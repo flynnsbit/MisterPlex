@@ -1,0 +1,25 @@
+# MiSTerPlex on-device conf → /media/fat/misterplex/misterplex.conf
+# Restart after edits: killall misterplexd; re-run deploy or startup hook.
+
+# --- PMS ---
+PLEX_BASE=http://192.168.1.41:32400
+PLEX_HOST=192.168.1.41
+# Optional static token (cast often supplies transient X-Plex-Token)
+# PLEX_TOKEN=
+
+# --- Decode / present (Phase 2 transitional ARM path) ---
+FFMPEG=/media/fat/mistercast/bin/ffmpeg
+DECODE=320x240
+# WEAK_RES=320x240
+# WEAK_BITRATE=1000
+# PRESENT=fb0|fpga|both
+PRESENT=fb0
+# STREAM=1  # annex-B → FPGA F3 (Phase 3.3 path)
+
+# --- Match source Hz (Phase 4) ---
+# Plex.rbf does NOT yet implement Groovy-style CmdSwitchres modeline swaps.
+# Until HPS modeline control exists, use OSD **Content FPS** (24/30/60/12) so the
+# FPGA present engine applies 3:2 / 2:2 cadence on a fixed display modeline.
+# See docs/match-source-hz.md.
+MATCH_SOURCE_HZ=off
+SOURCE_FPS=auto
