@@ -2,6 +2,24 @@
 
 Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 
+## HDMI capture (lab MacroSilicon)
+
+Capture card: `/dev/video4` (UVC `534d:2109`), MJPG/YUYV **800×600**.
+
+```bash
+# Prefer: skip cold MJPG frames (first ~30 often solid black ~4KB — capture artifact)
+ffmpeg -y -f v4l2 -input_format mjpeg -video_size 800x600 -i /dev/video4 \
+  -vf 'select=gte(n\,30)' -frames:v 1 -update 1 captures/mister_hdmi_latest.jpg
+
+# Or YUYV (locks faster on this dongle)
+ffmpeg -y -f v4l2 -input_format yuyv422 -video_size 800x600 -i /dev/video4 \
+  -frames:v 1 -update 1 captures/mister_hdmi_yuyv.jpg
+```
+
+**Warm** capture shows color bars: SMPTE bars in **left ~content** region; **right-side black DE**
+(Template **HBlank@529**, content painted only for `hc<320`). Cold single-frame MJPG is often
+solid black (~4 KB) — a capture-card artifact, **not** proof the core is dead.
+
 ## Phase 1 / 2 (misterplexd)
 
 | Script | What |

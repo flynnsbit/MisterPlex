@@ -200,16 +200,16 @@ Phase 3.3k (FPGA residual advance — this fire):
   **Paint (F3-only):** MB0 gray = clamp(128 + residual_dc, 0, 255) when residual_ok
     (≈104 on golden; not full inv-quant/IDCT recon — hybrid host F1 still product path).
   **Hybrid confirmed:** `host_owns_fs` still blocks stub wipe of STREAM F1 recon.
-  **Fit / HW (this fire):**
+  **Fit / HW (lab 2026-07-24 — GREEN):**
     - Analysis & Synthesis **Successful** (regs ~13.9k; block mem bits ~3.17M — **no new M10K**).
-    - Full Quartus fit→RBF **was** blocked on lab host OOM (pre-fix); **2026-07-24 sole fit OK** (NUM_PARALLEL=2, ALMs 22%, M10K 74%) → `releases/Plex.rbf` deployed `_Utility` (Template HSync + residual_dc wiring). HW green after runv-clear RBF: `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (test_f3_residual).
-      agents). Not a device BRAM over-util failure; hybrid + first-residual logic maps cleanly.
-    - HW gate when RBF available: `test_f3_residual.sh` asserts `res_dc=-24` (golden coeff0).
+    - Sole Quartus fit→RBF OK (NUM_PARALLEL=2, ALMs 22%, M10K 74%) after earlier concurrent-build OOM
+      (exit 137) on the 16 GB host — not a device BRAM over-util failure.
+    - Deployed `releases/Plex.rbf` → `/media/fat/_Utility/Plex.rbf` (Template HSync + residual_dc + runv-clear).
+    - HW: `test_f3_residual.sh` **hard-gates** `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (golden coeff0).
   **Hybrid confirmed:** host recon owns F1 present (`host_owns_fs`); FPGA residual status/paint
     is F3 diagnostic only until inv-quant/IDCT mae is competitive.
   **Still open (3.3l+):** inv quant + 4x4 IDCT + Intra pred into frame_store for all MBs;
-    optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers);
-    complete RBF fit when host has exclusive ~8+ GB free.
+    optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers).
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
@@ -236,24 +236,19 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     `push_frame --ddr` wall time on lab 192.168.1.183 after RBF deploy.
   **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
 
-  **RBF rebuild status (lab fire):** ARM DDR path is in tree and prefers DDR with
-  SPI fallback. Quartus map for DDR+current residual FSM hit segfaults / OOM (exit
-  137) under concurrent docker builds on the 16 GB host. Last green RBF remains
-  **3.3j hybrid** (no ddram_frame_rd). Until a clean sole fit+asm lands, product
-  path is SPI F1 (~5 fps) + PRESENT=both. Retry: kill all quartus containers,
-  `rm -rf db incremental_db`, single `quartus_sh --flow compile`, then asm if needed.
+  **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
+  completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
+  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product still **prefers DDR
+  with SPI fallback**; measure `tests/hw/test_ddr_frame.sh` / `push_frame --ddr` for
+  wall time (ddr_busy may stay 0 when idle — not proof of missing IP).
 
-
-  **Build / lab status (this fire):**
+  **Build / lab status:**
     - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr`)
-    - Quartus: `ddram_frame_rd` elaborates; full RBF fit OOM'd on 15 GiB host
-      (exit 137 during map/fit). Re-run when ≥12 GiB free:
-      `mister-dev build …/Plex_MiSTer --qpf Plex.qpf`
-    - Lab 192.168.1.183: ICMP ok; SSH key not configured from this agent —
-      measure after deploy: `tests/hw/test_ddr_frame.sh`
+    - Residual HW: `test_f3_residual.sh` → `res_dc=-24` on lab DE10
+    - Avoid concurrent raetro/quartus containers (OOM root cause earlier)
 
   **Still open after 3.1b:**
-    1. Complete RBF + lab measure push_ms / sustained fps
+    1. Lab measure push_ms / sustained fps for DDR vs SPI F1
     2. Optional: present directly from DDR (skip BRAM) for larger modes
     3. Async double-buffer SPI — small gain only; deprioritized
 
