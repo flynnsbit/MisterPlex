@@ -58,4 +58,11 @@ echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
 # 3.3k residual_dc (scan coeff0) — host golden coeff[0]=-24 after runv-clear RBF
 echo "$ST" | grep -qE 'res_dc=-24'
+# 3.3l-1 soft: res_csum=20 (0x14) = XOR sat8(full coeff[16]) at status[111:104].
+# Pre-3.3l-1 RBF: res_csum is stream_bytes low — do not hard-fail.
+if echo "$ST" | grep -qE 'res_csum=20\b'; then
+  echo "test_f3_residual: res_csum=20 (3.3l-1 full coeff place green, XOR sat8=0x14)"
+else
+  echo "test_f3_residual: res_csum soft skip (need 3.3l-1 RBF for csum=20; host golden locked)"
+fi
 echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"

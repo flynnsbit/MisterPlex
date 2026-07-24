@@ -87,6 +87,9 @@ public:
         uint8_t residual_t1 = 0;
         bool residual_ok = false;
         int8_t residual_dc = 0; // 3.3k: scan-order coeff[0] after levels+runs
+        // 3.3l-1: residualCsum8 = XOR satS8(coeff[i]); raw[13]/status[111:104].
+        // Golden Baseline first residual = 0x14 (20). Pre-3.3l-1 RBF: stream_bytes[7:0].
+        uint8_t residual_csum = 0;
         bool ddr_busy = false; // status_in[79] (v2) — DDR→BRAM copy in flight
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;

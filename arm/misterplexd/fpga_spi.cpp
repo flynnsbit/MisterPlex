@@ -714,7 +714,8 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     //   [55:48]  mb0     [63:56] slice_type
     //   [71:64]  residual pack   [79:72] {ddr_busy,0,qp}
     //   [87:80]  sps_mb_w        [95:88] sps_mb_h
-    //   [127:96] {residual_dc, stream_bytes_in[23:0]} (AR may touch [122:121])
+    //   [103:96] residual_dc  [111:104] residual_csum8  [127:112] stream_bytes[15:0]
+    //   AR may touch [122:121] (stream MSBs). Pre-3.3l-1 RBF: [127:104] was 24b bytes.
     CoreStatus s{};
     const uint16_t w1 = static_cast<uint16_t>(raw[2] | (raw[3] << 8));
     const uint16_t w2 = static_cast<uint16_t>(raw[4] | (raw[5] << 8));
@@ -753,11 +754,13 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.sps_height = static_cast<uint16_t>(mb_h) * 16u;
 
     s.stream_bytes_seen = 0;
-    // [103:96]=residual_dc (raw[12]); [127:104]=stream_bytes[23:0] (raw[13..15])
-    // Aspect ratio splice may stomp stream MSBs — residual_dc stays clean.
+    // [103:96]=residual_dc (raw[12]); [111:104]=residual_csum (raw[13]);
+    // [127:112]=stream_bytes[15:0] (raw[14..15]). residual_dc stays below AR splice.
     s.residual_dc = static_cast<int8_t>(raw[12]);
-    s.stream_bytes_in =
-        static_cast<uint32_t>(raw[13] | (raw[14] << 8) | (raw[15] << 16));
+    s.residual_csum = raw[13];
+    // 3.3l-1 RBF: 16-bit stream_bytes. Pre-3.3l-1: raw[13..15] was 24b bytes_in —
+    // residual_csum then equals old low byte (soft-gate res_csum=20 / 0x14 only after new RBF).
+    s.stream_bytes_in = static_cast<uint32_t>(raw[14] | (raw[15] << 8));
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }
