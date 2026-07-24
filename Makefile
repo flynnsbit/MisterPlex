@@ -33,7 +33,8 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_f
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
-		$(ROOT)/host/libmisterplex/h264_sps.hpp $(ROOT)/host/libmisterplex/h264_recon.hpp
+		$(ROOT)/host/libmisterplex/h264_sps.hpp $(ROOT)/host/libmisterplex/h264_recon.hpp \
+		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_idct_quant.cpp
 

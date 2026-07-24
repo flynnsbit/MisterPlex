@@ -1,9 +1,10 @@
 # Phase 3.3l — Inv quant + 4×4 IDCT + Intra pred (FPGA)
 
-**Status:** 3.3l-0 done (host golden); 3.3l-1..5 plan  
+**Status:** 3.3l-0 done; 3.3l-1 **RTL+host ready-for-fit** (full-16 + csum=0x14; Q-3l1 sole fit); 3.3l-2 **host paint goldens + post-3l1 handoff DONE** (y00=73 mean=62 pred=128; `test_f3_idct_mb0.sh`); RTL inv_quant/IDCT paint open after 3l1 RBF green  
+
 **Depends on:** 3.3k residual levels/runs → `residual_dc` (HW-green)  
 **Product rule:** hybrid host recon → F1 still owns present until FPGA mae is competitive.  
-**No Quartus for 3.3l-0** — RTL/fit starts at 3.3l-1+.
+**No Quartus for 3.3l-0 / host 3.3l-1 / host 3.3l-2** — RTL/fit when sole build free (leave Q-3l1 alone).
 
 ## Goal
 
@@ -27,7 +28,7 @@ Host reference (bit-exact vs FFmpeg no-deblock):
 | Paint | `decode_stub.sv` MB0 gray = clamp(128+dc) | diagnostic only |
 | Capture | nalu_scanner + MAXB=**48 B** RBSP | first residual ~17 B |
 | Product present | host `reconISlice` → F1; `host_owns_fs` | unchanged |
-| Fit (5CSEBA6, post-3.3k) | ALM **23%** (9.4k/41.9k), M10K **74%** (407/553), bits 56%, DSP 33% | headroom: **ALM**, **DSP**; **M10K is tight** |
+| Fit (5CSEBA6, post-3.3k / current `Plex.fit.summary`) | ALM **22%** (9.4k/41.9k), M10K **74%** (407/553), bits 56%, DSP 33% | headroom: **ALM**, **DSP**; **M10K is tight** |
 
 Golden Baseline F3 vector (`scripts/gen_test_annexb_real.py`):  
 `mb0=0` (I_NxN), `qp=25`, first residual `tc=8 t1=3 coeff[0]=-24`.
@@ -154,16 +155,33 @@ Lock math before RTL. **Done** in `tests/unit/test_idct_quant.cpp` (`make unit`)
 
 ### 3.3l-1 — Full first residual coeffs on FPGA (logic-only)
 
-Extend `ST_PLACE` in `slice_hdr_parser`:
+**Host prep (done, no Quartus):** goldens in `host/libmisterplex/h264_residual_gold.hpp`;
+helpers in `h264_cavlc.hpp`; locked by `test_idct_quant`.
 
-- Build `coeff[0:15]` signed (scan order), not only `coeff[0]`  
-- Keep `residual_dc = coeff[0]` for regression  
-- Status (example): pack `coeff[1]` or checksum of 16 levels into spare telemetry if room  
+| Host / RTL | Value |
+|------------|-------|
+| coeff scan | `-24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0` |
+| `residualCsum8` | **20 / 0x14** = XOR of `sat_s8(coeff[i])` (host + ST_PLACE RTL) |
+| Ports | `residual_coeff[0:15]` signed 9b through `stream_path`; `residual_csum[7:0]` |
+| Status pack | `[103:96]=dc` `[111:104]=csum` `[127:112]=bytes[15:0]` (`Plex.sv`) |
+| Host status | `push_frame` prints `res_csum=`; `CoreStatus::residual_csum` |
+| Unit | `test_idct_quant` locks full-16 + csum; prints `FPGA_GOLD` lines |
+| MAXB / M10K | **48** unchanged; **no new M10K** |
+| RBF | ST_PLACE+status **in tree** — **need sole fit after FBAR** (no Quartus this fire) |
+
+Helpers: `satS8`, `residualCsum8`, `dumpResidualCoeffs`, `hostToFpgaResidualExpose`,
+`residualCoeffsMatch`. Goldens: `residual_gold::{kCoeffScan,kCsum8,kDc,kY}`.
+
+- Keep `residual_dc = satS8(coeff[0])` = **-24** for regression  
 - Still **one** residual block; nC=0; MAXB=48 unchanged  
 
-**Exit HW:** `test_f3_residual.sh` still green (`res_dc=-24`); optional `res_csum=` matches host.
+**Exit unit:** host dump == `residual_gold` (csum **0x14**, full-16).  
+**Exit HW (after 3.3l-1 RBF):** `test_f3_residual.sh` `res_dc=-24` + soft `res_csum=20`.
 
 ### 3.3l-2 — Inv quant + IDCT on first 4×4 (logic-only)
+
+**Host prep (done, no Quartus):** `h264_residual_gold.hpp` locks dequant + recon paint;
+`test_idct_quant` prints `FPGA_GOLD deq4x4` / `recon_y4x4` / `recon_y00` / `recon_mean`.
 
 New small FSM after residual place (in parser or `mb_recon`):
 
@@ -175,7 +193,120 @@ New small FSM after residual place (in parser or `mb_recon`):
 
 **Bit-exact target vs host** for that 4×4 (mae=0 on block).
 
-**Exit HW:** new `tests/hw/test_f3_idct_mb0.sh` — residual gates + recon mean/y00 match host golden.
+#### Locked host paint vector (Baseline first residual)
+
+Source of truth: `host/libmisterplex/h264_residual_gold.hpp` + `tests/unit/test_idct_quant.cpp`
+(`3l2-table` table-only + `3l2-real` annex-B). `make unit` locks both.
+
+| Step | Value |
+|------|-------|
+| coeff scan | `-24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0` |
+| qp / pred | 25 / **128** (unavailable neighbours → DC) |
+| residual_csum | **20 / 0x14** = XOR sat8(coeff[i]) — **not** stale arith sum **−20 / 0xEC** |
+| dequant 4×4 (row-major) | `-4224 896 0 -224` / `896 -1152 0 288` / `0 0 0 0` / `-224 288 0 0` |
+| recon Y 4×4 | `73 72 76 76` / `72 74 71 73` / `76 71 32 27` / `76 73 27 24` |
+| y00 / mean4×4 | **73** / **62** = `(sum+8)/16` |
+| paint y00 RGB565 | **0x4A49** (`grayRgb565(73)`) |
+| 3.3k stub contrast | MB0 gray = `128+dc` = **104** (RGB565 **0x6B4D**) — **not** true recon |
+| frame_store addrs @W=320 | `0..3, 320..323, 640..643, 960..963` |
+
+#### `decode_stub` top-left 4×4 sketch (no Quartus this fire)
+
+Today (`decode_stub.sv` 3.3k): when `residual_ok`, **entire MB0 16×16** is painted
+`clamp(128 + residual_dc)` → gray **104**, packed RGB565 `{R[7:3],G[7:2],B[7:3]}` with R=G=B.
+
+**3.3l-2 target paint** (logic-only, no new M10K):
+
+```text
+// After inv_quant + idct_add onto pred=128 → recon_y[0:3][0:3] = residual_gold::kY
+// Sequential paint (existing wr_en / wr_pixel / wr_reset_ptr path):
+//   for y in 0..239:
+//     for x in 0..319:
+//       if (x < 4 && y < 4 && lat_res_ok && recon_ready)
+//         wr_pixel = gray_rgb565(recon_y[y][x]);   // true 4×4
+//       else if (mb0 && lat_res_ok)
+//         // optional: leave rest of MB0 as diagnostic grid / stub 104 / or 128
+//         ...
+// frame_store linear addrs for top-left 4×4 @ W=320:
+//   0,1,2,3, 320,321,322,323, 640..643, 960..963
+// y00 RGB565 = grayRgb565(73)  (host residual_gold::kPaintY00Rgb565)
+```
+
+**Minimal RTL add** (prefer regs only):
+
+| Item | Notes |
+|------|-------|
+| Hold `coeff[0:15]` after ST_PLACE | already 3.3l-1 tree |
+| `inv_quant4` + `idct4x4` FSM | multi-cycle; match host butterflies |
+| `recon_y[0:3][0:3]` 16×8b regs | paint source |
+| `recon_ready` sticky | gate paint vs incomplete IDCT |
+| Status soft | `recon_y00=73`, `recon_mean=62`; **keep `res_dc=-24`** |
+
+Do **not** require full MB0 true recon in 3.3l-2 — only first coded 4×4 (scan block 0).
+Rest of frame may stay strip/MB-grid diagnostic.
+
+**Exit unit:** `test_idct_quant` locks deq + y[][] + paint contract (stub 104 ≠ y00 73).  
+**Exit HW:** `tests/hw/test_f3_idct_mb0.sh` — residual gates + recon mean/y00 match host golden.
+
+---
+
+### Post-3l1 RBF → 3.3l-2 paint handoff (host DONE; RTL next)
+
+**When:** sole Q-3l1 rebuild `BUILD_OK`, one deploy, FBAR retest green, and
+`test_f3_residual.sh` hard-gates `res_dc=-24` **+** `res_csum=20` (XOR 0x14).
+
+**Do not start 3.3l-2 RTL fit before that residual csum hard-gate is green.**
+
+#### Host source of truth (no re-derive)
+
+| Artifact | Path / command |
+|----------|----------------|
+| Compile-time goldens | `host/libmisterplex/h264_residual_gold.hpp` |
+| Unit lock | `tests/unit/test_idct_quant.cpp` (`3l2-table` + `3l2-real`) |
+| Run | `./build/test_idct_quant /tmp/plex_real_baseline.h264` (or `make unit`) |
+| Machine lines | `FPGA_GOLD pred=128` … `recon_y00=73 recon_mean4x4=62 paint_y00_rgb565=0x4a49` |
+| Clip | `scripts/gen_test_annexb_real.py` → Baseline F3 first residual |
+
+#### Locked paint contract (must match mae=0)
+
+```text
+pred = 128                    # first 4×4 unavailable neighbours → DC
+qp   = 25
+coeff_scan = -24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0
+res_csum   = 20 (0x14)        # XOR sat8 — NEVER -20 / 0xEC
+deq 4×4    = -4224 896 0 -224 / 896 -1152 0 288 / 0 0 0 0 / -224 288 0 0
+recon Y    = 73 72 76 76 / 72 74 71 73 / 76 71 32 27 / 76 73 27 24
+y00=73  mean4x4=62=(sum+8)/16
+paint y00 RGB565 = 0x4A49    # gray pack {R[7:3],G[7:2],B[7:3]} R=G=B=73
+stub contrast    = y=104 RGB565 0x6B4D   # 128+dc; NOT true recon
+frame_store @W=320: 0..3, 320..323, 640..643, 960..963
+```
+
+#### RTL agent checklist (logic-only, **no new M10K**)
+
+1. Consume `residual_coeff[0:15]` already placed by 3.3l-1 `ST_PLACE` (keep wire).  
+2. `inv_quant4` = host `dequant4x4` (zigzag + LevelScale; qp=25). Match `kDeq`.  
+3. Fill `pred[16]=128`; run multi-cycle `idct4x4_add` = FFmpeg/`h264_recon.hpp`. Match `kY`.  
+4. `decode_stub`: when `recon_ready`, paint **top-left 4×4 only** from `recon_y[][]`
+   (rest of MB0 may stay stub 104 / grid).  
+5. Soft status (optional spare bytes): `recon_y00=73`, `recon_mean=62`.  
+6. **Hard keep:** `res_dc=-24`, `res_csum=20`, `res_ok/tc/t1`. Do not thrash residual bus.  
+7. Sole Quartus only when fit slot free (`NUM_PARALLEL=2`); never mid-FBAR thrash.
+
+#### HW gate sequence after paint RBF
+
+| Step | Gate | Notes |
+|------|------|-------|
+| Residual | `test_f3_residual.sh` | hard `res_dc=-24` + hard `res_csum=20` |
+| IDCT/paint | `test_f3_idct_mb0.sh` | residual hard; soft→hard `recon_y00=73` / `recon_mean=62` when telem packs; eyes-on y00≠104 |
+| FBAR | `test_fbar_fast` | must stay green after any paint RBF |
+
+#### Non-goals for 3.3l-2 paint
+
+- Full MB0 / all MBs (that is 3.3l-3/4)  
+- Changing MAXB / bitstream_fifo / dual YUV BRAM  
+- Product hybrid present (`host_owns_fs` stays until 3.3l-5)  
+- Re-fitting while another Quartus is live  
 
 ### 3.3l-3 — First full MB (I_NxN or I16)
 
@@ -267,11 +398,13 @@ Keep existing residual fields. Add without breaking `push_frame --status` parser
 | Bits / field | Meaning |
 |--------------|---------|
 | existing res_* / res_dc | regression 3.3k |
-| `recon_y00` or mean4×4 | 3.3l-2 eyes-on |
+| **`[111:104] residual_csum8`** | **3.3l-1** XOR sat8(coeff[0:15]); host `res_csum=` (gold **20**/0x14) |
+| `[127:112] stream_bytes[15:0]` | after 3.3l-1 (was 24b in [127:104]) |
+| `recon_y00` or mean4×4 | 3.3l-2 eyes-on — host gold **y00=73 mean=62** (`residual_gold`) |
 | `mb_done[7:0]` | 3.3l-4 progress |
 | `recon_ok` sticky | full I-slice done |
 
-Prefer packing into unused status_telem lanes; document in `Plex.sv` comment block.
+Host already parses `residual_csum` from raw[13] (soft until RBF). Document assign in `Plex.sv` when RTL lands.
 
 ---
 
@@ -280,8 +413,8 @@ Prefer packing into unused status_telem lanes; document in `Plex.sv` comment blo
 | Milestone | Unit | HW |
 |-----------|------|-----|
 | 3.3l-0 | `test_idct_quant` / extend `test_cavlc_dc` | — |
-| 3.3l-1 | host coeff dump == FPGA csum | `test_f3_residual.sh` still green |
-| 3.3l-2 | 4×4 pixels vs host | `test_f3_idct_mb0.sh` |
+| 3.3l-1 | host `h264_residual_gold` coeff[16]+csum=0x14 | `test_f3_residual.sh` res_dc; soft res_csum=20 after RBF |
+| 3.3l-2 | `test_idct_quant` paint/deq goldens + `FPGA_GOLD recon_*` | `tests/hw/test_f3_idct_mb0.sh` residual hard; soft→hard y00=73 mean=62 |
 | 3.3l-3 | MB0 Y mae=0 | HW status + optional frame dump |
 | 3.3l-4 | full recon maeY=U=V=0 | `test_f3_recon_frame.sh` vs host RGB/YUV |
 | Hybrid | — | STREAM smoke; host_owns_fs policy |
@@ -293,8 +426,9 @@ Do **not** require Quartus for 3.3l-0. Fit check only when RTL lands (sole build
 ## Milestone checklist (summary)
 
 1. **3.3l-0** ✅ Host quant/IDCT golden + first-4×4 pixel vector (`test_idct_quant`)  
-2. **3.3l-1** FPGA full 16-coeff place; keep `res_dc=-24`  
-3. **3.3l-2** Inv quant + IDCT + DC-pred; paint true 4×4; HW gate  
+2. **3.3l-1** Host gold+status ✅ (`csum=0x14`/20); RTL ST_PLACE+status pack in tree — need fit/RBF; keep `res_dc=-24`  
+3. **3.3l-2** Host paint goldens + post-3l1 handoff ✅ (y00=73 mean=62 pred=128; HW script ready); RTL inv quant + IDCT + DC-pred paint; HW gate after paint RBF  
+
 4. **3.3l-3** First full MB (I_NxN modes+CBP+16× residual+chroma); MAXB bridge or stream start  
 5. **3.3l-4** All MBs + top-row BRAM + stream CAVLC; full-frame mae  
 6. **3.3l-5** Product hybrid gate when mae competitive  
@@ -315,6 +449,9 @@ Do **not** require Quartus for 3.3l-0. Fit check only when RTL lands (sole build
 - Residual FSM: `fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv`  
 - Paint: `fpga/Plex_MiSTer/rtl/decode_stub.sv`  
 - Wire-up: `fpga/Plex_MiSTer/rtl/stream_path.sv`  
-- Host gold: `host/libmisterplex/h264_recon.hpp`, `h264_cavlc.hpp`  
+- Host gold: `host/libmisterplex/h264_recon.hpp`, `h264_cavlc.hpp`, `h264_residual_gold.hpp`  
+- Unit paint/IDCT: `tests/unit/test_idct_quant.cpp` (`FPGA_GOLD recon_*`)  
 - HW residual: `tests/hw/test_f3_residual.sh`  
+- HW paint gate: `tests/hw/test_f3_idct_mb0.sh` (host contract y00=73 mean=62; soft until paint RBF)  
+- Post-3l1 handoff: section above in this doc  
 - Parent log: `docs/phase3-decode.md` (Phase 3.3k → 3.3l pointer)

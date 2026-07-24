@@ -1,10 +1,13 @@
 // Baseline CAVLC residual_block using FFmpeg table layout (ITU-T H.264 9.2).
 // 3.3f/g: first I_16x16 DC probe + residual walk helpers.
+// 3.3l-1: full first-residual dump + residual_csum (XOR sat8) vs residual_gold.
 #pragma once
 #include "libmisterplex/h264_nal.hpp"
+#include "libmisterplex/h264_residual_gold.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -19,6 +22,71 @@ struct ResidualResult {
     int16_t level[16]{}; // reverse order (first = last in scan)
     int16_t coeff[16]{}; // scan-order placement
 };
+
+// --- 3.3l-1 host helpers: full first-residual dump + FPGA telem compare ---
+// Goldens: residual_gold (XOR csum=0x14, dc=-24). Lab RBF today: ok/tc/t1/dc only.
+// Tree RTL ST_PLACE + Plex.sv pack residual_csum[111:104] — sole fit/RBF still open.
+// Status plan: [103:96]=dc, [111:104]=csum, [127:112]=stream_bytes[15:0].
+
+// Saturate to signed 8-bit (matches FPGA residual_dc / residual_csum path).
+inline int8_t satS8(int v) { return residual_gold::satS8(v); }
+
+// 8-bit residual checksum: XOR of satS8(scan coeff[i]) for i=0..15 (RTL-identical).
+// Golden Baseline first residual → 0x14.
+inline uint8_t residualCsum8(const int16_t coeff[16]) {
+    return residual_gold::coeffCsum8(coeff);
+}
+
+// Fields the FPGA residual path exposes / will expose via push_frame --status.
+// On wire today: ok/tc/t1/dc. Host fills csum/c1 for compare until status packs csum.
+struct FpgaResidualExpose {
+    bool residual_ok = false;
+    int residual_tc = 0;
+    int residual_t1 = 0;
+    int residual_dc = 0;       // satS8(scan coeff[0]) — on wire today (lock -24)
+    uint8_t residual_csum = 0; // residualCsum8 — host now; wire after telem pack
+    int residual_c1 = 0;       // satS8(coeff[1]) peek — optional telem
+    bool full_coeffs_on_wire = false; // false until status packs residual_csum
+};
+
+// Project host ResidualResult onto FPGA status fields (dc on wire; csum host-side).
+inline FpgaResidualExpose hostToFpgaResidualExpose(const ResidualResult& r) {
+    FpgaResidualExpose e;
+    e.residual_ok = r.ok;
+    e.residual_tc = r.total_coeff;
+    e.residual_t1 = r.trailing_ones;
+    e.residual_dc = static_cast<int>(satS8(r.coeff[0]));
+    e.residual_csum = residualCsum8(r.coeff);
+    e.residual_c1 = static_cast<int>(satS8(r.coeff[1]));
+    e.full_coeffs_on_wire = false;
+    return e;
+}
+
+// Dump scan-order coeffs to FILE* (or stdout). Returns residualCsum8 (XOR).
+// Use vs residual_gold::kCoeffScan for full-16 lock / lab logs.
+inline uint8_t dumpResidualCoeffs(const char* label, const int16_t coeff[16],
+                                  std::FILE* out = stdout) {
+    if (label)
+        std::fprintf(out, "%s:", label);
+    else
+        std::fprintf(out, "coeffs:");
+    for (int i = 0; i < 16; ++i)
+        std::fprintf(out, " %d", static_cast<int>(coeff[i]));
+    const uint8_t csum = residualCsum8(coeff);
+    std::fprintf(out, "  | csum8=%u (0x%02x) xor-sat8 coeff0=%d coeff1=%d\n",
+                 static_cast<unsigned>(csum), static_cast<unsigned>(csum),
+                 static_cast<int>(coeff[0]), static_cast<int>(coeff[1]));
+    return csum;
+}
+
+// True if all 16 scan coeffs match a golden vector (e.g. residual_gold::kCoeffScan).
+inline bool residualCoeffsMatch(const int16_t got[16], const int16_t exp[16]) {
+    for (int i = 0; i < 16; ++i) {
+        if (got[i] != exp[i])
+            return false;
+    }
+    return true;
+}
 
 namespace tables {
 
@@ -383,7 +451,7 @@ inline ResidualResult probeFirstI16Dc(const uint8_t* annexb, size_t n) {
     }
     if (!pay)
         return fail;
-    auto rbsp = misterplex::detail::removeEpb(pay, plen);
+    auto rbsp = ::misterplex::detail::removeEpb(pay, plen);
     detail::BitReader br(rbsp.data(), rbsp.size());
     br.ue();
     br.ue();
@@ -481,7 +549,7 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
             i = j;
         }
         if (pay) {
-            auto rbsp = misterplex::detail::removeEpb(pay, plen);
+            auto rbsp = ::misterplex::detail::removeEpb(pay, plen);
             detail::BitReader br(rbsp.data(), rbsp.size());
             br.ue();
             br.ue();
