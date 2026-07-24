@@ -4,9 +4,9 @@
 
 **Depends on:** 3.3k residual levels/runs → `residual_dc` (HW-green); **3.3l-1 hard `res_csum=20` on lab** (still **FAIL** after R-csum1 BUILD_OK + sole deploy on **`dabdaeb0`**)  
 **Product rule:** hybrid host recon → F1 still owns present until FPGA mae is competitive.  
-**No Quartus for 3.3l-0 / host 3.3l-1 / host 3.3l-2 / L-3l2-rtl / L-csum-note / L-3l2-gate / L-3l2-gate2** — paint fit / SV wire-up / `files.qip` only after hard csum green + sole build free.  
-**Hard unblock:** `raw[13]==0x14` **AND** `res_dc=-24` stable ≥2 re-pushes; soft-skip EXIT=0 is **NOT** enough. **Do not invent PASS.**  
-**Contingency (R-csum-rca3 / H-rcsum-gate):** post-R-csum1-deploy hard gate **FAILED** on **`dabdaeb0`** → **no 3l2** (stay BLOCKED; residual RCA branch **a** status/preserve/multi-drive; do not thrash-redeploy dabdaeb0).
+**No Quartus for 3.3l-0 / host 3.3l-1 / host 3.3l-2 / L-3l2-rtl / L-csum-note / L-csum-note2 / L-3l2-gate / L-3l2-gate2** — paint fit / SV wire-up / `files.qip` only after hard csum green + sole build free. **No mid-RCA FPGA commit thrash.**  
+**Hard unblock:** `raw[13]==0x14` **AND** `res_dc=-24` stable ≥2 re-pushes on a *new* post-fix RBF (≠ **`dabdaeb0`**); soft-skip EXIT=0 is **NOT** enough. **Do not invent PASS.**  
+**Contingency ACTIVE (R-csum-rca3 / H-deploy-rcsum1):** post-R-csum1 sole deploy hard gate **FAILED** on **`dabdaeb0`** (raw[13] unstable **139/222/49**; soft-skip ≠ PASS) → **no 3l2** (stay BLOCKED; residual RCA branch **a** status/preserve/multi-drive; **do not thrash-redeploy dabdaeb0**). Probes: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`.
 
 ## Goal
 
@@ -180,31 +180,47 @@ Helpers: `satS8`, `residualCsum8`, `dumpResidualCoeffs`, `hostToFpgaResidualExpo
 **Exit unit:** host dump == `residual_gold` (csum **0x14**, full-16). ✅  
 **Exit HW (hard):** `test_f3_residual.sh` `res_dc=-24` + **hard** `res_csum=20` (soft-skip ≠ PASS).
 
-#### HW evidence — residual csum (L-csum-note, 2026-07-24)
+#### HW evidence — residual csum (L-csum-note + **L-csum-note2**, 2026-07-24)
 
 | Item | Result |
 |------|--------|
 | Host unit | XOR sat8(full-16) = **0x14** / **20** locked (`test_idct_quant`, `residual_gold::kCsum8`) |
 | Prior RBF `aa146c17` | `res_dc=-24` PASS; `res_csum` FAIL (raw[13]=`0x53` ≈ stream_bytes residue) |
-| Lab RBF **`dabdaeb0`** (R-csum1 BUILD_OK) | FBAR green (H-deploy-rcsum1); **`res_dc=-24` OK** (stable `0xE8`); **hard `res_csum=20` FAIL** |
-| raw[13] on `dabdaeb0` | **Live** but **≠0x14** and **unstable** (139 / 0x8b → 222 / 0xde → 49 / 0x31; H-rcsum-gate). Prior `820484a6`: 232/59/142 |
-| Soft-skip | `test_f3_residual.sh` EXIT=0 on mismatch — **not** hard PASS (got 49/139/222 want 20) |
-| **R-csum1** | **BUILD_OK** 12:17:04 exit=0; RBF **`dabdaeb0`**; sources **`7bee0a6`**; sole deploy done; hard gate still FAIL — residual RCA next |
-| **3.3l-2 paint** | **BLOCKED** — see *P3-3l2 UNBLOCK GATE*: hard raw[13]==0x14 + res_dc=-24 + no soft-skip; post-deploy FAIL → no 3l2 |
+| Prior RBF **`820484a6`** (Q-fix1) | FBAR green; res_dc=-24 OK; hard csum FAIL (raw[13] unstable 232/59/142) — **superseded** |
+| **R-csum1 APPLIED** | **BUILD_OK** 12:17:04 exit=0; running XOR + ST_PLACE `lev[]` + preserve; RTL commit **`7bee0a6`**; log `/tmp/plex_quartus_rcsum1.log`; RBF full md5 **`dabdaeb0c5ae708c4fdbba388ba275b6`** |
+| Lab RBF **`dabdaeb0`** | **H-deploy-rcsum1** one `DEPLOY_LOAD=menu`; CORENAME=Plex; **FBAR PASS** (m1=82.9 m2=94.4); **`res_dc=-24` PASS** stable `0xE8`; **hard `res_csum=20` FAIL** |
+| raw[13] on **`dabdaeb0`** | **Live** pack (≠ stream_bytes low 391/417/444; ≠ 0xE8) but **≠0x14** and **unstable**: **139 / 222 / 49** (`0x8b` / `0xde` / `0x31`) — never golden |
+| Soft-skip | `test_f3_residual.sh` EXIT=0 on mismatch (got 49/139/222 want 20) — **still NOT hard PASS** |
+| Failure class | Contingency branch **(a)** unstable csum → status path / preserve / multi-drive (do **not** re-open tmpc-fold first; R-csum1 already applied) |
+| **3.3l-2 paint** | **remains BLOCKED** — hard raw[13]==0x14 + res_dc=-24 + no soft-skip **not met**; contingency §D ACTIVE → **no 3l2** until next residual fix hard PASS |
+| **Do not** | Thrash-redeploy **`dabdaeb0`** expecting green; invent hard PASS; start paint / `files.qip` / mid-RCA FPGA commit |
 
-Peer reports: `/tmp/misterplex-agent-H-deploy-fix1.txt`, `/tmp/misterplex-agent-H-gate-fix1.txt`,
-`/tmp/misterplex-agent-Q-fix1.txt`, `/tmp/misterplex-agent-R-csum-rca3.txt`.
+**H-deploy-rcsum1 probes (silicon SoT for dabdaeb0 FAIL):**
+- Reports: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-H-rcsum-gate.txt`
+- Probes file: `/tmp/misterplex-H-deploy-rcsum1-probes.txt`
+- PROBE1: `res_dc=-24 res_csum=139` raw `e8 8b 87 01` (bytes_in=391) → HARD_FAIL
+- PROBE2/3: `res_dc=-24 res_csum=222` raw `e8 de a1 01` (bytes_in=417; stable within one stream state)
+- PROBE4 soft: `res_csum=49` soft-skip EXIT=0 (**not** hard PASS)
+- Soft log: `/tmp/misterplex-H-deploy-rcsum1-residual-soft.log`
+
+Peer reports: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-H-rcsum-gate.txt`,
+`/tmp/misterplex-agent-H-gate-rcsum1.txt`, `/tmp/misterplex-agent-R-csum1.txt`,
+`/tmp/misterplex-agent-G-fpga-rcsum1.txt`, `/tmp/misterplex-agent-M-fitmon-rc5.txt`,
+`/tmp/misterplex-agent-R-csum-rca3.txt`, `/tmp/misterplex-agent-H-deploy-fix1.txt` (prior 820484a6).
 
 #### Post–R-csum1 sole-deploy + hard-gate protocol (ONE agent after BUILD_OK)
 
-> **Historical protocol** — R-csum1 is **BUILD_OK** (`dabdaeb0`); sole deploy + hard-gate
-> already executed (**H-deploy-rcsum1** / **H-rcsum-gate**): hard residual **FAIL** (do not invent PASS).
-> Do **not** thrash-redeploy **`dabdaeb0`** expecting green. Prior lab was **`820484a6`**.
-> RCA **GO** was used (R-csum-rca3/4): R-csum1 (running XOR + ST_PLACE `lev[]` +
-> preserve status) matches root cause (ST_PLACE combo `tmpc[]` XOR unreliable).
-> **No further RTL before redeploy.** **No Quartus / no deploy / no residual thrash
-> from protocol authors** — this section is the runbook for the *post-BUILD_OK*
-> sole owner only.
+> **STATUS 2026-07-24 (H-deploy-rcsum1 / L-csum-note2):** R-csum1 **APPLIED** (running XOR +
+> ST_PLACE `lev[]` + preserve; commit **`7bee0a6`**; BUILD_OK → RBF **`dabdaeb0`**).
+> Sole menu deploy **DONE**. FBAR **PASS**. Hard residual **FAIL** — raw[13] unstable
+> **139/222/49** never 0x14; res_dc=-24 OK. Soft-skip EXIT=0 is **NOT** hard PASS.
+> **3.3l-2 remains BLOCKED** (contingency §D ACTIVE). **Do not thrash-redeploy dabdaeb0.**
+> Next: residual RCA branch **(a)** status/preserve/multi-drive (not tmpc rehash) →
+> *new* RBF md5 ≠ dabdaeb0 → re-run this checklist once. Probes:
+> `/tmp/misterplex-agent-H-deploy-rcsum1.txt`.
+>
+> **Historical runbook** below is for the *next* sole post-BUILD_OK owner only.
+> Do **not** invent BUILD_OK / hard PASS. Soft-skip ≠ PASS. One menu deploy only.
 
 **Preconditions (all required):**
 
@@ -432,18 +448,18 @@ Rest of frame may stay strip/MB-grid diagnostic.
 
 ### P3-3l2 UNBLOCK GATE (L-3l2-gate / L-3l2-gate2 — exact checklist)
 
-> **P3-3l2 remains BLOCKED.** Do **not** start inv_quant / IDCT fit, SV check-in,
+> **P3-3l2 remains BLOCKED** (L-csum-note2). Do **not** start inv_quant / IDCT fit, SV check-in,
 > `files.qip` thrash, or paint Quartus until **all** §A hard-PASS criteria are met on lab
-> **after** R-csum1 (or successor) BUILD_OK + **sole** deploy of the *new* RBF.
-> Soft-skip ≠ PASS. **Post–R-csum1 deploy only** — probing lab still on `820484a6` cannot unlock.
-> Deploy mechanics: *Post–R-csum1 sole-deploy + hard-gate protocol* above.
-> Contingency (R-csum-rca3): post-deploy still FAIL → **no 3l2**.
+> **after** a residual-fix BUILD_OK + **sole** deploy of a *new* RBF (md5 **≠ `dabdaeb0`**).
+> Soft-skip ≠ PASS. **R-csum1 dabdaeb0 sole deploy HARD FAIL** (raw[13] unstable **139/222/49**;
+> res_dc=-24 OK) — contingency §D **ACTIVE** → **no 3l2**. Do **not** thrash-redeploy dabdaeb0.
+> Probe SoT: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`. Deploy mechanics: protocol above.
 
 #### A) Hard residual PASS criteria (ALL required — no soft-skip)
 
 | # | Criterion | Exact pass value | How to read |
 |---|-----------|------------------|-------------|
-| **A0** | **Post–R-csum1 sole deploy only** | New RBF md5 **≠** `820484a6…` lab-loaded via one `DEPLOY_LOAD=menu` | Do **not** hard-gate on lab still running `820484a6`; inventing PASS before new md5 is forbidden |
+| **A0** | **Post residual-fix sole deploy only** | Candidate fix RBF lab-loaded via one `DEPLOY_LOAD=menu` (R-csum1 was **`dabdaeb0`** — hard FAIL; next fix must be **≠ dabdaeb0**) | Do **not** invent PASS; **do not** thrash-redeploy dabdaeb0 expecting green |
 | A1 | `res_dc` | **−24** | `push_frame --status` → `res_dc=-24`; **`raw[12]==0xE8`** |
 | A2 | `res_csum` | **20** | `res_csum=20`; **`raw[13]==0x14`** (XOR sat8 full-16 — **never** arith −20 / 0xEC) |
 | A3 | No soft-skip | Hard only | `test_f3_residual.sh` soft EXIT=0 on csum mismatch is **NOT** hard PASS and **NOT** unblock |
@@ -454,26 +470,31 @@ Rest of frame may stay strip/MB-grid diagnostic.
 **One-line hard PASS formula (L-3l2-gate2):**
 
 ```text
-HARD_PASS = (lab RBF md5 ≠ 820484a6)          // A0: post–R-csum1 sole deploy only
-         && FBAR green on that RBF
+HARD_PASS = FBAR green on candidate residual-fix RBF
          && res_dc  = -24  (raw[12] == 0xE8)  // A1
          && res_csum = 20  (raw[13] == 0x14)  // A2 — BOTH A1 AND A2 required
          && stable across ≥2 re-pushes        // A4
          && NOT soft-skip-as-pass             // A3: script EXIT=0 on mismatch ≠ PASS
+// dabdaeb0 (R-csum1 XOR+lev APPLIED): A1 PASS; A2+A4 FAIL (139/222/49) → NOT HARD_PASS
+// → 3.3l-2 remains BLOCKED (soft-skip still not hard PASS)
 ```
 
 **NOT hard PASS / NOT unblock:**
 - `test_f3_residual.sh` EXIT=0 with soft-skip on `res_csum` mismatch
 - host unit XOR `0x14` alone (already locked — HW must match)
-- re-probing lab still on **`820484a6`** expecting csum green
+- thrash-redeploying **`dabdaeb0`** (or prior **`820484a6`**) expecting csum green
 - inventing PASS without post-deploy **`raw[13]==0x14`** evidence
-- A1 alone (res_dc green) without A2 — **both** required
+- A1 alone (res_dc green) without A2 — **both** required (dabdaeb0 is this case)
+- treating soft-skip EXIT=0 as unblock (**soft-skip still NOT hard PASS**)
 
-**Lab now (blocked evidence):** RBF **`820484a6`** — A0 FAIL (still old md5); A1 PASS
-(stable 0xE8); **A2 FAIL** (raw[13] live/unstable e.g. 232/59/142 — never 0x14).
-Soft-skip EXIT=0 on residual script is **not** unblock. RCA: ST_PLACE
-XOR-over-combo-`tmpc[]` unreliable; R-csum1 fixes via running XOR + `lev[]`
-recompute + preserve status barrier (`/tmp/misterplex-agent-R-csum-rca3.txt`).
+**Lab now (blocked evidence — L-csum-note2 / H-deploy-rcsum1):** RBF **`dabdaeb0`**
+(R-csum1 APPLIED: running XOR + `lev[]` + preserve, commit `7bee0a6`; sole menu deploy done).
+A1 PASS (stable 0xE8); FBAR PASS; **A2 FAIL** (raw[13] live/unstable **139/222/49** =
+0x8b/0xde/0x31 — never 0x14); A3 soft-skip EXIT=0 is **not** unblock; A4 FAIL (unstable).
+Contingency §D **ACTIVE**: **no 3l2**. Next RCA: status path / preserve / multi-drive —
+**do not** re-open tmpc-fold first; **do not** thrash-redeploy dabdaeb0.
+Evidence: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, probes
+`/tmp/misterplex-H-deploy-rcsum1-probes.txt`.
 
 ```bash
 # After sole deploy of NEW RBF only (A0):
@@ -491,15 +512,16 @@ Helper: `python3 tests/parse_res_csum_status.py` (or pipe status line through `-
 
 Hard residual measurements (§A) **only count after B1**. No parallel paint work during B0–B3.
 
-| Step | Owner | Action | Gate |
-|------|-------|--------|------|
-| B0 | R-csum1 | BUILD_OK new RBF md5 **≠** `820484a6` | log `/tmp/plex_quartus_rcsum1.log` — **do not invent BUILD_OK** |
-| B1 | Deploy | **One** sole menu deploy of *new* RBF (protocol above) | lab md5 match; CORENAME=Plex; no concurrent Quartus |
-| B2 | FBAR | `test_fbar_fast` reconfirm on **new** RBF | expect PASS (Fix-1 colorbars still in tree) |
-| B3 | Hard residual | §A **A0–A5** | **`raw[13]==0x14` AND `res_dc=-24`** stable ≥2 pushes; **soft-skip NOT enough** |
-| B4 | Unblock 3l2 | Only if B3 hard PASS | then §C SV wire-up order — **not before** |
+| Step | Owner | Action | Gate / result (2026-07-24) |
+|------|-------|--------|----------------------------|
+| B0 | R-csum1 | BUILD_OK new RBF md5 **≠** `820484a6` | **DONE** — `/tmp/plex_quartus_rcsum1.log` BUILD END 12:17:04 exit=0 → **`dabdaeb0`** |
+| B1 | Deploy | **One** sole menu deploy of *new* RBF | **DONE** — H-deploy-rcsum1; lab==host `dabdaeb0`; CORENAME=Plex |
+| B2 | FBAR | `test_fbar_fast` reconfirm on **new** RBF | **PASS** on dabdaeb0 (m1=82.9 m2=94.4) |
+| B3 | Hard residual | §A **A0–A5** | **FAIL** — res_dc=-24 OK; raw[13] unstable **139/222/49** never 0x14; soft-skip ≠ PASS |
+| B4 | Unblock 3l2 | Only if B3 hard PASS | **NOT unlocked** — 3.3l-2 **remains BLOCKED** (contingency §D) |
 
-Report for B0–B3 owner: `/tmp/misterplex-agent-H-rcsum-gate.txt`.
+Report for B0–B3 owner: `/tmp/misterplex-agent-H-deploy-rcsum1.txt` / `/tmp/misterplex-agent-H-rcsum-gate.txt`.
+Next after B3 FAIL: residual RCA only (no paint); **no thrash redeploy** of dabdaeb0.
 
 #### C) After hard PASS only — SV wire-up order (logic-only, **no new M10K**)
 
@@ -525,18 +547,23 @@ Report for B0–B3 owner: `/tmp/misterplex-agent-H-rcsum-gate.txt`.
 
 Detail interfaces: *3.3l-2 concrete RTL plug sketch* below (L-3l2-rtl).
 
-#### D) Contingency — R-csum-rca3 (if post-deploy still FAIL → **no 3l2**)
+#### D) Contingency — R-csum-rca3 (**ACTIVE** after dabdaeb0 — **no 3l2**)
 
-Aligned with `/tmp/misterplex-agent-R-csum-rca3.txt` §7 and *Failure branches* in the sole-deploy protocol above:
+Aligned with `/tmp/misterplex-agent-R-csum-rca3.txt` §7, *Failure branches* above, and
+**H-deploy-rcsum1** silicon measure on **`dabdaeb0`**:
 
-- If R-csum1 BUILD_OK + sole deploy still leaves hard residual FAIL → **P3-3l2 stays BLOCKED**.
+- **Triggered:** R-csum1 (running XOR+lev) BUILD_OK + sole deploy left hard residual **FAIL** → **P3-3l2 stays BLOCKED**.
+- Measured class **(a)** unstable raw[13] **139/222/49** (same class as prior 232/59/142 on 820484a6):
+  status path / preserve / multi-drive — **not** tmpc rehash as first guess (R-csum1 already applied).
+- Soft-skip EXIT=0 is **still NOT** hard PASS and **still NOT** unblock.
 - Do **not** start inv_quant / IDCT / `files.qip` / paint Quartus while residual is red.
-- Further residual RCA only (measure first on the *new* RBF — do not pre-write paint or contingency RTL):
-  - csum still unstable → status path / preserve / multi-drive
+- Further residual RCA only (measure first on lab **`dabdaeb0`** probes — do not pre-write paint RTL):
+  - csum still unstable → status path / preserve / multi-drive  ← **current**
   - csum stable ≠0x14 → level fold / sat8 / wrong residual multiset
   - csum == stream_bytes again → pack regression (aa146c17 class)
   - csum == 0xE8 stable → ST_PLACE fold still collapsed (dc-only)
-- NO redeploy of **820484a6** expecting green; NO invent hard PASS without raw[13]==0x14 evidence.
+- NO thrash-redeploy of **`dabdaeb0`** expecting green; NO invent hard PASS without raw[13]==0x14 evidence.
+- Probe SoT: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-H-deploy-rcsum1-probes.txt`.
 
 #### Handoffs / goldens (read, do not re-derive)
 
@@ -544,7 +571,9 @@ Aligned with `/tmp/misterplex-agent-R-csum-rca3.txt` §7 and *Failure branches* 
 |------|----------|
 | L-3l2e host goldens DONE | `/tmp/misterplex-agent-L-3l2e.txt` |
 | L-3l2-rtl plug sketch DONE (docs only, no SV) | `/tmp/misterplex-agent-L-3l2-rtl.txt` + section below |
-| L-csum-note HW evidence | `/tmp/misterplex-agent-L-csum-note.txt` |
+| L-csum-note HW evidence (pre–R-csum1) | `/tmp/misterplex-agent-L-csum-note.txt` |
+| **L-csum-note2** dabdaeb0 silicon FAIL | `/tmp/misterplex-agent-L-csum-note2.txt` (this tick) |
+| **H-deploy-rcsum1** probes / hard gate | `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-H-deploy-rcsum1-probes.txt` |
 | L-3l2-gate / gate2 unblock checklist | `/tmp/misterplex-agent-L-3l2-gate.txt`, `/tmp/misterplex-agent-L-3l2-gate2.txt` |
 | H-rcsum-proto sole-deploy protocol | `/tmp/misterplex-agent-H-rcsum-proto.txt` |
 | R-csum-rca3 go/no-go + contingency | `/tmp/misterplex-agent-R-csum-rca3.txt` |
@@ -580,8 +609,8 @@ SoT: `host/libmisterplex/h264_residual_gold.hpp` + `tests/unit/test_idct_quant.c
 - Any paint Quartus while R-csum1 (or residual fit) is LIVE  
 - Checking in orphan paint SV before C1 authorized  
 - Treating `test_f3_residual.sh` soft-skip EXIT=0 as unblock (**soft-skip ≠ PASS**)  
-- Hard-gating on lab still running **`820484a6`** (must be post–R-csum1 new md5)  
-- Starting §C SV wire-up if post-R-csum1-deploy residual still FAIL (contingency §D)  
+- Thrash-redeploying lab **`dabdaeb0`** (or prior **`820484a6`**) expecting csum green  
+- Starting §C SV wire-up while post-R-csum1-deploy residual still FAIL (contingency §D **ACTIVE**)  
 - Touching `Plex.sv` residual status pack from paint work  
 
 ---
@@ -598,8 +627,9 @@ Until hard residual is green on a post-RCA sole deploy (`raw[13]==0x14` **AND**
 `res_dc=-24`; soft-skip ≠ PASS; do not invent PASS), paint RTL stays sketch-only.
 Unblock: *P3-3l2 UNBLOCK GATE* §A–§C.
 
-Reports: `/tmp/misterplex-agent-L-3l2-rtl.txt`, `/tmp/misterplex-agent-L-3l2-gate2.txt`.
-Host SoT unchanged (L-3l2e).
+Reports: `/tmp/misterplex-agent-L-3l2-rtl.txt`, `/tmp/misterplex-agent-L-3l2-gate2.txt`,
+`/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-L-csum-note2.txt`.
+Host SoT unchanged (L-3l2e). Soft-skip still **not** hard PASS; 3.3l-2 **remains BLOCKED**.
 
 #### Where modules plug (tree as of L-3l2-rtl)
 
@@ -720,16 +750,20 @@ input wire [7:0]  recon_y [0:15],     // row-major 4×4  OR  recon_y[0:3][0:3]
 #### Hard gate reminder (L-3l2-gate / L-3l2-gate2)
 
 ```text
-BLOCKED:  P3-3l2 paint / SV / files.qip
+BLOCKED:  P3-3l2 paint / SV / files.qip  (REMAINS BLOCKED after dabdaeb0)
 HARD:     raw[13]==0x14 (res_csum=20) AND res_dc=-24 (raw[12]==0xE8)
           both STABLE ≥2 re-pushes; FBAR green; soft-skip NOT enough
-WHEN:     post sole deploy of residual-fix RBF only
-LAB NOW:  RBF dabdaeb0 — res_dc=-24 OK; FBAR PASS; raw[13] live but ≠0x14 (unstable 139/222/49) FAIL
-          (H-rcsum-gate / H-deploy-rcsum1). Prior 820484a6 also hard FAIL.
+WHEN:     after next residual-fix sole deploy (new md5 ≠ dabdaeb0)
+LAB NOW:  RBF dabdaeb0 (R-csum1 XOR+lev APPLIED) — res_dc=-24 OK; FBAR PASS;
+          raw[13] live but ≠0x14 UNSTABLE 139/222/49 HARD FAIL
+SOFT:     test_f3_residual EXIT=0 soft-skip still NOT hard PASS
 HOST:     XOR sat8 full-16 = 0x14 locked unit; y00=73/mean=62/paint 0x4a49
-DONE:     R-csum1 BUILD_OK + sole deploy + FBAR; hard gate still FAIL
-THEN:     residual RCA (branch a status/preserve) → new sole rebuild → §A HARD_PASS → §C
-NO FIT:   inv_quant/IDCT / 3l2 paint until §A A0–A5 all PASS; do not invent PASS
+DONE:     R-csum1 BUILD_OK + H-deploy-rcsum1 sole deploy + FBAR PASS
+FAIL:     B3 hard csum — contingency §D ACTIVE → no 3l2
+PROBES:   /tmp/misterplex-agent-H-deploy-rcsum1.txt
+          /tmp/misterplex-H-deploy-rcsum1-probes.txt
+NEXT:     residual RCA (status/preserve/multi-drive) → new RBF → sole redeploy
+NO FIT:   inv_quant/IDCT / 3l2 paint until §A HARD_PASS; no thrash dabdaeb0
 ```
 
 ### 3.3l-3 — First full MB (I_NxN or I16)
@@ -850,8 +884,8 @@ Do **not** require Quartus for 3.3l-0. Fit check only when RTL lands (sole build
 ## Milestone checklist (summary)
 
 1. **3.3l-0** ✅ Host quant/IDCT golden + first-4×4 pixel vector (`test_idct_quant`)  
-2. **3.3l-1** Host gold+status ✅ (XOR sat8 full-16 **0x14**/20); **R-csum1 BUILD_OK** lab **`dabdaeb0`** `res_dc=-24` OK + FBAR PASS, **hard csum FAIL** (raw[13] unstable 139/222/49; H-rcsum-gate); soft-skip ≠ PASS  
-3. **3.3l-2** Host paint goldens + post-3l1 handoff ✅ (y00=73 mean=62 pred=128; HW script ready); **RTL plug sketch ✅** (L-3l2-rtl docs; no SV/`files.qip`); **UNBLOCK GATE defined** (L-3l2-gate + **L-3l2-gate2**: `raw[13]==0x14` **AND** `res_dc=-24`; soft-skip ≠ PASS); paint/SV/`files.qip` **BLOCKED** — post–R-csum1 sole deploy hard gate **FAILED** on **`dabdaeb0`** (contingency: **no 3l2**; residual RCA only)  
+2. **3.3l-1** Host gold+status ✅ (XOR sat8 full-16 **0x14**/20); **R-csum1 APPLIED** (XOR+lev, `7bee0a6`, RBF **`dabdaeb0`**); sole deploy + FBAR ✅; `res_dc=-24` OK; **hard csum still FAIL** (raw[13] unstable **139/222/49**; soft-skip ≠ PASS) — H-deploy-rcsum1 probes / L-csum-note2  
+3. **3.3l-2** Host paint goldens + post-3l1 handoff ✅ (y00=73 mean=62 pred=128; HW script ready); **RTL plug sketch ✅** (L-3l2-rtl docs; no SV/`files.qip`); **UNBLOCK GATE defined** (L-3l2-gate + **L-3l2-gate2**: `raw[13]==0x14` **AND** `res_dc=-24`; soft-skip ≠ PASS); paint/SV/`files.qip` **remains BLOCKED** after dabdaeb0 FAIL (contingency §D **ACTIVE** → **no 3l2** until next residual fix hard PASS)  
 
 
 4. **3.3l-3** First full MB (I_NxN modes+CBP+16× residual+chroma); MAXB bridge or stream start  
