@@ -58,3 +58,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 1. Deploy RBF with `sps_parser`.
 2. `./tests/hw/test_f3_sps.sh` — ffmpeg Baseline 320×240 annex-B → `sps_valid=1 sps=320x240`.
 3. Unit: `make unit` includes `test_sps_parse`.
+
+## Phase 3.3d PPS + I-slice header
+
+1. Deploy RBF with `pps_parser` + `slice_hdr_parser`.
+2. `./tests/hw/test_f3_slice_hdr.sh` — `pps_valid=1 slice_type=7` (I/IDR) + `sps=320x240`.
+3. Unit: `test_slice_hdr`. Display: MB grid diagnostic on VCL.

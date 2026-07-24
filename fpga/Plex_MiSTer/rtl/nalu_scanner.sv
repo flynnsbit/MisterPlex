@@ -1,7 +1,5 @@
-// Phase 3.3 / 3.3b / 3.3c: drain bitstream_fifo, count annex-B NALs, classify types.
-// Detects 00 00 01 and 00 00 00 01; captures nal_unit_type (5 bits).
-// Emits vcl_pulse on VCL NALs (types 1,5) for decode_stub.
-// 3.3c: capture SPS RBSP (EPB-stripped) into sps_parser.
+// Phase 3.3–3.3d: annex-B scan + typed counts + RBSP capture (SPS/PPS/slice hdr).
+// EPB (00 00 03) stripped. Slice capture stores first 32 bytes then ends parse.
 
 module nalu_scanner (
 	input  wire        clk,
@@ -23,23 +21,35 @@ module nalu_scanner (
 	output reg         has_idr,
 	output reg         vcl_pulse,
 
-	// SPS capture → sps_parser
 	output reg         sps_cap_clear,
 	output reg         sps_cap_en,
 	output reg  [7:0]  sps_cap_data,
-	output reg         sps_cap_end
+	output reg         sps_cap_end,
+
+	output reg         pps_cap_clear,
+	output reg         pps_cap_en,
+	output reg  [7:0]  pps_cap_data,
+	output reg         pps_cap_end,
+
+	output reg         sl_cap_clear,
+	output reg         sl_cap_en,
+	output reg  [7:0]  sl_cap_data,
+	output reg         sl_cap_end,
+	output reg         sl_is_idr
 );
 
 	reg [1:0] zrun;
 	reg       pend_type;
 	reg       data_valid;
-
-	// In-payload capture state
-	reg       in_sps;       // capturing SPS RBSP
-	reg [1:0] epb_z;        // consecutive zeros seen in RBSP for EPB
-	reg       ending_nal;   // saw start-code while in payload; next header closes
+	reg [1:0] cap_tgt; // 0 none, 1 sps, 2 pps, 3 slice
+	reg [1:0] epb_z;
+	reg [5:0] cap_len;
+	reg       sl_idr_r;
+	reg       sl_done; // slice header already ended (still draining NAL)
 
 	wire [4:0] nal_t = rd_data[4:0];
+	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
+	                       !(cap_tgt == 2'd3 && cap_len >= 6'd32);
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -57,18 +67,35 @@ module nalu_scanner (
 			slice_count   <= 0;
 			has_idr       <= 0;
 			vcl_pulse     <= 0;
-			in_sps        <= 0;
+			cap_tgt       <= 0;
 			epb_z         <= 0;
-			ending_nal    <= 0;
+			cap_len       <= 0;
+			sl_idr_r      <= 0;
+			sl_done       <= 0;
 			sps_cap_clear <= 0;
 			sps_cap_en    <= 0;
 			sps_cap_data  <= 0;
 			sps_cap_end   <= 0;
+			pps_cap_clear <= 0;
+			pps_cap_en    <= 0;
+			pps_cap_data  <= 0;
+			pps_cap_end   <= 0;
+			sl_cap_clear  <= 0;
+			sl_cap_en     <= 0;
+			sl_cap_data   <= 0;
+			sl_cap_end    <= 0;
+			sl_is_idr     <= 0;
 		end else begin
 			vcl_pulse     <= 1'b0;
 			sps_cap_clear <= 1'b0;
 			sps_cap_en    <= 1'b0;
 			sps_cap_end   <= 1'b0;
+			pps_cap_clear <= 1'b0;
+			pps_cap_en    <= 1'b0;
+			pps_cap_end   <= 1'b0;
+			sl_cap_clear  <= 1'b0;
+			sl_cap_en     <= 1'b0;
+			sl_cap_end    <= 1'b0;
 
 			rd_en <= !rd_empty;
 
@@ -77,85 +104,106 @@ module nalu_scanner (
 				has_stream <= 1'b1;
 
 				if (pend_type) begin
-					// NAL header byte
-					// Close previous SPS if any
-					if (in_sps) begin
-						sps_cap_end <= 1'b1;
-						in_sps <= 1'b0;
-						epb_z  <= 0;
+					// Close prior capture
+					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd3 && !sl_done) begin
+						sl_cap_end <= 1'b1;
+						sl_is_idr  <= sl_idr_r;
 					end
 
 					last_nal_type <= rd_data;
 					nalu_count    <= nalu_count + 1'd1;
 					pend_type     <= 1'b0;
 					zrun          <= 0;
-					ending_nal    <= 0;
+					epb_z         <= 0;
+					cap_len       <= 0;
+					sl_done       <= 0;
 
 					case (nal_t)
 						5'd7: begin
 							sps_count     <= sps_count + 1'd1;
-							in_sps        <= 1'b1;
-							epb_z         <= 0;
+							cap_tgt       <= 2'd1;
 							sps_cap_clear <= 1'b1;
 						end
-						5'd8: pps_count <= pps_count + 1'd1;
+						5'd8: begin
+							pps_count     <= pps_count + 1'd1;
+							cap_tgt       <= 2'd2;
+							pps_cap_clear <= 1'b1;
+						end
 						5'd5: begin
-							idr_count <= idr_count + 1'd1;
-							has_idr   <= 1'b1;
-							vcl_pulse <= 1'b1;
+							idr_count    <= idr_count + 1'd1;
+							has_idr      <= 1'b1;
+							vcl_pulse    <= 1'b1;
+							cap_tgt      <= 2'd3;
+							sl_idr_r     <= 1'b1;
+							sl_cap_clear <= 1'b1;
 						end
 						5'd1: begin
-							slice_count <= slice_count + 1'd1;
-							vcl_pulse   <= 1'b1;
+							slice_count  <= slice_count + 1'd1;
+							vcl_pulse    <= 1'b1;
+							cap_tgt      <= 2'd3;
+							sl_idr_r     <= 1'b0;
+							sl_cap_clear <= 1'b1;
 						end
-						default: ;
+						default: cap_tgt <= 2'd0;
 					endcase
+				end else if (rd_data == 8'h00) begin
+					if (zrun < 2'd3)
+						zrun <= zrun + 1'd1;
+					if (can_store) begin
+						if (epb_z < 2'd2)
+							epb_z <= epb_z + 1'd1;
+						if (cap_tgt == 2'd1) begin
+							sps_cap_en <= 1'b1; sps_cap_data <= 8'h00;
+						end else if (cap_tgt == 2'd2) begin
+							pps_cap_en <= 1'b1; pps_cap_data <= 8'h00;
+						end else begin
+							sl_cap_en <= 1'b1; sl_cap_data <= 8'h00;
+						end
+						cap_len <= cap_len + 1'd1;
+						// slice: end after storing 32nd byte
+						if (cap_tgt == 2'd3 && cap_len == 6'd31) begin
+							sl_cap_end <= 1'b1;
+							sl_is_idr  <= sl_idr_r;
+							sl_done    <= 1'b1;
+						end
+					end
+				end else if (rd_data == 8'h01 && zrun >= 2'd2) begin
+					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd3 && !sl_done) begin
+						sl_cap_end <= 1'b1;
+						sl_is_idr  <= sl_idr_r;
+					end
+					cap_tgt   <= 2'd0;
+					sl_done   <= 0;
+					epb_z     <= 0;
+					cap_len   <= 0;
+					pend_type <= 1'b1;
+					zrun      <= 0;
 				end else begin
-					// Payload or start-code hunt
-					// Start-code detection
-					if (rd_data == 8'h00) begin
-						if (zrun < 2'd3)
-							zrun <= zrun + 1'd1;
-						// SPS capture with EPB awareness
-						if (in_sps) begin
-							// track zeros for EPB: 00 00 03 → drop 03
-							if (epb_z < 2'd2)
-								epb_z <= epb_z + 1'd1;
-							// always store zeros (RBSP keeps them; only 03 after 00 00 is dropped)
-							sps_cap_en   <= 1'b1;
-							sps_cap_data <= 8'h00;
-						end
-					end else if (rd_data == 8'h01 && zrun >= 2'd2) begin
-						// start code complete — end current NAL payload
-						if (in_sps) begin
-							// zeros that were part of start code were already written to SPS buf
-							// Remove the trailing 00 00 (or 00 00 00) that belong to start code
-							// Simpler: don't write zeros while zrun building if they form SC.
-							// We already wrote them — sps may have extra trailing zeros.
-							// Parser tolerates trailing bits; extra zeros OK if < full byte issues.
-							// Better approach: defer writing zeros until non-zero non-SC.
-							// For this fire: end SPS and start parse; trailing zeros at end of
-							// RBSP are zero bits which is fine for trailing_bits.
-							sps_cap_end <= 1'b1;
-							in_sps <= 1'b0;
-							epb_z  <= 0;
-						end
-						pend_type <= 1'b1;
-						zrun      <= 0;
-					end else begin
-						// normal non-zero payload byte
-						if (in_sps) begin
-							if (rd_data == 8'h03 && epb_z >= 2'd2) begin
-								// EPB: skip 0x03, keep the two zeros already stored
-								epb_z <= 0;
+					if (can_store) begin
+						if (rd_data == 8'h03 && epb_z >= 2'd2) begin
+							epb_z <= 0; // skip EPB
+						end else begin
+							if (cap_tgt == 2'd1) begin
+								sps_cap_en <= 1'b1; sps_cap_data <= rd_data;
+							end else if (cap_tgt == 2'd2) begin
+								pps_cap_en <= 1'b1; pps_cap_data <= rd_data;
 							end else begin
-								sps_cap_en   <= 1'b1;
-								sps_cap_data <= rd_data;
-								epb_z <= 0;
+								sl_cap_en <= 1'b1; sl_cap_data <= rd_data;
+							end
+							cap_len <= cap_len + 1'd1;
+							epb_z <= 0;
+							if (cap_tgt == 2'd3 && cap_len == 6'd31) begin
+								sl_cap_end <= 1'b1;
+								sl_is_idr  <= sl_idr_r;
+								sl_done    <= 1'b1;
 							end
 						end
-						zrun <= 0;
 					end
+					zrun <= 0;
 				end
 			end
 

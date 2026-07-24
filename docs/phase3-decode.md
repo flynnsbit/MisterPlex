@@ -91,8 +91,18 @@ Phase 3.3c (done this fire — SPS RBSP parse + real Baseline vector):
   HW: `tests/hw/test_f3_sps.sh` — real F3 push → sps_valid + sps=320x240 + has_frame
   Still not a decoder — dimensions only; decode_stub still paints diagnostics on VCL
 
-Phase 3.3d (next):
-  Real H.264 Baseline soft-core / open IP (I-slice first) → YUV→RGB565 → frame_store
+Phase 3.3d (done this fire — PPS + I-slice header + MB-grid stub):
+  Host: `h264_nal.hpp` PPS + slice_header; `test_slice_hdr` (type=7 I/IDR, CAVLC)
+  FPGA: `pps_parser` (CAVLC-only), `slice_hdr_parser` (first_mb/type/pps/frame_num/idr_pic)
+  SPS exports log2_max_frame_num, poc_type, mb_width/height
+  nalu_scanner captures SPS/PPS/slice-hdr RBSP (slice cap 32B + EPB)
+  decode_stub: MB grid overlay from SPS; I-slice green grid
+  Status: [7] pps_valid; [63:56] slice_type (was stub_frames)
+  HW: `tests/hw/test_f3_slice_hdr.sh` — sps+pps+slice_type=7 + has_frame
+  Still not residual decode — headers only; CAVLC/IDCT next
+
+Phase 3.3e (next):
+  Baseline I-slice residual path: CAVLC → inv quant → IDCT → reconstruct → YUV→RGB565
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

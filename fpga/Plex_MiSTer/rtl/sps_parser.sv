@@ -16,6 +16,11 @@ module sps_parser (
 	output reg  [7:0]  level_idc,
 	output reg  [15:0] width,
 	output reg  [15:0] height,
+	// Extras for slice header / MB grid (3.3d)
+	output reg  [4:0]  log2_max_frame_num, // 4..16
+	output reg  [2:0]  poc_type,           // 0..2
+	output reg  [7:0]  mb_width,           // pic_width_in_mbs
+	output reg  [7:0]  mb_height,          // frame height in MBs
 	output reg         busy
 );
 
@@ -44,6 +49,8 @@ module sps_parser (
 	reg        crop_flag;
 	reg [15:0] cl, cr, ct, cb;
 	reg [7:0]  prof;
+	reg [4:0]  log2_fn;
+	reg [2:0]  poc_t;
 
 	localparam [4:0]
 		ST_IDLE    = 5'd0,
@@ -91,6 +98,12 @@ module sps_parser (
 			level_idc <= 0;
 			width <= 0;
 			height <= 0;
+			log2_max_frame_num <= 5'd4;
+			poc_type <= 0;
+			mb_width <= 0;
+			mb_height <= 0;
+			log2_fn <= 5'd4;
+			poc_t <= 0;
 			bbyte <= 0;
 			bpos <= 3'd7;
 			zcnt <= 0;
@@ -210,11 +223,14 @@ module sps_parser (
 				end
 			end
 			ST_LOG2: begin
+				// ue_val = log2_max_frame_num_minus4
+				log2_fn <= ue_val[4:0] + 5'd4;
 				zcnt <= 0;
 				ue_cont <= ST_POC;
 				st <= ST_UE_Z;
 			end
 			ST_POC: begin
+				poc_t <= ue_val[2:0];
 				if (ue_val == 16'd0) begin
 					zcnt <= 0;
 					ue_cont <= ST_POC0;
@@ -316,12 +332,12 @@ module sps_parser (
 			end
 
 			ST_FINISH: begin
-				// Compute dimensions from latched fields
-				// w = w_mbs*16 - crop; h similar
 				busy <= 0;
 				st <= ST_IDLE;
-				// width/height set below using continuous assigns from regs —
-				// do arithmetic here with nonblocking from known regs
+				log2_max_frame_num <= log2_fn;
+				poc_type <= poc_t;
+				mb_width <= w_mbs[7:0];
+				mb_height <= frame_mbs_only ? h_map[7:0] : {h_map[6:0], 1'b0};
 				if (crop_flag) begin
 					if ((w_mbs * 16'd16) > ((cl + cr) << 1) &&
 					    (h_map * 16'd16 * (frame_mbs_only ? 16'd1 : 16'd2)) > ((ct + cb) << 1)) begin

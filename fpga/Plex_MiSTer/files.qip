@@ -9,6 +9,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/bitstream_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/nalu_scanner.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sps_parser.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/pps_parser.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/slice_hdr_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv

@@ -1,4 +1,4 @@
-// Phase 3.3 / 3.3b / 3.3c: F3 → bitstream_fifo → nalu_scanner → sps_parser + decode_stub.
+// Phase 3.3–3.3d: F3 → FIFO → NAL scan → SPS/PPS/slice_hdr + decode_stub.
 
 module stream_path (
 	input  wire        clk,
@@ -25,12 +25,18 @@ module stream_path (
 	output wire [15:0] stub_frames,
 	output wire        stub_busy,
 
-	// 3.3c SPS
 	output wire        sps_valid,
 	output wire [7:0]  sps_profile,
 	output wire [7:0]  sps_level,
 	output wire [15:0] sps_width,
 	output wire [15:0] sps_height,
+	output wire [7:0]  sps_mb_w,
+	output wire [7:0]  sps_mb_h,
+
+	output wire        pps_valid,
+	output wire        slice_valid,
+	output wire [7:0]  slice_type,
+	output wire        slice_is_i,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -44,66 +50,45 @@ module stream_path (
 	wire        si_active;
 
 	stream_ingest si (
-		.clk(clk),
-		.reset(reset),
-		.ioctl_download(ioctl_download),
-		.ioctl_wr(ioctl_wr),
-		.ioctl_dout(ioctl_dout),
+		.clk(clk), .reset(reset),
+		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
 		.enable(enable),
-		.wr_en(si_wr_en),
-		.wr_data(si_wr_data),
-		.wr_flush(si_wr_flush),
-		.active(si_active),
-		.bytes_in(bytes_in)
+		.wr_en(si_wr_en), .wr_data(si_wr_data), .wr_flush(si_wr_flush),
+		.active(si_active), .bytes_in(bytes_in)
 	);
 
-	wire        bf_rd_en;
-	wire [7:0]  bf_rd_data;
-	wire        bf_rd_empty;
-	wire        bf_has;
+	wire bf_rd_en, bf_rd_empty, bf_has;
+	wire [7:0] bf_rd_data;
 
-	bitstream_fifo #(
-		.DEPTH(32768)
-	) bfifo (
-		.clk(clk),
-		.reset(reset),
-		.wr_en(si_wr_en),
-		.wr_data(si_wr_data),
-		.wr_flush(si_wr_flush | flush),
-		.wr_full(),
-		.wr_level(fifo_level),
-		.rd_en(bf_rd_en),
-		.rd_data(bf_rd_data),
-		.rd_empty(bf_rd_empty),
-		.has_data(bf_has)
+	bitstream_fifo #(.DEPTH(32768)) bfifo (
+		.clk(clk), .reset(reset),
+		.wr_en(si_wr_en), .wr_data(si_wr_data), .wr_flush(si_wr_flush | flush),
+		.wr_full(), .wr_level(fifo_level),
+		.rd_en(bf_rd_en), .rd_data(bf_rd_data), .rd_empty(bf_rd_empty), .has_data(bf_has)
 	);
 
-	wire        vcl_pulse;
-	wire [7:0]  idr_c, sps_c, pps_c, slc_c;
-	wire        has_idr_w;
-	wire        sps_cap_clear, sps_cap_en, sps_cap_end;
-	wire [7:0]  sps_cap_data;
+	wire vcl_pulse, has_idr_w;
+	wire [7:0] idr_c, sps_c, pps_c, slc_c;
+	wire sps_cap_clear, sps_cap_en, sps_cap_end;
+	wire [7:0] sps_cap_data;
+	wire pps_cap_clear, pps_cap_en, pps_cap_end;
+	wire [7:0] pps_cap_data;
+	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr;
+	wire [7:0] sl_cap_data;
 
 	nalu_scanner scan (
-		.clk(clk),
-		.reset(reset | flush),
-		.rd_data(bf_rd_data),
-		.rd_empty(bf_rd_empty),
-		.rd_en(bf_rd_en),
-		.nalu_count(nalu_count),
-		.last_nal_type(last_nal_type),
-		.has_stream(has_stream),
-		.bytes_seen(bytes_seen),
-		.idr_count(idr_c),
-		.sps_count(sps_c),
-		.pps_count(pps_c),
-		.slice_count(slc_c),
-		.has_idr(has_idr_w),
-		.vcl_pulse(vcl_pulse),
-		.sps_cap_clear(sps_cap_clear),
-		.sps_cap_en(sps_cap_en),
-		.sps_cap_data(sps_cap_data),
-		.sps_cap_end(sps_cap_end)
+		.clk(clk), .reset(reset | flush),
+		.rd_data(bf_rd_data), .rd_empty(bf_rd_empty), .rd_en(bf_rd_en),
+		.nalu_count(nalu_count), .last_nal_type(last_nal_type),
+		.has_stream(has_stream), .bytes_seen(bytes_seen),
+		.idr_count(idr_c), .sps_count(sps_c), .pps_count(pps_c), .slice_count(slc_c),
+		.has_idr(has_idr_w), .vcl_pulse(vcl_pulse),
+		.sps_cap_clear(sps_cap_clear), .sps_cap_en(sps_cap_en),
+		.sps_cap_data(sps_cap_data), .sps_cap_end(sps_cap_end),
+		.pps_cap_clear(pps_cap_clear), .pps_cap_en(pps_cap_en),
+		.pps_cap_data(pps_cap_data), .pps_cap_end(pps_cap_end),
+		.sl_cap_clear(sl_cap_clear), .sl_cap_en(sl_cap_en),
+		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr)
 	);
 
 	assign has_idr     = has_idr_w;
@@ -112,34 +97,73 @@ module stream_path (
 	assign pps_count   = pps_c;
 	assign slice_count = slc_c;
 
+	wire [4:0] log2_fn;
+	wire [2:0] poc_t;
 	wire sps_busy;
 
 	sps_parser sps (
-		.clk(clk),
-		.reset(reset | flush),
-		.cap_clear(sps_cap_clear),
-		.cap_en(sps_cap_en),
-		.cap_data(sps_cap_data),
-		.cap_end(sps_cap_end),
-		.valid(sps_valid),
-		.profile_idc(sps_profile),
-		.level_idc(sps_level),
-		.width(sps_width),
-		.height(sps_height),
+		.clk(clk), .reset(reset | flush),
+		.cap_clear(sps_cap_clear), .cap_en(sps_cap_en),
+		.cap_data(sps_cap_data), .cap_end(sps_cap_end),
+		.valid(sps_valid), .profile_idc(sps_profile), .level_idc(sps_level),
+		.width(sps_width), .height(sps_height),
+		.log2_max_frame_num(log2_fn), .poc_type(poc_t),
+		.mb_width(sps_mb_w), .mb_height(sps_mb_h),
 		.busy(sps_busy)
 	);
 
+	wire pps_busy;
+	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
+	wire signed [7:0] pps_qp;
+	wire pps_cabac;
+
+	pps_parser pps (
+		.clk(clk), .reset(reset | flush),
+		.cap_clear(pps_cap_clear), .cap_en(pps_cap_en),
+		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
+		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
+		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
+		.pic_init_qp(pps_qp), .busy(pps_busy)
+	);
+
+	wire sl_busy;
+	wire [15:0] sl_first, sl_fn, sl_idr_pic;
+	wire [7:0] sl_type, sl_pps;
+	wire sl_is_i;
+
+	slice_hdr_parser slp (
+		.clk(clk), .reset(reset | flush),
+		.cap_clear(sl_cap_clear), .cap_en(sl_cap_en),
+		.cap_data(sl_cap_data), .cap_end(sl_cap_end),
+		.is_idr_nal(sl_is_idr),
+		.log2_max_frame_num(log2_fn),
+		.poc_type(poc_t),
+		.sps_ready(sps_valid),
+		.valid(slice_valid),
+		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
+		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
+		.is_i_slice(sl_is_i), .busy(sl_busy)
+	);
+
+	assign slice_type = sl_type;
+	assign slice_is_i = sl_is_i;
+
+	// MB-grid decode_stub: uses SPS size when valid
 	decode_stub #(
 		.WIDTH(320),
 		.HEIGHT(240)
 	) stub (
-		.clk(clk),
-		.reset(reset | flush),
+		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),
 		.last_nal_type(last_nal_type),
 		.nalu_count(nalu_count),
 		.idr_count(idr_c),
 		.has_idr(has_idr_w),
+		.sps_valid(sps_valid),
+		.mb_w(sps_mb_w),
+		.mb_h(sps_mb_h),
+		.slice_type(sl_type),
+		.slice_is_i(sl_is_i),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),
@@ -150,6 +174,7 @@ module stream_path (
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
-	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy;
+	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
+	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first | |sl_fn;
 
 endmodule

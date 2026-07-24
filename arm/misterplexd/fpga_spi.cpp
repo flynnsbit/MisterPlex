@@ -377,12 +377,14 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.has_idr = (w0 & 16) != 0;
     s.stub_busy = (w0 & 32) != 0;
     s.sps_valid = (w0 & 64) != 0;
+    s.pps_valid = (w0 & 128) != 0;
     s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
     s.nalu_count = w1;
     s.stream_fifo_level = w2;
-    // [63:48] = {stub_frames[7:0], idr_count[7:0]}
+    // [63:48] = {slice_type[7:0], idr_count[7:0]}
     s.idr_count = static_cast<uint8_t>(w3 & 0xFF);
-    s.stub_frames = static_cast<uint8_t>((w3 >> 8) & 0xFF);
+    s.slice_type = static_cast<uint8_t>((w3 >> 8) & 0xFF);
+    s.stub_frames = s.slice_type; // alias for older logs
     s.wr_count_lo = w3;
     // [95:64] = {sps_width, sps_height}
     s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
