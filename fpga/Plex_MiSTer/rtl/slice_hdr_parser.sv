@@ -481,10 +481,21 @@ module slice_hdr_parser (
 					r_tc <= 8; r_t1 <= 3; residual_tc <= 5'd8; residual_t1 <= 2'd3;
 					// Mark ok early so 3.3j residual probe stays green if level path fails
 					residual_ok <= 1'b1;
+					residual_dc <= 0;
+					// Clear runs so ST_PLACE never sees X/stale runv (dc would stick at 0)
+					begin : clr_run_tc8
+						integer ri;
+						for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
+					end
 					sign_left <= 3; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
 				end else if (tbits == 5'd9 && tcode[8:0] == 9'b000000100) begin
 					// nC=0 tc=8 t1=2 (nearby)
 					r_tc <= 8; r_t1 <= 2; residual_tc <= 5'd8; residual_t1 <= 2'd2;
+					residual_dc <= 0;
+					begin : clr_run_tc8b
+						integer ri;
+						for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
+					end
 					sign_left <= 2; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
 				end else if (tbits >= 5'd16) begin
 					// token not in bring-up set — header still valid
@@ -653,7 +664,10 @@ module slice_hdr_parser (
 					end
 					suf_len <= nsl;
 					if (lev_i + 4'd1 >= r_tc[3:0] && r_tc[4] == 1'b0) begin
-						// all levels done → total_zeros (if tc < 16)
+						// all levels done → provisional residual_dc = last reverse-order
+						// level (equals scan DC when run[tc-1]==0, true on golden Baseline)
+						residual_dc <= sat8(lv);
+						// (lv is lev[lev_i] just stored; when finishing, lev_i == tc-1)
 						if (r_tc < 5'd16) begin
 							tzcode <= 0; tzbits <= 0; st <= ST_TZ_BIT;
 						end else begin
@@ -762,13 +776,17 @@ module slice_hdr_parser (
 					if (matched) begin
 						zeros_left <= zval;
 						run_i <= 0;
-						// clear runs
+						// clear all runs first (host run[] starts at 0)
+						begin : clr_runs_tz
+							integer ri;
+							for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
+						end
 						if (r_tc <= 5'd1) begin
-							// no run_before loop
+							// no run_before loop — sole run is total_zeros
 							runv[0] <= zval;
 							st <= ST_PLACE;
 						end else if (zval == 0) begin
-							// all runs 0 except last
+							// all run_before=0; last run also 0 (already cleared)
 							st <= ST_PLACE;
 						end else begin
 							runcode <= 0; runbits <= 0; st <= ST_RUN_BIT;
@@ -871,7 +889,8 @@ module slice_hdr_parser (
 							run_i <= run_i + 1'd1;
 							runcode <= 0; runbits <= 0;
 							if (zeros_left - rval == 0) begin
-								// remaining runs 0
+								// remaining run_before + last run are 0 (runv pre-cleared)
+								runv[r_tc[3:0] - 4'd1] <= 4'd0;
 								st <= ST_PLACE;
 							end else
 								st <= ST_RUN_BIT;
