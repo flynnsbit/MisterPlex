@@ -252,6 +252,10 @@ Rest of frame may stay strip/MB-grid diagnostic.
 
 ### Post-3l1 RBF → 3.3l-2 paint handoff (host DONE; RTL next)
 
+**Host handoff finalized (L-3l2e):** goldens locked **y00=73 mean=62 csum=0x14/20**
+(XOR sat8; not arith −20/0xEC). Unit `test_idct_quant` EXIT=0 (`3l2-table`+`3l2-real`).
+Report `/tmp/misterplex-agent-L-3l2e.txt`. **No further host re-derive needed.**
+
 **When:** sole Q-3l1 rebuild `BUILD_OK`, one deploy, FBAR retest green, and
 `test_f3_residual.sh` hard-gates `res_dc=-24` **+** `res_csum=20` (XOR 0x14).
 
