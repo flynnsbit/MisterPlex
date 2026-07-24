@@ -27,7 +27,7 @@ See [docs/architecture.md](docs/architecture.md).
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.1** — dual-bank RGB565 + SPI stream (`PRESENT=both`) |
+| **3** FPGA decode / frame store | **3.2** — RGB565 F1 + audio FIFO F2; SPI stream |
 | **4** Feature-rich client | planned |
 
 ### Phase 2 (current on MiSTer `192.168.1.183`)

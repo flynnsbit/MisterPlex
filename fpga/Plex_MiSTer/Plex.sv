@@ -1,7 +1,8 @@
 //============================================================================
 //  MiSTerPlex — native Plex present core
 //  Phase 1: color bars + cadence + tone
-//  Phase 3.0: dual-bank RGB565 frame_store via ioctl (F1 raw load)
+//  Phase 3.0: dual-bank RGB565 frame_store via ioctl F1
+//  Phase 3.2: present-domain audio_fifo via ioctl F2
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -43,6 +44,7 @@ localparam CONF_STR = {
 	"Plex;;",
 	"-;",
 	"F1,rawRGB565 frame (320x240);",
+	"F2,raw s16le stereo PCM @48k;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[2],TV Mode,NTSC,PAL;",
@@ -116,7 +118,11 @@ end
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
-// Frame ingest from F1 / file download
+// F1 = frame (index 1), F2 = audio (index 2) — low 6 bits of ioctl_index
+wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
+wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
+
+// Frame ingest from F1
 wire        fs_wr_en;
 wire [15:0] fs_wr_pixel;
 wire        fs_wr_reset;
@@ -124,7 +130,7 @@ wire        fs_swap;
 wire [31:0] ingest_pixels;
 wire        ingest_dl;
 
-frame_ingest ingest (
+frame_ingest finst (
 	.clk(clk_sys),
 	.reset(reset),
 	.ioctl_download(ioctl_download),
@@ -132,13 +138,33 @@ frame_ingest ingest (
 	.ioctl_dout(ioctl_dout),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_index(ioctl_index),
-	.enable(1'b1),
+	.enable(is_frame_dl),
 	.wr_en(fs_wr_en),
 	.wr_pixel(fs_wr_pixel),
 	.wr_reset_ptr(fs_wr_reset),
 	.swap_req(fs_swap),
 	.pixels_written(ingest_pixels),
 	.downloading(ingest_dl)
+);
+
+// Audio ingest from F2
+wire        af_wr_en;
+wire [31:0] af_wr_data;
+wire        af_wr_flush;
+wire        af_active;
+
+audio_ingest ainst (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_index(ioctl_index),
+	.enable(is_audio_dl),
+	.wr_en(af_wr_en),
+	.wr_data(af_wr_data),
+	.wr_flush(af_wr_flush),
+	.active(af_active)
 );
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
@@ -148,6 +174,8 @@ wire [31:0] disp_i, cont_i;
 wire advance;
 wire has_frame;
 wire [18:0] wr_count;
+wire has_audio;
+wire audio_underrun;
 
 present_core present (
 	.clk(clk_sys),
@@ -164,6 +192,9 @@ present_core present (
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
 	.fs_swap(fs_swap),
+	.af_wr_en(af_wr_en),
+	.af_wr_data(af_wr_data),
+	.af_wr_flush(af_wr_flush),
 	.ce_pix(ce_pix),
 	.HBlank(HBlank),
 	.HSync(HSync),
@@ -178,7 +209,9 @@ present_core present (
 	.stat_content_index(cont_i),
 	.stat_advance(advance),
 	.stat_has_frame(has_frame),
-	.stat_wr_count(wr_count)
+	.stat_wr_count(wr_count),
+	.stat_has_audio(has_audio),
+	.stat_audio_underrun(audio_underrun)
 );
 
 assign CLK_VIDEO = clk_sys;
@@ -195,12 +228,13 @@ assign AUDIO_S = 1;
 assign AUDIO_L = al;
 assign AUDIO_R = ar_audio;
 
-// Heartbeat LED; solid-ish when frame store has data
+// Heartbeat LED; solid-ish when frame store has data; faster when audio FIFO active
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1;
-assign LED_USER = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
+wire led_base = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
+assign LED_USER = has_audio ? act_cnt[22] : led_base;
 
 // Silence unused
-wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, ioctl_index};
+wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, af_active, audio_underrun, ioctl_addr};
 
 endmodule

@@ -28,3 +28,11 @@ Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 5. Display should show yellow border + color bars + orange diagonal (not the internal moving block alone).
 
 Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
+
+## Phase 3.2 audio FIFO
+
+1. Deploy latest `Plex.rbf`.
+2. `python3 scripts/gen_test_pcm.py /tmp/pcm.s16le`
+3. `push_frame --index 2 /tmp/pcm.s16le` on MiSTer (F2).
+4. Core should play tone from FIFO (~1s) instead of OSD square wave.
+5. LED blinks faster while `has_audio`.

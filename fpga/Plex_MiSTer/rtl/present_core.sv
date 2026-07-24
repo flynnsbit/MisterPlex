@@ -1,4 +1,4 @@
-// Present core: color bars OR external frame_store, with cadence + tone.
+// Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
 
 module present_core (
@@ -11,14 +11,19 @@ module present_core (
 	input  wire [7:0]  content_fps,
 	input  wire [7:0]  display_hz,
 	input  wire [1:0]  pattern,
-	input  wire        audio_en,
-	input  wire        use_frame_store, // 1 = external RGB frames when has_frame
+	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
+	input  wire        use_frame_store, // OSD force bars when 1
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
 	input  wire        fs_wr_reset,
 	input  wire        fs_swap,
+
+	// audio_fifo write (from audio_ingest)
+	input  wire        af_wr_en,
+	input  wire [31:0] af_wr_data,
+	input  wire        af_wr_flush,
 
 	output wire        ce_pix,
 	output wire        HBlank,
@@ -36,7 +41,9 @@ module present_core (
 	output wire [31:0] stat_content_index,
 	output wire        stat_advance,
 	output wire        stat_has_frame,
-	output wire [18:0] stat_wr_count
+	output wire [18:0] stat_wr_count,
+	output wire        stat_has_audio,
+	output wire        stat_audio_underrun
 );
 
 	wire frame_start;
@@ -76,31 +83,24 @@ module present_core (
 	);
 
 	// Reconstruct hc/vc from colorbars timing for frame_store reads.
-	// colorbars uses 320 active; track counters in parallel for external sample.
 	reg [9:0] hc, vc;
-	reg       ce_div;
 	always @(posedge clk) begin
 		if (reset) begin
 			hc <= 0;
 			vc <= 0;
-			ce_div <= 0;
-		end else begin
-			ce_div <= ~ce_div;
-			if (ce_pix_i) begin
-				if (hc == 10'd425) begin
-					hc <= 0;
-					if (vc >= (scandouble ? 10'd523 : 10'd261))
-						vc <= 0;
-					else
-						vc <= vc + 1'd1;
-				end else
-					hc <= hc + 1'd1;
-			end
+		end else if (ce_pix_i) begin
+			if (hc == 10'd425) begin
+				hc <= 0;
+				if (vc >= (scandouble ? 10'd523 : 10'd261))
+					vc <= 0;
+				else
+					vc <= vc + 1'd1;
+			end else
+				hc <= hc + 1'd1;
 		end
 	end
 
 	wire active = (hc < 10'd320) && (vc < (scandouble ? 10'd480 : 10'd240));
-	// When scandoubled, map y/2 for 240-line store
 	wire [9:0] store_y = scandouble ? {1'b0, vc[9:1]} : vc;
 	wire [9:0] store_x = hc;
 
@@ -131,7 +131,7 @@ module present_core (
 	);
 
 	// Auto: show frame_store once a complete frame is ingested.
-// use_frame_store (OSD O[9] Force bars=Yes) keeps bars for debug.
+	// use_frame_store (OSD O[9] Force bars=Yes) keeps bars for debug.
 	wire use_ext = has_frame && !use_frame_store;
 	assign r = use_ext ? fr : br;
 	assign g = use_ext ? fg : bg;
@@ -144,20 +144,49 @@ module present_core (
 	assign VSync  = vs;
 	assign frame_start = fstart;
 
+	// --- Audio: FIFO preferred, else OSD tone ---
+	wire [15:0] tone_l, tone_r;
+	wire [15:0] fifo_l, fifo_r;
+	wire        has_audio;
+	wire        fifo_underrun;
+
 	audio_tone tone (
 		.clk_audio(clk_audio),
 		.reset(reset),
-		.enable(audio_en),
+		.enable(audio_en && !has_audio),
 		.freq_div(16'd54),
-		.sample_l(audio_l),
-		.sample_r(audio_r),
+		.sample_l(tone_l),
+		.sample_r(tone_r),
 		.underrun()
 	);
+
+	audio_fifo #(
+		.DEPTH(4096)
+	) afifo (
+		.clk_wr(clk),
+		.clk_rd(clk_audio),
+		.reset(reset),
+		.wr_en(af_wr_en),
+		.wr_data(af_wr_data),
+		.wr_flush(af_wr_flush),
+		.wr_full(),
+		.wr_level(),
+		.rd_enable(1'b1),
+		.sample_l(fifo_l),
+		.sample_r(fifo_r),
+		.underrun(fifo_underrun),
+		.has_audio(has_audio)
+	);
+
+	assign audio_l = has_audio ? fifo_l : tone_l;
+	assign audio_r = has_audio ? fifo_r : tone_r;
 
 	assign stat_display_index = disp_i;
 	assign stat_content_index = cont_i;
 	assign stat_advance       = advance;
 	assign stat_has_frame     = has_frame;
 	assign stat_wr_count      = wr_count;
+	assign stat_has_audio     = has_audio;
+	assign stat_audio_underrun = fifo_underrun;
 
 endmodule
