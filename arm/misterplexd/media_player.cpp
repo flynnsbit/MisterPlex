@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -42,30 +43,71 @@ bool MediaPlayer::initPresent() {
     outH_ = 240;
     fb_.clear();
     log("media: fb " + fb_.info() + " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+    // Probe audio device
+    if (audioEnabled_) {
+        int fd = ::open(audioDev_.c_str(), O_WRONLY | O_NONBLOCK);
+        if (fd >= 0) {
+            ::close(fd);
+            log("media: audio device " + audioDev_ + " OK (s16le stereo @ 48k → FPGA)");
+        } else {
+            log("media: audio device " + audioDev_ + " unavailable (video-only)");
+        }
+    }
     return true;
 }
 
-void MediaPlayer::killChild() {
-    pid_t pid = childPid_.exchange(-1);
-    if (pid > 0) {
-        kill(pid, SIGTERM);
-        // brief wait then SIGKILL
-        for (int i = 0; i < 20; ++i) {
+void MediaPlayer::signalChildren(int sig) {
+    pid_t v = videoPid_.load();
+    pid_t a = audioPid_.load();
+    if (v > 0)
+        kill(-v, sig);
+    if (a > 0)
+        kill(-a, sig);
+}
+
+void MediaPlayer::killChildren() {
+    signalChildren(SIGTERM);
+    // Also reaping via process group; orphaned ffmpeg from prior sessions
+    // must not keep companion port (see CLOEXEC / close-on-spawn).
+    for (int i = 0; i < 20; ++i) {
+        pid_t v = videoPid_.load();
+        pid_t a = audioPid_.load();
+        bool done = true;
+        if (v > 0) {
             int st = 0;
-            pid_t r = waitpid(pid, &st, WNOHANG);
-            if (r == pid || r < 0)
-                return;
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            if (waitpid(v, &st, WNOHANG) == v)
+                videoPid_.store(-1);
+            else
+                done = false;
         }
-        kill(pid, SIGKILL);
-        int st = 0;
-        waitpid(pid, &st, 0);
+        if (a > 0) {
+            int st = 0;
+            if (waitpid(a, &st, WNOHANG) == a)
+                audioPid_.store(-1);
+            else
+                done = false;
+        }
+        if (done)
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
+    signalChildren(SIGKILL);
+    pid_t v = videoPid_.exchange(-1);
+    pid_t a = audioPid_.exchange(-1);
+    if (v > 0) {
+        int st = 0;
+        waitpid(v, &st, 0);
+    }
+    if (a > 0) {
+        int st = 0;
+        waitpid(a, &st, 0);
+    }
+    audioActive_.store(false);
 }
 
 void MediaPlayer::stop() {
     stop_.store(true);
-    killChild();
+    killChildren();
     if (thr_.joinable())
         thr_.join();
     playing_.store(false);
@@ -78,18 +120,14 @@ void MediaPlayer::stop() {
 
 void MediaPlayer::pause() {
     paused_.store(true);
-    pid_t pid = childPid_.load();
-    if (pid > 0)
-        kill(pid, SIGSTOP);
+    signalChildren(SIGSTOP);
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
 }
 
 void MediaPlayer::resume() {
     paused_.store(false);
-    pid_t pid = childPid_.load();
-    if (pid > 0)
-        kill(pid, SIGCONT);
+    signalChildren(SIGCONT);
     if (onProgress_)
         onProgress_("playing", positionMs_.load(), durationMs_);
 }
@@ -109,14 +147,13 @@ void MediaPlayer::seekMs(int64_t ms) {
         seekReqMs_.store(ms);
         return;
     }
-    // Restart stream at new offset
     play(url, ms, headers, dur);
 }
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
     stop_.store(true);
-    killChild();
+    killChildren();
     if (thr_.joinable())
         thr_.join();
 
@@ -139,6 +176,66 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     return true;
 }
 
+std::string MediaPlayer::buildCurlHeaderArgs(const std::string& headers) const {
+    std::string args;
+    size_t i = 0;
+    while (i < headers.size()) {
+        size_t j = headers.find('\n', i);
+        if (j == std::string::npos)
+            j = headers.size();
+        std::string line = headers.substr(i, j - i);
+        i = j + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+            line.pop_back();
+        if (line.empty())
+            continue;
+        args += "-H '";
+        for (char c : line) {
+            if (c == '\'')
+                args += "'\\''";
+            else
+                args += c;
+        }
+        args += "' ";
+    }
+    return args;
+}
+
+pid_t MediaPlayer::spawnShell(const std::string& cmd, int stdoutFd) {
+    pid_t pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid == 0) {
+        setpgid(0, 0);
+        if (stdoutFd >= 0) {
+            dup2(stdoutFd, STDOUT_FILENO);
+            if (stdoutFd != STDOUT_FILENO)
+                ::close(stdoutFd);
+        } else {
+            int dn = ::open("/dev/null", O_WRONLY);
+            if (dn >= 0) {
+                dup2(dn, STDOUT_FILENO);
+                ::close(dn);
+            }
+        }
+        int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDERR_FILENO);
+            ::close(devnull);
+        }
+        // Drop inherited companion/listen fds so orphans cannot hold :3005
+        for (int fd = 3; fd < 256; ++fd) {
+            if (fd == stdoutFd)
+                continue;
+            ::close(fd);
+        }
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    setpgid(pid, pid);
+    return pid;
+}
+
 void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string headers,
                              int64_t durationMs) {
     playing_.store(true);
@@ -149,110 +246,127 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     char scale[64];
     std::snprintf(scale, sizeof(scale), "%d:%d", outW_, outH_);
 
-    std::string cmd;
+    std::string vcmd;
+    std::string acmd;
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
     const bool httpUrl = (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0);
 
+    auto shellQuote = [](const std::string& s) {
+        std::string o = "'";
+        for (char c : s) {
+            if (c == '\'')
+                o += "'\\''";
+            else
+                o += c;
+        }
+        o += "'";
+        return o;
+    };
+
+    char ssArg[48] = {};
+    if (startMs > 0 && !testPattern)
+        std::snprintf(ssArg, sizeof(ssArg), " -ss %.3f", startMs / 1000.0);
+
+    // --- Video command (stdout = raw RGB24) ---
     if (testPattern) {
         char lavfi[128];
         std::snprintf(lavfi, sizeof(lavfi), "testsrc2=size=%dx%d:rate=30", outW_, outH_);
-        cmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin -f lavfi -i ";
-        cmd += lavfi;
-        cmd += " -t 120 -an -f rawvideo -pix_fmt rgb24 -";
+        vcmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin -f lavfi -i ";
+        vcmd += lavfi;
+        vcmd += " -t 120 -an -f rawvideo -pix_fmt rgb24 -";
+        // Audio: sine tone for pattern
+        if (audioEnabled_) {
+            acmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin -f lavfi -i sine=f=440:r=48000:d=120";
+            acmd += " -f s16le -ac 2 -ar 48000 - >";
+            acmd += shellQuote(audioDev_);
+        }
     } else if (httpUrl && !headers.empty()) {
-        // PMS universal: curl with one -H per header line (quoted), pipe to ffmpeg.
-        cmd = "curl -sS -g -L --http1.1 --connect-timeout 15 ";
-        {
-            std::string hblock = headers;
-            size_t i = 0;
-            while (i < hblock.size()) {
-                size_t j = hblock.find('\n', i);
-                if (j == std::string::npos)
-                    j = hblock.size();
-                std::string line = hblock.substr(i, j - i);
-                i = j + 1;
-                while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
-                    line.pop_back();
-                if (line.empty())
-                    continue;
-                cmd += "-H '";
-                for (char c : line) {
-                    if (c == '\'')
-                        cmd += "'\\''";
-                    else
-                        cmd += c;
-                }
-                cmd += "' ";
-            }
+        const std::string hargs = buildCurlHeaderArgs(headers);
+        const std::string qurl = shellQuote(url);
+        vcmd = "curl -sS -g -L --http1.1 --connect-timeout 15 ";
+        vcmd += hargs;
+        vcmd += qurl;
+        vcmd += " | ";
+        vcmd += ffmpeg_;
+        vcmd += " -hide_banner -loglevel error -nostdin -i pipe:0 -an -f rawvideo -pix_fmt rgb24 -vf 'scale=";
+        vcmd += scale;
+        vcmd += ":force_original_aspect_ratio=decrease,pad=";
+        vcmd += scale;
+        vcmd += ":(ow-iw)/2:(oh-ih)/2' -";
+        if (audioEnabled_) {
+            // Second fetch for audio (PMS universal is multi-client OK for weak ladder)
+            acmd = "curl -sS -g -L --http1.1 --connect-timeout 15 ";
+            acmd += hargs;
+            acmd += qurl;
+            acmd += " | ";
+            acmd += ffmpeg_;
+            acmd += " -hide_banner -loglevel error -nostdin -i pipe:0 -vn -f s16le -ac 2 -ar 48000 - >";
+            acmd += shellQuote(audioDev_);
         }
-        cmd += "'";
-        for (char c : url) {
-            if (c == '\'')
-                cmd += "'\\''";
-            else
-                cmd += c;
-        }
-        cmd += "' | ";
-        cmd += ffmpeg_;
-        cmd += " -hide_banner -loglevel error -nostdin -i pipe:0 -an -f rawvideo -pix_fmt rgb24 -vf 'scale=";
-        cmd += scale;
-        cmd += ":force_original_aspect_ratio=decrease,pad=";
-        cmd += scale;
-        cmd += ":(ow-iw)/2:(oh-ih)/2' -";
     } else {
-        cmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin";
-        if (startMs > 0) {
-            char ss[32];
-            std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
-            cmd += " -ss ";
-            cmd += ss;
-        }
-        cmd += " -i \"";
+        std::string qpath;
+        qpath.reserve(url.size() + 8);
+        qpath.push_back('"');
         for (char c : url) {
             if (c == '"' || c == '$' || c == '`' || c == '\\')
-                cmd += '\\';
-            cmd += c;
+                qpath += '\\';
+            qpath += c;
         }
-        cmd += "\"";
-        cmd += " -an -f rawvideo -pix_fmt rgb24 -vf 'scale=";
-        cmd += scale;
-        cmd += ":force_original_aspect_ratio=decrease,pad=";
-        cmd += scale;
-        cmd += ":(ow-iw)/2:(oh-ih)/2' -";
+        qpath.push_back('"');
+        vcmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin";
+        vcmd += ssArg;
+        vcmd += " -i ";
+        vcmd += qpath;
+        vcmd += " -an -f rawvideo -pix_fmt rgb24 -vf 'scale=";
+        vcmd += scale;
+        vcmd += ":force_original_aspect_ratio=decrease,pad=";
+        vcmd += scale;
+        vcmd += ":(ow-iw)/2:(oh-ih)/2' -";
+        if (audioEnabled_) {
+            acmd = ffmpeg_ + " -hide_banner -loglevel error -nostdin";
+            acmd += ssArg;
+            acmd += " -i ";
+            acmd += qpath;
+            acmd += " -vn -f s16le -ac 2 -ar 48000 - >";
+            acmd += shellQuote(audioDev_);
+        }
     }
 
-    log("media: spawn " + cmd);
-    int fds[2];
-    if (pipe(fds) != 0) {
-        log("media: pipe() failed");
+    // Spawn video
+    int vfds[2];
+    if (pipe(vfds) != 0) {
+        log("media: video pipe failed");
         playing_.store(false);
         return;
     }
-    pid_t pid = fork();
-    if (pid < 0) {
-        log("media: fork failed");
-        ::close(fds[0]);
-        ::close(fds[1]);
+    log("media: spawn video " + vcmd);
+    pid_t vpid = spawnShell(vcmd, vfds[1]);
+    ::close(vfds[1]);
+    if (vpid < 0) {
+        ::close(vfds[0]);
+        log("media: video fork failed");
         playing_.store(false);
         return;
     }
-    if (pid == 0) {
-        ::close(fds[0]);
-        dup2(fds[1], STDOUT_FILENO);
-        ::close(fds[1]);
-        int devnull = ::open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDERR_FILENO);
-            ::close(devnull);
+    videoPid_.store(vpid);
+    int rfd = vfds[0];
+
+    // Spawn audio (best-effort)
+    if (!acmd.empty()) {
+        // Only if device exists
+        if (::access(audioDev_.c_str(), W_OK) == 0) {
+            log("media: spawn audio " + acmd);
+            pid_t apid = spawnShell(acmd, -1);
+            if (apid > 0) {
+                audioPid_.store(apid);
+                audioActive_.store(true);
+            } else {
+                log("media: audio fork failed");
+            }
+        } else {
+            log("media: skip audio (no " + audioDev_ + ")");
         }
-        // New process group so we can signal the whole tree (sh + ffmpeg)
-        setpgid(0, 0);
-        execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
-        _exit(127);
     }
-    ::close(fds[1]);
-    childPid_.store(pid);
-    int rfd = fds[0];
 
     const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
     std::vector<uint8_t> frame(frameBytes);
@@ -260,14 +374,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
     size_t totalBytes = 0;
-    // Assume 30 fps presentation pace (testsrc and weak ladder)
     const int fps = 30;
 
     if (onProgress_)
         onProgress_("playing", startMs, durationMs);
 
     while (!stop_.load()) {
-        // Handle seek request mid-stream: break and restart outer play()
         int64_t seekTo = seekReqMs_.exchange(-1);
         if (seekTo >= 0) {
             log("media: seek requested " + std::to_string(seekTo));
@@ -306,7 +418,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto now = std::chrono::steady_clock::now();
         if (now - lastLog > std::chrono::seconds(1)) {
             lastLog = now;
-            log("media: frames=" + std::to_string(frameIndex) + " bytes=" + std::to_string(totalBytes));
+            log("media: frames=" + std::to_string(frameIndex) +
+                " bytes=" + std::to_string(totalBytes) +
+                " audio=" + (audioActive_.load() ? "on" : "off"));
         }
 
         auto target = t0 + std::chrono::milliseconds(frameIndex * 1000 / fps);
@@ -322,19 +436,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
 
     ::close(rfd);
-    // Kill process group
-    pid_t p = childPid_.exchange(-1);
-    if (p > 0) {
-        kill(-p, SIGTERM);
-        int st = 0;
-        for (int i = 0; i < 20; ++i) {
-            if (waitpid(p, &st, WNOHANG) == p)
-                break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
-        }
-        kill(-p, SIGKILL);
-        waitpid(p, &st, 0);
-    }
+    killChildren();
 
     playing_.store(false);
     if (!stop_.load() && onProgress_)

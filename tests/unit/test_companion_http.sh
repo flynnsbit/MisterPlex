@@ -32,4 +32,15 @@ curl -fsS "http://127.0.0.1:${PORT}/player/playback/stop?commandID=5" | grep -q 
 curl -fsS "http://127.0.0.1:${PORT}/player/timeline/mirror?key=%2Flibrary%2Fmetadata%2F2&commandID=6" \
   | grep -q Timeline
 
+# playMedia with play-queue bind fields (Web scrubber contract)
+PQ=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F9&containerKey=%2FplayQueues%2F42%3Fown%3D1&playQueueItemID=99&playQueueVersion=3&ratingKey=9&address=192.168.1.41&port=32400&protocol=http&machineIdentifier=server-mid&offset=0&commandID=7")
+echo "$PQ" | grep -q Timeline
+# After async bind, poll should expose queue fields while wantPlay
+sleep 0.3
+POLL2=$(curl -fsS "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=8")
+echo "$POLL2" | grep -q 'playQueueID="42"' || { echo "FAIL missing playQueueID: $POLL2" >&2; exit 1; }
+echo "$POLL2" | grep -q 'playQueueItemID="99"' || { echo "FAIL missing playQueueItemID: $POLL2" >&2; exit 1; }
+echo "$POLL2" | grep -q 'containerKey="/playQueues/42' || { echo "FAIL missing containerKey: $POLL2" >&2; exit 1; }
+echo "$POLL2" | grep -q 'key="/library/metadata/9"' || { echo "FAIL missing key: $POLL2" >&2; exit 1; }
+
 echo "test_companion_http: OK"

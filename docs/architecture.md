@@ -43,17 +43,21 @@ Plex Web / curl playMedia
         ▼
 misterplexd companion (:3005) + GDM
         │ resolve (local path | PMS universal weak)
-        ▼
-FFmpeg (ARM) → raw RGB24 320×240
-        │
-        ▼
-/dev/fb0  →  MiSTer_fb / ascal  →  HDMI/VGA
+        ├──────────────────────────────┐
+        ▼                              ▼
+FFmpeg video → RGB24 320×240    FFmpeg audio → s16le 48k stereo
+        │                              │
+        ▼                              ▼
+/dev/fb0 → MiSTer_fb/ascal     /dev/MrAudio → SPI DMA ring → sys audio mix
+        │                              │
+        └────────── HDMI/VGA + analog out ──────────┘
 ```
 
-- Pause/stop/seek control the FFmpeg child (SIGSTOP/TERM + restart).
-- Timeline reports scrubber-friendly fields when media is bound.
-- **Not yet native present:** ARM still owns decode; FPGA owns scanout only.
-- Next: feed decoded frames into Phase 1 SDRAM/frame FIFO; continuous audio via present-domain FIFO.
+- Pause/stop/seek signal **both** video and audio process groups (SIGSTOP/TERM).
+- Companion listen sockets use `FD_CLOEXEC`; media children close FDs ≥3 (orphaned ffmpeg must not hold `:3005`).
+- Timeline reports scrubber-friendly play-queue fields when media is bound.
+- **Not yet native present:** ARM still owns decode; FPGA owns scanout + MrAudio consumer.
+- Next (Phase 3): elementary H.264 into FPGA FIFO; present-domain audio FIFO for lip-sync without dual FFmpeg.
 
 ## Memory map (evolving)
 

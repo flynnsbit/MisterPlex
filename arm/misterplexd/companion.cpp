@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -20,6 +21,13 @@ namespace {
 bool setReuse(int fd) {
     int on = 1;
     return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == 0;
+}
+
+// Prevent forked ffmpeg/sh from inheriting companion sockets (would hold :3005).
+void setCloexec(int fd) {
+    int fl = fcntl(fd, F_GETFD);
+    if (fl >= 0)
+        fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
 }
 
 std::string queryParam(const std::string& req, const char* key) {
@@ -289,11 +297,10 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
     timeMs_ = timeMs;
     if (durationMs > 0)
         durationMs_ = durationMs;
-    if (state == "stopped") {
-        wantPlay_ = false;
-    } else if (state == "playing" || state == "paused" || state == "buffering") {
+    // Keep wantPlay_ latched after playMedia until clearMedia()/stop.
+    // Player progress "stopped" (EOF) must not drop scrubber bind fields.
+    if (state == "playing" || state == "paused" || state == "buffering")
         wantPlay_ = true;
-    }
 }
 
 void Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
@@ -308,8 +315,8 @@ void Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     serverProto_ = req.protocol.empty() ? "http" : req.protocol;
     serverHost_ = req.address;
     serverPort_ = req.port.empty() ? "32400" : req.port;
-    if (durationMs > 0)
-        durationMs_ = durationMs;
+    // Always take resolve duration (0 = unknown / local file without probe)
+    durationMs_ = durationMs > 0 ? durationMs : 0;
     wantPlay_ = true;
     prePlayHold_ = false;
 }
@@ -364,6 +371,7 @@ void Companion::gdmLoop() {
         return;
     }
     setReuse(fd);
+    setCloexec(fd);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -418,6 +426,7 @@ void Companion::httpLoop() {
         return;
     }
     setReuse(fd);
+    setCloexec(fd);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
