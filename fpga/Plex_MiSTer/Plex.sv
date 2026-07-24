@@ -74,6 +74,16 @@ wire [26:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire [15:0] ioctl_index;
 
+// Core→HPS status (UIO_GET_STATUS / 0x29). See docs/phase3-decode.md layout.
+wire [127:0] status_in;
+reg          status_set;
+wire         has_frame, has_audio, has_stream, audio_underrun;
+wire [15:0]  nalu_count;
+wire [7:0]   last_nal_type;
+wire [31:0]  stream_bytes_in, stream_bytes_seen;
+wire [15:0]  stream_fifo_level;
+wire [18:0]  wr_count;
+
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk_sys),
@@ -85,6 +95,8 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 	.buttons(buttons),
 	.status(status),
+	.status_in(status_in),
+	.status_set(status_set),
 	.status_menumask(0),
 
 	.ps2_key(ps2_key),
@@ -173,13 +185,6 @@ audio_ingest ainst (
 );
 
 // Phase 3.3 elementary H.264 annex-B → BRAM FIFO → NAL count (decode later)
-wire        has_stream;
-wire [15:0] nalu_count;
-wire [7:0]  last_nal_type;
-wire [31:0] stream_bytes_in;
-wire [31:0] stream_bytes_seen;
-wire [15:0] stream_fifo_level;
-
 stream_path spath (
 	.clk(clk_sys),
 	.reset(reset),
@@ -201,10 +206,6 @@ wire [7:0] r, g, b;
 wire [15:0] al, ar_audio;
 wire [31:0] disp_i, cont_i;
 wire advance;
-wire has_frame;
-wire [18:0] wr_count;
-wire has_audio;
-wire audio_underrun;
 
 present_core present (
 	.clk(clk_sys),
@@ -259,22 +260,50 @@ assign AUDIO_L = al;
 assign AUDIO_R = ar_audio;
 
 // Heartbeat LED; faster blink with audio; very fast when bitstream NALs seen.
-// XOR nalu_count into LED so scanner is not optimized away.
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1;
 wire led_base = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
 assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 	: (has_audio ? act_cnt[22] : led_base);
 
-// Keep stream path stats observable (noprune sinks)
-(* noprune *) reg [31:0] stream_stat_keep;
+// --- Core status → HPS (UIO_GET_STATUS) ---
+// Layout (little-endian 16-bit words as read by ARM):
+//   [0] has_frame  [1] has_audio  [2] has_stream  [3] audio_underrun
+//   [15:8] last_nal_type
+//   [31:16] nalu_count
+//   [47:32] stream_fifo_level
+//   [63:48] wr_count[15:0]
+//   [95:64] stream_bytes_seen
+//   [127:96] stream_bytes_in
+assign status_in = {
+	stream_bytes_in,                    // 127:96
+	stream_bytes_seen,                  // 95:64
+	wr_count[15:0],                     // 63:48
+	stream_fifo_level,                  // 47:32
+	nalu_count,                         // 31:16
+	last_nal_type,                      // 15:8
+	4'b0, audio_underrun, has_stream, has_audio, has_frame  // 7:0
+};
+
+// Pulse status_set ~1 kHz or when nalu_count changes so Main/ARM can poll.
+reg [15:0] prev_nalu;
+reg [14:0] st_div;
 always @(posedge clk_sys) begin
-	stream_stat_keep <= stream_bytes_in ^ stream_bytes_seen
-		^ {16'd0, stream_fifo_level} ^ {24'd0, last_nal_type} ^ {16'd0, nalu_count};
+	if (reset) begin
+		status_set <= 0;
+		prev_nalu  <= 0;
+		st_div     <= 0;
+	end else begin
+		status_set <= 0;
+		st_div <= st_div + 1'd1;
+		if (nalu_count != prev_nalu || st_div == 0) begin
+			status_set <= 1'b1;
+			prev_nalu  <= nalu_count;
+		end
+	end
 end
 
 // Silence unused
-wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, af_active,
-	audio_underrun, ioctl_addr, stream_stat_keep};
+wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr};
 
 endmodule

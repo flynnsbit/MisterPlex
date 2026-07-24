@@ -64,9 +64,16 @@ Phase 3.3 scaffold (HW-green):
   F3 ioctl → stream_ingest (append) → bitstream_fifo 32 KiB M10K → nalu_scanner
   Scanner counts annex-B start codes (00 00 01 / 00 00 00 01); LED on has_stream
   ARM: `sendBitstreamChunk` / push_frame --index 3; `scripts/gen_test_annexb.py`
-  HW: `tests/hw/test_f3_bitstream.sh` (SPI OK); unit `test_annexb_count`
+  HW: `tests/hw/test_f3_bitstream.sh`; unit `test_annexb_count`
   Fit: block mem ~56%, RAM blocks ~73% (bitstream 262144 bits / 32 M10K)
-  Next: real H.264 soft-core / open IP; YUV → frame_store; nalu_count status readback
+  Core status readback (UIO_GET_STATUS 0x29 / status_in):
+    [0] has_frame [1] has_audio [2] has_stream [3] underrun
+    [15:8] last_nal_type  [31:16] nalu_count  [47:32] fifo_level
+    [63:48] wr_count_lo  [95:64] bytes_seen  [127:96] bytes_in
+  `push_frame --status` dumps fields; HW test asserts nalu≥4 after F3 push
+
+Phase 3.3b (next):
+  H.264 Baseline soft-core / open IP → YUV → frame_store
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

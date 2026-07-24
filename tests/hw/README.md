@@ -40,7 +40,7 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 
 ## Phase 3.3 elementary bitstream (F3)
 
-1. Deploy RBF with `stream_path` / F3 menu entry.
+1. Deploy RBF with `stream_path` / F3 menu entry + status readback.
 2. `python3 scripts/gen_test_annexb.py /tmp/plex_test_annexb.h264`
-3. `./tests/hw/test_f3_bitstream.sh` — SPI index 3 push OK.
-4. LED_USER blinks very fast when `nalu_scanner` has_stream (eyes-on).
+3. `./tests/hw/test_f3_bitstream.sh` — SPI index 3 + `push_frame --status` asserts `nalu≥4`, `has_stream=1`.
+4. Manual: `push_frame --status` on MiSTer dumps has_frame/audio/stream + nalu_count.

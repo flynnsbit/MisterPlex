@@ -41,6 +41,26 @@ public:
     // does not fully sync with Main's cur_status shadow.
     bool setStatusBit(int bit, int value);
 
+    // Core→HPS status via UIO_GET_STATUS (0x29). Fills 16 bytes (128 bits).
+    // Layout: see CoreStatus helpers below / docs/phase3-decode.md.
+    bool getCoreStatus(uint8_t out[16]);
+
+    struct CoreStatus {
+        bool has_frame = false;
+        bool has_audio = false;
+        bool has_stream = false;
+        bool audio_underrun = false;
+        uint8_t last_nal_type = 0;
+        uint16_t nalu_count = 0;
+        uint16_t stream_fifo_level = 0;
+        uint16_t wr_count_lo = 0;
+        uint32_t stream_bytes_seen = 0;
+        uint32_t stream_bytes_in = 0;
+    };
+    // Parse getCoreStatus raw bytes into fields.
+    static CoreStatus parseCoreStatus(const uint8_t raw[16]);
+    bool readCoreStatus(CoreStatus& out);
+
     std::string lastError() const { return err_; }
     // Last successful frame push duration (ms)
     double lastPushMs() const { return lastPushMs_; }

@@ -4,7 +4,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <string>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -20,6 +23,63 @@ constexpr uint8_t FIO_FILE_TX = 0x53;
 constexpr uint8_t FIO_FILE_TX_DAT = 0x54;
 constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
+constexpr uint8_t UIO_GET_STATUS = 0x29;
+
+// Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
+// Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
+std::vector<pid_t> findMisterPids() {
+    std::vector<pid_t> out;
+    DIR* d = opendir("/proc");
+    if (!d)
+        return out;
+    while (dirent* e = readdir(d)) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9')
+            continue;
+        char path[96];
+        std::snprintf(path, sizeof(path), "/proc/%.32s/cmdline", e->d_name);
+        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        char buf[256]{};
+        ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+        ::close(fd);
+        if (n <= 0)
+            continue;
+        // cmdline is NUL-separated argv; argv0 is first token
+        const char* argv0 = buf;
+        if (std::strstr(argv0, "misterplex") != nullptr)
+            continue;
+        if (std::strstr(argv0, "MiSTer") != nullptr || std::strstr(argv0, "mister") != nullptr)
+            out.push_back(static_cast<pid_t>(std::atoi(e->d_name)));
+    }
+    closedir(d);
+    return out;
+}
+
+struct MainPause {
+    std::vector<pid_t> pids;
+    explicit MainPause(bool enable) {
+        if (!enable)
+            return;
+        // BusyBox killall is reliable on MiSTer rootfs
+        int r = system("killall -STOP MiSTer 2>/dev/null; "
+                       "killall -STOP MiSTer_groovy 2>/dev/null; true");
+        (void)r;
+        pids = findMisterPids();
+        for (pid_t p : pids)
+            kill(p, SIGSTOP);
+        usleep(15000); // let SPI settle
+    }
+    ~MainPause() {
+        for (pid_t p : pids)
+            kill(p, SIGCONT);
+        int r = system("killall -CONT MiSTer 2>/dev/null; "
+                       "killall -CONT MiSTer_groovy 2>/dev/null; true");
+        (void)r;
+    }
+    MainPause(const MainPause&) = delete;
+    MainPause& operator=(const MainPause&) = delete;
+};
 
 } // namespace
 
@@ -178,7 +238,8 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
         return false;
     }
     auto t0 = std::chrono::steady_clock::now();
-    // Best-effort lock so concurrent tools don't interleave
+    // Pause Main for clean FIO_FILE_* (short transfers; resume in dtor).
+    MainPause pause(true);
     int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
     if (lfd >= 0)
         flock(lfd, LOCK_EX);
@@ -271,6 +332,91 @@ bool FpgaSpi::flushBitstreamFifo() {
         return false;
     usleep(2000);
     return setStatusBit(11, 0);
+}
+
+bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
+    if (!ok() || !out) {
+        err_ = "getCoreStatus: not open";
+        return false;
+    }
+    // Pause Main so UIO_GET_STATUS is not interleaved mid-transaction.
+    MainPause pause(true);
+    int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
+    if (lfd >= 0)
+        flock(lfd, LOCK_EX);
+
+    enableIo(1);
+    // Main protocol: spi_w(cmd) returns {4'hA, stflg}; next words are status_req.
+    uint16_t hdr = spiWord(UIO_GET_STATUS);
+    (void)hdr;
+    for (int i = 0; i < 16; i += 2) {
+        uint16_t w = spiWord(0);
+        out[i] = static_cast<uint8_t>(w & 0xFF);
+        out[i + 1] = static_cast<uint8_t>((w >> 8) & 0xFF);
+    }
+    enableIo(0);
+
+    if (lfd >= 0) {
+        flock(lfd, LOCK_UN);
+        ::close(lfd);
+    }
+    err_.clear();
+    return true;
+}
+
+FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
+    CoreStatus s;
+    const uint16_t w0 = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
+    const uint16_t w1 = static_cast<uint16_t>(raw[2] | (raw[3] << 8));
+    const uint16_t w2 = static_cast<uint16_t>(raw[4] | (raw[5] << 8));
+    const uint16_t w3 = static_cast<uint16_t>(raw[6] | (raw[7] << 8));
+    s.has_frame = (w0 & 1) != 0;
+    s.has_audio = (w0 & 2) != 0;
+    s.has_stream = (w0 & 4) != 0;
+    s.audio_underrun = (w0 & 8) != 0;
+    s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
+    s.nalu_count = w1;
+    s.stream_fifo_level = w2;
+    s.wr_count_lo = w3;
+    s.stream_bytes_seen = static_cast<uint32_t>(raw[8] | (raw[9] << 8) | (raw[10] << 16) | (raw[11] << 24));
+    s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16) | (raw[15] << 24));
+    return s;
+}
+
+bool FpgaSpi::readCoreStatus(CoreStatus& out) {
+    // Prefer consistent samples: same nalu+bytes_in twice, or nalu>=1 with matching bytes.
+    CoreStatus best{};
+    bool have = false;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        uint8_t raw[16]{};
+        if (!getCoreStatus(raw))
+            return false;
+        CoreStatus s = parseCoreStatus(raw);
+        // Sanity: bytes_seen should be <= bytes_in + small slack, nalu not huge garbage
+        bool sane = s.nalu_count < 10000 &&
+                    (s.stream_bytes_in == 0 || s.stream_bytes_seen <= s.stream_bytes_in + 64) &&
+                    s.stream_bytes_in < (1u << 28);
+        if (!sane) {
+            usleep(10000);
+            continue;
+        }
+        if (have && s.nalu_count == best.nalu_count && s.stream_bytes_in == best.stream_bytes_in &&
+            s.has_stream == best.has_stream) {
+            out = s;
+            return true;
+        }
+        best = s;
+        have = true;
+        // Strong signal: stream with matching byte counts
+        if (s.has_stream && s.stream_bytes_in > 0 && s.stream_bytes_seen == s.stream_bytes_in &&
+            s.nalu_count > 0) {
+            out = s;
+            return true;
+        }
+        usleep(10000);
+    }
+    out = best;
+    return have;
 }
 
 } // namespace misterplex

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Hardware: push annex-B synthetic stream to F3 bitstream_fifo (SPI index 3).
-# Scanner runs on FPGA; we only assert SPI path succeeds until status readback exists.
+# Hardware: push annex-B to F3; verify nalu_count via UIO_GET_STATUS readback.
 set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
@@ -20,13 +19,45 @@ sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_test_annexb.h264 \
   "$USER@$HOST:/media/fat/plex_test_annexb.h264"
 
 echo "=== F3 SPI push (index 3) ==="
+# push_frame pauses Main_MiSTer during SPI for clean FIO + status readback
 OUT=$(ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264')
 echo "$OUT"
 echo "$OUT" | grep -q 'OK'
 echo "$OUT" | grep -q 'index=3'
+sleep 0.15
 
-echo "=== second append push ==="
+read_status() {
+  # Retry until has_stream or nalu non-zero (SPI can still glitch)
+  local st="" i
+  for i in 1 2 3 4 5 6; do
+    st=$(ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null || true)
+    if echo "$st" | grep -qE 'has_stream=1|nalu=[1-9]'; then
+      echo "$st"
+      return 0
+    fi
+    sleep 0.15
+  done
+  echo "$st"
+  return 1
+}
+
+echo "=== status readback (expect nalu>=4 has_stream=1 bytes_in>=149) ==="
+ST=$(read_status) || true
+echo "$ST"
+echo "$ST" | grep -q 'has_stream=1'
+NALU=$(echo "$ST" | sed -n 's/.*nalu=\([0-9]*\).*/\1/p')
+echo "nalu_count=$NALU"
+python3 -c "import sys; n=int('$NALU' or 0); sys.exit(0 if n >= 4 else 1)"
+BYTES_IN=$(echo "$ST" | sed -n 's/.*bytes_in=\([0-9]*\).*/\1/p')
+echo "bytes_in=$BYTES_IN"
+python3 -c "import sys; b=int('$BYTES_IN' or 0); sys.exit(0 if b >= 100 else 1)"
+
+echo "=== second append push (nalu should grow by >=4) ==="
 ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264' | grep -q OK
+sleep 0.2
+ST2=$(read_status) || true
+echo "$ST2"
+NALU2=$(echo "$ST2" | sed -n 's/.*nalu=\([0-9]*\).*/\1/p')
+python3 -c "import sys; a=int('$NALU' or 0); b=int('$NALU2' or 0); sys.exit(0 if b >= a + 4 else 1)"
 
-echo "test_f3_bitstream: OK on $HOST"
-echo "NOTE: LED_USER blinks fast when nalu_scanner has_stream; CRT eyes-on optional."
+echo "test_f3_bitstream: OK on $HOST (nalu $NALU → $NALU2)"
