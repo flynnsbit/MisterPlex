@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Hardware Phase 3.3f/h/j: headers + residual status after real Baseline F3 push.
-# First MB is I_NxN — FPGA residual token probe expects res_ok=1 res_tc=8 res_t1=3.
+# Hardware Phase 3.3f/h/j/k: headers + residual status after real Baseline F3 push.
+# First MB is I_NxN — FPGA residual levels/runs expect res_ok=1 res_tc=8 res_t1=3 res_dc=-24.
 # F3-only (no F1): decode_stub still paints has_frame; hybrid host_owns_fs not latched.
 # Assert control plane (sps/pps/mb0/qp/frame) matches host golden after IDR marking fix.
 set -euo pipefail
@@ -48,8 +48,9 @@ echo "$ST" | grep -q 'pps_valid=1'
 echo "$ST" | grep -q 'mb0=0'
 echo "$ST" | grep -q 'qp=25'
 echo "$ST" | grep -q 'has_frame=1'
-# I_NxN first residual (nC=0): real Baseline probe_tc=8 t1=3
+# I_NxN first residual (nC=0): real Baseline probe_tc=8 t1=3 coeff0=-24
 echo "$ST" | grep -qE 'res_ok=1'
 echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
-echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3"
+echo "$ST" | grep -qE 'res_dc=-24'
+echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"

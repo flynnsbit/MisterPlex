@@ -173,10 +173,9 @@ Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
   **RBF rebuild (this fire):** Quartus fit OK (ALMs 21%, M10K 73%); flow race killed
     asm once — assembler re-run produced `Plex.rbf` (3.42 MiB). Deployed lab;
     `test_f3_residual.sh` green on new core. Hybrid F1+F3 status smoke OK.
-  **Still open (3.3k+):** full CAVLC levels/runs, inv quant, IDCT, Intra pred into
-  frame_store; optional deblock; live STREAM soak with recon F1 + F3 stats.
+  **Was open → 3.3k residual:** CAVLC levels/runs for first residual; inv quant/IDCT/pred still deferred (M10K).
 
-Phase 3.3k (product path polish — this fire):
+Phase 3.3k (product path polish — done earlier this arc):
   **STREAM=1 host recon → F1 robust:**
     - multi-IDR: retain/update SPS+PPS; recon every I/IDR; overflow keeps last headers
     - seek/stop: kill both RGB/audio + STREAM demux process groups; pause SIGSTOP both
@@ -189,6 +188,21 @@ Phase 3.3k (product path polish — this fire):
     - auto + PRESENT=fpga: audio-only FFmpeg + stream demux; recon owns F1
     - PRESENT=both/fb0: always keep RGB (continuous fb0 / STREAM=0 path intact)
   Unit: `mediaVideoIsH264` + resolve helpers; HW: STREAM=1 PRESENT=both smoke.
+
+Phase 3.3k (FPGA residual advance — this fire):
+  **Goal:** extend first-MB residual beyond coeff_token+T1 if BRAM allows; else status/docs.
+  **Approach (logic-only, no new M10K):** `slice_hdr_parser` continues after T1 signs into
+    non-T1 level prefix/suffix, total_zeros (nC=0), run_before, reverse-scan place →
+    `residual_dc` = scan-order coeff[0] (golden Baseline: tc=8 t1=3 **dc=-24**).
+  First residual ends ~bit 130 (~17 B) inside existing MAXB=48 RBSP capture — no capture growth.
+  **Status:** `[127:96] = {residual_dc[7:0], stream_bytes_in[23:0]}`; host `res_dc=` in
+    `push_frame --status`. Existing res_ok/tc/t1 + qp/mb0/ddr_busy unchanged.
+  **Paint (F3-only):** MB0 gray = clamp(128 + residual_dc, 0, 255) when residual_ok
+    (≈104 on golden; not full inv-quant/IDCT recon — hybrid host F1 still product path).
+  **Hybrid confirmed:** `host_owns_fs` still blocks stub wipe of STREAM F1 recon.
+  **Fit / HW:** see RBF notes after rebuild; `test_f3_residual.sh` asserts `res_dc=-24`.
+  **Still open (3.3l+):** inv quant + 4x4 IDCT + Intra pred into frame_store for all MBs;
+    optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers).
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**

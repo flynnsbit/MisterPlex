@@ -78,6 +78,7 @@ public:
         uint8_t residual_tc = 0;
         uint8_t residual_t1 = 0;
         bool residual_ok = false;
+        int8_t residual_dc = 0; // 3.3k: scan-order coeff[0] after levels+runs
         bool ddr_busy = false; // status_in[39] — DDR→BRAM copy in flight
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
@@ -91,11 +92,14 @@ public:
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);
     bool readCoreStatus(CoreStatus& out);
 
-    std::string lastError() const { return err_; }
+    // Thread-safe copy of last error (F1/F2/F3 share this object).
+    std::string lastError() const;
     // Last successful frame push duration (ms)
     double lastPushMs() const { return lastPushMs_; }
 
 private:
+    void setErr(std::string msg);
+    void clearErr();
     void gpoWrite(uint32_t v);
     uint32_t gpoRead() const;
     int gpiRead() const;

@@ -522,15 +522,19 @@ void MediaPlayer::streamPump(int sfd) {
                     useDdrF1_ = false;
                     log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
                 } else if ((reconOk % 30) == 0) {
-                    log("media: recon F1 via DDR " + std::to_string(static_cast<int>(fpga_.lastPushMs())) +
-                        "ms");
+                    log("media: recon F1 via DDR " +
+                        std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
                 }
             }
             if (!ok) {
+                // SPI path: sendFileTx clears stale err_ from DDR probe.
                 if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
                     ok = true;
+                    if (reconOk == 1 || (reconOk % 8) == 0)
+                        log("media: recon F1 via SPI " +
+                            std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
                 } else {
-                    log("media: recon F1: " + fpga_.lastError());
+                    log("media: recon F1 SPI: " + fpga_.lastError());
                 }
             }
             if (ok)

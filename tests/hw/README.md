@@ -93,10 +93,11 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 2. `./tests/hw/test_f3_mb0.sh` — `mb0=7` (I_16x16) `qp=14` on real Baseline IDR.
 3. Unit: `test_slice_hdr` asserts mb0+qp.
 
-## Phase 3.3f/j residual probe + hybrid present
+## Phase 3.3f/j/k residual probe + hybrid present
 
-1. Deploy RBF with residual token probe + 3.3j hybrid mux (`host_owns_fs`).
-2. `./tests/hw/test_f3_residual.sh` — F3-only: `res_ok=1 res_tc=8 res_t1=3` (I_NxN first MB),
-   `mb0=0 qp=25 has_frame=1` (stub diagnostic paint; no F1 so host_owns_fs clear).
+1. Deploy RBF with residual levels/runs + 3.3j hybrid mux (`host_owns_fs`).
+2. `./tests/hw/test_f3_residual.sh` — F3-only: `res_ok=1 res_tc=8 res_t1=3 res_dc=-24`
+   (I_NxN first MB full CAVLC), `mb0=0 qp=25 has_frame=1` (stub MB0 gray from dc;
+   no F1 so host_owns_fs clear).
 3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0).
 4. STREAM hybrid: host recon F1 owns product present; F3 residual status must not wipe F1.

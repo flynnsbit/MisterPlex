@@ -29,6 +29,7 @@ constexpr uint8_t UIO_GET_STATUS = 0x29;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
+// Also guards err_ (std::string is not thread-safe — concurrent writes crashed soak).
 std::mutex& spiMutex() {
     static std::mutex m;
     return m;
@@ -130,16 +131,32 @@ bool gpiUserMode(volatile uint32_t* map) {
 
 FpgaSpi::~FpgaSpi() { close(); }
 
+void FpgaSpi::setErr(std::string msg) {
+    // Prefer calling under SpiExclusive; lock if free so lastError races are safe.
+    std::lock_guard<std::mutex> g(spiMutex());
+    err_ = std::move(msg);
+}
+
+void FpgaSpi::clearErr() {
+    std::lock_guard<std::mutex> g(spiMutex());
+    err_.clear();
+}
+
+std::string FpgaSpi::lastError() const {
+    std::lock_guard<std::mutex> g(spiMutex());
+    return err_;
+}
+
 bool FpgaSpi::open() {
     close();
     fd_ = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
     if (fd_ < 0) {
-        err_ = "open /dev/mem failed";
+        setErr("open /dev/mem failed");
         return false;
     }
     void* p = mmap(nullptr, kMapSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, kMapBase);
     if (p == MAP_FAILED) {
-        err_ = "mmap FPGA regs failed";
+        setErr("mmap FPGA regs failed");
         ::close(fd_);
         fd_ = -1;
         return false;
@@ -148,7 +165,7 @@ bool FpgaSpi::open() {
     // Seed gpo from hardware
     volatile uint32_t* gpo = map_ + ((kMgrBase - kMapBase + 0x10) >> 2);
     gpo_copy_ = *gpo;
-    err_.clear();
+    clearErr();
     return true;
 }
 
@@ -182,6 +199,7 @@ void FpgaSpi::spiEn(uint32_t mask, int en) {
 }
 
 uint16_t FpgaSpi::spiWord(uint16_t word) {
+    // Caller must hold SpiExclusive (spiMutex). Touch err_ without re-locking.
     uint32_t gpo = (gpoRead() & ~(0xFFFFu | SSPI_STROBE)) | word;
     gpoWrite(gpo);
     gpoWrite(gpo | SSPI_STROBE);
@@ -282,6 +300,8 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
         err_ = "sendFileTx: not open or empty";
         return false;
     }
+    // Clear stale err_ from prior DDR probe/fail so SPI F1/F2/F3 is not poisoned.
+    err_.clear();
     auto t0 = std::chrono::steady_clock::now();
     // Mutex + flock + Main pause (no system()/fork — thread-safe under STREAM load).
     SpiExclusive guard(true);
@@ -551,12 +571,12 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.stub_frames = s.slice_type;
     s.wr_count_lo = w3;
     // [47:40] {residual_ok, residual_tc[4:0], residual_t1[1:0]}
-    // [39:32] slice_qp
+    // [39:32] = {ddr_busy, 0, slice_qp[5:0]}
+    // [127:96] {residual_dc[7:0], stream_bytes_in[23:0]} (3.3k)
     const uint8_t hi = static_cast<uint8_t>((w2 >> 8) & 0xFF);
     s.residual_ok = (hi & 0x80) != 0;
     s.residual_tc = static_cast<uint8_t>((hi >> 2) & 0x1F);
     s.residual_t1 = static_cast<uint8_t>(hi & 0x3);
-    // [39:32] = {ddr_busy, 0, slice_qp[5:0]}
     s.ddr_busy = (w2 & 0x80) != 0;
     s.slice_qp = static_cast<uint8_t>(w2 & 0x3F);
     s.stream_fifo_level = 0;
@@ -564,7 +584,8 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
     s.sps_width = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
     s.stream_bytes_seen = 0;
-    s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16) | (raw[15] << 24));
+    s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16));
+    s.residual_dc = static_cast<int8_t>(raw[15]);
     // idr sticky still in flags; count not in status this rev
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
