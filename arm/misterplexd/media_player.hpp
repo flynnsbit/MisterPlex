@@ -29,9 +29,11 @@ public:
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
     // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
-    // STREAM=1: demux annex-B H.264 → F3 bitstream_fifo (decode_stub / future IP)
+    // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     void setDecodeSize(int w, int h);
+    // Host recon frames presented this session (I/IDR only)
+    int64_t reconFrames() const { return reconFrames_.load(); }
 
     bool initPresent();
 
@@ -66,7 +68,7 @@ private:
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
-    bool streamEnabled_ = false; // annex-B → F3
+    bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
 
     FbPresent fb_;
     FpgaSpi fpga_;
@@ -79,6 +81,8 @@ private:
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
     std::atomic<bool> streamActive_{false};
+    std::atomic<int64_t> reconFrames_{0};
+    std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     std::atomic<pid_t> childPid_{-1};

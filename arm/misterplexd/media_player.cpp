@@ -1,5 +1,7 @@
 #include "media_player.hpp"
 
+#include "libmisterplex/h264_recon.hpp"
+
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +16,47 @@
 #include <unistd.h>
 
 namespace misterplex {
+namespace {
+
+// Annex-B start-code length at `i`, or 0 if none.
+inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
+    if (i + 3 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1)
+        return 4;
+    if (i + 2 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1)
+        return 3;
+    return 0;
+}
+
+// Nearest-neighbor scale RGB565 → fixed frame_store size (default 320×240).
+inline void scaleRgb565(const uint16_t* src, int sw, int sh, uint16_t* dst, int dw, int dh) {
+    if (sw == dw && sh == dh) {
+        std::memcpy(dst, src, static_cast<size_t>(dw) * static_cast<size_t>(dh) * sizeof(uint16_t));
+        return;
+    }
+    for (int y = 0; y < dh; ++y) {
+        const int sy = (sh > 0) ? (y * sh) / dh : 0;
+        for (int x = 0; x < dw; ++x) {
+            const int sx = (sw > 0) ? (x * sw) / dw : 0;
+            dst[y * dw + x] = src[sy * sw + sx];
+        }
+    }
+}
+
+// RGB565 host words → packed RGB24 for fb0 blit.
+inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t>& out) {
+    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
+    for (int i = 0; i < w * h; ++i) {
+        const uint16_t p = src[i];
+        const int r = (p >> 11) & 0x1f;
+        const int g = (p >> 5) & 0x3f;
+        const int b = p & 0x1f;
+        out[static_cast<size_t>(i) * 3 + 0] = static_cast<uint8_t>((r << 3) | (r >> 2));
+        out[static_cast<size_t>(i) * 3 + 1] = static_cast<uint8_t>((g << 2) | (g >> 4));
+        out[static_cast<size_t>(i) * 3 + 2] = static_cast<uint8_t>((b << 3) | (b >> 2));
+    }
+}
+
+} // namespace
 
 void MediaPlayer::log(const std::string& s) const {
     if (log_)
@@ -201,6 +244,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     stop_.store(false);
     paused_.store(false);
     seekReqMs_.store(-1);
+    reconFrames_.store(0);
+    reconPresentOk_.store(false);
     thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
         threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
     });
@@ -292,26 +337,231 @@ pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& h
 }
 
 void MediaPlayer::streamPump(int sfd) {
-    // Push annex-B chunks into F3 bitstream_fifo (decode_stub paints on VCL).
-    if (!fpga_.ok()) {
-        char dump[4096];
-        while (!stop_.load()) {
-            if (::read(sfd, dump, sizeof(dump)) <= 0)
-                break;
-        }
-        ::close(sfd);
-        return;
-    }
-    fpga_.flushBitstreamFifo();
-    streamActive_.store(true);
-    log("media: F3 annex-B streaming enabled (STREAM=1)");
+    // Phase 3.3i: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
+    // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
+    const bool wantF3 = fpga_.ok();
+    const bool wantF1 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    // PRESENT=both: FFmpeg owns continuous fb0; recon owns F1 only.
+    // PRESENT=fb0 + STREAM: recon I-frames may blit fb0 (sparse keyframe present).
+    const bool reconToFb =
+        fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
-    constexpr size_t kChunk = 8192;
+    if (wantF3)
+        fpga_.flushBitstreamFifo();
+    streamActive_.store(true);
+    reconFrames_.store(0);
+    reconPresentOk_.store(false);
+    log(std::string("media: STREAM=1 host I-slice recon") +
+        (wantF1 ? " →F1" : "") + (wantF3 ? " +F3" : "") + (reconToFb ? " +fb0" : ""));
+
+    constexpr size_t kF3Chunk = 8192;
+    // Bound NAL scan buffer (SPS+PPS+IDR can be large at 720p; cap for dual-A9)
+    constexpr size_t kMaxAcc = 2 * 1024 * 1024;
     std::vector<uint8_t> acc;
-    acc.reserve(kChunk * 2);
+    acc.reserve(64 * 1024);
+    // Unsent F3 tail offset into acc (bytes [f3Off, acc.size()) not yet pushed)
+    size_t f3Off = 0;
+    // Last complete NAL start (start-code index) still in acc; incomplete NAL retained
+    size_t parseFrom = 0;
+
+    std::vector<uint8_t> spsNal; // includes start code
+    std::vector<uint8_t> ppsNal;
+    std::vector<uint16_t> rgbNative;
+    std::vector<uint16_t> rgb320(320 * 240);
+    std::vector<uint8_t> rgb24;
     char buf[4096];
-    size_t total = 0;
-    size_t pushes = 0;
+    size_t f3Total = 0;
+    size_t f3Pushes = 0;
+    size_t reconOk = 0;
+    size_t reconFail = 0;
+    size_t idrSeen = 0;
+    // Throttle F1 SPI: ~100–150ms/frame; present every Nth successful recon
+    constexpr size_t kReconPresentEvery = 1;
+    // Frame-store geometry (Plex core F1)
+    constexpr int kFsW = 320;
+    constexpr int kFsH = 240;
+
+    auto pushF3UpTo = [&](size_t end) {
+        if (!wantF3 || end <= f3Off)
+            return;
+        while (f3Off + kF3Chunk <= end && !stop_.load()) {
+            if (fpga_.sendBitstreamChunk(acc.data() + f3Off, kF3Chunk, /*F3*/ 3)) {
+                f3Total += kF3Chunk;
+                ++f3Pushes;
+                if ((f3Pushes % 64) == 0)
+                    log("media: F3 stream bytes=" + std::to_string(f3Total));
+            } else if ((f3Pushes % 16) == 0) {
+                log("media: F3 stream: " + fpga_.lastError());
+            }
+            f3Off += kF3Chunk;
+        }
+    };
+
+    auto presentRecon = [&](const recon::ReconResult& rec) {
+        if (rec.y.empty() || rec.width <= 0 || rec.height <= 0)
+            return false;
+        recon::yuv420ToRgb565(rec.y.data(), rec.u.data(), rec.v.data(), rec.width, rec.height,
+                              rgbNative);
+        scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
+        bool any = false;
+        if (wantF1) {
+            if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
+                any = true;
+            } else {
+                log("media: recon F1: " + fpga_.lastError());
+            }
+        }
+        if (reconToFb && fb_.ok()) {
+            rgb565ToRgb24(rgb320.data(), kFsW, kFsH, rgb24);
+            if (fb_.blitRgb24(rgb24.data(), kFsW, kFsH))
+                any = true;
+        }
+        if (any) {
+            reconPresentOk_.store(true);
+            reconFrames_.fetch_add(1);
+        }
+        return any;
+    };
+
+    // Lightweight slice_type probe (first_mb ue + slice_type ue) — skip P/B walks.
+    auto isISliceNal = [](const uint8_t* nalSc, size_t nalLen) -> bool {
+        size_t sc = annexBStartLen(nalSc, nalLen, 0);
+        if (!sc || sc >= nalLen)
+            return false;
+        const uint8_t ntype = nalSc[sc] & 0x1f;
+        if (ntype == 5)
+            return true; // IDR is always I
+        if (ntype != 1)
+            return false;
+        const uint8_t* pay = nalSc + sc + 1;
+        const size_t plen = nalLen - sc - 1;
+        if (plen < 1)
+            return false;
+        auto rbsp = misterplex::detail::removeEpb(pay, plen);
+        misterplex::detail::BitReader br(rbsp.data(), rbsp.size());
+        br.ue(); // first_mb_in_slice
+        uint32_t st = br.ue(); // slice_type
+        if (!br.ok)
+            return false;
+        // 2 or 7 = I (spec allows slice_type % 5)
+        return (st % 5) == 2;
+    };
+
+    auto tryReconNal = [&](const uint8_t* nalSc, size_t nalLen, uint8_t ntype) {
+        if (spsNal.empty() || ppsNal.empty())
+            return;
+        if (ntype != 5 && ntype != 1)
+            return;
+        if (!isISliceNal(nalSc, nalLen))
+            return;
+        if (ntype == 5)
+            ++idrSeen;
+
+        std::vector<uint8_t> au;
+        au.reserve(spsNal.size() + ppsNal.size() + nalLen);
+        au.insert(au.end(), spsNal.begin(), spsNal.end());
+        au.insert(au.end(), ppsNal.begin(), ppsNal.end());
+        au.insert(au.end(), nalSc, nalSc + nalLen);
+
+        auto rec = recon::reconISlice(au.data(), au.size());
+        if (rec.mb_decoded <= 0 || rec.mb_decoded != rec.mb_total || rec.y.empty()) {
+            ++reconFail;
+            if (ntype == 5 || (reconFail % 8) == 1) {
+                log("media: recon fail ntype=" + std::to_string(ntype) +
+                    " mb=" + std::to_string(rec.mb_decoded) + "/" +
+                    std::to_string(rec.mb_total) +
+                    " reason=" + (rec.fail_reason ? rec.fail_reason : "?"));
+            }
+            return;
+        }
+        ++reconOk;
+        // Present every kReconPresentEvery successful I-slice
+        if ((reconOk % kReconPresentEvery) != 0)
+            return;
+        if (presentRecon(rec)) {
+            if (reconOk == 1 || (reconOk % 8) == 0) {
+                log("media: recon frame ok #" + std::to_string(reconOk) + " " +
+                    std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                    " mb=" + std::to_string(rec.mb_decoded) + " idr=" + std::to_string(idrSeen) +
+                    " f1ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+            }
+        }
+    };
+
+    auto consumeCompleteNals = [&]() {
+        // Parse complete NALs from parseFrom; leave trailing incomplete NAL in acc.
+        size_t i = parseFrom;
+        // Ensure we start at a start code if possible
+        while (i + 3 < acc.size()) {
+            size_t sc = annexBStartLen(acc.data(), acc.size(), i);
+            if (sc)
+                break;
+            ++i;
+        }
+        parseFrom = i;
+
+        while (i + 3 < acc.size() && !stop_.load()) {
+            size_t sc = annexBStartLen(acc.data(), acc.size(), i);
+            if (!sc) {
+                ++i;
+                parseFrom = i;
+                continue;
+            }
+            // Find next start code (end of this NAL)
+            size_t j = i + sc;
+            bool foundNext = false;
+            while (j + 2 < acc.size()) {
+                size_t nsc = annexBStartLen(acc.data(), acc.size(), j);
+                if (nsc) {
+                    foundNext = true;
+                    break;
+                }
+                ++j;
+            }
+            if (!foundNext) {
+                // Incomplete NAL — wait for more bytes
+                parseFrom = i;
+                return;
+            }
+            // Complete NAL: [i, j)
+            const size_t nalLen = j - i;
+            if (i + sc < j) {
+                const uint8_t ntype = acc[i + sc] & 0x1f;
+                if (ntype == 7) {
+                    spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
+                                  acc.begin() + static_cast<std::ptrdiff_t>(j));
+                } else if (ntype == 8) {
+                    ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
+                                  acc.begin() + static_cast<std::ptrdiff_t>(j));
+                } else if (ntype == 5 || ntype == 1) {
+                    tryReconNal(acc.data() + i, nalLen, ntype);
+                }
+            }
+            i = j;
+            parseFrom = i;
+        }
+    };
+
+    auto compactAcc = [&]() {
+        // Drop bytes already pushed to F3 and fully parsed; keep incomplete NAL + unsent F3.
+        size_t drop = std::min(f3Off, parseFrom);
+        if (drop == 0)
+            return;
+        // Never drop past incomplete NAL start
+        drop = std::min(drop, parseFrom);
+        if (drop > 0 && drop <= acc.size()) {
+            acc.erase(acc.begin(), acc.begin() + static_cast<std::ptrdiff_t>(drop));
+            f3Off -= drop;
+            parseFrom -= drop;
+        }
+        // Hard cap
+        if (acc.size() > kMaxAcc) {
+            log("media: STREAM acc overflow — reset NAL state");
+            acc.clear();
+            f3Off = 0;
+            parseFrom = 0;
+        }
+    };
 
     while (!stop_.load()) {
         if (paused_.load()) {
@@ -327,25 +577,27 @@ void MediaPlayer::streamPump(int sfd) {
         if (n == 0)
             break;
         acc.insert(acc.end(), buf, buf + n);
-        while (acc.size() >= kChunk && !stop_.load()) {
-            if (fpga_.sendBitstreamChunk(acc.data(), kChunk, /*F3*/ 3)) {
-                total += kChunk;
-                ++pushes;
-                if ((pushes % 64) == 0)
-                    log("media: F3 stream bytes=" + std::to_string(total));
-            } else if ((pushes % 16) == 0) {
-                log("media: F3 stream: " + fpga_.lastError());
-            }
-            acc.erase(acc.begin(), acc.begin() + static_cast<std::ptrdiff_t>(kChunk));
-        }
+        consumeCompleteNals();
+        // Feed F3 up through fully parsed bytes (safe: complete NALs only)
+        pushF3UpTo(parseFrom);
+        compactAcc();
     }
-    if (!acc.empty() && fpga_.ok()) {
-        if (fpga_.sendBitstreamChunk(acc.data(), acc.size(), 3))
-            total += acc.size();
+
+    // Flush remaining complete NALs and F3 tail
+    consumeCompleteNals();
+    pushF3UpTo(parseFrom);
+    if (wantF3 && f3Off < acc.size()) {
+        size_t rem = acc.size() - f3Off;
+        if (rem && fpga_.sendBitstreamChunk(acc.data() + f3Off, rem, 3))
+            f3Total += rem;
     }
+
     ::close(sfd);
     streamActive_.store(false);
-    log("media: F3 stream end bytes=" + std::to_string(total));
+    log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
+        " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
+        " idr=" + std::to_string(idrSeen) +
+        " present=" + std::to_string(reconFrames_.load()));
 }
 
 void MediaPlayer::audioPump(int afd) {
@@ -661,7 +913,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         }
         // FPGA frame_store: SPI ioctl is ~100–150ms/frame — push every 4th unique
         // when dual present (keep fb0 smooth); every frame if PRESENT=fpga only.
-        if (fpga_.ok() && outW_ == 320 && outH_ == 240) {
+        // STREAM=1: host recon owns F1 once a recon frame has been presented (fallback
+        // to FFmpeg RGB if recon never succeeds).
+        const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
+        if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
             const bool every = (presentMode_ == "fpga");
             if (every || (frameIndex % 4) == 0) {
                 if (!fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
@@ -706,7 +961,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (!stop_.load() && onProgress_)
         onProgress_("stopped", 0, durationMs);
     log("media: session end frames=" + std::to_string(frameIndex) +
-        " f3=" + (streamActive_.load() ? "on" : "off"));
+        " recon=" + std::to_string(reconFrames_.load()) +
+        " stream=" + (streamEnabled_ ? "on" : "off"));
 }
 
 } // namespace misterplex

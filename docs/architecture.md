@@ -69,8 +69,8 @@ FFmpeg video → RGB24 320×240    FFmpeg audio → s16le 48k stereo
 
 ## Display policy
 
-1. **Match source Hz** when CRT/LCD accepts modeline (24/30/50/60).
-2. Else **fixed display Hz** + **cadence in present** (never force 60 unique RGB/s through decode).
+1. **Match source Hz** when CRT/LCD accepts modeline (24/30/50/60) — **TODO** HPS switchres; see [match-source-hz.md](match-source-hz.md).
+2. Else **fixed display Hz** + **cadence in present** (shipped: OSD Content FPS + `present_cadence`; never force 60 unique RGB/s through decode).
 3. Audio continuous; lip-sync delay in present-domain FIFO (Phase 2+).
 
 ## Codec policy

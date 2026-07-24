@@ -27,8 +27,8 @@ See [docs/architecture.md](docs/architecture.md).
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.3h** host I-slice recon (maeY≈0.95); I4 TR avail + I16 DC Hadamard; FPGA residual probe |
-| **4** Feature-rich client | planned |
+| **3** FPGA decode / frame store | **3.3h done** recon **bit-exact** (maeY/U/V=0 vs FFmpeg no-LF); **3.3i** STREAM→F1; next 3.3j FPGA residual |
+| **4** Feature-rich client | **foundation** — scrubber/resume hold, soak, package (parallel to Phase 3) |
 
 ### Phase 2 (current on MiSTer `192.168.1.183`)
 
@@ -44,10 +44,34 @@ See [docs/architecture.md](docs/architecture.md).
 
 **HW proven:** PMS “The Garden of Delights” → fb0 + MrAudio; suite green including `test_single_process.sh` (1× ffmpeg).
 
-**Phase 3 track:** see [docs/phase3-decode.md](docs/phase3-decode.md) — RGB frame FIFO then H.264 soft-core; dual-A9 stays pegged until decode leaves ARM.
+**Phase 3 track:** see [docs/phase3-decode.md](docs/phase3-decode.md) — RGB frame FIFO then H.264 soft-core; dual-A9 stays pegged until decode leaves ARM. Phase 4 UX advances in parallel and must not gate decode work.
+
+### Phase 4 foundation (cast client UX)
+
+Ported/hardened mistercast-linux companion lessons without requiring RBF changes:
+
+| Item | Status |
+|------|--------|
+| Scrubber bind fields (`key` / `containerKey` / `playQueueID` / `playQueueItemID` / server address) | **done** — unit + `tests/hw/test_playqueue_bind.sh` |
+| `viewOffset` / `offset` ms; continue-watching only when cast omits offset | **done** |
+| `prePlayHold` + `castBound`: stop ACK/polls stay `buffering@navigation` without media keys | **done** |
+| Mirror does not demote live cast; unsubscribe clears hold | **done** |
+| Match source Hz / modeline | **cadence + OSD Content FPS now**; switchres **TODO** — [docs/match-source-hz.md](docs/match-source-hz.md) |
+| Multi-title soak skeleton | `tests/hw/test_soak.sh` |
+| Release tarball | `scripts/package_release.sh` / `make package` |
+
+```bash
+make unit                          # includes companion scrubber + prePlayHold tests
+make package                       # dist/misterplex-*.tar.gz (ARM + conf + RBF if present)
+./scripts/deploy_misterplexd.sh
+./tests/hw/test_playqueue_bind.sh
+SOAK_HOLD_S=5 ./tests/hw/test_soak.sh
+```
+
+Conf example: [assets/misterplex.conf.example](assets/misterplex.conf.example).
 
 **Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
-**Tests:** `make unit` + HW scripts above.
+**Tests:** `make unit` + HW scripts under `tests/hw/`.
 ## Layout
 
 ```text

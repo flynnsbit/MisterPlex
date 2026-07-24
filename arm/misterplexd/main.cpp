@@ -104,6 +104,17 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = (v == "1" || v == "true" || v == "yes" || v == "on");
+        // Phase 4: match-source-Hz reserved (see docs/match-source-hz.md).
+        // Plex.rbf uses OSD Content FPS + FPGA cadence until HPS modeline switch exists.
+        v = loadConf(confPath, "MATCH_SOURCE_HZ");
+        if (!v.empty())
+            std::fprintf(stderr,
+                         "misterplexd: MATCH_SOURCE_HZ=%s noted (cadence-only until switchres)\n",
+                         v.c_str());
+        v = loadConf(confPath, "SOURCE_FPS");
+        if (!v.empty())
+            std::fprintf(stderr, "misterplexd: SOURCE_FPS=%s noted (OSD Content FPS is authoritative)\n",
+                         v.c_str());
     }
     // Align weak ladder with decode size when still default
     if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
@@ -126,7 +137,7 @@ int main(int argc, char** argv) {
     player.setStreamEnabled(streamEnabled);
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled)
-        std::fprintf(stderr, "misterplexd: STREAM=1 (annex-B → F3)\n");
+        std::fprintf(stderr, "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3)\n");
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
     }

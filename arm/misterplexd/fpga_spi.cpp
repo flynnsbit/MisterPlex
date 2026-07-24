@@ -298,6 +298,29 @@ bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
+bool FpgaSpi::sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index) {
+    if (!rgb565le || !len || (len & 1)) {
+        err_ = "bad rgb565 bytes";
+        return false;
+    }
+    return sendFileTx(rgb565le, len, index);
+}
+
+bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) {
+    if (!rgb || w <= 0 || h <= 0) {
+        err_ = "bad rgb565 frame";
+        return false;
+    }
+    const size_t npx = static_cast<size_t>(w) * static_cast<size_t>(h);
+    std::vector<uint8_t> packed(npx * 2);
+    for (size_t i = 0; i < npx; ++i) {
+        const uint16_t p = rgb[i];
+        packed[i * 2 + 0] = static_cast<uint8_t>(p & 0xFF);
+        packed[i * 2 + 1] = static_cast<uint8_t>(p >> 8);
+    }
+    return sendFileTx(packed.data(), packed.size(), index);
+}
+
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
     if (!pcm || !len) {
         err_ = "sendPcmChunk: empty";

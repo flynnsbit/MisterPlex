@@ -132,11 +132,18 @@ Phase 3.3h (host I-slice recon **bit-exact** vs FFmpeg no-deblock — done this 
   Host: FULL residual walk 300/300; recon real baseline **maeY=U=V=0** vs FFmpeg
         `-skip_loop_filter all`; tiny/gray mae=0; `h264_recon.hpp` → YUV420 + RGB565
   FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
-  **Next (3.3i):**
-    - Host SPI present: dump recon RGB565 → `push_frame` F1 on MiSTer (visual golden)
+  **Next was 3.3i (now done):** host SPI present + STREAM wire — see below.
     - Optional deblock filter (not needed for no-LF gold)
     - FPGA full MB residual + inv quant/IDCT path (extend beyond first-residual probe)
-    - Wire STREAM path: annex-B → host recon → SPI present (hybrid until FPGA decode)
+
+Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
+  STREAM=1: annex-B demux → retain SPS/PPS → IDR/I VCL → `recon::reconISlice`
+    → YUV420 → RGB565 → scale 320×240 → **F1** `sendRgb565Frame` (frame_store)
+  Still feeds **F3** for FPGA decode_stub / residual probes (diagnostic)
+  FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
+  PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
+  Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
+  Unit: `test_cavlc_dc` FULL walk + recon + rgb565; ARM builds with `-I host`
 
 ```
 

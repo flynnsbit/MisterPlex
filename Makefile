@@ -3,7 +3,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit arm-plexd clean help plexd
+.PHONY: all unit arm-plexd clean help plexd package
 
 all: unit
 
@@ -13,6 +13,7 @@ help:
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
+	@echo "  make package    - dist tarball (scripts/package_release.sh)"
 
 test: unit
 
@@ -71,14 +72,22 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp
-MPLEX_INC := -I$(ROOT)/arm/misterplexd
+MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
+# Host recon headers (Phase 3.3i STREAM path)
+MPLEX_HDR := \
+	$(ROOT)/host/libmisterplex/h264_recon.hpp \
+	$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
+	$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
+	$(ROOT)/host/libmisterplex/h264_nal.hpp \
+	$(ROOT)/host/libmisterplex/h264_sps.hpp
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
 		$(ROOT)/arm/misterplexd/media_player.hpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/arm/misterplexd/fb_present.hpp \
-		$(ROOT)/arm/misterplexd/fpga_spi.hpp
+		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(MPLEX_HDR)
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
@@ -98,13 +107,13 @@ ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || comman
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
-arm-plexd:
+arm-plexd: $(MPLEX_HDR)
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
@@ -114,6 +123,9 @@ arm-plexd:
 MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
 build-rbf:
 	$(MISTER_DEV)/scripts/mister-dev build $(ROOT)/fpga/Plex_MiSTer --qpf Plex.qpf
+
+package:
+	$(ROOT)/scripts/package_release.sh
 
 clean:
 	rm -rf $(ROOT)/build

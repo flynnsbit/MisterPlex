@@ -25,6 +25,10 @@ public:
     // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
+    // Push packed RGB565 LE (host word order: lo,hi per pixel). len must be w*h*2.
+    bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
+    bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
+
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 
