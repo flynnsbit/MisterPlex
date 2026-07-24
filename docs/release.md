@@ -153,7 +153,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | CRT 15 kHz | MiSTer video options / fixed modelines; [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
 | Wi-Fi vs Ethernet | Soak net hooks only; eth comparison not measured (no carrier) | lab |
 | Resolution | Lab default 320×240; 480×360 HW-verified weak ladder; higher sizes stress ARM | product |
-| Scrubber | Play-queue bind + seek/step clamp + stop/async race harden (P4-SCRUB E-P4g/f: playGen on stop, lastPlay only at demux, stale-duration reset, skipPrev threshold logs); skipPrevious=Plex-style (restart@0 if >3s else queue prev); live Web eyes-on optional | UX |
+| Scrubber | Play-queue bind + seek/step clamp + stop/async race harden (P4-SCRUB E-P4h: playQueued cast invalidate, async seek/step, scrub plant hold, same-pos demux no-op); skipPrevious=Plex-style (restart@0 if >3s else queue prev); live Web eyes-on optional | UX |
 | Audio | FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (off if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens | ops |
 | Stop under STREAM | thr_ joins; stop clears bind before join so late progress cannot re-arm cast UI | fixed |
