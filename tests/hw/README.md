@@ -36,6 +36,16 @@ SOAK_HOLD_S=15 SOAK_ROUNDS=5 SOAK_PROGRESS=1 SOAK_NET_LABEL=wifi ./tests/hw/test
 
 Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 
+## Phase 3.1b DDR bulk frame (beat SPI F1)
+
+1. Deploy RBF that includes `rtl/ddram_frame_rd.sv` (DDRAM not tied to 0).
+2. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565`
+3. On MiSTer: `push_frame --ddr /tmp/plex_test_320x240.rgb565`
+   - Or: `./tests/hw/test_ddr_frame.sh` (scp + push + status)
+4. Expect wall time **≪ 100 ms** (SPI is ~200 ms) and `has_frame=1`.
+5. misterplexd prefers DDR for F1; falls back to SPI if `ddr_busy` never asserts
+   (old RBF). Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
+
 ## Phase 3.2 audio FIFO
 
 1. Deploy latest `Plex.rbf`.

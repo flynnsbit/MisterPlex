@@ -22,18 +22,23 @@ module colorbars (
 	output reg  [7:0]  b
 );
 
-	// Timing constants (half-rate pixel clock when !scandouble via ce_pix toggle)
-	// Active ~320x240 progressive.
+	// Timing: match MiSTer Template / standard 320x240-class at ~60 Hz (NTSC)
+	// and ~50 Hz (PAL) with the 20 MHz sys PLL.
+	//
+	// Previous H_TOTAL=426 yielded ~90 Hz → LCD "out of range" + vertical roll
+	// (no vertical hold). Template uses ~638 px/line for ~59.8 Hz:
+	//   half-rate ce_pix: 10 MHz / (638 * 262) ≈ 59.8 Hz progressive
+	//   scandouble:       20 MHz / (638 * 524) ≈ 59.8 Hz
 	localparam H_ACTIVE = 10'd320;
-	localparam H_TOTAL  = 10'd426; // matches modelines.dat 320x240 family-ish
-	localparam H_FP     = 10'd16;
-	localparam H_SYNC   = 10'd31;
+	localparam H_TOTAL  = 10'd638; // 0..637 like Template mycore
+	localparam H_FP     = 10'd24;
+	localparam H_SYNC   = 10'd64;
 	// hblank starts after active
-	// PAL vs NTSC vtotal
-	wire [9:0] v_active = scandouble ? (pal ? 10'd480 : 10'd480) : (pal ? 10'd240 : 10'd240);
+	// PAL vs NTSC vtotal (Template-aligned)
+	wire [9:0] v_active = scandouble ? 10'd480 : 10'd240;
 	wire [9:0] v_total  = scandouble ? (pal ? 10'd624 : 10'd524) : (pal ? 10'd312 : 10'd262);
-	wire [9:0] v_sync_s = scandouble ? (pal ? 10'd490 : 10'd490) : (pal ? 10'd245 : 10'd245);
-	wire [9:0] v_sync_e = scandouble ? (pal ? 10'd496 : 10'd496) : (pal ? 10'd248 : 10'd248);
+	wire [9:0] v_sync_s = scandouble ? (pal ? 10'd490 : 10'd490) : (pal ? 10'd256 : 10'd245);
+	wire [9:0] v_sync_e = scandouble ? (pal ? 10'd496 : 10'd496) : (pal ? 10'd259 : 10'd248);
 
 	reg [9:0] hc;
 	reg [9:0] vc;

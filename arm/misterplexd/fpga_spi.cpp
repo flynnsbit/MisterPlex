@@ -30,8 +30,9 @@ constexpr uint8_t UIO_GET_STATUS = 0x29;
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
 // Also guards err_ (std::string is not thread-safe — concurrent writes crashed soak).
-std::mutex& spiMutex() {
-    static std::mutex m;
+// recursive: setErr/lastError may run while SpiExclusive already holds the lock.
+std::recursive_mutex& spiMutex() {
+    static std::recursive_mutex m;
     return m;
 }
 
@@ -92,7 +93,7 @@ struct MainPause {
 
 // Order: process mutex → flock → MainPause. No system()/fork under the lock.
 struct SpiExclusive {
-    std::lock_guard<std::mutex> mu;
+    std::lock_guard<std::recursive_mutex> mu;
     int lfd = -1;
     alignas(MainPause) unsigned char pause_storage_[sizeof(MainPause)]{};
     MainPause* pause = nullptr;
@@ -132,18 +133,17 @@ bool gpiUserMode(volatile uint32_t* map) {
 FpgaSpi::~FpgaSpi() { close(); }
 
 void FpgaSpi::setErr(std::string msg) {
-    // Prefer calling under SpiExclusive; lock if free so lastError races are safe.
-    std::lock_guard<std::mutex> g(spiMutex());
+    std::lock_guard<std::recursive_mutex> g(spiMutex());
     err_ = std::move(msg);
 }
 
 void FpgaSpi::clearErr() {
-    std::lock_guard<std::mutex> g(spiMutex());
+    std::lock_guard<std::recursive_mutex> g(spiMutex());
     err_.clear();
 }
 
 std::string FpgaSpi::lastError() const {
-    std::lock_guard<std::mutex> g(spiMutex());
+    std::lock_guard<std::recursive_mutex> g(spiMutex());
     return err_;
 }
 
@@ -265,7 +265,7 @@ void FpgaSpi::setDownload(int enable) {
 
 bool FpgaSpi::setStatusBit(int bit, int value) {
     if (!ok() || bit < 0 || bit > 127) {
-        err_ = "setStatusBit: bad args";
+        setErr("setStatusBit: bad args");
         return false;
     }
     SpiExclusive guard(true);
@@ -273,6 +273,7 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
         err_ = "FPGA not in user mode";
         return false;
     }
+    err_.clear();
 
     const int byte = bit / 8;
     const int b = bit % 8;
@@ -289,22 +290,18 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
     }
     enableIo(0);
 
-    if (!err_.empty())
-        return false;
-    err_.clear();
-    return true;
+    return err_.empty();
 }
 
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
     if (!ok() || !data || !len) {
-        err_ = "sendFileTx: not open or empty";
+        setErr("sendFileTx: not open or empty");
         return false;
     }
-    // Clear stale err_ from prior DDR probe/fail so SPI F1/F2/F3 is not poisoned.
-    err_.clear();
     auto t0 = std::chrono::steady_clock::now();
     // Mutex + flock + Main pause (no system()/fork — thread-safe under STREAM load).
     SpiExclusive guard(true);
+    err_.clear(); // drop stale DDR probe text so SPI callers see real SPI errors
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;
@@ -342,7 +339,7 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
 
 bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
     if (!rgb || w <= 0 || h <= 0) {
-        err_ = "bad rgb frame";
+        setErr("bad rgb frame");
         return false;
     }
     std::vector<uint8_t> packed(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
@@ -360,7 +357,7 @@ bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
 
 bool FpgaSpi::sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index) {
     if (!rgb565le || !len || (len & 1)) {
-        err_ = "bad rgb565 bytes";
+        setErr("bad rgb565 bytes");
         return false;
     }
     return sendFileTx(rgb565le, len, index);
@@ -368,7 +365,7 @@ bool FpgaSpi::sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index
 
 bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) {
     if (!rgb || w <= 0 || h <= 0) {
-        err_ = "bad rgb565 frame";
+        setErr("bad rgb565 frame");
         return false;
     }
     const size_t npx = static_cast<size_t>(w) * static_cast<size_t>(h);
@@ -383,11 +380,11 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 
 bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) {
     if (!rgb565le || len != kDdrFrameBytes) {
-        err_ = "sendRgb565FrameDdr: need 320x240 RGB565 (153600 B)";
+        setErr("sendRgb565FrameDdr: need 320x240 RGB565 (153600 B)");
         return false;
     }
     if (bank < 0 || bank > 1) {
-        err_ = "sendRgb565FrameDdr: bank must be 0 or 1";
+        setErr("sendRgb565FrameDdr: bank must be 0 or 1");
         return false;
     }
     auto t0 = std::chrono::steady_clock::now();
@@ -396,14 +393,14 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     const off_t phys = static_cast<off_t>(kDdrFrameBase + static_cast<uint32_t>(bank) * kDdrFrameStride);
     int mfd = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
     if (mfd < 0) {
-        err_ = "sendRgb565FrameDdr: open /dev/mem failed";
+        setErr("sendRgb565FrameDdr: open /dev/mem failed");
         return false;
     }
     // Map a full page-aligned region covering the bank stride.
     const size_t mapLen = kDdrFrameStride;
     void* p = mmap(nullptr, mapLen, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, phys);
     if (p == MAP_FAILED) {
-        err_ = "sendRgb565FrameDdr: mmap frame bank failed";
+        setErr("sendRgb565FrameDdr: mmap frame bank failed");
         ::close(mfd);
         return false;
     }
@@ -415,7 +412,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     // status[13]=bank, status[12]=start (rising edge). Pulse start high→sample→low.
     if (!setStatusBit(13, bank ? 1 : 0)) {
-        err_ = "sendRgb565FrameDdr: set bank bit failed: " + err_;
+        setErr("sendRgb565FrameDdr: set bank bit failed: " + lastError());
         return false;
     }
     if (!setStatusBit(12, 0))
@@ -444,12 +441,12 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
         ddr_verified = saw_busy ? 1 : -1;
         if (!saw_busy) {
             setStatusBit(12, 0);
-            err_ = "sendRgb565FrameDdr: no ddr_busy (core RBF lacks 3.1b DDR path?)";
+            setErr("sendRgb565FrameDdr: no ddr_busy (core RBF lacks 3.1b DDR path?)");
             return false;
         }
     } else if (ddr_verified < 0) {
         setStatusBit(12, 0);
-        err_ = "sendRgb565FrameDdr: DDR path previously unavailable";
+        setErr("sendRgb565FrameDdr: DDR path previously unavailable");
         return false;
     } else {
         usleep(2500); // allow DMA to finish without SPI thrash
@@ -460,13 +457,13 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    err_.clear();
+    clearErr();
     return true;
 }
 
 bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
     if (!rgb || w != 320 || h != 240) {
-        err_ = "sendRgb24FrameDdr: need 320x240 RGB24";
+        setErr("sendRgb24FrameDdr: need 320x240 RGB24");
         return false;
     }
     std::vector<uint8_t> packed(kDdrFrameBytes);
@@ -485,7 +482,7 @@ bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
     if (!pcm || !len) {
-        err_ = "sendPcmChunk: empty";
+        setErr("sendPcmChunk: empty");
         return false;
     }
     // Align to 4-byte stereo frames
@@ -497,7 +494,7 @@ bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
 
 bool FpgaSpi::sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index) {
     if (!data || !len) {
-        err_ = "sendBitstreamChunk: empty";
+        setErr("sendBitstreamChunk: empty");
         return false;
     }
     return sendFileTx(data, len, index);
@@ -521,7 +518,7 @@ bool FpgaSpi::flushBitstreamFifo() {
 
 bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
     if (!ok() || !out) {
-        err_ = "getCoreStatus: not open";
+        setErr("getCoreStatus: not open");
         return false;
     }
     // Mutex + flock + Main pause so UIO_GET_STATUS is not interleaved.
@@ -530,6 +527,7 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
         err_ = "FPGA not in user mode";
         return false;
     }
+    err_.clear();
 
     enableIo(1);
     // Main protocol: spi_w(cmd) returns {4'hA, stflg}; next words are status_req.

@@ -52,6 +52,7 @@ localparam CONF_STR = {
 	"F3,H.264 annex-B elementary;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
 	"O[5:4],Content FPS,24,30,60,12;",
 	"O[7:6],Pattern,Bars,Bars+Block,Grid,Ramp;",
@@ -62,7 +63,7 @@ localparam CONF_STR = {
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
-	"v,0;",
+	"v,1;", // was 0 — reset OSD options (force NTSC default after PAL save)
 	"V,v",`BUILD_DATE
 };
 

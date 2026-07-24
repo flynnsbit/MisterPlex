@@ -229,8 +229,16 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     `push_frame --ddr` wall time on lab 192.168.1.183 after RBF deploy.
   **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
 
+  **Build / lab status (this fire):**
+    - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr`)
+    - Quartus: `ddram_frame_rd` elaborates; full RBF fit OOM'd on 15 GiB host
+      (exit 137 during map/fit). Re-run when ≥12 GiB free:
+      `mister-dev build …/Plex_MiSTer --qpf Plex.qpf`
+    - Lab 192.168.1.183: ICMP ok; SSH key not configured from this agent —
+      measure after deploy: `tests/hw/test_ddr_frame.sh`
+
   **Still open after 3.1b:**
-    1. Lab measure push_ms / sustained fps with new RBF
+    1. Complete RBF + lab measure push_ms / sustained fps
     2. Optional: present directly from DDR (skip BRAM) for larger modes
     3. Async double-buffer SPI — small gain only; deprioritized
 

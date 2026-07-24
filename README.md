@@ -27,7 +27,7 @@ See [docs/architecture.md](docs/architecture.md).
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.3j hybrid** host recon F1 (mae=0) + FPGA residual probe/status; M10K ~73% limits full residual |
+| **3** FPGA decode / frame store | **3.3k hybrid** host recon F1 (mae=0) + FPGA first-residual levels/runs (`res_dc`); M10K ~73% defers full MB recon |
 | **4** Feature-rich client | **in progress** — multi-server, browse/menu UX, Content FPS hint, scrubber steps, auto-next (parallel to Phase 3) |
 | **5** Release / display matrix | **docs + soak + package** — [release.md](docs/release.md), [crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
 
