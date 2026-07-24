@@ -50,9 +50,14 @@ public:
         bool has_audio = false;
         bool has_stream = false;
         bool audio_underrun = false;
+        bool has_idr = false;
+        bool stub_busy = false;
         uint8_t last_nal_type = 0;
         uint16_t nalu_count = 0;
         uint16_t stream_fifo_level = 0;
+        uint8_t idr_count = 0;
+        uint8_t stub_frames = 0;
+        // Legacy alias: high/low of previous wr_count field (now idr|stub)
         uint16_t wr_count_lo = 0;
         uint32_t stream_bytes_seen = 0;
         uint32_t stream_bytes_in = 0;

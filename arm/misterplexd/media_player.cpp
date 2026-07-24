@@ -96,6 +96,9 @@ void MediaPlayer::signalChildren(int sig) {
 
 void MediaPlayer::killChildren() {
     signalChildren(SIGTERM);
+    pid_t sp = streamPid_.load();
+    if (sp > 0)
+        kill(-sp, SIGTERM);
     for (int i = 0; i < 20; ++i) {
         pid_t p = childPid_.load();
         if (p <= 0)
@@ -108,12 +111,21 @@ void MediaPlayer::killChildren() {
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     signalChildren(SIGKILL);
+    sp = streamPid_.load();
+    if (sp > 0)
+        kill(-sp, SIGKILL);
     pid_t p = childPid_.exchange(-1);
     if (p > 0) {
         int st = 0;
         waitpid(p, &st, 0);
     }
+    sp = streamPid_.exchange(-1);
+    if (sp > 0) {
+        int st = 0;
+        waitpid(sp, &st, 0);
+    }
     audioActive_.store(false);
+    streamActive_.store(false);
 }
 
 void MediaPlayer::stop() {
@@ -121,6 +133,8 @@ void MediaPlayer::stop() {
     killChildren();
     if (audioThr_.joinable())
         audioThr_.join();
+    if (streamThr_.joinable())
+        streamThr_.join();
     if (thr_.joinable())
         thr_.join();
     playing_.store(false);
@@ -169,6 +183,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     killChildren();
     if (audioThr_.joinable())
         audioThr_.join();
+    if (streamThr_.joinable())
+        streamThr_.join();
     if (thr_.joinable())
         thr_.join();
 
@@ -232,6 +248,104 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
     }
     setpgid(pid, pid);
     return pid;
+}
+
+pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
+                                    int64_t startMs, int writeFd) {
+    // Lightweight copy-demux: annex-B elementary for F3 (no re-encode).
+    std::vector<std::string> args;
+    args.push_back(ffmpeg_);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    if (startMs > 0) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-map");
+    args.push_back("0:v:0");
+    args.push_back("-an");
+    args.push_back("-c:v");
+    args.push_back("copy");
+    args.push_back("-bsf:v");
+    args.push_back("h264_mp4toannexb");
+    args.push_back("-f");
+    args.push_back("h264");
+    args.push_back("pipe:1");
+    return spawnFfmpeg(args, writeFd, -1);
+}
+
+void MediaPlayer::streamPump(int sfd) {
+    // Push annex-B chunks into F3 bitstream_fifo (decode_stub paints on VCL).
+    if (!fpga_.ok()) {
+        char dump[4096];
+        while (!stop_.load()) {
+            if (::read(sfd, dump, sizeof(dump)) <= 0)
+                break;
+        }
+        ::close(sfd);
+        return;
+    }
+    fpga_.flushBitstreamFifo();
+    streamActive_.store(true);
+    log("media: F3 annex-B streaming enabled (STREAM=1)");
+
+    constexpr size_t kChunk = 8192;
+    std::vector<uint8_t> acc;
+    acc.reserve(kChunk * 2);
+    char buf[4096];
+    size_t total = 0;
+    size_t pushes = 0;
+
+    while (!stop_.load()) {
+        if (paused_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        ssize_t n = ::read(sfd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        acc.insert(acc.end(), buf, buf + n);
+        while (acc.size() >= kChunk && !stop_.load()) {
+            if (fpga_.sendBitstreamChunk(acc.data(), kChunk, /*F3*/ 3)) {
+                total += kChunk;
+                ++pushes;
+                if ((pushes % 64) == 0)
+                    log("media: F3 stream bytes=" + std::to_string(total));
+            } else if ((pushes % 16) == 0) {
+                log("media: F3 stream: " + fpga_.lastError());
+            }
+            acc.erase(acc.begin(), acc.begin() + static_cast<std::ptrdiff_t>(kChunk));
+        }
+    }
+    if (!acc.empty() && fpga_.ok()) {
+        if (fpga_.sendBitstreamChunk(acc.data(), acc.size(), 3))
+            total += acc.size();
+    }
+    ::close(sfd);
+    streamActive_.store(false);
+    log("media: F3 stream end bytes=" + std::to_string(total));
 }
 
 void MediaPlayer::audioPump(int afd) {
@@ -481,6 +595,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
     }
 
+    // Optional continuous annex-B → F3 (Phase 3.3b product path toward FPGA decode)
+    const bool wantF3 = streamEnabled_ && fpga_.ok() && !testPattern;
+    if (wantF3) {
+        int spipe[2] = {-1, -1};
+        if (pipe(spipe) == 0) {
+            pid_t spid = spawnStreamDemux(url, headers, startMs, spipe[1]);
+            ::close(spipe[1]);
+            if (spid > 0) {
+                streamPid_.store(spid);
+                streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
+            } else {
+                ::close(spipe[0]);
+                log("media: F3 stream demux fork failed");
+            }
+        }
+    }
+
     const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
     std::vector<uint8_t> frame(frameBytes);
     int64_t frameIndex = 0;
@@ -568,11 +699,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     killChildren();
     if (audioThr_.joinable())
         audioThr_.join();
+    if (streamThr_.joinable())
+        streamThr_.join();
 
     playing_.store(false);
     if (!stop_.load() && onProgress_)
         onProgress_("stopped", 0, durationMs);
-    log("media: session end frames=" + std::to_string(frameIndex));
+    log("media: session end frames=" + std::to_string(frameIndex) +
+        " f3=" + (streamActive_.load() ? "on" : "off"));
 }
 
 } // namespace misterplex

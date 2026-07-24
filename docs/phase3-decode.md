@@ -66,14 +66,25 @@ Phase 3.3 scaffold (HW-green):
   ARM: `sendBitstreamChunk` / push_frame --index 3; `scripts/gen_test_annexb.py`
   HW: `tests/hw/test_f3_bitstream.sh`; unit `test_annexb_count`
   Fit: block mem ~56%, RAM blocks ~73% (bitstream 262144 bits / 32 M10K)
-  Core status readback (UIO_GET_STATUS 0x29 / status_in):
-    [0] has_frame [1] has_audio [2] has_stream [3] underrun
-    [15:8] last_nal_type  [31:16] nalu_count  [47:32] fifo_level
-    [63:48] wr_count_lo  [95:64] bytes_seen  [127:96] bytes_in
+  Core status readback (UIO_GET_STATUS 0x29 / status_in) — see 3.3b layout below
   `push_frame --status` dumps fields; HW test asserts nalu≥4 after F3 push
 
-Phase 3.3b (next):
-  H.264 Baseline soft-core / open IP → YUV → frame_store
+Phase 3.3b (done this fire — decode_stub + typed NAL + STREAM path):
+  nalu_scanner classifies SPS/PPS/IDR/slice; vcl_pulse on types 1/5
+  decode_stub: on VCL → paint 320×240 RGB565 diagnostic → frame_store swap
+    (green border=IDR, cyan=P; top strip encodes type/idr_count)
+  Same write interface as future Baseline IP (wr_en/pixel/reset/swap)
+  Status layout:
+    [0] has_frame [1] has_audio [2] has_stream [3] underrun
+    [4] has_idr [5] stub_busy
+    [15:8] last_nal_type  [31:16] nalu_count  [47:32] fifo_level
+    [55:48] idr_count  [63:56] stub_frames[7:0]
+    [95:64] bytes_seen  [127:96] bytes_in
+  ARM: STREAM=1 conf → second ffmpeg copy-demux annex-B → F3 chunks
+  HW: `tests/hw/test_f3_decode_stub.sh` (has_idr + stub_frames + has_frame)
+
+Phase 3.3c (next):
+  Real H.264 Baseline soft-core / open IP → YUV→RGB565 → same frame_store ports
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

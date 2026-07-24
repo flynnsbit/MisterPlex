@@ -4,6 +4,7 @@
 //  Phase 3.0: dual-bank RGB565 frame_store via ioctl F1
 //  Phase 3.2: present-domain audio_fifo via ioctl F2
 //  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
+//  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -78,8 +79,9 @@ wire [15:0] ioctl_index;
 wire [127:0] status_in;
 reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
-wire [15:0]  nalu_count;
-wire [7:0]   last_nal_type;
+wire         has_idr, stub_busy;
+wire [15:0]  nalu_count, stub_frames;
+wire [7:0]   last_nal_type, idr_count, sps_count, pps_count, slice_count;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -140,10 +142,10 @@ wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
 wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
 
 // Frame ingest from F1
-wire        fs_wr_en;
-wire [15:0] fs_wr_pixel;
-wire        fs_wr_reset;
-wire        fs_swap;
+wire        f1_wr_en;
+wire [15:0] f1_wr_pixel;
+wire        f1_wr_reset;
+wire        f1_swap;
 wire [31:0] ingest_pixels;
 wire        ingest_dl;
 
@@ -156,10 +158,10 @@ frame_ingest finst (
 	.ioctl_addr(ioctl_addr),
 	.ioctl_index(ioctl_index),
 	.enable(is_frame_dl),
-	.wr_en(fs_wr_en),
-	.wr_pixel(fs_wr_pixel),
-	.wr_reset_ptr(fs_wr_reset),
-	.swap_req(fs_swap),
+	.wr_en(f1_wr_en),
+	.wr_pixel(f1_wr_pixel),
+	.wr_reset_ptr(f1_wr_reset),
+	.swap_req(f1_swap),
 	.pixels_written(ingest_pixels),
 	.downloading(ingest_dl)
 );
@@ -184,7 +186,12 @@ audio_ingest ainst (
 	.active(af_active)
 );
 
-// Phase 3.3 elementary H.264 annex-B → BRAM FIFO → NAL count (decode later)
+// Phase 3.3/3.3b: annex-B → FIFO → NAL stats → decode_stub → frame_store
+wire        stub_wr_en;
+wire [15:0] stub_wr_pixel;
+wire        stub_wr_reset;
+wire        stub_swap;
+
 stream_path spath (
 	.clk(clk_sys),
 	.reset(reset),
@@ -198,8 +205,26 @@ stream_path spath (
 	.last_nal_type(last_nal_type),
 	.bytes_in(stream_bytes_in),
 	.bytes_seen(stream_bytes_seen),
-	.fifo_level(stream_fifo_level)
+	.fifo_level(stream_fifo_level),
+	.has_idr(has_idr),
+	.idr_count(idr_count),
+	.sps_count(sps_count),
+	.pps_count(pps_count),
+	.slice_count(slice_count),
+	.stub_frames(stub_frames),
+	.stub_busy(stub_busy),
+	.fs_wr_en(stub_wr_en),
+	.fs_wr_pixel(stub_wr_pixel),
+	.fs_wr_reset(stub_wr_reset),
+	.fs_swap(stub_swap)
 );
+
+// Mux F1 ingest vs decode_stub into single frame_store write port.
+// Stub wins while busy (or when asserting write); F1 used for RGB path.
+wire        fs_wr_en    = stub_busy ? stub_wr_en    : (stub_wr_en | f1_wr_en);
+wire [15:0] fs_wr_pixel = stub_wr_en ? stub_wr_pixel : f1_wr_pixel;
+wire        fs_wr_reset = stub_wr_reset | f1_wr_reset;
+wire        fs_swap     = stub_swap | f1_swap;
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;
@@ -269,41 +294,46 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 // --- Core status → HPS (UIO_GET_STATUS) ---
 // Layout (little-endian 16-bit words as read by ARM):
 //   [0] has_frame  [1] has_audio  [2] has_stream  [3] audio_underrun
+//   [4] has_idr    [5] stub_busy
 //   [15:8] last_nal_type
 //   [31:16] nalu_count
 //   [47:32] stream_fifo_level
-//   [63:48] wr_count[15:0]
+//   [55:48] idr_count   [63:56] stub_frames[7:0]
 //   [95:64] stream_bytes_seen
 //   [127:96] stream_bytes_in
+// Note: wr_count dropped from status (still internal); idr/stub replace it.
 assign status_in = {
 	stream_bytes_in,                    // 127:96
 	stream_bytes_seen,                  // 95:64
-	wr_count[15:0],                     // 63:48
+	stub_frames[7:0], idr_count,        // 63:48
 	stream_fifo_level,                  // 47:32
 	nalu_count,                         // 31:16
 	last_nal_type,                      // 15:8
-	4'b0, audio_underrun, has_stream, has_audio, has_frame  // 7:0
+	2'b0, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame  // 7:0
 };
 
-// Pulse status_set ~1 kHz or when nalu_count changes so Main/ARM can poll.
-reg [15:0] prev_nalu;
+// Pulse status_set ~1 kHz or when nalu/stub_frames change so Main/ARM can poll.
+reg [15:0] prev_nalu, prev_stub;
 reg [14:0] st_div;
 always @(posedge clk_sys) begin
 	if (reset) begin
 		status_set <= 0;
 		prev_nalu  <= 0;
+		prev_stub  <= 0;
 		st_div     <= 0;
 	end else begin
 		status_set <= 0;
 		st_div <= st_div + 1'd1;
-		if (nalu_count != prev_nalu || st_div == 0) begin
+		if (nalu_count != prev_nalu || stub_frames != prev_stub || st_div == 0) begin
 			status_set <= 1'b1;
 			prev_nalu  <= nalu_count;
+			prev_stub  <= stub_frames;
 		end
 	end
 end
 
 // Silence unused
-wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr};
+wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
+	sps_count, pps_count, slice_count, wr_count};
 
 endmodule

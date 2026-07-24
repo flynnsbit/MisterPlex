@@ -374,10 +374,15 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.has_audio = (w0 & 2) != 0;
     s.has_stream = (w0 & 4) != 0;
     s.audio_underrun = (w0 & 8) != 0;
+    s.has_idr = (w0 & 16) != 0;
+    s.stub_busy = (w0 & 32) != 0;
     s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
     s.nalu_count = w1;
     s.stream_fifo_level = w2;
-    s.wr_count_lo = w3;
+    // [63:48] = {stub_frames[7:0], idr_count[7:0]}
+    s.idr_count = static_cast<uint8_t>(w3 & 0xFF);
+    s.stub_frames = static_cast<uint8_t>((w3 >> 8) & 0xFF);
+    s.wr_count_lo = w3; // legacy combined field
     s.stream_bytes_seen = static_cast<uint32_t>(raw[8] | (raw[9] << 8) | (raw[10] << 16) | (raw[11] << 24));
     s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16) | (raw[15] << 24));
     return s;

@@ -73,8 +73,8 @@ $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 
 push-frame: $(ROOT)/build/push_frame
 
-# ARM hard-float for MiSTer (try common cross compilers)
-ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null)
+# ARM hard-float for MiSTer (try common cross compilers + local mistercast toolchain)
+ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null || ls /home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-g++ 2>/dev/null)
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.

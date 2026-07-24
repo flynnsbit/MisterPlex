@@ -1,4 +1,5 @@
-// Phase 3.3: F3 elementary stream → bitstream_fifo → nalu_scanner.
+// Phase 3.3 / 3.3b: F3 elementary stream → bitstream_fifo → nalu_scanner → decode_stub.
+// decode_stub paints frame_store on each VCL NAL until real H.264 IP lands.
 
 module stream_path (
 	input  wire        clk,
@@ -15,7 +16,22 @@ module stream_path (
 	output wire [7:0]  last_nal_type,
 	output wire [31:0] bytes_in,
 	output wire [31:0] bytes_seen,
-	output wire [15:0] fifo_level
+	output wire [15:0] fifo_level,
+
+	// 3.3b typed / decode-stub status
+	output wire        has_idr,
+	output wire [7:0]  idr_count,
+	output wire [7:0]  sps_count,
+	output wire [7:0]  pps_count,
+	output wire [7:0]  slice_count,
+	output wire [15:0] stub_frames,
+	output wire        stub_busy,
+
+	// frame_store write (muxed with F1 ingest at top)
+	output wire        fs_wr_en,
+	output wire [15:0] fs_wr_pixel,
+	output wire        fs_wr_reset,
+	output wire        fs_swap
 );
 
 	wire        si_wr_en;
@@ -58,6 +74,10 @@ module stream_path (
 		.has_data(bf_has)
 	);
 
+	wire        vcl_pulse;
+	wire [7:0]  idr_c, sps_c, pps_c, slc_c;
+	wire        has_idr_w;
+
 	nalu_scanner scan (
 		.clk(clk),
 		.reset(reset | flush),
@@ -67,12 +87,43 @@ module stream_path (
 		.nalu_count(nalu_count),
 		.last_nal_type(last_nal_type),
 		.has_stream(has_stream),
-		.bytes_seen(bytes_seen)
+		.bytes_seen(bytes_seen),
+		.idr_count(idr_c),
+		.sps_count(sps_c),
+		.pps_count(pps_c),
+		.slice_count(slc_c),
+		.has_idr(has_idr_w),
+		.vcl_pulse(vcl_pulse)
+	);
+
+	assign has_idr     = has_idr_w;
+	assign idr_count   = idr_c;
+	assign sps_count   = sps_c;
+	assign pps_count   = pps_c;
+	assign slice_count = slc_c;
+
+	decode_stub #(
+		.WIDTH(320),
+		.HEIGHT(240)
+	) stub (
+		.clk(clk),
+		.reset(reset | flush),
+		.vcl_pulse(vcl_pulse),
+		.last_nal_type(last_nal_type),
+		.nalu_count(nalu_count),
+		.idr_count(idr_c),
+		.has_idr(has_idr_w),
+		.wr_en(fs_wr_en),
+		.wr_pixel(fs_wr_pixel),
+		.wr_reset_ptr(fs_wr_reset),
+		.swap_req(fs_swap),
+		.busy(stub_busy),
+		.frames_out(stub_frames)
 	);
 
 	// Keep ingest/FIFO status from being optimized away
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
-	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in;
+	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy;
 
 endmodule

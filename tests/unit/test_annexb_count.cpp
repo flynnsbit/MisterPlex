@@ -1,17 +1,37 @@
-// Host mirror of nalu_scanner start-code logic (unit, no FPGA).
+// Host mirror of nalu_scanner start-code + type classify (unit, no FPGA).
 #include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
 
-static int countNalu(const uint8_t* p, size_t n) {
+struct NaluStats {
     int count = 0;
+    int sps = 0, pps = 0, idr = 0, slice = 0;
+    int vcl = 0;
+    uint8_t last = 0;
+};
+
+static NaluStats scanNalu(const uint8_t* p, size_t n) {
+    NaluStats s;
     int zrun = 0;
     bool pend = false;
     for (size_t i = 0; i < n; ++i) {
         uint8_t b = p[i];
         if (pend) {
-            ++count;
+            ++s.count;
+            s.last = b;
+            uint8_t t = b & 0x1f;
+            if (t == 7)
+                ++s.sps;
+            else if (t == 8)
+                ++s.pps;
+            else if (t == 5) {
+                ++s.idr;
+                ++s.vcl;
+            } else if (t == 1) {
+                ++s.slice;
+                ++s.vcl;
+            }
             pend = false;
             zrun = 0;
             continue;
@@ -26,7 +46,7 @@ static int countNalu(const uint8_t* p, size_t n) {
             zrun = 0;
         }
     }
-    return count;
+    return s;
 }
 
 int main() {
@@ -40,11 +60,12 @@ int main() {
     add4(8, "PPS");
     add4(5, "IDR");
     blob.insert(blob.end(), {0, 0, 1, 0x61, 'P'});
-    int c = countNalu(blob.data(), blob.size());
-    if (c != 4) {
-        std::printf("FAIL count=%d want 4\n", c);
+    auto s = scanNalu(blob.data(), blob.size());
+    if (s.count != 4 || s.sps != 1 || s.pps != 1 || s.idr != 1 || s.slice != 1 || s.vcl != 2) {
+        std::printf("FAIL count=%d sps=%d pps=%d idr=%d slice=%d vcl=%d\n", s.count, s.sps, s.pps,
+                    s.idr, s.slice, s.vcl);
         return 1;
     }
-    std::printf("test_annexb_count: OK (count=%d)\n", c);
+    std::printf("test_annexb_count: OK (count=%d vcl=%d idr=%d)\n", s.count, s.vcl, s.idr);
     return 0;
 }

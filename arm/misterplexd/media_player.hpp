@@ -29,6 +29,8 @@ public:
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
     // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
+    // STREAM=1: demux annex-B H.264 → F3 bitstream_fifo (decode_stub / future IP)
+    void setStreamEnabled(bool on) { streamEnabled_ = on; }
     void setDecodeSize(int w, int h);
 
     bool initPresent();
@@ -50,9 +52,12 @@ public:
 private:
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
     void audioPump(int afd);
+    void streamPump(int sfd);
     void killChildren();
     void signalChildren(int sig);
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
+    pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
+                           int writeFd);
     void log(const std::string& s) const;
 
     LogFn log_;
@@ -61,19 +66,23 @@ private:
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
+    bool streamEnabled_ = false; // annex-B → F3
 
     FbPresent fb_;
     FpgaSpi fpga_;
     mutable std::mutex mu_;
     std::thread thr_;
     std::thread audioThr_;
+    std::thread streamThr_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
+    std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     std::atomic<pid_t> childPid_{-1};
+    std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;
     std::string currentUrl_;
     std::string currentHeaders_;

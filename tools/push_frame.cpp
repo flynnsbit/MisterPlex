@@ -40,10 +40,12 @@ int main(int argc, char** argv) {
         }
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
-            "nalu=%u last_nal=0x%02x fifo_lvl=%u wr_lo=%u bytes_in=%u bytes_seen=%u\n",
+            "has_idr=%d stub_busy=%d nalu=%u last_nal=0x%02x fifo_lvl=%u "
+            "idr=%u stub_frames=%u bytes_in=%u bytes_seen=%u\n",
             st.has_frame ? 1 : 0, st.has_audio ? 1 : 0, st.has_stream ? 1 : 0,
-            st.audio_underrun ? 1 : 0, st.nalu_count, st.last_nal_type,
-            st.stream_fifo_level, st.wr_count_lo, st.stream_bytes_in, st.stream_bytes_seen);
+            st.audio_underrun ? 1 : 0, st.has_idr ? 1 : 0, st.stub_busy ? 1 : 0,
+            st.nalu_count, st.last_nal_type, st.stream_fifo_level, st.idr_count,
+            st.stub_frames, st.stream_bytes_in, st.stream_bytes_seen);
         return 0;
     }
 

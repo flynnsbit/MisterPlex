@@ -44,3 +44,11 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 2. `python3 scripts/gen_test_annexb.py /tmp/plex_test_annexb.h264`
 3. `./tests/hw/test_f3_bitstream.sh` — SPI index 3 + `push_frame --status` asserts `nalu≥4`, `has_stream=1`.
 4. Manual: `push_frame --status` on MiSTer dumps has_frame/audio/stream + nalu_count.
+
+## Phase 3.3b decode_stub (F3 → pixels)
+
+1. Deploy latest RBF (`decode_stub` wired into `frame_store`).
+2. `./tests/hw/test_f3_decode_stub.sh` — asserts `has_idr`, `stub_frames≥1`, `has_frame`.
+3. Display shows green-border diagnostic frame after F3 push (not color bars alone).
+4. Continuous product path: `STREAM=1` in `misterplex.conf` (+ `PRESENT=fpga|both`)
+   demuxes annex-B → F3 while playing (decode_stub until real H.264 IP).

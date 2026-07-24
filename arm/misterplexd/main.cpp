@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
     std::string confToken;
     int decodeW = 320, decodeH = 240;
     std::string presentMode = "fb0";
+    bool streamEnabled = false;
     misterplex::WeakLadder weak;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
@@ -100,6 +101,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
+        v = loadConf(confPath, "STREAM");
+        if (!v.empty())
+            streamEnabled = (v == "1" || v == "true" || v == "yes" || v == "on");
     }
     // Align weak ladder with decode size when still default
     if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
@@ -119,7 +123,10 @@ int main(int argc, char** argv) {
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeW, decodeH);
     player.setPresentMode(presentMode);
+    player.setStreamEnabled(streamEnabled);
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    if (streamEnabled)
+        std::fprintf(stderr, "misterplexd: STREAM=1 (annex-B → F3)\n");
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
     }
