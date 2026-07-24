@@ -184,6 +184,8 @@ module stream_path (
 		.mb_h(sps_mb_h),
 		.slice_type(sl_type),
 		.slice_is_i(sl_is_i),
+		.residual_ok(sl_res_ok),
+		.residual_tc(sl_rtc),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),

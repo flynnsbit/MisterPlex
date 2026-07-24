@@ -20,6 +20,9 @@ module decode_stub #(
 	input  wire [7:0]  mb_h,
 	input  wire [7:0]  slice_type,
 	input  wire        slice_is_i,
+	// 3.3g: first-MB residual cue for eyes-on recon stub
+	input  wire        residual_ok,
+	input  wire [4:0]  residual_tc,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -42,6 +45,8 @@ module decode_stub #(
 	reg [7:0]      lat_idr;
 	reg [7:0]      lat_mb_w, lat_mb_h;
 	reg            lat_sps;
+	reg            lat_res_ok;
+	reg [4:0]      lat_res_tc;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -55,21 +60,27 @@ module decode_stub #(
 	wire [7:0] mbx = x[9:4];
 	wire [7:0] mby = y[9:4];
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
+	// First MB (0,0) filled with recon stub gray when residual_ok
+	wire mb0 = (x < 10'd16) && (y < 10'd16);
+	wire [7:0] recon_y = 8'd128 + {3'b0, lat_res_tc}; // host mean ~128-142 band
 
 	wire idr_style = is_idr_frame || (lat_type[4:0] == 5'd5);
 
 	wire [7:0] rr =
 		border   ? 8'h10 :
+		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? {lat_type[4:0], 3'b000} :
 		mb_line  ? (is_i_frame ? 8'h20 : 8'h80) :
 		           (8'h08 + {4'b0, mb_hash[3:0]});
 	wire [7:0] gg =
 		border   ? (idr_style ? 8'hE0 : 8'hC0) :
+		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? lat_idr :
 		mb_line  ? (is_i_frame ? 8'hE0 : 8'h40) :
 		           (8'h18 + {3'b0, mb_hash[4:0]});
 	wire [7:0] bb =
 		border   ? (idr_style ? 8'h20 : 8'hE0) :
+		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? 8'h20 :
 		mb_line  ? 8'h30 :
 		           (8'h40 + {mb_hash[5:0], 2'b00});
@@ -95,6 +106,8 @@ module decode_stub #(
 			lat_mb_w     <= 0;
 			lat_mb_h     <= 0;
 			lat_sps      <= 0;
+			lat_res_ok   <= 0;
+			lat_res_tc   <= 0;
 			wr_pixel     <= 0;
 		end else if (!active) begin
 			if (vcl_pulse) begin
@@ -112,6 +125,8 @@ module decode_stub #(
 				lat_sps      <= sps_valid;
 				lat_mb_w     <= (mb_w == 0) ? 8'd20 : mb_w;
 				lat_mb_h     <= (mb_h == 0) ? 8'd15 : mb_h;
+				lat_res_ok   <= residual_ok;
+				lat_res_tc   <= residual_tc;
 			end
 		end else begin
 			wr_en    <= 1'b1;

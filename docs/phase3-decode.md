@@ -114,8 +114,14 @@ Phase 3.3f (done this fire — first-MB CAVLC residual token probe):
   Status: res_ok / res_tc / res_t1; HW `test_f3_residual.sh` green
   Full slice residual + inv quant/IDCT/recon still next
 
-Phase 3.3g (next):
-  Full I-slice residual walk (I_NxN+I_16x16) → inv quant → IDCT → recon → YUV→RGB565
+Phase 3.3g (done this fire — first-MB inv-quant recon stub):
+  Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
+  Unit: test_cavlc_dc reports tc/t1/meanY (e.g. meanY~128 y00~142)
+  FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
+  Full 300-MB I-slice walk + true IDCT/intra still next (I_NxN cbp/me alignment)
+
+Phase 3.3h (next):
+  Full I-slice residual walk (I_NxN+I_16x16, nC neighbors) → IDCT → recon → YUV→RGB565
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

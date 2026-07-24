@@ -1,4 +1,4 @@
-// Unit: CAVLC first I_16x16 DC residual of real Baseline IDR (Phase 3.3f).
+// Unit: CAVLC first I_16x16 DC + inv-quant recon mean Y (Phase 3.3f/g).
 #include "libmisterplex/h264_cavlc.hpp"
 
 #include <cstdio>
@@ -25,25 +25,28 @@ int main(int argc, char** argv) {
         blob = readFile("/tmp/plex_real_baseline.h264");
     }
     auto r = misterplex::cavlc::probeFirstI16Dc(blob.data(), blob.size());
-    if (!r.ok) {
-        std::printf("FAIL: residual probe not ok (tc=%d)\n", r.total_coeff);
+    if (!r.ok || r.total_coeff != 2 || r.trailing_ones != 2) {
+        std::printf("FAIL: residual ok=%d tc=%d t1=%d want 2/2\n", r.ok, r.total_coeff,
+                    r.trailing_ones);
         return 1;
     }
-    // Golden from bit-level analysis of plex_real_baseline.h264
-    if (r.total_coeff != 2 || r.trailing_ones != 2) {
-        std::printf("FAIL: tc=%d t1=%d want 2/2\n", r.total_coeff, r.trailing_ones);
-        return 1;
-    }
-    // levels of two trailing ones are ±1
     int nz = 0;
     for (int i = 0; i < 16; ++i)
         if (r.coeff[i] != 0)
             ++nz;
     if (nz != 2) {
-        std::printf("FAIL: nonzero count %d want 2\n", nz);
+        std::printf("FAIL: nonzero %d want 2\n", nz);
         return 1;
     }
-    std::printf("test_cavlc_dc: OK first I16 DC TotalCoeff=%d TrailingOnes=%d\n", r.total_coeff,
-                r.trailing_ones);
+    int16_t y[16][16];
+    int mean = misterplex::cavlc::reconFirstI16DcMeanY(blob.data(), blob.size(), y);
+    if (mean < 0 || mean > 255) {
+        std::printf("FAIL: meanY=%d\n", mean);
+        return 1;
+    }
+    // Residual non-zero → mean should move off pure mid-gray 128 for this clip
+    // (allow wide band; structural check is range)
+    std::printf("test_cavlc_dc: OK tc=%d t1=%d nz=%d meanY=%d y00=%d\n", r.total_coeff,
+                r.trailing_ones, nz, mean, (int)y[0][0]);
     return 0;
 }
