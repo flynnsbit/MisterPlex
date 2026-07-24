@@ -25,7 +25,13 @@ public:
     // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
+    // UIO_SET_STATUS2: set/clear a single status bit (0–127). Best-effort —
+    // does not fully sync with Main's cur_status shadow.
+    bool setStatusBit(int bit, int value);
+
     std::string lastError() const { return err_; }
+    // Last successful frame push duration (ms)
+    double lastPushMs() const { return lastPushMs_; }
 
 private:
     void gpoWrite(uint32_t v);
@@ -36,17 +42,21 @@ private:
     void spiByte(uint8_t b);
     void spiWriteBytes(const uint8_t* p, size_t n);
     void enableFpga(int on);
+    void enableIo(int on);
     void setIndex(uint8_t index);
     void setDownload(int enable);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
     uint32_t gpo_copy_ = 0;
+    uint8_t status_[16]{};
+    double lastPushMs_ = 0;
     std::string err_;
     static constexpr uint32_t kMgrBase = 0xFF706000;
     static constexpr uint32_t kMapBase = 0xFF000000;
     static constexpr size_t kMapSize = 0x01000000;
     static constexpr uint32_t SSPI_FPGA_EN = (1u << 18);
+    static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
 };
 

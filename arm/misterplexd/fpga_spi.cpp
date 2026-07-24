@@ -1,6 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -15,6 +16,7 @@ namespace {
 constexpr uint8_t FIO_FILE_TX = 0x53;
 constexpr uint8_t FIO_FILE_TX_DAT = 0x54;
 constexpr uint8_t FIO_FILE_INDEX = 0x55;
+constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 
 } // namespace
 
@@ -119,6 +121,7 @@ void FpgaSpi::spiWriteBytes(const uint8_t* p, size_t n) {
 }
 
 void FpgaSpi::enableFpga(int on) { spiEn(SSPI_FPGA_EN, on); }
+void FpgaSpi::enableIo(int on) { spiEn(SSPI_IO_EN, on); }
 
 void FpgaSpi::setIndex(uint8_t index) {
     enableFpga(1);
@@ -134,11 +137,44 @@ void FpgaSpi::setDownload(int enable) {
     enableFpga(0);
 }
 
+bool FpgaSpi::setStatusBit(int bit, int value) {
+    if (!ok() || bit < 0 || bit > 127) {
+        err_ = "setStatusBit: bad args";
+        return false;
+    }
+    int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
+    if (lfd >= 0)
+        flock(lfd, LOCK_EX);
+
+    const int byte = bit / 8;
+    const int b = bit % 8;
+    if (value)
+        status_[byte] = static_cast<uint8_t>(status_[byte] | (1u << b));
+    else
+        status_[byte] = static_cast<uint8_t>(status_[byte] & ~(1u << b));
+
+    enableIo(1);
+    spiWord(UIO_SET_STATUS2); // cmd on IO CS
+    for (int i = 0; i < 16; i += 2) {
+        uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
+        spiWord(w);
+    }
+    enableIo(0);
+
+    if (lfd >= 0) {
+        flock(lfd, LOCK_UN);
+        ::close(lfd);
+    }
+    err_.clear();
+    return true;
+}
+
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
     if (!ok() || !data || !len) {
         err_ = "sendFileTx: not open or empty";
         return false;
     }
+    auto t0 = std::chrono::steady_clock::now();
     // Best-effort lock so concurrent tools don't interleave
     int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
     if (lfd >= 0)
@@ -148,7 +184,7 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
     setDownload(1);
 
     // Chunk data with FIO_FILE_TX_DAT sessions
-    const size_t chunk = 4096;
+    const size_t chunk = 8192;
     size_t off = 0;
     while (off < len) {
         size_t n = len - off;
@@ -174,6 +210,8 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
         flock(lfd, LOCK_UN);
         ::close(lfd);
     }
+    auto t1 = std::chrono::steady_clock::now();
+    lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
     err_.clear();
     return true;
 }

@@ -48,7 +48,8 @@ Phase 3.0 (in tree now):
 Phase 3.1 (done this fire):
   `fpga_spi` + `push_frame` — HPS SPI FIO_FILE_TX → frame_ingest
   PRESENT=fb0|fpga|both conf; dual present throttles SPI to every 4th frame
-  HW: push_frame 153600B in ~127ms; continuous frame_tx during testsrc play
+  HW: push_frame 153600B in ~99–127ms; continuous frame_tx during testsrc play
+  Auto-present: frame_store shows as soon as has_frame (O[9]=Force bars for debug)
 
 Phase 3.2:
   PCM → core audio FIFO (retire dual-process MrAudio pump for lip-sync)

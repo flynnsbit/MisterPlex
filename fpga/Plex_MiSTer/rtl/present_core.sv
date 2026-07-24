@@ -130,8 +130,9 @@ module present_core (
 		.has_frame(has_frame)
 	);
 
-	// Mux: external frame when enabled and ready, else bars
-	wire use_ext = use_frame_store && has_frame;
+	// Auto: show frame_store once a complete frame is ingested.
+// use_frame_store (OSD O[9] Force bars=Yes) keeps bars for debug.
+	wire use_ext = has_frame && !use_frame_store;
 	assign r = use_ext ? fr : br;
 	assign g = use_ext ? fg : bg;
 	assign b = use_ext ? fb : bb;

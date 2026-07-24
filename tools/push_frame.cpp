@@ -49,6 +49,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "push failed: %s\n", spi.lastError().c_str());
         return 1;
     }
-    std::printf("pushed %zu bytes index=%u OK\n", buf.size(), index);
+    // Ensure Force-bars debug is off (status[9]=0) so auto frame present shows
+    spi.setStatusBit(9, 0);
+    std::printf("pushed %zu bytes index=%u OK (%.1f ms)\n", buf.size(), index, spi.lastPushMs());
     return 0;
 }

@@ -49,7 +49,7 @@ localparam CONF_STR = {
 	"O[5:4],Content FPS,24,30,60,12;",
 	"O[7:6],Pattern,Bars,Bars+Block,Grid,Ramp;",
 	"O[8],Audio tone,On,Off;",
-	"O[9],Video source,Bars,Frame store;",
+	"O[9],Force bars (debug),No,Yes;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
