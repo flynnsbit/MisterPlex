@@ -103,13 +103,24 @@ int main() {
     CHECK(mediaVideoIsH264("<Media videoCodec=\"h264\" />") == true);
     CHECK(mediaVideoIsH264("<Media videoCodec=\"hevc\" />") == false);
     CHECK(mediaVideoIsH264("<Media videoCodec=\"avc\" />") == true);
+    CHECK(mediaVideoIsH264("<Media videoCodec=\"x264\" />") == true);
+    CHECK(mediaVideoIsH264("<Media videoCodec=\"H264\" />") == true);
     CHECK(mediaVideoIsH264(
               "<Stream streamType=\"1\" codec=\"h264\" type=\"video\" />") == true);
+    CHECK(mediaVideoIsH264(
+              "<Stream type=\"video\" codec=\"avc1\" />") == true);
     CHECK(mediaVideoIsH264(
               "<Stream streamType=\"2\" codec=\"aac\" /><Media videoCodec=\"hevc\"/>") == false);
     // Local path + direct URL still resolve without preferDirect flag
     auto directLocal = resolvePlayTarget("/tmp/plex_real_baseline.h264", "", "", 0, true, {}, true);
     CHECK(directLocal.ok && directLocal.playable == "/tmp/plex_real_baseline.h264");
+    // preferDirectH264 does not alter local/http passthrough detail
+    auto directUrl =
+        resolvePlayTarget("http://192.168.1.41:32400/library/parts/1/file.mkv", "", "", 0, true, {},
+                          true);
+    CHECK(directUrl.ok && directUrl.detail == "direct URL");
+    auto localPath = resolvePlayTarget("/media/fat/misterplex/clip.mp4", "", "", 0, true, {}, true);
+    CHECK(localPath.ok && localPath.detail == "local path");
 
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);

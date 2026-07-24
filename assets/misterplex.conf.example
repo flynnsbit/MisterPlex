@@ -21,8 +21,9 @@ PRESENT=fb0
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
-# STREAM_SKIP_RGB=auto  # auto: skip heavy RGB when PRESENT=fpga (keep audio + recon)
-# STREAM_SKIP_RGB=0     # always FFmpeg RGB (fallback for CABAC / PRESENT=both)
+# STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
+# STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
+# PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

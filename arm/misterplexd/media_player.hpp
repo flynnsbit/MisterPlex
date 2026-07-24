@@ -33,8 +33,9 @@ public:
     // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
-    // "auto" = skip RGB when PRESENT=fpga after first recon (or from start with CABAC fallback)
-    // "1"/"on" = prefer skip whenever STREAM (PRESENT=both still keeps RGB for continuous fb0)
+    // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
+    // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
+    // STREAM_SKIP_RGB=0 or PRESENT=both for FFmpeg RGB fallback.
     // "0"/"off" = always full RGB (STREAM=0-compatible fallback path)
     void setStreamSkipRgb(std::string mode) { streamSkipRgb_ = std::move(mode); }
     // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).

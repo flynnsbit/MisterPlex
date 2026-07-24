@@ -226,9 +226,9 @@ int main(int argc, char** argv) {
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; prefer direct H.264; "
-                     "STREAM_SKIP_RGB=%s)\n",
-                     streamSkipRgb.c_str());
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
+                     presentMode.c_str(), streamSkipRgb.c_str());
     }
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");

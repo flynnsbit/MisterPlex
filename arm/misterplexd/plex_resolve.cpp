@@ -510,8 +510,41 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
-    const bool directH264 = preferDirectH264 && !xml.empty() && mediaVideoIsH264(xml);
-    if (directH264 && key.rfind("/library", 0) == 0) {
+    const bool metaOk = !xml.empty();
+    const bool isH264 = metaOk && mediaVideoIsH264(xml);
+    const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
+    const bool directH264 = wantDirect && isH264;
+    // Optional profile tag for operator logs (High often implies CABAC sticky skip).
+    auto videoProfileNote = [&]() -> std::string {
+        if (!metaOk)
+            return {};
+        // Prefer video Stream profile, then Media@videoProfile / videoCodec.
+        size_t sp = 0;
+        while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+            auto end = xml.find('>', sp);
+            if (end == std::string::npos)
+                break;
+            const std::string slice = xml.substr(sp, end - sp);
+            const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                 slice.find("type=\"video\"") != std::string::npos;
+            if (isVideo) {
+                auto p = attrIn(slice, "profile");
+                if (p.empty())
+                    p = attrIn(slice, "videoProfile");
+                if (!p.empty())
+                    return p;
+                break;
+            }
+            sp = end + 1;
+        }
+        auto p = attr(xml, "Media", "videoProfile");
+        if (p.empty())
+            p = attr(xml, "Media", "videoCodec");
+        return p;
+    };
+    if (directH264) {
+        const std::string prof = videoProfileNote();
+        const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
         auto partKey = attr(xml, "Part", "key");
         if (!partKey.empty()) {
             if (partKey[0] != '/')
@@ -522,7 +555,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part (STREAM)";
+            r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
             return r;
         }
         auto file = attr(xml, "Part", "file");
@@ -530,7 +563,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.transcoded = false;
-            r.detail = "direct H.264 Part file (STREAM)";
+            r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
             return r;
         }
         // Fall through to universal if Part missing
@@ -547,6 +580,15 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = start;
             r.httpHeaders = plexFfmpegHeaders(session, token);
             r.detail = "PMS universal weak " + weak.videoResolution + " " + key;
+            // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
+            if (preferDirectH264) {
+                if (!metaOk)
+                    r.detail += " (STREAM preferDirect: no metadata)";
+                else if (!isH264)
+                    r.detail += " (STREAM preferDirect: source not H.264)";
+                else
+                    r.detail += " (STREAM preferDirect: H.264 Part missing → universal may be High/CABAC)";
+            }
             return r;
         }
         r.detail = "universal decision failed; trying direct part";

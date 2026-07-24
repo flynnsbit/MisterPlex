@@ -187,8 +187,10 @@ Phase 3.3k (product path polish — done earlier this arc):
     - avoids Chrome universal High/CABAC that host CAVLC cannot recon
     - local `.h264`/`.264` demux skips `h264_mp4toannexb` BSF
   **Optional skip heavy FFmpeg RGB** (`STREAM_SKIP_RGB=auto|on|off`):
-    - auto + PRESENT=fpga: audio-only FFmpeg + stream demux; recon owns F1
+    - auto/on + PRESENT=fpga: skip RGB **from session start** (audio + demux; recon owns F1)
     - PRESENT=both/fb0: always keep RGB (continuous fb0 / STREAM=0 path intact)
+    - Logs: `STREAM skip RGB…` vs `STREAM keep FFmpeg RGB (PRESENT=… STREAM_SKIP_RGB=…)`
+    - CABAC + skip → no F1: log warns to set `STREAM_SKIP_RGB=0` or `PRESENT=both`
   Unit: `mediaVideoIsH264` + resolve helpers; HW: STREAM=1 PRESENT=both smoke.
 
 Phase 3.3k (FPGA residual advance — this fire):
@@ -222,7 +224,8 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     write RGB565 into existing `frame_store`.
   **3.3l-0 done:** `tests/unit/test_idct_quant.cpp` locks synth DC y=62 + real first 4×4
     (tc=8 t1=3 coeff0=-24 → y00=73 mean=62; full y[][] golden) via dequant4x4/idct4x4_add.
-  **Milestones:** 3.3l-0 ✅ host quant/IDCT golden → 3.3l-1 full coeff[16] on FPGA →
+  **Milestones:** 3.3l-0 ✅ host quant/IDCT golden → 3.3l-1 host full-16 dump+csum8=-20 ✅
+    (FPGA ST_PLACE still coeff[0]; RTL when sole Quartus) →
     3.3l-2 first 4×4 recon paint → 3.3l-3 first MB → 3.3l-4 all MBs → 3.3l-5 hybrid gate.
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.

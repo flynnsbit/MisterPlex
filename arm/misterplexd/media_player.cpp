@@ -117,14 +117,14 @@ std::string MediaPlayer::currentUrl() const {
 bool MediaPlayer::wantSkipRgbVideo() const {
     if (!streamEnabled_)
         return false;
-    // Continuous fb0 needs RGB; skip only frees ARM when FPGA owns present.
+    // Continuous fb0 needs RGB; skip only frees dual-A9 when FPGA alone owns present.
     if (presentMode_ == "both" || presentMode_ == "fb0" || presentMode_.empty())
         return false;
-    // presentMode_ == "fpga"
+    // presentMode_ == "fpga": auto/on skip RGB from start (host recon owns F1).
     if (streamSkipRgb_ == "0" || streamSkipRgb_ == "off" || streamSkipRgb_ == "false" ||
         streamSkipRgb_ == "no")
         return false;
-    // auto | on | 1 | true | yes
+    // auto | on | 1 | true | yes | empty(default auto)
     return streamSkipRgb_ == "auto" || confTruthyMode(streamSkipRgb_) || streamSkipRgb_.empty();
 }
 
@@ -250,6 +250,9 @@ void MediaPlayer::seekMs(int64_t ms) {
         headers = currentHeaders_;
         dur = durationMs_;
     }
+    // Clamp into known duration so scrubber/step edges cannot overshoot EOF.
+    if (dur > 0 && ms > dur)
+        ms = dur;
     if (url.empty()) {
         seekReqMs_.store(ms);
         return;
@@ -604,6 +607,9 @@ void MediaPlayer::streamPump(int sfd) {
             }
         } else {
             // CAVLC PPS: allow I-slice recon (seek/segment may flip profile).
+            if (cabacSkip_.load() && cabacLogged) {
+                log("media: recon CAVLC PPS — sticky CABAC cleared; host I-slice recon re-enabled");
+            }
             cabacSkip_.store(false);
             cabacLogged = false;
         }
@@ -965,8 +971,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Product path: STREAM + PRESENT=fpga may skip heavy RGB (keep audio + demux).
     // STREAM=0 and PRESENT=both/fb0 always keep the proven FFmpeg RGB path.
     const bool skipRgb = !testPattern && wantSkipRgbVideo();
-    if (skipRgb)
-        log("media: STREAM skip RGB decode (audio + host recon F1; PRESENT=fpga)");
+    if (streamEnabled_ && !testPattern) {
+        if (skipRgb) {
+            log("media: STREAM skip RGB decode (audio + host recon F1; PRESENT=fpga "
+                "STREAM_SKIP_RGB=" +
+                streamSkipRgb_ + ")");
+        } else {
+            // Make preferDirect / skip-RGB product path inspectable in logs.
+            log("media: STREAM keep FFmpeg RGB (PRESENT=" + presentMode_ +
+                " STREAM_SKIP_RGB=" + streamSkipRgb_ +
+                (presentMode_ == "fpga" ? " — RGB forced on for CABAC/fallback)"
+                                        : " — continuous fb0 needs RGB)"));
+        }
+    }
 
     // Optional continuous annex-B → host recon F1 + F3
     const bool wantStream = streamEnabled_ && fpga_.ok() && !testPattern;
@@ -980,11 +997,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
                 if (looksElementaryH264(url))
                     log("media: STREAM demux elementary H.264 (no mp4toannexb)");
+                else
+                    log("media: STREAM demux via h264_mp4toannexb (Part/container → annex-B)");
             } else {
                 ::close(spipe[0]);
                 log("media: STREAM demux fork failed");
             }
+        } else {
+            log("media: STREAM demux pipe failed errno=" + std::to_string(errno));
         }
+    } else if (streamEnabled_ && !testPattern && !fpga_.ok()) {
+        log("media: STREAM=1 but FPGA SPI unavailable — host recon F1/F3 disabled");
     }
 
     int rfd = -1;
@@ -1330,7 +1353,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
-        " rgb=" + (usedRgb ? "on" : "off"));
+        " rgb=" + (usedRgb ? "on" : "off") +
+        " present=" + presentMode_ +
+        " skip_rgb=" + (skipRgb ? "1" : "0"));
 }
 
 } // namespace misterplex
