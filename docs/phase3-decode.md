@@ -200,9 +200,16 @@ Phase 3.3k (FPGA residual advance — this fire):
   **Paint (F3-only):** MB0 gray = clamp(128 + residual_dc, 0, 255) when residual_ok
     (≈104 on golden; not full inv-quant/IDCT recon — hybrid host F1 still product path).
   **Hybrid confirmed:** `host_owns_fs` still blocks stub wipe of STREAM F1 recon.
-  **Fit / HW:** see RBF notes after rebuild; `test_f3_residual.sh` asserts `res_dc=-24`.
+  **Fit / HW (this fire):**
+    - Analysis & Synthesis **Successful** (regs ~13.9k; block mem bits ~3.17M — **no new M10K**).
+    - Full Quartus fit→RBF **blocked on lab host OOM** (exit 137 / mid-fit kill under concurrent
+      agents). Not a device BRAM over-util failure; hybrid + first-residual logic maps cleanly.
+    - HW gate when RBF available: `test_f3_residual.sh` asserts `res_dc=-24` (golden coeff0).
+  **Hybrid confirmed:** host recon owns F1 present (`host_owns_fs`); FPGA residual status/paint
+    is F3 diagnostic only until inv-quant/IDCT mae is competitive.
   **Still open (3.3l+):** inv quant + 4x4 IDCT + Intra pred into frame_store for all MBs;
-    optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers).
+    optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers);
+    complete RBF fit when host has exclusive ~8+ GB free.
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
