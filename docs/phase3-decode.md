@@ -143,7 +143,16 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
-  Unit: `test_cavlc_dc` FULL walk + recon + rgb565; ARM builds with `-I host`
+  Unit: `test_cavlc_dc` FULL walk + recon + maeY=U=V=0 vs FFmpeg; ARM `-I host`
+  HW: recon RGB565 F1 push → `has_frame=1`; F3 residual probe green
+      `res_ok=1 res_tc=8 res_t1=3` (matches host first I_NxN residual)
+
+Phase 3.3j (open — FPGA full I-slice residual / hybrid present):
+  - FPGA: walk all MBs residual (not first-only); inv quant + IDCT + Intra pred
+    into frame_store (replace decode_stub diagnostic paint)
+  - Host hybrid remains default product path until FPGA mae competitive
+  - Optional deblock (not required for no-LF gold)
+  - Live STREAM soak: cast real title → recon F1 + F3 stats in misterplexd.log
 
 ```
 
