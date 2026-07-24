@@ -107,7 +107,7 @@ module present_core (
 		end
 	end
 
-	// 320×240 content window inside Template-wide active (HBlank @ 529)
+	// 320×240 content window inside Template-wide active (HBlank @ 320 (full-width content DE))
 	wire active = (hc < 10'd320) && (vc < (scandouble ? 10'd480 : 10'd240));
 	wire [9:0] store_y = scandouble ? {1'b0, vc[9:1]} : vc;
 	wire [9:0] store_x = hc;

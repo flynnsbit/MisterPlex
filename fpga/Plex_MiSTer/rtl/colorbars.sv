@@ -26,10 +26,13 @@ module colorbars (
 	output reg  [7:0]  b
 );
 
-	// Content is 320×240; line timing is Template-wide (active DE through hc 528).
+	// Content is 320×240. Line total stays Template-like (638) for ~60 Hz, but
+	// HBlank starts at 320 so DE == content width. Template HBlank@529 left a
+	// black right half of active video (~320/529) so VGA/HDMI looked pillarboxed.
+	// HSync still near end of line (544..589) for stable lock.
 	localparam H_CONTENT = 10'd320;
 	localparam H_LAST    = 10'd637; // wrap after this → 638 clocks/line
-	localparam H_BLANK_S = 10'd529; // Template: start HBlank
+	localparam H_BLANK_S = H_CONTENT; // DE = content (full-width after scaler)
 	localparam H_SYNC_S  = 10'd544;
 	localparam H_SYNC_E  = 10'd590;
 
@@ -114,7 +117,7 @@ module colorbars (
 		end
 	end
 
-	// Color bars over the 320-wide content window (rest of DE is black)
+	// Color bars fill the full DE window (hc 0..H_CONTENT-1)
 	wire [9:0] px = hc;
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 	wire [2:0] bar = px[8:6]; // ~40 px per bar in 0..319
