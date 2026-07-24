@@ -11,6 +11,8 @@
 #   scripts/plex_browse.sh status                   # timeline poll
 #   scripts/plex_browse.sh stop | pause | resume
 #   scripts/plex_browse.sh seek <ms>
+#   scripts/plex_browse.sh step [ms] | stepBack [ms]  # relative ±10s (or custom ms)
+#   scripts/plex_browse.sh next | prev                # skipNext / skipPrevious
 #
 # Env / conf (first wins):
 #   PLEX_BASE / PLEX_SERVERS / PLEX_TOKEN
@@ -162,7 +164,9 @@ elif [[ ${#SERVERS[@]} -gt 0 ]]; then
 else
   # Player-only commands do not need PMS base
   case "$CMD" in
-    status|stop|pause|resume|seek) BASE="" ;;
+    status|stop|pause|resume|seek|step|stepForward|stepBack|ff|rw|next|prev|skipNext|skipPrevious)
+      BASE=""
+      ;;
     play)
       # play can still work without PMS list — misterplexd resolves
       BASE=""
@@ -390,6 +394,29 @@ case "$CMD" in
     [[ -n "$MS" ]] || { echo "usage: $0 seek <ms>" >&2; exit 1; }
     player_get "/player/playback/seekTo?offset=${MS}&commandID=browse-seek" | grep -q Timeline
     echo "seek OK offset=${MS}"
+    ;;
+  step|stepForward|ff)
+    # Relative +N ms (default 10000). Companion stepForward accepts optional offset=.
+    MS="${1:-10000}"
+    EXTRA=""
+    [[ "$MS" != "10000" ]] && EXTRA="&offset=${MS}"
+    player_get "/player/playback/stepForward?commandID=browse-step${EXTRA}" | grep -q Timeline
+    echo "stepForward OK deltaMs=${MS}"
+    ;;
+  stepBack|rw)
+    MS="${1:-10000}"
+    EXTRA=""
+    [[ "$MS" != "10000" ]] && EXTRA="&offset=${MS}"
+    player_get "/player/playback/stepBack?commandID=browse-stepBack${EXTRA}" | grep -q Timeline
+    echo "stepBack OK deltaMs=-${MS}"
+    ;;
+  next|skipNext)
+    player_get "/player/playback/skipNext?commandID=browse-skipNext" | grep -q Timeline
+    echo "skipNext OK"
+    ;;
+  prev|skipPrevious)
+    player_get "/player/playback/skipPrevious?commandID=browse-skipPrevious" | grep -q Timeline
+    echo "skipPrevious OK (restart title @ 0)"
     ;;
   *)
     echo "unknown command: $CMD" >&2

@@ -39,6 +39,12 @@ out=$("$BROWSE" --player "127.0.0.1:${PORT}" status) || fail "status-seek"
 # time may still be buffering at 12000
 echo "$out" | grep -q 'time=' || fail "status after seek: $out"
 
+# step ±10s + skip (companion routes; no PMS required)
+"$BROWSE" --player "127.0.0.1:${PORT}" step || fail "step"
+"$BROWSE" --player "127.0.0.1:${PORT}" stepBack || fail "stepBack"
+"$BROWSE" --player "127.0.0.1:${PORT}" next || fail "skipNext"
+"$BROWSE" --player "127.0.0.1:${PORT}" prev || fail "skipPrevious"
+
 # pause / resume / stop
 "$BROWSE" --player "127.0.0.1:${PORT}" pause || fail "pause"
 "$BROWSE" --player "127.0.0.1:${PORT}" resume || fail "resume"

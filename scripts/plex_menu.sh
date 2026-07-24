@@ -21,7 +21,8 @@ usage() {
 MiSTerPlex on-device library menu
   plex_menu.sh [--player HOST:PORT] [--conf PATH] [--base URL] [--token TOK] [--server N]
 
-Lists PMS sections/items (via plex_browse.sh) and triggers playMedia on misterplexd.
+Lists PMS sections/items (via plex_browse.sh) and controls misterplexd
+(playMedia, pause/resume/stop, seek, ±10s step, skip next/prev).
 EOF
   exit "${1:-0}"
 }
@@ -112,7 +113,10 @@ while true; do
   echo "  4) Pause"
   echo "  5) Resume"
   echo "  6) Stop"
-  echo "  7) Servers (conf)"
+  echo "  7) Seek to ms"
+  echo "  8) Step +10s   9) Step -10s"
+  echo "  n) Next (skipNext)   p) Prev (restart @ 0)"
+  echo "  s) Servers (conf)"
   echo "  q) Quit"
   printf 'Choice: '
   read -r main || exit 0
@@ -122,7 +126,22 @@ while true; do
     4) browse pause || true; echo ;;
     5) browse resume || true; echo ;;
     6) browse stop || true; echo ;;
-    7) browse servers; echo ;;
+    7)
+      printf 'Seek offset (ms): '
+      read -r ms || continue
+      [[ -z "$ms" ]] && continue
+      if [[ ! "$ms" =~ ^[0-9]+$ ]]; then
+        echo "need non-negative integer ms" >&2
+        continue
+      fi
+      browse seek "$ms" || true
+      echo
+      ;;
+    8) browse step || true; echo ;;
+    9) browse stepBack || true; echo ;;
+    n|N|next) browse next || true; echo ;;
+    p|P|prev) browse prev || true; echo ;;
+    s|S|servers) browse servers; echo ;;
     2)
       printf 'ratingKey or /library/metadata/N: '
       read -r k || continue
