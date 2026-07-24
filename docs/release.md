@@ -42,7 +42,7 @@ scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf   #
 make arm-plexd
 make package                    # rebuilds ARM if needed; copies Plex.rbf when present
 ./scripts/deploy_misterplexd.sh # HOST default 192.168.1.183, pass 1
-./scripts/deploy_plex_core.sh   # optional: load/copy RBF
+./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
 
 Startup hook (idempotent via deploy script):
@@ -138,26 +138,29 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Side-by-side eth vs wifi numbers | **Deferred** until eth cable present on 192.168.1.183 |
 | Wi-Fi blips | Whole-host SSH/curl timeouts can fail soak without daemon fault — re-run after AP recover |
 
-## Known limits (Phase 5) — remaining issues
+## Known limits (Phase 5)
 
 | Area | Limit | Severity |
 |------|--------|----------|
-| Decode | Dual-A9 FFmpeg is transitional; FPGA residual → IDCT (3.3l) not product-present yet | product |
-| STREAM hybrid | **Host I-recon → F1 owns pixels** (3.3k mae=0 golden); FPGA F3 is stub/status until 3.3l-5 hybrid gate | product |
-| STREAM recon | Host I-slice recon is Baseline CAVLC keyframe-oriented; **CABAC/High → sticky skip** from PPS entropy flag (`recon CABAC/High` / `recon skip CABAC/High`) so dual-A9 does not residual-walk every IDR; `recon_ok` often 0 on PMS weak ladder | product |
-| Match source Hz | **Cadence + OSD Content FPS only**; no HPS `CmdSwitchres` / modeline swap yet — [match-source-hz.md](match-source-hz.md) | product |
-| CRT 15 kHz | Use MiSTer video options / fixed modelines; matrix checklist in [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
-| Wi-Fi vs Ethernet | Checklist + soak net hooks only; eth comparison not measured this lab (no carrier) | lab |
-| Resolution | Lab default 320×240; 480×360 HW-verified on weak ladder; higher sizes stress ARM | product |
-| Scrubber | Play-queue bind fields implemented; edge cases vs Plex Web versions may still need tuning | UX |
-| Audio | Single-process FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (disabled for session if FPGA leaves user mode) | product |
-| Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens for multi-user | ops |
-| OSD / set_status | Status bits RMW via `bin/set_status`; force_bars + pattern stickiness depends on loaded RBF (`eff_pattern` / O[9]) | lab |
-| Stop under STREAM | Media thr_ owns audio/stream joins; stop clears bind before join so late progress cannot re-arm cast UI | fixed |
-| SPI under STREAM soak | Concurrent F1/F2/F3 used `system(killall)` + unlocked `err_`/`MainPause` → **daemon death** mid multi-round soak; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
-| F2 under PRESENT=both | F2 SPI ~20×/s plus F1/F3 thrashed Main; **now F2 only when PRESENT=fpga** (both uses MrAudio alone) | fixed |
-| PMS thin library | Lab PMS may only expose one playable episode + local `test.mp4`; soak discovers onDeck/recentlyAdded | lab |
-| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1`; includes `set_status` when `build/arm/set_status` exists | ops |
+| Decode | Dual-A9 FFmpeg transitional; **3.3l-0 done** (host quant/IDCT golden); FPGA IDCT 3.3l-1+ not product-present | product |
+| STREAM hybrid | **Host I-recon → F1 owns pixels** (3.3k mae=0); F3 stub/status until 3.3l-5 hybrid gate | product |
+| STREAM recon | Baseline CAVLC keyframe-oriented; **CABAC/High → sticky skip** (PPS entropy); `recon_ok` often 0 on weak ladder | product |
+| F1 bandwidth | **DDR ~16 ms/frame** when kick+`has_frame` verify works (~60 fps @320×240); **SPI F1 ~112 ms** (~9 fps) fallback only | product |
+| DDR product path | Prefer DDR with SPI fallback; kick/frame verify (not busy-only); ≥30 fps steady in misterplexd still lab-tracking | lab |
+| FBAR | Force bars O[9] visual **PASS** (`test_fbar_fast`: grid_off=7.0 force=82.9 bars=94.4) | fixed |
+| Safe deploy | `DEPLOY_LOAD=none\|menu\|core` (default **none** = copy only); avoid live RBF overwrite + `load_core` thrash — [`deploy_plex_core.sh`](../scripts/deploy_plex_core.sh) | ops |
+| Match source Hz | **Cadence + OSD Content FPS only**; no `CmdSwitchres` yet — [match-source-hz.md](match-source-hz.md) | product |
+| CRT 15 kHz | MiSTer video options / fixed modelines; [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
+| Wi-Fi vs Ethernet | Soak net hooks only; eth comparison not measured (no carrier) | lab |
+| Resolution | Lab default 320×240; 480×360 HW-verified weak ladder; higher sizes stress ARM | product |
+| Scrubber | Play-queue bind implemented; edge cases vs Plex Web may need tuning | UX |
+| Audio | FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (off if FPGA leaves user mode) | product |
+| Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens | ops |
+| Stop under STREAM | thr_ joins; stop clears bind before join so late progress cannot re-arm cast UI | fixed |
+| SPI under STREAM soak | Concurrent F1/F2/F3 → daemon death; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
+| F2 under PRESENT=both | F2 only when `PRESENT=fpga` (both uses MrAudio alone) | fixed |
+| PMS thin library | Lab may expose one episode + local `test.mp4`; soak uses onDeck/recentlyAdded | lab |
+| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1`; ships `set_status` when built | ops |
 
 ## Version stamp
 
