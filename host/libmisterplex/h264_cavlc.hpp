@@ -266,57 +266,47 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
     return out;
 }
 
-// --- Inv quant + Hadamard for Intra16x16 DC (8.5.2) ---
+// --- Inv quant + Hadamard for Intra16x16 DC (ITU 8.5.10 / FFmpeg luma_dc_dequant_idct)
+// Output is in residual-IDCT domain: place at each 4x4 (0,0), then run 4x4 idct
+// (or idct_dc_add: pred += (dc+32)>>6 when AC==0).
 inline void invQuantHadamardDc4x4(const int16_t coeffScan[16], int qp, int16_t dcOut[4][4]) {
-    // Place scan → 4x4 (zigzag)
+    // Place zigzag scan → 4x4
     static const int zz[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
-    int16_t c[4][4]{};
+    int c[4][4]{};
     for (int i = 0; i < 16; ++i)
         c[zz[i] / 4][zz[i] % 4] = coeffScan[i];
 
-    // LevelScale for (0,0) of 4x4 residual scale tables (approx MF[qP%6][0][0])
-    static const int mf0[6] = {10, 11, 13, 14, 16, 18};
-    const int scale = mf0[qp % 6];
-    const int qbits = qp / 6;
-    int16_t q[4][4]{};
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j) {
-            if (qp >= 12)
-                q[i][j] = static_cast<int16_t>((c[i][j] * scale) << (qbits - 2));
-            else {
-                int f = 1 << (1 - qbits);
-                q[i][j] = static_cast<int16_t>((c[i][j] * scale + f) >> (2 - qbits));
-            }
-        }
+    // Inverse 4x4 Hadamard (no intermediate scale)
+    int t[4][4];
+    for (int i = 0; i < 4; ++i) {
+        int a0 = c[i][0] + c[i][1];
+        int a1 = c[i][0] - c[i][1];
+        int a2 = c[i][2] + c[i][3];
+        int a3 = c[i][2] - c[i][3];
+        t[i][0] = a0 + a2;
+        t[i][1] = a1 + a3;
+        t[i][2] = a0 - a2;
+        t[i][3] = a1 - a3;
+    }
+    int f[4][4];
+    for (int j = 0; j < 4; ++j) {
+        int a0 = t[0][j] + t[1][j];
+        int a1 = t[0][j] - t[1][j];
+        int a2 = t[2][j] + t[3][j];
+        int a3 = t[2][j] - t[3][j];
+        f[0][j] = a0 + a2;
+        f[1][j] = a1 + a3;
+        f[2][j] = a0 - a2;
+        f[3][j] = a1 - a3;
+    }
 
-    // 4x4 Hadamard (forward style as in decode: butterfly)
-    auto had = [](int16_t s[4][4]) {
-        int16_t t[4][4];
-        for (int i = 0; i < 4; ++i) {
-            int a0 = s[i][0] + s[i][1];
-            int a1 = s[i][0] - s[i][1];
-            int a2 = s[i][2] + s[i][3];
-            int a3 = s[i][2] - s[i][3];
-            t[i][0] = static_cast<int16_t>(a0 + a2);
-            t[i][1] = static_cast<int16_t>(a1 + a3);
-            t[i][2] = static_cast<int16_t>(a0 - a2);
-            t[i][3] = static_cast<int16_t>(a1 - a3);
-        }
-        for (int j = 0; j < 4; ++j) {
-            int a0 = t[0][j] + t[1][j];
-            int a1 = t[0][j] - t[1][j];
-            int a2 = t[2][j] + t[3][j];
-            int a3 = t[2][j] - t[3][j];
-            s[0][j] = static_cast<int16_t>((a0 + a2 + 1) >> 1); // decode hadamard uses >>1
-            s[1][j] = static_cast<int16_t>((a1 + a3 + 1) >> 1);
-            s[2][j] = static_cast<int16_t>((a0 - a2 + 1) >> 1);
-            s[3][j] = static_cast<int16_t>((a1 - a3 + 1) >> 1);
-        }
-    };
-    had(q);
+    // FFmpeg: qmul = (mf * scaling_matrix=16) << (qp/6 + 2); (f*qmul+128)>>8
+    // → idct_dc_add: (dc+32)>>6 is pixel residual
+    static const int mf0[6] = {10, 11, 13, 14, 16, 18};
+    const int qmul = (mf0[qp % 6] * 16) << (qp / 6 + 2);
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-            dcOut[i][j] = q[i][j];
+            dcOut[i][j] = static_cast<int16_t>((f[i][j] * qmul + 128) >> 8);
 }
 
 // Probe first I_16x16 MB of an IDR annex-B stream
@@ -409,6 +399,7 @@ inline ResidualResult probeFirstI16Dc(const uint8_t* annexb, size_t n) {
     }
     if (mt > 24)
         return fail;
+    br.ue(); // intra_chroma_pred_mode (all Intra MBs, 7.3.5)
     br.se(); // mb_qp_delta
     return residualBlock(br, 0, 16);
 }
@@ -483,6 +474,7 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
             uint32_t mt = br.ue();
             if (mt == 0)
                 return -1; // I_NxN — recon path is I16 DC only
+            br.ue(); // intra_chroma_pred_mode
             int dlt = br.se();
             qp = chain.slice.slice_qp + dlt;
             if (qp < 0)
@@ -496,7 +488,8 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
     int sum = 0;
     for (int by = 0; by < 4; ++by)
         for (int bx = 0; bx < 4; ++bx) {
-            int val = 128 + static_cast<int>(dc[by][bx]);
+            // idct_dc_add: pixel += (dc + 32) >> 6
+            int val = 128 + ((static_cast<int>(dc[by][bx]) + 32) >> 6);
             if (val < 0)
                 val = 0;
             if (val > 255)

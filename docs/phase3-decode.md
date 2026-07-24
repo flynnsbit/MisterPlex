@@ -117,18 +117,18 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
 
-Phase 3.3h (in progress — I-slice residual walk):
-  Host: `h264_slice_walk.hpp` walkISliceResiduals — I_NxN + I_16x16, luma/chroma nC
-  CAVLC: FFmpeg tables incl. nC≥8 FLC VLC; run_before zerosLeft>6; OpenH264-style levels
-  IDR dec_ref_pic_marking fixed (host+FPGA); HW mb0=0 qp=25 green
-  Unit: walk ≥4 (real IDR **8/300**); residual round-trip stress 2600+ OK
-  Debug (this fire): flat-gray 64×64 bitstream is byte-aligned `0x27` = I16+qpδ0+**2-bit empty**
-    — with nC=0 empty is 1-bit (`1`); table1 empty is 2-bit (`11`). Bitstream needs 2-bit empty.
-    — Spec/FFmpeg/x264: first-MB nC=0 → 1-bit empty; yet stream structure requires 2-bit.
-    — Root cause still open (nC init vs empty-token table mismatch under investigation).
-  Next: resolve empty-I16 token bit width vs nC=0; re-sync walk to 300/300
-        then inv-quant → IDCT → recon → YUV→RGB565
-  Optional: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
+Phase 3.3h (host walk+recon green — FPGA residual probe next):
+  **Root cause fixed:** I_16x16 was missing `intra_chroma_pred_mode` (7.3.5, all Intra MBs).
+    Flat `0x27` pattern = ue(mb_type=3)+ue(chroma=0)+se(qpδ=0)+1-bit empty (nC=0) — not 2-bit empty.
+  Host: `h264_slice_walk.hpp` FULL residual walk I_NxN+I_16x16 (luma/chroma nC)
+  Host: `h264_recon.hpp` inv-quant (FFmpeg qmul) + 4x4 IDCT + Intra pred → YUV420 + RGB565
+  CAVLC: FFmpeg tables; IDR dec_ref_pic_marking; invQuantHadamardDc4x4 FFmpeg-scale
+  Unit: walk **300/300 FULL** on real Baseline; tiny/gray recon **maeY=0** vs FFmpeg golden
+  Real-clip recon maeY≈2.6 (I4 mode polish remaining); first MB ~mae 6, error cascades
+  FPGA: slice_hdr_parser ST_CHRPRED before mb_qp_delta (I16 path)
+  Next: tighten I4 pred modes (DDL/VR/HD/…) → real maeY≪1; FPGA MB residual walk stub;
+        paint recon RGB565 into frame_store (or SPI); optional DDRAM path
+
 ```
 
 ### 3.0 HW bring-up

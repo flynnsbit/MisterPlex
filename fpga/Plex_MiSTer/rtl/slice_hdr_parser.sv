@@ -85,12 +85,13 @@ module slice_hdr_parser (
 		ST_ALPHA   = 5'd12,
 		ST_BETA    = 5'd13,
 		ST_MBT     = 5'd14,
-		ST_MBQP    = 5'd15,
-		ST_TOK_BIT = 5'd16,
-		ST_TOK_CHK = 5'd17,
-		ST_SIGNS   = 5'd18,
-		ST_DONE    = 5'd19,
-		ST_FAIL    = 5'd20;
+		ST_CHRPRED = 5'd15, // I_16x16 intra_chroma_pred_mode (7.3.5)
+		ST_MBQP    = 5'd16,
+		ST_TOK_BIT = 5'd17,
+		ST_TOK_CHK = 5'd18,
+		ST_SIGNS   = 5'd19,
+		ST_DONE    = 5'd20,
+		ST_FAIL    = 5'd21;
 
 	always @(posedge clk) begin
 		if (reset || cap_clear)
@@ -252,11 +253,15 @@ module slice_hdr_parser (
 			ST_MBT: begin
 				first_mb_type <= ue_val[7:0];
 				has_mb_type <= (ue_val <= 16'd25);
-				// I_16x16 (1..24): mb_qp_delta then CAVLC DC residual (nC=0)
+				// I_16x16 (1..24): chroma_pred → mb_qp_delta → CAVLC DC residual (nC=0)
 				if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
-					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+					zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 				end else
 					st <= ST_DONE;
+			end
+			ST_CHRPRED: begin
+				// ue(intra_chroma_pred_mode) consumed
+				zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0

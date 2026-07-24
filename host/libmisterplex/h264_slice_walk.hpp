@@ -255,10 +255,11 @@ inline SliceWalkResult walkISliceResiduals(const uint8_t* annexb, size_t n) {
                     return out;
                 }
             } else {
-                // I_16x16
+                // I_16x16 — intra_chroma_pred_mode is coded for all Intra MBs (7.3.5)
                 int x = static_cast<int>(mt) - 1;
                 int cbp_c = (x / 4) % 3;
                 int cbp_l = (x / 12) ? 15 : 0;
+                br.ue(); // intra_chroma_pred_mode
                 br.se(); // mb_qp_delta
                 int* nA = tcatL(mbx - 1, mby, 3, 0);
                 int* nB = tcatL(mbx, mby - 1, 0, 3);
