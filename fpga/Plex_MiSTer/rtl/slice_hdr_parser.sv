@@ -79,17 +79,18 @@ module slice_hdr_parser (
 		ST_PPS     = 5'd6,
 		ST_FN      = 5'd7,
 		ST_IDR     = 5'd8,
-		ST_QPD     = 5'd9,
-		ST_DIDC    = 5'd10,
-		ST_ALPHA   = 5'd11,
-		ST_BETA    = 5'd12,
-		ST_MBT     = 5'd13,
-		ST_MBQP    = 5'd14,
-		ST_TOK_BIT = 5'd15,
-		ST_TOK_CHK = 5'd16,
-		ST_SIGNS   = 5'd17,
-		ST_DONE    = 5'd18,
-		ST_FAIL    = 5'd19;
+		ST_REFMARK = 5'd9,  // IDR dec_ref_pic_marking: 2 flags
+		ST_QPD     = 5'd10,
+		ST_DIDC    = 5'd11,
+		ST_ALPHA   = 5'd12,
+		ST_BETA    = 5'd13,
+		ST_MBT     = 5'd14,
+		ST_MBQP    = 5'd15,
+		ST_TOK_BIT = 5'd16,
+		ST_TOK_CHK = 5'd17,
+		ST_SIGNS   = 5'd18,
+		ST_DONE    = 5'd19,
+		ST_FAIL    = 5'd20;
 
 	always @(posedge clk) begin
 		if (reset || cap_clear)
@@ -216,6 +217,10 @@ module slice_hdr_parser (
 			end
 			ST_IDR: begin
 				idr_pic_id <= ue_val;
+				// dec_ref_pic_marking (IDR): no_output_of_prior_pics + long_term_reference
+				nleft <= 5'd2; acc <= 0; cont <= ST_REFMARK; st <= ST_GETBITS;
+			end
+			ST_REFMARK: begin
 				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 			end
 			ST_QPD: begin

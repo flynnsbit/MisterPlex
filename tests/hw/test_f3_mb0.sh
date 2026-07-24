@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hardware Phase 3.3e: real Baseline → first_mb_type=7 (I_16x16) + slice_qp.
+# Hardware Phase 3.3e/h: real Baseline → first_mb_type + slice_qp (IDR marking fixed).
 set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
@@ -25,7 +25,7 @@ sleep 0.5
 ST=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
   ST=$(ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null || true)
-  if echo "$ST" | grep -qE 'mb0=7'; then
+  if echo "$ST" | grep -qE 'mb0='; then
     break
   fi
   sleep 0.15
@@ -34,8 +34,8 @@ echo "$ST"
 echo "$ST" | grep -q 'sps_valid=1'
 echo "$ST" | grep -q 'pps_valid=1'
 echo "$ST" | grep -q 'slice_type=7'
-echo "$ST" | grep -q 'mb0=7'
-# qp=14 for this clip (23 + -9)
-echo "$ST" | grep -qE 'qp=14'
+# Correct IDR parse: mb0=0 (I_NxN), qp=25
+echo "$ST" | grep -qE 'mb0=0'
+echo "$ST" | grep -qE 'qp=25'
 echo "$ST" | grep -q 'has_frame=1'
 echo "test_f3_mb0: OK on $HOST"

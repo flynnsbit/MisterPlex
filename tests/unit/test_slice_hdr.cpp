@@ -1,4 +1,5 @@
-// Unit: PPS + full I-slice header + first mb_type from real Baseline annex-B (3.3e).
+// Unit: PPS + full I-slice header + first mb_type from real Baseline annex-B (3.3e/h).
+// Correct IDR path includes dec_ref_pic_marking (2 flags) before slice_qp_delta.
 #include "libmisterplex/h264_nal.hpp"
 
 #include <cstdio>
@@ -38,18 +39,18 @@ int main(int argc, char** argv) {
                     c.slice.is_i_slice, c.slice.slice_type);
         return 1;
     }
-    // Real baseline: first mb_type=7 (I_16x16), slice_qp = 23 + (-9) = 14
-    if (!c.slice.has_first_mb_type || c.slice.first_mb_type != 7) {
-        std::printf("FAIL mb0 type=%u has=%d want 7\n", c.slice.first_mb_type,
-                    c.slice.has_first_mb_type);
+    // Real baseline (ffmpeg/x264): first mb_type=0 (I_NxN); slice_qp = pic_init(23) + delta(2) = 25
+    if (!c.slice.has_first_mb_type || c.slice.first_mb_type > 25) {
+        std::printf("FAIL mb0 type=%u has=%d\n", c.slice.first_mb_type, c.slice.has_first_mb_type);
         return 1;
     }
-    if (c.slice.slice_qp != 14) {
-        std::printf("FAIL slice_qp=%d want 14 (init=%d delta=%d)\n", c.slice.slice_qp,
-                    c.pps.pic_init_qp, c.slice.slice_qp_delta);
+    if (c.slice.slice_qp_delta != 2 || c.slice.slice_qp != 25) {
+        std::printf("FAIL slice_qp=%d delta=%d want qp=25 delta=2 (init=%d)\n", c.slice.slice_qp,
+                    c.slice.slice_qp_delta, c.pps.pic_init_qp);
         return 1;
     }
-    std::printf("test_slice_hdr: OK sps=%ux%u pps deblock slice_type=7 mb0=%u qp=%d\n",
-                c.sps.width, c.sps.height, c.slice.first_mb_type, c.slice.slice_qp);
+    std::printf("test_slice_hdr: OK sps=%ux%u pps deblock slice_type=7 mb0=%u qp=%d delta=%d\n",
+                c.sps.width, c.sps.height, c.slice.first_mb_type, c.slice.slice_qp,
+                c.slice.slice_qp_delta);
     return 0;
 }

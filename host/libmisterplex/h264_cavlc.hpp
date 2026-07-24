@@ -181,9 +181,13 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
             else
                 levelCode = (14 << suffixLength) + static_cast<int>(br.u(suffixLength));
         } else {
-            levelCode = 30 + static_cast<int>(br.u(12));
-            if (suffixLength == 0)
-                levelCode += 15;
+            // level_prefix >= 15: levelSuffixSize = prefix-3 (FFmpeg decode_residual)
+            int suffixBits = level_prefix - 3;
+            levelCode = 30;
+            if (level_prefix >= 16)
+                levelCode += (1 << (level_prefix - 3)) - 4096;
+            if (suffixBits > 0)
+                levelCode += static_cast<int>(br.u(suffixBits));
         }
         if (i == t1 && t1 < 3)
             levelCode += 2;
@@ -209,8 +213,9 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
             zok = tables::matchMap(br, tables::total_zeros_len[tc - 1],
                                    tables::total_zeros_bits[tc - 1], 16 - tc + 1, zidx);
         }
-        if (!zok)
+        if (!zok) {
             return out;
+        }
         zerosLeft = zidx;
     }
 
@@ -225,10 +230,12 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
                     return out;
                 r = ridx;
             } else {
+                // zerosLeft > 6: Table 9-10 — 111→0 … 001→6; 0001→7; 00001→8 …
+                // (FFmpeg run_bits[6]: codes 7,6,5,4,3,2,1 with len 3)
                 int v = static_cast<int>(br.u(3));
-                if (v < 7)
-                    r = v;
-                else {
+                if (v > 0) {
+                    r = 7 - v;
+                } else {
                     r = 7;
                     while (br.ok && br.u(1) == 0)
                         ++r;
@@ -236,10 +243,13 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
             }
             run[i] = r;
             zerosLeft -= r;
+            if (zerosLeft < 0)
+                return out;
         }
     }
     run[tc - 1] = zerosLeft;
 
+    // Place levels in reverse-scan order (level[0]=highest freq).
     int coeffNum = -1;
     for (int i = tc - 1; i >= 0; --i) {
         coeffNum += run[i] + 1;
@@ -310,7 +320,8 @@ inline ResidualResult probeFirstI16Dc(const uint8_t* annexb, size_t n) {
     auto chain = parseAnnexBChain(annexb, n);
     if (!chain.sps.valid || !chain.pps.valid || !chain.slice.valid || !chain.slice.has_first_mb_type)
         return fail;
-    if (chain.slice.first_mb_type == 0 || chain.slice.first_mb_type > 24)
+    // first_mb_type 0 = I_NxN, 1..24 = I_16x16, 25 = PCM
+    if (chain.slice.first_mb_type > 25)
         return fail;
 
     size_t i = 0;
@@ -354,8 +365,11 @@ inline ResidualResult probeFirstI16Dc(const uint8_t* annexb, size_t n) {
     br.ue();
     br.ue();
     br.u(chain.log2_max_frame_num);
-    if (ntype == 5)
+    if (ntype == 5) {
         br.ue();
+        br.u(1);
+        br.u(1);
+    }
     br.se();
     if (chain.pps.deblock_ctrl) {
         uint32_t d = br.ue();
@@ -364,7 +378,32 @@ inline ResidualResult probeFirstI16Dc(const uint8_t* annexb, size_t n) {
             br.se();
         }
     }
-    br.ue(); // mb_type
+    // First MB may be I_NxN (mt=0) or I_16x16 (1..24).
+    uint32_t mt = br.ue();
+    if (mt == 0) {
+        for (int k = 0; k < 16; ++k)
+            if (br.u(1) == 0)
+                br.u(3);
+        br.ue(); // chroma pred
+        uint32_t code = br.ue();
+        if (code >= 48)
+            return fail;
+        static const uint8_t kMe[48] = {
+            47, 31, 15, 0,  23, 27, 29, 30, 7,  11, 13, 14, 39, 43, 45, 46,
+            16, 3,  5,  10, 12, 19, 21, 26, 28, 35, 37, 42, 44, 1,  2,  4,
+            8,  17, 18, 20, 24, 6,  9,  22, 25, 32, 33, 34, 36, 40, 38, 41};
+        int cbp = kMe[code];
+        if (cbp != 0)
+            br.se();
+        // First coded luma 4x4 in raster of 8x8 groups
+        for (int i8 = 0; i8 < 4; ++i8) {
+            if ((cbp >> i8) & 1)
+                return residualBlock(br, 0, 16);
+        }
+        return fail;
+    }
+    if (mt > 24)
+        return fail;
     br.se(); // mb_qp_delta
     return residualBlock(br, 0, 16);
 }
@@ -423,8 +462,11 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
             br.ue();
             br.ue();
             br.u(chain.log2_max_frame_num);
-            if (ntype == 5)
+            if (ntype == 5) {
                 br.ue();
+                br.u(1);
+                br.u(1);
+            }
             br.se();
             if (chain.pps.deblock_ctrl) {
                 uint32_t d = br.ue();
@@ -433,7 +475,9 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
                     br.se();
                 }
             }
-            br.ue();
+            uint32_t mt = br.ue();
+            if (mt == 0)
+                return -1; // I_NxN — recon path is I16 DC only
             int dlt = br.se();
             qp = chain.slice.slice_qp + dlt;
             if (qp < 0)

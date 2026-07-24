@@ -101,28 +101,29 @@ Phase 3.3d (done this fire — PPS + I-slice header + MB-grid stub):
   HW: `tests/hw/test_f3_slice_hdr.sh` — sps+pps+slice_type=7 + has_frame
   Still not residual decode — headers only; CAVLC/IDCT next
 
-Phase 3.3e (done this fire — slice QP/deblock + first mb_type probe):
-  Host: full slice header (qp_delta, deblock, first_mb_type); mb0=7 qp=14 on real IDR
-  FPGA: PPS completes flags (deblock_ctrl); slice_hdr parses qp+deblock+mb0
+Phase 3.3e (done — slice QP/deblock + first mb_type probe):
+  Host/FPGA: full slice header; **IDR `dec_ref_pic_marking` (2 flags) required before qp_delta**
+  Real baseline golden (corrected): mb0=0 (I_NxN), slice_qp=25 (init 23 + delta 2)
   Status: first_mb_type [55:48], slice_type [63:56], slice_qp in [47:40]
-  HW: `tests/hw/test_f3_mb0.sh` — mb0=7 qp=14 sps+pps+has_frame
-  Residual CAVLC/IDCT still next (control plane to first MB ready)
+  HW: `tests/hw/test_f3_mb0.sh` — mb0 + qp + sps+pps+has_frame
 
-Phase 3.3f (done this fire — first-MB CAVLC residual token probe):
-  Host: `h264_cavlc.hpp` residual_block + probeFirstI16Dc (tc=2 t1=2 golden)
+Phase 3.3f (done — first-MB CAVLC residual token probe):
+  Host: `h264_cavlc.hpp` residual_block + first residual probe (I_NxN or I16)
   FPGA: after I_16x16 mb_type + mb_qp_delta, CAVLC nC=0 coeff_token + T1 signs
-  Status: res_ok / res_tc / res_t1; HW `test_f3_residual.sh` green
+  Status: res_ok / res_tc / res_t1 (I16 path; I_NxN first MB may leave res_ok=0 until extended)
   Full slice residual + inv quant/IDCT/recon still next
 
-Phase 3.3g (done this fire — first-MB inv-quant recon stub):
+Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
-  Unit: test_cavlc_dc reports tc/t1/meanY (e.g. meanY~128 y00~142)
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
-  Full 300-MB I-slice walk + true IDCT/intra still next (I_NxN cbp/me alignment)
 
-Phase 3.3h (next):
-  Full I-slice residual walk (I_NxN+I_16x16, nC neighbors) → IDCT → recon → YUV→RGB565
-  Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
+Phase 3.3h (in progress — I-slice residual walk):
+  Host: `h264_slice_walk.hpp` walkISliceResiduals — I_NxN + I_16x16, luma/chroma nC
+  CAVLC fixes: run_before zerosLeft>6 (Table 9-10 invert), IDR ref marking
+  Unit: test_cavlc_dc requires walk ≥4 MBs (real IDR currently ~8/300; full 300 WIP)
+  Known gap: residual bit alignment after dense I4 / high nC (level/run edge cases)
+  Next: finish 300-MB walk → inv-quant → IDCT → recon → YUV→RGB565
+  Optional: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 
 ### 3.0 HW bring-up

@@ -83,7 +83,15 @@ inline SliceHeader parseSliceHeaderRbsp(const uint8_t* payload, size_t len, uint
     out.is_idr = (nal_type == 5);
     if (out.is_idr)
         out.idr_pic_id = br.ue();
-    // poc_type 2: nothing
+    // poc_type 0/1 not handled (Baseline IDR uses poc_type 2 → no POC syntax)
+    // dec_ref_pic_marking() when nal_ref_idc != 0 (IDR always refs):
+    //   IDR: no_output_of_prior_pics_flag + long_term_reference_flag
+    //   non-IDR: adaptive_ref_pic_marking_mode_flag (+ MMCO loop if set)
+    // Host parses IDR path; non-IDR I/P with adaptive marking is out of scope for 3.3h.
+    if (out.is_idr) {
+        br.u(1); // no_output_of_prior_pics_flag
+        br.u(1); // long_term_reference_flag
+    }
     out.slice_qp_delta = static_cast<int8_t>(br.se());
     int qp = static_cast<int>(pps.pic_init_qp) + out.slice_qp_delta;
     if (qp < 0)
