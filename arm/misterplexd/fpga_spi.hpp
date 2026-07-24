@@ -28,8 +28,14 @@ public:
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 
+    // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
+    bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
+
     // Pulse status bit 10 to flush present-domain audio FIFO.
     bool flushAudioFifo();
+
+    // Pulse status bit 11 to flush bitstream FIFO / NAL scanner.
+    bool flushBitstreamFifo();
 
     // UIO_SET_STATUS2: set/clear a single status bit (0–127). Best-effort —
     // does not fully sync with Main's cur_status shadow.

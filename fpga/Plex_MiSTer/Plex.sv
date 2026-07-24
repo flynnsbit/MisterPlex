@@ -3,6 +3,7 @@
 //  Phase 1: color bars + cadence + tone
 //  Phase 3.0: dual-bank RGB565 frame_store via ioctl F1
 //  Phase 3.2: present-domain audio_fifo via ioctl F2
+//  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -45,6 +46,7 @@ localparam CONF_STR = {
 	"-;",
 	"F1,rawRGB565 frame (320x240);",
 	"F2,raw s16le stereo PCM @48k;",
+	"F3,H.264 annex-B elementary;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[2],TV Mode,NTSC,PAL;",
@@ -53,6 +55,7 @@ localparam CONF_STR = {
 	"O[8],Audio tone,On,Off;",
 	"O[9],Force bars (debug),No,Yes;",
 	"T[10],Flush audio FIFO;",
+	"T[11],Flush bitstream FIFO;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
@@ -119,9 +122,10 @@ end
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
-// F1 = frame (index 1), F2 = audio (index 2) — low 6 bits of ioctl_index
+// F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
 wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
 wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
+wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
 
 // Frame ingest from F1
 wire        fs_wr_en;
@@ -166,6 +170,30 @@ audio_ingest ainst (
 	.wr_data(af_wr_data),
 	.wr_flush(af_wr_flush),
 	.active(af_active)
+);
+
+// Phase 3.3 elementary H.264 annex-B → BRAM FIFO → NAL count (decode later)
+wire        has_stream;
+wire [15:0] nalu_count;
+wire [7:0]  last_nal_type;
+wire [31:0] stream_bytes_in;
+wire [31:0] stream_bytes_seen;
+wire [15:0] stream_fifo_level;
+
+stream_path spath (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.enable(is_stream_dl),
+	.flush(status[11]),
+	.has_stream(has_stream),
+	.nalu_count(nalu_count),
+	.last_nal_type(last_nal_type),
+	.bytes_in(stream_bytes_in),
+	.bytes_seen(stream_bytes_seen),
+	.fifo_level(stream_fifo_level)
 );
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
@@ -230,13 +258,23 @@ assign AUDIO_S = 1;
 assign AUDIO_L = al;
 assign AUDIO_R = ar_audio;
 
-// Heartbeat LED; solid-ish when frame store has data; faster when audio FIFO active
+// Heartbeat LED; faster blink with audio; very fast when bitstream NALs seen.
+// XOR nalu_count into LED so scanner is not optimized away.
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1;
 wire led_base = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
-assign LED_USER = has_audio ? act_cnt[22] : led_base;
+assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
+	: (has_audio ? act_cnt[22] : led_base);
+
+// Keep stream path stats observable (noprune sinks)
+(* noprune *) reg [31:0] stream_stat_keep;
+always @(posedge clk_sys) begin
+	stream_stat_keep <= stream_bytes_in ^ stream_bytes_seen
+		^ {16'd0, stream_fifo_level} ^ {24'd0, last_nal_type} ^ {16'd0, nalu_count};
+end
 
 // Silence unused
-wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, af_active, audio_underrun, ioctl_addr};
+wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, af_active,
+	audio_underrun, ioctl_addr, stream_stat_keep};
 
 endmodule

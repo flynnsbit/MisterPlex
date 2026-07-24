@@ -37,3 +37,10 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 4. Core should play tone from FIFO (~1s) instead of OSD square wave.
 5. LED blinks faster while `has_audio`.
 6. Append + continuous: `./tests/hw/test_f2_append.sh` (multi-chunk SPI + live f2==bytes).
+
+## Phase 3.3 elementary bitstream (F3)
+
+1. Deploy RBF with `stream_path` / F3 menu entry.
+2. `python3 scripts/gen_test_annexb.py /tmp/plex_test_annexb.h264`
+3. `./tests/hw/test_f3_bitstream.sh` — SPI index 3 push OK.
+4. LED_USER blinks very fast when `nalu_scanner` has_stream (eyes-on).

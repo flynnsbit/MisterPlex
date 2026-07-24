@@ -249,6 +249,14 @@ bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
     return sendFileTx(pcm, len, index);
 }
 
+bool FpgaSpi::sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index) {
+    if (!data || !len) {
+        err_ = "sendBitstreamChunk: empty";
+        return false;
+    }
+    return sendFileTx(data, len, index);
+}
+
 bool FpgaSpi::flushAudioFifo() {
     // Pulse status[10] high then low (OSD T[10] / present_core af_wr_flush)
     if (!setStatusBit(10, 1))
@@ -256,6 +264,13 @@ bool FpgaSpi::flushAudioFifo() {
     // brief hold so FPGA samples the bit
     usleep(2000);
     return setStatusBit(10, 0);
+}
+
+bool FpgaSpi::flushBitstreamFifo() {
+    if (!setStatusBit(11, 1))
+        return false;
+    usleep(2000);
+    return setStatusBit(11, 0);
 }
 
 } // namespace misterplex

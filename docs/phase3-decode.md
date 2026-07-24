@@ -60,8 +60,14 @@ Phase 3.2 (done):
   HW: multi-chunk F2 OK (~17 ms/16 KiB); live play f2==audio bytes
   `tests/hw/test_f2_append.sh`
 
-Phase 3.3 (next):
-  H.264 soft-core / elementary NAL feed; optional DDRAM frame path (SPI ~99 ms/frame)
+Phase 3.3 scaffold (HW-green):
+  F3 ioctl → stream_ingest (append) → bitstream_fifo 32 KiB M10K → nalu_scanner
+  Scanner counts annex-B start codes (00 00 01 / 00 00 00 01); LED on has_stream
+  ARM: `sendBitstreamChunk` / push_frame --index 3; `scripts/gen_test_annexb.py`
+  HW: `tests/hw/test_f3_bitstream.sh` (SPI OK); unit `test_annexb_count`
+  Fit: block mem ~56%, RAM blocks ~73% (bitstream 262144 bits / 32 M10K)
+  Next: real H.264 soft-core / open IP; YUV → frame_store; nalu_count status readback
+  Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 
 ### 3.0 HW bring-up
@@ -71,6 +77,17 @@ Phase 3.3 (next):
 3. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565` and copy to SD.
 4. OSD: load frame via **F1**, set **Video source = Frame store**.
 5. Expect yellow border + color bars + orange diagonal (not internal pattern block).
+
+## H.264 soft-core evaluation notes
+
+| Option | Pros | Cons for Cyclone V 5CSEBA6 |
+|--------|------|----------------------------|
+| Open hardh264-class / VexRiscv+accel | Real Baseline | ALM/BRAM cost; integration effort |
+| Simplified Baseline intra-only | Fits fabric | Limited library titles |
+| ARM demux + FPGA IDCT/MC only | Incremental | Still ARM-heavy |
+| PMS ladder → Profile-1 elementary | Product path | Needs soft-core ready |
+
+**Bring-up order:** F3 byte path (done scaffold) → NAL parse stats → Baseline decode IP → YUV→RGB565 → frame_store swap.
 
 ## Acceptance
 
