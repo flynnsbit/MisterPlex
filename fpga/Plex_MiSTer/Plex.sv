@@ -2,6 +2,7 @@
 //  MiSTerPlex — native Plex present core
 //  Phase 1: color bars + cadence + tone
 //  Phase 3.0: dual-bank RGB565 frame_store via ioctl F1
+//  Phase 3.1b: DDRAM/f2sdram HPS bulk RGB565 → frame_store (beat SPI F1)
 //  Phase 3.2: present-domain audio_fifo via ioctl F2
 //  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
 //  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
@@ -21,7 +22,7 @@ assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = '0;
+// DDRAM driven by ddram_frame_rd (Phase 3.1b); not tied off.
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
@@ -172,6 +173,43 @@ frame_ingest finst (
 	.downloading(ingest_dl)
 );
 
+// Phase 3.1b: HPS mmap @ 0x30000000 → DDRAM burst → frame_store
+// status[12]=start (rising edge), status[13]=bank (0/1)
+wire        ddr_wr_en;
+wire [15:0] ddr_wr_pixel;
+wire        ddr_wr_reset;
+wire        ddr_swap;
+wire        ddr_busy;
+wire [15:0] ddr_frames;
+
+ddram_frame_rd #(
+	.WIDTH(320),
+	.HEIGHT(240),
+	.PHYS_BASE(32'h3000_0000),
+	.BURST(32)
+) ddr_fr (
+	.clk(clk_sys),
+	.reset(reset),
+	.start_req(status[12]),
+	.bank_sel(status[13]),
+	.DDRAM_CLK(DDRAM_CLK),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE),
+	.wr_en(ddr_wr_en),
+	.wr_pixel(ddr_wr_pixel),
+	.wr_reset_ptr(ddr_wr_reset),
+	.swap_req(ddr_swap),
+	.busy(ddr_busy),
+	.frames_done(ddr_frames)
+);
+
 // Audio ingest from F2
 wire        af_wr_en;
 wire [31:0] af_wr_data;
@@ -242,24 +280,29 @@ stream_path spath (
 	.fs_swap(stub_swap)
 );
 
-// Phase 3.3j hybrid present:
-//   Host F1 (I-slice recon / FFmpeg RGB) owns product frame_store once any F1
-//   frame has swapped. decode_stub F3 diagnostic paint is suppressed after that
-//   so STREAM residual probes cannot wipe recon. F3-only bring-up (no F1) still
-//   paints via stub. Cleared on core reset.
+// Phase 3.3j / 3.1b hybrid present:
+//   Host F1 SPI or DDR bulk owns product frame_store once any host frame has
+//   swapped. decode_stub F3 diagnostic paint is suppressed after that.
+//   Priority while writing: F1 ioctl download > DDR DMA > stub.
 reg host_owns_fs;
 always @(posedge clk_sys) begin
 	if (reset)
 		host_owns_fs <= 1'b0;
-	else if (f1_swap)
+	else if (f1_swap | ddr_swap)
 		host_owns_fs <= 1'b1;
 end
 
-wire        stub_allow  = ~host_owns_fs & ~ingest_dl;
-wire        fs_wr_en    = ingest_dl ? f1_wr_en    : (stub_allow ? (stub_wr_en | f1_wr_en) : f1_wr_en);
-wire [15:0] fs_wr_pixel = (ingest_dl | f1_wr_en) ? f1_wr_pixel : stub_wr_pixel;
-wire        fs_wr_reset = f1_wr_reset | (stub_wr_reset & stub_allow);
-wire        fs_swap     = f1_swap | (stub_swap & stub_allow);
+wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
+wire        host_wr     = ingest_dl | f1_wr_en | ddr_wr_en;
+wire        fs_wr_en    = ingest_dl ? f1_wr_en
+	                      : ddr_busy  ? ddr_wr_en
+	                      : (stub_allow ? (stub_wr_en | f1_wr_en) : f1_wr_en);
+wire [15:0] fs_wr_pixel = ingest_dl ? f1_wr_pixel
+	                      : ddr_wr_en ? ddr_wr_pixel
+	                      : (f1_wr_en ? f1_wr_pixel : stub_wr_pixel);
+wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & stub_allow);
+wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & stub_allow);
+wire        _host_wr_unused = host_wr;
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;
@@ -338,14 +381,15 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [79:64] sps_height  [95:80] sps_width
 //   [127:96] stream_bytes_in
 //   [47:40] {residual_ok, residual_tc[4:0], residual_t1[1:0]}
-//   [39:32] slice_qp
+//   [39] ddr_busy  [38] 0  [37:32] slice_qp
 //   has_mb_type implied by first_mb_type<=25 after I-slice parse
+//   status[12] HPS→core DDR start; status[13] bank
 assign status_in = {
 	stream_bytes_in,                    // 127:96
 	sps_width, sps_height,              // 95:64
 	slice_type, first_mb_type,          // 63:48
 	residual_ok, residual_tc, residual_t1, // 47:40
-	{2'b0, slice_qp},                   // 39:32
+	ddr_busy, 1'b0, slice_qp,           // 39:32
 	nalu_count,                         // 31:16
 	last_nal_type,                      // 15:8
 	pps_valid, sps_valid, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame
@@ -382,6 +426,6 @@ end
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
 	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h, has_mb_type, idr_count,
-	stream_fifo_level};
+	stream_fifo_level, ddr_frames, _host_wr_unused};
 
 endmodule

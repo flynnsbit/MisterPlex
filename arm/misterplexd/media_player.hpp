@@ -1,6 +1,7 @@
 #pragma once
 // Phase 2 media player: single-process FFmpeg → /dev/fb0 + /dev/MrAudio.
 // Transitional ARM decode; FPGA owns scanout (MiSTer_fb) + SPI audio (MrAudio).
+// STREAM=1: annex-B demux → host I-slice recon → F1 + F3; optional RGB skip.
 
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
@@ -31,6 +32,11 @@ public:
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
+    // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
+    // "auto" = skip RGB when PRESENT=fpga after first recon (or from start with CABAC fallback)
+    // "1"/"on" = prefer skip whenever STREAM (PRESENT=both still keeps RGB for continuous fb0)
+    // "0"/"off" = always full RGB (STREAM=0-compatible fallback path)
+    void setStreamSkipRgb(std::string mode) { streamSkipRgb_ = std::move(mode); }
     // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
@@ -38,6 +44,7 @@ public:
     void setDecodeSize(int w, int h);
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
+    bool reconPresentOk() const { return reconPresentOk_.load(); }
 
     bool initPresent();
 
@@ -50,6 +57,11 @@ public:
 
     bool playing() const { return playing_.load(); }
     bool audioActive() const { return audioActive_.load(); }
+    int64_t positionMs() const { return positionMs_.load(); }
+    int64_t durationMs() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return durationMs_;
+    }
     int decodeW() const { return outW_; }
     int decodeH() const { return outH_; }
     std::string lastError() const;
@@ -61,9 +73,13 @@ private:
     void streamPump(int sfd);
     void killChildren();
     void signalChildren(int sig);
+    // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
+    bool wantSkipRgbVideo() const;
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
+    pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
+                         int aWriteFd);
     void log(const std::string& s) const;
 
     LogFn log_;
@@ -73,11 +89,14 @@ private:
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
+    std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
 
     FbPresent fb_;
     FpgaSpi fpga_;
+    bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
+    int ddrBank_ = 0;      // ping-pong 0/1 @ 0x30000000 / 0x30040000
     mutable std::mutex mu_;
     std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;
@@ -90,6 +109,7 @@ private:
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
+    std::atomic<bool> cabacSkip_{false};      // sticky: host CAVLC cannot decode this stream
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     std::atomic<pid_t> childPid_{-1};

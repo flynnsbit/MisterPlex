@@ -29,6 +29,16 @@ public:
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
+    // Phase 3.1b: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000) + status[12] kick.
+    // Beats SPI F1 (~0.8 MB/s). Frame must be 320×240×2 = 153600 B.
+    // bank 0 → 0x30000000, bank 1 → 0x30040000.
+    bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
+    bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
+    // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
+    static constexpr uint32_t kDdrFrameBase = 0x30000000u;
+    static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
+    static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
+
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 
@@ -68,6 +78,7 @@ public:
         uint8_t residual_tc = 0;
         uint8_t residual_t1 = 0;
         bool residual_ok = false;
+        bool ddr_busy = false; // status_in[39] — DDR→BRAM copy in flight
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
         uint16_t sps_height = 0;

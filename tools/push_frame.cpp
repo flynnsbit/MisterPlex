@@ -1,6 +1,8 @@
-// Push raw RGB565/RGB24/PCM/annex-B to MiSTerPlex via SPI ioctl, or dump core status.
+// Push raw RGB565/RGB24/PCM/annex-B to MiSTerPlex via SPI ioctl or DDR bulk,
+// or dump core status.
 // Usage:
 //   push_frame [--index N] [--rgb24 WxH] file
+//   push_frame --ddr [--bank N] [--rgb24 320x240] file   # Phase 3.1b DDR path
 //   push_frame --status
 #include "fpga_spi.hpp"
 
@@ -14,6 +16,8 @@ int main(int argc, char** argv) {
     uint8_t index = 1;
     int rgb24w = 0, rgb24h = 0;
     bool do_status = false;
+    bool use_ddr = false;
+    int bank = 0;
     const char* path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--index") == 0 && i + 1 < argc)
@@ -22,6 +26,10 @@ int main(int argc, char** argv) {
             std::sscanf(argv[++i], "%dx%d", &rgb24w, &rgb24h);
         } else if (std::strcmp(argv[i], "--status") == 0) {
             do_status = true;
+        } else if (std::strcmp(argv[i], "--ddr") == 0) {
+            use_ddr = true;
+        } else if (std::strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
+            bank = std::atoi(argv[++i]);
         } else if (argv[i][0] != '-')
             path = argv[i];
     }
@@ -41,18 +49,20 @@ int main(int argc, char** argv) {
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
             "has_idr=%d stub_busy=%d sps_valid=%d pps_valid=%d nalu=%u last_nal=0x%02x "
-            "slice_type=%u mb0=%u qp=%u res_ok=%d res_tc=%u res_t1=%u sps=%ux%u bytes_in=%u\n",
+            "slice_type=%u mb0=%u qp=%u res_ok=%d res_tc=%u res_t1=%u ddr_busy=%d "
+            "sps=%ux%u bytes_in=%u\n",
             st.has_frame ? 1 : 0, st.has_audio ? 1 : 0, st.has_stream ? 1 : 0,
             st.audio_underrun ? 1 : 0, st.has_idr ? 1 : 0, st.stub_busy ? 1 : 0,
             st.sps_valid ? 1 : 0, st.pps_valid ? 1 : 0, st.nalu_count, st.last_nal_type,
             st.slice_type, st.first_mb_type, st.slice_qp, st.residual_ok ? 1 : 0, st.residual_tc,
-            st.residual_t1, st.sps_width, st.sps_height, st.stream_bytes_in);
+            st.residual_t1, st.ddr_busy ? 1 : 0, st.sps_width, st.sps_height, st.stream_bytes_in);
         return 0;
     }
 
     if (!path) {
         std::fprintf(stderr,
                      "usage: push_frame [--index 1] [--rgb24 320x240] file\n"
+                     "       push_frame --ddr [--bank 0|1] [--rgb24 320x240] file\n"
                      "       push_frame --status\n");
         return 1;
     }
@@ -63,7 +73,17 @@ int main(int argc, char** argv) {
     }
     std::vector<uint8_t> buf((std::istreambuf_iterator<char>(in)), {});
     bool ok = false;
-    if (rgb24w > 0 && rgb24h > 0) {
+    if (use_ddr) {
+        if (rgb24w > 0 && rgb24h > 0) {
+            if (buf.size() < static_cast<size_t>(rgb24w * rgb24h * 3)) {
+                std::fprintf(stderr, "file too small for %dx%d RGB24\n", rgb24w, rgb24h);
+                return 1;
+            }
+            ok = spi.sendRgb24FrameDdr(buf.data(), rgb24w, rgb24h, bank);
+        } else {
+            ok = spi.sendRgb565FrameDdr(buf.data(), buf.size(), bank);
+        }
+    } else if (rgb24w > 0 && rgb24h > 0) {
         if (buf.size() < static_cast<size_t>(rgb24w * rgb24h * 3)) {
             std::fprintf(stderr, "file too small for %dx%d RGB24\n", rgb24w, rgb24h);
             return 1;
@@ -77,7 +97,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     // Ensure Force-bars debug is off (status[9]=0) so auto frame present shows
-    spi.setStatusBit(9, 0);
-    std::printf("pushed %zu bytes index=%u OK (%.1f ms)\n", buf.size(), index, spi.lastPushMs());
+    if (!use_ddr)
+        spi.setStatusBit(9, 0);
+    const char* via = use_ddr ? "DDR" : "SPI";
+    std::printf("pushed %zu bytes %s bank=%d index=%u OK (%.1f ms)\n", buf.size(), via, bank,
+                index, spi.lastPushMs());
     return 0;
 }

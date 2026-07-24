@@ -6,6 +6,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <mutex>
+#include <new>
 #include <signal.h>
 #include <string>
 #include <sys/file.h>
@@ -25,8 +27,17 @@ constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
 
+// Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
+// share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
+std::mutex& spiMutex() {
+    static std::mutex m;
+    return m;
+}
+
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
 // Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
+// IMPORTANT: no system()/fork here — multi-threaded misterplexd (F1+F2+F3) must
+// not call system() under load (glibc fork+malloc deadlock → silent process death).
 std::vector<pid_t> findMisterPids() {
     std::vector<pid_t> out;
     DIR* d = opendir("/proc");
@@ -49,7 +60,10 @@ std::vector<pid_t> findMisterPids() {
         const char* argv0 = buf;
         if (std::strstr(argv0, "misterplex") != nullptr)
             continue;
-        if (std::strstr(argv0, "MiSTer") != nullptr || std::strstr(argv0, "mister") != nullptr)
+        // Exact basename match for main host binaries only (avoid "mister*" false positives)
+        const char* base = std::strrchr(argv0, '/');
+        base = base ? base + 1 : argv0;
+        if (std::strcmp(base, "MiSTer") == 0 || std::strcmp(base, "MiSTer_groovy") == 0)
             out.push_back(static_cast<pid_t>(std::atoi(e->d_name)));
     }
     closedir(d);
@@ -61,25 +75,56 @@ struct MainPause {
     explicit MainPause(bool enable) {
         if (!enable)
             return;
-        // BusyBox killall is reliable on MiSTer rootfs
-        int r = system("killall -STOP MiSTer 2>/dev/null; "
-                       "killall -STOP MiSTer_groovy 2>/dev/null; true");
-        (void)r;
         pids = findMisterPids();
         for (pid_t p : pids)
             kill(p, SIGSTOP);
-        usleep(15000); // let SPI settle
+        if (!pids.empty())
+            usleep(10000); // let SPI settle
     }
     ~MainPause() {
         for (pid_t p : pids)
             kill(p, SIGCONT);
-        int r = system("killall -CONT MiSTer 2>/dev/null; "
-                       "killall -CONT MiSTer_groovy 2>/dev/null; true");
-        (void)r;
     }
     MainPause(const MainPause&) = delete;
     MainPause& operator=(const MainPause&) = delete;
 };
+
+// Order: process mutex → flock → MainPause. No system()/fork under the lock.
+struct SpiExclusive {
+    std::lock_guard<std::mutex> mu;
+    int lfd = -1;
+    alignas(MainPause) unsigned char pause_storage_[sizeof(MainPause)]{};
+    MainPause* pause = nullptr;
+    explicit SpiExclusive(bool pauseMain) : mu(spiMutex()) {
+        lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
+        if (lfd >= 0)
+            flock(lfd, LOCK_EX);
+        if (pauseMain)
+            pause = new (pause_storage_) MainPause(true);
+    }
+    ~SpiExclusive() {
+        if (pause) {
+            pause->~MainPause();
+            pause = nullptr;
+        }
+        if (lfd >= 0) {
+            flock(lfd, LOCK_UN);
+            ::close(lfd);
+        }
+    }
+    SpiExclusive(const SpiExclusive&) = delete;
+    SpiExclusive& operator=(const SpiExclusive&) = delete;
+};
+
+bool gpiUserMode(volatile uint32_t* map) {
+    if (!map)
+        return false;
+    constexpr uint32_t kMgrBase = 0xFF706000;
+    constexpr uint32_t kMapBase = 0xFF000000;
+    volatile uint32_t* gpi = map + ((kMgrBase - kMapBase + 0x14) >> 2);
+    // MiSTer: high bit of GPI indicates not-in-user-mode (core reconfig / menu).
+    return (static_cast<int>(*gpi) >= 0);
+}
 
 } // namespace
 
@@ -205,9 +250,11 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
         err_ = "setStatusBit: bad args";
         return false;
     }
-    int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
-    if (lfd >= 0)
-        flock(lfd, LOCK_EX);
+    SpiExclusive guard(true);
+    if (!gpiUserMode(map_)) {
+        err_ = "FPGA not in user mode";
+        return false;
+    }
 
     const int byte = bit / 8;
     const int b = bit % 8;
@@ -224,10 +271,8 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
     }
     enableIo(0);
 
-    if (lfd >= 0) {
-        flock(lfd, LOCK_UN);
-        ::close(lfd);
-    }
+    if (!err_.empty())
+        return false;
     err_.clear();
     return true;
 }
@@ -238,11 +283,12 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
         return false;
     }
     auto t0 = std::chrono::steady_clock::now();
-    // Pause Main for clean FIO_FILE_* (short transfers; resume in dtor).
-    MainPause pause(true);
-    int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
-    if (lfd >= 0)
-        flock(lfd, LOCK_EX);
+    // Mutex + flock + Main pause (no system()/fork — thread-safe under STREAM load).
+    SpiExclusive guard(true);
+    if (!gpiUserMode(map_)) {
+        err_ = "FPGA not in user mode";
+        return false;
+    }
 
     setIndex(index);
     setDownload(1);
@@ -263,19 +309,11 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
         off += n;
         if (!err_.empty()) {
             setDownload(0);
-            if (lfd >= 0) {
-                flock(lfd, LOCK_UN);
-                ::close(lfd);
-            }
             return false;
         }
     }
 
     setDownload(0);
-    if (lfd >= 0) {
-        flock(lfd, LOCK_UN);
-        ::close(lfd);
-    }
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
     err_.clear();
@@ -323,6 +361,108 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
+bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) {
+    if (!rgb565le || len != kDdrFrameBytes) {
+        err_ = "sendRgb565FrameDdr: need 320x240 RGB565 (153600 B)";
+        return false;
+    }
+    if (bank < 0 || bank > 1) {
+        err_ = "sendRgb565FrameDdr: bank must be 0 or 1";
+        return false;
+    }
+    auto t0 = std::chrono::steady_clock::now();
+
+    // Map frame bank in HPS-visible DDR (same window cores use for 0x3xxxxxxx).
+    const off_t phys = static_cast<off_t>(kDdrFrameBase + static_cast<uint32_t>(bank) * kDdrFrameStride);
+    int mfd = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    if (mfd < 0) {
+        err_ = "sendRgb565FrameDdr: open /dev/mem failed";
+        return false;
+    }
+    // Map a full page-aligned region covering the bank stride.
+    const size_t mapLen = kDdrFrameStride;
+    void* p = mmap(nullptr, mapLen, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, phys);
+    if (p == MAP_FAILED) {
+        err_ = "sendRgb565FrameDdr: mmap frame bank failed";
+        ::close(mfd);
+        return false;
+    }
+    std::memcpy(p, rgb565le, len);
+    // Ensure visibility before kicking the FPGA DMA (O_SYNC map + explicit clean).
+    __sync_synchronize();
+    munmap(p, mapLen);
+    ::close(mfd);
+
+    // status[13]=bank, status[12]=start (rising edge). Pulse start high→sample→low.
+    if (!setStatusBit(13, bank ? 1 : 0)) {
+        err_ = "sendRgb565FrameDdr: set bank bit failed: " + err_;
+        return false;
+    }
+    if (!setStatusBit(12, 0))
+        return false;
+    usleep(200); // settle so rising edge is clean
+    if (!setStatusBit(12, 1))
+        return false;
+    // Core DMA for 153600 B is typically <2 ms @ clk_sys. Avoid SPI status polls
+    // in the hot path (each UIO_GET_STATUS pauses Main ~ms). One-shot verify once.
+    static int ddr_verified = 0; // 0=unknown, 1=ok, -1=missing
+    if (ddr_verified == 0) {
+        bool saw_busy = false;
+        for (int i = 0; i < 20 && !saw_busy; ++i) {
+            usleep(200);
+            CoreStatus st;
+            if (readCoreStatus(st) && st.ddr_busy)
+                saw_busy = true;
+        }
+        // Drain busy
+        for (int i = 0; i < 20; ++i) {
+            usleep(200);
+            CoreStatus st;
+            if (readCoreStatus(st) && !st.ddr_busy)
+                break;
+        }
+        ddr_verified = saw_busy ? 1 : -1;
+        if (!saw_busy) {
+            setStatusBit(12, 0);
+            err_ = "sendRgb565FrameDdr: no ddr_busy (core RBF lacks 3.1b DDR path?)";
+            return false;
+        }
+    } else if (ddr_verified < 0) {
+        setStatusBit(12, 0);
+        err_ = "sendRgb565FrameDdr: DDR path previously unavailable";
+        return false;
+    } else {
+        usleep(2500); // allow DMA to finish without SPI thrash
+    }
+    setStatusBit(12, 0);
+    // Ensure Force-bars debug off so frame_store is visible (same as SPI path).
+    setStatusBit(9, 0);
+
+    auto t1 = std::chrono::steady_clock::now();
+    lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    err_.clear();
+    return true;
+}
+
+bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
+    if (!rgb || w != 320 || h != 240) {
+        err_ = "sendRgb24FrameDdr: need 320x240 RGB24";
+        return false;
+    }
+    std::vector<uint8_t> packed(kDdrFrameBytes);
+    size_t o = 0;
+    for (int i = 0; i < w * h; ++i) {
+        const uint8_t r = rgb[i * 3 + 0];
+        const uint8_t g = rgb[i * 3 + 1];
+        const uint8_t b = rgb[i * 3 + 2];
+        const uint16_t px =
+            static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        packed[o++] = static_cast<uint8_t>(px & 0xFF);
+        packed[o++] = static_cast<uint8_t>(px >> 8);
+    }
+    return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
+}
+
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
     if (!pcm || !len) {
         err_ = "sendPcmChunk: empty";
@@ -364,11 +504,12 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
         err_ = "getCoreStatus: not open";
         return false;
     }
-    // Pause Main so UIO_GET_STATUS is not interleaved mid-transaction.
-    MainPause pause(true);
-    int lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
-    if (lfd >= 0)
-        flock(lfd, LOCK_EX);
+    // Mutex + flock + Main pause so UIO_GET_STATUS is not interleaved.
+    SpiExclusive guard(true);
+    if (!gpiUserMode(map_)) {
+        err_ = "FPGA not in user mode";
+        return false;
+    }
 
     enableIo(1);
     // Main protocol: spi_w(cmd) returns {4'hA, stflg}; next words are status_req.
@@ -381,10 +522,8 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
     }
     enableIo(0);
 
-    if (lfd >= 0) {
-        flock(lfd, LOCK_UN);
-        ::close(lfd);
-    }
+    if (!err_.empty())
+        return false;
     err_.clear();
     return true;
 }
@@ -417,6 +556,8 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.residual_ok = (hi & 0x80) != 0;
     s.residual_tc = static_cast<uint8_t>((hi >> 2) & 0x1F);
     s.residual_t1 = static_cast<uint8_t>(hi & 0x3);
+    // [39:32] = {ddr_busy, 0, slice_qp[5:0]}
+    s.ddr_busy = (w2 & 0x80) != 0;
     s.slice_qp = static_cast<uint8_t>(w2 & 0x3F);
     s.stream_fifo_level = 0;
     // [95:64] = {sps_width, sps_height}

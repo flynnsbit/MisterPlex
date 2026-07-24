@@ -18,6 +18,10 @@ Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 ./tests/hw/test_media_fb.sh
 # Soak: loads conf from MiSTer (or MISTER_CONF), discovers PMS titles when token set
 SOAK_HOLD_S=5 SOAK_ROUNDS=1 ./tests/hw/test_soak.sh
+# Longer multi-round soak + Wi-Fi/Ethernet matrix label (logs net snapshot via ssh)
+SOAK_HOLD_S=15 SOAK_ROUNDS=5 SOAK_PROGRESS=1 SOAK_NET_LABEL=wifi ./tests/hw/test_soak.sh
+# Ethernet row when cable is default route:
+# SOAK_NET_LABEL=eth SOAK_HOLD_S=15 SOAK_ROUNDS=5 ./tests/hw/test_soak.sh
 ```
 
 ## Phase 3.0 frame store (FPGA)
@@ -56,17 +60,20 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 4. Continuous product path: `STREAM=1` in `misterplex.conf` (+ `PRESENT=fpga|both`)
    demuxes annex-B → F3 while playing (decode_stub until real H.264 IP).
 
-## Phase 3.3i host I-slice recon → F1
+## Phase 3.3i/k host I-slice recon → F1 (product STREAM)
 
 1. Conf: `PRESENT=both` (or `fpga`) and `STREAM=1` in `/media/fat/misterplex/misterplex.conf`.
 2. Deploy: `./scripts/deploy_misterplexd.sh`.
-3. Play weak Baseline 320×240 (PMS ladder / test annex-B cast) via companion.
+3. Play Baseline 320×240 annex-B or direct H.264 Part (STREAM prefers direct H.264 over CABAC universal).
 4. Log should show:
    - `STREAM=1 host I-slice recon →F1 +F3`
-   - `recon frame ok #1 320x240 mb=300 …`
-   - `fpga`/session `recon=N` (N≥1 after first IDR)
+   - `recon frame ok #1 320x240 mb=300 …` (multi-IDR increments `idr=`)
+   - session `recon=N` (N≥1 after first IDR); CABAC logs sticky skip once if High profile
 5. Frame store shows reconstructed I-frame (not only decode_stub green border).
-6. Fallback: if recon fails, FFmpeg RGB still drives F1 until first recon success.
+6. Fallback: if recon fails, FFmpeg RGB still drives F1 until first recon success (`PRESENT=both`).
+7. Seek/stop: both FFmpeg groups killed; seek restarts demux at offset.
+8. Optional: `STREAM_SKIP_RGB=auto` + `PRESENT=fpga` drops heavy RGB (audio kept).
+9. Smoke: `./tests/hw/test_stream_recon.sh` (local Baseline + companion play).
 
 ## Phase 3.3c SPS parse (real Baseline)
 

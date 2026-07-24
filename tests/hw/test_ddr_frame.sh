@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Phase 3.1b: push 320×240 RGB565 via DDR bulk and check has_frame.
+# Requires Plex.rbf with ddram_frame_rd on the MiSTer.
+set -euo pipefail
+HOST="${MISTER_HOST:-192.168.1.183}"
+USER="${MISTER_USER:-root}"
+PASS="${MISTER_PASS:-1}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BIN="${ROOT}/build/arm/push_frame"
+FRAME="${FRAME:-/tmp/plex_test_320x240.rgb565}"
+
+ssh_m() {
+  sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
+}
+
+if [[ ! -x "$BIN" ]]; then
+  echo "missing $BIN — run: make arm-plexd"
+  exit 1
+fi
+
+if [[ ! -f "$FRAME" ]]; then
+  python3 "${ROOT}/scripts/gen_test_frame.py" "$FRAME"
+fi
+
+echo "=== ensure Plex core loaded ==="
+ssh_m 'killall -9 misterplexd 2>/dev/null || true
+echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
+sleep 5
+ssh_m 'grep -q Plex /tmp/CORENAME'
+
+echo "== scp push_frame + frame to $HOST =="
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" \
+  "$USER@$HOST:/tmp/"
+
+echo "== DDR push =="
+OUT=$(ssh_m 'chmod +x /tmp/push_frame
+/tmp/push_frame --ddr /tmp/plex_test_320x240.rgb565
+/tmp/push_frame --status
+' 2>&1)
+echo "$OUT"
+echo "$OUT" | grep -qiE 'DDR|OK'
+echo "$OUT" | grep -q 'has_frame=1'
+# Prefer ms << SPI (~170+). Allow slack if first verify path is slower.
+MS=$(echo "$OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 999)
+echo "push_ms≈$MS (SPI baseline ~170–220)"
+if [[ "$MS" -gt 80 ]]; then
+  echo "WARN: DDR push not much faster than SPI (ms=$MS) — check RBF has ddram_frame_rd"
+fi
+echo "test_ddr_frame: OK on $HOST"

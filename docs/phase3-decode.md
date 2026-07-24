@@ -190,27 +190,35 @@ Phase 3.3k (product path polish — this fire):
     - PRESENT=both/fb0: always keep RGB (continuous fb0 / STREAM=0 path intact)
   Unit: `mediaVideoIsH264` + resolve helpers; HW: STREAM=1 PRESENT=both smoke.
 
-Phase 3.1b (research + measured — open for DDR bulk impl):
+Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
     | chunk | wall time | effective |
     |-------|-----------|-----------|
     | 8 KiB | ~220 ms   | ~0.70 MB/s |
-    | 32 KiB| ~194 ms   | ~0.79 MB/s |  ← tree default
+    | 32 KiB| ~194 ms   | ~0.79 MB/s |  ← SPI default
     | 64–128 KiB | ~196–202 ms | ~0.76 MB/s |
-    Ceiling ≈ **4–5 unique fps** on F1 alone (not real-time 24/30).
+    Ceiling ≈ **4–5 unique fps** on SPI F1 alone (not real-time 24/30).
   **Why SPI is slow:** FIO_FILE_TX over HPS SPI with Main pause + per-chunk
-    CS sessions; not a streaming DMA. Larger chunks only drop protocol overhead.
-  **Product path until DDR:** PRESENT=both — continuous FFmpeg → fb0; sparse
-    host recon / FFmpeg RGB → F1 keyframes (STREAM=1).
-  **Next impl options (in order of leverage):**
-    1. **f2sdram / DDR3 bulk write** from HPS into FPGA-visible buffer, then
-       copy or present from DDR (sys has `f2sdram_safe_terminator` + `ddr_svc`;
-       Plex.sv currently ties DDRAM_* to 0). Target: ≥30 fps @320×240, ideally
-       480p ladder later.
-    2. Async double-buffer SPI (pipeline pack + TX) — small gain only.
-    3. Lower res / delta tiles — product compromise, not preferred.
-  **Blocking:** needs RBF DDRAM wiring + ARM mmap/ioctl path; must not break
-    Phase 2 fb0 cast. Measure fps after each path with push_frame / STREAM logs.
+    CS sessions; not a streaming DMA.
+
+  **DDR path (new):**
+    HPS `mmap(/dev/mem)` → bank @ **0x30000000** / **0x30040000** (256 KiB stride)
+    → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
+    burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
+    - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
+    - ARM: `FpgaSpi::sendRgb565FrameDdr` / `sendRgb24FrameDdr`
+    - Tool: `push_frame --ddr [--bank 0|1] file.rgb565`
+    - misterplexd: prefers DDR for F1; one-shot verifies `ddr_busy` (status_in[39]);
+      falls back to SPI if RBF lacks 3.1b
+    - status_in[39] = ddr_busy during copy
+  **Target:** ≥30 fps @320×240 (mmap + kick << SPI 200 ms). Measure with
+    `push_frame --ddr` wall time on lab 192.168.1.183 after RBF deploy.
+  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
+
+  **Still open after 3.1b:**
+    1. Lab measure push_ms / sustained fps with new RBF
+    2. Optional: present directly from DDR (skip BRAM) for larger modes
+    3. Async double-buffer SPI — small gain only; deprioritized
 
 ```
 

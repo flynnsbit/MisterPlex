@@ -3,10 +3,12 @@
 #include "libmisterplex/h264_recon.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <chrono>
+#include <exception>
 #include <signal.h>
 #include <vector>
 
@@ -57,6 +59,26 @@ inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t
     }
 }
 
+// Local annex-B elementary H.264 (skip remux BSF when possible).
+inline bool looksElementaryH264(const std::string& url) {
+    if (url.empty() || url.rfind("http", 0) == 0 || url.rfind("lavfi", 0) == 0)
+        return false;
+    auto lower = url;
+    for (char& c : lower)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    auto q = lower.find('?');
+    if (q != std::string::npos)
+        lower = lower.substr(0, q);
+    return lower.size() >= 5 &&
+           (lower.compare(lower.size() - 5, 5, ".h264") == 0 ||
+            lower.compare(lower.size() - 4, 4, ".264") == 0 ||
+            lower.compare(lower.size() - 4, 4, ".avc") == 0);
+}
+
+inline bool confTruthyMode(const std::string& v) {
+    return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
 } // namespace
 
 void MediaPlayer::log(const std::string& s) const {
@@ -92,6 +114,20 @@ std::string MediaPlayer::currentUrl() const {
     return currentUrl_;
 }
 
+bool MediaPlayer::wantSkipRgbVideo() const {
+    if (!streamEnabled_)
+        return false;
+    // Continuous fb0 needs RGB; skip only frees ARM when FPGA owns present.
+    if (presentMode_ == "both" || presentMode_ == "fb0" || presentMode_.empty())
+        return false;
+    // presentMode_ == "fpga"
+    if (streamSkipRgb_ == "0" || streamSkipRgb_ == "off" || streamSkipRgb_ == "false" ||
+        streamSkipRgb_ == "no")
+        return false;
+    // auto | on | 1 | true | yes
+    return streamSkipRgb_ == "auto" || confTruthyMode(streamSkipRgb_) || streamSkipRgb_.empty();
+}
+
 bool MediaPlayer::initPresent() {
     bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
     bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
@@ -109,7 +145,9 @@ bool MediaPlayer::initPresent() {
     }
     if (wantFpga) {
         if (fpga_.open()) {
-            log("media: FPGA SPI frame_tx OK (PRESENT=fpga → ioctl frame_store)");
+            useDdrF1_ = true; // try DDR bulk first; falls back to SPI on first fail
+            ddrBank_ = 0;
+            log("media: FPGA frame path OK (PRESENT=fpga → DDR bulk 3.1b, SPI F1 fallback)");
             any = true;
         } else {
             log("media: FPGA SPI unavailable: " + fpga_.lastError());
@@ -133,37 +171,36 @@ bool MediaPlayer::initPresent() {
 }
 
 void MediaPlayer::signalChildren(int sig) {
+    // Pause/resume both RGB/audio FFmpeg and STREAM demux process groups.
     pid_t p = childPid_.load();
     if (p > 0)
         kill(-p, sig);
+    pid_t sp = streamPid_.load();
+    if (sp > 0)
+        kill(-sp, sig);
 }
 
 void MediaPlayer::killChildren() {
     signalChildren(SIGTERM);
-    pid_t sp = streamPid_.load();
-    if (sp > 0)
-        kill(-sp, SIGTERM);
     for (int i = 0; i < 20; ++i) {
         pid_t p = childPid_.load();
-        if (p <= 0)
+        pid_t sp = streamPid_.load();
+        if (p <= 0 && sp <= 0)
             break;
         int st = 0;
-        if (waitpid(p, &st, WNOHANG) == p) {
+        if (p > 0 && waitpid(p, &st, WNOHANG) == p)
             childPid_.store(-1);
-            break;
-        }
+        if (sp > 0 && waitpid(sp, &st, WNOHANG) == sp)
+            streamPid_.store(-1);
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     signalChildren(SIGKILL);
-    sp = streamPid_.load();
-    if (sp > 0)
-        kill(-sp, SIGKILL);
     pid_t p = childPid_.exchange(-1);
     if (p > 0) {
         int st = 0;
         waitpid(p, &st, 0);
     }
-    sp = streamPid_.exchange(-1);
+    pid_t sp = streamPid_.exchange(-1);
     if (sp > 0) {
         int st = 0;
         waitpid(sp, &st, 0);
@@ -217,6 +254,7 @@ void MediaPlayer::seekMs(int64_t ms) {
         seekReqMs_.store(ms);
         return;
     }
+    // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).
     play(url, ms, headers, dur);
 }
 
@@ -244,8 +282,17 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         seekReqMs_.store(-1);
         reconFrames_.store(0);
         reconPresentOk_.store(false);
+        cabacSkip_.store(false);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
-            threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
+            try {
+                threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
+            } catch (const std::exception& ex) {
+                log(std::string("media: threadMain exception: ") + ex.what());
+                playing_.store(false);
+            } catch (...) {
+                log("media: threadMain unknown exception");
+                playing_.store(false);
+            }
         });
     }
     return true;
@@ -296,7 +343,9 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
 
 pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
                                     int64_t startMs, int writeFd) {
-    // Lightweight copy-demux: annex-B elementary for F3 (no re-encode).
+    // Lightweight copy-demux: annex-B elementary for host recon + F3 (no re-encode).
+    // Prefer direct elementary when already annex-B (.h264); otherwise remux via BSF.
+    const bool elementary = looksElementaryH264(url);
     std::vector<std::string> args;
     args.push_back(ffmpeg_);
     args.push_back("-hide_banner");
@@ -320,6 +369,11 @@ pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& h
         args.push_back("-reconnect_streamed");
         args.push_back("1");
     }
+    if (elementary) {
+        // Raw annex-B: declare format so FFmpeg does not probe as MP4.
+        args.push_back("-f");
+        args.push_back("h264");
+    }
     args.push_back("-i");
     args.push_back(url);
     args.push_back("-map");
@@ -327,17 +381,63 @@ pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& h
     args.push_back("-an");
     args.push_back("-c:v");
     args.push_back("copy");
-    args.push_back("-bsf:v");
-    args.push_back("h264_mp4toannexb");
+    if (!elementary) {
+        args.push_back("-bsf:v");
+        args.push_back("h264_mp4toannexb");
+    }
     args.push_back("-f");
     args.push_back("h264");
     args.push_back("pipe:1");
     return spawnFfmpeg(args, writeFd, -1);
 }
 
+pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
+                                  int aWriteFd) {
+    // Audio-only FFmpeg — frees dual-A9 when host recon owns F1 (no RGB scale/decode).
+    std::vector<std::string> args;
+    args.push_back(ffmpeg_);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    if (startMs > 0) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+        args.push_back("-reconnect_delay_max");
+        args.push_back("5");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-vn");
+    args.push_back("-map");
+    args.push_back("0:a:0?");
+    args.push_back("-f");
+    args.push_back("s16le");
+    args.push_back("-ac");
+    args.push_back("2");
+    args.push_back("-ar");
+    args.push_back("48000");
+    args.push_back("pipe:3");
+    return spawnFfmpeg(args, /*vWriteFd*/ -1, aWriteFd);
+}
+
 void MediaPlayer::streamPump(int sfd) {
-    // Phase 3.3i: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
+    // Phase 3.3i/product: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
     // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
+    // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
     const bool wantF1 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
     // PRESENT=both: FFmpeg owns continuous fb0; recon owns F1 only.
@@ -350,6 +450,7 @@ void MediaPlayer::streamPump(int sfd) {
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
+    // cabacSkip_ is session-level (cleared in play()); do not clear here on mid-session re-entry.
     log(std::string("media: STREAM=1 host I-slice recon") +
         (wantF1 ? " →F1" : "") + (wantF3 ? " +F3" : "") + (reconToFb ? " +fb0" : ""));
 
@@ -374,6 +475,8 @@ void MediaPlayer::streamPump(int sfd) {
     size_t reconOk = 0;
     size_t reconFail = 0;
     size_t idrSeen = 0;
+    size_t iSliceSeen = 0;
+    bool cabacLogged = cabacSkip_.load();
     // Throttle F1 SPI: ~100–150ms/frame; present every Nth successful recon
     constexpr size_t kReconPresentEvery = 1;
     // Frame-store geometry (Plex core F1)
@@ -404,11 +507,34 @@ void MediaPlayer::streamPump(int sfd) {
         scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
         bool any = false;
         if (wantF1) {
-            if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
-                any = true;
-            } else {
-                log("media: recon F1: " + fpga_.lastError());
+            // Prefer DDR bulk (3.1b); fall back to SPI F1 if RBF lacks path.
+            bool ok = false;
+            if (useDdrF1_) {
+                std::vector<uint8_t> packed(static_cast<size_t>(kFsW) * kFsH * 2);
+                for (int i = 0; i < kFsW * kFsH; ++i) {
+                    const uint16_t p = rgb320[static_cast<size_t>(i)];
+                    packed[static_cast<size_t>(i) * 2 + 0] = static_cast<uint8_t>(p & 0xFF);
+                    packed[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>(p >> 8);
+                }
+                ok = fpga_.sendRgb565FrameDdr(packed.data(), packed.size(), ddrBank_);
+                ddrBank_ ^= 1;
+                if (!ok) {
+                    useDdrF1_ = false;
+                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                } else if ((reconOk % 30) == 0) {
+                    log("media: recon F1 via DDR " + std::to_string(static_cast<int>(fpga_.lastPushMs())) +
+                        "ms");
+                }
             }
+            if (!ok) {
+                if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
+                    ok = true;
+                } else {
+                    log("media: recon F1: " + fpga_.lastError());
+                }
+            }
+            if (ok)
+                any = true;
         }
         if (reconToFb && fb_.ok()) {
             rgb565ToRgb24(rgb320.data(), kFsW, kFsH, rgb24);
@@ -453,8 +579,17 @@ void MediaPlayer::streamPump(int sfd) {
             return;
         if (!isISliceNal(nalSc, nalLen))
             return;
+        ++iSliceSeen;
         if (ntype == 5)
             ++idrSeen;
+
+        // Sticky CABAC: do not burn dual-A9 walking High-profile every keyframe.
+        if (cabacSkip_.load()) {
+            if (ntype == 5 && (idrSeen % 16) == 1)
+                log("media: recon skip CABAC/High (sticky) idr=" + std::to_string(idrSeen) +
+                    " — FFmpeg RGB F1 fallback if enabled");
+            return;
+        }
 
         std::vector<uint8_t> au;
         au.reserve(spsNal.size() + ppsNal.size() + nalLen);
@@ -467,15 +602,21 @@ void MediaPlayer::streamPump(int sfd) {
             ++reconFail;
             // CABAC/High: host CAVLC recon cannot decode — keep FFmpeg RGB F1 fallback.
             if (rec.fail_reason && std::strcmp(rec.fail_reason, "cabac") == 0) {
-                if (reconFail == 1)
-                    log("media: recon skip CABAC/High (FFmpeg RGB F1 fallback)");
+                cabacSkip_.store(true);
+                if (!cabacLogged) {
+                    cabacLogged = true;
+                    log("media: recon CABAC/High — host CAVLC cannot decode this stream; "
+                        "FFmpeg RGB F1 fallback (STREAM still feeds F3). "
+                        "Prefer Baseline/Main CAVLC or direct H.264 Part for STREAM recon.");
+                }
                 return;
             }
             if (ntype == 5 || (reconFail % 8) == 1) {
                 log("media: recon fail ntype=" + std::to_string(ntype) +
                     " mb=" + std::to_string(rec.mb_decoded) + "/" +
                     std::to_string(rec.mb_total) +
-                    " reason=" + (rec.fail_reason ? rec.fail_reason : "?"));
+                    " reason=" + (rec.fail_reason ? rec.fail_reason : "?") +
+                    " idr=" + std::to_string(idrSeen));
             }
             return;
         }
@@ -484,10 +625,11 @@ void MediaPlayer::streamPump(int sfd) {
         if ((reconOk % kReconPresentEvery) != 0)
             return;
         if (presentRecon(rec)) {
-            if (reconOk == 1 || (reconOk % 8) == 0) {
+            if (reconOk == 1 || ntype == 5 || (reconOk % 8) == 0) {
                 log("media: recon frame ok #" + std::to_string(reconOk) + " " +
                     std::to_string(rec.width) + "x" + std::to_string(rec.height) +
                     " mb=" + std::to_string(rec.mb_decoded) + " idr=" + std::to_string(idrSeen) +
+                    " i=" + std::to_string(iSliceSeen) +
                     " f1ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
             }
         }
@@ -535,9 +677,15 @@ void MediaPlayer::streamPump(int sfd) {
                 if (ntype == 7) {
                     spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
+                    // New SPS mid-stream (seek/segment): allow recon retry if profile changed.
+                    cabacSkip_.store(false);
+                    cabacLogged = false;
                 } else if (ntype == 8) {
                     ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
+                    // New PPS may flip entropy_coding_mode — re-probe on next I-slice.
+                    cabacSkip_.store(false);
+                    cabacLogged = false;
                 } else if (ntype == 5 || ntype == 1) {
                     tryReconNal(acc.data() + i, nalLen, ntype);
                 }
@@ -565,6 +713,7 @@ void MediaPlayer::streamPump(int sfd) {
             acc.clear();
             f3Off = 0;
             parseFrom = 0;
+            // Keep last SPS/PPS so multi-IDR can recover after overflow gap
         }
     };
 
@@ -580,7 +729,7 @@ void MediaPlayer::streamPump(int sfd) {
             break;
         }
         if (n == 0)
-            break;
+            break; // demux EOF or killed (seek/stop closes pipe)
         acc.insert(acc.end(), buf, buf + n);
         consumeCompleteNals();
         // Feed F3 up through fully parsed bytes (safe: complete NALs only)
@@ -588,27 +737,50 @@ void MediaPlayer::streamPump(int sfd) {
         compactAcc();
     }
 
-    // Flush remaining complete NALs and F3 tail
-    consumeCompleteNals();
-    pushF3UpTo(parseFrom);
-    if (wantF3 && f3Off < acc.size()) {
-        size_t rem = acc.size() - f3Off;
-        if (rem && fpga_.sendBitstreamChunk(acc.data() + f3Off, rem, 3))
-            f3Total += rem;
+    // EOF: process trailing NAL that has no following start code (short files / last IDR).
+    // Without this, single-AU Baseline vectors never recon (IDR is last NAL).
+    if (!stop_.load() && parseFrom + 3 < acc.size()) {
+        size_t sc = annexBStartLen(acc.data(), acc.size(), parseFrom);
+        if (sc && parseFrom + sc < acc.size()) {
+            const size_t nalLen = acc.size() - parseFrom;
+            const uint8_t ntype = acc[parseFrom + sc] & 0x1f;
+            if (ntype == 7) {
+                spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
+                              acc.end());
+            } else if (ntype == 8) {
+                ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
+                              acc.end());
+            } else if (ntype == 5 || ntype == 1) {
+                tryReconNal(acc.data() + parseFrom, nalLen, ntype);
+            }
+            parseFrom = acc.size();
+        }
+    }
+
+    // Flush remaining complete NALs and F3 tail (only if not mid-stop)
+    if (!stop_.load()) {
+        consumeCompleteNals();
+        pushF3UpTo(parseFrom);
+        if (wantF3 && f3Off < acc.size()) {
+            size_t rem = acc.size() - f3Off;
+            if (rem && fpga_.sendBitstreamChunk(acc.data() + f3Off, rem, 3))
+                f3Total += rem;
+        }
     }
 
     ::close(sfd);
     streamActive_.store(false);
     log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
         " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
-        " idr=" + std::to_string(idrSeen) +
+        " idr=" + std::to_string(idrSeen) + " i_slices=" + std::to_string(iSliceSeen) +
+        " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " present=" + std::to_string(reconFrames_.load()));
 }
 
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio (continuous) and optionally F2 audio_fifo chunks.
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
-    const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
 
     int out = -1;
     if (wantMr) {
@@ -638,6 +810,7 @@ void MediaPlayer::audioPump(int afd) {
     f2acc.reserve(32768);
     size_t total = 0;
     size_t f2total = 0;
+    int f2Fail = 0;
     // Match audio_fifo DEPTH=2048 stereo samples (~42 ms @ 48 kHz).
     // Larger chunks overflow and drop on wr_full (half-rate FPGA audio).
     constexpr size_t kF2Chunk = 8192;
@@ -675,10 +848,30 @@ void MediaPlayer::audioPump(int afd) {
             while (f2acc.size() >= kF2Chunk && !stop_.load()) {
                 if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
                     f2total += kF2Chunk;
-                } else if ((f2total % (kF2Chunk * 8)) == 0) {
-                    log("media: F2 pcm: " + fpga_.lastError());
+                    f2Fail = 0;
+                } else {
+                    ++f2Fail;
+                    // Rate-limit: was logging every chunk when f2total==0 (0 % N == 0).
+                    if (f2Fail == 1 || f2Fail == 8 || (f2Fail % 64) == 0)
+                        log("media: F2 pcm: " + fpga_.lastError() +
+                            " (fail#" + std::to_string(f2Fail) + ")");
+                    // Core reconfig / menu: stop hammering SPI; MrAudio still plays.
+                    if (fpga_.lastError().find("user mode") != std::string::npos && f2Fail >= 4) {
+                        log("media: F2 disabled for session (FPGA left user mode)");
+                        wantF2 = false;
+                        f2acc.clear();
+                        break;
+                    }
+                    if (f2Fail >= 32) {
+                        log("media: F2 disabled for session (too many SPI errors)");
+                        wantF2 = false;
+                        f2acc.clear();
+                        break;
+                    }
                 }
-                f2acc.erase(f2acc.begin(), f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
+                if (wantF2)
+                    f2acc.erase(f2acc.begin(),
+                                f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
             }
         }
         total += static_cast<size_t>(n);
@@ -731,145 +924,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
     const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
 
-    std::vector<std::string> args;
-    args.push_back(ffmpeg_);
-    args.push_back("-hide_banner");
-    args.push_back("-loglevel");
-    args.push_back("error");
-    args.push_back("-nostdin");
+    // Product path: STREAM + PRESENT=fpga may skip heavy RGB (keep audio + demux).
+    // STREAM=0 and PRESENT=both/fb0 always keep the proven FFmpeg RGB path.
+    const bool skipRgb = !testPattern && wantSkipRgbVideo();
+    if (skipRgb)
+        log("media: STREAM skip RGB decode (audio + host recon F1; PRESENT=fpga)");
 
-    if (testPattern) {
-        char lavfi[128];
-        std::snprintf(lavfi, sizeof(lavfi), "testsrc2=size=%dx%d:rate=30", outW_, outH_);
-        args.push_back("-f");
-        args.push_back("lavfi");
-        args.push_back("-i");
-        args.push_back(lavfi);
-        if (wantAudio) {
-            args.push_back("-f");
-            args.push_back("lavfi");
-            args.push_back("-i");
-            args.push_back("sine=f=440:r=48000:d=120");
-        }
-        args.push_back("-t");
-        args.push_back("120");
-        args.push_back("-map");
-        args.push_back("0:v:0");
-        args.push_back("-an");
-        args.push_back("-f");
-        args.push_back("rawvideo");
-        args.push_back("-pix_fmt");
-        args.push_back("rgb24");
-        args.push_back("pipe:1");
-        if (wantAudio) {
-            args.push_back("-map");
-            args.push_back("1:a:0");
-            args.push_back("-vn");
-            args.push_back("-f");
-            args.push_back("s16le");
-            args.push_back("-ac");
-            args.push_back("2");
-            args.push_back("-ar");
-            args.push_back("48000");
-            args.push_back("pipe:3");
-        }
-    } else {
-        if (startMs > 0) {
-            char ss[32];
-            std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
-            args.push_back("-ss");
-            args.push_back(ss);
-        }
-        // Prefer native HTTP with headers (single demux for A+V — dual-A9 critical)
-        if (!headers.empty()) {
-            // FFmpeg requires trailing CRLF on -headers block
-            std::string h = headers;
-            if (h.size() < 2 || h[h.size() - 1] != '\n')
-                h += "\r\n";
-            args.push_back("-headers");
-            args.push_back(h);
-            args.push_back("-reconnect");
-            args.push_back("1");
-            args.push_back("-reconnect_streamed");
-            args.push_back("1");
-            args.push_back("-reconnect_delay_max");
-            args.push_back("5");
-        }
-        args.push_back("-i");
-        args.push_back(url);
-
-        args.push_back("-map");
-        args.push_back("0:v:0");
-        args.push_back("-an");
-        args.push_back("-f");
-        args.push_back("rawvideo");
-        args.push_back("-pix_fmt");
-        args.push_back("rgb24");
-        args.push_back("-vf");
-        args.push_back(vf);
-        args.push_back("pipe:1");
-
-        if (wantAudio) {
-            // Optional audio map: missing track → no audio pipe traffic
-            args.push_back("-map");
-            args.push_back("0:a:0?");
-            args.push_back("-vn");
-            args.push_back("-f");
-            args.push_back("s16le");
-            args.push_back("-ac");
-            args.push_back("2");
-            args.push_back("-ar");
-            args.push_back("48000");
-            args.push_back("pipe:3");
-        }
-    }
-
-    int vpipe[2] = {-1, -1};
-    int apipe[2] = {-1, -1};
-    if (pipe(vpipe) != 0) {
-        log("media: video pipe failed");
-        playing_.store(false);
-        return;
-    }
-    if (wantAudio && pipe(apipe) != 0) {
-        log("media: audio pipe failed — video only");
-        apipe[0] = apipe[1] = -1;
-    }
-
-    {
-        std::string joined = "media: spawn single-process";
-        for (const auto& a : args) {
-            joined += ' ';
-            if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
-                joined += "[...]";
-            else
-                joined += a;
-        }
-        log(joined);
-    }
-
-    pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
-    ::close(vpipe[1]);
-    if (apipe[1] >= 0)
-        ::close(apipe[1]);
-    if (pid < 0) {
-        ::close(vpipe[0]);
-        if (apipe[0] >= 0)
-            ::close(apipe[0]);
-        log("media: fork failed");
-        playing_.store(false);
-        return;
-    }
-    childPid_.store(pid);
-    int rfd = vpipe[0];
-
-    if (apipe[0] >= 0) {
-        audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
-    }
-
-    // Optional continuous annex-B → F3 (Phase 3.3b product path toward FPGA decode)
-    const bool wantF3 = streamEnabled_ && fpga_.ok() && !testPattern;
-    if (wantF3) {
+    // Optional continuous annex-B → host recon F1 + F3
+    const bool wantStream = streamEnabled_ && fpga_.ok() && !testPattern;
+    if (wantStream) {
         int spipe[2] = {-1, -1};
         if (pipe(spipe) == 0) {
             pid_t spid = spawnStreamDemux(url, headers, startMs, spipe[1]);
@@ -877,100 +940,338 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (spid > 0) {
                 streamPid_.store(spid);
                 streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
+                if (looksElementaryH264(url))
+                    log("media: STREAM demux elementary H.264 (no mp4toannexb)");
             } else {
                 ::close(spipe[0]);
-                log("media: F3 stream demux fork failed");
+                log("media: STREAM demux fork failed");
             }
         }
     }
 
-    const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
-    std::vector<uint8_t> frame(frameBytes);
+    int rfd = -1;
     int64_t frameIndex = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
     size_t totalBytes = 0;
     const int fps = 30;
+    bool usedRgb = false;
 
-    if (onProgress_)
-        onProgress_("playing", startMs, durationMs);
-
-    while (!stop_.load()) {
-        int64_t seekTo = seekReqMs_.exchange(-1);
-        if (seekTo >= 0) {
-            log("media: seek requested " + std::to_string(seekTo));
-            break;
+    if (skipRgb) {
+        // Audio-only FFmpeg + wall-clock position. Host recon owns F1.
+        int apipe[2] = {-1, -1};
+        if (wantAudio && pipe(apipe) == 0) {
+            pid_t pid = spawnAudioOnly(url, headers, startMs, apipe[1]);
+            ::close(apipe[1]);
+            if (pid > 0) {
+                childPid_.store(pid);
+                audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+            } else {
+                ::close(apipe[0]);
+                log("media: audio-only fork failed");
+            }
+        } else if (wantAudio) {
+            log("media: audio pipe failed — STREAM recon video only");
         }
 
-        if (paused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
+        if (onProgress_)
+            onProgress_("playing", startMs, durationMs);
 
-        size_t got = 0;
-        while (got < frameBytes && !stop_.load() && !paused_.load()) {
-            ssize_t n = ::read(rfd, frame.data() + got, frameBytes - got);
-            if (n < 0) {
-                if (errno == EINTR)
-                    continue;
-                log("media: read err errno=" + std::to_string(errno));
+        // Wait for session end: stop/seek, or both pumps exit.
+        while (!stop_.load()) {
+            int64_t seekTo = seekReqMs_.exchange(-1);
+            if (seekTo >= 0) {
+                log("media: seek requested " + std::to_string(seekTo));
                 break;
             }
-            if (n == 0)
+            if (paused_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            // Wall-clock position (no RGB frame cadence)
+            auto now = std::chrono::steady_clock::now();
+            int64_t elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count();
+            int64_t tms = startMs + elapsed;
+            positionMs_.store(tms);
+            if (durationMs > 0 && tms >= durationMs) {
+                log("media: STREAM audio-only reached duration");
                 break;
-            got += static_cast<size_t>(n);
-            totalBytes += static_cast<size_t>(n);
-        }
-        if (got < frameBytes) {
-            log("media: short read got=" + std::to_string(got) + "/" + std::to_string(frameBytes) +
-                " totalBytes=" + std::to_string(totalBytes));
-            break;
-        }
-
-        if (fb_.ok()) {
-            if (!fb_.blitRgb24(frame.data(), outW_, outH_))
-                log("media: blit failed");
-        }
-        // FPGA frame_store: SPI ioctl is ~100–150ms/frame — push every 4th unique
-        // when dual present (keep fb0 smooth); every frame if PRESENT=fpga only.
-        // STREAM=1: host recon owns F1 once a recon frame has been presented (fallback
-        // to FFmpeg RGB if recon never succeeds).
-        const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-        if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
-            const bool every = (presentMode_ == "fpga");
-            if (every || (frameIndex % 4) == 0) {
-                if (!fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
-                    if ((frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " + fpga_.lastError());
-                } else if ((frameIndex % 30) == 0) {
-                    log("media: fpga frame_tx ok frames=" + std::to_string(frameIndex));
+            }
+            // Exit when demux and audio both finished (EOF)
+            if (!streamActive_.load() && streamThr_.joinable() && !audioActive_.load() &&
+                childPid_.load() > 0) {
+                // Give stream thr a moment; if stream ended and no audio, done
+                pid_t cp = childPid_.load();
+                if (cp > 0) {
+                    int st = 0;
+                    if (waitpid(cp, &st, WNOHANG) == cp)
+                        childPid_.store(-1);
+                }
+                if (childPid_.load() <= 0 && !streamActive_.load())
+                    break;
+            }
+            if (now - lastLog > std::chrono::seconds(1)) {
+                lastLog = now;
+                log("media: STREAM no-RGB t_ms=" + std::to_string(tms) +
+                    " recon=" + std::to_string(reconFrames_.load()) +
+                    " cabac=" + (cabacSkip_.load() ? "1" : "0") +
+                    " audio=" + (audioActive_.load() ? "on" : "off") +
+                    " stream=" + (streamActive_.load() ? "on" : "off"));
+            }
+            // CABAC with no recon: optional soft note (RGB was skipped — nothing to fall back)
+            if (cabacSkip_.load() && reconFrames_.load() == 0 && elapsed > 3000 &&
+                (elapsed / 1000) % 10 == 3) {
+                static thread_local int64_t lastCabacWarn = -1;
+                if (elapsed - lastCabacWarn > 9000) {
+                    lastCabacWarn = elapsed;
+                    log("media: STREAM no-RGB + CABAC — no F1 present; set STREAM_SKIP_RGB=0 "
+                        "or PRESENT=both for FFmpeg RGB fallback");
                 }
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        ++frameIndex;
+    } else {
+        // Full FFmpeg RGB path (STREAM=0 default; STREAM=1 with PRESENT=both/fb0; skip off).
+        usedRgb = true;
+        std::vector<std::string> args;
+        args.push_back(ffmpeg_);
+        args.push_back("-hide_banner");
+        args.push_back("-loglevel");
+        args.push_back("error");
+        args.push_back("-nostdin");
 
-        auto now = std::chrono::steady_clock::now();
-        if (now - lastLog > std::chrono::seconds(1)) {
-            lastLog = now;
-            log("media: frames=" + std::to_string(frameIndex) +
-                " bytes=" + std::to_string(totalBytes) +
-                " audio=" + (audioActive_.load() ? "on" : "off") +
-                " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+        if (testPattern) {
+            char lavfi[128];
+            std::snprintf(lavfi, sizeof(lavfi), "testsrc2=size=%dx%d:rate=30", outW_, outH_);
+            args.push_back("-f");
+            args.push_back("lavfi");
+            args.push_back("-i");
+            args.push_back(lavfi);
+            if (wantAudio) {
+                args.push_back("-f");
+                args.push_back("lavfi");
+                args.push_back("-i");
+                args.push_back("sine=f=440:r=48000:d=120");
+            }
+            args.push_back("-t");
+            args.push_back("120");
+            args.push_back("-map");
+            args.push_back("0:v:0");
+            args.push_back("-an");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgb24");
+            args.push_back("pipe:1");
+            if (wantAudio) {
+                args.push_back("-map");
+                args.push_back("1:a:0");
+                args.push_back("-vn");
+                args.push_back("-f");
+                args.push_back("s16le");
+                args.push_back("-ac");
+                args.push_back("2");
+                args.push_back("-ar");
+                args.push_back("48000");
+                args.push_back("pipe:3");
+            }
+        } else {
+            if (startMs > 0) {
+                char ss[32];
+                std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+                args.push_back("-ss");
+                args.push_back(ss);
+            }
+            // Prefer native HTTP with headers (single demux for A+V — dual-A9 critical)
+            if (!headers.empty()) {
+                // FFmpeg requires trailing CRLF on -headers block
+                std::string h = headers;
+                if (h.size() < 2 || h[h.size() - 1] != '\n')
+                    h += "\r\n";
+                args.push_back("-headers");
+                args.push_back(h);
+                args.push_back("-reconnect");
+                args.push_back("1");
+                args.push_back("-reconnect_streamed");
+                args.push_back("1");
+                args.push_back("-reconnect_delay_max");
+                args.push_back("5");
+            }
+            args.push_back("-i");
+            args.push_back(url);
+
+            args.push_back("-map");
+            args.push_back("0:v:0");
+            args.push_back("-an");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgb24");
+            args.push_back("-vf");
+            args.push_back(vf);
+            args.push_back("pipe:1");
+
+            if (wantAudio) {
+                // Optional audio map: missing track → no audio pipe traffic
+                args.push_back("-map");
+                args.push_back("0:a:0?");
+                args.push_back("-vn");
+                args.push_back("-f");
+                args.push_back("s16le");
+                args.push_back("-ac");
+                args.push_back("2");
+                args.push_back("-ar");
+                args.push_back("48000");
+                args.push_back("pipe:3");
+            }
         }
 
-        auto target = t0 + std::chrono::milliseconds(frameIndex * 1000 / fps);
-        if (target > now)
-            std::this_thread::sleep_until(target);
+        int vpipe[2] = {-1, -1};
+        int apipe[2] = {-1, -1};
+        if (pipe(vpipe) != 0) {
+            log("media: video pipe failed");
+            playing_.store(false);
+            killChildren();
+            if (streamThr_.joinable())
+                streamThr_.join();
+            return;
+        }
+        if (wantAudio && pipe(apipe) != 0) {
+            log("media: audio pipe failed — video only");
+            apipe[0] = apipe[1] = -1;
+        }
 
         {
-            int64_t tms = startMs + frameIndex * 1000 / fps;
-            positionMs_.store(tms);
-            if ((frameIndex % 15) == 0 && onProgress_)
-                onProgress_("playing", tms, durationMs);
+            std::string joined = "media: spawn single-process";
+            for (const auto& a : args) {
+                joined += ' ';
+                if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
+                    joined += "[...]";
+                else
+                    joined += a;
+            }
+            log(joined);
         }
+
+        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
+        ::close(vpipe[1]);
+        if (apipe[1] >= 0)
+            ::close(apipe[1]);
+        if (pid < 0) {
+            ::close(vpipe[0]);
+            if (apipe[0] >= 0)
+                ::close(apipe[0]);
+            log("media: fork failed");
+            playing_.store(false);
+            killChildren();
+            if (streamThr_.joinable())
+                streamThr_.join();
+            return;
+        }
+        childPid_.store(pid);
+        rfd = vpipe[0];
+
+        if (apipe[0] >= 0) {
+            audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+        }
+
+        const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
+        std::vector<uint8_t> frame(frameBytes);
+
+        if (onProgress_)
+            onProgress_("playing", startMs, durationMs);
+
+        while (!stop_.load()) {
+            int64_t seekTo = seekReqMs_.exchange(-1);
+            if (seekTo >= 0) {
+                log("media: seek requested " + std::to_string(seekTo));
+                break;
+            }
+
+            if (paused_.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+
+            size_t got = 0;
+            while (got < frameBytes && !stop_.load() && !paused_.load()) {
+                ssize_t n = ::read(rfd, frame.data() + got, frameBytes - got);
+                if (n < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    log("media: read err errno=" + std::to_string(errno));
+                    break;
+                }
+                if (n == 0)
+                    break;
+                got += static_cast<size_t>(n);
+                totalBytes += static_cast<size_t>(n);
+            }
+            if (got < frameBytes) {
+                log("media: short read got=" + std::to_string(got) + "/" +
+                    std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes));
+                break;
+            }
+
+            if (fb_.ok()) {
+                if (!fb_.blitRgb24(frame.data(), outW_, outH_))
+                    log("media: blit failed");
+            }
+            // FPGA frame_store: prefer DDR bulk (3.1b, ~ms/frame); SPI F1 is ~100–200ms
+            // so throttle to every 4th when dual present. STREAM recon owns F1 when ok.
+            const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
+            if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
+                const bool every = (presentMode_ == "fpga") || useDdrF1_;
+                if (every || (frameIndex % 4) == 0) {
+                    bool ok = false;
+                    if (useDdrF1_) {
+                        ok = fpga_.sendRgb24FrameDdr(frame.data(), outW_, outH_, ddrBank_);
+                        ddrBank_ ^= 1;
+                        if (!ok) {
+                            useDdrF1_ = false;
+                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                        }
+                    }
+                    if (!ok && !fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " + fpga_.lastError());
+                    } else if ((frameIndex % 30) == 0) {
+                        log(std::string("media: fpga frame_tx ok via ") +
+                            (useDdrF1_ ? "DDR" : "SPI") +
+                            " frames=" + std::to_string(frameIndex) +
+                            " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                    }
+                }
+            }
+            ++frameIndex;
+
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastLog > std::chrono::seconds(1)) {
+                lastLog = now;
+                log("media: frames=" + std::to_string(frameIndex) +
+                    " bytes=" + std::to_string(totalBytes) +
+                    " audio=" + (audioActive_.load() ? "on" : "off") +
+                    " recon=" + std::to_string(reconFrames_.load()) +
+                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+            }
+
+            auto target = t0 + std::chrono::milliseconds(frameIndex * 1000 / fps);
+            if (target > now)
+                std::this_thread::sleep_until(target);
+
+            {
+                int64_t tms = startMs + frameIndex * 1000 / fps;
+                positionMs_.store(tms);
+                if ((frameIndex % 15) == 0 && onProgress_)
+                    onProgress_("playing", tms, durationMs);
+            }
+        }
+
+        if (rfd >= 0)
+            ::close(rfd);
     }
 
-    ::close(rfd);
     killChildren();
     if (audioThr_.joinable())
         audioThr_.join();
@@ -980,14 +1281,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     playing_.store(false);
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
-        if (frameIndex > 0)
+        const bool hadContent = usedRgb ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
+                                                              positionMs_.load() > startMs + 500);
+        if (hadContent)
             onProgress_("ended", positionMs_.load(), durationMs);
         else
             onProgress_("stopped", 0, durationMs);
     }
     log("media: session end frames=" + std::to_string(frameIndex) +
         " recon=" + std::to_string(reconFrames_.load()) +
-        " stream=" + (streamEnabled_ ? "on" : "off"));
+        " cabac=" + (cabacSkip_.load() ? "1" : "0") +
+        " stream=" + (streamEnabled_ ? "on" : "off") +
+        " rgb=" + (usedRgb ? "on" : "off"));
 }
 
 } // namespace misterplex
