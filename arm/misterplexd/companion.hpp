@@ -117,8 +117,9 @@ private:
     std::string state_ = "stopped";
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;
-    // After seek/step plant: ignore demux progress that is still far from the
-    // scrubber target (async seek race — early playing@0 must not rewind thumb).
+    // After seek/step plant: pin scrubber to this target until demux playing/
+    // paused/ended is within catchup. Buffering never releases (plant itself is
+    // buffering@target). Async race — early/stale playing@0 must not rewind.
     // -1 = no hold.
     int64_t scrubTargetMs_ = -1;
     bool wantPlay_ = false;

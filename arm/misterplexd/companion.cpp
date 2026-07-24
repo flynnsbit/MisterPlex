@@ -340,28 +340,52 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
     else if (durationMs_ > 0 && timeMs > durationMs_)
         timeMs = durationMs_;
 
-    // Async seek/step: demux often reports playing@0 (or old position) before the
-    // restarted pipeline reaches the planted offset. Keep scrubber thumb at the
-    // plant until progress is near the target (or hold is cleared by a new plant).
+    // Async seek/step plant hold (P4-SCRUB / C-unit6):
+    // Demux restart often reports buffering/playing@0 (or the plant pulse) before
+    // real catch-up. Companion plant is scrubber source of truth until live
+    // progress is near *and past* the target (or natural EOF at plant).
+    //
+    // Rules while scrubTargetMs_ >= 0:
+    //  - buffering: pin time to the plant (companion plants via buffering@target);
+    //    never release — plant call itself must not clear the hold.
+    //  - playing/paused/ended far from plant: reflect transport state only.
+    //  - playing/paused at plant pulse (near, not advanced): apply time, keep hold
+    //    so late restart@0 / short-read cannot free-run after the pulse.
+    //  - playing/paused advanced past plant by kScrubAdvanceMs: release + apply.
+    //  - ended near plant: release + apply.
     constexpr int64_t kScrubCatchupMs = 2000;
+    constexpr int64_t kScrubAdvanceMs = 400;
     if (wantPlay_ && scrubTargetMs_ >= 0 &&
-        (state == "playing" || state == "paused" || state == "buffering")) {
+        (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         const int64_t delta =
             timeMs > scrubTargetMs_ ? timeMs - scrubTargetMs_ : scrubTargetMs_ - timeMs;
+        if (state == "buffering") {
+            if (durationMs > 0)
+                durationMs_ = durationMs;
+            state_ = "buffering";
+            // Pin thumb to plant (not demux startMs of a superseded seek).
+            timeMs_ = scrubTargetMs_;
+            wantPlay_ = true;
+            return;
+        }
         if (delta > kScrubCatchupMs) {
             if (durationMs > 0)
                 durationMs_ = durationMs;
-            // Reflect live transport state but do not rewind/fast-forward the thumb.
+            // Reflect live transport but keep the planted scrubber time.
             if (state == "playing" || state == "paused")
                 state_ = state;
-            if (state == "playing" || state == "paused" || state == "buffering")
-                wantPlay_ = true;
+            wantPlay_ = true;
             return;
         }
-        scrubTargetMs_ = -1; // demux caught up
+        // Near plant: release only after demux advances past plant, or on ended.
+        if (state == "ended" ||
+            ((state == "playing" || state == "paused") &&
+             timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            scrubTargetMs_ = -1;
+        }
+        // else playing@plant pulse: fall through apply time, keep hold
     }
-    if (state == "ended")
-        scrubTargetMs_ = -1;
+
 
     state_ = state;
     if (durationMs > 0)

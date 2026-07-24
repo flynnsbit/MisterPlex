@@ -569,13 +569,16 @@ int main(int argc, char** argv) {
     });
     // Async seek: demux restart joins the media thread — never block companion HTTP
     // (Web scrubber thumb / step / skipPrevious restart@0 would otherwise stall ACKs).
-    // seekGen drops superseded seeks that queue behind a slow restart.
+    // seekGen + seekMu: serialize demux restarts and drop superseded offsets so a
+    // late drained seekMs(old) cannot restart at 0 after a newer scrub plant.
     std::atomic<uint64_t> seekGen{0};
+    std::mutex seekMu;
     auto seekAsync = [&](int64_t ms) {
         const uint64_t g = ++seekGen;
         std::thread([&, ms, g]() {
+            std::lock_guard<std::mutex> lock(seekMu);
             if (g != seekGen.load())
-                return; // superseded before start
+                return; // superseded while waiting for prior seekMs
             try {
                 player.seekMs(ms);
             } catch (...) {
@@ -633,10 +636,23 @@ int main(int argc, char** argv) {
             try {
                 if (!tryQueueStep(-1, "skipPrevious")) {
                     if (t > 0) {
-                        std::fprintf(stderr,
-                                     "misterplexd: skipPrevious no prev — restart@0 (t=%lld)\n",
-                                     static_cast<long long>(t));
-                        seekAsync(0);
+                        // Queue lookup is network-bound. If the user scrubbed away
+                        // while it was in flight, do not clobber the new plant with
+                        // a stale restart@0 (unit: plant 40s after skipPrev@1.5s).
+                        const int64_t nowT = comp.timelineTimeMs();
+                        const int64_t drift = nowT > t ? nowT - t : t - nowT;
+                        if (drift > kRestartThresholdMs && nowT > kRestartThresholdMs) {
+                            std::fprintf(stderr,
+                                         "misterplexd: skipPrevious no prev — drop stale "
+                                         "restart@0 (was t=%lld now=%lld)\n",
+                                         static_cast<long long>(t),
+                                         static_cast<long long>(nowT));
+                        } else {
+                            std::fprintf(stderr,
+                                         "misterplexd: skipPrevious no prev — restart@0 (t=%lld)\n",
+                                         static_cast<long long>(t));
+                            seekAsync(0);
+                        }
                     } else {
                         std::fprintf(stderr,
                                      "misterplexd: skipPrevious — no previous item (at 0)\n");
