@@ -162,195 +162,154 @@ inline void predI16_Plane(uint8_t* mb, int stride, const uint8_t* above, const u
         }
 }
 
-// Intra4x4 modes 0..8
-inline void predI4(int mode, uint8_t* dst, int stride, const uint8_t* above /*4+4*/,
-                   const uint8_t* left /*4*/, uint8_t tl, bool hasA, bool hasL) {
-    // above[0..3] = top, above[4..7] = top-right (if avail else replicate)
-    auto dc = [&]() {
-        int s = 0, n = 0;
-        if (hasA) {
-            for (int i = 0; i < 4; ++i)
-                s += above[i];
-            n += 4;
-        }
-        if (hasL) {
-            for (int i = 0; i < 4; ++i)
-                s += left[i];
-            n += 4;
-        }
-        int v = n ? (s + 2) / n : 128;
-        // Spec uses +2 for 4 samples or +4 for 8
-        if (hasA && hasL)
-            v = (s + 4) >> 3;
-        else if (hasA || hasL)
-            v = (s + 2) >> 2;
-        else
-            v = 128;
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x)
-                dst[y * stride + x] = static_cast<uint8_t>(v);
+// Intra4x4 modes 0..8 — FFmpeg h264pred_template formulas
+// above[0..3]=top, above[4..7]=top-right; left[0..3]; tl=top-left
+inline void predI4(int mode, uint8_t* dst, int stride, const uint8_t* above, const uint8_t* left,
+                   uint8_t tl, bool hasA, bool hasL) {
+    const int t0 = above[0], t1 = above[1], t2 = above[2], t3 = above[3];
+    const int t4 = above[4], t5 = above[5], t6 = above[6], t7 = above[7];
+    const int l0 = left[0], l1 = left[1], l2 = left[2], l3 = left[3];
+    auto put = [&](int x, int y, int v) {
+        dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
     };
     switch (mode) {
     case 0: // Vertical
         for (int y = 0; y < 4; ++y)
             for (int x = 0; x < 4; ++x)
-                dst[y * stride + x] = above[x];
+                put(x, y, above[x]);
         break;
     case 1: // Horizontal
         for (int y = 0; y < 4; ++y)
             for (int x = 0; x < 4; ++x)
-                dst[y * stride + x] = left[y];
+                put(x, y, left[y]);
         break;
-    case 2:
-        dc();
-        break;
-    case 3: { // Diagonal Down-Left
-        // uses above[0..7]
-        auto p = [&](int i) -> int {
-            if (i < 4)
-                return above[i];
-            return above[i]; // 4..7 top-right
-        };
+    case 2: { // DC
+        int v;
+        if (hasA && hasL)
+            v = (t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 4) >> 3;
+        else if (hasA)
+            v = (t0 + t1 + t2 + t3 + 2) >> 2;
+        else if (hasL)
+            v = (l0 + l1 + l2 + l3 + 2) >> 2;
+        else
+            v = 128;
         for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int k = x + y;
-                int v;
-                if (k < 6)
-                    v = (p(k) + 2 * p(k + 1) + p(k + 2) + 2) >> 2;
-                else
-                    v = (p(6) + 3 * p(7) + 2) >> 2;
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+            for (int x = 0; x < 4; ++x)
+                put(x, y, v);
         break;
     }
-    case 4: { // Diagonal Down-Right
-        auto A = [&](int i) { return above[i]; };
-        auto L = [&](int i) { return left[i]; };
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int v;
-                if (x > y)
-                    v = (A(x - y - 2 + 1) + 2 * A(x - y - 1 + 1) + A(x - y + 1) + 2) >> 2;
-                else if (x < y)
-                    v = (L(y - x - 2 + 1) + 2 * L(y - x - 1 + 1) + L(y - x + 1) + 2) >> 2;
-                else
-                    v = (L(0) + 2 * tl + A(0) + 2) >> 2;
-                // Simpler correct form from JM:
-                (void)v;
-            }
-        // Use compact JM-style table via samples[9]: L3 L2 L1 L0 TL A0 A1 A2 A3
-        int s[9] = {left[3], left[2], left[1], left[0], tl, above[0], above[1], above[2], above[3]};
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int z = 4 + x - y;
-                int v = (s[z - 1] + 2 * s[z] + s[z + 1] + 2) >> 2;
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+    case 3: // Diagonal Down-Left
+        put(0, 0, (t0 + t2 + 2 * t1 + 2) >> 2);
+        put(1, 0, (t1 + t3 + 2 * t2 + 2) >> 2);
+        put(0, 1, (t1 + t3 + 2 * t2 + 2) >> 2);
+        put(2, 0, (t2 + t4 + 2 * t3 + 2) >> 2);
+        put(1, 1, (t2 + t4 + 2 * t3 + 2) >> 2);
+        put(0, 2, (t2 + t4 + 2 * t3 + 2) >> 2);
+        put(3, 0, (t3 + t5 + 2 * t4 + 2) >> 2);
+        put(2, 1, (t3 + t5 + 2 * t4 + 2) >> 2);
+        put(1, 2, (t3 + t5 + 2 * t4 + 2) >> 2);
+        put(0, 3, (t3 + t5 + 2 * t4 + 2) >> 2);
+        put(3, 1, (t4 + t6 + 2 * t5 + 2) >> 2);
+        put(2, 2, (t4 + t6 + 2 * t5 + 2) >> 2);
+        put(1, 3, (t4 + t6 + 2 * t5 + 2) >> 2);
+        put(3, 2, (t5 + t7 + 2 * t6 + 2) >> 2);
+        put(2, 3, (t5 + t7 + 2 * t6 + 2) >> 2);
+        put(3, 3, (t6 + 3 * t7 + 2) >> 2);
         break;
-    }
-    case 5: { // Vertical-Right
-        int s[9] = {left[3], left[2], left[1], left[0], tl, above[0], above[1], above[2], above[3]};
-        static const int8_t vr[4][4] = {
-            {6, 7, 8, 9}, // will remap
-            {0, 0, 0, 0},
-            {0, 0, 0, 0},
-            {0, 0, 0, 0},
-        };
-        (void)vr;
-        // positions relative to TL
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int z = 2 * x - y;
-                int v;
-                if (z >= 0 && (z & 1) == 0)
-                    v = (s[4 + (z >> 1)] + s[5 + (z >> 1)] + 1) >> 1;
-                else if (z >= 0)
-                    v = (s[4 + (z >> 1)] + 2 * s[5 + (z >> 1)] + s[6 + (z >> 1)] + 2) >> 2;
-                else if (z == -1)
-                    v = (s[3] + 2 * s[4] + s[5] + 2) >> 2;
-                else
-                    v = (s[1] + 2 * s[2] + s[3] + 2) >> 2; // y=2,3 x=0 etc.
-                // Fix bottom-left using left
-                if (z < -1)
-                    v = (s[4 + z] + 2 * s[5 + z] + s[6 + z] + 2) >> 2; // may OOB — use left path
-                if (2 * x - y < -1) {
-                    int yy = y - 1;
-                    v = (left[yy] + 2 * left[yy - 1] + left[yy - 2] + 2) >> 2;
-                    if (y == 2 && x == 0)
-                        v = (left[0] + 2 * left[1] + left[2] + 2) >> 2;
-                    if (y == 3 && x == 0)
-                        v = (left[1] + 2 * left[2] + left[3] + 2) >> 2;
-                    if (y == 3 && x == 1)
-                        v = (left[0] + 2 * left[1] + left[2] + 2) >> 2;
-                }
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+    case 4: // Diagonal Down-Right (FFmpeg)
+        put(0, 3, (l3 + 2 * l2 + l1 + 2) >> 2);
+        put(0, 2, (l2 + 2 * l1 + l0 + 2) >> 2);
+        put(1, 3, (l2 + 2 * l1 + l0 + 2) >> 2);
+        put(0, 1, (l1 + 2 * l0 + tl + 2) >> 2);
+        put(1, 2, (l1 + 2 * l0 + tl + 2) >> 2);
+        put(2, 3, (l1 + 2 * l0 + tl + 2) >> 2);
+        put(0, 0, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(1, 1, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(2, 2, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(3, 3, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(1, 0, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(2, 1, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(3, 2, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(2, 0, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(3, 1, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(3, 0, (t1 + 2 * t2 + t3 + 2) >> 2);
         break;
-    }
-    case 6: { // Horizontal-Down
-        int s[9] = {left[3], left[2], left[1], left[0], tl, above[0], above[1], above[2], above[3]};
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int z = 2 * y - x;
-                int v;
-                if (z >= 0 && (z & 1) == 0)
-                    v = (s[4 - (z >> 1)] + s[3 - (z >> 1)] + 1) >> 1;
-                else if (z >= 0)
-                    v = (s[4 - (z >> 1)] + 2 * s[3 - (z >> 1)] + s[2 - (z >> 1)] + 2) >> 2;
-                else if (z == -1)
-                    v = (s[3] + 2 * s[4] + s[5] + 2) >> 2;
-                else {
-                    // x-heavy
-                    v = (above[x - 1] + 2 * above[x - 2] + above[x - 3] + 2) >> 2;
-                    if (x == 2 && y == 0)
-                        v = (above[0] + 2 * above[1] + above[2] + 2) >> 2;
-                    if (x == 3 && y == 0)
-                        v = (above[1] + 2 * above[2] + above[3] + 2) >> 2;
-                    if (x == 3 && y == 1)
-                        v = (above[0] + 2 * above[1] + above[2] + 2) >> 2;
-                }
-                (void)s;
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+    case 5: // Vertical-Right
+        put(0, 0, (tl + t0 + 1) >> 1);
+        put(1, 2, (tl + t0 + 1) >> 1);
+        put(1, 0, (t0 + t1 + 1) >> 1);
+        put(2, 2, (t0 + t1 + 1) >> 1);
+        put(2, 0, (t1 + t2 + 1) >> 1);
+        put(3, 2, (t1 + t2 + 1) >> 1);
+        put(3, 0, (t2 + t3 + 1) >> 1);
+        put(0, 1, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(1, 3, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(1, 1, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(2, 3, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(2, 1, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(3, 3, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(3, 1, (t1 + 2 * t2 + t3 + 2) >> 2);
+        put(0, 2, (tl + 2 * l0 + l1 + 2) >> 2);
+        put(0, 3, (l0 + 2 * l1 + l2 + 2) >> 2);
         break;
-    }
-    case 7: { // Vertical-Left
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int z = 2 * x + y;
-                int v;
-                if ((z & 1) == 0)
-                    v = (above[x + (y >> 1)] + above[x + (y >> 1) + 1] + 1) >> 1;
-                else
-                    v = (above[x + (y >> 1)] + 2 * above[x + (y >> 1) + 1] + above[x + (y >> 1) + 2] +
-                         2) >>
-                        2;
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+    case 6: // Horizontal-Down
+        put(0, 0, (tl + l0 + 1) >> 1);
+        put(2, 1, (tl + l0 + 1) >> 1);
+        put(1, 0, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(3, 1, (l0 + 2 * tl + t0 + 2) >> 2);
+        put(2, 0, (tl + 2 * t0 + t1 + 2) >> 2);
+        put(3, 0, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(0, 1, (l0 + l1 + 1) >> 1);
+        put(2, 2, (l0 + l1 + 1) >> 1);
+        put(1, 1, (tl + 2 * l0 + l1 + 2) >> 2);
+        put(3, 2, (tl + 2 * l0 + l1 + 2) >> 2);
+        put(0, 2, (l1 + l2 + 1) >> 1);
+        put(2, 3, (l1 + l2 + 1) >> 1);
+        put(1, 2, (l0 + 2 * l1 + l2 + 2) >> 2);
+        put(3, 3, (l0 + 2 * l1 + l2 + 2) >> 2);
+        put(0, 3, (l2 + l3 + 1) >> 1);
+        put(1, 3, (l1 + 2 * l2 + l3 + 2) >> 2);
         break;
-    }
-    case 8: { // Horizontal-Up
-        for (int y = 0; y < 4; ++y)
-            for (int x = 0; x < 4; ++x) {
-                int z = 2 * y + x;
-                int v;
-                if (z < 5) {
-                    if ((z & 1) == 0)
-                        v = (left[y + (x >> 1)] + left[y + (x >> 1) + 1] + 1) >> 1;
-                    else
-                        v = (left[y + (x >> 1)] + 2 * left[y + (x >> 1) + 1] +
-                             left[y + (x >> 1) + 2] + 2) >>
-                            2;
-                } else if (z == 5)
-                    v = (left[2] + 3 * left[3] + 2) >> 2;
-                else
-                    v = left[3];
-                dst[y * stride + x] = static_cast<uint8_t>(clip8(v));
-            }
+    case 7: // Vertical-Left
+        put(0, 0, (t0 + t1 + 1) >> 1);
+        put(1, 0, (t1 + t2 + 1) >> 1);
+        put(0, 2, (t1 + t2 + 1) >> 1);
+        put(2, 0, (t2 + t3 + 1) >> 1);
+        put(1, 2, (t2 + t3 + 1) >> 1);
+        put(3, 0, (t3 + t4 + 1) >> 1);
+        put(2, 2, (t3 + t4 + 1) >> 1);
+        put(3, 2, (t4 + t5 + 1) >> 1);
+        put(0, 1, (t0 + 2 * t1 + t2 + 2) >> 2);
+        put(1, 1, (t1 + 2 * t2 + t3 + 2) >> 2);
+        put(0, 3, (t1 + 2 * t2 + t3 + 2) >> 2);
+        put(2, 1, (t2 + 2 * t3 + t4 + 2) >> 2);
+        put(1, 3, (t2 + 2 * t3 + t4 + 2) >> 2);
+        put(3, 1, (t3 + 2 * t4 + t5 + 2) >> 2);
+        put(2, 3, (t3 + 2 * t4 + t5 + 2) >> 2);
+        put(3, 3, (t4 + 2 * t5 + t6 + 2) >> 2);
         break;
-    }
+    case 8: // Horizontal-Up
+        put(0, 0, (l0 + l1 + 1) >> 1);
+        put(1, 0, (l0 + 2 * l1 + l2 + 2) >> 2);
+        put(2, 0, (l1 + l2 + 1) >> 1);
+        put(0, 1, (l1 + l2 + 1) >> 1);
+        put(3, 0, (l1 + 2 * l2 + l3 + 2) >> 2);
+        put(1, 1, (l1 + 2 * l2 + l3 + 2) >> 2);
+        put(2, 1, (l2 + l3 + 1) >> 1);
+        put(0, 2, (l2 + l3 + 1) >> 1);
+        put(3, 1, (l2 + 2 * l3 + l3 + 2) >> 2);
+        put(1, 2, (l2 + 2 * l3 + l3 + 2) >> 2);
+        put(3, 2, l3);
+        put(1, 3, l3);
+        put(0, 3, l3);
+        put(2, 2, l3);
+        put(2, 3, l3);
+        put(3, 3, l3);
+        break;
     default:
-        dc();
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x)
+                put(x, y, 128);
         break;
     }
 }

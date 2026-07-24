@@ -125,9 +125,11 @@ Phase 3.3h (host walk+recon green — FPGA residual probe next):
   CAVLC: FFmpeg tables; IDR dec_ref_pic_marking; invQuantHadamardDc4x4 FFmpeg-scale
   Unit: walk **300/300 FULL** on real Baseline; tiny/gray recon **maeY=0** vs FFmpeg golden
   Real-clip recon maeY≈2.6 (I4 mode polish remaining); first MB ~mae 6, error cascades
-  FPGA: slice_hdr_parser ST_CHRPRED before mb_qp_delta (I16 path)
-  Next: tighten I4 pred modes (DDL/VR/HD/…) → real maeY≪1; FPGA MB residual walk stub;
-        paint recon RGB565 into frame_store (or SPI); optional DDRAM path
+  FPGA: slice_hdr_parser ST_CHRPRED before mb_qp_delta (I16 path) — **HW-green**
+    gray I16: mb0=3 qp=27 res_ok=1 res_tc=1 res_t1=0 (matches host probe)
+    real Baseline still I_NxN first MB → res_ok=0 until I4 residual probe on FPGA
+  Next: I4 pred polish (real maeY≪1); FPGA I_NxN residual probe; paint recon → frame_store;
+        optional DDRAM path
 
 ```
 
