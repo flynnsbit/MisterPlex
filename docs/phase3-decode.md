@@ -155,7 +155,7 @@ Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
   NAL/SPS/PPS/slice/residual **status** + F3-only diagnostic paint. Do not replace
   host recon until FPGA mae is competitive.
 
-  **Fit (Cyclone V 5CSEBA6, post-3.3i RBF):**
+  **Fit (Cyclone V 5CSEBA6, 3.3j RBF 2026-07-24):**
     ALMs ~21% (8.8k/41.9k) — logic headroom for more CAVLC
     Block mem bits ~56%, **M10K 73% (405/553)** — BRAM is the hard limit
       (frame_store dual-bank + bitstream 32 KiB + audio + sys/ascal)
@@ -170,8 +170,25 @@ Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
     3. `slice_hdr_parser` clears residual/valid on `cap_clear` (new VCL capture)
     4. Residual token path unchanged (I_NxN tc=8 t1=3 / I16 tokens) — HW-green
 
+  **RBF rebuild (this fire):** Quartus fit OK (ALMs 21%, M10K 73%); flow race killed
+    asm once — assembler re-run produced `Plex.rbf` (3.42 MiB). Deployed lab;
+    `test_f3_residual.sh` green on new core. Hybrid F1+F3 status smoke OK.
   **Still open (3.3k+):** full CAVLC levels/runs, inv quant, IDCT, Intra pred into
   frame_store; optional deblock; live STREAM soak with recon F1 + F3 stats.
+
+Phase 3.3k (product path polish — this fire):
+  **STREAM=1 host recon → F1 robust:**
+    - multi-IDR: retain/update SPS+PPS; recon every I/IDR; overflow keeps last headers
+    - seek/stop: kill both RGB/audio + STREAM demux process groups; pause SIGSTOP both
+    - CABAC: sticky skip after first `fail_reason=cabac` + clear log; re-probe on new SPS/PPS
+  **Prefer direct elementary H.264 for STREAM:**
+    - resolve `preferDirectH264` when STREAM=1 → direct Part if Media/Stream is h264/avc
+    - avoids Chrome universal High/CABAC that host CAVLC cannot recon
+    - local `.h264`/`.264` demux skips `h264_mp4toannexb` BSF
+  **Optional skip heavy FFmpeg RGB** (`STREAM_SKIP_RGB=auto|on|off`):
+    - auto + PRESENT=fpga: audio-only FFmpeg + stream demux; recon owns F1
+    - PRESENT=both/fb0: always keep RGB (continuous fb0 / STREAM=0 path intact)
+  Unit: `mediaVideoIsH264` + resolve helpers; HW: STREAM=1 PRESENT=both smoke.
 
 Phase 3.1b (research + measured — open for DDR bulk impl):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
