@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package misterplexd ARM binary + conf example + Plex.rbf path notes for SD deploy.
+# Package misterplexd ARM binary + conf example + Plex.rbf + docs for SD deploy.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
@@ -10,6 +10,7 @@ TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 ARM_BIN="$ROOT/build/arm/misterplexd"
 RBF_RELEASE="$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf"
 RBF_OUT="$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf"
+RBF_DEV="${MISTER_DEV:-/home/shawn/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
 
 echo "=== package_release $VERSION ==="
@@ -38,22 +39,40 @@ else
 PLEX_BASE=http://192.168.1.41:32400
 DECODE=320x240
 PRESENT=fb0
+STREAM=0
 MATCH_SOURCE_HZ=off
 EOF
 fi
 
-# Optional RBF copy when present in tree (do not fail package if user only wants daemon)
+# RBF: prefer releases/ → output_files/ → misterfpga-dev out (do not fail if missing)
+RBF_SRC=""
 if [[ -f "$RBF_RELEASE" ]]; then
-  cp -a "$RBF_RELEASE" "$STAGE/cores/Plex.rbf"
-  echo "Included cores/Plex.rbf from releases/"
+  RBF_SRC="$RBF_RELEASE"
 elif [[ -f "$RBF_OUT" ]]; then
-  cp -a "$RBF_OUT" "$STAGE/cores/Plex.rbf"
-  echo "Included cores/Plex.rbf from output_files/"
+  RBF_SRC="$RBF_OUT"
+elif [[ -f "$RBF_DEV" ]]; then
+  RBF_SRC="$RBF_DEV"
+fi
+if [[ -n "$RBF_SRC" ]]; then
+  cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
+  echo "Included cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes)"
 else
-  echo "NOTE: Plex.rbf not in tree — see README paths below (package is daemon-only)."
+  echo "NOTE: Plex.rbf not in tree — daemon-only package (see docs for Quartus paths)."
 fi
 
-# Path notes for operators
+# Operator docs
+for doc in release.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+  if [[ -f "$ROOT/docs/$doc" ]]; then
+    cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
+  fi
+done
+if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
+  mkdir -p "$STAGE/scripts"
+  cp -a "$ROOT/scripts/plex_browse.sh" "$STAGE/scripts/"
+  chmod +x "$STAGE/scripts/plex_browse.sh"
+fi
+
+# Path notes for operators (also docs/INSTALL.txt)
 cat >"$STAGE/README.txt" <<EOF
 MiSTerPlex release package
 version: ${VERSION}
@@ -64,13 +83,15 @@ Contents
   bin/push_frame           optional SPI frame/bitstream tool
   conf/misterplex.conf.example
   cores/Plex.rbf           (if built) Phase 1–3 present/decode core
-  docs/                    short path notes
+  scripts/plex_browse.sh   list library sections/items (host or MiSTer)
+  docs/                    release, CRT/LCD matrix, match-source-Hz, subtitles
 
 Install on MiSTer SD
 --------------------
   /media/fat/misterplex/bin/misterplexd
-  /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE
+  /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
+  /media/fat/_Arcade/Plex.rbf            # optional; required for FPGA present / STREAM
 
 Plex.rbf locations (build tree / device)
 ----------------------------------------
@@ -85,25 +106,45 @@ Plex.rbf locations (build tree / device)
   Load core from OSD; misterplexd is independent of which core is running
   for Phase 2 fb0/MrAudio, but Phase 3 STREAM/FPGA present needs Plex.rbf.
 
+PRESENT / STREAM (conf)
+-----------------------
+  PRESENT=fb0|fpga|both     default fb0 (Phase 2 cast path)
+  STREAM=0|1                annex-B → host I-recon F1 + F3 (Phase 3.3i)
+  See docs/release.md for the full mode matrix. Do not regress Phase 2 cast.
+
 Deploy helper (from dev host)
 -----------------------------
   ./scripts/deploy_misterplexd.sh
   ./scripts/deploy_plex_core.sh     # copies RBF when built
+  make package                      # this tarball
 
 Phase notes
 -----------
   Phase 2: companion :3005 + FFmpeg → fb0 + MrAudio
-  Phase 3: FPGA decode (in progress) — does not block Phase 4 cast UX
-  Phase 4: scrubber / resume hold / soak — see README
+  Phase 3: FPGA decode (in progress) — does not block cast UX
+  Phase 4: multi-server, browse CLI, auto-next, subtitles burn plan
+  Phase 5: release docs, CRT/LCD matrix, hardened multi-title soak
+  Full docs: docs/release.md docs/crt-lcd-matrix.md docs/match-source-hz.md docs/subtitles-burnin.md
 EOF
-
-if [[ -f "$ROOT/docs/match-source-hz.md" ]]; then
-  cp -a "$ROOT/docs/match-source-hz.md" "$STAGE/docs/"
-fi
 cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
+
+# Checksums for binaries + optional RBF
+{
+  (cd "$STAGE" && find bin conf cores docs -type f 2>/dev/null | sort | xargs sha256sum)
+} >"$STAGE/SHA256SUMS" 2>/dev/null || true
 
 mkdir -p "$OUT_DIR"
 tar -C "$STAGE/.." -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"
+if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
+  echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes)"
+else
+  echo "RBF: ABSENT (daemon-only)"
+fi
 file "$STAGE/bin/misterplexd" || true
+# Fail soft-list of expected docs
+for need in docs/release.md docs/INSTALL.txt conf/misterplex.conf.example bin/misterplexd; do
+  [[ -e "$STAGE/$need" ]] || { echo "ERROR: missing $need in stage"; exit 1; }
+done
+echo "package_release: OK"

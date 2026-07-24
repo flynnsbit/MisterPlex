@@ -27,8 +27,9 @@ See [docs/architecture.md](docs/architecture.md).
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.3h done** recon **bit-exact** (maeY/U/V=0 vs FFmpeg no-LF); **3.3i** STREAM→F1; next 3.3j FPGA residual |
-| **4** Feature-rich client | **foundation** — scrubber/resume hold, soak, package (parallel to Phase 3) |
+| **3** FPGA decode / frame store | **3.3j hybrid** host recon F1 (mae=0) + FPGA residual probe/status; M10K ~73% limits full residual |
+| **4** Feature-rich client | **in progress** — multi-server, browse CLI, auto-next, subtitles plan (parallel to Phase 3) |
+| **5** Release / display matrix | **docs + soak + package** — [release.md](docs/release.md), [crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
 
 ### Phase 2 (current on MiSTer `192.168.1.183`)
 
@@ -57,21 +58,41 @@ Ported/hardened mistercast-linux companion lessons without requiring RBF changes
 | `prePlayHold` + `castBound`: stop ACK/polls stay `buffering@navigation` without media keys | **done** |
 | Mirror does not demote live cast; unsubscribe clears hold | **done** |
 | Match source Hz / modeline | **cadence + OSD Content FPS now**; switchres **TODO** — [docs/match-source-hz.md](docs/match-source-hz.md) |
-| Multi-title soak skeleton | `tests/hw/test_soak.sh` |
+| Multi-server conf (`PLEX_SERVERS` / multi `PLEX_BASE`) + cast-selected base | **done** — unit in `test_resolve` |
+| On-device/host browse CLI | `scripts/plex_browse.sh` (sections / section / item / servers) |
+| Next-episode stub (EOF → next `playQueue` item via internal play) | **done** — conf `AUTO_NEXT=1` (default) |
+| Subtitles burn-in | plan [docs/subtitles-burnin.md](docs/subtitles-burnin.md); conf `SUBTITLES=burn\|ffmpeg` |
+| Multi-title soak | `tests/hw/test_soak.sh` (PMS conf auto-discover) |
 | Release tarball | `scripts/package_release.sh` / `make package` |
 
+**Multi-server:** `PLEX_SERVERS=http://a:32400,http://b:32400` and/or multiple `PLEX_BASE=` lines. First entry is default; cast `address=`/`port=`/`protocol=` selects the active base; if cast omits address and resolve fails, remaining servers are tried.
+
+**Browse:** `./scripts/plex_browse.sh sections` → `section <id>` prints `key=` / `ratingKey=` for playMedia (needs `PLEX_TOKEN` + base).
+
+### Phase 5 (release / CRT·LCD matrix)
+
+| Item | Status |
+|------|--------|
+| Install + conf reference | [docs/release.md](docs/release.md) — PRESENT/STREAM matrix, known limits |
+| CRT 15 kHz / HDMI checklist | [docs/crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
+| Hardened multi-title soak | Auto-load `/media/fat/misterplex/misterplex.conf` from lab MiSTer; PMS key discovery |
+| Package includes `Plex.rbf` when built | `cores/Plex.rbf` from releases/ → output_files/ → mister-dev out |
+| Phase 2 cast path | **unchanged** — keep `PRESENT=fb0` `STREAM=0` as safe conf |
+
 ```bash
-make unit                          # includes companion scrubber + prePlayHold tests
-make package                       # dist/misterplex-*.tar.gz (ARM + conf + RBF if present)
+make unit                          # multi-server helpers + companion scrubber + prePlayHold
+make package                       # dist/misterplex-*.tar.gz (ARM + conf + docs + RBF if present)
 ./scripts/deploy_misterplexd.sh
+./scripts/plex_browse.sh sections  # needs PLEX_TOKEN + PLEX_BASE (or conf)
 ./tests/hw/test_playqueue_bind.sh
-SOAK_HOLD_S=5 ./tests/hw/test_soak.sh
+SOAK_HOLD_S=5 ./tests/hw/test_soak.sh   # multi-title when PMS conf available
 ```
 
 Conf example: [assets/misterplex.conf.example](assets/misterplex.conf.example).
 
 **Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
 **Tests:** `make unit` + HW scripts under `tests/hw/`.
+
 ## Layout
 
 ```text
