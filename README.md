@@ -39,7 +39,9 @@ See [docs/architecture.md](docs/architecture.md).
 - FFmpeg → raw RGB24 → `/dev/fb0` (MiSTer_fb ascal scanout); verified with `test.mp4` + `testsrc`
 - Deploy: `./scripts/deploy_misterplexd.sh` (startup hook + log)
 
-**Still open for Phase 2 acceptance:** real Plex Web cast with token (end-to-end library title), continuous audio path (HPS ALSA is Dummy — needs FPGA audio FIFO or core tone bridge), scrubber play-queue fields from live Web cast.
+**HW proven:** PMS universal weak ladder for library key `/library/metadata/3` (“The Garden of Delights”) → frames on `/dev/fb0`, timeline duration/seekRange advancing.
+
+**Still open for Phase 2:** continuous audio (HPS ALSA is Dummy — need FPGA audio FIFO), Plex Web UI cast polish (play-queue item IDs from live Web), seek mid-title soak, kill-daemon recovery.
 
 **Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
 **Tests:** `make unit` — cadence math + resolve helpers + companion HTTP smoke.
