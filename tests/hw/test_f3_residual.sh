@@ -52,13 +52,6 @@ echo "$ST" | grep -q 'has_frame=1'
 echo "$ST" | grep -qE 'res_ok=1'
 echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
-# 3.3k residual_dc (scan coeff0) when levels path completes; golden -24
-if echo "$ST" | grep -qE 'res_dc=-24'; then
-  echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"
-elif echo "$ST" | grep -qE 'res_dc=0'; then
-  echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 (res_dc pending levels RBF)"
-else
-  # any other reported dc still advances 3.3k reporting
-  echo "$ST" | grep -qE 'res_dc='
-  echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 + res_dc field"
-fi
+# 3.3k residual_dc (scan coeff0) — host golden coeff[0]=-24 after runv-clear RBF
+echo "$ST" | grep -qE 'res_dc=-24'
+echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"
