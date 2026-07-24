@@ -1,8 +1,12 @@
 # MiSTerPlex on-device conf → /media/fat/misterplex/misterplex.conf
 # Restart after edits: killall misterplexd; re-run deploy or startup hook.
 
-# --- PMS ---
+# --- PMS (multi-server) ---
+# Default / fallback base (first in list). Cast playMedia address= still wins when present.
 PLEX_BASE=http://192.168.1.41:32400
+# Optional: comma-separated additional servers (or use multiple PLEX_BASE= lines).
+# PLEX_SERVERS=http://192.168.1.41:32400,http://192.168.1.50:32400
+# PLEX_BASE=http://192.168.1.50:32400
 PLEX_HOST=192.168.1.41
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
@@ -15,6 +19,14 @@ DECODE=320x240
 # PRESENT=fb0|fpga|both
 PRESENT=fb0
 # STREAM=1  # annex-B → FPGA F3 (Phase 3.3 path)
+
+# --- Phase 4 UX ---
+# AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)
+# AUTO_NEXT=0
+# Subtitles: off | burn (PMS universal) | ffmpeg (local files, STREAM=0 only)
+# See docs/subtitles-burnin.md
+SUBTITLES=off
+# SUBTITLE_STREAM=0
 
 # --- Match source Hz (Phase 4) ---
 # Plex.rbf does NOT yet implement Groovy-style CmdSwitchres modeline swaps.
