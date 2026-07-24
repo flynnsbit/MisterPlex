@@ -16,11 +16,16 @@ help:
 
 test: unit
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_resolve
+	$(ROOT)/build/test_frame_store_math
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
+
+$(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_frame_store_math.cpp
 
 $(ROOT)/build/test_cadence: $(ROOT)/tests/unit/test_cadence.cpp $(ROOT)/host/libmisterplex/cadence.hpp
 	@mkdir -p $(ROOT)/build

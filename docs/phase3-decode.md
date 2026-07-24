@@ -37,14 +37,32 @@ Phase 2 remains valid bootstrap: FFmpeg → `/dev/fb0` + `/dev/MrAudio`.
 
 ## Intermediate milestone (before full H.264 IP)
 
-**RGB frame FIFO from ARM** (still FFmpeg decode, but present is FPGA WaitSync, not userspace blit pace):
+**RGB frame store on FPGA** (still FFmpeg decode on ARM; present is FPGA vsync):
 
 ```text
-FFmpeg RGB → HPS write window / DDR → FPGA triple buffer → present_cadence
-PCM → audio FIFO → CLK_AUDIO
+Phase 3.0 (in tree now):
+  F1 / ioctl raw RGB565 320×240 → frame_ingest → dual-bank BRAM frame_store
+  present_core mux: Bars | Frame store (OSD O[9])
+  cadence + tone unchanged
+
+Phase 3.1 (next):
+  misterplexd → continuous frame stream (ioctl/EXT_BUS/DDRAM window)
+  FFmpeg RGB → pack RGB565 → HPS write → swap on VBL
+
+Phase 3.2:
+  PCM → core audio FIFO (retire dual-process MrAudio pump for lip-sync)
+
+Phase 3.3:
+  H.264 soft-core / elementary NAL feed
 ```
 
-This reuses Phase 1 `present_core` and retires `/dev/fb0` path for quality.
+### 3.0 HW bring-up
+
+1. Build RBF: `make build-rbf` (Quartus via misterfpga-dev).
+2. Deploy: `./scripts/deploy_plex_core.sh`.
+3. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565` and copy to SD.
+4. OSD: load frame via **F1**, set **Video source = Frame store**.
+5. Expect yellow border + color bars + orange diagonal (not internal pattern block).
 
 ## Acceptance
 

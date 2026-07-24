@@ -1,6 +1,7 @@
 //============================================================================
-//  MiSTerPlex — native Plex present core (Phase 1)
-//  FPGA owns vsync present, cadence (3:2/2:2), and continuous audio tone.
+//  MiSTerPlex — native Plex present core
+//  Phase 1: color bars + cadence + tone
+//  Phase 3.0: dual-bank RGB565 frame_store via ioctl (F1 raw load)
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -41,11 +42,14 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 localparam CONF_STR = {
 	"Plex;;",
 	"-;",
+	"F1,rawRGB565 frame (320x240);",
+	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[2],TV Mode,NTSC,PAL;",
 	"O[5:4],Content FPS,24,30,60,12;",
 	"O[7:6],Pattern,Bars,Bars+Block,Grid,Ramp;",
 	"O[8],Audio tone,On,Off;",
+	"O[9],Video source,Bars,Frame store;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
@@ -58,17 +62,33 @@ wire   [1:0] buttons;
 wire [127:0] status;
 wire  [10:0] ps2_key;
 
+wire        ioctl_download;
+wire        ioctl_wr;
+wire [26:0] ioctl_addr;
+wire  [7:0] ioctl_dout;
+wire [15:0] ioctl_index;
+
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 	.EXT_BUS(),
 	.gamma_bus(),
+
 	.forced_scandoubler(forced_scandoubler),
+
 	.buttons(buttons),
 	.status(status),
 	.status_menumask(0),
-	.ps2_key(ps2_key)
+
+	.ps2_key(ps2_key),
+
+	.ioctl_download(ioctl_download),
+	.ioctl_index(ioctl_index),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(1'b0)
 );
 
 ///////////////////////   CLOCKS   ///////////////////////////////
@@ -96,11 +116,38 @@ end
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
+// Frame ingest from F1 / file download
+wire        fs_wr_en;
+wire [15:0] fs_wr_pixel;
+wire        fs_wr_reset;
+wire        fs_swap;
+wire [31:0] ingest_pixels;
+wire        ingest_dl;
+
+frame_ingest ingest (
+	.clk(clk_sys),
+	.reset(reset),
+	.ioctl_download(ioctl_download),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_index(ioctl_index),
+	.enable(1'b1),
+	.wr_en(fs_wr_en),
+	.wr_pixel(fs_wr_pixel),
+	.wr_reset_ptr(fs_wr_reset),
+	.swap_req(fs_swap),
+	.pixels_written(ingest_pixels),
+	.downloading(ingest_dl)
+);
+
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;
 wire [15:0] al, ar_audio;
 wire [31:0] disp_i, cont_i;
 wire advance;
+wire has_frame;
+wire [18:0] wr_count;
 
 present_core present (
 	.clk(clk_sys),
@@ -112,6 +159,11 @@ present_core present (
 	.display_hz(display_hz),
 	.pattern(status[7:6]),
 	.audio_en(~status[8]),
+	.use_frame_store(status[9]),
+	.fs_wr_en(fs_wr_en),
+	.fs_wr_pixel(fs_wr_pixel),
+	.fs_wr_reset(fs_wr_reset),
+	.fs_swap(fs_swap),
 	.ce_pix(ce_pix),
 	.HBlank(HBlank),
 	.HSync(HSync),
@@ -124,7 +176,9 @@ present_core present (
 	.audio_r(ar_audio),
 	.stat_display_index(disp_i),
 	.stat_content_index(cont_i),
-	.stat_advance(advance)
+	.stat_advance(advance),
+	.stat_has_frame(has_frame),
+	.stat_wr_count(wr_count)
 );
 
 assign CLK_VIDEO = clk_sys;
@@ -141,12 +195,12 @@ assign AUDIO_S = 1;
 assign AUDIO_L = al;
 assign AUDIO_R = ar_audio;
 
-// Heartbeat LED; faster blink when unique frames advance often
+// Heartbeat LED; solid-ish when frame store has data
 reg [26:0] act_cnt;
 always @(posedge clk_sys) act_cnt <= act_cnt + 1'd1;
-assign LED_USER = act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0];
+assign LED_USER = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cnt[7:0] : act_cnt[25:18] <= act_cnt[7:0]);
 
-// Silence unused warnings for stats until HPS status path is wired
-wire _unused = |{disp_i, cont_i, advance};
+// Silence unused
+wire _unused = |{disp_i, cont_i, advance, wr_count, ingest_pixels, ingest_dl, ioctl_index};
 
 endmodule
