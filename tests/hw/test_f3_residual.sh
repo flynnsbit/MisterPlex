@@ -14,9 +14,18 @@ ssh_m() {
 }
 
 echo "=== reload Plex core ==="
-ssh_m 'echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
-sleep 3
+# Free SPI lock held by misterplexd during F3 probe
+ssh_m 'killall -9 misterplexd 2>/dev/null || true; echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
+# Core load + UIO reappear can take several seconds on lab DE10
+sleep 5
 ssh_m 'grep -q Plex /tmp/CORENAME'
+# Wait until push_frame can open status (UIO ready)
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null | grep -q 'status'; then
+    break
+  fi
+  sleep 0.5
+done
 
 python3 "$ROOT/scripts/gen_test_annexb_real.py" /tmp/plex_real_baseline.h264
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_real_baseline.h264 \
