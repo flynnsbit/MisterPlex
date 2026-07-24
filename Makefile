@@ -26,7 +26,11 @@ $(ROOT)/build/test_cadence: $(ROOT)/tests/unit/test_cadence.cpp $(ROOT)/host/lib
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cadence.cpp
 
 # Native host daemon for local smoke
-MPLEX_SRC := $(ROOT)/arm/misterplexd/main.cpp $(ROOT)/arm/misterplexd/companion.cpp
+MPLEX_SRC := \
+	$(ROOT)/arm/misterplexd/main.cpp \
+	$(ROOT)/arm/misterplexd/companion.cpp \
+	$(ROOT)/arm/misterplexd/fb_present.cpp \
+	$(ROOT)/arm/misterplexd/media_player.cpp
 MPLEX_INC := -I$(ROOT)/arm/misterplexd
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) $(ROOT)/arm/misterplexd/companion.hpp
@@ -38,11 +42,15 @@ plexd: $(ROOT)/build/misterplexd
 # ARM hard-float for MiSTer (try common cross compilers)
 ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null)
 
+# Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
+# whole-archive pthread required for std::thread under -static.
 arm-plexd:
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
-	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) -pthread -static-libstdc++ \
-		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC)
+	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
+		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
+		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+	@file $(ROOT)/build/arm/misterplexd
 	@echo "Built $(ROOT)/build/arm/misterplexd"
 
 MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
