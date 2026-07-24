@@ -373,31 +373,48 @@ wire led_base = has_frame ? act_cnt[24] : (act_cnt[26] ? act_cnt[25:18] > act_cn
 assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 	: (has_audio ? act_cnt[22] : led_base);
 
-// --- Core status → HPS (UIO_GET_STATUS) ---
-// Layout (little-endian 16-bit words as read by ARM):
-//   [0] has_frame  [1] has_audio  [2] has_stream  [3] audio_underrun
-//   [4] has_idr    [5] stub_busy  [6] sps_valid  [7] pps_valid
-//   [15:8] last_nal_type
-//   [31:16] nalu_count
-//   [47:32] stream_fifo_level
-//   [55:48] first_mb_type  [63:56] slice_type
-//   [71:64] slice_qp (in low of height if 0..51) — see [79:64] sps_height
-//   [79:64] sps_height  [95:80] sps_width
-//   [127:96] stream_bytes_in
-//   [47:40] {residual_ok, residual_tc[4:0], residual_t1[1:0]}
-//   [39] ddr_busy  [38] 0  [37:32] slice_qp
-//   has_mb_type implied by first_mb_type<=25 after I-slice parse
-//   status[12] HPS→core DDR start; status[13] bank
-//   [127:96] {residual_dc[7:0], stream_bytes_in[23:0]} — 3.3k DC + 24b bytes
+// --- Core status → HPS (UIO_GET_STATUS / status_set) ---
+//
+// When status_set rises, Main_MiSTer *replaces* the entire OSD status word with
+// status_in (then clears bit 0). Telemetry MUST NOT occupy CONF_STR O/T bits or
+// Pattern / FPS / TV Mode freeze, and HPS status[12]/[13] DDR kick/bank survive.
+//
+// Layout v2 (OSD-safe, 128b):
+//   [15:0]    status[15:0]     // OSD O/T + DDR start[12] bank[13]
+//   [23:16]   flags            // has_frame..pps_valid
+//   [31:24]   last_nal_type
+//   [47:32]   nalu_count
+//   [55:48]   first_mb_type    [63:56] slice_type
+//   [71:64]   {residual_ok, residual_tc[4:0], residual_t1[1:0]}
+//   [79:72]   {ddr_busy, 1'b0, slice_qp[5:0]}
+//   [87:80]   sps_mb_w         [95:88] sps_mb_h  (pixels = mb*16)
+//   [103:96]  residual_dc      [127:104] stream_bytes_in[23:0]
+//   [122:121] forced from status (Aspect ratio) — overlaps stream MSBs only
+wire [7:0] telem_flags = {
+	pps_valid, sps_valid, stub_busy, has_idr,
+	audio_underrun, has_stream, has_audio, has_frame
+};
+
+wire [127:0] status_telem;
+assign status_telem[15:0]    = status[15:0];
+assign status_telem[23:16]   = telem_flags;
+assign status_telem[31:24]   = last_nal_type;
+assign status_telem[47:32]   = nalu_count;
+assign status_telem[55:48]   = first_mb_type;
+assign status_telem[63:56]   = slice_type;
+assign status_telem[71:64]   = {residual_ok, residual_tc, residual_t1};
+assign status_telem[79:72]   = {ddr_busy, 1'b0, slice_qp};
+assign status_telem[87:80]   = sps_mb_w;
+assign status_telem[95:88]   = sps_mb_h;
+// residual_dc at [103:96] so AR splice at [122:121] only touches stream MSBs
+assign status_telem[103:96]  = residual_dc;
+assign status_telem[127:104] = stream_bytes_in[23:0];
+
+// Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
 assign status_in = {
-	residual_dc, stream_bytes_in[23:0], // 127:96
-	sps_width, sps_height,              // 95:64
-	slice_type, first_mb_type,          // 63:48
-	residual_ok, residual_tc, residual_t1, // 47:40
-	ddr_busy, 1'b0, slice_qp,           // 39:32
-	nalu_count,                         // 31:16
-	last_nal_type,                      // 15:8
-	pps_valid, sps_valid, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame
+	status_telem[127:123],
+	status[122:121],
+	status_telem[120:0]
 };
 
 // Pulse status_set ~1 kHz or when nalu/sps/slice change so Main/ARM can poll.

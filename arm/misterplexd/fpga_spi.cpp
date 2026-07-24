@@ -420,19 +420,19 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     usleep(200); // settle so rising edge is clean
     if (!setStatusBit(12, 1))
         return false;
-    // Core DMA for 153600 B is typically <2 ms @ clk_sys. Avoid SPI status polls
-    // in the hot path (each UIO_GET_STATUS pauses Main ~ms). One-shot verify once.
+    // Core DMA for 153600 B is typically a few ms @ clk_sys. One-shot verify:
+    // sample busy for ~20 ms so a slow first transfer still qualifies.
     static int ddr_verified = 0; // 0=unknown, 1=ok, -1=missing
     if (ddr_verified == 0) {
         bool saw_busy = false;
-        for (int i = 0; i < 20 && !saw_busy; ++i) {
+        for (int i = 0; i < 100 && !saw_busy; ++i) {
             usleep(200);
             CoreStatus st;
             if (readCoreStatus(st) && st.ddr_busy)
                 saw_busy = true;
         }
-        // Drain busy
-        for (int i = 0; i < 20; ++i) {
+        // Drain busy (up to ~40 ms)
+        for (int i = 0; i < 200; ++i) {
             usleep(200);
             CoreStatus st;
             if (readCoreStatus(st) && !st.ddr_busy)
@@ -449,7 +449,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
         setErr("sendRgb565FrameDdr: DDR path previously unavailable");
         return false;
     } else {
-        usleep(2500); // allow DMA to finish without SPI thrash
+        usleep(4000); // allow DMA to finish without SPI thrash
     }
     setStatusBit(12, 0);
     // Ensure Force-bars debug off so frame_store is visible (same as SPI path).
@@ -547,44 +547,58 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
 }
 
 FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
-    CoreStatus s;
-    const uint16_t w0 = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
+    // status_in v2 (OSD-safe) — see Plex.sv. Telemetry starts at bit 16 so
+    // Main status_set does not wipe OSD / DDR kick bits 12–13.
+    //   [15:0]   OSD (ignored for telem)
+    //   [23:16]  flags   [31:24] last_nal
+    //   [47:32]  nalu_count
+    //   [55:48]  mb0     [63:56] slice_type
+    //   [71:64]  residual pack   [79:72] {ddr_busy,0,qp}
+    //   [87:80]  sps_mb_w        [95:88] sps_mb_h
+    //   [127:96] {residual_dc, stream_bytes_in[23:0]} (AR may touch [122:121])
+    CoreStatus s{};
     const uint16_t w1 = static_cast<uint16_t>(raw[2] | (raw[3] << 8));
     const uint16_t w2 = static_cast<uint16_t>(raw[4] | (raw[5] << 8));
     const uint16_t w3 = static_cast<uint16_t>(raw[6] | (raw[7] << 8));
-    s.has_frame = (w0 & 1) != 0;
-    s.has_audio = (w0 & 2) != 0;
-    s.has_stream = (w0 & 4) != 0;
-    s.audio_underrun = (w0 & 8) != 0;
-    s.has_idr = (w0 & 16) != 0;
-    s.stub_busy = (w0 & 32) != 0;
-    s.sps_valid = (w0 & 64) != 0;
-    s.pps_valid = (w0 & 128) != 0;
-    s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
-    s.nalu_count = w1;
-    s.stream_fifo_level = w2;
-    // [63:48] = {slice_type[7:0], first_mb_type[7:0]}
+    const uint16_t w4 = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
+    const uint16_t w5 = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
+
+    const uint8_t flags = static_cast<uint8_t>(w1 & 0xFF);
+    s.has_frame = (flags & 1) != 0;
+    s.has_audio = (flags & 2) != 0;
+    s.has_stream = (flags & 4) != 0;
+    s.audio_underrun = (flags & 8) != 0;
+    s.has_idr = (flags & 16) != 0;
+    s.stub_busy = (flags & 32) != 0;
+    s.sps_valid = (flags & 64) != 0;
+    s.pps_valid = (flags & 128) != 0;
+    s.last_nal_type = static_cast<uint8_t>((w1 >> 8) & 0xFF);
+    s.nalu_count = w2;
     s.first_mb_type = static_cast<uint8_t>(w3 & 0xFF);
     s.slice_type = static_cast<uint8_t>((w3 >> 8) & 0xFF);
     s.stub_frames = s.slice_type;
     s.wr_count_lo = w3;
-    // [47:40] {residual_ok, residual_tc[4:0], residual_t1[1:0]}
-    // [39:32] = {ddr_busy, 0, slice_qp[5:0]}
-    // [127:96] {residual_dc[7:0], stream_bytes_in[23:0]} (3.3k)
-    const uint8_t hi = static_cast<uint8_t>((w2 >> 8) & 0xFF);
-    s.residual_ok = (hi & 0x80) != 0;
-    s.residual_tc = static_cast<uint8_t>((hi >> 2) & 0x1F);
-    s.residual_t1 = static_cast<uint8_t>(hi & 0x3);
-    s.ddr_busy = (w2 & 0x80) != 0;
-    s.slice_qp = static_cast<uint8_t>(w2 & 0x3F);
+
+    const uint8_t res_pack = static_cast<uint8_t>(w4 & 0xFF);
+    s.residual_ok = (res_pack & 0x80) != 0;
+    s.residual_tc = static_cast<uint8_t>((res_pack >> 2) & 0x1F);
+    s.residual_t1 = static_cast<uint8_t>(res_pack & 0x3);
+    const uint8_t ddr_qp = static_cast<uint8_t>((w4 >> 8) & 0xFF);
+    s.ddr_busy = (ddr_qp & 0x80) != 0;
+    s.slice_qp = static_cast<uint8_t>(ddr_qp & 0x3F);
     s.stream_fifo_level = 0;
-    // [95:64] = {sps_width, sps_height}
-    s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
-    s.sps_width = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
+
+    const uint8_t mb_w = static_cast<uint8_t>(w5 & 0xFF);
+    const uint8_t mb_h = static_cast<uint8_t>((w5 >> 8) & 0xFF);
+    s.sps_width = static_cast<uint16_t>(mb_w) * 16u;
+    s.sps_height = static_cast<uint16_t>(mb_h) * 16u;
+
     s.stream_bytes_seen = 0;
-    s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16));
-    s.residual_dc = static_cast<int8_t>(raw[15]);
-    // idr sticky still in flags; count not in status this rev
+    // [103:96]=residual_dc (raw[12]); [127:104]=stream_bytes[23:0] (raw[13..15])
+    // Aspect ratio splice may stomp stream MSBs — residual_dc stays clean.
+    s.residual_dc = static_cast<int8_t>(raw[12]);
+    s.stream_bytes_in =
+        static_cast<uint32_t>(raw[13] | (raw[14] << 8) | (raw[15] << 16));
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }

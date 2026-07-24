@@ -135,7 +135,10 @@ module present_core (
 
 	// Auto: show frame_store once a complete frame is ingested.
 	// use_frame_store (OSD O[9] Force bars=Yes) keeps bars for debug.
-	wire use_ext = has_frame && !use_frame_store;
+	// Non-default Pattern (Bars+Block/Grid/Ramp) also forces the bars path so
+	// OSD Pattern is always visible even after has_frame latches.
+	wire force_bars = use_frame_store | (pattern != 2'd0);
+	wire use_ext = has_frame && !force_bars;
 	assign r = use_ext ? fr : br;
 	assign g = use_ext ? fg : bg;
 	assign b = use_ext ? fb : bb;
