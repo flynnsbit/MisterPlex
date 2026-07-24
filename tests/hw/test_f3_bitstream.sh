@@ -51,6 +51,7 @@ python3 -c "import sys; n=int('$NALU' or 0); sys.exit(0 if n >= 4 else 1)"
 BYTES_IN=$(echo "$ST" | sed -n 's/.*bytes_in=\([0-9]*\).*/\1/p')
 echo "bytes_in=$BYTES_IN"
 python3 -c "import sys; b=int('$BYTES_IN' or 0); sys.exit(0 if b >= 100 else 1)"
+# Fake SPS in synthetic blob is not Baseline-parseable — sps_valid may stay 0
 
 echo "=== second append push (nalu should grow by >=4) ==="
 ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264' | grep -q OK

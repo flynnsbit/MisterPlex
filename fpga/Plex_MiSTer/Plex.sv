@@ -79,9 +79,10 @@ wire [15:0] ioctl_index;
 wire [127:0] status_in;
 reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
-wire         has_idr, stub_busy;
-wire [15:0]  nalu_count, stub_frames;
+wire         has_idr, stub_busy, sps_valid;
+wire [15:0]  nalu_count, stub_frames, sps_width, sps_height;
 wire [7:0]   last_nal_type, idr_count, sps_count, pps_count, slice_count;
+wire [7:0]   sps_profile, sps_level;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -186,7 +187,7 @@ audio_ingest ainst (
 	.active(af_active)
 );
 
-// Phase 3.3/3.3b: annex-B → FIFO → NAL stats → decode_stub → frame_store
+// Phase 3.3/3.3b/3.3c: annex-B → NAL stats → SPS parse + decode_stub → frame_store
 wire        stub_wr_en;
 wire [15:0] stub_wr_pixel;
 wire        stub_wr_reset;
@@ -213,6 +214,11 @@ stream_path spath (
 	.slice_count(slice_count),
 	.stub_frames(stub_frames),
 	.stub_busy(stub_busy),
+	.sps_valid(sps_valid),
+	.sps_profile(sps_profile),
+	.sps_level(sps_level),
+	.sps_width(sps_width),
+	.sps_height(sps_height),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -294,46 +300,50 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 // --- Core status → HPS (UIO_GET_STATUS) ---
 // Layout (little-endian 16-bit words as read by ARM):
 //   [0] has_frame  [1] has_audio  [2] has_stream  [3] audio_underrun
-//   [4] has_idr    [5] stub_busy
+//   [4] has_idr    [5] stub_busy  [6] sps_valid
 //   [15:8] last_nal_type
 //   [31:16] nalu_count
 //   [47:32] stream_fifo_level
 //   [55:48] idr_count   [63:56] stub_frames[7:0]
-//   [95:64] stream_bytes_seen
+//   [79:64] sps_height  [95:80] sps_width
 //   [127:96] stream_bytes_in
-// Note: wr_count dropped from status (still internal); idr/stub replace it.
+// Note: bytes_seen dropped from status (still internal); SPS dims replace it.
 assign status_in = {
 	stream_bytes_in,                    // 127:96
-	stream_bytes_seen,                  // 95:64
+	sps_width, sps_height,              // 95:64
 	stub_frames[7:0], idr_count,        // 63:48
 	stream_fifo_level,                  // 47:32
 	nalu_count,                         // 31:16
 	last_nal_type,                      // 15:8
-	2'b0, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame  // 7:0
+	1'b0, sps_valid, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame
 };
 
-// Pulse status_set ~1 kHz or when nalu/stub_frames change so Main/ARM can poll.
+// Pulse status_set ~1 kHz or when nalu/stub/sps change so Main/ARM can poll.
 reg [15:0] prev_nalu, prev_stub;
+reg        prev_sps;
 reg [14:0] st_div;
 always @(posedge clk_sys) begin
 	if (reset) begin
 		status_set <= 0;
 		prev_nalu  <= 0;
 		prev_stub  <= 0;
+		prev_sps   <= 0;
 		st_div     <= 0;
 	end else begin
 		status_set <= 0;
 		st_div <= st_div + 1'd1;
-		if (nalu_count != prev_nalu || stub_frames != prev_stub || st_div == 0) begin
+		if (nalu_count != prev_nalu || stub_frames != prev_stub || sps_valid != prev_sps ||
+		    st_div == 0) begin
 			status_set <= 1'b1;
 			prev_nalu  <= nalu_count;
 			prev_stub  <= stub_frames;
+			prev_sps   <= sps_valid;
 		end
 	end
 end
 
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
-	sps_count, pps_count, slice_count, wr_count};
+	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level};
 
 endmodule

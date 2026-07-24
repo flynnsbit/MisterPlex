@@ -83,8 +83,16 @@ Phase 3.3b (done this fire — decode_stub + typed NAL + STREAM path):
   ARM: STREAM=1 conf → second ffmpeg copy-demux annex-B → F3 chunks
   HW: `tests/hw/test_f3_decode_stub.sh` (has_idr + stub_frames + has_frame)
 
-Phase 3.3c (next):
-  Real H.264 Baseline soft-core / open IP → YUV→RGB565 → same frame_store ports
+Phase 3.3c (done this fire — SPS RBSP parse + real Baseline vector):
+  Host: `host/libmisterplex/h264_sps.hpp` + `test_sps_parse` (320×240 profile=66)
+  FPGA: `sps_parser` multi-cycle bit-walker (ue/u); nalu_scanner captures SPS + EPB strip
+  Status: [6] sps_valid; [95:80] sps_width; [79:64] sps_height (bytes_seen dropped)
+  Scripts: `gen_test_annexb_real.py` (ffmpeg Baseline annex-B)
+  HW: `tests/hw/test_f3_sps.sh` — real F3 push → sps_valid + sps=320x240 + has_frame
+  Still not a decoder — dimensions only; decode_stub still paints diagnostics on VCL
+
+Phase 3.3d (next):
+  Real H.264 Baseline soft-core / open IP (I-slice first) → YUV→RGB565 → frame_store
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

@@ -52,3 +52,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 3. Display shows green-border diagnostic frame after F3 push (not color bars alone).
 4. Continuous product path: `STREAM=1` in `misterplex.conf` (+ `PRESENT=fpga|both`)
    demuxes annex-B → F3 while playing (decode_stub until real H.264 IP).
+
+## Phase 3.3c SPS parse (real Baseline)
+
+1. Deploy RBF with `sps_parser`.
+2. `./tests/hw/test_f3_sps.sh` — ffmpeg Baseline 320×240 annex-B → `sps_valid=1 sps=320x240`.
+3. Unit: `make unit` includes `test_sps_parse`.

@@ -376,14 +376,18 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.audio_underrun = (w0 & 8) != 0;
     s.has_idr = (w0 & 16) != 0;
     s.stub_busy = (w0 & 32) != 0;
+    s.sps_valid = (w0 & 64) != 0;
     s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
     s.nalu_count = w1;
     s.stream_fifo_level = w2;
     // [63:48] = {stub_frames[7:0], idr_count[7:0]}
     s.idr_count = static_cast<uint8_t>(w3 & 0xFF);
     s.stub_frames = static_cast<uint8_t>((w3 >> 8) & 0xFF);
-    s.wr_count_lo = w3; // legacy combined field
-    s.stream_bytes_seen = static_cast<uint32_t>(raw[8] | (raw[9] << 8) | (raw[10] << 16) | (raw[11] << 24));
+    s.wr_count_lo = w3;
+    // [95:64] = {sps_width, sps_height}
+    s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
+    s.sps_width = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
+    s.stream_bytes_seen = 0;
     s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16) | (raw[15] << 24));
     return s;
 }
@@ -398,23 +402,21 @@ bool FpgaSpi::readCoreStatus(CoreStatus& out) {
             return false;
         CoreStatus s = parseCoreStatus(raw);
         // Sanity: bytes_seen should be <= bytes_in + small slack, nalu not huge garbage
-        bool sane = s.nalu_count < 10000 &&
-                    (s.stream_bytes_in == 0 || s.stream_bytes_seen <= s.stream_bytes_in + 64) &&
-                    s.stream_bytes_in < (1u << 28);
+        bool sane = s.nalu_count < 10000 && s.stream_bytes_in < (1u << 28) &&
+                    s.sps_width <= 4096 && s.sps_height <= 2160;
         if (!sane) {
             usleep(10000);
             continue;
         }
         if (have && s.nalu_count == best.nalu_count && s.stream_bytes_in == best.stream_bytes_in &&
-            s.has_stream == best.has_stream) {
+            s.has_stream == best.has_stream && s.sps_valid == best.sps_valid) {
             out = s;
             return true;
         }
         best = s;
         have = true;
-        // Strong signal: stream with matching byte counts
-        if (s.has_stream && s.stream_bytes_in > 0 && s.stream_bytes_seen == s.stream_bytes_in &&
-            s.nalu_count > 0) {
+        // Strong signal: stream with NALs (and optional SPS)
+        if (s.has_stream && s.stream_bytes_in > 0 && s.nalu_count > 0) {
             out = s;
             return true;
         }

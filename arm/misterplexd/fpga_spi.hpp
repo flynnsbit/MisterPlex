@@ -52,14 +52,17 @@ public:
         bool audio_underrun = false;
         bool has_idr = false;
         bool stub_busy = false;
+        bool sps_valid = false;
         uint8_t last_nal_type = 0;
         uint16_t nalu_count = 0;
         uint16_t stream_fifo_level = 0;
         uint8_t idr_count = 0;
         uint8_t stub_frames = 0;
+        uint16_t sps_width = 0;
+        uint16_t sps_height = 0;
         // Legacy alias: high/low of previous wr_count field (now idr|stub)
         uint16_t wr_count_lo = 0;
-        uint32_t stream_bytes_seen = 0;
+        uint32_t stream_bytes_seen = 0; // not in status anymore; kept for API compat (=0)
         uint32_t stream_bytes_in = 0;
     };
     // Parse getCoreStatus raw bytes into fields.
