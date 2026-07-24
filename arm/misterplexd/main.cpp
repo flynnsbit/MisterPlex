@@ -71,9 +71,13 @@ int main(int argc, char** argv) {
     int decodeW = 320, decodeH = 240;
     std::string presentMode = "fb0";
     bool streamEnabled = false;
+    std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
+    // Phase 4 match-source-Hz: conf reserved for switchres; Content FPS hint is software-only.
+    std::string matchSourceHz = "off";
+    std::string sourceFpsConf = "auto";
     misterplex::WeakLadder weak;
     std::vector<std::string> servers;
     std::string defaultPms = "http://192.168.1.41:32400";
@@ -157,6 +161,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "STREAM_SKIP_RGB");
+        if (!v.empty())
+            streamSkipRgb = v;
         v = loadConf(confPath, "AUTO_NEXT");
         if (!v.empty())
             autoNext = confTruthy(v);
@@ -178,16 +185,20 @@ int main(int argc, char** argv) {
             subtitleStreamId = std::atoi(v.c_str());
             weak.subtitleStreamId = subtitleStreamId;
         }
-        // Phase 4: match-source-Hz reserved (see docs/match-source-hz.md).
+        // Phase 4: match-source-Hz / Content FPS (see docs/match-source-hz.md).
+        // Conf is applied on each play: SOURCE_FPS selects Content FPS hint from PMS
+        // metadata (or forces 12/24/30/60). MATCH_SOURCE_HZ=on still cannot switch
+        // modelines without HPS switchres — logs target only.
         v = loadConf(confPath, "MATCH_SOURCE_HZ");
         if (!v.empty())
-            std::fprintf(stderr,
-                         "misterplexd: MATCH_SOURCE_HZ=%s noted (cadence-only until switchres)\n",
-                         v.c_str());
+            matchSourceHz = v;
         v = loadConf(confPath, "SOURCE_FPS");
         if (!v.empty())
-            std::fprintf(stderr, "misterplexd: SOURCE_FPS=%s noted (OSD Content FPS is authoritative)\n",
-                         v.c_str());
+            sourceFpsConf = v;
+        std::fprintf(stderr,
+                     "misterplexd: MATCH_SOURCE_HZ=%s SOURCE_FPS=%s "
+                     "(cadence/OSD path; switchres TODO)\n",
+                     matchSourceHz.c_str(), sourceFpsConf.c_str());
     }
     // Align weak ladder with decode size when still default
     if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
@@ -207,13 +218,18 @@ int main(int argc, char** argv) {
     player.setDecodeSize(decodeW, decodeH);
     player.setPresentMode(presentMode);
     player.setStreamEnabled(streamEnabled);
+    player.setStreamSkipRgb(streamSkipRgb);
     if (subtitleMode == "ffmpeg")
         player.setSubtitleMode("ffmpeg");
     if (subtitleStreamId >= 0)
         player.setSubtitleStreamIndex(subtitleStreamId);
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
-    if (streamEnabled)
-        std::fprintf(stderr, "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3)\n");
+    if (streamEnabled) {
+        std::fprintf(stderr,
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; prefer direct H.264; "
+                     "STREAM_SKIP_RGB=%s)\n",
+                     streamSkipRgb.c_str());
+    }
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")
@@ -246,8 +262,10 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
+            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
+            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
-                                                 weak);
+                                                 weak, /*preferDirectH264=*/streamEnabled);
         };
 
         auto resolved = tryBase(selected);
@@ -280,11 +298,38 @@ int main(int argc, char** argv) {
             resolved.playable = "testsrc";
             resolved.ok = true;
             resolved.durationMs = 120000;
+            resolved.sourceFpsHint = 30; // testsrc default
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
                          static_cast<long long>(resolved.durationMs),
                          resolved.transcoded ? 1 : 0, base.c_str());
+        }
+
+        // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
+        {
+            const int effective =
+                misterplex::applySourceFpsConf(sourceFpsConf, resolved.sourceFpsHint);
+            if (effective > 0) {
+                std::fprintf(stderr,
+                             "misterplexd: Content FPS hint=%d (SOURCE_FPS=%s pms_vfr=%s "
+                             "frameRate=%s resolved=%d) — set OSD Content FPS or wait for "
+                             "switchres\n",
+                             effective, sourceFpsConf.c_str(),
+                             resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str(),
+                             resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
+                             resolved.sourceFpsHint);
+            } else {
+                std::fprintf(stderr,
+                             "misterplexd: Content FPS hint unknown (SOURCE_FPS=%s)\n",
+                             sourceFpsConf.c_str());
+            }
+            if (confTruthy(matchSourceHz) || matchSourceHz == "on" || matchSourceHz == "1") {
+                std::fprintf(stderr,
+                             "misterplexd: match-source-Hz ON target≈%dHz — switchres not "
+                             "wired (cadence path active; see docs/match-source-hz.md)\n",
+                             effective > 0 ? effective : 0);
+            }
         }
 
         if (!req.offsetPresent && resolved.viewOffsetMs > 0)
@@ -325,9 +370,11 @@ int main(int argc, char** argv) {
         }
 
         comp.bindMedia(bound, resolved.durationMs);
+        // Ensure timeline immediately reports duration + time for scrubber (seekRange).
+        comp.setState("buffering", off, resolved.durationMs);
 
-        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld\n", resolved.playable.c_str(),
-                     static_cast<long long>(off));
+        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
+                     static_cast<long long>(off), static_cast<long long>(resolved.durationMs));
         player.play(resolved.playable, off, resolved.httpHeaders, resolved.durationMs);
     };
 
@@ -415,6 +462,32 @@ int main(int argc, char** argv) {
         // clearMedia already called by companion stop path after onStop
     });
     comp.setSeek([&](int64_t ms) { player.seekMs(ms); });
+    // Scrubber step ±10s (Web / remote stepForward/stepBack).
+    comp.setStep([&](int64_t deltaMs) {
+        int64_t cur = player.positionMs();
+        int64_t target = cur + deltaMs;
+        if (target < 0)
+            target = 0;
+        player.seekMs(target);
+    });
+    // skipNext → same path as auto-next (play-queue advance).
+    comp.setSkipNext([&]() {
+        if (autoNextInFlight.exchange(true))
+            return;
+        std::thread([&]() {
+            try {
+                if (!tryAutoNext())
+                    std::fprintf(stderr, "misterplexd: skipNext — no next item\n");
+            } catch (...) {
+                std::fprintf(stderr, "misterplexd: skipNext exception\n");
+            }
+            autoNextInFlight.store(false);
+        }).detach();
+    });
+    comp.setSkipPrevious([&]() {
+        // Restart current title (queue prev needs reverse index — restart is safe UX).
+        player.seekMs(0);
+    });
 
     if (!comp.start()) {
         std::fprintf(stderr, "misterplexd: companion start failed\n");

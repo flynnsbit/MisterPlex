@@ -88,6 +88,37 @@ echo "$BADCK" | grep -qv 'containerKey="/library/metadata' || fail "poison conta
 # --- proxy/timeline alias ---
 curl -fsS "http://127.0.0.1:${PORT}/player/proxy/timeline?commandID=12" | grep -q Timeline
 
+# --- scrubber stepForward / stepBack (relative ±10s) ---
+# Use seekTo to plant a known time, then step (avoids async playMedia race).
+curl -fsS "http://127.0.0.1:${PORT}/player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F20&offset=0&commandID=12a" \
+  | grep -q Timeline || fail "rebind for step"
+sleep 0.4
+SEEK_BASE=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/seekTo?offset=30000&commandID=12a2")
+echo "$SEEK_BASE" | grep -q 'time="30000"' || fail "seekTo plant 30s: $SEEK_BASE"
+STEP=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/stepForward?commandID=12b")
+echo "$STEP" | grep -q Timeline || fail "stepForward no Timeline"
+# time should advance +10s from 30000 → 40000
+echo "$STEP" | grep -q 'time="40000"' || fail "stepForward not +10s: $STEP"
+STEPB=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/stepBack?commandID=12c")
+echo "$STEPB" | grep -q 'time="30000"' || fail "stepBack not -10s: $STEPB"
+
+# --- skipPrevious restarts at 0 ---
+SKP=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/skipPrevious?commandID=12d")
+echo "$SKP" | grep -q 'time="0"' || fail "skipPrevious not 0: $SKP"
+
+# --- skipNext ACK (may no-op without playQueue; must not 404) ---
+curl -fsS "http://127.0.0.1:${PORT}/player/playback/skipNext?commandID=12e" | grep -q Timeline \
+  || fail "skipNext missing Timeline"
+
+# --- seekTo applies offset ---
+SEEK=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/seekTo?offset=55000&commandID=12f")
+echo "$SEEK" | grep -q 'time="55000"' || fail "seekTo offset not applied: $SEEK"
+echo "$SEEK" | grep -q Timeline || fail "seekTo no Timeline"
+# After resolve/bind, duration from testsrc path is 120000 → seekRange present on poll
+sleep 0.3
+POLL_DUR=$(curl -fsS "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=12g")
+echo "$POLL_DUR" | grep -q 'seekRange=' || echo "NOTE: seekRange absent (duration may be 0): $POLL_DUR"
+
 # --- unsubscribe clears castBound hold (after stop → pure stopped ok) ---
 curl -fsS "http://127.0.0.1:${PORT}/player/playback/stop?commandID=13" >/dev/null
 curl -fsS "http://127.0.0.1:${PORT}/player/timeline/unsubscribe?commandID=14" >/dev/null

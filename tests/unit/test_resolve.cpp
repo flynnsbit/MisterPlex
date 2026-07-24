@@ -79,6 +79,38 @@ int main() {
     auto pq = fetchPlayQueue("not-a-queue", "http://127.0.0.1:32400", "tok");
     CHECK(!pq.ok);
 
+    // --- Phase 4 Content FPS / SOURCE_FPS helpers (no network) ---
+    CHECK(contentFpsHint("24p", "") == 24);
+    CHECK(contentFpsHint("NTSC", "") == 30);
+    CHECK(contentFpsHint("60p", "") == 60);
+    CHECK(contentFpsHint("", "23.976") == 24);
+    CHECK(contentFpsHint("", "29.970") == 30);
+    CHECK(contentFpsHint("", "59.94") == 60);
+    CHECK(contentFpsHint("film", "") == 24);
+    CHECK(contentFpsHint("", "") == 0);
+    // Numeric frameRate wins over token
+    CHECK(contentFpsHint("NTSC", "23.976") == 24);
+
+    CHECK(applySourceFpsConf("auto", 24) == 24);
+    CHECK(applySourceFpsConf("", 30) == 30);
+    CHECK(applySourceFpsConf("off", 24) == 0);
+    CHECK(applySourceFpsConf("60", 24) == 60);
+    CHECK(applySourceFpsConf("24", 0) == 24);
+    CHECK(applySourceFpsConf("auto", 0) == 0);
+
+    // --- STREAM preferDirectH264 helpers (no network) ---
+    CHECK(mediaVideoIsH264("") == false);
+    CHECK(mediaVideoIsH264("<Media videoCodec=\"h264\" />") == true);
+    CHECK(mediaVideoIsH264("<Media videoCodec=\"hevc\" />") == false);
+    CHECK(mediaVideoIsH264("<Media videoCodec=\"avc\" />") == true);
+    CHECK(mediaVideoIsH264(
+              "<Stream streamType=\"1\" codec=\"h264\" type=\"video\" />") == true);
+    CHECK(mediaVideoIsH264(
+              "<Stream streamType=\"2\" codec=\"aac\" /><Media videoCodec=\"hevc\"/>") == false);
+    // Local path + direct URL still resolve without preferDirect flag
+    auto directLocal = resolvePlayTarget("/tmp/plex_real_baseline.h264", "", "", 0, true, {}, true);
+    CHECK(directLocal.ok && directLocal.playable == "/tmp/plex_real_baseline.h264");
+
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
         return 1;

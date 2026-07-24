@@ -18,6 +18,10 @@ struct ResolveResult {
     int64_t durationMs = 0;
     int64_t viewOffsetMs = 0;
     std::string ratingKey;
+    // Phase 4 match-source-Hz / Content FPS hints from PMS metadata.
+    std::string videoFrameRate; // raw Media@videoFrameRate (e.g. 24p, NTSC, 60p)
+    std::string frameRate;      // raw Stream@frameRate (e.g. 23.976)
+    int sourceFpsHint = 0;      // nearest OSD Content FPS: 12/24/30/60, or 0 unknown
 };
 
 struct QueueItem {
@@ -67,11 +71,18 @@ struct WeakLadder {
     int subtitleStreamId = -1; // -1 = PMS default / first
 };
 
+// True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
+bool mediaVideoIsH264(const std::string& plexMetadataXml);
+
 // Resolve a playMedia key against PMS, or pass through local/http paths.
-// weakAlways: always request PMS universal H.264 ladder (recommended on dual A9).
+// weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
+// preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
+// already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
+// Non-H.264 still falls through to the weak universal ladder.
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
-                                bool weakAlways = true, const WeakLadder& weak = {});
+                                bool weakAlways = true, const WeakLadder& weak = {},
+                                bool preferDirectH264 = false);
 
 // Fetch /playQueues/{id} for next-episode / skipNext. currentKey or playQueueItemId
 // selects currentIndex when present.
@@ -85,5 +96,13 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 // Call /universal/decision before start.mp4 (PMS 1.43+).
 bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
                              const std::string& token);
+
+// Map PMS videoFrameRate / frameRate strings to OSD Content FPS (12/24/30/60).
+// Returns 0 when unknown. Prefers numeric frameRate when present.
+int contentFpsHint(const std::string& videoFrameRate, const std::string& frameRate = {});
+
+// Apply conf SOURCE_FPS (auto|12|24|30|60|off) over a resolved hint.
+// "auto"/empty → use resolvedHint; "off" → 0; numeric → forced bucket.
+int applySourceFpsConf(const std::string& sourceFpsConf, int resolvedHint);
 
 } // namespace misterplex

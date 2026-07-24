@@ -25,12 +25,21 @@ content_index = floor(display_index * content_fps / display_hz)
 
 Film on fixed 60 Hz: Content FPS **24** → unique advance only on 3:2 density ticks; no forced `fps=60` in FFmpeg.
 
-Conf keys (logged by `misterplexd`, authoritative control is OSD until switchres lands):
+Conf keys (applied on every play; OSD still owns the actual present rate until switchres lands):
 
 ```bash
-MATCH_SOURCE_HZ=off   # default — cadence path
-SOURCE_FPS=auto       # reserved; OSD Content FPS wins today
+MATCH_SOURCE_HZ=off   # default — cadence path; on = log target Hz only (no modeline swap yet)
+SOURCE_FPS=auto       # auto = PMS videoFrameRate/frameRate → 12/24/30/60 hint
+                      # 24|30|60|12 = force; off = no hint
 ```
+
+On play, `misterplexd` logs e.g.:
+
+```text
+misterplexd: Content FPS hint=24 (SOURCE_FPS=auto pms_vfr=24p frameRate=23.976 resolved=24)
+```
+
+Set OSD **Content FPS** to that value for film cadence on fixed 60 Hz.
 
 ### B) ARM decode path (Phase 2)
 
@@ -49,9 +58,10 @@ True **Match source Hz = on** as in mistercast-linux/Groovy requires:
 |------|--------|
 | Cadence math FPGA + unit tests | **done** |
 | OSD Content FPS | **done** (`Plex.sv`) |
-| Conf `MATCH_SOURCE_HZ` / `SOURCE_FPS` keys | **parsed/logged** (no-op switchres) |
+| Conf `MATCH_SOURCE_HZ` / `SOURCE_FPS` keys | **wired on play path** (log + hint; no-op switchres) |
+| PMS `videoFrameRate` / `frameRate` → Content FPS hint | **done** (`contentFpsHint` / `applySourceFpsConf`) |
 | HPS modeline switch from `misterplexd` | **TODO** (likely needs Main/sys hooks; not free without RBF or companion binary support) |
-| Auto-select Content FPS from PMS metadata | **TODO** (software-only; no RBF) |
+| Auto-write OSD Content FPS from daemon | **TODO** (needs core/Main hook; operator sets OSD today) |
 | Ship `assets/modelines.dat` with release | **TODO** when switchres wires |
 
 **Verdict:** ship cadence-only for Phase 4 foundation. Do **not** block Phase 3 FPGA decode on modeline switch. Wire match-Hz when a present path can change refresh without regressing lip-sync.

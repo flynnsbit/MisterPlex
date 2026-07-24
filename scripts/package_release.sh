@@ -58,6 +58,10 @@ if [[ -n "$RBF_SRC" ]]; then
   echo "Included cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes)"
 else
   echo "NOTE: Plex.rbf not in tree — daemon-only package (see docs for Quartus paths)."
+  if [[ "${PACKAGE_ALLOW_NO_RBF:-0}" != "1" ]]; then
+    echo "ERROR: cores/Plex.rbf missing. Build RBF or set PACKAGE_ALLOW_NO_RBF=1."
+    exit 1
+  fi
 fi
 
 # Operator docs
@@ -66,11 +70,13 @@ for doc in release.md match-source-hz.md crt-lcd-matrix.md architecture.md subti
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
 done
-if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
-  mkdir -p "$STAGE/scripts"
-  cp -a "$ROOT/scripts/plex_browse.sh" "$STAGE/scripts/"
-  chmod +x "$STAGE/scripts/plex_browse.sh"
-fi
+mkdir -p "$STAGE/scripts"
+for scr in plex_browse.sh plex_menu.sh; do
+  if [[ -f "$ROOT/scripts/$scr" ]]; then
+    cp -a "$ROOT/scripts/$scr" "$STAGE/scripts/"
+    chmod +x "$STAGE/scripts/$scr"
+  fi
+done
 
 # Path notes for operators (also docs/INSTALL.txt)
 cat >"$STAGE/README.txt" <<EOF
@@ -83,7 +89,8 @@ Contents
   bin/push_frame           optional SPI frame/bitstream tool
   conf/misterplex.conf.example
   cores/Plex.rbf           (if built) Phase 1–3 present/decode core
-  scripts/plex_browse.sh   list library sections/items (host or MiSTer)
+  scripts/plex_browse.sh   list library + play/status/stop via misterplexd
+  scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
   docs/                    release, CRT/LCD matrix, match-source-Hz, subtitles
 
 Install on MiSTer SD
@@ -122,9 +129,15 @@ Phase notes
 -----------
   Phase 2: companion :3005 + FFmpeg → fb0 + MrAudio
   Phase 3: FPGA decode (in progress) — does not block cast UX
-  Phase 4: multi-server, browse CLI, auto-next, subtitles burn plan
+  Phase 4: multi-server, browse/menu UX, Content FPS hint, scrubber steps, auto-next
   Phase 5: release docs, CRT/LCD matrix, hardened multi-title soak
   Full docs: docs/release.md docs/crt-lcd-matrix.md docs/match-source-hz.md docs/subtitles-burnin.md
+
+On-device play (no cast phone)
+-----------------------------
+  /media/fat/misterplex/scripts/plex_browse.sh play <ratingKey>
+  /media/fat/misterplex/scripts/plex_menu.sh
+  # needs PLEX_TOKEN in misterplex.conf for library list; play hits :3005
 EOF
 cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
 

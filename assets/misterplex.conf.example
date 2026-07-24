@@ -18,7 +18,10 @@ DECODE=320x240
 # WEAK_BITRATE=1000
 # PRESENT=fb0|fpga|both
 PRESENT=fb0
-# STREAM=1  # annex-B → FPGA F3 (Phase 3.3 path)
+# STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
+# Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
+# STREAM_SKIP_RGB=auto  # auto: skip heavy RGB when PRESENT=fpga (keep audio + recon)
+# STREAM_SKIP_RGB=0     # always FFmpeg RGB (fallback for CABAC / PRESENT=both)
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)
@@ -28,10 +31,12 @@ PRESENT=fb0
 SUBTITLES=off
 # SUBTITLE_STREAM=0
 
-# --- Match source Hz (Phase 4) ---
+# --- Match source Hz / Content FPS (Phase 4) ---
 # Plex.rbf does NOT yet implement Groovy-style CmdSwitchres modeline swaps.
-# Until HPS modeline control exists, use OSD **Content FPS** (24/30/60/12) so the
-# FPGA present engine applies 3:2 / 2:2 cadence on a fixed display modeline.
+# On each play, misterplexd reads PMS videoFrameRate/frameRate and logs a Content
+# FPS hint (12/24/30/60). Set OSD **Content FPS** to match for 3:2 / 2:2 cadence.
+# SOURCE_FPS=auto → use PMS metadata; 24|30|60|12 forces; off disables hint.
+# MATCH_SOURCE_HZ=on logs target Hz but still uses cadence (switchres TODO).
 # See docs/match-source-hz.md.
 MATCH_SOURCE_HZ=off
 SOURCE_FPS=auto

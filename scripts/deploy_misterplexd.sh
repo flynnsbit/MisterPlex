@@ -14,7 +14,7 @@ if [[ ! -f "$BIN" ]]; then
 fi
 
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
-  'mkdir -p /media/fat/misterplex/bin
+  'mkdir -p /media/fat/misterplex/bin /media/fat/misterplex/scripts
    killall -9 misterplexd 2>/dev/null || true
    # Orphaned ffmpeg can inherit :3005 if CLOEXEC was missing — free the port
    fuser -k 3005/tcp 2>/dev/null || true
@@ -22,9 +22,16 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
    sleep 0.4
    rm -f /media/fat/misterplex/bin/misterplexd'
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
+# On-device browse / menu (Phase 4 UX)
+if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
+  sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \
+    "$ROOT/scripts/plex_browse.sh" "$ROOT/scripts/plex_menu.sh" \
+    "$USER@$HOST:/media/fat/misterplex/scripts/"
+fi
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" bash -s <<'REMOTE'
 set -e
 chmod +x /media/fat/misterplex/bin/misterplexd
+chmod +x /media/fat/misterplex/scripts/plex_browse.sh /media/fat/misterplex/scripts/plex_menu.sh 2>/dev/null || true
 # Startup hook (idempotent)
 HOOK=/media/fat/linux/_user-startup.sh
 LINE='/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400 >>/media/fat/misterplex/misterplexd.log 2>&1 &'

@@ -28,7 +28,7 @@ See [docs/architecture.md](docs/architecture.md).
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
 | **3** FPGA decode / frame store | **3.3j hybrid** host recon F1 (mae=0) + FPGA residual probe/status; M10K ~73% limits full residual |
-| **4** Feature-rich client | **in progress** — multi-server, browse CLI, auto-next, subtitles plan (parallel to Phase 3) |
+| **4** Feature-rich client | **in progress** — multi-server, browse/menu UX, Content FPS hint, scrubber steps, auto-next (parallel to Phase 3) |
 | **5** Release / display matrix | **docs + soak + package** — [release.md](docs/release.md), [crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
 
 ### Phase 2 (current on MiSTer `192.168.1.183`)
@@ -57,9 +57,12 @@ Ported/hardened mistercast-linux companion lessons without requiring RBF changes
 | `viewOffset` / `offset` ms; continue-watching only when cast omits offset | **done** |
 | `prePlayHold` + `castBound`: stop ACK/polls stay `buffering@navigation` without media keys | **done** |
 | Mirror does not demote live cast; unsubscribe clears hold | **done** |
-| Match source Hz / modeline | **cadence + OSD Content FPS now**; switchres **TODO** — [docs/match-source-hz.md](docs/match-source-hz.md) |
+| Match source Hz / modeline | **cadence + OSD Content FPS**; play path logs PMS → Content FPS hint; switchres **TODO** — [docs/match-source-hz.md](docs/match-source-hz.md) |
 | Multi-server conf (`PLEX_SERVERS` / multi `PLEX_BASE`) + cast-selected base | **done** — unit in `test_resolve` |
-| On-device/host browse CLI | `scripts/plex_browse.sh` (sections / section / item / servers) |
+| On-device/host browse CLI | `scripts/plex_browse.sh` (sections / play / status / stop / seek) |
+| On-device interactive menu | `scripts/plex_menu.sh` — pick section/item → `playMedia` on `localhost:3005` |
+| Scrubber duration / seekRange after resolve | **done** — bind + setState; seek clamp |
+| Scrubber step / skip | **done** — `stepForward`/`stepBack` (±10s), `skipNext` (auto-next), `skipPrevious` (restart) |
 | Next-episode stub (EOF → next `playQueue` item via internal play) | **done** — conf `AUTO_NEXT=1` (default) |
 | Subtitles burn-in | plan [docs/subtitles-burnin.md](docs/subtitles-burnin.md); conf `SUBTITLES=burn\|ffmpeg` |
 | Multi-title soak | `tests/hw/test_soak.sh` (PMS conf auto-discover) |
@@ -67,7 +70,15 @@ Ported/hardened mistercast-linux companion lessons without requiring RBF changes
 
 **Multi-server:** `PLEX_SERVERS=http://a:32400,http://b:32400` and/or multiple `PLEX_BASE=` lines. First entry is default; cast `address=`/`port=`/`protocol=` selects the active base; if cast omits address and resolve fails, remaining servers are tried.
 
-**Browse:** `./scripts/plex_browse.sh sections` → `section <id>` prints `key=` / `ratingKey=` for playMedia (needs `PLEX_TOKEN` + base).
+**Browse / on-device play:**
+
+```bash
+./scripts/plex_browse.sh sections              # needs PLEX_TOKEN + PLEX_BASE
+./scripts/plex_browse.sh section <id>
+./scripts/plex_browse.sh play <ratingKey>      # → misterplexd playMedia (default 127.0.0.1:3005)
+./scripts/plex_browse.sh status | stop | pause | resume | seek <ms>
+./scripts/plex_menu.sh                         # interactive TUI (SSH / MiSTer Scripts)
+```
 
 ### Phase 5 (release / CRT·LCD matrix)
 
@@ -80,10 +91,12 @@ Ported/hardened mistercast-linux companion lessons without requiring RBF changes
 | Phase 2 cast path | **unchanged** — keep `PRESENT=fb0` `STREAM=0` as safe conf |
 
 ```bash
-make unit                          # multi-server helpers + companion scrubber + prePlayHold
+make unit                          # multi-server + Content FPS + companion scrubber/step + browse smoke
 make package                       # dist/misterplex-*.tar.gz (ARM + conf + docs + RBF if present)
 ./scripts/deploy_misterplexd.sh
 ./scripts/plex_browse.sh sections  # needs PLEX_TOKEN + PLEX_BASE (or conf)
+./scripts/plex_browse.sh play <ratingKey>   # on-device / host → localhost:3005
+./scripts/plex_menu.sh             # interactive library → play
 ./tests/hw/test_playqueue_bind.sh
 SOAK_HOLD_S=5 ./tests/hw/test_soak.sh   # multi-title when PMS conf available
 ```

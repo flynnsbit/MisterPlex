@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
@@ -143,6 +144,21 @@ std::string attrIn(const std::string& slice, const char* name) {
     if (e == std::string::npos)
         return {};
     return slice.substr(p, e - p);
+}
+
+std::string lowerCopy(std::string s) {
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// H.264/AVC direct Part is preferred for STREAM host CAVLC recon (Baseline/Main).
+bool videoCodecIsH264(const std::string& codecRaw) {
+    const std::string c = lowerCopy(codecRaw);
+    if (c.empty())
+        return false;
+    return c.find("h264") != std::string::npos || c.find("avc") != std::string::npos ||
+           c.find("x264") != std::string::npos;
 }
 
 } // namespace
@@ -364,9 +380,34 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
            body.find("transcodeDecisionCode") != std::string::npos;
 }
 
+bool mediaVideoIsH264(const std::string& plexMetadataXml) {
+    if (plexMetadataXml.empty())
+        return false;
+    // Prefer Stream video codec when present; else Media@videoCodec.
+    size_t pos = 0;
+    while ((pos = plexMetadataXml.find("<Stream", pos)) != std::string::npos) {
+        auto end = plexMetadataXml.find('>', pos);
+        if (end == std::string::npos)
+            break;
+        const std::string tag = plexMetadataXml.substr(pos, end - pos);
+        // PMS uses streamType="1" (video) and/or type="video"
+        const bool isVideo = tag.find("streamType=\"1\"") != std::string::npos ||
+                             tag.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            auto c = attrIn(tag, "codec");
+            if (c.empty())
+                c = attrIn(tag, "codecID");
+            if (videoCodecIsH264(c))
+                return true;
+        }
+        pos = end + 1;
+    }
+    return videoCodecIsH264(attr(plexMetadataXml, "Media", "videoCodec"));
+}
+
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs, bool weakAlways,
-                                const WeakLadder& weak) {
+                                const WeakLadder& weak, bool preferDirectH264) {
     ResolveResult r;
     std::string key = urlDecode(rawKeyOrPath);
     if (key.empty() || key == "test" || key == "testsrc") {
@@ -430,9 +471,72 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         if (!vo.empty())
             r.viewOffsetMs = std::strtoll(vo.c_str(), nullptr, 10);
         r.ratingKey = attr(xml, "Video", "ratingKey");
+        // Match-source-Hz / Content FPS: Media@videoFrameRate + video Stream@frameRate
+        r.videoFrameRate = attr(xml, "Media", "videoFrameRate");
+        if (r.videoFrameRate.empty())
+            r.videoFrameRate = attr(xml, "Video", "videoFrameRate");
+        // Fallback: any videoFrameRate="..." in the metadata payload
+        if (r.videoFrameRate.empty()) {
+            const std::string key = "videoFrameRate=\"";
+            auto p = xml.find(key);
+            if (p != std::string::npos) {
+                p += key.size();
+                auto e = xml.find('"', p);
+                if (e != std::string::npos)
+                    r.videoFrameRate = xml.substr(p, e - p);
+            }
+        }
+        r.frameRate = attr(xml, "Stream", "frameRate");
+        // Prefer video stream frameRate when Stream tags are mixed (first may be audio).
+        // Scan all Stream open-tags for type="video" frameRate.
+        {
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                if (slice.find("type=\"video\"") != std::string::npos) {
+                    auto fr = attrIn(slice, "frameRate");
+                    if (!fr.empty())
+                        r.frameRate = fr;
+                    break;
+                }
+                sp = end + 1;
+            }
+        }
+        r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
     }
 
-    // Prefer weak universal for dual A9
+    // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
+    // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    const bool directH264 = preferDirectH264 && !xml.empty() && mediaVideoIsH264(xml);
+    if (directH264 && key.rfind("/library", 0) == 0) {
+        auto partKey = attr(xml, "Part", "key");
+        if (!partKey.empty()) {
+            if (partKey[0] != '/')
+                partKey = "/" + partKey;
+            r.playable = plexBase + partKey;
+            if (!token.empty())
+                r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                              std::string("X-Plex-Token=") + urlEncodeQuery(token);
+            r.ok = true;
+            r.transcoded = false;
+            r.detail = "direct H.264 Part (STREAM)";
+            return r;
+        }
+        auto file = attr(xml, "Part", "file");
+        if (!file.empty()) {
+            r.playable = urlDecode(file);
+            r.ok = true;
+            r.transcoded = false;
+            r.detail = "direct H.264 Part file (STREAM)";
+            return r;
+        }
+        // Fall through to universal if Part missing
+    }
+
+    // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
         const std::string start =
@@ -596,6 +700,83 @@ PlayQueue fetchPlayQueue(const std::string& queueIdOrContainerKey, const std::st
     q.detail = "queue size=" + std::to_string(q.items.size()) +
                " index=" + std::to_string(q.currentIndex);
     return q;
+}
+
+namespace {
+
+int bucketFps(double fps) {
+    if (fps <= 0.0)
+        return 0;
+    // Nearest of OSD Content FPS options 12 / 24 / 30 / 60
+    const int opts[] = {12, 24, 30, 60};
+    int best = 24;
+    double bestDiff = 1e9;
+    for (int o : opts) {
+        double d = std::fabs(fps - static_cast<double>(o));
+        if (d < bestDiff) {
+            bestDiff = d;
+            best = o;
+        }
+    }
+    // 23.976 → 24, 29.97 → 30, 59.94 → 60
+    return best;
+}
+
+} // namespace
+
+int contentFpsHint(const std::string& videoFrameRate, const std::string& frameRate) {
+    // Prefer numeric stream frameRate
+    if (!frameRate.empty()) {
+        char* end = nullptr;
+        double v = std::strtod(frameRate.c_str(), &end);
+        if (end != frameRate.c_str() && v > 0.0)
+            return bucketFps(v);
+    }
+    if (videoFrameRate.empty())
+        return 0;
+    std::string s = videoFrameRate;
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // Common PMS tokens
+    if (s == "ntsc" || s.find("29.97") != std::string::npos || s == "30p" || s == "30")
+        return 30;
+    if (s == "pal" || s.find("25") == 0 || s == "25p")
+        return 24; // nearest OSD bucket (no 25); cadence at 24 is less wrong than 30 for film-ish
+    if (s == "24p" || s == "24" || s.find("23.9") != std::string::npos ||
+        s.find("film") != std::string::npos)
+        return 24;
+    if (s == "60p" || s == "60" || s.find("59.9") != std::string::npos || s == "120p")
+        return 60;
+    if (s == "12p" || s == "12")
+        return 12;
+    // Strip trailing 'p' and parse number
+    if (!s.empty() && (s.back() == 'p' || s.back() == 'i'))
+        s.pop_back();
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return bucketFps(v);
+    return 0;
+}
+
+int applySourceFpsConf(const std::string& sourceFpsConf, int resolvedHint) {
+    std::string s = sourceFpsConf;
+    // trim
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (s.empty() || s == "auto")
+        return resolvedHint;
+    if (s == "off" || s == "0" || s == "none")
+        return 0;
+    char* end = nullptr;
+    long v = std::strtol(s.c_str(), &end, 10);
+    if (end != s.c_str() && v > 0)
+        return bucketFps(static_cast<double>(v));
+    return resolvedHint;
 }
 
 } // namespace misterplex

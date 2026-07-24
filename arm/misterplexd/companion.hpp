@@ -34,6 +34,7 @@ public:
     using PlayFn = std::function<void(const PlayRequest&)>;
     using CtrlFn = std::function<void()>;
     using SeekFn = std::function<void(int64_t ms)>;
+    using StepFn = std::function<void(int64_t deltaMs)>;
 
     void setName(std::string n) { name_ = std::move(n); }
     void setMachineId(std::string id) { machineId_ = std::move(id); }
@@ -44,6 +45,10 @@ public:
     void setResume(CtrlFn f) { onResume_ = std::move(f); }
     void setStop(CtrlFn f) { onStop_ = std::move(f); }
     void setSeek(SeekFn f) { onSeek_ = std::move(f); }
+    // Relative scrubber step (stepForward/stepBack); deltaMs may be negative.
+    void setStep(StepFn f) { onStep_ = std::move(f); }
+    void setSkipNext(CtrlFn f) { onSkipNext_ = std::move(f); }
+    void setSkipPrevious(CtrlFn f) { onSkipPrevious_ = std::move(f); }
 
     bool start();
     void stop();
@@ -77,6 +82,9 @@ private:
     CtrlFn onResume_;
     CtrlFn onStop_;
     SeekFn onSeek_;
+    StepFn onStep_;
+    CtrlFn onSkipNext_;
+    CtrlFn onSkipPrevious_;
 
     std::atomic<bool> running_{false};
     std::thread gdmThr_;

@@ -607,9 +607,17 @@ void Companion::httpLoop() {
             const bool isStop = req.find("/stop") != std::string::npos ||
                                 req.find("playback/stop") != std::string::npos;
             const bool isSeek = req.find("seekTo") != std::string::npos ||
-                                req.find("/seek") != std::string::npos;
+                                (req.find("/seek") != std::string::npos &&
+                                 req.find("seekTo") == std::string::npos &&
+                                 req.find("step") == std::string::npos);
+            // Relative scrubber steps (Web remote / keyboard)
+            const bool isStepForward = req.find("stepForward") != std::string::npos;
+            const bool isStepBack = req.find("stepBack") != std::string::npos;
+            const bool isSkipNext = req.find("skipNext") != std::string::npos;
+            const bool isSkipPrevious = req.find("skipPrevious") != std::string::npos;
             const bool isResumePlay =
-                !isPlayMedia && !isPause && !isStop && !isSeek &&
+                !isPlayMedia && !isPause && !isStop && !isSeek && !isStepForward &&
+                !isStepBack && !isSkipNext && !isSkipPrevious &&
                 (req.find("/player/playback/play") != std::string::npos ||
                  req.find("playback/play?") != std::string::npos ||
                  req.find("playback/play ") != std::string::npos);
@@ -705,11 +713,68 @@ void Companion::httpLoop() {
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     d = durationMs_;
+                    // Clamp seek into known duration so scrubber cannot overshoot.
+                    if (d > 0 && ms > d)
+                        ms = d;
                 }
                 setState("buffering", ms, d);
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 if (onSeek_)
                     onSeek_(ms);
+                close(c);
+                continue;
+            }
+            if (isStepForward || isStepBack) {
+                // Default ±10s; optional offset= overrides absolute (rare) or type= for ms step.
+                int64_t step = 10000;
+                auto off = queryParam(req, "offset");
+                if (!off.empty()) {
+                    // Some clients send step size in offset; treat small values as relative ms.
+                    int64_t v = std::atoll(off.c_str());
+                    if (v > 0 && v < 120000)
+                        step = v;
+                }
+                if (isStepBack)
+                    step = -step;
+                int64_t t = 0, d = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    t = timeMs_;
+                    d = durationMs_;
+                }
+                int64_t target = t + step;
+                if (target < 0)
+                    target = 0;
+                if (d > 0 && target > d)
+                    target = d;
+                setState("buffering", target, d);
+                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                if (onStep_)
+                    onStep_(step);
+                else if (onSeek_)
+                    onSeek_(target);
+                close(c);
+                continue;
+            }
+            if (isSkipNext) {
+                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                if (onSkipNext_)
+                    onSkipNext_();
+                close(c);
+                continue;
+            }
+            if (isSkipPrevious) {
+                int64_t d = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    d = durationMs_;
+                }
+                setState("buffering", 0, d);
+                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                if (onSkipPrevious_)
+                    onSkipPrevious_();
+                else if (onSeek_)
+                    onSeek_(0);
                 close(c);
                 continue;
             }

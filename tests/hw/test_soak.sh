@@ -14,6 +14,8 @@
 #   SOAK_ROUNDS     full passes over the key list (default 1)
 #   SOAK_PROGRESS   if 1, require timeline time to advance during hold (default 0)
 #   SOAK_FETCH_CONF if 0, never scp conf from MiSTer (default 1)
+#   SOAK_NET_LABEL  optional label for Wi-Fi/Ethernet matrix rows (e.g. wifi|eth)
+#   SOAK_LOG_NET    if 1, ssh and log active iface / wireless quality (default 1)
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -25,12 +27,37 @@ ROUNDS="${SOAK_ROUNDS:-1}"
 CONF_LOCAL="${MISTER_CONF:-}"
 FETCH_CONF="${SOAK_FETCH_CONF:-1}"
 WANT_PROGRESS="${SOAK_PROGRESS:-0}"
+NET_LABEL="${SOAK_NET_LABEL:-}"
+LOG_NET="${SOAK_LOG_NET:-1}"
 
 CURL=(curl -fsS --connect-timeout 5 --max-time 60)
 CURL_STOP=(curl -fsS --connect-timeout 5 --max-time 20)
 
 log() { printf '[soak] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
+
+# Snapshot MiSTer net path for Wi-Fi vs Ethernet matrix rows (docs/crt-lcd-matrix.md).
+log_net_snapshot() {
+  [[ "$LOG_NET" == "1" ]] || return 0
+  command -v sshpass >/dev/null 2>&1 || { log "net: sshpass missing — skip"; return 0; }
+  local snap
+  snap=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+    "${USER}@${HOST}" 'default_if=$(ip route 2>/dev/null | awk "/^default/ {print \$5; exit}");
+      ip -4 -o addr show dev "$default_if" 2>/dev/null | awk "{print \$4}" | head -1;
+      echo IFACE=$default_if;
+      if [[ -n "$default_if" && -f /proc/net/wireless ]]; then
+        awk -v i="$default_if" "\$1 ~ i {printf \"WL_QUAL=%s WL_LEVEL=%s\\n\", \$3, \$4}" /proc/net/wireless;
+      fi
+      if [[ "$default_if" == eth* ]]; then
+        ethtool "$default_if" 2>/dev/null | awk "/Speed:|Duplex:/ {print}" | tr "\\n" " ";
+        echo;
+      fi' 2>/dev/null || true)
+  if [[ -n "$snap" ]]; then
+    log "net snapshot:${NET_LABEL:+ label=$NET_LABEL} $(echo "$snap" | tr '\n' ' ')"
+  else
+    log "net snapshot: unavailable (ssh failed)"
+  fi
+}
 
 # --- conf load (local path or MiSTer lab conf) ---------------------------------
 TOKEN=""
@@ -88,39 +115,58 @@ discover_pms_keys() {
   local base="$1" token="$2"
   local hdr=(-H "X-Plex-Token: ${token}")
   local xml keys=()
-  # Movies (section 1) — Video elements
-  xml=$("${CURL[@]}" "${hdr[@]}" "${base}/library/sections/1/all?X-Plex-Container-Size=20" 2>/dev/null || true)
-  if [[ -n "$xml" ]]; then
+  # Enumerate library sections dynamically (do not hardcode movie=1 / show=2).
+  local sections
+  sections=$("${CURL[@]}" "${hdr[@]}" "${base}/library/sections" 2>/dev/null || true)
+  local sec_ids=()
+  while read -r sk; do
+    [[ -n "$sk" ]] && sec_ids+=("$sk")
+  done < <(printf '%s' "$sections" | grep -oE 'key="[0-9]+"' | sed 's/key="//;s/"//')
+  local sid
+  for sid in "${sec_ids[@]}"; do
+    xml=$("${CURL[@]}" "${hdr[@]}" \
+      "${base}/library/sections/${sid}/all?X-Plex-Container-Size=20" 2>/dev/null || true)
+    # Movies / other leaf Video
     while read -r rk; do
       [[ -n "$rk" ]] && keys+=("/library/metadata/${rk}")
-    done < <(printf '%s' "$xml" | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -5)
-  fi
-  # TV shows → first show → first season → episodes
-  xml=$("${CURL[@]}" "${hdr[@]}" "${base}/library/sections/2/all?X-Plex-Container-Size=10" 2>/dev/null || true)
-  local show_rk
-  show_rk=$(printf '%s' "$xml" | grep -oE 'ratingKey="[0-9]+"' | head -1 | sed 's/ratingKey="//;s/"//' || true)
-  if [[ -n "$show_rk" ]]; then
-    local seas
-    seas=$("${CURL[@]}" "${hdr[@]}" "${base}/library/metadata/${show_rk}/children" 2>/dev/null || true)
-    local seas_rk
-    seas_rk=$(printf '%s' "$seas" | grep -oE 'ratingKey="[0-9]+"' | head -1 | sed 's/ratingKey="//;s/"//' || true)
-    if [[ -n "$seas_rk" ]]; then
-      local eps
-      eps=$("${CURL[@]}" "${hdr[@]}" "${base}/library/metadata/${seas_rk}/children" 2>/dev/null || true)
+    done < <(printf '%s' "$xml" | grep -oE '<Video[^>]*ratingKey="[0-9]+"' \
+      | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -5)
+    # TV: Directory shows → first show seasons → episodes
+    local show_rk
+    show_rk=$(printf '%s' "$xml" | grep -oE '<Directory[^>]*ratingKey="[0-9]+"' \
+      | grep -oE 'ratingKey="[0-9]+"' | head -1 | sed 's/ratingKey="//;s/"//' || true)
+    if [[ -n "$show_rk" ]]; then
+      local seas
+      seas=$("${CURL[@]}" "${hdr[@]}" "${base}/library/metadata/${show_rk}/children" 2>/dev/null || true)
+      local seas_rk
+      seas_rk=$(printf '%s' "$seas" | grep -oE 'ratingKey="[0-9]+"' | head -1 \
+        | sed 's/ratingKey="//;s/"//' || true)
+      if [[ -n "$seas_rk" ]]; then
+        local eps
+        eps=$("${CURL[@]}" "${hdr[@]}" \
+          "${base}/library/metadata/${seas_rk}/children" 2>/dev/null || true)
+        while read -r rk; do
+          [[ -n "$rk" ]] && keys+=("/library/metadata/${rk}")
+        done < <(printf '%s' "$eps" | grep -oE 'ratingKey="[0-9]+"' \
+          | sed 's/ratingKey="//;s/"//' | head -5)
+      fi
+      local extras
+      extras=$("${CURL[@]}" "${hdr[@]}" \
+        "${base}/library/metadata/${show_rk}/extras?X-Plex-Container-Size=5" 2>/dev/null || true)
       while read -r rk; do
         [[ -n "$rk" ]] && keys+=("/library/metadata/${rk}")
-      done < <(printf '%s' "$eps" | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -5)
+      done < <(printf '%s' "$extras" | grep -oE 'ratingKey="[0-9]+"' \
+        | sed 's/ratingKey="//;s/"//' | head -3)
     fi
-  fi
-  # Trailers / extras (clips) under first show for multi-title variety
-  if [[ -n "$show_rk" ]]; then
-    local extras
-    extras=$("${CURL[@]}" "${hdr[@]}" \
-      "${base}/library/metadata/${show_rk}/extras?X-Plex-Container-Size=5" 2>/dev/null || true)
+  done
+  # onDeck / recentlyAdded catch thin libraries (empty Movies section, one TV ep)
+  for path in library/onDeck "library/recentlyAdded?X-Plex-Container-Size=20"; do
+    xml=$("${CURL[@]}" "${hdr[@]}" "${base}/${path}" 2>/dev/null || true)
     while read -r rk; do
       [[ -n "$rk" ]] && keys+=("/library/metadata/${rk}")
-    done < <(printf '%s' "$extras" | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -3)
-  fi
+    done < <(printf '%s' "$xml" | grep -oE '<Video[^>]*ratingKey="[0-9]+"' \
+      | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -5)
+  done
   # Dedup preserve order
   local out=() seen="|"
   for k in "${keys[@]}"; do
@@ -162,6 +208,7 @@ fi
 
 log "resources on $HOST…"
 "${CURL[@]}" "$BASE/resources" | grep -q MiSTerPlex || fail "no MiSTerPlex on $BASE/resources"
+log_net_snapshot
 
 cmd=0
 ok_count=0
@@ -294,11 +341,12 @@ for ((r = 1; r <= ROUNDS; r++)); do
 done
 ELAPSED=$(( $(date +%s) - START_TS ))
 
-log "summary: ok=$ok_count fail=$fail_count elapsed=${ELAPSED}s host=$HOST"
+log_net_snapshot
+log "summary: ok=$ok_count fail=$fail_count elapsed=${ELAPSED}s host=$HOST${NET_LABEL:+ net=$NET_LABEL}"
 if [[ "$fail_count" -gt 0 ]]; then
   log "failed keys: ${FAIL_KEYS[*]}"
   fail "soak had $fail_count failure(s)"
 fi
 
-log "OK — ${#KEYS[@]} titles × ${ROUNDS} rounds on $HOST"
-echo "test_soak: OK on $HOST (${ok_count} plays, ${ELAPSED}s)"
+log "OK — ${#KEYS[@]} titles × ${ROUNDS} rounds on $HOST${NET_LABEL:+ ($NET_LABEL)}"
+echo "test_soak: OK on $HOST (${ok_count} plays, ${ELAPSED}s${NET_LABEL:+, $NET_LABEL})"

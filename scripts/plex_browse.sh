@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# Host or on-device CLI: list Plex library sections / items via PMS API and print keys.
+# Host or on-device CLI: list Plex library sections / items via PMS API and
+# optionally control local misterplexd (playMedia / timeline / stop).
 # Usage:
 #   scripts/plex_browse.sh                          # list library sections
 #   scripts/plex_browse.sh sections
 #   scripts/plex_browse.sh section <key|id>         # list items in a section
 #   scripts/plex_browse.sh item <ratingKey|/library/metadata/N>
 #   scripts/plex_browse.sh servers                  # show conf multi-server list
+#   scripts/plex_browse.sh play <ratingKey|key>     # playMedia → misterplexd
+#   scripts/plex_browse.sh status                   # timeline poll
+#   scripts/plex_browse.sh stop | pause | resume
+#   scripts/plex_browse.sh seek <ms>
 #
 # Env / conf (first wins):
 #   PLEX_BASE / PLEX_SERVERS / PLEX_TOKEN
+#   MISTERPLEX_PLAYER  (default 127.0.0.1:3005)
 #   --conf PATH (default: ./assets/misterplex.conf.example or /media/fat/misterplex/misterplex.conf)
 #   --base URL  --token TOK  --server N   (1-based index into PLEX_SERVERS)
+#   --player HOST[:PORT]  --offset MS
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,9 +25,11 @@ CONF=""
 BASE=""
 TOKEN=""
 SERVER_IDX=1
+PLAYER="${MISTERPLEX_PLAYER:-127.0.0.1:3005}"
+OFFSET_MS=0
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \?//'
+  sed -n '2,18p' "$0" | sed 's/^# \?//'
   exit "${1:-0}"
 }
 
@@ -31,6 +40,8 @@ while [[ $# -gt 0 ]]; do
     --base) BASE="$2"; shift 2 ;;
     --token) TOKEN="$2"; shift 2 ;;
     --server) SERVER_IDX="$2"; shift 2 ;;
+    --player) PLAYER="$2"; shift 2 ;;
+    --offset) OFFSET_MS="$2"; shift 2 ;;
     --) shift; break ;;
     -*)
       echo "unknown option: $1" >&2
@@ -149,9 +160,24 @@ elif [[ ${#SERVERS[@]} -gt 0 ]]; then
   fi
   BASE="${SERVERS[$((SERVER_IDX - 1))]}"
 else
-  echo "No PLEX_BASE/PLEX_SERVERS. Set env or conf." >&2
-  exit 1
+  # Player-only commands do not need PMS base
+  case "$CMD" in
+    status|stop|pause|resume|seek) BASE="" ;;
+    play)
+      # play can still work without PMS list — misterplexd resolves
+      BASE=""
+      ;;
+    *)
+      echo "No PLEX_BASE/PLEX_SERVERS. Set env or conf." >&2
+      exit 1
+      ;;
+  esac
 fi
+
+if [[ "$PLAYER" != *:* ]]; then
+  PLAYER="${PLAYER}:3005"
+fi
+PLAYER_URL="http://${PLAYER}"
 
 xml_get() {
   local path="$1"
@@ -169,14 +195,46 @@ xml_get() {
     "$url"
 }
 
+player_get() {
+  local path="$1"
+  curl -sS -g --connect-timeout 3 --max-time 15 \
+    -H 'Accept: application/xml' \
+    "${PLAYER_URL}${path}"
+}
+
+# Percent-encode a path for query (minimal: / → %2F, keep alnum)
+urlenc_path() {
+  # Prefer python if present; else sed / only (enough for /library/metadata/N)
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+  else
+    printf '%s' "$1" | sed 's|/|%2F|g; s| |%20|g'
+  fi
+}
+
+normalize_meta_key() {
+  local key="$1"
+  if [[ "$key" =~ ^[0-9]+$ ]]; then
+    key="/library/metadata/$key"
+  fi
+  [[ "$key" == /* ]] || key="/library/metadata/$key"
+  printf '%s' "$key"
+}
+
+# Attr extractors must not fail under set -o pipefail when the attr is absent.
+xml_attr() {
+  # $1=tag text  $2=attr name → value or empty
+  echo "$1" | grep -oE "$2=\"[^\"]*\"" 2>/dev/null | head -1 | sed "s/^$2=\"//;s/\"$//" || true
+}
+
 # Print tag attrs: title, key, ratingKey, type (best-effort sed/grep; no xmllint required)
 print_directory_rows() {
   # Each <Directory ...> on one logical line (PMS usually one line per tag open)
   grep -oE '<Directory[^>]+>' | while read -r tag; do
-    title=$(echo "$tag" | grep -oE 'title="[^"]*"' | head -1 | sed 's/^title="//;s/"$//')
-    key=$(echo "$tag" | grep -oE 'key="[^"]*"' | head -1 | sed 's/^key="//;s/"$//')
-    rk=$(echo "$tag" | grep -oE 'ratingKey="[^"]*"' | head -1 | sed 's/^ratingKey="//;s/"$//')
-    typ=$(echo "$tag" | grep -oE 'type="[^"]*"' | head -1 | sed 's/^type="//;s/"$//')
+    title=$(xml_attr "$tag" title)
+    key=$(xml_attr "$tag" key)
+    rk=$(xml_attr "$tag" ratingKey)
+    typ=$(xml_attr "$tag" type)
     printf 'key=%-40s ratingKey=%-10s type=%-10s title=%s\n' \
       "${key:-?}" "${rk:--}" "${typ:--}" "${title:--}"
   done
@@ -184,10 +242,10 @@ print_directory_rows() {
 
 print_video_rows() {
   grep -oE '<Video[^>]+>' | while read -r tag; do
-    title=$(echo "$tag" | grep -oE 'title="[^"]*"' | head -1 | sed 's/^title="//;s/"$//')
-    key=$(echo "$tag" | grep -oE 'key="[^"]*"' | head -1 | sed 's/^key="//;s/"$//')
-    rk=$(echo "$tag" | grep -oE 'ratingKey="[^"]*"' | head -1 | sed 's/^ratingKey="//;s/"$//')
-    dur=$(echo "$tag" | grep -oE 'duration="[^"]*"' | head -1 | sed 's/^duration="//;s/"$//')
+    title=$(xml_attr "$tag" title)
+    key=$(xml_attr "$tag" key)
+    rk=$(xml_attr "$tag" ratingKey)
+    dur=$(xml_attr "$tag" duration)
     printf 'key=%-40s ratingKey=%-10s durationMs=%-10s title=%s\n' \
       "${key:-?}" "${rk:--}" "${dur:--}" "${title:--}"
   done
@@ -196,7 +254,8 @@ print_video_rows() {
 case "$CMD" in
   servers)
     echo "conf=${CONF_FILE:-none}"
-    echo "selected_base=$BASE (server index $SERVER_IDX)"
+    echo "selected_base=${BASE:-none} (server index $SERVER_IDX)"
+    echo "player=$PLAYER_URL"
     if [[ ${#SERVERS[@]} -eq 0 ]]; then
       echo "(no multi-server list; using selected_base only)"
     else
@@ -218,6 +277,8 @@ case "$CMD" in
     fi
     echo "$xml" | print_directory_rows
     echo "# Tip: scripts/plex_browse.sh section <key|id>"
+    echo "# Play:  scripts/plex_browse.sh play <ratingKey>   # → misterplexd $PLAYER_URL"
+    echo "# Menu:  scripts/plex_menu.sh"
     ;;
   section|sec)
     SID="${1:-}"
@@ -241,14 +302,12 @@ case "$CMD" in
     echo "$xml" | print_directory_rows || true
     echo "$xml" | print_video_rows || true
     echo "# Tip: playMedia key=/library/metadata/<ratingKey>"
+    echo "#      scripts/plex_browse.sh play <ratingKey>"
     ;;
   item|meta)
     KEY="${1:-}"
     [[ -n "$KEY" ]] || { echo "usage: $0 item <ratingKey|/library/metadata/N>" >&2; exit 1; }
-    if [[ "$KEY" =~ ^[0-9]+$ ]]; then
-      KEY="/library/metadata/$KEY"
-    fi
-    [[ "$KEY" == /* ]] || KEY="/library/metadata/$KEY"
+    KEY="$(normalize_meta_key "$KEY")"
     echo "# PMS $BASE — $KEY"
     xml="$(xml_get "$KEY")"
     if ! echo "$xml" | grep -q 'MediaContainer'; then
@@ -264,6 +323,73 @@ case "$CMD" in
       file=$(echo "$tag" | grep -oE 'file="[^"]*"' | head -1 | sed 's/^file="//;s/"$//')
       printf 'part_key=%s file=%s\n' "${pk:--}" "${file:--}"
     done
+    # Frame-rate hints for match-source-Hz / Content FPS
+    vfr=$(echo "$xml" | grep -oE 'videoFrameRate="[^"]*"' | head -1 | sed 's/^videoFrameRate="//;s/"$//')
+    fr=$(echo "$xml" | grep -oE 'frameRate="[^"]*"' | head -1 | sed 's/^frameRate="//;s/"$//')
+    [[ -n "$vfr" || -n "$fr" ]] && printf 'videoFrameRate=%s frameRate=%s\n' "${vfr:--}" "${fr:--}"
+    ;;
+  play)
+    KEY="${1:-}"
+    [[ -n "$KEY" ]] || { echo "usage: $0 play <ratingKey|/library/metadata/N> [--offset MS]" >&2; exit 1; }
+    KEY="$(normalize_meta_key "$KEY")"
+    ENC="$(urlenc_path "$KEY")"
+    # Pass PMS address when known so scrubber bind + multi-server resolve pin correctly
+    EXTRA=""
+    if [[ -n "$BASE" ]]; then
+      hostport="${BASE#*://}"
+      hostport="${hostport%%/*}"
+      phost="${hostport%%:*}"
+      pport="${hostport##*:}"
+      [[ "$pport" == "$phost" ]] && pport="32400"
+      proto="http"
+      [[ "$BASE" == https://* ]] && proto="https"
+      EXTRA="&address=$(urlenc_path "$phost")&port=${pport}&protocol=${proto}"
+    fi
+    if [[ -n "$TOKEN" ]]; then
+      EXTRA="${EXTRA}&token=$(urlenc_path "$TOKEN")"
+    fi
+    echo "# playMedia → $PLAYER_URL key=$KEY offset=${OFFSET_MS}"
+    resp=$(player_get "/player/playback/playMedia?key=${ENC}&offset=${OFFSET_MS}&commandID=browse-play${EXTRA}") || {
+      echo "playMedia request failed (misterplexd up on $PLAYER?)" >&2
+      exit 2
+    }
+    if ! echo "$resp" | grep -q 'Timeline\|MediaContainer'; then
+      echo "unexpected response: ${resp:0:240}" >&2
+      exit 2
+    fi
+    echo "$resp" | tr '\n' ' ' | grep -oE 'state="[^"]*"|time="[^"]*"|duration="[^"]*"|key="[^"]*"|location="[^"]*"' | tr '\n' ' '
+    echo
+    ;;
+  status|poll)
+    resp=$(player_get "/player/timeline/poll?commandID=browse-status") || {
+      echo "player unreachable at $PLAYER_URL" >&2
+      exit 2
+    }
+    echo "# player $PLAYER_URL"
+    echo "$resp" | tr '\n' ' ' | grep -oE 'state="[^"]*"|time="[^"]*"|duration="[^"]*"|seekRange="[^"]*"|key="[^"]*"|location="[^"]*"|playQueueID="[^"]*"|playQueueItemID="[^"]*"|containerKey="[^"]*"|ratingKey="[^"]*"|address="[^"]*"' | tr '\n' ' '
+    echo
+    # Full XML available with STATUS_XML=1
+    if [[ "${STATUS_XML:-0}" == "1" ]]; then
+      echo "$resp"
+    fi
+    ;;
+  stop)
+    player_get "/player/playback/stop?commandID=browse-stop" | grep -q Timeline
+    echo "stop OK"
+    ;;
+  pause)
+    player_get "/player/playback/pause?commandID=browse-pause" | grep -q Timeline
+    echo "pause OK"
+    ;;
+  resume|play-ctrl)
+    player_get "/player/playback/play?commandID=browse-resume" | grep -q Timeline
+    echo "resume OK"
+    ;;
+  seek)
+    MS="${1:-}"
+    [[ -n "$MS" ]] || { echo "usage: $0 seek <ms>" >&2; exit 1; }
+    player_get "/player/playback/seekTo?offset=${MS}&commandID=browse-seek" | grep -q Timeline
+    echo "seek OK offset=${MS}"
     ;;
   *)
     echo "unknown command: $CMD" >&2

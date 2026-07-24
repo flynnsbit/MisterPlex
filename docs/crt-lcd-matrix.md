@@ -87,18 +87,47 @@ Film/30 modes need longer vertical blanking so horizontal rate stays near **15 k
 6. Soak: `SOAK_HOLD_S=8 SOAK_ROUNDS=1 ./tests/hw/test_soak.sh` (auto-uses MiSTer conf + PMS titles when token present).
 7. Record: output type, PRESENT/STREAM, Content FPS, pass/fail, notes (blanking, tear, audio drop).
 
+## Wi-Fi vs Ethernet matrix
+
+Network path affects PMS resolve + weak-ladder fetch latency, not the present engine itself.
+Lab often runs MiSTer on **wlan0** when `eth0` has no carrier (cable unplugged).
+
+| Path | How to force | Measure | Expect |
+|------|--------------|---------|--------|
+| **Ethernet** | Cable in; prefer `eth0` default route | `SOAK_NET_LABEL=eth SOAK_HOLD_S=12 SOAK_ROUNDS=3 ./tests/hw/test_soak.sh` | Lower jitter; stable weak ladder |
+| **Wi-Fi** | Unplug eth or lower eth metric | `SOAK_NET_LABEL=wifi …` (same soak) | OK for cast UX; watch mid-hold resource loss if AP drops |
+| **Compare** | Same `SOAK_KEYS` / rounds / hold on both paths | Soak summary lines + `net snapshot:` logs | Document deltas in sign-off table |
+
+### Script hooks
+
+- `tests/hw/test_soak.sh` logs `net snapshot:` (default iface, IPv4, wireless quality when `wlan*`) when `SOAK_LOG_NET=1` (default).
+- Set `SOAK_NET_LABEL=wifi|eth` so summary rows are greppable: `test_soak: OK … wifi`.
+- `SOAK_LOG_NET=0` skips the SSH probe (useful on CI without keys).
+
+### Operator checklist (when both links available)
+
+1. Note `ip route` default dev on MiSTer.
+2. Run soak with label for that path; record ok/fail + elapsed.
+3. Switch default (plug/unplug eth, or `ip route replace default via … dev eth0`).
+4. Re-run identical `SOAK_KEYS` / `SOAK_ROUNDS` / `SOAK_HOLD_S`.
+5. Fill sign-off: path, label, result, notes (AP band, RSSI, cable speed).
+
+**Lab 2026-07-24:** `eth0` NO-CARRIER; soak green on **wlan0** (5 GHz, ~78/100 quality) after SPI MainPause fix — Ethernet comparison deferred until cable present.
+
 ## Known display limits
 
 - No automated frame-capture golden vs CRT.
 - Match-source-Hz does **not** change PLL/modeline yet.
 - High `DECODE` (e.g. 720p) may drop frames on dual-A9 before FPGA decode lands.
 - STREAM recon is I-frame oriented; P-frames still rely on FFmpeg for fb0 continuity when `PRESENT=both`.
+- Concurrent F1/F2/F3 SPI without process mutex historically killed misterplexd under long soak (fixed: mutex + no `system()` in MainPause).
 
 ## Sign-off table (fill per session)
 
-| Date | Output | PRESENT | STREAM | Content FPS | Media | Result | Notes |
-|------|--------|---------|--------|-------------|-------|--------|-------|
-| | HDMI 60 | fb0 | 0 | n/a | local test.mp4 | | |
-| | HDMI 60 | both | 1 | 24 | library ep | | |
-| | CRT 15 kHz | fb0 | 0 | n/a | library ep | | |
-| | CRT 15 kHz | fpga | 1 | 24 | annex-B / weak | | |
+| Date | Output | Net | PRESENT | STREAM | Content FPS | Media | Result | Notes |
+|------|--------|-----|---------|--------|-------------|-------|--------|-------|
+| 2026-07-24 | HDMI 60 | wifi wlan0 | both | 1 | n/a | test.mp4 + lib/3 | PASS | 3×2 + 5×2 soak after SPI fix; eth N/C |
+| | HDMI 60 | eth | fb0 | 0 | n/a | local test.mp4 | | |
+| | HDMI 60 | wifi | both | 1 | 24 | library ep | | |
+| | CRT 15 kHz | | fb0 | 0 | n/a | library ep | | |
+| | CRT 15 kHz | | fpga | 1 | 24 | annex-B / weak | | |

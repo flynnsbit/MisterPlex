@@ -26,8 +26,9 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_f
 	$(ROOT)/build/test_sps_parse /tmp/plex_real_baseline.h264
 	$(ROOT)/build/test_slice_hdr /tmp/plex_real_baseline.h264
 	$(ROOT)/build/test_cavlc_dc /tmp/plex_real_baseline.h264
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
+	$(ROOT)/tests/unit/test_plex_browse.sh
 
 $(ROOT)/build/test_cavlc_dc: $(ROOT)/tests/unit/test_cavlc_dc.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
