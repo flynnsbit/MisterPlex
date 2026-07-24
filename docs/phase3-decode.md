@@ -122,9 +122,11 @@ Phase 3.3h (in progress — I-slice residual walk):
   CAVLC: FFmpeg tables incl. nC≥8 FLC VLC; run_before zerosLeft>6; OpenH264-style levels
   IDR dec_ref_pic_marking fixed (host+FPGA); HW mb0=0 qp=25 green
   Unit: walk ≥4 (real IDR **8/300**); residual round-trip stress 2600+ OK
-  Known gap: multi-MB bit alignment still breaks (~MB8 real / ~MB2 sparse qp50)
-    — residualBlock alone round-trips; likely nC edge or I_NxN residual count drift
-  Next: isolate first bad residual vs reference decoder → 300-MB walk
+  Debug (this fire): flat-gray 64×64 bitstream is byte-aligned `0x27` = I16+qpδ0+**2-bit empty**
+    — with nC=0 empty is 1-bit (`1`); table1 empty is 2-bit (`11`). Bitstream needs 2-bit empty.
+    — Spec/FFmpeg/x264: first-MB nC=0 → 1-bit empty; yet stream structure requires 2-bit.
+    — Root cause still open (nC init vs empty-token table mismatch under investigation).
+  Next: resolve empty-I16 token bit width vs nC=0; re-sync walk to 300/300
         then inv-quant → IDCT → recon → YUV→RGB565
   Optional: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
