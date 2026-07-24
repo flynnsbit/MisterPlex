@@ -263,6 +263,33 @@ void FpgaSpi::setDownload(int enable) {
     enableFpga(0);
 }
 
+// SPI body for UIO_SET_STATUS2. Caller must hold SpiExclusive and user mode.
+void FpgaSpi::writeStatusWordRaw(const uint8_t word[16]) {
+    std::memcpy(status_, word, 16);
+    enableIo(1);
+    spiWord(UIO_SET_STATUS2);
+    for (int i = 0; i < 16; i += 2) {
+        uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
+        spiWord(w);
+    }
+    enableIo(0);
+}
+
+// SPI body for UIO_GET_STATUS. Caller must hold SpiExclusive and user mode.
+bool FpgaSpi::readStatusRaw(uint8_t out[16]) {
+    if (!out)
+        return false;
+    enableIo(1);
+    (void)spiWord(UIO_GET_STATUS);
+    for (int i = 0; i < 16; i += 2) {
+        uint16_t w = spiWord(0);
+        out[i] = static_cast<uint8_t>(w & 0xFF);
+        out[i + 1] = static_cast<uint8_t>((w >> 8) & 0xFF);
+    }
+    enableIo(0);
+    return err_.empty();
+}
+
 bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
     if (!ok() || !word) {
         setErr("setStatusWord: bad args");
@@ -274,16 +301,7 @@ bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
         return false;
     }
     err_.clear();
-    std::memcpy(status_, word, 16);
-
-    enableIo(1);
-    spiWord(UIO_SET_STATUS2); // cmd on IO CS
-    for (int i = 0; i < 16; i += 2) {
-        uint16_t w = static_cast<uint16_t>((status_[i + 1] << 8) | status_[i]);
-        spiWord(w);
-    }
-    enableIo(0);
-
+    writeStatusWordRaw(word);
     return err_.empty();
 }
 
@@ -296,6 +314,18 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
     const int b = bit % 8;
     uint8_t word[16];
     std::memcpy(word, status_, 16);
+    // Live RMW of OSD / DDR kick low word (status_in v2 [15:0]) so rising-edge
+    // kicks on bit 12 see a true 0→1 on the FPGA (private shadow alone is stale
+    // across processes and after status_set echoes).
+    if (bit < 16) {
+        uint8_t live[16]{};
+        if (getCoreStatus(live)) {
+            word[0] = live[0];
+            word[1] = live[1];
+            if (bit != 0)
+                word[0] = static_cast<uint8_t>(word[0] & ~0x01);
+        }
+    }
     if (value)
         word[byte] = static_cast<uint8_t>(word[byte] | (1u << b));
     else
@@ -494,50 +524,107 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     munmap(p, mapLen);
     ::close(mfd);
 
-    // status[13]=bank, status[12]=start (rising edge). Pulse start high→sample→low.
-    if (!setStatusBit(13, bank ? 1 : 0)) {
-        setErr("sendRgb565FrameDdr: set bank bit failed: " + lastError());
-        return false;
-    }
-    if (!setStatusBit(12, 0))
-        return false;
-    usleep(200); // settle so rising edge is clean
-    if (!setStatusBit(12, 1))
-        return false;
-    // Core DMA for 153600 B is typically a few ms @ clk_sys. One-shot verify:
-    // sample busy for ~20 ms so a slow first transfer still qualifies.
+    // status[13]=bank, status[12]=start (rising edge). One SpiExclusive session so
+    // we pay MainPause (~10 ms) once instead of per setStatusBit (~100–200 ms total).
+    // status_in v2 echoes [15:0] so kick bits survive Main status_set.
+    //
+    // ddr_busy (status_in[79]) is real in fabric but often *invisible* via
+    // UIO_GET_STATUS: status_req only latches on status_set (~st_div), and DMA
+    // finishes in ~1–3 ms (busy cleared, has_frame=1) before a latched sample.
+    // Lab: mmap@0x30000000 + status[12] 0→1 yields has_frame 0→1; bit12 echoes;
+    // ddr_busy samples stayed 0. Verify = kick echo + has_frame (or busy if seen).
     static int ddr_verified = 0; // 0=unknown, 1=ok, -1=missing
-    if (ddr_verified == 0) {
-        bool saw_busy = false;
-        for (int i = 0; i < 100 && !saw_busy; ++i) {
-            usleep(200);
-            CoreStatus st;
-            if (readCoreStatus(st) && st.ddr_busy)
-                saw_busy = true;
-        }
-        // Drain busy (up to ~40 ms)
-        for (int i = 0; i < 200; ++i) {
-            usleep(200);
-            CoreStatus st;
-            if (readCoreStatus(st) && !st.ddr_busy)
-                break;
-        }
-        ddr_verified = saw_busy ? 1 : -1;
-        if (!saw_busy) {
-            setStatusBit(12, 0);
-            setErr("sendRgb565FrameDdr: no ddr_busy (core RBF lacks 3.1b DDR path?)");
-            return false;
-        }
-    } else if (ddr_verified < 0) {
-        setStatusBit(12, 0);
+    if (ddr_verified < 0) {
         setErr("sendRgb565FrameDdr: DDR path previously unavailable");
         return false;
-    } else {
-        usleep(4000); // allow DMA to finish without SPI thrash
     }
-    setStatusBit(12, 0);
-    // Ensure Force-bars debug off so frame_store is visible (same as SPI path).
-    setStatusBit(9, 0);
+
+    bool saw_busy = false;
+    bool saw_kick = false;
+    bool saw_frame = false;
+    {
+        SpiExclusive guard(true);
+        if (!gpiUserMode(map_)) {
+            err_ = "FPGA not in user mode";
+            return false;
+        }
+        err_.clear();
+
+        uint8_t word[16]{};
+        std::memcpy(word, status_, 16);
+        uint8_t live[16]{};
+        if (readStatusRaw(live)) {
+            word[0] = live[0];
+            word[1] = live[1];
+        }
+        // Clear Reset sticky; set bank; start low.
+        word[0] = static_cast<uint8_t>(word[0] & ~0x01);
+        if (bank)
+            word[1] = static_cast<uint8_t>(word[1] | 0x20); // bit 13
+        else
+            word[1] = static_cast<uint8_t>(word[1] & ~0x20);
+        word[1] = static_cast<uint8_t>(word[1] & ~0x10); // bit 12 = 0
+        word[1] = static_cast<uint8_t>(word[1] & ~0x02); // bit 9 force-bars off
+        writeStatusWordRaw(word);
+        usleep(200);
+
+        // Rising edge start
+        word[1] = static_cast<uint8_t>(word[1] | 0x10);
+        writeStatusWordRaw(word);
+
+        if (ddr_verified == 0) {
+            // Hold start high; sample latched status_req. DMA is short — has_frame
+            // is the reliable done flag; busy is a bonus if latched mid-copy.
+            for (int i = 0; i < 40; ++i) {
+                uint8_t raw[16]{};
+                if (!readStatusRaw(raw))
+                    break;
+                if (raw[1] & 0x10)
+                    saw_kick = true;
+                CoreStatus st = parseCoreStatus(raw);
+                if (st.ddr_busy)
+                    saw_busy = true;
+                if (st.has_frame)
+                    saw_frame = true;
+                if (saw_busy || (saw_kick && saw_frame && i >= 2))
+                    break;
+                usleep(200);
+            }
+        } else {
+            usleep(3000); // DMA finish without thrashing SPI
+        }
+
+        // Drop start
+        word[1] = static_cast<uint8_t>(word[1] & ~0x10);
+        writeStatusWordRaw(word);
+
+        // Final has_frame sample after start low
+        if (ddr_verified == 0 || !saw_frame) {
+            uint8_t raw[16]{};
+            if (readStatusRaw(raw)) {
+                if (raw[1] & 0x10)
+                    saw_kick = true;
+                CoreStatus st = parseCoreStatus(raw);
+                if (st.has_frame)
+                    saw_frame = true;
+                if (st.ddr_busy)
+                    saw_busy = true;
+            }
+        }
+    }
+
+    if (ddr_verified == 0) {
+        const bool ok = saw_busy || (saw_kick && saw_frame);
+        ddr_verified = ok ? 1 : -1;
+        if (!ok) {
+            setErr("sendRgb565FrameDdr: no kick/frame (busy=" +
+                   std::to_string(saw_busy ? 1 : 0) + " kick=" +
+                   std::to_string(saw_kick ? 1 : 0) + " frame=" +
+                   std::to_string(saw_frame ? 1 : 0) +
+                   "; RBF lacks 3.1b or status[12] not reaching ddram_frame_rd?)");
+            return false;
+        }
+    }
 
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -612,19 +699,7 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
         return false;
     }
     err_.clear();
-
-    enableIo(1);
-    // Main protocol: spi_w(cmd) returns {4'hA, stflg}; next words are status_req.
-    uint16_t hdr = spiWord(UIO_GET_STATUS);
-    (void)hdr;
-    for (int i = 0; i < 16; i += 2) {
-        uint16_t w = spiWord(0);
-        out[i] = static_cast<uint8_t>(w & 0xFF);
-        out[i + 1] = static_cast<uint8_t>((w >> 8) & 0xFF);
-    }
-    enableIo(0);
-
-    if (!err_.empty())
+    if (!readStatusRaw(out))
         return false;
     err_.clear();
     return true;

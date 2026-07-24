@@ -228,46 +228,55 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 
 Phase 3.1b (DDR bulk path — implemented this fire):
-  **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
+  **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
+    Historical SPI chunk sweep (earlier lab):
     | chunk | wall time | effective |
     |-------|-----------|-----------|
     | 8 KiB | ~220 ms   | ~0.70 MB/s |
     | 32 KiB| ~194 ms   | ~0.79 MB/s |  ← SPI default
     | 64–128 KiB | ~196–202 ms | ~0.76 MB/s |
-    Ceiling ≈ **4–5 unique fps** on SPI F1 alone (not real-time 24/30).
+    **Wall time after ARM kick batching + kick/frame verify (not busy-only):**
+    | path | wall time | effective | unique fps |
+    |------|-----------|-----------|------------|
+    | SPI F1 `push_frame --index 1` | **~112 ms** (5 runs: 110.9–116.6) | **~1.37 MB/s** | **≈8.9 fps** |
+    | DDR `push_frame --ddr` | **~16.5 ms** (5 runs: 16.0–16.8) | **~9.3 MB/s** | **≈60 fps** |
+    mmap alone ~1.9 ms; remainder is one MainPause SPI session + DMA settle.
+    Log: `/tmp/misterplex-ddr-agent.txt`. DDR ≈ **7× SPI** → real-time 24/30 @320×240 OK.
   **Why SPI is slow:** FIO_FILE_TX over HPS SPI with Main pause + per-chunk
     CS sessions; not a streaming DMA.
 
-  **DDR path (new):**
+  **DDR path:**
     HPS `mmap(/dev/mem)` → bank @ **0x30000000** / **0x30040000** (256 KiB stride)
     → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
     - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
-    - ARM: `FpgaSpi::sendRgb565FrameDdr` / `sendRgb24FrameDdr`
+    - ARM: `FpgaSpi::sendRgb565FrameDdr` / `sendRgb24FrameDdr` (single SpiExclusive kick)
     - Tool: `push_frame --ddr [--bank 0|1] file.rgb565`
-    - misterplexd: prefers DDR for F1; one-shot verifies `ddr_busy` (status_in[39]);
-      falls back to SPI if RBF lacks 3.1b
-    - status_in[39] = ddr_busy during copy
-  **Target:** ≥30 fps @320×240 (mmap + kick << SPI 200 ms). Measure with
-    `push_frame --ddr` wall time on lab 192.168.1.183 after RBF deploy.
+    - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only
+      was a false negative — see diagnosis below
+    - status_in[79] = ddr_busy during copy (`{ddr_busy,0,qp}` @ [79:72])
+  **Diagnosis (ddr_busy never seen via UIO_GET_STATUS):**
+    - RBF has `ddram_frame_rd` (map/fit + md5 match deployed).
+    - status_in v2: kick bits [12]/[13] **work** (`lo=0x1000` after set; survives status_set).
+    - Functional proof: after reset `has_frame=0` → mmap + status[12] 0→1 → `has_frame=1`.
+    - `ddr_busy` rarely latched: status_req updates only on status_set; DMA ~1–3 ms so
+      busy clears before SPI poll samples. Idle busy=0 is expected, not missing IP.
   **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
 
   **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
   completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
-  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product still **prefers DDR
-  with SPI fallback**; measure `tests/hw/test_ddr_frame.sh` / `push_frame --ddr` for
-  wall time (ddr_busy may stay 0 when idle — not proof of missing IP).
+  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **prefers DDR
+  with SPI fallback** (fallback only if kick/frame verify fails).
 
   **Build / lab status:**
-    - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr`)
+    - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr` OK ~16 ms)
     - Residual HW: `test_f3_residual.sh` → `res_dc=-24` on lab DE10
     - Avoid concurrent raetro/quartus containers (OOM root cause earlier)
 
   **Still open after 3.1b:**
-    1. Lab measure push_ms / sustained fps for DDR vs SPI F1
+    1. Optional: sticky `ddr_done` / frames_done in status_in for tighter verify (RTL)
     2. Optional: present directly from DDR (skip BRAM) for larger modes
     3. Async double-buffer SPI — small gain only; deprioritized
-
 ```
 
 ### 3.0 HW bring-up

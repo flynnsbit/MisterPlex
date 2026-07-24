@@ -32,18 +32,32 @@ echo "== scp push_frame + frame to $HOST =="
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" \
   "$USER@$HOST:/tmp/"
 
+echo "== SPI baseline =="
+SPI_OUT=$(ssh_m 'chmod +x /tmp/push_frame
+/tmp/push_frame /tmp/plex_test_320x240.rgb565
+' 2>&1)
+echo "$SPI_OUT"
+SPI_MS=$(echo "$SPI_OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 0)
+
 echo "== DDR push =="
-OUT=$(ssh_m 'chmod +x /tmp/push_frame
+# Reset so has_frame 0→1 is a strong proof of DMA (not stale SPI frame).
+OUT=$(ssh_m '/tmp/push_frame --pulse 0 >/dev/null
+sleep 0.05
 /tmp/push_frame --ddr /tmp/plex_test_320x240.rgb565
 /tmp/push_frame --status
 ' 2>&1)
 echo "$OUT"
-echo "$OUT" | grep -qiE 'DDR|OK'
-echo "$OUT" | grep -q 'has_frame=1'
-# Prefer ms << SPI (~170+). Allow slack if first verify path is slower.
+echo "$OUT" | grep -qE 'pushed .* DDR .* OK' || {
+  echo "FAIL: DDR push did not report OK (see above)"
+  exit 1
+}
+echo "$OUT" | grep -q 'has_frame=1' || {
+  echo "FAIL: has_frame!=1 after DDR"
+  exit 1
+}
 MS=$(echo "$OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 999)
-echo "push_ms≈$MS (SPI baseline ~170–220)"
+echo "push_ms≈$MS (SPI baseline ≈${SPI_MS} ms; expect DDR ≪ SPI)"
 if [[ "$MS" -gt 80 ]]; then
-  echo "WARN: DDR push not much faster than SPI (ms=$MS) — check RBF has ddram_frame_rd"
+  echo "WARN: DDR push not much faster than SPI (ms=$MS) — check RBF / MainPause batching"
 fi
-echo "test_ddr_frame: OK on $HOST"
+echo "test_ddr_frame: OK on $HOST (DDR ${MS} ms vs SPI ${SPI_MS} ms)"

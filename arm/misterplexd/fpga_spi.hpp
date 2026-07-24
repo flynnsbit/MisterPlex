@@ -87,7 +87,7 @@ public:
         uint8_t residual_t1 = 0;
         bool residual_ok = false;
         int8_t residual_dc = 0; // 3.3k: scan-order coeff[0] after levels+runs
-        bool ddr_busy = false; // status_in[39] — DDR→BRAM copy in flight
+        bool ddr_busy = false; // status_in[79] (v2) — DDR→BRAM copy in flight
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
         uint16_t sps_height = 0;
@@ -119,6 +119,9 @@ private:
     void enableIo(int on);
     void setIndex(uint8_t index);
     void setDownload(int enable);
+    // Caller holds SpiExclusive + user mode.
+    void writeStatusWordRaw(const uint8_t word[16]);
+    bool readStatusRaw(uint8_t out[16]);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;
