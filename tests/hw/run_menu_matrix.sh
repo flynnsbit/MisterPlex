@@ -8,6 +8,17 @@ PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
 DEVICE="${HDMI_DEV:-/dev/video4}"
 RBF_LOCAL="${RBF_LOCAL:-$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf}"
+# MENU_FAST=1 (default): short dwell — user-visible mode flips stay <0.5s
+# MENU_FAST=0: slower multi-frame capture for flaky grabbers
+MENU_FAST="${MENU_FAST:-1}"
+SETTLE="${SETTLE:-0.18}"
+LOAD_SLEEP="${LOAD_SLEEP:-3}"
+FRAMES="${FRAMES:-2}"
+if [[ "$MENU_FAST" != "1" ]]; then
+  SETTLE=0.5
+  LOAD_SLEEP=5
+  FRAMES=8
+fi
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "root@$HOST")
 SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no)
 mkdir -p "$OUT"
@@ -33,15 +44,36 @@ PY
 capture() {
   local name="$1"
   local dest="$OUT/${name}.jpg"
-  sleep 0.7
+  fuser -k "$DEVICE" 2>/dev/null || true
+  sleep "$SETTLE"
   ffmpeg -y -hide_banner -loglevel error \
     -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
-    -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest"
-  local mean
-  mean=$(mean_luma "$dest")
-  local sz
-  sz=$(wc -c <"$dest" | tr -d ' ')
-  echo "$mean $sz"
+    -i "$DEVICE" -frames:v "$FRAMES" -q:v 3 "$OUT/${name}_f%02d.jpg" 2>/dev/null || true
+  # pick brightest frame (skip black warmup)
+  local best="$dest"
+  python3 - "$OUT" "$name" "$dest" <<'PY'
+import sys
+from pathlib import Path
+from PIL import Image
+out, name, dest = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+cands = sorted(out.glob(f"{name}_f*.jpg"))
+best, best_m = None, -1.0
+for p in cands:
+    try:
+        im = Image.open(p).convert("L")
+        px = list(im.getdata())
+        m = sum(px) / max(len(px), 1)
+        if m > best_m:
+            best_m, best = m, p
+    except Exception:
+        pass
+if best is None:
+    dest.write_bytes(b"")
+    print("0.0 0")
+else:
+    dest.write_bytes(best.read_bytes())
+    print(f"{best_m:.1f} {best.stat().st_size}")
+PY
 }
 
 set_status() {
@@ -103,15 +135,15 @@ if [[ "$REMOTE_MD5" != "$EXPECTED_MD5" ]]; then
   log "WARN md5 mismatch after scp"
 fi
 
-log "load_core Plex.rbf"
+log "load_core Plex.rbf (MENU_FAST=$MENU_FAST settle=${SETTLE}s frames=$FRAMES)"
 ssh_q 'echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
-sleep 6
+sleep "$LOAD_SLEEP"
 CORE=$(ssh_q 'cat /tmp/CORENAME')
 log "CORENAME=$CORE"
 
 # Stop misterplexd so SPI is quiet during OSD tests
 ssh_q 'pkill -x misterplexd || true; killall -CONT MiSTer || true'
-sleep 1
+sleep 0.3
 
 # Verify SPI
 log "status raw:"
@@ -184,10 +216,9 @@ read -r mean sz < <(capture tv_ntsc)
 RESULTS[TV0]=$(pass_or_fail TV0 tv_ntsc "$mean" 20)
 
 set_status --pattern grid --force-bars 1 --tv pal --raw || true
-sleep 0.3
 read -r mean sz < <(capture tv_pal)
-# restore NTSC immediately
-set_status --tv ntsc --pattern grid --force-bars 1 || true
+# restore NTSC immediately (do not dwell on PAL)
+set_status --tv ntsc --pattern bars --force-bars 1 || true
 if python3 -c "import sys; sys.exit(0 if float('$mean')>=10 else 1)"; then
   update_checklist_row TV1 "PASS" "mean=$mean (may desync LCD)"
   RESULTS[TV1]=PASS
@@ -228,7 +259,7 @@ RESULTS[T11]=PASS
 
 # Reset
 set_status --pulse 0 --raw || true
-sleep 1
+sleep 0.35
 set_status --pattern bars --force-bars 1 --tv ntsc --raw || true
 read -r mean sz < <(capture after_reset)
 RESULTS[T0]=$(pass_or_fail T0 after_reset "$mean" 20)
@@ -267,7 +298,9 @@ PY
   done
 } >> "$REPORT"
 
-log "=== matrix done ==="
+# Always leave a calm full-screen bars image (don't park on grid/PAL for minutes)
+set_status --pattern bars --force-bars 1 --tv ntsc --fps 60 --audio on --raw || true
+log "=== matrix done (left on bars) ==="
 # Summary
 fail=0
 for k in "${!RESULTS[@]}"; do
