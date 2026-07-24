@@ -3,6 +3,7 @@
 // Transitional ARM decode; FPGA owns scanout (MiSTer_fb) + SPI audio (MrAudio).
 
 #include "fb_present.hpp"
+#include "fpga_spi.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -26,6 +27,8 @@ public:
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
+    // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
+    void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     void setDecodeSize(int w, int h);
 
     bool initPresent();
@@ -56,9 +59,11 @@ private:
     ProgressFn onProgress_;
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     std::string audioDev_ = "/dev/MrAudio";
+    std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
 
     FbPresent fb_;
+    FpgaSpi fpga_;
     mutable std::mutex mu_;
     std::thread thr_;
     std::thread audioThr_;

@@ -49,14 +49,28 @@ std::string MediaPlayer::currentUrl() const {
 }
 
 bool MediaPlayer::initPresent() {
-    if (!fb_.open("/dev/fb0")) {
-        std::lock_guard<std::mutex> lock(mu_);
-        lastError_ = "open /dev/fb0 failed";
-        log("media: " + lastError_);
-        return false;
+    bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
+    bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
+
+    bool any = false;
+    if (wantFb) {
+        if (fb_.open("/dev/fb0")) {
+            fb_.clear();
+            log("media: fb " + fb_.info() + " decode=" + std::to_string(outW_) + "x" +
+                std::to_string(outH_));
+            any = true;
+        } else {
+            log("media: /dev/fb0 unavailable");
+        }
     }
-    fb_.clear();
-    log("media: fb " + fb_.info() + " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+    if (wantFpga) {
+        if (fpga_.open()) {
+            log("media: FPGA SPI frame_tx OK (PRESENT=fpga → ioctl frame_store)");
+            any = true;
+        } else {
+            log("media: FPGA SPI unavailable: " + fpga_.lastError());
+        }
+    }
     if (audioEnabled_) {
         int fd = ::open(audioDev_.c_str(), O_WRONLY | O_NONBLOCK);
         if (fd >= 0) {
@@ -65,6 +79,11 @@ bool MediaPlayer::initPresent() {
         } else {
             log("media: audio device " + audioDev_ + " unavailable (video-only)");
         }
+    }
+    if (!any) {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "no present path (fb0/fpga)";
+        return false;
     }
     return true;
 }
@@ -464,8 +483,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             break;
         }
 
-        if (!fb_.blitRgb24(frame.data(), outW_, outH_))
-            log("media: blit failed");
+        if (fb_.ok()) {
+            if (!fb_.blitRgb24(frame.data(), outW_, outH_))
+                log("media: blit failed");
+        }
+        // FPGA frame_store: SPI ioctl is ~100–150ms/frame — push every 4th unique
+        // when dual present (keep fb0 smooth); every frame if PRESENT=fpga only.
+        if (fpga_.ok() && outW_ == 320 && outH_ == 240) {
+            const bool every = (presentMode_ == "fpga");
+            if (every || (frameIndex % 4) == 0) {
+                if (!fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
+                    if ((frameIndex % 30) == 0)
+                        log("media: fpga frame_tx: " + fpga_.lastError());
+                } else if ((frameIndex % 30) == 0) {
+                    log("media: fpga frame_tx ok frames=" + std::to_string(frameIndex));
+                }
+            }
+        }
         ++frameIndex;
 
         auto now = std::chrono::steady_clock::now();

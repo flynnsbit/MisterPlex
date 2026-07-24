@@ -45,9 +45,10 @@ Phase 3.0 (in tree now):
   present_core mux: Bars | Frame store (OSD O[9])
   cadence + tone unchanged
 
-Phase 3.1 (next):
-  misterplexd → continuous frame stream (ioctl/EXT_BUS/DDRAM window)
-  FFmpeg RGB → pack RGB565 → HPS write → swap on VBL
+Phase 3.1 (done this fire):
+  `fpga_spi` + `push_frame` — HPS SPI FIO_FILE_TX → frame_ingest
+  PRESENT=fb0|fpga|both conf; dual present throttles SPI to every 4th frame
+  HW: push_frame 153600B in ~127ms; continuous frame_tx during testsrc play
 
 Phase 3.2:
   PCM → core audio FIFO (retire dual-process MrAudio pump for lip-sync)

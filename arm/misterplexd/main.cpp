@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
     int decodeW = 320, decodeH = 240;
+    std::string presentMode = "fb0";
     misterplex::WeakLadder weak;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
@@ -96,6 +97,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "WEAK_BITRATE");
         if (!v.empty())
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        v = loadConf(confPath, "PRESENT");
+        if (!v.empty())
+            presentMode = v; // fb0 | fpga | both
     }
     // Align weak ladder with decode size when still default
     if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
@@ -114,9 +118,10 @@ int main(int argc, char** argv) {
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeW, decodeH);
+    player.setPresentMode(presentMode);
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (!player.initPresent()) {
-        std::fprintf(stderr, "misterplexd: WARNING fb present unavailable — companion only\n");
+        std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
     }
 
     misterplex::Companion comp;
@@ -206,9 +211,10 @@ int main(int argc, char** argv) {
     }
 
     std::fprintf(stderr,
-                 "misterplexd: running name=%s id=%s port=%d pms=%s decode=%dx%d weak=%s@%dk\n",
+                 "misterplexd: running name=%s id=%s port=%d pms=%s decode=%dx%d weak=%s@%dk "
+                 "present=%s\n",
                  name.c_str(), machineId.c_str(), port, defaultPms.c_str(), decodeW, decodeH,
-                 weak.videoResolution.c_str(), weak.maxVideoBitrateKbps);
+                 weak.videoResolution.c_str(), weak.maxVideoBitrateKbps, presentMode.c_str());
 
     while (!g_stop.load())
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

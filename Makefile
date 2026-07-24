@@ -44,18 +44,29 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/companion.cpp \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
-	$(ROOT)/arm/misterplexd/plex_resolve.cpp
+	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
+	$(ROOT)/arm/misterplexd/fpga_spi.cpp
 MPLEX_INC := -I$(ROOT)/arm/misterplexd
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
 		$(ROOT)/arm/misterplexd/media_player.hpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
-		$(ROOT)/arm/misterplexd/fb_present.hpp
+		$(ROOT)/arm/misterplexd/fb_present.hpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
 plexd: $(ROOT)/build/misterplexd
+
+# Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
+$(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+
+push-frame: $(ROOT)/build/push_frame
 
 # ARM hard-float for MiSTer (try common cross compilers)
 ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null)
@@ -68,8 +79,12 @@ arm-plexd:
 	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-	@file $(ROOT)/build/arm/misterplexd
-	@echo "Built $(ROOT)/build/arm/misterplexd"
+	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
+		-o $(ROOT)/build/arm/push_frame \
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		-static
+	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame
+	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame"
 
 MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
 build-rbf:
