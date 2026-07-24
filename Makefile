@@ -13,7 +13,7 @@ help:
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
-	@echo "  make package    - dist tarball (scripts/package_release.sh)"
+	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 
 test: unit
 

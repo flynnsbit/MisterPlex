@@ -5,6 +5,7 @@
 //  Phase 3.2: present-domain audio_fifo via ioctl F2
 //  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
 //  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
+//  Phase 3.3j: hybrid host F1 owns present; stub residual paint F3-only
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -241,12 +242,24 @@ stream_path spath (
 	.fs_swap(stub_swap)
 );
 
-// Mux F1 ingest vs decode_stub into single frame_store write port.
-// Stub wins while busy (or when asserting write); F1 used for RGB path.
-wire        fs_wr_en    = stub_busy ? stub_wr_en    : (stub_wr_en | f1_wr_en);
-wire [15:0] fs_wr_pixel = stub_wr_en ? stub_wr_pixel : f1_wr_pixel;
-wire        fs_wr_reset = stub_wr_reset | f1_wr_reset;
-wire        fs_swap     = stub_swap | f1_swap;
+// Phase 3.3j hybrid present:
+//   Host F1 (I-slice recon / FFmpeg RGB) owns product frame_store once any F1
+//   frame has swapped. decode_stub F3 diagnostic paint is suppressed after that
+//   so STREAM residual probes cannot wipe recon. F3-only bring-up (no F1) still
+//   paints via stub. Cleared on core reset.
+reg host_owns_fs;
+always @(posedge clk_sys) begin
+	if (reset)
+		host_owns_fs <= 1'b0;
+	else if (f1_swap)
+		host_owns_fs <= 1'b1;
+end
+
+wire        stub_allow  = ~host_owns_fs & ~ingest_dl;
+wire        fs_wr_en    = ingest_dl ? f1_wr_en    : (stub_allow ? (stub_wr_en | f1_wr_en) : f1_wr_en);
+wire [15:0] fs_wr_pixel = (ingest_dl | f1_wr_en) ? f1_wr_pixel : stub_wr_pixel;
+wire        fs_wr_reset = f1_wr_reset | (stub_wr_reset & stub_allow);
+wire        fs_swap     = f1_swap | (stub_swap & stub_allow);
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;

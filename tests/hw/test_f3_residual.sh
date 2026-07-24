@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Hardware Phase 3.3f/h: headers + residual status after real Baseline F3 push.
-# First MB on this clip is I_NxN — FPGA residual probe is I16-only, so res_ok may be 0.
+# Hardware Phase 3.3f/h/j: headers + residual status after real Baseline F3 push.
+# First MB is I_NxN — FPGA residual token probe expects res_ok=1 res_tc=8 res_t1=3.
+# F3-only (no F1): decode_stub still paints has_frame; hybrid host_owns_fs not latched.
 # Assert control plane (sps/pps/mb0/qp/frame) matches host golden after IDR marking fix.
 set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"

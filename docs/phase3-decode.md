@@ -150,12 +150,28 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
     - Manual F1 push recon RGB565: `has_frame=1` (~172–200 ms / 153600 B ≈ 0.75–0.9 MB/s SPI)
     - F3 residual: `res_ok=1 res_tc=8 res_t1=3` (test_f3_residual.sh green)
 
-Phase 3.3j (open — FPGA full I-slice residual / hybrid present):
-  - FPGA: walk all MBs residual (not first-only); inv quant + IDCT + Intra pred
-    into frame_store (replace decode_stub diagnostic paint)
-  - Host hybrid remains default product path until FPGA mae competitive
-  - Optional deblock (not required for no-LF gold)
-  - Live STREAM soak: cast real title → recon F1 + F3 stats in misterplexd.log
+Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
+  **Product path (hybrid):** host I-slice recon owns F1 present (3.3i). FPGA keeps
+  NAL/SPS/PPS/slice/residual **status** + F3-only diagnostic paint. Do not replace
+  host recon until FPGA mae is competitive.
+
+  **Fit (Cyclone V 5CSEBA6, post-3.3i RBF):**
+    ALMs ~21% (8.8k/41.9k) — logic headroom for more CAVLC
+    Block mem bits ~56%, **M10K 73% (405/553)** — BRAM is the hard limit
+      (frame_store dual-bank + bitstream 32 KiB + audio + sys/ascal)
+    DSP ~33%. Full I-slice residual walk + inv quant/IDCT/pred + pixel write
+    would need substantial extra BRAM (coeff buffers, neighbour rows) and is
+    deferred; first-MB probe stays in the 48B slice RBSP capture.
+
+  **FPGA changes this fire:**
+    1. `host_owns_fs` sticky after any F1 swap — decode_stub cannot wipe STREAM recon
+    2. `decode_stub` waits for residual_ok/slice_valid **rising** (or timeout) so MB0
+       gray (128+tc) latches this NAL's probe, not a stale sticky residual
+    3. `slice_hdr_parser` clears residual/valid on `cap_clear` (new VCL capture)
+    4. Residual token path unchanged (I_NxN tc=8 t1=3 / I16 tokens) — HW-green
+
+  **Still open (3.3k+):** full CAVLC levels/runs, inv quant, IDCT, Intra pred into
+  frame_store; optional deblock; live STREAM soak with recon F1 + F3 stats.
 
 Phase 3.1b (open — faster present path):
   - SPI F1 ceiling ≈ **5 fps** @320×240 (170–300 ms/frame measured)

@@ -1,6 +1,8 @@
-// Phase 3.3b/3.3d: stand-in for H.264 soft-core.
-// On each VCL NAL pulse, paint 320×240 RGB565 diagnostic into frame_store.
-// 3.3d: MB grid overlay using SPS mb_width/mb_height; I-slice = green grid.
+// Phase 3.3b/3.3d/3.3j: stand-in for H.264 soft-core.
+// On each VCL NAL, wait for slice/residual probe then paint 320×240 RGB565
+// diagnostic into frame_store (or residual MB0 gray when residual_ok).
+// 3.3j: paint after residual_ok/slice_valid so MB0 gray matches probe;
+//       hybrid product present is host F1 (see Plex.sv host_owns_fs).
 
 module decode_stub #(
 	parameter int WIDTH  = 320,
@@ -20,7 +22,8 @@ module decode_stub #(
 	input  wire [7:0]  mb_h,
 	input  wire [7:0]  slice_type,
 	input  wire        slice_is_i,
-	// 3.3g: first-MB residual cue for eyes-on recon stub
+	input  wire        slice_valid,
+	// 3.3g/j: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
 
@@ -34,10 +37,13 @@ module decode_stub #(
 
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int ADDR_W = $clog2(PIXELS);
+	// Slice RBSP cap is 48B; bit-walk + residual token ≪ 4096 cycles @ clk_sys
+	localparam int WAIT_MAX = 4095;
 
 	reg [ADDR_W:0] pix_i;
 	reg [9:0]      x, y;
-	reg            active;
+	// 0 idle, 1 wait residual/slice, 2 paint
+	reg [1:0]      phase;
 	reg            is_idr_frame;
 	reg            is_i_frame;
 	reg [7:0]      lat_type;
@@ -47,6 +53,9 @@ module decode_stub #(
 	reg            lat_sps;
 	reg            lat_res_ok;
 	reg [4:0]      lat_res_tc;
+	reg [11:0]     wait_cnt;
+	reg            slice_valid_d;
+	reg            residual_ok_d;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -62,7 +71,8 @@ module decode_stub #(
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
 	// First MB (0,0) filled with recon stub gray when residual_ok
 	wire mb0 = (x < 10'd16) && (y < 10'd16);
-	wire [7:0] recon_y = 8'd128 + {3'b0, lat_res_tc}; // host mean ~128-142 band
+	// I_NxN first residual tc=8 → gray ~136; I16 DC probe lower
+	wire [7:0] recon_y = 8'd128 + {3'b0, lat_res_tc};
 
 	wire idr_style = is_idr_frame || (lat_type[4:0] == 5'd5);
 
@@ -86,42 +96,60 @@ module decode_stub #(
 		           (8'h40 + {mb_hash[5:0], 2'b00});
 	wire [15:0] px_comb = {rr[7:3], gg[7:2], bb[7:3]};
 
+	// Only rising residual/slice after VCL — ignore sticky previous-NAL values
+	wire res_rise   = residual_ok & ~residual_ok_d;
+	wire slice_rise = slice_valid & ~slice_valid_d;
+	wire wait_done  = res_rise | slice_rise | (wait_cnt == 12'd0);
+
 	always @(posedge clk) begin
-		wr_en        <= 1'b0;
-		wr_reset_ptr <= 1'b0;
-		swap_req     <= 1'b0;
+		wr_en         <= 1'b0;
+		wr_reset_ptr  <= 1'b0;
+		swap_req      <= 1'b0;
+		slice_valid_d <= slice_valid;
+		residual_ok_d <= residual_ok;
 
 		if (reset) begin
-			active       <= 0;
-			busy         <= 0;
-			pix_i        <= 0;
-			x            <= 0;
-			y            <= 0;
-			frames_out   <= 0;
-			is_idr_frame <= 0;
-			is_i_frame   <= 0;
-			lat_type     <= 0;
-			lat_nalu     <= 0;
-			lat_idr      <= 0;
-			lat_mb_w     <= 0;
-			lat_mb_h     <= 0;
-			lat_sps      <= 0;
-			lat_res_ok   <= 0;
-			lat_res_tc   <= 0;
-			wr_pixel     <= 0;
-		end else if (!active) begin
+			phase         <= 2'd0;
+			busy          <= 0;
+			pix_i         <= 0;
+			x             <= 0;
+			y             <= 0;
+			frames_out    <= 0;
+			is_idr_frame  <= 0;
+			is_i_frame    <= 0;
+			lat_type      <= 0;
+			lat_nalu      <= 0;
+			lat_idr       <= 0;
+			lat_mb_w      <= 0;
+			lat_mb_h      <= 0;
+			lat_sps       <= 0;
+			lat_res_ok    <= 0;
+			lat_res_tc    <= 0;
+			wait_cnt      <= 0;
+			wr_pixel      <= 0;
+			slice_valid_d <= 0;
+			residual_ok_d <= 0;
+		end else if (phase == 2'd0) begin
+			// Idle: on VCL always wait for *this* NAL's residual/slice rise
 			if (vcl_pulse) begin
-				active       <= 1'b1;
-				busy         <= 1'b1;
+				phase    <= 2'd1;
+				busy     <= 1'b1;
+				wait_cnt <= WAIT_MAX[11:0];
+				lat_type <= last_nal_type;
+				lat_nalu <= nalu_count;
+				lat_idr  <= idr_count;
+			end
+		end else if (phase == 2'd1) begin
+			if (wait_cnt != 12'd0)
+				wait_cnt <= wait_cnt - 12'd1;
+			if (wait_done) begin
+				phase        <= 2'd2;
 				pix_i        <= 0;
 				x            <= 0;
 				y            <= 0;
 				wr_reset_ptr <= 1'b1;
-				is_idr_frame <= (last_nal_type[4:0] == 5'd5);
-				is_i_frame   <= slice_is_i || (last_nal_type[4:0] == 5'd5);
-				lat_type     <= last_nal_type;
-				lat_nalu     <= nalu_count;
-				lat_idr      <= idr_count;
+				is_idr_frame <= (lat_type[4:0] == 5'd5);
+				is_i_frame   <= slice_is_i || (lat_type[4:0] == 5'd5);
 				lat_sps      <= sps_valid;
 				lat_mb_w     <= (mb_w == 0) ? 8'd20 : mb_w;
 				lat_mb_h     <= (mb_h == 0) ? 8'd15 : mb_h;
@@ -129,11 +157,12 @@ module decode_stub #(
 				lat_res_tc   <= residual_tc;
 			end
 		end else begin
+			// Paint full frame
 			wr_en    <= 1'b1;
 			wr_pixel <= px_comb;
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin
-				active     <= 1'b0;
+				phase      <= 2'd0;
 				busy       <= 1'b0;
 				swap_req   <= 1'b1;
 				frames_out <= frames_out + 1'd1;

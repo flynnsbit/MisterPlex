@@ -1,4 +1,5 @@
-// Phase 3.3d/e/f: slice_header + first mb_type + CAVLC nC=0 residual token (I16 DC).
+// Phase 3.3d/e/f/j: slice_header + first mb_type + CAVLC nC=0 residual token.
+// I_NxN (mt=0) and I_16x16 (1..24); probe stops after coeff_token + T1 signs.
 // Needs SPS (log2/poc) + PPS (deblock_ctrl, pic_init_qp).
 
 module slice_hdr_parser (
@@ -144,6 +145,15 @@ module slice_hdr_parser (
 			log2_lat <= 5'd4;
 			init_qp_lat <= 8'sd26;
 			qp_tmp <= 0;
+		end else if (cap_clear) begin
+			// New slice capture: drop sticky residual/valid so paint waits for this NAL
+			st <= ST_IDLE;
+			busy <= 0;
+			valid <= 0;
+			has_mb_type <= 0;
+			residual_ok <= 0;
+			residual_tc <= 0;
+			residual_t1 <= 0;
 		end else begin
 			case (st)
 			ST_IDLE: begin
