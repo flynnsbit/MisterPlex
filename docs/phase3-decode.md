@@ -130,16 +130,19 @@ Phase 3.3h (walk+recon+FPGA residual — polish continues):
   FPGA: ST_CHRPRED (I16) + **ST_I4MODE/ST_CBP** (I_NxN skip modes→cbp→first residual nC=0)
     gray I16 HW: mb0=3 qp=27 res_ok=1 res_tc=1
     real I_NxN HW target: mb0=0 qp=25 **res_ok=1 res_tc=8 res_t1=3**
-  **Open (bit alignment) — refined:**
+  **Open (bit alignment) — refined + surgical experiment:**
     - First Y error at **MB41** (1,2): I16 H, cbp_l=0, cbp_c=1, qp=24.
-    - Gold needs **H pred + I16-DC coeff[1]=−1** (top-half Δ=−1, bottom-half Δ=+1) → **MB41 mae=0**.
-    - Our decode: residual @ bit **13720**, nC=0 → **coeff[2]=−1** (left/right pattern) mae=1.
-    - Correct residual: bit **13717**, nC=**2** → coeff[1]=−1 (3 bits earlier + different nC table).
-    - Neighbours report nA=nB=0 (MB40 right column tc=0, MB21 bottom-left tc=0) so we compute
-      nC=0; true decoder must be using nC≈2 — **investigate nnz cache / DC nC derivation**.
-    - MBs 0–40 Y pixel-perfect → luma CAVLC OK; 3-bit shift almost certainly from **chroma**
-      residual path in MB0–40 (MB40 alone has 202 chroma-AC bits). Next: bit-exact chroma vs
-      FFmpeg/openh264 for MB40; fix nC and/or level bit consumption.
+    - Gold (FFmpeg −skip_loop_filter): **H pred + I16-DC coeff[1]=−1** (top Δ=−1, bot Δ=+1).
+    - Ours: residual @ **13720**, nC=0 → **coeff[2]=−1** (L/R) mae=1.
+    - Residual-only @ **13717**, nC=2 → coeff[1]=−1 mae=0 for MB41 alone.
+    - **Surgical −3 bit + nC=2 at MB41 DC:** MB41 mae=0 but **parse fails by MB50** —
+      so a pure −3 global rewind is not a complete fix (stream not simply 3 bits early).
+    - No compliant I16 header (mt+ch+dqp) ends at 13717 with H pred near our after40=13711.
+    - Neighbours nA=nB=0 → nC=0; need path that yields nC≈2 **and** bit-stable continuation.
+    - Slice header bit pos matches FFmpeg trace_headers (ends RBSP bit 24). ✓
+    - Chroma DC inv: now matches FFmpeg scan + (had*qmul)>>7 (was wrong scan/scale; Y unchanged).
+    - Next: bit-exact compare of chroma AC level path vs FFmpeg for early MBs; fix nC/level
+      so residual start + nC jointly produce coeff[1]=−1 **and** full 300-MB walk.
     - Then residual polish / deblock / full FPGA MB residual.
 
 ```

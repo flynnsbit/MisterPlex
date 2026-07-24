@@ -387,28 +387,28 @@ inline int chromaQp(int qpy, int offset) {
     return kChromaQP[q];
 }
 
-// Inverse chroma DC 2x2 Hadamard + dequant (4:2:0)
+// Inverse chroma DC 2x2 Hadamard + dequant (4:2:0).
+// coeff[] is CAVLC scan order matching FFmpeg ff_h264_chroma_dc_scan:
+//   scan 0 → (0,0), 1 → (1,0), 2 → (0,1), 3 → (1,1).
+// Hadamard + qmul>>7 matches ff_h264_chroma_dc_dequant_idct
+// with qmul = (mf[0]*16) << (qp/6 + 2)  (same dequant4 pos0 scale).
 inline void invChromaDc2x2(const int16_t coeff[4], int qp, int16_t dc[2][2]) {
-    // Place scan: 0=(0,0), 1=(0,1), 2=(1,0), 3=(1,1) for chroma DC
-    int c0 = coeff[0], c1 = coeff[1], c2 = coeff[2], c3 = coeff[3];
-    int t0 = c0 + c1;
-    int t1 = c0 - c1;
-    int t2 = c2 + c3;
-    int t3 = c2 - c3;
-    int d00 = t0 + t2, d01 = t1 + t3, d10 = t0 - t2, d11 = t1 - t3;
+    // Raster from FFmpeg scan: a=(0,0), b=(1,0), c=(0,1), d=(1,1)
+    const int a0 = coeff[0];
+    const int b0 = coeff[1];
+    const int c0 = coeff[2];
+    const int d0 = coeff[3];
+    int a = a0 + b0;
+    int e = a0 - b0;
+    int b = c0 - d0;
+    int c = c0 + d0;
     static const int mf0[6] = {10, 11, 13, 14, 16, 18};
-    int scale = mf0[qp % 6];
-    int qbits = qp / 6;
-    auto dq = [&](int v) -> int16_t {
-        if (qbits >= 1)
-            return static_cast<int16_t>((v * scale) << (qbits - 1));
-        else
-            return static_cast<int16_t>((v * scale) >> 1); // qp 0..5
-    };
-    dc[0][0] = dq(d00);
-    dc[0][1] = dq(d01);
-    dc[1][0] = dq(d10);
-    dc[1][1] = dq(d11);
+    // FFmpeg: (had * qmul) >> 7; qmul = dequant4_coeff[qp][0]
+    const int qmul = (mf0[qp % 6] * 16) << (qp / 6 + 2);
+    dc[0][0] = static_cast<int16_t>(((a + c) * qmul) >> 7);
+    dc[0][1] = static_cast<int16_t>(((e + b) * qmul) >> 7);
+    dc[1][0] = static_cast<int16_t>(((a - c) * qmul) >> 7);
+    dc[1][1] = static_cast<int16_t>(((e - b) * qmul) >> 7);
 }
 
 } // namespace detail_r
