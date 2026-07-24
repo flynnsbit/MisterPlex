@@ -416,10 +416,27 @@ assign status_telem[71:64]   = {residual_ok, residual_tc, residual_t1};
 assign status_telem[79:72]   = {ddr_busy, 1'b0, slice_qp};
 assign status_telem[87:80]   = sps_mb_w;
 assign status_telem[95:88]   = sps_mb_h;
-// residual_dc / residual_csum below AR splice so both stay clean
-assign status_telem[103:96]  = residual_dc;
-assign status_telem[111:104] = residual_csum;
-assign status_telem[127:112] = stream_bytes_in[15:0];
+// residual_dc / residual_csum below AR splice so both stay clean.
+// R-csum1: preserve-register barrier so status[111:104] cannot collapse to
+// stream_bytes[7:0] (aa146c17 HW raw[13]=0x53 == bytes_in low of 6739; golden 0x14).
+// Pack as one 16b word {csum,dc} then split — same netlist intent, harder to prune.
+(* preserve *) reg signed [7:0] st_res_dc;
+(* preserve *) reg        [7:0] st_res_csum;
+(* preserve *) reg        [15:0] st_stream_lo;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		st_res_dc    <= 8'sd0;
+		st_res_csum  <= 8'd0;
+		st_stream_lo <= 16'd0;
+	end else begin
+		st_res_dc    <= residual_dc;
+		st_res_csum  <= residual_csum;
+		st_stream_lo <= stream_bytes_in[15:0];
+	end
+end
+assign status_telem[103:96]  = st_res_dc;
+assign status_telem[111:104] = st_res_csum;
+assign status_telem[127:112] = st_stream_lo;
 
 // Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
 assign status_in = {
@@ -428,10 +445,12 @@ assign status_in = {
 	status_telem[120:0]
 };
 
-// Pulse status_set ~1 kHz or when nalu/sps/slice change so Main/ARM can poll.
+// Pulse status_set ~1 kHz or when nalu/sps/slice/residual telem change so Main/ARM can poll.
 reg [15:0] prev_nalu;
 reg [7:0]  prev_sltype;
 reg        prev_sps, prev_pps;
+reg [7:0]  prev_csum;
+reg signed [7:0] prev_dc;
 reg [14:0] st_div;
 always @(posedge clk_sys) begin
 	if (reset) begin
@@ -440,17 +459,22 @@ always @(posedge clk_sys) begin
 		prev_sltype <= 0;
 		prev_sps   <= 0;
 		prev_pps   <= 0;
+		prev_csum  <= 0;
+		prev_dc    <= 0;
 		st_div     <= 0;
 	end else begin
 		status_set <= 0;
 		st_div <= st_div + 1'd1;
 		if (nalu_count != prev_nalu || slice_type != prev_sltype || sps_valid != prev_sps ||
-		    pps_valid != prev_pps || st_div == 0) begin
+		    pps_valid != prev_pps || st_res_csum != prev_csum || st_res_dc != prev_dc ||
+		    st_div == 0) begin
 			status_set <= 1'b1;
 			prev_nalu  <= nalu_count;
 			prev_sltype <= slice_type;
 			prev_sps   <= sps_valid;
 			prev_pps   <= pps_valid;
+			prev_csum  <= st_res_csum;
+			prev_dc    <= st_res_dc;
 		end
 	end
 end

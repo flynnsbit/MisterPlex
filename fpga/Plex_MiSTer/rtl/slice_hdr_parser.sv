@@ -543,7 +543,10 @@ module slice_hdr_parser (
 				// TrailingOnes sign bits → level[i] = ±1
 				if (oob) st <= ST_FAIL;
 				else begin
+					// Running XOR sat8(level): ±1 → 0x01 / 0xFF (host residualCsum8)
+					// Ready before ST_PLACE; place-independent (zeros do not change XOR).
 					lev[lev_i] <= bitv ? -9'sd1 : 9'sd1;
+					residual_csum <= residual_csum ^ (bitv ? 8'hFF : 8'h01);
 					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
 					else bpos <= bpos - 1'd1;
 					if (sign_left <= 3'd1) begin
@@ -699,6 +702,8 @@ module slice_hdr_parser (
 							nsl = suf_len;
 					end
 					suf_len <= nsl;
+					// Fold non-T1 level into residual_csum (same XOR sat8 as residual_gold)
+					residual_csum <= residual_csum ^ sat8(lv);
 					if (lev_i + 4'd1 >= r_tc[3:0] && r_tc[4] == 1'b0) begin
 						// all levels done → provisional residual_dc = last reverse-order
 						// level (equals scan DC when run[tc-1]==0, true on golden Baseline)
@@ -947,7 +952,10 @@ module slice_hdr_parser (
 				//     cn += run_before[i] + 1
 				//     coeff[cn] = level[i]
 				// residual_dc   = sat8(coeff[0])              // keep 3.3k golden -24
-				// residual_csum = XOR_i sat8(coeff[i])        // residual_gold 0x14
+				// residual_csum = XOR_i sat8(lev[i]) for i<tc // residual_gold 0x14
+				//   (place-independent: same multiset as coeff[]; avoid tmpc-index
+				//    synth issues. Running XOR during T1/levels already set csum;
+				//    recompute from lev[] here as the authoritative latch.)
 				// One-cycle combinatorial place (tc<=16); no extra M10K.
 				// Fit note: 16×9b flops + place LUTs; residual_coeff (*keep*) for 3.3l-2.
 				begin : place_body
@@ -976,10 +984,13 @@ module slice_hdr_parser (
 						residual_coeff[j] <= tmpc[j];
 					// Preserve residual_dc regression (do not change sat8 path)
 					residual_dc <= sat8(dcv);
-					// Match residual_gold::coeffCsum8 / residualCsum8 (XOR of sat8)
+					// residual_gold::coeffCsum8: XOR sat8 of all levels (≡ all coeffs)
+					// Prefer lev[] (direct indexed) over tmpc[cn] for synth reliability.
 					cs = 8'd0;
-					for (j = 0; j < 16; j = j + 1)
-						cs = cs ^ sat8(tmpc[j]);
+					for (j = 0; j < 16; j = j + 1) begin
+						if (j < r_tc)
+							cs = cs ^ sat8(lev[j]);
+					end
 					residual_csum <= cs;
 					residual_ok <= 1'b1;
 					st <= ST_DONE;
