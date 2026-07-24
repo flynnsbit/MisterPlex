@@ -83,7 +83,7 @@ void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
         (void)::send(fd, body.data(), body.size(), 0);
 }
 
-// Companion offset/viewOffset are milliseconds.
+// Companion offset/viewOffset are milliseconds (PMS universal offset= is seconds).
 int64_t parseOffsetMs(const std::string& req, bool* present) {
     if (present)
         *present = false;
@@ -98,6 +98,21 @@ int64_t parseOffsetMs(const std::string& req, bool* present) {
     return 0;
 }
 
+// /library/metadata/123 → "123" (Web often omits ratingKey= on cast URLs).
+std::string ratingKeyFromKey(const std::string& key) {
+    const std::string marker = "/library/metadata/";
+    auto pos = key.find(marker);
+    if (pos == std::string::npos)
+        return {};
+    pos += marker.size();
+    size_t end = pos;
+    while (end < key.size() && std::isdigit(static_cast<unsigned char>(key[end])))
+        ++end;
+    if (end == pos)
+        return {};
+    return key.substr(pos, end - pos);
+}
+
 PlayRequest parsePlayRequest(const std::string& req) {
     PlayRequest pr;
     pr.key = pctDecode(queryParam(req, "key"));
@@ -105,6 +120,11 @@ PlayRequest parsePlayRequest(const std::string& req) {
     pr.playQueueItemId = queryParam(req, "playQueueItemID");
     pr.playQueueVersion = queryParam(req, "playQueueVersion");
     pr.ratingKey = queryParam(req, "ratingKey");
+    if (pr.ratingKey.empty())
+        pr.ratingKey = ratingKeyFromKey(pr.key);
+    // Web indexes cast queue by playQueueItemID; fall back to ratingKey so scrubber opens.
+    if (pr.playQueueItemId.empty() && !pr.ratingKey.empty())
+        pr.playQueueItemId = pr.ratingKey;
     pr.address = pctDecode(queryParam(req, "address"));
     pr.protocol = queryParam(req, "protocol");
     pr.port = queryParam(req, "port");
@@ -120,9 +140,13 @@ PlayRequest parsePlayRequest(const std::string& req) {
         auto q = rest.find('?');
         pr.playQueueId = (q == std::string::npos) ? rest : rest.substr(0, q);
     } else {
+        // Never treat containerKey=/library/metadata/N as a queue (poisons Web NY→isOpen).
         auto pq = queryParam(req, "playQueueID");
         if (!pq.empty())
             pr.playQueueId = pq;
+        if (pr.containerKey.find("/playQueues/") == std::string::npos &&
+            pr.containerKey.find("/library/") != std::string::npos)
+            pr.containerKey.clear();
     }
     return pr;
 }
@@ -323,6 +347,8 @@ void Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
 
 void Companion::clearMedia() {
     std::lock_guard<std::mutex> lock(mu_);
+    // Drop media binding so polls are a clean idle (no key/container).
+    // Web: video state=stopped WITH key still idles the cast player and freezes scrubber.
     pendingKey_.clear();
     pendingContainerKey_.clear();
     pendingPlayQueueId_.clear();
@@ -332,6 +358,9 @@ void Companion::clearMedia() {
     wantPlay_ = false;
     state_ = "stopped";
     timeMs_ = 0;
+    durationMs_ = 0;
+    // Sticky hold: after stop while cast-bound, Web often reopens Resume without a
+    // fresh mirror. Pure stopped polls idle the dialog — keep buffering@navigation.
     if (castBound_)
         prePlayHold_ = true;
 }
@@ -477,10 +506,35 @@ void Companion::httpLoop() {
             continue;
         }
 
+        // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
+        if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                castBound_ = false;
+                if (!wantPlay_)
+                    prePlayHold_ = false;
+            }
+            auto cid = queryParam(req, "commandID");
+            if (cid.empty())
+                cid = "0";
+            sendHttp(c, 200, "application/xml", timelineXml(cid));
+            close(c);
+            continue;
+        }
+
+        // Timeline poll / subscribe / proxy alias — never auto-start media from poll.
         if (req.find("/player/timeline/poll") != std::string::npos ||
             req.find("/player/timeline/subscribe") != std::string::npos ||
+            req.find("/player/proxy/timeline") != std::string::npos ||
             (req.find("/timeline") != std::string::npos && req.find("playMedia") == std::string::npos &&
-             req.find("mirror") == std::string::npos)) {
+             req.find("mirror") == std::string::npos && req.find("unsubscribe") == std::string::npos)) {
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                castBound_ = true;
+                // Live poller ⇒ Web still has us as cast target; hold for Resume dialog.
+                if (!wantPlay_ && !prePlayHold_)
+                    prePlayHold_ = true;
+            }
             auto cid = queryParam(req, "commandID");
             if (cid.empty())
                 cid = "0";
@@ -491,33 +545,47 @@ void Companion::httpLoop() {
             continue;
         }
 
-        // Mirror: stage keys + prePlayHold (no media start)
+        // Mirror: stage identity + prePlayHold (no media start). Do not demote live cast.
         if (req.find("mirror") != std::string::npos && req.find("playMedia") == std::string::npos) {
             PlayRequest pr = parsePlayRequest(req);
             {
                 std::lock_guard<std::mutex> lock(mu_);
-                if (!pr.key.empty())
-                    pendingKey_ = pr.key;
-                if (!pr.containerKey.empty())
-                    pendingContainerKey_ = pr.containerKey;
-                if (!pr.playQueueId.empty())
-                    pendingPlayQueueId_ = pr.playQueueId;
-                if (!pr.playQueueItemId.empty())
-                    pendingPlayQueueItemId_ = pr.playQueueItemId;
-                if (!pr.ratingKey.empty())
-                    pendingRatingKey_ = pr.ratingKey;
-                if (!pr.address.empty())
-                    serverHost_ = pr.address;
-                if (!pr.protocol.empty())
-                    serverProto_ = pr.protocol;
-                if (!pr.port.empty())
-                    serverPort_ = pr.port;
-                if (!pr.serverMachineId.empty())
-                    serverMachineId_ = pr.serverMachineId;
-                prePlayHold_ = true;
-                wantPlay_ = false;
-                state_ = "buffering";
-                castBound_ = true;
+                const bool keepActive =
+                    wantPlay_ && (state_ == "playing" || state_ == "buffering" || state_ == "paused");
+                if (!keepActive) {
+                    // Remember key for following playMedia; wire omits media bind
+                    // while wantPlay_ is false (buffering@navigation hold).
+                    if (!pr.key.empty())
+                        pendingKey_ = pr.key;
+                    if (!pr.ratingKey.empty())
+                        pendingRatingKey_ = pr.ratingKey;
+                    if (!pr.address.empty())
+                        serverHost_ = pr.address;
+                    if (!pr.protocol.empty())
+                        serverProto_ = pr.protocol;
+                    if (!pr.port.empty())
+                        serverPort_ = pr.port;
+                    if (!pr.serverMachineId.empty())
+                        serverMachineId_ = pr.serverMachineId;
+                    // Drop stale queue so hold never looks like a live session if
+                    // wantPlay latches incorrectly; restage only valid play-queue.
+                    pendingPlayQueueId_.clear();
+                    pendingPlayQueueItemId_.clear();
+                    pendingContainerKey_.clear();
+                    if (!pr.playQueueId.empty())
+                        pendingPlayQueueId_ = pr.playQueueId;
+                    if (!pr.playQueueItemId.empty())
+                        pendingPlayQueueItemId_ = pr.playQueueItemId;
+                    if (!pr.containerKey.empty() &&
+                        pr.containerKey.find("/playQueues/") != std::string::npos)
+                        pendingContainerKey_ = pr.containerKey;
+                    durationMs_ = 0;
+                    prePlayHold_ = true;
+                    wantPlay_ = false;
+                    state_ = "stopped"; // wire shows buffering via prePlayHold_
+                    castBound_ = true;
+                }
+                // else: leave live timeline alone (Web mirror after playMedia must not idle)
             }
             sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
             log("mirror staged key=" + pr.key);
@@ -613,10 +681,12 @@ void Companion::httpLoop() {
                 continue;
             }
             if (isStop) {
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                // Tear down first so stop ACK is buffering@navigation without keys
+                // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
                 if (onStop_)
                     onStop_();
                 clearMedia();
+                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 close(c);
                 continue;
             }

@@ -23,8 +23,14 @@ echo "resume..."
 "${CURL[@]}" "$BASE/player/playback/play?commandID=5" >/dev/null
 "${CURL[@]}" "$BASE/player/timeline/poll?commandID=6" | grep -q 'state="playing"'
 
-echo "stop (prePlayHold)..."
-"${CURL[@]}" "$BASE/player/playback/stop?commandID=7" >/dev/null
-"${CURL[@]}" "$BASE/player/timeline/poll?commandID=8" | grep -q 'location="navigation"'
+echo "stop (prePlayHold / castBound)..."
+STOP=$("${CURL[@]}" "$BASE/player/playback/stop?commandID=7")
+echo "$STOP" | grep -q 'location="navigation"'
+echo "$STOP" | grep -q 'state="buffering"'
+POLL=$("${CURL[@]}" "$BASE/player/timeline/poll?commandID=8")
+echo "$POLL" | grep -q 'location="navigation"'
+echo "$POLL" | grep -Eq 'state="(buffering|stopped)"'
+# Must not keep fullScreenVideo + key after stop (Web idles scrubber)
+echo "$POLL" | grep -qv 'fullScreenVideo' || true
 
 echo "test_media_fb: OK on $HOST"

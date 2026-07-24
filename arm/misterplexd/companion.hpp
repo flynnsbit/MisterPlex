@@ -1,6 +1,7 @@
 #pragma once
-// Plex GDM + companion HTTP for MiSTerPlex Phase 2.
-// Lessons from mistercast-linux: prePlayHold, play-queue bind, async playMedia ACK.
+// Plex GDM + companion HTTP for MiSTerPlex Phase 2/4.
+// Lessons from mistercast-linux: prePlayHold, castBound, play-queue bind,
+// async playMedia ACK, viewOffset ms, resume-dialog hold after stop.
 
 #include <atomic>
 #include <cstdint>
