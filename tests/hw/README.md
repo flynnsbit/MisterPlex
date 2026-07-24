@@ -130,3 +130,23 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
    **`mb0=0 qp=25`** `has_frame=1` (stub MB0 gray from residual DC; no F1 so host_owns_fs clear).
 3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0).
 4. STREAM hybrid: host recon F1 owns product present; F3 residual status must not wipe F1.
+
+## Safe core deploy (lab DE10)
+
+Do **not** `scp` over a live `Plex.rbf` and immediately `echo load_core … > /dev/MiSTer_cmd`
+while SPI companions are active — that path has locked the unit (WiFi/SSH die until power cycle).
+
+Use:
+
+```bash
+# copy only (safest while watching VGA)
+DEPLOY_LOAD=none ./scripts/deploy_plex_core.sh
+
+# soft switch Menu → Plex when a reload is required
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh
+
+# already on Menu core
+DEPLOY_LOAD=core ./scripts/deploy_plex_core.sh
+```
+
+HW tests prefer **skip reload** when `CORENAME` is already Plex.
