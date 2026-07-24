@@ -11,7 +11,11 @@ ssh_m() {
 }
 
 echo "=== reload Plex core (clean state) ==="
-ssh_m 'echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
+ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true'
+# skip load_core if already Plex — avoids DE10 lockups
+if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then
+  DEPLOY_LOAD=menu "$(cd "$(dirname "$0")/../.." && pwd)/scripts/deploy_plex_core.sh" || true
+fi
 sleep 3
 ssh_m 'grep -q Plex /tmp/CORENAME'
 

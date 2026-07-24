@@ -127,23 +127,23 @@ log "local RBF md5=$EXPECTED_MD5"
 
 "${SCP[@]}" "$ROOT/build/arm/set_status" "$ROOT/build/arm/push_frame" \
   "root@$HOST:/media/fat/misterplex/bin/" || true
-"${SCP[@]}" "$RBF_LOCAL" "root@$HOST:/media/fat/_Utility/Plex.rbf"
 ssh_q "chmod +x /media/fat/misterplex/bin/set_status /media/fat/misterplex/bin/push_frame"
+
+# Safe deploy: stage RBF + optional menu bounce (never scp-over-live + load_core)
+# MENU_RELOAD=0 → copy only if already on Plex with matching md5
 REMOTE_MD5=$(ssh_q "md5sum /media/fat/_Utility/Plex.rbf" | awk '{print $1}')
-log "remote RBF md5=$REMOTE_MD5"
-if [[ "$REMOTE_MD5" != "$EXPECTED_MD5" ]]; then
-  log "WARN md5 mismatch after scp"
-fi
-
-log "load_core Plex.rbf (MENU_FAST=$MENU_FAST settle=${SETTLE}s frames=$FRAMES)"
-ssh_q 'echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
-sleep "$LOAD_SLEEP"
 CORE=$(ssh_q 'cat /tmp/CORENAME')
-log "CORENAME=$CORE"
-
-# Stop misterplexd so SPI is quiet during OSD tests
-ssh_q 'pkill -x misterplexd || true; killall -CONT MiSTer || true'
-sleep 0.3
+if [[ "$REMOTE_MD5" == "$EXPECTED_MD5" ]] && echo "$CORE" | grep -qi plex; then
+  log "RBF md5 match + CORE=Plex — skip load_core (MENU_FAST settle=${SETTLE}s)"
+else
+  log "safe deploy DEPLOY_LOAD=${MENU_RELOAD:-menu}"
+  MISTER_HOST="$HOST" MISTER_PASS="$PASS" DEPLOY_LOAD="${MENU_RELOAD:-menu}" DEPLOY_WAIT_S="$LOAD_SLEEP" \
+    "$ROOT/scripts/deploy_plex_core.sh" "$RBF_LOCAL" || log "WARN deploy returned $?"
+  sleep 1
+fi
+REMOTE_MD5=$(ssh_q "md5sum /media/fat/_Utility/Plex.rbf" | awk '{print $1}')
+CORE=$(ssh_q 'cat /tmp/CORENAME')
+log "remote RBF md5=$REMOTE_MD5 CORENAME=$CORE"
 
 # Verify SPI
 log "status raw:"

@@ -13,11 +13,15 @@ ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
 }
 
-echo "=== reload Plex core ==="
-# Free SPI lock held by misterplexd during F3 probe
-ssh_m 'killall -9 misterplexd 2>/dev/null || true; echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
-# Core load + UIO reappear can take several seconds on lab DE10
-sleep 5
+echo "=== ensure Plex core (safe — no kill-9 + load_core thrash) ==="
+# Free SPI gently; only bounce core if not already Plex (load_core mid-session wedges lab)
+ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
+sleep 1
+if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then
+  MISTER_HOST="$HOST" MISTER_PASS="$PASS" DEPLOY_LOAD=menu DEPLOY_WAIT_S=5 \
+    "$ROOT/scripts/deploy_plex_core.sh" || true
+  sleep 2
+fi
 ssh_m 'grep -q Plex /tmp/CORENAME'
 # Wait until push_frame can open status (UIO ready)
 for _ in 1 2 3 4 5 6 7 8 9 10; do

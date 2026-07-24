@@ -23,9 +23,13 @@ if [[ ! -f "$FRAME" ]]; then
 fi
 
 echo "=== ensure Plex core loaded ==="
-ssh_m 'killall -9 misterplexd 2>/dev/null || true
-echo load_core /media/fat/_Utility/Plex.rbf > /dev/MiSTer_cmd'
-sleep 5
+ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
+sleep 1
+if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then
+  ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  DEPLOY_LOAD=menu "$ROOT/scripts/deploy_plex_core.sh" 2>/dev/null || true
+  sleep 3
+fi
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "== scp push_frame + frame to $HOST =="
