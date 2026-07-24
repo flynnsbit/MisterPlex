@@ -1,4 +1,4 @@
-// Phase 3.3–3.3k: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+residual levels) + decode_stub.
+// Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 
 module stream_path (
@@ -45,6 +45,10 @@ module stream_path (
 	output wire [1:0]  residual_t1,
 	output wire        residual_ok,
 	output wire signed [7:0] residual_dc,
+	// 3.3l-1: residualCsum8=XOR sat8(coeff[0:15]); full coeffs for 3.3l-2 inv_quant.
+	// residual_coeff may be left unconnected at top until inv_quant; kept below.
+	output wire [7:0]  residual_csum,
+	output wire signed [8:0] residual_coeff [0:15],
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -141,6 +145,8 @@ module stream_path (
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
 
+	// residual_csum / residual_coeff connect straight to module outputs (no
+	// unpacked-array continuous assign — Quartus-friendly).
 	slice_hdr_parser slp (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(sl_cap_clear), .cap_en(sl_cap_en),
@@ -160,6 +166,8 @@ module stream_path (
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
+		.residual_csum(residual_csum),
+		.residual_coeff(residual_coeff),
 		.busy(sl_busy)
 	);
 
@@ -202,8 +210,11 @@ module stream_path (
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
+	// Touch residual_csum + a few coeff LSBs so place is not pruned if top
+	// only wires residual_dc / residual_csum and leaves residual_coeff open.
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
-	             |sl_fn | |sl_qpd | pps_deblock;
+	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_coeff[0][0] |
+	             residual_coeff[1][0] | residual_coeff[15][0];
 
 endmodule

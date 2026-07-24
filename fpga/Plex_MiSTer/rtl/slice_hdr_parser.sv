@@ -1,5 +1,7 @@
-// Phase 3.3d/e/f/j/k: slice_header + first mb_type + first residual CAVLC (nC=0).
+// Phase 3.3d/e/f/j/k/l-1: slice_header + first mb_type + first residual CAVLC (nC=0).
 // 3.3k: coeff_token + T1 signs + non-T1 levels + total_zeros + run_before → residual_dc.
+// 3.3l-1: ST_PLACE fills full scan-order coeff[0:15]; residual_dc=sat8(coeff[0]);
+//         residual_csum = XOR sat8(coeff[i]) (host residualCsum8 / residual_gold; Baseline 0x14).
 // I_NxN (mt=0) and I_16x16 (1..24). Capture window MAXB=48 B covers first residual (~17 B).
 // Logic-only (no extra M10K). Needs SPS (log2/poc) + PPS (deblock_ctrl, pic_init_qp).
 
@@ -36,6 +38,11 @@ module slice_hdr_parser (
 	output reg         residual_ok,
 	// 3.3k: scan-order DC (coeff[0]) after levels+runs; signed, sat to 8-bit
 	output reg  signed [7:0] residual_dc,
+	// 3.3l-1: residual_csum = XOR sat8(coeff[0:15]); full scan levels for inv_quant.
+	// Golden Baseline first residual = 0x14 — host/libmisterplex/h264_residual_gold.hpp.
+	// residual_coeff kept for 3.3l-2 inv_quant even if status only exports csum/dc.
+	output reg  [7:0]  residual_csum,
+	(* keep = 1 *) output reg signed [8:0] residual_coeff [0:15],
 	output reg         busy
 );
 
@@ -67,7 +74,7 @@ module slice_hdr_parser (
 	reg        i4_need_rem;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 
-	// 3.3k CAVLC level / zeros / run
+	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
 	reg signed [8:0] lev [0:15];
 	reg [3:0]  lev_i;
 	reg [2:0]  suf_len;
@@ -82,9 +89,6 @@ module slice_hdr_parser (
 	reg [3:0]  tzbits;
 	reg [4:0]  runcode;
 	reg [3:0]  runbits;
-	reg signed [5:0] coeff_num; // -1 .. 15
-	reg signed [8:0] dc_acc;
-	reg [7:0]  sa_acc;
 	reg        tok_ok;
 
 	function automatic signed [7:0] se_of;
@@ -156,21 +160,29 @@ module slice_hdr_parser (
 		ST_PLACE   = 5'd31;
 
 	task automatic res_clear;
+		integer ci;
 		begin
 			residual_ok <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_dc <= 0;
+			residual_csum <= 0;
+			for (ci = 0; ci < 16; ci = ci + 1)
+				residual_coeff[ci] <= 9'sd0;
 			tok_ok <= 0;
 		end
 	endtask
 
 	// After token(+signs): enter levels / tz / done
 	task automatic res_after_t1;
+		integer ci;
 		begin
 			if (r_tc == 0) begin
 				residual_ok <= 1'b1;
 				residual_dc <= 0;
+				residual_csum <= 0;
+				for (ci = 0; ci < 16; ci = ci + 1)
+					residual_coeff[ci] <= 9'sd0;
 				st <= ST_DONE;
 			end else if (r_t1 < r_tc) begin
 				lev_i <= r_t1[3:0];
@@ -215,6 +227,12 @@ module slice_hdr_parser (
 			residual_t1 <= 0;
 			residual_ok <= 0;
 			residual_dc <= 0;
+			residual_csum <= 0;
+			begin : rst_coeff
+				integer ci;
+				for (ci = 0; ci < 16; ci = ci + 1)
+					residual_coeff[ci] <= 9'sd0;
+			end
 			tcode <= 0;
 			tbits <= 0;
 			r_tc <= 0;
@@ -243,9 +261,6 @@ module slice_hdr_parser (
 			tzbits <= 0;
 			runcode <= 0;
 			runbits <= 0;
-			coeff_num <= 0;
-			dc_acc <= 0;
-			sa_acc <= 0;
 		end else if (cap_clear) begin
 			// New slice capture: drop sticky residual/valid so paint waits for this NAL
 			st <= ST_IDLE;
@@ -256,6 +271,12 @@ module slice_hdr_parser (
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_dc <= 0;
+			residual_csum <= 0;
+			begin : clr_coeff_cap
+				integer ci;
+				for (ci = 0; ci < 16; ci = ci + 1)
+					residual_coeff[ci] <= 9'sd0;
+			end
 			tok_ok <= 0;
 		end else begin
 			case (st)
@@ -268,6 +289,12 @@ module slice_hdr_parser (
 					residual_tc <= 0;
 					residual_t1 <= 0;
 					residual_dc <= 0;
+					residual_csum <= 0;
+					begin : clr_coeff_idle
+						integer ci;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							residual_coeff[ci] <= 9'sd0;
+					end
 					tok_ok <= 0;
 					idr_lat <= is_idr_nal;
 					db_lat <= deblock_ctrl;
@@ -457,7 +484,13 @@ module slice_hdr_parser (
 				if (tbits == 5'd1 && tcode[0] == 1'b1) begin
 					r_tc <= 0; r_t1 <= 0; residual_tc <= 0; residual_t1 <= 0;
 					tok_ok <= 1'b1;
-					residual_ok <= 1'b1; residual_dc <= 0; st <= ST_DONE;
+					residual_ok <= 1'b1; residual_dc <= 0; residual_csum <= 0;
+					begin : clr_coeff_tc0
+						integer ci;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							residual_coeff[ci] <= 9'sd0;
+					end
+					st <= ST_DONE;
 				end else if (tbits == 5'd2 && tcode[1:0] == 2'b01) begin
 					r_tc <= 1; r_t1 <= 1; residual_tc <= 1; residual_t1 <= 2'd1;
 					sign_left <= 1; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
@@ -480,8 +513,10 @@ module slice_hdr_parser (
 					// nC=0 tc=8 t1=3 — real Baseline first I_NxN residual
 					r_tc <= 8; r_t1 <= 3; residual_tc <= 5'd8; residual_t1 <= 2'd3;
 					// Mark ok early so 3.3j residual probe stays green if level path fails
+					// ST_PLACE later overwrites residual_dc / residual_csum / residual_coeff.
 					residual_ok <= 1'b1;
 					residual_dc <= 0;
+					residual_csum <= 0;
 					// Clear runs so ST_PLACE never sees X/stale runv (dc would stick at 0)
 					begin : clr_run_tc8
 						integer ri;
@@ -492,6 +527,7 @@ module slice_hdr_parser (
 					// nC=0 tc=8 t1=2 (nearby)
 					r_tc <= 8; r_t1 <= 2; residual_tc <= 5'd8; residual_t1 <= 2'd2;
 					residual_dc <= 0;
+					residual_csum <= 0;
 					begin : clr_run_tc8b
 						integer ri;
 						for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
@@ -903,33 +939,48 @@ module slice_hdr_parser (
 			end
 
 			ST_PLACE: begin
-				// Place levels reverse-scan; export coeff[0] as residual_dc
-				// coeffNum starts -1; for i=tc-1..0: coeffNum += run[i]+1; coeff[coeffNum]=level[i]
+				// 3.3l-1: place levels reverse-scan into residual_coeff[0:15]
+				// (host residualBlock / FFmpeg order; scan[0] = DC).
+				// Algorithm (same as host probeFirst / residualBlock):
+				//   cn = -1
+				//   for i = TotalCoeff-1 .. 0:
+				//     cn += run_before[i] + 1
+				//     coeff[cn] = level[i]
+				// residual_dc   = sat8(coeff[0])              // keep 3.3k golden -24
+				// residual_csum = XOR_i sat8(coeff[i])        // residual_gold 0x14
+				// One-cycle combinatorial place (tc<=16); no extra M10K.
+				// Fit note: 16×9b flops + place LUTs; residual_coeff (*keep*) for 3.3l-2.
 				begin : place_body
 					reg signed [5:0] cn;
-					reg [3:0] ii;
 					reg signed [8:0] dcv;
-					integer k;
-					// default runs for unset (zeros already assigned last)
-					// If zeros_left was 0 at start of runs, all runv[i]=0 and last=0
+					reg signed [8:0] tmpc [0:15];
+					reg [7:0] cs;
+					integer k, j;
+					// Zero all scan slots (unset runs already 0 after token/tz clear)
+					for (j = 0; j < 16; j = j + 1)
+						tmpc[j] = 9'sd0;
 					cn = -6'sd1;
-					dcv = 0;
-					for (k = 0; k < 16; k = k + 1) begin
-						if (k < r_tc) begin
-							// process in reverse: i from tc-1 downto 0 — unrolled via second loop
-						end
-					end
-					// Unrolled reverse placement (tc <= 16)
+					dcv = 9'sd0;
+					// k walks 15..0; only k < r_tc participates (i = tc-1 .. 0)
 					for (k = 15; k >= 0; k = k - 1) begin
 						if (k < r_tc) begin
 							cn = cn + $signed({2'b0, runv[k]}) + 6'sd1;
-							if (cn == 0)
-								dcv = lev[k];
+							if (cn >= 0 && cn <= 15) begin
+								tmpc[cn[3:0]] = lev[k];
+								if (cn == 0)
+									dcv = lev[k];
+							end
 						end
 					end
-					// Fix: when zeros_left path set only last run, ensure runv[0..tc-2]=0
-					// (runv defaults may be X — zero unused runs at token match)
+					for (j = 0; j < 16; j = j + 1)
+						residual_coeff[j] <= tmpc[j];
+					// Preserve residual_dc regression (do not change sat8 path)
 					residual_dc <= sat8(dcv);
+					// Match residual_gold::coeffCsum8 / residualCsum8 (XOR of sat8)
+					cs = 8'd0;
+					for (j = 0; j < 16; j = j + 1)
+						cs = cs ^ sat8(tmpc[j]);
+					residual_csum <= cs;
 					residual_ok <= 1'b1;
 					st <= ST_DONE;
 				end

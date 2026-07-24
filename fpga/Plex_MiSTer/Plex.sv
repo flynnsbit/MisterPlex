@@ -8,6 +8,7 @@
 //  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
 //  Phase 3.3j: hybrid host F1 owns present; stub residual paint F3-only
 //  Phase 3.3k: first residual CAVLC levels/runs → residual_dc paint/status
+//  Phase 3.3l-1: full coeff[0:15] place + residual_csum status (prep inv_quant)
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -92,6 +93,8 @@ wire [5:0]   slice_qp;
 wire [4:0]   residual_tc;
 wire [1:0]   residual_t1;
 wire signed [7:0] residual_dc;
+wire [7:0]   residual_csum;
+wire signed [8:0] residual_coeff [0:15];
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -278,6 +281,8 @@ stream_path spath (
 	.residual_t1(residual_t1),
 	.residual_ok(residual_ok),
 	.residual_dc(residual_dc),
+	.residual_csum(residual_csum),
+	.residual_coeff(residual_coeff),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -391,7 +396,9 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [71:64]   {residual_ok, residual_tc[4:0], residual_t1[1:0]}
 //   [79:72]   {ddr_busy, 1'b0, slice_qp[5:0]}
 //   [87:80]   sps_mb_w         [95:88] sps_mb_h  (pixels = mb*16)
-//   [103:96]  residual_dc      [127:104] stream_bytes_in[23:0]
+//   [103:96]  residual_dc      (3.3k regression; clean of AR)
+//   [111:104] residual_csum    (3.3l-1 XOR sat8(coeff[0:15]); Baseline golden 0x14)
+//   [127:112] stream_bytes_in[15:0]  (was 24b; 16b enough for F3 bring-up)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream MSBs only
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
@@ -409,9 +416,10 @@ assign status_telem[71:64]   = {residual_ok, residual_tc, residual_t1};
 assign status_telem[79:72]   = {ddr_busy, 1'b0, slice_qp};
 assign status_telem[87:80]   = sps_mb_w;
 assign status_telem[95:88]   = sps_mb_h;
-// residual_dc at [103:96] so AR splice at [122:121] only touches stream MSBs
+// residual_dc / residual_csum below AR splice so both stay clean
 assign status_telem[103:96]  = residual_dc;
-assign status_telem[127:104] = stream_bytes_in[23:0];
+assign status_telem[111:104] = residual_csum;
+assign status_telem[127:112] = stream_bytes_in[15:0];
 
 // Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
 assign status_in = {
@@ -450,6 +458,11 @@ end
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
+	// 3.3l-1: keep residual_coeff visible for inv_quant (3.3l-2); csum already in status
+	residual_coeff[0], residual_coeff[1], residual_coeff[2], residual_coeff[3],
+	residual_coeff[4], residual_coeff[5], residual_coeff[6], residual_coeff[7],
+	residual_coeff[8], residual_coeff[9], residual_coeff[10], residual_coeff[11],
+	residual_coeff[12], residual_coeff[13], residual_coeff[14], residual_coeff[15],
 	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h, has_mb_type, idr_count,
 	stream_fifo_level, ddr_frames, _host_wr_unused};
 

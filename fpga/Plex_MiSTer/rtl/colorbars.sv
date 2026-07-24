@@ -1,9 +1,9 @@
 // SMPTE-style color bars + optional moving block driven by content frame index.
 // Generates progressive 320x240-class timing (NTSC 15 kHz family when not scandoubled).
 //
-// Horizontal timing matches MiSTer Template mycore.v exactly so the scaler /
-// analog VGA path locks HSync correctly:
-//   hc 0..637, HBlank @529, HSync 544..589, ~59.8 Hz with 20 MHz / ce_pix.
+// Horizontal: 320 active + short porches + sync, total 638 clocks/line @ half-rate
+// ce_pix → ~59.8 Hz.  Do NOT use Template HBlank@529 with only 320px paint — that
+// leaves ~40% of DE black (lab measured span ≈320/529 on VGA/HDMI).
 
 module colorbars (
 	input  wire        clk,
@@ -26,15 +26,17 @@ module colorbars (
 	output reg  [7:0]  b
 );
 
-	// Content is 320×240. Line total stays Template-like (638) for ~60 Hz, but
-	// HBlank starts at 320 so DE == content width. Template HBlank@529 left a
-	// black right half of active video (~320/529) so VGA/HDMI looked pillarboxed.
-	// HSync still near end of line (544..589) for stable lock.
+	// Active 320, then FP/sync/BP in the remainder of the 638-count line.
+	// HSync must follow blanking (not stay at Template 544 after DE ends at 320),
+	// or ascal can still treat a long black porch as part of the picture geometry.
 	localparam H_CONTENT = 10'd320;
-	localparam H_LAST    = 10'd637; // wrap after this → 638 clocks/line
-	localparam H_BLANK_S = H_CONTENT; // DE = content (full-width after scaler)
-	localparam H_SYNC_S  = 10'd544;
-	localparam H_SYNC_E  = 10'd590;
+	localparam H_LAST    = 10'd637; // wrap → 638 clocks/line
+	localparam H_FP      = 10'd16;
+	localparam H_SYNC    = 10'd48;
+	// blank starts at end of active; sync immediately after FP
+	localparam H_BLANK_S = H_CONTENT;                 // 320
+	localparam H_SYNC_S  = H_CONTENT + H_FP;          // 336
+	localparam H_SYNC_E  = H_CONTENT + H_FP + H_SYNC; // 384
 
 	reg [9:0] hc;
 	reg [9:0] vc;
@@ -73,7 +75,8 @@ module colorbars (
 		end
 	end
 
-	// H/V blank & sync — same edges as Template mycore.v (every clk, sample hc)
+	// H/V blank & sync (sample hc every clk; hc advances on ce_pix)
+	// Level HBlank (not edge-only) so DE never stretches past H_CONTENT.
 	always @(posedge clk) begin
 		if (reset) begin
 			HBlank <= 1'b1;
@@ -81,14 +84,15 @@ module colorbars (
 			VBlank <= 1'b1;
 			VSync  <= 1'b0;
 		end else begin
-			if (hc == H_BLANK_S)
-				HBlank <= 1'b1;
-			else if (hc == 10'd0)
-				HBlank <= 1'b0;
+			HBlank <= (hc >= H_BLANK_S);
 
-			if (hc == H_SYNC_S) begin
+			if (hc == H_SYNC_S)
 				HSync <= 1'b1;
+			if (hc == H_SYNC_E)
+				HSync <= 1'b0;
 
+			// V edges still keyed off HSync start (Template-style)
+			if (hc == H_SYNC_S) begin
 				if (pal) begin
 					if (vc == (scandouble ? 10'd609 : 10'd304))
 						VSync <= 1'b1;
@@ -111,9 +115,6 @@ module colorbars (
 						VBlank <= 1'b0;
 				end
 			end
-
-			if (hc == H_SYNC_E)
-				HSync <= 1'b0;
 		end
 	end
 
