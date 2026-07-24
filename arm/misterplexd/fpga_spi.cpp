@@ -247,8 +247,10 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
     setIndex(index);
     setDownload(1);
 
-    // Chunk data with FIO_FILE_TX_DAT sessions
-    const size_t chunk = 8192;
+    // Chunk data with FIO_FILE_TX_DAT sessions.
+    // Lab measure @320×240 (153600 B): 8 KiB→~220 ms, 32 KiB→~194 ms, 128 KiB→~196 ms.
+    // SPI is the ceiling (~0.8 MB/s); DDR3 bulk (3.1b) needed for real-time F1.
+    const size_t chunk = 32768;
     size_t off = 0;
     while (off < len) {
         size_t n = len - off;

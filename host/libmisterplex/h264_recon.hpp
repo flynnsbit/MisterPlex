@@ -420,6 +420,46 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
     ReconResult out;
     auto chain = parseAnnexBChain(annexb, n);
     if (!chain.sps.valid || !chain.pps.valid || !chain.slice.valid) {
+        // Distinguish CABAC High-profile (PMS default ladder) from corrupt NALs.
+        // parsePpsRbsp rejects entropy_coding_mode_flag=1 → pps.valid=false.
+        if (chain.sps.valid && !chain.pps.valid) {
+            // Re-probe PPS for CABAC flag without requiring valid CAVLC chain
+            size_t ii = 0;
+            while (ii + 3 < n) {
+                size_t sc = 0;
+                if (ii + 3 < n && annexb[ii] == 0 && annexb[ii + 1] == 0 && annexb[ii + 2] == 0 &&
+                    annexb[ii + 3] == 1)
+                    sc = 4;
+                else if (annexb[ii] == 0 && annexb[ii + 1] == 0 && annexb[ii + 2] == 1)
+                    sc = 3;
+                else {
+                    ++ii;
+                    continue;
+                }
+                size_t jj = ii + sc;
+                while (jj + 3 < n) {
+                    if (annexb[jj] == 0 && annexb[jj + 1] == 0 &&
+                        (annexb[jj + 2] == 1 ||
+                         (jj + 3 < n && annexb[jj + 2] == 0 && annexb[jj + 3] == 1)))
+                        break;
+                    ++jj;
+                }
+                if (jj + 3 >= n)
+                    jj = n;
+                if ((annexb[ii + sc] & 0x1f) == 8 && ii + sc + 1 < jj) {
+                    auto pr = misterplex::detail::removeEpb(annexb + ii + sc + 1, jj - (ii + sc + 1));
+                    misterplex::detail::BitReader pbr(pr.data(), pr.size());
+                    pbr.ue();
+                    pbr.ue();
+                    if (pbr.u(1) != 0) {
+                        out.fail_reason = "cabac";
+                        return out;
+                    }
+                    break;
+                }
+                ii = jj;
+            }
+        }
         out.fail_reason = "no chain";
         return out;
     }

@@ -466,6 +466,12 @@ void MediaPlayer::streamPump(int sfd) {
         auto rec = recon::reconISlice(au.data(), au.size());
         if (rec.mb_decoded <= 0 || rec.mb_decoded != rec.mb_total || rec.y.empty()) {
             ++reconFail;
+            // CABAC/High: host CAVLC recon cannot decode — keep FFmpeg RGB F1 fallback.
+            if (rec.fail_reason && std::strcmp(rec.fail_reason, "cabac") == 0) {
+                if (reconFail == 1)
+                    log("media: recon skip CABAC/High (FFmpeg RGB F1 fallback)");
+                return;
+            }
             if (ntype == 5 || (reconFail % 8) == 1) {
                 log("media: recon fail ntype=" + std::to_string(ntype) +
                     " mb=" + std::to_string(rec.mb_decoded) + "/" +

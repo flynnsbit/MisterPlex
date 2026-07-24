@@ -144,8 +144,11 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
   Unit: `test_cavlc_dc` FULL walk + recon + maeY=U=V=0 vs FFmpeg; ARM `-I host`
-  HW: recon RGB565 F1 push → `has_frame=1`; F3 residual probe green
-      `res_ok=1 res_tc=8 res_t1=3` (matches host first I_NxN residual)
+  **HW lab 192.168.1.183 (this fire):**
+    - Baseline smoke: `recon_ok=3 recon_fail=0 present=3` f1ms≈170
+    - High/CABAC `test.mp4`: fail_reason=`cabac` → FFmpeg RGB F1 continues (frames>0)
+    - Manual F1 push recon RGB565: `has_frame=1` (~172–200 ms / 153600 B ≈ 0.75–0.9 MB/s SPI)
+    - F3 residual: `res_ok=1 res_tc=8 res_t1=3` (test_f3_residual.sh green)
 
 Phase 3.3j (open — FPGA full I-slice residual / hybrid present):
   - FPGA: walk all MBs residual (not first-only); inv quant + IDCT + Intra pred
@@ -153,6 +156,11 @@ Phase 3.3j (open — FPGA full I-slice residual / hybrid present):
   - Host hybrid remains default product path until FPGA mae competitive
   - Optional deblock (not required for no-LF gold)
   - Live STREAM soak: cast real title → recon F1 + F3 stats in misterplexd.log
+
+Phase 3.1b (open — faster present path):
+  - SPI F1 ceiling ≈ **5 fps** @320×240 (170–300 ms/frame measured)
+  - Options: larger SPI chunks, uio mmap / f2sdram bulk DDR3, dual-buffer async
+  - Product until then: PRESENT=both (fb0 continuous) + sparse F1 recon keyframes
 
 ```
 
