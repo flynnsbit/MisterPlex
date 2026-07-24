@@ -2,7 +2,12 @@
 
 Lab checklist for MiSTerPlex present paths on **15 kHz CRTs** and **HDMI LCDs**. Status reflects the monorepo as of Phase 5 foundation — not a full golden visual suite.
 
-Related: [match-source-hz.md](match-source-hz.md), [architecture.md](architecture.md), [release.md](release.md).
+**Practical lab rows (modes / force_bars / NTSC·PAL / pass criteria, LAB vs CRT):**  
+→ **[crt-lcd-lab-checklist.md](crt-lcd-lab-checklist.md)** — P5-CRT **PARTIAL**  
+→ Tick matrix marks **LAB** vs **physical CRT** separately; **no CRT PASS without hardware**  
+→ Session sheet: [captures/menu/CRT_LCD_LAB.md](../captures/menu/CRT_LCD_LAB.md)
+
+Related: [match-source-hz.md](match-source-hz.md), [architecture.md](architecture.md), [release.md](release.md), [captures/menu/CHECKLIST.md](../captures/menu/CHECKLIST.md).
 
 ## Display strategies
 
@@ -129,7 +134,10 @@ Lab often runs MiSTer on **wlan0** when `eth0` has no carrier (cable unplugged).
 | Date | Output | Net | PRESENT | STREAM | Content FPS | Media | Result | Notes |
 |------|--------|-----|---------|--------|-------------|-------|--------|-------|
 | 2026-07-24 | HDMI 60 | wifi wlan0 | both | 1 | n/a | test.mp4 + lib/3 | PASS | 3×2 + 5×2 soak after SPI fix; eth N/C |
-| | HDMI 60 | eth | fb0 | 0 | n/a | local test.mp4 | | |
-| | HDMI 60 | wifi | both | 1 | 24 | library ep | | |
-| | CRT 15 kHz | | fb0 | 0 | n/a | library ep | | |
-| | CRT 15 kHz | | fpga | 1 | 24 | annex-B / weak | | |
+| 2026-07-24 | HDMI 60 | wifi | both | 1 | n/a | soak local/testsrc | PASS | post-RBF `6db3a4d8` SOAK ok=6 fail=0 (agent-D) |
+| 2026-07-24 | HDMI 60 | wifi | n/a (Plex OSD) | n/a | 12/24/30/60 | patterns + FBAR | PASS | menu matrix + `test_fbar_fast` on `6db3a4d8`; see lab checklist |
+| 2026-07-24 | HDMI 60 | n/a | n/a | n/a | n/a | cadence unit | PASS | CRT2: `./build/test_cadence` OK; docs tick matrix only |
+| | HDMI 60 | eth | fb0 | 0 | n/a | local test.mp4 | | eth N/C — deferred |
+| | HDMI 60 | wifi | both | 1 | 24 | library ep | | live 3:2 eyes-on optional |
+| | CRT 15 kHz | | fb0 | 0 | n/a | library ep | **PENDING** | **no physical CRT in lab — do not mark PASS** |
+| | CRT 15 kHz | | fpga | 1 | 24 | annex-B / weak | **PENDING** | **no physical CRT in lab — do not mark PASS** |
