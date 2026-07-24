@@ -173,10 +173,27 @@ Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
   **Still open (3.3k+):** full CAVLC levels/runs, inv quant, IDCT, Intra pred into
   frame_store; optional deblock; live STREAM soak with recon F1 + F3 stats.
 
-Phase 3.1b (open — faster present path):
-  - SPI F1 ceiling ≈ **5 fps** @320×240 (170–300 ms/frame measured)
-  - Options: larger SPI chunks, uio mmap / f2sdram bulk DDR3, dual-buffer async
-  - Product until then: PRESENT=both (fb0 continuous) + sparse F1 recon keyframes
+Phase 3.1b (research + measured — open for DDR bulk impl):
+  **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**
+    | chunk | wall time | effective |
+    |-------|-----------|-----------|
+    | 8 KiB | ~220 ms   | ~0.70 MB/s |
+    | 32 KiB| ~194 ms   | ~0.79 MB/s |  ← tree default
+    | 64–128 KiB | ~196–202 ms | ~0.76 MB/s |
+    Ceiling ≈ **4–5 unique fps** on F1 alone (not real-time 24/30).
+  **Why SPI is slow:** FIO_FILE_TX over HPS SPI with Main pause + per-chunk
+    CS sessions; not a streaming DMA. Larger chunks only drop protocol overhead.
+  **Product path until DDR:** PRESENT=both — continuous FFmpeg → fb0; sparse
+    host recon / FFmpeg RGB → F1 keyframes (STREAM=1).
+  **Next impl options (in order of leverage):**
+    1. **f2sdram / DDR3 bulk write** from HPS into FPGA-visible buffer, then
+       copy or present from DDR (sys has `f2sdram_safe_terminator` + `ddr_svc`;
+       Plex.sv currently ties DDRAM_* to 0). Target: ≥30 fps @320×240, ideally
+       480p ladder later.
+    2. Async double-buffer SPI (pipeline pack + TX) — small gain only.
+    3. Lower res / delta tiles — product compromise, not preferred.
+  **Blocking:** needs RBF DDRAM wiring + ARM mmap/ioctl path; must not break
+    Phase 2 fb0 cast. Measure fps after each path with push_frame / STREAM logs.
 
 ```
 
