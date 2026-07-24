@@ -20,7 +20,8 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex
 /media/fat/misterplex/bin/misterplexd
 /media/fat/misterplex/misterplex.conf          # copy from example; edit keys
 /media/fat/linux/_user-startup.sh             # start daemon on boot
-/media/fat/_Arcade/Plex.rbf                   # or games/Plex/Plex.rbf
+/media/fat/_Utility/Plex.rbf                  # lab canonical (deploy_plex_core.sh / HW tests)
+# alternate OSD paths: /media/fat/_Arcade/Plex.rbf or games/Plex/Plex.rbf
 ```
 
 ### From a release tarball
@@ -31,7 +32,7 @@ tar -tzf misterplex-*.tar.gz
 scp -r stage-misterplex/bin root@MiSTer:/media/fat/misterplex/
 scp stage-misterplex/conf/misterplex.conf.example root@MiSTer:/media/fat/misterplex/misterplex.conf
 # Edit conf on device, then:
-scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Arcade/Plex.rbf   # if present
+scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf   # if present
 ```
 
 ### From this monorepo (recommended for lab)
@@ -102,7 +103,8 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 | Quartus output | `fpga/Plex_MiSTer/output_files/Plex.rbf` |
 | mister-dev out | `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` |
 | Package | `stage-misterplex/cores/Plex.rbf` (if any of the above existed at pack time) |
-| MiSTer SD | `/media/fat/_Arcade/Plex.rbf` or `/media/fat/games/Plex/Plex.rbf` |
+| MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
+| MiSTer SD (alt) | `/media/fat/_Arcade/Plex.rbf` or `/media/fat/games/Plex/Plex.rbf` |
 
 Phase 2 **fb0 / MrAudio** works with MiSTer’s normal video path (ascal/fb) even without Plex core loaded. Phase 3 **FPGA present / STREAM** requires `Plex.rbf` and OSD **Video source = Frame store** where applicable.
 

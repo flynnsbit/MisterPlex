@@ -1,5 +1,9 @@
 // SMPTE-style color bars + optional moving block driven by content frame index.
 // Generates progressive 320x240-class timing (NTSC 15 kHz family when not scandoubled).
+//
+// Horizontal timing matches MiSTer Template mycore.v exactly so the scaler /
+// analog VGA path locks HSync correctly:
+//   hc 0..637, HBlank @529, HSync 544..589, ~59.8 Hz with 20 MHz / ce_pix.
 
 module colorbars (
 	input  wire        clk,
@@ -22,27 +26,17 @@ module colorbars (
 	output reg  [7:0]  b
 );
 
-	// Timing: match MiSTer Template / standard 320x240-class at ~60 Hz (NTSC)
-	// and ~50 Hz (PAL) with the 20 MHz sys PLL.
-	//
-	// Previous H_TOTAL=426 yielded ~90 Hz → LCD "out of range" + vertical roll
-	// (no vertical hold). Template uses ~638 px/line for ~59.8 Hz:
-	//   half-rate ce_pix: 10 MHz / (638 * 262) ≈ 59.8 Hz progressive
-	//   scandouble:       20 MHz / (638 * 524) ≈ 59.8 Hz
-	localparam H_ACTIVE = 10'd320;
-	localparam H_TOTAL  = 10'd638; // 0..637 like Template mycore
-	localparam H_FP     = 10'd24;
-	localparam H_SYNC   = 10'd64;
-	// hblank starts after active
-	// PAL vs NTSC vtotal (Template-aligned)
-	wire [9:0] v_active = scandouble ? 10'd480 : 10'd240;
-	wire [9:0] v_total  = scandouble ? (pal ? 10'd624 : 10'd524) : (pal ? 10'd312 : 10'd262);
-	wire [9:0] v_sync_s = scandouble ? (pal ? 10'd490 : 10'd490) : (pal ? 10'd256 : 10'd245);
-	wire [9:0] v_sync_e = scandouble ? (pal ? 10'd496 : 10'd496) : (pal ? 10'd259 : 10'd248);
+	// Content is 320×240; line timing is Template-wide (active DE through hc 528).
+	localparam H_CONTENT = 10'd320;
+	localparam H_LAST    = 10'd637; // wrap after this → 638 clocks/line
+	localparam H_BLANK_S = 10'd529; // Template: start HBlank
+	localparam H_SYNC_S  = 10'd544;
+	localparam H_SYNC_E  = 10'd590;
 
 	reg [9:0] hc;
 	reg [9:0] vc;
 
+	// Pixel enable + counters (Template mycore style)
 	always @(posedge clk) begin
 		if (scandouble)
 			ce_pix <= 1'b1;
@@ -52,48 +46,81 @@ module colorbars (
 		frame_start <= 1'b0;
 
 		if (reset) begin
-			hc <= 0;
-			vc <= 0;
-			HBlank <= 1;
-			VBlank <= 1;
-			HSync  <= 0;
-			VSync  <= 0;
+			hc     <= 0;
+			vc     <= 0;
 			ce_pix <= 0;
 		end else if (ce_pix) begin
-			if (hc == H_TOTAL - 1) begin
+			if (hc == H_LAST) begin
 				hc <= 0;
-				if (vc == v_total - 1)
+				if (vc == (pal ? (scandouble ? 10'd623 : 10'd311)
+				               : (scandouble ? 10'd523 : 10'd261))) begin
 					vc <= 0;
-				else
+				end else begin
 					vc <= vc + 1'd1;
+				end
 			end else begin
 				hc <= hc + 1'd1;
 			end
 
-			// HBlank / HSync
-			HBlank <= (hc >= H_ACTIVE);
-			if (hc == H_ACTIVE + H_FP)
-				HSync <= 1'b1;
-			if (hc == H_ACTIVE + H_FP + H_SYNC)
-				HSync <= 1'b0;
-
-			// VBlank / VSync
-			VBlank <= (vc >= v_active);
-			if (vc == v_sync_s)
-				VSync <= 1'b1;
-			if (vc == v_sync_e)
-				VSync <= 1'b0;
-
-			// Display tick: start of first active line of a new frame
-			if (hc == 0 && vc == 0)
+			// Display tick at start of first active line
+			if (hc == H_LAST &&
+			    vc == (pal ? (scandouble ? 10'd623 : 10'd311)
+			               : (scandouble ? 10'd523 : 10'd261)))
 				frame_start <= 1'b1;
 		end
 	end
 
-	// Color bars: 8 vertical stripes
+	// H/V blank & sync — same edges as Template mycore.v (every clk, sample hc)
+	always @(posedge clk) begin
+		if (reset) begin
+			HBlank <= 1'b1;
+			HSync  <= 1'b0;
+			VBlank <= 1'b1;
+			VSync  <= 1'b0;
+		end else begin
+			if (hc == H_BLANK_S)
+				HBlank <= 1'b1;
+			else if (hc == 10'd0)
+				HBlank <= 1'b0;
+
+			if (hc == H_SYNC_S) begin
+				HSync <= 1'b1;
+
+				if (pal) begin
+					if (vc == (scandouble ? 10'd609 : 10'd304))
+						VSync <= 1'b1;
+					else if (vc == (scandouble ? 10'd617 : 10'd308))
+						VSync <= 1'b0;
+
+					if (vc == (scandouble ? 10'd601 : 10'd300))
+						VBlank <= 1'b1;
+					else if (vc == 10'd0)
+						VBlank <= 1'b0;
+				end else begin
+					if (vc == (scandouble ? 10'd490 : 10'd245))
+						VSync <= 1'b1;
+					else if (vc == (scandouble ? 10'd496 : 10'd248))
+						VSync <= 1'b0;
+
+					if (vc == (scandouble ? 10'd480 : 10'd240))
+						VBlank <= 1'b1;
+					else if (vc == 10'd0)
+						VBlank <= 1'b0;
+				end
+			end
+
+			if (hc == H_SYNC_E)
+				HSync <= 1'b0;
+		end
+	end
+
+	// Color bars over the 320-wide content window (rest of DE is black)
 	wire [9:0] px = hc;
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-	wire [2:0] bar = px[8:6]; // 320/8 ≈ 40 px per bar using high bits of 0..319
+	wire [2:0] bar = px[8:6]; // ~40 px per bar in 0..319
+	wire in_content = (hc < H_CONTENT) &&
+	                  (py < 10'd240) &&
+	                  ~HBlank && ~VBlank;
 
 	reg [7:0] br, bg, bb;
 	always @(*) begin
@@ -120,7 +147,7 @@ module colorbars (
 
 	always @(posedge clk) begin
 		if (ce_pix) begin
-			if (HBlank || VBlank) begin
+			if (!in_content) begin
 				r <= 0; g <= 0; b <= 0;
 			end else begin
 				case (pattern)

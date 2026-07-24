@@ -82,16 +82,18 @@ module present_core (
 		.b(bb)
 	);
 
-	// Reconstruct hc/vc from colorbars timing for frame_store reads.
+	// Reconstruct hc/vc from colorbars (Template) timing for frame_store reads.
+	// Must match colorbars: hc 0..637 (638 clocks/line), not the old 426-line total.
 	reg [9:0] hc, vc;
 	always @(posedge clk) begin
 		if (reset) begin
 			hc <= 0;
 			vc <= 0;
 		end else if (ce_pix_i) begin
-			if (hc == 10'd425) begin
+			if (hc == 10'd637) begin
 				hc <= 0;
-				if (vc >= (scandouble ? 10'd523 : 10'd261))
+				if (vc >= (pal ? (scandouble ? 10'd623 : 10'd311)
+				               : (scandouble ? 10'd523 : 10'd261)))
 					vc <= 0;
 				else
 					vc <= vc + 1'd1;
@@ -100,6 +102,7 @@ module present_core (
 		end
 	end
 
+	// 320×240 content window inside Template-wide active (HBlank @ 529)
 	wire active = (hc < 10'd320) && (vc < (scandouble ? 10'd480 : 10'd240));
 	wire [9:0] store_y = scandouble ? {1'b0, vc[9:1]} : vc;
 	wire [9:0] store_x = hc;

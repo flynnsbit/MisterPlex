@@ -98,7 +98,7 @@ Install on MiSTer SD
   /media/fat/misterplex/bin/misterplexd
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
-  /media/fat/_Arcade/Plex.rbf            # optional; required for FPGA present / STREAM
+  /media/fat/_Utility/Plex.rbf           # lab canonical; required for FPGA present / STREAM
 
 Plex.rbf locations (build tree / device)
 ----------------------------------------
@@ -107,7 +107,9 @@ Plex.rbf locations (build tree / device)
     fpga/Plex_MiSTer/output_files/Plex.rbf      # Quartus primary output
     misterfpga-dev/out/Plex_MiSTer/Plex.rbf    # when built via mister-dev
 
-  On MiSTer (typical):
+  On MiSTer (lab canonical):
+    /media/fat/_Utility/Plex.rbf
+  Alternates (OSD folders):
     /media/fat/_Arcade/Plex.rbf   or
     /media/fat/games/Plex/Plex.rbf
   Load core from OSD; misterplexd is independent of which core is running
