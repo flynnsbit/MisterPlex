@@ -108,8 +108,14 @@ Phase 3.3e (done this fire — slice QP/deblock + first mb_type probe):
   HW: `tests/hw/test_f3_mb0.sh` — mb0=7 qp=14 sps+pps+has_frame
   Residual CAVLC/IDCT still next (control plane to first MB ready)
 
-Phase 3.3f (next):
-  Baseline I-slice residual: CAVLC → inv quant → IDCT → intra recon → YUV→RGB565
+Phase 3.3f (done this fire — first-MB CAVLC residual token probe):
+  Host: `h264_cavlc.hpp` residual_block + probeFirstI16Dc (tc=2 t1=2 golden)
+  FPGA: after I_16x16 mb_type + mb_qp_delta, CAVLC nC=0 coeff_token + T1 signs
+  Status: res_ok / res_tc / res_t1; HW `test_f3_residual.sh` green
+  Full slice residual + inv quant/IDCT/recon still next
+
+Phase 3.3g (next):
+  Full I-slice residual walk (I_NxN+I_16x16) → inv quant → IDCT → recon → YUV→RGB565
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

@@ -16,7 +16,7 @@ help:
 
 test: unit
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
@@ -24,8 +24,15 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_f
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py /tmp/plex_real_baseline.h264
 	$(ROOT)/build/test_sps_parse /tmp/plex_real_baseline.h264
 	$(ROOT)/build/test_slice_hdr /tmp/plex_real_baseline.h264
+	$(ROOT)/build/test_cavlc_dc /tmp/plex_real_baseline.h264
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
+
+$(ROOT)/build/test_cavlc_dc: $(ROOT)/tests/unit/test_cavlc_dc.cpp \
+		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
+		$(ROOT)/host/libmisterplex/h264_sps.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cavlc_dc.cpp
 
 $(ROOT)/build/test_sps_parse: $(ROOT)/tests/unit/test_sps_parse.cpp $(ROOT)/host/libmisterplex/h264_sps.hpp
 	@mkdir -p $(ROOT)/build

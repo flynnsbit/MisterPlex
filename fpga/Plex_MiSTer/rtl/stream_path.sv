@@ -40,6 +40,9 @@ module stream_path (
 	output wire [7:0]  first_mb_type,
 	output wire        has_mb_type,
 	output wire [5:0]  slice_qp,
+	output wire [4:0]  residual_tc,
+	output wire [1:0]  residual_t1,
+	output wire        residual_ok,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -128,11 +131,13 @@ module stream_path (
 		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
 	);
 
-	wire sl_busy, sl_is_i, sl_has_mbt;
+	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
 	wire [15:0] sl_first, sl_fn, sl_idr_pic;
 	wire [7:0] sl_type, sl_pps, sl_mbt;
 	wire signed [7:0] sl_qpd;
 	wire [5:0] sl_qp;
+	wire [4:0] sl_rtc;
+	wire [1:0] sl_rt1;
 
 	slice_hdr_parser slp (
 		.clk(clk), .reset(reset | flush),
@@ -151,6 +156,7 @@ module stream_path (
 		.is_i_slice(sl_is_i),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
+		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.busy(sl_busy)
 	);
 
@@ -159,6 +165,9 @@ module stream_path (
 	assign first_mb_type = sl_mbt;
 	assign has_mb_type   = sl_has_mbt;
 	assign slice_qp      = sl_qp;
+	assign residual_tc   = sl_rtc;
+	assign residual_t1   = sl_rt1;
+	assign residual_ok   = sl_res_ok;
 
 	decode_stub #(
 		.WIDTH(320),

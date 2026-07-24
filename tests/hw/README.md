@@ -70,3 +70,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 1. Deploy RBF with extended slice_hdr (qp/deblock/mb0).
 2. `./tests/hw/test_f3_mb0.sh` — `mb0=7` (I_16x16) `qp=14` on real Baseline IDR.
 3. Unit: `test_slice_hdr` asserts mb0+qp.
+
+## Phase 3.3f first I16 DC residual CAVLC
+
+1. Deploy RBF with residual token probe in slice_hdr_parser.
+2. `./tests/hw/test_f3_residual.sh` — `res_ok=1 res_tc=2 res_t1=2` on real Baseline IDR.
+3. Unit: `test_cavlc_dc` (host CAVLC golden).

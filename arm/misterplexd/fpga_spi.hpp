@@ -61,6 +61,9 @@ public:
         uint8_t slice_type = 0;
         uint8_t first_mb_type = 0;
         uint8_t slice_qp = 0;
+        uint8_t residual_tc = 0;
+        uint8_t residual_t1 = 0;
+        bool residual_ok = false;
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
         uint16_t sps_height = 0;

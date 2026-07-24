@@ -386,9 +386,14 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.slice_type = static_cast<uint8_t>((w3 >> 8) & 0xFF);
     s.stub_frames = s.slice_type;
     s.wr_count_lo = w3;
-    // [47:32] = {slice_qp[5:0] in high, fifo_lvl low}
-    s.slice_qp = static_cast<uint8_t>((w2 >> 8) & 0x3F);
-    s.stream_fifo_level = static_cast<uint16_t>(w2 & 0xFF);
+    // [47:40] {residual_ok, residual_tc[4:0], residual_t1[1:0]}
+    // [39:32] slice_qp
+    const uint8_t hi = static_cast<uint8_t>((w2 >> 8) & 0xFF);
+    s.residual_ok = (hi & 0x80) != 0;
+    s.residual_tc = static_cast<uint8_t>((hi >> 2) & 0x1F);
+    s.residual_t1 = static_cast<uint8_t>(hi & 0x3);
+    s.slice_qp = static_cast<uint8_t>(w2 & 0x3F);
+    s.stream_fifo_level = 0;
     // [95:64] = {sps_width, sps_height}
     s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
     s.sps_width = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
