@@ -433,10 +433,16 @@ bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
         timeMs_ = 0;
     if (durationMs_ > 0 && timeMs_ > durationMs_)
         timeMs_ = durationMs_;
+    // Keep plant hold across resolve: demux may still report playing@0 after bind.
+    // Only playing/paused near-target in setState releases scrubTargetMs_.
+    if (scrubTargetMs_ >= 0) {
+        if (durationMs_ > 0 && scrubTargetMs_ > durationMs_)
+            scrubTargetMs_ = durationMs_;
+        // Thumb follows clamped plant (continue-watching past shorter stale duration).
+        timeMs_ = scrubTargetMs_;
+    }
     wantPlay_ = true;
     prePlayHold_ = false;
-    // Resolve landed — release scrub hold so bound time (possibly clamped) is live.
-    scrubTargetMs_ = -1;
     return true;
 }
 
@@ -890,11 +896,17 @@ void Companion::httpLoop() {
                 // (Web sometimes re-sends the current scrubber thumb position).
                 const bool moved = present && (ms != curT);
                 if (active && moved) {
+                    // Atomic plant: scrub target + time under one lock so demux
+                    // progress cannot interleave a stale pin between assign/setState.
                     {
                         std::lock_guard<std::mutex> lock(mu_);
                         scrubTargetMs_ = ms;
+                        timeMs_ = ms;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
                     }
-                    setState("buffering", ms, d);
                 }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 if (active && moved && onSeek_)
@@ -919,26 +931,28 @@ void Companion::httpLoop() {
                     step = -step;
                 int64_t t = 0, d = 0;
                 bool active = false;
+                int64_t target = 0;
+                int64_t applied = 0;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     t = timeMs_;
                     d = durationMs_;
                     active = wantPlay_;
-                }
-                int64_t target = t + step;
-                if (target < 0)
-                    target = 0;
-                if (d > 0 && target > d)
-                    target = d;
-                // Applied delta may be shorter than requested near 0 / duration edges.
-                const int64_t applied = target - t;
-                // applied==0 at bounds: ACK only — no buffering thrash / player restart.
-                if (active && applied != 0) {
-                    {
-                        std::lock_guard<std::mutex> lock(mu_);
+                    target = t + step;
+                    if (target < 0)
+                        target = 0;
+                    if (d > 0 && target > d)
+                        target = d;
+                    applied = target - t;
+                    // applied==0 at bounds: ACK only — no buffering thrash / player restart.
+                    if (active && applied != 0) {
                         scrubTargetMs_ = target;
+                        timeMs_ = target;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
                     }
-                    setState("buffering", target, d);
                 }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 // Prefer absolute seek when available so player lands on clamped target
@@ -985,11 +999,13 @@ void Companion::httpLoop() {
                         onSeek_(0);
                     // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
                     if (t != 0) {
-                        {
-                            std::lock_guard<std::mutex> lock(mu_);
-                            scrubTargetMs_ = 0;
-                        }
-                        setState("buffering", 0, d);
+                        std::lock_guard<std::mutex> lock(mu_);
+                        scrubTargetMs_ = 0;
+                        timeMs_ = 0;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
                     }
                 }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
