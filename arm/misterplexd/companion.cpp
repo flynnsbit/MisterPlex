@@ -323,23 +323,80 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
+    // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
+    // time so a plant seek + step is not clobbered by demux short-read teardown.
+    // Natural EOF with content uses "ended" and may update time to duration.
+    if (state == "stopped" && wantPlay_) {
+        state_ = state;
+        if (durationMs > 0)
+            durationMs_ = durationMs;
+        return;
+    }
+    // Scrubber bounds on incoming time before plant-hold compare.
+    if (timeMs < 0)
+        timeMs = 0;
+    if (durationMs > 0 && timeMs > durationMs)
+        timeMs = durationMs;
+    else if (durationMs_ > 0 && timeMs > durationMs_)
+        timeMs = durationMs_;
+
+    // Async seek/step: demux often reports playing@0 (or old position) before the
+    // restarted pipeline reaches the planted offset. Keep scrubber thumb at the
+    // plant until progress is near the target (or hold is cleared by a new plant).
+    constexpr int64_t kScrubCatchupMs = 2000;
+    if (wantPlay_ && scrubTargetMs_ >= 0 &&
+        (state == "playing" || state == "paused" || state == "buffering")) {
+        const int64_t delta =
+            timeMs > scrubTargetMs_ ? timeMs - scrubTargetMs_ : scrubTargetMs_ - timeMs;
+        if (delta > kScrubCatchupMs) {
+            if (durationMs > 0)
+                durationMs_ = durationMs;
+            // Reflect live transport state but do not rewind/fast-forward the thumb.
+            if (state == "playing" || state == "paused")
+                state_ = state;
+            if (state == "playing" || state == "paused" || state == "buffering")
+                wantPlay_ = true;
+            return;
+        }
+        scrubTargetMs_ = -1; // demux caught up
+    }
+    if (state == "ended")
+        scrubTargetMs_ = -1;
+
     state_ = state;
-    timeMs_ = timeMs;
     if (durationMs > 0)
         durationMs_ = durationMs;
+    // Scrubber bounds: never report negative time or time past known duration.
+    if (durationMs_ > 0 && timeMs > durationMs_)
+        timeMs = durationMs_;
+    timeMs_ = timeMs;
     // Keep wantPlay_ latched after playMedia until clearMedia()/stop.
     // Player progress "stopped" (EOF) must not drop scrubber bind fields.
     if (state == "playing" || state == "paused" || state == "buffering")
         wantPlay_ = true;
 }
 
-void Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
+bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     std::lock_guard<std::mutex> lock(mu_);
+    // Drop late async playMedia (resolve/network) that finishes after stop/clearMedia
+    // so scrubber cannot re-arm fullScreenVideo without a fresh cast command.
+    if (!wantPlay_) {
+        log("bindMedia ignored — session stopped (stale playMedia)");
+        return false;
+    }
+    // Newer playMedia/stagePlay already planted a different key — stale resolve.
+    if (!pendingKey_.empty() && !req.key.empty() && pendingKey_ != req.key) {
+        log("bindMedia ignored — key mismatch (stale) pending=" + pendingKey_ + " got=" +
+            req.key);
+        return false;
+    }
     pendingKey_ = req.key;
     pendingContainerKey_ = req.containerKey;
     pendingPlayQueueId_ = req.playQueueId;
     pendingPlayQueueItemId_ = req.playQueueItemId;
     pendingPlayQueueVersion_ = req.playQueueVersion.empty() ? "1" : req.playQueueVersion;
+    if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
+        pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
     pendingRatingKey_ = req.ratingKey;
     serverMachineId_ = req.serverMachineId;
     serverProto_ = req.protocol.empty() ? "http" : req.protocol;
@@ -347,8 +404,46 @@ void Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     serverPort_ = req.port.empty() ? "32400" : req.port;
     // Always take resolve duration (0 = unknown / local file without probe)
     durationMs_ = durationMs > 0 ? durationMs : 0;
+    // If playMedia planted a huge offset before duration was known, clamp now.
+    if (timeMs_ < 0)
+        timeMs_ = 0;
+    if (durationMs_ > 0 && timeMs_ > durationMs_)
+        timeMs_ = durationMs_;
     wantPlay_ = true;
     prePlayHold_ = false;
+    // Resolve landed — release scrub hold so bound time (possibly clamped) is live.
+    scrubTargetMs_ = -1;
+    return true;
+}
+
+void Companion::stagePlay(const PlayRequest& req) {
+    // Plant scrubber identity for skipNext/auto-next before async resolve so
+    // bindMedia key-match accepts this title and Web sees the advance early.
+    std::lock_guard<std::mutex> lock(mu_);
+    wantPlay_ = true;
+    prePlayHold_ = false;
+    castBound_ = true;
+    state_ = "buffering";
+    durationMs_ = 0;
+    timeMs_ = req.offsetMs < 0 ? 0 : req.offsetMs;
+    scrubTargetMs_ = timeMs_; // hold until demux/bind catches up
+    pendingKey_ = req.key;
+    pendingContainerKey_ = req.containerKey;
+    pendingPlayQueueId_ = req.playQueueId;
+    pendingPlayQueueItemId_ = req.playQueueItemId;
+    pendingPlayQueueVersion_ = req.playQueueVersion.empty() ? "1" : req.playQueueVersion;
+    if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
+        pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
+    if (!req.ratingKey.empty())
+        pendingRatingKey_ = req.ratingKey;
+    if (!req.address.empty())
+        serverHost_ = req.address;
+    if (!req.protocol.empty())
+        serverProto_ = req.protocol;
+    if (!req.port.empty())
+        serverPort_ = req.port;
+    if (!req.serverMachineId.empty())
+        serverMachineId_ = req.serverMachineId;
 }
 
 void Companion::clearMedia() {
@@ -365,6 +460,7 @@ void Companion::clearMedia() {
     state_ = "stopped";
     timeMs_ = 0;
     durationMs_ = 0;
+    scrubTargetMs_ = -1;
     // Sticky hold: after stop while cast-bound, Web often reopens Resume without a
     // fresh mirror. Pure stopped polls idle the dialog — keep buffering@navigation.
     if (castBound_)
@@ -632,13 +728,29 @@ void Companion::httpLoop() {
                     prePlayHold_ = false;
                     castBound_ = true;
                     state_ = "buffering";
-                    timeMs_ = pr.offsetMs;
+                    // Never plant negative scrubber time (Web/browse edge).
+                    int64_t off = pr.offsetMs < 0 ? 0 : pr.offsetMs;
+                    // Drop prior title duration on every fresh cast. A shorter leftover
+                    // duration (e.g. testsrc 120s) must not clamp a legitimate continue-
+                    // watching offset on a longer next title. bindMedia re-supplies
+                    // duration after resolve and clamps timeMs_ then.
+                    durationMs_ = 0;
+                    timeMs_ = off;
+                    scrubTargetMs_ = off; // hold until bind/demux
                     pendingKey_ = pr.key;
                     pendingContainerKey_ = pr.containerKey;
                     pendingPlayQueueId_ = pr.playQueueId;
                     pendingPlayQueueItemId_ = pr.playQueueItemId;
                     pendingPlayQueueVersion_ =
                         pr.playQueueVersion.empty() ? "1" : pr.playQueueVersion;
+                    // Synthetic containerKey when only playQueueID was supplied so
+                    // auto-next / skipNext lastPlay.containerKey paths stay queue-shaped.
+                    if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
+                        pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
+                    // Mirror onto PlayRequest so async onPlay_/lastPlay see the queue bind
+                    // (pending* alone is display-only until bindMedia).
+                    if (pr.containerKey.empty() && !pr.playQueueId.empty())
+                        pr.containerKey = "/playQueues/" + pr.playQueueId + "?own=1";
                     if (!pr.ratingKey.empty())
                         pendingRatingKey_ = pr.ratingKey;
                     if (!pr.address.empty())
@@ -651,9 +763,24 @@ void Companion::httpLoop() {
                         serverMachineId_ = pr.serverMachineId;
                 }
                 auto cid = queryParam(req, "commandID");
+                int64_t ackOff = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    ackOff = timeMs_;
+                }
                 sendHttp(c, 200, "application/xml", timelineXml(cid));
                 close(c);
-                log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(pr.offsetMs));
+                log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
+                // Invalidate in-flight resolve *before* spawning onPlay_ so a
+                // concurrent doPlay cannot bind/setState over this plant while
+                // the new play thread is still scheduling (P4-SCRUB cast race).
+                if (onPlayQueued_) {
+                    try {
+                        onPlayQueued_();
+                    } catch (...) {
+                        log("playQueued handler exception");
+                    }
+                }
                 if (onPlay_) {
                     std::thread([this, pr]() {
                         try {
@@ -668,28 +795,37 @@ void Companion::httpLoop() {
 
             if (isPause) {
                 int64_t t = 0, d = 0;
+                bool active = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     t = timeMs_;
                     d = durationMs_;
+                    active = wantPlay_;
                 }
-                setState("paused", t, d);
+                // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
+                // and fullScreenVideo without a media key (scrubber ghost after stop).
+                if (active)
+                    setState("paused", t, d);
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onPause_)
+                if (active && onPause_)
                     onPause_();
                 close(c);
                 continue;
             }
             if (isResumePlay) {
                 int64_t t = 0, d = 0;
+                bool active = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     t = timeMs_;
                     d = durationMs_;
+                    active = wantPlay_;
                 }
-                setState("playing", t, d);
+                // Idle: ACK only — do not re-arm wantPlay via setState("playing").
+                if (active)
+                    setState("playing", t, d);
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onResume_)
+                if (active && onResume_)
                     onResume_();
                 close(c);
                 continue;
@@ -709,72 +845,130 @@ void Companion::httpLoop() {
             if (isSeek) {
                 bool present = false;
                 int64_t ms = parseOffsetMs(req, &present);
+                if (ms < 0)
+                    ms = 0;
                 int64_t d = 0;
+                int64_t curT = 0;
+                bool active = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     d = durationMs_;
+                    curT = timeMs_;
+                    active = wantPlay_;
                     // Clamp seek into known duration so scrubber cannot overshoot.
                     if (d > 0 && ms > d)
                         ms = d;
                 }
-                setState("buffering", ms, d);
+                // No offset=/viewOffset=/time=: ACK only (do not jump to 0 unintentionally).
+                // Idle after stop: ACK only — do not re-arm player via onSeek
+                // (stop leaves last URL; seekMs would restart without scrubber bind).
+                // Same position after clamp: ACK only — avoid demux restart thrash
+                // (Web sometimes re-sends the current scrubber thumb position).
+                const bool moved = present && (ms != curT);
+                if (active && moved) {
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        scrubTargetMs_ = ms;
+                    }
+                    setState("buffering", ms, d);
+                }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onSeek_)
+                if (active && moved && onSeek_)
                     onSeek_(ms);
                 close(c);
                 continue;
             }
             if (isStepForward || isStepBack) {
-                // Default ±10s; optional offset= overrides absolute (rare) or type= for ms step.
+                // Default ±10s; optional offset= is relative step size in ms (cap 120s).
+                // offset=0 → keep default (not a zero-step no-op). Negative sizes use abs.
                 int64_t step = 10000;
                 auto off = queryParam(req, "offset");
                 if (!off.empty()) {
-                    // Some clients send step size in offset; treat small values as relative ms.
                     int64_t v = std::atoll(off.c_str());
-                    if (v > 0 && v < 120000)
-                        step = v;
+                    if (v < 0)
+                        v = -v;
+                    // Non-zero only; clamp huge values (Web may send large step sizes).
+                    if (v > 0)
+                        step = (v > 120000) ? 120000 : v;
                 }
                 if (isStepBack)
                     step = -step;
                 int64_t t = 0, d = 0;
+                bool active = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     t = timeMs_;
                     d = durationMs_;
+                    active = wantPlay_;
                 }
                 int64_t target = t + step;
                 if (target < 0)
                     target = 0;
                 if (d > 0 && target > d)
                     target = d;
-                setState("buffering", target, d);
+                // Applied delta may be shorter than requested near 0 / duration edges.
+                const int64_t applied = target - t;
+                // applied==0 at bounds: ACK only — no buffering thrash / player restart.
+                if (active && applied != 0) {
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        scrubTargetMs_ = target;
+                    }
+                    setState("buffering", target, d);
+                }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onStep_)
-                    onStep_(step);
-                else if (onSeek_)
-                    onSeek_(target);
+                // Prefer absolute seek when available so player lands on clamped target
+                // even if positionMs lags companion timeMs_ (progress race).
+                if (active && applied != 0) {
+                    if (onSeek_)
+                        onSeek_(target);
+                    else if (onStep_)
+                        onStep_(applied);
+                }
                 close(c);
                 continue;
             }
             if (isSkipNext) {
+                bool active = false;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    active = wantPlay_;
+                }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onSkipNext_)
+                // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
+                if (active && onSkipNext_)
                     onSkipNext_();
                 close(c);
                 continue;
             }
             if (isSkipPrevious) {
                 int64_t d = 0;
+                int64_t t = 0;
+                bool active = false;
                 {
                     std::lock_guard<std::mutex> lock(mu_);
                     d = durationMs_;
+                    t = timeMs_;
+                    active = wantPlay_;
                 }
-                setState("buffering", 0, d);
+                // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
+                // timeMs_ so main can Plex-style branch on scrub position
+                // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
+                if (active) {
+                    if (onSkipPrevious_)
+                        onSkipPrevious_();
+                    else if (onSeek_ && t != 0)
+                        onSeek_(0);
+                    // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
+                    if (t != 0) {
+                        {
+                            std::lock_guard<std::mutex> lock(mu_);
+                            scrubTargetMs_ = 0;
+                        }
+                        setState("buffering", 0, d);
+                    }
+                }
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (onSkipPrevious_)
-                    onSkipPrevious_();
-                else if (onSeek_)
-                    onSeek_(0);
                 close(c);
                 continue;
             }

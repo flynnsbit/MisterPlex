@@ -250,6 +250,9 @@ int main(int argc, char** argv) {
     std::string lastBase = defaultPms;
     std::string lastToken = confToken;
     std::atomic<bool> autoNextInFlight{false};
+    // Monotonic play generation: supersede in-flight async resolve when a newer
+    // playMedia/auto-next arrives (P4-SCRUB out-of-order bind race).
+    std::atomic<uint64_t> playGen{0};
 
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
                                      const std::string& preferredBase, int64_t off)
@@ -289,8 +292,15 @@ int main(int argc, char** argv) {
     };
 
     auto doPlay = [&](const misterplex::PlayRequest& req) {
+        const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off);
+
+        if (gen != playGen.load()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
+                         req.key.c_str());
+            return;
+        }
 
         if (!resolved.ok) {
             std::fprintf(stderr, "misterplexd: resolve failed: %s — test pattern\n",
@@ -362,26 +372,78 @@ int main(int argc, char** argv) {
         if (bound.serverMachineId.empty())
             bound.serverMachineId = "plex-server";
 
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before bind key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        if (!comp.bindMedia(bound, resolved.durationMs)) {
+            // Stop won the race against async playMedia resolve — do not restart player.
+            // Do not write lastPlay here: stop may have cleared it; a failed bind must
+            // not resurrect the prior/new queue for a post-stop skipNext race.
+            std::fprintf(stderr, "misterplexd: PLAY aborted (stopped during resolve) key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Honor scrubber seeks/steps that landed while resolve was in flight.
+        // playMedia seeded timeMs_=req.offsetMs; if the user moved the timeline,
+        // start there instead of rewinding to the original cast offset.
+        int64_t startAt = off;
+        const int64_t scrubT = comp.timelineTimeMs();
+        if (scrubT != req.offsetMs)
+            startAt = scrubT;
+        if (startAt < 0)
+            startAt = 0;
+        if (resolved.durationMs > 0 && startAt > resolved.durationMs)
+            startAt = resolved.durationMs;
+
+        // Stop / newer playMedia may still race after bindMedia: re-check before
+        // setState/player.play so we never restart demux on a stopped session.
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY aborted after bind key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Ensure timeline immediately reports duration + time for scrubber (seekRange).
+        comp.setState("buffering", startAt, resolved.durationMs);
+
+        if (gen != playGen.load() || !comp.wantPlay()) {
+            std::fprintf(stderr, "misterplexd: PLAY superseded before player.play key=%s\n",
+                         bound.key.c_str());
+            return;
+        }
+
+        // Commit session context only when we are about to start demux. Writing
+        // lastPlay earlier can resurrect a queue bind if stop cleared it mid-flight.
+        // setPlay already planted a provisional lastPlay for skip-during-resolve.
+        // Final wantPlay/playGen gate under the same critical section as lastPlay
+        // so stop cannot clear then get a zombie lastPlay + player.play.
         {
             std::lock_guard<std::mutex> lock(sessionMu);
+            if (gen != playGen.load() || !comp.wantPlay()) {
+                std::fprintf(stderr, "misterplexd: PLAY superseded before demux key=%s\n",
+                             bound.key.c_str());
+                return;
+            }
             lastPlay = bound;
             lastBase = base;
             lastToken = bound.token.empty() ? confToken : bound.token;
         }
 
-        comp.bindMedia(bound, resolved.durationMs);
-        // Ensure timeline immediately reports duration + time for scrubber (seekRange).
-        comp.setState("buffering", off, resolved.durationMs);
-
         std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
-                     static_cast<long long>(off), static_cast<long long>(resolved.durationMs));
-        player.play(resolved.playable, off, resolved.httpHeaders, resolved.durationMs);
+                     static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
+        player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
 
-    // Next-episode stub: on natural EOF, if playQueue has a next item, play it.
-    auto tryAutoNext = [&]() -> bool {
-        if (!autoNext)
+    // Shared play-queue step: delta=+1 (auto-next / skipNext), delta=-1 (skipPrevious).
+    // Returns true when a new title was started via doPlay.
+    auto tryQueueStep = [&](int delta, const char* tag) -> bool {
+        if (delta == 0)
             return false;
+        // autoNext conf gates natural-EOF advance only; explicit skipNext/Prev always try.
         misterplex::PlayRequest cur;
         std::string base, token;
         {
@@ -394,22 +456,21 @@ int main(int argc, char** argv) {
         if (qref.empty() && !cur.playQueueId.empty())
             qref = "/playQueues/" + cur.playQueueId;
         if (qref.empty() || qref.find("/playQueues/") == std::string::npos) {
-            std::fprintf(stderr, "misterplexd: auto-next skip — no playQueue bound\n");
+            std::fprintf(stderr, "misterplexd: %s skip — no playQueue bound\n", tag);
             return false;
         }
         auto q = misterplex::fetchPlayQueue(qref, base, token, cur.key, cur.playQueueItemId);
         if (!q.ok) {
-            std::fprintf(stderr, "misterplexd: auto-next queue fetch failed: %s\n",
-                         q.detail.c_str());
+            std::fprintf(stderr, "misterplexd: %s queue fetch failed: %s\n", tag, q.detail.c_str());
             return false;
         }
-        const int next = q.currentIndex + 1;
-        if (next < 0 || next >= static_cast<int>(q.items.size())) {
-            std::fprintf(stderr, "misterplexd: auto-next — end of queue (index=%d size=%zu)\n",
-                         q.currentIndex, q.items.size());
+        const int dest = q.currentIndex + delta;
+        if (dest < 0 || dest >= static_cast<int>(q.items.size())) {
+            std::fprintf(stderr, "misterplexd: %s — end of queue (index=%d size=%zu delta=%d)\n",
+                         tag, q.currentIndex, q.items.size(), delta);
             return false;
         }
-        const auto& item = q.items[static_cast<size_t>(next)];
+        const auto& item = q.items[static_cast<size_t>(dest)];
         misterplex::PlayRequest n = cur;
         n.key = item.key;
         n.ratingKey = item.ratingKey;
@@ -420,12 +481,28 @@ int main(int argc, char** argv) {
             !q.playQueueVersion.empty() ? q.playQueueVersion : cur.playQueueVersion;
         n.containerKey = !q.containerKey.empty() ? q.containerKey + "?own=1" : cur.containerKey;
         n.offsetMs = 0;
-        n.offsetPresent = true; // do not apply continue-watching on auto-next
+        n.offsetPresent = true; // do not apply continue-watching on queue step
         n.token = token;
-        std::fprintf(stderr, "misterplexd: auto-next → %s title=%s pqItem=%s\n", n.key.c_str(),
+        std::fprintf(stderr, "misterplexd: %s → %s title=%s pqItem=%s\n", tag, n.key.c_str(),
                      item.title.c_str(), n.playQueueItemId.c_str());
+        // Stage scrubber key before resolve so bindMedia key-match accepts this
+        // item (and Web sees queue advance immediately).
+        comp.stagePlay(n);
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = n;
+            if (!token.empty())
+                lastToken = token;
+        }
         doPlay(n);
         return true;
+    };
+
+    // Next-episode stub: on natural EOF, if playQueue has a next item, play it.
+    auto tryAutoNext = [&]() -> bool {
+        if (!autoNext)
+            return false;
+        return tryQueueStep(+1, "auto-next");
     };
 
     player.setProgress([&](const std::string& st, int64_t t, int64_t d) {
@@ -453,30 +530,82 @@ int main(int argc, char** argv) {
         comp.setState(st, t, d);
     });
 
-    comp.setPlay([&](const misterplex::PlayRequest& req) { doPlay(req); });
+    // playMedia HTTP thread: bump playGen immediately so in-flight doPlay aborts
+    // before the new onPlay_ thread even schedules (cast A→B race).
+    comp.setPlayQueued([&]() { ++playGen; });
+
+    // Plant lastPlay immediately so skipNext/skipPrevious during async resolve use the
+    // new cast's queue bind — not the previous title's lastPlay (P4-SCRUB race).
+    comp.setPlay([&](const misterplex::PlayRequest& req) {
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = req;
+            if (!req.token.empty())
+                lastToken = req.token;
+            // Prefer cast address as provisional base when present.
+            if (!req.address.empty()) {
+                const std::string proto = req.protocol.empty() ? "http" : req.protocol;
+                const std::string port = req.port.empty() ? "32400" : req.port;
+                lastBase = proto + "://" + req.address + ":" + port;
+            }
+        }
+        doPlay(req);
+    });
 
     comp.setPause([&]() { player.pause(); });
     comp.setResume([&]() { player.resume(); });
     comp.setStop([&]() {
+        // Invalidate in-flight doPlay (resolve/bind/player.play) so a late
+        // playMedia cannot restart demux after stop. clearMedia already cleared
+        // wantPlay_; bindMedia and wantPlay re-checks will also abort.
+        ++playGen;
         player.stop();
-        // clearMedia already called by companion stop path after onStop
+        // Drop session bind so a post-stop skip cannot fetch the old play-queue.
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastPlay = misterplex::PlayRequest{};
+            lastBase.clear();
+        }
     });
-    comp.setSeek([&](int64_t ms) { player.seekMs(ms); });
+    // Async seek: demux restart joins the media thread — never block companion HTTP
+    // (Web scrubber thumb / step / skipPrevious restart@0 would otherwise stall ACKs).
+    // seekGen drops superseded seeks that queue behind a slow restart.
+    std::atomic<uint64_t> seekGen{0};
+    auto seekAsync = [&](int64_t ms) {
+        const uint64_t g = ++seekGen;
+        std::thread([&, ms, g]() {
+            if (g != seekGen.load())
+                return; // superseded before start
+            try {
+                player.seekMs(ms);
+            } catch (...) {
+                std::fprintf(stderr, "misterplexd: seek exception\n");
+            }
+        }).detach();
+    };
+    comp.setSeek(seekAsync);
     // Scrubber step ±10s (Web / remote stepForward/stepBack).
+    // Companion prefers onSeek_(clamped absolute); this remains a fallback path.
     comp.setStep([&](int64_t deltaMs) {
         int64_t cur = player.positionMs();
+        int64_t dur = player.durationMs();
         int64_t target = cur + deltaMs;
         if (target < 0)
             target = 0;
-        player.seekMs(target);
+        if (dur > 0 && target > dur)
+            target = dur;
+        if (target == cur)
+            return; // already at boundary
+        seekAsync(target);
     });
-    // skipNext → same path as auto-next (play-queue advance).
+    // skipNext → play-queue advance (always tries; independent of AUTO_NEXT conf).
+    // Empty / unbound queue = no-op log.
     comp.setSkipNext([&]() {
         if (autoNextInFlight.exchange(true))
             return;
         std::thread([&]() {
             try {
-                if (!tryAutoNext())
+                if (!tryQueueStep(+1, "skipNext"))
                     std::fprintf(stderr, "misterplexd: skipNext — no next item\n");
             } catch (...) {
                 std::fprintf(stderr, "misterplexd: skipNext exception\n");
@@ -484,9 +613,40 @@ int main(int argc, char** argv) {
             autoNextInFlight.store(false);
         }).detach();
     });
+    // skipPrevious — Plex-style:
+    //   t > 3s  → restart current title @ 0
+    //   t ≤ 3s  → previous playQueue item when bound; else restart @ 0 (if t>0) or no-op
+    // Companion fires this *before* optimistic time=0 plant so timelineTimeMs() is real.
     comp.setSkipPrevious([&]() {
-        // Restart current title (queue prev needs reverse index — restart is safe UX).
-        player.seekMs(0);
+        const int64_t t = comp.timelineTimeMs();
+        constexpr int64_t kRestartThresholdMs = 3000;
+        if (t > kRestartThresholdMs) {
+            std::fprintf(stderr, "misterplexd: skipPrevious restart@0 (t=%lld)\n",
+                         static_cast<long long>(t));
+            seekAsync(0);
+            return;
+        }
+        // Near start: try queue previous (network). Guard concurrent skip/auto-next.
+        if (autoNextInFlight.exchange(true))
+            return;
+        std::thread([&, t]() {
+            try {
+                if (!tryQueueStep(-1, "skipPrevious")) {
+                    if (t > 0) {
+                        std::fprintf(stderr,
+                                     "misterplexd: skipPrevious no prev — restart@0 (t=%lld)\n",
+                                     static_cast<long long>(t));
+                        seekAsync(0);
+                    } else {
+                        std::fprintf(stderr,
+                                     "misterplexd: skipPrevious — no previous item (at 0)\n");
+                    }
+                }
+            } catch (...) {
+                std::fprintf(stderr, "misterplexd: skipPrevious exception\n");
+            }
+            autoNextInFlight.store(false);
+        }).detach();
     });
 
     if (!comp.start()) {

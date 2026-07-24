@@ -41,6 +41,9 @@ public:
     void setPort(uint16_t p) { port_ = p; }
     void setLog(LogFn f) { log_ = std::move(f); }
     void setPlay(PlayFn f) { onPlay_ = std::move(f); }
+    // Fired on the HTTP thread as soon as playMedia plants scrubber state (before
+    // the async onPlay_ thread). Used to ++playGen and kill in-flight resolve.
+    void setPlayQueued(CtrlFn f) { onPlayQueued_ = std::move(f); }
     void setPause(CtrlFn f) { onPause_ = std::move(f); }
     void setResume(CtrlFn f) { onResume_ = std::move(f); }
     void setStop(CtrlFn f) { onStop_ = std::move(f); }
@@ -58,10 +61,29 @@ public:
     void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
 
     // Bind media identity for scrubber (call after resolve / on playMedia).
-    void bindMedia(const PlayRequest& req, int64_t durationMs);
+    // Returns false if session already stopped (late async playMedia after stop)
+    // or if a newer cast already planted a different pendingKey (stale resolve).
+    bool bindMedia(const PlayRequest& req, int64_t durationMs);
+
+    // Plant scrubber bind for a queue step / skipNext without waiting for resolve.
+    // Ensures bindMedia key-match accepts the upcoming doPlay for this key.
+    void stagePlay(const PlayRequest& req);
 
     // Clear media bind (after stop finishes).
     void clearMedia();
+
+    // True while a playMedia session is live (false after stop/clearMedia).
+    bool wantPlay() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return wantPlay_;
+    }
+
+    // Current scrubber timeline position (ms). Used by doPlay to honor seeks
+    // that happen while async resolve is still in flight.
+    int64_t timelineTimeMs() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return timeMs_;
+    }
 
 private:
     void gdmLoop();
@@ -78,6 +100,7 @@ private:
     uint16_t port_ = 3005;
     LogFn log_;
     PlayFn onPlay_;
+    CtrlFn onPlayQueued_;
     CtrlFn onPause_;
     CtrlFn onResume_;
     CtrlFn onStop_;
@@ -94,6 +117,10 @@ private:
     std::string state_ = "stopped";
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;
+    // After seek/step plant: ignore demux progress that is still far from the
+    // scrubber target (async seek race — early playing@0 must not rewind thumb).
+    // -1 = no hold.
+    int64_t scrubTargetMs_ = -1;
     bool wantPlay_ = false;
     bool prePlayHold_ = false;
     bool castBound_ = false;

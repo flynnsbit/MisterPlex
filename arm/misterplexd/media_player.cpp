@@ -219,6 +219,15 @@ void MediaPlayer::stop() {
         thr_.join();
     playing_.store(false);
     paused_.store(false);
+    {
+        // Drop session URL so post-stop seekMs cannot restart without a new playMedia.
+        std::lock_guard<std::mutex> lock(mu_);
+        currentUrl_.clear();
+        currentHeaders_.clear();
+        durationMs_ = 0;
+    }
+    seekReqMs_.store(-1);
+    positionMs_.store(0);
     if (fb_.ok())
         fb_.clear();
     if (onProgress_)
@@ -254,7 +263,13 @@ void MediaPlayer::seekMs(int64_t ms) {
     if (dur > 0 && ms > dur)
         ms = dur;
     if (url.empty()) {
-        seekReqMs_.store(ms);
+        // No active session — drop seek (do not leave a phantom seekReq for next play).
+        return;
+    }
+    // Same scrubber position while session is live: skip demux restart thrash
+    // (companion already ACK-only gates; belt-and-suspenders for step/skip paths).
+    if (playing_.load() && !stop_.load() && positionMs_.load() == ms) {
+        log("media: seek same-pos " + std::to_string(ms) + " (no-op)");
         return;
     }
     // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).
