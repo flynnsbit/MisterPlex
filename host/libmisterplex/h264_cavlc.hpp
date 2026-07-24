@@ -158,7 +158,8 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
         return out;
     }
 
-    // Level decode matches OpenH264 CavlcGetLevelVal / ITU-T H.264 9.2.2
+    // Level decode — FFmpeg decode_residual / OpenH264 CavlcGetLevelVal.
+    // First non-T1 coeff uses a different escape path than subsequent coeffs.
     int16_t level[16]{};
     for (int i = 0; i < t1; ++i) {
         level[i] = br.u(1) ? -1 : 1;
@@ -166,45 +167,68 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
     }
     int suffixLength = (tc > 10 && t1 < 3) ? 1 : 0;
     for (int i = t1; i < tc && br.ok; ++i) {
-        int level_prefix = 0;
+        int prefix = 0;
         while (br.ok && br.u(1) == 0) {
-            ++level_prefix;
-            if (level_prefix > 31)
+            ++prefix;
+            if (prefix > 31)
                 return out;
         }
-        // levelCode starts as prefix << suffixLength; suffix size may grow for escapes
-        int levelCode = level_prefix << suffixLength;
-        int suffixBits = suffixLength;
-        if (level_prefix >= 14) {
-            if (level_prefix == 14 && suffixLength == 0)
-                suffixBits = 4;
-            else if (level_prefix == 15) {
-                // Always 12-bit suffix when prefix==15 (OpenH264 / common practice)
-                suffixBits = 12;
-                if (suffixLength == 0)
-                    levelCode += 15;
-            } else if (level_prefix > 15) {
-                // FFmpeg path for rare large prefixes
-                suffixBits = level_prefix - 3;
+        int levelCode = 0;
+        auto toSigned = [](int code) -> int16_t {
+            // FFmpeg: mask=-(code&1); (((2+code)>>1)^mask)-mask
+            const int mask = -(code & 1);
+            return static_cast<int16_t>((((2 + code) >> 1) ^ mask) - mask);
+        };
+        if (i == t1) {
+            // --- First non-trailing coefficient (suffixLength is 0 or 1) ---
+            // FFmpeg h264_cavlc.c first-coeff branch
+            if (prefix < 14) {
+                if (suffixLength)
+                    levelCode = (prefix << suffixLength) + static_cast<int>(br.u(suffixLength));
+                else
+                    levelCode = prefix;
+            } else if (prefix == 14) {
+                if (suffixLength)
+                    levelCode = (prefix << suffixLength) + static_cast<int>(br.u(suffixLength));
+                else
+                    levelCode = prefix + static_cast<int>(br.u(4));
+            } else {
+                // prefix >= 15: escape. Base 30, then (prefix-3) extra bits.
                 levelCode = 30;
-                if (level_prefix >= 16)
-                    levelCode += (1 << (level_prefix - 3)) - 4096;
+                if (prefix >= 16)
+                    levelCode += (1 << (prefix - 3)) - 4096;
+                levelCode += static_cast<int>(br.u(prefix - 3));
             }
+            if (t1 < 3)
+                levelCode += 2;
+            level[i] = toSigned(levelCode);
+            out.level[i] = level[i];
+            // suffixLength after first non-T1:
+            // escape path (prefix>=15, or prefix==14 with suffixLength==0) → 2
+            // else → 1 + (level+3 > 6)
+            if (prefix > 14 || (prefix == 14 && suffixLength == 0))
+                suffixLength = 2;
+            else
+                suffixLength = 1 + (static_cast<unsigned>(level[i] + 3) > 6u);
+        } else {
+            // --- Subsequent coefficients (suffixLength >= 1) ---
+            if (prefix < 15) {
+                levelCode = (prefix << suffixLength) + static_cast<int>(br.u(suffixLength));
+            } else {
+                // prefix >= 15: levelCode = (15<<suffixLength) + extra — NOT base 30
+                levelCode = (15 << suffixLength);
+                if (prefix >= 16)
+                    levelCode += (1 << (prefix - 3)) - 4096;
+                levelCode += static_cast<int>(br.u(prefix - 3));
+            }
+            level[i] = toSigned(levelCode);
+            out.level[i] = level[i];
+            // FFmpeg: suffix_length += (lim[s] + level > 2*lim[s])
+            static const unsigned kLim[7] = {0, 3, 6, 12, 24, 48, 0xffffffffu};
+            if (suffixLength < 6)
+                suffixLength +=
+                    (kLim[suffixLength] + static_cast<unsigned>(level[i]) > 2u * kLim[suffixLength]);
         }
-        if (suffixBits > 0)
-            levelCode += static_cast<int>(br.u(suffixBits));
-        if (i == t1 && t1 < 3)
-            levelCode += 2;
-        int16_t lvl =
-            (levelCode & 1) == 0 ? static_cast<int16_t>((levelCode + 2) >> 1)
-                                 : static_cast<int16_t>(-((levelCode + 1) >> 1));
-        level[i] = lvl;
-        out.level[i] = lvl;
-        // suffixLength++: first non-zero after T1s always bumps 0→1, then by magnitude
-        if (suffixLength == 0)
-            suffixLength = 1;
-        if (std::abs(static_cast<int>(lvl)) > (3 << (suffixLength - 1)) && suffixLength < 6)
-            ++suffixLength;
     }
 
     int zerosLeft = 0;
@@ -271,12 +295,18 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
 // (or idct_dc_add: pred += (dc+32)>>6 when AC==0).
 // Butterfly matches FFmpeg ff_h264_luma_dc_dequant_idct exactly; dcOut[ly][lx].
 inline void invQuantHadamardDc4x4(const int16_t coeffScan[16], int qp, int16_t dcOut[4][4]) {
-    // coeffScan is zigzag order of the 4x4 DC block (same as residualBlock max=16).
-    // FFmpeg input layout is row-major 4x4 (not zigzag). Convert.
+    // coeffScan is CAVLC zigzag order (residualBlock max=16).
+    // FFmpeg stores residual with TRANSPOSE(ff_zigzag_scan[i]) because its IDCT
+    // pipeline is column-major; butterfly below is copied from
+    // ff_h264_luma_dc_dequant_idct and expects that same layout.
+    // TRANSPOSE(x) = (x>>2) | ((x<<2)&0xF)  (row-major index ↔ col-major).
     static const int zz[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
     int input[16]{};
-    for (int i = 0; i < 16; ++i)
-        input[zz[i]] = coeffScan[i];
+    for (int i = 0; i < 16; ++i) {
+        const int z = zz[i];
+        const int t = (z >> 2) | ((z << 2) & 0xF); // FFmpeg TRANSPOSE
+        input[t] = coeffScan[i];
+    }
 
     // FFmpeg first stage (rows)
     int temp[16];
