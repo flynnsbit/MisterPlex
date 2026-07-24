@@ -322,7 +322,10 @@ present_core present (
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
 	.display_hz(display_hz),
-	.pattern(status[7:6]),
+	// O[9] Force bars=Yes: force pattern=Bars at the top-level port too so the
+	// colorbars mux cannot keep Grid/Ramp when the bit sticks (belt+suspenders
+	// with present_core eff_pattern).
+	.pattern(status[9] ? 2'd0 : status[7:6]),
 	.audio_en(~status[8]),
 	.use_frame_store(status[9]),
 	.fs_wr_en(fs_wr_en),
