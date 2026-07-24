@@ -544,8 +544,8 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
     std::vector<int> tcLuma(static_cast<size_t>(mbW * mbH * 16), -1);
     std::vector<int> tcChr[2] = {std::vector<int>(static_cast<size_t>(mbW * mbH * 4), -1),
                                   std::vector<int>(static_cast<size_t>(mbW * mbH * 4), -1)};
-    // Intra4x4 pred modes storage for neighbors (mpm)
-    std::vector<int8_t> i4mode(static_cast<size_t>(mbW * mbH * 16), 2);
+    // Intra4x4 pred modes; -1 = not available (MPM uses DC if either neighbour N/A)
+    std::vector<int8_t> i4mode(static_cast<size_t>(mbW * mbH * 16), -1);
 
     auto tcatL = [&](int mbx, int mby, int lx, int ly) -> int* {
         if (mbx < 0 || mby < 0 || mbx >= mbW || mby >= mbH || lx < 0 || ly < 0 || lx > 3 || ly > 3)
@@ -623,15 +623,13 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                     int i8 = blk / 4, i4 = blk % 4;
                     int lx, ly;
                     walk_detail::blkXY(i8, i4, lx, ly);
+                    // Spec 8.3.1.2 / FFmpeg pred_intra_mode: if either neighbour
+                    // unavailable (mode < 0), pred = DC (2); else min(A, B).
                     int modeA = (lx > 0) ? modeAt(mbx, mby, lx - 1, ly)
                                          : modeAt(mbx - 1, mby, 3, ly);
                     int modeB = (ly > 0) ? modeAt(mbx, mby, lx, ly - 1)
                                          : modeAt(mbx, mby - 1, lx, 3);
-                    if (modeA < 0)
-                        modeA = 2;
-                    if (modeB < 0)
-                        modeB = 2;
-                    int pred = std::min(modeA, modeB);
+                    int pred = (modeA < 0 || modeB < 0) ? 2 : std::min(modeA, modeB);
                     if (br.u(1)) {
                         predModes[blk] = pred;
                     } else {

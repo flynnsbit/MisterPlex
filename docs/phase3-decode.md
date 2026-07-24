@@ -117,19 +117,18 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
 
-Phase 3.3h (host walk+recon green — FPGA residual probe next):
-  **Root cause fixed:** I_16x16 was missing `intra_chroma_pred_mode` (7.3.5, all Intra MBs).
-    Flat `0x27` pattern = ue(mb_type=3)+ue(chroma=0)+se(qpδ=0)+1-bit empty (nC=0) — not 2-bit empty.
-  Host: `h264_slice_walk.hpp` FULL residual walk I_NxN+I_16x16 (luma/chroma nC)
-  Host: `h264_recon.hpp` inv-quant (FFmpeg qmul) + 4x4 IDCT + Intra pred → YUV420 + RGB565
-  CAVLC: FFmpeg tables; IDR dec_ref_pic_marking; invQuantHadamardDc4x4 FFmpeg-scale
-  Unit: walk **300/300 FULL** on real Baseline; tiny/gray recon **maeY=0** vs FFmpeg golden
-  Real-clip recon maeY≈2.6 (I4 mode polish remaining); first MB ~mae 6, error cascades
-  FPGA: slice_hdr_parser ST_CHRPRED before mb_qp_delta (I16 path) — **HW-green**
-    gray I16: mb0=3 qp=27 res_ok=1 res_tc=1 res_t1=0 (matches host probe)
-    real Baseline still I_NxN first MB → res_ok=0 until I4 residual probe on FPGA
-  Next: I4 pred polish (real maeY≪1); FPGA I_NxN residual probe; paint recon → frame_store;
-        optional DDRAM path
+Phase 3.3h (walk+recon+FPGA residual — polish continues):
+  **Root causes fixed this arc:**
+    1. I_16x16 missing `intra_chroma_pred_mode` → walk desync (0x27 = chroma+empty, not 2-bit empty)
+    2. I4 MPM: unavailable neighbour must force pred=DC(2), not min(...,2) — was decoding wrong modes
+  Host: FULL residual walk 300/300; recon tiny/gray **maeY=0**; real **maeY≈1.28** vs FFmpeg
+        no-deblock (MB0 pixel-perfect; 212/300 MBs exact; TR/edge modes remain)
+  Host: `h264_recon.hpp` → YUV420 + RGB565; tool dump `/tmp/recon_320x240.rgb565` for SPI push
+  FPGA: ST_CHRPRED (I16) + **ST_I4MODE/ST_CBP** (I_NxN skip modes→cbp→first residual nC=0)
+    gray I16 HW: mb0=3 qp=27 res_ok=1 res_tc=1
+    real I_NxN HW target: mb0=0 qp=25 **res_ok=1 res_tc=8 res_t1=3**
+  Next: residual edge/TR polish (real maeY≪1); deblock optional; host recon SPI present path;
+        optional DDRAM; full MB residual on FPGA
 
 ```
 

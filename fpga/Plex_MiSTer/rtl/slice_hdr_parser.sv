@@ -58,6 +58,10 @@ module slice_hdr_parser (
 	reg [4:0]  tbits;
 	reg [4:0]  r_tc, r_t1;
 	reg [2:0]  sign_left;
+	reg [4:0]  i4_i;       // 0..15 I_NxN pred-mode index
+	reg [1:0]  i4_sub;     // 0=flag, 1..3=rem bits
+	reg        i4_need_rem;
+	reg [5:0]  cbp_me;     // coded_block_pattern me code
 
 	function automatic signed [7:0] se_of;
 		input [15:0] k;
@@ -85,13 +89,15 @@ module slice_hdr_parser (
 		ST_ALPHA   = 5'd12,
 		ST_BETA    = 5'd13,
 		ST_MBT     = 5'd14,
-		ST_CHRPRED = 5'd15, // I_16x16 intra_chroma_pred_mode (7.3.5)
+		ST_CHRPRED = 5'd15, // intra_chroma_pred_mode (7.3.5)
 		ST_MBQP    = 5'd16,
 		ST_TOK_BIT = 5'd17,
 		ST_TOK_CHK = 5'd18,
 		ST_SIGNS   = 5'd19,
 		ST_DONE    = 5'd20,
-		ST_FAIL    = 5'd21;
+		ST_FAIL    = 5'd21,
+		ST_I4MODE  = 5'd22, // I_NxN: skip 16 pred modes
+		ST_CBP     = 5'd23; // I_NxN: coded_block_pattern me
 
 	always @(posedge clk) begin
 		if (reset || cap_clear)
@@ -253,15 +259,66 @@ module slice_hdr_parser (
 			ST_MBT: begin
 				first_mb_type <= ue_val[7:0];
 				has_mb_type <= (ue_val <= 16'd25);
-				// I_16x16 (1..24): chroma_pred → mb_qp_delta → CAVLC DC residual (nC=0)
+				// I_16x16 (1..24): chroma → qpδ → CAVLC DC (nC=0)
+				// I_NxN (0): 16 pred modes → chroma → cbp → qpδ? → first 4x4 residual
 				if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
 					zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+				end else if (ue_val == 16'd0) begin
+					i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0;
+					st <= ST_I4MODE;
 				end else
 					st <= ST_DONE;
 			end
+			ST_I4MODE: begin
+				// Skip 16 Intra4x4 modes: each is flag(1) or flag(0)+rem(3)
+				if (oob) st <= ST_FAIL;
+				else begin
+					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
+					else bpos <= bpos - 1'd1;
+					if (i4_sub == 2'd0) begin
+						// prev_intra4x4_pred_mode_flag
+						if (bitv) begin
+							// flag=1: mode=pred, next block
+							if (i4_i >= 5'd15) begin
+								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+							end else begin
+								i4_i <= i4_i + 1'd1;
+							end
+						end else begin
+							// flag=0: need 3 rem bits
+							i4_sub <= 2'd1;
+						end
+					end else begin
+						// consuming rem bits 1..3
+						if (i4_sub >= 2'd3) begin
+							i4_sub <= 0;
+							if (i4_i >= 5'd15) begin
+								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+							end else
+								i4_i <= i4_i + 1'd1;
+						end else
+							i4_sub <= i4_sub + 1'd1;
+					end
+				end
+			end
 			ST_CHRPRED: begin
 				// ue(intra_chroma_pred_mode) consumed
-				zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				// I_NxN → cbp me; I_16x16 → mb_qp_delta
+				if (first_mb_type == 8'd0) begin
+					zcnt <= 0; ue_cont <= ST_CBP; st <= ST_UE_Z;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				end
+			end
+			ST_CBP: begin
+				// ue(coded_block_pattern me) — me==3 → cbp=0 (no qpδ)
+				cbp_me <= ue_val[5:0];
+				if (ue_val == 16'd3) begin
+					// cbp=0: no residual (shouldn't happen on real first MB)
+					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				end
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
@@ -280,7 +337,7 @@ module slice_hdr_parser (
 				end
 			end
 			ST_TOK_CHK: begin
-				// Match num-VLC0 (nC=0) common tokens including golden TC=2 T1=2 ("001")
+				// Match num-VLC0 (nC=0) common tokens
 				if (tbits == 5'd1 && tcode[0] == 1'b1) begin
 					r_tc <= 0; r_t1 <= 0; residual_tc <= 0; residual_t1 <= 0;
 					residual_ok <= 1'b1; st <= ST_DONE;
@@ -288,7 +345,6 @@ module slice_hdr_parser (
 					r_tc <= 1; r_t1 <= 1; residual_tc <= 1; residual_t1 <= 2'd1;
 					sign_left <= 1; st <= ST_SIGNS;
 				end else if (tbits == 5'd3 && tcode[2:0] == 3'b001) begin
-					// golden path for plex_real_baseline first I16 DC
 					r_tc <= 2; r_t1 <= 2; residual_tc <= 2; residual_t1 <= 2'd2;
 					sign_left <= 2; st <= ST_SIGNS;
 				end else if (tbits == 5'd5 && tcode[4:0] == 5'b00011) begin
@@ -296,12 +352,19 @@ module slice_hdr_parser (
 					sign_left <= 3; st <= ST_SIGNS;
 				end else if (tbits == 5'd6 && tcode[5:0] == 6'b000101) begin
 					r_tc <= 1; r_t1 <= 0; residual_tc <= 1; residual_t1 <= 0;
-					// no trailing ones; still mark token ok for probe
 					residual_ok <= 1'b1; st <= ST_DONE;
 				end else if (tbits == 5'd6 && tcode[5:0] == 6'b000100) begin
 					r_tc <= 2; r_t1 <= 1; residual_tc <= 2; residual_t1 <= 2'd1;
 					sign_left <= 1; st <= ST_SIGNS;
-				end else if (tbits >= 5'd12) begin
+				end else if (tbits == 5'd10 && tcode[9:0] == 10'b0000000100) begin
+					// nC=0 tc=8 t1=3 — real Baseline first I_NxN residual
+					r_tc <= 8; r_t1 <= 3; residual_tc <= 5'd8; residual_t1 <= 2'd3;
+					sign_left <= 3; st <= ST_SIGNS;
+				end else if (tbits == 5'd9 && tcode[8:0] == 9'b000000100) begin
+					// nC=0 tc=8 t1=2 (nearby)
+					r_tc <= 8; r_t1 <= 2; residual_tc <= 5'd8; residual_t1 <= 2'd2;
+					sign_left <= 2; st <= ST_SIGNS;
+				end else if (tbits >= 5'd16) begin
 					// token not in bring-up set — header still valid
 					st <= ST_DONE;
 				end else
