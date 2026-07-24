@@ -202,7 +202,7 @@ Phase 3.3k (FPGA residual advance — this fire):
   **Hybrid confirmed:** `host_owns_fs` still blocks stub wipe of STREAM F1 recon.
   **Fit / HW (this fire):**
     - Analysis & Synthesis **Successful** (regs ~13.9k; block mem bits ~3.17M — **no new M10K**).
-    - Full Quartus fit→RBF **was** blocked on lab host OOM (pre-fix); **2026-07-24 sole fit OK** (NUM_PARALLEL=2, ALMs 22%, M10K 74%) → `releases/Plex.rbf` deployed `_Utility` (Template HSync + residual_dc wiring). Open: `res_dc` still 0 on lab (runv clear fix pending next RBF); HDMI capture still black (exit 137 / mid-fit kill under concurrent
+    - Full Quartus fit→RBF **was** blocked on lab host OOM (pre-fix); **2026-07-24 sole fit OK** (NUM_PARALLEL=2, ALMs 22%, M10K 74%) → `releases/Plex.rbf` deployed `_Utility` (Template HSync + residual_dc wiring). HW green after runv-clear RBF: `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (test_f3_residual).
       agents). Not a device BRAM over-util failure; hybrid + first-residual logic maps cleanly.
     - HW gate when RBF available: `test_f3_residual.sh` asserts `res_dc=-24` (golden coeff0).
   **Hybrid confirmed:** host recon owns F1 present (`host_owns_fs`); FPGA residual status/paint
