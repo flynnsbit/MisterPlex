@@ -41,7 +41,7 @@ Use this as the operator front page. Tick **LAB** only from HDMI/USB evidence; t
 | # | Check | How (lab) | LAB | CRT |
 |---|-------|-----------|-----|-----|
 | 1 | Pattern Bars / Block / Grid / Ramp | `set_status` + capture mean≥20 | [x] **PASS** | [ ] PENDING |
-| 2 | Force bars on non-Bars pattern | `test_fbar_fast.sh` (Δforce_grid ≫ 0) | [x] **PASS** `6db3a4d8` | [ ] PENDING |
+| 2 | Force bars on non-Bars pattern | `test_fbar_fast.sh` (Δforce_grid ≫ 0) | [x] **PASS** `dabdaeb0` | [ ] PENDING |
 | 3 | TV Mode NTSC | bit2=0 + non-black | [x] **PASS** | [ ] PENDING |
 | 4 | TV Mode PAL (+ restore NTSC) | bit2=1; recover HDMI; do not soak on PAL | [x] **PASS** (PROXY) | [ ] PENDING (true 50 Hz) |
 | 5 | Content FPS 12 / 24 / 30 / 60 bits | OSD / `set_status --fps` + capture | [x] **PASS** | [ ] PENDING eyes |
@@ -54,11 +54,11 @@ Use this as the operator front page. Tick **LAB** only from HDMI/USB evidence; t
 | 12 | Audio tone / MrAudio path | status bit LAB; hear on display | [x] bit PASS | [ ] hear analog |
 | 13 | 15 kHz H-lock / no roll | modeline 320×240-class | N/A | [ ] **needs CRT** |
 | 14 | Overscan / usable raster width | force bars fill usable area | N/A (HDMI ≠ proof) | [ ] **needs CRT** |
-| 15 | Full-width DE (HBlank@320 / P3-WIDE) | `fw_*` / VGA eyes | [~] PROXY only | [ ] **needs CRT/VGA** |
+| 15 | Full-width DE (HBlank@320 / P3-WIDE) | `fw_*` / VGA eyes | [x] **FAIL** ~60.5% proxy (`820484a6`) | [ ] **needs CRT/VGA** |
 | 16 | Match-source-Hz modeline | conf logged only today | [ ] TODO | [ ] TODO + switchres |
 | 17 | Eth vs wifi soak compare | `SOAK_NET_LABEL=` | [~] wifi only; eth **BLOCKED** | — |
 
-**Current lab hardware (2026-07-24, agent CRT2):** HDMI LCD + `/dev/video4` only — **no physical 15 kHz CRT**. Therefore every **CRT** column above remains unchecked / PENDING. Do not promote.
+**Current lab hardware (2026-07-24, agent CRT3):** HDMI LCD + `/dev/video4` only — **no physical 15 kHz CRT**. Therefore every **CRT** column above remains unchecked / PENDING. Do not promote. Lab RBF **`dabdaeb0`** (H-deploy-rcsum1; FBAR reconfirm PASS; res_dc=-24 PASS; res_csum hard FAIL H-rcsum-gate; prior soak/DDR on `820484a6`; WIDE FAIL last on `820484a6` — orthogonal to CRT matrix).
 
 ---
 
@@ -67,7 +67,7 @@ Use this as the operator front page. Tick **LAB** only from HDMI/USB evidence; t
 | Item | Expected | Lab 2026-07-24 |
 |------|----------|----------------|
 | MiSTer host | SSH `192.168.1.183` | wifi `wlan0` (eth NO-CARRIER) |
-| Core | `CORENAME=Plex`, RBF md5 **`6db3a4d8…`** | deployed (agent-H FBAR) |
+| Core | `CORENAME=Plex`, RBF md5 **`dabdaeb0…`** | lab LOADED (H-deploy-rcsum1; FBAR reconfirm; hard res_csum FAIL) |
 | Capture | MJPEG **800×600** `/dev/video4` | recipe locked in menu driver |
 | Tools | `set_status`, `push_frame` on device | `/media/fat/misterplex/bin/` |
 | Display under test | HDMI LCD **and/or** CRT | **HDMI only** — no 15 kHz CRT attached |
@@ -87,7 +87,7 @@ Screenshots live under `captures/menu/`.
 | PAT1 | Pattern | Bars+Block | Distinct vs pure bars (block may be small) | LAB | **PASS** | PENDING | `pat_bars_block.jpg` |
 | PAT2 | Pattern | Grid | Checkerboard; MAD vs bars ≫ 0 | LAB | **PASS** | PENDING | `pat_grid.jpg` |
 | PAT3 | Pattern | Ramp | Gradient; MAD vs bars ≫ 0 | LAB | **PASS** | PENDING | `pat_ramp.jpg` |
-| FBAR | Force bars | Yes on pattern≠Bars | Visual = **bars**, not grid/ramp; MAD force vs grid_off ≫ 0; bits O[9]=1 | LAB | **PASS** on RBF `6db3a4d8` | PENDING | agent-H `test_fbar_fast`: grid_off=7.0 force=82.9 bars=94.4 |
+| FBAR | Force bars | Yes on pattern≠Bars | Visual = **bars**, not grid/ramp; MAD force vs grid_off ≫ 0; bits O[9]=1 | LAB | **PASS** on RBF `820484a6` | PENDING | H-gate-fix1 `test_fbar_fast` EXIT=0: grid_off=7.0 force=82.9 bars=94.4 (Δforce_grid=75.9). Prior also PASS on `6db3a4d8`/`aa146c17`. Re-confirm after next RBF. |
 | FBAR0 | Force bars | No on pattern=Bars | Frame store or dark ok if has_frame path; no hang | LAB | **PASS** (recorded) | PENDING | `force_bars_no.jpg` |
 | TV0 | TV Mode | NTSC | bit2=0; stable HDMI lock; non-black | LAB | **PASS** | PENDING | `tv_ntsc.jpg` |
 | TV1 | TV Mode | PAL | bit2=1; core survives; **restore NTSC after** (LCD may desync) | LAB+PROXY | **PASS** (bit + capture) | PENDING (true 50 Hz CRT) | `tv_pal.jpg`; capture may blank — SKIP ok if restored |
@@ -151,7 +151,9 @@ Unit math is always LAB: `content_index = floor(display_index * content_fps / di
 | `PRESENT=both` `STREAM=1` | **PASS** soak (wifi) | PENDING | Daemon stays up; log recon path |
 | `PRESENT=fpga` `STREAM=1` | PARTIAL (frame store / F1 path) | PENDING | Needs Video source = Frame store; image non-black |
 
-Soak evidence (LAB, not CRT): post-RBF `6db3a4d8`, `SOAK_HOLD_S=6 ROUNDS=2` → ok=6 fail=0 wifi (`PRESENT=both`). Earlier longer wifi soaks also green. Eth comparison **BLOCKED** (no carrier).
+Soak evidence (LAB, not CRT): **D-soak4** on RBF `820484a6`, `SOAK_HOLD_S=6 ROUNDS=2 SOAK_NET_LABEL=wifi` → **ok=6 fail=0** (`PRESENT=both`; no load_core). Prior D-soak3 same recipe on `aa146c17` also green. Eth comparison **BLOCKED** (no carrier).
+
+**Related lab gates (not CRT columns):** DDR F1 **B-ddr5 PASS** on `820484a6` (push_frame --ddr ×5 mean≈18.0 ms, has_frame=1). **P3-WIDE FAIL** ~60.5% `PILLAR_320_of_529` (W-wide4/5/6; Fix-1 dead). **res_csum hard FAIL** on same RBF (live raw[13] ≠0x14; res_dc=-24 PASS). These do not invent CRT PASS and do not block LAB HDMI OSD rows.
 
 ---
 
@@ -164,7 +166,7 @@ Soak evidence (LAB, not CRT): post-RBF `6db3a4d8`, `SOAK_HOLD_S=6 ROUNDS=2` → 
 | **VGA → 15 kHz CRT** | **No** (not attached) | — | Sync, geometry, underscan, roll, 15 kHz modelines, analog audio |
 | **VGA → 31 kHz / PC CRT** | **No** | — | 480p-class eyes-on |
 | **Y/C / component** | **No** | — | Board-dependent path |
-| **Full-width DE (HBlank@320)** | PROXY only | HDMI may not prove full VGA width | **CRT/VGA eyes-on** (P3-WIDE) |
+| **Full-width DE (HBlank@320)** | PROXY only — **LAB FAIL** ~60.5% pillar on `820484a6` | HDMI proxy shows content320/DE529 (not full-width) | **CRT/VGA eyes-on** still required for true geometry (P3-WIDE FAIL open) |
 
 ### CRT-only pass criteria (when hardware arrives)
 
@@ -217,15 +219,18 @@ Record in sign-off table: date, CRT type, modeline/ini, PRESENT/STREAM, FPS, res
 | Area | LAB (HDMI) | Physical CRT 15 kHz |
 |------|------------|---------------------|
 | Pattern modes | **PASS** (menu captures) | **PENDING** (no CRT) |
-| Force bars visual | **PASS** RBF `6db3a4d8` | **PENDING** |
+| Force bars visual | **PASS** RBF **`dabdaeb0`** (H-deploy-rcsum1) | **PENDING** |
 | NTSC / PAL OSD | **PASS** (PAL restored) | **PENDING** (true 50 Hz CRT) |
 | Content FPS bits 12/24/30/60 | **PASS** | **PENDING** eyes-on |
-| Cadence unit tests | **PASS** (`test_cadence` EXIT=0, CRT2 recheck) | N/A |
-| PRESENT=both soak wifi | **PASS** (agent-D; not re-run CRT2) | **PENDING** |
+| Cadence unit tests | **PASS** (`test_cadence` / `make unit`; CRT2 recheck) | N/A |
+| DDR F1 push path | **PASS** B-ddr5 mean≈18.0 ms on `820484a6` | **PENDING** (frame store on CRT) |
+| PRESENT=both soak wifi | **PASS** D-soak4 ok=6 fail=0 on `820484a6` | **PENDING** |
 | PRESENT=fb0 cast | **PASS** (prior Phase 2 / soak family) | **PENDING** |
 | Live film 3:2 eyes-on | PENDING (optional lab) | **PENDING** |
+| Full-width DE / P3-WIDE | **FAIL** ~60.5% pillar (W-wide4/5/6) — PROXY not green | **PENDING — needs CRT/VGA** (lab already FAIL open) |
+| Residual hard res_csum | **FAIL** on `dabdaeb0` (raw[13] unstable ≠0x14; res_dc=-24 OK; soft-skip ≠ PASS) | N/A (decode gate, not CRT) |
 | 15 kHz geometry / sync | N/A (cannot claim from HDMI) | **PENDING — needs hardware** |
-| Full-width VGA / overscan | PROXY only | **PENDING — needs hardware** |
+| Overscan / usable raster | N/A (HDMI ≠ proof) | **PENDING — needs hardware** |
 | Match-source-Hz modeline | TODO (docs only) | TODO |
 | Eth vs wifi | wifi only; eth **BLOCKED** | — |
 
@@ -233,8 +238,9 @@ Record in sign-off table: date, CRT type, modeline/ini, PRESENT/STREAM, FPS, res
 |-------|--------------|---------------------|
 | CRT | Wrote checklist + matrix pointer + session sheet | **none** |
 | CRT2 | Practical tick matrix (LAB vs CRT), honesty rules, rollup dual columns, backlog note | **none** |
+| CRT3 | Polished LAB ticks from evidence on **`820484a6`**: FBAR PASS, soak PASS, DDR PASS, cadence PASS; WIDE FAIL + res_csum hard FAIL noted; physical CRT still **PENDING** | **none** |
 
-**P5-CRT verdict:** checklist **exists, dual-scoped (LAB vs CRT), and actionable without CRT**. Physical CRT rows remain open. Overall item status → **PARTIAL** (not DONE).
+**P5-CRT verdict:** checklist **exists, dual-scoped (LAB vs CRT), and actionable without CRT**. LAB HDMI rows green on current RBF **`820484a6`** where evidence exists. Physical CRT 15 kHz rows remain **PENDING** (no CRT attached) — **no false PASS**. Overall item status → **PARTIAL** (not DONE).
 
 ---
 

@@ -5,6 +5,7 @@ Lab checklist for MiSTerPlex present paths on **15 kHz CRTs** and **HDMI LCDs**.
 **Practical lab rows (modes / force_bars / NTSC·PAL / pass criteria, LAB vs CRT):**  
 → **[crt-lcd-lab-checklist.md](crt-lcd-lab-checklist.md)** — P5-CRT **PARTIAL**  
 → Tick matrix marks **LAB** vs **physical CRT** separately; **no CRT PASS without hardware**  
+→ Lab RBF **`dabdaeb0`**: FBAR reconfirm **PASS** (H-deploy-rcsum1); soak/DDR/cadence last measured **PASS** on prior `820484a6`; WIDE + res_csum hard **FAIL** (see lab checklist)  
 → Session sheet: [captures/menu/CRT_LCD_LAB.md](../captures/menu/CRT_LCD_LAB.md)
 
 Related: [match-source-hz.md](match-source-hz.md), [architecture.md](architecture.md), [release.md](release.md), [captures/menu/CHECKLIST.md](../captures/menu/CHECKLIST.md).
@@ -33,10 +34,10 @@ With **fixed 60 Hz** display (common LCD / NTSC CRT):
 
 | Content | OSD Content FPS | Expected unique advance | Checklist |
 |---------|-----------------|-------------------------|-----------|
-| Film ~24p | **24** | 3:2 density on 60 Hz | [ ] motion block / recon advances on film ticks only |
-| Video ~30p | **30** | 2:2 | [ ] smooth vs 60 unique |
-| Progressive 60 | **60** | 1:1 | [ ] no extra hold |
-| Slow debug | **12** | sparse | [ ] clearly stepped motion |
+| Film ~24p | **24** | 3:2 density on 60 Hz | [x] unit cadence **PASS**; live motion **PENDING** eyes |
+| Video ~30p | **30** | 2:2 | [x] unit + OSD bits **PASS**; live **PENDING** |
+| Progressive 60 | **60** | 1:1 | [x] unit + OSD bits **PASS** |
+| Slow debug | **12** | sparse | [x] OSD bits **PASS**; stepped motion easy on lab |
 
 Math (unit-tested): `content_index = floor(display_index * content_fps / display_hz)` — see `host/libmisterplex/cadence.hpp`.
 
@@ -68,10 +69,10 @@ Film/30 modes need longer vertical blanking so horizontal rate stays near **15 k
 
 | Conf | HDMI LCD | 15 kHz CRT | What to verify |
 |------|----------|------------|----------------|
-| `PRESENT=fb0` `STREAM=0` | [ ] picture + sound | [ ] ascal/fb stable | Phase 2 cast golden |
-| `PRESENT=both` `STREAM=0` | [ ] fb0 primary | [ ] optional F1 if core loaded | No regression vs fb0-only |
-| `PRESENT=both` `STREAM=1` | [ ] fb0 + recon log | [ ] same + core status | Log: `STREAM=1 host I-slice recon` |
-| `PRESENT=fpga` `STREAM=1` | [ ] frame store image | [ ] same | Needs Plex.rbf + Video source = Frame store |
+| `PRESENT=fb0` `STREAM=0` | [x] **PASS** (Phase 2 cast / soak family) | [ ] **PENDING** (no CRT) | Phase 2 cast golden |
+| `PRESENT=both` `STREAM=0` | [x] **PASS** / exercised | [ ] **PENDING** | No regression vs fb0-only |
+| `PRESENT=both` `STREAM=1` | [x] **PASS** soak wifi (D-soak4 on `820484a6` ok=6) | [ ] **PENDING** | Log: `STREAM=1 host I-slice recon` |
+| `PRESENT=fpga` `STREAM=1` | [~] PARTIAL (frame store / F1; DDR B-ddr5 PASS) | [ ] **PENDING** | Needs Plex.rbf + Video source = Frame store |
 
 ## Audio checklist (all displays)
 
@@ -123,6 +124,8 @@ Lab often runs MiSTer on **wlan0** when `eth0` has no carrier (cable unplugged).
 
 ## Known display limits
 
+- **P3-WIDE** LAB proxy **FAIL** on `820484a6` (~60.5% content320/DE529 pillar; Fix-1 closed). True CRT/VGA geometry still untested.
+- **res_csum** hard gate **FAIL** on lab `dabdaeb0` (H-rcsum-gate; soft-skip ≠ PASS; decode residual; orthogonal to CRT matrix).
 - No automated frame-capture golden vs CRT.
 - Match-source-Hz does **not** change PLL/modeline yet.
 - High `DECODE` (e.g. 720p) may drop frames on dual-A9 before FPGA decode lands.
@@ -135,8 +138,12 @@ Lab often runs MiSTer on **wlan0** when `eth0` has no carrier (cable unplugged).
 |------|--------|-----|---------|--------|-------------|-------|--------|-------|
 | 2026-07-24 | HDMI 60 | wifi wlan0 | both | 1 | n/a | test.mp4 + lib/3 | PASS | 3×2 + 5×2 soak after SPI fix; eth N/C |
 | 2026-07-24 | HDMI 60 | wifi | both | 1 | n/a | soak local/testsrc | PASS | post-RBF `6db3a4d8` SOAK ok=6 fail=0 (agent-D) |
-| 2026-07-24 | HDMI 60 | wifi | n/a (Plex OSD) | n/a | 12/24/30/60 | patterns + FBAR | PASS | menu matrix + `test_fbar_fast` on `6db3a4d8`; see lab checklist |
-| 2026-07-24 | HDMI 60 | n/a | n/a | n/a | n/a | cadence unit | PASS | CRT2: `./build/test_cadence` OK; docs tick matrix only |
+| 2026-07-24 | HDMI 60 | wifi | n/a (Plex OSD) | n/a | 12/24/30/60 | patterns + FBAR | PASS | menu matrix; **H-gate-fix1** `test_fbar_fast` EXIT=0 on **`820484a6`** (grid_off=7.0 force=82.9 bars=94.4) |
+| 2026-07-24 | HDMI 60 | wifi | both | 1 | n/a | soak local/lib | PASS | **D-soak4** on **`820484a6`** SOAK ok=6 fail=0 (wifi; no load_core) |
+| 2026-07-24 | HDMI 60 | n/a | n/a (DDR F1) | n/a | n/a | push_frame --ddr ×5 | PASS | **B-ddr5** mean≈18.0 ms has_frame=1 on `820484a6` |
+| 2026-07-24 | HDMI 60 | n/a | n/a | n/a | n/a | cadence unit | PASS | CRT2/CRT3: `test_cadence` / unit OK |
+| 2026-07-24 | HDMI 60 | n/a | n/a (Plex OSD) | n/a | n/a | WIDE eyes-on force bars | **FAIL** | **W-wide4/5/6** ~60.5% pillar on `820484a6` (Fix-1 dead); not CRT PASS |
+| 2026-07-24 | HDMI 60 | n/a | n/a | n/a | n/a | residual hard res_csum | **FAIL** | lab `dabdaeb0` raw[13] unstable ≠0x14 (res_dc=-24 OK; H-rcsum-gate); prior also FAIL on `820484a6` |
 | | HDMI 60 | eth | fb0 | 0 | n/a | local test.mp4 | | eth N/C — deferred |
 | | HDMI 60 | wifi | both | 1 | 24 | library ep | | live 3:2 eyes-on optional |
 | | CRT 15 kHz | | fb0 | 0 | n/a | library ep | **PENDING** | **no physical CRT in lab — do not mark PASS** |

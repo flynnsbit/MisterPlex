@@ -164,15 +164,22 @@ Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20` (soft-skip EXIT=0 is
 
 Full numbered protocol: [`docs/phase3-3l-idct.md`](../../docs/phase3-3l-idct.md) § *Post–R-csum1 sole-deploy + hard-gate protocol*.
 
-Summary (after real **BUILD_OK** only; new RBF md5 **≠** `820484a6`):
+**R-csum1 BUILD_OK** md5 **`dabdaeb0`**; sole deploy + hard-gate **DONE** (**H-deploy-rcsum1** / **H-rcsum-gate**): FBAR PASS; res_dc=-24 PASS; **res_csum HARD FAIL** (raw[13] unstable 139/222/49 ≠0x14). Soft-skip ≠ PASS. **Do not invent hard PASS.** Do not thrash-redeploy `dabdaeb0` expecting green.
 
-1. Promote `output_files/Plex.rbf` → `fpga/Plex_MiSTer/releases/` + `releases/` (same md5).
-2. **One** deploy: `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` — never scp+load_core thrash.
-3. `./tests/hw/test_fbar_fast.sh` PASS.
-4. Hard residual: `res_dc=-24` (`raw[12]=0xe8`) **and** `res_csum=20` (`raw[13]=0x14`) stable ≥2 re-pushes.
-   `test_f3_residual.sh` soft-skip EXIT=0 is **not** hard PASS.
-5. Park: `set_status --pattern bars --force-bars 1 --tv ntsc --fps 60`.
-6. On hard PASS only → 3.3l-2 paint path. On FAIL → RCA contingency (status/lev/pack/dc-only) — measure first.
+Historical ONE-agent checklist (already run; re-use after *next* residual-fix BUILD_OK only; new RBF md5 **≠** `dabdaeb0` / **≠** `820484a6`):
+
+1. **Collect md5** of `output_files/Plex.rbf` (abort if still prior FAIL md5).
+2. **Promote** same bitfile → `fpga/Plex_MiSTer/releases/Plex.rbf` + `releases/Plex.rbf` (all three md5s match).
+3. **Sole menu deploy once:** `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` — never scp+load_core thrash.
+4. Lab confirm: remote md5 match + `CORENAME=Plex`.
+5. **FBAR:** `./tests/hw/test_fbar_fast.sh` EXIT=0 (m1/m2 ≥15).
+6. **Hard residual:** `res_dc=-24` (`raw[12]=0xe8`) **and** `res_csum=20` (`raw[13]=0x14`) stable ≥2 re-pushes.
+   Soft-skip EXIT=0 from `test_f3_residual.sh` is **not** hard PASS.
+   Decode: `python3 tests/parse_res_csum_status.py` (A-csum-host2); lab print: `push_frame --status`/`--raw` (A-arm-csum).
+7. **Park bars:** `set_status --pattern bars --force-bars 1 --tv ntsc --fps 60`.
+8. **Report:** `/tmp/misterplex-agent-H-rcsum-gate.txt` (or successor).
+
+On hard PASS only → unlock 3.3l-2 paint. On FAIL (current dabdaeb0) → RCA contingency (a–g: status/lev/pack/dc-only/dc-regress/FBAR/tools) — measure first, no thrash. Branch **a** first for dabdaeb0 (unstable csum, res_dc stable).
 
 ## Safe core deploy (lab DE10)
 

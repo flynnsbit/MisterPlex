@@ -2,10 +2,10 @@
 
 **Status:** eyes-on **FAIL OPEN** on every lab RBF to date. Gate **OPEN**. Do **not** mark P3-WIDE **DONE**.  
 **RCA:** **FINALIZED** (W-rca → **W-rca6**).  
-**Fix-1 closed:** silicon **FAIL** — state B (`aa146c17`) and state C (`820484a6`) both **ineffective** (still `PILLAR_320_of_529` ~60.5%).  
-**Next:** **Fix-2 paint-full-DE@529** (design locked by **W-fix2-d2**). Apply RTL **only after R-csum1 BUILD_OK** frees Quartus (fit LIVE as of 2026-07-24 ~12:11; **do not invent BUILD_OK** / do not mid-fit edit `Plex.sv` / colorbars).  
-**Reports:** `/tmp/misterplex-agent-W-wide.txt`…`W-wide6.txt`, `W-rca.txt`…`W-rca6.txt`, `W-proto7.txt`, **`/tmp/misterplex-agent-W-fix2-d2.txt`**  
-**Lab RBF (current):** `820484a6` (full `820484a686dc6b744954e3c8ef8df3f4`) — FBAR **PASS**; res_dc=-24 PASS; res_csum hard FAIL (separate ticket); **WIDE FAIL** ~60.5% (**W-wide4 / W-wide5 / W-wide6**).
+**Fix-1 silicon CLOSED (ineffective — not PASS):** state B (`aa146c17`) and state C (`820484a6`) both still `PILLAR_320_of_529` ~60.5% on eyes-on. **Do not redeploy expecting WIDE green. No more HSync-only thrash.**  
+**Next:** **Fix-2 paint-full-DE@529** — design **LOCKED / READY** (**W-fix2-design → W-fix2-d3**). **R-csum1 BUILD_OK** (`dabdaeb0`) — Quartus free. Apply Fix-2 RTL when residual path allows (prefer not thrash residual RCA mid-edit; separate rebuild OK). Do **not** mid-edit residual csum sources for WIDE.  
+**Reports:** `/tmp/misterplex-agent-W-wide.txt`…`W-wide6.txt`, `W-rca.txt`…`W-rca6.txt`, `W-proto7.txt`, `W-fix2-design.txt`, **`/tmp/misterplex-agent-W-fix2-d3.txt`**  
+**Lab RBF (current):** `dabdaeb0` (full `dabdaeb0c5ae708c4fdbba388ba275b6`, H-deploy-rcsum1) — FBAR **PASS**; res_dc=-24 PASS; res_csum hard FAIL (H-rcsum-gate; separate ticket); **WIDE** last eyes-on **FAIL** ~60.5% on prior `820484a6` (**W-wide4 / W-wide5 / W-wide6**); Fix-2 design READY.
 
 ## Symptom
 
@@ -38,7 +38,7 @@ FBAR path is green on the same RBFs (bars force path OK). Failure class is **wid
 | `H_SYNC_S` .. `H_SYNC_E` (Template A) | 544 .. 590 | Proven FBAR-green class |
 | `H_SYNC_S` .. `H_SYNC_E` (state C / `820484a6` source) | 336 .. 384 | Short FP after DE@320 — **WIDE still pillar** |
 
-`VGA_DE = ~(HBlank | VBlank)` (`Plex.sv`). ascal measures DE and scales to HDMI. Default AR 4:3 matches 320×240 product content.
+`VGA_DE = ~(HBlank | VBlank)` (`Plex.sv` ~L365). ascal measures DE and scales to HDMI. Default AR 4:3 matches 320×240 product content.
 
 Bars (pre–Fix-2): `bar = px[8:6]` → 64-px slices; only bars 0–4 (W/Y/C/G/M) fit in 0..319. Red/blue never enter paint window.
 
@@ -72,9 +72,9 @@ So either:
 
 HBlank@320 + Template-late HSync@544: **ineffective** on silicon eyes-on.
 
-### State C / Fix-1 — Q-fix1 / `820484a6`  ★ CLOSED FAIL
+### State C / Fix-1 — Q-fix1 / `820484a6`  ★ CLOSED FAIL (ineffective — not PASS)
 
-Source claim (absorbed into Q-fix1):
+Source claim (absorbed into Q-fix1; **current tree `colorbars.sv` still matches**):
 
 ```text
 H_BLANK_S = H_CONTENT          // 320
@@ -88,9 +88,9 @@ HBlank   <= (hc >= H_BLANK_S)  // level
 | W-wide5 | FAIL span=60.5% R5%=0 |
 | W-wide6 | FAIL span=60.5% R5%=0 |
 
-Indistinguishable from Template A fingerprint. **Do not redeploy `820484a6` expecting WIDE green.** **Do not thrash more HSync-only variants.**
+Indistinguishable from Template A fingerprint. **Do not redeploy `820484a6` expecting WIDE green.** **Do not thrash more HSync-only variants.** **Fix-1 is closed as ineffective (experiment FAIL), not as WIDE PASS.**
 
-## Fix-2 design (LOCKED — W-fix2-d2) — paint-full-DE@529
+## Fix-2 design (LOCKED — W-fix2-d3) — paint-full-DE@529
 
 **Intent:** Keep **Template A timing** (FBAR-proven DE-class) and **paint the entire DE** so force-bars HDMI span ≥95%. Product `frame_store` stays 320×240 left-aligned until a later width ticket.
 
@@ -103,7 +103,7 @@ Indistinguishable from Template A fingerprint. **Do not redeploy `820484a6` expe
 | `H_LAST` | `10'd637` | 638 clocks/line (leave alone; FPS) |
 | `H_SYNC_S` | `10'd544` | Template |
 | `H_SYNC_E` | `10'd590` | Pulse width 46 clocks (Template) |
-| HBlank style | edge **or** level | Prefer Template edge: `if (hc==529) 1; else if (hc==0) 0` **or** level `HBlank <= (hc >= 529)` — both DE width 529 |
+| HBlank style | edge **or** level | Prefer level `HBlank <= (hc >= 529)` (clear); edge Template OK |
 
 VBlank/VSync remain keyed off HSync start as today (NTSC/PAL scandouble tables unchanged).
 
@@ -111,7 +111,7 @@ VBlank/VSync remain keyed off HSync start as today (NTSC/PAL scandouble tables u
 
 | Signal | Pre–Fix-2 (pillar) | Fix-2 |
 |--------|-------------------|-------|
-| `in_content` (colorbar paint) | `hc < H_CONTENT` (320) | `hc < H_BLANK_S` (**529**) i.e. hc ∈ **0..528** |
+| `in_content` (colorbar paint) | `hc < H_CONTENT` (320) | `hc < H_DE` (**529**) i.e. hc ∈ **0..528** |
 | Vertical | `py < 240` | unchanged |
 | Blank gate | `~HBlank && ~VBlank` | unchanged |
 | `bar` (pattern 0/1) | `px[8:6]` (64-px; 5 bars) | **stretch 7 bars across DE** |
@@ -121,8 +121,8 @@ VBlank/VSync remain keyed off HSync start as today (NTSC/PAL scandouble tables u
 ```text
 // Integer scale: 7 equal slices over DE width 529
 // bar ∈ {0..6} for hc ∈ {0..528}
-wire [12:0] bar_num = hc * 7;          // 0 .. 3696
-wire [2:0]  bar     = bar_num / 10'd529;  // 0..6 (hc=528 → 3696/529=6)
+wire [12:0] bar_prod = hc * 4'd7;     // 0 .. 3696  (< 8192)
+wire [2:0]  bar      = bar_prod / H_DE; // 0..6 (hc=528 → 3696/529=6)
 ```
 
 Expected slice starts (floor):  
@@ -141,23 +141,79 @@ Grid (`px[3]^py[3]`) and ramp (`px[7:0]`) automatically fill DE once `in_content
 
 Moving block (pattern 1): leave position math on `content_index`; still valid inside expanded paint window.
 
-### `present_core.sv` (minimal)
+### Concrete RTL touch points (implementer checklist)
 
-| Item | Fix-2 action |
-|------|----------------|
-| colorbars HBlank/HSync/V* | pass-through (unchanged) |
-| `active` / frame_store read | **keep `hc < 10'd320`** — product 320 left-aligned in DE |
-| `frame_store` WIDTH/HEIGHT | **320 / 240** — no change |
-| O[9] / `force_bars` / `eff_pattern` | **do not touch** |
+**Source of truth for line numbers:** tree at design lock time (Fix-1 state C still on disk while R-csum1 fits residual). Lines may shift ± a few after other commits — match by **symbol/comment**, not only line #.
 
-Black DE past x=320 on **frame_store** path is acceptable for this gate; WIDE gate is measured under `force_bars=1` (colorbar path).
+#### 1. PRIMARY — `fpga/Plex_MiSTer/rtl/colorbars.sv`
 
-### Files to touch (implementation ticket — **not this docs tick**)
+| Region (approx L#) | Current (state C / Fix-1) | Fix-2 action |
+|--------------------|---------------------------|--------------|
+| **L1–6** header | Claims “Do NOT use Template HBlank@529 with only 320px paint” | Rewrite: Fix-2 keeps HBlank@529 **and paints full DE**; note Fix-1 `820484a6` WIDE FAIL closed |
+| **L29–39** localparams | `H_CONTENT=320`; `H_FP=16`; `H_SYNC=48`; `H_BLANK_S=H_CONTENT` (320); `H_SYNC_S=336`; `H_SYNC_E=384` | Replace with Template: `H_CONTENT=320` **keep**; add `H_DE=529`; `H_BLANK_S=H_DE`; `H_SYNC_S=544`; `H_SYNC_E=590`; drop/leave-unused `H_FP`/`H_SYNC` derived path |
+| **L33** `H_LAST` | `10'd637` | **Leave alone** (FPS / 638 clocks) |
+| **L79–87** HBlank | comment “Level HBlank so DE never stretches past H_CONTENT”; `HBlank <= (hc >= H_BLANK_S)` | Keep level form; now `H_BLANK_S=529`. Update comment → DE width 529 |
+| **L89–92** HSync edges | fire at `H_SYNC_S`/`H_SYNC_E` | Unchanged pattern; constants become 544/590 |
+| **L94–117** VBlank/VSync | keyed off `hc == H_SYNC_S` | **Leave tables alone**; auto-follow new H_SYNC_S=544 |
+| **L121–127** paint | `bar = px[8:6]`; `in_content = (hc < H_CONTENT) && …` | `bar = (hc * 7) / H_DE`; `in_content = (hc < H_DE) && (py < 240) && ~HBlank && ~VBlank` |
+| **L129–142** `case(bar)` colors | 0..6 W/Y/C/G/M/R/B | **Unchanged** (R/B become reachable) |
+| **L144–148** moving block | `bx`/`by` from `content_index` | **Leave** |
+| **L150** grid | `px[3]^py[3]` | **Leave** (auto-fills DE once paint expands) |
+| **L152–178** pattern mux | uses `in_content` | **Leave body**; inherits expanded window |
 
-1. **`fpga/Plex_MiSTer/rtl/colorbars.sv`** — primary: restore Template timing; expand paint; stretch bars.  
-2. **`fpga/Plex_MiSTer/rtl/present_core.sv`** — comments only (active stays hc&lt;320); optional clarity rename in comments.  
-3. **Do not edit** `Plex.sv` O[9] mux, `mycore.v` (unused leftover), frame_store width, ascal/AR for WIDE alone.  
-4. **While R-csum1 fit LIVE:** **zero** edits under `fpga/Plex_MiSTer/` that race the csum rebuild (especially dirty `Plex.sv`). Apply Fix-2 RTL only when Quartus is free; prefer a **sole clean rebuild** that may combine residual csum outcome + Fix-2, or a follow-up sole rebuild after R-csum1 is collected.
+**Diff-intent sketch (paste reference only — do not apply mid-fit):**
+
+```systemverilog
+// Fix-2: Template HBlank@529 + HSync 544/590 (FBAR-proven) with paint
+// across full DE (hc 0..528). Fix-1 HBlank@320 / HSync 336/384 was
+// ineffective on silicon eyes-on (still PILLAR_320_of_529 on 820484a6).
+// frame_store remains 320; present_core active window stays hc<320.
+
+localparam H_CONTENT = 10'd320;  // product / frame_store only
+localparam H_DE      = 10'd529;  // Template active DE width
+localparam H_LAST    = 10'd637;  // 638 clocks/line — UNCHANGED
+localparam H_BLANK_S = H_DE;     // 529
+localparam H_SYNC_S  = 10'd544;  // Template
+localparam H_SYNC_E  = 10'd590;  // Template
+
+// blanking block (level preferred):
+HBlank <= (hc >= H_BLANK_S);
+
+// paint:
+wire [9:0] px = hc;
+wire [9:0] py = scandouble ? (vc >> 1) : vc;
+wire [12:0] bar_prod = hc * 4'd7;
+wire [2:0]  bar      = bar_prod / H_DE;
+wire in_content = (hc < H_DE) && (py < 10'd240) && ~HBlank && ~VBlank;
+// case(bar) / pattern mux / block / grid / ramp — unchanged
+```
+
+#### 2. COMMENTS ONLY — `fpga/Plex_MiSTer/rtl/present_core.sv`
+
+| Region (approx L#) | Current | Fix-2 action |
+|--------------------|---------|--------------|
+| **L90–108** hc/vc reconstruct | matches colorbars `H_LAST=637` | **No functional change** |
+| **L110–111** `active` | `hc < 10'd320` | **KEEP** — frame_store read window stays 320 left-aligned |
+| **L120–123** `frame_store` WIDTH/HEIGHT | 320 / 240 | **KEEP** |
+| **L146–150** `force_bars` / RGB mux | O[9] / pattern force | **DO NOT TOUCH** |
+| **L152–157** blanking assign | pass-through colorbars | **KEEP** |
+
+Optional comment near L110:
+
+```text
+// colorbars paint window is H_DE (529) under Fix-2; store remains 320 left-aligned.
+// WIDE gate is measured under force_bars=1 (colorbar path fills DE).
+```
+
+#### 3. DO NOT TOUCH (this ticket)
+
+| File / region | Why |
+|---------------|-----|
+| `fpga/Plex_MiSTer/Plex.sv` (O[9] mux ~L330–335, `VGA_DE` ~L365) | **R-csum1 owns residual mid-fit**; O[9]/DE out of WIDE scope |
+| `fpga/Plex_MiSTer/rtl/mycore.v` (HBlank@529 leftover) | Not on present path |
+| `frame_store.sv` WIDTH | Later product-width ticket |
+| `sys/ascal` / AR / video_freak | Not root cause; FBAR green |
+| Any mid-fit write under `fpga/Plex_MiSTer/` while quartus_fit LIVE | Race residual rebuild |
 
 ### FBAR / lock risk
 
@@ -188,15 +244,27 @@ Expected PASS signature under Fix-2:
 
 - span ≳ 95% (full DE painted; ascal scales full DE)  
 - **7** SMPTE-style bars visible (R and B enter window)  
-- R5% ≫ 15 (right edge is bar, not black pillar)
+- R5% ≫ 15 (right edge is bar, not black pillar)  
+- bar edges every ~114 capture-px (800/7), not every ~97 (800×64/529)
+
+Diagnostic bonus (not hard gate): all 7 bars + red/blue enter paint → proves paint past hc=320 on 529-class DE.
+
+If still `PILLAR_320_of_529` after a real Fix-2 RBF:
+
+1. Verify RBF md5 / CORENAME / force_bars live  
+2. Confirm colorbars.sv absorbed (H_DE paint + bar×7/529; clean Full Compilation preferred over smart recomp skip)  
+3. Only then deeper ascal / sys_top DE RCA  
+4. **Do NOT** return to Fix-1 HSync thrash as first resort  
 
 ### Sequencing (orchestrator)
 
 1. **R-csum1** sole rebuild LIVE → wait real **BUILD_OK** + collect (**do not invent**).  
 2. Sole deploy → FBAR re-confirm → hard res_csum gate (Open #1).  
-3. **Then** Fix-2 RTL apply + sole rebuild (or combine only if policy allows one free Quartus slot and sources are staged carefully).  
+3. **Then** Fix-2 RTL apply + sole rebuild (or combine only if policy allows one free Quartus slot and sources are staged carefully). Prefer **sole colorbars-focused rebuild** so residual pack does not silently drop paint.  
 4. One deploy of Fix-2 RBF → FBAR → WIDE eyes-on → park.  
 5. **No** Quartus / deploy / new lab captures required from this design docs worker.
+
+**While R-csum1 fit LIVE:** **zero** edits under `fpga/Plex_MiSTer/` that race the csum rebuild (especially dirty `Plex.sv`). Docs-only design ticks are safe during fit.
 
 ## Pass criteria (gate)
 
@@ -211,6 +279,7 @@ Expected PASS signature under Fix-2:
 | Q-3l1 Analysis map | ~11:34 | state B (HBlank@320, HSync@544) |
 | Dirty WIP write | ~11:41 | state C (HSync@336/384 + level HBlank) |
 | Q-3l1 BUILD_OK | 11:45 | RBF **aa146c17** = state B (smart recomp skipped C) |
-| Q-fix1 BUILD_OK | 12:02 | RBF **820484a6** = Fix-1 state C claim — **WIDE still FAIL** |
+| Q-fix1 BUILD_OK | 12:02 | RBF **820484a6** = Fix-1 state C claim — **WIDE still FAIL** (W-wide4/5/6) |
+| W-fix2-d3 design lock | ~12:13 | Fix-2 plan locked; RTL deferred (R-csum1 fit LIVE) |
 
 Leave `fpga/Plex_MiSTer/` alone while any fitter runs. Docs-only design ticks are safe during fit.
