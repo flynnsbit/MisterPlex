@@ -1,4 +1,4 @@
-// Phase 3.3–3.3j: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+residual) + decode_stub.
+// Phase 3.3–3.3k: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+residual levels) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 
 module stream_path (
@@ -44,6 +44,7 @@ module stream_path (
 	output wire [4:0]  residual_tc,
 	output wire [1:0]  residual_t1,
 	output wire        residual_ok,
+	output wire signed [7:0] residual_dc,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -135,7 +136,7 @@ module stream_path (
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
 	wire [15:0] sl_first, sl_fn, sl_idr_pic;
 	wire [7:0] sl_type, sl_pps, sl_mbt;
-	wire signed [7:0] sl_qpd;
+	wire signed [7:0] sl_qpd, sl_rdc;
 	wire [5:0] sl_qp;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
@@ -158,6 +159,7 @@ module stream_path (
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
+		.residual_dc(sl_rdc),
 		.busy(sl_busy)
 	);
 
@@ -169,6 +171,7 @@ module stream_path (
 	assign residual_tc   = sl_rtc;
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
+	assign residual_dc   = sl_rdc;
 
 	decode_stub #(
 		.WIDTH(320),
@@ -188,6 +191,7 @@ module stream_path (
 		.slice_valid(slice_valid),
 		.residual_ok(sl_res_ok),
 		.residual_tc(sl_rtc),
+		.residual_dc(sl_rdc),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),

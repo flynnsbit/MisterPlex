@@ -1,4 +1,4 @@
-// Phase 3.3b/3.3d/3.3j: stand-in for H.264 soft-core.
+// Phase 3.3b/3.3d/3.3j/k: stand-in for H.264 soft-core.
 // On each VCL NAL, wait for slice/residual probe then paint 320×240 RGB565
 // diagnostic into frame_store (or residual MB0 gray when residual_ok).
 // 3.3j: paint after residual_ok/slice_valid so MB0 gray matches probe;
@@ -23,9 +23,10 @@ module decode_stub #(
 	input  wire [7:0]  slice_type,
 	input  wire        slice_is_i,
 	input  wire        slice_valid,
-	// 3.3g/j: first-MB residual cue for eyes-on recon stub
+	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
+	input  wire signed [7:0] residual_dc,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -53,6 +54,7 @@ module decode_stub #(
 	reg            lat_sps;
 	reg            lat_res_ok;
 	reg [4:0]      lat_res_tc;
+	reg signed [7:0] lat_res_dc;
 	reg [11:0]     wait_cnt;
 	reg            slice_valid_d;
 	reg            residual_ok_d;
@@ -71,8 +73,12 @@ module decode_stub #(
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
 	// First MB (0,0) filled with recon stub gray when residual_ok
 	wire mb0 = (x < 10'd16) && (y < 10'd16);
-	// I_NxN first residual tc=8 → gray ~136; I16 DC probe lower
-	wire [7:0] recon_y = 8'd128 + {3'b0, lat_res_tc};
+	// 3.3k: paint from residual_dc (scan coeff0 → 128+dc); fallback 128+tc
+	wire signed [9:0] recon_sum = 10'sd128 + lat_res_dc;
+	wire [7:0] recon_from_dc =
+		(recon_sum < 10'sd0)   ? 8'd0 :
+		(recon_sum > 10'sd255) ? 8'd255 : recon_sum[7:0];
+	wire [7:0] recon_y = lat_res_ok ? recon_from_dc : (8'd128 + {3'b0, lat_res_tc});
 
 	wire idr_style = is_idr_frame || (lat_type[4:0] == 5'd5);
 
@@ -125,6 +131,7 @@ module decode_stub #(
 			lat_sps       <= 0;
 			lat_res_ok    <= 0;
 			lat_res_tc    <= 0;
+			lat_res_dc    <= 0;
 			wait_cnt      <= 0;
 			wr_pixel      <= 0;
 			slice_valid_d <= 0;
@@ -155,6 +162,7 @@ module decode_stub #(
 				lat_mb_h     <= (mb_h == 0) ? 8'd15 : mb_h;
 				lat_res_ok   <= residual_ok;
 				lat_res_tc   <= residual_tc;
+				lat_res_dc   <= residual_dc;
 			end
 		end else begin
 			// Paint full frame

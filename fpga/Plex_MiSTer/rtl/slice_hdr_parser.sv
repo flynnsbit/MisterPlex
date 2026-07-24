@@ -113,12 +113,10 @@ module slice_hdr_parser (
 	function automatic signed [7:0] sat8;
 		input signed [8:0] v;
 		begin
-			if (v > 9'sd127)
-				sat8 = 8'sd127;
-			else if (v < -9'sd128)
-				sat8 = -8'sd128;
-			else
-				sat8 = v[7:0];
+			// int8 clamp without out-of-range signed literals
+			if (!v[8] && v[7]) sat8 = 8'h7F;
+			else if (v[8] && !v[7]) sat8 = 8'h80;
+			else sat8 = v[7:0];
 		end
 	endfunction
 

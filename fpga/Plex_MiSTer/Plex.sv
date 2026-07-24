@@ -7,6 +7,7 @@
 //  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
 //  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
 //  Phase 3.3j: hybrid host F1 owns present; stub residual paint F3-only
+//  Phase 3.3k: first residual CAVLC levels/runs → residual_dc paint/status
 //  Copyright (C) 2026 MiSTerPlex contributors
 //  GPL-2.0-or-later (MiSTer core convention)
 //============================================================================
@@ -90,6 +91,7 @@ wire [7:0]   sps_profile, sps_level, slice_type, sps_mb_w, sps_mb_h, first_mb_ty
 wire [5:0]   slice_qp;
 wire [4:0]   residual_tc;
 wire [1:0]   residual_t1;
+wire signed [7:0] residual_dc;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -275,6 +277,7 @@ stream_path spath (
 	.residual_tc(residual_tc),
 	.residual_t1(residual_t1),
 	.residual_ok(residual_ok),
+	.residual_dc(residual_dc),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -385,8 +388,9 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [39] ddr_busy  [38] 0  [37:32] slice_qp
 //   has_mb_type implied by first_mb_type<=25 after I-slice parse
 //   status[12] HPS→core DDR start; status[13] bank
+//   [127:96] {residual_dc[7:0], stream_bytes_in[23:0]} — 3.3k DC + 24b bytes
 assign status_in = {
-	stream_bytes_in,                    // 127:96
+	residual_dc, stream_bytes_in[23:0], // 127:96
 	sps_width, sps_height,              // 95:64
 	slice_type, first_mb_type,          // 63:48
 	residual_ok, residual_tc, residual_t1, // 47:40
