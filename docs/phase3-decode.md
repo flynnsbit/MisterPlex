@@ -229,6 +229,14 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     `push_frame --ddr` wall time on lab 192.168.1.183 after RBF deploy.
   **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
 
+  **RBF rebuild status (lab fire):** ARM DDR path is in tree and prefers DDR with
+  SPI fallback. Quartus map for DDR+current residual FSM hit segfaults / OOM (exit
+  137) under concurrent docker builds on the 16 GB host. Last green RBF remains
+  **3.3j hybrid** (no ddram_frame_rd). Until a clean sole fit+asm lands, product
+  path is SPI F1 (~5 fps) + PRESENT=both. Retry: kill all quartus containers,
+  `rm -rf db incremental_db`, single `quartus_sh --flow compile`, then asm if needed.
+
+
   **Build / lab status (this fire):**
     - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr`)
     - Quartus: `ddram_frame_rd` elaborates; full RBF fit OOM'd on 15 GiB host
