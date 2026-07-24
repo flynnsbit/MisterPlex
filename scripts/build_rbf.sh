@@ -3,9 +3,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MISTER_DEV="${MISTER_DEV:-/home/shawn/Projects/misterfpga-dev}"
-export PATH="$MISTER_DEV/bin:$PATH"
-if ! command -v mister-dev >/dev/null 2>&1; then
-  echo "mister-dev not found; run $MISTER_DEV/scripts/mister-dev setup" >&2
+# Call scripts/mister-dev directly (bin/ symlink breaks SCRIPT_DIR for lib.sh)
+MISTER_DEV_BIN="${MISTER_DEV}/scripts/mister-dev"
+if [[ ! -x "$MISTER_DEV_BIN" ]]; then
+  echo "mister-dev not found at $MISTER_DEV_BIN" >&2
   exit 1
 fi
-exec mister-dev build "$ROOT/fpga/Plex_MiSTer" --qpf Plex "$@"
+# Auto-find Plex.qpf; pass through extra flags (e.g. --clean)
+exec "$MISTER_DEV_BIN" build "$ROOT/fpga/Plex_MiSTer" "$@"

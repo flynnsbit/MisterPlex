@@ -24,12 +24,15 @@ See [docs/architecture.md](docs/architecture.md).
 
 | Phase | State |
 |-------|--------|
-| **0** Scaffold monorepo | done |
-| **1** Native present core (color bars + tone + cadence) | in progress |
-| **2** Plex cast → native present | next |
+| **0** Scaffold monorepo | **done** |
+| **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
+| **2** Plex cast companion (GDM + HTTP) | **bootstrap** (`misterplexd`); media feed next |
 | **3** FPGA decode (Profile MiSTerPlex-1) | planned |
 | **4** Feature-rich client | planned |
 
+**Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
+**Tests:** `make unit` — cadence math + companion HTTP smoke.  
+**Note:** Timing analyzer reports setup slack on the template PLL path (common for early cores); functional CRT/HDMI bring-up is the next hardware gate.
 ## Layout
 
 ```text

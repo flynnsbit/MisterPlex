@@ -18,31 +18,36 @@ test: unit
 
 unit: $(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh
+	$(ROOT)/tests/unit/test_companion_http.sh
 
 $(ROOT)/build/test_cadence: $(ROOT)/tests/unit/test_cadence.cpp $(ROOT)/host/libmisterplex/cadence.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cadence.cpp
 
 # Native host daemon for local smoke
-$(ROOT)/build/misterplexd: $(ROOT)/arm/misterplexd/main.cpp
+MPLEX_SRC := $(ROOT)/arm/misterplexd/main.cpp $(ROOT)/arm/misterplexd/companion.cpp
+MPLEX_INC := -I$(ROOT)/arm/misterplexd
+
+$(ROOT)/build/misterplexd: $(MPLEX_SRC) $(ROOT)/arm/misterplexd/companion.hpp
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/arm/misterplexd/main.cpp
+	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
 plexd: $(ROOT)/build/misterplexd
 
 # ARM hard-float for MiSTer (try common cross compilers)
-ARM_CXX ?= $(shell command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null)
+ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null)
 
 arm-plexd:
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
-	$(ARM_CXX) -std=c++17 -O2 -Wall -pthread -static-libstdc++ -o $(ROOT)/build/arm/misterplexd \
-		$(ROOT)/arm/misterplexd/main.cpp
+	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) -pthread -static-libstdc++ \
+		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC)
 	@echo "Built $(ROOT)/build/arm/misterplexd"
 
 MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
 build-rbf:
-	$(MISTER_DEV)/scripts/mister-dev build $(ROOT)/fpga/Plex_MiSTer --qpf Plex
+	$(MISTER_DEV)/scripts/mister-dev build $(ROOT)/fpga/Plex_MiSTer --qpf Plex.qpf
 
 clean:
 	rm -rf $(ROOT)/build
