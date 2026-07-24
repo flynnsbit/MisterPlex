@@ -27,7 +27,7 @@ See [docs/architecture.md](docs/architecture.md).
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
 | **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.3g** first-MB DC inv-quant recon stub; CAVLC tables |
+| **3** FPGA decode / frame store | **3.3h** host I-slice recon (maeY≈0.95); I4 TR avail + I16 DC Hadamard; FPGA residual probe |
 | **4** Feature-rich client | planned |
 
 ### Phase 2 (current on MiSTer `192.168.1.183`)

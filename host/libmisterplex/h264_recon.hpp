@@ -580,6 +580,28 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
         if (x >= 0 && y >= 0 && x < out.width && y < out.height)
             out.y[static_cast<size_t>(y * out.width + x)] = v;
     };
+    // 4x4 decode order index within MB (matches walk_detail::blkXY / i8,i4 loops)
+    auto blkOrd = [](int lx, int ly) -> int {
+        int i8 = (ly / 2) * 2 + (lx / 2);
+        int i4 = (ly % 2) * 2 + (lx % 2);
+        return i8 * 4 + i4;
+    };
+    // True if luma pixel (px,py) belongs to a 4x4 already reconstructed before
+    // the 4x4 at (mbx,mby,lx,ly). Critical for Intra4x4 top-right samples:
+    // scan order leaves (1,1)/(1,3) TR and all (3,ly>0) TR not yet written.
+    auto lumaReady = [&](int px, int py, int mbx, int mby, int lx, int ly) -> bool {
+        if (px < 0 || py < 0 || px >= out.width || py >= out.height)
+            return false;
+        int pmbx = px / 16, pmby = py / 16;
+        int cur = mby * mbW + mbx;
+        int prev = pmby * mbW + pmbx;
+        if (prev < cur)
+            return true;
+        if (prev > cur)
+            return false;
+        int plx = (px % 16) / 4, ply = (py % 16) / 4;
+        return blkOrd(plx, ply) < blkOrd(lx, ly);
+    };
 
     for (int mby = 0; mby < mbH; ++mby) {
         for (int mbx = 0; mbx < mbW; ++mbx) {
@@ -668,20 +690,23 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                         int x0 = baseX + lx * 4;
                         int y0 = baseY + ly * 4;
                         uint8_t above[8], left[4], tl = 128;
-                        bool ha = (y0 > 0);
-                        bool hl = (x0 > 0);
+                        // Top/left neighbours must already be reconstructed (spec availability)
+                        bool ha = (y0 > 0) && lumaReady(x0, y0 - 1, mbx, mby, lx, ly);
+                        bool hl = (x0 > 0) && lumaReady(x0 - 1, y0, mbx, mby, lx, ly);
                         for (int t = 0; t < 4; ++t)
                             above[t] = ha ? yAt(x0 + t, y0 - 1) : 128;
-                        // top-right
+                        // Top-right: only use if each sample's 4x4 is already decoded;
+                        // else replicate above[3] (ITU 8.3.1.2 / FFmpeg).
                         for (int t = 0; t < 4; ++t) {
-                            if (ha && x0 + 4 + t < out.width)
-                                above[4 + t] = yAt(x0 + 4 + t, y0 - 1);
+                            int tx = x0 + 4 + t;
+                            if (ha && lumaReady(tx, y0 - 1, mbx, mby, lx, ly))
+                                above[4 + t] = yAt(tx, y0 - 1);
                             else
                                 above[4 + t] = above[3];
                         }
                         for (int t = 0; t < 4; ++t)
                             left[t] = hl ? yAt(x0 - 1, y0 + t) : 128;
-                        if (ha && hl)
+                        if (ha && hl && lumaReady(x0 - 1, y0 - 1, mbx, mby, lx, ly))
                             tl = yAt(x0 - 1, y0 - 1);
                         else if (ha)
                             tl = above[0];

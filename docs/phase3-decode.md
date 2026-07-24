@@ -121,14 +121,19 @@ Phase 3.3h (walk+recon+FPGA residual — polish continues):
   **Root causes fixed this arc:**
     1. I_16x16 missing `intra_chroma_pred_mode` → walk desync (0x27 = chroma+empty, not 2-bit empty)
     2. I4 MPM: unavailable neighbour must force pred=DC(2), not min(...,2) — was decoding wrong modes
-  Host: FULL residual walk 300/300; recon tiny/gray **maeY=0**; real **maeY≈1.28** vs FFmpeg
-        no-deblock (MB0 pixel-perfect; 212/300 MBs exact; TR/edge modes remain)
+    3. **I4 top-right availability** (scan order): only use TR samples whose 4x4 is already
+       reconstructed; else replicate above[3]. Fixes (1,1)/(1,3) and right-edge lx=3 TR bugs.
+    4. I16 DC Hadamard butterfly aligned to FFmpeg `ff_h264_luma_dc_dequant_idct`
+  Host: FULL residual walk 300/300; recon tiny/gray **maeY=0**; real **maeY≈0.95** vs FFmpeg
+        no-deblock (was ≈1.28; exact MBs 212→221+; MB0 still pixel-perfect)
   Host: `h264_recon.hpp` → YUV420 + RGB565; tool dump `/tmp/recon_320x240.rgb565` for SPI push
   FPGA: ST_CHRPRED (I16) + **ST_I4MODE/ST_CBP** (I_NxN skip modes→cbp→first residual nC=0)
     gray I16 HW: mb0=3 qp=27 res_ok=1 res_tc=1
     real I_NxN HW target: mb0=0 qp=25 **res_ok=1 res_tc=8 res_t1=3**
-  Next: residual edge/TR polish (real maeY≪1); deblock optional; host recon SPI present path;
-        optional DDRAM; full MB residual on FPGA
+  **Open (bit alignment):** first Y error at MB41 — CAVLC is **8 bits ahead** of the correct
+    I16-DC residual start (offset −8 yields pure DC coeff[0]=−1 matching FFmpeg). MBs 0–40 Y are
+    perfect → likely **chroma residual** over-read (cbp_c path) before MB41. Fix chroma AC/DC
+    bit consumption next; then residual polish / deblock / full FPGA MB residual.
 
 ```
 

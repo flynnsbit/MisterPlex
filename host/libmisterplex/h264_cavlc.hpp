@@ -269,44 +269,43 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
 // --- Inv quant + Hadamard for Intra16x16 DC (ITU 8.5.10 / FFmpeg luma_dc_dequant_idct)
 // Output is in residual-IDCT domain: place at each 4x4 (0,0), then run 4x4 idct
 // (or idct_dc_add: pred += (dc+32)>>6 when AC==0).
+// Butterfly matches FFmpeg ff_h264_luma_dc_dequant_idct exactly; dcOut[ly][lx].
 inline void invQuantHadamardDc4x4(const int16_t coeffScan[16], int qp, int16_t dcOut[4][4]) {
-    // Place zigzag scan → 4x4
+    // coeffScan is zigzag order of the 4x4 DC block (same as residualBlock max=16).
+    // FFmpeg input layout is row-major 4x4 (not zigzag). Convert.
     static const int zz[16] = {0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15};
-    int c[4][4]{};
+    int input[16]{};
     for (int i = 0; i < 16; ++i)
-        c[zz[i] / 4][zz[i] % 4] = coeffScan[i];
+        input[zz[i]] = coeffScan[i];
 
-    // Inverse 4x4 Hadamard (no intermediate scale)
-    int t[4][4];
+    // FFmpeg first stage (rows)
+    int temp[16];
     for (int i = 0; i < 4; ++i) {
-        int a0 = c[i][0] + c[i][1];
-        int a1 = c[i][0] - c[i][1];
-        int a2 = c[i][2] + c[i][3];
-        int a3 = c[i][2] - c[i][3];
-        t[i][0] = a0 + a2;
-        t[i][1] = a1 + a3;
-        t[i][2] = a0 - a2;
-        t[i][3] = a1 - a3;
-    }
-    int f[4][4];
-    for (int j = 0; j < 4; ++j) {
-        int a0 = t[0][j] + t[1][j];
-        int a1 = t[0][j] - t[1][j];
-        int a2 = t[2][j] + t[3][j];
-        int a3 = t[2][j] - t[3][j];
-        f[0][j] = a0 + a2;
-        f[1][j] = a1 + a3;
-        f[2][j] = a0 - a2;
-        f[3][j] = a1 - a3;
+        const int z0 = input[4 * i + 0] + input[4 * i + 1];
+        const int z1 = input[4 * i + 0] - input[4 * i + 1];
+        const int z2 = input[4 * i + 2] - input[4 * i + 3];
+        const int z3 = input[4 * i + 2] + input[4 * i + 3];
+        temp[4 * i + 0] = z0 + z3;
+        temp[4 * i + 1] = z0 - z3;
+        temp[4 * i + 2] = z1 - z2;
+        temp[4 * i + 3] = z1 + z2;
     }
 
-    // FFmpeg: qmul = (mf * scaling_matrix=16) << (qp/6 + 2); (f*qmul+128)>>8
-    // → idct_dc_add: (dc+32)>>6 is pixel residual
+    // qmul = dequant4_coeff[qp][0] = (mf[0] * 16) << (qp/6 + 2)
     static const int mf0[6] = {10, 11, 13, 14, 16, 18};
     const int qmul = (mf0[qp % 6] * 16) << (qp / 6 + 2);
-    for (int i = 0; i < 4; ++i)
-        for (int j = 0; j < 4; ++j)
-            dcOut[i][j] = static_cast<int16_t>((f[i][j] * qmul + 128) >> 8);
+
+    // FFmpeg second stage: i = row of 4x4s (ly); outputs lx = 0,1,2,3
+    for (int i = 0; i < 4; ++i) {
+        const int z0 = temp[4 * 0 + i] + temp[4 * 2 + i];
+        const int z1 = temp[4 * 0 + i] - temp[4 * 2 + i];
+        const int z2 = temp[4 * 1 + i] - temp[4 * 3 + i];
+        const int z3 = temp[4 * 1 + i] + temp[4 * 3 + i];
+        dcOut[i][0] = static_cast<int16_t>(((z0 + z3) * qmul + 128) >> 8);
+        dcOut[i][1] = static_cast<int16_t>(((z1 + z2) * qmul + 128) >> 8);
+        dcOut[i][2] = static_cast<int16_t>(((z1 - z2) * qmul + 128) >> 8);
+        dcOut[i][3] = static_cast<int16_t>(((z0 - z3) * qmul + 128) >> 8);
+    }
 }
 
 // Probe first I_16x16 MB of an IDR annex-B stream
