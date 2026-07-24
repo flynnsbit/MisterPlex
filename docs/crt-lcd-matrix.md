@@ -112,7 +112,9 @@ Lab often runs MiSTer on **wlan0** when `eth0` has no carrier (cable unplugged).
 4. Re-run identical `SOAK_KEYS` / `SOAK_ROUNDS` / `SOAK_HOLD_S`.
 5. Fill sign-off: path, label, result, notes (AP band, RSSI, cable speed).
 
-**Lab 2026-07-24:** `eth0` NO-CARRIER; soak green on **wlan0** (5 GHz, ~78/100 quality) after SPI MainPause fix — Ethernet comparison deferred until cable present.
+**Lab 2026-07-24:** `eth0` NO-CARRIER; soak **PASS** on **wlan0** (5 GHz, ~86/100 quality):
+`SOAK_HOLD_S=12 SOAK_ROUNDS=5 SOAK_PROGRESS=1 SOAK_NET_LABEL=wifi` → 10 plays / 0 fails / daemon stayed up
+(`PRESENT=both` `STREAM=1`). Ethernet comparison deferred until cable present.
 
 ## Known display limits
 

@@ -127,8 +127,9 @@ Not a separate product path — same companion/media code. Document latency/stab
 
 | Lab note | Status |
 |----------|--------|
-| Soak on wlan0 (eth NO-CARRIER) | **PASS** multi-round multi-key after SPI serialization fix |
+| Soak on wlan0 (eth NO-CARRIER) | **PASS** `2 keys × 5 rounds × 12s` (10 plays, ~137s) after SPI + F2 throttle fixes |
 | Side-by-side eth vs wifi numbers | **Deferred** until eth cable present on 192.168.1.183 |
+| Wi-Fi blips | Whole-host SSH/curl timeouts can fail soak without daemon fault — re-run after AP recover |
 
 ## Known limits (Phase 5) — remaining issues
 
@@ -144,7 +145,8 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Audio | Single-process FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (disabled for session if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens for multi-user | ops |
 | Stop under STREAM | Media thr_ owns audio/stream joins; stop clears bind before join so late progress cannot re-arm cast UI | fixed |
-| SPI under STREAM soak | Concurrent F1/F2/F3 used `system(killall)` + unlocked MainPause → **daemon death** mid multi-round soak; **fixed** process mutex + kill via `/proc` only | fixed |
+| SPI under STREAM soak | Concurrent F1/F2/F3 used `system(killall)` + unlocked `err_`/`MainPause` → **daemon death** mid multi-round soak; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
+| F2 under PRESENT=both | F2 SPI ~20×/s plus F1/F3 thrashed Main; **now F2 only when PRESENT=fpga** (both uses MrAudio alone) | fixed |
 | PMS thin library | Lab PMS may only expose one playable episode + local `test.mp4`; soak discovers onDeck/recentlyAdded | lab |
 | Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1` | ops |
 

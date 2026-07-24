@@ -784,7 +784,10 @@ void MediaPlayer::streamPump(int sfd) {
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio (continuous) and optionally F2 audio_fifo chunks.
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
-    bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    // F2 SPI pauses Main ~20×/s @ 48 kHz and races F1/F3 under STREAM soak.
+    // Only push F2 when FPGA owns audio present (PRESENT=fpga). PRESENT=both
+    // already has continuous MrAudio — skip redundant F2 to keep SPI healthy.
+    bool wantF2 = fpga_.ok() && presentMode_ == "fpga";
 
     int out = -1;
     if (wantMr) {
@@ -925,7 +928,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         log("media: FFmpeg subtitles burn-in si=" + std::to_string(subtitleStreamIndex_));
     }
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
-    const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    // Match audioPump: F2 only when PRESENT=fpga (both uses MrAudio alone).
+    const bool wantF2 = fpga_.ok() && presentMode_ == "fpga";
     const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
 
     // Product path: STREAM + PRESENT=fpga may skip heavy RGB (keep audio + demux).
