@@ -10,6 +10,7 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex
 |------|---------|
 | `bin/misterplexd` | Static ARM companion + media daemon (GDM + HTTP `:3005`) |
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
+| `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
 | `cores/Plex.rbf` | Present/decode core (included when built in tree) |
 | `docs/` | INSTALL path notes, match-source-Hz, CRT/LCD matrix |
@@ -88,10 +89,14 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 | `fb0` | `0` | **Phase 2 default path:** FFmpeg → `/dev/fb0` + `/dev/MrAudio`. Cast-proven. |
 | `fb0` | `1` | FFmpeg A/V + host I-slice recon may blit sparse keyframes to fb0; F3 fed for FPGA status. |
 | `fpga` | `0` | RGB565 frames → SPI frame_store (F1); no continuous fb0. Needs `Plex.rbf` loaded. |
-| `fpga` | `1` | Host I-recon → F1 + annex-B → F3; product STREAM path. `STREAM_SKIP_RGB=auto` drops heavy RGB (audio kept). |
+| `fpga` | `1` | **STREAM hybrid (3.3k):** host I-slice recon → F1 present (`host_owns_fs`, mae=0 on golden); annex-B → F3 stub. `STREAM_SKIP_RGB=auto` drops heavy RGB (audio kept). |
 | `both` | `0`/`1` | FFmpeg owns continuous fb0; recon/SPI F1 for FPGA path. Lab often uses `both` + `STREAM=1`. |
 
+**STREAM hybrid (current product policy):** dual-A9 **host I-recon owns frame-store present** until FPGA residual/IDCT (Phase 3.3l+) is mae-competitive. F3 is diagnostic/stub status; do not expect full FPGA pixel recon on screen yet. Lab RBF needs Template HSync ~60 Hz + `res_dc` tune for stable HDMI.
+
 **STREAM resolve:** when `STREAM=1`, prefer **direct H.264 Part** from PMS (CAVLC-friendly Baseline/Main) over Chrome universal High/CABAC. Non-H.264 still uses the weak universal ladder. Local `.h264` uses elementary demux (no `mp4toannexb`).
+
+**set_status (lab):** after core load, `/media/fat/misterplex/bin/set_status --pattern grid --force-bars 1 --raw` (etc.) RMW-writes OSD status bits without leaving Reset/Flush stuck. Menu matrix: `tests/hw/run_menu_matrix.sh` / `test_fbar_fast.sh`.
 
 **Do not break the Phase 2 cast path:** keep a known-good conf (`PRESENT=fb0`, `STREAM=0`) if STREAM/FPGA work regresses display. Companion HTTP and resolve stay the same for STREAM=0.
 
@@ -137,7 +142,8 @@ Not a separate product path — same companion/media code. Document latency/stab
 
 | Area | Limit | Severity |
 |------|--------|----------|
-| Decode | Dual-A9 FFmpeg is transitional; full FPGA residual decode is Phase 3.3j+ | product |
+| Decode | Dual-A9 FFmpeg is transitional; FPGA residual → IDCT (3.3l) not product-present yet | product |
+| STREAM hybrid | **Host I-recon → F1 owns pixels** (3.3k mae=0 golden); FPGA F3 is stub/status until 3.3l-5 hybrid gate | product |
 | STREAM recon | Host I-slice recon is Baseline CAVLC keyframe-oriented; **CABAC/High → sticky skip** from PPS entropy flag (`recon CABAC/High` / `recon skip CABAC/High`) so dual-A9 does not residual-walk every IDR; `recon_ok` often 0 on PMS weak ladder | product |
 | Match source Hz | **Cadence + OSD Content FPS only**; no HPS `CmdSwitchres` / modeline swap yet — [match-source-hz.md](match-source-hz.md) | product |
 | CRT 15 kHz | Use MiSTer video options / fixed modelines; matrix checklist in [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
@@ -146,11 +152,12 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Scrubber | Play-queue bind fields implemented; edge cases vs Plex Web versions may still need tuning | UX |
 | Audio | Single-process FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (disabled for session if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens for multi-user | ops |
+| OSD / set_status | Status bits RMW via `bin/set_status`; force_bars + pattern stickiness depends on loaded RBF (`eff_pattern` / O[9]) | lab |
 | Stop under STREAM | Media thr_ owns audio/stream joins; stop clears bind before join so late progress cannot re-arm cast UI | fixed |
 | SPI under STREAM soak | Concurrent F1/F2/F3 used `system(killall)` + unlocked `err_`/`MainPause` → **daemon death** mid multi-round soak; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
 | F2 under PRESENT=both | F2 SPI ~20×/s plus F1/F3 thrashed Main; **now F2 only when PRESENT=fpga** (both uses MrAudio alone) | fixed |
 | PMS thin library | Lab PMS may only expose one playable episode + local `test.mp4`; soak discovers onDeck/recentlyAdded | lab |
-| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1` | ops |
+| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1`; includes `set_status` when `build/arm/set_status` exists | ops |
 
 ## Version stamp
 

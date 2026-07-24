@@ -91,6 +91,7 @@ Contents
 --------
   bin/misterplexd          static ARM companion + media daemon
   bin/push_frame           optional SPI frame/bitstream tool
+  bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
   cores/Plex.rbf           (if built) Phase 1–3 present/decode core
   scripts/plex_browse.sh   list library + play/status/stop via misterplexd
@@ -122,8 +123,9 @@ Plex.rbf locations (build tree / device)
 PRESENT / STREAM (conf)
 -----------------------
   PRESENT=fb0|fpga|both     default fb0 (Phase 2 cast path)
-  STREAM=0|1                annex-B → host I-recon F1 + F3 (Phase 3.3i)
-  See docs/release.md for the full mode matrix. Do not regress Phase 2 cast.
+  STREAM=0|1                annex-B → host I-recon F1 + F3 (STREAM hybrid 3.3k)
+  Host recon owns present until FPGA 3.3l mae-competitive. See docs/release.md.
+  Lab: bin/set_status --pattern grid --force-bars 1 --raw
 
 Deploy helper (from dev host)
 -----------------------------
