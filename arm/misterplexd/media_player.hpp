@@ -109,7 +109,9 @@ private:
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
-    std::atomic<bool> cabacSkip_{false};      // sticky: host CAVLC cannot decode this stream
+    // Sticky: PPS entropy_coding_mode=1 or recon fail_reason=cabac; cleared only on
+    // CAVLC PPS or new play() — not on every in-band SPS (would defeat sticky).
+    std::atomic<bool> cabacSkip_{false};
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     std::atomic<pid_t> childPid_{-1};

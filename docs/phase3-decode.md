@@ -179,7 +179,9 @@ Phase 3.3k (product path polish — done earlier this arc):
   **STREAM=1 host recon → F1 robust:**
     - multi-IDR: retain/update SPS+PPS; recon every I/IDR; overflow keeps last headers
     - seek/stop: kill both RGB/audio + STREAM demux process groups; pause SIGSTOP both
-    - CABAC: sticky skip after first `fail_reason=cabac` + clear log; re-probe on new SPS/PPS
+    - CABAC sticky: PPS `entropy_coding_mode=1` sets skip immediately (no residual walk);
+      in-band SPS alone does **not** clear sticky (IDR often repeats SPS/PPS);
+      CAVLC PPS clears for re-probe; backup path still sets sticky on `fail_reason=cabac`
   **Prefer direct elementary H.264 for STREAM:**
     - resolve `preferDirectH264` when STREAM=1 → direct Part if Media/Stream is h264/avc
     - avoids Chrome universal High/CABAC that host CAVLC cannot recon
@@ -210,6 +212,18 @@ Phase 3.3k (FPGA residual advance — this fire):
     is F3 diagnostic only until inv-quant/IDCT mae is competitive.
   **Still open (3.3l+):** inv quant + 4x4 IDCT + Intra pred into frame_store for all MBs;
     optional deblock; full-slice residual walk on FPGA (BRAM neighbour/coeff buffers).
+
+Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
+  **Full implementation plan:** `docs/phase3-3l-idct.md`
+  **Scope:** first residual → inv quant + IDCT + pred; then first full MB; then all MBs.
+  **BRAM (5CSEBA6, post-3.3k fit):** M10K 74% (407/553) free ~146; first-MB path is
+    **logic-only** (coeff/IDCT/pred regs). All-MB adds ~2–4 M10K (top Y/UV rows + TC cache).
+    Do **not** grow slice MAXB to full IDR or dual YUV framebuffers — stream residual,
+    write RGB565 into existing `frame_store`.
+  **Milestones:** 3.3l-0 host quant/IDCT golden → 3.3l-1 full coeff[16] on FPGA →
+    3.3l-2 first 4×4 recon paint → 3.3l-3 first MB → 3.3l-4 all MBs → 3.3l-5 hybrid gate.
+  **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
+  **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured SPI F1 (lab, 320×240 RGB565 = 153600 B):**

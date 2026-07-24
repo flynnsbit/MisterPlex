@@ -20,6 +20,7 @@ DECODE=320x240
 PRESENT=fb0
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
+# High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
 # STREAM_SKIP_RGB=auto  # auto: skip heavy RGB when PRESENT=fpga (keep audio + recon)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (fallback for CABAC / PRESENT=both)
 

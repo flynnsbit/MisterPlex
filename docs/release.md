@@ -138,7 +138,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Area | Limit | Severity |
 |------|--------|----------|
 | Decode | Dual-A9 FFmpeg is transitional; full FPGA residual decode is Phase 3.3j+ | product |
-| STREAM recon | Host I-slice recon is Baseline CAVLC keyframe-oriented; **CABAC/High → skip** (`recon skip CABAC/High`) so `recon_ok` often 0 on PMS weak ladder | product |
+| STREAM recon | Host I-slice recon is Baseline CAVLC keyframe-oriented; **CABAC/High → sticky skip** from PPS entropy flag (`recon CABAC/High` / `recon skip CABAC/High`) so dual-A9 does not residual-walk every IDR; `recon_ok` often 0 on PMS weak ladder | product |
 | Match source Hz | **Cadence + OSD Content FPS only**; no HPS `CmdSwitchres` / modeline swap yet — [match-source-hz.md](match-source-hz.md) | product |
 | CRT 15 kHz | Use MiSTer video options / fixed modelines; matrix checklist in [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
 | Wi-Fi vs Ethernet | Checklist + soak net hooks only; eth comparison not measured this lab (no carrier) | lab |

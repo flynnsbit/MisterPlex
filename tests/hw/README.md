@@ -96,7 +96,7 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 4. Log should show:
    - `STREAM=1 host I-slice recon →F1 +F3`
    - `recon frame ok #1 320x240 mb=300 …` (multi-IDR increments `idr=`)
-   - session `recon=N` (N≥1 after first IDR); CABAC logs sticky skip once if High profile
+   - session `recon=N` (N≥1 after first IDR); CABAC sticky from PPS entropy flag (not cleared by in-band SPS)
 5. Frame store shows reconstructed I-frame (not only decode_stub green border).
 6. Fallback: if recon fails, FFmpeg RGB still drives F1 until first recon success (`PRESENT=both`).
 7. Seek/stop: both FFmpeg groups killed; seek restarts demux at offset.

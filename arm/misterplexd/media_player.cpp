@@ -576,6 +576,39 @@ void MediaPlayer::streamPump(int sfd) {
         return (st % 5) == 2;
     };
 
+    // PPS entropy_coding_mode_flag drives sticky CABAC. In-band SPS/PPS before every
+    // IDR used to clear skip → dual-A9 residual walk failed every keyframe on High.
+    // Policy: CABAC PPS sets sticky immediately; CAVLC PPS clears for re-probe; SPS no-op.
+    auto applyPpsEntropy = [&](const uint8_t* nalSc, size_t nalLen) {
+        size_t sc = annexBStartLen(nalSc, nalLen, 0);
+        if (!sc || sc + 1 >= nalLen)
+            return;
+        const uint8_t* pay = nalSc + sc + 1;
+        const size_t plen = nalLen - sc - 1;
+        if (plen < 1)
+            return;
+        auto rbsp = misterplex::detail::removeEpb(pay, plen);
+        misterplex::detail::BitReader br(rbsp.data(), rbsp.size());
+        br.ue(); // pic_parameter_set_id
+        br.ue(); // seq_parameter_set_id
+        const bool cabac = br.u(1) != 0;
+        if (!br.ok)
+            return;
+        if (cabac) {
+            cabacSkip_.store(true);
+            if (!cabacLogged) {
+                cabacLogged = true;
+                log("media: recon CABAC/High — PPS entropy_coding_mode=1; host CAVLC skip "
+                    "(sticky). FFmpeg RGB F1 fallback if enabled. Prefer Baseline/Main "
+                    "CAVLC or direct H.264 Part for STREAM recon.");
+            }
+        } else {
+            // CAVLC PPS: allow I-slice recon (seek/segment may flip profile).
+            cabacSkip_.store(false);
+            cabacLogged = false;
+        }
+    };
+
     auto tryReconNal = [&](const uint8_t* nalSc, size_t nalLen, uint8_t ntype) {
         if (spsNal.empty() || ppsNal.empty())
             return;
@@ -604,7 +637,7 @@ void MediaPlayer::streamPump(int sfd) {
         auto rec = recon::reconISlice(au.data(), au.size());
         if (rec.mb_decoded <= 0 || rec.mb_decoded != rec.mb_total || rec.y.empty()) {
             ++reconFail;
-            // CABAC/High: host CAVLC recon cannot decode — keep FFmpeg RGB F1 fallback.
+            // Backup path: CABAC detected late in recon chain (PPS probe missed).
             if (rec.fail_reason && std::strcmp(rec.fail_reason, "cabac") == 0) {
                 cabacSkip_.store(true);
                 if (!cabacLogged) {
@@ -679,17 +712,13 @@ void MediaPlayer::streamPump(int sfd) {
             if (i + sc < j) {
                 const uint8_t ntype = acc[i + sc] & 0x1f;
                 if (ntype == 7) {
+                    // SPS alone does not change entropy mode — keep sticky CABAC.
                     spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
-                    // New SPS mid-stream (seek/segment): allow recon retry if profile changed.
-                    cabacSkip_.store(false);
-                    cabacLogged = false;
                 } else if (ntype == 8) {
                     ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
-                    // New PPS may flip entropy_coding_mode — re-probe on next I-slice.
-                    cabacSkip_.store(false);
-                    cabacLogged = false;
+                    applyPpsEntropy(acc.data() + i, nalLen);
                 } else if (ntype == 5 || ntype == 1) {
                     tryReconNal(acc.data() + i, nalLen, ntype);
                 }
@@ -754,6 +783,7 @@ void MediaPlayer::streamPump(int sfd) {
             } else if (ntype == 8) {
                 ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
+                applyPpsEntropy(acc.data() + parseFrom, nalLen);
             } else if (ntype == 5 || ntype == 1) {
                 tryReconNal(acc.data() + parseFrom, nalLen, ntype);
             }
