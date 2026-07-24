@@ -1,9 +1,9 @@
 # Phase 3.3l — Inv quant + 4×4 IDCT + Intra pred (FPGA)
 
-**Status:** plan (not implemented)  
+**Status:** 3.3l-0 done (host golden); 3.3l-1..5 plan  
 **Depends on:** 3.3k residual levels/runs → `residual_dc` (HW-green)  
 **Product rule:** hybrid host recon → F1 still owns present until FPGA mae is competitive.  
-**No Quartus in this doc phase** — implement RTL/host tests first; fit when ready.
+**No Quartus for 3.3l-0** — RTL/fit starts at 3.3l-1+.
 
 ## Goal
 
@@ -131,15 +131,24 @@ Device: **553 M10K**, **5.66 Mbit**. Current fit: **407 / 553 (74%)**, **~3.17 M
 
 ## Implementation phases
 
-### 3.3l-0 — Host golden stubs (no FPGA)
+### 3.3l-0 — Host golden stubs (no FPGA) ✅
 
-Lock math before RTL.
+Lock math before RTL. **Done** in `tests/unit/test_idct_quant.cpp` (`make unit`).
 
-- Unit: `tests/unit/test_idct_quant.cpp` (optional, small)  
-  - `dequant4x4` + `idct4x4_add` on synthetic and real first residual  
-  - First I_NxN 4×4: pred=128 (unavailable), qp=25, host coeffs → pixel golden  
-  - Export printable golden: meanY, y[0..3][0..3] for HW status compare  
-- Reuse `probeFirstI16Dc` / recon path; no new algorithm.
+- `dequant4x4` + `idct4x4_add` on synthetic DC and real first residual  
+- First I_NxN 4×4: pred=128 (unavailable), qp=25, host coeffs → pixel golden  
+- Hard-locked golden + printable dump: coeffs, dequant block, meanY, y[0..3][0..3]  
+- Reuse `probeFirstI16Dc` / recon path; no new algorithm
+
+**Locked golden (Baseline clip, first residual):**
+
+| Field | Value |
+|-------|-------|
+| tc / t1 / qp | 8 / 3 / 25 |
+| coeff scan | `-24 4 4 0 -4 0 -1 0 0 -1 1 0 1 0 0 0` |
+| synth DC-only y | 62 (uniform; coeff0=-24) |
+| y00 / mean4×4 | 73 / 62 |
+| y 4×4 | `73 72 76 76` / `72 74 71 73` / `76 71 32 27` / `76 73 27 24` |
 
 **Exit:** `make unit` includes quant/IDCT check; coeffs and 4×4 pixels known for golden clip.
 
@@ -283,7 +292,7 @@ Do **not** require Quartus for 3.3l-0. Fit check only when RTL lands (sole build
 
 ## Milestone checklist (summary)
 
-1. **3.3l-0** Host quant/IDCT golden + first-4×4 pixel vector  
+1. **3.3l-0** ✅ Host quant/IDCT golden + first-4×4 pixel vector (`test_idct_quant`)  
 2. **3.3l-1** FPGA full 16-coeff place; keep `res_dc=-24`  
 3. **3.3l-2** Inv quant + IDCT + DC-pred; paint true 4×4; HW gate  
 4. **3.3l-3** First full MB (I_NxN modes+CBP+16× residual+chroma); MAXB bridge or stream start  

@@ -220,7 +220,9 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     **logic-only** (coeff/IDCT/pred regs). All-MB adds ~2–4 M10K (top Y/UV rows + TC cache).
     Do **not** grow slice MAXB to full IDR or dual YUV framebuffers — stream residual,
     write RGB565 into existing `frame_store`.
-  **Milestones:** 3.3l-0 host quant/IDCT golden → 3.3l-1 full coeff[16] on FPGA →
+  **3.3l-0 done:** `tests/unit/test_idct_quant.cpp` locks synth DC y=62 + real first 4×4
+    (tc=8 t1=3 coeff0=-24 → y00=73 mean=62; full y[][] golden) via dequant4x4/idct4x4_add.
+  **Milestones:** 3.3l-0 ✅ host quant/IDCT golden → 3.3l-1 full coeff[16] on FPGA →
     3.3l-2 first 4×4 recon paint → 3.3l-3 first MB → 3.3l-4 all MBs → 3.3l-5 hybrid gate.
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
