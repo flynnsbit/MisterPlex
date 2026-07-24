@@ -1,10 +1,12 @@
 #include "plex_resolve.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace misterplex {
 namespace {
@@ -116,6 +118,12 @@ std::string buildUniversal(const std::string& base, const std::string& metadataK
       << "&videoQuality=" << weak.videoQuality
       << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
       << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps;
+    // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
+    if (weak.burnSubtitles) {
+        q << "&subtitles=burn";
+        if (weak.subtitleStreamId >= 0)
+            q << "&subtitleStreamID=" << weak.subtitleStreamId;
+    }
     // PMS universal offset is SECONDS
     if (offsetMs > 0)
         q << "&offset=" << ((offsetMs + 500) / 1000);
@@ -124,7 +132,105 @@ std::string buildUniversal(const std::string& base, const std::string& metadataK
     return q.str();
 }
 
+// Attr from a free-form XML slice (first name="..." only).
+std::string attrIn(const std::string& slice, const char* name) {
+    const std::string key = std::string(name) + "=\"";
+    auto p = slice.find(key);
+    if (p == std::string::npos)
+        return {};
+    p += key.size();
+    auto e = slice.find('"', p);
+    if (e == std::string::npos)
+        return {};
+    return slice.substr(p, e - p);
+}
+
 } // namespace
+
+std::string normalizePlexBase(const std::string& raw) {
+    std::string s = raw;
+    // trim
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' ||
+                          s.front() == '\n'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' ||
+                          s.back() == '\n' || s.back() == '/'))
+        s.pop_back();
+    if (s.empty())
+        return {};
+    if (s.find("://") == std::string::npos) {
+        // bare host or host:port → assume http
+        s = "http://" + s;
+    }
+    // strip trailing slash again after scheme
+    while (!s.empty() && s.back() == '/')
+        s.pop_back();
+    // If no port in authority, default PMS :32400 (skip if user omitted intentionally
+    // for reverse-proxy with scheme-only host — rare; LAN always wants 32400).
+    auto scheme = s.find("://");
+    if (scheme != std::string::npos) {
+        auto hostStart = scheme + 3;
+        auto slash = s.find('/', hostStart);
+        std::string auth =
+            (slash == std::string::npos) ? s.substr(hostStart) : s.substr(hostStart, slash - hostStart);
+        // IPv6 in brackets or host:port
+        bool hasPort = false;
+        if (!auth.empty() && auth.front() == '[') {
+            auto br = auth.find(']');
+            hasPort = (br != std::string::npos && br + 1 < auth.size() && auth[br + 1] == ':');
+        } else {
+            hasPort = (auth.rfind(':') != std::string::npos);
+        }
+        if (!hasPort && !auth.empty())
+            s = s.substr(0, hostStart) + auth + ":32400" +
+                (slash == std::string::npos ? std::string() : s.substr(slash));
+    }
+    return s;
+}
+
+std::vector<std::string> parsePlexServerList(const std::string& csvOrSingle) {
+    std::vector<std::string> out;
+    std::string cur;
+    auto flush = [&]() {
+        auto n = normalizePlexBase(cur);
+        cur.clear();
+        if (n.empty())
+            return;
+        for (const auto& e : out) {
+            if (e == n)
+                return;
+        }
+        out.push_back(n);
+    };
+    for (char c : csvOrSingle) {
+        if (c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            flush();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    flush();
+    return out;
+}
+
+std::vector<std::string> mergePlexServers(const std::string& serversCsv,
+                                          const std::vector<std::string>& baseLines) {
+    std::vector<std::string> out = parsePlexServerList(serversCsv);
+    for (const auto& line : baseLines) {
+        for (const auto& n : parsePlexServerList(line)) {
+            bool seen = false;
+            for (const auto& e : out) {
+                if (e == n) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                out.push_back(n);
+        }
+    }
+    return out;
+}
 
 std::string urlDecode(const std::string& in) {
     std::string out;
@@ -368,6 +474,128 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     if (r.detail.empty())
         r.detail = "resolve failed for " + key;
     return r;
+}
+
+PlayQueue fetchPlayQueue(const std::string& queueIdOrContainerKey, const std::string& plexBase,
+                         const std::string& token, const std::string& currentKey,
+                         const std::string& playQueueItemId) {
+    PlayQueue q;
+    std::string raw = urlDecode(queueIdOrContainerKey);
+    std::string extraQuery;
+    auto qmark = raw.find('?');
+    if (qmark != std::string::npos) {
+        extraQuery = raw.substr(qmark + 1);
+        raw = raw.substr(0, qmark);
+    }
+    std::string id = raw;
+    auto slash = id.find_last_of('/');
+    if (slash != std::string::npos)
+        id = id.substr(slash + 1);
+    while (!id.empty() && !std::isdigit(static_cast<unsigned char>(id.back())))
+        id.pop_back();
+    if (id.empty() || !std::isdigit(static_cast<unsigned char>(id.front()))) {
+        q.detail = "empty/invalid play queue id from '" + queueIdOrContainerKey + "'";
+        return q;
+    }
+
+    std::string base = normalizePlexBase(plexBase);
+    if (base.empty()) {
+        q.detail = "no PMS base for play queue";
+        return q;
+    }
+
+    std::string url = base + "/playQueues/" + id + "?";
+    if (!extraQuery.empty())
+        url += extraQuery + "&";
+    else
+        url += "own=1&";
+    if (!token.empty())
+        url += "X-Plex-Token=" + urlEncodeQuery(token);
+
+    const std::string xml = httpGet(url, 20);
+    if (xml.empty() || xml.find("MediaContainer") == std::string::npos) {
+        q.detail = "play queue fetch failed id=" + id + " bytes=" + std::to_string(xml.size());
+        return q;
+    }
+
+    q.containerKey = "/playQueues/" + id;
+    q.playQueueId = id;
+    {
+        auto a = xml.find("playQueueID=\"");
+        if (a != std::string::npos) {
+            a += 13;
+            auto b = xml.find('"', a);
+            if (b != std::string::npos)
+                q.playQueueId = xml.substr(a, b - a);
+        }
+        a = xml.find("playQueueVersion=\"");
+        if (a != std::string::npos) {
+            a += 18;
+            auto b = xml.find('"', a);
+            if (b != std::string::npos)
+                q.playQueueVersion = xml.substr(a, b - a);
+        }
+    }
+
+    size_t pos = 0;
+    while ((pos = xml.find("<Video", pos)) != std::string::npos) {
+        auto tagEnd = xml.find('>', pos);
+        if (tagEnd == std::string::npos)
+            break;
+        size_t sliceEnd = tagEnd;
+        auto end2 = xml.find("</Video>", pos);
+        auto endSlash = xml.find("/>", pos);
+        if (endSlash != std::string::npos && endSlash < tagEnd + 8)
+            sliceEnd = endSlash;
+        if (end2 != std::string::npos)
+            sliceEnd = std::max(sliceEnd, end2);
+        const std::string slice = xml.substr(pos, std::min<size_t>(4000, sliceEnd - pos + 8));
+
+        QueueItem item;
+        item.key = attrIn(slice, "key");
+        item.ratingKey = attrIn(slice, "ratingKey");
+        item.playQueueItemId = attrIn(slice, "playQueueItemID");
+        if (item.playQueueItemId.empty())
+            item.playQueueItemId = attrIn(slice, "playQueueItemId");
+        item.title = attrIn(slice, "title");
+        auto d = attrIn(slice, "duration");
+        if (!d.empty())
+            item.durationMs = std::strtoll(d.c_str(), nullptr, 10);
+        if (!item.key.empty())
+            q.items.push_back(item);
+        pos = tagEnd + 1;
+    }
+
+    if (q.items.empty()) {
+        q.detail = "play queue had no Video items";
+        return q;
+    }
+
+    q.currentIndex = 0;
+    if (!playQueueItemId.empty()) {
+        for (size_t i = 0; i < q.items.size(); ++i) {
+            if (q.items[i].playQueueItemId == playQueueItemId ||
+                q.items[i].ratingKey == playQueueItemId ||
+                q.items[i].key.find(playQueueItemId) != std::string::npos) {
+                q.currentIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    } else if (!currentKey.empty()) {
+        for (size_t i = 0; i < q.items.size(); ++i) {
+            if (q.items[i].key == currentKey ||
+                (!q.items[i].ratingKey.empty() &&
+                 currentKey.find(q.items[i].ratingKey) != std::string::npos)) {
+                q.currentIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    q.ok = true;
+    q.detail = "queue size=" + std::to_string(q.items.size()) +
+               " index=" + std::to_string(q.currentIndex);
+    return q;
 }
 
 } // namespace misterplex

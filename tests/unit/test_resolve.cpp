@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 static int fails = 0;
 #define CHECK(cond)                                                                              \
@@ -43,6 +44,40 @@ int main() {
     auto h = plexFfmpegHeaders("sess1", "tok");
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
+
+    // --- Phase 4 multi-server conf helpers (no network) ---
+    CHECK(normalizePlexBase("http://192.168.1.41:32400/") == "http://192.168.1.41:32400");
+    CHECK(normalizePlexBase("192.168.1.50:32400") == "http://192.168.1.50:32400");
+    CHECK(normalizePlexBase("192.168.1.50") == "http://192.168.1.50:32400");
+    CHECK(normalizePlexBase("  https://pms.lan:32400  ") == "https://pms.lan:32400");
+    CHECK(normalizePlexBase("").empty());
+
+    auto list = parsePlexServerList("http://a:32400,http://b:32400; http://c:32400");
+    CHECK(list.size() == 3);
+    CHECK(list[0] == "http://a:32400");
+    CHECK(list[1] == "http://b:32400");
+    CHECK(list[2] == "http://c:32400");
+
+    // Dedup + bare host
+    auto dedup = parsePlexServerList("192.168.1.1, http://192.168.1.1:32400, 192.168.1.1:32400");
+    CHECK(dedup.size() == 1);
+    CHECK(dedup[0] == "http://192.168.1.1:32400");
+
+    // merge: PLEX_SERVERS first, then extra PLEX_BASE lines
+    std::vector<std::string> bases = {"http://extra:32400", "http://a:32400"};
+    auto merged = mergePlexServers("http://a:32400,http://b:32400", bases);
+    CHECK(merged.size() == 3);
+    CHECK(merged[0] == "http://a:32400");
+    CHECK(merged[1] == "http://b:32400");
+    CHECK(merged[2] == "http://extra:32400");
+
+    // Empty merge
+    auto empty = mergePlexServers("", {});
+    CHECK(empty.empty());
+
+    // Invalid play-queue id fails without network
+    auto pq = fetchPlayQueue("not-a-queue", "http://127.0.0.1:32400", "tok");
+    CHECK(!pq.ok);
 
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
