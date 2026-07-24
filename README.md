@@ -26,13 +26,23 @@ See [docs/architecture.md](docs/architecture.md).
 |-------|--------|
 | **0** Scaffold monorepo | **done** |
 | **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
-| **2** Plex cast companion (GDM + HTTP) | **bootstrap** (`misterplexd`); media feed next |
+| **2** Plex cast companion + ARM media path | **working on hardware** — see below |
 | **3** FPGA decode (Profile MiSTerPlex-1) | planned |
 | **4** Feature-rich client | planned |
 
+### Phase 2 (current on MiSTer `192.168.1.183`)
+
+- `misterplexd` static ARM binary: GDM + companion HTTP `:3005`
+- `playMedia` / pause / resume / stop / seek wired
+- prePlayHold after stop (timeline stays `buffering@navigation` while cast-bound)
+- Slim PMS resolve (Docker-bridge rewrite, weak universal H.264 ladder, local path/URL)
+- FFmpeg → raw RGB24 → `/dev/fb0` (MiSTer_fb ascal scanout); verified with `test.mp4` + `testsrc`
+- Deploy: `./scripts/deploy_misterplexd.sh` (startup hook + log)
+
+**Still open for Phase 2 acceptance:** real Plex Web cast with token (end-to-end library title), continuous audio path (HPS ALSA is Dummy — needs FPGA audio FIFO or core tone bridge), scrubber play-queue fields from live Web cast.
+
 **Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
-**Tests:** `make unit` — cadence math + companion HTTP smoke.  
-**Note:** Timing analyzer reports setup slack on the template PLL path (common for early cores); functional CRT/HDMI bring-up is the next hardware gate.
+**Tests:** `make unit` — cadence math + resolve helpers + companion HTTP smoke.
 ## Layout
 
 ```text

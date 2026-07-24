@@ -24,7 +24,7 @@ Plex clients ──► ARM (GDM/companion/resolve/demux)
                  VGA/HDMI (sys) + AUDIO_L/R
 ```
 
-## Phase 1 (current)
+## Phase 1
 
 Self-contained proof without ARM feed:
 
@@ -34,6 +34,26 @@ Self-contained proof without ARM feed:
 - OSD selects content FPS and pattern
 
 This validates **vsync-owned present** and **film cadence** before Plex protocol lands.
+
+## Phase 2 (current transitional path)
+
+```text
+Plex Web / curl playMedia
+        │
+        ▼
+misterplexd companion (:3005) + GDM
+        │ resolve (local path | PMS universal weak)
+        ▼
+FFmpeg (ARM) → raw RGB24 320×240
+        │
+        ▼
+/dev/fb0  →  MiSTer_fb / ascal  →  HDMI/VGA
+```
+
+- Pause/stop/seek control the FFmpeg child (SIGSTOP/TERM + restart).
+- Timeline reports scrubber-friendly fields when media is bound.
+- **Not yet native present:** ARM still owns decode; FPGA owns scanout only.
+- Next: feed decoded frames into Phase 1 SDRAM/frame FIFO; continuous audio via present-domain FIFO.
 
 ## Memory map (evolving)
 
