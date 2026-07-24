@@ -79,6 +79,7 @@ private:
     FbPresent fb_;
     FpgaSpi fpga_;
     mutable std::mutex mu_;
+    std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;
     std::thread audioThr_;
     std::thread streamThr_;

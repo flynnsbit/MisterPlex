@@ -317,6 +317,12 @@ std::string Companion::timelineXml(const std::string& commandId) const {
 
 void Companion::setState(const std::string& state, int64_t timeMs, int64_t durationMs) {
     std::lock_guard<std::mutex> lock(mu_);
+    // After stop clearMedia(), prePlayHold_ is set while wantPlay_ is false. Ignore
+    // late media-thread progress so async teardown cannot re-arm fullScreenVideo.
+    if (!wantPlay_ && prePlayHold_ &&
+        (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
+        return;
+    }
     state_ = state;
     timeMs_ = timeMs;
     if (durationMs > 0)
@@ -681,11 +687,13 @@ void Companion::httpLoop() {
                 continue;
             }
             if (isStop) {
-                // Tear down first so stop ACK is buffering@navigation without keys
+                // Drop bind first so stop ACK is buffering@navigation without keys
                 // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
+                // clearMedia before player.stop so late progress cannot re-arm wantPlay
+                // (setState ignores progress while prePlayHold && !wantPlay).
+                clearMedia();
                 if (onStop_)
                     onStop_();
-                clearMedia();
                 sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 close(c);
                 continue;

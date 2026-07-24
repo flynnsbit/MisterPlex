@@ -173,12 +173,11 @@ void MediaPlayer::killChildren() {
 }
 
 void MediaPlayer::stop() {
+    // Only join thr_ here. threadMain owns audioThr_/streamThr_ joins at session end.
+    // Joining helpers from both thr_ and stop() races and can hang the companion HTTP thread.
+    std::lock_guard<std::mutex> life(lifeMu_);
     stop_.store(true);
     killChildren();
-    if (audioThr_.joinable())
-        audioThr_.join();
-    if (streamThr_.joinable())
-        streamThr_.join();
     if (thr_.joinable())
         thr_.join();
     playing_.store(false);
@@ -223,33 +222,32 @@ void MediaPlayer::seekMs(int64_t ms) {
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
-    stop_.store(true);
-    killChildren();
-    if (audioThr_.joinable())
-        audioThr_.join();
-    if (streamThr_.joinable())
-        streamThr_.join();
-    if (thr_.joinable())
-        thr_.join();
-
-    if (!fb_.ok() && !initPresent())
-        return false;
-
     {
-        std::lock_guard<std::mutex> lock(mu_);
-        currentUrl_ = urlOrPath;
-        currentHeaders_ = httpHeaders;
-        durationMs_ = durationMs;
-    }
+        std::lock_guard<std::mutex> life(lifeMu_);
+        stop_.store(true);
+        killChildren();
+        if (thr_.joinable())
+            thr_.join();
 
-    stop_.store(false);
-    paused_.store(false);
-    seekReqMs_.store(-1);
-    reconFrames_.store(0);
-    reconPresentOk_.store(false);
-    thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
-        threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
-    });
+        if (!fb_.ok() && !initPresent())
+            return false;
+
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            currentUrl_ = urlOrPath;
+            currentHeaders_ = httpHeaders;
+            durationMs_ = durationMs;
+        }
+
+        stop_.store(false);
+        paused_.store(false);
+        seekReqMs_.store(-1);
+        reconFrames_.store(0);
+        reconPresentOk_.store(false);
+        thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
+            threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
+        });
+    }
     return true;
 }
 
