@@ -4,20 +4,27 @@
 //   push_frame [--index N] [--rgb24 WxH] file
 //   push_frame --ddr [--bank N] [--rgb24 320x240] file   # Phase 3.1b DDR path
 //   push_frame --status
+//   push_frame --raw
+//   push_frame --set-bit N 0|1
+//   push_frame --pulse N
 #include "fpga_spi.hpp"
 
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 int main(int argc, char** argv) {
     uint8_t index = 1;
     int rgb24w = 0, rgb24h = 0;
     bool do_status = false;
+    bool do_raw = false;
     bool use_ddr = false;
     int bank = 0;
+    int set_bit = -1, set_val = 0;
+    int pulse_bit = -1;
     const char* path = nullptr;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--index") == 0 && i + 1 < argc)
@@ -26,6 +33,13 @@ int main(int argc, char** argv) {
             std::sscanf(argv[++i], "%dx%d", &rgb24w, &rgb24h);
         } else if (std::strcmp(argv[i], "--status") == 0) {
             do_status = true;
+        } else if (std::strcmp(argv[i], "--raw") == 0) {
+            do_raw = true;
+        } else if (std::strcmp(argv[i], "--set-bit") == 0 && i + 2 < argc) {
+            set_bit = std::atoi(argv[++i]);
+            set_val = std::atoi(argv[++i]) ? 1 : 0;
+        } else if (std::strcmp(argv[i], "--pulse") == 0 && i + 1 < argc) {
+            pulse_bit = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--ddr") == 0) {
             use_ddr = true;
         } else if (std::strcmp(argv[i], "--bank") == 0 && i + 1 < argc) {
@@ -40,7 +54,45 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (do_status) {
+    if (set_bit >= 0) {
+        if (!spi.setStatusBit(set_bit, set_val)) {
+            std::fprintf(stderr, "set-bit: %s\n", spi.lastError().c_str());
+            return 1;
+        }
+        std::printf("set bit %d = %d\n", set_bit, set_val);
+        usleep(50000);
+    }
+    if (pulse_bit >= 0) {
+        if (!spi.setStatusBit(pulse_bit, 1)) {
+            std::fprintf(stderr, "pulse: %s\n", spi.lastError().c_str());
+            return 1;
+        }
+        usleep(5000);
+        if (!spi.setStatusBit(pulse_bit, 0)) {
+            std::fprintf(stderr, "pulse low: %s\n", spi.lastError().c_str());
+            return 1;
+        }
+        std::printf("pulsed bit %d\n", pulse_bit);
+        usleep(50000);
+    }
+
+    if (do_raw) {
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            uint8_t raw[16]{};
+            if (!spi.getCoreStatus(raw)) {
+                std::fprintf(stderr, "raw: %s\n", spi.lastError().c_str());
+                return 1;
+            }
+            std::printf("raw[%d]:", attempt);
+            for (int i = 0; i < 16; ++i)
+                std::printf(" %02x", raw[i]);
+            std::printf("  lo=0x%04x\n", raw[0] | (raw[1] << 8));
+            usleep(20000);
+        }
+        return 0;
+    }
+
+    if (do_status || set_bit >= 0 || pulse_bit >= 0) {
         misterplex::FpgaSpi::CoreStatus st;
         if (!spi.readCoreStatus(st)) {
             std::fprintf(stderr, "status: %s\n", spi.lastError().c_str());
@@ -57,7 +109,8 @@ int main(int argc, char** argv) {
             st.slice_type, st.first_mb_type, st.slice_qp, st.residual_ok ? 1 : 0, st.residual_tc,
             st.residual_t1, static_cast<int>(st.residual_dc), st.ddr_busy ? 1 : 0, st.sps_width,
             st.sps_height, st.stream_bytes_in);
-        return 0;
+        if (!path)
+            return 0;
     }
 
     if (!path) {

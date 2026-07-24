@@ -118,8 +118,12 @@ arm-plexd: $(MPLEX_HDR)
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
-	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame"
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
+		-o $(ROOT)/build/arm/set_status \
+		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		-static
+	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status
+	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status"
 
 MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
 build-rbf:

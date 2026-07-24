@@ -263,9 +263,9 @@ void FpgaSpi::setDownload(int enable) {
     enableFpga(0);
 }
 
-bool FpgaSpi::setStatusBit(int bit, int value) {
-    if (!ok() || bit < 0 || bit > 127) {
-        setErr("setStatusBit: bad args");
+bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
+    if (!ok() || !word) {
+        setErr("setStatusWord: bad args");
         return false;
     }
     SpiExclusive guard(true);
@@ -274,13 +274,7 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
         return false;
     }
     err_.clear();
-
-    const int byte = bit / 8;
-    const int b = bit % 8;
-    if (value)
-        status_[byte] = static_cast<uint8_t>(status_[byte] | (1u << b));
-    else
-        status_[byte] = static_cast<uint8_t>(status_[byte] & ~(1u << b));
+    std::memcpy(status_, word, 16);
 
     enableIo(1);
     spiWord(UIO_SET_STATUS2); // cmd on IO CS
@@ -291,6 +285,96 @@ bool FpgaSpi::setStatusBit(int bit, int value) {
     enableIo(0);
 
     return err_.empty();
+}
+
+bool FpgaSpi::setStatusBit(int bit, int value) {
+    if (!ok() || bit < 0 || bit > 127) {
+        setErr("setStatusBit: bad args");
+        return false;
+    }
+    const int byte = bit / 8;
+    const int b = bit % 8;
+    uint8_t word[16];
+    std::memcpy(word, status_, 16);
+    if (value)
+        word[byte] = static_cast<uint8_t>(word[byte] | (1u << b));
+    else
+        word[byte] = static_cast<uint8_t>(word[byte] & ~(1u << b));
+    return setStatusWord(word);
+}
+
+bool FpgaSpi::setStatusBits(const int* bit_val_pairs, int n_pairs) {
+    if (!ok() || !bit_val_pairs || n_pairs <= 0) {
+        setErr("setStatusBits: bad args");
+        return false;
+    }
+    // RMW base: private shadow (same process), then overlay live OSD echo from
+    // status_in v2 [15:0] when non-zero so successive set_status CLI processes
+    // accumulate (shadow is not shared across processes).
+    uint8_t word[16];
+    std::memcpy(word, status_, 16);
+    uint8_t live[16]{};
+    if (getCoreStatus(live)) {
+        const uint16_t live_lo =
+            static_cast<uint16_t>(live[0] | (static_cast<uint16_t>(live[1]) << 8));
+        if (live_lo != 0) {
+            word[0] = live[0];
+            word[1] = live[1];
+        }
+        // Aspect ratio O[122:121] lives in byte 15 bits [2:1]
+        if (live[15] & 0x06)
+            word[15] = static_cast<uint8_t>((word[15] & ~0x06) | (live[15] & 0x06));
+    }
+
+    // CRITICAL: never leave Reset (bit 0) or flush pulses stuck high.
+    // Holding status[0] keeps the core in reset → status_set stops → Main never
+    // adopts a clear, and UIO_GET_STATUS freezes. Pulse bits must be edge-only.
+    bool want_pulse0 = false;
+    for (int i = 0; i < n_pairs; ++i) {
+        const int bit = bit_val_pairs[i * 2];
+        const int value = bit_val_pairs[i * 2 + 1] ? 1 : 0;
+        if (bit < 0 || bit > 127) {
+            setErr("setStatusBits: bit out of range");
+            return false;
+        }
+        if (bit == 0 && value)
+            want_pulse0 = true;
+        const int byte = bit / 8;
+        const int b = bit % 8;
+        if (value)
+            word[byte] = static_cast<uint8_t>(word[byte] | (1u << b));
+        else
+            word[byte] = static_cast<uint8_t>(word[byte] & ~(1u << b));
+    }
+    // Clear sticky pulses unless this call intentionally raises bit 0.
+    if (!want_pulse0)
+        word[0] = static_cast<uint8_t>(word[0] & ~0x01);
+    // Always clear flush sticky bits unless the pairs explicitly set them.
+    bool want10 = false, want11 = false;
+    for (int i = 0; i < n_pairs; ++i) {
+        if (bit_val_pairs[i * 2] == 10 && bit_val_pairs[i * 2 + 1])
+            want10 = true;
+        if (bit_val_pairs[i * 2] == 11 && bit_val_pairs[i * 2 + 1])
+            want11 = true;
+    }
+    if (!want10)
+        word[1] = static_cast<uint8_t>(word[1] & ~0x04);
+    if (!want11)
+        word[1] = static_cast<uint8_t>(word[1] & ~0x08);
+
+    if (!setStatusWord(word))
+        return false;
+    // Give FPGA status_set a chance to echo; Main check_status_change adopts it.
+    usleep(30000);
+    // If we raised bit 0 for reset, immediately clear so the core can run.
+    if (want_pulse0) {
+        usleep(5000);
+        word[0] = static_cast<uint8_t>(word[0] & ~0x01);
+        if (!setStatusWord(word))
+            return false;
+        usleep(20000);
+    }
+    return true;
 }
 
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {

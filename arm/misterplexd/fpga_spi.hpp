@@ -52,8 +52,16 @@ public:
     bool flushBitstreamFifo();
 
     // UIO_SET_STATUS2: set/clear a single status bit (0–127). Best-effort —
-    // does not fully sync with Main's cur_status shadow.
+    // does not fully sync with Main's cur_status shadow. Uses private status_[]
+    // shadow (starts zero); prefer setStatusWord / setStatusBits for multi-bit.
     bool setStatusBit(int bit, int value);
+
+    // Write full 128-bit status word via UIO_SET_STATUS2 and update private shadow.
+    bool setStatusWord(const uint8_t word[16]);
+
+    // Read UIO_GET_STATUS into private shadow, apply bit changes, write back.
+    // bits: pairs (bit, value). Only OSD-safe if core status_in v2 preserves [15:0].
+    bool setStatusBits(const int* bit_val_pairs, int n_pairs);
 
     // Core→HPS status via UIO_GET_STATUS (0x29). Fills 16 bytes (128 bits).
     // Layout: see CoreStatus helpers below / docs/phase3-decode.md.
