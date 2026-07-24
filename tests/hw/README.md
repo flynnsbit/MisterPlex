@@ -160,6 +160,20 @@ Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h
 ARM on lab: `push_frame --status` prints `res_csum=`; `push_frame --raw` dumps hex.
 Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20` (soft-skip EXIT=0 is **not** hard PASS).
 
+### Post–R-csum1 sole-deploy + hard-gate (ONE agent)
+
+Full numbered protocol: [`docs/phase3-3l-idct.md`](../../docs/phase3-3l-idct.md) § *Post–R-csum1 sole-deploy + hard-gate protocol*.
+
+Summary (after real **BUILD_OK** only; new RBF md5 **≠** `820484a6`):
+
+1. Promote `output_files/Plex.rbf` → `fpga/Plex_MiSTer/releases/` + `releases/` (same md5).
+2. **One** deploy: `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` — never scp+load_core thrash.
+3. `./tests/hw/test_fbar_fast.sh` PASS.
+4. Hard residual: `res_dc=-24` (`raw[12]=0xe8`) **and** `res_csum=20` (`raw[13]=0x14`) stable ≥2 re-pushes.
+   `test_f3_residual.sh` soft-skip EXIT=0 is **not** hard PASS.
+5. Park: `set_status --pattern bars --force-bars 1 --tv ntsc --fps 60`.
+6. On hard PASS only → 3.3l-2 paint path. On FAIL → RCA contingency (status/lev/pack/dc-only) — measure first.
+
 ## Safe core deploy (lab DE10)
 
 Do **not** `scp` over a live `Plex.rbf` and immediately `echo load_core … > /dev/MiSTer_cmd`
