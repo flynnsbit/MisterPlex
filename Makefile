@@ -3,21 +3,22 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit arm-plexd clean help
+.PHONY: all unit arm-plexd clean help plexd
 
 all: unit
 
 help:
 	@echo "Targets:"
-	@echo "  make unit       - host unit tests (cadence, …)"
+	@echo "  make unit       - host unit tests (cadence, resolve, companion HTTP)"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
 
 test: unit
 
-unit: $(ROOT)/build/test_cadence
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve
 	$(ROOT)/build/test_cadence
+	$(ROOT)/build/test_resolve
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 
@@ -25,15 +26,27 @@ $(ROOT)/build/test_cadence: $(ROOT)/tests/unit/test_cadence.cpp $(ROOT)/host/lib
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cadence.cpp
 
+$(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
+
 # Native host daemon for local smoke
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
 	$(ROOT)/arm/misterplexd/companion.cpp \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
-	$(ROOT)/arm/misterplexd/media_player.cpp
+	$(ROOT)/arm/misterplexd/media_player.cpp \
+	$(ROOT)/arm/misterplexd/plex_resolve.cpp
 MPLEX_INC := -I$(ROOT)/arm/misterplexd
 
-$(ROOT)/build/misterplexd: $(MPLEX_SRC) $(ROOT)/arm/misterplexd/companion.hpp
+$(ROOT)/build/misterplexd: $(MPLEX_SRC) \
+		$(ROOT)/arm/misterplexd/companion.hpp \
+		$(ROOT)/arm/misterplexd/media_player.hpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/arm/misterplexd/fb_present.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 

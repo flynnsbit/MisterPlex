@@ -1,6 +1,6 @@
 #pragma once
-// Minimal Plex GDM + companion HTTP for MiSTerPlex Phase 2 bootstrap.
-// Full feature parity lands by porting mistercast-linux plex_cast lessons.
+// Plex GDM + companion HTTP for MiSTerPlex Phase 2.
+// Lessons from mistercast-linux: prePlayHold, play-queue bind, async playMedia ACK.
 
 #include <atomic>
 #include <cstdint>
@@ -11,22 +11,51 @@
 
 namespace misterplex {
 
+struct PlayRequest {
+    std::string key;
+    std::string containerKey;
+    std::string playQueueId;
+    std::string playQueueItemId;
+    std::string playQueueVersion;
+    std::string ratingKey;
+    std::string address;
+    std::string protocol;
+    std::string port;
+    std::string token;
+    std::string serverMachineId;
+    int64_t offsetMs = 0;
+    bool offsetPresent = false;
+};
+
 class Companion {
 public:
     using LogFn = std::function<void(const std::string&)>;
-    using PlayFn = std::function<void(const std::string& keyOrUrl, int64_t offsetMs)>;
+    using PlayFn = std::function<void(const PlayRequest&)>;
+    using CtrlFn = std::function<void()>;
+    using SeekFn = std::function<void(int64_t ms)>;
 
     void setName(std::string n) { name_ = std::move(n); }
     void setMachineId(std::string id) { machineId_ = std::move(id); }
     void setPort(uint16_t p) { port_ = p; }
     void setLog(LogFn f) { log_ = std::move(f); }
     void setPlay(PlayFn f) { onPlay_ = std::move(f); }
+    void setPause(CtrlFn f) { onPause_ = std::move(f); }
+    void setResume(CtrlFn f) { onResume_ = std::move(f); }
+    void setStop(CtrlFn f) { onStop_ = std::move(f); }
+    void setSeek(SeekFn f) { onSeek_ = std::move(f); }
 
     bool start();
     void stop();
     bool running() const { return running_.load(); }
 
+    // Update playback clock (ms) + state for timeline polls.
     void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
+
+    // Bind media identity for scrubber (call after resolve / on playMedia).
+    void bindMedia(const PlayRequest& req, int64_t durationMs);
+
+    // Clear media bind (after stop finishes).
+    void clearMedia();
 
 private:
     void gdmLoop();
@@ -36,12 +65,17 @@ private:
     std::string timelineXml(const std::string& commandId) const;
     std::string lanIp() const;
     void log(const std::string& s) const;
+    static std::string xmlEsc(const std::string& s);
 
     std::string name_ = "MiSTerPlex";
     std::string machineId_ = "misterplex-1";
     uint16_t port_ = 3005;
     LogFn log_;
     PlayFn onPlay_;
+    CtrlFn onPause_;
+    CtrlFn onResume_;
+    CtrlFn onStop_;
+    SeekFn onSeek_;
 
     std::atomic<bool> running_{false};
     std::thread gdmThr_;
@@ -51,6 +85,21 @@ private:
     std::string state_ = "stopped";
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;
+    bool wantPlay_ = false;
+    bool prePlayHold_ = false;
+    bool castBound_ = false;
+
+    // Active / staged media for Web scrubber
+    std::string pendingKey_;
+    std::string pendingContainerKey_;
+    std::string pendingPlayQueueId_;
+    std::string pendingPlayQueueItemId_;
+    std::string pendingPlayQueueVersion_;
+    std::string pendingRatingKey_;
+    std::string serverMachineId_;
+    std::string serverHost_;
+    std::string serverPort_;
+    std::string serverProto_ = "http";
 };
 
 } // namespace misterplex

@@ -21,17 +21,21 @@ set -e
 chmod +x /media/fat/misterplex/bin/misterplexd
 # Startup hook (idempotent)
 HOOK=/media/fat/linux/_user-startup.sh
-LINE='/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 >>/media/fat/misterplex/misterplexd.log 2>&1 &'
+LINE='/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --pms http://192.168.1.41:32400 >>/media/fat/misterplex/misterplexd.log 2>&1 &'
+mkdir -p /media/fat/linux
 touch "$HOOK"
-if ! grep -q misterplexd "$HOOK" 2>/dev/null; then
-  echo "$LINE" >>"$HOOK"
+if ! grep -q 'misterplex/bin/misterplexd' "$HOOK" 2>/dev/null; then
+  printf '\n# MiSTerPlex companion + media\n%s\n' "$LINE" >>"$HOOK"
   echo "Added startup hook"
 fi
 : >>/media/fat/misterplex/misterplexd.log
+# Truncate old log for this session
+: >/media/fat/misterplex/misterplexd.log
 nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 \
+  --pms http://192.168.1.41:32400 \
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
-sleep 0.5
-ps w | grep misterplexd | grep -v grep || true
-wget -qO- http://127.0.0.1:3005/resources | head -c 200; echo
+sleep 0.8
+ps w | grep '[m]isterplexd' || true
+wget -qO- http://127.0.0.1:3005/resources | head -c 300; echo
 REMOTE
 echo "Deployed misterplexd → $HOST"

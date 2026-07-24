@@ -12,6 +12,8 @@
 #include <string>
 #include <thread>
 
+#include <sys/types.h>
+
 namespace misterplex {
 
 class MediaPlayer {
@@ -23,11 +25,12 @@ public:
     void setProgress(ProgressFn f) { onProgress_ = std::move(f); }
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
 
-    // Open fb once (call at daemon start).
     bool initPresent();
 
-    // Start playing a local path or http(s) URL. Stops any previous session.
-    bool play(const std::string& urlOrPath, int64_t startOffsetMs = 0);
+    // Start playing a local path, lavfi testsrc, or http(s) URL.
+    // httpHeaders: optional FFmpeg -headers block (CRLF-terminated lines).
+    bool play(const std::string& urlOrPath, int64_t startOffsetMs = 0,
+              const std::string& httpHeaders = {}, int64_t durationMs = 0);
     void pause();
     void resume();
     void stop();
@@ -35,9 +38,11 @@ public:
 
     bool playing() const { return playing_.load(); }
     std::string lastError() const;
+    std::string currentUrl() const;
 
 private:
-    void threadMain(std::string url, int64_t startMs);
+    void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
+    void killChild();
     void log(const std::string& s) const;
 
     LogFn log_;
@@ -51,9 +56,14 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<int64_t> seekReqMs_{-1};
+    std::atomic<int64_t> positionMs_{0};
+    std::atomic<pid_t> childPid_{-1};
     std::string lastError_;
-    int outW_ = 640;
-    int outH_ = 480;
+    std::string currentUrl_;
+    std::string currentHeaders_;
+    int64_t durationMs_ = 0;
+    int outW_ = 320;
+    int outH_ = 240;
 };
 
 } // namespace misterplex

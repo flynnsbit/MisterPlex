@@ -3,12 +3,15 @@
 
 #include "companion.hpp"
 #include "media_player.hpp"
+#include "plex_resolve.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -17,24 +20,17 @@ namespace {
 std::atomic<bool> g_stop{false};
 void on_signal(int) { g_stop.store(true); }
 
-// Heuristic: turn playMedia key into something ffmpeg can open.
-// Full Plex resolve (token + PMS universal) is next; for now support:
-//   - absolute path /media/...
-//   - http(s)://...
-//   - key starting with /library → needs resolve (placeholder: test pattern)
-std::string resolvePlayable(const std::string& keyOrUrl) {
-    if (keyOrUrl.empty() || keyOrUrl == "test" || keyOrUrl == "testsrc")
-        return {}; // test pattern
-    if (keyOrUrl.rfind("http://", 0) == 0 || keyOrUrl.rfind("https://", 0) == 0)
-        return keyOrUrl;
-    // Local absolute path (not a Plex library key)
-    if (keyOrUrl[0] == '/' && keyOrUrl.rfind("/library", 0) != 0 &&
-        keyOrUrl.find("%2F") == std::string::npos)
-        return keyOrUrl;
-    // Plex metadata keys need PMS resolve (Phase 2.1)
-    if (keyOrUrl.find("library") != std::string::npos || keyOrUrl.find("%2F") != std::string::npos)
+std::string loadConf(const std::string& path, const char* key) {
+    std::ifstream in(path);
+    if (!in)
         return {};
-    return keyOrUrl;
+    const std::string p = std::string(key) + "=";
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.rfind(p, 0) == 0)
+            return line.substr(p.size());
+    }
+    return {};
 }
 
 } // namespace
@@ -44,6 +40,9 @@ int main(int argc, char** argv) {
     std::string machineId = "misterplex-1";
     int port = 3005;
     std::string ffmpeg = "/media/fat/mistercast/bin/ffmpeg";
+    std::string defaultPms = "http://192.168.1.41:32400";
+    std::string confPath = "/media/fat/misterplex/misterplex.conf";
+    std::string confToken;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
             name = argv[++i];
@@ -53,14 +52,33 @@ int main(int argc, char** argv) {
             port = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--ffmpeg") == 0 && i + 1 < argc)
             ffmpeg = argv[++i];
+        else if (std::strcmp(argv[i], "--pms") == 0 && i + 1 < argc)
+            defaultPms = argv[++i];
+        else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc)
+            confPath = argv[++i];
         else if (std::strcmp(argv[i], "--help") == 0) {
-            std::printf("misterplexd [--name NAME] [--id ID] [--port N] [--ffmpeg PATH]\n");
+            std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
+                        "[--conf PATH]\n");
             return 0;
         }
+    }
+    {
+        auto v = loadConf(confPath, "PLEX_BASE");
+        if (!v.empty())
+            defaultPms = v;
+        v = loadConf(confPath, "PLEX_HOST");
+        if (!v.empty())
+            defaultPms = "http://" + v + ":32400";
+        confToken = loadConf(confPath, "PLEX_TOKEN");
+        v = loadConf(confPath, "FFMPEG");
+        if (!v.empty())
+            ffmpeg = v;
     }
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+    // Avoid zombies from detached play threads' children if any leak
+    std::signal(SIGCHLD, SIG_DFL);
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
@@ -79,30 +97,84 @@ int main(int argc, char** argv) {
         comp.setState(st, t, d);
     });
 
-    comp.setPlay([&](const std::string& key, int64_t off) {
-        std::string playable = resolvePlayable(key);
-        if (playable.empty()) {
-            // Unresolved Plex key: play a built-in test pattern so cast path is visible
-            playable = "testsrc";
-            std::fprintf(stderr,
-                         "misterplexd: unresolved Plex key=%s — playing test pattern (resolve TBD)\n",
-                         key.c_str());
+    comp.setPlay([&](const misterplex::PlayRequest& req) {
+        std::string base =
+            misterplex::buildPlexBase(req.protocol, req.address, req.port, defaultPms);
+        if (base.empty())
+            base = defaultPms;
+
+        int64_t off = req.offsetMs;
+        std::string token = req.token.empty() ? confToken : req.token;
+        auto resolved =
+            misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true);
+
+        if (!resolved.ok) {
+            std::fprintf(stderr, "misterplexd: resolve failed: %s — test pattern\n",
+                         resolved.detail.c_str());
+            resolved.playable = "testsrc";
+            resolved.ok = true;
+            resolved.durationMs = 120000;
+        } else {
+            std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d\n",
+                         resolved.detail.c_str(), resolved.title.c_str(),
+                         static_cast<long long>(resolved.durationMs),
+                         resolved.transcoded ? 1 : 0);
         }
-        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld\n", playable.c_str(),
+
+        // Continue-watching: only when cast omitted offset
+        if (!req.offsetPresent && resolved.viewOffsetMs > 0)
+            off = resolved.viewOffsetMs;
+
+        misterplex::PlayRequest bound = req;
+        if (bound.ratingKey.empty())
+            bound.ratingKey = resolved.ratingKey;
+        // Ensure address fields for timeline scrubber
+        if (bound.address.empty() && !base.empty()) {
+            auto hostport = base;
+            auto p = hostport.find("://");
+            if (p != std::string::npos)
+                hostport = hostport.substr(p + 3);
+            auto slash = hostport.find('/');
+            if (slash != std::string::npos)
+                hostport = hostport.substr(0, slash);
+            auto colon = hostport.rfind(':');
+            if (colon != std::string::npos) {
+                bound.address = hostport.substr(0, colon);
+                bound.port = hostport.substr(colon + 1);
+            } else {
+                bound.address = hostport;
+                bound.port = "32400";
+            }
+            if (base.rfind("https", 0) == 0)
+                bound.protocol = "https";
+            else
+                bound.protocol = "http";
+        }
+        if (bound.serverMachineId.empty())
+            bound.serverMachineId = "plex-server";
+
+        comp.bindMedia(bound, resolved.durationMs);
+
+        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld\n", resolved.playable.c_str(),
                      static_cast<long long>(off));
-        player.play(playable, off);
+        player.play(resolved.playable, off, resolved.httpHeaders, resolved.durationMs);
     });
 
-    // Wire simple pause/stop via companion control — extend companion later
-    // (playMedia path already covered)
+    comp.setPause([&]() { player.pause(); });
+    comp.setResume([&]() { player.resume(); });
+    comp.setStop([&]() {
+        player.stop();
+        // clearMedia already called by companion stop path after onStop
+    });
+    comp.setSeek([&](int64_t ms) { player.seekMs(ms); });
 
     if (!comp.start()) {
         std::fprintf(stderr, "misterplexd: companion start failed\n");
         return 1;
     }
 
-    std::fprintf(stderr, "misterplexd: running name=%s id=%s port=%d\n", name.c_str(), machineId.c_str(),
-                 port);
+    std::fprintf(stderr, "misterplexd: running name=%s id=%s port=%d pms=%s\n", name.c_str(),
+                 machineId.c_str(), port, defaultPms.c_str());
 
     while (!g_stop.load())
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
