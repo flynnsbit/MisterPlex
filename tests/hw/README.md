@@ -11,6 +11,7 @@ Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 | `test_audio_mraudio.sh` | `/dev/MrAudio` PCM path |
 | `test_single_process.sh` | one FFmpeg demux for A/V |
 | `test_seek_kill.sh` | seek + kill/restart recovery |
+| `test_soak.sh` | multi-title play/stop soak (Phase 4 skeleton) |
 
 ```bash
 ./scripts/deploy_misterplexd.sh
@@ -52,6 +53,18 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 3. Display shows green-border diagnostic frame after F3 push (not color bars alone).
 4. Continuous product path: `STREAM=1` in `misterplex.conf` (+ `PRESENT=fpga|both`)
    demuxes annex-B → F3 while playing (decode_stub until real H.264 IP).
+
+## Phase 3.3i host I-slice recon → F1
+
+1. Conf: `PRESENT=both` (or `fpga`) and `STREAM=1` in `/media/fat/misterplex/misterplex.conf`.
+2. Deploy: `./scripts/deploy_misterplexd.sh`.
+3. Play weak Baseline 320×240 (PMS ladder / test annex-B cast) via companion.
+4. Log should show:
+   - `STREAM=1 host I-slice recon →F1 +F3`
+   - `recon frame ok #1 320x240 mb=300 …`
+   - `fpga`/session `recon=N` (N≥1 after first IDR)
+5. Frame store shows reconstructed I-frame (not only decode_stub green border).
+6. Fallback: if recon fails, FFmpeg RGB still drives F1 until first recon success.
 
 ## Phase 3.3c SPS parse (real Baseline)
 
