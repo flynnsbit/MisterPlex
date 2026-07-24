@@ -22,9 +22,9 @@ struct ResidualResult {
 
 namespace tables {
 
-// FFmpeg libavcodec/h264_cavlc.c — coeff_token for nC categories 0..2 + FLC for >=8
+// FFmpeg libavcodec/h264_cavlc.c — coeff_token for nC categories 0..3 (3 = nC>=8 FLC)
 // Layout: index = 4*TotalCoeff + TrailingOnes
-static const uint8_t coeff_token_len[3][4 * 17] = {
+static const uint8_t coeff_token_len[4][4 * 17] = {
     {1, 0, 0, 0, 6, 2, 0, 0, 8, 6, 3, 0, 9, 8, 7, 5, 10, 9, 8, 6, 11, 10, 9, 7,
      13, 11, 10, 8, 13, 13, 11, 9, 13, 13, 13, 10, 14, 14, 13, 11, 14, 14, 14, 13,
      15, 15, 14, 14, 15, 15, 15, 14, 16, 15, 15, 15, 16, 16, 16, 15, 16, 16, 16, 16,
@@ -35,8 +35,12 @@ static const uint8_t coeff_token_len[3][4 * 17] = {
     {4, 0, 0, 0, 6, 4, 0, 0, 6, 5, 4, 0, 6, 5, 5, 4, 7, 5, 5, 4, 7, 5, 5, 4, 7, 6,
      6, 4, 7, 6, 6, 4, 8, 7, 7, 5, 8, 8, 7, 6, 9, 8, 8, 7, 9, 9, 8, 8, 9, 9, 9, 8,
      10, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10},
+    // nC >= 8: 6-bit FLC (invalid (tc,t1) have len 0)
+    {6, 0, 0, 0, 6, 6, 0, 0, 6, 6, 6, 0, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6},
 };
-static const uint8_t coeff_token_bits[3][4 * 17] = {
+static const uint8_t coeff_token_bits[4][4 * 17] = {
     {1, 0, 0, 0, 5, 1, 0, 0, 7, 4, 1, 0, 7, 6, 5, 3, 7, 6, 5, 3, 7, 6, 5, 4, 15, 6,
      5, 4, 11, 14, 5, 4, 8, 10, 13, 4, 15, 14, 9, 4, 11, 10, 13, 12, 15, 14, 9, 12,
      11, 10, 13, 8, 15, 1, 9, 12, 11, 14, 13, 8, 7, 10, 9, 12, 4, 6, 5, 8},
@@ -47,6 +51,10 @@ static const uint8_t coeff_token_bits[3][4 * 17] = {
      9, 10, 9, 14, 13, 9, 8, 10, 9, 8, 15, 14, 13, 13, 11, 14, 10, 12, 15, 10, 13,
      12, 11, 14, 9, 12, 8, 10, 13, 8, 13, 7, 9, 12, 9, 12, 11, 10, 5, 8, 7, 6, 1, 4,
      3, 2},
+    {3, 0, 0, 0, 0, 1, 0, 0, 4, 5, 6, 0, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+     20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+     40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+     60, 61, 62, 63},
 };
 static const uint8_t chroma_dc_len[4 * 5] = {2, 0, 0, 0, 6, 1, 0, 0, 6, 6, 3, 0,
                                               6, 7, 7, 6, 6, 8, 8, 7};
@@ -122,25 +130,17 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
         return out;
 
     int tc = 0, t1 = 0;
-    if (nC >= 8) {
-        uint32_t v = br.u(6);
-        if (v == 3) {
-            tc = 0;
-            t1 = 0;
-        } else {
-            tc = static_cast<int>((v >> 2) + 1);
-            t1 = static_cast<int>(v & 3);
-        }
-    } else if (nC == -1) {
+    if (nC == -1) {
         int idx = 0;
         if (!tables::matchMap(br, tables::chroma_dc_len, tables::chroma_dc_bits, 20, idx))
             return out;
         tc = idx / 4;
         t1 = idx % 4;
         if (tc > 4)
-            tc = 4;
+            return out;
     } else {
-        int tab = nC < 2 ? 0 : (nC < 4 ? 1 : 2);
+        // FFmpeg table index: 0,0,1,1,2,2,2,2,3,3,... for nC 0..16
+        int tab = nC < 2 ? 0 : (nC < 4 ? 1 : (nC < 8 ? 2 : 3));
         int idx = 0;
         if (!tables::matchMap(br, tables::coeff_token_len[tab], tables::coeff_token_bits[tab],
                               4 * 17, idx))
@@ -148,10 +148,9 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
         tc = idx / 4;
         t1 = idx % 4;
     }
-    if (tc > maxNumCoeff)
-        tc = maxNumCoeff;
-    if (t1 > tc)
-        t1 = tc;
+    // Invalid token or exceeds residual size → bitstream misalignment / error
+    if (tc > maxNumCoeff || t1 > tc || t1 > 3)
+        return out;
     out.total_coeff = tc;
     out.trailing_ones = t1;
     if (tc == 0) {
@@ -159,6 +158,7 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
         return out;
     }
 
+    // Level decode matches OpenH264 CavlcGetLevelVal / ITU-T H.264 9.2.2
     int16_t level[16]{};
     for (int i = 0; i < t1; ++i) {
         level[i] = br.u(1) ? -1 : 1;
@@ -167,28 +167,32 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
     int suffixLength = (tc > 10 && t1 < 3) ? 1 : 0;
     for (int i = t1; i < tc && br.ok; ++i) {
         int level_prefix = 0;
-        while (br.ok && br.u(1) == 0)
+        while (br.ok && br.u(1) == 0) {
             ++level_prefix;
-        int levelCode = 0;
-        if (level_prefix < 14) {
-            if (suffixLength > 0)
-                levelCode = (level_prefix << suffixLength) + static_cast<int>(br.u(suffixLength));
-            else
-                levelCode = level_prefix;
-        } else if (level_prefix == 14) {
-            if (suffixLength == 0)
-                levelCode = 14 + static_cast<int>(br.u(4));
-            else
-                levelCode = (14 << suffixLength) + static_cast<int>(br.u(suffixLength));
-        } else {
-            // level_prefix >= 15: levelSuffixSize = prefix-3 (FFmpeg decode_residual)
-            int suffixBits = level_prefix - 3;
-            levelCode = 30;
-            if (level_prefix >= 16)
-                levelCode += (1 << (level_prefix - 3)) - 4096;
-            if (suffixBits > 0)
-                levelCode += static_cast<int>(br.u(suffixBits));
+            if (level_prefix > 31)
+                return out;
         }
+        // levelCode starts as prefix << suffixLength; suffix size may grow for escapes
+        int levelCode = level_prefix << suffixLength;
+        int suffixBits = suffixLength;
+        if (level_prefix >= 14) {
+            if (level_prefix == 14 && suffixLength == 0)
+                suffixBits = 4;
+            else if (level_prefix == 15) {
+                // Always 12-bit suffix when prefix==15 (OpenH264 / common practice)
+                suffixBits = 12;
+                if (suffixLength == 0)
+                    levelCode += 15;
+            } else if (level_prefix > 15) {
+                // FFmpeg path for rare large prefixes
+                suffixBits = level_prefix - 3;
+                levelCode = 30;
+                if (level_prefix >= 16)
+                    levelCode += (1 << (level_prefix - 3)) - 4096;
+            }
+        }
+        if (suffixBits > 0)
+            levelCode += static_cast<int>(br.u(suffixBits));
         if (i == t1 && t1 < 3)
             levelCode += 2;
         int16_t lvl =
@@ -196,6 +200,7 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
                                  : static_cast<int16_t>(-((levelCode + 1) >> 1));
         level[i] = lvl;
         out.level[i] = lvl;
+        // suffixLength++: first non-zero after T1s always bumps 0→1, then by magnitude
         if (suffixLength == 0)
             suffixLength = 1;
         if (std::abs(static_cast<int>(lvl)) > (3 << (suffixLength - 1)) && suffixLength < 6)

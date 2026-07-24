@@ -119,10 +119,13 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
 
 Phase 3.3h (in progress — I-slice residual walk):
   Host: `h264_slice_walk.hpp` walkISliceResiduals — I_NxN + I_16x16, luma/chroma nC
-  CAVLC fixes: run_before zerosLeft>6 (Table 9-10 invert), IDR ref marking
-  Unit: test_cavlc_dc requires walk ≥4 MBs (real IDR currently ~8/300; full 300 WIP)
-  Known gap: residual bit alignment after dense I4 / high nC (level/run edge cases)
-  Next: finish 300-MB walk → inv-quant → IDCT → recon → YUV→RGB565
+  CAVLC: FFmpeg tables incl. nC≥8 FLC VLC; run_before zerosLeft>6; OpenH264-style levels
+  IDR dec_ref_pic_marking fixed (host+FPGA); HW mb0=0 qp=25 green
+  Unit: walk ≥4 (real IDR **8/300**); residual round-trip stress 2600+ OK
+  Known gap: multi-MB bit alignment still breaks (~MB8 real / ~MB2 sparse qp50)
+    — residualBlock alone round-trips; likely nC edge or I_NxN residual count drift
+  Next: isolate first bad residual vs reference decoder → 300-MB walk
+        then inv-quant → IDCT → recon → YUV→RGB565
   Optional: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 
