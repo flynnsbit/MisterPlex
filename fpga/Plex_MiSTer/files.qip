@@ -1,0 +1,6 @@
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
+set_global_assignment -name SDC_FILE Plex.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
