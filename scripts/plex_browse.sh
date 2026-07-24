@@ -392,12 +392,25 @@ case "$CMD" in
   seek)
     MS="${1:-}"
     [[ -n "$MS" ]] || { echo "usage: $0 seek <ms>" >&2; exit 1; }
+    # Non-negative integer ms only (companion also clamps; reject junk early).
+    if [[ ! "$MS" =~ ^[0-9]+$ ]]; then
+      echo "seek: need non-negative integer ms, got: $MS" >&2
+      exit 1
+    fi
     player_get "/player/playback/seekTo?offset=${MS}&commandID=browse-seek" | grep -q Timeline
     echo "seek OK offset=${MS}"
     ;;
   step|stepForward|ff)
-    # Relative +N ms (default 10000). Companion stepForward accepts optional offset=.
+    # Relative +N ms (default 10000). Companion stepForward accepts optional offset= (cap 120s).
     MS="${1:-10000}"
+    if [[ ! "$MS" =~ ^[0-9]+$ ]] || [[ "$MS" -eq 0 ]]; then
+      echo "step: need positive integer ms, got: $MS" >&2
+      exit 1
+    fi
+    # Match companion clamp: relative step size max 120000 ms.
+    if [[ "$MS" -gt 120000 ]]; then
+      MS=120000
+    fi
     EXTRA=""
     [[ "$MS" != "10000" ]] && EXTRA="&offset=${MS}"
     player_get "/player/playback/stepForward?commandID=browse-step${EXTRA}" | grep -q Timeline
@@ -405,6 +418,13 @@ case "$CMD" in
     ;;
   stepBack|rw)
     MS="${1:-10000}"
+    if [[ ! "$MS" =~ ^[0-9]+$ ]] || [[ "$MS" -eq 0 ]]; then
+      echo "stepBack: need positive integer ms, got: $MS" >&2
+      exit 1
+    fi
+    if [[ "$MS" -gt 120000 ]]; then
+      MS=120000
+    fi
     EXTRA=""
     [[ "$MS" != "10000" ]] && EXTRA="&offset=${MS}"
     player_get "/player/playback/stepBack?commandID=browse-stepBack${EXTRA}" | grep -q Timeline
@@ -415,8 +435,9 @@ case "$CMD" in
     echo "skipNext OK"
     ;;
   prev|skipPrevious)
+    # Plex-style: restart @0 when scrub >3s; near start tries previous playQueue item.
     player_get "/player/playback/skipPrevious?commandID=browse-skipPrevious" | grep -q Timeline
-    echo "skipPrevious OK (restart title @ 0)"
+    echo "skipPrevious OK (restart@0 or queue previous when near start)"
     ;;
   *)
     echo "unknown command: $CMD" >&2

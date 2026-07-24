@@ -62,7 +62,7 @@ Ported/hardened mistercast-linux companion lessons without requiring RBF changes
 | On-device/host browse CLI | `scripts/plex_browse.sh` (sections / play / status / stop / seek) |
 | On-device interactive menu | `scripts/plex_menu.sh` — pick section/item → `playMedia` on `localhost:3005` |
 | Scrubber duration / seekRange after resolve | **done** — bind + setState; seek clamp |
-| Scrubber step / skip | **done** — `stepForward`/`stepBack` (±10s), `skipNext` (auto-next), `skipPrevious` (restart) |
+| Scrubber step / skip | **done** — `stepForward`/`stepBack` (±10s), `skipNext` (queue), `skipPrevious` (restart@0 if >3s; queue prev near start) |
 | Next-episode stub (EOF → next `playQueue` item via internal play) | **done** — conf `AUTO_NEXT=1` (default) |
 | Subtitles burn-in | plan [docs/subtitles-burnin.md](docs/subtitles-burnin.md); conf `SUBTITLES=burn\|ffmpeg` |
 | Multi-title soak | `tests/hw/test_soak.sh` (PMS conf auto-discover) |

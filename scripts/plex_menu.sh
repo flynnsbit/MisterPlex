@@ -115,7 +115,7 @@ while true; do
   echo "  6) Stop"
   echo "  7) Seek to ms"
   echo "  8) Step +10s   9) Step -10s"
-  echo "  n) Next (skipNext)   p) Prev (restart @ 0)"
+  echo "  n) Next (skipNext)   p) Prev (restart@0 / queue prev near start)"
   echo "  s) Servers (conf)"
   echo "  q) Quit"
   printf 'Choice: '
