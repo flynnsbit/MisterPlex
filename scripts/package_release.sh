@@ -31,6 +31,10 @@ if [[ -f "$ROOT/build/arm/push_frame" ]]; then
   cp -a "$ROOT/build/arm/push_frame" "$STAGE/bin/push_frame"
   chmod +x "$STAGE/bin/push_frame"
 fi
+if [[ -f "$ROOT/build/arm/set_status" ]]; then
+  cp -a "$ROOT/build/arm/set_status" "$STAGE/bin/set_status"
+  chmod +x "$STAGE/bin/set_status"
+fi
 
 if [[ -f "$CONF_EX" ]]; then
   cp -a "$CONF_EX" "$STAGE/conf/misterplex.conf.example"
