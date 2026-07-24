@@ -37,14 +37,14 @@ See [docs/architecture.md](docs/architecture.md).
 - prePlayHold after stop (timeline stays `buffering@navigation` while cast-bound)
 - Slim PMS resolve (Docker-bridge rewrite, weak universal H.264 ladder, local path/URL)
 - FFmpeg → raw RGB24 → `/dev/fb0` (MiSTer_fb ascal scanout)
-- **Audio:** parallel FFmpeg → s16le stereo @ 48 kHz → `/dev/MrAudio` (kernel SPI DMA into FPGA mix)
+- **Audio:** single-process FFmpeg → s16le stereo @ 48 kHz → `/dev/MrAudio` (SPI DMA)
 - Play-queue scrubber fields: `playQueueID` / `playQueueItemID` / `containerKey` / `key`
+- Conf: `DECODE=WxH`, `WEAK_RES`, `WEAK_BITRATE` (default 320×240; **480×360 HW-verified**)
 - Deploy: `./scripts/deploy_misterplexd.sh` (startup hook, conf, free :3005 orphans)
 
-**HW proven:** PMS “The Garden of Delights” universal → fb0 + MrAudio; full suite green:
-`tests/hw/test_media_fb.sh`, `test_playqueue_bind.sh`, `test_audio_mraudio.sh`, `test_seek_kill.sh`.
+**HW proven:** PMS “The Garden of Delights” → fb0 + MrAudio; suite green including `test_single_process.sh` (1× ffmpeg).
 
-**Still open / Phase 3 track:** native FPGA frame FIFO (move off ARM blit), single-process A/V lip-sync, raise decode res, live Plex Web click-through soak.
+**Phase 3 track:** see [docs/phase3-decode.md](docs/phase3-decode.md) — RGB frame FIFO then H.264 soft-core; dual-A9 stays pegged until decode leaves ARM.
 
 **Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
 **Tests:** `make unit` + HW scripts above.

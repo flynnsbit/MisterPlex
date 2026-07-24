@@ -1,7 +1,6 @@
 #pragma once
-// Phase 2 media player: FFmpeg decode → /dev/fb0 present + /dev/MrAudio PCM.
-// Transitional: ARM decode, FPGA scanout via MiSTer_fb/ascal + SPI audio buffer.
-// Phase 3 moves decode onto the fabric.
+// Phase 2 media player: single-process FFmpeg → /dev/fb0 + /dev/MrAudio.
+// Transitional ARM decode; FPGA owns scanout (MiSTer_fb) + SPI audio (MrAudio).
 
 #include "fb_present.hpp"
 
@@ -11,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <sys/types.h>
 
@@ -26,11 +26,10 @@ public:
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
+    void setDecodeSize(int w, int h);
 
     bool initPresent();
 
-    // Start playing a local path, lavfi testsrc, or http(s) URL.
-    // httpHeaders: optional FFmpeg -headers block (CRLF-terminated lines).
     bool play(const std::string& urlOrPath, int64_t startOffsetMs = 0,
               const std::string& httpHeaders = {}, int64_t durationMs = 0);
     void pause();
@@ -40,15 +39,17 @@ public:
 
     bool playing() const { return playing_.load(); }
     bool audioActive() const { return audioActive_.load(); }
+    int decodeW() const { return outW_; }
+    int decodeH() const { return outH_; }
     std::string lastError() const;
     std::string currentUrl() const;
 
 private:
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
+    void audioPump(int afd);
     void killChildren();
     void signalChildren(int sig);
-    pid_t spawnShell(const std::string& cmd, int stdoutFd /* -1 = inherit/devnull */);
-    std::string buildCurlHeaderArgs(const std::string& headers) const;
+    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
     void log(const std::string& s) const;
 
     LogFn log_;
@@ -60,14 +61,14 @@ private:
     FbPresent fb_;
     mutable std::mutex mu_;
     std::thread thr_;
+    std::thread audioThr_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
-    std::atomic<pid_t> videoPid_{-1};
-    std::atomic<pid_t> audioPid_{-1};
+    std::atomic<pid_t> childPid_{-1};
     std::string lastError_;
     std::string currentUrl_;
     std::string currentHeaders_;

@@ -27,11 +27,18 @@ std::string urlEncodeQuery(const std::string& s);
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
+// Weak ladder params for PMS universal transcoder (dual-A9 safe defaults).
+struct WeakLadder {
+    std::string videoResolution = "320x240"; // e.g. 320x240, 480x360, 640x480
+    int maxVideoBitrateKbps = 1000;
+    int videoQuality = 40;
+};
+
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9).
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
-                                bool weakAlways = true);
+                                bool weakAlways = true, const WeakLadder& weak = {});
 
 // Chrome-profile FFmpeg headers required by PMS universal transcoder.
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token);

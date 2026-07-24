@@ -43,6 +43,8 @@ int main(int argc, char** argv) {
     std::string defaultPms = "http://192.168.1.41:32400";
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
+    int decodeW = 320, decodeH = 240;
+    misterplex::WeakLadder weak;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
             name = argv[++i];
@@ -56,9 +58,16 @@ int main(int argc, char** argv) {
             defaultPms = argv[++i];
         else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc)
             confPath = argv[++i];
-        else if (std::strcmp(argv[i], "--help") == 0) {
+        else if (std::strcmp(argv[i], "--decode") == 0 && i + 1 < argc) {
+            // e.g. 320x240 or 640x480
+            int w = 0, h = 0;
+            if (std::sscanf(argv[++i], "%dx%d", &w, &h) == 2) {
+                decodeW = w;
+                decodeH = h;
+            }
+        } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
-                        "[--conf PATH]\n");
+                        "[--conf PATH] [--decode WxH]\n");
             return 0;
         }
     }
@@ -73,6 +82,28 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "FFMPEG");
         if (!v.empty())
             ffmpeg = v;
+        v = loadConf(confPath, "DECODE");
+        if (!v.empty()) {
+            int w = 0, h = 0;
+            if (std::sscanf(v.c_str(), "%dx%d", &w, &h) == 2) {
+                decodeW = w;
+                decodeH = h;
+            }
+        }
+        v = loadConf(confPath, "WEAK_RES");
+        if (!v.empty())
+            weak.videoResolution = v;
+        v = loadConf(confPath, "WEAK_BITRATE");
+        if (!v.empty())
+            weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+    }
+    // Align weak ladder with decode size when still default
+    if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
+        weak.videoResolution = std::to_string(decodeW) + "x" + std::to_string(decodeH);
+        if (decodeW >= 640)
+            weak.maxVideoBitrateKbps = 2000;
+        else if (decodeW >= 480)
+            weak.maxVideoBitrateKbps = 1500;
     }
 
     std::signal(SIGINT, on_signal);
@@ -82,6 +113,7 @@ int main(int argc, char** argv) {
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
+    player.setDecodeSize(decodeW, decodeH);
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING fb present unavailable — companion only\n");
@@ -106,7 +138,7 @@ int main(int argc, char** argv) {
         int64_t off = req.offsetMs;
         std::string token = req.token.empty() ? confToken : req.token;
         auto resolved =
-            misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true);
+            misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true, weak);
 
         if (!resolved.ok) {
             std::fprintf(stderr, "misterplexd: resolve failed: %s — test pattern\n",
@@ -173,8 +205,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::fprintf(stderr, "misterplexd: running name=%s id=%s port=%d pms=%s\n", name.c_str(),
-                 machineId.c_str(), port, defaultPms.c_str());
+    std::fprintf(stderr,
+                 "misterplexd: running name=%s id=%s port=%d pms=%s decode=%dx%d weak=%s@%dk\n",
+                 name.c_str(), machineId.c_str(), port, defaultPms.c_str(), decodeW, decodeH,
+                 weak.videoResolution.c_str(), weak.maxVideoBitrateKbps);
 
     while (!g_stop.load())
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

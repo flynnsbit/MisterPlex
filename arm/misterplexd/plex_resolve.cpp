@@ -103,8 +103,7 @@ std::string attr(const std::string& xml, const char* tag, const char* name) {
 
 std::string buildUniversal(const std::string& base, const std::string& metadataKey,
                            const std::string& token, const std::string& session,
-                           int64_t offsetMs) {
-    // Dual-A9 safe ladder: 320x240 @ ~1 Mbps
+                           int64_t offsetMs, const WeakLadder& weak) {
     std::ostringstream q;
     q << base << "/video/:/transcode/universal/start.mp4"
       << "?hasMDE=1"
@@ -114,9 +113,9 @@ std::string buildUniversal(const std::string& base, const std::string& metadataK
       << "&directPlay=0&directStream=0"
       << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
       << "&session=" << urlEncodeQuery(session)
-      << "&videoQuality=40"
-      << "&videoResolution=" << urlEncodeQuery("320x240")
-      << "&maxVideoBitrate=1000";
+      << "&videoQuality=" << weak.videoQuality
+      << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
+      << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps;
     // PMS universal offset is SECONDS
     if (offsetMs > 0)
         q << "&offset=" << ((offsetMs + 500) / 1000);
@@ -219,11 +218,32 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     std::string path = startUrl.substr(pathEq, pathEnd == std::string::npos ? std::string::npos
                                                                              : pathEnd - pathEq);
 
+    // Mirror ladder params from start URL when present
+    auto qparam = [&](const char* name) -> std::string {
+        std::string key = std::string(name) + "=";
+        auto p = startUrl.find(key);
+        if (p == std::string::npos)
+            return {};
+        p += key.size();
+        auto e = startUrl.find('&', p);
+        return startUrl.substr(p, e == std::string::npos ? std::string::npos : e - p);
+    };
+    std::string vq = qparam("videoQuality");
+    if (vq.empty())
+        vq = "40";
+    std::string vres = qparam("videoResolution");
+    if (vres.empty())
+        vres = "320x240";
+    std::string br = qparam("maxVideoBitrate");
+    if (br.empty())
+        br = "1000";
+
     std::ostringstream decisionUrl;
     decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
                 << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0"
                 << "&location=lan&session=" << urlEncodeQuery(sessionId)
-                << "&videoQuality=40&videoResolution=320x240&maxVideoBitrate=1000";
+                << "&videoQuality=" << vq << "&videoResolution=" << vres
+                << "&maxVideoBitrate=" << br;
     if (!token.empty())
         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
 
@@ -239,7 +259,8 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
 }
 
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
-                                const std::string& token, int64_t offsetMs, bool weakAlways) {
+                                const std::string& token, int64_t offsetMs, bool weakAlways,
+                                const WeakLadder& weak) {
     ResolveResult r;
     std::string key = urlDecode(rawKeyOrPath);
     if (key.empty() || key == "test" || key == "testsrc") {
@@ -309,13 +330,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
         const std::string start =
-            buildUniversal(plexBase, key, token, session, offsetMs > 0 ? offsetMs : 0);
+            buildUniversal(plexBase, key, token, session, offsetMs > 0 ? offsetMs : 0, weak);
         if (ensureUniversalDecision(start, session, token)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
             r.httpHeaders = plexFfmpegHeaders(session, token);
-            r.detail = "PMS universal weak " + key;
+            r.detail = "PMS universal weak " + weak.videoResolution + " " + key;
             return r;
         }
         r.detail = "universal decision failed; trying direct part";
