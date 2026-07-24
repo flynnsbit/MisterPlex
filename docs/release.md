@@ -127,6 +127,7 @@ SOAK_HOLD_S=5 SOAK_ROUNDS=1 ./tests/hw/test_soak.sh
 | Scrubber | Play-queue bind fields implemented; edge cases vs Plex Web versions may still need tuning |
 | Audio | Single-process FFmpeg → MrAudio @ 48 kHz stereo; do not reclock video to 60 unique RGB/s |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens for multi-user |
+| Stop under STREAM | Media thr_ owns audio/stream joins; stop clears bind before join so late progress cannot re-arm cast UI |
 
 ## Version stamp
 

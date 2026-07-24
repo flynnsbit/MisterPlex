@@ -112,8 +112,8 @@ discover_pms_keys() {
       done < <(printf '%s' "$eps" | grep -oE 'ratingKey="[0-9]+"' | sed 's/ratingKey="//;s/"//' | head -5)
     fi
   fi
-  # Trailers / extras (clips) under first show if we still need variety
-  if [[ ${#keys[@]} -lt 2 && -n "$show_rk" ]]; then
+  # Trailers / extras (clips) under first show for multi-title variety
+  if [[ -n "$show_rk" ]]; then
     local extras
     extras=$("${CURL[@]}" "${hdr[@]}" \
       "${base}/library/metadata/${show_rk}/extras?X-Plex-Container-Size=5" 2>/dev/null || true)
