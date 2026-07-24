@@ -235,15 +235,17 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
 }
 
 void MediaPlayer::audioPump(int afd) {
-    // Drain PCM to MrAudio; blocking write paces to FPGA ring.
+    // Drain PCM to MrAudio (continuous) and optionally F2 audio_fifo chunks.
+    const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
+    const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+
     int out = -1;
-    if (audioEnabled_ && ::access(audioDev_.c_str(), W_OK) == 0) {
+    if (wantMr) {
         out = ::open(audioDev_.c_str(), O_WRONLY);
         if (out < 0)
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
     }
-    if (out < 0) {
-        // Drain and discard so ffmpeg does not block
+    if (out < 0 && !wantF2) {
         char buf[4096];
         while (!stop_.load()) {
             ssize_t n = ::read(afd, buf, sizeof(buf));
@@ -253,9 +255,21 @@ void MediaPlayer::audioPump(int afd) {
         ::close(afd);
         return;
     }
+
+    if (wantF2) {
+        fpga_.flushAudioFifo();
+        log("media: F2 audio_fifo streaming enabled");
+    }
+
     audioActive_.store(true);
     char buf[8192];
+    std::vector<uint8_t> f2acc;
+    f2acc.reserve(32768);
     size_t total = 0;
+    size_t f2total = 0;
+    // ~85ms of stereo s16le @ 48k = 16384 bytes — matches FIFO depth comfort
+    constexpr size_t kF2Chunk = 16384;
+
     while (!stop_.load()) {
         if (paused_.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -269,24 +283,48 @@ void MediaPlayer::audioPump(int afd) {
         }
         if (n == 0)
             break;
-        size_t off = 0;
-        while (off < static_cast<size_t>(n) && !stop_.load()) {
-            ssize_t w = ::write(out, buf + off, static_cast<size_t>(n) - off);
-            if (w < 0) {
-                if (errno == EINTR)
-                    continue;
-                log("media: MrAudio write err errno=" + std::to_string(errno));
-                stop_.store(true);
-                break;
+
+        if (out >= 0) {
+            size_t off = 0;
+            while (off < static_cast<size_t>(n) && !stop_.load()) {
+                ssize_t w = ::write(out, buf + off, static_cast<size_t>(n) - off);
+                if (w < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    log("media: MrAudio write err errno=" + std::to_string(errno));
+                    break;
+                }
+                off += static_cast<size_t>(w);
             }
-            off += static_cast<size_t>(w);
-            total += static_cast<size_t>(w);
         }
+
+        if (wantF2) {
+            f2acc.insert(f2acc.end(), buf, buf + n);
+            while (f2acc.size() >= kF2Chunk && !stop_.load()) {
+                if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
+                    f2total += kF2Chunk;
+                } else if ((f2total % (kF2Chunk * 8)) == 0) {
+                    log("media: F2 pcm: " + fpga_.lastError());
+                }
+                f2acc.erase(f2acc.begin(), f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
+            }
+        }
+        total += static_cast<size_t>(n);
     }
-    ::close(out);
+
+    // Flush remainder to F2
+    if (wantF2 && f2acc.size() >= 4) {
+        size_t n = f2acc.size() & ~size_t(3);
+        if (n && fpga_.sendPcmChunk(f2acc.data(), n, 2))
+            f2total += n;
+    }
+
+    if (out >= 0)
+        ::close(out);
     ::close(afd);
     audioActive_.store(false);
-    log("media: audio pump end bytes=" + std::to_string(total));
+    log("media: audio pump end bytes=" + std::to_string(total) +
+        " f2=" + std::to_string(f2total));
 }
 
 void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string headers,
@@ -302,7 +340,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                      ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
-    const bool wantAudio = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
+    const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
+    const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+    const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
 
     std::vector<std::string> args;
     args.push_back(ffmpeg_);

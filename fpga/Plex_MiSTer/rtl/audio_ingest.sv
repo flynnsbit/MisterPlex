@@ -35,10 +35,11 @@ module audio_ingest (
 			active <= 0;
 			was_dl <= ioctl_download;
 		end else begin
+			// Continuous streaming: do NOT flush on every download start (appends).
+			// Flush only via core reset or external af_wr_flush from status.
 			if (ioctl_download && !was_dl) begin
-				wr_flush <= 1'b1;
-				phase    <= 0;
-				active   <= 1'b1;
+				phase  <= 0;
+				active <= 1'b1;
 			end
 			if (!ioctl_download && was_dl)
 				active <= 1'b0;

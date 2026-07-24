@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <vector>
 
+// usleep
+#include <time.h>
+
 namespace misterplex {
 namespace {
 
@@ -232,6 +235,27 @@ bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
         packed[o++] = static_cast<uint8_t>(p >> 8);
     }
     return sendFileTx(packed.data(), packed.size(), index);
+}
+
+bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
+    if (!pcm || !len) {
+        err_ = "sendPcmChunk: empty";
+        return false;
+    }
+    // Align to 4-byte stereo frames
+    len &= ~size_t(3);
+    if (!len)
+        return true;
+    return sendFileTx(pcm, len, index);
+}
+
+bool FpgaSpi::flushAudioFifo() {
+    // Pulse status[10] high then low (OSD T[10] / present_core af_wr_flush)
+    if (!setStatusBit(10, 1))
+        return false;
+    // brief hold so FPGA samples the bit
+    usleep(2000);
+    return setStatusBit(10, 0);
 }
 
 } // namespace misterplex

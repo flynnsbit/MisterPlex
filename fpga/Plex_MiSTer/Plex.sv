@@ -52,6 +52,7 @@ localparam CONF_STR = {
 	"O[7:6],Pattern,Bars,Bars+Block,Grid,Ramp;",
 	"O[8],Audio tone,On,Off;",
 	"O[9],Force bars (debug),No,Yes;",
+	"T[10],Flush audio FIFO;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
@@ -194,7 +195,8 @@ present_core present (
 	.fs_swap(fs_swap),
 	.af_wr_en(af_wr_en),
 	.af_wr_data(af_wr_data),
-	.af_wr_flush(af_wr_flush),
+	// OSD T[10] or SPI status bit 10 pulses flush
+	.af_wr_flush(af_wr_flush | status[10]),
 	.ce_pix(ce_pix),
 	.HBlank(HBlank),
 	.HSync(HSync),

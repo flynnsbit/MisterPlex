@@ -25,6 +25,12 @@ public:
     // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
+    // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
+    bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
+
+    // Pulse status bit 10 to flush present-domain audio FIFO.
+    bool flushAudioFifo();
+
     // UIO_SET_STATUS2: set/clear a single status bit (0–127). Best-effort —
     // does not fully sync with Main's cur_status shadow.
     bool setStatusBit(int bit, int value);

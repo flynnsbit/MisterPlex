@@ -54,7 +54,8 @@ Phase 3.1 (done this fire):
 Phase 3.2 (done this fire):
   `audio_fifo` + `audio_ingest` — F2 s16le stereo @48k → present-domain ring
   Prefers FIFO over OSD tone; underrun sticky; HW push index=2 ~154ms for 1s PCM
-  Continuous misterplexd audio still via MrAudio until dual SPI streaming polished
+  Continuous misterplexd: MrAudio + F2 SPI chunks (16 KiB); HW log f2≈audio bytes
+  audio_ingest append-mode (no per-chunk flush) + status[10] flush on play start
 
 Phase 3.3:
   H.264 soft-core / elementary NAL feed
