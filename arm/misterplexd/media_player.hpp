@@ -31,6 +31,10 @@ public:
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
+    // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).
+    // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
+    void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
+    void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
     void setDecodeSize(int w, int h);
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
@@ -69,6 +73,8 @@ private:
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
+    std::string subtitleMode_ = "off"; // off | ffmpeg
+    int subtitleStreamIndex_ = 0;
 
     FbPresent fb_;
     FpgaSpi fpga_;

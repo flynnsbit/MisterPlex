@@ -2,6 +2,7 @@
 
 #include "libmisterplex/h264_recon.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -713,6 +714,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                      ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
+    // STREAM=0 + local file: optional FFmpeg subtitles filter (burn-in). Network/PMS
+    // prefer WeakLadder::burnSubtitles so dual-A9 avoids libass on HTTP streams.
+    const bool localFile =
+        !testPattern && !url.empty() && url[0] == '/' && url.rfind("http", 0) != 0;
+    if (!streamEnabled_ && subtitleMode_ == "ffmpeg" && localFile) {
+        // Escape special chars for filtergraph path arg.
+        std::string esc;
+        for (char c : url) {
+            if (c == '\\' || c == ':' || c == '\'' || c == '[' || c == ']')
+                esc.push_back('\\');
+            esc.push_back(c);
+        }
+        vf += ",subtitles=" + esc + ":si=" + std::to_string(std::max(0, subtitleStreamIndex_));
+        log("media: FFmpeg subtitles burn-in si=" + std::to_string(subtitleStreamIndex_));
+    }
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
     const bool wantF2 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
     const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
@@ -964,8 +980,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         streamThr_.join();
 
     playing_.store(false);
-    if (!stop_.load() && onProgress_)
-        onProgress_("stopped", 0, durationMs);
+    // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
+    if (!stop_.load() && onProgress_) {
+        if (frameIndex > 0)
+            onProgress_("ended", positionMs_.load(), durationMs);
+        else
+            onProgress_("stopped", 0, durationMs);
+    }
     log("media: session end frames=" + std::to_string(frameIndex) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " stream=" + (streamEnabled_ ? "on" : "off"));
