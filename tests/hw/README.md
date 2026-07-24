@@ -36,3 +36,4 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 3. `push_frame --index 2 /tmp/pcm.s16le` on MiSTer (F2).
 4. Core should play tone from FIFO (~1s) instead of OSD square wave.
 5. LED blinks faster while `has_audio`.
+6. Append + continuous: `./tests/hw/test_f2_append.sh` (multi-chunk SPI + live f2==bytes).

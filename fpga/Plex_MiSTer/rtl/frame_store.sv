@@ -35,10 +35,10 @@ module frame_store #(
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int ADDR_W = $clog2(PIXELS);
 
-	// Two banks of RGB565
-	(* ramstyle = "no_rw_check, M10K" *)
+	// Two banks of RGB565 (M10K; dual-port registered)
+	(* ramstyle = "M10K" *)
 	reg [15:0] bank0 [0:PIXELS-1];
-	(* ramstyle = "no_rw_check, M10K" *)
+	(* ramstyle = "M10K" *)
 	reg [15:0] bank1 [0:PIXELS-1];
 
 	reg             disp_bank; // 0 → bank0 on display

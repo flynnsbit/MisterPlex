@@ -51,14 +51,17 @@ Phase 3.1 (done this fire):
   HW: push_frame 153600B in ~99–127ms; continuous frame_tx during testsrc play
   Auto-present: frame_store shows as soon as has_frame (O[9]=Force bars for debug)
 
-Phase 3.2 (done this fire):
+Phase 3.2 (done):
   `audio_fifo` + `audio_ingest` — F2 s16le stereo @48k → present-domain ring
-  Prefers FIFO over OSD tone; underrun sticky; HW push index=2 ~154ms for 1s PCM
-  Continuous misterplexd: MrAudio + F2 SPI chunks (16 KiB); HW log f2≈audio bytes
-  audio_ingest append-mode (no per-chunk flush) + status[10] flush on play start
+  Prefers FIFO over OSD tone; underrun sticky; HW push index=2
+  Continuous misterplexd: MrAudio + F2 SPI chunks (8 KiB = DEPTH 2048 samples)
+  audio_ingest **append-mode** (no per-chunk flush); status[10] flush on play start
+  M10K fit: ALMs ~19%, block memory ~51%, RAM blocks ~67% (DEPTH 2048)
+  HW: multi-chunk F2 OK (~17 ms/16 KiB); live play f2==audio bytes
+  `tests/hw/test_f2_append.sh`
 
-Phase 3.3:
-  H.264 soft-core / elementary NAL feed
+Phase 3.3 (next):
+  H.264 soft-core / elementary NAL feed; optional DDRAM frame path (SPI ~99 ms/frame)
 ```
 
 ### 3.0 HW bring-up

@@ -267,8 +267,9 @@ void MediaPlayer::audioPump(int afd) {
     f2acc.reserve(32768);
     size_t total = 0;
     size_t f2total = 0;
-    // ~85ms of stereo s16le @ 48k = 16384 bytes — matches FIFO depth comfort
-    constexpr size_t kF2Chunk = 16384;
+    // Match audio_fifo DEPTH=2048 stereo samples (~42 ms @ 48 kHz).
+    // Larger chunks overflow and drop on wr_full (half-rate FPGA audio).
+    constexpr size_t kF2Chunk = 8192;
 
     while (!stop_.load()) {
         if (paused_.load()) {

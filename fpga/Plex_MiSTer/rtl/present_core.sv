@@ -161,7 +161,7 @@ module present_core (
 	);
 
 	audio_fifo #(
-		.DEPTH(4096)
+		.DEPTH(2048)
 	) afifo (
 		.clk_wr(clk),
 		.clk_rd(clk_audio),
