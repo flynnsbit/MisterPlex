@@ -64,13 +64,18 @@ module present_core (
 	wire [7:0] br, bg, bb;
 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
 
+	// OSD O[9] Force bars=Yes must show true color bars regardless of Pattern.
+	// Without this override, force_bars only blocked frame_store while pattern
+	// (grid/ramp/block) still drove colorbars — matrix saw identical frames.
+	wire [1:0] eff_pattern = use_frame_store ? 2'd0 : pattern;
+
 	colorbars bars (
 		.clk(clk),
 		.reset(reset),
 		.pal(pal),
 		.scandouble(scandouble),
 		.content_index(cont_i),
-		.pattern(pattern),
+		.pattern(eff_pattern),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -134,9 +139,10 @@ module present_core (
 	);
 
 	// Auto: show frame_store once a complete frame is ingested.
-	// use_frame_store (OSD O[9] Force bars=Yes) keeps bars for debug.
-	// Non-default Pattern (Bars+Block/Grid/Ramp) also forces the bars path so
-	// OSD Pattern is always visible even after has_frame latches.
+	// use_frame_store (OSD O[9] Force bars=Yes): force color bars (eff_pattern=0)
+	// and never take frame_store.
+	// Non-default Pattern (Bars+Block/Grid/Ramp) also forces the pattern-gen path
+	// so OSD Pattern is always visible even after has_frame latches.
 	wire force_bars = use_frame_store | (pattern != 2'd0);
 	wire use_ext = has_frame && !force_bars;
 	assign r = use_ext ? fr : br;
