@@ -117,33 +117,26 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
 
-Phase 3.3h (walk+recon+FPGA residual — polish continues):
+Phase 3.3h (host I-slice recon **bit-exact** vs FFmpeg no-deblock — done this fire):
   **Root causes fixed this arc:**
-    1. I_16x16 missing `intra_chroma_pred_mode` → walk desync (0x27 = chroma+empty, not 2-bit empty)
-    2. I4 MPM: unavailable neighbour must force pred=DC(2), not min(...,2) — was decoding wrong modes
-    3. **I4 top-right availability** (scan order): only use TR samples whose 4x4 is already
-       reconstructed; else replicate above[3]. Fixes (1,1)/(1,3) and right-edge lx=3 TR bugs.
-    4. I16 DC Hadamard butterfly aligned to FFmpeg `ff_h264_luma_dc_dequant_idct`
-  Host: FULL residual walk 300/300; recon tiny/gray **maeY=0**; real **maeY≈0.95** vs FFmpeg
-        no-deblock (was ≈1.28; exact MBs 212→221+; MB0 still pixel-perfect)
-  Host: `h264_recon.hpp` → YUV420 + RGB565; tool dump `/tmp/recon_320x240.rgb565` for SPI push
-  FPGA: ST_CHRPRED (I16) + **ST_I4MODE/ST_CBP** (I_NxN skip modes→cbp→first residual nC=0)
-    gray I16 HW: mb0=3 qp=27 res_ok=1 res_tc=1
-    real I_NxN HW target: mb0=0 qp=25 **res_ok=1 res_tc=8 res_t1=3**
-  **Open (bit alignment) — refined + surgical experiment:**
-    - First Y error at **MB41** (1,2): I16 H, cbp_l=0, cbp_c=1, qp=24.
-    - Gold (FFmpeg −skip_loop_filter): **H pred + I16-DC coeff[1]=−1** (top Δ=−1, bot Δ=+1).
-    - Ours: residual @ **13720**, nC=0 → **coeff[2]=−1** (L/R) mae=1.
-    - Residual-only @ **13717**, nC=2 → coeff[1]=−1 mae=0 for MB41 alone.
-    - **Surgical −3 bit + nC=2 at MB41 DC:** MB41 mae=0 but **parse fails by MB50** —
-      so a pure −3 global rewind is not a complete fix (stream not simply 3 bits early).
-    - No compliant I16 header (mt+ch+dqp) ends at 13717 with H pred near our after40=13711.
-    - Neighbours nA=nB=0 → nC=0; need path that yields nC≈2 **and** bit-stable continuation.
-    - Slice header bit pos matches FFmpeg trace_headers (ends RBSP bit 24). ✓
-    - Chroma DC inv: now matches FFmpeg scan + (had*qmul)>>7 (was wrong scan/scale; Y unchanged).
-    - Next: bit-exact compare of chroma AC level path vs FFmpeg for early MBs; fix nC/level
-      so residual start + nC jointly produce coeff[1]=−1 **and** full 300-MB walk.
-    - Then residual polish / deblock / full FPGA MB residual.
+    1. I_16x16 missing `intra_chroma_pred_mode` → walk desync
+    2. I4 MPM: unavailable neighbour → pred=DC(2)
+    3. I4 top-right sample availability (scan order / `lumaReady`)
+    4. I16 DC Hadamard butterfly = FFmpeg `ff_h264_luma_dc_dequant_idct`
+    5. **I16 DC scan layout:** CAVLC zigzag must be loaded with FFmpeg `TRANSPOSE(zz[i])`
+       into the Hadamard (column-major). ITU raster alone mapped scan-pos 2 → vertical
+       frequency; FFmpeg places it at input[1] → gold top/bot pattern. Fixed
+       `invQuantHadamardDc4x4` → **maeY=0 exact 300/300**.
+    6. **Chroma DC pred rounding:** TL/BR 4x4 must use single-sum `(sA+sL+4)>>3`, not
+       nested avgs. Fixed `predChroma8` mode 0 → **maeU=maeV=0** (full YUV exact).
+  Host: FULL residual walk 300/300; recon real baseline **maeY=U=V=0** vs FFmpeg
+        `-skip_loop_filter all`; tiny/gray mae=0; `h264_recon.hpp` → YUV420 + RGB565
+  FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
+  **Next (3.3i):**
+    - Host SPI present: dump recon RGB565 → `push_frame` F1 on MiSTer (visual golden)
+    - Optional deblock filter (not needed for no-LF gold)
+    - FPGA full MB residual + inv quant/IDCT path (extend beyond first-residual probe)
+    - Wire STREAM path: annex-B → host recon → SPI present (hybrid until FPGA decode)
 
 ```
 

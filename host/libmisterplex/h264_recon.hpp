@@ -317,30 +317,31 @@ inline void predI4(int mode, uint8_t* dst, int stride, const uint8_t* above, con
 // Chroma 8x8 Intra pred modes 0=DC, 1=H, 2=V, 3=Plane
 inline void predChroma8(int mode, uint8_t* mb, int stride, const uint8_t* above,
                         const uint8_t* left, uint8_t tl, bool hasA, bool hasL) {
-    if (mode == 0) { // DC — 4 corner 4x4 regions slightly special
+    if (mode == 0) { // DC — four 4x4 regions (ITU 8.3.4 / FFmpeg pred8x8_dc)
         auto fill = [&](int x0, int y0, int v) {
             for (int y = 0; y < 4; ++y)
                 for (int x = 0; x < 4; ++x)
                     mb[(y0 + y) * stride + x0 + x] = static_cast<uint8_t>(v);
         };
-        auto avg4 = [](const uint8_t* p) {
-            return (p[0] + p[1] + p[2] + p[3] + 2) >> 2;
+        // Single-sum rounding: (s+2)>>2 or (sA+sL+4)>>3 — not nested avgs.
+        auto sum4 = [](const uint8_t* p) {
+            return p[0] + p[1] + p[2] + p[3];
         };
         if (hasA && hasL) {
-            fill(0, 0, (avg4(above) + avg4(left) + 1) >> 1);
-            fill(4, 0, avg4(above + 4));
-            fill(0, 4, avg4(left + 4));
-            fill(4, 4, (avg4(above + 4) + avg4(left + 4) + 1) >> 1);
+            fill(0, 0, (sum4(above) + sum4(left) + 4) >> 3);
+            fill(4, 0, (sum4(above + 4) + 2) >> 2);
+            fill(0, 4, (sum4(left + 4) + 2) >> 2);
+            fill(4, 4, (sum4(above + 4) + sum4(left + 4) + 4) >> 3);
         } else if (hasA) {
-            fill(0, 0, avg4(above));
-            fill(4, 0, avg4(above + 4));
-            fill(0, 4, avg4(above));
-            fill(4, 4, avg4(above + 4));
+            fill(0, 0, (sum4(above) + 2) >> 2);
+            fill(4, 0, (sum4(above + 4) + 2) >> 2);
+            fill(0, 4, (sum4(above) + 2) >> 2);
+            fill(4, 4, (sum4(above + 4) + 2) >> 2);
         } else if (hasL) {
-            fill(0, 0, avg4(left));
-            fill(4, 0, avg4(left));
-            fill(0, 4, avg4(left + 4));
-            fill(4, 4, avg4(left + 4));
+            fill(0, 0, (sum4(left) + 2) >> 2);
+            fill(4, 0, (sum4(left) + 2) >> 2);
+            fill(0, 4, (sum4(left + 4) + 2) >> 2);
+            fill(4, 4, (sum4(left + 4) + 2) >> 2);
         } else {
             for (int y = 0; y < 8; ++y)
                 std::memset(mb + y * stride, 128, 8);
