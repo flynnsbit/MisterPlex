@@ -75,9 +75,18 @@ int main() {
     auto empty = mergePlexServers("", {});
     CHECK(empty.empty());
 
-    // Invalid play-queue id fails without network
+    // Invalid / empty play-queue ids fail without network (P4-SCRUB edges)
     auto pq = fetchPlayQueue("not-a-queue", "http://127.0.0.1:32400", "tok");
     CHECK(!pq.ok);
+    auto pqEmpty = fetchPlayQueue("", "http://127.0.0.1:32400", "tok");
+    CHECK(!pqEmpty.ok);
+    auto pqLib = fetchPlayQueue("/library/metadata/9", "http://127.0.0.1:32400", "tok");
+    CHECK(!pqLib.ok); // must not treat metadata key as queue
+    auto pqNoBase = fetchPlayQueue("/playQueues/1", "", "tok");
+    CHECK(!pqNoBase.ok);
+    // Bare numeric id is accepted as queue id shape (network would still fail/empty)
+    auto pqBare = fetchPlayQueue("42", "", "tok");
+    CHECK(!pqBare.ok); // no PMS base
 
     // --- Phase 4 Content FPS / SOURCE_FPS helpers (no network) ---
     CHECK(contentFpsHint("24p", "") == 24);
