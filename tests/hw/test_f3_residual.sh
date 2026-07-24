@@ -59,10 +59,19 @@ echo "$ST" | grep -qE 'res_t1=3'
 # 3.3k residual_dc (scan coeff0) — host golden coeff[0]=-24 after runv-clear RBF
 echo "$ST" | grep -qE 'res_dc=-24'
 # 3.3l-1 soft: res_csum=20 (0x14) = XOR sat8(full coeff[16]) at status[111:104].
-# Pre-3.3l-1 RBF: res_csum is stream_bytes low — do not hard-fail.
+# Pre-3.3l-1 / pre-R-csum1 RBF: do not hard-fail (soft skip ≠ hard PASS).
+# Host golden locked: residual_gold::kCsum8=0x14 — RCA helper prints raw[12..15] map.
+RCA_HELPER="$ROOT/tests/parse_res_csum_status.py"
+if [[ -f "$RCA_HELPER" ]]; then
+  echo "=== host residual csum RCA (expect res_csum=20 / raw[13]=0x14) ==="
+  python3 "$RCA_HELPER" --goldens 2>/dev/null || true
+  echo "$ST" | python3 "$RCA_HELPER" - 2>/dev/null || true
+fi
 if echo "$ST" | grep -qE 'res_csum=20\b'; then
-  echo "test_f3_residual: res_csum=20 (3.3l-1 full coeff place green, XOR sat8=0x14)"
+  echo "test_f3_residual: res_csum=20 HARD-class green (3.3l-1 XOR sat8=0x14)"
 else
-  echo "test_f3_residual: res_csum soft skip (need 3.3l-1 RBF for csum=20; host golden locked)"
+  GOT_CSUM=$(echo "$ST" | sed -n 's/.*res_csum=\([0-9][0-9]*\).*/\1/p' | head -1)
+  echo "test_f3_residual: res_csum soft skip (got res_csum=${GOT_CSUM:-?} want 20/0x14; host golden locked)"
+  echo "test_f3_residual: soft-skip EXIT=0 is NOT hard PASS — re-gate after R-csum1 deploy"
 fi
 echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"

@@ -128,8 +128,37 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 2. `./tests/hw/test_f3_residual.sh` — F3-only golden (same Baseline IDR as 3.3e):
    `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (I_NxN first MB full CAVLC),
    **`mb0=0 qp=25`** `has_frame=1` (stub MB0 gray from residual DC; no F1 so host_owns_fs clear).
-3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0).
+   Soft: `res_csum=20` (XOR sat8 full-16 = **0x14**) — soft-skip EXIT=0 is **not** hard PASS.
+3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0); `test_idct_quant` locks csum **0x14**.
 4. STREAM hybrid: host recon F1 owns product present; F3 residual status must not wipe F1.
+
+### Residual csum RCA (host-only, post-R-csum1 re-gate)
+
+Host golden locked: `res_dc=-24` (`raw[12]=0xe8`) + `res_csum=20` (`raw[13]=0x14`).
+Do **not** thrash lab with residual push storms while R-csum1 fit/re-gate is in flight —
+capture one `--status`/`--raw` line and decode offline.
+
+```bash
+# print goldens + status map (no lab)
+python3 tests/parse_res_csum_status.py
+python3 tests/parse_res_csum_status.py --self-test
+
+# decode a captured status / raw line → EXPECTED vs ACTUAL + GATE
+echo 'status ... res_dc=-24 res_csum=20 ...' | python3 tests/parse_res_csum_status.py -
+python3 tests/parse_res_csum_status.py e8 14 2a 00   # raw[12..15]
+# class CSUM_FAIL_DC_OK / STREAM_BYTES_ALIAS / STALE_ARITH_SUM_FOLD
+```
+
+| raw | field | hard expect | ARM decode |
+|-----|-------|-------------|------------|
+| `[12]` | residual_dc | `0xe8` (−24) | `parseCoreStatus` → `residual_dc = (int8_t)raw[12]` |
+| `[13]` | residual_csum8 | `0x14` (20) XOR — never arith `0xEC` | `residual_csum = raw[13]` |
+| `[14:15]` | stream_bytes[15:0] | LE uint16 (not csum) | `stream_bytes_in = raw[14]\|(raw[15]<<8)` |
+
+Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h264_residual_gold.hpp` (`kCsum8==0x14`); `tools/push_frame.cpp` `res_csum=%u`.
+
+ARM on lab: `push_frame --status` prints `res_csum=`; `push_frame --raw` dumps hex.
+Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20` (soft-skip EXIT=0 is **not** hard PASS).
 
 ## Safe core deploy (lab DE10)
 
