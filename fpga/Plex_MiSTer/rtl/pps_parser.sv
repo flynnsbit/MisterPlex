@@ -1,4 +1,4 @@
-// Phase 3.3d: Baseline PPS parse — CAVLC only, no FMO.
+// Phase 3.3d/e: Baseline PPS parse — CAVLC only, no FMO; export deblock_ctrl.
 
 module pps_parser (
 	input  wire        clk,
@@ -15,6 +15,7 @@ module pps_parser (
 	output reg         entropy_cabac,
 	output reg  [7:0]  num_ref_l0,
 	output reg  signed [7:0] pic_init_qp,
+	output reg         deblock_ctrl,
 	output reg         busy
 );
 
@@ -47,10 +48,24 @@ module pps_parser (
 		ST_NRL1    = 5'd10,
 		ST_WP      = 5'd11,
 		ST_WBI     = 5'd12,
-		ST_QPUE    = 5'd13,
-		ST_QPSE    = 5'd14,
-		ST_DONE    = 5'd15,
-		ST_FAIL    = 5'd16;
+		ST_QP      = 5'd13,
+		ST_QS      = 5'd14,
+		ST_CHR     = 5'd15,
+		ST_DB      = 5'd16,
+		ST_CI      = 5'd17,
+		ST_RED     = 5'd18,
+		ST_DONE    = 5'd19,
+		ST_FAIL    = 5'd20;
+
+	function automatic signed [7:0] se_of;
+		input [15:0] k;
+		begin
+			if (k[0] == 1'b0)
+				se_of = -$signed({1'b0, k[7:1]});
+			else
+				se_of = $signed({1'b0, k[7:1]}) + 8'sd1;
+		end
+	endfunction
 
 	always @(posedge clk) begin
 		if (reset || cap_clear)
@@ -71,6 +86,7 @@ module pps_parser (
 			entropy_cabac <= 0;
 			num_ref_l0 <= 0;
 			pic_init_qp <= 8'sd26;
+			deblock_ctrl <= 0;
 			bbyte <= 0;
 			bpos <= 3'd7;
 			zcnt <= 0;
@@ -128,60 +144,37 @@ module pps_parser (
 				st <= ue_cont;
 			end
 
-			ST_PPSID: begin
-				pps_id <= ue_val[7:0];
-				zcnt <= 0; ue_cont <= ST_SPSID; st <= ST_UE_Z;
-			end
-			ST_SPSID: begin
-				sps_id <= ue_val[7:0];
-				nleft <= 5'd1; acc <= 0; cont <= ST_ENT; st <= ST_GETBITS;
-			end
-			ST_ENT: begin
-				entropy_cabac <= acc[0];
-				nleft <= 5'd1; acc <= 0; cont <= ST_BOT; st <= ST_GETBITS;
-			end
-			ST_BOT: begin
-				zcnt <= 0; ue_cont <= ST_SG; st <= ST_UE_Z;
-			end
+			ST_PPSID: begin pps_id <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_SPSID; st <= ST_UE_Z; end
+			ST_SPSID: begin sps_id <= ue_val[7:0]; nleft <= 5'd1; acc <= 0; cont <= ST_ENT; st <= ST_GETBITS; end
+			ST_ENT: begin entropy_cabac <= acc[0]; nleft <= 5'd1; acc <= 0; cont <= ST_BOT; st <= ST_GETBITS; end
+			ST_BOT: begin zcnt <= 0; ue_cont <= ST_SG; st <= ST_UE_Z; end
 			ST_SG: begin
 				if (ue_val != 0) st <= ST_FAIL;
 				else begin zcnt <= 0; ue_cont <= ST_NRL0; st <= ST_UE_Z; end
 			end
-			ST_NRL0: begin
-				num_ref_l0 <= ue_val[7:0];
-				zcnt <= 0; ue_cont <= ST_NRL1; st <= ST_UE_Z;
+			ST_NRL0: begin num_ref_l0 <= ue_val[7:0]; zcnt <= 0; ue_cont <= ST_NRL1; st <= ST_UE_Z; end
+			ST_NRL1: begin nleft <= 5'd1; acc <= 0; cont <= ST_WP; st <= ST_GETBITS; end
+			ST_WP: begin nleft <= 5'd2; acc <= 0; cont <= ST_WBI; st <= ST_GETBITS; end
+			ST_WBI: begin zcnt <= 0; ue_cont <= ST_QP; st <= ST_UE_Z; end
+			ST_QP: begin
+				pic_init_qp <= 8'sd26 + se_of(ue_val);
+				zcnt <= 0; ue_cont <= ST_QS; st <= ST_UE_Z;
 			end
-			ST_NRL1: begin
-				// ue_val = num_ref_idx_l1_default_active_minus1 (discard)
-				nleft <= 5'd1; acc <= 0; cont <= ST_WP; st <= ST_GETBITS;
+			ST_QS: begin zcnt <= 0; ue_cont <= ST_CHR; st <= ST_UE_Z; end
+			ST_CHR: begin nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS; end
+			ST_DB: begin
+				deblock_ctrl <= acc[0];
+				nleft <= 5'd1; acc <= 0; cont <= ST_CI; st <= ST_GETBITS;
 			end
-			ST_WP: begin
-				// weighted_pred_flag
-				nleft <= 5'd2; acc <= 0; cont <= ST_WBI; st <= ST_GETBITS;
-			end
-			ST_WBI: begin
-				// weighted_bipred_idc done
-				zcnt <= 0; ue_cont <= ST_QPUE; st <= ST_UE_Z;
-			end
-			ST_QPUE: begin
-				// ue code for se(pic_init_qp_minus26)
-				// se: k even => -k/2; odd => (k+1)/2
-				if (ue_val[0] == 1'b0)
-					pic_init_qp <= 8'sd26 - $signed({1'b0, ue_val[7:1]});
-				else
-					pic_init_qp <= 8'sd26 + $signed({1'b0, ue_val[7:1]}) + 8'sd1;
-				st <= ST_DONE;
-			end
+			ST_CI: begin nleft <= 5'd1; acc <= 0; cont <= ST_RED; st <= ST_GETBITS; end
+			ST_RED: begin st <= ST_DONE; end
 			ST_DONE: begin
 				busy <= 0;
 				st <= ST_IDLE;
 				if (!entropy_cabac)
 					valid <= 1'b1;
 			end
-			ST_FAIL: begin
-				busy <= 0;
-				st <= ST_IDLE;
-			end
+			ST_FAIL: begin busy <= 0; st <= ST_IDLE; end
 			default: st <= ST_IDLE;
 			endcase
 		end

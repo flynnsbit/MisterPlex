@@ -1,10 +1,9 @@
-// Unit: PPS + IDR slice header from real Baseline annex-B (Phase 3.3d).
+// Unit: PPS + full I-slice header + first mb_type from real Baseline annex-B (3.3e).
 #include "libmisterplex/h264_nal.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <string>
 #include <vector>
 
 static std::vector<uint8_t> readFile(const char* path) {
@@ -18,8 +17,7 @@ int main(int argc, char** argv) {
     const char* path = argc > 1 ? argv[1] : "/tmp/plex_real_baseline.h264";
     auto blob = readFile(path);
     if (blob.empty()) {
-        int r = std::system("python3 scripts/gen_test_annexb_real.py /tmp/plex_real_baseline.h264");
-        if (r != 0) {
+        if (std::system("python3 scripts/gen_test_annexb_real.py /tmp/plex_real_baseline.h264") != 0) {
             std::printf("FAIL: no bitstream\n");
             return 1;
         }
@@ -30,20 +28,28 @@ int main(int argc, char** argv) {
         std::printf("FAIL SPS %u x %u\n", c.sps.width, c.sps.height);
         return 1;
     }
-    if (!c.pps.valid || c.pps.entropy_cabac) {
-        std::printf("FAIL PPS valid=%d cabac=%d\n", c.pps.valid, c.pps.entropy_cabac);
+    if (!c.pps.valid || c.pps.entropy_cabac || !c.pps.deblock_ctrl) {
+        std::printf("FAIL PPS valid=%d cabac=%d deblock=%d\n", c.pps.valid, c.pps.entropy_cabac,
+                    c.pps.deblock_ctrl);
         return 1;
     }
-    if (!c.slice.valid || !c.slice.is_idr || !c.slice.is_i_slice) {
+    if (!c.slice.valid || !c.slice.is_idr || !c.slice.is_i_slice || c.slice.slice_type != 7) {
         std::printf("FAIL slice valid=%d idr=%d i=%d type=%u\n", c.slice.valid, c.slice.is_idr,
                     c.slice.is_i_slice, c.slice.slice_type);
         return 1;
     }
-    if (c.slice.first_mb_in_slice != 0 || c.slice.slice_type != 7) {
-        std::printf("FAIL first=%u type=%u want 0/7\n", c.slice.first_mb_in_slice, c.slice.slice_type);
+    // Real baseline: first mb_type=7 (I_16x16), slice_qp = 23 + (-9) = 14
+    if (!c.slice.has_first_mb_type || c.slice.first_mb_type != 7) {
+        std::printf("FAIL mb0 type=%u has=%d want 7\n", c.slice.first_mb_type,
+                    c.slice.has_first_mb_type);
         return 1;
     }
-    std::printf("test_slice_hdr: OK sps=%ux%u pps_id=%u slice_type=%u (I/IDR) qp=%d\n", c.sps.width,
-                c.sps.height, c.pps.pps_id, c.slice.slice_type, c.pps.pic_init_qp);
+    if (c.slice.slice_qp != 14) {
+        std::printf("FAIL slice_qp=%d want 14 (init=%d delta=%d)\n", c.slice.slice_qp,
+                    c.pps.pic_init_qp, c.slice.slice_qp_delta);
+        return 1;
+    }
+    std::printf("test_slice_hdr: OK sps=%ux%u pps deblock slice_type=7 mb0=%u qp=%d\n",
+                c.sps.width, c.sps.height, c.slice.first_mb_type, c.slice.slice_qp);
     return 0;
 }

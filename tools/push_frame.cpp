@@ -41,12 +41,12 @@ int main(int argc, char** argv) {
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
             "has_idr=%d stub_busy=%d sps_valid=%d pps_valid=%d nalu=%u last_nal=0x%02x "
-            "fifo_lvl=%u idr=%u slice_type=%u sps=%ux%u bytes_in=%u\n",
+            "fifo_lvl=%u slice_type=%u mb0=%u qp=%u sps=%ux%u bytes_in=%u\n",
             st.has_frame ? 1 : 0, st.has_audio ? 1 : 0, st.has_stream ? 1 : 0,
             st.audio_underrun ? 1 : 0, st.has_idr ? 1 : 0, st.stub_busy ? 1 : 0,
             st.sps_valid ? 1 : 0, st.pps_valid ? 1 : 0, st.nalu_count, st.last_nal_type,
-            st.stream_fifo_level, st.idr_count, st.slice_type, st.sps_width, st.sps_height,
-            st.stream_bytes_in);
+            st.stream_fifo_level, st.slice_type, st.first_mb_type, st.slice_qp, st.sps_width,
+            st.sps_height, st.stream_bytes_in);
         return 0;
     }
 

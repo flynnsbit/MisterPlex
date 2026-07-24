@@ -101,8 +101,15 @@ Phase 3.3d (done this fire — PPS + I-slice header + MB-grid stub):
   HW: `tests/hw/test_f3_slice_hdr.sh` — sps+pps+slice_type=7 + has_frame
   Still not residual decode — headers only; CAVLC/IDCT next
 
-Phase 3.3e (next):
-  Baseline I-slice residual path: CAVLC → inv quant → IDCT → reconstruct → YUV→RGB565
+Phase 3.3e (done this fire — slice QP/deblock + first mb_type probe):
+  Host: full slice header (qp_delta, deblock, first_mb_type); mb0=7 qp=14 on real IDR
+  FPGA: PPS completes flags (deblock_ctrl); slice_hdr parses qp+deblock+mb0
+  Status: first_mb_type [55:48], slice_type [63:56], slice_qp in [47:40]
+  HW: `tests/hw/test_f3_mb0.sh` — mb0=7 qp=14 sps+pps+has_frame
+  Residual CAVLC/IDCT still next (control plane to first MB ready)
+
+Phase 3.3f (next):
+  Baseline I-slice residual: CAVLC → inv quant → IDCT → intra recon → YUV→RGB565
   Optional parallel: DDRAM frame path (SPI RGB565 ~100–160 ms/frame bottleneck)
 ```
 

@@ -1,4 +1,4 @@
-// Phase 3.3–3.3d: F3 → FIFO → NAL scan → SPS/PPS/slice_hdr + decode_stub.
+// Phase 3.3–3.3e: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+mb0) + decode_stub.
 
 module stream_path (
 	input  wire        clk,
@@ -37,6 +37,9 @@ module stream_path (
 	output wire        slice_valid,
 	output wire [7:0]  slice_type,
 	output wire        slice_is_i,
+	output wire [7:0]  first_mb_type,
+	output wire        has_mb_type,
+	output wire [5:0]  slice_qp,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -112,10 +115,9 @@ module stream_path (
 		.busy(sps_busy)
 	);
 
-	wire pps_busy;
+	wire pps_busy, pps_cabac, pps_deblock;
 	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
 	wire signed [7:0] pps_qp;
-	wire pps_cabac;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
@@ -123,13 +125,14 @@ module stream_path (
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
 		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
 		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .busy(pps_busy)
+		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
 	);
 
-	wire sl_busy;
+	wire sl_busy, sl_is_i, sl_has_mbt;
 	wire [15:0] sl_first, sl_fn, sl_idr_pic;
-	wire [7:0] sl_type, sl_pps;
-	wire sl_is_i;
+	wire [7:0] sl_type, sl_pps, sl_mbt;
+	wire signed [7:0] sl_qpd;
+	wire [5:0] sl_qp;
 
 	slice_hdr_parser slp (
 		.clk(clk), .reset(reset | flush),
@@ -139,16 +142,24 @@ module stream_path (
 		.log2_max_frame_num(log2_fn),
 		.poc_type(poc_t),
 		.sps_ready(sps_valid),
+		.pps_ready(pps_valid),
+		.deblock_ctrl(pps_deblock),
+		.pic_init_qp(pps_qp),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
-		.is_i_slice(sl_is_i), .busy(sl_busy)
+		.is_i_slice(sl_is_i),
+		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
+		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
+		.busy(sl_busy)
 	);
 
-	assign slice_type = sl_type;
-	assign slice_is_i = sl_is_i;
+	assign slice_type    = sl_type;
+	assign slice_is_i    = sl_is_i;
+	assign first_mb_type = sl_mbt;
+	assign has_mb_type   = sl_has_mbt;
+	assign slice_qp      = sl_qp;
 
-	// MB-grid decode_stub: uses SPS size when valid
 	decode_stub #(
 		.WIDTH(320),
 		.HEIGHT(240)
@@ -175,6 +186,7 @@ module stream_path (
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
-	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first | |sl_fn;
+	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
+	             |sl_fn | |sl_qpd | pps_deblock;
 
 endmodule

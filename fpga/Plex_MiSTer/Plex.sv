@@ -79,10 +79,11 @@ wire [15:0] ioctl_index;
 wire [127:0] status_in;
 reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
-wire         has_idr, stub_busy, sps_valid, pps_valid, slice_valid, slice_is_i;
+wire         has_idr, stub_busy, sps_valid, pps_valid, slice_valid, slice_is_i, has_mb_type;
 wire [15:0]  nalu_count, stub_frames, sps_width, sps_height;
 wire [7:0]   last_nal_type, idr_count, sps_count, pps_count, slice_count;
-wire [7:0]   sps_profile, sps_level, slice_type, sps_mb_w, sps_mb_h;
+wire [7:0]   sps_profile, sps_level, slice_type, sps_mb_w, sps_mb_h, first_mb_type;
+wire [5:0]   slice_qp;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -225,6 +226,9 @@ stream_path spath (
 	.slice_valid(slice_valid),
 	.slice_type(slice_type),
 	.slice_is_i(slice_is_i),
+	.first_mb_type(first_mb_type),
+	.has_mb_type(has_mb_type),
+	.slice_qp(slice_qp),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -310,15 +314,16 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [15:8] last_nal_type
 //   [31:16] nalu_count
 //   [47:32] stream_fifo_level
-//   [55:48] idr_count   [63:56] slice_type
+//   [55:48] first_mb_type  [63:56] slice_type
+//   [71:64] slice_qp (in low of height if 0..51) — see [79:64] sps_height
 //   [79:64] sps_height  [95:80] sps_width
 //   [127:96] stream_bytes_in
-//   (slice_valid reflected as slice_type!=0 after parse; stub_frames internal)
+//   has_mb_type implied by first_mb_type<=25 after I-slice parse
 assign status_in = {
 	stream_bytes_in,                    // 127:96
 	sps_width, sps_height,              // 95:64
-	slice_type, idr_count,              // 63:48
-	stream_fifo_level,                  // 47:32
+	slice_type, first_mb_type,          // 63:48
+	{2'b0, slice_qp}, stream_fifo_level[7:0], // 47:32 — qp in high byte, fifo lo
 	nalu_count,                         // 31:16
 	last_nal_type,                      // 15:8
 	pps_valid, sps_valid, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame
@@ -354,6 +359,6 @@ end
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
-	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h};
+	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h, has_mb_type, idr_count};
 
 endmodule

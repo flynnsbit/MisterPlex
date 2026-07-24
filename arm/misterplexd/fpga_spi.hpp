@@ -59,7 +59,9 @@ public:
         uint16_t stream_fifo_level = 0;
         uint8_t idr_count = 0;
         uint8_t slice_type = 0;
-        uint8_t stub_frames = 0; // legacy; status now carries slice_type in that byte
+        uint8_t first_mb_type = 0;
+        uint8_t slice_qp = 0;
+        uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
         uint16_t sps_height = 0;
         // Legacy alias: high/low of previous wr_count field (now idr|stub)

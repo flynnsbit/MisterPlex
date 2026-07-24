@@ -381,16 +381,21 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.last_nal_type = static_cast<uint8_t>((w0 >> 8) & 0xFF);
     s.nalu_count = w1;
     s.stream_fifo_level = w2;
-    // [63:48] = {slice_type[7:0], idr_count[7:0]}
-    s.idr_count = static_cast<uint8_t>(w3 & 0xFF);
+    // [63:48] = {slice_type[7:0], first_mb_type[7:0]}
+    s.first_mb_type = static_cast<uint8_t>(w3 & 0xFF);
     s.slice_type = static_cast<uint8_t>((w3 >> 8) & 0xFF);
-    s.stub_frames = s.slice_type; // alias for older logs
+    s.stub_frames = s.slice_type;
     s.wr_count_lo = w3;
+    // [47:32] = {slice_qp[5:0] in high, fifo_lvl low}
+    s.slice_qp = static_cast<uint8_t>((w2 >> 8) & 0x3F);
+    s.stream_fifo_level = static_cast<uint16_t>(w2 & 0xFF);
     // [95:64] = {sps_width, sps_height}
     s.sps_height = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
     s.sps_width = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
     s.stream_bytes_seen = 0;
     s.stream_bytes_in = static_cast<uint32_t>(raw[12] | (raw[13] << 8) | (raw[14] << 16) | (raw[15] << 24));
+    // idr sticky still in flags; count not in status this rev
+    s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }
 

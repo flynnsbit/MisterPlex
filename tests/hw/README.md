@@ -64,3 +64,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 1. Deploy RBF with `pps_parser` + `slice_hdr_parser`.
 2. `./tests/hw/test_f3_slice_hdr.sh` — `pps_valid=1 slice_type=7` (I/IDR) + `sps=320x240`.
 3. Unit: `test_slice_hdr`. Display: MB grid diagnostic on VCL.
+
+## Phase 3.3e first MB type + slice QP
+
+1. Deploy RBF with extended slice_hdr (qp/deblock/mb0).
+2. `./tests/hw/test_f3_mb0.sh` — `mb0=7` (I_16x16) `qp=14` on real Baseline IDR.
+3. Unit: `test_slice_hdr` asserts mb0+qp.
