@@ -15,6 +15,7 @@
 - **A/V clock locked:** wall-paced 48 kHz MrAudio, every RGB frame presented (no pfps=15 cap)
 - **24 fps blip lipsync:** median flash↔beep offset ~**−13 ms** (within one 24p frame)
 - Eyes-on: Thundercats and blip tests look correct (user confirmed 2026-07-25)
+- **Check-in:** user reconfirmed *“looks good on video and vsync”* → git **`588e528`** + backlog stamp
 
 ---
 

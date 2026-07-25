@@ -2,107 +2,314 @@
 
 Update this file when work finishes. Loop agents claim items and mark `DONE` / `IN_PROGRESS` / `BLOCKED`.
 
-Evidence sources (2026-07-24 ~12:20 CDT): `/tmp/misterplex-*-agent*.txt`, **R-csum1 log `/tmp/plex_quartus_rcsum1.log` BUILD_OK** (BUILD END **12:17:04** exit=0; Full Compilation successful 0 errors, 5 warnings; wall ~365s after restart 12:10:59; RBF **`dabdaeb0`** full `dabdaeb0c5ae708c4fdbba388ba275b6`), Q-fix1 prior **`820484a6`**, Q-3l1 prior **`aa146c17`**, **G-fpga-rcsum1** `/tmp/misterplex-agent-G-fpga-rcsum1.txt` (FPGA sources **COMMITTED `7bee0a6`**), **H-deploy-rcsum1** + **H-rcsum-gate** `/tmp/misterplex-agent-H-deploy-rcsum1.txt` + `/tmp/misterplex-agent-H-rcsum-gate.txt` (**sole menu deploy PASS**; lab md5 **`dabdaeb0`**; **FBAR PASS** m1=82.9 m2=94.4; **res_dc=-24 PASS**; **res_csum HARD FAIL** unstable 139/222/49 ≠0x14 — soft-skip ≠ PASS; **OVERALL HARD GATE FAIL**), M-fitmon-rc5/rc6 BUILD_OK, residual3, **C-unit12/13 unit GREEN**, **G-docs1** + this **G-docs2**, **W-wide4/5/6 FAIL ~60.5%** on **`820484a6`** Fix-1 dead, **W-fix2-d2/d3 Fix-2 design READY**, **F-package3** still embeds prior `820484a6`, **A-arm-csum** + **A-csum-host2** tools READY, R-csum-rca3/4 GO used for deploy, git **HEAD was `7bee0a6`** (R-csum1 sources; parent `ee339b1` parse helper; docs dirty → G-docs2), FPGA tree **clean** post-7bee0a6, lab host `192.168.1.183`.
+## PRODUCT MILESTONE — VSync present / product A/V cast (**DONE** 2026-07-25)
+
+| | |
+|--|--|
+| **Status** | **DONE** — user eyes-on: *looks good on video and vsync* (2026-07-25) |
+| **Git** | **`588e528`** `milestone(vsync-present): tear-free DDR present + product A/V cast` |
+| **RBF** | **`1441d409ad3f8ccc5dcb0033c32ff7c8`** — `releases/Plex_vsync_tear_1441d409.rbf` + lab `/media/fat/_Utility/Plex.rbf` |
+| **Conf** | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` |
+| **Notes** | Full write-up: [`docs/MILESTONE_VSYNC_PRESENT.md`](MILESTONE_VSYNC_PRESENT.md) · resume: [`docs/SESSION_RESUME.md`](SESSION_RESUME.md) |
+
+**What fixed half-frame / multi-panel tears**
+
+1. **`frame_store`**: dual-bank writes to non-display bank; `swap_pending`; **flip display bank only on `vsync_pulse`**; **hold writes while pending** (no mid-scan flip, no multi-panel overwrite).
+2. **`ddram_frame_rd`**: **hold DDR→BRAM DMA while `swap_pending`**; queue one latest doorbell/SPI kick; mmap doorbell `0x3007F000` (`PLXK`).
+3. **Host (`misterplexd`)**: product cast = **STREAM=0 every-frame DDR F1** (not STREAM recon); **wall-48 kHz MrAudio**; doorbell-preferred present; **heal Main on stop**.
+
+**Evidence**
+
+- holdoff2: half/mid/multi tear rates **0.00/s** — `captures/e2e/tc_glitch/holdoff2/REPORT.txt`
+- Blip 24 fps Web cast: median flash↔beep **~−13 ms** — `captures/e2e/blip24/avsync_report.txt` (+ suite notes in `captures/e2e/REPORT*.md`)
+- Do **not** thrash this RBF while product path is green unless a new present gate fails.
+- Residual csum / WIDE / 3l2 below are **separate** serial tracks (historical RBF ids do not supersede product **`1441d409`** present path).
+
+---
+
+Evidence sources (2026-07-24; **J-backlog66** evidence-only stamp; **exclusive FREE**; lock **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`**): `/tmp/misterplex-*-agent*.txt`. **R-csum6 BUILD_OK DONE** — log `/tmp/plex_quartus_rcsum6.log` Full Comp **0e/40w** wall **438s** exit **0**; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; **LOCK_OK** claim **`c7a847f7`/`ca62d02b`/`904e9b2e`** DIAG=ABSENT Rank1+2+3. **H-deploy-rcsum6 ONE menu DEPLOY_OK** lab **LOADED `94bbfe43`** (`/tmp/misterplex-agent-H-deploy-rcsum6.txt` + user log + lab txt). **H-gate-rcsum6 hard residual IN_PROGRESS / PENDING** — **do NOT invent hard residual PASS**. **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605**. **3l2 BLOCKED** until sticky **0x14**. **C-unit28/27 PASS** host green. Soft-skip ≠ hard PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **J-backlog66 REFRESH_DONE**.
+
+**W-wide-gate-fix2b — WIDE FAIL reconfirm on lab `ec21e133` (J-backlog61 primary wide cite):** report **`/tmp/misterplex-agent-W-wide-gate-fix2b.txt`**. Lab LOADED full `ec21e1330ddd75ad7f39099e5abfad49` pre+post; ZERO reload. **WIDE FAIL** span=**0.605** (60.5%) live **2..485** R5%=**0.0** L5=**201.6** class **PILLAR_320_of_529**; multi-format 0.605–0.608. **FBAR PASS** 7.0/82.9/94.4 EXIT=0. Fingerprint **IDENTICAL** **H-gate-sf2** / **W-wide-gate-sf2**. Captures `fix2b_*` + `fix2b_wide_analysis.json`. **P3-WIDE remains FAIL open** — do **not** invent WIDE PASS / Fix-3 PASS. Fix-3 hold FIT_GO=NO until residual serial / exclusive free.
+
+**W-wide-gate-sf2 — WIDE FAIL on lab `ec21e133` (companion wide cite):** report **`/tmp/misterplex-agent-W-wide-gate-sf2.txt`**. Lab LOADED full `ec21e1330ddd75ad7f39099e5abfad49`. **WIDE FAIL** span=**0.605** (60.5%) class **PILLAR_320_of_529** (same as pre-Fix-2 / W-wide7); R5%=0.0; captures `wq2_*`. **FBAR soft PASS** 7.0/82.9/94.4 EXIT=0 — **≠ WIDE product PASS ≠ residual PASS**. **P3-WIDE remains FAIL open** — do **not** invent WIDE PASS / Fix-3 PASS.
+
+**H-gate-sf2 — WIDE Fix-2 companion gate on lab `ec21e133`:** report **`/tmp/misterplex-agent-H-gate-sf2.txt`**. RBF full `ec21e1330ddd75ad7f39099e5abfad49`; colorbars SRC **`f1d9666a…`**. **FBAR PASS** 7.0/82.9/94.4 EXIT=0. **WIDTH FAIL** span=**0.605** x0=2 x1=485 class **PILLAR_320_of_529**; captures `captures/menu/sf2w_10.jpg`..`sf2w_12.jpg`. **BUILD_OK + DEPLOY + FBAR ≠ WIDE product PASS.** Next: RCA / Fix-3 plan only after residual exclusive frees — **do not invent Fix-3 PASS**.
+
+**H-gate-ec21 — residual HARD_FAIL on LOADED wide `ec21e133` (residual still FAIL open on lab ec21e133; J-backlog65):** report **`/tmp/misterplex-agent-H-gate-ec21.txt`**; probes `/tmp/misterplex-H-gate-ec21-probes.txt`; reconfirm **`/tmp/misterplex-agent-H-res-ec21.txt`**. Lab md5 match full `ec21e1330ddd75ad7f39099e5abfad49`; ZERO redeploy. **res_csum HARD_FAIL**: sticky0x14=**0/3** (never raw[13]==**0x14**). Canonical +0x53 seq **08/5b/ae/01** (PRE→P1→P2→P3 all +0x53). Class **MULTI_DRIVE_OR_STILL_FAIL**. **res_dc PASS** (−24 / 0xe8) 3/3. FBAR soft EXIT=0 ≠ hard residual PASS. **H-res-ec21**: sticky0x14=**0/7** +0x53 6/6 raw13 **54 a7 fa 4d a0 f3 46** — **SAME CLASS** as historical **`8832824e`**. Wide Fix-2 bitfile does **not** carry residual sticky pack fix. **BUILD_OK + DEPLOY + FBAR + PACKAGE ≠ residual PASS.** Soft-skip ≠ PASS. **3l2 BLOCKED.** Thrash residual banned set **FORBIDDEN**; do not thrash-redeploy **ec21e133** for residual luck either. R-csum6 **BUILD_OK** host **`94bbfe43`** is the intentional multi-drive path — **not** luck redeploy of **ec21e133**; **ONE H-deploy-rcsum6** next.
+
+**H-fbar-ec21b — FBAR soft PASS reconfirm lab `ec21e133` (J-backlog64 cite):** report **`/tmp/misterplex-agent-H-fbar-ec21b.txt`**. Lab LOADED full `ec21e1330ddd75ad7f39099e5abfad49`; ZERO redeploy/Quartus. **FBAR soft PASS** EXIT=0 **7.0/82.9/94.4**. **≠ WIDE product PASS ≠ residual hard PASS ≠ 3l2 UNBLOCK.**
+
+**C-unit28 / C-unit27 — host unit PASS (J-backlog64 cite):** **C-unit28** report **`/tmp/misterplex-agent-C-unit28.txt`** — `make unit` **EXIT=0 PASS**; host goldens res_csum=**0x14** res_dc=**-24**; test_idct_quant + parse self-test OK. Prior **C-unit27** **`/tmp/misterplex-agent-C-unit27.txt`** / log `/tmp/misterplex-unit-C-unit27.log` same goldens. **HOST GREEN ≠ lab residual PASS.**
+
+**B-ddr7 — optional DDR F1 reconfirm PASS on LOADED `ec21e133` (J-backlog63 cite):** report **`/tmp/misterplex-agent-B-ddr7.txt`**. Lab md5 full `ec21e1330ddd75ad7f39099e5abfad49`; ZERO deploy/menu/Quartus; mean **16.5 ms** 5/5 OK (~60.6 fps) ≥30 fps; has_frame 0→1 after pulse0. **DDR ≠ residual PASS ≠ WIDE PASS.** Prior **B-ddr6** dabdaeb0 same class.
+
+**A-csum-host28 — HOST_GOLDEN_OK (J-backlog64 cite):** report **`/tmp/misterplex-agent-A-csum-host28.txt`**. Host residual goldens locked for post–R-csum6 H-gate compare: res_dc=**−24** (0xe8), res_csum=**XOR 0x14**, ideal raw class **`e8 14 xx`**; helper SELF-TEST OK; cite **C-unit28/C-unit27** PASS. **HOST_GOLDEN_OK ≠ lab residual PASS ≠ R-csum6 BUILD_OK ≠ 3l2 UNBLOCK.**
+
+**W-wide-rca-sf2 — FIX2_INEFFECTIVE + W-sf3-plan READY / FIT_GO_WIDE=NO (J-backlog64 cite):** loop SoT `/tmp/misterplex-loop-status.txt` harvest: **W-wide-rca-sf2: FIX2_INEFFECTIVE** pillar **0.605** paint still **content320/DE529**; **W-sf3-plan: Fix-3 READY; FIT_GO_WIDE=NO** while residual LIVE. Plan/hold reports (when present) `/tmp/misterplex-agent-W-sf3-plan.txt` **FIT_GO Q-SF3=NO**; `/tmp/misterplex-agent-W-sf3-hold.txt` **HOLD_OK**. Measure still **W-wide-gate-sf2b / W-wide-gate-sf2 / H-gate-sf2** span=**0.605** **PILLAR_320_of_529**. **≠ WIDE product PASS.** **Q-SF3 sole only after R-csum6 exclusive frees** — do **not** invent WIDE PASS / Fix-3 BUILD_OK.
+
+**H-gate-rcsum5d — DEFINITIVE HARD_FAIL historical lab `8832824e` (residual serial CLOSED FAIL; J-backlog64 cite):** report **`/tmp/misterplex-agent-H-gate-rcsum5d.txt`** consolidates **H-gate-rcsum5** + **5b** + **5c**. Primary `/tmp/misterplex-agent-H-gate-rcsum5.txt` + **`…5b.txt`**; probes `/tmp/misterplex-H-gate-rcsum5-probes.txt` + summary `/tmp/misterplex-H-gate-rcsum5-summary.txt`. Residual gate was on LOADED **`8832824e`** full `8832824e483cf6613f82ee3ba3e592b3` CORENAME=Plex. **res_csum HARD_FAIL**: sticky0x14=**0/12** (never raw[13]==**0x14**). Canonical +0x53/push seq **16/69/bc/0f/62/b5/08** (6/6 adjacent +0x53). Class **NOT PACK_PROVEN** / **MULTI_DRIVE_OR_STILL_FAIL**. **res_dc PASS** (−24 / 0xe8). FBAR soft EXIT=0 (≠ hard residual PASS). Soft residual EXIT=0 ≠ hard PASS. **3l2 BLOCKED.** **BUILD_OK + DEPLOY_OK + PACKAGE_OK ≠ hard residual PASS.** Thrash **`8832824e` forbidden.** Lab path **now** LOADED **`ec21e133`** (wide track) — residual **also HARD_FAIL on `ec21e133`** (**H-gate-ec21** / **H-res-ec21**); residual class **CLOSED FAIL historical + still FAIL open on current lab**.
+
+**H-gate-rcsum4 — HARD_FAIL lab `75da8bb1` (historical; path superseded by 8832824e then ec21e133):** report `/tmp/misterplex-agent-H-gate-rcsum4.txt` + **`/tmp/misterplex-agent-H-gate-rcsum4b.txt`**. Lab md5 **`75da8bb10e36b3e068d66a9ed053cd2c`** match; CORENAME=Plex. **FBAR PASS** (7.0/82.9/94.4). **res_dc PASS** (−24 / **0xe8** sticky). **res_csum HARD_FAIL**: never raw[13]==**0x14**. Series A **64/147/230** (**0x40→0x93→0xe6**, +0x53); 4b reconfirm **0x85→0xd8→0x2b** (+0x53/wrap). Class **NOT PACK_PROVEN** / **MULTI_DRIVE_OR_STILL_FAIL**. Soft residual EXIT=0 ≠ hard PASS. Thrash **75da8bb1 forbidden**.
+
+**R-csum6 sole — residual multi-drive Rank1+2+3 product sticky BUILD_OK DONE + ONE menu DEPLOY + exclusive FREE — J-backlog66:**
+- Lock **DONE BUILD_OK**: **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`** (`/tmp/plex_quartus.lock` verbatim).
+- **Exclusive FREE** — no `quartus_fit`/docker sole.
+- Log **`/tmp/plex_quartus_rcsum6.log`**: BUILD START **14:02:51**; Full Comp **0e/40w** successful; BUILD END **14:10:09** exit **0** wall **438s** (`/tmp/plex_quartus_rcsum6.exit`=`0`; `/tmp/plex_quartus_rcsum6.wall`=`438`).
+- NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` size **3506356** — host `fpga/Plex_MiSTer/output_files/Plex.rbf` md5 MATCH; **banned_hit=NO**.
+- Claim **`/tmp/plex_quartus_rcsum6.claim/`**: owner **R-csum6-sole**; **FIT_GO=YES** Rank1+2+3; **DIAG=ABSENT**; freeze **Plex `c7a847f7`** / **slice `ca62d02b`** / **stream `904e9b2e`** fulls MATCH live **LOCK_OK**; build_result/done **VERDICT=BUILD_OK**.
+- Sole **`/tmp/misterplex-agent-R-csum6-sole.txt` VERDICT=BUILD_OK**; mon **M-fitmon-rcsum6 BUILD_OK YES** SRC_DRIFT **NO** idle=YES.
+- **H-deploy-rcsum6 ONE menu DEPLOY_OK**: `/tmp/misterplex-agent-H-deploy-rcsum6.txt` **PROMOTE_OK|DEPLOY_OK**; `/tmp/misterplex-H-deploy-rcsum6-user.log` Soft reload Menu→Plex; lab `/tmp/misterplex-H-deploy-rcsum6-lab.txt` **LOADED `94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` CORENAME=Plex.
+- **H-gate-rcsum6 hard residual IN_PROGRESS / PENDING** — **do not invent hard PASS / PACK_PROVEN**. Expect sticky0x14 ≥2; reject +0x53; res_dc=-24.
+- **WIDE still FAIL open Fix-2** (historical **`ec21e133`** span=0.605). **3l2 BLOCKED** until hard product sticky **0x14**. Soft-skip ≠ PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.**
+- Evidence: `/tmp/plex_quartus.lock`; `/tmp/plex_quartus_rcsum6.log`; claim dir; `/tmp/misterplex-agent-R-csum6-sole.txt`; `/tmp/misterplex-agent-M-fitmon-rcsum6.txt`; `/tmp/misterplex-agent-H-deploy-rcsum6.txt`; `/tmp/misterplex-H-deploy-rcsum6-user.log`; `/tmp/misterplex-H-deploy-rcsum6-lab.txt`.
+
+**R-csum5 sole — residual serial CLOSED FAIL on `8832824e` (BUILD_OK+DEPLOY_OK+PACKAGE_OK; H-gate HARD_FAIL) — historical; J-backlog62:**
+- Build lock (historical): **`R-csum5 DONE BUILD_OK 2026-07-24T13:40:35-05:00`** — then exclusive FREE until Q-SF2 then R-csum6.
+- Log residual build: **`/tmp/plex_quartus_rcsum5.log`** — Full Compilation **0e/37w**; wall **441s** exit **0**.
+- Build report: `/tmp/misterplex-agent-R-csum5-build.txt` **VERDICT=BUILD_OK**.
+- Residual NEW_RBF **`8832824e`** full `8832824e483cf6613f82ee3ba3e592b3` size **3510568**; ∉ banned at build.
+- Claim@launch product sticky **`6422fb9a`/`8e6af3bb`** DIAG=ABSENT; mid-fit thrash **`6a5dcaaa`/`7d4a1d8b`** DIAG PRESENT → **PROVENANCE_UNTRUSTED** (map product sticky class midfit-rcsum5b).
+- **H-deploy-rcsum5 DEPLOY_OK** ONE menu; lab was **LOADED `8832824e`** (now superseded on lab path by **`ec21e133`**).
+- **PACKAGE_OK** (rcsum5 era) embeds **`8832824e`** (superseded by F-prep-qsf2 **`ec21e133`**).
+- **H-gate-rcsum5d HARD_FAIL** (definitive; sources 5/5b/5c) MULTI_DRIVE sticky0x14=**0/12** +0x53 seq **16/69/bc/0f/62/b5/08**; **res_dc PASS**; FBAR soft; **NOT PACK_PROVEN**.
+- **BUILD_OK + DEPLOY_OK + PACKAGE_OK ≠ hard residual PASS**. Soft-skip ≠ PASS. **3l2 BLOCKED.** Thrash **`8832824e` forbidden.**
+- Evidence: **`/tmp/misterplex-agent-H-gate-rcsum5d.txt`**; H-gate 5/5b/5c; probes `/tmp/misterplex-H-gate-rcsum5-probes.txt` + summary; build/deploy/package reports; midfit-rcsum5*.
+
+**Q-SF2 sole — wide Fix-2 TERMINAL BUILD_OK + DEPLOY + PACKAGE + WIDE FAIL open + residual HARD_FAIL on same RBF — historical; J-backlog62 cite:**
+- Lock start historical **`Q-SF2 2026-07-24T13:45:49-05:00`**; log END **13:52:56** Full Comp **0e/38w** wall **415s** exit **0**; NEW_RBF **`ec21e133`** full `ec21e1330ddd75ad7f39099e5abfad49` size **3436288**.
+- Mon **`M-fitmon-qsf2d` / `M-fitmon-qsf2b` BUILD_OK** — exclusive idle post-exit0 (pre–R-csum6).
+- Lock was **`Q-SF2 DONE BUILD_OK 2026-07-24T13:52:56-05:00 NEW_RBF=ec21e133…`** (H-deploy-qsf2 harvest) — **superseded** by **`R-csum6 DONE BUILD_OK`** NEW **`94bbfe43`**.
+- **H-deploy-qsf2: PROMOTE_OK | ALREADY_DEPLOYED** lab was **`ec21e133`** (ZERO second menu by H-deploy). Lab path **now LOADED `94bbfe43`** post H-deploy-rcsum6.
+- **F-prep-qsf2 / F-prep-sf2: PACKAGE_OK** embeds **`ec21e133`** tarball `dist/misterplex-3c43a66-dirty.tar.gz`.
+- **W-wide-gate-sf2: WIDE FAIL** span=**0.605** **PILLAR_320_of_529**; FBAR soft PASS — **WIDE still open**.
+- **H-gate-sf2: FBAR PASS**; **WIDTH FAIL** span=**0.605** pillar.
+- **H-gate-ec21 / H-res-ec21: residual HARD_FAIL** on LOADED **`ec21e133`** sticky0x14=0 +0x53 **08/5b/ae/01**; res_dc PASS — residual **FAIL open on current lab RBF**.
+- **Wide track + residual measure** — ≠ residual product PASS; ≠ WIDE product PASS; ≠ 3l2 unblock; soft-skip ≠ PASS.
+- Evidence: `/tmp/plex_quartus_sf2.log`; `/tmp/misterplex-agent-M-fitmon-qsf2d.txt`; `/tmp/misterplex-agent-M-fitmon-qsf2b.txt`; `/tmp/misterplex-agent-H-deploy-qsf2.txt`; `/tmp/misterplex-agent-F-prep-qsf2.txt`; `/tmp/misterplex-agent-F-prep-sf2.txt`; `/tmp/misterplex-agent-W-wide-gate-sf2.txt`; `/tmp/misterplex-agent-H-gate-sf2.txt`; `/tmp/misterplex-agent-H-gate-ec21.txt`; `/tmp/misterplex-agent-H-res-ec21.txt`.
+
+**R-csum4 sole — BUILD_OK NEW_RBF `75da8bb1` + DRIFT caveat (historical path):** log `/tmp/plex_quartus_rcsum4.log`; Full Compilation **0e/35w**; wall **421s** exit **0**; NEW_RBF **`75da8bb1`** full `75da8bb10e36b3e068d66a9ed053cd2c`. Claim freeze DIAG **`94db41b7`/`9a2d10c5`**. Mid-fit **DRIFT_CRITICAL** → **RBF_PROVENANCE_UNTRUSTED**. **H-deploy-rcsum4 PROMOTE_OK | DEPLOY_OK**. **F-prep-rcsum4 PACKAGE_OK** embeds **75da8bb1**. **H-gate HARD_FAIL** (not PACK_PROVEN). **Thrash-redeploy forbidden.**
+
+**R-csum-rtl5 FIT_GO (product sticky pack @ stamp; historical pre-rcsum5):** report `/tmp/misterplex-agent-R-csum-rtl5.txt` **VERDICT=FIT_GO**. Sticky pack PRESENT (`st_res_word_sticky` / `res_pair_sticky` family); status residual half from sticky ONLY; stream only [127:112]. **DIAG=ABSENT** product `residual_csum <= csum_acc` at stamp. Claim md5s **Plex `6422fb9a…` / slice `8e6af3bb…`**. No Quartus by rtl5. **FIT_GO ≠ BUILD_OK.**
+
+**Lab LOADED `94bbfe43` after ONE menu (J-backlog66):** **H-deploy-rcsum6 PROMOTE_OK | DEPLOY_OK** — report `/tmp/misterplex-agent-H-deploy-rcsum6.txt`; user log `/tmp/misterplex-H-deploy-rcsum6-user.log` Soft reload Menu→Plex; lab `/tmp/misterplex-H-deploy-rcsum6-lab.txt` full `94bbfe433feb562fabe0798e16b378c5` CORENAME=Plex size **3506356**. Prior **`ec21e133`** WIDE FAIL span=0.605 + residual HARD_FAIL (**H-gate-ec21**); historical **`8832824e` HARD_FAIL** (**H-gate-rcsum5d**). **H-gate-rcsum6 hard residual IN_PROGRESS / PENDING** — **do not invent hard residual PASS / PACK_PROVEN / 3l2 UNBLOCK**. Soft-skip ≠ PASS. **3l2 BLOCKED** until hard product sticky **0x14**. Thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **WIDE still FAIL open Fix-2.**
+
+**Prior product hard class (H-gate-rcsum3b / 3b2 / 3b3 — historical on `4d6ee356`):** **never sticky 0x14**. +0x53/push family. Soft residual ≠ hard PASS. **Thrash 4d6ee356 forbidden.**
+
+**A-csum-probe7 HOST_PROBE_OK** / **A-csum-map1/map2 MAP_OK:** host map matches FPGA packing; blame residual_csum value / multi-drive pack. Ideal **`e8 14 53 1a` HARD_PASS** offline only.
+
+**R-csum-postfail8 RCA (docs):** MULTI_DRIVE / PACK_FAIL on 75da8bb1; annex-len lo +0x53; sticky latch / multi-drive of status[111:104]; provenance co-cause. Report `/tmp/misterplex-agent-R-csum-postfail8.txt`. **H-gate-rcsum5d** reconfirms same class on **`8832824e`** (seq **16/69/bc/0f/62/b5/08**; sticky0x14=0/12).
+
+**Next serial (R-csum6 TERMINAL BUILD_OK; exclusive FREE; J-backlog66):**
+1. ~~**R-csum-rtl5** sticky pack FIT_GO~~ — **DONE**
+2. ~~**R-csum5 sole**~~ — **DONE BUILD_OK** NEW_RBF **`8832824e`** wall **441s**; **PROVENANCE_UNTRUSTED**; residual gate **CLOSED FAIL**
+3. ~~**Trust + H-deploy-rcsum5**~~ — **DONE DEPLOY_OK** ONE menu **`8832824e`** (lab path since superseded)
+4. ~~**PACKAGE_OK embed `8832824e`**~~ — **DONE** (superseded by F-prep-qsf2 / F-prep-sf2)
+5. ~~**H-gate-rcsum5 / 5b / 5c / 5d**~~ — **DONE HARD_FAIL** residual serial **CLOSED FAIL** MULTI_DRIVE sticky0x14=0 +0x53 **16/69/bc/0f/62/b5/08**; res_dc PASS; **NOT PACK_PROVEN** (**H-gate-rcsum5d** definitive)
+6. ~~**Q-SF2 sole wide Fix-2**~~ — **DONE BUILD_OK** END **13:52:56**; Full Comp **0e/38w** wall **415s** exit **0**; NEW_RBF **`ec21e133`**; mon **M-fitmon-qsf2d/qsf2b BUILD_OK**
+7. ~~**H-deploy-qsf2 promote + lab LOADED**~~ — **DONE PROMOTE_OK | ALREADY_DEPLOYED** lab was **`ec21e133`** (path superseded by **`94bbfe43`**)
+8. ~~**F-prep-qsf2 / F-prep-sf2 PACKAGE_OK embed `ec21e133`**~~ — **DONE** ≠ product/WIDE PASS
+9. ~~**W-wide-gate-sf2 / fix2b + H-gate-sf2 FBAR + WIDTH**~~ — **DONE FBAR soft PASS; WIDE/WIDTH FAIL** span=**0.605** **PILLAR_320_of_529** — **WIDE open; Fix-2 CLOSED ineffective**
+10. ~~**H-gate-ec21 / H-res-ec21 residual hard on `ec21e133`**~~ — **DONE HARD_FAIL** sticky0x14=0 +0x53 **08/5b/ae/01** — historical FAIL on prior lab path (superseded by **`94bbfe43`**)
+11. ~~**C-unit-sf2 / C-unit26 / C-unit27 / C-unit28 host unit**~~ — **DONE PASS** host (**C-unit28** `/tmp/misterplex-agent-C-unit28.txt`) ≠ lab residual PASS
+12. ~~**H-fbar-ec21b FBAR soft reconfirm**~~ — **DONE PASS** 7.0/82.9/94.4 on lab **`ec21e133`**
+13. ~~**R-multidrive-rca14 + H-proto-rcsum6 + L-csum-note37**~~ — **DONE** RCA_OK / PROTO_OK / DOCS_OK; parent **FIT_GO=YES**
+14. ~~**R-csum6 sole**~~ — **DONE TERMINAL BUILD_OK** lock **14:10:26** wall **438s** exit **0** Full Comp **0e/40w**; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; **LOCK_OK** claim **MATCH** Rank1+2+3 DIAG=ABSENT md5s **`c7a847f7`/`ca62d02b`/`904e9b2e`**; mon **M-fitmon-rcsum6c BUILD_OK**; mid-fit **SRC_DRIFT: NO** — **BUILD_OK ≠ residual hard PASS**
+15. ~~**W-fix3-hold / W-fix3-hold2**~~ — **DONE HOLD_OK** **FIT_GO Q-SF3=NO** (hold during exclusive; still hold until residual gate serial / parent free pick)
+16. ~~**ONE H-deploy-rcsum6**~~ — **DONE PROMOTE_OK|DEPLOY_OK** ONE menu lab **LOADED `94bbfe43`** (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`)
+17. **H-gate-rcsum6** hard residual on **`94bbfe43`** expect sticky0x14 ≥2; reject +0x53; res_dc=-24 — **IN_PROGRESS / PENDING** (do **not** invent hard PASS)
+18. ~~**F-prep-rcsum6**~~ — **DONE PACKAGE_OK** embeds **`94bbfe43`** (`/tmp/misterplex-agent-F-prep-rcsum6.txt`)
+19. **Wide Fix-3 / Q-SF3** — **WIDE FAIL open** historical **`ec21e133`** 0.605; exclusive FREE — **do not invent WIDE PASS / Fix-3 BUILD_OK**
+20. Soft-skip ≠ PASS. **3l2 BLOCKED** until hard product sticky **0x14** on non-DIAG product residual RBF. **WIDE still FAIL open Fix-2.** **BUILD_OK+DEPLOY ≠ residual PASS ≠ WIDE product PASS.**
+
+git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** DIAG=ABSENT Rank1+2+3 LOCK_OK; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; Fix-2 colorbars **`f1d9666a`**. Host/lab RBF **`94bbfe43`**. Lab **LOADED `94bbfe43`** after ONE menu; exclusive **FREE**. **H-gate-rcsum6 IN_PROGRESS / PENDING** — **do not invent hard residual PASS**. **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605**. **A-csum-host28 HOST_GOLDEN_OK** + **C-unit28/C-unit27 PASS** host ≠ lab residual PASS; **3l2 BLOCKED**. Soft-skip ≠ PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **Do not invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK.** **J-backlog66**. Lab `192.168.1.183`.
+
 
 ## Gate: all green before “complete”
-- [x] `make unit` — **GREEN** (**C-unit12** / **C-unit13** 2026-07-24): EXIT=0; goldens PASS (res_dc=-24 res_csum=0x14 y00=73 mean=62); companion OK at plant-hold **`ade6915`**. **A-csum-host2** helper self-test PASS. Reports `/tmp/misterplex-agent-C-unit12.txt`, `/tmp/misterplex-agent-C-unit13.txt`, `/tmp/misterplex-agent-A-csum-host2.txt`
-- [~] HW residual hard gate — **FAIL on lab `dabdaeb0`** (**H-deploy-rcsum1** + **H-rcsum-gate**). **R-csum1 BUILD_OK** md5 **`dabdaeb0`** (sources **`7bee0a6`**). Sole menu deploy + lab md5 match **PASS**. **FBAR PASS** on dabdaeb0. **res_dc=-24 PASS** (raw[12]=0xE8 stable). **res_csum HARD FAIL**: raw[13] **UNSTABLE** wrong values (**139 / 0x8b → 222 / 0xde → 49 / 0x31**; soft-skip got 49/139/222 want 20) — **NOT** 0x14/20; **NOT** stream_bytes low; **NOT** dc-only 0xE8. Soft-skip EXIT=0 is **not** hard PASS. Prior FAIL on `820484a6` (232/59/142) and pack-alias on `aa146c17` (0x53). Class = status path / preserve / multi-drive (branch **a**); do **not** re-open tmpc-fold first; do **not** redeploy dabdaeb0 expecting green; do **not** invent hard PASS. **3l2 paint remains BLOCKED**. Tools READY: A-arm-csum + A-csum-host2. Reports `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-H-rcsum-gate.txt`, `/tmp/misterplex-agent-G-fpga-rcsum1.txt`, `/tmp/misterplex-agent-R-csum1.txt`, log `/tmp/plex_quartus_rcsum1.log`
-- [x] FBAR visual PASS — **DONE on lab `dabdaeb0`** (**H-deploy-rcsum1**): `test_fbar_fast` EXIT=0 m1=82.9 m2=94.4 (≥15). Prior PASS on `820484a6` / `aa146c17` / `6db3a4d8`. Report `/tmp/misterplex-agent-H-deploy-rcsum1.txt`
-- [ ] Full-width VGA verified (HBlank@320) — **eyes-on FAIL open** last measured on lab **`820484a6`** (**W-wide4/5/6**): HDMI span **~60.5%** = content320/DE529 pillar; R5%=0. Fix-1 state C **ineffective** (**Fix-1 dead**). **No more HSync-only thrash.** **Fix-2 paint-full-DE@529 design READY** (**W-fix2-d2** / **W-fix2-d3**) — RTL apply when Quartus free (R-csum1 done; prefer residual RCA settled or separate rebuild). [docs/p3-wide-rca.md](p3-wide-rca.md). Eyes `/tmp/misterplex-agent-W-wide4.txt`…`W-wide6.txt`; design `/tmp/misterplex-agent-W-fix2-d2.txt`, `/tmp/misterplex-agent-W-fix2-d3.txt`
-
-- [x] DDR F1 ≥30 fps path stable in misterplexd — **B-ddr5 PASS** on prior lab **`820484a6`**: mean≈18.0 ms has_frame=1. Report `/tmp/misterplex-agent-B-ddr5.txt`
-- [x] `make package` — **F-package3 PASS** embeds prior RBF **`820484a6`**. Re-package after hard residual green if needed. Report `/tmp/misterplex-agent-F-package3.txt`
-- [x] misterplexd soak PASS (wifi) — **D-soak4 PASS** on prior **`820484a6`** ok=6; **D-soak3** on `aa146c17` ok=6; **D-park** PASS
-- [x] Safe deploy only (`DEPLOY_LOAD=none|menu` via `scripts/deploy_plex_core.sh`)
+- [x] **Product present / tear-free HDMI+VGA** — **DONE** git **`588e528`** RBF **`1441d409`**; vsync page-flip + DMA hold-off; holdoff2 half/mid/multi **0.00/s**; user eyes-on OK 2026-07-25. Docs: `MILESTONE_VSYNC_PRESENT.md`. **≠ residual hard PASS ≠ WIDE PASS.**
+- [x] **Product A/V cast (Plex Web → MiSTerPlex)** — **DONE** `PRESENT=fpga` `STREAM=0` wall-48k; blip24 median **~−13 ms**; pfps≈vfps. Evidence `captures/e2e/REPORT*.md` + blip24.
+- [x] `make unit` — **GREEN** (**C-unit28 PASS** + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS** reconfirm + **C-unit25/24/23/22/21/20/19/18/17** + **C-unit16/15/14**): EXIT=0; host golden res_csum=**0x14**; res_dc=-24; y00=73 mean=62; companion OK; parse self-test OK. **HOST GREEN ≠ lab hard residual PASS.** Soft-skip ≠ PASS. Reports `/tmp/misterplex-agent-C-unit28.txt`, `/tmp/misterplex-agent-C-unit27.txt`, `/tmp/misterplex-agent-C-unit-sf2.txt`, `/tmp/misterplex-agent-C-unit26.txt` … `/tmp/misterplex-agent-C-unit14.txt`
+- [~] HW residual hard gate — **IN_PROGRESS / PENDING H-gate-rcsum6** on lab LOADED **`94bbfe43`** (BUILD_OK+DEPLOY done; **do not invent hard PASS**). Historical FAIL **`ec21e133`** + **`8832824e`**. Soft-skip ≠ hard PASS. **3l2 BLOCKED** until product sticky 0x14. **BUILD_OK + DEPLOY ≠ product hard residual PASS.** (Product present path uses **`1441d409`** separately.)
+- [x] FBAR visual PASS — **DONE** on lab **`ec21e133`** (**H-fbar-ec21b** / **W-wide-gate-sf2** / **H-gate-sf2** / **H-gate-ec21** 7.0/82.9/94.4) and prior residual **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**. **FBAR soft ≠ hard residual PASS ≠ WIDE product PASS.**
+- [ ] Full-width VGA verified (HBlank@320) — **FAIL open** historical **`ec21e133`** (**W-wide-gate-sf2b** span=**0.605** **PILLAR_320_of_529**; **W-wide-gate-sf2** / **H-gate-sf2** same). Fix-2 BUILD_OK+DEPLOY+FBAR but **WIDTH FAIL** — **WIDE still FAIL open Fix-2**. **do not invent WIDE PASS / Fix-3 PASS**. **W-fix3-hold2 FIT_GO=NO**; exclusive FREE.
+- [x] DDR F1 ≥30 fps — **B-ddr7 PASS optional** on LOADED **`ec21e133`** mean **16.5 ms** (~60.6 fps) (`/tmp/misterplex-agent-B-ddr7.txt`); prior **B-ddr6 PASS** dabdaeb0 mean 16.5 ms. Product path **`1441d409`** also every-frame DDR. DDR ≠ residual/WIDE PASS.
+- [x] `make package` — **PACKAGE_OK** embeds **`94bbfe43`** (**F-prep-rcsum6** `/tmp/misterplex-agent-F-prep-rcsum6.txt`). Prior **ec21e133** / **8832824e** packages historical. Product tear RBF also in `releases/Plex_vsync_tear_1441d409.rbf`. Package ≠ WIDE PASS.
+- [x] misterplexd soak — **D-soak3/4/5 PASS** ok=6 (re-soak optional after next RBF)
+- [x] Safe deploy only — **H-deploy-rcsum6 PROMOTE_OK|DEPLOY_OK** lab **LOADED `94bbfe43`** ONE menu (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`). Prior **H-deploy-qsf2** **`ec21e133`** / **H-deploy-rcsum5** **`8832824e`**. Product present deploy **`1441d409`**. **Do not thrash-redeploy `8832824e`/`75da8bb1`/`4d6ee356` or second-menu `94bbfe43`.** Residual hard **PASS** via **H-gate-rcsum6** (separate).
 
 ## Phase 3 (decode / present)
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P3-FBAR | Force bars O[9] visual = bars when pattern=grid | **DONE** (on dabdaeb0) | **H-deploy-rcsum1** sole menu deploy lab **`dabdaeb0`**: `test_fbar_fast` EXIT=0 m1=82.9 m2=94.4. Prior PASS H-gate-fix1 on `820484a6`. Report `/tmp/misterplex-agent-H-deploy-rcsum1.txt` |
-| P3-WIDE | Full-width DE HBlank@320 | **PARTIAL / FAIL open** | Eyes-on **FAIL ~60.5%** on `820484a6` (W-wide4/5/6); Fix-1 **dead**. **Fix-2 design READY** (paint-full-DE@529; W-fix2-d2/d3). R-csum1 free — RTL apply when residual path allows / separate fit. **Not DONE.** [docs/p3-wide-rca.md](p3-wide-rca.md) |
-| P3-DDR | DDR F1 kick reliable in product path | **DONE** | **B-ddr5 PASS** mean≈18.0 ms on `820484a6` |
-| P3-3l0 | Host quant/IDCT golden | DONE | `test_idct_quant` first 4×4 locked |
-| P3-3l1 | FPGA full 16 coeffs | **PARTIAL — hard-gate FAIL on lab dabdaeb0** | **Host DONE** goldens `res_csum=0x14`. **R-csum1 BUILD_OK** RBF **`dabdaeb0`**; sources **`7bee0a6`** (running XOR + lev[] + preserve status). **Sole deploy PASS**; **FBAR PASS**; **res_dc=-24 PASS**; **res_csum HARD FAIL** unstable 139/222/49 ≠0x14 (H-rcsum-gate). Soft-skip ≠ PASS. Next: residual RCA branch **a** (status/preserve/multi-drive) — **no invent PASS**; no thrash redeploy dabdaeb0. Reports `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-H-rcsum-gate.txt`, `/tmp/misterplex-agent-G-fpga-rcsum1.txt`, `/tmp/misterplex-agent-R-csum1.txt` |
-| P3-3l2 | Inv quant + IDCT first 4×4 | **PARTIAL / BLOCKED** | Host goldens + RTL sketch DONE. **Hard-blocked** until hard res_csum=20 on lab (still FAIL on dabdaeb0). Contingency: stay BLOCKED; residual RCA only. See `docs/phase3-3l-idct.md` *P3-3l2 UNBLOCK GATE*. |
-| P3-3l3 | First full MB recon | TODO | I_NxN modes+CBP+residual+chroma |
-| P3-3l4 | All MBs / frame mae | TODO | Full I-slice mae vs host |
-| P3-3l5 | Hybrid gate product | TODO | When 3.3l-4 mae competitive |
-| P3-SPI | SPI F1 only ~9fps — keep as fallback | DONE | Measured ~112 ms / ~9 fps |
+| P3-PRESENT | VSync page-flip + DMA hold-off (tear-free present) | **DONE** | git **`588e528`** RBF **`1441d409`**; holdoff2 0.00/s tears; user eyes-on OK. See `MILESTONE_VSYNC_PRESENT.md`. |
+| P3-AVCAST | Product cast STREAM=0 + wall-48k A/V | **DONE** | blip24 ~−13 ms; Plex Web → MiSTerPlex HDMI/VGA. |
+| P3-FBAR | Force bars O[9] visual = bars when pattern=grid | **DONE** (on ec21e133 + 8832824e + 75da8bb1 + 4d6ee356 + 4deaf6cc + dabdaeb0) | **H-fbar-ec21b / W-wide-gate-sf2 / H-gate-sf2 / H-gate-ec21 FBAR soft PASS** on **`ec21e133`**. Parked force bars. **FBAR ≠ hard residual PASS ≠ WIDE product PASS.** |
+| P3-WIDE | Full-width DE HBlank@320 | **PARTIAL / FAIL open; WIDE still FAIL open Fix-2; Fix-3 HOLD FIT_GO=NO** | **W-wide-gate-sf2b WIDE FAIL** span=**0.605** **PILLAR_320_of_529** historical **`ec21e133`**; Fix-2 still WIDTH FAIL. **W-fix3-hold2 HOLD_OK FIT_GO=NO**. Exclusive FREE. **do not invent WIDE PASS / Fix-3 BUILD_OK**. |
+| P3-DDR | DDR F1 kick reliable in product path | **DONE** | Product **`1441d409`** every-frame F1 + doorbell; prior **B-ddr7** on **`ec21e133`** mean **16.5 ms**. DDR ≠ residual/WIDE PASS. |
+| P3-3l0 | Host quant/IDCT golden | DONE | `2e2c2dc` |
+| P3-3l1 | FPGA full 16 coeffs | **PARTIAL — R-csum6 BUILD_OK+DEPLOY lab `94bbfe43`; H-gate-rcsum6 IN_PROGRESS/PENDING (do not invent hard PASS); historical HARD_FAIL `ec21e133`+`8832824e`** | Host goldens 0x14 (**C-unit28 / C-unit27**). Lab **LOADED `94bbfe43`**. Soft-skip ≠ PASS. **3l2 BLOCKED** until sticky 0x14. Claim **c7a847f7/ca62d02b/904e9b2e** LOCK_OK. **BUILD_OK+DEPLOY ≠ residual PASS**. |
+| P3-3l2 | Inv quant + IDCT first 4×4 | **PARTIAL / BLOCKED** | Host DONE (L-3l2e). Hard-block until res_csum=0x14 stable ≥2 on **non-DIAG product** RBF. Lab **LOADED `94bbfe43`**; **H-gate-rcsum6 IN_PROGRESS/PENDING** — **do not unblock 3l2** until hard product sticky 0x14. **BUILD_OK+DEPLOY ≠ 3l2 UNBLOCK**. |
+| P3-3l3 | First full MB recon | TODO | |
+| P3-3l4 | All MBs / frame mae | TODO | |
+| P3-3l5 | Hybrid gate product | TODO | |
+| P3-SPI | SPI F1 only ~9fps — keep as fallback | DONE | |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P4-SCRUB | Scrubber/playqueue edge cases | **DONE** | plant-hold **`f635858`** + atomic plant **`ade6915`**; C-unit12 EXIT=0 |
-| P4-HZ | Match-source-Hz modeline (docs only OK) | DEFER | docs only |
-| P4-SUB | Subtitles burn-in plan | DEFER | docs only |
+| P4-SCRUB | Scrubber/playqueue edge cases | **DONE** | G-p4-dirty `ade6915`; C-unit14..21 reconfirm |
+| P4-HZ | Match-source-Hz modeline (docs only OK) | DEFER | |
+| P4-SUB | Subtitles burn-in plan | DEFER | |
 
 ## Phase 5 (release / lab)
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P5-PKG | Package release tarball | **DONE (F-package3 on 820484a6)** | embeds prior **`820484a6`**. Re-package after hard residual green if gates need new artifact. |
-| P5-SOAK | WiFi soak multi-round | **DONE** | D-soak3/4 ok=6 on aa146c17 / 820484a6; D-park PASS |
+| P5-PKG | Package release tarball | **DONE for 94bbfe43 embed** | **F-prep-rcsum6 PACKAGE_OK** embeds **`94bbfe43`** (`/tmp/misterplex-agent-F-prep-rcsum6.txt`). Prior **ec21e133**/**8832824e** historical. Ship still blocked on **WIDE**. Package ≠ WIDE PASS. |
+| P5-SOAK | WiFi soak multi-round | **DONE** | D-soak3/4/5 ok=6; optional re-soak after next RBF |
 | P5-ETH | Eth vs wifi numbers | BLOCKED | no eth lab path |
-| P5-CRT | CRT matrix checklist | **PARTIAL** | LAB HDMI rows updated (CRT3); physical CRT **PENDING**. No false CRT PASS. Reports CRT/CRT2/CRT3 |
+| P5-CRT | CRT matrix checklist | **PARTIAL** | Physical CRT PENDING |
 
-## RBF inventory (G-docs2: no Quartus; no deploy; docs only)
+## RBF inventory (agent-J-backlog66: no Quartus; no deploy; no RTL thrash; evidence-only; R-csum6 BUILD_OK harvest)
 | Path | md5 (prefix) | Notes |
 |------|--------------|-------|
-| `fpga/Plex_MiSTer/output_files/Plex.rbf` | **`dabdaeb0`** | **R-csum1 BUILD_OK**; full `dabdaeb0c5ae708c4fdbba388ba275b6`; size **3433864** B; mtime 12:16 |
-| `fpga/Plex_MiSTer/releases/Plex.rbf` | **`dabdaeb0`** | Promoted match |
-| `releases/Plex.rbf` (repo root) | **`dabdaeb0`** | Promoted match |
-| `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` | **`dabdaeb0`** | Collect match |
-| Lab `/media/fat/_Utility/Plex.rbf` | **`dabdaeb0`** | **LOADED** H-deploy-rcsum1; FBAR PASS; res_dc=-24 PASS; **res_csum HARD FAIL** (unstable ≠0x14); soft-skip ≠ PASS |
-| `dist/stage-misterplex/cores/Plex.rbf` | **`820484a6`** | F-package3 stage (stale vs lab) |
-| `dist/misterplex-0aa744f-dirty.tar.gz` | embeds **`820484a6`** | F-package3 PASS (prior) |
+| `fpga/Plex_MiSTer/output_files/Plex.rbf` | **`94bbfe43`** | **R-csum6 NEW_RBF** full `94bbfe433feb562fabe0798e16b378c5` size **3506356**; BUILD_OK wall **438s** exit **0**; claim **c7a847f7/ca62d02b/904e9b2e** DIAG=ABSENT Rank1+2+3; ∉ ban |
+| `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` | **`94bbfe43`** | R-csum6 collect match output |
+| `fpga/Plex_MiSTer/releases/Plex.rbf` | **`94bbfe43`** | R-csum6 promote MATCH full `94bbfe433feb562fabe0798e16b378c5` |
+| `releases/Plex.rbf` (repo root) | **`94bbfe43`** | **PROMOTE_OK** H-deploy-rcsum6; MATCH lab LOADED |
+| `releases/Plex_qsf2_ec21e133.rbf` | **`ec21e133`** | H-deploy sidecar copy-only |
+| `releases/Plex_sf2_wide_ec21e133.rbf` | **`ec21e133`** | F-prep named snapshot |
+| `dist/stage-misterplex/cores/Plex.rbf` | **`ec21e133`** | F-prep-qsf2 PACKAGE_OK stage embed |
+| `dist/misterplex-3c43a66-dirty.tar.gz` (F-prep-qsf2) | embeds **`ec21e133`** | **PACKAGE_OK** ≠ product/WIDE PASS |
+| Lab `/media/fat/_Utility/Plex.rbf` | **`94bbfe43`** | **LOADED** after **H-deploy-rcsum6 ONE menu** full `94bbfe433feb562fabe0798e16b378c5` CORENAME=Plex; cite user log + lab txt + `/tmp/misterplex-agent-H-deploy-rcsum6.txt`; **H-gate-rcsum6 IN_PROGRESS/PENDING** — do not invent hard PASS; prior **`ec21e133`** WIDE FAIL 0.605 historical open |
+| Prior residual host/lab RBF (R-csum5; path superseded on lab) | **`8832824e`** | **BUILD_OK** + **DEPLOY_OK** + **H-gate-rcsum5d HARD_FAIL** MULTI_DRIVE; thrash **forbidden**; residual CLOSED FAIL historical |
+| `releases/Plex_rcsum5_8832824e.rbf` | **`8832824e`** | local archive copy-only (R-csum5-build) |
+| Prior host/lab RBF (R-csum4; path superseded) | **`75da8bb1`** | **BUILD_OK** + **DEPLOY_OK** + **H-gate HARD_FAIL**; thrash forbidden |
+| Prior host/lab RBF (R-csum3b; path superseded) | **`4d6ee356`** | historical **HARD_FAIL** +0x53; **thrash forbidden** |
+| Prior host/lab RBF (R-csum2) | **`4deaf6cc`** | superseded; PACK_FAIL stream24 |
+| R-csum2 fit-start claim SRC | Plex **`9b97b792`** + slice **`eec44561`** | DIAG force-0x14 + multi-cycle |
+| **R-csum3 claim @ fit start (historical; dead)** | Plex **`eb6b8541`** + slice **`6ce28d6e`** | **FIT_DEAD_MID**; not BUILD_OK |
+| **R-csum3b freeze @ fit start (BUILD_OK product; HARD_FAIL lab; path superseded)** | Plex **`ce1ef26c`** + slice **`e45f98c4`** | **LOCK_OK**; DIAG ABSENT; failed product hard csum |
+| **R-csum4 freeze @ claim (BUILD_OK; gate HARD_FAIL; DRIFT caveat)** | Plex **`94db41b7`** + slice **`9a2d10c5`** | DIAG PRESENT at claim; mid-fit **DRIFT_CRITICAL**; **PROVENANCE_UNTRUSTED**; silicon never sticky 0x14 |
+| **R-csum5 claim@launch (BUILD_OK sole; product sticky map-era)** | Plex **`6422fb9a`** + slice **`8e6af3bb`** | sticky_pack PRESENT; **DIAG=ABSENT** product csum_acc; lock **13:31:58**; map-era class per midfit-rcsum5b; **PROVENANCE_UNTRUSTED** vs thrash |
+| **R-csum5 live WT + claim overwrite mid-fit (DRIFT_CRITICAL)** | Plex **`6a5dcaaa`** + slice **`7d4a1d8b`** | DIAG PRESENT `residual_csum<=8'h14`; claim rewrite ~13:33:19 SUPERSEDES launch product; live matches overwrite; **PROVENANCE_UNTRUSTED**; map netlist ≠ this class |
+| **Q-SF2 claim SRC_colorbars (wide Fix-2 BUILD_OK)** | colorbars **`f1d9666a`** full `f1d9666ada5347dbde7e7246bad345c8` | W-sf2-midfit **DRIFT: NO**; Fix-2 paint-full-DE; silicon still WIDTH FAIL 0.605 |
+| **R-csum6 claim@fit (BUILD_OK+LOCK_OK wall 438s)** | Plex **`c7a847f7`** + slice **`ca62d02b`** + stream **`904e9b2e`** fulls `c7a847f743bace1e0df48f2d0571f513` / `ca62d02b7188f4dd9be5109dc4f2dd64` / `904e9b2ea3bc6f560cb10c65796f9fbc` | **FIT_GO=YES** Rank1+2+3 **DIAG=ABSENT**; live==claim **MATCH** **SRC_DRIFT: NO** **LOCK_OK**; lock **DONE BUILD_OK** NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` wall **438s**; mon **BUILD_OK**; **H-deploy ONE menu lab LOADED `94bbfe43`**; exclusive **FREE**; **H-gate-rcsum6 PENDING** — **BUILD_OK+DEPLOY ≠ residual PASS** |
+| Prior lab FAIL baseline | **`dabdaeb0`** | Superseded |
+| Prior tarballs | `820484a6` / `aa146c17` / `6db3a4d8` / F-prep-rcsum2/3b/4/5 era | Superseded by **ec21e133** package (F-prep-qsf2) |
 
-### Quartus status (2026-07-24 ~12:20 CDT)
+### Quartus status (2026-07-24; **R-csum6 BUILD_OK DONE** NEW **`94bbfe43`** wall **438s** LOCK_OK; lab LOADED **`94bbfe43`**; exclusive **FREE**; H-gate PENDING; WIDE FAIL open Fix-2 — **J-backlog66**)
 | Build | Log | Result |
 |-------|-----|--------|
-| Clean FBAR | `/tmp/plex_quartus_fbar_clean.log` | **BUILD_OK**; RBF `6db3a4d8` (prior) |
-| **Q-3l1** | `/tmp/plex_quartus_3l1.log` | **BUILD_OK**; RBF **`aa146c17`** (superseded) |
-| **Q-fix1** | `/tmp/plex_quartus_fix1.log` | **BUILD_OK** 12:02:28; RBF **`820484a6`** (prior lab; hard csum FAIL; WIDE FAIL) |
-| **R-csum1** | `/tmp/plex_quartus_rcsum1.log` | **BUILD_OK** — BUILD END **12:17:04** exit=0; wall ~365s (restart 12:10:59 after prior timeout kill). RBF **`dabdaeb0`**. Sources committed **`7bee0a6`**. **No Quartus LIVE.** |
+| Clean FBAR | `/tmp/plex_quartus_fbar_clean.log` | **BUILD_OK**; RBF `6db3a4d8` |
+| **Q-3l1** | `/tmp/plex_quartus_3l1.log` | **BUILD_OK** → `aa146c17` (superseded) |
+| Q-3l1b | (not started) | **ABORT** busy |
+| **Q-SF1** | `/tmp/plex_quartus_sf1.log` | **BUILD_OK** → `820484a6` (superseded) |
+| **R-csum1** | `/tmp/plex_quartus_rcsum1.log` | **BUILD_OK** → **`dabdaeb0`**; superseded |
+| **R-csum2** | `/tmp/plex_quartus_rcsum2.log` | **BUILD_OK** → **`4deaf6cc`**; hard csum FAIL. Superseded. |
+| **R-csum3** | **`/tmp/plex_quartus_rcsum3.log`** | **FIT_DEAD_MID** — **NOT BUILD_OK.** |
+| **R-csum3b** | **`/tmp/plex_quartus_rcsum3b.log`** | **BUILD_OK** → **`4d6ee356`**. H-gate hard **HARD_FAIL**. Thrash forbidden. |
+| **R-csum4** | **`/tmp/plex_quartus_rcsum4.log`** | **BUILD_OK ~13:22** → **`75da8bb1`** wall **421s**. **H-gate HARD_FAIL** MULTI_DRIVE; thrash forbidden. |
+| **R-csum5** (residual serial **CLOSED FAIL** historical) | **`/tmp/plex_quartus_rcsum5.log`** | **BUILD_OK** wall **441s** → **`8832824e`**; **DEPLOY_OK**+**PACKAGE_OK**; **H-gate-rcsum5d HARD_FAIL** sticky0x14=0 +0x53 **16/69/bc/0f/62/b5/08**; res_dc PASS; **PROVENANCE_UNTRUSTED**; thrash **`8832824e` FORBIDDEN**. |
+| **Q-SF2** (wide Fix-2 sole — **DONE**) | **`/tmp/plex_quartus_sf2.log`** | **BUILD_OK DONE** END **13:52:56**; Full Comp **0e/38w** wall **415s** exit **0**; NEW_RBF **`ec21e133`** full `ec21e1330ddd75ad7f39099e5abfad49`; mon **M-fitmon-qsf2d/qsf2b BUILD_OK**; lock was **DONE BUILD_OK** (H-deploy harvest) — **superseded by R-csum6 DONE BUILD_OK**. **H-deploy PROMOTE_OK \| ALREADY_DEPLOYED**; **F-prep-qsf2/sf2 PACKAGE_OK**; **W-wide-gate-sf2 WIDE FAIL** span=0.605 pillar; **H-gate-ec21 residual HARD_FAIL** on same RBF. **≠ residual PASS ≠ WIDE product PASS.** |
+| **R-csum6** (residual multi-drive Rank1+2+3 product sticky — **DONE BUILD_OK + DEPLOY**) | **`/tmp/plex_quartus_rcsum6.log`** | **BUILD_OK DONE** END **14:10:09**; Full Comp **0e/40w** wall **438s** exit **0**; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` size **3506356**; claim Rank1+2+3 **DIAG=ABSENT** **`c7a847f7`/`ca62d02b`/`904e9b2e`** **LOCK_OK** SRC_DRIFT **NO**; mon **M-fitmon-rcsum6 BUILD_OK**; lock **DONE BUILD_OK 14:10:26**; exclusive **FREE**. **H-deploy-rcsum6 ONE menu** lab **LOADED `94bbfe43`**; **H-gate-rcsum6 IN_PROGRESS/PENDING** — do **not** invent hard residual PASS. |
 
-- Post-R-csum1 sequence status:
-  1. ~~Wait R-csum1 BUILD_OK + collect md5~~ — **DONE** **`dabdaeb0`**
-  2. ~~One sole deploy~~ — **DONE** H-deploy-rcsum1
-  3. ~~FBAR re-confirm~~ — **DONE PASS** on dabdaeb0
-  4. **Hard res_csum=20** — **FAIL** (H-rcsum-gate; soft-skip ≠ PASS) → residual RCA next
-  5. **WIDE Fix-2** — design **READY**; apply when fit slot free (prefer residual settled or separate rebuild)
-  6. Optional re-package after gates green
-- Do **not** invent hard-csum PASS; do **not** thrash-redeploy dabdaeb0 expecting green
+- Action this agent (**J-backlog66**): **refresh backlog only** (no Quartus; no lab thrash; no RTL) — **REFRESH_DONE**; cite **R-csum6 BUILD_OK** Full Comp **0e/40w** wall **438s** NEW_RBF **`94bbfe43`** LOCK_OK + **H-deploy ONE menu lab LOADED `94bbfe43`** (`/tmp/misterplex-H-deploy-rcsum6-user.log` + lab txt + agent report) + exclusive **FREE** + **H-gate-rcsum6 IN_PROGRESS/PENDING** (do not invent hard PASS) + **WIDE still FAIL open Fix-2** + **C-unit28/27 PASS** host + **3l2 BLOCKED** until sticky 0x14
+- Sequence:
+  1. ~~R-csum1 BUILD_OK + collect dabdaeb0~~ — **DONE**
+  2. ~~Sole menu deploy dabdaeb0 + FBAR~~ — **DONE** H-deploy; hard csum **FAIL**
+  3. ~~Postfail + rtl2 multi-cycle + diagrtl~~ — **DONE dirty**
+  4. ~~**R-csum2 sole fit BUILD_OK**~~ — **DONE** → **`4deaf6cc`**
+  5. ~~**Promote `4deaf6cc`**~~ — **DONE**
+  6. ~~**One sole menu deploy `4deaf6cc` + FBAR + hard csum**~~ — **DONE deploy/FBAR PASS**; **hard csum FAIL**
+  7. ~~**F-prep-rcsum2 package embeds 4deaf6cc`**~~ — **DONE PASS** (superseded)
+  8. ~~**C-unit16..19 unit green**~~ — **DONE PASS**
+  9. ~~**Pack-path RCA + R-csum-rtl3 dirty fix + LOCK_OK @ claim**~~ — **DONE**
+  10. ~~**R-csum3 sole**~~ — **FIT_DEAD_MID** — **NOT BUILD_OK**
+  10b. ~~**Mid-fit WT drift audit (R-csum3)**~~ — **DONE** → R-csum3b freeze
+  11. ~~**R-csum3b sole fit BUILD_OK**~~ — **DONE** → **`4d6ee356`**
+  11b. ~~**Promote + ONE menu (H-deploy-rcsum3b)**~~ — **DONE**
+  11c. ~~**F-prep-rcsum3b package embeds 4d6ee356**~~ — **DONE** (superseded)
+  11d..11d3. ~~**H-gate-rcsum3b / 3b2 / 3b3**~~ — **DONE HARD_FAIL** +0x53; thrash forbidden
+  11e. ~~**C-unit21..27 unit green**~~ — **DONE PASS** (**C-unit27** host; ≠ lab PASS)
+  11f. ~~**A-csum-probe7**~~ — **DONE HOST_PROBE_OK**
+  11g. ~~**A-csum-map1 / map2**~~ — **DONE MAP_OK**
+  11h. ~~Stale **R-csum-rtl4.txt @12:34**~~ — **ignore for FIT_GO**
+  11i. ~~**L-csum-note21 DIAG pack bisect docs**~~ — **DONE**
+  12. ~~**`R-csum-rtl4c` FIT_GO**~~ — **DONE** DIAG sticky 0x14; freeze **`94db41b7`/`9a2d10c5`**
+  12b. ~~**`R-csum4` sole DIAG compile**~~ — **BUILD_OK ~13:22** → **`75da8bb1`** — **DRIFT / PROVENANCE_UNTRUSTED**
+  12c. ~~**H-deploy-rcsum4 promote + ONE menu**~~ — **DONE** lab was LOADED (now superseded)
+  12d. ~~**F-prep-rcsum4 package embeds 75da8bb1**~~ — **DONE PACKAGE_OK** (historical)
+  12e. ~~**H-gate-rcsum4**~~ — **DONE HARD_FAIL** NOT PACK_PROVEN MULTI_DRIVE
+  12e2. ~~**H-gate-rcsum4b reconfirm (no redeploy)**~~ — **DONE HARD_FAIL** +0x53 0x85→0xd8→0x2b
+  12f. ~~**R-csum-rtl5** sticky pack product FIT_GO~~ — **DONE** claim **`6422fb9a`/`8e6af3bb`** DIAG=ABSENT
+  12g. ~~**R-csum5 sole**~~ — **DONE BUILD_OK** lock **13:40:35** CDT; Full Comp **0e/37w** wall **441s** exit **0**; NEW_RBF **`8832824e`**; mid-fit **DRIFT_CRITICAL** launch **`6422fb9a`/`8e6af3bb`** → live/claim **`6a5dcaaa`/`7d4a1d8b`** DIAG PRESENT; map-era product sticky (**midfit-rcsum5b**); **PROVENANCE_UNTRUSTED**
+  12h. ~~**H-deploy-rcsum5 ONE menu**~~ — **DONE DEPLOY_OK** lab was **LOADED `8832824e`** (path superseded)
+  12i. ~~**PACKAGE_OK embed `8832824e`**~~ — **DONE** (superseded by F-prep-qsf2)
+  12j. ~~**H-gate-rcsum5 / 5b / 5c / 5d**~~ — **DONE HARD_FAIL** residual serial **CLOSED FAIL** MULTI_DRIVE sticky0x14=0 +0x53 **16/69/bc/0f/62/b5/08**; res_dc PASS; FBAR soft; **NOT PACK_PROVEN**; thrash **`8832824e` forbidden** (**H-gate-rcsum5d** definitive)
+  12k. ~~**Q-SF2 sole wide Fix-2 BUILD_OK**~~ — **DONE** END **13:52:56**; Full Comp **0e/38w** wall **415s** exit **0**; NEW_RBF **`ec21e133`**; mon M-fitmon-qsf2d/b **BUILD_OK**; lock was **DONE BUILD_OK** (superseded by R-csum6 DONE BUILD_OK)
+  12l. ~~**H-deploy-qsf2 PROMOTE_OK | ALREADY_DEPLOYED**~~ — **DONE** lab was **`ec21e133`** (superseded by **`94bbfe43`**)
+  12m. ~~**F-prep-qsf2 / F-prep-sf2 PACKAGE_OK embed `ec21e133`**~~ — **DONE** ≠ product/WIDE PASS
+  12n. ~~**W-wide-gate-sf2 + H-gate-sf2 FBAR + WIDTH**~~ — **DONE FBAR soft PASS; WIDE/WIDTH FAIL** span=**0.605** pillar — **WIDE open**
+  12o. ~~**H-gate-ec21 / H-res-ec21 residual hard on `ec21e133`**~~ — **DONE HARD_FAIL** sticky0x14=0 +0x53 **08/5b/ae/01**; res_dc PASS — residual **FAIL open on current lab**
+  12p. ~~**C-unit-sf2 / C-unit27 / C-unit28 host unit**~~ — **DONE PASS** host ≠ lab residual PASS (**C-unit28** `/tmp/misterplex-agent-C-unit28.txt`)
+  12p2. ~~**A-csum-host28 HOST_GOLDEN_OK**~~ — **DONE** host 0x14/−24 ≠ lab PASS
+  12q. ~~**H-fbar-ec21b FBAR soft reconfirm**~~ — **DONE PASS** 7.0/82.9/94.4
+  12r. ~~**W-wide-rca-sf2 + W-sf3-plan**~~ — **DONE** FIX2_INEFFECTIVE 0.605; Fix-3 READY; **FIT_GO_WIDE=NO** until residual hard path / parent Q-SF3 pick (exclusive FREE post BUILD_OK)
+  13. ~~**R-csum6 sole**~~ — **DONE TERMINAL BUILD_OK** lock **14:10:26** wall **438s** exit **0** Full Comp **0e/40w**; NEW_RBF **`94bbfe43`**; mon **M-fitmon-rcsum6c BUILD_OK**; claim **MATCH** Rank1+2+3 DIAG=ABSENT **c7a847f7/ca62d02b/904e9b2e** — **BUILD_OK ≠ residual hard PASS**
+  14. ~~**ONE H-deploy-rcsum6**~~ — **DONE PROMOTE_OK|DEPLOY_OK** lab **`94bbfe43`** (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`) ≠ hard residual PASS
+  14b. **H-gate-rcsum6 hard residual on `94bbfe43`** — **IN_PROGRESS / PENDING** sticky0x14 ≥2 reject +0x53 res_dc=-24 — **do not invent hard PASS**
+  15. **Wide Q-SF3 after residual serial / free** — WIDTH FAIL open on **`ec21e133`**; **W-fix3-hold2 FIT_GO=NO** — **do not invent WIDE PASS / Fix-3 BUILD_OK**
+  16. Soft-skip ≠ PASS; G-fpga WAIT; thrash banned residual FORBIDDEN; **3l2 BLOCKED**
+- Do **not** invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK; soft-skip ≠ PASS; **DIAG ≠ product PASS**; **BUILD_OK+DEPLOY+PKG+FBAR ≠ residual PASS ≠ WIDE product PASS**; **3l2 BLOCKED** until sticky 0x14; thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**; exclusive **FREE**; **H-gate-rcsum6 PENDING**; **WIDE still FAIL open Fix-2**
 
 ## Open (priority next workers)
-1. **Hard residual retest / RCA after H-gate FAIL on dabdaeb0** — **OPEN #1**. Lab **`dabdaeb0`**: FBAR PASS; res_dc=-24 PASS; **res_csum HARD FAIL** unstable 139/222/49 ≠0x14. Soft-skip ≠ PASS. Class branch **a** (status path / preserve / multi-drive). **Do not invent PASS.** **Do not redeploy same bitstream expecting green.** Next RTL residual fix only when RCA ready + sole Quartus free. Evidence: `/tmp/misterplex-agent-H-deploy-rcsum1.txt`, `/tmp/misterplex-agent-H-rcsum-gate.txt`, `/tmp/misterplex-agent-G-fpga-rcsum1.txt`, `/tmp/plex_quartus_rcsum1.log`
-2. **P3-WIDE Fix-2** — **FAIL open** (~60.5% on 820484a6 eyes); **Fix-1 dead**; **Fix-2 design READY** (W-fix2-d2/d3 paint-full-DE@529). R-csum1 free. Prefer residual path not mid-edit, or separate rebuild after residual green. Design `/tmp/misterplex-agent-W-fix2-d3.txt`, docs/p3-wide-rca.md
-3. **P3-3l2..3l5** — **BLOCKED** until hard res_csum=20 PASS post-deploy (still FAIL)
-4. **P5-CRT** — PARTIAL; physical CRT pending
-5. ~~**R-csum1 BUILD_OK + sole deploy + FBAR**~~ — **DONE** dabdaeb0 / H-deploy-rcsum1 (hard csum still OPEN FAIL)
-6. ~~**G-fpga-rcsum1 FPGA source commit**~~ — **DONE** **`7bee0a6`**
-7. ~~**make unit**~~ — **DONE green** C-unit12/13
-8. ~~**H-deploy-fix1 → FBAR on 820484a6**~~ — **DONE** (superseded lab by dabdaeb0)
-9. ~~**F-package3 / P5-PKG**~~ — **DONE** (embeds 820484a6; re-pkg later)
-10. ~~**P3-DDR B-ddr5**~~ — **DONE**
-11. ~~**host P3-3l2 handoff / L-3l2-rtl / L-csum-note**~~ — **DONE** (paint still blocked)
-12. ~~**W-proto7 / W-fix2-d2/d3 Fix-2 design**~~ — **DONE / READY**
-13. ~~**W-wide3..W-wide6 eyes**~~ — **DONE (result FAIL ~60.5%)** — gate still open
-14. ~~**A-arm-csum + A-csum-host2 tools**~~ — **READY**
-15. ~~**R-csum-rca3/rca4 GO**~~ — **DONE** (deploy path used)
-16. ~~**G-docs1**~~ — **DONE** d58269b / b5e8320
-17. **G-docs2** — this refresh (BUILD_OK dabdaeb0 + H-gate FAIL + WIDE Fix-2 ready)
+1. ~~**R-csum6 sole LIVE**~~ — **DONE TERMINAL BUILD_OK** lock **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`**; Full Comp **0e/40w** wall **438s** exit **0**; mon **M-fitmon-rcsum6c BUILD_OK**; claim **MATCH** Rank1+2+3 DIAG=ABSENT md5s **`c7a847f7`/`ca62d02b`/`904e9b2e`**; **SRC_DRIFT: NO**; exclusive **FREE** post-build — **BUILD_OK ≠ residual hard PASS**
+2. ~~**ONE H-deploy-rcsum6**~~ — **DONE PROMOTE_OK|DEPLOY_OK** ONE menu lab **LOADED `94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` (`/tmp/misterplex-agent-H-deploy-rcsum6.txt`) — **DEPLOY_OK ≠ hard residual PASS** — do **not** invent hard sticky0x14 PASS
+3. **H-gate-rcsum6** hard residual on lab **`94bbfe43`** (sticky0x14 ≥2; reject +0x53; res_dc=-24) — **IN_PROGRESS / PENDING** — **do not invent hard PASS / PACK_PROVEN**. Prior **ec21e133** **H-gate-ec21 HARD_FAIL** MULTI_DRIVE; historical **CLOSED FAIL** **`8832824e`**
+4. **P3-WIDE / Q-SF3 Fix-3** — **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605** pillar (**W-wide-gate-fix2b**); Fix-2 **CLOSED ineffective**. **W-fix3-hold2 HOLD_OK FIT_GO=NO** — **do not invent WIDE PASS / Fix-3 BUILD_OK**
+5. **3l2 BLOCKED** — until hard product sticky **0x14** on non-DIAG product RBF (**H-gate-rcsum6 PENDING** on **`94bbfe43`**); historical FAIL **`ec21e133`** + **`8832824e`**; soft-skip ≠ PASS; thrash residual banned set FORBIDDEN
+6. ~~**Q-SF2 sole**~~ — **DONE BUILD_OK** NEW_RBF **`ec21e133`** (superseded on lab path by residual **`94bbfe43`** post H-deploy-rcsum6)
+7. ~~**H-deploy-qsf2**~~ — **DONE PROMOTE_OK | ALREADY_DEPLOYED** lab **LOADED `ec21e133`**
+8. ~~**F-prep-qsf2 / F-prep-sf2**~~ — **DONE PACKAGE_OK** embeds **`ec21e133`**
+9. ~~**W-wide-gate-fix2b / sf2 / H-gate-sf2**~~ — **DONE FBAR soft PASS; WIDE FAIL** 0.605 open (Fix-2 ineffective)
+10. ~~**H-gate-ec21 / H-res-ec21**~~ — **DONE residual HARD_FAIL** on **`ec21e133`** sticky0x14=0 +0x53 MULTI_DRIVE; res_dc PASS
+11. ~~**R-multidrive-rca14 + H-proto-rcsum6 + L-csum-note37**~~ — **DONE**
+12. ~~**H-fbar-ec21b**~~ — **DONE FBAR soft PASS** 7.0/82.9/94.4
+13. ~~**C-unit28 / C-unit27**~~ — **DONE PASS** host ≠ lab residual PASS
+14. ~~**W-fix3-hold / W-fix3-hold2**~~ — **DONE HOLD_OK** FIT_GO Q-SF3=**NO**
+15. ~~**H-gate-rcsum5d**~~ — residual serial **CLOSED FAIL** historical on **`8832824e`**
+16. **P3-3l1 HW residual hard** — **H-gate-rcsum6 IN_PROGRESS / PENDING** on lab **`94bbfe43`**; historical FAIL **`ec21e133`** — **do not invent hard PASS**
+17. **P3-3l2..3l5** — **3l2 BLOCKED** until hard csum sticky **0x14** on non-DIAG product; soft-skip ≠ PASS; **BUILD_OK+DEPLOY ≠ hard PASS**
+18. **P5-CRT** — PARTIAL physical open
+19. ~~**P5-PKG**~~ — **DONE** embeds **`94bbfe43`** (F-prep-rcsum6); prior ec21e133 historical
+20. ~~**make unit C-unit14..28 + C-unit-sf2**~~ — DONE PASS host ≠ lab residual PASS
+21. ~~**J-backlog16..65**~~ — DONE prior; this is **J-backlog66 REFRESH_DONE**
+22. **G-fpga** — **WAIT** (no FPGA commit of thrash/DIAG; after hard green + intentional product SRC@fit match LOCK_OK)
+23. ~~**R-csum6-midfit***~~ — **DONE** mid-fit DRIFT_OK / SRC_DRIFT NO through terminal
 
 ## Non-RBF always available
-- (done **G-fpga-rcsum1**) R-csum1 sources **`7bee0a6`** BUILD_OK md5 dabdaeb0
-- (done **H-deploy-rcsum1** / **H-rcsum-gate**) sole deploy + FBAR PASS + hard residual **FAIL** on dabdaeb0
-- (done **G-docs1**) prior docs at b5e8320 / d58269b
-- (done W-rca + W-fix2-d2/d3) P3-WIDE Fix-2 design READY; eyes FAIL open
-- (done C-unit12/13 / G-p4-dirty) unit GREEN; plant-hold ade6915
-- (done A-arm-csum / A-csum-host2) hard-gate tools READY
-- (done L-3l2e / L-3l2-rtl / L-csum-note / L-3l2-gate2) paint blocked on hard csum
-- (done B-ddr5 / D-soak4 / F-package3) product gates on prior RBF
-- Residual RCA next fix prep (docs/measure only until sole fit)
-- Fix-2 RTL apply when authorized (colorbars.sv only; no residual thrash)
-- Unit tests, docs, package after hard green
-- P5-CRT physical when hardware available
-- **No invented hard-csum PASS**; **no thrash redeploy dabdaeb0**
-- git HEAD at G-docs2 commit; FPGA **clean** @ `7bee0a6`; companion clean @ `ade6915`
+- (done **C-unit14..28 + C-unit-sf2**) unit GREEN host 0x14 — **C-unit28 PASS** (`/tmp/misterplex-agent-C-unit28.txt`) + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS**; **host GREEN ≠ lab hard residual PASS**; soft-skip ≠ PASS
+- (done **B-ddr7 optional**) DDR F1 on LOADED **`ec21e133`** mean **16.5 ms** PASS (`/tmp/misterplex-agent-B-ddr7.txt`) — DDR ≠ residual/WIDE PASS
+- (done **Q-SF2 BUILD_OK**) Full Comp 0e/38w wall 415s exit 0; NEW_RBF **`ec21e133`**; mon M-fitmon-qsf2d/b; lock was DONE — then R-csum6 **TERMINAL BUILD_OK** NEW **`94bbfe43`**; exclusive FREE post-build
+- (done **H-deploy-qsf2**) **PROMOTE_OK | ALREADY_DEPLOYED** lab was **`ec21e133`** (superseded by **`94bbfe43`**)
+- (done **H-deploy-rcsum6 ONE menu**) **PROMOTE_OK | DEPLOY_OK** lab **LOADED `94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5` (`/tmp/misterplex-agent-H-deploy-rcsum6.txt` + user log + lab txt) — **DEPLOY ≠ hard residual PASS**
+- (in progress **H-gate-rcsum6**) hard residual on **`94bbfe43`** — **do not invent hard PASS**
+- (done **F-prep-qsf2 / F-prep-sf2 PACKAGE_OK**) embeds **`ec21e133`** ≠ product/WIDE PASS; prior residual package **`8832824e`** / F-prep-rcsum4 **75da8bb1** historical
+- (done **W-wide-gate-sf2**) **WIDE FAIL** span=0.605 **PILLAR_320_of_529**; FBAR soft PASS — WIDE open; ≠ residual PASS (`/tmp/misterplex-agent-W-wide-gate-sf2.txt`)
+- (done **H-gate-sf2**) FBAR PASS; **WIDTH FAIL** span=0.605 pillar — WIDE open; ≠ residual PASS
+- (done **H-fbar-ec21b**) FBAR soft PASS 7.0/82.9/94.4 on lab **`ec21e133`** — ≠ WIDE/residual PASS (`/tmp/misterplex-agent-H-fbar-ec21b.txt`)
+- (done **H-gate-ec21 / H-res-ec21**) residual **HARD_FAIL** on LOADED **`ec21e133`**: sticky0x14=0 +0x53 **08/5b/ae/01**; res_dc PASS; MULTI_DRIVE; **3l2 BLOCKED** (`/tmp/misterplex-agent-H-gate-ec21.txt`, `/tmp/misterplex-agent-H-res-ec21.txt`)
+- (done **H-deploy-rcsum5**) promote + one menu **DEPLOY_OK** lab was **`8832824e`** (path superseded)
+- (done **H-gate-rcsum5 / 5b / 5c / 5d**) residual serial **CLOSED FAIL** historical **`8832824e`**: FBAR soft; res_dc PASS; sticky0x14=0 +0x53 **16/69/bc/0f/62/b5/08**; **MULTI_DRIVE**; **NOT PACK_PROVEN**; thrash **`8832824e` forbidden**; definitive **`H-gate-rcsum5d`**
+- (done **H-deploy-rcsum4**) promote + one menu **DEPLOY_OK** lab was **75da8bb1** (path superseded)
+- (done **H-gate-rcsum4 / 4b**) **HARD_FAIL** lab **75da8bb1**: FBAR PASS soft; res_dc PASS; res_csum +0x53 never 0x14; **MULTI_DRIVE/PACK_FAIL**; **NOT PACK_PROVEN**
+- (done **H-gate-rcsum3b / 3b2 / 3b3**) hard residual **HARD_FAIL** on prior **4d6ee356** (path superseded; thrash forbidden)
+- (done **A-csum-probe7**) HOST_PROBE_OK; ideal **`e8 14 53 1a` HARD_PASS** offline only
+- (done **A-csum-map1 / map2**) **MAP_OK** — blame residual_csum value path / multi-drive
+- (done **A-csum-host28**) **HOST_GOLDEN_OK** res_dc=−24/0xe8 res_csum=XOR **0x14** ideal **e8 14 xx** (`/tmp/misterplex-agent-A-csum-host28.txt`) — HOST GREEN ≠ lab residual PASS
+- (done **L-csum-note2..38** + **H-proto-rcsum*** + **R-csum-rtl3/6-plan** + **R-csum-fold-audit2** + **R-csum-postfail8** + **R-multidrive-rca14**) docs + pack RCA + R-csum6 protocol
+- (done **R-csum-midfit-rcsum4 / midfit-rcsum4b**) **DRIFT_CRITICAL** documented; STOP mid-fit RTL
+- (done **R-csum-midfit-rcsum5 / midfit-rcsum5b / midfit-rcsum5c**) **DRIFT_CRITICAL** launch **`6422fb9a`/`8e6af3bb`** → **`6a5dcaaa`/`7d4a1d8b`** claim overwrite; map=`st_res_word_sticky` product-class **PROVENANCE_UNTRUSTED**
+- (done **W-sf2-d2/d3** / **W-wide7/7b**) design READY; Fix-2 silicon still WIDTH FAIL 0.605 on **`ec21e133`**
+- (done **R-csum6 sole TERMINAL BUILD_OK**) lock **DONE BUILD_OK 14:10:26** wall **438s** exit **0** Full Comp **0e/40w**; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; claim freeze **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** FIT_GO=YES DIAG=ABSENT Rank1+2+3; mon **M-fitmon-rcsum6c BUILD_OK**; mid-fit **SRC_DRIFT: NO**; exclusive **FREE**; lab **LOADED `94bbfe43`** after ONE menu
+- soft-skip ≠ PASS; **3l2 BLOCKED** until hard product sticky **0x14**; **BUILD_OK / DEPLOY_OK / FBAR / PACKAGE ≠ hard residual PASS ≠ WIDE product PASS**; **DIAG ≠ product PASS**
+- thrash **`8832824e`/`75da8bb1`/`4d6ee356` FORBIDDEN**; exclusive **FREE**; **H-deploy-rcsum6 DONE** lab **LOADED `94bbfe43`**; **H-gate-rcsum6 IN_PROGRESS/PENDING** — do not invent hard PASS; **WIDE still FAIL open Fix-2**; **W-sf3-hold2 FIT_GO=NO**
+- git docs **`3c43a66`**; FPGA committed **`7bee0a6`**; R-csum6 claim **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** NEW host **`94bbfe43`**; prior thrash residual **`6a5dcaaa`/`7d4a1d8b`**; colorbars Fix-2 **`f1d9666a`**; lab LOADED **`94bbfe43`**; residual CLOSED FAIL historical **`8832824e`**; **WIDE FAIL 0.605** open; **C-unit28 PASS** host; G-fpga **WAIT**; stamp **J-backlog66**; **do not invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK**
