@@ -42,6 +42,10 @@ public:
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
     void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
+    // Intentional A/V lead compensation (ms of PCM held before first MrAudio write).
+    // 0 = start fresh (no hardcoded lag). Positive delays audio relative to video.
+    void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
+    int audioDelayMs() const { return audioDelayMs_; }
     void setDecodeSize(int w, int h);
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
@@ -93,6 +97,8 @@ private:
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
+    // Conf AUDIO_DELAY_MS — default 0 (no hardcoded lag). Applied in audioPump only.
+    int audioDelayMs_ = 0;
 
     FbPresent fb_;
     FpgaSpi fpga_;

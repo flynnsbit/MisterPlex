@@ -125,9 +125,10 @@ std::string buildUniversal(const std::string& base, const std::string& metadataK
         if (weak.subtitleStreamId >= 0)
             q << "&subtitleStreamID=" << weak.subtitleStreamId;
     }
-    // PMS universal offset is SECONDS
-    if (offsetMs > 0)
-        q << "&offset=" << ((offsetMs + 500) / 1000);
+    // PMS universal offset is SECONDS (companion / scrubber use ms).
+    const int64_t offSec = universalOffsetSeconds(offsetMs);
+    if (offSec > 0)
+        q << "&offset=" << offSec;
     if (!token.empty())
         q << "&X-Plex-Token=" << urlEncodeQuery(token);
     return q.str();

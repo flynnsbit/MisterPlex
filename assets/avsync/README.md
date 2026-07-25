@@ -1,36 +1,53 @@
 # A/V sync blip tests
 
-Short clips with a **white flash** and a **1 kHz beep** every 1.0 s (aligned).
+Clips with a **white flash** and a **1 kHz beep** every 1.0 s (aligned in the file).
 
-| File | Content fps | Duration |
-|------|-------------|----------|
-| `sync_24fps_blip.mp4` | 24 | 30 s |
-| `sync_30fps_blip.mp4` | 30 | 30 s |
+| File | Class | Size | fps | Notes |
+|------|-------|------|-----|-------|
+| `sync_24fps_blip.mp4` | product | 320×240 | 24 | DECODE path |
+| `sync_30fps_blip.mp4` | product | 320×240 | 30 | |
+| `sync_60fps_blip.mp4` | product | 320×240 | 60 | |
+| `sync_trekmatch_1080p24_blip.mp4` | **source / Trek-class** | 1920×1080 | 24 | ~8 Mbps H.264 + AAC; PMS weak → 320×240 |
+| `sync_trekmatch_320x240_24_blip.mp4` | product twin | 320×240 | 24 | ~1.5 Mbps; same flash/beep timeline |
 
-- **Visual:** full-frame brightness pulse for 2 frames at each integer second.
-- **Audio:** loud 50 ms tone at the same times (otherwise quiet hum).
-- **On-screen:** frame counter + fps label.
+Regenerate:
 
-## On MiSTer lab
+```bash
+python3 scripts/gen_avsync_blip.py --only all
+python3 scripts/gen_avsync_blip.py --only trekmatch
+```
 
-Copied to `/media/fat/misterplex/avsync/`.
+## Content
 
-Play via companion cast of a local path (if supported) or copy into a Plex library
-and cast from PMS.
+- **Visual:** full-frame white flash (~2 frames) at each integer second + “FLASH” label + red mouth bar during beep.
+- **Audio:** 50 ms 1 kHz tone at the same times (silence otherwise).
+- **On-screen:** label + frame counter.
+
+## Product conf (fresh lipsync baseline)
+
+```
+PRESENT=fpga
+STREAM=0
+DECODE=320x240
+AUDIO_DELAY_MS=0   # no hardcoded lag; set only from measure evidence
+```
 
 ## What “good” looks like
 
-On the display + speakers (or HDMI capture + waveform):
+1. Flash and beep simultaneous on display+speakers within **1 frame** (24p ≈ 42 ms).
+2. Logs: `vfps ≈ content fps`, `pfps ≈ vfps`, `audio_s ≈ wall_s`.
+3. Seek/resume: cast mid-title or scrub → picture matches plant (±1 s).
 
-1. Flash and beep are **simultaneous** (within ~1 frame at 24 fps ≈ 42 ms).
-2. Logs: `vfps ≈ content fps`, `pfps ≈ vfps` (no present drop), `audio_s ≈ wall_s`.
+## Trek dialogue stress
 
-## Measuring lip-sync from HDMI
+Use real title `/library/metadata/40710` (TNG S1E1) at **~3:54** after seek fix.  
+Source-class blip stresses the same film cadence + high bitrate before weak ladder.
 
-Capture HDMI with a card, then e.g.:
+## Lab install
 
 ```bash
-ffmpeg -i capture.mkv -vf "select='gt(scene,0.3)',showinfo" -af "silencedetect=n=-30dB:d=0.02" -f null -
+# PMS Movies (docker example)
+cp assets/avsync/sync_trekmatch_*.mp4 /path/to/movies/misterplex-avsync/
+# MiSTer local
+scp assets/avsync/*.mp4 root@192.168.1.183:/media/fat/misterplex/avsync/
 ```
-
-Compare flash PTS vs beep onset.

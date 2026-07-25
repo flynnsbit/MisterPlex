@@ -27,6 +27,35 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 
 ---
 
+## ACTIVE — A/V lipsync + Plex Web seek/resume (**IN_PROGRESS** 2026-07-25)
+
+| | |
+|--|--|
+| **Title SoT** | TNG S1E1 `/library/metadata/40710` server `1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe` (~3:54 dialogue) |
+| **RBF** | Keep **`1441d409`** (tear-free); ARM/conf only unless present regresses |
+| **Conf** | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` · **`AUDIO_DELAY_MS=0`** baseline (no hardcoded lag) |
+| **Plan** | session plan A/V + seek · multi-agent fill ~6 workers · no Quartus sole |
+
+| ID | Item | Status | Notes |
+|----|------|--------|-------|
+| P3-AVSYNC | Fresh lipsync: zero lag + Trek-matched blip + measure + fix | **PARTIAL** | G-AV0/1 PASS; G-AV2..4 PENDING measure/Trek |
+| P4-SEEK | Plex Web seek/resume: re-resolve universal on seek | **DONE** (lab blip) | G-SEEK1/2/3 PASS; see `MILESTONE_AVSYNC_SEEK.md` |
+| P3-PRESENT | VSync tear-free present | **DONE** | do not thrash RBF |
+
+**Gates**
+
+- [x] G-AV0 zero intentional lag (`AUDIO_DELAY_MS=0`) — lab conf + log `delay_ms=0`
+- [x] G-AV1 Trek-matched blip fixture — `assets/avsync/sync_trekmatch_*` PMS keys **9/10**
+- [ ] G-AV2 measure harness flash↔beep — PENDING HDMI capture
+- [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms)
+- [ ] G-AV4 Trek ~3:54 eyes-on/capture — needs 40710 on reachable PMS
+- [x] G-SEEK1 mid-play seekTo ±1 s — blip key=6 seek 12s → playing ~15.5s
+- [x] G-SEEK2 resume/continue-watching ≠0 — playMedia offset=15s → playing ~19s
+- [x] G-SEEK3 unit regression — `make unit` PASS + `universalOffsetSeconds(234000)==234`
+- [x] G-REG tear RBF unchanged unless proven needed
+
+---
+
 Evidence sources (2026-07-24; **J-backlog66** evidence-only stamp; **exclusive FREE**; lock **`R-csum6 DONE BUILD_OK 2026-07-24T14:10:26-05:00 NEW_RBF=94bbfe433feb562fabe0798e16b378c5 wall=438s LOCK_OK`**): `/tmp/misterplex-*-agent*.txt`. **R-csum6 BUILD_OK DONE** — log `/tmp/plex_quartus_rcsum6.log` Full Comp **0e/40w** wall **438s** exit **0**; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; **LOCK_OK** claim **`c7a847f7`/`ca62d02b`/`904e9b2e`** DIAG=ABSENT Rank1+2+3. **H-deploy-rcsum6 ONE menu DEPLOY_OK** lab **LOADED `94bbfe43`** (`/tmp/misterplex-agent-H-deploy-rcsum6.txt` + user log + lab txt). **H-gate-rcsum6 hard residual IN_PROGRESS / PENDING** — **do NOT invent hard residual PASS**. **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605**. **3l2 BLOCKED** until sticky **0x14**. **C-unit28/27 PASS** host green. Soft-skip ≠ hard PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **J-backlog66 REFRESH_DONE**.
 
 **W-wide-gate-fix2b — WIDE FAIL reconfirm on lab `ec21e133` (J-backlog61 primary wide cite):** report **`/tmp/misterplex-agent-W-wide-gate-fix2b.txt`**. Lab LOADED full `ec21e1330ddd75ad7f39099e5abfad49` pre+post; ZERO reload. **WIDE FAIL** span=**0.605** (60.5%) live **2..485** R5%=**0.0** L5=**201.6** class **PILLAR_320_of_529**; multi-format 0.605–0.608. **FBAR PASS** 7.0/82.9/94.4 EXIT=0. Fingerprint **IDENTICAL** **H-gate-sf2** / **W-wide-gate-sf2**. Captures `fix2b_*` + `fix2b_wide_analysis.json`. **P3-WIDE remains FAIL open** — do **not** invent WIDE PASS / Fix-3 PASS. Fix-3 hold FIT_GO=NO until residual serial / exclusive free.

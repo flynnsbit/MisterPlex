@@ -78,6 +78,17 @@ int main() {
     // Invalid / empty play-queue ids fail without network (P4-SCRUB edges)
     auto pq = fetchPlayQueue("not-a-queue", "http://127.0.0.1:32400", "tok");
     CHECK(!pq.ok);
+
+    // --- Seek/resume: companion ms → PMS universal offset= seconds ---
+    // Resume @ 3:54 (234000 ms) must become offset=234, not double-seek with -ss.
+    CHECK(universalOffsetSeconds(0) == 0);
+    CHECK(universalOffsetSeconds(-1) == 0);
+    CHECK(universalOffsetSeconds(500) == 1);     // half-up
+    CHECK(universalOffsetSeconds(499) == 0);
+    CHECK(universalOffsetSeconds(1000) == 1);
+    CHECK(universalOffsetSeconds(234000) == 234); // Trek ~3:54
+    CHECK(universalOffsetSeconds(234499) == 234);
+    CHECK(universalOffsetSeconds(234500) == 235);
     auto pqEmpty = fetchPlayQueue("", "http://127.0.0.1:32400", "tok");
     CHECK(!pqEmpty.ok);
     auto pqLib = fetchPlayQueue("/library/metadata/9", "http://127.0.0.1:32400", "tok");

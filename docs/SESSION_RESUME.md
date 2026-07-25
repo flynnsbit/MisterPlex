@@ -1,44 +1,36 @@
-# MiSTerPlex session resume — 2026-07-25
+# MiSTerPlex session resume — 2026-07-25 (avsync + seek)
 
-**Purpose:** Handoff after **VSync present / product A/V cast** milestone.  
 **Repo:** `/home/shawn/Projects/misterplex`  
-**Lab:** `root@192.168.1.183` (sshpass pass=`1`)  
-**Full notes:** [`docs/MILESTONE_VSYNC_PRESENT.md`](MILESTONE_VSYNC_PRESENT.md)
-
----
+**Lab:** `root@192.168.1.183`  
+**RBF (tear):** **`1441d409`** — do not thrash  
+**Docs:** [`MILESTONE_AVSYNC_SEEK.md`](MILESTONE_AVSYNC_SEEK.md) · [`MILESTONE_VSYNC_PRESENT.md`](MILESTONE_VSYNC_PRESENT.md)
 
 ## Snapshot
 
 | Item | Value |
 |------|--------|
-| **Milestone** | VSync page-flip + DMA hold-off + product cast path |
-| **Lab RBF** | **`1441d409ad3f8ccc5dcb0033c32ff7c8`** |
-| **Host RBF** | `fpga/Plex_MiSTer/output_files/Plex.rbf` + `releases/Plex_vsync_tear_1441d409.rbf` |
-| **CORE** | Plex |
-| **Conf** | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` |
-| **User** | Video + vsync look good (2026-07-25 eyes-on) |
-| **holdoff2** | half/mid/multi tear rates **0.00/s** — see milestone doc |
+| **Seek/resume** | **FIXED** — re-resolve universal + skip double `-ss` |
+| **AUDIO_DELAY_MS** | **0** (no hardcoded lag) |
+| **Trek title** | `/library/metadata/40710` @ ~3:54 (remote server `1cdd1b7f…`) |
+| **Trekmatch blips** | PMS Movies **9** (1080p24) / **10** (320×240@24) |
+| **Open** | HDMI flash↔beep measure (G-AV2/3); Trek eyes-on G-AV4 |
 
-### What fixed tears
+### What fixed seek
 
-1. **Swap only on vsync** (`frame_store`) — no mid-scan bank flip  
-2. **Hold DMA while `swap_pending`** (`ddram_frame_rd`) — no overwrite of completed back buffer  
-3. **Host:** every-frame DDR present, wall-48k audio, doorbell kick, heal Main on stop  
+1. Library `seekTo` → re-`doPlay` with new `offsetMs` (fresh universal `offset=` seconds)  
+2. No FFmpeg `-ss` when URL already has universal `offset=`  
+3. Resume playMedia with non-zero offset works the same path  
 
-### Re-verify
+### Re-verify seek
 
 ```bash
-md5sum /media/fat/_Utility/Plex.rbf   # 1441d409…
-# Cast via Plex Web → MiSTerPlex; set_status --status → has_frame=1
-# HDMI capture /dev/video4
+# After cast of Sync 24fps Blip:
+# seekTo offset=12000 → log: seek re-resolve … offset=12 … skip -ss
+# timeline time ≈ plant + wall
 ```
 
-### Open (not this milestone)
+### Next
 
-- Dialogue lipsync on film still subjective  
-- F12 may still need heal after long SPI sessions if doorbell falls back  
-- Residual csum / WIDE bar work is separate backlog history  
-
----
-
-**Do not** thrash RBF while this is green unless a new gate fails.
+1. Cast trekmatch blip (key 9 or 10); measure flash↔beep with `AUDIO_DELAY_MS=0`  
+2. If systematic audio lead, set conf from evidence only  
+3. Cast 40710 via user Web URL; seek to 3:54; eyes-on dialogue  

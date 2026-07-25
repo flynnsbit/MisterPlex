@@ -230,6 +230,16 @@ int main(int argc, char** argv) {
         player.setSubtitleMode("ffmpeg");
     if (subtitleStreamId >= 0)
         player.setSubtitleStreamIndex(subtitleStreamId);
+    {
+        // Default 0 — no hardcoded audio lag. Conf AUDIO_DELAY_MS only.
+        int audioDelayMs = 0;
+        auto adv = loadConf(confPath, "AUDIO_DELAY_MS");
+        if (!adv.empty())
+            audioDelayMs = std::atoi(adv.c_str());
+        player.setAudioDelayMs(audioDelayMs);
+        std::fprintf(stderr, "misterplexd: AUDIO_DELAY_MS=%d (0=fresh, no hardcoded lag)\n",
+                     audioDelayMs);
+    }
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
@@ -602,6 +612,9 @@ int main(int argc, char** argv) {
     // (Web scrubber thumb / step / skipPrevious restart@0 would otherwise stall ACKs).
     // seekGen + seekMu: serialize demux restarts and drop superseded offsets so a
     // late drained seekMs(old) cannot restart at 0 after a newer scrub plant.
+    // Product STREAM=0 cast uses PMS universal with offset= baked into the URL.
+    // Re-resolve + fresh play at the new offset (not FFmpeg -ss on a stale universal).
+    // Local files / direct Parts still use player.seekMs → -ss.
     std::atomic<uint64_t> seekGen{0};
     std::mutex seekMu;
     auto seekAsync = [&](int64_t ms) {
@@ -611,7 +624,26 @@ int main(int argc, char** argv) {
             if (g != seekGen.load())
                 return; // superseded while waiting for prior seekMs
             try {
-                player.seekMs(ms);
+                misterplex::PlayRequest cur;
+                {
+                    std::lock_guard<std::mutex> sl(sessionMu);
+                    cur = lastPlay;
+                }
+                const bool libraryKey =
+                    !cur.key.empty() &&
+                    (cur.key.rfind("/library", 0) == 0 || cur.key.find("library/metadata") != std::string::npos);
+                if (libraryKey) {
+                    cur.offsetMs = ms < 0 ? 0 : ms;
+                    cur.offsetPresent = true;
+                    std::fprintf(stderr,
+                                 "misterplexd: seek re-resolve key=%s offMs=%lld\n",
+                                 cur.key.c_str(), static_cast<long long>(cur.offsetMs));
+                    // doPlay re-resolves universal with offset=seconds and restarts demux.
+                    doPlay(cur);
+                } else {
+                    // Local path / testsrc / non-library: demux -ss on same URL.
+                    player.seekMs(ms);
+                }
             } catch (...) {
                 std::fprintf(stderr, "misterplexd: seek exception\n");
             }

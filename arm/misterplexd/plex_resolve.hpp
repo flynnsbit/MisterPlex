@@ -90,6 +90,14 @@ PlayQueue fetchPlayQueue(const std::string& queueIdOrContainerKey, const std::st
                          const std::string& token, const std::string& currentKey = {},
                          const std::string& playQueueItemId = {});
 
+// Companion offsets are milliseconds; PMS universal `offset=` is whole seconds.
+// Rounds half-up so 1500 ms → 2 s (matches buildUniversal).
+inline int64_t universalOffsetSeconds(int64_t offsetMs) {
+    if (offsetMs <= 0)
+        return 0;
+    return (offsetMs + 500) / 1000;
+}
+
 // Chrome-profile FFmpeg headers required by PMS universal transcoder.
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token);
 

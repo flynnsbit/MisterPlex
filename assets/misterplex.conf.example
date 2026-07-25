@@ -42,3 +42,10 @@ SUBTITLES=off
 # See docs/match-source-hz.md.
 MATCH_SOURCE_HZ=off
 SOURCE_FPS=auto
+
+# --- A/V lipsync (post vsync present) ---
+# Intentional PCM hold before first MrAudio write (milliseconds). Default 0 = no
+# hardcoded lag — measure flash↔beep first, then set from evidence only.
+# Positive values delay audio relative to video (lips late → increase this).
+# AUDIO_DELAY_MS=0
+
