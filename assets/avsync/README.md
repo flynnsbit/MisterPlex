@@ -38,6 +38,12 @@ AUDIO_DELAY_MS=0   # no hardcoded lag; set only from measure evidence
 2. Logs: `vfps ≈ content fps`, `pfps ≈ vfps`, `audio_s ≈ wall_s`.
 3. Seek/resume: cast mid-title or scrub → picture matches plant (±1 s).
 
+### Lab stamp (2026-07-25, RK10 @ AUDIO_DELAY_MS=0)
+
+Evidence: `captures/e2e/avsync_trekmatch/avsync_report.txt`  
+**G-AV2 PASS** (n=12) · **G-AV3 FAIL** median **−60 ms** (\|m\|=60 > 42).  
+Next: conf-only `AUDIO_DELAY_MS≈60` + remeasure (do not invent PASS).
+
 ## Trek dialogue stress
 
 Use real title `/library/metadata/40710` (TNG S1E1) at **~3:54** after seek fix.  

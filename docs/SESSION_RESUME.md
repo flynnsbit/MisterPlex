@@ -9,11 +9,13 @@
 
 | Item | Value |
 |------|--------|
-| **Seek/resume** | **FIXED** — re-resolve universal + skip double `-ss` |
-| **AUDIO_DELAY_MS** | **0** (no hardcoded lag) |
+| **Seek/resume** | **FIXED** — re-resolve universal + skip double `-ss` (commits `4e4ebfb` / `ba7aa89`) |
+| **AUDIO_DELAY_MS** | **0** (lab measure baseline; no hardcoded lag in code) |
+| **G-AV2** | **PASS** — HDMI flash↔beep harness RUN n=12 |
+| **G-AV3** | **FAIL** — median **−60 ms** (\|m\|=60 > 42); evidence `captures/e2e/avsync_trekmatch/avsync_report.txt` |
 | **Trek title** | `/library/metadata/40710` @ ~3:54 (remote server `1cdd1b7f…`) |
 | **Trekmatch blips** | PMS Movies **9** (1080p24) / **10** (320×240@24) |
-| **Open** | HDMI flash↔beep measure (G-AV2/3); Trek eyes-on G-AV4 |
+| **Open** | G-AV3 lipsync (AUDIO_DELAY_MS≈60 conf remeasure); Trek eyes-on **G-AV4** |
 
 ### What fixed seek
 
@@ -31,6 +33,6 @@
 
 ### Next
 
-1. Cast trekmatch blip (key 9 or 10); measure flash↔beep with `AUDIO_DELAY_MS=0`  
-2. If systematic audio lead, set conf from evidence only  
-3. Cast 40710 via user Web URL; seek to 3:54; eyes-on dialogue  
+1. **AV-delay-remeasure (lab):** set `AUDIO_DELAY_MS≈60` conf-only, soft restart, recast RK10, HDMI remeasure — do **not** mark G-AV3 PASS until \|median\| ≤ 42 ms  
+2. Cast 40710 via user Web URL; seek to 3:54; eyes-on dialogue (G-AV4)  
+3. RBF `1441d409` leave alone

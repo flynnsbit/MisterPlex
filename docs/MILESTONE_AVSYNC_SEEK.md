@@ -59,14 +59,27 @@ Product cast uses PMS **universal** URLs that already bake `offset=` in **second
 Generator: `scripts/gen_avsync_blip.py`  
 Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
 
-### Measure status
+### Measure status (2026-07-25 HDMI flash↔beep)
 
-- Harness + full G-AV3 (≤42 ms @24p) still **to run** on HDMI capture after this check-in.  
-- Prior blip tight path ~−13 ms (holdoff era); Trek dialogue needs remeasure with **AUDIO_DELAY_MS=0** and seek-to-3:54 once remote 40710 token is available.
+| Item | Value |
+|------|--------|
+| Title | Sync Trekmatch 320×240@24 Blip **RK10** |
+| Lab | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` **`AUDIO_DELAY_MS=0`** |
+| RBF | `1441d409` (unchanged) |
+| Capture | `captures/e2e/avsync_trekmatch/capture_12s.mkv` |
+| Report | [`captures/e2e/avsync_trekmatch/avsync_report.txt`](../captures/e2e/avsync_trekmatch/avsync_report.txt) |
+| Samples | flashes=12 beeps=12 matches=**n=12** |
+| **median_offset_ms** | **−60.0** (audio earlier than flash) |
+| mad / mean / range | 1.5 / −59.4 / [−62 … −55] |
+| abs_median_le_42ms | **False** |
+
+- **G-AV2 PASS** — harness RUN; flash↔beep method locked with `sample_count=12`.  
+- **G-AV3 FAIL** — \|median\| = **60 ms** > 42 ms (≤1 frame @24p). Do **not** invent green.  
+- **Next (lab owns):** set conf **`AUDIO_DELAY_MS≈60`** (positive holds PCM → delays audio), soft restart, recast RK10, HDMI remeasure — worker **AV-delay-remeasure**. No non-zero default in code without remeasure PASS (conf-only policy).
 
 ### Trek 40710 probe
 
-Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (lives on Web server `1cdd1b7f…`). Cast from user Plex Web URL still valid; lab remeasure when that server is reachable with token.
+Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (lives on Web server `1cdd1b7f…`). Cast from user Plex Web URL still valid; G-AV4 eyes-on when that server is reachable with token.
 
 ---
 
@@ -88,8 +101,8 @@ Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (lives on Web s
 |------|--------|
 | G-AV0 AUDIO_DELAY_MS=0 | **PASS** (lab conf + log `delay_ms=0`) |
 | G-AV1 Trek-matched blip | **PASS** (assets + PMS 9/10) |
-| G-AV2 measure harness | **PENDING** (HDMI flash↔beep) |
-| G-AV3 \|median\| ≤ 42 ms | **PENDING** |
+| G-AV2 measure harness | **PASS** (`avsync_report.txt` n=12 flash↔beep) |
+| G-AV3 \|median\| ≤ 42 ms | **FAIL** — median **−60 ms** (\|m\|=60 > 42); path `captures/e2e/avsync_trekmatch/avsync_report.txt` |
 | G-AV4 Trek 3:54 | **PENDING** (needs 40710 access + seek) |
 | G-SEEK1 mid-play seekTo | **PASS** (lab blip evidence) |
 | G-SEEK2 resume offset≠0 | **PASS** (lab blip evidence) |
