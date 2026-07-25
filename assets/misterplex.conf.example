@@ -44,8 +44,8 @@ MATCH_SOURCE_HZ=off
 SOURCE_FPS=auto
 
 # --- A/V lipsync (post vsync present) ---
-# Intentional PCM hold before first MrAudio write (milliseconds). Default 0 = no
-# hardcoded lag — measure flash↔beep first, then set from evidence only.
-# Positive values delay audio relative to video (lips late → increase this).
+# FFmpeg adelay (ms) on the product dual-pipe path. Default 0 = no intentional lag.
+# Positive delays audio content vs video (voice-ahead / lips-late → try 20–60 eyes-on).
+# Measure: cast Sync Trekmatch blip (PMS 9/10); eyes-on Trek S1E1 @ ~3:54 after seek.
+# Baseline HDMI flash↔beep @ 0: median ~−54…−60 ms (audio early). See MILESTONE_AVSYNC_SEEK.md.
 # AUDIO_DELAY_MS=0
-

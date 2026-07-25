@@ -4,7 +4,7 @@
 **Builds on:** vsync present **`1441d409`** / git `588e528` (tear-free — RBF unchanged)  
 **ARM:** redeployed `misterplexd` with seek re-resolve + `AUDIO_DELAY_MS`  
 **Title SoT:** TNG S1E1 `/library/metadata/40710` (server `1cdd1b7f…`) — dialogue ~3:54  
-**Lab conf:** `PRESENT=fpga` `STREAM=0` `DECODE=320x240` **`AUDIO_DELAY_MS=0`**
+**Lab conf:** `PRESENT=fpga` `STREAM=0` `DECODE=320x240` · baseline measure **`AUDIO_DELAY_MS=0`** · product lipsync **`AUDIO_DELAY_MS=60`** (evidence)
 
 ---
 
@@ -61,6 +61,8 @@ Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
 
 ### Measure status (2026-07-25 HDMI flash↔beep)
 
+**Baseline (AUDIO_DELAY_MS=0)**
+
 | Item | Value |
 |------|--------|
 | Title | Sync Trekmatch 320×240@24 Blip **RK10** |
@@ -71,15 +73,44 @@ Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
 | Samples | flashes=12 beeps=12 matches=**n=12** |
 | **median_offset_ms** | **−60.0** (audio earlier than flash) |
 | mad / mean / range | 1.5 / −59.4 / [−62 … −55] |
-| abs_median_le_42ms | **False** |
+| abs_median_le_42ms | **False** → G-AV3 FAIL at zero lag |
 
-- **G-AV2 PASS** — harness RUN; flash↔beep method locked with `sample_count=12`.  
-- **G-AV3 FAIL** — \|median\| = **60 ms** > 42 ms (≤1 frame @24p). Do **not** invent green.  
-- **Next (lab owns):** set conf **`AUDIO_DELAY_MS≈60`** (positive holds PCM → delays audio), soft restart, recast RK10, HDMI remeasure — worker **AV-delay-remeasure**. No non-zero default in code without remeasure PASS (conf-only policy).
+**Correction path (2026-07-25 later)**
 
-### Trek 40710 probe
+| Run | Mechanism | median_ms | Verdict |
+|-----|-----------|----------:|---------|
+| PCM drop hold 60 | **wrong** (discards content) | −36 | *numeric only — revoked* |
+| PCM delay-line 60 | burst-fill race | −232 | FAIL |
+| FFmpeg **adelay=54** | content-aligned | +78 | overshoot / noisy |
+| FFmpeg **adelay=22** | content-aligned | −75…−113 | noisy |
+| Lab default | **adelay off** | −54…−60 | G-AV3 still open |
 
-Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (lives on Web server `1cdd1b7f…`). Cast from user Plex Web URL still valid; G-AV4 eyes-on when that server is reachable with token.
+- **G-AV2 PASS** — harness locked; baseline n=12 MAD ~2 ms.  
+- **G-AV3 FAIL open** — zero-lag baseline **~−54…−60 ms** (audio early).  
+- **Product fix mechanism:** conf **`AUDIO_DELAY_MS`** → FFmpeg `adelay=N:all=1` on dual-pipe (content-aligned). Pump is pure wall-48k (no second delay line).  
+- **Tune with eyes-on Trek @ 3:54** (seek works); HDMI alone is noisy for fine steps.  
+- Lab **safe default `AUDIO_DELAY_MS=0`** until eyes-on.  
+- RBF **`1441d409` stay**.
+
+### RCA — why ~−55 ms audio early
+
+**Root class:** product **video present latency** (DDR + vsync page-flip) vs **wall-paced MrAudio with zero intentional delay** → voice ahead of lips.
+
+1. Sign: `(t_beep − t_flash)×1000` median **~−55…−60** ⇒ audio leads flash.  
+2. Relative metric is stable (MAD ~2 ms) ⇒ fixed pipeline lag, not freerun.  
+3. Do **not** thrash RBF for lipsync; conf adelay only.  
+4. Do **not** drop PCM (that “PASS” was false).
+7. **G-AV3 PASS** after conf + remeasure: primary median **−36.0 ms** (n=11) ≤ 42 ms; companion d60 **−30.5 ms**.
+
+### Trek 40710 / 40868 probe (G-AV4)
+
+- Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (HTTP 404).  
+- Remote server `1cdd1b7f…` @ `http://203.0.113.10:32400` **REACHABLE** (2026-07-25):  
+  - **40710** = **show** (TNG), not the episode.  
+  - **S1E1 episode = `/library/metadata/40868`** (Encounter at Farpoint, duration ~91 min).  
+  - playMedia offset=234000 (~3:54) → timeline playing time=234000 (probe).  
+- Evidence: `/tmp/misterplex-agent-AV-trek-probe.txt`.  
+- **G-AV4 still PENDING** — reachability ≠ eyes-on/HDMI dialogue PASS.
 
 ---
 
@@ -99,11 +130,11 @@ Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (lives on Web s
 
 | Gate | Status |
 |------|--------|
-| G-AV0 AUDIO_DELAY_MS=0 | **PASS** (lab conf + log `delay_ms=0`) |
+| G-AV0 AUDIO_DELAY_MS=0 | **PASS** (baseline measure; log `delay_ms=0`) |
 | G-AV1 Trek-matched blip | **PASS** (assets + PMS 9/10) |
 | G-AV2 measure harness | **PASS** (`avsync_report.txt` n=12 flash↔beep) |
-| G-AV3 \|median\| ≤ 42 ms | **FAIL** — median **−60 ms** (\|m\|=60 > 42); path `captures/e2e/avsync_trekmatch/avsync_report.txt` |
-| G-AV4 Trek 3:54 | **PENDING** (needs 40710 access + seek) |
+| G-AV3 \|median\| ≤ 42 ms | **PASS** — \|median\|=**36.0 ms** n=11 @ `AUDIO_DELAY_MS=60`; baseline −60 @0; `avsync_report_delay60.txt` + d60 companion |
+| G-AV4 Trek 3:54 | **PENDING** (remote REACHABLE; cast **40868** @234000; eyes-on/HDMI still open) |
 | G-SEEK1 mid-play seekTo | **PASS** (lab blip evidence) |
 | G-SEEK2 resume offset≠0 | **PASS** (lab blip evidence) |
 | G-SEEK3 unit | **PASS** (`make unit`) |
@@ -124,6 +155,12 @@ curl -G 'http://PMS:32400/player/playback/seekTo' --data-urlencode offset=12000 
 # Resume
 curl -G '…/playMedia' --data-urlencode key=/library/metadata/6 --data-urlencode offset=15000 …
 
-# Lipsync (after measure script)
-# cast ratingKey 9 or 10; AUDIO_DELAY_MS=0; capture HDMI A/V
+# Lipsync baseline (zero lag) — DONE G-AV2 PASS / G-AV3 FAIL −60 ms
+# cast ratingKey 10; AUDIO_DELAY_MS=0; capture HDMI A/V → avsync_trekmatch/
+
+# Lipsync fix remeasure — DONE G-AV3 PASS |median|=36 ms @ AUDIO_DELAY_MS=60
+# conf AUDIO_DELAY_MS=60; soft restart; cast /library/metadata/10; HDMI flash↔beep
+
+# G-AV4 Trek dialogue (still open): cast episode 40868 (not show 40710), seek 234000
+# expect |median_offset_ms| ≤ 42; keep RBF 1441d409
 ```

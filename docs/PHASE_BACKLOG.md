@@ -31,28 +31,28 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 
 | | |
 |--|--|
-| **Title SoT** | TNG S1E1 `/library/metadata/40710` server `1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe` (~3:54 dialogue) |
+| **Title SoT** | TNG show `/library/metadata/40710` · **S1E1 episode `/library/metadata/40868`** (Encounter at Farpoint) on server `1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe` @ `http://203.0.113.10:32400` (~3:54 = seek 234000); probe **REACHABLE** 2026-07-25 (`/tmp/misterplex-agent-AV-trek-probe.txt`) — **≠ G-AV4 PASS** |
 | **RBF** | Keep **`1441d409`** (tear-free); ARM/conf only unless present regresses |
-| **Conf** | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` · **`AUDIO_DELAY_MS=0`** baseline (no hardcoded lag) |
-| **Plan** | session plan A/V + seek · multi-agent fill ~6 workers · no Quartus sole |
+| **Conf** | `PRESENT=fpga` `STREAM=0` `DECODE=320x240` · **`AUDIO_DELAY_MS=0`** (safe default; adelay via conf when eyes-on tunes) |
+| **Plan** | session plan A/V + seek · multi-agent fill · no Quartus sole |
 
 | ID | Item | Status | Notes |
 |----|------|--------|-------|
-| P3-AVSYNC | Fresh lipsync: zero lag + Trek-matched blip + measure + fix | **PARTIAL** | G-AV0/1 PASS; G-AV2..4 PENDING measure/Trek |
-| P4-SEEK | Plex Web seek/resume: re-resolve universal on seek | **DONE** (lab blip) | G-SEEK1/2/3 PASS; see `MILESTONE_AVSYNC_SEEK.md` |
-| P3-PRESENT | VSync tear-free present | **DONE** | do not thrash RBF |
+| P3-AVSYNC | Fresh lipsync + Trek-matched blip + measure | **PARTIAL** | G-AV0/1/2 PASS; G-AV3 **FAIL open** baseline HDMI **−54…−60 ms**; PCM-drop “−36 PASS” **revoked** (wrong polarity); FFmpeg **adelay** conf ready |
+| P4-SEEK | Plex Web seek/resume: re-resolve universal on seek | **DONE** (lab blip) | G-SEEK1/2/3 **PASS**; see `MILESTONE_AVSYNC_SEEK.md` |
+| P3-PRESENT | VSync tear-free present | **DONE** | do not thrash RBF **`1441d409`** |
 
 **Gates**
 
-- [x] G-AV0 zero intentional lag (`AUDIO_DELAY_MS=0`) — lab conf + log `delay_ms=0`
+- [x] G-AV0 zero intentional lag (`AUDIO_DELAY_MS=0`) — lab conf default; no hardcoded lag
 - [x] G-AV1 Trek-matched blip fixture — `assets/avsync/sync_trekmatch_*` PMS keys **9/10**
-- [ ] G-AV2 measure harness flash↔beep — PENDING HDMI capture
-- [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms)
-- [ ] G-AV4 Trek ~3:54 eyes-on/capture — needs 40710 on reachable PMS
+- [x] G-AV2 measure harness flash↔beep — **PASS** HDMI trekmatch RK10 n=12; `captures/e2e/avsync_trekmatch/`
+- [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms) — **FAIL open** baseline **−54…−60 ms** @ delay=0; adelay conf (`AUDIO_DELAY_MS`) ready; **eyes-on Trek** to pick value (HDMI fine-tune noisy)
+- [ ] G-AV4 Trek ~3:54 eyes-on — **PENDING** (S1E1 **40868** / show **40710** reachable; seek fix enables offset=234000; **≠ PASS** until eyes-on)
 - [x] G-SEEK1 mid-play seekTo ±1 s — blip key=6 seek 12s → playing ~15.5s
 - [x] G-SEEK2 resume/continue-watching ≠0 — playMedia offset=15s → playing ~19s
 - [x] G-SEEK3 unit regression — `make unit` PASS + `universalOffsetSeconds(234000)==234`
-- [x] G-REG tear RBF unchanged unless proven needed
+- [x] G-REG tear RBF unchanged unless proven needed — leave **`1441d409`** alone
 
 ---
 

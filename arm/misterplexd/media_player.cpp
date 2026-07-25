@@ -488,6 +488,11 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     args.push_back("-vn");
     args.push_back("-map");
     args.push_back("0:a:0?");
+    args.push_back("-af");
+    if (audioDelayMs_ > 0)
+        args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
+    else
+        args.push_back("aresample=48000");
     args.push_back("-f");
     args.push_back("s16le");
     args.push_back("-ac");
@@ -883,13 +888,10 @@ void MediaPlayer::audioPump(int afd) {
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
     // clock; that back-pressures FFmpeg and thus video.
     // F2 SPI skipped when MrAudio works (SPI thrash + no heard benefit).
-    // AUDIO_DELAY_MS (default 0): hold that many ms of PCM before first MrAudio/F2
-    // write so audio can be delayed to match vsync present latency. No hardcoded lag.
+    // AUDIO_DELAY_MS is applied in FFmpeg (adelay) on the product RGB path so A+V
+    // stay on one clock. Pump is pure wall-48k MrAudio (no second delay line).
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
     bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
-    const int delayMs = audioDelayMs_;
-    const int64_t delayBytes =
-        static_cast<int64_t>(delayMs) * 48000LL * 4LL / 1000LL; // stereo s16le
 
     int out = -1;
     if (wantMr) {
@@ -898,7 +900,7 @@ void MediaPlayer::audioPump(int afd) {
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
         else
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
-                std::to_string(delayMs) + " (device does not block)");
+                std::to_string(audioDelayMs_) + " (adelay in ffmpeg if >0)");
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
@@ -913,7 +915,7 @@ void MediaPlayer::audioPump(int afd) {
 
     if (wantF2) {
         fpga_.flushAudioFifo();
-        log("media: F2 audio_fifo streaming enabled delay_ms=" + std::to_string(delayMs));
+        log("media: F2 audio_fifo streaming enabled");
     }
 
     audioActive_.store(true);
@@ -922,9 +924,6 @@ void MediaPlayer::audioPump(int afd) {
     char buf[3840];
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
-    std::vector<uint8_t> delayBuf;
-    if (delayBytes > 0)
-        delayBuf.reserve(static_cast<size_t>(delayBytes) + 8192);
     size_t total = 0;
     size_t f2total = 0;
     int f2Fail = 0;
@@ -932,32 +931,6 @@ void MediaPlayer::audioPump(int afd) {
     constexpr double kBytesPerSec = 48000.0 * 4.0; // stereo s16le
     auto audioT0 = std::chrono::steady_clock::now();
     int64_t pacedBytes = 0;
-    int64_t heldBytes = 0;
-    bool delayDone = delayBytes <= 0;
-
-    auto writePaced = [&](const char* data, size_t n) {
-        if (out >= 0) {
-            size_t off = 0;
-            while (off < n && !stop_.load()) {
-                ssize_t w = ::write(out, data + off, n - off);
-                if (w < 0) {
-                    if (errno == EINTR)
-                        continue;
-                    log("media: MrAudio write err errno=" + std::to_string(errno));
-                    break;
-                }
-                off += static_cast<size_t>(w);
-            }
-            audioBytes_.fetch_add(static_cast<int64_t>(n));
-            pacedBytes += static_cast<int64_t>(n);
-            const auto due =
-                audioT0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                              std::chrono::duration<double>(pacedBytes / kBytesPerSec));
-            const auto now = std::chrono::steady_clock::now();
-            if (due > now)
-                std::this_thread::sleep_until(due);
-        }
-    };
 
     while (!stop_.load()) {
         if (paused_.load()) {
@@ -973,31 +946,27 @@ void MediaPlayer::audioPump(int afd) {
         if (n == 0)
             break;
 
-        // Hold first delayBytes of PCM (drop from ear) so audio starts late vs video.
-        if (!delayDone) {
-            delayBuf.insert(delayBuf.end(), buf, buf + n);
-            heldBytes += n;
-            if (heldBytes < delayBytes)
-                continue;
-            // Discard the held head; emit only the excess after the delay window.
-            const size_t skip = static_cast<size_t>(delayBytes);
-            if (delayBuf.size() > skip) {
-                writePaced(reinterpret_cast<const char*>(delayBuf.data() + skip),
-                           delayBuf.size() - skip);
-                if (wantF2) {
-                    f2acc.insert(f2acc.end(), delayBuf.begin() + static_cast<std::ptrdiff_t>(skip),
-                                 delayBuf.end());
+        if (out >= 0) {
+            size_t off = 0;
+            while (off < static_cast<size_t>(n) && !stop_.load()) {
+                ssize_t w = ::write(out, buf + off, static_cast<size_t>(n) - off);
+                if (w < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    log("media: MrAudio write err errno=" + std::to_string(errno));
+                    break;
                 }
+                off += static_cast<size_t>(w);
             }
-            delayBuf.clear();
-            delayDone = true;
-            log("media: AUDIO_DELAY_MS applied held=" + std::to_string(delayMs) + "ms");
-            // Fall through to F2 chunk flush for any excess already queued.
-            n = 0;
-        }
-
-        if (n > 0 && out >= 0) {
-            writePaced(buf, static_cast<size_t>(n));
+            audioBytes_.fetch_add(static_cast<size_t>(n));
+            pacedBytes += n;
+            // Sleep until wall clock matches samples written (true 1.0× realtime).
+            const auto due =
+                audioT0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                              std::chrono::duration<double>(pacedBytes / kBytesPerSec));
+            const auto now = std::chrono::steady_clock::now();
+            if (due > now)
+                std::this_thread::sleep_until(due);
         }
 
         if (wantF2) {
@@ -1300,13 +1269,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("pipe:1");
 
             if (wantAudio) {
-                // Plain 48k stereo — no async stretch. MrAudio blocking write is the
+                // Plain 48k stereo — no async stretch. MrAudio wall-pace is the
                 // master clock; FFmpeg back-pressures A+V together (see present loop).
+                // AUDIO_DELAY_MS>0: adelay shifts audio content later (ms) so lipsync
+                // can be corrected from measure evidence. adelay is content-aligned
+                // (unlike a pure wall hold that races during network burst fill).
                 args.push_back("-map");
                 args.push_back("0:a:0?");
                 args.push_back("-vn");
                 args.push_back("-af");
-                args.push_back("aresample=48000");
+                if (audioDelayMs_ > 0) {
+                    // adelay unit is ms per channel; all=1 applies to every channel.
+                    args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) +
+                                   ":all=1");
+                    log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_));
+                } else {
+                    args.push_back("aresample=48000");
+                }
                 args.push_back("-f");
                 args.push_back("s16le");
                 args.push_back("-ac");

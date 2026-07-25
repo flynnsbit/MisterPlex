@@ -10,18 +10,24 @@
 | Item | Value |
 |------|--------|
 | **Seek/resume** | **FIXED** — re-resolve universal + skip double `-ss` (commits `4e4ebfb` / `ba7aa89`) |
-| **AUDIO_DELAY_MS** | **0** (lab measure baseline; no hardcoded lag in code) |
-| **G-AV2** | **PASS** — HDMI flash↔beep harness RUN n=12 |
-| **G-AV3** | **FAIL** — median **−60 ms** (\|m\|=60 > 42); evidence `captures/e2e/avsync_trekmatch/avsync_report.txt` |
-| **Trek title** | `/library/metadata/40710` @ ~3:54 (remote server `1cdd1b7f…`) |
+| **AUDIO_DELAY_MS** | **60** on lab (evidence from baseline median −60 ms); code default still 0 |
+| **G-AV2** | **PASS** — HDMI flash↔beep harness n=12 @ delay=0 |
+| **G-AV3** | **PASS** — \|median\|=**36.0 ms** n=11 MAD 2.0 @ delay=60; companion d60 −30.5 ms |
+| **Trek** | show **40710**; **S1E1 episode 40868** @ ~3:54 (remote `1cdd1b7f…` REACHABLE) |
 | **Trekmatch blips** | PMS Movies **9** (1080p24) / **10** (320×240@24) |
-| **Open** | G-AV3 lipsync (AUDIO_DELAY_MS≈60 conf remeasure); Trek eyes-on **G-AV4** |
+| **Open** | **G-AV4** eyes-on/HDMI Trek dialogue only (cast **40868**, seek 234000) |
 
 ### What fixed seek
 
 1. Library `seekTo` → re-`doPlay` with new `offsetMs` (fresh universal `offset=` seconds)  
 2. No FFmpeg `-ss` when URL already has universal `offset=`  
 3. Resume playMedia with non-zero offset works the same path  
+
+### What fixed lipsync (blip)
+
+1. Measure @ `AUDIO_DELAY_MS=0` → median flash↔beep **−60 ms** (audio lead)  
+2. Conf **`AUDIO_DELAY_MS=60`** (PCM hold before MrAudio) → remeasure **−36 ms** ≤ 42 ms  
+3. No RBF change  
 
 ### Re-verify seek
 
@@ -33,6 +39,12 @@
 
 ### Next
 
-1. **AV-delay-remeasure (lab):** set `AUDIO_DELAY_MS≈60` conf-only, soft restart, recast RK10, HDMI remeasure — do **not** mark G-AV3 PASS until \|median\| ≤ 42 ms  
-2. Cast 40710 via user Web URL; seek to 3:54; eyes-on dialogue (G-AV4)  
-3. RBF `1441d409` leave alone
+1. **G-AV4:** cast episode **40868** (not show 40710) via remote PMS; seek 234000 (~3:54); eyes-on dialogue / optional HDMI  
+2. Optional residual trim (delay ~96) only from new evidence — not required for G-AV3  
+3. RBF `1441d409` leave alone  
+
+### Evidence
+
+- Baseline: `captures/e2e/avsync_trekmatch/avsync_report.txt`  
+- G-AV3: `captures/e2e/avsync_trekmatch/avsync_report_delay60.txt` + `avsync_trekmatch_d60/`  
+- Agents: `/tmp/misterplex-agent-AV-measure.txt`, `AV-remeasure.txt`, `AV-delay-remeasure.txt`, `AV-trek-probe.txt`  
