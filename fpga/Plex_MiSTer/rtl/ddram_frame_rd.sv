@@ -1,32 +1,37 @@
 // Phase 3.1b: HPS → DDR3 bulk RGB565 → frame_store (bypass SPI F1).
 //
-// Physical layout (HPS /dev/mem view, same f2sdram window as Menu/ao486):
+// Physical layout (HPS /dev/mem view):
 //   Bank 0: 0x30000000
 //   Bank 1: 0x30040000  (256 KiB stride; frame is 153600 B)
-// Frame: 320×240 RGB565 little-endian = 76800 pixels = 19200 × 64-bit words.
+//   Doorbell: 0x3007F000  (one 64-bit word — product hot path, no SPI kick)
+//     [31:0]  magic 0x504C584B ("PLXK")
+//     [62:32] seq   (monotonic)
+//     [63]    bank  (0/1)
 //
-// Protocol:
-//   1. ARM writes full frame to bank N via mmap(/dev/mem)
-//   2. ARM sets status[12]=1 (start), status[13]=bank
-//   3. Rising edge of start_req → DMA-read DDR into frame_store, then swap
-//   4. busy is status_in[39]; frames_done increments per completed copy
+// Start paths:
+//   A) SPI: rising status[12] + status[13] bank
+//   B) Doorbell: idle poll of 0x3007F000; new seq → start
 //
-// DDRAM_ADDR is physical[31:3] (64-bit word address). Base 0x30000000 → 0x06000000.
+// swap_req is a request only; frame_store flips display bank on vsync.
 //
-// Avalon burst: beats land with DDRAM_DOUT_READY; a small FIFO absorbs them while
-// we unpack 4× RGB565 per beat into frame_store (1 pixel/clk).
+// Tear fix: never start a new DMA while frame_store.swap_pending — the completed
+// back buffer must not be overwritten before the vsync flip. Queue one held
+// start (latest doorbell/SPI) and launch when pending clears.
 
 module ddram_frame_rd #(
 	parameter int WIDTH      = 320,
 	parameter int HEIGHT     = 240,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
-	parameter int BURST      = 16   // 64-bit beats per Avalon read
+	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
+	parameter int BURST      = 16
 )(
 	input  wire        clk,
 	input  wire        reset,
 
-	input  wire        start_req,   // level; rising edge starts copy
-	input  wire        bank_sel,    // 0 → base, 1 → base+0x40000
+	input  wire        start_req,
+	input  wire        bank_sel,
+	// From frame_store: hold new DMA until vsync consumed last swap
+	input  wire        swap_pending,
 
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -45,17 +50,18 @@ module ddram_frame_rd #(
 	output reg         swap_req,
 
 	output reg         busy,
-	output reg  [15:0] frames_done
+	output reg  [15:0] frames_done,
+	output reg         doorbell_ok
 );
 
 	localparam int PIXELS = WIDTH * HEIGHT;
-	localparam int QWORDS = PIXELS / 4; // 19200 for 320×240
+	localparam int QWORDS = PIXELS / 4;
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	// bank1 = PHYS_BASE + 0x40000 → word addr
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000; // 0x40000/8
+	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
+	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [31:0] MAGIC = 32'h504C_584B;
 
-	// Beat FIFO: enough for a couple of bursts while unpacking (4 clks/beat)
-	localparam int FIFO_AW = 5; // 32 entries
+	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;
 
 	assign DDRAM_CLK = clk;
@@ -64,48 +70,76 @@ module ddram_frame_rd #(
 	assign DDRAM_WE  = 1'b0;
 
 	reg [63:0] fifo_mem [0:FIFO_N-1];
-	reg [FIFO_AW:0] fifo_wr, fifo_rd; // extra bit for full/empty
+	reg [FIFO_AW:0] fifo_wr, fifo_rd;
 	wire [FIFO_AW:0] fifo_level = fifo_wr - fifo_rd;
 	wire fifo_empty = (fifo_wr == fifo_rd);
 	wire [FIFO_AW-1:0] fifo_wix = fifo_wr[FIFO_AW-1:0];
 	wire [FIFO_AW-1:0] fifo_rix = fifo_rd[FIFO_AW-1:0];
 
 	reg [28:0] rd_addr;
-	reg [15:0] qwords_issued;  // total beats requested this frame
-	reg [15:0] qwords_written; // beats fully unpacked to pixels
-	reg [15:0] inflight;       // issued but not yet DOUT_READY
+	reg [15:0] qwords_issued;
+	reg [15:0] qwords_written;
+	reg [15:0] inflight;
 	reg        start_d;
 	reg        active;
 	reg [1:0]  pix_i;
 	reg [63:0] beat_q;
 	reg        have_beat;
 	reg        need_reset;
+	reg        bank_r;
+	reg [30:0] last_seq;
+	reg        have_seq;
+	reg [15:0] poll_div;
+	reg        poll_pending;
 
-	wire [28:0] bank_base = bank_sel ? BASE_W1 : BASE_W0;
+	// Held start while swap_pending (or overlapping edge)
+	reg        hold_start;
+	reg        hold_bank;
+
+	wire [28:0] bank_base = bank_r ? BASE_W1 : BASE_W0;
 
 	wire [15:0] cur_pix =
 		(pix_i == 2'd0) ? beat_q[15:0]  :
 		(pix_i == 2'd1) ? beat_q[31:16] :
 		(pix_i == 2'd2) ? beat_q[47:32] : beat_q[63:48];
 
-	// Space in FIFO for another full burst?
 	wire [FIFO_AW:0] space = FIFO_N[FIFO_AW:0] - fifo_level;
 	wire can_issue = active && !DDRAM_BUSY && !DDRAM_RD
 		&& (qwords_issued < QWORDS[15:0])
-		&& (inflight == 0) // one burst in flight
+		&& (inflight == 0)
 		&& (space >= BURST[FIFO_AW:0])
-		&& !need_reset;
+		&& !need_reset
+		&& !poll_pending;
 
 	wire [15:0] remain = QWORDS[15:0] - qwords_issued;
 	wire [7:0]  this_burst = (remain >= BURST[15:0]) ? BURST[7:0] : remain[7:0];
 
-	// Combinational next inflight (issue and/or ready same cycle)
 	wire        do_issue = can_issue;
 	wire [15:0] inf_after_issue = do_issue ? (inflight + {8'd0, this_burst}) : inflight;
-	wire        do_ready = DDRAM_DOUT_READY && active;
+	wire        do_ready_frame = DDRAM_DOUT_READY && active && !poll_pending;
 	wire [15:0] inf_next =
-		do_ready ? (inf_after_issue != 0 ? inf_after_issue - 16'd1 : 16'd0)
-		         : inf_after_issue;
+		do_ready_frame ? (inf_after_issue != 0 ? inf_after_issue - 16'd1 : 16'd0)
+		               : inf_after_issue;
+
+	// SPI start edge or doorbell new-seq (detected even if we cannot launch yet)
+	wire spi_edge    = start_req && !start_d;
+	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
+	wire db_new_seq  = db_magic_ok && (!have_seq || (DDRAM_DOUT[62:32] != last_seq));
+	wire db_bank     = DDRAM_DOUT[63];
+
+	// Launch when idle and vsync has consumed prior swap. Doorbell detect runs
+	// while poll_pending=1, so free_for_dma must NOT require !poll_pending.
+	// Held starts wait until the poll cycle ends so DDRAM_RD is free.
+	wire free_for_dma = !active && !swap_pending;
+	wire fresh_spi    = spi_edge && free_for_dma && !poll_pending;
+	wire fresh_db     = db_new_seq && free_for_dma;
+	wire held_go      = hold_start && free_for_dma && !poll_pending;
+	wire any_start    = fresh_spi || fresh_db || held_go;
+	wire start_bank   = fresh_db  ? db_bank :
+	                    fresh_spi ? bank_sel :
+	                    hold_bank;
+	// can_launch: used for hold-queue decisions (not ready to run yet)
+	wire can_launch   = free_for_dma && (!poll_pending || db_new_seq);
 
 	always @(posedge clk) begin
 		wr_en        <= 1'b0;
@@ -128,15 +162,44 @@ module ddram_frame_rd #(
 			have_beat      <= 1'b0;
 			pix_i          <= 2'd0;
 			need_reset     <= 1'b0;
+			bank_r         <= 1'b0;
+			last_seq       <= 31'd0;
+			have_seq       <= 1'b0;
+			poll_div       <= 16'd0;
+			poll_pending   <= 1'b0;
+			doorbell_ok    <= 1'b0;
+			hold_start     <= 1'b0;
+			hold_bank      <= 1'b0;
 		end else begin
 			if (!DDRAM_BUSY)
 				DDRAM_RD <= 1'b0;
 
-			// --- start ---
-			if (start_req && !start_d && !active) begin
+			// Capture doorbell seq whenever we see a new one (even if held)
+			if (db_new_seq) begin
+				last_seq    <= DDRAM_DOUT[62:32];
+				have_seq    <= 1'b1;
+				doorbell_ok <= 1'b1;
+			end
+
+			// Queue start if we cannot launch yet (swap_pending / active / poll)
+			// Latest doorbell or SPI bank wins.
+			if (db_new_seq && !can_launch) begin
+				hold_start <= 1'b1;
+				hold_bank  <= db_bank;
+			end else if (spi_edge && !can_launch) begin
+				hold_start <= 1'b1;
+				hold_bank  <= bank_sel;
+			end
+
+			// Complete doorbell poll when not launching from it this cycle
+			if (poll_pending && DDRAM_DOUT_READY && !(db_new_seq && can_launch))
+				poll_pending <= 1'b0;
+
+			if (any_start) begin
 				active         <= 1'b1;
 				busy           <= 1'b1;
-				rd_addr        <= bank_base;
+				bank_r         <= start_bank;
+				rd_addr        <= start_bank ? BASE_W1 : BASE_W0;
 				qwords_issued  <= 0;
 				qwords_written <= 0;
 				inflight       <= 0;
@@ -145,14 +208,24 @@ module ddram_frame_rd #(
 				have_beat      <= 1'b0;
 				pix_i          <= 2'd0;
 				need_reset     <= 1'b1;
+				poll_pending   <= 1'b0;
+				hold_start     <= 1'b0;
+			end else if (!active) begin
+				// Idle doorbell poll ~every 256 cycles
+				poll_div <= poll_div + 16'd1;
+				if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD) begin
+					DDRAM_ADDR     <= DOORBELL_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_RD       <= 1'b1;
+					poll_pending   <= 1'b1;
+				end
 			end else begin
-				// --- reset ptr pulse ---
+				// Active frame DMA
 				if (need_reset) begin
 					wr_reset_ptr <= 1'b1;
 					need_reset   <= 1'b0;
 				end
 
-				// --- issue burst ---
 				if (do_issue) begin
 					DDRAM_ADDR     <= rd_addr;
 					DDRAM_BURSTCNT <= this_burst;
@@ -161,15 +234,13 @@ module ddram_frame_rd #(
 					qwords_issued  <= qwords_issued + {8'd0, this_burst};
 				end
 
-				// --- push beats into FIFO ---
-				if (do_ready) begin
+				if (do_ready_frame) begin
 					fifo_mem[fifo_wix] <= DDRAM_DOUT;
 					fifo_wr <= fifo_wr + 1'd1;
 				end
 
-				inflight <= (start_req && !start_d && !active) ? 16'd0 : inf_next;
+				inflight <= inf_next;
 
-				// --- pop FIFO → 4 pixels ---
 				if (active && !need_reset) begin
 					if (!have_beat) begin
 						if (!fifo_empty) begin

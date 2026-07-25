@@ -1,7 +1,14 @@
 // Dual-bank RGB565 frame store (Phase 3 intermediate).
 // Write path: HPS ioctl stream (byte pairs → RGB565).
 // Read path: present engine samples active pixel (x,y).
-// Bank swap after a full frame is written so display never tears mid-write.
+//
+// Tear fix (double-buffer contract):
+//   - Write always goes to the non-display bank.
+//   - swap_banks latches swap_pending after a *complete* frame.
+//   - Display flip applies only on vsync_pulse (no mid-scan tear).
+//   - While swap_pending, writes are IGNORED so the completed back buffer
+//     cannot be overwritten before the flip (multi-panel / half-frame glitch).
+//   - ddram_frame_rd must also hold new DMA starts until !swap_pending.
 //
 // Size: 320×240 × 16-bit × 2 banks ≈ 307 KB BRAM — fits Cyclone V SE.
 
@@ -28,8 +35,12 @@ module frame_store #(
 	output reg  [7:0]  rd_b,
 
 	// ---- control ----
-	input  wire        swap_banks,   // display ← write bank (usually on frame done)
-	output reg         has_frame     // at least one complete frame presented
+	// swap_banks: request (pulse) after a full frame is written
+	// vsync_pulse: 1-cycle at display frame start — only then apply flip
+	input  wire        swap_banks,
+	input  wire        vsync_pulse,
+	output reg         has_frame,    // at least one complete frame presented
+	output reg         swap_pending  // request latched, waiting for vsync
 );
 
 	localparam int PIXELS = WIDTH * HEIGHT;
@@ -54,13 +65,36 @@ module frame_store #(
 			{ADDR_W{1'b0}};
 
 	localparam [ADDR_W-1:0] LAST_PIX = PIXELS[ADDR_W-1:0] - 1'd1;
-	assign wr_frame_done = wr_en && (wr_count == PIXELS[18:0] - 19'd1);
+	assign wr_frame_done = wr_en && !swap_pending && (wr_count == PIXELS[18:0] - 19'd1);
 
-	// Write port — always into the non-display bank
+	// Bank swap: latch request; apply ONLY on vsync_pulse (no mid-scan tear).
+	// Never flip mid-write into a partial bank: writers are gated while pending,
+	// and DMA is held off until !swap_pending (see ddram_frame_rd).
+	always @(posedge clk) begin
+		if (reset) begin
+			disp_bank     <= 0;
+			has_frame     <= 0;
+			swap_pending  <= 0;
+		end else begin
+			if (swap_banks)
+				swap_pending <= 1'b1;
+			if (vsync_pulse && swap_pending) begin
+				disp_bank     <= ~disp_bank;
+				has_frame     <= 1'b1;
+				swap_pending  <= 1'b0;
+			end
+		end
+	end
+
+	// Write port — always into the non-display bank.
+	// Gate all writes while swap_pending so the completed frame stays intact
+	// until vsync promotes it to display.
 	always @(posedge clk) begin
 		if (reset) begin
 			wr_addr  <= 0;
 			wr_count <= 0;
+		end else if (swap_pending) begin
+			// Hold pointer/count; ignore wr_en / wr_reset_ptr.
 		end else if (wr_reset_ptr) begin
 			wr_addr  <= 0;
 			wr_count <= 0;
@@ -78,17 +112,6 @@ module frame_store #(
 		end
 	end
 
-	// Bank swap + ready
-	always @(posedge clk) begin
-		if (reset) begin
-			disp_bank <= 0;
-			has_frame <= 0;
-		end else if (swap_banks) begin
-			disp_bank <= ~disp_bank;
-			has_frame <= 1'b1;
-		end
-	end
-
 	// Sync read: register address then data (1-cycle)
 	reg             rd_active_d;
 	reg [ADDR_W-1:0] rd_addr_r;
@@ -100,12 +123,14 @@ module frame_store #(
 		else
 			rd_q <= bank1[rd_addr_r];
 
-		// Expand RGB565 → 8-bit (replicate MSBs)
+		// Expand RGB565 → 8-bit (replicate MSBs).
+		// Hold last pixel when inactive (matches colorbars registered hold).
+		// Zeroing here blacked every !ce_pix tick and made cast look pillarboxed.
 		if (rd_active_d && has_frame) begin
 			rd_r <= {rd_q[15:11], rd_q[15:13]};
 			rd_g <= {rd_q[10:5],  rd_q[10:9]};
 			rd_b <= {rd_q[4:0],   rd_q[4:2]};
-		end else begin
+		end else if (!has_frame) begin
 			rd_r <= 8'd0;
 			rd_g <= 8'd0;
 			rd_b <= 8'd0;

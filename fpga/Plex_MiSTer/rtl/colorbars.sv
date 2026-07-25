@@ -1,9 +1,11 @@
 // SMPTE-style color bars + optional moving block driven by content frame index.
-// Generates progressive 320x240-class timing (NTSC 15 kHz family when not scandoubled).
+// Generates progressive 320x240-class content timing (NTSC 15 kHz family when
+// not scandoubled) inside Template-class horizontal DE.
 //
-// Horizontal: 320 active + short porches + sync, total 638 clocks/line @ half-rate
-// ce_pix → ~59.8 Hz.  Do NOT use Template HBlank@529 with only 320px paint — that
-// leaves ~40% of DE black (lab measured span ≈320/529 on VGA/HDMI).
+// Fix-2 (P3-WIDE): Template HBlank@529 + HSync 544/590 (FBAR-proven DE class)
+// with paint across the FULL DE (hc 0..528). Fix-1 HBlank@320 / HSync 336/384
+// was ineffective on silicon eyes-on (still PILLAR_320_of_529). frame_store
+// remains 320×240 left-aligned in present_core.
 
 module colorbars (
 	input  wire        clk,
@@ -12,7 +14,7 @@ module colorbars (
 	input  wire        pal,           // 0 NTSC-like, 1 PAL-like
 	input  wire        scandouble,
 	input  wire [31:0] content_index, // unique frame number (cadence-advanced)
-	input  wire [1:0]  pattern,       // 0=bars, 1=bars+block, 2=grid, 3=solid ramp
+	input  wire [1:0]  pattern,       // 0=none(black), 1=bars, 2=bars+block, 3=grid
 
 	output reg         ce_pix,
 	output reg         HBlank,
@@ -21,25 +23,28 @@ module colorbars (
 	output reg         VSync,
 	output reg         frame_start,   // 1-cycle pulse when leaving VBlank (display tick)
 
+	// Expose counters so present can stretch frame_store with the SAME hc/vc
+	// colorbars uses for full-DE paint (reconstructed counters can skew).
+	output wire [9:0]  hc_out,
+	output wire [9:0]  vc_out,
+
 	output reg  [7:0]  r,
 	output reg  [7:0]  g,
 	output reg  [7:0]  b
 );
 
-	// Active 320, then FP/sync/BP in the remainder of the 638-count line.
-	// HSync must follow blanking (not stay at Template 544 after DE ends at 320),
-	// or ascal can still treat a long black porch as part of the picture geometry.
-	localparam H_CONTENT = 10'd320;
-	localparam H_LAST    = 10'd637; // wrap → 638 clocks/line
-	localparam H_FP      = 10'd16;
-	localparam H_SYNC    = 10'd48;
-	// blank starts at end of active; sync immediately after FP
-	localparam H_BLANK_S = H_CONTENT;                 // 320
-	localparam H_SYNC_S  = H_CONTENT + H_FP;          // 336
-	localparam H_SYNC_E  = H_CONTENT + H_FP + H_SYNC; // 384
+	// Template A timing (mycore-class). H_CONTENT is product width only.
+	localparam H_CONTENT = 10'd320;  // product / frame_store only
+	localparam H_DE      = 10'd529;  // Template active DE width
+	localparam H_LAST    = 10'd637;  // wrap → 638 clocks/line (FPS)
+	localparam H_BLANK_S = H_DE;     // 529
+	localparam H_SYNC_S  = 10'd544;  // Template
+	localparam H_SYNC_E  = 10'd590;  // Template
 
 	reg [9:0] hc;
 	reg [9:0] vc;
+	assign hc_out = hc;
+	assign vc_out = vc;
 
 	// Pixel enable + counters (Template mycore style)
 	always @(posedge clk) begin
@@ -76,7 +81,7 @@ module colorbars (
 	end
 
 	// H/V blank & sync (sample hc every clk; hc advances on ce_pix)
-	// Level HBlank (not edge-only) so DE never stretches past H_CONTENT.
+	// Level HBlank: DE width = H_DE (529).
 	always @(posedge clk) begin
 		if (reset) begin
 			HBlank <= 1'b1;
@@ -118,11 +123,13 @@ module colorbars (
 		end
 	end
 
-	// Color bars fill the full DE window (hc 0..H_CONTENT-1)
+	// Color bars fill the full DE window (hc 0..H_DE-1). Stretch 7 bars.
 	wire [9:0] px = hc;
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-	wire [2:0] bar = px[8:6]; // ~40 px per bar in 0..319
-	wire in_content = (hc < H_CONTENT) &&
+	// Integer scale: 7 equal slices over DE width 529 (hc=528 → 3696/529=6)
+	wire [12:0] bar_prod = hc * 4'd7; // 0 .. 3696
+	wire [2:0]  bar      = bar_prod / H_DE; // 0..6
+	wire in_content = (hc < H_DE) &&
 	                  (py < 10'd240) &&
 	                  ~HBlank && ~VBlank;
 
@@ -155,23 +162,23 @@ module colorbars (
 				r <= 0; g <= 0; b <= 0;
 			end else begin
 				case (pattern)
-					2'd0: begin r <= br; g <= bg; b <= bb; end
-					2'd1: begin
+					2'd0: begin // None — black (idle / product default)
+						r <= 8'd0; g <= 8'd0; b <= 8'd0;
+					end
+					2'd1: begin // Bars
+						r <= br; g <= bg; b <= bb;
+					end
+					2'd2: begin // Bars + moving block
 						if (in_block) begin
 							r <= 8'hFF; g <= 8'hFF; b <= 8'h00;
 						end else begin
 							r <= br; g <= bg; b <= bb;
 						end
 					end
-					2'd2: begin
+					default: begin // Grid
 						r <= grid ? 8'hFF : 8'h20;
 						g <= grid ? 8'hFF : 8'h20;
 						b <= grid ? 8'hFF : 8'h20;
-					end
-					default: begin
-						r <= px[7:0];
-						g <= py[7:0];
-						b <= content_index[7:0];
 					end
 				endcase
 			end

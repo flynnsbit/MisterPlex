@@ -98,6 +98,10 @@ private:
     FpgaSpi fpga_;
     bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
     int ddrBank_ = 0;      // ping-pong 0/1 @ 0x30000000 / 0x30040000
+    // Bytes written to MrAudio this session (A/V clock diagnostics)
+    std::atomic<int64_t> audioBytes_{0};
+    // FPGA presents this session (wall-clock capped)
+    int64_t presentCount_ = 0;
     mutable std::mutex mu_;
     std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;

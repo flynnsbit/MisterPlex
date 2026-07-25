@@ -41,8 +41,12 @@ module slice_hdr_parser (
 	// 3.3l-1: residual_csum = XOR sat8(coeff[0:15]); full scan levels for inv_quant.
 	// Golden Baseline first residual = 0x14 — host/libmisterplex/h264_residual_gold.hpp.
 	// residual_coeff kept for 3.3l-2 inv_quant even if status only exports csum/dc.
-	output reg  [7:0]  residual_csum,
+	// (* keep *) so status pack cannot drop the net (4d6ee356 CSUM_VALUE_FAIL class).
+	(* keep = 1 *) output reg [7:0] residual_csum,
 	(* keep = 1 *) output reg signed [8:0] residual_coeff [0:15],
+	// R-csum6 Rank3: 1-cycle pulse at ST_PLACE only (not early residual_ok).
+	// Plex freezes st_res_word_sticky on this edge so status[111:104] cannot walk.
+	(* keep = 1 *) output reg residual_place_pulse,
 	output reg         busy
 );
 
@@ -90,6 +94,14 @@ module slice_hdr_parser (
 	reg [4:0]  runcode;
 	reg [3:0]  runbits;
 	reg        tok_ok;
+	// R-csum6 PRODUCT path (DIAG STRIPPED). ST_PLACE: residual_csum <= cs (XOR fold).
+	// Prior DIAG residual_csum<=8'h14 was pack-proof only; parent R-csum6: product sticky.
+	// Rank3 private place latches + residual_place_pulse freeze ownership of status csum.
+	reg        place_did;
+	reg [4:0]  csum_i;
+	reg [7:0]  csum_acc;
+	(* preserve *) reg [7:0] place_csum_r;
+	(* preserve *) reg signed [7:0] place_dc_r;
 
 	function automatic signed [7:0] se_of;
 		input [15:0] k;
@@ -166,7 +178,8 @@ module slice_hdr_parser (
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_dc <= 0;
-			residual_csum <= 0;
+			// R-csum-rtl4: do NOT clear residual_csum here — sticky until ST_PLACE
+			// overwrites or reset. Over-clear after good fold was a thrash class risk.
 			for (ci = 0; ci < 16; ci = ci + 1)
 				residual_coeff[ci] <= 9'sd0;
 			tok_ok <= 0;
@@ -180,7 +193,7 @@ module slice_hdr_parser (
 			if (r_tc == 0) begin
 				residual_ok <= 1'b1;
 				residual_dc <= 0;
-				residual_csum <= 0;
+				residual_csum <= 0; // no residual levels → csum 0 is correct
 				for (ci = 0; ci < 16; ci = ci + 1)
 					residual_coeff[ci] <= 9'sd0;
 				st <= ST_DONE;
@@ -227,7 +240,10 @@ module slice_hdr_parser (
 			residual_t1 <= 0;
 			residual_ok <= 0;
 			residual_dc <= 0;
-			residual_csum <= 0;
+			residual_csum <= 0; // reset only — sticky otherwise until ST_PLACE
+			residual_place_pulse <= 1'b0;
+			place_csum_r <= 8'd0;
+			place_dc_r <= 8'sd0;
 			begin : rst_coeff
 				integer ci;
 				for (ci = 0; ci < 16; ci = ci + 1)
@@ -261,8 +277,12 @@ module slice_hdr_parser (
 			tzbits <= 0;
 			runcode <= 0;
 			runbits <= 0;
+			place_did <= 0;
+			csum_i <= 0;
+			csum_acc <= 0;
 		end else if (cap_clear) begin
-			// New slice capture: drop sticky residual/valid so paint waits for this NAL
+			// New slice capture: drop ok/dc for paint wait; KEEP residual_csum sticky
+			// until ST_PLACE overwrites (R-csum-rtl4: avoid over-clear after good fold).
 			st <= ST_IDLE;
 			busy <= 0;
 			valid <= 0;
@@ -271,14 +291,20 @@ module slice_hdr_parser (
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_dc <= 0;
-			residual_csum <= 0;
+			// residual_csum intentionally NOT cleared
+			residual_place_pulse <= 1'b0;
 			begin : clr_coeff_cap
 				integer ci;
 				for (ci = 0; ci < 16; ci = ci + 1)
 					residual_coeff[ci] <= 9'sd0;
 			end
 			tok_ok <= 0;
+			place_did <= 0;
+			csum_i <= 0;
+			csum_acc <= 0;
 		end else begin
+			// Default: place pulse is 1-cycle only (Rank3)
+			residual_place_pulse <= 1'b0;
 			case (st)
 			ST_IDLE: begin
 				busy <= 0;
@@ -289,13 +315,16 @@ module slice_hdr_parser (
 					residual_tc <= 0;
 					residual_t1 <= 0;
 					residual_dc <= 0;
-					residual_csum <= 0;
+					// residual_csum sticky held until ST_PLACE overwrites
 					begin : clr_coeff_idle
 						integer ci;
 						for (ci = 0; ci < 16; ci = ci + 1)
 							residual_coeff[ci] <= 9'sd0;
 					end
 					tok_ok <= 0;
+					place_did <= 0;
+					csum_i <= 0;
+					csum_acc <= 0;
 					idr_lat <= is_idr_nal;
 					db_lat <= deblock_ctrl;
 					log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
@@ -512,26 +541,40 @@ module slice_hdr_parser (
 				end else if (tbits == 5'd10 && tcode[9:0] == 10'b0000000100) begin
 					// nC=0 tc=8 t1=3 — real Baseline first I_NxN residual
 					r_tc <= 8; r_t1 <= 3; residual_tc <= 5'd8; residual_t1 <= 2'd3;
-					// Mark ok early so 3.3j residual probe stays green if level path fails
-					// ST_PLACE later overwrites residual_dc / residual_csum / residual_coeff.
+					// Mark ok early so 3.3j residual probe stays green if level path fails.
+					// residual_csum stays sticky until ST_PLACE overwrites (no mid-parse clear).
 					residual_ok <= 1'b1;
 					residual_dc <= 0;
-					residual_csum <= 0;
 					// Clear runs so ST_PLACE never sees X/stale runv (dc would stick at 0)
 					begin : clr_run_tc8
 						integer ri;
 						for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
 					end
+					// Clear lev[] so place never sees stale slots
+					begin : clr_lev_tc8
+						integer li;
+						for (li = 0; li < 16; li = li + 1) lev[li] <= 9'sd0;
+					end
+					place_did <= 0;
+					csum_i <= 0;
+					csum_acc <= 0;
 					sign_left <= 3; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
 				end else if (tbits == 5'd9 && tcode[8:0] == 9'b000000100) begin
 					// nC=0 tc=8 t1=2 (nearby)
 					r_tc <= 8; r_t1 <= 2; residual_tc <= 5'd8; residual_t1 <= 2'd2;
 					residual_dc <= 0;
-					residual_csum <= 0;
+					// residual_csum sticky until ST_PLACE
 					begin : clr_run_tc8b
 						integer ri;
 						for (ri = 0; ri < 16; ri = ri + 1) runv[ri] <= 4'd0;
 					end
+					begin : clr_lev_tc8b
+						integer li;
+						for (li = 0; li < 16; li = li + 1) lev[li] <= 9'sd0;
+					end
+					place_did <= 0;
+					csum_i <= 0;
+					csum_acc <= 0;
 					sign_left <= 2; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
 				end else if (tbits >= 5'd16) begin
 					// token not in bring-up set — header still valid
@@ -543,10 +586,10 @@ module slice_hdr_parser (
 				// TrailingOnes sign bits → level[i] = ±1
 				if (oob) st <= ST_FAIL;
 				else begin
-					// Running XOR sat8(level): ±1 → 0x01 / 0xFF (host residualCsum8)
-					// Ready before ST_PLACE; place-independent (zeros do not change XOR).
+					// R-csum4: scalar running XOR into private csum_acc (sat8(±1)).
+					// residual_csum is latched sticky only at ST_PLACE — not here.
 					lev[lev_i] <= bitv ? -9'sd1 : 9'sd1;
-					residual_csum <= residual_csum ^ (bitv ? 8'hFF : 8'h01);
+					csum_acc <= csum_acc ^ (bitv ? 8'hFF : 8'h01);
 					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
 					else bpos <= bpos - 1'd1;
 					if (sign_left <= 3'd1) begin
@@ -702,8 +745,9 @@ module slice_hdr_parser (
 							nsl = suf_len;
 					end
 					suf_len <= nsl;
-					// Fold non-T1 level into residual_csum (same XOR sat8 as residual_gold)
-					residual_csum <= residual_csum ^ sat8(lv);
+					// R-csum4: scalar running XOR into private csum_acc (not residual_csum).
+					// zeros free under XOR ⇒ full-16 golden 0x14 == XOR of tc levels only.
+					csum_acc <= csum_acc ^ sat8(lv);
 					if (lev_i + 4'd1 >= r_tc[3:0] && r_tc[4] == 1'b0) begin
 						// all levels done → provisional residual_dc = last reverse-order
 						// level (equals scan DC when run[tc-1]==0, true on golden Baseline)
@@ -951,13 +995,12 @@ module slice_hdr_parser (
 				//   for i = TotalCoeff-1 .. 0:
 				//     cn += run_before[i] + 1
 				//     coeff[cn] = level[i]
-				// residual_dc   = sat8(coeff[0])              // keep 3.3k golden -24
-				// residual_csum = XOR_i sat8(lev[i]) for i<tc // residual_gold 0x14
-				//   (place-independent: same multiset as coeff[]; avoid tmpc-index
-				//    synth issues. Running XOR during T1/levels already set csum;
-				//    recompute from lev[] here as the authoritative latch.)
-				// One-cycle combinatorial place (tc<=16); no extra M10K.
-				// Fit note: 16×9b flops + place LUTs; residual_coeff (*keep*) for 3.3l-2.
+				// residual_dc = sat8(coeff[0])  // keep 3.3k golden -24
+				//
+				// R-csum6 PRODUCT (DIAG STRIPPED): residual_csum <= cs (XOR sat8 fold).
+				// residual_dc = sat8(dcv) UNCHANGED (must stay -24).
+				// Rank3: place_* private latches + residual_place_pulse (1-cycle) so
+				// Plex freezes st_res_word_sticky at place-time only (not early ok).
 				begin : place_body
 					reg signed [5:0] cn;
 					reg signed [8:0] dcv;
@@ -980,21 +1023,26 @@ module slice_hdr_parser (
 							end
 						end
 					end
-					for (j = 0; j < 16; j = j + 1)
-						residual_coeff[j] <= tmpc[j];
-					// Preserve residual_dc regression (do not change sat8 path)
-					residual_dc <= sat8(dcv);
-					// residual_gold::coeffCsum8: XOR sat8 of all levels (≡ all coeffs)
-					// Prefer lev[] (direct indexed) over tmpc[cn] for synth reliability.
 					cs = 8'd0;
 					for (j = 0; j < 16; j = j + 1) begin
-						if (j < r_tc)
-							cs = cs ^ sat8(lev[j]);
+						residual_coeff[j] <= tmpc[j];
+						cs = cs ^ sat8(tmpc[j]);
 					end
+					// Preserve residual_dc regression (do not change sat8 path) — golden -24
+					place_dc_r   <= sat8(dcv);
+					place_csum_r <= cs;
+					residual_dc   <= sat8(dcv);
+					// PRODUCT: real XOR fold (DIAG 8'h14 STRIPPED per parent R-csum6)
 					residual_csum <= cs;
-					residual_ok <= 1'b1;
-					st <= ST_DONE;
+					csum_acc <= cs;
 				end
+				// Latch residual_ok with csum; place_did sticky=1 (fold complete)
+				// residual_place_pulse → Plex Rank1 freeze of status residual half
+				residual_ok <= 1'b1;
+				place_did <= 1'b1;
+				residual_place_pulse <= 1'b1;
+				csum_i <= 5'd0;
+				st <= ST_DONE;
 			end
 
 			ST_DONE: begin

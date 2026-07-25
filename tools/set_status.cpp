@@ -20,7 +20,7 @@ namespace {
 void printUsage() {
     std::fprintf(stderr,
                  "usage: set_status [--status|--raw]\n"
-                 "       set_status [--pattern bars|bars_block|grid|ramp]\n"
+                 "       set_status [--pattern none|bars|bars_block|grid]\n"
                  "                  [--force-bars 0|1] [--tv ntsc|pal]\n"
                  "                  [--fps 24|30|60|12] [--audio on|off]\n"
                  "                  [--ar original|full|arc1|arc2]\n"
@@ -29,10 +29,10 @@ void printUsage() {
 
 const char* patternName(int p) {
     switch (p & 3) {
-    case 0: return "bars";
-    case 1: return "bars_block";
-    case 2: return "grid";
-    default: return "ramp";
+    case 0: return "none";
+    case 1: return "bars";
+    case 2: return "bars_block";
+    default: return "grid";
     }
 }
 
@@ -51,7 +51,7 @@ void printRaw(const uint8_t raw[16]) {
         "T10=%d T11=%d R0=%d AR_bits=%d\n",
         lo, (lo & 4) ? "PAL" : "NTSC", fps,
         fps == 0 ? "24" : fps == 1 ? "30" : fps == 2 ? "60" : "12", pat,
-        patternName(pat), (lo & 0x100) ? "Off" : "On", (lo >> 9) & 1,
+        patternName(pat), (lo & 0x100) ? "On" : "Off", (lo >> 9) & 1,
         (lo >> 10) & 1, (lo >> 11) & 1, lo & 1, ar);
 }
 
@@ -95,16 +95,17 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--pattern") == 0 && i + 1 < argc) {
             const char* p = argv[++i];
             int v = 0;
-            if (!std::strcmp(p, "bars") || !std::strcmp(p, "0"))
+            if (!std::strcmp(p, "none") || !std::strcmp(p, "off") || !std::strcmp(p, "0"))
                 v = 0;
-            else if (!std::strcmp(p, "bars_block") || !std::strcmp(p, "1"))
+            else if (!std::strcmp(p, "bars") || !std::strcmp(p, "1"))
                 v = 1;
-            else if (!std::strcmp(p, "grid") || !std::strcmp(p, "2"))
+            else if (!std::strcmp(p, "bars_block") || !std::strcmp(p, "block") ||
+                     !std::strcmp(p, "2"))
                 v = 2;
-            else if (!std::strcmp(p, "ramp") || !std::strcmp(p, "3"))
+            else if (!std::strcmp(p, "grid") || !std::strcmp(p, "3"))
                 v = 3;
             else {
-                std::fprintf(stderr, "bad pattern: %s\n", p);
+                std::fprintf(stderr, "bad pattern: %s (none|bars|bars_block|grid)\n", p);
                 return 1;
             }
             add_field(6, 2, v);
@@ -134,7 +135,11 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--audio") == 0 && i + 1 < argc) {
             const char* a = argv[++i];
             pairs.push_back(8);
-            pairs.push_back((!std::strcmp(a, "off") || !std::strcmp(a, "1")) ? 1 : 0);
+            // CONF "Audio tone,Off,On": bit0=Off, bit1=On (was inverted On,Off)
+            pairs.push_back((!std::strcmp(a, "on") || !std::strcmp(a, "1") ||
+                             !std::strcmp(a, "yes") || !std::strcmp(a, "true"))
+                                ? 1
+                                : 0);
         } else if (std::strcmp(argv[i], "--ar") == 0 && i + 1 < argc) {
             const char* a = argv[++i];
             int v = 0;

@@ -81,6 +81,9 @@ int main(int argc, char** argv) {
     misterplex::WeakLadder weak;
     std::vector<std::string> servers;
     std::string defaultPms = "http://192.168.1.41:32400";
+    // Lab: --play-file PATH [--play-seconds N] plays a local file then exits (no GDM).
+    std::string playFile;
+    int playSeconds = 25;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
@@ -101,9 +104,13 @@ int main(int argc, char** argv) {
                 decodeW = w;
                 decodeH = h;
             }
+        } else if (std::strcmp(argv[i], "--play-file") == 0 && i + 1 < argc) {
+            playFile = argv[++i];
+        } else if (std::strcmp(argv[i], "--play-seconds") == 0 && i + 1 < argc) {
+            playSeconds = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
-                        "[--conf PATH] [--decode WxH]\n");
+                        "[--conf PATH] [--decode WxH] [--play-file PATH] [--play-seconds N]\n");
             return 0;
         }
     }
@@ -236,6 +243,30 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: SUBTITLES=ffmpeg (local files, STREAM=0)\n");
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
+    }
+
+    // Lab A/V sync: play local file and exit (no companion / GDM).
+    if (!playFile.empty()) {
+        std::fprintf(stderr, "misterplexd: LAB play-file=%s seconds=%d\n", playFile.c_str(),
+                     playSeconds);
+        if (!player.play(playFile, 0, {}, playSeconds * 1000LL)) {
+            std::fprintf(stderr, "misterplexd: play-file failed\n");
+            return 1;
+        }
+        // Wait up to playSeconds; exit early only after we have observed playing
+        // then see it clear (natural EOF). Do not treat the pre-thread window as done.
+        bool sawPlaying = false;
+        for (int i = 0; i < playSeconds * 10; ++i) {
+            if (player.playing())
+                sawPlaying = true;
+            else if (sawPlaying)
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        player.stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        std::fprintf(stderr, "misterplexd: LAB play-file done\n");
+        return 0;
     }
 
     misterplex::Companion comp;

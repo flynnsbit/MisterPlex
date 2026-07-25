@@ -57,15 +57,17 @@ localparam CONF_STR = {
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
 	"O[5:4],Content FPS,24,30,60,12;",
-	"O[7:6],Pattern,Bars,Bars+Block,Grid,Ramp;",
-	"O[8],Audio tone,On,Off;",
+	// None = black idle, never steals cast frames (was Bars-default + pattern!=0 force).
+	"O[7:6],Pattern,None,Bars,Bars+Block,Grid;",
+	// Default Off — On beeped under cast when F2/has_audio dropped (bars test tone).
+	"O[8],Audio tone,Off,On;",
 	"O[9],Force bars (debug),No,Yes;",
 	"T[10],Flush audio FIFO;",
 	"T[11],Flush bitstream FIFO;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
-	"v,1;", // was 0 — reset OSD options (force NTSC default after PAL save)
+	"v,2;", // reset OSD: Pattern=None, Audio tone=Off defaults
 	"V,v",`BUILD_DATE
 };
 
@@ -95,6 +97,7 @@ wire [1:0]   residual_t1;
 wire signed [7:0] residual_dc;
 wire [7:0]   residual_csum;
 wire signed [8:0] residual_coeff [0:15];
+wire         residual_place_pulse;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -181,12 +184,14 @@ frame_ingest finst (
 
 // Phase 3.1b: HPS mmap @ 0x30000000 → DDRAM burst → frame_store
 // status[12]=start (rising edge), status[13]=bank (0/1)
+// swap_pending comes from present_core/frame_store (declared below; wire OK early).
 wire        ddr_wr_en;
 wire [15:0] ddr_wr_pixel;
 wire        ddr_wr_reset;
 wire        ddr_swap;
 wire        ddr_busy;
 wire [15:0] ddr_frames;
+wire        swap_pending;
 
 ddram_frame_rd #(
 	.WIDTH(320),
@@ -198,6 +203,7 @@ ddram_frame_rd #(
 	.reset(reset),
 	.start_req(status[12]),
 	.bank_sel(status[13]),
+	.swap_pending(swap_pending),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -283,6 +289,7 @@ stream_path spath (
 	.residual_dc(residual_dc),
 	.residual_csum(residual_csum),
 	.residual_coeff(residual_coeff),
+	.residual_place_pulse(residual_place_pulse),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -318,6 +325,7 @@ wire [7:0] r, g, b;
 wire [15:0] al, ar_audio;
 wire [31:0] disp_i, cont_i;
 wire advance;
+// swap_pending declared above (fed back into ddram_frame_rd hold-off)
 
 present_core present (
 	.clk(clk_sys),
@@ -331,7 +339,8 @@ present_core present (
 	// colorbars mux cannot keep Grid/Ramp when the bit sticks (belt+suspenders
 	// with present_core eff_pattern).
 	.pattern(status[9] ? 2'd0 : status[7:6]),
-	.audio_en(~status[8]),
+	// status[8]: 0=Off (default), 1=On — matches CONF "Audio tone,Off,On"
+	.audio_en(status[8]),
 	.use_frame_store(status[9]),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
@@ -357,7 +366,8 @@ present_core present (
 	.stat_has_frame(has_frame),
 	.stat_wr_count(wr_count),
 	.stat_has_audio(has_audio),
-	.stat_audio_underrun(audio_underrun)
+	.stat_audio_underrun(audio_underrun),
+	.stat_swap_pending(swap_pending)
 );
 
 assign CLK_VIDEO = clk_sys;
@@ -394,7 +404,7 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [47:32]   nalu_count
 //   [55:48]   first_mb_type    [63:56] slice_type
 //   [71:64]   {residual_ok, residual_tc[4:0], residual_t1[1:0]}
-//   [79:72]   {ddr_busy, 1'b0, slice_qp[5:0]}
+//   [79:72]   {ddr_busy, swap_pending, slice_qp[5:0]}
 //   [87:80]   sps_mb_w         [95:88] sps_mb_h  (pixels = mb*16)
 //   [103:96]  residual_dc      (3.3k regression; clean of AR)
 //   [111:104] residual_csum    (3.3l-1 XOR sat8(coeff[0:15]); Baseline golden 0x14)
@@ -405,44 +415,89 @@ wire [7:0] telem_flags = {
 	audio_underrun, has_stream, has_audio, has_frame
 };
 
-wire [127:0] status_telem;
-assign status_telem[15:0]    = status[15:0];
-assign status_telem[23:16]   = telem_flags;
-assign status_telem[31:24]   = last_nal_type;
-assign status_telem[47:32]   = nalu_count;
-assign status_telem[55:48]   = first_mb_type;
-assign status_telem[63:56]   = slice_type;
-assign status_telem[71:64]   = {residual_ok, residual_tc, residual_t1};
-assign status_telem[79:72]   = {ddr_busy, 1'b0, slice_qp};
-assign status_telem[87:80]   = sps_mb_w;
-assign status_telem[95:88]   = sps_mb_h;
-// residual_dc / residual_csum below AR splice so both stay clean.
-// R-csum1: preserve-register barrier so status[111:104] cannot collapse to
-// stream_bytes[7:0] (aa146c17 HW raw[13]=0x53 == bytes_in low of 6739; golden 0x14).
-// Pack as one 16b word {csum,dc} then split — same netlist intent, harder to prune.
-(* preserve *) reg signed [7:0] st_res_dc;
-(* preserve *) reg        [7:0] st_res_csum;
-(* preserve *) reg        [15:0] st_stream_lo;
+// R-csum6 Rank1+2+3 product sticky residual pack (owner R-csum6; DIAG STRIPPED):
+// Lab SoT H-gate-rcsum5: 8832824e MULTI_DRIVE +0x53/push; level res_pair_sticky FAIL.
+// Intent: freeze published residual half ONLY on place completion (or ok-rise for tc=0).
+//
+// Rank1: st_res_word_sticky samples on residual_place_pulse (primary) or residual_ok_rise
+//        (tc=0 / no-place paths). NEVER continuous/level while residual_ok (walk class).
+// Rank2: residual half forced from sticky via status_telem_masked; stream ONLY [127:112].
+// Rank3: slice residual_place_pulse + place_* private; product residual_csum<=cs at ST_PLACE.
+// DIAG STRIPPED: no residual_csum<=8'h14 force (parent product path).
+// Layout unchanged for ARM: raw[12]=dc, raw[13]=csum, raw[14:15]=stream LE.
+(* preserve *) reg [15:0] st_res_word;         // live bond {csum,dc} debug ONLY — never status
+(* preserve *) reg [15:0] st_res_word_sticky;  // ONLY status residual source {csum,dc}
+(* preserve *) reg [15:0] st_stream_lo;        // stream lo debug; separate from residual
+(* preserve *) reg [127:0] status_telem_r;
+(* preserve *) reg        residual_ok_d_st;
+wire residual_ok_rise = residual_ok & ~residual_ok_d_st;
+wire [7:0] st_res_csum = st_res_word_sticky[15:8];
+wire signed [7:0] st_res_dc = st_res_word_sticky[7:0];
+
+// Always block A: residual sticky ONLY (inputs: place pulse / ok rise / residual_*)
+// NEVER mentions stream_bytes_in — structural isolate Rank2.
 always @(posedge clk_sys) begin
 	if (reset) begin
-		st_res_dc    <= 8'sd0;
-		st_res_csum  <= 8'd0;
-		st_stream_lo <= 16'd0;
+		st_res_word        <= 16'd0;
+		st_res_word_sticky <= 16'd0;
+		residual_ok_d_st   <= 1'b0;
 	end else begin
-		st_res_dc    <= residual_dc;
-		st_res_csum  <= residual_csum;
-		st_stream_lo <= stream_bytes_in[15:0];
+		st_res_word      <= {residual_csum, residual_dc}; // debug bond
+		residual_ok_d_st <= residual_ok;
+		// Primary: ST_PLACE pulse freezes place-time product pair (blocks +0x53 walk)
+		if (residual_place_pulse)
+			st_res_word_sticky <= {residual_csum, residual_dc};
+		// Secondary: residual_ok rise for tc=0 / paths without ST_PLACE
+		else if (residual_ok_rise)
+			st_res_word_sticky <= {residual_csum, residual_dc};
+		// else HOLD sticky — frozen between intentional place/ok edges
 	end
 end
-assign status_telem[103:96]  = st_res_dc;
-assign status_telem[111:104] = st_res_csum;
-assign status_telem[127:112] = st_stream_lo;
+
+// Always block B: stream lo debug ONLY
+always @(posedge clk_sys) begin
+	if (reset)
+		st_stream_lo <= 16'd0;
+	else
+		st_stream_lo <= stream_bytes_in[15:0];
+end
+
+// Always block C: assemble status_telem from sticky residual + live stream half
+always @(posedge clk_sys) begin
+	if (reset) begin
+		status_telem_r <= 128'd0;
+	end else begin
+		status_telem_r[15:0]    <= status[15:0];
+		status_telem_r[23:16]   <= telem_flags;
+		status_telem_r[31:24]   <= last_nal_type;
+		status_telem_r[47:32]   <= nalu_count;
+		status_telem_r[55:48]   <= first_mb_type;
+		status_telem_r[63:56]   <= slice_type;
+		status_telem_r[71:64]   <= {residual_ok, residual_tc, residual_t1};
+		status_telem_r[79:72]   <= {ddr_busy, swap_pending, slice_qp};
+		status_telem_r[87:80]   <= sps_mb_w;
+		status_telem_r[95:88]   <= sps_mb_h;
+		// residual half from sticky ONLY (never live residual_csum, never stream)
+		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
+		status_telem_r[111:104] <= st_res_word_sticky[15:8];
+		status_telem_r[127:112] <= stream_bytes_in[15:0];
+	end
+end
+
+// Rank2 structural mask: force residual bytes from sticky before AR splice
+wire [127:0] status_telem_masked = {
+	status_telem_r[127:112],      // stream
+	st_res_word_sticky[15:8],     // csum forced from sticky
+	st_res_word_sticky[7:0],      // dc forced from sticky
+	status_telem_r[95:0]
+};
 
 // Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
+// status_set replaces entire word in Main; residual bits stay below AR splice.
 assign status_in = {
-	status_telem[127:123],
+	status_telem_masked[127:123],
 	status[122:121],
-	status_telem[120:0]
+	status_telem_masked[120:0]
 };
 
 // Pulse status_set ~1 kHz or when nalu/sps/slice/residual telem change so Main/ARM can poll.

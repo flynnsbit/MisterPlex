@@ -49,6 +49,8 @@ module stream_path (
 	// residual_coeff may be left unconnected at top until inv_quant; kept below.
 	output wire [7:0]  residual_csum,
 	output wire signed [8:0] residual_coeff [0:15],
+	// R-csum6 Rank3: 1-cycle ST_PLACE pulse for status residual sticky freeze
+	output wire        residual_place_pulse,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -168,6 +170,7 @@ module stream_path (
 		.residual_dc(sl_rdc),
 		.residual_csum(residual_csum),
 		.residual_coeff(residual_coeff),
+		.residual_place_pulse(residual_place_pulse),
 		.busy(sl_busy)
 	);
 
@@ -210,11 +213,10 @@ module stream_path (
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
-	// Touch residual_csum + a few coeff LSBs so place is not pruned if top
-	// only wires residual_dc / residual_csum and leaves residual_coeff open.
+	// Touch residual_csum + place pulse + a few coeff LSBs so place is not pruned.
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
-	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_coeff[0][0] |
-	             residual_coeff[1][0] | residual_coeff[15][0];
+	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
+	             residual_coeff[0][0] | residual_coeff[1][0] | residual_coeff[15][0];
 
 endmodule

@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -12,6 +13,7 @@
 #include <string>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -72,19 +74,40 @@ std::vector<pid_t> findMisterPids() {
     return out;
 }
 
+// Refcounted Main pause: nested SpiExclusive must not CONT until outermost.
+// Why pause at all: unpaused SPI races Main get_video_info → garbage vtime/width →
+// scaler retune → VGA "out of range" (HDMI often still OK). That is a real race.
+// Why not pause forever / watchdog: F12/OSD needs Main running between SPI words.
+// Design: STOP only for the actual SPI critical section (settle_us=0 on hot path);
+// long ops may use a short settle. Always CONT on outermost release.
+// Future (proper zero-SPI hot path): memory-mapped DDR kick so SPI is not needed
+// per frame — then pauseMain=false on present with no VGA race.
+std::atomic<int>& mainPauseDepth() {
+    static std::atomic<int> d{0};
+    return d;
+}
+
 struct MainPause {
     std::vector<pid_t> pids;
-    explicit MainPause(bool enable) {
+    explicit MainPause(bool enable, unsigned settle_us) {
         if (!enable)
             return;
-        pids = findMisterPids();
-        for (pid_t p : pids)
-            kill(p, SIGSTOP);
-        if (!pids.empty())
-            usleep(10000); // let SPI settle
+        if (mainPauseDepth().fetch_add(1) == 0) {
+            pids = findMisterPids();
+            for (pid_t p : pids)
+                kill(p, SIGSTOP);
+            if (settle_us && !pids.empty())
+                usleep(settle_us);
+        }
     }
     ~MainPause() {
-        for (pid_t p : pids)
+        if (mainPauseDepth().fetch_sub(1) != 1)
+            return;
+        // Outermost: CONT every MiSTer we can see (heal if list was empty at STOP).
+        auto now = findMisterPids();
+        if (now.empty())
+            now = pids;
+        for (pid_t p : now)
             kill(p, SIGCONT);
     }
     MainPause(const MainPause&) = delete;
@@ -92,17 +115,19 @@ struct MainPause {
 };
 
 // Order: process mutex → flock → MainPause. No system()/fork under the lock.
+// pauseMain: STOP Main for SPI exclusivity (VGA-safe).
+// settle_us: extra usleep after STOP — use 0 on per-frame DDR kick; 300 on long ops.
 struct SpiExclusive {
     std::lock_guard<std::recursive_mutex> mu;
     int lfd = -1;
     alignas(MainPause) unsigned char pause_storage_[sizeof(MainPause)]{};
     MainPause* pause = nullptr;
-    explicit SpiExclusive(bool pauseMain) : mu(spiMutex()) {
+    explicit SpiExclusive(bool pauseMain, unsigned settle_us = 300) : mu(spiMutex()) {
         lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
         if (lfd >= 0)
             flock(lfd, LOCK_EX);
         if (pauseMain)
-            pause = new (pause_storage_) MainPause(true);
+            pause = new (pause_storage_) MainPause(true, settle_us);
     }
     ~SpiExclusive() {
         if (pause) {
@@ -131,6 +156,99 @@ bool gpiUserMode(volatile uint32_t* map) {
 } // namespace
 
 FpgaSpi::~FpgaSpi() { close(); }
+
+bool FpgaSpi::healMainReloadPlex(const char* plexRbf) {
+    // Product path until present kicks leave SPI: after play, Main does not
+    // service F12/MiSTer_cmd until process restart (bus left inconsistent).
+    // Only called after play threads join (no concurrent SPI).
+    if (!plexRbf || !plexRbf[0])
+        plexRbf = "/media/fat/_Utility/Plex.rbf";
+    // CONT leftovers, then terminate and reap (avoid zombies — they break cmd path).
+    for (pid_t p : findMisterPids())
+        kill(p, SIGCONT);
+    usleep(50000);
+    std::vector<pid_t> old = findMisterPids();
+    for (pid_t p : old)
+        kill(p, SIGTERM);
+    for (int i = 0; i < 40; ++i) {
+        int st = 0;
+        while (waitpid(-1, &st, WNOHANG) > 0) {
+        }
+        if (findMisterPids().empty())
+            break;
+        usleep(50000);
+    }
+    for (pid_t p : findMisterPids())
+        kill(p, SIGKILL);
+    for (int i = 0; i < 20; ++i) {
+        int st = 0;
+        while (waitpid(-1, &st, WNOHANG) > 0) {
+        }
+        if (findMisterPids().empty())
+            break;
+        usleep(50000);
+    }
+    usleep(200000);
+    // Double-fork so Main is reparented to init (no zombie when companion is parent).
+    pid_t pid = fork();
+    if (pid < 0)
+        return false;
+    if (pid == 0) {
+        pid_t pid2 = fork();
+        if (pid2 < 0)
+            _exit(127);
+        if (pid2 > 0)
+            _exit(0); // intermediate exits; init adopts Main
+        setsid();
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            dup2(devnull, 0);
+            dup2(devnull, 1);
+            dup2(devnull, 2);
+            if (devnull > 2)
+                ::close(devnull);
+        }
+        chdir("/media/fat");
+        execl("/media/fat/MiSTer", "/media/fat/MiSTer", static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    int st = 0;
+    waitpid(pid, &st, 0); // reap intermediate
+    // Wait for Main to create cmd pipe and settle
+    for (int i = 0; i < 60; ++i) {
+        if (!findMisterPids().empty() && ::access("/dev/MiSTer_cmd", W_OK) == 0)
+            break;
+        usleep(100000);
+    }
+    usleep(800000);
+    int cfd = ::open("/dev/MiSTer_cmd", O_WRONLY | O_NONBLOCK);
+    if (cfd < 0)
+        return false;
+    char line[256];
+    int n = std::snprintf(line, sizeof(line), "load_core %s\n", plexRbf);
+    if (n > 0)
+        (void)::write(cfd, line, static_cast<size_t>(n));
+    ::close(cfd);
+    for (int i = 0; i < 60; ++i) {
+        int nfd = ::open("/tmp/CORENAME", O_RDONLY | O_CLOEXEC);
+        if (nfd >= 0) {
+            char buf[64]{};
+            ssize_t r = ::read(nfd, buf, sizeof(buf) - 1);
+            ::close(nfd);
+            if (r > 0) {
+                for (ssize_t j = 0; j < r; ++j) {
+                    if (buf[j] == '\n' || buf[j] == '\r')
+                        buf[j] = 0;
+                }
+                if (std::strstr(buf, "Plex") || std::strstr(buf, "plex") ||
+                    std::strstr(buf, "PLEX"))
+                    return true;
+            }
+        }
+        usleep(100000);
+    }
+    return false;
+}
 
 void FpgaSpi::setErr(std::string msg) {
     std::lock_guard<std::recursive_mutex> g(spiMutex());
@@ -170,6 +288,7 @@ bool FpgaSpi::open() {
 }
 
 void FpgaSpi::close() {
+    releaseDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
         map_ = nullptr;
@@ -178,6 +297,150 @@ void FpgaSpi::close() {
         ::close(fd_);
         fd_ = -1;
     }
+    ddrKickMode_ = 0;
+    doorbellSeq_ = 0;
+}
+
+bool FpgaSpi::ensureDdrMap() {
+    if (ddrMap_ && ddrMemFd_ >= 0)
+        return true;
+    releaseDdrMap();
+    // Map both banks (2×256KiB) + space through doorbell at 0x3007F000.
+    // Base 0x30000000, length 0x80000 covers 0x30000000..0x3007FFFF.
+    constexpr size_t kLen = 0x80000u;
+    ddrMemFd_ = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    if (ddrMemFd_ < 0) {
+        setErr("ensureDdrMap: open /dev/mem failed");
+        return false;
+    }
+    void* p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, ddrMemFd_,
+                   static_cast<off_t>(kDdrFrameBase));
+    if (p == MAP_FAILED) {
+        setErr("ensureDdrMap: mmap frame window failed");
+        ::close(ddrMemFd_);
+        ddrMemFd_ = -1;
+        return false;
+    }
+    ddrMap_ = static_cast<uint8_t*>(p);
+    ddrMapLen_ = kLen;
+    return true;
+}
+
+void FpgaSpi::releaseDdrMap() {
+    if (ddrMap_) {
+        munmap(ddrMap_, ddrMapLen_);
+        ddrMap_ = nullptr;
+        ddrMapLen_ = 0;
+    }
+    if (ddrMemFd_ >= 0) {
+        ::close(ddrMemFd_);
+        ddrMemFd_ = -1;
+    }
+}
+
+bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
+    // Poll status until flags clear (or timeout). No MainPause — present hot path.
+    const int step = 500;
+    int waited = 0;
+    while (waited < maxUs) {
+        uint8_t raw[16]{};
+        {
+            SpiExclusive guard(/*pauseMain=*/false, /*settle_us=*/0);
+            if (!map_ || !gpiUserMode(map_))
+                return false;
+            if (!readStatusRaw(raw))
+                return false;
+        }
+        CoreStatus st = parseCoreStatus(raw);
+        const bool busyOk = !clearBusy || !st.ddr_busy;
+        const bool pendOk = !clearPending || !st.swap_pending;
+        if (busyOk && pendOk)
+            return true;
+        usleep(step);
+        waited += step;
+    }
+    return false;
+}
+
+bool FpgaSpi::kickDdrDoorbell(int bank) {
+    if (!ddrMap_ || bank < 0 || bank > 1)
+        return false;
+    // Doorbell is at phys 0x3007F000 → offset 0x7F000 from map base 0x30000000
+    constexpr size_t kOff = 0x7F000u;
+    if (kOff + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
+    ++doorbellSeq_;
+    // Pack: [31:0]=magic, [62:32]=seq (31b), [63]=bank  → as two LE u32
+    // 64-bit word: low = magic, high = (bank<<31) | (seq & 0x7FFFFFFF)
+    const uint32_t seq = doorbellSeq_ & 0x7FFFFFFFu;
+    const uint32_t hi = (static_cast<uint32_t>(bank & 1) << 31) | seq;
+    dw[0] = kDdrDoorbellMagic;
+    dw[1] = hi;
+    __sync_synchronize();
+    return true;
+}
+
+bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick,
+                         bool& saw_frame) {
+    SpiExclusive guard(/*pauseMain=*/false);
+    if (!gpiUserMode(map_)) {
+        err_ = "FPGA not in user mode";
+        return false;
+    }
+    err_.clear();
+    uint8_t word[16]{};
+    std::memcpy(word, status_, 16);
+    if (first_verify) {
+        uint8_t live[16]{};
+        if (readStatusRaw(live)) {
+            word[0] = live[0];
+            word[1] = live[1];
+        }
+    }
+    word[0] = static_cast<uint8_t>(word[0] & ~0x01);
+    if (bank)
+        word[1] = static_cast<uint8_t>(word[1] | 0x20);
+    else
+        word[1] = static_cast<uint8_t>(word[1] & ~0x20);
+    word[1] = static_cast<uint8_t>(word[1] & ~0x10);
+    word[1] = static_cast<uint8_t>(word[1] & ~0x02);
+    writeStatusWordRaw(word);
+    word[1] = static_cast<uint8_t>(word[1] | 0x10);
+    writeStatusWordRaw(word);
+    if (first_verify) {
+        for (int i = 0; i < 40; ++i) {
+            uint8_t raw[16]{};
+            if (!readStatusRaw(raw))
+                break;
+            if (raw[1] & 0x10)
+                saw_kick = true;
+            CoreStatus st = parseCoreStatus(raw);
+            if (st.ddr_busy)
+                saw_busy = true;
+            if (st.has_frame)
+                saw_frame = true;
+            if (saw_busy || (saw_kick && saw_frame && i >= 2))
+                break;
+            usleep(200);
+        }
+    }
+    word[1] = static_cast<uint8_t>(word[1] & ~0x10);
+    writeStatusWordRaw(word);
+    if (first_verify) {
+        uint8_t raw[16]{};
+        if (readStatusRaw(raw)) {
+            if (raw[1] & 0x10)
+                saw_kick = true;
+            CoreStatus st = parseCoreStatus(raw);
+            if (st.has_frame)
+                saw_frame = true;
+            if (st.ddr_busy)
+                saw_busy = true;
+        }
+    }
+    std::memcpy(status_, word, 16);
+    return true;
 }
 
 void FpgaSpi::gpoWrite(uint32_t v) {
@@ -501,130 +764,89 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
         setErr("sendRgb565FrameDdr: bank must be 0 or 1");
         return false;
     }
-    auto t0 = std::chrono::steady_clock::now();
-
-    // Map frame bank in HPS-visible DDR (same window cores use for 0x3xxxxxxx).
-    const off_t phys = static_cast<off_t>(kDdrFrameBase + static_cast<uint32_t>(bank) * kDdrFrameStride);
-    int mfd = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
-    if (mfd < 0) {
-        setErr("sendRgb565FrameDdr: open /dev/mem failed");
-        return false;
-    }
-    // Map a full page-aligned region covering the bank stride.
-    const size_t mapLen = kDdrFrameStride;
-    void* p = mmap(nullptr, mapLen, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, phys);
-    if (p == MAP_FAILED) {
-        setErr("sendRgb565FrameDdr: mmap frame bank failed");
-        ::close(mfd);
-        return false;
-    }
-    std::memcpy(p, rgb565le, len);
-    // Ensure visibility before kicking the FPGA DMA (O_SYNC map + explicit clean).
-    __sync_synchronize();
-    munmap(p, mapLen);
-    ::close(mfd);
-
-    // status[13]=bank, status[12]=start (rising edge). One SpiExclusive session so
-    // we pay MainPause (~10 ms) once instead of per setStatusBit (~100–200 ms total).
-    // status_in v2 echoes [15:0] so kick bits survive Main status_set.
-    //
-    // ddr_busy (status_in[79]) is real in fabric but often *invisible* via
-    // UIO_GET_STATUS: status_req only latches on status_set (~st_div), and DMA
-    // finishes in ~1–3 ms (busy cleared, has_frame=1) before a latched sample.
-    // Lab: mmap@0x30000000 + status[12] 0→1 yields has_frame 0→1; bit12 echoes;
-    // ddr_busy samples stayed 0. Verify = kick echo + has_frame (or busy if seen).
-    static int ddr_verified = 0; // 0=unknown, 1=ok, -1=missing
-    if (ddr_verified < 0) {
+    if (ddrKickMode_ < 0) {
         setErr("sendRgb565FrameDdr: DDR path previously unavailable");
         return false;
     }
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+
+    auto t0 = std::chrono::steady_clock::now();
+
+    // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
+    // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
+    // (status latch is sparse and was adding ~100 ms → pfps collapse).
+    usleep(1500);
+
+    // Copy frame into bank (persistent map).
+    const size_t bankOff = static_cast<size_t>(bank) * kDdrFrameStride;
+    std::memcpy(ddrMap_ + bankOff, rgb565le, len);
+    __sync_synchronize();
 
     bool saw_busy = false;
     bool saw_kick = false;
     bool saw_frame = false;
-    {
-        SpiExclusive guard(true);
-        if (!gpiUserMode(map_)) {
-            err_ = "FPGA not in user mode";
-            return false;
-        }
-        err_.clear();
+    const bool first = (ddrKickMode_ == 0);
 
-        uint8_t word[16]{};
-        std::memcpy(word, status_, 16);
-        uint8_t live[16]{};
-        if (readStatusRaw(live)) {
-            word[0] = live[0];
-            word[1] = live[1];
-        }
-        // Clear Reset sticky; set bank; start low.
-        word[0] = static_cast<uint8_t>(word[0] & ~0x01);
-        if (bank)
-            word[1] = static_cast<uint8_t>(word[1] | 0x20); // bit 13
-        else
-            word[1] = static_cast<uint8_t>(word[1] & ~0x20);
-        word[1] = static_cast<uint8_t>(word[1] & ~0x10); // bit 12 = 0
-        word[1] = static_cast<uint8_t>(word[1] & ~0x02); // bit 9 force-bars off
-        writeStatusWordRaw(word);
-        usleep(200);
-
-        // Rising edge start
-        word[1] = static_cast<uint8_t>(word[1] | 0x10);
-        writeStatusWordRaw(word);
-
-        if (ddr_verified == 0) {
-            // Hold start high; sample latched status_req. DMA is short — has_frame
-            // is the reliable done flag; busy is a bonus if latched mid-copy.
-            for (int i = 0; i < 40; ++i) {
-                uint8_t raw[16]{};
-                if (!readStatusRaw(raw))
-                    break;
-                if (raw[1] & 0x10)
-                    saw_kick = true;
-                CoreStatus st = parseCoreStatus(raw);
-                if (st.ddr_busy)
-                    saw_busy = true;
-                if (st.has_frame)
-                    saw_frame = true;
-                if (saw_busy || (saw_kick && saw_frame && i >= 2))
-                    break;
-                usleep(200);
-            }
-        } else {
-            usleep(3000); // DMA finish without thrashing SPI
-        }
-
-        // Drop start
-        word[1] = static_cast<uint8_t>(word[1] & ~0x10);
-        writeStatusWordRaw(word);
-
-        // Final has_frame sample after start low
-        if (ddr_verified == 0 || !saw_frame) {
-            uint8_t raw[16]{};
-            if (readStatusRaw(raw)) {
-                if (raw[1] & 0x10)
-                    saw_kick = true;
-                CoreStatus st = parseCoreStatus(raw);
-                if (st.has_frame)
-                    saw_frame = true;
-                if (st.ddr_busy)
-                    saw_busy = true;
+    // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
+    bool kicked = false;
+    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+        if (kickDdrDoorbell(bank)) {
+            kicked = true;
+            if (first) {
+                // Give poller time to see seq; expect busy / pending / has_frame.
+                usleep(3000);
+                for (int i = 0; i < 40; ++i) {
+                    uint8_t raw[16]{};
+                    {
+                        SpiExclusive guard(/*pauseMain=*/false, /*settle_us=*/0);
+                        if (!readStatusRaw(raw))
+                            break;
+                    }
+                    CoreStatus st = parseCoreStatus(raw);
+                    if (st.ddr_busy)
+                        saw_busy = true;
+                    if (st.has_frame)
+                        saw_frame = true;
+                    if (st.swap_pending)
+                        saw_kick = true;
+                    if (saw_busy || saw_frame || saw_kick)
+                        break;
+                    usleep(500);
+                }
+                if (!(saw_busy || saw_frame || saw_kick)) {
+                    kicked = false; // fall through to SPI
+                } else {
+                    ddrKickMode_ = 1;
+                }
             }
         }
     }
-
-    if (ddr_verified == 0) {
-        const bool ok = saw_busy || (saw_kick && saw_frame);
-        ddr_verified = ok ? 1 : -1;
-        if (!ok) {
-            setErr("sendRgb565FrameDdr: no kick/frame (busy=" +
-                   std::to_string(saw_busy ? 1 : 0) + " kick=" +
-                   std::to_string(saw_kick ? 1 : 0) + " frame=" +
-                   std::to_string(saw_frame ? 1 : 0) +
-                   "; RBF lacks 3.1b or status[12] not reaching ddram_frame_rd?)");
+    if (!kicked && (ddrKickMode_ == 2 || ddrKickMode_ == 0)) {
+        if (!kickDdrSpi(bank, first, saw_busy, saw_kick, saw_frame))
             return false;
+        if (first) {
+            const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
+            if (!ok) {
+                ddrKickMode_ = -1;
+                setErr("sendRgb565FrameDdr: no kick/frame via SPI or doorbell");
+                return false;
+            }
+            ddrKickMode_ = 2;
         }
     }
+    if (first && ddrKickMode_ == 0) {
+        ddrKickMode_ = -1;
+        setErr("sendRgb565FrameDdr: could not kick DDR path");
+        return false;
+    }
+
+    // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
+    // in frame_store prevents tears without host blocking on swap_pending.
+    if (!first)
+        usleep(500);
 
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -712,7 +934,7 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     //   [23:16]  flags   [31:24] last_nal
     //   [47:32]  nalu_count
     //   [55:48]  mb0     [63:56] slice_type
-    //   [71:64]  residual pack   [79:72] {ddr_busy,0,qp}
+    //   [71:64]  residual pack   [79:72] {ddr_busy,swap_pending,qp}
     //   [87:80]  sps_mb_w        [95:88] sps_mb_h
     //   [103:96] residual_dc  [111:104] residual_csum8  [127:112] stream_bytes[15:0]
     //   AR may touch [122:121] (stream MSBs). Pre-3.3l-1 RBF: [127:104] was 24b bytes.
@@ -745,6 +967,7 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.residual_t1 = static_cast<uint8_t>(res_pack & 0x3);
     const uint8_t ddr_qp = static_cast<uint8_t>((w4 >> 8) & 0xFF);
     s.ddr_busy = (ddr_qp & 0x80) != 0;
+    s.swap_pending = (ddr_qp & 0x40) != 0;
     s.slice_qp = static_cast<uint8_t>(ddr_qp & 0x3F);
     s.stream_fifo_level = 0;
 

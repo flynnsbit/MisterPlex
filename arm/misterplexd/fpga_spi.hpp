@@ -18,6 +18,12 @@ public:
     void close();
     bool ok() const { return map_ != nullptr; }
 
+    // After HPS SPI present traffic, Main often ignores F12 / MiSTer_cmd until the
+    // MiSTer process is restarted (SPI bus left inconsistent; Main stays state=R).
+    // Restart Main and reload Plex.rbf so OSD works again. Call after play stop.
+    // Glitches video briefly; required until DDR kick is memory-mapped (no SPI).
+    static bool healMainReloadPlex(const char* plexRbf = "/media/fat/_Utility/Plex.rbf");
+
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
     // For Plex core F1 frame store, index is typically 1.
     bool sendFileTx(const uint8_t* data, size_t len, uint8_t index = 1);
@@ -29,14 +35,18 @@ public:
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
-    // Phase 3.1b: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000) + status[12] kick.
-    // Beats SPI F1 (~0.8 MB/s). Frame must be 320×240×2 = 153600 B.
-    // bank 0 → 0x30000000, bank 1 → 0x30040000.
+    // Phase 3.1b: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000).
+    // Product path: mmap frame + doorbell @ 0x3007F000 (no SPI kick).
+    // Fallback: status[12]/[13] SPI kick if doorbell fails first verify.
+    // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
+    // Frame must be 320×240×2 = 153600 B. bank 0 → 0x30000000, bank 1 → 0x30040000.
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
+    static constexpr uint32_t kDdrDoorbellPhys = 0x3007F000u;
+    static constexpr uint32_t kDdrDoorbellMagic = 0x504C584Bu; // "PLXK"
     static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
@@ -90,7 +100,8 @@ public:
         // 3.3l-1: residualCsum8 = XOR satS8(coeff[i]); raw[13]/status[111:104].
         // Golden Baseline first residual = 0x14 (20). Pre-3.3l-1 RBF: stream_bytes[7:0].
         uint8_t residual_csum = 0;
-        bool ddr_busy = false; // status_in[79] (v2) — DDR→BRAM copy in flight
+        bool ddr_busy = false;      // status_in[79] (v2) — DDR→BRAM copy in flight
+        bool swap_pending = false;  // status_in[78] — display bank flip waiting for vsync
         uint8_t stub_frames = 0; // legacy alias
         uint16_t sps_width = 0;
         uint16_t sps_height = 0;
@@ -132,6 +143,17 @@ private:
     uint8_t status_[16]{};
     double lastPushMs_ = 0;
     std::string err_;
+    // Persistent HPS DDR frame window (both banks + doorbell page).
+    int ddrMemFd_ = -1;
+    uint8_t* ddrMap_ = nullptr;
+    size_t ddrMapLen_ = 0;
+    uint32_t doorbellSeq_ = 0;
+    int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
+    bool ensureDdrMap();
+    void releaseDdrMap();
+    bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
+    bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
+    bool kickDdrDoorbell(int bank);
     static constexpr uint32_t kMgrBase = 0xFF706000;
     static constexpr uint32_t kMapBase = 0xFF000000;
     static constexpr size_t kMapSize = 0x01000000;
