@@ -119,7 +119,7 @@ wire [7:0]   recon_sig;
 wire         recon_valid;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
-wire [18:0]  wr_count;
+wire [31:0]  wr_count;
 
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
@@ -254,6 +254,25 @@ localparam int SDRAM_REFRESH_CYCLES = 389;
 localparam int SDRAM_CLK_HZ = 100_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
+
+`ifndef FRAME_W
+`define FRAME_W 320
+`endif
+`ifndef FRAME_H
+`define FRAME_H 240
+`endif
+localparam int FRAME_W = `FRAME_W;
+localparam int FRAME_H = `FRAME_H;
+`ifdef FRAME_STRIDE
+localparam int FRAME_STRIDE = `FRAME_STRIDE;
+`else
+localparam int FRAME_STRIDE = FRAME_W;
+`endif
+localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
+localparam int HPS_BANK_STRIDE_BYTES =
+	(FRAME_BYTES <= 262144)  ? 262144  :
+	(FRAME_BYTES <= 1048576) ? 1048576 :
+	(FRAME_BYTES <= 2097152) ? 2097152 : 4194304;
 
 // Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
 // the stick, publishes PLXM, then hands the port to the B2 frame store.
@@ -416,9 +435,11 @@ wire [15:0] ddr_frames;
 wire        swap_pending;
 
 ddram_frame_rd #(
-	.WIDTH(320),
-	.HEIGHT(240),
+	.FRAME_W(FRAME_W),
+	.FRAME_H(FRAME_H),
+	.FRAME_STRIDE(FRAME_STRIDE),
 	.PHYS_BASE(32'h3000_0000),
+	.HPS_BANK_STRIDE_BYTES(HPS_BANK_STRIDE_BYTES),
 	.BURST(32)
 ) ddr_fr (
 	.clk(clk_sys),
@@ -485,7 +506,10 @@ wire [15:0] stub_wr_pixel;
 wire        stub_wr_reset;
 wire        stub_swap;
 
-stream_path spath (
+stream_path #(
+	.FRAME_W(FRAME_W),
+	.FRAME_H(FRAME_H)
+) spath (
 	.clk(clk_sys),
 	.reset(reset),
 	.ioctl_download(ioctl_download),
@@ -567,6 +591,9 @@ wire advance;
 // swap_pending declared above (fed back into ddram_frame_rd hold-off)
 
 present_core #(
+	.FRAME_W(FRAME_W),
+	.FRAME_H(FRAME_H),
+	.FRAME_STRIDE(FRAME_STRIDE),
 	.SDRAM_REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) present (
 	.clk(clk_sys),

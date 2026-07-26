@@ -1,4 +1,4 @@
-// True dual-clock 320×16 line buffer RAM.
+// True dual-clock parameterized WIDTH×16 line buffer RAM.
 module line_buf_ram #(
 	parameter int WIDTH = 320,
 	parameter int AW = 9

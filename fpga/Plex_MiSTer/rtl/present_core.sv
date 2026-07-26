@@ -2,6 +2,9 @@
 // Display owns VSync; unique content advances only when present_cadence says so.
 
 module present_core #(
+	parameter int FRAME_W = 320,
+	parameter int FRAME_H = 240,
+	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 `ifdef FRAME_CMD_FIFO_AW4
 	parameter int FRAME_CMD_FIFO_AW = 4,
@@ -72,7 +75,7 @@ module present_core #(
 	output wire [31:0] stat_content_index,
 	output wire        stat_advance,
 	output wire        stat_has_frame,
-	output wire [18:0] stat_wr_count,
+	output wire [31:0] stat_wr_count,
 	output wire        stat_has_audio,
 	output wire        stat_audio_underrun,
 	output wire        stat_swap_pending,
@@ -123,14 +126,21 @@ module present_core #(
 		.b(bb)
 	);
 
-	// Stretch 320×240 frame_store across full Template DE — match colorbars in_content.
+	localparam int FRAME_X_W = $clog2(FRAME_W);
+	localparam int FRAME_Y_W = $clog2(FRAME_H);
+
+	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
 	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
 	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
 	localparam H_DE    = 10'd529;
-	localparam H_STORE = 10'd320;
+	localparam V_STORE = 10'd240;
+	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
+	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_W - 1;
+	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_H - 1;
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-	wire in_content = (hc < H_DE) && (py < 10'd240) && ~hb && ~vb;
+	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
 	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
 	// Drive the address straight from the clamped counter, with no blank-time special
@@ -141,10 +151,10 @@ module present_core #(
 	// the clamp naturally holds column 319 through the right overhang, and hc wraps to
 	// 0 early in the left blank so column 0 is ready before DE opens.
 	wire [9:0] read_hc = hc;
-	wire [25:0] store_x_prod = read_hc * 16'd39647;
-	wire [9:0]  store_x_comb = store_x_prod[25:16];
-	wire [9:0]  store_x_clamped =
-		(store_x_comb >= H_STORE) ? (H_STORE - 10'd1) : store_x_comb;
+	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
+	wire [15:0] store_x_comb = store_x_prod[31:16];
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(store_x_comb >= FRAME_W) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
 
 	// colorbars moves the V blank edges at hc == H_SYNC_S, i.e. AFTER each line's
 	// active region, so VBlank releases a line early with respect to the content
@@ -154,16 +164,20 @@ module present_core #(
 	// That surplus row is the "bottom line": nothing gates it on py, so it reads
 	// store_y = 240, one row past the end of the 240-row store.
 	// Blank it, and clamp the address so an out-of-range row can never be fetched.
-	wire       past_last_row = (py >= 10'd240);
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	wire       past_last_row = (py >= V_STORE);
+	wire [31:0] store_y_prod = py * STORE_Y_SCALE;
+	wire [15:0] store_y_comb = store_y_prod[31:16];
+	wire [FRAME_Y_W-1:0] store_y_scaled =
+		(store_y_comb >= FRAME_H) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	wire [FRAME_Y_W-1:0] store_y_clamped = past_last_row ? FRAME_LAST_Y : store_y_scaled;
 
-	reg [9:0] store_x;
-	reg [9:0] store_y;
+	reg [FRAME_X_W-1:0] store_x;
+	reg [FRAME_Y_W-1:0] store_y;
 	reg       de_r; // registered in_content for frame_store read align
 	always @(posedge clk) begin
 		if (reset) begin
-			store_x <= 10'd0;
-			store_y <= 10'd0;
+			store_x <= '0;
+			store_y <= '0;
 			de_r    <= 1'b0;
 		end else if (ce_pix_i) begin
 			de_r    <= in_content;
@@ -175,14 +189,15 @@ module present_core #(
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
 	wire       swap_pending;
-	wire [18:0] wr_count;
+	wire [31:0] wr_count;
 	wire        wr_done;
 	wire [15:0] frame_underruns;
 	wire [7:0]  frame_sdram_state;
 
 	frame_store #(
-		.WIDTH(320),
-		.HEIGHT(240),
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.FRAME_STRIDE(FRAME_STRIDE),
 		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES),
 		.CMD_FIFO_AW(FRAME_CMD_FIFO_AW),
 		.LINE_COUNT(FRAME_LINE_COUNT)
