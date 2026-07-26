@@ -11,12 +11,13 @@ from pathlib import Path
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("out", nargs="?", default="plex_real_baseline.h264")
+    ap.add_argument("out", nargs="?", default="plex_real_baseline.264")
     ap.add_argument("--w", type=int, default=320)
     ap.add_argument("--h", type=int, default=240)
     ap.add_argument("--frames", type=int, default=1)
     args = ap.parse_args()
     out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         print("ffmpeg not found", file=sys.stderr)

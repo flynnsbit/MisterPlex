@@ -367,16 +367,20 @@ int main(int argc, char** argv) {
     if (!testTableFirst4x4InvQuantIdct())
         return 1;
 
-    const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.h264";
+
+    const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.264";
     auto blob = readFile(path);
     if (blob.empty()) {
-        if (std::system("python3 scripts/gen_test_annexb_real.py build/plex_real_baseline.h264") !=
+        if (std::system("python3 scripts/gen_test_annexb_real.py build/plex_real_baseline.264") !=
+
             0) {
             std::printf("FAIL: no bitstream (gen_test_annexb_real.py)\n");
             return 1;
         }
-        blob = readFile("build/plex_real_baseline.h264");
-        path = "build/plex_real_baseline.h264";
+
+        blob = readFile("build/plex_real_baseline.264");
+        path = "build/plex_real_baseline.264";
+
     }
     if (blob.empty()) {
         std::printf("FAIL: empty bitstream\n");

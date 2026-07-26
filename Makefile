@@ -17,7 +17,7 @@ help:
 
 test: unit
 
-UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.h264
+UNIT_ANNEXB := 1000 969 985 998 1000ROOT)/build/plex_real_baseline.264
 
 unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
@@ -28,11 +28,14 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
-	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
-	$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)
-	$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)
-	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
-	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
+
+	@mkdir -p $(ROOT)/build
+	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_sps_parse $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_slice_hdr $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_cavlc_dc $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_idct_quant $(ROOT)/build/plex_real_baseline.264
+
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh

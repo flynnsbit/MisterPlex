@@ -620,7 +620,7 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
 pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
                                     int64_t startMs, int writeFd) {
     // Lightweight copy-demux: annex-B elementary for host recon + F3 (no re-encode).
-    // Prefer direct elementary when already annex-B (.h264); otherwise remux via BSF.
+    // Prefer direct elementary when already annex-B (.264); otherwise remux via BSF.
     const bool elementary = looksElementaryH264(url);
     std::vector<std::string> args;
     args.push_back(ffmpeg_);

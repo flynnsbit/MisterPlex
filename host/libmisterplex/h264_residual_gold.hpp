@@ -1,5 +1,5 @@
 // Phase 3.3l-0/1/2: locked host goldens for first residual of Baseline F3 vector.
-// Clip: scripts/gen_test_annexb_real.py → /tmp/plex_real_baseline.h264
+// Clip: scripts/gen_test_annexb_real.py → build/plex_real_baseline.264
 // Source of truth for FPGA ST_PLACE coeff[0:15] + residual_csum (3.3l-1)
 // and inv_quant+IDCT first 4×4 paint / recon_y00·mean (3.3l-2).
 //

@@ -185,7 +185,7 @@ Phase 3.3k (product path polish — done earlier this arc):
   **Prefer direct elementary H.264 for STREAM:**
     - resolve `preferDirectH264` when STREAM=1 → direct Part if Media/Stream is h264/avc
     - avoids Chrome universal High/CABAC that host CAVLC cannot recon
-    - local `.h264`/`.264` demux skips `h264_mp4toannexb` BSF
+    - local `.264` demux skips `h264_mp4toannexb` BSF
   **Optional skip heavy FFmpeg RGB** (`STREAM_SKIP_RGB=auto|on|off`):
     - auto/on + PRESENT=fpga: skip RGB **from session start** (audio + demux; recon owns F1)
     - PRESENT=both/fb0: always keep RGB (continuous fb0 / STREAM=0 path intact)

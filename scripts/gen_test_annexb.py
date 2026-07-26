@@ -14,7 +14,8 @@ def nal(unit_type: int, payload: bytes) -> bytes:
 
 
 def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "plex_test_annexb.h264")
+    out = Path(sys.argv[1] if len(sys.argv) > 1 else "plex_test_annexb.264")
+    out.parent.mkdir(parents=True, exist_ok=True)
     # Minimal fake SPS/PPS/IDR-ish NALs with distinct types 7, 8, 5
     blob = b""
     blob += nal(7, b"SPS" + b"\x00" * 16)
