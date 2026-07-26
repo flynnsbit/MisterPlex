@@ -75,7 +75,9 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
   **Verification is now automated and self-checking** — `scripts/gen_edge_markers.py` pushes a
   synthetic marker frame and `scripts/check_edges.py` captures HDMI and grades all four edges on
   both position and run width (exit 0 = pass). Reports `PASS: all four edges correct`, and live
-  TNG shows col0↔col319 r=0.33 / row0↔row239 r=0.13 (no wrap). User confirmed left/right on VGA.
+  TNG shows col0↔col319 r=0.33 / row0↔row239 r=0.13 (no wrap). **User confirmed all four edges
+  eyes-on on VGA (2026-07-26)** — left/right after the horizontal fix, bottom after the 241st-row
+  fix. Closed.
   *Measurement traps worth remembering:* MJPEG 4:2:0 **fabricates** colours at 1 px saturated
   boundaries (use `-input_format yuyv422` and luma-coded markers); `/dev/video4` needs ~60 warm-up
   frames; captures right after a DDR push can be torn — validate with solid white/black first.
