@@ -5,6 +5,8 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
+PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
@@ -22,26 +24,27 @@ fi
 python3 - <<'PY'
 from pathlib import Path
 import math, struct
+Path("build").mkdir(exist_ok=True)
 rate, n, amp = 48000, 4096, 10000
 buf = bytearray()
 for i in range(n):
     s = int(amp * math.sin(2 * math.pi * 440.0 * i / rate))
     buf += struct.pack("<hh", s, s)
-Path("/tmp/plex_f2_chunk16k.s16le").write_bytes(buf)
+Path("build/plex_f2_chunk16k.s16le").write_bytes(buf)
 print(len(buf))
 PY
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_f2_chunk16k.s16le \
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$ROOT/build/plex_f2_chunk16k.s16le" \
   "$USER@$HOST:/media/fat/plex_f2_chunk16k.s16le"
 
 echo "=== 8× F2 append (SPI, no host flush) ==="
 OUT=$(ssh_m '
 ok=0
 for i in 1 2 3 4 5 6 7 8; do
-  /media/fat/misterplex/bin/push_frame --index 2 /media/fat/plex_f2_chunk16k.s16le >/tmp/f2push.out || exit 1
+  /media/fat/misterplex/bin/push_frame --index 2 /media/fat/plex_f2_chunk16k.s16le >/media/fat/f2push.out || exit 1
   ok=$((ok+1))
 done
 echo chunks_ok=$ok
-cat /tmp/f2push.out
+cat /media/fat/f2push.out
 ')
 echo "$OUT"
 echo "$OUT" | grep -q 'chunks_ok=8'
@@ -49,20 +52,24 @@ echo "$OUT" | grep -q 'OK'
 
 echo "=== live testsrc: require F2 continuous (f2≈audio bytes) ==="
 # Truncate log so we can match this session only
-ssh_m 'cp /media/fat/misterplex/misterplexd.log /tmp/mpx.log.bak; : > /media/fat/misterplex/misterplexd.log; killall -HUP misterplexd 2>/dev/null || true'
+ssh_m 'cp /media/fat/misterplex/misterplexd.log /media/fat/misterplex/mpx.log.bak; : > /media/fat/misterplex/misterplexd.log; killall -HUP misterplexd 2>/dev/null || true'
 # Restart daemon so log is clean and companion is up
-ssh_m '
+PMS_ARG=""
+if [[ -n "$PMS_URL" ]]; then
+  PMS_ARG="--pms '$PMS_URL'"
+fi
+ssh_m "
 killall misterplexd 2>/dev/null || true
 sleep 1
 fuser -k 3005/tcp 2>/dev/null || true
 sleep 1
 cd /media/fat/misterplex
-nohup ./bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 \
+nohup ./bin/misterplexd --name MiSTerPlex --id '$PLAYER_ID' --port 3005 \
   --conf /media/fat/misterplex/misterplex.conf \
-  --pms http://192.168.1.41:32400 >> /media/fat/misterplex/misterplexd.log 2>&1 &
+  $PMS_ARG >> /media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 2
-grep -q "companion on" /media/fat/misterplex/misterplexd.log
-'
+grep -q 'companion on' /media/fat/misterplex/misterplexd.log
+"
 
 curl -sS -m 5 "http://${HOST}:3005/player/playback/playMedia?key=testsrc&offset=0&protocol=http&address=127.0.0.1&port=32400&machineIdentifier=local&token=x" \
   -H 'X-Plex-Client-Identifier: f2append' >/dev/null

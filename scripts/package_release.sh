@@ -89,7 +89,8 @@ if [[ -f "$CONF_EX" ]]; then
   cp -a "$CONF_EX" "$STAGE/conf/misterplex.conf.example"
 else
   cat >"$STAGE/conf/misterplex.conf.example" <<'EOF'
-PLEX_BASE=http://192.168.1.41:32400
+# Set this to your Plex Media Server, for example:
+# PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
 PRESENT=fb0
 STREAM=0

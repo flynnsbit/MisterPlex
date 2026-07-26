@@ -41,7 +41,7 @@ scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf   #
 ```bash
 make arm-plexd
 make package                    # rebuilds ARM if needed; copies Plex.rbf when present
-./scripts/deploy_misterplexd.sh # HOST default 192.168.1.183, pass 1
+MISTER_HOST=<mister-ip> ./scripts/deploy_misterplexd.sh
 ./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
 
@@ -49,9 +49,8 @@ Startup hook (idempotent via deploy script):
 
 ```bash
 /media/fat/misterplex/bin/misterplexd \
-  --name MiSTerPlex --id misterplex-183 --port 3005 \
+  --name MiSTerPlex --id misterplex-dev --port 3005 \
   --conf /media/fat/misterplex/misterplex.conf \
-  --pms http://192.168.1.41:32400 \
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 ```
 
@@ -67,8 +66,8 @@ File: `/media/fat/misterplex/misterplex.conf` (see [`assets/misterplex.conf.exam
 
 | Key | Example | Meaning |
 |-----|---------|---------|
-| `PLEX_BASE` | `http://192.168.1.41:32400` | Default PMS URL for resolve |
-| `PLEX_HOST` | `192.168.1.41` | Alternate host; builds `http://HOST:32400` (overrides base host) |
+| `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
+| `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
 | `FFMPEG` | `/media/fat/mistercast/bin/ffmpeg` | FFmpeg binary (Phase 2 path) |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
@@ -135,7 +134,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Lab note | Status |
 |----------|--------|
 | Soak on wlan0 (eth NO-CARRIER) | **PASS** `2 keys × 5 rounds × 12s` (10 plays, ~137s) after SPI + F2 throttle fixes |
-| Side-by-side eth vs wifi numbers | **Deferred** until eth cable present on 192.168.1.183 |
+| Side-by-side eth vs wifi numbers | **Deferred** until ethernet is available on the lab MiSTer |
 | Wi-Fi blips | Whole-host SSH/curl timeouts can fail soak without daemon fault — re-run after AP recover |
 
 ## Known limits (Phase 5)

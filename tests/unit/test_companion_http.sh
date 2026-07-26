@@ -119,7 +119,7 @@ echo "$MIRROR" | grep -q 'location="navigation"' || fail "mirror not navigation:
 echo "$MIRROR" | grep -qv 'fullScreenVideo' || fail "mirror fullScreenVideo: $MIRROR"
 
 # --- playMedia with full play-queue bind fields (Web scrubber contract) ---
-PQ=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F9&containerKey=%2FplayQueues%2F42%3Fown%3D1&playQueueItemID=99&playQueueVersion=3&ratingKey=9&address=192.168.1.41&port=32400&protocol=http&machineIdentifier=server-mid&offset=0&commandID=7")
+PQ=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F9&containerKey=%2FplayQueues%2F42%3Fown%3D1&playQueueItemID=99&playQueueVersion=3&ratingKey=9&address=pms.lan&port=32400&protocol=http&machineIdentifier=server-mid&offset=0&commandID=7")
 echo "$PQ" | grep -q Timeline
 # Immediate ACK should already expose queue bind (async resolve later)
 echo "$PQ" | grep -q 'playQueueID="42"' || fail "ACK missing playQueueID: $PQ"
@@ -127,7 +127,7 @@ echo "$PQ" | grep -q 'playQueueItemID="99"' || fail "ACK missing playQueueItemID
 echo "$PQ" | grep -q 'containerKey="/playQueues/42' || fail "ACK missing containerKey: $PQ"
 echo "$PQ" | grep -q 'key="/library/metadata/9"' || fail "ACK missing key: $PQ"
 echo "$PQ" | grep -q 'location="fullScreenVideo"' || fail "ACK not fullScreenVideo: $PQ"
-echo "$PQ" | grep -q 'address="192.168.1.41"' || fail "ACK missing server address: $PQ"
+echo "$PQ" | grep -q 'address="pms.lan"' || fail "ACK missing server address: $PQ"
 
 sleep 0.3
 POLL2=$(curl -fsS "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=8")

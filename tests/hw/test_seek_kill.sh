@@ -5,6 +5,8 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 BASE="http://${HOST}:3005"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
+PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
+PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
@@ -33,7 +35,11 @@ if curl -fsS --connect-timeout 2 "$BASE/resources" >/dev/null 2>&1; then
 fi
 
 echo "=== restart daemon ==="
-ssh_m 'nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400 >>/media/fat/misterplex/misterplexd.log 2>&1 &'
+PMS_ARG=""
+if [[ -n "$PMS_URL" ]]; then
+  PMS_ARG="--pms '$PMS_URL'"
+fi
+ssh_m "nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id '$PLAYER_ID' --port 3005 --conf /media/fat/misterplex/misterplex.conf $PMS_ARG >>/media/fat/misterplex/misterplexd.log 2>&1 &"
 sleep 1.5
 curl -fsS --connect-timeout 5 "$BASE/resources" | grep -q MiSTerPlex
 
