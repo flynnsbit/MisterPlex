@@ -21,10 +21,9 @@ fi
 
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   'mkdir -p /media/fat/misterplex/bin /media/fat/misterplex/scripts
-   killall -9 misterplexd 2>/dev/null || true
-   # Orphaned ffmpeg can inherit :3005 if CLOEXEC was missing — free the port
-   fuser -k 3005/tcp 2>/dev/null || true
-   killall -9 ffmpeg 2>/dev/null || true
+   for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
+     kill -9 "$p" 2>/dev/null || true
+   done
    sleep 0.4
    rm -f /media/fat/misterplex/bin/misterplexd'
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"

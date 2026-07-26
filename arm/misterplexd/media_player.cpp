@@ -4,6 +4,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/pixel_format.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -97,28 +98,17 @@ inline void scaleRgb565(const uint16_t* src, int sw, int sh, uint16_t* dst, int 
 inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t>& out) {
     out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
     for (int i = 0; i < w * h; ++i) {
-        const uint16_t p = src[i];
-        const int r = (p >> 11) & 0x1f;
-        const int g = (p >> 5) & 0x3f;
-        const int b = p & 0x1f;
-        out[static_cast<size_t>(i) * 3 + 0] = static_cast<uint8_t>((r << 3) | (r >> 2));
-        out[static_cast<size_t>(i) * 3 + 1] = static_cast<uint8_t>((g << 2) | (g >> 4));
-        out[static_cast<size_t>(i) * 3 + 2] = static_cast<uint8_t>((b << 3) | (b >> 2));
+        uint8_t r = 0, g = 0, b = 0;
+        pixel::expandRgb565(src[i], r, g, b);
+        out[static_cast<size_t>(i) * 3 + 0] = r;
+        out[static_cast<size_t>(i) * 3 + 1] = g;
+        out[static_cast<size_t>(i) * 3 + 2] = b;
     }
 }
 
 inline void packRgb24ToRgb565Le(const uint8_t* rgb, int w, int h, std::vector<uint8_t>& out) {
     out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
-    size_t o = 0;
-    for (int i = 0; i < w * h; ++i) {
-        const uint8_t r = rgb[i * 3 + 0];
-        const uint8_t g = rgb[i * 3 + 1];
-        const uint8_t b = rgb[i * 3 + 2];
-        const uint16_t p =
-            static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        out[o++] = static_cast<uint8_t>(p & 0xFF);
-        out[o++] = static_cast<uint8_t>(p >> 8);
-    }
+    pixel::rgb24ToRgb565Le(rgb, out.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
 }
 
 // Local annex-B elementary H.264 (skip remux BSF when possible).
@@ -145,6 +135,36 @@ inline int64_t steadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
+}
+
+enum class RawVideoFormat {
+    Rgb24,
+    Rgb565Le,
+    Bgra32,
+};
+
+inline const char* ffmpegPixFmt(RawVideoFormat f) {
+    switch (f) {
+    case RawVideoFormat::Rgb565Le:
+        return "rgb565le";
+    case RawVideoFormat::Bgra32:
+        return "bgra";
+    case RawVideoFormat::Rgb24:
+    default:
+        return "rgb24";
+    }
+}
+
+inline size_t rawVideoBytesPerPixel(RawVideoFormat f) {
+    switch (f) {
+    case RawVideoFormat::Rgb565Le:
+        return 2;
+    case RawVideoFormat::Bgra32:
+        return 4;
+    case RawVideoFormat::Rgb24:
+    default:
+        return 3;
+    }
 }
 
 } // namespace
@@ -877,7 +897,7 @@ void MediaPlayer::streamPump(int sfd) {
     std::vector<uint8_t> ppsNal;
     std::vector<uint16_t> rgbNative;
     std::vector<uint16_t> rgb320(320 * 240);
-    std::vector<uint8_t> rgb24;
+    std::vector<uint8_t> rgb565le;
     char buf[4096];
     size_t f3Total = 0;
     size_t f3Pushes = 0;
@@ -914,18 +934,23 @@ void MediaPlayer::streamPump(int sfd) {
         recon::yuv420ToRgb565(rec.y.data(), rec.u.data(), rec.v.data(), rec.width, rec.height,
                               rgbNative);
         scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
+        auto ensureRgb565Le = [&]() -> const uint8_t* {
+            if (rgb565le.empty()) {
+                rgb565le.resize(static_cast<size_t>(kFsW) * kFsH * 2);
+                for (int i = 0; i < kFsW * kFsH; ++i)
+                    pixel::storeLe16(rgb565le.data() + static_cast<size_t>(i) * 2,
+                                     rgb320[static_cast<size_t>(i)]);
+            }
+            return rgb565le.data();
+        };
+        rgb565le.clear();
         bool any = false;
         if (wantF1) {
             // Prefer DDR bulk (3.1b); fall back to SPI F1 if RBF lacks path.
             bool ok = false;
             if (useDdrF1_) {
-                std::vector<uint8_t> packed(static_cast<size_t>(kFsW) * kFsH * 2);
-                for (int i = 0; i < kFsW * kFsH; ++i) {
-                    const uint16_t p = rgb320[static_cast<size_t>(i)];
-                    packed[static_cast<size_t>(i) * 2 + 0] = static_cast<uint8_t>(p & 0xFF);
-                    packed[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>(p >> 8);
-                }
-                ok = fpga_.sendRgb565FrameDdr(packed.data(), packed.size(), ddrBank_);
+                ensureRgb565Le();
+                ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
                 ddrBank_ ^= 1;
                 if (!ok) {
                     useDdrF1_ = false;
@@ -950,8 +975,8 @@ void MediaPlayer::streamPump(int sfd) {
                 any = true;
         }
         if (reconToFb && fb_.ok()) {
-            rgb565ToRgb24(rgb320.data(), kFsW, kFsH, rgb24);
-            if (fb_.blitRgb24(rgb24.data(), kFsW, kFsH))
+            ensureRgb565Le();
+            if (fb_.blitRgb565Le(rgb565le.data(), kFsW, kFsH))
                 any = true;
         }
         if (any) {
@@ -1648,8 +1673,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // Full FFmpeg RGB path (STREAM=0 default; STREAM=1 with PRESENT=both/fb0; skip off).
         // STREAM=0 + PRESENT=fpga: every RGB frame → F1 (DDR preferred) — not IDR recon.
         // STREAM=1 recon is ~1 fps (keyframe only) and is the wrong interactive cast path.
+        const bool wantFpgaFrameStore = fpga_.ok() &&
+                                        (presentMode_ == "fpga" || presentMode_ == "both") &&
+                                        outW_ == 320 && outH_ == 240;
+        RawVideoFormat videoFmt = RawVideoFormat::Rgb24;
+        if (wantFpgaFrameStore || (fb_.ok() && fb_.bpp() == 16)) {
+            videoFmt = RawVideoFormat::Rgb565Le;
+        } else if (fb_.ok() && (fb_.bpp() == 32 || fb_.bpp() == 24)) {
+            videoFmt = RawVideoFormat::Bgra32;
+        }
         if (!streamEnabled_ && (presentMode_ == "fpga" || presentMode_ == "both"))
-            log("media: STREAM=0 RGB→F1 PRESENT=" + presentMode_ +
+            log("media: STREAM=0 rawvideo(" + std::string(ffmpegPixFmt(videoFmt)) +
+                ")→F1 PRESENT=" + presentMode_ +
                 " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                 " clock=wall-48k-audio+every-frame-present");
         usedRgb = true;
@@ -1683,7 +1718,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("-f");
             args.push_back("rawvideo");
             args.push_back("-pix_fmt");
-            args.push_back("rgb24");
+            args.push_back(ffmpegPixFmt(videoFmt));
             args.push_back("pipe:1");
             if (wantAudio) {
                 args.push_back("-map");
@@ -1732,7 +1767,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("-f");
             args.push_back("rawvideo");
             args.push_back("-pix_fmt");
-            args.push_back("rgb24");
+            args.push_back(ffmpegPixFmt(videoFmt));
             args.push_back("-vf");
             args.push_back(vf);
             args.push_back("pipe:1");
@@ -1817,73 +1852,124 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         }
 
-        const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
+        const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) *
+                                  rawVideoBytesPerPixel(videoFmt);
         std::vector<uint8_t> frame(frameBytes);
         std::vector<uint8_t> rgb565Frame;
         std::vector<uint8_t> fbOverlayBackup;
 
-        auto blitFbWithOverlay = [&](uint8_t* cleanFrame) {
+        auto blitFrame = [&](const uint8_t* data) {
             if (!fb_.ok())
                 return;
-            const OverlayRect dirty = overlay_.dirtyBounds(outW_, outH_);
-            if (!dirty.empty()) {
-                const size_t rowBytes = static_cast<size_t>(dirty.w) * 3;
-                fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
-                for (int yy = 0; yy < dirty.h; ++yy) {
-                    const size_t src =
-                        (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * 3;
-                    std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
-                                cleanFrame + src, rowBytes);
-                }
-                overlay_.renderRgb24(cleanFrame, outW_, outH_);
-                if (!fb_.blitRgb24(cleanFrame, outW_, outH_))
-                    log("media: blit failed");
-                for (int yy = 0; yy < dirty.h; ++yy) {
-                    const size_t dst =
-                        (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * 3;
-                    std::memcpy(cleanFrame + dst,
-                                fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
-                                rowBytes);
-                }
-            } else if (!fb_.blitRgb24(cleanFrame, outW_, outH_)) {
-                log("media: blit failed");
+            bool fbOk = false;
+            switch (videoFmt) {
+            case RawVideoFormat::Rgb565Le:
+                fbOk = fb_.blitRgb565Le(data, outW_, outH_);
+                break;
+            case RawVideoFormat::Bgra32:
+                fbOk = fb_.blitBgra32(data, outW_, outH_);
+                break;
+            case RawVideoFormat::Rgb24:
+            default:
+                fbOk = fb_.blitRgb24(data, outW_, outH_);
+                break;
+            }
+            if (!fbOk)
+                log("media: blit failed fmt=" + std::string(ffmpegPixFmt(videoFmt)));
+        };
+
+        auto renderOverlay = [&](uint8_t* data) {
+            switch (videoFmt) {
+            case RawVideoFormat::Rgb565Le:
+                overlay_.renderRgb565Le(data, outW_, outH_);
+                break;
+            case RawVideoFormat::Bgra32:
+                overlay_.renderBgra32(data, outW_, outH_);
+                break;
+            case RawVideoFormat::Rgb24:
+            default:
+                overlay_.renderRgb24(data, outW_, outH_);
+                break;
+            }
+        };
+
+        auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
+            fbOverlayBackup.clear();
+            if (dirty.empty())
+                return;
+            const size_t bpp = rawVideoBytesPerPixel(videoFmt);
+            const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
+            fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
+            for (int yy = 0; yy < dirty.h; ++yy) {
+                const size_t src =
+                    (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * bpp;
+                std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
+                            cleanFrame + src, rowBytes);
+            }
+        };
+
+        auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
+            if (dirty.empty() || fbOverlayBackup.empty())
+                return;
+            const size_t bpp = rawVideoBytesPerPixel(videoFmt);
+            const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
+            for (int yy = 0; yy < dirty.h; ++yy) {
+                const size_t dst =
+                    (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * bpp;
+                std::memcpy(cleanFrame + dst,
+                            fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
+                            rowBytes);
             }
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            blitFbWithOverlay(cleanFrame);
+            const OverlayRect dirty = overlay_.dirtyBounds(outW_, outH_);
+            backupOverlayDirty(cleanFrame, dirty);
+            if (!dirty.empty())
+                renderOverlay(cleanFrame);
+
+            blitFrame(cleanFrame);
+
             const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-            if (reconOwnsF1 || !fpga_.ok() || outW_ != 320 || outH_ != 240)
-                return;
+            if (!reconOwnsF1 && wantFpgaFrameStore) {
+                const uint8_t* txFrame = cleanFrame;
+                size_t txBytes = frameBytes;
+                if (videoFmt == RawVideoFormat::Rgb24) {
+                    packRgb24ToRgb565Le(cleanFrame, outW_, outH_, rgb565Frame);
+                    txFrame = rgb565Frame.data();
+                    txBytes = rgb565Frame.size();
+                }
 
-            packRgb24ToRgb565Le(cleanFrame, outW_, outH_, rgb565Frame);
-            overlay_.renderRgb565Le(rgb565Frame.data(), outW_, outH_);
-
-            // Serialise with the OSD poller / idle painter: FpgaSpi keeps
-            // transaction state, so overlapping ioctls corrupt each other.
-            std::lock_guard<std::mutex> lk(presentMu_);
-            bool ok = false;
-            if (useDdrF1_) {
-                ok = fpga_.sendRgb565FrameDdr(rgb565Frame.data(), rgb565Frame.size(), ddrBank_);
-                ddrBank_ ^= 1;
+                // Serialise with the OSD poller / idle painter: FpgaSpi keeps
+                // transaction state, so overlapping ioctls corrupt each other.
+                std::lock_guard<std::mutex> lk(presentMu_);
+                bool ok = false;
+                if (useDdrF1_) {
+                    ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
+                    ddrBank_ ^= 1;
+                    if (!ok) {
+                        useDdrF1_ = false;
+                        log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                    }
+                }
+                if (!ok)
+                    ok = fpga_.sendRgb565Bytes(txFrame, txBytes, /*F1*/ 1);
                 if (!ok) {
-                    useDdrF1_ = false;
-                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                    if (countPresent && (frameIndex % 30) == 0)
+                        log("media: fpga frame_tx: " + fpga_.lastError());
+                } else if (countPresent) {
+                    ++presentCount_;
+                    if ((presentCount_ % 48) == 0) {
+                        log(std::string("media: fpga frame_tx ok via ") +
+                            (useDdrF1_ ? "DDR" : "SPI") +
+                            " presents=" + std::to_string(presentCount_) +
+                            " frames=" + std::to_string(frameIndex) +
+                            " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                    }
                 }
             }
-            if (!ok && !fpga_.sendRgb565Bytes(rgb565Frame.data(), rgb565Frame.size(), /*F1*/ 1)) {
-                if (countPresent && (frameIndex % 30) == 0)
-                    log("media: fpga frame_tx: " + fpga_.lastError());
-            } else if (countPresent) {
-                ++presentCount_;
-                if ((presentCount_ % 48) == 0) {
-                    log(std::string("media: fpga frame_tx ok via ") +
-                        (useDdrF1_ ? "DDR" : "SPI") +
-                        " presents=" + std::to_string(presentCount_) +
-                        " frames=" + std::to_string(frameIndex) +
-                        " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
-                }
-            }
+
+            restoreOverlayDirty(cleanFrame, dirty);
         };
 
         if (onProgress_)
@@ -2012,10 +2098,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " drops=" + std::to_string(droppedFrames_.load()));
             } else {
                 dropRun = 0;
-                // Present every scheduled frame (no pfps cap). Content is often 24fps
-                // film; capping at 15 dropped ~37% of frames and looked "slow/off"
-                // vs audio. SPI load at 24fps with short MainPause is acceptable now
-                // that audio is wall-paced (not competing for Main).
                 presentCleanFrame(frame.data(), /*countPresent*/ true);
             }
 

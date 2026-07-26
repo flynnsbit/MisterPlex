@@ -1,5 +1,7 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/pixel_format.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -953,15 +955,7 @@ bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
         return false;
     }
     std::vector<uint8_t> packed(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
-    size_t o = 0;
-    for (int i = 0; i < w * h; ++i) {
-        const uint8_t r = rgb[i * 3 + 0];
-        const uint8_t g = rgb[i * 3 + 1];
-        const uint8_t b = rgb[i * 3 + 2];
-        const uint16_t p = static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        packed[o++] = static_cast<uint8_t>(p & 0xFF);
-        packed[o++] = static_cast<uint8_t>(p >> 8);
-    }
+    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
@@ -1093,16 +1087,7 @@ bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
         return false;
     }
     std::vector<uint8_t> packed(kDdrFrameBytes);
-    size_t o = 0;
-    for (int i = 0; i < w * h; ++i) {
-        const uint8_t r = rgb[i * 3 + 0];
-        const uint8_t g = rgb[i * 3 + 1];
-        const uint8_t b = rgb[i * 3 + 2];
-        const uint16_t px =
-            static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        packed[o++] = static_cast<uint8_t>(px & 0xFF);
-        packed[o++] = static_cast<uint8_t>(px >> 8);
-    }
+    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }
 
