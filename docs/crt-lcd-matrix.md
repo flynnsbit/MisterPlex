@@ -10,6 +10,86 @@ Lab checklist for MiSTerPlex present paths on **15 kHz CRTs** and **HDMI LCDs**.
 
 Related: [match-source-hz.md](match-source-hz.md), [architecture.md](architecture.md), [release.md](release.md), [captures/menu/CHECKLIST.md](../captures/menu/CHECKLIST.md).
 
+## Output-mode sweep with `ascal` scaler (C1, 2026-07-26)
+
+Purpose: answer whether raising MiSTer's **output** mode costs MiSTerPlex decode/present headroom while the
+content remains the existing 320×240 weak-ladder stream. This is distinct from native high-resolution content:
+the Plex core still presents 320×240 and MiSTer's `ascal` scaler upsamples it using HPS DDR3. The lab ini stayed
+LCD-safe: `vga_scaler=1`, `direct_video=0`, `vsync_adjust=0`; modes were switched live through
+`/dev/MiSTer_cmd` and the device was restored to `video_mode=5`.
+
+MiSTer preset numbering from `/media/fat/MiSTer.ini`:
+
+| `video_mode` | Preset |
+|---:|---|
+| 0 | 1280×720@60 |
+| 1 | 1024×768@60 |
+| 2 | 720×480@60 |
+| 3 | 720×576@50 |
+| 4 | 1280×1024@60 |
+| 5 | 800×600@60 |
+| 6 | 640×480@60 |
+| 7 | 1280×720@50 |
+| 8 | 1920×1080@60 |
+| 9 | 1920×1080@50 |
+| 10 | 1366×768@60 |
+| 11 | 1024×600@60 |
+| 12 | 1920×1440@60 |
+| 13 | 2048×1536@60 |
+
+Custom modelines use:
+
+```ini
+video_mode=hact,hfp,hs,hbp,vact,vfp,vs,vbp,Fpix_in_KHz
+; example from the live ini:
+; video_mode=1280,110,40,220,720,5,5,20,74250
+; CVT/RB helper format is also accepted, e.g. video_mode=1920,1440,60,cvtrb,p13
+```
+
+### Lab method
+
+- Media: PMS item `/library/metadata/3` ("The Garden of Delights"), resolved through the device's
+  `misterplex.conf` credentials, transcoded to weak 320×240 (`decode=320x240`, `fps=25/1`). No tokens were
+  written to repo files.
+- Hold: 120 s per mode, plus spot retests for anomalous rows.
+- HDMI sync: USB grabber `/dev/video4`, `yuyv422`, 60-frame warm-up, two captures per mode. A pass means the
+  grabber returned frames and the two SHA/mean stats changed, avoiding the known stale-capture trap.
+- A/V signal: `media: frames=... av_drift_ms=... drops=...` in `misterplexd.log`.
+- CPU: `top -b -n2 -d2` during playback.
+- Evidence generated in the local lab worktree: `captures/c1/output-mode-sweep-pms.tsv` and
+  `captures/c1/output-mode-anomaly-retest.tsv`.
+
+### Results
+
+VGA note: the physical VGA display in this lab is specified only up to 800×600@60. With `vga_scaler=1`, VGA
+follows the same scaler mode as HDMI; therefore only 640×480@60 and 800×600@60 are inside the known VGA envelope.
+Higher rows were not marked VGA PASS without an instrumented VGA capture/eyes-on confirmation.
+
+| Mode | HDMI sync | VGA expectation | 120 s playback result | CPU during playback | Notes |
+|---:|---|---|---|---|---|
+| 5 — 800×600@60 | PASS | PASS / baseline envelope | drops 0, drift −32…−21 ms | 0% idle | Current LCD/VGA-safe default. |
+| 1 — 1024×768@60 | PASS | expected out-of-range | drops 1, drift −40…−20 ms | 0% idle | Clean HDMI; not for the user's VGA panel. |
+| 0 — 1280×720@60 | PASS | expected out-of-range | drops 0, drift −40…−20 ms | 0% idle | Clean HDMI 720p60. |
+| 8 — 1920×1080@60 | PASS | expected out-of-range | drops 0, drift −38…−25 ms | 0% idle | Clean HDMI 1080p60. |
+| 6 — 640×480@60 | PASS | PASS / within envelope | retest drops 2, drift −40…−20 ms | 0% idle | Safe fallback; first run had a transient 25-drop burst. |
+| 2 — 720×480@60 | PASS | expected out-of-range | drops 1, drift −40…−21 ms | 0% idle | HDMI sync OK. |
+| 3 — 720×576@50 | PASS | expected out-of-range | drops 0, drift −40…−21 ms | 0% idle | HDMI sync OK; PAL-friendly. |
+| 7 — 1280×720@50 | PASS | expected out-of-range | drops 0, drift −35…−24 ms | 0% idle | Clean HDMI 720p50. |
+| 4 — 1280×1024@60 | INCONCLUSIVE | expected out-of-range | retest drops 1, drift −40…−20 ms | 0% idle | Playback OK, but HDMI capture failed to relock on retest; do not expose by default. |
+| 10 — 1366×768@60 | PASS | expected out-of-range | retest drops 1, drift −40…+40 ms | 0% idle | HDMI sync OK, but less universal than 720p/1080p. |
+| 11 — 1024×600@60 | PASS | expected out-of-range | drops 2, drift −40…−20 ms | 0% idle | HDMI sync OK; niche panel mode. |
+| 9 — 1920×1080@50 | PASS | expected out-of-range | drops 1, drift −40…−20 ms | 0% idle | Clean HDMI 1080p50. |
+| 12 — 1920×1440@60 | PASS | expected out-of-range | retest drops 2, drift −40…−20 ms | 0% idle | Above the requested 1080p ceiling; not a default user-facing mode. |
+| 13 — 2048×1536@60 | PASS | expected out-of-range | drops 3, drift −40…−20 ms | 0% idle | Above the requested 1080p ceiling; not a default user-facing mode. |
+
+### Recommendation
+
+Expose **HDMI 800×600@60, 1024×768@60, 1280×720@60/50, and 1920×1080@60/50**. Keep
+**800×600@60** as the VGA/LCD-safe default and offer **640×480@60** as a conservative VGA fallback. Do not spend
+RBF/RTL effort on native 720p/1080p scanout for the current 320×240 path: the sweep shows output-mode changes do
+not materially affect ARM load or A/V lock; decode remains the bottleneck and is already CPU-saturated at
+320×240.
+
 ## Display strategies
 
 | Strategy | When | Status |
