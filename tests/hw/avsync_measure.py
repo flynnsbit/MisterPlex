@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import subprocess
@@ -197,7 +198,8 @@ def measure_window(cap: Path) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rating-key", default="11", help="PMS ratingKey to cast")
-    ap.add_argument("--token", default="YOUR_PLEX_TOKEN")
+    ap.add_argument("--token", default=os.environ.get("PLEX_TOKEN", ""),
+                    help="Plex auth token (default: $PLEX_TOKEN)")
     ap.add_argument("--out", type=Path, required=True, help="output dir")
     ap.add_argument("--label", default="run")
     ap.add_argument("--window", type=float, default=15.0, help="capture seconds")

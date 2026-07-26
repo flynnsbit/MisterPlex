@@ -2,7 +2,7 @@
 # Build Plex.rbf using misterfpga-dev Quartus Docker image.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MISTER_DEV="${MISTER_DEV:-/home/shawn/Projects/misterfpga-dev}"
+MISTER_DEV="${MISTER_DEV:-$HOME/Projects/misterfpga-dev}"
 # Call scripts/mister-dev directly (bin/ symlink breaks SCRIPT_DIR for lib.sh)
 MISTER_DEV_BIN="${MISTER_DEV}/scripts/mister-dev"
 if [[ ! -x "$MISTER_DEV_BIN" ]]; then

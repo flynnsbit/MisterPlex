@@ -10,7 +10,7 @@ BIN="$ROOT/build/arm/misterplexd"
 # Always let make decide. Guarding this with `if [[ ! -f "$BIN" ]]` meant that
 # once the binary existed it was never rebuilt again, so every subsequent deploy
 # silently shipped a stale daemon and "verified" fixes that were not on the box.
-export PATH="${PATH}:/home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin"
+export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
 make -C "$ROOT" arm-plexd
 if [[ ! -f "$BIN" ]]; then
   echo "arm-plexd did not produce $BIN" >&2

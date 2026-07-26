@@ -29,7 +29,7 @@ if [[ -z "$RBF" ]]; then
   for c in \
     "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
     "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
-    /home/shawn/Projects/misterfpga-dev/out/Plex_MiSTer/Plex.rbf
+    "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
   do
     [[ -f "$c" ]] && RBF=$c && break
   done

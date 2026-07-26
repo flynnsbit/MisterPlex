@@ -1,157 +1,222 @@
 # MiSTerPlex
 
-**Native Plex media client for [MiSTer FPGA](https://mister-devel.github.io/MkDocs_MiSTer/)** — FPGA owns pixels and audio present (console-core philosophy); ARM owns Plex protocol and network.
+**A native Plex client for [MiSTer FPGA](https://mister-devel.github.io/MkDocs_MiSTer/).**
 
-Not a PC cast app with the DE10 as a dumb display. Lessons and protocol code from [mistercast-linux](https://github.com/flynnsbit/mistercast-linux) are harvested; the product path is a **dedicated `Plex.rbf` + `misterplexd`**.
+Cast from any Plex app — phone, desktop, or web — and your MiSTer plays it. The FPGA owns
+pixel and audio presentation the way a console core does; an ARM daemon (`misterplexd`) owns
+the Plex protocol and networking.
 
-## Priority
+This is not a PC cast app using the DE10-Nano as a dumb display. The product is a dedicated
+`Plex.rbf` core plus an on-device daemon.
 
-Best attainable **video + sound, perfectly synchronized**, on **CRTs and LCDs**. Full **user-level tests**. Ship feature-rich cast + library playback on-device.
+---
 
-## Architecture (target)
+## Requirements
 
-| Resource | Role |
-|----------|------|
-| **FPGA** | Decode (profile), frame store, vsync present, 3:2/2:2 cadence, audio FIFO |
-| **BRAM** | Linebufs, bit FIFOs, audio ring |
-| **SDRAM** | Working VRAM / unique frames |
-| **DDR3** | Stream buffers, ARM↔FPGA payload |
-| **ARM** | GDM, companion, resolve, demux control — **not** the present loop |
+| | |
+|---|---|
+| **Hardware** | DE10-Nano running MiSTer, on your network |
+| **Server** | Plex Media Server reachable from the MiSTer |
+| **Display** | HDMI or VGA/CRT, as you normally use |
 
-See [docs/architecture.md](docs/architecture.md).
+A static ARM `ffmpeg` binary is required for the transcode path. It is **not** bundled — see
+[ffmpeg](#ffmpeg) below.
 
-## Status
+---
 
-| Phase | State |
-|-------|--------|
-| **0** Scaffold monorepo | **done** |
-| **1** Native present core (color bars + tone + cadence) | **RBF built** (`Plex.rbf`, Quartus 17.0.2) |
-| **2** Plex cast companion + ARM media path | **working on hardware** — see below |
-| **3** FPGA decode / frame store | **3.3k hybrid** host recon F1 (mae=0); lab RBF green (Template HSync ~60 Hz + `res_dc=-24`); DDR 3.1b in RTL (SPI fallback when idle) |
-| **4** Feature-rich client | **in progress** — multi-server, browse/menu UX, Content FPS hint, scrubber steps, auto-next (parallel to Phase 3) |
-| **5** Release / display matrix | **docs + soak + package** — [release.md](docs/release.md), [crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
+## Install
 
-### Phase 2 (current on MiSTer `192.168.1.183`)
+Download the latest release tarball from the
+[Releases page](https://github.com/flynnsbit/MisterPlex/releases), then:
 
-- `misterplexd` static ARM binary: GDM + companion HTTP `:3005`
-- `playMedia` / pause / resume / stop / seek wired
-- prePlayHold after stop (timeline stays `buffering@navigation` while cast-bound)
-- Slim PMS resolve (Docker-bridge rewrite, weak universal H.264 ladder, local path/URL)
-- FFmpeg → raw RGB24 → `/dev/fb0` (MiSTer_fb ascal scanout)
-- **Audio:** single-process FFmpeg → s16le stereo @ 48 kHz → `/dev/MrAudio` (SPI DMA)
-- Play-queue scrubber fields: `playQueueID` / `playQueueItemID` / `containerKey` / `key`
-- Conf: `DECODE=WxH`, `WEAK_RES`, `WEAK_BITRATE` (default 320×240; **480×360 HW-verified**)
-- Deploy: `./scripts/deploy_misterplexd.sh` (startup hook, conf, free :3005 orphans)
-
-**HW proven:** PMS “The Garden of Delights” → fb0 + MrAudio; suite green including `test_single_process.sh` (1× ffmpeg).
-
-**Phase 3 track:** see [docs/phase3-decode.md](docs/phase3-decode.md) — RGB frame FIFO then H.264 soft-core; dual-A9 stays pegged until decode leaves ARM. Phase 4 UX advances in parallel and must not gate decode work.
-
-### Phase 4 foundation (cast client UX)
-
-Ported/hardened mistercast-linux companion lessons without requiring RBF changes:
-
-| Item | Status |
-|------|--------|
-| Scrubber bind fields (`key` / `containerKey` / `playQueueID` / `playQueueItemID` / server address) | **done** — unit + `tests/hw/test_playqueue_bind.sh` |
-| `viewOffset` / `offset` ms; continue-watching only when cast omits offset | **done** |
-| `prePlayHold` + `castBound`: stop ACK/polls stay `buffering@navigation` without media keys | **done** |
-| Mirror does not demote live cast; unsubscribe clears hold | **done** |
-| Match source Hz / modeline | **cadence + OSD Content FPS**; play path logs PMS → Content FPS hint; switchres **TODO** — [docs/match-source-hz.md](docs/match-source-hz.md) |
-| Multi-server conf (`PLEX_SERVERS` / multi `PLEX_BASE`) + cast-selected base | **done** — unit in `test_resolve` |
-| On-device/host browse CLI | `scripts/plex_browse.sh` (sections / play / status / stop / seek) |
-| On-device interactive menu | `scripts/plex_menu.sh` — pick section/item → `playMedia` on `localhost:3005` |
-| Scrubber duration / seekRange after resolve | **done** — bind + setState; seek clamp |
-| Scrubber step / skip | **done** — `stepForward`/`stepBack` (±10s), `skipNext` (queue), `skipPrevious` (restart@0 if >3s; queue prev near start) |
-| Next-episode stub (EOF → next `playQueue` item via internal play) | **done** — conf `AUTO_NEXT=1` (default) |
-| Subtitles burn-in | plan [docs/subtitles-burnin.md](docs/subtitles-burnin.md); conf `SUBTITLES=burn\|ffmpeg` |
-| Multi-title soak | `tests/hw/test_soak.sh` (PMS conf auto-discover) |
-| Release tarball | `scripts/package_release.sh` / `make package` |
-
-**Multi-server:** `PLEX_SERVERS=http://a:32400,http://b:32400` and/or multiple `PLEX_BASE=` lines. First entry is default; cast `address=`/`port=`/`protocol=` selects the active base; if cast omits address and resolve fails, remaining servers are tried.
-
-**Browse / on-device play:**
+### 1. Copy files to the SD card
 
 ```bash
-./scripts/plex_browse.sh sections              # needs PLEX_TOKEN + PLEX_BASE
-./scripts/plex_browse.sh section <id>
-./scripts/plex_browse.sh play <ratingKey>      # → misterplexd playMedia (default 127.0.0.1:3005)
-./scripts/plex_browse.sh status | stop | pause | resume | seek <ms>
-./scripts/plex_menu.sh                         # interactive TUI (SSH / MiSTer Scripts)
+# from a machine that can reach the MiSTer over SSH (default user root, password 1)
+tar xzf misterplex-*.tar.gz
+cd stage-misterplex   # or the extracted directory
+
+ssh root@<mister-ip> "mkdir -p /media/fat/misterplex"
+scp -r bin scripts docs root@<mister-ip>:/media/fat/misterplex/
+scp cores/Plex.rbf   root@<mister-ip>:/media/fat/_Utility/
+scp conf/misterplex.conf.example root@<mister-ip>:/media/fat/misterplex/misterplex.conf
 ```
 
-### Phase 5 (release / CRT·LCD matrix)
+Resulting layout on the MiSTer:
 
-| Item | Status |
-|------|--------|
-| Install + conf reference | [docs/release.md](docs/release.md) — PRESENT/STREAM matrix, known limits |
-| CRT 15 kHz / HDMI checklist | [docs/crt-lcd-matrix.md](docs/crt-lcd-matrix.md) |
-| Hardened multi-title soak | Auto-load `/media/fat/misterplex/misterplex.conf` from lab MiSTer; PMS key discovery |
-| Package includes `Plex.rbf` when built | `cores/Plex.rbf` from releases/ → output_files/ → mister-dev out |
-| Phase 2 cast path | **unchanged** — keep `PRESENT=fb0` `STREAM=0` as safe conf |
+```text
+/media/fat/misterplex/bin/misterplexd    # the daemon
+/media/fat/misterplex/bin/ffmpeg         # you supply this (see below)
+/media/fat/misterplex/misterplex.conf    # your settings
+/media/fat/_Utility/Plex.rbf             # the FPGA core
+```
+
+### 2. Configure
+
+Edit `/media/fat/misterplex/misterplex.conf` and set your server:
+
+```ini
+PLEX_BASE=http://192.168.1.10:32400
+DECODE=320x240
+PRESENT=fb0
+```
+
+`PLEX_BASE` is the only value most people need to change. A fully annotated reference lives in
+[`assets/misterplex.conf.example`](assets/misterplex.conf.example).
+
+### 3. Start on boot
+
+Append to `/media/fat/linux/user-startup.sh` (create it if absent):
+
+```sh
+/media/fat/misterplex/bin/misterplexd \
+  --conf /media/fat/misterplex/misterplex.conf \
+  >>/media/fat/misterplex/misterplexd.log 2>&1 &
+```
+
+Then reboot, or start it by hand for a first try:
 
 ```bash
-make unit                          # multi-server + Content FPS + companion scrubber/step + browse smoke
-make package                       # dist/misterplex-*.tar.gz (ARM + conf + docs + RBF if present)
-./scripts/deploy_misterplexd.sh
-./scripts/plex_browse.sh sections  # needs PLEX_TOKEN + PLEX_BASE (or conf)
-./scripts/plex_browse.sh play <ratingKey>   # on-device / host → localhost:3005
-./scripts/plex_menu.sh             # interactive library → play
-./tests/hw/test_playqueue_bind.sh
-SOAK_HOLD_S=5 ./tests/hw/test_soak.sh   # multi-title when PMS conf available
+ssh root@<mister-ip>
+chmod +x /media/fat/misterplex/bin/*
+/media/fat/misterplex/bin/misterplexd --conf /media/fat/misterplex/misterplex.conf &
 ```
 
-Conf example: [assets/misterplex.conf.example](assets/misterplex.conf.example).
+### 4. Load the core and cast
 
-**Artifacts:** `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` and `fpga/Plex_MiSTer/releases/Plex.rbf`.  
-**Tests:** `make unit` + HW scripts under `tests/hw/`.
+1. On the MiSTer, open the OSD (**F12**) and load **Plex** from `_Utility`.
+2. Open any Plex app on the same network.
+3. Pick a video, hit the cast button, and choose **MiSTerPlex**.
+
+### ffmpeg
+
+`misterplexd` shells out to a static ARM `ffmpeg` for transcoding. It probes, in order:
+
+1. `/media/fat/misterplex/bin/ffmpeg`
+2. `/media/fat/mistercast/bin/ffmpeg`
+
+Any statically linked `armv7` build with HTTPS protocol support works. If you already run
+[mistercast-linux](https://github.com/flynnsbit/mistercast-linux), its bundled binary is picked
+up automatically and you need do nothing. Otherwise drop one at path 1, or set `FFMPEG=` in the
+conf.
+
+---
+
+## Verify it works
+
+```bash
+curl http://<mister-ip>:3005/resources    # should return a <Player> element
+tail -f /media/fat/misterplex/misterplexd.log
+```
+
+You can also drive playback without a Plex app:
+
+```bash
+export PLEX_TOKEN=<your-token>
+./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://192.168.1.10:32400 sections
+./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://192.168.1.10:32400 play <ratingKey>
+./scripts/plex_menu.sh                    # interactive TUI; runs on the MiSTer too
+```
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| MiSTerPlex not offered as a cast target | Daemon not running, or port 3005 unreachable. Check `curl http://<ip>:3005/resources`. |
+| Cast connects, screen stays black | `Plex.rbf` not loaded — the daemon and the core are independent. Load the core from the OSD. |
+| Playback starts then stops | Usually ffmpeg. Check the log for the spawn line; confirm the binary exists and is executable. |
+| Video plays, no audio | Audio goes to `/dev/MrAudio` via the core; confirm the Plex core is loaded, not another core. |
+| Lip-sync drift | Set OSD **Content FPS** to match the source (24 for film). See [docs/match-source-hz.md](docs/match-source-hz.md). |
+| F12/OSD dead, core won't change | A crashed daemon could strand MiSTer's `Main` process. Reboot the MiSTer; the crash cause is fixed in current releases. |
+
+---
+
+## Configuration highlights
+
+| Key | Meaning |
+|---|---|
+| `PLEX_BASE` | Server URL. Multiple servers via `PLEX_SERVERS=a,b` or repeated `PLEX_BASE=` lines. |
+| `DECODE` | Decode/present size, default `320x240`; `480x360` is hardware-verified. |
+| `PRESENT` | `fb0` (default, safe), `fpga`, or `both`. |
+| `SUBTITLES` | `off`, `burn` (server-side), or `ffmpeg` (local files). |
+| `AUTO_NEXT` | Play the next play-queue item at end of media. Default on. |
+| `SOURCE_FPS` | `auto` uses server metadata to log a Content FPS hint. |
+
+Full reference: [`assets/misterplex.conf.example`](assets/misterplex.conf.example) and
+[docs/release.md](docs/release.md).
+
+---
+
+## Features
+
+- Cast from any Plex client — play, pause, resume, stop, seek
+- Scrubber with duration and seek range; step ±10 s; skip next/previous
+- Auto-play the next episode from the play queue
+- Multi-server support, with the cast-selected server winning
+- On-device browse CLI and interactive menu
+- Subtitle burn-in (server-side or local)
+- OSD controls: Content FPS, test patterns, TV mode, audio tone
+- 3:2 / 2:2 cadence handling so 24 fps film is correct on a 60 Hz display
+
+---
+
+## Building from source
+
+```bash
+git clone https://github.com/flynnsbit/MisterPlex.git
+cd MisterPlex
+make unit        # host unit tests
+make arm-plexd   # cross-compile the ARM daemon
+make package     # release tarball in dist/
+```
+
+The ARM build needs an `arm-none-linux-gnueabihf` (or `arm-linux-gnueabihf`) cross compiler on
+`PATH`, or point `ARM_TOOLCHAIN_BIN` at one.
+
+### FPGA core
+
+`Plex.rbf` is built with Quartus 17.0.2 (the MiSTer standard):
+
+```bash
+export MISTER_DEV=$HOME/Projects/misterfpga-dev
+make build-rbf
+```
+
+Built cores are not tracked in git; each release ships one as an asset.
+
+### Deploying to a device during development
+
+```bash
+export MISTER_HOST=192.168.1.183      # your MiSTer
+./scripts/deploy_misterplexd.sh       # build and push the daemon
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh   # push the RBF and reload the core
+```
+
+---
 
 ## Layout
 
 ```text
-misterplex/
-  fpga/Plex_MiSTer/   # Quartus core → Plex.rbf
-  arm/misterplexd/    # HPS daemon
-  host/libmisterplex/ # shared algorithms (cadence, …)
-  tests/unit|hw/
-  docs/
-  scripts/
+fpga/Plex_MiSTer/    Quartus project → Plex.rbf
+arm/misterplexd/     on-device daemon (companion + media)
+host/libmisterplex/  shared algorithms (cadence, A/V clock)
+scripts/             deploy, packaging, browse/menu, diagnostics
+tests/unit|hw/       host unit tests and hardware test scripts
+docs/                architecture, release, CRT/LCD matrix, phase notes
 ```
 
-## Quick start (dev host)
+Architecture and design notes: [docs/architecture.md](docs/architecture.md).
 
-```bash
-cd /home/shawn/Projects/misterplex
-make unit                 # cadence math tests
-make plexd                # host skeleton daemon
-```
+---
 
-### Build RBF (Quartus via misterfpga-dev)
+## Project status
 
-```bash
-export PATH=/home/shawn/Projects/misterfpga-dev/bin:$PATH
-# once: mister-dev setup
-make build-rbf            # long; outputs under misterfpga-dev/out or core tree
-```
-
-### OSD (Phase 1 core)
-
-- **Content FPS** 24 / 30 / 60 / 12 — unique advance rate vs display
-- **Pattern** bars / bars+block / grid / ramp
-- **Audio tone** on/off
-- **TV Mode** NTSC / PAL family
-
-Film on fixed 60 Hz: set Content FPS **24** — FPGA holds frames (3:2 density), block motion advances only on unique ticks.
-
-## Relationship to mistercast-linux
-
-| mistercast-linux | MiSTerPlex |
-|------------------|------------|
-| Groovy UDP present | Native `Plex.rbf` present |
-| ARM/host FFmpeg decode as product | Transitional only; FPGA decode is the goal |
-| Proven companion + lip-sync lessons | Port into `misterplexd` (Phase 2) |
+Cast playback, audio, A/V sync, and the OSD work on hardware today. FPGA-side H.264 decode is
+in progress; until it lands, decoding happens on the ARM side while the FPGA owns presentation.
+Per-phase detail is in [docs/PHASE_BACKLOG.md](docs/PHASE_BACKLOG.md); the older development
+README is kept at [docs/DEVNOTES_legacy_readme.md](docs/DEVNOTES_legacy_readme.md).
 
 ## License
 
-- FPGA core / sys: GPL-2.0-or-later (MiSTer)
-- Host/ARM tools: MIT unless noted
+- FPGA core and `sys/`: GPL-2.0-or-later (MiSTer framework)
+- Host and ARM tools: MIT unless noted otherwise

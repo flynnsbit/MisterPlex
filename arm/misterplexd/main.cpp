@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,11 +62,26 @@ bool confTruthy(const std::string& v) {
 
 } // namespace
 
+namespace {
+
+// MiSTerPlex ships its own static ffmpeg, but installs that predate that (or that
+// share a box with mistercast-linux) keep it elsewhere. Probe our own bin first so
+// a stock install is self-contained, then fall back rather than hard-failing.
+std::string defaultFfmpegPath() {
+    for (const char* c : {"/media/fat/misterplex/bin/ffmpeg", "/media/fat/mistercast/bin/ffmpeg"}) {
+        if (::access(c, X_OK) == 0)
+            return c;
+    }
+    return "/media/fat/misterplex/bin/ffmpeg";
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
     std::string name = "MiSTerPlex";
     std::string machineId = "misterplex-1";
     int port = 3005;
-    std::string ffmpeg = "/media/fat/mistercast/bin/ffmpeg";
+    std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
     int decodeW = 320, decodeH = 240;

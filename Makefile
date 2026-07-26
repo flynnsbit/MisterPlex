@@ -138,7 +138,8 @@ $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 push-frame: $(ROOT)/build/push_frame
 
 # ARM hard-float for MiSTer (try common cross compilers + local mistercast toolchain)
-ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null || ls /home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin/arm-none-linux-gnueabihf-g++ 2>/dev/null)
+ARM_TOOLCHAIN_BIN ?= $(HOME)/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin
+ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null || ls $(ARM_TOOLCHAIN_BIN)/arm-none-linux-gnueabihf-g++ 2>/dev/null)
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
@@ -159,7 +160,7 @@ arm-plexd: $(MPLEX_HDR)
 	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status
 	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status"
 
-MISTER_DEV ?= /home/shawn/Projects/misterfpga-dev
+MISTER_DEV ?= $(HOME)/Projects/misterfpga-dev
 build-rbf:
 	$(MISTER_DEV)/scripts/mister-dev build $(ROOT)/fpga/Plex_MiSTer --qpf Plex.qpf
 

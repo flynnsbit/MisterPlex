@@ -10,14 +10,14 @@ TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 ARM_BIN="$ROOT/build/arm/misterplexd"
 RBF_RELEASE="$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf"
 RBF_OUT="$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf"
-RBF_DEV="${MISTER_DEV:-/home/shawn/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
+RBF_DEV="${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
 
 echo "=== package_release $VERSION ==="
 
 if [[ ! -f "$ARM_BIN" ]]; then
   echo "Building arm misterplexd…"
-  export PATH="${PATH}:/home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin"
+  export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
   make -C "$ROOT" arm-plexd
 fi
 [[ -f "$ARM_BIN" ]] || { echo "missing $ARM_BIN"; exit 1; }

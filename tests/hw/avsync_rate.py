@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -49,7 +50,8 @@ def fit_period(times: list[float]) -> tuple[float, int, float]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--rating-key", default="11")
-    ap.add_argument("--token", default="YOUR_PLEX_TOKEN")
+    ap.add_argument("--token", default=os.environ.get("PLEX_TOKEN", ""),
+                    help="Plex auth token (default: $PLEX_TOKEN)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--label", default="rate")
     ap.add_argument("--settle", type=float, default=45.0,

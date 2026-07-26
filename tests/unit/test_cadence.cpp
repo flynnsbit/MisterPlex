@@ -1,5 +1,5 @@
 // Unit tests for present cadence (24→60 3:2, 30→60 2:2, identity).
-// Run: make -C /home/shawn/Projects/misterplex unit
+// Run: make unit (from the repo root)
 
 #include "../../host/libmisterplex/cadence.hpp"
 

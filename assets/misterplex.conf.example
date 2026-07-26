@@ -3,16 +3,17 @@
 
 # --- PMS (multi-server) ---
 # Default / fallback base (first in list). Cast playMedia address= still wins when present.
-PLEX_BASE=http://192.168.1.41:32400
+PLEX_BASE=http://192.168.1.10:32400
 # Optional: comma-separated additional servers (or use multiple PLEX_BASE= lines).
-# PLEX_SERVERS=http://192.168.1.41:32400,http://192.168.1.50:32400
-# PLEX_BASE=http://192.168.1.50:32400
-PLEX_HOST=192.168.1.41
+# PLEX_SERVERS=http://192.168.1.10:32400,http://192.168.1.11:32400
+# PLEX_BASE=http://192.168.1.11:32400
+PLEX_HOST=192.168.1.10
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
 
 # --- Decode / present (Phase 2 transitional ARM path) ---
-FFMPEG=/media/fat/mistercast/bin/ffmpeg
+# Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
+# FFMPEG=/media/fat/misterplex/bin/ffmpeg
 DECODE=320x240
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
