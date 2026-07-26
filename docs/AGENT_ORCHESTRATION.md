@@ -1,5 +1,10 @@
 # Multi-agent orchestration (lab)
 
+> **Start here:** [`agent-fleet-playbook.md`](agent-fleet-playbook.md) — the durable
+> structure for running a worker fleet (token protocol, worker prompt anatomy, evidence
+> standards, tick loop, anti-patterns). **This** document holds the run-specific lab
+> gates and deploy bans, which change from build to build.
+
 **Default harness (all projects):** `~/.grok/rules/00-multi-agent-build.md` + skill `/multi-agent-build`  
 (`~/.grok/skills/multi-agent-build/SKILL.md`). Repo entry: root `AGENTS.md`.
 
