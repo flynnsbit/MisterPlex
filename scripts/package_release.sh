@@ -119,7 +119,7 @@ else
 fi
 
 # Operator docs
-for doc in release.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
+for doc in release.md release-notes-v0.3.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
   if [[ -f "$ROOT/docs/$doc" ]]; then
     cp -a "$ROOT/docs/$doc" "$STAGE/docs/"
   fi
@@ -144,11 +144,18 @@ Contents
   bin/push_frame           optional SPI frame/bitstream tool
   bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
-  cores/Plex.rbf           (if built) Phase 1–3 present/decode core
+  cores/Plex.rbf           Phase 1–3 present/decode core (required by default)
   scripts/plex_browse.sh   list library + play/status/stop via misterplexd
   scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
   licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
-  docs/                    release, CRT/LCD matrix, match-source-Hz, subtitles
+  docs/                    install/release, display resolution, match-source-Hz, subtitles
+
+Quick install from this extracted directory
+-------------------------------------------
+  ssh root@<mister-ip> "mkdir -p /media/fat/misterplex /media/fat/_Utility"
+  scp -r bin scripts docs licenses root@<mister-ip>:/media/fat/misterplex/
+  scp conf/misterplex.conf.example root@<mister-ip>:/media/fat/misterplex/misterplex.conf
+  scp cores/Plex.rbf root@<mister-ip>:/media/fat/_Utility/Plex.rbf
 
 Install on MiSTer SD
 --------------------
@@ -157,6 +164,36 @@ Install on MiSTer SD
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
   /media/fat/_Utility/Plex.rbf           # lab canonical; required for FPGA present / STREAM
+
+Configure Plex server and credentials
+-------------------------------------
+  Edit /media/fat/misterplex/misterplex.conf:
+    PLEX_BASE=http://YOUR-PLEX-SERVER:32400
+    PLEX_TOKEN=<optional-token>
+
+  PLEX_BASE points at your Plex Media Server. Cast sessions usually supply a
+  transient X-Plex-Token, so PLEX_TOKEN is optional for casting. Set PLEX_TOKEN
+  if you want on-device library browsing via scripts/plex_browse.sh or
+  scripts/plex_menu.sh.
+
+Start on boot
+-------------
+  Append this to /media/fat/linux/_user-startup.sh:
+
+    /media/fat/misterplex/bin/misterplexd \\
+      --name MiSTerPlex --id misterplex --port 3005 \\
+      --conf /media/fat/misterplex/misterplex.conf \\
+      >>/media/fat/misterplex/misterplexd.log 2>&1 &
+
+  Then reboot, or run that command once over SSH for a first test.
+
+Launch the core
+---------------
+  On MiSTer, open the OSD with F12 and load Plex from _Utility. After the daemon
+  is running, Plex apps on the same network should offer MiSTerPlex as a cast
+  target. Verify with:
+
+    curl http://<mister-ip>:3005/resources
 
 Plex.rbf locations (build tree / device)
 ----------------------------------------
@@ -202,10 +239,16 @@ On-device play (no cast phone)
 EOF
 cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
 
-# Checksums for binaries + optional RBF
-{
-  (cd "$STAGE" && find bin conf cores docs licenses scripts -type f 2>/dev/null | sort | xargs sha256sum)
-} >"$STAGE/SHA256SUMS" 2>/dev/null || true
+# Checksums for every shipped payload file. The manifest necessarily excludes
+# itself, then verifies before tar creation so coverage cannot silently regress.
+(
+  cd "$STAGE"
+  find . -type f ! -name SHA256SUMS -printf '%P\0' | sort -z | xargs -0 sha256sum
+) >"$STAGE/SHA256SUMS"
+(
+  cd "$STAGE"
+  sha256sum -c SHA256SUMS
+)
 
 mkdir -p "$OUT_DIR"
 # Extract as misterplex-<version>/ rather than leaking the staging directory name.

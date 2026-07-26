@@ -4,16 +4,18 @@ Install, configure, and verify a lab or SD deploy. For packaging from source, se
 
 ## Package contents
 
-Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex/`:
+Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-desc>/`:
 
 | Path | Purpose |
 |------|---------|
 | `bin/misterplexd` | Static ARM companion + media daemon (GDM + HTTP `:3005`) |
+| `bin/ffmpeg` | Bundled static ARM FFmpeg 7.0.2; no external ffmpeg install required |
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
 | `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
-| `cores/Plex.rbf` | Present/decode core (included when built in tree) |
-| `docs/` | INSTALL path notes, display/output resolution, match-source-Hz, CRT/LCD matrix |
+| `cores/Plex.rbf` | Present/decode core (required by default; `PACKAGE_ALLOW_NO_RBF=1` makes a daemon-only package) |
+| `licenses/ffmpeg/` | GPLv3 text, build provenance, and source pointers for the bundled FFmpeg |
+| `docs/` | INSTALL path notes, display/output resolution, release notes, match-source-Hz, CRT/LCD matrix |
 
 ## Install on MiSTer SD
 
@@ -30,11 +32,20 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex
 ```bash
 # On dev host
 tar -tzf misterplex-*.tar.gz
-scp -r stage-misterplex/bin root@MiSTer:/media/fat/misterplex/
-scp stage-misterplex/conf/misterplex.conf.example root@MiSTer:/media/fat/misterplex/misterplex.conf
+tar -xzf misterplex-*.tar.gz
+cd misterplex-*
+ssh root@MiSTer "mkdir -p /media/fat/misterplex /media/fat/_Utility"
+scp -r bin scripts docs licenses root@MiSTer:/media/fat/misterplex/
+scp conf/misterplex.conf.example root@MiSTer:/media/fat/misterplex/misterplex.conf
 # Edit conf on device, then:
-scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf   # if present
+scp cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf
 ```
+
+Set at least `PLEX_BASE=http://YOUR-PLEX-SERVER:32400` in
+`/media/fat/misterplex/misterplex.conf`. Cast sessions usually bring a transient
+token; set `PLEX_TOKEN=` only if you want the on-device browse/menu scripts to
+list libraries without a phone or web app. Load the core from MiSTer's OSD
+(**F12** → `_Utility` → `Plex`) after starting the daemon.
 
 ### From this monorepo (recommended for lab)
 
@@ -71,7 +82,7 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
 | `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
-| `FFMPEG` | `/media/fat/mistercast/bin/ffmpeg` | FFmpeg binary (Phase 2 path) |
+| `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
 | `WEAK_RES` | `320x240` | PMS universal weak ladder resolution |
 | `WEAK_BITRATE` | `1000` | Weak ladder max video kbps |
@@ -108,7 +119,7 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 | Monorepo release copy | `fpga/Plex_MiSTer/releases/Plex.rbf` |
 | Quartus output | `fpga/Plex_MiSTer/output_files/Plex.rbf` |
 | mister-dev out | `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` |
-| Package | `stage-misterplex/cores/Plex.rbf` (if any of the above existed at pack time) |
+| Package | `misterplex-<version>/cores/Plex.rbf` (if any of the above existed at pack time) |
 | MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
 | MiSTer SD (alt) | `/media/fat/_Arcade/Plex.rbf` or `/media/fat/games/Plex/Plex.rbf` |
 
