@@ -3,7 +3,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit arm-plexd arm-ddr-bench ddr-bench clean help plexd package
+.PHONY: all unit arm-plexd arm-ddr-bench ddr-bench present-harness clean help plexd package
 
 all: unit
 
@@ -15,6 +15,7 @@ help:
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
+	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
 test: unit
 
@@ -185,6 +186,12 @@ $(ROOT)/build/ddr_write_bench: $(ROOT)/tools/ddr_write_bench.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/ddr_write_bench.cpp
 
 ddr-bench: $(ROOT)/build/ddr_write_bench
+
+$(ROOT)/build/present_loop_harness: $(ROOT)/tools/present_loop_harness.cpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -pthread -o $@ $(ROOT)/tools/present_loop_harness.cpp
+
+present-harness: $(ROOT)/build/present_loop_harness
 
 # ARM hard-float for MiSTer (try common cross compilers + local mistercast toolchain)
 ARM_TOOLCHAIN_BIN ?= $(HOME)/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin
