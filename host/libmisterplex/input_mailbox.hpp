@@ -38,6 +38,13 @@ struct PlaybackAction {
     int64_t seekTargetMs = 0;
 };
 
+struct PlaybackTransportState {
+    bool playing = false;
+    bool paused = false;
+    int64_t positionMs = 0;
+    int64_t durationMs = 0;
+};
+
 inline bool decodeInputMailboxWord(uint64_t word, InputMailboxSample& out) {
     if (static_cast<uint32_t>(word) != kInputMailboxMagic)
         return false;
@@ -137,6 +144,41 @@ inline PlaybackAction mapPlaybackCommand(PlaybackCommand command, bool playing, 
         return action;
     case PlaybackCommand::None:
         return action;
+    }
+    return action;
+}
+
+inline bool playbackInputSuppressed(int64_t nowMs, int64_t ignoreUntilMs) {
+    return nowMs < ignoreUntilMs;
+}
+
+template <typename Transport>
+inline PlaybackAction dispatchPlaybackCommand(PlaybackCommand command,
+                                              const PlaybackTransportState& state,
+                                              int64_t skipForwardMs, int64_t skipBackMs,
+                                              int64_t nowMs, int64_t ignoreUntilMs,
+                                              Transport& transport) {
+    PlaybackAction action;
+    if (playbackInputSuppressed(nowMs, ignoreUntilMs))
+        return action;
+
+    action = mapPlaybackCommand(command, state.playing, state.paused, state.positionMs,
+                                state.durationMs, skipForwardMs, skipBackMs);
+    switch (action.kind) {
+    case PlaybackActionKind::Pause:
+        transport.pause();
+        break;
+    case PlaybackActionKind::Resume:
+        transport.resume();
+        break;
+    case PlaybackActionKind::Stop:
+        transport.stop();
+        break;
+    case PlaybackActionKind::Seek:
+        transport.seekMs(action.seekTargetMs);
+        break;
+    case PlaybackActionKind::None:
+        break;
     }
     return action;
 }

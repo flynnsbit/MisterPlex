@@ -285,27 +285,10 @@ void MediaPlayer::stopInputPoll() {
 }
 
 void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
-    if (steadyMs() < ignoreInputUntilMs_.load())
-        return;
-    const PlaybackAction action =
-        mapPlaybackCommand(command, playing_.load(), paused_.load(), positionMs_.load(),
-                           durationMs(), skipForwardMs_, skipBackMs_);
-    switch (action.kind) {
-    case PlaybackActionKind::Pause:
-        pause();
-        break;
-    case PlaybackActionKind::Resume:
-        resume();
-        break;
-    case PlaybackActionKind::Stop:
-        stop();
-        break;
-    case PlaybackActionKind::Seek:
-        seekMs(action.seekTargetMs);
-        break;
-    case PlaybackActionKind::None:
-        break;
-    }
+    const PlaybackTransportState state{playing_.load(), paused_.load(), positionMs_.load(),
+                                       durationMs()};
+    (void)dispatchPlaybackCommand(command, state, skipForwardMs_, skipBackMs_, steadyMs(),
+                                  ignoreInputUntilMs_.load(), *this);
 }
 
 void MediaPlayer::applyOsd(uint16_t word) {
