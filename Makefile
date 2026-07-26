@@ -17,25 +17,24 @@ help:
 
 test: unit
 
-UNIT_ANNEXB := 1000 969 985 998 1000ROOT)/build/plex_real_baseline.264
+UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
+	$(ROOT)/build/test_playback_overlay
 	$(ROOT)/build/test_main_guard
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
-
 	@mkdir -p $(ROOT)/build
-	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(ROOT)/build/plex_real_baseline.264
-	$(ROOT)/build/test_sps_parse $(ROOT)/build/plex_real_baseline.264
-	$(ROOT)/build/test_slice_hdr $(ROOT)/build/plex_real_baseline.264
-	$(ROOT)/build/test_cavlc_dc $(ROOT)/build/plex_real_baseline.264
-	$(ROOT)/build/test_idct_quant $(ROOT)/build/plex_real_baseline.264
-
+	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
+	$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)
+	$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)
+	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
+	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
@@ -97,6 +96,11 @@ $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 
+$(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cpp \
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
+
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp
@@ -119,7 +123,8 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
 	$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
-	$(ROOT)/host/libmisterplex/h264_sps.hpp
+	$(ROOT)/host/libmisterplex/h264_sps.hpp \
+	$(ROOT)/host/libmisterplex/playback_overlay.hpp
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
