@@ -434,6 +434,9 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.playable = "testsrc";
         r.detail = "test pattern";
         r.durationMs = 120000;
+        r.sourceFpsHint = 30;
+        r.fpsNum = 30;
+        r.fpsDen = 1;
         return r;
     }
 

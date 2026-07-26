@@ -1703,8 +1703,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         args.push_back("-nostdin");
 
         if (testPattern) {
-            char lavfi[128];
-            std::snprintf(lavfi, sizeof(lavfi), "testsrc2=size=%dx%d:rate=30", outW_, outH_);
+            std::string lavfi;
+            if (url.rfind("lavfi:", 0) == 0 && url.size() > 6) {
+                lavfi = url.substr(6);
+            } else {
+                const std::string rate =
+                    fpsNum_ > 0 ? (std::to_string(fpsNum_) +
+                                   (fpsDen_ > 1 ? ("/" + std::to_string(fpsDen_)) : ""))
+                                : "30";
+                lavfi = "testsrc2=size=" + std::to_string(outW_) + "x" +
+                        std::to_string(outH_) + ":rate=" + rate;
+            }
             args.push_back("-f");
             args.push_back("lavfi");
             args.push_back("-i");

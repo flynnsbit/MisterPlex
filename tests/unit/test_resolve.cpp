@@ -40,6 +40,7 @@ int main() {
 
     auto t = resolvePlayTarget("testsrc", "", "", 0, true);
     CHECK(t.ok && t.playable == "testsrc");
+    CHECK(t.sourceFpsHint == 30 && t.fpsNum == 30 && t.fpsDen == 1);
 
     auto h = plexFfmpegHeaders("sess1", "tok");
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
