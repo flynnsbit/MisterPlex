@@ -110,7 +110,7 @@ Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
   - **S1E1 episode = `/library/metadata/40868`** (Encounter at Farpoint, duration ~91 min).  
   - playMedia offset=234000 (~3:54) → timeline playing time=234000 (probe).  
 - Evidence: `/tmp/misterplex-agent-AV-trek-probe.txt`.  
-- **G-AV4 still PENDING** — reachability ≠ eyes-on/HDMI dialogue PASS.
+- **G-AV4 now PASS** — eyes-on settled at `Video delay` **+80 ms** (see the Video delay section at the end of this doc).
 
 ---
 
@@ -180,9 +180,12 @@ of a few ms/min. The rate script fits flash and beep cadence **inside one captur
 | 24.000 control RK12 @685 | **−2.21 ms/min** |
 
 Constant offset across those runs: **+91.8 / +95.3 / +100.3 ms** — a ~5–9 ms spread
-where the pre-fix origin race gave **67 ms**. Absolute value still includes an
-uncalibrated grabber skew, so `AUDIO_DELAY_MS` stays **0** and G-AV4 eyes-on remains the
-arbiter of the constant.
+where the pre-fix origin race gave **67 ms**. This was read at the time as
+grabber skew, so the constant was left uncorrected. **That call was wrong**: it
+was a real, constant video lead. Eyes-on (G-AV4) independently landed on
+**+80 ms**, one 20 ms menu step from this capture's ~+92 ms, so the two agree.
+The correction now ships as the `Video delay` default — see the Video delay
+section at the end of this doc.
 
 Trek S1E1 soak (remote PMS `1cdd1b7f…`, WAN transcode, 6.5 min): log shows
 `fps=24000/1001`, `vfps=23.9` sustained, `av_drift_ms` bounded −30…−35, **13 drops in
@@ -380,10 +383,10 @@ appears to have no effect on hardware.
 | G-AV1 Trek-matched blip | **PASS** (assets + PMS 9/10) |
 | G-AV2 measure harness | **PASS** (`avsync_report.txt` n=12 flash↔beep) |
 | G-AV3 \|median\| ≤ 42 ms | **PASS** — \|median\|=**36.0 ms** n=11 @ `AUDIO_DELAY_MS=60`; baseline −60 @0; `avsync_report_delay60.txt` + d60 companion |
-| G-AV4 Trek 3:54 | **PENDING** (clock now locked over a 6.5 min WAN soak; eyes-on dialogue still the only PASS) |
+| G-AV4 Trek 3:54 | **PASS** — eyes-on settled at **Video delay +80 ms**, now the power-on default (OSD index 0) |
 | G-AV5 exact rate | **PASS** — log `content fps exact=24000/1001` (Trek/RK11) and `24/1` (RK12) from the same `24p` metadata; `make unit` `test_avclock` |
 | G-AV6 drift slope ≤10 ms/min | **PASS** — **+0.79 / −0.67 / +1.79** ms/min (RK11, 240 s fits) and **−2.21** (RK12 control); before: **−53.3** |
-| G-AV7 constant offset | **PARTIAL** — run-to-run spread cut 67 ms → ~9 ms; absolute value blocked on grabber skew calibration, so `AUDIO_DELAY_MS=0` pending G-AV4 |
+| G-AV7 constant offset | **PASS** — the residual was a real constant video lead, not grabber skew: capture said +60 ms, eyes-on said +80 ms (one 20 ms step apart) |
 | G-SEEK1 mid-play seekTo | **PASS** (lab blip evidence) |
 | G-SEEK2 resume offset≠0 | **PASS** (lab blip evidence) |
 | G-SEEK3 unit | **PASS** (`make unit`) |
@@ -419,6 +422,44 @@ curl -G '…/playMedia' --data-urlencode key=/library/metadata/6 --data-urlencod
 # Lipsync fix remeasure — DONE G-AV3 PASS |median|=36 ms @ AUDIO_DELAY_MS=60
 # conf AUDIO_DELAY_MS=60; soft restart; cast /library/metadata/10; HDMI flash↔beep
 
-# G-AV4 Trek dialogue (still open): cast episode 40868 (not show 40710), seek 234000
+# G-AV4 Trek dialogue: PASS at Video delay +80 ms (episode 40868, not show 40710)
 # expect |median_offset_ms| ≤ 42; keep RBF 1441d409
 ```
+
+
+## Video delay (OSD `O[9:6]`) — the lipsync control
+
+**Symptom that led here.** On TNG S1E1 audio sounded ~half a second behind the
+lips, and turning the menu to `-160ms` "did nothing".
+
+**Cause.** Two things compounded:
+
+1. **The label had no direction.** `A/V offset` does not say *which* stream
+   moves. The present loop waits for the audio clock to reach
+   `frameContentMs(frameIndex) + avOffsetMs`, so **positive holds the frame back
+   and makes video later**. Video was already running ahead, so the correct
+   direction was positive — `-160 ms` pushed it further ahead. The reported
+   "half a second" is the `-160 → +80` swing of **240 ms**, not an absolute
+   error, which is why the knob felt inert: it was working, backwards.
+2. **The default was `0 ms`** even though two independent measurements said the
+   platform needs ~+60…+80 ms.
+
+**Fix.** The item is now `Video delay`, and the option list is a signed wrap
+*biased to the calibrated default* so that **menu index 0 — the power-on
+default — is +80 ms**. The list stays monotonic across the wrap seam (index 15 =
++60 ms is exactly one step below index 0 = +80 ms), so left/right on the OSD is
+a plain down/up knob with no jump.
+
+`kOsdAvOffsetDefaultMs` in `host/libmisterplex/osd_menu.hpp` is the single source
+of truth; `Plex.sv`'s CONF_STR list and the daemon decode are both derived from
+it, and `tests/unit/test_osd_menu.cpp` pins the mapping and the wrap-seam
+continuity so the two can never disagree.
+
+**Why a hardcoded default is allowed here** (G-AV0 forbids *guessed* lag): it is
+measure-backed twice over — instrumented flash-to-beep landed on +60 ms
+(`captures/e2e/avsync_trekmatch_d60`, |median| 36 ms) and eyes-on landed on
++80 ms. The knob remains exposed because HDMI sinks add their own audio latency,
+so per-display trim is expected.
+
+**Config version bumped `v,3` → `v,4`** so saved `Plex_v3.CFG` files (where index
+0 meant 0 ms) are discarded rather than silently reinterpreted under the new bias.

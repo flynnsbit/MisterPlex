@@ -33,10 +33,21 @@
 
 namespace misterplex {
 
-// Step/bias of the A/V offset list. Kept here so the CONF_STR generator, the
+// Step/bias of the video delay list. Kept here so the CONF_STR generator, the
 // daemon and the tests cannot disagree about what a menu index means.
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
+
+// Menu index 0 is the power-on default, so the calibrated value has to live at
+// index 0 rather than at "0 ms". The present loop waits for the audio clock to
+// reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back and
+// makes video LATER. Raise it when audio sounds late (video running ahead).
+//
+// +80 ms is measure-backed, not guessed: the instrumented flash-to-beep runs
+// landed on +60 (median |36| ms, captures/e2e/avsync_trekmatch_d60) and eyes-on
+// on TNG S1E1 settled at +80. The knob stays available for per-display trim
+// because HDMI sinks add their own audio latency.
+constexpr int kOsdAvOffsetDefaultMs = 80;
 
 // Audio clock trim applied when the menu enables it (see AUDIO_CLOCK_PPM).
 constexpr int kOsdAudioClockPpm = 685;
@@ -48,11 +59,14 @@ struct OsdSettings {
     int idleMode = 0; // matches IdleMode enum
 };
 
+// Signed wrap around the default: index 0 is the default, 1..7 step up and
+// 8..15 step down. That keeps the list monotonic across the wrap (index 15 is
+// one step BELOW index 0), so right/left on the OSD is a plain up/down knob.
 inline int osdAvOffsetMsFromIndex(unsigned idx) {
     int i = static_cast<int>(idx % kOsdAvOffsetSteps);
     if (i >= kOsdAvOffsetSteps / 2)
         i -= kOsdAvOffsetSteps;
-    return i * kOsdAvOffsetStepMs;
+    return i * kOsdAvOffsetStepMs + kOsdAvOffsetDefaultMs;
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {

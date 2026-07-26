@@ -48,10 +48,10 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 - [x] G-AV1 Trek-matched blip fixture — `assets/avsync/sync_trekmatch_*` PMS keys **9/10**
 - [x] G-AV2 measure harness flash↔beep — **PASS** HDMI trekmatch RK10 n=12; `captures/e2e/avsync_trekmatch/`
 - [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms) — **superseded by G-AV7**; the old absolute number was unmeasurable while the A/V origin race added ±35 ms per play
-- [ ] G-AV4 Trek ~3:54 eyes-on — **PENDING** (S1E1 **40868** @234000; 6.5 min WAN soak now shows `fps=24000/1001`, `av_drift` −30…−35 ms, 0.14 % drops; **≠ PASS** until eyes-on)
+- [x] G-AV4 Trek eyes-on — **PASS** (S1E1 **40868**): user eyes-on settled on **video delay +80 ms**. Root cause of the reported "half a second" was the knob turned the wrong way: the menu read `A/V offset` and never said which stream moved, so `-160 ms` pushed video *further* ahead (−160 → +80 is a 240 ms swing). Menu is now `Video delay` (positive = video later) and index 0 (power-on default) **is** +80 ms.
 - [x] G-AV5 exact content rate — log `content fps exact=24000/1001` (Trek/RK11) vs `24/1` (RK12) from identical `videoFrameRate="24p"` metadata; `test_avclock` in `make unit`
 - [x] G-AV6 drift slope ≤ 10 ms/min — **+0.79 / −0.67 / +1.79** ms/min (RK11) and **−2.21** (RK12), 240 s single-capture fits; before **−53.3**; `tests/hw/avsync_rate.py`
-- [ ] G-AV7 constant offset ≤ 42 ms — **PARTIAL**: run-to-run spread 67 ms → ~9 ms after the origin fix; absolute value needs grabber-skew calibration, so `AUDIO_DELAY_MS` stays 0 pending G-AV4
+- [x] G-AV7 constant offset ≤ 42 ms — **PASS via G-AV4**: the residual was a real, constant video lead, not grabber skew. Instrumented capture said +60 ms (|median| 36 ms, `avsync_trekmatch_d60`) and eyes-on said +80 ms — two independent measures one step apart, so the default is evidence-backed, not guessed.
 - [x] G-SEEK1 mid-play seekTo ±1 s — blip key=6 seek 12s → playing ~15.5s
 - [x] G-SEEK2 resume/continue-watching ≠0 — playMedia offset=15s → playing ~19s
 - [x] G-SEEK3 unit regression — `make unit` PASS + `universalOffsetSeconds(234000)==234`

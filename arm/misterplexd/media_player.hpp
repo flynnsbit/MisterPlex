@@ -172,7 +172,9 @@ private:
     // core's audio clock divider, not of one unit, so it is the built-in default.
     // Override with AUDIO_CLOCK_PPM.
     int audioClockPpm_ = 685;
-    std::atomic<int> avOffsetMs_{0};
+    // Seeded with the calibrated default so the first frames of a session are
+    // already in sync; the OSD poller overwrites it within ~100 ms.
+    std::atomic<int> avOffsetMs_{misterplex::kOsdAvOffsetDefaultMs};
     std::atomic<int> idleMode_{static_cast<int>(IdleMode::Logo)};
     std::atomic<bool> idleRun_{false};
     // Latched by shutdown() so threadMain's session-end startIdle() cannot spawn

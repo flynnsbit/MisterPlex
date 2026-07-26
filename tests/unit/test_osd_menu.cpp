@@ -22,38 +22,41 @@ static int fails = 0;
 int main() {
     using namespace misterplex;
 
-    // --- A/V offset: 4-bit signed, 20 ms per step ---
+    // --- video delay: 4-bit signed wrap, 20 ms per step, biased to the default ---
     // Power-on status is all zeroes and Main_MiSTer cannot express a non-zero
     // default, so index 0 MUST mean 0 ms.
-    CHECK(osdAvOffsetMsFromIndex(0) == 0);
-    CHECK(osdAvOffsetMsFromIndex(1) == 20);
-    CHECK(osdAvOffsetMsFromIndex(7) == 140);
-    CHECK(osdAvOffsetMsFromIndex(8) == -160);
-    CHECK(osdAvOffsetMsFromIndex(15) == -20);
+    CHECK(osdAvOffsetMsFromIndex(0) == kOsdAvOffsetDefaultMs);
+    CHECK(osdAvOffsetMsFromIndex(1) == kOsdAvOffsetDefaultMs + 20);
+    CHECK(osdAvOffsetMsFromIndex(7) == kOsdAvOffsetDefaultMs + 140);
+    CHECK(osdAvOffsetMsFromIndex(8) == kOsdAvOffsetDefaultMs - 160);
+    CHECK(osdAvOffsetMsFromIndex(15) == kOsdAvOffsetDefaultMs - 20);
+    // The knob must stay monotonic across the wrap seam: index 15 is exactly one
+    // step below index 0, so left/right on the OSD never jumps.
+    CHECK(osdAvOffsetMsFromIndex(15) + kOsdAvOffsetStepMs == osdAvOffsetMsFromIndex(0));
     // Every index maps to a distinct, in-range value.
     for (unsigned i = 0; i < 16; ++i) {
         const int ms = osdAvOffsetMsFromIndex(i);
-        CHECK(ms >= -160 && ms <= 140);
+        CHECK(ms >= kOsdAvOffsetDefaultMs - 160 && ms <= kOsdAvOffsetDefaultMs + 140);
         CHECK(ms % kOsdAvOffsetStepMs == 0);
     }
 
     // --- word decode: bit positions must match CONF_STR exactly ---
     {
         const OsdSettings d = decodeOsdWord(0x0000);
-        CHECK(d.avOffsetMs == 0);
+        CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.audioClockPpm == kOsdAudioClockPpm);
         CHECK(d.resyncEnabled);
         CHECK(d.idleMode == 0);
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
     CHECK(decodeOsdWord(1u << 3).audioClockPpm == 0);       // O[3] Audio clock trim
-    CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == -20);      // O[9:6] index 15
-    CHECK(decodeOsdWord(8u << 6).avOffsetMs == -160);       // O[9:6] index 8
+    CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
+    CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
     CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
     // Core-owned bits must not leak into user settings.
     for (int bit : {0, 2, 4, 5, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
-        CHECK(d.avOffsetMs == 0);
+        CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.resyncEnabled);
         CHECK(d.audioClockPpm == kOsdAudioClockPpm);
         CHECK(d.idleMode == 0);

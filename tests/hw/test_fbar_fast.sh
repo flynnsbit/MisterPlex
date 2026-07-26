@@ -2,10 +2,10 @@
 # OBSOLETE on Plex core v3 (RBF 91777ac1) and later.
 #
 # The v3 CONF_STR removed the debug menu items this script drives — Pattern,
-# Audio tone and Force bars — and reclaimed status[9:6] for the A/V offset.
+# Audio tone and Force bars — and reclaimed status[9:6] for the video delay.
 # `pattern`, `audio_en` and `use_frame_store` are now hardwired to 0 in Plex.sv,
 # so there is no way to ask the core for colour bars any more. Running this
-# against a v3 core writes a bogus A/V offset instead of enabling bars and will
+# against a v3 core writes a bogus video delay instead of enabling bars and will
 # always report failure.
 #
 # Kept for archaeology / for bisecting against a pre-v3 RBF only.
