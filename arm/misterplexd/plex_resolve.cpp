@@ -460,7 +460,14 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     if (!token.empty())
         metaUrl += "X-Plex-Token=" + urlEncodeQuery(token);
     const std::string xml = httpGet(metaUrl, 12);
-    if (!xml.empty()) {
+    // A 404 or 401 from PMS still returns a BODY (an HTML error page), so
+    // "response is not empty" does not mean "item exists". Without this check a
+    // ratingKey that was deleted or renumbered by a library re-scan sails
+    // through every branch below, finds no Part, and lands on the test pattern —
+    // which looks like a playback bug instead of a missing item, and silently
+    // invalidates any measurement taken against it.
+    const bool metaFound = xml.find("<MediaContainer") != std::string::npos;
+    if (metaFound) {
         r.title = attr(xml, "Video", "title");
         if (r.title.empty())
             r.title = attr(xml, "Directory", "title");
@@ -513,7 +520,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
-    const bool metaOk = !xml.empty();
+    const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
     const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
     const bool directH264 = wantDirect && isH264;
@@ -598,7 +605,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     }
 
     // Fallback: direct Part stream URL from metadata
-    if (!xml.empty()) {
+    if (metaFound) {
         auto partKey = attr(xml, "Part", "key");
         if (!partKey.empty()) {
             if (partKey[0] != '/')
@@ -620,6 +627,9 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
     }
 
+    if (!metaFound)
+        r.detail = "no such item on PMS (" + key + " returned no MediaContainer — "
+                   "deleted, renumbered by a library re-scan, or bad token)";
     if (r.detail.empty())
         r.detail = "resolve failed for " + key;
     return r;

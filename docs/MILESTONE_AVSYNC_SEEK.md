@@ -568,8 +568,23 @@ fallback when the ring depth cannot be read at all.
 | frame drops | 1 | **0** |
 | ring overrun warnings | (unreported) | 0 |
 
-**Why the `Video delay` default is 0.** The old eyes-on **+80 ms** is not
-transferable. It was tuned while video paced off submitted bytes, so it silently
+**Why the `Video delay` default is 0 — confirmed by eyes-on.** With the audible
+clock and the servo in place, the user watched real TNG S1E1 at 3:54 with
+`av_offset_ms=0` and reported it in sync. **No constant is needed at all.** The
++80 ms was entirely the ring depth the submitted-byte clock was carrying.
+
+That is the answer to the question that started this work — "why do I have to set
+Star Trek ahead by 80 ms when Plex Web doesn't?" Plex Web asks the OS for the
+output latency and schedules against the hardware playback position. We were
+counting bytes we had handed over. Now we ask the driver the same question.
+
+Note the flash/beep harness read **-215 ms** at that same in-sync setting, which
+makes -215 ms the **USB grabber's own A/V skew** (video and audio arrive as
+separate USB streams with independent latency). Treat
+`tests/hw/avsync_measure.py` as a relative/drift instrument; add +215 ms for an
+absolute reading, and never bake a constant from it without eyes-on.
+
+The old eyes-on **+80 ms** is not transferable. It was tuned while video paced off submitted bytes, so it silently
 absorbed whatever ring depth that session happened to have — and that depth was
 both large and session-dependent. Arithmetic on it would be arithmetic on sand.
 
