@@ -203,11 +203,13 @@ cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
 
 # Checksums for binaries + optional RBF
 {
-  (cd "$STAGE" && find bin conf cores docs -type f 2>/dev/null | sort | xargs sha256sum)
+  (cd "$STAGE" && find bin conf cores docs licenses scripts -type f 2>/dev/null | sort | xargs sha256sum)
 } >"$STAGE/SHA256SUMS" 2>/dev/null || true
 
 mkdir -p "$OUT_DIR"
-tar -C "$STAGE/.." -czf "$TAR" "$(basename "$STAGE")"
+# Extract as misterplex-<version>/ rather than leaking the staging directory name.
+tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" \
+  -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"
 if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
