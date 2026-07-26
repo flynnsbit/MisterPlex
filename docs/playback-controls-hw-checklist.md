@@ -10,9 +10,17 @@ Run the scripted validation from the deploy-token window:
 
 Deploy safety: the script uses `DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh` for any RBF deploy. Treat deploy exit 3 (Main wedged) or 4 (never returned to Plex) as authoritative; do not trust an SD-card md5 alone.
 
-## Eyes-on PASS/FAIL points
+## Automated uinput path
 
-1. **F12 Load lines** — PASS only if the three file entries render as clean, readable Load lines for RGB565 frame, PCM s16le stereo, and H.264 Annex-B. FAIL if the old fragments appear: `*.raw,RGB,565, fr,ame`, `*.raw, s1,6le , st,ere,o`, or `*.H.2,64 ,ann,ex-,B e,...`.
+`tests/hw/osd_keys.py` runs on the MiSTer and creates a temporary
+`misterplex-uinput-keys` virtual keyboard. The validation script stages it under
+`/media/fat/misterplex/validation/` and injects F12/Space/Esc/Left/Right as real
+press/release pairs, so keyboard checks exercise Main → hps_io → core → `PLXI`
+mailbox rather than a daemon shortcut.
+
+## PASS/FAIL points
+
+1. **F12 Load lines** — the script injects F12 and captures the OSD. PASS only if the three file entries render as clean, readable Load lines for RGB565 frame, PCM s16le stereo, and H.264 Annex-B. FAIL if the old fragments appear: `*.raw,RGB,565, fr,ame`, `*.raw, s1,6le , st,ere,o`, or `*.H.2,64 ,ann,ex-,B e,...`.
 2. **Controller mapping** — use F12 → Define buttons and map Play/Pause, Stop, Skip Fwd, Skip Back before the controller half of the script.
 3. **Overlay** — each local command should show the correct icon/state, progress near the current time, skip direction/delta for Left/Right, and then auto-hide without dirty pixels.
 4. **Casting app sync** — keep Plex phone/web visible. A local press should show state/time change on the app within about one Companion long-poll (~400 ms).

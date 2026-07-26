@@ -16,6 +16,7 @@ ROLLBACK_DIR="$STATE_DIR/rollback"
 REMOTE_DIR="/media/fat/misterplex/validation"
 REMOTE_PROBE="$REMOTE_DIR/input_mailbox_probe"
 REMOTE_PUSH="$REMOTE_DIR/push_frame"
+REMOTE_KEYS="$REMOTE_DIR/osd_keys.py"
 REMOTE_EDGE="$REMOTE_DIR/edge_markers.rgb"
 LOCAL_EDGE="$STATE_DIR/edge_markers.rgb"
 MODE="run"
@@ -119,8 +120,9 @@ build_helpers() {
 stage_helpers() {
   log "Staging DDR-only mailbox probe and DDR push helper"
   remote "mkdir -p '$REMOTE_DIR'"
-  "${SCP[@]}" "$ROOT/build/arm/input_mailbox_probe" "$ROOT/build/arm/push_frame" "$USER@$HOST:$REMOTE_DIR/" >/dev/null
-  remote "chmod +x '$REMOTE_PROBE' '$REMOTE_PUSH'"
+  "${SCP[@]}" "$ROOT/build/arm/input_mailbox_probe" "$ROOT/build/arm/push_frame" \
+    "$ROOT/tests/hw/osd_keys.py" "$USER@$HOST:$REMOTE_DIR/" >/dev/null
+  remote "chmod +x '$REMOTE_PROBE' '$REMOTE_PUSH' '$REMOTE_KEYS'"
   pass "helpers staged under $REMOTE_DIR"
 }
 
@@ -183,10 +185,23 @@ probe_once() {
   remote "$REMOTE_PROBE --once" 2>&1 || true
 }
 
+inject_key() {
+  local key="$1"
+  remote "python3 '$REMOTE_KEYS' '$key'"
+}
+
 press_and_probe() {
-  local label="$1" expect="$2" prompt="$3"
+  local label="$1" expect="$2" prompt="$3" key="${4:-}"
   log "$label"
   printf '%s\n' "$prompt"
+  if [[ -n "$key" ]]; then
+    if remote "('$REMOTE_PROBE' --expect '$expect' --timeout-ms 12000 --settle-ms 800 & p=\$!; sleep 1; python3 '$REMOTE_KEYS' '$key' >'$REMOTE_DIR/osd_keys_${label// /_}.log' 2>&1; wait \$p; rc=\$?; cat '$REMOTE_DIR/osd_keys_${label// /_}.log'; exit \$rc)" | tee "$STATE_DIR/${label// /_}.log"; then
+      pass "$label: injected $key; mailbox cmd_seq advanced exactly once as $expect"
+    else
+      fail "$label: injected $key but mailbox did not report exactly one $expect event"
+    fi
+    return
+  fi
   if remote "$REMOTE_PROBE --expect '$expect' --timeout-ms 12000 --settle-ms 800" | tee "$STATE_DIR/${label// /_}.log"; then
     pass "$label: mailbox cmd_seq advanced exactly once as $expect"
   else
@@ -203,6 +218,32 @@ Open F12 OSD. The three file slots must be clean, readable Load entries, not spl
   - Load H.264 stream (*.h264 / Annex-B wording fits on one line)
 FAIL if you see the old broken fragments: "*.raw,RGB,565, fr,ame", "*.raw, s1,6le , st,ere,o", or "*.H.2,64 ,ann,ex-,B e,...".
 TEXT
+  local cap="$STATE_DIR/osd_f12.png" ocr="$STATE_DIR/osd_f12_ocr.txt" keylog="$STATE_DIR/osd_f12_keys.log"
+  log "1a. Automated F12 injection + capture"
+  remote "python3 '$REMOTE_KEYS' --hold 14 f12" >"$keylog" 2>&1 &
+  local keypid=$!
+  sleep 8
+  if ffmpeg -hide_banner -loglevel error -f v4l2 -input_format yuyv422 \
+      -video_size 1920x1080 -i "${HDMI_DEV:-/dev/video4}" \
+      -vf 'select=gte(n\,60)' -frames:v 1 -y "$cap"; then
+    pass "captured F12 OSD evidence at $cap"
+    if command -v tesseract >/dev/null 2>&1; then
+      tesseract "$cap" stdout --psm 6 >"$ocr" 2>&1 || true
+      if grep -Eiq 'RGB.*frame' "$ocr" &&
+         grep -Eiq '(s.?16le|stereo).*(48k|PCM)|48k.*stereo' "$ocr" &&
+         grep -Eiq 'H.?264.*annex.?B|annex.?B.*elementary' "$ocr"; then
+        pass "OCR recognized the three corrected Load lines ($ocr)"
+        wait "$keypid" || true
+        return
+      fi
+      manual "F12 OSD captured at $cap, but OCR was inconclusive; inspect $ocr."
+    else
+      manual "F12 OSD captured at $cap; install tesseract locally for scripted OCR."
+    fi
+  else
+    fail "could not capture F12 OSD via ${HDMI_DEV:-/dev/video4}"
+  fi
+  wait "$keypid" || true
   if confirm "Do all three F12 Load lines render cleanly as described?"; then pass "F12 Load lines clean"; else fail "F12 Load lines still garbled"; fi
 }
 
@@ -210,8 +251,8 @@ check_mailbox_live() {
   log "2. Input mailbox live proof"
   echo "Initial mailbox read:"
   probe_once | tee "$STATE_DIR/mailbox_initial.log"
-  press_and_probe "mailbox live first Space" playpause "Press Space once now (no active media required)."
-  press_and_probe "mailbox live second Space" playpause "Press Space once more; this proves seq/cmd_seq advance on the live bitstream."
+  press_and_probe "mailbox live first Space" playpause "Inject Space once now (no active media required)." space
+  press_and_probe "mailbox live second Space" playpause "Inject Space once more; this proves seq/cmd_seq advance on the live bitstream." space
 }
 
 require_real_playback() {
@@ -246,23 +287,23 @@ check_companion_wait_poll() {
 
 keyboard_controls() {
   log "3. Keyboard controls end-to-end"
-  press_and_probe "keyboard PlayPause pause" playpause "Press keyboard Space once; video should pause."
+  press_and_probe "keyboard PlayPause pause" playpause "Inject keyboard Space once; video should pause." space
   wait_timeline_pred "keyboard pause transport" '[[ "$(timeline_state "$xml")" == "paused" ]]' 5 || true
   check_companion_wait_poll "keyboard pause" '[[ "$state" == "paused" ]]'
 
-  press_and_probe "keyboard PlayPause resume" playpause "Press keyboard Space once; video should resume."
+  press_and_probe "keyboard PlayPause resume" playpause "Inject keyboard Space once; video should resume." space
   wait_timeline_pred "keyboard resume transport" '[[ "$(timeline_state "$xml")" == "playing" || "$(timeline_state "$xml")" == "buffering" ]]' 5 || true
 
   local before after dur
   before=$(timeline_time "$(curl_timeline 0 || true)"); before=${before:-0}
-  press_and_probe "keyboard Skip Forward" skipforward "Press keyboard Right Arrow once."
+  press_and_probe "keyboard Skip Forward" skipforward "Inject keyboard Right Arrow once." right
   wait_timeline_pred "keyboard skip forward transport" 'after=$(timeline_time "$xml"); [[ "$after" =~ ^[0-9]+$ ]] && (( after >= before + 10000 || after == $(timeline_duration "$xml") ))' 8 || true
 
   before=$(timeline_time "$(curl_timeline 0 || true)"); before=${before:-0}
-  press_and_probe "keyboard Skip Back" skipback "Press keyboard Left Arrow once."
+  press_and_probe "keyboard Skip Back" skipback "Inject keyboard Left Arrow once." left
   wait_timeline_pred "keyboard skip back transport" 'after=$(timeline_time "$xml"); [[ "$after" =~ ^[0-9]+$ ]] && (( after <= before - 5000 || after == 0 ))' 8 || true
 
-  press_and_probe "keyboard Stop" stop "Press keyboard Esc once."
+  press_and_probe "keyboard Stop" stop "Inject keyboard Esc once." esc
   wait_timeline_pred "keyboard stop transport" '[[ "$(timeline_location "$xml")" == "navigation" || "$(timeline_state "$xml")" == "stopped" || "$(timeline_state "$xml")" == "buffering" ]]' 5 || true
 }
 
