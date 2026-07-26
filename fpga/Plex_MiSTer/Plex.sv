@@ -93,7 +93,8 @@ wire  [7:0] ioctl_dout;
 wire [15:0] ioctl_index;
 wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
 wire fs_wr_ready;
-wire ioctl_wait = is_frame_dl && !fs_wr_ready;
+wire sdram_startup_busy;
+wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
 
 // Core→HPS status (UIO_GET_STATUS / 0x29). See docs/phase3-decode.md layout.
 wire [127:0] status_in;
@@ -220,23 +221,81 @@ localparam int SDRAM_REFRESH_CYCLES = 858;
 localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
 
-// Single-stick SDRAM controller. B2 owns it for the frame store; the destructive
-// B1 memtest remains buildable from commit 6c6f94b/sweep artifacts but is not
-// active in the product frame-store path.
-wire        sdram_sel;
-wire [26:1] sdram_addr;
+// Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
+// the stick, publishes PLXM, then hands the port to the B2 frame store.
+wire        sdram_ctl_sel;
+wire [26:1] sdram_ctl_addr;
 wire [15:0] sdram_dout;
-wire [15:0] sdram_din;
-wire        sdram_wr;
-wire        sdram_rd;
-wire  [1:0] sdram_bs;
+wire [15:0] sdram_ctl_din;
+wire        sdram_ctl_wr;
+wire        sdram_ctl_rd;
+wire  [1:0] sdram_ctl_bs;
 wire        sdram_ready;
-wire        sdram_refresh;
-wire  [3:0] sdram_test_state = 4'd0;
-wire  [3:0] sdram_size_code = 4'd0;
-wire [15:0] sdram_error_count = 16'd0;
+wire        sdram_ctl_refresh;
+wire        sdram_test_sel;
+wire [26:1] sdram_test_addr;
+wire [15:0] sdram_test_din;
+wire        sdram_test_wr;
+wire        sdram_test_rd;
+wire  [1:0] sdram_test_bs;
+wire        sdram_test_refresh;
+wire        frame_sdram_sel;
+wire [26:1] frame_sdram_addr;
+wire [15:0] frame_sdram_din;
+wire        frame_sdram_wr;
+wire        frame_sdram_rd;
+wire  [1:0] frame_sdram_bs;
+wire        frame_sdram_refresh;
+wire  [3:0] sdram_test_state;
+wire  [3:0] sdram_size_code;
+wire [15:0] sdram_error_count;
+wire        sdram_test_done;
+wire        sdram_test_pass;
 wire [15:0] frame_underruns;
 wire  [7:0] frame_sdram_state;
+wire        sdram_test_active = !sdram_test_done;
+
+sdram_memtest #(
+	.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
+) sdram_test (
+	.clk(clk_sdram),
+	.reset(reset | ~pll_locked),
+	.sdram_dout(sdram_dout),
+	.sdram_ready(sdram_ready),
+	.sdram_sel(sdram_test_sel),
+	.sdram_addr(sdram_test_addr),
+	.sdram_din(sdram_test_din),
+	.sdram_wr(sdram_test_wr),
+	.sdram_rd(sdram_test_rd),
+	.sdram_bs(sdram_test_bs),
+	.sdram_refresh(sdram_test_refresh),
+	.state_code(sdram_test_state),
+	.size_code(sdram_size_code),
+	.error_count(sdram_error_count),
+	.done(sdram_test_done),
+	.pass(sdram_test_pass)
+);
+wire _sdram_test_pass_unused = sdram_test_pass;
+
+assign sdram_ctl_sel     = sdram_test_active ? sdram_test_sel     : frame_sdram_sel;
+assign sdram_ctl_addr    = sdram_test_active ? sdram_test_addr    : frame_sdram_addr;
+assign sdram_ctl_din     = sdram_test_active ? sdram_test_din     : frame_sdram_din;
+assign sdram_ctl_wr      = sdram_test_active ? sdram_test_wr      : frame_sdram_wr;
+assign sdram_ctl_rd      = sdram_test_active ? sdram_test_rd      : frame_sdram_rd;
+assign sdram_ctl_bs      = sdram_test_active ? sdram_test_bs      : frame_sdram_bs;
+assign sdram_ctl_refresh = sdram_test_active ? sdram_test_refresh : frame_sdram_refresh;
+
+reg sdram_test_done_s1, sdram_test_done_s2;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		sdram_test_done_s1 <= 1'b0;
+		sdram_test_done_s2 <= 1'b0;
+	end else begin
+		sdram_test_done_s1 <= sdram_test_done;
+		sdram_test_done_s2 <= sdram_test_done_s1;
+	end
+end
+assign sdram_startup_busy = !sdram_test_done_s2;
 
 sdram sdram_ctl (
 	.init(reset | ~pll_locked),
@@ -253,15 +312,15 @@ sdram sdram_ctl (
 	.SDRAM_CKE(SDRAM_CKE),
 	.SDRAM_CLK(SDRAM_CLK),
 	.SDRAM_EN(1'b1),
-	.sel(sdram_sel),
-	.addr(sdram_addr),
+	.sel(sdram_ctl_sel),
+	.addr(sdram_ctl_addr),
 	.dout(sdram_dout),
-	.din(sdram_din),
-	.wr(sdram_wr),
-	.bs(sdram_bs),
-	.rd(sdram_rd),
+	.din(sdram_ctl_din),
+	.wr(sdram_ctl_wr),
+	.bs(sdram_ctl_bs),
+	.rd(sdram_ctl_rd),
 	.ready(sdram_ready),
-	.refresh(sdram_refresh),
+	.refresh(sdram_ctl_refresh),
 	.cpsel(1'b0),
 	.cpaddr(26'd0),
 	.cpdin(16'd0),
@@ -358,7 +417,7 @@ ddram_frame_rd #(
 	.wr_pixel(ddr_wr_pixel),
 	.wr_reset_ptr(ddr_wr_reset),
 	.swap_req(ddr_swap),
-	.wr_ready(fs_wr_ready),
+	.wr_ready(fs_wr_ready && !sdram_startup_busy),
 	.busy(ddr_busy),
 	.frames_done(ddr_frames)
 );
@@ -371,7 +430,7 @@ wire        af_active;
 
 audio_ingest ainst (
 	.clk(clk_sys),
-	.reset(reset),
+	.reset(reset | sdram_startup_busy),
 	.ioctl_download(ioctl_download),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_dout(ioctl_dout),
@@ -474,7 +533,7 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	.reset(reset),
+	.reset(reset | sdram_startup_busy),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
@@ -492,13 +551,13 @@ present_core #(
 	.fs_wr_ready(fs_wr_ready),
 	.sdram_dout(sdram_dout),
 	.sdram_ready(sdram_ready),
-	.sdram_sel(sdram_sel),
-	.sdram_addr(sdram_addr),
-	.sdram_din(sdram_din),
-	.sdram_wr(sdram_wr),
-	.sdram_rd(sdram_rd),
-	.sdram_bs(sdram_bs),
-	.sdram_refresh(sdram_refresh),
+	.sdram_sel(frame_sdram_sel),
+	.sdram_addr(frame_sdram_addr),
+	.sdram_din(frame_sdram_din),
+	.sdram_wr(frame_sdram_wr),
+	.sdram_rd(frame_sdram_rd),
+	.sdram_bs(frame_sdram_bs),
+	.sdram_refresh(frame_sdram_refresh),
 	.af_wr_en(af_wr_en),
 	.af_wr_data(af_wr_data),
 	// OSD T[10] or SPI status bit 10 pulses flush

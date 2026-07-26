@@ -37,6 +37,13 @@ The SDRAM result is published without SPI at physical address `0x3007F110`, next
 
 The mailbox is published on change and heartbeat by `rtl/ddram_frame_rd.sv`.
 
+In the B2 product path the SDRAM memtest runs at cold start before the frame
+store takes ownership of the SDRAM controller. While it is active, F1 backpressure
+is asserted and the frame/audio present path is held reset; once `done` is set,
+the port mux hands the stick to `frame_store`. This keeps `PLXM` meaningful in
+the same RBF used for frame-store parity instead of requiring a separate
+destructive bring-up image.
+
 ## B2 frame-store migration notes
 
 Branch `feat/b2` moves the 320x240 double-buffered `frame_store` payload from M10K BRAM to the single SDRAM stick.  The B1 final accepted RBF (`aff45bd0...`) was **100 MHz CL3**; the separate sweep showed **100 MHz CL2** was also timing-clean, so B2 defaults to 100 MHz CL2.  `SDRAM_CL3=1` remains available for a conservative fallback.
