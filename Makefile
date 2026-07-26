@@ -172,8 +172,19 @@ arm-plexd: $(MPLEX_HDR)
 		-o $(ROOT)/build/arm/set_status \
 		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
-	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status"
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/input_mailbox_probe \
+		$(ROOT)/tools/input_mailbox_probe.cpp \
+		-static
+	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
+	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
+
+$(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $@ $(ROOT)/tools/input_mailbox_probe.cpp -static
 
 MISTER_DEV ?= $(HOME)/Projects/misterfpga-dev
 build-rbf:
