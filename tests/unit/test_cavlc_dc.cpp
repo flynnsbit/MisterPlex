@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
 
     // Bit-exact vs FFmpeg (no loop filter) when ffmpeg is available.
     double maeY = -1.0, maeU = -1.0, maeV = -1.0;
-    const char* goldPath = "/tmp/misterplex_cavlc_gold.yuv";
+    const char* goldPath = "build/misterplex_cavlc_gold.yuv";
     if (ffmpegGold(path, goldPath)) {
         auto gold = readFile(goldPath);
         const size_t ysz = rec.y.size();

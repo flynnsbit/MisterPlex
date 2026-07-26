@@ -8,6 +8,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/playback_overlay.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -129,6 +130,12 @@ public:
     void pause();
     void resume();
     void stop();
+    // On-screen playback overlay API for input/transport workers.
+    // showPlaybackOverlay() only affects visual feedback: it latches the state,
+    // progress and a short auto-hide timer. flashPlaybackSkip() adds transient
+    // "<< Ns" / "Ns >>" feedback; callers still own the actual seek/skip.
+    void showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs);
+    void flashPlaybackSkip(int64_t deltaMs);
     // Process-exit teardown: joins every worker thread without touching the FPGA
     // or reloading Main. A std::thread that is still joinable when ~MediaPlayer
     // runs calls std::terminate(), which is how the daemon used to abort on
@@ -253,6 +260,7 @@ private:
     std::atomic<bool> cabacSkip_{false};
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
+    PlaybackOverlay overlay_;
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;
