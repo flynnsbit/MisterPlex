@@ -99,6 +99,10 @@ md5sum "$FINAL"
 REMOTE
 fi
 
+# Core reconfiguration takes several seconds; the liveness probe needs a longer window
+# than the post-load settle time so a healthy Main is never mistaken for a wedged one.
+MENU_WAIT_S="$DEPLOY_WAIT_S"; [ "$MENU_WAIT_S" -ge 20 ] || MENU_WAIT_S=20
+
 case "$DEPLOY_LOAD" in
   none|0|off|copy)
     echo "DEPLOY_LOAD=none — RBF on SD only; not calling load_core (safest)."
@@ -106,22 +110,37 @@ case "$DEPLOY_LOAD" in
     ;;
   menu|bounce)
     echo "Soft reload: Menu → wait → Plex"
-    # Fire-and-forget into the FIFO so SSH cannot hang if Main wedges briefly
+    # The MENU step is also the ONLY valid Main liveness test. A wedged Main accepts
+    # /dev/MiSTer_cmd writes and drops them: the RBF on SD updates (md5 verifies!) but the
+    # FPGA keeps running the bitstream loaded when Main wedged. Reaching CORENAME=Plex at
+    # the end proves nothing on its own, because Plex may simply never have been unloaded.
     "${SSH[@]}" "bash -s" <<REMOTE
 set +e
-# Only one cmd at a time; small gaps so Main drains the pipe
 printf '%s\n' 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd
 sync
-sleep 3
-printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
-sync
-# Do not block SSH on CORENAME forever
-for i in \$(seq 1 $DEPLOY_WAIT_S); do
+menu_ok=0
+for i in \$(seq 1 $MENU_WAIT_S); do
   c=\$(cat /tmp/CORENAME 2>/dev/null || true)
   echo "CORENAME=\$c"
-  echo "\$c" | grep -qi plex && break
+  if echo "\$c" | grep -qi menu; then menu_ok=1; break; fi
   sleep 1
 done
+if [ "\$menu_ok" != "1" ]; then
+  echo "DEPLOY_FAIL: Main never switched to MENU — it is WEDGED and is silently ignoring" >&2
+  echo "  /dev/MiSTer_cmd. The new RBF is on the SD card but the FPGA is STILL RUNNING THE" >&2
+  echo "  OLD BITSTREAM. Do not test this build. Reboot the MiSTer, then redeploy." >&2
+  exit 3
+fi
+printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
+sync
+for i in \$(seq 1 $MENU_WAIT_S); do
+  c=\$(cat /tmp/CORENAME 2>/dev/null || true)
+  echo "CORENAME=\$c"
+  echo "\$c" | grep -qi plex && exit 0
+  sleep 1
+done
+echo "DEPLOY_FAIL: Main accepted MENU but never came back to Plex." >&2
+exit 4
 REMOTE
     ;;
   core|plex|1)

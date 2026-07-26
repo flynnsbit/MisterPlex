@@ -123,10 +123,9 @@ module frame_store #(
 		else
 			rd_q <= bank1[rd_addr_r];
 
-		// Expand RGB565 → 8-bit (replicate MSBs).
-		// Hold last pixel when inactive (matches colorbars registered hold).
-		// Zeroing here blacked every !ce_pix tick and made cast look pillarboxed.
-		if (rd_active_d && has_frame) begin
+		// Expand RGB565 → 8-bit (replicate MSBs). Keep loading the blank-time
+		// x=0 prefetch so active video does not reopen on the prior line.
+		if ((rd_active_d || !rd_active) && has_frame) begin
 			rd_r <= {rd_q[15:11], rd_q[15:13]};
 			rd_g <= {rd_q[10:5],  rd_q[10:9]};
 			rd_b <= {rd_q[4:0],   rd_q[4:2]};
