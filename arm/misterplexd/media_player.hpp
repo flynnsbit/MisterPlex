@@ -111,6 +111,9 @@ public:
     void setOsdControl(bool on) { osdControl_ = on; }
     void startOsdPoll();
     void stopOsdPoll();
+    void setSkipDeltasMs(int64_t forwardMs, int64_t backMs);
+    void startInputPoll();
+    void stopInputPoll();
     uint16_t lastOsdWord() const { return lastOsd_.load(); }
     // Paint one idle frame right now (used at session end).
     void paintIdle();
@@ -162,6 +165,7 @@ private:
     void streamPump(int sfd);
     void killChildren();
     void signalChildren(int sig);
+    void dispatchPlaybackInput(PlaybackCommand command);
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
@@ -221,6 +225,12 @@ private:
     std::atomic<uint16_t> lastOsd_{0};
     std::atomic<bool> osdSeen_{false};
     std::thread osdThr_;
+    std::mutex inputMu_;
+    std::atomic<bool> inputRun_{false};
+    std::thread inputThr_;
+    int64_t skipForwardMs_ = 30000;
+    int64_t skipBackMs_ = 10000;
+    std::atomic<int64_t> ignoreInputUntilMs_{0};
     // Present pacing: keep video from free-running ahead of wall/audio (lipsync).
     // Exact rational content rate; 0/0 → treat as 24/1 when pacing with audio.
     int fpsNum_ = 0;

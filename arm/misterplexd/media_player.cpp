@@ -26,9 +26,13 @@ namespace {
 
 // PMS universal already bakes offset= (seconds). Applying FFmpeg -ss again double-seeks
 // and breaks resume / mid-play scrub on STREAM=0 cast. Timeline still uses startMs.
+inline bool isUniversalTranscodeUrl(const std::string& url) {
+    return url.find("transcode/universal") != std::string::npos ||
+           url.find("/video/:/transcode/") != std::string::npos;
+}
+
 inline bool urlHasUniversalOffset(const std::string& url) {
-    if (url.find("transcode/universal") == std::string::npos &&
-        url.find("/video/:/transcode/") == std::string::npos)
+    if (!isUniversalTranscodeUrl(url))
         return false;
     // offset=N in query (N may be 0; still "baked" path when present after ?)
     auto q = url.find('?');
@@ -36,6 +40,33 @@ inline bool urlHasUniversalOffset(const std::string& url) {
         return false;
     const std::string qs = url.substr(q + 1);
     return qs.find("offset=") != std::string::npos;
+}
+
+inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs) {
+    if (!isUniversalTranscodeUrl(url))
+        return url;
+    const int64_t offSec = offsetMs <= 0 ? 0 : (offsetMs + 500) / 1000;
+    const std::string value = "offset=" + std::to_string(offSec);
+    const auto q = url.find('?');
+    const auto hash = url.find('#');
+    const auto end = (hash == std::string::npos) ? url.size() : hash;
+    if (q == std::string::npos || q > end) {
+        return url.substr(0, end) + "?" + value +
+               (hash == std::string::npos ? std::string() : url.substr(hash));
+    }
+    auto pos = q + 1;
+    while ((pos = url.find("offset=", pos)) != std::string::npos && pos < end) {
+        const bool atKey = pos == q + 1 || url[pos - 1] == '&';
+        if (atKey) {
+            auto valEnd = url.find('&', pos);
+            if (valEnd == std::string::npos || valEnd > end)
+                valEnd = end;
+            return url.substr(0, pos) + value + url.substr(valEnd);
+        }
+        pos += 7;
+    }
+    return url.substr(0, end) + "&" + value +
+           (hash == std::string::npos ? std::string() : url.substr(hash));
 }
 
 // Annex-B start-code length at `i`, or 0 if none.
@@ -108,6 +139,12 @@ inline bool looksElementaryH264(const std::string& url) {
 
 inline bool confTruthyMode(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+inline int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 } // namespace
@@ -203,7 +240,59 @@ void MediaPlayer::stopOsdPoll() {
         osdThr_.join();
 }
 
+void MediaPlayer::setSkipDeltasMs(int64_t forwardMs, int64_t backMs) {
+    if (forwardMs < 0)
+        forwardMs = 0;
+    if (backMs < 0)
+        backMs = 0;
+    skipForwardMs_ = forwardMs;
+    skipBackMs_ = backMs;
+}
+
+void MediaPlayer::startInputPoll() {
+    std::lock_guard<std::mutex> lk(inputMu_);
+    if (shuttingDown_.load() || inputRun_.exchange(true))
+        return;
+    if (inputThr_.joinable())
+        inputThr_.join();
+    inputThr_ = std::thread([this] {
+        bool logged = false;
+        while (inputRun_.load()) {
+            PlaybackCommand command = PlaybackCommand::None;
+            bool got = false;
+            {
+                std::lock_guard<std::mutex> lk(presentMu_);
+                got = fpga_.readInputMailbox(command);
+            }
+            if (got) {
+                if (!logged) {
+                    logged = true;
+                    log("media: playback input via DDR mailbox (no SPI)");
+                }
+                dispatchPlaybackInput(command);
+            }
+            for (int slept = 0; slept < 50 && inputRun_.load(); slept += 10)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+}
+
+void MediaPlayer::stopInputPoll() {
+    std::lock_guard<std::mutex> lk(inputMu_);
+    inputRun_.store(false);
+    if (inputThr_.joinable())
+        inputThr_.join();
+}
+
+void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
+    const PlaybackTransportState state{playing_.load(), paused_.load(), positionMs_.load(),
+                                       durationMs()};
+    (void)dispatchPlaybackCommand(command, state, skipForwardMs_, skipBackMs_, steadyMs(),
+                                  ignoreInputUntilMs_.load(), *this);
+}
+
 void MediaPlayer::applyOsd(uint16_t word) {
+    ignoreInputUntilMs_.store(steadyMs() + 300);
     const OsdSettings s = decodeOsdWord(word);
     setAvOffsetMs(s.avOffsetMs);
     // Takes effect on the next session: the feed rate is captured when audioPump
@@ -454,6 +543,7 @@ void MediaPlayer::shutdown() {
         playing_.store(false);
         paused_.store(false);
     }
+    stopInputPoll();
     stopOsdPoll();
     stopIdle();
 }
@@ -547,8 +637,10 @@ void MediaPlayer::seekMs(int64_t ms) {
         log("media: seek same-pos " + std::to_string(ms) + " (no-op)");
         return;
     }
+    if (onProgress_)
+        onProgress_("buffering", ms, dur);
     // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).
-    play(url, ms, headers, dur);
+    play(withUniversalOffset(url, ms), ms, headers, dur);
 }
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,

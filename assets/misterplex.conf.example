@@ -86,6 +86,17 @@ SOURCE_FPS=auto
 # other and got the sign wrong.
 AUDIO_CLOCK_PPM=-638
 
+# --- Playback input -----------------------------------------------------------
+#
+# The Plex core publishes keyboard/controller playback commands through a DDR
+# mailbox; the daemon polls that mailbox only (no HPS<->FPGA SPI bus access).
+# Skip defaults follow common media remote behavior: Right/SkipForward = +30s,
+# Left/SkipBack = -10s. Use SKIP_MS to make both directions symmetric, or set
+# the directional keys independently.
+# SKIP_MS=30000
+# SKIP_FORWARD_MS=30000
+# SKIP_BACK_MS=10000
+
 # --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
 #
 # OSD_CONTROL: let the core's OSD menu (F12) drive playback settings live. The

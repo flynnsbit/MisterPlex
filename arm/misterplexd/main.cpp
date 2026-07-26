@@ -6,6 +6,7 @@
 #include "media_player.hpp"
 #include "plex_resolve.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -97,6 +98,8 @@ int main(int argc, char** argv) {
     misterplex::WeakLadder weak;
     std::vector<std::string> servers;
     std::string defaultPms = "http://192.168.1.41:32400";
+    int64_t skipForwardMs = 30000;
+    int64_t skipBackMs = 10000;
     // Lab: --play-file PATH [--play-seconds N] plays a local file then exits (no GDM).
     std::string playFile;
     int playSeconds = 25;
@@ -218,6 +221,20 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "SOURCE_FPS");
         if (!v.empty())
             sourceFpsConf = v;
+        v = loadConf(confPath, "SKIP_MS");
+        if (!v.empty()) {
+            const int ms = std::atoi(v.c_str());
+            if (ms >= 0) {
+                skipForwardMs = ms;
+                skipBackMs = ms;
+            }
+        }
+        v = loadConf(confPath, "SKIP_FORWARD_MS");
+        if (!v.empty())
+            skipForwardMs = std::max(0, std::atoi(v.c_str()));
+        v = loadConf(confPath, "SKIP_BACK_MS");
+        if (!v.empty())
+            skipBackMs = std::max(0, std::atoi(v.c_str()));
         std::fprintf(stderr,
                      "misterplexd: MATCH_SOURCE_HZ=%s SOURCE_FPS=%s "
                      "(cadence/OSD path; switchres TODO)\n",
@@ -256,6 +273,9 @@ int main(int argc, char** argv) {
     player.setPresentMode(presentMode);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
+    player.setSkipDeltasMs(skipForwardMs, skipBackMs);
+    std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
+                 static_cast<long long>(skipForwardMs), static_cast<long long>(skipBackMs));
     if (subtitleMode == "ffmpeg")
         player.setSubtitleMode("ffmpeg");
     if (subtitleStreamId >= 0)
@@ -327,6 +347,7 @@ int main(int argc, char** argv) {
         // Paint the idle screen at boot so the core never shows a stale frame store.
         player.startIdle();
         player.startOsdPoll();
+        player.startInputPoll();
     }
 
     // Lab A/V sync: play local file and exit (no companion / GDM).
