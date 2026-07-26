@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "libmisterplex/input_mailbox.hpp"
+
 namespace misterplex {
 
 class FpgaSpi {
@@ -115,6 +117,10 @@ public:
     // so we trust the word only while seq keeps advancing.
     bool readOsdMailbox(uint16_t& osd);
 
+    // Read one edge-detected playback command from the input mailbox. This is
+    // DDR-only and never falls back to the HPS<->FPGA SPI bus.
+    bool readInputMailbox(PlaybackCommand& command);
+
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 
@@ -221,6 +227,7 @@ private:
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
     double mboxSeqMs_ = 0.0;
+    InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     bool ensureDdrMap();
     void releaseDdrMap();

@@ -142,6 +142,7 @@ export PLEX_TOKEN=<your-token>
 | `PRESENT` | `fb0` (default, safe), `fpga`, or `both`. |
 | `SUBTITLES` | `off`, `burn` (server-side), or `ffmpeg` (local files). |
 | `AUTO_NEXT` | Play the next play-queue item at end of media. Default on. |
+| `SKIP_FORWARD_MS` / `SKIP_BACK_MS` | Core input skip deltas; defaults are +30s / -10s. |
 | `SOURCE_FPS` | `auto` uses server metadata to log a Content FPS hint. |
 
 Full reference: [`assets/misterplex.conf.example`](assets/misterplex.conf.example) and

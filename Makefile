@@ -17,11 +17,13 @@ help:
 
 test: unit
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
+	$(ROOT)/build/test_playback_overlay
+	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_main_guard
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
@@ -93,6 +95,16 @@ $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 
+$(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cpp \
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
+
+$(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_input_mailbox.cpp
+
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp
@@ -115,7 +127,9 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
 	$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
-	$(ROOT)/host/libmisterplex/h264_sps.hpp
+	$(ROOT)/host/libmisterplex/h264_sps.hpp \
+	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
+	$(ROOT)/host/libmisterplex/playback_overlay.hpp
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
@@ -133,7 +147,7 @@ plexd: $(ROOT)/build/misterplexd
 $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -o $@ \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
 
 push-frame: $(ROOT)/build/push_frame
@@ -150,11 +164,11 @@ arm-plexd: $(MPLEX_HDR)
 	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/set_status \
 		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static

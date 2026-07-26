@@ -19,3 +19,11 @@ Address: `0x3007F108`, one 64-bit little-endian word, magic `0x504C5849` (`PLXI`
 ```
 
 Read twice and accept only if both reads match, `magic == PLXI`, and `seq` or `cmd_seq` advanced since the last accepted command.
+
+The ARM daemon treats the first valid word after startup as a baseline when DDR
+already contains `PLXI`, so it does not replay a stale value from a previous core
+load. If it first sees no valid magic, the next stable valid word is accepted as
+the first live command. A later dispatch requires stable reads plus advanced
+`seq` and `cmd_seq`; repeated identical commands are valid because `cmd_seq`
+changes each time. Defaults: skip forward = 30000 ms, skip back = 10000 ms
+(`SKIP_FORWARD_MS` / `SKIP_BACK_MS`; `SKIP_MS` sets both).
