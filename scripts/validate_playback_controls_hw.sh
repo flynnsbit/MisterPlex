@@ -11,6 +11,12 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 PORT="${MISTERPLEX_PORT:-3005}"
+# Optional: point the daemon at a specific Plex Media Server, e.g.
+#   PMS_URL=http://192.168.0.10:32400 ./scripts/validate_playback_controls_hw.sh
+# When unset the daemon uses whatever is configured in misterplex.conf.
+PMS_URL="${PMS_URL:-}"
+PMS_ARG=""
+[[ -n "$PMS_URL" ]] && PMS_ARG="--pms $PMS_URL"
 STATE_DIR="${PLAYBACK_VALIDATE_DIR:-$ROOT/build/playback-controls-hw}"
 ROLLBACK_DIR="$STATE_DIR/rollback"
 REMOTE_DIR="/media/fat/misterplex/validation"
@@ -137,7 +143,7 @@ backup_current() {
 restart_daemon_payload() {
   local bin="$1"
   "${SCP[@]}" "$bin" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd" >/dev/null
-  remote_sh <<'REMOTE'
+  remote_sh <<REMOTE
 set -e
 chmod +x /media/fat/misterplex/bin/misterplexd
 killall misterplexd 2>/dev/null || true
@@ -147,8 +153,8 @@ for i in 1 2 3 4 5 6 7 8; do
 done
 if ps | grep -v grep | grep -q '[m]isterplexd'; then killall -9 misterplexd 2>/dev/null || true; fi
 : >/media/fat/misterplex/misterplexd.log
-nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 \
-  --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400 \
+nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-${PORT} --port ${PORT} \\
+  --conf /media/fat/misterplex/misterplex.conf ${PMS_ARG} \\
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 0.8
 ps w | grep '[m]isterplexd'
