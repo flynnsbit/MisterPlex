@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace misterplex {
@@ -104,6 +105,12 @@ inline int64_t universalOffsetSeconds(int64_t offsetMs) {
 
 // Chrome-profile FFmpeg headers required by PMS universal transcoder.
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token);
+
+// Best-effort PMS GET using the same curl-based Plex client identity as resolve.
+// Headers are name/value pairs; response body is discarded by callers.
+bool plexHttpGetNoBody(const std::string& url,
+                       const std::vector<std::pair<std::string, std::string>>& headers = {},
+                       int timeoutSec = 4);
 
 // Call /universal/decision before start.mp4 (PMS 1.43+).
 bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,

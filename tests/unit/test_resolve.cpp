@@ -132,8 +132,15 @@ int main() {
     CHECK(mediaVideoIsH264(
               "<Stream streamType=\"2\" codec=\"aac\" /><Media videoCodec=\"hevc\"/>") == false);
     // Local path + direct URL still resolve without preferDirect flag
-    auto directLocal = resolvePlayTarget("/tmp/plex_real_baseline.h264", "", "", 0, true, {}, true);
-    CHECK(directLocal.ok && directLocal.playable == "/tmp/plex_real_baseline.h264");
+    auto directLocal =
+
+
+        resolvePlayTarget("/media/fat/misterplex/plex_real_baseline.264", "", "", 0, true, {},
+                          true);
+    CHECK(directLocal.ok &&
+          directLocal.playable == "/media/fat/misterplex/plex_real_baseline.264");
+
+
     // preferDirectH264 does not alter local/http passthrough detail
     auto directUrl =
         resolvePlayTarget("http://192.168.1.41:32400/library/parts/1/file.mkv", "", "", 0, true, {},

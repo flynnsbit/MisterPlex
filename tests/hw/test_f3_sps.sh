@@ -14,12 +14,13 @@ echo "=== core is Plex ==="
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "=== generate real Baseline 320x240 annex-B ==="
-python3 "$ROOT/scripts/gen_test_annexb_real.py" /tmp/plex_real_baseline.h264
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_real_baseline.h264 \
-  "$USER@$HOST:/media/fat/plex_real_baseline.h264"
+mkdir -p "$ROOT/build"
+python3 "$ROOT/scripts/gen_test_annexb_real.py" "$ROOT/build/plex_real_baseline.264"
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$ROOT/build/plex_real_baseline.264" \
+  "$USER@$HOST:/media/fat/plex_real_baseline.264"
 
 echo "=== F3 push real stream ==="
-OUT=$(ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_real_baseline.h264')
+OUT=$(ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_real_baseline.264')
 echo "$OUT"
 echo "$OUT" | grep -q OK
 sleep 0.4

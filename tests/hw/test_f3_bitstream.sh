@@ -14,13 +14,14 @@ echo "=== core is Plex ==="
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "=== generate annex-B test blob ==="
-python3 "$ROOT/scripts/gen_test_annexb.py" /tmp/plex_test_annexb.h264
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_test_annexb.h264 \
-  "$USER@$HOST:/media/fat/plex_test_annexb.h264"
+mkdir -p "$ROOT/build"
+python3 "$ROOT/scripts/gen_test_annexb.py" "$ROOT/build/plex_test_annexb.264"
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$ROOT/build/plex_test_annexb.264" \
+  "$USER@$HOST:/media/fat/plex_test_annexb.264"
 
 echo "=== F3 SPI push (index 3) ==="
 # push_frame pauses Main_MiSTer during SPI for clean FIO + status readback
-OUT=$(ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264')
+OUT=$(ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.264')
 echo "$OUT"
 echo "$OUT" | grep -q 'OK'
 echo "$OUT" | grep -q 'index=3'
@@ -54,7 +55,7 @@ python3 -c "import sys; b=int('$BYTES_IN' or 0); sys.exit(0 if b >= 100 else 1)"
 # Fake SPS in synthetic blob is not Baseline-parseable — sps_valid may stay 0
 
 echo "=== second append push (nalu should grow by >=4) ==="
-ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264' | grep -q OK
+ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.264' | grep -q OK
 sleep 0.2
 ST2=$(read_status) || true
 echo "$ST2"

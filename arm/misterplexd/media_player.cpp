@@ -26,9 +26,13 @@ namespace {
 
 // PMS universal already bakes offset= (seconds). Applying FFmpeg -ss again double-seeks
 // and breaks resume / mid-play scrub on STREAM=0 cast. Timeline still uses startMs.
+inline bool isUniversalTranscodeUrl(const std::string& url) {
+    return url.find("transcode/universal") != std::string::npos ||
+           url.find("/video/:/transcode/") != std::string::npos;
+}
+
 inline bool urlHasUniversalOffset(const std::string& url) {
-    if (url.find("transcode/universal") == std::string::npos &&
-        url.find("/video/:/transcode/") == std::string::npos)
+    if (!isUniversalTranscodeUrl(url))
         return false;
     // offset=N in query (N may be 0; still "baked" path when present after ?)
     auto q = url.find('?');
@@ -36,6 +40,33 @@ inline bool urlHasUniversalOffset(const std::string& url) {
         return false;
     const std::string qs = url.substr(q + 1);
     return qs.find("offset=") != std::string::npos;
+}
+
+inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs) {
+    if (!isUniversalTranscodeUrl(url))
+        return url;
+    const int64_t offSec = offsetMs <= 0 ? 0 : (offsetMs + 500) / 1000;
+    const std::string value = "offset=" + std::to_string(offSec);
+    const auto q = url.find('?');
+    const auto hash = url.find('#');
+    const auto end = (hash == std::string::npos) ? url.size() : hash;
+    if (q == std::string::npos || q > end) {
+        return url.substr(0, end) + "?" + value +
+               (hash == std::string::npos ? std::string() : url.substr(hash));
+    }
+    auto pos = q + 1;
+    while ((pos = url.find("offset=", pos)) != std::string::npos && pos < end) {
+        const bool atKey = pos == q + 1 || url[pos - 1] == '&';
+        if (atKey) {
+            auto valEnd = url.find('&', pos);
+            if (valEnd == std::string::npos || valEnd > end)
+                valEnd = end;
+            return url.substr(0, pos) + value + url.substr(valEnd);
+        }
+        pos += 7;
+    }
+    return url.substr(0, end) + "&" + value +
+           (hash == std::string::npos ? std::string() : url.substr(hash));
 }
 
 // Annex-B start-code length at `i`, or 0 if none.
@@ -76,6 +107,20 @@ inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t
     }
 }
 
+inline void packRgb24ToRgb565Le(const uint8_t* rgb, int w, int h, std::vector<uint8_t>& out) {
+    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
+    size_t o = 0;
+    for (int i = 0; i < w * h; ++i) {
+        const uint8_t r = rgb[i * 3 + 0];
+        const uint8_t g = rgb[i * 3 + 1];
+        const uint8_t b = rgb[i * 3 + 2];
+        const uint16_t p =
+            static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        out[o++] = static_cast<uint8_t>(p & 0xFF);
+        out[o++] = static_cast<uint8_t>(p >> 8);
+    }
+}
+
 // Local annex-B elementary H.264 (skip remux BSF when possible).
 inline bool looksElementaryH264(const std::string& url) {
     if (url.empty() || url.rfind("http", 0) == 0 || url.rfind("lavfi", 0) == 0)
@@ -94,6 +139,12 @@ inline bool looksElementaryH264(const std::string& url) {
 
 inline bool confTruthyMode(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+inline int64_t steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 } // namespace
@@ -189,7 +240,59 @@ void MediaPlayer::stopOsdPoll() {
         osdThr_.join();
 }
 
+void MediaPlayer::setSkipDeltasMs(int64_t forwardMs, int64_t backMs) {
+    if (forwardMs < 0)
+        forwardMs = 0;
+    if (backMs < 0)
+        backMs = 0;
+    skipForwardMs_ = forwardMs;
+    skipBackMs_ = backMs;
+}
+
+void MediaPlayer::startInputPoll() {
+    std::lock_guard<std::mutex> lk(inputMu_);
+    if (shuttingDown_.load() || inputRun_.exchange(true))
+        return;
+    if (inputThr_.joinable())
+        inputThr_.join();
+    inputThr_ = std::thread([this] {
+        bool logged = false;
+        while (inputRun_.load()) {
+            PlaybackCommand command = PlaybackCommand::None;
+            bool got = false;
+            {
+                std::lock_guard<std::mutex> lk(presentMu_);
+                got = fpga_.readInputMailbox(command);
+            }
+            if (got) {
+                if (!logged) {
+                    logged = true;
+                    log("media: playback input via DDR mailbox (no SPI)");
+                }
+                dispatchPlaybackInput(command);
+            }
+            for (int slept = 0; slept < 50 && inputRun_.load(); slept += 10)
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+}
+
+void MediaPlayer::stopInputPoll() {
+    std::lock_guard<std::mutex> lk(inputMu_);
+    inputRun_.store(false);
+    if (inputThr_.joinable())
+        inputThr_.join();
+}
+
+void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
+    const PlaybackTransportState state{playing_.load(), paused_.load(), positionMs_.load(),
+                                       durationMs()};
+    (void)dispatchPlaybackCommand(command, state, skipForwardMs_, skipBackMs_, steadyMs(),
+                                  ignoreInputUntilMs_.load(), *this);
+}
+
 void MediaPlayer::applyOsd(uint16_t word) {
+    ignoreInputUntilMs_.store(steadyMs() + 300);
     const OsdSettings s = decodeOsdWord(word);
     setAvOffsetMs(s.avOffsetMs);
     // Takes effect on the next session: the feed rate is captured when audioPump
@@ -440,6 +543,7 @@ void MediaPlayer::shutdown() {
         playing_.store(false);
         paused_.store(false);
     }
+    stopInputPoll();
     stopOsdPoll();
     stopIdle();
 }
@@ -452,8 +556,16 @@ void MediaPlayer::stop() {
     killChildren();
     if (thr_.joinable())
         thr_.join();
+    const int64_t finalPos = positionMs_.load();
+    int64_t finalDur = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        finalDur = durationMs_;
+    }
     playing_.store(false);
     paused_.store(false);
+    if (onProgress_)
+        onProgress_("stopped", finalPos, finalDur);
     {
         // Drop session URL so post-stop seekMs cannot restart without a new playMedia.
         std::lock_guard<std::mutex> lock(mu_);
@@ -463,6 +575,7 @@ void MediaPlayer::stop() {
     }
     seekReqMs_.store(-1);
     positionMs_.store(0);
+    showPlaybackOverlay(PlaybackOverlayState::Stopped, 0, 0);
     // Retire the background FPGA users BEFORE tearing the SPI/mmap state down.
     // stop() closes FpgaSpi and reloads the core; an OSD poll or idle paint in
     // flight would then ioctl through an unmapped handle and take the daemon down.
@@ -477,13 +590,12 @@ void MediaPlayer::stop() {
     paintIdle();
     startIdle();
     startOsdPoll();
-    if (onProgress_)
-        onProgress_("stopped", 0, 0);
 }
 
 void MediaPlayer::pause() {
     paused_.store(true);
     signalChildren(SIGSTOP);
+    showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
 }
@@ -491,13 +603,24 @@ void MediaPlayer::pause() {
 void MediaPlayer::resume() {
     paused_.store(false);
     signalChildren(SIGCONT);
+    showPlaybackOverlay(PlaybackOverlayState::Playing, positionMs_.load(), durationMs());
     if (onProgress_)
         onProgress_("playing", positionMs_.load(), durationMs_);
+}
+
+void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs,
+                                      int64_t durationMs) {
+    overlay_.show(state, positionMs, durationMs);
+}
+
+void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
+    overlay_.flashSkip(deltaMs, positionMs_.load(), durationMs());
 }
 
 void MediaPlayer::seekMs(int64_t ms) {
     if (ms < 0)
         ms = 0;
+    const int64_t fromMs = positionMs_.load();
     std::string url, headers;
     int64_t dur = 0;
     {
@@ -513,14 +636,17 @@ void MediaPlayer::seekMs(int64_t ms) {
         // No active session — drop seek (do not leave a phantom seekReq for next play).
         return;
     }
+    flashPlaybackSkip(ms - fromMs);
     // Same scrubber position while session is live: skip demux restart thrash
     // (companion already ACK-only gates; belt-and-suspenders for step/skip paths).
     if (playing_.load() && !stop_.load() && positionMs_.load() == ms) {
         log("media: seek same-pos " + std::to_string(ms) + " (no-op)");
         return;
     }
+    if (onProgress_)
+        onProgress_("buffering", ms, dur);
     // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).
-    play(url, ms, headers, dur);
+    play(withUniversalOffset(url, ms), ms, headers, dur);
 }
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
@@ -554,6 +680,7 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
         playing_.store(true);
+        showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
@@ -620,7 +747,7 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
 pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
                                     int64_t startMs, int writeFd) {
     // Lightweight copy-demux: annex-B elementary for host recon + F3 (no re-encode).
-    // Prefer direct elementary when already annex-B (.h264); otherwise remux via BSF.
+    // Prefer direct elementary when already annex-B (.264); otherwise remux via BSF.
     const bool elementary = looksElementaryH264(url);
     std::vector<std::string> args;
     args.push_back(ffmpeg_);
@@ -1457,6 +1584,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
+        auto lastProgress = t0;
 
         // Wait for session end: stop/seek, or both pumps exit.
         while (!stop_.load()) {
@@ -1475,6 +1603,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count();
             int64_t tms = startMs + elapsed;
             positionMs_.store(tms);
+            if (onProgress_ && now - lastProgress >= std::chrono::seconds(1)) {
+                lastProgress = now;
+                onProgress_("playing", tms, durationMs);
+            }
             if (durationMs > 0 && tms >= durationMs) {
                 log("media: STREAM audio-only reached duration");
                 break;
@@ -1677,6 +1809,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         }
         childPid_.store(pid);
         rfd = vpipe[0];
+        const int rflags = fcntl(rfd, F_GETFL, 0);
+        if (rflags >= 0)
+            fcntl(rfd, F_SETFL, rflags | O_NONBLOCK);
 
         if (apipe[0] >= 0) {
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
@@ -1684,6 +1819,72 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;
         std::vector<uint8_t> frame(frameBytes);
+        std::vector<uint8_t> rgb565Frame;
+        std::vector<uint8_t> fbOverlayBackup;
+
+        auto blitFbWithOverlay = [&](uint8_t* cleanFrame) {
+            if (!fb_.ok())
+                return;
+            const OverlayRect dirty = overlay_.dirtyBounds(outW_, outH_);
+            if (!dirty.empty()) {
+                const size_t rowBytes = static_cast<size_t>(dirty.w) * 3;
+                fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
+                for (int yy = 0; yy < dirty.h; ++yy) {
+                    const size_t src =
+                        (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * 3;
+                    std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
+                                cleanFrame + src, rowBytes);
+                }
+                overlay_.renderRgb24(cleanFrame, outW_, outH_);
+                if (!fb_.blitRgb24(cleanFrame, outW_, outH_))
+                    log("media: blit failed");
+                for (int yy = 0; yy < dirty.h; ++yy) {
+                    const size_t dst =
+                        (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * 3;
+                    std::memcpy(cleanFrame + dst,
+                                fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
+                                rowBytes);
+                }
+            } else if (!fb_.blitRgb24(cleanFrame, outW_, outH_)) {
+                log("media: blit failed");
+            }
+        };
+
+        auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
+            blitFbWithOverlay(cleanFrame);
+            const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
+            if (reconOwnsF1 || !fpga_.ok() || outW_ != 320 || outH_ != 240)
+                return;
+
+            packRgb24ToRgb565Le(cleanFrame, outW_, outH_, rgb565Frame);
+            overlay_.renderRgb565Le(rgb565Frame.data(), outW_, outH_);
+
+            // Serialise with the OSD poller / idle painter: FpgaSpi keeps
+            // transaction state, so overlapping ioctls corrupt each other.
+            std::lock_guard<std::mutex> lk(presentMu_);
+            bool ok = false;
+            if (useDdrF1_) {
+                ok = fpga_.sendRgb565FrameDdr(rgb565Frame.data(), rgb565Frame.size(), ddrBank_);
+                ddrBank_ ^= 1;
+                if (!ok) {
+                    useDdrF1_ = false;
+                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                }
+            }
+            if (!ok && !fpga_.sendRgb565Bytes(rgb565Frame.data(), rgb565Frame.size(), /*F1*/ 1)) {
+                if (countPresent && (frameIndex % 30) == 0)
+                    log("media: fpga frame_tx: " + fpga_.lastError());
+            } else if (countPresent) {
+                ++presentCount_;
+                if ((presentCount_ % 48) == 0) {
+                    log(std::string("media: fpga frame_tx ok via ") +
+                        (useDdrF1_ ? "DDR" : "SPI") +
+                        " presents=" + std::to_string(presentCount_) +
+                        " frames=" + std::to_string(frameIndex) +
+                        " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                }
+            }
+        };
 
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
@@ -1706,6 +1907,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " waited_ms=" + std::to_string(waited));
         }
         t0 = std::chrono::steady_clock::now();
+        bool pauseClockHeld = false;
+        bool pausedOverlayWasVisible = false;
+        std::chrono::steady_clock::time_point pauseStarted{};
+        size_t got = 0;
+        bool videoEof = false;
 
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
@@ -1715,29 +1921,50 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
 
             if (paused_.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                if (!pauseClockHeld) {
+                    pauseClockHeld = true;
+                    pauseStarted = std::chrono::steady_clock::now();
+                }
+                const bool overlayNow = overlay_.visible();
+                if ((overlayNow || pausedOverlayWasVisible) && frameIndex > 0) {
+                    presentCleanFrame(frame.data(), /*countPresent*/ false);
+                    pausedOverlayWasVisible = overlayNow;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
+            } else if (pauseClockHeld) {
+                t0 += std::chrono::steady_clock::now() - pauseStarted;
+                pauseClockHeld = false;
             }
 
-            size_t got = 0;
             while (got < frameBytes && !stop_.load() && !paused_.load()) {
                 ssize_t n = ::read(rfd, frame.data() + got, frameBytes - got);
                 if (n < 0) {
                     if (errno == EINTR)
                         continue;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                        continue;
+                    }
                     log("media: read err errno=" + std::to_string(errno));
                     break;
                 }
-                if (n == 0)
+                if (n == 0) {
+                    videoEof = true;
                     break;
+                }
                 got += static_cast<size_t>(n);
                 totalBytes += static_cast<size_t>(n);
             }
+            if (paused_.load())
+                continue;
             if (got < frameBytes) {
                 log("media: short read got=" + std::to_string(got) + "/" +
-                    std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes));
+                    std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
+                    (videoEof ? " eof=1" : ""));
                 break;
             }
+            got = 0;
 
             ++frameIndex;
 
@@ -1785,42 +2012,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " drops=" + std::to_string(droppedFrames_.load()));
             } else {
                 dropRun = 0;
-                if (fb_.ok()) {
-                    if (!fb_.blitRgb24(frame.data(), outW_, outH_))
-                        log("media: blit failed");
-                }
                 // Present every scheduled frame (no pfps cap). Content is often 24fps
                 // film; capping at 15 dropped ~37% of frames and looked "slow/off"
                 // vs audio. SPI load at 24fps with short MainPause is acceptable now
                 // that audio is wall-paced (not competing for Main).
-                const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-                if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
-                    // Serialise with the OSD poller / idle painter: FpgaSpi keeps
-                    // transaction state, so overlapping ioctls corrupt each other.
-                    std::lock_guard<std::mutex> lk(presentMu_);
-                    bool ok = false;
-                    if (useDdrF1_) {
-                        ok = fpga_.sendRgb24FrameDdr(frame.data(), outW_, outH_, ddrBank_);
-                        ddrBank_ ^= 1;
-                        if (!ok) {
-                            useDdrF1_ = false;
-                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                        }
-                    }
-                    if (!ok && !fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
-                        if ((frameIndex % 30) == 0)
-                            log("media: fpga frame_tx: " + fpga_.lastError());
-                    } else {
-                        ++presentCount_;
-                        if ((presentCount_ % 48) == 0) {
-                            log(std::string("media: fpga frame_tx ok via ") +
-                                (useDdrF1_ ? "DDR" : "SPI") +
-                                " presents=" + std::to_string(presentCount_) +
-                                " frames=" + std::to_string(frameIndex) +
-                                " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
-                        }
-                    }
-                }
+                presentCleanFrame(frame.data(), /*countPresent*/ true);
             }
 
             auto now = std::chrono::steady_clock::now();
@@ -1855,6 +2051,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             {
                 int64_t tms = startMs + wall2;
                 positionMs_.store(tms);
+                overlay_.setProgress(tms, durationMs);
                 if ((frameIndex % 15) == 0 && onProgress_)
                     onProgress_("playing", tms, durationMs);
             }

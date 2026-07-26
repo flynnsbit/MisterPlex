@@ -15,13 +15,14 @@ echo "=== core is Plex ==="
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "=== generate annex-B test blob (SPS/PPS/IDR/P) ==="
-python3 "$ROOT/scripts/gen_test_annexb.py" /tmp/plex_test_annexb.h264
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_test_annexb.h264 \
-  "$USER@$HOST:/media/fat/plex_test_annexb.h264"
+mkdir -p "$ROOT/build"
+python3 "$ROOT/scripts/gen_test_annexb.py" "$ROOT/build/plex_test_annexb.264"
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$ROOT/build/plex_test_annexb.264" \
+  "$USER@$HOST:/media/fat/plex_test_annexb.264"
 
 echo "=== F3 push ==="
-ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264' | tee /tmp/f3_stub_push.txt
-grep -q OK /tmp/f3_stub_push.txt
+ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.264' | tee "$ROOT/build/f3_stub_push.txt"
+grep -q OK "$ROOT/build/f3_stub_push.txt"
 sleep 0.25
 
 read_status() {
@@ -52,7 +53,7 @@ echo "$ST" | grep -q 'has_frame=1'
 echo "=== second push grows nalu and idr ==="
 NALU1=$NALU
 IDR1=$IDR
-ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.h264' | grep -q OK
+ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_test_annexb.264' | grep -q OK
 sleep 0.3
 ST2=$(read_status) || true
 echo "$ST2"

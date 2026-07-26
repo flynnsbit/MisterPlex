@@ -28,6 +28,10 @@
 //   [15:14]  Idle screen      0=Logo 1=Black 2=Screensaver 3=Last frame
 //
 // Pure decode so it can be unit-tested without an FPGA.
+//
+// CONF_STR file slots (`F1,raw,...`) and controller labels (`J1,...`) are menu
+// metadata only. They do not allocate OSD status bits, so fixing F labels or
+// adding J1 names does not change this v3/v6 bit layout.
 
 #include <cstdint>
 

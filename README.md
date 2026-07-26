@@ -88,6 +88,35 @@ chmod +x /media/fat/misterplex/bin/*
 2. Open any Plex app on the same network.
 3. Pick a video, hit the cast button, and choose **MiSTerPlex**.
 
+### Playback controls
+
+MiSTerPlex can publish local keyboard/controller playback commands from the core to the
+daemon. In builds that include the input-mailbox dispatcher, the controls are:
+
+| Keyboard | Action |
+|---|---|
+| **Space** | Play / pause |
+| **Esc** | Stop |
+| **Right Arrow** | Skip forward |
+| **Left Arrow** | Skip back |
+
+For controllers, use MiSTer's normal mapping flow: open the OSD (**F12**) and choose
+**Define joystick buttons**. The Plex core declares these button prompts, in this order:
+
+1. **Play/Pause**
+2. **Stop**
+3. **Skip Fwd**
+4. **Skip Back**
+
+After you map them once, MiSTer applies that controller mapping to the core. Local commands
+show an on-screen overlay with a state icon/label, elapsed and total time, and a progress bar.
+Skip actions also flash a short `30S >>` or `<< 30S` confirmation. The overlay appears when a
+command is handled, stays up briefly, then fades out automatically; while paused, the daemon
+keeps refreshing the last video frame so the overlay can update and disappear cleanly.
+
+The casting Plex app (phone, web, desktop) is kept in sync too: local playback actions are
+reported back through the Companion timeline long-poll, normally within about **400 ms**.
+
 ### ffmpeg
 
 `misterplexd` shells out to a static ARM `ffmpeg` for transcoding. **It is bundled in the
@@ -142,6 +171,7 @@ export PLEX_TOKEN=<your-token>
 | `PRESENT` | `fb0` (default, safe), `fpga`, or `both`. |
 | `SUBTITLES` | `off`, `burn` (server-side), or `ffmpeg` (local files). |
 | `AUTO_NEXT` | Play the next play-queue item at end of media. Default on. |
+| `SKIP_FORWARD_MS` / `SKIP_BACK_MS` | Core input skip deltas; defaults are +30s / -10s. |
 | `SOURCE_FPS` | `auto` uses server metadata to log a Content FPS hint. |
 
 Full reference: [`assets/misterplex.conf.example`](assets/misterplex.conf.example) and

@@ -428,6 +428,7 @@ bool FpgaSpi::ensureDdrMap() {
 void FpgaSpi::releaseDdrMap() {
     mboxInit_ = false;
     mboxAlive_ = false;
+    inputMboxEdge_.reset();
     if (ddrMap_) {
         munmap(ddrMap_, ddrMapLen_);
         ddrMap_ = nullptr;
@@ -525,6 +526,37 @@ bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
             return false;
         osd = static_cast<uint16_t>(hi & 0xFFFFu);
         return true;
+    }
+    return false;
+}
+
+bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
+    command = PlaybackCommand::None;
+    if (!ensureDdrMap())
+        return false;
+    constexpr size_t kOff = kInputMailboxPhys - kDdrFrameBase;
+    if (kOff + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo = mb[0];
+        const uint32_t hi = mb[1];
+        __sync_synchronize();
+        const uint32_t verifyLo = mb[0];
+        const uint32_t verifyHi = mb[1];
+        if (lo != verifyLo || hi != verifyHi)
+            continue;
+        if (lo != kInputMailboxMagic) {
+            inputMboxEdge_.noteNoValidWord();
+            return false;
+        }
+        InputMailboxSample sample;
+        if (!decodeInputMailboxWord(static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32),
+                                    sample))
+            return false;
+        if (inputMboxEdge_.accept(sample, command))
+            return true;
+        return false;
     }
     return false;
 }

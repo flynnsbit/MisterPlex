@@ -49,9 +49,9 @@ assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 localparam CONF_STR = {
 	"Plex;;",
 	"-;",
-	"F1,rawRGB565 frame (320x240);",
-	"F2,raw s16le stereo PCM @48k;",
-	"F3,H.264 annex-B elementary;",
+	"F1,raw,RGB565 frame (320x240);",
+	"F2,raw,s16le stereo PCM @48k;",
+	"F3,264,H.264 annex-B elementary;",
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
@@ -74,6 +74,8 @@ localparam CONF_STR = {
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
+	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
+	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
 	"v,6;", // reset OSD: v6 recentres O[9:6] on 0 now that the MrAudio ring is measured out
 	"V,v",`BUILD_DATE
 };
@@ -82,6 +84,7 @@ wire forced_scandoubler;
 wire   [1:0] buttons;
 wire [127:0] status;
 wire  [10:0] ps2_key;
+wire  [31:0] joystick_0;
 
 wire        ioctl_download;
 wire        ioctl_wr;
@@ -125,6 +128,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.status_menumask(0),
 
 	.ps2_key(ps2_key),
+	.joystick_0(joystick_0),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -133,6 +137,59 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(1'b0)
 );
+
+// Playback input capture. MiSTer Main owns/grabs evdev, so commands must arrive
+// through hps_io and then be published to the daemon via the DDR mailbox.
+// Keyboard defaults (PS/2 Set 2): Space=Play/Pause, Esc=Stop,
+// E0 Right=Skip Fwd, E0 Left=Skip Back. Controller defaults are J1 buttons 1..4.
+localparam [7:0] PLX_CMD_PLAY_PAUSE = 8'h01;
+localparam [7:0] PLX_CMD_STOP       = 8'h02;
+localparam [7:0] PLX_CMD_SKIP_FWD   = 8'h03;
+localparam [7:0] PLX_CMD_SKIP_BACK  = 8'h04;
+
+reg        ps2_toggle_d;
+reg [31:0] joystick_0_d;
+reg        playback_cmd_valid;
+reg  [7:0] playback_cmd;
+
+wire       ps2_event = ps2_key[10] ^ ps2_toggle_d;
+wire       ps2_press = ps2_event & ps2_key[9];
+wire [7:0] ps2_code  = ps2_key[7:0];
+wire       ps2_ext   = ps2_key[8];
+wire [31:0] joy_rise = joystick_0 & ~joystick_0_d;
+
+wire key_play_pause = ps2_press & ~ps2_ext & (ps2_code == 8'h29); // Space
+wire key_stop       = ps2_press & ~ps2_ext & (ps2_code == 8'h76); // Esc
+wire key_skip_fwd   = ps2_press &  ps2_ext & (ps2_code == 8'h74); // Right arrow
+wire key_skip_back  = ps2_press &  ps2_ext & (ps2_code == 8'h6B); // Left arrow
+
+always @(posedge clk_sys) begin
+	if (reset) begin
+		ps2_toggle_d       <= ps2_key[10];
+		joystick_0_d       <= 32'd0;
+		playback_cmd_valid <= 1'b0;
+		playback_cmd       <= 8'd0;
+	end else begin
+		ps2_toggle_d       <= ps2_key[10];
+		joystick_0_d       <= joystick_0;
+		playback_cmd_valid <= 1'b0;
+		playback_cmd       <= 8'd0;
+
+		if (key_play_pause | joy_rise[4]) begin
+			playback_cmd_valid <= 1'b1;
+			playback_cmd       <= PLX_CMD_PLAY_PAUSE;
+		end else if (key_stop | joy_rise[5]) begin
+			playback_cmd_valid <= 1'b1;
+			playback_cmd       <= PLX_CMD_STOP;
+		end else if (key_skip_fwd | joy_rise[6]) begin
+			playback_cmd_valid <= 1'b1;
+			playback_cmd       <= PLX_CMD_SKIP_FWD;
+		end else if (key_skip_back | joy_rise[7]) begin
+			playback_cmd_valid <= 1'b1;
+			playback_cmd       <= PLX_CMD_SKIP_BACK;
+		end
+	end
+end
 
 ///////////////////////   CLOCKS   ///////////////////////////////
 
@@ -214,6 +271,8 @@ ddram_frame_rd #(
 	// Publish the live OSD word to HPS DDR so misterplexd never has to read it
 	// back over the SPI bus that Main_MiSTer owns.
 	.status_osd(status[15:0]),
+	.input_cmd_valid(playback_cmd_valid),
+	.input_cmd(playback_cmd),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),

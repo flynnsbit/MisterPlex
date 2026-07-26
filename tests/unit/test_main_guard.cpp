@@ -71,7 +71,7 @@ static bool waitForState(pid_t p, char want, int tries) {
 }
 
 int main() {
-    const char* dir = "/tmp/mplex_guard_fixture";
+    const char* dir = "build/mplex_guard_fixture";
     std::string fake = makeFakeMain(dir);
 
     if (FpgaSpi::mainAlive())
