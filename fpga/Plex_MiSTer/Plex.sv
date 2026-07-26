@@ -23,7 +23,7 @@ assign ADC_BUS  = 'Z;
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
+// SDRAM is driven by the bring-up controller/tester below (single MiSTer stick).
 // DDRAM driven by ddram_frame_rd (Phase 3.1b); not tied off.
 
 assign VGA_SL = 0;
@@ -194,14 +194,99 @@ end
 ///////////////////////   CLOCKS   ///////////////////////////////
 
 wire clk_sys;
+wire clk_sdram;
+wire pll_locked;
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
-	.outclk_0(clk_sys)
+	.outclk_0(clk_sys),
+	.outclk_1(clk_sdram),
+	.locked(pll_locked)
 );
 
 wire reset = RESET | status[0] | buttons[1];
+
+`ifdef SDRAM_CLK_133
+localparam int SDRAM_REFRESH_CYCLES = 1041;
+`elsif SDRAM_CLK_120
+localparam int SDRAM_REFRESH_CYCLES = 936;
+`elsif SDRAM_CLK_110
+localparam int SDRAM_REFRESH_CYCLES = 858;
+`else
+localparam int SDRAM_REFRESH_CYCLES = 780;
+`endif
+
+// B1 bring-up: single-stick SDRAM controller plus destructive full-device test.
+// Results are mirrored to HPS DDR mailbox 0x3007F110 by ddram_frame_rd.
+wire        sdram_sel;
+wire [26:1] sdram_addr;
+wire [15:0] sdram_dout;
+wire [15:0] sdram_din;
+wire        sdram_wr;
+wire        sdram_rd;
+wire  [1:0] sdram_bs;
+wire        sdram_ready;
+wire        sdram_refresh;
+wire  [3:0] sdram_test_state;
+wire  [3:0] sdram_size_code;
+wire [15:0] sdram_error_count;
+wire        sdram_test_done;
+wire        sdram_test_pass;
+wire        _sdram_test_unused = sdram_test_done ^ sdram_test_pass;
+
+sdram_memtest #(
+	.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
+) sdram_test (
+	.clk(clk_sdram),
+	.reset(reset | ~pll_locked),
+	.sdram_dout(sdram_dout),
+	.sdram_ready(sdram_ready),
+	.sdram_sel(sdram_sel),
+	.sdram_addr(sdram_addr),
+	.sdram_din(sdram_din),
+	.sdram_wr(sdram_wr),
+	.sdram_rd(sdram_rd),
+	.sdram_bs(sdram_bs),
+	.sdram_refresh(sdram_refresh),
+	.state_code(sdram_test_state),
+	.size_code(sdram_size_code),
+	.error_count(sdram_error_count),
+	.done(sdram_test_done),
+	.pass(sdram_test_pass)
+);
+
+sdram sdram_ctl (
+	.init(reset | ~pll_locked),
+	.clk(clk_sdram),
+	.SDRAM_DQ(SDRAM_DQ),
+	.SDRAM_A(SDRAM_A),
+	.SDRAM_DQML(SDRAM_DQML),
+	.SDRAM_DQMH(SDRAM_DQMH),
+	.SDRAM_BA(SDRAM_BA),
+	.SDRAM_nCS(SDRAM_nCS),
+	.SDRAM_nWE(SDRAM_nWE),
+	.SDRAM_nRAS(SDRAM_nRAS),
+	.SDRAM_nCAS(SDRAM_nCAS),
+	.SDRAM_CKE(SDRAM_CKE),
+	.SDRAM_CLK(SDRAM_CLK),
+	.SDRAM_EN(1'b1),
+	.sel(sdram_sel),
+	.addr(sdram_addr),
+	.dout(sdram_dout),
+	.din(sdram_din),
+	.wr(sdram_wr),
+	.bs(sdram_bs),
+	.rd(sdram_rd),
+	.ready(sdram_ready),
+	.refresh(sdram_refresh),
+	.cpsel(1'b0),
+	.cpaddr(26'd0),
+	.cpdin(16'd0),
+	.cprd(),
+	.cpreq(1'b0),
+	.cpbusy()
+);
 
 // Map OSD content FPS
 reg [7:0] content_fps;
@@ -273,6 +358,9 @@ ddram_frame_rd #(
 	.status_osd(status[15:0]),
 	.input_cmd_valid(playback_cmd_valid),
 	.input_cmd(playback_cmd),
+	.sdram_test_state(sdram_test_state),
+	.sdram_size_code(sdram_size_code),
+	.sdram_error_count(sdram_error_count)
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
