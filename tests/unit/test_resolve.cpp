@@ -27,11 +27,11 @@ int main() {
     auto bad = buildPlexBase("http", "172.17.0.1", "32400", "");
     CHECK(bad.empty());
 
-    auto good = buildPlexBase("http", "192.168.1.41", "32400", "");
-    CHECK(good == "http://192.168.1.41:32400");
+    auto good = buildPlexBase("http", "pms.lan", "32400", "");
+    CHECK(good == "http://pms.lan:32400");
 
-    auto rewritten = buildPlexBase("http", "172-17-0-1.abc.plex.direct", "32400", "192.168.1.41");
-    CHECK(rewritten.find("192.168.1.41") != std::string::npos);
+    auto rewritten = buildPlexBase("http", "172-17-0-1.abc.plex.direct", "32400", "pms.lan");
+    CHECK(rewritten.find("pms.lan") != std::string::npos);
 
     // Local path resolve (no network)
     auto r = resolvePlayTarget("/media/fat/mistercast/test.mp4", "", "", 0, true);
@@ -46,9 +46,9 @@ int main() {
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
     // --- Phase 4 multi-server conf helpers (no network) ---
-    CHECK(normalizePlexBase("http://192.168.1.41:32400/") == "http://192.168.1.41:32400");
-    CHECK(normalizePlexBase("192.168.1.50:32400") == "http://192.168.1.50:32400");
-    CHECK(normalizePlexBase("192.168.1.50") == "http://192.168.1.50:32400");
+    CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");
+    CHECK(normalizePlexBase("pms2.lan:32400") == "http://pms2.lan:32400");
+    CHECK(normalizePlexBase("pms2.lan") == "http://pms2.lan:32400");
     CHECK(normalizePlexBase("  https://pms.lan:32400  ") == "https://pms.lan:32400");
     CHECK(normalizePlexBase("").empty());
 
@@ -59,9 +59,9 @@ int main() {
     CHECK(list[2] == "http://c:32400");
 
     // Dedup + bare host
-    auto dedup = parsePlexServerList("192.168.1.1, http://192.168.1.1:32400, 192.168.1.1:32400");
+    auto dedup = parsePlexServerList("pms3.lan, http://pms3.lan:32400, pms3.lan:32400");
     CHECK(dedup.size() == 1);
-    CHECK(dedup[0] == "http://192.168.1.1:32400");
+    CHECK(dedup[0] == "http://pms3.lan:32400");
 
     // merge: PLEX_SERVERS first, then extra PLEX_BASE lines
     std::vector<std::string> bases = {"http://extra:32400", "http://a:32400"};
@@ -143,7 +143,7 @@ int main() {
 
     // preferDirectH264 does not alter local/http passthrough detail
     auto directUrl =
-        resolvePlayTarget("http://192.168.1.41:32400/library/parts/1/file.mkv", "", "", 0, true, {},
+        resolvePlayTarget("http://pms.lan:32400/library/parts/1/file.mkv", "", "", 0, true, {},
                           true);
     CHECK(directUrl.ok && directUrl.detail == "direct URL");
     auto localPath = resolvePlayTarget("/media/fat/misterplex/clip.mp4", "", "", 0, true, {}, true);

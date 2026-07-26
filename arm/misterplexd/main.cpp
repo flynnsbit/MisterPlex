@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
     std::string sourceFpsConf = "auto";
     misterplex::WeakLadder weak;
     std::vector<std::string> servers;
-    std::string defaultPms = "http://192.168.1.41:32400";
+    std::string defaultPms;
     int64_t skipForwardMs = 30000;
     int64_t skipBackMs = 10000;
     // Lab: --play-file PATH [--play-seconds N] plays a local file then exits (no GDM).
@@ -860,10 +860,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (defaultPms.empty()) {
+        std::fprintf(stderr,
+                     "misterplexd: no default Plex server configured; set PLEX_BASE in %s "
+                     "or pass --pms URL. Cast clients that include a server address can still "
+                     "select a server per play.\n",
+                     confPath.c_str());
+    }
     std::fprintf(stderr,
                  "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%dx%d "
                  "weak=%s@%dk present=%s auto_next=%d subs=%s\n",
-                 name.c_str(), machineId.c_str(), port, defaultPms.c_str(), servers.size(),
+                 name.c_str(), machineId.c_str(), port,
+                 defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
                  decodeW, decodeH, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
                  presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str());
     for (size_t i = 0; i < servers.size(); ++i)

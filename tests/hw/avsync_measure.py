@@ -32,8 +32,10 @@ VIDEO_DEV = "/dev/video4"
 # PipeWire/Pulse source (matches the harness the -60 ms RK10 baseline was measured
 # with). Capturing ALSA hw: directly adds a large, silent A/V mux skew.
 PULSE_SRC = "alsa_input.usb-MACROSILICON_2109-02.analog-stereo"
-COMPANION = "http://192.168.1.183:3005"
-PMS = "http://192.168.1.41:32400"
+COMPANION = os.environ.get("MISTERPLEX_PLAYER", "http://192.168.1.183:3005")
+PMS = os.environ.get("PLEX_BASE", "http://YOUR-PLEX-SERVER:32400")
+PMS_HOST = os.environ.get("PMS_HOST", "YOUR-PLEX-SERVER")
+PMS_MACHINE_ID = os.environ.get("PMS_MACHINE_ID", "server-mid")
 
 
 def sh(cmd: list[str], timeout: int = 60) -> str:
@@ -57,8 +59,8 @@ def cast(rating_key: str, token: str, offset_ms: int = 0) -> None:
         f"{COMPANION}/player/playback/playMedia"
         f"?key=/library/metadata/{rating_key}"
         f"&offset={offset_ms}"
-        f"&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0"
-        f"&address=192.168.1.41&port=32400&protocol=http"
+        f"&machineIdentifier={PMS_MACHINE_ID}"
+        f"&address={PMS_HOST}&port=32400&protocol=http"
         f"&X-Plex-Token={token}"
         f"&X-Plex-Client-Identifier=avsync-harness"
         f"&commandID=1"

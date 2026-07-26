@@ -56,13 +56,14 @@ Resulting layout on the MiSTer:
 Edit `/media/fat/misterplex/misterplex.conf` and set your server:
 
 ```ini
-PLEX_BASE=http://192.168.1.10:32400
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
 PRESENT=fb0
 ```
 
-`PLEX_BASE` is the only value most people need to change. A fully annotated reference lives in
-[`assets/misterplex.conf.example`](assets/misterplex.conf.example).
+Set `PLEX_BASE` to the URL of **your** Plex Media Server (usually port `32400` on the server
+host). `PLEX_BASE` is the only value most people need to change. A fully annotated reference
+lives in [`assets/misterplex.conf.example`](assets/misterplex.conf.example).
 
 ### 3. Start on boot
 
@@ -144,8 +145,8 @@ You can also drive playback without a Plex app:
 
 ```bash
 export PLEX_TOKEN=<your-token>
-./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://192.168.1.10:32400 sections
-./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://192.168.1.10:32400 play <ratingKey>
+./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://YOUR-PLEX-SERVER:32400 sections
+./scripts/plex_browse.sh --player <mister-ip>:3005 --base http://YOUR-PLEX-SERVER:32400 play <ratingKey>
 ./scripts/plex_menu.sh                    # interactive TUI; runs on the MiSTer too
 ```
 
@@ -219,7 +220,7 @@ Built cores are not tracked in git; each release ships one as an asset.
 ### Deploying to a device during development
 
 ```bash
-export MISTER_HOST=192.168.1.183      # your MiSTer
+export MISTER_HOST=<mister-ip>        # your MiSTer
 ./scripts/deploy_misterplexd.sh       # build and push the daemon
 DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh   # push the RBF and reload the core
 ```

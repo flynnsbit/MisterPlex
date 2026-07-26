@@ -3,6 +3,8 @@
 set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 BASE="http://${HOST}:3005"
+PMS_HOST="${PMS_HOST:-${PLEX_HOST:-YOUR-PLEX-SERVER}}"
+PMS_MACHINE_ID="${PMS_MACHINE_ID:-server-mid}"
 
 echo "=== playMedia with full queue bind ==="
 # Simulate Plex Web cast URL fields
@@ -12,10 +14,10 @@ BODY=$(curl -fsS --get "$BASE/player/playback/playMedia" \
   --data-urlencode "playQueueItemID=555" \
   --data-urlencode "playQueueVersion=2" \
   --data-urlencode "ratingKey=3" \
-  --data-urlencode "address=192.168.1.41" \
+  --data-urlencode "address=${PMS_HOST}" \
   --data-urlencode "port=32400" \
   --data-urlencode "protocol=http" \
-  --data-urlencode "machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0" \
+  --data-urlencode "machineIdentifier=${PMS_MACHINE_ID}" \
   --data-urlencode "offset=0" \
   --data-urlencode "commandID=80")
 echo "$BODY" | grep -q Timeline

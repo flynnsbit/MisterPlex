@@ -6,6 +6,8 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 BIN="$ROOT/build/arm/misterplexd"
+PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
+PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
 
 # Always let make decide. Guarding this with `if [[ ! -f "$BIN" ]]` meant that
 # once the binary existed it was never rebuilt again, so every subsequent deploy
@@ -32,13 +34,18 @@ if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
     "$ROOT/scripts/plex_browse.sh" "$ROOT/scripts/plex_menu.sh" \
     "$USER@$HOST:/media/fat/misterplex/scripts/"
 fi
-sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" bash -s <<'REMOTE'
+sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
+  "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
 chmod +x /media/fat/misterplex/bin/misterplexd
 chmod +x /media/fat/misterplex/scripts/plex_browse.sh /media/fat/misterplex/scripts/plex_menu.sh 2>/dev/null || true
 # Startup hook (idempotent)
 HOOK=/media/fat/linux/_user-startup.sh
-LINE='/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400 >>/media/fat/misterplex/misterplexd.log 2>&1 &'
+PMS_ARG=""
+if [[ -n "${PMS_URL:-}" ]]; then
+  PMS_ARG=" --pms ${PMS_URL}"
+fi
+LINE="/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id ${PLAYER_ID:-misterplex-dev} --port 3005 --conf /media/fat/misterplex/misterplex.conf${PMS_ARG} >>/media/fat/misterplex/misterplexd.log 2>&1 &"
 mkdir -p /media/fat/linux /media/fat/misterplex
 touch "$HOOK"
 if ! grep -q 'misterplex/bin/misterplexd' "$HOOK" 2>/dev/null; then
@@ -48,15 +55,17 @@ fi
 # Ensure conf exists (token optional — cast can supply transient tokens)
 if [[ ! -f /media/fat/misterplex/misterplex.conf ]]; then
   cat >/media/fat/misterplex/misterplex.conf <<'CONF'
-PLEX_BASE=http://192.168.1.41:32400
-PLEX_HOST=192.168.1.41
+# Set this to your Plex Media Server, for example:
+# PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 # PLEX_TOKEN=
 CONF
+  if [[ -n "${PMS_URL:-}" ]]; then
+    printf 'PLEX_BASE=%s\n' "$PMS_URL" >>/media/fat/misterplex/misterplex.conf
+  fi
 fi
 : >/media/fat/misterplex/misterplexd.log
-nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 \
-  --conf /media/fat/misterplex/misterplex.conf \
-  --pms http://192.168.1.41:32400 \
+nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id "${PLAYER_ID:-misterplex-dev}" --port 3005 \
+  --conf /media/fat/misterplex/misterplex.conf ${PMS_ARG} \
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 0.8
 ps w | grep '[m]isterplexd' || true

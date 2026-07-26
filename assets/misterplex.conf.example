@@ -3,11 +3,12 @@
 
 # --- PMS (multi-server) ---
 # Default / fallback base (first in list). Cast playMedia address= still wins when present.
-PLEX_BASE=http://192.168.1.10:32400
+# Set this to your Plex Media Server, for example:
+# PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 # Optional: comma-separated additional servers (or use multiple PLEX_BASE= lines).
-# PLEX_SERVERS=http://192.168.1.10:32400,http://192.168.1.11:32400
-# PLEX_BASE=http://192.168.1.11:32400
-PLEX_HOST=192.168.1.10
+# PLEX_SERVERS=http://SERVER-A:32400,http://SERVER-B:32400
+# PLEX_BASE=http://ANOTHER-PLEX-SERVER:32400
+# PLEX_HOST=YOUR-PLEX-SERVER
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
 
