@@ -57,7 +57,13 @@ video_mode=hact,hfp,hs,hbp,vact,vfp,vs,vbp,Fpix_in_KHz
 - A/V signal: `media: frames=... av_drift_ms=... drops=...` in `misterplexd.log`.
 - CPU: `top -b -n2 -d2` during playback.
 - Evidence generated in the local lab worktree: `captures/c1/output-mode-sweep-pms.tsv` and
-  `captures/c1/output-mode-anomaly-retest.tsv`.
+  `captures/c1/output-mode-anomaly-retest.tsv`. (`captures/` is gitignored, so the TSVs are not in the repo.)
+
+> **Method caveat.** This sweep switched modes live via `/dev/MiSTer_cmd`, which leaves `MiSTer.ini`
+> untouched. The **supported** way to change output modes is to edit `[Plex] video_mode` in
+> `/media/fat/MiSTer.ini` and soft-reboot — that is what `scripts/sweep_plex_video_modes.sh`
+> does, including a guaranteed restore of the original ini. Prefer that script for any repeat or
+> extension of this sweep; the numbers below stand, but reproduce them through the ini path.
 
 ### Results
 
