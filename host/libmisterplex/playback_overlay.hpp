@@ -123,6 +123,22 @@ public:
         return true;
     }
 
+    bool renderBgra32(uint8_t* bgra, int w, int h) const {
+        return renderBgra32At(bgra, w, h, monotonicMs());
+    }
+
+    bool renderBgra32At(uint8_t* bgra, int w, int h, int64_t nowMs) const {
+        if (!bgra || w <= 0 || h <= 0)
+            return false;
+        Snapshot s = snapshot();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        if (dirty.empty())
+            return false;
+        Bgra32Target target{bgra, w, h};
+        render(target, s, w, h, nowMs);
+        return true;
+    }
+
 private:
     struct Color {
         uint8_t r;
@@ -179,6 +195,25 @@ private:
             const size_t i = (static_cast<size_t>(y) * w + x) * 2;
             p[i] = static_cast<uint8_t>(v & 0xff);
             p[i + 1] = static_cast<uint8_t>(v >> 8);
+        }
+    };
+
+    struct Bgra32Target {
+        uint8_t* p;
+        int w;
+        int h;
+
+        Color get(int x, int y) const {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            return Color{p[i + 2], p[i + 1], p[i + 0]};
+        }
+
+        void set(int x, int y, Color c) {
+            const size_t i = (static_cast<size_t>(y) * w + x) * 4;
+            p[i + 0] = c.b;
+            p[i + 1] = c.g;
+            p[i + 2] = c.r;
+            p[i + 3] = 0xff;
         }
     };
 

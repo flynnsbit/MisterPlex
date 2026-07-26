@@ -1,5 +1,7 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/pixel_format.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -12,6 +14,7 @@
 #include <new>
 #include <signal.h>
 #include <string>
+#include <sys/syscall.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -38,6 +41,31 @@ constexpr uint8_t UIO_GET_STRING = 0x14;
 std::recursive_mutex& spiMutex() {
     static std::recursive_mutex m;
     return m;
+}
+
+bool cleanDcacheRange(const void* p, size_t len) {
+    if (!p || !len)
+        return true;
+#if defined(__arm__)
+#ifndef __ARM_NR_BASE
+#define __ARM_NR_BASE 0x0f0000
+#endif
+#ifndef __ARM_NR_cacheflush
+#define __ARM_NR_cacheflush (__ARM_NR_BASE + 2)
+#endif
+    const uintptr_t start = reinterpret_cast<uintptr_t>(p);
+    const uintptr_t end = start + len;
+    return ::syscall(__ARM_NR_cacheflush, start, end, 0) == 0;
+#else
+    (void)p;
+    (void)len;
+    return true;
+#endif
+}
+
+int64_t elapsedUs(std::chrono::steady_clock::time_point a,
+                  std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
 }
 
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
@@ -407,7 +435,10 @@ bool FpgaSpi::ensureDdrMap() {
     // Map both banks (2×256KiB) + space through doorbell at 0x3007F000.
     // Base 0x30000000, length 0x80000 covers 0x30000000..0x3007FFFF.
     constexpr size_t kLen = 0x80000u;
-    ddrMemFd_ = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    ddrMemFd_ = ::open("/dev/mem", flags);
     if (ddrMemFd_ < 0) {
         setErr("ensureDdrMap: open /dev/mem failed");
         return false;
@@ -423,6 +454,14 @@ bool FpgaSpi::ensureDdrMap() {
     ddrMap_ = static_cast<uint8_t*>(p);
     ddrMapLen_ = kLen;
     return true;
+}
+
+void FpgaSpi::setDdrMemSync(bool on) {
+    if (ddrMemSync_ == on)
+        return;
+    ddrMemSync_ = on;
+    releaseDdrMap();
+    ddrKickMode_ = 0;
 }
 
 void FpgaSpi::releaseDdrMap() {
@@ -953,15 +992,7 @@ bool FpgaSpi::sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index) {
         return false;
     }
     std::vector<uint8_t> packed(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
-    size_t o = 0;
-    for (int i = 0; i < w * h; ++i) {
-        const uint8_t r = rgb[i * 3 + 0];
-        const uint8_t g = rgb[i * 3 + 1];
-        const uint8_t b = rgb[i * 3 + 2];
-        const uint16_t p = static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        packed[o++] = static_cast<uint8_t>(p & 0xFF);
-        packed[o++] = static_cast<uint8_t>(p >> 8);
-    }
+    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
@@ -1006,17 +1037,34 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     if (!ensureDdrMap())
         return false;
 
+    DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
     // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
     // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
     // (status latch is sparse and was adding ~100 ms → pfps collapse).
+    auto tPrep0 = std::chrono::steady_clock::now();
     usleep(1500);
+    auto tPrep1 = std::chrono::steady_clock::now();
+    timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * kDdrFrameStride;
+    auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, rgb565le, len);
     __sync_synchronize();
+    auto tCopy1 = std::chrono::steady_clock::now();
+    timing.copy_us = elapsedUs(tCopy0, tCopy1);
+    if (!ddrMemSync_ && ddrMemFlush_) {
+        auto tFlush0 = std::chrono::steady_clock::now();
+        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
+            setErr("sendRgb565FrameDdr: cache clean failed");
+            return false;
+        }
+        __sync_synchronize();
+        auto tFlush1 = std::chrono::steady_clock::now();
+        timing.flush_us = elapsedUs(tFlush0, tFlush1);
+    }
 
     bool saw_busy = false;
     bool saw_kick = false;
@@ -1025,6 +1073,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
     bool kicked = false;
+    auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
         if (kickDdrDoorbell(bank)) {
             kicked = true;
@@ -1070,6 +1119,8 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
             ddrKickMode_ = 2;
         }
     }
+    auto tKick1 = std::chrono::steady_clock::now();
+    timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
         setErr("sendRgb565FrameDdr: could not kick DDR path");
@@ -1078,11 +1129,16 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.
+    auto tPost0 = std::chrono::steady_clock::now();
     if (!first)
         usleep(500);
+    auto tPost1 = std::chrono::steady_clock::now();
+    timing.post_wait_us = elapsedUs(tPost0, tPost1);
 
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    timing.total_us = elapsedUs(t0, t1);
+    lastDdrTiming_ = timing;
     clearErr();
     return true;
 }
@@ -1093,16 +1149,7 @@ bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
         return false;
     }
     std::vector<uint8_t> packed(kDdrFrameBytes);
-    size_t o = 0;
-    for (int i = 0; i < w * h; ++i) {
-        const uint8_t r = rgb[i * 3 + 0];
-        const uint8_t g = rgb[i * 3 + 1];
-        const uint8_t b = rgb[i * 3 + 2];
-        const uint16_t px =
-            static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-        packed[o++] = static_cast<uint8_t>(px & 0xFF);
-        packed[o++] = static_cast<uint8_t>(px >> 8);
-    }
+    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }
 

@@ -88,6 +88,9 @@ int main(int argc, char** argv) {
     std::string confToken;
     int decodeW = 320, decodeH = 240;
     std::string presentMode = "fb0";
+    bool ddrMemSync = true;
+    bool ddrMemFlush = false;
+    bool presentProfile = false;
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
@@ -185,6 +188,15 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
+        v = loadConf(confPath, "DDR_MEM_SYNC");
+        if (!v.empty())
+            ddrMemSync = confTruthy(v);
+        v = loadConf(confPath, "DDR_MEM_FLUSH");
+        if (!v.empty())
+            ddrMemFlush = confTruthy(v);
+        v = loadConf(confPath, "PRESENT_PROFILE");
+        if (!v.empty())
+            presentProfile = confTruthy(v);
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
@@ -272,6 +284,9 @@ int main(int argc, char** argv) {
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeW, decodeH);
     player.setPresentMode(presentMode);
+    player.setDdrMemSync(ddrMemSync);
+    player.setDdrMemFlush(ddrMemFlush);
+    player.setPresentProfile(presentProfile);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
@@ -338,6 +353,9 @@ int main(int argc, char** argv) {
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
+                 ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
+    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")

@@ -1,5 +1,7 @@
 #include "fb_present.hpp"
 
+#include "libmisterplex/pixel_format.hpp"
+
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -87,17 +89,19 @@ bool FbPresent::blitRgb24(const uint8_t* rgb, int w, int h) {
     const int copyH = (h < dstH) ? h : dstH;
 
     if (bpp_ == 32 || bpp_ == 24) {
+        const int dstStep = bpp_ / 8;
         for (int y = 0; y < copyH; ++y) {
             const uint8_t* src = rgb + static_cast<size_t>(y) * static_cast<size_t>(w) * 3;
             uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
-                           static_cast<size_t>(x0) * 4;
+                           static_cast<size_t>(x0) * static_cast<size_t>(dstStep);
             for (int x = 0; x < copyW; ++x) {
                 // ARGB8888 little-endian: B G R A (MiSTer often BGR order with RxB flag)
                 dst[0] = src[2]; // B
                 dst[1] = src[1]; // G
                 dst[2] = src[0]; // R
-                dst[3] = 0xFF;
-                dst += 4;
+                if (dstStep == 4)
+                    dst[3] = 0xFF;
+                dst += dstStep;
                 src += 3;
             }
         }
@@ -116,6 +120,107 @@ bool FbPresent::blitRgb24(const uint8_t* rgb, int w, int h) {
                 const unsigned b = src[2] >> 3;
                 *dst++ = static_cast<uint16_t>((r << 11) | (g << 5) | b);
                 src += 3;
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool FbPresent::blitBgra32(const uint8_t* bgra, int w, int h) {
+    if (!ok() || !bgra || w <= 0 || h <= 0)
+        return false;
+
+    const int dstW = width_;
+    const int dstH = height_;
+    const int x0 = (dstW > w) ? (dstW - w) / 2 : 0;
+    const int y0 = (dstH > h) ? (dstH - h) / 2 : 0;
+    const int copyW = (w < dstW) ? w : dstW;
+    const int copyH = (h < dstH) ? h : dstH;
+
+    if (bpp_ == 32) {
+        const size_t rowBytes = static_cast<size_t>(copyW) * 4;
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* src = bgra + static_cast<size_t>(y) * static_cast<size_t>(w) * 4;
+            uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                           static_cast<size_t>(x0) * 4;
+            std::memcpy(dst, src, rowBytes);
+        }
+        return true;
+    }
+
+    if (bpp_ == 24) {
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* src = bgra + static_cast<size_t>(y) * static_cast<size_t>(w) * 4;
+            uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                           static_cast<size_t>(x0) * 3;
+            for (int x = 0; x < copyW; ++x) {
+                dst[0] = src[0];
+                dst[1] = src[1];
+                dst[2] = src[2];
+                dst += 3;
+                src += 4;
+            }
+        }
+        return true;
+    }
+
+    if (bpp_ == 16) {
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* src = bgra + static_cast<size_t>(y) * static_cast<size_t>(w) * 4;
+            uint16_t* dst = reinterpret_cast<uint16_t*>(
+                mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                static_cast<size_t>(x0) * 2);
+            for (int x = 0; x < copyW; ++x) {
+                *dst++ = pixel::packRgb565(src[2], src[1], src[0]);
+                src += 4;
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool FbPresent::blitRgb565Le(const uint8_t* rgb565le, int w, int h) {
+    if (!ok() || !rgb565le || w <= 0 || h <= 0)
+        return false;
+
+    const int dstW = width_;
+    const int dstH = height_;
+    const int x0 = (dstW > w) ? (dstW - w) / 2 : 0;
+    const int y0 = (dstH > h) ? (dstH - h) / 2 : 0;
+    const int copyW = (w < dstW) ? w : dstW;
+    const int copyH = (h < dstH) ? h : dstH;
+
+    if (bpp_ == 16) {
+        const size_t rowBytes = static_cast<size_t>(copyW) * 2;
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* src = rgb565le + static_cast<size_t>(y) * static_cast<size_t>(w) * 2;
+            uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                           static_cast<size_t>(x0) * 2;
+            std::memcpy(dst, src, rowBytes);
+        }
+        return true;
+    }
+
+    if (bpp_ == 32 || bpp_ == 24) {
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* src =
+                rgb565le + static_cast<size_t>(y) * static_cast<size_t>(w) * 2;
+            uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                           static_cast<size_t>(x0) * static_cast<size_t>(bpp_ / 8);
+            for (int x = 0; x < copyW; ++x) {
+                uint8_t r = 0, g = 0, b = 0;
+                pixel::expandRgb565(pixel::loadLe16(src), r, g, b);
+                dst[0] = b;
+                dst[1] = g;
+                dst[2] = r;
+                if (bpp_ == 32)
+                    dst[3] = 0xFF;
+                dst += bpp_ / 8;
+                src += 2;
             }
         }
         return true;
