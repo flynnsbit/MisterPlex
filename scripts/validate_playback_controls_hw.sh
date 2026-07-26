@@ -12,7 +12,7 @@ USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 PORT="${MISTERPLEX_PORT:-3005}"
 # Optional: point the daemon at a specific Plex Media Server, e.g.
-#   PMS_URL=http://192.168.0.10:32400 ./scripts/validate_playback_controls_hw.sh
+#   PMS_URL=http://YOUR-PLEX-SERVER:32400 ./scripts/validate_playback_controls_hw.sh
 # When unset the daemon uses whatever is configured in misterplex.conf.
 PMS_URL="${PMS_URL:-}"
 PMS_ARG=""

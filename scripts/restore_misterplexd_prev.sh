@@ -6,8 +6,9 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 
-sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" bash -s <<'REMOTE'
+sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" bash -s -- "${PMS_URL:-}" <<'REMOTE'
 set -euo pipefail
+PMS_URL="${1:-}"
 BIN=/media/fat/misterplex/bin/misterplexd
 PREV=/media/fat/misterplex/bin/misterplexd.prev-c2
 LOG=/media/fat/misterplex/misterplexd.log
@@ -24,9 +25,13 @@ sleep 0.4
 cp -f "$PREV" "$BIN"
 chmod +x "$BIN"
 : >"$LOG"
+pms_args=()
+if [[ -n "$PMS_URL" ]]; then
+  pms_args=(--pms "$PMS_URL")
+fi
 nohup "$BIN" --name MiSTerPlex --id misterplex-183 --port 3005 \
   --conf /media/fat/misterplex/misterplex.conf \
-  --pms http://192.168.1.41:32400 \
+  "${pms_args[@]}" \
   >>"$LOG" 2>&1 &
 sleep 0.8
 ps w | grep '[m]isterplexd' || true
