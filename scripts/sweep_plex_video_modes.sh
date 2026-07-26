@@ -44,6 +44,10 @@ Environment:
   MISTER_HOST                  MiSTer host (default: 192.168.1.183)
   MISTER_USER                  SSH user (default: root)
   MISTER_PASS or SSHPASS       SSH password for sshpass -e (required)
+  PMS_URL                      Plex Media Server base URL used only when the
+                               script has to start misterplexd itself, e.g.
+                               http://YOUR-PLEX-SERVER:32400 (default: unset,
+                               daemon falls back to its own conf)
   MISTERPLEX_SWEEP_MODES       Mode specs (default: "5 1280x720@60 1920x1080@60")
   MISTERPLEX_PLAY_KEY          Plex companion play key (default: testsrc)
   MISTERPLEX_SETTLE_SECONDS    Settle time after playMedia (default: 8)
@@ -295,20 +299,26 @@ soft_reboot() {
 }
 
 start_daemon_if_needed() {
-  ssh_m sh -s <<'REMOTE'
+  ssh_m sh -s -- "${PMS_URL:-}" <<'REMOTE'
 set -eu
+pms_url="$1"
 if ! ps w | grep -q '[m]isterplexd'; then
   mkdir -p /media/fat/misterplex
   if [ ! -x /media/fat/misterplex/bin/misterplexd ]; then
     echo "misterplexd binary missing" >&2
     exit 3
   fi
+  if [ -n "$pms_url" ]; then
+    set -- --pms "$pms_url"
+  else
+    set --
+  fi
   nohup /media/fat/misterplex/bin/misterplexd \
     --name MiSTerPlex \
     --id misterplex-183 \
     --port 3005 \
     --conf /media/fat/misterplex/misterplex.conf \
-    --pms http://192.168.1.41:32400 \
+    "$@" \
     >>/media/fat/misterplex/misterplexd.log 2>&1 &
 fi
 REMOTE

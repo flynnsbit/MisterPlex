@@ -104,7 +104,7 @@ Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
 
 ### Trek 40710 / 40868 probe (G-AV4)
 
-- Local PMS (`4edd44…` / `192.168.1.41`) does **not** host 40710 (HTTP 404).  
+- Local PMS (`4edd44…`, lab LAN address redacted) does **not** host 40710 (HTTP 404).  
 - Remote server `1cdd1b7f…` @ `http://203.0.113.10:32400` **REACHABLE** (2026-07-25):  
   - **40710** = **show** (TNG), not the episode.  
   - **S1E1 episode = `/library/metadata/40868`** (Encounter at Farpoint, duration ~91 min).  
