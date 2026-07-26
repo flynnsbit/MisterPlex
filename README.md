@@ -19,8 +19,8 @@ This is not a PC cast app using the DE10-Nano as a dumb display. The product is 
 | **Server** | Plex Media Server reachable from the MiSTer |
 | **Display** | HDMI or VGA/CRT, as you normally use |
 
-A static ARM `ffmpeg` binary is required for the transcode path. It is **not** bundled — see
-[ffmpeg](#ffmpeg) below.
+Everything else you need — the daemon, the FPGA core, and a static ARM `ffmpeg` — is in the
+release tarball.
 
 ---
 
@@ -46,7 +46,7 @@ Resulting layout on the MiSTer:
 
 ```text
 /media/fat/misterplex/bin/misterplexd    # the daemon
-/media/fat/misterplex/bin/ffmpeg         # you supply this (see below)
+/media/fat/misterplex/bin/ffmpeg         # bundled static ARM FFmpeg
 /media/fat/misterplex/misterplex.conf    # your settings
 /media/fat/_Utility/Plex.rbf             # the FPGA core
 ```
@@ -90,15 +90,17 @@ chmod +x /media/fat/misterplex/bin/*
 
 ### ffmpeg
 
-`misterplexd` shells out to a static ARM `ffmpeg` for transcoding. It probes, in order:
+`misterplexd` shells out to a static ARM `ffmpeg` for transcoding. **It is bundled in the
+release** as `bin/ffmpeg`, so a stock install needs nothing extra.
 
-1. `/media/fat/misterplex/bin/ffmpeg`
-2. `/media/fat/mistercast/bin/ffmpeg`
+The daemon probes, in order:
 
-Any statically linked `armv7` build with HTTPS protocol support works. If you already run
-[mistercast-linux](https://github.com/flynnsbit/mistercast-linux), its bundled binary is picked
-up automatically and you need do nothing. Otherwise drop one at path 1, or set `FFMPEG=` in the
-conf.
+1. `/media/fat/misterplex/bin/ffmpeg` (the bundled one)
+2. `/media/fat/mistercast/bin/ffmpeg` (if you also run
+   [mistercast-linux](https://github.com/flynnsbit/mistercast-linux))
+
+To use a different build, replace `bin/ffmpeg` or set `FFMPEG=` in the conf. Any statically
+linked `armv7` build with HTTPS support works.
 
 ---
 
@@ -220,3 +222,14 @@ README is kept at [docs/DEVNOTES_legacy_readme.md](docs/DEVNOTES_legacy_readme.m
 
 - FPGA core and `sys/`: GPL-2.0-or-later (MiSTer framework)
 - Host and ARM tools: MIT unless noted otherwise
+
+### Bundled third-party software
+
+Release tarballs include an unmodified static armhf build of **FFmpeg 7.0.2**
+(by [John Van Sickle](https://johnvansickle.com/ffmpeg/)), configured with
+`--enable-gpl --enable-version3` and therefore licensed under the **GPLv3**. The full licence
+text, the exact build configuration, and pointers to the corresponding source ship in
+`licenses/ffmpeg/` inside the tarball.
+
+FFmpeg is invoked as a separate subprocess, so it is an aggregate — bundling it does not place
+MiSTerPlex's own sources under the GPLv3.

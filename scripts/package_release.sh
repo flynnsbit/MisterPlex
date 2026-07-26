@@ -12,6 +12,10 @@ RBF_RELEASE="$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf"
 RBF_OUT="$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf"
 RBF_DEV="${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
+# Static armhf ffmpeg to bundle so the package is self-contained. Override with
+# FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
+# alongside it (see the licenses/ffmpeg staging below).
+FFMPEG_ARMHF="${FFMPEG_ARMHF:-$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg}"
 
 echo "=== package_release $VERSION ==="
 
@@ -34,6 +38,51 @@ fi
 if [[ -f "$ROOT/build/arm/set_status" ]]; then
   cp -a "$ROOT/build/arm/set_status" "$STAGE/bin/set_status"
   chmod +x "$STAGE/bin/set_status"
+fi
+
+# ffmpeg: bundled so a fresh install needs nothing else. GPLv3 obliges us to ship
+# the licence text and say exactly which build this is and where its source lives.
+if [[ -f "$FFMPEG_ARMHF" ]]; then
+  cp -a "$FFMPEG_ARMHF" "$STAGE/bin/ffmpeg"
+  chmod +x "$STAGE/bin/ffmpeg"
+  mkdir -p "$STAGE/licenses/ffmpeg"
+  FFMPEG_SRC_DIR="$(dirname "$FFMPEG_ARMHF")"
+  for lic in GPLv3.txt readme.txt; do
+    [[ -f "$FFMPEG_SRC_DIR/$lic" ]] && cp -a "$FFMPEG_SRC_DIR/$lic" "$STAGE/licenses/ffmpeg/"
+  done
+  cat >"$STAGE/licenses/ffmpeg/README.md" <<'EOF'
+# Bundled ffmpeg
+
+`bin/ffmpeg` is an unmodified static armhf build of **FFmpeg 7.0.2**, produced by
+John Van Sickle and redistributed here so that MiSTerPlex works out of the box.
+
+It is configured with `--enable-gpl --enable-version3` and is therefore licensed
+under the **GNU General Public License, version 3**. The full licence text is in
+`GPLv3.txt`, and `readme.txt` records the exact build configuration and the
+version of every bundled library.
+
+## Corresponding source
+
+- FFmpeg 7.0.2 source: <https://ffmpeg.org/releases/ffmpeg-7.0.2.tar.xz>
+- Build and source tarballs for this specific static build:
+  <https://johnvansickle.com/ffmpeg/>
+
+The binary is unmodified. It is a separate program that MiSTerPlex merely invokes
+as a subprocess, so it is an aggregate: bundling it does not place MiSTerPlex's
+own sources under the GPLv3.
+
+## Replacing it
+
+Any statically linked armhf ffmpeg with HTTPS support will do. Replace
+`bin/ffmpeg`, or point `FFMPEG=` in `misterplex.conf` at another binary.
+EOF
+  echo "Included bin/ffmpeg from $FFMPEG_ARMHF ($(wc -c <"$STAGE/bin/ffmpeg") bytes) + GPLv3 licence"
+else
+  echo "NOTE: static armhf ffmpeg not found at $FFMPEG_ARMHF"
+  if [[ "${PACKAGE_ALLOW_NO_FFMPEG:-0}" != "1" ]]; then
+    echo "ERROR: bin/ffmpeg missing — set FFMPEG_ARMHF=/path/to/ffmpeg or PACKAGE_ALLOW_NO_FFMPEG=1."
+    exit 1
+  fi
 fi
 
 if [[ -f "$CONF_EX" ]]; then
@@ -90,17 +139,20 @@ version: ${VERSION}
 Contents
 --------
   bin/misterplexd          static ARM companion + media daemon
+  bin/ffmpeg               static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
   bin/push_frame           optional SPI frame/bitstream tool
   bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
   cores/Plex.rbf           (if built) Phase 1–3 present/decode core
   scripts/plex_browse.sh   list library + play/status/stop via misterplexd
   scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
+  licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
   docs/                    release, CRT/LCD matrix, match-source-Hz, subtitles
 
 Install on MiSTer SD
 --------------------
   /media/fat/misterplex/bin/misterplexd
+  /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
   /media/fat/_Utility/Plex.rbf           # lab canonical; required for FPGA present / STREAM
