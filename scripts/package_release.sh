@@ -8,9 +8,9 @@ STAGE="$OUT_DIR/stage-misterplex"
 TAR="$OUT_DIR/misterplex-${VERSION}.tar.gz"
 
 ARM_BIN="$ROOT/build/arm/misterplexd"
-RBF_RELEASE="$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf"
-RBF_OUT="$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf"
-RBF_DEV="${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
+RBF_MD5_EXPECTED="41adb98c7a630b541091c22ce291be68"
+RBF_DEFAULT="$ROOT/release_artifacts/v0.3.0/Plex.rbf"
+RBF_SRC="${RBF_PATH:-$RBF_DEFAULT}"
 CONF_EX="$ROOT/assets/misterplex.conf.example"
 # Static armhf ffmpeg to bundle so the package is self-contained. Override with
 # FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
@@ -98,25 +98,29 @@ MATCH_SOURCE_HZ=off
 EOF
 fi
 
-# RBF: prefer releases/ → output_files/ → misterfpga-dev out (do not fail if missing)
-RBF_SRC=""
-if [[ -f "$RBF_RELEASE" ]]; then
-  RBF_SRC="$RBF_RELEASE"
-elif [[ -f "$RBF_OUT" ]]; then
-  RBF_SRC="$RBF_OUT"
-elif [[ -f "$RBF_DEV" ]]; then
-  RBF_SRC="$RBF_DEV"
+# RBF: releases must package the exact hardware-validated bitstream. Do not
+# silently search output_files/, releases/, or MISTER_DEV: stale local cores are
+# indistinguishable by path and have already nearly shipped once. Operators may
+# pass RBF_PATH=/path/to/Plex.rbf, but every candidate is gated by this MD5.
+if [[ -n "${PACKAGE_ALLOW_NO_RBF:-}" || -n "${PACKAGE_DAEMON_ONLY:-}" ]]; then
+  echo "ERROR: daemon-only packages are disabled for release builds; v0.3.0 must ship a verified Plex.rbf." >&2
+  exit 1
 fi
-if [[ -n "$RBF_SRC" ]]; then
-  cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
-  echo "Included cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes)"
-else
-  echo "NOTE: Plex.rbf not in tree — daemon-only package (see docs for Quartus paths)."
-  if [[ "${PACKAGE_ALLOW_NO_RBF:-0}" != "1" ]]; then
-    echo "ERROR: cores/Plex.rbf missing. Build RBF or set PACKAGE_ALLOW_NO_RBF=1."
-    exit 1
-  fi
+if [[ ! -f "$RBF_SRC" ]]; then
+  echo "ERROR: verified release core missing: $RBF_SRC" >&2
+  echo "       Use the tracked release_artifacts/v0.3.0/Plex.rbf, or set RBF_PATH to a core with MD5 $RBF_MD5_EXPECTED." >&2
+  exit 1
 fi
+RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
+if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
+  echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
+  echo "       expected md5: $RBF_MD5_EXPECTED" >&2
+  echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
+  echo "       v0.3.0 ships only the Phase A playback-controls core validated on hardware." >&2
+  exit 1
+fi
+cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
+echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
 
 # Operator docs
 for doc in release.md release-notes-v0.3.0.md display-resolution.md match-source-hz.md crt-lcd-matrix.md architecture.md subtitles-burnin.md; do
@@ -144,7 +148,7 @@ Contents
   bin/push_frame           optional SPI frame/bitstream tool
   bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
   conf/misterplex.conf.example
-  cores/Plex.rbf           Phase 1–3 present/decode core (required by default)
+  cores/Plex.rbf           Phase A playback-controls core (MD5 41adb98c7a630b541091c22ce291be68)
   scripts/plex_browse.sh   list library + play/status/stop via misterplexd
   scripts/plex_menu.sh     interactive on-device menu (sections → playMedia)
   licenses/ffmpeg/         GPLv3 text, build provenance, source pointers
@@ -163,7 +167,7 @@ Install on MiSTer SD
   /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
   /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
-  /media/fat/_Utility/Plex.rbf           # lab canonical; required for FPGA present / STREAM
+  /media/fat/_Utility/Plex.rbf           # verified v0.3.0 core; md5 41adb98c7a630b541091c22ce291be68
 
 Configure Plex server and credentials
 -------------------------------------
@@ -195,12 +199,13 @@ Launch the core
 
     curl http://<mister-ip>:3005/resources
 
-Plex.rbf locations (build tree / device)
-----------------------------------------
-  In this monorepo after Quartus:
-    fpga/Plex_MiSTer/releases/Plex.rbf          # preferred release copy
-    fpga/Plex_MiSTer/output_files/Plex.rbf      # Quartus primary output
-    misterfpga-dev/out/Plex_MiSTer/Plex.rbf    # when built via mister-dev
+Plex.rbf locations (release / device)
+-------------------------------------
+  In this monorepo for v0.3.0 packaging:
+    release_artifacts/v0.3.0/Plex.rbf          # tracked, MD5-gated release core
+
+  Override only with an explicitly validated core:
+    RBF_PATH=/path/to/Plex.rbf make package    # must md5 to 41adb98c7a630b541091c22ce291be68
 
   On MiSTer (lab canonical):
     /media/fat/_Utility/Plex.rbf
@@ -256,11 +261,7 @@ tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" 
   -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"
-if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
-  echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes)"
-else
-  echo "RBF: ABSENT (daemon-only)"
-fi
+echo "RBF: present ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}'))"
 file "$STAGE/bin/misterplexd" || true
 # Fail soft-list of expected docs
 for need in docs/release.md docs/INSTALL.txt conf/misterplex.conf.example bin/misterplexd; do

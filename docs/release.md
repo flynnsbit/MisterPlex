@@ -13,7 +13,7 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
 | `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
-| `cores/Plex.rbf` | Present/decode core (required by default; `PACKAGE_ALLOW_NO_RBF=1` makes a daemon-only package) |
+| `cores/Plex.rbf` | Verified v0.3.0 Phase A playback-controls core; MD5 `41adb98c7a630b541091c22ce291be68` |
 | `licenses/ffmpeg/` | GPLv3 text, build provenance, and source pointers for the bundled FFmpeg |
 | `docs/` | INSTALL path notes, display/output resolution, release notes, match-source-Hz, CRT/LCD matrix |
 
@@ -51,7 +51,7 @@ list libraries without a phone or web app. Load the core from MiSTer's OSD
 
 ```bash
 make arm-plexd
-make package                    # rebuilds ARM if needed; copies Plex.rbf when present
+make package                    # rebuilds ARM if needed; copies the MD5-verified release Plex.rbf
 MISTER_HOST=<mister-ip> ./scripts/deploy_misterplexd.sh
 ./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
@@ -116,14 +116,18 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 
 | Where | Path |
 |-------|------|
-| Monorepo release copy | `fpga/Plex_MiSTer/releases/Plex.rbf` |
-| Quartus output | `fpga/Plex_MiSTer/output_files/Plex.rbf` |
-| mister-dev out | `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` |
-| Package | `misterplex-<version>/cores/Plex.rbf` (if any of the above existed at pack time) |
+| Monorepo release copy | `release_artifacts/v0.3.0/Plex.rbf` |
+| Explicit override | `RBF_PATH=/path/to/Plex.rbf make package` (must match the pinned MD5) |
+| Package | `misterplex-<version>/cores/Plex.rbf` |
 | MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
 | MiSTer SD (alt) | `/media/fat/_Arcade/Plex.rbf` or `/media/fat/games/Plex/Plex.rbf` |
 
 Phase 2 **fb0 / MrAudio** works with MiSTer’s normal video path (ascal/fb) even without Plex core loaded. Phase 3 **FPGA present / STREAM** requires `Plex.rbf` and OSD **Video source = Frame store** where applicable.
+
+Release packages do not silently select local Quartus outputs. `make package`
+uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
+`RBF_PATH`, and refuses to package it unless the MD5 is
+`41adb98c7a630b541091c22ce291be68`.
 
 ## Smoke tests
 
@@ -172,7 +176,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | SPI under STREAM soak | Concurrent F1/F2/F3 → daemon death; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
 | F2 under PRESENT=both | F2 only when `PRESENT=fpga` (both uses MrAudio alone) | fixed |
 | PMS thin library | Lab may expose one episode + local `test.mp4`; soak uses onDeck/recentlyAdded | lab |
-| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1`; ships `set_status` when built | ops |
+| Package | `make package` **requires** the pinned v0.3.0 `Plex.rbf` MD5; daemon-only packages are disabled for release builds | ops |
 
 ## Version stamp
 

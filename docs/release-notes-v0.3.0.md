@@ -4,6 +4,17 @@ v0.3.0 is a self-contained release candidate for general MiSTer users: the packa
 `Plex.rbf` FPGA core, the `misterplexd` ARM daemon, a static ARM `ffmpeg`, install docs, checksums,
 and FFmpeg license/source notices.
 
+## Release core identity
+
+The v0.3.0 package must ship the Phase A playback-controls core validated on hardware:
+
+```text
+MD5  41adb98c7a630b541091c22ce291be68  cores/Plex.rbf
+```
+
+`make package` refuses to include any `Plex.rbf` with a different MD5, so a stale local Quartus
+output cannot silently become the release core.
+
 ## Highlights
 
 - **Local playback controls:** Space / Esc / Right / Left and mapped gamepad buttons now drive
@@ -31,7 +42,7 @@ MiSTer's video path.
 
 - Native/content resolution is still **320×240** by default.
 - Higher native resolution is in progress and depends on SDRAM frame-store work plus enough ARM CPU
-  headroom for the decode/transcode path.
+  headroom for the decode/transcode path; SDRAM frame-store work is **not** included in v0.3.0.
 - FPGA-side full H.264 reconstruction remains under development; the current product path still uses
   the ARM daemon and FFmpeg for decode/transcode.
 - `MATCH_SOURCE_HZ` logs/cadences to source FPS, but true runtime modeline switching is not finished.
