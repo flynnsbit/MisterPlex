@@ -27,16 +27,16 @@ static bool ffmpegGold(const char* h264, const char* yuvOut) {
 }
 
 int main(int argc, char** argv) {
-    const char* path = argc > 1 ? argv[1] : "/tmp/plex_real_baseline.h264";
+    const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.h264";
     auto blob = readFile(path);
     if (blob.empty()) {
-        if (std::system("python3 scripts/gen_test_annexb_real.py /tmp/plex_real_baseline.h264") !=
+        if (std::system("python3 scripts/gen_test_annexb_real.py build/plex_real_baseline.h264") !=
             0) {
             std::printf("FAIL: no bitstream\n");
             return 1;
         }
-        blob = readFile("/tmp/plex_real_baseline.h264");
-        path = "/tmp/plex_real_baseline.h264";
+        blob = readFile("build/plex_real_baseline.h264");
+        path = "build/plex_real_baseline.h264";
     }
 
     // First residual probe (I_NxN first coded 4x4 or I16 DC)
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
 
     // Bit-exact vs FFmpeg (no loop filter) when ffmpeg is available.
     double maeY = -1.0, maeU = -1.0, maeV = -1.0;
-    const char* goldPath = "/tmp/misterplex_cavlc_gold.yuv";
+    const char* goldPath = "build/misterplex_cavlc_gold.yuv";
     if (ffmpegGold(path, goldPath)) {
         auto gold = readFile(goldPath);
         const size_t ysz = rec.y.size();

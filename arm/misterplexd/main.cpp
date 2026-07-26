@@ -4,6 +4,7 @@
 
 #include "companion.hpp"
 #include "media_player.hpp"
+#include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
 
 #include <atomic>
@@ -359,6 +360,9 @@ int main(int argc, char** argv) {
     comp.setPort(static_cast<uint16_t>(port));
     comp.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
 
+    misterplex::PmsTimelineReporter pmsTimeline;
+    pmsTimeline.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+
     // Session context for multi-base resolve + auto-next.
     std::mutex sessionMu;
     misterplex::PlayRequest lastPlay;
@@ -562,6 +566,15 @@ int main(int argc, char** argv) {
             lastToken = bound.token.empty() ? confToken : bound.token;
         }
 
+        misterplex::PmsTimelineSession timelineSession;
+        timelineSession.baseUrl = base;
+        timelineSession.token = bound.token.empty() ? confToken : bound.token;
+        timelineSession.key = bound.key;
+        timelineSession.ratingKey = bound.ratingKey;
+        timelineSession.playQueueItemId = bound.playQueueItemId;
+        timelineSession.containerKey = bound.containerKey;
+        pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
+
         std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
@@ -636,6 +649,7 @@ int main(int argc, char** argv) {
 
     player.setProgress([&](const std::string& st, int64_t t, int64_t d) {
         if (st == "ended") {
+            pmsTimeline.endSession(t, d);
             // Must not call player.play() on the media thread (join self). Schedule async.
             if (autoNextInFlight.exchange(true)) {
                 comp.setState("stopped", t, d);
@@ -656,6 +670,10 @@ int main(int argc, char** argv) {
             }).detach();
             return;
         }
+        if (st == "stopped")
+            pmsTimeline.endSession(t, d);
+        else
+            pmsTimeline.reportState(st, t, d);
         comp.setState(st, t, d);
     });
 
@@ -847,6 +865,7 @@ int main(int argc, char** argv) {
     }
 
     player.stop();
+    pmsTimeline.stopAndFlush();
     comp.stop();
     // Last chance on the way out: a window leaked during teardown would
     // otherwise outlive us.
