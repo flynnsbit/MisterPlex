@@ -1,13 +1,15 @@
 // SDRAM-backed RGB565 frame store.
 // Write path: HPS/decoder pixels cross into the 100 MHz SDRAM controller.
-// Read path: scanout uses two 320-pixel line buffers and prefetches one line
-// ahead so the visible pixel path remains BRAM-like and edge timing is stable.
+// Read path: scanout uses parameterized line buffers and prefetches ahead of
+// the raster so the visible pixel path remains BRAM-like and edge timing stays
+// aligned with present_core's measured DE_LAG.
 
 module frame_store #(
 	parameter int WIDTH  = 320,
 	parameter int HEIGHT = 240,
 	parameter int REFRESH_CYCLES = 780,
-	parameter int CMD_FIFO_AW = 5
+	parameter int CMD_FIFO_AW = 5,
+	parameter int LINE_COUNT = 2
 )(
 	input  wire        clk,
 	input  wire        clk_sdram,
@@ -61,6 +63,8 @@ module frame_store #(
 	localparam [9:0] HEIGHT_W = HEIGHT[9:0];
 	localparam [15:0] REFRESH_LIMIT = REFRESH_CYCLES[15:0];
 	localparam int SDRAM_ADDR_PAD = 26 - ADDR_W;
+	localparam int LINE_AW = $clog2(WIDTH);
+	localparam int MAX_LINES = 8;
 
 	localparam [1:0] CMD_PIXEL = 2'd0;
 	localparam [1:0] CMD_RESET = 2'd1;
@@ -68,40 +72,34 @@ module frame_store #(
 
 	assign sdram_bs = 2'b11;
 
-	localparam int LINE_AW = $clog2(WIDTH);
-
-	reg                 line0_wr, line1_wr;
+	reg  [MAX_LINES-1:0] line_wr;
 	reg  [LINE_AW-1:0]  line_wr_addr;
 	reg  [15:0]         line_wr_data;
-	wire [15:0]         line0_q, line1_q;
+	wire [15:0]         line_q [0:MAX_LINES-1];
 	wire [9:0]          rd_x_clamped = (rd_x < WIDTH_W) ? rd_x : (WIDTH_W - 10'd1);
 	wire [LINE_AW-1:0]  line_rd_addr = rd_x_clamped[LINE_AW-1:0];
 
-	line_buf_ram #(
-		.WIDTH(WIDTH),
-		.AW(LINE_AW)
-	) line0_ram (
-		.wr_clk(clk_sdram),
-		.wr_en(line0_wr),
-		.wr_addr(line_wr_addr),
-		.wr_data(line_wr_data),
-		.rd_clk(clk),
-		.rd_addr(line_rd_addr),
-		.rd_data(line0_q)
-	);
-
-	line_buf_ram #(
-		.WIDTH(WIDTH),
-		.AW(LINE_AW)
-	) line1_ram (
-		.wr_clk(clk_sdram),
-		.wr_en(line1_wr),
-		.wr_addr(line_wr_addr),
-		.wr_data(line_wr_data),
-		.rd_clk(clk),
-		.rd_addr(line_rd_addr),
-		.rd_data(line1_q)
-	);
+	genvar li;
+	generate
+		for (li = 0; li < MAX_LINES; li = li + 1) begin : gen_line
+			if (li < LINE_COUNT) begin : used
+				line_buf_ram #(
+					.WIDTH(WIDTH),
+					.AW(LINE_AW)
+				) ram (
+					.wr_clk(clk_sdram),
+					.wr_en(line_wr[li]),
+					.wr_addr(line_wr_addr),
+					.wr_data(line_wr_data),
+					.rd_clk(clk),
+					.rd_addr(line_rd_addr),
+					.rd_data(line_q[li])
+				);
+			end else begin : unused
+				assign line_q[li] = 16'd0;
+			end
+		end
+	endgenerate
 
 	reg disp_bank;
 	reg swap_commit_wait;
@@ -140,6 +138,7 @@ module frame_store #(
 	reg swap_done_t_sdram;
 	reg swap_done_s1, swap_done_s2, swap_done_seen;
 	wire read_bank_sys = swap_pending ? ~disp_bank : disp_bank;
+
 	always @(posedge clk) begin
 		if (reset) begin
 			disp_bank <= 1'b0;
@@ -174,58 +173,70 @@ module frame_store #(
 		end
 	end
 
-	// Video-domain line-buffer read. Keep the old 3-cycle frame_store latency so
-	// present_core's measured DE_LAG=3 remains valid.
+	// Video-domain line-buffer read. The line RAM adds the same one-cycle
+	// address->data latency the old BRAM store had, so present_core's DE_LAG=3
+	// edge alignment is intentionally preserved.
 	reg       rd_active_r;
-	reg       hit0_r, hit1_r;
+	reg       hit_r;
+	reg [2:0] hit_idx_r;
 	reg [15:0] rd_q;
 	reg        rd_active_d;
 	reg        miss_d;
-	reg [9:0] line0_y_v1, line0_y_v2, line1_y_v1, line1_y_v2;
-	reg       line0_valid_v1, line0_valid_v2, line1_valid_v1, line1_valid_v2;
-
+	reg [MAX_LINES-1:0] line_valid_v1, line_valid_v2;
+	reg [9:0] line_y_v1 [0:MAX_LINES-1];
+	reg [9:0] line_y_v2 [0:MAX_LINES-1];
 	reg [9:0] want_y_sys;
 	reg [9:0] want_y_s1, want_y_s2;
 
-	wire hit0_now = line0_valid_v2 && (line0_y_v2 == rd_y);
-	wire hit1_now = line1_valid_v2 && (line1_y_v2 == rd_y);
-	wire rd_miss_now = rd_active && has_frame && !(hit0_now || hit1_now);
+	integer vi;
+	reg hit_now;
+	reg [2:0] hit_idx_now;
+	reg [15:0] selected_line_q;
+	always @* begin
+		hit_now = 1'b0;
+		hit_idx_now = 3'd0;
+		selected_line_q = 16'd0;
+		for (vi = 0; vi < MAX_LINES; vi = vi + 1) begin
+			if (vi < LINE_COUNT) begin
+				if (line_valid_v2[vi] && (line_y_v2[vi] == rd_y) && !hit_now) begin
+					hit_now = 1'b1;
+					hit_idx_now = vi[2:0];
+				end
+				if (hit_idx_r == vi[2:0])
+					selected_line_q = line_q[vi];
+			end
+		end
+	end
+	wire rd_miss_now = rd_active && has_frame && !hit_now;
 
 	always @(posedge clk) begin
 		if (reset) begin
 			rd_active_r <= 1'b0;
-			hit0_r <= 1'b0;
-			hit1_r <= 1'b0;
+			hit_r <= 1'b0;
+			hit_idx_r <= 3'd0;
 			rd_q <= 16'd0;
 			rd_active_d <= 1'b0;
 			miss_d <= 1'b0;
 			underrun_count <= 16'd0;
 			want_y_sys <= 10'd0;
-			{line0_valid_v1, line0_valid_v2, line1_valid_v1, line1_valid_v2} <= 4'd0;
+			line_valid_v1 <= '0;
+			line_valid_v2 <= '0;
 		end else begin
-			line0_valid_v1 <= line0_valid;
-			line0_valid_v2 <= line0_valid_v1;
-			line1_valid_v1 <= line1_valid;
-			line1_valid_v2 <= line1_valid_v1;
-			line0_y_v1 <= line0_y;
-			line0_y_v2 <= line0_y_v1;
-			line1_y_v1 <= line1_y;
-			line1_y_v2 <= line1_y_v1;
-
-			if (rd_y != want_y_sys) begin
-				want_y_sys <= rd_y;
+			line_valid_v1 <= line_valid;
+			line_valid_v2 <= line_valid_v1;
+			for (vi = 0; vi < MAX_LINES; vi = vi + 1) begin
+				line_y_v1[vi] <= line_y[vi];
+				line_y_v2[vi] <= line_y_v1[vi];
 			end
 
+			if (rd_y != want_y_sys)
+				want_y_sys <= rd_y;
+
 			rd_active_r <= rd_active;
-			hit0_r <= hit0_now;
-			hit1_r <= hit1_now;
+			hit_r <= hit_now;
+			hit_idx_r <= hit_idx_now;
 			miss_d <= rd_miss_now;
-			if (hit0_r)
-				rd_q <= line0_q;
-			else if (hit1_r)
-				rd_q <= line1_q;
-			else
-				rd_q <= 16'd0;
+			rd_q <= hit_r ? selected_line_q : 16'd0;
 			rd_active_d <= rd_active_r;
 			if (miss_d && underrun_count != 16'hFFFF)
 				underrun_count <= underrun_count + 16'd1;
@@ -244,8 +255,7 @@ module frame_store #(
 
 	// SDRAM-domain controller: line reads have priority; writes drain in the
 	// slack and blanking windows. A 100 MHz controller at ~8 cycles/word fills
-	// one 320-word line in ~25.6 us; the 20 MHz raster line is ~31.8 us, leaving
-	// ~6 us before the next line needs the buffer.
+	// one 320-word line in ~25.6 us; the 20 MHz raster line is ~31.8 us.
 	localparam [3:0] S_IDLE       = 4'd0;
 	localparam [3:0] S_READ_ISSUE = 4'd1;
 	localparam [3:0] S_READ_WAIT  = 4'd2;
@@ -258,26 +268,71 @@ module frame_store #(
 	reg              wr_bank_sdram;
 	reg [9:0]        fill_x;
 	reg [9:0]        fill_y;
-	reg              fill_buf;
+	reg [2:0]        fill_idx;
 	reg [15:0]       refresh_ctr;
-	reg              line0_valid, line1_valid;
-	reg [9:0]        line0_y, line1_y;
+	reg [MAX_LINES-1:0] line_valid;
+	reg [9:0]        line_y [0:MAX_LINES-1];
 	reg              disp_bank_s1, disp_bank_s2;
 	reg              read_bank_s1, read_bank_s2, read_bank_prev;
 	reg [17:0]       cmd_hold;
 
-	wire [9:0] want_y_next = (want_y_s2 == (HEIGHT_W - 10'd1)) ? want_y_s2 : (want_y_s2 + 10'd1);
-	wire have_want = (line0_valid && line0_y == want_y_s2) || (line1_valid && line1_y == want_y_s2);
-	wire have_next = (line0_valid && line0_y == want_y_next) || (line1_valid && line1_y == want_y_next);
-	wire choose_current = !have_want;
-	wire need_fill = !have_want || !have_next;
-	wire [9:0] target_y = choose_current ? want_y_s2 : want_y_next;
-	wire target_buf = (!line0_valid || (line0_y != want_y_s2 && line0_y != want_y_next)) ? 1'b0 : 1'b1;
+	function automatic [9:0] clamp_ahead(input [9:0] base, input integer ahead);
+		integer sum;
+		begin
+			sum = base + ahead;
+			clamp_ahead = (sum >= HEIGHT) ? (HEIGHT_W - 10'd1) : sum[9:0];
+		end
+	endfunction
+
+	integer ti, tj, tk;
+	reg need_fill;
+	reg [9:0] target_y;
+	reg [2:0] target_idx;
+	reg found_line;
+	reg slot_keep;
+	reg found_slot;
+	reg [9:0] desired_y;
+	always @* begin
+		need_fill = 1'b0;
+		target_y = want_y_s2;
+		target_idx = 3'd0;
+		found_slot = 1'b0;
+
+		for (ti = 0; ti < MAX_LINES; ti = ti + 1) begin
+			if (ti < LINE_COUNT) begin
+				desired_y = clamp_ahead(want_y_s2, ti);
+				found_line = 1'b0;
+				for (tj = 0; tj < MAX_LINES; tj = tj + 1) begin
+					if (tj < LINE_COUNT && line_valid[tj] && (line_y[tj] == desired_y))
+						found_line = 1'b1;
+				end
+				if (!found_line && !need_fill) begin
+					need_fill = 1'b1;
+					target_y = desired_y;
+				end
+			end
+		end
+
+		for (tj = 0; tj < MAX_LINES; tj = tj + 1) begin
+			if (tj < LINE_COUNT) begin
+				slot_keep = 1'b0;
+				for (tk = 0; tk < MAX_LINES; tk = tk + 1) begin
+					if (tk < LINE_COUNT && line_valid[tj] && (line_y[tj] == clamp_ahead(want_y_s2, tk)))
+						slot_keep = 1'b1;
+				end
+				if ((!line_valid[tj] || !slot_keep) && !found_slot) begin
+					found_slot = 1'b1;
+					target_idx = tj[2:0];
+				end
+			end
+		end
+	end
+
 	wire [ADDR_W-1:0] rd_base = read_bank_s2 ? BANK1_BASE : BANK0_BASE;
 	wire [ADDR_W-1:0] wr_base = wr_bank_sdram ? BANK1_BASE : BANK0_BASE;
 	wire [ADDR_W-1:0] read_word_addr = rd_base + (fill_y * WIDTH_W) + fill_x;
-
-	assign debug_state = {1'b0, line1_valid, line0_valid, state_sdram};
+	wire [2:0] line_count_code = LINE_COUNT[2:0];
+	assign debug_state = {line_count_code, |line_valid, state_sdram};
 
 	always @(posedge clk_sdram) begin
 		if (reset) begin
@@ -287,8 +342,7 @@ module frame_store #(
 			sdram_rd <= 1'b0;
 			sdram_addr <= 26'd0;
 			sdram_din <= 16'd0;
-			line0_wr <= 1'b0;
-			line1_wr <= 1'b0;
+			line_wr <= '0;
 			line_wr_addr <= '0;
 			line_wr_data <= 16'd0;
 			sdram_refresh <= 1'b0;
@@ -297,11 +351,10 @@ module frame_store #(
 			wr_bank_sdram <= 1'b1;
 			fill_x <= 10'd0;
 			fill_y <= 10'd0;
-			fill_buf <= 1'b0;
-			line0_valid <= 1'b0;
-			line1_valid <= 1'b0;
-			line0_y <= 10'd0;
-			line1_y <= 10'd0;
+			fill_idx <= 3'd0;
+			line_valid <= '0;
+			for (ti = 0; ti < MAX_LINES; ti = ti + 1)
+				line_y[ti] <= 10'd0;
 			disp_bank_s1 <= 1'b0;
 			disp_bank_s2 <= 1'b0;
 			read_bank_s1 <= 1'b0;
@@ -316,8 +369,7 @@ module frame_store #(
 			sdram_sel <= 1'b0;
 			sdram_wr <= 1'b0;
 			sdram_rd <= 1'b0;
-			line0_wr <= 1'b0;
-			line1_wr <= 1'b0;
+			line_wr <= '0;
 			cmd_pop <= 1'b0;
 
 			disp_bank_s1 <= disp_bank;
@@ -336,8 +388,7 @@ module frame_store #(
 
 			if (read_bank_s2 != read_bank_prev) begin
 				read_bank_prev <= read_bank_s2;
-				line0_valid <= 1'b0;
-				line1_valid <= 1'b0;
+				line_valid <= '0;
 			end
 
 			case (state_sdram)
@@ -345,8 +396,8 @@ module frame_store #(
 					if (need_fill) begin
 						fill_y <= target_y;
 						fill_x <= 10'd0;
-						fill_buf <= target_buf;
-						if (!target_buf) line0_valid <= 1'b0; else line1_valid <= 1'b0;
+						fill_idx <= target_idx;
+						line_valid[target_idx] <= 1'b0;
 						state_sdram <= S_READ_ISSUE;
 					end else if (!cmd_empty) begin
 						cmd_hold <= cmd_rdata;
@@ -375,16 +426,10 @@ module frame_store #(
 					if (sdram_ready) begin
 						line_wr_addr <= fill_x[LINE_AW-1:0];
 						line_wr_data <= sdram_dout;
-						line0_wr <= !fill_buf;
-						line1_wr <= fill_buf;
+						line_wr[fill_idx] <= 1'b1;
 						if (fill_x == (WIDTH_W - 10'd1)) begin
-							if (!fill_buf) begin
-								line0_y <= fill_y;
-								line0_valid <= 1'b1;
-							end else begin
-								line1_y <= fill_y;
-								line1_valid <= 1'b1;
-							end
+							line_y[fill_idx] <= fill_y;
+							line_valid[fill_idx] <= 1'b1;
 							state_sdram <= S_IDLE;
 						end else begin
 							fill_x <= fill_x + 10'd1;

@@ -4,11 +4,20 @@
 module present_core #(
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 `ifdef FRAME_CMD_FIFO_AW4
-	parameter int FRAME_CMD_FIFO_AW = 4
+	parameter int FRAME_CMD_FIFO_AW = 4,
 `elsif FRAME_CMD_FIFO_AW6
-	parameter int FRAME_CMD_FIFO_AW = 6
+	parameter int FRAME_CMD_FIFO_AW = 6,
 `else
-	parameter int FRAME_CMD_FIFO_AW = 5
+	parameter int FRAME_CMD_FIFO_AW = 5,
+`endif
+`ifdef FRAME_LINES_1
+	parameter int FRAME_LINE_COUNT = 1
+`elsif FRAME_LINES_4
+	parameter int FRAME_LINE_COUNT = 4
+`elsif FRAME_LINES_8
+	parameter int FRAME_LINE_COUNT = 8
+`else
+	parameter int FRAME_LINE_COUNT = 4
 `endif
 )(
 	input  wire        clk,
@@ -175,7 +184,8 @@ module present_core #(
 		.WIDTH(320),
 		.HEIGHT(240),
 		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES),
-		.CMD_FIFO_AW(FRAME_CMD_FIFO_AW)
+		.CMD_FIFO_AW(FRAME_CMD_FIFO_AW),
+		.LINE_COUNT(FRAME_LINE_COUNT)
 	) fstore (
 		.clk(clk),
 		.clk_sdram(clk_sdram),
