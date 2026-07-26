@@ -59,6 +59,17 @@ Output mode is **not** a `misterplex.conf` setting. Edit the `[Plex]` section of
    vga_scaler=1
    ```
 
+   Before rebooting, verify the anti-retune pins are still active:
+
+   ```sh
+   python3 scripts/check_mister_ini_plex_guard.py path/to/MiSTer.ini
+   ```
+
+   The reference keys live in `assets/MiSTer.ini.Plex.required`, and `make unit`
+   exercises the checker against good and intentionally broken examples. Do not
+   comment out `video_mode`, `video_mode_ntsc`, or `video_mode_pal` in `[Plex]`
+   unless you are deliberately changing the reference with lab evidence.
+
 3. Reboot:
 
    ```sh

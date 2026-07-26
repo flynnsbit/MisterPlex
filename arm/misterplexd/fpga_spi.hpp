@@ -121,8 +121,8 @@ public:
     //   [31:0]  magic "PLXS"
     //   [47:32] status[15:0]
     //   [63:48] seq
-    static constexpr uint32_t kDdrMailboxPhys = 0x3007F100u;
-    static constexpr uint32_t kDdrMailboxMagic = 0x504C5853u; // "PLXS"
+    static constexpr uint32_t kDdrMailboxPhys = kDdrStatusMailboxPhys;
+    static constexpr uint32_t kDdrMailboxMagic = kDdrStatusMailboxMagic; // "PLXS"
 
     // Read the OSD word from the mailbox. Returns false until the mailbox is
     // proven LIVE, which is the caller's cue to fall back to getCoreStatus().

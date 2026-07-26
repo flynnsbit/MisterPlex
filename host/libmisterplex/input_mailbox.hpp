@@ -8,8 +8,14 @@
 
 namespace misterplex {
 
+constexpr uint32_t kDdrStatusMailboxPhys = 0x3007F100u;
+constexpr uint32_t kDdrStatusMailboxMagic = 0x504C5853u; // "PLXS"
 constexpr uint32_t kInputMailboxPhys = 0x3007F108u;
 constexpr uint32_t kInputMailboxMagic = 0x504C5849u; // "PLXI"
+constexpr uint32_t kMemtestMailboxPhys = 0x3007F110u;
+constexpr uint32_t kMemtestMailboxMagic = 0x504C584Du; // "PLXM"
+constexpr uint32_t kUnderrunMailboxPhys = 0x3007F118u;
+constexpr uint32_t kUnderrunMailboxMagic = 0x504C5846u; // "PLXF"
 
 enum class PlaybackCommand : uint8_t {
     None = 0,

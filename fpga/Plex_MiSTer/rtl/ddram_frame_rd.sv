@@ -16,6 +16,9 @@
 //     [39:32] cmd (1=play/pause, 2=stop, 3=skip fwd, 4=skip back)
 //     [47:40] cmd_seq (increments for every published command)
 //     [63:48] seq (monotonic; lets the host reject a torn/stale read)
+//   Reserved fixed mailbox slots (host/FPGA ABI; keep stable):
+//     0x3007F110 magic 0x504C584D ("PLXM") memtest
+//     0x3007F118 magic 0x504C5846 ("PLXF") underrun
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
@@ -41,6 +44,8 @@ module ddram_frame_rd #(
 	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
 	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
+	parameter [31:0] MEMTEST_MAILBOX_PHYS = 32'h3007_F110,
+	parameter [31:0] UNDERRUN_MAILBOX_PHYS = 32'h3007_F118,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -84,9 +89,13 @@ module ddram_frame_rd #(
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
+	localparam [28:0] MEMTEST_MAILBOX_W = MEMTEST_MAILBOX_PHYS[31:3];
+	localparam [28:0] UNDERRUN_MAILBOX_W = UNDERRUN_MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
+	localparam [31:0] MAGIC_M = 32'h504C_584D;
+	localparam [31:0] MAGIC_F = 32'h504C_5846;
 
 	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;

@@ -39,11 +39,13 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)
 	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
+	$(ROOT)/tests/unit/test_rtl_invariants.sh
+	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
