@@ -36,3 +36,28 @@ The SDRAM result is published without SPI at physical address `0x3007F110`, next
 | `[63:48]` | saturated error count |
 
 The mailbox is published on change and heartbeat by `rtl/ddram_frame_rd.sv`.
+
+## B2 frame-store migration notes
+
+Branch `feat/b2` moves the 320x240 double-buffered `frame_store` payload from M10K BRAM to the single SDRAM stick.  The B1 final accepted RBF (`aff45bd0...`) was **100 MHz CL3**; the separate sweep showed **100 MHz CL2** was also timing-clean, so B2 defaults to 100 MHz CL2.  `SDRAM_CL3=1` remains available for a conservative fallback.
+
+The video path still consumes the same 320x240 source coordinates generated in `present_core.sv`, including the G-VID1 invariants: `DE_LAG=3`, no blank-time `store_x` reset, and `past_last_row` blank/clamp.  The external interface (`wr_en`, `wr_reset_ptr`, `swap_banks`, `vsync_pulse`, `swap_pending`) is kept so F1, DDR DMA, and decode-stub writers retain the tear-free contract.
+
+### Line-buffer sizing
+
+At 20 MHz video, the active line period from the template counters is about 31.8 us.  The stock MiSTer `sdram.sv` controller uses one activate/read/precharge sequence per 16-bit word; the measured build timing and controller state sequence budget this as roughly 8 SDRAM clocks per word.  At 100 MHz CL2 that is about 12.5 Mword/s, so one 320-word line fills in ~25.6 us.  The two-line buffer therefore carries the current line plus the next line, leaving about 6.2 us (~19.5% of a line, ~620 SDRAM clocks) for refresh jitter/bank-conflict slack before visible scanout catches the prefetcher.  The reader also prefetches from the pending bank while `swap_pending` is set, so the first line of a newly flipped frame can be warm before VSync.
+
+### Frame-store mailbox
+
+A second frame-store status mailbox is published by `ddram_frame_rd` at physical `0x3007F118`, next to the B1 SDRAM-test mailbox and still away from W-A01's `0x3007F108` input mailbox.
+
+64-bit little-endian layout:
+
+| Bits | Field |
+|---|---|
+| `[31:0]` | magic `0x504C5846` (`PLXF`) |
+| `[39:32]` | sequence counter |
+| `[47:40]` | frame-store SDRAM/debug state |
+| `[63:48]` | saturated line-buffer underrun count |
+
+A nonzero underrun count means scanout requested a visible pixel before the SDRAM line prefetch had delivered it; this should be treated as video corruption, not ignored.

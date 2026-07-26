@@ -30,7 +30,7 @@
 //   https://github.com/MiSTer-devel/NeoGeo_MiSTer/blob/227d4f418fd908a66712329400a6f619ca4fee77/rtl/mem/sdram.sv
 // License: GPL-3.0-or-later, as stated above.
 // Local bring-up adaptation: CAS latency can be selected at synthesis time with
-// SDRAM_CL2 (default is CL3 for the 100/110/120/133 MHz sweep).
+// SDRAM_CL3. Default is CL2 because the B1 sweep proved 100 MHz CL2 timing-clean.
 
 module sdram
 (
@@ -78,10 +78,10 @@ assign {SDRAM_DQMH,SDRAM_DQML} = SDRAM_A[12:11];
 localparam BURST_LENGTH        = 4;
 localparam BURST_CODE          = (BURST_LENGTH == 8) ? 3'b011 : (BURST_LENGTH == 4) ? 3'b010 : (BURST_LENGTH == 2) ? 3'b001 : 3'b000;  // 000=1, 001=2, 010=4, 011=8
 localparam ACCESS_TYPE         = 1'b0;     // 0=sequential, 1=interleaved
-`ifdef SDRAM_CL2
-localparam CAS_LATENCY         = 3'd2;     // 2 for <=100MHz when the stick permits it
-`else
+`ifdef SDRAM_CL3
 localparam CAS_LATENCY         = 3'd3;     // conservative default for >100MHz sweeps
+`else
+localparam CAS_LATENCY         = 3'd2;     // 100MHz B2 default
 `endif
 localparam OP_MODE             = 2'b00;    // only 00 (standard operation) allowed
 localparam NO_WRITE_BURST      = 1'b1;     // 0= write burst enabled, 1=only single access write

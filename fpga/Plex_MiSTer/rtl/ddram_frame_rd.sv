@@ -23,6 +23,11 @@
 //                            5 address, 6 pass, 7 fail)
 //     [47:44] detected size code (2=16MB, 3=32MB, 4=64MB; 0 unknown)
 //     [63:48] saturated error count
+//   SDRAM frame-store mailbox: 0x3007F118 (one 64-bit word, core -> HPS, no SPI)
+//     [31:0]  magic 0x504C5846 ("PLXF")
+//     [39:32] seq
+//     [47:40] frame-store SDRAM debug state
+//     [63:48] saturated line-buffer underrun count
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
@@ -49,6 +54,7 @@ module ddram_frame_rd #(
 	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
+	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -67,6 +73,8 @@ module ddram_frame_rd #(
 	input  wire  [3:0] sdram_test_state,
 	input  wire  [3:0] sdram_size_code,
 	input  wire [15:0] sdram_error_count,
+	input  wire  [7:0] frame_sdram_state,
+	input  wire [15:0] frame_underrun_count,
 
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -83,6 +91,7 @@ module ddram_frame_rd #(
 	output reg  [15:0] wr_pixel,
 	output reg         wr_reset_ptr,
 	output reg         swap_req,
+	input  wire        wr_ready,
 
 	output reg         busy,
 	output reg  [15:0] frames_done,
@@ -97,10 +106,12 @@ module ddram_frame_rd #(
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
+	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
+	localparam [31:0] MAGIC_F = 32'h504C_5846;
 
 	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;
@@ -145,6 +156,11 @@ module ddram_frame_rd #(
 	reg        sdram_mbox_req;
 	reg        sdram_mbox_valid;
 	reg [17:0] sdram_mbox_hb;
+	reg  [7:0] frame_mbox_seq;
+	reg [23:0] frame_mbox_last;
+	reg        frame_mbox_req;
+	reg        frame_mbox_valid;
+	reg [17:0] frame_mbox_hb;
 
 	// Input mailbox FIFO. Human input is sparse, but a tiny queue keeps
 	// commands from being lost while a frame DMA or status publish owns DDR.
@@ -247,6 +263,11 @@ module ddram_frame_rd #(
 			sdram_mbox_req   <= 1'b1;
 			sdram_mbox_valid <= 1'b0;
 			sdram_mbox_hb    <= 18'd0;
+			frame_mbox_seq   <= 8'd0;
+			frame_mbox_last  <= 24'd0;
+			frame_mbox_req   <= 1'b1;
+			frame_mbox_valid <= 1'b0;
+			frame_mbox_hb    <= 18'd0;
 			cmd_fifo_wr    <= 0;
 			cmd_fifo_rd    <= 0;
 			imbox_seq      <= 16'd0;
@@ -269,6 +290,11 @@ module ddram_frame_rd #(
 			    || ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_mbox_last)
 			    || (sdram_mbox_hb == 18'd0))
 				sdram_mbox_req <= 1'b1;
+			frame_mbox_hb <= frame_mbox_hb + 18'd1;
+			if (!frame_mbox_valid
+			    || ({frame_underrun_count, frame_sdram_state} != frame_mbox_last)
+			    || (frame_mbox_hb == 18'd0))
+				frame_mbox_req <= 1'b1;
 
 			if (input_cmd_valid && (input_cmd != 8'd0) && !cmd_fifo_full) begin
 				cmd_fifo[cmd_fifo_wix] <= input_cmd;
@@ -357,6 +383,18 @@ module ddram_frame_rd #(
 					sdram_mbox_valid <= 1'b1;
 					sdram_mbox_req   <= 1'b0;
 				end
+				else if (frame_mbox_req && !poll_pending && poll_div[7:0] == 8'd224
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= FRAME_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= {frame_underrun_count, frame_sdram_state,
+					                   frame_mbox_seq + 8'd1, MAGIC_F};
+					DDRAM_WE       <= 1'b1;
+					frame_mbox_seq   <= frame_mbox_seq + 8'd1;
+					frame_mbox_last  <= {frame_underrun_count, frame_sdram_state};
+					frame_mbox_valid <= 1'b1;
+					frame_mbox_req   <= 1'b0;
+				end
 			end else begin
 				// Active frame DMA
 				if (need_reset) begin
@@ -379,7 +417,7 @@ module ddram_frame_rd #(
 
 				inflight <= inf_next;
 
-				if (active && !need_reset) begin
+				if (active && !need_reset && wr_ready) begin
 					if (!have_beat) begin
 						if (!fifo_empty) begin
 							beat_q    <= fifo_mem[fifo_rix];
