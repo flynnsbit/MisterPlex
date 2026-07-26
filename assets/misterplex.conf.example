@@ -49,3 +49,61 @@ SOURCE_FPS=auto
 # Measure: cast Sync Trekmatch blip (PMS 9/10); eyes-on Trek S1E1 @ ~3:54 after seek.
 # Baseline HDMI flash↔beep @ 0: median ~−54…−60 ms (audio early). See MILESTONE_AVSYNC_SEEK.md.
 # AUDIO_DELAY_MS=0
+
+# --- A/V pacing (present loop) ---
+# Video is paced against the audio master clock using the EXACT content rate parsed
+# from PMS (Stream@frameRate), forced into the FFmpeg chain as fps=<num>/<den> so the
+# frame index and content time can never diverge. Leave these alone unless measuring.
+#
+# AV_PRESENT_LEAD_MS: how early a frame may be shown vs the master clock (default 40).
+# AV_PRESENT_LEAD_MS=40
+#
+# AV_RESYNC_DROP_MS: drift past which a late frame is dropped to catch up. 0 disables
+# dropping (video then only ever lags on a decode stall). Default 80.
+# AV_RESYNC_DROP_MS=80
+#
+# AV_CONTENT_FPS: override the detected content rate. "auto" (default) uses PMS.
+# Accepts "24000/1001", "23.976", "25". Only for debugging bad metadata.
+# AV_CONTENT_FPS=auto
+
+# AUDIO_CLOCK_PPM: trim of the 48 kHz feed rate to match the FPGA's real audio
+# clock. Measured over HDMI capture, the MiSTer plays audio ~685 ppm faster than a
+# wall-paced 48 kHz feed. Left at 0 that is ~41 ms/min of lipsync drift — bigger
+# than the 23.976-vs-24 pacing bug and invisible to the daemon, which only counts
+# bytes WRITTEN, not played. Video is paced off those same bytes, so this one
+# constant re-times both outputs.
+# Recalibrate with: python3 tests/hw/avsync_rate.py --rating-key <blip> --settle 60
+#   --window 240 --out /tmp/av --label cal
+# then add (drift_ms_per_min / 0.06) to the current value.
+AUDIO_CLOCK_PPM=685
+
+# --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
+#
+# OSD_CONTROL: let the core's OSD menu (F12) drive playback settings live. The
+# daemon polls status[15:0] ~4x/s and applies A/V offset, auto-resync, audio
+# clock trim and the idle screen without a restart or a conf edit.
+#
+# The daemon NEVER writes these bits. Main_MiSTer owns the OSD word and persists
+# it to /media/fat/config/Plex_v3.CFG; a daemon-side write fights Main's shadow
+# copy and makes the value flap. Read-only polling is the whole contract.
+#
+# REQUIRES a v3 or newer Plex.rbf (check with `set_status --confstr`). On an
+# older core those same bits mean Pattern / Audio tone / Force bars, so enabling
+# this would decode a stale "Force bars=Yes" as a bogus A/V offset. Set to 0 if
+# you are running a pre-v3 core.
+OSD_CONTROL=1
+#
+# AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT
+# an ffmpeg adelay), so the OSD can change it mid-playback. Positive = present
+# video later = audio appears earlier. The OSD exposes -160..+140 ms in 20 ms
+# steps; this conf value is the power-on default and is not limited to that grid.
+# AV_OFFSET_MS=0
+#
+# IDLE_SCREEN: what to show when nothing is playing. The FPGA frame store and
+# /dev/fb0 both latch the LAST frame written, so without this the final frame of
+# the previous video stays on screen forever (a CRT burn-in risk).
+#   logo        centred Plex-style chevron on a near-black field (default)
+#   black       flat black
+#   screensaver chevron drifting slowly to avoid burn-in
+#   lastframe   legacy behaviour — leave the last video frame up
+# IDLE_SCREEN=logo

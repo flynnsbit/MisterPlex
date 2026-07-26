@@ -17,8 +17,10 @@ help:
 
 test: unit
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_osd_menu $(ROOT)/build/test_resolve $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
+	$(ROOT)/build/test_avclock
+	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
@@ -65,6 +67,17 @@ $(ROOT)/build/test_annexb_count: $(ROOT)/tests/unit/test_annexb_count.cpp
 $(ROOT)/build/test_cadence: $(ROOT)/tests/unit/test_cadence.cpp $(ROOT)/host/libmisterplex/cadence.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_cadence.cpp
+
+$(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
+		$(ROOT)/host/libmisterplex/av_clock.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_avclock.cpp
+
+$(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/idle_screen.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \

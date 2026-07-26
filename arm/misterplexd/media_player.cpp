@@ -1,5 +1,8 @@
 #include "media_player.hpp"
 
+#include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_recon.hpp"
 
 #include <algorithm>
@@ -102,6 +105,163 @@ void MediaPlayer::log(const std::string& s) const {
         std::fprintf(stderr, "%s\n", s.c_str());
 }
 
+void MediaPlayer::setContentFpsRational(int num, int den) {
+    if (num <= 0 || den <= 0) {
+        fpsNum_ = 0;
+        fpsDen_ = 0;
+        return;
+    }
+    // Sanity clamp: 1..240 fps. Keeps a bogus PMS value from wedging the schedule.
+    const double v = static_cast<double>(num) / static_cast<double>(den);
+    if (v < 1.0 || v > 240.0) {
+        fpsNum_ = 0;
+        fpsDen_ = 0;
+        return;
+    }
+    fpsNum_ = num;
+    fpsDen_ = den;
+}
+
+std::string MediaPlayer::hex16(uint16_t v) {
+    static const char* d = "0123456789abcdef";
+    std::string out(4, '0');
+    for (int i = 3; i >= 0; --i) {
+        out[static_cast<size_t>(i)] = d[v & 0xF];
+        v >>= 4;
+    }
+    return out;
+}
+
+void MediaPlayer::startOsdPoll() {
+    std::lock_guard<std::mutex> lk(osdMu_);
+    if (shuttingDown_.load() || !osdControl_ || osdRun_.exchange(true))
+        return;
+    if (osdThr_.joinable())
+        osdThr_.join();
+    osdThr_ = std::thread([this] {
+        while (osdRun_.load()) {
+            uint8_t raw[16]{};
+            bool got = false;
+            {
+                std::lock_guard<std::mutex> lk(presentMu_);
+                got = fpga_.ok() && fpga_.getCoreStatus(raw);
+            }
+            if (got) {
+                // status[15:0] is the only slice the core echoes back; everything
+                // above it is telemetry that Main overwrites.
+                const uint16_t word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
+                const uint16_t prev = lastOsd_.load();
+                if (!osdSeen_.exchange(true) || osdChanged(prev, word)) {
+                    lastOsd_.store(word);
+                    applyOsd(word);
+                }
+            }
+            for (int i = 0; i < 5 && osdRun_.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+}
+
+void MediaPlayer::stopOsdPoll() {
+    std::lock_guard<std::mutex> lk(osdMu_);
+    osdRun_.store(false);
+    if (osdThr_.joinable())
+        osdThr_.join();
+}
+
+void MediaPlayer::applyOsd(uint16_t word) {
+    const OsdSettings s = decodeOsdWord(word);
+    setAvOffsetMs(s.avOffsetMs);
+    // Takes effect on the next session: the feed rate is captured when audioPump
+    // opens MrAudio, and re-timing it mid-stream would step the audio clock.
+    setAudioClockPpm(s.audioClockPpm);
+    setResyncDropMs(s.resyncEnabled ? kDefaultResyncDropMs : 0);
+    const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
+    const bool idleChanged = im != idleMode();
+    setIdleMode(im);
+    if (idleChanged)
+        idleLogged_.store(false);
+    if (idleChanged && !playing_.load())
+        paintIdle();
+    log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
+        " clock_ppm=" + std::to_string(s.audioClockPpm) +
+        " resync=" + (s.resyncEnabled ? "on" : "off") +
+        " idle=" + std::to_string(s.idleMode));
+}
+
+void MediaPlayer::paintIdle() {
+    const IdleMode m = idleMode();
+    if (m == IdleMode::LastFrame)
+        return;
+    const int w = 320;
+    const int h = 240;
+    std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
+    renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+
+    std::lock_guard<std::mutex> lk(presentMu_);
+    if (fb_.ok())
+        fb_.blitRgb24(buf.data(), w, h);
+    // F1 latches the last frame written, so the frame store must be repainted too —
+    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga. Use the
+    // same DDR-bulk-then-SPI ladder as the present loop; the SPI path alone does
+    // not reliably land a frame on a core that has been running the DDR path.
+    if (fpga_.ok()) {
+        bool ok = false;
+        if (useDdrF1_) {
+            ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
+            ddrBank_ ^= 1;
+        }
+        if (!ok)
+            ok = fpga_.sendRgb24Frame(buf.data(), w, h, /*F1*/ 1);
+        if (!ok) {
+            if (!idleWarned_.exchange(true))
+                log("media: idle paint failed (will retry): " + fpga_.lastError());
+        } else {
+            // Arm the warning again so a later failure is not swallowed — the core
+            // is briefly out of user mode right after a heal/reload and the first
+            // paint legitimately fails.
+            idleWarned_.store(false);
+            if (!idleLogged_.exchange(true))
+                log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) + ")");
+        }
+    }
+}
+
+// startIdle() is called from the play thread at session end while stopIdle() is
+// called from the companion thread at the next play(); without this mutex the two
+// can move-assign and join the same std::thread object and std::terminate.
+void MediaPlayer::startIdle() {
+    std::lock_guard<std::mutex> lk(idleMu_);
+    if (shuttingDown_.load() || idleRun_.exchange(true))
+        return;
+    if (idleThr_.joinable())
+        idleThr_.join();
+    idleThr_ = std::thread([this] {
+        while (idleRun_.load()) {
+            if (playing_.load() || idleMode() == IdleMode::LastFrame) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                continue;
+            }
+            paintIdle();
+            const bool moving = idleMode() == IdleMode::Screensaver;
+            if (moving)
+                idlePhase_.fetch_add(1);
+            // Screensaver drifts at ~10 fps; a static idle only needs a slow
+            // keepalive repaint in case the core is reloaded underneath us.
+            const int stepMs = moving ? 100 : 2000;
+            for (int slept = 0; slept < stepMs && idleRun_.load(); slept += 50)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+}
+
+void MediaPlayer::stopIdle() {
+    std::lock_guard<std::mutex> lk(idleMu_);
+    idleRun_.store(false);
+    if (idleThr_.joinable())
+        idleThr_.join();
+}
+
 void MediaPlayer::setDecodeSize(int w, int h) {
     if (w < 160)
         w = 160;
@@ -162,13 +322,17 @@ bool MediaPlayer::initPresent() {
             useDdrF1_ = true; // try DDR bulk first; falls back to SPI on first fail
             ddrBank_ = 0;
             log("media: FPGA frame path OK (PRESENT=fpga → DDR bulk 3.1b, SPI F1 fallback)");
-            // Product cast defaults: Pattern=None, Audio tone Off, Force bars No.
-            // status[7:6]=0 None, [8]=0 tone Off, [9]=0 no force-bars.
-            const int park[] = {6, 0, 7, 0, 8, 0, 9, 0};
-            if (!fpga_.setStatusBits(park, 4))
-                log("media: park OSD (None/tone-off): " + fpga_.lastError());
-            else
-                log("media: park OSD — Pattern=None, audio tone Off, force bars No");
+            // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
+            // cannot steal cast frames. On a v3 core those same bits ARE the A/V
+            // offset menu item, so zeroing them would silently reset the user's
+            // setting on every startup.
+            if (!osdControl_) {
+                const int park[] = {6, 0, 7, 0, 8, 0, 9, 0};
+                if (!fpga_.setStatusBits(park, 4))
+                    log("media: park OSD (None/tone-off): " + fpga_.lastError());
+                else
+                    log("media: park OSD — Pattern=None, audio tone Off, force bars No");
+            }
             any = true;
         } else {
             log("media: FPGA SPI unavailable: " + fpga_.lastError());
@@ -230,6 +394,31 @@ void MediaPlayer::killChildren() {
     streamActive_.store(false);
 }
 
+void MediaPlayer::shutdown() {
+    // Order matters: retire the play thread FIRST. threadMain calls startIdle()
+    // at session end, so stopping the idle painter before joining thr_ leaves a
+    // window where a brand new idle thread is spawned after we joined the old
+    // one — it is then still joinable in ~MediaPlayer and aborts the process.
+    shuttingDown_.store(true);
+    {
+        std::lock_guard<std::mutex> life(lifeMu_);
+        stop_.store(true);
+        killChildren();
+        if (thr_.joinable())
+            thr_.join();
+        // threadMain normally joins these at session end, but it may never have
+        // run (or may have been torn down mid-session), so sweep them here too.
+        if (audioThr_.joinable())
+            audioThr_.join();
+        if (streamThr_.joinable())
+            streamThr_.join();
+        playing_.store(false);
+        paused_.store(false);
+    }
+    stopOsdPoll();
+    stopIdle();
+}
+
 void MediaPlayer::stop() {
     // Only join thr_ here. threadMain owns audioThr_/streamThr_ joins at session end.
     // Joining helpers from both thr_ and stop() races and can hang the companion HTTP thread.
@@ -249,6 +438,11 @@ void MediaPlayer::stop() {
     }
     seekReqMs_.store(-1);
     positionMs_.store(0);
+    // Retire the background FPGA users BEFORE tearing the SPI/mmap state down.
+    // stop() closes FpgaSpi and reloads the core; an OSD poll or idle paint in
+    // flight would then ioctl through an unmapped handle and take the daemon down.
+    stopOsdPoll();
+    stopIdle();
     if (fb_.ok())
         fb_.clear();
     // Drop SPI flock leftovers so Main is not blocked on shared bus tools.
@@ -266,6 +460,12 @@ void MediaPlayer::stop() {
             log("media: Main heal incomplete — user may need power cycle");
         }
     }
+    // Repaint the idle screen after the heal: the core reload wipes the frame
+    // store, and initPresent() alone leaves it black rather than on the chosen
+    // idle screen. Restart the background users only once SPI is stable again.
+    paintIdle();
+    startIdle();
+    startOsdPoll();
     if (onProgress_)
         onProgress_("stopped", 0, 0);
 }
@@ -314,6 +514,8 @@ void MediaPlayer::seekMs(int64_t ms) {
 
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
+    // Idle painter owns fb0/F1 between sessions — retire it before we present.
+    stopIdle();
     {
         std::lock_guard<std::mutex> life(lifeMu_);
         stop_.store(true);
@@ -900,7 +1102,8 @@ void MediaPlayer::audioPump(int afd) {
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
         else
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
-                std::to_string(audioDelayMs_) + " (adelay in ffmpeg if >0)");
+                std::to_string(audioDelayMs_) +
+                " clock_ppm=" + std::to_string(audioClockPpm_) + " (adelay in ffmpeg if >0)");
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
@@ -928,7 +1131,13 @@ void MediaPlayer::audioPump(int afd) {
     size_t f2total = 0;
     int f2Fail = 0;
     constexpr size_t kF2Chunk = 8192;
-    constexpr double kBytesPerSec = 48000.0 * 4.0; // stereo s16le
+    // Nominal 48 kHz stereo s16le, trimmed by AUDIO_CLOCK_PPM. The FPGA's audio
+    // clock is not exactly 48 kHz: measured over HDMI capture it plays ~890 ppm
+    // fast relative to a wall-paced feed, which is ~53 ms/min of lipsync drift —
+    // far larger than the 23.976-vs-24 pacing error and invisible to the internal
+    // clock (which only counts bytes written). Feeding at the FPGA's true rate
+    // re-times video too, because video is paced off audioBytes_.
+    const double kBytesPerSec = 48000.0 * 4.0 * (1.0 + audioClockPpm_ / 1000000.0);
     auto audioT0 = std::chrono::steady_clock::now();
     int64_t pacedBytes = 0;
 
@@ -1027,8 +1236,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
     char scale[64];
     std::snprintf(scale, sizeof(scale), "%d:%d", outW_, outH_);
-    std::string vf = std::string("scale=") + scale +
-                     ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+    std::string vf;
+    // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
+    // time then holds by construction (even if PMS emits a different rate than its
+    // metadata claims), and frames dropped by the fps filter are never scaled.
+    if (fpsNum_ > 0 && fpsDen_ > 0) {
+        vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
+    }
+    vf += std::string("scale=") + scale +
+          ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
     // STREAM=0 + local file: optional FFmpeg subtitles filter (burn-in). Network/PMS
@@ -1098,8 +1314,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
     size_t totalBytes = 0;
-    const int fps = 30;
+
     bool usedRgb = false;
+
+    // A/V pacing state. The exact rational rate is load-bearing: pacing 23.976 fps
+    // content at a hardcoded 24 leaks ~1 ms/s of video lead.
+    const int fpsNum = fpsNum_ > 0 ? fpsNum_ : kDefaultFpsNum;
+    const int fpsDen = fpsNum_ > 0 && fpsDen_ > 0 ? fpsDen_ : kDefaultFpsDen;
+    const int64_t leadMs = presentLeadMs_;
+    const int64_t dropMs = resyncDropMs_;
+    int dropRun = 0;
+    avDriftMs_.store(0);
+    droppedFrames_.store(0);
+    if (fpsNum_ <= 0)
+        log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
+            std::to_string(kDefaultFpsDen) + " and relying on drift correction");
+    else
+        log("media: content fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
+            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs));
 
     if (skipRgb) {
         // Audio-only FFmpeg + wall-clock position. Host recon owns F1.
@@ -1351,6 +1583,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
 
+        // Deterministic A/V origin: never start the schedule on the wall clock and then
+        // switch to the audio clock mid-stream — that step discontinuity randomises the
+        // lipsync offset by tens of ms on every play (measured spread ~67 ms across
+        // identical runs). Wait for the audio master clock to exist first.
+        if (wantAudio && apipe[0] >= 0) {
+            const auto waitStart = std::chrono::steady_clock::now();
+            while (!stop_.load() && !audioActive_.load() &&
+                   std::chrono::steady_clock::now() - waitStart < std::chrono::seconds(5)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - waitStart)
+                                       .count();
+            log("media: A/V origin armed audio_active=" +
+                std::string(audioActive_.load() ? "1" : "0") +
+                " waited_ms=" + std::to_string(waited));
+        }
+        t0 = std::chrono::steady_clock::now();
+
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
             if (seekTo >= 0) {
@@ -1383,43 +1634,86 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 break;
             }
 
-            if (fb_.ok()) {
-                if (!fb_.blitRgb24(frame.data(), outW_, outH_))
-                    log("media: blit failed");
-            }
-            // Present EVERY decoded frame (no pfps cap). Content is often 24fps
-            // film; capping at 15 dropped ~37% of frames and looked "slow/off"
-            // vs audio. SPI load at 24fps with short MainPause is acceptable now
-            // that audio is wall-paced (not competing for Main).
-            const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-            if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
-                bool ok = false;
-                if (useDdrF1_) {
-                    ok = fpga_.sendRgb24FrameDdr(frame.data(), outW_, outH_, ddrBank_);
-                    ddrBank_ ^= 1;
-                    if (!ok) {
-                        useDdrF1_ = false;
-                        log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                    }
-                }
-                if (!ok && !fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
-                    if ((frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " + fpga_.lastError());
-                } else {
-                    ++presentCount_;
-                    if ((presentCount_ % 48) == 0) {
-                        log(std::string("media: fpga frame_tx ok via ") +
-                            (useDdrF1_ ? "DDR" : "SPI") +
-                            " presents=" + std::to_string(presentCount_) +
-                            " frames=" + std::to_string(frameIndex) +
-                            " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
-                    }
-                }
-            }
             ++frameIndex;
 
-            // Video pace: after audio is software-paced to 48k wall, FFmpeg slows and
-            // read() blocks. Present every frame as it arrives (no drop cap).
+            // A/V lock: wait until the master clock reaches this frame's content time,
+            // or drop the frame when we are too far behind to catch up by waiting.
+            // Content time comes from the EXACT rational rate — a bucketed integer fps
+            // (23.976 → 24) leaks ~1 ms/s, invisible in a 12 s clip but ~234 ms by 3:54.
+            bool present = true;
+            {
+                // Live OSD trim is read every frame so the menu takes effect at once.
+                const int64_t frameMs =
+                    frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_.load();
+                for (;;) {
+                    if (stop_.load() || paused_.load())
+                        break;
+                    int64_t clockMs = 0;
+                    if (wantAudio && audioActive_.load()) {
+                        clockMs = audioClockMs(audioBytes_.load());
+                    } else {
+                        clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - t0)
+                                      .count();
+                    }
+                    const int64_t drift = misterplex::avDriftMs(clockMs, frameMs);
+                    avDriftMs_.store(drift);
+                    const AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
+                    if (act == AvAction::Hold) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                        continue;
+                    }
+                    present = (act != AvAction::Drop);
+                    break;
+                }
+            }
+
+            if (!present) {
+                ++dropRun;
+                droppedFrames_.fetch_add(1);
+                if ((droppedFrames_.load() % 24) == 1)
+                    log("media: A/V resync drop drift_ms=" + std::to_string(avDriftMs_.load()) +
+                        " drops=" + std::to_string(droppedFrames_.load()));
+            } else {
+                dropRun = 0;
+                if (fb_.ok()) {
+                    if (!fb_.blitRgb24(frame.data(), outW_, outH_))
+                        log("media: blit failed");
+                }
+                // Present every scheduled frame (no pfps cap). Content is often 24fps
+                // film; capping at 15 dropped ~37% of frames and looked "slow/off"
+                // vs audio. SPI load at 24fps with short MainPause is acceptable now
+                // that audio is wall-paced (not competing for Main).
+                const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
+                if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
+                    // Serialise with the OSD poller / idle painter: FpgaSpi keeps
+                    // transaction state, so overlapping ioctls corrupt each other.
+                    std::lock_guard<std::mutex> lk(presentMu_);
+                    bool ok = false;
+                    if (useDdrF1_) {
+                        ok = fpga_.sendRgb24FrameDdr(frame.data(), outW_, outH_, ddrBank_);
+                        ddrBank_ ^= 1;
+                        if (!ok) {
+                            useDdrF1_ = false;
+                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                        }
+                    }
+                    if (!ok && !fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " + fpga_.lastError());
+                    } else {
+                        ++presentCount_;
+                        if ((presentCount_ % 48) == 0) {
+                            log(std::string("media: fpga frame_tx ok via ") +
+                                (useDdrF1_ ? "DDR" : "SPI") +
+                                " presents=" + std::to_string(presentCount_) +
+                                " frames=" + std::to_string(frameIndex) +
+                                " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                        }
+                    }
+                }
+            }
+
             auto now = std::chrono::steady_clock::now();
             const int64_t wall2 = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       now - t0)
@@ -1442,16 +1736,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " audio_s=" + std::to_string(a_sec).substr(0, 5) +
                     " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
-                    " clock=wall48k" +
+                    " clock=av-lock" +
+                    " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
+                    " drops=" + std::to_string(droppedFrames_.load()) +
+                    " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
-            }
-
-            // Video-only: ~24fps wall pace so we do not burn the dual-A9.
-            if (!wantAudio) {
-                constexpr int kSoloFps = 24;
-                auto target = t0 + std::chrono::milliseconds(frameIndex * 1000 / kSoloFps);
-                if (target > now)
-                    std::this_thread::sleep_until(target);
             }
 
             {
@@ -1482,6 +1771,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         else
             onProgress_("stopped", 0, durationMs);
     }
+    // The frame store latches the last frame written; without this the final frame
+    // of the video stays on screen until something else paints over it.
+    paintIdle();
+    startIdle();
+
     log("media: session end frames=" + std::to_string(frameIndex) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +

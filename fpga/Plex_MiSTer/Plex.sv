@@ -56,18 +56,22 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
-	"O[5:4],Content FPS,24,30,60,12;",
-	// None = black idle, never steals cast frames (was Bars-default + pattern!=0 force).
-	"O[7:6],Pattern,None,Bars,Bars+Block,Grid;",
-	// Default Off — On beeped under cast when F2/has_audio dropped (bars test tone).
-	"O[8],Audio tone,Off,On;",
-	"O[9],Force bars (debug),No,Yes;",
+	// O[5:4] Content FPS is written by misterplexd from the exact PMS frame rate,
+	// so it is intentionally NOT a menu item.
+	"-;",
+	// misterplexd reads these back over UIO and applies them live (no restart).
+	// 4-bit signed, 20 ms per step: index 0 = 0 ms, 8..15 = -160..-20 ms.
+	"O[9:6],A/V offset,0ms,+20ms,+40ms,+60ms,+80ms,+100ms,+120ms,+140ms,-160ms,-140ms,-120ms,-100ms,-80ms,-60ms,-40ms,-20ms;",
+	"O[1],A/V auto resync,On,Off;",
+	"O[3],Audio clock trim,On,Off;",
+	"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;",
+	"-;",
 	"T[10],Flush audio FIFO;",
 	"T[11],Flush bitstream FIFO;",
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
-	"v,2;", // reset OSD: Pattern=None, Audio tone=Off defaults
+	"v,3;", // reset OSD: v3 reclaims O[9:6],O[3],O[1],O[15:14] for playback controls
 	"V,v",`BUILD_DATE
 };
 
@@ -335,13 +339,12 @@ present_core present (
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
 	.display_hz(display_hz),
-	// O[9] Force bars=Yes: force pattern=Bars at the top-level port too so the
-	// colorbars mux cannot keep Grid/Ramp when the bit sticks (belt+suspenders
-	// with present_core eff_pattern).
-	.pattern(status[9] ? 2'd0 : status[7:6]),
-	// status[8]: 0=Off (default), 1=On — matches CONF "Audio tone,Off,On"
-	.audio_en(status[8]),
-	.use_frame_store(status[9]),
+	// v3 reclaimed the debug bits O[9:6]/O[8]/O[9] for playback controls, so the
+	// pattern generator and the bars test tone are hardwired to their previous
+	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
+	.pattern(2'd0),
+	.audio_en(1'b0),
+	.use_frame_store(1'b0),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

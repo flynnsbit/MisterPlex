@@ -24,7 +24,7 @@ void printUsage() {
                  "                  [--force-bars 0|1] [--tv ntsc|pal]\n"
                  "                  [--fps 24|30|60|12] [--audio on|off]\n"
                  "                  [--ar original|full|arc1|arc2]\n"
-                 "                  [--bit N 0|1] [--pulse N]...\n");
+                 "                  [--bit N 0|1] [--pulse N]... [--confstr]\n");
 }
 
 const char* patternName(int p) {
@@ -77,6 +77,7 @@ bool readRawStable(misterplex::FpgaSpi& spi, uint8_t out[16]) {
 int main(int argc, char** argv) {
     bool do_status = false;
     bool do_raw = false;
+    bool do_confstr = false;
     std::vector<int> pairs; // flat bit,val,bit,val,...
     std::vector<int> pulses;
 
@@ -92,6 +93,8 @@ int main(int argc, char** argv) {
             do_status = true;
         } else if (std::strcmp(argv[i], "--raw") == 0) {
             do_raw = true;
+        } else if (std::strcmp(argv[i], "--confstr") == 0) {
+            do_confstr = true;
         } else if (std::strcmp(argv[i], "--pattern") == 0 && i + 1 < argc) {
             const char* p = argv[++i];
             int v = 0;
@@ -172,7 +175,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!do_status && !do_raw && pairs.empty() && pulses.empty()) {
+    if (!do_status && !do_raw && !do_confstr && pairs.empty() && pulses.empty()) {
         printUsage();
         return 1;
     }
@@ -211,6 +214,25 @@ int main(int argc, char** argv) {
         }
         usleep(30000);
         std::printf("pulsed bit %d\n", bit);
+    }
+
+    if (do_confstr) {
+        std::string cs;
+        if (!spi.getConfigString(cs)) {
+            std::fprintf(stderr, "confstr: %s\n", spi.lastError().c_str());
+            return 1;
+        }
+        // Split on ';' so a 20-item menu is readable in a terminal.
+        std::string line;
+        for (char c : cs) {
+            line.push_back(c);
+            if (c == ';') {
+                std::printf("%s\n", line.c_str());
+                line.clear();
+            }
+        }
+        if (!line.empty())
+            std::printf("%s\n", line.c_str());
     }
 
     uint8_t raw[16]{};

@@ -77,6 +77,9 @@ public:
     // Layout: see CoreStatus helpers below / docs/phase3-decode.md.
     bool getCoreStatus(uint8_t out[16]);
 
+    // UIO_GET_STRING — the core's CONF_STR exactly as Main_MiSTer sees it.
+    bool getConfigString(std::string& out);
+
     struct CoreStatus {
         bool has_frame = false;
         bool has_audio = false;

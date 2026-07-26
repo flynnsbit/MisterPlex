@@ -47,12 +47,86 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 - [x] G-AV0 zero intentional lag (`AUDIO_DELAY_MS=0`) — lab conf default; no hardcoded lag
 - [x] G-AV1 Trek-matched blip fixture — `assets/avsync/sync_trekmatch_*` PMS keys **9/10**
 - [x] G-AV2 measure harness flash↔beep — **PASS** HDMI trekmatch RK10 n=12; `captures/e2e/avsync_trekmatch/`
-- [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms) — **FAIL open** baseline **−54…−60 ms** @ delay=0; adelay conf (`AUDIO_DELAY_MS`) ready; **eyes-on Trek** to pick value (HDMI fine-tune noisy)
-- [ ] G-AV4 Trek ~3:54 eyes-on — **PENDING** (S1E1 **40868** / show **40710** reachable; seek fix enables offset=234000; **≠ PASS** until eyes-on)
+- [ ] G-AV3 blip \|median\| ≤ 1 frame @24p (≤42 ms) — **superseded by G-AV7**; the old absolute number was unmeasurable while the A/V origin race added ±35 ms per play
+- [ ] G-AV4 Trek ~3:54 eyes-on — **PENDING** (S1E1 **40868** @234000; 6.5 min WAN soak now shows `fps=24000/1001`, `av_drift` −30…−35 ms, 0.14 % drops; **≠ PASS** until eyes-on)
+- [x] G-AV5 exact content rate — log `content fps exact=24000/1001` (Trek/RK11) vs `24/1` (RK12) from identical `videoFrameRate="24p"` metadata; `test_avclock` in `make unit`
+- [x] G-AV6 drift slope ≤ 10 ms/min — **+0.79 / −0.67 / +1.79** ms/min (RK11) and **−2.21** (RK12), 240 s single-capture fits; before **−53.3**; `tests/hw/avsync_rate.py`
+- [ ] G-AV7 constant offset ≤ 42 ms — **PARTIAL**: run-to-run spread 67 ms → ~9 ms after the origin fix; absolute value needs grabber-skew calibration, so `AUDIO_DELAY_MS` stays 0 pending G-AV4
 - [x] G-SEEK1 mid-play seekTo ±1 s — blip key=6 seek 12s → playing ~15.5s
 - [x] G-SEEK2 resume/continue-watching ≠0 — playMedia offset=15s → playing ~19s
 - [x] G-SEEK3 unit regression — `make unit` PASS + `universalOffsetSeconds(234000)==234`
 - [x] G-REG tear RBF unchanged unless proven needed — leave **`1441d409`** alone
+
+---
+
+## ACTIVE — OSD menu v3 + idle screen (**DONE** 2026-07-26)
+
+User ask: *"add the different audio delay settings and any other controls in the config directly to the RBF
+menu items so the user can change them there without having to edit a config"* and *"the last frame of the
+last video is staying on screen and should go back to a default state, black screen or even better a Plex
+logo screensaver option in the menu"*.
+
+| | |
+|--|--|
+| **RBF** | **`91777ac1`** (`91777ac11bc63e7bb4ab20331a26540d`) — supersedes `1441d409` on the lab path. Fit 427 s, **0 errors / 40 warnings**. Not in the banned set. |
+| **Deploy** | ONE `DEPLOY_LOAD=menu` bounce; lab `md5sum /media/fat/_Utility/Plex.rbf` = `91777ac1…` |
+| **Conf** | `OSD_CONTROL=1` is now the shipped default (requires v3+); `AV_OFFSET_MS` / `IDLE_SCREEN` are power-on defaults only |
+
+### v3 CONF_STR bit layout (`host/libmisterplex/osd_menu.hpp` is the SoT)
+
+| Bits | Menu item | Notes |
+|------|-----------|-------|
+| `[0]` | Reset | core-owned |
+| `[1]` | A/V auto resync | 0 = On (drift corrector) |
+| `[2]` | TV Mode | core-owned |
+| `[3]` | Audio clock trim | 0 = On (685 ppm); takes effect next session |
+| `[5:4]` | *(dead)* | old Content FPS — removed from the menu, still inert in RTL |
+| `[9:6]` | **A/V offset** | **4-bit signed** × 20 ms = −160…+140 ms; index 0 **must** be 0 ms because Main cannot express a non-zero CONF_STR default |
+| `[10]`/`[11]` | flush triggers | core-owned |
+| `[13:12]` | HPS DDR kick/bank | **never reuse** |
+| `[15:14]` | **Idle screen** | Logo / Black / Screensaver / LastFrame |
+
+`kOsdOwnedMask = 0xC3CA`. Removed from the menu: Content FPS, Pattern, Audio tone, Force bars —
+`pattern`, `audio_en` and `use_frame_store` are hardwired to `0` in `Plex.sv`, preserving the prior defaults.
+
+### Hard rule (non-obvious trap)
+
+**The daemon must NEVER write user OSD bits.** Main_MiSTer owns the OSD word and persists it to
+`/media/fat/config/Plex_v3.CFG`. Any daemon-side `setStatusBits()` on those bits fights Main's shadow copy —
+observed flapping `0x01c0 ↔ 0x0000` every poll. Removing all daemon writes made it rock-stable for 30 s+.
+This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were reverted. Polling is read-only.
+
+**Gates**
+
+- [x] G-OSD1 live core carries the v3 menu — `set_status --confstr` dumps the exact expected CONF_STR from the running core
+- [x] G-OSD2 OSD renders with live values — `/tmp/osd5.png` via `tests/hw/osd_keys.py` (uinput F12), labels + values correct
+- [x] G-OSD3 all four controls decode and apply live — `0x00c0`→+60 ms, `0x40c0`→idle=1, `0x40ca`→trim+resync off, `0x020a`→−160 ms; verified **mid-playback**
+- [x] G-OSD4 A/V offset measurably moves lipsync — OSD +140 ms → median **−62.15 ms** vs baseline **+94.0 ms** = **−156 ms** delta
+- [x] G-IDLE idle screen replaces the stuck last frame — `/tmp/idle3.png`, `/tmp/idle_afterstop.png`; amber chevron on near-black after stop
+- [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
+- [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
+
+### Fallout / follow-ups
+
+- `tests/hw/test_fbar_fast.sh` and `tests/hw/test_menu_osd.sh` are **OBSOLETE on v3** (they drive the removed
+  debug menu; on v3 they would write a bogus A/V offset). Headers now say so.
+- Two thread-lifecycle bugs fixed in `media_player.cpp`: `startIdle()`/`stopIdle()` raced the same
+  `std::thread` (→ `std::terminate`), and `stop()`'s `fpga_.close()` + `healMainReloadPlex()` ran while the
+  OSD poller / idle painter were mid-ioctl (→ crash). Guarded by `idleMu_` / `osdMu_` and an ordered
+  retire-then-restart in `stop()`.
+- A **third**, intermittent abort was found by stress-running `test_plex_browse.sh` (3/6 repro) and read
+  out of a core dump: `~MediaPlayer()` destroyed a still-joinable `std::thread`. Only `stop()`/`play()`
+  ever joined `thr_`, so a session that ended on its own left it finished-but-joinable, and SIGTERM →
+  `main()` return → destructor → `std::terminate`. Fixed with `MediaPlayer::shutdown()`, which joins
+  `thr_`/`audioThr_`/`streamThr_` **before** retiring the idle/OSD threads — the reverse order still
+  aborted 1/10, because `threadMain` calls `startIdle()` at session end and would spawn a fresh painter
+  after the old one was joined. A `shuttingDown_` latch makes `startIdle()`/`startOsdPoll()` refuse to
+  start once teardown begins. **0/15 after the fix.**
+- Both `test_plex_browse.sh` and `test_companion_http.sh` now `assert_clean_exit` (daemon must exit 0 or
+  143). They previously only asserted HTTP responses, so the abort printed `terminate called without an
+  active exception` and the script still exited 0 — that is why this shipped.
+- `paintIdle()` must use the same DDR-bulk-then-SPI ladder as the present loop; SPI-only F1 does not land.
+- HDMI grabber emits ~20 black warmup frames — single-frame captures must `select=gte(n\,40)`.
 
 ---
 

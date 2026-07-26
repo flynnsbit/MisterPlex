@@ -5,6 +5,8 @@
 
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
+#include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/osd_menu.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -20,6 +22,8 @@ namespace misterplex {
 
 class MediaPlayer {
 public:
+    ~MediaPlayer() { shutdown(); }
+
     using LogFn = std::function<void(const std::string&)>;
     using ProgressFn = std::function<void(const std::string& state, int64_t timeMs, int64_t durMs)>;
 
@@ -42,10 +46,68 @@ public:
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
     void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
-    // Intentional A/V lead compensation (ms of PCM held before first MrAudio write).
-    // 0 = start fresh (no hardcoded lag). Positive delays audio relative to video.
+    // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
+    // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
     int audioDelayMs() const { return audioDelayMs_; }
+    // Trim of the 48 kHz feed rate, in ppm, to match the FPGA's real audio clock.
+    // The MiSTer plays back faster than our wall-paced 48 kHz feed; video is slaved
+    // to bytes written, so this single constant re-times BOTH outputs.
+    void setAudioClockPpm(int ppm) {
+        if (ppm < -20000)
+            ppm = -20000;
+        if (ppm > 20000)
+            ppm = 20000;
+        audioClockPpm_ = ppm;
+    }
+    int audioClockPpm() const { return audioClockPpm_; }
+    // Exact content frame rate as a rational (24000/1001 for 23.976 NTSC film).
+    // This drives A/V pacing, so it must NOT be bucketed: pacing 23.976 content at 24
+    // makes video lead by ~1 ms/s (~234 ms by 3:54, ~5.5 s over a 91-minute episode).
+    // 0/0 = unknown → fall back to 24/1 and lean on the drift corrector.
+    void setContentFpsRational(int num, int den);
+    // Convenience shim for integer rates (12/24/30/60) and tests.
+    void setContentFps(int fps) { setContentFpsRational(fps, 1); }
+    int contentFpsNum() const { return fpsNum_; }
+    int contentFpsDen() const { return fpsDen_; }
+    // Present lead (ms) so the vsync path is not starved. Conf AV_PRESENT_LEAD_MS.
+    void setPresentLeadMs(int ms) { presentLeadMs_ = ms < 0 ? 0 : ms; }
+    // Drift (ms) past which a late frame is dropped to re-converge. Conf AV_RESYNC_DROP_MS.
+    // 0 disables dropping (hold-only pacing).
+    void setResyncDropMs(int ms) { resyncDropMs_ = ms < 0 ? 0 : ms; }
+    static constexpr int kDefaultResyncDropMs = 80;
+    // Signed live A/V trim (ms), applied in the pacing loop rather than via an
+    // FFmpeg filter, so the OSD can move it mid-playback with no respawn.
+    //   > 0  hold video back  -> audio plays EARLIER relative to picture
+    //   < 0  advance video    -> audio plays LATER  ("fixes" lips-ahead)
+    void setAvOffsetMs(int ms) {
+        if (ms < -1000)
+            ms = -1000;
+        if (ms > 1000)
+            ms = 1000;
+        avOffsetMs_.store(ms);
+    }
+    int avOffsetMs() const { return avOffsetMs_.load(); }
+    // Idle/screensaver painting. Without this the frame store keeps the last frame
+    // of the previous video on screen forever.
+    void setIdleMode(IdleMode m) { idleMode_.store(static_cast<int>(m)); }
+    IdleMode idleMode() const { return static_cast<IdleMode>(idleMode_.load()); }
+    void startIdle();
+    void stopIdle();
+
+    // Live OSD menu control. Only enable against a core whose CONF_STR uses the
+    // v3 bit layout (see libmisterplex/osd_menu.hpp) — the old layout puts Pattern
+    // and Content FPS on the same bits, which would be read as an A/V offset.
+    void setOsdControl(bool on) { osdControl_ = on; }
+    void startOsdPoll();
+    void stopOsdPoll();
+    uint16_t lastOsdWord() const { return lastOsd_.load(); }
+    // Paint one idle frame right now (used at session end).
+    void paintIdle();
+    // Live A/V drift: audio clock − content time of the last presented frame.
+    // Negative = video ahead of audio (audio sounds late).
+    int64_t avDriftMs() const { return avDriftMs_.load(); }
+    int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
@@ -58,6 +120,12 @@ public:
     void pause();
     void resume();
     void stop();
+    // Process-exit teardown: joins every worker thread without touching the FPGA
+    // or reloading Main. A std::thread that is still joinable when ~MediaPlayer
+    // runs calls std::terminate(), which is how the daemon used to abort on
+    // SIGTERM whenever a session had ended on its own (thread finished but never
+    // joined, because only stop()/play() join thr_).
+    void shutdown();
     void seekMs(int64_t ms);
 
     bool playing() const { return playing_.load(); }
@@ -97,8 +165,41 @@ private:
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
-    // Conf AUDIO_DELAY_MS — default 0 (no hardcoded lag). Applied in audioPump only.
+    // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
+    // Measured on HDMI capture: the Plex core plays audio ~685 ppm faster than a
+    // wall-paced 48 kHz feed (~41 ms/min of drift at 0). This is a property of the
+    // core's audio clock divider, not of one unit, so it is the built-in default.
+    // Override with AUDIO_CLOCK_PPM.
+    int audioClockPpm_ = 685;
+    std::atomic<int> avOffsetMs_{0};
+    std::atomic<int> idleMode_{static_cast<int>(IdleMode::Logo)};
+    std::atomic<bool> idleRun_{false};
+    // Latched by shutdown() so threadMain's session-end startIdle() cannot spawn
+    // a fresh painter after we have already joined the old one.
+    std::atomic<bool> shuttingDown_{false};
+    std::atomic<int> idlePhase_{0};
+    std::thread idleThr_;
+    std::atomic<bool> idleWarned_{false};
+    std::atomic<bool> idleLogged_{false};
+    std::mutex idleMu_;
+    std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
+    std::mutex presentMu_;
+    void applyOsd(uint16_t word);
+
+    static std::string hex16(uint16_t v);
+
+    bool osdControl_ = false;
+    std::atomic<bool> osdRun_{false};
+    std::atomic<uint16_t> lastOsd_{0};
+    std::atomic<bool> osdSeen_{false};
+    std::thread osdThr_;
+    // Present pacing: keep video from free-running ahead of wall/audio (lipsync).
+    // Exact rational content rate; 0/0 → treat as 24/1 when pacing with audio.
+    int fpsNum_ = 0;
+    int fpsDen_ = 0;
+    int presentLeadMs_ = 40;
+    int resyncDropMs_ = 80;
 
     FbPresent fb_;
     FpgaSpi fpga_;
@@ -106,6 +207,9 @@ private:
     int ddrBank_ = 0;      // ping-pong 0/1 @ 0x30000000 / 0x30040000
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};
+    // Live A/V drift + resync counters (per play/seek session)
+    std::atomic<int64_t> avDriftMs_{0};
+    std::atomic<int64_t> droppedFrames_{0};
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
     mutable std::mutex mu_;

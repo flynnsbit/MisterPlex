@@ -28,6 +28,7 @@ constexpr uint8_t FIO_FILE_TX_DAT = 0x54;
 constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
+constexpr uint8_t UIO_GET_STRING = 0x14;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
@@ -551,6 +552,35 @@ bool FpgaSpi::readStatusRaw(uint8_t out[16]) {
     }
     enableIo(0);
     return err_.empty();
+}
+
+// UIO_GET_STRING: the same read Main_MiSTer does to build the OSD. Reading it back
+// from the live core is the only way to prove the deployed RBF carries the CONF_STR
+// we think it does — the string lives in the bitstream, so nothing on disk shows it.
+bool FpgaSpi::getConfigString(std::string& out) {
+    if (!ok()) {
+        setErr("getConfigString: not open");
+        return false;
+    }
+    SpiExclusive guard(true);
+    if (!gpiUserMode(map_)) {
+        err_ = "FPGA not in user mode";
+        return false;
+    }
+    err_.clear();
+    out.clear();
+    enableIo(1);
+    (void)spiWord(UIO_GET_STRING);
+    // The core streams one character per word, NUL-terminated. Cap the read so a
+    // wedged core cannot spin here forever.
+    for (int i = 0; i < 4096; ++i) {
+        const uint8_t c = static_cast<uint8_t>(spiWord(0) & 0xFF);
+        if (c == 0)
+            break;
+        out.push_back(static_cast<char>(c));
+    }
+    enableIo(0);
+    return !out.empty();
 }
 
 bool FpgaSpi::setStatusWord(const uint8_t word[16]) {

@@ -20,6 +20,9 @@ DEPLOY_LOAD=none|menu ./scripts/deploy_plex_core.sh
 - `none` (default): copy RBF only  
 - `menu`: Menu bounce then Plex (preferred reload)  
 - Never thrash `load_core` / kill-9 storms  
+- **READY_TO_DEPLOY=NO** while exclusive LIVE and/or **DRIFT_CRITICAL** (live SRC ≠ claim freeze without parent **accept-ambiguous**); **NO** until BUILD_OK of a **new** intentional LOCK_OK RBF after HARD_FAIL  
+- After BUILD_OK: NEW_RBF ∉ banned `{8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0,…}`; prefer claim **LOCK_OK**; **ONE** menu only; never thrash **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**; hard expect sticky **`e8 14 xx`**, reject **+0x53**; soft-skip ≠ PASS; **DIAG ≠ product PASS**; **3l2 BLOCKED** until non-DIAG product sticky 0x14  
+- Protocol cards: residual **post BUILD_OK+DEPLOY `94bbfe43`** `/tmp/misterplex-agent-H-proto-rcsum6e.txt` (**PROTO_OK**; Branch A taken; ONE waiter menu DONE; serial **H-gate-rcsum6** sticky **0x14≥2** reject **+0x53**; **BUILD_OK+DEPLOY_OK ≠ hard PASS**; **3l2 BLOCKED**; multi-drive FAIL → RCA not thrash; Q-SF3 after residual gate/parent) · post-terminal checklist `/tmp/misterplex-agent-H-proto-rcsum6d.txt` · WAIT `/tmp/misterplex-agent-H-proto-rcsum6c.txt` · authorize `/tmp/misterplex-agent-H-proto-rcsum6.txt` · `docs/AGENT_ORCHESTRATION.md` · `docs/phase3-3l-idct.md`  
 
 Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 

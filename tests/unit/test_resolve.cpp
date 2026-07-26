@@ -142,6 +142,49 @@ int main() {
     auto localPath = resolvePlayTarget("/media/fat/misterplex/clip.mp4", "", "", 0, true, {}, true);
     CHECK(localPath.ok && localPath.detail == "local path");
 
+    // --- exact rational content rate (A/V pacing) ---
+    // PMS reports Media@videoFrameRate="24p" for 23.976 content; the Stream@frameRate
+    // value is the truthful one and must win.
+    {
+        int n = 0, d = 0;
+        CHECK(parseExactFps("24p", "23.976", n, d) && n == 24000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("", "23.976023", n, d) && n == 24000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("", "24.000", n, d) && n == 24 && d == 1);
+        n = d = 0;
+        CHECK(parseExactFps("", "29.97", n, d) && n == 30000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("", "59.94", n, d) && n == 60000 && d == 1001);
+        n = d = 0;
+        CHECK(parseExactFps("", "25", n, d) && n == 25 && d == 1);
+        n = d = 0;
+        CHECK(parseExactFps("PAL", "", n, d) && n == 25 && d == 1);
+        n = d = 0;
+        CHECK(parseExactFps("NTSC", "", n, d) && n == 30000 && d == 1001);
+        n = d = 0;
+        // Fall back to the videoFrameRate bucket only when Stream@frameRate is absent.
+        CHECK(parseExactFps("24p", "", n, d) && n == 24 && d == 1);
+        n = d = 0;
+        CHECK(parseExactFps("", "", n, d) == false && n == 0 && d == 0);
+        n = d = 0;
+        CHECK(parseExactFps("", "garbage", n, d) == false);
+        // Non-standard rate is kept as-is (no snap), not rejected.
+        n = d = 0;
+        CHECK(parseExactFps("", "23.0", n, d) && n == 23000 && d == 1000);
+    }
+    {
+        // Conf override wins over metadata; "auto"/empty leaves it alone.
+        int n = 24000, d = 1001;
+        CHECK(applyContentFpsConf("auto", n, d) == false && n == 24000 && d == 1001);
+        CHECK(applyContentFpsConf("", n, d) == false && n == 24000 && d == 1001);
+        CHECK(applyContentFpsConf("25", n, d) && n == 25 && d == 1);
+        CHECK(applyContentFpsConf("24000/1001", n, d) && n == 24000 && d == 1001);
+        CHECK(applyContentFpsConf("29.97", n, d) && n == 30000 && d == 1001);
+        n = 24; d = 1;
+        CHECK(applyContentFpsConf("junk", n, d) == false && n == 24 && d == 1);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_resolve: %d failures\n", fails);
         return 1;

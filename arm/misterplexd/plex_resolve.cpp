@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <vector>
@@ -507,6 +508,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             }
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
+        parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
@@ -820,6 +822,131 @@ int applySourceFpsConf(const std::string& sourceFpsConf, int resolvedHint) {
     if (end != s.c_str() && v > 0)
         return bucketFps(static_cast<double>(v));
     return resolvedHint;
+}
+
+namespace {
+
+struct FpsRational {
+    int num;
+    int den;
+};
+
+// Standard broadcast rates. 1001-denominator entries must snap exactly: treating
+// 23.976 as 24 costs ~1 ms/s of lipsync drift (~234 ms by 3:54, ~5.5 s over 91 min).
+constexpr FpsRational kStdFps[] = {
+    {12, 1},        {15, 1},        {24000, 1001}, {24, 1},       {25, 1},
+    {30000, 1001},  {30, 1},        {48, 1},       {50, 1},       {60000, 1001},
+    {60, 1},
+};
+
+// Snap a decimal rate onto the standard family. Tolerance is well under the
+// 23.976↔24 gap (0.024) so the NTSC pairs never collapse into each other.
+bool snapStdFps(double v, int& num, int& den) {
+    if (!(v > 0.0) || v > 1000.0)
+        return false;
+    for (const auto& f : kStdFps) {
+        const double std_v = static_cast<double>(f.num) / static_cast<double>(f.den);
+        if (std::fabs(v - std_v) <= 0.010) {
+            num = f.num;
+            den = f.den;
+            return true;
+        }
+    }
+    // Not a standard rate — keep it exact to 3 decimals rather than rounding to int.
+    long n = std::lround(v * 1000.0);
+    if (n <= 0)
+        return false;
+    num = static_cast<int>(n);
+    den = 1000;
+    return true;
+}
+
+std::string lowerTrim(const std::string& in) {
+    std::string s = in;
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+    for (char& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+} // namespace
+
+bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRate,
+                   int& num, int& den) {
+    num = 0;
+    den = 0;
+    // Prefer the numeric video Stream@frameRate — it carries the real 23.976/29.97.
+    if (!frameRate.empty()) {
+        char* end = nullptr;
+        double v = std::strtod(frameRate.c_str(), &end);
+        if (end != frameRate.c_str() && v > 0.0 && snapStdFps(v, num, den))
+            return true;
+    }
+    if (videoFrameRate.empty())
+        return false;
+
+    std::string s = lowerTrim(videoFrameRate);
+    if (s.empty())
+        return false;
+    // PMS Media@videoFrameRate tokens. NTSC/PAL are film/broadcast families, not integers.
+    if (s == "ntsc") {
+        num = 30000;
+        den = 1001;
+        return true;
+    }
+    if (s == "pal") {
+        num = 25;
+        den = 1;
+        return true;
+    }
+    if (s == "film" || s == "24p") {
+        num = 24;
+        den = 1;
+        return true;
+    }
+    // Strip a trailing progressive/interlaced marker ("24p", "60i").
+    if (s.back() == 'p' || s.back() == 'i')
+        s.pop_back();
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return snapStdFps(v, num, den);
+    return false;
+}
+
+bool applyContentFpsConf(const std::string& conf, int& num, int& den) {
+    const std::string s = lowerTrim(conf);
+    if (s.empty() || s == "auto")
+        return false;
+    if (s == "off" || s == "0" || s == "none") {
+        num = 0;
+        den = 0;
+        return true;
+    }
+    // "24000/1001" rational form
+    const auto slash = s.find('/');
+    if (slash != std::string::npos) {
+        char* e1 = nullptr;
+        char* e2 = nullptr;
+        const std::string ns = s.substr(0, slash);
+        const std::string ds = s.substr(slash + 1);
+        long n = std::strtol(ns.c_str(), &e1, 10);
+        long d = std::strtol(ds.c_str(), &e2, 10);
+        if (e1 != ns.c_str() && e2 != ds.c_str() && n > 0 && d > 0) {
+            num = static_cast<int>(n);
+            den = static_cast<int>(d);
+            return true;
+        }
+        return false;
+    }
+    char* end = nullptr;
+    double v = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() && v > 0.0)
+        return snapStdFps(v, num, den);
+    return false;
 }
 
 } // namespace misterplex

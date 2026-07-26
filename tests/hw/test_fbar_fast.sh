@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# OBSOLETE on Plex core v3 (RBF 91777ac1) and later.
+#
+# The v3 CONF_STR removed the debug menu items this script drives — Pattern,
+# Audio tone and Force bars — and reclaimed status[9:6] for the A/V offset.
+# `pattern`, `audio_en` and `use_frame_store` are now hardwired to 0 in Plex.sv,
+# so there is no way to ask the core for colour bars any more. Running this
+# against a v3 core writes a bogus A/V offset instead of enabling bars and will
+# always report failure.
+#
+# Kept for archaeology / for bisecting against a pre-v3 RBF only.
+# Verify the live core first:  set_status --confstr
+#
 # Fast Force-bars only check — no long dwell, no full matrix.
 # ~2–4 seconds wall. Exit 0 if force_bars=1 with pattern=grid still shows bars
 # after RBF with eff_pattern (O[9] → pattern 0).

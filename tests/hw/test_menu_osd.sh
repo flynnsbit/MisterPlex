@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# OBSOLETE on Plex core v3 (RBF 91777ac1) and later — it drives the v2 debug
+# menu (Pattern / Audio tone / Force bars) which v3 removed. status[9:6] is now
+# the A/V offset. Use `set_status --confstr` to read the live menu instead.
+#
 # Exercise Plex core OSD options via status bits + HDMI capture.
 # Run on the *build host* (needs sshpass + /dev/video4 MacroSilicon).
 set -euo pipefail

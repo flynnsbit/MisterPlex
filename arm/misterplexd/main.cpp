@@ -240,6 +240,46 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: AUDIO_DELAY_MS=%d (0=fresh, no hardcoded lag)\n",
                      audioDelayMs);
     }
+    {
+        // A/V pacing knobs. Defaults match the shipped behaviour; conf lets the lab
+        // retune without a rebuild.
+        auto lead = loadConf(confPath, "AV_PRESENT_LEAD_MS");
+        if (!lead.empty())
+            player.setPresentLeadMs(std::atoi(lead.c_str()));
+        auto drop = loadConf(confPath, "AV_RESYNC_DROP_MS");
+        if (!drop.empty())
+            player.setResyncDropMs(std::atoi(drop.c_str()));
+        auto ppm = loadConf(confPath, "AUDIO_CLOCK_PPM");
+        if (!ppm.empty())
+            player.setAudioClockPpm(std::atoi(ppm.c_str()));
+        std::fprintf(stderr, "misterplexd: AUDIO_CLOCK_PPM=%d\n", player.audioClockPpm());
+        auto avoff = loadConf(confPath, "AV_OFFSET_MS");
+        if (!avoff.empty())
+            player.setAvOffsetMs(std::atoi(avoff.c_str()));
+        std::fprintf(stderr, "misterplexd: AV_PRESENT_LEAD_MS=%s AV_RESYNC_DROP_MS=%s\n",
+                     lead.empty() ? "40(default)" : lead.c_str(),
+                     drop.empty() ? "80(default)" : drop.c_str());
+    }
+    {
+        // Idle/screensaver: without this the last frame of the previous video stays
+        // latched in the frame store after playback ends.
+        auto idle = loadConf(confPath, "IDLE_SCREEN");
+        misterplex::IdleMode im = misterplex::IdleMode::Logo;
+        if (idle == "black")
+            im = misterplex::IdleMode::Black;
+        else if (idle == "screensaver")
+            im = misterplex::IdleMode::Screensaver;
+        else if (idle == "last" || idle == "off")
+            im = misterplex::IdleMode::LastFrame;
+        player.setIdleMode(im);
+        // OSD_CONTROL requires the v3 CONF_STR layout; on an older core the same
+        // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
+        const bool osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
+        player.setOsdControl(osdControl);
+        std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
+        std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
+                     idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
+    }
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
@@ -253,6 +293,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: SUBTITLES=ffmpeg (local files, STREAM=0)\n");
     if (!player.initPresent()) {
         std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
+    } else {
+        // Paint the idle screen at boot so the core never shows a stale frame store.
+        player.startIdle();
+        player.startOsdPoll();
     }
 
     // Lab A/V sync: play local file and exit (no companion / GDM).
@@ -350,6 +394,8 @@ int main(int argc, char** argv) {
             resolved.ok = true;
             resolved.durationMs = 120000;
             resolved.sourceFpsHint = 30; // testsrc default
+            resolved.fpsNum = 30;
+            resolved.fpsDen = 1;
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
@@ -381,6 +427,18 @@ int main(int argc, char** argv) {
                              "wired (cadence path active; see docs/match-source-hz.md)\n",
                              effective > 0 ? effective : 0);
             }
+
+            // Exact rational rate for A/V pacing. This is deliberately NOT the bucketed
+            // hint above: PMS reports Media@videoFrameRate="24p" for 23.976 content, and
+            // pacing that at 24 costs ~1 ms/s of lipsync drift.
+            int fnum = resolved.fpsNum;
+            int fden = resolved.fpsDen;
+            misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"), fnum, fden);
+            player.setContentFpsRational(fnum, fden);
+            std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
+                         fnum, fden,
+                         resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
+                         resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
         }
 
         if (!req.offsetPresent && resolved.viewOffsetMs > 0)

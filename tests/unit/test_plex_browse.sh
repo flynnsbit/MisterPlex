@@ -31,6 +31,22 @@ PID=$!
 cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# Assert the daemon shut down cleanly on SIGTERM. Without this the harness only
+# checked HTTP responses, so an abort during MediaPlayer teardown (a joinable
+# std::thread in the destructor) printed "terminate called without an active
+# exception" and the script still exited 0.
+assert_clean_exit() {
+  kill "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null
+  local rc=$?
+  # 0 = clean, 143 = killed by SIGTERM before installing a handler: both fine.
+  case "$rc" in
+    0 | 143) ;;
+    134) fail "daemon aborted on shutdown (SIGABRT — joinable thread in destructor?)" ;;
+    *) fail "daemon exited $rc on shutdown (expected 0 or 143)" ;;
+  esac
+}
 # Wait for our HTTP bind
 ok=0
 for _ in $(seq 1 50); do
@@ -148,5 +164,7 @@ echo "$out" | grep -qv 'fullScreenVideo' || fail "race-stop still fullScreenVide
 # servers with example conf (no token ok)
 "$BROWSE" --conf "$ROOT/assets/misterplex.conf.example" servers | grep -q selected_base \
   || fail "servers"
+
+assert_clean_exit
 
 echo "test_plex_browse: OK"

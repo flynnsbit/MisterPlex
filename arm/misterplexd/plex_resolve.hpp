@@ -22,6 +22,10 @@ struct ResolveResult {
     std::string videoFrameRate; // raw Media@videoFrameRate (e.g. 24p, NTSC, 60p)
     std::string frameRate;      // raw Stream@frameRate (e.g. 23.976)
     int sourceFpsHint = 0;      // nearest OSD Content FPS: 12/24/30/60, or 0 unknown
+    // Exact content rate as a rational (24000/1001 for 23.976). 0/0 = unknown.
+    // Drives A/V pacing; must NOT be bucketed (23.976 vs 24 = ~1 ms/s of lipsync drift).
+    int fpsNum = 0;
+    int fpsDen = 0;
 };
 
 struct QueueItem {
@@ -112,5 +116,18 @@ int contentFpsHint(const std::string& videoFrameRate, const std::string& frameRa
 // Apply conf SOURCE_FPS (auto|12|24|30|60|off) over a resolved hint.
 // "auto"/empty → use resolvedHint; "off" → 0; numeric → forced bucket.
 int applySourceFpsConf(const std::string& sourceFpsConf, int resolvedHint);
+
+// Exact content frame rate as a rational — NOT bucketed.
+// Prefers numeric Stream@frameRate ("23.976"), falls back to Media@videoFrameRate
+// tokens ("24p", "NTSC", "PAL"). Snaps near-values onto the standard broadcast family
+// so 23.976 becomes exactly 24000/1001 rather than a lossy decimal.
+// Returns false and leaves num/den at 0 when the rate cannot be determined.
+bool parseExactFps(const std::string& videoFrameRate, const std::string& frameRate,
+                   int& num, int& den);
+
+// Parse conf AV_CONTENT_FPS override ("auto"|"off"|"23.976"|"24000/1001"|"25").
+// "auto"/empty keeps the resolved rate; "off" forces unknown (0/0).
+// Returns true when num/den were set from the conf (including the "off" case).
+bool applyContentFpsConf(const std::string& conf, int& num, int& den);
 
 } // namespace misterplex

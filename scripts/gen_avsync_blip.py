@@ -40,14 +40,23 @@ def gen_one(
     *,
     width: int,
     height: int,
-    fps: int,
+    fps: str | int | float,
     duration_s: float,
     vbitrate: str,
     audio_bitrate: str,
     label: str,
 ) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    flash_s = 2.0 / float(fps)
+    # fps may be a rational string ("24000/1001") so fixtures can carry a real NTSC
+    # film rate. Integer-only fixtures are exactly why the 23.976 pacing bug hid:
+    # a 24.000 fps blip makes a hardcoded fps=24 assumption true.
+    fps_str = str(fps)
+    if "/" in fps_str:
+        num, den = fps_str.split("/", 1)
+        fps_val = float(num) / float(den)
+    else:
+        fps_val = float(fps_str)
+    flash_s = 2.0 / fps_val
     fs = max(14, height // 18)
     fs_flash = max(24, height // 10)
     font = FONT if Path(FONT).is_file() else "/usr/share/fonts/liberation/LiberationSans-Bold.ttf"
@@ -80,7 +89,7 @@ def gen_one(
             "-f",
             "lavfi",
             "-i",
-            f"color=c=black:s={width}x{height}:r={fps}:d={duration_s}",
+            f"color=c=black:s={width}x{height}:r={fps_str}:d={duration_s}",
             "-f",
             "s16le",
             "-ar",
@@ -108,9 +117,9 @@ def gen_one(
             "-bufsize",
             str(int(vbitrate.rstrip("kK")) * 2) + "k" if vbitrate[-1] in "kK" else vbitrate,
             "-r",
-            str(fps),
+            fps_str,
             "-g",
-            str(fps * 2),
+            str(int(round(fps_val * 2))),
             "-c:a",
             "aac",
             "-b:a",
@@ -124,7 +133,7 @@ def gen_one(
             "+faststart",
             str(out),
         ]
-        print("GEN", out.name, f"{width}x{height}@{fps}", vbitrate, flush=True)
+        print("GEN", out.name, f"{width}x{height}@{fps_str}", vbitrate, flush=True)
         subprocess.check_call(cmd)
         print("OK", out, out.stat().st_size, flush=True)
 
@@ -135,7 +144,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument(
         "--only",
-        choices=("all", "product", "trekmatch", "24", "30", "60"),
+        choices=("all", "product", "trekmatch", "24", "30", "60", "2397"),
         default="all",
     )
     args = ap.parse_args()
@@ -204,6 +213,22 @@ def main() -> int:
                 vbitrate="1500k",
                 audio_bitrate="128k",
                 label="TREK24p",
+            )
+        )
+    if args.only in ("all", "2397"):
+        # Real NTSC film rate (24000/1001 = 23.976). Drift against a hardcoded fps=24
+        # is ~1 ms/s, so this fixture only tells the truth over a long run — keep it
+        # several minutes long and measure the SLOPE, not a single 12 s window.
+        jobs.append(
+            dict(
+                out=od / "sync_2397fps_blip.mp4",
+                width=320,
+                height=240,
+                fps="24000/1001",
+                duration_s=max(d, 360.0),
+                vbitrate="1500k",
+                audio_bitrate="128k",
+                label="NTSC2397",
             )
         )
     for j in jobs:

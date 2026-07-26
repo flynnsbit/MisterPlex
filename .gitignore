@@ -19,3 +19,7 @@ incremental_db/
 *.sld
 c5_pin_model_dump.txt
 dist/
+
+# Python bytecode caches
+__pycache__/
+*.pyc

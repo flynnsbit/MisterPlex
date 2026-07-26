@@ -46,6 +46,21 @@ fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Assert the daemon shut down cleanly on SIGTERM. Without this the harness only
+# checked HTTP responses, so an abort during MediaPlayer teardown (a joinable
+# std::thread in the destructor) printed "terminate called without an active
+# exception" and the script still exited 0.
+assert_clean_exit() {
+  kill "$PID" 2>/dev/null || true
+  wait "$PID" 2>/dev/null
+  local rc=$?
+  case "$rc" in
+    0 | 143) ;;
+    134) fail "daemon aborted on shutdown (SIGABRT — joinable thread in destructor?)" ;;
+    *) fail "daemon exited $rc on shutdown (expected 0 or 143)" ;;
+  esac
+}
+
 BODY=$(curl -fsS "http://127.0.0.1:${PORT}/resources")
 echo "$BODY" | grep -q MiSTerPlexTest
 echo "$BODY" | grep -q machineIdentifier
@@ -472,5 +487,7 @@ curl -fsS "http://127.0.0.1:${PORT}/player/timeline/unsubscribe?commandID=14" >/
 # After unsubscribe without wantPlay, prePlayHold off — may be stopped or still buffered
 # from residual state; at least request succeeds
 curl -fsS "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=15" | grep -q Timeline
+
+assert_clean_exit
 
 echo "test_companion_http: OK"

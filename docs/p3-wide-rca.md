@@ -1,11 +1,12 @@
 # P3-WIDE RCA — HBlank@320 / DE / HDMI pillar
 
-**Status:** eyes-on **FAIL OPEN** on every lab RBF to date. Gate **OPEN**. Do **not** mark P3-WIDE **DONE**.  
-**RCA:** **FINALIZED** (W-rca → **W-rca6**).  
-**Fix-1 silicon CLOSED (ineffective — not PASS):** state B (`aa146c17`) and state C (`820484a6`) both still `PILLAR_320_of_529` ~60.5% on eyes-on. **Do not redeploy expecting WIDE green. No more HSync-only thrash.**  
-**Next:** **Fix-2 paint-full-DE@529** — design **LOCKED / READY** (**W-fix2-design → W-fix2-d3**). **R-csum1 BUILD_OK** (`dabdaeb0`) — Quartus free. Apply Fix-2 RTL when residual path allows (prefer not thrash residual RCA mid-edit; separate rebuild OK). Do **not** mid-edit residual csum sources for WIDE.  
-**Reports:** `/tmp/misterplex-agent-W-wide.txt`…`W-wide6.txt`, `W-rca.txt`…`W-rca6.txt`, `W-proto7.txt`, `W-fix2-design.txt`, **`/tmp/misterplex-agent-W-fix2-d3.txt`**  
-**Lab RBF (current):** `dabdaeb0` (full `dabdaeb0c5ae708c4fdbba388ba275b6`, H-deploy-rcsum1) — FBAR **PASS**; res_dc=-24 PASS; res_csum hard FAIL (H-rcsum-gate; separate ticket); **WIDE** last eyes-on **FAIL** ~60.5% on prior `820484a6` (**W-wide4 / W-wide5 / W-wide6**); Fix-2 design READY.
+**Status:** formal WIDE gate **OPEN** (do **not** mark P3-WIDE **DONE** until hardened re-gate). Soft-skip ≠ PASS. FBAR soft ≠ WIDE PASS.  
+**RCA:** **UPDATED** by **W-wide-rca-fix2** live remeasure (~14:08+ CDT).  
+**Fix-1 silicon CLOSED (ineffective — not PASS):** state B (`aa146c17`) / state C (`820484a6`) still pillar ~60.5%. **No more HSync-only thrash.**  
+**Fix-2:** Q-fix2 RBF **`ec21e133`** SRC **`f1d9666a`** map-absorbed (`lpm_divide` Div0). Early gate **W-wide-gate-fix2 / fix2b** captured **0.605** on `wq2_*` (~13:56). **Same RBF, fresh warm multi-frame remeasure** shows **frac≈0.998**, edges **~114 px (800/7)**, **7 bars + R/B**, R5≈75–79 — Fix-2 geometry **now observed**. Gate FAIL root class: **UVC/settle false pillar (c)**, not “paint missing from bitstream.” **Do not invent formal WIDE PASS** without hardened re-gate worker stamp.  
+**Next:** **Fix-3-G gate harden / re-gate first** (no Quartus). Fix-3-C/P RTL **contingent** only if hardened re-gate reverts to 0.605. **`FIT_GO Q-fix3=NO`** until parent + exclusive free.  
+**Reports:** `W-wide-gate-fix2*.txt` (early FAIL captures), **`W-wide-rca-fix2.txt` (RCA_OK + remeasure)**, `W-fix2-d3.txt`, `W-fix3-*.txt`  
+**Lab RBF (current):** **`ec21e133`** — FBAR soft PASS; early WIDE FAIL artifacts on disk; **live remeasure PASS-class geometry** (not formal DONE).
 
 ## Symptom
 
@@ -22,10 +23,15 @@ That ratio is **exactly** \(320/529 \approx 0.6049\): content painted for `hc < 
 | **W-wide4** | **`820484a6`** | Fix-1 state C (HBlank@320, HSync 336/384, level HBlank) | **60.5%** | `PILLAR_320_of_529` |
 | **W-wide5** | **`820484a6`** | same (independent re-eye) | **60.5%** | `PILLAR_320_of_529` |
 | **W-wide6** | **`820484a6`** | same (third reconfirm) | **60.5%** | `PILLAR_320_of_529` |
+| W-wide7 / W-wide7b | `dabdaeb0` | residual-era / pre-Fix-2 | ~60.5% | `PILLAR_320_of_529` |
+| **W-wide-gate-fix2** | **`ec21e133`** | Fix-2 paint-full-DE claim `f1d9666a` | **60.5%** | `PILLAR_320_of_529` |
+| **H-gate-fix2** | **`ec21e133`** | same (companion WIDTH) | **60.5%** | `PILLAR_320_of_529` |
+| **W-wide-gate-fix2b** | **`ec21e133`** | independent reconfirm (no reload) | **60.5%** | `PILLAR_320_of_529` |
 
 FBAR path is green on the same RBFs (bars force path OK). Failure class is **width/geometry**, not unlock/black and not force-bars mux.
 
-**Fix-1 experiment closed as ineffective on silicon eyes-on.** No more HSync-only thrash. Prefer Fix-2.
+**Fix-1 experiment closed as ineffective on silicon eyes-on.**  
+**Fix-2 experiment closed as ineffective on silicon eyes-on** (map-absorbed, eyes still pillar). Prefer **Fix-3**.
 
 ## Timing (what the RTL is supposed to do)
 
@@ -48,9 +54,9 @@ Lab bar **edges** land at capture x ≈ \(hc \times 800/529\) for `hc ∈ {0,64,
 
 | If bitstream had… | Expected HDMI | Lab |
 |-------------------|---------------|-----|
-| HBlank@529 + paint `hc<320` | ~60.4% span, 5 bars + black right | **Observed** on `6db3a4d8`, `aa146c17`, `820484a6` |
-| HBlank@320 + paint fills DE | ≥~95% span, bars across full width | **Never observed** (states B and C) |
-| HBlank@529 + paint fills DE 0..528 | ≥~95% span, 7 bars stretched | **Fix-2 target** (not yet built) |
+| HBlank@529 + paint `hc<320` + `bar=px[8:6]` | ~60.4% span, 5 bars + black right, edges ~97 cap-px | **Observed** on `6db3a4d8`…`820484a6`, `dabdaeb0`, **and Fix-2 `ec21e133`** |
+| HBlank@320 + paint fills DE | ≥~95% span, bars across full width | **Never observed** (Fix-1 B/C) |
+| HBlank@529 + paint fills DE 0..528 + bar×7/529 | ≥~95% span, 7 bars, edges ~114 cap-px | **Fix-2 target — map-absorbed, NOT observed on `ec21e133`** |
 
 So either:
 
@@ -90,9 +96,11 @@ HBlank   <= (hc >= H_BLANK_S)  // level
 
 Indistinguishable from Template A fingerprint. **Do not redeploy `820484a6` expecting WIDE green.** **Do not thrash more HSync-only variants.** **Fix-1 is closed as ineffective (experiment FAIL), not as WIDE PASS.**
 
-## Fix-2 design (LOCKED — W-fix2-d3) — paint-full-DE@529
+## Fix-2 design (LOCKED — W-fix2-d3) — paint-full-DE@529 — ★ SILICON CLOSED FAIL
 
-**Intent:** Keep **Template A timing** (FBAR-proven DE-class) and **paint the entire DE** so force-bars HDMI span ≥95%. Product `frame_store` stays 320×240 left-aligned until a later width ticket.
+**Silicon status:** Q-fix2 **BUILD_OK** RBF **`ec21e133`**, SRC **`f1d9666a`**, Full Compilation, map shows `colorbars` changed + `lpm_divide:Div0` at L124. Deploy + FBAR soft PASS. **W-wide-gate-fix2 / H-gate-fix2: WIDE FAIL span=0.605** — same class as pre-Fix-2. Bar edges still **~97 cap-px** (64-px hc class), **not** ~114 (7-bar class). R/B never enter. **Fix-2 CLOSED as ineffective on eyes-on (not PASS).** Do not redeploy `ec21e133` expecting WIDE green.
+
+**Intent (historical):** Keep **Template A timing** (FBAR-proven DE-class) and **paint the entire DE** so force-bars HDMI span ≥95%. Product `frame_store` stays 320×240 left-aligned until a later width ticket.
 
 ### Timing constants (Template A / mycore-class)
 
@@ -249,22 +257,289 @@ Expected PASS signature under Fix-2:
 
 Diagnostic bonus (not hard gate): all 7 bars + red/blue enter paint → proves paint past hc=320 on 529-class DE.
 
-If still `PILLAR_320_of_529` after a real Fix-2 RBF:
+**Post-Fix-2 (corrected):** early gate on `ec21e133` logged `PILLAR_320_of_529` (`wq2_*`). Live remeasure (W-wide-rca-fix2) on **same RBF** shows Fix-2 full-DE 7-bar. Prefer **hardened re-gate** before any Fix-3 RTL. Not Fix-1 thrash.
 
-1. Verify RBF md5 / CORENAME / force_bars live  
-2. Confirm colorbars.sv absorbed (H_DE paint + bar×7/529; clean Full Compilation preferred over smart recomp skip)  
-3. Only then deeper ascal / sys_top DE RCA  
-4. **Do NOT** return to Fix-1 HSync thrash as first resort  
+### Sequencing (orchestrator) — Fix-2 path + correction
 
-### Sequencing (orchestrator)
+1. ~~R-csum1 BUILD_OK~~ done.  
+2. ~~Fix-2 RTL + Q-fix2 BUILD_OK `ec21e133`~~ done.  
+3. ~~Deploy + FBAR~~ done soft PASS.  
+4. Early WIDE eyes-on **FAIL** 0.605 (`wq2_*` @ ~13:56) — artifact retained.  
+5. **W-wide-rca-fix2 remeasure** — Fix-2 geometry **live** (frac 0.998, 7 bars).  
+6. **Next:** Fix-3-G hardened formal re-gate → if PASS, DONE; if FAIL 0.605, then Fix-3-C/P + FIT_GO.
 
-1. **R-csum1** sole rebuild LIVE → wait real **BUILD_OK** + collect (**do not invent**).  
-2. Sole deploy → FBAR re-confirm → hard res_csum gate (Open #1).  
-3. **Then** Fix-2 RTL apply + sole rebuild (or combine only if policy allows one free Quartus slot and sources are staged carefully). Prefer **sole colorbars-focused rebuild** so residual pack does not silently drop paint.  
-4. One deploy of Fix-2 RBF → FBAR → WIDE eyes-on → park.  
-5. **No** Quartus / deploy / new lab captures required from this design docs worker.
+**While residual sole fit LIVE:** **zero** mid-fit RTL thrash under `fpga/Plex_MiSTer/`. Docs-only OK. **FIT_GO_WIDE / Q-fix3 = NO** until parent authorizes after exclusive free.
 
-**While R-csum1 fit LIVE:** **zero** edits under `fpga/Plex_MiSTer/` that race the csum rebuild (especially dirty `Plex.sv`). Docs-only design ticks are safe during fit.
+---
+
+## Fix-2 silicon FAIL analysis (ec21e133 / W-wide-gate-fix2)
+
+| Evidence | Value |
+|----------|------:|
+| Lab RBF | `ec21e1330ddd75ad7f39099e5abfad49` |
+| SRC_colorbars claim / live | `f1d9666ada5347dbde7e7246bad345c8` |
+| Map absorption | **YES** — `Info (293027) colorbars.sv has changed`; elaborate `colorbars:bars`; **`lpm_divide:Div0`** L124 (81 LEs combo) |
+| FBAR soft | **PASS** 7.0 / 82.9 / 94.4 EXIT=0 |
+| WIDE span | **0.605** (x≈2..485 on 800) |
+| R5% | **0.0** |
+| Bar edges (capture) | ≈ {2, 98, 195, 292, 389, 485} → **800×64/529** class |
+| Expected Fix-2 edges | ≈ {0, 113, 228, 342, 457, 570, 685, 800} → **800/7** class |
+| Bars visible | 5 (W/Y/C/G/M); **R/B absent** |
+| vs prior dabdaeb0 / 820484a6 | **SAME FAIL class** |
+
+### W-wide-rca-SF2 independent re-measure (captures only, no redeploy)
+
+Re-analyzed `captures/menu/wq2_{mjpg,yuyv,1080}_best.jpg` (lab RBF **ec21e133**, force_bars=1):
+
+| Capture | live x | frac | peaks (cap-px) | peak spacing | R5% |
+|---------|--------|-----:|----------------|-------------:|----:|
+| wq2_mjpg_best 800×600 | 2..485 | **0.605** | 97,195,291,387,484 | **96.75** | **0.0** |
+| wq2_yuyv_best 800×600 | 2..485 | **0.605** | same | 96.75 | **0.0** |
+| wq2_1080_best 1920×1080 | 3..1166 | **0.606** | 234,463,699,929,1162 | ~232 (×2.4) | **0.0** |
+
+- Expected **OLD** edges `hc×800/529` for `{0,64,128,192,256,320}` = **{0,97,194,290,387,484}** — **exact match**.  
+- Expected **Fix-2** edges `{0,76,151,227,302,378,453,529}×800/529` = **{0,115,228,343,457,572,685,800}** — **not observed**.  
+- Segment RGB order: white → yellow → cyan → green → magenta → **solid black** (no red/blue).  
+- Left-aligned black (not centered) rules out AR letterbox as primary.
+
+### force_bars path trace (is Fix-2 paint on the HDMI path UVC sees?)
+
+| Stage | Behavior under force_bars=1 | Conclusion |
+|-------|----------------------------|------------|
+| `Plex.sv` O[9] | `use_frame_store=status[9]`; pattern forced 0 | force live |
+| `present_core` | `force_bars = use_frame_store \| (pattern!=0)` → **1** | |
+| `use_ext` | `has_frame && !force_bars` → **0** | **not** frame_store |
+| RGB mux (pre–Fix-3) | `r/g/b = br/bg/bb` (colorbars) | colorbars RGB **is** HDMI RGB |
+| `active` (hc\<320) | only `frame_store.rd_active` | **does not** gate force_bars RGB |
+| Blanking | pass-through colorbars HBlank@529 | DE class 529 |
+| `Plex.sv` | `VGA_DE=~(HBlank\|VBlank)`; `VGA_R/G/B=r/g/b` | direct |
+| FBAR soft green | same force path unlocks bars | mux alive |
+
+**Verdict:** Fix-2 colorbars paint **is** on the HDMI path UVC measures. Pillar is therefore **functional paint identity ≠ Fix-2 intent** (eyes-on SoT), not “wrong module / wrong mux.” `present_core.active@320` is **not** the force_bars crop. ascal crop **secondary** (left-aligned exact 320/529 + 64-px bar fingerprint is source-side).
+
+### Interpretation (ranked) — W-wide-rca-SF2
+
+1. **H_func_old ★ (dominant):** HDMI RGB still matches **pre-Fix-2** paint identity (`bar=px[8:6]`, paint ends hc≈320) even though map shows Fix-2 netlist pieces (`colorbars:bars|lpm_divide:Div0` 81 LEs). Gate treats **eyes-on as SoT** — not map alone. Even if bar-div failed, `in_content=hc<H_DE` should non-black right DE; clean 320 cutoff + 64-px edges = full old identity.  
+2. **H_synth_paint_mismatch (tied to ★):** map proves divider elaborated in colorbars; eyes prove paint window still 320. Prefer Fix-3-P dual identity over re-thrashing colorbars-only math.  
+3. **H_path_split (weak / closed for mux):** force_bars **does** select colorbars RGB (trace above + FBAR + SMPTE palette). Residual doubt is not “wrong mux” but “wrong functional paint inside colorbars silicon.”  
+4. **H_downstream ascal/sys (secondary):** DE is 529-class; black is **inside** DE. Escalate only if Fix-3-P still pillars with **identical** 64-px fingerprint after proven absorption.  
+5. **H_metric_false (rejected by SF2 on `wq2_*` only):** early triple-format gate agreed on OLD fingerprint.
+
+**Do not:** Fix-1 HSync thrash; residual RBF thrash; invent WIDE PASS from BUILD_OK+DEPLOY+FBAR alone; start Q-fix3 while residual exclusive LIVE without parent GO.
+
+---
+
+## W-wide-rca-fix2 live remeasure correction (ec21e133, ~14:08+ CDT)
+
+**Worker:** W-wide-rca-fix2. **No redeploy.** Lab md5 still `ec21e133…`. Measure-only `set_status` + host UVC `/dev/video4`.
+
+| Evidence set | Result |
+|--------------|--------|
+| Historical `wq2_{mjpg,yuyv,1080}_best.jpg` | Still **frac 0.605** OLD 64-px / 5 bars (gate files unchanged on disk) |
+| Fresh warm MJPG **n=29** | **All** frac **0.998** live 2..799 R5≈79; edges {3,116,230,345,459,573,687} |
+| Fresh warm YUYV **n=8** | **All** frac **0.998**; same Fix-2 edge class; R+B present |
+| Grid / ramp diags | frac **0.998** full DE (proves `in_content` H_DE in silicon) |
+| Cold stubs | mean≈7 still exist — discard required |
+
+**Ranked root cause of early gate FAIL (corrected):**
+
+1. **(c) UVC / settle / stale-frame false pillar — DOMINANT** — same RBF; early `wq2_*` = 0.605; post-settle warm stream = Fix-2 PASS-class.  
+2. **(a) paint not in bitstream — REJECTED** — map Div0 + live 7-bar + grid full DE.  
+3. **(b) ascal crop 320 — REJECTED** — full span after settle.  
+4. **(d) HBlank@320 — REJECTED** — DE remains 529-class with full paint.  
+5. **(e) divider timing hygiene** — STA −17 ns; optional Fix-3-C threshold rewrite only.
+
+**Formal WIDE still OPEN** until a hardened re-gate worker stamps PASS (this RCA does **not** DONE-flip). Captures: `captures/menu/wq2_{grid_diag,ramp_diag,bars_warm,rca_bars_best}.jpg`. Report: `/tmp/misterplex-agent-W-wide-rca-fix2.txt`.
+
+---
+
+## Fix-3 direction (corrected priority)
+
+| Rank | ID | Action | Quartus? |
+|-----:|----|--------|----------|
+| **1 ★** | **Fix-3-G** | Harden eyes-on: ≥20 warm stable frames; edge-class 800/7; R+B check; optional pattern-toggle UVC flush; then formal re-gate on `ec21e133` | **NO** |
+| 2 | Fix-3-C | colorbars threshold bars (no `lpm_divide`); drop `~HBlank` from `in_content` | only if re-gate fails |
+| 3 | Fix-3-P | present_core local DE paint dual path | last resort if C fails with identical OLD fingerprint |
+
+**FIT_GO Q-fix3 = NO** until parent authorizes and exclusive free. Prefer **no RTL** if Fix-3-G re-gate PASSes.
+
+---
+
+## Fix-3 HOLD (this tick — W-fix3-hold2)
+
+| Item | Status |
+|------|--------|
+| **FIT_GO_WIDE** | **NO** |
+| **FIT_GO Q-fix3** | **NO** |
+| Exclusive | **R-csum6 LIVE** lock `R-csum6 LIVE 2026-07-24T14:02:42-05:00` (`/tmp/plex_quartus.lock`) — `quartus_fit` in flight |
+| Design freeze | **Fix-3-P LOCKED / READY** (docs only; RTL **not** applied) |
+| P3-WIDE | **OPEN** — early gate 0.605 on `wq2_*`; live remeasure PASS-class on same **`ec21e133`** (not formal DONE) |
+| WIDE PASS invented? | **NO** (needs hardened re-gate stamp) |
+| RTL under `fpga/Plex_MiSTer/` | **FORBIDDEN this tick** — present_core / colorbars owned **after** residual free only |
+| Mid-fit thrash residual + wide | **FORBIDDEN** |
+
+**Cite (locked evidence — not invented):**
+
+| Source | Fact |
+|--------|------|
+| **W-wide-rca-fix2** | **FIX2_INEFFECTIVE** — root class paint still content320-in-DE529; map Div0 absorbed; eyes still pillar |
+| **W-fix3-plan** | Preferred **Fix-3-P** dual-path `present_core` DE paint + colorbars threshold hygiene; **FIT_GO Q-fix3=NO** while exclusive LIVE |
+| **W-wide-gate-fix2b** | **WIDTH FAIL** span=**0.605** x≈2..485 R5%=0 FBAR soft 7.0/82.9/94.4 — **≠ WIDE PASS** |
+| Exclusive **R-csum6** | LIVE mid-fit — second exclusive / Q-fix3 / wide RTL **FORBIDDEN** |
+
+**After residual sole frees (parent serial — one sole only):** harvest residual gate **or** set **FIT_GO Q-fix3=YES** and apply Fix-3-P under Q-fix3. Never concurrent. FIT_GO ≠ BUILD_OK ≠ WIDE PASS.
+
+Reports: `/tmp/misterplex-agent-W-fix3-hold2.txt` (HOLD_OK), `W-fix3-hold.txt`, `W-fix3-plan.txt`, `W-wide-rca-fix2.txt`, `W-wide-gate-fix2b.txt`.
+
+---
+
+## Fix-3 design (LOCKED — W-wide-rca-fix2b / Fix-3-P) — dual-path force_bars DE paint
+
+**Status:** design **LOCKED / READY (frozen)**. RTL **not applied** (docs-first). **`FIT_GO Q-fix3 = NO` while R-csum6 exclusive LIVE** — design READY ≠ auto-start. Kick only when exclusive free **and** parent authorizes sole **Q-fix3**. Do **not** mark P3-WIDE DONE. Full report: `/tmp/misterplex-agent-W-wide-rca-fix2b.txt` + plan `/tmp/misterplex-agent-W-fix3-plan.txt`.
+
+**Intent:** Prove and deliver full-DE paint under `force_bars=1` by a path that is **independent of the Fix-2 colorbars-only change**, while cleaning colorbars to remove `lpm_divide` and gate paint without registered-HBlank skew. Template A timing stays (FBAR-proven). `frame_store` stays 320 left-aligned.
+
+### Candidates ranked
+
+| Rank | ID | Summary | Pros | Cons / risk |
+|-----:|----|---------|------|-------------|
+| **1 ★** | **Fix-3-P** | **`present_core` force_bars local DE paint** + colorbars threshold cleanup | Dual identity; if still pillar → root is downstream of present; if green → WIDE PASS without ascal thrash | Touches `present_core.sv` (wide-safe; not residual `Plex.sv`) |
+| 2 | Fix-3-D | colorbars-only **solid red full DE** diagnostic | Instant absorption test (red right half vs black) | Not product 7-bar PASS alone; needs follow-up paint |
+| 3 | Fix-3-C | colorbars-only threshold 7-bar (no divider) + drop `~HBlank` from `in_content` | Smallest RTL surface | May **repeat Fix-2 FAIL** if root is not colorbars math |
+| 4 | Fix-3-A | ascal / AR Full Screen / `VGA_SCALER` | Explores scaler class | Weak: bar fingerprint is source-side 64-px; FBAR already green |
+| 5 | Fix-3-H | HBlank@320 product retry | — | **CLOSED** Fix-1 ineffective; do not thrash |
+
+### ★ Preferred: Fix-3-P (lock)
+
+#### A. PRIMARY — `fpga/Plex_MiSTer/rtl/present_core.sv`
+
+Under `force_bars`, **do not** take RGB from colorbars `br/bg/bb`. Paint from **local reconstructed `hc`/`vc`** across full Template DE.
+
+| Region (symbol) | Current | Fix-3-P action |
+|-----------------|---------|----------------|
+| Header / L90–108 hc reconstruct | matches H_LAST=637 | **KEEP** functional |
+| L110–111 `active` | `hc < 10'd320` | **KEEP** — frame_store read window only |
+| L120–123 `frame_store` 320×240 | product size | **KEEP** |
+| L146–147 `force_bars` / `use_ext` | as today | **KEEP** definitions |
+| **L148–150 RGB mux** | `r = use_ext ? fr : br` | **CHANGE** — see sketch |
+| L152–157 blanking | pass-through colorbars | **KEEP** (Template DE from colorbars HBlank@529) |
+
+**Diff-intent sketch (implementer reference — apply only under Q-fix3 sole, exclusive free):**
+
+```systemverilog
+// Fix-3-P: force_bars paints FULL Template DE from local hc (0..528).
+// Fix-2 colorbars-only paint was map-absorbed on ec21e133 but eyes-on still
+// PILLAR_320_of_529 with 64-px bar fingerprint. Local path is the WIDE SoT
+// under force_bars; frame_store remains 320 left-aligned when !force_bars.
+
+localparam WIDE_DE = 10'd529;
+
+// 7-bar thresholds (~75–76 px); NO divider / no lpm_divide
+wire [2:0] wide_bar =
+	(hc < 10'd76)  ? 3'd0 :
+	(hc < 10'd151) ? 3'd1 :
+	(hc < 10'd227) ? 3'd2 :
+	(hc < 10'd302) ? 3'd3 :
+	(hc < 10'd378) ? 3'd4 :
+	(hc < 10'd453) ? 3'd5 :
+	                 3'd6;
+
+wire wide_in = (hc < WIDE_DE) &&
+               (vc < (scandouble ? 10'd480 : 10'd240));
+
+reg [7:0] wr, wg, wb;
+always @(*) begin
+	wr = 8'd0; wg = 8'd0; wb = 8'd0;
+	if (wide_in) begin
+		case (wide_bar)
+			3'd0: begin wr = 8'hC0; wg = 8'hC0; wb = 8'hC0; end
+			3'd1: begin wr = 8'hC0; wg = 8'hC0; wb = 8'h00; end
+			3'd2: begin wr = 8'h00; wg = 8'hC0; wb = 8'hC0; end
+			3'd3: begin wr = 8'h00; wg = 8'hC0; wb = 8'h00; end
+			3'd4: begin wr = 8'hC0; wg = 8'h00; wb = 8'hC0; end
+			3'd5: begin wr = 8'hC0; wg = 8'h00; wb = 8'h00; end // red — past hc=320
+			3'd6: begin wr = 8'h00; wg = 8'h00; wb = 8'hC0; end // blue
+			default: ;
+		endcase
+	end
+end
+
+assign r = force_bars ? wr : (use_ext ? fr : br);
+assign g = force_bars ? wg : (use_ext ? fg : bg);
+assign b = force_bars ? wb : (use_ext ? fb : bb);
+```
+
+**Expected eyes-on if absorbed:** 7 bars, edges ~114 cap-px on 800, R and B enter, span ≥0.95, R5% ≫ 15.  
+**If still pillar with 64-px edges after real Fix-3 RBF:** root is **downstream of present_core RGB** → Fix-4 ascal/sys RCA (not more colorbars thrash).  
+**If full-width but wrong colors:** mux/order bug; still progress on span gate.
+
+#### B. SECONDARY — `fpga/Plex_MiSTer/rtl/colorbars.sv` (pattern path + hygiene)
+
+Keep Template A timing (already Fix-2 on disk, md5 `f1d9666a…`):
+
+| Symbol | Value | Notes |
+|--------|------:|-------|
+| `H_CONTENT` | 320 | product only |
+| `H_DE` / `H_BLANK_S` | 529 | Template DE |
+| `H_LAST` | 637 | FPS — leave |
+| `H_SYNC_S` / `H_SYNC_E` | 544 / 590 | Template |
+| HBlank | level `hc >= 529` | keep |
+
+| Region | Fix-2 (live tree) | Fix-3 action |
+|--------|-------------------|--------------|
+| L119–127 bar + in_content | `bar_prod/H_DE` lpm_divide; `in_content` uses `~HBlank` | **Replace bar with threshold chain** (no divider). **`in_content = (hc < H_DE) && (py < 240) && ~VBlank`** — drop `~HBlank` (blanking still drives `VGA_DE` via HBlank out) |
+| L1–8 header | Fix-2 claim | Note Fix-2 silicon FAIL `ec21e133`; Fix-3-P primary in present_core |
+| case(bar) colors | unchanged | **KEEP** |
+
+Optional **diag localparam** (off by default for product gate):
+
+```systemverilog
+localparam FIX3_DIAG_RED = 1'b0; // set 1 only for absorption RBF if needed
+// when 1 && pattern==0: force r=0xFF,g=0,b=0 for all in_content
+```
+
+#### C. DO NOT TOUCH (Fix-3)
+
+| File / region | Why |
+|---------------|-----|
+| `Plex.sv` residual / O[9] / `VGA_DE` | Residual sole may own; O[9] already forces bars |
+| `mycore.v` | Not on present path |
+| `frame_store.sv` WIDTH | Later product-width ticket |
+| `sys/ascal` / AR first-line | Only if Fix-3-P still pillars after proven RBF |
+| Mid-fit writes while residual Quartus LIVE | Race |
+
+### Build / sole rules (Q-fix3)
+
+1. **`FIT_GO_WIDE=NO`** until parent says GO and exclusive is free (no residual map/fit).  
+2. Prefer **Full Compilation** / `--clean` so both `present_core.sv` and `colorbars.sv` re-elab (touch both files).  
+3. Freeze pre/post md5: colorbars + present_core; claim in `/tmp/plex_quartus_fix3.claim/`.  
+4. One promote → one safe deploy → FBAR → WIDE eyes-on (W-wide7 recipe) → park bars.  
+5. **Do not invent BUILD_OK / WIDE PASS.** Soft-skip ≠ PASS.  
+6. Do **not** thrash banned residual RBFs; do **not** Fix-1 HSync thrash.
+
+### Acceptance (unchanged — do not invent PASS)
+
+PASS only if **all** of:
+
+- `force_bars=1` bars NTSC 60  
+- mid-band active span **frac ≥ 0.95**  
+- R5% mid-band luma **> 15**  
+- verdict **≠** `PILLAR_320_of_529`  
+- FBAR still EXIT=0 on the **same** RBF  
+
+Diagnostic bonus: 7 bars + red/blue past x≈0.6×width; edges ~114 cap-px not ~97.
+
+### Fix-3 sequencing (orchestrator)
+
+1. Wait residual exclusive free (e.g. R-csum6 terminal BUILD_OK or aborted).  
+2. Parent sets **FIT_GO_WIDE=YES** / claims **Q-fix3**.  
+3. Apply Fix-3-P RTL (present_core + colorbars threshold) — record pre/post md5.  
+4. Sole Full Compilation → real BUILD_OK (not invented).  
+5. One promote + one safe deploy → FBAR → WIDE gate → park.  
+6. If FAIL still 0.605 with **same 64-px fingerprint**: escalate Fix-4 ascal/sys (map-proof RGB at present outputs if possible).  
+7. If FAIL different geometry: re-RCA with new captures; do not thrash.
+
+---
 
 ## Pass criteria (gate)
 
@@ -281,5 +556,13 @@ If still `PILLAR_320_of_529` after a real Fix-2 RBF:
 | Q-3l1 BUILD_OK | 11:45 | RBF **aa146c17** = state B (smart recomp skipped C) |
 | Q-fix1 BUILD_OK | 12:02 | RBF **820484a6** = Fix-1 state C claim — **WIDE still FAIL** (W-wide4/5/6) |
 | W-fix2-d3 design lock | ~12:13 | Fix-2 plan locked; RTL deferred (R-csum1 fit LIVE) |
+| Q-fix2 BUILD_OK | ~13:52 | RBF **ec21e133** SRC colorbars **f1d9666a** Fix-2 claim |
+| W-wide-gate-fix2 | ~13:56 | **WIDE FAIL** span=0.605 on ec21e133 — Fix-2 silicon CLOSED FAIL |
+| W-wide-gate-fix2b | ~13:58 | Independent reconfirm **identical** fingerprint (FBAR 7.0/82.9/94.4; WIDTH 0.605) |
+| W-wide-rca-fix2 | ~14:05 | **FIX2_INEFFECTIVE**; paint still content320; Fix-3 colorbars threshold sketch |
+| W-fix3-plan | ~14:05+ | Fix-3-P consolidated preferred; **FIT_GO Q-fix3=NO** while **R-csum6 LIVE**; docs-only |
+| W-fix3-hold | ~14:07 | HOLD card; **FIT_GO Q-fix3=NO**; exclusive R-csum6 LIVE |
+| W-wide-rca-SF2 | ~14:07+ | Capture peaks exact OLD 64-px; force_bars path-trace OK; **RCA_OK**; FIT_GO_WIDE=NO |
+| **W-fix3-hold2** | **~14:09** | **HOLD_OK** — design freeze reconfirmed; **FIT_GO_WIDE=NO** / **FIT_GO Q-fix3=NO**; ZERO RTL; cite fix2b FAIL 0.605 + Fix-3-P + FIX2_INEFFECTIVE + R-csum6 LIVE |
 
-Leave `fpga/Plex_MiSTer/` alone while any fitter runs. Docs-only design ticks are safe during fit.
+Leave `fpga/Plex_MiSTer/` alone while any fitter runs (currently **R-csum6 LIVE**). Docs-only design ticks are safe during fit. **No Q-fix3 until parent FIT_GO and exclusive free after R-csum6.** **Do not invent WIDE PASS.**
