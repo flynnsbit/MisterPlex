@@ -3,7 +3,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit arm-plexd clean help plexd package
+.PHONY: all unit arm-plexd arm-ddr-bench ddr-bench clean help plexd package
 
 all: unit
 
@@ -14,6 +14,7 @@ help:
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
+	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
 
 test: unit
 
@@ -175,13 +176,28 @@ $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 
 push-frame: $(ROOT)/build/push_frame
 
+$(ROOT)/build/ddr_write_bench: $(ROOT)/tools/ddr_write_bench.cpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/ddr_write_bench.cpp
+
+ddr-bench: $(ROOT)/build/ddr_write_bench
+
 # ARM hard-float for MiSTer (try common cross compilers + local mistercast toolchain)
 ARM_TOOLCHAIN_BIN ?= $(HOME)/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin
 ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null || ls $(ARM_TOOLCHAIN_BIN)/arm-none-linux-gnueabihf-g++ 2>/dev/null)
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
-arm-plexd: $(MPLEX_HDR)
+arm-ddr-bench:
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall \
+		-o $(ROOT)/build/arm/ddr_write_bench \
+		$(ROOT)/tools/ddr_write_bench.cpp \
+		-static
+	@file $(ROOT)/build/arm/ddr_write_bench
+
+arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \

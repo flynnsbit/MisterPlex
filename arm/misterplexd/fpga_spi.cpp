@@ -14,6 +14,7 @@
 #include <new>
 #include <signal.h>
 #include <string>
+#include <sys/syscall.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -40,6 +41,26 @@ constexpr uint8_t UIO_GET_STRING = 0x14;
 std::recursive_mutex& spiMutex() {
     static std::recursive_mutex m;
     return m;
+}
+
+bool cleanDcacheRange(const void* p, size_t len) {
+    if (!p || !len)
+        return true;
+#if defined(__arm__)
+#ifndef __ARM_NR_BASE
+#define __ARM_NR_BASE 0x0f0000
+#endif
+#ifndef __ARM_NR_cacheflush
+#define __ARM_NR_cacheflush (__ARM_NR_BASE + 2)
+#endif
+    const uintptr_t start = reinterpret_cast<uintptr_t>(p);
+    const uintptr_t end = start + len;
+    return ::syscall(__ARM_NR_cacheflush, start, end, 0) == 0;
+#else
+    (void)p;
+    (void)len;
+    return true;
+#endif
 }
 
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
@@ -409,7 +430,10 @@ bool FpgaSpi::ensureDdrMap() {
     // Map both banks (2×256KiB) + space through doorbell at 0x3007F000.
     // Base 0x30000000, length 0x80000 covers 0x30000000..0x3007FFFF.
     constexpr size_t kLen = 0x80000u;
-    ddrMemFd_ = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    ddrMemFd_ = ::open("/dev/mem", flags);
     if (ddrMemFd_ < 0) {
         setErr("ensureDdrMap: open /dev/mem failed");
         return false;
@@ -425,6 +449,14 @@ bool FpgaSpi::ensureDdrMap() {
     ddrMap_ = static_cast<uint8_t*>(p);
     ddrMapLen_ = kLen;
     return true;
+}
+
+void FpgaSpi::setDdrMemSync(bool on) {
+    if (ddrMemSync_ == on)
+        return;
+    ddrMemSync_ = on;
+    releaseDdrMap();
+    ddrKickMode_ = 0;
 }
 
 void FpgaSpi::releaseDdrMap() {
@@ -1011,6 +1043,13 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     const size_t bankOff = static_cast<size_t>(bank) * kDdrFrameStride;
     std::memcpy(ddrMap_ + bankOff, rgb565le, len);
     __sync_synchronize();
+    if (!ddrMemSync_ && ddrMemFlush_) {
+        if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
+            setErr("sendRgb565FrameDdr: cache clean failed");
+            return false;
+        }
+        __sync_synchronize();
+    }
 
     bool saw_busy = false;
     bool saw_kick = false;

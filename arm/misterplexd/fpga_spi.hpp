@@ -91,6 +91,12 @@ public:
     // Frame must be 320×240×2 = 153600 B. bank 0 → 0x30000000, bank 1 → 0x30040000.
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
+    // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
+    // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
+    // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
+    // sees all stores before the DDR doorbell is signalled.
+    void setDdrMemSync(bool on);
+    void setDdrMemFlush(bool on) { ddrMemFlush_ = on; }
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -222,6 +228,8 @@ private:
     int ddrMemFd_ = -1;
     uint8_t* ddrMap_ = nullptr;
     size_t ddrMapLen_ = 0;
+    bool ddrMemSync_ = true;
+    bool ddrMemFlush_ = false;
     uint32_t doorbellSeq_ = 0;
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
