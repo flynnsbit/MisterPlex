@@ -200,7 +200,7 @@ private:
             return 0;
         if (age <= kVisibleMs - kFadeMs)
             return 255;
-        return static_cast<int>(((kVisibleMs - age) * 255) / kFadeMs);
+        return std::max<int>(1, static_cast<int>(((kVisibleMs - age) * 255) / kFadeMs));
     }
 
     static int skipAlphaFor(const Snapshot& s, int64_t nowMs) {
@@ -209,7 +209,7 @@ private:
             return 0;
         if (age <= kSkipVisibleMs - 300)
             return 255;
-        return static_cast<int>(((kSkipVisibleMs - age) * 255) / 300);
+        return std::max<int>(1, static_cast<int>(((kSkipVisibleMs - age) * 255) / 300));
     }
 
     static OverlayRect panelBounds(int w, int h) {
