@@ -452,8 +452,16 @@ void MediaPlayer::stop() {
     killChildren();
     if (thr_.joinable())
         thr_.join();
+    const int64_t finalPos = positionMs_.load();
+    int64_t finalDur = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        finalDur = durationMs_;
+    }
     playing_.store(false);
     paused_.store(false);
+    if (onProgress_)
+        onProgress_("stopped", finalPos, finalDur);
     {
         // Drop session URL so post-stop seekMs cannot restart without a new playMedia.
         std::lock_guard<std::mutex> lock(mu_);
@@ -477,8 +485,6 @@ void MediaPlayer::stop() {
     paintIdle();
     startIdle();
     startOsdPoll();
-    if (onProgress_)
-        onProgress_("stopped", 0, 0);
 }
 
 void MediaPlayer::pause() {
@@ -1457,6 +1463,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
+        auto lastProgress = t0;
 
         // Wait for session end: stop/seek, or both pumps exit.
         while (!stop_.load()) {
@@ -1475,6 +1482,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count();
             int64_t tms = startMs + elapsed;
             positionMs_.store(tms);
+            if (onProgress_ && now - lastProgress >= std::chrono::seconds(1)) {
+                lastProgress = now;
+                onProgress_("playing", tms, durationMs);
+            }
             if (durationMs > 0 && tms >= durationMs) {
                 log("media: STREAM audio-only reached duration");
                 break;

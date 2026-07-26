@@ -55,6 +55,16 @@ std::string httpGet(const std::string& url, int timeoutSec = 15,
     return out;
 }
 
+std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>>& headers) {
+    std::ostringstream args;
+    for (const auto& h : headers) {
+        if (h.first.empty())
+            continue;
+        args << " -H " << shellQuote(h.first + ": " + h.second);
+    }
+    return args.str();
+}
+
 std::string makeSessionId() {
     static std::atomic<uint32_t> n{1};
     std::ostringstream o;
@@ -298,6 +308,13 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
     if (!token.empty())
         o << "X-Plex-Token: " << token << "\r\n";
     return o.str();
+}
+
+bool plexHttpGetNoBody(const std::string& url,
+                       const std::vector<std::pair<std::string, std::string>>& headers,
+                       int timeoutSec) {
+    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers));
+    return !body.empty();
 }
 
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
