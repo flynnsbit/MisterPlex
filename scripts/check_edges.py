@@ -15,18 +15,20 @@ Exit code 0 = all four edges correct.
 """
 import subprocess
 import sys
+import os
 
 import numpy as np
 from PIL import Image
 
-DEV = "/dev/video4"
-CAP = "/tmp/edge_cap.png"
+DEV = os.environ.get("HDMI_DEV", "/dev/video4")
+CAP = os.environ.get("EDGE_CAP", "build/edge_cap.png")
 WARMUP = 60
 
 MAX_EDGE_PX = 9  # widest a single source column may legitimately appear
 
 
 def capture(path=CAP):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "v4l2",
          "-input_format", "yuyv422", "-video_size", "1920x1080", "-i", DEV,
