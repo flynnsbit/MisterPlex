@@ -28,18 +28,22 @@ static bool ffmpegGold(const char* h264, const char* yuvOut) {
 
 int main(int argc, char** argv) {
 
+
     const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.264";
     auto blob = readFile(path);
     if (blob.empty()) {
         if (std::system("python3 scripts/gen_test_annexb_real.py build/plex_real_baseline.264") !=
+
 
             0) {
             std::printf("FAIL: no bitstream\n");
             return 1;
         }
 
+
         blob = readFile("build/plex_real_baseline.264");
         path = "build/plex_real_baseline.264";
+
 
     }
 

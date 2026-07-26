@@ -18,7 +18,9 @@ static std::vector<uint8_t> readFile(const char* path) {
 
 int main(int argc, char** argv) {
 
+
     const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.264";
+
 
     auto blob = readFile(path);
     if (blob.empty()) {

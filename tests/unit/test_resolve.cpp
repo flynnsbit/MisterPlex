@@ -134,10 +134,12 @@ int main() {
     // Local path + direct URL still resolve without preferDirect flag
     auto directLocal =
 
+
         resolvePlayTarget("/media/fat/misterplex/plex_real_baseline.264", "", "", 0, true, {},
                           true);
     CHECK(directLocal.ok &&
           directLocal.playable == "/media/fat/misterplex/plex_real_baseline.264");
+
 
     // preferDirectH264 does not alter local/http passthrough detail
     auto directUrl =

@@ -16,6 +16,7 @@ static std::vector<uint8_t> readFile(const char* path) {
 
 int main(int argc, char** argv) {
 
+
     const char* path = argc > 1 ? argv[1] : "build/plex_real_baseline.264";
     auto blob = readFile(path);
     if (blob.empty()) {
@@ -24,6 +25,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         blob = readFile("build/plex_real_baseline.264");
+
 
     }
     auto c = misterplex::parseAnnexBChain(blob.data(), blob.size());
