@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -22,6 +23,8 @@
 
 namespace misterplex {
 namespace {
+
+constexpr const char* kMainBinary = "/media/fat/MiSTer";
 
 constexpr uint8_t FIO_FILE_TX = 0x53;
 constexpr uint8_t FIO_FILE_TX_DAT = 0x54;
@@ -88,6 +91,13 @@ std::atomic<int>& mainPauseDepth() {
     return d;
 }
 
+// Non-zero while healMainReloadPlex() is deliberately killing and re-execing
+// Main, so the liveness watchdog does not see the gap and fork a second Main.
+std::atomic<int>& mainHealDepth() {
+    static std::atomic<int> d{0};
+    return d;
+}
+
 struct MainPause {
     std::vector<pid_t> pids;
     explicit MainPause(bool enable, unsigned settle_us) {
@@ -115,8 +125,32 @@ struct MainPause {
     MainPause& operator=(const MainPause&) = delete;
 };
 
-// Order: process mutex → flock → MainPause. No system()/fork under the lock.
-// pauseMain: STOP Main for SPI exclusivity (VGA-safe).
+// Read the scheduler state character from /proc/<pid>/stat. 'T' = stopped by a
+// signal, which for Main means SIGSTOP from a MainPause that never released.
+// stat is "pid (comm) state ..." and comm may contain spaces or ')', so scan
+// back from the LAST ')' rather than tokenising forward.
+char misterProcState(pid_t p) {
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/%d/stat", static_cast<int>(p));
+    int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return 0;
+    char buf[256]{};
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0)
+        return 0;
+    buf[n] = 0;
+    const char* close_paren = std::strrchr(buf, ')');
+    if (!close_paren)
+        return 0;
+    const char* s = close_paren + 1;
+    while (*s == ' ')
+        ++s;
+    return *s;
+}
+
+// Order: process mutex → flock → MainPause. No system()/fork under the lock.// pauseMain: STOP Main for SPI exclusivity (VGA-safe).
 // settle_us: extra usleep after STOP — use 0 on per-frame DDR kick; 300 on long ops.
 struct SpiExclusive {
     std::lock_guard<std::recursive_mutex> mu;
@@ -158,12 +192,67 @@ bool gpiUserMode(volatile uint32_t* map) {
 
 FpgaSpi::~FpgaSpi() { close(); }
 
+bool FpgaSpi::mainPaused() { return mainPauseDepth().load() > 0; }
+
+bool FpgaSpi::mainAlive() { return !findMisterPids().empty(); }
+
+void FpgaSpi::resumeStrandedMain() {
+    // Never fight a pause we are legitimately holding right now.
+    if (mainPauseDepth().load() > 0)
+        return;
+    for (pid_t p : findMisterPids()) {
+        if (misterProcState(p) == 'T')
+            kill(p, SIGCONT);
+    }
+}
+
+namespace {
+
+// async-signal-safe enough: kill()/open()/read()/close() are all on the safe
+// list, and we re-raise with the default handler so the crash still surfaces.
+void crashGuardHandler(int sig) {
+    mainPauseDepth().store(0);
+    for (pid_t p : findMisterPids())
+        kill(p, SIGCONT);
+    std::signal(sig, SIG_DFL);
+    ::raise(sig);
+}
+
+} // namespace
+
+void FpgaSpi::installCrashGuard() {
+    // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
+    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
+        std::signal(sig, crashGuardHandler);
+}
+
+bool FpgaSpi::ensureMainAlive(const char* plexRbf) {
+    if (mainHealDepth().load() > 0)
+        return false; // a deliberate heal is mid-flight; do not race it
+    if (!findMisterPids().empty())
+        return false;
+    return healMainReloadPlex(plexRbf);
+}
+
 bool FpgaSpi::healMainReloadPlex(const char* plexRbf) {
     // Product path until present kicks leave SPI: after play, Main does not
     // service F12/MiSTer_cmd until process restart (bus left inconsistent).
     // Only called after play threads join (no concurrent SPI).
+    //
+    // No Main binary means this is not a MiSTer (dev host, unit tests): there is
+    // nothing to supervise, and forking a doomed exec would just stall the caller
+    // for the length of the retry loop.
+    if (::access(kMainBinary, X_OK) != 0)
+        return false;
     if (!plexRbf || !plexRbf[0])
         plexRbf = "/media/fat/_Utility/Plex.rbf";
+    // Nothing on the board respawns Main (inittab uses sysinit, not respawn), so
+    // between the kill below and the re-exec the system has no Main at all. Mark
+    // the window so the liveness watchdog does not fork a competing one.
+    struct HealMark {
+        HealMark() { mainHealDepth().fetch_add(1); }
+        ~HealMark() { mainHealDepth().fetch_sub(1); }
+    } heal_mark;
     // CONT leftovers, then terminate and reap (avoid zombies — they break cmd path).
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
@@ -191,36 +280,47 @@ bool FpgaSpi::healMainReloadPlex(const char* plexRbf) {
     }
     usleep(200000);
     // Double-fork so Main is reparented to init (no zombie when companion is parent).
-    pid_t pid = fork();
-    if (pid < 0)
-        return false;
-    if (pid == 0) {
-        pid_t pid2 = fork();
-        if (pid2 < 0)
-            _exit(127);
-        if (pid2 > 0)
-            _exit(0); // intermediate exits; init adopts Main
-        setsid();
-        int devnull = ::open("/dev/null", O_RDWR);
-        if (devnull >= 0) {
-            dup2(devnull, 0);
-            dup2(devnull, 1);
-            dup2(devnull, 2);
-            if (devnull > 2)
-                ::close(devnull);
+    // Retry: leaving the board with no Main is unrecoverable without a power cycle,
+    // so a single failed fork/exec must not be the end of it.
+    bool spawned = false;
+    for (int attempt = 0; attempt < 3 && !spawned; ++attempt) {
+        pid_t pid = fork();
+        if (pid < 0) {
+            usleep(200000);
+            continue;
         }
-        chdir("/media/fat");
-        execl("/media/fat/MiSTer", "/media/fat/MiSTer", static_cast<char*>(nullptr));
-        _exit(127);
+        if (pid == 0) {
+            pid_t pid2 = fork();
+            if (pid2 < 0)
+                _exit(127);
+            if (pid2 > 0)
+                _exit(0); // intermediate exits; init adopts Main
+            setsid();
+            int devnull = ::open("/dev/null", O_RDWR);
+            if (devnull >= 0) {
+                dup2(devnull, 0);
+                dup2(devnull, 1);
+                dup2(devnull, 2);
+                if (devnull > 2)
+                    ::close(devnull);
+            }
+            chdir("/media/fat");
+            execl(kMainBinary, kMainBinary, static_cast<char*>(nullptr));
+            _exit(127);
+        }
+        int st = 0;
+        waitpid(pid, &st, 0); // reap intermediate
+        // Wait for Main to create cmd pipe and settle
+        for (int i = 0; i < 60; ++i) {
+            if (!findMisterPids().empty() && ::access("/dev/MiSTer_cmd", W_OK) == 0) {
+                spawned = true;
+                break;
+            }
+            usleep(100000);
+        }
     }
-    int st = 0;
-    waitpid(pid, &st, 0); // reap intermediate
-    // Wait for Main to create cmd pipe and settle
-    for (int i = 0; i < 60; ++i) {
-        if (!findMisterPids().empty() && ::access("/dev/MiSTer_cmd", W_OK) == 0)
-            break;
-        usleep(100000);
-    }
+    if (!spawned)
+        return false;
     usleep(800000);
     int cfd = ::open("/dev/MiSTer_cmd", O_WRONLY | O_NONBLOCK);
     if (cfd < 0)

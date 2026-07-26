@@ -106,6 +106,31 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
 
+### Main liveness hardening (**DONE** 2026-07-26)
+
+`/etc/inittab` runs Main as `::sysinit:/media/fat/MiSTer &` — **sysinit, not respawn** — so
+nothing on the board ever restarts it, yet `healMainReloadPlex()` kills and re-execs Main on
+every stop/redeploy. An interrupted heal leaves the board with **no Main**: no F12, no OSD,
+no menu, until a power cycle. Separately, SPI exclusivity SIGSTOPs Main, so a daemon death
+inside that window strands Main stopped forever — and the OSD poller/idle painter opened that
+window several times a second, forever.
+
+- [x] G-MAIN1 stranded Main auto-resumed — live trace `T` → `R` in ~100 ms
+- [x] G-MAIN2 dead Main auto-relaunched — killed `25909` → watchdog brought up `26493`, core=Plex
+- [x] G-MAIN3 unit regression — `tests/unit/test_main_guard.cpp` in `make unit`
+
+Guards: `resumeStrandedMain()` (startup + 600 ms watchdog), `installCrashGuard()` (fatal
+signals resume Main then re-raise), `ensureMainAlive()` (relaunch after ~3 s of absence,
+`mainHealDepth()`-guarded so it never races a deliberate heal), `healMainReloadPlex()` retries
+the fork/exec 3× and no-ops off-device. Idle SPI backoff: OSD poll 1 Hz idle / 4 Hz playing,
+static idle repaint 2 s → 30 s.
+
+**`scripts/deploy_misterplexd.sh` was shipping stale binaries** — it only cross-compiled
+`if [[ ! -f "$BIN" ]]`, so once `build/arm/misterplexd` existed no later deploy ever rebuilt
+it. The first hardware run of this fix "failed" only because the binary on the box predated
+it (`strings` proved it). It now always runs `make arm-plexd`. Check this first whenever a
+fix appears to have no effect on hardware.
+
 ### Fallout / follow-ups
 
 - `tests/hw/test_fbar_fast.sh` and `tests/hw/test_menu_osd.sh` are **OBSOLETE on v3** (they drive the removed

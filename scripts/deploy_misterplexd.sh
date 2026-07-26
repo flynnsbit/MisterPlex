@@ -7,10 +7,14 @@ USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 BIN="$ROOT/build/arm/misterplexd"
 
+# Always let make decide. Guarding this with `if [[ ! -f "$BIN" ]]` meant that
+# once the binary existed it was never rebuilt again, so every subsequent deploy
+# silently shipped a stale daemon and "verified" fixes that were not on the box.
+export PATH="${PATH}:/home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin"
+make -C "$ROOT" arm-plexd
 if [[ ! -f "$BIN" ]]; then
-  echo "Building arm misterplexd..."
-  export PATH="${PATH}:/home/shawn/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin"
-  make -C "$ROOT" arm-plexd
+  echo "arm-plexd did not produce $BIN" >&2
+  exit 1
 fi
 
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \

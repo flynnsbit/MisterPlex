@@ -156,7 +156,13 @@ void MediaPlayer::startOsdPoll() {
                     applyOsd(word);
                 }
             }
-            for (int i = 0; i < 5 && osdRun_.load(); ++i)
+            // Every status read SIGSTOPs Main for the SPI critical section. While
+            // playing that is unavoidable (and stop() heals Main afterwards), but
+            // while idle nothing heals, so a 4 Hz drumbeat forever is what
+            // eventually wedges Main and kills F12. Idle needs only enough
+            // responsiveness to notice a menu change: 1 Hz.
+            const int quietMs = playing_.load() ? 250 : 1000;
+            for (int slept = 0; slept < quietMs && osdRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     });
@@ -246,9 +252,14 @@ void MediaPlayer::startIdle() {
             const bool moving = idleMode() == IdleMode::Screensaver;
             if (moving)
                 idlePhase_.fetch_add(1);
-            // Screensaver drifts at ~10 fps; a static idle only needs a slow
-            // keepalive repaint in case the core is reloaded underneath us.
-            const int stepMs = moving ? 100 : 2000;
+            // A static idle screen is already latched in the frame store, so
+            // repainting it buys nothing except another SIGSTOP of Main every
+            // couple of seconds — forever, with no heal to follow. applyOsd()
+            // and the session-end path repaint on the transitions that matter;
+            // this slow sweep is only a safety net for a core reload underneath
+            // us. The screensaver still moves at ~10 fps because the user asked
+            // for motion.
+            const int stepMs = moving ? 100 : 30000;
             for (int slept = 0; slept < stepMs && idleRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }

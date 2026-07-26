@@ -24,6 +24,45 @@ public:
     // Glitches video briefly; required until DDR kick is memory-mapped (no SPI).
     static bool healMainReloadPlex(const char* plexRbf = "/media/fat/_Utility/Plex.rbf");
 
+    // --- Main-pause safety net -------------------------------------------------
+    // SPI exclusivity is implemented by SIGSTOPing Main for the critical section
+    // (see MainPause in fpga_spi.cpp). If misterplexd dies inside that window —
+    // crash, SIGKILL, OOM — nothing ever sends SIGCONT and Main is left stopped
+    // FOREVER: no F12, no OSD, no /dev/MiSTer_cmd. The user sees "the core killed
+    // Main". Before the OSD poller and idle painter existed this window only
+    // opened during playback; they now open it several times a second, forever,
+    // so the hole has to be closed properly.
+    //
+    // resumeStrandedMain(): SIGCONT any MiSTer left in state T while we hold no
+    // pause of our own. Safe to call from anywhere — it only reads /proc and
+    // never touches SPI. Call at startup (repairs a previous death) and from a
+    // slow watchdog (repairs a hang inside the critical section).
+    static void resumeStrandedMain();
+
+    // installCrashGuard(): resume Main from fatal-signal handlers, then re-raise
+    // with the default disposition so the crash is still reported normally.
+    // Covers everything except SIGKILL, which resumeStrandedMain() mops up on the
+    // next start.
+    static void installCrashGuard();
+
+    // True while this process holds Main stopped for an SPI critical section.
+    static bool mainPaused();
+
+    // False when no MiSTer process exists at all (see ensureMainAlive).
+    static bool mainAlive();
+
+    // --- Main liveness ---------------------------------------------------------
+    // /etc/inittab starts Main with `::sysinit:/media/fat/MiSTer &` — sysinit,
+    // NOT respawn — so nothing on the system ever restarts it. healMainReloadPlex()
+    // deliberately kills Main and re-execs it, which means any interruption of
+    // that sequence (daemon crash, SIGKILL, failed exec) leaves the board with no
+    // Main at all: no F12, no OSD, no menu, until the user power-cycles.
+    //
+    // ensureMainAlive(): relaunch Main + reload the Plex core if no MiSTer process
+    // exists and we are not in the middle of a deliberate heal. Returns true if it
+    // had to act. Safe to call from a watchdog.
+    static bool ensureMainAlive(const char* plexRbf = "/media/fat/_Utility/Plex.rbf");
+
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
     // For Plex core F1 frame store, index is typically 1.
     bool sendFileTx(const uint8_t* data, size_t len, uint8_t index = 1);

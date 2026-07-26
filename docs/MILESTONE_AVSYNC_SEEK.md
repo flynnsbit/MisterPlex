@@ -267,10 +267,71 @@ knob worked. Polling is read-only, full stop.
 
 ---
 
-## Gates
+## Main liveness: why F12 kept dying (2026-07-26)
 
-| Gate | Status |
-|------|--------|
+**Symptom:** "the Plex RBF has crashed MiSTer Main again, I can't hit F12 any longer."
+
+**It was not a crash and not the RBF.** `/etc/inittab` starts Main with:
+
+```
+::sysinit:/media/fat/MiSTer &
+```
+
+`sysinit`, **not** `respawn`. Nothing on the board ever restarts Main. Meanwhile
+`healMainReloadPlex()` deliberately SIGTERM/SIGKILLs Main and re-execs it after every
+play (to restore F12 after SPI present traffic), and `MediaPlayer::stop()` runs that on
+daemon shutdown — i.e. on every redeploy. Any interruption of that window (daemon crash,
+`killall -9` from the deploy script, a failed fork) leaves the board with **no Main
+process at all**: no F12, no OSD, no menu, until a power cycle. Confirmed live — `ps`
+showed zero `/media/fat/MiSTer` processes while the core ran fine.
+
+A second, related hole: SPI exclusivity works by **SIGSTOPing Main** (`MainPause`). If the
+daemon dies inside that window nothing sends SIGCONT and Main is stopped forever. Before
+the OSD poller and idle painter existed, that window only opened during playback; they
+opened it several times a second, forever.
+
+### Fixes
+
+| Guard | What it does |
+|-------|--------------|
+| `FpgaSpi::resumeStrandedMain()` | SIGCONTs any Main left in state `T` while we hold no pause. Called at startup (repairs a previous death) and from a 600 ms watchdog. |
+| `FpgaSpi::installCrashGuard()` | SIGSEGV/SIGABRT/SIGBUS/SIGILL/SIGFPE/SIGQUIT handlers resume Main, then re-raise with the default disposition. |
+| `FpgaSpi::ensureMainAlive()` | Relaunches Main + reloads the Plex core when no MiSTer process exists. Runs at startup and from the watchdog after 5 consecutive misses (~3 s), guarded by `mainHealDepth()` so it never races a deliberate heal. |
+| `healMainReloadPlex()` retry | The fork/exec is retried up to 3× and the function reports failure instead of silently leaving the board Main-less. Returns early on a non-MiSTer host (no `/media/fat/MiSTer`). |
+| Idle SPI backoff | OSD poll 4 Hz while playing, **1 Hz idle**; static idle repaint 2 s → **30 s**. Every SPI op SIGSTOPs Main, and while idle nothing heals afterwards. |
+
+### Evidence (live hardware)
+
+```
+== stranded Main (leaked SIGSTOP) ==
+main_pid=26493
+TRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      # T -> R within ~100 ms
+== Main killed outright ==
+killing main_pid=25909
+immediately_after_kill=[]
+after_watchdog=[26493] state=R      # new pid, core=Plex
+```
+
+`tests/unit/test_main_guard.cpp` pins the detection side on the build host using a symlink
+to `sleep` named `MiSTer` (a shell script will not do — the kernel puts the interpreter in
+`argv[0]`, and the fixture path must not contain the string `misterplex`, which
+`findMisterPids()` filters out).
+
+### The deploy script was shipping stale binaries
+
+`scripts/deploy_misterplexd.sh` only cross-compiled when the output was missing:
+
+```bash
+if [[ ! -f "$BIN" ]]; then make -C "$ROOT" arm-plexd; fi
+```
+
+Once `build/arm/misterplexd` existed it was never rebuilt, so every later deploy pushed an
+old daemon — and the first hardware run of this fix "failed" purely because the binary on
+the box did not contain it (`strings` showed the new log lines missing). It now always runs
+`make arm-plexd` and fails loudly if no binary is produced. Worth remembering when a fix
+appears to have no effect on hardware.
+
+---
 | G-AV0 AUDIO_DELAY_MS=0 | **PASS** (baseline measure; log `delay_ms=0`) |
 | G-AV1 Trek-matched blip | **PASS** (assets + PMS 9/10) |
 | G-AV2 measure harness | **PASS** (`avsync_report.txt` n=12 flash↔beep) |
@@ -289,6 +350,9 @@ knob worked. Polling is read-only, full stop.
 | G-OSD4 offset moves lipsync | **PASS** (+140 ms → −156 ms measured) |
 | G-OSD5 arrow-key nav | **PENDING** — uinput arrows don't register; needs eyes-on |
 | G-IDLE idle screen | **PASS** (`/tmp/idle3.png`, chevron after stop) |
+| G-MAIN1 stranded Main resumed | **PASS** (T -> R in ~100 ms, live) |
+| G-MAIN2 dead Main relaunched | **PASS** (new pid + core=Plex, live) |
+| G-MAIN3 guard unit | **PASS** (`test_main_guard` in `make unit`) |
 
 ---
 
