@@ -2,10 +2,14 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_cadence.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/colorbars.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_tone.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddram_frame_rd.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_memtest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bitstream_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/nalu_scanner.sv

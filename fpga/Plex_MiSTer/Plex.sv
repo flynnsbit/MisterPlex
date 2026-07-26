@@ -23,7 +23,7 @@ assign ADC_BUS  = 'Z;
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
+// SDRAM is driven by the bring-up controller/tester below (single MiSTer stick).
 // DDRAM driven by ddram_frame_rd (Phase 3.1b); not tied off.
 
 assign VGA_SL = 0;
@@ -91,6 +91,10 @@ wire        ioctl_wr;
 wire [26:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire [15:0] ioctl_index;
+wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
+wire fs_wr_ready;
+wire sdram_startup_busy;
+wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
 
 // Core→HPS status (UIO_GET_STATUS / 0x29). See docs/phase3-decode.md layout.
 wire [127:0] status_in;
@@ -135,7 +139,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
-	.ioctl_wait(1'b0)
+	.ioctl_wait(ioctl_wait)
 );
 
 // Playback input capture. MiSTer Main owns/grabs evdev, so commands must arrive
@@ -194,14 +198,153 @@ end
 ///////////////////////   CLOCKS   ///////////////////////////////
 
 wire clk_sys;
+wire clk_sdram;
+wire pll_locked;
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
-	.outclk_0(clk_sys)
+	.outclk_0(clk_sys),
+	.outclk_1(clk_sdram),
+	.locked(pll_locked)
 );
 
 wire reset = RESET | status[0] | buttons[1];
+
+// Refresh interval = floor((f_MHz * 64_000us / 8192 rows) - 1). The
+// counter toggles refresh after REFRESH_CYCLES+1 clocks, so every option
+// refreshes at least as often as the 7.8125us SDRAM row budget.
+`ifdef SDRAM_CLK_133
+localparam int SDRAM_REFRESH_CYCLES = 1040;
+`elsif SDRAM_CLK_120
+localparam int SDRAM_REFRESH_CYCLES = 936;
+`elsif SDRAM_CLK_110
+localparam int SDRAM_REFRESH_CYCLES = 858;
+`elsif SDRAM_CLK_80
+localparam int SDRAM_REFRESH_CYCLES = 624;
+`elsif SDRAM_CLK_75
+localparam int SDRAM_REFRESH_CYCLES = 584;
+`elsif SDRAM_CLK_50
+localparam int SDRAM_REFRESH_CYCLES = 389;
+`else
+localparam int SDRAM_REFRESH_CYCLES = 780;
+`endif
+
+// Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
+// the stick, publishes PLXM, then hands the port to the B2 frame store.
+wire        sdram_ctl_sel;
+wire [26:1] sdram_ctl_addr;
+wire [15:0] sdram_dout;
+wire [15:0] sdram_ctl_din;
+wire        sdram_ctl_wr;
+wire        sdram_ctl_rd;
+wire  [1:0] sdram_ctl_bs;
+wire        sdram_ready;
+wire        sdram_ctl_refresh;
+wire        sdram_test_sel;
+wire [26:1] sdram_test_addr;
+wire [15:0] sdram_test_din;
+wire        sdram_test_wr;
+wire        sdram_test_rd;
+wire  [1:0] sdram_test_bs;
+wire        sdram_test_refresh;
+wire        frame_sdram_sel;
+wire [26:1] frame_sdram_addr;
+wire [15:0] frame_sdram_din;
+wire        frame_sdram_wr;
+wire        frame_sdram_rd;
+wire  [1:0] frame_sdram_bs;
+wire        frame_sdram_refresh;
+wire  [3:0] sdram_test_state;
+wire  [3:0] sdram_size_code;
+wire [15:0] sdram_error_count;
+wire [15:0] sdram_read_sample;
+wire        sdram_first_fail_valid;
+wire [25:0] sdram_first_fail_addr;
+wire [15:0] sdram_first_fail_expect;
+wire        sdram_test_done;
+wire        sdram_test_pass;
+wire [15:0] frame_underruns;
+wire  [7:0] frame_sdram_state;
+wire        sdram_test_active = !sdram_test_done;
+
+sdram_memtest #(
+	.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
+) sdram_test (
+	.clk(clk_sdram),
+	.reset(reset | ~pll_locked),
+	.sdram_dout(sdram_dout),
+	.sdram_ready(sdram_ready),
+	.sdram_sel(sdram_test_sel),
+	.sdram_addr(sdram_test_addr),
+	.sdram_din(sdram_test_din),
+	.sdram_wr(sdram_test_wr),
+	.sdram_rd(sdram_test_rd),
+	.sdram_bs(sdram_test_bs),
+	.sdram_refresh(sdram_test_refresh),
+	.state_code(sdram_test_state),
+	.size_code(sdram_size_code),
+	.error_count(sdram_error_count),
+	.read_sample(sdram_read_sample),
+	.first_fail_valid(sdram_first_fail_valid),
+	.first_fail_addr(sdram_first_fail_addr),
+	.first_fail_expect(sdram_first_fail_expect),
+	.done(sdram_test_done),
+	.pass(sdram_test_pass)
+);
+wire _sdram_test_pass_unused = sdram_test_pass;
+
+assign sdram_ctl_sel     = sdram_test_active ? sdram_test_sel     : frame_sdram_sel;
+assign sdram_ctl_addr    = sdram_test_active ? sdram_test_addr    : frame_sdram_addr;
+assign sdram_ctl_din     = sdram_test_active ? sdram_test_din     : frame_sdram_din;
+assign sdram_ctl_wr      = sdram_test_active ? sdram_test_wr      : frame_sdram_wr;
+assign sdram_ctl_rd      = sdram_test_active ? sdram_test_rd      : frame_sdram_rd;
+assign sdram_ctl_bs      = sdram_test_active ? sdram_test_bs      : frame_sdram_bs;
+assign sdram_ctl_refresh = sdram_test_active ? sdram_test_refresh : frame_sdram_refresh;
+
+reg sdram_test_done_s1, sdram_test_done_s2;
+always @(posedge clk_sys) begin
+	if (reset) begin
+		sdram_test_done_s1 <= 1'b0;
+		sdram_test_done_s2 <= 1'b0;
+	end else begin
+		sdram_test_done_s1 <= sdram_test_done;
+		sdram_test_done_s2 <= sdram_test_done_s1;
+	end
+end
+assign sdram_startup_busy = !sdram_test_done_s2;
+
+sdram sdram_ctl (
+	.init(reset | ~pll_locked),
+	.clk(clk_sdram),
+	.SDRAM_DQ(SDRAM_DQ),
+	.SDRAM_A(SDRAM_A),
+	.SDRAM_DQML(SDRAM_DQML),
+	.SDRAM_DQMH(SDRAM_DQMH),
+	.SDRAM_BA(SDRAM_BA),
+	.SDRAM_nCS(SDRAM_nCS),
+	.SDRAM_nWE(SDRAM_nWE),
+	.SDRAM_nRAS(SDRAM_nRAS),
+	.SDRAM_nCAS(SDRAM_nCAS),
+	.SDRAM_CKE(SDRAM_CKE),
+	.SDRAM_CLK(SDRAM_CLK),
+	.SDRAM_EN(1'b1),
+	.sel(sdram_ctl_sel),
+	.addr(sdram_ctl_addr),
+	.dout(sdram_dout),
+	.din(sdram_ctl_din),
+	.wr(sdram_ctl_wr),
+	.bs(sdram_ctl_bs),
+	.rd(sdram_ctl_rd),
+	.ready(sdram_ready),
+	.refresh(sdram_ctl_refresh),
+	.cpsel(1'b0),
+	.cpaddr(26'd0),
+	.cpdin(16'd0),
+	.cprd(),
+	.cpreq(1'b0),
+	.cpbusy()
+);
 
 // Map OSD content FPS
 reg [7:0] content_fps;
@@ -217,7 +360,6 @@ end
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
 // F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
-wire is_frame_dl = (ioctl_index[5:0] == 6'd1);
 wire is_audio_dl = (ioctl_index[5:0] == 6'd2);
 wire is_stream_dl = (ioctl_index[5:0] == 6'd3);
 
@@ -273,6 +415,15 @@ ddram_frame_rd #(
 	.status_osd(status[15:0]),
 	.input_cmd_valid(playback_cmd_valid),
 	.input_cmd(playback_cmd),
+	.sdram_test_state(sdram_test_state),
+	.sdram_size_code(sdram_size_code),
+	.sdram_error_count(sdram_error_count),
+	.sdram_read_sample(sdram_read_sample),
+	.sdram_first_fail_valid(sdram_first_fail_valid),
+	.sdram_first_fail_addr(sdram_first_fail_addr),
+	.sdram_first_fail_expect(sdram_first_fail_expect),
+	.frame_sdram_state(frame_sdram_state),
+	.frame_underrun_count(frame_underruns),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -287,6 +438,7 @@ ddram_frame_rd #(
 	.wr_pixel(ddr_wr_pixel),
 	.wr_reset_ptr(ddr_wr_reset),
 	.swap_req(ddr_swap),
+	.wr_ready(fs_wr_ready && !sdram_startup_busy),
 	.busy(ddr_busy),
 	.frames_done(ddr_frames)
 );
@@ -299,7 +451,7 @@ wire        af_active;
 
 audio_ingest ainst (
 	.clk(clk_sys),
-	.reset(reset),
+	.reset(reset | sdram_startup_busy),
 	.ioctl_download(ioctl_download),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_dout(ioctl_dout),
@@ -396,10 +548,13 @@ wire [31:0] disp_i, cont_i;
 wire advance;
 // swap_pending declared above (fed back into ddram_frame_rd hold-off)
 
-present_core present (
+present_core #(
+	.SDRAM_REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
+) present (
 	.clk(clk_sys),
+	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	.reset(reset),
+	.reset(reset | sdram_startup_busy),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
@@ -414,6 +569,16 @@ present_core present (
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),
 	.fs_swap(fs_swap),
+	.fs_wr_ready(fs_wr_ready),
+	.sdram_dout(sdram_dout),
+	.sdram_ready(sdram_ready),
+	.sdram_sel(frame_sdram_sel),
+	.sdram_addr(frame_sdram_addr),
+	.sdram_din(frame_sdram_din),
+	.sdram_wr(frame_sdram_wr),
+	.sdram_rd(frame_sdram_rd),
+	.sdram_bs(frame_sdram_bs),
+	.sdram_refresh(frame_sdram_refresh),
 	.af_wr_en(af_wr_en),
 	.af_wr_data(af_wr_data),
 	// OSD T[10] or SPI status bit 10 pulses flush
@@ -435,7 +600,9 @@ present_core present (
 	.stat_wr_count(wr_count),
 	.stat_has_audio(has_audio),
 	.stat_audio_underrun(audio_underrun),
-	.stat_swap_pending(swap_pending)
+	.stat_swap_pending(swap_pending),
+	.stat_frame_underruns(frame_underruns),
+	.stat_frame_sdram_state(frame_sdram_state)
 );
 
 assign CLK_VIDEO = clk_sys;

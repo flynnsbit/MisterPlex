@@ -1,8 +1,27 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
 
-module present_core (
+module present_core #(
+	parameter int SDRAM_REFRESH_CYCLES = 780,
+`ifdef FRAME_CMD_FIFO_AW4
+	parameter int FRAME_CMD_FIFO_AW = 4,
+`elsif FRAME_CMD_FIFO_AW6
+	parameter int FRAME_CMD_FIFO_AW = 6,
+`else
+	parameter int FRAME_CMD_FIFO_AW = 5,
+`endif
+`ifdef FRAME_LINES_1
+	parameter int FRAME_LINE_COUNT = 1
+`elsif FRAME_LINES_4
+	parameter int FRAME_LINE_COUNT = 4
+`elsif FRAME_LINES_8
+	parameter int FRAME_LINE_COUNT = 8
+`else
+	parameter int FRAME_LINE_COUNT = 4
+`endif
+)(
 	input  wire        clk,
+	input  wire        clk_sdram,
 	input  wire        clk_audio,
 	input  wire        reset,
 
@@ -19,6 +38,18 @@ module present_core (
 	input  wire [15:0] fs_wr_pixel,
 	input  wire        fs_wr_reset,
 	input  wire        fs_swap,
+	output wire        fs_wr_ready,
+
+	// SDRAM-backed frame_store port
+	input  wire [15:0] sdram_dout,
+	input  wire        sdram_ready,
+	output wire        sdram_sel,
+	output wire [26:1] sdram_addr,
+	output wire [15:0] sdram_din,
+	output wire        sdram_wr,
+	output wire        sdram_rd,
+	output wire  [1:0] sdram_bs,
+	output wire        sdram_refresh,
 
 	// audio_fifo write (from audio_ingest)
 	input  wire        af_wr_en,
@@ -44,7 +75,9 @@ module present_core (
 	output wire [18:0] stat_wr_count,
 	output wire        stat_has_audio,
 	output wire        stat_audio_underrun,
-	output wire        stat_swap_pending
+	output wire        stat_swap_pending,
+	output wire [15:0] stat_frame_underruns,
+	output wire  [7:0] stat_frame_sdram_state
 );
 
 	wire frame_start;
@@ -144,16 +177,23 @@ module present_core (
 	wire       swap_pending;
 	wire [18:0] wr_count;
 	wire        wr_done;
+	wire [15:0] frame_underruns;
+	wire [7:0]  frame_sdram_state;
 
 	frame_store #(
 		.WIDTH(320),
-		.HEIGHT(240)
+		.HEIGHT(240),
+		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES),
+		.CMD_FIFO_AW(FRAME_CMD_FIFO_AW),
+		.LINE_COUNT(FRAME_LINE_COUNT)
 	) fstore (
 		.clk(clk),
+		.clk_sdram(clk_sdram),
 		.reset(reset),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),
+		.wr_ready(fs_wr_ready),
 		.wr_count(wr_count),
 		.wr_frame_done(wr_done),
 		.rd_x(store_x),
@@ -163,11 +203,22 @@ module present_core (
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.sdram_dout(sdram_dout),
+		.sdram_ready(sdram_ready),
+		.sdram_sel(sdram_sel),
+		.sdram_addr(sdram_addr),
+		.sdram_din(sdram_din),
+		.sdram_wr(sdram_wr),
+		.sdram_rd(sdram_rd),
+		.sdram_bs(sdram_bs),
+		.sdram_refresh(sdram_refresh),
 		// Request on DMA/F1 complete; apply only at display frame_start (vsync)
 		.swap_banks(fs_swap),
 		.vsync_pulse(fstart),
 		.has_frame(has_frame),
-		.swap_pending(swap_pending)
+		.swap_pending(swap_pending),
+		.underrun_count(frame_underruns),
+		.debug_state(frame_sdram_state)
 	);
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
@@ -269,5 +320,7 @@ module present_core (
 	assign stat_has_audio     = has_audio;
 	assign stat_audio_underrun = fifo_underrun;
 	assign stat_swap_pending  = swap_pending;
+	assign stat_frame_underruns = frame_underruns;
+	assign stat_frame_sdram_state = frame_sdram_state;
 
 endmodule
