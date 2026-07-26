@@ -11,6 +11,11 @@
 //     [31:0]  magic 0x504C5853 ("PLXS")
 //     [47:32] status[15:0]  (the live OSD menu word)
 //     [63:48] seq (monotonic; lets the host reject a torn/stale read)
+//   Input mailbox: 0x3007F108  (one 64-bit word, core -> HPS, no SPI)
+//     [31:0]  magic 0x504C5849 ("PLXI")
+//     [39:32] cmd (1=play/pause, 2=stop, 3=skip fwd, 4=skip back)
+//     [47:40] cmd_seq (increments for every published command)
+//     [63:48] seq (monotonic; lets the host reject a torn/stale read)
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
@@ -35,6 +40,7 @@ module ddram_frame_rd #(
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
 	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
+	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -47,6 +53,8 @@ module ddram_frame_rd #(
 
 	// Live OSD menu word to publish to the HPS (see mailbox layout above).
 	input  wire [15:0] status_osd,
+	input  wire        input_cmd_valid,
+	input  wire  [7:0] input_cmd,
 
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -75,11 +83,15 @@ module ddram_frame_rd #(
 	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
+	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
+	localparam [31:0] MAGIC_I = 32'h504C_5849;
 
 	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;
+	localparam int CMD_FIFO_AW = 2;
+	localparam int CMD_FIFO_N  = 1 << CMD_FIFO_AW;
 
 	assign DDRAM_CLK = clk;
 	assign DDRAM_BE  = 8'hFF;
@@ -114,6 +126,19 @@ module ddram_frame_rd #(
 	reg        mbox_req;
 	reg        mbox_valid;
 	reg [17:0] mbox_hb;
+
+	// Input mailbox FIFO. Human input is sparse, but a tiny queue keeps
+	// commands from being lost while a frame DMA or status publish owns DDR.
+	reg [7:0]  cmd_fifo [0:CMD_FIFO_N-1];
+	reg [CMD_FIFO_AW:0] cmd_fifo_wr, cmd_fifo_rd;
+	wire [CMD_FIFO_AW:0] cmd_fifo_level = cmd_fifo_wr - cmd_fifo_rd;
+	wire cmd_fifo_empty = (cmd_fifo_wr == cmd_fifo_rd);
+	wire cmd_fifo_full  = cmd_fifo_level[CMD_FIFO_AW];
+	wire [CMD_FIFO_AW-1:0] cmd_fifo_wix = cmd_fifo_wr[CMD_FIFO_AW-1:0];
+	wire [CMD_FIFO_AW-1:0] cmd_fifo_rix = cmd_fifo_rd[CMD_FIFO_AW-1:0];
+	wire [7:0] cmd_fifo_head = cmd_fifo[cmd_fifo_rix];
+	reg [15:0] imbox_seq;
+	reg [7:0]  imbox_cmd_seq;
 
 	// Held start while swap_pending (or overlapping edge)
 	reg        hold_start;
@@ -198,6 +223,10 @@ module ddram_frame_rd #(
 			mbox_req       <= 1'b1; // publish once as soon as we go idle
 			mbox_valid     <= 1'b0;
 			mbox_hb        <= 18'd0;
+			cmd_fifo_wr    <= 0;
+			cmd_fifo_rd    <= 0;
+			imbox_seq      <= 16'd0;
+			imbox_cmd_seq  <= 8'd0;
 			hold_start     <= 1'b0;
 			hold_bank      <= 1'b0;
 		end else begin
@@ -211,6 +240,11 @@ module ddram_frame_rd #(
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd != mbox_last) || (mbox_hb == 18'd0))
 				mbox_req <= 1'b1;
+
+			if (input_cmd_valid && (input_cmd != 8'd0) && !cmd_fifo_full) begin
+				cmd_fifo[cmd_fifo_wix] <= input_cmd;
+				cmd_fifo_wr <= cmd_fifo_wr + 1'd1;
+			end
 
 			// Capture doorbell seq whenever we see a new one (even if held)
 			if (db_new_seq) begin
@@ -260,6 +294,17 @@ module ddram_frame_rd #(
 				end
 				// Publish the OSD word in a slot that cannot collide with the
 				// poll above: idle only, no read outstanding, bus free.
+				else if (!cmd_fifo_empty && !poll_pending && poll_div[7:0] == 8'd64
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= INPUT_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1,
+					                   cmd_fifo_head, MAGIC_I};
+					DDRAM_WE       <= 1'b1;
+					imbox_seq      <= imbox_seq + 16'd1;
+					imbox_cmd_seq  <= imbox_cmd_seq + 8'd1;
+					cmd_fifo_rd    <= cmd_fifo_rd + 1'd1;
+				end
 				else if (mbox_req && !poll_pending && poll_div[7:0] == 8'd128
 				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 					DDRAM_ADDR     <= MAILBOX_W;

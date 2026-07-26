@@ -7,6 +7,7 @@ BASE="http://${HOST}:3005"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 HOLD_S="${HOLD_S:-8}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "$USER@$HOST" "$@"
@@ -21,10 +22,10 @@ ssh_m 'grep -E "^(STREAM|PRESENT|STREAM_SKIP)" /media/fat/misterplex/misterplex.
 ssh_m 'grep -q "^STREAM=1" /media/fat/misterplex/misterplex.conf || echo "WARN: STREAM!=1"'
 
 # Prefer real Baseline annex-B already on device; else generate + scp
-LOCAL_AB="/tmp/plex_real_baseline.h264"
-REMOTE_AB="/media/fat/misterplex/plex_real_baseline.h264"
+LOCAL_AB="$ROOT/build/plex_real_baseline.264"
+REMOTE_AB="/media/fat/misterplex/plex_real_baseline.264"
 if [[ ! -f "$LOCAL_AB" ]]; then
-  ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+  mkdir -p "$ROOT/build"
   python3 "$ROOT/scripts/gen_test_annexb_real.py" "$LOCAL_AB"
 fi
 echo "=== push Baseline annex-B ==="
@@ -38,7 +39,7 @@ curl -fsS --get "$BASE/player/playback/playMedia" \
   --data-urlencode "offset=0" \
   --data-urlencode "commandID=101" >/dev/null || true
 sleep 2
-curl -fsS "$BASE/player/timeline/poll?commandID=102" | tee /tmp/stream_tl1.xml | \
+curl -fsS "$BASE/player/timeline/poll?commandID=102" | tee "$ROOT/build/stream_tl1.xml" | \
   grep -Eq 'state="(playing|buffering)"' || {
   echo "timeline not playing; dump log:" >&2
   ssh_m 'tail -80 /media/fat/misterplex/misterplexd.log' >&2

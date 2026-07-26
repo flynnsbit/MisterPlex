@@ -26,11 +26,12 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
-	@python3 $(ROOT)/scripts/gen_test_annexb_real.py /tmp/plex_real_baseline.h264
-	$(ROOT)/build/test_sps_parse /tmp/plex_real_baseline.h264
-	$(ROOT)/build/test_slice_hdr /tmp/plex_real_baseline.h264
-	$(ROOT)/build/test_cavlc_dc /tmp/plex_real_baseline.h264
-	$(ROOT)/build/test_idct_quant /tmp/plex_real_baseline.h264
+	@mkdir -p $(ROOT)/build
+	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_sps_parse $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_slice_hdr $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_cavlc_dc $(ROOT)/build/plex_real_baseline.264
+	$(ROOT)/build/test_idct_quant $(ROOT)/build/plex_real_baseline.264
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh

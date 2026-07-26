@@ -93,7 +93,7 @@ Hard PASS on this path is **product sticky real XOR 0x14**, not DIAG force-pack.
 | **`tests/parse_res_csum_status.py`** | **Hard grade SoT** — host goldens; decode `--status` / `--raw`; class HARD_PASS / CSUM_FAIL_DC_OK |
 | **`tests/hw/test_f3_residual.sh`** | Soft residual — hard-gates res_dc=−24 + control plane; **soft-skips** res_csum≠20 with **EXIT=0** → **≠ hard PASS** |
 | `tests/hw/test_fbar_fast.sh` | Optional visual soft; EXIT=0 **≠ residual PASS** |
-| `scripts/gen_test_annexb_real.py` | Baseline AnnexB → `plex_real_baseline.h264` (**6739** B; `6739 & 0xFF = 0x53`) |
+| `scripts/gen_test_annexb_real.py` | Baseline AnnexB → `plex_real_baseline.264` (**6739** B; `6739 & 0xFF = 0x53`) |
 | `scripts/deploy_plex_core.sh` | Safe deploy; gate worker uses **only if** preflight proves STALE and parent authorized — default **no second deploy** |
 | `host/libmisterplex/h264_residual_gold.hpp` | Locked unit goldens `kDc=-24`, `kCsum8=0x14` |
 
@@ -211,11 +211,12 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no root@$HOST \
 ### Step D — Baseline AnnexB on lab
 
 ```bash
-python3 "$ROOT/scripts/gen_test_annexb_real.py" /tmp/plex_real_baseline.h264
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/plex_real_baseline.h264 \
-  root@$HOST:/media/fat/plex_real_baseline.h264
+mkdir -p "$ROOT/build"
+python3 "$ROOT/scripts/gen_test_annexb_real.py" "$ROOT/build/plex_real_baseline.264"
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$ROOT/build/plex_real_baseline.264" \
+  root@$HOST:/media/fat/plex_real_baseline.264
 # Prefer also misterplex path if present:
-# /media/fat/misterplex/plex_real_baseline.h264  size 6739
+# /media/fat/misterplex/plex_real_baseline.264  size 6739
 ```
 
 ### Step E — PRE status (optional latch note)
@@ -233,7 +234,7 @@ For each probe `P1..PN`:
 
 ```bash
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no root@$HOST \
-  '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_real_baseline.h264'
+  '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_real_baseline.264'
 sleep 0.5
 ST=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no root@$HOST \
   '/media/fat/misterplex/bin/push_frame --status')
