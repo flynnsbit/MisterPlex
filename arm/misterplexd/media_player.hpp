@@ -6,6 +6,7 @@
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/osd_menu.hpp"
 
 #include <atomic>
@@ -50,15 +51,23 @@ public:
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
     int audioDelayMs() const { return audioDelayMs_; }
-    // Trim of the 48 kHz feed rate, in ppm, to match the FPGA's real audio clock.
-    // The MiSTer plays back faster than our wall-paced 48 kHz feed; video is slaved
-    // to bytes written, so this single constant re-times BOTH outputs.
+    // Seed for the feed-rate servo, in ppm, and the open-loop fallback if the
+    // driver's ring depth is unreadable. NOT a calibration any more — see
+    // feedRateBytesPerSec().
     void setAudioClockPpm(int ppm) {
         if (ppm < -20000)
             ppm = -20000;
         if (ppm > 20000)
             ppm = 20000;
-        audioClockPpm_ = ppm;
+        audioClockPpmConf_ = ppm;
+        if (audioClockTrimEnabled_)
+            audioClockPpm_ = ppm;
+    }
+    // OSD O[3]: disable the feed-rate trim entirely (debug). Off means seed the
+    // servo at exactly nominal 48 kHz; on restores the configured seed.
+    void setAudioClockTrimEnabled(bool en) {
+        audioClockTrimEnabled_ = en;
+        audioClockPpm_ = en ? audioClockPpmConf_ : 0;
     }
     int audioClockPpm() const { return audioClockPpm_; }
     // Exact content frame rate as a rational (24000/1001 for 23.976 NTSC film).
@@ -167,11 +176,17 @@ private:
     int subtitleStreamIndex_ = 0;
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
-    // Measured on HDMI capture: the Plex core plays audio ~685 ppm faster than a
-    // wall-paced 48 kHz feed (~41 ms/min of drift at 0). This is a property of the
-    // core's audio clock divider, not of one unit, so it is the built-in default.
-    // Override with AUDIO_CLOCK_PPM.
-    int audioClockPpm_ = 685;
+    // Starting point for the feed-rate servo, and the open-loop rate if the ring
+    // depth cannot be read. Derived from the servo itself: seeded at the old
+    // +685 ppm the loop settled holding a 254 B/s correction, so the FPGA's real
+    // audio clock is 685 - 1323 = ~-638 ppm off nominal 48 kHz. (It plays
+    // *slower* than nominal; the old +685 had the sign inverted because it was
+    // measured when a growing ring looked identical to a fast playback clock.)
+    // Seeding the truth means the ring settles on the target depth immediately
+    // instead of being dragged there. Override with AUDIO_CLOCK_PPM.
+    int audioClockPpm_ = -638;
+    int audioClockPpmConf_ = -638;
+    bool audioClockTrimEnabled_ = true;
     // Seeded with the calibrated default so the first frames of a session are
     // already in sync; the OSD poller overwrites it within ~100 ms.
     std::atomic<int> avOffsetMs_{misterplex::kOsdAvOffsetDefaultMs};
@@ -188,6 +203,9 @@ private:
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
     void applyOsd(uint16_t word);
+    // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
+    // driver does not expose it. Cheap: one open/read/close, no allocation.
+    int64_t readMrAudioQueuedBytes();
 
     static std::string hex16(uint16_t v);
 
@@ -209,6 +227,10 @@ private:
     int ddrBank_ = 0;      // ping-pong 0/1 @ 0x30000000 / 0x30040000
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};
+    // Bytes sitting in the MrAudio DMA ring, i.e. handed to the driver but not
+    // yet played. -1 = unknown (kernel without the status line) and the clock
+    // falls back to counting submitted bytes. See libmisterplex/mraudio_status.hpp.
+    std::atomic<int64_t> audioQueuedBytes_{-1};
     // Live A/V drift + resync counters (per play/seek session)
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};

@@ -38,23 +38,31 @@ namespace misterplex {
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
 
-// Menu index 0 is the power-on default, so the calibrated value has to live at
-// index 0 rather than at "0 ms". The present loop waits for the audio clock to
-// reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back and
-// makes video LATER. Raise it when audio sounds late (video running ahead).
+// Menu index 0 is the power-on default. The present loop waits for the audio
+// clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
+// and makes video LATER. Raise it when audio sounds late (video running ahead).
 //
-// +80 ms is measure-backed, not guessed: the instrumented flash-to-beep runs
-// landed on +60 (median |36| ms, captures/e2e/avsync_trekmatch_d60) and eyes-on
-// on TNG S1E1 settled at +80. The knob stays available for per-display trim
-// because HDMI sinks add their own audio latency.
-constexpr int kOsdAvOffsetDefaultMs = 80;
-
-// Audio clock trim applied when the menu enables it (see AUDIO_CLOCK_PPM).
-constexpr int kOsdAudioClockPpm = 685;
+// The default is 0 and that is now a real claim, not a punt. The latency that
+// software CAN see is measured and removed: the MrAudio DMA ring runs ~185 ms
+// deep during playback (and varies per session, see mraudio_status.hpp), and the
+// pump subtracts it live. What remains is only the difference between the audio
+// and video paths downstream of the driver — FPGA output, HDMI, and the
+// display's own processing — which is per-display and cannot be measured from
+// the ARM. Displays commonly add tens of ms of VIDEO processing, so a negative
+// trim is normal here.
+//
+// Do not bake a non-zero constant in without eyes-on or capture evidence for
+// THIS clock; a value tuned against the old submitted-byte clock is not
+// comparable, because it silently absorbed that session's ring depth.
+constexpr int kOsdAvOffsetDefaultMs = 0;
 
 struct OsdSettings {
     int avOffsetMs = 0;
-    int audioClockPpm = kOsdAudioClockPpm;
+    // O[3] is a debug kill-switch for the feed-rate trim, not a value. It used
+    // to decode to a hardcoded ppm, which silently overrode AUDIO_CLOCK_PPM the
+    // moment the OSD was polled — i.e. always — so the conf key did nothing.
+    // The ppm itself belongs to the daemon; the menu only says on or off.
+    bool audioClockTrimEnabled = true;
     bool resyncEnabled = true;
     int idleMode = 0; // matches IdleMode enum
 };
@@ -72,7 +80,7 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
 inline OsdSettings decodeOsdWord(uint16_t word) {
     OsdSettings s;
     s.resyncEnabled = ((word >> 1) & 1u) == 0u;
-    s.audioClockPpm = ((word >> 3) & 1u) ? 0 : kOsdAudioClockPpm;
+    s.audioClockTrimEnabled = ((word >> 3) & 1u) == 0u;
     s.avOffsetMs = osdAvOffsetMsFromIndex((word >> 6) & 0x0Fu);
     s.idleMode = (word >> 14) & 3u;
     return s;

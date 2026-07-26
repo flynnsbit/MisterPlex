@@ -110,7 +110,7 @@ Flash + 1 kHz beep every 1.0 s + mouth bar + labels.
   - **S1E1 episode = `/library/metadata/40868`** (Encounter at Farpoint, duration ~91 min).  
   - playMedia offset=234000 (~3:54) → timeline playing time=234000 (probe).  
 - Evidence: `/tmp/misterplex-agent-AV-trek-probe.txt`.  
-- **G-AV4 now PASS** — eyes-on settled at `Video delay` **+80 ms** (see the Video delay section at the end of this doc).
+- **G-AV4 now PASS** — eyes-on settled at `Video delay` **+80 ms** under the *old* submitted-byte clock. That value is not transferable to the audible clock; see the Video delay section at the end of this doc.
 
 ---
 
@@ -383,7 +383,7 @@ appears to have no effect on hardware.
 | G-AV1 Trek-matched blip | **PASS** (assets + PMS 9/10) |
 | G-AV2 measure harness | **PASS** (`avsync_report.txt` n=12 flash↔beep) |
 | G-AV3 \|median\| ≤ 42 ms | **PASS** — \|median\|=**36.0 ms** n=11 @ `AUDIO_DELAY_MS=60`; baseline −60 @0; `avsync_report_delay60.txt` + d60 companion |
-| G-AV4 Trek 3:54 | **PASS** — eyes-on settled at **Video delay +80 ms**, now the power-on default (OSD index 0) |
+| G-AV4 Trek 3:54 | **PASS** — eyes-on settled at **Video delay +80 ms** (old submitted-byte clock; default since reset to 0 — see G-AV9) |
 | G-AV5 exact rate | **PASS** — log `content fps exact=24000/1001` (Trek/RK11) and `24/1` (RK12) from the same `24p` metadata; `make unit` `test_avclock` |
 | G-AV6 drift slope ≤10 ms/min | **PASS** — **+0.79 / −0.67 / +1.79** ms/min (RK11, 240 s fits) and **−2.21** (RK12 control); before: **−53.3** |
 | G-AV7 constant offset | **PASS** — the residual was a real constant video lead, not grabber skew: capture said +60 ms, eyes-on said +80 ms (one 20 ms step apart) |
@@ -423,6 +423,7 @@ curl -G '…/playMedia' --data-urlencode key=/library/metadata/6 --data-urlencod
 # conf AUDIO_DELAY_MS=60; soft restart; cast /library/metadata/10; HDMI flash↔beep
 
 # G-AV4 Trek dialogue: PASS at Video delay +80 ms (episode 40868, not show 40710)
+# NOTE: measured on the old submitted-byte clock. Retune from 0 under the audible clock (G-AV9).
 # expect |median_offset_ms| ≤ 42; keep RBF 1441d409
 ```
 
@@ -444,11 +445,9 @@ lips, and turning the menu to `-160ms` "did nothing".
 2. **The default was `0 ms`** even though two independent measurements said the
    platform needs ~+60…+80 ms.
 
-**Fix.** The item is now `Video delay`, and the option list is a signed wrap
-*biased to the calibrated default* so that **menu index 0 — the power-on
-default — is +80 ms**. The list stays monotonic across the wrap seam (index 15 =
-+60 ms is exactly one step below index 0 = +80 ms), so left/right on the OSD is
-a plain down/up knob with no jump.
+**Fix.** The item is now `Video delay`, and after the audible-clock work below
+the default is back to **0 ms** — see "What it did not buy" for why a baked-in
+constant is no longer appropriate.
 
 `kOsdAvOffsetDefaultMs` in `host/libmisterplex/osd_menu.hpp` is the single source
 of truth; `Plex.sv`'s CONF_STR list and the daemon decode are both derived from
@@ -463,3 +462,131 @@ so per-display trim is expected.
 
 **Config version bumped `v,3` → `v,4`** so saved `Plex_v3.CFG` files (where index
 0 meant 0 ms) are discarded rather than silently reinterpreted under the new bias.
+
+
+## Why a constant was needed at all — and how most of it was removed
+
+The obvious question: Plex's own web player never asks you to dial in a lipsync
+offset, so why did we?
+
+**Because we paced video off the wrong clock.** The pump wrote PCM to
+`/dev/MrAudio` and incremented `audioBytes_` the moment `write()` returned, and
+the present loop treated that counter as the master clock. But *accepted* is not
+*played*. Reading MiSTer's driver (`sound/drivers/MiSTer-audio-spi.c`) shows why:
+
+- `/dev/MrAudio` is a **512 KB DMA ring** (~2.6 s of audio).
+- `device_write()` **never consults the read pointer**. It copies into the ring,
+  wraps, and returns. There is no backpressure of any kind, and writing past the
+  read pointer silently destroys audio that has not been played yet.
+
+Measured on the lab unit: **10 s of PCM accepted in 116 ms**. So a clock built
+from submitted bytes runs arbitrarily ahead of what you hear, and video slaved to
+it runs ahead too — audio "sounds late". The old fix was to hand-tune a video
+delay until it looked right. A browser never needs that because the OS reports
+its audio output latency and the renderer schedules against the hardware playback
+position, not the submit position.
+
+**The driver does expose the playback position** — it just isn't obvious.
+`device_open()` does an `spi_read` of the FPGA's read pointer and formats one
+line, which `read()` then returns:
+
+```
+rptr: 238120, wptr: 426576, len: 188456, comp: 4
+```
+
+`len` is `(wptr - rptr)` wrapped: **bytes queued but not yet played** — the
+output latency, live and exact. Verified draining at precisely 192000 B/s.
+
+So the pump now samples `len` every 4th chunk (~80 ms) and the present loop paces
+off `audibleClockMs(written, queued) = (written - queued) / 192000`. Sampling
+harder buys nothing: between samples the only error is the feed-vs-drain
+difference (~685 ppm ≈ 0.05 ms).
+
+**What this bought:**
+
+- Video now paces off what is **heard**, not what was sent — the same thing the
+  browser gets from the OS for free.
+- The ring depth is compensated **continuously**, so bursts, stalls and network
+  hiccups no longer shift lipsync. Previously any deviation from exactly 1.0x
+  feed was invisible and permanent.
+- Ring overwrite (which destroys unplayed audio with no error anywhere) is now
+  **detectable** and logged.
+
+**What it exposed — the ring was growing without bound.** With the depth finally
+visible, the first sustained measurement showed it climbing steadily at
+**~255 B/s (~80 ms/min)**, from ~19 ms at startup through 243 ms and still
+rising when the clip ended. Extrapolated, that overruns the 512 KB ring about
+**31 minutes into playback** — comfortably inside a 45-minute episode — at which
+point `device_write()` walks over unplayed audio with no error anywhere.
+
+The cause was `AUDIO_CLOCK_PPM=+685`. That number came from an HDMI-capture
+calibration taken while video paced off *submitted* bytes, and under that clock
+**a ring that is filling up and a playback clock that is running fast are
+indistinguishable** — both make audio appear to lead. The calibration folded one
+into the other and came out with the wrong sign. The true error is about
+**−638 ppm**: the core plays slightly *slower* than nominal 48 kHz.
+
+**The fix: stop calibrating, close the loop.** Ring depth is the integral of
+(feed − drain), so it is a direct error signal. `feedRateBytesPerSec()` is a
+proportional controller that trims the feed to hold the depth at
+`kFeedTargetBytes` (~100 ms), with an 8 s time constant and a ±1 % clamp. Any
+clock error — this board's, another board's, a different video mode's — is now
+found by the loop instead of being measured by hand.
+
+`AUDIO_CLOCK_PPM` survives only as the servo's seed and as the open-loop
+fallback when the ring depth cannot be read at all.
+
+**Two more things had to change for the loop to behave:**
+
+- **Anchor the pump clock on the first chunk, not before the read.** FFmpeg
+  needs a variable warm-up before it emits anything. Anchoring earlier left the
+  pump "behind schedule" the moment data arrived, so it wrote flat out to catch
+  up and dumped the entire warm-up into the ring, where it stayed all session
+  (feed and drain are both ~48 kHz, so nothing drained it). That is why the
+  first sustained measurement started at ~185 ms and why ring depth — and
+  therefore lipsync — was **session-dependent**, the likely source of this
+  project's long-standing run-to-run variance. The anchor is now biased exactly
+  one target-depth into the past, which turns the burst into an ordinary,
+  bounded prefill. A catch-up debt of more than a second is dropped rather than
+  repaid, for the same reason.
+
+- **The OSD stopped overwriting the conf.** `decodeOsdWord()` returned a
+  hardcoded `685` for the O[3] "audio clock trim" bit, and `applyOsd()` pushed
+  it into the player on every poll — so `AUDIO_CLOCK_PPM` in the conf was
+  applied at startup and then silently clobbered within ~100 ms, every time,
+  forever. O[3] is now the boolean it always meant to be (trim on/off) and the
+  ppm value belongs solely to the daemon.
+
+**Result on hardware** (TNG S1E1 `40868` @ 3:54, 120 s):
+
+| | before | after |
+|---|---|---|
+| ring depth | 19 → 243 ms, still climbing | **97–101 ms, flat** |
+| growth | +255 B/s (~80 ms/min) | **~0** |
+| steady-state depth vs 19200 B target | n/a | 19198–19231 B |
+| `audio_s` vs `wall_s` | +0.1 s and diverging | **equal** |
+| frame drops | 1 | **0** |
+| ring overrun warnings | (unreported) | 0 |
+
+**Why the `Video delay` default is 0.** The old eyes-on **+80 ms** is not
+transferable. It was tuned while video paced off submitted bytes, so it silently
+absorbed whatever ring depth that session happened to have — and that depth was
+both large and session-dependent. Arithmetic on it would be arithmetic on sand.
+
+So the default returns to **0 ms**: everything measurable is now measured, and
+the residual — the audio-vs-video difference *downstream* of the driver (FPGA
+output, HDMI, and the display's own processing) — is per-display and belongs on
+the knob. Displays commonly add tens of ms of *video* processing, so a small
+negative trim is the expected answer, not +80.
+
+The sampled depth is low-passed (EMA, alpha 1/4, seeded on the first sample)
+before it reaches either consumer, so neither the video clock nor the servo
+chases sampling noise.
+
+Parsing lives in `host/libmisterplex/mraudio_status.hpp` as pure functions and is
+pinned by `tests/unit/test_mraudio_status.cpp` against strings captured verbatim
+from the lab unit, so a kernel-side format change fails loudly instead of
+silently feeding the present loop a bogus latency. The servo is tested there too,
+including a convergence simulation. An unparseable line yields `-1`, which
+disengages the servo and falls the clock back to the old submitted-byte
+behaviour.

@@ -44,12 +44,12 @@ int main() {
     {
         const OsdSettings d = decodeOsdWord(0x0000);
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
-        CHECK(d.audioClockPpm == kOsdAudioClockPpm);
+        CHECK(d.audioClockTrimEnabled);
         CHECK(d.resyncEnabled);
         CHECK(d.idleMode == 0);
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
-    CHECK(decodeOsdWord(1u << 3).audioClockPpm == 0);       // O[3] Audio clock trim
+    CHECK(!decodeOsdWord(1u << 3).audioClockTrimEnabled); // O[3] Audio clock trim
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
     CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
@@ -58,7 +58,7 @@ int main() {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.resyncEnabled);
-        CHECK(d.audioClockPpm == kOsdAudioClockPpm);
+        CHECK(d.audioClockTrimEnabled);
         CHECK(d.idleMode == 0);
     }
 

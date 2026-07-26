@@ -61,10 +61,10 @@ localparam CONF_STR = {
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
-	// late. Index 0 is the power-on default, so the calibrated +80ms sits there;
-	// the list is a signed wrap around it and stays monotonic across the seam
-	// (index 15 = +60ms is one step below index 0), so left/right is a real knob.
-	"O[9:6],Video delay,+80ms,+100ms,+120ms,+140ms,+160ms,+180ms,+200ms,+220ms,-80ms,-60ms,-40ms,-20ms,0ms,+20ms,+40ms,+60ms;",
+	// late. The MrAudio ring depth (~185ms, session-dependent) is measured and
+	// subtracted by the daemon, so this knob only trims what is left downstream:
+	// HDMI + the display's own video processing. Negative is normal there.
+	"O[9:6],Video delay,0ms,+20ms,+40ms,+60ms,+80ms,+100ms,+120ms,+140ms,-160ms,-140ms,-120ms,-100ms,-80ms,-60ms,-40ms,-20ms;",
 	"O[1],A/V auto resync,On,Off;",
 	"O[3],Audio clock trim,On,Off;",
 	"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;",
@@ -74,7 +74,7 @@ localparam CONF_STR = {
 	"-;",
 	"T[0],Reset;",
 	"R[0],Reset and close OSD;",
-	"v,4;", // reset OSD: v4 rebiases O[9:6] so index 0 = calibrated +80ms video delay
+	"v,6;", // reset OSD: v6 recentres O[9:6] on 0 now that the MrAudio ring is measured out
 	"V,v",`BUILD_DATE
 };
 

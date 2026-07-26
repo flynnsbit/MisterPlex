@@ -194,7 +194,7 @@ void MediaPlayer::applyOsd(uint16_t word) {
     setAvOffsetMs(s.avOffsetMs);
     // Takes effect on the next session: the feed rate is captured when audioPump
     // opens MrAudio, and re-timing it mid-stream would step the audio clock.
-    setAudioClockPpm(s.audioClockPpm);
+    setAudioClockTrimEnabled(s.audioClockTrimEnabled);
     setResyncDropMs(s.resyncEnabled ? kDefaultResyncDropMs : 0);
     const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
     const bool idleChanged = im != idleMode();
@@ -204,7 +204,7 @@ void MediaPlayer::applyOsd(uint16_t word) {
     if (idleChanged && !playing_.load())
         paintIdle();
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
-        " clock_ppm=" + std::to_string(s.audioClockPpm) +
+        " clock_ppm=" + std::to_string(audioClockPpm_) +
         " resync=" + (s.resyncEnabled ? "on" : "off") +
         " idle=" + std::to_string(s.idleMode));
 }
@@ -1096,6 +1096,18 @@ void MediaPlayer::streamPump(int sfd) {
         " present=" + std::to_string(reconFrames_.load()));
 }
 
+int64_t MediaPlayer::readMrAudioQueuedBytes() {
+    const int fd = ::open(audioDev_.c_str(), O_RDONLY);
+    if (fd < 0)
+        return -1;
+    char buf[128];
+    const ssize_t n = ::read(fd, buf, sizeof(buf));
+    ::close(fd);
+    if (n <= 0)
+        return -1;
+    return misterplex::parseMrAudioQueuedBytes(buf, n);
+}
+
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio. Lab evidence: MrAudio write() does NOT pace realtime
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
@@ -1134,6 +1146,7 @@ void MediaPlayer::audioPump(int afd) {
 
     audioActive_.store(true);
     audioBytes_.store(0);
+    audioQueuedBytes_.store(-1);
     // 20ms chunks @ 48k stereo s16le
     char buf[3840];
     std::vector<uint8_t> f2acc;
@@ -1142,15 +1155,29 @@ void MediaPlayer::audioPump(int afd) {
     size_t f2total = 0;
     int f2Fail = 0;
     constexpr size_t kF2Chunk = 8192;
-    // Nominal 48 kHz stereo s16le, trimmed by AUDIO_CLOCK_PPM. The FPGA's audio
-    // clock is not exactly 48 kHz: measured over HDMI capture it plays ~890 ppm
-    // fast relative to a wall-paced feed, which is ~53 ms/min of lipsync drift —
-    // far larger than the 23.976-vs-24 pacing error and invisible to the internal
-    // clock (which only counts bytes written). Feeding at the FPGA's true rate
-    // re-times video too, because video is paced off audioBytes_.
+    // Nominal 48 kHz stereo s16le, seeded by AUDIO_CLOCK_PPM. This used to be
+    // the whole story: an open-loop trim for the FPGA's not-quite-48 kHz audio
+    // clock. It cannot be, because the ring has no backpressure, so any residual
+    // error integrates into ring depth forever (measured: +255 B/s at the old
+    // +685 ppm, ~80 ms/min, overrunning the ring mid-episode). The servo in
+    // feedRateBytesPerSec() now closes the loop on the measured depth and this
+    // value is only a starting point — and the fallback if the depth is
+    // unreadable.
     const double kBytesPerSec = 48000.0 * 4.0 * (1.0 + audioClockPpm_ / 1000000.0);
-    auto audioT0 = std::chrono::steady_clock::now();
-    int64_t pacedBytes = 0;
+    // Deadline for the next chunk. Started on the FIRST chunk actually read, not
+    // here: FFmpeg needs a variable, sometimes multi-hundred-ms warm-up before it
+    // emits anything, and anchoring the clock before that made the pump write
+    // flat out to "catch up", dumping the entire warm-up into the ring where it
+    // stayed for the session (feed and drain are both ~48 kHz, so nothing ever
+    // drained it). That is what made ring depth — and therefore lipsync —
+    // session-dependent.
+    std::chrono::steady_clock::time_point audioDue{};
+    bool audioClockStarted = false;
+    int64_t chunkIndex = 0;
+    int64_t queuedEma = -1;
+    int64_t lastLatLog = -1;
+    bool latencyLogged = false;
+    bool overrunLogged = false;
 
     while (!stop_.load()) {
         if (paused_.load()) {
@@ -1179,14 +1206,81 @@ void MediaPlayer::audioPump(int afd) {
                 off += static_cast<size_t>(w);
             }
             audioBytes_.fetch_add(static_cast<size_t>(n));
-            pacedBytes += n;
-            // Sleep until wall clock matches samples written (true 1.0× realtime).
-            const auto due =
-                audioT0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                              std::chrono::duration<double>(pacedBytes / kBytesPerSec));
+
+            // Anchor on the first chunk, biased one target-depth into the past so
+            // the pump runs flat out just long enough to prefill the ring to the
+            // servo's set point, then falls into paced mode. This is the ordinary
+            // audio prefill, and it is bounded — unlike the old warm-up burst.
+            if (!audioClockStarted) {
+                audioClockStarted = true;
+                audioDue = std::chrono::steady_clock::now() -
+                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                               std::chrono::duration<double>(
+                                   static_cast<double>(misterplex::kFeedTargetBytes) /
+                                   kBytesPerSec));
+            }
+
+            // Advance the deadline by this chunk's duration at the servo-corrected
+            // rate. Accumulating the deadline (rather than recomputing it from a
+            // fixed origin) is what lets the rate change mid-stream without the
+            // schedule jumping.
+            const double rate = misterplex::feedRateBytesPerSec(
+                kBytesPerSec, audioQueuedBytes_.load(std::memory_order_relaxed));
+            audioDue += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(n / rate));
             const auto now = std::chrono::steady_clock::now();
-            if (due > now)
-                std::this_thread::sleep_until(due);
+            if (audioDue > now)
+                std::this_thread::sleep_until(audioDue);
+            else if (now - audioDue > std::chrono::seconds(1)) {
+                // We fell more than a second behind (decoder stall, CPU spike).
+                // Do not try to make it up in one burst — that is precisely the
+                // ring-stuffing behaviour we just removed. Re-anchor and let the
+                // servo refill the target depth at its own pace.
+                audioDue = now;
+            }
+
+            // Turn the submitted-byte counter into a real playback position by
+            // subtracting what is still sitting in the driver's DMA ring. This
+            // reading is also the servo's error signal, so it feeds both the
+            // video clock and the feed rate.
+            // Sampled every 4th chunk (~80 ms), which is far faster than the
+            // servo's 8 s time constant; polling harder buys nothing but
+            // syscalls.
+            if ((chunkIndex++ % 4) == 0) {
+                const int64_t q = readMrAudioQueuedBytes();
+                if (q < 0) {
+                    audioQueuedBytes_.store(-1);
+                } else {
+                    // Low-pass the depth. The servo holds the true depth
+                    // constant, so sample-to-sample movement is mostly noise;
+                    // feeding it raw into the video clock would jitter every
+                    // frame's release time, and into the servo would make it
+                    // chase that jitter. Seed on the first sample so startup is
+                    // not slewed in from zero.
+                    queuedEma = (queuedEma < 0) ? q : (queuedEma * 3 + q) / 4;
+                    audioQueuedBytes_.store(queuedEma);
+                    const int64_t latMs =
+                        (queuedEma * 1000LL) / misterplex::kMrAudioBytesPerSec;
+                    if (!latencyLogged) {
+                        latencyLogged = true;
+                        log("media: MrAudio playback position available — video now paces "
+                            "off what is HEARD, not what is sent");
+                    }
+                    const int64_t nowMs = audioClockMs(audioBytes_.load());
+                    if (lastLatLog < 0 || nowMs - lastLatLog >= 5000) {
+                        lastLatLog = nowMs;
+                        log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
+                            std::to_string(queuedEma) + "B");
+                    }
+                    // The ring has no backpressure: writing past the read pointer
+                    // silently destroys unplayed audio. Nothing else reports this.
+                    if (!overrunLogged && queuedEma > (misterplex::kMrAudioRingBytes * 3) / 4) {
+                        overrunLogged = true;
+                        log("media: WARNING MrAudio ring " + std::to_string(latMs) +
+                            "ms deep — approaching overwrite of unplayed audio");
+                    }
+                }
+            }
         }
 
         if (wantF2) {
@@ -1661,7 +1755,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         break;
                     int64_t clockMs = 0;
                     if (wantAudio && audioActive_.load()) {
-                        clockMs = audioClockMs(audioBytes_.load());
+                        // What has actually been HEARD, not what has been handed
+                        // to the driver. Falls back to the submitted-byte clock
+                        // when the ring depth is unavailable.
+                        clockMs = misterplex::audibleClockMs(audioBytes_.load(),
+                                                             audioQueuedBytes_.load());
                     } else {
                         clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - t0)

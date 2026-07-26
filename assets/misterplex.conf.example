@@ -66,16 +66,24 @@ SOURCE_FPS=auto
 # Accepts "24000/1001", "23.976", "25". Only for debugging bad metadata.
 # AV_CONTENT_FPS=auto
 
-# AUDIO_CLOCK_PPM: trim of the 48 kHz feed rate to match the FPGA's real audio
-# clock. Measured over HDMI capture, the MiSTer plays audio ~685 ppm faster than a
-# wall-paced 48 kHz feed. Left at 0 that is ~41 ms/min of lipsync drift — bigger
-# than the 23.976-vs-24 pacing bug and invisible to the daemon, which only counts
-# bytes WRITTEN, not played. Video is paced off those same bytes, so this one
-# constant re-times both outputs.
-# Recalibrate with: python3 tests/hw/avsync_rate.py --rating-key <blip> --settle 60
-#   --window 240 --out /tmp/av --label cal
-# then add (drift_ms_per_min / 0.06) to the current value.
-AUDIO_CLOCK_PPM=685
+# AUDIO_CLOCK_PPM: starting point for the audio feed-rate servo, in ppm off a
+# nominal 48 kHz. You should not need to touch this.
+#
+# /dev/MrAudio is a 512 KB DMA ring with NO backpressure, so any mismatch
+# between how fast we feed and how fast the FPGA plays integrates into the ring
+# depth forever. The daemon now reads the driver's read pointer and servos the
+# feed rate to hold ~100 ms of buffer, so a wrong value here is corrected within
+# seconds rather than drifting lipsync all episode.
+#
+# -638 is the measured clock error of the Plex core (it plays slightly SLOWER
+# than nominal). It is only used verbatim as a fallback, if the ring depth
+# cannot be read at all.
+#
+# The previous value here was +685, from an HDMI-capture calibration taken when
+# video paced off bytes *submitted*. A ring filling up and a fast playback clock
+# are indistinguishable under that clock, so the calibration folded one into the
+# other and got the sign wrong.
+AUDIO_CLOCK_PPM=-638
 
 # --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
 #
