@@ -412,10 +412,14 @@ REMOTE
 
 check_edges() {
   log "7b. G-VID1 edge alignment"
+  EDGE_CAP="$STATE_DIR/edge_prev.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
+    python3 "$ROOT/scripts/check_edges.py" --capture-only --out "$STATE_DIR/edge_prev.png"
   python3 "$ROOT/scripts/gen_edge_markers.py" "$LOCAL_EDGE"
   "${SCP[@]}" "$LOCAL_EDGE" "$USER@$HOST:$REMOTE_EDGE" >/dev/null
   remote "'$REMOTE_PUSH' --ddr --rgb24 320x240 '$REMOTE_EDGE'"
-  EDGE_CAP="$STATE_DIR/edge_cap.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" python3 "$ROOT/scripts/check_edges.py" | tee "$STATE_DIR/check_edges.log"
+  EDGE_CAP="$STATE_DIR/edge_cap.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
+    python3 "$ROOT/scripts/check_edges.py" --previous "$STATE_DIR/edge_prev.png" \
+    --out "$STATE_DIR/edge_cap.png" | tee "$STATE_DIR/check_edges.log"
   if grep -q 'PASS: all four edges correct' "$STATE_DIR/check_edges.log"; then pass "G-VID1 all four edges correct"; else fail "G-VID1 edge check failed"; fi
 }
 

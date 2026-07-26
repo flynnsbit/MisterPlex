@@ -20,6 +20,13 @@ ffmpeg -y -f v4l2 -input_format yuyv422 -video_size 800x600 -i /dev/video4 \
 (Template **HBlank@529**, content painted only for `hc<320`). Cold single-frame MJPG is often
 solid black (~4 KB) — a capture-card artifact, **not** proof the core is dead.
 
+For **G-VID1 edge alignment**, use `scripts/check_edges.py` rather than an ad-hoc
+grab. The checker forces `yuyv422`, discards 60 warm-up frames, and refuses to
+grade unless the frame differs from a previous baseline (`--capture-only` before
+the marker push, then `--previous` for the graded capture). Its `--source file`
+and `--source synthetic` modes exercise the same grading/staleness logic without
+opening the hardware grabber.
+
 ## Phase 1 / 2 (misterplexd)
 
 | Script | What |
