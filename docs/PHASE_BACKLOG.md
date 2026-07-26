@@ -106,30 +106,40 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
 
-### Main liveness hardening (**DONE** 2026-07-26)
+### misterplexd no longer touches Main (**DONE** 2026-07-26)
 
-`/etc/inittab` runs Main as `::sysinit:/media/fat/MiSTer &` — **sysinit, not respawn** — so
-nothing on the board ever restarts it, yet `healMainReloadPlex()` kills and re-execs Main on
-every stop/redeploy. An interrupted heal leaves the board with **no Main**: no F12, no OSD,
-no menu, until a power cycle. Separately, SPI exclusivity SIGSTOPs Main, so a daemon death
-inside that window strands Main stopped forever — and the OSD poller/idle painter opened that
-window several times a second, forever.
+**Root cause of "the Plex core keeps crashing Main / F12 is dead".** The HPS<->FPGA "SPI"
+is a single GPO register (`0xFF706010`) plus a strobe/ACK handshake, owned by Main. Main's
+`fpga_spi()` spins on that handshake with **no timeout**, so rewriting GPO while Main sits
+between `strobe=1` and `saw ACK` makes the core drop ACK and Main spin **forever** — no
+F12, no OSD, no `/dev/MiSTer_cmd`. `healMainReloadPlex()` then "fixed" that by killing and
+re-exec'ing Main after every play; since `/etc/inittab` uses `sysinit` (not `respawn`), any
+interruption of that left the board with **no Main at all** until a power cycle.
 
-- [x] G-MAIN1 stranded Main auto-resumed — live trace `T` → `R` in ~100 ms
-- [x] G-MAIN2 dead Main auto-relaunched — killed `25909` → watchdog brought up `26493`, core=Plex
-- [x] G-MAIN3 unit regression — `tests/unit/test_main_guard.cpp` in `make unit`
+- [x] G-MAIN1 verified-safe SPI window — stop Main, wait for **every task** in
+      `/proc/<pid>/task` to reach state `T`, require Main's enable bits
+      (FPGA_EN/OSD_EN/IO_EN) + strobe all clear, restore GPO byte-for-byte, then SIGCONT.
+      Retry on busy; fail the call cleanly rather than corrupt the handshake.
+- [x] G-MAIN2 DDR OSD mailbox — core publishes `status[15:0]` at **`0x3007F100`**
+      (`"PLXS"` + seq) from `ddram_frame_rd`; host reads it with a plain load. Live on
+      hardware: `media: OSD via DDR mailbox (no SPI)`. Frame path was already SPI-free,
+      so a normal session now touches SPI **zero** times.
+- [x] G-MAIN3 bandaid removed — `healMainReloadPlex()` and `ensureMainAlive()` deleted.
+      misterplexd never starts, stops, kills or reloads Main. Only `resumeStrandedMain()`
+      remains, and it sends **SIGCONT only**.
+- [x] G-MAIN4 hardware proof — 4 play/stop cycles, Main pid **28219 unchanged throughout**;
+      `screenshot` via `/dev/MiSTer_cmd` produced a new file *after* playback (the exact
+      thing that used to need a Main restart); final state `R`, core `Plex`.
+- [x] G-MAIN5 unit regression — `tests/unit/test_main_guard.cpp` also asserts no guard
+      ever terminates Main.
 
-Guards: `resumeStrandedMain()` (startup + 600 ms watchdog), `installCrashGuard()` (fatal
-signals resume Main then re-raise), `ensureMainAlive()` (relaunch after ~3 s of absence,
-`mainHealDepth()`-guarded so it never races a deliberate heal), `healMainReloadPlex()` retries
-the fork/exec 3× and no-ops off-device. Idle SPI backoff: OSD poll 1 Hz idle / 4 Hz playing,
-static idle repaint 2 s → 30 s.
+RBF `06b3cb4836436ba2a60a237dc604eb7a` — 0 errors, timing MET (worst setup slack
+0.051 ns, pll_hdmi), ALM 23%, RAM blocks 74%.
 
 **`scripts/deploy_misterplexd.sh` was shipping stale binaries** — it only cross-compiled
-`if [[ ! -f "$BIN" ]]`, so once `build/arm/misterplexd` existed no later deploy ever rebuilt
-it. The first hardware run of this fix "failed" only because the binary on the box predated
-it (`strings` proved it). It now always runs `make arm-plexd`. Check this first whenever a
-fix appears to have no effect on hardware.
+`if [[ ! -f "$BIN" ]]`, so once `build/arm/misterplexd` existed no later deploy rebuilt it.
+It now always runs `make arm-plexd`. Check this first whenever a fix appears to have no
+effect on hardware.
 
 ### Fallout / follow-ups
 

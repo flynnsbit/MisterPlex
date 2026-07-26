@@ -18,23 +18,43 @@ public:
     void close();
     bool ok() const { return map_ != nullptr; }
 
-    // After HPS SPI present traffic, Main often ignores F12 / MiSTer_cmd until the
-    // MiSTer process is restarted (SPI bus left inconsistent; Main stays state=R).
-    // Restart Main and reload Plex.rbf so OSD works again. Call after play stop.
-    // Glitches video briefly; required until DDR kick is memory-mapped (no SPI).
-    static bool healMainReloadPlex(const char* plexRbf = "/media/fat/_Utility/Plex.rbf");
+    // --- Sharing the SPI bus with Main ----------------------------------------
+    // The HPS<->FPGA "SPI" is not a bus with arbitration: it is a single 32-bit
+    // GPO register in the FPGA manager (0xFF706010) plus a strobe/ACK handshake
+    // on GPI. Main_MiSTer assumes it is the sole owner. Two facts make naive
+    // sharing fatal:
+    //
+    //   1. Main's fpga_spi() spins on the ACK handshake with NO timeout — the
+    //      only other way out is the FPGA leaving user mode (fpga_io.cpp). If we
+    //      rewrite GPO while Main sits between "strobe=1" and "saw ACK", the core
+    //      drops ACK, Main never sees it, and Main spins forever. That is a hard
+    //      hang: no F12, no OSD, no /dev/MiSTer_cmd, and no way out but killing
+    //      the process. This is what used to be blamed on "the Plex core crashing
+    //      Main", and what healMainReloadPlex() existed to paper over.
+    //   2. Main never re-reads GPO (`#define fpga_gpo_read() gpo_copy`), so any
+    //      bits we leave behind are invisible to it.
+    //
+    // SIGSTOPing Main does not fix either problem — it freezes Main at an
+    // arbitrary instruction, including inside the handshake, which is precisely
+    // the dangerous case.
+    //
+    // What is actually safe: stop Main, WAIT until it has really stopped, then
+    // read the hardware GPO and check Main's own transaction-enable bits
+    // (FPGA_EN/OSD_EN/IO_EN) and the strobe. Main only ever calls fpga_spi()
+    // between EnableXxx()/DisableXxx(), so all-clear proves it is between
+    // transactions and, being stopped, cannot start one. We then run our
+    // transaction, restore GPO byte-for-byte, and resume Main — which wakes up
+    // with hardware exactly matching its shadow copy. If Main is mid-transaction
+    // we resume it, back off, and retry; if it stays busy the SPI call fails
+    // cleanly rather than corrupting anything. See SpiExclusive in fpga_spi.cpp.
 
-    // --- Main-pause safety net -------------------------------------------------
-    // SPI exclusivity is implemented by SIGSTOPing Main for the critical section
-    // (see MainPause in fpga_spi.cpp). If misterplexd dies inside that window —
-    // crash, SIGKILL, OOM — nothing ever sends SIGCONT and Main is left stopped
-    // FOREVER: no F12, no OSD, no /dev/MiSTer_cmd. The user sees "the core killed
-    // Main". Before the OSD poller and idle painter existed this window only
-    // opened during playback; they now open it several times a second, forever,
-    // so the hole has to be closed properly.
+    // --- Stranded-Main safety net ---------------------------------------------
+    // The safe window above still SIGSTOPs Main for a few microseconds. If
+    // misterplexd dies inside that window — crash, SIGKILL, OOM — nothing ever
+    // sends SIGCONT and Main is left stopped forever.
     //
     // resumeStrandedMain(): SIGCONT any MiSTer left in state T while we hold no
-    // pause of our own. Safe to call from anywhere — it only reads /proc and
+    // window of our own. Safe to call from anywhere — it only reads /proc and
     // never touches SPI. Call at startup (repairs a previous death) and from a
     // slow watchdog (repairs a hang inside the critical section).
     static void resumeStrandedMain();
@@ -48,20 +68,8 @@ public:
     // True while this process holds Main stopped for an SPI critical section.
     static bool mainPaused();
 
-    // False when no MiSTer process exists at all (see ensureMainAlive).
+    // False when no MiSTer process exists at all.
     static bool mainAlive();
-
-    // --- Main liveness ---------------------------------------------------------
-    // /etc/inittab starts Main with `::sysinit:/media/fat/MiSTer &` — sysinit,
-    // NOT respawn — so nothing on the system ever restarts it. healMainReloadPlex()
-    // deliberately kills Main and re-execs it, which means any interruption of
-    // that sequence (daemon crash, SIGKILL, failed exec) leaves the board with no
-    // Main at all: no F12, no OSD, no menu, until the user power-cycles.
-    //
-    // ensureMainAlive(): relaunch Main + reload the Plex core if no MiSTer process
-    // exists and we are not in the middle of a deliberate heal. Returns true if it
-    // had to act. Safe to call from a watchdog.
-    static bool ensureMainAlive(const char* plexRbf = "/media/fat/_Utility/Plex.rbf");
 
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
     // For Plex core F1 frame store, index is typically 1.
@@ -87,6 +95,25 @@ public:
     static constexpr uint32_t kDdrDoorbellPhys = 0x3007F000u;
     static constexpr uint32_t kDdrDoorbellMagic = 0x504C584Bu; // "PLXK"
     static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
+
+    // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------
+    // ddram_frame_rd publishes the live OSD word here whenever it changes, plus a
+    // slow heartbeat. Reading it costs one uncached 64-bit load and, unlike
+    // UIO_GET_STATUS, never touches the GPO register Main_MiSTer owns — so it
+    // cannot stall or hang Main no matter how often we poll.
+    //   [31:0]  magic "PLXS"
+    //   [47:32] status[15:0]
+    //   [63:48] seq
+    static constexpr uint32_t kDdrMailboxPhys = 0x3007F100u;
+    static constexpr uint32_t kDdrMailboxMagic = 0x504C5853u; // "PLXS"
+
+    // Read the OSD word from the mailbox. Returns false until the mailbox is
+    // proven LIVE, which is the caller's cue to fall back to getCoreStatus().
+    // Liveness matters: DDR keeps its contents across a core reload, so a
+    // pre-mailbox RBF would otherwise leave us reading the previous core's stale
+    // magic forever. The core bumps seq on every publish (change + heartbeat),
+    // so we trust the word only while seq keeps advancing.
+    bool readOsdMailbox(uint16_t& osd);
 
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
@@ -190,6 +217,10 @@ private:
     uint8_t* ddrMap_ = nullptr;
     size_t ddrMapLen_ = 0;
     uint32_t doorbellSeq_ = 0;
+    bool mboxInit_ = false;
+    bool mboxAlive_ = false;
+    uint16_t mboxSeq_ = 0;
+    double mboxSeqMs_ = 0.0;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     bool ensureDdrMap();
     void releaseDdrMap();

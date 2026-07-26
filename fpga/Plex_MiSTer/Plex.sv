@@ -208,6 +208,9 @@ ddram_frame_rd #(
 	.start_req(status[12]),
 	.bank_sel(status[13]),
 	.swap_pending(swap_pending),
+	// Publish the live OSD word to HPS DDR so misterplexd never has to read it
+	// back over the SPI bus that Main_MiSTer owns.
+	.status_osd(status[15:0]),
 	.DDRAM_CLK(DDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY),
 	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),

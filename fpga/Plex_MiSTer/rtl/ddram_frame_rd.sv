@@ -7,6 +7,17 @@
 //     [31:0]  magic 0x504C584B ("PLXK")
 //     [62:32] seq   (monotonic)
 //     [63]    bank  (0/1)
+//   Status mailbox: 0x3007F100  (one 64-bit word, core -> HPS, no SPI)
+//     [31:0]  magic 0x504C5853 ("PLXS")
+//     [47:32] status[15:0]  (the live OSD menu word)
+//     [63:48] seq (monotonic; lets the host reject a torn/stale read)
+//
+// Why the mailbox exists: misterplexd used to read the OSD word back over the
+// HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
+// by Main_MiSTer, whose fpga_spi() spins on the strobe/ACK handshake with no
+// timeout — so an interleaved access from another process can hang Main dead
+// (no F12, no OSD, no MiSTer_cmd). Publishing the word into DDR instead means
+// the daemon never touches SPI at all during normal operation.
 //
 // Start paths:
 //   A) SPI: rising status[12] + status[13] bank
@@ -23,6 +34,7 @@ module ddram_frame_rd #(
 	parameter int HEIGHT     = 240,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
+	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -33,6 +45,9 @@ module ddram_frame_rd #(
 	// From frame_store: hold new DMA until vsync consumed last swap
 	input  wire        swap_pending,
 
+	// Live OSD menu word to publish to the HPS (see mailbox layout above).
+	input  wire [15:0] status_osd,
+
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
 	output reg   [7:0] DDRAM_BURSTCNT,
@@ -40,9 +55,9 @@ module ddram_frame_rd #(
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
 	output reg         DDRAM_RD,
-	output wire [63:0] DDRAM_DIN,
+	output reg  [63:0] DDRAM_DIN,
 	output wire  [7:0] DDRAM_BE,
-	output wire        DDRAM_WE,
+	output reg         DDRAM_WE,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -59,15 +74,15 @@ module ddram_frame_rd #(
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
+	localparam [31:0] MAGIC_S = 32'h504C_5853;
 
 	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;
 
 	assign DDRAM_CLK = clk;
-	assign DDRAM_DIN = 64'd0;
 	assign DDRAM_BE  = 8'hFF;
-	assign DDRAM_WE  = 1'b0;
 
 	reg [63:0] fifo_mem [0:FIFO_N-1];
 	reg [FIFO_AW:0] fifo_wr, fifo_rd;
@@ -92,6 +107,14 @@ module ddram_frame_rd #(
 	reg [15:0] poll_div;
 	reg        poll_pending;
 
+	// Status mailbox (core -> HPS). Published on change and on a slow heartbeat
+	// so the host always converges even if it starts late or misses a change.
+	reg [15:0] mbox_seq;
+	reg [15:0] mbox_last;
+	reg        mbox_req;
+	reg        mbox_valid;
+	reg [17:0] mbox_hb;
+
 	// Held start while swap_pending (or overlapping edge)
 	reg        hold_start;
 	reg        hold_bank;
@@ -104,7 +127,7 @@ module ddram_frame_rd #(
 		(pix_i == 2'd2) ? beat_q[47:32] : beat_q[63:48];
 
 	wire [FIFO_AW:0] space = FIFO_N[FIFO_AW:0] - fifo_level;
-	wire can_issue = active && !DDRAM_BUSY && !DDRAM_RD
+	wire can_issue = active && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE
 		&& (qwords_issued < QWORDS[15:0])
 		&& (inflight == 0)
 		&& (space >= BURST[FIFO_AW:0])
@@ -168,11 +191,26 @@ module ddram_frame_rd #(
 			poll_div       <= 16'd0;
 			poll_pending   <= 1'b0;
 			doorbell_ok    <= 1'b0;
+			DDRAM_WE       <= 1'b0;
+			DDRAM_DIN      <= 64'd0;
+			mbox_seq       <= 16'd0;
+			mbox_last      <= 16'd0;
+			mbox_req       <= 1'b1; // publish once as soon as we go idle
+			mbox_valid     <= 1'b0;
+			mbox_hb        <= 18'd0;
 			hold_start     <= 1'b0;
 			hold_bank      <= 1'b0;
 		end else begin
-			if (!DDRAM_BUSY)
+			if (!DDRAM_BUSY) begin
 				DDRAM_RD <= 1'b0;
+				DDRAM_WE <= 1'b0;
+			end
+
+			// Request a publish when the OSD word changes, and periodically so a
+			// host that attaches later still gets a value without any SPI.
+			mbox_hb <= mbox_hb + 18'd1;
+			if (!mbox_valid || (status_osd != mbox_last) || (mbox_hb == 18'd0))
+				mbox_req <= 1'b1;
 
 			// Capture doorbell seq whenever we see a new one (even if held)
 			if (db_new_seq) begin
@@ -213,11 +251,25 @@ module ddram_frame_rd #(
 			end else if (!active) begin
 				// Idle doorbell poll ~every 256 cycles
 				poll_div <= poll_div + 16'd1;
-				if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD) begin
+				if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD
+				    && !DDRAM_WE) begin
 					DDRAM_ADDR     <= DOORBELL_W;
 					DDRAM_BURSTCNT <= 8'd1;
 					DDRAM_RD       <= 1'b1;
 					poll_pending   <= 1'b1;
+				end
+				// Publish the OSD word in a slot that cannot collide with the
+				// poll above: idle only, no read outstanding, bus free.
+				else if (mbox_req && !poll_pending && poll_div[7:0] == 8'd128
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= {mbox_seq + 16'd1, status_osd, MAGIC_S};
+					DDRAM_WE       <= 1'b1;
+					mbox_seq       <= mbox_seq + 16'd1;
+					mbox_last      <= status_osd;
+					mbox_valid     <= 1'b1;
+					mbox_req       <= 1'b0;
 				end
 			end else begin
 				// Active frame DMA

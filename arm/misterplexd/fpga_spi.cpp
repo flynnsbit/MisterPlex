@@ -24,8 +24,6 @@
 namespace misterplex {
 namespace {
 
-constexpr const char* kMainBinary = "/media/fat/MiSTer";
-
 constexpr uint8_t FIO_FILE_TX = 0x53;
 constexpr uint8_t FIO_FILE_TX_DAT = 0x54;
 constexpr uint8_t FIO_FILE_INDEX = 0x55;
@@ -78,60 +76,32 @@ std::vector<pid_t> findMisterPids() {
     return out;
 }
 
-// Refcounted Main pause: nested SpiExclusive must not CONT until outermost.
-// Why pause at all: unpaused SPI races Main get_video_info → garbage vtime/width →
-// scaler retune → VGA "out of range" (HDMI often still OK). That is a real race.
-// Why not pause forever / watchdog: F12/OSD needs Main running between SPI words.
-// Design: STOP only for the actual SPI critical section (settle_us=0 on hot path);
-// long ops may use a short settle. Always CONT on outermost release.
-// Future (proper zero-SPI hot path): memory-mapped DDR kick so SPI is not needed
-// per frame — then pauseMain=false on present with no VGA race.
+// Bits Main sets in GPO while it owns a SPI transaction (spi.cpp EnableFpga/
+// EnableOsd/EnableIO) plus the handshake strobe. If every one of these is clear
+// then Main is between transactions and cannot be hurt by us driving the bus.
+constexpr uint32_t kSspiStrobe = 1u << 17;
+constexpr uint32_t kSspiFpgaEn = 1u << 18;
+constexpr uint32_t kSspiOsdEn = 1u << 19;
+constexpr uint32_t kSspiIoEn = 1u << 20;
+constexpr uint32_t kMainBusyMask = kSspiStrobe | kSspiFpgaEn | kSspiOsdEn | kSspiIoEn;
+
+volatile uint32_t* gpoReg(volatile uint32_t* map) {
+    constexpr uint32_t kMgrBase = 0xFF706000;
+    constexpr uint32_t kMapBase = 0xFF000000;
+    return map + ((kMgrBase - kMapBase + 0x10) >> 2);
+}
+
+// Non-zero while this process holds Main stopped, so resumeStrandedMain() does
+// not fight a window we are legitimately holding right now.
 std::atomic<int>& mainPauseDepth() {
     static std::atomic<int> d{0};
     return d;
 }
 
-// Non-zero while healMainReloadPlex() is deliberately killing and re-execing
-// Main, so the liveness watchdog does not see the gap and fork a second Main.
-std::atomic<int>& mainHealDepth() {
-    static std::atomic<int> d{0};
-    return d;
-}
-
-struct MainPause {
-    std::vector<pid_t> pids;
-    explicit MainPause(bool enable, unsigned settle_us) {
-        if (!enable)
-            return;
-        if (mainPauseDepth().fetch_add(1) == 0) {
-            pids = findMisterPids();
-            for (pid_t p : pids)
-                kill(p, SIGSTOP);
-            if (settle_us && !pids.empty())
-                usleep(settle_us);
-        }
-    }
-    ~MainPause() {
-        if (mainPauseDepth().fetch_sub(1) != 1)
-            return;
-        // Outermost: CONT every MiSTer we can see (heal if list was empty at STOP).
-        auto now = findMisterPids();
-        if (now.empty())
-            now = pids;
-        for (pid_t p : now)
-            kill(p, SIGCONT);
-    }
-    MainPause(const MainPause&) = delete;
-    MainPause& operator=(const MainPause&) = delete;
-};
-
 // Read the scheduler state character from /proc/<pid>/stat. 'T' = stopped by a
-// signal, which for Main means SIGSTOP from a MainPause that never released.
-// stat is "pid (comm) state ..." and comm may contain spaces or ')', so scan
-// back from the LAST ')' rather than tokenising forward.
-char misterProcState(pid_t p) {
-    char path[64];
-    std::snprintf(path, sizeof(path), "/proc/%d/stat", static_cast<int>(p));
+// signal. stat is "pid (comm) state ..." and comm may contain spaces or ')', so
+// scan back from the LAST ')' rather than tokenising forward.
+char procStateFile(const char* path) {
     int fd = ::open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0)
         return 0;
@@ -150,30 +120,183 @@ char misterProcState(pid_t p) {
     return *s;
 }
 
-// Order: process mutex → flock → MainPause. No system()/fork under the lock.// pauseMain: STOP Main for SPI exclusivity (VGA-safe).
-// settle_us: extra usleep after STOP — use 0 on per-frame DDR kick; 300 on long ops.
+char misterProcState(pid_t p) {
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/%d/stat", static_cast<int>(p));
+    return procStateFile(path);
+}
+
+// A window in which it is provably safe to drive GPO ourselves.
+//
+// Acquire: SIGSTOP Main -> wait for /proc to actually report state 'T' (kill()
+// returns long before the target stops) -> read the live GPO register. If any
+// of Main's transaction-enable bits or the strobe is set, Main was frozen inside
+// fpga_spi() and touching GPO now would hang it forever; resume it, back off and
+// retry. All-clear means Main is parked between transactions and, being stopped,
+// cannot start another one.
+//
+// Release: put GPO back exactly as Main left it, THEN SIGCONT. Main's shadow
+// copy (`gpo_copy`) is never re-read from hardware, so handing the register back
+// bit-for-bit is what keeps its view of the world true.
+//
+// Only the outermost SpiExclusive builds a window; nested frames inherit it.
+struct MainSafeWindow {
+    volatile uint32_t* map = nullptr;
+    std::vector<pid_t> pids;
+    uint32_t savedGpo = 0;
+    bool enabled = false;
+    bool safe = false;
+
+    // A process-directed SIGSTOP initiates a *group* stop: the thread-group
+    // leader can already report 'T' while a worker thread is still running.
+    // Main is multi-threaded (offload.cpp) and its workers touch SPI, so it is
+    // not enough to look at /proc/<pid>/stat — every task in /proc/<pid>/task
+    // must have stopped before the GPO sample means anything.
+    static bool allTasksStopped(pid_t p) {
+        char dir[64];
+        std::snprintf(dir, sizeof(dir), "/proc/%d/task", static_cast<int>(p));
+        DIR* d = opendir(dir);
+        if (!d)
+            return true; // process is gone; it can no longer race us
+        bool all = true;
+        while (dirent* e = readdir(d)) {
+            if (e->d_name[0] < '1' || e->d_name[0] > '9')
+                continue;
+            char path[128];
+            std::snprintf(path, sizeof(path), "%.48s/%.16s/stat", dir, e->d_name);
+            const char st = procStateFile(path);
+            if (st != 'T' && st != 0) {
+                all = false;
+                break;
+            }
+        }
+        closedir(d);
+        return all;
+    }
+
+    static bool waitStopped(const std::vector<pid_t>& pids, int maxUs) {
+        for (int waited = 0; waited <= maxUs; waited += 200) {
+            bool all = true;
+            for (pid_t p : pids) {
+                if (!allTasksStopped(p)) {
+                    all = false;
+                    break;
+                }
+            }
+            if (all)
+                return true;
+            usleep(200);
+        }
+        return false;
+    }
+
+    MainSafeWindow(volatile uint32_t* m, int attempts, bool enable) : map(m), enabled(enable) {
+        if (!enabled)
+            return;
+        mainPauseDepth().fetch_add(1);
+        for (int attempt = 0; attempt < attempts && !safe; ++attempt) {
+            pids = findMisterPids();
+            if (pids.empty()) {
+                // No Main on this system (dev host) — nobody to race.
+                if (map)
+                    savedGpo = *gpoReg(map);
+                safe = true;
+                break;
+            }
+            for (pid_t p : pids)
+                kill(p, SIGSTOP);
+            if (waitStopped(pids, 50000) && map) {
+                savedGpo = *gpoReg(map);
+                if ((savedGpo & kMainBusyMask) == 0) {
+                    safe = true;
+                    break;
+                }
+            }
+            // Main is mid-transaction (or would not stop): let it finish and
+            // try again a little later. Backing off is always better than
+            // corrupting a handshake we cannot repair.
+            for (pid_t p : pids)
+                kill(p, SIGCONT);
+            usleep(500 + static_cast<unsigned>(attempt) * 500);
+        }
+        if (!safe) {
+            // Never leave Main stopped just because we gave up.
+            for (pid_t p : findMisterPids())
+                kill(p, SIGCONT);
+        }
+    }
+
+    ~MainSafeWindow() {
+        if (!enabled)
+            return;
+        if (safe && map)
+            *gpoReg(map) = savedGpo;
+        auto now = findMisterPids();
+        if (now.empty())
+            now = pids;
+        for (pid_t p : now)
+            kill(p, SIGCONT);
+        mainPauseDepth().fetch_sub(1);
+    }
+    MainSafeWindow(const MainSafeWindow&) = delete;
+    MainSafeWindow& operator=(const MainSafeWindow&) = delete;
+};
+
+// Cross-process lock. Held for the whole window, including the GPO restore —
+// another process writing GPO while we are sampling or restoring would make
+// savedGpo a lie and could hang Main exactly as before.
+struct FlockGuard {
+    int fd = -1;
+    explicit FlockGuard(bool enable) {
+        if (!enable)
+            return;
+        fd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
+        if (fd >= 0)
+            flock(fd, LOCK_EX);
+    }
+    ~FlockGuard() {
+        if (fd >= 0) {
+            flock(fd, LOCK_UN);
+            ::close(fd);
+        }
+    }
+    FlockGuard(const FlockGuard&) = delete;
+    FlockGuard& operator=(const FlockGuard&) = delete;
+};
+
+// Nesting state, only ever touched while spiMutex (recursive) is held.
+int& spiDepth() {
+    static int d = 0;
+    return d;
+}
+bool& spiWindowSafe() {
+    static bool s = false;
+    return s;
+}
+
+// Every SPI transaction goes through this; there is no "fast, unpaused" variant,
+// because an unsynchronised GPO write can hang Main just as dead as a paused one.
+//
+// Member order IS the lock order: mutex -> flock -> window on the way in, and
+// the exact reverse on the way out (members are destroyed in reverse declaration
+// order, after the destructor body). The flock must outlive the window so that
+// GPO is restored and Main resumed while we still hold the cross-process lock.
+// No system()/fork under the lock: multi-threaded misterplexd must not fork
+// (glibc fork+malloc deadlock).
 struct SpiExclusive {
     std::lock_guard<std::recursive_mutex> mu;
-    int lfd = -1;
-    alignas(MainPause) unsigned char pause_storage_[sizeof(MainPause)]{};
-    MainPause* pause = nullptr;
-    explicit SpiExclusive(bool pauseMain, unsigned settle_us = 300) : mu(spiMutex()) {
-        lfd = ::open("/tmp/misterplex_spi.lock", O_CREAT | O_RDWR, 0666);
-        if (lfd >= 0)
-            flock(lfd, LOCK_EX);
-        if (pauseMain)
-            pause = new (pause_storage_) MainPause(true, settle_us);
+    bool outer;
+    FlockGuard lock;
+    MainSafeWindow win;
+    explicit SpiExclusive(volatile uint32_t* map, int attempts = 8)
+        : mu(spiMutex()), outer(spiDepth()++ == 0), lock(outer), win(map, attempts, outer) {
+        if (outer)
+            spiWindowSafe() = win.safe;
     }
-    ~SpiExclusive() {
-        if (pause) {
-            pause->~MainPause();
-            pause = nullptr;
-        }
-        if (lfd >= 0) {
-            flock(lfd, LOCK_UN);
-            ::close(lfd);
-        }
-    }
+    ~SpiExclusive() { --spiDepth(); }
+    // False when Main could not be parked safely: the caller must not touch SPI.
+    // Nested frames report the outermost window's real state, never a blind true.
+    bool safe() const { return spiWindowSafe(); }
     SpiExclusive(const SpiExclusive&) = delete;
     SpiExclusive& operator=(const SpiExclusive&) = delete;
 };
@@ -224,131 +347,6 @@ void FpgaSpi::installCrashGuard() {
     // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
         std::signal(sig, crashGuardHandler);
-}
-
-bool FpgaSpi::ensureMainAlive(const char* plexRbf) {
-    if (mainHealDepth().load() > 0)
-        return false; // a deliberate heal is mid-flight; do not race it
-    if (!findMisterPids().empty())
-        return false;
-    return healMainReloadPlex(plexRbf);
-}
-
-bool FpgaSpi::healMainReloadPlex(const char* plexRbf) {
-    // Product path until present kicks leave SPI: after play, Main does not
-    // service F12/MiSTer_cmd until process restart (bus left inconsistent).
-    // Only called after play threads join (no concurrent SPI).
-    //
-    // No Main binary means this is not a MiSTer (dev host, unit tests): there is
-    // nothing to supervise, and forking a doomed exec would just stall the caller
-    // for the length of the retry loop.
-    if (::access(kMainBinary, X_OK) != 0)
-        return false;
-    if (!plexRbf || !plexRbf[0])
-        plexRbf = "/media/fat/_Utility/Plex.rbf";
-    // Nothing on the board respawns Main (inittab uses sysinit, not respawn), so
-    // between the kill below and the re-exec the system has no Main at all. Mark
-    // the window so the liveness watchdog does not fork a competing one.
-    struct HealMark {
-        HealMark() { mainHealDepth().fetch_add(1); }
-        ~HealMark() { mainHealDepth().fetch_sub(1); }
-    } heal_mark;
-    // CONT leftovers, then terminate and reap (avoid zombies — they break cmd path).
-    for (pid_t p : findMisterPids())
-        kill(p, SIGCONT);
-    usleep(50000);
-    std::vector<pid_t> old = findMisterPids();
-    for (pid_t p : old)
-        kill(p, SIGTERM);
-    for (int i = 0; i < 40; ++i) {
-        int st = 0;
-        while (waitpid(-1, &st, WNOHANG) > 0) {
-        }
-        if (findMisterPids().empty())
-            break;
-        usleep(50000);
-    }
-    for (pid_t p : findMisterPids())
-        kill(p, SIGKILL);
-    for (int i = 0; i < 20; ++i) {
-        int st = 0;
-        while (waitpid(-1, &st, WNOHANG) > 0) {
-        }
-        if (findMisterPids().empty())
-            break;
-        usleep(50000);
-    }
-    usleep(200000);
-    // Double-fork so Main is reparented to init (no zombie when companion is parent).
-    // Retry: leaving the board with no Main is unrecoverable without a power cycle,
-    // so a single failed fork/exec must not be the end of it.
-    bool spawned = false;
-    for (int attempt = 0; attempt < 3 && !spawned; ++attempt) {
-        pid_t pid = fork();
-        if (pid < 0) {
-            usleep(200000);
-            continue;
-        }
-        if (pid == 0) {
-            pid_t pid2 = fork();
-            if (pid2 < 0)
-                _exit(127);
-            if (pid2 > 0)
-                _exit(0); // intermediate exits; init adopts Main
-            setsid();
-            int devnull = ::open("/dev/null", O_RDWR);
-            if (devnull >= 0) {
-                dup2(devnull, 0);
-                dup2(devnull, 1);
-                dup2(devnull, 2);
-                if (devnull > 2)
-                    ::close(devnull);
-            }
-            chdir("/media/fat");
-            execl(kMainBinary, kMainBinary, static_cast<char*>(nullptr));
-            _exit(127);
-        }
-        int st = 0;
-        waitpid(pid, &st, 0); // reap intermediate
-        // Wait for Main to create cmd pipe and settle
-        for (int i = 0; i < 60; ++i) {
-            if (!findMisterPids().empty() && ::access("/dev/MiSTer_cmd", W_OK) == 0) {
-                spawned = true;
-                break;
-            }
-            usleep(100000);
-        }
-    }
-    if (!spawned)
-        return false;
-    usleep(800000);
-    int cfd = ::open("/dev/MiSTer_cmd", O_WRONLY | O_NONBLOCK);
-    if (cfd < 0)
-        return false;
-    char line[256];
-    int n = std::snprintf(line, sizeof(line), "load_core %s\n", plexRbf);
-    if (n > 0)
-        (void)::write(cfd, line, static_cast<size_t>(n));
-    ::close(cfd);
-    for (int i = 0; i < 60; ++i) {
-        int nfd = ::open("/tmp/CORENAME", O_RDONLY | O_CLOEXEC);
-        if (nfd >= 0) {
-            char buf[64]{};
-            ssize_t r = ::read(nfd, buf, sizeof(buf) - 1);
-            ::close(nfd);
-            if (r > 0) {
-                for (ssize_t j = 0; j < r; ++j) {
-                    if (buf[j] == '\n' || buf[j] == '\r')
-                        buf[j] = 0;
-                }
-                if (std::strstr(buf, "Plex") || std::strstr(buf, "plex") ||
-                    std::strstr(buf, "PLEX"))
-                    return true;
-            }
-        }
-        usleep(100000);
-    }
-    return false;
 }
 
 void FpgaSpi::setErr(std::string msg) {
@@ -428,6 +426,8 @@ bool FpgaSpi::ensureDdrMap() {
 }
 
 void FpgaSpi::releaseDdrMap() {
+    mboxInit_ = false;
+    mboxAlive_ = false;
     if (ddrMap_) {
         munmap(ddrMap_, ddrMapLen_);
         ddrMap_ = nullptr;
@@ -440,14 +440,14 @@ void FpgaSpi::releaseDdrMap() {
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
-    // Poll status until flags clear (or timeout). No MainPause — present hot path.
+    // Poll status until flags clear (or timeout).
     const int step = 500;
     int waited = 0;
     while (waited < maxUs) {
         uint8_t raw[16]{};
         {
-            SpiExclusive guard(/*pauseMain=*/false, /*settle_us=*/0);
-            if (!map_ || !gpiUserMode(map_))
+            SpiExclusive guard(map_);
+            if (!guard.safe() || !map_ || !gpiUserMode(map_))
                 return false;
             if (!readStatusRaw(raw))
                 return false;
@@ -482,9 +482,60 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     return true;
 }
 
+bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
+    if (!ensureDdrMap())
+        return false;
+    constexpr size_t kOff = kDdrMailboxPhys - kDdrFrameBase;
+    if (kOff + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
+    // The core writes all 8 bytes in one DDR burst, but the ARM sees it as two
+    // 32-bit loads, so re-read until the sequence number is stable to be sure we
+    // did not catch a publish in flight.
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo = mb[0];
+        const uint32_t hi = mb[1];
+        __sync_synchronize();
+        if (lo != kDdrMailboxMagic)
+            return false; // core has not published (pre-mailbox RBF, or reset)
+        if (mb[1] != hi || mb[0] != lo)
+            continue; // caught a publish in flight; re-read
+        const uint16_t seq = static_cast<uint16_t>(hi >> 16);
+        const double now = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+        if (!mboxInit_) {
+            // First sight proves nothing: the magic may be a leftover from a
+            // previous core. Wait for seq to actually move.
+            mboxInit_ = true;
+            mboxSeq_ = seq;
+            mboxSeqMs_ = now;
+            return false;
+        }
+        if (seq != mboxSeq_) {
+            mboxSeq_ = seq;
+            mboxSeqMs_ = now;
+            mboxAlive_ = true;
+        } else if (now - mboxSeqMs_ > 2000.0) {
+            // Heartbeat is milliseconds; two seconds of a frozen counter means
+            // nothing is publishing. Hand the caller back to the SPI path.
+            mboxAlive_ = false;
+        }
+        if (!mboxAlive_)
+            return false;
+        osd = static_cast<uint16_t>(hi & 0xFFFFu);
+        return true;
+    }
+    return false;
+}
+
 bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick,
                          bool& saw_frame) {
-    SpiExclusive guard(/*pauseMain=*/false);
+    SpiExclusive guard(map_);
+    if (!guard.safe()) {
+        err_ = "Main busy on SPI — skipped";
+        return false;
+    }
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;
@@ -550,7 +601,15 @@ void FpgaSpi::gpoWrite(uint32_t v) {
     *gpo = v;
 }
 
-uint32_t FpgaSpi::gpoRead() const { return gpo_copy_; }
+uint32_t FpgaSpi::gpoRead() const {
+    // Read the live register, not a shadow. Main keeps a static `gpo_copy` and
+    // never re-reads hardware, so a shadow of our own would drift from Main's
+    // every time it drove the bus, and we would hand back bits it never set.
+    // Inside a SpiExclusive window we are the only writer, so this is stable.
+    if (map_)
+        return *gpoReg(map_);
+    return gpo_copy_;
+}
 
 int FpgaSpi::gpiRead() const {
     volatile uint32_t* gpi = map_ + ((kMgrBase - kMapBase + 0x14) >> 2);
@@ -662,7 +721,11 @@ bool FpgaSpi::getConfigString(std::string& out) {
         setErr("getConfigString: not open");
         return false;
     }
-    SpiExclusive guard(true);
+    SpiExclusive guard(map_);
+    if (!guard.safe()) {
+        err_ = "Main busy on SPI — skipped";
+        return false;
+    }
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;
@@ -688,7 +751,11 @@ bool FpgaSpi::setStatusWord(const uint8_t word[16]) {
         setErr("setStatusWord: bad args");
         return false;
     }
-    SpiExclusive guard(true);
+    SpiExclusive guard(map_);
+    if (!guard.safe()) {
+        err_ = "Main busy on SPI — skipped";
+        return false;
+    }
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;
@@ -807,8 +874,12 @@ bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
     }
     auto t0 = std::chrono::steady_clock::now();
     // Mutex + flock + Main pause (no system()/fork — thread-safe under STREAM load).
-    SpiExclusive guard(true);
+    SpiExclusive guard(map_);
     err_.clear(); // drop stale DDR probe text so SPI callers see real SPI errors
+    if (!guard.safe()) {
+        err_ = "Main busy on SPI — skipped";
+        return false;
+    }
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;
@@ -931,8 +1002,8 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
                 for (int i = 0; i < 40; ++i) {
                     uint8_t raw[16]{};
                     {
-                        SpiExclusive guard(/*pauseMain=*/false, /*settle_us=*/0);
-                        if (!readStatusRaw(raw))
+                        SpiExclusive guard(map_);
+                        if (!guard.safe() || !readStatusRaw(raw))
                             break;
                     }
                     CoreStatus st = parseCoreStatus(raw);
@@ -1045,7 +1116,11 @@ bool FpgaSpi::getCoreStatus(uint8_t out[16]) {
         return false;
     }
     // Mutex + flock + Main pause so UIO_GET_STATUS is not interleaved.
-    SpiExclusive guard(true);
+    SpiExclusive guard(map_);
+    if (!guard.safe()) {
+        err_ = "Main busy on SPI — skipped";
+        return false;
+    }
     if (!gpiUserMode(map_)) {
         err_ = "FPGA not in user mode";
         return false;

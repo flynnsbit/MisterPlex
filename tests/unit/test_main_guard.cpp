@@ -1,14 +1,13 @@
-// Guards the two ways misterplexd can leave a MiSTer with no usable Main:
+// Guards the one way misterplexd can still leave a MiSTer with no usable Main:
+// an SPI critical section SIGSTOPs Main just long enough to prove it is parked
+// between its own transactions, and if the daemon dies inside that window
+// nothing sends SIGCONT and Main stays stopped forever — no F12, no OSD, no
+// /dev/MiSTer_cmd, and no way back without a power cycle.
 //
-//   1. SPI exclusivity SIGSTOPs Main for the critical section. If the daemon dies
-//      inside that window nothing sends SIGCONT and Main stays stopped forever —
-//      no F12, no OSD, no /dev/MiSTer_cmd.
-//   2. /etc/inittab starts Main with `::sysinit:/media/fat/MiSTer &` — sysinit,
-//      not respawn — so if Main exits, nothing on the board restarts it.
-//
-// Both are unrecoverable for the user without a power cycle, so the detection
-// side is pinned here. We deliberately do NOT exercise ensureMainAlive(): it
-// execs /media/fat/MiSTer, which does not exist on the build host.
+// misterplexd must never kill, restart or reload Main; the recovery path here is
+// SIGCONT and nothing else. This test pins that: resumeStrandedMain() revives a
+// stopped Main, is idempotent on a healthy one, and never signals anything but
+// SIGCONT (a killed fixture would show up as a failed liveness check below).
 
 #include "fpga_spi.hpp"
 
@@ -130,10 +129,23 @@ int main() {
         die("second resumeStrandedMain() stopped a healthy MiSTer");
     }
 
+    // 4. the guards never terminate Main: after all of the above it is still
+    //    running and not stopped.
+    if (!FpgaSpi::mainAlive()) {
+        waitpid(pid, nullptr, WNOHANG);
+        die("a guard killed the fake MiSTer — misterplexd must never do that");
+    }
+    if (procState(pid) == 'T') {
+        kill(pid, SIGCONT);
+        kill(pid, SIGKILL);
+        waitpid(pid, nullptr, 0);
+        die("fake MiSTer left stopped after the guards ran");
+    }
+
     kill(pid, SIGKILL);
     waitpid(pid, nullptr, 0);
 
-    // 4. death is detected
+    // 5. and once it really exits, that is observable
     for (int i = 0; i < 40 && FpgaSpi::mainAlive(); ++i)
         usleep(50000);
     if (FpgaSpi::mainAlive())

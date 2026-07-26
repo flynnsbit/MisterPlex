@@ -267,55 +267,99 @@ knob worked. Polling is read-only, full stop.
 
 ---
 
-## Main liveness: why F12 kept dying (2026-07-26)
+## Why F12 kept dying — and why we no longer touch Main (2026-07-26)
 
 **Symptom:** "the Plex RBF has crashed MiSTer Main again, I can't hit F12 any longer."
 
-**It was not a crash and not the RBF.** `/etc/inittab` starts Main with:
+**It was never the RBF, and it was never a crash.** It was us corrupting the bus Main
+owns, and then "fixing" it by killing Main.
+
+### The actual root cause
+
+The HPS↔FPGA "SPI" is not a bus with arbitration. It is **one 32-bit GPO register** in the
+FPGA manager (`0xFF706010`) plus a strobe/ACK handshake on GPI (`0xFF706014`).
+Main_MiSTer assumes it is the sole owner, and its `fpga_spi()` spins on that handshake
+with **no timeout** — the only other exit is the FPGA leaving user mode:
+
+```c
+fpga_gpo_write(gpo | SSPI_STROBE);
+do { gpi = fpga_gpi_read(); ... } while (!(gpi & SSPI_ACK));   // fpga_io.cpp
+```
+
+So if misterplexd rewrites GPO while Main sits between *"strobe=1"* and *"saw ACK"*, the
+core drops ACK, Main never sees it, and **Main spins forever**. No F12, no OSD, no
+`/dev/MiSTer_cmd`. The only escape is killing the process — which is precisely what
+`healMainReloadPlex()` was doing after every single play.
+
+Worse, Main never re-reads the register (`#define fpga_gpo_read() gpo_copy`), so anything
+we left behind was invisible to it. And `SIGSTOP`ping Main did **not** help: it freezes
+Main at an arbitrary instruction, *including inside the handshake*, which is exactly the
+dangerous case.
+
+The bandaid then created a second, worse failure. `/etc/inittab` starts Main with:
 
 ```
 ::sysinit:/media/fat/MiSTer &
 ```
 
-`sysinit`, **not** `respawn`. Nothing on the board ever restarts Main. Meanwhile
-`healMainReloadPlex()` deliberately SIGTERM/SIGKILLs Main and re-execs it after every
-play (to restore F12 after SPI present traffic), and `MediaPlayer::stop()` runs that on
-daemon shutdown — i.e. on every redeploy. Any interruption of that window (daemon crash,
-`killall -9` from the deploy script, a failed fork) leaves the board with **no Main
-process at all**: no F12, no OSD, no menu, until a power cycle. Confirmed live — `ps`
-showed zero `/media/fat/MiSTer` processes while the core ran fine.
+`sysinit`, **not** `respawn` — nothing on the board ever restarts Main. So any interruption
+of the kill/re-exec window (daemon crash, the deploy script's `killall -9`, a failed fork)
+left the board with **no Main at all** until a power cycle. Confirmed live: `ps` showed
+zero `/media/fat/MiSTer` processes while the core ran fine.
 
-A second, related hole: SPI exclusivity works by **SIGSTOPing Main** (`MainPause`). If the
-daemon dies inside that window nothing sends SIGCONT and Main is stopped forever. Before
-the OSD poller and idle painter existed, that window only opened during playback; they
-opened it several times a second, forever.
+### The fix: stop sharing the register, then stop needing it
 
-### Fixes
+**1. Every SPI transaction now runs in a provably safe window** (`SpiExclusive` /
+`MainSafeWindow`). Instead of blindly stopping Main:
 
-| Guard | What it does |
-|-------|--------------|
-| `FpgaSpi::resumeStrandedMain()` | SIGCONTs any Main left in state `T` while we hold no pause. Called at startup (repairs a previous death) and from a 600 ms watchdog. |
-| `FpgaSpi::installCrashGuard()` | SIGSEGV/SIGABRT/SIGBUS/SIGILL/SIGFPE/SIGQUIT handlers resume Main, then re-raise with the default disposition. |
-| `FpgaSpi::ensureMainAlive()` | Relaunches Main + reloads the Plex core when no MiSTer process exists. Runs at startup and from the watchdog after 5 consecutive misses (~3 s), guarded by `mainHealDepth()` so it never races a deliberate heal. |
-| `healMainReloadPlex()` retry | The fork/exec is retried up to 3× and the function reports failure instead of silently leaving the board Main-less. Returns early on a non-MiSTer host (no `/media/fat/MiSTer`). |
-| Idle SPI backoff | OSD poll 4 Hz while playing, **1 Hz idle**; static idle repaint 2 s → **30 s**. Every SPI op SIGSTOPs Main, and while idle nothing heals afterwards. |
+1. `SIGSTOP` Main, then **poll `/proc/<pid>/stat` until it is really state `T`** —
+   `kill()` returns long before the target stops.
+2. Read the **live** GPO register and test Main's own transaction-enable bits
+   (`FPGA_EN` 1<<18, `OSD_EN` 1<<19, `IO_EN` 1<<20) and the strobe (1<<17). Main only ever
+   calls `fpga_spi()` between `EnableXxx()`/`DisableXxx()`, so **all-clear proves it is
+   parked between transactions** and, being stopped, it cannot start another.
+3. If it *was* mid-transaction: `SIGCONT`, back off, retry. If we run out of attempts the
+   SPI call **fails cleanly** (`"Main busy on SPI — skipped"`) rather than corrupting
+   anything.
+4. On release, write GPO back **byte-for-byte** as Main left it, *then* `SIGCONT`. Main
+   wakes with hardware exactly matching its shadow copy.
 
-### Evidence (live hardware)
+`gpoRead()` now reads the live register rather than a shadow of our own, so we can never
+hand Main back bits it never set.
 
-```
-== stranded Main (leaked SIGSTOP) ==
-main_pid=26493
-TRRRRRRRRRRRRRRRRRRRRRRRRRRRRR      # T -> R within ~100 ms
-== Main killed outright ==
-killing main_pid=25909
-immediately_after_kill=[]
-after_watchdog=[26493] state=R      # new pid, core=Plex
-```
+**2. The core publishes the OSD word into DDR, so the poller needs no SPI at all.**
+`ddram_frame_rd` now writes a mailbox qword at **`0x3007F100`** — inside the frame window
+misterplexd already mmaps:
 
-`tests/unit/test_main_guard.cpp` pins the detection side on the build host using a symlink
-to `sleep` named `MiSTer` (a shell script will not do — the kernel puts the interpreter in
-`argv[0]`, and the fixture path must not contain the string `misterplex`, which
-`findMisterPids()` filters out).
+| Bits | Field |
+|------|-------|
+| `[31:0]` | magic `0x504C5853` ("PLXS") |
+| `[47:32]` | `status[15:0]` — the live OSD menu word |
+| `[63:48]` | seq (monotonic; lets the host reject a torn read) |
+
+Published on change plus a slow heartbeat, issued only in the idle branch so it can never
+collide with the doorbell poll or a frame DMA. `readOsdMailbox()` prefers this path and
+falls back to `UIO_GET_STATUS` only on a pre-mailbox RBF. **The frame path was already
+SPI-free** (mmap + doorbell), so with the mailbox in place a normal session touches the
+SPI bus zero times.
+
+### What was removed
+
+`healMainReloadPlex()` and `ensureMainAlive()` are **gone**. misterplexd no longer starts,
+stops, kills, or reloads Main under any circumstance. `MediaPlayer::stop()` no longer
+heals, no longer tears down and re-opens the FPGA, and no longer unlinks
+`/tmp/misterplex_spi.lock` (recreating that inode would have put concurrent tools on a
+different lock — a real bug).
+
+The only thing left is `resumeStrandedMain()`, which sends **`SIGCONT` and nothing else**,
+plus `installCrashGuard()` for fatal signals. They exist purely because the safe window
+still stops Main for a few microseconds; if misterplexd is SIGKILLed inside it, the next
+start (or the 600 ms watchdog) resumes Main.
+
+`tests/unit/test_main_guard.cpp` pins this: the fixture must be a symlink to `sleep` named
+`MiSTer` (a shell script will not do — the kernel puts the interpreter in `argv[0]`) at a
+path not containing `misterplex`, which `findMisterPids()` filters out. It now also asserts
+that no guard ever terminates Main.
 
 ### The deploy script was shipping stale binaries
 

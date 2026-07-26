@@ -220,16 +220,12 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, on_signal);
     std::signal(SIGCHLD, SIG_DFL);
 
-    // SPI exclusivity SIGSTOPs Main. If a previous misterplexd died inside that
-    // window, Main is still stopped right now and F12/OSD/MiSTer_cmd are all
-    // dead — resume it before we do anything else, then arm the crash guard so
-    // we cannot strand it again.
+    // An SPI critical section SIGSTOPs Main for a few microseconds. If a previous
+    // misterplexd died inside that window, Main is still stopped right now and
+    // F12/OSD/MiSTer_cmd are all dead — resume it before we do anything else,
+    // then arm the crash guard so we cannot strand it again.
     misterplex::FpgaSpi::resumeStrandedMain();
     misterplex::FpgaSpi::installCrashGuard();
-    // A previous misterplexd may have died mid-heal and left the board with no
-    // Main at all. Nothing else on the system will bring it back.
-    if (misterplex::FpgaSpi::ensureMainAlive())
-        std::fprintf(stderr, "misterplexd: Main was not running — relaunched it\n");
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
@@ -812,36 +808,25 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd:   server[%zu]=%s%s\n", i, servers[i].c_str(),
                      i == 0 ? " (default)" : "");
 
-    // Watchdog: SPI exclusivity SIGSTOPs Main for the critical section, and the
-    // OSD poller / idle painter now open that window several times a second for
-    // as long as the daemon runs. If a pause is ever leaked — a hang inside the
-    // section, a thread killed mid-flight — Main stays stopped and the user
-    // loses F12 with no way back. Sweeping /proc twice a second costs nothing
-    // and touches no SPI, so it can never make things worse.
+    // Watchdog: an SPI critical section SIGSTOPs Main only long enough to prove
+    // it is parked between its own transactions, but if that window is ever
+    // leaked — a hang inside the section, a thread killed mid-flight — Main
+    // stays stopped and the user loses F12 with no way back. Sweeping /proc
+    // twice a second costs nothing and touches no SPI, so it can never make
+    // things worse. This only ever sends SIGCONT: misterplexd does not start,
+    // stop, or reload Main.
     unsigned tick = 0;
-    unsigned mainMissing = 0;
     while (!g_stop.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         if (++tick % 3 != 0)
             continue;
         misterplex::FpgaSpi::resumeStrandedMain();
-        // Main is started from inittab as sysinit, not respawn: if it dies (or a
-        // heal is interrupted) nothing else will ever bring it back and the user
-        // loses F12/OSD/menu entirely. Require a few consecutive misses so a
-        // deliberate reload is never mistaken for a death.
-        if (misterplex::FpgaSpi::mainAlive()) {
-            mainMissing = 0;
-        } else if (++mainMissing >= 5) {
-            mainMissing = 0;
-            if (misterplex::FpgaSpi::ensureMainAlive())
-                std::fprintf(stderr, "misterplexd: Main died — relaunched it\n");
-        }
     }
 
     player.stop();
     comp.stop();
-    // Last chance on the way out: stop() tears down SPI and reloads Main, so a
-    // pause leaked during teardown would otherwise outlive us.
+    // Last chance on the way out: a window leaked during teardown would
+    // otherwise outlive us.
     misterplex::FpgaSpi::resumeStrandedMain();
     return 0;
 }

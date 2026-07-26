@@ -63,7 +63,9 @@ Smoking-gun pre-fix frame: `captures/e2e/tc_glitch/t9/exact_9.03.png`
 - **Wall-48 kHz audio pace** so A/V share one clock; FFmpeg dual-pipe RGB+PCM.
 - **`playing_` set early** (avoid race with zero frames).
 - **Doorbell-preferred DDR present** with persistent `/dev/mem` map; short settle, no 100 ms SPI poll of pending (that collapsed pfps).
-- **Heal Main on stop** (`healMainReloadPlex`) so F12/OSD recover after SPI.
+- ~~**Heal Main on stop** (`healMainReloadPlex`)~~ — **removed 2026-07-26.** That was a
+  bandaid for corrupting Main's SPI handshake; the handshake is now protected and the OSD
+  word comes from a DDR mailbox, so nothing needs healing. See `docs/MILESTONE_AVSYNC_SEEK.md`.
 
 ### 5. Lab conf (on device)
 

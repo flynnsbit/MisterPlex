@@ -139,29 +139,43 @@ void MediaPlayer::startOsdPoll() {
     if (osdThr_.joinable())
         osdThr_.join();
     osdThr_ = std::thread([this] {
+        bool mailboxLogged = false;
         while (osdRun_.load()) {
-            uint8_t raw[16]{};
+            uint16_t word = 0;
             bool got = false;
+            bool viaMailbox = false;
             {
                 std::lock_guard<std::mutex> lk(presentMu_);
-                got = fpga_.ok() && fpga_.getCoreStatus(raw);
+                // Preferred path: the core publishes the OSD word into HPS DDR,
+                // so reading it is a plain memory load that Main never sees.
+                if (fpga_.readOsdMailbox(word)) {
+                    got = true;
+                    viaMailbox = true;
+                } else if (fpga_.ok()) {
+                    // Pre-mailbox RBF: fall back to UIO_GET_STATUS over SPI.
+                    // status[15:0] is the only slice the core echoes back;
+                    // everything above it is telemetry that Main overwrites.
+                    uint8_t raw[16]{};
+                    if (fpga_.getCoreStatus(raw)) {
+                        word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
+                        got = true;
+                    }
+                }
+            }
+            if (got && viaMailbox && !mailboxLogged) {
+                mailboxLogged = true;
+                log("media: OSD via DDR mailbox (no SPI)");
             }
             if (got) {
-                // status[15:0] is the only slice the core echoes back; everything
-                // above it is telemetry that Main overwrites.
-                const uint16_t word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
                 const uint16_t prev = lastOsd_.load();
                 if (!osdSeen_.exchange(true) || osdChanged(prev, word)) {
                     lastOsd_.store(word);
                     applyOsd(word);
                 }
             }
-            // Every status read SIGSTOPs Main for the SPI critical section. While
-            // playing that is unavoidable (and stop() heals Main afterwards), but
-            // while idle nothing heals, so a 4 Hz drumbeat forever is what
-            // eventually wedges Main and kills F12. Idle needs only enough
-            // responsiveness to notice a menu change: 1 Hz.
-            const int quietMs = playing_.load() ? 250 : 1000;
+            // The mailbox is free to poll. The SPI fallback is not: it has to
+            // park Main for the critical section, so keep that path slow.
+            const int quietMs = viaMailbox ? 100 : (playing_.load() ? 250 : 1000);
             for (int slept = 0; slept < quietMs && osdRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
@@ -456,24 +470,10 @@ void MediaPlayer::stop() {
     stopIdle();
     if (fb_.ok())
         fb_.clear();
-    // Drop SPI flock leftovers so Main is not blocked on shared bus tools.
-    ::unlink("/tmp/misterplex_spi.lock");
-    // SPI present traffic leaves Main unable to service F12/MiSTer_cmd until the
-    // MiSTer process is restarted (soft load_core fails while state=R). Heal now
-    // so users always get OSD after cast. Re-open FPGA after Main reloads Plex.
-    if (fpga_.ok()) {
-        fpga_.close();
-        log("media: healing Main after SPI present (restore F12/OSD)");
-        if (FpgaSpi::healMainReloadPlex()) {
-            (void)initPresent();
-            log("media: Main heal OK — Plex core reloaded");
-        } else {
-            log("media: Main heal incomplete — user may need power cycle");
-        }
-    }
-    // Repaint the idle screen after the heal: the core reload wipes the frame
-    // store, and initPresent() alone leaves it black rather than on the chosen
-    // idle screen. Restart the background users only once SPI is stable again.
+    // Nothing to heal: SPI transactions hand GPO back to Main exactly as they
+    // found it, and the frame path never touches SPI at all, so Main is still
+    // servicing F12/OSD/MiSTer_cmd. Do NOT unlink /tmp/misterplex_spi.lock here —
+    // recreating that inode would put concurrent tools on a different lock.
     paintIdle();
     startIdle();
     startOsdPoll();
