@@ -21,6 +21,9 @@ fi
 
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   'mkdir -p /media/fat/misterplex/bin /media/fat/misterplex/scripts
+   if [ -f /media/fat/misterplex/bin/misterplexd ]; then
+     cp -f /media/fat/misterplex/bin/misterplexd /media/fat/misterplex/bin/misterplexd.prev-c2
+   fi
    for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
      kill -9 "$p" 2>/dev/null || true
    done
