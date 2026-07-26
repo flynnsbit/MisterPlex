@@ -78,9 +78,12 @@ void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
                   "Connection: close\r\nAccess-Control-Allow-Origin: *\r\n"
                   "Access-Control-Allow-Headers: *\r\nAccess-Control-Allow-Methods: *\r\n\r\n",
                   code, status, ctype, body.size());
-    (void)::send(fd, hdr, std::strlen(hdr), 0);
+    // MSG_NOSIGNAL: a client that hangs up before we flush (Plex's long-poll
+    // timeline, or any timed-out request) would otherwise raise SIGPIPE, whose
+    // default action kills the daemon silently — no log line, no dmesg entry.
+    (void)::send(fd, hdr, std::strlen(hdr), MSG_NOSIGNAL);
     if (!body.empty())
-        (void)::send(fd, body.data(), body.size(), 0);
+        (void)::send(fd, body.data(), body.size(), MSG_NOSIGNAL);
 }
 
 // Companion offset/viewOffset are milliseconds (PMS universal offset= is seconds).

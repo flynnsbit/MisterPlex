@@ -53,7 +53,32 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 - [x] G-AV4 Trek eyes-on — **PASS** (S1E1 **40868**): user eyes-on settled on **video delay +80 ms**. Root cause of the reported "half a second" was the knob turned the wrong way: the menu read `A/V offset` and never said which stream moved, so `-160 ms` pushed video *further* ahead (−160 → +80 is a 240 ms swing). Menu is now `Video delay` (positive = video later). **The +80 is not transferable to the new clock** — it was tuned while video paced off submitted bytes, so it silently absorbed that session's ring depth (see G-AV8). The default is therefore reset to **0 ms** and needs one fresh eyes-on pass; tracked as G-AV9.
 - [x] G-AV9 retune `Video delay` under the audible clock — **PASS at 0 ms, no constant needed.** User eyes-on, real TNG S1E1 `40868` @ 3:54 (23.976 → `fps=24000/1001`, HEVC transcode), `osd lo=0x0000` / `av_offset_ms=0`: "audio looks in sync right now". The old +80 ms was **entirely** the MrAudio ring depth the submitted-byte clock was silently carrying; with the audible clock and the feed servo there is nothing left to trim. This is the answer to the original question — Plex Web needs no constant because it schedules against the hardware playback position, and now so do we.
 - [x] G-AV11 HDMI grabber calibration — the flash/beep harness read **-215 ms** at the same setting the user's eyes call in-sync, so **the USB grabber's own A/V skew is about -215 ms** (video and audio arrive as independent USB streams). `tests/hw/avsync_measure.py` is therefore a **relative/drift instrument only**; add **+215 ms** to treat a reading as absolute, and never bake a constant from it without eyes-on confirmation.
-- [ ] G-VID1 VGA 1 px horizontal wrap — user eyes-on: on VGA the image is shifted one pixel right and the column that falls off the right edge wraps to a vertical bar on the far LEFT. A wrap (not black) points at the frame-store read address being one pixel clock out of step with DE, not a DE delay. Suspect a pipeline register added/removed during the vsync work without a matching address adjustment. Must not shift HDMI the other way — both share the readout.
+- [x] G-VID1 VGA/HDMI 1 px edge wrap — **RESOLVED (build `dfebf2bf`).** Symptom: the column falling
+  off the right edge reappeared as a vertical bar on the far LEFT ("like word wrap"), plus a
+  duplicated bottom line.
+  **Two independent defects, both in `present_core.sv`:**
+  1. *Horizontal.* `hc → fr` costs ~4 clk (`store_x` on `ce_pix` = 2, `frame_store`
+     `rd_addr_r → rd_q → rd_r` = 3) while `hc → hb` costs 1, so pixel data lagged its own DE.
+     Fix: delay `hb`/`hs` by `DE_LAG` — **not** `vb`/`vs`. Advancing `read_hc` can never fix this
+     and burned many cycles. `DE_LAG = 3` was *measured*, not guessed (sweep 3/4/5/6 built in
+     parallel: 3 → col0 w=6px, col319 w=4px ✅; 4 → 4/7; 5 → col0 missing/11; 6 → missing/14).
+  2. *The blank-time reset was the actual wrap.* `store_x <= in_content ? store_x_clamped : 0`
+     handed **column 0** to any pixel addressed outside `in_content` — which, with DE delayed, is
+     the tail of every line. It also *masked* left-edge errors. Fix: drive `store_x` unconditionally
+     from the clamped counter.
+  3. *Vertical.* `colorbars.sv` moves the V blank edges at `hc == H_SYNC_S` (544), i.e. **after**
+     each line's active region, so `VBlank` releases a line early and line 240 is displayed;
+     `de_out` never checked `py < 240`, so that row fetched `store_y = 240` — one past the store.
+     Fix: `past_last_row = (py >= 240)` folded into `vb_d`, plus a clamped `store_y`.
+     Proven by stripe pitch: 1035/1044/1053/1062/1071 = 1080/**241**; after the fix
+     1038/1047/1056/1065/1074 and top at 2/9/18/27/36 = 1080/**240**.
+  **Verification is now automated and self-checking** — `scripts/gen_edge_markers.py` pushes a
+  synthetic marker frame and `scripts/check_edges.py` captures HDMI and grades all four edges on
+  both position and run width (exit 0 = pass). Reports `PASS: all four edges correct`, and live
+  TNG shows col0↔col319 r=0.33 / row0↔row239 r=0.13 (no wrap). User confirmed left/right on VGA.
+  *Measurement traps worth remembering:* MJPEG 4:2:0 **fabricates** colours at 1 px saturated
+  boundaries (use `-input_format yuyv422` and luma-coded markers); `/dev/video4` needs ~60 warm-up
+  frames; captures right after a DDR push can be torn — validate with solid white/black first.
 - [ ] G-LIB1 missing PMS item silently plays the test pattern — a deleted/renumbered ratingKey 404s, but PMS returns an HTML error *body*, so the old `!xml.empty()` check passed and resolve fell through to `testsrc2`. Cost a full session of measurements attributed to Star Trek that were actually the test pattern. Now detected via `<MediaContainer` and reported as "no such item on PMS". **TNG is no longer in the library** (section 2 holds only ThunderCats; 40868/40710 both 404) — G-AV9 eyes-on needs it re-added.
 - [x] G-AV5 exact content rate — log `content fps exact=24000/1001` (Trek/RK11) vs `24/1` (RK12) from identical `videoFrameRate="24p"` metadata; `test_avclock` in `make unit`
 - [x] G-AV6 drift slope ≤ 10 ms/min — **+0.79 / −0.67 / +1.79** ms/min (RK11) and **−2.21** (RK12), 240 s single-capture fits; before **−53.3**; `tests/hw/avsync_rate.py`
@@ -111,6 +136,69 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-IDLE idle screen replaces the stuck last frame — `/tmp/idle3.png`, `/tmp/idle_afterstop.png`; amber chevron on near-black after stop
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
+- [x] G-OSD6 **F12/OSD invisible (2026-07-26)** — **RESOLVED. Root cause: a wedged MiSTer `Main`.**
+  F12 came back by itself after a reboot, with zero RTL changes. `Main` had spun forever in the
+  GPO/SPI ACK handshake; while wedged it stops servicing the HPS<->FPGA link, so it never writes
+  `io_osd_vga`/`io_strobe`/`io_din` and the OSD simply has nothing to draw. Same wedge also made it
+  silently drop `/dev/MiSTer_cmd`, so `load_core` was a no-op (see G-VID1).
+  **Two earlier diagnoses were WRONG — recorded so they are not repeated:**
+  1. "SPI sharing in `d9941de` starves Main's OSD writes." Disproven: F12 stayed dead with
+     `misterplexd` fully stopped.
+  2. "`sys/video_mixer.sv` / `sys/osd.v` are never instantiated." Disproven: `video_mixer.sv`
+     contains **no OSD at all**, and `sys/sys_top.v` **is** the top-level entity
+     (`Plex.qsf:11: TOP_LEVEL_ENTITY sys_top`), instantiating `osd hdmi_osd` (line 1183) and
+     `osd vga_osd` (line 1403) via `sys/sys.qip`. The framework composites the OSD regardless of
+     whether the core uses `video_mixer`; routing through `video_mixer` would NOT have fixed F12.
+  **Follow-up (open, tracked as G-STAB2):** find what wedges `Main` in the first place.
+  **Liveness test — the only valid one:** `load_core /media/fat/menu.rbf`, then confirm
+  `/tmp/CORENAME` actually becomes `MENU`. A `DEPLOY_LOAD=menu` bounce printing `CORENAME=Plex`
+  proves **nothing** (it loads Menu then Plex, ending at `Plex` either way).
+  **First diagnosis was WRONG — recorded so it is not repeated:** Main pid 30664 sits in `state=R`
+  at ~48 % CPU with `utime` climbing, which looks exactly like the documented GPO-mid-handshake
+  spin. It is not — the same Main serviced `/dev/MiSTer_cmd` during a `DEPLOY_LOAD=menu` bounce
+  (`CORENAME=Plex`). **A busy-looking Main is normal while a core is loaded; only a dead
+  `MiSTer_cmd` proves the wedge.** Keyboard is enumerated fine (`SIGMACHIP USB Keyboard` →
+  `event0`; Main's `MiSTer virtual input` → `event4`).
+- [x] G-STAB1 **`misterplexd` exits during session handoff** — **RESOLVED. Root cause: unhandled
+  `SIGPIPE`.** Reproduced deterministically with a `seekTo` on live TNG: the new `PLAY`, the old
+  session's `audio pump end` / `session end`, the session-start banner (`FPGA frame path OK`), then
+  **nothing** — process gone, port 3005 refusing.
+  The silence was the clue. All logging is `fprintf(stderr, …)` and stderr is unbuffered, so no
+  message was lost; the process was dying from a signal that prints nothing. `SIGPIPE`'s default
+  action terminates silently and leaves **no dmesg record**, which is exactly what we saw.
+  Two defects, both fixed:
+  1. `SIGPIPE` was never ignored — `main.cpp` installed handlers for SIGINT/SIGTERM/SIGCHLD only.
+  2. `companion.cpp`'s `sendHttp()` called `::send(fd, …, 0)` without `MSG_NOSIGNAL`, so any client
+     that hung up before the response flushed (Plex's long-poll timeline, a timed-out request)
+     raised SIGPIPE on the HTTP thread.
+  **This one defect also explains G-OSD6.** `SIGPIPE` is not in `installCrashGuard()`'s list
+  (SIGSEGV/ABRT/BUS/ILL/FPE/QUIT), so the guard never ran, `Main` was left SIGSTOPped mid-SPI, and
+  F12/OSD/`/dev/MiSTer_cmd` all died with the daemon — the "wedged Main" of G-STAB2.
+  Verified: seek on live TNG now survives (same pid, new session plays, audio `av-lock`), and
+  `Main` stays `state=R` with `CORENAME=Plex`.
+
+- [ ] G-STAB2 **What wedges MiSTer `Main`?** (highest-value stability item) — during this session
+  `Main` entered the GPO/SPI ACK spin (`state=R`, `utime` climbing, `wchan=0`) and stayed there.
+  Consequences are severe and **silent**: F12/OSD dies (G-OSD6) *and* `/dev/MiSTer_cmd` stops being
+  serviced, so `load_core` is accepted then dropped — the RBF on the SD card updates and its md5
+  verifies, but **the FPGA keeps running whatever bitstream was loaded when Main wedged**. Four
+  consecutive build/deploy/test cycles were invalidated this way before it was noticed.
+  Notes: `resumeStrandedMain()` only rescues state **T**, never this spin; Main's handshake loop has
+  no timeout. Only recovery found is a reboot (~75 s to SSH; the startup hook re-launches
+  `misterplexd`).
+  **Next:** determine whether `misterplexd` provokes it (it wedged while the daemon was running),
+  and add an automatic detector — probe `load_core menu.rbf` + `/tmp/CORENAME` before trusting any
+  deploy, and consider having `deploy_plex_core.sh` fail loudly instead of reporting success.
+  **UPDATE — likely answered by G-STAB1.** The daemon was dying from an unhandled `SIGPIPE`, which
+  is *not* in `installCrashGuard()`'s signal list. So the guard never ran and `Main` was left
+  SIGSTOPped inside an SPI critical section — precisely this wedge. With SIGPIPE ignored and
+  `MSG_NOSIGNAL` on the HTTP sends, the daemon no longer dies on that path. Keep this item open
+  only to confirm no *other* silent-death path exists: any signal outside
+  {SEGV,ABRT,BUS,ILL,FPE,QUIT} strands Main the same way, so consider widening the guard (or
+  restoring GPO from an `atexit`/RAII owner) rather than enumerating signals.
+  The automatic detector is **done**: `deploy_plex_core.sh` now verifies `CORENAME` actually
+  becomes `MENU` and hard-fails (exit 3 wedged / exit 4 never returned to Plex) instead of
+  reporting a false success. It fired correctly and caught a real wedge during the edge work.
 
 ### misterplexd no longer touches Main (**DONE** 2026-07-26)
 

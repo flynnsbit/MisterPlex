@@ -219,6 +219,13 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
     std::signal(SIGCHLD, SIG_DFL);
+    // Session handoff (seek / new playMedia) calls killChildren() while the audio
+    // and STREAM pump threads may still be writing to the ffmpeg pipes. The default
+    // SIGPIPE action terminates the process *silently* — no log line, no dmesg entry
+    // — and it is not in installCrashGuard()'s list, so Main is left SIGSTOPped and
+    // F12/OSD die with us. Ignoring it turns those writes into a normal EPIPE that
+    // the pump loops already treat as end-of-stream.
+    std::signal(SIGPIPE, SIG_IGN);
 
     // An SPI critical section SIGSTOPs Main for a few microseconds. If a previous
     // misterplexd died inside that window, Main is still stopped right now and
