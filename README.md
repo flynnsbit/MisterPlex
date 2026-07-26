@@ -150,6 +150,21 @@ export PLEX_TOKEN=<your-token>
 ./scripts/plex_menu.sh                    # interactive TUI; runs on the MiSTer too
 ```
 
+## Display and output resolution
+
+MiSTerPlex currently decodes/presents **320×240** content internally, but MiSTer's scaler can
+output higher HDMI modes without extra ARM cost. Lab sweep results show 720p and 1080p HDMI
+output modes keep the same drop/drift band and **0% CPU idle** as the 800×600 default.
+
+Change output mode in `/media/fat/MiSTer.ini`, not `misterplex.conf`: edit the `[Plex]`
+section's `video_mode`, `video_mode_ntsc`, and `video_mode_pal`, then soft-reboot. Default is
+`video_mode=5` (800×600@60). Common supported HDMI choices are `0` (1280×720@60), `7`
+(1280×720@50), `8` (1920×1080@60), and `9` (1920×1080@50). VGA users should stay at
+mode `5`, or use `6` (640×480@60), because `vga_scaler=1` makes VGA follow the same mode as
+HDMI.
+
+Full guidance and the supported matrix: [docs/display-resolution.md](docs/display-resolution.md).
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -235,7 +250,7 @@ arm/misterplexd/     on-device daemon (companion + media)
 host/libmisterplex/  shared algorithms (cadence, A/V clock)
 scripts/             deploy, packaging, browse/menu, diagnostics
 tests/unit|hw/       host unit tests and hardware test scripts
-docs/                architecture, release, CRT/LCD matrix, phase notes
+docs/                architecture, display/output resolution, release, phase notes
 ```
 
 Architecture and design notes: [docs/architecture.md](docs/architecture.md).
