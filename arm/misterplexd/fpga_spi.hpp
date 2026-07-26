@@ -97,6 +97,15 @@ public:
     // sees all stores before the DDR doorbell is signalled.
     void setDdrMemSync(bool on);
     void setDdrMemFlush(bool on) { ddrMemFlush_ = on; }
+    struct DdrTiming {
+        int64_t prep_wait_us = 0;
+        int64_t copy_us = 0;
+        int64_t flush_us = 0;
+        int64_t doorbell_us = 0;
+        int64_t post_wait_us = 0;
+        int64_t total_us = 0;
+    };
+    DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -230,6 +239,7 @@ private:
     size_t ddrMapLen_ = 0;
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
+    DdrTiming lastDdrTiming_{};
     uint32_t doorbellSeq_ = 0;
     bool mboxInit_ = false;
     bool mboxAlive_ = false;

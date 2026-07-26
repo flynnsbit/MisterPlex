@@ -38,6 +38,7 @@ public:
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     void setDdrMemSync(bool on) { fpga_.setDdrMemSync(on); }
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
+    void setPresentProfile(bool on) { presentProfile_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
@@ -242,6 +243,7 @@ private:
 
     FbPresent fb_;
     FpgaSpi fpga_;
+    bool presentProfile_ = false;
     bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
     int ddrBank_ = 0;      // ping-pong 0/1 @ 0x30000000 / 0x30040000
     // Bytes written to MrAudio this session (A/V clock diagnostics)

@@ -63,6 +63,11 @@ bool cleanDcacheRange(const void* p, size_t len) {
 #endif
 }
 
+int64_t elapsedUs(std::chrono::steady_clock::time_point a,
+                  std::chrono::steady_clock::time_point b) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+}
+
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
 // Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
 // IMPORTANT: no system()/fork here — multi-threaded misterplexd (F1+F2+F3) must
@@ -1032,23 +1037,33 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     if (!ensureDdrMap())
         return false;
 
+    DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
     // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
     // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
     // (status latch is sparse and was adding ~100 ms → pfps collapse).
+    auto tPrep0 = std::chrono::steady_clock::now();
     usleep(1500);
+    auto tPrep1 = std::chrono::steady_clock::now();
+    timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * kDdrFrameStride;
+    auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, rgb565le, len);
     __sync_synchronize();
+    auto tCopy1 = std::chrono::steady_clock::now();
+    timing.copy_us = elapsedUs(tCopy0, tCopy1);
     if (!ddrMemSync_ && ddrMemFlush_) {
+        auto tFlush0 = std::chrono::steady_clock::now();
         if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
             setErr("sendRgb565FrameDdr: cache clean failed");
             return false;
         }
         __sync_synchronize();
+        auto tFlush1 = std::chrono::steady_clock::now();
+        timing.flush_us = elapsedUs(tFlush0, tFlush1);
     }
 
     bool saw_busy = false;
@@ -1058,6 +1073,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
     bool kicked = false;
+    auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
         if (kickDdrDoorbell(bank)) {
             kicked = true;
@@ -1103,6 +1119,8 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
             ddrKickMode_ = 2;
         }
     }
+    auto tKick1 = std::chrono::steady_clock::now();
+    timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
         setErr("sendRgb565FrameDdr: could not kick DDR path");
@@ -1111,11 +1129,16 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.
+    auto tPost0 = std::chrono::steady_clock::now();
     if (!first)
         usleep(500);
+    auto tPost1 = std::chrono::steady_clock::now();
+    timing.post_wait_us = elapsedUs(tPost0, tPost1);
 
     auto t1 = std::chrono::steady_clock::now();
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    timing.total_us = elapsedUs(t0, t1);
+    lastDdrTiming_ = timing;
     clearErr();
     return true;
 }
