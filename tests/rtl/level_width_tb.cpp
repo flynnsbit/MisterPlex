@@ -181,10 +181,46 @@ int main(int argc, char** argv) {
     std::cout << "  coeff[0]=255 gold dequant[0]=" << gold_255 << " RTL=" << rtl_255 << "\n";
     check("safe_255", rtl_255, gold_255);
 
+    // --- Tests 5+: w-qp sign-flip cases and extreme values ---
+    // These cover the full range up to ±2047 (H.264 4x4 block maximum)
+    // plus values beyond that from I_16x16 DC blocks.
+    // The 9-bit truncation produced sign flips at code=1000 (level 501→−11)
+    // and code=2000 (level 1001→−23). Verify the fix kills those.
+    struct ExtCase { int coeff; int qp; const char* label; };
+    const ExtCase ext_cases[] = {
+        {  501,  4, "w-qp_code1000"},     // was −11 (sign flip)
+        { -501,  4, "w-qp_code1001"},
+        { 1001,  4, "w-qp_code2000"},     // was −23 (sign flip)
+        {-1001,  4, "w-qp_code2001"},
+        { 2047,  0, "max_4x4_qp0"},       // max 4x4 level at lowest QP
+        {-2047,  0, "min_4x4_qp0"},
+        { 2047,  4, "max_4x4_qp4"},
+        { 1500, 10, "large_qp10"},
+        { -256,  4, "neg256"},            // boundary: −256 fits 9-bit, +256 does not
+        {  512,  4, "pos512"},
+        { -512,  4, "neg512"},
+    };
+    for (const auto& tc : ext_cases) {
+        for (int i = 0; i < 16; ++i) {
+            dut->coeff[i] = 0;
+            dut->pred[i] = PRED;
+        }
+        dut->coeff[0] = static_cast<int16_t>(tc.coeff);
+        dut->qp = tc.qp;
+        dut->max_coeff = 16;
+        dut->eval();
+        int gold = dequant_gold(tc.coeff, tc.qp, 0);
+        int rtl = sx18(dut->dequant[0]);
+        std::cout << "  " << tc.label << ": coeff=" << tc.coeff
+                  << " QP=" << tc.qp << " gold=" << gold << " RTL=" << rtl
+                  << (gold == rtl ? " OK" : " FAIL") << "\n";
+        check(tc.label, rtl, gold);
+    }
+
     if (failures) {
         std::cerr << "level_width_tb: " << failures << " FAILURES (expected on pre-fix RTL)\n";
         return 1;
     }
-    std::cout << "level_width_tb: PASS — coefficient width is correct\n";
+    std::cout << "level_width_tb: PASS — coefficient width is correct through ±2047\n";
     return 0;
 }
