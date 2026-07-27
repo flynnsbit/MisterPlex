@@ -49,7 +49,7 @@ module  pll_0002(
 		.output_clock_frequency1(`MISTERPLEX_SDRAM_PLL_FREQ),
 		.phase_shift1("0 ps"),
 		.duty_cycle1(50),
-		.output_clock_frequency2("90.000000 MHz"),
+		.output_clock_frequency2("80.000000 MHz"),
 		.phase_shift2("0 ps"),
 		.duty_cycle2(50),
 		.output_clock_frequency3("0 MHz"),
@@ -101,11 +101,7 @@ module  pll_0002(
 		.pll_subtype("General")
 	) altera_pll_i (
 		.rst	(rst),
-<<<<<<< HEAD
-		.outclk	({outclk_1, outclk_0}),
-=======
 		.outclk	({outclk_2, outclk_1, outclk_0}),
->>>>>>> 3e1d455 (feat(fpga): add DDR-backed 480p frame store)
 		.locked	(locked),
 		.fboutclk	( ),
 		.fbclk	(1'b0),

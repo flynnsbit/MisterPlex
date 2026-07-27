@@ -2,7 +2,7 @@
 //  MiSTerPlex — native Plex present core
 //  Phase 1: color bars + cadence + tone
 //  Phase 3.0: dual-bank RGB565 frame_store via ioctl F1
-//  Phase 3.1b: DDRAM/f2sdram HPS bulk RGB565 → frame_store (beat SPI F1)
+//  Phase 3.1b/C3: DDRAM/f2sdram HPS YUV420p frame store (beat SPI F1)
 //  Phase 3.2: present-domain audio_fifo via ioctl F2
 //  Phase 3.3: elementary bitstream FIFO + NAL scanner via ioctl F3
 //  Phase 3.3b: NAL typed stats + decode_stub → frame_store on VCL
@@ -24,7 +24,7 @@ assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 // SDRAM is driven by the bring-up controller/tester below (single MiSTer stick).
-// DDRAM driven by ddram_frame_rd (Phase 3.1b); not tied off.
+// DDRAM driven by ddram_frame_rd or the C3 DDR frame store; not tied off.
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
@@ -270,7 +270,11 @@ localparam int FRAME_STRIDE = `FRAME_STRIDE;
 `else
 localparam int FRAME_STRIDE = FRAME_W;
 `endif
+`ifdef DDR_FRAME_STORE
+localparam int FRAME_BYTES = FRAME_W * FRAME_H * 3 / 2;
+`else
 localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
+`endif
 localparam int HPS_BANK_STRIDE_BYTES =
 	(FRAME_BYTES <= 262144)  ? 262144  :
 	(FRAME_BYTES <= 1048576) ? 1048576 :

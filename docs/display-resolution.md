@@ -129,19 +129,70 @@ uses, via the DDR OSD mailbox, before starting playback. That keeps Plex server 
 ARM decode size, and the core's native-resolution selector tied to one source of truth instead of
 separate ARM/RTL copies.
 
-### 480p status
+### Native-resolution frame-store status
 
 Choose `640x480` only for 480p test builds that include all three required pieces:
 
-1. DDR-backed frame store in the core, so the frame buffer is not limited to the old BRAM-sized
-   320×240 path.
-2. ARM RGB565 conversion and DDR frame writes sized for 640×480.
+1. DDR-backed YUV420p frame store in the core, so the frame buffer is not limited to the old
+   BRAM-sized 320×240 path and does not depend on the unvalidated SDRAM stick path.
+2. ARM YUV420p DDR frame writes sized for 640×480, using the shared
+   `host/libmisterplex/ddr_frame_layout.hpp` layout.
 3. Plex weak-ladder resolve requesting a 640×480 stream.
 
-Current claim level: **fits and closes timing / within modelled bandwidth**. The 480p path is not
-hardware-validated yet, so do not describe it as supported until a lab run proves playback on
-silicon. The output-mode sweep above remains valid: output signal resolution is effectively free;
-native 480p content is the part that needs validation.
+Current claim level: **fits and closes timing / within modelled bandwidth**. The DDR-backed native
+path is not hardware-validated yet, so do not describe it as supported until a lab run proves playback
+on silicon. The output-mode sweep above remains valid: output signal resolution is effectively free;
+native content resolution is the part that needs validation.
+
+#### DDR frame-store bandwidth model
+
+The legacy DDR bridge clock was `clk_sys = 20 MHz`; this is our PLL choice, not an HPS DDR3 bridge
+limit. In-tree framework evidence shows the core supplies `DDRAM_CLK` (`sys/sys_top.v` connects it to
+`ram_clk`) and `sys/sys_top.sdc` constrains the HPS user clock at 100 MHz. This branch therefore adds a
+dedicated DDR PLL output instead of raising `clk_sys` wholesale. The YUV420p frame-store RTL currently
+closes at the fitted DDR clock below; 100 MHz remains a framework target, not a claim for this build.
+
+Model assumptions:
+
+- DDRAM port width is 64 bits, so peak bridge bandwidth is `DDRAM_CLK × 8 bytes`.
+- The continuously safe FPGA read budget is pessimistically capped at **25% of peak** to leave room for
+  ARM writes, Linux, MiSTer's scaler, and decoder traffic.
+- The table counts full read plus write DDR traffic. The FPGA-read column is the pressure on the core's
+  `DDRAM_CLK` port; the ARM-write column is simultaneous HPS DDR fabric traffic.
+- YUV420p is 1.5 bytes/pixel; RGB565 is 2 bytes/pixel. At 640×480, this is 460,800 bytes/frame vs
+  614,400 bytes/frame.
+
+**Current 20 MHz baseline** — peak 160 MB/s; pessimistic FPGA-read budget 40 MB/s:
+
+| Native mode | Format | FPGA read | ARM write | Total DDR fabric | Model result |
+|---|---|---:|---:|---:|---|
+| 640×480@30 | YUV420p | 13.824 MB/s | 13.824 MB/s | 27.648 MB/s | within modelled bandwidth |
+| 640×480@30 | RGB565 | 18.432 MB/s | 18.432 MB/s | 36.864 MB/s | within modelled bandwidth |
+| 640×480@60 | YUV420p | 27.648 MB/s | 27.648 MB/s | 55.296 MB/s | within modelled bandwidth, but latency-sensitive |
+| 640×480@60 | RGB565 | 36.864 MB/s | 36.864 MB/s | 73.728 MB/s | near the pessimistic read budget; not comfortable |
+| 1280×720@30 | YUV420p | 41.472 MB/s | 41.472 MB/s | 82.944 MB/s | just over the 20 MHz read budget |
+| 1280×720@30 | RGB565 | 55.296 MB/s | 55.296 MB/s | 110.592 MB/s | over the 20 MHz read budget |
+
+**Fitted DDR clock for this YUV420p branch: 80 MHz** — peak 640 MB/s; pessimistic FPGA-read budget
+160 MB/s:
+
+| Native mode | Format | FPGA read | ARM write | Total DDR fabric | Model result |
+|---|---|---:|---:|---:|---|
+| 640×480@30 | YUV420p | 13.824 MB/s | 13.824 MB/s | 27.648 MB/s | comfortable within modelled bandwidth |
+| 640×480@30 | RGB565 | 18.432 MB/s | 18.432 MB/s | 36.864 MB/s | comfortable within modelled bandwidth |
+| 640×480@60 | YUV420p | 27.648 MB/s | 27.648 MB/s | 55.296 MB/s | comfortable by bandwidth; use 16-line prefetch for the blackout model |
+| 640×480@60 | RGB565 | 36.864 MB/s | 36.864 MB/s | 73.728 MB/s | comfortable by bandwidth; higher ARM conversion cost |
+| 1280×720@30 | YUV420p | 41.472 MB/s | 41.472 MB/s | 82.944 MB/s | viable by bandwidth; needs 16-line prefetch and a separate fit |
+| 1280×720@30 | RGB565 | 55.296 MB/s | 55.296 MB/s | 110.592 MB/s | viable by bandwidth; less fabric/ARM margin than YUV420p |
+
+**100 MHz framework target** — peak 800 MB/s; pessimistic FPGA-read budget 200 MB/s. The same rows
+remain within modelled bandwidth with 25% more margin than 80 MHz, but this YUV420p branch has
+not closed timing there yet. Treat 100 MHz as a future optimization target, not current evidence.
+
+Latency modelling uses a recurring 500 µs DDR blackout and a conservative 128-cycle response latency
+before burst data. Under that model, 640×480@30 is clean with 8 prefetched lines, while 640×480@60 and
+1280×720@30 need 16 lines at 80 MHz. The implemented first rung is therefore **YUV420p 640×480@30, 8-line
+prefetch**.
 
 ## What this does and does not mean
 
