@@ -15,6 +15,25 @@ Coverage:
   - Boundary cases: QP 0, QP 51, qP/6 and qP%6 at every value
   - Bit-width overflow detection at high QP
   - RED proof: deliberately broken LUT / shift / decomposition → must FAIL
+
+INSTRUMENT FAILURE #14 (2026-07-27):
+  The original version of this test ran 14,144 Verilator vectors and
+  reported "spec-correct across QP 0–51" on a tree with a known
+  sign-flipping overflow bug (fixed by w-cabac in 3b321ca).
+
+  Two independent failures:
+  (1) The Verilator sweep used max |coeff|=20 (max product 117,760),
+      structurally below the 131,071 overflow threshold. 14,144 vectors,
+      zero of which could trip the bug.
+  (2) The Python test detected 117 overflow cases and explicitly dismissed
+      them: "These are theoretical — real coefficients at high QP are
+      small." The test saw the defect 117 times and returned 0.
+
+  Rule: A TEST MAY NOT DECIDE THAT A DISCREPANCY DOES NOT MATTER.
+  If a check finds a mismatch from the spec, it fails. Period.
+  Any judgement embedded in a test — "theoretical", "not realistic",
+  "won't happen in practice" — is an unreviewed assumption with the
+  authority of a passing build behind it.
 """
 from __future__ import annotations
 
@@ -358,10 +377,16 @@ def test_chroma_qp_table() -> int:
 
     This table is NOT yet implemented in RTL — this test documents what
     the correct values are so when chroma dequant is added, it can be
-    verified.
+    verified. The table is non-linear above qPI=29 and has NEVER been
+    exercised by our QP 5–27 test corpus.
+
+    The mapping matters because chroma QP saturates: QPc maxes out at 39
+    even when QPy reaches 51. A naive QPc=QPy implementation would
+    over-quantize chroma at high QP, producing visible colour artefacts.
     """
     # ITU-T H.264 Table 8-15: QPc as a function of qPI
-    # For qPI 0–29, QPc = qPI. For qPI 30–51, QPc diverges.
+    # qPI = QPy + chroma_qp_index_offset (clamped to [0,51])
+    # For qPI 0–29, QPc = qPI. For qPI 30–51, QPc diverges and saturates at 39.
     SPEC_QPC_TABLE = [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
         20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 34,
@@ -369,18 +394,51 @@ def test_chroma_qp_table() -> int:
     ]
 
     errors = 0
-    for qpi in range(52):
-        if qpi < len(SPEC_QPC_TABLE):
-            expected = SPEC_QPC_TABLE[qpi]
-            # Just verify the table is self-consistent
-            if expected > qpi:
-                print(f"  qPI→QPc TABLE ERROR: qPI={qpi} QPc={expected} > qPI")
-                errors += 1
-            if expected < 0 or expected > 39:
-                print(f"  qPI→QPc TABLE ERROR: qPI={qpi} QPc={expected} out of range")
-                errors += 1
 
-    info(f"Chroma QP table: 52 entries verified (RTL NOT YET IMPLEMENTED)")
+    # Verify basic properties
+    for qpi in range(52):
+        qpc = SPEC_QPC_TABLE[qpi]
+        # QPc must never exceed qPI
+        if qpc > qpi:
+            print(f"  qPI→QPc TABLE ERROR: qPI={qpi} QPc={qpc} > qPI")
+            errors += 1
+        # QPc must be in [0, 39]
+        if qpc < 0 or qpc > 39:
+            print(f"  qPI→QPc TABLE ERROR: qPI={qpi} QPc={qpc} out of [0,39]")
+            errors += 1
+        # QPc must be monotonically non-decreasing
+        if qpi > 0 and qpc < SPEC_QPC_TABLE[qpi - 1]:
+            print(f"  qPI→QPc TABLE ERROR: qPI={qpi} QPc={qpc} < QPc({qpi-1})={SPEC_QPC_TABLE[qpi-1]}")
+            errors += 1
+
+    # Verify the non-linear region is genuinely different from linear
+    linear_diffs = sum(1 for qpi in range(30, 52) if SPEC_QPC_TABLE[qpi] != qpi)
+    if linear_diffs != 22:
+        print(f"  Expected 22 non-linear entries (qPI 30–51), got {linear_diffs}")
+        errors += 1
+
+    # Verify saturation at QPc=39
+    if SPEC_QPC_TABLE[51] != 39 or SPEC_QPC_TABLE[50] != 39:
+        print(f"  QPc saturation error: QPc(51)={SPEC_QPC_TABLE[51]}, QPc(50)={SPEC_QPC_TABLE[50]}")
+        errors += 1
+
+    # Document the gap: our corpus never tested the non-linear region
+    info(f"Chroma QP table: 52 entries verified, {linear_diffs} non-linear above qPI=29")
+    info(f"  QPc range: [{SPEC_QPC_TABLE[0]}, {SPEC_QPC_TABLE[51]}] (saturates at 39)")
+    info(f"  Non-linear region qPI=[30,51] NEVER EXERCISED by test corpus (QP 5–27)")
+    info(f"  RTL STATUS: NOT IMPLEMENTED — no qPI→QPc mapping in RTL")
+    info(f"  RTL STATUS: No chroma DC Hadamard (2×2 transform) path exists")
+    info(f"  RTL STATUS: No chroma_qp_index_offset handling in pps_parser.sv")
+
+    # Check if pps_parser has chroma_qp_index_offset
+    pps_path = ROOT / "fpga/Plex_MiSTer/rtl/pps_parser.sv"
+    if pps_path.exists():
+        pps_text = pps_path.read_text()
+        if "chroma_qp_index_offset" not in pps_text:
+            info(f"  CONFIRMED: pps_parser.sv does not parse chroma_qp_index_offset")
+        else:
+            info(f"  NOTE: pps_parser.sv mentions chroma_qp_index_offset (check if functional)")
+
     return errors
 
 
