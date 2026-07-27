@@ -1075,7 +1075,8 @@ for an intra-domain one.
 | MC allocation = 250 cyc/MB | w-c1, conditional on adjacent-MB cache | **Official** |
 | Arbiter was on wrong clock | w-a3 `60df5a2`: 17 unsynchronized crossings | Traced ✓ |
 | Pulse hazard: 7/10 CAS drops | w-a3 `3c6d1d2`: m1_dout_ready beat conservation test | Traced ✓ |
-| **w-plane I16 Plane: 55-70 → 18/8 levels after pipelining** | w-plane report: pre-computed 32 products, 512→32 multipliers | **Reported (v3.1)** |
+| **w-plane I16 Plane: 55-70 → ~10/8 levels after pipelining + tree** | w-plane `df21c4a`: balanced tree accumulator, pre-computed products | **Reported (v4)** |
+| **w-plane Chroma Plane cy1: ~14 levels (deepest intra path)** | w-plane depth audit | **Reported (v4)** |
 | **6-tap FIR shift+add decomposition: ~7 levels** | Symmetry: (a+f)+20(c+d)-5(b+e) | **DERIVED (v3.1, still valid)** |
 | **CDC cost for decode-only separation: 1 async FIFO + ~4 2-FF syncs** | Traced from stream_path ports and DDR_FRAME_STORE architecture | **Traced ✓ (v3)** |
 
@@ -1140,15 +1141,11 @@ The scope of work is unknown until identified.
    what is the next timing bottleneck? Determines whether 45 MHz is
    achievable or whether there is a stack of long paths.
 
-6. **Adjacent-MB cache miss rate** — optimisation only at 60 MHz.
-
-11. **w-plane I16 Plane cy1 = 18 levels vs 60 MHz.** At conservative
-    1.0 ns/level, 18 levels = 18.3 ns > 16.7 ns period (60 MHz). Options:
-    (a) split cy1 into two pipeline stages (9+9 levels, 3 total cycles),
-    (b) accept that Plane MBs are rare and tolerate a local timing
-    exception (multicycle path constraint), or (c) target 48 MHz.
-    **This is potentially the binding constraint for 60 MHz.** Coordinate
-    with w-plane immediately.
+6. ~~**w-plane I16 Plane cy1 = 18 levels**~~ → **RESOLVED.** w-plane reduced
+   cy1 from ~18 to ~10 levels via balanced tree accumulator (`df21c4a`).
+   Deepest intra path is now Chroma Plane cy1 at ~14 levels. No intra
+   path blocks 45 MHz. **CAUTION:** level counts underestimate fitter delay
+   by ~3.2× historically — actual ns pending post-fit STA.
 
 ---
 
