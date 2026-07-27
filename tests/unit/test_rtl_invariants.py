@@ -30,8 +30,12 @@ DDR_FRAME_LAYOUT_HPP = Path(
 MEDIA_PLAYER_CPP = Path(
     os.environ.get("MEDIA_PLAYER_CPP", ROOT / "arm/misterplexd/media_player.cpp")
 )
+FB_PRESENT_CPP = Path(os.environ.get("FB_PRESENT_CPP", ROOT / "arm/misterplexd/fb_present.cpp"))
 MISTERPLEXD_MAIN_CPP = Path(
     os.environ.get("MISTERPLEXD_MAIN_CPP", ROOT / "arm/misterplexd/main.cpp")
+)
+H264_RECON_HPP = Path(
+    os.environ.get("H264_RECON_HPP", ROOT / "host/libmisterplex/h264_recon.hpp")
 )
 DDR_BITSTREAM_READER = Path(
     os.environ.get(
@@ -518,6 +522,16 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "line_addr=fill_is_chroma?chroma_addr:y_addr",
                 "chroma fill path must issue the selected chroma address",
             ),
+            ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
+            (
+                "c_line_v2[video_slot]==rd_cy",
+                "chroma line-buffer hit must compare against the halved source Y",
+            ),
+            ("c_sel_r<=src_x[3:1]", "chroma byte select must halve the source X"),
+            (
+                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
+                "chroma DDR line address must stride by the chroma line width",
+            ),
             ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
             ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),
             ("r_calc_w=(y_ext<<<8)+(21'sd359*v_s)", "red channel must derive from V"),
@@ -547,6 +561,27 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     )
     if not missing_requirements(swapped):
         fail("deliberately swapped U/V read bases did not make the DDR frame-store gate red")
+    swapped_coeffs = (
+        nt.replace(
+            "r_calc_w=(y_ext<<<8)+(21'sd359*v_s)",
+            "r_calc_w=(y_ext<<<8)+(21'sd359*u_s)",
+        ).replace(
+            "b_calc_w=(y_ext<<<8)+(21'sd454*u_s)",
+            "b_calc_w=(y_ext<<<8)+(21'sd454*v_s)",
+        )
+    )
+    if not missing_requirements(swapped_coeffs):
+        fail("deliberately swapped YUV→RGB R/B chroma inputs did not make the gate red")
+    bad_geometry = (
+        nt.replace("rd_cy=src_y[CODED_Y_W-1:1]", "rd_cy=src_y[CODED_Y_W-2:0]")
+        .replace("c_sel_r<=src_x[3:1]", "c_sel_r<=src_x[2:0]")
+        .replace(
+            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
+            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*Y_LINE_QWORDS_W",
+        )
+    )
+    if not missing_requirements(bad_geometry):
+        fail("deliberately broken chroma half-resolution geometry did not make the gate red")
 
     y_stride = coded_w
     c_stride = coded_w // 2
@@ -570,16 +605,18 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     print(
         "PASS DDR frame-store YUV read contract "
         f"(Y={y_offset} U={u_offset} V={v_offset} strides Y={y_stride} C={c_stride}; "
-        "deliberate U/V swap goes red)"
+        "deliberate U/V, R/B coefficient, and chroma-geometry faults go red)"
     )
 
 
 def check_yuv_ddr_writer_contract() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
+    fb_present = strip_comments(read(FB_PRESENT_CPP))
     main_cpp = strip_comments(read(MISTERPLEXD_MAIN_CPP))
     fpga_h = strip_comments(read(FPGA_SPI_HPP))
     fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
     layout_h = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
+    recon_h = strip_comments(read(H264_RECON_HPP))
     ddr_writer_sources = "\n".join([media, main_cpp, fpga_h, fpga_cpp, layout_h])
     check(
         "packRgb24ToRgb565Le" not in media,
@@ -608,7 +645,166 @@ def check_yuv_ddr_writer_contract() -> None:
         "writer. Keep any legacy config key as an ignored warning and leave production fixed "
         "to yuv420p.",
     )
-    print("PASS ARM DDR writer uses product yuv420p frame-store path only")
+
+    media_nt = norm(media)
+    fb_nt = norm(fb_present)
+    fpga_nt = norm(fpga_cpp)
+    recon_nt = norm(recon_h)
+
+    def missing_arm_yuv_requirements(
+        media_norm: str, fb_norm: str, fpga_norm: str, recon_norm: str
+    ) -> list[str]:
+        required = [
+            (
+                media_norm,
+                'caseRawVideoFormat::Yuv420p:return"yuv420p";',
+                "FFmpeg rawvideo output must request yuv420p/I420 for DDR YUV mode",
+            ),
+            (
+                media_norm,
+                "wantYuvDdr=wantFpgaFrameStore&&ddrFrameFormat_==DdrFrameFormat::Yuv420p",
+                "FPGA DDR presentation must select the YUV420p rawvideo decoder output mode",
+            ),
+            (
+                media_norm,
+                "if(wantYuvDdr){videoFmt=RawVideoFormat::Yuv420p;}",
+                "DDR YUV mode must force the FFmpeg pipe format to yuv420p/I420",
+            ),
+            (
+                media_norm,
+                'args.push_back("-pix_fmt");args.push_back(ffmpegPixFmt(videoFmt));',
+                "FFmpeg invocation must bind -pix_fmt to the selected yuv420p/I420 decoder output",
+            ),
+            (
+                media_norm,
+                "caseRawVideoFormat::Yuv420p:returnyuv420pFrameBytes(width,height);",
+                "YUV420p frame byte count must be coded_width*coded_height*3/2",
+            ),
+            (
+                media_norm,
+                "n=::read(rfd,frame.data()+got,frameBytes-got);",
+                "decoded rawvideo bytes must be read contiguously into frame.data()",
+            ),
+            (
+                media_norm,
+                "constuint8_t*txFrame=cleanFrame;",
+                "DDR send must use the clean frame pointer, not a remapped chroma scratch buffer",
+            ),
+            (
+                media_norm,
+                "size_ttxBytes=frameBytes;",
+                "DDR send length must remain the full contiguous yuv420p frame size",
+            ),
+            (
+                media_norm,
+                "presentCleanFrame(frame.data(),true);",
+                "product playback must present the contiguous FFmpeg yuv420p pipe buffer",
+            ),
+            (
+                media_norm,
+                "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
+                "crop padding must treat offset yBytes as the U/Cb plane",
+            ),
+            (
+                media_norm,
+                "clearPlane(yuv+yBytes+cW*cH,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackV)",
+                "crop padding must treat offset yBytes+cBytes as the V/Cr plane",
+            ),
+            (
+                media_norm,
+                "std::memcpy(yuv420p.data()+yBytes,rec.u.data(),cBytes)",
+                "host recon staging must copy rec.u to the U/Cb plane at offset yBytes",
+            ),
+            (
+                media_norm,
+                "std::memcpy(yuv420p.data()+yBytes+cBytes,rec.v.data(),cBytes)",
+                "host recon staging must copy rec.v to the V/Cr plane after U",
+            ),
+            (
+                media_norm,
+                "ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)",
+                "product rawvideo DDR send must pass the yuv420p frame buffer unchanged",
+            ),
+            (
+                fpga_norm,
+                "returnsendDdrFrame(yuv420p,len,bank)",
+                "sendYuv420pFrameDdr must forward the yuv420p pointer to the DDR copier unchanged",
+            ),
+            (
+                fpga_norm,
+                "std::memcpy(ddrMap_+bankOff,payload,len)",
+                "DDR writer must copy the contiguous Y,U,V payload into the bank without plane remap",
+            ),
+            (
+                fb_norm,
+                "uPlane=yPlane+static_cast<size_t>(w)*static_cast<size_t>(h)",
+                "fb0 reference blit must locate U immediately after Y",
+            ),
+            (
+                fb_norm,
+                "vPlane=uPlane+static_cast<size_t>(w/2)*static_cast<size_t>(h/2)",
+                "fb0 reference blit must locate V immediately after U",
+            ),
+            (
+                fb_norm,
+                "pixel::yuvToRgb(yRow[x],uRow[x/2],vRow[x/2],r,g,b)",
+                "fb0 reference blit must feed yuvToRgb as Y,U,V",
+            ),
+            (
+                recon_norm,
+                "uint8_t*planes[2]={out.u.data(),out.v.data()}",
+                "host H.264 recon chroma component order must be U/Cb then V/Cr",
+            ),
+            (
+                recon_norm,
+                "int16_tdcU[2][2],dcV[2][2]",
+                "host H.264 recon must keep first/second chroma DC blocks as U then V",
+            ),
+            (
+                recon_norm,
+                "int16_t(*dcs[2])[2][2]={&dcU,&dcV}",
+                "host H.264 recon must add chroma residuals to U then V planes",
+            ),
+        ]
+        return [msg for haystack, needle, msg in required if needle not in haystack]
+
+    missing = missing_arm_yuv_requirements(media_nt, fb_nt, fpga_nt, recon_nt)
+    if missing:
+        fail(f"ARM YUV420 DDR plane contract: {missing[0]}")
+
+    swapped_media = (
+        media_nt.replace(
+            "std::memcpy(yuv420p.data()+yBytes,rec.u.data(),cBytes)",
+            "std::memcpy(yuv420p.data()+yBytes,rec.v.data(),cBytes)",
+        )
+        .replace(
+            "std::memcpy(yuv420p.data()+yBytes+cBytes,rec.v.data(),cBytes)",
+            "std::memcpy(yuv420p.data()+yBytes+cBytes,rec.u.data(),cBytes)",
+        )
+        .replace(
+            "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
+            "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackV)",
+        )
+        .replace(
+            "clearPlane(yuv+yBytes+cW*cH,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackV)",
+            "clearPlane(yuv+yBytes+cW*cH,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
+        )
+    )
+    if not missing_arm_yuv_requirements(swapped_media, fb_nt, fpga_nt, recon_nt):
+        fail("deliberately swapped ARM U/V staging did not make the YUV420 DDR plane gate red")
+    remapped_fpga = fpga_nt.replace(
+        "returnsendDdrFrame(yuv420p,len,bank)",
+        "returnsendDdrFrame(remapYuv420pForDdr(yuv420p),len,bank)",
+    ).replace(
+        "std::memcpy(ddrMap_+bankOff,payload,len)",
+        "copyYv12PlanesToDdr(ddrMap_+bankOff,payload,len)",
+    )
+    if not missing_arm_yuv_requirements(media_nt, fb_nt, remapped_fpga, recon_nt):
+        fail("deliberately remapped rawvideo DDR payload did not make the YUV420 DDR plane gate red")
+    print(
+        "PASS ARM DDR writer keeps FFmpeg yuv420p/I420 order "
+        "(Y then U/Cb then V/Cr) through the product DDR path"
+    )
 
 
 def check_ddr_bitstream_product_path() -> None:

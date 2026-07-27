@@ -115,11 +115,15 @@ Y/U/V max   = [230, 220, 171]
 Follow-up reload testing found a more dangerous phantom-green shape: five
 Plex reload+push captures were byte/pixel identical (`296640/296640`, Y/U/V MAE
 `[0,0,0]`) because the screen was frozen on an old frame, while status reported
-`bytes_in=4`. That result must never be accepted as a visual PASS. The comparator
-therefore gates delivery counters before loading/grading pixels; the checked-in
-natural fixture `tests/fixtures/hw_visual/reload_determinism/plex_bytes_in4_*`
-uses the exact stale-screen capture/status pair and confirms `rc=7` even when the
-capture is compared against itself.
+`bytes_in=4`. Source audit closed the suspicious "four bytes" question: in the
+current status ABI that field is not a byte counter at all. `raw[12..15]` were
+reclaimed for residual/recon telemetry, and `push_frame --status` now prints
+`bytes_in = nalu_count`; the natural fixture has `nalu=4`, meaning four NALs
+(SPS/PPS/SEI/IDR), not four delivered bytes. The comparator therefore names this
+as a `STATUS_TELEMETRY_LAYER` freshness failure and refuses before
+loading/grading pixels; the checked-in natural fixture
+`tests/fixtures/hw_visual/reload_determinism/plex_bytes_in4_*` confirms `rc=7`
+even when the capture is compared against itself.
 
 2026-07-27 artifact-identity failure mode: rollback `57674f2e` predates the
 current YUV420/624×480 DDR frame-store path. w-cap proved ARM decode→I420→DDR
