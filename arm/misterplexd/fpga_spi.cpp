@@ -1353,7 +1353,32 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
         constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
         int plxdIters = 0;
         if (readBankRelease(brs)) {
-            // PLXD present — use it for bank selection.
+            // --- Degeneracy defence (instrument-integrity #18) ---
+            // A DDR word that happens to contain PLXD magic by coincidence
+            // (boot residue) would pass the magic check and return valid-
+            // looking fields. Defence: check frames_done advances between
+            // successive frames. If it never advances, the mailbox is stale
+            // (never written by the FPGA) and we must not trust it.
+            if (brs.frames_done != plxdLastFramesDone_) {
+                plxdLivenessProven_ = true;
+                plxdStaleCount_ = 0;
+            } else {
+                ++plxdStaleCount_;
+            }
+            plxdLastFramesDone_ = brs.frames_done;
+            constexpr int kPlxdStaleLimitFrames = 10;
+            if (!plxdLivenessProven_ && plxdStaleCount_ >= kPlxdStaleLimitFrames) {
+                // frames_done has not advanced in 10 consecutive reads.
+                // This is almost certainly boot residue, not a live mailbox.
+                fprintf(stderr,
+                        "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
+                        "%d frames — treating as boot residue, falling back to timed delay\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_);
+                // Fall through to timed delay below.
+                goto plxd_absent_fallback;
+            }
+
+            // PLXD present and live — use it for bank selection.
             if (brs.anyFree()) {
                 bank = brs.freeBank();
                 plxdUsed = true;
@@ -1385,7 +1410,8 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             timing.plxa_poll_iters = plxdIters;
             timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
         } else {
-            // PLXD absent — pre-PLXD RBF or mailbox not yet written.
+            plxd_absent_fallback:
+            // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
             // Fall back to the old timing-based mitigation: brief yield for
             // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
             usleep(1500);

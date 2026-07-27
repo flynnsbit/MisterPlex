@@ -1182,6 +1182,36 @@ def check_ddr_bank_handoff_contract() -> None:
     )
 
 
+def check_plxd_liveness_degeneracy() -> None:
+    """Instrument-integrity #18: ensure PLXD consumer has stale-buffer detection."""
+    fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
+    fpga_h = strip_comments(read(FPGA_SPI_HPP))
+    cpp_nt = norm(fpga_cpp)
+    h_nt = norm(fpga_h)
+
+    # Key signals of degeneracy defence in the PLXD consumer:
+    required = [
+        (h_nt, "plxdStaleCount_", "PLXD consumer must track consecutive stale reads"),
+        (h_nt, "plxdLivenessProven_", "PLXD consumer must record whether liveness was ever proven"),
+        (cpp_nt, "plxdStaleCount_", "sendDdrFrame must increment stale count when frames_done unchanged"),
+        (cpp_nt, "plxdLivenessProven_=true", "sendDdrFrame must mark liveness proven on first advance"),
+        (cpp_nt, "[STALE]", "sendDdrFrame must log LOUD when mailbox is stale"),
+    ]
+    missing = [msg for haystack, needle, msg in required if needle not in haystack]
+    if missing:
+        fail(f"PLXD liveness/degeneracy defence missing: {missing[0]}")
+
+    # Red-proof: removing the stale detection must make the gate fail.
+    poisoned = h_nt.replace("plxdStaleCount_", "")
+    missing_poisoned = [msg for haystack, needle, msg in [
+        (poisoned, "plxdStaleCount_", "PLXD consumer must track consecutive stale reads"),
+    ] if needle not in haystack]
+    if not missing_poisoned:
+        fail("deliberately removed stale counter did not make the liveness gate red")
+
+    print("PASS PLXD consumer has stale-buffer degeneracy defence (#18)")
+
+
 def check_yuv_ddr_writer_contract() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
     fb_present = strip_comments(read(FB_PRESENT_CPP))
@@ -1726,6 +1756,7 @@ def main() -> int:
     check_ddr_frame_store_yuv_read_contract()
     check_present_geometry_stride_contract()
     check_ddr_bank_handoff_contract()
+    check_plxd_liveness_degeneracy()
     check_yuv_ddr_writer_contract()
     check_present_path_degradation_contract()
     check_ddr_bitstream_product_path()

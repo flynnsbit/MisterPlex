@@ -400,6 +400,45 @@ int main() {
         std::fprintf(stderr, "test_input_mailbox: %d failure(s)\n", fails);
         return 1;
     }
+
+    // --- Degeneracy assertions (instrument-integrity #18) ---
+    // Verify that different PLXD inputs produce observably different outputs.
+    // If a broken decoder returned the same thing for all inputs, the earlier
+    // tests would still pass if both expected and actual were identical garbage.
+    {
+        // Three distinct raw words with different free_bank_mask, disp_bank, frames_done
+        constexpr uint64_t w1 = 0x0001000100000000ull | 0x504C5844ull; // frames_done=1, mask=01
+        constexpr uint64_t w2 = 0x0002000600000000ull | 0x504C5844ull; // frames_done=2, mask=10, disp_bank=1
+        constexpr uint64_t w3 = 0x000A000B00000000ull | 0x504C5844ull; // frames_done=10, mask=11, swap_pend=1
+
+        BankReleaseStatus r1{}, r2{}, r3{};
+        CHECK(decodeBankReleaseWord(w1, r1));
+        CHECK(decodeBankReleaseWord(w2, r2));
+        CHECK(decodeBankReleaseWord(w3, r3));
+
+        // Assert outputs are NOT all equal — i.e. decoder actually differentiates
+        bool all_same = (r1.frames_done == r2.frames_done) &&
+                        (r2.frames_done == r3.frames_done) &&
+                        (r1.free_bank_mask == r2.free_bank_mask) &&
+                        (r2.free_bank_mask == r3.free_bank_mask) &&
+                        (r1.disp_bank == r2.disp_bank) &&
+                        (r2.disp_bank == r3.disp_bank);
+        if (all_same) {
+            std::fprintf(stderr,
+                         "DEGENERACY: three distinct PLXD words produced identical outputs\n");
+            ++fails;
+        }
+        // Assert a wrong-magic word FAILS decode — not everything passes
+        constexpr uint64_t bad_magic = 0x0001000100000000ull | 0xDEADBEEFull;
+        BankReleaseStatus rbad{};
+        CHECK(!decodeBankReleaseWord(bad_magic, rbad));
+    }
+
+    if (fails) {
+        std::fprintf(stderr, "test_input_mailbox: %d DEGENERACY failure(s)\n", fails);
+        return 1;
+    }
+
     std::printf("test_input_mailbox: OK\n");
     return 0;
 }

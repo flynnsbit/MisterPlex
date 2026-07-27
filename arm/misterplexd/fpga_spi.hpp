@@ -297,6 +297,10 @@ private:
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
+    // PLXD liveness: detect stale/residue mailbox by checking frames_done advances.
+    uint16_t plxdLastFramesDone_ = 0;
+    int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
+    bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();
