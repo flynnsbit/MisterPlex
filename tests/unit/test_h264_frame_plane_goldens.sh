@@ -307,6 +307,7 @@ data["decoder"]["command_argv"] = [
 ]
 data["decoder"]["h264_loop_filter"] = "disabled"
 data["decoder"]["h264_loop_filter_ffmpeg"] = "-skip_loop_filter all"
+data["decoder"]["loop_filter"] = "skip_loop_filter=all"
 data["provenance"]["h264_loop_filter"] = "disabled"
 data["plane_blob"]["path"] = str(planes)
 data["plane_blob"]["bytes"] = len(blob)
@@ -332,4 +333,4 @@ fi
 grep -q "declares H.264 loop filter disabled but decoder command does not include '-skip_loop_filter all'" \
   "$OUT/deblocked_declared_undeblocked.log"
 
-echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, alias/explicit loop-filter contracts verified, corrupt-plane/provenance RED checked"
+echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, alias/explicit loop-filter provenance verified, corrupt-plane/provenance RED checked"

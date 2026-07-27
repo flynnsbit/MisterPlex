@@ -193,6 +193,14 @@ int signExtend(T value, int bits) {
     return (v & mask) ? (v - full) : v;
 }
 
+struct FrameStageCycles {
+    uint64_t vcl_arrive = 0;     // cycle when stub_busy rises (VCL begins)
+    uint64_t paint_start = 0;    // cycle when fs_wr_reset fires (parse done)
+    uint64_t paint_end = 0;      // cycle when fs_swap fires (paint done)
+    uint64_t parse_cycles() const { return paint_start - vcl_arrive; }
+    uint64_t paint_cycles() const { return paint_end - paint_start; }
+};
+
 struct Mb0Trace {
     bool valid = false;
     uint64_t cycle = 0;
@@ -219,8 +227,27 @@ public:
     std::vector<std::vector<uint8_t>> frames;
     std::vector<uint8_t> cur;
     Mb0Trace mb0Trace;
+    std::vector<FrameStageCycles> stageCycles;
+    bool prevStubBusy = false;
+    uint64_t injectionCycles = 0;
+    uint64_t nonVclIdleCycles = 0;
+    uint64_t resetCycles = 0;
 
     void capturePosedge() {
+        // Track decode_stub phase transitions for per-stage cycle accounting.
+        if (top.stub_busy && !prevStubBusy) {
+            FrameStageCycles fsc;
+            fsc.vcl_arrive = cycles;
+            stageCycles.push_back(fsc);
+        }
+        if (top.fs_wr_reset && !stageCycles.empty() && stageCycles.back().paint_start == 0) {
+            stageCycles.back().paint_start = cycles;
+        }
+        if (top.fs_swap && !stageCycles.empty() && stageCycles.back().paint_end == 0) {
+            stageCycles.back().paint_end = cycles;
+        }
+        prevStubBusy = top.stub_busy;
+
         if (top.recon_valid && !mb0Trace.valid) {
             mb0Trace.valid = true;
             mb0Trace.cycle = cycles;
@@ -270,6 +297,7 @@ public:
         for (int i = 0; i < 8; ++i) tick();
         top.reset = 0;
         for (int i = 0; i < 4; ++i) tick();
+        resetCycles = cycles;
     }
 
     void feedByte(uint8_t v) {
@@ -355,6 +383,38 @@ void writeTraceJson(const std::string& path, const Mb0Trace& t) {
         printArray(out, t.recon);
     }
     out << "\n}\n";
+}
+
+void printStageCycles(const Sim& sim, int mbsPerFrame) {
+    uint64_t totalParse = 0, totalPaint = 0;
+    for (std::size_t f = 0; f < sim.stageCycles.size(); ++f) {
+        const auto& sc = sim.stageCycles[f];
+        const uint64_t parse = sc.parse_cycles();
+        const uint64_t paint = sc.paint_cycles();
+        totalParse += parse;
+        totalPaint += paint;
+        std::cout << "STAGE_CYCLES frame=" << f
+                  << " parse_cycles=" << parse
+                  << " paint_cycles=" << paint
+                  << " parse_per_mb=" << std::fixed << std::setprecision(3)
+                  << (static_cast<double>(parse) / mbsPerFrame)
+                  << " paint_per_mb="
+                  << (static_cast<double>(paint) / mbsPerFrame) << "\n";
+    }
+    const int totalMbs = mbsPerFrame * static_cast<int>(sim.stageCycles.size());
+    std::cout << "STAGE_CYCLES_TOTAL"
+              << " frames=" << sim.stageCycles.size()
+              << " parse_total=" << totalParse
+              << " paint_total=" << totalPaint
+              << " injection_total=" << sim.injectionCycles
+              << " nonvcl_idle_total=" << sim.nonVclIdleCycles
+              << " reset_total=" << sim.resetCycles
+              << " parse_per_mb=" << std::fixed << std::setprecision(3)
+              << (totalMbs > 0 ? static_cast<double>(totalParse) / totalMbs : 0.0)
+              << " paint_per_mb="
+              << (totalMbs > 0 ? static_cast<double>(totalPaint) / totalMbs : 0.0)
+              << " injection_per_mb="
+              << (totalMbs > 0 ? static_cast<double>(sim.injectionCycles) / totalMbs : 0.0) << "\n";
 }
 
 struct PlaneStats {
@@ -575,7 +635,7 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
 
 void writeJsonReport(const std::string& path, const Args& args, const SequenceMeta& seq,
                      const CompareResult& cr, int nals, int idr, int p, std::size_t bytes,
-                     uint64_t cycles) {
+                     uint64_t cycles, const Sim& sim) {
     if (path.empty()) return;
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write compare JSON: " + path);
@@ -644,7 +704,31 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
         if (f + 1 != cr.frames.size()) out << ",";
         out << "\n";
     }
-    out << "  ]\n";
+    out << "  ],\n";
+    // Per-stage cycle accounting
+    uint64_t totalParse = 0, totalPaint = 0;
+    out << "  \"stage_cycles\": {\n";
+    out << "    \"method\": \"Per-frame phase tracking via stub_busy/fs_wr_reset/fs_swap transitions in Verilator sim\",\n";
+    out << "    \"injection_cycles\": " << sim.injectionCycles << ",\n";
+    out << "    \"nonvcl_idle_cycles\": " << sim.nonVclIdleCycles << ",\n";
+    out << "    \"reset_cycles\": " << sim.resetCycles << ",\n";
+    out << "    \"frames\": [\n";
+    for (std::size_t f = 0; f < sim.stageCycles.size(); ++f) {
+        const auto& sc = sim.stageCycles[f];
+        const uint64_t parse = sc.parse_cycles();
+        const uint64_t paint = sc.paint_cycles();
+        totalParse += parse;
+        totalPaint += paint;
+        out << "      {\"frame\": " << f
+            << ", \"parse_cycles\": " << parse
+            << ", \"paint_cycles\": " << paint << "}";
+        if (f + 1 != sim.stageCycles.size()) out << ",";
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"parse_total\": " << totalParse << ",\n";
+    out << "    \"paint_total\": " << totalPaint << "\n";
+    out << "  }\n";
     out << "}\n";
 }
 
@@ -694,7 +778,9 @@ int main(int argc, char** argv) {
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
         for (const auto& n : nals) {
+            const uint64_t injectStart = sim.cycles;
             for (std::size_t i = n.start; i < n.end; ++i) sim.feedByte(annexb[i]);
+            sim.injectionCycles += (sim.cycles - injectStart);
             fed += static_cast<uint32_t>(n.end - n.start);
             sim.top.ioctl_download = 0;
             sim.tick();
@@ -706,7 +792,9 @@ int main(int argc, char** argv) {
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {
+                const uint64_t idleStart = sim.cycles;
                 for (int i = 0; i < 256; ++i) sim.tick();
+                sim.nonVclIdleCycles += (sim.cycles - idleStart);
             }
         }
 
@@ -727,7 +815,9 @@ int main(int argc, char** argv) {
             if (!cand) throw std::runtime_error("short write candidate I420: " + args.candidateI420Out);
         }
         writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
-                        annexb.size(), sim.cycles);
+                        annexb.size(), sim.cycles, sim);
+        const int mbsPerFrame = (args.width / 16) * (args.height / 16);
+        printStageCycles(sim, mbsPerFrame);
         std::cout << "FULL_FRAME_COMPARE summary width=" << args.width
                   << " height=" << args.height
                   << " frames=" << sim.frames.size()

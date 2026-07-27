@@ -1,20 +1,10 @@
 {
-  "format": "misterplex.p3.frame_planes_golden.v1",
   "source": {
     "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264",
-    "bytes": 27653,
-    "sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e"
-  },
-  "sequence_manifest": {
-    "path": "tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json",
-    "bytes": 5499,
-    "sha256": "cdfef8d60ee3ee30930b351453caa143b34244a1af6d9b0b613fc35f7e804f7d",
-    "format": "misterplex.p3.nal_sequence.v1"
+    "sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
+    "bytes": 27653
   },
   "decoder": {
-    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
-    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
-    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
     "command_argv": [
       "ffmpeg",
       "-v",
@@ -31,28 +21,18 @@
       "yuv420p",
       "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv"
     ],
-    "input_format": "Annex-B H.264",
-    "output_format": "rawvideo",
-    "pix_fmt": "yuv420p",
-    "h264_loop_filter": "disabled",
+    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
     "h264_loop_filter_ffmpeg": "-skip_loop_filter all",
+    "input_format": "Annex-B H.264",
+    "h264_loop_filter": "disabled",
+    "output_format": "rawvideo",
+    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "pix_fmt": "yuv420p",
+    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
     "loop_filter": "skip_loop_filter=all"
   },
-  "provenance": {
-    "source_domain": "decoded H.264 planes",
-    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
-    "colorspace": "I420_NATIVE",
-    "h264_loop_filter": "disabled",
-    "rgb_roundtrip": false,
-    "rgb565_roundtrip": false,
-    "presentation_border_or_pillar_mask": false
-  },
+  "format": "misterplex.p3.frame_planes_golden.v1",
   "geometry": {
-    "coded_width": 320,
-    "coded_height": 240,
-    "display_width": 320,
-    "display_height": 240,
-    "colorspace": "I420_NATIVE",
     "planes": [
       {
         "plane": "Y",
@@ -72,14 +52,27 @@
         "height": 120,
         "stride": 160
       }
-    ]
+    ],
+    "display_width": 320,
+    "coded_width": 320,
+    "coded_height": 240,
+    "colorspace": "I420_NATIVE",
+    "display_height": 240
   },
-  "plane_blob": {
-    "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
-    "bytes": 1382400,
-    "sha256": "8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268",
-    "layout": "I420 planar per frame: Y then U then V",
-    "frame_bytes": 115200
+  "provenance": {
+    "rgb_roundtrip": false,
+    "presentation_border_or_pillar_mask": false,
+    "rgb565_roundtrip": false,
+    "source_domain": "decoded H.264 planes",
+    "colorspace": "I420_NATIVE",
+    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
+    "h264_loop_filter": "disabled"
+  },
+  "sequence_manifest": {
+    "path": "tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json",
+    "format": "misterplex.p3.nal_sequence.v1",
+    "sha256": "cdfef8d60ee3ee30930b351453caa143b34244a1af6d9b0b613fc35f7e804f7d",
+    "bytes": 5499
   },
   "frames": [
     {
@@ -514,5 +507,12 @@
         }
       ]
     }
-  ]
+  ],
+  "plane_blob": {
+    "frame_bytes": 115200,
+    "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+    "layout": "I420 planar per frame: Y then U then V",
+    "sha256": "8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268",
+    "bytes": 1382400
+  }
 }

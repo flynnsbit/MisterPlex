@@ -1,20 +1,10 @@
 {
-  "format": "misterplex.p3.frame_planes_golden.v1",
   "source": {
     "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264",
-    "bytes": 70348,
-    "sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9"
-  },
-  "sequence_manifest": {
-    "path": "tests/fixtures/p3_multinal/plex_inter_p16_624x480_sequence_v1.json",
-    "bytes": 5512,
-    "sha256": "dd24e0785af25324b87748e330f531673ddc878e9f55f0f569214d464ed98460",
-    "format": "misterplex.p3.nal_sequence.v1"
+    "sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9",
+    "bytes": 70348
   },
   "decoder": {
-    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
-    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
-    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
     "command_argv": [
       "ffmpeg",
       "-v",
@@ -31,28 +21,18 @@
       "yuv420p",
       "tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv"
     ],
-    "input_format": "Annex-B H.264",
-    "output_format": "rawvideo",
-    "pix_fmt": "yuv420p",
-    "h264_loop_filter": "disabled",
+    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
     "h264_loop_filter_ffmpeg": "-skip_loop_filter all",
+    "input_format": "Annex-B H.264",
+    "h264_loop_filter": "disabled",
+    "output_format": "rawvideo",
+    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "pix_fmt": "yuv420p",
+    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
     "loop_filter": "skip_loop_filter=all"
   },
-  "provenance": {
-    "source_domain": "decoded H.264 planes",
-    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
-    "colorspace": "I420_NATIVE",
-    "h264_loop_filter": "disabled",
-    "rgb_roundtrip": false,
-    "rgb565_roundtrip": false,
-    "presentation_border_or_pillar_mask": false
-  },
+  "format": "misterplex.p3.frame_planes_golden.v1",
   "geometry": {
-    "coded_width": 624,
-    "coded_height": 480,
-    "display_width": 624,
-    "display_height": 480,
-    "colorspace": "I420_NATIVE",
     "planes": [
       {
         "plane": "Y",
@@ -72,14 +52,27 @@
         "height": 240,
         "stride": 312
       }
-    ]
+    ],
+    "display_width": 624,
+    "coded_width": 624,
+    "coded_height": 480,
+    "colorspace": "I420_NATIVE",
+    "display_height": 480
   },
-  "plane_blob": {
-    "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
-    "bytes": 5391360,
-    "sha256": "d044f61bdd33e60616334841d9f1cf8ac55d42b8d5708c54bcf2faa6f5d46d02",
-    "layout": "I420 planar per frame: Y then U then V",
-    "frame_bytes": 449280
+  "provenance": {
+    "rgb_roundtrip": false,
+    "presentation_border_or_pillar_mask": false,
+    "rgb565_roundtrip": false,
+    "source_domain": "decoded H.264 planes",
+    "colorspace": "I420_NATIVE",
+    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
+    "h264_loop_filter": "disabled"
+  },
+  "sequence_manifest": {
+    "path": "tests/fixtures/p3_multinal/plex_inter_p16_624x480_sequence_v1.json",
+    "format": "misterplex.p3.nal_sequence.v1",
+    "sha256": "dd24e0785af25324b87748e330f531673ddc878e9f55f0f569214d464ed98460",
+    "bytes": 5512
   },
   "frames": [
     {
@@ -514,5 +507,12 @@
         }
       ]
     }
-  ]
+  ],
+  "plane_blob": {
+    "frame_bytes": 449280,
+    "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
+    "layout": "I420 planar per frame: Y then U then V",
+    "sha256": "d044f61bdd33e60616334841d9f1cf8ac55d42b8d5708c54bcf2faa6f5d46d02",
+    "bytes": 5391360
+  }
 }
