@@ -349,7 +349,6 @@ module decode_stub #(
 	wire signed [15:0] dpb_chroma_origin_x, dpb_chroma_origin_y;
 	wire              dpb_mem_rd;
 	wire [31:0]       dpb_mem_raddr;
-	reg               dpb_mem_rd_q;
 	reg [31:0]        dpb_mem_raddr_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;
@@ -529,8 +528,7 @@ module decode_stub #(
 		wr_reset_ptr  <= 1'b0;
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
-		dpb_mem_rvalid <= dpb_mem_rd_q;
-		dpb_mem_rd_q <= dpb_mem_rd;
+		dpb_mem_rvalid <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
 		if (dpb_luma_window_valid)
 			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
@@ -587,7 +585,6 @@ module decode_stub #(
 			dpb_fetch_start <= 0;
 			dpb_fill_mb_addr <= '0;
 			dpb_fill_sample_idx <= 9'd0;
-			dpb_mem_rd_q <= 0;
 			dpb_mem_raddr_q <= 0;
 			dpb_mem_rvalid <= 0;
 			wr_pixel      <= 0;
