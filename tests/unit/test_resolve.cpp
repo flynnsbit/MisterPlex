@@ -85,15 +85,21 @@ int main() {
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
     CHECK(start480.find("audioCodec=aac") != std::string::npos);
     CHECK(start480.find("videoProfile=baseline") != std::string::npos);
+    CHECK(start480.find("videoProfile=main") == std::string::npos);
+    CHECK(start480.find("videoProfile=high") == std::string::npos);
     CHECK(start480.find("videoLevel=30") != std::string::npos);
+    CHECK(start480.find("videoLevel=31") == std::string::npos);
     CHECK(start480.find("offset=2") != std::string::npos);
 
     const auto extra480 = plexClientProfileExtra(w480);
-    CHECK(extra480.find("container=mp4") != std::string::npos);
+    CHECK(extra480.find("container=mpegts") != std::string::npos);
     CHECK(extra480.find("videoCodec=h264") != std::string::npos);
     CHECK(extra480.find("audioCodec=aac") != std::string::npos);
     CHECK(extra480.find("name=video.profile&list=baseline") != std::string::npos);
+    CHECK(extra480.find("name=video.profile&list=main") == std::string::npos);
+    CHECK(extra480.find("name=video.profile&list=high") == std::string::npos);
     CHECK(extra480.find("name=video.level&value=30") != std::string::npos);
+    CHECK(extra480.find("name=video.level&value=31") == std::string::npos);
     CHECK(extra480.find("scope=videoTranscodeTarget&scopeName=h264") != std::string::npos);
     CHECK(extra480.find("name=video.width&value=640") != std::string::npos);
     CHECK(extra480.find("name=video.height&value=480") != std::string::npos);
@@ -103,6 +109,9 @@ int main() {
     const auto headers480 = plexFfmpegHeaders("sess480", "tok", w480);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: Generic") != std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Capabilities: ") != std::string::npos);
+    CHECK(headers480.find("profile:baseline&resolution:640x480&level:30") != std::string::npos);
+    CHECK(headers480.find("profile:high") == std::string::npos);
+    CHECK(headers480.find("profile:main") == std::string::npos);
     CHECK(headers480.find("X-Plex-Client-Profile-Extra: ") != std::string::npos);
 
     WeakLadder bad480 = w480;

@@ -331,7 +331,10 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
     parseResolution(weak.videoResolution, w, h);
     std::ostringstream o;
     o << "add-transcode-target(type=videoProfile&context=streaming&protocol=http"
-      << "&container=mp4&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
+      // PMS universal/start.mp4 is the HTTP entrypoint, but its working
+      // streaming transcode target is TS; advertising mp4 here can make PMS
+      // return an empty video/mp4 response.
+      << "&container=mpegts&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
       << "&replace=true)+"
       << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
       << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
