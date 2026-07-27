@@ -396,6 +396,7 @@ At 60 MHz, even a naive implementation with headroom to spare.
 |-------|-----------|------|------------|
 | `parse_cavlc` | 3.2 | Sequential | w-c1 measured on test vector |
 | `dequant_idct` | 0 | Combinational | Traced: `h264_dequant4x4` + `h264_idct4x4` are pure wires |
+| | | | **⚠ COVERS 4×4 AC ONLY — chroma DC 2×2 Hadamard is absent from RTL (failure #16)** |
 | `intra_pred` | 0 | Combinational | Traced: `h264_intra4x4_pred` etc. are pure `always @*` |
 
 **CAVLC provenance caveat:** The 3.2 cycles/MB figure is an average that
@@ -606,6 +607,7 @@ w-c1 owns per-stage cycle ratchets and delivered this binding allocation:
 | parse_cavlc (full) | 50 | 7% | Partially measured |
 | ddr_write | 50 | 7% | Unbuilt |
 | dequant_idct | 48 | 7% | Combinational (0 today, 48 budgeted for pipeline regs) |
+| | | | **⚠ Chroma DC 2×2 Hadamard missing from RTL — ≤1 cycle impact but correctness gap** |
 | intra_pred | 30 | 4% | Combinational (0 today, 30 budgeted) |
 | control overhead | 30 | 4% | FSM transitions |
 | **Total** | **558** | **82%** | |
@@ -1238,6 +1240,96 @@ Fix if confirmed: one pipeline register stage (7 levels at 10.7 ns
    Deepest intra path is now Chroma Plane cy1 at ~14 levels. No intra
    path blocks 45 MHz. **CAUTION:** level counts underestimate fitter delay
    by ~3.2× historically — actual ns pending post-fit STA.
+
+---
+
+## 10. Gate Audit — w-arch Self-Assessment (v5)
+
+**Responding to parent's instrument-integrity directive (failure #16).**
+
+### What is my gate?
+
+This study has no pass/fail test. It is a written analysis whose "gate" is
+the set of claims in the Executive Summary and the provenance labels in the
+Provenance Ledger. A reader trusts the study if the labels are honest.
+
+### 1. What does my pass/fail assertion literally compare?
+
+**It doesn't.** This study contains no automated assertion. Its claims are
+validated by:
+- TRACED facts: checked against specific RTL lines (verifiable by re-reading)
+- VERIFIED facts: confirmed by fitter output (reproducible by re-running STA)
+- ESTIMATED facts: computed from first principles (checkable by arithmetic)
+- HYPOTHESIS facts: explicitly labelled as unverified
+
+**The "gate" is the Provenance Ledger (§8).** If a label says VERIFIED, the
+fact should be reproducible from the cited source. If it says ESTIMATED, it
+should be clearly subordinate to any measurement.
+
+### 2. What does it NOT cover that a reader would assume?
+
+**Three gaps identified:**
+
+**Gap A: The chroma DC 2×2 Hadamard inverse transform is absent from RTL.**
+w-plane has established this (failure #16). My cycle model (§3) lists
+`dequant_idct` as "0 cycles, combinational" — this was traced from the
+existing RTL (`h264_dequant4x4` + `h264_idct4x4`). But those modules only
+handle the 4×4 AC transform. The H.264 spec requires a 2×2 Hadamard
+inverse on chroma DC coefficients before dequant. **That transform does
+not exist in hardware.** My model silently assumes chroma reconstruction
+works correctly because the 4×4 IDCT exists. It does not.
+
+**Impact on cycle budget:** The 2×2 Hadamard is 4 additions on 4 values —
+trivially combinational or 1 pipeline cycle. Budget impact is negligible
+(≤1 cycle/MB). But the chroma reconstruction PATH being untested means
+the cycle model's "dequant+IDCT = combinational" is true of a pipeline
+that produces wrong chroma output for ~50% of macroblocks containing
+skin tones. **The model is right about timing and wrong about correctness.**
+
+**Gap B: The cycle model's weighted average assumes specific MB type ratios.**
+"70% P_Skip, 20% P_Motion, 10% Intra" is stated as an assumption (§3.3)
+but a reader might take the resulting "215 cycles/MB weighted average"
+as more authoritative than it is. Different content produces very different
+ratios. An I-frame-only stream (some encoders in low-latency mode) would
+be 100% Case C = 335 cycles/MB, still within budget but with different
+margin characteristics.
+
+**Gap C: Estimated delays were systematically optimistic.** Three estimates
+were wrong in the direction of my argument:
+- VCO: 720 (too high, made more outputs seem available)
+- Critical path: 12.3 ns (too low, made higher frequencies seem reachable)
+- 60 MHz margin: +4.1 ns (positive when it should have been deeply negative)
+
+The pattern is clear enough to be a bias, not bad luck. **Readers should
+weight my estimated delays as optimistic by default.** The Provenance
+Ledger now marks discredited estimates with strikethrough, but the
+systematic direction of the errors should be noted.
+
+### 3. Can my gate fail?
+
+**Not automatically — and that is itself a gap.** There is no script that
+re-checks the Provenance Ledger claims against the sources it cites. A
+future reader must manually verify each TRACED fact by opening the cited
+file and line. This is acceptable for a one-time study but fragile if the
+RTL changes.
+
+**What would make it fail:**
+- If `pll_0002.v` output_clock_frequency0 is changed from 20 MHz → the
+  "never changed" finding becomes stale
+- If `stream_path .clk()` wiring changes → the decode-on-clk_sys fact stales
+- If the PLL VCO changes in a new fit → the 360 MHz figure stales
+
+**None of these are gated.** The study is a snapshot, not a monitor.
+
+### Summary of this audit
+
+| Item | Status |
+|------|--------|
+| Provenance labels | Honest — discredited items marked, no false VERIFIED |
+| Chroma DC Hadamard | **MISSING from model** — cycle impact negligible, correctness impact severe |
+| Delay estimates | Systematically optimistic (3 of 3 wrong in same direction) |
+| Automated regression | None — study is a snapshot document |
+| Recommendations actionability | Sound — 684 cyc/MB working number confirmed by parent |
 
 ---
 
