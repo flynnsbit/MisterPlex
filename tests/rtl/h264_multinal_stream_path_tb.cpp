@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
             expect(pFirstMbMode1 == 2, "expected two first-MB P_L0_16x8 slices");
             expect(pFirstMbMode2 == 1, "expected one first-MB P_L0_8x16 slice");
             expect(pFirstMbBad == 0, "unexpected first P macroblock syntax/classification");
+            expect(reconSig3bCycles > 0, "parsed P DPB/MC recon signature missing");
         }
         expect(dut.stub_frames >= 2, "decode_stub did not consume multiple VCL pulses");
 

@@ -27,10 +27,10 @@ the expected residual checksum to be observed (`0x14` for w-cap, `0x10` for the 
 sequence), more than one consumed VCL frame, and a P-slice parse after the IDR parse. That P
 parse plus the testbench-only `slice_parser_state==ST_IDLE` probe proves that
 `slice_hdr_parser` returned to idle/re-entered between VCL NALs; a single-NAL fixture cannot
-prove it. Current RTL still reports `recon_sig_3b=0` for the full inter sequence; the gate
-prints that raw RED-class metric instead of treating it as a product PASS. After the
-w-cap residual handoff fix, the focused w-cap sequence reports GREEN (`recon_sig=0x3b`)
-through `stream_path`. The unit script also runs a deliberate RED check with an impossible
+prove it. The full inter sequence now reports GREEN liveness
+(`recon_sig_3b_cycles=39780`) because parsed P first-MB syntax drives the DPB fetch/MC path.
+This is not a quality PASS; the full-frame clean-I420 comparator remains the quality ratchet.
+The unit script also runs deliberate RED checks with forced `recon_sig=0` and an impossible
 expected checksum so this gate cannot silently become decoration. The C++ simulator refuses
 implicit default expectations; each fixture invocation must name the proven NAL/slice counts
 and checksum.

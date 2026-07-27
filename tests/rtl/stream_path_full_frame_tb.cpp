@@ -379,6 +379,8 @@ struct BadPixel {
 struct FrameCompareStats {
     std::array<PlaneStats, 3> plane;
     std::array<BadPixel, 3> firstBad;
+    int mbExact = 0;
+    int mbTotal = 0;
 };
 
 struct CompareResult {
@@ -420,6 +422,35 @@ std::array<PlaneView, 3> framePlaneViews(std::size_t frame, int width, int heigh
         {base + pixels, uvPixels, uvW, uvH},
         {base + pixels + uvPixels, uvPixels, uvW, uvH},
     }};
+}
+
+bool mbExactAllPlanes(const std::vector<uint8_t>& got, const std::vector<uint8_t>& ref,
+                      std::size_t frame, int width, int height, int mbX, int mbY) {
+    const auto views = framePlaneViews(frame, width, height);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const int px = mbX * 16 + x;
+            const int py = mbY * 16 + y;
+            if (px >= width || py >= height) continue;
+            const std::size_t i = views[0].offset + static_cast<std::size_t>(py) * width + px;
+            if (got[i] != ref[i]) return false;
+        }
+    }
+    const int cw = width / 2;
+    const int ch = height / 2;
+    for (int p = 1; p < 3; ++p) {
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                const int px = mbX * 8 + x;
+                const int py = mbY * 8 + y;
+                if (px >= cw || py >= ch) continue;
+                const std::size_t i = views[static_cast<std::size_t>(p)].offset +
+                                      static_cast<std::size_t>(py) * cw + px;
+                if (got[i] != ref[i]) return false;
+            }
+        }
+    }
+    return true;
 }
 
 void writeCandidateFrameI420(const std::vector<uint8_t>& rgb,
@@ -527,6 +558,15 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
                           << " abs=" << first.abs << "\n";
             }
         }
+        frameStats.mbTotal = ((width + 15) / 16) * ((height + 15) / 16);
+        for (int my = 0; my < (height + 15) / 16; ++my) {
+            for (int mx = 0; mx < (width + 15) / 16; ++mx) {
+                frameStats.mbExact += mbExactAllPlanes(result.candidateI420, ref, f, width, height, mx, my) ? 1 : 0;
+            }
+        }
+        std::cout << "FULL_FRAME_COMPARE mb frame=" << f
+                  << " exact=" << frameStats.mbExact
+                  << " total=" << frameStats.mbTotal << "\n";
         result.frames.push_back(frameStats);
     }
     result.exact = (result.firstBadFrame < 0) && (got.size() == refFrames);
@@ -574,7 +614,8 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
         const int frameNum = f < seq.frames.size() ? seq.frames[f].frameNum : static_cast<int>(f);
         const std::string kind = f < seq.frames.size() ? seq.frames[f].sliceKind : "?";
         out << "    {\"frame_index\": " << f << ", \"frame_num\": " << frameNum
-            << ", \"slice_kind\": \"" << kind << "\", \"planes\": [";
+            << ", \"slice_kind\": \"" << kind << "\", \"mb_exact\": " << cr.frames[f].mbExact
+            << ", \"mb_total\": " << cr.frames[f].mbTotal << ", \"planes\": [";
         for (int pi = 0; pi < 3; ++pi) {
             const auto& st = cr.frames[f].plane[static_cast<std::size_t>(pi)];
             if (pi) out << ", ";
@@ -661,7 +702,7 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                const int frameWaitCycles = std::max(200000, args.width * args.height * 2);
+                const int frameWaitCycles = std::max(200000, args.width * args.height * 3);
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {
