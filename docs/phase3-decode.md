@@ -230,6 +230,13 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     sole-deployed); FBAR PASS + res_dc=-24 OK; **res_csum HARD FAIL** — H-gate
     **0x53/0xa6/0xf9** (+0x53/push) and/or unstable **0x8b/de/31** (never 0x14);
     **soft-skip ≠ hard PASS**. Do **not** thrash-redeploy dabdaeb0.
+    RCA guard added: `tests/unit/test_status_telemetry.cpp` + `test_rtl_invariants.py`
+    lock the status ABI so `raw[12]=residual_dc`, `raw[13]=residual_csum`, and
+    `raw[14]=stream_bytes[7:0]`; the old pre-3.3l-1 layout preserved dc but put
+    stream low at raw[13], explaining the +file_size%256 walk without implicating
+    XOR residual math. Scheduled hardware discriminator:
+    `MISTER_HOST=... scripts/res_csum_size_probe.sh` (no deploy) pushes baseline
+    and padded vectors; product PASS requires raw[13]=0x14 for both.
     Host (**A-csum-probe2**): progressive residual XOR ends **0x14**; **0x53 ≠ residual intermediate**.
     RCA (**R-csum-rtl2**): one-cycle combo XOR over array (`tmpc`/`lev`) unreliable on this
     Quartus path → multi-cycle scalar RMW fold + `st_res_word` pack harden.
