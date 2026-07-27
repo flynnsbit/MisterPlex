@@ -28,6 +28,8 @@ def derive(compare: dict, ratchet: dict) -> dict:
             "compare JSON is not misterplex.p3.frame_planes_compare.v1")
     require(ratchet.get("format") == "misterplex.decode_throughput_ratchet.v1",
             "ratchet JSON is not misterplex.decode_throughput_ratchet.v1")
+    require(compare["source"]["sha256"] == ratchet["source_sha256"],
+            "compare source sha256 does not match throughput ratchet")
 
     geometry = compare["geometry"]
     width = int(geometry["width"])
@@ -140,6 +142,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--compare-json", required=True)
     ap.add_argument("--ratchet", required=True)
+    ap.add_argument("--label", help="stable run label to copy into the report")
     ap.add_argument("--report")
     args = ap.parse_args()
 
@@ -147,6 +150,12 @@ def main() -> int:
         report = derive(load_json(args.compare_json), load_json(args.ratchet))
     except (KeyError, TypeError, ValueError) as e:
         return fail(str(e))
+    source_path = Path(report["source"]["path"]).name
+    report["run"] = {
+        "label": args.label or f"{source_path}:{report['geometry']['width']}x{report['geometry']['height']}",
+        "compare_json": args.compare_json,
+        "ratchet": args.ratchet,
+    }
 
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
