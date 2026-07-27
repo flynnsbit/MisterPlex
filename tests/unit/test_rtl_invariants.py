@@ -275,6 +275,47 @@ def check_phase_a_surface() -> None:
     print("PASS Plex.sv Phase A feature surface")
 
 
+def check_plex_reset_domains() -> None:
+    text = strip_comments(read(PLEX_SV))
+
+    def missing_reset_requirements(src: str) -> list[str]:
+        missing: list[str] = []
+        if not re.search(
+            r"`ifdef\s+DDR_FRAME_STORE\s+wire\s+present_reset\s*=\s*reset\s*;"
+            r"\s*`else\s*wire\s+present_reset\s*=\s*reset\s*\|\s*sdram_startup_busy\s*;"
+            r"\s*`endif",
+            src,
+            re.S,
+        ):
+            missing.append(
+                "Plex.sv must keep DDR_FRAME_STORE present_core reset independent of "
+                "sdram_startup_busy, while non-DDR builds still wait for SDRAM startup"
+            )
+        m = re.search(r"present_core\s*#\s*\(.*?\)\s+present\s*\((.*?)\n\s*\);", src, re.S)
+        if not m or re.search(r"\.reset\s*\(\s*present_reset\s*\)", m.group(1)) is None:
+            missing.append(
+                "present_core must consume present_reset. Resetting DDR presentation with "
+                "reset|sdram_startup_busy can leave accepted DDR/YUV doorbells unpublished "
+                "with has_frame=0."
+            )
+        return missing
+
+    missing = missing_reset_requirements(text)
+    if missing:
+        fail(f"Plex.sv reset-domain contract: {missing[0]}")
+
+    faulted = re.sub(
+        r"(`ifdef\s+DDR_FRAME_STORE\s+wire\s+present_reset\s*=\s*)reset(\s*;)",
+        r"\1reset | sdram_startup_busy\2",
+        text,
+        count=1,
+        flags=re.S,
+    )
+    if not missing_reset_requirements(faulted):
+        fail("deliberately tying DDR present reset to sdram_startup_busy did not make the reset gate red")
+    print("PASS Plex.sv DDR presenter reset is not held behind SDRAM startup")
+
+
 def check_mailboxes() -> None:
     rtl = strip_comments(read(DDRAM_FRAME_RD))
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
@@ -888,6 +929,7 @@ def check_ddr_bitstream_product_path() -> None:
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
+    check_plex_reset_domains()
     check_mailboxes()
     check_ddr_bitstream_ring()
     check_status_telemetry()
