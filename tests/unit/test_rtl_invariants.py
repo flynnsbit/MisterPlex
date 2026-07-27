@@ -1446,13 +1446,8 @@ def check_present_path_degradation_contract() -> None:
                 "a screensaver regression",
             ),
             (
-                'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
-                "idle F1 failure must name that legacy RGB F1 was refused and DDR YUV420p is "
-                "required",
-            ),
-            (
-                'log("media:idlepaintfailed(willretry):"+fpga_.lastError());',
-                "idle DDR failure must remain visible and retryable instead of being swallowed",
+                'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
+                "idle DDR failure must name DDR and the re-probe recovery path",
             ),
             (
                 'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
@@ -1528,7 +1523,7 @@ def check_present_path_degradation_contract() -> None:
         fail(f"ARM present-path degradation contract: {missing[0]}")
 
     rgb_fallback_media = media_nt.replace(
-        'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
+        'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
         "ok=fpga_.sendRgb24Frame(buf.data(),w,h,1);",
     )
     if not present_degradation_violations(rgb_fallback_media, fb_nt, status_nt):

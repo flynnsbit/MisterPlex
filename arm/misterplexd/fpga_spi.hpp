@@ -292,6 +292,7 @@ private:
     double mboxSeqMs_ = 0.0;
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
+    double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

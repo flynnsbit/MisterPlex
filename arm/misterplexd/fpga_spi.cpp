@@ -429,6 +429,7 @@ void FpgaSpi::close() {
         fd_ = -1;
     }
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
 }
 
@@ -697,6 +698,7 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat
     ddrLayout_ = next;
     releaseDdrMap();
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
     clearErr();
     return true;
@@ -712,6 +714,7 @@ void FpgaSpi::setDdrMemSync(bool on) {
     ddrMemSync_ = on;
     releaseDdrMap();
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
 }
 
 void FpgaSpi::releaseDdrMap() {
@@ -1313,8 +1316,19 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
         return false;
     }
     if (ddrKickMode_ < 0) {
-        setErr("sendDdrFrame: DDR path previously unavailable");
-        return false;
+        // Allow re-probe after a cooldown so transient FPGA stalls (e.g. core
+        // reload, timing recovery) don't permanently kill the frame path.
+        constexpr double kReprobeIntervalMs = 5000.0;
+        const double nowMs = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+        if (ddrKickFailMs_ >= 0.0 && (nowMs - ddrKickFailMs_) < kReprobeIntervalMs) {
+            setErr("sendDdrFrame: DDR path previously unavailable (re-probe in " +
+                   std::to_string(static_cast<int>(kReprobeIntervalMs - (nowMs - ddrKickFailMs_))) +
+                   " ms)");
+            return false;
+        }
+        ddrKickMode_ = 0;
     }
     if (!ok() && !open())
         return false;
@@ -1427,6 +1441,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
                 ddrKickMode_ = -1;
+                ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
                 setErr("sendDdrFrame: no kick/frame via SPI or doorbell" +
                        frameStoreStatusSuffix());
                 return false;
@@ -1438,6 +1455,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
+        ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
         setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
     }
