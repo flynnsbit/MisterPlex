@@ -1,0 +1,38 @@
+{
+  "excluded_prefixes": [
+    "fpga/Plex_MiSTer/sys/",
+    "fpga/Plex_MiSTer/rtl/pll/"
+  ],
+  "files": [
+    "fpga/Plex_MiSTer/Plex.sv",
+    "fpga/Plex_MiSTer/rtl/audio_fifo.sv",
+    "fpga/Plex_MiSTer/rtl/audio_ingest.sv",
+    "fpga/Plex_MiSTer/rtl/audio_tone.sv",
+    "fpga/Plex_MiSTer/rtl/bitstream_fifo.sv",
+    "fpga/Plex_MiSTer/rtl/colorbars.sv",
+    "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv",
+    "fpga/Plex_MiSTer/rtl/decode_stub.sv",
+    "fpga/Plex_MiSTer/rtl/frame_ingest.sv",
+    "fpga/Plex_MiSTer/rtl/frame_store.sv",
+    "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv",
+    "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv",
+    "fpga/Plex_MiSTer/rtl/nalu_scanner.sv",
+    "fpga/Plex_MiSTer/rtl/pps_parser.sv",
+    "fpga/Plex_MiSTer/rtl/present_cadence.sv",
+    "fpga/Plex_MiSTer/rtl/present_core.sv",
+    "fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv",
+    "fpga/Plex_MiSTer/rtl/sps_parser.sv",
+    "fpga/Plex_MiSTer/rtl/stream_ingest.sv",
+    "fpga/Plex_MiSTer/rtl/stream_path.sv"
+  ],
+  "project": "fpga/Plex_MiSTer/Plex.qsf",
+  "schema": "misterplex.rtl_lint_baseline.v1",
+  "warning_classes": [
+    "WIDTHTRUNC",
+    "WIDTHEXPAND",
+    "WIDTH",
+    "UNSIGNED",
+    "IMPLICIT*"
+  ],
+  "warnings": {}
+}
