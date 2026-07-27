@@ -5,6 +5,7 @@
       "name": "ddr_frame_store",
       "entity": "ddr_frame_store",
       "hierarchy_contains": "ddr_frame_store:fstore",
+      "log_contains": "present|fstore",
       "min_comb_aluts": 1000,
       "min_registers": 500,
       "min_block_memory_bits": 100000,

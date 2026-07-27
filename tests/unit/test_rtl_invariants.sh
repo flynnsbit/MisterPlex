@@ -80,6 +80,7 @@ echo "OK red-check: define parity guard rejects missing shared DDR_FRAME_STORE"
 
 FIT_GREEN="$FAULT_DIR/fake_fit_green.rpt"
 FIT_RED="$FAULT_DIR/fake_fit_red.rpt"
+FIT_LOOP_LOG="$FAULT_DIR/fake_fit_loop.log"
 FIT_CFG="$FAULT_DIR/critical_fit_one_module.json"
 cat >"$FIT_CFG" <<'JSON'
 {
@@ -89,6 +90,7 @@ cat >"$FIT_CFG" <<'JSON'
       "name": "ddr_frame_store",
       "entity": "ddr_frame_store",
       "hierarchy_contains": "ddr_frame_store:fstore",
+      "log_contains": "present|fstore",
       "min_comb_aluts": 1000,
       "min_registers": 500,
       "min_block_memory_bits": 100000,
@@ -118,4 +120,40 @@ else
     exit 1
   fi
 fi
-echo "OK red-check: fit hierarchy guard rejects optimized-away ddr_frame_store"
+cat >"$FIT_LOOP_LOG" <<'LOG'
+Warning (332125): Found combinational loop of 7 nodes File: /build/rtl/async_fifo.sv Line: 34
+    Warning (332126): Node "emu|present|fstore|input_fifo|comb~3|combout"
+LOG
+if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" --log "$FIT_LOOP_LOG" --config "$FIT_CFG" \
+     >"$FAULT_DIR/fit_loop_red.out" 2>"$FAULT_DIR/fit_loop_red.err"; then
+  echo "FAIL: fit hierarchy guard accepted critical-module combinational loop warning" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "critical-module combinational-loop" "$FAULT_DIR/fit_loop_red.err"; then
+    echo "FAIL: fit hierarchy comb-loop red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/fit_loop_red.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: fit hierarchy guard rejects optimized-away or comb-looped ddr_frame_store"
+
+STA_RED="$FAULT_DIR/fake_timing_red.sta.rpt"
+cat >"$STA_RED" <<'RPT'
+; Setup Summary ;
+; Clock ; Slack ; End Point TNS ;
+; clk_ddr ; -0.125 ; -1.250 ;
+RPT
+if "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$STA_RED" \
+     >"$FAULT_DIR/timing_red.out" 2>"$FAULT_DIR/timing_red.err"; then
+  echo "FAIL: timing guard accepted negative setup slack" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "QUARTUS_TIMING_REJECTED(exit=1)" "$FAULT_DIR/timing_red.err"; then
+    echo "FAIL: timing red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/timing_red.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: timing guard rejects negative slack"
