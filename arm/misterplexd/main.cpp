@@ -100,6 +100,10 @@ int main(int argc, char** argv) {
     std::string matchSourceHz = "off";
     std::string sourceFpsConf = "auto";
     misterplex::WeakLadder weak;
+    std::string cliTranscodeProfile;
+    bool transcodeProfileExplicit = false;
+    bool weakResExplicit = false;
+    bool weakBitrateExplicit = false;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -127,13 +131,16 @@ int main(int argc, char** argv) {
                 decodeW = w;
                 decodeH = h;
             }
+        } else if (std::strcmp(argv[i], "--transcode-profile") == 0 && i + 1 < argc) {
+            cliTranscodeProfile = argv[++i];
         } else if (std::strcmp(argv[i], "--play-file") == 0 && i + 1 < argc) {
             playFile = argv[++i];
         } else if (std::strcmp(argv[i], "--play-seconds") == 0 && i + 1 < argc) {
             playSeconds = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
-                        "[--conf PATH] [--decode WxH] [--play-file PATH] [--play-seconds N]\n");
+                        "[--conf PATH] [--decode WxH] [--transcode-profile 240p|480p] "
+                        "[--play-file PATH] [--play-seconds N]\n");
             return 0;
         }
     }
@@ -168,6 +175,15 @@ int main(int argc, char** argv) {
         }
 
         confToken = loadConf(confPath, "PLEX_TOKEN");
+        auto profile = loadConf(confPath, "TRANSCODE_PROFILE");
+        if (profile.empty())
+            profile = loadConf(confPath, "WEAK_PROFILE");
+        if (!profile.empty()) {
+            transcodeProfileExplicit = true;
+            if (!misterplex::applyPlexTranscodeProfile(profile, weak))
+                std::fprintf(stderr, "misterplexd: unknown TRANSCODE_PROFILE=%s (keeping %s)\n",
+                             profile.c_str(), weak.profileName.c_str());
+        }
         auto v = loadConf(confPath, "FFMPEG");
         if (!v.empty())
             ffmpeg = v;
@@ -180,11 +196,18 @@ int main(int argc, char** argv) {
             }
         }
         v = loadConf(confPath, "WEAK_RES");
-        if (!v.empty())
-            weak.videoResolution = v;
+        if (!v.empty()) {
+            weakResExplicit = true;
+            if (!misterplex::applyPlexTranscodeProfile(v, weak)) {
+                weak.profileName = "custom";
+                weak.videoResolution = v;
+            }
+        }
         v = loadConf(confPath, "WEAK_BITRATE");
-        if (!v.empty())
+        if (!v.empty()) {
+            weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
@@ -253,13 +276,33 @@ int main(int argc, char** argv) {
                      "(cadence/OSD path; switchres TODO)\n",
                      matchSourceHz.c_str(), sourceFpsConf.c_str());
     }
-    // Align weak ladder with decode size when still default
-    if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
-        weak.videoResolution = std::to_string(decodeW) + "x" + std::to_string(decodeH);
-        if (decodeW >= 640)
-            weak.maxVideoBitrateKbps = 2000;
-        else if (decodeW >= 480)
-            weak.maxVideoBitrateKbps = 1500;
+    if (!cliTranscodeProfile.empty()) {
+        transcodeProfileExplicit = true;
+        if (!misterplex::applyPlexTranscodeProfile(cliTranscodeProfile, weak))
+            std::fprintf(stderr, "misterplexd: unknown --transcode-profile=%s (keeping %s)\n",
+                         cliTranscodeProfile.c_str(), weak.profileName.c_str());
+    }
+    // Align PMS ladder with decode size only when the operator did not choose a
+    // transcode profile/resolution explicitly.
+    if (!transcodeProfileExplicit && !weakResExplicit &&
+        weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
+        const std::string decodeRes = std::to_string(decodeW) + "x" + std::to_string(decodeH);
+        if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
+            weak.profileName = "custom";
+            weak.videoResolution = decodeRes;
+            if (!weakBitrateExplicit) {
+                if (decodeW >= 640)
+                    weak.maxVideoBitrateKbps = 2500;
+                else if (decodeW >= 480)
+                    weak.maxVideoBitrateKbps = 1500;
+            }
+        }
+    }
+    std::string weakWhy;
+    if (!misterplex::validateWeakLadder(weak, &weakWhy)) {
+        std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
+                     weakWhy.c_str());
+        misterplex::applyPlexTranscodeProfile("240p", weak);
     }
 
     std::signal(SIGINT, on_signal);
@@ -887,10 +930,11 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr,
                  "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%dx%d "
-                 "weak=%s@%dk present=%s auto_next=%d subs=%s\n",
+                 "weak=%s/%s@%dk h264=%s@L%d present=%s auto_next=%d subs=%s\n",
                  name.c_str(), machineId.c_str(), port,
                  defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
-                 decodeW, decodeH, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
+                 decodeW, decodeH, weak.profileName.c_str(), weak.videoResolution.c_str(),
+                 weak.maxVideoBitrateKbps, weak.h264Profile.c_str(), weak.h264Level,
                  presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str());
     for (size_t i = 0; i < servers.size(); ++i)
         std::fprintf(stderr, "misterplexd:   server[%zu]=%s%s\n", i, servers[i].c_str(),

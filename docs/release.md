@@ -84,8 +84,9 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
 | `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
-| `WEAK_RES` | `320x240` | PMS universal weak ladder resolution |
-| `WEAK_BITRATE` | `1000` | Weak ladder max video kbps |
+| `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = 640x480@2500k. Both request H.264 Baseline Level 3.0. |
+| `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
+| `WEAK_BITRATE` | `1000` | Legacy ladder max video kbps override |
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
 | **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
 | `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
