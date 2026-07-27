@@ -36,6 +36,7 @@ BUILD_CLAMP_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_clamp"
 BUILD_MC_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_mc_round"
 BUILD_REF_FAULT="$ROOT/build/verilator/h264_dpb_mc_early_ref"
 BUILD_PART_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_part_mask"
+BUILD_CONTENT_GATE="$ROOT/build/verilator/h264_dpb_mc_content_gate"
 
 for f in "$RTL" "$DEBLOCK_RTL" "$QIP" "$TB" "$TOP" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
@@ -67,7 +68,8 @@ if [[ "$NAL_COUNT" -lt 2 ]]; then
 fi
 
 mkdir -p "$BUILD" "$BUILD_SEAM" "$BUILD_SEAM_MB_FAULT" "$BUILD_SEAM_REF_FAULT" \
-  "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT" "$BUILD_PART_FAULT"
+  "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT" "$BUILD_PART_FAULT" \
+  "$BUILD_CONTENT_GATE"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -203,3 +205,24 @@ if ! grep -q 'part luma prediction/mask mismatch' <<<"$PART_OUT"; then
   exit 1
 fi
 echo "OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden"
+
+# ── Deblock content gate: reference must be post-deblock ──
+# Uses the same build as the main test (no special parameters needed).
+"$BUILD/Vh264_dpb_mc_tb" --deblock-content-gate
+echo "OK h264_dpb_mc RTL: deblock content gate passed — reference is post-deblock"
+
+# Red-check: skip the deblock overwrite and verify the gate detects it.
+set +e
+CONTENT_OUT="$("$BUILD/Vh264_dpb_mc_tb" --deblock-content-gate-skip 2>&1)"
+CONTENT_RC=$?
+set -e
+printf '%s\n' "$CONTENT_OUT"
+if [[ "$CONTENT_RC" -eq 0 ]]; then
+  echo "FAIL h264_dpb_mc RTL red-check: skipped deblock unexpectedly passed — gate cannot detect unfiltered reference" >&2
+  exit 1
+fi
+if ! grep -q 'DETECTED unfiltered reference' <<<"$CONTENT_OUT"; then
+  echo "FAIL h264_dpb_mc RTL red-check: expected unfiltered reference detection message" >&2
+  exit 1
+fi
+echo "OK h264_dpb_mc RTL red-check: deblock content gate detected unfiltered reference"

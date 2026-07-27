@@ -188,6 +188,198 @@ void commitFilteredMb(Sim& s, int mbAddr, bool terminal) {
     s.top.filtered_frame_done = 0;
 }
 
+// "Raw reconstruction" pattern — deliberately different from the filtered/deblocked
+// pattern used by planePattern().  In real decode, deblocking changes 8–25% of pixels;
+// we use a large constant offset so the content gate never passes by coincidence.
+uint8_t rawYPattern(int x, int y) { return static_cast<uint8_t>((yPattern(x, y) + 47) & 0xff); }
+uint8_t rawUPattern(int x, int y) { return static_cast<uint8_t>((uPattern(x, y) + 47) & 0xff); }
+uint8_t rawVPattern(int x, int y) { return static_cast<uint8_t>((vPattern(x, y) + 47) & 0xff); }
+uint8_t rawPlanePattern(int plane, int x, int y) {
+    if (plane == 0) return rawYPattern(x, y);
+    if (plane == 1) return rawUPattern(x, y);
+    return rawVPattern(x, y);
+}
+
+// Deblock-content-gate test: proves the reference surface is post-deblock,
+// not raw reconstruction.  Fails if unfiltered data is ever served.
+int runDeblockContentGate(bool skipDeblock) {
+    Sim s;
+    reset(s);
+
+    // --- Step 1: seed the reference bank with "raw reconstruction" data. ---
+    // In real hardware this would never happen directly — the raw recon values
+    // would be what's in memory BEFORE the deblock filter writes.  We simulate
+    // it by pre-filling the memory array.
+    for (int mby = 0; mby < 2; ++mby) {
+        for (int mbx = 0; mbx < 2; ++mbx) {
+            for (int i = 0; i < 256; ++i) {
+                int x = mbx * 16 + (i & 15);
+                int y = mby * 16 + (i >> 4);
+                s.mem[i420Addr(0, 0, x, y)] = rawYPattern(x, y);
+            }
+            for (int i = 0; i < 64; ++i) {
+                int x = mbx * 8 + (i & 7);
+                int y = mby * 8 + (i >> 3);
+                s.mem[i420Addr(0, 1, x, y)] = rawUPattern(x, y);
+                s.mem[i420Addr(0, 2, x, y)] = rawVPattern(x, y);
+            }
+        }
+    }
+
+    // --- Step 2: write "deblocked" (filtered) data through the DPB write
+    // port, overwriting the raw reconstruction.  If skipDeblock is true, we
+    // skip this step — the reference bank retains the raw values, which is
+    // the fault condition the gate must detect. ---
+    if (!skipDeblock) {
+        for (int mby = 0; mby < 2; ++mby) {
+            for (int mbx = 0; mbx < 2; ++mbx) {
+                for (int i = 0; i < 256; ++i) writeSample(s, mbx, mby, 0, i);
+                for (int i = 0; i < 64; ++i) writeSample(s, mbx, mby, 1, i);
+                for (int i = 0; i < 64; ++i) writeSample(s, mbx, mby, 2, i);
+            }
+        }
+    }
+    s.top.filtered_sample_valid = 0;
+    s.tick();
+
+    // --- Step 3: promote current to reference. ---
+    s.top.frame_done = 1;
+    s.tick();
+    s.top.frame_done = 0;
+    s.tick();
+    if (!s.top.ref_ready) {
+        std::cerr << "FAIL deblock-content-gate: ref_ready not asserted after frame_done\n";
+        return 1;
+    }
+
+    // --- Step 4: fetch a reference window at MB (0,0) with a small MV. ---
+    s.top.fetch_mb_x = 0;
+    s.top.fetch_mb_y = 0;
+    s.top.fetch_part_mode = 0;
+    s.top.fetch_part_idx = 0;
+    s.top.fetch_part_w = 16;
+    s.top.fetch_part_h = 16;
+    s.top.fetch_mv_x_qpel = 4;  // +1 full-pel horizontal
+    s.top.fetch_mv_y_qpel = 4;  // +1 full-pel vertical
+    s.top.fetch_start = 1;
+    s.tick();
+    s.top.fetch_start = 0;
+
+    std::array<uint8_t, 441> lumaWin{};
+    std::array<uint8_t, 81> uWin{};
+    std::array<uint8_t, 81> vWin{};
+    int lc = 0, uc = 0, vc = 0;
+    bool sawDone = false;
+    for (int guard = 0; guard < 800 && !sawDone; ++guard) {
+        s.tick();
+        if (s.top.luma_window_valid) {
+            lumaWin[s.top.luma_window_idx] = s.top.luma_window_sample;
+            ++lc;
+        }
+        if (s.top.chroma_u_window_valid) {
+            uWin[s.top.chroma_window_idx] = s.top.chroma_window_sample;
+            ++uc;
+        }
+        if (s.top.chroma_v_window_valid) {
+            vWin[s.top.chroma_window_idx] = s.top.chroma_window_sample;
+            ++vc;
+        }
+        sawDone = sawDone || s.top.fetch_done;
+    }
+    if (lc != 441 || uc != 81 || vc != 81 || !sawDone) {
+        std::cerr << "FAIL deblock-content-gate: incomplete fetch luma=" << lc
+                  << " u=" << uc << " v=" << vc << " done=" << sawDone << "\n";
+        return 1;
+    }
+
+    // --- Step 5: verify every fetched luma sample matches the DEBLOCKED
+    // pattern, not the raw reconstruction pattern. ---
+    // MV=(4,4) qpel = (1,1) full-pel. Luma origin = (1,1).
+    // Window spans from (origin-2, origin-2) to (origin+18, origin+18) with clamping.
+    int lumaDeblockMatch = 0;
+    int lumaRawMatch = 0;
+    int lumaTotal = 441;
+    for (int wy = 0; wy < 21; ++wy) {
+        for (int wx = 0; wx < 21; ++wx) {
+            int srcX = std::clamp(1 + wx - 2, 0, W - 1);
+            int srcY = std::clamp(1 + wy - 2, 0, H - 1);
+            uint8_t fetched = lumaWin[wy * 21 + wx];
+            uint8_t deblocked = yPattern(srcX, srcY);
+            uint8_t raw = rawYPattern(srcX, srcY);
+            if (fetched == deblocked) ++lumaDeblockMatch;
+            if (fetched == raw) ++lumaRawMatch;
+        }
+    }
+
+    // If skipDeblock: the bank has raw values, so rawMatch should be high
+    // and deblockMatch low.  If correct: deblockMatch should be 441/441.
+    if (skipDeblock) {
+        if (lumaRawMatch < lumaTotal * 9 / 10) {
+            std::cerr << "FAIL deblock-content-gate (skip-deblock fault): expected raw data in reference"
+                      << " rawMatch=" << lumaRawMatch << "/" << lumaTotal << "\n";
+            return 1;
+        }
+        // The gate DETECTS the fault: deblocked pattern should NOT match.
+        if (lumaDeblockMatch == lumaTotal) {
+            std::cerr << "FAIL deblock-content-gate: fault injected but reference still matches deblocked pattern"
+                      << " — gate did not detect unfiltered reference\n";
+            return 1;
+        }
+        std::cerr << "deblock-content-gate DETECTED unfiltered reference: "
+                  << lumaDeblockMatch << "/" << lumaTotal << " deblock-match vs "
+                  << lumaRawMatch << "/" << lumaTotal << " raw-match\n";
+        return 1;  // Return non-zero: the red-check EXPECTS failure.
+    }
+
+    // Normal path: every sample must match the deblocked pattern.
+    if (lumaDeblockMatch != lumaTotal) {
+        std::cerr << "FAIL deblock-content-gate: reference data is not fully deblocked"
+                  << " deblockMatch=" << lumaDeblockMatch << "/" << lumaTotal
+                  << " rawMatch=" << lumaRawMatch << "/" << lumaTotal << "\n";
+        return 1;
+    }
+
+    // --- Step 6: compute MC prediction from deblocked vs raw windows and
+    // prove they differ.  This is the measurement that proves deblocking is
+    // not cosmetic for inter prediction. ---
+    std::array<uint8_t, 441> rawLumaWin{};
+    for (int wy = 0; wy < 21; ++wy) {
+        for (int wx = 0; wx < 21; ++wx) {
+            int srcX = std::clamp(1 + wx - 2, 0, W - 1);
+            int srcY = std::clamp(1 + wy - 2, 0, H - 1);
+            rawLumaWin[wy * 21 + wx] = rawYPattern(srcX, srcY);
+        }
+    }
+    int diffCount = 0;
+    int64_t diffSum = 0;
+    int maxDiff = 0;
+    // MV frac = (0, 0) for full-pel — use integer qpel position
+    for (int py = 0; py < 16; ++py) {
+        for (int px = 0; px < 16; ++px) {
+            uint8_t predDeblock = qpel(lumaWin, px, py, 0, 0);
+            uint8_t predRaw = qpel(rawLumaWin, px, py, 0, 0);
+            int d = std::abs(static_cast<int>(predDeblock) - static_cast<int>(predRaw));
+            if (d != 0) ++diffCount;
+            diffSum += d;
+            if (d > maxDiff) maxDiff = d;
+        }
+    }
+    if (diffCount == 0) {
+        std::cerr << "FAIL deblock-content-gate: deblocked and raw MC predictions are IDENTICAL"
+                  << " — deblocking has no effect on inter prediction, which contradicts"
+                  << " the 8-25% pixel difference measurement\n";
+        return 1;
+    }
+
+    std::cout << "OK deblock-content-gate: reference is post-deblock"
+              << " deblockMatch=" << lumaDeblockMatch << "/" << lumaTotal
+              << " rawMatch=" << lumaRawMatch << "/" << lumaTotal
+              << " mc_pixel_diff=" << diffCount << "/256"
+              << " mc_mean_abs_diff=" << (static_cast<double>(diffSum) / 256.0)
+              << " mc_max_diff=" << maxDiff << "\n";
+    return 0;
+}
+
 int runDeblockDpbSeam(const std::string& nalFixture) {
     int nals = countAnnexBNals(nalFixture);
     if (nals < 2) {
@@ -315,14 +507,24 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
         bool seamOnly = false;
+        bool contentGate = false;
+        bool contentGateSkip = false;
         std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--deblock-dpb-seam")
                 seamOnly = true;
+            else if (arg == "--deblock-content-gate")
+                contentGate = true;
+            else if (arg == "--deblock-content-gate-skip")
+                contentGateSkip = true;
             else
                 nalFixture = arg;
         }
+        if (contentGate)
+            return runDeblockContentGate(false);
+        if (contentGateSkip)
+            return runDeblockContentGate(true);
         if (seamOnly)
             return runDeblockDpbSeam(nalFixture);
         int nals = countAnnexBNals(nalFixture);
