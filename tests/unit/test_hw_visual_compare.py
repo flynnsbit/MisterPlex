@@ -95,6 +95,9 @@ def main() -> int:
     require(gr["stats"]["per_plane_exact_match_pixels_rgb"] ==
             [gr["stats"]["active_pixels"]] * 3,
             f"known-good per-plane exact counts wrong: {gr}")
+    require(gr["stats"]["per_plane_exact_match_pixels_yuv"] ==
+            [gr["stats"]["active_pixels"]] * 3,
+            f"known-good YUV per-plane exact counts wrong: {gr}")
     require(good_diff.exists() and good_diff.stat().st_size > 0, "good diff artifact missing")
     print("PASS known-good frame exact-matches active display region")
 
@@ -122,6 +125,8 @@ def main() -> int:
     require(br["stats"]["per_plane_exact_match_pixels_rgb"][1] ==
             br["stats"]["active_pixels"] - 1,
             f"bad per-plane exact count should isolate one green-plane pixel: {br}")
+    require(br["stats"]["per_plane_mae_yuv"][0] > 0,
+            f"bad YUV per-plane MAE did not report the injected pixel: {br}")
     require(bad_diff.exists() and bad_diff.stat().st_size > 0, "bad diff artifact missing")
     print("PASS corrupted active pixel rejected with precise worst mismatch + diff artifact")
 

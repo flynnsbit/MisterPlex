@@ -55,6 +55,37 @@ forking new streams. The first hardware candidate is `wcap_residual14_idr_plus_p
 the hardware visual gate aligned with the simulation-side multi-NAL stream-path gate and makes sim-vs-silicon
 disagreements directly actionable.
 
+2026-07-27 full-frame investigation result: **REFUSED / not a gate**. The 618×480 active region is stable within a
+single static capture run on `57674f2e` (`noise max_abs=0`), but it is not stable across the menu reload/push
+sequence required by the hardware script. Known-good `57674f2e` false-reded against the checked-in golden:
+
+```text
+good full-frame vs checked golden: exact 281458/296640
+Y/U/V exact = [283588, 282443, 282742]
+Y/U/V MAE   = [5.1175, 3.3041, 1.9793]
+Y/U/V max   = [166, 112, 69]
+```
+
+Re-running good against a full-frame golden captured earlier in the same window still false-reded after another
+menu reload:
+
+```text
+good rerun vs same-window full golden: exact 281249/296640
+Y/U/V exact = [283483, 282293, 282531]
+Y/U/V MAE   = [5.1944, 3.3532, 2.0109]
+Y/U/V max   = [165, 114, 69]
+```
+
+The bad specimen still goes red full-frame, but because the known-good path is not green, full-frame must remain
+refused by default:
+
+```text
+bad fe7673bc vs same full golden: exact 0/296640
+Y/U/V exact = [4103, 5120, 4716]
+Y/U/V MAE   = [63.9724, 24.5320, 26.1278]
+Y/U/V max   = [230, 220, 171]
+```
+
 ## Metrics and failure artifact
 
 `scripts/hw_visual_compare.py compare` reports:

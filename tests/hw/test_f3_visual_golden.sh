@@ -34,6 +34,11 @@ if [[ "$(basename "$BITSTREAM")" == "plex_visual_624x480_1f.264" && "${VISUAL_AL
   echo "Use the default 320x240 proven vector/golden, or set VISUAL_ALLOW_UNPROVEN_624=1 for investigation only." >&2
   exit 2
 fi
+if [[ "${VISUAL_FULL_FRAME:-0}" == "1" && "${VISUAL_ALLOW_UNPROVEN_FULL:-0}" != "1" ]]; then
+  echo "FAIL: full-frame visual gate is not proven on rollback 57674f2e." >&2
+  echo "Use the proven default ROI gate, or set VISUAL_ALLOW_UNPROVEN_FULL=1 for scheduled investigation only." >&2
+  exit 2
+fi
 
 mkdir -p "$OUT"
 

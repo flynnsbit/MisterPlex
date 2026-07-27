@@ -82,10 +82,11 @@ as either green or known-red core evidence.
 - [x] Prove green visual compare against rollback `57674f2e`.
 - [x] Prove red path on hardware with known-bad `fe7673bc`.
 - [x] Promote the proven 320×240 vector + hardware-captured `57674f2e` golden to default gate inputs.
-- [ ] Prove or refuse full-frame `VISUAL_FULL_FRAME=1` coverage: 618×480 active region, per-plane exact counts
-  and MAE, green on `57674f2e`, red on `fe7673bc`, one consistent configuration. Use the shared
-  `tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264` + `..._sequence_v1.json` candidate before forking
-  any hardware-only stream.
+- [x] Refuse full-frame `VISUAL_FULL_FRAME=1` coverage by default. Hardware investigation of the 618×480 active
+  region false-reded on known-good `57674f2e` despite zero within-run noise: exact `281458/296640`,
+  Y/U/V MAE `[5.1175,3.3041,1.9793]` vs checked golden, and `281249/296640`, Y/U/V MAE
+  `[5.1944,3.3532,2.0109]` after rerun against a same-window full golden. Bad `fe7673bc` was red
+  (`0/296640`, Y/U/V MAE `[63.9724,24.5320,26.1278]`), but a full-frame gate cannot ship until good is green.
 - [ ] Promote a checked-in host/good 624×480 golden only after that vector is live and green on rollback hardware.
 
 ---

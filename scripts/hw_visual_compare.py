@@ -272,6 +272,16 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def rgb_to_yuv601(rgb: np.ndarray) -> np.ndarray:
+    r = rgb[..., 0].astype(np.float64)
+    g = rgb[..., 1].astype(np.float64)
+    b = rgb[..., 2].astype(np.float64)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    u = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0
+    v = 0.5 * r - 0.418688 * g - 0.081312 * b + 128.0
+    return np.clip(np.rint(np.stack([y, u, v], axis=-1)), 0, 255).astype(np.int16)
+
+
 def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
                box: tuple[int, int, int, int] | None = None) -> dict:
     ga = active_view(golden, g, box).astype(np.int16)
@@ -283,6 +293,12 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
     per_plane_mae = ad.reshape(-1, 3).mean(axis=0)
     per_plane_exact = (ad == 0).reshape(-1, 3).sum(axis=0)
     per_plane_max = ad.reshape(-1, 3).max(axis=0)
+    gy = rgb_to_yuv601(ga)
+    cy = rgb_to_yuv601(ca)
+    yuv_ad = np.abs(cy - gy)
+    yuv_mae = yuv_ad.reshape(-1, 3).mean(axis=0)
+    yuv_exact = (yuv_ad == 0).reshape(-1, 3).sum(axis=0)
+    yuv_max = yuv_ad.reshape(-1, 3).max(axis=0)
     exact = np.all(ad == 0, axis=2)
     worst_flat = int(np.argmax(ad))
     wy, wx, wc = np.unravel_index(worst_flat, ad.shape)
@@ -295,6 +311,10 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
         "per_plane_exact_match_ratio_rgb": [float(x / exact.size) for x in per_plane_exact],
         "per_plane_mae_rgb": [float(x) for x in per_plane_mae],
         "per_plane_max_abs_rgb": [int(x) for x in per_plane_max],
+        "per_plane_exact_match_pixels_yuv": [int(x) for x in yuv_exact],
+        "per_plane_exact_match_ratio_yuv": [float(x / exact.size) for x in yuv_exact],
+        "per_plane_mae_yuv": [float(x) for x in yuv_mae],
+        "per_plane_max_abs_yuv": [int(x) for x in yuv_max],
         "overall_mae": float(ad.mean()),
         "max_abs": int(ad[wy, wx, wc]),
         "worst": {
