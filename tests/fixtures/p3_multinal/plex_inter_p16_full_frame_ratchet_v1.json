@@ -1,7 +1,7 @@
 {
   "format": "misterplex.p3.frame_planes_ratchet.v1",
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
-  "colorspace": "YUV444_FROM_RGB565",
+  "colorspace": "I420_FROM_RGB565",
   "rule": "For every listed frame/plane: exact_pixels must not decrease, mae must not increase, max_abs must not increase.",
   "metrics": [
     {
@@ -9,324 +9,324 @@
       "frame_num": 0,
       "slice_kind": "I",
       "plane": "Y",
-      "min_exact_pixels": 189,
-      "max_mae": 82.082448,
+      "min_exact_pixels": 1079,
+      "max_mae": 76.656185,
+      "max_abs": 194
+    },
+    {
+      "frame_index": 0,
+      "frame_num": 0,
+      "slice_kind": "I",
+      "plane": "U",
+      "min_exact_pixels": 73,
+      "max_mae": 74.814167,
+      "max_abs": 180
+    },
+    {
+      "frame_index": 0,
+      "frame_num": 0,
+      "slice_kind": "I",
+      "plane": "V",
+      "min_exact_pixels": 150,
+      "max_mae": 75.381719,
+      "max_abs": 211
+    },
+    {
+      "frame_index": 1,
+      "frame_num": 1,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 927,
+      "max_mae": 77.260742,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 1,
+      "frame_num": 1,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 141,
+      "max_mae": 74.565938,
+      "max_abs": 183
+    },
+    {
+      "frame_index": 1,
+      "frame_num": 1,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 19,
+      "max_mae": 72.669479,
+      "max_abs": 211
+    },
+    {
+      "frame_index": 2,
+      "frame_num": 2,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 486,
+      "max_mae": 77.225638,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 2,
+      "frame_num": 2,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 107,
+      "max_mae": 75.18599,
+      "max_abs": 183
+    },
+    {
+      "frame_index": 2,
+      "frame_num": 2,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 17,
+      "max_mae": 72.495156,
+      "max_abs": 211
+    },
+    {
+      "frame_index": 3,
+      "frame_num": 3,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 315,
+      "max_mae": 77.032357,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 3,
+      "frame_num": 3,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 103,
+      "max_mae": 75.843125,
+      "max_abs": 187
+    },
+    {
+      "frame_index": 3,
+      "frame_num": 3,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 15,
+      "max_mae": 72.214062,
       "max_abs": 210
     },
     {
-      "frame_index": 0,
-      "frame_num": 0,
-      "slice_kind": "I",
-      "plane": "U",
-      "min_exact_pixels": 51,
-      "max_mae": 84.779232,
-      "max_abs": 195
-    },
-    {
-      "frame_index": 0,
-      "frame_num": 0,
-      "slice_kind": "I",
-      "plane": "V",
-      "min_exact_pixels": 29,
-      "max_mae": 84.160716,
-      "max_abs": 217
-    },
-    {
-      "frame_index": 1,
-      "frame_num": 1,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 107,
-      "max_mae": 82.779544,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 1,
-      "frame_num": 1,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 50,
-      "max_mae": 83.661484,
-      "max_abs": 198
-    },
-    {
-      "frame_index": 1,
-      "frame_num": 1,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 24,
-      "max_mae": 82.312943,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 2,
-      "frame_num": 2,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 51,
-      "max_mae": 82.807318,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 2,
-      "frame_num": 2,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 31,
-      "max_mae": 84.238919,
-      "max_abs": 198
-    },
-    {
-      "frame_index": 2,
-      "frame_num": 2,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 29,
-      "max_mae": 82.109596,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 3,
-      "frame_num": 3,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 81,
-      "max_mae": 82.723164,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 3,
-      "frame_num": 3,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 26,
-      "max_mae": 84.86569,
-      "max_abs": 202
-    },
-    {
-      "frame_index": 3,
-      "frame_num": 3,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 31,
-      "max_mae": 81.780833,
-      "max_abs": 219
-    },
-    {
       "frame_index": 4,
       "frame_num": 4,
       "slice_kind": "P",
       "plane": "Y",
-      "min_exact_pixels": 67,
-      "max_mae": 82.676992,
-      "max_abs": 220
+      "min_exact_pixels": 321,
+      "max_mae": 76.903138,
+      "max_abs": 204
     },
     {
       "frame_index": 4,
       "frame_num": 4,
       "slice_kind": "P",
       "plane": "U",
-      "min_exact_pixels": 15,
-      "max_mae": 85.498164,
-      "max_abs": 202
+      "min_exact_pixels": 84,
+      "max_mae": 76.505313,
+      "max_abs": 187
     },
     {
       "frame_index": 4,
       "frame_num": 4,
       "slice_kind": "P",
       "plane": "V",
-      "min_exact_pixels": 34,
-      "max_mae": 81.477695,
-      "max_abs": 219
+      "min_exact_pixels": 14,
+      "max_mae": 71.965104,
+      "max_abs": 210
     },
     {
       "frame_index": 5,
       "frame_num": 5,
       "slice_kind": "P",
       "plane": "Y",
-      "min_exact_pixels": 32,
-      "max_mae": 82.580156,
-      "max_abs": 220
+      "min_exact_pixels": 296,
+      "max_mae": 76.75375,
+      "max_abs": 204
     },
     {
       "frame_index": 5,
       "frame_num": 5,
       "slice_kind": "P",
       "plane": "U",
+      "min_exact_pixels": 89,
+      "max_mae": 77.179688,
+      "max_abs": 202
+    },
+    {
+      "frame_index": 5,
+      "frame_num": 5,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 23,
+      "max_mae": 71.738229,
+      "max_abs": 210
+    },
+    {
+      "frame_index": 6,
+      "frame_num": 6,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 282,
+      "max_mae": 76.547201,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 6,
+      "frame_num": 6,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 103,
+      "max_mae": 77.89401,
+      "max_abs": 202
+    },
+    {
+      "frame_index": 6,
+      "frame_num": 6,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 39,
+      "max_mae": 71.678229,
+      "max_abs": 210
+    },
+    {
+      "frame_index": 7,
+      "frame_num": 7,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 264,
+      "max_mae": 76.335534,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 7,
+      "frame_num": 7,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 100,
+      "max_mae": 78.453906,
+      "max_abs": 206
+    },
+    {
+      "frame_index": 7,
+      "frame_num": 7,
+      "slice_kind": "P",
+      "plane": "V",
       "min_exact_pixels": 37,
-      "max_mae": 86.137005,
-      "max_abs": 217
-    },
-    {
-      "frame_index": 5,
-      "frame_num": 5,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 32,
-      "max_mae": 81.183997,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 6,
-      "frame_num": 6,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 15,
-      "max_mae": 82.381836,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 6,
-      "frame_num": 6,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 52,
-      "max_mae": 86.773021,
-      "max_abs": 217
-    },
-    {
-      "frame_index": 6,
-      "frame_num": 6,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 51,
-      "max_mae": 81.109544,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 7,
-      "frame_num": 7,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 22,
-      "max_mae": 82.16931,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 7,
-      "frame_num": 7,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 51,
-      "max_mae": 87.285,
-      "max_abs": 221
-    },
-    {
-      "frame_index": 7,
-      "frame_num": 7,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 44,
-      "max_mae": 80.853086,
-      "max_abs": 219
+      "max_mae": 71.481562,
+      "max_abs": 210
     },
     {
       "frame_index": 8,
       "frame_num": 8,
       "slice_kind": "P",
       "plane": "Y",
-      "min_exact_pixels": 34,
-      "max_mae": 81.973151,
-      "max_abs": 220
+      "min_exact_pixels": 265,
+      "max_mae": 76.169336,
+      "max_abs": 204
     },
     {
       "frame_index": 8,
       "frame_num": 8,
       "slice_kind": "P",
       "plane": "U",
-      "min_exact_pixels": 55,
-      "max_mae": 87.985755,
-      "max_abs": 221
+      "min_exact_pixels": 115,
+      "max_mae": 79.29875,
+      "max_abs": 206
     },
     {
       "frame_index": 8,
       "frame_num": 8,
-      "slice_kind": "P",
-      "plane": "V",
-      "min_exact_pixels": 53,
-      "max_mae": 80.683789,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 9,
-      "frame_num": 9,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 28,
-      "max_mae": 81.770859,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 9,
-      "frame_num": 9,
-      "slice_kind": "P",
-      "plane": "U",
-      "min_exact_pixels": 58,
-      "max_mae": 88.652643,
-      "max_abs": 223
-    },
-    {
-      "frame_index": 9,
-      "frame_num": 9,
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 45,
-      "max_mae": 80.56138,
-      "max_abs": 219
+      "max_mae": 71.323542,
+      "max_abs": 210
     },
     {
-      "frame_index": 10,
-      "frame_num": 10,
+      "frame_index": 9,
+      "frame_num": 9,
       "slice_kind": "P",
       "plane": "Y",
-      "min_exact_pixels": 32,
-      "max_mae": 81.641654,
-      "max_abs": 220
+      "min_exact_pixels": 255,
+      "max_mae": 75.989805,
+      "max_abs": 204
     },
     {
-      "frame_index": 10,
-      "frame_num": 10,
+      "frame_index": 9,
+      "frame_num": 9,
       "slice_kind": "P",
       "plane": "U",
-      "min_exact_pixels": 63,
-      "max_mae": 89.330651,
-      "max_abs": 223
+      "min_exact_pixels": 130,
+      "max_mae": 80.106615,
+      "max_abs": 208
     },
     {
-      "frame_index": 10,
-      "frame_num": 10,
+      "frame_index": 9,
+      "frame_num": 9,
       "slice_kind": "P",
       "plane": "V",
-      "min_exact_pixels": 78,
-      "max_mae": 80.487813,
-      "max_abs": 219
-    },
-    {
-      "frame_index": 11,
-      "frame_num": 11,
-      "slice_kind": "P",
-      "plane": "Y",
-      "min_exact_pixels": 30,
-      "max_mae": 81.66668,
-      "max_abs": 220
-    },
-    {
-      "frame_index": 11,
-      "frame_num": 11,
-      "slice_kind": "P",
-      "plane": "U",
       "min_exact_pixels": 40,
-      "max_mae": 90.182435,
-      "max_abs": 227
+      "max_mae": 71.216927,
+      "max_abs": 210
+    },
+    {
+      "frame_index": 10,
+      "frame_num": 10,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 270,
+      "max_mae": 75.848034,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 10,
+      "frame_num": 10,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 129,
+      "max_mae": 80.908802,
+      "max_abs": 209
+    },
+    {
+      "frame_index": 10,
+      "frame_num": 10,
+      "slice_kind": "P",
+      "plane": "V",
+      "min_exact_pixels": 22,
+      "max_mae": 71.178542,
+      "max_abs": 210
+    },
+    {
+      "frame_index": 11,
+      "frame_num": 11,
+      "slice_kind": "P",
+      "plane": "Y",
+      "min_exact_pixels": 277,
+      "max_mae": 75.841393,
+      "max_abs": 204
+    },
+    {
+      "frame_index": 11,
+      "frame_num": 11,
+      "slice_kind": "P",
+      "plane": "U",
+      "min_exact_pixels": 109,
+      "max_mae": 81.908177,
+      "max_abs": 212
     },
     {
       "frame_index": 11,
       "frame_num": 11,
       "slice_kind": "P",
       "plane": "V",
-      "min_exact_pixels": 121,
-      "max_mae": 80.348607,
-      "max_abs": 219
+      "min_exact_pixels": 19,
+      "max_mae": 71.066927,
+      "max_abs": 210
     }
   ]
 }
