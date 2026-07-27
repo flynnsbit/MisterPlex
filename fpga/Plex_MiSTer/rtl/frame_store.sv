@@ -57,13 +57,13 @@ module frame_store #(
 	localparam int ADDR_W = $clog2(FRAME_WORDS * 2);
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
-	localparam [ADDR_W-1:0] FRAME_WORDS_W = FRAME_WORDS;
+	localparam [ADDR_W-1:0] FRAME_WORDS_W = ADDR_W'(FRAME_WORDS);
 	localparam [ADDR_W-1:0] BANK0_BASE = '0;
 	localparam [ADDR_W-1:0] BANK1_BASE = FRAME_WORDS_W;
 	localparam [31:0] PIXELS_COUNT = PIXELS;
 	localparam [31:0] LAST_COUNT = PIXELS_COUNT - 32'd1;
-	localparam [X_W-1:0] LAST_X = FRAME_W - 1;
-	localparam [Y_W-1:0] LAST_Y = FRAME_H - 1;
+	localparam [X_W-1:0] LAST_X = X_W'(FRAME_W - 1);
+	localparam [Y_W-1:0] LAST_Y = Y_W'(FRAME_H - 1);
 	localparam [15:0] REFRESH_LIMIT = REFRESH_CYCLES[15:0];
 	localparam int SDRAM_ADDR_PAD = 26 - ADDR_W;
 	localparam int LINE_AW = X_W;
@@ -81,7 +81,7 @@ module frame_store #(
 	reg  [LINE_AW-1:0]  line_wr_addr;
 	reg  [15:0]         line_wr_data;
 	wire [15:0]         line_q [0:LINE_SLOTS-1];
-	wire [X_W-1:0]     rd_x_clamped = (rd_x < FRAME_W) ? rd_x : LAST_X;
+	wire [X_W-1:0]     rd_x_clamped = (rd_x <= LAST_X) ? rd_x : LAST_X;
 	wire [LINE_AW-1:0]  line_rd_addr = rd_x_clamped[LINE_AW-1:0];
 
 	genvar li;
@@ -309,13 +309,14 @@ module frame_store #(
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
 		integer sum;
 		begin
-			sum = base + ahead;
+			sum = base;
+			sum = sum + ahead;
 			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
 		end
 	endfunction
 
 	function automatic [ADDR_W-1:0] row_word_addr(input [Y_W-1:0] row);
-		row_word_addr = row * FRAME_STRIDE;
+		row_word_addr = ADDR_W'(row) * ADDR_W'(FRAME_STRIDE);
 	endfunction
 
 	integer ti, tj, tk;
@@ -406,7 +407,8 @@ module frame_store #(
 
 	wire [ADDR_W-1:0] rd_base = fill_bank ? BANK1_BASE : BANK0_BASE;
 	wire [ADDR_W-1:0] wr_base = wr_bank_sdram ? BANK1_BASE : BANK0_BASE;
-	wire [ADDR_W-1:0] read_word_addr = rd_base + row_word_addr(fill_y) + fill_x;
+	wire [ADDR_W-1:0] fill_x_addr = ADDR_W'(fill_x);
+	wire [ADDR_W-1:0] read_word_addr = rd_base + row_word_addr(fill_y) + fill_x_addr;
 	wire [2:0] line_count_code = LINE_COUNT[2:0];
 	assign debug_state = {line_count_code, |line_valid, state_sdram};
 
