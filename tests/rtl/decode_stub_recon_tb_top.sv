@@ -14,6 +14,8 @@ module decode_stub_recon_tb #(
 	input  wire [5:0]  slice_qp,
 	input  wire signed [15:0] coeff [0:15],
 	output wire [7:0]  recon_sig,
+	output wire [7:0]  recon_dbg,
+	output wire        recon_dbg_valid,
 	output wire        recon_valid,
 	output wire        busy,
 	output wire [15:0] frames_out
@@ -54,6 +56,8 @@ module decode_stub_recon_tb #(
 		.slice_qp(slice_qp),
 		.residual_coeff(coeff9),
 		.recon_sig(recon_sig),
+		.recon_dbg(recon_dbg),
+		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
 		.wr_en(wr_en),
 		.wr_pixel(wr_pixel),

@@ -3,7 +3,7 @@
 
 No SPI / no lab thrash. Decodes push_frame --status / --raw lines or raw hex
 for status bytes [12]=res_dc, [13]=res_csum. On P3-3l2+ raw[14] is
-recon_sig and raw[15] is stream-low debug; pre-3.3l-2 used raw[14:15] for stream.
+recon_sig and raw[15] is recon RCA debug flags; pre-3.3l-2 used raw[14:15] for stream.
 
 Host golden (locked in host/libmisterplex/h264_residual_gold.hpp):
   res_dc   = -24 = 0xE8 (sat8(coeff[0]))
@@ -68,7 +68,7 @@ def print_goldens() -> None:
     print("    raw[12]     residual_dc      status[103:96]   expect 0xe8 (-24)")
     print("    raw[13]     residual_csum8   status[111:104]  expect 0x14 (20)")
     print("    raw[14]     recon_sig8      status[119:112]  expect 0x3b after 3.3l-2")
-    print("    raw[15]     stream_low_dbg  status[127:120]  perturbation witness; AR may mask bits")
+    print("    raw[15]     recon_dbg flags status[127:120]  P3 RCA; AR may mask bits [2:1]")
     print("  hard gate:    res_dc=-24 AND res_csum=20 (raw[13]=0x14)")
     print("  soft-skip:    test_f3_residual EXIT=0 on csum miss is NOT hard PASS")
     print("  SoT: host/libmisterplex/h264_residual_gold.hpp + tests/unit/test_idct_quant.cpp")
@@ -135,7 +135,7 @@ def decode_bytes(raw12_15: Sequence[int], label: str = "") -> None:
           f"expect 0x{GOLD_RES_CSUM_HEX:02x} ({GOLD_RES_CSUM})")
     print(f"  raw[14] recon_sig = 0x{b[2]:02x}  unsigned={b[2]}   "
           f"expect 0x{GOLD_RECON_SIG:02x} ({GOLD_RECON_SIG}) after 3.3l-2")
-    print(f"  raw[15] stream_lo = 0x{b[3]:02x}  ({b[3]})  debug only (AR may mask bits)")
+    print(f"  raw[15] recon_dbg = 0x{b[3]:02x}  ({b[3]})  P3 RCA flags (AR may mask bits [2:1])")
     print_expected_vs_actual(dc_u8, csum_u8, stream16)
     print(f"  class:      {classify(dc_u8, csum_u8, stream16)}")
 
@@ -253,9 +253,9 @@ def self_test() -> int:
         print("SELF-TEST FAIL: csum equals stale sum")
         ok = False
 
-    # PASS vector (P3-3l2 ABI: raw[14]=recon_sig 0x3b, raw[15]=stream-low debug)
-    print("self-test PASS vector e8 14 3b 53:")
-    decode_bytes([0xE8, 0x14, 0x3B, 0x53], label="PASS")
+    # PASS vector (P3-3l2 ABI: raw[14]=recon_sig 0x3b, raw[15]=recon_dbg 0xf9)
+    print("self-test PASS vector e8 14 3b f9:")
+    decode_bytes([0xE8, 0x14, 0x3B, 0xF9], label="PASS")
     # aa146c17-class stream alias
     print("self-test stream-alias vector e8 53 53 02:")
     decode_bytes([0xE8, 0x53, 0x53, 0x02], label="alias")
@@ -289,7 +289,7 @@ def self_test() -> int:
         ok = False
 
     # --raw form must still work
-    raw_line = "raw[0]: 20 22 15 01 80 00 00 00 00 00 00 00 e8 14 3b 53"
+    raw_line = "raw[0]: 20 22 15 01 80 00 00 00 00 00 00 00 e8 14 3b f9"
     print("self-test raw line:")
     raw = extract_from_raw_line(raw_line)
     if raw is None or len(raw) < 16 or raw[12] != 0xE8 or raw[13] != 0x14:

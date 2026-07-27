@@ -38,15 +38,15 @@ void setBits(Raw& raw, int lo, int hi, uint32_t value) {
 }
 
 Raw packPlexStatus(uint8_t residual_dc, uint8_t residual_csum, uint8_t recon_sig,
-                   uint8_t stream_low_debug, uint8_t aspect_ratio) {
+                   uint8_t recon_dbg, uint8_t aspect_ratio) {
     using namespace misterplex::status_telemetry;
     Raw raw{};
     setBits(raw, kResidualDcBitLo, kResidualDcBitHi, residual_dc);
     setBits(raw, kResidualCsumBitLo, kResidualCsumBitHi, residual_csum);
     setBits(raw, kReconSigBitLo, kReconSigBitHi, recon_sig);
-    setBits(raw, kStreamByteLowDebugBitLo, kStreamByteLowDebugBitHi, stream_low_debug);
+    setBits(raw, kReconDbgBitLo, kReconDbgBitHi, recon_dbg);
     // Plex.sv status_in preserves OSD aspect ratio bits at [122:121], which are
-    // inside stream debug only. residual_dc/csum/recon_sig must be untouched.
+    // reserved inside recon_dbg. residual_dc/csum/recon_sig must be untouched.
     setBits(raw, 121, 122, aspect_ratio & 0x3);
     return raw;
 }
@@ -76,26 +76,29 @@ int main(int argc, char** argv) {
     static_assert(kResidualDcByte == 12, "raw[12] residual_dc");
     static_assert(kResidualCsumByte == 13, "raw[13] residual_csum");
     static_assert(kReconSigByte == 14, "raw[14] recon_sig");
-    static_assert(kStreamByteLowDebugByte == 15, "raw[15] stream low debug");
+    static_assert(kReconDbgByte == 15, "raw[15] recon debug flags");
     static_assert(kCsum8 == 0x14, "residual checksum golden");
     static_assert(kReconSigMb0Block0 == 0x3B, "MB0 block0 recon signature golden");
+    static_assert(kReconDbgMb0Block0 == 0xF9, "MB0 block0 recon debug flags golden");
 
     const auto dc_u8 = static_cast<uint8_t>(kDc);
-    const uint8_t stream_with_0x53_low = 0x53;
-
     for (uint8_t ar = 0; ar < 4; ++ar) {
         const Raw raw =
-            packPlexStatus(dc_u8, kCsum8, kReconSigMb0Block0, stream_with_0x53_low, ar);
+            packPlexStatus(dc_u8, kCsum8, kReconSigMb0Block0, kReconDbgMb0Block0, ar);
         const FpgaSpi::CoreStatus st = FpgaSpi::parseCoreStatus(raw.data());
         expect(raw[kResidualDcByte] == dc_u8, "Plex.sv model did not put residual_dc at raw[12]");
         expect(raw[kResidualCsumByte] == kCsum8,
                "Plex.sv model did not put residual_csum at raw[13]");
         expect(raw[kReconSigByte] == kReconSigMb0Block0,
                "Plex.sv model did not put recon_sig at raw[14]");
+        expect((raw[kReconDbgByte] & ~0x06) == (kReconDbgMb0Block0 & ~0x06),
+               "Plex.sv model did not put recon_dbg usable flags at raw[15]");
         expect(st.residual_dc == kDc, "host parser did not decode residual_dc from raw[12]");
         expect(st.residual_csum == kCsum8,
                "host parser did not decode residual_csum from raw[13]");
         expect(st.recon_sig == kReconSigMb0Block0, "host parser did not decode recon_sig");
+        expect((st.recon_dbg & ~0x06) == (kReconDbgMb0Block0 & ~0x06),
+               "host parser did not decode recon_dbg usable flags");
     }
 
     const Raw alias = packPre33l1Alias(dc_u8, 0x002A53);
@@ -112,7 +115,7 @@ int main(int argc, char** argv) {
                "generated Baseline Annex-B size low byte changed; update residual-size RCA notes");
     }
 
-    std::printf("test_status_telemetry: OK raw[12]=dc raw[13]=csum raw[14]=recon_sig; "
+    std::printf("test_status_telemetry: OK raw[12]=dc raw[13]=csum raw[14]=recon_sig raw[15]=recon_dbg; "
                 "old raw[13]=0x53 alias rejected\n");
     return 0;
 }

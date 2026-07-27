@@ -22,10 +22,12 @@ now instantiates the shared `h264_iq_idct_4x4.sv` modules copied from
 `feat/p3-idct-sim` for first-4×4 inverse quant + H.264 integer IDCT from
 `residual_coeff[0:15]` and `slice_qp`; it paints the reconstructed top-left 4×4
 and publishes `raw[14]=recon_sig=0x3b` (XOR of MB0 block0 reconstructed Y) while
-preserving `raw[12]=res_dc` and `raw[13]=res_csum`. `raw[15]` is stream-low debug
-only (AR may mask bits) for the baseline-vs-padded perturbation witness. Gate
+preserving `raw[12]=res_dc` and `raw[13]=res_csum`. `raw[15]` is now P3-3l2
+silicon RCA debug (`recon_dbg` usable bits avoid AR-masked bits [2:1]:
+coeff/dequant/IDCT/recon non-zero plus residual-wait flags). Gate
 before fit: 6739B baseline and 6776B padded vectors must both read
-`res_csum=0x14` and `recon_sig=0x3b`; raw[15]/stream debug must move. Fixture
+`res_csum=0x14`, `recon_sig=0x3b`, and `recon_dbg&~0x06=0xf9`; the existing
+`nalu_count`/raw[4] move is the liveness witness. Fixture
 source of truth: `tests/fixtures/p3_host_recon/mb0_luma_v1.json`. Real Verilator
 behavioral sim now gates both the shared IQ/IDCT modules and product `decode_stub.sv`:
 `make rtl-sim` must show `OK real RTL sim`, `OK decode_stub RTL sim: ... recon_sig=0x3b`,
