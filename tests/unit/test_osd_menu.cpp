@@ -145,6 +145,34 @@ int main() {
         }
     }
 
+    // DDR idle is I420/YUV420p now. Black must be exact video black, while
+    // logo/screensaver must preserve the renderer rather than degenerating to
+    // a black-only frame.
+    std::vector<uint8_t> yuv(static_cast<size_t>(w) * h * 3 / 2);
+    CHECK(renderIdleYuv420p(yuv.data(), w, h, IdleMode::Black, 0));
+    const size_t yBytes = static_cast<size_t>(w) * h;
+    const size_t cBytes = yBytes / 4;
+    for (size_t i = 0; i < yBytes; ++i)
+        CHECK(yuv[i] == 16);
+    for (size_t i = 0; i < cBytes; ++i) {
+        CHECK(yuv[yBytes + i] == 128);
+        CHECK(yuv[yBytes + cBytes + i] == 128);
+    }
+
+    std::vector<uint8_t> yuv2(yuv.size());
+    CHECK(renderIdleYuv420p(yuv.data(), w, h, IdleMode::Screensaver, 0));
+    CHECK(renderIdleYuv420p(yuv2.data(), w, h, IdleMode::Screensaver, kIdlePhasePeriod / 4));
+    size_t nonBlackLuma = 0;
+    size_t changed = 0;
+    for (size_t i = 0; i < yBytes; ++i) {
+        if (yuv[i] != 16)
+            ++nonBlackLuma;
+        if (yuv[i] != yuv2[i])
+            ++changed;
+    }
+    CHECK(nonBlackLuma > yBytes / 2);
+    CHECK(changed > 0);
+
     if (fails) {
         std::fprintf(stderr, "test_osd_menu: %d failure(s)\n", fails);
         return 1;
