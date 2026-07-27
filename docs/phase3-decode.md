@@ -353,7 +353,10 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   **skip 77.7%**; first RTL rung implements only P_Skip + P_L0_16x16.
   RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, partition-aware
   predictors for P_L0_16x8/P_L0_8x16/P_8x8/sub-MB modes, luma qpel six-tap interpolation, chroma
-  eighth-pel bilinear interpolation, and 9×9 reference fetch address clamping. `decode_stub.sv`
+  eighth-pel bilinear interpolation, and 9×9 reference fetch address clamping. `h264_p_slice_modes.sv`
+  classifies P_Skip, P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8/P_8x8ref0 and sub-MB
+  8x8/8x4/4x8/4x4 shapes; `slice_hdr_parser.sv` now skips non-IDR ref-marking/ref-idx bits before
+  QP and exposes P `mb_skip_run` plus the first P MB type. `decode_stub.sv`
   instantiates the inter RTL in the shipped artifact and paints a top-row MB1 diagnostic tile as four
   green/red stage bands (MV+partition, luma qpel, chroma epel, fetch; aggregate signature `0x57`).
   Verilator: `tests/unit/test_p3_inter_rtl_sim.sh` elaborates the real product RTL listed in

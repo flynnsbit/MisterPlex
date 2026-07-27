@@ -47,6 +47,12 @@ int main(int argc, char** argv) {
         int sawI = 0;
         int sawP = 0;
         int idleBetweenVcl = 0;
+        int prevSliceValid = 0;
+        int pFirstMbSeen = 0;
+        int pFirstMbMode0 = 0;
+        int pFirstMbMode1 = 0;
+        int pFirstMbMode2 = 0;
+        int pFirstMbBad = 0;
 
         auto tick = [&]() {
             dut.clk = 0;
@@ -60,13 +66,31 @@ int main(int argc, char** argv) {
                 sawExpectedCsum = 1;
             if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b)
                 ++reconSig3bCycles;
-            if (dut.slice_valid) {
+            if (dut.slice_valid && !prevSliceValid) {
                 const uint8_t st = static_cast<uint8_t>(dut.slice_type) % 5;
                 if (st == 2 && dut.slice_is_i)
                     sawI = 1;
                 if (st == 0 && !dut.slice_is_i)
                     sawP = 1;
+                if (st == 0 && !dut.slice_is_i && dut.has_mb_type) {
+                    ++pFirstMbSeen;
+                    const int mt = static_cast<int>(dut.first_mb_type);
+                    const int pm = static_cast<int>(dut.first_mb_part_mode);
+                    const int pc = static_cast<int>(dut.first_mb_part_count);
+                    if (dut.p_skip_run != 0 || dut.first_mb_p_skip || dut.first_mb_uses_sub_mb || dut.first_mb_intra) {
+                        ++pFirstMbBad;
+                    } else if (mt == 0 && pm == 0 && pc == 1) {
+                        ++pFirstMbMode0;
+                    } else if (mt == 1 && pm == 1 && pc == 2) {
+                        ++pFirstMbMode1;
+                    } else if (mt == 2 && pm == 2 && pc == 2) {
+                        ++pFirstMbMode2;
+                    } else {
+                        ++pFirstMbBad;
+                    }
+                }
             }
+            prevSliceValid = dut.slice_valid ? 1 : 0;
             if (sawI && !sawP && placePulses >= 1 &&
                 static_cast<uint8_t>(dut.slice_parser_state) == 0)
                 idleBetweenVcl = 1;
@@ -121,6 +145,13 @@ int main(int argc, char** argv) {
         expect(sawI, "I-slice parse not observed");
         expect(idleBetweenVcl, "slice_hdr_parser ST_IDLE was not observed between IDR and P VCLs");
         expect(sawP, "P-slice parse not observed after IDR; parser did not prove idle/re-entry");
+        if (minSlices >= 11) {
+            expect(pFirstMbSeen == 11, "expected first P macroblock syntax for all 11 P slices");
+            expect(pFirstMbMode0 == 8, "expected eight first-MB P_L0_16x16 slices");
+            expect(pFirstMbMode1 == 2, "expected two first-MB P_L0_16x8 slices");
+            expect(pFirstMbMode2 == 1, "expected one first-MB P_L0_8x16 slice");
+            expect(pFirstMbBad == 0, "unexpected first P macroblock syntax/classification");
+        }
         expect(dut.stub_frames >= 2, "decode_stub did not consume multiple VCL pulses");
 
         std::cout << "multi-NAL stream_path raw: bytes=" << bytes.size()
@@ -138,8 +169,14 @@ int main(int argc, char** argv) {
                   << " saw_i=" << sawI
                   << " idle_between_vcl=" << idleBetweenVcl
                   << " saw_p=" << sawP
+                  << " p_first_mb_seen=" << pFirstMbSeen
+                  << " p_first_modes=" << pFirstMbMode0 << "/" << pFirstMbMode1 << "/" << pFirstMbMode2
+                  << " p_first_bad=" << pFirstMbBad
                   << " slice_parser_state=" << static_cast<int>(dut.slice_parser_state)
                   << " final_slice_type=" << static_cast<int>(dut.slice_type)
+                  << " final_p_skip_run=" << static_cast<int>(dut.p_skip_run)
+                  << " final_first_mb_type=" << static_cast<int>(dut.first_mb_type)
+                  << " final_first_part_mode=" << static_cast<int>(dut.first_mb_part_mode)
                   << " expect_csum=0x" << std::hex << expectCsum
                   << " residual_csum=0x" << static_cast<int>(static_cast<uint8_t>(dut.residual_csum))
                   << std::dec << " cycles=" << cycle << "\n";

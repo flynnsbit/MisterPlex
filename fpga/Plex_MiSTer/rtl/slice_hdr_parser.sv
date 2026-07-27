@@ -14,6 +14,7 @@ module slice_hdr_parser (
 	input  wire [7:0]  cap_data,
 	input  wire        cap_end,
 	input  wire        is_idr_nal,
+	input  wire        nal_ref_idc_nonzero,
 	input  wire [4:0]  log2_max_frame_num,
 	input  wire [2:0]  poc_type,
 	input  wire        sps_ready,
@@ -37,6 +38,12 @@ module slice_hdr_parser (
 	output reg  signed [4:0] slice_beta_offset,
 	output reg  [7:0]  first_mb_type,
 	output reg         has_mb_type,
+	output reg         first_mb_p_skip,
+	output reg  [7:0]  p_skip_run,
+	output reg  [2:0]  first_mb_part_mode,
+	output reg  [2:0]  first_mb_part_count,
+	output reg         first_mb_uses_sub_mb,
+	output reg         first_mb_intra,
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
@@ -71,11 +78,12 @@ module slice_hdr_parser (
 	wire bitv = cur[bpos];
 	wire oob = (bbyte >= len);
 
-	reg [4:0] st, cont, ue_cont;
+	reg [5:0] st, cont, ue_cont;
 	reg [5:0] zcnt;
 	reg [4:0] nleft;
 	reg [15:0] acc, ue_val;
 	reg        idr_lat, db_lat;
+	reg        nal_ref_lat;
 	reg [4:0]  log2_lat;
 	reg signed [7:0] init_qp_lat;
 	reg signed [7:0] dlt_tmp;
@@ -154,40 +162,74 @@ module slice_hdr_parser (
 		end
 	endfunction
 
-	localparam [4:0]
-		ST_IDLE    = 5'd0,
-		ST_GETBITS = 5'd1,
-		ST_UE_Z    = 5'd2,
-		ST_UE_V    = 5'd3,
-		ST_FIRST   = 5'd4,
-		ST_TYPE    = 5'd5,
-		ST_PPS     = 5'd6,
-		ST_FN      = 5'd7,
-		ST_IDR     = 5'd8,
-		ST_REFMARK = 5'd9,  // IDR dec_ref_pic_marking: 2 flags
-		ST_QPD     = 5'd10,
-		ST_DIDC    = 5'd11,
-		ST_ALPHA   = 5'd12,
-		ST_BETA    = 5'd13,
-		ST_MBT     = 5'd14,
-		ST_CHRPRED = 5'd15, // intra_chroma_pred_mode (7.3.5)
-		ST_MBQP    = 5'd16,
-		ST_TOK_BIT = 5'd17,
-		ST_TOK_CHK = 5'd18,
-		ST_SIGNS   = 5'd19,
-		ST_DONE    = 5'd20,
-		ST_FAIL    = 5'd21,
-		ST_I4MODE  = 5'd22, // I_NxN: skip 16 pred modes
-		ST_CBP     = 5'd23, // I_NxN: coded_block_pattern me
+	function automatic is_p_slice_type;
+		input [7:0] t;
+		begin
+			is_p_slice_type = (t == 8'd0) || (t == 8'd5);
+		end
+	endfunction
+
+	function automatic [2:0] p_part_mode_of;
+		input        skipped;
+		input [7:0] mt;
+		begin
+			if (skipped || mt == 8'd0) p_part_mode_of = 3'd0;       // P_Skip / P_L0_16x16
+			else if (mt == 8'd1)       p_part_mode_of = 3'd1;       // P_L0_16x8
+			else if (mt == 8'd2)       p_part_mode_of = 3'd2;       // P_L0_8x16
+			else if (mt == 8'd3 || mt == 8'd4) p_part_mode_of = 3'd3; // P_8x8 / P_8x8ref0
+			else                       p_part_mode_of = 3'd7;       // intra/unsupported
+		end
+	endfunction
+
+	function automatic [2:0] p_part_count_of;
+		input        skipped;
+		input [7:0] mt;
+		begin
+			if (skipped || mt == 8'd0) p_part_count_of = 3'd1;
+			else if (mt == 8'd1 || mt == 8'd2) p_part_count_of = 3'd2;
+			else if (mt == 8'd3 || mt == 8'd4) p_part_count_of = 3'd4;
+			else p_part_count_of = 3'd0;
+		end
+	endfunction
+
+	localparam [5:0]
+		ST_IDLE    = 6'd0,
+		ST_GETBITS = 6'd1,
+		ST_UE_Z    = 6'd2,
+		ST_UE_V    = 6'd3,
+		ST_FIRST   = 6'd4,
+		ST_TYPE    = 6'd5,
+		ST_PPS     = 6'd6,
+		ST_FN      = 6'd7,
+		ST_IDR     = 6'd8,
+		ST_REFMARK = 6'd9,  // IDR dec_ref_pic_marking: 2 flags
+		ST_QPD     = 6'd10,
+		ST_DIDC    = 6'd11,
+		ST_ALPHA   = 6'd12,
+		ST_BETA    = 6'd13,
+		ST_MBT     = 6'd14,
+		ST_CHRPRED = 6'd15, // intra_chroma_pred_mode (7.3.5)
+		ST_MBQP    = 6'd16,
+		ST_TOK_BIT = 6'd17,
+		ST_TOK_CHK = 6'd18,
+		ST_SIGNS   = 6'd19,
+		ST_DONE    = 6'd20,
+		ST_FAIL    = 6'd21,
+		ST_I4MODE  = 6'd22, // I_NxN: skip 16 pred modes
+		ST_CBP     = 6'd23, // I_NxN: coded_block_pattern me
 		// 3.3k residual body
-		ST_LVL_PRE = 5'd24, // unary prefix zeros + stop-1
-		ST_LVL_SUF = 5'd25, // suffix bits
-		ST_LVL_NXT = 5'd26, // store level, advance
-		ST_TZ_BIT  = 5'd27,
-		ST_TZ_CHK  = 5'd28,
-		ST_RUN_BIT = 5'd29,
-		ST_RUN_CHK = 5'd30,
-		ST_PLACE   = 5'd31;
+		ST_LVL_PRE = 6'd24, // unary prefix zeros + stop-1
+		ST_LVL_SUF = 6'd25, // suffix bits
+		ST_LVL_NXT = 6'd26, // store level, advance
+		ST_TZ_BIT  = 6'd27,
+		ST_TZ_CHK  = 6'd28,
+		ST_RUN_BIT = 6'd29,
+		ST_RUN_CHK = 6'd30,
+		ST_PLACE   = 6'd31,
+		ST_REFIDX_FLAG = 6'd32,
+		ST_REFIDX_L0   = 6'd33,
+		ST_NIDR_REFMARK = 6'd34,
+		ST_P_MBT       = 6'd35;
 
 	task automatic res_clear;
 		integer ci;
@@ -259,6 +301,12 @@ module slice_hdr_parser (
 			slice_beta_offset <= 0;
 			first_mb_type <= 0;
 			has_mb_type <= 0;
+			first_mb_p_skip <= 0;
+			p_skip_run <= 0;
+			first_mb_part_mode <= 3'd7;
+			first_mb_part_count <= 0;
+			first_mb_uses_sub_mb <= 0;
+			first_mb_intra <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_ok <= 0;
@@ -294,6 +342,7 @@ module slice_hdr_parser (
 			ue_cont <= ST_IDLE;
 			idr_lat <= 0;
 			db_lat <= 0;
+			nal_ref_lat <= 0;
 			log2_lat <= 5'd4;
 			init_qp_lat <= 8'sd26;
 			qp_tmp <= 0;
@@ -317,6 +366,12 @@ module slice_hdr_parser (
 			busy <= 0;
 			valid <= 0;
 			has_mb_type <= 0;
+			first_mb_p_skip <= 0;
+			p_skip_run <= 0;
+			first_mb_part_mode <= 3'd7;
+			first_mb_part_count <= 0;
+			first_mb_uses_sub_mb <= 0;
+			first_mb_intra <= 0;
 			residual_ok <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
@@ -341,6 +396,12 @@ module slice_hdr_parser (
 				if (cap_end && len >= 6'd2 && sps_ready && pps_ready && poc_type != 3'd1) begin
 					busy <= 1'b1;
 					has_mb_type <= 0;
+					first_mb_p_skip <= 0;
+					p_skip_run <= 0;
+					first_mb_part_mode <= 3'd7;
+					first_mb_part_count <= 0;
+					first_mb_uses_sub_mb <= 0;
+					first_mb_intra <= 0;
 					residual_ok <= 0;
 					residual_tc <= 0;
 					residual_t1 <= 0;
@@ -361,6 +422,7 @@ module slice_hdr_parser (
 					csum_i <= 0;
 					csum_acc <= 0;
 					idr_lat <= is_idr_nal;
+					nal_ref_lat <= nal_ref_idc_nonzero;
 					db_lat <= deblock_ctrl;
 					log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
 					init_qp_lat <= pic_init_qp;
@@ -424,6 +486,10 @@ module slice_hdr_parser (
 				frame_num <= acc;
 				if (idr_lat) begin
 					zcnt <= 0; ue_cont <= ST_IDR; st <= ST_UE_Z;
+				end else if (is_p_slice_type(slice_type)) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_REFIDX_FLAG; st <= ST_GETBITS;
+				end else if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
@@ -435,6 +501,32 @@ module slice_hdr_parser (
 			end
 			ST_REFMARK: begin
 				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+			end
+			ST_REFIDX_FLAG: begin
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
+				end else if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end
+			end
+			ST_REFIDX_L0: begin
+				if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end
+			end
+			ST_NIDR_REFMARK: begin
+				// Baseline product profile uses one short-term reference and no MMCO.
+				// If adaptive_ref_pic_marking_mode_flag is set, stop after the
+				// header rather than mis-parsing MMCO as QP/MB syntax.
+				if (acc[0])
+					st <= ST_DONE;
+				else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end
 			end
 			ST_QPD: begin
 				// se(slice_qp_delta); slice_qp = clamp(pic_init_qp + delta, 0, 51)
@@ -474,17 +566,48 @@ module slice_hdr_parser (
 				zcnt <= 0; ue_cont <= ST_MBT; st <= ST_UE_Z;
 			end
 			ST_MBT: begin
-				first_mb_type <= ue_val[7:0];
-				has_mb_type <= (ue_val <= 16'd25);
+				if (is_p_slice_type(slice_type)) begin
+					p_skip_run <= ue_val[7:0];
+					if (ue_val != 16'd0) begin
+						first_mb_type <= 8'd0;
+						has_mb_type <= 1'b1;
+						first_mb_p_skip <= 1'b1;
+						first_mb_part_mode <= p_part_mode_of(1'b1, 8'd0);
+						first_mb_part_count <= p_part_count_of(1'b1, 8'd0);
+						first_mb_uses_sub_mb <= 1'b0;
+						first_mb_intra <= 1'b0;
+						st <= ST_DONE;
+					end else begin
+						first_mb_p_skip <= 1'b0;
+						zcnt <= 0; ue_cont <= ST_P_MBT; st <= ST_UE_Z;
+					end
+				end else begin
+					first_mb_type <= ue_val[7:0];
+					has_mb_type <= (ue_val <= 16'd25);
+					first_mb_p_skip <= 1'b0;
+					first_mb_part_mode <= 3'd7;
+					first_mb_part_count <= 3'd0;
+					first_mb_uses_sub_mb <= 1'b0;
+					first_mb_intra <= (ue_val <= 16'd25);
 				// I_16x16 (1..24): chroma → qpδ → CAVLC DC (nC=0)
 				// I_NxN (0): 16 pred modes → chroma → cbp → qpδ? → first 4x4 residual
-				if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
-					zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
-				end else if (ue_val == 16'd0) begin
-					i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0;
-					st <= ST_I4MODE;
-				end else
-					st <= ST_DONE;
+					if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
+						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+					end else if (ue_val == 16'd0) begin
+						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0;
+						st <= ST_I4MODE;
+					end else
+						st <= ST_DONE;
+				end
+			end
+			ST_P_MBT: begin
+				first_mb_type <= ue_val[7:0];
+				has_mb_type <= (ue_val <= 16'd30);
+				first_mb_part_mode <= p_part_mode_of(1'b0, ue_val[7:0]);
+				first_mb_part_count <= p_part_count_of(1'b0, ue_val[7:0]);
+				first_mb_uses_sub_mb <= (ue_val == 16'd3) || (ue_val == 16'd4);
+				first_mb_intra <= (ue_val >= 16'd5) && (ue_val <= 16'd30);
+				st <= ST_DONE;
 			end
 			ST_I4MODE: begin
 				// Skip 16 Intra4x4 modes: each is flag(1) or flag(0)+rem(3)
