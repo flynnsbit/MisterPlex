@@ -15,9 +15,19 @@ coordinating with RTL consumers.
 ## Shared macroblock golden extractor
 
 `tools/extract_h264_golden.cpp` emits deterministic per-macroblock JSON in
-`format=misterplex.p3.mb_golden.v1`. The current checked-in red/green unit uses the proven
-320×240 IDR vector and independently grades MB0 against `mb0_luma_v1.json`,
-`residual_gold::kCsum8 == 0x14`, and the established first-4×4 recon signature `0x3b`.
+`format=misterplex.p3.mb_golden.v1`. Each luma 4×4 block records CAVLC diagnostics
+needed by entropy/inter/deblock consumers: `nA`/`nB` availability and TotalCoeff,
+predicted `nC`, selected `coeff_token_table`, parsed `total_coeff`, bit offsets,
+scan-order coefficients, dequant, IDCT, prediction, and reconstruction samples.
+The current checked-in red/green unit uses the proven 320×240 IDR vector and
+independently grades MB0 against `mb0_luma_v1.json`, `residual_gold::kCsum8 == 0x14`,
+and the established first-4×4 recon signature `0x3b`.
+
+The JSON also carries latency red-checks for the simulation-versus-silicon trap seen
+on P3-3l2: MB0 true recon is `0x3b`, while pred-only and one-cycle-delayed residual
+models are both `0x00`. Hardware consumers must align residual valid/data with the
+prediction stage and reject these latency-error signatures; a fixture that accepts
+pred-only `0x00` is certifying the exact failure observed on the DE10-Nano.
 
 Regenerate the deterministic MB0 JSON used by the unit guard:
 

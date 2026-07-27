@@ -117,6 +117,43 @@ uint8_t xorU8(const std::array<uint8_t, 16>& a) {
     return v;
 }
 
+std::string hexU8(uint8_t v) {
+    std::ostringstream os;
+    os << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(v);
+    return os.str();
+}
+
+uint8_t clip8(int v) {
+    if (v < 0)
+        return 0;
+    if (v > 255)
+        return 255;
+    return static_cast<uint8_t>(v);
+}
+
+uint8_t addResidualSig(const std::array<uint8_t, 16>& pred,
+                       const std::array<int16_t, 16>& idct) {
+    uint8_t v = 0;
+    for (size_t i = 0; i < pred.size(); ++i)
+        v ^= clip8(static_cast<int>(pred[i]) + static_cast<int>(idct[i]));
+    return v;
+}
+
+const char* coeffTokenTableName(int table) {
+    switch (table) {
+    case 0:
+        return "nC_0_1";
+    case 1:
+        return "nC_2_3";
+    case 2:
+        return "nC_4_7";
+    case 3:
+        return "nC_8_plus";
+    default:
+        return "not_parsed";
+    }
+}
+
 int firstVclNalOffset(const std::vector<uint8_t>& data) {
     size_t i = 0;
     while (i + 3 < data.size()) {
@@ -184,6 +221,9 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
     const int codedW = mbW * 16;
     const int codedH = mbH * 16;
     const auto& b0 = mb.blocks[0];
+    std::array<int16_t, 16> zeroResidual{};
+    const uint8_t b0PredOnlySig = addResidualSig(b0.pred, zeroResidual);
+    const uint8_t b0DelayedSig = addResidualSig(b0.pred, zeroResidual);
     std::ostringstream os;
     os << "{\n";
     os << "  \"format\": \"misterplex.p3.mb_golden.v1\",\n";
@@ -217,16 +257,35 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
     os << "  \"residual\": {\"luma4x4\": [\n";
     for (size_t i = 0; i < mb.blocks.size(); ++i) {
         const auto& b = mb.blocks[i];
+        const auto& prev = i == 0 ? zeroResidual : mb.blocks[i - 1].idct;
+        const uint8_t predOnlySig = addResidualSig(b.pred, zeroResidual);
+        const uint8_t delayedSig = addResidualSig(b.pred, prev);
+        const uint8_t reconSig = xorU8(b.recon);
         if (i) os << ",\n";
         os << "    {\"block\": " << b.block << ", \"x\": " << b.x << ", \"y\": " << b.y
            << ", \"bit_offset_start\": " << b.bit_offset_start
            << ", \"bit_offset_end\": " << b.bit_offset_end
+           << ", \"nA\": {\"available\": " << (b.nA_available ? "true" : "false")
+           << ", \"total_coeff\": " << b.nA_total_coeff << "}"
+           << ", \"nB\": {\"available\": " << (b.nB_available ? "true" : "false")
+           << ", \"total_coeff\": " << b.nB_total_coeff << "}"
+           << ", \"predicted_nC\": " << b.predicted_nC
+           << ", \"coeff_token_table\": " << b.coeff_token_table
+           << ", \"coeff_token_table_name\": \"" << coeffTokenTableName(b.coeff_token_table)
+           << "\""
            << ", \"total_coeff\": " << b.total_coeff << ", \"coefficients_zigzag\": ";
         jsonArray(os, b.coeff, 8);
         os << ", \"dequant\": ";
         jsonArray(os, b.dequant, 8);
         os << ", \"idct\": ";
         jsonArray(os, b.idct, 8);
+        os << ", \"latency_checks\": {\"true_recon_signature8_hex\": \"" << hexU8(reconSig)
+           << "\", \"pred_only_signature8_hex\": \"" << hexU8(predOnlySig)
+           << "\", \"one_cycle_delayed_signature8_hex\": \"" << hexU8(delayedSig)
+           << "\", \"must_match_true_recon\": true, \"must_reject_pred_only\": "
+           << (predOnlySig == reconSig ? "false" : "true")
+           << ", \"must_reject_one_cycle_delayed\": " << (delayedSig == reconSig ? "false" : "true")
+           << "}";
         os << "}";
     }
     os << "\n  ]},\n";
@@ -237,13 +296,17 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
     os << "},\n";
     os << "  \"checks\": {\"first_residual_checksum8\": "
        << static_cast<unsigned>(misterplex::cavlc::residualCsum8(b0.coeff.data()))
-       << ", \"first_residual_checksum8_hex\": \"0x" << std::hex << std::setw(2)
-       << std::setfill('0') << static_cast<unsigned>(misterplex::cavlc::residualCsum8(b0.coeff.data()))
-       << std::dec << std::setfill(' ') << "\", \"first_recon_signature8\": "
+       << ", \"first_residual_checksum8_hex\": \""
+       << hexU8(misterplex::cavlc::residualCsum8(b0.coeff.data()))
+       << "\", \"first_recon_signature8\": "
        << static_cast<unsigned>(xorU8(b0.recon))
-       << ", \"first_recon_signature8_hex\": \"0x" << std::hex << std::setw(2)
-       << std::setfill('0') << static_cast<unsigned>(xorU8(b0.recon)) << std::dec
-       << std::setfill(' ') << "\", \"independent_reference\": {\"path\": \"" << refPath
+       << ", \"first_recon_signature8_hex\": \"" << hexU8(xorU8(b0.recon))
+       << "\", \"first_pred_only_signature8\": " << static_cast<unsigned>(b0PredOnlySig)
+       << ", \"first_pred_only_signature8_hex\": \"" << hexU8(b0PredOnlySig)
+       << "\", \"first_one_cycle_delayed_signature8\": " << static_cast<unsigned>(b0DelayedSig)
+       << ", \"first_one_cycle_delayed_signature8_hex\": \"" << hexU8(b0DelayedSig)
+       << "\", \"latency_contract\": \"Consumers must align residual valid/data with prediction; pred-only or one-cycle-delayed residual paths are explicit red checks, not acceptable alternates.\""
+       << ", \"independent_reference\": {\"path\": \"" << refPath
        << "\", \"match\": " << (refOk ? "true" : "false") << ", \"note\": \"" << refReason
        << "\"}}\n";
     os << "}\n";
