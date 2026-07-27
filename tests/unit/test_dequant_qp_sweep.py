@@ -175,10 +175,15 @@ def test_formula_equivalence() -> int:
 
 
 def test_overflow_detection() -> int:
-    """Check which QP/coefficient combinations overflow 18-bit signed range."""
-    overflow_count = 0
+    """Check which QP/coefficient combinations overflow 18-bit signed range.
+
+    Overflow IS a bug — the RTL truncates (not saturates), which flips the
+    sign and corrupts all downstream values. This was a real defect found
+    by w-cabac (3b321ca). Any overflow must be a hard failure.
+    """
     max_18bit = (1 << 17) - 1  # 131071
     min_18bit = -(1 << 17)     # -131072
+    errors = 0
 
     overflow_cases = []
     for qp in range(52):
@@ -187,59 +192,53 @@ def test_overflow_detection() -> int:
                 val = spec_dequant_ac(c, qp, row, col)
                 if val > max_18bit or val < min_18bit:
                     overflow_cases.append((qp, row, col, c, val))
-                    overflow_count += 1
                     break
             for c in range(-1, -257, -1):
                 val = spec_dequant_ac(c, qp, row, col)
                 if val > max_18bit or val < min_18bit:
+                    overflow_cases.append((qp, row, col, c, val))
                     break
 
     if overflow_cases:
-        info(f"18-bit overflow starts at these (QP, pos, min_coeff) boundaries:")
+        info(f"18-bit overflow detected at {len(overflow_cases)} (QP, pos, coeff) boundaries:")
         for qp, row, col, c, val in overflow_cases[:12]:
             info(f"  QP={qp} pos=({row},{col}) coeff={c} → {val} (18-bit range: [{min_18bit}, {max_18bit}])")
+        info(f"FAIL: {len(overflow_cases)} overflow cases — RTL truncation corrupts values (sign flip).")
+        info("This is the bug fixed by w-cabac in commit 3b321ca (widen to 22-bit).")
+        errors = len(overflow_cases)
 
-    # Check that the RTL's truncation differs from the mathematical value
-    truncation_errors = 0
-    for qp, row, col, c, val in overflow_cases[:6]:
-        truncated = sign_extend_18(val)
-        if truncated != val:
-            truncation_errors += 1
-
-    if truncation_errors > 0:
-        info(f"WARNING: {truncation_errors} cases where 18-bit truncation changes the value.")
-        info("  These are theoretical — real coefficients at high QP are small.")
-        info("  At QP 51, typical coefficients are ±1 to ±3, well within range.")
-
-    # This is not a hard failure — it's an audit finding.
-    return 0
+    return errors
 
 
 def test_rtl_18bit_truncation_correctness() -> int:
-    """Verify that for REALISTIC coefficient ranges at each QP, no overflow occurs."""
+    """Verify that overflow cases produce sign-flipped values (proving the bug).
+
+    This test confirms that 18-bit truncation at the RTL boundary actually
+    corrupts the output — the truncated value has wrong sign or magnitude
+    compared to the mathematically correct dequant result.
+    """
     errors = 0
     max_18bit = (1 << 17) - 1
     min_18bit = -(1 << 17)
 
-    # At high QP, real-world coefficients are small. The CAVLC/CABAC parsed
-    # levels for 4x4 blocks at high QP are bounded by the quantiser step.
-    # Conservative bound: at QP q, max |coeff| ≈ 2^(11 - q/6).
-    # For our 9-bit input: max |coeff| = 256.
+    sign_flips = 0
     for qp in range(52):
-        qdiv = qp // 6
-        # At QP qp, the max realistic coefficient is roughly bounded by
-        # the inverse of the quantiser step. For H.264 level 3.1:
-        # coeff_max ≈ min(256, max(1, 2048 >> qdiv))
-        realistic_max = min(256, max(1, 2048 >> qdiv))
         for row in range(4):
             for col in range(4):
-                for c in [realistic_max, -realistic_max]:
+                for c in [255, -256, 200, -200]:
                     val = spec_dequant_ac(c, qp, row, col)
                     if val > max_18bit or val < min_18bit:
-                        info(f"REALISTIC OVERFLOW: QP={qp} pos=({row},{col}) "
-                             f"coeff={c} → {val}")
-                        errors += 1
-    return errors
+                        truncated = sign_extend_18(val)
+                        if (val > 0 and truncated < 0) or (val < 0 and truncated > 0):
+                            sign_flips += 1
+
+    if sign_flips > 0:
+        info(f"CONFIRMED: {sign_flips} cases where 18-bit truncation flips the sign.")
+        info("This is a production-affecting bug at high QP with moderate coefficients.")
+    else:
+        info("No sign flips detected at tested coefficient values.")
+    # This is informational — the hard failure is in test_overflow_detection.
+    return 0
 
 
 # ── RED proofs ────────────────────────────────────────────────────────────
@@ -466,19 +465,17 @@ def main() -> int:
     if e == 0:
         info(f"ALL {n_tests} test vectors match ✓")
 
-    # 4. Overflow analysis
-    print("\n4. 18-bit overflow boundary analysis:")
+    # 4. Overflow analysis — this MUST fail on unfixed 18-bit tree
+    print("\n4. 18-bit overflow detection (MUST fail on unfixed tree):")
     e = test_overflow_detection()
     total_errors += e
+    if e > 0:
+        info(f"DETECTED: {e} overflow cases — dequant output width is too narrow")
 
-    # 5. Realistic overflow check
-    print("\n5. Realistic coefficient range overflow check:")
+    # 5. Sign-flip confirmation
+    print("\n5. Sign-flip analysis (confirms corruption from truncation):")
     e = test_rtl_18bit_truncation_correctness()
     total_errors += e
-    if e == 0:
-        info("No overflow for realistic coefficient ranges ✓")
-    else:
-        info(f"{e} realistic overflow cases found — potential production issue")
 
     # 6. RED proofs
     print("\n6. RED proofs (deliberately broken models must be detected):")

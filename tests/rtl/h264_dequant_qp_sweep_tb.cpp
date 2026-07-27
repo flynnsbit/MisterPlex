@@ -59,10 +59,14 @@ int main(int argc, char** argv) {
 
     Vh264_dequant_qp_sweep_tb dut;
 
-    // Test coefficients — small values that won't overflow 18-bit output,
-    // plus boundary values to test truncation detection.
+    // Test coefficients — must include values large enough to overflow
+    // the output width at high QP. The dequant product is c*na*2^(qP/6),
+    // where na can be up to 29. At QP 51 (qdiv=8), coeff=18 gives
+    // 18*29*256=132,864 which exceeds 18-bit signed range (±131071).
+    // Omitting large coefficients would make this sweep blind to width bugs.
     const std::vector<int> test_coeffs = {
-        0, 1, -1, 2, -2, 3, -3, 5, -5, 7, -7, 10, -10, 15, -15, 20, -20
+        0, 1, -1, 2, -2, 3, -3, 5, -5, 7, -7, 10, -10, 15, -15, 20, -20,
+        50, -50, 100, -100, 127, -128, 200, -200, 255, -256
     };
 
     int total_compared = 0;
@@ -97,23 +101,15 @@ int main(int argc, char** argv) {
                 bool overflow = (spec_val > 131071 || spec_val < -131072);
 
                 if (overflow) {
-                    // Expected: RTL truncates, so values won't match.
-                    // Count but don't fail — this is an audit finding.
-                    int truncated = spec_val & 0x3FFFF;
-                    if (truncated & 0x20000) truncated -= 0x40000;
-                    if (rtl_raw == truncated) {
-                        // RTL correctly truncates (by design, not a bug fix)
-                        ++total_overflow_detected;
-                    } else {
-                        std::cerr << "OVERFLOW MISMATCH: QP=" << qp
-                                  << " scan=" << scan << " pos=(" << row << "," << col
-                                  << ") coeff=" << coeff_val
-                                  << " spec=" << spec_val
-                                  << " expected_trunc=" << truncated
-                                  << " got=" << rtl_raw << "\n";
-                        ++total_mismatch;
-                        qp_pass[qp] = false;
-                    }
+                    // Overflow IS a bug — the RTL's truncation corrupts the
+                    // value (sign flip, magnitude collapse). This must fail.
+                    std::cerr << "OVERFLOW BUG: QP=" << qp
+                              << " scan=" << scan << " pos=(" << row << "," << col
+                              << ") coeff=" << coeff_val
+                              << " spec=" << spec_val
+                              << " rtl_truncated=" << rtl_raw << "\n";
+                    ++total_mismatch;
+                    qp_pass[qp] = false;
                 } else {
                     if (rtl_raw != spec_val) {
                         std::cerr << "MISMATCH: QP=" << qp
