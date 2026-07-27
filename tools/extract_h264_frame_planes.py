@@ -129,6 +129,8 @@ def decode_i420(ffmpeg: str, bitstream: Path, planes_out: Path) -> list[str]:
         "-v",
         "error",
         "-y",
+        "-skip_loop_filter",
+        "all",
         "-i",
         str(bitstream),
         "-an",
@@ -139,7 +141,7 @@ def decode_i420(ffmpeg: str, bitstream: Path, planes_out: Path) -> list[str]:
         str(planes_out),
     ]
     subprocess.check_call(cmd)
-    return ["ffmpeg", "-v", "error", "-y", "-i", rel(bitstream), "-an", "-f", "rawvideo",
+    return ["ffmpeg", "-v", "error", "-y", "-skip_loop_filter", "all", "-i", rel(bitstream), "-an", "-f", "rawvideo",
             "-pix_fmt", "yuv420p", rel(planes_out)]
 
 
@@ -185,11 +187,13 @@ def build_manifest(
             "ffprobe_version": version_line(ffprobe),
             "command": " ".join(ffmpeg_cmd),
             "pix_fmt": "yuv420p",
+            "loop_filter": "disabled",
         },
         "provenance": {
             "source_domain": "decoded H.264 planes",
             "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
             "colorspace": NATIVE_I420,
+            "loop_filter": "disabled",
             "rgb_roundtrip": False,
             "rgb565_roundtrip": False,
             "presentation_border_or_pillar_mask": False,
@@ -266,9 +270,13 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
     decoder = manifest.get("decoder", {})
     if decoder.get("pix_fmt") != "yuv420p":
         refuse("frame-plane golden decoder pix_fmt is not yuv420p")
+    if decoder.get("loop_filter") != "disabled":
+        refuse("frame-plane golden decoder loop_filter is not disabled")
     provenance = manifest.get("provenance", {})
     if provenance.get("colorspace") != NATIVE_I420 or provenance.get("pixel_format") != "I420/YUV420p planar 8-bit 4:2:0":
         refuse("frame-plane golden provenance does not declare native I420/YUV420p")
+    if provenance.get("loop_filter") != "disabled":
+        refuse("frame-plane golden provenance does not declare disabled loop filter")
     if provenance.get("rgb_roundtrip") is not False or provenance.get("rgb565_roundtrip") is not False:
         refuse("frame-plane golden provenance allows an RGB/RGB565 round-trip")
     if provenance.get("presentation_border_or_pillar_mask") is not False:

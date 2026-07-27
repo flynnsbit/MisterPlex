@@ -115,7 +115,7 @@ void jsonCount(std::ostream& os, const char* name, const Count& c) {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string input, planes, output;
+    std::string input, planes, output, loopFilterState;
     int wantFrame = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -126,16 +126,22 @@ int main(int argc, char** argv) {
         if (a == "--input") input = need("--input");
         else if (a == "--planes") planes = need("--planes");
         else if (a == "--output") output = need("--output");
+        else if (a == "--loop-filter-state") loopFilterState = need("--loop-filter-state");
         else if (a == "--frame-index") wantFrame = std::stoi(need("--frame-index"));
         else {
             std::cerr << "usage: analyze_h264_intra_mbs --input stream.264 --planes ref.yuv "
-                         "[--frame-index N] [--output out.json]\n";
+                         "--loop-filter-state disabled [--frame-index N] [--output out.json]\n";
             return 2;
         }
     }
     try {
-        if (input.empty() || planes.empty())
-            throw std::runtime_error("missing --input or --planes");
+        if (input.empty() || planes.empty() || loopFilterState.empty())
+            throw std::runtime_error("missing --input, --planes, or --loop-filter-state");
+        if (loopFilterState != "disabled") {
+            std::cerr << "FAIL intra MB analysis: current recon output is undeblocked; refusing loop_filter_state="
+                      << loopFilterState << "\n";
+            return 9;
+        }
         auto blob = readFile(input);
         auto ref = readFile(planes);
         auto nals = splitAnnexB(blob);
@@ -278,6 +284,7 @@ int main(int argc, char** argv) {
         os << "{\n  \"format\":\"misterplex.p3.intra_mb_analysis.v1\",\n";
         os << "  \"source\":{\"path\":\"" << input << "\"},\n";
         os << "  \"reference\":{\"path\":\"" << planes << "\"},\n";
+        os << "  \"loop_filter\":\"disabled\",\n";
         os << "  \"frame_index\":" << wantFrame << ",\"geometry\":{\"width\":" << w
            << ",\"height\":" << h << ",\"mb_width\":" << mbW << ",\"mb_height\":" << mbH << "},\n";
         os << "  \"summary\":{\"mb_exact\":" << mbAll.exact << ",\"mb_total\":" << mbAll.total
