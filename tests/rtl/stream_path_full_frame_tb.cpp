@@ -236,14 +236,16 @@ public:
     std::vector<uint8_t> nativeCandidate;
     std::vector<InterMbCapture> interCaptures;
     std::size_t nativeFrameCount = 0;
+    std::size_t nativeFrameBytes = 0;
+    std::size_t nativeI420DpbWrites = 0;
     int ignoredInterCaptures = 0;
     bool nativeInterValidQ = false;
     Mb0Trace mb0Trace;
 
     void initNativeCandidate(std::size_t frameCount) {
         nativeFrameCount = frameCount;
-        const std::size_t frameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
-        nativeCandidate.assign(frameCount * frameBytes, 0);
+        nativeFrameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
+        nativeCandidate.assign(frameCount * nativeFrameBytes, 0);
     }
 
     void writeNativeInterMb(const InterMbCapture& cap) {
@@ -298,6 +300,18 @@ public:
                 mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 18);
                 mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 18);
                 mb0Trace.recon[static_cast<std::size_t>(i)] = static_cast<int>(top.trace_recon_px[i]);
+            }
+        }
+        // Native I420 DPB write tap: capture per-sample I420 data from the
+        // reconstruction path (DPB fill for IDR, eventually inter writeback).
+        if (top.native_i420_wr_en && !nativeCandidate.empty()) {
+            const auto offset = static_cast<std::size_t>(top.native_i420_wr_offset);
+            const int frame = static_cast<int>(top.native_i420_wr_frame);
+            if (frame >= 0 && static_cast<std::size_t>(frame) < nativeFrameCount &&
+                offset < nativeFrameBytes) {
+                nativeCandidate[static_cast<std::size_t>(frame) * nativeFrameBytes + offset] =
+                    static_cast<uint8_t>(top.native_i420_wr_data);
+                ++nativeI420DpbWrites;
             }
         }
         if (top.native_inter_valid && !nativeInterValidQ) {
@@ -896,6 +910,7 @@ int main(int argc, char** argv) {
                   << " bytes=" << annexb.size()
                   << " native_inter_mb_captures=" << sim.interCaptures.size()
                   << " native_inter_ignored=" << sim.ignoredInterCaptures
+                  << " native_i420_dpb_writes=" << sim.nativeI420DpbWrites
                   << " cycles=" << sim.cycles
                   << " first_bad_frame=" << cr.firstBadFrame
                   << " strict_pass=" << (cr.exact ? 1 : 0)

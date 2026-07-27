@@ -66,7 +66,13 @@ module stream_path_full_frame_tb #(
 	output wire [2:0]  native_inter_part_mode,
 	output wire [7:0]  native_inter_pred_y [0:255],
 	output wire [7:0]  native_inter_pred_u [0:63],
-	output wire [7:0]  native_inter_pred_v [0:63]
+	output wire [7:0]  native_inter_pred_v [0:63],
+
+	// Native I420 DPB write tap — per-sample stream from reconstruction path
+	output wire        native_i420_wr_en,
+	output wire [31:0] native_i420_wr_offset,
+	output wire [7:0]  native_i420_wr_data,
+	output wire [15:0] native_i420_wr_frame
 );
 	wire [7:0] sps_level;
 	wire [5:0] slice_qp;
@@ -217,6 +223,15 @@ module stream_path_full_frame_tb #(
 			assign native_inter_pred_v[native_c_i] = dut.stub.dpb_pred_v[native_c_i];
 		end
 	endgenerate
+
+	// Native I420 DPB write tap: captures every sample written to the DPB
+	// (IDR intra frames during DPB fill; eventually inter reconstruction too).
+	wire [31:0] dpb_wr_addr_raw = dut.stub.dpb_mem_waddr;
+	wire [31:0] dpb_cur_base    = dut.stub.dpb_current_base;
+	assign native_i420_wr_en     = dut.stub.dpb_mem_we;
+	assign native_i420_wr_offset = dpb_wr_addr_raw - dpb_cur_base;
+	assign native_i420_wr_data   = dut.stub.dpb_mem_wdata;
+	assign native_i420_wr_frame  = dut.stub.frames_out;
 endmodule
 
 `default_nettype wire
