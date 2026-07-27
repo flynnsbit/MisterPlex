@@ -4,7 +4,8 @@
 
 module ddr_frame_store_warm_reset_tb #(
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
-	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096
+	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
+	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -23,6 +24,7 @@ module ddr_frame_store_warm_reset_tb #(
 	output wire [15:0] underrun_count,
 	output wire [15:0] frames_done,
 	output wire        doorbell_ok,
+	output wire        debug_sched_valid,
 	output wire [7:0]  debug_state,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
@@ -56,7 +58,8 @@ module ddr_frame_store_warm_reset_tb #(
 		.FRAME_MAILBOX_PHYS(32'h3001_F118),
 		.DDR_BURST_MAX(8),
 		.IGNORE_STALE_DOORBELL_AFTER_RESET(IGNORE_STALE_DOORBELL_AFTER_RESET),
-		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)
+		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS),
+		.PIPELINE_REFILL_SCHEDULER(PIPELINE_REFILL_SCHEDULER)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -93,6 +96,7 @@ module ddr_frame_store_warm_reset_tb #(
 		.doorbell_ok(doorbell_ok),
 		.debug_state(debug_state)
 	);
+	assign debug_sched_valid = dut.sched_valid;
 endmodule
 
 `default_nettype wire

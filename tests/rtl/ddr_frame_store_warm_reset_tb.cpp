@@ -48,6 +48,10 @@ public:
     int rdIndex = 0;
     int scanX = 0;
     int scanY = 0;
+    bool schedHighBeforeEdge = false;
+    bool schedulerArmed = false;
+    bool sawSchedValid = false;
+    bool sawScheduledLineRead = false;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -87,6 +91,10 @@ public:
 
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
+            if (schedulerArmed) {
+                sawScheduledLineRead = true;
+                schedulerArmed = false;
+            }
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
             rdIndex = 0;
@@ -125,6 +133,11 @@ public:
         top.clk = 0;
         top.clk_ddr = 0;
         top.eval();
+        schedHighBeforeEdge = top.debug_sched_valid;
+        if (schedHighBeforeEdge) {
+            sawSchedValid = true;
+            schedulerArmed = true;
+        }
         serviceDdrDrive();
         top.clk = 1;
         top.clk_ddr = 1;
@@ -218,6 +231,8 @@ public:
         scanY = saveY;
         return top.rd_r;
     }
+
+    bool schedulerProven() const { return sawSchedValid && sawScheduledLineRead; }
 };
 
 uint8_t stableSample(Sim& sim) {
@@ -239,7 +254,7 @@ void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
     }
 }
 
-void runFreshNoStale() {
+bool runFreshNoStale() {
     Sim sim;
     sim.fillFrame(1, 208);
     sim.resetCore();
@@ -249,9 +264,10 @@ void runFreshNoStale() {
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
     expectFreshSample("first fresh no-stale", sim, 208);
+    return sim.schedulerProven();
 }
 
-void runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, int freshBank,
+bool runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, int freshBank,
                          uint8_t freshY, const std::string& label) {
     Sim sim;
     sim.fillFrame(0, 48);
@@ -276,9 +292,10 @@ void runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, in
               << " fresh_bank=" << freshBank << " no_frame_cycles=25000 frames="
               << sim.top.frames_done << " sample_x=0 sample_y=0 sample_r=" << int(freshY)
               << " underruns=" << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
 }
 
-void runRunningArmRestartLower() {
+bool runRunningArmRestartLower() {
     Sim sim;
     sim.fillFrame(0, 96);
     sim.resetCore();
@@ -306,9 +323,10 @@ void runRunningArmRestartLower() {
               << " stale_bank=0 fresh_bank=1 frames=" << sim.top.frames_done
               << " sample_r=214 underruns=" << sim.top.underrun_count
               << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
 }
 
-void runEqualTokenFallback() {
+bool runEqualTokenFallback() {
     Sim sim;
     sim.fillFrame(0, 48);
     sim.ringDoorbell(0, 5);
@@ -329,17 +347,23 @@ void runEqualTokenFallback() {
               << " stale_bank=0 fresh_bank=0 no_frame_cycles=25000 frames="
               << sim.top.frames_done << " sample_r=212 underruns=" << sim.top.underrun_count
               << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
 }
 
 void run() {
-    runFreshNoStale();
-    runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
-    runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
-    runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
-    runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
-    runRunningArmRestartLower();
-    runEqualTokenFallback();
-    std::cout << "OK ddr_frame_store warm-reset: stale doorbell ignored until fresh frame\n";
+    bool schedulerSeen = false;
+    schedulerSeen |= runFreshNoStale();
+    schedulerSeen |= runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
+    schedulerSeen |= runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
+    schedulerSeen |= runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
+    schedulerSeen |= runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
+    schedulerSeen |= runRunningArmRestartLower();
+    schedulerSeen |= runEqualTokenFallback();
+    if (!schedulerSeen) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
+        std::exit(1);
+    }
+    std::cout << "OK ddr_frame_store warm-reset: stale doorbell ignored until fresh frame; refill scheduler pipelined\n";
 }
 } // namespace
 
