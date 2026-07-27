@@ -117,6 +117,21 @@ uint8_t xorU8(const std::array<uint8_t, 16>& a) {
     return v;
 }
 
+const char* coeffTokenTableName(int table) {
+    switch (table) {
+    case 0:
+        return "nC_0_1";
+    case 1:
+        return "nC_2_3";
+    case 2:
+        return "nC_4_7";
+    case 3:
+        return "nC_8_plus";
+    default:
+        return "not_parsed";
+    }
+}
+
 int firstVclNalOffset(const std::vector<uint8_t>& data) {
     size_t i = 0;
     while (i + 3 < data.size()) {
@@ -221,6 +236,14 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
         os << "    {\"block\": " << b.block << ", \"x\": " << b.x << ", \"y\": " << b.y
            << ", \"bit_offset_start\": " << b.bit_offset_start
            << ", \"bit_offset_end\": " << b.bit_offset_end
+           << ", \"nA\": {\"available\": " << (b.nA_available ? "true" : "false")
+           << ", \"total_coeff\": " << b.nA_total_coeff << "}"
+           << ", \"nB\": {\"available\": " << (b.nB_available ? "true" : "false")
+           << ", \"total_coeff\": " << b.nB_total_coeff << "}"
+           << ", \"predicted_nC\": " << b.predicted_nC
+           << ", \"coeff_token_table\": " << b.coeff_token_table
+           << ", \"coeff_token_table_name\": \"" << coeffTokenTableName(b.coeff_token_table)
+           << "\""
            << ", \"total_coeff\": " << b.total_coeff << ", \"coefficients_zigzag\": ";
         jsonArray(os, b.coeff, 8);
         os << ", \"dequant\": ";

@@ -30,6 +30,12 @@ struct Luma4x4Trace {
     int y = 0;           // macroblock-local pixel y
     int pred_mode = -1;  // H.264 Intra4x4 mode, or Intra16x16 mode for I16 MBs
     int total_coeff = 0;
+    bool nA_available = false;
+    int nA_total_coeff = -1;
+    bool nB_available = false;
+    int nB_total_coeff = -1;
+    int predicted_nC = 0;
+    int coeff_token_table = -1; // 0..3 for CAVLC luma coeff_token table, -1 if no token
     int bit_offset_start = -1; // RBSP bit offset for this luma residual, if coded
     int bit_offset_end = -1;
     std::array<int16_t, 16> coeff{}; // CAVLC scan-order coefficients
@@ -680,6 +686,9 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
             return -1;
         return i4mode[static_cast<size_t>(((mby * mbW + mbx) * 16) + ly * 4 + lx)];
     };
+    auto coeffTokenTable = [](int nC) -> int {
+        return nC < 2 ? 0 : (nC < 4 ? 1 : (nC < 8 ? 2 : 3));
+    };
 
     auto yAt = [&](int x, int y) -> uint8_t {
         if (x < 0 || y < 0 || x >= out.width || y >= out.height)
@@ -749,7 +758,8 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                             yAt(baseX + xx, baseY + yy);
             };
             auto traceBlock = [&](int block, int lx, int ly, int predMode, int totalCoeff,
-                                  const uint8_t pred[16], const int16_t coeff[16],
+                                  bool nAAvail, int nA, bool nBAvail, int nB, int nC,
+                                  int table, const uint8_t pred[16], const int16_t coeff[16],
                                   int bitStart, int bitEnd, const int16_t blkq[4][4]) {
                 if (!traceMb)
                     return;
@@ -759,6 +769,12 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 tb.y = ly * 4;
                 tb.pred_mode = predMode;
                 tb.total_coeff = totalCoeff;
+                tb.nA_available = nAAvail;
+                tb.nA_total_coeff = nA;
+                tb.nB_available = nBAvail;
+                tb.nB_total_coeff = nB;
+                tb.predicted_nC = nC;
+                tb.coeff_token_table = table;
                 tb.bit_offset_start = bitStart;
                 tb.bit_offset_end = bitEnd;
                 int16_t idct[4][4];
@@ -894,12 +910,17 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                         int totalCoeff = 0;
                         int bitStart = -1;
                         int bitEnd = -1;
+                        int* nAptr = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
+                                              : tcatL(mbx - 1, mby, 3, ly);
+                        int* nBptr = (ly > 0) ? tcatL(mbx, mby, lx, ly - 1)
+                                              : tcatL(mbx, mby - 1, lx, 3);
+                        const bool nAAvail = nAptr != nullptr;
+                        const bool nBAvail = nBptr != nullptr;
+                        const int nA = nAAvail ? *nAptr : -1;
+                        const int nB = nBAvail ? *nBptr : -1;
+                        const int nC = walk_detail::ncFrom(nAptr, nBptr);
+                        const int table = coeffTokenTable(nC);
                         if ((cbp_l >> i8) & 1) {
-                            int* nA = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
-                                               : tcatL(mbx - 1, mby, 3, ly);
-                            int* nB = (ly > 0) ? tcatL(mbx, mby, lx, ly - 1)
-                                               : tcatL(mbx, mby - 1, lx, 3);
-                            int nC = walk_detail::ncFrom(nA, nB);
                             bitStart = static_cast<int>(br.bit);
                             auto r = cavlc::residualBlock(br, nC, 16);
                             bitEnd = static_cast<int>(br.bit);
@@ -923,8 +944,8 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                         } else {
                             tcsetL(mbx, mby, lx, ly, 0);
                         }
-                        traceBlock(blk, lx, ly, useMode, totalCoeff, pred, coeff, bitStart,
-                                   bitEnd, blkq);
+                        traceBlock(blk, lx, ly, useMode, totalCoeff, nAAvail, nA, nBAvail, nB,
+                                   nC, table, pred, coeff, bitStart, bitEnd, blkq);
                     }
                 }
 
@@ -1074,13 +1095,19 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                         int totalCoeff = (dc[ly][lx] != 0) ? 1 : 0;
                         int bitStart = -1;
                         int bitEnd = -1;
-                        if (cbp_l) {
-                            int* a = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
+                        int* nAptr = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
                                               : tcatL(mbx - 1, mby, 3, ly);
-                            int* b = (ly > 0) ? tcatL(mbx, mby, lx, ly - 1)
+                        int* nBptr = (ly > 0) ? tcatL(mbx, mby, lx, ly - 1)
                                               : tcatL(mbx, mby - 1, lx, 3);
+                        const bool nAAvail = nAptr != nullptr;
+                        const bool nBAvail = nBptr != nullptr;
+                        const int nA = nAAvail ? *nAptr : -1;
+                        const int nB = nBAvail ? *nBptr : -1;
+                        const int nC = walk_detail::ncFrom(nAptr, nBptr);
+                        const int table = cbp_l ? coeffTokenTable(nC) : -1;
+                        if (cbp_l) {
                             bitStart = static_cast<int>(br.bit);
-                            auto rr = cavlc::residualBlock(br, walk_detail::ncFrom(a, b), 15);
+                            auto rr = cavlc::residualBlock(br, nC, 15);
                             bitEnd = static_cast<int>(br.bit);
                             if (!rr.ok) {
                                 out.fail_mb = mb;
@@ -1127,8 +1154,9 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                             for (int xx = 0; xx < 4; ++xx)
                                 predBlk[yy * 4 + xx] =
                                     mbpred[(ly * 4 + yy) * 16 + lx * 4 + xx];
-                        traceBlock(i8 * 4 + i4, lx, ly, predMode, totalCoeff, predBlk, coeff,
-                                   bitStart, bitEnd, blkq);
+                        traceBlock(i8 * 4 + i4, lx, ly, predMode, totalCoeff, nAAvail, nA,
+                                   nBAvail, nB, nC, table, predBlk, coeff, bitStart, bitEnd,
+                                   blkq);
                     }
 
                 // Chroma for I16
