@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
 #include <atomic>
@@ -1263,11 +1264,13 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.stream_bytes_seen = 0;
     // [103:96]=residual_dc (raw[12]); [111:104]=residual_csum (raw[13]);
     // [127:112]=stream_bytes[15:0] (raw[14..15]). residual_dc stays below AR splice.
-    s.residual_dc = static_cast<int8_t>(raw[12]);
-    s.residual_csum = raw[13];
+    using namespace status_telemetry;
+    s.residual_dc = static_cast<int8_t>(raw[kResidualDcByte]);
+    s.residual_csum = raw[kResidualCsumByte];
     // 3.3l-1 RBF: 16-bit stream_bytes. Pre-3.3l-1: raw[13..15] was 24b bytes_in —
     // residual_csum then equals old low byte (soft-gate res_csum=20 / 0x14 only after new RBF).
-    s.stream_bytes_in = static_cast<uint32_t>(raw[14] | (raw[15] << 8));
+    s.stream_bytes_in =
+        static_cast<uint32_t>(raw[kStreamBytesLoByte] | (raw[kStreamBytesHiByte] << 8));
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }
