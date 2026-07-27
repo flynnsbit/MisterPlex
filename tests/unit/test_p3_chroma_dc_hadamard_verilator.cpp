@@ -121,12 +121,39 @@ int main() {
                 ok = false;
             }
         }
+        // Degeneracy defence (#18): non-zero input must produce non-zero output
+        bool anyInputNonZero = false, anyOutputNonZero = false;
+        for (int i = 0; i < 4; ++i) {
+            if (v.coeff[i] != 0) anyInputNonZero = true;
+            if (sign18(dut.dc[i]) != 0) anyOutputNonZero = true;
+        }
+        if (anyInputNonZero && !anyOutputNonZero) {
+            std::cerr << "DEGENERACY " << v.name
+                      << ": non-zero input produced all-zero output — transform never exercised\n";
+            ok = false;
+        }
         if (ok) ++pass;
         else ++fail;
     }
 
     std::cout << "Chroma DC Hadamard: " << pass << " pass, " << fail << " fail"
               << " out of " << vecs.size() << " vectors\n";
+
+    // Count how many non-zero-input vectors produced non-zero output
+    int nonZeroInputVecs = 0, nonTrivialVecs = 0;
+    for (const auto& v : vecs) {
+        bool hasInput = false;
+        for (int i = 0; i < 4; ++i) if (v.coeff[i] != 0) hasInput = true;
+        if (hasInput) {
+            ++nonZeroInputVecs;
+            for (int i = 0; i < 4; ++i) dut.coeff[i] = v.coeff[i];
+            dut.qp = v.qp;
+            dut.eval();
+            for (int i = 0; i < 4; ++i) if (sign18(dut.dc[i]) != 0) { ++nonTrivialVecs; break; }
+        }
+    }
+    std::cout << "Degeneracy: " << nonTrivialVecs << "/" << nonZeroInputVecs
+              << " non-zero-input vectors produced non-zero output\n";
 
     if (fail) {
         std::cerr << "CHROMA DC HADAMARD TEST FAILED\n";

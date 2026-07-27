@@ -471,6 +471,13 @@ int main(int argc, char** argv) {
     int noAboveBlocks = 0, noLeftBlocks = 0, topRightReplicatedBlocks = 0;
     int failures = 0;
     int chromaReconPixelFails = 0;
+    // Degeneracy counters (instrument-integrity #18 defence):
+    // Assert that the transform under test actually changes output.
+    int chromaDcDrivenMbs = 0;     // MBs where cbp_c > 0 (Hadamard was driven)
+    int chromaDcNonTrivialMbs = 0; // MBs where Hadamard output was non-zero
+    int chromaResidChangedMbs = 0; // MBs where recon != prediction (residual contributed)
+    int lumaResidDrivenBlks = 0;   // Luma blocks where residual was driven through recon
+    int lumaResidChangedBlks = 0;  // Luma blocks where recon != pred (residual contributed)
 
     for (int mb = 0; mb < rec.mb_total; ++mb) {
         misterplex::recon::ReconTrace trace;
@@ -587,6 +594,8 @@ int main(int argc, char** argv) {
                         dut.recon_pred[yy * 4 + xx] = dut.i16_pred[(blk.y + yy) * 16 + blk.x + xx];
                 setResidual(dut, blk.idct, true);
                 dut.eval();
+                ++lumaResidDrivenBlks;
+                bool lumaBlkChanged = false;
                 int x0 = baseX + blk.x;
                 int y0 = baseY + blk.y;
                 for (int i = 0; i < 16; ++i) {
@@ -597,7 +606,10 @@ int main(int argc, char** argv) {
                         mbOk = false;
                         break;
                     }
+                    if (dut.recon_out[i] != dut.recon_pred[i])
+                        lumaBlkChanged = true;
                 }
+                if (lumaBlkChanged) ++lumaResidChangedBlks;
                 for (int yy = 0; yy < 4; ++yy)
                     for (int xx = 0; xx < 4; ++xx)
                         if (x0 + xx < width && y0 + yy < height)
@@ -648,6 +660,7 @@ int main(int argc, char** argv) {
                 {
                     std::vector<uint8_t>& cbuf = (plane == 0) ? rtlCb : rtlCr;
                     if (trace.mb.chroma.cbp_c > 0) {
+                        if (plane == 0) ++chromaDcDrivenMbs; // degeneracy: count once per MB
                         // Drive DC coefficients through RTL Hadamard
                         const auto& dcCoeff = (plane == 0) ? trace.mb.chroma.dc_coeff_cb
                                                            : trace.mb.chroma.dc_coeff_cr;
@@ -659,9 +672,11 @@ int main(int argc, char** argv) {
                         // Verify Hadamard output against host reference
                         const auto& refDc = (plane == 0) ? trace.mb.chroma.dc_out_cb
                                                          : trace.mb.chroma.dc_out_cr;
+                        bool anyDcNonZero = false;
                         for (int i = 0; i < 4; ++i) {
                             int rtlDc = fromSigned18(dut.chroma_dc_out[i]);
                             int expDc = refDc[static_cast<size_t>(i)];
+                            if (rtlDc != 0) anyDcNonZero = true;
                             if (rtlDc != expDc) {
                                 std::cerr << "mb " << mb << " chroma DC Hadamard p=" << plane
                                           << " dc[" << i << "] rtl=" << rtlDc << " exp=" << expDc << "\n";
@@ -669,7 +684,9 @@ int main(int argc, char** argv) {
                                 mbOk = false;
                             }
                         }
+                        if (plane == 0 && anyDcNonZero) ++chromaDcNonTrivialMbs;
                         // Process each 4x4 chroma block through recon4_generic
+                        bool residChangedPixel = false;
                         const auto& chrBlks = (plane == 0) ? trace.mb.chroma.blocks_cb
                                                            : trace.mb.chroma.blocks_cr;
                         for (int by = 0; by < 2; ++by)
@@ -685,10 +702,14 @@ int main(int argc, char** argv) {
                                 int by0 = cy + by * 4;
                                 for (int yy = 0; yy < 4; ++yy)
                                     for (int xx = 0; xx < 4; ++xx)
-                                        if (bx0 + xx < cw && by0 + yy < ch)
-                                            cbuf[static_cast<size_t>((by0 + yy) * cw + bx0 + xx)] =
-                                                dut.recon_out[yy * 4 + xx];
+                                        if (bx0 + xx < cw && by0 + yy < ch) {
+                                            uint8_t rv = dut.recon_out[yy * 4 + xx];
+                                            if (rv != dut.recon_pred[yy * 4 + xx])
+                                                residChangedPixel = true;
+                                            cbuf[static_cast<size_t>((by0 + yy) * cw + bx0 + xx)] = rv;
+                                        }
                             }
+                        if (plane == 0 && residChangedPixel) ++chromaResidChangedMbs;
                     } else {
                         // No residual — prediction is the reconstruction
                         for (int yy = 0; yy < 8; ++yy)
@@ -763,6 +784,25 @@ int main(int argc, char** argv) {
         ++failures;
     }
 
+    // Degeneracy defence (#18): assert that the transform under test
+    // actually changed output. A test where residual adds nothing to
+    // prediction proves the transform never ran — it passes trivially.
+    if (chromaDcDrivenMbs > 0 && chromaDcNonTrivialMbs == 0) {
+        std::cerr << "DEGENERACY: chroma DC Hadamard driven " << chromaDcDrivenMbs
+                  << " MBs but ALL outputs were zero — transform never exercised\n";
+        ++failures;
+    }
+    if (chromaDcDrivenMbs > 0 && chromaResidChangedMbs == 0) {
+        std::cerr << "DEGENERACY: chroma residual driven " << chromaDcDrivenMbs
+                  << " MBs but reconstruction == prediction in ALL — residual add never exercised\n";
+        ++failures;
+    }
+    if (lumaResidDrivenBlks > 0 && lumaResidChangedBlks == 0) {
+        std::cerr << "DEGENERACY: luma recon4_generic driven " << lumaResidDrivenBlks
+                  << " blocks but output == prediction in ALL — residual never changed a pixel\n";
+        ++failures;
+    }
+
     if (failures) {
         std::cerr << "P3 intra frame-wide Verilator exact check FAILED: failures=" << failures
                   << " mb_exact=" << mbExact << "/" << rec.mb_total << "\n";
@@ -774,6 +814,11 @@ int main(int argc, char** argv) {
               << " luma_pixels=" << rtlY.size()
               << " chroma_recon_mismatches=" << chromaReconPixelFails
               << " frame_mae_fixture=max_abs_y_zero\n";
+    std::cout << "Degeneracy: chroma_dc_driven=" << chromaDcDrivenMbs
+              << " chroma_dc_nontrivial=" << chromaDcNonTrivialMbs
+              << " chroma_resid_changed=" << chromaResidChangedMbs
+              << " luma_resid_driven=" << lumaResidDrivenBlks
+              << " luma_resid_changed=" << lumaResidChangedBlks << "\n";
     std::cout << "I4 pass counts: V=" << i4Pass[0] << " H=" << i4Pass[1]
               << " DC=" << i4Pass[2] << " DDL=" << i4Pass[3] << " DDR=" << i4Pass[4]
               << " VR=" << i4Pass[5] << " HD=" << i4Pass[6] << " VL=" << i4Pass[7]
