@@ -21,6 +21,7 @@ fi
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/stream_path_ddr_ring_tb_top.sv"
 TB="$ROOT/tests/rtl/stream_path_ddr_ring_tb.cpp"
+SHARED_FIXTURE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 BUILD_ROOT="$ROOT/build/verilator"
 BUILD_OK="$BUILD_ROOT/stream_path_ddr_ring"
 BUILD_WRAP="$BUILD_ROOT/stream_path_ddr_ring_wrap_fault"
@@ -42,7 +43,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
 )
 
-for f in "$QIP" "$TOP" "$TB" "${RTL[@]}"; do
+for f in "$QIP" "$TOP" "$TB" "$SHARED_FIXTURE" "${RTL[@]}"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -63,7 +64,7 @@ build_and_run() {
     --top-module stream_path_ddr_ring_tb_top "$@" -Wno-fatal \
     -CFLAGS "-std=c++17 -O2" \
     "$TOP" "${RTL[@]}" "$TB"
-  "$out/Vstream_path_ddr_ring_tb_top"
+  "$out/Vstream_path_ddr_ring_tb_top" "$SHARED_FIXTURE"
 }
 
 echo "RTL SIM: using $VERILATOR_VERSION" >&2

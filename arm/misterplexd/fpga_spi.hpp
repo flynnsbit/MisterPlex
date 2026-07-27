@@ -148,9 +148,23 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
-    // Product path: append elementary bitstream bytes into the HPS DDR ring.
-    // Flow control is via FPGA-published read_count; returns false instead of
-    // overwriting unread bytes.
+    // Product path: copy complete Annex-B NAL records into the HPS DDR ring.
+    // pushBitstreamNal() copies before returning, so the caller may immediately
+    // reuse/free Nal::annexb. Full is transient; Desync/Fatal require a session
+    // reset. begin while active is rejected by contract: end the old session first.
+    using BitstreamNal = ddr_bitstream_ring::Nal;
+    using BitstreamStatus = ddr_bitstream_ring::Status;
+    using BitstreamPushResult = ddr_bitstream_ring::PushResult;
+    bool beginBitstreamSession(uint64_t session_id, int timeout_ms = 250);
+    BitstreamPushResult pushBitstreamNal(const BitstreamNal& nal, int timeout_ms = 250);
+    bool flushBitstreamSession(uint64_t session_id, int timeout_ms = 250);
+    bool endBitstreamSession(uint64_t session_id, int timeout_ms = 250);
+    bool pauseBitstreamSession(uint64_t session_id, int timeout_ms = 250);
+    bool resumeBitstreamSession(uint64_t session_id, int timeout_ms = 250);
+    bool readBitstreamStatus(BitstreamStatus& status);
+    // Legacy byte-chunk entry point: wraps each chunk in a default-session NAL
+    // record so older call sites keep working while source-demux moves to the
+    // explicit record API above.
     bool sendBitstreamChunkDdr(const uint8_t* data, size_t len);
     bool flushBitstreamDdr();
 
@@ -272,6 +286,14 @@ private:
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
+    bool waitBitstreamReadCount(uint32_t target, int timeout_ms);
+    BitstreamPushResult writeBitstreamRecord(ddr_bitstream_ring::Event event,
+                                             uint64_t session_id,
+                                             uint32_t seq,
+                                             uint8_t nal_type,
+                                             const uint8_t* payload,
+                                             size_t len,
+                                             int timeout_ms);
     void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
@@ -293,6 +315,9 @@ private:
     uint8_t* bitstreamMap_ = nullptr;
     size_t bitstreamMapLen_ = 0;
     uint32_t bitstreamWriteCount_ = 0;
+    uint64_t bitstreamLegacySessionId_ = 1;
+    uint32_t bitstreamLegacySeq_ = 0;
+    bool bitstreamLegacyActive_ = false;
     bool bitstreamResetEpoch_ = false;
 };
 
