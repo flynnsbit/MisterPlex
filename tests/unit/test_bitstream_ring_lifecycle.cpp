@@ -94,6 +94,9 @@ static void testBasicSessionLifecycle() {
     CHECK(st.active);
     CHECK(st.nal_accepted == 3);
     CHECK(st.bytes_accepted > 0);
+    // Degeneracy: ring must actually contain data (not zero-length passthrough)
+    CHECK(ring.snapshot().size() > 0);
+    CHECK(ring.snapshot().size() >= sps.size() + pps.size() + idr.size());
 
     CHECK(dispatch.end() == ControlResult::Ok);
     st = ring.status();
@@ -116,17 +119,23 @@ static void testFixtureFullStream() {
     CHECK(dispatch.begin(1) == ControlResult::Ok);
 
     size_t pushed = 0;
+    size_t totalInputBytes = 0;
     for (const auto& nal : nals) {
         auto r = dispatch.handleNal(nal.data(), nal.size());
         CHECK(r == PushResult::Ok);
         ++pushed;
+        totalInputBytes += nal.size();
     }
     CHECK(pushed == nals.size());
-    CHECK(dispatch.end() == ControlResult::Ok);
+    // Degeneracy: fixture must contain non-trivial data, and ring must hold it
+    CHECK(totalInputBytes > 100);
     auto st = ring.status();
-    std::fprintf(stderr, "  OK: fixture nals=%zu pushed=%llu bytes=%llu\n",
+    CHECK(st.bytes_accepted >= totalInputBytes);
+    CHECK(ring.snapshot().size() > 0);
+    CHECK(dispatch.end() == ControlResult::Ok);
+    std::fprintf(stderr, "  OK: fixture nals=%zu pushed=%llu bytes=%llu (input=%zu)\n",
                  nals.size(), static_cast<unsigned long long>(st.nal_accepted),
-                 static_cast<unsigned long long>(st.bytes_accepted));
+                 static_cast<unsigned long long>(st.bytes_accepted), totalInputBytes);
 }
 
 static void testSeekFlushReset() {
@@ -237,6 +246,10 @@ static void testRingFullBackpressure() {
     CHECK(sawFull);
     auto stats = dispatch.stats();
     CHECK(stats.full_escalations >= 1);
+    // Degeneracy: must have pushed at least some data before hitting Full.
+    // If it returns Full on the first push, the ring never accepted anything.
+    CHECK(stats.bytes_pushed > 0);
+    CHECK(stats.nal_pushed >= 3); // at least SPS + PPS + one slice before Full
     // Ring overrun count should be recorded
     auto st = ring.status();
     CHECK(st.overrun_count >= 1);
@@ -339,6 +352,10 @@ static void testRingCapacitySustain() {
     CHECK(!anyFail);
     auto stats = dispatch.stats();
     CHECK(stats.full_escalations == 0);
+    // Degeneracy: must have actually transferred substantial data.
+    // 1000 frames × ~6700 bytes = ~6.7 MB minimum; anything less means the
+    // ring silently dropped data while returning Ok.
+    CHECK(stats.bytes_pushed > 5000000);
     CHECK(dispatch.end() == ControlResult::Ok);
     std::fprintf(stderr, "  OK: sustained 1000 frames, bytes=%llu full_escalations=0\n",
                  static_cast<unsigned long long>(stats.bytes_pushed));
@@ -371,6 +388,10 @@ static void testDataIntegrity() {
     expected.insert(expected.end(), idr.begin(), idr.end());
 
     auto got = ring.snapshot();
+    // Degeneracy: both sides must be non-empty and non-trivial.
+    // A zero-length comparison is vacuously exact — that is #18.
+    CHECK(expected.size() > 100);
+    CHECK(got.size() > 100);
     CHECK(got.size() == expected.size());
     size_t mismatches = 0;
     for (size_t i = 0; i < std::min(got.size(), expected.size()); ++i) {
