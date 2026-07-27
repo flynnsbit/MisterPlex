@@ -112,6 +112,21 @@ int main() {
           0x20001234u);
     CHECK(misterplex::ddrDoorbellHi(0x1234, 1, misterplex::DdrFrameFormat::Yuv420p) ==
           0xA0001234u);
+    CHECK(misterplex::ddrDoorbellHi(0x3FFFFFFFu, 1, misterplex::DdrFrameFormat::Yuv420p) ==
+          0xBFFFFFFFu);
+    uint32_t decodedSeq = 0;
+    int decodedBank = -1;
+    CHECK(misterplex::decodeDdrDoorbell(misterplex::kDdrFrameDoorbellMagic, 0xA0000005u,
+                                        misterplex::DdrFrameFormat::Yuv420p, decodedSeq,
+                                        decodedBank));
+    CHECK(decodedSeq == 5u);
+    CHECK(decodedBank == 1);
+    CHECK(misterplex::ddrDoorbellHi((decodedSeq + 1u) & misterplex::kDdrFrameDoorbellSeqMask,
+                                    decodedBank, misterplex::DdrFrameFormat::Yuv420p) !=
+          0xA0000005u);
+    CHECK(!misterplex::decodeDdrDoorbell(0, 0xA0000005u,
+                                         misterplex::DdrFrameFormat::Yuv420p, decodedSeq,
+                                         decodedBank));
 
     // Hardware nondeterminism bbox from reload captures. Presentation x includes
     // the 11px pillarbox, so map it back to coded 624-wide YUV420 offsets.

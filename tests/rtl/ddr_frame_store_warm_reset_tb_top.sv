@@ -3,7 +3,8 @@
 `default_nettype none
 
 module ddr_frame_store_warm_reset_tb #(
-	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1
+	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
+	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -54,7 +55,8 @@ module ddr_frame_store_warm_reset_tb #(
 		.SDRAM_MAILBOX_PHYS(32'h3001_F110),
 		.FRAME_MAILBOX_PHYS(32'h3001_F118),
 		.DDR_BURST_MAX(8),
-		.IGNORE_STALE_DOORBELL_AFTER_RESET(IGNORE_STALE_DOORBELL_AFTER_RESET)
+		.IGNORE_STALE_DOORBELL_AFTER_RESET(IGNORE_STALE_DOORBELL_AFTER_RESET),
+		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

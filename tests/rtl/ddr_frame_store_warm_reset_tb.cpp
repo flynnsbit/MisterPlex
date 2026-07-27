@@ -19,6 +19,7 @@ constexpr int kYQ = kW / 8;
 constexpr int kCQ = kW / 16;
 constexpr int kUQBase = (kW * kH) / 8;
 constexpr int kVQBase = kUQBase + (kW * kH) / 32;
+constexpr uint32_t kSeqMask = 0x1fffffffu;
 
 uint32_t doorbellHi(uint32_t seq, int bank) {
     return (static_cast<uint32_t>(bank & 1) << 31) | (1u << 29) | (seq & 0x1fffffffu);
@@ -45,6 +46,8 @@ public:
     uint32_t rdAddr = 0;
     int rdLeft = 0;
     int rdIndex = 0;
+    int scanX = 0;
+    int scanY = 0;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -134,6 +137,21 @@ public:
         top.vsync_pulse = 0;
     }
 
+    void videoTick() {
+        top.rd_active = 1;
+        top.rd_x = scanX;
+        top.rd_y = scanY;
+        top.vsync_pulse = (scanX == 0 && scanY == 0);
+        tick();
+        ++scanX;
+        if (scanX == kW) {
+            scanX = 0;
+            ++scanY;
+            if (scanY == kH)
+                scanY = 0;
+        }
+    }
+
     void resetCore() {
         top.reset = 1;
         for (int i = 0; i < 8; ++i)
@@ -150,10 +168,7 @@ public:
 
     bool waitCyclesNoFrame(int n) {
         for (int i = 0; i < n; ++i) {
-            if ((i % 97) == 0)
-                pulseVsync();
-            else
-                tick();
+            videoTick();
             if (top.has_frame)
                 return false;
         }
@@ -161,18 +176,37 @@ public:
     }
 
     bool waitForFrame(int maxCycles) {
+        const int startFrames = top.frames_done;
+        return waitForFrameCount(startFrames + 1, maxCycles);
+    }
+
+    bool waitForFrameCount(int minFrames, int maxCycles) {
+        for (int i = 0; i < maxCycles; ++i) {
+            videoTick();
+            if (top.frames_done >= minFrames)
+                return true;
+        }
+        return false;
+    }
+
+    bool waitForFrameCountStatic(int minFrames, int maxCycles) {
+        top.rd_active = 0;
+        top.rd_x = 0;
+        top.rd_y = 0;
         for (int i = 0; i < maxCycles; ++i) {
             if ((i % 97) == 0)
                 pulseVsync();
             else
                 tick();
-            if (top.has_frame)
+            if (top.frames_done >= minFrames)
                 return true;
         }
         return false;
     }
 
     uint8_t sample(int x, int y) {
+        const int saveX = scanX;
+        const int saveY = scanY;
         top.rd_x = x;
         top.rd_y = y;
         top.rd_active = 1;
@@ -180,52 +214,22 @@ public:
             tick();
         top.rd_active = 0;
         tick();
+        scanX = saveX;
+        scanY = saveY;
         return top.rd_r;
     }
 };
 
-void run() {
-    {
-        Sim sim;
-        sim.fillFrame(1, 208);
-        sim.resetCore();
-        for (int i = 0; i < 3000; ++i)
-            sim.tick();
-        sim.ringDoorbell(1, 1);
-        if (!sim.waitForFrame(50000))
-            throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
-        for (int i = 0; i < 1000; ++i)
-            sim.tick();
-        const uint8_t got = sim.sample(0, 0);
-        if (got < 207 || got > 209) {
-            std::cerr << "FAIL ddr_frame_store warm-reset: first fresh no-stale pixel r="
-                      << int(got) << " want≈208\n";
-            std::exit(1);
-        }
-    }
-
-    Sim sim;
-    sim.fillFrame(0, 48);
-    sim.fillFrame(1, 208);
-    sim.ringDoorbell(0, 1);
-    sim.resetCore();
-
-    if (!sim.waitCyclesNoFrame(25000)) {
-        std::cerr << "FAIL ddr_frame_store warm-reset: accepted stale doorbell before fresh frame"
-                  << " cycle=" << sim.cycle << " frames=" << sim.top.frames_done << "\n";
-        std::exit(1);
-    }
-
-    sim.ringDoorbell(1, 2);
-    if (!sim.waitForFrame(50000))
-        throw std::runtime_error("fresh doorbell did not produce a frame");
+uint8_t stableSample(Sim& sim) {
     for (int i = 0; i < 1000; ++i)
         sim.tick();
+    return sim.sample(0, 0);
+}
 
-    const uint8_t got = sim.sample(0, 0);
-    const uint8_t want = expectedRgb(208);
+void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
+    const uint8_t got = stableSample(sim);
     if (got + 1 < want || got > want + 1) {
-        std::cerr << "FAIL ddr_frame_store warm-reset: got stale/wrong pixel r=" << int(got)
+        std::cerr << "FAIL ddr_frame_store warm-reset: " << label << " got r=" << int(got)
                   << " want≈" << int(want) << " frames=" << sim.top.frames_done
                   << " underruns=" << sim.top.underrun_count
                   << " has_frame=" << int(sim.top.has_frame)
@@ -233,12 +237,108 @@ void run() {
                   << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec << "\n";
         std::exit(1);
     }
+}
 
-    std::cout << "ddr_frame_store warm-reset raw: stale_seq=1 fresh_seq=2 stale_bank=0"
-              << " fresh_bank=1 first_fresh_no_stale=pass no_frame_cycles=25000 frames=" << sim.top.frames_done
-              << " sample_x=0 sample_y=0 sample_r=" << int(got)
-              << " underruns=" << sim.top.underrun_count
+void runFreshNoStale() {
+    Sim sim;
+    sim.fillFrame(1, 208);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+    sim.ringDoorbell(1, 1);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
+    expectFreshSample("first fresh no-stale", sim, 208);
+}
+
+void runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, int freshBank,
+                         uint8_t freshY, const std::string& label) {
+    Sim sim;
+    sim.fillFrame(0, 48);
+    sim.fillFrame(1, freshY);
+    sim.ringDoorbell(staleBank, staleSeq);
+    sim.resetCore();
+
+    if (!sim.waitCyclesNoFrame(25000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: accepted stale doorbell before fresh frame"
+                  << " label=" << label << " cycle=" << sim.cycle
+                  << " frames=" << sim.top.frames_done << "\n";
+        std::exit(1);
+    }
+
+    sim.ringDoorbell(freshBank, freshSeq);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error(label + ": fresh doorbell did not produce a frame");
+    expectFreshSample(label, sim, freshY);
+
+    std::cout << "ddr_frame_store warm-reset raw: " << label << " stale_seq=" << staleSeq
+              << " fresh_seq=" << freshSeq << " stale_bank=" << staleBank
+              << " fresh_bank=" << freshBank << " no_frame_cycles=25000 frames="
+              << sim.top.frames_done << " sample_x=0 sample_y=0 sample_r=" << int(freshY)
+              << " underruns=" << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
+}
+
+void runRunningArmRestartLower() {
+    Sim sim;
+    sim.fillFrame(0, 96);
+    sim.resetCore();
+    sim.ringDoorbell(0, 9);
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("running-restart: initial frame did not present");
+    expectFreshSample("running-restart initial", sim, 96);
+
+    const int prevFrames = sim.top.frames_done;
+    sim.fillFrame(1, 214);
+    sim.ringDoorbell(1, 1);
+    if (!sim.waitForFrameCountStatic(prevFrames + 1, 800000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: running-restart no second frame"
+                  << " prev_frames=" << prevFrames << " frames=" << sim.top.frames_done
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " swap_pending=" << int(sim.top.swap_pending)
+                  << " doorbell_ok=" << int(sim.top.doorbell_ok)
+                  << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec
+                  << " cycle=" << sim.cycle << "\n";
+        throw std::runtime_error("running-restart: lower restarted seq did not present");
+    }
+    expectFreshSample("running-restart lower seq", sim, 214);
+
+    std::cout << "ddr_frame_store warm-reset raw: running_arm_restart stale_seq=9 fresh_seq=1"
+              << " stale_bank=0 fresh_bank=1 frames=" << sim.top.frames_done
+              << " sample_r=214 underruns=" << sim.top.underrun_count
               << " cycles=" << sim.cycle << "\n";
+}
+
+void runEqualTokenFallback() {
+    Sim sim;
+    sim.fillFrame(0, 48);
+    sim.ringDoorbell(0, 5);
+    sim.resetCore();
+    if (!sim.waitCyclesNoFrame(25000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: equal-token fallback fired too early"
+                  << " cycle=" << sim.cycle << " frames=" << sim.top.frames_done << "\n";
+        std::exit(1);
+    }
+
+    sim.fillFrame(0, 212);
+    sim.ringDoorbell(0, 5);
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("equal-token fallback did not recover");
+    expectFreshSample("equal-token fallback", sim, 212);
+
+    std::cout << "ddr_frame_store warm-reset raw: equal_token_fallback stale_seq=5 fresh_seq=5"
+              << " stale_bank=0 fresh_bank=0 no_frame_cycles=25000 frames="
+              << sim.top.frames_done << " sample_r=212 underruns=" << sim.top.underrun_count
+              << " cycles=" << sim.cycle << "\n";
+}
+
+void run() {
+    runFreshNoStale();
+    runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
+    runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
+    runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
+    runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
+    runRunningArmRestartLower();
+    runEqualTokenFallback();
     std::cout << "OK ddr_frame_store warm-reset: stale doorbell ignored until fresh frame\n";
 }
 } // namespace

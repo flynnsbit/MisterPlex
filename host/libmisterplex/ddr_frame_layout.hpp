@@ -33,6 +33,8 @@ constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
+constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
@@ -264,7 +266,19 @@ inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
 
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {
     return (static_cast<uint32_t>(bank & 1) << 31) |
-           ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & 0x1FFFFFFFu);
+           ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & kDdrFrameDoorbellSeqMask);
+}
+
+inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,
+                              uint32_t& seq, int& bank) {
+    if (lo != kDdrFrameDoorbellMagic)
+        return false;
+    const uint32_t format = (hi >> 29) & 0x3u;
+    if (format != ddrFrameFormatCode(expectedFormat))
+        return false;
+    bank = static_cast<int>((hi >> 31) & 0x1u);
+    seq = hi & kDdrFrameDoorbellSeqMask;
+    return true;
 }
 
 } // namespace misterplex
