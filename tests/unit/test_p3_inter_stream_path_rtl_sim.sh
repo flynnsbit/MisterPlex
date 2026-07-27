@@ -25,6 +25,7 @@ TB="$ROOT/tests/rtl/stream_path_inter_tb.cpp"
 IDR_FIXTURE="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
 INTER_FIXTURE="$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264"
 BUILD="$ROOT/build/verilator/stream_path_inter"
+BUILD_FAULT="$ROOT/build/verilator/stream_path_inter_bad_pixel"
 RTL_DIR="$ROOT/fpga/Plex_MiSTer/rtl"
 PRODUCT_RTL=(
   stream_path.sv
@@ -58,7 +59,7 @@ for f in "${PRODUCT_RTL[@]}"; do
   RTL_ARGS+=("$RTL_DIR/$f")
 done
 
-mkdir -p "$BUILD"
+mkdir -p "$BUILD" "$BUILD_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -67,3 +68,23 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$TOP" "${RTL_ARGS[@]}" "$TB"
 "$BUILD/Vstream_path_inter_tb" "$IDR_FIXTURE"
 "$BUILD/Vstream_path_inter_tb" "$INTER_FIXTURE"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_FAULT" \
+  --top-module stream_path_inter_tb -GFAULT_INTER_DIAG_PIXEL=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+set +e
+FAULT_OUT="$($BUILD_FAULT/Vstream_path_inter_tb "$INTER_FIXTURE" 2>&1)"
+FAULT_RC=$?
+set -e
+printf '%s\n' "$FAULT_OUT"
+if [[ "$FAULT_RC" -eq 0 ]]; then
+  echo "FAIL stream_path inter RTL red-check: bad diagnostic pixel unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'inter diag pixel' <<<"$FAULT_OUT"; then
+  echo "FAIL stream_path inter RTL red-check: expected inter diag pixel mismatch" >&2
+  exit 1
+fi
+echo "OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden"
