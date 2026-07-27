@@ -96,10 +96,9 @@ struct WeakLadder {
     std::string audioCodec = "aac";
     std::string h264Profile = "baseline";
     int h264Level = 30;
-    // Use a neutral PMS profile for universal transcodes so our explicit
-    // X-Plex-Client-Profile-Extra constraints are not widened by Chrome's
-    // High-profile-capable defaults.
-    std::string clientProfileName = "Generic";
+    // Server-side PMS profile that forces Baseline/CAVLC/ref=1 transcodes.
+    // If the XML is absent, tested PMS versions fall back gracefully to Generic.
+    std::string clientProfileName = "MiSTerPlex";
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first

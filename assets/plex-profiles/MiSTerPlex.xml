@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Client name="MiSTerPlex">
-  <!-- Prepared profile for MiSTerPlex 480p hardware-decode experiments.
-       Install only with user approval; see docs/pms-baseline-profile.md. -->
+  <!-- MiSTerPlex 480p hardware-decode profile; see docs/pms-baseline-profile.md
+       for install, restore, rollback, and delivered-SPS evidence. -->
   <TranscodeTargets>
     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
       <!-- Force x264 into the narrow subset the FPGA decoder is scoped for:

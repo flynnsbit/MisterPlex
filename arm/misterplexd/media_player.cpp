@@ -1046,8 +1046,8 @@ void MediaPlayer::streamPump(int sfd) {
             if (!cabacLogged) {
                 cabacLogged = true;
                 log("media: recon CABAC/High — PPS entropy_coding_mode=1; host CAVLC skip "
-                    "(sticky). FFmpeg RGB F1 fallback if enabled. Prefer Baseline/Main "
-                    "CAVLC or direct H.264 Part for STREAM recon.");
+                    "(sticky). Stream is High/CABAC; MiSTerPlex.xml profile may be missing "
+                    "or inactive on PMS. FFmpeg RGB F1 fallback if enabled.");
             }
         } else {
             // CAVLC PPS: allow I-slice recon (seek/segment may flip profile).
@@ -1093,8 +1093,8 @@ void MediaPlayer::streamPump(int sfd) {
                 if (!cabacLogged) {
                     cabacLogged = true;
                     log("media: recon CABAC/High — host CAVLC cannot decode this stream; "
-                        "FFmpeg RGB F1 fallback (STREAM still feeds F3). "
-                        "Prefer Baseline/Main CAVLC or direct H.264 Part for STREAM recon.");
+                        "stream is High/CABAC; MiSTerPlex.xml profile may be missing or "
+                        "inactive on PMS. FFmpeg RGB F1 fallback (STREAM still feeds F3).");
                 }
                 return;
             }
@@ -1676,8 +1676,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 static thread_local int64_t lastCabacWarn = -1;
                 if (elapsed - lastCabacWarn > 9000) {
                     lastCabacWarn = elapsed;
-                    log("media: STREAM no-RGB + CABAC — no F1 present; set STREAM_SKIP_RGB=0 "
-                        "or PRESENT=both for FFmpeg RGB fallback");
+                    log("media: STREAM no-RGB + CABAC — stream is High/CABAC; MiSTerPlex.xml "
+                        "profile may be missing or inactive on PMS. Set STREAM_SKIP_RGB=0 or "
+                        "PRESENT=both for FFmpeg RGB fallback.");
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
