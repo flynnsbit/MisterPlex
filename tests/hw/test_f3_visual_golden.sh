@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Hardware visual decode regression: deploy/verify Plex, push a known 624x480
-# Baseline/CAVLC IDR, capture the real HDMI output, and compare against a
-# checked-in 640x480 golden with quantified errors + diff artifact.
+# Hardware visual decode regression: deploy/verify Plex, push the proven
+# Baseline/CAVLC IDR, capture the real HDMI output, and compare against the
+# checked-in known-good hardware golden with quantified errors + diff artifact.
 #
 # This is a scheduled-token test. It does not build Quartus and only deploys an
 # RBF when VISUAL_RBF (or the first positional arg) is supplied.
@@ -18,11 +18,18 @@ CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
 CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
+COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
 RBF="${VISUAL_RBF:-${1:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
-BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/hw_visual/plex_visual_624x480_1f.264}"
-GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_visual_640x480_golden.png}"
+BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
+GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png}"
 TOOL="$ROOT/scripts/hw_visual_compare.py"
+
+if [[ "$(basename "$BITSTREAM")" == "plex_visual_624x480_1f.264" && "${VISUAL_ALLOW_UNPROVEN_624:-0}" != "1" ]]; then
+  echo "FAIL: 624x480 visual fixture is not a proven hardware gate on rollback 57674f2e." >&2
+  echo "Use the default 320x240 proven vector/golden, or set VISUAL_ALLOW_UNPROVEN_624=1 for investigation only." >&2
+  exit 2
+fi
 
 mkdir -p "$OUT"
 
@@ -55,21 +62,76 @@ capture() {
     --video-size "$CAP_SIZE" --framerate "$CAP_FPS" --attempts "$CAP_ATTEMPTS" "$@"
 }
 
+COMPARE_ARGS=()
+if [[ -n "$COMPARE_BOX" ]]; then
+  COMPARE_ARGS=(--compare-box "$COMPARE_BOX")
+fi
+
 echo "=== set HDMI mode preset $VIDEO_MODE for capture ($CAP_FMT $CAP_SIZE@$CAP_FPS) ==="
 ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
 sleep 3
 
-echo "=== capture previous condition for stale-capture rejection ==="
-capture --out "$OUT/previous.png"
+if [[ -z "$RBF" && "${VISUAL_PREVIOUS_MENU:-1}" == "1" ]]; then
+  echo "=== capture MiSTer menu as previous condition for freshness ==="
+  ssh_m "printf '%s\n' 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd"
+  for _ in $(seq 1 20); do
+    ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi menu && break
+    sleep 1
+  done
+  ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi menu
+  ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
+  sleep 2
+  capture --out "$OUT/previous.png"
+  echo "=== reload existing Plex core after menu freshness capture ==="
+  ssh_m "printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd"
+  for _ in $(seq 1 20); do
+    ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi plex && break
+    sleep 1
+  done
+  ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi plex
+  ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
+  sleep 2
+else
+  echo "=== capture previous condition for stale-capture rejection ==="
+  capture --out "$OUT/previous.png"
+fi
 
-echo "=== push checked-in Baseline/CAVLC visual bitstream ==="
-"${SCP[@]}" "$BITSTREAM" "$USER@$HOST:/media/fat/plex_visual_624x480_1f.264"
-ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_visual_624x480_1f.264' \
-  | tee "$OUT/push.txt"
-sleep 1
+echo "=== wait for Plex status path ==="
+for _ in $(seq 1 20); do
+  if ssh_m '/media/fat/misterplex/bin/push_frame --status' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
 
-echo "=== status telemetry (off-screen decoder debug state) ==="
-ssh_m '/media/fat/misterplex/bin/push_frame --status' | tee "$OUT/status.txt"
+echo "=== push checked-in Baseline/CAVLC visual bitstream: $(basename "$BITSTREAM") ==="
+"${SCP[@]}" "$BITSTREAM" "$USER@$HOST:/media/fat/plex_visual_gate.264"
+ST=""
+>"$OUT/push.txt"
+for attempt in 1 2 3; do
+  echo "push attempt $attempt" | tee -a "$OUT/push.txt"
+  ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_visual_gate.264' \
+    | tee -a "$OUT/push.txt"
+  sleep 1
+
+  echo "=== status telemetry (off-screen decoder debug state; attempt $attempt) ==="
+  for _ in $(seq 1 20); do
+    ST="$(ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null || true)"
+    if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+      break
+    fi
+    sleep 0.2
+  done
+  if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+    break
+  fi
+done
+printf '%s\n' "$ST" | tee "$OUT/status.txt"
+if [[ "${VISUAL_REQUIRE_STATUS:-1}" == "1" ]]; then
+  echo "$ST" | grep -q 'sps_valid=1' || { echo "FAIL: visual bitstream did not latch SPS status" >&2; exit 2; }
+  echo "$ST" | grep -q 'pps_valid=1' || { echo "FAIL: visual bitstream did not latch PPS status" >&2; exit 2; }
+  echo "$ST" | grep -q 'mb0=0' || { echo "FAIL: visual bitstream did not reach MB0 status" >&2; exit 2; }
+fi
 
 echo "=== repeated static captures for measured noise floor ==="
 for i in 0 1 2 3 4; do
@@ -77,12 +139,14 @@ for i in 0 1 2 3 4; do
   sleep 0.2
 done
 python3 "$TOOL" noise \
+  "${COMPARE_ARGS[@]}" \
   --frames "$OUT/cap_0.png" "$OUT/cap_1.png" "$OUT/cap_2.png" "$OUT/cap_3.png" "$OUT/cap_4.png" \
   --out "$OUT/noise.json" | tee "$OUT/noise.txt"
 
 echo "=== compare capture against checked-in golden ==="
 set +e
 python3 "$TOOL" compare \
+  "${COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
   --previous "$OUT/previous.png" \
   --capture "$OUT/cap_4.png" \
@@ -130,6 +194,7 @@ Image.fromarray(im, "RGB").save(dst)
 PY
   set +e
   python3 "$TOOL" compare \
+    "${COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
     --capture "$OUT/cap_bad.png" \
     --noise-report "$OUT/noise.json" \
