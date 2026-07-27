@@ -4,6 +4,37 @@ This note is a realtime ratchet for the FPGA decode path. It deliberately
 separates measured cost from unknown future cost; unknown stages are not counted
 as free.
 
+## Clock provenance (traced and verified 2026-07-27)
+
+Every decode stage runs on a single clock domain. The chain is:
+
+```
+FPGA_CLK2_50 (50 MHz board osc)
+ └─ pll_0002.v: altera_pll outclk_0 = "20.000000 MHz"     → clk_sys
+    └─ Plex.sv line 215:   .outclk_0(clk_sys)
+       └─ Plex.sv line 588: stream_path spath .clk(clk_sys)
+          └─ stream_path.sv: every submodule gets .clk(clk)
+             ├─ stream_ingest    .clk(clk)   line 103
+             ├─ ddr_bitstream_reader .clk(clk) line 116
+             ├─ bitstream_fifo   .clk(clk)   line 148
+             ├─ nalu_scanner     .clk(clk)   line 164
+             ├─ sps_parser       .clk(clk)   line 190
+             ├─ pps_parser       .clk(clk)   line 205
+             ├─ slice_hdr_parser .clk(clk)   line 232
+             └─ decode_stub      .clk(clk)   line 293
+```
+
+**The decode clock is 20 MHz. There is no 100 MHz decode path.**
+
+The 100 MHz SDRAM clock (`clk_sdram`, outclk_1) and 90 MHz DDR bridge clock
+(`clk_ddr`, outclk_2) are separate outputs of the same PLL. They drive the
+SDRAM controller and f2sdram bridge respectively, NOT the decode pipeline.
+
+**Provenance of the "100 MHz / 3,418 cycles/MB" figure:** `docs/p3-mc-dpb-bandwidth.md`
+used the SDRAM default clock (100 MHz) in the budget calculation instead of the
+actual decode clock (20 MHz). This error has been corrected. The number had no
+traced provenance — it was an assumption that was never verified against the RTL.
+
 ## Declared assumptions
 
 | Parameter | Value | Source |
@@ -45,16 +76,36 @@ Additional raw integration signal:
 | `test_stream_path_deblock_integration.sh` on `wcap_residual14_idr_plus_p.264` | `recon_sig_3b_cycles` | 16,523 | deblock/stream integration liveness counter, not a per-stage cycle cost |
 | `test_h264_multinal_stream_path.sh` 320×240 12f fixture | `recon_sig_3b_cycles` / `cycles` | 39,780 / 55,319 | P-slice DPB/MC liveness context from w-cabac; not full-frame P quality and not a stage cost |
 
-## Stage coverage
+## Stage coverage (per-stage cycle accounting, 2026-07-27)
 
-| Stage | Status | Current measured cost |
-| --- | --- | ---:|
-| Aggregate current `stream_path` simulation | measured | 259.391 cycles/MB at 624×480 |
-| Annex-B/SPS/PPS/slice parse | included in aggregate | no separate counter |
-| CAVLC/dequant/IDCT/intra prediction | included in aggregate for implemented I path | no separate counter |
-| MC/DPB fetch for correct P-slices | **UNKNOWN** | not yet bit-exact in this branch |
-| Deblock cost | **UNKNOWN** | liveness tested, no per-frame cost counter |
-| Product DDR writeback/present arbitration | **UNKNOWN** | current full-frame sim emits diagnostic RGB/I420 comparison, not full product arbitration |
+The aggregate 259 cycles/MB was **98.7% decode_stub diagnostic paint overhead**.
+Per-stage instrumentation (via `stub_busy`/`fs_wr_reset`/`fs_swap` phase
+transitions in the Verilator testbench) reveals the true breakdown:
+
+| Stage | cycles/MB | Status | Method |
+| --- | ---:| --- | --- |
+| parse_cavlc | 3.2 | **measured** | stub_busy rise → fs_wr_reset transition |
+| dequant_idct | 0 | **measured** | combinational (h264_dequant4x4 + h264_idct4x4) |
+| intra_pred | 0 | **measured** | combinational (DC pred=128 in h264_recon4x4) |
+| diagnostic_paint | 256 | measured, **NOT PRODUCTION** | fs_wr_reset → fs_swap; WxH pixels at 1 px/cycle |
+| mc_interpolation | **?** | **NOT IMPLEMENTED** | h264_inter_pred.sv is diagnostic-only |
+| deblock | **?** | **NOT IMPLEMENTED** | h264_deblock.sv exists but not in pipeline |
+| ddr_write | **?** | **NOT IMPLEMENTED** | ddr_frame_store not instrumented |
+| injection_overhead | 10 | measured, **TESTBENCH ARTIFACT** | ioctl 2 cycles/byte; product uses DDR DMA |
+
+**What "MARGINAL 2.64x" actually measured:** the ratio of the realtime budget
+(684 cycles/MB) to the aggregate cycle count (259 cycles/MB), where the
+aggregate is dominated by decode_stub painting 624×480 diagnostic pixels per
+frame — an operation that does not exist in the production decoder. The three
+most expensive production stages (MC, deblock, DDR write) contribute exactly
+**zero measured cycles** because they are not built yet. The margin is
+**illusory** and will collapse when those stages are implemented.
+
+**Note on parse_cavlc timing:** the 3.2 cycles/MB figure includes P-frame
+decode_stub WAIT_MAX timeout (4096 cycles each) because `residual_place_pulse`
+does not fire for unimplemented inter frames. The IDR-only parse cost is
+~0.25 cycles/MB (287 cycles for 1170 MBs). Once inter is implemented and
+residual arrives for every frame, this number will change.
 
 Do not use stale `build/p3_full_frame_624/native_score_624.json` artifacts if
 present. The full-frame candidate stream is `I420_FROM_RGB565` diagnostic output;

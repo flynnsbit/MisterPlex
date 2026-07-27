@@ -31,12 +31,23 @@ beats.
 
 ## Latency budget
 
-The decode schedule has about 100 MHz / (1170 * 25) = 3418 fabric cycles/MB.
-A raw byte-serial fetch+write would be 987 cycles/MB plus arbitration latency,
-leaving ~2400 cycles for CAVLC, inverse transform, deblock, and control. A
-64-bit coalesced implementation is comfortably lower. If arbitration ever
-forces worst-case single-byte DDR transactions, this budget does not close and
-the DPB requester must be upgraded before silicon gating.
+**CORRECTED 2026-07-27:** the original claim here used 100 MHz, but `stream_path`
+runs on `clk_sys` = 20 MHz (`pll_0002.v outclk_0`; `Plex.sv` line 588:
+`.clk(clk_sys)`). The 100 MHz figure had no provenance — it was the default
+SDRAM PLL output, not the decode clock. See `docs/decode-throughput.md` for the
+traced instantiation chain.
+
+The real budget is **20 MHz / (1170 × 25) ≈ 684 cycles/MB**, not 3,418.
+
+~~The decode schedule has about 100 MHz / (1170 * 25) = 3418 fabric cycles/MB.~~
+
+A raw byte-serial fetch+write would be 987 cycles/MB plus arbitration latency.
+**At the real 684 cycles/MB budget, raw byte-serial DPB traffic alone (987
+cycles/MB) EXCEEDS the budget by 1.44×.** 64-bit coalesced transactions
+reduce this to ~124 cycles/MB, which fits, but leaves only ~560 cycles/MB
+for CAVLC, inverse transform, deblock, control, and arbitration overhead.
+If arbitration ever forces worst-case single-byte DDR transactions, this budget
+does not close and the DPB requester must be upgraded before silicon gating.
 
 ## Memory choice
 
