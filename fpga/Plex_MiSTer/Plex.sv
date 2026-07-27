@@ -204,6 +204,7 @@ end
 
 wire clk_sys;
 wire clk_sdram;
+wire clk_ddr;
 wire pll_locked;
 pll pll
 (
@@ -211,6 +212,7 @@ pll pll
 	.rst(0),
 	.outclk_0(clk_sys),
 	.outclk_1(clk_sdram),
+	.outclk_2(clk_ddr),
 	.locked(pll_locked)
 );
 
@@ -312,6 +314,31 @@ wire [15:0] frame_underruns;
 wire  [7:0] frame_sdram_state;
 wire        sdram_test_active = !sdram_test_done;
 
+`ifdef DDR_FRAME_STORE
+assign SDRAM_DQ = 'Z;
+assign SDRAM_A = '0;
+assign SDRAM_DQML = 1'b1;
+assign SDRAM_DQMH = 1'b1;
+assign SDRAM_BA = '0;
+assign SDRAM_nCS = 1'b1;
+assign SDRAM_nWE = 1'b1;
+assign SDRAM_nRAS = 1'b1;
+assign SDRAM_nCAS = 1'b1;
+assign SDRAM_CKE = 1'b0;
+assign SDRAM_CLK = 1'b0;
+assign sdram_dout = 16'd0;
+assign sdram_ready = 1'b0;
+assign sdram_test_state = 4'd0;
+assign sdram_size_code = 4'd0;
+assign sdram_error_count = 16'd0;
+assign sdram_read_sample = 16'd0;
+assign sdram_first_fail_valid = 1'b0;
+assign sdram_first_fail_addr = 26'd0;
+assign sdram_first_fail_expect = 16'd0;
+assign sdram_test_done = 1'b1;
+assign sdram_test_pass = 1'b0;
+assign sdram_startup_busy = 1'b0;
+`else
 sdram_memtest #(
 	.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
 ) sdram_test (
@@ -391,6 +418,7 @@ sdram #(
 	.cpreq(1'b0),
 	.cpbusy()
 );
+`endif
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
@@ -432,8 +460,16 @@ wire        ddr_wr_reset;
 wire        ddr_swap;
 wire        ddr_busy;
 wire [15:0] ddr_frames;
+wire        ddr_doorbell_ok;
 wire        swap_pending;
 
+`ifdef DDR_FRAME_STORE
+assign ddr_wr_en = 1'b0;
+assign ddr_wr_pixel = 16'd0;
+assign ddr_wr_reset = 1'b0;
+assign ddr_swap = 1'b0;
+assign ddr_busy = swap_pending;
+`else
 ddram_frame_rd #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
@@ -479,6 +515,8 @@ ddram_frame_rd #(
 	.busy(ddr_busy),
 	.frames_done(ddr_frames)
 );
+assign ddr_doorbell_ok = 1'b0;
+`endif
 
 // Audio ingest from F2
 wire        af_wr_en;
@@ -624,6 +662,29 @@ present_core #(
 	.sdram_rd(frame_sdram_rd),
 	.sdram_bs(frame_sdram_bs),
 	.sdram_refresh(frame_sdram_refresh),
+`ifdef DDR_FRAME_STORE
+	.ddr_start_req(status[12]),
+	.ddr_bank_sel(status[13]),
+	.ddr_status_osd(status[15:0]),
+	.ddr_input_cmd_valid(playback_cmd_valid),
+	.ddr_input_cmd(playback_cmd),
+	.ddr_sdram_test_state(sdram_test_state),
+	.ddr_sdram_size_code(sdram_size_code),
+	.ddr_sdram_error_count(sdram_error_count),
+	.clk_ddr(clk_ddr),
+	.DDRAM_CLK(DDRAM_CLK),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE),
+	.ddr_frames_done(ddr_frames),
+	.ddr_doorbell_ok(ddr_doorbell_ok),
+`endif
 	.af_wr_en(af_wr_en),
 	.af_wr_data(af_wr_data),
 	// OSD T[10] or SPI status bit 10 pulses flush

@@ -14,12 +14,10 @@ struct Spec {
     int fps;
 };
 
-constexpr double kDdrClkMHz = 20.0;
-constexpr double kBridgeQwordsPerUs = kDdrClkMHz;
 constexpr double kWorstBlackoutUs = 500.0;
 constexpr double kBlackoutPeriodUs = 5000.0;
 constexpr double kBlackoutPhaseUs = 1000.0;
-constexpr double kLineReadLatencyUs = 6.4; // 128 clk_sys cycles before a long burst returns.
+constexpr double kLineReadLatencyCycles = 128.0; // Conservative bridge response latency before burst data.
 
 uint16_t pattern(int bank, int row, int col, int width) {
     return static_cast<uint16_t>((bank ? 0x8000 : 0x1000) ^ (row * width + col));
@@ -135,10 +133,10 @@ struct PrefetchResult {
     int first_underrun_line = -1;
 };
 
-PrefetchResult simulate_ddr_prefetch(const Spec& s, int line_count) {
+PrefetchResult simulate_ddr_prefetch(const Spec& s, int line_count, double ddr_clk_mhz) {
     const double line_period_us = 1000000.0 / (static_cast<double>(s.height) * s.fps);
     const double line_qwords = static_cast<double>(s.width) / 4.0;
-    const double service_us = kLineReadLatencyUs + line_qwords / kBridgeQwordsPerUs;
+    const double service_us = (kLineReadLatencyCycles + line_qwords) / ddr_clk_mhz;
 
     std::map<int, double> complete_at;
     std::set<int> scheduled;
@@ -173,28 +171,28 @@ PrefetchResult simulate_ddr_prefetch(const Spec& s, int line_count) {
     return result;
 }
 
-bool expect_clean(const Spec& s, int lines) {
-    const auto r = simulate_ddr_prefetch(s, lines);
+bool expect_clean(const Spec& s, int lines, double ddr_clk_mhz) {
+    const auto r = simulate_ddr_prefetch(s, lines, ddr_clk_mhz);
     if (r.underruns != 0) {
         std::fprintf(stderr,
-                     "%dx%d@%d line_count=%d: expected clean, underruns=%d first_line=%d\n",
-                     s.width, s.height, s.fps, lines, r.underruns, r.first_underrun_line);
+                     "%dx%d@%d %.0fMHz line_count=%d: expected clean, underruns=%d first_line=%d\n",
+                     s.width, s.height, s.fps, ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
         return false;
     }
-    std::printf("test_frame_store_ddr_prefetch_sim: %dx%d@%d line_count=%d OK under %.0fus DDR blackout\n",
-                s.width, s.height, s.fps, lines, kWorstBlackoutUs);
+    std::printf("test_frame_store_ddr_prefetch_sim: %dx%d@%d %.0fMHz line_count=%d OK under %.0fus DDR blackout\n",
+                s.width, s.height, s.fps, ddr_clk_mhz, lines, kWorstBlackoutUs);
     return true;
 }
 
-bool expect_underrun(const Spec& s, int lines) {
-    const auto r = simulate_ddr_prefetch(s, lines);
+bool expect_underrun(const Spec& s, int lines, double ddr_clk_mhz) {
+    const auto r = simulate_ddr_prefetch(s, lines, ddr_clk_mhz);
     if (r.underruns == 0) {
-        std::fprintf(stderr, "%dx%d@%d line_count=%d: expected underrun under %.0fus blackout\n",
-                     s.width, s.height, s.fps, lines, kWorstBlackoutUs);
+        std::fprintf(stderr, "%dx%d@%d %.0fMHz line_count=%d: expected underrun under %.0fus blackout\n",
+                     s.width, s.height, s.fps, ddr_clk_mhz, lines, kWorstBlackoutUs);
         return false;
     }
-    std::printf("test_frame_store_ddr_prefetch_sim: %dx%d@%d line_count=%d expected underrun=%d first_line=%d\n",
-                s.width, s.height, s.fps, lines, r.underruns, r.first_underrun_line);
+    std::printf("test_frame_store_ddr_prefetch_sim: %dx%d@%d %.0fMHz line_count=%d expected underrun=%d first_line=%d\n",
+                s.width, s.height, s.fps, ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
     return true;
 }
 } // namespace
@@ -216,10 +214,22 @@ int main() {
                 broken);
 
     bool ok = true;
-    ok &= expect_clean(Spec{640, 480, 24}, 8);
-    ok &= expect_underrun(Spec{640, 480, 30}, 4);
-    ok &= expect_clean(Spec{640, 480, 30}, 8);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8);
-    ok &= expect_clean(Spec{640, 480, 60}, 16);
+    ok &= expect_clean(Spec{640, 480, 24}, 8, 20.0);
+    ok &= expect_underrun(Spec{640, 480, 30}, 4, 20.0);
+    ok &= expect_clean(Spec{640, 480, 30}, 8, 20.0);
+    ok &= expect_underrun(Spec{640, 480, 60}, 8, 20.0);
+    ok &= expect_clean(Spec{640, 480, 60}, 16, 20.0);
+
+    ok &= expect_clean(Spec{640, 480, 30}, 8, 90.0);
+    ok &= expect_underrun(Spec{640, 480, 60}, 8, 90.0);
+    ok &= expect_clean(Spec{640, 480, 60}, 16, 90.0);
+    ok &= expect_underrun(Spec{1280, 720, 30}, 8, 90.0);
+    ok &= expect_clean(Spec{1280, 720, 30}, 16, 90.0);
+
+    ok &= expect_clean(Spec{640, 480, 30}, 8, 100.0);
+    ok &= expect_underrun(Spec{640, 480, 60}, 8, 100.0);
+    ok &= expect_clean(Spec{640, 480, 60}, 16, 100.0);
+    ok &= expect_underrun(Spec{1280, 720, 30}, 8, 100.0);
+    ok &= expect_clean(Spec{1280, 720, 30}, 16, 100.0);
     return ok ? 0 : 1;
 }

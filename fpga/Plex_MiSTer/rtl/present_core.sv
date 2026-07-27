@@ -19,6 +19,8 @@ module present_core #(
 	parameter int FRAME_LINE_COUNT = 4
 `elsif FRAME_LINES_8
 	parameter int FRAME_LINE_COUNT = 8
+`elsif FRAME_LINES_16
+	parameter int FRAME_LINE_COUNT = 16
 `else
 	parameter int FRAME_LINE_COUNT = 4
 `endif
@@ -53,6 +55,30 @@ module present_core #(
 	output wire        sdram_rd,
 	output wire  [1:0] sdram_bs,
 	output wire        sdram_refresh,
+
+`ifdef DDR_FRAME_STORE
+	input  wire        ddr_start_req,
+	input  wire        ddr_bank_sel,
+	input  wire [15:0] ddr_status_osd,
+	input  wire        ddr_input_cmd_valid,
+	input  wire  [7:0] ddr_input_cmd,
+	input  wire  [3:0] ddr_sdram_test_state,
+	input  wire  [3:0] ddr_sdram_size_code,
+	input  wire [15:0] ddr_sdram_error_count,
+	input  wire        clk_ddr,
+	output wire        DDRAM_CLK,
+	input  wire        DDRAM_BUSY,
+	output wire  [7:0] DDRAM_BURSTCNT,
+	output wire [28:0] DDRAM_ADDR,
+	input  wire [63:0] DDRAM_DOUT,
+	input  wire        DDRAM_DOUT_READY,
+	output wire        DDRAM_RD,
+	output wire [63:0] DDRAM_DIN,
+	output wire  [7:0] DDRAM_BE,
+	output wire        DDRAM_WE,
+	output wire [15:0] ddr_frames_done,
+	output wire        ddr_doorbell_ok,
+`endif
 
 	// audio_fifo write (from audio_ingest)
 	input  wire        af_wr_en,
@@ -194,6 +220,66 @@ module present_core #(
 	wire [15:0] frame_underruns;
 	wire [7:0]  frame_sdram_state;
 
+`ifdef DDR_FRAME_STORE
+	assign fs_wr_ready = 1'b1;
+	assign wr_count = 32'd0;
+	assign wr_done = 1'b0;
+	assign sdram_sel = 1'b0;
+	assign sdram_addr = 26'd0;
+	assign sdram_din = 16'd0;
+	assign sdram_wr = 1'b0;
+	assign sdram_rd = 1'b0;
+	assign sdram_bs = 2'b11;
+	assign sdram_refresh = 1'b0;
+
+	ddr_frame_store #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.FRAME_STRIDE(FRAME_STRIDE),
+		.LINE_COUNT(FRAME_LINE_COUNT),
+		.PHYS_BASE(32'h3000_0000),
+		.HPS_BANK_STRIDE_BYTES(
+			((FRAME_STRIDE * FRAME_H * 2) <= 262144)  ? 262144  :
+			((FRAME_STRIDE * FRAME_H * 2) <= 1048576) ? 1048576 :
+			((FRAME_STRIDE * FRAME_H * 2) <= 2097152) ? 2097152 : 4194304
+		)
+	) fstore (
+		.clk(clk),
+		.clk_ddr(clk_ddr),
+		.reset(reset),
+		.rd_x(store_x),
+		.rd_y(store_y),
+		.rd_active(de_r),
+		.rd_r(fr),
+		.rd_g(fg),
+		.rd_b(fb),
+		.start_req(ddr_start_req),
+		.bank_sel(ddr_bank_sel),
+		.status_osd(ddr_status_osd),
+		.input_cmd_valid(ddr_input_cmd_valid),
+		.input_cmd(ddr_input_cmd),
+		.sdram_test_state(ddr_sdram_test_state),
+		.sdram_size_code(ddr_sdram_size_code),
+		.sdram_error_count(ddr_sdram_error_count),
+		.DDRAM_CLK(DDRAM_CLK),
+		.DDRAM_BUSY(DDRAM_BUSY),
+		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+		.DDRAM_ADDR(DDRAM_ADDR),
+		.DDRAM_DOUT(DDRAM_DOUT),
+		.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+		.DDRAM_RD(DDRAM_RD),
+		.DDRAM_DIN(DDRAM_DIN),
+		.DDRAM_BE(DDRAM_BE),
+		.DDRAM_WE(DDRAM_WE),
+		.vsync_pulse(fstart),
+		.has_frame(has_frame),
+		.swap_pending(swap_pending),
+		.underrun_count(frame_underruns),
+		.frames_done(ddr_frames_done),
+		.doorbell_ok(ddr_doorbell_ok),
+		.debug_state(frame_sdram_state)
+	);
+`else
 	frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -235,6 +321,7 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+`endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
 	// Pattern no longer steals cast (old pattern!=0 force caused bars/grid under video).
