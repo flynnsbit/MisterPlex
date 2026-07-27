@@ -31,6 +31,7 @@ QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 BITSTREAM="${FULL_FRAME_BITSTREAM:-$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264}"
 SEQUENCE="${FULL_FRAME_SEQUENCE:-}"
 RATCHET="${FULL_FRAME_RATCHET:-}"
+THROUGHPUT_RATCHET="${FULL_FRAME_THROUGHPUT_RATCHET:-}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
@@ -125,8 +126,25 @@ if [[ -z "$RATCHET" ]]; then
       ;;
   esac
 fi
+if [[ -z "$THROUGHPUT_RATCHET" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_320x240_decode_throughput_v1.json"
+      ;;
+    9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_624x480_decode_throughput_v1.json"
+      ;;
+    9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_decode_throughput_v1.json"
+      ;;
+  esac
+fi
 if [[ -z "$RATCHET" || ! -f "$RATCHET" ]]; then
   echo "RTL SIM ERROR: missing native full-frame ratchet for bitstream: ${RATCHET:-<unset>}" >&2
+  exit 2
+fi
+if [[ -z "$THROUGHPUT_RATCHET" || ! -f "$THROUGHPUT_RATCHET" ]]; then
+  echo "RTL SIM ERROR: missing decode throughput ratchet for bitstream: ${THROUGHPUT_RATCHET:-<unset>}" >&2
   exit 2
 fi
 if [[ ! -f "$SEQUENCE" ]]; then
@@ -209,6 +227,10 @@ grep -q 'candidate colorspace mismatch' <<<"$COLORSPACE_OUT"
 echo "OK full-frame colorspace red-check: RGB565-derived diagnostic candidate refused by native I420 golden"
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
+"$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$COMPARE_JSON" \
+  --ratchet "$THROUGHPUT_RATCHET" \
+  --report "$REF_DIR/decode_throughput.json"
 make -s -C "$ROOT" h264-golden-tools
 python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
 import json
