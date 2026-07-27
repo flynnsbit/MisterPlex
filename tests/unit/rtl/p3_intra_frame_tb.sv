@@ -5,7 +5,7 @@ module p3_intra_frame_tb (
 	input  wire [7:0] i4_top_left,
 	input  wire       i4_has_above,
 	input  wire       i4_has_left,
-	input  wire signed [21:0] i4_residual [0:15],
+	input  wire signed [28:0] i4_residual [0:15],
 	output wire [3:0] i4_used_mode,
 	output wire [7:0] i4_pred [0:15],
 	output wire [7:0] i4_recon [0:15],
@@ -28,7 +28,7 @@ module p3_intra_frame_tb (
 	output wire [7:0] chroma_pred [0:63],
 
 	input  wire [7:0] recon_pred [0:15],
-	input  wire signed [21:0] recon_residual [0:15],
+	input  wire signed [28:0] recon_residual [0:15],
 	output wire [7:0] recon_out [0:15]
 );
 	wire [7:0] i4_pred_raw [0:15];
