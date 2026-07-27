@@ -1322,7 +1322,7 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan) {
     const uint8_t* payload = frame.payload;
     const size_t len = frame.len;
-    const int bank = plan.bank;
+    int bank = plan.bank;
     if (!payload || len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
         plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
         plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
@@ -1352,31 +1352,101 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // Brief yield so previous DMA (~1–3 ms) is done, plus a two-vsync
-    // same-bank reuse floor so a writer faster than the display cannot
-    // immediately overwrite the bank it just published. RTL still owns the
-    // actual vsync flip; there is no cheap per-frame bank-release mailbox yet,
-    // and SPI-polling swap_pending every frame previously added ~100 ms and
-    // collapsed pfps.
+    // Prefer the PLXD bank-release mailbox when it is present and live: it is the
+    // authoritative scanout/release signal, so the old same-bank timing floor is
+    // redundant on that path. Keep the timed interlock only as the structural
+    // fallback for pre-PLXD cores, mailbox absence, or stale DDR residue.
     auto tPrep0 = std::chrono::steady_clock::now();
-    usleep(1500);
-    const double nowMs = std::chrono::duration<double, std::milli>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-    const double lastBankMs = lastDdrBankDoorbellMs_[bank];
-    if (lastBankMs >= 0.0) {
-        const int64_t sinceUs = static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
-        if (sinceUs < kDdrBankReuseMinUs) {
-            const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
-            usleep(static_cast<useconds_t>(waitUs));
-            timing.bank_reuse_wait_us = waitUs;
+    bool plxdUsed = false;
+    {
+        BankReleaseStatus brs;
+        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        int plxdIters = 0;
+        if (readBankRelease(brs)) {
+            // --- Degeneracy defence (instrument-integrity #18) ---
+            // A DDR word that happens to contain PLXD magic by coincidence
+            // (boot residue) would pass the magic check and return valid-
+            // looking fields. Defence: check frames_done advances between
+            // successive frames. If it never advances, the mailbox is stale
+            // (never written by the FPGA) and we must not trust it.
+            if (brs.frames_done != plxdLastFramesDone_) {
+                plxdLivenessProven_ = true;
+                plxdStaleCount_ = 0;
+            } else {
+                ++plxdStaleCount_;
+            }
+            plxdLastFramesDone_ = brs.frames_done;
+            constexpr int kPlxdStaleLimitFrames = 10;
+            if (!plxdLivenessProven_ && plxdStaleCount_ >= kPlxdStaleLimitFrames) {
+                // frames_done has not advanced in 10 consecutive reads.
+                // This is almost certainly boot residue, not a live mailbox.
+                fprintf(stderr,
+                        "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
+                        "%d frames — treating as boot residue, falling back to timed delay\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_);
+                // Fall through to timed delay below.
+                goto plxd_absent_fallback;
+            }
+
+            // PLXD present and live — use it for bank selection. Do not also
+            // apply kDdrBankReuseMinUs here; the mailbox is the release proof.
+            if (brs.anyFree()) {
+                bank = brs.freeBank();
+                plxdUsed = true;
+            } else {
+                // Both banks in use (swap pending). Poll until free or timeout.
+                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+                    usleep(1000);
+                    ++plxdIters;
+                    if (readBankRelease(brs) && brs.anyFree()) {
+                        bank = brs.freeBank();
+                        plxdUsed = true;
+                        break;
+                    }
+                }
+                if (!plxdUsed) {
+                    // LOUD timeout — never silently fall back to the timed
+                    // interlock after PLXD was accepted as live.
+                    fprintf(stderr,
+                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
+                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
+                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(brs.disp_bank),
+                            static_cast<int>(brs.swap_pending));
+                    // Use the opposite of disp_bank as a best-effort guess.
+                    bank = brs.disp_bank ^ 1;
+                }
+            }
+            auto tPlxd1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+            timing.plxa_poll_iters = plxdIters;
+            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+        } else {
+            plxd_absent_fallback:
+            // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
+            // Fall back to the old timing-based mitigation: brief yield for
+            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
+            usleep(1500);
+            const double nowMs = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+            const double lastBankMs = lastDdrBankDoorbellMs_[bank];
+            if (lastBankMs >= 0.0) {
+                const int64_t sinceUs =
+                    static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
+                if (sinceUs < kDdrBankReuseMinUs) {
+                    const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
+                    usleep(static_cast<useconds_t>(waitUs));
+                    timing.bank_reuse_wait_us = waitUs;
+                }
+            }
         }
     }
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
-    const size_t bankOff = plan.bank_offset;
+    const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, payload, len);
     __sync_synchronize();
