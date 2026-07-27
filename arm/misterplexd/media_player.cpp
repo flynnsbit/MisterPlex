@@ -412,14 +412,23 @@ void MediaPlayer::paintIdle() {
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok())
         fb_.blitRgb24(buf.data(), w, h);
-    // F1 latches the last frame written, so the frame store must be repainted too —
-    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga. Use the
-    // same DDR-bulk-then-SPI ladder as the present loop; the SPI path alone does
-    // not reliably land a frame on a core that has been running the DDR path.
+    // F1 latches the last frame written, so the frame store must be repainted too.
+    // C3 frame-store DDR is YUV-only; use a deterministic black I420 frame for
+    // the FPGA idle clear rather than ringing the doorbell with an RGB payload.
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
-            ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
+            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            std::vector<uint8_t> yuv(makeDdrFrameLayout(g, kDdrFramePhysBase,
+                                                        kDdrFrameStrideAlign,
+                                                        DdrFrameFormat::Yuv420p)
+                                         .frame_bytes);
+            const size_t yBytes = static_cast<size_t>(g.coded_width) * g.coded_height;
+            const size_t cBytes = yBytes / 4u;
+            std::memset(yuv.data(), kYuv420BlackY, yBytes);
+            std::memset(yuv.data() + yBytes, kYuv420BlackU, cBytes);
+            std::memset(yuv.data() + yBytes + cBytes, kYuv420BlackV, cBytes);
+            ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
             ddrBank_ ^= 1;
         }
         if (!ok)

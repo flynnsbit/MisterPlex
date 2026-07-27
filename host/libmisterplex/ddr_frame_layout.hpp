@@ -45,8 +45,7 @@ enum class DdrFramePlacement {
 // HPS DDR frame-store contract shared by misterplexd and RTL:
 // - Two banks start at phys_base and phys_base+bank_stride.
 // - Doorbell is the final 4 KiB page of the mapped window.
-// - RGB565 banks contain one packed little-endian plane at offset 0.
-// - YUV420p banks contain planar I420: Y at y_offset, U at u_offset,
+// - Banks contain planar I420: Y at y_offset, U at u_offset,
 //   V at v_offset. Luma stride is line_bytes; chroma stride is
 //   chroma_line_bytes. The RTL reader schedules line_qwords for luma bursts and
 //   chroma_line_qwords for U/V bursts.
@@ -59,21 +58,14 @@ enum class DdrFramePlacement {
 //   (Y=16,U=128,V=128) for those columns. The ARM writer also clears cropped
 //   padding inside the coded frame to the same black.
 // - Doorbell high word is [31]=bank, [30:29]=format, [28:0]=sequence.
-//   Format 0=RGB565, 1=YUV420p. RGB565 preserves the historical bank bit and
-//   still presents a monotonically changing sequence to older readers.
+//   C3 RTL consumes format 1=YUV420p only; the ARM must never ring this doorbell
+//   with an RGB565 payload.
 enum class DdrFrameFormat {
-    Rgb565,
     Yuv420p,
 };
 
-inline uint32_t ddrFrameFormatCode(DdrFrameFormat f) {
-    switch (f) {
-    case DdrFrameFormat::Yuv420p:
-        return 1;
-    case DdrFrameFormat::Rgb565:
-    default:
-        return 0;
-    }
+inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
+    return 1;
 }
 
 struct DdrFrameGeometry {
@@ -121,7 +113,7 @@ struct DdrFrameLayout {
     int present_x = 0;
     int present_y = 0;
     DdrFramePlacement placement = DdrFramePlacement::None;
-    DdrFrameFormat format = DdrFrameFormat::Rgb565;
+    DdrFrameFormat format = DdrFrameFormat::Yuv420p;
 };
 
 inline uint32_t alignUpU32(uint32_t v, uint32_t align) {
@@ -181,7 +173,7 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
-                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
+                                         DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     DdrFrameLayout out{};
     if (geom.coded_width <= 0 || geom.coded_height <= 0 || geom.display_width <= 0 ||
         geom.display_height <= 0 || geom.presented_width <= 0 || geom.presented_height <= 0)
@@ -193,20 +185,12 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     if (geom.presented_width < geom.display_width || geom.presented_height < geom.display_height)
         return out;
 
-    uint64_t lineBytes = 0;
-    uint64_t frameBytes = 0;
-    uint64_t chromaLineBytes = 0;
-    if (format == DdrFrameFormat::Yuv420p) {
-        if ((geom.coded_width & 1) || (geom.coded_height & 1))
-            return out;
-        lineBytes = static_cast<uint64_t>(geom.coded_width);
-        chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
-        frameBytes = static_cast<uint64_t>(geom.coded_width) *
-                     static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
-    } else {
-        lineBytes = static_cast<uint64_t>(geom.coded_width) * 2u;
-        frameBytes = lineBytes * static_cast<uint64_t>(geom.coded_height);
-    }
+    if ((geom.coded_width & 1) || (geom.coded_height & 1))
+        return out;
+    const uint64_t lineBytes = static_cast<uint64_t>(geom.coded_width);
+    const uint64_t frameBytes = static_cast<uint64_t>(geom.coded_width) *
+                                static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
+    const uint64_t chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
     if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
         return out;
 
@@ -233,13 +217,11 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     out.chroma_line_bytes = static_cast<int>(chromaLineBytes);
     out.chroma_line_qwords = static_cast<int>(chromaLineBytes / 8u);
     out.frame_bytes = static_cast<size_t>(frameBytes);
-    if (format == DdrFrameFormat::Yuv420p) {
-        const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
-        const uint32_t cBytes = yBytes / 4u;
-        out.y_offset = 0;
-        out.u_offset = yBytes;
-        out.v_offset = yBytes + cBytes;
-    }
+    const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
+    const uint32_t cBytes = yBytes / 4u;
+    out.y_offset = 0;
+    out.u_offset = yBytes;
+    out.v_offset = yBytes + cBytes;
     out.bank_stride = alignUpU32(static_cast<uint32_t>(frameBytes), strideAlign);
     out.doorbell_phys = physBase + out.bank_stride * 2u - 0x1000u;
     out.map_bytes = out.bank_stride * 2u;
@@ -249,7 +231,7 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
 inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
-                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
+                                         DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     return makeDdrFrameLayout(makeDdrFrameGeometry(width, height), physBase, strideAlign, format);
 }
 

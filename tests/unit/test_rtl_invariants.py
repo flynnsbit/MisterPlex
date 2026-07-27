@@ -407,6 +407,10 @@ def check_ddr_frame_layout_contract() -> None:
 def check_yuv_ddr_writer_contract() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
     main_cpp = strip_comments(read(MISTERPLEXD_MAIN_CPP))
+    fpga_h = strip_comments(read(FPGA_SPI_HPP))
+    fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
+    layout_h = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
+    ddr_writer_sources = "\n".join([media, main_cpp, fpga_h, fpga_cpp, layout_h])
     check(
         "packRgb24ToRgb565Le" not in media,
         "media_player.cpp reintroduced RGB24→RGB565 packing in the rawvideo present path. "
@@ -414,16 +418,17 @@ def check_yuv_ddr_writer_contract() -> None:
         "alternate hot path that can drift from the RTL reader.",
     )
     check(
-        "DdrFrameFormat::Rgb565" not in media,
-        "media_player.cpp still selects or writes RGB565 DDR frames. The product DDR frame "
-        "store path must send YUV420p only; RGB565 helpers may remain in tools/legacy probes "
-        "but not in the daemon's active present loop.",
+        "DdrFrameFormat::Rgb565" not in ddr_writer_sources,
+        "ARM DDR writer code still exposes DdrFrameFormat::Rgb565. C3 RTL interprets DDR as "
+        "I420/YUV420p unconditionally; retaining an RGB565 DDR enum/config is a silent "
+        "cross-module format mismatch waiting to render garbage.",
     )
     check(
-        "sendRgb565FrameDdr" not in media,
-        "media_player.cpp can still write RGB565 payloads to the DDR frame-store doorbell. "
-        "C3 RTL is YUV-only; use sendYuv420pFrameDdr for F1 DDR or skip the presentation "
-        "rather than producing decoder-looking garbage.",
+        "sendRgb565FrameDdr" not in ddr_writer_sources
+        and "sendRgb24FrameDdr" not in ddr_writer_sources,
+        "ARM code can still write RGB payloads to the DDR frame-store doorbell. C3 RTL is "
+        "YUV-only; use sendYuv420pFrameDdr for DDR or fail loudly rather than producing "
+        "decoder-looking garbage.",
     )
     check(
         "DDR_FRAME_FORMAT" in main_cpp

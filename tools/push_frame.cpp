@@ -1,8 +1,8 @@
-// Push raw RGB565/RGB24/PCM/annex-B to MiSTerPlex via SPI ioctl or DDR bulk,
+// Push raw RGB565/RGB24/PCM/annex-B to MiSTerPlex via SPI ioctl or YUV DDR bulk,
 // or dump core status.
 // Usage:
 //   push_frame [--index N] [--rgb24 WxH] file
-//   push_frame --ddr [--bank N] [--rgb24 320x240] file   # Phase 3.1b DDR path
+//   push_frame --ddr [--bank N] [--yuv420p WxH] file
 //   push_frame --status
 //   push_frame --raw
 //   push_frame --set-bit N 0|1
@@ -19,6 +19,7 @@
 int main(int argc, char** argv) {
     uint8_t index = 1;
     int rgb24w = 0, rgb24h = 0;
+    int yuvW = 0, yuvH = 0;
     bool do_status = false;
     bool do_raw = false;
     bool use_ddr = false;
@@ -31,6 +32,8 @@ int main(int argc, char** argv) {
             index = static_cast<uint8_t>(std::atoi(argv[++i]));
         else if (std::strcmp(argv[i], "--rgb24") == 0 && i + 1 < argc) {
             std::sscanf(argv[++i], "%dx%d", &rgb24w, &rgb24h);
+        } else if (std::strcmp(argv[i], "--yuv420p") == 0 && i + 1 < argc) {
+            std::sscanf(argv[++i], "%dx%d", &yuvW, &yuvH);
         } else if (std::strcmp(argv[i], "--status") == 0) {
             do_status = true;
         } else if (std::strcmp(argv[i], "--raw") == 0) {
@@ -118,7 +121,7 @@ int main(int argc, char** argv) {
     if (!path) {
         std::fprintf(stderr,
                      "usage: push_frame [--index 1] [--rgb24 320x240] file\n"
-                     "       push_frame --ddr [--bank 0|1] [--rgb24 320x240] file\n"
+                     "       push_frame --ddr [--bank 0|1] [--yuv420p 624x480] file\n"
                      "       push_frame --status\n");
         return 1;
     }
@@ -130,15 +133,29 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> buf((std::istreambuf_iterator<char>(in)), {});
     bool ok = false;
     if (use_ddr) {
-        if (rgb24w > 0 && rgb24h > 0) {
-            if (buf.size() < static_cast<size_t>(rgb24w * rgb24h * 3)) {
-                std::fprintf(stderr, "file too small for %dx%d RGB24\n", rgb24w, rgb24h);
-                return 1;
-            }
-            ok = spi.sendRgb24FrameDdr(buf.data(), rgb24w, rgb24h, bank);
-        } else {
-            ok = spi.sendRgb565FrameDdr(buf.data(), buf.size(), bank);
+        if (rgb24w > 0 || rgb24h > 0) {
+            std::fprintf(stderr, "DDR frame-store path is YUV420p only; --rgb24 is SPI-only\n");
+            return 1;
         }
+        misterplex::DdrFrameGeometry g{};
+        if (yuvW > 0 && yuvH > 0) {
+            g = misterplex::makeDdrFrameGeometry(yuvW, yuvH);
+        } else if (buf.size() == static_cast<size_t>(misterplex::kPlex480pYuv420pBytes)) {
+            g = misterplex::plex480pDdrFrameGeometry();
+        } else {
+            std::fprintf(stderr,
+                         "DDR frame-store path is YUV420p only; pass --yuv420p WxH or a "
+                         "%d-byte Plex 480p I420 frame\n",
+                         misterplex::kPlex480pYuv420pBytes);
+            return 1;
+        }
+        const size_t want = misterplex::yuv420pFrameBytes(g.coded_width, g.coded_height);
+        if (buf.size() < want) {
+            std::fprintf(stderr, "file too small for %dx%d YUV420p\n", g.coded_width,
+                         g.coded_height);
+            return 1;
+        }
+        ok = spi.sendYuv420pFrameDdr(buf.data(), want, g, bank);
     } else if (rgb24w > 0 && rgb24h > 0) {
         if (buf.size() < static_cast<size_t>(rgb24w * rgb24h * 3)) {
             std::fprintf(stderr, "file too small for %dx%d RGB24\n", rgb24w, rgb24h);
