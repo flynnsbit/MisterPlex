@@ -71,3 +71,31 @@ test_h264_golden_extractor: OK deterministic MB0 golden; ref csum=0x14 recon_sig
 Command output — full unit exit:
 $ make unit > /dev/null 2>&1 && echo 'make unit: PASS exit 0'
 make unit: PASS exit 0
+
+Hardware-readiness update after fleet policy change:
+- Replayed CAVLC residual RTL onto current local main 5dffb17 (contains user-noted main 34e04b0 plus SDRAM conservative merge).
+- Simulation is exhausted for the current standalone entropy block: table uniqueness/prefix-free checks, constructed CAVLC encoder round-trips, nC edge cases, suffix-length escalation, red/green perturbation, golden extractor, combined rtl-sim, RTL lint, and full unit all pass.
+- Hardware caveat: this CAVLC block is listed in files.qip and is the shipped RTL artifact, but it is not yet wired into the live slice-wide decode path. A board run now should therefore be a timing/build and visual unit-test deployment, not a product video-decode gate.
+
+Post-rebase command output:
+$ scripts/rtl_lint.py
+RTL lint: parsed 66 Quartus RTL/context files; reporting 26 owned files
+RTL lint: PASS no warning regressions above /home/shawn/Projects/mp-wt-cavlc/tests/fixtures/rtl_lint_baseline.json
+
+$ tests/unit/test_h264_cavlc_residual_verilator.sh
+RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=1)
+H264 CAVLC residual Verilator PASS: prefix-free tables checked; roundtrip_cases=526 including all coeff_token tables, luma/chroma total_zeros, run_before, nC edges, suffix escalation
+
+$ make rtl-sim
+OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks=16 compared_values=768 qp=25 fixture=/home/shawn/Projects/mp-wt-cavlc/tests/fixtures/p3_host_recon/mb0_luma_v1.json
+H264 CAVLC residual Verilator PASS: prefix-free tables checked; roundtrip_cases=526 including all coeff_token tables, luma/chroma total_zeros, run_before, nC edges, suffix escalation
+h264 syntax primitives RTL check PASS: EPB synthetic=6 real_epb_removed=2 ue=9 se=7 malformed_long=rejected offsets=RBSP-after-EPB
+OK h264_syntax_primitives red-check: EPB leak fault failed synthetic/real RBSP checks
+OK h264_syntax_primitives red-check: SE sign fault failed signed Exp-Golomb checks
+
+$ make h264-golden-tools && tests/unit/test_h264_golden_extractor.sh
+make: Nothing to be done for 'h264-golden-tools'.
+test_h264_golden_extractor: OK deterministic MB0 golden; ref csum=0x14 recon_sig=0x3b
+
+$ make unit > /dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
