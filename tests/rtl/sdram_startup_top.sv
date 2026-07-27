@@ -29,7 +29,8 @@ module sdram_startup_top #(
 	output wire [3:0] memtest_size,
 	output wire [15:0] memtest_errors,
 	output wire [31:0] startup_cycles,
-	output wire [31:0] refresh_cycles
+	output wire [31:0] refresh_cycles,
+	output wire [2:0] configured_cas_latency
 );
 	localparam longint unsigned STARTUP_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 121) + 999_999) / 1_000_000;
 	localparam longint unsigned REFRESH_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 64_000) / (8192 * 1_000_000)) - 1;
@@ -50,6 +51,11 @@ module sdram_startup_top #(
 	wire        shared_reset = reset | ~pll_locked;
 	assign startup_cycles = STARTUP_CYCLES_CALC[31:0];
 	assign refresh_cycles = REFRESH_CYCLES_CALC[31:0];
+`ifdef SDRAM_CL3
+	assign configured_cas_latency = 3'd3;
+`else
+	assign configured_cas_latency = 3'd2;
+`endif
 
 	reg force_released;
 	always @(posedge clk) begin
