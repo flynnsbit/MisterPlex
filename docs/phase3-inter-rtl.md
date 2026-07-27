@@ -243,6 +243,11 @@ I420_CANDIDATE_SCORE summary intra=0/300 inter=0/3300 strict_pass=0
 OK native inter candidate score: intra=0/300 inter=0/3300 first_bad_inter_mb=0 plane=Y
 first_bad_inter: frame=1 mb=0 plane=Y got=32 ref=80 abs=48 mb_type=P_L0_16x16 mv_l0=(0,0)
 OK native inter provenance: candidate_stage=mc_prediction_only_pre_deblock_no_residual_add reference_state=diagnostic_filtered_reference_via_deblock_writeback_ctrl reference_h264_loop_filter=disabled
+
+624x480 scorer self-check:
+candidate bytes=5,391,360
+I420_CANDIDATE_SCORE summary intra=0/1170 inter=0/12870 strict_pass=0
+first_bad_inter: frame=1 mb=0 plane=Y got=32 ref=77 abs=45 mb_type=P_L0_16x16 mv_l0=(0,0)
 ```
 
 This is still a measured red, not a decode PASS: only the parser-driven first-P
