@@ -137,7 +137,7 @@ pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 pms-nal-stats: $(ROOT)/build/pms_nal_stats
 	bash $(ROOT)/tests/hw/test_pms_nal_stats.sh
 
-h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_native_frames
+h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_native_frames $(ROOT)/build/analyze_h264_intra_mbs
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
@@ -180,6 +180,13 @@ $(ROOT)/build/score_h264_native_frames: $(ROOT)/tools/score_h264_native_frames.c
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/score_h264_native_frames.cpp
+
+$(ROOT)/build/analyze_h264_intra_mbs: $(ROOT)/tools/analyze_h264_intra_mbs.cpp \
+		$(ROOT)/host/libmisterplex/h264_recon.hpp \
+		$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
+		$(ROOT)/host/libmisterplex/h264_cavlc.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/analyze_h264_intra_mbs.cpp
 
 $(ROOT)/build/test_p3_idct_reference_model: $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
