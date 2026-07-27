@@ -94,3 +94,38 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_mc_interp_bad_
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_mc_interp RTL red-check: bad chroma weight fault failed golden"
+
+# ---- Precision Red checks 3-6: spec-class defects ----
+PRECISION_FAULTS=(
+  "BAD_ROUND_OFFSET:h264_mc_interp_bad_round_offset:j-position rounding (256 vs 512)"
+  "NO_INTERMEDIATE_CLIP:h264_mc_interp_no_intermediate_clip:intermediate clip before vertical"
+  "QPEL_AVERAGE_DIR:h264_mc_interp_qpel_avg_dir:quarter-pel averaging direction"
+  "CHROMA_WEIGHT_TRANSPOSE:h264_mc_interp_chroma_transpose:chroma weight dx/dy transpose"
+)
+
+for SPEC in "${PRECISION_FAULTS[@]}"; do
+  IFS=: read -r PARAM RED_ID DESC <<<"$SPEC"
+  BUILD_DIR="$ROOT/build/verilator/h264_mc_interp_fault_${PARAM}"
+  mkdir -p "$BUILD_DIR"
+
+  echo "--- Building h264_mc_interp (FAULT_${PARAM}) ---" >&2
+  "$RUN_VERILATOR" --cc --exe --build \
+    --Mdir "$BUILD_DIR" \
+    --top-module h264_mc_interp_tb "-GFAULT_${PARAM}=1" -Wno-fatal \
+    -CFLAGS "-std=c++17 -O2 -I$ROOT/tests/rtl" \
+    "$TOP" "$RTL" "$TB"
+
+  set +e
+  FAULT_OUT="$("$BUILD_DIR/Vh264_mc_interp_tb" 2>&1)"
+  FAULT_RC=$?
+  set -e
+  FAIL_COUNT=$(printf '%s' "$FAULT_OUT" | grep -c "^FAIL" || true)
+  # Subtract 1 for the summary "N failures out of M tests" line
+  FAIL_COUNT=$((FAIL_COUNT > 0 ? FAIL_COUNT - 1 : 0))
+  if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" "$RED_ID" "$FAULT_RC" <<<"$FAULT_OUT" 2>&1)"; then
+    printf '%s\n%s\n' "$RED_CHECK" "$FAULT_OUT" >&2
+    exit 1
+  fi
+  printf '%s\n' "$RED_CHECK"
+  echo "OK h264_mc_interp RTL red-check: ${DESC} fault — ${FAIL_COUNT}/953 detected"
+done

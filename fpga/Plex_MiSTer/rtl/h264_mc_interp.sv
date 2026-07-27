@@ -31,7 +31,13 @@
 //   pred_*    — 2-wide predicted sample output
 `default_nettype none
 
-module h264_mc_interp (
+module h264_mc_interp #(
+	// Fault injection parameters for precision red-checks
+	parameter FAULT_BAD_ROUND_OFFSET     = 0,  // (sum+256)>>10 instead of (sum+512)>>10
+	parameter FAULT_NO_INTERMEDIATE_CLIP = 0,  // clip half-pel before vertical (spec violation)
+	parameter FAULT_QPEL_AVERAGE_DIR     = 0,  // swap quarter-pel averaging direction
+	parameter FAULT_CHROMA_WEIGHT_TRANSPOSE = 0 // swap (8-dx) and (8-dy)
+) (
 	input  wire        clk,
 	input  wire        rst_n,
 
@@ -205,36 +211,44 @@ module h264_mc_interp (
 	wire [7:0] half_s0 = clip1((s0_raw + 21'sd16) >>> 5);
 
 	// Centre half-pel 'j0': vertical 6-tap on horizontal intermediates
-	wire signed [20:0] j0_h0 = luma_h6_raw(ridx(lr0 - 5'd2, lc0));
-	wire signed [20:0] j0_h1 = luma_h6_raw(ridx(lr0 - 5'd1, lc0));
-	wire signed [20:0] j0_h2 = b0_raw;  // same position
-	wire signed [20:0] j0_h3 = s0_raw;  // same position
-	wire signed [20:0] j0_h4 = luma_h6_raw(ridx(lr0 + 5'd2, lc0));
-	wire signed [20:0] j0_h5 = luma_h6_raw(ridx(lr0 + 5'd3, lc0));
+	// FAULT_NO_INTERMEDIATE_CLIP: clip intermediates to [0,255] before vertical pass (spec violation)
+	wire signed [20:0] j0_h0_raw = luma_h6_raw(ridx(lr0 - 5'd2, lc0));
+	wire signed [20:0] j0_h1_raw = luma_h6_raw(ridx(lr0 - 5'd1, lc0));
+	wire signed [20:0] j0_h2_raw = b0_raw;  // same position
+	wire signed [20:0] j0_h3_raw = s0_raw;  // same position
+	wire signed [20:0] j0_h4_raw = luma_h6_raw(ridx(lr0 + 5'd2, lc0));
+	wire signed [20:0] j0_h5_raw = luma_h6_raw(ridx(lr0 + 5'd3, lc0));
+	wire signed [20:0] j0_h0 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h0_raw)}) : j0_h0_raw;
+	wire signed [20:0] j0_h1 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h1_raw)}) : j0_h1_raw;
+	wire signed [20:0] j0_h2 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h2_raw)}) : j0_h2_raw;
+	wire signed [20:0] j0_h3 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h3_raw)}) : j0_h3_raw;
+	wire signed [20:0] j0_h4 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h4_raw)}) : j0_h4_raw;
+	wire signed [20:0] j0_h5 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h5_raw)}) : j0_h5_raw;
 	wire signed [31:0] j0_sum = j0_h0 - 32'sd5 * j0_h1 + 32'sd20 * j0_h2
 	                          + 32'sd20 * j0_h3 - 32'sd5 * j0_h4 + j0_h5;
-	wire [7:0] half_j0 = clip1((j0_sum + 32'sd512) >>> 10);
+	wire signed [31:0] j0_round = FAULT_BAD_ROUND_OFFSET ? 32'sd256 : 32'sd512;
+	wire [7:0] half_j0 = clip1((j0_sum + j0_round) >>> 10);
 
 	// Sample 0 sub-position mux
 	reg [7:0] luma0;
 	always @* begin
 		case ({frac_y, frac_x})
 			4'b0000: luma0 = pix_G0;
-			4'b0001: luma0 = avg2(pix_G0, half_b0);
+			4'b0001: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_H0, half_b0) : avg2(pix_G0, half_b0);
 			4'b0010: luma0 = half_b0;
-			4'b0011: luma0 = avg2(half_b0, pix_H0);
-			4'b0100: luma0 = avg2(pix_G0, half_h0);
-			4'b0101: luma0 = avg2(half_b0, half_h0);
-			4'b0110: luma0 = avg2(half_b0, half_j0);
-			4'b0111: luma0 = avg2(half_b0, half_k0);
+			4'b0011: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b0, pix_G0) : avg2(half_b0, pix_H0);
+			4'b0100: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_M0, half_h0) : avg2(pix_G0, half_h0);
+			4'b0101: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_h0, half_j0) : avg2(half_b0, half_h0);
+			4'b0110: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b0, half_h0) : avg2(half_b0, half_j0);
+			4'b0111: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b0, half_j0) : avg2(half_b0, half_k0);
 			4'b1000: luma0 = half_h0;
-			4'b1001: luma0 = avg2(half_h0, half_j0);
+			4'b1001: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_j0, half_h0) : avg2(half_h0, half_j0);
 			4'b1010: luma0 = half_j0;
-			4'b1011: luma0 = avg2(half_j0, half_k0);
-			4'b1100: luma0 = avg2(half_h0, pix_M0);
-			4'b1101: luma0 = avg2(half_s0, half_h0);
-			4'b1110: luma0 = avg2(half_j0, half_s0);
-			4'b1111: luma0 = avg2(half_s0, half_k0);
+			4'b1011: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_k0, half_j0) : avg2(half_j0, half_k0);
+			4'b1100: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_G0, half_h0)  : avg2(half_h0, pix_M0);
+			4'b1101: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_h0, half_j0) : avg2(half_s0, half_h0);
+			4'b1110: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_s0, half_j0) : avg2(half_j0, half_s0);
+			4'b1111: luma0 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_j0, half_k0) : avg2(half_s0, half_k0);
 		endcase
 	end
 
@@ -272,36 +286,43 @@ module h264_mc_interp (
 	wire [7:0] half_s1 = clip1((s1_raw + 21'sd16) >>> 5);
 
 	// Centre half-pel 'j1'
-	wire signed [20:0] j1_h0 = luma_h6_raw(ridx(lr0 - 5'd2, lc1));
-	wire signed [20:0] j1_h1 = luma_h6_raw(ridx(lr0 - 5'd1, lc1));
-	wire signed [20:0] j1_h2 = b1_raw;
-	wire signed [20:0] j1_h3 = s1_raw;
-	wire signed [20:0] j1_h4 = luma_h6_raw(ridx(lr0 + 5'd2, lc1));
-	wire signed [20:0] j1_h5 = luma_h6_raw(ridx(lr0 + 5'd3, lc1));
+	wire signed [20:0] j1_h0_raw = luma_h6_raw(ridx(lr0 - 5'd2, lc1));
+	wire signed [20:0] j1_h1_raw = luma_h6_raw(ridx(lr0 - 5'd1, lc1));
+	wire signed [20:0] j1_h2_raw = b1_raw;
+	wire signed [20:0] j1_h3_raw = s1_raw;
+	wire signed [20:0] j1_h4_raw = luma_h6_raw(ridx(lr0 + 5'd2, lc1));
+	wire signed [20:0] j1_h5_raw = luma_h6_raw(ridx(lr0 + 5'd3, lc1));
+	wire signed [20:0] j1_h0 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h0_raw)}) : j1_h0_raw;
+	wire signed [20:0] j1_h1 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h1_raw)}) : j1_h1_raw;
+	wire signed [20:0] j1_h2 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h2_raw)}) : j1_h2_raw;
+	wire signed [20:0] j1_h3 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h3_raw)}) : j1_h3_raw;
+	wire signed [20:0] j1_h4 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h4_raw)}) : j1_h4_raw;
+	wire signed [20:0] j1_h5 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h5_raw)}) : j1_h5_raw;
 	wire signed [31:0] j1_sum = j1_h0 - 32'sd5 * j1_h1 + 32'sd20 * j1_h2
 	                          + 32'sd20 * j1_h3 - 32'sd5 * j1_h4 + j1_h5;
-	wire [7:0] half_j1 = clip1((j1_sum + 32'sd512) >>> 10);
+	wire signed [31:0] j1_round = FAULT_BAD_ROUND_OFFSET ? 32'sd256 : 32'sd512;
+	wire [7:0] half_j1 = clip1((j1_sum + j1_round) >>> 10);
 
 	// Sample 1 sub-position mux
 	reg [7:0] luma1;
 	always @* begin
 		case ({frac_y, frac_x})
 			4'b0000: luma1 = pix_G1;
-			4'b0001: luma1 = avg2(pix_G1, half_b1);
+			4'b0001: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_H1, half_b1) : avg2(pix_G1, half_b1);
 			4'b0010: luma1 = half_b1;
-			4'b0011: luma1 = avg2(half_b1, pix_H1);
-			4'b0100: luma1 = avg2(pix_G1, half_h1);
-			4'b0101: luma1 = avg2(half_b1, half_h1);
-			4'b0110: luma1 = avg2(half_b1, half_j1);
-			4'b0111: luma1 = avg2(half_b1, half_k1);
+			4'b0011: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b1, pix_G1) : avg2(half_b1, pix_H1);
+			4'b0100: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_M1, half_h1) : avg2(pix_G1, half_h1);
+			4'b0101: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_h1, half_j1) : avg2(half_b1, half_h1);
+			4'b0110: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b1, half_h1) : avg2(half_b1, half_j1);
+			4'b0111: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_b1, half_j1) : avg2(half_b1, half_k1);
 			4'b1000: luma1 = half_h1;
-			4'b1001: luma1 = avg2(half_h1, half_j1);
+			4'b1001: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_j1, half_h1) : avg2(half_h1, half_j1);
 			4'b1010: luma1 = half_j1;
-			4'b1011: luma1 = avg2(half_j1, half_k1);
-			4'b1100: luma1 = avg2(half_h1, pix_M1);
-			4'b1101: luma1 = avg2(half_s1, half_h1);
-			4'b1110: luma1 = avg2(half_j1, half_s1);
-			4'b1111: luma1 = avg2(half_s1, half_k1);
+			4'b1011: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_k1, half_j1) : avg2(half_j1, half_k1);
+			4'b1100: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(pix_G1, half_h1)  : avg2(half_h1, pix_M1);
+			4'b1101: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_h1, half_j1) : avg2(half_s1, half_h1);
+			4'b1110: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_s1, half_j1) : avg2(half_j1, half_s1);
+			4'b1111: luma1 = FAULT_QPEL_AVERAGE_DIR ? avg2(half_j1, half_k1) : avg2(half_s1, half_k1);
 		endcase
 	end
 
@@ -320,10 +341,10 @@ module h264_mc_interp (
 	wire [7:0] c1_p01 = c0_p11;
 	wire [7:0] c1_p11 = ref_buf[ridx(out_row + 5'd1, out_col + 5'd2)];
 
-	wire [3:0] cwx0 = 4'd8 - {1'b0, chroma_dx};
-	wire [3:0] cwy0 = 4'd8 - {1'b0, chroma_dy};
-	wire [3:0] cwx1 = {1'b0, chroma_dx};
-	wire [3:0] cwy1 = {1'b0, chroma_dy};
+	wire [3:0] cwx0 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? (4'd8 - {1'b0, chroma_dy}) : (4'd8 - {1'b0, chroma_dx});
+	wire [3:0] cwy0 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? (4'd8 - {1'b0, chroma_dx}) : (4'd8 - {1'b0, chroma_dy});
+	wire [3:0] cwx1 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? {1'b0, chroma_dy} : {1'b0, chroma_dx};
+	wire [3:0] cwy1 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? {1'b0, chroma_dx} : {1'b0, chroma_dy};
 
 	wire [15:0] chr0_sum = cwx0 * cwy0 * {8'd0, c0_p00}
 	                     + cwx1 * cwy0 * {8'd0, c0_p10}

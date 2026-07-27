@@ -4,7 +4,11 @@
 
 module h264_mc_interp_tb #(
 	parameter FAULT_BAD_LUMA_ROUND  = 0,  // corrupt luma rounding (+1 to output)
-	parameter FAULT_BAD_CHROMA_WEIGHT = 0  // corrupt chroma weights (XOR)
+	parameter FAULT_BAD_CHROMA_WEIGHT = 0, // corrupt chroma weights (XOR)
+	parameter FAULT_BAD_ROUND_OFFSET = 0,  // (sum+256)>>10 instead of (sum+512)>>10
+	parameter FAULT_NO_INTERMEDIATE_CLIP = 0, // clip half-pel before vertical pass
+	parameter FAULT_QPEL_AVERAGE_DIR = 0,  // swap quarter-pel averaging direction
+	parameter FAULT_CHROMA_WEIGHT_TRANSPOSE = 0 // swap (8-dx) and (8-dy)
 ) (
 	input  wire        clk,
 	input  wire        rst_n,
@@ -40,7 +44,12 @@ module h264_mc_interp_tb #(
 	wire [7:0] pred_sample0_raw;
 	wire [7:0] pred_sample1_raw;
 
-	h264_mc_interp u_dut (
+	h264_mc_interp #(
+		.FAULT_BAD_ROUND_OFFSET(FAULT_BAD_ROUND_OFFSET),
+		.FAULT_NO_INTERMEDIATE_CLIP(FAULT_NO_INTERMEDIATE_CLIP),
+		.FAULT_QPEL_AVERAGE_DIR(FAULT_QPEL_AVERAGE_DIR),
+		.FAULT_CHROMA_WEIGHT_TRANSPOSE(FAULT_CHROMA_WEIGHT_TRANSPOSE)
+	) u_dut (
 		.clk(clk),
 		.rst_n(rst_n),
 		.cmd_valid(cmd_valid),

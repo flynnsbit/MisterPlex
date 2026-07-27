@@ -79,6 +79,38 @@
       "required_substrings": [
         "FAIL h264_mc_interp RTL: chroma mismatch"
       ]
+    },
+    {
+      "id": "h264_mc_interp_bad_round_offset",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "j-position rounding (sum+256)>>10 instead of (sum+512)>>10 — the exact spec-misread defect class. Detection rate 77/953 (8.1%).",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: luma mismatch"
+      ]
+    },
+    {
+      "id": "h264_mc_interp_no_intermediate_clip",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "Clipping half-pel intermediates before the vertical pass violates spec — full precision required. Detection rate 115/953 (12.1%).",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: luma mismatch"
+      ]
+    },
+    {
+      "id": "h264_mc_interp_qpel_avg_dir",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "Quarter-pel averaging direction swap — uses opposite neighbor sample. Detection rate 148/953 (15.5%).",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: luma mismatch"
+      ]
+    },
+    {
+      "id": "h264_mc_interp_chroma_transpose",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "Chroma bilinear weight dx/dy transposition — (8-dx)(8-dy) swapped. Detection rate 560/953 (58.8%).",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: chroma mismatch"
+      ]
     }
   ]
 }
