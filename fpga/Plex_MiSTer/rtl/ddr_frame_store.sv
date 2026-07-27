@@ -1075,4 +1075,36 @@ module ddr_frame_store #(
 		end
 	end
 
+	// ---- Gray-code precondition assertion ----
+	// want_y_sys must change by at most 1 between non-zero values during
+	// active display. Transitions to/from 0 happen at blanking boundaries
+	// (when DISPLAY_W < FRAME_W) and are safe because the value is held
+	// stable for at least one full clk period (= 4.5+ clk_ddr periods)
+	// before the next active-region sampling.
+	// If want_y ever jumps between two non-zero values by more than 1 —
+	// seek, resolution change, fast-forward — the Gray encoding silently
+	// stops protecting the CDC crossing because multiple bits change
+	// simultaneously. This assertion enforces that property in simulation.
+`ifdef VERILATOR
+	reg [Y_W-1:0] want_y_sys_prev;
+	reg [15:0] assertion_warmup;
+	always @(posedge clk) begin
+		if (reset) begin
+			assertion_warmup <= '0;
+		end else begin
+			want_y_sys_prev <= want_y_sys;
+			if (assertion_warmup < 16'd10000)
+				assertion_warmup <= assertion_warmup + 16'd1;
+			// Only check non-zero → non-zero transitions (skip blanking)
+			else if (want_y_sys != want_y_sys_prev &&
+			         want_y_sys != '0 && want_y_sys_prev != '0 &&
+			         want_y_sys != Y_W'(want_y_sys_prev + 1'b1) &&
+			         want_y_sys != Y_W'(want_y_sys_prev - 1'b1)) begin
+				$error("GRAY PRECONDITION VIOLATED: want_y_sys jumped from %0d to %0d (delta > 1)",
+				       want_y_sys_prev, want_y_sys);
+			end
+		end
+	end
+`endif
+
 endmodule

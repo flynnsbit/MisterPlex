@@ -116,8 +116,11 @@ See `rtl/tb_arb_beat_conservation.sv` for the reference implementation.
 | 11 | `start_req` | clk→clk_ddr | 1 | toggle | 2-FF sync (`start_d1/d2`) + toggle protocol | SAFE |
 | 12 | `bank_sel` | clk→clk_ddr | 1 | level | 2-FF sync (`bank_sel_d1/d2`), stable before start toggle | SAFE |
 | 13 | `want_y` | clk→clk_ddr | 9 | multi-bit | Gray-coded 2-FF sync (`want_y_gray` → `want_y_gray_s1/s2` → `y_gray2bin`) | SAFE (fixed: was 1-FF binary sync, `want_y_s2` dead code) |
+| | | | | | **⚠ PRECONDITION:** Gray coding is safe only because `want_y_sys` increments by exactly 1 per scan line (one bit changes per transition). If `want_y` ever jumps by >1 (seek, resolution change, fast-forward), multiple Gray bits change simultaneously and the protection silently breaks. **Enforced** by `$error` assertion in RTL (`ifdef VERILATOR`). | |
 | 14 | `status_osd` | clk→clk_ddr | 16 | multi-bit | Toggle-snapshot (`status_osd_toggle` 2-FF sync, data captured on edge) | SAFE (fixed: was 2-FF binary sync, fed PLXS mailbox) |
+| | | | | | **⚠ INSTRUMENT-INTEGRITY:** This feeds the PLXS mailbox at `0x3007F100`, read to evaluate whether a fit succeeded. Before the fix, a glitched sample would produce a plausible-looking status word with no way to distinguish it from a real one. This is the 15th instrument-integrity failure of this session: our measuring equipment fails more often than our design does. | |
 | 15 | `sdram_status` | clk→clk_ddr | 24 | multi-bit | Toggle-snapshot (`sdram_status_toggle` 2-FF sync, data captured on edge) | SAFE (fixed: was 2-FF binary sync, fed PLXM mailbox) |
+| | | | | | **⚠ INSTRUMENT-INTEGRITY:** This feeds the PLXM mailbox at `0x3007F110`. A glitched `sdram_status` could falsely report SDRAM errors during fit evaluation, sending the fleet down a false debugging path for a day, or worse — read a plausible zero and trust it. Same class of failure as the `ERR=0x00000001` uninitialised-register incident. | |
 | 16 | `input_fifo` data | clk→clk_ddr | 8 | data stream | `async_fifo` Gray-coded, AW=2 (4 deep) | SAFE |
 | 17 | line_buf_ram ×48 | clk_ddr→clk | 64 | data | Dual-port M10K, wr_clk=clk_ddr, rd_clk=clk | SAFE |
 
@@ -175,6 +178,45 @@ require approximately:
 
 ---
 
+## Glitch injection test: want_y as frozen-screen RCA candidate
+
+**Result: NEGATIVE.** A corrupted `want_y` does not reproduce the frozen screen.
+
+Crossing #13 (`want_y`) had a real defect: single-sync stage with `want_y_s2` as dead
+code, meaning metastability had no second stage to resolve. The parent promoted it as a
+frozen-screen RCA candidate because "wrong pixels or a stall" matches the silicon
+signature (`PLXF` present, `seq=4`, `has_frame=0`).
+
+### Raw bench data
+
+Bench: `tests/rtl/test_want_y_glitch.sh` — injects a corrupted value (offset by
+`FRAME_H/2`) into `want_y_gray_s2` via Verilator rootp access before each posedge
+`clk_ddr`, at configurable rates.
+
+| Configuration | Glitch count | has_frame % | Underruns | frames_done |
+|---------------|-------------|-------------|-----------|-------------|
+| Baseline      | 0           | 100.0%      | 8,752     | 1           |
+| Rate 37       | 2,023       | 100.0%      | 11,543    | 1           |
+| Rate 5        | 14,976      | 100.0%      | 45,005    | 1           |
+| Rate 1 (every cycle) | 74,880 | 100.0%   | 65,535    | 1           |
+
+### Interpretation
+
+1. **The injection is effective.** Underruns scale monotonically with glitch rate
+   (8,752 → 65,535 at saturation), confirming the corrupted `want_y_gray_s2` is
+   reaching `desired_y_r` and causing wrong line evictions/fetches.
+
+2. **`has_frame` is structurally insensitive to `want_y` corruption.** Even at rate=1
+   (every cycle corrupted), `has_frame` stays at 100%. The `pending_ready_ddr` mechanism
+   at vsync recovers because DDR fetch latency is short relative to frame period.
+
+3. **Demoted back to hygiene.** The want_y single-sync bug causes increased underruns
+   (wrong pixels) but is **not** the frozen-screen root cause. The remaining candidates
+   are the async-FIFO comb loop (`7a3d960`), the bank race, and the arbiter→`y_valid[7]`
+   timing path — all of which ride on the next fit.
+
+---
+
 ## Changelog
 
 | Date | Commit | Change |
@@ -183,3 +225,7 @@ require approximately:
 | 2026-07-27 | `60df5a2` | ddr_bus_arbiter: moved from clk_sys to clk_ddr |
 | 2026-07-27 | `3c6d1d2` | ddr_bus_arbiter: added m1 response FIFO (beat-drop fix) |
 | 2026-07-27 | `610c298` | ddr_bus_arbiter: registered + 2-FF sync on m1_busy |
+| 2026-07-27 | `70481fd` | ddr_frame_store: Gray-coded want_y (#13), toggle-snapshot status_osd/sdram_status (#14-15) |
+| 2026-07-28 | — | Glitch injection test: want_y NOT the frozen-screen RCA (has_frame unaffected even at rate=1) |
+| 2026-07-28 | — | Added Gray-code precondition assertion (enforced in Verilator) |
+| 2026-07-28 | — | Documented instrument-integrity risk on #14, #15 |
