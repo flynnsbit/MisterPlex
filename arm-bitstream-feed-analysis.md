@@ -138,11 +138,99 @@ is ready, by setting `STREAM=1`.**
 
 ---
 
+## 7. Ring Capacity at Product Bitrate
+
+**Requirement:** 25 fps at 1345 kbps, sustained indefinitely.
+
+| Metric | Value |
+|--------|-------|
+| Average frame size | 6,725 bytes |
+| Record size (incl 32B header) | 6,757 bytes |
+| Ring capacity | 262,144 bytes (256 KiB) |
+| Frames fitting in ring | ~38.8 |
+| Ring depth (latency buffer) | ~1,552 ms |
+| Required drain rate | 168,125 bytes/sec (1.34 Mbps) |
+| DDR bus bandwidth | 720 MB/s (64-bit @ 90 MHz) |
+| Bus utilization | 0.023% — **~4,000× headroom** |
+| Worst-case IDR (40 KiB) | 15.6% of ring |
+
+**Verdict:** The ring can comfortably sustain product bitrate. The constraint
+is consumer latency (drain within ~1.5s to avoid Full), not bandwidth. The
+FPGA's DDR bus has 4,000× the required throughput.
+
+**Seek/pause/teardown analysis:**
+- **Seek:** `flushForSeek()` → `producer.flush()` + `producer.end()` + new
+  `begin()`. Clean session boundary. SPS/PPS cleared; demux provides fresh ones.
+- **Pause:** `f3Dispatch.pause()` → FPGA holds last frame. NALs silently
+  dropped. Resume replays SPS/PPS before next VCL.
+- **PMS teardown mid-NAL:** Pipe EOF → `consumeCompleteNals` only pushes
+  complete NALs (delimited by start codes). Trailing incomplete data is
+  discarded. No mid-NAL splice can reach the ring. Session ends cleanly.
+
+## 8. Fixture Injection (ioctl_download) Independence
+
+The SPI `ioctl_download` path (`sendFileTx` → `sendBitstreamChunk`, index=3)
+and the DDR ring path (`writeBitstreamRecord` → `publishBitstreamCtrl`) are
+**completely independent:**
+
+| Property | SPI/ioctl path | DDR ring path |
+|----------|----------------|---------------|
+| Hardware | GPO @ `0xFF706010` | `/dev/mem` @ `0x30100000` |
+| Protocol | F3 file_tx download | PLXB/PLXN record ring |
+| Concurrency | Requires Main SPI lock | No SPI involvement |
+| Used by | Decode gate fixtures | Product stream feed |
+
+Enabling the DDR ring **cannot** interfere with fixture injection. They share
+no state, no locks, and no hardware paths.
+
+## 9. STREAM=1 Completion Criteria
+
+Evidence-based prerequisites for `STREAM=1` as shipping default:
+
+### Hard gates (must be green, no exceptions)
+
+| # | Gate | Evidence required | Current status |
+|---|------|-------------------|----------------|
+| G1 | **FPGA I-slice decode** produces pixel-exact output for at least one fixture | Full-frame ratchet `maeY=0` on `wcap_residual14` with native I420 from FPGA decode, not host recon | **Intra 300/300 MB exact** (P3-3l) but via host recon; FPGA consumer path not yet wired |
+| G2 | **DDR bitstream reader** advances `READ` count and publishes PLXR magic after `beginBitstreamSession` | Live device: `readBitstreamFpgaCount` returns true, PLXR magic present | **NOT MEASURED** — requires `60df5a2`/`3c6d1d2` fixes on silicon |
+| G3 | **No user-visible regression** — ARM decode path must remain available as fallback | `STREAM=1` with broken FPGA must not freeze or crash; must fall back to ARM decode | **Design OK** — `f3Fatal` path disables F3 without killing the FFmpeg RGB pipeline |
+| G4 | **FPGA parser handles all NAL types in the stream** — SPS, PPS, IDR, P at minimum | `stream_path.sv` accepts all NAL types without desync/fatal | **PARTIAL** — SPS/PPS/IDR yes; P-slice inter output is measured red (MAE 76) |
+| G5 | **PMS delivers Baseline/CAVLC** or FPGA handles CABAC | Either MiSTerPlex.xml forces Baseline+CAVLC, or FPGA CABAC engine exists | **BLOCKED** — PMS ignores Baseline request (delivers High/CABAC); no FPGA CABAC |
+
+### Soft gates (should be green, waivable with evidence)
+
+| # | Gate | Evidence required | Current status |
+|---|------|-------------------|----------------|
+| S1 | **Ring sustained at product bitrate** | 1000-frame host test at 1345 kbps without Full | **PASS** — `testRingCapacitySustain` in `test_bitstream_ring_lifecycle` |
+| S2 | **Dormant state self-describing** | CTRL carries PLXD when `STREAM=0`; probes can distinguish from boot residue | **IMPLEMENTED** — `publishBitstreamDormant()` writes PLXD at startup |
+| S3 | **Seek/pause/resume lifecycle** | Host test: session boundary clean, no mid-NAL splice, SPS/PPS replay | **PASS** — `testSeekFlushReset`, `testPauseResume`, `testMidStreamTeardown` |
+| S4 | **beginBitstreamSession timeout** reasonable for cold core | 250ms may be too short if FPGA reader has a long poll interval | **NEEDS MEASUREMENT** on silicon with new RBF |
+
+### The hard truth
+
+**G5 is the structural blocker.** PMS delivers High/CABAC/B-slices regardless
+of the Baseline XML profile request. The FPGA has no CABAC engine and no
+B-slice support. Until either:
+- PMS reliably delivers Baseline/CAVLC (server-side fix), or
+- The FPGA gains a CABAC engine (P3-3n scoping says this is "not sane near-term")
+
+...`STREAM=1` can only decode the I-slices (which are CAVLC even in a
+High-profile stream), not the P/B-slices that make up 95%+ of frames. This
+produces ~1 fps of decoded output (keyframe-only), which is worse than the
+current ARM decode at 25 fps.
+
+**The ARM cannot be retired until the FPGA can match its frame rate**, which
+requires either CAVLC P-slice support or CABAC support. The producer path
+(this work) is ready and waiting.
+
 ## Recommendations
 
-1. **No code changes needed on the producer side.** The path is sound.
-2. When FPGA H.264 decode is ready, enable with `STREAM=1` in `misterplex.conf`.
-3. The `beginBitstreamSession` 250ms timeout on FPGA read may need tuning for
-   first-time startup of a cold core — consider a longer initial timeout.
-4. Consider a diagnostic that logs the DDR mailbox magic validity at startup,
-   so future probes can distinguish "never written" from "written then cleared".
+1. **PLXD dormant magic** is now implemented. Deploy with next RBF to eliminate
+   the uninitialized-DDR ambiguity.
+2. When the FPGA decoder handles at least I+P CAVLC, enable `STREAM=1` in lab
+   and measure end-to-end frame delivery.
+3. The `beginBitstreamSession` 250ms timeout should be tested on silicon with
+   the new RBF before shipping `STREAM=1`.
+4. **G5 decision needed:** pursue PMS Baseline XML forcing (server-side) vs
+   FPGA CABAC engine (RTL). This is a project-level architectural choice that
+   determines the critical path to ARM retirement.

@@ -495,6 +495,7 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
         volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
         return *p;
     };
+    const uint64_t ctrlRaw = read64(ring::kCtrlPhys);
     const uint64_t readRaw = read64(ring::kReadPhys);
     const uint64_t errRaw = read64(ring::kErrPhys);
     const uint64_t st0 = read64(ring::kStat0Phys);
@@ -504,6 +505,11 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
     const uint64_t st4 = read64(ring::kStat4Phys);
     const uint64_t st5 = read64(ring::kStat5Phys);
     const uint64_t st6 = read64(ring::kStat6Phys);
+    // PLXD in CTRL means the ARM deliberately marked the producer dormant.
+    if (static_cast<uint32_t>(ctrlRaw) == ring::kCtrlDormantMagic) {
+        status.dormant = true;
+        return true;
+    }
     if (static_cast<uint32_t>(readRaw) != ring::kReadMagic)
         return false;
     status.producer_count = bitstreamWriteCount_;
@@ -627,6 +633,19 @@ void FpgaSpi::publishBitstreamCtrl() {
     *p = (static_cast<uint64_t>(bitstreamResetEpoch_ ? 1u : 0u) << 63) |
          (static_cast<uint64_t>(bitstreamWriteCount_ & 0x7fffffffu) << 32) |
          ring::kCtrlMagic;
+}
+
+bool FpgaSpi::publishBitstreamDormant() {
+    namespace ring = ddr_bitstream_ring;
+    if (!ensureBitstreamDdrMap())
+        return false;
+    const size_t off = ring::kCtrlPhys - ring::kDataPhys;
+    volatile uint64_t* p = reinterpret_cast<volatile uint64_t*>(bitstreamMap_ + off);
+    // PLXD magic: the FPGA reader checks for PLXB only, so this word is
+    // harmlessly ignored.  A DDR probe sees a valid MiSTerPlex mailbox and
+    // knows the ARM wrote it deliberately with STREAM=0.
+    *p = ring::kCtrlDormantMagic;
+    return true;
 }
 
 bool FpgaSpi::ensureDdrMap() {

@@ -19,6 +19,7 @@ constexpr uint32_t kStat6Phys = 0x30140048u;
 constexpr size_t kRingBytes = 262144u;
 
 constexpr uint32_t kCtrlMagic = 0x504C5842u; // PLXB, HPS -> FPGA
+constexpr uint32_t kCtrlDormantMagic = 0x504C5844u; // PLXD, HPS -> FPGA (STREAM=0, producer disabled)
 constexpr uint32_t kReadMagic = 0x504C5852u; // PLXR, FPGA -> HPS
 constexpr uint32_t kErrMagic = 0x504C5845u;  // PLXE, FPGA -> HPS
 constexpr uint32_t kRecordMagic = 0x504C584Eu; // PLXN, record header
@@ -89,6 +90,7 @@ struct Status {
     bool overrun = false;
     bool desync = false;
     bool fatal = false;
+    bool dormant = false;  // PLXD: producer disabled by config (STREAM=0)
 };
 
 inline bool decodeErrStatusWord(uint64_t word, Status& status) {
