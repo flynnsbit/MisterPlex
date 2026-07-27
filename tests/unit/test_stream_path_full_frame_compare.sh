@@ -273,6 +273,37 @@ print(
     f"plane={summary['first_bad_inter']['plane']}"
 )
 PY
+python3 - "$INTER_METADATA_JSON" "$GOLDEN_MANIFEST" <<'PY'
+import json
+import sys
+
+meta = json.load(open(sys.argv[1]))
+gold = json.load(open(sys.argv[2]))
+if meta.get("format") != "misterplex.p3.inter_mb_metadata.v1":
+    raise SystemExit("FAIL native inter metadata: unknown format")
+candidate = meta.get("candidate", {})
+expected = {
+    "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
+    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
+    "reference_picture_state": "diagnostic_filtered_reference_via_deblock_writeback_ctrl",
+    "reference_picture_source": "generated_i420_pattern_not_decoded_prior_frame",
+}
+for key, want in expected.items():
+    got = candidate.get(key)
+    if got != want:
+        raise SystemExit(f"FAIL native inter metadata: candidate.{key}={got!r} want {want!r}")
+if gold.get("decoder", {}).get("loop_filter") != "skip_loop_filter=all":
+    raise SystemExit("FAIL native inter metadata: golden decoder.loop_filter is not skip_loop_filter=all")
+if gold.get("provenance", {}).get("h264_loop_filter") != "disabled":
+    raise SystemExit("FAIL native inter metadata: golden h264_loop_filter is not disabled")
+print(
+    "OK native inter provenance: "
+    f"candidate_stage={candidate['reconstruction_stage']} "
+    f"reference_state={candidate['reference_picture_state']} "
+    "reference_h264_loop_filter=disabled"
+)
+PY
 make -s -C "$ROOT" h264-golden-tools
 python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
 import json

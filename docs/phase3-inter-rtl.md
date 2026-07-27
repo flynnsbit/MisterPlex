@@ -227,15 +227,22 @@ for inter scoring.
 `tests/unit/test_stream_path_full_frame_compare.sh` also exports the current
 RTL DPB/MC native-inter candidate as `I420_NATIVE`, with a companion
 `misterplex.p3.inter_mb_metadata.v1` file carrying parsed first-P-MB mode,
-zero-MVD/ref0 context, and predicted Y/U/V blocks. That candidate is scored by
-w-cabac's `tools/score_i420_candidate.py`, not by the RGB565 presentation
-round-trip:
+zero-MVD/ref0 context, predicted Y/U/V blocks, and a refusing provenance
+contract. The candidate declares `h264_loop_filter=disabled` and
+`reconstruction_stage=mc_prediction_only_pre_deblock_no_residual_add`.
+The reference-picture state is also explicit:
+`diagnostic_filtered_reference_via_deblock_writeback_ctrl` from a generated I420
+pattern, not an actually decoded/deblocked prior frame. Therefore this measures
+MC arithmetic and parser-to-DPB plumbing only; it is not an end-to-end H.264 P
+conformance score. The candidate is scored by w-cabac's
+`tools/score_i420_candidate.py`, not by the RGB565 presentation round-trip:
 
 ```text
 FULL_FRAME_COMPARE summary ... native_inter_mb_captures=21 native_inter_ignored=0
 I420_CANDIDATE_SCORE summary intra=0/300 inter=0/3300 strict_pass=0
 OK native inter candidate score: intra=0/300 inter=0/3300 first_bad_inter_mb=0 plane=Y
 first_bad_inter: frame=1 mb=0 plane=Y got=32 ref=80 abs=48 mb_type=P_L0_16x16 mv_l0=(0,0)
+OK native inter provenance: candidate_stage=mc_prediction_only_pre_deblock_no_residual_add reference_state=diagnostic_filtered_reference_via_deblock_writeback_ctrl reference_h264_loop_filter=disabled
 ```
 
 This is still a measured red, not a decode PASS: only the parser-driven first-P

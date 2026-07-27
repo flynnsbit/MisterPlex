@@ -472,6 +472,14 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "{\n";
     out << "  \"format\": \"misterplex.p3.inter_mb_metadata.v1\",\n";
     out << "  \"producer\": \"stream_path_full_frame_tb.native_inter_candidate\",\n";
+    out << "  \"candidate\": {\n";
+    out << "    \"colorspace\": \"I420_NATIVE\",\n";
+    out << "    \"h264_loop_filter\": \"disabled\",\n";
+    out << "    \"reconstruction_stage\": \"mc_prediction_only_pre_deblock_no_residual_add\",\n";
+    out << "    \"reference_picture_state\": \"diagnostic_filtered_reference_via_deblock_writeback_ctrl\",\n";
+    out << "    \"reference_picture_source\": \"generated_i420_pattern_not_decoded_prior_frame\",\n";
+    out << "    \"conformance_scope\": \"MC arithmetic and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
+    out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";
     for (std::size_t i = 0; i < caps.size(); ++i) {
