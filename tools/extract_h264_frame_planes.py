@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,14 @@ from typing import Any
 FORMAT = "misterplex.p3.frame_planes_golden.v1"
 SEQUENCE_FORMAT = "misterplex.p3.nal_sequence.v1"
 NATIVE_I420 = "I420_NATIVE"
+
+
+class ProvenanceRefusal(Exception):
+    pass
+
+
+def refuse(message: str) -> None:
+    raise ProvenanceRefusal(message)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -177,6 +186,14 @@ def build_manifest(
             "command": " ".join(ffmpeg_cmd),
             "pix_fmt": "yuv420p",
         },
+        "provenance": {
+            "source_domain": "decoded H.264 planes",
+            "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
+            "colorspace": NATIVE_I420,
+            "rgb_roundtrip": False,
+            "rgb565_roundtrip": False,
+            "presentation_border_or_pillar_mask": False,
+        },
         "geometry": {
             "coded_width": width,
             "coded_height": height,
@@ -248,12 +265,19 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
         raise SystemExit("frame-plane golden blob hash/size mismatch")
     decoder = manifest.get("decoder", {})
     if decoder.get("pix_fmt") != "yuv420p":
-        raise SystemExit("frame-plane golden decoder pix_fmt is not yuv420p")
+        refuse("frame-plane golden decoder pix_fmt is not yuv420p")
+    provenance = manifest.get("provenance", {})
+    if provenance.get("colorspace") != NATIVE_I420 or provenance.get("pixel_format") != "I420/YUV420p planar 8-bit 4:2:0":
+        refuse("frame-plane golden provenance does not declare native I420/YUV420p")
+    if provenance.get("rgb_roundtrip") is not False or provenance.get("rgb565_roundtrip") is not False:
+        refuse("frame-plane golden provenance allows an RGB/RGB565 round-trip")
+    if provenance.get("presentation_border_or_pillar_mask") is not False:
+        refuse("frame-plane golden provenance allows presentation masking")
     geom = manifest.get("geometry", {})
     if geom.get("colorspace") != NATIVE_I420:
-        raise SystemExit("frame-plane golden colorspace is unknown or not I420_NATIVE")
+        refuse("frame-plane golden colorspace is unknown or not I420_NATIVE")
     if plane_blob.get("layout") != "I420 planar per frame: Y then U then V":
-        raise SystemExit("frame-plane golden plane layout is unknown or not I420")
+        refuse("frame-plane golden plane layout is unknown or not I420")
 
     frame_bytes = int(plane_blob.get("frame_bytes", 0))
     frames = manifest.get("frames", [])
@@ -280,9 +304,9 @@ def compare_candidate(
 ) -> bool:
     golden_colorspace = manifest.get("geometry", {}).get("colorspace")
     if not candidate_colorspace:
-        raise SystemExit("candidate colorspace is unknown; refusing plane comparison")
+        refuse("candidate colorspace is unknown; refusing plane comparison")
     if candidate_colorspace != golden_colorspace:
-        raise SystemExit(
+        refuse(
             f"candidate colorspace mismatch: candidate={candidate_colorspace} golden={golden_colorspace}"
         )
     golden = golden_path.read_bytes()
@@ -403,13 +427,17 @@ def main() -> int:
     ap.add_argument("--candidate-colorspace", help="required with --candidate-planes; must match manifest colorspace")
     ap.add_argument("--expect-red", action="store_true", help="candidate comparison must fail strict equality")
     args = ap.parse_args()
-    if args.verify:
-        if not args.planes or not args.manifest:
-            raise SystemExit("--verify requires --planes and --manifest")
-        return verify(args)
-    if not args.planes_out or not args.manifest_out:
-        raise SystemExit("generation requires --planes-out and --manifest-out")
-    return generate(args)
+    try:
+        if args.verify:
+            if not args.planes or not args.manifest:
+                raise SystemExit("--verify requires --planes and --manifest")
+            return verify(args)
+        if not args.planes_out or not args.manifest_out:
+            raise SystemExit("generation requires --planes-out and --manifest-out")
+        return generate(args)
+    except ProvenanceRefusal as e:
+        print(str(e), file=sys.stderr)
+        return 9
 
 
 if __name__ == "__main__":

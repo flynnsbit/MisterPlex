@@ -17,6 +17,14 @@
     "command": "ffmpeg -v error -y -i tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
     "pix_fmt": "yuv420p"
   },
+  "provenance": {
+    "source_domain": "decoded H.264 planes",
+    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
+    "colorspace": "I420_NATIVE",
+    "rgb_roundtrip": false,
+    "rgb565_roundtrip": false,
+    "presentation_border_or_pillar_mask": false
+  },
   "geometry": {
     "coded_width": 320,
     "coded_height": 240,
