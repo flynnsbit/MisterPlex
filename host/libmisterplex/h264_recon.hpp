@@ -45,6 +45,23 @@ struct Luma4x4Trace {
     std::array<uint8_t, 16> recon{};
 };
 
+struct Chroma4x4Trace {
+    std::array<int16_t, 16> idct{};   // IDCT residual output (after DC substitution)
+    std::array<uint8_t, 16> pred{};   // Prediction samples for this 4x4 block
+    std::array<uint8_t, 16> recon{};  // Reconstructed samples
+};
+
+struct ChromaMbTrace {
+    int qpc = 0;                                // Chroma QP (after non-linear mapping)
+    int cbp_c = 0;                              // Coded block pattern for chroma (0, 1, or 2)
+    std::array<int16_t, 4> dc_coeff_cb{};       // CAVLC DC coefficients for Cb
+    std::array<int16_t, 4> dc_coeff_cr{};       // CAVLC DC coefficients for Cr
+    std::array<int16_t, 4> dc_out_cb{};         // Hadamard+dequant output for Cb
+    std::array<int16_t, 4> dc_out_cr{};         // Hadamard+dequant output for Cr
+    std::array<Chroma4x4Trace, 4> blocks_cb{};  // 4 blocks for Cb (raster by*2+bx)
+    std::array<Chroma4x4Trace, 4> blocks_cr{};  // 4 blocks for Cr
+};
+
 struct LumaMbTrace {
     bool valid = false;
     int mb = 0;
@@ -59,6 +76,7 @@ struct LumaMbTrace {
     std::array<uint8_t, 256> pred{};
     std::array<uint8_t, 256> recon{};
     std::array<Luma4x4Trace, 16> blocks{};
+    ChromaMbTrace chroma{};
 };
 
 struct ReconTrace {
@@ -983,6 +1001,10 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                             if (cx + xx < cw && cy + yy < ch)
                                 planes[p][(cy + yy) * cw + cx + xx] = cmb[yy * 8 + xx];
                 }
+                if (traceMb) {
+                    trace->mb.chroma.qpc = qpc;
+                    trace->mb.chroma.cbp_c = cbp_c;
+                }
                 if (cbp_c) {
                     auto r0 = cavlc::residualBlock(br, -1, 4);
                     auto r1 = cavlc::residualBlock(br, -1, 4);
@@ -994,6 +1016,14 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                     int16_t dcU[2][2], dcV[2][2];
                     invChromaDc2x2(r0.coeff, qpc, dcU);
                     invChromaDc2x2(r1.coeff, qpc, dcV);
+                    if (traceMb) {
+                        for (int i = 0; i < 4; ++i) {
+                            trace->mb.chroma.dc_coeff_cb[static_cast<size_t>(i)] = r0.coeff[i];
+                            trace->mb.chroma.dc_coeff_cr[static_cast<size_t>(i)] = r1.coeff[i];
+                        }
+                        trace->mb.chroma.dc_out_cb = {dcU[0][0], dcU[0][1], dcU[1][0], dcU[1][1]};
+                        trace->mb.chroma.dc_out_cr = {dcV[0][0], dcV[0][1], dcV[1][0], dcV[1][1]};
+                    }
                     int16_t(*dcs[2])[2][2] = {&dcU, &dcV};
                     for (int p = 0; p < 2; ++p) {
                         for (int by = 0; by < 2; ++by)
@@ -1029,7 +1059,26 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                                             (x0 + xx < cw && y0 + yy < ch)
                                                 ? planes[p][(y0 + yy) * cw + x0 + xx]
                                                 : 128;
+                                if (traceMb) {
+                                    int bi = by * 2 + bx;
+                                    auto& cblk = (p == 0) ? trace->mb.chroma.blocks_cb[static_cast<size_t>(bi)]
+                                                          : trace->mb.chroma.blocks_cr[static_cast<size_t>(bi)];
+                                    for (int k = 0; k < 16; ++k)
+                                        cblk.pred[static_cast<size_t>(k)] = tmp[k];
+                                    int16_t idctRes[4][4];
+                                    idct4x4_residual(blkq, idctRes);
+                                    for (int yy = 0; yy < 4; ++yy)
+                                        for (int xx = 0; xx < 4; ++xx)
+                                            cblk.idct[static_cast<size_t>(yy * 4 + xx)] = idctRes[yy][xx];
+                                }
                                 idct4x4_add(blkq, tmp, 4);
+                                if (traceMb) {
+                                    int bi = by * 2 + bx;
+                                    auto& cblk = (p == 0) ? trace->mb.chroma.blocks_cb[static_cast<size_t>(bi)]
+                                                          : trace->mb.chroma.blocks_cr[static_cast<size_t>(bi)];
+                                    for (int k = 0; k < 16; ++k)
+                                        cblk.recon[static_cast<size_t>(k)] = tmp[k];
+                                }
                                 for (int yy = 0; yy < 4; ++yy)
                                     for (int xx = 0; xx < 4; ++xx)
                                         if (x0 + xx < cw && y0 + yy < ch)
@@ -1193,6 +1242,10 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                             if (cx + xx < cw && cy + yy < ch)
                                 planes[p][(cy + yy) * cw + cx + xx] = cmb[yy * 8 + xx];
                 }
+                if (traceMb) {
+                    trace->mb.chroma.qpc = qpc;
+                    trace->mb.chroma.cbp_c = cbp_c;
+                }
                 if (cbp_c) {
                     auto r0 = cavlc::residualBlock(br, -1, 4);
                     auto r1 = cavlc::residualBlock(br, -1, 4);
@@ -1204,6 +1257,14 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                     int16_t dcU[2][2], dcV[2][2];
                     invChromaDc2x2(r0.coeff, qpc, dcU);
                     invChromaDc2x2(r1.coeff, qpc, dcV);
+                    if (traceMb) {
+                        for (int i = 0; i < 4; ++i) {
+                            trace->mb.chroma.dc_coeff_cb[static_cast<size_t>(i)] = r0.coeff[i];
+                            trace->mb.chroma.dc_coeff_cr[static_cast<size_t>(i)] = r1.coeff[i];
+                        }
+                        trace->mb.chroma.dc_out_cb = {dcU[0][0], dcU[0][1], dcU[1][0], dcU[1][1]};
+                        trace->mb.chroma.dc_out_cr = {dcV[0][0], dcV[0][1], dcV[1][0], dcV[1][1]};
+                    }
                     int16_t(*dcs[2])[2][2] = {&dcU, &dcV};
                     for (int p = 0; p < 2; ++p) {
                         for (int by = 0; by < 2; ++by)
@@ -1236,7 +1297,26 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                                             (x0 + xx < cw && y0 + yy < ch)
                                                 ? planes[p][(y0 + yy) * cw + x0 + xx]
                                                 : 128;
+                                if (traceMb) {
+                                    int bi = by * 2 + bx;
+                                    auto& cblk = (p == 0) ? trace->mb.chroma.blocks_cb[static_cast<size_t>(bi)]
+                                                          : trace->mb.chroma.blocks_cr[static_cast<size_t>(bi)];
+                                    for (int k = 0; k < 16; ++k)
+                                        cblk.pred[static_cast<size_t>(k)] = tmp[k];
+                                    int16_t idctRes[4][4];
+                                    idct4x4_residual(blkq, idctRes);
+                                    for (int yy2 = 0; yy2 < 4; ++yy2)
+                                        for (int xx2 = 0; xx2 < 4; ++xx2)
+                                            cblk.idct[static_cast<size_t>(yy2 * 4 + xx2)] = idctRes[yy2][xx2];
+                                }
                                 idct4x4_add(blkq, tmp, 4);
+                                if (traceMb) {
+                                    int bi = by * 2 + bx;
+                                    auto& cblk = (p == 0) ? trace->mb.chroma.blocks_cb[static_cast<size_t>(bi)]
+                                                          : trace->mb.chroma.blocks_cr[static_cast<size_t>(bi)];
+                                    for (int k = 0; k < 16; ++k)
+                                        cblk.recon[static_cast<size_t>(k)] = tmp[k];
+                                }
                                 for (int yy = 0; yy < 4; ++yy)
                                     for (int xx = 0; xx < 4; ++xx)
                                         if (x0 + xx < cw && y0 + yy < ch)

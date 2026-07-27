@@ -33,6 +33,11 @@ module p3_intra_frame_tb (
 	output wire       chroma_valid,
 	output wire [7:0] chroma_pred [0:63],
 
+	// Chroma DC Hadamard inverse
+	input  wire signed [15:0] chroma_dc_coeff [0:3],
+	input  wire [5:0]        chroma_dc_qp,
+	output wire signed [17:0] chroma_dc_out [0:3],
+
 	input  wire [7:0] recon_pred [0:15],
 	input  wire signed [17:0] recon_residual [0:15],
 	output wire [7:0] recon_out [0:15]
@@ -101,5 +106,11 @@ module p3_intra_frame_tb (
 		.pred(recon_pred),
 		.residual(recon_residual),
 		.recon(recon_out)
+	);
+
+	h264_chroma_dc_hadamard_inv chroma_dc_had (
+		.coeff(chroma_dc_coeff),
+		.qp(chroma_dc_qp),
+		.dc(chroma_dc_out)
 	);
 endmodule

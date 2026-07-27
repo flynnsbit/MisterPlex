@@ -30,6 +30,11 @@ uint32_t signed18(int v) {
     return static_cast<uint32_t>(v) & ((1u << 18) - 1u);
 }
 
+int fromSigned18(uint32_t v) {
+    if (v & (1u << 17)) return static_cast<int>(v | 0xFFFC0000u);
+    return static_cast<int>(v & 0x0003FFFFu);
+}
+
 int blockOrder(int lx, int ly) {
     int i8 = (ly / 2) * 2 + (lx / 2);
     int i4 = (ly % 2) * 2 + (lx % 2);
@@ -637,14 +642,61 @@ int main(int argc, char** argv) {
                 }
                 if (chromaOk)
                     ++chromaPlaneEvalPass[static_cast<size_t>(cm)];
-                // Store RTL chroma output (prediction-only) into tracking buffer
+                // Apply chroma reconstruction: if cbp_c > 0, drive residual
+                // through Hadamard + IDCT (from trace) + recon module;
+                // otherwise store prediction directly.
                 {
                     std::vector<uint8_t>& cbuf = (plane == 0) ? rtlCb : rtlCr;
-                    for (int yy = 0; yy < 8; ++yy)
-                        for (int xx = 0; xx < 8; ++xx)
-                            if (cx + xx < cw && cy + yy < ch)
-                                cbuf[static_cast<size_t>((cy + yy) * cw + cx + xx)] =
-                                    dut.chroma_pred[yy * 8 + xx];
+                    if (trace.mb.chroma.cbp_c > 0) {
+                        // Drive DC coefficients through RTL Hadamard
+                        const auto& dcCoeff = (plane == 0) ? trace.mb.chroma.dc_coeff_cb
+                                                           : trace.mb.chroma.dc_coeff_cr;
+                        for (int i = 0; i < 4; ++i)
+                            dut.chroma_dc_coeff[i] = static_cast<uint32_t>(
+                                static_cast<uint16_t>(dcCoeff[static_cast<size_t>(i)])) & 0xFFFFu;
+                        dut.chroma_dc_qp = static_cast<uint8_t>(trace.mb.chroma.qpc);
+                        dut.eval();
+                        // Verify Hadamard output against host reference
+                        const auto& refDc = (plane == 0) ? trace.mb.chroma.dc_out_cb
+                                                         : trace.mb.chroma.dc_out_cr;
+                        for (int i = 0; i < 4; ++i) {
+                            int rtlDc = fromSigned18(dut.chroma_dc_out[i]);
+                            int expDc = refDc[static_cast<size_t>(i)];
+                            if (rtlDc != expDc) {
+                                std::cerr << "mb " << mb << " chroma DC Hadamard p=" << plane
+                                          << " dc[" << i << "] rtl=" << rtlDc << " exp=" << expDc << "\n";
+                                ++failures;
+                                mbOk = false;
+                            }
+                        }
+                        // Process each 4x4 chroma block through recon4_generic
+                        const auto& chrBlks = (plane == 0) ? trace.mb.chroma.blocks_cb
+                                                           : trace.mb.chroma.blocks_cr;
+                        for (int by = 0; by < 2; ++by)
+                            for (int bx = 0; bx < 2; ++bx) {
+                                int bi = by * 2 + bx;
+                                const auto& cblk = chrBlks[static_cast<size_t>(bi)];
+                                for (int i = 0; i < 16; ++i) {
+                                    dut.recon_pred[i] = cblk.pred[static_cast<size_t>(i)];
+                                    dut.recon_residual[i] = signed18(cblk.idct[static_cast<size_t>(i)]);
+                                }
+                                dut.eval();
+                                int bx0 = cx + bx * 4;
+                                int by0 = cy + by * 4;
+                                for (int yy = 0; yy < 4; ++yy)
+                                    for (int xx = 0; xx < 4; ++xx)
+                                        if (bx0 + xx < cw && by0 + yy < ch)
+                                            cbuf[static_cast<size_t>((by0 + yy) * cw + bx0 + xx)] =
+                                                dut.recon_out[yy * 4 + xx];
+                            }
+                    } else {
+                        // No residual — prediction is the reconstruction
+                        for (int yy = 0; yy < 8; ++yy)
+                            for (int xx = 0; xx < 8; ++xx)
+                                if (cx + xx < cw && cy + yy < ch)
+                                    cbuf[static_cast<size_t>((cy + yy) * cw + cx + xx)] =
+                                        dut.chroma_pred[yy * 8 + xx];
+                    }
                 }
             }
             if (chromaOk)

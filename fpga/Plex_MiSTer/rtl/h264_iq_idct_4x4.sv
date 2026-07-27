@@ -191,3 +191,69 @@ module h264_recon4x4 (
 	assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
 	assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
 endmodule
+
+// Inverse 2x2 chroma DC Hadamard transform + dequant (H.264 clause 8.5.11.2).
+// 4:2:0: processes 4 DC coefficients per chroma component (Cb or Cr).
+// Reference: host/libmisterplex/h264_recon.hpp:481 invChromaDc2x2().
+//
+// Width analysis (measured worst case, not spec bound):
+//   Input coeff:    signed [15:0] → CAVLC levels, measured up to ±14K in our corpus
+//   Butterfly 1:    signed [16:0] → ±sum of two 16-bit inputs
+//   Butterfly 2:    signed [17:0] → ±sum of two 17-bit values
+//   qmul at QPC=39: 14 << 12 = 57,344 (17 bits unsigned)
+//   had×qmul:       worst case needs 35 bits (17-bit had × 17-bit qmul)
+//   After >>>7:     up to 28 bits signed
+//   Typical (±1 level, QPC=26): had ≤ 4, qmul = 2560, result ≤ 80
+//   Output truncated to int16_t (16 bits signed) to match host reference
+//   exactly; sign-extended to 18 bits for IDCT input compatibility.
+//   TODO: widen output to full 18+ bits if high-QP test vectors expose truncation.
+module h264_chroma_dc_hadamard_inv (
+	input  wire signed [15:0] coeff [0:3],  // CAVLC scan order: 0→(0,0) 1→(1,0) 2→(0,1) 3→(1,1)
+	input  wire [5:0]         qp,           // chroma QP (after non-linear mapping table)
+	output wire signed [17:0] dc [0:3]      // raster (by*2+bx): 0→(0,0) 1→(0,1) 2→(1,0) 3→(1,1)
+);
+	// Position-0 dequant scale factors (clause 8.5.12.1 Table 8-6)
+	function automatic [4:0] mf0;
+		input [2:0] qmod;
+		begin
+			case (qmod)
+			3'd0: mf0 = 5'd10;
+			3'd1: mf0 = 5'd11;
+			3'd2: mf0 = 5'd13;
+			3'd3: mf0 = 5'd14;
+			3'd4: mf0 = 5'd16;
+			default: mf0 = 5'd18;
+			endcase
+		end
+	endfunction
+
+	// Butterfly stage 1
+	wire signed [31:0] a = $signed(coeff[0]) + $signed(coeff[1]);
+	wire signed [31:0] e = $signed(coeff[0]) - $signed(coeff[1]);
+	wire signed [31:0] b = $signed(coeff[2]) - $signed(coeff[3]);
+	wire signed [31:0] c = $signed(coeff[2]) + $signed(coeff[3]);
+
+	// Butterfly stage 2 — full Hadamard outputs
+	wire signed [31:0] had0 = a + c;  // (0,0)
+	wire signed [31:0] had1 = e + b;  // (0,1)
+	wire signed [31:0] had2 = a - c;  // (1,0)
+	wire signed [31:0] had3 = e - b;  // (1,1)
+
+	// Dequant: (had * qmul) >>> 7
+	// qmul = (mf0[qp%6] * 16) << (qp/6 + 2) = mf0[qp%6] << (qp/6 + 6)
+	wire [2:0] qmod = qp % 6;
+	wire [3:0] qdiv = qp / 6;
+	wire signed [31:0] qmul = $signed({1'b0, mf0(qmod)}) <<< (qdiv + 4'd6);
+
+	wire signed [31:0] r0 = (had0 * qmul) >>> 7;
+	wire signed [31:0] r1 = (had1 * qmul) >>> 7;
+	wire signed [31:0] r2 = (had2 * qmul) >>> 7;
+	wire signed [31:0] r3 = (had3 * qmul) >>> 7;
+
+	// Truncate to int16_t to match host reference (h264_recon.hpp:493-496).
+	// Sign-extend to 18 bits for h264_idct4x4 input compatibility.
+	assign dc[0] = {{2{r0[15]}}, r0[15:0]};
+	assign dc[1] = {{2{r1[15]}}, r1[15:0]};
+	assign dc[2] = {{2{r2[15]}}, r2[15:0]};
+	assign dc[3] = {{2{r3[15]}}, r3[15:0]};
+endmodule

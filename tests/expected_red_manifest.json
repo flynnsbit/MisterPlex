@@ -20,10 +20,9 @@
     {
       "id": "p3_intra_frame_negative",
       "owner": "tests/unit/test_p3_intra_frame_verilator.py",
-      "why": "Negative-direction RTL perturbation must fail the frame-wide exact reconstruction checker. Also detects missing chroma DC 2x2 Hadamard inverse (chroma recon gap).",
+      "why": "Negative-direction RTL perturbation must fail the frame-wide exact reconstruction checker.",
       "required_substrings": [
-        "CHROMA RECON GAP:",
-        "P3 intra frame-wide Verilator exact check FAILED: failures=9 mb_exact=197/300"
+        "P3 intra frame-wide Verilator exact check FAILED: failures=8 mb_exact=292/300"
       ]
     },
     {
