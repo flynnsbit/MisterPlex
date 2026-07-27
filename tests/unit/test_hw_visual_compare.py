@@ -644,9 +644,10 @@ def main() -> int:
             "can be labelled as a colour defect\n"
             f"stdout={absent_guard.stdout}\nstderr={absent_guard.stderr}")
     absent_report = json.loads(absent_status_report.read_text())
-    require(absent_report["stats"]["visual_verdict"]["id"] == "NO_FRAME_DELIVERED" and
-            absent_report["stats"]["visual_verdict"]["delivery_reason"] == "no_fresh_frame_delivery",
-            f"PLXF absent status must map to stable NO_FRAME_DELIVERED verdict: {absent_report}")
+    require(absent_report["stats"] is None and
+            absent_report["delivery_verdict"]["id"] == "NO_FRAME_DELIVERED" and
+            absent_report["delivery_verdict"]["delivery_reason"] == "no_fresh_frame_delivery",
+            f"PLXF absent status must map to delivery_verdict without pixel stats: {absent_report}")
 
     absent_text_status = WORK / "status_plxf_absent_text.txt"
     absent_text_status.write_text(
@@ -665,7 +666,9 @@ def main() -> int:
     )
     require(absent_text_guard.returncode == 7 and
             "frame store status unavailable (PLXF mailbox absent/unwritten)" in absent_text_guard.stderr and
-            '"id": "NO_FRAME_DELIVERED"' in absent_text_guard.stdout,
+            '"delivery_verdict":' in absent_text_guard.stdout and
+            '"id": "NO_FRAME_DELIVERED"' in absent_text_guard.stdout and
+            '"stats": null' in absent_text_guard.stdout,
             "plain PLXF absent/unwritten status text must be a named delivery refusal, "
             f"not graded\nstdout={absent_text_guard.stdout}\nstderr={absent_text_guard.stderr}")
 
@@ -688,6 +691,7 @@ def main() -> int:
     require(non_yuv.returncode == 7 and
             "frame store refused non-YUV doorbell (0xE1)" in non_yuv.stderr and
             "non-YUV DDR doorbell format error" in non_yuv.stderr and
+            '"delivery_verdict":' in non_yuv.stdout and
             '"id": "NO_FRAME_DELIVERED"' in non_yuv.stdout,
             "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
             f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
