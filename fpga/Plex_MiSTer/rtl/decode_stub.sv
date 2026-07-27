@@ -23,6 +23,12 @@ module decode_stub #(
 	input  wire [7:0]  slice_type,
 	input  wire        slice_is_i,
 	input  wire        slice_valid,
+	input  wire        first_mb_p_skip,
+	input  wire [7:0]  p_skip_run,
+	input  wire [2:0]  first_mb_part_mode,
+	input  wire [2:0]  first_mb_part_count,
+	input  wire        first_mb_uses_sub_mb,
+	input  wire        first_mb_intra,
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -60,6 +66,13 @@ module decode_stub #(
 	reg [7:0]      lat_idr;
 	reg [7:0]      lat_mb_w, lat_mb_h;
 	reg            lat_sps;
+	reg            lat_slice_is_p;
+	reg            lat_first_mb_p_skip;
+	reg [7:0]      lat_p_skip_run;
+	reg [2:0]      lat_first_mb_part_mode;
+	reg [2:0]      lat_first_mb_part_count;
+	reg            lat_first_mb_uses_sub_mb;
+	reg            lat_first_mb_intra;
 	reg            lat_res_ok;
 	reg [4:0]      lat_res_tc;
 	reg signed [7:0] lat_res_dc;
@@ -108,6 +121,8 @@ module decode_stub #(
 			if (recon_px[dbg_i] != 8'd128)
 				recon_dbg_comb[5] = 1'b1; // recon differs from pred-only 128
 		end
+		recon_dbg_comb[1] = lat_slice_is_p && inter_mode_supported;
+		recon_dbg_comb[2] = lat_slice_is_p && (inter_mode_luma != 8'd0);
 		recon_dbg_comb[6] = lat_res_ok;
 		recon_dbg_comb[7] = lat_wait_res;
 	end
@@ -220,6 +235,58 @@ module decode_stub #(
 	                            (inter_diag_band == 2'd2) ? inter_chroma_sample :
 	                                                         (inter_fetch_x[7:0] ^ inter_fetch_y[7:0]);
 
+	// Mode-driven first-P-MB MC/reconstruction scaffold. P_Skip/partition mode
+	// comes from the real slice parser; MVD remains zero until the MB-layer parser
+	// exports motion-vector deltas.
+	wire [1:0] inter_mode_part_idx =
+		(lat_first_mb_part_mode == 3'd1) ? {1'b0, y[3]} :
+		(lat_first_mb_part_mode == 3'd2) ? {1'b0, x[3]} :
+		{x[3], y[3]};
+	wire signed [15:0] mode_pred_x, mode_pred_y, mode_mv_x, mode_mv_y;
+	wire mode_skip_zero;
+	wire mode_avail_a = !lat_first_mb_p_skip;
+	wire mode_avail_b = !lat_first_mb_p_skip;
+	wire mode_avail_c = !lat_first_mb_p_skip;
+	h264_mv_pred_part u_inter_mode_mv (
+		.part_mode(lat_first_mb_part_mode), .part_idx(inter_mode_part_idx),
+		.avail_a(mode_avail_a), .avail_b(mode_avail_b), .avail_c(mode_avail_c), .avail_d(1'b0),
+		.mv_a_x(16'sd4), .mv_a_y(16'sd0),
+		.mv_b_x(16'sd0), .mv_b_y(16'sd4),
+		.mv_c_x(16'sd8), .mv_c_y(16'sd0),
+		.mv_d_x(16'sd0), .mv_d_y(16'sd0),
+		.mvd_x(16'sd0), .mvd_y(16'sd0), .p_skip(lat_first_mb_p_skip),
+		.pred_x(mode_pred_x), .pred_y(mode_pred_y),
+		.mv_x(mode_mv_x), .mv_y(mode_mv_y), .skip_zero(mode_skip_zero)
+	);
+	wire signed [15:0] mode_base_x_s = $signed({6'd0, x}) + (mode_mv_x >>> 2);
+	wire signed [15:0] mode_base_y_s = $signed({6'd0, y}) + (mode_mv_y >>> 2);
+	wire [15:0] mode_fetch_x, mode_fetch_y;
+	h264_luma_ref_tap_addr u_inter_mode_fetch (
+		.base_x(mode_base_x_s), .base_y(mode_base_y_s), .tap_idx(7'd40),
+		.width({6'd0, width_w}), .height({6'd0, height_w}),
+		.tap_x(mode_fetch_x), .tap_y(mode_fetch_y)
+	);
+	wire [7:0] mode_luma_ref [0:80];
+	genvar mode_ref_i;
+	generate
+		for (mode_ref_i = 0; mode_ref_i < 81; mode_ref_i = mode_ref_i + 1) begin : gen_mode_ref
+			wire [15:0] rx = mode_fetch_x + (mode_ref_i % 9);
+			wire [15:0] ry = mode_fetch_y + (mode_ref_i / 9);
+			assign mode_luma_ref[mode_ref_i] =
+				((rx[7:0] * 8'd13) + (ry[7:0] * 8'd7) +
+				 {5'd0, lat_first_mb_part_mode} + (lat_first_mb_p_skip ? 8'd29 : 8'd0)) & 8'hff;
+		end
+	endgenerate
+	wire [7:0] inter_mode_luma;
+	h264_luma_qpel_sample u_inter_mode_luma (
+		.ref_pix(mode_luma_ref),
+		.frac_x(mode_mv_x[1:0]),
+		.frac_y(mode_mv_y[1:0]),
+		.sample(inter_mode_luma)
+	);
+	wire inter_mode_supported = lat_slice_is_p && !lat_first_mb_intra && !lat_first_mb_uses_sub_mb &&
+	                            (lat_first_mb_part_count != 3'd0);
+
 	// 3.3k fallback: paint from residual_dc (scan coeff0 → 128+dc)
 	wire signed [9:0] recon_sum = 10'sd128 + lat_res_dc;
 	wire [7:0] recon_from_dc =
@@ -280,6 +347,13 @@ module decode_stub #(
 			lat_mb_w      <= 0;
 			lat_mb_h      <= 0;
 			lat_sps       <= 0;
+			lat_slice_is_p <= 0;
+			lat_first_mb_p_skip <= 0;
+			lat_p_skip_run <= 0;
+			lat_first_mb_part_mode <= 3'd7;
+			lat_first_mb_part_count <= 0;
+			lat_first_mb_uses_sub_mb <= 0;
+			lat_first_mb_intra <= 0;
 			lat_res_ok    <= 0;
 			lat_res_tc    <= 0;
 			lat_res_dc    <= 0;
@@ -317,6 +391,13 @@ module decode_stub #(
 				lat_sps      <= sps_valid;
 				lat_mb_w     <= (mb_w == 0) ? 8'd20 : mb_w;
 				lat_mb_h     <= (mb_h == 0) ? 8'd15 : mb_h;
+				lat_slice_is_p <= (slice_type == 8'd0) || (slice_type == 8'd5);
+				lat_first_mb_p_skip <= first_mb_p_skip;
+				lat_p_skip_run <= p_skip_run;
+				lat_first_mb_part_mode <= first_mb_part_mode;
+				lat_first_mb_part_count <= first_mb_part_count;
+				lat_first_mb_uses_sub_mb <= first_mb_uses_sub_mb;
+				lat_first_mb_intra <= first_mb_intra;
 				lat_res_ok   <= residual_ok;
 				lat_res_tc   <= residual_tc;
 				lat_res_dc   <= residual_dc;

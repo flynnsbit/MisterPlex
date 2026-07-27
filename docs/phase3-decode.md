@@ -359,16 +359,20 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   QP and exposes P `mb_skip_run` plus the first P MB type. `decode_stub.sv`
   instantiates the inter RTL in the shipped artifact and paints a top-row MB1 diagnostic tile as four
   green/red stage bands (MV+partition, luma qpel, chroma epel, fetch; aggregate signature `0x57`).
+  It also feeds the parsed first-P-MB mode into a mode-driven MC/reference-fetch/recon scaffold
+  (`recon_dbg[2:1]`) without changing the full-frame pixel ratchet; MVD export and the real
+  previous-frame store remain pending.
   Verilator: `tests/unit/test_p3_inter_rtl_sim.sh` elaborates the real product RTL listed in
   `files.qip` through `tests/rtl/h264_inter_pred_tb_top.sv`, compares against
   `tests/fixtures/p3_inter_pred/inter_mc_v1.json`, and red-checks bad interpolation rounding via a
   testbench-only fault. The integrated gate `tests/unit/test_p3_inter_stream_path_rtl_sim.sh` now
   elaborates product `stream_path.sv` plus parsers/`decode_stub`/inter RTL, feeds paced multi-NAL
   Annex-B vectors, and requires idle return after each VCL: IDR fixture `nals=4 frames=1`, P fixture
-  `nals=15 idr=1 p=11 frames=12`, all four MB1 inter diagnostic bands green, and red-checks a
+  `nals=15 idr=1 p=11 frames=12`, all four MB1 inter diagnostic bands green,
+  `mode_mc_dbg=886914`, `mode_ref_dbg=886914`, and red-checks a
   testbench-only bad visual-diagnostic pixel fault. Primitive RTL evidence is `mv_cases=6`,
   `partition_cases=10`, plus a bad-partition-MV red-check. This is a stream-path/diagnostic gate; parsed P
-  MB syntax is not yet driving MC. DDR/YUV update: one
+  MB syntax now reaches the MC scaffold but not the real reference frame. DDR/YUV update: one
   624×480 YUV420 ref + current = 898,560 B; +present = 1,347,840 B. At 25 fps, narrow P16×16/P_Skip
   YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
   80 MHz DDR/YUV path; SDRAM remains out of scope.

@@ -64,8 +64,15 @@ public:
     int pxY = 0;
     std::vector<int> interBandSamples{0, 0, 0, 0};
     int interBadSamples = 0;
+    int modeMcDbg = 0;
+    int modeRefDbg = 0;
 
     void evalPosedgeSideEffects() {
+        if (top.recon_dbg_valid) {
+            const uint8_t dbg = static_cast<uint8_t>(top.recon_dbg);
+            if (dbg & 0x02) ++modeMcDbg;
+            if (dbg & 0x04) ++modeRefDbg;
+        }
         if (top.fs_wr_reset) {
             pxX = 0;
             pxY = 0;
@@ -220,6 +227,10 @@ int main(int argc, char** argv) {
             check(sim.interBandSamples[i] > 0, "missing green inter diagnostic band " + std::to_string(i));
         }
         check(sim.interBadSamples == 0, "red/mismatched inter diagnostic pixels observed");
+        if (pNals > 0) {
+            check(sim.modeMcDbg > 0, "mode-driven MC/recon dbg bit never asserted");
+            check(sim.modeRefDbg > 0, "mode-driven reference fetch dbg bit never asserted");
+        }
         if (!ok) return 1;
 
         std::cout << "OK real RTL sim: stream_path integrated inter vector nals=" << nals.size()
@@ -230,6 +241,8 @@ int main(int argc, char** argv) {
                   << " mb=" << static_cast<int>(sim.top.sps_mb_w) << "x" << static_cast<int>(sim.top.sps_mb_h)
                   << " inter_band_samples=" << sim.interBandSamples[0] << "/" << sim.interBandSamples[1]
                   << "/" << sim.interBandSamples[2] << "/" << sim.interBandSamples[3]
+                  << " mode_mc_dbg=" << sim.modeMcDbg
+                  << " mode_ref_dbg=" << sim.modeRefDbg
                   << (pNals == 0 ? " idr-multinal" : " p-slice-multinal")
                   << " cycles=" << sim.cycles << "\n";
         return 0;

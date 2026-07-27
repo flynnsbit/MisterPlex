@@ -57,8 +57,15 @@ in `files.qip`; test-only fault injection lives only in the testbench top.
 cannot optimize the block away before hardware bring-up. It paints the second macroblock in the
 top row as four 4-pixel-wide stage bands (MV, luma qpel, chroma epel, fetch): each band is green
 when that stage matches the fixture and red on mismatch, with the blue channel carrying the stage
-signature. The MV band also includes a visible partition-predictor witness; the aggregate inter signature is `0x57`. The first macroblock remains the existing IQ/IDCT
-residual/recon diagnostic.
+signature. The MV band also includes a visible partition-predictor witness; the aggregate inter
+signature is `0x57`. The first macroblock remains the existing IQ/IDCT residual/recon diagnostic.
+
+The integrated path now also feeds the parsed first-P-MB `P_Skip`/partition mode into a
+mode-driven MC scaffold inside `decode_stub`: partition selection drives `h264_mv_pred_part`, the
+resulting MV drives `h264_luma_ref_tap_addr`, and that address drives a qpel sample/recon witness.
+The witness is reported in the reserved `recon_dbg[2:1]` bits so the full-frame pixel ratchet stays
+unchanged while the parser→MC→reference-fetch→recon handoff is still red-checked in RTL. MVD export
+and real previous-frame storage are still pending.
 
 Silicon-divergence audit after the IQ/IDCT `0x3b`→`0x00` hardware failure: this inter primitive
 does not currently infer an internal coefficient/reference RAM. The qpel module consumes an
@@ -109,7 +116,7 @@ Current evidence:
 
 ```text
 OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal
-OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal
+OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 mode_mc_dbg=886914 mode_ref_dbg=886914 p-slice-multinal
 FAIL stream_path inter diag pixel: x=16 y=4 band=0 got=0xe87b want=0x1784
 OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 ```
@@ -126,10 +133,11 @@ Those 11 first-P-MB classifications cover P_L0_16x16, P_L0_16x8 and P_L0_8x16 th
 until the shared fixtures contain those syntax modes at the first macroblock or expose full P-MB
 goldens.
 
-The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
+The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate. Parsed P macroblock syntax now reaches the MC/reference-fetch/recon scaffold, but full decode still requires consuming shared `misterplex.p3.mb_golden.v1` P-macroblock records, exporting MVDs, and replacing the generated reference window with an explicitly-latency-modeled previous-frame store.
 
 The full-frame reference gate remains the decode scoreboard and still reports honest RED at frame 0;
-this slice moves P syntax/mode classification, not full-frame MC/reconstruction:
+this slice wires P syntax/mode classification into the MC scaffold without changing full-frame
+pixels:
 
 ```text
 FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=Y exact=189/76800 mae=82.082448 max_abs=210
