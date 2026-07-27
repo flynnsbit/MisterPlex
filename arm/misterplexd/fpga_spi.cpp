@@ -842,30 +842,6 @@ bool FpgaSpi::readDdrDoorbellStatus(DdrDoorbellStatus& status) {
     return false;
 }
 
-bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& status) {
-    status = FrameStoreStatus{};
-    if (!ensureDdrMap())
-        return false;
-    const size_t kOff = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
-    if (kOff + 8 > ddrMapLen_)
-        return false;
-    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo = mb[0];
-        const uint32_t hi = mb[1];
-        __sync_synchronize();
-        if (mb[0] != lo || mb[1] != hi)
-            continue;
-        if (lo != kUnderrunMailboxMagic)
-            return false;
-        status.seq = static_cast<uint8_t>(hi & 0xFFu);
-        status.debug_state = static_cast<uint8_t>((hi >> 8) & 0xFFu);
-        status.underrun_count = static_cast<uint16_t>(hi >> 16);
-        return true;
-    }
-    return false;
-}
-
 bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
     command = PlaybackCommand::None;
     if (!ensureDdrMap())

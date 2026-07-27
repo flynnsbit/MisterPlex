@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PRESENT_CORE = Path(os.environ.get("PRESENT_CORE", ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv"))
 PLEX_SV = Path(os.environ.get("PLEX_SV", ROOT / "fpga/Plex_MiSTer/Plex.sv"))
+PLEX_QSF = Path(os.environ.get("PLEX_QSF", ROOT / "fpga/Plex_MiSTer/Plex.qsf"))
 DDRAM_FRAME_RD = Path(
     os.environ.get("DDRAM_FRAME_RD", ROOT / "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv")
 )
@@ -671,7 +672,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
             ),
             ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
             (
-                "c_line_v2[video_slot]==rd_cy",
+                "c_line_v2[video_slot]==(Y_W-1)'(rd_cy)",
                 "chroma line-buffer hit must compare against the halved source Y",
             ),
             ("c_sel_r<=src_x[3:1]", "chroma byte select must halve the source X"),
@@ -753,6 +754,186 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         "PASS DDR frame-store YUV read contract "
         f"(Y={y_offset} U={u_offset} V={v_offset} strides Y={y_stride} C={c_stride}; "
         "deliberate U/V, R/B coefficient, and chroma-geometry faults go red)"
+    )
+
+
+def check_present_geometry_stride_contract() -> None:
+    host = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
+    layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
+    media = strip_comments(read(MEDIA_PLAYER_CPP))
+    fb_present = strip_comments(read(FB_PRESENT_CPP))
+    frame_store = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    present_core = strip_comments(read(PRESENT_CORE))
+    qsf = read(PLEX_QSF)
+
+    host_nt = norm(host)
+    media_nt = norm(media)
+    fb_nt = norm(fb_present)
+    frame_nt = norm(frame_store)
+    present_nt = norm(present_core)
+    qsf_nt = norm(qsf)
+
+    coded_w = cpp_const(host, "kPlex480pCodedWidth")
+    coded_h = cpp_const(host, "kPlex480pCodedHeight")
+    display_w = cpp_const(host, "kPlex480pDisplayWidth")
+    presented_w = cpp_const(host, "kPlex480pPresentedWidth")
+    crop_right = cpp_const(host, "kPlex480pCropRight")
+    pillar_left = cpp_const(host, "kPlex480pPillarboxLeft")
+    pillar_right = cpp_const(host, "kPlex480pPillarboxRight")
+    y_stride = cpp_const(host, "kPlex480pYStrideBytes")
+    c_stride = cpp_const(host, "kPlex480pChromaStrideBytes")
+    y_offset = cpp_const(host, "kPlex480pYPlaneOffset")
+    u_offset = cpp_const(host, "kPlex480pUPlaneOffset")
+    v_offset = cpp_const(host, "kPlex480pVPlaneOffset")
+    y_bytes = cpp_const(host, "kPlex480pYuv420pBytes")
+
+    check(
+        (coded_w, coded_h, display_w, presented_w, crop_right, pillar_left, pillar_right)
+        == (624, 480, 618, 640, 6, 11, 11),
+        "480p geometry contract changed unexpectedly. If the PMS/profile target changed, "
+        "update the geometry table, visual provenance, and this stride gate together.",
+    )
+    check(
+        (y_stride, c_stride, y_offset, u_offset, v_offset, y_bytes)
+        == (624, 312, 0, 299520, 374400, 449280),
+        "480p I420 byte layout changed unexpectedly. The product path must declare any "
+        "stride/offset change before grading distorted-video reports.",
+    )
+
+    def missing_stride_requirements(host_norm: str, media_norm: str, frame_norm: str) -> list[str]:
+        required = [
+            (
+                host_norm,
+                "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width)",
+                "ARM layout must derive luma stride from coded_width (624), not display/presented width",
+            ),
+            (
+                host_norm,
+                "constuint64_tchromaLineBytes=static_cast<uint64_t>(geom.coded_width/2)",
+                "ARM layout must derive chroma stride from coded_width/2 (312), not cropped width/2",
+            ),
+            (
+                host_norm,
+                "constuint32_tyBytes=static_cast<uint32_t>(geom.coded_width*geom.coded_height)",
+                "ARM plane offsets must use coded_width*coded_height for Y bytes",
+            ),
+            (
+                host_norm,
+                "if(width==kPlex480pPresentedWidth&&height==kPlex480pPresentedHeight)returnplex480pDdrFrameGeometry();",
+                "640x480 presentation must map to the declared 624x480 coded / 618x480 display geometry",
+            ),
+            (
+                media_norm,
+                "constintrawW=ddrGeometry.coded_width;",
+                "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",
+            ),
+            (
+                media_norm,
+                "constintrawDisplayW=ddrGeometry.display_width;",
+                "FFmpeg visible scale width must be the cropped display width (618)",
+            ),
+            (
+                media_norm,
+                'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease,pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
+                "FFmpeg must scale into display geometry then pad once into the coded 624-pixel stride",
+            ),
+            (
+                media_norm,
+                "clearYuv420pCropPadding(frame.data(),ddrGeometry)",
+                "rawvideo DDR frames must blacken coded crop padding before the frame-store reads them",
+            ),
+            (
+                media_norm,
+                "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
+                "U crop padding must use chroma stride coded_width/2 (312) and half-resolution crop",
+            ),
+            (
+                media_norm,
+                "clearPlane(yuv+yBytes+cW*cH,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackV)",
+                "V crop padding must use chroma stride coded_width/2 (312) and half-resolution crop",
+            ),
+            (
+                media_norm,
+                "ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)",
+                "rawvideo present must send the same declared geometry that selected FFmpeg's coded stride",
+            ),
+            (
+                frame_norm,
+                "Y_LINE_QWORDS=CODED_W/8",
+                "RTL luma DDR line stride must be CODED_W/8 qwords (624 bytes), not FRAME_W/8",
+            ),
+            (
+                frame_norm,
+                "C_LINE_QWORDS=CODED_W/16",
+                "RTL chroma DDR line stride must be CODED_W/16 qwords (312 bytes), not display/FRAME width",
+            ),
+            (
+                frame_norm,
+                "PRESENT_END_X=X_W'(PRESENT_X+DISPLAY_W)",
+                "RTL visible area must end at pillar_left + display_width, leaving the right pillar outside DDR",
+            ),
+            (
+                frame_norm,
+                "src_x=rd_visible?(display_x+CROP_LEFT_L):'0",
+                "RTL source X must crop from display_x into coded coordinates exactly once",
+            ),
+            (
+                frame_norm,
+                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
+                "RTL chroma fetch address must stride by 312-byte chroma lines",
+            ),
+        ]
+        return [msg for haystack, needle, msg in required if needle not in haystack]
+
+    missing = missing_stride_requirements(host_nt, media_nt, frame_nt)
+    if missing:
+        fail(f"present geometry/stride contract: {missing[0]}")
+
+    check(
+        ".FRAME_W(FRAME_W)" in present_nt
+        and ".FRAME_H(FRAME_H)" in present_nt
+        and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
+        and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
+        and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
+        and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
+        and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt,
+        "present_core must instantiate ddr_frame_store from the shared layout params: "
+        "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
+        "PRESENT_X=11 for pillarbox.",
+    )
+    check(
+        'set_global_assignment-nameVERILOG_MACRO"DDR_FRAME_STORE=1"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_W=640"' in qsf_nt
+        and 'set_global_assignment-nameVERILOG_MACRO"FRAME_H=480"' in qsf_nt,
+        "Quartus build must declare DDR_FRAME_STORE with 640x480 presented scanout. "
+        "A missing/changed FRAME_W silently changes the frame-store scanout geometry.",
+    )
+    check(
+        "uPlane=yPlane+static_cast<size_t>(w)*static_cast<size_t>(h)" in fb_nt
+        and "vPlane=uPlane+static_cast<size_t>(w/2)*static_cast<size_t>(h/2)" in fb_nt,
+        "fb0 YUV reference blit must use the supplied coded width as stride and "
+        "coded_width/2 as chroma stride.",
+    )
+
+    bad_host_presented_stride = host_nt.replace(
+        "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width)",
+        "constuint64_tlineBytes=static_cast<uint64_t>(geom.presented_width)",
+    )
+    if not missing_stride_requirements(bad_host_presented_stride, media_nt, frame_nt):
+        fail("deliberately changed ARM luma stride 624→640 did not make the geometry gate red")
+    bad_media_display_stride = media_nt.replace(
+        "constintrawW=ddrGeometry.coded_width;",
+        "constintrawW=ddrGeometry.display_width;",
+    )
+    if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt):
+        fail("deliberately changed FFmpeg raw stride 624→618 did not make the geometry gate red")
+    bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
+    if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride):
+        fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
+
+    print(
+        "PASS present geometry/stride chain is declared end-to-end "
+        "(coded 624 stride, display 618 crop, presented 640 with 11px pillars, chroma stride 312)"
     )
 
 
@@ -1303,6 +1484,7 @@ def main() -> int:
     check_status_telemetry()
     check_ddr_frame_layout_contract()
     check_ddr_frame_store_yuv_read_contract()
+    check_present_geometry_stride_contract()
     check_yuv_ddr_writer_contract()
     check_present_path_degradation_contract()
     check_ddr_bitstream_product_path()
