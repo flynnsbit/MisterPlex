@@ -616,6 +616,80 @@ int main(int argc, char** argv) {
     std::cout << "  j-position regression tests: " << j_tests << "\n";
 
     // -----------------------------------------------------------------------
+    // Test 8: Edge-clamping fault detection (per instrument-integrity #18)
+    // Inject off-by-one in the clamping and measure how many edge tests
+    // detect it. This proves the edge test vectors actually exercise boundary
+    // pixels and that a ±1 clamp error is detectable.
+    // -----------------------------------------------------------------------
+    int edge_clamp_detected = 0, edge_clamp_total = 0;
+    {
+        // Build ref window with BROKEN clamping: clamp to boundary-1 instead
+        // of boundary (i.e., fetch from 1 pixel inside instead of AT the edge).
+        auto build_luma_ref_window_bad_clamp = [&](const uint8_t* ref, int rs,
+                int ix, int iy, int bw, int bh, int pw, int ph) {
+            int win_w = bw + 5, win_h = bh + 5;
+            std::vector<uint8_t> win(win_w * win_h);
+            for (int r = 0; r < win_h; r++)
+                for (int c = 0; c < win_w; c++) {
+                    int x = ix - 2 + c, y = iy - 2 + r;
+                    // Bad clamp: one pixel too conservative
+                    if (x < 0) x = 1;    // should be 0
+                    else if (x >= pw) x = pw - 2;  // should be pw-1
+                    if (y < 0) y = 1;
+                    else if (y >= ph) y = ph - 2;
+                    win[r * win_w + c] = ref[y * rs + x];
+                }
+            return win;
+        };
+
+        int mv_tests[][2] = {
+            {-12, 0}, {0, -12}, {56, 0}, {80, 0}, {0, 80}, {-20, -20}, {80, 80},
+        };
+        for (const auto& mv : mv_tests) {
+            for (int fy2 = 0; fy2 < 4; fy2++) {
+                for (int fx2 = 0; fx2 < 4; fx2++) {
+                    int full_mv_x = mv[0] + fx2, full_mv_y = mv[1] + fy2;
+                    int blk_w2 = 4, blk_h2 = 4, bx2 = 8, by2 = 8;
+                    int ix2 = bx2 + (full_mv_x >> 2);
+                    int iy2 = by2 + (full_mv_y >> 2);
+                    int fx_v = full_mv_x & 3, fy_v = full_mv_y & 3;
+
+                    // Golden model with correct clamping
+                    std::vector<uint8_t> expected(blk_w2 * blk_h2);
+                    mc_ref::luma_mc_block(ref_frame.data(), ref_stride,
+                                          bx2, by2, full_mv_x, full_mv_y,
+                                          blk_w2, blk_h2, pic_w, pic_h,
+                                          expected.data(), blk_w2);
+
+                    // RTL fed with BAD-clamped reference
+                    auto bad_win = build_luma_ref_window_bad_clamp(
+                        ref_frame.data(), ref_stride, ix2, iy2,
+                        blk_w2, blk_h2, pic_w, pic_h);
+
+                    std::vector<uint8_t> got;
+                    int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+                    run_mc_block(top, false, fx_v, fy_v, 0, 0,
+                                 blk_w2, blk_h2, bad_win, got, rx, ry);
+
+                    ++edge_clamp_total;
+                    // Does bad clamp produce different output than golden?
+                    if (got.size() == expected.size()) {
+                        for (size_t i = 0; i < got.size(); i++) {
+                            if (got[i] != expected[i]) {
+                                ++edge_clamp_detected;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::cout << "  EDGE_CLAMP_FAULT: detected=" << edge_clamp_detected
+                  << "/" << edge_clamp_total
+                  << " (" << (100*edge_clamp_detected/std::max(1,edge_clamp_total)) << "%)\n";
+    }
+
+    // -----------------------------------------------------------------------
     // Summary
     // -----------------------------------------------------------------------
     int total_tests = total_luma + total_chroma + edge_luma + edge_chroma
