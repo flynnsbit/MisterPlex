@@ -42,16 +42,16 @@ read_status() {
   return 1
 }
 
-echo "=== status readback (expect nalu>=4 has_stream=1 bytes_in>=149) ==="
+echo "=== status readback (expect nalu>=4 has_stream=1; byte counter is not in status ABI) ==="
 ST=$(read_status) || true
 echo "$ST"
 echo "$ST" | grep -q 'has_stream=1'
 NALU=$(echo "$ST" | sed -n 's/.*nalu=\([0-9]*\).*/\1/p')
 echo "nalu_count=$NALU"
 python3 -c "import sys; n=int('$NALU' or 0); sys.exit(0 if n >= 4 else 1)"
-BYTES_IN=$(echo "$ST" | sed -n 's/.*bytes_in=\([0-9]*\).*/\1/p')
-echo "bytes_in=$BYTES_IN"
-python3 -c "import sys; b=int('$BYTES_IN' or 0); sys.exit(0 if b >= 100 else 1)"
+STREAM_NALUS=$(echo "$ST" | sed -n 's/.*stream_nalus=\([0-9]*\).*/\1/p')
+echo "stream_nalus=$STREAM_NALUS"
+python3 -c "import sys; n=int('$STREAM_NALUS' or 0); sys.exit(0 if n >= 4 else 1)"
 # Fake SPS in synthetic blob is not Baseline-parseable — sps_valid may stay 0
 
 echo "=== second append push (nalu should grow by >=4) ==="

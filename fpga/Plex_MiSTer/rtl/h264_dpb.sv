@@ -369,16 +369,21 @@ module h264_luma_qpel_block_16x16 (
 	endfunction
 
 	function automatic integer pix(input integer r, input integer c);
-		pix = {24'd0, ref_win[r * 21 + c]};
+		reg [7:0] sample;
+		begin
+			sample = ref_win[r * 21 + c];
+			pix = {24'd0, sample};
+		end
+	endfunction
+
+	function automatic [7:0] low8(input integer v);
+		low8 = v[7:0];
 	endfunction
 
 	function automatic integer avg2(input integer a, input integer b);
 		avg2 = (a + b + 1) >>> 1;
 	endfunction
 
-	function automatic [7:0] u8(input integer v);
-		u8 = v[7:0];
-	endfunction
 
 	function automatic integer hraw_at(input integer row, input integer col);
 		hraw_at = pix(row, col - 2) - 5 * pix(row, col - 1) +
@@ -413,22 +418,24 @@ module h264_luma_qpel_block_16x16 (
 			col = x + 2;
 			row = y + 2;
 			case ({frac_y, frac_x})
-			4'b0000: qpel_at = u8(pix(row, col));
-			4'b0001: qpel_at = u8(avg2(pix(row, col), half_h_at(row, col)));
-			4'b0010: qpel_at = u8(half_h_at(row, col));
-			4'b0011: qpel_at = u8(avg2(half_h_at(row, col), pix(row, col + 1)));
-			4'b0100: qpel_at = u8(avg2(pix(row, col), half_v_at(row, col)));
-			4'b0101: qpel_at = u8(avg2(half_h_at(row, col), half_v_at(row, col)));
-			4'b0110: qpel_at = u8(avg2(half_h_at(row, col), half_c_at(row, col)));
-			4'b0111: qpel_at = u8(avg2(half_h_at(row, col), half_v_at(row, col + 1)));
-			4'b1000: qpel_at = u8(half_v_at(row, col));
-			4'b1001: qpel_at = u8(avg2(half_v_at(row, col), half_c_at(row, col)));
-			4'b1010: qpel_at = u8(half_c_at(row, col));
-			4'b1011: qpel_at = u8(avg2(half_c_at(row, col), half_v_at(row, col + 1)));
-			4'b1100: qpel_at = u8(avg2(half_v_at(row, col), pix(row + 1, col)));
-			4'b1101: qpel_at = u8(avg2(half_h_at(row + 1, col), half_v_at(row, col)));
-			4'b1110: qpel_at = u8(avg2(half_c_at(row, col), half_h_at(row + 1, col)));
-			default: qpel_at = u8(avg2(half_h_at(row + 1, col), half_v_at(row, col + 1)));
+
+			4'b0000: qpel_at = low8(pix(row, col));
+			4'b0001: qpel_at = low8(avg2(pix(row, col), half_h_at(row, col)));
+			4'b0010: qpel_at = low8(half_h_at(row, col));
+			4'b0011: qpel_at = low8(avg2(half_h_at(row, col), pix(row, col + 1)));
+			4'b0100: qpel_at = low8(avg2(pix(row, col), half_v_at(row, col)));
+			4'b0101: qpel_at = low8(avg2(half_h_at(row, col), half_v_at(row, col)));
+			4'b0110: qpel_at = low8(avg2(half_h_at(row, col), half_c_at(row, col)));
+			4'b0111: qpel_at = low8(avg2(half_h_at(row, col), half_v_at(row, col + 1)));
+			4'b1000: qpel_at = low8(half_v_at(row, col));
+			4'b1001: qpel_at = low8(avg2(half_v_at(row, col), half_c_at(row, col)));
+			4'b1010: qpel_at = low8(half_c_at(row, col));
+			4'b1011: qpel_at = low8(avg2(half_c_at(row, col), half_v_at(row, col + 1)));
+			4'b1100: qpel_at = low8(avg2(half_v_at(row, col), pix(row + 1, col)));
+			4'b1101: qpel_at = low8(avg2(half_h_at(row + 1, col), half_v_at(row, col)));
+			4'b1110: qpel_at = low8(avg2(half_c_at(row, col), half_h_at(row + 1, col)));
+			default: qpel_at = low8(avg2(half_h_at(row + 1, col), half_v_at(row, col + 1)));
+
 			endcase
 		end
 	endfunction
@@ -448,6 +455,14 @@ module h264_chroma_epel_block_8x8 (
 	input  wire [2:0] frac_y,
 	output reg  [7:0] pred [0:63]
 );
+	function automatic integer chroma_pix(input integer idx);
+		reg [7:0] sample;
+		begin
+			sample = ref_win[idx];
+			chroma_pix = {24'd0, sample};
+		end
+	endfunction
+
 	function automatic [7:0] interp(input integer x, input integer y);
 		integer p00;
 		integer p10;
@@ -459,10 +474,10 @@ module h264_chroma_epel_block_8x8 (
 		begin
 			fx = {29'd0, frac_x};
 			fy = {29'd0, frac_y};
-			p00 = {24'd0, ref_win[y * 9 + x]};
-			p10 = {24'd0, ref_win[y * 9 + x + 1]};
-			p01 = {24'd0, ref_win[(y + 1) * 9 + x]};
-			p11 = {24'd0, ref_win[(y + 1) * 9 + x + 1]};
+			p00 = chroma_pix(y * 9 + x);
+			p10 = chroma_pix(y * 9 + x + 1);
+			p01 = chroma_pix((y + 1) * 9 + x);
+			p11 = chroma_pix((y + 1) * 9 + x + 1);
 			sum = (8 - fx) * (8 - fy) * p00 +
 			      fx * (8 - fy) * p10 +
 			      (8 - fx) * fy * p01 +

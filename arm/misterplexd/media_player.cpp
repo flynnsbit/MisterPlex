@@ -81,7 +81,7 @@ inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
     return 0;
 }
 
-// Nearest-neighbor scale RGB565 → fixed frame_store size (default 320×240).
+// Legacy SPI fallback scaler for RGB565 frame-store cores.
 inline void scaleRgb565(const uint16_t* src, int sw, int sh, uint16_t* dst, int dw, int dh) {
     if (sw == dw && sh == dh) {
         std::memcpy(dst, src, static_cast<size_t>(dw) * static_cast<size_t>(dh) * sizeof(uint16_t));
@@ -2010,7 +2010,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto lastLog = t0;
     size_t totalBytes = 0;
 
-    bool usedRgb = false;
+    bool usedRawVideo = false;
     bool videoEof = false;
     bool shortRead = false;
     size_t shortReadGot = 0;
@@ -2138,7 +2138,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (wantYuvDdr && presentMode_ == "both" && fb_.ok())
             log("media: PRESENT=both uses yuv420p DDR frame-store path; fb0 blit converts the "
                 "same frame");
-        usedRgb = true;
+        usedRawVideo = true;
         presentCount_ = 0;
         audioBytes_.store(0);
         std::vector<std::string> args;
@@ -2897,7 +2897,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         lastSummary_.presentedFrames = presentCount_;
         lastSummary_.reconFrames = reconFrames_.load();
         lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
-        lastSummary_.usedRawVideo = usedRgb;
+        lastSummary_.usedRawVideo = usedRawVideo;
         lastSummary_.streamEnabled = streamEnabled_;
         lastSummary_.skipRgb = skipRgb;
         lastSummary_.shortRead = shortRead;
@@ -2907,8 +2907,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
-        const bool hadContent = usedRgb ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
-                                                              positionMs_.load() > startMs + 500);
+        const bool hadContent = usedRawVideo ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
+                                                                   positionMs_.load() > startMs + 500);
         if (hadContent)
             onProgress_("ended", positionMs_.load(), durationMs);
         else
@@ -2923,7 +2923,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
-        " rgb=" + (usedRgb ? "on" : "off") +
+        " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0"));
 }

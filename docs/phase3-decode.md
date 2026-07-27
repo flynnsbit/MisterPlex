@@ -137,12 +137,13 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
   Host: FULL residual walk exists, but the former full-frame **maeY=U=V=0**
         status is **UNSUBSTANTIATED** as product decode evidence. Native-I420
         scoreboard evidence replaces it: the old MB0 phantom (`got=142 ref=65`
-        through RGB565) is clean (`got=73 ref=73 abs=0`), while full-frame
-        intra remains partial: 624×480 12f `510/1170` MB exact, Y MAE
-        `17.765057`; 320×240 12f `155/300`, Y MAE `6.050521` max `96`;
-        wcap fixture `207/300`. `h264_recon.hpp` still produces YUV420/RGB565
-        host references, but full-frame green must cite native-I420 plane
-        evidence, not RGB565 presentation output.
+        through RGB565) is clean (`got=73 ref=73 abs=0`). The first native-I420
+        full-frame ratchet numbers (624×480 `510/1170`, 320×240 `155/300`,
+        wcap `207/300`) are also retired because the reference silently kept
+        in-loop deblocking enabled while RTL output was no-deblock. Full-frame
+        green must cite native-I420 plane evidence with loop-filter state
+        declared/refused in provenance, not RGB565 presentation output or a
+        silent FFmpeg default.
   FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
   **Next was 3.3i (now done):** host SPI present + STREAM wire — see below.
     - Optional deblock filter (not needed for no-LF gold)
@@ -301,12 +302,13 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     formerly reported `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
     That is now **UNSUBSTANTIATED** for product full-frame decode because the
     measurement path was RGB565/presentation-contaminated. The evidence-backed
-    native-I420 ratchets are:
-    - `plex_inter_p16_624x480_12f`: intra `510/1170` MB exact, Y MAE `17.765057`;
-      11 P frames expected-red.
-    - `plex_inter_p16_320x240_12f`: intra `155/300` MB exact, Y MAE `6.050521`,
-      max `96`; 11 P frames expected-red.
-    - `wcap_residual14_idr_plus_p`: intra `207/300` MB exact; 1 P frame expected-red.
+    first native-I420 ratchets (`plex_inter_p16_624x480_12f` `510/1170`,
+    `plex_inter_p16_320x240_12f` `155/300`, `wcap_residual14_idr_plus_p`
+    `207/300`) are also retired because their reference silently had in-loop
+    deblocking enabled while RTL output did not. Current full-frame status waits
+    for no-deblock native-I420 ratchets; first real localized mismatch is MB 182
+    `(26,4)`, `Y(420,72)`, `got=107 ref=145`, I16x16 vertical, QP 0, pred=106,
+    AC all zero, dequant DC=60, IDCT=1.
     The host CSV can remain a source-level regression fixture, but it must not be
     cited as a full-frame product PASS.
   **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 MB0 host+handoff ✅ / paint **BLOCKED** →

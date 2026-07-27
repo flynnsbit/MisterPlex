@@ -127,9 +127,11 @@ Plex reload+push captures were byte/pixel identical (`296640/296640`, Y/U/V MAE
 `bytes_in=4`. Source audit closed the suspicious "four bytes" question: in the
 current status ABI that field is not a byte counter at all. `raw[12..15]` were
 reclaimed for residual/recon telemetry, and `push_frame --status` now prints
-`bytes_in = nalu_count`; the natural fixture has `nalu=4`, meaning four NALs
-(SPS/PPS/SEI/IDR), not four delivered bytes. The comparator therefore names this
-as a `STATUS_TELEMETRY_LAYER` freshness failure and refuses before
+`stream_nalus` plus `bytes_in_unavailable=1` instead of a byte counter. Older
+logs that still contain `bytes_in = nalu_count` are explicitly treated as a
+telemetry-layer alias; the natural fixture has `nalu=4`, meaning four NALs
+(SPS/PPS/SEI/IDR), not four delivered bytes. The comparator therefore names
+both forms as a `STATUS_TELEMETRY_LAYER` freshness failure and refuses before
 loading/grading pixels; the checked-in natural fixture
 `tests/fixtures/hw_visual/reload_determinism/plex_bytes_in4_*` confirms `rc=7`
 even when the capture is compared against itself.
@@ -172,7 +174,7 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 4 | V4L2/FFmpeg reported corrupted capture buffers/data |
 | 5 | capture device absent |
 | 6 | capture device busy/exclusive-open |
-| 7 | no fresh frame delivery proven (`bytes_in`/required status/token freshness failed) |
+| 7 | no fresh frame delivery proven (status byte counter absent/aliased, required status, or token freshness failed) |
 | 8 | loaded `/media/fat/_Utility/Plex.rbf` md5 does not match the declared artifact, or golden source RBF does not match the loaded core |
 | 9 | missing or mismatched golden provenance (geometry, pixel format, colour, or non-hardware reference) |
 

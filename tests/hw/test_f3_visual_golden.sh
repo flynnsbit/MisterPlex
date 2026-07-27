@@ -163,11 +163,6 @@ status_ready() {
   echo "$st" | grep -q 'sps_valid=1' || return 1
   echo "$st" | grep -q 'pps_valid=1' || return 1
   echo "$st" | grep -q 'mb0=0' || return 1
-  if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
-    local bytes
-    bytes="$(echo "$st" | sed -n 's/.*bytes_in=\([0-9][0-9]*\).*/\1/p')"
-    [[ -n "$bytes" && "$bytes" -ge "$MIN_BYTES_IN" ]] || return 1
-  fi
   return 0
 }
 for attempt in 1 2 3; do
@@ -200,13 +195,15 @@ if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
   STATUS_COMPARE_ARGS=(
     --status-log "$OUT/status.txt"
     --previous-status-log "$OUT/status_before.txt"
-    --min-bytes-in "$MIN_BYTES_IN"
     --require-status-field has_frame=1
     --require-status-field has_stream=1
     --require-status-field has_idr=1
     --require-status-field sps_valid=1
     --require-status-field pps_valid=1
   )
+  if grep -q 'bytes_in=' "$OUT/status.txt"; then
+    STATUS_COMPARE_ARGS+=(--min-bytes-in "$MIN_BYTES_IN")
+  fi
   if [[ "${VISUAL_REQUIRE_TOKEN:-0}" == "1" ]]; then
     STATUS_COMPARE_ARGS+=(--require-token-change)
   fi

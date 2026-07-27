@@ -507,11 +507,7 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
         return false;
     status.producer_count = bitstreamWriteCount_;
     status.consumer_count = static_cast<uint32_t>(readRaw >> 32);
-    if (static_cast<uint32_t>(errRaw) == ring::kErrMagic) {
-        status.underrun = (errRaw >> 40) & 1u;
-        status.overrun = (errRaw >> 41) & 1u;
-        status.active = (errRaw >> 42) & 1u;
-    }
+    (void)ring::decodeErrStatusWord(errRaw, status);
     if (static_cast<uint32_t>(st0) == ring::kStat0Magic)
         status.ring_level = static_cast<uint32_t>(st0 >> 32);
     else
@@ -524,22 +520,8 @@ bool FpgaSpi::readBitstreamStatus(BitstreamStatus& status) {
         status.session_id = static_cast<uint32_t>(st3 >> 32);
     if (static_cast<uint32_t>(st4) == ring::kStat4Magic)
         status.session_id |= static_cast<uint64_t>(static_cast<uint32_t>(st4 >> 32)) << 32;
-    if (static_cast<uint32_t>(st5) == ring::kStat5Magic) {
-        const uint32_t counts = static_cast<uint32_t>(st5 >> 32);
-        status.overrun_count = static_cast<uint16_t>(counts);
-        status.underrun_count = static_cast<uint16_t>(counts >> 16);
-    }
-    if (static_cast<uint32_t>(st6) == ring::kStat6Magic) {
-        const uint32_t ds = static_cast<uint32_t>(st6 >> 32);
-        status.desync_count = static_cast<uint16_t>(ds >> 16);
-        const uint16_t flags = static_cast<uint16_t>(ds);
-        status.underrun = status.underrun || ((flags >> 6) & 1u);
-        status.overrun = status.overrun || ((flags >> 7) & 1u);
-        status.active = status.active || ((flags >> 8) & 1u);
-        status.paused = (flags >> 9) & 1u;
-        status.desync = (flags >> 10) & 1u;
-        status.fatal = (flags >> 11) & 1u;
-    }
+    (void)ring::decodeStat5StatusWord(st5, status);
+    (void)ring::decodeStat6StatusWord(st6, status);
     return true;
 }
 
@@ -829,6 +811,56 @@ bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
         if (!mboxAlive_)
             return false;
         osd = static_cast<uint16_t>(hi & 0xFFFFu);
+        return true;
+    }
+    return false;
+}
+
+bool FpgaSpi::readDdrDoorbellStatus(DdrDoorbellStatus& status) {
+    status = DdrDoorbellStatus{};
+    if (!ensureDdrMap())
+        return false;
+    const size_t kOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
+    if (kOff + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo = dw[0];
+        const uint32_t hi = dw[1];
+        __sync_synchronize();
+        if (dw[0] != lo || dw[1] != hi)
+            continue;
+        uint32_t seq = 0;
+        int bank = 0;
+        if (!decodeDdrDoorbell(lo, hi, ddrLayout_.format, seq, bank))
+            return false;
+        status.seq = seq;
+        status.bank = bank;
+        status.format = ddrLayout_.format;
+        return true;
+    }
+    return false;
+}
+
+bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& status) {
+    status = FrameStoreStatus{};
+    if (!ensureDdrMap())
+        return false;
+    const size_t kOff = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    if (kOff + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo = mb[0];
+        const uint32_t hi = mb[1];
+        __sync_synchronize();
+        if (mb[0] != lo || mb[1] != hi)
+            continue;
+        if (lo != kUnderrunMailboxMagic)
+            return false;
+        status.seq = static_cast<uint8_t>(hi & 0xFFu);
+        status.debug_state = static_cast<uint8_t>((hi >> 8) & 0xFFu);
+        status.underrun_count = static_cast<uint16_t>(hi >> 16);
         return true;
     }
     return false;
@@ -1666,15 +1698,17 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.residual_csum = raw[kResidualCsumByte];
     s.recon_sig = raw[kReconSigByte];
     s.recon_dbg = raw[kReconDbgByte];
-    // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Use nalu_count
-    // as the liveness/perturbation witness while this debug ABI is active.
-    s.stream_bytes_in = static_cast<uint32_t>(s.nalu_count);
+    // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Publish the
+    // NAL-count liveness mirror under an explicit name; keep stream_bytes_in
+    // only as a deprecated in-process compatibility alias.
+    s.stream_nalus = static_cast<uint32_t>(s.nalu_count);
+    s.stream_bytes_in = s.stream_nalus;
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }
 
 bool FpgaSpi::readCoreStatus(CoreStatus& out) {
-    // Prefer consistent samples: same nalu+bytes_in twice, or nalu>=1 with matching bytes.
+    // Prefer consistent samples: same NAL liveness twice, or any stable stream with NALs.
     CoreStatus best{};
     bool have = false;
     for (int attempt = 0; attempt < 8; ++attempt) {
@@ -1682,14 +1716,14 @@ bool FpgaSpi::readCoreStatus(CoreStatus& out) {
         if (!getCoreStatus(raw))
             return false;
         CoreStatus s = parseCoreStatus(raw);
-        // Sanity: bytes_seen should be <= bytes_in + small slack, nalu not huge garbage
-        bool sane = s.nalu_count < 10000 && s.stream_bytes_in < (1u << 28) &&
+        // Sanity: status no longer carries byte counts; nalu not huge garbage.
+        bool sane = s.nalu_count < 10000 && s.stream_nalus < 10000 &&
                     s.sps_width <= 4096 && s.sps_height <= 2160;
         if (!sane) {
             usleep(10000);
             continue;
         }
-        if (have && s.nalu_count == best.nalu_count && s.stream_bytes_in == best.stream_bytes_in &&
+        if (have && s.nalu_count == best.nalu_count && s.stream_nalus == best.stream_nalus &&
             s.has_stream == best.has_stream && s.sps_valid == best.sps_valid) {
             out = s;
             return true;
@@ -1697,7 +1731,7 @@ bool FpgaSpi::readCoreStatus(CoreStatus& out) {
         best = s;
         have = true;
         // Strong signal: stream with NALs (and optional SPS)
-        if (s.has_stream && s.stream_bytes_in > 0 && s.nalu_count > 0) {
+        if (s.has_stream && s.stream_nalus > 0 && s.nalu_count > 0) {
             out = s;
             return true;
         }

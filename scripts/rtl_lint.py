@@ -253,7 +253,7 @@ def compare_to_baseline(current: dict[str, dict[str, int]], baseline: dict[str, 
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__ + "\nThis is a Verilator parse/lint gate, not a Quartus synthesis-validity gate.")
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--list-files", action="store_true")
@@ -269,9 +269,9 @@ def main() -> int:
     probe = subprocess.run([str(ROOT / "scripts" / "run_verilator.sh"), "--version"], cwd=ROOT,
                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if probe.returncode == 127:
-        print("SKIP RTL LINT: Verilator not found; whole-design RTL lint was NOT run.", file=sys.stderr)
+        print("RTL LINT REFUSED(exit=3): Verilator not found; whole-design RTL lint was NOT run.", file=sys.stderr)
         print("Install oss-cad-suite under ~/.local/oss-cad-suite or set VERILATOR=/path/to/verilator.", file=sys.stderr)
-        return 0
+        return 3
     if probe.returncode != 0:
         print("RTL LINT ERROR: Verilator probe failed:", file=sys.stderr)
         print(probe.stdout, file=sys.stderr)

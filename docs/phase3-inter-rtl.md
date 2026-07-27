@@ -159,7 +159,9 @@ FULL_FRAME_COMPARE summary ... frames=12 nals=15 idr=1 p=11 ... first_bad_frame=
 
 Native-I420 ratchets (`tests/fixtures/p3_multinal/*full_frame_ratchet_v1.json`,
 generated/checked by `tests/unit/test_stream_path_full_frame_compare.sh` and
-`tools/score_h264_native_frames.cpp`) are the current evidence:
+`tools/score_h264_native_frames.cpp`) were the next evidence instrument, but
+their first baseline is also retired: the FFmpeg reference silently included
+in-loop deblocking while the RTL candidate did not.
 
 ```text
 624x480 12f intra: 510/1170 MB exact, Y MAE 17.765057; P frames 11/11 expected-red
@@ -168,9 +170,13 @@ wcap residual14 fixture: 207/300 intra MB exact; P frames 1/1 expected-red
 MB0 phantom resolved on native I420: got=73 ref=73 abs=0 (retired RGB565 path reported got=142 ref=65)
 ```
 
-The ratchet fixture was regenerated after removing RGB565 scoreboard contamination. The strict
-reference comparator remains RED where expected, and the behavioral pixel-XOR/colorspace red-checks
-still fail strict compare/refuse RGB565-derived candidates.
+The ratchet must be regenerated against no-deblock reference planes
+(`-skip_loop_filter all`) with loop-filter state recorded/refused in provenance.
+The first real no-deblock mismatch is localized to MB 182 `(26,4)`, luma
+`Y(420,72)`: `got=107 ref=145`, I16x16 vertical, QP 0, pred=106, AC all zero,
+dequant DC=60, IDCT=1, which points at DC scaling collapse rather than MB0,
+prediction, or CAVLC. The behavioral pixel-XOR/colorspace red-checks still
+fail strict compare/refuse RGB565-derived candidates.
 
 ## Hardware gate plan
 

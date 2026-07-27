@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import importlib.util
 from pathlib import Path
 
 
@@ -67,6 +68,11 @@ TEST_DDR_FRAME_SH = Path(
 )
 HW_README_MD = Path(os.environ.get("HW_README_MD", ROOT / "tests/hw/README.md"))
 PHASE3_DECODE_MD = Path(os.environ.get("PHASE3_DECODE_MD", ROOT / "docs/phase3-decode.md"))
+PUSH_FRAME_CPP = Path(os.environ.get("PUSH_FRAME_CPP", ROOT / "tools/push_frame.cpp"))
+SET_STATUS_CPP = Path(os.environ.get("SET_STATUS_CPP", ROOT / "tools/set_status.cpp"))
+H264_DPB_RTL = Path(os.environ.get("H264_DPB_RTL", ROOT / "fpga/Plex_MiSTer/rtl/h264_dpb.sv"))
+H264_DEBLOCK_RTL = Path(os.environ.get("H264_DEBLOCK_RTL", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv"))
+QUARTUS_SV_GUARD = ROOT / "scripts/check_quartus_sv_subset.py"
 
 
 def read(path: Path) -> str:
@@ -348,7 +354,7 @@ def check_quartus_syntax_tripwires() -> None:
     fault_deblock = deblock.replace("parameter int MB_AW =", "localparam int MB_AW =", 1)
     if not missing_quartus_requirements(fault_deblock, dpb):
         fail("deliberate h264_deblock localparam-in-parameter-list fault did not go red")
-    fault_dpb = dpb.replace("u8(pix(row, col))", "pix(row, col)[7:0]", 1)
+    fault_dpb = dpb.replace("low8(pix(row, col))", "pix(row, col)[7:0]", 1)
     if not missing_quartus_requirements(deblock, fault_dpb):
         fail("deliberate h264_dpb function-call part-select fault did not go red")
     print("PASS Quartus syntax tripwires for known Verilator-clean fit failures")
@@ -384,6 +390,7 @@ def check_mailboxes() -> None:
 def check_ddr_bitstream_ring() -> None:
     rtl = strip_comments(read(DDR_BITSTREAM_READER))
     host = strip_comments(read(DDR_BITSTREAM_RING_HPP))
+    fpga_spi = strip_comments(read(FPGA_SPI_CPP))
     cases = [
         ("DATA_PHYS", "kDataPhys", 0x30100000),
         ("CTRL_PHYS", "kCtrlPhys", 0x30140000),
@@ -417,6 +424,36 @@ def check_ddr_bitstream_ring() -> None:
             f"DDR bitstream ring ABI mismatch: RTL {rtl_name}=0x{rv:X}, "
             f"host {host_name}=0x{hv:X}, expected 0x{expected:X}.",
         )
+    err_bits = {
+        "kErrTelemetrySeqShift": 32,
+        "kErrUnderrunStickyBit": 45,
+        "kErrOverrunStickyBit": 46,
+        "kErrActiveBit": 47,
+        "kErrUnderrunCountShift": 48,
+        "kErrOverrunCountShift": 56,
+    }
+    for name, expected in err_bits.items():
+        got = cpp_const(host, name)
+        check(
+            got == expected,
+            f"DDR bitstream PLXE {name}={got}, expected {expected}. The RTL packs "
+            "PLXE as seq[39:32], flags[47:45], underrun_count[55:48], "
+            "overrun_count[63:56]; do not parse the old [42:40] flag positions.",
+        )
+    rtl_nt = norm(rtl)
+    check(
+        "DDRAM_DIN<={overrun_count[7:0],underrun_count[7:0],active,overrun_sticky,underrun_sticky,5'd0,telem_seq+8'd1,MAGIC_ERR}" in rtl_nt,
+        "ddr_bitstream_reader no longer packs PLXE as {overrun_count[7:0], "
+        "underrun_count[7:0], active, overrun_sticky, underrun_sticky, 5'd0, "
+        "telem_seq, MAGIC_ERR}. Update ddr_bitstream_ring.hpp decode constants and "
+        "red tests with the new producer layout.",
+    )
+    check(
+        "decodeErrStatusWord(errRaw,status)" in norm(fpga_spi),
+        "FpgaSpi::readBitstreamStatus must decode the PLXE word through the shared "
+        "ddr_bitstream_ring.hpp helper. Open-coded shifts already drifted from the RTL "
+        "producer once and made active/underrun/overrun flags lie.",
+    )
     print("PASS DDR bitstream ring host/RTL ABI constants")
 
 
@@ -424,6 +461,8 @@ def check_status_telemetry() -> None:
     plex = strip_comments(read(PLEX_SV))
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
     status_h = strip_comments(read(STATUS_TELEMETRY_HPP))
+    push_frame = strip_comments(read(PUSH_FRAME_CPP))
+    set_status = strip_comments(read(SET_STATUS_CPP))
     nt = norm(plex)
     expected = {
         "kResidualDcBitLo": 96,
@@ -502,6 +541,19 @@ def check_status_telemetry() -> None:
         ".recon_sig(recon_sig)" in plex and ".recon_valid(recon_valid)" in plex,
         "Plex.sv/stream_path no longer wire decode_stub recon telemetry to status. "
         "P3-3l2 requires product RTL to publish an IDCT-sensitive signature.",
+    )
+    status_tools = push_frame + "\n" + set_status
+    check(
+        "bytes_in=%u" not in status_tools and "stream_nalus=%u" in status_tools,
+        "status tools must not label the post-P3 NAL-count liveness alias as bytes_in. "
+        "Expose stream_nalus and bytes_in_unavailable=1 so freshness gates cannot mistake "
+        "nalu=4 for four delivered bytes again.",
+    )
+    check(
+        "frame_debug=0x%02x" in status_tools and "frame_seq=%u" in status_tools,
+        "status tools must surface the DDR frame-store debug byte and doorbell token. "
+        "frame_debug=0xE1 distinguishes a rejected non-YUV doorbell/harness bug from "
+        "a broken delivery path.",
     )
     print("PASS residual/recon status telemetry ABI (raw[12]=dc raw[13]=csum raw[14]=recon_sig)")
 
@@ -964,6 +1016,22 @@ def check_ddr_bitstream_product_path() -> None:
     print("PASS product STREAM path uses DDR NAL records with zero-delivery telemetry")
 
 
+def check_h264_quartus_subset() -> None:
+    spec = importlib.util.spec_from_file_location("check_quartus_sv_subset", QUARTUS_SV_GUARD)
+    check(spec is not None and spec.loader is not None, "Quartus SV subset guard script missing")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    errors = []
+    for rtl in (H264_DPB_RTL, H264_DEBLOCK_RTL):
+        errors.extend(guard.check_file(rtl))
+    check(
+        not errors,
+        "H.264 RTL uses constructs Quartus rejected while Verilator accepted:\n"
+        + "\n".join(f"  {err}" for err in errors),
+    )
+    print("PASS H.264 Quartus SV subset guard")
+
+
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
@@ -976,6 +1044,7 @@ def main() -> int:
     check_ddr_frame_store_yuv_read_contract()
     check_yuv_ddr_writer_contract()
     check_ddr_bitstream_product_path()
+    check_h264_quartus_subset()
     return 0
 
 

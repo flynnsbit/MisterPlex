@@ -1,4 +1,5 @@
 #include "fpga_spi.hpp"
+#include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/h264_residual_gold.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 
@@ -58,6 +59,18 @@ Raw packPre33l1Alias(uint8_t residual_dc, uint32_t stream_bytes) {
     return raw;
 }
 
+uint64_t packDdrRingErrWord(bool active, bool underrun, bool overrun, uint8_t seq,
+                            uint8_t underrun_count, uint8_t overrun_count) {
+    using namespace misterplex::ddr_bitstream_ring;
+    return static_cast<uint64_t>(kErrMagic) |
+           (static_cast<uint64_t>(seq) << kErrTelemetrySeqShift) |
+           (static_cast<uint64_t>(underrun ? 1u : 0u) << kErrUnderrunStickyBit) |
+           (static_cast<uint64_t>(overrun ? 1u : 0u) << kErrOverrunStickyBit) |
+           (static_cast<uint64_t>(active ? 1u : 0u) << kErrActiveBit) |
+           (static_cast<uint64_t>(underrun_count) << kErrUnderrunCountShift) |
+           (static_cast<uint64_t>(overrun_count) << kErrOverrunCountShift);
+}
+
 uintmax_t fileSize(const char* path) {
     std::ifstream f(path, std::ios::binary);
     if (!f)
@@ -80,6 +93,12 @@ int main(int argc, char** argv) {
     static_assert(kCsum8 == 0x14, "residual checksum golden");
     static_assert(kReconSigMb0Block0 == 0x3B, "MB0 block0 recon signature golden");
     static_assert(kReconDbgMb0Block0 == 0xF9, "MB0 block0 recon debug flags golden");
+    static_assert(misterplex::ddr_bitstream_ring::kErrUnderrunStickyBit == 45,
+                  "PLXE underrun sticky bit");
+    static_assert(misterplex::ddr_bitstream_ring::kErrOverrunStickyBit == 46,
+                  "PLXE overrun sticky bit");
+    static_assert(misterplex::ddr_bitstream_ring::kErrActiveBit == 47,
+                  "PLXE active bit");
 
     const auto dc_u8 = static_cast<uint8_t>(kDc);
     for (uint8_t ar = 0; ar < 4; ++ar) {
@@ -109,6 +128,25 @@ int main(int argc, char** argv) {
     expect(old.residual_csum != kCsum8,
            "old alias layout was accepted as a hard residual_csum PASS");
 
+    misterplex::ddr_bitstream_ring::Status ring{};
+    const uint64_t errWord =
+        packDdrRingErrWord(/*active*/ true, /*underrun*/ true, /*overrun*/ false,
+                           /*seq*/ 0x5A, /*underrun_count*/ 7, /*overrun_count*/ 3);
+    expect(misterplex::ddr_bitstream_ring::decodeErrStatusWord(errWord, ring),
+           "PLXE status word did not decode");
+    expect(ring.active, "PLXE active flag did not decode from bit 47");
+    expect(ring.underrun, "PLXE underrun flag did not decode from bit 45");
+    expect(!ring.overrun, "PLXE overrun flag false positive");
+    expect(ring.underrun_count == 7, "PLXE underrun count low byte did not decode");
+    expect(ring.overrun_count == 3, "PLXE overrun count low byte did not decode");
+    misterplex::ddr_bitstream_ring::Status oldErrBits{};
+    const uint64_t oldErrWord = static_cast<uint64_t>(misterplex::ddr_bitstream_ring::kErrMagic) |
+                                (1ull << 40) | (1ull << 41) | (1ull << 42);
+    expect(misterplex::ddr_bitstream_ring::decodeErrStatusWord(oldErrWord, oldErrBits),
+           "old PLXE status word did not decode magic");
+    expect(!oldErrBits.active && !oldErrBits.underrun && !oldErrBits.overrun,
+           "old PLXE bit positions [42:40] were accepted as current flags");
+
     if (argc > 1) {
         const uintmax_t sz = fileSize(argv[1]);
         expect((sz & 0xFFu) == 0x53u,
@@ -116,6 +154,6 @@ int main(int argc, char** argv) {
     }
 
     std::printf("test_status_telemetry: OK raw[12]=dc raw[13]=csum raw[14]=recon_sig raw[15]=recon_dbg; "
-                "old raw[13]=0x53 alias rejected\n");
+                "old raw[13]=0x53 alias rejected; PLXE bits 45/46/47 decoded\n");
     return 0;
 }

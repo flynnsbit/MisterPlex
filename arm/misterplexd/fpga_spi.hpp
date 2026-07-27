@@ -113,6 +113,18 @@ public:
         int64_t total_us = 0;
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
+    struct DdrDoorbellStatus {
+        uint32_t seq = 0;
+        int bank = 0;
+        DdrFrameFormat format = DdrFrameFormat::Yuv420p;
+    };
+    struct FrameStoreStatus {
+        uint8_t seq = 0;
+        uint8_t debug_state = 0;
+        uint16_t underrun_count = 0;
+    };
+    bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
+    bool readFrameStoreStatus(FrameStoreStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
@@ -230,7 +242,8 @@ public:
         // Legacy alias: high/low of previous wr_count field (now idr|stub)
         uint16_t wr_count_lo = 0;
         uint32_t stream_bytes_seen = 0; // not in status anymore; kept for API compat (=0)
-        uint32_t stream_bytes_in = 0; // legacy API compat; no longer byte-accurate in status
+        uint32_t stream_nalus = 0; // status liveness mirror of nalu_count, not bytes
+        uint32_t stream_bytes_in = 0; // deprecated alias of stream_nalus for API compat
     };
     // Parse getCoreStatus raw bytes into fields.
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);
