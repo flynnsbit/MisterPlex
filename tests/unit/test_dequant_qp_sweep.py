@@ -473,6 +473,19 @@ def test_chroma_qp_table() -> int:
     info(f"  RTL STATUS: No chroma DC Hadamard (2×2 transform) path exists")
     info(f"  RTL STATUS: No chroma_qp_index_offset handling in pps_parser.sv")
 
+    # Quantify dequant error from using QPy instead of QPc above QP 30
+    # This is the production impact of the missing mapping.
+    info(f"\n  DEQUANT ERROR from missing QPc mapping (coeff=1, pos=(0,0)):")
+    info(f"  {'QPy':>4s}  {'QPc':>4s}  {'2^(QPy/6)':>10s}  {'2^(QPc/6)':>10s}  {'ratio':>6s}")
+    for qpy in [30, 35, 40, 45, 48, 51]:
+        qpc = SPEC_QPC_TABLE[qpy]
+        scale_y = 1 << (qpy // 6)
+        scale_c = 1 << (qpc // 6)
+        ratio = scale_y / scale_c if scale_c > 0 else float('inf')
+        info(f"  {qpy:4d}  {qpc:4d}  {scale_y:10d}  {scale_c:10d}  {ratio:5.1f}×")
+    info(f"  At QPy=51, using luma QP gives 4× the correct chroma scale factor.")
+    info(f"  This produces visible chroma artefacts on constrained-bitrate content.")
+
     # Check if pps_parser has chroma_qp_index_offset
     pps_path = ROOT / "fpga/Plex_MiSTer/rtl/pps_parser.sv"
     if pps_path.exists():
