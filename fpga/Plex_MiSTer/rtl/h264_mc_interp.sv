@@ -3,6 +3,13 @@
 //
 // Budget: 250 cycles/MB (37% of 684 total at 20 MHz).
 //
+// *** PERFORMANCE CAVEAT ***
+// The measured 220 cycles/MB is a LOWER BOUND under ideal memory conditions:
+// reference data always available when ref_ready is high, no DDR latency,
+// no arbiter contention. Real DDR stalls add 1:1 to this number. 220 is a
+// property of the compute datapath, not of the system. The system number
+// depends entirely on w-dpb's ability to deliver 64-bit words without stalling.
+//
 // v3 architecture:
 //   - 2-wide output: 2 samples per cycle (mandatory to hit budget)
 //   - Pipelined load/compute: compute starts as soon as enough rows loaded
