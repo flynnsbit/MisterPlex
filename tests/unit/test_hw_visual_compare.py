@@ -205,10 +205,12 @@ def main() -> int:
         "--require-status-field", "has_stream=1",
         "--require-status-field", "has_idr=1",
     )
-    require(stale_delivery.returncode == 7 and "bytes_in=4 below minimum 512" in stale_delivery.stderr,
-            "bytes_in=4 stale-screen status must be refused before an exact pixel match can pass, "
-            f"not graded\nstdout={stale_delivery.stdout}\nstderr={stale_delivery.stderr}")
-    print("PASS natural bytes_in=4 stale-screen fixture is rejected before exact pixel grading")
+    require(stale_delivery.returncode == 7 and
+            "STATUS_TELEMETRY_LAYER: bytes_in=4 equals nalu=4" in stale_delivery.stderr,
+            "bytes_in=4/nalu=4 stale-screen status must be refused as status-telemetry aliasing "
+            "before an exact pixel match can pass, not graded\n"
+            f"stdout={stale_delivery.stdout}\nstderr={stale_delivery.stderr}")
+    print("PASS natural bytes_in=4/nalu=4 stale-screen fixture is rejected as telemetry-layer aliasing")
 
     fresh_status_before = WORK / "status_before_token.txt"
     fresh_status_after = WORK / "status_after_token.txt"

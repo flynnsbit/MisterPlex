@@ -76,8 +76,10 @@ Capture-rig, delivery, or wrong-core failure is never accepted as either green o
   and are not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default
   active-region compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
 - Stale-screen follow-up: Plex reload+push captures can exact-match a golden while status reports `bytes_in=4`.
-  The comparator now refuses that phantom-green path before pixel grading (`rc=7`) using the natural captured
-  fixture, and unit coverage proves both the `bytes_in=4` red/refusal and a fresh `bytes_in=6227` plus changed
+  Source audit proved this is a status-telemetry alias (`bytes_in == nalu == 4`, four NALs, not four bytes)
+  after stream byte telemetry was reclaimed for residual/recon RCA. The comparator now names the
+  `STATUS_TELEMETRY_LAYER` and refuses that phantom-green path before pixel grading (`rc=7`) using the natural
+  captured fixture; unit coverage also proves a fresh legacy-style `bytes_in=6227` plus changed
   `{bank,format,seq}` token green path.
 - Wrong-core follow-up: rollback `57674f2e` predates the current YUV420/624×480 frame-store contract, so it cannot
   validate the current ARM I420 delivery path. The hardware script now requires `VISUAL_RBF` or
@@ -97,7 +99,7 @@ Capture-rig, delivery, or wrong-core failure is never accepted as either green o
   `[5.1944,3.3532,2.0109]` after rerun against a same-window full golden. Bad `fe7673bc` was red
   (`0/296640`, Y/U/V MAE `[63.9724,24.5320,26.1278]`), but a full-frame gate cannot ship until good is green.
 - [x] Add a freshness/delivery guard so a stale frozen screen cannot grade as PASS. `compare --status-log`
-  refuses `bytes_in=4` before pixel grading (`rc=7`) and supports the shared DDR frame token
+  refuses the `bytes_in=4`/`nalu=4` status-telemetry alias before pixel grading (`rc=7`) and supports the shared DDR frame token
   `{bank,format,seq}` for w-a3/w-cap alignment.
 - [x] Add loaded-artifact identity gating. The hardware script records and verifies `md5sum
   /media/fat/_Utility/Plex.rbf`; compare refuses wrong or undeclared RBF identity (`rc=8`) before grading pixels.

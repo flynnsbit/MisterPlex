@@ -297,7 +297,16 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
         if bytes_in is None:
             problems.append("bytes_in missing")
         elif bytes_in < args.min_bytes_in:
-            problems.append(f"bytes_in={bytes_in} below minimum {args.min_bytes_in}")
+            nalu = current["ints"].get("nalu")
+            if nalu is not None and bytes_in == nalu:
+                problems.append(
+                    "STATUS_TELEMETRY_LAYER: "
+                    f"bytes_in={bytes_in} equals nalu={nalu}, so this status line is exposing "
+                    "the post-P3 telemetry alias (NAL count), not a byte-delivery counter; "
+                    f"below minimum {args.min_bytes_in}"
+                )
+            else:
+                problems.append(f"bytes_in={bytes_in} below minimum {args.min_bytes_in}")
 
     for spec in args.require_status_field:
         problem = require_field_match(current, spec)
