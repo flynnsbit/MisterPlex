@@ -203,6 +203,51 @@ static bool ffmpegGold(const std::string& h264, const std::string& yuvOut, int f
     return std::system(cmd.c_str()) == 0;
 }
 
+static bool writeUnsupportedHighProbe(const std::string& out) {
+    const std::string cmd =
+        "ffmpeg -y -hide_banner -loglevel error "
+        "-f lavfi -i 'testsrc2=size=320x240:rate=25' -frames:v 12 "
+        "-c:v libx264 -profile:v high -level 3.0 -pix_fmt yuv420p "
+        "-g 12 -bf 2 -x264-params 'keyint=12:min-keyint=12:scenecut=0:cabac=1:bframes=2:ref=2' "
+        "-bsf:v h264_mp4toannexb -f h264 '" +
+        out + "'";
+    return std::system(cmd.c_str()) == 0;
+}
+
+static bool checkUnsupportedHighProbe() {
+    const std::string out = "build/p3_inter_unsupported_high_cabac_b.264";
+    if (!writeUnsupportedHighProbe(out)) {
+        std::printf("FAIL unsupported probe: ffmpeg could not generate High/CABAC/B vector\n");
+        return false;
+    }
+    const auto data = readBinary(out);
+    auto chain = misterplex::parseAnnexBChain(data.data(), data.size());
+    std::vector<FrameInfo> frames;
+    int refs = 0;
+    int hasB = 0;
+    if (!decodeWithMvs(out, frames, refs, hasB) || frames.empty()) {
+        std::printf("FAIL unsupported probe: decode failed frames=%zu refs=%d hasB=%d\n",
+                    frames.size(), refs, hasB);
+        return false;
+    }
+    int countB = 0;
+    for (const auto& f : frames)
+        countB += f.type == 'B';
+    const bool unsupported = !chain.sps.valid || chain.sps.profile_idc != 66 || chain.sps.level_idc > 30 ||
+                             chain.pps.entropy_cabac || hasB || countB > 0;
+    if (!unsupported || chain.sps.profile_idc != 100 || !chain.pps.entropy_cabac || countB == 0) {
+        std::printf("FAIL unsupported probe: profile=%u level=%u cabac=%d hasB=%d B=%d refs=%d\n",
+                    chain.sps.valid ? static_cast<unsigned>(chain.sps.profile_idc) : 0U,
+                    chain.sps.valid ? static_cast<unsigned>(chain.sps.level_idc) : 0U,
+                    chain.pps.entropy_cabac ? 1 : 0, hasB, countB, refs);
+        return false;
+    }
+    std::printf("unsupported probe: correctly rejects High/CABAC/B stream profile=%u level=%u B=%d refs=%d\n",
+                static_cast<unsigned>(chain.sps.profile_idc),
+                static_cast<unsigned>(chain.sps.level_idc), countB, refs);
+    return true;
+}
+
 static std::string frameMaeCsv(const std::vector<FrameInfo>& frames, const std::vector<uint8_t>& gold) {
     const int w = frames[0].width;
     const int h = frames[0].height;
@@ -312,6 +357,8 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (!checkUnsupportedHighProbe())
+        return 1;
 
     std::vector<FrameInfo> frames;
     int refs = 0;

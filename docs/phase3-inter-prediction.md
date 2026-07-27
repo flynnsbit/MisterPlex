@@ -38,6 +38,21 @@ It is a tractable P-slice/CAVLC problem if the delivered stream really honors th
 removes B-slices, CABAC, weighted prediction, and interlaced/field coding from the hardware scope.
 That eliminates bidirectional reference lists, CABAC arithmetic decode, and weighted sample math.
 
+**Critical PMS result (W-A4, 2026-07-26): the real server did not honor this constraint.** A
+captured 640×480 universal transcode request with `videoProfile=baseline&videoLevel=30` delivered
+H.264 **High** profile instead:
+
+```text
+ffprobe delivered stream: h264 High, width=618 height=480, level=30, 25/1
+host SPS parse: profile_idc=100, level_idc=30, width=618, height=480
+PPS parse: entropy_cabac=1
+12 s VCL scan: vcl=302 idr=8 nonidr=294 i=22 p=165 b=115
+```
+
+So the Baseline-only decoder is feasible as an architecture, but **not yet a safe assumption for
+actual Plex 480p output**. Until PMS delivery is proven Baseline/CAVLC/I-P, product code must detect
+High/CABAC/B streams and fall back/report unsupported; silent decode is forbidden.
+
 What remains for 480p Baseline:
 
 - P-slice macroblock syntax and CAVLC residuals.
@@ -65,11 +80,12 @@ and must be detected/rejected rather than silently fed to the Baseline decoder.
 
 `test_p3_inter_pred_vectors` regenerates the vector byte-for-byte, decodes with libav motion-vector
 export, verifies the narrow profile (`profile_idc=66`, `level_idc<=30`, CAVLC PPS, `I=1 P=11 B=0
-refs=1 parts=16x16`), and checks the JSON/CSV fixtures. Red perturbions cover MV data, MAE rows,
-and byte-identical regeneration. The guard is intentionally fail-closed: an unexpected B/CABAC or
-non-Baseline stream must be reported as unsupported, not decoded incorrectly.
+refs=1 parts=16x16`), and checks the JSON/CSV fixtures. Red perturbations cover MV data, MAE rows,
+byte-identical regeneration, and unsupported-profile handling. The guard is intentionally
+fail-closed: an unexpected B/CABAC or non-Baseline stream must be reported as unsupported, not
+decoded incorrectly.
 
-## Hardware cost and memory path
+## Hardware cost and memory path under Baseline Level 3.0
 
 Inter prediction is external-memory work, not BRAM work.
 
@@ -98,7 +114,6 @@ For 640×480 P16×16 quarter-pel with one active reference, a rough per-frame me
 
 - reference read: ~0.72 MB/frame (luma 6-tap halo + chroma bilinear halo)
 - decoded YUV reference write: 0.46 MB/frame
-- decoded YUV reference write: 0.46 MB/frame
 - present/output write:
   - RGB565 path: 0.61 MB/frame
   - YUV420 DDR path (`w-c2` direction): 0.46 MB/frame
@@ -122,8 +137,7 @@ comfortable and leave headroom for sub-MB partitions and deblock.
 ## Coordination note for `w-a4`
 
 `w-a4` landed the 480p profile request (`videoProfile=baseline&videoLevel=30`) and PMS accepted the
-request. The remaining required proof is the actual delivered stream, not source metadata: source
-XML may still show `videoProfile="main"` for the input file. Before hardware depends on Baseline,
-capture/probe the emitted stream and verify profile_idc=66, PPS `entropy_coding_mode_flag=0`,
-slice types I/P only, `max_num_ref_frames` within the implemented count, and no unsupported
-partitions beyond the rung being tested.
+request. W-A4's first delivered-stream probe is **negative**: High/CABAC/B was delivered despite
+the request. Before hardware depends on Baseline, either make PMS actually deliver profile_idc=66
+with PPS `entropy_coding_mode_flag=0`, I/P only, and `max_num_ref_frames` within the implemented
+count, or keep the ARM/FFmpeg fallback for that stream.

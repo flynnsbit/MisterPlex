@@ -296,11 +296,18 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   Baseline makes inter prediction tractable: no B-slices, no CABAC, no weighted prediction, no
   field/interlaced coding. Treat this as a request until delivered-stream probing proves profile_idc=66
   and CAVLC PPS; source XML may still describe the original Main-profile input.
+  **Actual PMS probe (W-A4 2026-07-26):** the server did **not** honor Baseline. Delivered stream
+  probed as H.264 High, `profile_idc=100`, `level_idc=30`, `width=618`, `height=480`, PPS
+  `entropy_cabac=1`, and a 12 s slice scan found `i=22 p=165 b=115`. Therefore Baseline-only
+  FPGA inter decode is architecturally tractable but **not yet product-safe for PMS 480p**; product
+  must fail closed / fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder
+  exists.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
   (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
   `test_p3_inter_pred_vectors` regenerates byte-identically, exports libav motion vectors, and
-  verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbions cover MV and MAE rows.
+  verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbations cover MV, MAE rows,
+  and unsupported-profile handling.
   **Architecture:** inter prediction requires DDR3-backed YUV reference storage; BRAM is not viable
   for 480p references. Level 3.0 worst-case DPB is `floor(8100 / 1200) = 6` 640×480 refs:
   2.76 MB YUV420 for references, ~3.23 MB including current reconstruction. One-ref P16×16 480p
@@ -310,7 +317,8 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   DDR3 is plausible for the narrow Baseline/YUV path; faster DDRAM clock makes it comfortable.
   SDRAM remains unsuitable until its hardware bring-up is green.
   **Detection rule:** unexpected B-slice, CABAC PPS, non-Baseline profile, over-level stream, or
-  `max_num_ref_frames` above the implemented DPB must fail closed and report unsupported.
+  `max_num_ref_frames` above the implemented DPB must fail closed and report unsupported; unit
+  `test_p3_inter_pred_vectors` includes a generated High/CABAC/B probe for this guard.
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
