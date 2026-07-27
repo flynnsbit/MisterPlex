@@ -8,7 +8,7 @@ Each JSON manifest records:
 
 - bitstream path, byte count and SHA-256
 - `misterplex.p3.nal_sequence.v1` manifest path, byte count and SHA-256
-- FFmpeg/FFprobe version, decode command, and H.264 loop-filter state
+- FFmpeg/FFprobe version, decode command, decoder loop-filter marker (`loop_filter=skip_loop_filter=all`), and H.264 loop-filter state
 - provenance that declares native decoded planes, I420/YUV420p pixel format, no
   in-loop deblock (`-skip_loop_filter all`), no RGB/RGB565 round-trip, and no
   presentation border/pillar mask

@@ -35,7 +35,8 @@
     "output_format": "rawvideo",
     "pix_fmt": "yuv420p",
     "h264_loop_filter": "disabled",
-    "h264_loop_filter_ffmpeg": "-skip_loop_filter all"
+    "h264_loop_filter_ffmpeg": "-skip_loop_filter all",
+    "loop_filter": "skip_loop_filter=all"
   },
   "provenance": {
     "source_domain": "decoded H.264 planes",

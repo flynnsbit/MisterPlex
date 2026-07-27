@@ -115,7 +115,7 @@ void jsonCount(std::ostream& os, const char* name, const Count& c) {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string input, planes, output, loopFilterState;
+    std::string input, planes, manifest, output;
     int wantFrame = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -125,21 +125,28 @@ int main(int argc, char** argv) {
         };
         if (a == "--input") input = need("--input");
         else if (a == "--planes") planes = need("--planes");
+        else if (a == "--manifest") manifest = need("--manifest");
         else if (a == "--output") output = need("--output");
-        else if (a == "--loop-filter-state") loopFilterState = need("--loop-filter-state");
         else if (a == "--frame-index") wantFrame = std::stoi(need("--frame-index"));
         else {
             std::cerr << "usage: analyze_h264_intra_mbs --input stream.264 --planes ref.yuv "
-                         "--loop-filter-state disabled [--frame-index N] [--output out.json]\n";
+                         "--manifest frame_planes.json [--frame-index N] [--output out.json]\n";
             return 2;
         }
     }
     try {
-        if (input.empty() || planes.empty() || loopFilterState.empty())
-            throw std::runtime_error("missing --input, --planes, or --loop-filter-state");
-        if (loopFilterState != "disabled") {
-            std::cerr << "FAIL intra MB analysis: current recon output is undeblocked; refusing loop_filter_state="
-                      << loopFilterState << "\n";
+        if (input.empty() || planes.empty() || manifest.empty())
+            throw std::runtime_error("missing --input, --planes, or --manifest");
+        const auto manifestBlob = readFile(manifest);
+        const std::string manifestText(manifestBlob.begin(), manifestBlob.end());
+        if (manifestText.find("\"format\": \"misterplex.p3.frame_planes_golden.v1\"") == std::string::npos) {
+            std::cerr << "FAIL intra MB analysis: unknown frame-plane manifest format\n";
+            return 2;
+        }
+        if (manifestText.find("\"loop_filter\": \"skip_loop_filter=all\"") == std::string::npos ||
+            manifestText.find("\"h264_loop_filter\": \"disabled\"") == std::string::npos) {
+            std::cerr << "FAIL intra MB analysis: current recon output is undeblocked; refusing manifest without "
+                         "decoder.loop_filter=skip_loop_filter=all and provenance.h264_loop_filter=disabled\n";
             return 9;
         }
         auto blob = readFile(input);
@@ -284,7 +291,8 @@ int main(int argc, char** argv) {
         os << "{\n  \"format\":\"misterplex.p3.intra_mb_analysis.v1\",\n";
         os << "  \"source\":{\"path\":\"" << input << "\"},\n";
         os << "  \"reference\":{\"path\":\"" << planes << "\"},\n";
-        os << "  \"loop_filter\":\"disabled\",\n";
+        os << "  \"golden_manifest\":{\"path\":\"" << manifest
+           << "\",\"decoder_loop_filter\":\"skip_loop_filter=all\",\"h264_loop_filter\":\"disabled\"},\n";
         os << "  \"frame_index\":" << wantFrame << ",\"geometry\":{\"width\":" << w
            << ",\"height\":" << h << ",\"mb_width\":" << mbW << ",\"mb_height\":" << mbH << "},\n";
         os << "  \"summary\":{\"mb_exact\":" << mbAll.exact << ",\"mb_total\":" << mbAll.total

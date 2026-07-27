@@ -205,6 +205,9 @@ def build_manifest(
             "h264_loop_filter_ffmpeg": "-skip_loop_filter all"
             if h264_loop_filter == LOOP_FILTER_DISABLED
             else "ffmpeg default",
+            "loop_filter": "skip_loop_filter=all"
+            if h264_loop_filter == LOOP_FILTER_DISABLED
+            else "ffmpeg default",
         },
         "provenance": {
             "source_domain": "decoded H.264 planes",
@@ -305,6 +308,9 @@ def validate_manifest(
             "frame-plane golden H.264 loop-filter mismatch: "
             f"golden={decoder_loop_filter} expected={expected_h264_loop_filter}"
         )
+    decoder_loop_filter_alias = decoder.get("loop_filter")
+    if decoder_loop_filter == LOOP_FILTER_DISABLED and decoder_loop_filter_alias != "skip_loop_filter=all":
+        refuse("frame-plane golden decoder loop_filter is not skip_loop_filter=all")
     command_argv = decoder.get("command_argv")
     if not isinstance(command_argv, list) or not all(isinstance(v, str) for v in command_argv):
         refuse("frame-plane golden decoder command_argv is missing or invalid")
