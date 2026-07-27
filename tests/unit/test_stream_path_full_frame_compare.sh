@@ -506,3 +506,17 @@ if trace["coefficients_zigzag"][0] != block0["coefficients_zigzag"][0] + 1:
 print("OK full-frame MB0 trace red-check: injected coeff0 fault rejected by trace comparator")
 PY
 echo "OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison"
+
+# --- RTL-in-the-loop reconstruction scorer ---
+# Runs the actual RTL dequant/IDCT/recon pipeline on all 16 luma blocks of MB0.
+# verification_target=RTL (not host). This is what tells us the hardware works.
+RTL_SCORER_BUILD="$ROOT/build/verilator/rtl_recon_scorer"
+mkdir -p "$RTL_SCORER_BUILD"
+"$RUN_VERILATOR" --cc --exe --build \
+  -Mdir "$RTL_SCORER_BUILD" \
+  --top-module h264_rtl_recon_scorer_tb \
+  -Wno-fatal \
+  "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv" \
+  "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.cpp"
+"$RTL_SCORER_BUILD/Vh264_rtl_recon_scorer_tb" "$MB0_GOLDEN_JSON"
