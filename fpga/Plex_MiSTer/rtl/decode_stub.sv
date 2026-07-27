@@ -118,8 +118,8 @@ module decode_stub #(
 	wire inter_diag_tile = (x >= 10'd16) && (x < 10'd32) && (y < 10'd16);
 	// 3.3l-2: first 4x4 inv_quant + IDCT (pred=128) from the shared
 	// h264_iq_idct_4x4.sv RTL. The signature is XOR of reconstructed samples.
-	wire signed [17:0] idct_dequant [0:15];
-	wire signed [17:0] idct_residual [0:15];
+	wire signed [21:0] idct_dequant [0:15];
+	wire signed [21:0] idct_residual [0:15];
 	wire [7:0] idct_pred [0:15];
 	wire [7:0] recon_px [0:15];
 	wire [7:0] recon_sig_comb = recon_px[0]  ^ recon_px[1]  ^ recon_px[2]  ^ recon_px[3] ^
@@ -133,9 +133,9 @@ module decode_stub #(
 		for (dbg_i = 0; dbg_i < 16; dbg_i = dbg_i + 1) begin
 			if (lat_coeff[dbg_i] != 9'sd0)
 				recon_dbg_comb[0] = 1'b1; // coefficients seen by recon path are non-zero
-			if (idct_dequant[dbg_i] != 18'sd0)
+			if (idct_dequant[dbg_i] != 22'sd0)
 				recon_dbg_comb[3] = 1'b1; // dequant stage produced a non-zero value
-			if (idct_residual[dbg_i] != 18'sd0)
+			if (idct_residual[dbg_i] != 22'sd0)
 				recon_dbg_comb[4] = 1'b1; // IDCT residual contribution is non-zero
 			if (recon_px[dbg_i] != 8'd128)
 				recon_dbg_comb[5] = 1'b1; // recon differs from pred-only 128

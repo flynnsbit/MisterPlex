@@ -6,7 +6,7 @@ module h264_dequant4x4 (
 	input  wire signed [8:0] coeff [0:15],
 	input  wire [5:0]        qp,
 	input  wire [4:0]        max_coeff,
-	output wire signed [17:0] dequant [0:15]
+	output wire signed [21:0] dequant [0:15]
 );
 	function automatic [4:0] zigzag;
 		input [4:0] k;
@@ -47,7 +47,7 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
-	function automatic signed [17:0] dequant_one;
+	function automatic signed [21:0] dequant_one;
 		input signed [8:0] c;
 		input [5:0] q;
 		input [4:0] scan;
@@ -74,43 +74,43 @@ module h264_dequant4x4 (
 			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
 			qmul = qmul <<< (qdiv + 4'd2);
 			v = ($signed(c) * qmul + 32'sd32) >>> 6;
-			dequant_one = v[17:0];
+			dequant_one = v[21:0];
 		end
 	endfunction
 
 	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
-	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 18'sd0;
-	assign dequant[1]  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 18'sd0;
-	assign dequant[2]  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 18'sd0;
-	assign dequant[3]  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 18'sd0;
-	assign dequant[4]  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 18'sd0;
-	assign dequant[5]  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 18'sd0;
-	assign dequant[6]  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 18'sd0;
-	assign dequant[7]  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 18'sd0;
-	assign dequant[8]  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 18'sd0;
-	assign dequant[9]  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 18'sd0;
-	assign dequant[10] = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 18'sd0;
-	assign dequant[11] = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 18'sd0;
-	assign dequant[12] = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 18'sd0;
-	assign dequant[13] = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 18'sd0;
-	assign dequant[14] = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 18'sd0;
-	assign dequant[15] = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 18'sd0;
+	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 22'sd0;
+	assign dequant[1]  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 22'sd0;
+	assign dequant[2]  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 22'sd0;
+	assign dequant[3]  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 22'sd0;
+	assign dequant[4]  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 22'sd0;
+	assign dequant[5]  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 22'sd0;
+	assign dequant[6]  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 22'sd0;
+	assign dequant[7]  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 22'sd0;
+	assign dequant[8]  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 22'sd0;
+	assign dequant[9]  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 22'sd0;
+	assign dequant[10] = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 22'sd0;
+	assign dequant[11] = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 22'sd0;
+	assign dequant[12] = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 22'sd0;
+	assign dequant[13] = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 22'sd0;
+	assign dequant[14] = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 22'sd0;
+	assign dequant[15] = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 22'sd0;
 endmodule
 
 module h264_idct4x4 (
-	input  wire signed [17:0] dequant [0:15],
-	output wire signed [17:0] residual [0:15]
+	input  wire signed [21:0] dequant [0:15],
+	output wire signed [21:0] residual [0:15]
 );
-	function automatic signed [17:0] sat18;
+	function automatic signed [21:0] sat22;
 		input signed [31:0] v;
 		begin
-			if (v > 32'sd131071) sat18 = 18'sd131071;
-			else if (v < -32'sd131072) sat18 = -18'sd131072;
-			else sat18 = v[17:0];
+			if (v > 32'sd2097151) sat22 = 22'sd2097151;
+			else if (v < -32'sd2097152) sat22 = -22'sd2097152;
+			else sat22 = v[21:0];
 		end
 	endfunction
 
-	wire signed [31:0] b0  = dequant[0] + 18'sd32;
+	wire signed [31:0] b0  = dequant[0] + 22'sd32;
 	wire signed [31:0] b1  = dequant[1];
 	wire signed [31:0] b2  = dequant[2];
 	wire signed [31:0] b3  = dequant[3];
@@ -142,34 +142,34 @@ module h264_idct4x4 (
 	wire signed [31:0] c2_z0 = t2 + t10,  c2_z1 = t2 - t10,  c2_z2 = (t6 >>> 1) - t14,  c2_z3 = t6 + (t14 >>> 1);
 	wire signed [31:0] c3_z0 = t3 + t11,  c3_z1 = t3 - t11,  c3_z2 = (t7 >>> 1) - t15,  c3_z3 = t7 + (t15 >>> 1);
 
-	assign residual[0]  = sat18((c0_z0 + c0_z3) >>> 6);
-	assign residual[4]  = sat18((c0_z1 + c0_z2) >>> 6);
-	assign residual[8]  = sat18((c0_z1 - c0_z2) >>> 6);
-	assign residual[12] = sat18((c0_z0 - c0_z3) >>> 6);
-	assign residual[1]  = sat18((c1_z0 + c1_z3) >>> 6);
-	assign residual[5]  = sat18((c1_z1 + c1_z2) >>> 6);
-	assign residual[9]  = sat18((c1_z1 - c1_z2) >>> 6);
-	assign residual[13] = sat18((c1_z0 - c1_z3) >>> 6);
-	assign residual[2]  = sat18((c2_z0 + c2_z3) >>> 6);
-	assign residual[6]  = sat18((c2_z1 + c2_z2) >>> 6);
-	assign residual[10] = sat18((c2_z1 - c2_z2) >>> 6);
-	assign residual[14] = sat18((c2_z0 - c2_z3) >>> 6);
-	assign residual[3]  = sat18((c3_z0 + c3_z3) >>> 6);
-	assign residual[7]  = sat18((c3_z1 + c3_z2) >>> 6);
-	assign residual[11] = sat18((c3_z1 - c3_z2) >>> 6);
-	assign residual[15] = sat18((c3_z0 - c3_z3) >>> 6);
+	assign residual[0]  = sat22((c0_z0 + c0_z3) >>> 6);
+	assign residual[4]  = sat22((c0_z1 + c0_z2) >>> 6);
+	assign residual[8]  = sat22((c0_z1 - c0_z2) >>> 6);
+	assign residual[12] = sat22((c0_z0 - c0_z3) >>> 6);
+	assign residual[1]  = sat22((c1_z0 + c1_z3) >>> 6);
+	assign residual[5]  = sat22((c1_z1 + c1_z2) >>> 6);
+	assign residual[9]  = sat22((c1_z1 - c1_z2) >>> 6);
+	assign residual[13] = sat22((c1_z0 - c1_z3) >>> 6);
+	assign residual[2]  = sat22((c2_z0 + c2_z3) >>> 6);
+	assign residual[6]  = sat22((c2_z1 + c2_z2) >>> 6);
+	assign residual[10] = sat22((c2_z1 - c2_z2) >>> 6);
+	assign residual[14] = sat22((c2_z0 - c2_z3) >>> 6);
+	assign residual[3]  = sat22((c3_z0 + c3_z3) >>> 6);
+	assign residual[7]  = sat22((c3_z1 + c3_z2) >>> 6);
+	assign residual[11] = sat22((c3_z1 - c3_z2) >>> 6);
+	assign residual[15] = sat22((c3_z0 - c3_z3) >>> 6);
 endmodule
 
 module h264_recon4x4 (
 	input  wire [7:0]         pred [0:15],
-	input  wire signed [17:0] residual [0:15],
+	input  wire signed [21:0] residual [0:15],
 	output wire [7:0]         recon [0:15]
 );
 	function automatic [7:0] clip8;
-		input signed [18:0] v;
+		input signed [22:0] v;
 		begin
-			if (v < 19'sd0) clip8 = 8'd0;
-			else if (v > 19'sd255) clip8 = 8'd255;
+			if (v < 23'sd0) clip8 = 8'd0;
+			else if (v > 23'sd255) clip8 = 8'd255;
 			else clip8 = v[7:0];
 		end
 	endfunction

@@ -27,7 +27,7 @@ std::vector<uint8_t> readFile(const std::string& path) {
 }
 
 uint32_t signed18(int v) {
-    return static_cast<uint32_t>(v) & ((1u << 18) - 1u);
+    return static_cast<uint32_t>(v) & ((1u << 22) - 1u);
 }
 
 int blockOrder(int lx, int ly) {

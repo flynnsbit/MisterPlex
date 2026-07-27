@@ -223,7 +223,8 @@ void fillSequenceHeaders(const std::vector<uint8_t>& data, std::vector<NalUnit>&
             pps = misterplex::parsePpsRbsp(pay, plen);
         } else if ((n.type == 1 || n.type == 5) && sps.valid && pps.valid &&
                    log2MaxFrameNum != 0) {
-            n.slice = misterplex::parseSliceHeaderRbsp(pay, plen, n.type, log2MaxFrameNum,
+            uint8_t nri = (n.header >> 5) & 3;
+            n.slice = misterplex::parseSliceHeaderRbsp(pay, plen, n.type, nri, log2MaxFrameNum,
                                                        pocType, pps);
         }
     }

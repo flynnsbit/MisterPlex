@@ -324,8 +324,8 @@ public:
             mb0Trace.csum = static_cast<int>(top.trace_residual_csum);
             for (int i = 0; i < 16; ++i) {
                 mb0Trace.coeff[static_cast<std::size_t>(i)] = signExtend(top.trace_residual_coeff[i], 9);
-                mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 18);
-                mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 18);
+                mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 22);
+                mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 22);
                 mb0Trace.recon[static_cast<std::size_t>(i)] = static_cast<int>(top.trace_recon_px[i]);
             }
         }
