@@ -179,8 +179,10 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 9 | missing or mismatched golden provenance (geometry, pixel format, colour, or non-hardware reference) |
 
 If status exposes the frame-store debug byte, `0xe1` is surfaced as
-`non-YUV DDR doorbell/debug format error` and is treated as a freshness/setup
-refusal, not a visual mismatch.
+`frame store refused non-YUV doorbell (0xE1); non-YUV DDR doorbell format error`
+and is treated as a freshness/setup refusal, not a visual mismatch. The visual
+gate consumes `frame_debug` directly when w-osd's ARM status output exposes it;
+`debug_state`/DDR debug aliases remain accepted only for compatibility.
 
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before

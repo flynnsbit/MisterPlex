@@ -510,7 +510,9 @@ def main() -> int:
         "--status-log", str(non_yuv_status),
         "--min-bytes-in", "512",
     )
-    require(non_yuv.returncode == 7 and "non-YUV DDR doorbell/debug format error" in non_yuv.stderr,
+    require(non_yuv.returncode == 7 and
+            "frame store refused non-YUV doorbell (0xE1)" in non_yuv.stderr and
+            "non-YUV DDR doorbell format error" in non_yuv.stderr,
             "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
             f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
     print("PASS frame-store 0xe1 non-YUV doorbell debug is surfaced as a named refusal")
