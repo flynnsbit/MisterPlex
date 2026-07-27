@@ -15,6 +15,14 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "scripts" / "hw_visual_compare.py"
 WORK = ROOT / "build" / "hw-visual-unit"
 GOLDEN = ROOT / "tests" / "fixtures" / "hw_visual" / "plex_visual_640x480_golden.png"
+WCAP_CORRUPT_LOG = (
+    ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
+    "wcap_fe7673bc_yuyv422_corrupt.log"
+)
+WCAP_CORRUPT_640_LOG = (
+    ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
+    "wcap_fe7673bc_yuyv422_640_corrupt.log"
+)
 
 spec = importlib.util.spec_from_file_location("hw_visual_compare", TOOL)
 hw_visual_compare = importlib.util.module_from_spec(spec)
@@ -126,7 +134,28 @@ def main() -> int:
     mjpeg_log = "Error submitting packet to decoder: Invalid data found when processing input"
     require(hw_visual_compare.classify_capture_log(mjpeg_log) == "corrupt",
             "MJPEG decoder invalid-data wording was not classified as corrupt")
-    print("PASS V4L2 corrupt-buffer diagnostic classified distinctly")
+    require(WCAP_CORRUPT_LOG.exists(), "W-CAP corrupt capture log fixture missing")
+    wcap_log = WCAP_CORRUPT_LOG.read_text()
+    wcap_640_log = WCAP_CORRUPT_640_LOG.read_text()
+    require("1843200 bytes" in wcap_log and "yuyv422, 1280x720" in wcap_log,
+            "W-CAP 1280x720 fixture lost exact corrupt-buffer details")
+    require("614400 bytes" in wcap_640_log,
+            "W-CAP 640x480 fixture lost exact corrupt-buffer details")
+    require(hw_visual_compare.classify_capture_log(wcap_log) == "corrupt",
+            "W-CAP fe7673bc corrupt capture log fixture was not classified as corrupt")
+    require(hw_visual_compare.classify_capture_log(wcap_640_log) == "corrupt",
+            "W-CAP fe7673bc 640x480 corrupt capture log fixture was not classified as corrupt")
+    corrupt_logged = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        "--capture", str(cap2),
+        "--capture-log", str(WCAP_CORRUPT_LOG),
+        "--noise-report", str(noise),
+    )
+    require(corrupt_logged.returncode == 4,
+            "compare with W-CAP corrupt capture log must return capture-integrity rc=4, "
+            f"not grade pixels\nstdout={corrupt_logged.stdout}\nstderr={corrupt_logged.stderr}")
+    print("PASS V4L2 corrupt-buffer diagnostics classified distinctly")
     return 0
 
 

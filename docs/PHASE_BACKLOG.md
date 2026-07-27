@@ -55,19 +55,27 @@ as either green or known-red core evidence.
 
 **Hardware evidence (W-C1 token window):**
 
-- HDMI capture is trustworthy through `/dev/video4` with MJPEG `1280x720@60`; YUYV currently emits corrupted
-  V4L2 buffers and is rejected as `rc=4`, not graded.
+- Differential test: the exact W-CAP YUYV pipelines also report full-frame corrupt buffers on the MiSTer menu
+  (`1843200` bytes at 1280×720@10 and `614400` bytes at 640×480@10), so this is a raw-YUYV capture-pipeline
+  problem rather than evidence that Plex alone emits bad HDMI timing.
+- Repaired capture path: `/dev/video4` MJPEG `1280x720@60`; menu capture was clean, YUYV 640×480@5 with
+  120-frame warm-up still reported full-frame corruption. `v4l2-ctl` advertises MJPEG 720p60/1080p30 and YUYV
+  720p only at 10 fps; dongle is on a shared 480M USB bus.
+- W-CAP's real `fe7673bc959f37fd7da44e8a865f7db3` YUYV failure logs (`Dequeued v4l2 buffer contains corrupted
+  data`, `/dev/video4`, 10 fps, 1280×720 corrupt bytes `1843200`, 640×480 corrupt bytes `614400`) are now checked
+  in as capture-log fixtures and force `compare --capture-log ...` to return `rc=4` before pixel grading.
 - Measured static capture noise floor on `57674f2e`: `max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`; thresholds
   `[1,1,1]` / `2`.
 - Green rollback `57674f2e`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0`.
-- Red specimen `fe7673bc`: telemetry `raw[13]=0x14`, `raw[14]=0x00`; visual compare exact active pixels
-  `62125/296640`, MAE RGB `[14.3978,51.0105,90.1486]`, max_abs `255`, `rc=1`, diff artifact emitted.
+- Red specimen `fe7673bc`: telemetry has `res_csum=20`/`raw[13]=0x14` class signal while reconstruction is known
+  bad; visual compare exact active pixels `0/296640`, MAE RGB `[4.9069,66.3937,151.4916]`, max_abs `255`,
+  `rc=1`, diff artifact emitted.
 - Caveat: the checked-in 624×480 fixture did not yet exercise the rollback RBF reliably; the red/green proof used
   the existing 320×240 F3 baseline vector and a hardware-captured good golden.
 
 **Hardware TODO:**
 
-- [ ] Get W-CAP's actual corrupted V4L2 command/log/device/artifacts and add it as a harness specimen if usable.
+- [x] Get W-CAP's actual corrupted V4L2 command/log/device/artifacts and add the logs as rc=4 harness specimens.
 - [x] Record real HDMI capture noise floor from `build/hw_visual_accept/noise_good_57674f2e.json`.
 - [x] Prove green visual compare against rollback `57674f2e`.
 - [x] Prove red path on hardware with known-bad `fe7673bc`.

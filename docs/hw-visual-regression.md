@@ -59,6 +59,10 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 5 | capture device absent |
 | 6 | capture device busy/exclusive-open |
 
+When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
+`--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before
+looking at pixels, so a noisy PNG cannot be mislabeled as a core mismatch.
+
 ## Capture noise threshold
 
 The hardware test captures the same static frame five times and derives thresholds from that measured floor:
@@ -84,8 +88,37 @@ threshold_mae_rgb = [1, 1, 1], threshold_max_abs = 2
 ```
 
 The YUYV path on `/dev/video4` repeatedly produced `Dequeued v4l2 buffer contains corrupted data`; the harness
-classifies that as `rc=4` and refuses to grade it. MJPEG captures at 1280×720@60 were usable for the current
-luma/region comparison, but still retry on occasional decoder invalid-data warnings.
+classifies that as `rc=4` and refuses to grade it. MJPEG captures at 1280×720@60 are the repaired path for the
+current lab dongle and are usable for the current luma/region comparison, with retry on occasional decoder
+invalid-data warnings.
+
+Capture-repair differential test, 2026-07-27:
+
+| Source | Pipeline | Result |
+|---|---|---|
+| MiSTer menu | YUYV 1280×720@10, 60-frame warm-up | `Dequeued v4l2 buffer contains corrupted data (1843200 bytes)`, PNG 63,940 bytes |
+| MiSTer menu | YUYV 640×480@10, 60-frame warm-up | `Dequeued v4l2 buffer contains corrupted data (614400 bytes)`, PNG 15,863 bytes |
+| MiSTer menu | YUYV 640×480@5, 120-frame warm-up | still `614400 bytes` corrupt; longer warm-up did not fix raw YUYV |
+| MiSTer menu | MJPEG 1280×720@60, 60-frame warm-up | clean log, PNG 36,065 bytes |
+
+That makes the original W-CAP symptom a capture-pipeline/format problem, not evidence that Plex alone emitted
+bad HDMI timing: the exact YUYV pipeline also reports full-frame corrupt buffers while the MiSTer menu is live.
+`v4l2-ctl --list-formats-ext` shows the dongle supports MJPEG up to 1080p30 and 720p60, while YUYV at 720p is
+only advertised at 10 fps. The dongle sits on a shared 480M USB bus, so high-resolution raw YUYV should not be
+used as the visual gate.
+
+W-CAP's original failed visual attempt is checked in as log fixtures under
+`tests/fixtures/hw_visual/capture_logs/`:
+
+```text
+RBF md5: fe7673bc959f37fd7da44e8a865f7db3, live path /media/fat/_Utility/Plex.rbf
+Device: /dev/video4, V4L2 raw yuyv422, -framerate 10, ~60-frame warm-up
+hw-fe7673bc-capture.log:     yuyv422 1280x720, corrupted data (1843200 bytes = 1280*720*2)
+hw-fe7673bc-capture-640.log: yuyv422 640x480,  corrupted data (614400 bytes = 640*480*2)
+```
+
+The corresponding noisy PNGs (`hw-fe7673bc-padded.png`, `hw-fe7673bc-640x480.png`, and zoom derivatives) remain
+W-CAP build artifacts, not goldens; the checked-in unit test proves those logs force capture-integrity `rc=4`.
 
 ## Red-path proof
 
@@ -97,12 +130,12 @@ The current characterized hardware red specimen is **`fe7673bc`**: residual tele
 (`raw[13]=0x14`) but reconstruction signature is `raw[14]=0x00` instead of the simulated `0x3b`, matching a
 pred-only/flat-block failure.
 
-Hardware proof on the actual rig:
+Hardware proof on the actual rig with the repaired MJPEG 1280×720@60 path:
 
 | Specimen | Result | Evidence |
 |---|---|---|
-| `57674f2e` known-good | GREEN | `green_compare.json`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
-| `fe7673bc` known-bad | RED | `red_compare.json`: exact active pixels `62125/296640`, MAE RGB `[14.3978,51.0105,90.1486]`, max_abs `255`, `rc=1`; diff PNG emitted |
+| `57674f2e` known-good | GREEN | `green_compare_57674f2e.json`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
+| `fe7673bc` known-bad | RED | `red_compare_fe7673bc.json`: exact active pixels `0/296640`, MAE RGB `[4.9069,66.3937,151.4916]`, max_abs `255`, `rc=1`; diff PNG emitted |
 
 That acceptance used a good hardware capture as the golden and the existing 320×240 baseline F3 vector, because
 the checked-in 624×480 fixture did not yet exercise the current rollback RBF reliably. Keep the 624×480 fixture as

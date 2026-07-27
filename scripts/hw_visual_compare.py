@@ -70,6 +70,18 @@ def classify_capture_log(stderr: str) -> str | None:
     return None
 
 
+def reject_corrupt_capture_log(path: str | None) -> None:
+    """Reject externally captured frames when their ffmpeg/V4L2 log is corrupt."""
+    if not path:
+        return
+    p = Path(path)
+    log = p.read_text(encoding="utf-8", errors="replace")
+    if classify_capture_log(log) == "corrupt":
+        raise CorruptCaptureError(
+            f"capture log {p} reports corrupted V4L2/FFmpeg data; not grading image"
+        )
+
+
 @dataclass(frozen=True)
 class Geometry:
     coded_width: int
@@ -368,6 +380,7 @@ def cmd_noise(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
+    reject_corrupt_capture_log(args.capture_log)
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
     freshness = None
@@ -392,6 +405,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "ok": ok,
         "golden": str(args.golden),
         "capture": str(args.capture),
+        "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
         "freshness": freshness,
         "stats": stats,
@@ -439,6 +453,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("compare", help="compare a capture against the checked-in golden")
     p.add_argument("--golden", required=True)
     p.add_argument("--capture", required=True)
+    p.add_argument("--capture-log",
+                   help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
     p.add_argument("--previous", help="previous-condition frame for stale-capture rejection")
     p.add_argument("--noise-report")
     p.add_argument("--max-mae", type=float, default=0.0)
