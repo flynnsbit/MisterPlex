@@ -50,10 +50,10 @@ layout active region for future 624×480 gates.
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
 corrupts one active pixel and fails with exact worst coordinate + diff artifact.
 
-**Capture/freshness integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame,
-`4` = V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device, `7` = no fresh frame delivery
-proven from status counters/token. Capture-rig or delivery failure is never accepted as either green or known-red
-core evidence.
+**Capture/freshness/artifact integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` =
+stale frame, `4` = V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device, `7` = no fresh
+frame delivery proven from status counters/token, `8` = loaded RBF md5 does not match the declared artifact.
+Capture-rig, delivery, or wrong-core failure is never accepted as either green or known-red core evidence.
 
 **Hardware evidence (W-C1 token window):**
 
@@ -76,8 +76,13 @@ core evidence.
   and are not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default
   active-region compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
 - Stale-screen follow-up: Plex reload+push captures can exact-match a golden while status reports `bytes_in=4`.
-  The comparator now refuses that phantom-green path before pixel grading (`rc=7`), and unit coverage proves both
-  the `bytes_in=4` red/refusal and a fresh `bytes_in=6227` plus changed `{bank,format,seq}` token green path.
+  The comparator now refuses that phantom-green path before pixel grading (`rc=7`) using the natural captured
+  fixture, and unit coverage proves both the `bytes_in=4` red/refusal and a fresh `bytes_in=6227` plus changed
+  `{bank,format,seq}` token green path.
+- Wrong-core follow-up: rollback `57674f2e` predates the current YUV420/624×480 frame-store contract, so it cannot
+  validate the current ARM I420 delivery path. The hardware script now requires `VISUAL_RBF` or
+  `VISUAL_EXPECTED_RBF_MD5`, verifies device `/media/fat/_Utility/Plex.rbf`, and the comparator refuses mismatches
+  before pixel grading (`rc=8`). Unit coverage proves wrong/undeclared RBF red and matching md5 green.
 
 **Hardware TODO:**
 
@@ -94,6 +99,9 @@ core evidence.
 - [x] Add a freshness/delivery guard so a stale frozen screen cannot grade as PASS. `compare --status-log`
   refuses `bytes_in=4` before pixel grading (`rc=7`) and supports the shared DDR frame token
   `{bank,format,seq}` for w-a3/w-cap alignment.
+- [x] Add loaded-artifact identity gating. The hardware script records and verifies `md5sum
+  /media/fat/_Utility/Plex.rbf`; compare refuses wrong or undeclared RBF identity (`rc=8`) before grading pixels.
+  Status `frame_debug=0xe1` is surfaced as a named non-YUV doorbell/debug refusal.
 - [ ] Promote a checked-in host/good 624×480 golden only after that vector is live and green on rollback hardware.
 
 ---

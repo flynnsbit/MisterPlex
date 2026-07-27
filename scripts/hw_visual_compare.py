@@ -56,6 +56,10 @@ class DeliveryFreshnessError(HarnessError):
     exit_code = 7
 
 
+class RbfIdentityError(HarnessError):
+    exit_code = 8
+
+
 CORRUPT_LOG_PATTERNS = (
     "corrupt",
     "v4l2 buffer contains corrupted data",
@@ -122,11 +126,53 @@ def require_color_provenance(args: argparse.Namespace) -> dict:
 
 
 STATUS_FIELD_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)")
+MD5_RE = re.compile(r"\b([0-9a-fA-F]{32})\b")
 FORMAT_CODES = {
     "1": 1,
     "yuv420p": 1,
     "i420": 1,
 }
+FORMAT_ERROR_DEBUG_FIELDS = ("frame_debug", "frame_dbg", "ddr_debug", "ddr_dbg", "debug_state")
+SURFACED_DEBUG_FIELDS = FORMAT_ERROR_DEBUG_FIELDS + ("recon_dbg",)
+
+
+def normalize_md5(value: str | None) -> str | None:
+    if value is None:
+        return None
+    m = MD5_RE.search(value)
+    return m.group(1).lower() if m else None
+
+
+def validate_rbf_identity(args: argparse.Namespace) -> dict | None:
+    if not args.expected_rbf_md5 and not args.actual_rbf_md5 and not args.rbf_md5_log:
+        return None
+    expected = normalize_md5(args.expected_rbf_md5)
+    actual_src = args.actual_rbf_md5
+    log_path = None
+    if args.rbf_md5_log:
+        log_path = str(args.rbf_md5_log)
+        actual_src = Path(args.rbf_md5_log).read_text(encoding="utf-8", errors="replace")
+    actual = normalize_md5(actual_src)
+    if expected is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: expected RBF md5 was not declared; refusing to grade loaded core"
+        )
+    if actual is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: loaded /media/fat/_Utility/Plex.rbf md5 is missing/unparseable; "
+            "refusing to grade"
+        )
+    report = {
+        "expected_md5": expected,
+        "actual_md5": actual,
+        "rbf_md5_log": log_path,
+        "match": actual == expected,
+    }
+    if actual != expected:
+        raise RbfIdentityError(
+            f"RBF_IDENTITY: loaded core md5 {actual} != expected {expected}; not grading pixels"
+        )
+    return report
 
 
 def parse_int_value(value: str) -> int | None:
@@ -202,11 +248,20 @@ def load_status_snapshot(path: str) -> dict:
     if not fields:
         raise DeliveryFreshnessError(f"NO_FRESH_FRAME: no key=value status line in {p}")
     ints = {k: v for k, raw in fields.items() if (v := parse_int_value(raw)) is not None}
+    debug_flags = []
+    for name in SURFACED_DEBUG_FIELDS:
+        val = ints.get(name)
+        if val is not None:
+            entry = {"field": name, "value": val, "hex": f"0x{val & 0xFF:02x}"}
+            if name in FORMAT_ERROR_DEBUG_FIELDS and (val & 0xFF) == 0xE1:
+                entry["meaning"] = "non-YUV DDR doorbell/debug format error"
+            debug_flags.append(entry)
     return {
         "path": str(p),
         "fields": fields,
         "ints": ints,
         "frame_token": extract_frame_token(fields),
+        "debug_flags": debug_flags,
     }
 
 
@@ -248,6 +303,10 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
         problem = require_field_match(current, spec)
         if problem:
             problems.append(problem)
+
+    for flag in current["debug_flags"]:
+        if flag.get("meaning") == "non-YUV DDR doorbell/debug format error":
+            problems.append(f"{flag['field']}={flag['hex']} non-YUV DDR doorbell/debug format error")
 
     report = {
         "status": current,
@@ -692,6 +751,7 @@ def cmd_noise(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
     box = parse_compare_box(args.compare_box, g)
+    rbf_identity = validate_rbf_identity(args)
     color_provenance = require_color_provenance(args)
     reject_corrupt_capture_log(args.capture_log)
     delivery_freshness = validate_delivery_freshness(args)
@@ -722,6 +782,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
         "compare_box": list(box),
+        "rbf_identity": rbf_identity,
         "color_provenance": color_provenance,
         "freshness": freshness,
         "delivery_freshness": delivery_freshness,
@@ -779,6 +840,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--capture", required=True)
     p.add_argument("--capture-log",
                    help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
+    p.add_argument("--expected-rbf-md5",
+                   help="declared md5 of the RBF artifact this run intends to grade")
+    p.add_argument("--actual-rbf-md5",
+                   help="actual loaded /media/fat/_Utility/Plex.rbf md5, or md5sum output")
+    p.add_argument("--rbf-md5-log",
+                   help="file containing device md5sum /media/fat/_Utility/Plex.rbf output")
     p.add_argument("--status-log",
                    help="push_frame --status log for this run; implausible delivery returns rc=7")
     p.add_argument("--previous-status-log",

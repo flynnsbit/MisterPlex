@@ -28,6 +28,7 @@ else
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
 fi
 RBF="${VISUAL_RBF:-${1:-}}"
+EXPECTED_RBF_MD5="${VISUAL_EXPECTED_RBF_MD5:-${VISUAL_RBF_MD5:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
 GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png}"
@@ -43,6 +44,13 @@ if [[ "${VISUAL_FULL_FRAME:-0}" == "1" && "${VISUAL_ALLOW_UNPROVEN_FULL:-0}" != 
   echo "Use the proven default ROI gate, or set VISUAL_ALLOW_UNPROVEN_FULL=1 for scheduled investigation only." >&2
   exit 2
 fi
+if [[ -n "$RBF" && -z "$EXPECTED_RBF_MD5" ]]; then
+  EXPECTED_RBF_MD5="$(md5sum "$RBF" | awk '{print tolower($1)}')"
+fi
+if [[ -z "$EXPECTED_RBF_MD5" ]]; then
+  echo "FAIL: expected RBF md5 is not declared; set VISUAL_EXPECTED_RBF_MD5 (or pass VISUAL_RBF)." >&2
+  exit 2
+fi
 
 mkdir -p "$OUT"
 
@@ -51,6 +59,17 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
 ssh_m() {
   "${SSH[@]}" "$@"
+}
+
+verify_loaded_rbf() {
+  echo "=== verify loaded Plex.rbf md5 (expected $EXPECTED_RBF_MD5) ==="
+  ssh_m "md5sum /media/fat/_Utility/Plex.rbf" | tee "$OUT/rbf_md5.txt"
+  local actual
+  actual="$(sed -n 's/^\([0-9a-fA-F]\{32\}\).*/\1/p' "$OUT/rbf_md5.txt" | tr 'A-F' 'a-f' | head -1)"
+  if [[ "$actual" != "$EXPECTED_RBF_MD5" ]]; then
+    echo "FAIL: loaded core md5 $actual != expected $EXPECTED_RBF_MD5; refusing to grade" >&2
+    exit 8
+  fi
 }
 
 restore_mode() {
@@ -69,6 +88,7 @@ else
   echo "=== no VISUAL_RBF supplied; verifying existing Plex core ==="
   ssh_m "ps | grep -q '[P]lex.rbf'"
 fi
+verify_loaded_rbf
 
 capture() {
   python3 "$TOOL" capture --device "$DEV" --input-format "$CAP_FMT" \
@@ -80,6 +100,7 @@ COMPARE_ARGS=()
 if [[ -n "$COMPARE_BOX" ]]; then
   COMPARE_ARGS=(--compare-box "$COMPARE_BOX")
 fi
+RBF_COMPARE_ARGS=(--expected-rbf-md5 "$EXPECTED_RBF_MD5" --rbf-md5-log "$OUT/rbf_md5.txt")
 
 echo "=== set HDMI mode preset $VIDEO_MODE for capture ($CAP_FMT $CAP_SIZE@$CAP_FPS) ==="
 ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
@@ -103,6 +124,7 @@ if [[ -z "$RBF" && "${VISUAL_PREVIOUS_MENU:-1}" == "1" ]]; then
     sleep 1
   done
   ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi plex
+  verify_loaded_rbf
   ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
   sleep 2
 else
@@ -191,6 +213,7 @@ echo "=== compare capture against checked-in golden ==="
 set +e
 python3 "$TOOL" compare \
   "${COMPARE_ARGS[@]}" \
+  "${RBF_COMPARE_ARGS[@]}" \
   "${STATUS_COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
   --golden-color-matrix "$COLOR_MATRIX" \
@@ -223,6 +246,10 @@ case "$EXPECT:$compare_rc" in
     echo "FAIL: capture/freshness integrity error rc=$compare_rc (stale/corrupt/absent/busy/no-fresh-frame), not a core result" >&2
     exit "$compare_rc"
     ;;
+  *:8)
+    echo "FAIL: loaded RBF identity error rc=$compare_rc; not a core result" >&2
+    exit "$compare_rc"
+    ;;
   *)
     echo "FAIL: comparator error rc=$compare_rc" >&2
     exit "$compare_rc"
@@ -244,6 +271,7 @@ PY
   set +e
   python3 "$TOOL" compare \
     "${COMPARE_ARGS[@]}" \
+    "${RBF_COMPARE_ARGS[@]}" \
     "${STATUS_COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
     --golden-color-matrix "$COLOR_MATRIX" \
