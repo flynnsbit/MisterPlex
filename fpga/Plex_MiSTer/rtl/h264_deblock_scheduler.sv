@@ -13,6 +13,42 @@
 //
 // The MB sample address is {y[3:0], x[3:0]} = row-major 16x16 layout.
 //
+// ═══════════════════════════════════════════════════════════════════════
+//  INTERFACE CONTRACT — what this module needs from the pipeline
+// ═══════════════════════════════════════════════════════════════════════
+//
+//  FROM PARSER / CABAC:
+//    mb_intra[15:0]      — per-4x4-block intra flag (H.264 raster scan)
+//    mb_nonzero[15:0]    — per-4x4-block coded-block-pattern flag
+//    disable_idc[1:0]    — slice header: disable_deblocking_filter_idc
+//    qp[5:0]             — QPy for this MB (QPp+QPq averaged at the edge)
+//    alpha_offset[4:0]   — slice_alpha_c0_offset_div2 * 2
+//    beta_offset[4:0]    — slice_beta_offset_div2 * 2
+//
+//  FROM MC / MV PREDICTOR:
+//    mb_mvx[0:15], mb_mvy[0:15]  — quarter-pel MVs per 4x4 block
+//    mb_ref[0:15]                 — reference index per 4x4 block
+//    (bS=1 when |mvx_diff| >= 4 qpel OR |mvy_diff| >= 4 qpel OR ref differs)
+//
+//  FROM NEIGHBOR CONTEXT (w-ctl / line buffer):
+//    left_avail, top_avail          — neighbor availability
+//    left_same_slice, top_same_slice — for disable_idc=2
+//    left_intra[3:0], left_nonzero[3:0], left_mvx/mvy/ref[0:3]
+//    top_intra[3:0], top_nonzero[3:0], top_mvx/mvy/ref[0:3]
+//
+//  MISSING (not yet implemented):
+//    left_samples[0:63]  — 4 columns × 16 rows from left neighbor (luma)
+//    top_samples[0:63]   — 16 cols × 4 rows from top neighbor (luma)
+//    Chroma sample ports (8×8 Cb + 8×8 Cr register files)
+//    Chroma QP averaging (QPc differs from QPy per H.264 table 8-15)
+//
+//  OUTPUT CONTRACT:
+//    The 256-byte register file contains post-deblock luma samples.
+//    'done' pulses HIGH for one cycle when filtering completes.
+//    DPB must store POST-DEBLOCK output (this is the reference for MC).
+//    Intra prediction uses PRE-DEBLOCK reconstructed neighbors.
+//    Getting this backwards produces plausible video that drifts.
+//
 // Product RTL only: test scaffolding belongs under tests/rtl.
 
 `default_nettype none

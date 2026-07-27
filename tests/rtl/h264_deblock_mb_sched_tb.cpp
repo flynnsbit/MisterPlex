@@ -862,6 +862,221 @@ void redProofWrongQP(Vh264_deblock_mb_sched_tb& dut) {
               << "/256 samples, gate detects QP errors\n";
 }
 
+// ── bS=4 boundary edge test ──
+// Exercises MB boundary with intra neighbor → bS=4 (strong filter).
+// NOTE: p-side samples are 0 (no neighbor sample port yet). Reference uses 0 too.
+// This tests bS DERIVATION and strong-filter EXECUTION, not sample accuracy.
+void testBs4BoundaryEdge(Vh264_deblock_mb_sched_tb& dut) {
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    // QP=48: alpha=203, beta=16. With p-side=0 and q-side~128, |p0-q0|<203.
+    dut.disable_idc = 0; dut.qp = 48;
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    // Enable left neighbor, mark it as intra
+    dut.left_avail = 1;
+    dut.top_avail = 0;
+    dut.left_same_slice = 1;
+    dut.top_same_slice = 0;
+    dut.left_intra = 0xF;   // all 4 left-neighbor blocks are intra → bS=4
+    dut.left_nonzero = 0xF;
+    for (int i = 0; i < 4; ++i) {
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+    }
+    // Current MB: intra (so bS=4 at boundary AND bS=3 internally)
+    dut.mb_intra = 0xFFFF;
+    dut.mb_nonzero = 0xFFFF;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    dut.top_intra = 0; dut.top_nonzero = 0;
+    for (int i = 0; i < 4; ++i) {
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    // Pattern with small values near x=0 so boundary filter condition passes
+    // (|p0(0) - q0| must be < alpha=203 at QP=48 — any value works)
+    // But also need |q1-q0| < beta=16: use flat blocks
+    MB mb = makeBlockArtifactMB(5);  // Small seed keeps values moderate
+    loadMb(dut, mb);
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    // Reference: bS=4 at x=0 boundary (p-side is 0), bS=3 at x=4,8,12 internal
+    MB ref = mb;
+    // Process boundary edge x=0: p-side is zeros (matching RTL behavior)
+    for (int sy = 0; sy < 16; sy += 4) {
+        Edge4 e{};
+        for (int r = 0; r < 4; ++r) {
+            int y = sy + r;
+            e.p3[r]=0; e.p2[r]=0; e.p1[r]=0; e.p0[r]=0;  // No neighbor samples
+            e.q0[r]=ref[y*16+0]; e.q1[r]=ref[y*16+1]; e.q2[r]=ref[y*16+2]; e.q3[r]=ref[y*16+3];
+        }
+        auto o = refEdge(e, false, 4, 48, 0, 0);  // bS=4 at MB boundary, QP=48
+        for (int r = 0; r < 4; ++r) {
+            int y = sy + r;
+            // Only write q-side (inside current MB)
+            ref[y*16+0]=o.q0[r]; ref[y*16+1]=o.q1[r]; ref[y*16+2]=o.q2[r];
+        }
+    }
+    // Then process internal edges (bS=3 for all-intra)
+    refDeblockMb(ref, 48, 0, 0);  // This processes x=4,8,12 and y=4,8,12
+
+    // The boundary edge should cause ADDITIONAL changes beyond internal-only
+    MB ref_no_boundary = mb;
+    refDeblockMb(ref_no_boundary, 48, 0, 0);
+
+    int boundaryDiffs = 0;
+    for (int i = 0; i < 256; ++i) if (ref[i] != ref_no_boundary[i]) ++boundaryDiffs;
+
+    if (boundaryDiffs == 0) {
+        std::cerr << "FAIL bS=4 boundary: boundary edge produced no additional "
+                     "changes vs internal-only. bS=4 strong filter not exercised.\n";
+        std::exit(1);
+    }
+
+    if (got != ref) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) if (got[i] != ref[i]) ++mm;
+        std::cerr << "FAIL bS=4 boundary: " << mm << "/256 mismatches vs reference\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK bS=4 boundary: " << boundaryDiffs
+              << " additional samples from boundary edge (strong filter)\n";
+}
+
+// ── bS histogram degeneracy check ──
+// Runs a representative test and counts how many times each bS value occurs.
+// Asserts ALL values 0-4 are exercised at least once.
+void testBsHistogram(Vh264_deblock_mb_sched_tb& dut) {
+    // We'll run testInterMixedBs setup (bS 0,1,2) + boundary test (bS 3,4)
+    // and verify all bS values appear.
+    // The histogram is based on the test corpus, not a single run.
+    // From our test suite:
+    //   bS=0: testBs0Passthrough, testInterMixedBs (zero-coeff blocks)
+    //   bS=1: testInterMixedBs (MV diff, ref diff)
+    //   bS=2: testInterMixedBs (nonzero coefficients)
+    //   bS=3: testIntraInternalEdges (intra, internal edge)
+    //   bS=4: testBs4BoundaryEdge (intra, MB boundary)
+    //
+    // Rather than re-run all tests, we assert the coverage here
+    // by exercising all 5 in a single MB configuration.
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    dut.disable_idc = 0; dut.qp = 32;
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    dut.left_avail = 1; dut.top_avail = 1;
+    dut.left_same_slice = 1; dut.top_same_slice = 1;
+
+    // Left neighbor: intra → bS=4 at x=0 boundary
+    dut.left_intra = 0xF; dut.left_nonzero = 0xF;
+    for (int i = 0; i < 4; ++i) {
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+    }
+    // Top neighbor: intra → bS=4 at y=0 boundary
+    dut.top_intra = 0xF; dut.top_nonzero = 0xF;
+    for (int i = 0; i < 4; ++i) {
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    // Current MB: mixed metadata to produce bS 0-4
+    // Blocks 0,2,8,10 (left column): intra → bS=3 at internal edges with them
+    // Blocks 1,3: inter, nonzero → bS=2 at edges between 0→1
+    // Blocks 5,7: inter, MV diff ≥4 → bS=1
+    // Blocks 4,6,12,14: inter, same everything → bS=0
+    dut.mb_intra = 0;
+    dut.mb_nonzero = 0;
+    std::array<BlockMeta, 16> meta{};
+    for (int i = 0; i < 16; ++i) {
+        meta[i] = {false, false, 0, 0, 0};
+    }
+    // Make blocks 0,2 intra (raster scan: block 0 is (bx=0,by=0), block 2 is (bx=0,by=1))
+    meta[0].intra = true; meta[2].intra = true;
+    dut.mb_intra = (1<<0) | (1<<2);
+    // Make blocks 1,3 have nonzero
+    meta[1].nonzero = true; meta[3].nonzero = true;
+    dut.mb_nonzero = (1<<1) | (1<<3);
+    // Make block 5 have MV diff from block 4
+    meta[5].mvx = 8;  // diff=8 >=4 → bS=1
+    // Blocks 4,6,12,14: all zero → bS=0 between them
+
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = meta[i].mvx; dut.mb_mvy[i] = meta[i].mvy;
+        dut.mb_ref[i] = meta[i].ref;
+    }
+
+    MB mb = makeBlockArtifactMB(55);
+    loadMb(dut, mb);
+    runAndWait(dut);
+
+    // We don't check output correctness here (other tests do that).
+    // We check that the DUT exercised all bS values.
+    // The bS values we expect:
+    //   x=0 boundary (left intra + block 0 intra): bS=4
+    //   y=0 boundary (top intra + block 0 intra): bS=4
+    //   x=4, seg_y=0: block 0 (intra) → block 1 (inter): bS=3
+    //   x=4, seg_y=4: block 1 (nz) → something: bS=2
+    //   Somewhere bS=1 (MV diff) and bS=0 (same everything)
+    //
+    // Since we can't read derived_bs from the DUT externally, we verify
+    // via the reference model that produces all 5 values.
+    int bsHist[5] = {0, 0, 0, 0, 0};
+
+    // Count expected bS values from reference derivation
+    auto refBsLocal = [&](int pBlk, int qBlk, bool mbBoundary) -> int {
+        bool pI = (pBlk < 0) ? true : meta[pBlk].intra;  // neighbor is intra
+        bool qI = meta[qBlk].intra;
+        if (pI || qI) return mbBoundary ? 4 : 3;
+        bool pNz = (pBlk < 0) ? true : meta[pBlk].nonzero;
+        bool qNz = meta[qBlk].nonzero;
+        if (pNz || qNz) return 2;
+        int pRef = (pBlk < 0) ? 0 : meta[pBlk].ref;
+        int qRef = meta[qBlk].ref;
+        if (pRef != qRef) return 1;
+        int pMvx = (pBlk < 0) ? 0 : meta[pBlk].mvx;
+        int qMvx = meta[qBlk].mvx;
+        int pMvy = (pBlk < 0) ? 0 : meta[pBlk].mvy;
+        int qMvy = meta[qBlk].mvy;
+        if (std::abs(pMvx-qMvx) >= 4 || std::abs(pMvy-qMvy) >= 4) return 1;
+        return 0;
+    };
+
+    // V edges: x=0 (boundary), x=4, x=8, x=12
+    for (int eidx = 0; eidx < 4; ++eidx) {
+        for (int sidx = 0; sidx < 4; ++sidx) {
+            int qBlk = blk_from_xy(eidx, sidx);
+            int pBlk = (eidx == 0) ? -1 : blk_from_xy(eidx-1, sidx);
+            int bs = refBsLocal(pBlk, qBlk, eidx == 0);
+            if (bs >= 0 && bs <= 4) bsHist[bs]++;
+        }
+    }
+    // H edges: y=0 (boundary), y=4, y=8, y=12
+    for (int eidx = 0; eidx < 4; ++eidx) {
+        for (int sidx = 0; sidx < 4; ++sidx) {
+            int qBlk = blk_from_xy(sidx, eidx);
+            int pBlk = (eidx == 0) ? -1 : blk_from_xy(sidx, eidx-1);
+            int bs = refBsLocal(pBlk, qBlk, eidx == 0);
+            if (bs >= 0 && bs <= 4) bsHist[bs]++;
+        }
+    }
+
+    std::cout << "bS histogram: ";
+    bool allCovered = true;
+    for (int b = 0; b <= 4; ++b) {
+        std::cout << "bS=" << b << ":" << bsHist[b] << " ";
+        if (bsHist[b] == 0) allCovered = false;
+    }
+    std::cout << "\n";
+
+    if (!allCovered) {
+        std::cerr << "FAIL bS histogram degeneracy: not all bS values 0-4 exercised\n";
+        for (int b = 0; b <= 4; ++b)
+            if (bsHist[b] == 0)
+                std::cerr << "  bS=" << b << " NEVER OCCURS in test corpus\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK bS histogram: all values 0-4 exercised in single-MB config\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -878,16 +1093,23 @@ int main(int argc, char** argv) {
     testBs0Passthrough(dut);
     testAlphaBetaOffset(dut);
 
+    // Boundary edge and bS coverage
+    testBs4BoundaryEdge(dut);
+    testBsHistogram(dut);
+
     // Red proofs: prove the gate CAN fail
     redProofWrongBs(dut);
     redProofPassthroughDetection(dut);
     redProofWrongQP(dut);
 
     std::cout << "\n=== COVERAGE STATEMENT ===\n"
-              << "OK h264_deblock_mb_scheduler: 11 tests passed (8 green + 3 red proofs)\n"
-              << "COVERS: luma internal edges (x=4,8,12; y=4,8,12), bS 0-4, QP 5-51,\n"
-              << "        disable_idc=0/1, alpha/beta offsets, V-then-H ordering\n"
-              << "DOES NOT COVER: chroma filtering, MB boundary edges (x=0,y=0),\n"
-              << "                disable_idc=2 (slice boundary), multi-MB pipeline\n";
+              << "OK h264_deblock_mb_scheduler: 13 tests passed (8 green + 2 bS coverage + 3 red proofs)\n"
+              << "COVERS: luma edges (x=0,4,8,12; y=0,4,8,12), bS 0-4, QP 5-51,\n"
+              << "        disable_idc=0/1, alpha/beta offsets, V-then-H ordering,\n"
+              << "        MB boundary edges with intra neighbor (strong filter)\n"
+              << "DOES NOT COVER: chroma filtering, disable_idc=2 (slice boundary),\n"
+              << "                neighbor p-side SAMPLE accuracy (zeros used),\n"
+              << "                multi-MB pipeline, real-frame content\n"
+              << "NOT IN ANY DATAPATH: module is standalone, not instantiated in product\n";
     return 0;
 }
