@@ -59,7 +59,7 @@ module h264_multinal_stream_path_tb #(
     wire [1:0] residual_t1;
     wire residual_ok;
     wire signed [7:0] residual_dc;
-    wire signed [8:0] residual_coeff [0:15];
+    wire signed [15:0] residual_coeff [0:15];
     wire [7:0] recon_sig_dut;
     wire recon_dbg_valid;
     wire fs_wr_en, fs_wr_reset, fs_swap;

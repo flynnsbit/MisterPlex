@@ -54,7 +54,7 @@ module stream_path_recon_integration_tb_top #(
 	wire [7:0] first_mb_type;
 	wire has_mb_type;
 	wire signed [7:0] residual_dc;
-	wire signed [8:0] residual_coeff [0:15];
+	wire signed [15:0] residual_coeff [0:15];
 	wire fs_wr_en;
 	wire [15:0] fs_wr_pixel;
 	wire fs_wr_reset;

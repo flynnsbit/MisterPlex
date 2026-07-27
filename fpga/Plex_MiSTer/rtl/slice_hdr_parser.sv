@@ -55,7 +55,7 @@ module slice_hdr_parser (
 	// residual_coeff kept for 3.3l-2 inv_quant even if status only exports csum/dc.
 	// (* keep *) so status pack cannot drop the net (4d6ee356 CSUM_VALUE_FAIL class).
 	(* keep = 1 *) output reg [7:0] residual_csum,
-	(* keep = 1 *) output reg signed [8:0] residual_coeff [0:15],
+	(* keep = 1 *) output reg signed [15:0] residual_coeff [0:15],
 	// R-csum6 Rank3: 1-cycle pulse at ST_PLACE only (not early residual_ok).
 	// Plex freezes st_res_word_sticky on this edge so status[111:104] cannot walk.
 	(* keep = 1 *) output reg residual_place_pulse,
@@ -64,7 +64,7 @@ module slice_hdr_parser (
 	output reg  [1:0]  residual_place_t1,
 	output reg  signed [7:0] residual_place_dc,
 	output reg  [5:0]  residual_place_qp,
-	(* keep = 1 *) output reg signed [8:0] residual_place_coeff [0:15],
+	(* keep = 1 *) output reg signed [15:0] residual_place_coeff [0:15],
 	output reg         busy
 );
 
@@ -98,7 +98,7 @@ module slice_hdr_parser (
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
-	reg signed [8:0] lev [0:15];
+	reg signed [15:0] lev [0:15];
 	reg [3:0]  lev_i;
 	reg [2:0]  suf_len;
 	reg [5:0]  pref;
@@ -134,13 +134,13 @@ module slice_hdr_parser (
 
 	// FFmpeg/ITU: levelCode → signed level
 	// mask=-(code&1); (((2+code)>>1)^mask)-mask
-	function automatic signed [8:0] lev_of;
+	function automatic signed [15:0] lev_of;
 		input [15:0] code;
-		reg signed [8:0] mask;
-		reg signed [8:0] t;
+		reg signed [15:0] mask;
+		reg signed [15:0] t;
 		begin
-			mask = code[0] ? -9'sd1 : 9'sd0;
-			t = ($signed({1'b0, code}) + 9'sd2) >>> 1;
+			mask = code[0] ? -16'sd1 : 16'sd0;
+			t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
 			lev_of = (t ^ mask) - mask;
 		end
 	endfunction
@@ -153,12 +153,11 @@ module slice_hdr_parser (
 	endfunction
 
 	function automatic signed [7:0] sat8;
-		input signed [8:0] v;
+		input signed [15:0] v;
 		begin
-			// int8 clamp without out-of-range signed literals
-			if (!v[8] && v[7]) sat8 = 8'h7F;
-			else if (v[8] && !v[7]) sat8 = 8'h80;
-			else sat8 = v[7:0];
+			if (v > 16'sd127)       sat8 = 8'h7F;
+			else if (v < -16'sd128) sat8 = 8'h80;
+			else                    sat8 = v[7:0];
 		end
 	endfunction
 
@@ -241,7 +240,7 @@ module slice_hdr_parser (
 			// R-csum-rtl4: do NOT clear residual_csum here — sticky until ST_PLACE
 			// overwrites or reset. Over-clear after good fold was a thrash class risk.
 			for (ci = 0; ci < 16; ci = ci + 1)
-				residual_coeff[ci] <= 9'sd0;
+				residual_coeff[ci] <= 16'sd0;
 			tok_ok <= 0;
 		end
 	endtask
@@ -255,7 +254,7 @@ module slice_hdr_parser (
 				residual_dc <= 0;
 				residual_csum <= 0; // no residual levels → csum 0 is correct
 				for (ci = 0; ci < 16; ci = ci + 1)
-					residual_coeff[ci] <= 9'sd0;
+					residual_coeff[ci] <= 16'sd0;
 				st <= ST_DONE;
 			end else if (r_t1 < r_tc) begin
 				lev_i <= r_t1[3:0];
@@ -323,8 +322,8 @@ module slice_hdr_parser (
 			begin : rst_coeff
 				integer ci;
 				for (ci = 0; ci < 16; ci = ci + 1) begin
-					residual_coeff[ci] <= 9'sd0;
-					residual_place_coeff[ci] <= 9'sd0;
+					residual_coeff[ci] <= 16'sd0;
+					residual_place_coeff[ci] <= 16'sd0;
 				end
 			end
 			tcode <= 0;
@@ -381,7 +380,7 @@ module slice_hdr_parser (
 			begin : clr_coeff_cap
 				integer ci;
 				for (ci = 0; ci < 16; ci = ci + 1)
-					residual_coeff[ci] <= 9'sd0;
+					residual_coeff[ci] <= 16'sd0;
 			end
 			tok_ok <= 0;
 			place_did <= 0;
@@ -415,7 +414,7 @@ module slice_hdr_parser (
 					begin : clr_coeff_idle
 						integer ci;
 						for (ci = 0; ci < 16; ci = ci + 1)
-							residual_coeff[ci] <= 9'sd0;
+							residual_coeff[ci] <= 16'sd0;
 					end
 					tok_ok <= 0;
 					place_did <= 0;
@@ -686,7 +685,7 @@ module slice_hdr_parser (
 					begin : clr_coeff_tc0
 						integer ci;
 						for (ci = 0; ci < 16; ci = ci + 1)
-							residual_coeff[ci] <= 9'sd0;
+							residual_coeff[ci] <= 16'sd0;
 					end
 					st <= ST_DONE;
 				end else if (tbits == 5'd2 && tcode[1:0] == 2'b01) begin
@@ -722,7 +721,7 @@ module slice_hdr_parser (
 					// Clear lev[] so place never sees stale slots
 					begin : clr_lev_tc8
 						integer li;
-						for (li = 0; li < 16; li = li + 1) lev[li] <= 9'sd0;
+						for (li = 0; li < 16; li = li + 1) lev[li] <= 16'sd0;
 					end
 					place_did <= 0;
 					csum_i <= 0;
@@ -739,7 +738,7 @@ module slice_hdr_parser (
 					end
 					begin : clr_lev_tc8b
 						integer li;
-						for (li = 0; li < 16; li = li + 1) lev[li] <= 9'sd0;
+						for (li = 0; li < 16; li = li + 1) lev[li] <= 16'sd0;
 					end
 					place_did <= 0;
 					csum_i <= 0;
@@ -757,7 +756,7 @@ module slice_hdr_parser (
 				else begin
 					// R-csum4: scalar running XOR into private csum_acc (sat8(±1)).
 					// residual_csum is latched sticky only at ST_PLACE — not here.
-					lev[lev_i] <= bitv ? -9'sd1 : 9'sd1;
+					lev[lev_i] <= bitv ? -16'sd1 : 16'sd1;
 					csum_acc <= csum_acc ^ (bitv ? 8'hFF : 8'h01);
 					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
 					else bpos <= bpos - 1'd1;
@@ -845,7 +844,7 @@ module slice_hdr_parser (
 				// Use combinatorial temps via blocking assigns in this clock
 				begin : lvl_body
 					reg [15:0] lc;
-					reg signed [8:0] lv;
+					reg signed [15:0] lv;
 					reg [2:0] nsl;
 					reg [15:0] pfx;
 					pfx = {10'b0, pref};
@@ -874,7 +873,7 @@ module slice_hdr_parser (
 						if (pref > 6'd14 || (pref == 6'd14 && suf_len == 0))
 							nsl = 3'd2;
 						else
-							nsl = 3'd1 + (((lv + 9'sd3) > 9'sd6) ? 3'd1 : 3'd0);
+							nsl = 3'd1 + (((lv + 16'sd3) > 16'sd6) ? 3'd1 : 3'd0);
 						first_non_t1 <= 0;
 					end else begin
 						if (pref < 6'd15) begin
@@ -893,17 +892,17 @@ module slice_hdr_parser (
 							// level is signed; FFmpeg uses unsigned cast of level
 							// Use abs-ish: unsigned(level) in 9 bits
 							begin : suf_bump
-								reg [8:0] ul;
-								reg [8:0] lim;
-								ul = lv[8:0]; // two's as unsigned bits
+								reg [15:0] ul;
+								reg [15:0] lim;
+								ul = lv[15:0]; // two's complement as unsigned bits
 								case (suf_len)
-									3'd0: lim = 9'd0;
-									3'd1: lim = 9'd3;
-									3'd2: lim = 9'd6;
-									3'd3: lim = 9'd12;
-									3'd4: lim = 9'd24;
-									3'd5: lim = 9'd48;
-									default: lim = 9'd511;
+									3'd0: lim = 16'd0;
+									3'd1: lim = 16'd3;
+									3'd2: lim = 16'd6;
+									3'd3: lim = 16'd12;
+									3'd4: lim = 16'd24;
+									3'd5: lim = 16'd48;
+									default: lim = 16'd65535;
 								endcase
 								if (lim + ul > (lim << 1))
 									nsl = suf_len + 3'd1;
@@ -1172,15 +1171,15 @@ module slice_hdr_parser (
 				// Plex freezes st_res_word_sticky at place-time only (not early ok).
 				begin : place_body
 					reg signed [5:0] cn;
-					reg signed [8:0] dcv;
-					reg signed [8:0] tmpc [0:15];
+					reg signed [15:0] dcv;
+					reg signed [15:0] tmpc [0:15];
 					reg [7:0] cs;
 					integer k, j;
 					// Zero all scan slots (unset runs already 0 after token/tz clear)
 					for (j = 0; j < 16; j = j + 1)
-						tmpc[j] = 9'sd0;
+						tmpc[j] = 16'sd0;
 					cn = -6'sd1;
-					dcv = 9'sd0;
+					dcv = 16'sd0;
 					// k walks 15..0; only k < r_tc participates (i = tc-1 .. 0)
 					for (k = 15; k >= 0; k = k - 1) begin
 						if (k < r_tc) begin

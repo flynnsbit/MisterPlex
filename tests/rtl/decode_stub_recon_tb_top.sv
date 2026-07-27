@@ -20,11 +20,11 @@ module decode_stub_recon_tb #(
 	output wire        busy,
 	output wire [15:0] frames_out
 );
-	wire signed [8:0] coeff9 [0:15];
+	wire signed [15:0] coeff16 [0:15];
 	genvar i;
 	generate
 		for (i = 0; i < 16; i = i + 1) begin : g_coeff
-			assign coeff9[i] = FAULT_PRED_ONLY ? 9'sd0 : coeff[i][8:0];
+			assign coeff16[i] = FAULT_PRED_ONLY ? 16'sd0 : coeff[i];
 		end
 	endgenerate
 
@@ -63,7 +63,7 @@ module decode_stub_recon_tb #(
 		.residual_dc(coeff[0][7:0]),
 		.residual_valid(residual_ok),
 		.slice_qp(slice_qp),
-		.residual_coeff(coeff9),
+		.residual_coeff(coeff16),
 		.recon_sig(recon_sig),
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),

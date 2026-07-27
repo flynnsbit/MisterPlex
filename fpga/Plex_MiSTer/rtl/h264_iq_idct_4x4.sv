@@ -3,7 +3,7 @@
 // Golden fixture: tests/fixtures/p3_host_recon/mb0_luma_v1.json block 0.
 
 module h264_dequant4x4 (
-	input  wire signed [8:0] coeff [0:15],
+	input  wire signed [15:0] coeff [0:15],
 	input  wire [5:0]        qp,
 	input  wire [4:0]        max_coeff,
 	output wire signed [17:0] dequant [0:15]
@@ -48,7 +48,7 @@ module h264_dequant4x4 (
 	endfunction
 
 	function automatic signed [17:0] dequant_one;
-		input signed [8:0] c;
+		input signed [15:0] c;
 		input [5:0] q;
 		input [4:0] scan;
 		input       skip_dc;
