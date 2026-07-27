@@ -24,8 +24,11 @@ or ALLOWANCE. No number may be used without its label.
 | Cycles per macroblock | 683.76 | **MEASURED** | 800,000 / 1170 |
 
 **Clock-dependent note:** every cycle count in this document scales linearly
-with `clk_sys`. If w-arch establishes that `clk_sys` can run at e.g. 40 MHz,
-all per-MB budgets double. The feasibility verdict may change.
+with `clk_sys`. However, w-cap's fitter measurements (2026-07-27) show the
+`clk_sys` intra-domain Fmax is **25.09 MHz** (critical path 39.86 ns). Running
+above ~25 MHz requires pipelining the critical path, which is unscheduled work.
+**All budgets in this document use 20 MHz as the planning assumption.** Any
+higher clock is upside, not a dependency.
 
 ## 2. Existing stage allocation (from fleet measurements)
 
@@ -281,10 +284,14 @@ of decode time wasted — eating into the 257-cycle pipelined margin.
 
 ### Second f2sdram port (w-cap dependency)
 
-The Cyclone V HPS supports up to 6 f2sdram ports. If w-cap can bring up a
-second port, the DPB gets a dedicated DDR channel with zero contention from
-presentation. This is the cleanest solution and makes the pipelined budget
-close comfortably.
+The Cyclone V HPS supports up to 6 f2sdram ports. w-cap has established that
+a second port **IS achievable** but at a real cost: all 4 SDRAM data channels
+are currently used, and freeing a pair requires downgrading the 128-bit video
+scaler buffer to 64-bit (dropping scaler bandwidth from 1.6 GB/s to 800 MB/s,
+still above the ~497 MB/s that 1080p60 requires). This also invalidates the
+bit-identity baseline used for two-slot fit verification. Full analysis in
+`build/sta_paths/f2sdram_port_analysis.md`. **Coordinate with w-cap before
+assuming this port is available.**
 
 **With a dedicated port:** fetch takes 177 cycles, MC takes 250, total 427
 of 684 = **1.60× margin**. Writeback overlaps on the decode port or shares
@@ -293,6 +300,11 @@ the DPB port.
 **Without a dedicated port:** fetch takes 177 + up to 156 stall = 333 cycles
 worst case, plus MC 250, total 583 of 684 = **1.17× margin**. This is tight
 but may close if presentation bursts are short enough on average.
+
+**Additional risk:** `clk_ddr` already sits at -0.21 ns intra-domain slack
+at 90 MHz. A wider bus arbiter adding DPB as a third master in the DDR domain
+will likely worsen this. The next fit may trade a cross-domain timing failure
+for an intra-domain one.
 
 ## 10. SRAM requirements for the DPB fetch path
 
@@ -353,16 +365,29 @@ The DPB fetch interface as implemented in `h264_dpb_one_ref`:
 source coordinates. The DPB returns raw bordered windows; the requester owns
 interpolation and arithmetic.
 
-## 13. Scaling table
+## 13. Scaling table — CONSTRAINED by fitter measurements
 
-If `clk_sys` is increased, every per-MB cycle count scales:
+**2026-07-27 correction from w-cap fitter reports:** the `clk_sys` intra-domain
+Fmax is **25.09 MHz** (critical path 39.86 ns, slack +10.14 ns at 20 MHz).
+Reaching higher clocks requires shortening that critical path by real
+pipelining work that nobody has scheduled. The table below is retained for
+reference, but **only the 20 MHz row is a planning assumption; all others
+are conditional on path restructuring.**
 
-| clk_sys | Cycles/MB | DPB fetch+MC serial | Margin | Verdict |
-|--------:|----------:|--------------------:|-------:|---------|
-| 20 MHz | 684 | 427 | 257 (1.60×) | **MARGINAL** — closes only if DDR port not contended |
-| 30 MHz | 1026 | 427 | 599 (2.40×) | **COMFORTABLE** — tolerates contention |
-| 40 MHz | 1368 | 427 | 941 (3.20×) | **EASY** — room for sub-MB partitions |
-| 50 MHz | 1709 | 427 | 1282 (4.00×) | **WIDE** |
+Additionally, the cross-domain relationships constrain which frequencies are
+safe:
+- **40 MHz** vs clk_ddr(90 MHz): 4:9 ratio, 2.778 ns worst-case setup — WORSE
+  than the relationship that already failed at -2.137 ns.
+- **45 MHz** vs clk_ddr(90 MHz): 1:2 exact ratio, 11.111 ns — the only
+  comfortable candidate, but requires shrinking the 39.86 ns path by 17.6 ns.
+- **60 MHz** vs clk_ddr(90 MHz): 2:3 ratio, 5.556 ns — the SAME zone that
+  produced the -2.137 ns failure.
+
+| clk_sys | Cycles/MB | DPB fetch+MC serial | Margin | Verdict | Reachable? |
+|--------:|----------:|--------------------:|-------:|---------|------------|
+| 20 MHz | 684 | 427 | 257 (1.60×) | **MARGINAL** — closes only if DDR port not contended | **YES — current** |
+| 25 MHz | 855 | 427 | 428 (2.00×) | **OK** — tolerates moderate contention | **NEAR LIMIT** — Fmax 25.09 MHz |
+| 45 MHz | 1538 | 427 | 1111 (3.60×) | **WIDE** | **CONDITIONAL** — needs 17.6 ns path reduction |
 
 **Note:** the "427 cycles" figure is in DDR-clock-relative terms (burst
 latency does not change with decode clock). At higher decode clocks, the DDR
@@ -372,28 +397,60 @@ holds when `clk_sys ≤ DDRAM_CLK` (true: 20 ≤ 90).
 
 ## 14. Verdict and next steps
 
-**PIPELINED FEASIBILITY: MARGINAL at 20 MHz, COMFORTABLE at ≥30 MHz.**
+**PIPELINED FEASIBILITY: MARGINAL at 20 MHz. Higher clocks are NOT a
+near-term escape.**
 
 The sequential model does not close (897/684 = 1.31× over budget). The
 pipelined model closes at 427/684 = 1.60× margin, but only if DDR port
 contention is bounded.
 
+**2026-07-27 clock correction:** w-cap's fitter measurements show the decode
+fabric Fmax is 25.09 MHz (critical path 39.86 ns). The w-arch study's
+estimate of "12 logic levels, ~12.3 ns" was refuted — the fitter includes
+routing delay that more than triples the logic-only estimate. Reaching
+45 MHz requires shortening the critical path by 17.6 ns (real pipelining
+work). **Design to 20 MHz. Treat any clock increase as upside, not a
+planning assumption.**
+
+**2026-07-27 second f2sdram port correction:** w-cap has established a second
+port IS achievable, but at a real cost: all 4 data channels are currently
+used, and freeing a pair requires downgrading the 128-bit video scaler buffer
+to 64-bit (dropping scaler bandwidth from 1.6 GB/s to 800 MB/s — still above
+the ~497 MB/s that 1080p60 needs). This also invalidates the bit-identity
+baseline used for two-slot fit verification. Full analysis in
+`build/sta_paths/f2sdram_port_analysis.md`.
+
+**Also noted:** `clk_ddr` already sits at -0.21 ns intra-domain slack at
+90 MHz. Any additional logic in that domain (e.g. a wider bus arbiter) will
+likely worsen this. The next fit may trade a cross-domain failure for an
+intra-domain one.
+
 **Dependencies:**
-1. **w-cap (second f2sdram port):** if available, DPB gets a dedicated DDR
-   channel and the pipelined budget closes cleanly.
-2. **w-arch (clock study):** if `clk_sys` can run at ≥30 MHz, the budget
-   has 2.4× margin even without a second port.
+1. **w-cap (second f2sdram port):** achievable but has scaler bandwidth cost.
+   Coordinate before assuming it. Without it, DPB fetch contends with
+   presentation on the same port, and the 1.60× margin is only valid if
+   contention is bounded to ~100 cycles worst-case stall.
+2. **w-arch (clock study):** currently REFUTED above 25 MHz without
+   pipelining. The critical path needs to be identified and restructured
+   before higher clocks are realistic.
 3. **w-deblock:** deblock writeback timing determines when filtered samples
    are available for the current picture bank. The DPB must not read from
    the current bank until writeback is complete.
 4. **w-mc:** MC interpolation starts after fetch_done. The 250-cycle MC
    allocation is the dominant cost after fetch completes.
 
+**The honest framing:** the DPB fetch path is MARGINAL at 20 MHz with the
+pipelined model. It requires either (a) a second DDR port with bounded cost,
+or (b) demonstrating that DDR port contention on the shared port stays below
+~100 cycles per MB on average. Both are achievable but neither is free. There
+is no comfortable escape from a faster clock in the near term.
+
 **Next steps for this worker:**
-1. Commit this budget document.
+1. ~~Commit this budget document.~~ DONE.
 2. Build a DPB fetch controller that replaces the byte-serial `h264_dpb_one_ref`
    with a 64-bit burst DDR interface.
 3. Add a DDR read port to the fetch path (m2 on the arbiter, or second f2sdram).
+   **Coordinate with w-cap on the scaler bandwidth tradeoff before proceeding.**
 4. Measure actual burst latency on the f2sdram bridge (Verilator model).
 5. Implement the previous-MB luma cache for adjacency overlap savings.
 
