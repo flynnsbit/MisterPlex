@@ -415,6 +415,99 @@ majority is estimates is workable, not comfortable. The clock may eventually
 provide real headroom, but **it has not been demonstrated and must not be
 assumed.**
 
+## 39.86 ns critical path — what it costs and where to cut (2026-07-27)
+
+The fitter-measured critical path (39.86 ns, Fmax 25.09 MHz) is now the
+**most valuable optimisation target in the project**. Cutting it directly
+buys decode clock headroom.
+
+**What the path costs in budget terms:**
+
+| Path reduction | Achievable Fmax | Budget cycles/MB | MC headroom |
+| ---:| ---:| ---:| ---:|
+| 0 ns (status quo) | 25 MHz | 855 | +297 over 558 |
+| 10 ns (→ 29.86 ns) | 33.5 MHz | 1,145 | +587 |
+| 17.6 ns (→ 22.22 ns) | 45 MHz | 1,539 | +981 |
+
+**Where it might sit, and what that means for the budget:**
+
+- **dequant→IDCT→recon chain (22-bit carry, combinational):** HIGH VALUE.
+  w-cabac's widening from `signed[17:0]` to `signed[21:0]` added carry chain
+  length. w-plane showed this exact codebase's arithmetic can be restructured
+  from 55-70 LUT levels to 18 without changing the computation. If the critical
+  path is here, the clock question reopens on merit.
+
+- **MC/DDR arbitration (45% of budget):** HIGH VALUE. Cutting here buys both
+  frequency and per-fetch latency. The arbiter logic has complex ready/valid
+  handshaking that could have long combinational paths.
+
+- **Parse FSM (9% of budget, 3.2 cycles measured):** MODERATE VALUE. Budget
+  is generous, but FSMs with wide next-state logic create long paths.
+
+- **Present/video path (not in decode budget):** ARCHITECTURAL VALUE only.
+  Cutting enables clock separation but does not directly help decode.
+
+**Action:** w-arch should obtain the path from w-cap's fit report and identify
+the start/end modules. If it is in the combinational arithmetic chain, the
+restructuring precedent from w-plane applies directly.
+
+## Ratchet audit: commit 3fda008 (2026-07-27)
+
+**Audit requested by parent.** Commit `3fda008` widened two throughput ratchet
+fixtures (320x240 and wcap) after the cabac-scoreboard + rel-mc merges added
+DPB and MC fetch FSM wiring to `decode_stub.sv`.
+
+### Changes
+
+| Threshold | Before | After | Widening |
+| --- | ---:| ---:| ---:|
+| 320x240 `max_cycles_per_mb` | 282.69 | 320.0 | +13.2% |
+| 320x240 `diagnostic_paint` | 270.0 | 305.0 | +13.0% |
+| wcap `max_cycles_per_mb` | 280.17 | 320.0 | +14.2% |
+| wcap `diagnostic_paint` | 270.0 | 305.0 | +13.0% |
+
+Claimed measurements: total 301.48 cycles/MB, diagnostic_paint 288.26 cycles/MB.
+Claimed headroom: ~6% on both thresholds.
+
+### Findings
+
+1. **Measurement provenance: UNVERIFIED.** The commit message claims specific
+   numbers (301.48, 288.26) but no simulation log, measurement artifact, or CI
+   output was committed alongside. The numbers appear only in the commit message
+   and cannot be independently verified from the repository.
+
+2. **Structural explanation: SOUND.** DPB registered outputs adding pipeline
+   latency to the diagnostic paint loop is the expected direction of change.
+   A ~32 cycle/MB increase (~12.5%) for DPB + MC FSM wiring is not unreasonable.
+
+3. **Detection sensitivity: PRESERVED.** Headroom percentages are consistent
+   with pre-widening values (~5.5-6%). The widened bound still catches
+   regressions >6% (~19 cycles/MB). A 250 cycle/MB MC addition would blow
+   past 320 decisively.
+
+4. **624x480 fixture: INCONSISTENCY.** The primary 624x480 fixture
+   (`max_cycles_per_mb: 272.36`) was **not widened**. If DPB wiring adds ~32
+   cycles/MB equally across resolutions, the 624x480 fixture will fail when
+   next exercised against the merged code. This needs resolution.
+
+5. **Metric is transient.** `diagnostic_paint` exists only because the
+   production pipeline is not built. Once MC and deblock replace the paint
+   loop, this threshold becomes meaningless. The widening is in a proxy metric
+   with a limited remaining lifespan.
+
+### Verdict
+
+**JUSTIFIABLE RE-BASELINE, not a rubber stamp.** The explanation is structurally
+sound, the headroom percentages are consistent, and detection sensitivity is
+preserved. However, the measurement should have been committed as an artifact,
+and the 624x480 inconsistency needs to be resolved.
+
+**Recommendations:**
+1. Widen the 624x480 fixture to match, or verify it was intentionally left
+2. Commit a reproducible sim log when re-baselining ratchets
+3. Mark `diagnostic_paint` thresholds as TRANSIENT — they expire when paint
+   is replaced by production stages
+
 ## Ratchet
 
 `tools/check_decode_throughput.py` consumes the existing full-frame comparison
