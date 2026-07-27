@@ -24,7 +24,8 @@ module ddr_frame_store #(
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
-	parameter int DDR_BURST_MAX = 128
+	parameter int DDR_BURST_MAX = 128,
+	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -381,6 +382,7 @@ module ddr_frame_store #(
 	reg poll_pending;
 	reg [30:0] last_seq;
 	reg have_seq;
+	reg doorbell_primed;
 	reg [15:0] mbox_seq, mbox_last;
 	reg mbox_req, mbox_valid;
 	reg [17:0] mbox_hb;
@@ -552,7 +554,9 @@ module ddr_frame_store #(
 	wire [Y_QW_AW:0] burst_cap = (qwords_remaining > DDR_BURST_MAX_QWORDS) ? DDR_BURST_MAX_QWORDS : qwords_remaining;
 	wire [7:0] burst_this = burst_cap[7:0];
 	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
-	wire db_new_seq = db_magic_ok && (!have_seq || (DDRAM_DOUT[62:32] != last_seq));
+	wire [30:0] db_token = DDRAM_DOUT[62:32];
+	wire db_token_new = db_magic_ok && (!have_seq || (db_token != last_seq));
+	wire db_new_seq = db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed);
 	wire spi_edge_ddr = start_d2 != start_seen;
 
 	assign debug_state = {LINE_COUNT[2:0], |y_valid, state_ddr};
@@ -600,6 +604,7 @@ module ddr_frame_store #(
 			poll_pending <= 1'b0;
 			last_seq <= 31'd0;
 			have_seq <= 1'b0;
+			doorbell_primed <= 1'b0;
 			doorbell_ok <= 1'b0;
 			start_d1 <= 1'b0;
 			start_d2 <= 1'b0;
@@ -674,9 +679,11 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
-			if (db_new_seq) begin
-				last_seq <= DDRAM_DOUT[62:32];
+			if (db_token_new) begin
+				last_seq <= db_token;
 				have_seq <= 1'b1;
+			end
+			if (db_new_seq) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
@@ -689,7 +696,7 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= pending_ready_c;
+					pending_ready_ddr <= swap_pending_d2 && pending_ready_c;
 					poll_div <= poll_div + 16'd1;
 					if (need_y_cur_c || (swap_pending_d2 && need_y_prep_c)) begin
 						fill_bank <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
@@ -816,6 +823,7 @@ module ddr_frame_store #(
 
 				S_POLL_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
+						doorbell_primed <= 1'b1;
 						poll_pending <= 1'b0;
 						state_ddr <= S_IDLE;
 					end
