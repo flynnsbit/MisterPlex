@@ -70,6 +70,7 @@ module sdram_memtest #(
 	localparam [5:0] ST_DET_W64      = 6'd17;
 	localparam [5:0] ST_DET_R32      = 6'd18;
 	localparam [5:0] ST_DET_R64      = 6'd19;
+	localparam [5:0] ST_OP_CAPTURE   = 6'd20;
 
 	assign sdram_bs = 2'b11;
 
@@ -322,20 +323,24 @@ module sdram_memtest #(
 				ST_OP_WAIT: begin
 					if (sdram_ready) begin
 						last_read <= sdram_dout;
-						if (!first_fail_valid)
-							read_sample <= sdram_dout;
-						if (op_check && (sdram_dout != op_expect)) begin
-							if (!first_fail_valid) begin
-								first_fail_valid  <= 1'b1;
-								first_fail_addr   <= op_addr;
-								first_fail_expect <= op_expect;
-								read_sample       <= sdram_dout;
-							end
-							if (error_count != 16'hFFFF)
-								error_count <= error_count + 16'd1;
-						end
-						state <= op_return;
+						state <= ST_OP_CAPTURE;
 					end
+				end
+
+				ST_OP_CAPTURE: begin
+					if (!first_fail_valid)
+						read_sample <= last_read;
+					if (op_check && (last_read != op_expect)) begin
+						if (!first_fail_valid) begin
+							first_fail_valid  <= 1'b1;
+							first_fail_addr   <= op_addr;
+							first_fail_expect <= op_expect;
+							read_sample       <= last_read;
+						end
+						if (error_count != 16'hFFFF)
+							error_count <= error_count + 16'd1;
+					end
+					state <= op_return;
 				end
 
 				default: state <= ST_RESET;
