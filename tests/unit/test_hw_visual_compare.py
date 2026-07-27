@@ -115,18 +115,23 @@ def main() -> int:
         "--capture", str(bad_path),
         "--noise-report", str(noise),
         "--report", str(bad_report),
+        "--shift-radius", "1",
         "--diff", str(bad_diff),
     )
     require(b.returncode == 1, f"corrupted frame did not fail\nstdout={b.stdout}\nstderr={b.stderr}")
     br = json.loads(bad_report.read_text())
     require(br["stats"]["worst"]["x_presented"] == 20, f"wrong worst x: {br}")
     require(br["stats"]["worst"]["y_presented"] == 20, f"wrong worst y: {br}")
+    require(br["stats"]["mismatch_bbox"]["presented"] == [20, 20, 20, 20],
+            f"wrong mismatch bbox: {br}")
     require(br["stats"]["max_abs"] >= 64, f"bad max_abs too small: {br}")
     require(br["stats"]["per_plane_exact_match_pixels_rgb"][1] ==
             br["stats"]["active_pixels"] - 1,
             f"bad per-plane exact count should isolate one green-plane pixel: {br}")
     require(br["stats"]["per_plane_mae_yuv"][0] > 0,
             f"bad YUV per-plane MAE did not report the injected pixel: {br}")
+    require(br["shift_sweep"][0]["captured_dx"] == 0 and br["shift_sweep"][0]["captured_dy"] == 0,
+            f"shift sweep should prefer no shift for single-pixel corruption: {br['shift_sweep'][:3]}")
     require(bad_diff.exists() and bad_diff.stat().st_size > 0, "bad diff artifact missing")
     print("PASS corrupted active pixel rejected with precise worst mismatch + diff artifact")
 

@@ -303,10 +303,23 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
     worst_flat = int(np.argmax(ad))
     wy, wx, wc = np.unravel_index(worst_flat, ad.shape)
     x0, y0, _x1, _y1 = box if box else g.active_box
+    mismatch_mask = np.any(ad != 0, axis=2)
+    mismatch_bbox = None
+    if np.any(mismatch_mask):
+        ys, xs = np.where(mismatch_mask)
+        mismatch_bbox = {
+            "display": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())],
+            "presented": [
+                int(x0 + xs.min()), int(y0 + ys.min()),
+                int(x0 + xs.max()), int(y0 + ys.max()),
+            ],
+            "pixels": int(mismatch_mask.sum()),
+        }
     return {
         "active_pixels": int(exact.size),
         "exact_match_pixels": int(exact.sum()),
         "exact_match_ratio": float(exact.sum() / exact.size),
+        "mismatch_bbox": mismatch_bbox,
         "per_plane_exact_match_pixels_rgb": [int(x) for x in per_plane_exact],
         "per_plane_exact_match_ratio_rgb": [float(x / exact.size) for x in per_plane_exact],
         "per_plane_mae_rgb": [float(x) for x in per_plane_mae],
@@ -328,6 +341,40 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
             "delta": int(diff[wy, wx, wc]),
         },
     }
+
+
+def shifted_overlap_box(box: tuple[int, int, int, int], dx: int, dy: int) -> tuple[
+    tuple[int, int, int, int], tuple[int, int, int, int]
+]:
+    x0, y0, x1, y1 = box
+    ax0 = max(x0, x0 - dx)
+    ax1 = min(x1, x1 - dx)
+    ay0 = max(y0, y0 - dy)
+    ay1 = min(y1, y1 - dy)
+    return (ax0, ay0, ax1, ay1), (ax0 + dx, ay0 + dy, ax1 + dx, ay1 + dy)
+
+
+def shift_sweep(golden: np.ndarray, captured: np.ndarray, g: Geometry,
+                box: tuple[int, int, int, int], radius: int) -> list[dict]:
+    rows = []
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            ga_box, ca_box = shifted_overlap_box(box, dx, dy)
+            ga = active_view(golden, g, ga_box)
+            ca = active_view(captured, g, ca_box)
+            stats = diff_stats(ga, ca, g, (0, 0, ga.shape[1], ga.shape[0]))
+            rows.append({
+                "captured_dx": dx,
+                "captured_dy": dy,
+                "pixels_compared": stats["active_pixels"],
+                "exact_match_pixels": stats["exact_match_pixels"],
+                "exact_match_ratio": stats["exact_match_ratio"],
+                "per_plane_mae_rgb": stats["per_plane_mae_rgb"],
+                "per_plane_mae_yuv": stats["per_plane_mae_yuv"],
+                "max_abs": stats["max_abs"],
+            })
+    rows.sort(key=lambda r: (sum(r["per_plane_mae_rgb"]) / 3.0, -r["exact_match_pixels"]))
+    return rows
 
 
 def diff_artifact(golden: np.ndarray, captured: np.ndarray, g: Geometry, out: Path,
@@ -466,6 +513,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if args.diff:
         diff_artifact(golden, captured, g, Path(args.diff), box)
         report["diff"] = str(args.diff)
+    if args.shift_radius:
+        report["shift_sweep"] = shift_sweep(golden, captured, g, box, args.shift_radius)
     if args.report:
         out = Path(args.report)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -509,6 +558,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")
     p.add_argument("--max-mae", type=float, default=0.0)
     p.add_argument("--max-abs", type=int, default=0)
+    p.add_argument("--shift-radius", type=int, default=0,
+                   help="try captured image shifts +/-N pixels and report best overlaps")
     p.add_argument("--diff", help="PNG artifact: golden | captured | amplified diff")
     p.add_argument("--report", help="write JSON report")
     p.set_defaults(func=cmd_compare)
