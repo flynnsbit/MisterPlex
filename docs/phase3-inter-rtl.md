@@ -91,14 +91,19 @@ Current evidence:
 ```text
 OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal
 OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal
+FAIL stream_path inter diag pixel: x=16 y=4 band=0 got=0xe87f want=0x1780
+OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 ```
 
-This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
+The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
 
 ## Hardware gate plan
 
 Deploy the branch RBF after Quartus scheduling and load the Baseline 624×480 elementary stream
-through F3 before any host F1 frame owns the frame store.
+through F3 before any host F1 frame owns the frame store. Do **not** treat the no-argument
+`tests/hw/test_f3_visual_golden.sh` default as an inter gate until w-c1 re-proves its default
+fixture/golden on rollback `57674f2e`; use direct screen/capture observation or an explicitly
+proven visual-gate configuration only.
 
 Pass:
 

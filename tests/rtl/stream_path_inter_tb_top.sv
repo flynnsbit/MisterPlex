@@ -2,7 +2,9 @@
 // It instantiates product RTL only; no synthesized source is fault-injected here.
 `default_nettype none
 
-module stream_path_inter_tb (
+module stream_path_inter_tb #(
+	parameter bit FAULT_INTER_DIAG_PIXEL = 1'b0
+)(
 	input  wire        clk,
 	input  wire        reset,
 	input  wire        ioctl_download,
@@ -53,6 +55,8 @@ module stream_path_inter_tb (
 	output wire        fs_swap
 );
 	wire signed [8:0] residual_coeff [0:15];
+	wire [15:0] fs_wr_pixel_raw;
+	assign fs_wr_pixel = FAULT_INTER_DIAG_PIXEL ? (fs_wr_pixel_raw ^ 16'hffff) : fs_wr_pixel_raw;
 
 	stream_path #(
 		.FRAME_W(320),
@@ -104,7 +108,7 @@ module stream_path_inter_tb (
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
 		.fs_wr_en(fs_wr_en),
-		.fs_wr_pixel(fs_wr_pixel),
+		.fs_wr_pixel(fs_wr_pixel_raw),
 		.fs_wr_reset(fs_wr_reset),
 		.fs_swap(fs_swap)
 	);
