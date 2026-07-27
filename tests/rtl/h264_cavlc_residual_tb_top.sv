@@ -19,8 +19,8 @@ module h264_cavlc_residual_tb_top #(
     output wire [4:0]         total_coeff,
     output wire [1:0]         trailing_ones,
     output wire [3:0]         total_zeros,
-    output wire signed [8:0]  coeff [0:15],
-    output wire signed [8:0]  level_dbg [0:15],
+    output wire signed [15:0] coeff [0:15],
+    output wire signed [15:0] level_dbg [0:15],
     output wire [3:0]         run_dbg [0:15],
 
     input  wire [7:0]         nc_mb_x,
@@ -39,7 +39,7 @@ module h264_cavlc_residual_tb_top #(
     output wire [4:0]         nc_nC,
     output wire [2:0]         nc_coeff_token_table
 );
-    wire signed [8:0] dut_coeff [0:15];
+    wire signed [15:0] dut_coeff [0:15];
 
     h264_cavlc_residual_block #(.MAX_BYTES(MAX_BYTES)) u_residual (
         .clk(clk),
@@ -66,7 +66,7 @@ module h264_cavlc_residual_tb_top #(
     generate
         for (i = 0; i < 16; i = i + 1) begin : g_coeff
 `ifdef CAVLC_NEGATIVE_TEST
-            assign coeff[i] = (i == 0) ? (dut_coeff[i] ^ 9'sd1) : dut_coeff[i];
+            assign coeff[i] = (i == 0) ? (dut_coeff[i] ^ 16'sd1) : dut_coeff[i];
 `else
             assign coeff[i] = dut_coeff[i];
 `endif
