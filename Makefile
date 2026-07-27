@@ -335,6 +335,7 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
 	$(ROOT)/host/libmisterplex/h264_sps.hpp \
 	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
 	$(ROOT)/host/libmisterplex/pixel_format.hpp

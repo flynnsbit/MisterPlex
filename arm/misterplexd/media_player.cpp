@@ -626,22 +626,20 @@ void MediaPlayer::paintIdle() {
     if (fb_.ok())
         fb_.blitRgb24(buf.data(), w, h);
     // F1 latches the last frame written, so the frame store must be repainted too.
-    // C3 frame-store DDR is YUV-only; use a deterministic black I420 frame for
-    // the FPGA idle clear rather than ringing the doorbell with an RGB payload.
+    // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
+    // instead of ringing the doorbell with an RGB payload.
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
             const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-            std::vector<uint8_t> yuv(makeDdrFrameLayout(g, kDdrFramePhysBase,
-                                                        kDdrFrameStrideAlign,
-                                                        DdrFrameFormat::Yuv420p)
-                                         .frame_bytes);
-            const size_t yBytes = static_cast<size_t>(g.coded_width) * g.coded_height;
-            const size_t cBytes = yBytes / 4u;
-            std::memset(yuv.data(), kYuv420BlackY, yBytes);
-            std::memset(yuv.data() + yBytes, kYuv420BlackU, cBytes);
-            std::memset(yuv.data() + yBytes + cBytes, kYuv420BlackV, cBytes);
-            ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
+            const DdrFrameLayout layout =
+                makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
+                                   DdrFrameFormat::Yuv420p);
+            std::vector<uint8_t> yuv(layout.frame_bytes);
+            if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
+                                  idlePhase_.load())) {
+                ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
+            }
             ddrBank_ ^= 1;
         }
         if (!ok)

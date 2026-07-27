@@ -145,6 +145,80 @@ int main() {
         }
     }
 
+    // DDR idle is I420/YUV420p now. Black must be exact video black, while
+    // logo/screensaver must preserve the renderer rather than degenerating to
+    // a black-only frame.
+    std::vector<uint8_t> yuv(static_cast<size_t>(w) * h * 3 / 2);
+    CHECK(renderIdleYuv420p(yuv.data(), w, h, IdleMode::Black, 0));
+    const size_t yBytes = static_cast<size_t>(w) * h;
+    const size_t cBytes = yBytes / 4;
+    for (size_t i = 0; i < yBytes; ++i)
+        CHECK(yuv[i] == 16);
+    for (size_t i = 0; i < cBytes; ++i) {
+        CHECK(yuv[yBytes + i] == 128);
+        CHECK(yuv[yBytes + cBytes + i] == 128);
+    }
+
+    std::vector<uint8_t> yuv2(yuv.size());
+    CHECK(renderIdleYuv420p(yuv.data(), w, h, IdleMode::Screensaver, 0));
+    CHECK(renderIdleYuv420p(yuv2.data(), w, h, IdleMode::Screensaver, kIdlePhasePeriod / 4));
+    size_t nonBlackLuma = 0;
+    size_t changed = 0;
+    for (size_t i = 0; i < yBytes; ++i) {
+        if (yuv[i] != 16)
+            ++nonBlackLuma;
+        if (yuv[i] != yuv2[i])
+            ++changed;
+    }
+    CHECK(nonBlackLuma > yBytes / 2);
+    CHECK(changed > 0);
+
+    // A valid YUV doorbell carrying valid all-black pixels is still a regression:
+    // the frame store cannot distinguish that from a deliberate black screen.
+    // Grade the actual I420 pixels so logo/screensaver content cannot disappear
+    // behind a formally valid payload again.
+    constexpr uint8_t kBgY = 45, kBgU = 130, kBgV = 126;
+    constexpr uint8_t kFgY = 157, kFgU = 53, kFgV = 169;
+    auto sampleIsFg = [](int x, int y, const IdleRenderState& state) {
+        uint8_t r = 0, g = 0, b = 0;
+        idlePixelRgb(x, y, state, r, g, b);
+        return r == kIdleFgR && g == kIdleFgG && b == kIdleFgB;
+    };
+    auto findSolid2x2 = [&](IdleMode mode, int phase, bool wantFg, int& outX, int& outY) {
+        const IdleRenderState state = idleRenderState(w, h, mode, phase);
+        for (int y = 0; y + 1 < h; y += 2) {
+            for (int x = 0; x + 1 < w; x += 2) {
+                bool solid = true;
+                for (int dy = 0; dy < 2; ++dy)
+                    for (int dx = 0; dx < 2; ++dx)
+                        solid = solid && (sampleIsFg(x + dx, y + dy, state) == wantFg);
+                if (solid) {
+                    outX = x;
+                    outY = y;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    auto expectI420Sample = [&](const std::vector<uint8_t>& frame, int x, int y, uint8_t yy,
+                                uint8_t uu, uint8_t vv) {
+        const size_t yi = static_cast<size_t>(y) * w + x;
+        const size_t ci = static_cast<size_t>(y / 2) * (w / 2) + (x / 2);
+        CHECK(frame[yi] == yy);
+        CHECK(frame[yBytes + ci] == uu);
+        CHECK(frame[yBytes + cBytes + ci] == vv);
+    };
+
+    int fgX0 = 0, fgY0 = 0, bgX0 = 0, bgY0 = 0, fgX1 = 0, fgY1 = 0;
+    CHECK(findSolid2x2(IdleMode::Screensaver, 0, true, fgX0, fgY0));
+    CHECK(findSolid2x2(IdleMode::Screensaver, 0, false, bgX0, bgY0));
+    CHECK(findSolid2x2(IdleMode::Screensaver, kIdlePhasePeriod / 4, true, fgX1, fgY1));
+    expectI420Sample(yuv, fgX0, fgY0, kFgY, kFgU, kFgV);
+    expectI420Sample(yuv, bgX0, bgY0, kBgY, kBgU, kBgV);
+    expectI420Sample(yuv2, fgX1, fgY1, kFgY, kFgU, kFgV);
+    CHECK(fgX0 != fgX1 || fgY0 != fgY1);
+
     if (fails) {
         std::fprintf(stderr, "test_osd_menu: %d failure(s)\n", fails);
         return 1;
