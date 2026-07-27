@@ -14,17 +14,20 @@ run_preflight() {
 run_preflight "$FIX/meminfo_high_headroom" >/dev/null
 echo "PASS preflight accepts synthetic high-headroom host"
 
+run_preflight "$FIX/meminfo_low_steady_state" >/dev/null
+echo "PASS preflight accepts synthetic 6269MB steady-state host with swap slack"
+
 set +e
-LOW_OUT="$(run_preflight "$FIX/meminfo_low_steady_state" 2>&1)"
+LOW_OUT="$(run_preflight "$FIX/meminfo_swap_exhausted" 2>&1)"
 LOW_RC=$?
 set -e
 printf '%s\n' "$LOW_OUT"
 if [[ "$LOW_RC" -ne 3 ]]; then
-  echo "FAIL preflight low-headroom fixture: got rc=$LOW_RC want rc=3" >&2
+  echo "FAIL preflight swap-exhausted fixture: got rc=$LOW_RC want rc=3" >&2
   exit 1
 fi
-if ! grep -q "below 8192MB absolute headroom floor" <<<"$LOW_OUT"; then
-  echo "FAIL preflight low-headroom fixture: refusal did not cite absolute headroom" >&2
+if ! grep -q "swap free" <<<"$LOW_OUT"; then
+  echo "FAIL preflight swap-exhausted fixture: refusal did not cite swap exhaustion" >&2
   exit 1
 fi
-echo "PASS preflight refuses synthetic steady-state low-headroom host"
+echo "PASS preflight refuses synthetic swap-exhausted host"
