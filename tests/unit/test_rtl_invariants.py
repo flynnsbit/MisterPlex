@@ -1951,9 +1951,9 @@ def check_present_path_degradation_contract() -> None:
                 "(including frame_status=absent or frame_debug=0xE1)",
             ),
             (
-                'log("media:reconF1skipped:YUVDDRframe-storerequirescoded624x480,got"+',
-                "geometry fallback/skip in STREAM recon must be a named skip, not a quiet "
-                "absence of F1 frames",
+                'log("ERRORmedia:reconF1REFUSED:frame-storerequirescoded"+',
+                "geometry mismatch in STREAM recon must be a LOUD refusal (not a quiet skip), "
+                "because a silent skip is indistinguishable from frozen screen",
             ),
             (
                 'log("media:blitfailedfmt="+std::string(ffmpegPixFmt(videoFmt)));',
