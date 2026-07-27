@@ -18,12 +18,26 @@ or ALLOWANCE. No number may be used without its label.
 | Decode clock (`clk_sys`) | 20.000 MHz | **MEASURED** | `pll_0002.v` `output_clock_frequency0("20.000000 MHz")`; `Plex.sv:215` `.outclk_0(clk_sys)` |
 | SDRAM clock (`clk_sdram`) | 100–142 MHz selectable | **MEASURED** | `pll_0002.v` `output_clock_frequency1` ifdef chain; default 100 MHz |
 | DDRAM clock | 90 MHz | **MEASURED** | `pll_0002.v` `output_clock_frequency2("90.000000 MHz")` |
-| Target frame rate | 25 fps | **ALLOWANCE** | PMS 480p stream target |
-| Coded geometry | 624×480 = 39×30 = 1170 MB/frame | **MEASURED** | SPS `pic_width_in_mbs=39`, `pic_height_in_map_units=30` (rawvideo path) |
+| Target frame rate | **30 fps** | **MEASURED** | w-osd: PMS STREAM path delivers 30 fps (w-arch v6) |
 | STREAM path geometry | 640×480 = 40×30 = 1200 MB/frame | **MEASURED** | w-osd: PMS transcodes to 640×480 coded on STREAM path |
-| Cycles per frame | 800,000 | **MEASURED** | 20 MHz / 25 fps |
-| Cycles per macroblock (624) | 683.76 | **MEASURED** | 800,000 / 1170 |
-| Cycles per macroblock (640) | 666.67 | **MEASURED** | 800,000 / 1200 |
+| MBs per second | 36,000 | **MEASURED** | 1200 × 30 |
+| Cycles per frame (20 MHz) | 666,667 | **MEASURED** | 20 MHz / 30 fps |
+| Cycles per MB (20 MHz) | **555.6** | **MEASURED** | 666,667 / 1200 — **DOES NOT FIT** (w-arch v6) |
+| Cycles per frame (45 MHz) | 1,500,000 | **TARGET** | 45 MHz / 30 fps |
+| Cycles per MB (45 MHz) | **1,250** | **TARGET** | 1,500,000 / 1200 — 2.24× over allocation |
+
+**CRITICAL CORRECTION (w-arch v6, 2026-07-27):** 20 MHz at 30 fps / 1200 MBs gives
+only 556 cycles/MB. The fleet allocation alone is 558 cycles — **it exceeds the
+budget by 2 cycles before DPB fetch is even counted.** 20 MHz is arithmetically
+impossible. 45 MHz (VCO=360/8, 1:2 ratio to 90 MHz DDR) is REQUIRED, giving
+1,250 cycles/MB (2.24× margin).
+
+**Previous 25 fps / 624-width numbers are OBSOLETE.** Retained below as
+~~strikethrough~~ for audit trail but must not be used for planning.
+
+~~| Target frame rate | 25 fps | — | PMS 480p stream target (rawvideo path only) |~~
+~~| Coded geometry | 624×480 = 39×30 = 1170 MB/frame | — | rawvideo path forced via ffmpeg scale |~~
+~~| Cycles per MB (20 MHz, 25 fps) | 683.76 | — | 800,000 / 1170 — OBSOLETE |~~
 
 **Clock-dependent note:** every cycle count in this document scales linearly
 with `clk_sys`. The actual decode-fabric Fmax has **never been measured** —
@@ -31,8 +45,9 @@ no Quartus fit with real decode modules has ever run. The previously cited
 "25.09 MHz" figure (critical path 39.86 ns) was measuring `decode_stub`, a
 diagnostic shim, not the decoder (w-arch v5, 2026-07-27). The real limit is
 **UNKNOWN**, which is not the same as "high."
-**All budgets in this document use 20 MHz as the planning assumption.** Any
-higher clock is upside, not a dependency.
+**All budgets in this document now use 45 MHz as the planning assumption.**
+20 MHz does not close. 45 MHz feasibility is conditional on the first fit
+with real decode modules — which per #19 has never happened.
 
 ## 2. Existing stage allocation (from fleet measurements)
 
@@ -46,8 +61,14 @@ higher clock is upside, not a dependency.
 | Intra prediction | 30 | **ALLOWANCE** | Fleet allocation |
 | Control | 30 | **ALLOWANCE** | Fleet allocation |
 | **Subtotal** | **608** | | |
-| **Total budget** | **684** | | |
-| **Remaining margin** | **76** | | 684 − 608 = 76 cycles (1.12× headroom) |
+| **Total budget (45 MHz)** | **1,250** | | 45 MHz / 30 fps / 1200 MBs |
+| **Remaining margin** | **642** | | 1,250 − 608 = 642 cycles (2.06× headroom) |
+
+**At 45 MHz the DPB fetch has a COMFORTABLE allocation.** The 289-cycle
+64-bit burst fetch fits within the 642-cycle margin without pipelining.
+Even serial execution (608 + 289 = 897) closes with 1.39× margin at 45 MHz.
+
+~~**Total budget (20 MHz)** | **556** | **DOES NOT FIT** | 558 > 556~~
 
 **Critical observation:** the DPB fetch path has **no explicit allocation** in
 this table. It was not counted in the 608-cycle sum. The 250-cycle MC
@@ -371,49 +392,41 @@ interpolation and arithmetic.
 
 ## 13. Scaling table — CONSTRAINED by CDC relationships
 
-**2026-07-27 v5 correction from w-arch:** the previously cited 25.09 MHz /
-39.86 ns "fabric limit" was measuring `decode_stub` (a diagnostic shim), not
-the real decoder. No fit with actual decode modules has ever run. **The real
-decode-fabric Fmax is UNKNOWN.** "Unknown" is not "high" — continue designing
-to 20 MHz.
+**2026-07-27 v6 correction from w-arch:** 20 MHz is **arithmetically
+impossible** at 30 fps / 1200 MBs (only 556 cycles/MB; allocation needs 558).
+45 MHz is REQUIRED, not optional.
 
 The cross-domain relationships constrain which frequencies are safe:
 - **40 MHz** vs clk_ddr(90 MHz): 4:9 ratio, 2.778 ns worst-case setup — WORSE
-  than the relationship that already failed at -2.137 ns.
+  than the relationship that already failed at -2.137 ns. **RULED OUT.**
 - **45 MHz** vs clk_ddr(90 MHz): 1:2 exact ratio, 11.111 ns — the only
-  comfortable candidate. Feasibility is UNKNOWN pending first real decode fit.
+  safe candidate. VCO=360 MHz / 8 = 45 MHz. **REQUIRED.**
 - **60 MHz** vs clk_ddr(90 MHz): 2:3 ratio, 5.556 ns — the SAME zone that
-  produced the -2.137 ns failure.
+  produced the -2.137 ns failure. **RULED OUT.**
 
-| clk_sys | Cycles/MB | DPB fetch+MC serial | Margin | Verdict | Reachable? |
-|--------:|----------:|--------------------:|-------:|---------|------------|
-| 20 MHz | 684 | 427 | 257 (1.60×) | **MARGINAL** — closes only if DDR port not contended | **YES — current** |
-| 25 MHz | 855 | 427 | 428 (2.00×) | **OK** — tolerates moderate contention | **UNKNOWN** — no real decode fit exists |
-| 45 MHz | 1538 | 427 | 1111 (3.60×) | **WIDE** | **UNKNOWN** — safe CDC ratio but needs real Fmax data |
+| clk_sys | Cycles/MB | DPB serial (608+289) | Margin | Verdict |
+|--------:|----------:|---------------------:|-------:|---------|
+| 20 MHz | 556 | 897 | **−341** | **IMPOSSIBLE** — allocation alone exceeds budget |
+| 45 MHz | 1,250 | 897 | 353 (1.39×) | **OK** — comfortable even without pipelining |
+| 45 MHz pipelined | 1,250 | 647 | 603 (1.93×) | **WIDE** — fetch overlaps MC |
 
-**Note:** the "427 cycles" figure is in DDR-clock-relative terms (burst
-latency does not change with decode clock). At higher decode clocks, the DDR
-beats still take the same wall time, but the decode budget grows. The 427
-is conservative — it assumes 1:1 between DDR beats and decode cycles, which
-holds when `clk_sys ≤ DDRAM_CLK` (true: 20 ≤ 90).
+**Note:** 45 MHz feasibility is UNKNOWN — conditional on the first fit with
+real decode modules (per #19, no such fit has ever existed). The real
+decode-fabric Fmax has never been measured.
 
 ## 14. Verdict and next steps
 
-**PIPELINED FEASIBILITY: MARGINAL at 20 MHz. Higher clocks are NOT a
-near-term escape.**
+**PIPELINED FEASIBILITY: COMFORTABLE at 45 MHz. 20 MHz is DEAD.**
 
-The sequential model does not close (897/684 = 1.31× over budget). The
-pipelined model closes at 427/684 = 1.60× margin, but only if DDR port
-contention is bounded.
+At 45 MHz / 1,250 cycles/MB:
+- Serial (all stages + DPB fetch): 897/1,250 = 1.39× margin ✓
+- Pipelined (fetch overlaps MC): 647/1,250 = 1.93× margin ✓
+- DDR port contention at 45 MHz is less critical — 353 spare cycles absorb it
 
-**2026-07-27 clock corrections:** the previously cited 25.09 MHz Fmax was
-measuring `decode_stub`, a diagnostic shim, not the decoder (w-arch v5). The
-real decode-fabric Fmax is **UNKNOWN** — no Quartus fit with actual decode
-modules has ever run. "Unknown" is not "high." The w-arch study's initial
-estimate of "12 logic levels, ~12.3 ns" was refuted by the fitter's routing
-delay on `decode_stub`, and is not applicable to the real fabric either.
-**Design to 20 MHz. Treat any clock increase as upside, not a planning
-assumption.**
+At 20 MHz / 556 cycles/MB:
+- Allocation alone (558) > budget (556). Nothing fits. No DPB design saves this.
+
+**The DPB fetch path is no longer the bottleneck.** The clock is.
 
 **2026-07-27 second f2sdram port correction:** w-cap has established a second
 port IS achievable, but at a real cost: all 4 data channels are currently
@@ -431,47 +444,48 @@ intra-domain one.
 **Dependencies:**
 1. **w-cap (second f2sdram port):** achievable but has scaler bandwidth cost.
    Coordinate before assuming it. Without it, DPB fetch contends with
-   presentation on the same port, and the 1.60× margin is only valid if
-   contention is bounded to ~100 cycles worst-case stall.
-2. **w-arch (clock study):** decode-fabric Fmax is UNKNOWN — the 25.09 MHz
-   figure was `decode_stub`, not the decoder. No fit with real decode
-   modules has run. The first such fit will establish the actual ceiling.
+   presentation on the same port. At 45 MHz the margin is comfortable enough
+   that moderate contention (~100 cycles) is absorbable.
+2. **w-arch (clock study):** 45 MHz is now REQUIRED (w-arch v6). Decode-fabric
+   Fmax is UNKNOWN — no fit with real decode modules has run (per #19,
+   `decode_stub` IS the decode path, and it is a probe). The first real fit
+   establishes whether 45 MHz is achievable.
 3. **w-deblock:** deblock writeback timing determines when filtered samples
    are available for the current picture bank. The DPB must not read from
    the current bank until writeback is complete.
 4. **w-mc:** MC interpolation starts after fetch_done. The 250-cycle MC
    allocation is the dominant cost after fetch completes.
 
-**The honest framing:** the DPB fetch path is MARGINAL at 20 MHz with the
-pipelined model. It requires either (a) a second DDR port with bounded cost,
-or (b) demonstrating that DDR port contention on the shared port stays below
-~100 cycles per MB on average. Both are achievable but neither is free. There
-is no comfortable escape from a faster clock in the near term.
+**The honest framing (REVISED):** at 45 MHz the DPB fetch path is
+COMFORTABLE — serial execution (608 + 289 = 897) fits within 1,250 with
+1.39× margin. Pipelined (fetch overlaps MC: max(250, 289) + 358 = 647) gives
+1.93× margin. The question is no longer "does it fit?" but "can the fabric
+reach 45 MHz?" — which is unknown and conditional on the first real fit.
 
-## 15. Width-640 budget impact (2026-07-27, w-osd coordination)
+~~**Previous framing (20 MHz, OBSOLETE):** the DPB fetch path was MARGINAL.~~
+
+## 15. Width-640 budget impact (2026-07-27, w-osd/w-arch coordination)
 
 w-osd established that the STREAM path (the one needed for FPGA-native decode)
-produces coded 640×480 = 40×30 = **1200 MBs/frame**, not 624×480 / 1170 MBs.
-The 624 width came from the rawvideo path's forced ffmpeg scale filter — the
-measurement was self-fulfilling.
+produces coded 640×480 = 40×30 = **1200 MBs/frame** at **30 fps** (not 25).
+w-arch v6 confirmed 20 MHz is arithmetically impossible at these parameters.
 
-| Parameter | At 624 (current) | At 640 (STREAM path) | Impact |
-|-----------|------------------:|---------------------:|--------|
-| MB columns | 39 | 40 | +1 column |
-| MBs/frame | 1170 | 1200 | +2.56% |
-| Cycles/MB | 683.76 | 666.67 | −2.50% headroom |
-| Total budget margin (76 cyc) | 1.12× | 1.09× | Still closes |
-| Pipelined model margin (1.60×) | Yes | 1.56× | Still closes |
-| DDR frame bytes (Y+U+V) | 449,280 | 460,800 | +11,520 (+2.6%), still < bank stride 0x80000 |
-| Luma read (21×21) | 441 B/MB | 441 B/MB | **Unchanged** — per-MB fetch is geometry-independent |
-| Total frame read/write traffic | unchanged per-MB | unchanged per-MB | +2.6% frames/s is negligible |
+| Parameter | Value | Notes |
+|-----------|------:|-------|
+| MBs/frame | 1200 | 40×30 |
+| Frame rate | 30 fps | STREAM path measured |
+| MBs/s | 36,000 | |
+| Cycles/MB (20 MHz) | 556 | **DOES NOT FIT** — allocation alone is 558 |
+| Cycles/MB (45 MHz) | 1,250 | 2.24× over 558 allocation |
+| DDR frame bytes | 460,800 | < bank stride 0x80000 (524,288) ✓ |
+| Luma read/MB | 441 B | Unchanged — geometry-independent |
+| DPB serial budget (45 MHz) | 897/1,250 | 1.39× margin |
+| DPB pipelined budget (45 MHz) | 647/1,250 | 1.93× margin |
 
-**Verdict:** the budget **still closes at 640.** The per-MB costs (fetch, MC,
-deblock) are all independent of frame width — they operate on fixed 16×16/8×8
-blocks regardless of how many columns exist. The only impact is +30 MBs per
-frame, which reduces cycles/MB from 684 to 667. The serial sum (608 existing +
-289 DPB = 897) still does not fit at either width; the pipelined model (427
-serial) has margin 1.56× instead of 1.60× — still comfortable.
+**Verdict:** the budget **closes comfortably at 45 MHz.** At 20 MHz nothing
+fits regardless of DPB design. The per-MB costs are geometry-independent;
+only the MBs/frame count changed. The DPB fetch path is no longer the
+marginal constraint — the clock is.
 
 **RTL verification at 640:** the DPB parameterisation has been **measured** at
 FRAME_W=640 (not merely read). The width-edge test exercises MB column 39 with
@@ -489,6 +503,11 @@ a positive MV crossing the right boundary:
    **Coordinate with w-cap on the scaler bandwidth tradeoff before proceeding.**
 4. Measure actual burst latency on the f2sdram bridge (Verilator model).
 5. Implement the previous-MB luma cache for adjacency overlap savings.
+
+**Note (post #19):** steps 2–5 are building for a decode datapath that does not
+yet exist. The work is still correct — the datapath will need this interface —
+but "done" cannot be reached until the integration pipeline is wired. This
+budget is now labelled a **DESIGN TARGET**, not a description of a working system.
 
 ---
 
