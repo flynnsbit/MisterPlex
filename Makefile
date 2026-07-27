@@ -3,7 +3,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit rtl-sim arm-plexd arm-ddr-bench ddr-bench present-harness clean help plexd package
+.PHONY: all unit rtl-sim rtl-lint arm-plexd arm-ddr-bench ddr-bench present-harness clean help plexd package
 
 all: unit
 
@@ -11,6 +11,7 @@ help:
 	@echo "Targets:"
 	@echo "  make unit       - host unit tests (cadence, resolve, companion HTTP)"
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
+	@echo "  make rtl-lint   - run Verilator width/implicit lint with baseline regression gate"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
@@ -63,9 +64,13 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+	$(ROOT)/scripts/rtl_lint.py
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+
+rtl-lint:
+	$(ROOT)/scripts/rtl_lint.py
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \

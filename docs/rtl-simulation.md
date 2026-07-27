@@ -41,3 +41,17 @@ build/verilator/$TOP/V$TOP
 ```
 
 For multi-file RTL, list every required `.sv` on the Verilator command line or use `-f filelist.f`. Keep generated outputs under `build/verilator/`.
+
+## Whole-project RTL lint baseline
+
+Run the Verilator lint gate without starting Quartus:
+
+```bash
+make rtl-lint
+# or update the checked-in baseline intentionally after triage:
+scripts/rtl_lint.py --write-baseline
+```
+
+`rtl-lint` parses `fpga/Plex_MiSTer/Plex.qsf` plus sourced `.qip`/`.tcl` assignments, runs Verilator on owned RTL, and reports only warnings physically located in MiSTerPlex-owned sources. Vendor/generated context (`sys/`, `rtl/pll/`, Intel primitive stubs) is excluded from the ranked counts so it does not bury project warnings.
+
+The checked-in baseline is `tests/fixtures/rtl_lint_baseline.json`. Existing `WIDTHTRUNC`, `WIDTHEXPAND`, `WIDTH`, `UNSIGNED`, and `IMPLICIT*` counts are allowed; any count above baseline fails. The baseline stores both per-file/type counts and `warning_details` entries with line/message text so a diff shows which warning moved or appeared. `make unit` runs this gate after the RTL simulations. If Verilator is absent, the target prints `SKIP RTL LINT` loudly and exits 0, matching the RTL sim degrade path.
