@@ -141,10 +141,10 @@ int main(int argc, char** argv) {
             // Compare
             bool ok = true;
             for (int i = 0; i < 16; ++i) {
-                // RTL output is signed 18-bit; sign-extend
+                // RTL output is signed 22-bit; sign-extend
                 int32_t rtl_val = dut->dequant[i];
-                if (rtl_val & (1 << 17))
-                    rtl_val |= ~((1 << 18) - 1);
+                if (rtl_val & (1 << 21))
+                    rtl_val |= ~((1 << 22) - 1);
                 if (rtl_val != ref.values[i]) {
                     if (ok) {
                         fprintf(stderr, "MISMATCH QP=%d pattern=%s:\n", qp, pat.name);
