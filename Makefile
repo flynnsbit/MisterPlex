@@ -58,6 +58,8 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
+	bash $(ROOT)/scripts/test_resource_preflight.sh
+	python3 $(ROOT)/tests/unit/test_no_conflict_markers.py
 	python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
