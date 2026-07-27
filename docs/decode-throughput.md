@@ -86,15 +86,21 @@ Additional raw integration signal:
 
 ## Stage coverage (per-stage cycle accounting, 2026-07-27)
 
+**Instrument-integrity note (#17):** these are TIMING measurements — they
+report how many clock cycles each stage takes. They do NOT verify
+CORRECTNESS. The RTL has been verified on 16 of 76,800 luma pixels (0.021%)
+and 0 of 38,400 chroma pixels (0%). A module that runs in 0 cycles but
+produces wrong output will show 0 cycles/MB here. See #17 in PHASE_BACKLOG.
+
 The aggregate 259 cycles/MB was **98.7% decode_stub diagnostic paint overhead**.
 Per-stage instrumentation (via `stub_busy`/`fs_wr_reset`/`fs_swap` phase
 transitions in the Verilator testbench) reveals the true breakdown:
 
 | Stage | cycles/MB | Status | Method |
 | --- | ---:| --- | --- |
-| parse_cavlc | 3.2 | **measured** | stub_busy rise → fs_wr_reset transition |
-| dequant_idct | 0 | **measured** | combinational (h264_dequant4x4 + h264_idct4x4) |
-| intra_pred | 0 | **measured** | combinational (DC pred=128 in h264_recon4x4) |
+| parse_cavlc | 3.2 | **measured (TIMING)** | stub_busy rise → fs_wr_reset transition |
+| dequant_idct | 0 | **measured (TIMING)** | combinational (h264_dequant4x4 + h264_idct4x4) |
+| intra_pred | 0 | **measured (TIMING)** | combinational (DC pred=128 in h264_recon4x4) |
 | diagnostic_paint | 256 | measured, **NOT PRODUCTION** | fs_wr_reset → fs_swap; WxH pixels at 1 px/cycle |
 | mc_interpolation | **?** | **NOT IMPLEMENTED** | h264_inter_pred.sv is diagnostic-only |
 | deblock | **?** | **NOT IMPLEMENTED** | h264_deblock.sv exists but not in pipeline |
