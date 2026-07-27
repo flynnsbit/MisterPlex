@@ -65,13 +65,12 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh $(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh $(ROOT)/tests/unit/test_h264_multinal_stream_path.sh $(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh $(ROOT)/tests/unit/test_stream_path_deblock_integration.sh $(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py $(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh $(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+	@chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh $(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py $(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh $(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh $(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh $(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh $(ROOT)/tests/unit/test_stream_path_recon_integration.sh $(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
+	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
@@ -415,7 +414,6 @@ build-rbf:
 
 package:
 	$(ROOT)/scripts/package_release.sh
-	@chmod +x $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh
 	REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_no_private_data.sh
 	REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_release_rbf_hash.sh
 

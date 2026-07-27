@@ -235,6 +235,73 @@ inline int64_t threadCpuMicros() {
     return static_cast<int64_t>(ts.tv_sec) * 1000000 + static_cast<int64_t>(ts.tv_nsec) / 1000;
 }
 
+bool ffmpegHasAudioStream(const std::string& ffmpeg, const std::string& url,
+                          const std::string& headers, int64_t startMs) {
+    std::vector<std::string> args;
+    args.push_back(ffmpeg);
+    args.push_back("-hide_banner");
+    args.push_back("-loglevel");
+    args.push_back("error");
+    args.push_back("-nostdin");
+    if (startMs > 0 && !urlHasUniversalOffset(url)) {
+        char ss[32];
+        std::snprintf(ss, sizeof(ss), "%.3f", startMs / 1000.0);
+        args.push_back("-ss");
+        args.push_back(ss);
+    }
+    if (!headers.empty()) {
+        std::string h = headers;
+        if (h.size() < 2 || h[h.size() - 1] != '\n')
+            h += "\r\n";
+        args.push_back("-headers");
+        args.push_back(h);
+        args.push_back("-reconnect");
+        args.push_back("1");
+        args.push_back("-reconnect_streamed");
+        args.push_back("1");
+        args.push_back("-reconnect_delay_max");
+        args.push_back("5");
+    }
+    args.push_back("-i");
+    args.push_back(url);
+    args.push_back("-map");
+    args.push_back("0:a:0");
+    args.push_back("-frames:a");
+    args.push_back("1");
+    args.push_back("-f");
+    args.push_back("null");
+    args.push_back("-");
+
+    pid_t pid = fork();
+    if (pid < 0)
+        return true; // fail open: do not suppress product audio just because probe fork failed
+    if (pid == 0) {
+        int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            if (devnull != STDOUT_FILENO && devnull != STDERR_FILENO)
+                ::close(devnull);
+        }
+        for (int fd = 3; fd < 256; ++fd)
+            ::close(fd);
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (const auto& s : args)
+            argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        execv(args[0].c_str(), argv.data());
+        _exit(127);
+    }
+    int st = 0;
+    while (waitpid(pid, &st, 0) < 0) {
+        if (errno == EINTR)
+            continue;
+        return true;
+    }
+    return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+}
+
 } // namespace
 
 void MediaPlayer::log(const std::string& s) const {
@@ -242,6 +309,11 @@ void MediaPlayer::log(const std::string& s) const {
         log_(s);
     else
         std::fprintf(stderr, "%s\n", s.c_str());
+}
+
+PlaybackSummary MediaPlayer::lastPlaybackSummary() const {
+    std::lock_guard<std::mutex> lock(summaryMu_);
+    return lastSummary_;
 }
 
 void MediaPlayer::setContentFpsRational(int num, int den) {
@@ -528,6 +600,11 @@ bool MediaPlayer::wantSkipRgbVideo() const {
 }
 
 bool MediaPlayer::initPresent() {
+    if (presentMode_ == "none") {
+        log("media: PRESENT=none decode-only path (test/lab; no fb0 or FPGA writes)");
+        return true;
+    }
+
     bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
     bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
 
@@ -773,6 +850,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            lastSummary_ = PlaybackSummary{};
+        }
         // Mark playing before thr_ starts so callers (e.g. lab --play-file) that
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
@@ -1614,7 +1695,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);
     // Match audioPump: F2 only when PRESENT=fpga and MrAudio unavailable.
     const bool wantF2 = fpga_.ok() && presentMode_ == "fpga" && !wantMr;
-    const bool wantAudio = audioEnabled_ && (wantMr || wantF2);
+    bool wantAudio = audioEnabled_ && (wantMr || wantF2);
+    if (wantAudio && localFile && !ffmpegHasAudioStream(ffmpeg_, url, headers, startMs)) {
+        wantAudio = false;
+        log("media: audio disabled for session: no audio stream detected; avoiding empty "
+            "audio output abort");
+    }
 
     // Product path: STREAM + PRESENT=fpga may skip heavy RGB (keep audio + demux).
     // STREAM=0 and PRESENT=both/fb0 always keep the proven FFmpeg RGB path.
@@ -1665,6 +1751,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     size_t totalBytes = 0;
 
     bool usedRgb = false;
+    bool videoEof = false;
+    bool shortRead = false;
+    size_t shortReadGot = 0;
+    size_t shortReadWant = 0;
 
     // A/V pacing state. The exact rational rate is load-bearing: pacing 23.976 fps
     // content at a hardcoded 24 leaks ~1 ms/s of video lead.
@@ -2265,8 +2355,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
         size_t got = 0;
-        bool videoEof = false;
-
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
             if (seekTo >= 0) {
@@ -2358,6 +2446,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
+                shortRead = true;
+                shortReadGot = got;
+                shortReadWant = frameBytes;
                 log("media: short read got=" + std::to_string(got) + "/" +
                     std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
                     (videoEof ? " eof=1" : ""));
@@ -2514,6 +2605,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         streamThr_.join();
 
     playing_.store(false);
+    {
+        std::lock_guard<std::mutex> lock(summaryMu_);
+        lastSummary_.rawFrames = frameIndex;
+        lastSummary_.presentedFrames = presentCount_;
+        lastSummary_.reconFrames = reconFrames_.load();
+        lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
+        lastSummary_.usedRawVideo = usedRgb;
+        lastSummary_.streamEnabled = streamEnabled_;
+        lastSummary_.skipRgb = skipRgb;
+        lastSummary_.shortRead = shortRead;
+        lastSummary_.videoEof = videoEof;
+        lastSummary_.shortReadGot = shortReadGot;
+        lastSummary_.shortReadWant = shortReadWant;
+    }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
         const bool hadContent = usedRgb ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
