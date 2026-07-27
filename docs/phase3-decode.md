@@ -265,7 +265,10 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `raw[15]=recon_dbg` (usable bits avoid AR-masked bits [2:1]: coeff/dequant/IDCT/recon
     non-zero plus residual-wait flags). Unit `test_p3_idct_rtl_model.py`
     locks product integration and promotes the Verilator path to a hard failure with
-    `P3_IDCT_REQUIRE_RTL_SIM=1`; `make rtl-sim` elaborates the real product RTL source.
+    `P3_IDCT_REQUIRE_RTL_SIM=1`; `make rtl-sim` elaborates the real product RTL source and
+    the integrated `stream_path` handoff (`slice_hdr_parser` → `decode_stub`).
+    `decode_stub` consumes sticky `residual_place_*` payload latched at `ST_PLACE` and
+    wakes on `residual_place_pulse`; it must not race transient `residual_ok` or slice-valid.
     **Gate design before fit:** push baseline 6739B and padded 6776B vectors; PASS requires
     `res_csum=0x14`, `recon_sig=0x3b`, and `recon_dbg&~0x06=0xf9` invariant for both
     while the existing nalu_count/status witness changes.

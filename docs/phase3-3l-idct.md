@@ -31,7 +31,17 @@ before fit: 6739B baseline and 6776B padded vectors must both read
 source of truth: `tests/fixtures/p3_host_recon/mb0_luma_v1.json`. Real Verilator
 behavioral sim now gates both the shared IQ/IDCT modules and product `decode_stub.sv`:
 `make rtl-sim` must show `OK real RTL sim`, `OK decode_stub RTL sim: ... recon_sig=0x3b`,
-and the pred-only red-check `recon_sig got 0x0 want 0x3b` before any Quartus/device gate.
+the pred-only red-check `recon_sig got 0x0 want 0x3b`, and
+`OK stream_path integrated sim: ... recon_sig=0x3b` before any Quartus/device gate.
+
+Silicon RCA for `fe7673bc` showed `raw[13]=0x14` but `raw[14]=0x00`, matching
+sixteen pred-only `0x80` samples XORed together. The root cause was an integration
+race: `slice_hdr_parser` kept `residual_csum` sticky but cleared transient
+`residual_coeff[]`/`residual_ok` on the next capture, while `decode_stub` could
+latch before/after the real place-time payload. The fix extends the existing
+`ST_PLACE` pattern with sticky place-time payload latches (`residual_place_*`) and
+has `decode_stub` latch only on `residual_place_pulse`, not on `residual_ok` or
+slice-valid edges.
 
 
 ## Goal

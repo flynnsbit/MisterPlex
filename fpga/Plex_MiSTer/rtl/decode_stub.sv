@@ -27,6 +27,7 @@ module decode_stub #(
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
 	input  wire signed [7:0] residual_dc,
+	input  wire        residual_valid,
 	input  wire [5:0]  slice_qp,
 	input  wire signed [8:0] residual_coeff [0:15],
 
@@ -65,8 +66,6 @@ module decode_stub #(
 	reg [5:0]      lat_qp;
 	reg signed [8:0] lat_coeff [0:15];
 	reg [11:0]     wait_cnt;
-	reg            slice_valid_d;
-	reg            residual_ok_d;
 	reg            lat_wait_res;
 	integer        coeff_i;
 
@@ -169,17 +168,15 @@ module decode_stub #(
 		           (8'h40 + {mb_hash[5:0], 2'b00});
 	wire [15:0] px_comb = {rr[7:3], gg[7:2], bb[7:3]};
 
-	// Only rising residual/slice after VCL — ignore sticky previous-NAL values
-	wire res_rise   = residual_ok & ~residual_ok_d;
-	wire slice_rise = slice_valid & ~slice_valid_d;
-	wire wait_done  = res_rise | (wait_cnt == 12'd0);
+	// Latch on the producer's explicit place-time pulse; residual_ok/coefficients
+	// are sticky payload, not a safe valid edge.
+	wire wait_done  = residual_valid | (wait_cnt == 12'd0);
+	(* keep = 1 *) wire _slice_valid_observe = slice_valid;
 
 	always @(posedge clk) begin
 		wr_en         <= 1'b0;
 		wr_reset_ptr  <= 1'b0;
 		swap_req      <= 1'b0;
-		slice_valid_d <= slice_valid;
-		residual_ok_d <= residual_ok;
 
 		if (reset) begin
 			phase         <= 2'd0;
@@ -209,10 +206,8 @@ module decode_stub #(
 			wait_cnt      <= 0;
 			lat_wait_res  <= 0;
 			wr_pixel      <= 0;
-			slice_valid_d <= 0;
-			residual_ok_d <= 0;
 		end else if (phase == 2'd0) begin
-			// Idle: on VCL always wait for *this* NAL's residual/slice rise
+			// Idle: on VCL wait for this NAL's place-time residual pulse.
 			if (vcl_pulse) begin
 				phase    <= 2'd1;
 				busy     <= 1'b1;
@@ -239,7 +234,7 @@ module decode_stub #(
 				lat_res_tc   <= residual_tc;
 				lat_res_dc   <= residual_dc;
 				lat_qp       <= slice_qp;
-				lat_wait_res <= res_rise;
+				lat_wait_res <= residual_valid;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
 				recon_valid  <= 1'b0;

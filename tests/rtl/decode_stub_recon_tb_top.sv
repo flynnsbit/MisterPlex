@@ -53,6 +53,7 @@ module decode_stub_recon_tb #(
 		.residual_ok(residual_ok),
 		.residual_tc(5'd8),
 		.residual_dc(coeff[0][7:0]),
+		.residual_valid(residual_ok),
 		.slice_qp(slice_qp),
 		.residual_coeff(coeff9),
 		.recon_sig(recon_sig),
