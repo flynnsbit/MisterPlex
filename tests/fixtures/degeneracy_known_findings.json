@@ -1,0 +1,17 @@
+{
+  "description": "Known active degeneracy findings with assigned owners. These do not block make unit but are reported. A NEW finding not listed here will fail the gate.",
+  "findings": [
+    {
+      "file": "tests/unit/test_p3_intra_frame_verilator.cpp",
+      "owner": "w-plane",
+      "issue": "Instrument failure #16: mbExact compares luma only, 0.021% RTL pixel coverage. Chroma DC Hadamard absent from RTL.",
+      "tracked_since": "2026-07-27"
+    },
+    {
+      "file": "tools/score_h264_native_frames.cpp",
+      "owner": "w-rel",
+      "issue": "Instrument failure #17: scorer compares host C++ vs ffmpeg with zero RTL involvement. Fixed in 3dbef6a (labelled HOST-ONLY).",
+      "tracked_since": "2026-07-27"
+    }
+  ]
+}

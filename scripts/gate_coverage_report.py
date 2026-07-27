@@ -506,6 +506,69 @@ def build_report() -> list[GateReport]:
             observed_failing_real=True,
             observed_failing_note="Currently rc=1 on real codebase: 2 active findings — test_p3_intra_frame_verilator.cpp (instrument failure #16) and score_h264_native_frames.cpp (#17). Both are the exact instruments that produced misleading headline numbers.",
         ),
+        GateReport(
+            id="rtl-claim",
+            script="scripts/check_rtl_claim.py",
+            makefile_target="rtl-claim",
+            proves=(
+                "Every test whose filename claims RTL/Verilator coverage (contains "
+                "'verilator', 'rtl_sim', 'rtl_model') demonstrably invokes the "
+                "Verilator binary or links against generated simulation objects. "
+                "Prevents #17: a test named as though it tests hardware when it "
+                "only runs the host model."
+            ),
+            does_not_prove=(
+                "Does NOT prove the Verilator invocation succeeds — only that it is "
+                "attempted. Does NOT prove the RTL test covers all paths. Does NOT "
+                "catch a test that claims RTL in its output/docs but not its filename. "
+                "Does NOT prove the comparison logic is correct — only that a simulator "
+                "is in the loop."
+            ),
+            red_proof_method=(
+                "Synthetic test_foo_verilator.sh that calls host binary without "
+                "Verilator → rc=1. Remove synthetic → rc=0."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note="Pure Python, no external tools.",
+            owner="w-c2",
+            verification_target="STATIC",
+            verification_target_note="Scans test source for Verilator invocation evidence. No RTL execution.",
+            exit_codes={"green": 0, "red_no_verilator": 1, "refuse_missing": 4},
+            observed_failing_real=False,
+            observed_failing_note="All existing *verilator* and *rtl_sim* files reference Verilator/ALLOW_MISSING_VERILATOR. Would have caught score_h264_native_frames.cpp if it had been named *_rtl* or *_verilator*.",
+        ),
+        GateReport(
+            id="product-hierarchy",
+            script="scripts/check_product_hierarchy.py",
+            makefile_target="product-hierarchy",
+            proves=(
+                "No module on the deny list appears in the Quartus synthesis "
+                "hierarchy. Currently denies: decode_stub (1,438 ALMs, 32 DSPs, "
+                "simulation shim setting Fmax ceiling). Prevents simulation-only "
+                "or diagnostic code from reaching the product bitstream unnoticed."
+            ),
+            does_not_prove=(
+                "Does NOT prove non-denied modules are correct. Does NOT prove "
+                "the denied module is harmful (justification is in the deny list). "
+                "Does NOT detect modules that SHOULD be present but are absent — "
+                "that is post-fit-hierarchy's job. Requires map report from a fit."
+            ),
+            red_proof_method=(
+                "decode_stub in slot11 Plex.map.rpt → rc=1 REJECTED. "
+                "With known-findings file → rc=0 (owned, reported). "
+                "Remove decode_stub from deny list → rc=0 (no denied modules)."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note="Requires MAP_RPT from a remote Quartus build. slot11 available locally.",
+            owner="w-c2",
+            verification_target="STATIC",
+            verification_target_note="Parses Quartus .map.rpt hierarchy table. No RTL execution.",
+            exit_codes={"green": 0, "red_denied_module": 1, "refuse_no_report": 4},
+            observed_failing_real=True,
+            observed_failing_note="rc=1 on slot11 Plex.map.rpt: decode_stub present in product hierarchy (1,438 ALMs, 32 DSPs). This is the finding that prompted gate creation.",
+        ),
     ]
     return gates
 

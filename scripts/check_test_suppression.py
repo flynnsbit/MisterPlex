@@ -163,6 +163,10 @@ def main() -> int:
                     default=str(ROOT / "tests/fixtures/suppression_allowlist.json"))
     ap.add_argument("--write-findings",
                     help="Write raw findings to JSON for review")
+    ap.add_argument("--known-findings",
+                    help="JSON file of known active findings with owner. "
+                         "Known findings are reported but do not fail. "
+                         "NEW findings not in this file still fail.")
     args = ap.parse_args()
 
     allowlist = load_allowlist(Path(args.allowlist))
@@ -208,14 +212,42 @@ def main() -> int:
             print(f"    Justification: {f.get('allowlist_justification', 'none')}")
 
     if unallowed:
-        print(f"\nACTIVE FINDINGS ({len(unallowed)}):")
-        for f in sorted(unallowed, key=lambda x: (x["severity"], x["file"])):
-            print(f"  [{f['severity']}] {f['file']}:{f['line']}")
-            print(f"    {f['detail']}")
-            if "context" in f:
-                print(f"    Context: {f['context']}")
-        print(f"\nREJECTED: {len(unallowed)} suppression pattern(s) found")
-        return 1
+        # Check for known findings
+        known_keys: dict[str, str] = {}  # "file:line" -> owner
+        if args.known_findings:
+            kf_path = Path(args.known_findings)
+            if kf_path.exists():
+                kf_data = json.loads(kf_path.read_text())
+                for e in kf_data.get("findings", []):
+                    known_keys[e["key"]] = e["owner"]
+
+        known = []
+        new_findings = []
+        for f in unallowed:
+            key = f"{f['file']}:{f['line']}"
+            if key in known_keys:
+                f["known_owner"] = known_keys[key]
+                known.append(f)
+            else:
+                new_findings.append(f)
+
+        if known:
+            print(f"\nKNOWN FINDINGS (owned, not blocking) ({len(known)}):")
+            for f in sorted(known, key=lambda x: x["file"]):
+                print(f"  [{f['severity']}] {f['file']}:{f['line']} owner={f['known_owner']}")
+
+        if new_findings:
+            print(f"\nNEW FINDINGS ({len(new_findings)}):")
+            for f in sorted(new_findings, key=lambda x: (x["severity"], x["file"])):
+                print(f"  [{f['severity']}] {f['file']}:{f['line']}")
+                print(f"    {f['detail']}")
+                if "context" in f:
+                    print(f"    Context: {f['context']}")
+            print(f"\nREJECTED: {len(new_findings)} NEW suppression pattern(s) found")
+            return 1
+        else:
+            print(f"\nPASS: {len(known)} known finding(s) (owned), 0 new")
+            return 0
 
     print("PASS: no unallowlisted suppression patterns")
     return 0

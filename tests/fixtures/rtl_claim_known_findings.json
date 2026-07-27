@@ -1,0 +1,4 @@
+{
+  "description": "Known RTL-claim findings. Tests that claim RTL coverage by name but whose Verilator invocation is confirmed elsewhere. New findings not listed here fail the gate.",
+  "findings": []
+}

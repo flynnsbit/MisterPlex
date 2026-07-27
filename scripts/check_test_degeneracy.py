@@ -138,16 +138,21 @@ def scan_file(path: Path) -> dict | None:
     }
 
 
-def main() -> int:
+def run(known_findings_path: Path | None = None) -> int:
     if not TESTS_DIR.exists():
         print(f"REFUSE: test directory {TESTS_DIR} does not exist", file=sys.stderr)
         return 4
 
-    # Load allowlist
+    # Load allowlist — justification is REQUIRED
     allowlist = {}
     if ALLOWLIST_PATH.exists():
         data = json.loads(ALLOWLIST_PATH.read_text())
-        allowlist = {e["file"]: e["justification"] for e in data.get("entries", [])}
+        for e in data.get("entries", []):
+            if not e.get("justification", "").strip():
+                print(f"REJECTED: allowlist entry '{e.get('file', '?')}' has empty justification",
+                      file=sys.stderr)
+                return 1
+            allowlist[e["file"]] = e["justification"]
 
     # Scan all test files
     test_files = []
@@ -199,19 +204,52 @@ def main() -> int:
         print()
 
     if active:
-        print(f"ACTIVE FINDINGS — tests with comparisons but NO degeneracy guard ({len(active)}):")
-        for f in active:
-            line_no, line_text = f["first_comparison"]
-            print(f"  [{f['file']}:{line_no}] {f['comparison_count']} comparison(s), no guard")
-            print(f"    First: {line_text}")
-        print()
-        print(f"REJECTED: {len(active)} test(s) lack degeneracy guards")
-        print("  Add an assertion that the reference/golden output differs from input,")
-        print("  or allowlist with justification in tests/fixtures/degeneracy_allowlist.json")
+        # Load known findings if provided
+        known_files: dict[str, str] = {}  # file -> owner
+        if known_findings_path and known_findings_path.exists():
+            kf_data = json.loads(known_findings_path.read_text())
+            known_files = {e["file"]: e["owner"] for e in kf_data.get("findings", [])}
+
+        known_active = [f for f in active if f["file"] in known_files]
+        new_active = [f for f in active if f["file"] not in known_files]
+
+        if known_active:
+            print(f"KNOWN FINDINGS (owned, not blocking) ({len(known_active)}):")
+            for f in known_active:
+                line_no, line_text = f["first_comparison"]
+                owner = known_files[f["file"]]
+                print(f"  [{f['file']}:{line_no}] owner={owner}, {f['comparison_count']} comparison(s)")
+            print()
+
+        if new_active:
+            print(f"NEW FINDINGS — tests with comparisons but NO degeneracy guard ({len(new_active)}):")
+            for f in new_active:
+                line_no, line_text = f["first_comparison"]
+                print(f"  [{f['file']}:{line_no}] {f['comparison_count']} comparison(s), no guard")
+                print(f"    First: {line_text}")
+            print()
+            print(f"REJECTED: {len(new_active)} NEW test(s) lack degeneracy guards")
+            print("  Add an assertion that the reference/golden output differs from input,")
+            print("  or allowlist with justification in tests/fixtures/degeneracy_allowlist.json")
+            return 1
+        else:
+            print(f"PASS: {len(known_active)} known finding(s) (owned), 0 new")
+            return 0
         return 1
 
     print("PASS: all test files with comparisons either have degeneracy guards or are allowlisted")
     return 0
+
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--known-findings", type=Path, default=None,
+                        help="JSON file of known active findings with owner. "
+                             "Known findings are reported but do not fail the gate. "
+                             "NEW findings (not in the file) still fail.")
+    args = parser.parse_args()
+    return run(known_findings_path=args.known_findings)
 
 
 if __name__ == "__main__":

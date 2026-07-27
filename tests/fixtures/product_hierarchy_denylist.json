@@ -1,0 +1,12 @@
+{
+  "description": "Modules that must NOT appear in the product bitstream. Each entry requires a reason. A deny-list entry with empty reason is a hard fail.",
+  "denied": [
+    {
+      "module": "decode_stub",
+      "reason": "Simulation/diagnostic shim. 1,438 ALMs, 32 DSPs, 22 logic levels. Sets the product Fmax ceiling via lat_qp→recon_dbg critical path. Contains debug arithmetic (recon_dbg_comb) that is pure diagnostic weight. Instantiates product RTL (dequant/IDCT/recon) for integration testing but these should be instantiated by the real decoder, not the stub.",
+      "added": "2026-07-27",
+      "added_by": "w-c2",
+      "evidence": "slot11 Plex.fit.rpt: decode_stub 1,438 ALMs, 2,635 ALUTs, 32 DSP blocks. Critical path: lat_qp[4]→recon_dbg[5], 22 levels, 39.227ns."
+    }
+  ]
+}

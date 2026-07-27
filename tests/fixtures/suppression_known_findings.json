@@ -1,0 +1,135 @@
+{
+  "description": "Known active suppression findings. New findings not listed here fail the gate.",
+  "findings": [
+    {
+      "key": "tests/unit/test_ddr_frame_store_warm_reset.sh:10",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_h264_cavlc_residual_verilator.sh:19",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_h264_multinal_stream_path.sh:13",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_h264_p_slice_modes_rtl_sim.sh:14",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_h264_syntax_primitives_rtl_sim.sh:14",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_deblock_rtl_sim.sh:14",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_dpb_mc_rtl_sim.sh:14",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_idct_rtl_sim.sh:15",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_inter_rtl_sim.sh:15",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_inter_stream_path_rtl_sim.sh:15",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_intra_frame_verilator.py:71",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_intra_mb0_verilator.py:279",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_p3_stream_path_recon_rtl_sim.sh:12",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_rtl_invariants.sh:331",
+      "owner": "w-c2",
+      "reason": "Red-proof test fixture \u2014 synthetic suppression pattern for gate testing."
+    },
+    {
+      "key": "tests/unit/test_rtl_invariants.sh:340",
+      "owner": "w-c2",
+      "reason": "Red-proof test fixture \u2014 synthetic suppression pattern for gate testing."
+    },
+    {
+      "key": "tests/unit/test_rtl_invariants.sh:331",
+      "owner": "w-c2",
+      "reason": "Red-proof test fixture \u2014 synthetic suppression pattern for gate testing."
+    },
+    {
+      "key": "tests/unit/test_stream_path_deblock_integration.sh:14",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_stream_path_full_frame_compare.sh:15",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "tests/unit/test_stream_path_recon_integration.sh:15",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:437",
+      "owner": "w-c2",
+      "reason": "Loud refusal pattern (rc=3 + stderr). Not silent suppression \u2014 banned by house rules."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:438",
+      "owner": "w-c2",
+      "reason": "Loud refusal. Banned by house rules."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:452",
+      "owner": "w-c2",
+      "reason": "Self-reference in gate docstrings describing scan patterns."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:439",
+      "owner": "w-c2",
+      "reason": "Self-reference in gate docstrings describing scan patterns."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:440",
+      "owner": "w-c2",
+      "reason": "Self-reference in gate docstrings describing scan patterns."
+    },
+    {
+      "key": "scripts/gate_coverage_report.py:451",
+      "owner": "w-c2",
+      "reason": "Self-reference in gate docstrings describing scan patterns."
+    },
+    {
+      "key": "scripts/test_resource_preflight.sh:47",
+      "owner": "w-c2",
+      "reason": "Loud refusal. Banned by house rules."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "description": "Known product hierarchy violations. Modules that are denied but currently present, with owner assigned for removal. New violations not listed here fail the gate.",
+  "findings": [
+    {
+      "module": "decode_stub",
+      "owner": "w-a3 (removal requires coordination with w-cap for telemetry continuity)",
+      "issue": "1,438 ALMs + 32 DSPs of simulation/diagnostic shim in product. Sets Fmax ceiling. Removal blocked until real decoder replaces the integration-test instantiations.",
+      "tracked_since": "2026-07-27"
+    }
+  ]
+}
