@@ -1,0 +1,36 @@
+W-CAVLC evidence / running notes
+Worktree: /home/shawn/Projects/mp-wt-cavlc
+Branch: feat/cavlc-residual
+Base rebased to main a4ec1bc3ed0cd54c3ed58df69d6bb1d92bd40adf
+
+Table-validation and round-trip approach reported before deep RTL:
+1. Keep CAVLC table decode in shipped RTL modules, added to fpga/Plex_MiSTer/files.qip; testbench-only wrappers live under tests/rtl and are not synthesized.
+2. Validate the spec tables mechanically in the C++/Verilator harness before driving RTL: for coeff_token (nC tables 0..3 plus chroma-DC), total_zeros (4x4 plus chroma-DC), and run_before, every nonzero-length code is checked for uniqueness and prefix-freeness.
+3. The harness includes a reference CAVLC encoder. It builds synthetic coefficient vectors that deliberately cover every coeff_token entry, every luma/chroma total_zeros entry, every run_before entry including zerosLeft>=7 escape-style rows, trailing-one signs, and suffixLength escalation with large signed levels.
+4. Each encoded residual block is decoded by the real RTL artifact h264_cavlc_residual_block.sv via Verilator. A testbench-only top can perturb output behavior for mandatory red proof; no perturbation ifdefs are placed in shipped RTL.
+5. Coefficients are emitted in CAVLC scan order, matching h264_dequant4x4 coeff[0:15]. Decoder is sequential (bit/table/register states) with registered output, so it does not add a wide combinational VLC cone into the already timing-sensitive dequant→IDCT→recon path.
+
+Implementation completed in this iteration:
+- Added shipped RTL `fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv` and listed it in `fpga/Plex_MiSTer/files.qip`.
+- `h264_cavlc_residual_block` sequentially decodes coeff_token (nC tables 0..3 plus chroma-DC), trailing-one signs, adaptive level_prefix/level_suffix, luma/chroma total_zeros, run_before, and emits scan-order signed 9-bit coefficients.
+- `h264_cavlc_nc_predictor` implements left/up availability, slice/frame boundary blocking, single-neighbor and averaged nC, and coeff_token table selection.
+- Added Verilator-only wrapper/harness in `tests/rtl/` and `tests/unit/test_h264_cavlc_residual_verilator.sh`; negative behavior perturbation is in the test wrapper only.
+
+Command output — CAVLC Verilator red/green:
+$ tests/unit/test_h264_cavlc_residual_verilator.sh
+RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=1)
+FAIL coeff_token table=0 max=16 ok=1 tc=0/0 t1=0/0 tz=0/0 bits=1/1 coeff= 1(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0)
+FAIL coeff_token table=0 max=16 ok=1 tc=1/1 t1=0/0 tz=0/0 bits=8/8 coeff= 3(2) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0)
+H264 CAVLC residual Verilator PASS: prefix-free tables checked; roundtrip_cases=526 including all coeff_token tables, luma/chroma total_zeros, run_before, nC edges, suffix escalation
+
+Command output — validation:
+$ make rtl-sim
+[full output large; command completed with exit code 0]
+
+$ make unit
+[full output large; command completed with exit code 0]
+
+Notes / limits:
+- This is the table/residual-block engine and nC predictor, not yet a full slice-wide residual walker wired into `slice_hdr_parser.sv`/`stream_path.sv`.
+- The sequential FSM deliberately registers stages instead of creating a wide VLC decode cone feeding IQ/IDCT, reflecting the current timing risk from the combinational dequant→IDCT→recon path.
+- Real `misterplex.p3.mb_golden.v1` fixtures from W-C1B can be added as confirmation vectors once capture-gated assets land.
