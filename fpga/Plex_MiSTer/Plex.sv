@@ -475,11 +475,9 @@ assign ddr_swap = 1'b0;
 assign ddr_busy = swap_pending;
 `else
 ddram_frame_rd #(
-	.FRAME_W(FRAME_W),
-	.FRAME_H(FRAME_H),
-	.FRAME_STRIDE(FRAME_STRIDE),
+	.WIDTH(FRAME_W),
+	.HEIGHT(FRAME_H),
 	.PHYS_BASE(32'h3000_0000),
-	.HPS_BANK_STRIDE_BYTES(HPS_BANK_STRIDE_BYTES),
 	.BURST(32)
 ) ddr_fr (
 	.clk(clk_sys),

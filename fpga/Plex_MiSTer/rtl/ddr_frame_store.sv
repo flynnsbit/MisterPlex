@@ -8,6 +8,14 @@ module ddr_frame_store #(
 	parameter int FRAME_W = 640,
 	parameter int FRAME_H = 480,
 	parameter int FRAME_STRIDE = FRAME_W,
+	parameter int CODED_W = FRAME_W,
+	parameter int CODED_H = FRAME_H,
+	parameter int DISPLAY_W = FRAME_W,
+	parameter int DISPLAY_H = FRAME_H,
+	parameter int CROP_LEFT = 0,
+	parameter int CROP_TOP = 0,
+	parameter int PRESENT_X = 0,
+	parameter int PRESENT_Y = 0,
 	parameter int LINE_COUNT = 8,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
@@ -59,14 +67,22 @@ module ddr_frame_store #(
 );
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
-	localparam int Y_LINE_QWORDS = FRAME_W / 8;
-	localparam int C_LINE_QWORDS = FRAME_W / 16;
+	localparam int CODED_X_W = $clog2(CODED_W);
+	localparam int CODED_Y_W = $clog2(CODED_H);
+	localparam int Y_LINE_QWORDS = CODED_W / 8;
+	localparam int C_LINE_QWORDS = CODED_W / 16;
 	localparam int Y_QW_AW = $clog2(Y_LINE_QWORDS);
 	localparam int C_QW_AW = $clog2(C_LINE_QWORDS);
 	localparam int LINE_SLOTS = LINE_COUNT * 2;
 	localparam [4:0] SECOND_SET_BASE = LINE_COUNT;
 	localparam [X_W-1:0] LAST_X = FRAME_W - 1;
 	localparam [Y_W-1:0] LAST_Y = FRAME_H - 1;
+	localparam [X_W-1:0] PRESENT_X_L = PRESENT_X;
+	localparam [Y_W-1:0] PRESENT_Y_L = PRESENT_Y;
+	localparam [X_W-1:0] PRESENT_END_X = PRESENT_X + DISPLAY_W;
+	localparam [Y_W-1:0] PRESENT_END_Y = PRESENT_Y + DISPLAY_H;
+	localparam [CODED_X_W-1:0] CROP_LEFT_L = CROP_LEFT;
+	localparam [CODED_Y_W-1:0] CROP_TOP_L = CROP_TOP;
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] HPS_BANK_STRIDE_QWORDS = HPS_BANK_STRIDE_BYTES / 8;
 	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
@@ -75,8 +91,8 @@ module ddr_frame_store #(
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
-	localparam [28:0] Y_PLANE_QWORDS = (FRAME_W * FRAME_H) / 8;
-	localparam [28:0] C_PLANE_QWORDS = (FRAME_W * FRAME_H) / 32;
+	localparam [28:0] Y_PLANE_QWORDS = (CODED_W * CODED_H) / 8;
+	localparam [28:0] C_PLANE_QWORDS = (CODED_W * CODED_H) / 32;
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
 	localparam [28:0] V_PLANE_BASE = Y_PLANE_QWORDS + C_PLANE_QWORDS;
 	localparam [31:0] MAGIC = 32'h504C_584B;
@@ -95,9 +111,15 @@ module ddr_frame_store #(
 	wire [63:0] y_q [0:LINE_SLOTS-1];
 	wire [63:0] u_q [0:LINE_SLOTS-1];
 	wire [63:0] v_q [0:LINE_SLOTS-1];
-	wire [X_W-1:0] rd_x_clamped = (rd_x < FRAME_W) ? rd_x : LAST_X;
-	wire [Y_QW_AW-1:0] y_rd_addr = rd_x_clamped[X_W-1:3];
-	wire [C_QW_AW-1:0] c_rd_addr = rd_x_clamped[X_W-1:4];
+	wire rd_x_visible = (rd_x >= PRESENT_X_L) && (rd_x < PRESENT_END_X);
+	wire rd_y_visible = (rd_y >= PRESENT_Y_L) && (rd_y < PRESENT_END_Y);
+	wire rd_visible = rd_x_visible && rd_y_visible;
+	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
+	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
+	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
+	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
+	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
 	genvar li;
 	generate
@@ -197,7 +219,7 @@ module ddr_frame_store #(
 	reg [Y_W-2:0] c_line_v1 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v2 [0:LINE_SLOTS-1];
 	reg [Y_W-1:0] want_y_sys;
-	reg rd_active_r, rd_active_d, miss_d;
+	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
 	reg y_hit_r, c_hit_r;
 	reg [4:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
@@ -207,7 +229,7 @@ module ddr_frame_store #(
 	reg [4:0] y_hit_idx_now, c_hit_idx_now;
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [4:0] video_slot;
-	wire [Y_W-2:0] rd_cy = rd_y[Y_W-1:1];
+	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
 	always @* begin
 		y_hit_now = 1'b0;
 		c_hit_now = 1'b0;
@@ -219,7 +241,7 @@ module ddr_frame_store #(
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : 5'd0) + vi[4:0];
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == rd_y) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == src_y) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
@@ -236,7 +258,7 @@ module ddr_frame_store #(
 			end
 		end
 	end
-	wire rd_miss_now = rd_active && has_frame && (!y_hit_now || !c_hit_now);
+	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
 	wire [7:0] u_pix = pick_byte(selected_u_q, c_sel_r);
@@ -255,6 +277,8 @@ module ddr_frame_store #(
 		if (reset) begin
 			rd_active_r <= 1'b0;
 			rd_active_d <= 1'b0;
+			rd_visible_r <= 1'b0;
+			rd_visible_d <= 1'b0;
 			miss_d <= 1'b0;
 			underrun_count <= 16'd0;
 			want_y_sys <= '0;
@@ -288,26 +312,28 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (rd_y != want_y_sys)
-				want_y_sys <= rd_y;
+			if (src_y != want_y_sys)
+				want_y_sys <= src_y;
 
 			rd_active_r <= rd_active;
 			rd_active_d <= rd_active_r;
+			rd_visible_r <= rd_visible;
+			rd_visible_d <= rd_visible_r;
 			y_hit_r <= y_hit_now;
 			c_hit_r <= c_hit_now;
 			y_hit_idx_r <= y_hit_idx_now;
 			c_hit_idx_r <= c_hit_idx_now;
-			y_sel_r <= rd_x_clamped[2:0];
-			c_sel_r <= rd_x_clamped[3:1];
+			y_sel_r <= src_x[2:0];
+			c_sel_r <= src_x[3:1];
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF)
 				underrun_count <= underrun_count + 16'd1;
 
-			if ((rd_active_d || !rd_active) && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
-			end else if (!has_frame || miss_d) begin
+			end else if (!has_frame || !rd_visible_d || miss_d) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;

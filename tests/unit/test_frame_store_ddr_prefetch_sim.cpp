@@ -12,6 +12,7 @@ struct Spec {
     int width;
     int height;
     int fps;
+    int coded_width = 0;
 };
 
 constexpr double kWorstBlackoutUs = 500.0;
@@ -135,9 +136,10 @@ struct PrefetchResult {
 
 PrefetchResult simulate_ddr_prefetch(const Spec& s, int line_count, double ddr_clk_mhz) {
     const double line_period_us = 1000000.0 / (static_cast<double>(s.height) * s.fps);
+    const int coded_width = s.coded_width ? s.coded_width : s.width;
     // YUV420p: one luma line (W bytes) plus one U and one V chroma line
     // amortized over each pair of luma lines: W/8 + W/16 qwords per source row.
-    const double line_qwords = static_cast<double>(s.width) * 3.0 / 16.0;
+    const double line_qwords = static_cast<double>(coded_width) * 3.0 / 16.0;
     const double service_us = (kLineReadLatencyCycles + line_qwords) / ddr_clk_mhz;
 
     std::map<int, double> complete_at;
@@ -177,30 +179,34 @@ bool expect_clean(const Spec& s, int lines, double ddr_clk_mhz) {
     const auto r = simulate_ddr_prefetch(s, lines, ddr_clk_mhz);
     if (r.underruns != 0) {
         std::fprintf(stderr,
-                     "%dx%d@%d %.0fMHz line_count=%d: expected clean, underruns=%d first_line=%d\n",
-                     s.width, s.height, s.fps, ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
+                     "%dx%d@%d coded=%d %.0fMHz line_count=%d: expected clean, underruns=%d first_line=%d\n",
+                     s.width, s.height, s.fps, s.coded_width ? s.coded_width : s.width,
+                     ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
         return false;
     }
-    std::printf("test_frame_store_ddr_prefetch_sim: YUV420p %dx%d@%d %.0fMHz line_count=%d OK under %.0fus DDR blackout\n",
-                s.width, s.height, s.fps, ddr_clk_mhz, lines, kWorstBlackoutUs);
+    std::printf("test_frame_store_ddr_prefetch_sim: YUV420p %dx%d@%d coded=%d %.0fMHz line_count=%d OK under %.0fus DDR blackout\n",
+                         s.width, s.height, s.fps, s.coded_width ? s.coded_width : s.width,
+                         ddr_clk_mhz, lines, kWorstBlackoutUs);
     return true;
 }
 
 bool expect_underrun(const Spec& s, int lines, double ddr_clk_mhz) {
     const auto r = simulate_ddr_prefetch(s, lines, ddr_clk_mhz);
     if (r.underruns == 0) {
-        std::fprintf(stderr, "%dx%d@%d %.0fMHz line_count=%d: expected underrun under %.0fus blackout\n",
-                     s.width, s.height, s.fps, ddr_clk_mhz, lines, kWorstBlackoutUs);
+        std::fprintf(stderr, "%dx%d@%d coded=%d %.0fMHz line_count=%d: expected underrun under %.0fus blackout\n",
+                     s.width, s.height, s.fps, s.coded_width ? s.coded_width : s.width,
+                     ddr_clk_mhz, lines, kWorstBlackoutUs);
         return false;
     }
-    std::printf("test_frame_store_ddr_prefetch_sim: YUV420p %dx%d@%d %.0fMHz line_count=%d expected underrun=%d first_line=%d\n",
-                s.width, s.height, s.fps, ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
+    std::printf("test_frame_store_ddr_prefetch_sim: YUV420p %dx%d@%d coded=%d %.0fMHz line_count=%d expected underrun=%d first_line=%d\n",
+                s.width, s.height, s.fps, s.coded_width ? s.coded_width : s.width,
+                ddr_clk_mhz, lines, r.underruns, r.first_underrun_line);
     return true;
 }
 } // namespace
 
 int main() {
-    const Spec s30{640, 480, 30};
+    const Spec s30{640, 480, 30, 624};
     const int broken = simulate_broken_single_set(s30);
     const int want_broken = s30.width * s30.height / 2;
     if (broken != want_broken) {
@@ -216,33 +222,33 @@ int main() {
                 broken);
 
     bool ok = true;
-    ok &= expect_clean(Spec{640, 480, 24}, 8, 20.0);
-    ok &= expect_underrun(Spec{640, 480, 30}, 4, 20.0);
-    ok &= expect_clean(Spec{640, 480, 30}, 8, 20.0);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8, 20.0);
-    ok &= expect_clean(Spec{640, 480, 60}, 16, 20.0);
+    ok &= expect_clean(Spec{640, 480, 24, 624}, 8, 20.0);
+    ok &= expect_underrun(Spec{640, 480, 30, 624}, 4, 20.0);
+    ok &= expect_clean(Spec{640, 480, 30, 624}, 8, 20.0);
+    ok &= expect_underrun(Spec{640, 480, 60, 624}, 8, 20.0);
+    ok &= expect_clean(Spec{640, 480, 60, 624}, 16, 20.0);
 
-    ok &= expect_clean(Spec{640, 480, 30}, 8, 80.0);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8, 80.0);
-    ok &= expect_clean(Spec{640, 480, 60}, 16, 80.0);
+    ok &= expect_clean(Spec{640, 480, 30, 624}, 8, 80.0);
+    ok &= expect_underrun(Spec{640, 480, 60, 624}, 8, 80.0);
+    ok &= expect_clean(Spec{640, 480, 60, 624}, 16, 80.0);
     ok &= expect_underrun(Spec{1280, 720, 30}, 8, 80.0);
     ok &= expect_clean(Spec{1280, 720, 30}, 16, 80.0);
 
-    ok &= expect_clean(Spec{640, 480, 30}, 8, 85.0);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8, 85.0);
-    ok &= expect_clean(Spec{640, 480, 60}, 16, 85.0);
+    ok &= expect_clean(Spec{640, 480, 30, 624}, 8, 85.0);
+    ok &= expect_underrun(Spec{640, 480, 60, 624}, 8, 85.0);
+    ok &= expect_clean(Spec{640, 480, 60, 624}, 16, 85.0);
     ok &= expect_underrun(Spec{1280, 720, 30}, 8, 85.0);
     ok &= expect_clean(Spec{1280, 720, 30}, 16, 85.0);
 
-    ok &= expect_clean(Spec{640, 480, 30}, 8, 90.0);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8, 90.0);
-    ok &= expect_clean(Spec{640, 480, 60}, 16, 90.0);
+    ok &= expect_clean(Spec{640, 480, 30, 624}, 8, 90.0);
+    ok &= expect_underrun(Spec{640, 480, 60, 624}, 8, 90.0);
+    ok &= expect_clean(Spec{640, 480, 60, 624}, 16, 90.0);
     ok &= expect_underrun(Spec{1280, 720, 30}, 8, 90.0);
     ok &= expect_clean(Spec{1280, 720, 30}, 16, 90.0);
 
-    ok &= expect_clean(Spec{640, 480, 30}, 8, 100.0);
-    ok &= expect_underrun(Spec{640, 480, 60}, 8, 100.0);
-    ok &= expect_clean(Spec{640, 480, 60}, 16, 100.0);
+    ok &= expect_clean(Spec{640, 480, 30, 624}, 8, 100.0);
+    ok &= expect_underrun(Spec{640, 480, 60, 624}, 8, 100.0);
+    ok &= expect_clean(Spec{640, 480, 60, 624}, 16, 100.0);
     ok &= expect_underrun(Spec{1280, 720, 30}, 8, 100.0);
     ok &= expect_clean(Spec{1280, 720, 30}, 16, 100.0);
     return ok ? 0 : 1;
