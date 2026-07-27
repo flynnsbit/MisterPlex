@@ -29,6 +29,11 @@ models are both `0x00`. Hardware consumers must align residual valid/data with t
 prediction stage and reject these latency-error signatures; a fixture that accepts
 pred-only `0x00` is certifying the exact failure observed on the DE10-Nano.
 
+For integration bugs that only appear after a later NAL clears transient parser state,
+use the additive multi-NAL sequence fixture in `tests/fixtures/p3_multinal/`. It keeps
+`misterplex.p3.mb_golden.v1` stable while adding `misterplex.p3.nal_sequence.v1` metadata
+for byte-exact ioctl injection and IDR→P parser re-entry.
+
 Regenerate the deterministic MB0 JSON used by the unit guard:
 
 ```bash

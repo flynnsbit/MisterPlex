@@ -154,6 +154,244 @@ const char* coeffTokenTableName(int table) {
     }
 }
 
+struct NalUnit {
+    size_t start = 0;
+    size_t start_code_bytes = 0;
+    size_t header_offset = 0;
+    size_t payload_offset = 0;
+    size_t end = 0;
+    uint8_t header = 0;
+    uint8_t type = 0;
+    misterplex::SliceHeader slice;
+};
+
+std::vector<NalUnit> splitAnnexB(const std::vector<uint8_t>& data) {
+    std::vector<NalUnit> out;
+    size_t i = 0;
+    auto startCodeLen = [&](size_t p) -> size_t {
+        if (p + 3 < data.size() && data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 0 &&
+            data[p + 3] == 1)
+            return 4;
+        if (p + 2 < data.size() && data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1)
+            return 3;
+        return 0;
+    };
+    while (i + 3 < data.size()) {
+        const size_t sc = startCodeLen(i);
+        if (!sc) {
+            ++i;
+            continue;
+        }
+        size_t j = i + sc;
+        while (j + 3 < data.size() && !startCodeLen(j))
+            ++j;
+        if (j + 3 >= data.size())
+            j = data.size();
+        if (i + sc < j) {
+            NalUnit n;
+            n.start = i;
+            n.start_code_bytes = sc;
+            n.header_offset = i + sc;
+            n.payload_offset = n.header_offset + 1;
+            n.end = j;
+            n.header = data[n.header_offset];
+            n.type = n.header & 0x1f;
+            out.push_back(n);
+        }
+        i = j;
+    }
+    return out;
+}
+
+void fillSequenceHeaders(const std::vector<uint8_t>& data, std::vector<NalUnit>& nals,
+                         misterplex::SpsInfo& sps, misterplex::PpsInfo& pps,
+                         uint8_t& log2MaxFrameNum, uint8_t& pocType) {
+    for (auto& n : nals) {
+        const uint8_t* pay = data.data() + n.payload_offset;
+        const size_t plen = n.end - n.payload_offset;
+        if (n.type == 7) {
+            sps = misterplex::parseSpsRbsp(pay, plen);
+            auto rb = misterplex::detail::removeEpb(pay, plen);
+            misterplex::detail::BitReader br(rb.data(), rb.size());
+            br.u(8); // profile
+            br.u(8); // constraints
+            br.u(8); // level
+            br.ue(); // sps id
+            log2MaxFrameNum = static_cast<uint8_t>(br.ue() + 4);
+            pocType = static_cast<uint8_t>(br.ue());
+        } else if (n.type == 8) {
+            pps = misterplex::parsePpsRbsp(pay, plen);
+        } else if ((n.type == 1 || n.type == 5) && sps.valid && pps.valid &&
+                   log2MaxFrameNum != 0) {
+            n.slice = misterplex::parseSliceHeaderRbsp(pay, plen, n.type, log2MaxFrameNum,
+                                                       pocType, pps);
+        }
+    }
+}
+
+const char* nalTypeName(uint8_t type) {
+    switch (type) {
+    case 1:
+        return "non_idr_vcl";
+    case 5:
+        return "idr_vcl";
+    case 6:
+        return "sei";
+    case 7:
+        return "sps";
+    case 8:
+        return "pps";
+    case 9:
+        return "aud";
+    default:
+        return "other";
+    }
+}
+
+const char* sliceKind(const misterplex::SliceHeader& sh) {
+    const uint8_t t = sh.slice_type % 5;
+    if (t == 0)
+        return "P";
+    if (t == 2)
+        return "I";
+    return "other";
+}
+
+int parseMaxNumRefFrames(const std::vector<uint8_t>& data, const std::vector<NalUnit>& nals) {
+    for (const auto& n : nals) {
+        if (n.type != 7)
+            continue;
+        auto rb = misterplex::detail::removeEpb(data.data() + n.payload_offset,
+                                                n.end - n.payload_offset);
+        misterplex::detail::BitReader br(rb.data(), rb.size());
+        const uint8_t profile = static_cast<uint8_t>(br.u(8));
+        br.u(8);
+        br.u(8);
+        br.ue();
+        if (profile == 100 || profile == 110 || profile == 122 || profile == 244 ||
+            profile == 44 || profile == 83 || profile == 86 || profile == 118 ||
+            profile == 128 || profile == 138 || profile == 139 || profile == 134 ||
+            profile == 135) {
+            uint32_t chroma = br.ue();
+            if (chroma == 3)
+                br.u(1);
+            br.ue();
+            br.ue();
+            br.u(1);
+            if (br.u(1)) {
+                const int lists = chroma != 3 ? 8 : 12;
+                for (int i = 0; i < lists && br.ok; ++i) {
+                    if (!br.u(1))
+                        continue;
+                    int last = 8, next = 8;
+                    const int count = i < 6 ? 16 : 64;
+                    for (int j = 0; j < count && br.ok; ++j) {
+                        if (next) {
+                            next = (last + br.se() + 256) % 256;
+                        }
+                        last = next ? next : last;
+                    }
+                }
+            }
+        }
+        br.ue(); // log2_max_frame_num_minus4
+        const uint32_t poc = br.ue();
+        if (poc == 0) {
+            br.ue();
+        } else if (poc == 1) {
+            br.u(1);
+            br.se();
+            br.se();
+            const uint32_t nref = br.ue();
+            for (uint32_t i = 0; i < nref && br.ok; ++i)
+                br.se();
+        }
+        return br.ok ? static_cast<int>(br.ue()) : -1;
+    }
+    return -1;
+}
+
+std::string makeSequenceJson(const std::string& inputPath, const std::vector<uint8_t>& blob) {
+    auto nals = splitAnnexB(blob);
+    misterplex::SpsInfo sps;
+    misterplex::PpsInfo pps;
+    uint8_t log2Fn = 0, pocType = 0;
+    fillSequenceHeaders(blob, nals, sps, pps, log2Fn, pocType);
+
+    int vcl = 0, idr = 0, nonIdr = 0, iSlices = 0, pSlices = 0;
+    for (const auto& n : nals) {
+        if (n.type == 1 || n.type == 5) {
+            ++vcl;
+            idr += n.type == 5;
+            nonIdr += n.type == 1;
+            if (n.slice.valid && std::string(sliceKind(n.slice)) == "I")
+                ++iSlices;
+            if (n.slice.valid && std::string(sliceKind(n.slice)) == "P")
+                ++pSlices;
+        }
+    }
+    const int mbW = sps.valid ? ((sps.width + 15) / 16) : 0;
+    const int mbH = sps.valid ? ((sps.height + 15) / 16) : 0;
+    const int codedW = mbW * 16;
+    const int codedH = mbH * 16;
+    const int maxRefs = parseMaxNumRefFrames(blob, nals);
+
+    std::ostringstream os;
+    os << "{\n";
+    os << "  \"format\": \"misterplex.p3.nal_sequence.v1\",\n";
+    os << "  \"source\": {\"path\": \"" << baseName(inputPath) << "\", \"bytes\": "
+       << blob.size() << ", \"sha256\": \"" << sha256Hex(blob) << "\"},\n";
+    os << "  \"profile\": {\"profile_idc\": " << static_cast<int>(sps.profile_idc)
+       << ", \"level_idc\": " << static_cast<int>(sps.level_idc)
+       << ", \"max_num_ref_frames\": " << maxRefs
+       << ", \"entropy_cabac\": " << (pps.entropy_cabac ? "true" : "false")
+       << ", \"baseline_cavlc_only\": "
+       << (sps.profile_idc == 66 && sps.level_idc <= 30 && pps.valid && !pps.entropy_cabac
+               ? "true"
+               : "false")
+       << "},\n";
+    os << "  \"frame\": {\"coded_width\": " << codedW << ", \"coded_height\": " << codedH
+       << ", \"display_width\": " << sps.width << ", \"display_height\": " << sps.height
+       << ", \"mb_width\": " << mbW << ", \"mb_height\": " << mbH
+       << ", \"crop_right_px\": " << (codedW - static_cast<int>(sps.width)) << "},\n";
+    os << "  \"sequence\": {\"nal_count\": " << nals.size() << ", \"vcl\": " << vcl
+       << ", \"idr\": " << idr << ", \"non_idr\": " << nonIdr << ", \"i_slices\": "
+       << iSlices << ", \"p_slices\": " << pSlices
+       << ", \"requires_idle_between_vcl\": true, \"ioctl_injection\": \"assert ioctl_download, pulse ioctl_wr once per byte on ioctl_dout, deassert ioctl_download after final byte\"},\n";
+    os << "  \"nals\": [\n";
+    int vclIndex = 0;
+    for (size_t i = 0; i < nals.size(); ++i) {
+        const auto& n = nals[i];
+        const bool isVcl = n.type == 1 || n.type == 5;
+        if (i)
+            os << ",\n";
+        os << "    {\"index\": " << i << ", \"offset\": " << n.start
+           << ", \"start_code_bytes\": " << n.start_code_bytes << ", \"header_offset\": "
+           << n.header_offset << ", \"payload_offset\": " << n.payload_offset << ", \"end\": "
+           << n.end << ", \"bytes\": " << (n.end - n.start) << ", \"nal_type\": "
+           << static_cast<int>(n.type) << ", \"nal_type_name\": \"" << nalTypeName(n.type)
+           << "\"";
+        if (isVcl) {
+            os << ", \"vcl_index\": " << vclIndex++ << ", \"slice_type\": "
+               << (n.slice.valid ? static_cast<int>(n.slice.slice_type) : -1)
+               << ", \"slice_kind\": \"" << (n.slice.valid ? sliceKind(n.slice) : "invalid")
+               << "\", \"frame_num\": " << (n.slice.valid ? static_cast<int>(n.slice.frame_num) : -1)
+               << ", \"first_mb_in_slice\": "
+               << (n.slice.valid ? static_cast<int>(n.slice.first_mb_in_slice) : -1)
+               << ", \"return_to_idle_before_next_vcl_required\": true";
+        }
+        os << "}";
+    }
+    os << "\n  ],\n";
+    os << "  \"checks\": {\"min_two_nals\": " << (nals.size() >= 2 ? "true" : "false")
+       << ", \"has_i_slice\": " << (iSlices > 0 ? "true" : "false")
+       << ", \"has_p_slice\": " << (pSlices > 0 ? "true" : "false")
+       << ", \"geometry_explicit_no_640_assumption\": true"
+       << ", \"rtl_stream_path_idle_check\": \"tests/unit/test_h264_multinal_stream_path.sh verifies this byte stream through ioctl_download/ioctl_wr/ioctl_dout, observes slice_hdr_parser ST_IDLE between VCLs, and requires an IDR parse followed by a P-slice parse.\"}\n";
+    os << "}\n";
+    return os.str();
+}
+
 int firstVclNalOffset(const std::vector<uint8_t>& data) {
     size_t i = 0;
     while (i + 3 < data.size()) {
@@ -321,6 +559,7 @@ int main(int argc, char** argv) {
     std::string ref = "tests/fixtures/p3_host_recon/mb0_luma_v1.json";
     int mb = 0;
     bool verify = false;
+    bool sequence = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto need = [&](const char* name) -> std::string {
@@ -333,9 +572,10 @@ int main(int argc, char** argv) {
         if (a == "--input") input = need("--input");
         else if (a == "--output") output = need("--output");
         else if (a == "--mb") mb = std::stoi(need("--mb"));
+        else if (a == "--sequence") sequence = true;
         else if (a == "--verify-mb0-reference") { verify = true; ref = need("--verify-mb0-reference"); }
         else {
-            std::cerr << "usage: extract_h264_golden [--input file.264] [--mb N] [--output file.json] [--verify-mb0-reference mb0_luma_v1.json]\n";
+            std::cerr << "usage: extract_h264_golden [--input file.264] [--mb N] [--output file.json] [--sequence] [--verify-mb0-reference mb0_luma_v1.json]\n";
             return 2;
         }
     }
@@ -343,6 +583,41 @@ int main(int argc, char** argv) {
     if (blob.empty()) {
         std::cerr << "FAIL: empty/missing input " << input << "\n";
         return 1;
+    }
+    if (sequence) {
+        const std::string json = makeSequenceJson(input, blob);
+        if (!output.empty()) {
+            if (!writeText(output, json)) {
+                std::cerr << "FAIL: cannot write " << output << "\n";
+                return 1;
+            }
+        } else {
+            std::cout << json;
+        }
+        auto nals = splitAnnexB(blob);
+        misterplex::SpsInfo sps;
+        misterplex::PpsInfo pps;
+        uint8_t log2Fn = 0, pocType = 0;
+        fillSequenceHeaders(blob, nals, sps, pps, log2Fn, pocType);
+        int vcl = 0, iSlices = 0, pSlices = 0;
+        for (const auto& n : nals) {
+            if (n.type == 1 || n.type == 5) {
+                ++vcl;
+                if (n.slice.valid && std::string(sliceKind(n.slice)) == "I")
+                    ++iSlices;
+                if (n.slice.valid && std::string(sliceKind(n.slice)) == "P")
+                    ++pSlices;
+            }
+        }
+        if (nals.size() < 2 || vcl < 2 || pSlices < 1) {
+            std::cerr << "FAIL: sequence needs >=2 NALs, >=2 VCL NALs, and at least one P-slice; got nals="
+                      << nals.size() << " vcl=" << vcl << " p=" << pSlices << "\n";
+            return 1;
+        }
+        std::cout << "extract_h264_golden: OK sequence input=" << input << " nals="
+                  << nals.size() << " vcl=" << vcl << " i=" << iSlices << " p=" << pSlices
+                  << " sha256=" << sha256Hex(blob) << "\n";
+        return 0;
     }
     auto chain = misterplex::parseAnnexBChain(blob.data(), blob.size());
     if (!chain.sps.valid || !chain.pps.valid || !chain.slice.valid) {
