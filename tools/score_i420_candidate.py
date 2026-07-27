@@ -181,6 +181,127 @@ def mb_exact(candidate: bytes, golden: bytes, frame: int, width: int, height: in
     return True
 
 
+def analyze_mv_precision(mv: dict[str, Any] | None) -> dict[str, Any]:
+    """Classify MV as integer-pel, half-pel, or quarter-pel.
+
+    H.264 MVs are in quarter-pel units. Integer MVs mean the interpolator
+    filter is NOT exercised — errors at integer MVs point to MV/reference
+    selection bugs, not filter bugs.
+    """
+    if mv is None:
+        return {"classification": "unknown", "mv_present": False}
+    mx = int(mv.get("x", 0))
+    my = int(mv.get("y", 0))
+    frac_x = mx % 4 if mx >= 0 else (-mx) % 4
+    frac_y = my % 4 if my >= 0 else (-my) % 4
+    if frac_x == 0 and frac_y == 0:
+        classification = "integer"
+    elif frac_x % 2 == 0 and frac_y % 2 == 0:
+        classification = "half_pel"
+    else:
+        classification = "quarter_pel"
+    return {
+        "classification": classification,
+        "mv_present": True,
+        "mv_x_qpel": mx,
+        "mv_y_qpel": my,
+        "frac_x_qpel": frac_x,
+        "frac_y_qpel": frac_y,
+        "integer_pel": classification == "integer",
+    }
+
+
+def analyze_error_source(
+    candidate_block: list[int],
+    reference_block: list[int],
+    predicted_block: list[int] | None,
+) -> dict[str, Any]:
+    """Decompose candidate-vs-reference error into prediction and residual components.
+
+    If the predicted_block (motion-compensated prediction from the DUT) is
+    available, compute:
+      candidate_residual = candidate - predicted  (should equal decoded residual)
+      reference_residual = reference - predicted  (what residual SHOULD be, if pred matched)
+      prediction_error   = candidate_pred vs expected_pred (if we had ref pred)
+
+    Since we only have the DUT prediction, we infer:
+      If predicted == reference => residual must be zero, but candidate != reference,
+        so residual decoding is wrong.
+      If predicted != reference => prediction is wrong (MC/interpolation bug).
+    """
+    n = len(candidate_block)
+    if n != len(reference_block):
+        return {"analysis": "size_mismatch"}
+
+    total_error = sum(abs(candidate_block[i] - reference_block[i]) for i in range(n))
+    max_error = max(abs(candidate_block[i] - reference_block[i]) for i in range(n))
+    error_pixels = sum(1 for i in range(n) if candidate_block[i] != reference_block[i])
+
+    result: dict[str, Any] = {
+        "total_abs_error": total_error,
+        "max_abs_error": max_error,
+        "error_pixels": error_pixels,
+        "total_pixels": n,
+    }
+
+    if predicted_block is None or len(predicted_block) != n:
+        result["decomposition"] = "unavailable"
+        result["reason"] = "no predicted_block metadata"
+        return result
+
+    # Compute candidate residual: what the DUT thinks residual is
+    cand_residual = [candidate_block[i] - predicted_block[i] for i in range(n)]
+    # Compute "expected residual if prediction were correct": ref - pred
+    expected_residual = [reference_block[i] - predicted_block[i] for i in range(n)]
+
+    # Prediction error: does candidate's prediction match the reference?
+    # If predicted_block matched reference, expected_residual would be all-zero
+    # and the whole error would be in the residual.
+    pred_error_pixels = sum(1 for i in range(n) if predicted_block[i] != reference_block[i])
+    pred_total_abs = sum(abs(predicted_block[i] - reference_block[i]) for i in range(n))
+    pred_max_abs = max(abs(predicted_block[i] - reference_block[i]) for i in range(n))
+
+    # Residual error: does candidate residual match expected residual?
+    # (This checks if CAVLC/IDCT/dequant is correct given the prediction)
+    res_error_pixels = sum(1 for i in range(n) if cand_residual[i] != expected_residual[i])
+    res_total_abs = sum(abs(cand_residual[i] - expected_residual[i]) for i in range(n))
+
+    result["decomposition"] = "available"
+    result["prediction_error"] = {
+        "error_pixels": pred_error_pixels,
+        "total_abs": pred_total_abs,
+        "max_abs": pred_max_abs,
+    }
+    result["residual_error"] = {
+        "error_pixels": res_error_pixels,
+        "total_abs": res_total_abs,
+    }
+
+    if pred_error_pixels > 0 and res_error_pixels == 0:
+        result["error_source"] = "prediction"
+        result["diagnosis"] = (
+            "Prediction (motion compensation) differs from reference. "
+            "Residual decoding appears correct given the prediction."
+        )
+    elif pred_error_pixels == 0 and res_error_pixels > 0:
+        result["error_source"] = "residual"
+        result["diagnosis"] = (
+            "Prediction matches reference, but residual reconstruction diverges. "
+            "Check CAVLC/IDCT/dequant for this MB."
+        )
+    elif pred_error_pixels > 0 and res_error_pixels > 0:
+        result["error_source"] = "both"
+        result["diagnosis"] = (
+            "Both prediction and residual diverge from reference. "
+            "Fix prediction first — residual error may be a consequence."
+        )
+    else:
+        result["error_source"] = "none"
+        result["diagnosis"] = "Block-level comparison shows no error (pixel-level rounding?)."
+
+    return result
+
+
 def annotate_mb_context(
     fb: dict[str, Any],
     candidate: bytes,
@@ -209,7 +330,79 @@ def annotate_mb_context(
     pred_key = {"Y": "pred_y", "U": "pred_u", "V": "pred_v"}[plane]
     if pred_key in meta:
         out["predicted_block"] = meta[pred_key]
+
+    # Inter RCA: MV precision and error decomposition
+    mv = out.get("mv_l0")
+    out["mv_precision"] = analyze_mv_precision(mv)
+    out["error_analysis"] = analyze_error_source(
+        out["candidate_block"],
+        out["reference_block"],
+        out.get("predicted_block"),
+    )
     return out
+
+
+def format_inter_rca_diagnostic(fb: dict[str, Any]) -> str:
+    """Format a human-readable diagnostic for the first divergent inter MB."""
+    lines = []
+    lines.append("=" * 72)
+    lines.append("INTER RCA: first divergent macroblock in raster order")
+    lines.append("=" * 72)
+    lines.append(
+        f"  frame={fb.get('frame_index')} mb_index={fb.get('mb_index')} "
+        f"mb=({fb.get('mb_x')},{fb.get('mb_y')}) plane={fb.get('plane')}"
+    )
+    lines.append(
+        f"  first_bad_pixel=({fb.get('x')},{fb.get('y')}) "
+        f"got={fb.get('got')} ref={fb.get('ref')} abs={fb.get('abs')}"
+    )
+    mb_type = fb.get("mb_type", "?")
+    lines.append(f"  mb_type={mb_type}")
+
+    ref_idx = fb.get("ref_idx_l0")
+    mv = fb.get("mv_l0")
+    if ref_idx is not None:
+        lines.append(f"  ref_idx_l0={ref_idx}")
+    if mv is not None:
+        lines.append(f"  mv_l0=({mv.get('x', '?')},{mv.get('y', '?')}) [quarter-pel units]")
+
+    mvp = fb.get("mv_precision", {})
+    if mvp.get("mv_present"):
+        cls = mvp.get("classification", "?")
+        lines.append(f"  mv_precision={cls} frac=({mvp.get('frac_x_qpel', '?')},{mvp.get('frac_y_qpel', '?')})")
+        if cls == "integer":
+            lines.append(
+                "  >> INTEGER MV: interpolation filter NOT involved. "
+                "Error points to MV value, reference selection, or DPB."
+            )
+        else:
+            lines.append(
+                f"  >> SUB-PEL MV ({cls}): interpolation filter IS exercised. "
+                "Error could be filter coefficients, rounding, or tap fetch."
+            )
+
+    ea = fb.get("error_analysis", {})
+    if ea.get("decomposition") == "available":
+        src = ea.get("error_source", "?")
+        lines.append(f"  error_source={src}")
+        pe = ea.get("prediction_error", {})
+        re_ = ea.get("residual_error", {})
+        lines.append(
+            f"  prediction_error: {pe.get('error_pixels', '?')}/{ea.get('total_pixels', '?')} pixels, "
+            f"total_abs={pe.get('total_abs', '?')} max_abs={pe.get('max_abs', '?')}"
+        )
+        lines.append(
+            f"  residual_error: {re_.get('error_pixels', '?')}/{ea.get('total_pixels', '?')} pixels, "
+            f"total_abs={re_.get('total_abs', '?')}"
+        )
+        diag = ea.get("diagnosis", "")
+        if diag:
+            lines.append(f"  >> {diag}")
+    elif ea.get("decomposition") == "unavailable":
+        lines.append(f"  error_decomposition=unavailable ({ea.get('reason', '?')})")
+        lines.append("  >> Supply --mb-metadata with pred_y/pred_u/pred_v to enable prediction vs residual RCA.")
+    lines.append("=" * 72)
+    return "\n".join(lines)
 
 
 def first_bad_mb(
@@ -355,6 +548,7 @@ def main() -> int:
             if kind == "P" and first_bad_inter is None:
                 first_bad_inter = dict(fb)
                 first_bad_inter["slice_kind"] = kind
+                print(format_inter_rca_diagnostic(first_bad_inter), file=sys.stderr)
         plane_reports = []
         for name, off, pw, ph, count in plane_views(fidx, width, height):
             st = score_plane(candidate, golden, off, pw, ph, count)
