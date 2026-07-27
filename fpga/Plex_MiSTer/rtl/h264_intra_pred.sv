@@ -180,13 +180,18 @@ module h264_intra16x16_pred (
 	// Combinational gradient computation (feeds cycle 1 registers)
 	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
 	integer gi;
+	// Individual gradient terms (computed independently, then tree-reduced)
+	integer ht [0:7];
+	integer vt [0:7];
 	always @* begin
-		hgrad_c = 0;
-		vgrad_c = 0;
+		// Compute individual gradient terms (clause 8.3.3.4)
 		for (gi = 0; gi < 8; gi = gi + 1) begin
-			hgrad_c = hgrad_c + (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
-			vgrad_c = vgrad_c + (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+			ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+			vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
 		end
+		// Balanced tree reduction: 3 add levels instead of 7 in linear chain
+		hgrad_c = ((ht[0]+ht[1]) + (ht[2]+ht[3])) + ((ht[4]+ht[5]) + (ht[6]+ht[7]));
+		vgrad_c = ((vt[0]+vt[1]) + (vt[2]+vt[3])) + ((vt[4]+vt[5]) + (vt[6]+vt[7]));
 		a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
 		b_c = (5 * hgrad_c + 32) >>> 6;
 		c_c = (5 * vgrad_c + 32) >>> 6;
