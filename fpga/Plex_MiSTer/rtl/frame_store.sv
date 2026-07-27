@@ -70,6 +70,8 @@ module frame_store #(
 	localparam int MAX_LINES = 8;
 	localparam int LINE_SLOTS = MAX_LINES * 2;
 	localparam [3:0] SECOND_SET_BASE = 4'd8;
+	localparam [3:0] LAST_SCAN = (LINE_COUNT <= 1) ? 4'd0 :
+	                             ((LINE_COUNT <= 4) ? 4'd3 : 4'd7);
 
 	localparam [1:0] CMD_PIXEL = 2'd0;
 	localparam [1:0] CMD_RESET = 2'd1;
@@ -285,7 +287,11 @@ module frame_store #(
 	localparam [3:0] S_WRITE_ISSUE= 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
 	localparam [3:0] S_SWAP       = 4'd5;
-	localparam [3:0] S_DECIDE     = 4'd6;
+	localparam [3:0] S_SCAN_CUR_PREP  = 4'd6;
+	localparam [3:0] S_SCAN_CUR_CHECK = 4'd7;
+	localparam [3:0] S_SCAN_PREP_PREP = 4'd8;
+	localparam [3:0] S_SCAN_PREP_CHECK= 4'd9;
+	localparam [3:0] S_CMD       = 4'd10;
 
 	reg [3:0] state_sdram;
 	reg [ADDR_W-1:0] wr_addr_sdram;
@@ -295,6 +301,7 @@ module frame_store #(
 	reg              fill_bank;
 	reg [X_W-1:0]    fill_x;
 	reg [Y_W-1:0]    fill_y;
+	reg [ADDR_W-1:0] fill_addr;
 	reg [3:0]        fill_idx;
 	reg [15:0]       refresh_ctr;
 	reg [LINE_SLOTS-1:0] line_valid;
@@ -304,14 +311,26 @@ module frame_store #(
 	reg              disp_buf_s1, disp_buf_s2;
 	reg              swap_pending_s1, swap_pending_s2;
 	reg [17:0]       cmd_hold;
-	reg [Y_W-1:0]    desired_y_r [0:MAX_LINES-1];
+	reg [3:0]        scan_i;
+	reg [Y_W-1:0]    scan_y;
+	reg [3:0]        scan_idx;
 
-	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
-		integer sum;
+	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input [3:0] ahead);
+		reg [Y_W:0] sum;
 		begin
-			sum = base;
-			sum = sum + ahead;
+			sum = {1'b0, base} + {{(Y_W-3){1'b0}}, ahead};
 			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
+		end
+	endfunction
+
+	function automatic [3:0] cache_slot_for_y(input [Y_W-1:0] y);
+		begin
+			if (LINE_COUNT <= 1)
+				cache_slot_for_y = 4'd0;
+			else if (LINE_COUNT <= 4)
+				cache_slot_for_y = {2'b00, y[1:0]};
+			else
+				cache_slot_for_y = {1'b0, y[2:0]};
 		end
 	endfunction
 
@@ -319,96 +338,10 @@ module frame_store #(
 		row_word_addr = ADDR_W'(row) * ADDR_W'(FRAME_STRIDE);
 	endfunction
 
-	integer ti, tj, tk;
-	reg need_fill_cur_c, need_fill_prep_c, pending_ready_c;
-	reg [Y_W-1:0] target_y_cur_c, target_y_prep_c;
-	reg [3:0] target_idx_cur_c, target_idx_prep_c;
-	reg need_fill_cur, need_fill_prep;
-	reg [Y_W-1:0] target_y_cur, target_y_prep;
-	reg [3:0] target_idx_cur, target_idx_prep;
-	reg found_line;
-	reg slot_keep;
-	reg found_slot_cur, found_slot_prep;
-	reg [Y_W-1:0] desired_y;
-	reg [3:0] cur_base_idx, prep_base_idx;
-	always @* begin
-		cur_base_idx = disp_buf_s2 ? SECOND_SET_BASE : 4'd0;
-		prep_base_idx = disp_buf_s2 ? 4'd0 : SECOND_SET_BASE;
-		need_fill_cur_c = 1'b0;
-		need_fill_prep_c = 1'b0;
-		target_y_cur_c = desired_y_r[0];
-		target_y_prep_c = '0;
-		target_idx_cur_c = cur_base_idx;
-		target_idx_prep_c = prep_base_idx;
-		found_slot_cur = 1'b0;
-		found_slot_prep = 1'b0;
-		pending_ready_c = 1'b1;
-
-		for (ti = 0; ti < MAX_LINES; ti = ti + 1) begin
-			if (ti < LINE_COUNT) begin
-				desired_y = desired_y_r[ti];
-				found_line = 1'b0;
-				for (tj = 0; tj < MAX_LINES; tj = tj + 1) begin
-					if (tj < LINE_COUNT && line_valid[cur_base_idx + tj[3:0]]
-					    && (line_bank[cur_base_idx + tj[3:0]] == disp_bank_s2)
-					    && (line_y[cur_base_idx + tj[3:0]] == desired_y))
-						found_line = 1'b1;
-				end
-				if (!found_line && !need_fill_cur_c) begin
-					need_fill_cur_c = 1'b1;
-					target_y_cur_c = desired_y;
-				end
-
-				found_line = 1'b0;
-				for (tj = 0; tj < MAX_LINES; tj = tj + 1) begin
-					if (tj < LINE_COUNT && line_valid[prep_base_idx + tj[3:0]]
-					    && (line_bank[prep_base_idx + tj[3:0]] == ~disp_bank_s2)
-					    && (line_y[prep_base_idx + tj[3:0]] == ti[Y_W-1:0]))
-						found_line = 1'b1;
-				end
-				if (!found_line) begin
-					pending_ready_c = 1'b0;
-					if (!need_fill_prep_c) begin
-						need_fill_prep_c = 1'b1;
-						target_y_prep_c = ti[Y_W-1:0];
-					end
-				end
-			end
-		end
-
-		for (tj = 0; tj < MAX_LINES; tj = tj + 1) begin
-			if (tj < LINE_COUNT) begin
-				slot_keep = 1'b0;
-				for (tk = 0; tk < MAX_LINES; tk = tk + 1) begin
-					if (tk < LINE_COUNT && line_valid[cur_base_idx + tj[3:0]]
-					    && (line_bank[cur_base_idx + tj[3:0]] == disp_bank_s2)
-					    && (line_y[cur_base_idx + tj[3:0]] == desired_y_r[tk]))
-						slot_keep = 1'b1;
-				end
-				if ((!line_valid[cur_base_idx + tj[3:0]] || !slot_keep) && !found_slot_cur) begin
-					found_slot_cur = 1'b1;
-					target_idx_cur_c = cur_base_idx + tj[3:0];
-				end
-
-				slot_keep = 1'b0;
-				for (tk = 0; tk < MAX_LINES; tk = tk + 1) begin
-					if (tk < LINE_COUNT && line_valid[prep_base_idx + tj[3:0]]
-					    && (line_bank[prep_base_idx + tj[3:0]] == ~disp_bank_s2)
-					    && (line_y[prep_base_idx + tj[3:0]] == tk[Y_W-1:0]))
-						slot_keep = 1'b1;
-				end
-				if ((!line_valid[prep_base_idx + tj[3:0]] || !slot_keep) && !found_slot_prep) begin
-					found_slot_prep = 1'b1;
-					target_idx_prep_c = prep_base_idx + tj[3:0];
-				end
-			end
-		end
-	end
-
-	wire [ADDR_W-1:0] rd_base = fill_bank ? BANK1_BASE : BANK0_BASE;
+	integer ti;
+	wire [3:0] cur_base_idx = disp_buf_s2 ? SECOND_SET_BASE : 4'd0;
+	wire [3:0] prep_base_idx = disp_buf_s2 ? 4'd0 : SECOND_SET_BASE;
 	wire [ADDR_W-1:0] wr_base = wr_bank_sdram ? BANK1_BASE : BANK0_BASE;
-	wire [ADDR_W-1:0] fill_x_addr = ADDR_W'(fill_x);
-	wire [ADDR_W-1:0] read_word_addr = rd_base + row_word_addr(fill_y) + fill_x_addr;
 	wire [2:0] line_count_code = LINE_COUNT[2:0];
 	assign debug_state = {line_count_code, |line_valid, state_sdram};
 
@@ -432,6 +365,7 @@ module frame_store #(
 			fill_bank <= 1'b0;
 			fill_x <= '0;
 			fill_y <= '0;
+			fill_addr <= '0;
 			fill_idx <= 4'd0;
 			line_valid <= '0;
 			line_bank <= '0;
@@ -445,18 +379,13 @@ module frame_store #(
 			swap_pending_s2 <= 1'b0;
 			want_y_s1 <= '0;
 			want_y_s2 <= '0;
-			pending_ready_sdram <= 1'b0;
-			need_fill_cur <= 1'b0;
-			need_fill_prep <= 1'b0;
-			target_y_cur <= '0;
-			target_y_prep <= '0;
-			target_idx_cur <= 4'd0;
-			target_idx_prep <= 4'd0;
-			for (ti = 0; ti < MAX_LINES; ti = ti + 1)
-				desired_y_r[ti] <= '0;
 			swap_done_t_sdram <= 1'b0;
+			pending_ready_sdram <= 1'b1;
 			cmd_hold <= 18'd0;
 			cmd_pop <= 1'b0;
+			scan_i <= 4'd0;
+			scan_y <= '0;
+			scan_idx <= 4'd0;
 		end else begin
 			sdram_sel <= 1'b0;
 			sdram_wr <= 1'b0;
@@ -472,8 +401,6 @@ module frame_store #(
 			swap_pending_s2 <= swap_pending_s1;
 			want_y_s1 <= want_y_sys;
 			want_y_s2 <= want_y_s1;
-			for (ti = 0; ti < MAX_LINES; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(want_y_s1, ti);
 
 			if (refresh_ctr == REFRESH_LIMIT) begin
 				refresh_ctr <= 16'd0;
@@ -484,34 +411,64 @@ module frame_store #(
 
 			case (state_sdram)
 				S_IDLE: begin
-					need_fill_cur <= need_fill_cur_c;
-					need_fill_prep <= need_fill_prep_c;
-					target_y_cur <= target_y_cur_c;
-					target_y_prep <= target_y_prep_c;
-					target_idx_cur <= target_idx_cur_c;
-					target_idx_prep <= target_idx_prep_c;
-					pending_ready_sdram <= pending_ready_c;
-					state_sdram <= S_DECIDE;
+					scan_i <= 4'd0;
+					state_sdram <= S_SCAN_CUR_PREP;
 				end
 
-				S_DECIDE: begin
-					if (need_fill_cur) begin
+				S_SCAN_CUR_PREP: begin
+					scan_y <= clamp_ahead(want_y_s2, scan_i);
+					scan_idx <= cur_base_idx + cache_slot_for_y(clamp_ahead(want_y_s2, scan_i));
+					state_sdram <= S_SCAN_CUR_CHECK;
+				end
+
+				S_SCAN_CUR_CHECK: begin
+					if (!(line_valid[scan_idx] && (line_bank[scan_idx] == disp_bank_s2)
+					      && (line_y[scan_idx] == scan_y))) begin
 						fill_bank <= disp_bank_s2;
-						fill_y <= target_y_cur;
+						fill_y <= scan_y;
+						fill_addr <= (disp_bank_s2 ? BANK1_BASE : BANK0_BASE) + row_word_addr(scan_y);
 						fill_x <= '0;
-						fill_idx <= target_idx_cur;
-						line_valid[target_idx_cur] <= 1'b0;
-						line_bank[target_idx_cur] <= disp_bank_s2;
+						fill_idx <= scan_idx;
 						state_sdram <= S_READ_ISSUE;
-					end else if (swap_pending_s2 && need_fill_prep) begin
+					end else if (scan_i != LAST_SCAN) begin
+						scan_i <= scan_i + 4'd1;
+						state_sdram <= S_SCAN_CUR_PREP;
+					end else if (swap_pending_s2) begin
+						scan_i <= 4'd0;
+						pending_ready_sdram <= 1'b1;
+						state_sdram <= S_SCAN_PREP_PREP;
+					end else begin
+						state_sdram <= S_CMD;
+					end
+				end
+
+				S_SCAN_PREP_PREP: begin
+					scan_y <= Y_W'(scan_i);
+					scan_idx <= prep_base_idx + scan_i;
+					state_sdram <= S_SCAN_PREP_CHECK;
+				end
+
+				S_SCAN_PREP_CHECK: begin
+					if (!(line_valid[scan_idx] && (line_bank[scan_idx] == ~disp_bank_s2)
+					      && (line_y[scan_idx] == scan_y))) begin
+						pending_ready_sdram <= 1'b0;
 						fill_bank <= ~disp_bank_s2;
-						fill_y <= target_y_prep;
+						fill_y <= scan_y;
+						fill_addr <= ((~disp_bank_s2) ? BANK1_BASE : BANK0_BASE) + row_word_addr(scan_y);
 						fill_x <= '0;
-						fill_idx <= target_idx_prep;
-						line_valid[target_idx_prep] <= 1'b0;
-						line_bank[target_idx_prep] <= ~disp_bank_s2;
+						fill_idx <= scan_idx;
 						state_sdram <= S_READ_ISSUE;
-					end else if (!cmd_empty) begin
+					end else if (scan_i != LAST_SCAN) begin
+						scan_i <= scan_i + 4'd1;
+						state_sdram <= S_SCAN_PREP_PREP;
+					end else begin
+						pending_ready_sdram <= 1'b1;
+						state_sdram <= S_CMD;
+					end
+				end
+
+				S_CMD: begin
+					if (!cmd_empty) begin
 						cmd_hold <= cmd_rdata;
 						cmd_pop <= 1'b1;
 						case (cmd_rdata[17:16])
@@ -520,18 +477,22 @@ module frame_store #(
 								wr_addr_sdram <= (~disp_bank_s2) ? BANK1_BASE : BANK0_BASE;
 								wr_x_sdram <= '0;
 								wr_y_sdram <= '0;
+								state_sdram <= S_IDLE;
 							end
 							CMD_SWAP: state_sdram <= S_SWAP;
 							default: state_sdram <= S_WRITE_ISSUE;
 						endcase
-					end else
+					end else begin
 						state_sdram <= S_IDLE;
+					end
 				end
 
 				S_READ_ISSUE: begin
 					if (sdram_ready) begin
+						line_valid[fill_idx] <= 1'b0;
+						line_bank[fill_idx] <= fill_bank;
 						sdram_sel <= 1'b1;
-						sdram_addr <= {{SDRAM_ADDR_PAD{1'b0}}, read_word_addr};
+						sdram_addr <= {{SDRAM_ADDR_PAD{1'b0}}, fill_addr};
 						sdram_rd <= 1'b1;
 						state_sdram <= S_READ_WAIT;
 					end
@@ -549,6 +510,7 @@ module frame_store #(
 							state_sdram <= S_IDLE;
 						end else begin
 							fill_x <= fill_x + 1'b1;
+							fill_addr <= fill_addr + 1'b1;
 							state_sdram <= S_READ_ISSUE;
 						end
 					end

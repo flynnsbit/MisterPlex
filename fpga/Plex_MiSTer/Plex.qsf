@@ -79,9 +79,11 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 # Disable ALSA audio output to save some resources
 #set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
-set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
-set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
-set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+# W-SDCONS: keep the single-stick SDRAM controller/memtest in-circuit for the
+# MemTest8 hardware bring-up artifact. DDR_FRAME_STORE bypasses the SDRAM pins.
+#set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=320"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=240"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.

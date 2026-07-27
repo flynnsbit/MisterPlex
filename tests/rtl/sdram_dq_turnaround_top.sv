@@ -53,18 +53,9 @@ module sdram_dq_turnaround_top #(
 	wire        shared_reset = reset | ~pll_locked;
 	wire        sdram_clk_unused;
 
+	assign SDRAM_DQ = device_drive ? device_drive_data : (DEVICE_DRIVES ? 16'hZZZZ : 16'hffff);
 	assign dq_bus = device_drive ? device_drive_data : (DEVICE_DRIVES ? SDRAM_DQ : 16'hffff);
 	assign ctl_dq_drive = (!SDRAM_nCS && {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} == 3'b100);
-
-	always @* begin
-		if (device_drive) begin
-			force ctl.SDRAM_DQ = device_drive_data;
-		end else if (!DEVICE_DRIVES) begin
-			force ctl.SDRAM_DQ = 16'hffff;
-		end else begin
-			release ctl.SDRAM_DQ;
-		end
-	end
 
 	sdram_memtest #(
 		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
