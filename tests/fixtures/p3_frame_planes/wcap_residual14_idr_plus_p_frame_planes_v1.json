@@ -1,0 +1,127 @@
+{
+  "format": "misterplex.p3.frame_planes_golden.v1",
+  "source": {
+    "path": "tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264",
+    "bytes": 9060,
+    "sha256": "9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62"
+  },
+  "sequence_manifest": {
+    "path": "tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json",
+    "bytes": 2243,
+    "sha256": "f6477a7016ce72a632215bb62732d055bb60a00348d627ceedc32f0fcd9a12b8",
+    "format": "misterplex.p3.nal_sequence.v1"
+  },
+  "decoder": {
+    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -y -i tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
+    "pix_fmt": "yuv420p"
+  },
+  "geometry": {
+    "coded_width": 320,
+    "coded_height": 240,
+    "display_width": 320,
+    "display_height": 240,
+    "planes": [
+      {
+        "plane": "Y",
+        "width": 320,
+        "height": 240,
+        "stride": 320
+      },
+      {
+        "plane": "U",
+        "width": 160,
+        "height": 120,
+        "stride": 160
+      },
+      {
+        "plane": "V",
+        "width": 160,
+        "height": 120,
+        "stride": 160
+      }
+    ]
+  },
+  "plane_blob": {
+    "path": "tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
+    "bytes": 230400,
+    "sha256": "5cabc69088f0e5d0365cc3bb37d43bacb69da89fdacc72a40ce0045db530b5c9",
+    "layout": "I420 planar per frame: Y then U then V",
+    "frame_bytes": 115200
+  },
+  "frames": [
+    {
+      "frame_index": 0,
+      "frame_num": 0,
+      "slice_kind": "I",
+      "nal_index": 3,
+      "nal_type": 5,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 0,
+          "bytes": 76800,
+          "sha256": "a076e0941256552f92a049087447195feeedfa90f6c929ec7cb08dc083875cbf"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 76800,
+          "bytes": 19200,
+          "sha256": "20233d88ef97b1ff230de2d3ea475be2de3c07d860ef917445c4961e68e59a1f"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 96000,
+          "bytes": 19200,
+          "sha256": "225abb467c08ef8bc02b828e8dbeaf705637b0cfd2ed52ddbc9498eae04eac6d"
+        }
+      ]
+    },
+    {
+      "frame_index": 1,
+      "frame_num": 1,
+      "slice_kind": "P",
+      "nal_index": 4,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 115200,
+          "bytes": 76800,
+          "sha256": "ae6bf353d4331a800e8539ebad589e0fdbf2a08e2ba44db82a4501d422322ebb"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 192000,
+          "bytes": 19200,
+          "sha256": "cfe4206ba864a73e574aef4b80f4f985a2b5cdc7598fa3081a8471516ba5804d"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 211200,
+          "bytes": 19200,
+          "sha256": "3ebbe7c206f523e50bfbea9bc9666fbac9ae0a5720a190c518087ddcdb084c05"
+        }
+      ]
+    }
+  ]
+}

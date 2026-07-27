@@ -25,7 +25,9 @@ std::vector<uint8_t> readBytes(const std::string& path) {
 
 struct Args {
     std::string annexb;
-    std::string refRgb;
+    std::string goldenPlanes;
+    std::string goldenManifest;
+    std::string candidateI420Out;
     std::string sequenceJson;
     std::string sourceSha256;
     std::string jsonOut;
@@ -43,7 +45,9 @@ Args parseArgs(int argc, char** argv) {
             return argv[i];
         };
         if (k == "--annexb") a.annexb = need("--annexb");
-        else if (k == "--ref-rgb") a.refRgb = need("--ref-rgb");
+        else if (k == "--golden-planes") a.goldenPlanes = need("--golden-planes");
+        else if (k == "--golden-manifest") a.goldenManifest = need("--golden-manifest");
+        else if (k == "--candidate-i420-out") a.candidateI420Out = need("--candidate-i420-out");
         else if (k == "--sequence") a.sequenceJson = need("--sequence");
         else if (k == "--source-sha256") a.sourceSha256 = need("--source-sha256");
         else if (k == "--json-out") a.jsonOut = need("--json-out");
@@ -52,9 +56,11 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--expect-red") a.expectRed = true;
         else throw std::runtime_error("unknown argument: " + k);
     }
-    if (a.annexb.empty() || a.refRgb.empty() || a.sequenceJson.empty() || a.sourceSha256.empty() ||
+    if (a.annexb.empty() || a.goldenPlanes.empty() || a.goldenManifest.empty() ||
+        a.sequenceJson.empty() || a.sourceSha256.empty() ||
         a.width <= 0 || a.height <= 0)
-        throw std::runtime_error("usage: --annexb in.264 --ref-rgb ref.rgb --sequence sequence.json "
+        throw std::runtime_error("usage: --annexb in.264 --golden-planes ref.yuv "
+                                 "--golden-manifest ref.json --sequence sequence.json "
                                  "--source-sha256 SHA --width W --height H [--json-out out.json] [--expect-red]");
     return a;
 }
@@ -255,6 +261,7 @@ public:
 struct PlaneStats {
     uint64_t exact = 0;
     uint64_t sumAbs = 0;
+    uint64_t total = 0;
     uint8_t maxAbs = 0;
     double mae = 0.0;
 };
@@ -280,6 +287,7 @@ struct CompareResult {
     int firstBadFrame = -1;
     BadPixel firstBad;
     std::vector<FrameCompareStats> frames;
+    std::vector<uint8_t> candidateI420;
 };
 
 uint8_t clamp8(int v) {
@@ -294,38 +302,100 @@ std::array<uint8_t, 3> rgbToYuv(uint8_t r, uint8_t g, uint8_t b) {
     };
 }
 
+struct PlaneView {
+    std::size_t offset = 0;
+    std::size_t count = 0;
+    int width = 0;
+    int height = 0;
+};
+
+std::array<PlaneView, 3> framePlaneViews(std::size_t frame, int width, int height) {
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    const int uvW = width / 2;
+    const int uvH = height / 2;
+    const std::size_t uvPixels = static_cast<std::size_t>(uvW) * uvH;
+    const std::size_t frameBytes = pixels + uvPixels * 2;
+    const std::size_t base = frame * frameBytes;
+    return {{
+        {base, pixels, width, height},
+        {base + pixels, uvPixels, uvW, uvH},
+        {base + pixels + uvPixels, uvPixels, uvW, uvH},
+    }};
+}
+
+void writeCandidateFrameI420(const std::vector<uint8_t>& rgb,
+                             std::vector<uint8_t>& candidate,
+                             std::size_t frame,
+                             int width,
+                             int height) {
+    const std::size_t rgbBytes = static_cast<std::size_t>(width) * height * 3;
+    if (rgb.size() != rgbBytes) throw std::runtime_error("captured frame has wrong byte count");
+    const auto views = framePlaneViews(frame, width, height);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t px = static_cast<std::size_t>(y) * width + x;
+            const auto yuv = rgbToYuv(rgb[px * 3 + 0], rgb[px * 3 + 1], rgb[px * 3 + 2]);
+            candidate[views[0].offset + px] = yuv[0];
+        }
+    }
+    for (int cy = 0; cy < height / 2; ++cy) {
+        for (int cx = 0; cx < width / 2; ++cx) {
+            int sumU = 0;
+            int sumV = 0;
+            for (int dy = 0; dy < 2; ++dy) {
+                for (int dx = 0; dx < 2; ++dx) {
+                    const int x = cx * 2 + dx;
+                    const int y = cy * 2 + dy;
+                    const std::size_t px = static_cast<std::size_t>(y) * width + x;
+                    const auto yuv = rgbToYuv(rgb[px * 3 + 0], rgb[px * 3 + 1], rgb[px * 3 + 2]);
+                    sumU += yuv[1];
+                    sumV += yuv[2];
+                }
+            }
+            const std::size_t cpx = static_cast<std::size_t>(cy) * (width / 2) + cx;
+            candidate[views[1].offset + cpx] = static_cast<uint8_t>((sumU + 2) / 4);
+            candidate[views[2].offset + cpx] = static_cast<uint8_t>((sumV + 2) / 4);
+        }
+    }
+}
+
 CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
                             const std::vector<uint8_t>& ref,
                             int width, int height) {
-    const std::size_t pixels = static_cast<std::size_t>(width) * height;
-    const std::size_t frameBytes = pixels * 3;
+    if ((width & 1) || (height & 1)) throw std::runtime_error("I420 comparison requires even geometry");
+    const std::size_t lumaPixels = static_cast<std::size_t>(width) * height;
+    const std::size_t chromaPixels = static_cast<std::size_t>(width / 2) * (height / 2);
+    const std::size_t frameBytes = lumaPixels + chromaPixels * 2;
     const std::size_t refFrames = ref.size() / frameBytes;
+    if (ref.empty() || (ref.size() % frameBytes) != 0)
+        throw std::runtime_error("golden I420 size is not a whole number of frames");
     CompareResult result;
     const char* names = "YUV";
+    result.candidateI420.assign(got.size() * frameBytes, 0);
     for (std::size_t f = 0; f < got.size(); ++f) {
-        if (got[f].size() != frameBytes) throw std::runtime_error("captured frame has wrong byte count");
+        writeCandidateFrameI420(got[f], result.candidateI420, f, width, height);
         FrameCompareStats frameStats;
-        for (std::size_t i = 0; i < pixels; ++i) {
-            const auto gyuv = rgbToYuv(got[f][i * 3 + 0], got[f][i * 3 + 1], got[f][i * 3 + 2]);
-            const auto rrgb = rgb888ToRgb565Expanded(ref[f * frameBytes + i * 3 + 0],
-                                                     ref[f * frameBytes + i * 3 + 1],
-                                                     ref[f * frameBytes + i * 3 + 2]);
-            const auto ryuv = rgbToYuv(rrgb[0], rrgb[1], rrgb[2]);
-            const int x = static_cast<int>(i % static_cast<std::size_t>(width));
-            const int y = static_cast<int>(i / static_cast<std::size_t>(width));
-            for (int p = 0; p < 3; ++p) {
+        const auto views = framePlaneViews(f, width, height);
+        for (int p = 0; p < 3; ++p) {
+            const PlaneView& v = views[static_cast<std::size_t>(p)];
+            for (std::size_t i = 0; i < v.count; ++i) {
                 PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
-                const uint8_t g = gyuv[static_cast<std::size_t>(p)];
-                const uint8_t r = ryuv[static_cast<std::size_t>(p)];
+                const uint8_t g = result.candidateI420[v.offset + i];
+                const uint8_t r = ref[v.offset + i];
                 const uint8_t d = static_cast<uint8_t>(g > r ? g - r : r - g);
                 st.exact += (d == 0);
                 st.sumAbs += d;
+                st.total += 1;
                 st.maxAbs = std::max(st.maxAbs, d);
                 if (d != 0 && !frameStats.firstBad[static_cast<std::size_t>(p)].valid) {
+                    const int x = static_cast<int>(i % static_cast<std::size_t>(v.width));
+                    const int y = static_cast<int>(i / static_cast<std::size_t>(v.width));
                     frameStats.firstBad[static_cast<std::size_t>(p)] =
                         {true, f, p, x, y, static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
                 }
                 if (d != 0 && !result.firstBad.valid) {
+                    const int x = static_cast<int>(i % static_cast<std::size_t>(v.width));
+                    const int y = static_cast<int>(i / static_cast<std::size_t>(v.width));
                     result.firstBad = {true, f, p, x, y, static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
                     result.firstBadFrame = static_cast<int>(f);
                 }
@@ -333,25 +403,26 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
         }
         for (int p = 0; p < 3; ++p) {
             PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
-            st.mae = static_cast<double>(st.sumAbs) / static_cast<double>(pixels);
+            st.mae = static_cast<double>(st.sumAbs) / static_cast<double>(st.total);
             const BadPixel& first = frameStats.firstBad[static_cast<std::size_t>(p)];
             std::cout << "FULL_FRAME_COMPARE raw frame=" << f
-                      << " colorspace=YUV444_FROM_RGB565"
+                      << " colorspace=I420_FROM_RGB565"
                       << " plane=" << names[p]
                       << " exact=" << st.exact
-                      << " pixels=" << pixels
+                      << " pixels=" << st.total
                       << " mae=" << std::fixed << std::setprecision(6) << st.mae
                       << " max_abs=" << static_cast<int>(st.maxAbs) << "\n";
             if (first.valid) {
+                const int mbDiv = (p == 0) ? 16 : 8;
                 std::cout << "FULL_FRAME_COMPARE first_bad frame=" << f
-                          << " colorspace=YUV444_FROM_RGB565"
+                          << " colorspace=I420_FROM_RGB565"
                           << " plane=" << names[p]
                           << " x=" << first.x
                           << " y=" << first.y
-                          << " mb_x=" << (first.x / 16)
-                          << " mb_y=" << (first.y / 16)
-                          << " pixel_in_mb_x=" << (first.x & 15)
-                          << " pixel_in_mb_y=" << (first.y & 15)
+                          << " mb_x=" << (first.x / mbDiv)
+                          << " mb_y=" << (first.y / mbDiv)
+                          << " pixel_in_mb_x=" << (first.x % mbDiv)
+                          << " pixel_in_mb_y=" << (first.y % mbDiv)
                           << " got=" << first.got
                           << " ref=" << first.ref
                           << " abs=" << first.abs << "\n";
@@ -369,24 +440,29 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
     if (path.empty()) return;
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write compare JSON: " + path);
-    const std::size_t pixels = static_cast<std::size_t>(args.width) * args.height;
     const char* names[3] = {"Y", "U", "V"};
     out << "{\n";
     out << "  \"format\": \"misterplex.p3.frame_planes_compare.v1\",\n";
     out << "  \"source\": {\"path\": \"" << args.annexb << "\", \"bytes\": " << bytes
         << ", \"sha256\": \"" << args.sourceSha256 << "\"},\n";
     out << "  \"sequence_manifest\": \"" << args.sequenceJson << "\",\n";
+    out << "  \"golden_manifest\": \"" << args.goldenManifest << "\",\n";
+    out << "  \"golden_planes\": \"" << args.goldenPlanes << "\",\n";
     out << "  \"geometry\": {\"width\": " << args.width << ", \"height\": " << args.height
-        << ", \"colorspace\": \"YUV444_FROM_RGB565\", \"planes\": [\"Y\", \"U\", \"V\"]},\n";
+        << ", \"colorspace\": \"I420_FROM_RGB565\", \"planes\": ["
+        << "{\"plane\": \"Y\", \"width\": " << args.width << ", \"height\": " << args.height << "}, "
+        << "{\"plane\": \"U\", \"width\": " << (args.width / 2) << ", \"height\": " << (args.height / 2) << "}, "
+        << "{\"plane\": \"V\", \"width\": " << (args.width / 2) << ", \"height\": " << (args.height / 2) << "}]},\n";
     out << "  \"summary\": {\"nals\": " << nals << ", \"idr\": " << idr << ", \"p\": " << p
         << ", \"cycles\": " << cycles << ", \"first_bad_frame\": " << cr.firstBadFrame
         << ", \"first_bad\": ";
     if (cr.firstBad.valid) {
+        const int mbDiv = (cr.firstBad.plane == 0) ? 16 : 8;
         out << "{\"frame_index\": " << cr.firstBad.frame << ", \"plane\": \"" << names[cr.firstBad.plane]
             << "\", \"x\": " << cr.firstBad.x << ", \"y\": " << cr.firstBad.y
-            << ", \"mb_x\": " << (cr.firstBad.x / 16) << ", \"mb_y\": " << (cr.firstBad.y / 16)
-            << ", \"pixel_in_mb_x\": " << (cr.firstBad.x & 15)
-            << ", \"pixel_in_mb_y\": " << (cr.firstBad.y & 15)
+            << ", \"mb_x\": " << (cr.firstBad.x / mbDiv) << ", \"mb_y\": " << (cr.firstBad.y / mbDiv)
+            << ", \"pixel_in_mb_x\": " << (cr.firstBad.x % mbDiv)
+            << ", \"pixel_in_mb_y\": " << (cr.firstBad.y % mbDiv)
             << ", \"got\": " << cr.firstBad.got << ", \"ref\": " << cr.firstBad.ref
             << ", \"abs\": " << cr.firstBad.abs << "}";
     } else {
@@ -404,16 +480,19 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
             const auto& st = cr.frames[f].plane[static_cast<std::size_t>(pi)];
             if (pi) out << ", ";
             const BadPixel& first = cr.frames[f].firstBad[static_cast<std::size_t>(pi)];
-            out << "{\"plane\": \"" << names[pi] << "\", \"width\": " << args.width
-                << ", \"height\": " << args.height << ", \"exact_pixels\": " << st.exact
-                << ", \"total_pixels\": " << pixels << ", \"mae\": "
+            const int pw = (pi == 0) ? args.width : args.width / 2;
+            const int ph = (pi == 0) ? args.height : args.height / 2;
+            out << "{\"plane\": \"" << names[pi] << "\", \"width\": " << pw
+                << ", \"height\": " << ph << ", \"exact_pixels\": " << st.exact
+                << ", \"total_pixels\": " << st.total << ", \"mae\": "
                 << std::fixed << std::setprecision(6) << st.mae
                 << ", \"max_abs\": " << static_cast<int>(st.maxAbs) << ", \"first_bad\": ";
             if (first.valid) {
+                const int mbDiv = (pi == 0) ? 16 : 8;
                 out << "{\"x\": " << first.x << ", \"y\": " << first.y
-                    << ", \"mb_x\": " << (first.x / 16) << ", \"mb_y\": " << (first.y / 16)
-                    << ", \"pixel_in_mb_x\": " << (first.x & 15)
-                    << ", \"pixel_in_mb_y\": " << (first.y & 15)
+                    << ", \"mb_x\": " << (first.x / mbDiv) << ", \"mb_y\": " << (first.y / mbDiv)
+                    << ", \"pixel_in_mb_x\": " << (first.x % mbDiv)
+                    << ", \"pixel_in_mb_y\": " << (first.y % mbDiv)
                     << ", \"got\": " << first.got << ", \"ref\": " << first.ref
                     << ", \"abs\": " << first.abs << "}";
             } else {
@@ -436,13 +515,18 @@ int main(int argc, char** argv) {
     try {
         const Args args = parseArgs(argc, argv);
         const auto annexb = readBytes(args.annexb);
-        const auto ref = readBytes(args.refRgb);
+        const auto golden = readBytes(args.goldenPlanes);
+        (void)readBytes(args.goldenManifest);
         const auto sequenceText = readBytes(args.sequenceJson);
         const SequenceMeta seq = parseSequenceManifest(std::string(sequenceText.begin(), sequenceText.end()));
-        const std::size_t frameBytes = static_cast<std::size_t>(args.width) * args.height * 3;
-        if (ref.empty() || (ref.size() % frameBytes) != 0)
-            throw std::runtime_error("reference RGB size is not a whole number of frames");
-        const std::size_t refFrames = ref.size() / frameBytes;
+        if ((args.width & 1) || (args.height & 1))
+            throw std::runtime_error("I420 comparison requires even geometry");
+        const std::size_t yBytes = static_cast<std::size_t>(args.width) * args.height;
+        const std::size_t uvBytes = static_cast<std::size_t>(args.width / 2) * (args.height / 2);
+        const std::size_t frameBytes = yBytes + uvBytes * 2;
+        if (golden.empty() || (golden.size() % frameBytes) != 0)
+            throw std::runtime_error("golden I420 size is not a whole number of frames");
+        const std::size_t refFrames = golden.size() / frameBytes;
         const auto nals = findNals(annexb);
         if (nals.size() < 2) throw std::runtime_error("fixture must contain >=2 NALs");
 
@@ -490,7 +574,14 @@ int main(int argc, char** argv) {
         if (sim.top.sps_width != args.width || sim.top.sps_height != args.height)
             throw std::runtime_error("SPS geometry does not match ffprobe geometry");
 
-        const CompareResult cr = compareFrames(sim.frames, ref, args.width, args.height);
+        const CompareResult cr = compareFrames(sim.frames, golden, args.width, args.height);
+        if (!args.candidateI420Out.empty()) {
+            std::ofstream cand(args.candidateI420Out, std::ios::binary);
+            if (!cand) throw std::runtime_error("cannot write candidate I420: " + args.candidateI420Out);
+            cand.write(reinterpret_cast<const char*>(cr.candidateI420.data()),
+                       static_cast<std::streamsize>(cr.candidateI420.size()));
+            if (!cand) throw std::runtime_error("short write candidate I420: " + args.candidateI420Out);
+        }
         writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
                         annexb.size(), sim.cycles);
         std::cout << "FULL_FRAME_COMPARE summary width=" << args.width
@@ -519,7 +610,7 @@ int main(int argc, char** argv) {
                       << cr.firstBadFrame << "\n";
             return 1;
         }
-        std::cout << "OK full-frame strict: all RGB planes matched reference decoder\n";
+        std::cout << "OK full-frame strict: all I420 planes matched reference decoder\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL full-frame compare: " << e.what() << "\n";

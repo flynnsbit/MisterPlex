@@ -1,0 +1,487 @@
+{
+  "format": "misterplex.p3.frame_planes_golden.v1",
+  "source": {
+    "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264",
+    "bytes": 27653,
+    "sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e"
+  },
+  "sequence_manifest": {
+    "path": "tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json",
+    "bytes": 5499,
+    "sha256": "cdfef8d60ee3ee30930b351453caa143b34244a1af6d9b0b613fc35f7e804f7d",
+    "format": "misterplex.p3.nal_sequence.v1"
+  },
+  "decoder": {
+    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -y -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+    "pix_fmt": "yuv420p"
+  },
+  "geometry": {
+    "coded_width": 320,
+    "coded_height": 240,
+    "display_width": 320,
+    "display_height": 240,
+    "planes": [
+      {
+        "plane": "Y",
+        "width": 320,
+        "height": 240,
+        "stride": 320
+      },
+      {
+        "plane": "U",
+        "width": 160,
+        "height": 120,
+        "stride": 160
+      },
+      {
+        "plane": "V",
+        "width": 160,
+        "height": 120,
+        "stride": 160
+      }
+    ]
+  },
+  "plane_blob": {
+    "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+    "bytes": 1382400,
+    "sha256": "c1bde3ac3828be208d63a45641e34920c945e8fc774e7a533f39fe40a04edb9d",
+    "layout": "I420 planar per frame: Y then U then V",
+    "frame_bytes": 115200
+  },
+  "frames": [
+    {
+      "frame_index": 0,
+      "frame_num": 0,
+      "slice_kind": "I",
+      "nal_index": 3,
+      "nal_type": 5,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 0,
+          "bytes": 76800,
+          "sha256": "2a4a099f43310efce1a2b584ac8dcdd8d54af6374548314d913b7d344497f94c"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 76800,
+          "bytes": 19200,
+          "sha256": "5d50b344792be76a92bf0d3bc75d4a5fc365ff683deab23dc69054468d353d4c"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 96000,
+          "bytes": 19200,
+          "sha256": "e0124f743c01f484e1c7f9e47d02f469e48af4abc7d22c787580b79106d979aa"
+        }
+      ]
+    },
+    {
+      "frame_index": 1,
+      "frame_num": 1,
+      "slice_kind": "P",
+      "nal_index": 4,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 115200,
+          "bytes": 76800,
+          "sha256": "792862ee14b1a695bdf5755d4a39a28e46487c3d5456c3d3c513b7674df5b808"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 192000,
+          "bytes": 19200,
+          "sha256": "e37804acb5cafc652ad2e54c2b7fc8ce16fb41dc3594ac1e6603608b8f217672"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 211200,
+          "bytes": 19200,
+          "sha256": "c6b74a9c1e2e7f2f4f55722030c3626e85d58ebc9258afee0f29b33db5f87fc3"
+        }
+      ]
+    },
+    {
+      "frame_index": 2,
+      "frame_num": 2,
+      "slice_kind": "P",
+      "nal_index": 5,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 230400,
+          "bytes": 76800,
+          "sha256": "ef4f2e78f8cdc03dac10d153077c0c83cd348db91d48091dd354023d68836e61"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 307200,
+          "bytes": 19200,
+          "sha256": "2cc0ab92949207491fdb83251d749f38ebed6aade27e6acf33a5f22482cbbf66"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 326400,
+          "bytes": 19200,
+          "sha256": "c4b0a2838a87f0d92d36248ddff6149f70e5543b111c3fa01c3cd1973ccd02cd"
+        }
+      ]
+    },
+    {
+      "frame_index": 3,
+      "frame_num": 3,
+      "slice_kind": "P",
+      "nal_index": 6,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 345600,
+          "bytes": 76800,
+          "sha256": "79210485f148626a97ea291c8d34e6c0ca3c9c3afd3c0f6fd2d1dbc40c5299a0"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 422400,
+          "bytes": 19200,
+          "sha256": "efc815dd2cc145b67e042c579c0cadd33b926c0f43d8369ad8a3730e67c55936"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 441600,
+          "bytes": 19200,
+          "sha256": "7579121426a38ae64fc27d90b52cd090a930e76d80cd5e8ca28e5d25b6d6e684"
+        }
+      ]
+    },
+    {
+      "frame_index": 4,
+      "frame_num": 4,
+      "slice_kind": "P",
+      "nal_index": 7,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 460800,
+          "bytes": 76800,
+          "sha256": "b724dc29fc9c92e5cb45f490c169d27a561dee3ca91e2ed709767fe4bf8207d3"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 537600,
+          "bytes": 19200,
+          "sha256": "1da3be8d521b1c1ff9b4a5fab751f731c26655a07bba9b914e5d32ee64e481f9"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 556800,
+          "bytes": 19200,
+          "sha256": "11bb08d9b35f10c2b7cd3b81353e1a567cc88d68858598330e0eac3222e82973"
+        }
+      ]
+    },
+    {
+      "frame_index": 5,
+      "frame_num": 5,
+      "slice_kind": "P",
+      "nal_index": 8,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 576000,
+          "bytes": 76800,
+          "sha256": "de21c9bcdb68f9690a686b784fcc73a77a045a0aaf5681872a4f258c15ba325d"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 652800,
+          "bytes": 19200,
+          "sha256": "7cacc6f06d0b5c0fa63a0fb61bdd272c92bd79517502447829b00805086abe5e"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 672000,
+          "bytes": 19200,
+          "sha256": "7884bf689121fcede2eedcfc8f48cd1b7767790f521369a48acab6189a33b5c1"
+        }
+      ]
+    },
+    {
+      "frame_index": 6,
+      "frame_num": 6,
+      "slice_kind": "P",
+      "nal_index": 9,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 691200,
+          "bytes": 76800,
+          "sha256": "067872eaeb8e09db90c631a66bce522e8e53a5d274744288234bb8b85866241f"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 768000,
+          "bytes": 19200,
+          "sha256": "3e56ffd0c406d70c506e9db0c62af426bd3b439362d0402bce12657c2de3e945"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 787200,
+          "bytes": 19200,
+          "sha256": "3e8d8f137a9cb59666926f945e5a6a9c7967b4941c655d56b2bda42f4376eec2"
+        }
+      ]
+    },
+    {
+      "frame_index": 7,
+      "frame_num": 7,
+      "slice_kind": "P",
+      "nal_index": 10,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 806400,
+          "bytes": 76800,
+          "sha256": "55253cc62883ad37e7dc53bf52869418d7ce6069441b29489a7393b5fc6e2181"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 883200,
+          "bytes": 19200,
+          "sha256": "6b7c25c7ef2dd1eac794eebdfe07344d9085e247cc3448c9e4d148934074a00e"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 902400,
+          "bytes": 19200,
+          "sha256": "7232cd7d729515afa5c6fc1117bb30b7b026aed118a744ea1195da5e02b82e38"
+        }
+      ]
+    },
+    {
+      "frame_index": 8,
+      "frame_num": 8,
+      "slice_kind": "P",
+      "nal_index": 11,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 921600,
+          "bytes": 76800,
+          "sha256": "ec9165c46edbb1e8911da9d159b5b2f4d42640d715f92193abd9cbe9b639f500"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 998400,
+          "bytes": 19200,
+          "sha256": "de2b574620238386db66c226ea8eaad4508d6d3ad9554cbe376d3facc65db132"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1017600,
+          "bytes": 19200,
+          "sha256": "b94060c64c3904c22b04638b595050e73de329abfcc4ebc093f369c696b15134"
+        }
+      ]
+    },
+    {
+      "frame_index": 9,
+      "frame_num": 9,
+      "slice_kind": "P",
+      "nal_index": 12,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 1036800,
+          "bytes": 76800,
+          "sha256": "a47b3babae6b6d453b4e4c620484aa0ebd773560691d63de532303cfb53b8e82"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1113600,
+          "bytes": 19200,
+          "sha256": "824f9108a58377779440cbabeca0697625bd357f6522ef65ea0a27affc79e4b7"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1132800,
+          "bytes": 19200,
+          "sha256": "8d840daebbb4bcc958a9d15c459eb0cc46be99b4cce50d8e2baec12cb271b32d"
+        }
+      ]
+    },
+    {
+      "frame_index": 10,
+      "frame_num": 10,
+      "slice_kind": "P",
+      "nal_index": 13,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 1152000,
+          "bytes": 76800,
+          "sha256": "3e51259841b736d130d9c0b2d5cc14504cbbc0440886f6c7370109bb02b3dc6c"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1228800,
+          "bytes": 19200,
+          "sha256": "60afd12991c63f38add230d8936b3b08e3525537143739c17b47e5d50bd10d76"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1248000,
+          "bytes": 19200,
+          "sha256": "2479b8d88b37642603ce5a7d5f03dd0c8e4e88c50c34c6dfb93c0c0bddbe4a73"
+        }
+      ]
+    },
+    {
+      "frame_index": 11,
+      "frame_num": 11,
+      "slice_kind": "P",
+      "nal_index": 14,
+      "nal_type": 1,
+      "planes": [
+        {
+          "plane": "Y",
+          "width": 320,
+          "height": 240,
+          "stride": 320,
+          "offset": 1267200,
+          "bytes": 76800,
+          "sha256": "9773681cdd49c7efef3a190ed9a112ead4f40b0c2b1d6d8d5c60e03b59433a02"
+        },
+        {
+          "plane": "U",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1344000,
+          "bytes": 19200,
+          "sha256": "614943625b10fa951536e847740138a4db09419958956be831f85c4aa210851b"
+        },
+        {
+          "plane": "V",
+          "width": 160,
+          "height": 120,
+          "stride": 160,
+          "offset": 1363200,
+          "bytes": 19200,
+          "sha256": "7c66314fe9cb08b2bd49776253f48e779ff01700a92fb7a8980d6024a0295d67"
+        }
+      ]
+    }
+  ]
+}
