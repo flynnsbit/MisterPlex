@@ -72,9 +72,11 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/scripts/rtl_lint.py
+	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
