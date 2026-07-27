@@ -454,6 +454,8 @@ int main(int argc, char** argv) {
     const int cw = (width + 1) / 2;
     const int ch = (height + 1) / 2;
     std::vector<uint8_t> rtlY(static_cast<size_t>(width * height), 128);
+    std::vector<uint8_t> rtlCb(static_cast<size_t>(cw * ch), 128);
+    std::vector<uint8_t> rtlCr(static_cast<size_t>(cw * ch), 128);
 
     std::array<int, 9> i4Pass{};
     std::array<int, 4> i16Pass{};
@@ -463,6 +465,7 @@ int main(int argc, char** argv) {
     int mbExact = 0;
     int noAboveBlocks = 0, noLeftBlocks = 0, topRightReplicatedBlocks = 0;
     int failures = 0;
+    int chromaReconPixelFails = 0;
 
     for (int mb = 0; mb < rec.mb_total; ++mb) {
         misterplex::recon::ReconTrace trace;
@@ -634,6 +637,15 @@ int main(int argc, char** argv) {
                 }
                 if (chromaOk)
                     ++chromaPlaneEvalPass[static_cast<size_t>(cm)];
+                // Store RTL chroma output (prediction-only) into tracking buffer
+                {
+                    std::vector<uint8_t>& cbuf = (plane == 0) ? rtlCb : rtlCr;
+                    for (int yy = 0; yy < 8; ++yy)
+                        for (int xx = 0; xx < 8; ++xx)
+                            if (cx + xx < cw && cy + yy < ch)
+                                cbuf[static_cast<size_t>((cy + yy) * cw + cx + xx)] =
+                                    dut.chroma_pred[yy * 8 + xx];
+                }
             }
             if (chromaOk)
                 ++chromaMbPass[static_cast<size_t>(cm)];
@@ -648,6 +660,21 @@ int main(int argc, char** argv) {
                 if (rtlY[static_cast<size_t>(y * width + x)] != rec.y[static_cast<size_t>(y * width + x)])
                     mbOk = false;
             }
+        }
+        // Chroma reconstruction: compare RTL chroma (prediction-only) vs
+        // host reference (prediction + residual).  Mismatches reveal the
+        // missing 2x2 chroma DC inverse Hadamard.
+        {
+            int cx0 = mbx * 8;
+            int cy0 = mby * 8;
+            for (int yy = 0; yy < 8; ++yy)
+                for (int xx = 0; xx < 8; ++xx) {
+                    int ccx = cx0 + xx, ccy = cy0 + yy;
+                    if (ccx >= cw || ccy >= ch) continue;
+                    size_t idx = static_cast<size_t>(ccy * cw + ccx);
+                    if (rtlCb[idx] != rec.u[idx]) { mbOk = false; ++chromaReconPixelFails; }
+                    if (rtlCr[idx] != rec.v[idx]) { mbOk = false; ++chromaReconPixelFails; }
+                }
         }
         if (mbOk)
             ++mbExact;
@@ -677,6 +704,13 @@ int main(int argc, char** argv) {
         ++failures;
     }
 
+    if (chromaReconPixelFails > 0) {
+        std::cerr << "CHROMA RECON GAP: " << chromaReconPixelFails
+                  << " chroma pixel mismatches (RTL=prediction-only, host=prediction+residual)\n"
+                  << "  The 2x2 chroma DC inverse Hadamard is not implemented in RTL.\n";
+        ++failures;
+    }
+
     if (failures) {
         std::cerr << "P3 intra frame-wide Verilator exact check FAILED: failures=" << failures
                   << " mb_exact=" << mbExact << "/" << rec.mb_total << "\n";
@@ -685,7 +719,9 @@ int main(int argc, char** argv) {
 
     std::cout << "P3 intra frame-wide Verilator exact check PASS: mb_exact=" << mbExact << "/"
               << rec.mb_total << " frame=" << width << "x" << height
-              << " luma_pixels=" << rtlY.size() << " frame_mae_fixture=max_abs_y_zero\n";
+              << " luma_pixels=" << rtlY.size()
+              << " chroma_recon_mismatches=" << chromaReconPixelFails
+              << " frame_mae_fixture=max_abs_y_zero\n";
     std::cout << "I4 pass counts: V=" << i4Pass[0] << " H=" << i4Pass[1]
               << " DC=" << i4Pass[2] << " DDL=" << i4Pass[3] << " DDR=" << i4Pass[4]
               << " VR=" << i4Pass[5] << " HD=" << i4Pass[6] << " VL=" << i4Pass[7]
