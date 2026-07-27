@@ -95,6 +95,16 @@ def strip_comments(text: str) -> str:
     return "".join(out)
 
 
+def select_default_sv_fault_branches(text: str) -> str:
+    """Return the product/default view of small fault-injection `ifdef blocks."""
+    return re.sub(
+        r"`ifdef\s+DDR_FRAME_STORE_FAULT_SWAP_UV_READ\b.*?`else\s*(.*?)`endif",
+        r"\1",
+        text,
+        flags=re.S,
+    )
+
+
 def norm(s: str) -> str:
     return re.sub(r"\s+", "", s)
 
@@ -457,7 +467,7 @@ def check_ddr_frame_layout_contract() -> None:
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
-    rtl = strip_comments(read(DDR_FRAME_STORE))
+    rtl = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
     layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
     nt = norm(rtl)
 
@@ -501,8 +511,12 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "V fetch address must use V_PLANE_BASE",
             ),
             (
-                "line_addr=fill_is_chroma?(fill_plane_v?v_addr:u_addr):y_addr",
-                "chroma fill order must select U first, then V",
+                "chroma_addr=fill_plane_v?v_addr:u_addr",
+                "chroma read address must select U while fill_plane_v=0, then V",
+            ),
+            (
+                "line_addr=fill_is_chroma?chroma_addr:y_addr",
+                "chroma fill path must issue the selected chroma address",
             ),
             ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
             ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),

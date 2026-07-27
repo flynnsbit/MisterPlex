@@ -76,12 +76,5 @@ FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT"
-if [[ "$FAULT_RC" -eq 0 ]]; then
-  echo "FAIL decode_stub RTL red-check: pred-only fault unexpectedly passed" >&2
-  exit 1
-fi
-if ! grep -qi 'recon_sig got 0x0 want 0x3b' <<<"$FAULT_OUT"; then
-  echo "FAIL decode_stub RTL red-check: expected pred-only recon_sig 0x00 vs 0x3b" >&2
-  exit 1
-fi
+python3 "$ROOT/tests/unit/expected_red.py" decode_stub_pred_only "$FAULT_RC" <<<"$FAULT_OUT"
 echo "OK decode_stub RTL red-check: pred-only residual drop produced recon_sig=0x00 and failed golden 0x3b"

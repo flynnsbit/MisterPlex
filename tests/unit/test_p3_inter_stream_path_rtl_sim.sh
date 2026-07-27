@@ -85,12 +85,5 @@ FAULT_OUT="$($BUILD_FAULT/Vstream_path_inter_tb "$INTER_FIXTURE" 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT"
-if [[ "$FAULT_RC" -eq 0 ]]; then
-  echo "FAIL stream_path inter RTL red-check: bad diagnostic pixel unexpectedly passed" >&2
-  exit 1
-fi
-if ! grep -q 'inter diag pixel' <<<"$FAULT_OUT"; then
-  echo "FAIL stream_path inter RTL red-check: expected inter diag pixel mismatch" >&2
-  exit 1
-fi
+python3 "$ROOT/tests/unit/expected_red.py" stream_path_inter_bad_pixel "$FAULT_RC" <<<"$FAULT_OUT"
 echo "OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden"
