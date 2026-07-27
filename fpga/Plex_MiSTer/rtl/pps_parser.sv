@@ -16,6 +16,8 @@ module pps_parser (
 	output reg  [7:0]  num_ref_l0,
 	output reg  signed [7:0] pic_init_qp,
 	output reg  signed [4:0] chroma_qp_index_offset,  // se(), range [-12, +12]
+	// NOTE: High Profile adds second_chroma_qp_index_offset (for Cr vs Cb).
+	// Baseline/Main use this single offset for both chroma planes.
 	output reg         deblock_ctrl,
 	output reg         busy
 );
