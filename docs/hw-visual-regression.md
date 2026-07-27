@@ -29,6 +29,17 @@ by default. `scripts/hw_visual_compare.py compare` refuses to grade images unles
 both golden and capture matrix/range are stated, and also refuses mismatched
 provenance.
 
+Freshness is also a precondition, not an inference from the pixels. The hardware
+script passes the post-push `push_frame --status` log into the comparator and
+requires plausible delivery counters before grading: default
+`VISUAL_MIN_BYTES_IN=512`, plus `has_frame=1`, `has_stream=1`, `has_idr=1`,
+`sps_valid=1`, and `pps_valid=1`. A stale/frozen screen can exactly match a
+golden; it still returns `rc=7` if the status says only a poison/trivial input
+arrived. When the shared DDR frame-store token is exposed, set
+`VISUAL_REQUIRE_TOKEN=1`; the comparator already understands the common
+`{bank, format, seq}` / doorbell fields and will require the token to change
+from `status_before.txt` to `status.txt`.
+
 ## What is compared
 
 - Default input bitstream: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`.
@@ -92,6 +103,13 @@ Y/U/V MAE   = [63.9724, 24.5320, 26.1278]
 Y/U/V max   = [230, 220, 171]
 ```
 
+Follow-up reload testing found a more dangerous phantom-green shape: five
+Plex reload+push captures were byte/pixel identical (`296640/296640`, Y/U/V MAE
+`[0,0,0]`) because the screen was frozen on an old frame, while status reported
+`bytes_in=4`. That result must never be accepted as a visual PASS. The comparator
+therefore gates delivery counters before loading/grading pixels; the unit proof
+uses an exact pixel match plus `bytes_in=4` and confirms `rc=7`.
+
 ## Metrics and failure artifact
 
 `scripts/hw_visual_compare.py compare` reports:
@@ -118,6 +136,7 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 4 | V4L2/FFmpeg reported corrupted capture buffers/data |
 | 5 | capture device absent |
 | 6 | capture device busy/exclusive-open |
+| 7 | no fresh frame delivery proven (`bytes_in`/required status/token freshness failed) |
 
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before
@@ -203,12 +222,14 @@ the target final gate, but do not claim it as a hardware PASS until its status/v
 
 ## Decoder debug output
 
-The harness captures the existing status telemetry in `status.txt` immediately after the F3 push:
+The harness captures the existing status telemetry in `status_before.txt` before the push and in `status.txt`
+immediately after the F3 push:
 
 ```text
 sps_valid pps_valid has_idr slice_type mb0 qp res_ok res_tc res_t1 res_dc res_csum recon_sig bytes_in
 ```
 
 Those fields already expose decoded macroblock/QP/slice/residual/signature state without adding synthesized RTL
-scaffolding. For on-screen debug, the safe path is to render these status fields through the existing
-`PlaybackOverlay` text compositor from the ARM side after reading status telemetry; do not add test-only RTL.
+scaffolding, and `bytes_in` is now a hard freshness gate. For on-screen debug, the safe path is to render these
+status fields through the existing `PlaybackOverlay` text compositor from the ARM side after reading status
+telemetry; do not add test-only RTL.

@@ -50,9 +50,10 @@ layout active region for future 624×480 gates.
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
 corrupts one active pixel and fails with exact worst coordinate + diff artifact.
 
-**Capture integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame, `4` =
-V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device. Capture-rig failure is never accepted
-as either green or known-red core evidence.
+**Capture/freshness integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame,
+`4` = V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device, `7` = no fresh frame delivery
+proven from status counters/token. Capture-rig or delivery failure is never accepted as either green or known-red
+core evidence.
 
 **Hardware evidence (W-C1 token window):**
 
@@ -74,6 +75,9 @@ as either green or known-red core evidence.
 - Tooling now enforces the proven default pair. The 624×480 fixture/golden are retained only as a future target
   and are not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default
   active-region compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
+- Stale-screen follow-up: Plex reload+push captures can exact-match a golden while status reports `bytes_in=4`.
+  The comparator now refuses that phantom-green path before pixel grading (`rc=7`), and unit coverage proves both
+  the `bytes_in=4` red/refusal and a fresh `bytes_in=6227` plus changed `{bank,format,seq}` token green path.
 
 **Hardware TODO:**
 
@@ -87,6 +91,9 @@ as either green or known-red core evidence.
   Y/U/V MAE `[5.1175,3.3041,1.9793]` vs checked golden, and `281249/296640`, Y/U/V MAE
   `[5.1944,3.3532,2.0109]` after rerun against a same-window full golden. Bad `fe7673bc` was red
   (`0/296640`, Y/U/V MAE `[63.9724,24.5320,26.1278]`), but a full-frame gate cannot ship until good is green.
+- [x] Add a freshness/delivery guard so a stale frozen screen cannot grade as PASS. `compare --status-log`
+  refuses `bytes_in=4` before pixel grading (`rc=7`) and supports the shared DDR frame token
+  `{bank,format,seq}` for w-a3/w-cap alignment.
 - [ ] Promote a checked-in host/good 624×480 golden only after that vector is live and green on rollback hardware.
 
 ---

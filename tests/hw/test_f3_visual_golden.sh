@@ -20,6 +20,8 @@ CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 COLOR_MATRIX="${VISUAL_COLOR_MATRIX:-bt601}"
 COLOR_RANGE="${VISUAL_COLOR_RANGE:-full}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
+REQUIRE_FRESH_DELIVERY="${VISUAL_REQUIRE_FRESH_DELIVERY:-1}"
+MIN_BYTES_IN="${VISUAL_MIN_BYTES_IN:-512}"
 if [[ "${VISUAL_FULL_FRAME:-0}" == "1" ]]; then
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-active}" # full 618x480 active display region
 else
@@ -115,11 +117,24 @@ for _ in $(seq 1 20); do
   fi
   sleep 0.5
 done
+ssh_m '/media/fat/misterplex/bin/push_frame --status' > "$OUT/status_before.txt" 2>/dev/null || true
 
 echo "=== push checked-in Baseline/CAVLC visual bitstream: $(basename "$BITSTREAM") ==="
 "${SCP[@]}" "$BITSTREAM" "$USER@$HOST:/media/fat/plex_visual_gate.264"
 ST=""
 >"$OUT/push.txt"
+status_ready() {
+  local st="$1"
+  echo "$st" | grep -q 'sps_valid=1' || return 1
+  echo "$st" | grep -q 'pps_valid=1' || return 1
+  echo "$st" | grep -q 'mb0=0' || return 1
+  if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
+    local bytes
+    bytes="$(echo "$st" | sed -n 's/.*bytes_in=\([0-9][0-9]*\).*/\1/p')"
+    [[ -n "$bytes" && "$bytes" -ge "$MIN_BYTES_IN" ]] || return 1
+  fi
+  return 0
+}
 for attempt in 1 2 3; do
   echo "push attempt $attempt" | tee -a "$OUT/push.txt"
   ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_visual_gate.264' \
@@ -129,12 +144,12 @@ for attempt in 1 2 3; do
   echo "=== status telemetry (off-screen decoder debug state; attempt $attempt) ==="
   for _ in $(seq 1 20); do
     ST="$(ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null || true)"
-    if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+    if status_ready "$ST"; then
       break
     fi
     sleep 0.2
   done
-  if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+  if status_ready "$ST"; then
     break
   fi
 done
@@ -143,6 +158,23 @@ if [[ "${VISUAL_REQUIRE_STATUS:-1}" == "1" ]]; then
   echo "$ST" | grep -q 'sps_valid=1' || { echo "FAIL: visual bitstream did not latch SPS status" >&2; exit 2; }
   echo "$ST" | grep -q 'pps_valid=1' || { echo "FAIL: visual bitstream did not latch PPS status" >&2; exit 2; }
   echo "$ST" | grep -q 'mb0=0' || { echo "FAIL: visual bitstream did not reach MB0 status" >&2; exit 2; }
+fi
+
+STATUS_COMPARE_ARGS=()
+if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
+  STATUS_COMPARE_ARGS=(
+    --status-log "$OUT/status.txt"
+    --previous-status-log "$OUT/status_before.txt"
+    --min-bytes-in "$MIN_BYTES_IN"
+    --require-status-field has_frame=1
+    --require-status-field has_stream=1
+    --require-status-field has_idr=1
+    --require-status-field sps_valid=1
+    --require-status-field pps_valid=1
+  )
+  if [[ "${VISUAL_REQUIRE_TOKEN:-0}" == "1" ]]; then
+    STATUS_COMPARE_ARGS+=(--require-token-change)
+  fi
 fi
 
 echo "=== repeated static captures for measured noise floor ==="
@@ -159,6 +191,7 @@ echo "=== compare capture against checked-in golden ==="
 set +e
 python3 "$TOOL" compare \
   "${COMPARE_ARGS[@]}" \
+  "${STATUS_COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
   --golden-color-matrix "$COLOR_MATRIX" \
   --golden-color-range "$COLOR_RANGE" \
@@ -186,8 +219,8 @@ case "$EXPECT:$compare_rc" in
     echo "FAIL: VISUAL_EXPECT=fail but capture matched golden; red specimen did not go red" >&2
     exit 1
     ;;
-  *:3|*:4|*:5|*:6)
-    echo "FAIL: capture integrity error rc=$compare_rc (stale/corrupt/absent/busy), not a core result" >&2
+  *:3|*:4|*:5|*:6|*:7)
+    echo "FAIL: capture/freshness integrity error rc=$compare_rc (stale/corrupt/absent/busy/no-fresh-frame), not a core result" >&2
     exit "$compare_rc"
     ;;
   *)
@@ -211,6 +244,7 @@ PY
   set +e
   python3 "$TOOL" compare \
     "${COMPARE_ARGS[@]}" \
+    "${STATUS_COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
     --golden-color-matrix "$COLOR_MATRIX" \
     --golden-color-range "$COLOR_RANGE" \
