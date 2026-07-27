@@ -94,6 +94,8 @@ int main(int argc, char** argv) {
     int total_compared = 0;
     int total_match = 0;
     int total_mismatch = 0;
+    int nontrivial = 0;       // vectors where dequant output != input coeff
+    int nonzero_inputs = 0;   // vectors with coeff != 0
     std::array<bool, 52> qp_pass{};
     qp_pass.fill(true);
 
@@ -117,6 +119,12 @@ int main(int argc, char** argv) {
 
                 int spec_val = specDequant(coeff_val, qp, row, col);
                 int rtl_raw = signExtend(static_cast<int>(dut.dequant[pos]), sign_mask, sign_bit);
+
+                if (coeff_val != 0) {
+                    ++nonzero_inputs;
+                    if (rtl_raw != coeff_val)
+                        ++nontrivial;
+                }
 
                 // Any difference between spec and RTL is a failure.
                 // We do NOT classify overflows as "expected" or "theoretical".
@@ -160,6 +168,28 @@ int main(int argc, char** argv) {
     if (total_mismatch > 0) {
         std::cerr << "FAIL dequant-qp-sweep-rtl: " << total_mismatch
                   << " mismatches in RTL simulation\n";
+        return 1;
+    }
+
+    // DEGENERACY ASSERTION (#18): the dequant must actually transform inputs.
+    // If output == input for all non-zero coefficients, the test proved nothing —
+    // it compared untransformed values against themselves.
+    // At QP=0 with LevelScale=10 for class-a: dequant(c) = c*10*1 = 10*c != c.
+    // So every non-zero input at every QP must produce output != input.
+    std::cout << "Degeneracy check: " << nontrivial << "/" << nonzero_inputs
+              << " non-zero inputs produced output != input\n";
+    if (nonzero_inputs == 0) {
+        std::cerr << "FAIL degeneracy: zero non-zero coefficients tested — "
+                  << "test exercised nothing\n";
+        return 1;
+    }
+    if (nontrivial < nonzero_inputs) {
+        // The only case where dequant(c) == c is if c*LevelScale*2^(qP/6) == c,
+        // which requires LevelScale*2^(qP/6) == 1 — impossible since min LevelScale is 10.
+        // So ANY non-trivial result < 100% means the dequant didn't actually run.
+        std::cerr << "FAIL degeneracy: " << (nonzero_inputs - nontrivial)
+                  << " non-zero inputs produced output == input — "
+                  << "dequant may not have executed\n";
         return 1;
     }
 

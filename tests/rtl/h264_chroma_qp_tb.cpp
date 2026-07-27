@@ -79,6 +79,38 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // DEGENERACY ASSERTION (#18): the non-linear mapping must actually diverge.
+    // If QPc == qPI for all inputs, the table is just a passthrough and the
+    // test proved nothing about the non-linear region (qPI 30–51).
+    int nonlinear_count = 0;
+    for (int qpi = 0; qpi < 52; ++qpi) {
+        if (SPEC_QPC[qpi] != qpi)
+            ++nonlinear_count;
+    }
+    // H.264 Table 8-15 has 22 non-linear entries (qPI 30–51 where QPc < qPI)
+    if (nonlinear_count < 22) {
+        std::cerr << "FAIL degeneracy: only " << nonlinear_count
+                  << " non-linear entries in spec table (expected 22) — "
+                  << "test may not exercise the mapping\n";
+        return 1;
+    }
+    // Verify the RTL actually implements the non-linear mapping
+    int rtl_nonlinear = 0;
+    for (int qpi = 30; qpi < 52; ++qpi) {
+        dut.qpi = static_cast<uint8_t>(qpi);
+        dut.eval();
+        if (static_cast<int>(dut.qpc) != qpi)
+            ++rtl_nonlinear;
+    }
+    std::cout << "Degeneracy check: " << rtl_nonlinear
+              << "/22 non-linear entries produce QPc != qPI\n";
+    if (rtl_nonlinear < 22) {
+        std::cerr << "FAIL degeneracy: RTL maps QPc=qPI for "
+                  << (22 - rtl_nonlinear) << " entries in the non-linear region — "
+                  << "mapping is degenerate (passthrough)\n";
+        return 1;
+    }
+
     std::cout << "OK h264_chroma_qp: all " << tested
               << " qPI values verified against spec Table 8-15\n";
     return 0;

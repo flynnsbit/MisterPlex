@@ -191,6 +191,8 @@ def test_formula_equivalence() -> int:
     errors = 0
     test_coefficients = [0, 1, -1, 2, -2, 5, -5, 10, -10, 50, -50, 127, -128, 255, -256]
     qp_tested = set()
+    nontrivial = 0  # vectors where dequant output != input coeff
+    nonzero_inputs = 0
 
     for qp in range(52):
         qp_tested.add(qp)
@@ -199,6 +201,10 @@ def test_formula_equivalence() -> int:
                 for c in test_coefficients:
                     spec_val = spec_dequant_ac(c, qp, row, col)
                     rtl_val = rtl_dequant_one(c, qp, row, col)
+                    if c != 0:
+                        nonzero_inputs += 1
+                        if spec_val != c:
+                            nontrivial += 1
                     if spec_val != rtl_val:
                         print(f"  FORMULA MISMATCH: QP={qp} pos=({row},{col}) "
                               f"coeff={c} spec={spec_val} rtl={rtl_val}")
@@ -210,6 +216,20 @@ def test_formula_equivalence() -> int:
     if len(qp_tested) != 52:
         print(f"  COVERAGE GAP: only {len(qp_tested)}/52 QP values tested")
         errors += 1
+
+    # DEGENERACY ASSERTION (#18): dequant must actually transform inputs.
+    # LevelScale minimum is 10, so dequant(c) = c*10*2^(qP/6) >= 10*c != c
+    # for any non-zero c. If output == input, the formula didn't execute.
+    if nonzero_inputs == 0:
+        print(f"  FAIL degeneracy: zero non-zero coefficients tested")
+        errors += 1
+    elif nontrivial < nonzero_inputs:
+        print(f"  FAIL degeneracy: {nonzero_inputs - nontrivial}/{nonzero_inputs} "
+              f"non-zero inputs produced output == input — dequant is a passthrough")
+        errors += 1
+    else:
+        info(f"Degeneracy OK: {nontrivial}/{nonzero_inputs} non-zero inputs transformed")
+
     return errors
 
 
