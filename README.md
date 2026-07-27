@@ -34,10 +34,10 @@ Download the latest release tarball from the
 ```bash
 # from a machine that can reach the MiSTer over SSH (default user root, password 1)
 tar xzf misterplex-*.tar.gz
-cd stage-misterplex   # or the extracted directory
+cd misterplex-*       # the extracted release directory
 
 ssh root@<mister-ip> "mkdir -p /media/fat/misterplex"
-scp -r bin scripts docs root@<mister-ip>:/media/fat/misterplex/
+scp -r bin scripts docs licenses root@<mister-ip>:/media/fat/misterplex/
 scp cores/Plex.rbf   root@<mister-ip>:/media/fat/_Utility/
 scp conf/misterplex.conf.example root@<mister-ip>:/media/fat/misterplex/misterplex.conf
 ```
@@ -59,15 +59,17 @@ Edit `/media/fat/misterplex/misterplex.conf` and set your server:
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
 PRESENT=fb0
+# PLEX_TOKEN=<optional-token>
 ```
 
 Set `PLEX_BASE` to the URL of **your** Plex Media Server (usually port `32400` on the server
-host). `PLEX_BASE` is the only value most people need to change. A fully annotated reference
-lives in [`assets/misterplex.conf.example`](assets/misterplex.conf.example).
+host). Cast sessions usually supply a transient Plex token, so `PLEX_TOKEN` is optional for
+casting; set it if you want the on-device browse/menu scripts to list your libraries. A fully
+annotated reference lives in [`assets/misterplex.conf.example`](assets/misterplex.conf.example).
 
 ### 3. Start on boot
 
-Append to `/media/fat/linux/user-startup.sh` (create it if absent):
+Append to `/media/fat/linux/_user-startup.sh` (create it if absent):
 
 ```sh
 /media/fat/misterplex/bin/misterplexd \
@@ -111,7 +113,7 @@ For controllers, use MiSTer's normal mapping flow: open the OSD (**F12**) and ch
 
 After you map them once, MiSTer applies that controller mapping to the core. Local commands
 show an on-screen overlay with a state icon/label, elapsed and total time, and a progress bar.
-Skip actions also flash a short `30S >>` or `<< 30S` confirmation. The overlay appears when a
+Skip actions also flash the configured delta (default `30S >>` or `<< 10S`). The overlay appears when a
 command is handled, stays up briefly, then fades out automatically; while paused, the daemon
 keeps refreshing the last video frame so the overlay can update and disappear cleanly.
 
@@ -164,6 +166,7 @@ mode `5`, or use `6` (640×480@60), because `vga_scaler=1` makes VGA follow the 
 HDMI.
 
 Full guidance and the supported matrix: [docs/display-resolution.md](docs/display-resolution.md).
+Draft v0.3.0 release notes: [docs/release-notes-v0.3.0.md](docs/release-notes-v0.3.0.md).
 
 ## Troubleshooting
 

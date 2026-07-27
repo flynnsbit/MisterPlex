@@ -4,16 +4,18 @@ Install, configure, and verify a lab or SD deploy. For packaging from source, se
 
 ## Package contents
 
-Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex/`:
+Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-desc>/`:
 
 | Path | Purpose |
 |------|---------|
 | `bin/misterplexd` | Static ARM companion + media daemon (GDM + HTTP `:3005`) |
+| `bin/ffmpeg` | Bundled static ARM FFmpeg 7.0.2; no external ffmpeg install required |
 | `bin/push_frame` | Optional SPI frame / bitstream push tool (Phase 3) |
 | `bin/set_status` | Lab tool: drive Plex OSD CONF_STR bits (pattern / force-bars / TV / FPS / audio / AR) via SPI |
 | `conf/misterplex.conf.example` | Conf template |
-| `cores/Plex.rbf` | Present/decode core (included when built in tree) |
-| `docs/` | INSTALL path notes, display/output resolution, match-source-Hz, CRT/LCD matrix |
+| `cores/Plex.rbf` | Verified v0.3.0 Phase A playback-controls core; MD5 `41adb98c7a630b541091c22ce291be68` |
+| `licenses/ffmpeg/` | GPLv3 text, build provenance, and source pointers for the bundled FFmpeg |
+| `docs/` | INSTALL path notes, display/output resolution, release notes, match-source-Hz, CRT/LCD matrix |
 
 ## Install on MiSTer SD
 
@@ -30,17 +32,26 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `stage-misterplex
 ```bash
 # On dev host
 tar -tzf misterplex-*.tar.gz
-scp -r stage-misterplex/bin root@MiSTer:/media/fat/misterplex/
-scp stage-misterplex/conf/misterplex.conf.example root@MiSTer:/media/fat/misterplex/misterplex.conf
+tar -xzf misterplex-*.tar.gz
+cd misterplex-*
+ssh root@MiSTer "mkdir -p /media/fat/misterplex /media/fat/_Utility"
+scp -r bin scripts docs licenses root@MiSTer:/media/fat/misterplex/
+scp conf/misterplex.conf.example root@MiSTer:/media/fat/misterplex/misterplex.conf
 # Edit conf on device, then:
-scp stage-misterplex/cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf   # if present
+scp cores/Plex.rbf root@MiSTer:/media/fat/_Utility/Plex.rbf
 ```
+
+Set at least `PLEX_BASE=http://YOUR-PLEX-SERVER:32400` in
+`/media/fat/misterplex/misterplex.conf`. Cast sessions usually bring a transient
+token; set `PLEX_TOKEN=` only if you want the on-device browse/menu scripts to
+list libraries without a phone or web app. Load the core from MiSTer's OSD
+(**F12** → `_Utility` → `Plex`) after starting the daemon.
 
 ### From this monorepo (recommended for lab)
 
 ```bash
 make arm-plexd
-make package                    # rebuilds ARM if needed; copies Plex.rbf when present
+make package                    # rebuilds ARM if needed; copies the MD5-verified release Plex.rbf
 MISTER_HOST=<mister-ip> ./scripts/deploy_misterplexd.sh
 ./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
@@ -71,7 +82,7 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
 | `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
-| `FFMPEG` | `/media/fat/mistercast/bin/ffmpeg` | FFmpeg binary (Phase 2 path) |
+| `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
 | `WEAK_RES` | `320x240` | PMS universal weak ladder resolution |
 | `WEAK_BITRATE` | `1000` | Weak ladder max video kbps |
@@ -105,14 +116,18 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 
 | Where | Path |
 |-------|------|
-| Monorepo release copy | `fpga/Plex_MiSTer/releases/Plex.rbf` |
-| Quartus output | `fpga/Plex_MiSTer/output_files/Plex.rbf` |
-| mister-dev out | `misterfpga-dev/out/Plex_MiSTer/Plex.rbf` |
-| Package | `stage-misterplex/cores/Plex.rbf` (if any of the above existed at pack time) |
+| Monorepo release copy | `release_artifacts/v0.3.0/Plex.rbf` |
+| Explicit override | `RBF_PATH=/path/to/Plex.rbf make package` (must match the pinned MD5) |
+| Package | `misterplex-<version>/cores/Plex.rbf` |
 | MiSTer SD (lab) | `/media/fat/_Utility/Plex.rbf` (deploy + HW tests) |
 | MiSTer SD (alt) | `/media/fat/_Arcade/Plex.rbf` or `/media/fat/games/Plex/Plex.rbf` |
 
 Phase 2 **fb0 / MrAudio** works with MiSTer’s normal video path (ascal/fb) even without Plex core loaded. Phase 3 **FPGA present / STREAM** requires `Plex.rbf` and OSD **Video source = Frame store** where applicable.
+
+Release packages do not silently select local Quartus outputs. `make package`
+uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
+`RBF_PATH`, and refuses to package it unless the MD5 is
+`41adb98c7a630b541091c22ce291be68`.
 
 ## Smoke tests
 
@@ -161,7 +176,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | SPI under STREAM soak | Concurrent F1/F2/F3 → daemon death; **fixed** recursive mutex, no `system()`, thread-safe `lastError` | fixed |
 | F2 under PRESENT=both | F2 only when `PRESENT=fpga` (both uses MrAudio alone) | fixed |
 | PMS thin library | Lab may expose one episode + local `test.mp4`; soak uses onDeck/recentlyAdded | lab |
-| Package | `make package` **requires** `cores/Plex.rbf` unless `PACKAGE_ALLOW_NO_RBF=1`; ships `set_status` when built | ops |
+| Package | `make package` **requires** the pinned v0.3.0 `Plex.rbf` MD5; daemon-only packages are disabled for release builds | ops |
 
 ## Version stamp
 
