@@ -139,6 +139,12 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 16; ++i)
         check("dequant", sx18(dut->dequant[i]), gold_dq[i]);
 
+    // DEGENERACY GUARD: golden dequant[0] must be non-zero
+    if (gold_dq[0] == 0) {
+        std::cerr << "DEGENERATE test1: golden dequant[0] is zero\n";
+        ++failures;
+    }
+
     // Check recon
     for (int i = 0; i < 16; ++i)
         check("recon", dut->recon[i], gold_recon[i]);
@@ -254,14 +260,36 @@ int main(int argc, char** argv) {
                   << " QP=" << tc.qp << " gold=" << gold << " RTL=" << rtl
                   << (gold == rtl ? " OK" : " FAIL") << "\n";
         check(tc.label, rtl, gold);
+
+        // DEGENERACY GUARD (instrument-integrity #18): assert that the
+        // golden model actually produced a non-zero dequant and the RTL
+        // path is active.  A test over all-zero coefficients passes at
+        // every QP by comparing nothing against nothing.
+        if (gold == 0) {
+            std::cerr << "DEGENERATE " << tc.label
+                      << ": golden dequant is zero — test proves nothing\n";
+            ++failures;
+        }
+        if (rtl == 0 && tc.coeff != 0) {
+            std::cerr << "DEGENERATE " << tc.label
+                      << ": RTL dequant is zero for non-zero coeff — path may be disconnected\n";
+            ++failures;
+        }
     }
 
     if (failures) {
         std::cerr << "level_width_tb: " << failures << " FAILURES (expected on pre-fix RTL)\n";
         return 1;
     }
+
+    // Final degeneracy summary
+    int non_trivial = 0;
+    for (const auto& tc : ext_cases)
+        if (tc.coeff != 0) ++non_trivial;
     std::cout << "level_width_tb: PASS — coefficient width correct through ±13000 (I_16x16 DC range)\n";
     std::cout << "  Width guard: " << (sizeof(ext_cases)/sizeof(ext_cases[0]))
               << " vectors above ±2047 protect against spec-derived narrowing to signed [11:0]\n";
+    std::cout << "  Degeneracy: " << non_trivial << "/" << (sizeof(ext_cases)/sizeof(ext_cases[0]))
+              << " vectors have non-zero coeff; all golden dequant values verified non-zero\n";
     return 0;
 }
