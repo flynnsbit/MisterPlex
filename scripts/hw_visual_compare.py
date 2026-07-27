@@ -52,6 +52,14 @@ class CaptureBusyError(HarnessError):
     exit_code = 6
 
 
+class DeliveryFreshnessError(HarnessError):
+    exit_code = 7
+
+
+class RbfIdentityError(HarnessError):
+    exit_code = 8
+
+
 CORRUPT_LOG_PATTERNS = (
     "corrupt",
     "v4l2 buffer contains corrupted data",
@@ -115,6 +123,222 @@ def require_color_provenance(args: argparse.Namespace) -> dict:
             "range": args.capture_color_range,
         },
     }
+
+
+STATUS_FIELD_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)")
+MD5_RE = re.compile(r"\b([0-9a-fA-F]{32})\b")
+FORMAT_CODES = {
+    "1": 1,
+    "yuv420p": 1,
+    "i420": 1,
+}
+FORMAT_ERROR_DEBUG_FIELDS = ("frame_debug", "frame_dbg", "ddr_debug", "ddr_dbg", "debug_state")
+SURFACED_DEBUG_FIELDS = FORMAT_ERROR_DEBUG_FIELDS + ("recon_dbg",)
+
+
+def normalize_md5(value: str | None) -> str | None:
+    if value is None:
+        return None
+    m = MD5_RE.search(value)
+    return m.group(1).lower() if m else None
+
+
+def validate_rbf_identity(args: argparse.Namespace) -> dict | None:
+    if not args.expected_rbf_md5 and not args.actual_rbf_md5 and not args.rbf_md5_log:
+        return None
+    expected = normalize_md5(args.expected_rbf_md5)
+    actual_src = args.actual_rbf_md5
+    log_path = None
+    if args.rbf_md5_log:
+        log_path = str(args.rbf_md5_log)
+        actual_src = Path(args.rbf_md5_log).read_text(encoding="utf-8", errors="replace")
+    actual = normalize_md5(actual_src)
+    if expected is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: expected RBF md5 was not declared; refusing to grade loaded core"
+        )
+    if actual is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: loaded /media/fat/_Utility/Plex.rbf md5 is missing/unparseable; "
+            "refusing to grade"
+        )
+    report = {
+        "expected_md5": expected,
+        "actual_md5": actual,
+        "rbf_md5_log": log_path,
+        "match": actual == expected,
+    }
+    if actual != expected:
+        raise RbfIdentityError(
+            f"RBF_IDENTITY: loaded core md5 {actual} != expected {expected}; not grading pixels"
+        )
+    return report
+
+
+def parse_int_value(value: str) -> int | None:
+    """Parse decimal/hex integer status values; return None for strings."""
+    v = value.strip().rstrip(",")
+    if re.fullmatch(r"-?\d+", v):
+        return int(v, 10)
+    if re.fullmatch(r"0x[0-9a-fA-F]+", v):
+        return int(v, 16)
+    return None
+
+
+def parse_status_fields(text: str) -> dict[str, str]:
+    """Return the last push_frame-style key=value status snapshot in text."""
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        kv = dict(STATUS_FIELD_RE.findall(line))
+        if kv and ("bytes_in" in kv or line.strip().startswith("status")):
+            fields = kv
+    return fields
+
+
+def decode_doorbell_hi(hi: int) -> dict:
+    return {
+        "bank": (hi >> 31) & 0x1,
+        "format": (hi >> 29) & 0x3,
+        "seq": hi & 0x1FFFFFFF,
+    }
+
+
+def status_int(fields: dict[str, str], *names: str) -> int | None:
+    for name in names:
+        if name in fields:
+            parsed = parse_int_value(fields[name])
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def status_format(fields: dict[str, str], *names: str) -> int | None:
+    for name in names:
+        if name in fields:
+            raw = fields[name].strip().lower().rstrip(",")
+            if raw in FORMAT_CODES:
+                return FORMAT_CODES[raw]
+            parsed = parse_int_value(raw)
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def extract_frame_token(fields: dict[str, str]) -> dict | None:
+    """Extract the shared {bank, format, seq} DDR token if status exposes it."""
+    doorbell_hi = status_int(fields, "doorbell_hi", "ddr_doorbell_hi", "frame_doorbell_hi")
+    if doorbell_hi is None:
+        doorbell = status_int(fields, "doorbell", "ddr_doorbell", "frame_doorbell")
+        if doorbell is not None:
+            doorbell_hi = (doorbell >> 32) if doorbell > 0xFFFFFFFF else doorbell
+    if doorbell_hi is not None:
+        return decode_doorbell_hi(doorbell_hi)
+
+    bank = status_int(fields, "frame_bank", "ddr_bank", "bank")
+    fmt = status_format(fields, "frame_format", "ddr_format", "format")
+    seq = status_int(fields, "frame_seq", "ddr_seq", "doorbell_seq", "seq")
+    if bank is None or fmt is None or seq is None:
+        return None
+    return {"bank": bank & 1, "format": fmt & 0x3, "seq": seq & 0x1FFFFFFF}
+
+
+def load_status_snapshot(path: str) -> dict:
+    p = Path(path)
+    fields = parse_status_fields(p.read_text(encoding="utf-8", errors="replace"))
+    if not fields:
+        raise DeliveryFreshnessError(f"NO_FRESH_FRAME: no key=value status line in {p}")
+    ints = {k: v for k, raw in fields.items() if (v := parse_int_value(raw)) is not None}
+    debug_flags = []
+    for name in SURFACED_DEBUG_FIELDS:
+        val = ints.get(name)
+        if val is not None:
+            entry = {"field": name, "value": val, "hex": f"0x{val & 0xFF:02x}"}
+            if name in FORMAT_ERROR_DEBUG_FIELDS and (val & 0xFF) == 0xE1:
+                entry["meaning"] = "non-YUV DDR doorbell/debug format error"
+            debug_flags.append(entry)
+    return {
+        "path": str(p),
+        "fields": fields,
+        "ints": ints,
+        "frame_token": extract_frame_token(fields),
+        "debug_flags": debug_flags,
+    }
+
+
+def require_field_match(snapshot: dict, spec: str) -> str | None:
+    if "=" not in spec:
+        raise HarnessError(f"invalid --require-status-field {spec!r}; expected key=value")
+    key, want_raw = spec.split("=", 1)
+    fields = snapshot["fields"]
+    if key not in fields:
+        return f"{key} missing"
+    have_raw = fields[key]
+    have_i = parse_int_value(have_raw)
+    want_i = parse_int_value(want_raw)
+    if have_i is not None and want_i is not None:
+        if have_i != want_i:
+            return f"{key}={have_i} expected {want_i}"
+    elif have_raw.strip().lower() != want_raw.strip().lower():
+        return f"{key}={have_raw!r} expected {want_raw!r}"
+    return None
+
+
+def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
+    """Reject captures that cannot be attributed to a fresh frame delivery."""
+    if not args.status_log and not args.previous_status_log and args.min_bytes_in is None:
+        return None
+    if not args.status_log:
+        raise DeliveryFreshnessError("NO_FRESH_FRAME: --status-log is required for delivery gating")
+
+    current = load_status_snapshot(args.status_log)
+    problems: list[str] = []
+    if args.min_bytes_in is not None:
+        bytes_in = current["ints"].get("bytes_in")
+        if bytes_in is None:
+            problems.append("bytes_in missing")
+        elif bytes_in < args.min_bytes_in:
+            problems.append(f"bytes_in={bytes_in} below minimum {args.min_bytes_in}")
+
+    for spec in args.require_status_field:
+        problem = require_field_match(current, spec)
+        if problem:
+            problems.append(problem)
+
+    for flag in current["debug_flags"]:
+        if flag.get("meaning") == "non-YUV DDR doorbell/debug format error":
+            problems.append(f"{flag['field']}={flag['hex']} non-YUV DDR doorbell/debug format error")
+
+    report = {
+        "status": current,
+        "min_bytes_in": args.min_bytes_in,
+        "required_fields": list(args.require_status_field),
+        "previous_status": None,
+        "token_changed": None,
+        "require_token_change": bool(args.require_token_change),
+    }
+    if args.previous_status_log:
+        try:
+            previous = load_status_snapshot(args.previous_status_log)
+        except DeliveryFreshnessError as e:
+            if args.require_token_change:
+                problems.append(str(e))
+            else:
+                report["previous_status"] = {"path": args.previous_status_log, "error": str(e)}
+        else:
+            report["previous_status"] = previous
+            cur_token = current["frame_token"]
+            prev_token = previous["frame_token"]
+            if cur_token is not None and prev_token is not None:
+                token_changed = cur_token != prev_token
+                report["token_changed"] = token_changed
+                if args.require_token_change and not token_changed:
+                    problems.append(f"frame token did not change ({cur_token})")
+            elif args.require_token_change:
+                problems.append("frame token missing; expected shared {bank,format,seq} token")
+
+    if problems:
+        raise DeliveryFreshnessError("NO_FRESH_FRAME: " + "; ".join(problems) + "; not grading pixels")
+    return report
 
 
 @dataclass(frozen=True)
@@ -527,8 +751,10 @@ def cmd_noise(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
     box = parse_compare_box(args.compare_box, g)
+    rbf_identity = validate_rbf_identity(args)
     color_provenance = require_color_provenance(args)
     reject_corrupt_capture_log(args.capture_log)
+    delivery_freshness = validate_delivery_freshness(args)
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
     freshness = None
@@ -556,8 +782,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
         "compare_box": list(box),
+        "rbf_identity": rbf_identity,
         "color_provenance": color_provenance,
         "freshness": freshness,
+        "delivery_freshness": delivery_freshness,
         "stats": stats,
         "thresholds": {
             "source": str(args.noise_report) if args.noise_report else "cli",
@@ -612,6 +840,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--capture", required=True)
     p.add_argument("--capture-log",
                    help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
+    p.add_argument("--expected-rbf-md5",
+                   help="declared md5 of the RBF artifact this run intends to grade")
+    p.add_argument("--actual-rbf-md5",
+                   help="actual loaded /media/fat/_Utility/Plex.rbf md5, or md5sum output")
+    p.add_argument("--rbf-md5-log",
+                   help="file containing device md5sum /media/fat/_Utility/Plex.rbf output")
+    p.add_argument("--status-log",
+                   help="push_frame --status log for this run; implausible delivery returns rc=7")
+    p.add_argument("--previous-status-log",
+                   help="pre-push/previous status log for optional DDR frame-token freshness checks")
+    p.add_argument("--min-bytes-in", type=int,
+                   help="minimum plausible decoded input bytes required before pixel grading")
+    p.add_argument("--require-status-field", action="append", default=[],
+                   help="required status key=value before pixel grading; may be repeated")
+    p.add_argument("--require-token-change", action="store_true",
+                   help="require shared DDR {bank,format,seq} token to change vs --previous-status-log")
     p.add_argument("--previous", help="previous-condition frame for stale-capture rejection")
     p.add_argument("--noise-report")
     p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")

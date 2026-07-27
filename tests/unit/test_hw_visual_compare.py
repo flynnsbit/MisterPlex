@@ -29,6 +29,14 @@ WCAP_CORRUPT_640_LOG = (
     ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
     "wcap_fe7673bc_yuyv422_640_corrupt.log"
 )
+RELOAD_STALE_CAPTURE = (
+    ROOT / "tests" / "fixtures" / "hw_visual" / "reload_determinism" /
+    "plex_bytes_in4_stale_screen.png"
+)
+RELOAD_STALE_STATUS = (
+    ROOT / "tests" / "fixtures" / "hw_visual" / "reload_determinism" /
+    "plex_bytes_in4_status.txt"
+)
 
 spec = importlib.util.spec_from_file_location("hw_visual_compare", TOOL)
 hw_visual_compare = importlib.util.module_from_spec(spec)
@@ -182,6 +190,131 @@ def main() -> int:
     require(stale.returncode == 3 and "STALE capture" in stale.stderr,
             f"stale capture was not rejected\nstdout={stale.stdout}\nstderr={stale.stderr}")
     print("PASS stale previous-condition capture rejected")
+
+    require(RELOAD_STALE_CAPTURE.exists(), "natural bytes_in=4 stale capture fixture missing")
+    require(RELOAD_STALE_STATUS.exists(), "natural bytes_in=4 status fixture missing")
+    stale_delivery = run(
+        "compare",
+        "--golden", str(RELOAD_STALE_CAPTURE),
+        *COLOR_ARGS,
+        "--capture", str(RELOAD_STALE_CAPTURE),
+        "--noise-report", str(noise),
+        "--status-log", str(RELOAD_STALE_STATUS),
+        "--min-bytes-in", "512",
+        "--require-status-field", "has_frame=1",
+        "--require-status-field", "has_stream=1",
+        "--require-status-field", "has_idr=1",
+    )
+    require(stale_delivery.returncode == 7 and "bytes_in=4 below minimum 512" in stale_delivery.stderr,
+            "bytes_in=4 stale-screen status must be refused before an exact pixel match can pass, "
+            f"not graded\nstdout={stale_delivery.stdout}\nstderr={stale_delivery.stderr}")
+    print("PASS natural bytes_in=4 stale-screen fixture is rejected before exact pixel grading")
+
+    fresh_status_before = WORK / "status_before_token.txt"
+    fresh_status_after = WORK / "status_after_token.txt"
+    fresh_status_before.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "frame_bank=0 frame_format=yuv420p frame_seq=41 bytes_in=4096\n",
+        encoding="utf-8",
+    )
+    fresh_status_after.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "frame_bank=1 frame_format=yuv420p frame_seq=42 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    fresh_report = WORK / "fresh_delivery.json"
+    fresh_delivery = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--actual-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /media/fat/_Utility/Plex.rbf",
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+        "--status-log", str(fresh_status_after),
+        "--previous-status-log", str(fresh_status_before),
+        "--min-bytes-in", "512",
+        "--require-status-field", "has_frame=1",
+        "--require-status-field", "has_stream=1",
+        "--require-status-field", "has_idr=1",
+        "--require-token-change",
+        "--report", str(fresh_report),
+    )
+    require(fresh_delivery.returncode == 0,
+            f"fresh delivery status with changed token did not allow exact compare\n"
+            f"stdout={fresh_delivery.stdout}\nstderr={fresh_delivery.stderr}")
+    fr = json.loads(fresh_report.read_text())
+    require(fr["delivery_freshness"]["token_changed"] is True,
+            f"fresh token change not reported: {fr['delivery_freshness']}")
+    require(fr["rbf_identity"]["match"] is True,
+            f"matching RBF identity not reported: {fr['rbf_identity']}")
+    print("PASS fresh delivery counters, matching RBF md5, and shared {bank,format,seq} token allow grading")
+
+    unchanged_token = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+        "--status-log", str(fresh_status_before),
+        "--previous-status-log", str(fresh_status_before),
+        "--min-bytes-in", "512",
+        "--require-status-field", "has_frame=1",
+        "--require-status-field", "has_stream=1",
+        "--require-status-field", "has_idr=1",
+        "--require-token-change",
+    )
+    require(unchanged_token.returncode == 7 and "frame token did not change" in unchanged_token.stderr,
+            "unchanged DDR frame token must be refused when token freshness is required, "
+            f"not graded\nstdout={unchanged_token.stdout}\nstderr={unchanged_token.stderr}")
+    print("PASS unchanged shared frame token is rejected before pixel grading")
+
+    wrong_core = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--actual-rbf-md5", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  /media/fat/_Utility/Plex.rbf",
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+        "--status-log", str(fresh_status_after),
+        "--min-bytes-in", "512",
+    )
+    require(wrong_core.returncode == 8 and "loaded core md5 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in wrong_core.stderr,
+            "wrong loaded RBF md5 must be refused before an exact pixel match can pass, "
+            f"not graded\nstdout={wrong_core.stdout}\nstderr={wrong_core.stderr}")
+    undeclared_core = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--actual-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /media/fat/_Utility/Plex.rbf",
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+    )
+    require(undeclared_core.returncode == 8 and "expected RBF md5 was not declared" in undeclared_core.stderr,
+            "loaded RBF md5 without declared expected artifact must be refused, "
+            f"not graded\nstdout={undeclared_core.stdout}\nstderr={undeclared_core.stderr}")
+    print("PASS wrong or undeclared loaded RBF identity is rejected before pixel grading")
+
+    non_yuv_status = WORK / "status_non_yuv_debug.txt"
+    non_yuv_status.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "frame_bank=1 frame_format=yuv420p frame_seq=43 frame_debug=0xe1 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    non_yuv = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+        "--status-log", str(non_yuv_status),
+        "--min-bytes-in", "512",
+    )
+    require(non_yuv.returncode == 7 and "non-YUV DDR doorbell/debug format error" in non_yuv.stderr,
+            "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
+            f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
+    print("PASS frame-store 0xe1 non-YUV doorbell debug is surfaced as a named refusal")
 
     v4l2_log = "[video4linux2,v4l2 @ 0x123] Dequeued v4l2 buffer contains corrupted data (0 bytes)."
     require(hw_visual_compare.classify_capture_log(v4l2_log) == "corrupt",

@@ -20,12 +20,15 @@ CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 COLOR_MATRIX="${VISUAL_COLOR_MATRIX:-bt601}"
 COLOR_RANGE="${VISUAL_COLOR_RANGE:-full}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
+REQUIRE_FRESH_DELIVERY="${VISUAL_REQUIRE_FRESH_DELIVERY:-1}"
+MIN_BYTES_IN="${VISUAL_MIN_BYTES_IN:-512}"
 if [[ "${VISUAL_FULL_FRAME:-0}" == "1" ]]; then
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-active}" # full 618x480 active display region
 else
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
 fi
 RBF="${VISUAL_RBF:-${1:-}}"
+EXPECTED_RBF_MD5="${VISUAL_EXPECTED_RBF_MD5:-${VISUAL_RBF_MD5:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
 GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png}"
@@ -41,6 +44,13 @@ if [[ "${VISUAL_FULL_FRAME:-0}" == "1" && "${VISUAL_ALLOW_UNPROVEN_FULL:-0}" != 
   echo "Use the proven default ROI gate, or set VISUAL_ALLOW_UNPROVEN_FULL=1 for scheduled investigation only." >&2
   exit 2
 fi
+if [[ -n "$RBF" && -z "$EXPECTED_RBF_MD5" ]]; then
+  EXPECTED_RBF_MD5="$(md5sum "$RBF" | awk '{print tolower($1)}')"
+fi
+if [[ -z "$EXPECTED_RBF_MD5" ]]; then
+  echo "FAIL: expected RBF md5 is not declared; set VISUAL_EXPECTED_RBF_MD5 (or pass VISUAL_RBF)." >&2
+  exit 2
+fi
 
 mkdir -p "$OUT"
 
@@ -49,6 +59,17 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
 ssh_m() {
   "${SSH[@]}" "$@"
+}
+
+verify_loaded_rbf() {
+  echo "=== verify loaded Plex.rbf md5 (expected $EXPECTED_RBF_MD5) ==="
+  ssh_m "md5sum /media/fat/_Utility/Plex.rbf" | tee "$OUT/rbf_md5.txt"
+  local actual
+  actual="$(sed -n 's/^\([0-9a-fA-F]\{32\}\).*/\1/p' "$OUT/rbf_md5.txt" | tr 'A-F' 'a-f' | head -1)"
+  if [[ "$actual" != "$EXPECTED_RBF_MD5" ]]; then
+    echo "FAIL: loaded core md5 $actual != expected $EXPECTED_RBF_MD5; refusing to grade" >&2
+    exit 8
+  fi
 }
 
 restore_mode() {
@@ -67,6 +88,7 @@ else
   echo "=== no VISUAL_RBF supplied; verifying existing Plex core ==="
   ssh_m "ps | grep -q '[P]lex.rbf'"
 fi
+verify_loaded_rbf
 
 capture() {
   python3 "$TOOL" capture --device "$DEV" --input-format "$CAP_FMT" \
@@ -78,6 +100,7 @@ COMPARE_ARGS=()
 if [[ -n "$COMPARE_BOX" ]]; then
   COMPARE_ARGS=(--compare-box "$COMPARE_BOX")
 fi
+RBF_COMPARE_ARGS=(--expected-rbf-md5 "$EXPECTED_RBF_MD5" --rbf-md5-log "$OUT/rbf_md5.txt")
 
 echo "=== set HDMI mode preset $VIDEO_MODE for capture ($CAP_FMT $CAP_SIZE@$CAP_FPS) ==="
 ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
@@ -101,6 +124,7 @@ if [[ -z "$RBF" && "${VISUAL_PREVIOUS_MENU:-1}" == "1" ]]; then
     sleep 1
   done
   ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi plex
+  verify_loaded_rbf
   ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
   sleep 2
 else
@@ -115,11 +139,24 @@ for _ in $(seq 1 20); do
   fi
   sleep 0.5
 done
+ssh_m '/media/fat/misterplex/bin/push_frame --status' > "$OUT/status_before.txt" 2>/dev/null || true
 
 echo "=== push checked-in Baseline/CAVLC visual bitstream: $(basename "$BITSTREAM") ==="
 "${SCP[@]}" "$BITSTREAM" "$USER@$HOST:/media/fat/plex_visual_gate.264"
 ST=""
 >"$OUT/push.txt"
+status_ready() {
+  local st="$1"
+  echo "$st" | grep -q 'sps_valid=1' || return 1
+  echo "$st" | grep -q 'pps_valid=1' || return 1
+  echo "$st" | grep -q 'mb0=0' || return 1
+  if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
+    local bytes
+    bytes="$(echo "$st" | sed -n 's/.*bytes_in=\([0-9][0-9]*\).*/\1/p')"
+    [[ -n "$bytes" && "$bytes" -ge "$MIN_BYTES_IN" ]] || return 1
+  fi
+  return 0
+}
 for attempt in 1 2 3; do
   echo "push attempt $attempt" | tee -a "$OUT/push.txt"
   ssh_m '/media/fat/misterplex/bin/push_frame --index 3 /media/fat/plex_visual_gate.264' \
@@ -129,12 +166,12 @@ for attempt in 1 2 3; do
   echo "=== status telemetry (off-screen decoder debug state; attempt $attempt) ==="
   for _ in $(seq 1 20); do
     ST="$(ssh_m '/media/fat/misterplex/bin/push_frame --status' 2>/dev/null || true)"
-    if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+    if status_ready "$ST"; then
       break
     fi
     sleep 0.2
   done
-  if echo "$ST" | grep -q 'sps_valid=1' && echo "$ST" | grep -q 'pps_valid=1' && echo "$ST" | grep -q 'mb0=0'; then
+  if status_ready "$ST"; then
     break
   fi
 done
@@ -143,6 +180,23 @@ if [[ "${VISUAL_REQUIRE_STATUS:-1}" == "1" ]]; then
   echo "$ST" | grep -q 'sps_valid=1' || { echo "FAIL: visual bitstream did not latch SPS status" >&2; exit 2; }
   echo "$ST" | grep -q 'pps_valid=1' || { echo "FAIL: visual bitstream did not latch PPS status" >&2; exit 2; }
   echo "$ST" | grep -q 'mb0=0' || { echo "FAIL: visual bitstream did not reach MB0 status" >&2; exit 2; }
+fi
+
+STATUS_COMPARE_ARGS=()
+if [[ "$REQUIRE_FRESH_DELIVERY" == "1" ]]; then
+  STATUS_COMPARE_ARGS=(
+    --status-log "$OUT/status.txt"
+    --previous-status-log "$OUT/status_before.txt"
+    --min-bytes-in "$MIN_BYTES_IN"
+    --require-status-field has_frame=1
+    --require-status-field has_stream=1
+    --require-status-field has_idr=1
+    --require-status-field sps_valid=1
+    --require-status-field pps_valid=1
+  )
+  if [[ "${VISUAL_REQUIRE_TOKEN:-0}" == "1" ]]; then
+    STATUS_COMPARE_ARGS+=(--require-token-change)
+  fi
 fi
 
 echo "=== repeated static captures for measured noise floor ==="
@@ -159,6 +213,8 @@ echo "=== compare capture against checked-in golden ==="
 set +e
 python3 "$TOOL" compare \
   "${COMPARE_ARGS[@]}" \
+  "${RBF_COMPARE_ARGS[@]}" \
+  "${STATUS_COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
   --golden-color-matrix "$COLOR_MATRIX" \
   --golden-color-range "$COLOR_RANGE" \
@@ -186,8 +242,12 @@ case "$EXPECT:$compare_rc" in
     echo "FAIL: VISUAL_EXPECT=fail but capture matched golden; red specimen did not go red" >&2
     exit 1
     ;;
-  *:3|*:4|*:5|*:6)
-    echo "FAIL: capture integrity error rc=$compare_rc (stale/corrupt/absent/busy), not a core result" >&2
+  *:3|*:4|*:5|*:6|*:7)
+    echo "FAIL: capture/freshness integrity error rc=$compare_rc (stale/corrupt/absent/busy/no-fresh-frame), not a core result" >&2
+    exit "$compare_rc"
+    ;;
+  *:8)
+    echo "FAIL: loaded RBF identity error rc=$compare_rc; not a core result" >&2
     exit "$compare_rc"
     ;;
   *)
@@ -211,6 +271,8 @@ PY
   set +e
   python3 "$TOOL" compare \
     "${COMPARE_ARGS[@]}" \
+    "${RBF_COMPARE_ARGS[@]}" \
+    "${STATUS_COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
     --golden-color-matrix "$COLOR_MATRIX" \
     --golden-color-range "$COLOR_RANGE" \

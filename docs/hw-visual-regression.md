@@ -29,6 +29,26 @@ by default. `scripts/hw_visual_compare.py compare` refuses to grade images unles
 both golden and capture matrix/range are stated, and also refuses mismatched
 provenance.
 
+Freshness is also a precondition, not an inference from the pixels. The hardware
+script passes the post-push `push_frame --status` log into the comparator and
+requires plausible delivery counters before grading: default
+`VISUAL_MIN_BYTES_IN=512`, plus `has_frame=1`, `has_stream=1`, `has_idr=1`,
+`sps_valid=1`, and `pps_valid=1`. A stale/frozen screen can exactly match a
+golden; it still returns `rc=7` if the status says only a poison/trivial input
+arrived. When the shared DDR frame-store token is exposed, set
+`VISUAL_REQUIRE_TOKEN=1`; the comparator already understands the common
+`{bank, format, seq}` / doorbell fields and will require the token to change
+from `status_before.txt` to `status.txt`.
+
+Artifact identity is another precondition. `tests/hw/test_f3_visual_golden.sh`
+will not grade an unspecified loaded core: either pass `VISUAL_RBF` (the script
+derives its md5) or set `VISUAL_EXPECTED_RBF_MD5`/`VISUAL_RBF_MD5` for an
+already-loaded core. The script records `md5sum /media/fat/_Utility/Plex.rbf` in
+`rbf_md5.txt`, verifies it immediately after deploy/reload, and passes that log
+into the comparator. A mismatch returns `rc=8` before pixel grading, which
+prevents testing a current I420/624×480 ARM pipeline against an old RGB565-era
+rollback core by accident.
+
 ## What is compared
 
 - Default input bitstream: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`.
@@ -92,6 +112,23 @@ Y/U/V MAE   = [63.9724, 24.5320, 26.1278]
 Y/U/V max   = [230, 220, 171]
 ```
 
+Follow-up reload testing found a more dangerous phantom-green shape: five
+Plex reload+push captures were byte/pixel identical (`296640/296640`, Y/U/V MAE
+`[0,0,0]`) because the screen was frozen on an old frame, while status reported
+`bytes_in=4`. That result must never be accepted as a visual PASS. The comparator
+therefore gates delivery counters before loading/grading pixels; the checked-in
+natural fixture `tests/fixtures/hw_visual/reload_determinism/plex_bytes_in4_*`
+uses the exact stale-screen capture/status pair and confirms `rc=7` even when the
+capture is compared against itself.
+
+2026-07-27 artifact-identity failure mode: rollback `57674f2e` predates the
+current YUV420/624×480 DDR frame-store path. w-cap proved ARM decode→I420→DDR
+was byte-exact, then screen capture against that verified DDR content returned
+`exact 0/296640`, `MAE 111.73`, `max_abs 255`, and first bad at presented
+`(11,0)` because the loaded core could not possibly interpret the written
+format correctly. The harness now refuses to grade unless the loaded
+`/media/fat/_Utility/Plex.rbf` md5 matches the declared artifact.
+
 ## Metrics and failure artifact
 
 `scripts/hw_visual_compare.py compare` reports:
@@ -118,6 +155,12 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 4 | V4L2/FFmpeg reported corrupted capture buffers/data |
 | 5 | capture device absent |
 | 6 | capture device busy/exclusive-open |
+| 7 | no fresh frame delivery proven (`bytes_in`/required status/token freshness failed) |
+| 8 | loaded `/media/fat/_Utility/Plex.rbf` md5 does not match the declared artifact |
+
+If status exposes the frame-store debug byte, `0xe1` is surfaced as
+`non-YUV DDR doorbell/debug format error` and is treated as a freshness/setup
+refusal, not a visual mismatch.
 
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before
@@ -203,12 +246,14 @@ the target final gate, but do not claim it as a hardware PASS until its status/v
 
 ## Decoder debug output
 
-The harness captures the existing status telemetry in `status.txt` immediately after the F3 push:
+The harness captures the existing status telemetry in `status_before.txt` before the push and in `status.txt`
+immediately after the F3 push:
 
 ```text
 sps_valid pps_valid has_idr slice_type mb0 qp res_ok res_tc res_t1 res_dc res_csum recon_sig bytes_in
 ```
 
 Those fields already expose decoded macroblock/QP/slice/residual/signature state without adding synthesized RTL
-scaffolding. For on-screen debug, the safe path is to render these status fields through the existing
-`PlaybackOverlay` text compositor from the ARM side after reading status telemetry; do not add test-only RTL.
+scaffolding, and `bytes_in` is now a hard freshness gate. For on-screen debug, the safe path is to render these
+status fields through the existing `PlaybackOverlay` text compositor from the ARM side after reading status
+telemetry; do not add test-only RTL.
