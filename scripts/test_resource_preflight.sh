@@ -20,14 +20,23 @@
 #    reclaiming it needs swapoff, which needs unavailable sudo. Gating on
 #    SwapFree therefore refuses forever, which trains everyone to set the
 #    override and makes the gate worse than absent.
-# 3. MemAvailable as a floor, kept deliberately loose so it only catches the
-#    genuinely starved case.
+# 3. Absolute headroom floor, calibrated to this 16 GB fleet host. The
+#    deterministic merge adjudication ran cleanly at ~5.4-6.1 GB available, and
+#    sibling workers routinely validate around ~4.7 GB. Refuse below 4 GB rather
+#    than a round 8 GB so the gate catches real starvation without becoming the
+#    default outcome.
+# 4. Swap exhaustion. The documented phantom-red incidents correlated with swap
+#    at 100% full; low swap *history* is not enough, but no remaining swap slack
+#    plus Verilator is unsafe.
 #
 # Override with MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 (announces itself loudly).
 set -uo pipefail
 
 SAMPLE_SECONDS="${MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS:-2}"
-MIN_AVAIL_MB="${MISTERPLEX_PREFLIGHT_MIN_AVAIL_MB:-2048}"
+MIN_AVAIL_MB="${MISTERPLEX_PREFLIGHT_MIN_AVAIL_MB:-4096}"
+MIN_SWAPFREE_MB="${MISTERPLEX_PREFLIGHT_MIN_SWAPFREE_MB:-32}"
+VMSTAT_FILE="${MISTERPLEX_PREFLIGHT_VMSTAT:-/proc/vmstat}"
+MEMINFO_FILE="${MISTERPLEX_PREFLIGHT_MEMINFO:-/proc/meminfo}"
 # Pages per second. A quiet machine reads 0; sustained paging runs orders of
 # magnitude above this.
 MAX_PAGING_PPS="${MISTERPLEX_PREFLIGHT_MAX_PAGING_PPS:-200}"
@@ -55,9 +64,9 @@ fi
 
 # --- 2. paging rate -----------------------------------------------------------
 read_paging() {
-  awk '/^pswpin |^pswpout /{s+=$2} END{print s+0}' /proc/vmstat
+  awk '/^pswpin |^pswpout /{s+=$2} END{print s+0}' "$VMSTAT_FILE"
 }
-if [[ -r /proc/vmstat ]]; then
+if [[ -r "$VMSTAT_FILE" ]]; then
   before="$(read_paging)"
   sleep "$SAMPLE_SECONDS"
   after="$(read_paging)"
@@ -69,11 +78,26 @@ if [[ -r /proc/vmstat ]]; then
 fi
 
 # --- 3. available memory floor ------------------------------------------------
-avail_mb="$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)"
+if [[ ! -r "$MEMINFO_FILE" ]]; then
+  fail "cannot read memory information from ${MEMINFO_FILE}"
+fi
+avail_mb="$(awk '/^MemAvailable:/{print int($2/1024)}' "$MEMINFO_FILE")"
+if [[ -z "$avail_mb" ]]; then
+  fail "MemAvailable is missing from ${MEMINFO_FILE}"
+fi
 echo "preflight: MemAvailable ${avail_mb}MB (floor ${MIN_AVAIL_MB}MB)"
 if (( avail_mb < MIN_AVAIL_MB )); then
-  fail "only ${avail_mb}MB available, below ${MIN_AVAIL_MB}MB floor"
+  fail "only ${avail_mb}MB available for Verilator, below ${MIN_AVAIL_MB}MB absolute headroom floor"
 fi
 
-echo "preflight OK: no local Quartus, no active paging, ${avail_mb}MB available"
+# --- 4. swap exhaustion -------------------------------------------------------
+swapfree_mb="$(awk '/^SwapFree:/{print int($2/1024)}' "$MEMINFO_FILE")"
+if [[ -n "$swapfree_mb" ]]; then
+  echo "preflight: SwapFree ${swapfree_mb}MB (floor ${MIN_SWAPFREE_MB}MB)"
+  if (( swapfree_mb < MIN_SWAPFREE_MB )); then
+    fail "only ${swapfree_mb}MB swap free, below ${MIN_SWAPFREE_MB}MB exhaustion guard"
+  fi
+fi
+
+echo "preflight OK: no local Quartus, no active paging, ${avail_mb}MB available, ${swapfree_mb:-unknown}MB swap free"
 exit 0

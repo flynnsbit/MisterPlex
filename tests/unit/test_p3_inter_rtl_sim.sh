@@ -69,15 +69,11 @@ set +e
 FAULT_OUT="$("$BUILD_FAULT/Vh264_inter_pred_tb" "$FIXTURE" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT"
-if [[ "$FAULT_RC" -eq 0 ]]; then
-  echo "FAIL h264_inter_pred RTL red-check: bad qpel/chroma rounding unexpectedly passed" >&2
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_round "$FAULT_RC" <<<"$FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$FAULT_OUT" >&2
   exit 1
 fi
-if ! grep -q 'luma qpel frac mismatch' <<<"$FAULT_OUT"; then
-  echo "FAIL h264_inter_pred RTL red-check: expected luma qpel mismatch" >&2
-  exit 1
-fi
+printf '%s\n' "$RED_CHECK"
 echo "OK h264_inter_pred RTL red-check: bad rounding fault failed golden"
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -89,13 +85,9 @@ set +e
 PART_FAULT_OUT="$($BUILD_PART_FAULT/Vh264_inter_pred_tb "$FIXTURE" 2>&1)"
 PART_FAULT_RC=$?
 set -e
-printf '%s\n' "$PART_FAULT_OUT"
-if [[ "$PART_FAULT_RC" -eq 0 ]]; then
-  echo "FAIL h264_inter_pred RTL red-check: bad partition MV unexpectedly passed" >&2
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_part_mv "$PART_FAULT_RC" <<<"$PART_FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$PART_FAULT_OUT" >&2
   exit 1
 fi
-if ! grep -q 'partition MV case mismatch' <<<"$PART_FAULT_OUT"; then
-  echo "FAIL h264_inter_pred RTL red-check: expected partition MV mismatch" >&2
-  exit 1
-fi
+printf '%s\n' "$RED_CHECK"
 echo "OK h264_inter_pred RTL red-check: bad partition MV fault failed golden"
