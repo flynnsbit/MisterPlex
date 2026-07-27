@@ -261,12 +261,14 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `h264_iq_idct_4x4.sv` modules for first-4×4 inverse quant + H.264 integer IDCT onto
     **pred=128**. It paints the true first 4×4 into F3 diagnostic MB0 and publishes
     `recon_sig=0x3b` (XOR of reconstructed Y samples) at `raw[14]/status[119:112]`.
-    ABI v3: `raw[12]=res_dc`, `raw[13]=res_csum`, `raw[14]=recon_sig`,
-    `raw[15]=stream_low_debug` (AR may mask bits). Unit `test_p3_idct_rtl_model.py`
+    P3-3l2 RCA ABI: `raw[12]=res_dc`, `raw[13]=res_csum`, `raw[14]=recon_sig`,
+    `raw[15]=recon_dbg` (usable bits avoid AR-masked bits [2:1]: coeff/dequant/IDCT/recon
+    non-zero plus residual-wait flags). Unit `test_p3_idct_rtl_model.py`
     locks product integration and promotes the Verilator path to a hard failure with
     `P3_IDCT_REQUIRE_RTL_SIM=1`; `make rtl-sim` elaborates the real product RTL source.
     **Gate design before fit:** push baseline 6739B and padded 6776B vectors; PASS requires
-    `res_csum=0x14` and `recon_sig=0x3b` invariant for both while raw[15]/stream debug changes.
+    `res_csum=0x14`, `recon_sig=0x3b`, and `recon_dbg&~0x06=0xf9` invariant for both
+    while the existing nalu_count/status witness changes.
     This is the P3-3l2 analogue of the size-invariant csum gate; no DIAG/constant force.
 
   **3.3l-3 host full-MB golden done (W-REL 2026-07-26):** `h264_recon.hpp` now has an optional

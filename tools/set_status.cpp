@@ -249,11 +249,12 @@ int main(int argc, char** argv) {
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
             "has_idr=%d sps_valid=%d pps_valid=%d nalu=%u last_nal=0x%02x "
-            "res_csum=%u recon_sig=%u sps=%ux%u bytes_in=%u\n",
+            "res_csum=%u recon_sig=%u recon_dbg=0x%02x sps=%ux%u bytes_in=%u\n",
             st.has_frame ? 1 : 0, st.has_audio ? 1 : 0, st.has_stream ? 1 : 0,
             st.audio_underrun ? 1 : 0, st.has_idr ? 1 : 0,
             st.sps_valid ? 1 : 0, st.pps_valid ? 1 : 0, st.nalu_count, st.last_nal_type,
             static_cast<unsigned>(st.residual_csum), static_cast<unsigned>(st.recon_sig),
+            static_cast<unsigned>(st.recon_dbg),
             st.sps_width, st.sps_height, st.stream_bytes_in);
     }
     return 0;

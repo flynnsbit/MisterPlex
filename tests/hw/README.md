@@ -161,7 +161,7 @@ python3 tests/parse_res_csum_status.py e8 14 3b 53   # raw[12..15]
 | `[12]` | residual_dc | `0xe8` (−24) | `parseCoreStatus` → `residual_dc = (int8_t)raw[12]` |
 | `[13]` | residual_csum8 | `0x14` (20) XOR — never arith `0xEC` | `residual_csum = raw[13]` |
 | `[14]` | recon_sig8 | `0x3b` (59) after P3-3l2 | `recon_sig = raw[14]` |
-| `[15]` | stream_low_debug | perturbation witness only (AR may mask bits) | `stream_bytes_in = raw[15]` |
+| `[15]` | recon_dbg flags | P3-3l2 RCA: usable bits `0x01/0x08/0x10/0x20/0x40/0x80` (AR may mask bits `[2:1]`) | `recon_dbg = raw[15]` |
 
 Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h264_residual_gold.hpp` (`kCsum8==0x14`); `tools/push_frame.cpp` `res_csum=%u`.
 

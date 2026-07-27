@@ -1283,7 +1283,7 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     //   [71:64]  residual pack   [79:72] {ddr_busy,swap_pending,qp}
     //   [87:80]  sps_mb_w        [95:88] sps_mb_h
     //   [103:96] residual_dc  [111:104] residual_csum8
-    //   [119:112] recon_sig   [127:120] stream_bytes low debug (AR may touch [122:121])
+    //   [119:112] recon_sig   [127:120] recon RCA debug flags (AR may touch [122:121])
     //   Pre-3.3l-1 RBF: [127:104] was 24b bytes; pre-3.3l-2: [127:112] was 16b bytes.
     CoreStatus s{};
     const uint16_t w1 = static_cast<uint16_t>(raw[2] | (raw[3] << 8));
@@ -1325,15 +1325,16 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
 
     s.stream_bytes_seen = 0;
     // [103:96]=residual_dc (raw[12]); [111:104]=residual_csum (raw[13]);
-    // [119:112]=recon_sig (raw[14]); [127:120]=stream low debug (raw[15]).
+    // [119:112]=recon_sig (raw[14]); [127:120]=recon RCA flags (raw[15]).
     // residual_dc/csum/recon_sig stay below AR splice.
     using namespace status_telemetry;
     s.residual_dc = static_cast<int8_t>(raw[kResidualDcByte]);
     s.residual_csum = raw[kResidualCsumByte];
     s.recon_sig = raw[kReconSigByte];
-    // 3.3l-2 RBF: stream is debug-only low byte. AR splice may alter bits [2:1],
-    // so use this only as a perturbation witness, never as a byte-accurate counter.
-    s.stream_bytes_in = static_cast<uint32_t>(raw[kStreamByteLowDebugByte]);
+    s.recon_dbg = raw[kReconDbgByte];
+    // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Use nalu_count
+    // as the liveness/perturbation witness while this debug ABI is active.
+    s.stream_bytes_in = static_cast<uint32_t>(s.nalu_count);
     s.idr_count = s.has_idr ? 1 : 0;
     return s;
 }

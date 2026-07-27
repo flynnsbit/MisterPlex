@@ -201,8 +201,20 @@ int main(int argc, char** argv) {
                       << " want 0x" << want_sig << std::dec << "\n";
             return 1;
         }
+        if (!dut.recon_dbg_valid) {
+            std::cerr << "FAIL decode_stub RTL sim: recon_dbg_valid never asserted\n";
+            return 1;
+        }
+        const int got_dbg = static_cast<uint8_t>(dut.recon_dbg);
+        const int want_dbg = 0xF9;
+        if (got_dbg != want_dbg) {
+            std::cerr << "FAIL decode_stub RTL sim: recon_dbg got 0x" << std::hex << got_dbg
+                      << " want 0x" << want_dbg << std::dec << "\n";
+            return 1;
+        }
 
         std::cout << "OK decode_stub RTL sim: product decode path recon_sig=0x" << std::hex << got_sig
+                  << " recon_dbg=0x" << got_dbg
                   << std::dec << " qp=" << qp << " fixture=" << argv[1] << '\n';
         return 0;
     } catch (const std::exception& e) {

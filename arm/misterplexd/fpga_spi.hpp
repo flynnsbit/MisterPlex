@@ -207,6 +207,9 @@ public:
         // 3.3l-2: reconstructed-pixel signature for MB0 block0 after inv_quant+IDCT.
         // raw[14]/status[119:112] = XOR of 16 reconstructed Y samples; golden 0x3B.
         uint8_t recon_sig = 0;
+        // raw[15]/status[127:120] = P3-3l2 silicon RCA flags. Bits [2:1] may be
+        // altered by the Aspect Ratio OSD splice; use the other bits only.
+        uint8_t recon_dbg = 0;
         bool ddr_busy = false;      // status_in[79] (v2) — DDR→BRAM copy in flight
         bool swap_pending = false;  // status_in[78] — display bank flip waiting for vsync
         uint8_t stub_frames = 0; // legacy alias
@@ -215,7 +218,7 @@ public:
         // Legacy alias: high/low of previous wr_count field (now idr|stub)
         uint16_t wr_count_lo = 0;
         uint32_t stream_bytes_seen = 0; // not in status anymore; kept for API compat (=0)
-        uint32_t stream_bytes_in = 0; // v3: low debug byte only in raw[15] (AR may mask bits)
+        uint32_t stream_bytes_in = 0; // legacy API compat; no longer byte-accurate in status
     };
     // Parse getCoreStatus raw bytes into fields.
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);

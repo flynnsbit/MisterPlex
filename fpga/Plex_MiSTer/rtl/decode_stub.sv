@@ -31,6 +31,8 @@ module decode_stub #(
 	input  wire signed [8:0] residual_coeff [0:15],
 
 	output reg  [7:0]  recon_sig,
+	output reg  [7:0]  recon_dbg,
+	output reg         recon_dbg_valid,
 	output reg         recon_valid,
 
 	output reg         wr_en,
@@ -65,6 +67,7 @@ module decode_stub #(
 	reg [11:0]     wait_cnt;
 	reg            slice_valid_d;
 	reg            residual_ok_d;
+	reg            lat_wait_res;
 	integer        coeff_i;
 
 	wire [9:0] width_w  = WIDTH[9:0];
@@ -91,6 +94,23 @@ module decode_stub #(
 	                            recon_px[4]  ^ recon_px[5]  ^ recon_px[6]  ^ recon_px[7] ^
 	                            recon_px[8]  ^ recon_px[9]  ^ recon_px[10] ^ recon_px[11] ^
 	                            recon_px[12] ^ recon_px[13] ^ recon_px[14] ^ recon_px[15];
+	reg [7:0] recon_dbg_comb;
+	integer dbg_i;
+	always @* begin
+		recon_dbg_comb = 8'd0;
+		for (dbg_i = 0; dbg_i < 16; dbg_i = dbg_i + 1) begin
+			if (lat_coeff[dbg_i] != 9'sd0)
+				recon_dbg_comb[0] = 1'b1; // coefficients seen by recon path are non-zero
+			if (idct_dequant[dbg_i] != 18'sd0)
+				recon_dbg_comb[3] = 1'b1; // dequant stage produced a non-zero value
+			if (idct_residual[dbg_i] != 18'sd0)
+				recon_dbg_comb[4] = 1'b1; // IDCT residual contribution is non-zero
+			if (recon_px[dbg_i] != 8'd128)
+				recon_dbg_comb[5] = 1'b1; // recon differs from pred-only 128
+		end
+		recon_dbg_comb[6] = lat_res_ok;
+		recon_dbg_comb[7] = lat_wait_res;
+	end
 
 	genvar pred_i;
 	generate
@@ -152,7 +172,7 @@ module decode_stub #(
 	// Only rising residual/slice after VCL — ignore sticky previous-NAL values
 	wire res_rise   = residual_ok & ~residual_ok_d;
 	wire slice_rise = slice_valid & ~slice_valid_d;
-	wire wait_done  = res_rise | slice_rise | (wait_cnt == 12'd0);
+	wire wait_done  = res_rise | (wait_cnt == 12'd0);
 
 	always @(posedge clk) begin
 		wr_en         <= 1'b0;
@@ -183,8 +203,11 @@ module decode_stub #(
 			for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 				lat_coeff[coeff_i] <= 9'sd0;
 			recon_sig     <= 0;
+			recon_dbg     <= 0;
+			recon_dbg_valid <= 0;
 			recon_valid   <= 0;
 			wait_cnt      <= 0;
+			lat_wait_res  <= 0;
 			wr_pixel      <= 0;
 			slice_valid_d <= 0;
 			residual_ok_d <= 0;
@@ -216,9 +239,11 @@ module decode_stub #(
 				lat_res_tc   <= residual_tc;
 				lat_res_dc   <= residual_dc;
 				lat_qp       <= slice_qp;
+				lat_wait_res <= res_rise;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
 				recon_valid  <= 1'b0;
+				recon_dbg_valid <= 1'b0;
 			end
 		end else begin
 			// Paint full frame
@@ -226,6 +251,8 @@ module decode_stub #(
 			wr_pixel <= px_comb;
 			if (pix_i == 0) begin
 				recon_sig   <= lat_res_ok ? recon_sig_comb : 8'd0;
+				recon_dbg   <= recon_dbg_comb;
+				recon_dbg_valid <= 1'b1;
 				recon_valid <= lat_res_ok;
 			end
 

@@ -135,6 +135,11 @@ def cpp_const(text: str, name: str) -> int:
 
     def resolve(expr: str) -> int:
         expr = expr.strip()
+        if "|" in expr:
+            value = 0
+            for part in expr.split("|"):
+                value |= resolve(part)
+            return value
         if re.fullmatch(r"\w+", expr) and expr in consts:
             if expr in seen:
                 fail(f"host constant alias cycle while resolving {name}")
@@ -266,13 +271,14 @@ def check_status_telemetry() -> None:
         "kResidualCsumBitHi": 111,
         "kReconSigBitLo": 112,
         "kReconSigBitHi": 119,
-        "kStreamByteLowDebugBitLo": 120,
-        "kStreamByteLowDebugBitHi": 127,
+        "kReconDbgBitLo": 120,
+        "kReconDbgBitHi": 127,
         "kResidualDcByte": 12,
         "kResidualCsumByte": 13,
         "kReconSigByte": 14,
-        "kStreamByteLowDebugByte": 15,
+        "kReconDbgByte": 15,
         "kReconSigMb0Block0": 0x3B,
+        "kReconDbgMb0Block0": 0xF9,
     }
     for name, value in expected.items():
         got = cpp_const(status_h, name)
@@ -302,9 +308,10 @@ def check_status_telemetry() -> None:
             "raw[14] or update the documented ABI and hardware gate.",
         ),
         (
-            r"status_telem_r\s*\[\s*127\s*:\s*120\s*\]\s*<=\s*st_stream_low",
-            "Plex.sv no longer keeps stream low debug in status[127:120]/raw[15]. This byte is "
-            "the perturbation witness for baseline-vs-padded gates; restore it or redesign the gate.",
+            r"status_telem_r\s*\[\s*127\s*:\s*120\s*\]\s*<=\s*st_recon_dbg_sticky",
+            "Plex.sv no longer keeps P3 recon RCA flags in status[127:120]/raw[15]. "
+            "This byte distinguishes coefficient/dequant/IDCT/recon stages on silicon; "
+            "restore it or update the documented RCA gate.",
         ),
     ]
     for pat, msg in checks:
@@ -317,17 +324,17 @@ def check_status_telemetry() -> None:
         "exactly the +file_size%256 failure signature.",
     )
     check(
-        "status_telem_masked={status_telem_r[127:120],st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}" in nt,
-        "Plex.sv residual/recon mask no longer structurally forces {stream_low, recon_sig, csum, dc}. "
+        "status_telem_masked={st_recon_dbg_sticky,st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}" in nt,
+        "Plex.sv residual/recon mask no longer structurally forces {recon_dbg, recon_sig, csum, dc}. "
         "This mask prevents residual_csum/recon_sig from aliasing live stream bytes; restore it or "
         "add an equivalent guarded pack with a simulation proof.",
     )
     check(
         "raw[kResidualCsumByte]" in fpga_spi
         and "raw[kReconSigByte]" in fpga_spi
-        and "raw[kStreamByteLowDebugByte]" in fpga_spi,
+        and "raw[kReconDbgByte]" in fpga_spi,
         "parseCoreStatus is not using the shared status_telemetry byte constants. The host "
-        "must decode raw[13] as residual_csum, raw[14] as recon_sig and raw[15] as stream debug; restore the "
+        "must decode raw[13] as residual_csum, raw[14] as recon_sig and raw[15] as recon debug; restore the "
         "shared constants to avoid silent host/RTL ABI drift.",
     )
     check(
