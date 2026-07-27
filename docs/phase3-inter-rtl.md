@@ -22,10 +22,11 @@ frame I:6, P:294, B:0
 mb P: intra 4.8%, P16x16 17.6%, sub-MB partitions 0.0%, skip 77.7%
 ```
 
-Therefore this RTL rung deliberately implements only the modes that remain load-bearing for the
-profile: P_Skip and P_L0_16x16 with one previous reference. It does **not** implement B-slices,
-weighted prediction, multi-reference lists, 8×8 transform, or sub-MB partitions. The existing
-unsupported-stream guard must stay in product code if the PMS profile is removed or bypassed.
+Therefore this RTL rung prioritizes the modes that remain load-bearing for the profile: P_Skip and
+P_L0_16x16 with one previous reference, then P_L0_16x8, P_L0_8x16, P_8x8 and the sub-MB shapes.
+It does **not** implement B-slices, weighted prediction, multi-reference lists, or 8×8 transform.
+The existing unsupported-stream guard must stay in product code if the PMS profile is removed or
+bypassed.
 
 ## Interpolation / prediction design
 
@@ -49,6 +50,11 @@ Product RTL added in `fpga/Plex_MiSTer/rtl/h264_inter_pred.sv`:
   P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8, P_8x8ref0 and the P sub-MB shapes
   8x8/8x4/4x8/4x4. Intra-in-P macroblocks are classified as intra rather than silently treated
   as inter.
+- `h264_dpb_one_ref`: one-reference decoded picture buffer front-end with filtered I420 writeback,
+  frame-boundary-only current→reference promotion, IDR invalidation, and 21×21 luma / 9×9 chroma
+  raw reference-window reads with normative edge replication.
+- `h264_inter_mc_16x16` and `h264_inter_mc_part`: 16×16 qpel/epel MC arithmetic plus partition masks
+  for P_L0_16x8, P_L0_8x16, P_8x8 and 8x4/4x8/4x4 sub-partition-sized predictions.
 
 The Verilator top in `tests/rtl/h264_inter_pred_tb_top.sv` instantiates the real product RTL listed
 in `files.qip`; test-only fault injection lives only in the testbench top.
@@ -91,6 +97,17 @@ OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
 
 The red path perturbs interpolation behaviour in the testbench wrapper (`FAULT_BAD_ROUND=1`), not
 source text or synthesised RTL.
+
+`tests/unit/test_p3_dpb_mc_rtl_sim.sh` verifies the first DPB/MC integration rung with a ≥2-NAL
+inter fixture:
+
+```text
+OK real RTL sim: h264_dpb_mc product RTL nals=15 i420_writes=1536 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64 part_modes=16x8/8x16/8x8/8x4/4x8/4x4
+OK h264_dpb_mc RTL red-check: bad edge clamp fault failed golden
+OK h264_dpb_mc RTL red-check: bad MC arithmetic fault failed golden
+OK h264_dpb_mc RTL red-check: early reference publication fault failed golden
+OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden
+```
 
 `tests/unit/test_h264_p_slice_modes_rtl_sim.sh` separately exercises the product P MB type decoder:
 
@@ -175,15 +192,16 @@ reference + current reconstruction = 898,560 B
 reference + current + one present/reorder buffer = 1,347,840 B
 ```
 
-Assuming the validated 80 MHz DDR clock path and YUV420 planar frame store, the narrow inter path is
-comfortable. A conservative P16×16/P_Skip budget is one quarter-pel reference read plus one current
-YUV write plus one present/reorder write:
+Assuming the validated DDR path and YUV420 planar DPB, the inter path is comfortable. The first
+product DPB budget is:
 
 ```text
-~0.70 MB reference reads/frame + 0.45 MB current write + 0.45 MB present = ~1.60 MB/frame
-at 25 fps: ~40 MB/s before arbitration/halo overhead
-planning with overhead: ~50-70 MB/s
+filtered writeback: 384 B/MB
+P reference fetch: 21*21 Y + 9*9 U + 9*9 V = 603 B/MB
+total DPB traffic: 987 B/MB * 1170 MB/frame = 1,154,790 B/frame
+at 25 fps: 28,869,750 B/s (27.5 MiB/s)
 ```
 
-That is now comfortably below an 80 MHz DDR path. SDRAM remains out of scope because it still has no
-hardware response evidence.
+That is a small fraction of the HPS DDR3 path even alongside presentation. SDRAM remains the escape
+hatch once the project controller is product-ready, but its bring-up is no longer on the MC critical
+path.
