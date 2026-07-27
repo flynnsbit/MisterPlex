@@ -303,51 +303,41 @@ accounting.
    `present_core`/`CLK_VIDEO` stay on `clk_sys`. The only CDC needed is the
    frame-store handoff (already crosses domains via `fs_swap`/`fs_wr_reset`).
 
-### Clock upside — what is real vs what was premature (CORRECTED 2026-07-27)
+### Clock upside — what is real vs what was premature (CORRECTED ×2, 2026-07-27)
 
 **The provenance finding stands:** 20 MHz is genuinely an untouched
 Template_MiSTer default that nobody chose. The separation path (4th PLL output
 for decode, video stays on `clk_sys`) is architecturally clean.
 
-**However, discovering that a limit was never chosen is not the same as
-discovering the hardware can exceed it.** w-cap has produced fitter-measured
-numbers that refute the estimated frequency targets:
+**The fabric frequency limit is UNMEASURED.** Two successive corrections:
 
-#### Fitter-measured intra-domain Fmax (from `Plex.sta.rpt`)
+1. w-arch estimated the critical path at 12 logic levels ≈ 12.3 ns →
+   theoretical 81 MHz. **Refuted by fitter:** measured 39.86 ns (3.2× longer
+   because routing delay was excluded).
+2. w-cap measured fitter Fmax at 25.09 MHz (39.86 ns critical path). **Then
+   identified the endpoints:** `decode_stub|lat_qp[4]` → `decode_stub|recon_dbg[5]`,
+   22 logic levels. **`decode_stub` is a diagnostic shim, not the decoder.**
+   All 10 worst intra-domain paths are the same FROM/TO pair. When `decode_stub`
+   is replaced by the production decoder, this path disappears and the true
+   constraint becomes whatever is second-deepest — which is also `decode_stub`.
 
-| Domain | Fmax (MEASURED) | Critical path | Slack at current clock |
-| --- | ---:| ---:| ---:|
-| `clk_sys` (20 MHz) | **25.09 MHz** | **39.86 ns** | +10.14 ns |
-| `clk_ddr` (90 MHz) | 88.31 MHz | 11.33 ns | -0.21 ns |
+**We have no measurement of the real decode fabric's frequency limit.** Not from
+w-arch's estimate, not from the 25.09 MHz figure. It requires a fit containing
+production decode modules, and that fit has not run.
 
-**The decode fabric cannot currently run above ~25 MHz.** To reach 45 MHz
-(22.22 ns period) the critical path must shrink by 17.6 ns. For 60 MHz
-(16.67 ns) by 23.2 ns. That is 2–3 pipeline stages of real work, not a PLL
-parameter change.
+#### Cross-domain timing relationships (from w-cap — UNAFFECTED by decode_stub)
 
-#### w-arch's estimate vs fitter measurement
-
-w-arch estimated the critical path at 12 logic levels ≈ 12.3 ns. The fitter
-measured **39.86 ns** — a factor of **3.2× longer**, because the fitter includes
-routing delay and the logic-level count does not. **All clock targets derived
-from that estimate (40, 48, 60 MHz) were based on a number that was wrong by
-3.2×.** They are withdrawn from this document as planning targets.
-
-#### Cross-domain timing relationships (from w-cap)
-
-Even if the fabric could be pipelined to a higher frequency, the cross-domain
-relationship to `clk_ddr` (90 MHz) constrains which frequencies are safe:
+The cross-domain relationship to `clk_ddr` (90 MHz) constrains which decode
+frequencies are safe regardless of fabric Fmax:
 
 | Decode clock | DDR ratio | Worst-case setup | Assessment |
 | ---:| ---:| ---:| --- |
-| 20 MHz (current) | 2:9 | 11.111 ns | +10.14 ns slack (MEASURED) |
+| 20 MHz (current) | 2:9 | 11.111 ns | Current, working |
 | 40 MHz | 4:9 | 2.778 ns | HALF the budget that already failed at -2.137 ns |
 | **45 MHz** | **1:2 exact** | **11.111 ns** | **Edges align every cycle — safest** |
 | 60 MHz | 2:3 | 5.556 ns | SAME zone that produced the -2.137 ns failure |
 
-**45 MHz is the only comfortable candidate** — integer 1:2 ratio to clk_ddr,
-edges align every cycle. But the fabric cannot reach it without ~17.6 ns of
-critical-path reduction.
+**45 MHz remains the only comfortable candidate** if the fabric can reach it.
 
 #### PLL VCO constraint (VERIFIED from STA)
 
@@ -360,27 +350,39 @@ Corroborated by `fractional_vco_multiplier = "false"` in `pll_0002.v`.
 
 #### What a clock increase requires
 
-A clock increase is **not** a PLL parameter change — it requires:
-1. Identify the 39.86 ns critical path (which module, which signal)
-2. Pipeline it to reduce the path to ≤22.22 ns (for 45 MHz)
-3. Re-fit and get positive STA slack at the new frequency
+1. A fit with production decode modules (not `decode_stub`) to learn the real Fmax
+2. If Fmax ≥ 45 MHz: a PLL change to 45 MHz (integer ratio to clk_ddr)
+3. If Fmax < 45 MHz: identify and pipeline the critical path, then re-fit
 4. Verify cross-domain timing closes with the 1:2 ratio
 
-This is real engineering work that nobody has scheduled. **Do not budget
-against it.**
+**Until step 1 happens, the frequency limit is unknown. "Unknown" is not
+"high" — do not budget against it.**
+
+#### `clk_ddr` violation: `disp_buf_d2 → DDRAM_ADDR` (REAL, PRODUCT PATH)
+
+While the `clk_sys` critical path is diagnostic dead code, the `clk_ddr`
+violation is real:
+```
+FROM:   ddr_frame_store|disp_buf_d2
+TO:     ddr_frame_store|DDRAM_ADDR[9] (also [15], [18], [23], ...)
+slack:  -0.213 ns    7 logic levels    10.722 ns data delay
+```
+
+`disp_buf_d2` is the display buffer bank select feeding the DDR address. A
+setup violation here can cause reads from the wrong bank — a direct mechanism
+for the observed `has_frame=0` frozen-screen signature. **This is candidate 2
+(bank race) with a named register and measured violation.** w-a3 owns the
+investigation; one pipeline register fixes it.
 
 ### Implication for the budget
 
 | Decode clock | Budget cycles/MB | Margin at 558 total | Status |
 | ---:| ---:| ---:| --- |
-| **20 MHz (current, VERIFIED)** | **684** | **1.23× (126 cycles)** | **Working number** |
-| 25 MHz (fabric Fmax, MEASURED) | 855 | 1.53× (297 cycles) | Reachable with clean fit |
-| 45 MHz (requires pipelining) | 1,538 | 2.76× (980 cycles) | Conditional on ~17.6 ns path reduction |
+| **20 MHz (current)** | **684** | **1.23× (126 cycles)** | **Working number** |
+| 45 MHz (if fabric allows) | 1,538 | 2.76× (980 cycles) | Conditional on unknown Fmax |
 
-**684 cycles/MB is the working budget.** The ~25 MHz Fmax suggests modest
-upside (~1.53× margin at 855 cycles/MB) may be reachable with a clean fit,
-but that is upside, not a planning assumption. Treat any clock increase as
-a bonus that arrives if and when a fit proves it.
+**684 cycles/MB is the working budget.** The fabric Fmax is unmeasured.
+Do not budget against any higher clock until a production-module fit reports it.
 
 ## Verdict
 
@@ -399,11 +401,11 @@ The budget has three provenance tiers:
 modules. **At 1.23× margin with 58% ESTIMATED, feasibility is tight but
 workable — not comfortable.**
 
-The 20 MHz clock is a template default that nobody chose, **but the fabric
-cannot currently exceed ~25 MHz** (39.86 ns critical path, MEASURED by
-fitter). A clock increase to 45 MHz (the only safe cross-domain candidate)
-requires ~17.6 ns of critical-path reduction — real pipelining work, not
-a PLL change.
+The 20 MHz clock is a template default that nobody chose, and the fabric
+Fmax is **UNMEASURED** (the 25.09 MHz figure was `decode_stub` dead code,
+not the production decoder). A clock increase to 45 MHz (the only safe
+cross-domain candidate) may be achievable but requires a production-module
+fit to determine. **Do not design against it.**
 
 **Consequence for MC:** adjacent-MB overlap exploitation is **recommended**
 at 20 MHz. Without it, MC must stay under 376 cycles/MB. With it (~180
@@ -412,44 +414,33 @@ it is the difference between a tight budget and a comfortable one.
 
 **Do not report "comfortable" at 20 MHz.** 1.23× margin on a budget whose
 majority is estimates is workable, not comfortable. The clock may eventually
-provide real headroom, but **it has not been demonstrated and must not be
+provide real headroom, but **it has not been measured and must not be
 assumed.**
 
-## 39.86 ns critical path — what it costs and where to cut (2026-07-27)
+## Critical path status (2026-07-27, CORRECTED ×2)
 
-The fitter-measured critical path (39.86 ns, Fmax 25.09 MHz) is now the
-**most valuable optimisation target in the project**. Cutting it directly
-buys decode clock headroom.
+**The 39.86 ns / 25.09 MHz figure was `decode_stub` dead code.** All 10 worst
+`clk_sys` intra-domain paths run through `decode_stub|lat_qp[4]` →
+`decode_stub|recon_dbg[5]` (22 logic levels, routing variants only).
+`decode_stub` is a simulation/diagnostic shim that the production decoder
+replaces. When it goes, the path goes with it.
 
-**What the path costs in budget terms:**
+**The production decode fabric's frequency limit has never been measured.**
+It requires a fit containing the real decode modules. Until then:
+- Do not cite 25.09 MHz as the fabric Fmax — it was dead code
+- Do not cite w-arch's 12.3 ns estimate — it excluded routing delay
+- Design to 684 cycles/MB (20 MHz). "Unknown limit" is not "high limit"
 
-| Path reduction | Achievable Fmax | Budget cycles/MB | MC headroom |
-| ---:| ---:| ---:| ---:|
-| 0 ns (status quo) | 25 MHz | 855 | +297 over 558 |
-| 10 ns (→ 29.86 ns) | 33.5 MHz | 1,145 | +587 |
-| 17.6 ns (→ 22.22 ns) | 45 MHz | 1,539 | +981 |
+**The `clk_ddr` violation IS real and in the product path:**
+`disp_buf_d2 → DDRAM_ADDR` at -0.213 ns, 7 logic levels. One pipeline
+register fixes it. w-a3 owns this investigation.
 
-**Where it might sit, and what that means for the budget:**
-
-- **dequant→IDCT→recon chain (22-bit carry, combinational):** HIGH VALUE.
-  w-cabac's widening from `signed[17:0]` to `signed[21:0]` added carry chain
-  length. w-plane showed this exact codebase's arithmetic can be restructured
-  from 55-70 LUT levels to 18 without changing the computation. If the critical
-  path is here, the clock question reopens on merit.
-
-- **MC/DDR arbitration (45% of budget):** HIGH VALUE. Cutting here buys both
-  frequency and per-fetch latency. The arbiter logic has complex ready/valid
-  handshaking that could have long combinational paths.
-
-- **Parse FSM (9% of budget, 3.2 cycles measured):** MODERATE VALUE. Budget
-  is generous, but FSMs with wide next-state logic create long paths.
-
-- **Present/video path (not in decode budget):** ARCHITECTURAL VALUE only.
-  Cutting enables clock separation but does not directly help decode.
-
-**Action:** w-arch should obtain the path from w-cap's fit report and identify
-the start/end modules. If it is in the combinational arithmetic chain, the
-restructuring precedent from w-plane applies directly.
+**Error record:** This document has been corrected twice on the clock question
+within two hours. At `71e509b` it said "target 60 MHz." At `747d960` it said
+"fabric tops out at 25 MHz." Both were wrong — the first from an estimate that
+excluded routing, the second from a fitter number that measured a diagnostic
+shim. The budget (684 cycles/MB, 20 MHz) has been correct throughout because
+it was never loosened on the strength of either claim.
 
 ## Ratchet audit: commit 3fda008 (2026-07-27)
 
