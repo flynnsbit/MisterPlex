@@ -244,8 +244,21 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `res_csum=0x14` on a **non-DIAG / non-force product RBF** (contingency §D ACTIVE after
     dabdaeb0 FAIL reference; DIAG force-0x14 alone ≠ product unblock; **soft-skip ≠ hard PASS**;
     do not thrash-redeploy dabdaeb0).
+  **3.3l-3 host full-MB golden done (W-REL 2026-07-26):** `h264_recon.hpp` now has an optional
+    `ReconTrace` that records MB0 luma prediction, 16 dequantized coefficients per 4×4, signed
+    post-IDCT residual samples, and final reconstructed pixels. Stable RTL fixture:
+    `tests/fixtures/p3_host_recon/mb0_luma_v1.json` (`format=misterplex.p3.luma_mb.v1`).
+    The checked-in source vector is `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`
+    and remains **6739 bytes**; no existing generated vector is resized.
+  **3.3l-4 host frame-MAE golden done (W-REL 2026-07-26):** `test_p3_host_recon_vectors`
+    reconstructs the whole 320×240 IDR, compares it to FFmpeg
+    `-skip_loop_filter all`, and emits `tests/fixtures/p3_host_recon/frame_mae_v1.csv`
+    (`format=misterplex.p3.frame_mae.v1`). Evidence command:
+    `build/test_p3_host_recon_vectors` → `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
+    Every MB row has `sum_abs_y=0`, `mae_y=0.000000`, `max_abs_y=0`; generated copies land in
+    `build/p3_host_recon_mb0_luma_v1.json` and `build/p3_host_recon_frame_mae_v1.csv`.
   **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 host+handoff ✅ / paint **BLOCKED** →
-    3.3l-3 first MB → 3.3l-4 all MBs → 3.3l-5 hybrid gate.
+    3.3l-3 host first full MB ✅ → 3.3l-4 host all-MB frame MAE ✅ → FPGA 3.3l-3/4 remain blocked behind residual checksum gate → 3.3l-5 hybrid gate.
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 

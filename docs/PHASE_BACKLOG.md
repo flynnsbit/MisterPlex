@@ -381,8 +381,8 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 | P3-3l0 | Host quant/IDCT golden | DONE | `2e2c2dc` |
 | P3-3l1 | FPGA full 16 coeffs | **PARTIAL — R-csum6 BUILD_OK+DEPLOY lab `94bbfe43`; H-gate-rcsum6 IN_PROGRESS/PENDING (do not invent hard PASS); historical HARD_FAIL `ec21e133`+`8832824e`** | Host goldens 0x14 (**C-unit28 / C-unit27**). Lab **LOADED `94bbfe43`**. Soft-skip ≠ PASS. **3l2 BLOCKED** until sticky 0x14. Claim **c7a847f7/ca62d02b/904e9b2e** LOCK_OK. **BUILD_OK+DEPLOY ≠ residual PASS**. |
 | P3-3l2 | Inv quant + IDCT first 4×4 | **PARTIAL / BLOCKED** | Host DONE (L-3l2e). Hard-block until res_csum=0x14 stable ≥2 on **non-DIAG product** RBF. Lab **LOADED `94bbfe43`**; **H-gate-rcsum6 IN_PROGRESS/PENDING** — **do not unblock 3l2** until hard product sticky 0x14. **BUILD_OK+DEPLOY ≠ 3l2 UNBLOCK**. |
-| P3-3l3 | First full MB recon | TODO | |
-| P3-3l4 | All MBs / frame mae | TODO | |
+| P3-3l3 | First full MB recon | **HOST DONE / FPGA BLOCKED** | W-REL: checked-in `tests/fixtures/p3_host_recon/mb0_luma_v1.json` gives MB0 luma pred/dequant/post-IDCT/recon for RTL; source vector is fixed 6739 B. FPGA still waits for residual-csum gate. |
+| P3-3l4 | All MBs / frame mae | **HOST DONE / FPGA BLOCKED** | W-REL: `tests/fixtures/p3_host_recon/frame_mae_v1.csv`, `test_p3_host_recon_vectors` in `make unit`; evidence `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`. |
 | P3-3l5 | Hybrid gate product | TODO | |
 | P3-SPI | SPI F1 only ~9fps — keep as fallback | DONE | |
 
