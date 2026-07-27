@@ -197,25 +197,27 @@ module h264_luma_qpel_sample (
 		end
 	endfunction
 
+	integer sample_i;
 	always @* begin
 		case ({frac_y, frac_x})
-			4'b0000: sample = pix(4, 4)[7:0];
-			4'b0001: sample = avg2(pix(4, 4), half_h(0, 0))[7:0];
-			4'b0010: sample = half_h(0, 0)[7:0];
-			4'b0011: sample = avg2(half_h(0, 0), pix(4, 5))[7:0];
-			4'b0100: sample = avg2(pix(4, 4), half_v(0, 0))[7:0];
-			4'b0101: sample = avg2(half_h(0, 0), half_v(0, 0))[7:0];
-			4'b0110: sample = avg2(half_h(0, 0), half_c(0, 0))[7:0];
-			4'b0111: sample = avg2(half_h(0, 0), half_v(0, 1))[7:0];
-			4'b1000: sample = half_v(0, 0)[7:0];
-			4'b1001: sample = avg2(half_v(0, 0), half_c(0, 0))[7:0];
-			4'b1010: sample = half_c(0, 0)[7:0];
-			4'b1011: sample = avg2(half_c(0, 0), half_v(0, 1))[7:0];
-			4'b1100: sample = avg2(half_v(0, 0), pix(5, 4))[7:0];
-			4'b1101: sample = avg2(half_h(1, 0), half_v(0, 0))[7:0];
-			4'b1110: sample = avg2(half_c(0, 0), half_h(1, 0))[7:0];
-			4'b1111: sample = avg2(half_h(1, 0), half_v(0, 1))[7:0];
+			4'b0000: sample_i = pix(4, 4);
+			4'b0001: sample_i = avg2(pix(4, 4), half_h(0, 0));
+			4'b0010: sample_i = half_h(0, 0);
+			4'b0011: sample_i = avg2(half_h(0, 0), pix(4, 5));
+			4'b0100: sample_i = avg2(pix(4, 4), half_v(0, 0));
+			4'b0101: sample_i = avg2(half_h(0, 0), half_v(0, 0));
+			4'b0110: sample_i = avg2(half_h(0, 0), half_c(0, 0));
+			4'b0111: sample_i = avg2(half_h(0, 0), half_v(0, 1));
+			4'b1000: sample_i = half_v(0, 0);
+			4'b1001: sample_i = avg2(half_v(0, 0), half_c(0, 0));
+			4'b1010: sample_i = half_c(0, 0);
+			4'b1011: sample_i = avg2(half_c(0, 0), half_v(0, 1));
+			4'b1100: sample_i = avg2(half_v(0, 0), pix(5, 4));
+			4'b1101: sample_i = avg2(half_h(1, 0), half_v(0, 0));
+			4'b1110: sample_i = avg2(half_c(0, 0), half_h(1, 0));
+			4'b1111: sample_i = avg2(half_h(1, 0), half_v(0, 1));
 		endcase
+		sample = sample_i[7:0];
 	end
 endmodule
 
@@ -266,8 +268,10 @@ module h264_luma_ref_tap_addr (
 	output wire        [15:0] tap_x,
 	output wire        [15:0] tap_y
 );
-	wire signed [15:0] tap_col = $signed({9'd0, (tap_idx % 7'd9)}) - 16'sd4;
-	wire signed [15:0] tap_row = $signed({9'd0, (tap_idx / 7'd9)}) - 16'sd4;
+	wire [6:0] tap_col_u = tap_idx % 7'd9;
+	wire [6:0] tap_row_u = tap_idx / 7'd9;
+	wire signed [15:0] tap_col = $signed({9'd0, tap_col_u}) - 16'sd4;
+	wire signed [15:0] tap_row = $signed({9'd0, tap_row_u}) - 16'sd4;
 	h264_ref_clamp u_clamp (
 		.x(base_x + tap_col),
 		.y(base_y + tap_row),
