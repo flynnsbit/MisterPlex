@@ -132,6 +132,15 @@ public:
         return false;
     }
 
+    bool waitForFrameMailboxMagic(int maxCycles) {
+        for (int i = 0; i < maxCycles; ++i) {
+            if (static_cast<uint32_t>(frameMailbox()) == kFrameMailboxMagic)
+                return true;
+            tick();
+        }
+        return false;
+    }
+
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
             if (schedulerArmed) {
@@ -337,6 +346,23 @@ bool runFreshNoStale() {
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
     expectFreshSample("first fresh no-stale", sim, 208);
+    return sim.schedulerProven();
+}
+
+bool runInitialFrameMailboxPublish() {
+    Sim sim;
+    sim.resetCore();
+    if (!sim.waitForFrameMailboxMagic(20000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: PLXF frame mailbox did not publish"
+                  << " after reset mailbox=0x" << std::hex << sim.frameMailbox()
+                  << std::dec << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    const uint64_t mbox = sim.frameMailbox();
+    std::cout << "ddr_frame_store warm-reset raw: initial_plxf_publish"
+              << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
+              << " frame_debug=0x" << int((mbox >> 40) & 0xffu)
+              << std::dec << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -631,6 +657,7 @@ bool runEqualTokenRefreshAfterAccept() {
 
 void run() {
     bool schedulerSeen = false;
+    schedulerSeen |= runInitialFrameMailboxPublish();
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runChromaVerticalStrideMapping();
