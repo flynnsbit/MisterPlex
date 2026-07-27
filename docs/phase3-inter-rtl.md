@@ -139,7 +139,9 @@ The stream path now instantiates the product `h264_deblock_writeback_ctrl`: IDR 
 `dpb_invalidate_refs` into `h264_dpb_one_ref.idr_start`, generated filtered I420 sample writes precede
 each `filtered_mb_valid`, terminal commit is followed by `frame_boundary`, and the controller's
 `ref_ready_pulse` is the only signal promoted into `h264_dpb_one_ref.frame_done`. That makes the
-parser→DPB/MC liveness path and the deblock commit-barrier seam one wired RTL path.
+parser→DPB/MC liveness path and the deblock commit-barrier seam one wired RTL path. IDR starts
+invalidate the one-ref DPB, the diagnostic filtered sample is presented before frame promotion, and
+the frame-boundary promotion enables P fetches from the previous reference.
 
 ```text
 multi-NAL stream_path raw: bytes=27653 bytes_in=27653 bytes_seen=27652 nalu=15 sps=1 pps=1 idr=1 slice=11 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=39780 frames=10 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 ... final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1
@@ -151,7 +153,10 @@ Those 11 first-P-MB classifications cover P_L0_16x16, P_L0_16x8 and P_L0_8x16 th
 until the shared fixtures contain those syntax modes at the first macroblock or expose full P-MB
 goldens. `recon_sig_3b_cycles` moving from zero is a liveness signal only: it proves the parsed
 P path can issue a DPB reference fetch, fill the 21×21/9×9 MC windows, and publish a reconstructed-P
-signature after product deblock-writeback reference promotion. It is not a quality PASS.
+signature after product deblock-writeback reference promotion. It is not a quality PASS. The
+authoritative native-I420 scoreboard still classifies P output as expected-red (`11/11` P frames
+for both 12-frame fixtures; `1/1` for the wcap fixture) until native inter/DPB plane output replaces
+the RGB565-derived observable path.
 
 The older inter diagnostic red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`)
 to perturb visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated
