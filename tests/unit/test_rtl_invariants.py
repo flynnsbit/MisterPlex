@@ -648,6 +648,46 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 media_norm,
+                "wantYuvDdr=wantFpgaFrameStore&&ddrFrameFormat_==DdrFrameFormat::Yuv420p",
+                "FPGA DDR presentation must select the YUV420p rawvideo decoder output mode",
+            ),
+            (
+                media_norm,
+                "if(wantYuvDdr){videoFmt=RawVideoFormat::Yuv420p;}",
+                "DDR YUV mode must force the FFmpeg pipe format to yuv420p/I420",
+            ),
+            (
+                media_norm,
+                'args.push_back("-pix_fmt");args.push_back(ffmpegPixFmt(videoFmt));',
+                "FFmpeg invocation must bind -pix_fmt to the selected yuv420p/I420 decoder output",
+            ),
+            (
+                media_norm,
+                "caseRawVideoFormat::Yuv420p:returnyuv420pFrameBytes(width,height);",
+                "YUV420p frame byte count must be coded_width*coded_height*3/2",
+            ),
+            (
+                media_norm,
+                "n=::read(rfd,frame.data()+got,frameBytes-got);",
+                "decoded rawvideo bytes must be read contiguously into frame.data()",
+            ),
+            (
+                media_norm,
+                "constuint8_t*txFrame=cleanFrame;",
+                "DDR send must use the clean frame pointer, not a remapped chroma scratch buffer",
+            ),
+            (
+                media_norm,
+                "size_ttxBytes=frameBytes;",
+                "DDR send length must remain the full contiguous yuv420p frame size",
+            ),
+            (
+                media_norm,
+                "presentCleanFrame(frame.data(),true);",
+                "product playback must present the contiguous FFmpeg yuv420p pipe buffer",
+            ),
+            (
+                media_norm,
                 "clearPlane(yuv+yBytes,cW,cW,cH,g.crop_left/2,g.crop_right/2,g.crop_top/2,g.crop_bottom/2,kYuv420BlackU)",
                 "crop padding must treat offset yBytes as the U/Cb plane",
             ),
@@ -670,6 +710,11 @@ def check_yuv_ddr_writer_contract() -> None:
                 media_norm,
                 "ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)",
                 "product rawvideo DDR send must pass the yuv420p frame buffer unchanged",
+            ),
+            (
+                fpga_norm,
+                "returnsendDdrFrame(yuv420p,len,bank)",
+                "sendYuv420pFrameDdr must forward the yuv420p pointer to the DDR copier unchanged",
             ),
             (
                 fpga_norm,
@@ -733,7 +778,19 @@ def check_yuv_ddr_writer_contract() -> None:
     )
     if not missing_arm_yuv_requirements(swapped_media, fb_nt, fpga_nt, recon_nt):
         fail("deliberately swapped ARM U/V staging did not make the YUV420 DDR plane gate red")
-    print("PASS ARM DDR writer uses product yuv420p frame-store path only")
+    remapped_fpga = fpga_nt.replace(
+        "returnsendDdrFrame(yuv420p,len,bank)",
+        "returnsendDdrFrame(remapYuv420pForDdr(yuv420p),len,bank)",
+    ).replace(
+        "std::memcpy(ddrMap_+bankOff,payload,len)",
+        "copyYv12PlanesToDdr(ddrMap_+bankOff,payload,len)",
+    )
+    if not missing_arm_yuv_requirements(media_nt, fb_nt, remapped_fpga, recon_nt):
+        fail("deliberately remapped rawvideo DDR payload did not make the YUV420 DDR plane gate red")
+    print(
+        "PASS ARM DDR writer keeps FFmpeg yuv420p/I420 order "
+        "(Y then U/Cb then V/Cr) through the product DDR path"
+    )
 
 
 def check_ddr_bitstream_product_path() -> None:
