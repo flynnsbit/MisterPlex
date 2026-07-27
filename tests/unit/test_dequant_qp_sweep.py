@@ -28,6 +28,14 @@ NOT transcribed from the RTL, to avoid proving we typed the same thing twice.
 
 RED proof: deliberately broken LUT / shift / decomposition → must FAIL
 
+INSTRUMENT FAILURE #17 CONTEXT (2026-07-27):
+  The project's "1170/1170 bit-exact" claim comes from
+  tools/score_h264_native_frames.cpp, which compares HOST C++ decoder
+  output against ffmpeg. It does not involve the RTL at all.
+  THIS TEST (test_dequant_qp_sweep) is independent: it drives the
+  h264_dequant4x4 Verilator model directly. Its results are genuine
+  RTL verification — but module-level, luma AC only, as stated above.
+
 INSTRUMENT FAILURE #14 (2026-07-27):
   The original version of this test ran 14,144 Verilator vectors and
   reported "spec-correct across QP 0–51" on a tree with a known
