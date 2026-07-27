@@ -30,6 +30,7 @@ command -v ffprobe >/dev/null || { echo "RTL SIM ERROR: ffprobe not found" >&2; 
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 BITSTREAM="${FULL_FRAME_BITSTREAM:-$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264}"
 SEQUENCE="${FULL_FRAME_SEQUENCE:-$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json}"
+RATCHET="${FULL_FRAME_RATCHET:-$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_full_frame_ratchet_v1.json}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
@@ -52,7 +53,7 @@ PRODUCT_RTL=(
   decode_stub.sv
 )
 
-for f in "$QIP" "$BITSTREAM" "$SEQUENCE" "$TOP" "$TB"; do
+for f in "$QIP" "$BITSTREAM" "$SEQUENCE" "$RATCHET" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -94,6 +95,10 @@ if ! grep -q "$SOURCE_SHA" "$SEQUENCE"; then
   echo "RTL SIM ERROR: sequence manifest sha256 does not match bitstream" >&2
   exit 2
 fi
+if ! grep -q "$SOURCE_SHA" "$RATCHET"; then
+  echo "RTL SIM ERROR: ratchet baseline sha256 does not match bitstream" >&2
+  exit 2
+fi
 expected_size=$((WIDTH * HEIGHT * 3 * FRAMES))
 actual_size=$(wc -c < "$REF_RGB")
 if [[ "$actual_size" -ne "$expected_size" ]]; then
@@ -120,6 +125,47 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}
   --json-out "$COMPARE_JSON" --expect-red
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
+python3 - "$COMPARE_JSON" "$RATCHET" <<'PY'
+import json
+import sys
+
+actual = json.load(open(sys.argv[1]))
+ratchet = json.load(open(sys.argv[2]))
+if ratchet.get("format") != "misterplex.p3.frame_planes_ratchet.v1":
+    raise SystemExit("FAIL full-frame ratchet: unknown ratchet format")
+if actual["source"]["sha256"] != ratchet.get("source_sha256"):
+    raise SystemExit("FAIL full-frame ratchet: source sha256 mismatch")
+if actual["geometry"].get("colorspace") != ratchet.get("colorspace"):
+    raise SystemExit("FAIL full-frame ratchet: colorspace mismatch")
+
+planes = {}
+for frame in actual["frames"]:
+    for plane in frame["planes"]:
+        planes[(frame["frame_index"], plane["plane"])] = plane
+
+failures = []
+eps = 1e-6
+for metric in ratchet["metrics"]:
+    key = (metric["frame_index"], metric["plane"])
+    got = planes.get(key)
+    if got is None:
+        failures.append(f"missing frame={key[0]} plane={key[1]}")
+        continue
+    if got["exact_pixels"] < metric["min_exact_pixels"]:
+        failures.append(f"frame={key[0]} plane={key[1]} exact {got['exact_pixels']} < {metric['min_exact_pixels']}")
+    if got["mae"] > metric["max_mae"] + eps:
+        failures.append(f"frame={key[0]} plane={key[1]} mae {got['mae']} > {metric['max_mae']}")
+    if got["max_abs"] > metric["max_abs"]:
+        failures.append(f"frame={key[0]} plane={key[1]} max_abs {got['max_abs']} > {metric['max_abs']}")
+
+if failures:
+    print("FAIL full-frame ratchet: divergence metrics regressed")
+    for item in failures[:20]:
+        print("  " + item)
+    raise SystemExit(1)
+
+print(f"OK full-frame ratchet: {len(ratchet['metrics'])} frame/plane metrics did not regress")
+PY
 
 set +e
 FAULT_OUT="$("$BUILD_FAULT/Vstream_path_full_frame_tb" \
@@ -128,7 +174,7 @@ FAULT_OUT="$("$BUILD_FAULT/Vstream_path_full_frame_tb" \
   --json-out "$FAULT_JSON" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT" | grep -E 'FULL_FRAME_COMPARE summary|FAIL full-frame strict|FULL_FRAME_COMPARE raw frame=0 plane='
+printf '%s\n' "$FAULT_OUT" | grep -E 'FULL_FRAME_COMPARE summary|FAIL full-frame strict|FULL_FRAME_COMPARE raw frame=0 .*plane='
 if [[ "$FAULT_RC" -eq 0 ]]; then
   echo "FAIL full-frame red-check: faulted pixel stream unexpectedly matched reference" >&2
   exit 1

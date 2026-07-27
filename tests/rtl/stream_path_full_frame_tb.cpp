@@ -173,6 +173,10 @@ std::array<uint8_t, 3> rgb565ToRgb(uint16_t px) {
     return {expand5((px >> 11) & 0x1f), expand6((px >> 5) & 0x3f), expand5(px & 0x1f)};
 }
 
+std::array<uint8_t, 3> rgb888ToRgb565Expanded(uint8_t r, uint8_t g, uint8_t b) {
+    return rgb565ToRgb(static_cast<uint16_t>(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)));
+}
+
 class Sim {
 public:
     explicit Sim(int w, int h) : width(w), height(h), framePixels(static_cast<std::size_t>(w) * h) {}
@@ -255,15 +259,40 @@ struct PlaneStats {
     double mae = 0.0;
 };
 
+struct BadPixel {
+    bool valid = false;
+    std::size_t frame = 0;
+    int plane = 0;
+    int x = 0;
+    int y = 0;
+    int got = 0;
+    int ref = 0;
+    int abs = 0;
+};
+
 struct FrameCompareStats {
     std::array<PlaneStats, 3> plane;
+    std::array<BadPixel, 3> firstBad;
 };
 
 struct CompareResult {
     bool exact = true;
     int firstBadFrame = -1;
+    BadPixel firstBad;
     std::vector<FrameCompareStats> frames;
 };
+
+uint8_t clamp8(int v) {
+    return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+std::array<uint8_t, 3> rgbToYuv(uint8_t r, uint8_t g, uint8_t b) {
+    return {
+        clamp8((77 * r + 150 * g + 29 * b + 128) >> 8),
+        clamp8((-43 * r - 85 * g + 128 * b + 32896) >> 8),
+        clamp8((128 * r - 107 * g - 21 * b + 32896) >> 8),
+    };
+}
 
 CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
                             const std::vector<uint8_t>& ref,
@@ -272,30 +301,61 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
     const std::size_t frameBytes = pixels * 3;
     const std::size_t refFrames = ref.size() / frameBytes;
     CompareResult result;
-    const char* names = "RGB";
+    const char* names = "YUV";
     for (std::size_t f = 0; f < got.size(); ++f) {
         if (got[f].size() != frameBytes) throw std::runtime_error("captured frame has wrong byte count");
         FrameCompareStats frameStats;
-        for (int p = 0; p < 3; ++p) {
-            PlaneStats st;
-            for (std::size_t i = 0; i < pixels; ++i) {
-                const uint8_t g = got[f][i * 3 + p];
-                const uint8_t r = ref[f * frameBytes + i * 3 + p];
+        for (std::size_t i = 0; i < pixels; ++i) {
+            const auto gyuv = rgbToYuv(got[f][i * 3 + 0], got[f][i * 3 + 1], got[f][i * 3 + 2]);
+            const auto rrgb = rgb888ToRgb565Expanded(ref[f * frameBytes + i * 3 + 0],
+                                                     ref[f * frameBytes + i * 3 + 1],
+                                                     ref[f * frameBytes + i * 3 + 2]);
+            const auto ryuv = rgbToYuv(rrgb[0], rrgb[1], rrgb[2]);
+            const int x = static_cast<int>(i % static_cast<std::size_t>(width));
+            const int y = static_cast<int>(i / static_cast<std::size_t>(width));
+            for (int p = 0; p < 3; ++p) {
+                PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
+                const uint8_t g = gyuv[static_cast<std::size_t>(p)];
+                const uint8_t r = ryuv[static_cast<std::size_t>(p)];
                 const uint8_t d = static_cast<uint8_t>(g > r ? g - r : r - g);
                 st.exact += (d == 0);
                 st.sumAbs += d;
                 st.maxAbs = std::max(st.maxAbs, d);
+                if (d != 0 && !frameStats.firstBad[static_cast<std::size_t>(p)].valid) {
+                    frameStats.firstBad[static_cast<std::size_t>(p)] =
+                        {true, f, p, x, y, static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
+                }
+                if (d != 0 && !result.firstBad.valid) {
+                    result.firstBad = {true, f, p, x, y, static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
+                    result.firstBadFrame = static_cast<int>(f);
+                }
             }
+        }
+        for (int p = 0; p < 3; ++p) {
+            PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
             st.mae = static_cast<double>(st.sumAbs) / static_cast<double>(pixels);
-            frameStats.plane[static_cast<std::size_t>(p)] = st;
+            const BadPixel& first = frameStats.firstBad[static_cast<std::size_t>(p)];
             std::cout << "FULL_FRAME_COMPARE raw frame=" << f
+                      << " colorspace=YUV444_FROM_RGB565"
                       << " plane=" << names[p]
                       << " exact=" << st.exact
                       << " pixels=" << pixels
                       << " mae=" << std::fixed << std::setprecision(6) << st.mae
                       << " max_abs=" << static_cast<int>(st.maxAbs) << "\n";
-            if (st.exact != pixels && result.firstBadFrame < 0)
-                result.firstBadFrame = static_cast<int>(f);
+            if (first.valid) {
+                std::cout << "FULL_FRAME_COMPARE first_bad frame=" << f
+                          << " colorspace=YUV444_FROM_RGB565"
+                          << " plane=" << names[p]
+                          << " x=" << first.x
+                          << " y=" << first.y
+                          << " mb_x=" << (first.x / 16)
+                          << " mb_y=" << (first.y / 16)
+                          << " pixel_in_mb_x=" << (first.x & 15)
+                          << " pixel_in_mb_y=" << (first.y & 15)
+                          << " got=" << first.got
+                          << " ref=" << first.ref
+                          << " abs=" << first.abs << "\n";
+            }
         }
         result.frames.push_back(frameStats);
     }
@@ -310,17 +370,29 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write compare JSON: " + path);
     const std::size_t pixels = static_cast<std::size_t>(args.width) * args.height;
-    const char* names[3] = {"R", "G", "B"};
+    const char* names[3] = {"Y", "U", "V"};
     out << "{\n";
     out << "  \"format\": \"misterplex.p3.frame_planes_compare.v1\",\n";
     out << "  \"source\": {\"path\": \"" << args.annexb << "\", \"bytes\": " << bytes
         << ", \"sha256\": \"" << args.sourceSha256 << "\"},\n";
     out << "  \"sequence_manifest\": \"" << args.sequenceJson << "\",\n";
     out << "  \"geometry\": {\"width\": " << args.width << ", \"height\": " << args.height
-        << ", \"planes\": [\"R\", \"G\", \"B\"]},\n";
+        << ", \"colorspace\": \"YUV444_FROM_RGB565\", \"planes\": [\"Y\", \"U\", \"V\"]},\n";
     out << "  \"summary\": {\"nals\": " << nals << ", \"idr\": " << idr << ", \"p\": " << p
         << ", \"cycles\": " << cycles << ", \"first_bad_frame\": " << cr.firstBadFrame
-        << ", \"strict_pass\": " << (cr.exact ? "true" : "false")
+        << ", \"first_bad\": ";
+    if (cr.firstBad.valid) {
+        out << "{\"frame_index\": " << cr.firstBad.frame << ", \"plane\": \"" << names[cr.firstBad.plane]
+            << "\", \"x\": " << cr.firstBad.x << ", \"y\": " << cr.firstBad.y
+            << ", \"mb_x\": " << (cr.firstBad.x / 16) << ", \"mb_y\": " << (cr.firstBad.y / 16)
+            << ", \"pixel_in_mb_x\": " << (cr.firstBad.x & 15)
+            << ", \"pixel_in_mb_y\": " << (cr.firstBad.y & 15)
+            << ", \"got\": " << cr.firstBad.got << ", \"ref\": " << cr.firstBad.ref
+            << ", \"abs\": " << cr.firstBad.abs << "}";
+    } else {
+        out << "null";
+    }
+    out << ", \"strict_pass\": " << (cr.exact ? "true" : "false")
         << ", \"expectation\": \"" << (args.expectRed ? "red" : "strict") << "\"},\n";
     out << "  \"frames\": [\n";
     for (std::size_t f = 0; f < cr.frames.size(); ++f) {
@@ -331,11 +403,23 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
         for (int pi = 0; pi < 3; ++pi) {
             const auto& st = cr.frames[f].plane[static_cast<std::size_t>(pi)];
             if (pi) out << ", ";
+            const BadPixel& first = cr.frames[f].firstBad[static_cast<std::size_t>(pi)];
             out << "{\"plane\": \"" << names[pi] << "\", \"width\": " << args.width
                 << ", \"height\": " << args.height << ", \"exact_pixels\": " << st.exact
                 << ", \"total_pixels\": " << pixels << ", \"mae\": "
                 << std::fixed << std::setprecision(6) << st.mae
-                << ", \"max_abs\": " << static_cast<int>(st.maxAbs) << "}";
+                << ", \"max_abs\": " << static_cast<int>(st.maxAbs) << ", \"first_bad\": ";
+            if (first.valid) {
+                out << "{\"x\": " << first.x << ", \"y\": " << first.y
+                    << ", \"mb_x\": " << (first.x / 16) << ", \"mb_y\": " << (first.y / 16)
+                    << ", \"pixel_in_mb_x\": " << (first.x & 15)
+                    << ", \"pixel_in_mb_y\": " << (first.y & 15)
+                    << ", \"got\": " << first.got << ", \"ref\": " << first.ref
+                    << ", \"abs\": " << first.abs << "}";
+            } else {
+                out << "null";
+            }
+            out << "}";
         }
         out << "]}";
         if (f + 1 != cr.frames.size()) out << ",";
