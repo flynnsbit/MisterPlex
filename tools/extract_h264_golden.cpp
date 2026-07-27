@@ -481,6 +481,11 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
        << ", \"display_width\": " << rec.width << ", \"display_height\": " << rec.height
        << ", \"mb_width\": " << mbW << ", \"mb_height\": " << mbH
        << ", \"crop_right_px\": " << (codedW - rec.width) << "},\n";
+    os << "  \"frame_plane_golden\": {\"format\": \"misterplex.p3.frame_planes_golden.v1\", "
+       << "\"optional\": true, \"compose_with\": \"misterplex.p3.frame_planes_compare.v1\", "
+       << "\"match_keys\": [\"source.sha256\", \"frame_index\", \"geometry.coded_width\", "
+       << "\"geometry.coded_height\"], "
+       << "\"consumer_refusal\": \"A full-frame consumer must reject frame-plane goldens whose source, frame index, decoder provenance, or geometry does not match the candidate.\"},\n";
     os << "  \"macroblock\": {\"index\": " << mb.mb << ", \"x\": " << mb.mb_x
        << ", \"y\": " << mb.mb_y << ", \"type\": " << mb.mb_type
        << ", \"type_name\": \"" << (mb.mb_type == 0 ? "I_NxN" : "I_16x16_or_pcm")

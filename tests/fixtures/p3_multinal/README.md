@@ -17,6 +17,10 @@ The sequence metadata names the preserved hardware injection route: assert
 `ioctl_download`, pulse `ioctl_wr` once per byte on `ioctl_dout`, then deassert
 `ioctl_download`.
 
+`plex_inter_p16_624x480_sequence_v1.json` is the same P16-only pattern generated at the
+settled 624×480 coded geometry. Its I420 per-frame plane goldens live in
+`tests/fixtures/p3_frame_planes/` and state Y stride 624, U/V stride 312.
+
 `wcap_residual14_idr_plus_p.264` is the focused w-cap fixture: inter-stream
 SPS/PPS/SEI (`max_num_ref_frames=1`), the proven IDR whose first residual checksum is
 `0x14`, then one P slice. It is deliberately small for the silicon-divergence fix.

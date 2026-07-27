@@ -29,8 +29,8 @@ command -v ffprobe >/dev/null || { echo "RTL SIM ERROR: ffprobe not found" >&2; 
 
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 BITSTREAM="${FULL_FRAME_BITSTREAM:-$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264}"
-SEQUENCE="${FULL_FRAME_SEQUENCE:-$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json}"
-RATCHET="${FULL_FRAME_RATCHET:-$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_full_frame_ratchet_v1.json}"
+SEQUENCE="${FULL_FRAME_SEQUENCE:-}"
+RATCHET="${FULL_FRAME_RATCHET:-}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
@@ -54,17 +54,12 @@ PRODUCT_RTL=(
   decode_stub.sv
 )
 
-for f in "$QIP" "$BITSTREAM" "$SEQUENCE" "$RATCHET" "$TOP" "$TB"; do
+for f in "$QIP" "$BITSTREAM" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
   fi
 done
-
-if ! grep -q '"format": "misterplex.p3.nal_sequence.v1"' "$SEQUENCE"; then
-  echo "RTL SIM ERROR: sequence manifest is not misterplex.p3.nal_sequence.v1: $SEQUENCE" >&2
-  exit 2
-fi
 
 RTL_ARGS=()
 for rtl in "${PRODUCT_RTL[@]}"; do
@@ -90,16 +85,84 @@ if [[ -z "${WIDTH:-}" || -z "${HEIGHT:-}" || -z "${FRAMES:-}" || "$FRAMES" == "N
 fi
 
 mkdir -p "$BUILD" "$BUILD_FAULT" "$REF_DIR"
-ffmpeg -v error -y -i "$BITSTREAM" -an -f rawvideo -pix_fmt rgb24 "$REF_RGB"
 SOURCE_SHA=$(sha256sum "$BITSTREAM" | awk '{print $1}')
+if [[ -z "$SEQUENCE" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      SEQUENCE="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json"
+      ;;
+    9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9)
+      SEQUENCE="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_624x480_sequence_v1.json"
+      ;;
+    9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62)
+      SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
+      ;;
+    *)
+      echo "RTL SIM ERROR: no sequence manifest supplied for bitstream $BITSTREAM" >&2
+      echo "Set FULL_FRAME_SEQUENCE after generating/committing a nal_sequence.v1 manifest." >&2
+      exit 2
+      ;;
+  esac
+fi
+if [[ ! -f "$SEQUENCE" ]]; then
+  echo "RTL SIM ERROR: missing required file: $SEQUENCE" >&2
+  exit 2
+fi
+if ! grep -q '"format": "misterplex.p3.nal_sequence.v1"' "$SEQUENCE"; then
+  echo "RTL SIM ERROR: sequence manifest is not misterplex.p3.nal_sequence.v1: $SEQUENCE" >&2
+  exit 2
+fi
 if ! grep -q "$SOURCE_SHA" "$SEQUENCE"; then
   echo "RTL SIM ERROR: sequence manifest sha256 does not match bitstream" >&2
+  exit 2
+fi
+if [[ -z "$RATCHET" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_full_frame_ratchet_v1.json"
+      ;;
+    *)
+      echo "RTL SIM ERROR: no proven full-frame ratchet supplied for bitstream $BITSTREAM" >&2
+      echo "Set FULL_FRAME_RATCHET after generating/committing a ratchet baseline." >&2
+      exit 2
+      ;;
+  esac
+fi
+if [[ ! -f "$RATCHET" ]]; then
+  echo "RTL SIM ERROR: missing required file: $RATCHET" >&2
   exit 2
 fi
 if ! grep -q "$SOURCE_SHA" "$RATCHET"; then
   echo "RTL SIM ERROR: ratchet baseline sha256 does not match bitstream" >&2
   exit 2
 fi
+GOLDEN_PLANES="${FULL_FRAME_GOLDEN_PLANES:-}"
+GOLDEN_MANIFEST="${FULL_FRAME_GOLDEN_MANIFEST:-}"
+if [[ -z "$GOLDEN_PLANES" && -z "$GOLDEN_MANIFEST" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      GOLDEN_PLANES="$ROOT/tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv"
+      GOLDEN_MANIFEST="$ROOT/tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json"
+      ;;
+    9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9)
+      GOLDEN_PLANES="$ROOT/tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv"
+      GOLDEN_MANIFEST="$ROOT/tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_frame_planes_v1.json"
+      ;;
+    9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62)
+      GOLDEN_PLANES="$ROOT/tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv"
+      GOLDEN_MANIFEST="$ROOT/tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_frame_planes_v1.json"
+      ;;
+  esac
+fi
+if [[ -z "$GOLDEN_PLANES" || -z "$GOLDEN_MANIFEST" ]]; then
+  echo "RTL SIM ERROR: no proven frame-plane golden supplied for bitstream $BITSTREAM" >&2
+  echo "Set FULL_FRAME_GOLDEN_PLANES and FULL_FRAME_GOLDEN_MANIFEST after generating/committing provenance." >&2
+  exit 2
+fi
+"$ROOT/tools/extract_h264_frame_planes.py" --verify \
+  --input "$BITSTREAM" --sequence "$SEQUENCE" \
+  --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST"
+ffmpeg -v error -y -i "$BITSTREAM" -an -f rawvideo -pix_fmt rgb24 "$REF_RGB"
 expected_size=$((WIDTH * HEIGHT * 3 * FRAMES))
 actual_size=$(wc -c < "$REF_RGB")
 if [[ "$actual_size" -ne "$expected_size" ]]; then

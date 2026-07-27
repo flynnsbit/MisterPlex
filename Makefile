@@ -61,6 +61,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	$(ROOT)/build/test_p3_host_recon_vectors
 	$(ROOT)/tests/unit/test_h264_golden_extractor.sh
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
+	$(ROOT)/tests/unit/test_h264_frame_plane_goldens.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
 	python3 $(ROOT)/tests/unit/test_no_conflict_markers.py
