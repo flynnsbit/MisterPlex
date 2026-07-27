@@ -174,6 +174,12 @@ public:
     bool pauseBitstreamSession(uint64_t session_id, int timeout_ms = 250);
     bool resumeBitstreamSession(uint64_t session_id, int timeout_ms = 250);
     bool readBitstreamStatus(BitstreamStatus& status);
+    // Write PLXD (dormant) magic to CTRL so a DDR probe can distinguish
+    // "producer disabled by config" from "never written / boot residue".
+    // Safe to call even when STREAM=0 — it maps the control page, writes one
+    // 64-bit word, and unmaps. The FPGA reader ignores PLXD (not PLXB), so
+    // this has no side-effects on the decode path.
+    bool publishBitstreamDormant();
     // Legacy byte-chunk entry point: wraps each chunk in a default-session NAL
     // record so older call sites keep working while source-demux moves to the
     // explicit record API above.

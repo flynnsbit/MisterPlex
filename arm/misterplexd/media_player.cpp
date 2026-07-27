@@ -777,6 +777,15 @@ bool MediaPlayer::initPresent() {
             useDdrF1_ = true;
             ddrBank_ = 0;
             log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
+            // Write PLXD (dormant) to the bitstream ring CTRL so that a DDR probe
+            // can distinguish "producer disabled by config" from uninitialised DDR
+            // residue. The FPGA reader ignores PLXD; this is diagnostic only.
+            if (!streamEnabled_) {
+                if (fpga_.publishBitstreamDormant())
+                    log("media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)");
+                else
+                    log("media: DDR bitstream dormant publish failed: " + fpga_.lastError());
+            }
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
@@ -1189,6 +1198,8 @@ void MediaPlayer::streamPump(int sfd) {
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
     auto formatDdrBitstreamStatus = [](const FpgaSpi::BitstreamStatus& st) {
+        if (st.dormant)
+            return std::string("ddr_status=DORMANT (STREAM=0, PLXD)");
         return std::string("ddr_status session=") + std::to_string(st.session_id) +
                " active=" + (st.active ? "1" : "0") +
                " paused=" + (st.paused ? "1" : "0") +

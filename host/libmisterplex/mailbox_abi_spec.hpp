@@ -86,6 +86,10 @@ constexpr unsigned kPlxdFramesDoneWidth = 16;
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
 constexpr uint32_t kPlxbAddr  = 0x30140000u;
 constexpr uint32_t kPlxbMagic = 0x504C5842u; // "PLXB"
+// PLXD in the PLXB CTRL slot marks the bitstream producer intentionally dormant
+// (STREAM=0). This is an in-band diagnostic value at kPlxbAddr, not a separate
+// addressed mailbox; it intentionally reuses the PLXD magic value defined above.
+constexpr uint32_t kPlxbDormantMagic = kPlxdMagic;
 
 // ---- All magics (for collision detection) ----
 // Every PLX-prefixed magic in the system. Gate rejects duplicates.
