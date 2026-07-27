@@ -24,9 +24,11 @@ or ALLOWANCE. No number may be used without its label.
 | Cycles per macroblock | 683.76 | **MEASURED** | 800,000 / 1170 |
 
 **Clock-dependent note:** every cycle count in this document scales linearly
-with `clk_sys`. However, w-cap's fitter measurements (2026-07-27) show the
-`clk_sys` intra-domain Fmax is **25.09 MHz** (critical path 39.86 ns). Running
-above ~25 MHz requires pipelining the critical path, which is unscheduled work.
+with `clk_sys`. The actual decode-fabric Fmax has **never been measured** —
+no Quartus fit with real decode modules has ever run. The previously cited
+"25.09 MHz" figure (critical path 39.86 ns) was measuring `decode_stub`, a
+diagnostic shim, not the decoder (w-arch v5, 2026-07-27). The real limit is
+**UNKNOWN**, which is not the same as "high."
 **All budgets in this document use 20 MHz as the planning assumption.** Any
 higher clock is upside, not a dependency.
 
@@ -365,29 +367,27 @@ The DPB fetch interface as implemented in `h264_dpb_one_ref`:
 source coordinates. The DPB returns raw bordered windows; the requester owns
 interpolation and arithmetic.
 
-## 13. Scaling table — CONSTRAINED by fitter measurements
+## 13. Scaling table — CONSTRAINED by CDC relationships
 
-**2026-07-27 correction from w-cap fitter reports:** the `clk_sys` intra-domain
-Fmax is **25.09 MHz** (critical path 39.86 ns, slack +10.14 ns at 20 MHz).
-Reaching higher clocks requires shortening that critical path by real
-pipelining work that nobody has scheduled. The table below is retained for
-reference, but **only the 20 MHz row is a planning assumption; all others
-are conditional on path restructuring.**
+**2026-07-27 v5 correction from w-arch:** the previously cited 25.09 MHz /
+39.86 ns "fabric limit" was measuring `decode_stub` (a diagnostic shim), not
+the real decoder. No fit with actual decode modules has ever run. **The real
+decode-fabric Fmax is UNKNOWN.** "Unknown" is not "high" — continue designing
+to 20 MHz.
 
-Additionally, the cross-domain relationships constrain which frequencies are
-safe:
+The cross-domain relationships constrain which frequencies are safe:
 - **40 MHz** vs clk_ddr(90 MHz): 4:9 ratio, 2.778 ns worst-case setup — WORSE
   than the relationship that already failed at -2.137 ns.
 - **45 MHz** vs clk_ddr(90 MHz): 1:2 exact ratio, 11.111 ns — the only
-  comfortable candidate, but requires shrinking the 39.86 ns path by 17.6 ns.
+  comfortable candidate. Feasibility is UNKNOWN pending first real decode fit.
 - **60 MHz** vs clk_ddr(90 MHz): 2:3 ratio, 5.556 ns — the SAME zone that
   produced the -2.137 ns failure.
 
 | clk_sys | Cycles/MB | DPB fetch+MC serial | Margin | Verdict | Reachable? |
 |--------:|----------:|--------------------:|-------:|---------|------------|
 | 20 MHz | 684 | 427 | 257 (1.60×) | **MARGINAL** — closes only if DDR port not contended | **YES — current** |
-| 25 MHz | 855 | 427 | 428 (2.00×) | **OK** — tolerates moderate contention | **NEAR LIMIT** — Fmax 25.09 MHz |
-| 45 MHz | 1538 | 427 | 1111 (3.60×) | **WIDE** | **CONDITIONAL** — needs 17.6 ns path reduction |
+| 25 MHz | 855 | 427 | 428 (2.00×) | **OK** — tolerates moderate contention | **UNKNOWN** — no real decode fit exists |
+| 45 MHz | 1538 | 427 | 1111 (3.60×) | **WIDE** | **UNKNOWN** — safe CDC ratio but needs real Fmax data |
 
 **Note:** the "427 cycles" figure is in DDR-clock-relative terms (burst
 latency does not change with decode clock). At higher decode clocks, the DDR
@@ -404,13 +404,14 @@ The sequential model does not close (897/684 = 1.31× over budget). The
 pipelined model closes at 427/684 = 1.60× margin, but only if DDR port
 contention is bounded.
 
-**2026-07-27 clock correction:** w-cap's fitter measurements show the decode
-fabric Fmax is 25.09 MHz (critical path 39.86 ns). The w-arch study's
-estimate of "12 logic levels, ~12.3 ns" was refuted — the fitter includes
-routing delay that more than triples the logic-only estimate. Reaching
-45 MHz requires shortening the critical path by 17.6 ns (real pipelining
-work). **Design to 20 MHz. Treat any clock increase as upside, not a
-planning assumption.**
+**2026-07-27 clock corrections:** the previously cited 25.09 MHz Fmax was
+measuring `decode_stub`, a diagnostic shim, not the decoder (w-arch v5). The
+real decode-fabric Fmax is **UNKNOWN** — no Quartus fit with actual decode
+modules has ever run. "Unknown" is not "high." The w-arch study's initial
+estimate of "12 logic levels, ~12.3 ns" was refuted by the fitter's routing
+delay on `decode_stub`, and is not applicable to the real fabric either.
+**Design to 20 MHz. Treat any clock increase as upside, not a planning
+assumption.**
 
 **2026-07-27 second f2sdram port correction:** w-cap has established a second
 port IS achievable, but at a real cost: all 4 data channels are currently
@@ -430,9 +431,9 @@ intra-domain one.
    Coordinate before assuming it. Without it, DPB fetch contends with
    presentation on the same port, and the 1.60× margin is only valid if
    contention is bounded to ~100 cycles worst-case stall.
-2. **w-arch (clock study):** currently REFUTED above 25 MHz without
-   pipelining. The critical path needs to be identified and restructured
-   before higher clocks are realistic.
+2. **w-arch (clock study):** decode-fabric Fmax is UNKNOWN — the 25.09 MHz
+   figure was `decode_stub`, not the decoder. No fit with real decode
+   modules has run. The first such fit will establish the actual ceiling.
 3. **w-deblock:** deblock writeback timing determines when filtered samples
    are available for the current picture bank. The DPB must not read from
    the current bank until writeback is complete.
