@@ -1311,7 +1311,6 @@ void MediaPlayer::streamPump(int sfd) {
                     ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
                     ddrBank_ ^= 1;
                     if (!ok) {
-                        useDdrF1_ = false;
                         log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
                     } else if ((reconOk % 30) == 0) {
                         log("media: recon F1 via YUV420 DDR " +

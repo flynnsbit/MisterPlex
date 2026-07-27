@@ -275,6 +275,10 @@ int main(int argc, char** argv) {
         std::printf("\n");
         if (haveFrameStoreStatus && fs.nonYuvDoorbellRejected())
             std::printf("ERROR %s\n", misterplex::frameStoreDebugDescription(fs.debug_state));
+        else if (!haveFrameStoreStatus)
+            std::printf("ERROR %s: %s\n",
+                        misterplex::frameStoreStatusUnavailableDescription(),
+                        spi.lastError().c_str());
     }
     return 0;
 }

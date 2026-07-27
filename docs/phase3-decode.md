@@ -438,8 +438,9 @@ Phase 3.1b (DDR bulk path — implemented this fire):
 
   **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
   completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
-  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **prefers DDR
-  with SPI fallback** (fallback only if kick/frame verify fails).
+  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **uses DDR
+  YUV420p only for F1**; kick/frame failures stay visible instead of falling
+  back to legacy RGB/SPI.
 
   **Build / lab status:**
     - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr` OK ~16 ms)

@@ -1372,11 +1372,20 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool saw_kick = false;
     bool saw_frame = false;
     const bool first = (ddrKickMode_ == 0);
-    auto frameStoreRefusalSuffix = [this]() -> std::string {
+    auto frameStoreStatusSuffix = [this]() -> std::string {
         FrameStoreStatus st{};
-        if (readFrameStoreStatus(st) && st.nonYuvDoorbellRejected())
-            return std::string(": ") + frameStoreDebugDescription(st.debug_state);
-        return std::string();
+        if (readFrameStoreStatus(st)) {
+            if (st.nonYuvDoorbellRejected())
+                return std::string(": ") + frameStoreDebugDescription(st.debug_state);
+            char buf[128]{};
+            std::snprintf(buf, sizeof(buf),
+                          ": frame-store status frame_debug=0x%02x frame_seq=%u "
+                          "frame_underrun=%u",
+                          static_cast<unsigned>(st.debug_state), static_cast<unsigned>(st.seq),
+                          static_cast<unsigned>(st.underrun_count));
+            return std::string(buf);
+        }
+        return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
     };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
@@ -1422,7 +1431,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             if (!ok) {
                 ddrKickMode_ = -1;
                 setErr("sendDdrFrame: no kick/frame via SPI or doorbell" +
-                       frameStoreRefusalSuffix());
+                       frameStoreStatusSuffix());
                 return false;
             }
             ddrKickMode_ = 2;
@@ -1432,7 +1441,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
-        setErr("sendDdrFrame: could not kick DDR path" + frameStoreRefusalSuffix());
+        setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
     }
 
@@ -1467,17 +1476,32 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
         return false;
     }
     volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    uint32_t lastLo = 0;
+    uint32_t lastHi = 0;
+    bool stable = false;
     for (int attempt = 0; attempt < 4; ++attempt) {
         const uint32_t lo0 = mw[0];
         const uint32_t hi0 = mw[1];
         __sync_synchronize();
         const uint32_t lo1 = mw[0];
         const uint32_t hi1 = mw[1];
+        lastLo = lo1;
+        lastHi = hi1;
+        stable = (lo0 == lo1 && hi0 == hi1);
         if (decodeStableFrameStoreStatus(lo0, hi0, lo1, hi1, out)) {
             clearErr();
             return true;
         }
         usleep(200);
+    }
+    if (stable && lastLo != kUnderrunMailboxMagic) {
+        char buf[160]{};
+        std::snprintf(buf, sizeof(buf),
+                      "readFrameStoreStatus: PLXF mailbox absent/unwritten "
+                      "(lo=0x%08x hi=0x%08x)",
+                      static_cast<unsigned>(lastLo), static_cast<unsigned>(lastHi));
+        setErr(buf);
+        return false;
     }
     setErr("readFrameStoreStatus: PLXF mailbox not valid/stable");
     return false;

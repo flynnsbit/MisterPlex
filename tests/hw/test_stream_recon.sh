@@ -65,7 +65,7 @@ if echo "$LOG" | grep -q 'recon frame ok'; then
   echo "OK: recon frame present"
   echo "$LOG" | grep -E 'recon frame ok|STREAM end|session end' | tail -10
 elif echo "$LOG" | grep -qE 'recon CABAC/High|recon skip CABAC'; then
-  echo "OK: CABAC sticky fail path (FFmpeg RGB fallback expected on PRESENT=both)"
+  echo "OK: CABAC sticky fail path (fb0 fallback expected on PRESENT=both)"
 elif echo "$LOG" | grep -qE 'recon_ok=[1-9]'; then
   echo "OK: STREAM recon_ok≥1"
 elif echo "$LOG" | grep -qE 'STREAM end'; then

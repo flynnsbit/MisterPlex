@@ -164,7 +164,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | STREAM hybrid | **Host I-recon → F1 owns pixels** (3.3k mae=0); F3 stub/status until 3.3l-5 hybrid gate | product |
 | STREAM recon | Baseline CAVLC keyframe-oriented; **CABAC/High → sticky skip** (PPS entropy); `recon_ok` often 0 on weak ladder | product |
 | F1 bandwidth | **DDR ~16 ms/frame** when kick+`has_frame` verify works (~60 fps @320×240); RGB/SPI F1 is retired/refused | product |
-| DDR product path | Prefer DDR with SPI fallback; kick/frame verify (not busy-only); ≥30 fps steady in misterplexd still lab-tracking | lab |
+| DDR product path | F1 product path is DDR YUV420p-only; DDR failures are reported, not hidden by RGB/SPI fallback; ≥30 fps steady in misterplexd still lab-tracking | lab |
 | FBAR | Force bars O[9] visual **PASS** (`test_fbar_fast`: grid_off=7.0 force=82.9 bars=94.4) | fixed |
 | Safe deploy | `DEPLOY_LOAD=none\|menu\|core` (default **none** = copy only); avoid live RBF overwrite + `load_core` thrash — [`deploy_plex_core.sh`](../scripts/deploy_plex_core.sh) | ops |
 | Match source Hz | **Cadence + OSD Content FPS only**; no `CmdSwitchres` yet — [match-source-hz.md](match-source-hz.md) | product |

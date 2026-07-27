@@ -63,8 +63,8 @@ public:
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
     // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
-    // STREAM_SKIP_RGB=0 or PRESENT=both for FFmpeg RGB fallback.
-    // "0"/"off" = always full RGB (STREAM=0-compatible fallback path)
+    // STREAM_SKIP_RGB=0 or PRESENT=both for fb0 fallback.
+    // "0"/"off" = always full RGB decode for fb0/diagnostic fallback.
     void setStreamSkipRgb(std::string mode) { streamSkipRgb_ = std::move(mode); }
     // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
@@ -265,7 +265,7 @@ private:
     FpgaSpi fpga_;
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
-    bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
+    bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};

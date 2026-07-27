@@ -118,6 +118,8 @@ int main() {
     CHECK(fs.nonYuvDoorbellRejected());
     CHECK(std::string(frameStoreDebugDescription(fs.debug_state)) ==
           "frame store refused non-YUV doorbell (0xE1)");
+    CHECK(std::string(frameStoreStatusUnavailableDescription()) ==
+          "frame store status unavailable (PLXF mailbox absent/unwritten)");
     CHECK(!decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17, 0), fs));
     CHECK(decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
                                        hi(frameWord(5, 0x23, 7)),

@@ -48,6 +48,10 @@ inline const char* frameStoreDebugDescription(uint8_t debug) {
     return "frame store debug state";
 }
 
+inline const char* frameStoreStatusUnavailableDescription() {
+    return "frame store status unavailable (PLXF mailbox absent/unwritten)";
+}
+
 enum class PlaybackActionKind {
     None,
     Pause,

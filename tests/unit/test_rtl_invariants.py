@@ -974,10 +974,12 @@ def check_yuv_ddr_writer_contract() -> None:
         and "sendRgb24Frame(buf.data(),w,h,1)" not in compact_media
         and "sendRgb565Bytes(txFrame,txBytes,/*F1*/1)" not in compact_media
         and "sendRgb565Bytes(txFrame,txBytes,1)" not in compact_media
+        and "useDdrF1_=false" not in compact_media
         and "RGB F1 fallback" not in media,
-        "media_player.cpp still has an RGB/SPI F1 fallback. That fallback can hide a DDR "
-        "YUV420p refusal and re-create the frozen-screen measurement failure; F1 product "
-        "presentation must fail loudly instead.",
+        "media_player.cpp still has an RGB/SPI F1 fallback or disables future DDR attempts "
+        "after a failure. That can hide a DDR YUV420p refusal and re-create the frozen-screen "
+        "measurement failure; F1 product presentation must fail loudly and keep reporting DDR "
+        "failure instead.",
     )
     check(
         "memset(yuv.data(),kYuv420BlackY,yBytes)" not in compact_media,
@@ -1062,10 +1064,13 @@ def check_yuv_ddr_writer_contract() -> None:
     check(
         "readFrameStoreStatus" in fpga_status_sources
         and "frame_debug=0x%02x" in fpga_status_sources
+        and "frame_status=absent" in fpga_status_sources
+        and "PLXF mailbox absent/unwritten" in fpga_status_sources
         and "frame store refused non-YUV doorbell (0xE1)" in fpga_status_sources,
         "Frame-store debug 0xE1 must be first-class in FpgaSpi status tooling. "
-        "Status output must include frame_debug=0x.. and print the human-readable "
-        "non-YUV doorbell refusal, matching the visual provenance gate fields.",
+        "Status output must include frame_debug=0x.., name a missing/unwritten PLXF mailbox "
+        "as frame_status=absent, and print the human-readable non-YUV doorbell refusal, "
+        "matching the visual provenance gate fields.",
     )
     print("PASS ARM DDR writer uses product yuv420p frame-store path only")
 
