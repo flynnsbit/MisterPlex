@@ -126,6 +126,28 @@ public:
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     bool readBankRelease(BankReleaseStatus& status);
+
+    // PLXD provenance diagnostic — classifies whether the FPGA actually wrote
+    // the bank-release mailbox, without requiring valid magic.
+    enum class PlxdProvenance {
+        Absent,      // magic does not match — cold DDR, pre-PLXD RBF, or corruption
+        Residue,     // magic matches but reserved bits non-zero (coincidence/corruption)
+        InitOnly,    // magic valid, clean fields, but frames_done==0 — FPGA initialized, never swapped
+        Alive,       // magic valid, frames_done>0 — FPGA has completed at least one bank swap
+        LiveAdvance, // frames_done advanced between two reads — FPGA is actively running
+    };
+    struct PlxdDiag {
+        PlxdProvenance provenance = PlxdProvenance::Absent;
+        uint32_t raw_lo = 0;        // raw [31:0]
+        uint32_t raw_hi = 0;        // raw [63:32]
+        uint16_t frames_done = 0;
+        uint8_t free_bank_mask = 0;
+        uint8_t disp_bank = 0;
+        bool swap_pending = false;
+        uint16_t reserved_bits = 0; // [47:36] should be zero if written by RTL
+    };
+    PlxdDiag diagnosePlxdProvenance();
+
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB

@@ -1616,7 +1616,7 @@ def check_present_path_degradation_contract() -> None:
                 "(including frame_status=absent or frame_debug=0xE1)",
             ),
             (
-                'log("ERRORmedia:reconF1REFUSED:frame-storerequirescoded"+',
+                'log("ERRORmedia:reconF1REFUSED:frame-storerequiresMB-alignedresolution<="+',
                 "geometry mismatch in STREAM recon must be a LOUD refusal (not a quiet skip), "
                 "because a silent skip is indistinguishable from frozen screen",
             ),
