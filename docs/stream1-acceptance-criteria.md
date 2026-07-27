@@ -118,6 +118,14 @@ Rule:      nalu_count > 0 proves NALs were parsed
            recon_sig == golden (0x3B for MB0 block0) proves correct reconstruction
 Check:     readCoreStatus() → parseCoreStatus() → CoreStatus fields
 ```
+**WARNING (instrument #17):** The golden value `0x3B` comes from the HOST C++
+model (`h264_recon.hpp`), which is verified bit-exact against ffmpeg. However,
+as of #17 the **RTL has only 0.021% pixel coverage (16/76800 luma, 0% chroma)**.
+`recon_sig` matching golden proves the FPGA ran the same math as the host model
+for those 16 pixels — it does NOT prove full-frame correctness. Signal 2 is
+valid as a narrow existence proof ("decode math ran and got the right answer for
+MB0 block0"), not as a frame-level accuracy claim.
+
 This proves the FPGA **processed** NAL data. Combined with Signal 1, it proves
 end-to-end: ARM produced → FPGA consumed → FPGA parsed → FPGA decoded.
 

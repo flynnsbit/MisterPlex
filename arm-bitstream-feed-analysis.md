@@ -191,7 +191,7 @@ Evidence-based prerequisites for `STREAM=1` as shipping default:
 
 | # | Gate | Evidence required | Current status |
 |---|------|-------------------|----------------|
-| G1 | **FPGA I-slice decode** produces pixel-exact output for at least one fixture | Full-frame ratchet `maeY=0` on `wcap_residual14` with native I420 from FPGA decode, not host recon | **Intra 300/300 MB exact** (P3-3l) but via host recon; FPGA consumer path not yet wired |
+| G1 | **FPGA I-slice decode** produces pixel-exact output for at least one fixture | Full-frame ratchet `maeY=0` on `wcap_residual14` with native I420 from FPGA decode, not host recon | **NOT MET** — "Intra 300/300" is HOST C++ vs ffmpeg (instrument #17: zero RTL involvement). RTL pixel coverage is 16/76800 luma (0.021%), 0% chroma. FPGA decode is essentially unverified |
 | G2 | **DDR bitstream reader** advances `READ` count and publishes PLXR magic after `beginBitstreamSession` | Live device: `readBitstreamFpgaCount` returns true, PLXR magic present | **NOT MEASURED** — requires `60df5a2`/`3c6d1d2` fixes on silicon |
 | G3 | **No user-visible regression** — ARM decode path must remain available as fallback | `STREAM=1` with broken FPGA must not freeze or crash; must fall back to ARM decode | **Design OK** — `f3Fatal` path disables F3 without killing the FFmpeg RGB pipeline |
 | G4 | **FPGA parser handles all NAL types in the stream** — SPS, PPS, IDR, P at minimum | `stream_path.sv` accepts all NAL types without desync/fatal | **PARTIAL** — SPS/PPS/IDR yes; P-slice inter output is measured red (MAE 76) |
@@ -208,7 +208,13 @@ Evidence-based prerequisites for `STREAM=1` as shipping default:
 
 ### The hard truth
 
-**G5 is the structural blocker.** PMS delivers High/CABAC/B-slices regardless
+**UPDATE (instrument #17):** The "Intra 300/300 MB exact" status previously
+listed for G1 was **HOST C++ vs ffmpeg — zero RTL involvement.** RTL pixel
+verification stands at 16/76800 luma (0.021%), 0% chroma. **FPGA intra decode
+is essentially unverified.** G1 is NOT MET — the gate requires RTL-produced
+pixels, not host model output. See parent retraction of the 94% progress claim.
+
+**G5 is the structural blocker for P/B content.** PMS delivers High/CABAC/B-slices regardless
 of the Baseline XML profile request. The FPGA has no CABAC engine and no
 B-slice support. Until either:
 - PMS reliably delivers Baseline/CAVLC (server-side fix), or
