@@ -75,7 +75,8 @@ curl -s http://MiSTer:3005/resources | grep MiSTerPlex
 
 File: `/media/fat/misterplex/misterplex.conf` (see [`assets/misterplex.conf.example`](../assets/misterplex.conf.example)).
 Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` in
-`/media/fat/MiSTer.ini` instead. See [`display-resolution.md`](display-resolution.md).
+`/media/fat/MiSTer.ini` instead. Native content resolution is an OSD setting
+(**Content resolution**). See [`display-resolution.md`](display-resolution.md).
 
 | Key | Example | Meaning |
 |-----|---------|---------|
@@ -168,7 +169,7 @@ Not a separate product path — same companion/media code. Document latency/stab
 | Match source Hz | **Cadence + OSD Content FPS only**; no `CmdSwitchres` yet — [match-source-hz.md](match-source-hz.md) | product |
 | CRT 15 kHz | MiSTer video options / fixed modelines; [crt-lcd-matrix.md](crt-lcd-matrix.md) — no automated CRT golden | lab |
 | Wi-Fi vs Ethernet | Soak net hooks only; eth comparison not measured (no carrier) | lab |
-| Resolution | Output signal modes through 1920×1080@60/50 are supported via MiSTer.ini/ascal; native content remains 320×240 by default and higher decode sizes stress ARM | product |
+| Resolution | Output signal modes through 1920×1080@60/50 are supported via MiSTer.ini/ascal; native content defaults to 320×240. OSD 640×480 is for 480p test builds only: fits and closes timing / within modelled bandwidth, not hardware-validated. | product |
 | Scrubber | Play-queue bind + seek/step clamp + stop/async race harden (P4-SCRUB E-P4h: playQueued cast invalidate, async seek/step, scrub plant hold, same-pos demux no-op); skipPrevious=Plex-style (restart@0 if >3s else queue prev); live Web eyes-on optional | UX |
 | Audio | FFmpeg → MrAudio @ 48 kHz stereo; F2 FIFO best-effort (off if FPGA leaves user mode) | product |
 | Auth | Static `PLEX_TOKEN` optional; prefer cast-supplied tokens | ops |

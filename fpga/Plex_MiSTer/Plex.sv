@@ -57,7 +57,10 @@ localparam CONF_STR = {
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
 	// O[5:4] Content FPS is written by misterplexd from the exact PMS frame rate,
-	// so it is intentionally NOT a menu item.
+	// so it is intentionally NOT a menu item. O[4] is now the single source of
+	// truth for native content resolution; misterplexd reads the same OSD word
+	// through the DDR mailbox before each play.
+	"O[4],Content resolution,320x240,640x480;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -76,7 +79,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,6;", // reset OSD: v6 recentres O[9:6] on 0 now that the MrAudio ring is measured out
+	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
 	"V,v",`BUILD_DATE
 };
 
@@ -203,16 +206,15 @@ pll pll
 
 wire reset = RESET | status[0] | buttons[1];
 
-// Map OSD content FPS
-reg [7:0] content_fps;
-always @(*) begin
-	case (status[5:4])
-		2'd0: content_fps = 8'd24;
-		2'd1: content_fps = 8'd30;
-		2'd2: content_fps = 8'd60;
-		default: content_fps = 8'd12;
-	endcase
-end
+// O[4] is the native content-resolution selector shared with misterplexd.
+// C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
+// dimensions for the actual 480p present path.
+wire        content_res_640x480 = status[4];
+wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
+wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+
+// Legacy cadence input is now fixed; the daemon handles exact content pacing.
+wire [7:0] content_fps = 8'd24;
 
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
@@ -404,7 +406,7 @@ present_core present (
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
 	.display_hz(display_hz),
-	// v3 reclaimed the debug bits O[9:6]/O[8]/O[9] for playback controls, so the
+	// v3+ reclaimed the debug bits O[9:6]/O[8]/O[9] for playback controls, so the
 	// pattern generator and the bars test tone are hardwired to their previous
 	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
 	.pattern(2'd0),

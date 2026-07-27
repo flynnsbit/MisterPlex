@@ -62,6 +62,16 @@ bool confTruthy(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
 
+misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
+                                                const misterplex::ContentResolution& res,
+                                                bool bitrateExplicit) {
+    misterplex::WeakLadder weak = base;
+    weak.videoResolution = res.label;
+    if (!bitrateExplicit)
+        weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+    return weak;
+}
+
 } // namespace
 
 namespace {
@@ -100,6 +110,7 @@ int main(int argc, char** argv) {
     std::string matchSourceHz = "off";
     std::string sourceFpsConf = "auto";
     misterplex::WeakLadder weak;
+    bool weakBitrateExplicit = false;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -183,8 +194,10 @@ int main(int argc, char** argv) {
         if (!v.empty())
             weak.videoResolution = v;
         v = loadConf(confPath, "WEAK_BITRATE");
-        if (!v.empty())
+        if (!v.empty()) {
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+            weakBitrateExplicit = true;
+        }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
@@ -253,12 +266,13 @@ int main(int argc, char** argv) {
                      "(cadence/OSD path; switchres TODO)\n",
                      matchSourceHz.c_str(), sourceFpsConf.c_str());
     }
-    // Align weak ladder with decode size when still default
+    // Fallback when OSD_CONTROL=0 or no Plex core is loaded. With OSD_CONTROL=1,
+    // the OSD status word (O[4]) is the content-resolution source of truth.
     if (weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
         weak.videoResolution = std::to_string(decodeW) + "x" + std::to_string(decodeH);
-        if (decodeW >= 640)
+        if (!weakBitrateExplicit && decodeW >= 640)
             weak.maxVideoBitrateKbps = 2000;
-        else if (decodeW >= 480)
+        else if (!weakBitrateExplicit && decodeW >= 480)
             weak.maxVideoBitrateKbps = 1500;
     }
 
@@ -296,6 +310,7 @@ int main(int argc, char** argv) {
         player.setSubtitleMode("ffmpeg");
     if (subtitleStreamId >= 0)
         player.setSubtitleStreamIndex(subtitleStreamId);
+    bool osdControl = false;
     {
         // Default 0 — no hardcoded audio lag. Conf AUDIO_DELAY_MS only.
         int audioDelayMs = 0;
@@ -338,9 +353,9 @@ int main(int argc, char** argv) {
         else if (idle == "last" || idle == "off")
             im = misterplex::IdleMode::LastFrame;
         player.setIdleMode(im);
-        // OSD_CONTROL requires the v3 CONF_STR layout; on an older core the same
+        // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
         // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
-        const bool osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
+        osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
         player.setOsdControl(osdControl);
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
@@ -412,8 +427,15 @@ int main(int argc, char** argv) {
     // playMedia/auto-next arrives (P4-SCRUB out-of-order bind race).
     std::atomic<uint64_t> playGen{0};
 
+    auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
+        if (osdControl)
+            return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
+        return misterplex::contentResolutionFromSize(decodeW, decodeH);
+    };
+
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
-                                     const std::string& preferredBase, int64_t off)
+                                     const std::string& preferredBase, int64_t off,
+                                     const misterplex::WeakLadder& weakForPlay)
         -> std::pair<misterplex::ResolveResult, std::string> {
         std::string token = req.token.empty() ? confToken : req.token;
         // Cast-selected base wins when address present.
@@ -426,7 +448,8 @@ int main(int argc, char** argv) {
             // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
             // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
-                                                 weak, /*preferDirectH264=*/streamEnabled);
+                                                 weakForPlay,
+                                                 /*preferDirectH264=*/streamEnabled);
         };
 
         auto resolved = tryBase(selected);
@@ -452,7 +475,17 @@ int main(int argc, char** argv) {
     auto doPlay = [&](const misterplex::PlayRequest& req) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
-        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off);
+        const auto contentRes = contentResolutionForNextPlay();
+        player.setDecodeSize(contentRes.width, contentRes.height);
+        const auto weakForPlay =
+            weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+        std::fprintf(stderr,
+                     "misterplexd: content resolution=%s source=%s status_word=0x%04x "
+                     "weak=%s bitrate=%d\n",
+                     contentRes.label, osdControl ? "OSD O[4]" : "conf/--decode",
+                     player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
+                     weakForPlay.maxVideoBitrateKbps);
+        auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {
             std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
@@ -483,8 +516,8 @@ int main(int argc, char** argv) {
             if (effective > 0) {
                 std::fprintf(stderr,
                              "misterplexd: Content FPS hint=%d (SOURCE_FPS=%s pms_vfr=%s "
-                             "frameRate=%s resolved=%d) — set OSD Content FPS or wait for "
-                             "switchres\n",
+                             "frameRate=%s resolved=%d) — exact pacing uses resolved rate; "
+                             "switchres TODO\n",
                              effective, sourceFpsConf.c_str(),
                              resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str(),
                              resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),
