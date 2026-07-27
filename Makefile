@@ -79,6 +79,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 
 rtl-lint:
