@@ -612,6 +612,53 @@ void testBs0Passthrough(Vh264_deblock_mb_sched_tb& dut) {
     std::cout << "OK scheduler bS=0 passthrough: no filtering applied\n";
 }
 
+void testAlphaBetaOffset(Vh264_deblock_mb_sched_tb& dut) {
+    // Test with nonzero alpha/beta offsets to verify the scheduler passes
+    // them through to the edge filter correctly.
+    struct OffCase { int aOff, bOff; const char* name; };
+    OffCase cases[] = {
+        {6, -6, "alpha+6/beta-6"},
+        {-4, 4, "alpha-4/beta+4"},
+        {12, 12, "both+12"},
+        {-12, -12, "both-12"},
+    };
+    for (auto& c : cases) {
+        dut.reset = 1;
+        tick(dut);
+        dut.reset = 0;
+        dut.disable_idc = 0;
+        dut.qp = 28;
+        dut.alpha_offset = c.aOff;
+        dut.beta_offset = c.bOff;
+        dut.left_avail = 0;
+        dut.top_avail = 0;
+        dut.mb_intra = 0xFFFF;
+        dut.mb_nonzero = 0xFFFF;
+        for (int i = 0; i < 16; ++i) {
+            dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+        }
+
+        MB mb{};
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                mb[y*16+x] = clip8(100 + x*3 + y*5 + ((x^y)&3)*7);
+
+        loadMb(dut, mb);
+        MB ref = mb;
+        refDeblockMb(ref, 28, c.aOff, c.bOff);
+        runAndWait(dut);
+        MB got = readMb(dut);
+
+        if (got != ref) {
+            int mm = 0;
+            for (int i = 0; i < 256; ++i) if (got[i] != ref[i]) ++mm;
+            std::cerr << "FAIL scheduler offset " << c.name << ": " << mm << "/256 mismatches\n";
+            std::exit(1);
+        }
+    }
+    std::cout << "OK scheduler alpha/beta offsets: 4 offset combinations verified\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -626,7 +673,8 @@ int main(int argc, char** argv) {
     testQPSweep(dut);
     testInterMixedBs(dut);
     testBs0Passthrough(dut);
+    testAlphaBetaOffset(dut);
 
-    std::cout << "OK h264_deblock_mb_scheduler: all 7 tests passed\n";
+    std::cout << "OK h264_deblock_mb_scheduler: all 8 tests passed\n";
     return 0;
 }
