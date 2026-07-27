@@ -21,7 +21,7 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_rtl_sim
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -43,7 +43,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	$(ROOT)/build/test_p3_host_recon_vectors
-	$(ROOT)/build/test_p3_idct_rtl_sim
+	$(ROOT)/build/test_p3_idct_reference_model
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
@@ -80,18 +80,21 @@ $(ROOT)/build/test_p3_host_recon_vectors: $(ROOT)/tests/unit/test_p3_host_recon_
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_host_recon_vectors.cpp
 
-$(ROOT)/build/test_p3_idct_rtl_sim: $(ROOT)/tests/unit/test_p3_idct_rtl_sim.cpp \
+$(ROOT)/build/test_p3_idct_reference_model: $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal.hpp \
 		$(ROOT)/host/libmisterplex/h264_sps.hpp \
+		$(ROOT)/host/libmisterplex/h264_recon.hpp \
+		$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/fpga/Plex_MiSTer/files.qip \
 		$(ROOT)/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
 		$(ROOT)/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
 		$(ROOT)/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 \
-		$(ROOT)/tests/fixtures/p3_host_recon/mb0_luma_v1.json
+		$(ROOT)/tests/fixtures/p3_host_recon/mb0_luma_v1.json \
+		$(ROOT)/tests/fixtures/p3_host_recon/frame_mae_v1.csv
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_idct_rtl_sim.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp
 
 $(ROOT)/build/test_cavlc_dc: $(ROOT)/tests/unit/test_cavlc_dc.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \

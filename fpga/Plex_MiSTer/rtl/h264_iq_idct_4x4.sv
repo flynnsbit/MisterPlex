@@ -73,14 +73,7 @@ module h264_dequant4x4 (
 			qdiv = q / 6;
 			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
 			qmul = qmul <<< (qdiv + 4'd2);
-`ifdef MPLEX_P3_IDCT_SIM_PERTURB
-			if (scan == 5'd1)
-				v = ((-$signed(c)) * qmul + 32'sd32) >>> 6;
-			else
-				v = ($signed(c) * qmul + 32'sd32) >>> 6;
-`else
 			v = ($signed(c) * qmul + 32'sd32) >>> 6;
-`endif
 			dequant_one = v[17:0];
 		end
 	endfunction
