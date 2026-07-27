@@ -91,9 +91,9 @@ void check(const char* label, int got, int want) {
     }
 }
 
-int sx22(uint32_t v) {
-    v &= 0x3FFFFF;
-    return (v & 0x200000) ? static_cast<int>(v) - 0x400000 : static_cast<int>(v);
+int sx29(uint32_t v) {
+    v &= 0x1FFFFFFF;
+    return (v & 0x10000000) ? static_cast<int>(v) - 0x20000000 : static_cast<int>(v);
 }
 
 } // namespace
@@ -133,11 +133,11 @@ int main(int argc, char** argv) {
 
     std::cout << "level_width_tb: coeff[0]=" << TEST_COEFF << " QP=" << TEST_QP << "\n";
     std::cout << "  gold dequant[0]=" << gold_dq[0] << "\n";
-    std::cout << "  RTL  dequant[0]=" << sx22(dut->dequant[0]) << "\n";
+    std::cout << "  RTL  dequant[0]=" << sx29(dut->dequant[0]) << "\n";
 
     // Check dequant
     for (int i = 0; i < 16; ++i)
-        check("dequant", sx22(dut->dequant[i]), gold_dq[i]);
+        check("dequant", sx29(dut->dequant[i]), gold_dq[i]);
 
     // Check recon
     for (int i = 0; i < 16; ++i)
@@ -159,9 +159,9 @@ int main(int argc, char** argv) {
         gold_dq2[i] = (i == 0) ? dequant_gold(TEST_COEFF2, TEST_QP, 0) : 0;
 
     std::cout << "  coeff[0]=" << TEST_COEFF2 << " gold dequant[0]=" << gold_dq2[0]
-              << " RTL=" << sx22(dut->dequant[0]) << "\n";
+              << " RTL=" << sx29(dut->dequant[0]) << "\n";
     for (int i = 0; i < 16; ++i)
-        check("dequant2", sx22(dut->dequant[i]), gold_dq2[i]);
+        check("dequant2", sx29(dut->dequant[i]), gold_dq2[i]);
 
     // --- Test 3: boundary: coeff[0] = 256, first value that overflows 9-bit ---
     constexpr int TEST_COEFF3 = 256;
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
     dut->eval();
 
     int gold_256 = dequant_gold(TEST_COEFF3, TEST_QP, 0);
-    int rtl_256 = sx22(dut->dequant[0]);
+    int rtl_256 = sx29(dut->dequant[0]);
     std::cout << "  coeff[0]=256 gold dequant[0]=" << gold_256 << " RTL=" << rtl_256 << "\n";
     check("boundary_256", rtl_256, gold_256);
 
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
     dut->eval();
 
     int gold_255 = dequant_gold(TEST_COEFF4, TEST_QP, 0);
-    int rtl_255 = sx22(dut->dequant[0]);
+    int rtl_255 = sx29(dut->dequant[0]);
     std::cout << "  coeff[0]=255 gold dequant[0]=" << gold_255 << " RTL=" << rtl_255 << "\n";
     check("safe_255", rtl_255, gold_255);
 
@@ -249,7 +249,7 @@ int main(int argc, char** argv) {
         dut->max_coeff = 16;
         dut->eval();
         int gold = dequant_gold(tc.coeff, tc.qp, 0);
-        int rtl = sx22(dut->dequant[0]);
+        int rtl = sx29(dut->dequant[0]);
         std::cout << "  " << tc.label << ": coeff=" << tc.coeff
                   << " QP=" << tc.qp << " gold=" << gold << " RTL=" << rtl
                   << (gold == rtl ? " OK" : " FAIL") << "\n";

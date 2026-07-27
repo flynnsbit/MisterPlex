@@ -5,7 +5,7 @@ module p3_intra_mb0_tb (
 	input  wire [7:0] top_left,
 	input  wire       has_above,
 	input  wire       has_left,
-	input  wire signed [21:0] residual [0:15],
+	input  wire signed [28:0] residual [0:15],
 	output wire [3:0] used_mode,
 	output wire [7:0] pred [0:15],
 	output wire [7:0] recon [0:15]

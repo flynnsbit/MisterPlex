@@ -9,8 +9,8 @@ module level_width_tb_top (
 	input  wire        [4:0]  max_coeff,
 	input  wire        [5:0]  qp,
 	input  wire        [7:0]  pred     [0:15],
-	output wire signed [21:0] dequant  [0:15],
-	output wire signed [21:0] idct     [0:15],
+	output wire signed [28:0] dequant  [0:15],
+	output wire signed [28:0] idct     [0:15],
 	output wire        [7:0]  recon    [0:15]
 );
 	// Product RTL coefficient width — now matches the full 16-bit spec width.
