@@ -31,6 +31,7 @@ BUILD="$ROOT/build/verilator/h264_dpb_mc"
 BUILD_CLAMP_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_clamp"
 BUILD_MC_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_mc_round"
 BUILD_REF_FAULT="$ROOT/build/verilator/h264_dpb_mc_early_ref"
+BUILD_PART_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_part_mask"
 
 for f in "$RTL" "$QIP" "$TB" "$TOP" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
@@ -57,7 +58,7 @@ if [[ "$NAL_COUNT" -lt 2 ]]; then
   exit 2
 fi
 
-mkdir -p "$BUILD" "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT"
+mkdir -p "$BUILD" "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT" "$BUILD_PART_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -126,3 +127,23 @@ if ! grep -q 'early reference publication' <<<"$REF_OUT"; then
   exit 1
 fi
 echo "OK h264_dpb_mc RTL red-check: early reference publication fault failed golden"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_PART_FAULT" \
+  --top-module h264_dpb_mc_tb -GFAULT_BAD_PART_MASK=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+PART_OUT="$("$BUILD_PART_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" 2>&1)"
+PART_RC=$?
+set -e
+printf '%s\n' "$PART_OUT"
+if [[ "$PART_RC" -eq 0 ]]; then
+  echo "FAIL h264_dpb_mc RTL red-check: bad partition mask unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'part luma prediction/mask mismatch' <<<"$PART_OUT"; then
+  echo "FAIL h264_dpb_mc RTL red-check: expected partition mask mismatch" >&2
+  exit 1
+fi
+echo "OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden"

@@ -4,7 +4,8 @@
 module h264_dpb_mc_tb #(
 	parameter FAULT_BAD_CLAMP = 0,
 	parameter FAULT_BAD_MC_ROUND = 0,
-	parameter FAULT_EARLY_REF = 0
+	parameter FAULT_EARLY_REF = 0,
+	parameter FAULT_BAD_PART_MASK = 0
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -61,8 +62,11 @@ module h264_dpb_mc_tb #(
 	input  wire [7:0]         chroma_u_ref_win [0:80],
 	input  wire [7:0]         chroma_v_ref_win [0:80],
 	output wire [7:0]         pred_y [0:255],
+	output wire               pred_y_valid [0:255],
 	output wire [7:0]         pred_u [0:63],
-	output wire [7:0]         pred_v [0:63]
+	output wire               pred_u_valid [0:63],
+	output wire [7:0]         pred_v [0:63],
+	output wire               pred_v_valid [0:63]
 );
 	wire ref_ready_good;
 	wire luma_window_valid_good;
@@ -73,8 +77,11 @@ module h264_dpb_mc_tb #(
 	wire [6:0] chroma_window_idx_good;
 	wire [7:0] chroma_window_sample_good;
 	wire [7:0] pred_y_good [0:255];
+	wire pred_y_valid_good [0:255];
 	wire [7:0] pred_u_good [0:63];
+	wire pred_u_valid_good [0:63];
 	wire [7:0] pred_v_good [0:63];
+	wire pred_v_valid_good [0:63];
 
 	h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
 		.clk(clk), .reset(reset),
@@ -104,13 +111,16 @@ module h264_dpb_mc_tb #(
 		.chroma_window_sample(chroma_window_sample_good)
 	);
 
-	h264_inter_mc_16x16 u_mc (
+	h264_inter_mc_part u_mc (
 		.luma_ref_win(luma_ref_win),
 		.chroma_u_ref_win(chroma_u_ref_win),
 		.chroma_v_ref_win(chroma_v_ref_win),
 		.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
 		.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
-		.pred_y(pred_y_good), .pred_u(pred_u_good), .pred_v(pred_v_good)
+		.part_w(fetch_part_w), .part_h(fetch_part_h),
+		.pred_y(pred_y_good), .pred_y_valid(pred_y_valid_good),
+		.pred_u(pred_u_good), .pred_u_valid(pred_u_valid_good),
+		.pred_v(pred_v_good), .pred_v_valid(pred_v_valid_good)
 	);
 
 	assign ref_ready = FAULT_EARLY_REF ? 1'b1 : ref_ready_good;
@@ -127,10 +137,13 @@ module h264_dpb_mc_tb #(
 	generate
 		for (i = 0; i < 256; i = i + 1) begin : gen_pred_y
 			assign pred_y[i] = (FAULT_BAD_MC_ROUND && i == 0) ? (pred_y_good[i] + 8'd1) : pred_y_good[i];
+			assign pred_y_valid[i] = (FAULT_BAD_PART_MASK && i == 8) ? ~pred_y_valid_good[i] : pred_y_valid_good[i];
 		end
 		for (i = 0; i < 64; i = i + 1) begin : gen_pred_c
 			assign pred_u[i] = pred_u_good[i];
 			assign pred_v[i] = pred_v_good[i];
+			assign pred_u_valid[i] = pred_u_valid_good[i];
+			assign pred_v_valid[i] = pred_v_valid_good[i];
 		end
 	endgenerate
 endmodule

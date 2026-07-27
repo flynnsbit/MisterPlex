@@ -504,4 +504,57 @@ module h264_inter_mc_16x16 (
 	);
 endmodule
 
+module h264_inter_mc_part (
+	input  wire [7:0] luma_ref_win [0:440],
+	input  wire [7:0] chroma_u_ref_win [0:80],
+	input  wire [7:0] chroma_v_ref_win [0:80],
+	input  wire [1:0] luma_frac_x,
+	input  wire [1:0] luma_frac_y,
+	input  wire [2:0] chroma_frac_x,
+	input  wire [2:0] chroma_frac_y,
+	input  wire [4:0] part_w,
+	input  wire [4:0] part_h,
+	output wire [7:0] pred_y [0:255],
+	output wire       pred_y_valid [0:255],
+	output wire [7:0] pred_u [0:63],
+	output wire       pred_u_valid [0:63],
+	output wire [7:0] pred_v [0:63],
+	output wire       pred_v_valid [0:63]
+);
+	wire [7:0] full_y [0:255];
+	wire [7:0] full_u [0:63];
+	wire [7:0] full_v [0:63];
+	wire [4:0] chroma_w = {1'b0, part_w[4:1]};
+	wire [4:0] chroma_h = {1'b0, part_h[4:1]};
+
+	h264_inter_mc_16x16 u_full (
+		.luma_ref_win(luma_ref_win),
+		.chroma_u_ref_win(chroma_u_ref_win),
+		.chroma_v_ref_win(chroma_v_ref_win),
+		.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
+		.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
+		.pred_y(full_y), .pred_u(full_u), .pred_v(full_v)
+	);
+
+	genvar py_i;
+	generate
+		for (py_i = 0; py_i < 256; py_i = py_i + 1) begin : gen_part_y
+			localparam int LX = py_i % 16;
+			localparam int LY = py_i / 16;
+			wire in_part = (LX[4:0] < part_w) && (LY[4:0] < part_h);
+			assign pred_y_valid[py_i] = in_part;
+			assign pred_y[py_i] = in_part ? full_y[py_i] : 8'd0;
+		end
+		for (py_i = 0; py_i < 64; py_i = py_i + 1) begin : gen_part_c
+			localparam int CX = py_i % 8;
+			localparam int CY = py_i / 8;
+			wire in_part = (CX[4:0] < chroma_w) && (CY[4:0] < chroma_h);
+			assign pred_u_valid[py_i] = in_part;
+			assign pred_v_valid[py_i] = in_part;
+			assign pred_u[py_i] = in_part ? full_u[py_i] : 8'd0;
+			assign pred_v[py_i] = in_part ? full_v[py_i] : 8'd0;
+		end
+	endgenerate
+endmodule
+
 `default_nettype wire

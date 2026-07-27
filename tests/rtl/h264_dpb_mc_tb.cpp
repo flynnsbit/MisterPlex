@@ -170,6 +170,55 @@ void reset(Sim& s) {
     s.tick();
 }
 
+bool wantLumaValid(int idx, int w, int h) {
+    return (idx % 16) < w && (idx / 16) < h;
+}
+
+bool wantChromaValid(int idx, int w, int h) {
+    return (idx % 8) < (w / 2) && (idx / 8) < (h / 2);
+}
+
+void checkPartMc(Sim& s, const std::array<uint8_t, 441>& luma, const std::array<uint8_t, 81>& u,
+                 const std::array<uint8_t, 81>& v, int w, int h, int fx, int fy) {
+    s.top.fetch_part_w = w;
+    s.top.fetch_part_h = h;
+    s.top.eval();
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            int idx = y * 16 + x;
+            bool valid = wantLumaValid(idx, w, h);
+            uint8_t want = valid ? qpel(luma, x, y, fx, fy) : 0;
+            if (static_cast<bool>(s.top.pred_y_valid[idx]) != valid || s.top.pred_y[idx] != want) {
+                std::cerr << "FAIL h264_dpb_mc RTL: part luma prediction/mask mismatch"
+                          << " part=" << w << "x" << h << " idx=" << idx
+                          << " valid=" << int(s.top.pred_y_valid[idx]) << " want_valid=" << valid
+                          << " got=" << int(s.top.pred_y[idx]) << " want=" << int(want) << "\n";
+                throw std::runtime_error("part luma prediction/mask mismatch");
+            }
+        }
+    }
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            int idx = y * 8 + x;
+            bool valid = wantChromaValid(idx, w, h);
+            uint8_t wantU = valid ? chroma(u, x, y, fx & 7, fy & 7) : 0;
+            uint8_t wantV = valid ? chroma(v, x, y, fx & 7, fy & 7) : 0;
+            if (static_cast<bool>(s.top.pred_u_valid[idx]) != valid ||
+                static_cast<bool>(s.top.pred_v_valid[idx]) != valid ||
+                s.top.pred_u[idx] != wantU || s.top.pred_v[idx] != wantV) {
+                std::cerr << "FAIL h264_dpb_mc RTL: part chroma prediction/mask mismatch"
+                          << " part=" << w << "x" << h << " idx=" << idx
+                          << " u_valid=" << int(s.top.pred_u_valid[idx])
+                          << " v_valid=" << int(s.top.pred_v_valid[idx])
+                          << " want_valid=" << valid
+                          << " got=(" << int(s.top.pred_u[idx]) << "," << int(s.top.pred_v[idx])
+                          << ") want=(" << int(wantU) << "," << int(wantV) << ")\n";
+                throw std::runtime_error("part chroma prediction/mask mismatch");
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -315,6 +364,12 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        checkPartMc(s, luma, u, v, 16, 8, 3, 1);
+        checkPartMc(s, luma, u, v, 8, 16, 3, 1);
+        checkPartMc(s, luma, u, v, 8, 8, 3, 1);
+        checkPartMc(s, luma, u, v, 8, 4, 3, 1);
+        checkPartMc(s, luma, u, v, 4, 8, 3, 1);
+        checkPartMc(s, luma, u, v, 4, 4, 3, 1);
 
         s.top.idr_start = 1;
         s.tick();
@@ -338,6 +393,7 @@ int main(int argc, char** argv) {
                   << " luma_window=" << lc
                   << " chroma_windows=" << uc << "/" << vc
                   << " mc_pixels=256/64/64"
+                  << " part_modes=16x8/8x16/8x8/8x4/4x8/4x4"
                   << " fixture=" << nalFixture << "\n";
         return 0;
     } catch (const std::exception& e) {
