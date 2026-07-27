@@ -59,6 +59,9 @@ set +e
 FAULT_OUT="$("$BUILD_FAULT/Vh264_p_slice_modes_tb_top" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT"
-python3 "$ROOT/tests/unit/expected_red.py" h264_p_slice_modes_swap_16x8 "$FAULT_RC" <<<"$FAULT_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_p_slice_modes_swap_16x8 "$FAULT_RC" <<<"$FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$FAULT_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
 echo "OK h264_p_slice_modes red-check: swapped 16x8 partition fault failed golden"

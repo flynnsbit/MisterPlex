@@ -75,6 +75,9 @@ set +e
 FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT"
-python3 "$ROOT/tests/unit/expected_red.py" decode_stub_pred_only "$FAULT_RC" <<<"$FAULT_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" decode_stub_pred_only "$FAULT_RC" <<<"$FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$FAULT_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
 echo "OK decode_stub RTL red-check: pred-only residual drop produced recon_sig=0x00 and failed golden 0x3b"

@@ -79,6 +79,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
+	$(ROOT)/tests/unit/test_resource_preflight.sh
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh

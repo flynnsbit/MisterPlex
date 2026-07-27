@@ -69,8 +69,11 @@ set +e
 FAULT_OUT="$("$BUILD_FAULT/Vh264_inter_pred_tb" "$FIXTURE" 2>&1)"
 FAULT_RC=$?
 set -e
-printf '%s\n' "$FAULT_OUT"
-python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_round "$FAULT_RC" <<<"$FAULT_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_round "$FAULT_RC" <<<"$FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$FAULT_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
 echo "OK h264_inter_pred RTL red-check: bad rounding fault failed golden"
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -82,6 +85,9 @@ set +e
 PART_FAULT_OUT="$($BUILD_PART_FAULT/Vh264_inter_pred_tb "$FIXTURE" 2>&1)"
 PART_FAULT_RC=$?
 set -e
-printf '%s\n' "$PART_FAULT_OUT"
-python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_part_mv "$PART_FAULT_RC" <<<"$PART_FAULT_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_inter_pred_bad_part_mv "$PART_FAULT_RC" <<<"$PART_FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$PART_FAULT_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
 echo "OK h264_inter_pred RTL red-check: bad partition MV fault failed golden"

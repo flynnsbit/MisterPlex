@@ -12,7 +12,7 @@ FIXTURE = ROOT / "tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/p3_intra_mb0_tb.sv"
 sys.path.insert(0, str(ROOT / "tests/unit"))
-from expected_red import require_expected_red  # noqa: E402
+from expected_red import ExpectedRedError, require_expected_red  # noqa: E402
 
 
 def c_array(values):
@@ -130,7 +130,6 @@ def run(cmd, *, expect_success=True):
 
 def run_capture(cmd):
     proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    sys.stdout.write(proc.stdout)
     return proc.returncode, proc.stdout
 
 
@@ -168,7 +167,11 @@ def build_and_run(name: str, negative: bool, expected_red_id: str | None = None)
     exe = build_dir / "Vp3_intra_mb0_tb"
     if expected_red_id:
         rc, out = run_capture([str(exe)])
-        require_expected_red(expected_red_id, out, rc)
+        try:
+            require_expected_red(expected_red_id, out, rc)
+        except ExpectedRedError:
+            sys.stdout.write(out)
+            raise
         return rc
     return run([str(exe)], expect_success=False)
 
