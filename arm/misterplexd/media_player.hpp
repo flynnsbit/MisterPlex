@@ -52,19 +52,19 @@ public:
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
-    // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
+    // present: "fb0" (default) and/or "fpga" (DDR YUV420p → frame_store)
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     void setDdrMemSync(bool on) { fpga_.setDdrMemSync(on); }
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
-    // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
+    // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
     // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
-    // STREAM_SKIP_RGB=0 or PRESENT=both for FFmpeg RGB fallback.
-    // "0"/"off" = always full RGB (STREAM=0-compatible fallback path)
+    // STREAM_SKIP_RGB=0 or PRESENT=both for fb0 fallback.
+    // "0"/"off" = always full RGB decode for fb0/diagnostic fallback.
     void setStreamSkipRgb(std::string mode) { streamSkipRgb_ = std::move(mode); }
     // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
@@ -265,7 +265,7 @@ private:
     FpgaSpi fpga_;
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
-    bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
+    bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};

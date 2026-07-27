@@ -8,9 +8,7 @@ PASS="${MISTER_PASS:-1}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="${ROOT}/build/arm/push_frame"
 FRAME="${FRAME:-${ROOT}/build/plex_test_320x240.yuv420p}"
-RGB_FRAME="${RGB_FRAME:-${ROOT}/build/plex_test_320x240.rgb565}"
 REMOTE_FRAME="/tmp/plex_test_320x240.yuv420p"
-REMOTE_RGB_FRAME="/tmp/plex_test_320x240.rgb565"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
@@ -25,11 +23,6 @@ if [[ ! -f "$FRAME" ]]; then
   mkdir -p "$(dirname "$FRAME")"
   python3 "${ROOT}/scripts/gen_edge_markers.py" --format yuv420p "$FRAME"
 fi
-if [[ ! -f "$RGB_FRAME" ]]; then
-  mkdir -p "$(dirname "$RGB_FRAME")"
-  python3 "${ROOT}/scripts/gen_test_frame.py" "$RGB_FRAME"
-fi
-
 echo "=== ensure Plex core loaded ==="
 ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
 sleep 1
@@ -40,16 +33,9 @@ if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then
 fi
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
-echo "== scp push_frame + frame to $HOST =="
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" "$RGB_FRAME" \
+echo "== scp push_frame + YUV420p frame to $HOST =="
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" \
   "$USER@$HOST:/tmp/"
-
-echo "== SPI baseline =="
-SPI_OUT=$(ssh_m 'chmod +x /tmp/push_frame
-/tmp/push_frame '"$REMOTE_RGB_FRAME"'
-' 2>&1)
-echo "$SPI_OUT"
-SPI_MS=$(echo "$SPI_OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 0)
 
 echo "== DDR push =="
 # Reset so has_frame 0→1 is a strong proof of DMA (not stale SPI frame).
@@ -68,8 +54,8 @@ echo "$OUT" | grep -q 'has_frame=1' || {
   exit 1
 }
 MS=$(echo "$OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 999)
-echo "push_ms≈$MS (SPI baseline ≈${SPI_MS} ms; expect DDR ≪ SPI)"
+echo "push_ms≈$MS (expect DDR ≪ legacy SPI F1)"
 if [[ "$MS" -gt 80 ]]; then
   echo "WARN: DDR push not much faster than SPI (ms=$MS) — check RBF / MainPause batching"
 fi
-echo "test_ddr_frame: OK on $HOST (DDR ${MS} ms vs SPI ${SPI_MS} ms)"
+echo "test_ddr_frame: OK on $HOST (DDR ${MS} ms)"

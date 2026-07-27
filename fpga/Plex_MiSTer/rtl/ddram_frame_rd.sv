@@ -1,8 +1,8 @@
-// Phase 3.1b: HPS → DDR3 bulk RGB565 → frame_store (bypass SPI F1).
+// Phase 3.1b: HPS → DDR3 bulk YUV420p → RGB565 frame_store.
 //
 // Physical layout (HPS /dev/mem view):
 //   Bank 0: 0x30000000
-//   Bank 1: phys_base + bank_stride. Legacy 320x240 RGB565 uses 0x40000.
+//   Bank 1: phys_base + bank_stride.
 //           The measured 480p contract is coded 624x480/display 618x480/
 //           presented 640x480; see ddr_frame_layout_params.svh and the host
 //           ddr_frame_layout.hpp guard for its RGB/YUV strides and doorbells.

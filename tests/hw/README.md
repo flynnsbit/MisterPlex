@@ -49,15 +49,11 @@ SOAK_HOLD_S=15 SOAK_ROUNDS=5 SOAK_PROGRESS=1 SOAK_NET_LABEL=wifi ./tests/hw/test
 # SOAK_NET_LABEL=eth SOAK_HOLD_S=15 SOAK_ROUNDS=5 ./tests/hw/test_soak.sh
 ```
 
-## Phase 3.0 frame store (FPGA)
+## Phase 3.0 legacy SPI frame push (retired)
 
-1. Deploy core: `./scripts/deploy_plex_core.sh`
-2. Generate frame: `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565`
-3. Copy to SD: `scp … root@MiSTer:/media/fat/plex_test_320x240.rgb565`
-4. On OSD (Plex core):
-   - Open file menu (**F1**), select `plex_test_320x240.rgb565`
-   - Set **Video source = Frame store**
-5. Display should show yellow border + color bars + orange diagonal (not the internal moving block alone).
+The old RGB565 F1/SPI push path is retired. Product and hardware helpers must
+use the DDR YUV420p frame-store path below; non-YUV F1 sends are refused at the
+tool/API boundary.
 
 Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 
@@ -68,8 +64,8 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 3. On MiSTer: `push_frame --ddr --yuv420p 320x240 plex_test_320x240.yuv420p`
    - Or: `./tests/hw/test_ddr_frame.sh` (scp + push + status)
 4. Expect wall time **≪ 100 ms** (SPI is ~200 ms) and `has_frame=1`.
-5. misterplexd prefers DDR for F1; falls back to SPI if `ddr_busy` never asserts
-   (old RBF). Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
+5. misterplexd uses DDR YUV420p for F1 and does not fall back to RGB/SPI.
+   Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
 
 ## Phase 3.2 audio FIFO
 
