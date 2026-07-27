@@ -52,13 +52,13 @@ public:
     void setFfmpegPath(std::string p) { ffmpeg_ = std::move(p); }
     void setAudioPath(std::string p) { audioDev_ = std::move(p); }
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
-    // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
+    // present: "fb0" (default) and/or "fpga" (DDR YUV420p → frame_store)
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
     void setDdrMemSync(bool on) { fpga_.setDdrMemSync(on); }
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
-    // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
+    // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).

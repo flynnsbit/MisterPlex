@@ -1,8 +1,8 @@
-// Push raw RGB565/RGB24/PCM/annex-B to MiSTerPlex via SPI ioctl or YUV DDR bulk,
+// Push YUV420p video via DDR, or non-video PCM/annex-B via SPI ioctl,
 // or dump core status.
 // Usage:
-//   push_frame [--index N] [--rgb24 WxH] file
 //   push_frame --ddr [--bank N] [--yuv420p WxH] file
+//   push_frame --index 2|3 file
 //   push_frame --status
 //   push_frame --raw
 //   push_frame --set-bit N 0|1
@@ -49,6 +49,19 @@ int main(int argc, char** argv) {
             bank = std::atoi(argv[++i]);
         } else if (argv[i][0] != '-')
             path = argv[i];
+    }
+
+    if (path && use_ddr && (rgb24w > 0 || rgb24h > 0)) {
+        std::fprintf(stderr,
+                     "non-YUV frame send refused: DDR frame-store path is YUV420p only; "
+                     "--rgb24 is disabled for F1\n");
+        return 1;
+    }
+    if (path && !use_ddr && (index == 1 || rgb24w > 0 || rgb24h > 0)) {
+        std::fprintf(stderr,
+                     "non-YUV frame send refused: F1 frame-store path is DDR YUV420p only; "
+                     "use --ddr --yuv420p WxH\n");
+        return 1;
     }
 
     misterplex::FpgaSpi spi;
@@ -101,6 +114,8 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "status: %s\n", spi.lastError().c_str());
             return 1;
         }
+        misterplex::FrameStoreStatus fs{};
+        const bool haveFrameStoreStatus = spi.readFrameStoreStatus(fs);
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
             "has_idr=%d stub_busy=%d sps_valid=%d pps_valid=%d nalu=%u last_nal=0x%02x "
@@ -120,22 +135,25 @@ int main(int argc, char** argv) {
             std::printf(" frame_bank=%d frame_format=yuv420p frame_seq=%u",
                         tok.bank, tok.seq);
         }
-        misterplex::FpgaSpi::FrameStoreStatus fs;
-        if (spi.readFrameStoreStatus(fs)) {
-            std::printf(" frame_debug=0x%02x frame_underruns=%u frame_status_seq=%u",
+        if (haveFrameStoreStatus) {
+            std::printf(" frame_debug=0x%02x frame_underrun=%u frame_status_seq=%u",
                         static_cast<unsigned>(fs.debug_state),
                         static_cast<unsigned>(fs.underrun_count),
                         static_cast<unsigned>(fs.seq));
+        } else {
+            std::printf(" frame_status=absent");
         }
         std::printf("\n");
+        if (haveFrameStoreStatus && fs.nonYuvDoorbellRejected())
+            std::printf("ERROR %s\n", misterplex::frameStoreDebugDescription(fs.debug_state));
         if (!path)
             return 0;
     }
 
     if (!path) {
         std::fprintf(stderr,
-                     "usage: push_frame [--index 1] [--rgb24 320x240] file\n"
-                     "       push_frame --ddr [--bank 0|1] [--yuv420p 624x480] file\n"
+                     "usage: push_frame --ddr [--bank 0|1] [--yuv420p 624x480] file\n"
+                     "       push_frame --index 2|3 file\n"
                      "       push_frame --status\n");
         return 1;
     }
@@ -148,7 +166,9 @@ int main(int argc, char** argv) {
     bool ok = false;
     if (use_ddr) {
         if (rgb24w > 0 || rgb24h > 0) {
-            std::fprintf(stderr, "DDR frame-store path is YUV420p only; --rgb24 is SPI-only\n");
+            std::fprintf(stderr,
+                         "non-YUV frame send refused: DDR frame-store path is YUV420p only; "
+                         "--rgb24 is disabled for F1\n");
             return 1;
         }
         misterplex::DdrFrameGeometry g{};
@@ -170,12 +190,11 @@ int main(int argc, char** argv) {
             return 1;
         }
         ok = spi.sendYuv420pFrameDdr(buf.data(), want, g, bank);
-    } else if (rgb24w > 0 && rgb24h > 0) {
-        if (buf.size() < static_cast<size_t>(rgb24w * rgb24h * 3)) {
-            std::fprintf(stderr, "file too small for %dx%d RGB24\n", rgb24w, rgb24h);
-            return 1;
-        }
-        ok = spi.sendRgb24Frame(buf.data(), rgb24w, rgb24h, index);
+    } else if (index == 1 || rgb24w > 0 || rgb24h > 0) {
+        std::fprintf(stderr,
+                     "non-YUV frame send refused: F1 frame-store path is DDR YUV420p only; "
+                     "use --ddr --yuv420p WxH\n");
+        return 1;
     } else {
         ok = spi.sendFileTx(buf.data(), buf.size(), index);
     }

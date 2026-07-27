@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 static int fails = 0;
@@ -22,6 +23,12 @@ static uint64_t word(uint16_t seq, uint8_t cmdSeq, misterplex::PlaybackCommand c
 
 static uint32_t lo(uint64_t v) { return static_cast<uint32_t>(v); }
 static uint32_t hi(uint64_t v) { return static_cast<uint32_t>(v >> 32); }
+
+static uint64_t frameWord(uint8_t seq, uint8_t debug, uint16_t underrun,
+                          uint32_t magic = misterplex::kUnderrunMailboxMagic) {
+    return static_cast<uint64_t>(magic) | (static_cast<uint64_t>(seq) << 32) |
+           (static_cast<uint64_t>(debug) << 40) | (static_cast<uint64_t>(underrun) << 48);
+}
 
 struct FakeTransport {
     bool playing = true;
@@ -102,6 +109,25 @@ int main() {
     CHECK(!decodeInputMailboxWord(static_cast<uint64_t>(kInputMailboxMagic) |
                                       (static_cast<uint64_t>(0x7Fu) << 32),
                                   s));
+
+    FrameStoreStatus fs;
+    CHECK(decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17), fs));
+    CHECK(fs.seq == 4);
+    CHECK(fs.debug_state == kFrameStoreDebugFormatError);
+    CHECK(fs.underrun_count == 17);
+    CHECK(fs.nonYuvDoorbellRejected());
+    CHECK(std::string(frameStoreDebugDescription(fs.debug_state)) ==
+          "frame store refused non-YUV doorbell (0xE1)");
+    CHECK(!decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17, 0), fs));
+    CHECK(decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
+                                       hi(frameWord(5, 0x23, 7)),
+                                       lo(frameWord(5, 0x23, 7)),
+                                       hi(frameWord(5, 0x23, 7)), fs));
+    CHECK(fs.seq == 5 && fs.debug_state == 0x23 && fs.underrun_count == 7);
+    CHECK(!decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
+                                        hi(frameWord(5, 0x23, 7)),
+                                        lo(frameWord(6, 0x23, 7)),
+                                        hi(frameWord(6, 0x23, 7)), fs));
 
     const uint64_t good = word(10, 1, PlaybackCommand::PlayPause);
     CHECK(decodeStableInputMailbox(lo(good), hi(good), lo(good), hi(good), s));

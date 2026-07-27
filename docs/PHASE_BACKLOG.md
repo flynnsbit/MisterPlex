@@ -494,7 +494,7 @@ git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze 
 | P3-3q | In-loop deblocking | **NORMATIVE EDGE BLOCKS + MULTI-NAL GATE DONE / FRAME SCHEDULER PENDING** | W-A3: `h264_deblock.sv` covers bS derivation (intra, residual, ref/MV, idc=1/2 controls), alpha/beta/tC0 indexing with slice offsets/clipping, luma/chroma edge rules, and a registered edge pipe. `test_p3_deblock_rtl_sim.sh` now sources the ≥2-VCL `wcap_residual14_idr_plus_p` fixture rather than a single-NAL stream and red-checks edge order drift. `test_stream_path_deblock_integration.sh` proves multi-NAL parser handoff, stream QP/deblock controls, chroma bS4 short filtering, picture-boundary preservation, and that filtered samples feed the next reference value; red-checks trip for bS, threshold offsets, chroma-vs-luma behavior, picture boundaries, in-loop reference use, and slice controls. Full frame deblock scheduling/writeback to the DPB/reference store remains the consumer integration step with W-A4/W-REL. |
 
 
-| P3-SPI | SPI F1 only ~9fps — keep as fallback | DONE | |
+| P3-SPI | SPI F1 only ~9fps — retired; product F1 is DDR YUV420p-only | DONE | |
 
 ## Phase 4 (UX)
 | ID | Item | Status | Notes |

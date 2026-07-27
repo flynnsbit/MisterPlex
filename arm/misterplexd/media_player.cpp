@@ -5,8 +5,6 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
-#include "libmisterplex/pixel_format.hpp"
-
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
@@ -79,33 +77,6 @@ inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
     if (i + 2 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1)
         return 3;
     return 0;
-}
-
-// Legacy SPI fallback scaler for RGB565 frame-store cores.
-inline void scaleRgb565(const uint16_t* src, int sw, int sh, uint16_t* dst, int dw, int dh) {
-    if (sw == dw && sh == dh) {
-        std::memcpy(dst, src, static_cast<size_t>(dw) * static_cast<size_t>(dh) * sizeof(uint16_t));
-        return;
-    }
-    for (int y = 0; y < dh; ++y) {
-        const int sy = (sh > 0) ? (y * sh) / dh : 0;
-        for (int x = 0; x < dw; ++x) {
-            const int sx = (sw > 0) ? (x * sw) / dw : 0;
-            dst[y * dw + x] = src[sy * sw + sx];
-        }
-    }
-}
-
-// RGB565 host words → packed RGB24 for fb0 blit.
-inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t>& out) {
-    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
-    for (int i = 0; i < w * h; ++i) {
-        uint8_t r = 0, g = 0, b = 0;
-        pixel::expandRgb565(src[i], r, g, b);
-        out[static_cast<size_t>(i) * 3 + 0] = r;
-        out[static_cast<size_t>(i) * 3 + 1] = g;
-        out[static_cast<size_t>(i) * 3 + 2] = b;
-    }
 }
 
 // Local annex-B elementary H.264 (skip remux BSF when possible).
@@ -643,7 +614,7 @@ void MediaPlayer::paintIdle() {
             ddrBank_ ^= 1;
         }
         if (!ok)
-            ok = fpga_.sendRgb24Frame(buf.data(), w, h, /*F1*/ 1);
+            log("media: idle paint refused legacy RGB F1 path; frame store requires DDR YUV420p");
         if (!ok) {
             if (!idleWarned_.exchange(true))
                 log("media: idle paint failed (will retry): " + fpga_.lastError());
@@ -760,9 +731,9 @@ bool MediaPlayer::initPresent() {
     }
     if (wantFpga) {
         if (fpga_.open()) {
-            useDdrF1_ = true; // try DDR bulk first; falls back to SPI on first fail
+            useDdrF1_ = true;
             ddrBank_ = 0;
-            log("media: FPGA frame path OK (PRESENT=fpga → DDR bulk 3.1b, SPI F1 fallback)");
+            log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
@@ -1415,7 +1386,7 @@ void MediaPlayer::streamPump(int sfd) {
                 cabacLogged = true;
                 log("media: recon CABAC/High — PPS entropy_coding_mode=1; host CAVLC skip "
                     "(sticky). Stream is High/CABAC; MiSTerPlex.xml profile may be missing "
-                    "or inactive on PMS. FFmpeg RGB F1 fallback if enabled.");
+                    "or inactive on PMS. Use STREAM_SKIP_RGB=0/PRESENT=both for fb0 fallback.");
             }
         } else {
             // CAVLC PPS: allow I-slice recon (seek/segment may flip profile).
@@ -1442,7 +1413,7 @@ void MediaPlayer::streamPump(int sfd) {
         if (cabacSkip_.load()) {
             if (ntype == 5 && (idrSeen % 16) == 1)
                 log("media: recon skip CABAC/High (sticky) idr=" + std::to_string(idrSeen) +
-                    " — FFmpeg RGB F1 fallback if enabled");
+                    " — legacy RGB F1 path is disabled; use PRESENT=both for fb0 fallback");
             return;
         }
 
@@ -1462,7 +1433,7 @@ void MediaPlayer::streamPump(int sfd) {
                     cabacLogged = true;
                     log("media: recon CABAC/High — host CAVLC cannot decode this stream; "
                         "stream is High/CABAC; MiSTerPlex.xml profile may be missing or "
-                        "inactive on PMS. FFmpeg RGB F1 fallback (STREAM still feeds F3).");
+                        "inactive on PMS. Legacy RGB F1 path is disabled; STREAM still feeds F3.");
                 }
                 return;
             }
@@ -1974,7 +1945,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             // Make preferDirect / skip-RGB product path inspectable in logs.
             log("media: STREAM keep FFmpeg RGB (PRESENT=" + presentMode_ +
                 " STREAM_SKIP_RGB=" + streamSkipRgb_ +
-                (presentMode_ == "fpga" ? " — RGB forced on for CABAC/fallback)"
+                (presentMode_ == "fpga" ? " — RGB retained only for decode/audio fallback)"
                                         : " — continuous fb0 needs RGB)"));
         }
     }
@@ -2107,7 +2078,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     lastCabacWarn = elapsed;
                     log("media: STREAM no-RGB + CABAC — stream is High/CABAC; MiSTerPlex.xml "
                         "profile may be missing or inactive on PMS. Set STREAM_SKIP_RGB=0 or "
-                        "PRESENT=both for FFmpeg RGB fallback.");
+                        "PRESENT=both for fb0 fallback.");
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -2348,8 +2319,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrTotalUs = 0;
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
-            int64_t spiFallbackUs = 0;
-            int64_t spiFallbackCpuUs = 0;
             int64_t drops = 0;
         } prof;
         const bool profilePresent = presentProfile_;
@@ -2405,9 +2374,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
                 " ddr_total_us_p=" + std::to_string(avgPresented(prof.ddrTotalUs)) +
                 " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
-                " spi_fallback_us_p=" + std::to_string(avgPresented(prof.spiFallbackUs)) +
-                " spi_fallback_cpu_us_p=" +
-                    std::to_string(avgPresented(prof.spiFallbackCpuUs)) +
                 " frame_bytes=" + std::to_string(frameBytes) +
                 " fmt=" + ffmpegPixFmt(videoFmt));
             prof = PresentProfileAccum{};
@@ -2549,26 +2515,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             prof.ddrUnaccountedUs += dt.total_us - accounted;
                     }
                     ddrBank_ ^= 1;
-                    if (!ok) {
-                        useDdrF1_ = false;
-                        if (videoFmt == RawVideoFormat::Yuv420p)
-                            log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
-                        else
-                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                    }
+                    if (!ok)
+                        log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
                 }
                 if (!ok && videoFmt != RawVideoFormat::Yuv420p) {
-                    if (profilePresent) {
-                        const auto spi0 = std::chrono::steady_clock::now();
-                        const int64_t spiCpu0 = threadCpuMicros();
-                        ok = fpga_.sendRgb565Bytes(txFrame, txBytes, /*F1*/ 1);
-                        const int64_t spiCpu1 = threadCpuMicros();
-                        const auto spi1 = std::chrono::steady_clock::now();
-                        prof.spiFallbackUs += microsBetween(spi0, spi1);
-                        prof.spiFallbackCpuUs += spiCpu1 - spiCpu0;
-                    } else {
-                        ok = fpga_.sendRgb565Bytes(txFrame, txBytes, /*F1*/ 1);
-                    }
+                    log("media: non-YUV F1 frame refused before send; frame store requires DDR "
+                        "YUV420p");
                 }
                 if (!ok) {
                     if (countPresent && (frameIndex % 30) == 0)
@@ -2579,7 +2531,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         ++prof.presented;
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
-                            (useDdrF1_ ? "DDR" : "SPI") +
+                            "DDR" +
                             " presents=" + std::to_string(presentCount_) +
                             " frames=" + std::to_string(frameIndex) +
                             " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));

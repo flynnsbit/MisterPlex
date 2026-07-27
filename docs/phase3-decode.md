@@ -151,9 +151,9 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
 
 Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   STREAM=1: annex-B demux → retain SPS/PPS → IDR/I VCL → `recon::reconISlice`
-    → YUV420 → RGB565 → scale 320×240 → **F1** `sendRgb565Frame` (frame_store)
+    → I420/YUV420p → **F1** `sendYuv420pFrameDdr` (frame_store)
   Still feeds **F3** for FPGA decode_stub / residual probes (diagnostic)
-  FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
+  FFmpeg RGB: fb0 fallback only; F1 frame-store sends remain YUV420p DDR-only
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
   Unit: `test_cavlc_dc` FULL walk + recon host check; ARM `-I host`.
@@ -161,8 +161,8 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   paired with native-I420 plane provenance.
   **HW lab 192.168.1.183 (this fire):**
     - Baseline smoke: `recon_ok=3 recon_fail=0 present=3` f1ms≈170
-    - High/CABAC `test.mp4`: fail_reason=`cabac` → FFmpeg RGB F1 continues (frames>0)
-    - Manual F1 push recon RGB565: `has_frame=1` (~172–200 ms / 153600 B ≈ 0.75–0.9 MB/s SPI)
+    - High/CABAC `test.mp4`: fail_reason=`cabac` → fb0 fallback continues when enabled
+    - Legacy manual RGB565 F1 push is retired; use DDR YUV420p frame pushes
     - F3 residual: `res_ok=1 res_tc=8 res_t1=3` (test_f3_residual.sh green)
 
 Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
@@ -411,7 +411,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     **Wall time after ARM kick batching + kick/frame verify (not busy-only):**
     | path | wall time | effective | unique fps |
     |------|-----------|-----------|------------|
-    | SPI F1 `push_frame --index 1` | **~112 ms** (5 runs: 110.9–116.6) | **~1.37 MB/s** | **≈8.9 fps** |
+    | legacy SPI F1 RGB path | retired/refused (non-YUV frame-store payload) | n/a | n/a |
     | DDR `push_frame --ddr` | **~16.5 ms** (5 runs: 16.0–16.8) | **~9.3 MB/s** | **≈60 fps** |
     mmap alone ~1.9 ms; remainder is one MainPause SPI session + DMA settle.
     Log: `/tmp/misterplex-ddr-agent.txt`. DDR ≈ **7× SPI** → real-time 24/30 @320×240 OK.
@@ -434,7 +434,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     - Functional proof: after reset `has_frame=0` → mmap + status[12] 0→1 → `has_frame=1`.
     - `ddr_busy` rarely latched: status_req updates only on status_set; DMA ~1–3 ms so
       busy clears before SPI poll samples. Idle busy=0 is expected, not missing IP.
-  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
+  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; F1 remains DDR YUV420p-only.
 
   **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
   completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
@@ -456,9 +456,9 @@ Phase 3.1b (DDR bulk path — implemented this fire):
 
 1. Build RBF: `make build-rbf` (Quartus via misterfpga-dev).
 2. Deploy: `./scripts/deploy_plex_core.sh`.
-3. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565` and copy to SD.
-4. OSD: load frame via **F1**, set **Video source = Frame store**.
-5. Expect yellow border + color bars + orange diagonal (not internal pattern block).
+3. `python3 scripts/gen_edge_markers.py --format yuv420p build/plex_test_320x240.yuv420p`.
+4. Push with `push_frame --ddr --yuv420p 320x240 build/plex_test_320x240.yuv420p`.
+5. Expect edge-marker frame and `has_frame=1`.
 
 ## H.264 soft-core evaluation notes
 
