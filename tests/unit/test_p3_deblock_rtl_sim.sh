@@ -23,6 +23,9 @@ QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
+GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
+ANNEXB="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
+MB0_REF="$ROOT/tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 
 for f in "$RTL" "$QIP" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
@@ -35,14 +38,16 @@ if ! grep -q 'rtl/h264_deblock.sv' "$QIP"; then
   exit 2
 fi
 
-mkdir -p "$BUILD"
+mkdir -p "$BUILD" "$(dirname "$GOLDEN")"
+make -s -C "$ROOT" h264-golden-tools
+"$ROOT/build/extract_h264_golden" --input "$ANNEXB" --mb 0 --output "$GOLDEN" --verify-mb0-reference "$MB0_REF" >/dev/null
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module h264_deblock_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL" "$TB"
-"$BUILD/Vh264_deblock_tb"
+"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN"
 
 set +e
 FAULT_OUT="$($BUILD/Vh264_deblock_tb --fault-horizontal-first 2>&1)"

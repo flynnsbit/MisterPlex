@@ -4,12 +4,77 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <cctype>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
+
+std::string readText(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::cerr << "FAIL deblock mb_golden: cannot open " << path << "\n";
+        std::exit(1);
+    }
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
+int parseIntAfter(const std::string& text, const std::string& key, std::size_t start = 0) {
+    const std::string needle = "\"" + key + "\"";
+    std::size_t p = text.find(needle, start);
+    if (p == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: missing key " << key << "\n";
+        std::exit(1);
+    }
+    p = text.find(':', p);
+    if (p == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: malformed key " << key << "\n";
+        std::exit(1);
+    }
+    ++p;
+    while (p < text.size() && std::isspace(static_cast<unsigned char>(text[p]))) ++p;
+    char* end = nullptr;
+    long v = std::strtol(text.c_str() + p, &end, 10);
+    if (end == text.c_str() + p) {
+        std::cerr << "FAIL deblock mb_golden: invalid integer for " << key << "\n";
+        std::exit(1);
+    }
+    return static_cast<int>(v);
+}
+
+std::vector<uint8_t> parseByteArrayAfter(const std::string& text, const std::string& key, std::size_t start = 0) {
+    const std::string needle = "\"" + key + "\"";
+    std::size_t p = text.find(needle, start);
+    if (p == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: missing array " << key << "\n";
+        std::exit(1);
+    }
+    p = text.find('[', p);
+    const std::size_t q = text.find(']', p);
+    if (p == std::string::npos || q == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: malformed array " << key << "\n";
+        std::exit(1);
+    }
+    std::vector<uint8_t> out;
+    const char* cur = text.c_str() + p + 1;
+    const char* end = text.c_str() + q;
+    while (cur < end) {
+        while (cur < end && (std::isspace(static_cast<unsigned char>(*cur)) || *cur == ',')) ++cur;
+        if (cur >= end) break;
+        char* next = nullptr;
+        long v = std::strtol(cur, &next, 10);
+        if (next == cur || v < 0 || v > 255) {
+            std::cerr << "FAIL deblock mb_golden: invalid byte in " << key << "\n";
+            std::exit(1);
+        }
+        out.push_back(static_cast<uint8_t>(v));
+        cur = next;
+    }
+    return out;
+}
 
 struct EdgeIO {
     std::array<uint8_t, 4> p3{}, p2{}, p1{}, p0{}, q0{}, q1{}, q2{}, q3{};
@@ -277,6 +342,50 @@ uint32_t fnv1a(const Frame& f) {
     return h;
 }
 
+
+void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
+    const std::string json = readText(path);
+    if (json.find("\"format\": \"misterplex.p3.mb_golden.v1\"") == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: wrong or missing format marker\n";
+        std::exit(1);
+    }
+    const std::size_t mbPos = json.find("\"macroblock\"");
+    const int qp = parseIntAfter(json, "qp", mbPos == std::string::npos ? 0 : mbPos);
+    const std::size_t samplesPos = json.find("\"samples\"");
+    const auto recon = parseByteArrayAfter(json, "recon_y", samplesPos == std::string::npos ? 0 : samplesPos);
+    if (recon.size() != 256) {
+        std::cerr << "FAIL deblock mb_golden: recon_y size " << recon.size() << " expected 256\n";
+        std::exit(1);
+    }
+    Frame ref = recon;
+    Frame got = recon;
+    constexpr int W = 16, H = 16;
+    for (int x : {4, 8, 12}) {
+        for (int y = 0; y < H; y += 4) {
+            scatterVertical(ref, W, x, y, refEdge(gatherVertical(ref, W, x, y), false, 3, qp, 0, 0));
+            scatterVertical(got, W, x, y, dutEdge(dut, gatherVertical(got, W, x, y), false, 3, qp, 0, 0));
+        }
+    }
+    for (int y : {4, 8, 12}) {
+        for (int x = 0; x < W; x += 4) {
+            scatterHorizontal(ref, W, x, y, refEdge(gatherHorizontal(ref, W, x, y), false, 3, qp, 0, 0));
+            scatterHorizontal(got, W, x, y, dutEdge(dut, gatherHorizontal(got, W, x, y), false, 3, qp, 0, 0));
+        }
+    }
+    if (ref != got) {
+        for (std::size_t i = 0; i < ref.size(); ++i) {
+            if (ref[i] != got[i]) {
+                std::cerr << "FAIL deblock mb_golden first_mismatch=" << i << " got=" << int(got[i])
+                          << " want=" << int(ref[i]) << " got_fnv=0x" << std::hex << fnv1a(got)
+                          << " want_fnv=0x" << fnv1a(ref) << std::dec << "\n";
+                std::exit(1);
+            }
+        }
+    }
+    std::cout << "OK deblock mb_golden.v1 MB0 intra-edge pass qp=" << qp
+              << " fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
+}
+
 void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     constexpr int W = 32, H = 32;
     Frame ref(W * H), got(W * H);
@@ -311,8 +420,12 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool faultHorizontalFirst = false;
+    std::string mbGoldenPath;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--fault-horizontal-first") faultHorizontalFirst = true;
+        const std::string arg = argv[i];
+        if (arg == "--fault-horizontal-first") faultHorizontalFirst = true;
+        else if (arg == "--mb-golden" && i + 1 < argc) mbGoldenPath = argv[++i];
+        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--fault-horizontal-first]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
 
@@ -332,8 +445,9 @@ int main(int argc, char** argv) {
     requireEdge(dut, "chroma bS2", chromaNormal, true, 2, 32, 0, 0);
     requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
 
+    if (!mbGoldenPath.empty()) runMbGolden(dut, mbGoldenPath);
     runDrift(dut, faultHorizontalFirst);
 
-    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, edge-order drift\n";
+    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, mb_golden, edge-order drift\n";
     return 0;
 }
