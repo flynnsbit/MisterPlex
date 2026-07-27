@@ -81,6 +81,11 @@ rtl-sim:
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
 h264-golden-tools: $(ROOT)/build/extract_h264_golden
+	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+
+rtl-sim:
+	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
