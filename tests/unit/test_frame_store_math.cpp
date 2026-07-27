@@ -22,12 +22,15 @@ static uint16_t rgb565(unsigned r, unsigned g, unsigned b) {
 }
 
 static void checkLayout(int w, int h, size_t bytes, uint32_t stride, uint32_t doorbell,
-                        int lineQwords) {
-    const auto l = misterplex::makeDdrFrameLayout(w, h);
+                        int lineQwords,
+                        misterplex::DdrFrameFormat fmt = misterplex::DdrFrameFormat::Rgb565,
+                        int chromaLineQwords = 0) {
+    const auto l = misterplex::makeDdrFrameLayout(w, h, 0x30000000u, 0x40000u, fmt);
     CHECK(misterplex::ddrFrameLayoutValid(l));
     CHECK(l.frame_bytes == bytes);
-    CHECK(l.line_bytes == w * 2);
+    CHECK(l.line_bytes == (fmt == misterplex::DdrFrameFormat::Rgb565 ? w * 2 : w));
     CHECK(l.line_qwords == lineQwords);
+    CHECK(l.chroma_line_qwords == chromaLineQwords);
     CHECK(l.bank_stride == stride);
     CHECK(l.phys_base + l.bank_stride >= l.phys_base + l.frame_bytes);
     CHECK(l.phys_base + l.bank_stride + l.frame_bytes <= l.doorbell_phys);
@@ -64,6 +67,8 @@ int main() {
     CHECK(BYTES * 2 == 307200);
     checkLayout(320, 240, 153600, 0x40000, 0x3007F000, 80);
     checkLayout(640, 480, 614400, 0xC0000, 0x3017F000, 160);
+    checkLayout(640, 480, 460800, 0x80000, 0x300FF000, 80,
+                misterplex::DdrFrameFormat::Yuv420p, 40);
     checkConversion(320, 240);
     checkConversion(640, 480);
 

@@ -5,6 +5,11 @@
 
 namespace misterplex {
 
+enum class DdrFrameFormat {
+    Rgb565,
+    Yuv420p,
+};
+
 struct DdrFrameLayout {
     uint32_t phys_base = 0;
     uint32_t bank_stride = 0;
@@ -15,6 +20,9 @@ struct DdrFrameLayout {
     int height = 0;
     int line_bytes = 0;
     int line_qwords = 0;
+    int chroma_line_bytes = 0;
+    int chroma_line_qwords = 0;
+    DdrFrameFormat format = DdrFrameFormat::Rgb565;
 };
 
 inline uint32_t alignUpU32(uint32_t v, uint32_t align) {
@@ -23,21 +31,36 @@ inline uint32_t alignUpU32(uint32_t v, uint32_t align) {
 
 inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
                                          uint32_t physBase = 0x30000000u,
-                                         uint32_t strideAlign = 0x40000u) {
+                                         uint32_t strideAlign = 0x40000u,
+                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
     DdrFrameLayout out{};
     if (width <= 0 || height <= 0)
         return out;
 
-    const uint64_t lineBytes = static_cast<uint64_t>(width) * 2u;
-    const uint64_t frameBytes = lineBytes * static_cast<uint64_t>(height);
+    uint64_t lineBytes = 0;
+    uint64_t frameBytes = 0;
+    uint64_t chromaLineBytes = 0;
+    if (format == DdrFrameFormat::Yuv420p) {
+        if ((width & 1) || (height & 1))
+            return out;
+        lineBytes = static_cast<uint64_t>(width);
+        chromaLineBytes = static_cast<uint64_t>(width / 2);
+        frameBytes = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 3u / 2u;
+    } else {
+        lineBytes = static_cast<uint64_t>(width) * 2u;
+        frameBytes = lineBytes * static_cast<uint64_t>(height);
+    }
     if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
         return out;
 
     out.phys_base = physBase;
+    out.format = format;
     out.width = width;
     out.height = height;
     out.line_bytes = static_cast<int>(lineBytes);
     out.line_qwords = static_cast<int>(lineBytes / 8u);
+    out.chroma_line_bytes = static_cast<int>(chromaLineBytes);
+    out.chroma_line_qwords = static_cast<int>(chromaLineBytes / 8u);
     out.frame_bytes = static_cast<size_t>(frameBytes);
     out.bank_stride = alignUpU32(static_cast<uint32_t>(frameBytes), strideAlign);
     out.doorbell_phys = physBase + out.bank_stride * 2u - 0x1000u;
