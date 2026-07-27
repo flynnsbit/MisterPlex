@@ -22,6 +22,24 @@
 
 namespace misterplex {
 
+struct PlaybackSummary {
+    int64_t rawFrames = 0;
+    int64_t presentedFrames = 0;
+    int64_t reconFrames = 0;
+    int64_t totalBytes = 0;
+    bool usedRawVideo = false;
+    bool streamEnabled = false;
+    bool skipRgb = false;
+    bool shortRead = false;
+    bool videoEof = false;
+    size_t shortReadGot = 0;
+    size_t shortReadWant = 0;
+
+    int64_t deliveredFrames() const {
+        return rawFrames > 0 ? rawFrames : (reconFrames > 0 ? reconFrames : presentedFrames);
+    }
+};
+
 class MediaPlayer {
 public:
     ~MediaPlayer() { shutdown(); }
@@ -129,6 +147,7 @@ public:
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
+    PlaybackSummary lastPlaybackSummary() const;
 
     bool initPresent();
 
@@ -260,6 +279,8 @@ private:
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
     mutable std::mutex mu_;
+    mutable std::mutex summaryMu_;
+    PlaybackSummary lastSummary_;
     std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;
     std::thread audioThr_;

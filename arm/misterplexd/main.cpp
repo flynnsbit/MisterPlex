@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
         }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
-            presentMode = v; // fb0 | fpga | both
+            presentMode = v; // fb0 | fpga | both | none(test/lab)
         v = loadConf(confPath, "DDR_FRAME_FORMAT");
         if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
             std::fprintf(stderr,
@@ -362,6 +362,12 @@ int main(int argc, char** argv) {
         player.setSubtitleStreamIndex(subtitleStreamId);
     bool osdControl = false;
     {
+        auto audio = loadConf(confPath, "AUDIO");
+        if (!audio.empty())
+            player.setAudioEnabled(confTruthy(audio));
+        auto audioDev = loadConf(confPath, "AUDIO_DEVICE");
+        if (!audioDev.empty())
+            player.setAudioPath(audioDev);
         // Default 0 — no hardcoded audio lag. Conf AUDIO_DELAY_MS only.
         int audioDelayMs = 0;
         auto adv = loadConf(confPath, "AUDIO_DELAY_MS");
@@ -455,7 +461,28 @@ int main(int argc, char** argv) {
         }
         player.stop();
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        std::fprintf(stderr, "misterplexd: LAB play-file done\n");
+        const auto summary = player.lastPlaybackSummary();
+        if (summary.deliveredFrames() <= 0) {
+            std::fprintf(stderr,
+                         "misterplexd: LAB play-file ERROR zero frames delivered "
+                         "(raw=%lld presented=%lld recon=%lld totalBytes=%lld short_read=%d "
+                         "got=%zu/%zu eof=%d stream=%d skip_rgb=%d). Check FFmpeg stderr/log, "
+                         "source streams, and DDR/F1 delivery before grading captures.\n",
+                         static_cast<long long>(summary.rawFrames),
+                         static_cast<long long>(summary.presentedFrames),
+                         static_cast<long long>(summary.reconFrames),
+                         static_cast<long long>(summary.totalBytes), summary.shortRead ? 1 : 0,
+                         summary.shortReadGot, summary.shortReadWant, summary.videoEof ? 1 : 0,
+                         summary.streamEnabled ? 1 : 0, summary.skipRgb ? 1 : 0);
+            return 2;
+        }
+        std::fprintf(stderr,
+                     "misterplexd: LAB play-file done frames=%lld presented=%lld recon=%lld "
+                     "totalBytes=%lld\n",
+                     static_cast<long long>(summary.rawFrames),
+                     static_cast<long long>(summary.presentedFrames),
+                     static_cast<long long>(summary.reconFrames),
+                     static_cast<long long>(summary.totalBytes));
         return 0;
     }
 
