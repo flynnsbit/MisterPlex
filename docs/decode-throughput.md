@@ -309,7 +309,8 @@ accounting.
 | ---:| ---:| ---:| --- |
 | 20 MHz (current) | 684 | 1.23× (126 cycles) | Feasible but not comfortable |
 | 40 MHz | 1,368 | 2.45× (810 cycles) | Comfortable |
-| 60 MHz | 2,052 | 3.68× (1,494 cycles) | Feasibility question dissolves |
+| **48 MHz (fallback)** | **1,641** | **2.94× (1,083 cycles)** | **Comfortable** |
+| **60 MHz (w-arch target)** | **2,052** | **3.68× (1,494 cycles)** | **Recommended target** |
 | 90 MHz | 3,077 | 5.51× (2,519 cycles) | Surplus to allocate |
 
 **w-arch has confirmed: decode can be clock-separated from video.** The
@@ -318,9 +319,30 @@ separation path is clean — `stream_path` takes a dedicated `clk_decode`,
 4 two-FF syncs (w-arch estimates 2-3 days). Cross-reference: `ao486_MiSTer`
 (shipping production core, same device family) uses 90 MHz for `clk_sys`.
 
+### w-arch v3.1 frequency target: 60 MHz (ESTIMATED)
+
+w-arch (`0ef3e85`) analysed fabric depth and recommends **60 MHz** as the
+decode clock target, up from the initial 40 MHz investigation:
+- Critical path: `parse_cavlc` and `deblock`, both at 12 logic levels
+- At 1.0 ns/level conservative estimate: 12.3 ns → max theoretical 81 MHz
+- 60 MHz period is 16.7 ns → **+4.1 ns slack** (ESTIMATED, not from STA)
+- 40 MHz wasted 75% of the clock period — same pattern as 20 MHz
+
+**Binding constraint: w-plane's I16 Plane prediction.** Cycle 1 (gradient →
+products) is 18 LUT levels ≈ 18.3 ns at 1.0 ns/level (ESTIMATED FROM RTL
+STRUCTURE by w-plane). This exceeds 16.7 ns at 60 MHz. Options:
+1. w-plane adds a 3rd pipeline stage to split cycle 1 (preferred)
+2. Accept 48 MHz as fallback (still 2.94× margin, comfortable)
+3. Plane mode is rare in Baseline — accept that all-Plane I-frames stall
+
+**Provenance:** both the 60 MHz target and the 12-level critical path are
+ESTIMATES from first-principles analysis. The only honest validation is a
+post-synthesis STA report from a fit. The fallback ladder is PLL-parameter-only:
+60 → 48 → 40 → 20 MHz.
+
 ## Verdict
 
-**FEASIBLE at 20 MHz. Comfortable at ≥40 MHz. Clock is the highest-leverage decision.**
+**FEASIBLE at 20 MHz. Comfortable at ≥40 MHz. Target 60 MHz pending w-plane fix.**
 
 Updated budget: **558/684 = 1.23× margin at 20 MHz.** This is an improvement
 from the previous 608/684 = 1.12×, driven by w-deblock's measured 100 cycles
@@ -334,8 +356,9 @@ The budget has three provenance tiers:
 
 **The clock constraint is confirmed imaginary.** Both w-c1 and w-arch
 independently verified that 20 MHz is the Template_MiSTer default, never
-chosen. w-arch's study (`ab073d7`) confirms decode can be clock-separated
-from video via a 4th PLL output at 40+ MHz.
+chosen. w-arch's v3.1 study (`0ef3e85`) targets **60 MHz** for the decode
+clock, with a fallback ladder to 48/40/20. Even the most conservative
+fallback (40 MHz) provides 2.45× margin.
 
 **At 20 MHz:** MC overlap is recommended (moves to 1.49×) but not mandatory.
 MC must stay under 376 cycles/MB.
@@ -344,9 +367,14 @@ MC must stay under 376 cycles/MB.
 straightforward MC design fits trivially. w-mc should build the simplest
 correct implementation first.
 
-**Recommendation to parent:** approve the PLL change. It is the single
-lowest-risk, highest-leverage decision available. Every failing scenario in
-the sensitivity table passes at 40 MHz.
+**At 60 MHz (target):** 3.68× margin. Budget conversation is over. The only
+open item is w-plane's Plane prediction critical path (18 LUT levels vs 16.7 ns
+period). If w-plane cannot add a pipeline stage, fall back to 48 MHz (still
+2.94×, still comfortable).
+
+**Recommendation to parent:** approve the PLL change at 60 MHz. If w-plane's
+Plane path blocks 60, approve 48 MHz. Either way, the budget is no longer the
+constraint — the fit and STA are.
 
 ## Ratchet
 
