@@ -422,6 +422,11 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y;
 	reg [Y_W-2:0] desired_c;
 	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
+	reg sched_valid, sched_is_y;
+	reg sched_bank, sched_pending_ready;
+	reg [Y_W-1:0] sched_y;
+	reg [Y_W-2:0] sched_cy;
+	reg [SLOT_W-1:0] sched_idx;
 	always @* begin
 		cur_base_idx = disp_buf_d2 ? SECOND_SET_BASE : '0;
 		prep_base_idx = disp_buf_d2 ? '0 : SECOND_SET_BASE;
@@ -626,6 +631,13 @@ module ddr_frame_store #(
 			frame_mbox_valid <= 1'b0;
 			frame_mbox_hb <= 18'd0;
 			cmd_pop <= 1'b0;
+			sched_valid <= 1'b0;
+			sched_is_y <= 1'b0;
+			sched_bank <= 1'b0;
+			sched_pending_ready <= 1'b0;
+			sched_y <= '0;
+			sched_cy <= '0;
+			sched_idx <= '0;
 			imbox_seq <= 16'd0;
 			imbox_cmd_seq <= 8'd0;
 			fill_qword <= '0;
@@ -689,30 +701,41 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= pending_ready_c;
+					pending_ready_ddr <= sched_valid ? sched_pending_ready : pending_ready_c;
 					poll_div <= poll_div + 16'd1;
-					if (need_y_cur_c || (swap_pending_d2 && need_y_prep_c)) begin
-						fill_bank <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_y <= need_y_cur_c ? target_y_cur_c : target_y_prep_c;
-						fill_idx <= need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c;
-						y_valid[need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c] <= 1'b0;
-						y_bank[need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c] <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_is_chroma <= 1'b0;
+					if (sched_valid) begin
+						fill_bank <= sched_bank;
+						fill_idx <= sched_idx;
+						fill_is_chroma <= !sched_is_y;
 						fill_plane_v <= 1'b0;
 						fill_qword <= '0;
-						qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+						sched_valid <= 1'b0;
+						if (sched_is_y) begin
+							fill_y <= sched_y;
+							y_valid[sched_idx] <= 1'b0;
+							y_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+						end else begin
+							fill_cy <= sched_cy;
+							c_valid[sched_idx] <= 1'b0;
+							c_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+						end
 						state_ddr <= S_LINE_ISSUE;
+					end else if (need_y_cur_c || (swap_pending_d2 && need_y_prep_c)) begin
+						sched_valid <= 1'b1;
+						sched_is_y <= 1'b1;
+						sched_bank <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
+						sched_y <= need_y_cur_c ? target_y_cur_c : target_y_prep_c;
+						sched_idx <= need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c;
+						sched_pending_ready <= pending_ready_c;
 					end else if (need_c_cur_c || (swap_pending_d2 && need_c_prep_c)) begin
-						fill_bank <= need_c_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_cy <= need_c_cur_c ? target_c_cur_c : target_c_prep_c;
-						fill_idx <= need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c;
-						c_valid[need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c] <= 1'b0;
-						c_bank[need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c] <= need_c_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_is_chroma <= 1'b1;
-						fill_plane_v <= 1'b0;
-						fill_qword <= '0;
-						qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
-						state_ddr <= S_LINE_ISSUE;
+						sched_valid <= 1'b1;
+						sched_is_y <= 1'b0;
+						sched_bank <= need_c_cur_c ? disp_bank_d2 : pending_bank_d2;
+						sched_cy <= need_c_cur_c ? target_c_cur_c : target_c_prep_c;
+						sched_idx <= need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c;
+						sched_pending_ready <= pending_ready_c;
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;
