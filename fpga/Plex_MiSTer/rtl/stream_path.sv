@@ -153,6 +153,12 @@ module stream_path #(
 	wire [5:0] sl_qp;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
+	wire sl_place_ok;
+	wire [4:0] sl_place_tc;
+	wire [1:0] sl_place_t1;
+	wire signed [7:0] sl_place_dc;
+	wire [5:0] sl_place_qp;
+	wire signed [8:0] sl_place_coeff [0:15];
 
 	// residual_csum / residual_coeff connect straight to module outputs (no
 	// unpacked-array continuous assign — Quartus-friendly).
@@ -178,6 +184,12 @@ module stream_path #(
 		.residual_csum(residual_csum),
 		.residual_coeff(residual_coeff),
 		.residual_place_pulse(residual_place_pulse),
+		.residual_place_ok(sl_place_ok),
+		.residual_place_tc(sl_place_tc),
+		.residual_place_t1(sl_place_t1),
+		.residual_place_dc(sl_place_dc),
+		.residual_place_qp(sl_place_qp),
+		.residual_place_coeff(sl_place_coeff),
 		.busy(sl_busy)
 	);
 
@@ -207,11 +219,12 @@ module stream_path #(
 		.slice_type(sl_type),
 		.slice_is_i(sl_is_i),
 		.slice_valid(slice_valid),
-		.residual_ok(sl_res_ok),
-		.residual_tc(sl_rtc),
-		.residual_dc(sl_rdc),
-		.slice_qp(sl_qp),
-		.residual_coeff(residual_coeff),
+		.residual_ok(sl_place_ok),
+		.residual_tc(sl_place_tc),
+		.residual_dc(sl_place_dc),
+		.residual_valid(residual_place_pulse),
+		.slice_qp(sl_place_qp),
+		.residual_coeff(sl_place_coeff),
 		.recon_sig(recon_sig),
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
@@ -230,7 +243,9 @@ module stream_path #(
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
-	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg | residual_coeff[0][0] | residual_coeff[1][0] |
-	             residual_coeff[15][0];
+	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
+	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
+	             residual_coeff[0][0] | residual_coeff[1][0] |
+	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
 
 endmodule

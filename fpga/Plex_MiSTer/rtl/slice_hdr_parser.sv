@@ -47,6 +47,12 @@ module slice_hdr_parser (
 	// R-csum6 Rank3: 1-cycle pulse at ST_PLACE only (not early residual_ok).
 	// Plex freezes st_res_word_sticky on this edge so status[111:104] cannot walk.
 	(* keep = 1 *) output reg residual_place_pulse,
+	output reg         residual_place_ok,
+	output reg  [4:0]  residual_place_tc,
+	output reg  [1:0]  residual_place_t1,
+	output reg  signed [7:0] residual_place_dc,
+	output reg  [5:0]  residual_place_qp,
+	(* keep = 1 *) output reg signed [8:0] residual_place_coeff [0:15],
 	output reg         busy
 );
 
@@ -242,12 +248,19 @@ module slice_hdr_parser (
 			residual_dc <= 0;
 			residual_csum <= 0; // reset only — sticky otherwise until ST_PLACE
 			residual_place_pulse <= 1'b0;
+			residual_place_ok <= 1'b0;
+			residual_place_tc <= 5'd0;
+			residual_place_t1 <= 2'd0;
+			residual_place_dc <= 8'sd0;
+			residual_place_qp <= 6'd0;
 			place_csum_r <= 8'd0;
 			place_dc_r <= 8'sd0;
 			begin : rst_coeff
 				integer ci;
-				for (ci = 0; ci < 16; ci = ci + 1)
+				for (ci = 0; ci < 16; ci = ci + 1) begin
 					residual_coeff[ci] <= 9'sd0;
+					residual_place_coeff[ci] <= 9'sd0;
+				end
 			end
 			tcode <= 0;
 			tbits <= 0;
@@ -1026,12 +1039,18 @@ module slice_hdr_parser (
 					cs = 8'd0;
 					for (j = 0; j < 16; j = j + 1) begin
 						residual_coeff[j] <= tmpc[j];
+						residual_place_coeff[j] <= tmpc[j];
 						cs = cs ^ sat8(tmpc[j]);
 					end
 					// Preserve residual_dc regression (do not change sat8 path) — golden -24
 					place_dc_r   <= sat8(dcv);
 					place_csum_r <= cs;
 					residual_dc   <= sat8(dcv);
+					residual_place_ok <= 1'b1;
+					residual_place_tc <= r_tc;
+					residual_place_t1 <= r_t1[1:0];
+					residual_place_dc <= sat8(dcv);
+					residual_place_qp <= slice_qp;
 					// PRODUCT: real XOR fold (DIAG 8'h14 STRIPPED per parent R-csum6)
 					residual_csum <= cs;
 					csum_acc <= cs;
