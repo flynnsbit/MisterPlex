@@ -155,6 +155,22 @@ The unit proof also checks the live wrapper's absent-dependency path: missing
 `PLEX_BASE`/`PLEX_TOKEN`/`MISTERPLEX_BASELINE_KEY` returns `77` and prints
 `SKIP-NOT-PASS`, never a green pass.
 
+Live host check on 2026-07-27 found no blocker: Docker was present, container
+`plex` was running, the profile path existed and matched the repo copy, and the
+PMS token was present in `Preferences.xml` (not recorded here). The HEVC Main
+480p test item was found at `/library/metadata/3`, and the live gate passed:
+
+```text
+PMS_BASELINE_SOURCE live_pms=http://127.0.0.1:32400 key=/library/metadata/3
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=1 coded=624x480 display=618x480 crop_flag=1 crop_lrtb=0,3,0,0 crop_unit=2x2
+PMS_BASELINE_SLICES vcl=350 idr=7 nonidr=343 i=7 p=343 b=0 other=0 bytes=2519896
+test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B 624x480 stream
+```
+
+If this check becomes `SKIP-NOT-PASS` on another host, the human must provide
+the missing item named by the script: `PLEX_BASE`, a PMS token, and a video
+metadata key such as `MISTERPLEX_BASELINE_KEY=/library/metadata/N`.
+
 ## Rollback
 
 One-step server rollback:
@@ -198,6 +214,18 @@ golden `.provenance.json` sidecar and `--expected-pixel-format yuv420p`. The
 canonical value for the RGB565→YUV420 migration is `yuv420p` (`i420` is accepted
 only as an alias by the visual harness), matching w-osd's frame-format status
 token and avoiding a second, competing pixel-format declaration in the PMS XML.
+
+## Salvage verdict for stranded 480p branches
+
+These branches were inspected and adjudicated so they can be closed instead of
+remaining parallel attempts:
+
+| Branch / commit | Verdict | Reason |
+| --- | --- | --- |
+| `feat/a4-480p-server` / `216703b` | Salvaged | Its built-in `240p`/`480p` transcode profile table, `TRANSCODE_PROFILE`/`--transcode-profile` wiring, URL `videoProfile=baseline&videoLevel=30`, and 480p unit guards are ancestors of the current branch. |
+| `feat/a4-pms-profile-prep` / `af339d6` | Salvaged and updated | Its `assets/plex-profiles/MiSTerPlex.xml` and initial recipe are ancestors; the current doc changes status from prepared-only to installed/load-bearing with live evidence and rollback. |
+| `feat/a4-profile-header` / `edb5f40` | Salvaged | Its `X-Plex-Client-Profile-Name: MiSTerPlex` identity, suppression of counterproductive `X-Plex-Client-Profile-Extra` for that profile, MPEG-TS target, and High/CABAC diagnostics are ancestors. |
+| `feat/a4-sps-baseline` / `b28e863` | Superseded | Its useful MPEG-TS/profile guard intent is covered by `edb5f40` plus the delivered-stream gate. It is not an ancestor of the current branch because its client-side-only assertions were weaker than the live SPS/PPS/slice gate and did not prove delivered refs/B-slices/geometry. |
 
 ## Direct Play / Direct Stream check for the current test item
 
