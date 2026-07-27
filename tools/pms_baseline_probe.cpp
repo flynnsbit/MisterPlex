@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -48,6 +49,13 @@ std::string runCommandBytes(const std::string& cmd, size_t maxBytes) {
     return data;
 }
 
+std::string readFileBytes(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), {});
+}
+
 std::string ffmpegExtractH264(const std::string& url, const std::string& headers, int seconds) {
     // The PMS response is MPEG-TS. Extracting the video elementary stream avoids
     // false Annex-B start-code matches in TS packet metadata or unrelated payload.
@@ -59,6 +67,24 @@ std::string ffmpegExtractH264(const std::string& url, const std::string& headers
         << " -c:v copy -an -f h264 - 2>/dev/null";
     return runCommandBytes(cmd.str(), 16u << 20);
 }
+
+bool parseSizeSpec(const std::string& spec, int& w, int& h) {
+    char x = 0;
+    std::istringstream in(spec);
+    return (in >> w >> x >> h) && x == 'x' && w > 0 && h > 0 && in.eof();
+}
+
+struct Expectations {
+    int profile_idc = 66;
+    int entropy_cabac = 0;
+    int max_num_ref_frames = 1;
+    int b_slices = 0;
+    int coded_width = 624;
+    int coded_height = 480;
+    int display_width = 618;
+    int display_height = 480;
+    bool check_geometry = true;
+};
 
 struct SpsProbe {
     bool valid = false;
@@ -255,8 +281,12 @@ StreamProbe probeAnnexBInBytes(const std::string& data) {
 }
 
 int usage(const char* argv0) {
-    std::cerr << "usage: " << argv0 << " --base URL --token TOKEN --key /library/metadata/N [--seconds N]\n"
-              << "       Env equivalents: PLEX_BASE, PLEX_TOKEN, MISTERPLEX_BASELINE_KEY\n";
+    std::cerr << "usage: " << argv0
+              << " --base URL --token TOKEN --key /library/metadata/N [--seconds N]\n"
+              << "       " << argv0 << " --annexb delivered.264\n"
+              << "       Env equivalents: PLEX_BASE, PLEX_TOKEN, MISTERPLEX_BASELINE_KEY\n"
+              << "       Defaults enforce profile_idc=66, entropy_cabac=0, max_num_ref_frames=1,\n"
+              << "       B-slices=0, coded=624x480, display=618x480.\n";
     return 2;
 }
 
@@ -266,9 +296,9 @@ int main(int argc, char** argv) {
     std::string base = envOrEmpty("PLEX_BASE");
     std::string token = envOrEmpty("PLEX_TOKEN");
     std::string key = envOrEmpty("MISTERPLEX_BASELINE_KEY");
+    std::string annexbPath;
     int seconds = 14;
-    int expectProfile = 66;
-    int expectCabac = 0;
+    Expectations expect;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -292,16 +322,39 @@ int main(int argc, char** argv) {
             if (!needValue(v))
                 return usage(argv[0]);
             seconds = std::atoi(v.c_str());
+        } else if (a == "--annexb") {
+            if (!needValue(annexbPath))
+                return usage(argv[0]);
         } else if (a == "--expect-profile") {
             std::string v;
             if (!needValue(v))
                 return usage(argv[0]);
-            expectProfile = std::atoi(v.c_str());
+            expect.profile_idc = std::atoi(v.c_str());
         } else if (a == "--expect-cabac") {
             std::string v;
             if (!needValue(v))
                 return usage(argv[0]);
-            expectCabac = std::atoi(v.c_str());
+            expect.entropy_cabac = std::atoi(v.c_str());
+        } else if (a == "--expect-max-ref" || a == "--expect-max-num-ref-frames") {
+            std::string v;
+            if (!needValue(v))
+                return usage(argv[0]);
+            expect.max_num_ref_frames = std::atoi(v.c_str());
+        } else if (a == "--expect-b-slices") {
+            std::string v;
+            if (!needValue(v))
+                return usage(argv[0]);
+            expect.b_slices = std::atoi(v.c_str());
+        } else if (a == "--expect-coded") {
+            std::string v;
+            if (!needValue(v) || !parseSizeSpec(v, expect.coded_width, expect.coded_height))
+                return usage(argv[0]);
+        } else if (a == "--expect-display") {
+            std::string v;
+            if (!needValue(v) || !parseSizeSpec(v, expect.display_width, expect.display_height))
+                return usage(argv[0]);
+        } else if (a == "--no-geometry-check") {
+            expect.check_geometry = false;
         } else if (a == "--help" || a == "-h") {
             return usage(argv[0]);
         } else {
@@ -310,34 +363,44 @@ int main(int argc, char** argv) {
         }
     }
 
-    base = misterplex::normalizePlexBase(base);
-    if (base.empty() || token.empty() || key.empty()) {
-        std::cerr << "SKIP-NOT-PASS pms_baseline_profile: live PMS inputs missing; set PLEX_BASE, "
-                     "PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY. This is not a pass.\n";
-        return 77;
-    }
-    if (seconds < 4)
-        seconds = 4;
-    if (seconds > 30)
-        seconds = 30;
+    std::string body;
+    std::string sourceDesc;
+    if (!annexbPath.empty()) {
+        body = readFileBytes(annexbPath);
+        sourceDesc = "annexb=" + annexbPath;
+    } else {
+        base = misterplex::normalizePlexBase(base);
+        if (base.empty() || token.empty() || key.empty()) {
+            std::cerr << "SKIP-NOT-PASS pms_baseline_profile: live PMS inputs missing; set PLEX_BASE, "
+                         "PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY. This is not a pass.\n";
+            return 77;
+        }
+        if (seconds < 4)
+            seconds = 4;
+        if (seconds > 30)
+            seconds = 30;
 
-    misterplex::WeakLadder weak;
-    if (!misterplex::applyPlexTranscodeProfile("480p", weak)) {
-        std::cerr << "FAIL pms_baseline_profile: built-in 480p transcode profile missing\n";
-        return 1;
-    }
-    const std::string session = "mplex-baseline-check";
-    const std::string startUrl = misterplex::buildUniversalTranscodeUrl(base, key, token, session, 0, weak);
+        misterplex::WeakLadder weak;
+        if (!misterplex::applyPlexTranscodeProfile("480p", weak)) {
+            std::cerr << "FAIL pms_baseline_profile: built-in 480p transcode profile missing\n";
+            return 1;
+        }
+        const std::string session = "mplex-baseline-check";
+        const std::string startUrl =
+            misterplex::buildUniversalTranscodeUrl(base, key, token, session, 0, weak);
 
-    if (!misterplex::ensureUniversalDecision(startUrl, session, token, weak)) {
-        std::cerr << "FAIL pms_baseline_profile: PMS universal decision request failed before stream fetch\n";
-        return 1;
-    }
+        if (!misterplex::ensureUniversalDecision(startUrl, session, token, weak)) {
+            std::cerr << "FAIL pms_baseline_profile: PMS universal decision request failed before stream fetch\n";
+            return 1;
+        }
 
-    const std::string headerBlock = misterplex::plexFfmpegHeaders(session, token, weak);
-    const std::string body = ffmpegExtractH264(startUrl, headerBlock, seconds);
+        const std::string headerBlock = misterplex::plexFfmpegHeaders(session, token, weak);
+        body = ffmpegExtractH264(startUrl, headerBlock, seconds);
+        sourceDesc = "live_pms=" + base + " key=" + key;
+    }
     if (body.empty()) {
-        std::cerr << "FAIL pms_baseline_profile: PMS returned no transcode bytes; check PMS reachability and token\n";
+        std::cerr << "FAIL pms_baseline_profile: no H.264 bytes from " << sourceDesc
+                  << "; check PMS reachability/token or Annex-B path\n";
         return 1;
     }
 
@@ -348,6 +411,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::cout << "PMS_BASELINE_SOURCE " << sourceDesc << "\n";
     std::cout << "PMS_BASELINE_DELIVERED profile_idc=" << static_cast<unsigned>(probe.sps.profile_idc)
               << " level_idc=" << static_cast<unsigned>(probe.sps.level_idc)
               << " pps_valid=" << (probe.pps.valid ? 1 : 0)
@@ -362,24 +426,63 @@ int main(int argc, char** argv) {
     std::cout << "PMS_BASELINE_SLICES vcl=" << probe.vcl << " idr=" << probe.idr
               << " nonidr=" << probe.nonidr << " i=" << probe.i << " p=" << probe.p
               << " b=" << probe.b << " other=" << probe.other << " bytes=" << body.size() << "\n";
+    std::cout.flush();
 
-    bool ok = true;
-    if (probe.sps.profile_idc != expectProfile)
-        ok = false;
-    if ((probe.pps.entropy_cabac ? 1 : 0) != expectCabac)
-        ok = false;
-    if (expectCabac == 0 && !probe.pps.valid)
-        ok = false;
-    if (!ok) {
-        std::cerr << "FAIL pms_baseline_profile: PMS delivered profile_idc="
-                  << static_cast<unsigned>(probe.sps.profile_idc) << ", expected " << expectProfile
-                  << "; entropy_cabac=" << (probe.pps.entropy_cabac ? 1 : 0) << ", expected "
-                  << expectCabac << "; pps_valid=" << (probe.pps.valid ? 1 : 0)
-                  << " — is MiSTerPlex.xml still installed in the PMS Profiles "
-                  << "directory and has the plex container been restarted? See docs/pms-baseline-profile.md.\n";
+    std::vector<std::string> problems;
+    auto addProblem = [&](const std::string& p) { problems.push_back(p); };
+    if (probe.sps.profile_idc != expect.profile_idc) {
+        std::ostringstream p;
+        p << "profile_idc=" << static_cast<unsigned>(probe.sps.profile_idc) << ", expected "
+          << expect.profile_idc;
+        addProblem(p.str());
+    }
+    if ((probe.pps.entropy_cabac ? 1 : 0) != expect.entropy_cabac) {
+        std::ostringstream p;
+        p << "entropy_cabac=" << (probe.pps.entropy_cabac ? 1 : 0) << ", expected "
+          << expect.entropy_cabac;
+        addProblem(p.str());
+    }
+    if (expect.entropy_cabac == 0 && !probe.pps.valid)
+        addProblem("pps_valid=0 for expected CAVLC stream");
+    if (static_cast<int>(probe.sps.max_num_ref_frames) != expect.max_num_ref_frames) {
+        std::ostringstream p;
+        p << "max_num_ref_frames=" << probe.sps.max_num_ref_frames << ", expected "
+          << expect.max_num_ref_frames;
+        addProblem(p.str());
+    }
+    if (probe.b != expect.b_slices) {
+        std::ostringstream p;
+        p << "b_slices=" << probe.b << ", expected " << expect.b_slices;
+        addProblem(p.str());
+    }
+    if (expect.check_geometry) {
+        if (static_cast<int>(probe.sps.coded_width) != expect.coded_width ||
+            static_cast<int>(probe.sps.coded_height) != expect.coded_height) {
+            std::ostringstream p;
+            p << "coded=" << probe.sps.coded_width << "x" << probe.sps.coded_height
+              << ", expected " << expect.coded_width << "x" << expect.coded_height
+              << " (39x30 macroblocks; do not silently assume 640)";
+            addProblem(p.str());
+        }
+        if (static_cast<int>(probe.sps.display_width) != expect.display_width ||
+            static_cast<int>(probe.sps.display_height) != expect.display_height) {
+            std::ostringstream p;
+            p << "display=" << probe.sps.display_width << "x" << probe.sps.display_height
+              << ", expected " << expect.display_width << "x" << expect.display_height
+              << " (640x480 presentation uses 11px pillars)";
+            addProblem(p.str());
+        }
+    }
+    if (!problems.empty()) {
+        std::cerr << "FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p "
+                     "FPGA contract:";
+        for (const auto& p : problems)
+            std::cerr << " " << p << ";";
+        std::cerr << " is MiSTerPlex.xml still installed in the PMS Profiles directory and has "
+                     "the plex container been restarted? See docs/pms-baseline-profile.md.\n";
         return 1;
     }
 
-    std::cout << "test_pms_baseline_profile: OK delivered Baseline/CAVLC from live PMS\n";
+    std::cout << "test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B 624x480 stream\n";
     return 0;
 }
