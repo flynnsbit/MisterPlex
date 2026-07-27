@@ -35,6 +35,7 @@ THROUGHPUT_RATCHET="${FULL_FRAME_THROUGHPUT_RATCHET:-}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
+THROUGHPUT_DIR="$ROOT/build/realtime_throughput"
 COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
 NATIVE_SCORE_JSON="$REF_DIR/native_frame_score.json"
@@ -94,7 +95,7 @@ if [[ -z "${WIDTH:-}" || -z "${HEIGHT:-}" || -z "${FRAMES:-}" || "$FRAMES" == "N
 fi
 
 SOURCE_SHA=$(sha256sum "$BITSTREAM" | awk '{print $1}')
-mkdir -p "$BUILD" "$BUILD_FAULT" "$REF_DIR"
+mkdir -p "$BUILD" "$BUILD_FAULT" "$REF_DIR" "$THROUGHPUT_DIR"
 if [[ -z "$SEQUENCE" ]]; then
   case "$SOURCE_SHA" in
     d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
@@ -230,7 +231,8 @@ grep -q '"sequence_manifest":' "$COMPARE_JSON"
 "$ROOT/tools/check_decode_throughput.py" \
   --compare-json "$COMPARE_JSON" \
   --ratchet "$THROUGHPUT_RATCHET" \
-  --report "$REF_DIR/decode_throughput.json"
+  --label "$(basename "$BITSTREAM"):${WIDTH}x${HEIGHT}" \
+  --report "$THROUGHPUT_DIR/decode_throughput_${WIDTH}x${HEIGHT}.json"
 make -s -C "$ROOT" h264-golden-tools
 python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
 import json

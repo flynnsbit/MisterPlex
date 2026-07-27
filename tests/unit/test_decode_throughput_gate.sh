@@ -42,12 +42,15 @@ cat >"$COMPARE" <<'JSON'
 JSON
 
 "$ROOT/tools/check_decode_throughput.py" \
-  --compare-json "$COMPARE" --ratchet "$RATCHET" --report "$REPORT"
+  --compare-json "$COMPARE" --ratchet "$RATCHET" \
+  --label unit-624x480 --report "$REPORT"
 python3 - "$REPORT" <<'PY'
 import json
 import sys
 
 r = json.load(open(sys.argv[1]))
+assert r["run"]["label"] == "unit-624x480", r
+assert r["source"]["sha256"] == "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9", r
 assert r["geometry"]["mbs_per_frame"] == 1170, r
 assert r["target"]["stream_path_clock_hz"] == 20_000_000, r
 assert abs(r["measured"]["cycles_per_mb"] - 259.3912393162) < 1e-6, r
