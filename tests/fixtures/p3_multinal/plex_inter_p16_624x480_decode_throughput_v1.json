@@ -1,7 +1,7 @@
 {
   "format": "misterplex.decode_throughput_ratchet.v1",
   "source_sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9",
-  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh with FULL_FRAME_BITSTREAM=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264. This is the 480p realtime ratchet for the current implemented stream_path path, with missing inter/deblock/product-DDR stages declared UNKNOWN instead of silently counted as zero.",
+  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh with FULL_FRAME_BITSTREAM=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions in the Verilator testbench. The aggregate 259 cycles/MB is dominated by decode_stub diagnostic paint (WxH pixels/frame at 1 pixel/cycle) which is NOT a production cost. Production-relevant measured stages are parse_cavlc (~3-4 cycles/MB) and dequant_idct/intra_pred (0 cycles — combinational). MC/deblock/DDR write are NOT IMPLEMENTED and will add significant cost.",
   "target": {
     "fps": 25.0,
     "stream_path_clock_hz": 20000000,
@@ -21,26 +21,64 @@
     "max_cycles_total": 3823946,
     "max_cycles_per_frame": 318662.1375,
     "max_cycles_per_mb": 272.3608012821,
-    "min_budget_margin_ratio": 2.3
+    "min_budget_margin_ratio": 2.3,
+    "stages": {
+      "parse_cavlc": {
+        "max_cycles_per_mb": 10.0
+      },
+      "diagnostic_paint": {
+        "max_cycles_per_mb": 260.0
+      }
+    }
   },
   "stage_coverage": [
     {
-      "name": "stream_path_total_current",
+      "name": "parse_cavlc",
       "status": "measured",
-      "cycles_per_mb": 259.3912393162,
-      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, and diagnostic frame emission in the existing full-frame RTL simulation."
+      "cycles_per_mb": null,
+      "note": "Annex-B parse, SPS/PPS/slice header, CAVLC residual decode. Measured as stub_busy rise to fs_wr_reset per VCL frame. Populated from sim stage_cycles."
     },
     {
-      "name": "parse_cavlc_dequant_idct_intra_breakdown",
-      "status": "unknown",
-      "cycles_per_mb": null,
-      "note": "Existing simulation reports aggregate cycles and MB0 trace, not separate per-stage cycle counters."
+      "name": "dequant_idct",
+      "status": "measured",
+      "cycles_per_mb": 0.0,
+      "note": "Zero clock cycles. h264_dequant4x4, h264_idct4x4, h264_recon4x4 are combinational modules that settle within one clock period."
     },
     {
-      "name": "inter_mc_dpb_deblock_product_writeback",
-      "status": "unknown",
+      "name": "intra_pred",
+      "status": "measured",
+      "cycles_per_mb": 0.0,
+      "note": "Zero additional clock cycles. DC Intra_4x4 prediction (pred=128) is combinational inside h264_recon4x4."
+    },
+    {
+      "name": "diagnostic_paint",
+      "status": "measured",
       "cycles_per_mb": null,
-      "note": "Inter correctness, DPB fetch, deblock, and product DDR writeback are not fully represented by this ratchet yet."
+      "note": "NOT PRODUCTION. decode_stub paints WxH diagnostic pixels per frame at 1 pixel/cycle. Populated from sim stage_cycles."
+    },
+    {
+      "name": "mc_interpolation",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "Inter prediction, motion compensation, and DPB reference fetch are NOT YET IMPLEMENTED. Will add significant cost: qpel interpolation + DDR reference fetch latency."
+    },
+    {
+      "name": "deblock",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "H.264 deblocking filter exists as RTL but is not in the measured pipeline."
+    },
+    {
+      "name": "ddr_write",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "Product DDR frame writeback is not instrumented in the measured pipeline."
+    },
+    {
+      "name": "injection_overhead",
+      "status": "measured",
+      "cycles_per_mb": null,
+      "note": "TESTBENCH ARTIFACT. ioctl byte-by-byte injection at 2 cycles/byte. Real hardware uses DDR DMA."
     }
   ]
 }

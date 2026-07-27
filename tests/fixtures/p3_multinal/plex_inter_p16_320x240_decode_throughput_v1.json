@@ -1,7 +1,7 @@
 {
   "format": "misterplex.decode_throughput_ratchet.v1",
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
-  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. This is a cycle ratchet for the current implemented stream_path path, not a claim that all final inter/deblock/product-DDR stages are implemented.",
+  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions. The aggregate cycles/MB is dominated by decode_stub diagnostic paint. MC/deblock/DDR write are NOT IMPLEMENTED.",
   "target": {
     "fps": 25.0,
     "stream_path_clock_hz": 20000000,
@@ -21,26 +21,64 @@
     "max_cycles_total": 1017671,
     "max_cycles_per_frame": 84805.875,
     "max_cycles_per_mb": 282.68625,
-    "min_budget_margin_ratio": 8.0
+    "min_budget_margin_ratio": 8.0,
+    "stages": {
+      "parse_cavlc": {
+        "max_cycles_per_mb": 15.0
+      },
+      "diagnostic_paint": {
+        "max_cycles_per_mb": 270.0
+      }
+    }
   },
   "stage_coverage": [
     {
-      "name": "stream_path_total_current",
+      "name": "parse_cavlc",
       "status": "measured",
-      "cycles_per_mb": 269.225,
-      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, and diagnostic frame emission in the existing full-frame RTL simulation."
+      "cycles_per_mb": null,
+      "note": "Annex-B parse, SPS/PPS/slice header, CAVLC residual decode. Populated from sim stage_cycles."
     },
     {
-      "name": "parse_cavlc_dequant_idct_intra_breakdown",
-      "status": "unknown",
-      "cycles_per_mb": null,
-      "note": "Existing simulation reports aggregate cycles and MB0 trace, not separate per-stage cycle counters."
+      "name": "dequant_idct",
+      "status": "measured",
+      "cycles_per_mb": 0.0,
+      "note": "Zero clock cycles. Combinational modules."
     },
     {
-      "name": "inter_mc_dpb_deblock_product_writeback",
-      "status": "unknown",
+      "name": "intra_pred",
+      "status": "measured",
+      "cycles_per_mb": 0.0,
+      "note": "Zero additional clock cycles. DC Intra_4x4 prediction is combinational."
+    },
+    {
+      "name": "diagnostic_paint",
+      "status": "measured",
       "cycles_per_mb": null,
-      "note": "Inter correctness, DPB fetch, deblock, and product DDR writeback are not fully represented by this ratchet yet."
+      "note": "NOT PRODUCTION. decode_stub diagnostic paint."
+    },
+    {
+      "name": "mc_interpolation",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "Inter prediction and motion compensation are NOT YET IMPLEMENTED."
+    },
+    {
+      "name": "deblock",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "Deblocking filter is not in the measured pipeline."
+    },
+    {
+      "name": "ddr_write",
+      "status": "not_implemented",
+      "cycles_per_mb": null,
+      "note": "Product DDR frame writeback is not instrumented."
+    },
+    {
+      "name": "injection_overhead",
+      "status": "measured",
+      "cycles_per_mb": null,
+      "note": "TESTBENCH ARTIFACT. ioctl byte-by-byte injection."
     }
   ]
 }

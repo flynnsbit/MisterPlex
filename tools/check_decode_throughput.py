@@ -54,6 +54,119 @@ def derive(compare: dict, ratchet: dict) -> dict:
     cycles_per_mb = cycles_total / total_mbs
     margin_ratio = budget_cycles_per_frame / cycles_per_frame
 
+    # Extract per-stage cycle data if the compare JSON has it
+    sc = compare.get("stage_cycles")
+    stages_measured: dict | None = None
+    if sc is not None:
+        parse_total = int(sc["parse_total"])
+        paint_total = int(sc["paint_total"])
+        injection_total = int(sc["injection_cycles"])
+        nonvcl_idle_total = int(sc["nonvcl_idle_cycles"])
+        reset_total = int(sc["reset_cycles"])
+        overhead_total = injection_total + nonvcl_idle_total + reset_total
+        accounted = parse_total + paint_total
+        unaccounted = cycles_total - accounted - overhead_total
+        if unaccounted < 0:
+            unaccounted = 0
+        stages_measured = {
+            "parse_cavlc": {
+                "cycles": parse_total,
+                "cycles_per_mb": parse_total / total_mbs if total_mbs else 0.0,
+                "status": "measured",
+                "method": "stub_busy rise to fs_wr_reset transition per VCL frame",
+                "note": "Annex-B parse, SPS/PPS/slice header, CAVLC residual decode latency. "
+                        "Overlaps with ioctl byte injection in the testbench.",
+            },
+            "dequant_idct": {
+                "cycles": 0,
+                "cycles_per_mb": 0.0,
+                "status": "measured",
+                "method": "combinational — h264_dequant4x4 + h264_idct4x4 + h264_recon4x4 are pure comb logic",
+                "note": "Zero clock cycles. Dequant/IDCT/recon are combinational modules instantiated "
+                        "in decode_stub; they settle within one clock period and consume no pipeline stages.",
+            },
+            "intra_pred": {
+                "cycles": 0,
+                "cycles_per_mb": 0.0,
+                "status": "measured",
+                "method": "combinational — DC Intra_4x4 prediction is pred=128 constant",
+                "note": "Zero additional clock cycles. Intra prediction is currently DC-only (pred=128), "
+                        "computed combinationally inside h264_recon4x4. The parse_cavlc time already "
+                        "covers the residual decode; intra adds no pipeline latency.",
+            },
+            "diagnostic_paint": {
+                "cycles": paint_total,
+                "cycles_per_mb": paint_total / total_mbs if total_mbs else 0.0,
+                "status": "measured",
+                "method": "fs_wr_reset to fs_swap transition per VCL frame",
+                "note": "NOT PRODUCTION. decode_stub paints WxH={}x{} diagnostic pixels per frame "
+                        "at 1 pixel/cycle. This will not exist in the production decoder.".format(width, height),
+            },
+            "mc_interpolation": {
+                "cycles": None,
+                "cycles_per_mb": None,
+                "status": "not_implemented",
+                "method": None,
+                "note": "Inter prediction, motion compensation, and DPB reference fetch are NOT YET "
+                        "IMPLEMENTED in the measured pipeline. h264_inter_pred.sv exists but is only "
+                        "exercised as a diagnostic self-check, not in the decode data path. THIS STAGE "
+                        "WILL ADD SIGNIFICANT COST when it is built — possibly hundreds of cycles/MB "
+                        "for qpel interpolation + DDR reference fetch latency.",
+            },
+            "deblock": {
+                "cycles": None,
+                "cycles_per_mb": None,
+                "status": "not_implemented",
+                "method": None,
+                "note": "H.264 deblocking filter (h264_deblock.sv) exists as RTL but is not in the "
+                        "measured stream_path pipeline. Deblocking is compute-intensive: up to ~100 "
+                        "cycles/MB for strong filtering across 16 edges per MB.",
+            },
+            "ddr_write": {
+                "cycles": None,
+                "cycles_per_mb": None,
+                "status": "not_implemented",
+                "method": None,
+                "note": "Product DDR frame writeback is not instrumented. The ddr_frame_store module "
+                        "exists but its write latency is not part of the measured pipeline cycle count.",
+            },
+            "injection_overhead": {
+                "cycles": injection_total,
+                "cycles_per_mb": injection_total / total_mbs if total_mbs else 0.0,
+                "status": "measured",
+                "method": "ioctl feedByte loop: 2 cycles per byte (ioctl_wr=1 then ioctl_wr=0)",
+                "note": "TESTBENCH ARTIFACT. Real hardware uses DDR DMA, not ioctl byte-by-byte injection. "
+                        "This cost does not exist in the product pipeline.",
+            },
+        }
+
+    # Build stage_coverage from ratchet declarations + measured data
+    stage_coverage = []
+    for stage_decl in ratchet["stage_coverage"]:
+        entry = dict(stage_decl)
+        name = entry["name"]
+        if stages_measured and name in stages_measured:
+            sm = stages_measured[name]
+            entry["status"] = sm["status"]
+            entry["cycles_per_mb"] = sm["cycles_per_mb"]
+            entry["cycles"] = sm["cycles"]
+            entry["method"] = sm["method"]
+            entry["note"] = sm["note"]
+        stage_coverage.append(entry)
+    # Add any measured stages not declared in ratchet
+    if stages_measured:
+        declared_names = {s["name"] for s in stage_coverage}
+        for name, sm in stages_measured.items():
+            if name not in declared_names:
+                stage_coverage.append({
+                    "name": name,
+                    "status": sm["status"],
+                    "cycles_per_mb": sm["cycles_per_mb"],
+                    "cycles": sm.get("cycles"),
+                    "method": sm.get("method"),
+                    "note": sm["note"],
+                })
+
     return {
         "format": "misterplex.decode_throughput_report.v1",
         "source": compare["source"],
@@ -76,7 +189,7 @@ def derive(compare: dict, ratchet: dict) -> dict:
             "cycles_per_mb": budget_cycles_per_mb,
             "margin_ratio": margin_ratio,
         },
-        "stage_coverage": ratchet["stage_coverage"],
+        "stage_coverage": stage_coverage,
         "thresholds": ratchet["thresholds"],
     }
 
@@ -109,6 +222,21 @@ def check_report(report: dict) -> list[str]:
             f"measured frame cost {measured['cycles_per_frame']:.3f} exceeds realtime budget "
             f"{budget['cycles_per_frame']:.3f}"
         )
+    # Per-stage ratchet checks
+    stage_thresholds = thresholds.get("stages", {})
+    for stage in report["stage_coverage"]:
+        name = stage["name"]
+        st = stage_thresholds.get(name)
+        if st is None:
+            continue
+        cpm = stage.get("cycles_per_mb")
+        if cpm is None:
+            continue
+        max_stage_mb = st.get("max_cycles_per_mb")
+        if max_stage_mb is not None and float(cpm) > float(max_stage_mb):
+            failures.append(
+                f"stage {name} cycles_per_mb {float(cpm):.3f} > ratchet {float(max_stage_mb):.3f}"
+            )
     return failures
 
 
@@ -127,14 +255,43 @@ def print_raw(report: dict) -> None:
         f"budget_cycles_per_mb={b['cycles_per_mb']:.3f} "
         f"margin_ratio={b['margin_ratio']:.3f}"
     )
+    # Per-stage breakdown
+    production_measured = 0.0
+    has_unimplemented = False
     for stage in report["stage_coverage"]:
         status = stage["status"]
-        value = stage.get("cycles_per_mb")
-        rendered = "UNKNOWN" if value is None else f"{float(value):.3f}"
+        cpm = stage.get("cycles_per_mb")
+        rendered = "UNKNOWN" if cpm is None else f"{float(cpm):.3f}"
+        method = stage.get("method", "")
+        method_str = f" method={method}" if method else ""
         print(
             "DECODE_THROUGHPUT_STAGE "
-            f"name={stage['name']} status={status} cycles_per_mb={rendered} "
+            f"name={stage['name']} status={status} cycles_per_mb={rendered}{method_str} "
             f"note={stage['note']}"
+        )
+        if status == "not_implemented":
+            has_unimplemented = True
+        elif status == "measured" and cpm is not None:
+            name = stage["name"]
+            # Only count production-relevant stages
+            if name not in ("diagnostic_paint", "injection_overhead"):
+                production_measured += float(cpm)
+    # Print the honest summary
+    if production_measured > 0:
+        print(
+            f"DECODE_THROUGHPUT_PRODUCTION_COST "
+            f"measured_production_cycles_per_mb={production_measured:.3f} "
+            f"budget_cycles_per_mb={b['cycles_per_mb']:.3f} "
+            f"production_margin={b['cycles_per_mb'] / production_measured:.1f}x"
+        )
+    if has_unimplemented:
+        print(
+            "DECODE_THROUGHPUT_WARNING "
+            "mc_interpolation/deblock/ddr_write are NOT IMPLEMENTED and NOT MEASURED. "
+            "The margin ratio is computed against the aggregate cycle count which is "
+            "dominated by diagnostic paint overhead (not production). The real production "
+            "margin CANNOT be determined until MC and deblock are in the pipeline. "
+            "Do not use the aggregate margin as evidence of timing closure."
         )
 
 
