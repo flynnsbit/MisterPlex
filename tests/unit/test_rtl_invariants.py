@@ -19,6 +19,9 @@ DDR_FRAME_LAYOUT_SVH = Path(
         "DDR_FRAME_LAYOUT_SVH", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh"
     )
 )
+DDR_FRAME_STORE = Path(
+    os.environ.get("DDR_FRAME_STORE", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv")
+)
 FPGA_SPI_HPP = Path(os.environ.get("FPGA_SPI_HPP", ROOT / "arm/misterplexd/fpga_spi.hpp"))
 FPGA_SPI_CPP = Path(os.environ.get("FPGA_SPI_CPP", ROOT / "arm/misterplexd/fpga_spi.cpp"))
 DDR_FRAME_LAYOUT_HPP = Path(
@@ -453,6 +456,110 @@ def check_ddr_frame_layout_contract() -> None:
     print("PASS DDR frame layout ARM/RTL contract")
 
 
+def check_ddr_frame_store_yuv_read_contract() -> None:
+    rtl = strip_comments(read(DDR_FRAME_STORE))
+    layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
+    nt = norm(rtl)
+
+    coded_w = sv_const(layout, "DDR_FRAME_CODED_WIDTH")
+    coded_h = sv_const(layout, "DDR_FRAME_CODED_HEIGHT")
+    expected_y_offset = sv_const(layout, "DDR_FRAME_Y_PLANE_OFFSET")
+    expected_u_offset = sv_const(layout, "DDR_FRAME_U_PLANE_OFFSET")
+    expected_v_offset = sv_const(layout, "DDR_FRAME_V_PLANE_OFFSET")
+    expected_y_stride = sv_const(layout, "DDR_FRAME_Y_STRIDE_BYTES")
+    expected_c_stride = sv_const(layout, "DDR_FRAME_CHROMA_STRIDE_BYTES")
+
+    def missing_requirements(text_norm: str) -> list[str]:
+        required = [
+            (
+                "Y_LINE_QWORDS=CODED_W/8",
+                "luma line fetch stride must be CODED_W/8 qwords",
+            ),
+            (
+                "C_LINE_QWORDS=CODED_W/16",
+                "chroma line fetch stride must be CODED_W/16 qwords (half-width bytes)",
+            ),
+            (
+                "Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
+                "Y plane size in qwords must be coded_width*coded_height/8",
+            ),
+            (
+                "C_PLANE_QWORDS=29'((CODED_W*CODED_H)/32)",
+                "U/V plane size in qwords must be coded_width*coded_height/32",
+            ),
+            ("U_PLANE_BASE=Y_PLANE_QWORDS", "U read base must immediately follow Y"),
+            (
+                "V_PLANE_BASE=Y_PLANE_QWORDS+C_PLANE_QWORDS",
+                "V read base must immediately follow U",
+            ),
+            (
+                "u_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
+                "U fetch address must use U_PLANE_BASE",
+            ),
+            (
+                "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
+                "V fetch address must use V_PLANE_BASE",
+            ),
+            (
+                "line_addr=fill_is_chroma?(fill_plane_v?v_addr:u_addr):y_addr",
+                "chroma fill order must select U first, then V",
+            ),
+            ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
+            ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),
+            ("r_calc_w=(y_ext<<<8)+(21'sd359*v_s)", "red channel must derive from V"),
+            ("b_calc_w=(y_ext<<<8)+(21'sd454*u_s)", "blue channel must derive from U"),
+        ]
+        return [msg for needle, msg in required if needle not in text_norm]
+
+    def enforce(text_norm: str, label: str) -> None:
+        missing = missing_requirements(text_norm)
+        if missing:
+            fail(f"{label}: {missing[0]}")
+
+    enforce(nt, "ddr_frame_store.sv")
+
+    # Deliberate-fault proof: swapping the read bases in memory must make this
+    # gate go red. This catches the exact symptom class where the ARM writes
+    # byte-exact I420 but the RTL reads U from the V plane and V from the U plane.
+    swapped = (
+        nt.replace(
+            "u_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
+            "u_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
+        )
+        .replace(
+            "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
+            "v_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
+        )
+    )
+    if not missing_requirements(swapped):
+        fail("deliberately swapped U/V read bases did not make the DDR frame-store gate red")
+
+    y_stride = coded_w
+    c_stride = coded_w // 2
+    y_offset = 0
+    u_offset = coded_w * coded_h
+    v_offset = u_offset + (coded_w // 2) * (coded_h // 2)
+    check(
+        (y_offset, u_offset, v_offset, y_stride, c_stride)
+        == (
+            expected_y_offset,
+            expected_u_offset,
+            expected_v_offset,
+            expected_y_stride,
+            expected_c_stride,
+        ),
+        "computed DDR frame-store read geometry does not match ratified 480p I420 layout: "
+        f"computed Y/U/V offsets {y_offset}/{u_offset}/{v_offset}, strides "
+        f"{y_stride}/{c_stride}; expected {expected_y_offset}/{expected_u_offset}/"
+        f"{expected_v_offset}, strides {expected_y_stride}/{expected_c_stride}",
+    )
+    print(
+        "PASS DDR frame-store YUV read contract "
+        f"(Y={y_offset} U={u_offset} V={v_offset} strides Y={y_stride} C={c_stride}; "
+        "deliberate U/V swap goes red)"
+    )
+
+
 def check_yuv_ddr_writer_contract() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
     main_cpp = strip_comments(read(MISTERPLEXD_MAIN_CPP))
@@ -530,6 +637,7 @@ def main() -> int:
     check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
+    check_ddr_frame_store_yuv_read_contract()
     check_yuv_ddr_writer_contract()
     check_ddr_bitstream_product_path()
     return 0
