@@ -355,9 +355,14 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   Verilator: `tests/unit/test_p3_inter_rtl_sim.sh` elaborates the real product RTL listed in
   `files.qip` through `tests/rtl/h264_inter_pred_tb_top.sv`, compares against
   `tests/fixtures/p3_inter_pred/inter_mc_v1.json`, and red-checks bad interpolation rounding via a
-  testbench-only fault. DDR/YUV update: one 624×480 YUV420 ref + current = 898,560 B; +present =
-  1,347,840 B. At 25 fps, narrow P16×16/P_Skip YUV traffic is ~40 MB/s before overhead (~50–70 MB/s
-  planning), comfortable for the validated 80 MHz DDR/YUV path; SDRAM remains out of scope.
+  testbench-only fault. The integrated gate `tests/unit/test_p3_inter_stream_path_rtl_sim.sh` now
+  elaborates product `stream_path.sv` plus parsers/`decode_stub`/inter RTL, feeds paced multi-NAL
+  Annex-B vectors, and requires idle return after each VCL: IDR fixture `nals=4 frames=1`, P fixture
+  `nals=15 idr=1 p=11 frames=12`, all four MB1 inter diagnostic bands green. This is a
+  stream-path/diagnostic gate; parsed P MB syntax is not yet driving MC. DDR/YUV update: one
+  624×480 YUV420 ref + current = 898,560 B; +present = 1,347,840 B. At 25 fps, narrow P16×16/P_Skip
+  YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
+  80 MHz DDR/YUV path; SDRAM remains out of scope.
 
 
 Phase 3.1b (DDR bulk path — implemented this fire):

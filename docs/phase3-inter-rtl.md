@@ -81,6 +81,20 @@ OK h264_inter_pred RTL red-check: bad rounding fault failed golden
 The red path perturbs interpolation behaviour in the testbench wrapper (`FAULT_BAD_ROUND=1`), not
 source text or synthesised RTL.
 
+
+## Integrated stream-path simulation
+
+The primitive unit test is no longer the acceptance boundary. `tests/unit/test_p3_inter_stream_path_rtl_sim.sh` now elaborates the real product `stream_path.sv` chain (`stream_ingest` → FIFO → NAL/SPS/PPS/slice parsers → `decode_stub`) plus `h264_inter_pred.sv` from `files.qip`. The test feeds paced Annex-B NAL segments and waits for `decode_stub` to return idle after every VCL so a broken busy/idle handoff cannot be hidden by a single-NAL fixture.
+
+Current evidence:
+
+```text
+OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal
+OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal
+```
+
+This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
+
 ## Hardware gate plan
 
 Deploy the branch RBF after Quartus scheduling and load the Baseline 624×480 elementary stream
