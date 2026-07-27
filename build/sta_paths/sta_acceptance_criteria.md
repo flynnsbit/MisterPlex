@@ -83,3 +83,101 @@ The `check_timing_exclusions.py` gate must pass.
 - [ ] No timing exclusions hiding the clk_sys↔clk_ddr crossing (Rule 7)
 
 **Any single failure is a HARD STOP. No partial passes. No "known warnings."**
+
+---
+
+## Rule 8. Intra-domain Fmax Reporting (added 2026-07-27T17:05)
+
+The post-fit Fmax Summary contains **intra-domain** Fmax for each clock
+(same-source-and-destination paths only). Report these explicitly and
+separately from the headline setup slack:
+
+| Clock | Pre-fix Fmax | Target | Pre-fix intra slack |
+|-------|-------------|--------|---------------------|
+| clk_sys (general[0], 20 MHz) | 25.09 MHz | 20 MHz | +10.14 ns |
+| clk_ddr (general[2], 90 MHz) | 88.31 MHz | 90 MHz | −0.21 ns |
+
+**clk_ddr is expected to worsen** after the arbiter moves into that domain.
+If the cross-domain failure is eliminated but `clk_ddr` intra-domain Fmax
+drops further (say to 85 MHz), that is the fix **relocating** the problem
+to where it can be solved by pipelining — not the fix failing.
+
+**Route both figures to w-arch immediately after the fit.** The `clk_sys`
+intra-domain Fmax directly quantifies decode-fabric frequency headroom.
+
+---
+
+## Rule 9. Attribution Pre-commitment (added 2026-07-27T17:05)
+
+Four CDC fixes land simultaneously in the integration tree:
+
+| Fix | Commit | What it addresses |
+|-----|--------|-------------------|
+| Arbiter domain move (clk_sys → clk_ddr) | `60df5a2` | PATH 1 + PATH 2 timing violations |
+| Response FIFO for m1_dout_ready | `3c6d1d2` | Dropped DDR read beats (11 ns pulse / 50 ns sample) |
+| m1_busy 2-FF sync | `610c298` | Crossing #21, arbiter busy signal |
+| want_y Gray-code CDC | `70481fd` | Crossing #13, line-cache eviction (4th stall candidate) |
+
+**Pre-committed attribution assessment:**
+
+If the deployed core **presents correctly** (PLXF `has_frame=1`, pixels
+graded as correct):
+
+> **The evidence will show that the set of four fixes resolved the stall.
+> It will NOT isolate which fix was individually necessary or sufficient.**
+>
+> Specifically: there is no observation available from a single deploy that
+> distinguishes "the arbiter timing violation alone caused the stall" from
+> "the want_y eviction glitch alone caused the stall" from "both were
+> required." All four fixes address paths that converge on the same
+> observable — frame delivery — and the stall has only one symptom
+> (PLXF present + has_frame=0).
+
+**The honest label is: "four CDC defects fixed as a set; stall resolved;
+individual RCA not established."** This is a legitimate engineering
+outcome. Do not claim a specific root cause post-hoc.
+
+The only way to isolate individual fixes would be to deploy them one at
+a time in separate fits — four exclusive-slot builds, each consuming
+hours. The parent may or may not consider that worthwhile; the decision
+is theirs, not mine.
+
+If the deployed core **still stalls** (PLXF present, has_frame=0):
+
+> The four fixes are insufficient. At least one additional defect exists
+> that was not in the set. This would be a stronger result than a pass,
+> diagnostically — it eliminates four candidates and proves a fifth.
+
+---
+
+## Rule 10. Instrument Sanity (added 2026-07-27T17:05)
+
+w-a3 has identified that **PLXS** (0x3007F100) and **PLXM** (0x3007F110)
+mailbox CDC was unsafe prior to `70481fd`. After the fix, both use
+toggle-snapshot CDC. However, as a defence-in-depth:
+
+**When reading any mailbox for fit grading, confirm value stability:**
+1. Read the register 3 times with ≥100 ms spacing.
+2. If all 3 reads match → value is stable, proceed.
+3. If any read differs → flag as UNSTABLE, do not use for grading.
+   This would indicate a live CDC issue in the telemetry path itself.
+
+This supplements the existing magic-check (no magic → never written).
+
+---
+
+## Rule 11. Plane Prediction Verification (added 2026-07-27T17:05)
+
+Before starting the fit, confirm the integration tree contains:
+- `d027c63` (pipelined I16 Plane, 2-cycle) or its successor `df21c4a`
+  (balanced gradient tree, further reducing cycle 1 critical path)
+- Register stages `a_r`, `bx_r[0:15]`, `cy_r[0:15]` present in source
+
+After fit completes, check the fitter's multiplier usage for
+`h264_intra16x16_pred`. If the fitter reports >50 multiplier elements
+for this module, the product-sharing claim is wrong regardless of what
+simulation says — flag and investigate before deploy.
+
+**Current status:** `d027c63` verified at source level. Register stages
+confirmed. Balanced tree (`df21c4a`) also verified. HOLD is conditionally
+lifted — final confirmation required against the actual integration SHA.
