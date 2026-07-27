@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all unit rtl-sim rtl-lint arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all unit rtl-sim rtl-lint pms-baseline-check arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -14,6 +14,7 @@ help:
 	@echo "  make unit       - host unit tests (cadence, resolve, companion HTTP)"
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
 	@echo "  make rtl-lint   - run Verilator width/implicit lint with baseline regression gate"
+	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
@@ -82,6 +83,10 @@ rtl-sim:
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
+
+pms-baseline-check: $(ROOT)/build/pms_baseline_probe
+	$(ROOT)/tests/hw/test_pms_baseline_profile.sh
+
 h264-golden-tools: $(ROOT)/build/extract_h264_golden
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
@@ -231,6 +236,15 @@ $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
+
+$(ROOT)/build/pms_baseline_probe: $(ROOT)/tools/pms_baseline_probe.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/h264_nal.hpp \
+		$(ROOT)/host/libmisterplex/h264_sps.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tools/pms_baseline_probe.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
 
 $(ROOT)/build/test_pms_timeline: $(ROOT)/tests/unit/test_pms_timeline.cpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.cpp \

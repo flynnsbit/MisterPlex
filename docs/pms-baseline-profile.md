@@ -91,6 +91,36 @@ The absence symptom is specific: delivered stream probes return
 also logs a specific High/CABAC diagnostic naming the PMS profile as the likely
 cause.
 
+## Live guard: measure the delivered stream
+
+Do not trust request parameters or the XML file when debugging decoder failures;
+measure the stream PMS actually delivers. The dedicated live-PMS guard is:
+
+```bash
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400 \
+PLEX_TOKEN=... \
+MISTERPLEX_BASELINE_KEY=/library/metadata/N \
+make pms-baseline-check
+```
+
+This target is intentionally **not** part of `make unit` because it requires a
+running PMS, a token, `ffmpeg`, and a known media item. If those inputs are
+missing, it prints `SKIP-NOT-PASS` and exits non-zero; do not report that as a
+pass.
+
+The guard uses the same production transcode URL and FFmpeg headers as
+`misterplexd`, extracts the delivered H.264 elementary stream, parses SPS/PPS,
+and fails with an actionable message if PMS silently falls back to High/CABAC:
+
+```text
+FAIL pms_baseline_profile: PMS delivered profile_idc=100, expected 66;
+entropy_cabac=1, expected 0 — is MiSTerPlex.xml still installed in the PMS
+Profiles directory and has the plex container been restarted?
+```
+
+Searchable symptom for missing/inactive profile: **PMS delivered
+profile_idc=100 expected 66 MiSTerPlex.xml still installed**.
+
 ## Rollback
 
 One-step server rollback:
