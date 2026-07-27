@@ -212,8 +212,46 @@ Bench: `tests/rtl/test_want_y_glitch.sh` — injects a corrupted value (offset b
 
 3. **Demoted back to hygiene.** The want_y single-sync bug causes increased underruns
    (wrong pixels) but is **not** the frozen-screen root cause. The remaining candidates
-   are the async-FIFO comb loop (`7a3d960`), the bank race, and the arbiter→`y_valid[7]`
-   timing path — all of which ride on the next fit.
+   are the async-FIFO comb loop (`7a3d960`) and the arbiter→`y_valid[7]` timing path —
+   both of which ride on the next fit.
+
+---
+
+## STA-reported violation: `disp_buf_d2 → DDRAM_ADDR` (clk_ddr intra-domain)
+
+**Result: NEGATIVE.** Not the frozen-screen RCA.
+
+```
+FROM:   ddr_frame_store|disp_buf_d2
+TO:     ddr_frame_store|DDRAM_ADDR[9]  (also [15], [18], [23], ...)
+slack:  -0.213 ns    data delay 10.722 ns    7 logic levels
+```
+
+The path goes: `disp_buf_d2` → `cur_base_idx/prep_base_idx` (MUX) → cache slot
+array index → hit/miss logic → `need_y_cur_c/prep_c` → MUX for `fill_bank` →
+`fill_bank_base` → `y_addr/chroma_addr` → `line_addr` → `DDRAM_ADDR`.
+
+### Why it cannot produce has_frame=0
+
+1. **Self-consistency of prep path.** Both `pending_ready_c` (the check) and the
+   prep-line fill use `prep_base_idx` derived from the same `disp_buf_d2`. Even if
+   `disp_buf_d2` holds the wrong value, the fill writes to the same slots that the
+   check examines. They always agree → `pending_ready` converges to 1.
+
+2. **`has_frame` is monotonic.** The clk-domain `has_frame` register is only SET
+   (at vsync when `swap_pending && pending_ready_s2`), never cleared except by reset.
+   Once the first frame succeeds, subsequent `disp_buf_d2` timing violations cannot
+   un-set it.
+
+3. **No interaction with PLXD bank-release.** The PLXD mailbox uses `disp_bank_d2`
+   and `pending_bank_d2` (separate 2-FF sync chains). `disp_buf_d2` controls line
+   cache SET selection, not DDR BANK selection.
+
+### Required fix (for timing closure, not for the stall)
+
+One pipeline register stage between `disp_buf_d2` and the array index logic.
+Cost: ~1-3 ALMs, 1 cycle latency on cache-set selection after bank swap.
+This eliminates the 7-level combinational depth, giving ~5 ns margin at 90 MHz.
 
 ---
 
@@ -229,3 +267,4 @@ Bench: `tests/rtl/test_want_y_glitch.sh` — injects a corrupted value (offset b
 | 2026-07-28 | — | Glitch injection test: want_y NOT the frozen-screen RCA (has_frame unaffected even at rate=1) |
 | 2026-07-28 | — | Added Gray-code precondition assertion (enforced in Verilator) |
 | 2026-07-28 | — | Documented instrument-integrity risk on #14, #15 |
+| 2026-07-28 | — | Bank-swap timing test: disp_buf_d2 → DDRAM_ADDR NOT the frozen-screen RCA (self-consistent prep path) |
