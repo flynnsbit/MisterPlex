@@ -16,6 +16,7 @@ constexpr uint32_t kMemtestMailboxPhys = 0x3007F110u;
 constexpr uint32_t kMemtestMailboxMagic = 0x504C584Du; // "PLXM"
 constexpr uint32_t kUnderrunMailboxPhys = 0x3007F118u;
 constexpr uint32_t kUnderrunMailboxMagic = 0x504C5846u; // "PLXF"
+constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 
 enum class PlaybackCommand : uint8_t {
     None = 0,
@@ -30,6 +31,26 @@ struct InputMailboxSample {
     uint8_t cmdSeq = 0;
     PlaybackCommand command = PlaybackCommand::None;
 };
+
+struct FrameStoreStatus {
+    uint8_t seq = 0;
+    uint8_t debug_state = 0;
+    uint16_t underrun_count = 0;
+
+    bool nonYuvDoorbellRejected() const {
+        return debug_state == kFrameStoreDebugFormatError;
+    }
+};
+
+inline const char* frameStoreDebugDescription(uint8_t debug) {
+    if (debug == kFrameStoreDebugFormatError)
+        return "frame store refused non-YUV doorbell (0xE1)";
+    return "frame store debug state";
+}
+
+inline const char* frameStoreStatusUnavailableDescription() {
+    return "frame store status unavailable (PLXF mailbox absent/unwritten)";
+}
 
 enum class PlaybackActionKind {
     None,
@@ -69,6 +90,23 @@ inline bool decodeStableInputMailbox(uint32_t lo, uint32_t hi, uint32_t verifyLo
         return false;
     const uint64_t word = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
     return decodeInputMailboxWord(word, out);
+}
+
+inline bool decodeFrameStoreStatusWord(uint64_t word, FrameStoreStatus& out) {
+    if (static_cast<uint32_t>(word) != kUnderrunMailboxMagic)
+        return false;
+    out.seq = static_cast<uint8_t>((word >> 32) & 0xFFu);
+    out.debug_state = static_cast<uint8_t>((word >> 40) & 0xFFu);
+    out.underrun_count = static_cast<uint16_t>((word >> 48) & 0xFFFFu);
+    return true;
+}
+
+inline bool decodeStableFrameStoreStatus(uint32_t lo, uint32_t hi, uint32_t verifyLo,
+                                         uint32_t verifyHi, FrameStoreStatus& out) {
+    if (lo != verifyLo || hi != verifyHi)
+        return false;
+    const uint64_t word = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+    return decodeFrameStoreStatusWord(word, out);
 }
 
 class InputMailboxEdgeDetector {

@@ -1236,6 +1236,11 @@ bool FpgaSpi::setStatusBits(const int* bit_val_pairs, int n_pairs) {
 }
 
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
+    if (index == 1) {
+        setErr("non-YUV frame send refused: SPI F1 RGB frame path is disabled; use DDR "
+               "YUV420p (sendYuv420pFrameDdr / push_frame --ddr --yuv420p)");
+        return false;
+    }
     if (!ok() || !data || !len) {
         setErr("sendFileTx: not open or empty");
         return false;
@@ -1367,6 +1372,21 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool saw_kick = false;
     bool saw_frame = false;
     const bool first = (ddrKickMode_ == 0);
+    auto frameStoreStatusSuffix = [this]() -> std::string {
+        FrameStoreStatus st{};
+        if (readFrameStoreStatus(st)) {
+            if (st.nonYuvDoorbellRejected())
+                return std::string(": ") + frameStoreDebugDescription(st.debug_state);
+            char buf[128]{};
+            std::snprintf(buf, sizeof(buf),
+                          ": frame-store status frame_debug=0x%02x frame_seq=%u "
+                          "frame_underrun=%u",
+                          static_cast<unsigned>(st.debug_state), static_cast<unsigned>(st.seq),
+                          static_cast<unsigned>(st.underrun_count));
+            return std::string(buf);
+        }
+        return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
+    };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
     bool kicked = false;
@@ -1410,7 +1430,8 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
                 ddrKickMode_ = -1;
-                setErr("sendDdrFrame: no kick/frame via SPI or doorbell");
+                setErr("sendDdrFrame: no kick/frame via SPI or doorbell" +
+                       frameStoreStatusSuffix());
                 return false;
             }
             ddrKickMode_ = 2;
@@ -1420,7 +1441,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
-        setErr("sendDdrFrame: could not kick DDR path");
+        setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
     }
 
@@ -1438,6 +1459,52 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     lastDdrTiming_ = timing;
     clearErr();
     return true;
+}
+
+bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
+        setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    uint32_t lastLo = 0;
+    uint32_t lastHi = 0;
+    bool stable = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        lastLo = lo1;
+        lastHi = hi1;
+        stable = (lo0 == lo1 && hi0 == hi1);
+        if (decodeStableFrameStoreStatus(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    if (stable && lastLo != kUnderrunMailboxMagic) {
+        char buf[160]{};
+        std::snprintf(buf, sizeof(buf),
+                      "readFrameStoreStatus: PLXF mailbox absent/unwritten "
+                      "(lo=0x%08x hi=0x%08x)",
+                      static_cast<unsigned>(lastLo), static_cast<unsigned>(lastHi));
+        setErr(buf);
+        return false;
+    }
+    setErr("readFrameStoreStatus: PLXF mailbox not valid/stable");
+    return false;
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,

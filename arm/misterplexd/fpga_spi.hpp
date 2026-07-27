@@ -76,19 +76,20 @@ public:
     static bool mainAlive();
 
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
-    // For Plex core F1 frame store, index is typically 1.
+    // F1 frame presentation is not accepted here: the product frame-store
+    // contract is DDR YUV420p only.
     bool sendFileTx(const uint8_t* data, size_t len, uint8_t index = 1);
 
-    // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
+    // Convenience for non-F1 legacy/debug slots: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
-    // Push packed RGB565 LE (host word order: lo,hi per pixel). len must be w*h*2.
+    // Push packed RGB565 LE to non-F1 legacy/debug slots. len must be w*h*2.
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
     // C3 DDR frame-store path: planar I420/YUV420p via HPS DDR
     // (/dev/mem @ 0x30000000) plus format-tagged doorbell. RGB565 is not a
-    // valid DDR payload for this RTL; keep RGB565 only on the legacy SPI F1 path.
+    // valid F1 frame-store payload for this RTL.
     bool setDdrFrameLayout(const DdrFrameGeometry& geometry,
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     bool setDdrFrameLayout(int width, int height,
@@ -248,6 +249,7 @@ public:
     // Parse getCoreStatus raw bytes into fields.
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);
     bool readCoreStatus(CoreStatus& out);
+    bool readFrameStoreStatus(FrameStoreStatus& out);
 
     // Thread-safe copy of last error (F1/F2/F3 share this object).
     std::string lastError() const;
