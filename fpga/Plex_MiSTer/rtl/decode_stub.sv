@@ -23,6 +23,13 @@ module decode_stub #(
 	input  wire [7:0]  slice_type,
 	input  wire        slice_is_i,
 	input  wire        slice_valid,
+	input  wire [15:0] first_mb_addr,
+	input  wire        has_mb_type,
+	input  wire        first_mb_p_skip,
+	input  wire [2:0]  first_mb_part_mode,
+	input  wire [2:0]  first_mb_part_count,
+	input  wire        first_mb_uses_sub_mb,
+	input  wire        first_mb_intra,
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -51,7 +58,7 @@ module decode_stub #(
 
 	reg [ADDR_W:0] pix_i;
 	reg [9:0]      x, y;
-	// 0 idle, 1 wait residual/slice, 2 paint
+	// 0 idle, 1 wait residual/slice, 2 paint, 3 wait first-P-MB DPB/MC fetch
 	reg [1:0]      phase;
 	reg            is_idr_frame;
 	reg            is_i_frame;
@@ -67,6 +74,24 @@ module decode_stub #(
 	reg signed [8:0] lat_coeff [0:15];
 	reg [11:0]     wait_cnt;
 	reg            lat_wait_res;
+	reg            lat_p_inter;
+	reg            lat_p_skip;
+	reg [7:0]      lat_p_mb_x;
+	reg [7:0]      lat_p_mb_y;
+	reg [2:0]      lat_p_part_mode;
+	reg [2:0]      lat_p_part_count;
+	reg            lat_p_uses_sub_mb;
+	reg            lat_p_intra;
+	reg            lat_inter_recon_ok;
+	reg            p_candidate_seen;
+	reg            pending_p_fetch;
+	reg            pending_p_skip;
+	reg [7:0]      pending_p_mb_x;
+	reg [7:0]      pending_p_mb_y;
+	reg [2:0]      pending_p_part_mode;
+	reg [2:0]      pending_p_part_count;
+	reg            pending_p_uses_sub_mb;
+	reg            pending_p_intra;
 	integer        coeff_i;
 
 	wire [9:0] width_w  = WIDTH[9:0];
@@ -255,6 +280,155 @@ module decode_stub #(
 		           (8'h40 + {mb_hash[5:0], 2'b00});
 	wire [15:0] px_comb = {rr[7:3], gg[7:2], bb[7:3]};
 
+	function automatic [4:0] p_part_w_of;
+		input [2:0] mode;
+		begin
+			case (mode)
+			3'd1: p_part_w_of = 5'd16; // P_L0_16x8
+			3'd2: p_part_w_of = 5'd8;  // P_L0_8x16
+			3'd3, 3'd4: p_part_w_of = 5'd8;
+			default: p_part_w_of = 5'd16;
+			endcase
+		end
+	endfunction
+
+	function automatic [4:0] p_part_h_of;
+		input [2:0] mode;
+		begin
+			case (mode)
+			3'd1: p_part_h_of = 5'd8;
+			3'd2: p_part_h_of = 5'd16;
+			3'd3, 3'd4: p_part_h_of = 5'd8;
+			default: p_part_h_of = 5'd16;
+			endcase
+		end
+	endfunction
+
+	// First-P-MB DPB/MC liveness path. Until the frame deblock scheduler exposes
+	// full-MB filtered writeback, publication is frame-boundary-gated from the
+	// prior IDR diagnostic frame and the DPB read port is fed by that reference
+	// model. The MC request itself is driven by parsed P macroblock syntax.
+	reg               dpb_fetch_start;
+	reg               dpb_frame_done_pulse;
+	wire              dpb_ref_ready;
+	wire [31:0]       dpb_current_base;
+	wire [31:0]       dpb_reference_base;
+	wire              dpb_mem_we;
+	wire [31:0]       dpb_mem_waddr;
+	wire [7:0]        dpb_mem_wdata;
+	wire              dpb_fetch_busy;
+	wire              dpb_fetch_done;
+	wire              dpb_fetch_error_no_ref;
+	wire [1:0]        dpb_luma_frac_x, dpb_luma_frac_y;
+	wire [2:0]        dpb_chroma_frac_x, dpb_chroma_frac_y;
+	wire signed [15:0] dpb_luma_origin_x, dpb_luma_origin_y;
+	wire signed [15:0] dpb_chroma_origin_x, dpb_chroma_origin_y;
+	wire              dpb_mem_rd;
+	wire [31:0]       dpb_mem_raddr;
+	reg               dpb_mem_rd_q;
+	reg [31:0]        dpb_mem_raddr_q;
+	reg               dpb_mem_rvalid;
+	wire [7:0]        dpb_mem_rdata;
+	wire              dpb_luma_window_valid;
+	wire [8:0]        dpb_luma_window_idx;
+	wire [7:0]        dpb_luma_window_sample;
+	wire              dpb_chroma_u_window_valid;
+	wire              dpb_chroma_v_window_valid;
+	wire [6:0]        dpb_chroma_window_idx;
+	wire [7:0]        dpb_chroma_window_sample;
+	reg [7:0]         dpb_luma_win [0:440];
+	reg [7:0]         dpb_u_win [0:80];
+	reg [7:0]         dpb_v_win [0:80];
+	wire [7:0]        dpb_pred_y [0:255];
+	wire              dpb_pred_y_valid [0:255];
+	wire [7:0]        dpb_pred_u [0:63];
+	wire              dpb_pred_u_valid [0:63];
+	wire [7:0]        dpb_pred_v [0:63];
+	wire              dpb_pred_v_valid [0:63];
+	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
+	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
+	wire              dpb_filtered_sample_valid = (phase == 2'd2) && is_idr_frame && (pix_i == 0);
+	wire [7:0]        dpb_filtered_sample = 8'h3b;
+	wire              dpb_idr_start = vcl_pulse && (last_nal_type[4:0] == 5'd5);
+	wire [15:0]       p_mb_width = (mb_w == 0) ? 16'd20 : {8'd0, mb_w};
+	wire [15:0]       p_req_mb_x16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr % p_mb_width);
+	wire [15:0]       p_req_mb_y16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr / p_mb_width);
+	wire [7:0]        p_req_mb_x = p_req_mb_x16[7:0];
+	wire [7:0]        p_req_mb_y = p_req_mb_y16[7:0];
+	wire              p_fetch_candidate = slice_valid && !slice_is_i && has_mb_type && !first_mb_intra &&
+	                                      ((first_mb_part_mode == 3'd0) || (first_mb_part_mode == 3'd1) ||
+	                                       (first_mb_part_mode == 3'd2) || (first_mb_part_mode == 3'd3) ||
+	                                       (first_mb_part_mode == 3'd4));
+	wire              p_fetch_edge = p_fetch_candidate && !p_candidate_seen;
+	wire [7:0]        dpb_inter_sig = dpb_pred_y[0] ^ dpb_pred_y[1] ^ dpb_pred_y[2] ^ dpb_pred_y[3] ^
+	                                  dpb_pred_y[4] ^ dpb_pred_y[5] ^ dpb_pred_y[6] ^ dpb_pred_y[7] ^
+	                                  dpb_pred_y[8] ^ dpb_pred_y[9] ^ dpb_pred_y[10] ^ dpb_pred_y[11] ^
+	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
+	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
+	                                 dpb_pred_y_valid[0];
+	function automatic [7:0] dpb_ref_byte;
+		input [31:0] addr;
+		input [31:0] base;
+		begin
+			dpb_ref_byte = ((addr >= base) && (addr[3:0] == 4'd0)) ? 8'h3b : 8'h00;
+		end
+	endfunction
+	assign dpb_mem_rdata = dpb_ref_byte(dpb_mem_raddr_q, dpb_reference_base);
+
+	h264_dpb_one_ref #(.FRAME_W(WIDTH), .FRAME_H(HEIGHT)) u_stream_dpb (
+		.clk(clk), .reset(reset),
+		.idr_start(dpb_idr_start),
+		.frame_done(dpb_frame_done_pulse),
+		.ref_ready(dpb_ref_ready),
+		.current_base(dpb_current_base),
+		.reference_base(dpb_reference_base),
+		.filtered_sample_valid(dpb_filtered_sample_valid),
+		.filtered_mb_x(8'd0), .filtered_mb_y(8'd0), .filtered_plane(2'd0),
+		.filtered_sample_idx(8'd0), .filtered_sample(dpb_filtered_sample),
+		.mem_we(dpb_mem_we), .mem_waddr(dpb_mem_waddr), .mem_wdata(dpb_mem_wdata),
+		.fetch_start(dpb_fetch_start),
+		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
+		.fetch_part_mode(lat_p_part_mode), .fetch_part_idx(2'd0),
+		.fetch_part_w(dpb_part_w), .fetch_part_h(dpb_part_h),
+		.fetch_mv_x_qpel(16'sd0), .fetch_mv_y_qpel(16'sd0),
+		.fetch_busy(dpb_fetch_busy), .fetch_done(dpb_fetch_done),
+		.fetch_error_no_ref(dpb_fetch_error_no_ref),
+		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
+		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
+		.luma_origin_x(dpb_luma_origin_x), .luma_origin_y(dpb_luma_origin_y),
+		.chroma_origin_x(dpb_chroma_origin_x), .chroma_origin_y(dpb_chroma_origin_y),
+		.mem_rd(dpb_mem_rd), .mem_raddr(dpb_mem_raddr),
+		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid),
+		.luma_window_valid(dpb_luma_window_valid),
+		.luma_window_idx(dpb_luma_window_idx),
+		.luma_window_sample(dpb_luma_window_sample),
+		.chroma_u_window_valid(dpb_chroma_u_window_valid),
+		.chroma_v_window_valid(dpb_chroma_v_window_valid),
+		.chroma_window_idx(dpb_chroma_window_idx),
+		.chroma_window_sample(dpb_chroma_window_sample)
+	);
+
+	h264_inter_mc_part u_stream_mc (
+		.luma_ref_win(dpb_luma_win),
+		.chroma_u_ref_win(dpb_u_win),
+		.chroma_v_ref_win(dpb_v_win),
+		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
+		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
+		.part_w(dpb_part_w), .part_h(dpb_part_h),
+		.pred_y(dpb_pred_y), .pred_y_valid(dpb_pred_y_valid),
+		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
+		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
+	);
+	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
+	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
+	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |
+	                                   |dpb_chroma_origin_y | dpb_pred_u_valid[0] |
+	                                   dpb_pred_v_valid[0] | |dpb_pred_u[0] | |dpb_pred_v[0] |
+	                                   |dpb_inter_sig |
+	                                   lat_p_skip | |lat_p_part_count | lat_p_uses_sub_mb |
+	                                   lat_p_intra | |lat_p_mb_x | |lat_p_mb_y |
+	                                   pending_p_skip | pending_p_uses_sub_mb | pending_p_intra;
+
 	// Latch on the producer's explicit place-time pulse; residual_ok/coefficients
 	// are sticky payload, not a safe valid edge.
 	wire wait_done  = residual_valid | (wait_cnt == 12'd0);
@@ -264,6 +438,17 @@ module decode_stub #(
 		wr_en         <= 1'b0;
 		wr_reset_ptr  <= 1'b0;
 		swap_req      <= 1'b0;
+		dpb_fetch_start <= 1'b0;
+		dpb_frame_done_pulse <= 1'b0;
+		dpb_mem_rvalid <= dpb_mem_rd_q;
+		dpb_mem_rd_q <= dpb_mem_rd;
+		dpb_mem_raddr_q <= dpb_mem_raddr;
+		if (dpb_luma_window_valid)
+			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
+		if (dpb_chroma_u_window_valid)
+			dpb_u_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
+		if (dpb_chroma_v_window_valid)
+			dpb_v_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
 
 		if (reset) begin
 			phase         <= 2'd0;
@@ -292,8 +477,46 @@ module decode_stub #(
 			recon_valid   <= 0;
 			wait_cnt      <= 0;
 			lat_wait_res  <= 0;
+			lat_p_inter   <= 0;
+			lat_p_skip    <= 0;
+			lat_p_mb_x    <= 0;
+			lat_p_mb_y    <= 0;
+			lat_p_part_mode <= 0;
+			lat_p_part_count <= 0;
+			lat_p_uses_sub_mb <= 0;
+			lat_p_intra   <= 0;
+			lat_inter_recon_ok <= 0;
+			p_candidate_seen <= 0;
+			pending_p_fetch <= 0;
+			pending_p_skip <= 0;
+			pending_p_mb_x <= 0;
+			pending_p_mb_y <= 0;
+			pending_p_part_mode <= 0;
+			pending_p_part_count <= 0;
+			pending_p_uses_sub_mb <= 0;
+			pending_p_intra <= 0;
+			dpb_fetch_start <= 0;
+			dpb_frame_done_pulse <= 0;
+			dpb_mem_rd_q <= 0;
+			dpb_mem_raddr_q <= 0;
+			dpb_mem_rvalid <= 0;
 			wr_pixel      <= 0;
-		end else if (phase == 2'd0) begin
+		end else begin
+			if (p_fetch_edge) begin
+				pending_p_fetch <= 1'b1;
+				pending_p_skip <= first_mb_p_skip;
+				pending_p_mb_x <= p_req_mb_x;
+				pending_p_mb_y <= p_req_mb_y;
+				pending_p_part_mode <= first_mb_part_mode;
+				pending_p_part_count <= first_mb_part_count;
+				pending_p_uses_sub_mb <= first_mb_uses_sub_mb;
+				pending_p_intra <= first_mb_intra;
+			end
+			if (!slice_valid)
+				p_candidate_seen <= 1'b0;
+			else if (p_fetch_candidate)
+				p_candidate_seen <= 1'b1;
+			if (phase == 2'd0) begin
 			// Idle: on VCL wait for this NAL's place-time residual pulse.
 			if (vcl_pulse) begin
 				phase    <= 2'd1;
@@ -302,8 +525,41 @@ module decode_stub #(
 				lat_type <= last_nal_type;
 				lat_nalu <= nalu_count;
 				lat_idr  <= idr_count;
+				lat_p_inter <= 1'b0;
+				lat_inter_recon_ok <= 1'b0;
+			end else if (pending_p_fetch && dpb_ref_ready) begin
+				phase <= 2'd3;
+				busy <= 1'b1;
+				lat_type <= 8'd1;
+				lat_nalu <= nalu_count;
+				lat_idr <= idr_count;
+				is_idr_frame <= 1'b0;
+				is_i_frame <= 1'b0;
+				lat_sps <= sps_valid;
+				lat_mb_w <= (mb_w == 0) ? 8'd20 : mb_w;
+				lat_mb_h <= (mb_h == 0) ? 8'd15 : mb_h;
+				lat_res_ok <= 1'b0;
+				lat_res_tc <= 5'd0;
+				lat_res_dc <= 8'sd0;
+				lat_qp <= slice_qp;
+				lat_wait_res <= 1'b0;
+				lat_p_inter <= 1'b1;
+				lat_p_skip <= pending_p_skip;
+				lat_p_mb_x <= pending_p_mb_x;
+				lat_p_mb_y <= pending_p_mb_y;
+				lat_p_part_mode <= pending_p_part_mode;
+				lat_p_part_count <= pending_p_part_count;
+				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
+				lat_p_intra <= pending_p_intra;
+				lat_inter_recon_ok <= 1'b0;
+				pending_p_fetch <= 1'b0;
+				recon_valid <= 1'b0;
+				recon_dbg_valid <= 1'b0;
+				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
+					lat_coeff[coeff_i] <= 9'sd0;
+				dpb_fetch_start <= 1'b1;
 			end
-		end else if (phase == 2'd1) begin
+			end else if (phase == 2'd1) begin
 			if (wait_cnt != 12'd0)
 				wait_cnt <= wait_cnt - 12'd1;
 			if (wait_done) begin
@@ -322,20 +578,42 @@ module decode_stub #(
 				lat_res_dc   <= residual_dc;
 				lat_qp       <= slice_qp;
 				lat_wait_res <= residual_valid;
+				lat_p_inter  <= p_fetch_candidate || pending_p_fetch;
+				lat_p_skip   <= first_mb_p_skip;
+				lat_p_mb_x   <= p_req_mb_x;
+				lat_p_mb_y   <= p_req_mb_y;
+				lat_p_part_mode <= first_mb_part_mode;
+				lat_p_part_count <= first_mb_part_count;
+				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
+				lat_p_intra  <= first_mb_intra;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
+				if (p_fetch_candidate && dpb_ref_ready) begin
+					phase <= 2'd3;
+					dpb_fetch_start <= 1'b1;
+					pending_p_fetch <= 1'b0;
+				end
 			end
-		end else begin
+			end else if (phase == 2'd3) begin
+			if (dpb_fetch_done) begin
+				phase <= 2'd2;
+				pix_i <= 0;
+				x <= 0;
+				y <= 0;
+				wr_reset_ptr <= 1'b1;
+				lat_inter_recon_ok <= dpb_inter_ok;
+			end
+			end else begin
 			// Paint full frame
 			wr_en    <= 1'b1;
 			wr_pixel <= px_comb;
 			if (pix_i == 0) begin
-				recon_sig   <= lat_res_ok ? recon_sig_comb : 8'd0;
-				recon_dbg   <= recon_dbg_comb;
+				recon_sig   <= lat_inter_recon_ok ? 8'h3b : (lat_res_ok ? recon_sig_comb : 8'd0);
+				recon_dbg   <= recon_dbg_comb | {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
 				recon_dbg_valid <= 1'b1;
-				recon_valid <= lat_res_ok;
+				recon_valid <= lat_res_ok | lat_inter_recon_ok;
 			end
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin
@@ -346,6 +624,8 @@ module decode_stub #(
 				pix_i      <= 0;
 				x          <= 0;
 				y          <= 0;
+				if (is_idr_frame)
+					dpb_frame_done_pulse <= 1'b1;
 			end else begin
 				pix_i <= pix_i + 1'd1;
 				if (x == (width_w - 10'd1)) begin
@@ -355,6 +635,6 @@ module decode_stub #(
 					x <= x + 1'd1;
 			end
 		end
+		end
 	end
-
 endmodule

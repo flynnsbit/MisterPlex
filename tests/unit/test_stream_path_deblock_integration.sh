@@ -49,6 +49,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv"
 )

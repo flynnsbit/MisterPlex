@@ -132,29 +132,34 @@ OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 ```
 
 The shared multi-NAL gate also now proves the P-slice header handoff parses non-IDR reference marking,
-`mb_skip_run`, and first P macroblock type instead of misreading those bits as QP/residual syntax:
+`mb_skip_run`, and first P macroblock type instead of misreading those bits as QP/residual syntax. The
+first parsed P macroblock is now latched into the DPB/MC requester (`first_mb` → `mb_x/mb_y`,
+parsed P partition mode/count → `part_w/part_h`, single-ref zero-MVD request for this profile rung).
+IDR starts invalidate the one-ref DPB, the diagnostic filtered sample is presented before frame
+promotion, and the frame-boundary promotion enables P fetches from the previous reference.
 
 ```text
-multi-NAL stream_path raw: bytes=27653 ... nalu=15 ... slice=11 ... recon_sig_3b_cycles=0 ... p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 ... final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1
+multi-NAL stream_path raw: bytes=27653 bytes_in=27653 bytes_seen=27652 nalu=15 sps=1 pps=1 idr=1 slice=11 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=39780 frames=10 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 ... final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1
+test_h264_multinal_stream_path: OK red-check forced recon_sig=0 rejected parsed P DPB/MC liveness
 ```
 
 Those 11 first-P-MB classifications cover P_L0_16x16, P_L0_16x8 and P_L0_8x16 through the real
 `stream_path` parser. P_Skip and P_8x8/sub-MB modes are covered by product RTL synthetic mode cases
 until the shared fixtures contain those syntax modes at the first macroblock or expose full P-MB
-goldens.
+goldens. `recon_sig_3b_cycles` moving from zero is a liveness signal only: it proves the parsed
+P path can issue a DPB reference fetch, fill the 21×21/9×9 MC windows, and publish a reconstructed-P
+signature. It is not a quality PASS.
 
 The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
 
-The full-frame reference gate is now the native-I420 scoreboard. The older
-RGB565-derived numbers below are retired as decode evidence because they passed
-through presentation diagnostics and border masking; they are kept only as the
-historical reason this area was re-instrumented:
+The full-frame reference gate is now the native-I420 scoreboard and still reports honest RED at frame 0. The older RGB565-derived numbers are retired as decode evidence because they passed through presentation diagnostics and border masking. This slice moves P syntax/mode classification plus DPB/MC liveness, not full-frame MC/reconstruction quality:
 
 ```text
-FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=Y exact=189/76800 mae=82.082448 max_abs=210
-FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=U exact=51/76800 mae=84.779232 max_abs=195
-FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=V exact=29/76800 mae=84.160716 max_abs=217
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=Y exact=1082 pixels=76800 mae=76.597201 max_abs=194
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=U exact=73 pixels=19200 mae=74.762708 max_abs=180
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=V exact=150 pixels=19200 mae=75.251771 max_abs=211
 FULL_FRAME_COMPARE summary ... frames=12 nals=15 idr=1 p=11 ... first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
 ```
 
 Native-I420 ratchets (`tests/fixtures/p3_multinal/*full_frame_ratchet_v1.json`,
