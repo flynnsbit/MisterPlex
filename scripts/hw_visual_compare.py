@@ -30,6 +30,7 @@ DEFAULT_WARMUP = 60
 DEFAULT_ATTEMPTS = 5
 COLOR_MATRICES = ("bt601", "bt709")
 COLOR_RANGES = ("full", "limited")
+PIXEL_FORMATS = ("yuv420p", "i420", "rgb565")
 
 
 class HarnessError(RuntimeError):
@@ -58,6 +59,10 @@ class DeliveryFreshnessError(HarnessError):
 
 class RbfIdentityError(HarnessError):
     exit_code = 8
+
+
+class GoldenProvenanceError(HarnessError):
+    exit_code = 9
 
 
 CORRUPT_LOG_PATTERNS = (
@@ -92,31 +97,33 @@ def reject_corrupt_capture_log(path: str | None) -> None:
         )
 
 
-def require_color_provenance(args: argparse.Namespace) -> dict:
-    fields = (
-        args.golden_color_matrix,
-        args.golden_color_range,
-        args.capture_color_matrix,
-        args.capture_color_range,
-    )
+def require_color_provenance(args: argparse.Namespace, golden_provenance: dict) -> dict:
+    golden_color = golden_provenance["color"]
+    golden_matrix = args.golden_color_matrix or golden_color["matrix"]
+    golden_range = args.golden_color_range or golden_color["range"]
+    fields = (golden_matrix, golden_range, args.capture_color_matrix, args.capture_color_range)
     if any(v is None for v in fields):
         raise HarnessError(
             "colour matrix/range provenance is required; pass "
-            "--golden-color-matrix, --golden-color-range, "
-            "--capture-color-matrix, and --capture-color-range"
+            "--capture-color-matrix and --capture-color-range; golden colour "
+            "must be present in the golden provenance sidecar"
         )
-    if (args.golden_color_matrix, args.golden_color_range) != (
-        args.capture_color_matrix, args.capture_color_range
-    ):
-        raise HarnessError(
-            "refusing to compare images with different colour provenance: "
-            f"golden={args.golden_color_matrix}/{args.golden_color_range} "
+    if (golden_matrix, golden_range) != (golden_color["matrix"], golden_color["range"]):
+        raise GoldenProvenanceError(
+            "GOLDEN_PROVENANCE: CLI golden colour does not match sidecar: "
+            f"cli={golden_matrix}/{golden_range} "
+            f"sidecar={golden_color['matrix']}/{golden_color['range']}"
+        )
+    if (golden_matrix, golden_range) != (args.capture_color_matrix, args.capture_color_range):
+        raise GoldenProvenanceError(
+            "GOLDEN_PROVENANCE: refusing to compare images with different colour provenance: "
+            f"golden={golden_matrix}/{golden_range} "
             f"capture={args.capture_color_matrix}/{args.capture_color_range}"
         )
     return {
         "golden": {
-            "matrix": args.golden_color_matrix,
-            "range": args.golden_color_range,
+            "matrix": golden_matrix,
+            "range": golden_range,
         },
         "capture": {
             "matrix": args.capture_color_matrix,
@@ -173,6 +180,172 @@ def validate_rbf_identity(args: argparse.Namespace) -> dict | None:
             f"RBF_IDENTITY: loaded core md5 {actual} != expected {expected}; not grading pixels"
         )
     return report
+
+
+def parse_size_spec(spec: str | None) -> tuple[int, int] | None:
+    if spec is None:
+        return None
+    m = re.fullmatch(r"\s*(\d+)x(\d+)\s*", spec)
+    if not m:
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: invalid size {spec!r}; expected WIDTHxHEIGHT"
+        )
+    return int(m.group(1)), int(m.group(2))
+
+
+def _require_dict(data: dict, key: str, where: Path) -> dict:
+    value = data.get(key)
+    if not isinstance(value, dict):
+        raise GoldenProvenanceError(f"GOLDEN_PROVENANCE: {where} missing object {key!r}")
+    return value
+
+
+def _require_int(data: dict, key: str, where: Path) -> int:
+    value = data.get(key)
+    if not isinstance(value, int):
+        raise GoldenProvenanceError(f"GOLDEN_PROVENANCE: {where} missing integer {key!r}")
+    return value
+
+
+def _require_str(data: dict, key: str, where: Path) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value:
+        raise GoldenProvenanceError(f"GOLDEN_PROVENANCE: {where} missing string {key!r}")
+    return value
+
+
+def load_golden_provenance(args: argparse.Namespace) -> dict:
+    path = Path(args.golden_provenance) if args.golden_provenance else (
+        Path(args.golden).with_suffix(Path(args.golden).suffix + ".provenance.json")
+    )
+    if not path.exists():
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: missing {path}; every hardware golden must declare "
+            "source_rbf_md5, geometry, pixel_format, and colour matrix/range"
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise GoldenProvenanceError(f"GOLDEN_PROVENANCE: {path} is invalid JSON: {e}") from e
+
+    if data.get("schema") != "misterplex.hw_visual_golden.v1":
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} has unsupported schema {data.get('schema')!r}"
+        )
+    source_type = _require_str(data, "source_type", path)
+    if source_type != "hardware_capture":
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} is {source_type!r}, not a hardware-captured golden"
+        )
+    source_md5 = normalize_md5(data.get("source_rbf_md5"))
+    if source_md5 is None:
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} missing valid source_rbf_md5"
+        )
+    pixel_format = _require_str(data, "pixel_format", path).lower()
+    if pixel_format == "i420":
+        pixel_format = "yuv420p"
+    if pixel_format not in PIXEL_FORMATS:
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} unsupported pixel_format {pixel_format!r}"
+        )
+    color = _require_dict(data, "color", path)
+    matrix = _require_str(color, "matrix", path).lower()
+    color_range = _require_str(color, "range", path).lower()
+    if matrix not in COLOR_MATRICES or color_range not in COLOR_RANGES:
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} unsupported colour {matrix}/{color_range}"
+        )
+    geometry = _require_dict(data, "geometry", path)
+    compare_box = geometry.get("compare_box")
+    if (
+        not isinstance(compare_box, list)
+        or len(compare_box) != 4
+        or not all(isinstance(v, int) for v in compare_box)
+    ):
+        raise GoldenProvenanceError(
+            f"GOLDEN_PROVENANCE: {path} geometry.compare_box must be [x,y,w,h]"
+        )
+    normalized = {
+        "path": str(path),
+        "schema": data["schema"],
+        "source_type": source_type,
+        "source_rbf_md5": source_md5,
+        "source_rbf_label": data.get("source_rbf_label"),
+        "pixel_format": pixel_format,
+        "color": {"matrix": matrix, "range": color_range},
+        "geometry": {
+            "content_width": _require_int(geometry, "content_width", path),
+            "content_height": _require_int(geometry, "content_height", path),
+            "presented_width": _require_int(geometry, "presented_width", path),
+            "presented_height": _require_int(geometry, "presented_height", path),
+            "compare_box": compare_box,
+        },
+    }
+    return normalized
+
+
+def validate_golden_provenance(
+    args: argparse.Namespace,
+    g: "Geometry",
+    box: tuple[int, int, int, int],
+    rbf_identity: dict | None,
+) -> dict:
+    prov = load_golden_provenance(args)
+    geom = prov["geometry"]
+    problems: list[str] = []
+
+    if (geom["presented_width"], geom["presented_height"]) != (g.presented_width, g.presented_height):
+        problems.append(
+            "presented geometry "
+            f"{geom['presented_width']}x{geom['presented_height']} != "
+            f"loaded layout {g.presented_width}x{g.presented_height}"
+        )
+    expected_size = parse_size_spec(args.expected_content_size)
+    if expected_size is None:
+        problems.append("expected content geometry is undeclared; pass --expected-content-size WIDTHxHEIGHT")
+    elif (geom["content_width"], geom["content_height"]) != expected_size:
+        problems.append(
+            "content geometry "
+            f"{geom['content_width']}x{geom['content_height']} != "
+            f"expected {expected_size[0]}x{expected_size[1]}"
+        )
+    expected_format = (args.expected_pixel_format or "").lower()
+    if expected_format == "i420":
+        expected_format = "yuv420p"
+    if not expected_format:
+        problems.append("expected pixel format is undeclared; pass --expected-pixel-format")
+    elif expected_format != prov["pixel_format"]:
+        problems.append(f"pixel format {prov['pixel_format']} != expected {expected_format}")
+
+    x0, y0, x1, y1 = box
+    selected_box = [x0, y0, x1 - x0, y1 - y0]
+    if geom["compare_box"] != selected_box:
+        problems.append(f"compare box {geom['compare_box']} != selected {selected_box}")
+
+    if problems:
+        raise GoldenProvenanceError(
+            "GOLDEN_PROVENANCE: " + "; ".join(problems) + "; not grading pixels"
+        )
+
+    if rbf_identity is None or not rbf_identity.get("actual_md5"):
+        raise RbfIdentityError(
+            "RBF_IDENTITY: loaded core md5 was not supplied; golden was produced by "
+            f"{prov['source_rbf_md5']}; not grading pixels"
+        )
+    actual = rbf_identity["actual_md5"]
+    if prov["source_rbf_md5"] != actual:
+        raise RbfIdentityError(
+            "GOLDEN_PROVENANCE: golden was produced by core "
+            f"{prov['source_rbf_md5']} but loaded core is {actual}; not grading pixels"
+        )
+    expected = rbf_identity.get("expected_md5")
+    if expected and prov["source_rbf_md5"] != expected:
+        raise RbfIdentityError(
+            "GOLDEN_PROVENANCE: golden was produced by core "
+            f"{prov['source_rbf_md5']} but artifact under test is {expected}; not grading pixels"
+        )
+    return prov
 
 
 def parse_int_value(value: str) -> int | None:
@@ -475,7 +648,10 @@ def capture_v4l2_once(path: Path, dev: str, input_format: str, size: str, framer
         "-vf", vf, "-frames:v", "1", "-update", "1",
         "-y", str(path),
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30 + warmup)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30 + warmup)
+    except FileNotFoundError as e:
+        raise HarnessError("required dependency ffmpeg was not found; cannot capture HDMI") from e
     log = (r.stderr or r.stdout or "").strip()
     if r.returncode != 0 or not path.exists() or path.stat().st_size == 0:
         return None, log, r.returncode
@@ -564,6 +740,60 @@ def rgb_to_yuv601(rgb: np.ndarray) -> np.ndarray:
     return np.clip(np.rint(np.stack([y, u, v], axis=-1)), 0, 255).astype(np.int16)
 
 
+def classify_error_signatures(stats: dict) -> list[dict]:
+    """Attach interpretation hints after raw per-channel numbers are reported."""
+    if stats["exact_match_pixels"] == stats["active_pixels"]:
+        return [{"id": "exact_match", "confidence": "high"}]
+
+    mae = [float(x) for x in stats["per_plane_mae_rgb"]]
+    avg = sum(mae) / 3.0
+    spread = max(mae) - min(mae)
+    max_abs = int(stats["max_abs"])
+    exact_ratio = float(stats["exact_match_ratio"])
+    bbox = stats.get("mismatch_bbox") or {}
+    display_bbox = bbox.get("display")
+    sigs: list[dict] = []
+
+    if avg >= 5.0 and spread <= max(5.0, avg * 0.08):
+        sigs.append({
+            "id": "balanced_rgb_error",
+            "confidence": "medium",
+            "note": "RGB MAE is nearly uniform; this is not the usual colour-matrix or U/V-swap shape",
+        })
+    if exact_ratio == 0.0 and avg >= 64.0 and max_abs >= 250 and spread <= max(8.0, avg * 0.08):
+        sigs.append({
+            "id": "uniform_high_rgb_error_wrong_scheme_or_core",
+            "confidence": "high",
+            "note": "zero exact pixels plus flat high RGB MAE suggests bytes decoded under the wrong scheme/core",
+        })
+    if display_bbox and display_bbox[0] == 0 and display_bbox[1] == 0 and exact_ratio < 0.05:
+        sigs.append({
+            "id": "first_sample_or_geometry_mismatch",
+            "confidence": "medium",
+            "note": "mismatches begin at the first compared sample; verify geometry, crop, and artifact provenance",
+        })
+    r, g_mae, b = mae
+    if g_mae >= max(r, b) * 2.5 and g_mae >= 20.0:
+        sigs.append({
+            "id": "green_dominant_colour_transform_or_chroma_path",
+            "confidence": "medium",
+            "note": "green-dominant error is characteristic of matrix/range or chroma-path mistakes",
+        })
+    if r >= g_mae * 1.6 and b >= g_mae * 1.6 and max(r, b) >= 20.0:
+        sigs.append({
+            "id": "red_blue_dominant_possible_uv_swap",
+            "confidence": "medium",
+            "note": "red and blue dominate together; check U/V ordering before blaming luma geometry",
+        })
+    if not sigs:
+        sigs.append({
+            "id": "unclassified_visual_mismatch",
+            "confidence": "low",
+            "note": "use raw per-channel MAE/max/exact counts and diff artifact for diagnosis",
+        })
+    return sigs
+
+
 def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
                box: tuple[int, int, int, int] | None = None) -> dict:
     ga = active_view(golden, g, box).astype(np.int16)
@@ -597,7 +827,7 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
             ],
             "pixels": int(mismatch_mask.sum()),
         }
-    return {
+    stats = {
         "active_pixels": int(exact.size),
         "exact_match_pixels": int(exact.sum()),
         "exact_match_ratio": float(exact.sum() / exact.size),
@@ -623,6 +853,8 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
             "delta": int(diff[wy, wx, wc]),
         },
     }
+    stats["diagnostic_signatures"] = classify_error_signatures(stats)
+    return stats
 
 
 def shifted_overlap_box(box: tuple[int, int, int, int], dx: int, dy: int) -> tuple[
@@ -761,7 +993,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
     box = parse_compare_box(args.compare_box, g)
     rbf_identity = validate_rbf_identity(args)
-    color_provenance = require_color_provenance(args)
+    golden_provenance = validate_golden_provenance(args, g, box, rbf_identity)
+    color_provenance = require_color_provenance(args, golden_provenance)
     reject_corrupt_capture_log(args.capture_log)
     delivery_freshness = validate_delivery_freshness(args)
     golden = load_rgb(Path(args.golden), g)
@@ -792,6 +1025,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "geometry": asdict(g),
         "compare_box": list(box),
         "rbf_identity": rbf_identity,
+        "golden_provenance": golden_provenance,
         "color_provenance": color_provenance,
         "freshness": freshness,
         "delivery_freshness": delivery_freshness,
@@ -846,6 +1080,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("compare", help="compare a capture against the checked-in golden")
     p.add_argument("--golden", required=True)
+    p.add_argument("--golden-provenance",
+                   help="JSON sidecar declaring the golden's RBF/geometry/format/colour provenance; "
+                   "defaults to GOLDEN.png.provenance.json")
     p.add_argument("--capture", required=True)
     p.add_argument("--capture-log",
                    help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
@@ -855,6 +1092,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="actual loaded /media/fat/_Utility/Plex.rbf md5, or md5sum output")
     p.add_argument("--rbf-md5-log",
                    help="file containing device md5sum /media/fat/_Utility/Plex.rbf output")
+    p.add_argument("--expected-content-size",
+                   help="declared content geometry for the artifact under test, WIDTHxHEIGHT")
+    p.add_argument("--expected-pixel-format", choices=PIXEL_FORMATS,
+                   help="declared frame-store pixel format for the artifact under test")
     p.add_argument("--status-log",
                    help="push_frame --status log for this run; implausible delivery returns rc=7")
     p.add_argument("--previous-status-log",

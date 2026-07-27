@@ -19,6 +19,8 @@ CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
 CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 COLOR_MATRIX="${VISUAL_COLOR_MATRIX:-bt601}"
 COLOR_RANGE="${VISUAL_COLOR_RANGE:-full}"
+PIXEL_FORMAT="${VISUAL_PIXEL_FORMAT:-yuv420p}"
+CONTENT_SIZE="${VISUAL_EXPECTED_CONTENT_SIZE:-320x240}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
 REQUIRE_FRESH_DELIVERY="${VISUAL_REQUIRE_FRESH_DELIVERY:-1}"
 MIN_BYTES_IN="${VISUAL_MIN_BYTES_IN:-512}"
@@ -29,10 +31,16 @@ else
 fi
 RBF="${VISUAL_RBF:-${1:-}}"
 EXPECTED_RBF_MD5="${VISUAL_EXPECTED_RBF_MD5:-${VISUAL_RBF_MD5:-}}"
-EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
+EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means same-provenance capture must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
-GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png}"
+GOLDEN="${VISUAL_GOLDEN:-}"
 TOOL="$ROOT/scripts/hw_visual_compare.py"
+
+if [[ -z "$GOLDEN" ]]; then
+  echo "FAIL: VISUAL_GOLDEN must be declared; no hardware golden is safe as a silent default." >&2
+  echo "Legacy rollback captures are quarantined and only valid when their provenance matches the loaded RBF." >&2
+  exit 2
+fi
 
 if [[ "$(basename "$BITSTREAM")" == "plex_visual_624x480_1f.264" && "${VISUAL_ALLOW_UNPROVEN_624:-0}" != "1" ]]; then
   echo "FAIL: 624x480 visual fixture is not a proven hardware gate on rollback 57674f2e." >&2
@@ -100,7 +108,12 @@ COMPARE_ARGS=()
 if [[ -n "$COMPARE_BOX" ]]; then
   COMPARE_ARGS=(--compare-box "$COMPARE_BOX")
 fi
-RBF_COMPARE_ARGS=(--expected-rbf-md5 "$EXPECTED_RBF_MD5" --rbf-md5-log "$OUT/rbf_md5.txt")
+RBF_COMPARE_ARGS=(
+  --expected-rbf-md5 "$EXPECTED_RBF_MD5"
+  --rbf-md5-log "$OUT/rbf_md5.txt"
+  --expected-content-size "$CONTENT_SIZE"
+  --expected-pixel-format "$PIXEL_FORMAT"
+)
 
 echo "=== set HDMI mode preset $VIDEO_MODE for capture ($CAP_FMT $CAP_SIZE@$CAP_FPS) ==="
 ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
@@ -236,7 +249,7 @@ case "$EXPECT:$compare_rc" in
     exit 1
     ;;
   fail:1)
-    echo "VISUAL_EXPECT=fail: known-bad core went red as expected (diff=$OUT/diff.png)"
+    echo "VISUAL_EXPECT=fail: same-provenance capture went red as expected (diff=$OUT/diff.png)"
     ;;
   fail:0)
     echo "FAIL: VISUAL_EXPECT=fail but capture matched golden; red specimen did not go red" >&2
@@ -248,6 +261,10 @@ case "$EXPECT:$compare_rc" in
     ;;
   *:8)
     echo "FAIL: loaded RBF identity error rc=$compare_rc; not a core result" >&2
+    exit "$compare_rc"
+    ;;
+  *:9)
+    echo "FAIL: golden provenance error rc=$compare_rc; not a core result" >&2
     exit "$compare_rc"
     ;;
   *)
