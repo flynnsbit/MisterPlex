@@ -3,16 +3,42 @@
 **Author:** w-arch  
 **Date:** 2026-07-27  
 **Branch:** feat/arch-study  
-**Status:** v4 — **Three corrections from fitter measurements.
-VCO=360 MHz (not 720). Fmax=25.09 MHz (not my estimated 81 MHz).
-45 MHz is the only safe CDC candidate. The 39.86 ns critical path
-must be identified and eliminated before any clock increase.**
+**Status:** v5 — **The 39.86 ns critical path was in `decode_stub` (dead code).
+The real decode fabric's frequency limit has NEVER BEEN MEASURED.
+45 MHz remains the only safe CDC candidate. The clk_ddr violating path
+(`disp_buf_d2 → DDRAM_ADDR`) is a candidate mechanism for the frozen screen.**
 
 ---
 
 ## Executive Summary
 
-### v4: Corrections from w-cap's fitter measurements
+### v5: The 39.86 ns path was dead code — fabric limit is UNMEASURED
+
+**w-cap extracted the actual endpoints of the 39.86 ns clk_sys path:**
+
+```
+FROM:   decode_stub|lat_qp[4]
+TO:     decode_stub|recon_dbg[5]
+slack:  +10.151 ns    data delay 39.227 ns    22 logic levels
+
+All 10 worst intra-domain paths: same FROM/TO pair in decode_stub.
+```
+
+**`decode_stub` is a simulation and diagnostic shim. It is not the decoder.**
+The 25.09 MHz Fmax figure I used in v4 to say the fabric "measurably cannot
+exceed 25 MHz" was an artifact of a module the real decoder replaces. The
+next-worst path is also `decode_stub` at 10.179 ns slack. **We have no
+measurement of the real decode fabric's frequency limit.**
+
+My v4 hypothesis — that the path went through `h264_luma_qpel_block_16x16`
+— was wrong about the module but right about the mechanism: a massively
+combinational block dominated the timing. **The conclusion survives in
+stronger form than I argued:** I said if the path were eliminated by MC
+replacement, the clock question reopens. The path is eliminated by decode_stub
+removal. **The clock question is genuinely reopened — not as optimism, as
+ignorance.**
+
+### v4: Corrections from w-cap's fitter measurements (PARTIALLY SUPERSEDED)
 
 **Three of my published estimates were wrong. The fitter measured otherwise.**
 
@@ -52,30 +78,38 @@ there, and right now, measurably, it cannot.
    60 MHz has the SAME 5.556 ns gap. 45 MHz has a 1:2 ratio → edges align
    every cycle → 11.111 ns gap (the full DDR period). See §6A.
 
-6. **The decode fabric currently caps at ~25 MHz** (Fmax = 25.09 MHz,
-   critical path = 39.86 ns, slack = +10.14 ns at 20 MHz). To reach 45 MHz
-   (22.22 ns period), the critical path must shrink by **17.6 ns**. This
-   is 2–3 pipeline stages of real work, not a PLL parameter change.
+6. ~~**The decode fabric currently caps at ~25 MHz**~~ — WRONG (v5). The
+   39.86 ns path was in `decode_stub` (dead code). The real fabric limit
+   is **UNMEASURED**. All 10 worst clk_sys paths are in `decode_stub`.
 
-7. **But the critical path is almost certainly in the MC simulation model**
-   (`h264_luma_qpel_block_16x16`), which computes 256 luma samples in one
-   `always @*` via a 6×6 FIR cascade — the exact same pattern as w-plane's
-   I16 Plane (55–70 levels before pipelining). **w-mc is replacing this
-   module with a time-multiplexed implementation.** Once replaced, the
-   second-deepest path becomes the new ceiling. **That path must be
-   identified before the clock question can be answered.**
+7. ~~**The critical path is in the MC simulation model**~~ — WRONG (v5).
+   The path is in `decode_stub`, not `h264_luma_qpel_block_16x16`. My
+   hypothesis had the right mechanism (massive combinational block) but the
+   wrong module.
 
-### The honest picture
+8. **The `clk_ddr` violating path is a frozen-screen candidate.** (NEW v5)
+   `disp_buf_d2 → DDRAM_ADDR[9,15,18,23,...]` — the display buffer bank
+   select fails setup timing at -0.213 ns, 7 logic levels, 10.722 ns.
+   A bank-select sampled wrong → read from unfilled bank → `has_frame=0`
+   forever. This is direct evidence for the bank-race hypothesis (candidate 2).
+   w-a3 owns the investigation.
+
+### The honest picture (v5)
 
 - **20 MHz was never chosen** → TRUE (traced)
 - **Decode can have its own clock** → TRUE (traced)
-- **A PLL change dissolves the feasibility question** → FALSE (fitter says Fmax=25 MHz)
-- **The 39.86 ns path is fixable** → LIKELY but UNVERIFIED (pending critical path identification)
-- **45 MHz is achievable after MC replacement** → PLAUSIBLE but ESTIMATED (pending post-replacement fit)
+- **The fabric caps at 25 MHz** → WRONG (v5, the path was dead code)
+- **The fabric's real frequency limit** → UNMEASURED (no fit with real decoder exists)
+- **45 MHz is the only safe CDC candidate** → TRUE (computed, unaffected by path identity)
+- **45 MHz is achievable** → UNKNOWN (requires a fit with real decode modules)
+- **`disp_buf_d2` timing violation may cause frozen screen** → PLAUSIBLE (w-a3 investigating)
 
-The clock question is not answered by v4. It is reframed as: **what is
-the critical path, and does it survive the MC replacement?** That is the
-question w-cap's path report will answer.
+The clock question is not answered by v5. It is reframed as: **the fabric
+limit has never been measured because every fit so far contained `decode_stub`.
+The first fit with real decode modules will produce the first real number.**
+
+Design against **20 MHz / 684 cycles/MB**. "The limit is unknown" is not
+"the limit is high."
 
 ### Finding: 20 MHz was never chosen
 
@@ -877,19 +911,60 @@ need w-cap's post-fix STA to confirm the exact number).
 
 ```
 clk_sys intra-domain Fmax:   25.09 MHz
-  Critical path delay:       39.86 ns
-  Slack at 20 MHz (50 ns):   +10.14 ns
+  Critical path delay:       39.23 ns (39.86 ns was rounded; precise = 39.227)
+  Slack at 20 MHz (50 ns):   +10.15 ns
+  **Critical path endpoints:  decode_stub|lat_qp[4] → decode_stub|recon_dbg[5]**
+  **ALL 10 worst paths are in decode_stub (diagnostic shim, not the decoder)**
+  **DECODE FABRIC LIMIT IS UNMEASURED — the Fmax number measures dead code**
 
 clk_ddr intra-domain Fmax:   88.31 MHz
-  Critical path delay:       11.33 ns
+  Critical path delay:       10.72 ns (precise: 10.722)
   Slack at 90 MHz (11.1 ns): -0.21 ns  ← marginally failing on its own
+  **Critical path: ddr_frame_store|disp_buf_d2 → DDRAM_ADDR[9,15,18,23,...]**
+  **Bank select → address is the frozen-screen candidate (see below)**
 ```
 
-**Why my 12-level estimate was wrong:**
+**Why the 25 MHz "limit" was wrong:**
+
+The v4 Fmax of 25.09 MHz was a real measurement from a real fitter run.
+But the endpoints were in `decode_stub` — a simulation and diagnostic shim
+that the real decoder replaces. When decode_stub is removed and real decode
+modules are fitted, the 39.86 ns path goes with it. **No fit containing
+the actual decode pipeline has ever run**, so the fabric's real frequency
+limit is unknown.
+
+My v3.1 estimate of 12 logic levels / 12.3 ns was wrong. The fitter's
+39.86 ns was real but measuring the wrong thing. **Both errors went in the
+direction of their author's argument** — mine underestimated to support
+feasibility, the correction over-constrained to support caution. The honest
+position: unknown.
+
+**The `clk_ddr` violating path is architecturally significant:**
+
+```
+ddr_frame_store|disp_buf_d2 → DDRAM_ADDR[9] (also [15], [18], [23], ...)
+slack: -0.213 ns    data delay: 10.722 ns    7 logic levels
+```
+
+`disp_buf_d2` is the **display buffer bank select**. It feeds the DDR address
+computation for the display read path and **fails setup timing**. A bank-select
+register that violates timing on its way into a memory address is a mechanism
+for reading the wrong bank. Our silicon signature — `PLXF` present, `seq=4`,
+`has_frame=0`, `ddr_busy=0` — is consistent with the display side reading a
+bank the producer has not filled.
+
+This is **direct evidence for candidate 2 (bank race)**. w-a3 owns
+investigation. Note: -0.213 ns is marginal and may work across most of the
+temperature/voltage range. It is a plausible mechanism, not a smoking gun.
+
+**Fix is cheap:** 7 logic levels at 10.7 ns → one pipeline register stage
+brings it under the 11.1 ns DDR period with margin.
+
+**Why my 12-level estimate was wrong (v4 analysis, retained for record):**
 
 My v3.1 analysis estimated 12 logic levels (parse_cavlc, deblock) as the
 critical path, at ~12.3 ns. The fitter measured 39.86 ns — **3.2× longer**.
-The difference is explained by two factors I omitted:
+The gap is explained by:
 
 1. **Routing delay.** Logic-level counting accounts for ALM propagation but
    NOT for interconnect routing between ALMs. On Cyclone V, routing delay
@@ -909,34 +984,30 @@ The difference is explained by two factors I omitted:
    pipelining: 256 parallel multiply-add operations in one combinational
    block, producing 55–70 logic levels.
 
-**HYPOTHESIS: the 39.86 ns critical path goes through the MC simulation
-model.** This hypothesis is UNVERIFIED — I have asked w-cap for the
-specific path endpoints (FROM and TO registers). If confirmed, the path
-will be eliminated when w-mc replaces the combinational model with a
-time-multiplexed implementation.
+**~~HYPOTHESIS~~: the 39.86 ns critical path goes through the MC simulation
+model.** ~~This hypothesis is UNVERIFIED~~. **REFUTED (v5).** w-cap extracted
+the endpoints: `decode_stub|lat_qp[4] → decode_stub|recon_dbg[5]`. All 10
+worst paths are in `decode_stub`, which is a diagnostic shim the real
+decoder replaces. The path disappears when `decode_stub` is removed.
 
-**What happens after the MC replacement?**
+**What this means for 45 MHz:**
 
-The combinational MC block is the ONLY circuit in the clk_sys domain with
-this structure (256 parallel FIR cascades). Once removed, the critical path
-shifts to the second-deepest circuit. My estimate of that second path
-(parse_cavlc or deblock at ~12 levels) remains ESTIMATED and may be wrong
-in the same direction — but the error factor should be much smaller because
-those circuits are small sequential FSMs, not 441→256 combinational cones.
+The 39.86 ns path is not in the real decode fabric. **The fabric's true
+Fmax is UNMEASURED.** To get a real number, a fit containing the actual
+decode modules (`h264_stream_path`, `h264_cavlc_parser`, `h264_intra_pred`,
+w-mc's new MC, w-deblock's filter) must run.
 
-**To reach 45 MHz (22.22 ns period):**
+**Previous scenario table (retained for reference, but the starting point
+has changed — it is "unknown" rather than "39.86 ns"):**
 
-| Scenario | Required improvement | Plausibility |
-|----------|---------------------|-------------|
-| MC replacement eliminates path, 2nd path is ~15 ns | 0 ns (already fits) | Possible but UNVERIFIED |
-| MC replacement eliminates path, 2nd path is ~25 ns | 2.8 ns of pipelining | Likely achievable |
-| MC replacement eliminates path, 2nd path is ~35 ns | 12.8 ns of pipelining | Hard |
-| MC replacement does NOT eliminate path | 17.6 ns of pipelining | Very hard |
-| Critical path is NOT in MC at all | Unknown work | Must identify path first |
+| Scenario | Decode fabric Fmax | 45 MHz feasibility |
+|----------|-------------------|-------------------|
+| Real fabric ≤ 22 ns critical path | ≥ 45 MHz | **Achievable** with CDC work |
+| Real fabric 22–30 ns | 33–45 MHz | **Marginal** — may need pipelining |
+| Real fabric 30–40 ns | 25–33 MHz | **Difficult** — multiple pipeline stages |
+| Real fabric > 40 ns | < 25 MHz | **Not feasible** without major restructuring |
 
-**STATUS: The Fmax = 25.09 MHz is a VERIFIED MEASUREMENT. The hypothesis
-that it's in the MC simulation model is UNVERIFIED. Everything downstream
-of that hypothesis is conditional.**
+**We will not know which row we are in until the first fit with real modules.**
 
 ### 6A. CDC relationship analysis (NEW in v4)
 
@@ -1034,12 +1105,26 @@ The following remain good engineering at any frequency:
 fitter timing reports.** Once identified, the path becomes a target for
 the same restructuring technique w-plane applied to I16 Plane.
 
-### 7.5 One more measurement to note
+### 7.5 The `clk_ddr` violation and the frozen screen (UPDATED v5)
 
-**`clk_ddr` already sits at -0.21 ns intra-domain slack** (Fmax 88.31 MHz
-vs 90 MHz target). w-a3's fix moves the bus arbiter INTO this domain, which
-will likely make it worse. The upcoming fit may trade a cross-domain failure
-for an intra-domain one.
+**`clk_ddr` sits at -0.213 ns intra-domain slack** (Fmax 88.31 MHz
+vs 90 MHz target). The violating path is now identified:
+
+```
+ddr_frame_store|disp_buf_d2 → DDRAM_ADDR[9,15,18,23,...]
+data delay: 10.722 ns    7 logic levels
+```
+
+**This is the display buffer bank select feeding the DDR address
+computation.** A setup violation here means the address bits can
+be computed from a stale or metastable bank select, potentially
+reading from the wrong DDR bank. This directly matches the frozen-screen
+signature (`has_frame=0`, `ddr_busy=0`).
+
+w-a3's arbiter move INTO clk_ddr adds logic to this domain and may
+worsen the slack. However, the `disp_buf_d2` fix is straightforward:
+one pipeline register stage reduces the 7-level path to meet the
+11.1 ns DDR period.
 
 ---
 
@@ -1051,13 +1136,17 @@ for an intra-domain one.
 | **20 MHz is Template_MiSTer default, never changed** | `git log --all --follow pll_0002.v`: initial commit `44a4611` identical to Template `c599468` | **Traced ✓ (v3)** |
 | **VCO = 360 MHz** | `Plex.sta.rpt`: `create_generated_clock -divide_by 5 -multiply_by 36` → 50×36/5=360 | **VERIFIED (v4)** |
 | ~~VCO ≈ 720 MHz~~ | ~~Computed from PLL constraints~~ | **WRONG (v3.1) — corrected v4** |
-| **Fmax clk_sys = 25.09 MHz (critical path 39.86 ns)** | `Plex.sta.rpt` Fmax Summary, intra-domain | **VERIFIED (v4)** |
-| **Fmax clk_ddr = 88.31 MHz (critical path 11.33 ns, slack -0.21 ns)** | `Plex.sta.rpt` Fmax Summary, intra-domain | **VERIFIED (v4)** |
+| ~~Fmax clk_sys = 25.09 MHz (critical path 39.86 ns)~~ | ~~`Plex.sta.rpt` Fmax Summary, intra-domain~~ | **MISLEADING (v5) — path is in decode_stub (dead code)** |
+| **clk_sys critical path = decode_stub\|lat_qp[4] → recon_dbg[5]** | w-cap `quartus_sta` intra-domain extraction, all 10 worst paths | **VERIFIED (v5)** |
+| **Decode fabric Fmax = UNMEASURED** | No fit with real decode modules exists; decode_stub dominates all 10 paths | **ESTABLISHED (v5)** |
+| **clk_ddr critical path = ddr_frame_store\|disp_buf_d2 → DDRAM_ADDR** | w-cap `quartus_sta` intra-domain extraction, all 10 worst paths | **VERIFIED (v5)** |
+| **Fmax clk_ddr = 88.31 MHz (critical path 10.72 ns, slack -0.213 ns)** | `Plex.sta.rpt` Fmax Summary, intra-domain | **VERIFIED (v4, endpoints v5)** |
+| **disp_buf_d2 → DDRAM_ADDR is frozen-screen candidate** | Bank select failing setup → wrong bank read → has_frame=0 | **HYPOTHESIS (v5)** |
 | ~~Critical path = 12 levels (~12.3 ns)~~ | ~~First-principles depth analysis~~ | **WRONG (v3.1) — fitter says 39.86 ns** |
 | ~~60 MHz target closes with +4.1 ns margin~~ | ~~Estimate~~ | **WRONG (v3.1) — rejected: same CDC gap as failure** |
 | **45 MHz is the only safe CDC candidate** | CDC gap analysis: 1:2 ratio → 11.111 ns gap | **COMPUTED (v4)** |
 | **40 MHz has WORSE CDC gap (2.778 ns) than 20 MHz (5.556 ns)** | CDC gap analysis: 4:9 ratio | **COMPUTED (v4)** |
-| **39.86 ns path likely in h264_luma_qpel_block_16x16** | RTL: 256 parallel qpel in `always @*`, 6×6 FIR cascade | **HYPOTHESIS (v4)** |
+| ~~39.86 ns path likely in h264_luma_qpel_block_16x16~~ | ~~RTL: 256 parallel qpel in `always @*`, 6×6 FIR cascade~~ | **WRONG (v5) — path is in decode_stub** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
@@ -1082,64 +1171,67 @@ for an intra-domain one.
 
 ---
 
-## 9. Open Questions — UPDATED v4
+## 9. Open Questions — UPDATED v5
 
 ### Resolved
 
 ~~1. VCO frequency~~ → **360 MHz** (VERIFIED from STA).
 
-### Critical open question (v4)
+~~12. WHERE IS THE 39.86 ns CRITICAL PATH?~~ → **RESOLVED (v5).**
+`decode_stub|lat_qp[4] → decode_stub|recon_dbg[5]`. All 10 worst paths
+are in `decode_stub` (diagnostic shim, not the decoder). The path
+disappears when real decode modules are fitted. **The decode fabric's
+frequency limit has never been measured.**
 
-**12. WHERE IS THE 39.86 ns CRITICAL PATH?**
+### Critical open question (v5)
 
-This is the single most important open question. The intra-domain Fmax
-of 25.09 MHz means the worst path in the clk_sys domain is 39.86 ns.
+**13. WHAT IS THE REAL DECODE FABRIC'S Fmax?**
 
-**Hypothesis:** It goes through `h264_luma_qpel_block_16x16` — the
-combinational MC interpolation that computes 256 luma samples via a 6×6
-FIR cascade in one `always @*` block (h264_dpb.sv:357–492). This is the
-exact same pattern as w-plane's I16 Plane (55–70 levels before pipelining).
+This is the single most important open question. No fit containing
+the actual decode pipeline has ever run. `decode_stub` dominates all
+10 worst clk_sys paths, masking the real fabric's limit.
 
-**If confirmed:** The path is eliminated when w-mc replaces this module
-with a time-multiplexed implementation. The post-replacement Fmax becomes
-the real ceiling. If that's ≤22 ns, 45 MHz is achievable.
+**Required:** A fit with real decode modules (h264_stream_path,
+h264_cavlc_parser, h264_intra_pred, and at minimum w-mc's MC FSM
+and w-deblock's filter) to get the first honest Fmax measurement.
 
-**If refuted:** The path is in another module and must be traced and fixed.
-The scope of work is unknown until identified.
+**14. Does `disp_buf_d2 → DDRAM_ADDR` cause the frozen screen?**
 
-**w-cap has been asked for the FROM and TO register endpoints.**
+The display bank select fails setup timing at -0.213 ns and fans out
+to multiple DDRAM_ADDR bits. If sampled wrong, the display side reads
+an unfilled bank → `has_frame=0` forever. w-a3 is investigating.
 
-### New questions (v4)
+Fix if confirmed: one pipeline register stage (7 levels at 10.7 ns
+→ comfortably under 11.1 ns DDR period).
 
-8. ~~**VCO confirmation**~~ → **360 MHz, VERIFIED** from STA report.
+### Remaining from v4
 
-9. **Post-MC-replacement Fmax.** When w-mc replaces the combinational
-   `h264_luma_qpel_block_16x16` with a time-multiplexed FSM, what does the
-   intra-domain Fmax become? This is the GATE for the 45 MHz decision.
-   **Requires a new fit after w-mc's module is integrated.**
+9. **Post-decode-stub Fmax.** When `decode_stub` is removed and real
+   decode modules are fitted, what does the intra-domain Fmax become?
+   This replaces the previous "post-MC-replacement" question — the
+   gate is now broader (first fit with any real decode logic).
 
-10. **clk_ddr intra-domain margin.** Already at -0.21 ns slack. w-a3's
-    arbiter move INTO clk_ddr will add logic. The next fit may trade a
-    cross-domain failure for an intra-domain one. **w-cap to report.**
+10. **clk_ddr intra-domain margin.** At -0.213 ns slack, already
+    marginal. w-a3's arbiter move INTO clk_ddr adds logic. The
+    `disp_buf_d2` pipeline stage (if added) helps but must be measured.
 
-11. **w-cabac's wider arithmetic impact.** Residual pipeline widened from
-    `signed [17:0]` to `signed [21:0]`. At 45 MHz (22.22 ns), a few ns of
-    additional carry chain delay could matter. **Need STA data.**
+11. **w-cabac's wider arithmetic impact.** Residual pipeline widened
+    from `signed [17:0]` to `signed [21:0]`. Impact unknown until a
+    fit with real decode modules measures it.
 
-### Still open from v1–v2 (updated for 20 MHz working number)
+### Still open from v1–v2
 
-2. **Actual CAVLC worst-case** — 50-cycle allocation needs validation on
-   complex I-frames. Could affect both budget (cycles) and timing (depth).
+2. **Actual CAVLC worst-case** — 50-cycle allocation needs validation.
 
 3. **DDR arbitration contention** — worst-case latency bounds under
    multi-port contention. At 684 cycles/MB, this must be bounded.
 
-4. **Sub-MB partitions** — P_L0_16×8, P_L0_8×16, P_8×8ref impact on MC
-   cycles. Must fit within the 250-cycle MC allocation.
+4. **Sub-MB partitions** — impact on MC cycle count within the
+   250-cycle allocation.
 
-5. **2nd-deepest critical path.** After MC combinational block is removed,
-   what is the next timing bottleneck? Determines whether 45 MHz is
-   achievable or whether there is a stack of long paths.
+5. **Stack depth of critical paths.** Once `decode_stub` is removed,
+   is there one dominant path or a stack of similarly-timed paths?
+   The answer determines how much pipelining work 45 MHz requires.
 
 6. ~~**w-plane I16 Plane cy1 = 18 levels**~~ → **RESOLVED.** w-plane reduced
    cy1 from ~18 to ~10 levels via balanced tree accumulator (`df21c4a`).
