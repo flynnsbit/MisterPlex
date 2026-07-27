@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import importlib.util
 from pathlib import Path
 
 
@@ -65,6 +66,9 @@ HW_README_MD = Path(os.environ.get("HW_README_MD", ROOT / "tests/hw/README.md"))
 PHASE3_DECODE_MD = Path(os.environ.get("PHASE3_DECODE_MD", ROOT / "docs/phase3-decode.md"))
 PUSH_FRAME_CPP = Path(os.environ.get("PUSH_FRAME_CPP", ROOT / "tools/push_frame.cpp"))
 SET_STATUS_CPP = Path(os.environ.get("SET_STATUS_CPP", ROOT / "tools/set_status.cpp"))
+H264_DPB_RTL = Path(os.environ.get("H264_DPB_RTL", ROOT / "fpga/Plex_MiSTer/rtl/h264_dpb.sv"))
+H264_DEBLOCK_RTL = Path(os.environ.get("H264_DEBLOCK_RTL", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv"))
+QUARTUS_SV_GUARD = ROOT / "scripts/check_quartus_sv_subset.py"
 
 
 def read(path: Path) -> str:
@@ -974,6 +978,22 @@ def check_ddr_bitstream_product_path() -> None:
     print("PASS product STREAM path uses DDR NAL records with zero-delivery telemetry")
 
 
+def check_h264_quartus_subset() -> None:
+    spec = importlib.util.spec_from_file_location("check_quartus_sv_subset", QUARTUS_SV_GUARD)
+    check(spec is not None and spec.loader is not None, "Quartus SV subset guard script missing")
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    errors = []
+    for rtl in (H264_DPB_RTL, H264_DEBLOCK_RTL):
+        errors.extend(guard.check_file(rtl))
+    check(
+        not errors,
+        "H.264 RTL uses constructs Quartus rejected while Verilator accepted:\n"
+        + "\n".join(f"  {err}" for err in errors),
+    )
+    print("PASS H.264 Quartus SV subset guard")
+
+
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
@@ -985,6 +1005,7 @@ def main() -> int:
     check_ddr_frame_store_yuv_read_contract()
     check_yuv_ddr_writer_contract()
     check_ddr_bitstream_product_path()
+    check_h264_quartus_subset()
     return 0
 
 
