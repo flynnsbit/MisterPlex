@@ -1,0 +1,97 @@
+{
+  "_comment": "CDC Crossing Register — maintained by w-c2. Every known clock-domain crossing must be listed here. Unlisted crossings are invisible to this gate.",
+  "_updated": "2026-07-28",
+  "_audit_note": "Does NOT prove completeness. Only listed crossings are checked.",
+  "crossings": [
+    {
+      "id": "async_fifo_wr2rd_gray",
+      "signal": "wr_gray[AW:0]",
+      "src_clock": "wr_clk",
+      "dst_clock": "rd_clk",
+      "src_module": "async_fifo",
+      "dst_module": "async_fifo",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "Gray-coded pointer through 2-FF chain (wr_gray_r1 → wr_gray_r2). Gray coding ensures at most 1 bit changes per clock, safe for 2-FF sync. Used for rd_empty detection."
+    },
+    {
+      "id": "async_fifo_rd2wr_gray",
+      "signal": "rd_gray[AW:0]",
+      "src_clock": "rd_clk",
+      "dst_clock": "wr_clk",
+      "src_module": "async_fifo",
+      "dst_module": "async_fifo",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "Gray-coded pointer through 2-FF chain (rd_gray_w1 → rd_gray_w2). Used for wr_full/wr_almost_full detection."
+    },
+    {
+      "id": "audio_fifo_wr2rd_gray",
+      "signal": "wr_gray[AW:0]",
+      "src_clock": "clk_wr (clk_sys 20MHz)",
+      "dst_clock": "clk_rd (CLK_AUDIO 48kHz)",
+      "src_module": "audio_fifo",
+      "dst_module": "audio_fifo",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "Gray-coded after d86c183 fix. Was binary (CDC bug). Now safe: 2-FF sync on Gray pointers. Slow reader (48kHz) from fast writer (20MHz) — direction is safe for level sync."
+    },
+    {
+      "id": "audio_fifo_rd2wr_gray",
+      "signal": "rd_gray[AW:0]",
+      "src_clock": "clk_rd (CLK_AUDIO 48kHz)",
+      "dst_clock": "clk_wr (clk_sys 20MHz)",
+      "src_module": "audio_fifo",
+      "dst_module": "audio_fifo",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "Gray-coded after d86c183 fix. Fast reader (20MHz) from slow writer (48kHz). 2-FF sync."
+    },
+    {
+      "id": "audio_fifo_has_wr",
+      "signal": "has_wr",
+      "src_clock": "clk_wr (clk_sys 20MHz)",
+      "dst_clock": "clk_rd (CLK_AUDIO 48kHz)",
+      "src_module": "audio_fifo",
+      "dst_module": "audio_fifo",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "1-bit level signal through 2-FF chain (has_wr_s1 → has_wr_s2). Single bit, level-stable. Safe."
+    },
+    {
+      "id": "arbiter_m1_dout_ready_FUTURE",
+      "signal": "m1_dout_ready (stream_ddr_dout_ready)",
+      "src_clock": "clk_ddr (90MHz)",
+      "dst_clock": "clk_sys (20MHz)",
+      "src_module": "ddr_bus_arbiter",
+      "dst_module": "stream_path",
+      "src_type": "pulse",
+      "protection": "none",
+      "_status": "FUTURE — only exists after w-a3 commit 60df5a2 merges (arbiter .clk → clk_ddr)",
+      "justification": "UNPROTECTED. m1_dout_ready = DDRAM_DOUT_READY & rsp_active & rsp_owner_m1, produced combinationally from clk_ddr-domain registers. Single-cycle pulse at 90 MHz (11.1 ns) sampled by clk_sys at 20 MHz (50 ns). The slow-domain sampler can miss beats. Needs FIFO or pulse-stretch. Currently on feat/a3-frame-store, not merged to main."
+    },
+    {
+      "id": "arbiter_m0_dout_ready",
+      "signal": "m0_dout_ready (present_ddr_dout_ready)",
+      "src_clock": "clk_ddr (90MHz after 60df5a2)",
+      "dst_clock": "clk_sys (20MHz)",
+      "src_module": "ddr_bus_arbiter",
+      "dst_module": "present_core",
+      "src_type": "pulse",
+      "protection": "none",
+      "_status": "FUTURE — same fix as m1_dout_ready",
+      "justification": "UNPROTECTED after 60df5a2. Same pattern as m1_dout_ready. present_core samples this on clk_sys. However, ddr_frame_store may have its own synchronization — needs verification by w-a3."
+    },
+    {
+      "id": "pll_general0_to_general2",
+      "signal": "multiple (f2sdram path)",
+      "src_clock": "general[0].gpll (clk_sys 20MHz)",
+      "dst_clock": "general[2].gpll (clk_ddr 90MHz)",
+      "src_module": "Plex",
+      "dst_module": "sysmem (HPS)",
+      "src_type": "burst",
+      "protection": "fifo",
+      "justification": "F2SDRAM command/response interface uses Intel-provided async FIFOs inside the HPS hard IP. The sysmem_lite wrapper handles CDC internally. SDC has set_clock_groups -exclusive between these PLLs."
+    }
+  ]
+}

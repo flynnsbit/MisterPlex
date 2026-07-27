@@ -34,6 +34,7 @@ class GateReport:
     runnable_here: bool
     runnable_note: str
     owner: str
+    coverage_level: str = "green"  # green | refuses_here | partial | dead
     exit_codes: dict[str, int] = field(default_factory=dict)
 
 
@@ -135,6 +136,7 @@ def build_report() -> list[GateReport]:
                 "and distinct from PASS. The static subset checks run regardless."
             ),
             owner="w-c2",
+            coverage_level="refuses_here" if not has_quartus else "green",
             exit_codes={"refuse_no_toolchain": 4},
         ),
         GateReport(
@@ -310,6 +312,7 @@ def build_report() -> list[GateReport]:
                 f"Live v4l2 capture requires HDMI grabber attached to MiSTer output."
             ),
             owner="w-c2 (gate logic), w-cap (device/capture)",
+            coverage_level="partial" if not has_grabber else "green",
             exit_codes={"green_synthetic": 0, "red_hwrap": 1, "red_vshift": 1, "red_stale": 2, "no_device": 2},
         ),
         GateReport(
@@ -342,6 +345,40 @@ def build_report() -> list[GateReport]:
             owner="w-c2",
             exit_codes={"green": 0, "refuse_no_verilator": 3},
         ),
+        GateReport(
+            id="cdc-crossings",
+            script="scripts/check_cdc_crossings.py",
+            makefile_target="cdc-crossings",
+            proves=(
+                "Every crossing in the CDC manifest has a documented protection "
+                "mechanism (fifo, sync_2ff, handshake, or level). Fast-domain "
+                "pulse sources crossing to slow domains without protection are "
+                "flagged CRITICAL (data loss risk). Stale module references are "
+                "detected when --check-stale is used."
+            ),
+            does_not_prove=(
+                "Does NOT prove the crossing list is COMPLETE — unlisted crossings "
+                "are invisible to this gate. Does NOT prove the protection mechanism "
+                "is correctly implemented (only that one is declared). Does NOT "
+                "prove synchroniser depth is adequate for the frequency ratio. "
+                "Does NOT prove handshake/FIFO logic is bug-free. This is a "
+                "structured register, not a verifier."
+            ),
+            red_proof_method=(
+                "Manifest with protection='none' and src_type='pulse' → rc=1 CRITICAL. "
+                "Missing manifest → rc=4 REFUSE."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note=(
+                "Pure Python, no external tools. Currently REJECTS (rc=1) because "
+                "manifest contains 2 known-unprotected future crossings from w-a3's "
+                "arbiter fix (60df5a2, not yet merged). These are INTENTIONALLY "
+                "listed as unprotected to track the hazard."
+            ),
+            owner="w-c2",
+            exit_codes={"green": 0, "red_unprotected": 1, "refuse_no_manifest": 4},
+        ),
     ]
     return gates
 
@@ -355,13 +392,20 @@ def format_report(gates: list[GateReport]) -> str:
 
     dead = []
     for g in gates:
-        status = "✅ LIVE" if g.runnable_here else "⚠️  PARTIAL"
+        level_labels = {
+            "green": "✅ GREEN (passes here)",
+            "refuses_here": "🟡 REFUSES HERE (rc=4, zero local coverage, only meaningful on build host)",
+            "partial": "🟠 PARTIAL (synthetic/file modes work; live capture requires device host)",
+            "dead": "❌ DEAD",
+        }
+        status = level_labels.get(g.coverage_level, "✅ GREEN (passes here)")
         if not g.red_proof_passed:
             status = "❌ DEAD (no red proof)"
         lines.append(f"## {g.id} — {status}")
         lines.append(f"  Script:    {g.script}")
         lines.append(f"  Target:    {g.makefile_target}")
         lines.append(f"  Owner:     {g.owner}")
+        lines.append(f"  Coverage:  {g.coverage_level}")
         lines.append(f"  PROVES:    {g.proves}")
         lines.append(f"  NOT prove: {g.does_not_prove}")
         lines.append(f"  Red proof: {g.red_proof_method}")

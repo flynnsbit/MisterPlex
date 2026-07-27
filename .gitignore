@@ -33,3 +33,4 @@ remote_out/
 # reproducible from a fresh clone and cannot pick up stale local bitstreams.
 !release_artifacts/
 !release_artifacts/**
+fpga/Plex_MiSTer/remote_out/

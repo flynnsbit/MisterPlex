@@ -245,3 +245,78 @@ else
   fi
 fi
 echo "OK red-check: timing exclusion gate rejects empty STA (zero checked paths)"
+
+# ─── CDC Crossing Register red proofs ───────────────────────────────────────
+# Red: manifest with unprotected pulse crossing → rc=1
+echo "--- CDC crossing gate: red-check (unprotected pulse) ---"
+CDC_FAULT_DIR="$FAULT_DIR/cdc_faults"
+mkdir -p "$CDC_FAULT_DIR"
+
+cat > "$CDC_FAULT_DIR/unprotected.json" <<'MANIFEST'
+{
+  "crossings": [
+    {
+      "id": "test_unprotected_pulse",
+      "signal": "test_sig",
+      "src_clock": "fast_clk",
+      "dst_clock": "slow_clk",
+      "src_module": "test_src",
+      "dst_module": "test_dst",
+      "src_type": "pulse",
+      "protection": "none",
+      "justification": "deliberately unprotected for red proof"
+    }
+  ]
+}
+MANIFEST
+
+if python3 "$ROOT/scripts/check_cdc_crossings.py" --manifest "$CDC_FAULT_DIR/unprotected.json" 2>"$CDC_FAULT_DIR/unprotected.err"; then
+  echo "FAIL: CDC crossing gate should reject unprotected pulse crossing" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]]; then
+    echo "FAIL: CDC crossing gate red-check returned rc=$rc, want 1" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: CDC crossing gate rejects unprotected pulse crossing"
+
+# Green: all crossings protected → rc=0
+cat > "$CDC_FAULT_DIR/protected.json" <<'MANIFEST'
+{
+  "crossings": [
+    {
+      "id": "test_protected",
+      "signal": "test_sig",
+      "src_clock": "fast_clk",
+      "dst_clock": "slow_clk",
+      "src_module": "test_src",
+      "dst_module": "test_dst",
+      "src_type": "level",
+      "protection": "sync_2ff",
+      "justification": "test green proof"
+    }
+  ]
+}
+MANIFEST
+
+python3 "$ROOT/scripts/check_cdc_crossings.py" --manifest "$CDC_FAULT_DIR/protected.json" 2>"$CDC_FAULT_DIR/protected.err" || {
+  echo "FAIL: CDC crossing gate should pass with all protected crossings" >&2
+  cat "$CDC_FAULT_DIR/protected.err" >&2
+  exit 1
+}
+echo "OK green: CDC crossing gate passes with protected crossings"
+
+# Refuse: missing manifest → rc=4
+if python3 "$ROOT/scripts/check_cdc_crossings.py" --manifest /nonexistent_manifest_12345.json 2>"$CDC_FAULT_DIR/refuse.err"; then
+  echo "FAIL: CDC crossing gate should refuse on missing manifest" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 4 ]]; then
+    echo "FAIL: CDC crossing gate refuse returned rc=$rc, want 4" >&2
+    exit 1
+  fi
+fi
+echo "OK refuse: CDC crossing gate refuses on missing manifest (rc=4)"

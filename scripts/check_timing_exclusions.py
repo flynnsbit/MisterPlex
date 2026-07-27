@@ -282,7 +282,10 @@ def main(argv: list[str]) -> int:
                 f"paths may have been excluded from analysis"
             )
         for expected_clk in expected_clocks:
-            if expected_clk not in cov.clocks:
+            # Quartus uses fully-qualified hierarchy names (e.g.
+            # "emu|pll|...|general[0].gpll~PLL_OUTPUT_COUNTER|divclk")
+            # so match as a substring of any clock name in the report.
+            if not any(expected_clk in clk for clk in cov.clocks):
                 errors.append(
                     f"expected clock '{expected_clk}' missing from STA report: "
                     f"it may have been excluded by a new set_clock_groups or set_false_path"
