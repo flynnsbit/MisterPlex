@@ -163,11 +163,101 @@ void reset(Sim& s) {
     s.top.idr_start = 0;
     s.top.frame_done = 0;
     s.top.filtered_sample_valid = 0;
+    s.top.filtered_mb_valid = 0;
+    s.top.filtered_mb_addr = 0;
+    s.top.filtered_mb_is_ref = 0;
+    s.top.filtered_frame_done = 0;
+    s.top.frame_slot_i = 0;
+    s.top.frame_boundary = 0;
     s.top.fetch_start = 0;
     s.tick();
     s.tick();
     s.top.reset = 0;
     s.tick();
+}
+
+void commitFilteredMb(Sim& s, int mbAddr, bool terminal) {
+    s.top.filtered_sample_valid = 0;
+    s.top.filtered_mb_valid = 1;
+    s.top.filtered_mb_addr = mbAddr;
+    s.top.filtered_mb_is_ref = 1;
+    s.top.filtered_frame_done = terminal;
+    s.top.frame_slot_i = 0;
+    s.tick();
+    s.top.filtered_mb_valid = 0;
+    s.top.filtered_frame_done = 0;
+}
+
+int runDeblockDpbSeam(const std::string& nalFixture) {
+    int nals = countAnnexBNals(nalFixture);
+    if (nals < 2) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam bench requires >=2 NAL units, got " << nals << "\n";
+        return 1;
+    }
+
+    Sim s;
+    reset(s);
+    s.top.filtered_mb_valid = 1;
+    s.top.filtered_mb_addr = 0;
+    s.top.filtered_mb_is_ref = 1;
+    s.top.filtered_frame_done = 0;
+    s.tick();
+    if (s.top.deblock_wb_valid || !s.top.deblock_commit_order_error || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam MB commit before all filtered samples"
+                  << " wb=" << int(s.top.deblock_wb_valid)
+                  << " order_error=" << int(s.top.deblock_commit_order_error)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.top.filtered_mb_valid = 0;
+    s.tick();
+
+    for (int i = 0; i < 256; ++i) writeSample(s, 0, 0, 0, i);
+    for (int i = 0; i < 64; ++i) writeSample(s, 0, 0, 1, i);
+    for (int i = 0; i < 64; ++i) writeSample(s, 0, 0, 2, i);
+    commitFilteredMb(s, 0, false);
+    if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != 0 || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam nonterminal commit mismatch"
+                  << " wb=" << int(s.top.deblock_wb_valid)
+                  << " addr=" << int(s.top.deblock_wb_mb_addr)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+
+    for (int i = 0; i < 256; ++i) writeSample(s, 38, 29, 0, i);
+    for (int i = 0; i < 64; ++i) writeSample(s, 38, 29, 1, i);
+    for (int i = 0; i < 64; ++i) writeSample(s, 38, 29, 2, i);
+    commitFilteredMb(s, 1169, true);
+    if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != 1169 || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam terminal commit/ref_ready order"
+                  << " wb=" << int(s.top.deblock_wb_valid)
+                  << " addr=" << int(s.top.deblock_wb_mb_addr)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.top.frame_boundary = 1;
+    s.tick();
+    s.top.frame_boundary = 0;
+    if (!s.top.deblock_ref_ready_pulse || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam terminal commit/ref_ready order phase"
+                  << " pulse=" << int(s.top.deblock_ref_ready_pulse)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+    if (!s.top.ref_ready || s.top.reference_base != 0 || s.top.current_base != FRAME_BYTES) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam frame_done before terminal filtered MB commit"
+                  << " ref_ready=" << int(s.top.ref_ready)
+                  << " ref_base=" << s.top.reference_base
+                  << " cur_base=" << s.top.current_base << "\n";
+        return 1;
+    }
+
+    std::cout << "OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; "
+              << "terminal wb_valid precedes frame_done/ref_ready"
+              << " nals=" << nals << " fixture=" << nalFixture << "\n";
+    return 0;
 }
 
 bool wantLumaValid(int idx, int w, int h) {
@@ -224,7 +314,17 @@ void checkPartMc(Sim& s, const std::array<uint8_t, 441>& luma, const std::array<
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
-        const std::string nalFixture = argc > 1 ? argv[1] : "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
+        bool seamOnly = false;
+        std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg == "--deblock-dpb-seam")
+                seamOnly = true;
+            else
+                nalFixture = arg;
+        }
+        if (seamOnly)
+            return runDeblockDpbSeam(nalFixture);
         int nals = countAnnexBNals(nalFixture);
         if (nals < 2) {
             std::cerr << "FAIL h264_dpb_mc RTL: bench requires >=2 NAL units, got " << nals << "\n";

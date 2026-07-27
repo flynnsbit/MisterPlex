@@ -5,7 +5,8 @@ module h264_dpb_mc_tb #(
 	parameter FAULT_BAD_CLAMP = 0,
 	parameter FAULT_BAD_MC_ROUND = 0,
 	parameter FAULT_EARLY_REF = 0,
-	parameter FAULT_BAD_PART_MASK = 0
+	parameter FAULT_BAD_PART_MASK = 0,
+	parameter USE_DEBLOCK_WB_CTRL = 0
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -21,6 +22,16 @@ module h264_dpb_mc_tb #(
 	input  wire [1:0]         filtered_plane,
 	input  wire [7:0]         filtered_sample_idx,
 	input  wire [7:0]         filtered_sample,
+	input  wire               filtered_mb_valid,
+	input  wire [10:0]        filtered_mb_addr,
+	input  wire               filtered_mb_is_ref,
+	input  wire               filtered_frame_done,
+	input  wire [1:0]         frame_slot_i,
+	input  wire               frame_boundary,
+	output wire               deblock_wb_valid,
+	output wire [10:0]        deblock_wb_mb_addr,
+	output wire               deblock_ref_ready_pulse,
+	output wire               deblock_commit_order_error,
 	output wire               mem_we,
 	output wire [31:0]        mem_waddr,
 	output wire [7:0]         mem_wdata,
@@ -82,10 +93,44 @@ module h264_dpb_mc_tb #(
 	wire pred_u_valid_good [0:63];
 	wire [7:0] pred_v_good [0:63];
 	wire pred_v_valid_good [0:63];
+	wire dpb_frame_done;
+
+	generate
+		if (USE_DEBLOCK_WB_CTRL) begin : gen_deblock_wb
+			wire deblock_wb_is_ref;
+			wire deblock_dpb_invalidate_refs;
+			wire [1:0] deblock_ref_ready_slot;
+			h264_deblock_writeback_ctrl #(.MB_COUNT(1170), .FRAME_SLOT_W(2), .SAMPLES_PER_MB(384)) u_deblock_wb (
+				.clk(clk), .reset(reset),
+				.idr_frame_start(idr_start),
+				.filtered_sample_valid(filtered_sample_valid),
+				.filtered_mb_valid(filtered_mb_valid),
+				.filtered_mb_addr(filtered_mb_addr),
+				.filtered_mb_is_ref(filtered_mb_is_ref),
+				.filtered_frame_done(filtered_frame_done),
+				.frame_slot_i(frame_slot_i),
+				.frame_boundary(frame_boundary),
+				.wb_valid(deblock_wb_valid),
+				.wb_mb_addr(deblock_wb_mb_addr),
+				.wb_is_ref(deblock_wb_is_ref),
+				.dpb_invalidate_refs(deblock_dpb_invalidate_refs),
+				.ref_ready_pulse(deblock_ref_ready_pulse),
+				.ref_ready_slot(deblock_ref_ready_slot),
+				.commit_order_error(deblock_commit_order_error)
+			);
+			assign dpb_frame_done = deblock_ref_ready_pulse;
+		end else begin : gen_direct_frame_done
+			assign deblock_wb_valid = 1'b0;
+			assign deblock_wb_mb_addr = 11'd0;
+			assign deblock_ref_ready_pulse = 1'b0;
+			assign deblock_commit_order_error = 1'b0;
+			assign dpb_frame_done = frame_done;
+		end
+	endgenerate
 
 	h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
 		.clk(clk), .reset(reset),
-		.idr_start(idr_start), .frame_done(frame_done),
+		.idr_start(idr_start), .frame_done(dpb_frame_done),
 		.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
 		.filtered_sample_valid(filtered_sample_valid),
 		.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
