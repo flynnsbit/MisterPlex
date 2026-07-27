@@ -46,9 +46,9 @@ int specDequant(int coeff, int qp, int row, int col) {
     return coeff * ls * (1 << (qp / 6));
 }
 
-int signExtend18(int v) {
-    v &= 0x3FFFF;
-    if (v & 0x20000) v -= 0x40000;
+int signExtend(int v, unsigned int mask, unsigned int sbit) {
+    v &= static_cast<int>(mask);
+    if (static_cast<unsigned int>(v) & sbit) v -= static_cast<int>(mask + 1);
     return v;
 }
 
@@ -56,6 +56,22 @@ int signExtend18(int v) {
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
+
+    // Accept optional output width argument (default 18 for pre-fix tree)
+    int output_width = 18;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]).rfind("--width=", 0) == 0) {
+            output_width = std::atoi(argv[i] + 8);
+        }
+    }
+    const int max_val = (1 << (output_width - 1)) - 1;
+    const int min_val = -(1 << (output_width - 1));
+    const unsigned int sign_mask = (1u << output_width) - 1u;
+    const unsigned int sign_bit = 1u << (output_width - 1);
+
+    std::cout << "RTL output width: signed [" << (output_width - 1)
+              << ":0] = " << output_width << " bits (range ["
+              << min_val << ", " << max_val << "])\n";
 
     Vh264_dequant_qp_sweep_tb dut;
 
@@ -72,7 +88,6 @@ int main(int argc, char** argv) {
     int total_compared = 0;
     int total_match = 0;
     int total_mismatch = 0;
-    int total_overflow_detected = 0;
     std::array<bool, 52> qp_pass{};
     qp_pass.fill(true);
 
@@ -95,33 +110,20 @@ int main(int argc, char** argv) {
                 int col = pos % 4;
 
                 int spec_val = specDequant(coeff_val, qp, row, col);
-                int rtl_raw = signExtend18(static_cast<int>(dut.dequant[pos]));
+                int rtl_raw = signExtend(static_cast<int>(dut.dequant[pos]), sign_mask, sign_bit);
 
-                // Check if spec value fits in 18 bits
-                bool overflow = (spec_val > 131071 || spec_val < -131072);
-
-                if (overflow) {
-                    // Overflow IS a bug — the RTL's truncation corrupts the
-                    // value (sign flip, magnitude collapse). This must fail.
-                    std::cerr << "OVERFLOW BUG: QP=" << qp
+                // Any difference between spec and RTL is a failure.
+                // We do NOT classify overflows as "expected" or "theoretical".
+                if (rtl_raw != spec_val) {
+                    std::cerr << "MISMATCH: QP=" << qp
                               << " scan=" << scan << " pos=(" << row << "," << col
                               << ") coeff=" << coeff_val
                               << " spec=" << spec_val
-                              << " rtl_truncated=" << rtl_raw << "\n";
+                              << " rtl=" << rtl_raw << "\n";
                     ++total_mismatch;
                     qp_pass[qp] = false;
                 } else {
-                    if (rtl_raw != spec_val) {
-                        std::cerr << "MISMATCH: QP=" << qp
-                                  << " scan=" << scan << " pos=(" << row << "," << col
-                                  << ") coeff=" << coeff_val
-                                  << " spec=" << spec_val
-                                  << " rtl=" << rtl_raw << "\n";
-                        ++total_mismatch;
-                        qp_pass[qp] = false;
-                    } else {
-                        ++total_match;
-                    }
+                    ++total_match;
                 }
                 ++total_compared;
                 ++qp_compared;
@@ -147,7 +149,6 @@ int main(int argc, char** argv) {
     std::cout << "Total: compared=" << total_compared
               << " matched=" << total_match
               << " mismatched=" << total_mismatch
-              << " overflow_truncations=" << total_overflow_detected
               << " qp_passed=" << qp_passed << "/52\n";
 
     if (total_mismatch > 0) {

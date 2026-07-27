@@ -193,52 +193,83 @@ def test_formula_equivalence() -> int:
     return errors
 
 
+def detect_rtl_output_width() -> int:
+    """Read the actual dequant output width from the RTL source."""
+    rtl_path = ROOT / "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+    if not rtl_path.exists():
+        fail("RTL source not found")
+    import re
+    text = rtl_path.read_text()
+    # Look for: output wire signed [N:0] dequant [0:15]
+    m = re.search(r'output\s+wire\s+signed\s+\[(\d+):0\]\s+dequant', text)
+    if not m:
+        fail("Could not parse dequant output width from RTL")
+    msb = int(m.group(1))
+    return msb + 1  # total width in bits
+
+
 def test_overflow_detection() -> int:
-    """Check which QP/coefficient combinations overflow 18-bit signed range.
+    """Check which QP/coefficient combinations overflow the RTL output width.
 
-    Overflow IS a bug — the RTL truncates (not saturates), which flips the
-    sign and corrupts all downstream values. This was a real defect found
-    by w-cabac (3b321ca). Any overflow must be a hard failure.
+    Overflow IS a bug — truncation (not saturation) corrupts the value
+    (sign flip, magnitude collapse). The test MUST fail if any legal
+    coefficient × QP combination produces a dequant product that exceeds
+    the RTL's output range.
+
+    This was instrument failure #14: the original test detected 117
+    overflow cases on the 18-bit tree and dismissed them as "theoretical".
+    The rule is: if a check finds a mismatch, it fails. A test may not
+    decide that a discrepancy does not matter.
     """
-    max_18bit = (1 << 17) - 1  # 131071
-    min_18bit = -(1 << 17)     # -131072
-    errors = 0
+    width = detect_rtl_output_width()
+    max_val = (1 << (width - 1)) - 1
+    min_val = -(1 << (width - 1))
+    info(f"RTL dequant output width: signed [{width-1}:0] = {width} bits (range [{min_val}, {max_val}])")
 
+    errors = 0
     overflow_cases = []
+
     for qp in range(52):
         for pos_class, (row, col) in enumerate([(0, 0), (0, 1), (1, 1)]):
             for c in range(1, 257):
                 val = spec_dequant_ac(c, qp, row, col)
-                if val > max_18bit or val < min_18bit:
+                if val > max_val or val < min_val:
                     overflow_cases.append((qp, row, col, c, val))
                     break
             for c in range(-1, -257, -1):
                 val = spec_dequant_ac(c, qp, row, col)
-                if val > max_18bit or val < min_18bit:
+                if val > max_val or val < min_val:
                     overflow_cases.append((qp, row, col, c, val))
                     break
 
     if overflow_cases:
-        info(f"18-bit overflow detected at {len(overflow_cases)} (QP, pos, coeff) boundaries:")
+        info(f"{width}-bit overflow detected at {len(overflow_cases)} (QP, pos, coeff) boundaries:")
         for qp, row, col, c, val in overflow_cases[:12]:
-            info(f"  QP={qp} pos=({row},{col}) coeff={c} → {val} (18-bit range: [{min_18bit}, {max_18bit}])")
-        info(f"FAIL: {len(overflow_cases)} overflow cases — RTL truncation corrupts values (sign flip).")
-        info("This is the bug fixed by w-cabac in commit 3b321ca (widen to 22-bit).")
+            info(f"  QP={qp} pos=({row},{col}) coeff={c} → {val} (range: [{min_val}, {max_val}])")
+        info(f"FAIL: {len(overflow_cases)} overflow cases — dequant output width too narrow.")
         errors = len(overflow_cases)
+    else:
+        info(f"No overflow: all 9-bit coeff × QP 0–51 products fit in {width}-bit output ✓")
 
     return errors
 
 
-def test_rtl_18bit_truncation_correctness() -> int:
-    """Verify that overflow cases produce sign-flipped values (proving the bug).
+def test_rtl_truncation_correctness() -> int:
+    """Verify whether truncation at the detected output width causes sign flips.
 
-    This test confirms that 18-bit truncation at the RTL boundary actually
-    corrupts the output — the truncated value has wrong sign or magnitude
-    compared to the mathematically correct dequant result.
+    If the width is too narrow, truncation flips signs — this is the
+    production-affecting bug that corrupts pixel values.
     """
-    errors = 0
-    max_18bit = (1 << 17) - 1
-    min_18bit = -(1 << 17)
+    width = detect_rtl_output_width()
+    max_val = (1 << (width - 1)) - 1
+    min_val = -(1 << (width - 1))
+
+    def sign_extend(v: int, w: int) -> int:
+        mask = (1 << w) - 1
+        v = v & mask
+        if v & (1 << (w - 1)):
+            v -= (1 << w)
+        return v
 
     sign_flips = 0
     for qp in range(52):
@@ -246,17 +277,17 @@ def test_rtl_18bit_truncation_correctness() -> int:
             for col in range(4):
                 for c in [255, -256, 200, -200]:
                     val = spec_dequant_ac(c, qp, row, col)
-                    if val > max_18bit or val < min_18bit:
-                        truncated = sign_extend_18(val)
+                    if val > max_val or val < min_val:
+                        truncated = sign_extend(val, width)
                         if (val > 0 and truncated < 0) or (val < 0 and truncated > 0):
                             sign_flips += 1
 
     if sign_flips > 0:
-        info(f"CONFIRMED: {sign_flips} cases where 18-bit truncation flips the sign.")
-        info("This is a production-affecting bug at high QP with moderate coefficients.")
+        info(f"CONFIRMED: {sign_flips} cases where {width}-bit truncation flips the sign.")
+        info("This is a production-affecting bug — pixels invert at affected QPs.")
     else:
-        info("No sign flips detected at tested coefficient values.")
-    # This is informational — the hard failure is in test_overflow_detection.
+        info(f"No sign flips at {width}-bit width ✓")
+    # Informational — the hard failure is in test_overflow_detection.
     return 0
 
 
@@ -454,15 +485,41 @@ def run_verilator_sweep() -> int:
             return 0
 
     tb_cpp = ROOT / "tests/rtl/h264_dequant_qp_sweep_tb.cpp"
-    tb_sv = ROOT / "tests/rtl/h264_dequant_qp_sweep_tb_top.sv"
     rtl_src = ROOT / "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 
-    if not tb_cpp.exists() or not tb_sv.exists():
-        info("SKIP Verilator RTL sweep (testbench files not found)")
+    if not tb_cpp.exists():
+        info("SKIP Verilator RTL sweep (testbench C++ not found)")
         return 0
+
+    # Read the product RTL output width and generate a matching SV wrapper
+    import re
+    rtl_text = rtl_src.read_text()
+    m = re.search(r'output\s+wire\s+signed\s+\[(\d+):0\]\s+dequant', rtl_text)
+    if not m:
+        info("SKIP Verilator RTL sweep (cannot parse dequant output width)")
+        return 0
+    msb = int(m.group(1))
 
     build_dir = ROOT / "build/verilator_qp_sweep"
     build_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate the SV wrapper with the exact width from the product RTL
+    tb_sv = build_dir / "h264_dequant_qp_sweep_tb.sv"
+    tb_sv.write_text(f"""\
+// Auto-generated testbench wrapper — width [{msb}:0] from product RTL.
+`default_nettype none
+module h264_dequant_qp_sweep_tb (
+    input  wire signed [8:0]  coeff    [0:15],
+    input  wire        [4:0]  max_coeff,
+    input  wire        [5:0]  qp,
+    output wire signed [{msb}:0] dequant  [0:15]
+);
+    h264_dequant4x4 u_dequant (
+        .coeff(coeff), .qp(qp), .max_coeff(max_coeff), .dequant(dequant)
+    );
+endmodule
+`default_nettype wire
+""")
 
     # Build
     cmd_build = [
@@ -485,7 +542,10 @@ def run_verilator_sweep() -> int:
         print(f"  Verilator build produced no executable at {exe}")
         return 1
 
-    result = subprocess.run([str(exe)], capture_output=True, text=True, cwd=ROOT)
+    result = subprocess.run(
+        [str(exe), f"--width={msb + 1}"],
+        capture_output=True, text=True, cwd=ROOT,
+    )
     print(result.stdout.rstrip())
     if result.stderr.strip():
         print(result.stderr.rstrip())
@@ -530,9 +590,9 @@ def main() -> int:
     if e > 0:
         info(f"DETECTED: {e} overflow cases — dequant output width is too narrow")
 
-    # 5. Sign-flip confirmation
-    print("\n5. Sign-flip analysis (confirms corruption from truncation):")
-    e = test_rtl_18bit_truncation_correctness()
+    # 5. Sign-flip analysis
+    print("\n5. Sign-flip analysis (confirms corruption if width is too narrow):")
+    e = test_rtl_truncation_correctness()
     total_errors += e
 
     # 6. RED proofs
