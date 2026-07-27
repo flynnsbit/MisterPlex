@@ -915,10 +915,14 @@ intra-domain timing failures**. This means the 20 MHz domain has
 significant timing margin — possibly 20–30 ns of positive slack (we
 need w-cap's post-fix STA to confirm the exact number).
 
-### v4: Fitter-measured Fmax — CORRECTIONS
+### v4: Fitter-measured Fmax — CORRECTIONS (FURTHER QUALIFIED in v5/v5.2)
 
 **v3/v3.1 estimated the fabric ceiling at 60–81 MHz. The fitter measured
-25.09 MHz.** My estimate was wrong by a factor of 3.2×. Here is why.
+25.09 MHz — but that was decode_stub (dead code).** My estimate was wrong
+about the module (predicted decode pipeline, fitter measured decode_stub)
+and wrong about the per-level delay (1.0 ns/level assumed, ~1.78 ns/level
+measured). The combined error appears as 3.2× but decomposes into two
+independent mistakes. See v5 correction below.
 
 **Fitter measurements (VERIFIED from `Plex.sta.rpt`):**
 
@@ -973,11 +977,33 @@ temperature/voltage range. It is a plausible mechanism, not a smoking gun.
 **Fix is cheap:** 7 logic levels at 10.7 ns → one pipeline register stage
 brings it under the 11.1 ns DDR period with margin.
 
-**Why my 12-level estimate was wrong (v4 analysis, retained for record):**
+**Why my 12-level estimate was wrong (v4 analysis, retained for record,
+FURTHER CORRECTED in v5.2):**
 
 My v3.1 analysis estimated 12 logic levels (parse_cavlc, deblock) as the
 critical path, at ~12.3 ns. The fitter measured 39.86 ns — **3.2× longer**.
-The gap is explained by:
+
+**v5.2 correction: The 3.2× factor is itself suspect.** The comparison was
+between my estimate of the *decode pipeline* (12 levels) and the fitter's
+measurement of *decode_stub* (22 levels, a different module). The "3.2×"
+conflates two independent errors:
+- Wrong level count: 12 predicted vs 22 actual (different modules)
+- Wrong per-level delay: 1.0 ns/level assumed vs ~1.78 ns/level measured
+
+The **per-level multiplier is ~1.78×**, not 3.2×. The 3.2× overstates the
+routing penalty for narrow pipelines and should NOT be applied uniformly.
+Typical Cyclone V guidance:
+- Narrow sequential pipelines: ~1.0–1.5 ns/level including routing
+- Medium combinational cones: ~1.5–2.0 ns/level
+- Wide fanout/fanin (256+ consumers): ~2.0–3.0+ ns/level
+
+**No logic-level estimate in this study should be treated as fitter-grade.
+But the 3.2× calibration is a comparison of two different circuits, not a
+measured routing overhead for one circuit.** Use ~1.8× as a more defensible
+(but still ESTIMATED) multiplier for typical paths. Use 2.5–3.0× for wide
+combinational cones. Wait for the fitter for anything that matters.
+
+The gap between my estimate and the fitter was explained by:
 
 1. **Routing delay.** Logic-level counting accounts for ALM propagation but
    NOT for interconnect routing between ALMs. On Cyclone V, routing delay
@@ -1253,7 +1279,9 @@ Fix if confirmed: one pipeline register stage (7 levels at 10.7 ns
    cy1 from ~18 to ~10 levels via balanced tree accumulator (`df21c4a`).
    Deepest intra path is now Chroma Plane cy1 at ~14 levels. No intra
    path blocks 45 MHz. **CAUTION:** level counts underestimate fitter delay
-   by ~3.2× historically — actual ns pending post-fit STA.
+   by ~1.8× (narrow paths) to ~3× (wide cones) — actual ns pending post-fit
+   STA. The "3.2×" figure compared different modules and overstates the
+   penalty for narrow optimized paths.
 
 ---
 
@@ -1306,7 +1334,7 @@ ratios. An I-frame-only stream (some encoders in low-latency mode) would
 be 100% Case C = 335 cycles/MB, still within budget but with different
 margin characteristics.
 
-**Gap C: Estimated delays were systematically optimistic.** Three estimates
+**Gap D: Estimated delays were systematically optimistic.** Three estimates
 were wrong in the direction of my argument:
 - VCO: 720 (too high, made more outputs seem available)
 - Critical path: 12.3 ns (too low, made higher frequencies seem reachable)
@@ -1316,6 +1344,12 @@ The pattern is clear enough to be a bias, not bad luck. **Readers should
 weight my estimated delays as optimistic by default.** The Provenance
 Ledger now marks discredited estimates with strikethrough, but the
 systematic direction of the errors should be noted.
+
+**v5.2 update:** The "3.2× error factor" itself was comparing different
+modules (my estimate of decode pipeline vs fitter's measurement of
+decode_stub). The per-level multiplier is ~1.78×, not 3.2×. The error
+remains real (optimistic estimates) but the magnitude is overstated for
+narrow pipelines. See §6 for the corrected framing.
 
 ### 3. Can my gate fail?
 
