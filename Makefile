@@ -59,11 +59,13 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
+	$(ROOT)/tests/unit/test_h264_cabac_engine_verilator.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_cabac_engine_verilator.sh
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \

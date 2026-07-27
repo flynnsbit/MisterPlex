@@ -1,0 +1,85 @@
+W-CABAC evidence — CABAC real-time feasibility
+Worktree: /home/shawn/Projects/mp-wt-cabac
+Base: main @ 47d3be96f5ab5434e26909d115eeab5383cc0a78
+Date: 2026-07-26
+
+Scope / rules followed:
+- Created separate worktree /home/shawn/Projects/mp-wt-cabac on feat/cabac-feasibility.
+- No MiSTer device access.
+- No Quartus fit was run; Quartus Fmax still needs parent authorization if sign-off is required.
+- Verilator was run via scripts/run_verilator.sh with OSS_CAD_SUITE scoped to /home/shawn/.local/oss-cad-suite-20260726.
+- Red/green proof uses a testbench-only perturbation in tests/rtl/h264_cabac_engine_tb_top.sv; no perturbation ifdefs in synthesized RTL.
+
+Real stream identified:
+  /home/shawn/Projects/mp-wt-a4-sps/build/pms_480p_delivered.264
+  size: 2016460 bytes
+
+Command output — sample metadata:
+$ ffprobe -v error -select_streams v:0 -count_packets -count_frames -show_entries stream=profile,width,height,coded_width,coded_height,level,avg_frame_rate,nb_read_frames,nb_read_packets -of default=nw=1 /home/shawn/Projects/mp-wt-a4-sps/build/pms_480p_delivered.264
+profile=High
+width=618
+height=480
+coded_width=624
+coded_height=480
+level=30
+avg_frame_rate=25/1
+nb_read_frames=302
+nb_read_packets=302
+
+Bin-count method:
+- Built a local instrumented FFmpeg 8.1.2 under build/ffmpeg-8.1.2, with generic CABAC C path forced by --disable-asm --disable-x86asm.
+- Instrumented libavcodec/cabac_functions.h to increment regular/bypass/terminate bin counters in get_cabac_inline(), get_cabac_bypass(), get_cabac_bypass_sign(), and get_cabac_terminate().
+- Instrumented h264_slice.c to print one CABAC_PROBE_SLICE line at each CABAC slice finish.
+- The first pre-input probing decode was discarded; all 302 post-Input slice/frame rows were summarized in build/cabac_frame_bins.csv.
+- Uncertainty: totals count CABAC arithmetic decode calls observed by FFmpeg, including terminate-bin probes. They do not classify full H.264 syntax elements; only regular/bypass/terminate component totals are available.
+
+Command output — bin summary:
+frames 302
+total_bins 9138771
+mean_bins_per_frame 30260.831
+worst_bins_per_frame 73390
+worst_frame {'frame_index': '141', 'frame_num': '0', 'poc': '65536', 'slice_type': 'I', 'regular_bins': '71989', 'bypass_bins': '0', 'terminate_bins': '1401', 'total_bins': '73390'}
+required_mean_bins_per_second_at_25fps 756520.778
+required_worst_frame_bins_per_second_at_25fps 1834750
+type_counts {'I': 22, 'P': 165, 'B': 115}
+component_totals regular bypass terminate total 8402608 293108 443055 9138771
+type_summary I n 22 mean 49368.182 max 73390 min 11731
+type_summary P n 165 mean 32809.758 max 62182 min 2340
+type_summary B n 115 mean 22948.357 max 55326 min 2390
+
+RTL engine implemented:
+- fpga/Plex_MiSTer/rtl/h264_cabac_engine.sv
+- Added to fpga/Plex_MiSTer/files.qip so the tested RTL is in the Quartus project file list.
+- Implements the CABAC arithmetic decoder core: FFmpeg-compatible range/low update, lps_range table, mlps state transition table, renormalization/refill, bypass and bypass-sign bins, and terminate bins. Context derivation is external by design.
+- Test fixture tests/fixtures/p3_host_recon/cabac_trace_i0_ffmpeg.log contains a real FFmpeg trace from the delivered High/CABAC sample.
+
+Command output — Verilator red/green and measured bins/clock:
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_cabac_engine_neg)
+RTL SIM RED proof: CABAC_NEGATIVE_TEST failed as expected (rc=1)
+mismatch op 0 kind=R got bin=1 state=124 low=60029974 range=501 byte_pos=0 expected bin=0 state=124 low=60029974 range=501 byte_pos=0
+mismatch op 1 kind=R got bin=1 state=68 low=60029974 range=458 byte_pos=0 expected bin=0 state=68 low=60029974 range=458 byte_pos=0
+mismatch op 2 kind=R got bin=0 state=30 low=49279064 range=376 byte_pos=0 expected bin=1 state=30 low=49279064 range=376 byte_pos=0
+mismatch op 3 kind=R got bin=0 state=24 low=41927008 range=320 byte_pos=0 expected bin=1 state=24 low=41927008 range=320 byte_pos=0
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_cabac_engine_pos)
+H264 CABAC engine Verilator PASS: decoded 11772 real FFmpeg-traced CABAC bins in 11772 issue cycles; bins_per_clock=1 trace_bytes=102
+
+Command output — full unit suite:
+$ make unit
+[full output was large; command completed with exit code 0]
+
+Fmax situation:
+- No Quartus synthesis/fitter was run because parent authorization is required.
+- Current PLL file fpga/Plex_MiSTer/rtl/pll/pll_0002.v sets output_clock_frequency0("20.000000 MHz") for clk_sys.
+- The Verilated engine issues one bin per clock when its refill bytes are available.
+- At current 20 MHz clk_sys: achievable simulated rate = 20,000,000 bins/s.
+  Margin vs mean demand = 20,000,000 / 756,520.778 = 26.44x.
+  Margin vs worst-frame 40 ms budget = 20,000,000 / 1,834,750 = 10.90x.
+  Equivalently, even at 20 MHz the entropy engine can tolerate about 10.9 clocks/bin average over the worst frame before dropping below real-time.
+- Dedicated PLL case: actual Fmax is not measured without Quartus. If a dedicated CABAC clock closes at 50 MHz, margin vs worst frame is 27.25x; at 100 MHz, 54.50x. The required Fmax at 1 bin/clock for the worst frame is only 1.835 MHz.
+- Critical-path estimate from RTL: one lps table lookup, subtract/compare, state table lookup, normalization/ctz/refill add/shift in a single cycle. This still needs Quartus timing sign-off, but 20 MHz is a very low bar for this datapath on Cyclone V.
+
+Verdict:
+FEASIBLE for this delivered stream at current 20 MHz clk_sys if the one-cycle arithmetic core closes timing, with measured 10.90x worst-frame margin and 26.44x mean margin. This does NOT mean a complete H.264 High-profile decoder is done: B-slice/reference management, full CABAC context derivation, residual/motion syntax plumbing, and integration remain large tasks. But the CABAC arithmetic engine rate itself is not the blocker. Authorized Quartus synthesis is still required for hard Fmax/resource sign-off; I did not run it.
+
+2026-07-26 redirect note:
+Parent stopped CABAC feasibility as not currently on the critical path. W-A4 proved a server-side Plex XML profile can force Baseline/CAVLC (`-x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0`), so FPGA CABAC/B-slice/multi-ref support is out of current scope. These numbers are retained only for a future unmodified-server option.
