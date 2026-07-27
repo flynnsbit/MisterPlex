@@ -269,12 +269,12 @@ module ddr_frame_store #(
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == src_y) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(src_y)) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
 			if (c_valid_v2[video_slot] && (c_bank_v2[video_slot] == disp_bank)
-			    && (c_line_v2[video_slot] == rd_cy) && !c_hit_now) begin
+			    && (c_line_v2[video_slot] == (Y_W-1)'(rd_cy)) && !c_hit_now) begin
 				c_hit_now = 1'b1;
 				c_hit_idx_now = video_slot;
 			end
@@ -341,8 +341,8 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (src_y != want_y_sys)
-				want_y_sys <= src_y;
+			if (Y_W'(src_y) != want_y_sys)
+				want_y_sys <= Y_W'(src_y);
 
 			rd_active_r <= rd_active;
 			rd_active_d <= rd_active_r;
