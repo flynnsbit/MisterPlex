@@ -30,6 +30,11 @@ module stream_path_deblock_tb (
 	output wire        slice_valid,
 	output wire        slice_is_i,
 	output wire [5:0]  slice_qp,
+	output wire [1:0]  disable_deblocking_filter_idc,
+	output wire signed [4:0] slice_alpha_c0_offset_div2,
+	output wire signed [4:0] slice_beta_offset_div2,
+	output wire signed [4:0] slice_alpha_c0_offset,
+	output wire signed [4:0] slice_beta_offset,
 	output wire        residual_ok,
 	output wire [7:0]  residual_csum,
 	output wire        residual_place_pulse,
@@ -93,7 +98,7 @@ module stream_path_deblock_tb (
 	wire fs_wr_en, fs_wr_reset, fs_swap;
 	wire [15:0] fs_wr_pixel;
 
-	stream_path #(.FRAME_W(320), .FRAME_H(240)) u_stream (
+	stream_path #(.FRAME_W(16), .FRAME_H(16)) u_stream (
 		.clk(clk), .reset(reset),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
 		.enable(enable), .flush(flush),
@@ -105,7 +110,13 @@ module stream_path_deblock_tb (
 		.sps_width(sps_width), .sps_height(sps_height), .sps_mb_w(sps_mb_w), .sps_mb_h(sps_mb_h),
 		.pps_valid(pps_valid), .slice_valid(slice_valid), .slice_type(slice_type),
 		.slice_is_i(slice_is_i), .first_mb_type(first_mb_type), .has_mb_type(has_mb_type),
-		.slice_qp(slice_qp), .residual_tc(residual_tc), .residual_t1(residual_t1),
+		.slice_qp(slice_qp),
+		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
+		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
+		.slice_beta_offset_div2(slice_beta_offset_div2),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
+		.residual_tc(residual_tc), .residual_t1(residual_t1),
 		.residual_ok(residual_ok), .residual_dc(residual_dc), .residual_csum(residual_csum),
 		.residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
 		.recon_sig(recon_sig), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),

@@ -30,6 +30,11 @@ module slice_hdr_parser (
 	output reg         is_i_slice,
 	output reg  signed [7:0] slice_qp_delta,
 	output reg  [5:0]  slice_qp,       // 0..51
+	output reg  [1:0]  disable_deblocking_filter_idc,
+	output reg  signed [4:0] slice_alpha_c0_offset_div2,
+	output reg  signed [4:0] slice_beta_offset_div2,
+	output reg  signed [4:0] slice_alpha_c0_offset,
+	output reg  signed [4:0] slice_beta_offset,
 	output reg  [7:0]  first_mb_type,
 	output reg         has_mb_type,
 	// 3.3f/k residual (first I residual block, nC=0)
@@ -129,6 +134,13 @@ module slice_hdr_parser (
 			mask = code[0] ? -9'sd1 : 9'sd0;
 			t = ($signed({1'b0, code}) + 9'sd2) >>> 1;
 			lev_of = (t ^ mask) - mask;
+		end
+	endfunction
+
+	function automatic signed [4:0] filter_offset_of_div2;
+		input signed [7:0] v;
+		begin
+			filter_offset_of_div2 = $signed(v[4:0]) <<< 1;
 		end
 	endfunction
 
@@ -240,6 +252,11 @@ module slice_hdr_parser (
 			is_i_slice <= 0;
 			slice_qp_delta <= 0;
 			slice_qp <= 0;
+			disable_deblocking_filter_idc <= 0;
+			slice_alpha_c0_offset_div2 <= 0;
+			slice_beta_offset_div2 <= 0;
+			slice_alpha_c0_offset <= 0;
+			slice_beta_offset <= 0;
 			first_mb_type <= 0;
 			has_mb_type <= 0;
 			residual_tc <= 0;
@@ -329,6 +346,11 @@ module slice_hdr_parser (
 					residual_t1 <= 0;
 					residual_dc <= 0;
 					// residual_csum sticky held until ST_PLACE overwrites
+					disable_deblocking_filter_idc <= 0;
+					slice_alpha_c0_offset_div2 <= 0;
+					slice_beta_offset_div2 <= 0;
+					slice_alpha_c0_offset <= 0;
+					slice_beta_offset <= 0;
 					begin : clr_coeff_idle
 						integer ci;
 						for (ci = 0; ci < 16; ci = ci + 1)
@@ -432,14 +454,25 @@ module slice_hdr_parser (
 				end
 			end
 			ST_DIDC: begin
+				disable_deblocking_filter_idc <= ue_val[1:0];
 				if (ue_val != 16'd1) begin
 					zcnt <= 0; ue_cont <= ST_ALPHA; st <= ST_UE_Z;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBT; st <= ST_UE_Z;
 				end
 			end
-			ST_ALPHA: begin zcnt <= 0; ue_cont <= ST_BETA; st <= ST_UE_Z; end
-			ST_BETA: begin zcnt <= 0; ue_cont <= ST_MBT; st <= ST_UE_Z; end
+			ST_ALPHA: begin
+				dlt_tmp = se_of(ue_val);
+				slice_alpha_c0_offset_div2 <= dlt_tmp[4:0];
+				slice_alpha_c0_offset <= filter_offset_of_div2(dlt_tmp);
+				zcnt <= 0; ue_cont <= ST_BETA; st <= ST_UE_Z;
+			end
+			ST_BETA: begin
+				dlt_tmp = se_of(ue_val);
+				slice_beta_offset_div2 <= dlt_tmp[4:0];
+				slice_beta_offset <= filter_offset_of_div2(dlt_tmp);
+				zcnt <= 0; ue_cont <= ST_MBT; st <= ST_UE_Z;
+			end
 			ST_MBT: begin
 				first_mb_type <= ue_val[7:0];
 				has_mb_type <= (ue_val <= 16'd25);
