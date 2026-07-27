@@ -53,6 +53,9 @@ struct LumaMbTrace {
     int mb_type = 0;
     int qp = 0;
     int pred_mode = -1;
+    int chroma_mode = -1;
+    int cbp_luma = -1;
+    int cbp_chroma = -1;
     std::array<uint8_t, 256> pred{};
     std::array<uint8_t, 256> recon{};
     std::array<Luma4x4Trace, 16> blocks{};
@@ -844,6 +847,11 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 int cbp = walk_detail::kMeIntra[code];
                 int cbp_l = cbp & 15;
                 int cbp_c = cbp >> 4;
+                if (traceMb) {
+                    trace->mb.chroma_mode = chromaMode;
+                    trace->mb.cbp_luma = cbp_l;
+                    trace->mb.cbp_chroma = cbp_c;
+                }
                 if (cbp != 0) {
                     int d = br.se();
                     qp += d;
@@ -1043,8 +1051,12 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                     qp = 0;
                 if (qp > 51)
                     qp = 51;
-                if (traceMb)
+                if (traceMb) {
                     trace->mb.qp = qp;
+                    trace->mb.chroma_mode = chromaMode;
+                    trace->mb.cbp_luma = cbp_l;
+                    trace->mb.cbp_chroma = cbp_c;
+                }
 
                 uint8_t above[16], left[16], tl = 128;
                 for (int t = 0; t < 16; ++t) {

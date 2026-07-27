@@ -486,6 +486,9 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
        << ", \"type_name\": \"" << (mb.mb_type == 0 ? "I_NxN" : "I_16x16_or_pcm")
        << "\", \"qp\": " << mb.qp << ", \"partition_mode\": \"intra\", \"skipped\": false},\n";
     os << "  \"prediction\": {\"mode\": \"intra\", \"luma_16x16\": " << mb.pred_mode
+       << ", \"chroma\": " << mb.chroma_mode
+       << ", \"coded_block_pattern\": {\"luma\": " << mb.cbp_luma
+       << ", \"chroma\": " << mb.cbp_chroma << "}"
        << ", \"luma_4x4_modes\": [";
     for (size_t i = 0; i < mb.blocks.size(); ++i) {
         if (i) os << ",";
