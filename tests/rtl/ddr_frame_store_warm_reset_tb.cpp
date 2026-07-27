@@ -69,6 +69,8 @@ public:
     bool hangLineReadResponses = false;
     bool sawDroppedLineRead = false;
     bool forceDdrBusy = false;
+    int ddrReadBursts = 0;   // degeneracy: DDR reads must occur for a frame to present
+    int ddrWriteBursts = 0;  // degeneracy: DDR writes must occur for doorbell acceptance
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -161,6 +163,7 @@ public:
 
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
+            ++ddrReadBursts;
             if (schedulerArmed) {
                 sawScheduledLineRead = true;
                 schedulerArmed = false;
@@ -176,6 +179,7 @@ public:
             busy = rdLeft + rdDelay + 1;
         }
         if (top.DDRAM_WE && busy == 0) {
+            ++ddrWriteBursts;
             const uint32_t off = addrOffQ(top.DDRAM_ADDR);
             if (off < mem.size())
                 mem[off] = top.DDRAM_DIN;
@@ -364,6 +368,19 @@ void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
     }
 }
 
+// Degeneracy guard (#18): a presented frame MUST have caused DDR read bursts.
+// If the frame store claims has_frame=1 but never issued a DDR read, the test
+// is comparing nothing — the pixel pipeline never fetched data from memory.
+void assertNonDegenerate(const std::string& label, const Sim& sim) {
+    if (sim.ddrReadBursts < 2) {
+        std::cerr << "FAIL ddr_frame_store DEGENERACY: " << label
+                  << " claimed frame presented but only " << sim.ddrReadBursts
+                  << " DDR read bursts occurred (need >=2: doorbell poll + line fetch)."
+                  << " This test is trivially passing without exercising the DDR read path.\n";
+        std::exit(1);
+    }
+}
+
 bool runFreshNoStale() {
     Sim sim;
     sim.fillFrame(1, 208);
@@ -374,6 +391,7 @@ bool runFreshNoStale() {
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
     expectFreshSample("first fresh no-stale", sim, 208);
+    assertNonDegenerate("runFreshNoStale", sim);
     return sim.schedulerProven();
 }
 
@@ -490,6 +508,7 @@ bool runChromaPlaneReadMapping() {
               << " sample_rgb=" << int(got.r) << "/" << int(got.g) << "/" << int(got.b)
               << " frames=" << sim.top.frames_done
               << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runChromaPlaneReadMapping", sim);
     return sim.schedulerProven();
 }
 
@@ -528,6 +547,7 @@ bool runChromaVerticalStrideMapping() {
               << " bench_C_stride_bytes=" << (kCQ * 8)
               << " product_Y_stride_bytes=624 product_C_stride_bytes=312"
               << " frames=" << sim.top.frames_done << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runChromaVerticalStrideMapping", sim);
     return sim.schedulerProven();
 }
 
@@ -556,6 +576,7 @@ bool runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, in
               << " fresh_bank=" << freshBank << " no_frame_cycles=25000 frames="
               << sim.top.frames_done << " sample_x=0 sample_y=0 sample_r=" << int(freshY)
               << " underruns=" << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runWarmResetChanged:" + label, sim);
     return sim.schedulerProven();
 }
 
@@ -785,6 +806,7 @@ bool runLumaStrideVerification() {
               << " ymid_r=" << int(stableSampleRgbAt(sim, 0, kH/2).r)
               << " frames=" << sim.top.frames_done
               << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runLumaStrideVerification", sim);
     return sim.schedulerProven();
 }
 

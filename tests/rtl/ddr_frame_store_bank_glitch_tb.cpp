@@ -63,6 +63,7 @@ public:
     // Counters
     int has_frame_cycles = 0;
     int no_frame_cycles = 0;
+    int ddrReadBursts = 0;  // degeneracy: must be non-zero for a valid test
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -104,6 +105,7 @@ public:
 
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
+            ++ddrReadBursts;
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
             rdIndex = 0;
@@ -274,13 +276,21 @@ int main(int argc, char** argv) {
            "inject=%d hold_cycles=%d glitch_count=%d "
            "has_frame_cycles=%d no_frame_cycles=%d total=%d "
            "has_frame_pct=%.1f%% underruns=%d frames_done=%d "
-           "disp_buf_d2=%d swap_pending=%d pending_ready=%d\n",
+           "disp_buf_d2=%d swap_pending=%d pending_ready=%d ddr_reads=%d\n",
            s.injectBankGlitch ? 1 : 0, s.holdCycles, s.glitchCount,
            s.has_frame_cycles, s.no_frame_cycles, total,
            frame_pct, (int)s.top.underrun_count, (int)s.top.frames_done,
            (int)r->ddr_frame_store_want_y_glitch_tb__DOT__dut__DOT__disp_buf_d2,
            (int)s.top.swap_pending,
-           (int)r->ddr_frame_store_want_y_glitch_tb__DOT__dut__DOT__pending_ready_c);
+           (int)r->ddr_frame_store_want_y_glitch_tb__DOT__dut__DOT__pending_ready_c,
+           s.ddrReadBursts);
+
+    // Degeneracy guard (#18): if no DDR reads occurred, the test proved nothing.
+    if (s.ddrReadBursts < 2) {
+        printf("FAIL DEGENERACY: only %d DDR reads — test is trivially passing\n",
+               s.ddrReadBursts);
+        return 1;
+    }
 
     bool stalled = (s.has_frame_cycles == 0);
     bool degraded = (frame_pct < 90.0);

@@ -70,6 +70,7 @@ public:
     // Counters
     int has_frame_cycles = 0;
     int no_frame_cycles = 0;
+    int ddrReadBursts = 0;  // degeneracy: must be non-zero for a valid test
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -111,6 +112,7 @@ public:
 
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
+            ++ddrReadBursts;
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
             rdIndex = 0;
@@ -264,10 +266,18 @@ int main(int argc, char** argv) {
     printf("want_y_glitch raw: "
            "inject=%d glitch_count=%d "
            "has_frame_cycles=%d no_frame_cycles=%d total=%d "
-           "has_frame_pct=%.1f%% underruns=%d frames_done=%d\n",
+           "has_frame_pct=%.1f%% underruns=%d frames_done=%d ddr_reads=%d\n",
            s.injectGlitch ? 1 : 0, s.glitchCount,
            s.has_frame_cycles, s.no_frame_cycles, total,
-           frame_pct, (int)s.top.underrun_count, (int)s.top.frames_done);
+           frame_pct, (int)s.top.underrun_count, (int)s.top.frames_done,
+           s.ddrReadBursts);
+
+    // Degeneracy guard (#18): if no DDR reads occurred, the test proved nothing.
+    if (s.ddrReadBursts < 2) {
+        printf("FAIL DEGENERACY: only %d DDR reads — test is trivially passing\n",
+               s.ddrReadBursts);
+        return 1;
+    }
 
     bool stalled = (s.has_frame_cycles == 0);
     bool degraded = (frame_pct < 90.0);
