@@ -1,19 +1,22 @@
-// H.264 Motion Compensation Interpolation Engine — v2
+// H.264 Motion Compensation Interpolation Engine — v3
 // Block-level luma quarter-pel and chroma eighth-pel interpolation.
 //
 // Budget: 250 cycles/MB (37% of 684 total at 20 MHz).
 //
-// v2 architecture:
+// v3 architecture:
 //   - 2-wide output: 2 samples per cycle (mandatory to hit budget)
 //   - Pipelined load/compute: compute starts as soon as enough rows loaded
 //   - Reference cache: exact-match skip; coordinates exposed for future
 //     partial-overlap (sliding window) by w-rel
+//   - P_Skip fast path: cmd_skip_zero bypasses FIR, fetches blk_w×blk_h
+//     instead of (blk_w+5)×(blk_h+5), saving 42% DPB bandwidth
 //
-// Cycle budget analysis (16×16 MB at quarter-pel):
-//   Luma:   startup 18 + compute 128 = 146 cycles
+// Cycle budget analysis (16×16 MB):
+//   Quarter-pel j (worst): startup 18 + compute 128 = 146 cycles
+//   P_Skip (best): startup ~2 + compute 128 = 130 cycles (42% less BW)
 //   Chroma: 2 × (startup 4 + compute 32) = 72 cycles
 //   Overhead: 6 cycles
-//   Total: ~224 cycles → within 250 with 26-cycle margin
+//   Total: 130–224 cycles → within 250
 //
 // Interface:
 //   cmd_*     — command port with cache-support coordinates
@@ -35,6 +38,9 @@ module h264_mc_interp (
 	input  wire [2:0]  cmd_chroma_dy,   // chroma eighth-pel y fraction (0-7)
 	input  wire [4:0]  cmd_blk_w,       // output block width  (4, 8, or 16)
 	input  wire [4:0]  cmd_blk_h,       // output block height (4, 8, or 16)
+	// P_Skip fast path: integer-pel, no interpolation.
+	// Bypasses FIR, fetches blk_w×blk_h instead of (blk_w+5)×(blk_h+5).
+	input  wire        cmd_skip_zero,
 	// Cache-support: absolute ref window position in picture coordinates.
 	// When identical to previous command, reference load is skipped.
 	input  wire signed [15:0] cmd_ref_x,
@@ -75,6 +81,7 @@ module h264_mc_interp (
 	reg signed [15:0] cache_ref_x, cache_ref_y;
 	reg [4:0]  cache_ref_cols, cache_ref_rows;
 	reg        cache_is_chroma;
+	reg        cache_skip_zero;
 
 	// Latched command parameters
 	reg        is_chroma;
@@ -86,6 +93,7 @@ module h264_mc_interp (
 	reg [4:0]  blk_h;
 	reg [4:0]  ref_cols;
 	reg [4:0]  ref_rows;
+	reg        skip_zero;  // P_Skip: bypass FIR, direct copy
 
 	// Output iteration — col advances by 2 per cycle
 	reg [4:0]  out_row;
@@ -144,7 +152,8 @@ module h264_mc_interp (
 	// Luma needs rows out_row..out_row+5 (6 rows for j-position 6-tap)
 	// Chroma needs rows out_row..out_row+1 (2 rows for bilinear)
 	// -----------------------------------------------------------------------
-	wire [4:0] rows_needed = is_chroma ? (out_row + 5'd2) : (out_row + 5'd6);
+	wire [4:0] rows_needed = skip_zero  ? (out_row + 5'd1) :
+	                         is_chroma ? (out_row + 5'd2) : (out_row + 5'd6);
 	wire       can_compute = load_done || (rows_loaded >= rows_needed);
 	wire       compute_done = (out_count >= out_total);
 
@@ -324,10 +333,17 @@ module h264_mc_interp (
 	wire [7:0] chroma1 = chr1_sum[13:6];
 
 	// -----------------------------------------------------------------------
-	// Final computed samples (luma or chroma, 2-wide)
+	// P_Skip fast path — direct copy from buffer, no interpolation
+	// Reference window is blk_w×blk_h (no border), so indices are direct
 	// -----------------------------------------------------------------------
-	wire [7:0] computed0 = is_chroma ? chroma0 : luma0;
-	wire [7:0] computed1 = is_chroma ? chroma1 : luma1;
+	wire [7:0] skip0 = ref_buf[ridx(out_row, out_col)];
+	wire [7:0] skip1 = ref_buf[ridx(out_row, out_col + 5'd1)];
+
+	// -----------------------------------------------------------------------
+	// Final computed samples (skip, luma, or chroma, 2-wide)
+	// -----------------------------------------------------------------------
+	wire [7:0] computed0 = skip_zero  ? skip0  : is_chroma ? chroma0 : luma0;
+	wire [7:0] computed1 = skip_zero  ? skip1  : is_chroma ? chroma1 : luma1;
 
 	// -----------------------------------------------------------------------
 	// Reference data unpacking
@@ -345,14 +361,17 @@ module h264_mc_interp (
 	// -----------------------------------------------------------------------
 	// Cache hit detection
 	// -----------------------------------------------------------------------
-	wire [4:0] new_ref_cols = cmd_is_chroma ? (cmd_blk_w + 5'd1) : (cmd_blk_w + 5'd5);
-	wire [4:0] new_ref_rows = cmd_is_chroma ? (cmd_blk_h + 5'd1) : (cmd_blk_h + 5'd5);
+	wire [4:0] new_ref_cols = cmd_skip_zero ? cmd_blk_w :
+	                         cmd_is_chroma ? (cmd_blk_w + 5'd1) : (cmd_blk_w + 5'd5);
+	wire [4:0] new_ref_rows = cmd_skip_zero ? cmd_blk_h :
+	                          cmd_is_chroma ? (cmd_blk_h + 5'd1) : (cmd_blk_h + 5'd5);
 	wire       cache_hit = cache_valid
 	                     && (cmd_ref_x == cache_ref_x)
 	                     && (cmd_ref_y == cache_ref_y)
 	                     && (new_ref_cols == cache_ref_cols)
 	                     && (new_ref_rows == cache_ref_rows)
-	                     && (cmd_is_chroma == cache_is_chroma);
+	                     && (cmd_is_chroma == cache_is_chroma)
+	                     && (cmd_skip_zero == cache_skip_zero);
 
 	// -----------------------------------------------------------------------
 	// State machine — pipelined load/compute
@@ -392,6 +411,7 @@ module h264_mc_interp (
 			cache_ref_cols <= 5'd0;
 			cache_ref_rows <= 5'd0;
 			cache_is_chroma <= 1'b0;
+			cache_skip_zero <= 1'b0;
 		end else begin
 			case (state)
 			S_IDLE: begin
@@ -406,6 +426,7 @@ module h264_mc_interp (
 					chroma_dy  <= cmd_chroma_dy;
 					blk_w      <= cmd_blk_w;
 					blk_h      <= cmd_blk_h;
+					skip_zero  <= cmd_skip_zero;
 					ref_cols   <= new_ref_cols;
 					ref_rows   <= new_ref_rows;
 					ref_total  <= {5'd0, new_ref_cols} * {5'd0, new_ref_rows};
@@ -518,6 +539,7 @@ module h264_mc_interp (
 					cache_ref_cols <= ref_cols;
 					cache_ref_rows <= ref_rows;
 					cache_is_chroma <= is_chroma;
+					cache_skip_zero <= skip_zero;
 				end
 			end
 

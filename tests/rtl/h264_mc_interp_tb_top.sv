@@ -1,4 +1,4 @@
-// Testbench wrapper for h264_mc_interp v2 — instantiates product RTL with
+// Testbench wrapper for h264_mc_interp v3 — instantiates product RTL with
 // optional fault injection for red-before-green verification.
 `default_nettype none
 
@@ -18,6 +18,7 @@ module h264_mc_interp_tb #(
 	input  wire [2:0]  cmd_chroma_dy,
 	input  wire [4:0]  cmd_blk_w,
 	input  wire [4:0]  cmd_blk_h,
+	input  wire        cmd_skip_zero,
 	input  wire signed [15:0] cmd_ref_x,
 	input  wire signed [15:0] cmd_ref_y,
 
@@ -51,6 +52,7 @@ module h264_mc_interp_tb #(
 		.cmd_chroma_dy(cmd_chroma_dy),
 		.cmd_blk_w(cmd_blk_w),
 		.cmd_blk_h(cmd_blk_h),
+		.cmd_skip_zero(cmd_skip_zero),
 		.cmd_ref_x(cmd_ref_x),
 		.cmd_ref_y(cmd_ref_y),
 		.ref_valid(ref_valid),

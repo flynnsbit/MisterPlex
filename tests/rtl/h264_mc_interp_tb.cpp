@@ -59,7 +59,8 @@ static int run_mc_block(Vh264_mc_interp_tb& top,
                         int blk_w, int blk_h,
                         const std::vector<uint8_t>& ref_window,
                         std::vector<uint8_t>& out_samples,
-                        int ref_x = 0, int ref_y = 0) {
+                        int ref_x = 0, int ref_y = 0,
+                        bool skip_zero = false) {
     out_samples.clear();
 
     // Issue command
@@ -71,6 +72,7 @@ static int run_mc_block(Vh264_mc_interp_tb& top,
     top.cmd_chroma_dy = chroma_dy;
     top.cmd_blk_w     = blk_w;
     top.cmd_blk_h     = blk_h;
+    top.cmd_skip_zero = skip_zero ? 1 : 0;
     top.cmd_ref_x     = static_cast<int16_t>(ref_x);
     top.cmd_ref_y     = static_cast<int16_t>(ref_y);
     top.ref_valid     = 0;
@@ -481,6 +483,57 @@ int main(int argc, char** argv) {
     }
 
     // -----------------------------------------------------------------------
+    // Test 6b: P_Skip fast path — integer-pel direct copy, no FIR
+    // Reference window is blk_w×blk_h (no +5 border).
+    // -----------------------------------------------------------------------
+    int skip_tests = 0, skip_cycles = 0;
+    {
+        // Build a blk_w×blk_h reference window (no border)
+        for (const auto& blk : luma_blocks) {
+            int bw = blk.w, bh = blk.h, bx = blk.x, by = blk.y;
+            std::vector<uint8_t> skip_win(bw * bh);
+            for (int r = 0; r < bh; r++)
+                for (int c = 0; c < bw; c++)
+                    skip_win[r * bw + c] = mc_ref::fetch_ref(
+                        ref_frame.data(), ref_stride, bx + c, by + r, pic_w, pic_h);
+
+            // Expected: direct copy of the reference window
+            std::vector<uint8_t> expected = skip_win;
+
+            std::vector<uint8_t> got;
+            int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+            int cyc = run_mc_block(top, false, 0, 0, 0, 0,
+                                    bw, bh, skip_win, got, rx, ry, true);
+
+            bool match = (got.size() == expected.size());
+            if (match) {
+                for (size_t i = 0; i < got.size(); i++) {
+                    if (got[i] != expected[i]) {
+                        match = false;
+                        char buf[256];
+                        snprintf(buf, sizeof(buf),
+                                 "skip_zero mismatch blk=%dx%d pos=%d got=%d want=%d",
+                                 bw, bh, static_cast<int>(i), got[i], expected[i]);
+                        fail(buf);
+                        break;
+                    }
+                }
+            } else {
+                char buf[128];
+                snprintf(buf, sizeof(buf),
+                         "skip_zero size mismatch blk=%dx%d got=%zu want=%d",
+                         bw, bh, got.size(), bw * bh);
+                fail(buf);
+            }
+            if (match) ++g_pass_count;
+            ++skip_tests;
+            if (cyc > 0 && bw == 16 && bh == 16) skip_cycles = cyc;
+        }
+        std::cout << "  P_SKIP: tests=" << skip_tests
+                  << " 16x16_cycles=" << skip_cycles << "\n";
+    }
+
+    // -----------------------------------------------------------------------
     // Test 7: Cache hit — re-issuing same window should skip loading
     // -----------------------------------------------------------------------
     int cache_cycles = 0;
@@ -504,7 +557,8 @@ int main(int argc, char** argv) {
     // -----------------------------------------------------------------------
     // Summary
     // -----------------------------------------------------------------------
-    int total_tests = total_luma + total_chroma + edge_luma + edge_chroma + extreme_luma;
+    int total_tests = total_luma + total_chroma + edge_luma + edge_chroma
+                    + extreme_luma + skip_tests;
     if (g_fail_count > 0) {
         std::cerr << "FAIL h264_mc_interp RTL: " << g_fail_count
                   << " failures out of " << total_tests << " tests\n";
@@ -517,9 +571,11 @@ int main(int argc, char** argv) {
               << " edge_luma=" << edge_luma
               << " edge_chroma=" << edge_chroma
               << " extreme_luma=" << extreme_luma
+              << " skip_zero=" << skip_tests
               << " total=" << total_tests
               << " pass=" << g_pass_count
               << " cycles_per_mb=" << budget_cycles
+              << " skip_16x16_cyc=" << skip_cycles
               << "\n";
     return 0;
 }
