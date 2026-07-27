@@ -201,4 +201,108 @@ if ! grep -q "^OK decode throughput" <<<"$ALL_IMPL_OUT"; then
 fi
 echo "RED OK all-implemented verdict: ratchet emits OK when all stages are measured"
 
+# ---- Degeneracy assertion red proof (#18) ----
+# A zero-cycle compare JSON must FAIL, not produce infinite margin.
+DEGEN_COMPARE="$WORK/degenerate_zero_cycles.json"
+cat >"$DEGEN_COMPARE" <<'JSON'
+{
+  "format": "misterplex.p3.frame_planes_compare.v1",
+  "source": {
+    "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264",
+    "bytes": 70348,
+    "sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9"
+  },
+  "geometry": {
+    "width": 624,
+    "height": 480,
+    "colorspace": "I420_FROM_RGB565",
+    "planes": [
+      {"plane": "Y", "width": 624, "height": 480},
+      {"plane": "U", "width": 312, "height": 240},
+      {"plane": "V", "width": 312, "height": 240}
+    ]
+  },
+  "summary": {
+    "nals": 15,
+    "idr": 1,
+    "p": 11,
+    "cycles": 0,
+    "first_bad_frame": 0,
+    "first_bad": null,
+    "strict_pass": false,
+    "expectation": "red"
+  },
+  "frames": [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]
+}
+JSON
+
+set +e
+DEGEN_OUT="$("$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$DEGEN_COMPARE" --ratchet "$RATCHET" 2>&1)"
+DEGEN_RC=$?
+set -e
+if [[ "$DEGEN_RC" -eq 0 ]]; then
+  printf '%s\n' "$DEGEN_OUT"
+  echo "FAIL degeneracy red proof: zero-cycle input should be rejected but passed" >&2
+  exit 1
+fi
+grep -q "DEGENERATE" <<<"$DEGEN_OUT"
+echo "RED OK degeneracy assertion: zero-cycle input is rejected (not infinite margin)"
+
+# A zero-stage compare JSON (stage_cycles present but all zeros) must also FAIL.
+DEGEN_STAGE="$WORK/degenerate_zero_stages.json"
+cat >"$DEGEN_STAGE" <<'JSON'
+{
+  "format": "misterplex.p3.frame_planes_compare.v1",
+  "source": {
+    "path": "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264",
+    "bytes": 70348,
+    "sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9"
+  },
+  "geometry": {
+    "width": 624,
+    "height": 480,
+    "colorspace": "I420_FROM_RGB565",
+    "planes": [
+      {"plane": "Y", "width": 624, "height": 480},
+      {"plane": "U", "width": 312, "height": 240},
+      {"plane": "V", "width": 312, "height": 240}
+    ]
+  },
+  "summary": {
+    "nals": 15,
+    "idr": 1,
+    "p": 11,
+    "cycles": 1000,
+    "first_bad_frame": 0,
+    "first_bad": null,
+    "strict_pass": false,
+    "expectation": "red"
+  },
+  "frames": [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}],
+  "stage_cycles": {
+    "method": "degenerate test",
+    "injection_cycles": 0,
+    "nonvcl_idle_cycles": 0,
+    "reset_cycles": 0,
+    "frames": [{"frame": 0, "parse_cycles": 0, "paint_cycles": 0}],
+    "parse_total": 0,
+    "paint_total": 0
+  }
+}
+JSON
+
+set +e
+DEGEN_STAGE_OUT="$("$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$DEGEN_STAGE" --ratchet "$RATCHET" 2>&1)"
+DEGEN_STAGE_RC=$?
+set -e
+if [[ "$DEGEN_STAGE_RC" -eq 0 ]]; then
+  printf '%s\n' "$DEGEN_STAGE_OUT"
+  echo "FAIL degeneracy red proof: zero-stage input should be rejected but passed" >&2
+  exit 1
+fi
+grep -q "DEGENERATE" <<<"$DEGEN_STAGE_OUT"
+echo "RED OK degeneracy assertion: zero-stage cycles rejected (no work occurred)"
+
 echo "PASS decode throughput gate"

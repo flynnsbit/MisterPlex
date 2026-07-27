@@ -45,6 +45,13 @@ def derive(compare: dict, ratchet: dict) -> dict:
     mbs_per_frame = mb_w * mb_h
     total_mbs = mbs_per_frame * frames
 
+    # Degeneracy assertion (#18): refuse zero-cycle input.
+    # A sim that reports 0 total cycles never ticked the clock or had no input.
+    # Without this check, cycles_per_mb=0 yields margin=infinity → degenerate PASS.
+    require(cycles_total > 0,
+            "DEGENERATE: cycles_total is 0 — sim never ran or input was empty. "
+            "A zero-cycle report cannot produce a meaningful throughput measurement.")
+
     target = ratchet["target"]
     clock_hz = int(target["stream_path_clock_hz"])
     fps = float(target["fps"])
@@ -65,6 +72,13 @@ def derive(compare: dict, ratchet: dict) -> dict:
         reset_total = int(sc["reset_cycles"])
         overhead_total = injection_total + nonvcl_idle_total + reset_total
         accounted = parse_total + paint_total
+
+        # Degeneracy assertion (#18): at least one stage must have non-zero cycles.
+        # If parse=0 AND paint=0, the sim produced stage_cycles but nothing happened.
+        require(parse_total > 0 or paint_total > 0,
+                "DEGENERATE: stage_cycles present but parse_total=0 AND paint_total=0. "
+                "The sim reported stages but no work occurred in any of them.")
+
         unaccounted = cycles_total - accounted - overhead_total
         if unaccounted < 0:
             unaccounted = 0

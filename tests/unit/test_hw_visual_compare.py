@@ -185,6 +185,14 @@ def main() -> int:
     print("PASS generated reference golden is quarantined by machine-readable provenance")
 
     golden = np.array(Image.open(GENERATED_REFERENCE).convert("RGB"), dtype=np.uint8)
+
+    # Degeneracy assertion (#18): golden must be non-trivial.
+    # If golden is all-zeros or all-constant, every comparison is degenerate.
+    golden_std = float(golden.std())
+    require(golden_std > 10.0,
+            f"DEGENERATE: golden image has std={golden_std:.2f} — all-constant or near-constant. "
+            "Visual comparison against a trivial golden proves nothing.")
+
     valid_golden = WORK / "valid_yuv420_624x480_golden.png"
     write_png(valid_golden, golden)
     write_provenance(valid_golden)
