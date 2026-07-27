@@ -16,6 +16,12 @@
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg
 DECODE=320x240
+# PMS universal transcode profile. 240p is the current RTL/ARM product path.
+# 480p requests 640x480 H.264 Baseline Level 3.0 at 2500 kbps for the 480p
+# streaming build; enable only with the matching 640x480 frame-store/present path.
+# TRANSCODE_PROFILE=240p
+# TRANSCODE_PROFILE=480p
+# Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
 # PRESENT=fb0|fpga|both

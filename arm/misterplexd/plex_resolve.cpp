@@ -115,36 +115,6 @@ std::string attr(const std::string& xml, const char* tag, const char* name) {
     return slice.substr(p, e - p);
 }
 
-std::string buildUniversal(const std::string& base, const std::string& metadataKey,
-                           const std::string& token, const std::string& session,
-                           int64_t offsetMs, const WeakLadder& weak) {
-    std::ostringstream q;
-    q << base << "/video/:/transcode/universal/start.mp4"
-      << "?hasMDE=1"
-      << "&path=" << urlEncodeQuery(metadataKey)
-      << "&mediaIndex=0&partIndex=0"
-      << "&protocol=http&fastSeek=1"
-      << "&directPlay=0&directStream=0"
-      << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
-      << "&session=" << urlEncodeQuery(session)
-      << "&videoQuality=" << weak.videoQuality
-      << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
-      << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps;
-    // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
-    if (weak.burnSubtitles) {
-        q << "&subtitles=burn";
-        if (weak.subtitleStreamId >= 0)
-            q << "&subtitleStreamID=" << weak.subtitleStreamId;
-    }
-    // PMS universal offset is SECONDS (companion / scrubber use ms).
-    const int64_t offSec = universalOffsetSeconds(offsetMs);
-    if (offSec > 0)
-        q << "&offset=" << offSec;
-    if (!token.empty())
-        q << "&X-Plex-Token=" << urlEncodeQuery(token);
-    return q.str();
-}
-
 // Attr from a free-form XML slice (first name="..." only).
 std::string attrIn(const std::string& slice, const char* name) {
     const std::string key = std::string(name) + "=\"";
@@ -174,6 +144,14 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 }
 
 } // namespace
+
+const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
+    static const std::vector<PlexTranscodeProfile> profiles = {
+        {"240p", "320x240", 1000, 40, "baseline", 30},
+        {"480p", "640x480", 2500, 60, "baseline", 30},
+    };
+    return profiles;
+}
 
 std::string normalizePlexBase(const std::string& raw) {
     std::string s = raw;
@@ -292,7 +270,144 @@ std::string urlEncodeQuery(const std::string& s) {
     return o.str();
 }
 
+namespace {
+
+bool parseResolution(const std::string& res, int& w, int& h) {
+    w = h = 0;
+    return std::sscanf(res.c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0;
+}
+
+} // namespace
+
+bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& weak) {
+    for (const auto& p : plexTranscodeProfiles()) {
+        if (nameOrResolution == p.name || nameOrResolution == p.videoResolution) {
+            weak.profileName = p.name;
+            weak.videoResolution = p.videoResolution;
+            weak.maxVideoBitrateKbps = p.maxVideoBitrateKbps;
+            weak.videoQuality = p.videoQuality;
+            weak.videoCodec = "h264";
+            weak.audioCodec = "aac";
+            weak.h264Profile = p.h264Profile;
+            weak.h264Level = p.h264Level;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
+    int w = 0, h = 0;
+    auto fail = [&](const std::string& msg) {
+        if (why)
+            *why = msg;
+        return false;
+    };
+    if (!parseResolution(weak.videoResolution, w, h))
+        return fail("videoResolution must be WxH");
+    if (weak.videoCodec != "h264")
+        return fail("videoCodec must be h264");
+    if (weak.audioCodec != "aac")
+        return fail("audioCodec must be aac");
+    if (weak.h264Profile != "baseline")
+        return fail("H.264 profile must be baseline for the current decoder");
+    if (weak.h264Level > 30)
+        return fail("H.264 level must not exceed 3.0 for the current decoder");
+    if (w >= 640 || h >= 480) {
+        if (w > 640 || h > 480)
+            return fail("current built-in profiles stop at 640x480");
+        if (weak.maxVideoBitrateKbps < 2000)
+            return fail("480p profile bitrate is too low");
+    } else if (weak.maxVideoBitrateKbps < 750) {
+        return fail("240p profile bitrate is too low");
+    }
+    if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return fail("videoQuality and maxVideoBitrate must be positive");
+    return true;
+}
+
+std::string plexClientProfileExtra(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    parseResolution(weak.videoResolution, w, h);
+    std::ostringstream o;
+    o << "add-transcode-target(type=videoProfile&context=streaming&protocol=http"
+      << "&container=mp4&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
+      << "&replace=true)+"
+      << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
+      << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
+      << "add-limitation(scope=videoCodec&scopeName=h264&type=match&name=video.profile"
+      << "&list=" << weak.h264Profile << "&replace=true)+"
+      << "add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level"
+      << "&value=" << weak.h264Level << "&replace=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=match&name=video.profile"
+      << "&list=" << weak.h264Profile << "&isRequired=true)+"
+      << "add-limitation(scope=videoTranscodeTarget&scopeName=h264&scopeType=videoCodec"
+      << "&context=streaming&protocol=http&type=upperBound&name=video.level"
+      << "&value=" << weak.h264Level << "&isRequired=true)";
+    if (w > 0 && h > 0) {
+        o << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.width"
+          << "&value=" << w << "&replace=true)"
+          << "+add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.height"
+          << "&value=" << h << "&replace=true)";
+    }
+    return o.str();
+}
+
+std::string plexClientCapabilities(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    parseResolution(weak.videoResolution, w, h);
+    std::ostringstream o;
+    o << "protocols=http-streaming-video,http-mp2t-video;"
+      << "videoDecoders=h264{profile:" << weak.h264Profile << "&resolution:" << w << "x" << h
+      << "&level:" << weak.h264Level << "};"
+      << "audioDecoders=" << weak.audioCodec << "{channels:2}";
+    return o.str();
+}
+
+std::string buildUniversalTranscodeUrl(const std::string& base,
+                                       const std::string& metadataKey,
+                                       const std::string& token,
+                                       const std::string& session,
+                                       int64_t offsetMs,
+                                       const WeakLadder& weak) {
+    std::ostringstream q;
+    q << base << "/video/:/transcode/universal/start.mp4"
+      << "?hasMDE=1"
+      << "&path=" << urlEncodeQuery(metadataKey)
+      << "&mediaIndex=0&partIndex=0"
+      << "&protocol=http&fastSeek=1"
+      << "&directPlay=0&directStream=0"
+      << "&subtitleSize=100&audioBoost=100&location=lan&copyts=1"
+      << "&session=" << urlEncodeQuery(session)
+      << "&videoQuality=" << weak.videoQuality
+      << "&videoResolution=" << urlEncodeQuery(weak.videoResolution)
+      << "&maxVideoBitrate=" << weak.maxVideoBitrateKbps
+      << "&videoCodec=" << urlEncodeQuery(weak.videoCodec)
+      << "&audioCodec=" << urlEncodeQuery(weak.audioCodec)
+      << "&videoProfile=" << urlEncodeQuery(weak.h264Profile)
+      << "&videoLevel=" << weak.h264Level;
+    // Phase 4: PMS-side burn-in (preferred over dual-A9 FFmpeg subtitles filter).
+    if (weak.burnSubtitles) {
+        q << "&subtitles=burn";
+        if (weak.subtitleStreamId >= 0)
+            q << "&subtitleStreamID=" << weak.subtitleStreamId;
+    }
+    // PMS universal offset is SECONDS (companion / scrubber use ms).
+    const int64_t offSec = universalOffsetSeconds(offsetMs);
+    if (offSec > 0)
+        q << "&offset=" << offSec;
+    if (!token.empty())
+        q << "&X-Plex-Token=" << urlEncodeQuery(token);
+    return q.str();
+}
+
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token) {
+    return plexFfmpegHeaders(sessionId, token, WeakLadder{});
+}
+
+std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token,
+                              const WeakLadder& weak) {
     std::ostringstream o;
     o << "X-Plex-Client-Identifier: misterplex\r\n"
       << "X-Plex-Product: Plex Web\r\n"
@@ -301,9 +416,11 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
       << "X-Plex-Platform-Version: 120.0\r\n"
       << "X-Plex-Device: Linux\r\n"
       << "X-Plex-Device-Name: Chrome\r\n"
-      << "X-Plex-Client-Profile-Name: Chrome\r\n"
+      << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
       << "X-Plex-Provides: player\r\n"
+      << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
+      << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n"
       << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
     if (!token.empty())
         o << "X-Plex-Token: " << token << "\r\n";
@@ -343,6 +460,11 @@ std::string buildPlexBase(const std::string& protocol, const std::string& addres
 
 bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
                              const std::string& token) {
+    return ensureUniversalDecision(startUrl, sessionId, token, WeakLadder{});
+}
+
+bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
+                             const std::string& token, const WeakLadder& weak) {
     if (startUrl.find("/video/:/transcode/universal/") == std::string::npos)
         return true;
     // Derive base + path from start URL
@@ -377,19 +499,38 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
         vres = "320x240";
     std::string br = qparam("maxVideoBitrate");
     if (br.empty())
-        br = "1000";
+        br = std::to_string(weak.maxVideoBitrateKbps);
+    std::string vcodec = qparam("videoCodec");
+    if (vcodec.empty())
+        vcodec = weak.videoCodec;
+    std::string acodec = qparam("audioCodec");
+    if (acodec.empty())
+        acodec = weak.audioCodec;
+    std::string vprofile = qparam("videoProfile");
+    if (vprofile.empty())
+        vprofile = weak.h264Profile;
+    std::string vlevel = qparam("videoLevel");
+    if (vlevel.empty())
+        vlevel = std::to_string(weak.h264Level);
 
     std::ostringstream decisionUrl;
     decisionUrl << base << "/video/:/transcode/universal/decision?hasMDE=1&path=" << path
                 << "&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0"
                 << "&location=lan&session=" << urlEncodeQuery(sessionId)
                 << "&videoQuality=" << vq << "&videoResolution=" << vres
-                << "&maxVideoBitrate=" << br;
+                << "&maxVideoBitrate=" << br
+                << "&videoCodec=" << vcodec << "&audioCodec=" << acodec
+                << "&videoProfile=" << vprofile << "&videoLevel=" << vlevel;
     if (!token.empty())
         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
 
     std::ostringstream sessHdr;
-    sessHdr << " -H 'X-Plex-Session-Identifier: " << sessionId << "' ";
+    sessHdr << curlHeaderArgs({
+        {"X-Plex-Session-Identifier", sessionId},
+        {"X-Plex-Client-Profile-Name", weak.clientProfileName},
+        {"X-Plex-Client-Capabilities", plexClientCapabilities(weak)},
+        {"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)},
+    });
     const std::string body = httpGet(decisionUrl.str(), 20, sessHdr.str());
     if (body.empty())
         return false;
@@ -602,14 +743,14 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     // Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
-        const std::string start =
-            buildUniversal(plexBase, key, token, session, offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token)) {
+        const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
+                                                             offsetMs > 0 ? offsetMs : 0, weak);
+        if (ensureUniversalDecision(start, session, token, weak)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token);
-            r.detail = "PMS universal weak " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
+            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)

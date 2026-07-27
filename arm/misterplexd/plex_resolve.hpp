@@ -66,15 +66,55 @@ std::vector<std::string> mergePlexServers(const std::string& serversCsv,
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
                           const std::string& port, const std::string& lanFallback = {});
 
+struct PlexTranscodeProfile {
+    std::string name;
+    std::string videoResolution;
+    int maxVideoBitrateKbps = 0;
+    int videoQuality = 0;
+    // H.264 constraints advertised to PMS. Keep these aligned with the FPGA/host
+    // decoder; do not ask PMS for Main/High/CABAC when only baseline-ish vectors
+    // are proven.
+    std::string h264Profile;
+    int h264Level = 0; // Plex capability/profile-extra integer form: 30 == Level 3.0.
+};
+
+// Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
+// 480p is the server-negotiation half of the new 640x480 pipeline.
+const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
+
+// Match by profile name ("240p"/"480p") or exact WxH resolution.
+bool applyPlexTranscodeProfile(const std::string& nameOrResolution,
+                               struct WeakLadder& weak);
+
 // Weak ladder params for PMS universal transcoder (dual-A9 safe defaults).
 struct WeakLadder {
+    std::string profileName = "240p";
     std::string videoResolution = "320x240"; // e.g. 320x240, 480x360, 640x480
     int maxVideoBitrateKbps = 1000;
     int videoQuality = 40;
+    std::string videoCodec = "h264";
+    std::string audioCodec = "aac";
+    std::string h264Profile = "baseline";
+    int h264Level = 30;
+    // Use a neutral PMS profile for universal transcodes so our explicit
+    // X-Plex-Client-Profile-Extra constraints are not widened by Chrome's
+    // High-profile-capable defaults.
+    std::string clientProfileName = "Generic";
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
 };
+
+// Guard rails for built-in and configured ladders.
+bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+std::string plexClientProfileExtra(const WeakLadder& weak);
+std::string plexClientCapabilities(const WeakLadder& weak);
+std::string buildUniversalTranscodeUrl(const std::string& base,
+                                       const std::string& metadataKey,
+                                       const std::string& token,
+                                       const std::string& session,
+                                       int64_t offsetMs,
+                                       const WeakLadder& weak);
 
 // True when metadata Media@videoCodec looks like H.264/AVC (direct Part friendly for STREAM).
 bool mediaVideoIsH264(const std::string& plexMetadataXml);
@@ -105,6 +145,8 @@ inline int64_t universalOffsetSeconds(int64_t offsetMs) {
 
 // Chrome-profile FFmpeg headers required by PMS universal transcoder.
 std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token);
+std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& token,
+                              const WeakLadder& weak);
 
 // Best-effort PMS GET using the same curl-based Plex client identity as resolve.
 // Headers are name/value pairs; response body is discarded by callers.
@@ -115,6 +157,8 @@ bool plexHttpGetNoBody(const std::string& url,
 // Call /universal/decision before start.mp4 (PMS 1.43+).
 bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
                              const std::string& token);
+bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,
+                             const std::string& token, const WeakLadder& weak);
 
 // Map PMS videoFrameRate / frameRate strings to OSD Content FPS (12/24/30/60).
 // Returns 0 when unknown. Prefers numeric frameRate when present.
