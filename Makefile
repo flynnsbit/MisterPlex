@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -17,6 +17,7 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard with toolchain presence probe"
 	@echo "  make define-parity - verify Quartus product macros match Verilator/lint macros"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
+	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-nal-stats      - live PMS NAL size/jitter probe (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
@@ -143,6 +144,10 @@ post-fit-hierarchy:
 	$(ROOT)/scripts/check_quartus_fit_hierarchy.py --fit-rpt "$(FIT_RPT)" \
 		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",) \
 		$(if $(COMPILE_LOG),--log "$(COMPILE_LOG)",)
+
+post-fit-timing:
+	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/check_quartus_timing.py --sta-rpt "$(STA_RPT)"
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 	$(ROOT)/tests/hw/test_pms_baseline_profile.sh

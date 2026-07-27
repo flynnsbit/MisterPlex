@@ -116,6 +116,43 @@ def scan_log(path: Path | None, module_names: list[str]) -> list[str]:
     return hits
 
 
+def scan_comb_loops(path: Path | None, specs: list[dict[str, object]]) -> list[str]:
+    if not path or not path.exists():
+        return []
+    allow = {
+        str(item)
+        for spec in specs
+        for item in spec.get("allowed_comb_loop_nodes", [])
+    }
+    contexts = [
+        str(spec.get("hierarchy_contains", "")) for spec in specs if spec.get("hierarchy_contains")
+    ] + [
+        str(spec.get("log_contains", "")) for spec in specs if spec.get("log_contains")
+    ] + [str(spec.get("name", "")) for spec in specs if spec.get("name")]
+    hits: list[str] = []
+    current: list[str] = []
+    active = False
+    for line in path.read_text(errors="ignore").splitlines():
+        if "Warning (332125): Found combinational loop" in line:
+            current = [line.strip()]
+            active = True
+            continue
+        if active and "Warning (332126): Node" in line:
+            current.append(line.strip())
+            continue
+        if active:
+            text = "\n".join(current)
+            if any(ctx and ctx in text for ctx in contexts) and not any(token and token in text for token in allow):
+                hits.extend(current)
+            current = []
+            active = False
+    if active:
+        text = "\n".join(current)
+        if any(ctx and ctx in text for ctx in contexts) and not any(token and token in text for token in allow):
+            hits.extend(current)
+    return hits
+
+
 def format_table(rows: list[tuple[dict[str, object], HierRow | None]]) -> str:
     lines = [
         "| module | entity | hierarchy | comb ALUTs | registers | block bits | M10Ks | DSPs | status |",
@@ -179,6 +216,10 @@ def main(argv: list[str]) -> int:
     if warning_hits:
         errors.append("critical-module removal/tie-off warning(s):")
         errors.extend("  " + hit for hit in warning_hits[:20])
+    comb_hits = scan_comb_loops(args.log, specs)
+    if comb_hits:
+        errors.append("critical-module combinational-loop warning(s):")
+        errors.extend("  " + hit for hit in comb_hits[:20])
 
     if errors:
         print("FIT_HIERARCHY_REJECTED(exit=1):", file=sys.stderr)

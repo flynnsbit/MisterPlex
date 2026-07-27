@@ -241,6 +241,7 @@ if [[ "$COPY_BACK" == "1" ]]; then
     --fit-rpt "$LOCAL_OUT/Plex.fit.rpt" \
     --map-rpt "$LOCAL_OUT/Plex.map.rpt" \
     --log "$LOCAL_OUT/compile.log"
+  "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   RBF="$LOCAL_OUT/Plex.rbf"
   STA="$LOCAL_OUT/Plex.sta.rpt"
   FIT="$LOCAL_OUT/Plex.fit.rpt"

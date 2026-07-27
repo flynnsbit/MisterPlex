@@ -247,6 +247,7 @@ make build-rbf
 make post-fit-hierarchy FIT_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.fit.rpt \
   MAP_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.map.rpt \
   COMPILE_LOG=fpga/Plex_MiSTer/remote_out/<slot>/compile.log
+make post-fit-timing STA_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.sta.rpt
 ```
 
 `make rtl-lint` is a Verilator parse/lint regression gate, not a Quartus
@@ -255,7 +256,7 @@ define-parity` refuses undeclared macro drift. `make quartus-sv-subset` catches
 the known Quartus subset syntax hazards but is still static and does not replace
 Analysis & Elaboration. `make post-fit-hierarchy` refuses a fit where critical
 modules such as `ddr_frame_store` disappear or collapse to trivial resource
-usage.
+usage. `make post-fit-timing` refuses negative Quartus STA slack.
 
 Built cores are not tracked in git; each release ships one as an asset.
 
