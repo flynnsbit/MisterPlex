@@ -412,7 +412,7 @@ module h264_deblock_writeback_ctrl #(
 	output reg                    commit_order_error
 );
 	localparam int SAMPLE_COUNT_W = $clog2(SAMPLES_PER_MB + 1);
-	localparam [SAMPLE_COUNT_W-1:0] SAMPLES_PER_MB_COUNT = SAMPLES_PER_MB;
+	localparam [SAMPLE_COUNT_W-1:0] SAMPLES_PER_MB_COUNT = SAMPLES_PER_MB[SAMPLE_COUNT_W-1:0];
 
 	reg                    ref_pending;
 	reg [FRAME_SLOT_W-1:0] ref_pending_slot;
