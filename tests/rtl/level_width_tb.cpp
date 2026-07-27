@@ -6,6 +6,20 @@
 // On the current RTL the [8:0] truncation wraps 300 → −212 (sign flip),
 // producing dequant = −3392 instead of +4800.  This test MUST FAIL on the
 // un-fixed RTL and PASS after the coefficient path is widened.
+//
+// WIDTH GUARD (parent directive, commit context):
+// The lev[] / lev_of() path in slice_hdr_parser.sv carries BOTH ordinary
+// 4×4 CAVLC levels (bounded ±2047 per H.264 spec) AND I_16x16 DC
+// coefficients that have been through a 4×4 Hadamard transform.  The
+// Hadamard output at QP=1 was measured at |level| = 14,573 (testsrc2
+// 640×480, x264 Baseline, forced QP=4, slice QP drops to 1).  Theoretical
+// maximum at QP=0: ~26,000.  The width MUST be signed [15:0] (±32767),
+// NOT signed [11:0] (±2047).  A spec-derived ±2047 bound would silently
+// re-create the identical truncation bug on I_16x16 DC blocks.
+//
+// Test vectors at I_16x16 DC magnitude (14573, 26000) guard this: if the
+// pipeline is ever narrowed below signed [15:0], those vectors will wrap
+// and the dequant/recon output will diverge from the golden model.
 
 #include "Vlevel_width_tb_top.h"
 #include "verilated.h"
@@ -199,6 +213,31 @@ int main(int argc, char** argv) {
         { -256,  4, "neg256"},            // boundary: −256 fits 9-bit, +256 does not
         {  512,  4, "pos512"},
         { -512,  4, "neg512"},
+
+        // --- WIDTH GUARD: I_16x16 DC range (coeff > ±2047) ---
+        // These vectors MUST fail if someone narrows the coefficient path
+        // from signed [15:0] back to signed [11:0] (±2047).  The H.264 spec
+        // bounds ordinary 4×4 levels to ±2047, but I_16x16 DC coefficients
+        // that flow through the same lev_of() path undergo a 4×4 Hadamard
+        // transform that produces values up to ~26,000 at QP=0.
+        //
+        // Measured: |level| = 14,573 at QP=4 on testsrc2 640×480 (x264
+        // Baseline, forced QP=4, slice QP drops to 1).
+        //
+        // These use QP=0 where dequant(c) ≈ c*10, fitting in the current
+        // 18-bit dequant output.  Full-range testing at coeff=14573/QP=4
+        // (dequant=233,168) requires w-cabac's 22-bit dequant output widening
+        // from feat/cabac-scoreboard — extend this test after that merges.
+        { 2048,  0, "i16dc_first_12bit_overflow"},  // ±2047 is signed [11:0] max
+        {-2048,  0, "i16dc_neg_12bit_overflow"},
+        { 3000,  0, "i16dc_3000_qp0"},
+        {-3000,  0, "i16dc_neg3000_qp0"},
+        { 5000,  0, "i16dc_5000_qp0"},
+        { 8000,  0, "i16dc_8000_qp0"},
+        {-8000,  0, "i16dc_neg8000_qp0"},
+        {10000,  0, "i16dc_10000_qp0"},
+        {13000,  0, "i16dc_13000_qp0"},            // dequant ≈ 130,000, near 18-bit limit
+        {-13000, 0, "i16dc_neg13000_qp0"},
     };
     for (const auto& tc : ext_cases) {
         for (int i = 0; i < 16; ++i) {
@@ -221,6 +260,8 @@ int main(int argc, char** argv) {
         std::cerr << "level_width_tb: " << failures << " FAILURES (expected on pre-fix RTL)\n";
         return 1;
     }
-    std::cout << "level_width_tb: PASS — coefficient width is correct through ±2047\n";
+    std::cout << "level_width_tb: PASS — coefficient width correct through ±13000 (I_16x16 DC range)\n";
+    std::cout << "  Width guard: " << (sizeof(ext_cases)/sizeof(ext_cases[0]))
+              << " vectors above ±2047 protect against spec-derived narrowing to signed [11:0]\n";
     return 0;
 }

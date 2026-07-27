@@ -98,6 +98,15 @@ module slice_hdr_parser (
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
+	// Width: signed [15:0] — NOT [11:0].  The H.264 spec bounds ordinary 4×4
+	// CAVLC levels to ±2047 (fits in 12 bits), but I_16x16 DC coefficients flow
+	// through the same lev_of() path after a 4×4 Hadamard transform, which can
+	// produce far larger values.  Measured: |level| = 14,573 at QP=4 on
+	// testsrc2 640×480 (x264 Baseline, forced QP=4, slice QP drops to 1).
+	// Theoretical max at QP=0: ~26,000.  signed [11:0] (±2047) would silently
+	// truncate with two's-complement wraparound, reproducing the identical class
+	// of bug this width change fixes.  See level_width_tb.cpp for the assertion
+	// that guards this width.
 	reg signed [15:0] lev [0:15];
 	reg [3:0]  lev_i;
 	reg [2:0]  suf_len;
@@ -134,6 +143,8 @@ module slice_hdr_parser (
 
 	// FFmpeg/ITU: levelCode → signed level
 	// mask=-(code&1); (((2+code)>>1)^mask)-mask
+	// Returns signed [15:0] — must match lev[] width.  Do NOT narrow to [11:0];
+	// I_16x16 DC levels reach |level| = 14,573 (measured) and ~26,000 (theoretical).
 	function automatic signed [15:0] lev_of;
 		input [15:0] code;
 		reg signed [15:0] mask;
