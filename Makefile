@@ -73,6 +73,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	@chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_dpb_ref_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
@@ -115,6 +116,7 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_dpb_ref_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 
