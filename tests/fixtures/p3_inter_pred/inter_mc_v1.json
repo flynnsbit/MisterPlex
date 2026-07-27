@@ -179,8 +179,8 @@
         0
       ],
       "mv": [
-        5,
-        5
+        0,
+        0
       ]
     },
     {
@@ -218,9 +218,460 @@
         0
       ],
       "mv": [
-        3,
-        -3
+        0,
+        0
       ]
+    },
+    {
+      "name": "skip_predicted_nonzero",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        4,
+        2
+      ],
+      "b": [
+        8,
+        6
+      ],
+      "c": [
+        12,
+        10
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        9,
+        9
+      ],
+      "p_skip": true,
+      "skip_zero": false,
+      "pred": [
+        8,
+        6
+      ],
+      "mv": [
+        8,
+        6
+      ]
+    }
+  ],
+  "partition_cases": [
+    {
+      "name": "p16x16_median",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        4,
+        -2
+      ],
+      "b": [
+        -8,
+        6
+      ],
+      "c": [
+        12,
+        10
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        1,
+        -1
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        4,
+        6
+      ],
+      "mv": [
+        5,
+        5
+      ],
+      "mode": 0,
+      "idx": 0
+    },
+    {
+      "name": "pskip_predicted_nonzero",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        4,
+        2
+      ],
+      "b": [
+        8,
+        6
+      ],
+      "c": [
+        12,
+        10
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        9,
+        9
+      ],
+      "p_skip": true,
+      "skip_zero": false,
+      "pred": [
+        8,
+        6
+      ],
+      "mv": [
+        8,
+        6
+      ],
+      "mode": 0,
+      "idx": 0
+    },
+    {
+      "name": "pskip_left_edge_zero",
+      "avail": {
+        "a": false,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        0,
+        0
+      ],
+      "b": [
+        9,
+        4
+      ],
+      "c": [
+        7,
+        2
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        5,
+        5
+      ],
+      "p_skip": true,
+      "skip_zero": true,
+      "pred": [
+        0,
+        0
+      ],
+      "mv": [
+        0,
+        0
+      ],
+      "mode": 0,
+      "idx": 0
+    },
+    {
+      "name": "p16x8_top_uses_b",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        100,
+        0
+      ],
+      "b": [
+        1,
+        2
+      ],
+      "c": [
+        50,
+        0
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        3,
+        4
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        1,
+        2
+      ],
+      "mv": [
+        4,
+        6
+      ],
+      "mode": 1,
+      "idx": 0
+    },
+    {
+      "name": "p16x8_bottom_uses_a",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        7,
+        -3
+      ],
+      "b": [
+        20,
+        12
+      ],
+      "c": [
+        30,
+        2
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        -2,
+        5
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        7,
+        -3
+      ],
+      "mv": [
+        5,
+        2
+      ],
+      "mode": 1,
+      "idx": 1
+    },
+    {
+      "name": "p8x16_left_uses_a",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        6,
+        -6
+      ],
+      "b": [
+        40,
+        1
+      ],
+      "c": [
+        30,
+        8
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        4,
+        -1
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        6,
+        -6
+      ],
+      "mv": [
+        10,
+        -7
+      ],
+      "mode": 2,
+      "idx": 0
+    },
+    {
+      "name": "p8x16_right_uses_c",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        6,
+        -6
+      ],
+      "b": [
+        40,
+        1
+      ],
+      "c": [
+        9,
+        11
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        2,
+        3
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        9,
+        11
+      ],
+      "mv": [
+        11,
+        14
+      ],
+      "mode": 2,
+      "idx": 1
+    },
+    {
+      "name": "p8x16_right_c_missing_median_d",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": false,
+        "d": true
+      },
+      "a": [
+        2,
+        20
+      ],
+      "b": [
+        8,
+        4
+      ],
+      "c": [
+        0,
+        0
+      ],
+      "d": [
+        6,
+        10
+      ],
+      "mvd": [
+        1,
+        -2
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        6,
+        10
+      ],
+      "mv": [
+        7,
+        8
+      ],
+      "mode": 2,
+      "idx": 1
+    },
+    {
+      "name": "p8x8_median",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": false,
+        "d": true
+      },
+      "a": [
+        2,
+        20
+      ],
+      "b": [
+        8,
+        4
+      ],
+      "c": [
+        0,
+        0
+      ],
+      "d": [
+        6,
+        10
+      ],
+      "mvd": [
+        -3,
+        7
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        6,
+        10
+      ],
+      "mv": [
+        3,
+        17
+      ],
+      "mode": 3,
+      "idx": 2
+    },
+    {
+      "name": "sub_partition_median",
+      "avail": {
+        "a": true,
+        "b": true,
+        "c": true,
+        "d": false
+      },
+      "a": [
+        -5,
+        1
+      ],
+      "b": [
+        11,
+        9
+      ],
+      "c": [
+        3,
+        7
+      ],
+      "d": [
+        0,
+        0
+      ],
+      "mvd": [
+        2,
+        -4
+      ],
+      "p_skip": false,
+      "skip_zero": false,
+      "pred": [
+        3,
+        7
+      ],
+      "mv": [
+        5,
+        3
+      ],
+      "mode": 4,
+      "idx": 3
     }
   ],
   "luma_ref_9x9": [

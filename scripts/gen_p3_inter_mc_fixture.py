@@ -98,13 +98,32 @@ def mv_case(name: str, a: tuple[int, int] | None, b: tuple[int, int] | None, c: 
             cx = use_c[0] if use_c is not None else 0
             cy = use_c[1] if use_c is not None else 0
             pred = (median(ax, bx, cx), median(ay, by, cy))
+    mv = pred if skip else (pred[0] + mvd[0], pred[1] + mvd[1])
     return {
         "name": name,
         "avail": {"a": a is not None, "b": b is not None, "c": c is not None, "d": d is not None},
         "a": list(a or (0, 0)), "b": list(b or (0, 0)), "c": list(c or (0, 0)), "d": list(d or (0, 0)),
         "mvd": list(mvd), "p_skip": skip, "skip_zero": skip_zero,
-        "pred": list(pred), "mv": [pred[0] + mvd[0], pred[1] + mvd[1]],
+        "pred": list(pred), "mv": list(mv),
     }
+
+
+def part_case(name: str, mode: int, idx: int, a: tuple[int, int] | None, b: tuple[int, int] | None,
+              c: tuple[int, int] | None, d: tuple[int, int] | None, mvd: tuple[int, int], skip: bool = False) -> dict:
+    base = mv_case(name, a, b, c, d, mvd, skip)
+    median_pred = tuple(base["pred"])
+    if not base["skip_zero"]:
+        if mode == 1 and idx == 0 and b is not None:
+            median_pred = b
+        elif mode == 1 and idx == 1 and a is not None:
+            median_pred = a
+        elif mode == 2 and idx == 0 and a is not None:
+            median_pred = a
+        elif mode == 2 and idx == 1 and c is not None:
+            median_pred = c
+    mv = median_pred if skip else (median_pred[0] + mvd[0], median_pred[1] + mvd[1])
+    base.update({"mode": mode, "idx": idx, "pred": list(median_pred), "mv": list(mv)})
+    return base
 
 
 def main() -> int:
@@ -129,6 +148,19 @@ def main() -> int:
             mv_case("top_row_single_a", (7, -5), None, None, None, (0, 0), False),
             mv_case("skip_left_edge", None, (9, 4), (7, 2), None, (5, 5), True),
             mv_case("skip_zero_neighbor", (0, 0), (9, 4), (7, 2), None, (3, -3), True),
+            mv_case("skip_predicted_nonzero", (4, 2), (8, 6), (12, 10), None, (9, 9), True),
+        ],
+        "partition_cases": [
+            part_case("p16x16_median", 0, 0, (4, -2), (-8, 6), (12, 10), None, (1, -1)),
+            part_case("pskip_predicted_nonzero", 0, 0, (4, 2), (8, 6), (12, 10), None, (9, 9), True),
+            part_case("pskip_left_edge_zero", 0, 0, None, (9, 4), (7, 2), None, (5, 5), True),
+            part_case("p16x8_top_uses_b", 1, 0, (100, 0), (1, 2), (50, 0), None, (3, 4)),
+            part_case("p16x8_bottom_uses_a", 1, 1, (7, -3), (20, 12), (30, 2), None, (-2, 5)),
+            part_case("p8x16_left_uses_a", 2, 0, (6, -6), (40, 1), (30, 8), None, (4, -1)),
+            part_case("p8x16_right_uses_c", 2, 1, (6, -6), (40, 1), (9, 11), None, (2, 3)),
+            part_case("p8x16_right_c_missing_median_d", 2, 1, (2, 20), (8, 4), None, (6, 10), (1, -2)),
+            part_case("p8x8_median", 3, 2, (2, 20), (8, 4), None, (6, 10), (-3, 7)),
+            part_case("sub_partition_median", 4, 3, (-5, 1), (11, 9), (3, 7), None, (2, -4)),
         ],
         "luma_ref_9x9": ref,
         "luma_cases": [{"frac": [fx, fy], "sample": qpel(ref, fx, fy)} for fy in range(4) for fx in range(4)],

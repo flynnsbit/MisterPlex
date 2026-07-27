@@ -2,7 +2,8 @@
 `default_nettype none
 
 module h264_inter_pred_tb #(
-	parameter FAULT_BAD_ROUND = 0
+	parameter FAULT_BAD_ROUND = 0,
+	parameter FAULT_BAD_PART_MV = 0
 ) (
 	input  wire               avail_a,
 	input  wire               avail_b,
@@ -24,6 +25,14 @@ module h264_inter_pred_tb #(
 	output wire signed [15:0] mv_x,
 	output wire signed [15:0] mv_y,
 	output wire               skip_zero,
+
+	input  wire [2:0]         part_mode,
+	input  wire [1:0]         part_idx,
+	output wire signed [15:0] part_pred_x,
+	output wire signed [15:0] part_pred_y,
+	output wire signed [15:0] part_mv_x,
+	output wire signed [15:0] part_mv_y,
+	output wire               part_skip_zero,
 
 	input  wire [7:0]         luma_ref [0:80],
 	input  wire [1:0]         luma_frac_x,
@@ -55,6 +64,8 @@ module h264_inter_pred_tb #(
 );
 	wire [7:0] luma_good;
 	wire [7:0] chroma_good;
+	wire signed [15:0] part_pred_x_good, part_pred_y_good;
+	wire signed [15:0] part_mv_x_good, part_mv_y_good;
 
 	h264_mv_pred_16x16 u_mv (
 		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
@@ -62,6 +73,16 @@ module h264_inter_pred_tb #(
 		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
 		.mvd_x(mvd_x), .mvd_y(mvd_y), .p_skip(p_skip),
 		.pred_x(pred_x), .pred_y(pred_y), .mv_x(mv_x), .mv_y(mv_y), .skip_zero(skip_zero)
+	);
+
+	h264_mv_pred_part u_part (
+		.part_mode(part_mode), .part_idx(part_idx),
+		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
+		.mv_a_x(mv_a_x), .mv_a_y(mv_a_y), .mv_b_x(mv_b_x), .mv_b_y(mv_b_y),
+		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
+		.mvd_x(mvd_x), .mvd_y(mvd_y), .p_skip(p_skip),
+		.pred_x(part_pred_x_good), .pred_y(part_pred_y_good),
+		.mv_x(part_mv_x_good), .mv_y(part_mv_y_good), .skip_zero(part_skip_zero)
 	);
 
 	h264_luma_qpel_sample u_luma (
@@ -83,6 +104,10 @@ module h264_inter_pred_tb #(
 		.width(fetch_w), .height(fetch_h), .tap_x(fetch_x), .tap_y(fetch_y)
 	);
 
+	assign part_pred_x = FAULT_BAD_PART_MV ? (part_pred_x_good + 16'sd1) : part_pred_x_good;
+	assign part_pred_y = part_pred_y_good;
+	assign part_mv_x = FAULT_BAD_PART_MV ? (part_mv_x_good + 16'sd1) : part_mv_x_good;
+	assign part_mv_y = part_mv_y_good;
 	assign luma_sample = FAULT_BAD_ROUND ? (luma_good + 8'd1) : luma_good;
 	assign chroma_sample = FAULT_BAD_ROUND ? (chroma_good + 8'd1) : chroma_good;
 endmodule
