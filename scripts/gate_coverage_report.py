@@ -379,6 +379,42 @@ def build_report() -> list[GateReport]:
             owner="w-c2",
             exit_codes={"green": 0, "red_unprotected": 1, "refuse_no_manifest": 4},
         ),
+        GateReport(
+            id="test-suppression",
+            script="scripts/check_test_suppression.py",
+            makefile_target="test-suppression",
+            proves=(
+                "No test or gate script contains an unallowlisted suppression pattern: "
+                "env-var-gated pass-on-skip (ALLOW_MISSING_VERILATOR, "
+                "MISTERPLEX_ALLOW_LOW_MEMORY_TESTS), judgement words near success "
+                "returns, or detected mismatch/error followed by success return. "
+                "Catches the w-qp pattern: detecting overflow 117 times then return 0."
+            ),
+            does_not_prove=(
+                "Does NOT prove allowlisted entries are actually safe (only reviewed). "
+                "Does NOT prove tolerance thresholds are correct. Does NOT prove "
+                "test generators reach their failure regions. Regex-based, not AST-based — "
+                "can have false positives (handled via allowlist) and may miss obfuscated "
+                "suppression patterns. Does NOT verify that tests check the RIGHT thing, "
+                "only that they do not suppress what they find."
+            ),
+            red_proof_method=(
+                "Synthetic test with w-qp's exact pattern: detect 18-bit overflow N times, "
+                "comment 'These are theoretical', return 0. Gate catches both the "
+                "mismatch-near-success (HIGH) and the judgement word (MEDIUM). "
+                "Missing scan dir → rc=4 REFUSE."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note=(
+                "Pure Python, no external tools. Currently REJECTS (rc=1) with 17 "
+                "active findings: 16 ALLOW_MISSING_VERILATOR overrides + 1 "
+                "MISTERPLEX_ALLOW_LOW_MEMORY_TESTS override. These are real "
+                "suppression patterns in the codebase, not false positives."
+            ),
+            owner="w-c2",
+            exit_codes={"green": 0, "red_suppression": 1, "refuse_missing": 4},
+        ),
     ]
     return gates
 

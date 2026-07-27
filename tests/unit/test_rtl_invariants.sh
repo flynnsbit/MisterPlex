@@ -320,3 +320,69 @@ else
   fi
 fi
 echo "OK refuse: CDC crossing gate refuses on missing manifest (rc=4)"
+
+# ─── Test suppression gate red proofs ────────────────────────────────────────
+echo "--- Test suppression gate: red-check (w-qp pattern) ---"
+SUPP_FAULT_DIR="$FAULT_DIR/suppression_faults"
+mkdir -p "$SUPP_FAULT_DIR"
+
+cat > "$SUPP_FAULT_DIR/fake_suppressor.py" <<'PYEOF'
+#!/usr/bin/env python3
+"""Synthetic w-qp pattern: detect overflow, judge it theoretical, return 0."""
+def check():
+    overflow_count = 0
+    for qp in range(52):
+        for coeff in range(-2048, 2049):
+            result = coeff * (1 << (qp // 6))
+            if abs(result) > 131071:  # 18-bit overflow
+                overflow_count += 1
+    if overflow_count > 0:
+        # "These are theoretical — real coefficients at high QP are small"
+        return 0
+    return 0
+if __name__ == "__main__":
+    raise SystemExit(check())
+PYEOF
+
+if python3 "$ROOT/scripts/check_test_suppression.py" --scan-dirs "$SUPP_FAULT_DIR" 2>"$SUPP_FAULT_DIR/red.err"; then
+  echo "FAIL: suppression gate should reject w-qp pattern" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]]; then
+    echo "FAIL: suppression gate red-check returned rc=$rc, want 1" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: suppression gate catches w-qp overflow-suppress pattern"
+
+# Green: clean test
+cat > "$SUPP_FAULT_DIR/clean_test.py" <<'PYEOF'
+#!/usr/bin/env python3
+def check():
+    for i in range(100):
+        if i * 2 != i + i:
+            return 1
+    return 0
+if __name__ == "__main__":
+    raise SystemExit(check())
+PYEOF
+rm "$SUPP_FAULT_DIR/fake_suppressor.py"
+python3 "$ROOT/scripts/check_test_suppression.py" --scan-dirs "$SUPP_FAULT_DIR" 2>"$SUPP_FAULT_DIR/green.err" || {
+  echo "FAIL: suppression gate should pass on clean test" >&2
+  exit 1
+}
+echo "OK green: suppression gate passes on clean test"
+
+# Refuse: missing scan dir
+if python3 "$ROOT/scripts/check_test_suppression.py" --scan-dirs /nonexistent_suppression_dir_12345 2>"$SUPP_FAULT_DIR/refuse.err"; then
+  echo "FAIL: suppression gate should refuse on missing dir" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 4 ]]; then
+    echo "FAIL: suppression gate refuse returned rc=$rc, want 4" >&2
+    exit 1
+  fi
+fi
+echo "OK refuse: suppression gate refuses on missing scan dir (rc=4)"

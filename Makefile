@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion cdc-crossings pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion cdc-crossings test-suppression pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -151,6 +151,9 @@ timing-exclusion:
 
 cdc-crossings:
 	$(ROOT)/scripts/check_cdc_crossings.py --check-stale
+
+test-suppression:
+	$(ROOT)/scripts/check_test_suppression.py
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 	$(ROOT)/tests/hw/test_pms_baseline_profile.sh

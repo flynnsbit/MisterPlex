@@ -1,0 +1,36 @@
+{
+  "_comment": "Allowlist for check_test_suppression.py. Each entry must have a written justification.",
+  "_updated": "2026-07-27",
+  "entries": [
+    {
+      "file": "scripts/check_test_suppression.py",
+      "line": 11,
+      "pattern": "judgement_near_success",
+      "justification": "Self-reference: the gate's own docstring lists the judgement words it scans for. Not a suppression."
+    },
+    {
+      "file": "scripts/check_test_suppression.py",
+      "line": 12,
+      "pattern": "judgement_near_success",
+      "justification": "Self-reference: the gate's own docstring lists the judgement words it scans for. Not a suppression."
+    },
+    {
+      "file": "scripts/check_test_suppression.py",
+      "line": 13,
+      "pattern": "judgement_near_success",
+      "justification": "Self-reference: the gate's own docstring lists the judgement words it scans for. Not a suppression."
+    },
+    {
+      "file": "tests/unit/test_sdram_mailbox.cpp",
+      "line": 48,
+      "pattern": "mismatch_near_success",
+      "justification": "False positive: 'wrong' appears in a require() assertion error message. The test DOES fail on mismatch — require() aborts with rc!=0."
+    },
+    {
+      "file": "tests/unit/test_sdram_memtest_sim.cpp",
+      "line": 472,
+      "pattern": "mismatch_near_success",
+      "justification": "False positive: 'corrupt' appears in the OK summary line describing the FAIL sub-test that already ran and verified corruption was detected. The test does fail on real corruption."
+    }
+  ]
+}
