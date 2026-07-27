@@ -487,6 +487,19 @@ def check_yuv_ddr_writer_contract() -> None:
         "writer. Keep any legacy config key as an ignored warning and leave production fixed "
         "to yuv420p.",
     )
+    compact_media = norm(media)
+    check(
+        "renderIdleYuv420p" in media
+        and "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,ddrBank_)" in compact_media,
+        "MediaPlayer::paintIdle must send the rendered logo/screensaver through the YUV420p "
+        "DDR path. A hard-coded black I420 payload clears stale video but makes the selectable "
+        "FPGA idle logo/screensaver disappear under PRESENT=fpga.",
+    )
+    check(
+        "memset(yuv.data(),kYuv420BlackY,yBytes)" not in compact_media,
+        "MediaPlayer::paintIdle still constructs an all-black DDR idle payload. That is only "
+        "valid for IDLE_SCREEN=black; logo/screensaver modes must preserve the idle renderer.",
+    )
     print("PASS ARM DDR writer uses product yuv420p frame-store path only")
 
 
