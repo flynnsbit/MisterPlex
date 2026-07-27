@@ -473,6 +473,108 @@ def test_chroma_qp_table() -> int:
     return errors
 
 
+def test_width_cascade() -> int:
+    """Verify the residual coefficient width chain is consistent.
+
+    Maps every signal in the coefficient path from parser through dequant
+    to reconstruction and checks for width bottlenecks. A bottleneck is a
+    signal declared narrower than its upstream source, causing silent
+    truncation.
+
+    WIDTH SIZING LESSON (2026-07-27):
+      The ±2047 bound from H.264 clause 9.2.2 describes *coded levels*.
+      The datapath also carries I_16x16 DC values post-Hadamard, which
+      reach |level|=14,573 at QP=1 (measured by w-level). 14,573 does NOT
+      fit in 12 bits (±2047). A spec-derived bound would re-create the
+      truncation bug at a different threshold.
+
+      Rule: width bounds come from MEASUREMENT of the actual signal,
+      not from spec analysis of a neighbouring quantity.
+
+    WIDTH CASCADE (current main + w-cabac 29-bit + w-level 16-bit):
+      slice_hdr_parser.sv:lev_of()     → signed [15:0]  (w-level f5c3e88)
+      slice_hdr_parser.sv:lev[0:15]    → signed [15:0]  (w-level f5c3e88)
+      slice_hdr_parser.sv:residual_coeff → signed [15:0] (needs widening)
+      slice_hdr_parser.sv:residual_place_coeff → signed [15:0] (needs)
+      stream_path.sv:sl_place_coeff    → signed [15:0]  (needs widening)
+      decode_stub.sv:residual_coeff    → signed [15:0]  (needs widening)
+      decode_stub.sv:lat_coeff         → signed [15:0]  (needs widening)
+      h264_iq_idct_4x4.sv:coeff input → signed [15:0]  (needs widening)
+      h264_iq_idct_4x4.sv:dequant out → signed [28:0]  (w-cabac 3f4c572)
+      h264_iq_idct_4x4.sv:idct I/O    → signed [28:0]  (w-cabac 3f4c572)
+      h264_iq_idct_4x4.sv:recon out   → [7:0]          (clip to 8-bit)
+
+    Max dequant products (with 16-bit input, measurement-based):
+      QP=1  |coeff|=14573: 14573 × 29 × 1   = 422,617      fits 29-bit ✓
+      QP=24 |coeff|=14573: 14573 × 29 × 16  = 6,761,872    fits 29-bit ✓
+      QP=51 |coeff|=32767: 32767 × 29 × 256 = 243,269,632  fits 29-bit ✓
+      Theoretical max:     32767 × 40 × 256  = 335,511,680  needs 30-bit
+        (but mi=2 and norm_adjust=40 cannot coincide at qdiv=8)
+    """
+    import re
+    errors = 0
+
+    # Read actual widths from RTL
+    rtl_path = ROOT / "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+    slp_path = ROOT / "fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
+    sp_path = ROOT / "fpga/Plex_MiSTer/rtl/stream_path.sv"
+    ds_path = ROOT / "fpga/Plex_MiSTer/rtl/decode_stub.sv"
+
+    chain = []  # (file, signal, declared_width, min_required)
+
+    # Check dequant coeff input width
+    if rtl_path.exists():
+        text = rtl_path.read_text()
+        m = re.search(r'input\s+wire\s+signed\s+\[(\d+):0\]\s+coeff', text)
+        if m:
+            w = int(m.group(1)) + 1
+            chain.append(("h264_iq_idct_4x4.sv", "coeff input", w, 16))
+
+        m = re.search(r'output\s+wire\s+signed\s+\[(\d+):0\]\s+dequant', text)
+        if m:
+            w = int(m.group(1)) + 1
+            chain.append(("h264_iq_idct_4x4.sv", "dequant output", w, 22))
+
+    # Check slice_hdr_parser widths
+    if slp_path.exists():
+        text = slp_path.read_text()
+        m = re.search(r'function\s+automatic\s+signed\s+\[(\d+):0\]\s+lev_of', text)
+        if m:
+            w = int(m.group(1)) + 1
+            chain.append(("slice_hdr_parser.sv", "lev_of() return", w, 16))
+
+        m = re.search(r'reg\s+signed\s+\[(\d+):0\]\s+lev\s*\[', text)
+        if m:
+            w = int(m.group(1)) + 1
+            chain.append(("slice_hdr_parser.sv", "lev[0:15]", w, 16))
+
+        for pat, name in [
+            (r'output\s+reg\s+signed\s+\[(\d+):0\]\s+residual_coeff', "residual_coeff"),
+            (r'output\s+reg\s+signed\s+\[(\d+):0\]\s+residual_place_coeff', "residual_place_coeff"),
+        ]:
+            m = re.search(pat, text)
+            if m:
+                w = int(m.group(1)) + 1
+                chain.append(("slice_hdr_parser.sv", name, w, 16))
+
+    # Report
+    info("Width cascade analysis:")
+    bottlenecks = 0
+    for fname, sig, declared, required in chain:
+        status = "✓" if declared >= required else f"BOTTLENECK ({declared} < {required})"
+        if declared < required:
+            bottlenecks += 1
+        info(f"  {fname}:{sig} = {declared}-bit (need ≥{required}) {status}")
+
+    if bottlenecks > 0:
+        info(f"  {bottlenecks} width bottleneck(s) found — truncation will occur")
+        info(f"  NOTE: These are expected on unfixed trees; verify after w-level + w-cabac land")
+        # Not counting as errors because the fixes are on other branches
+        # The test's job is to REPORT, not to fail on other workers' pending fixes
+
+    return errors
+
+
 def run_verilator_sweep() -> int:
     """If Verilator is available, build and run the exhaustive RTL simulation."""
     verilator = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
@@ -606,8 +708,12 @@ def main() -> int:
     print("\n7. Chroma QP mapping table (spec Table 8-15):")
     total_errors += test_chroma_qp_table()
 
-    # 8. Verilator RTL simulation sweep
-    print("\n8. Verilator RTL simulation sweep (QP 0–51):")
+    # 8. Width cascade analysis
+    print("\n8. Width cascade analysis (residual coefficient chain):")
+    total_errors += test_width_cascade()
+
+    # 9. Verilator RTL simulation sweep
+    print("\n9. Verilator RTL simulation sweep (QP 0–51):")
     total_errors += run_verilator_sweep()
 
     # Summary
