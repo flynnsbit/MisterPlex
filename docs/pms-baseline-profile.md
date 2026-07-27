@@ -1,6 +1,10 @@
-# Prepared PMS profile for MiSTerPlex Baseline transcodes
+# PMS profile for MiSTerPlex Baseline transcodes
 
-Status: **prepared only**. Do not install without explicit user approval; this changes the user's Plex Media Server profile set and requires a PMS restart.
+Status: **installed and load-bearing on the lab PMS**. This file is now the
+mechanism that makes PMS emit the Baseline/CAVLC stream the FPGA decoder is
+scoped for. A Plex container rebuild, image upgrade, or config restore may
+remove the profile; the symptom is delivery reverting to High/CABAC with
+B-slices.
 
 ## Why this exists
 
@@ -16,7 +20,7 @@ Client-only requests are not enough on this PMS. The sweep in `build/misterplex-
 
 The prepared server-side profile is `assets/plex-profiles/MiSTerPlex.xml`. It constrains the HTTP streaming target to H.264/AAC in MPEG-TS and adds x264 flags for Baseline/CAVLC, no B-slices, one reference frame, weighted prediction off, no 8x8 DCT, no sub-macroblock partitions, and a bounded GOP.
 
-## Current shipped profile match
+## Client profile match
 
 For universal transcode playback, `misterplexd` sends these client identity headers from `arm/misterplexd/plex_resolve.cpp`:
 
@@ -28,7 +32,7 @@ X-Plex-Platform: Chrome
 X-Plex-Platform-Version: 120.0
 X-Plex-Device: Linux
 X-Plex-Device-Name: Chrome
-X-Plex-Client-Profile-Name: Generic
+X-Plex-Client-Profile-Name: MiSTerPlex
 X-Plex-Model: bundled
 X-Plex-Provides: player
 ```
@@ -40,17 +44,21 @@ The PMS container's shipped profile resources show:
 /usr/lib/plexmediaserver/Resources/Profiles/Chrome.xml: <Client name="Chrome" redirect="Web" />
 ```
 
-So the universal transcode path currently selects the shipped **Generic** profile by name. Generic is empty, while Chrome redirects to Web. To use the prepared profile without overriding Generic globally, MiSTerPlex should change its transcode identity to:
+Previously, the universal transcode path selected the shipped **Generic**
+profile by name. Generic is empty, while Chrome redirects to Web. MiSTerPlex now
+uses its own profile name:
 
 ```text
 X-Plex-Client-Profile-Name: MiSTerPlex
 ```
 
-That client-header change is ours. The alternative, copying this file as `Generic.xml`, is not recommended because it could affect other PMS clients that also select Generic.
+The header was tested with the XML absent: PMS fell back cleanly and streaming
+continued, but delivered High/CABAC. Copying this file as `Generic.xml` is not
+recommended because it could affect other PMS clients that also select Generic.
 
 ## Exact path on this PMS
 
-The Plex container is named `plex`, and Docker maps `/home/shawn/plex/config` to `/config`. Therefore the prepared profile would be installed at:
+The Plex container is named `plex`, and Docker maps `/home/shawn/plex/config` to `/config`. The profile is installed at:
 
 ```text
 /home/shawn/plex/config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml
@@ -62,17 +70,26 @@ Inside the container, the same file is:
 /config/Library/Application Support/Plex Media Server/Profiles/MiSTerPlex.xml
 ```
 
-The `Profiles` directory is currently absent in this install, so installation would first create it, then copy `assets/plex-profiles/MiSTerPlex.xml` there.
+The `Profiles` directory was absent before the experiment; it now exists and
+contains `MiSTerPlex.xml`.
 
-## Activation and disruption
+## Restore / activation and disruption
 
-Safest activation is a Plex Media Server restart after copying the XML, for this install:
+If a Plex upgrade or container rebuild removes the file, restore it by copying
+`assets/plex-profiles/MiSTerPlex.xml` back to the path above, then restart PMS:
 
 ```bash
 docker restart plex
 ```
 
-Expected disruption: active PMS streams disconnect and the server is unavailable while the container restarts. Library data is not modified.
+Expected disruption: active PMS streams disconnect and the server is unavailable
+for a few seconds while the container restarts. Library data is not modified.
+
+The absence symptom is specific: delivered stream probes return
+`profile_idc=100`, `entropy_cabac=1`, B-slices present, and
+`max_num_ref_frames=4` instead of the expected Baseline values below. The daemon
+also logs a specific High/CABAC diagnostic naming the PMS profile as the likely
+cause.
 
 ## Rollback
 
@@ -84,9 +101,9 @@ rm "/home/shawn/plex/config/Library/Application Support/Plex Media Server/Profil
 
 If MiSTerPlex has also been changed to send `X-Plex-Client-Profile-Name: MiSTerPlex`, client-side rollback is to restore `Generic` or remove the custom profile-name override.
 
-## Pre-committed expected delivered stream if the server-side profile works
+## Delivered stream with the server-side profile installed
 
-The next experiment must judge the delivered bitstream, not PMS XML. Success means the extracted Annex-B stream reports:
+The profile was measured on the delivered Annex-B stream, not PMS XML:
 
 ```text
 profile_idc=66
@@ -94,9 +111,14 @@ level_idc=30
 PPS entropy_cabac=0
 B-slices=0
 max_num_ref_frames=1
+vcl=300 idr=6 i=6 p=294 b=0 over a 12 s sample
+coded=624x480 display=618x480 crop_lrtb=0,3,0,0 crop_unit=2x2
 ```
 
-Geometry may still remain coded `624x480` with right crop to display `618x480`; the profile is intended to constrain codec tools, not force padding to 640.
+The GOP flags are honored: `keyint=50:min-keyint=25:scenecut=0` produced
+exactly 6 IDR frames across 300 VCL slices, i.e. one IDR every 50 frames at
+25 fps. Geometry remains coded `624x480` with right crop to display `618x480`;
+the profile constrains codec tools, not padding to 640.
 
 ## Direct Play / Direct Stream check for the current test item
 

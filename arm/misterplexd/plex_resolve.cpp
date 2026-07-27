@@ -38,7 +38,7 @@ std::string httpGet(const std::string& url, int timeoutSec = 15,
         << " -H 'X-Plex-Platform-Version: 120.0'"
         << " -H 'X-Plex-Device: Linux'"
         << " -H 'X-Plex-Device-Name: Chrome'"
-        << " -H 'X-Plex-Client-Profile-Name: Chrome'"
+        << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
         << " -H 'X-Plex-Model: bundled'"
         << " -H 'X-Plex-Provides: player'";
     if (!extraHeaders.empty())
@@ -331,7 +331,10 @@ std::string plexClientProfileExtra(const WeakLadder& weak) {
     parseResolution(weak.videoResolution, w, h);
     std::ostringstream o;
     o << "add-transcode-target(type=videoProfile&context=streaming&protocol=http"
-      << "&container=mp4&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
+      // PMS universal/start.mp4 is the HTTP entrypoint, but its working
+      // streaming transcode target is TS; advertising mp4 here can make PMS
+      // return an empty video/mp4 response.
+      << "&container=mpegts&videoCodec=" << weak.videoCodec << "&audioCodec=" << weak.audioCodec
       << "&replace=true)+"
       << "add-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=http"
       << "&audioCodec=" << weak.audioCodec << "&replace=true)+"
@@ -418,10 +421,15 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
       << "X-Plex-Device-Name: Chrome\r\n"
       << "X-Plex-Client-Profile-Name: " << weak.clientProfileName << "\r\n"
       << "X-Plex-Model: bundled\r\n"
-      << "X-Plex-Provides: player\r\n"
-      << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
-      << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n"
-      << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
+      << "X-Plex-Provides: player\r\n";
+    // With the server-side MiSTerPlex.xml profile installed, Profile-Extra is
+    // counterproductive: it overrides the XML transcode target and drops the
+    // VideoEncodeFlags that force Baseline/CAVLC/ref=1.
+    if (weak.clientProfileName != "MiSTerPlex") {
+        o << "X-Plex-Client-Capabilities: " << plexClientCapabilities(weak) << "\r\n"
+          << "X-Plex-Client-Profile-Extra: " << plexClientProfileExtra(weak) << "\r\n";
+    }
+    o << "X-Plex-Session-Identifier: " << sessionId << "\r\n";
     if (!token.empty())
         o << "X-Plex-Token: " << token << "\r\n";
     return o.str();
@@ -524,13 +532,16 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     if (!token.empty())
         decisionUrl << "&X-Plex-Token=" << urlEncodeQuery(token);
 
-    std::ostringstream sessHdr;
-    sessHdr << curlHeaderArgs({
+    std::vector<std::pair<std::string, std::string>> decisionHeaders = {
         {"X-Plex-Session-Identifier", sessionId},
         {"X-Plex-Client-Profile-Name", weak.clientProfileName},
-        {"X-Plex-Client-Capabilities", plexClientCapabilities(weak)},
-        {"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)},
-    });
+    };
+    if (weak.clientProfileName != "MiSTerPlex") {
+        decisionHeaders.push_back({"X-Plex-Client-Capabilities", plexClientCapabilities(weak)});
+        decisionHeaders.push_back({"X-Plex-Client-Profile-Extra", plexClientProfileExtra(weak)});
+    }
+    std::ostringstream sessHdr;
+    sessHdr << curlHeaderArgs(decisionHeaders);
     const std::string body = httpGet(decisionUrl.str(), 20, sessHdr.str());
     if (body.empty())
         return false;
