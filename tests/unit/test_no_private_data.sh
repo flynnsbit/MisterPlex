@@ -36,9 +36,25 @@ else
 fi
 
 # Generated packages are not git-tracked, but they are exactly what users
-# download. Scan both the staging tree and extracted release tarballs when
-# present so private lab values cannot leak through copied/generated files.
-add_tree "dist/stage-misterplex"
+# download, so they are scanned too.
+#
+# Scope matters here: dist/ accumulates tarballs from every past build, and
+# those old artifacts can contain values that were legitimately removed from
+# the source since. Scanning them unconditionally made this test fail forever
+# on any machine holding a stale tarball, which is a property of local
+# filesystem history rather than of the code under test. Only artifacts built
+# from the current tree are scanned by default; SCAN_ARTIFACTS=1 forces every
+# artifact to be scanned and is what `make package` uses, so whatever actually
+# ships is always covered.
+version="${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+scan_all="${SCAN_ARTIFACTS:-0}"
+
+artifact_is_current() {
+  [[ "$scan_all" == "1" ]] && return 0
+  local name="$1"
+  [[ "$name" == "misterplex-$version" || "$name" == "misterplex-${version%-dirty}" ]]
+}
+
 scan_root="$ROOT/build/private-data-scan"
 if compgen -G "dist/misterplex-*.tar.gz" >/dev/null; then
   rm -rf "$scan_root"
@@ -46,10 +62,23 @@ if compgen -G "dist/misterplex-*.tar.gz" >/dev/null; then
   for tarball in dist/misterplex-*.tar.gz; do
     [[ -f "$tarball" ]] || continue
     safe_name="$(basename "$tarball" .tar.gz)"
+    if ! artifact_is_current "$safe_name"; then
+      echo "test_no_private_data: skipping stale artifact $tarball (built from another revision, not $version); SCAN_ARTIFACTS=1 to include it"
+      continue
+    fi
     mkdir -p "$scan_root/$safe_name"
     tar -xzf "$tarball" -C "$scan_root/$safe_name"
     add_tree "$scan_root/$safe_name"
+    scanned_artifact=1
   done
+fi
+
+# package_release.sh rebuilds the staging tree immediately before tarring it,
+# so it is current exactly when a current-version tarball is present.
+if [[ "$scan_all" == "1" || "${scanned_artifact:-0}" == "1" ]]; then
+  add_tree "dist/stage-misterplex"
+elif [[ -d "dist/stage-misterplex" ]]; then
+  echo "test_no_private_data: skipping stale dist/stage-misterplex (no $version tarball to date it against); SCAN_ARTIFACTS=1 to include it"
 fi
 
 files=()
