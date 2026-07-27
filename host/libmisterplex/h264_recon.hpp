@@ -4,6 +4,7 @@
 #include "libmisterplex/h264_slice_walk.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -21,6 +22,36 @@ struct ReconResult {
     std::vector<uint8_t> y;  // width*height
     std::vector<uint8_t> u;  // (w/2)*(h/2)
     std::vector<uint8_t> v;
+};
+
+struct Luma4x4Trace {
+    int block = 0;       // decode order, 0..15
+    int x = 0;           // macroblock-local pixel x
+    int y = 0;           // macroblock-local pixel y
+    int pred_mode = -1;  // H.264 Intra4x4 mode, or Intra16x16 mode for I16 MBs
+    int total_coeff = 0;
+    std::array<uint8_t, 16> pred{};
+    std::array<int16_t, 16> dequant{};
+    std::array<int16_t, 16> idct{};
+    std::array<uint8_t, 16> recon{};
+};
+
+struct LumaMbTrace {
+    bool valid = false;
+    int mb = 0;
+    int mb_x = 0;
+    int mb_y = 0;
+    int mb_type = 0;
+    int qp = 0;
+    int pred_mode = -1;
+    std::array<uint8_t, 256> pred{};
+    std::array<uint8_t, 256> recon{};
+    std::array<Luma4x4Trace, 16> blocks{};
+};
+
+struct ReconTrace {
+    int target_mb = 0;
+    LumaMbTrace mb;
 };
 
 namespace detail_r {
@@ -80,6 +111,7 @@ inline void idct4x4_add(int16_t blk[4][4], uint8_t* dst, int stride) {
         t[i][2] = z1 - z2;
         t[i][3] = z0 - z3;
     }
+
     for (int j = 0; j < 4; ++j) {
         int z0 = t[0][j] + t[2][j];
         int z1 = t[0][j] - t[2][j];
@@ -89,6 +121,37 @@ inline void idct4x4_add(int16_t blk[4][4], uint8_t* dst, int stride) {
         dst[1 * stride + j] = static_cast<uint8_t>(clip8(dst[1 * stride + j] + ((z1 + z2) >> 6)));
         dst[2 * stride + j] = static_cast<uint8_t>(clip8(dst[2 * stride + j] + ((z1 - z2) >> 6)));
         dst[3 * stride + j] = static_cast<uint8_t>(clip8(dst[3 * stride + j] + ((z0 - z3) >> 6)));
+    }
+}
+
+// Same inverse transform as idct4x4_add, but returns the signed residual samples
+// before they are added to prediction. This is the per-4x4 RTL golden payload.
+inline void idct4x4_residual(const int16_t blk[4][4], int16_t residual[4][4]) {
+    int b[4][4];
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            b[i][j] = blk[i][j];
+    b[0][0] += 32;
+    int t[4][4];
+    for (int i = 0; i < 4; ++i) {
+        int z0 = b[i][0] + b[i][2];
+        int z1 = b[i][0] - b[i][2];
+        int z2 = (b[i][1] >> 1) - b[i][3];
+        int z3 = b[i][1] + (b[i][3] >> 1);
+        t[i][0] = z0 + z3;
+        t[i][1] = z1 + z2;
+        t[i][2] = z1 - z2;
+        t[i][3] = z0 - z3;
+    }
+    for (int j = 0; j < 4; ++j) {
+        int z0 = t[0][j] + t[2][j];
+        int z1 = t[0][j] - t[2][j];
+        int z2 = (t[1][j] >> 1) - t[3][j];
+        int z3 = t[1][j] + (t[3][j] >> 1);
+        residual[0][j] = static_cast<int16_t>((z0 + z3) >> 6);
+        residual[1][j] = static_cast<int16_t>((z1 + z2) >> 6);
+        residual[2][j] = static_cast<int16_t>((z1 - z2) >> 6);
+        residual[3][j] = static_cast<int16_t>((z0 - z3) >> 6);
     }
 }
 
@@ -414,10 +477,13 @@ inline void invChromaDc2x2(const int16_t coeff[4], int qp, int16_t dc[2][2]) {
 
 } // namespace detail_r
 
-// Reconstruct full I-slice of first IDR/I NAL into YUV420 planar.
-inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
+// Reconstruct full I-slice of first IDR/I NAL into YUV420 planar. When trace is
+// non-null, captures stable luma prediction/residual/recon data for one MB.
+inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trace = nullptr) {
     using namespace detail_r;
     ReconResult out;
+    if (trace)
+        trace->mb = LumaMbTrace{};
     auto chain = parseAnnexBChain(annexb, n);
     if (!chain.sps.valid || !chain.pps.valid || !chain.slice.valid) {
         // Distinguish CABAC High-profile (PMS default ladder) from corrupt NALs.
@@ -662,6 +728,47 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
             const int baseY = mby * 16;
             const bool hasLeft = mbx > 0;
             const bool hasAbove = mby > 0;
+            const bool traceMb = trace && (mb == trace->target_mb);
+            if (traceMb) {
+                trace->mb.valid = true;
+                trace->mb.mb = mb;
+                trace->mb.mb_x = mbx;
+                trace->mb.mb_y = mby;
+                trace->mb.mb_type = static_cast<int>(mt);
+                trace->mb.qp = qp;
+            }
+            auto finishTraceMb = [&]() {
+                if (!traceMb)
+                    return;
+                for (int yy = 0; yy < 16; ++yy)
+                    for (int xx = 0; xx < 16; ++xx)
+                        trace->mb.recon[static_cast<size_t>(yy * 16 + xx)] =
+                            yAt(baseX + xx, baseY + yy);
+            };
+            auto traceBlock = [&](int block, int lx, int ly, int predMode, int totalCoeff,
+                                  const uint8_t pred[16], const int16_t blkq[4][4]) {
+                if (!traceMb)
+                    return;
+                Luma4x4Trace& tb = trace->mb.blocks[static_cast<size_t>(block)];
+                tb.block = block;
+                tb.x = lx * 4;
+                tb.y = ly * 4;
+                tb.pred_mode = predMode;
+                tb.total_coeff = totalCoeff;
+                int16_t idct[4][4];
+                idct4x4_residual(blkq, idct);
+                for (int yy = 0; yy < 4; ++yy) {
+                    for (int xx = 0; xx < 4; ++xx) {
+                        const size_t k = static_cast<size_t>(yy * 4 + xx);
+                        tb.pred[k] = pred[k];
+                        tb.dequant[k] = blkq[yy][xx];
+                        tb.idct[k] = idct[yy][xx];
+                        tb.recon[k] = yAt(baseX + lx * 4 + xx, baseY + ly * 4 + yy);
+                        trace->mb.pred[static_cast<size_t>((ly * 4 + yy) * 16 + lx * 4 + xx)] =
+                            pred[k];
+                    }
+                }
+            };
 
             if (mt == 25) {
                 while (br.ok && (br.bit % 8) != 0)
@@ -675,6 +782,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                 for (int ly = 0; ly < 4; ++ly)
                     for (int lx = 0; lx < 4; ++lx)
                         tcsetL(mbx, mby, lx, ly, 16);
+                finishTraceMb();
                 out.mb_decoded++;
                 continue;
             }
@@ -719,6 +827,10 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                         qp = 0;
                     if (qp > 51)
                         qp = 51;
+                }
+                if (traceMb) {
+                    trace->mb.qp = qp;
+                    trace->mb.pred_mode = -1; // per-4x4 modes live in blocks[]
                 }
 
                 // Predict + residual each 4x4
@@ -769,6 +881,8 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                             for (int xx = 0; xx < 4; ++xx)
                                 setY(x0 + xx, y0 + yy, pred[yy * 4 + xx]);
 
+                        int16_t blkq[4][4]{};
+                        int totalCoeff = 0;
                         if ((cbp_l >> i8) & 1) {
                             int* nA = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
                                                : tcatL(mbx - 1, mby, 3, ly);
@@ -782,7 +896,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                                 return out;
                             }
                             tcsetL(mbx, mby, lx, ly, r.total_coeff);
-                            int16_t blkq[4][4];
+                            totalCoeff = r.total_coeff;
                             dequant4x4(r.coeff, 16, qp, blkq);
                             uint8_t tmp[16];
                             for (int yy = 0; yy < 4; ++yy)
@@ -795,6 +909,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                         } else {
                             tcsetL(mbx, mby, lx, ly, 0);
                         }
+                        traceBlock(blk, lx, ly, useMode, totalCoeff, pred, blkq);
                     }
                 }
 
@@ -892,6 +1007,8 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                     qp = 0;
                 if (qp > 51)
                     qp = 51;
+                if (traceMb)
+                    trace->mb.qp = qp;
 
                 uint8_t above[16], left[16], tl = 128;
                 for (int t = 0; t < 16; ++t) {
@@ -911,6 +1028,13 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                 else
                     predI16_DC(mbpred, 16, above, left, hasAbove, hasLeft);
 
+                if (traceMb) {
+                    trace->mb.pred_mode = predMode;
+                    for (int yy = 0; yy < 16; ++yy)
+                        for (int xx = 0; xx < 16; ++xx)
+                            trace->mb.pred[static_cast<size_t>(yy * 16 + xx)] =
+                                mbpred[yy * 16 + xx];
+                }
                 for (int yy = 0; yy < 16; ++yy)
                     for (int xx = 0; xx < 16; ++xx)
                         setY(baseX + xx, baseY + yy, mbpred[yy * 16 + xx]);
@@ -931,6 +1055,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                         int lx, ly;
                         walk_detail::blkXY(i8, i4, lx, ly);
                         int16_t blkq[4][4]{};
+                        int totalCoeff = (dc[ly][lx] != 0) ? 1 : 0;
                         if (cbp_l) {
                             int* a = (lx > 0) ? tcatL(mbx, mby, lx - 1, ly)
                                               : tcatL(mbx - 1, mby, 3, ly);
@@ -943,6 +1068,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                                 return out;
                             }
                             tcsetL(mbx, mby, lx, ly, rr.total_coeff);
+                            totalCoeff += rr.total_coeff;
                             dequant4x4(rr.coeff, 15, qp, blkq);
                         } else {
                             tcsetL(mbx, mby, lx, ly, 0);
@@ -975,6 +1101,12 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                             for (int xx = 0; xx < 4; ++xx)
                                 setY(x0 + xx, y0 + yy, tmp[yy * 4 + xx]);
                         i4mode[static_cast<size_t>(((mby * mbW + mbx) * 16) + ly * 4 + lx)] = 2;
+                        uint8_t predBlk[16];
+                        for (int yy = 0; yy < 4; ++yy)
+                            for (int xx = 0; xx < 4; ++xx)
+                                predBlk[yy * 4 + xx] =
+                                    mbpred[(ly * 4 + yy) * 16 + lx * 4 + xx];
+                        traceBlock(i8 * 4 + i4, lx, ly, predMode, totalCoeff, predBlk, blkq);
                     }
 
                 // Chroma for I16
@@ -1056,6 +1188,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n) {
                         }
                 }
             }
+            finishTraceMb();
             out.mb_decoded++;
         }
     }
