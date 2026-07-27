@@ -142,6 +142,7 @@ enum class RawVideoFormat {
     Rgb24,
     Rgb565Le,
     Bgra32,
+    Yuv420p,
 };
 
 inline const char* ffmpegPixFmt(RawVideoFormat f) {
@@ -150,21 +151,40 @@ inline const char* ffmpegPixFmt(RawVideoFormat f) {
         return "rgb565le";
     case RawVideoFormat::Bgra32:
         return "bgra";
+    case RawVideoFormat::Yuv420p:
+        return "yuv420p";
     case RawVideoFormat::Rgb24:
     default:
         return "rgb24";
     }
 }
 
-inline size_t rawVideoBytesPerPixel(RawVideoFormat f) {
+inline size_t rawVideoFrameBytes(RawVideoFormat f, int width, int height) {
+    const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+    switch (f) {
+    case RawVideoFormat::Rgb565Le:
+        return pixels * 2;
+    case RawVideoFormat::Bgra32:
+        return pixels * 4;
+    case RawVideoFormat::Yuv420p:
+        return yuv420pFrameBytes(width, height);
+    case RawVideoFormat::Rgb24:
+    default:
+        return pixels * 3;
+    }
+}
+
+inline size_t rawVideoPackedBytesPerPixel(RawVideoFormat f) {
     switch (f) {
     case RawVideoFormat::Rgb565Le:
         return 2;
     case RawVideoFormat::Bgra32:
         return 4;
     case RawVideoFormat::Rgb24:
-    default:
         return 3;
+    case RawVideoFormat::Yuv420p:
+    default:
+        return 0;
     }
 }
 
@@ -963,7 +983,8 @@ void MediaPlayer::streamPump(int sfd) {
             bool ok = false;
             if (useDdrF1_) {
                 ensureRgb565Le();
-                ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
+                if (fpga_.setDdrFrameSize(kFsW, kFsH))
+                    ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
                 ddrBank_ ^= 1;
                 if (!ok) {
                     useDdrF1_ = false;
@@ -1683,14 +1704,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     } else {
-        // Full FFmpeg RGB path (STREAM=0 default; STREAM=1 with PRESENT=both/fb0; skip off).
-        // STREAM=0 + PRESENT=fpga: every RGB frame → F1 (DDR preferred) — not IDR recon.
+        // Full FFmpeg rawvideo path (STREAM=0 default; STREAM=1 with PRESENT=both/fb0; skip off).
+        // STREAM=0 + PRESENT=fpga: every decoded frame → F1 (DDR preferred) — not IDR recon.
         // STREAM=1 recon is ~1 fps (keyframe only) and is the wrong interactive cast path.
-        const bool wantFpgaFrameStore = fpga_.ok() &&
-                                        (presentMode_ == "fpga" || presentMode_ == "both") &&
-                                        outW_ == 320 && outH_ == 240;
+        const bool wantFpgaFrameStore =
+            fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
+        const bool wantYuvDdr = wantFpgaFrameStore && presentMode_ == "fpga" &&
+                                ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
         RawVideoFormat videoFmt = RawVideoFormat::Rgb24;
-        if (wantFpgaFrameStore || (fb_.ok() && fb_.bpp() == 16)) {
+        if (wantYuvDdr) {
+            videoFmt = RawVideoFormat::Yuv420p;
+        } else if (wantFpgaFrameStore || (fb_.ok() && fb_.bpp() == 16)) {
             videoFmt = RawVideoFormat::Rgb565Le;
         } else if (fb_.ok() && (fb_.bpp() == 32 || fb_.bpp() == 24)) {
             videoFmt = RawVideoFormat::Bgra32;
@@ -1874,8 +1898,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         }
 
-        const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) *
-                                  rawVideoBytesPerPixel(videoFmt);
+        const size_t frameBytes = rawVideoFrameBytes(videoFmt, outW_, outH_);
         std::vector<uint8_t> frame(frameBytes);
         std::vector<uint8_t> rgb565Frame;
         std::vector<uint8_t> fbOverlayBackup;
@@ -1986,6 +2009,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             case RawVideoFormat::Bgra32:
                 fbOk = fb_.blitBgra32(data, outW_, outH_);
                 break;
+            case RawVideoFormat::Yuv420p:
+                return;
             case RawVideoFormat::Rgb24:
             default:
                 fbOk = fb_.blitRgb24(data, outW_, outH_);
@@ -2003,6 +2028,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             case RawVideoFormat::Bgra32:
                 overlay_.renderBgra32(data, outW_, outH_);
                 break;
+            case RawVideoFormat::Yuv420p:
+                break;
             case RawVideoFormat::Rgb24:
             default:
                 overlay_.renderRgb24(data, outW_, outH_);
@@ -2014,7 +2041,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             fbOverlayBackup.clear();
             if (dirty.empty())
                 return;
-            const size_t bpp = rawVideoBytesPerPixel(videoFmt);
+            const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
+            if (bpp == 0)
+                return;
             const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
             fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
             for (int yy = 0; yy < dirty.h; ++yy) {
@@ -2028,7 +2057,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             if (dirty.empty() || fbOverlayBackup.empty())
                 return;
-            const size_t bpp = rawVideoBytesPerPixel(videoFmt);
+            const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
+            if (bpp == 0)
+                return;
             const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
             for (int yy = 0; yy < dirty.h; ++yy) {
                 const size_t dst =
@@ -2096,7 +2127,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 bool ok = false;
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
-                    ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
+                    if (videoFmt == RawVideoFormat::Yuv420p) {
+                        ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, outW_, outH_, ddrBank_);
+                    } else if (fpga_.setDdrFrameLayout(outW_, outH_, DdrFrameFormat::Rgb565)) {
+                        ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
+                    }
                     if (profilePresent && ok) {
                         const int64_t ddrCpu1 = threadCpuMicros();
                         const auto dt = fpga_.lastDdrTiming();
@@ -2115,10 +2150,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     ddrBank_ ^= 1;
                     if (!ok) {
                         useDdrF1_ = false;
-                        log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
+                        if (videoFmt == RawVideoFormat::Yuv420p)
+                            log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                        else
+                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
                     }
                 }
-                if (!ok) {
+                if (!ok && videoFmt != RawVideoFormat::Yuv420p) {
                     if (profilePresent) {
                         const auto spi0 = std::chrono::steady_clock::now();
                         const int64_t spiCpu0 = threadCpuMicros();

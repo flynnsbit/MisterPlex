@@ -91,9 +91,15 @@ public:
     // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
     // Default frame geometry is 320×240. Call setDdrFrameSize() before present
     // for larger DDR-backed cores such as 640×480.
-    bool setDdrFrameSize(int width, int height);
+    bool setDdrFrameLayout(int width, int height,
+                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
+    bool setDdrFrameSize(int width, int height) {
+        return setDdrFrameLayout(width, height, DdrFrameFormat::Rgb565);
+    }
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
+    bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
+                             int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.

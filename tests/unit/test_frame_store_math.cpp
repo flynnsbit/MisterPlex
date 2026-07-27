@@ -31,11 +31,20 @@ static void checkLayout(int w, int h, size_t bytes, uint32_t stride, uint32_t do
     CHECK(l.line_bytes == (fmt == misterplex::DdrFrameFormat::Rgb565 ? w * 2 : w));
     CHECK(l.line_qwords == lineQwords);
     CHECK(l.chroma_line_qwords == chromaLineQwords);
+    CHECK(l.y_offset == 0);
+    if (fmt == misterplex::DdrFrameFormat::Yuv420p) {
+        CHECK(l.u_offset == static_cast<uint32_t>(w * h));
+        CHECK(l.v_offset == static_cast<uint32_t>(w * h + (w / 2) * (h / 2)));
+    } else {
+        CHECK(l.u_offset == 0);
+        CHECK(l.v_offset == 0);
+    }
     CHECK(l.bank_stride == stride);
     CHECK(l.phys_base + l.bank_stride >= l.phys_base + l.frame_bytes);
     CHECK(l.phys_base + l.bank_stride + l.frame_bytes <= l.doorbell_phys);
     CHECK(l.doorbell_phys == doorbell);
     CHECK(l.map_bytes == l.bank_stride * 2u);
+    CHECK(l.doorbell_format == misterplex::ddrFrameFormatCode(fmt));
 }
 
 static void checkConversion(int w, int h) {
@@ -69,6 +78,15 @@ int main() {
     checkLayout(640, 480, 614400, 0xC0000, 0x3017F000, 160);
     checkLayout(640, 480, 460800, 0x80000, 0x300FF000, 80,
                 misterplex::DdrFrameFormat::Yuv420p, 40);
+    CHECK(misterplex::ddrFrameFormatCode(misterplex::DdrFrameFormat::Rgb565) == 0);
+    CHECK(misterplex::ddrFrameFormatCode(misterplex::DdrFrameFormat::Yuv420p) == 1);
+    CHECK(misterplex::ddrDoorbellHi(0x1234, 0, misterplex::DdrFrameFormat::Rgb565) == 0x1234u);
+    CHECK(misterplex::ddrDoorbellHi(0x1234, 1, misterplex::DdrFrameFormat::Rgb565) ==
+          0x80001234u);
+    CHECK(misterplex::ddrDoorbellHi(0x1234, 0, misterplex::DdrFrameFormat::Yuv420p) ==
+          0x20001234u);
+    CHECK(misterplex::ddrDoorbellHi(0x1234, 1, misterplex::DdrFrameFormat::Yuv420p) ==
+          0xA0001234u);
     checkConversion(320, 240);
     checkConversion(640, 480);
 

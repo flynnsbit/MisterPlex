@@ -458,13 +458,14 @@ bool FpgaSpi::ensureDdrMap() {
     return true;
 }
 
-bool FpgaSpi::setDdrFrameSize(int width, int height) {
-    DdrFrameLayout next = makeDdrFrameLayout(width, height, kDdrFrameBase);
+bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
+    DdrFrameLayout next = makeDdrFrameLayout(width, height, kDdrFrameBase, 0x40000u, format);
     if (!ddrFrameLayoutValid(next)) {
-        setErr("setDdrFrameSize: invalid DDR frame layout");
+        setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
     }
-    if (next.width == ddrLayout_.width && next.height == ddrLayout_.height)
+    if (next.width == ddrLayout_.width && next.height == ddrLayout_.height &&
+        next.format == ddrLayout_.format)
         return true;
     ddrLayout_ = next;
     releaseDdrMap();
@@ -529,10 +530,9 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
         return false;
     volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
     ++doorbellSeq_;
-    // Pack: [31:0]=magic, [62:32]=seq (31b), [63]=bank  → as two LE u32
-    // 64-bit word: low = magic, high = (bank<<31) | (seq & 0x7FFFFFFF)
-    const uint32_t seq = doorbellSeq_ & 0x7FFFFFFFu;
-    const uint32_t hi = (static_cast<uint32_t>(bank & 1) << 31) | seq;
+    // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
+    const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
+    const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
     dw[0] = kDdrDoorbellMagic;
     dw[1] = hi;
     __sync_synchronize();
@@ -1172,6 +1172,20 @@ bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
     std::vector<uint8_t> packed(ddrLayout_.frame_bytes);
     pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
+}
+
+bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
+                                  int bank) {
+    if (!yuv420p || width <= 0 || height <= 0 || (width & 1) || (height & 1)) {
+        setErr("sendYuv420pFrameDdr: bad YUV420p frame");
+        return false;
+    }
+    if (width != ddrLayout_.width || height != ddrLayout_.height ||
+        ddrLayout_.format != DdrFrameFormat::Yuv420p) {
+        if (!setDdrFrameLayout(width, height, DdrFrameFormat::Yuv420p))
+            return false;
+    }
+    return sendRgb565FrameDdr(yuv420p, len, bank);
 }
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
