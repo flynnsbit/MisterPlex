@@ -119,11 +119,6 @@ public:
         int bank = 0;
         DdrFrameFormat format = DdrFrameFormat::Yuv420p;
     };
-    struct FrameStoreStatus {
-        uint8_t seq = 0;
-        uint8_t debug_state = 0;
-        uint16_t underrun_count = 0;
-    };
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
@@ -249,7 +244,6 @@ public:
     // Parse getCoreStatus raw bytes into fields.
     static CoreStatus parseCoreStatus(const uint8_t raw[16]);
     bool readCoreStatus(CoreStatus& out);
-    bool readFrameStoreStatus(FrameStoreStatus& out);
 
     // Thread-safe copy of last error (F1/F2/F3 share this object).
     std::string lastError() const;
