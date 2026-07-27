@@ -366,10 +366,40 @@ public:
         top.ioctl_download = 0;
         top.ioctl_wr = 0;
         top.ioctl_dout = 0;
+        top.dpb_prefill_en = 0;
+        top.dpb_prefill_addr = 0;
+        top.dpb_prefill_data = 0;
         for (int i = 0; i < 8; ++i) tick();
         top.reset = 0;
         for (int i = 0; i < 4; ++i) tick();
     }
+
+    // Pre-fill the DPB reference bank with real IDR frame data.
+    // The h264_dpb_one_ref starts with current_base=BANK0, reference_base=BANK1.
+    // After IDR fill + frame_done, banks swap: current=BANK1, reference=BANK0.
+    // So for the FIRST P-slice, the reference is in BANK0.
+    // We pre-fill BANK0 (addr 0..frameBytes-1) with the IDR frame.
+    void prefillDpbReference(const std::vector<uint8_t>& goldenPlanes) {
+        const std::size_t frameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
+        if (goldenPlanes.size() < frameBytes) {
+            std::cerr << "WARNING: golden planes too small for DPB prefill ("
+                      << goldenPlanes.size() << " < " << frameBytes << ")\n";
+            return;
+        }
+        // Write frame 0 (IDR) into BANK0 of DPB SRAM
+        for (std::size_t i = 0; i < frameBytes; ++i) {
+            top.dpb_prefill_en = 1;
+            top.dpb_prefill_addr = static_cast<uint32_t>(i);
+            top.dpb_prefill_data = goldenPlanes[i];
+            tick();
+        }
+        top.dpb_prefill_en = 0;
+        dpbPrefilled = true;
+        std::cout << "DPB_PREFILL wrote " << frameBytes
+                  << " bytes of IDR reference into BANK0\n";
+    }
+
+    bool dpbPrefilled = false;
 
     void feedByte(uint8_t v) {
         top.ioctl_download = 1;
@@ -856,6 +886,13 @@ int main(int argc, char** argv) {
         Sim sim(args.width, args.height);
         sim.initNativeCandidate(refFrames);
         sim.reset();
+
+        // Pre-fill DPB reference bank with real IDR frame data.
+        // This gives MC an honest reference for P-slice prediction.
+        sim.prefillDpbReference(golden);
+        // Prefill ticks are setup cost, not decode; reset cycle counter.
+        sim.cycles = 0;
+
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
         for (const auto& n : nals) {

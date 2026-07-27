@@ -72,7 +72,12 @@ module stream_path_full_frame_tb #(
 	output wire        native_i420_wr_en,
 	output wire [31:0] native_i420_wr_offset,
 	output wire [7:0]  native_i420_wr_data,
-	output wire [15:0] native_i420_wr_frame
+	output wire [15:0] native_i420_wr_frame,
+
+	// DPB reference pre-fill — testbench injects real IDR reference data
+	input  wire        dpb_prefill_en,
+	input  wire [31:0] dpb_prefill_addr,
+	input  wire [7:0]  dpb_prefill_data
 );
 	wire [7:0] sps_level;
 	wire [5:0] slice_qp;
@@ -232,6 +237,14 @@ module stream_path_full_frame_tb #(
 	assign native_i420_wr_offset = dpb_wr_addr_raw - dpb_cur_base;
 	assign native_i420_wr_data   = dut.stub.dpb_mem_wdata;
 	assign native_i420_wr_frame  = dut.stub.frames_out;
+
+	// DPB reference pre-fill: inject real decoded IDR samples into the
+	// DPB SRAM. The testbench writes to the REFERENCE bank so that MC
+	// fetches see real data instead of synthetic patterns.
+	always @(posedge clk) begin
+		if (dpb_prefill_en)
+			dut.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
+	end
 endmodule
 
 `default_nettype wire
