@@ -17,8 +17,24 @@
 //     [47:40] cmd_seq (increments for every published command)
 //     [63:48] seq (monotonic; lets the host reject a torn/stale read)
 //   Reserved fixed mailbox slots (host/FPGA ABI; keep stable):
-//     0x3007F110 magic 0x504C584D ("PLXM") memtest
-//     0x3007F118 magic 0x504C5846 ("PLXF") underrun
+//   SDRAM bring-up mailbox: 0x3007F110  (one 64-bit word, core -> HPS, no SPI)
+//     [31:0]  magic 0x504C584D ("PLXM")
+//     [39:32] seq (monotonic; lets the host reject a torn/stale read)
+//     [43:40] memtest state (1 init, 2 detect, 3 walk1, 4 walk0,
+//                            5 address, 6 pass, 7 fail)
+//     [47:44] detected size code (2=16MB, 3=32MB, 4=64MB, 5=128MB; 0 unknown)
+//     [63:48] saturated error count
+//   SDRAM diagnostic mailbox: 0x3007F120 (one 64-bit word, core -> HPS, no SPI)
+//     [4:0]   layout version = 1
+//     [20:5]  expected value at first failing address
+//     [46:21] first failing 16-bit word address
+//     [47]    first-fail valid
+//     [63:48] read sample: first failing read value if valid, otherwise latest read
+//   SDRAM frame-store mailbox: 0x3007F118 (one 64-bit word, core -> HPS, no SPI)
+//     [31:0]  magic 0x504C5846 ("PLXF")
+//     [39:32] seq
+//     [47:40] frame-store SDRAM debug state
+//     [63:48] saturated line-buffer underrun count
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
@@ -46,6 +62,7 @@ module ddram_frame_rd #(
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter [31:0] MEMTEST_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] UNDERRUN_MAILBOX_PHYS = 32'h3007_F118,
+	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = 32'h3007_F120,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -60,6 +77,16 @@ module ddram_frame_rd #(
 	input  wire [15:0] status_osd,
 	input  wire        input_cmd_valid,
 	input  wire  [7:0] input_cmd,
+	// SDRAM bring-up telemetry to publish to the HPS (see mailbox layout above).
+	input  wire  [3:0] sdram_test_state,
+	input  wire  [3:0] sdram_size_code,
+	input  wire [15:0] sdram_error_count,
+	input  wire [15:0] sdram_read_sample,
+	input  wire        sdram_first_fail_valid,
+	input  wire [25:0] sdram_first_fail_addr,
+	input  wire [15:0] sdram_first_fail_expect,
+	input  wire  [7:0] frame_sdram_state,
+	input  wire [15:0] frame_underrun_count,
 
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
@@ -76,6 +103,7 @@ module ddram_frame_rd #(
 	output reg  [15:0] wr_pixel,
 	output reg         wr_reset_ptr,
 	output reg         swap_req,
+	input  wire        wr_ready,
 
 	output reg         busy,
 	output reg  [15:0] frames_done,
@@ -91,11 +119,13 @@ module ddram_frame_rd #(
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] MEMTEST_MAILBOX_W = MEMTEST_MAILBOX_PHYS[31:3];
 	localparam [28:0] UNDERRUN_MAILBOX_W = UNDERRUN_MAILBOX_PHYS[31:3];
+	localparam [28:0] MEMTEST_DIAG_MAILBOX_W = MEMTEST_DIAG_MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
+	localparam [4:0]  MEMTEST_DIAG_VERSION = 5'd1;
 
 	localparam int FIFO_AW = 5;
 	localparam int FIFO_N  = 1 << FIFO_AW;
@@ -135,6 +165,19 @@ module ddram_frame_rd #(
 	reg        mbox_req;
 	reg        mbox_valid;
 	reg [17:0] mbox_hb;
+	reg  [7:0] sdram_mbox_seq;
+	reg [23:0] sdram_mbox_last;
+	reg        sdram_mbox_req;
+	reg        sdram_mbox_valid;
+	reg [17:0] sdram_mbox_hb;
+	reg [63:0] sdram_diag_last;
+	reg        sdram_diag_req;
+	reg        sdram_diag_valid;
+	reg  [7:0] frame_mbox_seq;
+	reg [23:0] frame_mbox_last;
+	reg        frame_mbox_req;
+	reg        frame_mbox_valid;
+	reg [17:0] frame_mbox_hb;
 
 	// Input mailbox FIFO. Human input is sparse, but a tiny queue keeps
 	// commands from being lost while a frame DMA or status publish owns DDR.
@@ -146,6 +189,9 @@ module ddram_frame_rd #(
 	wire [CMD_FIFO_AW-1:0] cmd_fifo_wix = cmd_fifo_wr[CMD_FIFO_AW-1:0];
 	wire [CMD_FIFO_AW-1:0] cmd_fifo_rix = cmd_fifo_rd[CMD_FIFO_AW-1:0];
 	wire [7:0] cmd_fifo_head = cmd_fifo[cmd_fifo_rix];
+	wire [63:0] sdram_diag_word = {sdram_read_sample, sdram_first_fail_valid,
+	                               sdram_first_fail_addr, sdram_first_fail_expect,
+	                               MEMTEST_DIAG_VERSION};
 	reg [15:0] imbox_seq;
 	reg [7:0]  imbox_cmd_seq;
 
@@ -232,6 +278,19 @@ module ddram_frame_rd #(
 			mbox_req       <= 1'b1; // publish once as soon as we go idle
 			mbox_valid     <= 1'b0;
 			mbox_hb        <= 18'd0;
+			sdram_mbox_seq   <= 8'd0;
+			sdram_mbox_last  <= 24'd0;
+			sdram_mbox_req   <= 1'b1;
+			sdram_mbox_valid <= 1'b0;
+			sdram_mbox_hb    <= 18'd0;
+			sdram_diag_last  <= 64'd0;
+			sdram_diag_req   <= 1'b1;
+			sdram_diag_valid <= 1'b0;
+			frame_mbox_seq   <= 8'd0;
+			frame_mbox_last  <= 24'd0;
+			frame_mbox_req   <= 1'b1;
+			frame_mbox_valid <= 1'b0;
+			frame_mbox_hb    <= 18'd0;
 			cmd_fifo_wr    <= 0;
 			cmd_fifo_rd    <= 0;
 			imbox_seq      <= 16'd0;
@@ -249,6 +308,19 @@ module ddram_frame_rd #(
 			mbox_hb <= mbox_hb + 18'd1;
 			if (!mbox_valid || (status_osd != mbox_last) || (mbox_hb == 18'd0))
 				mbox_req <= 1'b1;
+			sdram_mbox_hb <= sdram_mbox_hb + 18'd1;
+			if (!sdram_mbox_valid
+			    || ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_mbox_last)
+			    || (sdram_diag_word != sdram_diag_last)
+			    || (sdram_mbox_hb == 18'd0)) begin
+				sdram_mbox_req <= 1'b1;
+				sdram_diag_req <= 1'b1;
+			end
+			frame_mbox_hb <= frame_mbox_hb + 18'd1;
+			if (!frame_mbox_valid
+			    || ({frame_underrun_count, frame_sdram_state} != frame_mbox_last)
+			    || (frame_mbox_hb == 18'd0))
+				frame_mbox_req <= 1'b1;
 
 			if (input_cmd_valid && (input_cmd != 8'd0) && !cmd_fifo_full) begin
 				cmd_fifo[cmd_fifo_wix] <= input_cmd;
@@ -325,6 +397,40 @@ module ddram_frame_rd #(
 					mbox_valid     <= 1'b1;
 					mbox_req       <= 1'b0;
 				end
+				else if (sdram_mbox_req && !poll_pending && poll_div[7:0] == 8'd192
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= MEMTEST_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= {sdram_error_count, sdram_size_code, sdram_test_state,
+					                   sdram_mbox_seq + 8'd1, MAGIC_M};
+					DDRAM_WE       <= 1'b1;
+					sdram_mbox_seq   <= sdram_mbox_seq + 8'd1;
+					sdram_mbox_last  <= {sdram_error_count, sdram_size_code, sdram_test_state};
+					sdram_mbox_valid <= 1'b1;
+					sdram_mbox_req   <= 1'b0;
+				end
+				else if (sdram_diag_req && !poll_pending && poll_div[7:0] == 8'd208
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= MEMTEST_DIAG_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= sdram_diag_word;
+					DDRAM_WE       <= 1'b1;
+					sdram_diag_last  <= sdram_diag_word;
+					sdram_diag_valid <= 1'b1;
+					sdram_diag_req   <= 1'b0;
+				end
+				else if (frame_mbox_req && !poll_pending && poll_div[7:0] == 8'd224
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= UNDERRUN_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= {frame_underrun_count, frame_sdram_state,
+					                   frame_mbox_seq + 8'd1, MAGIC_F};
+					DDRAM_WE       <= 1'b1;
+					frame_mbox_seq   <= frame_mbox_seq + 8'd1;
+					frame_mbox_last  <= {frame_underrun_count, frame_sdram_state};
+					frame_mbox_valid <= 1'b1;
+					frame_mbox_req   <= 1'b0;
+				end
 			end else begin
 				// Active frame DMA
 				if (need_reset) begin
@@ -347,7 +453,7 @@ module ddram_frame_rd #(
 
 				inflight <= inf_next;
 
-				if (active && !need_reset) begin
+				if (active && !need_reset && wr_ready) begin
 					if (!have_beat) begin
 						if (!fifo_empty) begin
 							beat_q    <= fifo_mem[fifo_rix];

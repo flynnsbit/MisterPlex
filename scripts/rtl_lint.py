@@ -264,23 +264,46 @@ def main() -> int:
         print(probe.stdout, file=sys.stderr)
         return probe.returncode
 
-    rc, output = run_verilator(files)
+    plex_rel = "fpga/Plex_MiSTer/Plex.sv"
+    module_files = [p for p in files if rel(p) in reportable and rel(p) != plex_rel]
+    rc, output = run_verilator(module_files)
+
+    # Plex.sv depends on MiSTer sys/generated modules. Run a separate context pass
+    # and count only warnings physically reported against Plex.sv; vendor/generated
+    # diagnostics from the context are excluded from the gate.
+    plex_files = [p for p in files if rel(p) == plex_rel]
+    top_output = ""
+    top_rc = 0
+    if plex_files:
+        all_context = sorted({p for p in PROJECT.rglob("*") if p.suffix.lower() in {".sv", ".v"}})
+        top_rc, top_output = run_verilator(plex_files + all_context)
+
     (ROOT / "build").mkdir(exist_ok=True)
-    (ROOT / "build" / "rtl_lint_verilator.log").write_text(output)
+    (ROOT / "build" / "rtl_lint_verilator.log").write_text(
+        "=== owned module pass ===\n" + output + "\n=== Plex.sv context pass ===\n" + top_output
+    )
     current = count_warnings(output, reportable)
+    top_counts = count_warnings(top_output, {plex_rel})
+    for file_name, kinds in top_counts.items():
+        current.setdefault(file_name, {})
+        for kind, value in kinds.items():
+            current[file_name][kind] = current[file_name].get(kind, 0) + value
 
     print(f"RTL lint: using {probe.stdout.strip()}")
     print(f"RTL lint: parsed {len(files)} Quartus RTL/context files; reporting {len(reportable)} owned files")
     print_ranked(current)
 
-    owned_errors, ignored_errors = reportable_errors(output, reportable)
+    owned_errors, ignored_errors = reportable_errors(output, reportable - {plex_rel})
+    top_owned_errors, top_ignored_errors = reportable_errors(top_output, {plex_rel})
+    owned_errors += top_owned_errors
+    ignored_errors += top_ignored_errors
     if ignored_errors:
         print(f"RTL lint: ignored {len(ignored_errors)} vendor/generated context errors; see build/rtl_lint_verilator.log")
     if owned_errors:
         print("RTL LINT ERROR: Verilator reported errors in owned RTL (see build/rtl_lint_verilator.log):", file=sys.stderr)
         for line in owned_errors[:20]:
             print(f"  {line}", file=sys.stderr)
-        return rc or 1
+        return rc or top_rc or 1
 
     if args.write_baseline:
         write_baseline(args.baseline, current, reportable)
