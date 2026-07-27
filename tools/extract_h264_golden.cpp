@@ -559,10 +559,12 @@ std::string makeJson(const std::string& inputPath, const std::vector<uint8_t>& b
 int main(int argc, char** argv) {
     std::string input = "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264";
     std::string output;
+    std::string outputDir;
     std::string ref = "tests/fixtures/p3_host_recon/mb0_luma_v1.json";
     int mb = 0;
     bool verify = false;
     bool sequence = false;
+    bool allMbs = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto need = [&](const char* name) -> std::string {
@@ -574,11 +576,13 @@ int main(int argc, char** argv) {
         };
         if (a == "--input") input = need("--input");
         else if (a == "--output") output = need("--output");
+        else if (a == "--output-dir") outputDir = need("--output-dir");
         else if (a == "--mb") mb = std::stoi(need("--mb"));
+        else if (a == "--all-mbs") allMbs = true;
         else if (a == "--sequence") sequence = true;
         else if (a == "--verify-mb0-reference") { verify = true; ref = need("--verify-mb0-reference"); }
         else {
-            std::cerr << "usage: extract_h264_golden [--input file.264] [--mb N] [--output file.json] [--sequence] [--verify-mb0-reference mb0_luma_v1.json]\n";
+            std::cerr << "usage: extract_h264_golden [--input file.264] [--mb N] [--output file.json] [--output-dir dir] [--all-mbs] [--sequence] [--verify-mb0-reference mb0_luma_v1.json]\n";
             return 2;
         }
     }
@@ -631,6 +635,49 @@ int main(int argc, char** argv) {
         std::cerr << "FAIL: v1 extractor supports I-slice macroblocks only; got slice_type="
                   << static_cast<int>(chain.slice.slice_type) << "\n";
         return 1;
+    }
+    if (allMbs) {
+        if (outputDir.empty()) {
+            std::cerr << "FAIL: --all-mbs requires --output-dir\n";
+            return 2;
+        }
+        // Determine total MB count
+        misterplex::recon::ReconTrace probe;
+        probe.target_mb = 0;
+        auto probeRec = misterplex::recon::reconISlice(blob.data(), blob.size(), &probe);
+        if (probeRec.mb_decoded != probeRec.mb_total) {
+            std::cerr << "FAIL: recon probe failed: " << probeRec.mb_decoded << "/"
+                      << probeRec.mb_total << "\n";
+            return 1;
+        }
+        const int totalMbs = probeRec.mb_total;
+        int extracted = 0;
+        for (int m = 0; m < totalMbs; ++m) {
+            misterplex::recon::ReconTrace t;
+            t.target_mb = m;
+            auto r = misterplex::recon::reconISlice(blob.data(), blob.size(), &t);
+            if (r.mb_decoded != r.mb_total || !t.mb.valid) {
+                std::cerr << "FAIL: recon at mb=" << m << " decoded=" << r.mb_decoded
+                          << "/" << r.mb_total << " valid=" << t.mb.valid << "\n";
+                return 1;
+            }
+            std::string refReason = "not checked (all-mbs mode)";
+            bool refOk = false;
+            if (m == 0)
+                refOk = verifyMb0Reference(t.mb, ref, refReason);
+            const std::string json = makeJson(input, blob, chain, r, t.mb, ref, refOk, refReason);
+            std::ostringstream fname;
+            fname << outputDir << "/mb_" << std::setw(3) << std::setfill('0') << m << ".json";
+            if (!writeText(fname.str(), json)) {
+                std::cerr << "FAIL: cannot write " << fname.str() << "\n";
+                return 1;
+            }
+            ++extracted;
+        }
+        std::cout << "extract_h264_golden: OK --all-mbs input=" << input
+                  << " mbs=" << extracted << "/" << totalMbs
+                  << " output_dir=" << outputDir << "\n";
+        return 0;
     }
     misterplex::recon::ReconTrace trace;
     trace.target_mb = mb;

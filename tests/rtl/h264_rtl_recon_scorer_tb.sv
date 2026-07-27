@@ -3,6 +3,11 @@
 // coefficient/prediction injection ports for the C++ testbench driver.
 // This tests whether the FPGA arithmetic produces correct output
 // for known golden inputs — independent of CAVLC parsing or prediction.
+//
+// Two modes:
+//   inject_bypass_dequant=0: coeff → dequant → IDCT → recon (tests full pipeline)
+//   inject_bypass_dequant=1: inject_dequant → IDCT → recon (tests IDCT+recon only)
+//   The bypass mode handles I_16x16 MBs where DC comes from Hadamard, not per-block CAVLC.
 
 module h264_rtl_recon_scorer_tb #(
 	parameter int FRAME_W = 320,
@@ -16,6 +21,10 @@ module h264_rtl_recon_scorer_tb #(
 	input  wire [5:0]         inject_qp,
 	input  wire [7:0]         inject_pred [0:15],
 	input  wire               inject_valid,
+
+	// Direct dequant injection (bypass dequant module for I_16x16 DC path)
+	input  wire signed [17:0] inject_dequant [0:15],
+	input  wire               inject_bypass_dequant,
 
 	// RTL reconstruction output
 	output wire [7:0]         recon_out [0:15],
@@ -35,10 +44,19 @@ module h264_rtl_recon_scorer_tb #(
 		.dequant(dq)
 	);
 
+	// Mux: use RTL dequant output or direct injection
+	wire signed [17:0] idct_in [0:15];
+	genvar gi;
+	generate
+		for (gi = 0; gi < 16; gi = gi + 1) begin : gen_dq_mux
+			assign idct_in[gi] = inject_bypass_dequant ? inject_dequant[gi] : dq[gi];
+		end
+	endgenerate
+
 	// IDCT stage
 	wire signed [17:0] res [0:15];
 	h264_idct4x4 u_idct (
-		.dequant(dq),
+		.dequant(idct_in),
 		.residual(res)
 	);
 
@@ -51,7 +69,7 @@ module h264_rtl_recon_scorer_tb #(
 	);
 
 	assign recon_out = rec;
-	assign dequant_out = dq;
+	assign dequant_out = idct_in;
 	assign idct_out = res;
 
 	// Combinational: output ready same cycle as input valid
