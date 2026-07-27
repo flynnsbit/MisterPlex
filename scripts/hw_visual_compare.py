@@ -141,6 +141,7 @@ FORMAT_CODES = {
 }
 FORMAT_ERROR_DEBUG_FIELDS = ("frame_debug", "frame_dbg", "ddr_debug", "ddr_dbg", "debug_state")
 SURFACED_DEBUG_FIELDS = FORMAT_ERROR_DEBUG_FIELDS + ("recon_dbg",)
+NON_YUV_DOORBELL_ERROR = "frame store refused non-YUV doorbell (0xE1); non-YUV DDR doorbell format error"
 
 
 def normalize_md5(value: str | None) -> str | None:
@@ -427,7 +428,7 @@ def load_status_snapshot(path: str) -> dict:
         if val is not None:
             entry = {"field": name, "value": val, "hex": f"0x{val & 0xFF:02x}"}
             if name in FORMAT_ERROR_DEBUG_FIELDS and (val & 0xFF) == 0xE1:
-                entry["meaning"] = "non-YUV DDR doorbell/debug format error"
+                entry["meaning"] = NON_YUV_DOORBELL_ERROR
             debug_flags.append(entry)
     return {
         "path": str(p),
@@ -500,8 +501,8 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
             problems.append(problem)
 
     for flag in current["debug_flags"]:
-        if flag.get("meaning") == "non-YUV DDR doorbell/debug format error":
-            problems.append(f"{flag['field']}={flag['hex']} non-YUV DDR doorbell/debug format error")
+        if flag.get("meaning") == NON_YUV_DOORBELL_ERROR:
+            problems.append(f"{flag['field']}={flag['hex']} {NON_YUV_DOORBELL_ERROR}")
 
     report = {
         "status": current,
