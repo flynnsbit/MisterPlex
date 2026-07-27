@@ -149,8 +149,10 @@ native content resolution is the part that needs validation.
 The legacy DDR bridge clock was `clk_sys = 20 MHz`; this is our PLL choice, not an HPS DDR3 bridge
 limit. In-tree framework evidence shows the core supplies `DDRAM_CLK` (`sys/sys_top.v` connects it to
 `ram_clk`) and `sys/sys_top.sdc` constrains the HPS user clock at 100 MHz. This branch therefore adds a
-dedicated DDR PLL output instead of raising `clk_sys` wholesale. The YUV420p frame-store RTL currently
-closes at the fitted DDR clock below; 100 MHz remains a framework target, not a claim for this build.
+dedicated DDR PLL output instead of raising `clk_sys` wholesale. The prior C3 fit closed cleanly at
+80 MHz; this branch now targets 90 MHz because `ao486_MiSTer` drives the same MiSTer HPS DDR bridge at
+90 MHz with 0 ps phase shift. A post-change fit and hardware test are still required before treating
+90 MHz as production evidence.
 
 Model assumptions:
 
@@ -173,8 +175,9 @@ Model assumptions:
 | 1280×720@30 | YUV420p | 41.472 MB/s | 41.472 MB/s | 82.944 MB/s | just over the 20 MHz read budget |
 | 1280×720@30 | RGB565 | 55.296 MB/s | 55.296 MB/s | 110.592 MB/s | over the 20 MHz read budget |
 
-**Fitted DDR clock for this YUV420p branch: 80 MHz** — peak 640 MB/s; pessimistic FPGA-read budget
-160 MB/s:
+**Current DDR clock target for this YUV420p branch: 90 MHz** — peak 720 MB/s; pessimistic FPGA-read
+budget 180 MB/s. Prior C3 evidence closed 80 MHz (peak 640 MB/s, 160 MB/s read budget); 90 MHz is the
+next target based on the ao486 production reference, pending fit:
 
 | Native mode | Format | FPGA read | ARM write | Total DDR fabric | Model result |
 |---|---|---:|---:|---:|---|
@@ -185,13 +188,13 @@ Model assumptions:
 | 1280×720@30 | YUV420p | 41.472 MB/s | 41.472 MB/s | 82.944 MB/s | viable by bandwidth; needs 16-line prefetch and a separate fit |
 | 1280×720@30 | RGB565 | 55.296 MB/s | 55.296 MB/s | 110.592 MB/s | viable by bandwidth; less fabric/ARM margin than YUV420p |
 
-**100 MHz framework target** — peak 800 MB/s; pessimistic FPGA-read budget 200 MB/s. The same rows
-remain within modelled bandwidth with 25% more margin than 80 MHz, but this YUV420p branch has
-not closed timing there yet. Treat 100 MHz as a future optimization target, not current evidence.
+**Next sweep targets**: 100, 120, 142, 160, and 167 MHz. The same rows remain within modelled
+bandwidth with increasing margin, but this YUV420p branch has not closed timing there yet. Treat them
+as measurement targets, not current evidence.
 
 Latency modelling uses a recurring 500 µs DDR blackout and a conservative 128-cycle response latency
 before burst data. Under that model, 640×480@30 is clean with 8 prefetched lines, while 640×480@60 and
-1280×720@30 need 16 lines at 80 MHz. The implemented first rung is therefore **YUV420p 640×480@30, 8-line
+1280×720@30 need 16 lines at the current 90 MHz target. The implemented first rung is therefore **YUV420p 640×480@30, 8-line
 prefetch**.
 
 ## What this does and does not mean
