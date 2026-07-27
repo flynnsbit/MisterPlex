@@ -1,7 +1,8 @@
-// H.264 MC interpolation Verilator testbench
+// H.264 MC interpolation Verilator testbench — v2 (2-wide output)
 // Self-checking: compares RTL output against the independent C++ reference model.
 // Coverage: all 16 luma sub-positions, chroma eighth-pel grid, edge clamping,
 //           extreme sample values, randomised reference data.
+// Reports cycles/MB as a first-class metric against the 250-cycle budget.
 #include "Vh264_mc_interp_tb.h"
 #include "verilated.h"
 #include "h264_mc_ref_model.h"
@@ -29,35 +30,36 @@ static void tick(Vh264_mc_interp_tb& top) {
     top.eval();
 }
 
-// Reset the DUT
 static void reset(Vh264_mc_interp_tb& top) {
     top.rst_n = 0;
     top.cmd_valid = 0;
     top.ref_valid = 0;
     top.pred_ready = 0;
+    top.cmd_ref_x = 0;
+    top.cmd_ref_y = 0;
     for (int i = 0; i < 3; i++) tick(top);
     top.rst_n = 1;
     tick(top);
 }
 
-// Pack bytes into a 64-bit word, MSB first
 static uint64_t pack_bytes(const uint8_t* data, int count) {
     uint64_t word = 0;
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++)
         word |= static_cast<uint64_t>(data[i]) << (56 - 8 * i);
-    }
     return word;
 }
 
-// Run one MC block through the RTL and collect output samples.
-// Returns the cycle count reported by the DUT.
+// Run one MC block through the RTL, collecting 2-wide output.
+// ref_x, ref_y: absolute position for cache (use unique values to avoid
+// unintended cache hits across test cases).
 static int run_mc_block(Vh264_mc_interp_tb& top,
                         bool is_chroma,
                         int frac_x, int frac_y,
                         int chroma_dx, int chroma_dy,
                         int blk_w, int blk_h,
                         const std::vector<uint8_t>& ref_window,
-                        std::vector<uint8_t>& out_samples) {
+                        std::vector<uint8_t>& out_samples,
+                        int ref_x = 0, int ref_y = 0) {
     out_samples.clear();
 
     // Issue command
@@ -69,21 +71,26 @@ static int run_mc_block(Vh264_mc_interp_tb& top,
     top.cmd_chroma_dy = chroma_dy;
     top.cmd_blk_w     = blk_w;
     top.cmd_blk_h     = blk_h;
+    top.cmd_ref_x     = static_cast<int16_t>(ref_x);
+    top.cmd_ref_y     = static_cast<int16_t>(ref_y);
     top.ref_valid     = 0;
     top.pred_ready    = 1;
 
-    // Wait for cmd_ready
     int timeout = 100;
     while (!top.cmd_ready && timeout-- > 0) tick(top);
     if (timeout <= 0) { fail("cmd_ready timeout"); return -1; }
-    tick(top); // clock in the command
+    tick(top);
     top.cmd_valid = 0;
 
-    // Stream reference data in 64-bit words
+    // Stream reference data AND collect output simultaneously (pipelined)
     size_t ref_idx = 0;
     top.ref_valid = 0;
-    while (ref_idx < ref_window.size()) {
-        if (top.ref_ready) {
+    int total_samples = blk_w * blk_h;
+    timeout = total_samples + static_cast<int>(ref_window.size()) + 200;
+
+    while (static_cast<int>(out_samples.size()) < total_samples && timeout-- > 0) {
+        // Feed reference data
+        if (ref_idx < ref_window.size() && top.ref_ready) {
             int remaining = static_cast<int>(ref_window.size() - ref_idx);
             int count = std::min(remaining, 8);
             top.ref_data = pack_bytes(&ref_window[ref_idx], count);
@@ -93,73 +100,59 @@ static int run_mc_block(Vh264_mc_interp_tb& top,
         } else {
             top.ref_valid = 0;
         }
-        tick(top);
-    }
-    top.ref_valid = 0;
 
-    // Collect output samples
-    int total_samples = blk_w * blk_h;
-    timeout = total_samples + 200;
-    while (static_cast<int>(out_samples.size()) < total_samples && timeout-- > 0) {
         tick(top);
+
+        // Collect output (2-wide)
         if (top.pred_valid && top.pred_ready) {
-            out_samples.push_back(top.pred_sample_out);
+            out_samples.push_back(top.pred_sample0_out);
+            if (top.pred_pair && static_cast<int>(out_samples.size()) < total_samples)
+                out_samples.push_back(top.pred_sample1_out);
         }
     }
     if (static_cast<int>(out_samples.size()) != total_samples) {
-        fail("incomplete output from DUT");
+        char buf[128];
+        snprintf(buf, sizeof(buf), "incomplete output: got %zu want %d",
+                 out_samples.size(), total_samples);
+        fail(buf);
         return -1;
     }
 
-    // Let DUT return to idle
-    tick(top);
-    tick(top);
-
+    tick(top); tick(top);
     return static_cast<int>(top.cycle_count);
 }
 
-// Build a reference window for luma: (blk_w+5) × (blk_h+5) samples,
-// extracted from a reference frame with edge clamping applied.
 static std::vector<uint8_t> build_luma_ref_window(
     const uint8_t* ref, int ref_stride,
-    int int_x, int int_y,
-    int blk_w, int blk_h,
+    int int_x, int int_y, int blk_w, int blk_h,
     int pic_w, int pic_h) {
-    int win_w = blk_w + 5;
-    int win_h = blk_h + 5;
+    int win_w = blk_w + 5, win_h = blk_h + 5;
     std::vector<uint8_t> win(win_w * win_h);
-    for (int r = 0; r < win_h; r++) {
-        for (int c = 0; c < win_w; c++) {
-            int rx = int_x - 2 + c;
-            int ry = int_y - 2 + r;
+    for (int r = 0; r < win_h; r++)
+        for (int c = 0; c < win_w; c++)
             win[r * win_w + c] = mc_ref::fetch_ref(ref, ref_stride,
-                                                    rx, ry, pic_w, pic_h);
-        }
-    }
+                                                    int_x - 2 + c, int_y - 2 + r,
+                                                    pic_w, pic_h);
     return win;
 }
 
-// Build a reference window for chroma: (blk_w+1) × (blk_h+1) samples.
 static std::vector<uint8_t> build_chroma_ref_window(
     const uint8_t* ref, int ref_stride,
-    int int_x, int int_y,
-    int blk_w, int blk_h,
+    int int_x, int int_y, int blk_w, int blk_h,
     int pic_w, int pic_h) {
-    int win_w = blk_w + 1;
-    int win_h = blk_h + 1;
+    int win_w = blk_w + 1, win_h = blk_h + 1;
     std::vector<uint8_t> win(win_w * win_h);
-    for (int r = 0; r < win_h; r++) {
-        for (int c = 0; c < win_w; c++) {
-            int rx = int_x + c;
-            int ry = int_y + r;
+    for (int r = 0; r < win_h; r++)
+        for (int c = 0; c < win_w; c++)
             win[r * win_w + c] = mc_ref::fetch_ref(ref, ref_stride,
-                                                    rx, ry, pic_w, pic_h);
-        }
-    }
+                                                    int_x + c, int_y + r,
+                                                    pic_w, pic_h);
     return win;
 }
 
-// Test all 16 luma sub-positions with a given reference block.
+// Use unique ref_x/y per test case to prevent cache hits across unrelated tests.
+static int g_ref_coord_counter = 1000;
+
 static void test_luma_all_positions(Vh264_mc_interp_tb& top,
                                     const uint8_t* ref, int ref_stride,
                                     int blk_x, int blk_y,
@@ -168,30 +161,23 @@ static void test_luma_all_positions(Vh264_mc_interp_tb& top,
                                     int& total_luma, int& total_cycles) {
     for (int fy = 0; fy < 4; fy++) {
         for (int fx = 0; fx < 4; fx++) {
-            // Compute reference model output
             std::vector<uint8_t> expected(blk_w * blk_h);
-            // Quarter-pel MV that places us at (blk_x, blk_y) integer + (fx, fy) fraction
-            int mv_x = fx;  // fraction only, since blk_x is already the base
-            int mv_y = fy;
-            mc_ref::luma_mc_block(ref, ref_stride,
-                                  blk_x, blk_y, mv_x, mv_y,
+            int mv_x = fx, mv_y = fy;
+            mc_ref::luma_mc_block(ref, ref_stride, blk_x, blk_y, mv_x, mv_y,
                                   blk_w, blk_h, pic_w, pic_h,
                                   expected.data(), blk_w);
 
-            // Build reference window with clamping
             int int_x = blk_x + (mv_x >> 2);
             int int_y = blk_y + (mv_y >> 2);
-            auto ref_win = build_luma_ref_window(ref, ref_stride,
-                                                  int_x, int_y,
-                                                  blk_w, blk_h,
-                                                  pic_w, pic_h);
+            auto ref_win = build_luma_ref_window(ref, ref_stride, int_x, int_y,
+                                                  blk_w, blk_h, pic_w, pic_h);
 
-            // Run RTL
             std::vector<uint8_t> got;
+            int rx = g_ref_coord_counter++;
+            int ry = g_ref_coord_counter++;
             int cycles = run_mc_block(top, false, fx, fy, 0, 0,
-                                      blk_w, blk_h, ref_win, got);
+                                      blk_w, blk_h, ref_win, got, rx, ry);
 
-            // Compare
             bool match = (got.size() == expected.size());
             if (match) {
                 for (size_t i = 0; i < got.size(); i++) {
@@ -221,7 +207,6 @@ static void test_luma_all_positions(Vh264_mc_interp_tb& top,
     }
 }
 
-// Test chroma fractional grid.
 static void test_chroma_grid(Vh264_mc_interp_tb& top,
                              const uint8_t* ref, int ref_stride,
                              int blk_x, int blk_y,
@@ -231,23 +216,20 @@ static void test_chroma_grid(Vh264_mc_interp_tb& top,
     for (int dy = 0; dy < 8; dy++) {
         for (int dx = 0; dx < 8; dx++) {
             std::vector<uint8_t> expected(blk_w * blk_h);
-            int mv_x = dx;
-            int mv_y = dy;
-            mc_ref::chroma_mc_block(ref, ref_stride,
-                                    blk_x, blk_y, mv_x, mv_y,
+            mc_ref::chroma_mc_block(ref, ref_stride, blk_x, blk_y, dx, dy,
                                     blk_w, blk_h, pic_w, pic_h,
                                     expected.data(), blk_w);
 
-            int int_x = blk_x + (mv_x >> 3);
-            int int_y = blk_y + (mv_y >> 3);
-            auto ref_win = build_chroma_ref_window(ref, ref_stride,
-                                                    int_x, int_y,
-                                                    blk_w, blk_h,
-                                                    pic_w, pic_h);
+            int int_x = blk_x + (dx >> 3);
+            int int_y = blk_y + (dy >> 3);
+            auto ref_win = build_chroma_ref_window(ref, ref_stride, int_x, int_y,
+                                                    blk_w, blk_h, pic_w, pic_h);
 
             std::vector<uint8_t> got;
+            int rx = g_ref_coord_counter++;
+            int ry = g_ref_coord_counter++;
             int cycles = run_mc_block(top, true, 0, 0, dx, dy,
-                                      blk_w, blk_h, ref_win, got);
+                                      blk_w, blk_h, ref_win, got, rx, ry);
 
             bool match = (got.size() == expected.size());
             if (match) {
@@ -280,71 +262,44 @@ static void test_chroma_grid(Vh264_mc_interp_tb& top,
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-
     Vh264_mc_interp_tb top;
     reset(top);
 
-    std::mt19937 rng(42); // deterministic seed
+    std::mt19937 rng(42);
     std::uniform_int_distribution<int> pixel_dist(0, 255);
 
     int total_luma = 0, total_chroma = 0, total_cycles = 0;
-    int edge_luma = 0, edge_chroma = 0;
-    int extreme_luma = 0;
+    int edge_luma = 0, edge_chroma = 0, extreme_luma = 0;
 
     // -----------------------------------------------------------------------
-    // Test 1: All 16 luma sub-positions with random reference data
-    // Multiple block sizes: 16×16, 8×8, 4×4
+    // Test 1: All 16 luma sub-positions, multiple block sizes
     // -----------------------------------------------------------------------
-    const int pic_w = 32, pic_h = 32;
-    const int ref_stride = pic_w;
+    const int pic_w = 32, pic_h = 32, ref_stride = pic_w;
     std::vector<uint8_t> ref_frame(pic_w * pic_h);
-
-    // Random reference frame
     for (auto& p : ref_frame) p = static_cast<uint8_t>(pixel_dist(rng));
 
-    // Test with blocks at various positions
     struct BlkSpec { int x, y, w, h; };
     BlkSpec luma_blocks[] = {
-        {8, 8, 16, 16},   // interior 16×16
-        {0, 0, 16, 16},   // top-left corner
-        {8, 8, 8, 8},     // interior 8×8
-        {4, 4, 4, 4},     // interior 4×4
-        {0, 0, 8, 8},     // corner 8×8
-        {8, 4, 8, 16},    // 8×16 partition
-        {4, 8, 16, 8},    // 16×8 partition
-        {0, 0, 4, 8},     // 4×8 sub-partition
-        {4, 0, 8, 4},     // 8×4 sub-partition
+        {8, 8, 16, 16}, {0, 0, 16, 16}, {8, 8, 8, 8}, {4, 4, 4, 4},
+        {0, 0, 8, 8}, {8, 4, 8, 16}, {4, 8, 16, 8}, {0, 0, 4, 8}, {4, 0, 8, 4},
     };
-
-    for (const auto& blk : luma_blocks) {
+    for (const auto& blk : luma_blocks)
         test_luma_all_positions(top, ref_frame.data(), ref_stride,
-                                blk.x, blk.y, blk.w, blk.h,
-                                pic_w, pic_h,
+                                blk.x, blk.y, blk.w, blk.h, pic_w, pic_h,
                                 total_luma, total_cycles);
-    }
 
     // -----------------------------------------------------------------------
     // Test 2: Edge clamping — MVs pointing outside the picture
     // -----------------------------------------------------------------------
     {
-        // MV pointing left of picture (negative x)
-        int mv_tests[][4] = {
-            {-12, 0, 0, 0},   // 3 pixels left of boundary
-            {0, -12, 0, 0},   // 3 pixels above boundary
-            {0, 0, 0, 0},     // at boundary
-            {56, 0, 0, 0},    // right of picture (pic_w=32, blk at x=8, mv=56/4=14 → x=22, ref extends to 24 → within, try larger)
-            {80, 0, 0, 0},    // far right
-            {0, 80, 0, 0},    // far below
-            {-20, -20, 0, 0}, // top-left corner
-            {80, 80, 0, 0},   // bottom-right corner
+        int mv_tests[][2] = {
+            {-12, 0}, {0, -12}, {56, 0}, {80, 0}, {0, 80}, {-20, -20}, {80, 80},
         };
         for (const auto& mv : mv_tests) {
             for (int fy = 0; fy < 4; fy++) {
                 for (int fx = 0; fx < 4; fx++) {
-                    int full_mv_x = mv[0] + fx;
-                    int full_mv_y = mv[1] + fy;
-                    int blk_w = 4, blk_h = 4;
-                    int blk_x = 8, blk_y = 8;
+                    int full_mv_x = mv[0] + fx, full_mv_y = mv[1] + fy;
+                    int blk_w = 4, blk_h = 4, blk_x = 8, blk_y = 8;
 
                     std::vector<uint8_t> expected(blk_w * blk_h);
                     mc_ref::luma_mc_block(ref_frame.data(), ref_stride,
@@ -355,32 +310,28 @@ int main(int argc, char** argv) {
                     int int_x = blk_x + (full_mv_x >> 2);
                     int int_y = blk_y + (full_mv_y >> 2);
                     auto ref_win = build_luma_ref_window(ref_frame.data(), ref_stride,
-                                                          int_x, int_y,
-                                                          blk_w, blk_h,
+                                                          int_x, int_y, blk_w, blk_h,
                                                           pic_w, pic_h);
 
-                    int frac_x_val = full_mv_x & 3;
-                    int frac_y_val = full_mv_y & 3;
+                    int frac_x_v = full_mv_x & 3, frac_y_v = full_mv_y & 3;
                     std::vector<uint8_t> got;
-                    run_mc_block(top, false, frac_x_val, frac_y_val, 0, 0,
-                                 blk_w, blk_h, ref_win, got);
+                    int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+                    run_mc_block(top, false, frac_x_v, frac_y_v, 0, 0,
+                                 blk_w, blk_h, ref_win, got, rx, ry);
 
                     bool match = (got.size() == expected.size());
-                    if (match) {
-                        for (size_t i = 0; i < got.size(); i++) {
+                    if (match)
+                        for (size_t i = 0; i < got.size(); i++)
                             if (got[i] != expected[i]) {
                                 match = false;
                                 char buf[256];
                                 snprintf(buf, sizeof(buf),
-                                         "edge luma mismatch mv=(%d,%d) frac=(%d,%d) "
-                                         "pos=%d got=%d want=%d",
-                                         full_mv_x, full_mv_y, frac_x_val, frac_y_val,
+                                         "edge luma mismatch mv=(%d,%d) pos=%d got=%d want=%d",
+                                         full_mv_x, full_mv_y,
                                          static_cast<int>(i), got[i], expected[i]);
                                 fail(buf);
                                 break;
                             }
-                        }
-                    }
                     if (match) ++g_pass_count;
                     ++edge_luma;
                 }
@@ -389,103 +340,68 @@ int main(int argc, char** argv) {
     }
 
     // -----------------------------------------------------------------------
-    // Test 3: Extreme sample values (0 and 255) to catch overflow/clipping
+    // Test 3: Extreme sample values (0, 255, checkerboard)
     // -----------------------------------------------------------------------
     {
-        // All-zero frame
         std::vector<uint8_t> zero_frame(pic_w * pic_h, 0);
         test_luma_all_positions(top, zero_frame.data(), ref_stride,
-                                4, 4, 8, 8, pic_w, pic_h,
-                                extreme_luma, total_cycles);
+                                4, 4, 8, 8, pic_w, pic_h, extreme_luma, total_cycles);
 
-        // All-255 frame
         std::vector<uint8_t> max_frame(pic_w * pic_h, 255);
         test_luma_all_positions(top, max_frame.data(), ref_stride,
-                                4, 4, 8, 8, pic_w, pic_h,
-                                extreme_luma, total_cycles);
+                                4, 4, 8, 8, pic_w, pic_h, extreme_luma, total_cycles);
 
-        // Alternating 0/255 checkerboard — maximises filter ringing
         std::vector<uint8_t> checker_frame(pic_w * pic_h);
         for (int y = 0; y < pic_h; y++)
             for (int x = 0; x < pic_w; x++)
                 checker_frame[y * pic_w + x] = ((x + y) & 1) ? 255 : 0;
         test_luma_all_positions(top, checker_frame.data(), ref_stride,
-                                4, 4, 8, 8, pic_w, pic_h,
-                                extreme_luma, total_cycles);
+                                4, 4, 8, 8, pic_w, pic_h, extreme_luma, total_cycles);
     }
 
     // -----------------------------------------------------------------------
     // Test 4: Chroma eighth-pel — all 64 fractional positions
     // -----------------------------------------------------------------------
     {
-        int chroma_pic_w = 16, chroma_pic_h = 16;
-        int chroma_stride = chroma_pic_w;
-        std::vector<uint8_t> chroma_frame(chroma_pic_w * chroma_pic_h);
-        for (auto& p : chroma_frame)
-            p = static_cast<uint8_t>(pixel_dist(rng));
+        int cpw = 16, cph = 16, cs = cpw;
+        std::vector<uint8_t> chroma_frame(cpw * cph);
+        for (auto& p : chroma_frame) p = static_cast<uint8_t>(pixel_dist(rng));
 
-        // 8×8 and 4×4 chroma blocks
-        BlkSpec chroma_blocks[] = {
-            {2, 2, 8, 8},
-            {0, 0, 8, 8},
-            {2, 2, 4, 4},
-            {0, 0, 4, 4},
-        };
-        for (const auto& blk : chroma_blocks) {
-            test_chroma_grid(top, chroma_frame.data(), chroma_stride,
-                             blk.x, blk.y, blk.w, blk.h,
-                             chroma_pic_w, chroma_pic_h,
+        BlkSpec chroma_blocks[] = {{2,2,8,8}, {0,0,8,8}, {2,2,4,4}, {0,0,4,4}};
+        for (const auto& blk : chroma_blocks)
+            test_chroma_grid(top, chroma_frame.data(), cs,
+                             blk.x, blk.y, blk.w, blk.h, cpw, cph,
                              total_chroma, total_cycles);
-        }
 
-        // Edge-clamping chroma tests
-        int chroma_mv_tests[][2] = {
-            {-4, 0}, {0, -4}, {60, 0}, {0, 60}, {-8, -8}, {60, 60},
-        };
+        int chroma_mv_tests[][2] = {{-4,0},{0,-4},{60,0},{0,60},{-8,-8},{60,60}};
         for (const auto& mv : chroma_mv_tests) {
             for (int dy = 0; dy < 8; dy++) {
                 for (int dx = 0; dx < 8; dx++) {
-                    int full_dx = mv[0] + dx;
-                    int full_dy = mv[1] + dy;
-                    int blk_w = 4, blk_h = 4;
-                    int blk_x = 4, blk_y = 4;
-
-                    std::vector<uint8_t> expected(blk_w * blk_h);
-                    mc_ref::chroma_mc_block(chroma_frame.data(), chroma_stride,
-                                            blk_x, blk_y, full_dx, full_dy,
-                                            blk_w, blk_h,
-                                            chroma_pic_w, chroma_pic_h,
-                                            expected.data(), blk_w);
-
-                    int int_x = blk_x + (full_dx >> 3);
-                    int int_y = blk_y + (full_dy >> 3);
-                    auto ref_win = build_chroma_ref_window(
-                        chroma_frame.data(), chroma_stride,
-                        int_x, int_y, blk_w, blk_h,
-                        chroma_pic_w, chroma_pic_h);
-
-                    int frac_dx = full_dx & 7;
-                    int frac_dy = full_dy & 7;
+                    int full_dx = mv[0]+dx, full_dy = mv[1]+dy;
+                    int bw=4, bh=4, bx=4, by=4;
+                    std::vector<uint8_t> expected(bw*bh);
+                    mc_ref::chroma_mc_block(chroma_frame.data(), cs,
+                                            bx, by, full_dx, full_dy,
+                                            bw, bh, cpw, cph, expected.data(), bw);
+                    int ix = bx + (full_dx >> 3), iy = by + (full_dy >> 3);
+                    auto ref_win = build_chroma_ref_window(chroma_frame.data(), cs,
+                                                            ix, iy, bw, bh, cpw, cph);
+                    int fdx = full_dx & 7, fdy = full_dy & 7;
                     std::vector<uint8_t> got;
-                    run_mc_block(top, true, 0, 0, frac_dx, frac_dy,
-                                 blk_w, blk_h, ref_win, got);
-
+                    int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+                    run_mc_block(top, true, 0, 0, fdx, fdy, bw, bh, ref_win, got, rx, ry);
                     bool match = (got.size() == expected.size());
-                    if (match) {
-                        for (size_t i = 0; i < got.size(); i++) {
+                    if (match)
+                        for (size_t i = 0; i < got.size(); i++)
                             if (got[i] != expected[i]) {
                                 match = false;
                                 char buf[256];
                                 snprintf(buf, sizeof(buf),
-                                         "edge chroma mismatch frac=(%d,%d) "
-                                         "pos=%d got=%d want=%d",
-                                         frac_dx, frac_dy,
-                                         static_cast<int>(i), got[i], expected[i]);
+                                         "edge chroma mismatch frac=(%d,%d) pos=%d got=%d want=%d",
+                                         fdx, fdy, static_cast<int>(i), got[i], expected[i]);
                                 fail(buf);
                                 break;
                             }
-                        }
-                    }
                     if (match) ++g_pass_count;
                     ++edge_chroma;
                 }
@@ -494,52 +410,96 @@ int main(int argc, char** argv) {
     }
 
     // -----------------------------------------------------------------------
-    // Test 5: Specific j-position regression — this is where the classic
-    // off-by-one bug lives (intermediate precision, double rounding).
-    // Test with carefully constructed data that maximises intermediate values.
+    // Test 5: j-position regression + cycle measurement
     // -----------------------------------------------------------------------
+    int j_tests = 0;
     {
-        // Ramp pattern to stress intermediate accumulation
         std::vector<uint8_t> ramp_frame(pic_w * pic_h);
         for (int y = 0; y < pic_h; y++)
             for (int x = 0; x < pic_w; x++)
-                ramp_frame[y * pic_w + x] = static_cast<uint8_t>((x * 13 + y * 7) & 0xFF);
+                ramp_frame[y * pic_w + x] = static_cast<uint8_t>((x*13+y*7) & 0xFF);
 
-        int j_tests = 0;
-        // Test j position (frac_x=2, frac_y=2) specifically with multiple blocks
-        for (int by = 2; by < pic_h - 10; by += 4) {
-            for (int bx = 2; bx < pic_w - 10; bx += 4) {
+        for (int by = 2; by < pic_h-10; by += 4) {
+            for (int bx = 2; bx < pic_w-10; bx += 4) {
                 std::vector<uint8_t> expected(16);
                 mc_ref::luma_mc_block(ramp_frame.data(), ref_stride,
-                                      bx, by, 2, 2,  // frac (2,2) = j position
-                                      4, 4, pic_w, pic_h,
+                                      bx, by, 2, 2, 4, 4, pic_w, pic_h,
                                       expected.data(), 4);
-
-                int int_x = bx;
-                int int_y = by;
                 auto ref_win = build_luma_ref_window(ramp_frame.data(), ref_stride,
-                                                      int_x, int_y,
-                                                      4, 4, pic_w, pic_h);
-
+                                                      bx, by, 4, 4, pic_w, pic_h);
                 std::vector<uint8_t> got;
-                run_mc_block(top, false, 2, 2, 0, 0, 4, 4, ref_win, got);
-
-                for (size_t i = 0; i < got.size() && i < expected.size(); i++) {
+                int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+                run_mc_block(top, false, 2, 2, 0, 0, 4, 4, ref_win, got, rx, ry);
+                for (size_t i = 0; i < got.size() && i < expected.size(); i++)
                     if (got[i] != expected[i]) {
                         char buf[256];
                         snprintf(buf, sizeof(buf),
-                                 "j-position regression blk=(%d,%d) pos=%d "
-                                 "got=%d want=%d",
+                                 "j-position regression blk=(%d,%d) pos=%d got=%d want=%d",
                                  bx, by, static_cast<int>(i), got[i], expected[i]);
                         fail(buf);
                         break;
                     }
-                }
                 ++j_tests;
             }
         }
-        std::cout << "  j-position regression tests: " << j_tests << "\n";
     }
+
+    // -----------------------------------------------------------------------
+    // Test 6: Cycle budget measurement — full MB at worst-case j position
+    // -----------------------------------------------------------------------
+    int budget_cycles = 0;
+    {
+        // Luma 16×16 at j position (worst case: frac 2,2)
+        std::vector<uint8_t> budget_frame(pic_w * pic_h);
+        for (auto& p : budget_frame) p = static_cast<uint8_t>(pixel_dist(rng));
+        auto luma_win = build_luma_ref_window(budget_frame.data(), ref_stride,
+                                               8, 8, 16, 16, pic_w, pic_h);
+        std::vector<uint8_t> luma_got;
+        int rx = g_ref_coord_counter++, ry = g_ref_coord_counter++;
+        int luma_cyc = run_mc_block(top, false, 2, 2, 0, 0,
+                                     16, 16, luma_win, luma_got, rx, ry);
+
+        // Chroma 8×8 × 2 (worst-case fractional)
+        int cpw = 16, cph = 16;
+        std::vector<uint8_t> chroma_frame(cpw * cph);
+        for (auto& p : chroma_frame) p = static_cast<uint8_t>(pixel_dist(rng));
+        auto cb_win = build_chroma_ref_window(chroma_frame.data(), cpw, 4, 4,
+                                               8, 8, cpw, cph);
+        auto cr_win = build_chroma_ref_window(chroma_frame.data(), cpw, 4, 4,
+                                               8, 8, cpw, cph);
+        std::vector<uint8_t> cb_got, cr_got;
+        rx = g_ref_coord_counter++; ry = g_ref_coord_counter++;
+        int cb_cyc = run_mc_block(top, true, 0, 0, 3, 5, 8, 8, cb_win, cb_got, rx, ry);
+        rx = g_ref_coord_counter++; ry = g_ref_coord_counter++;
+        int cr_cyc = run_mc_block(top, true, 0, 0, 5, 3, 8, 8, cr_win, cr_got, rx, ry);
+
+        budget_cycles = luma_cyc + cb_cyc + cr_cyc;
+        std::cout << "  CYCLE BUDGET: luma_16x16_j=" << luma_cyc
+                  << " cb_8x8=" << cb_cyc << " cr_8x8=" << cr_cyc
+                  << " total=" << budget_cycles
+                  << " budget=250 " << (budget_cycles <= 250 ? "OK" : "OVER") << "\n";
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 7: Cache hit — re-issuing same window should skip loading
+    // -----------------------------------------------------------------------
+    int cache_cycles = 0;
+    {
+        auto luma_win = build_luma_ref_window(ref_frame.data(), ref_stride,
+                                               8, 8, 16, 16, pic_w, pic_h);
+        std::vector<uint8_t> got1, got2;
+        // First call: full load
+        int cyc1 = run_mc_block(top, false, 2, 2, 0, 0, 16, 16, luma_win, got1,
+                                 -500, -500);
+        // Second call: same ref_x/ref_y → cache hit, should be faster
+        int cyc2 = run_mc_block(top, false, 1, 1, 0, 0, 16, 16, luma_win, got2,
+                                 -500, -500);
+        cache_cycles = cyc1 - cyc2;
+        std::cout << "  CACHE: first=" << cyc1 << " cached=" << cyc2
+                  << " saved=" << cache_cycles << " cycles\n";
+    }
+
+    std::cout << "  j-position regression tests: " << j_tests << "\n";
 
     // -----------------------------------------------------------------------
     // Summary
@@ -559,6 +519,7 @@ int main(int argc, char** argv) {
               << " extreme_luma=" << extreme_luma
               << " total=" << total_tests
               << " pass=" << g_pass_count
+              << " cycles_per_mb=" << budget_cycles
               << "\n";
     return 0;
 }
