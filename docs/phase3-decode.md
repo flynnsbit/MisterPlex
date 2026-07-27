@@ -251,6 +251,17 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `res_csum=0x14` on a **non-DIAG / non-force product RBF** (contingency §D ACTIVE after
     dabdaeb0 FAIL reference; DIAG force-0x14 alone ≠ product unblock; **soft-skip ≠ hard PASS**;
     do not thrash-redeploy dabdaeb0).
+  **3.3l-2 RTL simulation prep done (W-REL 2026-07-27; no hardware/no Quartus):**
+    `fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv` adds combinational inverse-quant, 4×4 IDCT
+    residual, and prediction-add modules for the first residual handoff. Unit
+    `test_p3_idct_rtl_sim` is wired into `make unit`; it drives the checked-in 6739-byte
+    Annex-B vector, locks the real residual handoff signatures in `slice_hdr_parser.sv`, and
+    compares all 16 block-0 `dequant`, signed post-IDCT, and reconstructed samples against
+    `tests/fixtures/p3_host_recon/mb0_luma_v1.json`. Evidence: green output
+    `vector_bytes=6739 coeff_csum=0x14 tc=8 t1=3 dequant16/idct16/recon16 match ... y00=73 mean=62`;
+    red direction perturbs the AC dequant path and fails at `dequant[1] got=-896 want=896`.
+    This is an off-device prep gate only; it does **not** unblock hardware paint until the product
+    residual checksum gate is sticky `0x14`.
   **3.3l-3 host full-MB golden done (W-REL 2026-07-26):** `h264_recon.hpp` now has an optional
     `ReconTrace` that records MB0 luma prediction, 16 dequantized coefficients per 4×4, signed
     post-IDCT residual samples, and final reconstructed pixels. Stable RTL fixture:
