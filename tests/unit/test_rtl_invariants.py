@@ -490,6 +490,39 @@ def check_yuv_ddr_writer_contract() -> None:
     print("PASS ARM DDR writer uses product yuv420p frame-store path only")
 
 
+def check_ddr_bitstream_product_path() -> None:
+    media = strip_comments(read(MEDIA_PLAYER_CPP))
+    check(
+        "beginBitstreamSession" in media
+        and "pushBitstreamNal" in media
+        and "endBitstreamSession" in media,
+        "media_player.cpp must feed STREAM=1 through the DDR record transport "
+        "with explicit begin/pushNal/end. Falling back to ioctl or byte chunks "
+        "reintroduces the one-shot/mid-NAL splice path that blocks FPGA decode.",
+    )
+    check(
+        "NalDispatcher" in media and "h264stream::IBitstreamProducer" in media,
+        "media_player.cpp must keep the w-a4 NalDispatcher/IBitstreamProducer source "
+        "contract as the product feed loop. Replacing it with ad-hoc direct pushes risks "
+        "duplicating sequence/backpressure policy and drifting from the host source side.",
+    )
+    check(
+        "sendBitstreamChunkDdr" not in media,
+        "media_player.cpp still calls sendBitstreamChunkDdr from the product stream. "
+        "That legacy shim can wrap arbitrary byte chunks as records; product playback "
+        "must copy complete Annex-B NALs with sequence/session metadata.",
+    )
+    check(
+        "frames=0 with STREAM=1" in media
+        and "DDR bitstream zero/effectively-empty delivery" in media
+        and "readBitstreamStatus" in media,
+        "STREAM=1 zero-delivery must fail loudly with DDR ring telemetry. A frames=0 "
+        "session without producer/consumer/desync/underrun counters is indistinguishable "
+        "from a decoder bug.",
+    )
+    print("PASS product STREAM path uses DDR NAL records with zero-delivery telemetry")
+
+
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
@@ -498,6 +531,7 @@ def main() -> int:
     check_status_telemetry()
     check_ddr_frame_layout_contract()
     check_yuv_ddr_writer_contract()
+    check_ddr_bitstream_product_path()
     return 0
 
 

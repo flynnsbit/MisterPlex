@@ -1176,6 +1176,31 @@ void MediaPlayer::streamPump(int sfd) {
     const bool reconToFb =
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
+    auto formatDdrBitstreamStatus = [](const FpgaSpi::BitstreamStatus& st) {
+        return std::string("ddr_status session=") + std::to_string(st.session_id) +
+               " active=" + (st.active ? "1" : "0") +
+               " paused=" + (st.paused ? "1" : "0") +
+               " ring=" + std::to_string(st.ring_level) + "/" +
+               std::to_string(st.ring_capacity) +
+               " producer_bytes=" + std::to_string(st.producer_count) +
+               " consumer_bytes=" + std::to_string(st.consumer_count) +
+               " consumer_seq=" + std::to_string(st.consumer_seq) +
+               " underrun=" + std::to_string(st.underrun_count) +
+               " overrun=" + std::to_string(st.overrun_count) +
+               " desync=" + std::to_string(st.desync_count) +
+               " last_bad_seq=" + std::to_string(st.last_bad_seq) +
+               " flags=u" + (st.underrun ? "1" : "0") +
+               "o" + (st.overrun ? "1" : "0") +
+               "d" + (st.desync ? "1" : "0") +
+               "f" + (st.fatal ? "1" : "0");
+    };
+    auto readDdrBitstreamStatusString = [&]() {
+        FpgaSpi::BitstreamStatus st;
+        if (!fpga_.readBitstreamStatus(st))
+            return std::string("ddr_status=unreadable err=") + fpga_.lastError();
+        return formatDdrBitstreamStatus(st);
+    };
+
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
@@ -1205,7 +1230,8 @@ void MediaPlayer::streamPump(int sfd) {
         const auto br = f3Dispatch.begin(streamSession);
         if (br == h264stream::ControlResult::Ok) {
             f3Active = true;
-            log("media: F3 NAL producer begin session=" + std::to_string(streamSession));
+            log("media: F3 NAL producer begin session=" + std::to_string(streamSession) +
+                " " + readDdrBitstreamStatusString());
         } else {
             f3Fatal = true;
             log("media: F3 NAL producer begin failed " +
@@ -1275,11 +1301,12 @@ void MediaPlayer::streamPump(int sfd) {
         }
         if (r == h264stream::PushResult::Full) {
             f3Fatal = true;
-            log("media: F3 NAL producer Full persisted after bounded retry; resetting session");
+            log("ERROR media: F3 NAL producer Full persisted after bounded retry; resetting session " +
+                readDdrBitstreamStatusString());
         } else {
             f3Fatal = true;
-            log("media: F3 NAL producer " + std::string(h264stream::toString(r)) +
-                " — resetting session");
+            log("ERROR media: F3 NAL producer " + std::string(h264stream::toString(r)) +
+                " — resetting session " + readDdrBitstreamStatusString());
         }
         if (f3Active)
             f3Dispatch.end();
@@ -1584,8 +1611,19 @@ void MediaPlayer::streamPump(int sfd) {
         consumeCompleteNals();
     }
 
-    if (f3Active)
-        f3Dispatch.end();
+    FpgaSpi::BitstreamStatus ddrBeforeEnd{};
+    const bool haveDdrBeforeEnd = fpga_.readBitstreamStatus(ddrBeforeEnd);
+    const std::string ddrStatusBeforeEnd = haveDdrBeforeEnd
+                                               ? formatDdrBitstreamStatus(ddrBeforeEnd)
+                                               : (std::string("ddr_status=unreadable err=") +
+                                                  fpga_.lastError());
+    h264stream::Telemetry f3StatusBeforeEnd = f3Producer.status();
+    if (f3Active) {
+        const auto endResult = f3Dispatch.end();
+        if (endResult != h264stream::ControlResult::Ok)
+            log("ERROR media: F3 NAL producer end failed " +
+                std::string(h264stream::toString(endResult)) + " " + ddrStatusBeforeEnd);
+    }
     ::close(sfd);
     streamActive_.store(false);
     const auto streamWall1 = std::chrono::steady_clock::now();
@@ -1594,7 +1632,23 @@ void MediaPlayer::streamPump(int sfd) {
         std::chrono::duration_cast<std::chrono::milliseconds>(streamWall1 - streamWall0).count();
     const int64_t streamCpuUs = std::max<int64_t>(0, streamCpu1 - streamCpu0);
     const auto f3Stats = f3Dispatch.stats();
-    const auto f3Status = f3Producer.status();
+    const auto f3Status = f3StatusBeforeEnd;
+    const bool effectivelyEmptyDelivery =
+        wantF3 && f3Status.bytes_accepted > 4 && haveDdrBeforeEnd &&
+        ddrBeforeEnd.consumer_count <= 4;
+    if (wantF3 && (f3Status.nal_accepted == 0 || f3Status.bytes_accepted <= 4 ||
+                   effectivelyEmptyDelivery || f3Fatal || f3Stats.full_escalations != 0 ||
+                   f3Stats.desync_or_fatal != 0)) {
+        log("ERROR media: DDR bitstream zero/effectively-empty delivery "
+            "accepted_nals=" + std::to_string(f3Status.nal_accepted) +
+            " accepted_bytes=" + std::to_string(f3Status.bytes_accepted) +
+            " dispatcher_seen=" + std::to_string(f3Stats.nal_seen) +
+            " full_retries=" + std::to_string(f3Stats.full_retries) +
+            " full_escalations=" + std::to_string(f3Stats.full_escalations) +
+            " desync_or_fatal=" + std::to_string(f3Stats.desync_or_fatal) +
+            " effectively_empty=" + (effectivelyEmptyDelivery ? "1" : "0") +
+            " " + ddrStatusBeforeEnd);
+    }
     log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
         " f3_nals=" + std::to_string(f3Status.nal_accepted) +
         " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
@@ -1602,6 +1656,7 @@ void MediaPlayer::streamPump(int sfd) {
         " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
         " f3_desync=" + std::to_string(f3Status.desync_count) +
         " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +
+        " " + ddrStatusBeforeEnd +
         " stream_wall_ms=" + std::to_string(streamWallMs) +
         " stream_cpu_us=" + std::to_string(streamCpuUs) +
         " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
@@ -2810,6 +2865,32 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioThr_.join();
     if (streamThr_.joinable())
         streamThr_.join();
+
+    if (streamEnabled_ && frameIndex == 0) {
+        FpgaSpi::BitstreamStatus st;
+        if (fpga_.readBitstreamStatus(st)) {
+            log("ERROR media: frames=0 with STREAM=1; DDR bitstream telemetry "
+                "session=" + std::to_string(st.session_id) +
+                " active=" + (st.active ? "1" : "0") +
+                " paused=" + (st.paused ? "1" : "0") +
+                " ring=" + std::to_string(st.ring_level) + "/" +
+                std::to_string(st.ring_capacity) +
+                " producer_bytes=" + std::to_string(st.producer_count) +
+                " consumer_bytes=" + std::to_string(st.consumer_count) +
+                " consumer_seq=" + std::to_string(st.consumer_seq) +
+                " underrun=" + std::to_string(st.underrun_count) +
+                " overrun=" + std::to_string(st.overrun_count) +
+                " desync=" + std::to_string(st.desync_count) +
+                " last_bad_seq=" + std::to_string(st.last_bad_seq) +
+                " flags=u" + (st.underrun ? "1" : "0") +
+                "o" + (st.overrun ? "1" : "0") +
+                "d" + (st.desync ? "1" : "0") +
+                "f" + (st.fatal ? "1" : "0"));
+        } else {
+            log("ERROR media: frames=0 with STREAM=1; DDR bitstream telemetry unreadable: " +
+                fpga_.lastError());
+        }
+    }
 
     playing_.store(false);
     {
