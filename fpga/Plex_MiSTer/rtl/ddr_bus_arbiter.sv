@@ -1,10 +1,18 @@
 // Two-master f2sdram arbiter for the single HPS DDR port.
 //
-// Master 0 is the video frame store and keeps priority.  Master 1 is the
-// compressed-bitstream ring reader; it receives one isolated command slot only
-// when it raises m1_want and the frame master has no command in flight.  Read
-// responses are routed by the recorded burst owner, so masters never see each
-// other's DDRAM_DOUT_READY pulses.
+// Master 0 is the video frame store — both master and arbiter share clk
+// (the DDR bridge clock, general[2].gpll, 90 MHz).
+//
+// Master 1 is the compressed-bitstream ring reader on the system clock
+// (general[0].gpll, 20 MHz).  Because both PLL outputs are synchronous
+// (same PLL, 0 ps phase shift), Quartus times the crossing correctly.
+// m1_want gets a 2-FF synchroniser for robustness; data/address signals
+// are protocol-guarded (stable while m1_busy is deasserted).
+//
+// ⚠ This module previously ran on clk_sys (20 MHz) which placed its
+// registered state (rsp_left, grant_m1) between the 90 MHz DDR bridge
+// and the 90 MHz frame store, creating a 5.555 ns setup path that
+// failed STA by −1.346 ns.  Moving to clk_ddr eliminates that crossing.
 
 module ddr_bus_arbiter (
 	input  wire        clk,
@@ -42,6 +50,31 @@ module ddr_bus_arbiter (
 	output wire  [7:0] DDRAM_BE,
 	output wire        DDRAM_WE
 );
+	// Reset synchroniser (reset originates in clk_sys, we run on clk_ddr)
+	reg reset_s1, reset_s2;
+	always @(posedge clk or posedge reset) begin
+		if (reset) begin
+			reset_s1 <= 1'b1;
+			reset_s2 <= 1'b1;
+		end else begin
+			reset_s1 <= 1'b0;
+			reset_s2 <= reset_s1;
+		end
+	end
+	wire rst = reset_s2;
+
+	// 2-FF synchroniser for m1_want (clk_sys → clk_ddr)
+	reg m1_want_s1, m1_want_s2;
+	always @(posedge clk) begin
+		if (rst) begin
+			m1_want_s1 <= 1'b0;
+			m1_want_s2 <= 1'b0;
+		end else begin
+			m1_want_s1 <= m1_want;
+			m1_want_s2 <= m1_want_s1;
+		end
+	end
+
 	reg grant_m1;
 	reg rsp_owner_m1;
 	reg [8:0] rsp_left;
@@ -68,7 +101,7 @@ module ddr_bus_arbiter (
 	assign m1_dout_ready = DDRAM_DOUT_READY & rsp_active & rsp_owner_m1;
 
 	always @(posedge clk) begin
-		if (reset) begin
+		if (rst) begin
 			grant_m1 <= 1'b0;
 			rsp_owner_m1 <= 1'b0;
 			rsp_left <= 9'd0;
@@ -82,14 +115,14 @@ module ddr_bus_arbiter (
 						rsp_owner_m1 <= 1'b1;
 						rsp_left <= {1'b0, selected_burst};
 						grant_m1 <= 1'b0;
-					end else if (m1_we || !m1_want) begin
+					end else if (m1_we || !m1_want_s2) begin
 						grant_m1 <= 1'b0;
 					end
 				end else begin
 					if (m0_rd) begin
 						rsp_owner_m1 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
-					end else if (!m0_cmd && m1_want) begin
+					end else if (!m0_cmd && m1_want_s2) begin
 						grant_m1 <= 1'b1;
 					end
 				end
