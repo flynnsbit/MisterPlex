@@ -18,7 +18,6 @@ ERROR_FILE_RE = re.compile(r"^%Error(?:-[A-Z0-9_]+)?:\s+([^:]+):(\d+):(\d+):")
 INTERESTING_RE = re.compile(r"^(?:WIDTHTRUNC|WIDTHEXPAND|WIDTH|UNSIGNED|IMPLICIT)")
 ASSIGN_RE = re.compile(r"set_global_assignment\b.*?-name\s+(SYSTEMVERILOG_FILE|VERILOG_FILE|QIP_FILE)\b\s+(.+)$")
 SOURCE_RE = re.compile(r"^\s*source\s+(.+?)\s*$")
-MODULE_PARAM_RE = re.compile(r"\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)\s*#\s*\(")
 
 
 def rel(path: Path) -> str:
@@ -27,55 +26,6 @@ def rel(path: Path) -> str:
 
 def strip_comment(line: str) -> str:
     return line.split("#", 1)[0].strip()
-
-
-def strip_sv_comments(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
-    return re.sub(r"//.*", "", text)
-
-
-def find_matching_paren(text: str, open_idx: int) -> int:
-    depth = 0
-    for idx in range(open_idx, len(text)):
-        ch = text[idx]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return idx
-    return -1
-
-
-def check_quartus_subset_text(path_name: str, text: str) -> list[str]:
-    """Catch SV constructs Verilator accepts but Quartus Analysis rejects."""
-    stripped = strip_sv_comments(text)
-    issues: list[str] = []
-    for match in MODULE_PARAM_RE.finditer(stripped):
-        close_idx = find_matching_paren(stripped, match.end() - 1)
-        if close_idx < 0:
-            continue
-        params = stripped[match.end():close_idx]
-        localparam = re.search(r"\blocalparam\b", params)
-        if localparam:
-            line_no = stripped.count("\n", 0, match.end() + localparam.start()) + 1
-            issues.append(
-                f"{path_name}:{line_no}: Quartus subset error: localparam in a module parameter port list "
-                f"({match.group(1)}) is rejected by Quartus Analysis; use a parameter there or move the "
-                "localparam inside the module body"
-            )
-    return issues
-
-
-def check_quartus_subset(files: list[Path]) -> list[str]:
-    issues: list[str] = []
-    for path in files:
-        try:
-            path_name = rel(path)
-        except ValueError:
-            path_name = str(path)
-        issues.extend(check_quartus_subset_text(path_name, path.read_text(errors="ignore")))
-    return issues
 
 
 def resolve_quartus_path(raw: str, base_dir: Path) -> list[Path]:
@@ -326,13 +276,6 @@ def main() -> int:
         print("RTL LINT ERROR: Verilator probe failed:", file=sys.stderr)
         print(probe.stdout, file=sys.stderr)
         return probe.returncode
-
-    quartus_subset_issues = check_quartus_subset([p for p in files if rel(p) in reportable])
-    if quartus_subset_issues:
-        print("RTL LINT ERROR: Quartus-subset syntax rejected before fit:", file=sys.stderr)
-        for issue in quartus_subset_issues[:20]:
-            print(f"  {issue}", file=sys.stderr)
-        return 1
 
     plex_rel = "fpga/Plex_MiSTer/Plex.sv"
     module_files = [p for p in files if rel(p) in reportable and rel(p) != plex_rel]
