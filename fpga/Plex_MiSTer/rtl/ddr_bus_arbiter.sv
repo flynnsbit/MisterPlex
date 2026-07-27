@@ -4,19 +4,26 @@
 // (the DDR bridge clock, general[2].gpll, 90 MHz).
 //
 // Master 1 is the compressed-bitstream ring reader on the system clock
-// (general[0].gpll, 20 MHz).  Because both PLL outputs are synchronous
-// (same PLL, 0 ps phase shift), Quartus times the crossing correctly.
-// m1_want gets a 2-FF synchroniser for robustness; data/address signals
-// are protocol-guarded (stable while m1_busy is deasserted).
+// (general[0].gpll, 20 MHz).  clk_m1 carries the consumer's clock so
+// that DDR read responses can be safely forwarded via an async FIFO.
+// m1_want gets a 2-FF synchroniser; data/address signals are protocol-
+// guarded (stable while m1_busy is deasserted).
 //
 // ⚠ This module previously ran on clk_sys (20 MHz) which placed its
 // registered state (rsp_left, grant_m1) between the 90 MHz DDR bridge
 // and the 90 MHz frame store, creating a 5.555 ns setup path that
 // failed STA by −1.346 ns.  Moving to clk_ddr eliminates that crossing.
+//
+// ⚠ m1_dout_ready is a single clk_ddr pulse (11.1 ns).  The 20 MHz
+// consumer misses ~70 % of pulses depending on DDR CAS alignment.
+// An async_fifo on the m1 response path absorbs the rate difference:
+// write on clk_ddr, auto-pop read on clk_m1.  Beat-conservation test
+// confirmed 7/10 drops WITHOUT the FIFO, 0/10 WITH it.
 
 module ddr_bus_arbiter (
-	input  wire        clk,
-	input  wire        reset,
+	input  wire        clk,      // DDR bridge clock (90 MHz)
+	input  wire        clk_m1,   // m1 consumer clock (20 MHz / clk_sys)
+	input  wire        reset,    // synchronous to clk_m1 domain
 
 	input  wire        m1_want,
 
@@ -96,9 +103,35 @@ module ddr_bus_arbiter (
 	assign DDRAM_WE       = use_m1 ? m1_we        : m0_we;
 
 	assign m0_dout = DDRAM_DOUT;
-	assign m1_dout = DDRAM_DOUT;
 	assign m0_dout_ready = DDRAM_DOUT_READY & rsp_active & !rsp_owner_m1;
-	assign m1_dout_ready = DDRAM_DOUT_READY & rsp_active & rsp_owner_m1;
+
+	// ── m1 response FIFO (clk_ddr → clk_m1) ──
+	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
+	// (20 MHz) consumer would miss ~70 % of those pulses if sampled
+	// directly.  The FIFO absorbs beats on the fast side and auto-pops
+	// them one per clk_m1 cycle on the slow side.
+	wire        m1_rsp_fifo_full;
+	wire        m1_rsp_fifo_empty;
+	wire [63:0] m1_rsp_fifo_rdata;
+	wire        m1_rsp_wr_en = DDRAM_DOUT_READY & rsp_active & rsp_owner_m1;
+
+	async_fifo #(.WIDTH(64), .AW(3)) m1_rsp_fifo (
+		.wr_clk   (clk),
+		.wr_reset (rst),
+		.wr_en    (m1_rsp_wr_en),
+		.wr_data  (DDRAM_DOUT),
+		.wr_full  (m1_rsp_fifo_full),
+		.wr_almost_full (),
+
+		.rd_clk   (clk_m1),
+		.rd_reset (reset),       // reset is synchronous to clk_m1
+		.rd_en    (!m1_rsp_fifo_empty),  // auto-pop
+		.rd_data  (m1_rsp_fifo_rdata),
+		.rd_empty (m1_rsp_fifo_empty)
+	);
+
+	assign m1_dout       = m1_rsp_fifo_rdata;
+	assign m1_dout_ready = !m1_rsp_fifo_empty;
 
 	always @(posedge clk) begin
 		if (rst) begin
