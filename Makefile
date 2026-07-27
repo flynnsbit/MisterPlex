@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all unit rtl-sim rtl-lint pms-baseline-check arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all unit __unit_after_resource_preflight rtl-sim rtl-lint pms-baseline-check arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -17,7 +17,7 @@ help:
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
-	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
+	@echo "  make build-rbf  - local RBF build entrypoint (refuses unless explicitly allowed)"
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
@@ -28,7 +28,11 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit:
+	$(ROOT)/scripts/test_resource_preflight.sh unit
+	$(MAKE) __unit_after_resource_preflight
+
+__unit_after_resource_preflight: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -88,8 +92,11 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+	$(ROOT)/tests/unit/test_resource_preflight.sh
+	$(ROOT)/tests/unit/test_local_fit_refusal.sh
 
 rtl-sim:
+	$(ROOT)/scripts/test_resource_preflight.sh rtl-sim
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
@@ -101,6 +108,7 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 
 rtl-lint:
+	$(ROOT)/scripts/test_resource_preflight.sh rtl-lint
 	$(ROOT)/scripts/rtl_lint.py
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
@@ -399,7 +407,7 @@ $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
 
 MISTER_DEV ?= $(HOME)/Projects/misterfpga-dev
 build-rbf:
-	$(MISTER_DEV)/scripts/mister-dev build $(ROOT)/fpga/Plex_MiSTer --qpf Plex.qpf
+	MISTER_DEV=$(MISTER_DEV) $(ROOT)/scripts/build_rbf.sh --qpf Plex.qpf
 
 package:
 	$(ROOT)/scripts/package_release.sh

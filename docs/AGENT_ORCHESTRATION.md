@@ -12,6 +12,37 @@
 Keep **5–8 worker agents** busy until `docs/PHASE_BACKLOG.md` gates are green.
 Parent (top-level) verifies count and **refills the bucket** every tick.
 
+## Remote Quartus fit procedure
+
+Local Quartus fitting is **closed** unless parent explicitly reopens it.
+`scripts/build_rbf.sh` refuses by default; the emergency override is
+`MISTERPLEX_ALLOW_LOCAL_FIT=1`. Use `scripts/build_rbf_remote.sh` with isolated slots on
+SSH host `docker`; proven ceiling is **4 concurrent remote fits** (`slot1`…`slot4`), and
+**>4 is unproven**.
+
+Rules enforced by the script:
+- The local `fpga/Plex_MiSTer` tree, including uncommitted edits, is rsynced into one
+  remote slot; local `output_files/` is never clobbered. Results return to
+  `fpga/Plex_MiSTer/remote_out/<slot>/`.
+- QSF `NUM_PARALLEL_PROCESSORS` is preserved. `MISTER_REMOTE_PROCESSORS` is unsafe and
+  requires explicit `MISTER_REMOTE_ALLOW_PROCESSOR_OVERRIDE=1` because it changes the RBF.
+- A single-slot build refuses to emit an unverified RBF unless it matches
+  `MISTER_REMOTE_REFERENCE_RBF` (or existing local `output_files/Plex.rbf`). Exit 4 means
+  no reference/verification was available.
+
+Examples:
+```bash
+# Existing configuration with a known local reference RBF:
+scripts/build_rbf_remote.sh slot4
+
+# New configuration with no local reference: fit same source in two remote slots and
+# require bit-identity before trusting either RBF.
+MISTER_REMOTE_CROSS_VERIFY_SLOT=slot4 scripts/build_rbf_remote.sh slot3
+```
+
+Cross-slot verification writes `cross_slot_verified.txt` next to both returned RBFs and
+moves mismatched `Plex.rbf` files aside rather than leaving a standard output path.
+
 ## Every orchestrator tick
 1. Read `docs/PHASE_BACKLOG.md` + `/tmp/misterplex-agent-bucket.json`
 2. Count open TODO/IN_PROGRESS items

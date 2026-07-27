@@ -3,6 +3,9 @@
 # environment globally or changing the caller's shell/toolchain PATH.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"$ROOT/scripts/test_resource_preflight.sh" verilator
+
 if [[ -n "${VERILATOR:-}" ]]; then
   if [[ ! -x "$VERILATOR" ]]; then
     echo "run_verilator: VERILATOR is not executable: $VERILATOR" >&2

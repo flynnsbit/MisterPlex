@@ -17,6 +17,10 @@ Environment:
   MISTER_REMOTE_ALLOW_PROCESSOR_OVERRIDE=1 is required if MISTER_REMOTE_PROCESSORS is set.
   MISTER_REMOTE_COPY_BACK     1 to rsync reports/RBF back locally, 0 to leave remote-only (default: 1)
   MISTER_REMOTE_REFERENCE_RBF Reference RBF for bit-identity check. Defaults to PROJECT_PATH/output_files/Plex.rbf if present.
+                              Set to "none" for cross-slot verification without a local reference.
+  MISTER_REMOTE_CROSS_VERIFY_SLOT
+                              Optional second slot. Builds identical source in SLOT and this slot,
+                              then requires bit-identical RBFs before leaving Plex.rbf in remote_out.
   MISTER_REMOTE_ALLOW_UNVERIFIED=1 permits a remote RBF when no reference RBF exists.
 
 Artifacts are copied back to PROJECT_PATH/remote_out/SLOT/ unless copy-back is disabled.
@@ -53,6 +57,7 @@ COPY_BACK="${MISTER_REMOTE_COPY_BACK:-1}"
 ALLOW_PROCESSOR_OVERRIDE="${MISTER_REMOTE_ALLOW_PROCESSOR_OVERRIDE:-0}"
 REFERENCE_RBF="${MISTER_REMOTE_REFERENCE_RBF:-}"
 ALLOW_UNVERIFIED="${MISTER_REMOTE_ALLOW_UNVERIFIED:-0}"
+CROSS_VERIFY_SLOT="${MISTER_REMOTE_CROSS_VERIFY_SLOT:-}"
 if [[ -n "$PROCESSORS" ]]; then
   if [[ "$ALLOW_PROCESSOR_OVERRIDE" != "1" ]]; then
     echo "MISTER_REMOTE_PROCESSORS changes the RBF and is disabled unless MISTER_REMOTE_ALLOW_PROCESSOR_OVERRIDE=1." >&2
@@ -71,12 +76,101 @@ if [[ "$ALLOW_UNVERIFIED" != "0" && "$ALLOW_UNVERIFIED" != "1" ]]; then
   echo "MISTER_REMOTE_ALLOW_UNVERIFIED must be 0 or 1 (got '$ALLOW_UNVERIFIED')." >&2
   exit 2
 fi
-if [[ -z "$REFERENCE_RBF" && -f "$PROJECT/output_files/Plex.rbf" ]]; then
+if [[ -n "$CROSS_VERIFY_SLOT" ]]; then
+  if [[ ! "$CROSS_VERIFY_SLOT" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid MISTER_REMOTE_CROSS_VERIFY_SLOT '$CROSS_VERIFY_SLOT': use only letters, digits, dot, underscore, and hyphen." >&2
+    exit 2
+  fi
+  if [[ "$CROSS_VERIFY_SLOT" == "$SLOT" ]]; then
+    echo "MISTER_REMOTE_CROSS_VERIFY_SLOT must differ from primary slot '$SLOT'." >&2
+    exit 2
+  fi
+  if [[ "$COPY_BACK" != "1" ]]; then
+    echo "Cross-slot verification requires MISTER_REMOTE_COPY_BACK=1." >&2
+    exit 2
+  fi
+fi
+REFERENCE_RBF_DISABLED=0
+if [[ "$REFERENCE_RBF" == "none" || "$REFERENCE_RBF" == "NONE" ]]; then
+  REFERENCE_RBF=""
+  REFERENCE_RBF_DISABLED=1
+fi
+if [[ "$REFERENCE_RBF_DISABLED" == "0" && -z "$REFERENCE_RBF" && -f "$PROJECT/output_files/Plex.rbf" ]]; then
   REFERENCE_RBF="$PROJECT/output_files/Plex.rbf"
 fi
 if [[ -n "$REFERENCE_RBF" && ! -f "$REFERENCE_RBF" ]]; then
   echo "Reference RBF not found: $REFERENCE_RBF" >&2
   exit 2
+fi
+if [[ -n "$CROSS_VERIFY_SLOT" ]]; then
+  stamp="$(date +%Y%m%d%H%M%S)"
+  log_dir="$ROOT/build/remote_cross_verify/$stamp"
+  mkdir -p "$log_dir"
+  printf 'Cross-slot verify: primary=%s verify=%s project=%s\n' "$SLOT" "$CROSS_VERIFY_SLOT" "$PROJECT"
+  printf 'Cross-slot logs: %s\n' "$log_dir"
+
+  set +e
+  env -u MISTER_REMOTE_CROSS_VERIFY_SLOT \
+    MISTER_REMOTE_REFERENCE_RBF=none \
+    MISTER_REMOTE_ALLOW_UNVERIFIED=1 \
+    "$0" "$SLOT" "$PROJECT" >"$log_dir/$SLOT.log" 2>&1 &
+  pid_primary=$!
+  env -u MISTER_REMOTE_CROSS_VERIFY_SLOT \
+    MISTER_REMOTE_REFERENCE_RBF=none \
+    MISTER_REMOTE_ALLOW_UNVERIFIED=1 \
+    "$0" "$CROSS_VERIFY_SLOT" "$PROJECT" >"$log_dir/$CROSS_VERIFY_SLOT.log" 2>&1 &
+  pid_verify=$!
+  wait "$pid_primary"; rc_primary=$?
+  wait "$pid_verify"; rc_verify=$?
+  set -e
+
+  if [[ "$rc_primary" -ne 0 || "$rc_verify" -ne 0 ]]; then
+    for maybe_out in "$PROJECT/remote_out/$SLOT" "$PROJECT/remote_out/$CROSS_VERIFY_SLOT"; do
+      if [[ -f "$maybe_out/Plex.rbf" ]]; then
+        mv "$maybe_out/Plex.rbf" "$maybe_out/Plex.rbf.unverified-failed-$stamp"
+      fi
+    done
+    echo "Cross-slot verify build failed: $SLOT rc=$rc_primary, $CROSS_VERIFY_SLOT rc=$rc_verify" >&2
+    echo "--- $SLOT log tail ---" >&2
+    tail -80 "$log_dir/$SLOT.log" >&2 || true
+    echo "--- $CROSS_VERIFY_SLOT log tail ---" >&2
+    tail -80 "$log_dir/$CROSS_VERIFY_SLOT.log" >&2 || true
+    exit 1
+  fi
+
+  out_primary="$PROJECT/remote_out/$SLOT"
+  out_verify="$PROJECT/remote_out/$CROSS_VERIFY_SLOT"
+  rbf_primary="$out_primary/Plex.rbf"
+  rbf_verify="$out_verify/Plex.rbf"
+  if [[ ! -f "$rbf_primary" || ! -f "$rbf_verify" ]]; then
+    echo "Cross-slot verify missing copied RBF(s): $rbf_primary / $rbf_verify" >&2
+    exit 1
+  fi
+  md5_primary="$(md5sum "$rbf_primary" | awk '{print $1}')"
+  md5_verify="$(md5sum "$rbf_verify" | awk '{print $1}')"
+  if ! cmp -s "$rbf_primary" "$rbf_verify"; then
+    mismatch_tag="unverified-mismatch-$stamp"
+    mv "$rbf_primary" "$out_primary/Plex.rbf.$mismatch_tag"
+    mv "$rbf_verify" "$out_verify/Plex.rbf.$mismatch_tag"
+    printf 'Primary md5: %s  %s\n' "$md5_primary" "$rbf_primary" >&2
+    printf 'Verify md5:  %s  %s\n' "$md5_verify" "$rbf_verify" >&2
+    echo "FAIL: cross-slot RBFs differ; standard Plex.rbf outputs moved aside as .$mismatch_tag" >&2
+    exit 3
+  fi
+  {
+    echo "cross_slot_bit_identity=PASS"
+    echo "primary_slot=$SLOT"
+    echo "verify_slot=$CROSS_VERIFY_SLOT"
+    echo "md5=$md5_primary"
+    echo "primary_rbf=$rbf_primary"
+    echo "verify_rbf=$rbf_verify"
+    echo "log_dir=$log_dir"
+  } | tee "$out_primary/cross_slot_verified.txt" >"$out_verify/cross_slot_verified.txt"
+  printf 'Cross-slot bit-identity: PASS\n'
+  printf 'Primary slot md5: %s\n' "$md5_primary"
+  printf 'Verify slot md5:  %s\n' "$md5_verify"
+  printf 'Verified artifacts: %s and %s\n' "$out_primary" "$out_verify"
+  exit 0
 fi
 if [[ -z "$REFERENCE_RBF" && "$ALLOW_UNVERIFIED" != "1" ]]; then
   echo "No reference RBF available for bit-identity check." >&2
