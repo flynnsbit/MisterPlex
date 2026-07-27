@@ -3,7 +3,7 @@
 **Author:** w-arch  
 **Date:** 2026-07-27  
 **Branch:** feat/arch-study  
-**Status:** ANALYSIS COMPLETE — verdict: **20 MHz is sufficient, conditionally**
+**Status:** v2 — updated with w-c1 official allocation and w-a3 CDC data
 
 ---
 
@@ -291,17 +291,77 @@ leaves comfortable headroom.
 
 ---
 
+## 3A. Official w-c1 Allocation (f31c61a)
+
+w-c1 owns per-stage cycle ratchets and delivered this binding allocation:
+
+| Stage | Cycles/MB | % of 684 | Status |
+|-------|-----------|----------|--------|
+| **MC interpolation** | **250** | **37%** | **UNBUILT — dominant risk** |
+| deblock | 100 | 15% | Building blocks exist, scheduler unbuilt |
+| parse_cavlc (full) | 50 | 7% | Partially measured |
+| ddr_write | 50 | 7% | Unbuilt |
+| dequant_idct | 48 | 7% | Combinational (0 today, 48 budgeted for pipeline regs) |
+| intra_pred | 30 | 4% | Combinational (0 today, 30 budgeted) |
+| control overhead | 30 | 4% | FSM transitions |
+| **Total** | **558** | **82%** | |
+| **Margin** | **126** | **1.23×** | |
+
+### Risk Assessment of the 1.23× Margin
+
+**This margin is thin for an estimate-dominated budget.** Three of the seven
+stages (MC interpolation, deblock, ddr_write — together 400 cycles, 72% of
+the total allocation) are **entirely unbuilt**. Engineering estimates for
+unbuilt blocks are systematically optimistic; a 1.23× margin provides only
+~20% overrun tolerance before the budget fails.
+
+**Critical: MC at 250 is 37% of the budget.** If MC lands at 400 cycles/MB
+(plausible if the reference cache miss rate is worse than expected), the total
+becomes 708 and the budget fails outright (708/684 = 1.04× overshoot). If MC
+lands at 350, the total is 658 with only 1.04× margin — not credibly safe.
+
+**The 250-cycle MC allocation rests on a specific architectural assumption:**
+adjacent-MB reference overlap exploitation (sliding window cache). w-c1
+states this is MANDATORY — without it, the budget does not close. This means
+the MC core architecture is not a free design choice; it is constrained by
+the cycle budget.
+
+### Missing from the allocation
+
+**Intra_16×16 Plane and I_PCM** are currently `unsupported_code` in RTL
+(h264_intra_pred.sv:243) and are being implemented by w-plane. These are
+required for real content.
+
+- I16 Plane prediction: gradient computation (H, V sums over 16 boundary
+  samples) + 256 multiply-add operations → **~70 cycles/MB** (worst case,
+  only for I16 Plane MBs)
+- I_PCM: raw 384 bytes, no transform → **48 cycles** at 64-bit
+
+The `intra_pred` allocation is 30 cycles — insufficient for I16 Plane. The
+Plane cost must come from the 126-cycle margin, reducing effective margin to
+~56 cycles (1.09× — dangerously thin). **This is acceptable only because I16
+Plane MBs are rare in typical Baseline content** (most encoders prefer I4×4
+for quality; Plane mode is uncommon). But it must be tracked.
+
+---
+
 ## 4. Verdict on 20 MHz
 
-### The answer is YES — with one non-negotiable condition.
+### The answer is YES — tight but feasible, with two non-negotiable conditions.
 
-**20 MHz is sufficient for 624×480 @ 25 fps H.264 Baseline decode**, provided
-the DPB memory interface is upgraded from byte-serial to **64-bit coalesced
-burst access**. The composite cycle budget uses at most 59% of the 684-cycle
-allocation in the worst non-skip case, leaving 41% margin for implementation
-overhead, stalls, and arbitration contention.
+**20 MHz is sufficient for 624×480 @ 25 fps H.264 Baseline decode**, but the
+margin is thin (1.23× on w-c1's official allocation) and rests on two
+architectural conditions that are NOT optional:
 
-### The condition: 64-bit DPB memory interface
+1. **64-bit coalesced DPB memory interface** — byte-serial (988 cyc/MB) is
+   1.44× the entire budget.
+2. **Adjacent-MB reference overlap exploitation** in the MC core — without a
+   sliding window cache, MC interpolation cannot hit 250 cycles/MB.
+
+If either condition is not met, the budget fails and a clock change or scope
+reduction is required (see §5A Contingency Plan).
+
+### Condition 1: 64-bit DPB memory interface
 
 The current `h264_dpb_one_ref` fetches reference windows one byte per clock
 cycle. At 988 cycles/MB for a single P macroblock partition, this is
@@ -312,9 +372,26 @@ A 64-bit coalesced DPB controller reduces this to ~168 cycles/MB (4.1×
 throughput increase for 8× bus width — the difference from 8× is alignment
 waste). This is the single highest-impact change in the decode path.
 
-**w-mc and w-rel: the DPB controller width is an architecture-level
-requirement, not an optimisation.** It must be designed for 64-bit from the
-start.
+### Condition 2: MC reference cache with adjacent-MB overlap
+
+A 16×16 luma block at quarter-pel requires a 21×21 reference region. Two
+horizontally adjacent MBs with similar MVs share ~18 of 21 columns — 86%
+overlap. Re-fetching the full 21×21 for every MB would cost ~120 DPB read
+beats per MB; with a sliding window cache that retains the overlap, the
+marginal cost drops to ~16–20 beats for the 3 new columns.
+
+**w-c1 states this is MANDATORY for the 250-cycle MC target.** Without it,
+the fetch component alone would consume ~120 of the 250 cycles, leaving only
+130 for the 6-tap FIR on 256 luma + 128 chroma samples — barely 0.3 cycles
+per output sample, requiring 3+ parallel FIR units and 18+ DSP blocks.
+Feasible but tight. The cache relaxes this to a comfortable ~1 cycle per
+sample with a 4-wide FIR.
+
+**Caveat:** MVs differ per MB. When a scene cut or fast pan causes adjacent
+MBs to have very different MVs, the cache miss rate spikes and the overlap
+benefit vanishes. The MC core must degrade gracefully to full-refetch in
+these cases, and the worst case must still fit within 250 cycles. **Measure
+the realistic hit rate on w-cabac's graded P-slice ladder (rungs 2–6).**
 
 ### What about the discredited 100 MHz / 3,418 cycles/MB figure?
 
@@ -338,119 +415,107 @@ not use it for any planning purpose.**
 
 ## 5. Options Analysis (If Budget Tightens)
 
-Even though 20 MHz appears sufficient, this section evaluates fallback
-options in case implementation realities (arbitration contention, deeper
-pipeline stalls, sub-MB partition handling) consume the margin.
+The 1.23× margin is thin enough that a contingency plan is not academic —
+it is operationally necessary. If MC lands above 250, the question becomes:
+**what is the cheapest credible escape?**
 
-### Option A: Move decode to `clk_ddr` (90 MHz)
+### 5A. CONTINGENCY PLAN: What If MC Exceeds 250?
 
-**Budget:** 90,000,000 / 29,250 = **3,077 cycles/MB** (4.5× current)
+**Trigger:** MC interpolation measured at >250 cycles/MB on w-cabac's graded
+P-slice ladder, after reasonable optimisation effort.
 
-**Pros:** Massive headroom. Even byte-serial DPB (988 cycles) fits easily.
-No need to redesign the DPB controller.
+**Escalation ladder (cheapest first):**
 
-**Cons — CDC crossings that would be required:**
+#### Tier 1: Squeeze within 20 MHz (cost: days, no new CDC risk)
 
-| Crossing | From → To | Signals | Risk |
-|----------|-----------|---------|------|
-| 1. Bitstream input | clk_sys → clk_decode | `ioctl_wr`, `ioctl_dout`, FIFO output | Medium (FIFO-based, well-understood) |
-| 2. DPB ↔ DDR | clk_decode ↔ clk_ddr | `DDRAM_*` bus (already failing STA) | **HIGH** — exact failure mode that caused -2.137 ns slack |
-| 3. Reconstructed frame output | clk_decode → clk_sys | Frame store write port, swap signals | Medium |
-| 4. Status/telemetry | clk_decode → clk_sys | residual_csum, recon_sig, etc. | Low (can be multi-cycle) |
-| 5. Control signals | clk_sys → clk_decode | reset, flush, config registers | Low (quasi-static) |
+| Action | Cycles recoverable | Difficulty |
+|--------|-------------------|------------|
+| More aggressive reference cache (prefetch next MB's window speculatively) | 20–40 | Medium |
+| Wider FIR: 8-parallel instead of 4 (48 DSP blocks, 43% of budget) | ~48 (96→48) | Low |
+| P_Skip zero-MV fast path (bypass FIR entirely) | ~260 average savings | Low (but only helps average, not worst-case) |
+| Reduce deblock from 100 to 80 (2-wide edge pipe) | 20 | Low |
+| Total recoverable | **~130 cycles** | |
 
-**The project was just burned by crossing #2.** PATH 1 in w-cap's analysis
-is exactly this interface: f2sdram (90 MHz) → ddr_bus_arbiter (20 MHz) →
-stream_path registers (20 MHz), failing at -2.137 ns. Moving decode to a
-different clock makes this problem WORSE, not better, because it adds a
-third clock domain to an already-broken two-domain crossing.
+**If MC is at 380 or below, Tier 1 is sufficient** (380 + remaining 308 = 688,
+add 130 recovery → effective budget 814 > 688). 
 
-**Verdict: NOT RECOMMENDED.** The CDC risk is too high for a project at
-this stage, and the budget analysis shows it is not needed.
+#### Tier 2: Add a dedicated decode PLL output (cost: weeks, moderate CDC risk)
 
-### Option B: New PLL output (dedicated decode clock)
+If MC genuinely cannot hit 250 even with Tier 1, add a 4th PLL output for
+a dedicated decode clock. Based on PLL analysis (§1):
 
-**Candidate frequencies** (from same PLL, VCO assumed ~720 MHz):
+**Candidate: 40 MHz** (VCO/C, feasibility depends on fitter-chosen VCO)
+- Budget: 40M / 29,250 = **1,368 cycles/MB** (2× current)
+- MC allocation: 500 cycles → trivially achievable even without cache
 
-| Freq | Budget (cyc/MB) | Margin vs worst P | CDC crossings |
-|------|-----------------|-------------------|---------------|
-| 40 MHz | 1,368 | 3.4× | 2 new (bitstream in, frame out) |
-| 45 MHz | 1,538 | 3.8× | 2 new |
-| 60 MHz | 2,051 | 5.1× | 2 new |
+**CDC crossings required (enumerated, not assumed):**
 
-**Pros:** Budget headroom without touching the existing clk_sys domain.
-All existing framework modules stay at 20 MHz.
+Based on `stream_path` port analysis (rtl/stream_path.sv:7–96), the decode
+pipeline exchanges these signal groups with the clk_sys domain:
 
-**Cons:**
-- Requires 2 CDC crossings minimum (bitstream FIFO, frame output).
-- Each crossing is a potential source of the kind of bugs this project
-  has already suffered.
-- The DPB memory path still crosses to clk_ddr for DDR access — same
-  problem as Option A, crossing #2.
-- VCO achievability must be confirmed by running the fitter (w-cap).
+| # | Signal group | Width | Direction | CDC mechanism needed |
+|---|-------------|-------|-----------|---------------------|
+| 1 | Bitstream FIFO output (`bf_rd_data`, `bf_rd_en`, `bf_rd_empty`) | 10 | clk_sys → clk_decode | Async FIFO (proven: `async_fifo` already in repo, used by w-a3 for arbiter response) |
+| 2 | DDR bus signals (`ddr_busy`, `ddr_dout[63:0]`, `ddr_dout_ready`, `ddr_rd`, `ddr_addr[28:0]`, `ddr_burstcnt[7:0]`, `ddr_din[63:0]`, `ddr_be[7:0]`, `ddr_we`) | ~180 | clk_decode ↔ clk_ddr | **HIGH RISK** — this is the exact crossing that w-a3 just spent days fixing. Would need arbiter m2 port or second async FIFO pair. |
+| 3 | Frame store write (`fs_wr_en`, `fs_wr_pixel[15:0]`, `fs_wr_reset`, `fs_swap`) | 20 | clk_decode → clk_sys | Async FIFO (write samples at decode rate, read at display rate) |
+| 4 | Status/telemetry (residual_csum, recon_sig, etc.) | ~60 | clk_decode → clk_sys | 2-FF synchronizers (multi-cycle, low bandwidth) |
+| 5 | Control inputs (reset, flush, config) | ~5 | clk_sys → clk_decode | 2-FF synchronizers (quasi-static) |
+| 6 | ioctl interface (download, wr, dout) | 10 | clk_sys → clk_decode | Through bitstream FIFO (crossing #1) |
 
-**Verdict: VIABLE but not needed now.** Hold in reserve if the 20 MHz
-margin proves insufficient after implementation. The PLL has spare outputs.
+**Total: 6 crossing groups, ~285 signal wires crossing clock domains.**
 
-### Option C: Raise `clk_sys` itself
+**Engineering cost of the crossings:**
 
-**What depends on clk_sys = 20 MHz (traced from Plex.sv):**
+Crossing #2 (DDR bus) is the dangerous one. w-a3's experience:
 
-| Module | clk_sys dependency | Impact of change |
-|--------|-------------------|------------------|
-| `hps_io` (Plex.sv:130) | Framework interface to ARM HPS | **CRITICAL** — MiSTer framework assumes specific timing |
-| `present_core` (Plex.sv:737) | Video timing generation, ce_pix | Pixel clock ratios change, display breaks |
-| `CLK_VIDEO = clk_sys` (Plex.sv:825) | Video scaler input | All video timing must be re-derived |
-| `frame_store` / `ddr_frame_store` | Write/read timing | Affects DDR arbitration |
-| `audio_fifo` | Audio sample timing | 48 kHz relationship changes |
-| `AUDIO_S/L/R` (Plex.sv:831) | Audio output | Derived from CLK_AUDIO, probably OK |
-| `ddram_frame_rd` | DDR DMA engine | Burst timing changes |
-| `sdram_memtest` + `sdram` | SDRAM controller (via clk_sdram, separate) | Indirect only |
-| Status telemetry | ~1 kHz update rate from st_div counter | Harmless |
+> *"ddr_bus_arbiter was on clk_sys (20 MHz) between two 90 MHz endpoints —
+> 17 unsynchronized signal groups. Moving it to clk_ddr eliminated PATH 2
+> (slack −1.346 ns) but exposed a fast→slow pulse hazard on m1_dout_ready:
+> a single 11.1 ns clk_ddr pulse sampled by a 50 ns consumer, with 7/10
+> CAS latencies dropping the beat. Required an async_fifo #(.WIDTH(64),
+> .AW(3)) to fix."* — w-a3, `3c6d1d2`
 
-**This is the highest-risk option.** The MiSTer framework (`sys_top.v`,
-`hps_io.v`, video scaler) is shared infrastructure across hundreds of cores.
-Changing clk_sys requires re-validating the entire framework integration.
-The `ce_pix` pixel-clock enable, the OSD overlay, the DDR DMA — all assume
-20 MHz base timing.
+A clk_decode domain would create **the same category of problem**: DDR
+responses arriving at 90 MHz must be captured by a 25–40 ns consumer.
+The fix is known (async FIFO), but the failure mode is subtle (STA passes,
+functional testing fails intermittently depending on phase alignment).
 
-**Verdict: NOT RECOMMENDED.** Too many dependants, too much risk, not needed.
+**Estimated CDC engineering effort: 2–3 weeks** for a senior FPGA engineer
+who has already been through the arbiter CDC exercise. 1–2 async FIFOs,
+comprehensive beat-conservation testing, STA re-validation.
 
-### Option D: Increase parallelism (RECOMMENDED)
+#### Tier 3: Move decode to clk_ddr (90 MHz) — last resort
 
-**Key insight:** The bottleneck at 20 MHz is not compute but memory
-bandwidth. The single most impactful change is widening the DPB interface
-from 8-bit to 64-bit.
+**Budget:** 90M / 29,250 = **3,077 cycles/MB** (4.5× current)
 
-| Parallelism upgrade | Cycles saved | Complexity |
-|---------------------|-------------|------------|
-| 64-bit DPB bus | **820 cycles/MB** (988 → 168) | Medium: redesign fetch FSM |
-| 4-wide MC FIR | ~288 cycles/MB (384 → 96) | Medium: 24 DSP blocks |
-| 2-wide deblock edge | ~48 cycles/MB (96 → 48) | Low: duplicate edge pipe |
-| 4×4 block-parallel IDCT | 0 (already combinational) | N/A |
+This eliminates the MC cycle pressure entirely — even byte-serial DPB at
+988 fits easily in 3,077. **But the CDC cost is severe:**
 
-**The 64-bit DPB redesign alone is sufficient.** It converts a 1.44×-over-budget
-design into one with 59% margin. The other parallelism upgrades are
-optimisations, not requirements.
+All 6 crossing groups from Tier 2 apply, but crossing #2 is eliminated
+(decode and DDR are same clock). However, crossings #1 and #3 become
+**faster→slower** (90→20 MHz), which is the exact direction that caused
+the pulse-drop bug. Both would need async FIFOs.
 
-**DSP budget (5CSEBA6U23I7):** 112 × 18×18 multipliers available.
-- 4 FIR units × 6 taps = 24 multipliers (21%)
-- Dequant: uses shift/add, no DSPs
-- IDCT: uses shift/add, no DSPs
-- Remaining: 88 multipliers for future use (chroma subpel, etc.)
+**The real cost is not the FIFOs — it is the testing.** w-a3 spent ~4
+commits and extensive beat-conservation testing to handle ONE 90→20 MHz
+crossing (arbiter m1 response). Moving the entire decode pipeline adds
+two more such crossings, each with different data widths, burst patterns,
+and backpressure semantics.
 
-### Option E: Reduce scope
+**Estimated CDC engineering effort: 4–6 weeks.** Not recommended unless
+Tier 1 and Tier 2 are exhausted.
 
-If all else fails:
+#### Tier 4: Reduce scope
 
-| Reduction | New budget | Impact |
-|-----------|-----------|--------|
-| 624×480 @ 20 fps | 855 cyc/MB | 25% more headroom |
-| 480×360 @ 25 fps | 1,185 cyc/MB | 73% more headroom, visible quality loss |
-| 320×240 @ 25 fps | 3,333 cyc/MB | 4.9× headroom, DVD → VHS quality |
+| Reduction | New budget | MC allocation at 37% |
+|-----------|-----------|---------------------|
+| 624×480 @ 20 fps | 855 cyc/MB | 316 cyc/MB |
+| 624×480 @ 15 fps | 1,140 cyc/MB | 422 cyc/MB |
+| 480×360 @ 25 fps | 1,185 cyc/MB | 439 cyc/MB |
 
-**Verdict: Not needed.** The cycle model shows 624×480 @ 25 fps fits at
-20 MHz with the 64-bit DPB upgrade.
+**20 fps is the cheapest scope reduction** — it buys 25% more cycles with
+no resolution change. 15 fps is noticeable but tolerable for many content
+types. Resolution reduction is a last resort.
 
 ---
 
@@ -483,12 +548,12 @@ intra-domain timing failures**. This means:
 
 ### Impact on recommendations
 
-- **Option A (move to clk_ddr):** Would need to close timing at 11.1 ns
+- **Tier 3 (move to clk_ddr):** Would need to close timing at 11.1 ns
   period (90 MHz) for the entire decode pipeline. Given that even 20 MHz
   has CDC-related failures, this is risky.
-- **Option B (new PLL output):** Creates new CDC crossings, which are the
+- **Tier 2 (new PLL output):** Creates new CDC crossings, which are the
   exact failure mode. Each new crossing must be properly synchronised.
-- **Option D (wider datapaths at 20 MHz):** No new clock domains. The
+- **§5C (wider datapaths at 20 MHz):** No new clock domains. The
   wider DPB bus is just more wires in the same clock domain. **Lowest
   timing risk.** Area increase for a 64-bit DPB controller is modest.
 
@@ -517,36 +582,56 @@ closure at 20 MHz is not a concern for the decode pipeline.**
    cycle budget. w-mc and w-rel must coordinate on this.
 
 2. **Keep the entire decode pipeline on `clk_sys` (20 MHz).** Do not
-   introduce a new clock domain. The cycle budget is sufficient, and new
-   CDC crossings are the project's highest-risk failure mode.
+   introduce a new clock domain. The cycle budget is sufficient (w-c1
+   allocation: 558/684, 1.23× margin), and new CDC crossings are the
+   project's highest-risk failure mode (see w-a3's 4-commit arbiter
+   fix sequence: `60df5a2`→`3c6d1d2`).
 
-3. **Plan MC interpolation as time-multiplexed with 4 parallel FIR units.**
+3. **Design MC interpolation with adjacent-MB reference cache.**
+   This is MANDATORY per w-c1's allocation. Without overlap exploitation,
+   the 250-cycle MC target does not close. The cache must degrade
+   gracefully when MVs diverge. Measure hit rate on w-cabac's graded
+   P-slice ladder (rungs 2–6).
+
+4. **Plan MC as time-multiplexed with 4 parallel FIR units.**
    The existing combinational `h264_inter_mc_16x16` is a simulation model,
    not a synthesis target. Budget 24 DSP blocks for the FIR array.
 
-4. **P_Skip fast path:** When `skip_zero` is asserted (MV = 0,0), bypass
+5. **Report cycles/MB as a first-class testbench output from day one.**
+   w-c1's ratchet will measure MC against 250 automatically once it lands.
+   If you cannot hit 250, say so early — the Tier 1–2 contingency plan
+   (§5A) exists specifically for this case.
+
+6. **P_Skip fast path:** When `skip_zero` is asserted (MV = 0,0), bypass
    the FIR entirely and copy the co-located 16×16 reference block directly.
-   This is the dominant case for movie content and reduces average cost
-   from ~404 to ~144 cycles/MB.
 
 ### 7.2 Implementation order
 
 1. 64-bit DPB controller (w-rel / w-mc) — **gating**
-2. Time-multiplexed MC FIR (w-mc) — **gating**
-3. Deblock scheduler integration (w-rel) — **needed for correctness**
-4. P_Skip fast path — **optimisation, do after basic pipeline works**
-5. I16 Plane + I_PCM (w-plane) — **needed for real content**
+2. Adjacent-MB reference cache (w-mc) — **gating for 250-cycle target**
+3. Time-multiplexed MC FIR (w-mc) — **gating**
+4. Deblock scheduler integration (w-rel) — **needed for correctness**
+5. P_Skip fast path — **optimisation, do after basic pipeline works**
+6. I16 Plane + I_PCM (w-plane) — **needed for real content**
 
-### 7.3 Monitoring
+### 7.3 Monitoring and escalation
 
 After the MC datapath is built, w-c1 should measure the actual per-stage
 cycle counts on real content and compare against this model. The key
 numbers to watch:
 
-- DPB fetch cycles/MB (target: ≤170)
-- MC interpolation cycles/MB (target: ≤100)
-- Deblock cycles/MB (target: ≤130)
-- Total pipeline cycles/MB (target: ≤500, hard limit: 684)
+| Metric | Target | Hard limit | Escalation |
+|--------|--------|------------|------------|
+| MC cycles/MB | ≤250 | 380 (with Tier 1) | >380 → Tier 2 (new PLL output) |
+| DPB fetch cycles/MB | ≤168 | 200 | >200 → cache sizing issue |
+| Deblock cycles/MB | ≤100 | 130 | >130 → 2-wide edge pipe |
+| Total pipeline cycles/MB | ≤558 | 684 | >684 → frame drops |
+
+**If MC exceeds 250 but is below 380:** apply Tier 1 optimisations (§5A) —
+wider FIR, aggressive cache prefetch, P_Skip fast path. Recovers ~130 cycles.
+
+**If MC exceeds 380:** escalate to Tier 2 — add dedicated 40 MHz PLL output.
+Budget 2–3 weeks for CDC engineering (w-a3). See §5A for enumerated crossings.
 
 ---
 
@@ -564,12 +649,19 @@ numbers to watch:
 | Device = 5CSEBA6U23I7 | `sys/sys.tcl` line 2 | Traced ✓ |
 | Speed grade = 7 (slowest) | `sys/sys.tcl` line 5 | Traced ✓ |
 | STA failure = -2.137 ns | w-cap `clock_relationship_analysis.md` PATH 1 | Cross-ref ✓ |
-| CAVLC = 3.2 cyc/MB | w-c1 measurement | Reported (not independently verified) |
+| CAVLC = 3.2 cyc/MB (average) | w-c1 measurement (becomes 50 in official allocation) | Reported |
 | 100 MHz budget = discredited | `p3-mc-dpb-bandwidth.md`: uses wrong clock | Debunked ✓ |
+| w-c1 total allocation = 558/684 | w-c1 at `f31c61a`, delivered via parent | **Official** |
+| MC allocation = 250 cyc/MB | w-c1, conditional on adjacent-MB cache | **Official** |
+| Arbiter was on wrong clock | w-a3 `60df5a2`: 17 unsynchronized crossings | Traced ✓ |
+| Pulse hazard: 7/10 CAS drops | w-a3 `3c6d1d2`: m1_dout_ready beat conservation test | Traced ✓ |
+| Async FIFO fix for m1 response | w-a3 `3c6d1d2`: `async_fifo #(.WIDTH(64), .AW(3))` | Traced ✓ |
 | MC interpolation = 96 cyc/MB | First-principles estimate, 4-wide FIR | **Estimate** |
 | Deblocking = 126 cyc/MB | First-principles estimate, 48 edges × 2 + overhead | **Estimate** |
 | P_Skip fraction = 60–80% | Typical movie content heuristic | **Assumption** |
 | VCO ≈ 720 MHz | Inference from PLL constraints | **Unverified** |
+| 6 CDC crossing groups if clock change | Enumerated from stream_path ports | Traced ✓ |
+| ~285 signal wires cross domain | Counted from stream_path + DDR interface | Counted ✓ |
 
 ---
 
@@ -577,11 +669,12 @@ numbers to watch:
 
 1. **Exact VCO frequency** — w-cap should confirm by inspecting fitter
    output or running a trial fit. This determines what intermediate
-   frequencies are available if Option B is ever needed.
+   frequencies are available if Tier 2 (§5A) is ever triggered.
 
-2. **Actual CAVLC worst-case** — w-c1 should measure on a complex I-frame
-   to bound the worst case. The 3.2 average is fine for throughput
-   planning but a worst-case MB could stall the pipeline.
+2. **Actual CAVLC worst-case** — w-c1's allocation gives 50 cycles for
+   `parse_cavlc`. This needs measurement on a complex I-frame to bound
+   the worst case. If a single MB's CAVLC exceeds 50 cycles, it either
+   borrows from the margin or stalls the pipeline.
 
 3. **DDR arbitration contention** — The DPB shares the DDR bus with
    `ddr_frame_store` (present path) and `ddr_bitstream_reader` (stream
@@ -592,13 +685,27 @@ numbers to watch:
 
 4. **Sub-MB partitions** — The cycle model assumes P_L0_16×16 (one
    motion vector per MB). P_L0_16×8 and P_L0_8×16 require two reference
-   fetches; P_8×8ref requires four. With 64-bit coalescing, the per-fetch
-   overhead is smaller, but multi-partition MBs could reach ~400–500
-   cycles. Still within budget but worth measuring.
+   fetches; P_8×8ref requires four. With 64-bit coalescing and the
+   adjacent-MB cache, the per-fetch overhead is smaller, but multi-partition
+   MBs could reach the 250-cycle limit. Measure on w-cabac's graded
+   P-slice ladder.
 
-5. **I16 Plane correctness on DSP budget** — w-plane's implementation
-   must use shift-add, not DSP multipliers, to preserve the DSP budget
-   for MC FIR. Verify this constraint is communicated.
+5. **I16 Plane on the DSP budget** — w-plane's implementation must use
+   shift-add, not DSP multipliers, to preserve DSPs for MC FIR. The
+   I16 Plane gradient computation (17× multiplier) can be decomposed
+   as 16+1 = shift+add. Verify this constraint is communicated.
+
+6. **Adjacent-MB cache miss rate** — The 250-cycle MC target assumes
+   high cache hit rates for horizontally adjacent MBs. Scene cuts, fast
+   pans, and sub-MB partitions with divergent MVs will cause misses.
+   **Measure the realistic hit rate** on w-cabac's rungs 2–6 before
+   committing to the 250 target. If the hit rate is below ~70%, escalate
+   to Tier 1 optimisations immediately.
+
+7. **Post-CDC-fix STA update** — w-a3's arbiter fixes (`60df5a2`,
+   `3c6d1d2`, `d86c183`, `9461845`) have landed but no post-fix STA
+   run has been done. w-cap should confirm whether the -2.137 ns and
+   -1.346 ns failures are resolved. This affects all contingency options.
 
 ---
 
