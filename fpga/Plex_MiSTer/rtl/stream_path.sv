@@ -14,12 +14,30 @@ module stream_path #(
 	input  wire        enable,
 	input  wire        flush,
 
+	input  wire        ddr_stream_enable,
+	output wire        ddr_bus_want,
+	input  wire        ddr_busy,
+	output wire  [7:0] ddr_burstcnt,
+	output wire [28:0] ddr_addr,
+	input  wire [63:0] ddr_dout,
+	input  wire        ddr_dout_ready,
+	output wire        ddr_rd,
+	output wire [63:0] ddr_din,
+	output wire  [7:0] ddr_be,
+	output wire        ddr_we,
+
 	output wire        has_stream,
 	output wire [15:0] nalu_count,
 	output wire [7:0]  last_nal_type,
 	output wire [31:0] bytes_in,
 	output wire [31:0] bytes_seen,
 	output wire [15:0] fifo_level,
+	output wire        stream_ddr_active,
+	output wire [31:0] stream_ddr_bytes_out,
+	output wire [15:0] stream_ddr_underruns,
+	output wire [15:0] stream_ddr_overruns,
+	output wire [31:0] stream_ddr_host_write,
+	output wire [31:0] stream_ddr_fpga_read,
 
 	output wire        has_idr,
 	output wire [7:0]  idr_count,
@@ -83,13 +101,47 @@ module stream_path #(
 		.active(si_active), .bytes_in(bytes_in)
 	);
 
+	wire        ddr_wr_en;
+	wire [7:0]  ddr_wr_data;
+	wire        ddr_wr_flush;
+	wire        bf_wr_full;
+
+	ddr_bitstream_reader ddr_stream (
+		.clk(clk), .reset(reset),
+		.enable(ddr_stream_enable),
+		.flush(flush),
+		.out_valid(ddr_wr_en),
+		.out_byte(ddr_wr_data),
+		.out_flush(ddr_wr_flush),
+		.out_full(bf_wr_full | si_wr_en),
+		.bus_want(ddr_bus_want),
+		.DDRAM_BUSY(ddr_busy),
+		.DDRAM_BURSTCNT(ddr_burstcnt),
+		.DDRAM_ADDR(ddr_addr),
+		.DDRAM_DOUT(ddr_dout),
+		.DDRAM_DOUT_READY(ddr_dout_ready),
+		.DDRAM_RD(ddr_rd),
+		.DDRAM_DIN(ddr_din),
+		.DDRAM_BE(ddr_be),
+		.DDRAM_WE(ddr_we),
+		.active(stream_ddr_active),
+		.bytes_out(stream_ddr_bytes_out),
+		.underrun_count(stream_ddr_underruns),
+		.overrun_count(stream_ddr_overruns),
+		.host_write_count(stream_ddr_host_write),
+		.fpga_read_count(stream_ddr_fpga_read)
+	);
+
 	wire bf_rd_en, bf_rd_empty, bf_has;
 	wire [7:0] bf_rd_data;
+	wire bf_wr_en = si_wr_en | ddr_wr_en;
+	wire [7:0] bf_wr_data = si_wr_en ? si_wr_data : ddr_wr_data;
+	wire bf_wr_flush = si_wr_flush | ddr_wr_flush | flush;
 
 	bitstream_fifo #(.DEPTH(32768)) bfifo (
 		.clk(clk), .reset(reset),
-		.wr_en(si_wr_en), .wr_data(si_wr_data), .wr_flush(si_wr_flush | flush),
-		.wr_full(), .wr_level(fifo_level),
+		.wr_en(bf_wr_en), .wr_data(bf_wr_data), .wr_flush(bf_wr_flush),
+		.wr_full(bf_wr_full), .wr_level(fifo_level),
 		.rd_en(bf_rd_en), .rd_data(bf_rd_data), .rd_empty(bf_rd_empty), .has_data(bf_has)
 	);
 

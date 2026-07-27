@@ -942,7 +942,7 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
 
 void MediaPlayer::streamPump(int sfd) {
     // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
-    // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
+    // Also feed the FPGA decoder through the continuous HPS-DDR bitstream ring.
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
     const bool wantF1 = fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
@@ -952,13 +952,14 @@ void MediaPlayer::streamPump(int sfd) {
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
     if (wantF3)
-        fpga_.flushBitstreamFifo();
+        fpga_.flushBitstreamDdr();
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
     // cabacSkip_ is session-level (cleared in play()); do not clear here on mid-session re-entry.
     log(std::string("media: STREAM=1 host I-slice recon") +
-        (wantF1 ? " →F1" : "") + (wantF3 ? " +F3" : "") + (reconToFb ? " +fb0" : ""));
+        (wantF1 ? " →F1" : "") + (wantF3 ? " +DDR-bitstream" : "") +
+        (reconToFb ? " +fb0" : ""));
 
     constexpr size_t kF3Chunk = 8192;
     // Bound NAL scan buffer (SPS+PPS+IDR can be large at 720p; cap for dual-A9)
@@ -989,13 +990,14 @@ void MediaPlayer::streamPump(int sfd) {
         if (!wantF3 || end <= f3Off)
             return;
         while (f3Off + kF3Chunk <= end && !stop_.load()) {
-            if (fpga_.sendBitstreamChunk(acc.data() + f3Off, kF3Chunk, /*F3*/ 3)) {
+            if (fpga_.sendBitstreamChunkDdr(acc.data() + f3Off, kF3Chunk)) {
                 f3Total += kF3Chunk;
                 ++f3Pushes;
                 if ((f3Pushes % 64) == 0)
-                    log("media: F3 stream bytes=" + std::to_string(f3Total));
+                    log("media: DDR bitstream bytes=" + std::to_string(f3Total));
             } else if ((f3Pushes % 16) == 0) {
-                log("media: F3 stream: " + fpga_.lastError());
+                log("media: DDR bitstream backpressure: " + fpga_.lastError());
+                break;
             }
             f3Off += kF3Chunk;
         }
@@ -1306,7 +1308,7 @@ void MediaPlayer::streamPump(int sfd) {
         pushF3UpTo(parseFrom);
         if (wantF3 && f3Off < acc.size()) {
             size_t rem = acc.size() - f3Off;
-            if (rem && fpga_.sendBitstreamChunk(acc.data() + f3Off, rem, 3))
+            if (rem && fpga_.sendBitstreamChunkDdr(acc.data() + f3Off, rem))
                 f3Total += rem;
         }
     }

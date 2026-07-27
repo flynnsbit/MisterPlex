@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {
@@ -147,6 +148,11 @@ public:
 
     // Push elementary bitstream (H.264 annex-B) to F3 bitstream_fifo. Appends.
     bool sendBitstreamChunk(const uint8_t* data, size_t len, uint8_t index = 3);
+    // Product path: append elementary bitstream bytes into the HPS DDR ring.
+    // Flow control is via FPGA-published read_count; returns false instead of
+    // overwriting unread bytes.
+    bool sendBitstreamChunkDdr(const uint8_t* data, size_t len);
+    bool flushBitstreamDdr();
 
     // Pulse status bit 10 to flush present-domain audio FIFO.
     bool flushAudioFifo();
@@ -263,6 +269,10 @@ private:
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     bool ensureDdrMap();
     void releaseDdrMap();
+    bool ensureBitstreamDdrMap();
+    void releaseBitstreamDdrMap();
+    bool readBitstreamFpgaCount(uint32_t& readCount);
+    void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
     bool kickDdrDoorbell(int bank);
@@ -278,6 +288,12 @@ private:
     static constexpr uint32_t SSPI_FPGA_EN = (1u << 18);
     static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
+
+    int bitstreamMemFd_ = -1;
+    uint8_t* bitstreamMap_ = nullptr;
+    size_t bitstreamMapLen_ = 0;
+    uint32_t bitstreamWriteCount_ = 0;
+    bool bitstreamResetEpoch_ = false;
 };
 
 } // namespace misterplex

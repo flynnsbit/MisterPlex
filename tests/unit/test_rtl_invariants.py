@@ -30,6 +30,16 @@ MEDIA_PLAYER_CPP = Path(
 MISTERPLEXD_MAIN_CPP = Path(
     os.environ.get("MISTERPLEXD_MAIN_CPP", ROOT / "arm/misterplexd/main.cpp")
 )
+DDR_BITSTREAM_READER = Path(
+    os.environ.get(
+        "DDR_BITSTREAM_READER", ROOT / "fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv"
+    )
+)
+DDR_BITSTREAM_RING_HPP = Path(
+    os.environ.get(
+        "DDR_BITSTREAM_RING_HPP", ROOT / "host/libmisterplex/ddr_bitstream_ring.hpp"
+    )
+)
 INPUT_MAILBOX_HPP = Path(
     os.environ.get("INPUT_MAILBOX_HPP", ROOT / "host/libmisterplex/input_mailbox.hpp")
 )
@@ -265,6 +275,30 @@ def check_mailboxes() -> None:
     print("PASS DDR mailbox host/RTL ABI constants")
 
 
+def check_ddr_bitstream_ring() -> None:
+    rtl = strip_comments(read(DDR_BITSTREAM_READER))
+    host = strip_comments(read(DDR_BITSTREAM_RING_HPP))
+    cases = [
+        ("DATA_PHYS", "kDataPhys", 0x30100000),
+        ("CTRL_PHYS", "kCtrlPhys", 0x30140000),
+        ("READ_PHYS", "kReadPhys", 0x30140008),
+        ("ERR_PHYS", "kErrPhys", 0x30140010),
+        ("RING_BYTES", "kRingBytes", 262144),
+        ("MAGIC_CTRL", "kCtrlMagic", 0x504C5842),
+        ("MAGIC_READ", "kReadMagic", 0x504C5852),
+        ("MAGIC_ERR", "kErrMagic", 0x504C5845),
+    ]
+    for rtl_name, host_name, expected in cases:
+        rv = sv_const(rtl, rtl_name)
+        hv = cpp_const(host, host_name)
+        check(
+            rv == hv == expected,
+            f"DDR bitstream ring ABI mismatch: RTL {rtl_name}=0x{rv:X}, "
+            f"host {host_name}=0x{hv:X}, expected 0x{expected:X}.",
+        )
+    print("PASS DDR bitstream ring host/RTL ABI constants")
+
+
 def check_status_telemetry() -> None:
     plex = strip_comments(read(PLEX_SV))
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
@@ -445,6 +479,7 @@ def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_mailboxes()
+    check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
     check_yuv_ddr_writer_contract()

@@ -38,6 +38,11 @@
 //     [39:32] seq
 //     [47:40] frame-store SDRAM debug state
 //     [63:48] saturated line-buffer underrun count
+//   Continuous H.264 bitstream ring (HPS DDR3, independent of SDRAM stick):
+//     Data ring:       0x30100000..0x3013FFFF (256 KiB)
+//     HPS->FPGA CTRL:  0x30140000 ("PLXB", write_count[30:0], reset epoch)
+//     FPGA->HPS READ:  0x30140008 ("PLXR", read_count[31:0])
+//     FPGA->HPS ERR:   0x30140010 ("PLXE", seq, active, underrun/overrun sticky/counts)
 //
 // Why the mailbox exists: misterplexd used to read the OSD word back over the
 // HPS<->FPGA SPI bus (UIO_GET_STATUS). That bus is a single GPO register owned
