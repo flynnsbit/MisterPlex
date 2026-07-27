@@ -170,7 +170,8 @@ if [[ -z "$GOLDEN_PLANES" || -z "$GOLDEN_MANIFEST" ]]; then
 fi
 "$ROOT/tools/extract_h264_frame_planes.py" --verify \
   --input "$BITSTREAM" --sequence "$SEQUENCE" \
-  --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST"
+  --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" \
+  --expected-h264-loop-filter disabled
 
 echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}x${HEIGHT} frames=${FRAMES})" >&2
 "$RUN_VERILATOR" --cc --exe --build \
@@ -194,6 +195,7 @@ set +e
 COLORSPACE_OUT="$("$ROOT/tools/extract_h264_frame_planes.py" --verify \
   --input "$BITSTREAM" --sequence "$SEQUENCE" \
   --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" \
+  --expected-h264-loop-filter disabled \
   --candidate-planes "$CANDIDATE_I420" --candidate-colorspace I420_FROM_RGB565 2>&1)"
 COLORSPACE_RC=$?
 set -e

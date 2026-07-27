@@ -141,6 +141,16 @@ FORMAT_CODES = {
 }
 FORMAT_ERROR_DEBUG_FIELDS = ("frame_debug", "frame_dbg", "ddr_debug", "ddr_dbg", "debug_state")
 SURFACED_DEBUG_FIELDS = FORMAT_ERROR_DEBUG_FIELDS + ("recon_dbg",)
+NON_YUV_DOORBELL_ERROR = "frame store refused non-YUV doorbell (0xE1); non-YUV DDR doorbell format error"
+PLXF_ABSENT_ERROR = "frame store status unavailable (PLXF mailbox absent/unwritten)"
+STATUS_SNAPSHOT_KEYS = {
+    "bytes_in", "nalu", "has_frame", "has_stream", "has_idr", "frame_status",
+    "frame_bank", "ddr_bank", "bank", "frame_format", "ddr_format", "format",
+    "frame_seq", "ddr_seq", "doorbell_seq", "seq", "doorbell", "ddr_doorbell",
+    "frame_doorbell", "doorbell_hi", "ddr_doorbell_hi", "frame_doorbell_hi",
+    *SURFACED_DEBUG_FIELDS,
+    "plxf_magic", "frame_magic", "frame_store_magic",
+}
 
 
 def normalize_md5(value: str | None) -> str | None:
@@ -363,7 +373,7 @@ def parse_status_fields(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in text.splitlines():
         kv = dict(STATUS_FIELD_RE.findall(line))
-        if kv and ("bytes_in" in kv or line.strip().startswith("status")):
+        if kv and (line.strip().startswith("status") or STATUS_SNAPSHOT_KEYS.intersection(kv)):
             fields = kv
     return fields
 
@@ -417,17 +427,32 @@ def extract_frame_token(fields: dict[str, str]) -> dict | None:
 
 def load_status_snapshot(path: str) -> dict:
     p = Path(path)
-    fields = parse_status_fields(p.read_text(encoding="utf-8", errors="replace"))
-    if not fields:
+    text = p.read_text(encoding="utf-8", errors="replace")
+    fields = parse_status_fields(text)
+    status_errors = []
+    if PLXF_ABSENT_ERROR.lower() in text.lower():
+        status_errors.append(PLXF_ABSENT_ERROR)
+    if not fields and not status_errors:
         raise DeliveryFreshnessError(f"NO_FRESH_FRAME: no key=value status line in {p}")
     ints = {k: v for k, raw in fields.items() if (v := parse_int_value(raw)) is not None}
+    frame_status = fields.get("frame_status")
+    if frame_status and frame_status.strip().lower().rstrip(",") in {
+        "absent", "unavailable", "missing", "none", "no_frame",
+    }:
+        status_errors.append(f"frame_status={frame_status} ({PLXF_ABSENT_ERROR})")
+    has_frame = ints.get("has_frame")
+    if has_frame == 0:
+        status_errors.append(f"has_frame=0 ({PLXF_ABSENT_ERROR})")
+    plxf_magic = status_int(fields, "plxf_magic", "frame_magic", "frame_store_magic")
+    if plxf_magic == 0:
+        status_errors.append(f"PLXF magic=0x00000000 ({PLXF_ABSENT_ERROR})")
     debug_flags = []
     for name in SURFACED_DEBUG_FIELDS:
         val = ints.get(name)
         if val is not None:
             entry = {"field": name, "value": val, "hex": f"0x{val & 0xFF:02x}"}
             if name in FORMAT_ERROR_DEBUG_FIELDS and (val & 0xFF) == 0xE1:
-                entry["meaning"] = "non-YUV DDR doorbell/debug format error"
+                entry["meaning"] = NON_YUV_DOORBELL_ERROR
             debug_flags.append(entry)
     return {
         "path": str(p),
@@ -435,6 +460,7 @@ def load_status_snapshot(path: str) -> dict:
         "ints": ints,
         "frame_token": extract_frame_token(fields),
         "debug_flags": debug_flags,
+        "status_errors": status_errors,
     }
 
 
@@ -500,8 +526,9 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
             problems.append(problem)
 
     for flag in current["debug_flags"]:
-        if flag.get("meaning") == "non-YUV DDR doorbell/debug format error":
-            problems.append(f"{flag['field']}={flag['hex']} non-YUV DDR doorbell/debug format error")
+        if flag.get("meaning") == NON_YUV_DOORBELL_ERROR:
+            problems.append(f"{flag['field']}={flag['hex']} {NON_YUV_DOORBELL_ERROR}")
+    problems.extend(current["status_errors"])
 
     report = {
         "status": current,
@@ -807,6 +834,123 @@ def classify_error_signatures(stats: dict) -> list[dict]:
     return sigs
 
 
+def channel_dispersion(mae: list[float]) -> dict:
+    arr = np.array(mae, dtype=np.float64)
+    avg = float(arr.mean()) if arr.size else 0.0
+    min_v = float(arr.min()) if arr.size else 0.0
+    max_v = float(arr.max()) if arr.size else 0.0
+    ratio = float(max_v / min_v) if min_v > 1.0e-9 else (float("inf") if max_v > 0 else 1.0)
+    cv = float(arr.std() / avg) if avg > 1.0e-9 else 0.0
+    return {
+        "metric": "rgb_mae_channel_dispersion",
+        "per_channel_mae_rgb": [float(x) for x in mae],
+        "mean": avg,
+        "min": min_v,
+        "max": max_v,
+        "max_min_ratio": ratio,
+        "coefficient_of_variation": cv,
+        "threshold_basis": {
+            # Synthetic 624x480 active-region evidence in tests/unit/test_hw_visual_compare.py:
+            # unrelated/random: ratio=1.007 cv=0.003; unrelated/solid: ratio=1.046 cv=0.018;
+            # live frozen-screen report: ratio≈1.06 cv≈0.024.  These are intentionally below
+            # the flat/no-frame cutoffs.  Colour-path cases are far above them: 601→709
+            # ratio≈38.8 cv≈1.27, 709→601 ratio≈15.8 cv≈0.74, U/V swap ratio≈7.1 cv≈0.56.
+            "no_frame_delivered": {
+                "mean_mae_min": 20.0,
+                "exact_match_ratio_max": 0.05,
+                "max_min_ratio_max": 1.15,
+                "coefficient_of_variation_max": 0.06,
+            },
+            "colour_path_defect": {
+                "mean_mae_min": 5.0,
+                "exact_match_ratio_max": 0.20,
+                "max_min_ratio_min": 5.0,
+                "coefficient_of_variation_min": 0.50,
+            },
+        },
+    }
+
+
+def classify_visual_verdict(stats: dict, shift_rows: list[dict] | None = None) -> dict:
+    """Classify mismatch shape without hiding raw numbers.
+
+    The verdict is diagnostic, not a pass/fail threshold.  Ambiguous high-error
+    channel dispersion is deliberately refused by cmd_compare instead of being
+    guessed as either a colour defect or absent frame.
+    """
+    dispersion = channel_dispersion([float(x) for x in stats["per_plane_mae_rgb"]])
+    exact_ratio = float(stats["exact_match_ratio"])
+    mean_mae = dispersion["mean"]
+    ratio = dispersion["max_min_ratio"]
+    cv = dispersion["coefficient_of_variation"]
+    if stats["exact_match_pixels"] == stats["active_pixels"]:
+        return {
+            "id": "EXACT_MATCH",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "captured active region exactly matches the declared golden",
+        }
+
+    current_avg = mean_mae
+    if shift_rows:
+        best = shift_rows[0]
+        best_avg = float(sum(best["per_plane_mae_rgb"]) / 3.0)
+        best_exact = float(best["exact_match_ratio"])
+        if (
+            (best["captured_dx"] != 0 or best["captured_dy"] != 0)
+            and (best_exact >= exact_ratio + 0.20 or best_avg <= current_avg * 0.25)
+        ):
+            return {
+                "id": "GEOMETRY_CONTENT_DEFECT",
+                "confidence": "high",
+                "dispersion": dispersion,
+                "best_shift": best,
+                "note": "a shifted capture overlap explains the mismatch better than channel dispersion; check geometry, crop, pillar, or content alignment",
+            }
+
+    no_frame = (
+        mean_mae >= 20.0
+        and exact_ratio <= 0.05
+        and ratio <= 1.15
+        and cv <= 0.06
+    )
+    if no_frame:
+        return {
+            "id": "NO_FRAME_DELIVERED",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "RGB MAE is high and nearly channel-uniform; treat as absent/stale panel content (e.g. PLXF mailbox/frame delivery), not a colour conversion defect",
+        }
+
+    colour = (
+        mean_mae >= 5.0
+        and exact_ratio <= 0.20
+        and (ratio >= 5.0 or cv >= 0.50)
+    )
+    if colour:
+        return {
+            "id": "COLOUR_PATH_DEFECT",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "RGB MAE is strongly channel-skewed; check matrix/range or U/V/chroma path before delivery plumbing",
+        }
+
+    if mean_mae < 5.0 or exact_ratio >= 0.10:
+        return {
+            "id": "GEOMETRY_CONTENT_DEFECT",
+            "confidence": "medium",
+            "dispersion": dispersion,
+            "note": "mismatch is sparse/structured or low-amplitude rather than flat absent-frame or strongly channel-skewed colour error",
+        }
+
+    return {
+        "id": "INDETERMINATE",
+        "confidence": "none",
+        "dispersion": dispersion,
+        "note": "RGB MAE dispersion is in the unsafe band between flat no-frame and skewed colour-path signatures; refusing to guess",
+    }
+
+
 def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
                box: tuple[int, int, int, int] | None = None) -> dict:
     ga = active_view(golden, g, box).astype(np.int16)
@@ -867,6 +1011,7 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
         },
     }
     stats["diagnostic_signatures"] = classify_error_signatures(stats)
+    stats["visual_verdict"] = classify_visual_verdict(stats)
     return stats
 
 
@@ -971,6 +1116,26 @@ def compare_ok(stats: dict, noise: dict | None, max_mae: float | None, max_abs: 
     return all(maes[i] <= mae_limits[i] for i in range(3)) and stats["max_abs"] <= abs_limit
 
 
+def delivery_failure_verdict(error: DeliveryFreshnessError) -> dict:
+    msg = str(error)
+    if NON_YUV_DOORBELL_ERROR in msg:
+        reason = "non_yuv_doorbell_refusal"
+        note = "ARM status reports PLXF non-YUV doorbell refusal; delivery failed before pixels are eligible for colour classification"
+    elif PLXF_ABSENT_ERROR in msg or "NO_FRESH_FRAME" in msg:
+        reason = "no_fresh_frame_delivery"
+        note = "ARM status reports absent/unfresh PLXF frame delivery; do not diagnose colour or geometry from panel pixels"
+    else:
+        reason = "delivery_freshness_failure"
+        note = "delivery freshness gate failed before pixels are eligible for colour classification"
+    return {
+        "id": "NO_FRAME_DELIVERED",
+        "confidence": "high",
+        "delivery_reason": reason,
+        "note": note,
+        "delivery_error": msg,
+    }
+
+
 def cmd_geometry(_args: argparse.Namespace) -> int:
     print(json.dumps(asdict(load_geometry()), indent=2, sort_keys=True))
     return 0
@@ -1009,7 +1174,31 @@ def cmd_compare(args: argparse.Namespace) -> int:
     golden_provenance = validate_golden_provenance(args, g, box, rbf_identity)
     color_provenance = require_color_provenance(args, golden_provenance)
     reject_corrupt_capture_log(args.capture_log)
-    delivery_freshness = validate_delivery_freshness(args)
+    try:
+        delivery_freshness = validate_delivery_freshness(args)
+    except DeliveryFreshnessError as e:
+        report = {
+            "ok": False,
+            "golden": str(args.golden),
+            "capture": str(args.capture),
+            "capture_log": str(args.capture_log) if args.capture_log else None,
+            "geometry": asdict(g),
+            "compare_box": list(box),
+            "rbf_identity": rbf_identity,
+            "golden_provenance": golden_provenance,
+            "color_provenance": color_provenance,
+            "freshness": None,
+            "delivery_freshness": {"error": str(e)},
+            "stats": {"visual_verdict": delivery_failure_verdict(e)},
+            "thresholds": None,
+        }
+        if args.report:
+            out = Path(args.report)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        print(f"ERROR: {e}", file=sys.stderr)
+        return e.exit_code
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
     freshness = None
@@ -1054,11 +1243,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
         report["diff"] = str(args.diff)
     if args.shift_radius:
         report["shift_sweep"] = shift_sweep(golden, captured, g, box, args.shift_radius)
+        stats["visual_verdict"] = classify_visual_verdict(stats, report["shift_sweep"])
     if args.report:
         out = Path(args.report)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
+    if not ok and stats["visual_verdict"]["id"] == "INDETERMINATE":
+        return 2
     return 0 if ok else 1
 
 

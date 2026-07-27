@@ -14,13 +14,34 @@
   "decoder": {
     "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
     "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
-    "command": "ffmpeg -v error -y -i tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
-    "pix_fmt": "yuv420p"
+    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
+    "command_argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-skip_loop_filter",
+      "all",
+      "-i",
+      "tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264",
+      "-an",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "yuv420p",
+      "tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv"
+    ],
+    "input_format": "Annex-B H.264",
+    "output_format": "rawvideo",
+    "pix_fmt": "yuv420p",
+    "h264_loop_filter": "disabled",
+    "h264_loop_filter_ffmpeg": "-skip_loop_filter all"
   },
   "provenance": {
     "source_domain": "decoded H.264 planes",
     "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
     "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
     "rgb_roundtrip": false,
     "rgb565_roundtrip": false,
     "presentation_border_or_pillar_mask": false
@@ -55,7 +76,7 @@
   "plane_blob": {
     "path": "tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
     "bytes": 230400,
-    "sha256": "5cabc69088f0e5d0365cc3bb37d43bacb69da89fdacc72a40ce0045db530b5c9",
+    "sha256": "82aaafc0ed7c46851ec7f9d36a4db07d3fd229e540d9d5597220054a9f958b61",
     "layout": "I420 planar per frame: Y then U then V",
     "frame_bytes": 115200
   },
@@ -74,7 +95,7 @@
           "stride": 320,
           "offset": 0,
           "bytes": 76800,
-          "sha256": "a076e0941256552f92a049087447195feeedfa90f6c929ec7cb08dc083875cbf"
+          "sha256": "b9a53498a2679730481c64cc29f37cca715a1c346676b60a45b4407a418c61aa"
         },
         {
           "plane": "U",
@@ -83,7 +104,7 @@
           "stride": 160,
           "offset": 76800,
           "bytes": 19200,
-          "sha256": "20233d88ef97b1ff230de2d3ea475be2de3c07d860ef917445c4961e68e59a1f"
+          "sha256": "c4ed563691a312cf2980520bf6f16de0b1df4091e1cebb8c4205d0ea58bff60a"
         },
         {
           "plane": "V",
@@ -92,7 +113,7 @@
           "stride": 160,
           "offset": 96000,
           "bytes": 19200,
-          "sha256": "225abb467c08ef8bc02b828e8dbeaf705637b0cfd2ed52ddbc9498eae04eac6d"
+          "sha256": "447250e7b31f7849a279f200d76bf07540b083579abcfbd92ae18d3b7a2ce149"
         }
       ]
     },
@@ -110,7 +131,7 @@
           "stride": 320,
           "offset": 115200,
           "bytes": 76800,
-          "sha256": "ae6bf353d4331a800e8539ebad589e0fdbf2a08e2ba44db82a4501d422322ebb"
+          "sha256": "e2d8833eadd0f58489e63b5b94ecc866400ed330abbdc5e109d894fc2f6b0e75"
         },
         {
           "plane": "U",
@@ -119,7 +140,7 @@
           "stride": 160,
           "offset": 192000,
           "bytes": 19200,
-          "sha256": "cfe4206ba864a73e574aef4b80f4f985a2b5cdc7598fa3081a8471516ba5804d"
+          "sha256": "1aad2a36a9a6e76e2349207b8eb72f15a2cc39a4edef67b444105617579de3b6"
         },
         {
           "plane": "V",
@@ -128,7 +149,7 @@
           "stride": 160,
           "offset": 211200,
           "bytes": 19200,
-          "sha256": "3ebbe7c206f523e50bfbea9bc9666fbac9ae0a5720a190c518087ddcdb084c05"
+          "sha256": "8260c59012acfe3ee27de235a888f43f455573c7da76b26013fc658672f17bb5"
         }
       ]
     }

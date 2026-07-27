@@ -105,6 +105,58 @@ def write_provenance(path: Path, *, rbf: str = VALID_RBF_MD5,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def rgb_to_yuv601(rgb: np.ndarray) -> np.ndarray:
+    r = rgb[..., 0].astype(np.float64)
+    g = rgb[..., 1].astype(np.float64)
+    b = rgb[..., 2].astype(np.float64)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    u = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0
+    v = 0.5 * r - 0.418688 * g - 0.081312 * b + 128.0
+    return np.stack([y, u, v], axis=-1)
+
+
+def rgb_to_yuv709(rgb: np.ndarray) -> np.ndarray:
+    r = rgb[..., 0].astype(np.float64)
+    g = rgb[..., 1].astype(np.float64)
+    b = rgb[..., 2].astype(np.float64)
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    u = -0.114572 * r - 0.385428 * g + 0.5 * b + 128.0
+    v = 0.5 * r - 0.454153 * g - 0.045847 * b + 128.0
+    return np.stack([y, u, v], axis=-1)
+
+
+def yuv_to_rgb601(yuv: np.ndarray) -> np.ndarray:
+    y = yuv[..., 0]
+    u = yuv[..., 1] - 128.0
+    v = yuv[..., 2] - 128.0
+    r = y + 1.402 * v
+    g = y - 0.344136 * u - 0.714136 * v
+    b = y + 1.772 * u
+    return np.clip(np.rint(np.stack([r, g, b], axis=-1)), 0, 255).astype(np.uint8)
+
+
+def yuv_to_rgb709(yuv: np.ndarray) -> np.ndarray:
+    y = yuv[..., 0]
+    u = yuv[..., 1] - 128.0
+    v = yuv[..., 2] - 128.0
+    r = y + 1.5748 * v
+    g = y - 0.187324 * u - 0.468124 * v
+    b = y + 1.8556 * u
+    return np.clip(np.rint(np.stack([r, g, b], axis=-1)), 0, 255).astype(np.uint8)
+
+
+def print_verdict_case(name: str, report: dict) -> None:
+    verdict = report["stats"]["visual_verdict"]
+    disp = verdict["dispersion"]
+    mae = [round(x, 6) for x in disp["per_channel_mae_rgb"]]
+    print(
+        f"VISUAL_VERDICT_CASE {name} id={verdict['id']} "
+        f"mae_rgb={mae} ratio={disp['max_min_ratio']:.6f} "
+        f"cv={disp['coefficient_of_variation']:.6f} "
+        f"exact={report['stats']['exact_match_ratio']:.6f}"
+    )
+
+
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +222,8 @@ def main() -> int:
     require(gr["stats"]["per_plane_exact_match_pixels_yuv"] ==
             [gr["stats"]["active_pixels"]] * 3,
             f"known-good YUV per-plane exact counts wrong: {gr}")
+    require(gr["stats"]["visual_verdict"]["id"] == "EXACT_MATCH",
+            f"known-good visual verdict wrong: {gr['stats']['visual_verdict']}")
     require(good_diff.exists() and good_diff.stat().st_size > 0, "good diff artifact missing")
     require(gr["color_provenance"]["golden"] == {"matrix": "bt601", "range": "full"},
             f"good compare did not record golden colour provenance: {gr}")
@@ -318,6 +372,74 @@ def main() -> int:
             f"shift sweep should prefer no shift for single-pixel corruption: {br['shift_sweep'][:3]}")
     require(bad_diff.exists() and bad_diff.stat().st_size > 0, "bad diff artifact missing")
     print("PASS corrupted active pixel rejected with precise worst mismatch + diff artifact")
+
+    def compare_variant(name: str, pixels: np.ndarray, expected_id: str,
+                        expected_rc: int = 1, shift_radius: int = 0) -> dict:
+        path = WORK / f"{name}.png"
+        report = WORK / f"{name}.json"
+        write_png(path, pixels)
+        args = [
+            "compare",
+            "--golden", str(valid_golden),
+            *COLOR_ARGS,
+            *VALID_PROVENANCE_ARGS,
+            "--capture", str(path),
+            "--report", str(report),
+        ]
+        if shift_radius:
+            args.extend(["--shift-radius", str(shift_radius)])
+        proc = run(*args)
+        require(proc.returncode == expected_rc,
+                f"{name} rc={proc.returncode}, want {expected_rc}\nstdout={proc.stdout}\nstderr={proc.stderr}")
+        data = json.loads(report.read_text())
+        print_verdict_case(name, data)
+        require(data["stats"]["visual_verdict"]["id"] == expected_id,
+                f"{name} verdict wrong: {data['stats']['visual_verdict']}")
+        return data
+
+    exact_case = compare_variant("verdict_exact", golden, "EXACT_MATCH", expected_rc=0)
+    require(exact_case["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] == 1.0,
+            f"exact dispersion should be ratio 1: {exact_case['stats']['visual_verdict']}")
+
+    rng = np.random.default_rng(12345)
+    unrelated = rng.integers(0, 256, golden.shape, dtype=np.uint8)
+    no_frame = compare_variant("verdict_unrelated_random", unrelated, "NO_FRAME_DELIVERED")
+    require(no_frame["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] < 1.02,
+            f"unrelated/random should be flat channel error: {no_frame['stats']['visual_verdict']}")
+
+    wrong_709 = yuv_to_rgb709(rgb_to_yuv601(golden))
+    matrix = compare_variant("verdict_601_encoded_709_decoded", wrong_709, "COLOUR_PATH_DEFECT")
+    require(matrix["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] > 30.0,
+            f"601/709 matrix mismatch should be strongly channel-skewed: {matrix['stats']['visual_verdict']}")
+
+    yuv = rgb_to_yuv601(golden)
+    uv_swapped_yuv = yuv.copy()
+    uv_swapped_yuv[..., 1] = yuv[..., 2]
+    uv_swapped_yuv[..., 2] = yuv[..., 1]
+    uv_swap = compare_variant("verdict_uv_swap", yuv_to_rgb601(uv_swapped_yuv), "COLOUR_PATH_DEFECT")
+    require(uv_swap["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] > 5.0,
+            f"U/V swap should be channel-skewed: {uv_swap['stats']['visual_verdict']}")
+
+    shifted = golden.copy()
+    shifted[:, 5:, :] = golden[:, :-5, :]
+    shifted[:, :5, :] = 0
+    shifted_case = compare_variant("verdict_shift_x5", shifted, "GEOMETRY_CONTENT_DEFECT",
+                                   shift_radius=6)
+    require(shifted_case["stats"]["visual_verdict"]["id"] != "COLOUR_PATH_DEFECT",
+            f"pixel shift must not be labelled colour: {shifted_case['stats']['visual_verdict']}")
+    require(shifted_case["stats"]["visual_verdict"]["best_shift"]["captured_dx"] == 5,
+            f"shift verdict did not identify +5px capture shift: {shifted_case['stats']['visual_verdict']}")
+
+    ambiguous = golden.copy().astype(np.int16)
+    ambiguous[:, :, 0] = np.clip(ambiguous[:, :, 0] + 80, 0, 255)
+    ambiguous[:, :, 1] = np.clip(ambiguous[:, :, 1] + 50, 0, 255)
+    ambiguous[:, :, 2] = np.clip(ambiguous[:, :, 2] + 40, 0, 255)
+    ambiguous_case = compare_variant("verdict_ambiguous_dispersion", ambiguous.astype(np.uint8),
+                                     "INDETERMINATE", expected_rc=2)
+    disp = ambiguous_case["stats"]["visual_verdict"]["dispersion"]
+    require(1.15 < disp["max_min_ratio"] < 5.0 and disp["coefficient_of_variation"] < 0.50,
+            f"ambiguous case must land in the refused unsafe band: {disp}")
+    print("PASS visual verdict classifies exact/no-frame/colour/geometry and refuses ambiguous dispersion")
 
     uniform_sig = hw_visual_compare.classify_error_signatures({
         "active_pixels": 296640,
@@ -494,6 +616,59 @@ def main() -> int:
             f"not graded\nstdout={undeclared_core.stdout}\nstderr={undeclared_core.stderr}")
     print("PASS wrong or undeclared loaded RBF identity is rejected before pixel grading")
 
+    status_skewed_colour = WORK / "status_skewed_colour.png"
+    write_png(status_skewed_colour, wrong_709)
+    absent_status = WORK / "status_frame_absent.txt"
+    absent_status.write_text(
+        "status frame_status=absent has_frame=0 has_stream=1 has_idr=1 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    absent_status_report = WORK / "status_absent_must_not_colour.json"
+    absent_guard = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(absent_status),
+        "--min-bytes-in", "512",
+        "--report", str(absent_status_report),
+    )
+    require(absent_guard.returncode == 7 and
+            "frame_status=absent" in absent_guard.stderr and
+            "PLXF mailbox absent/unwritten" in absent_guard.stderr and
+            "COLOUR_PATH_DEFECT" not in (absent_guard.stdout + absent_guard.stderr) and
+            absent_status_report.exists(),
+            "ARM frame_status=absent/has_frame=0 must refuse before a channel-skewed image "
+            "can be labelled as a colour defect\n"
+            f"stdout={absent_guard.stdout}\nstderr={absent_guard.stderr}")
+    absent_report = json.loads(absent_status_report.read_text())
+    require(absent_report["stats"]["visual_verdict"]["id"] == "NO_FRAME_DELIVERED" and
+            absent_report["stats"]["visual_verdict"]["delivery_reason"] == "no_fresh_frame_delivery",
+            f"PLXF absent status must map to stable NO_FRAME_DELIVERED verdict: {absent_report}")
+
+    absent_text_status = WORK / "status_plxf_absent_text.txt"
+    absent_text_status.write_text(
+        "frame store status unavailable (PLXF mailbox absent/unwritten)\n",
+        encoding="utf-8",
+    )
+    absent_text_guard = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(absent_text_status),
+        "--min-bytes-in", "512",
+    )
+    require(absent_text_guard.returncode == 7 and
+            "frame store status unavailable (PLXF mailbox absent/unwritten)" in absent_text_guard.stderr and
+            '"id": "NO_FRAME_DELIVERED"' in absent_text_guard.stdout,
+            "plain PLXF absent/unwritten status text must be a named delivery refusal, "
+            f"not graded\nstdout={absent_text_guard.stdout}\nstderr={absent_text_guard.stderr}")
+
     non_yuv_status = WORK / "status_non_yuv_debug.txt"
     non_yuv_status.write_text(
         "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
@@ -510,10 +685,38 @@ def main() -> int:
         "--status-log", str(non_yuv_status),
         "--min-bytes-in", "512",
     )
-    require(non_yuv.returncode == 7 and "non-YUV DDR doorbell/debug format error" in non_yuv.stderr,
+    require(non_yuv.returncode == 7 and
+            "frame store refused non-YUV doorbell (0xE1)" in non_yuv.stderr and
+            "non-YUV DDR doorbell format error" in non_yuv.stderr and
+            '"id": "NO_FRAME_DELIVERED"' in non_yuv.stdout,
             "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
             f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
-    print("PASS frame-store 0xe1 non-YUV doorbell debug is surfaced as a named refusal")
+
+    debug_state_non_yuv_status = WORK / "status_non_yuv_debug_state.txt"
+    debug_state_non_yuv_status.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "frame_bank=1 frame_format=yuv420p frame_seq=44 debug_state=0x1234e1 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    debug_state_non_yuv = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(debug_state_non_yuv_status),
+        "--min-bytes-in", "512",
+    )
+    require(debug_state_non_yuv.returncode == 7 and
+            "debug_state=0xe1" in debug_state_non_yuv.stderr and
+            "frame store refused non-YUV doorbell (0xE1)" in debug_state_non_yuv.stderr and
+            '"delivery_reason": "non_yuv_doorbell_refusal"' in debug_state_non_yuv.stdout and
+            "COLOUR_PATH_DEFECT" not in (debug_state_non_yuv.stdout + debug_state_non_yuv.stderr),
+            "debug_state low byte 0xe1 must refuse before a channel-skewed image can be "
+            "labelled as a colour defect\n"
+            f"stdout={debug_state_non_yuv.stdout}\nstderr={debug_state_non_yuv.stderr}")
+    print("PASS ARM absent/0xe1 status overrides colour-shape classification before grading pixels")
 
     v4l2_log = "[video4linux2,v4l2 @ 0x123] Dequeued v4l2 buffer contains corrupted data (0 bytes)."
     require(hw_visual_compare.classify_capture_log(v4l2_log) == "corrupt",

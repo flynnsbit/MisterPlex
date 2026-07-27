@@ -27,13 +27,16 @@ check_fixture() {
     --sequence "$sequence"
     --planes-out "$gen_planes"
     --manifest-out "$gen_manifest"
+    --h264-loop-filter disabled
   )
   if [[ "$expect_w" != "0" ]]; then args+=(--expect-width "$expect_w"); fi
   if [[ "$expect_h" != "0" ]]; then args+=(--expect-height "$expect_h"); fi
   "$TOOL" "${args[@]}"
   cmp -s "$gen_planes" "$planes"
-  "$TOOL" --verify --input "$bitstream" --sequence "$sequence" --planes "$planes" --manifest "$manifest"
   "$TOOL" --verify --input "$bitstream" --sequence "$sequence" --planes "$planes" --manifest "$manifest" \
+    --expected-h264-loop-filter disabled
+  "$TOOL" --verify --input "$bitstream" --sequence "$sequence" --planes "$planes" --manifest "$manifest" \
+    --expected-h264-loop-filter disabled \
     --candidate-planes "$gen_planes" --candidate-colorspace I420_NATIVE
 }
 
@@ -59,6 +62,22 @@ check_fixture \
   tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_frame_planes_v1.json \
   624 480
 
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  > "$OUT/missing_expected_loop_filter.log" 2>&1
+MISSING_LOOP_RC=$?
+set -e
+if [[ "$MISSING_LOOP_RC" -ne 9 ]]; then
+  cat "$OUT/missing_expected_loop_filter.log"
+  echo "FAIL frame-plane red-check: missing expected loop-filter rc=$MISSING_LOOP_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'expected H.264 loop-filter state is undeclared' "$OUT/missing_expected_loop_filter.log"
+
 python3 - <<'PY'
 from pathlib import Path
 src = Path("tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv")
@@ -74,6 +93,7 @@ set +e
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --expected-h264-loop-filter disabled \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
   --candidate-colorspace I420_NATIVE \
   > "$OUT/corrupt_compare.log" 2>&1
@@ -91,6 +111,7 @@ grep -q 'candidate plane comparison diverged from golden' "$OUT/corrupt_compare.
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --expected-h264-loop-filter disabled \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
   --candidate-colorspace I420_NATIVE \
   --expect-red
@@ -101,6 +122,7 @@ set +e
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --expected-h264-loop-filter disabled \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
   > "$OUT/unknown_colorspace_compare.log" 2>&1
 UNKNOWN_RC=$?
@@ -123,6 +145,7 @@ set +e
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --expected-h264-loop-filter disabled \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
   --candidate-colorspace I420_FROM_RGB565 \
   > "$OUT/mismatched_colorspace_compare.log" 2>&1
@@ -161,6 +184,7 @@ set +e
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest build/p3_frame_planes/plex_inter_p16_320x240_12f_bad_provenance.json \
+  --expected-h264-loop-filter disabled \
   > "$OUT/bad_provenance_compare.log" 2>&1
 PROVENANCE_RC=$?
 set -e
@@ -182,6 +206,7 @@ set +e
   --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest build/p3_frame_planes/plex_inter_p16_320x240_12f_masked_provenance.json \
+  --expected-h264-loop-filter disabled \
   > "$OUT/masked_provenance_compare.log" 2>&1
 MASKED_RC=$?
 set -e
@@ -197,4 +222,55 @@ if [[ "$MASKED_RC" -ne 9 ]]; then
 fi
 grep -q 'presentation masking' "$OUT/masked_provenance_compare.log"
 
-echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane/provenance RED checked"
+ffmpeg -v error -y \
+  -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  -an -f rawvideo -pix_fmt yuv420p "$OUT/plex_inter_p16_320x240_12f_deblocked.i420"
+python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+
+manifest = Path("tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json")
+planes = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_deblocked.i420")
+bad = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_deblocked_declared_undeblocked.json")
+data = json.loads(manifest.read_text())
+blob = planes.read_bytes()
+data["decoder"]["command"] = (
+    "ffmpeg -v error -y -i tests/fixtures/p3_inter_pred/"
+    "plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p "
+    "build/p3_frame_planes/plex_inter_p16_320x240_12f_deblocked.i420"
+)
+data["decoder"]["command_argv"] = [
+    "ffmpeg", "-v", "error", "-y", "-i",
+    "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264",
+    "-an", "-f", "rawvideo", "-pix_fmt", "yuv420p",
+    "build/p3_frame_planes/plex_inter_p16_320x240_12f_deblocked.i420",
+]
+data["decoder"]["h264_loop_filter"] = "disabled"
+data["decoder"]["h264_loop_filter_ffmpeg"] = "-skip_loop_filter all"
+data["provenance"]["h264_loop_filter"] = "disabled"
+data["plane_blob"]["path"] = str(planes)
+data["plane_blob"]["bytes"] = len(blob)
+data["plane_blob"]["sha256"] = hashlib.sha256(blob).hexdigest()
+bad.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes "$OUT/plex_inter_p16_320x240_12f_deblocked.i420" \
+  --manifest "$OUT/plex_inter_p16_320x240_12f_deblocked_declared_undeblocked.json" \
+  --expected-h264-loop-filter disabled \
+  > "$OUT/deblocked_declared_undeblocked.log" 2>&1
+DEBLOCK_RC=$?
+set -e
+if [[ "$DEBLOCK_RC" -ne 9 ]]; then
+  cat "$OUT/deblocked_declared_undeblocked.log"
+  echo "FAIL frame-plane red-check: deblocked reference declared as undeblocked rc=$DEBLOCK_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q "declares H.264 loop filter disabled but decoder command does not include '-skip_loop_filter all'" \
+  "$OUT/deblocked_declared_undeblocked.log"
+
+echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, loop-filter provenance verified, corrupt-plane/provenance RED checked"
