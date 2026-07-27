@@ -11,6 +11,7 @@ PASS="${MISTER_PASS:-1}"
 LOOPS="${LOOPS:-1000}"
 WIDTH="${WIDTH:-320}"
 HEIGHT="${HEIGHT:-240}"
+GEOMETRY="${GEOMETRY:-auto}"
 FORMATS="${FORMATS:-rgb565}"
 REMOTE="/media/fat/misterplex/bin/ddr_write_bench"
 
@@ -26,9 +27,9 @@ run_remote() {
     "chmod +x '$REMOTE' && '$REMOTE' --loops '$LOOPS' $*"
 }
 
-echo "host=$HOST loops=$LOOPS width=$WIDTH height=$HEIGHT formats=$FORMATS"
+echo "host=$HOST loops=$LOOPS width=$WIDTH height=$HEIGHT geometry=$GEOMETRY formats=$FORMATS"
 for fmt in $FORMATS; do
-  run_remote "O_SYNC /dev/mem format=$fmt" --sync --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
-  run_remote "no O_SYNC /dev/mem format=$fmt" --no-sync --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
-  run_remote "no O_SYNC + ARM cacheflush format=$fmt" --no-sync --flush --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
+  run_remote "O_SYNC /dev/mem format=$fmt" --sync --format "$fmt" --geometry "$GEOMETRY" --width "$WIDTH" --height "$HEIGHT"
+  run_remote "no O_SYNC /dev/mem format=$fmt" --no-sync --format "$fmt" --geometry "$GEOMETRY" --width "$WIDTH" --height "$HEIGHT"
+  run_remote "no O_SYNC + ARM cacheflush format=$fmt" --no-sync --flush --format "$fmt" --geometry "$GEOMETRY" --width "$WIDTH" --height "$HEIGHT"
 done

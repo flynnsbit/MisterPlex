@@ -14,8 +14,16 @@ PLEX_SV = Path(os.environ.get("PLEX_SV", ROOT / "fpga/Plex_MiSTer/Plex.sv"))
 DDRAM_FRAME_RD = Path(
     os.environ.get("DDRAM_FRAME_RD", ROOT / "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv")
 )
+DDR_FRAME_LAYOUT_SVH = Path(
+    os.environ.get(
+        "DDR_FRAME_LAYOUT_SVH", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh"
+    )
+)
 FPGA_SPI_HPP = Path(os.environ.get("FPGA_SPI_HPP", ROOT / "arm/misterplexd/fpga_spi.hpp"))
 FPGA_SPI_CPP = Path(os.environ.get("FPGA_SPI_CPP", ROOT / "arm/misterplexd/fpga_spi.cpp"))
+DDR_FRAME_LAYOUT_HPP = Path(
+    os.environ.get("DDR_FRAME_LAYOUT_HPP", ROOT / "host/libmisterplex/ddr_frame_layout.hpp")
+)
 INPUT_MAILBOX_HPP = Path(
     os.environ.get("INPUT_MAILBOX_HPP", ROOT / "host/libmisterplex/input_mailbox.hpp")
 )
@@ -330,11 +338,57 @@ def check_status_telemetry() -> None:
     print("PASS residual/recon status telemetry ABI (raw[12]=dc raw[13]=csum raw[14]=recon_sig)")
 
 
+def check_ddr_frame_layout_contract() -> None:
+    host = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
+    rtl = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
+    pairs = [
+        ("kPlex480pCodedWidth", "DDR_FRAME_CODED_WIDTH"),
+        ("kPlex480pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
+        ("kPlex480pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
+        ("kPlex480pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
+        ("kPlex480pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
+        ("kPlex480pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+        ("kPlex480pCropLeft", "DDR_FRAME_CROP_LEFT"),
+        ("kPlex480pCropRight", "DDR_FRAME_CROP_RIGHT"),
+        ("kPlex480pCropTop", "DDR_FRAME_CROP_TOP"),
+        ("kPlex480pCropBottom", "DDR_FRAME_CROP_BOTTOM"),
+        ("kPlex480pPillarboxLeft", "DDR_FRAME_PILLARBOX_LEFT"),
+        ("kPlex480pPillarboxRight", "DDR_FRAME_PILLARBOX_RIGHT"),
+        ("kPlex480pRgb565LineQwords", "DDR_FRAME_RGB565_LINE_QWORDS"),
+        ("kPlex480pYuvLumaLineQwords", "DDR_FRAME_YUV_LUMA_LINE_QWORDS"),
+        ("kPlex480pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
+        ("kPlex480pRgb565Bytes", "DDR_FRAME_RGB565_BYTES"),
+        ("kPlex480pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
+        ("kPlex480pRgb565BankStride", "DDR_FRAME_RGB565_BANK_STRIDE"),
+        ("kPlex480pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
+        ("kPlex480pRgb565DoorbellPhys", "DDR_FRAME_RGB565_DOORBELL_PHYS"),
+        ("kPlex480pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+    ]
+    for host_name, rtl_name in pairs:
+        hv = cpp_const(host, host_name)
+        rv = sv_const(rtl, rtl_name)
+        check(
+            hv == rv,
+            f"DDR frame layout mismatch: {host_name}={hv} but {rtl_name}={rv}. "
+            "ARM writer and RTL reader must agree on coded/display/presented geometry, "
+            "burst qwords, bank stride, and doorbell addresses.",
+        )
+    check(
+        cpp_const(host, "kPlex480pPillarboxLeft")
+        + cpp_const(host, "kPlex480pDisplayWidth")
+        + cpp_const(host, "kPlex480pPillarboxRight")
+        == cpp_const(host, "kPlex480pPresentedWidth"),
+        "480p pillarbox math no longer lands display width exactly in presented width",
+    )
+    print("PASS DDR frame layout ARM/RTL contract")
+
+
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_mailboxes()
     check_status_telemetry()
+    check_ddr_frame_layout_contract()
     return 0
 
 
