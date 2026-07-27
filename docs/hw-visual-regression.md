@@ -257,7 +257,7 @@ Hardware proof on the actual rig with the repaired MJPEG 1280×720@60 path:
 
 | Specimen | Result | Evidence |
 |---|---|---|
-| `57674f2e` legacy rollback | GREEN only when explicit legacy contract is declared | compare box `11,0,160,120`, exact `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
+| `57674f2e` legacy rollback | **EVIDENCE-BACKED legacy GREEN only** when explicit rollback/RGB565 contract is declared; **UNSUBSTANTIATED** for current YUV420 product decode | compare box `11,0,160,120`, exact `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
 | `fe7673bc` against `57674f2e` golden | PROVENANCE RED | now refused before pixel grading as wrong golden source (`rc=8`) |
 
 That acceptance used a good hardware capture as the golden and the existing 320×240 baseline F3 vector, because

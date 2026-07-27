@@ -1915,7 +1915,7 @@ Host already parses `residual_csum` from raw[13] (soft until RBF). Document assi
 | 3.3l-1 | host `h264_residual_gold` coeff[16]+csum=0x14 | `test_f3_residual.sh` res_dc; soft res_csum=20 after RBF |
 | 3.3l-2 | `test_idct_quant` paint/deq goldens + `FPGA_GOLD recon_*` | `tests/hw/test_f3_idct_mb0.sh` residual hard; soft→hard y00=73 mean=62 |
 | 3.3l-3 | MB0 Y mae=0 | HW status + optional frame dump |
-| 3.3l-4 | full recon maeY=U=V=0 | `test_f3_recon_frame.sh` vs host RGB/YUV |
+| 3.3l-4 | **retired:** full recon maeY=U=V=0; **current:** native-I420 partial ratchet (320×240 155/300 MB exact, 624×480 510/1170) | native-I420 plane scoreboard; do not cite RGB565/host-RGB green as product PASS |
 | Hybrid | — | STREAM smoke; host_owns_fs policy |
 
 Do **not** require Quartus for 3.3l-0. Fit check only when RTL lands (sole build, `NUM_PARALLEL=2`).

@@ -145,8 +145,10 @@ goldens.
 
 The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
 
-The full-frame reference gate remains the decode scoreboard and still reports honest RED at frame 0;
-this slice moves P syntax/mode classification, not full-frame MC/reconstruction:
+The full-frame reference gate is now the native-I420 scoreboard. The older
+RGB565-derived numbers below are retired as decode evidence because they passed
+through presentation diagnostics and border masking; they are kept only as the
+historical reason this area was re-instrumented:
 
 ```text
 FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=Y exact=189/76800 mae=82.082448 max_abs=210
@@ -155,9 +157,20 @@ FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=V exact=29/76
 FULL_FRAME_COMPARE summary ... frames=12 nals=15 idr=1 p=11 ... first_bad_frame=0 strict_pass=0 mode=expect-red
 ```
 
-The ratchet fixture was regenerated from this parser-correct diagnostic baseline because the prior
-baseline included pixels produced while the P slice was being misread as intra syntax. The strict
-reference comparator remains RED and the behavioral pixel-XOR red-check still fails strict compare.
+Native-I420 ratchets (`tests/fixtures/p3_multinal/*full_frame_ratchet_v1.json`,
+generated/checked by `tests/unit/test_stream_path_full_frame_compare.sh` and
+`tools/score_h264_native_frames.cpp`) are the current evidence:
+
+```text
+624x480 12f intra: 510/1170 MB exact, Y MAE 17.765057; P frames 11/11 expected-red
+320x240 12f intra: 155/300  MB exact, Y MAE 6.050521 max 96; P frames 11/11 expected-red
+wcap residual14 fixture: 207/300 intra MB exact; P frames 1/1 expected-red
+MB0 phantom resolved on native I420: got=73 ref=73 abs=0 (retired RGB565 path reported got=142 ref=65)
+```
+
+The ratchet fixture was regenerated after removing RGB565 scoreboard contamination. The strict
+reference comparator remains RED where expected, and the behavioral pixel-XOR/colorspace red-checks
+still fail strict compare/refuse RGB565-derived candidates.
 
 ## Hardware gate plan
 

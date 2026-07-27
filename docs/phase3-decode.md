@@ -79,7 +79,9 @@ Phase 3.3b (done this fire — decode_stub + typed NAL + STREAM path):
     [4] has_idr [5] stub_busy
     [15:8] last_nal_type  [31:16] nalu_count  [47:32] fifo_level
     [55:48] idr_count  [63:56] stub_frames[7:0]
-    [95:64] bytes_seen  [127:96] bytes_in
+    [95:64] bytes_seen  [127:96] bytes_in (historical name; later status overlays
+    reuse this field, so in current ARM parsing `bytes_in=4` means `nalu_count=4`,
+    not four delivered bytes)
   ARM: STREAM=1 conf → second ffmpeg copy-demux annex-B → F3 chunks
   HW: `tests/hw/test_f3_decode_stub.sh` (has_idr + stub_frames + has_frame)
 
@@ -117,7 +119,7 @@ Phase 3.3g (done — first-MB inv-quant recon stub):
   Host: FFmpeg-table CAVLC residual_block; invQuantHadamardDc4x4; reconFirstI16DcMeanY
   FPGA: residual_ok paints top-left 16×16 recon-gray (128+tc) in decode_stub
 
-Phase 3.3h (host I-slice recon **bit-exact** vs FFmpeg no-deblock — done this fire):
+Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide green retired**):
   **Root causes fixed this arc:**
     1. I_16x16 missing `intra_chroma_pred_mode` → walk desync
     2. I4 MPM: unavailable neighbour → pred=DC(2)
@@ -126,11 +128,21 @@ Phase 3.3h (host I-slice recon **bit-exact** vs FFmpeg no-deblock — done this 
     5. **I16 DC scan layout:** CAVLC zigzag must be loaded with FFmpeg `TRANSPOSE(zz[i])`
        into the Hadamard (column-major). ITU raster alone mapped scan-pos 2 → vertical
        frequency; FFmpeg places it at input[1] → gold top/bot pattern. Fixed
-       `invQuantHadamardDc4x4` → **maeY=0 exact 300/300**.
+       `invQuantHadamardDc4x4` → retired scoreboard once claimed
+       **maeY=0 exact 300/300**. That frame-wide green is no longer accepted
+       as product evidence because it was measured through RGB565/presentation
+       diagnostics with border masking.
     6. **Chroma DC pred rounding:** TL/BR 4x4 must use single-sum `(sA+sL+4)>>3`, not
        nested avgs. Fixed `predChroma8` mode 0 → **maeU=maeV=0** (full YUV exact).
-  Host: FULL residual walk 300/300; recon real baseline **maeY=U=V=0** vs FFmpeg
-        `-skip_loop_filter all`; tiny/gray mae=0; `h264_recon.hpp` → YUV420 + RGB565
+  Host: FULL residual walk exists, but the former full-frame **maeY=U=V=0**
+        status is **UNSUBSTANTIATED** as product decode evidence. Native-I420
+        scoreboard evidence replaces it: the old MB0 phantom (`got=142 ref=65`
+        through RGB565) is clean (`got=73 ref=73 abs=0`), while full-frame
+        intra remains partial: 624×480 12f `510/1170` MB exact, Y MAE
+        `17.765057`; 320×240 12f `155/300`, Y MAE `6.050521` max `96`;
+        wcap fixture `207/300`. `h264_recon.hpp` still produces YUV420/RGB565
+        host references, but full-frame green must cite native-I420 plane
+        evidence, not RGB565 presentation output.
   FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
   **Next was 3.3i (now done):** host SPI present + STREAM wire — see below.
     - Optional deblock filter (not needed for no-LF gold)
@@ -143,7 +155,9 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
-  Unit: `test_cavlc_dc` FULL walk + recon + maeY=U=V=0 vs FFmpeg; ARM `-I host`
+  Unit: `test_cavlc_dc` FULL walk + recon host check; ARM `-I host`.
+  Treat any historical `maeY=U=V=0` wording from this path as retired unless
+  paired with native-I420 plane provenance.
   **HW lab 192.168.1.183 (this fire):**
     - Baseline smoke: `recon_ok=3 recon_fail=0 present=3` f1ms≈170
     - High/CABAC `test.mp4`: fail_reason=`cabac` → FFmpeg RGB F1 continues (frames>0)
@@ -251,11 +265,13 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     model / source-integration check, **not** a Verilog simulator. It drives the checked-in
     6739-byte Annex-B vector, compares all 16 block-0 `dequant`, signed post-IDCT, and
     reconstructed samples against `tests/fixtures/p3_host_recon/mb0_luma_v1.json`, checks all
-    16 MB0 block pred+IDCT→recon rows, and grades all 300 frame-MAE rows from
-    `frame_mae_v1.csv`. Evidence: green output
-    `vector_bytes=6739 coeff_csum=0x14 ... mb0_blocks=16 ... frame_mae_rows=300 maeY=0.000000 y00=73 mean=62`;
-    red directions perturb AC dequant and frame-MAE grading. This does **not** replace the
-    Verilator behavioural RTL testbench.
+    16 MB0 block pred+IDCT→recon rows. The historical frame-MAE grading line
+    (`frame_mae_rows=300 maeY=0.000000`) is retained only as a host-source
+    regression check and is **not** a product full-frame decode PASS; it came
+    from the retired RGB565/presentation scoreboard path. Evidence-backed MB0
+    output remains `y00=73 mean=62 coeff_csum=0x14`, corroborated by native
+    I420 (`got=73 ref=73 abs=0`). This does **not** replace the Verilator
+    behavioural RTL testbench or native-I420 full-frame ratchet.
   **3.3l-2 product RTL staged (W-CAP):** `decode_stub.sv` now consumes proven
     `residual_coeff[0:15]` + `slice_qp` and instantiates the shared
     `h264_iq_idct_4x4.sv` modules for first-4×4 inverse quant + H.264 integer IDCT onto
@@ -280,15 +296,21 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `tests/fixtures/p3_host_recon/mb0_luma_v1.json` (`format=misterplex.p3.luma_mb.v1`).
     The checked-in source vector is `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`
     and remains **6739 bytes**; no existing generated vector is resized.
-  **3.3l-4 host frame-MAE golden done (W-REL 2026-07-26):** `test_p3_host_recon_vectors`
-    reconstructs the whole 320×240 IDR, compares it to FFmpeg
-    `-skip_loop_filter all`, and emits `tests/fixtures/p3_host_recon/frame_mae_v1.csv`
-    (`format=misterplex.p3.frame_mae.v1`). Evidence command:
-    `build/test_p3_host_recon_vectors` → `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
-    Every MB row has `sum_abs_y=0`, `mae_y=0.000000`, `max_abs_y=0`; generated copies land in
-    `build/p3_host_recon_mb0_luma_v1.json` and `build/p3_host_recon_frame_mae_v1.csv`.
-  **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 host+handoff ✅ / paint **BLOCKED** →
-    3.3l-3 host first full MB ✅ → 3.3l-4 host all-MB frame MAE ✅ → FPGA 3.3l-3/4 remain blocked behind residual checksum gate → 3.3l-5 hybrid gate.
+  **3.3l-4 host frame-MAE green retired as product evidence (W-CTL reconciliation 2026-07-27):**
+    `test_p3_host_recon_vectors` / `tests/fixtures/p3_host_recon/frame_mae_v1.csv`
+    formerly reported `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
+    That is now **UNSUBSTANTIATED** for product full-frame decode because the
+    measurement path was RGB565/presentation-contaminated. The evidence-backed
+    native-I420 ratchets are:
+    - `plex_inter_p16_624x480_12f`: intra `510/1170` MB exact, Y MAE `17.765057`;
+      11 P frames expected-red.
+    - `plex_inter_p16_320x240_12f`: intra `155/300` MB exact, Y MAE `6.050521`,
+      max `96`; 11 P frames expected-red.
+    - `wcap_residual14_idr_plus_p`: intra `207/300` MB exact; 1 P frame expected-red.
+    The host CSV can remain a source-level regression fixture, but it must not be
+    cited as a full-frame product PASS.
+  **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 MB0 host+handoff ✅ / paint **BLOCKED** →
+    3.3l-3 host first full MB ✅ → 3.3l-4 frame-wide green **RETIRED / native-I420 partial** → FPGA 3.3l-3/4 remain blocked behind residual checksum gate → 3.3l-5 hybrid gate.
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 
@@ -315,7 +337,9 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
-  (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
+  (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, host-model maeY=0).
+  This is evidence for the host inter model/golden generator only, not a product
+  stream-path/DPB/MC full-frame PASS. Unit
   `test_p3_inter_pred_vectors` regenerates byte-identically, exports libav motion vectors, and
   verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbations cover MV, MAE rows,
   and unsupported-profile handling.
