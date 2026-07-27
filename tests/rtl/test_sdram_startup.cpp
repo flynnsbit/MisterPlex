@@ -66,6 +66,15 @@ bool is_data_command(Cmd cmd) {
     return cmd == Cmd::Active || cmd == Cmd::Read || cmd == Cmd::Write;
 }
 
+bool startup_ok(uint64_t cycles, uint64_t hz) {
+    return cycles * 1'000'000ULL >= hz * 100ULL;
+}
+
+bool refresh_ok(uint64_t refresh_cycles, uint64_t hz) {
+    const uint64_t period_cycles = refresh_cycles + 1;
+    return period_cycles * 8192ULL * 1'000'000ULL <= hz * 64'000ULL;
+}
+
 void tick(Vsdram_startup_top& top, uint64_t& cycle) {
     top.clk = 0;
     top.eval();
@@ -82,10 +91,45 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
 
     bool inject_early_read = false;
+    bool force_ready_init_high = false;
+    uint64_t freq_hz = 100'000'000ULL;
+    bool legacy_constant_check = false;
+    bool constants_only = false;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--inject-early-read") {
+        const std::string arg(argv[i]);
+        if (arg == "--inject-early-read") {
             inject_early_read = true;
+        } else if (arg == "--force-ready-init-high") {
+            force_ready_init_high = true;
+        } else if (arg.rfind("--freq-hz=", 0) == 0) {
+            freq_hz = std::stoull(arg.substr(std::string("--freq-hz=").size()));
+        } else if (arg == "--check-legacy-100mhz-constants") {
+            legacy_constant_check = true;
+        } else if (arg == "--constants-only") {
+            constants_only = true;
         }
+    }
+
+    if (legacy_constant_check) {
+        constexpr uint64_t legacy_startup = 12'100;
+        constexpr uint64_t legacy_refresh = 780;
+        bool ok = true;
+        if (!startup_ok(legacy_startup, freq_hz)) {
+            std::cerr << "FAIL: legacy startup cycles " << legacy_startup
+                      << " are below 100us at " << freq_hz << " Hz\n";
+            ok = false;
+        }
+        if (!refresh_ok(legacy_refresh, freq_hz)) {
+            std::cerr << "FAIL: legacy refresh cycles " << legacy_refresh
+                      << " exceed the 64ms/8192-row interval at "
+                      << freq_hz << " Hz\n";
+            ok = false;
+        }
+        if (ok) {
+            std::cout << "PASS: legacy constants satisfy timing at "
+                      << freq_hz << " Hz\n";
+        }
+        return ok ? 0 : 1;
     }
 
     Vsdram_startup_top top;
@@ -99,8 +143,31 @@ int main(int argc, char** argv) {
     int64_t first_request_cycle = -1;
     std::vector<Event> events;
 
+    top.force_ready_init_high = force_ready_init_high ? 1 : 0;
     top.reset = 1;
     top.pll_locked = 0;
+    top.clk = 0;
+    top.eval();
+    const uint64_t startup_cycles = top.startup_cycles;
+    const uint64_t refresh_cycles = top.refresh_cycles;
+    if (!startup_ok(startup_cycles, freq_hz)) {
+        std::cerr << "FAIL: computed startup cycles " << startup_cycles
+                  << " are below 100us at " << freq_hz << " Hz\n";
+        return 3;
+    }
+    if (!refresh_ok(refresh_cycles, freq_hz)) {
+        std::cerr << "FAIL: computed refresh cycles " << refresh_cycles
+                  << " exceed the 64ms/8192-row interval at "
+                  << freq_hz << " Hz\n";
+        return 4;
+    }
+    std::cout << "Computed timing constants: SDRAM_CLK_HZ=" << freq_hz
+              << " startup_cycles=" << startup_cycles
+              << " refresh_cycles=" << refresh_cycles << "\n";
+    if (constants_only) {
+        std::cout << "PASS: computed startup/refresh constants satisfy SDRAM timing\n";
+        return 0;
+    }
     for (int i = 0; i < 8; ++i) tick(top, cycle);
 
     top.reset = 0;

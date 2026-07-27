@@ -2,10 +2,13 @@
 // Instantiates the real controller and real bring-up memtest with the same
 // reset/clock/refresh wiring used by Plex.sv.
 
-module sdram_startup_top (
+module sdram_startup_top #(
+	parameter int unsigned SDRAM_CLK_HZ = 100_000_000
+)(
 	input  wire clk,
 	input  wire reset,
 	input  wire pll_locked,
+	input  wire force_ready_init_high,
 
 	output wire SDRAM_nCS,
 	output wire SDRAM_nRAS,
@@ -24,9 +27,13 @@ module sdram_startup_top (
 	output wire sdram_wr,
 	output wire [3:0] memtest_state,
 	output wire [3:0] memtest_size,
-	output wire [15:0] memtest_errors
+	output wire [15:0] memtest_errors,
+	output wire [31:0] startup_cycles,
+	output wire [31:0] refresh_cycles
 );
-	localparam int SDRAM_REFRESH_CYCLES = 780;
+	localparam longint unsigned STARTUP_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 121) + 999_999) / 1_000_000;
+	localparam longint unsigned REFRESH_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 64_000) / (8192 * 1_000_000)) - 1;
+	localparam int SDRAM_REFRESH_CYCLES = REFRESH_CYCLES_CALC[31:0];
 
 	wire [15:0] SDRAM_DQ;
 	wire [26:1] sdram_addr;
@@ -41,6 +48,20 @@ module sdram_startup_top (
 	wire [25:0] first_fail_addr;
 	wire [15:0] first_fail_expect;
 	wire        shared_reset = reset | ~pll_locked;
+	assign startup_cycles = STARTUP_CYCLES_CALC[31:0];
+	assign refresh_cycles = REFRESH_CYCLES_CALC[31:0];
+
+	reg force_released;
+	always @(posedge clk) begin
+		if (shared_reset) begin
+			force_released <= 1'b0;
+			if (force_ready_init_high)
+				force ctl.ready = 1'b1;
+		end else if (force_ready_init_high && !force_released) begin
+			release ctl.ready;
+			force_released <= 1'b1;
+		end
+	end
 
 	sdram_memtest #(
 		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES)
@@ -67,7 +88,9 @@ module sdram_startup_top (
 		.pass(memtest_pass)
 	);
 
-	sdram ctl (
+	sdram #(
+		.SDRAM_CLK_HZ(SDRAM_CLK_HZ)
+	) ctl (
 		.init(shared_reset),
 		.clk(clk),
 		.SDRAM_DQ(SDRAM_DQ),

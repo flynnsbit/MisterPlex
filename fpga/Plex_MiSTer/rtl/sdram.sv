@@ -34,7 +34,9 @@
 // external SDRAM chip returns valid data at that CAS latency.
 
 module sdram
-(
+#(
+	parameter int unsigned SDRAM_CLK_HZ = 100_000_000
+)(
 	input             init,        // reset to initialize RAM
 	input             clk,         // clock ~100MHz
 
@@ -88,8 +90,10 @@ localparam OP_MODE             = 2'b00;    // only 00 (standard operation) allow
 localparam NO_WRITE_BURST      = 1'b1;     // 0= write burst enabled, 1=only single access write
 localparam MODE                = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_CODE};
 
-localparam sdram_startup_cycles= 14'd12100;// 100us, plus a little more, @ 100MHz
-localparam cycles_per_refresh  = 14'd780;  // (64000*100)/8192-1 Calc'd as (64ms @ 100MHz)/8192 rose
+localparam longint unsigned sdram_startup_cycles_calc = ((longint'(SDRAM_CLK_HZ) * 121) + 999_999) / 1_000_000;
+localparam longint unsigned cycles_per_refresh_calc   = ((longint'(SDRAM_CLK_HZ) * 64_000) / (8192 * 1_000_000)) - 1;
+localparam [13:0] sdram_startup_cycles = sdram_startup_cycles_calc[13:0]; // 121us, preserves 12100 @ 100MHz
+localparam [13:0] cycles_per_refresh   = cycles_per_refresh_calc[13:0];   // max interval <= 64ms/8192 rows
 localparam startup_refresh_max = 14'b11111111111111;
 
 // SDRAM commands

@@ -215,18 +215,25 @@ wire reset = RESET | status[0] | buttons[1];
 // counter toggles refresh after REFRESH_CYCLES+1 clocks, so every option
 // refreshes at least as often as the 7.8125us SDRAM row budget.
 `ifdef SDRAM_CLK_133
+localparam int SDRAM_CLK_HZ = 133_333_333;
 localparam int SDRAM_REFRESH_CYCLES = 1040;
 `elsif SDRAM_CLK_120
+localparam int SDRAM_CLK_HZ = 120_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 936;
 `elsif SDRAM_CLK_110
+localparam int SDRAM_CLK_HZ = 110_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 858;
 `elsif SDRAM_CLK_80
+localparam int SDRAM_CLK_HZ = 80_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 624;
 `elsif SDRAM_CLK_75
+localparam int SDRAM_CLK_HZ = 75_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 584;
 `elsif SDRAM_CLK_50
+localparam int SDRAM_CLK_HZ = 50_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 389;
 `else
+localparam int SDRAM_CLK_HZ = 100_000_000;
 localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
 
@@ -314,7 +321,9 @@ always @(posedge clk_sys) begin
 end
 assign sdram_startup_busy = !sdram_test_done_s2;
 
-sdram sdram_ctl (
+sdram #(
+	.SDRAM_CLK_HZ(SDRAM_CLK_HZ)
+) sdram_ctl (
 	.init(reset | ~pll_locked),
 	.clk(clk_sdram),
 	.SDRAM_DQ(SDRAM_DQ),
