@@ -32,6 +32,7 @@ module h264_deblock_tb (
 	input  wire signed [11:0] q_mvx,
 	input  wire signed [11:0] q_mvy,
 	input  wire              idr_frame_start,
+	input  wire              filtered_sample_valid,
 	input  wire              filtered_mb_valid,
 	input  wire [10:0]       filtered_mb_addr,
 	input  wire              filtered_mb_is_ref,
@@ -61,7 +62,8 @@ module h264_deblock_tb (
 	output wire              wb_is_ref,
 	output wire              dpb_invalidate_refs,
 	output wire              ref_ready_pulse,
-	output wire [1:0]        ref_ready_slot
+	output wire [1:0]        ref_ready_slot,
+	output wire              commit_order_error
 );
 	h264_deblock_bs u_bs (
 		.disable_all(disable_all),
@@ -114,6 +116,7 @@ module h264_deblock_tb (
 		.clk(clk),
 		.reset(reset),
 		.idr_frame_start(idr_frame_start),
+		.filtered_sample_valid(filtered_sample_valid),
 		.filtered_mb_valid(filtered_mb_valid),
 		.filtered_mb_addr(filtered_mb_addr),
 		.filtered_mb_is_ref(filtered_mb_is_ref),
@@ -125,7 +128,8 @@ module h264_deblock_tb (
 		.wb_is_ref(wb_is_ref),
 		.dpb_invalidate_refs(dpb_invalidate_refs),
 		.ref_ready_pulse(ref_ready_pulse),
-		.ref_ready_slot(ref_ready_slot)
+		.ref_ready_slot(ref_ready_slot),
+		.commit_order_error(commit_order_error)
 	);
 
 endmodule

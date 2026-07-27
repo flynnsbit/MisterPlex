@@ -533,6 +533,7 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
 void testWritebackContract(Vh264_deblock_tb& dut) {
     dut.reset = 1;
     dut.idr_frame_start = 0;
+    dut.filtered_sample_valid = 0;
     dut.filtered_mb_valid = 0;
     dut.filtered_mb_addr = 0;
     dut.filtered_mb_is_ref = 0;
@@ -552,6 +553,32 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
     dut.idr_frame_start = 0;
 
     dut.filtered_mb_valid = 1;
+    dut.filtered_mb_addr = 3;
+    dut.filtered_mb_is_ref = 1;
+    dut.filtered_frame_done = 0;
+    dut.frame_slot_i = 2;
+    tick(dut);
+    if (dut.wb_valid || !dut.commit_order_error) {
+        std::cerr << "FAIL deblock writeback: MB commit before all filtered samples"
+                  << " wb=" << int(dut.wb_valid)
+                  << " order_error=" << int(dut.commit_order_error) << "\n";
+        std::exit(1);
+    }
+    dut.filtered_mb_valid = 0;
+    tick(dut);
+
+    for (int i = 0; i < 384; ++i) {
+        dut.filtered_sample_valid = 1;
+        tick(dut);
+        if (dut.wb_valid || dut.ref_ready_pulse) {
+            std::cerr << "FAIL deblock writeback: sample write asserted commit/ref_ready"
+                      << " sample_i=" << i << " wb=" << int(dut.wb_valid)
+                      << " ready=" << int(dut.ref_ready_pulse) << "\n";
+            std::exit(1);
+        }
+    }
+    dut.filtered_sample_valid = 0;
+    dut.filtered_mb_valid = 1;
     dut.filtered_mb_addr = 17;
     dut.filtered_mb_is_ref = 1;
     dut.filtered_frame_done = 0;
@@ -563,7 +590,21 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
                   << " ready=" << int(dut.ref_ready_pulse) << "\n";
         std::exit(1);
     }
+    dut.filtered_mb_valid = 0;
+    tick(dut);
 
+    for (int i = 0; i < 384; ++i) {
+        dut.filtered_sample_valid = 1;
+        tick(dut);
+        if (dut.wb_valid || dut.ref_ready_pulse) {
+            std::cerr << "FAIL deblock writeback: terminal sample write asserted commit/ref_ready"
+                      << " sample_i=" << i << " wb=" << int(dut.wb_valid)
+                      << " ready=" << int(dut.ref_ready_pulse) << "\n";
+            std::exit(1);
+        }
+    }
+    dut.filtered_sample_valid = 0;
+    dut.filtered_mb_valid = 1;
     dut.filtered_mb_addr = 1169;
     dut.filtered_frame_done = 1;
     tick(dut);
@@ -598,7 +639,7 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
         std::exit(1);
     }
 
-    std::cout << "OK deblock writeback contract: writeback precedes frame-boundary DPB ref_ready; IDR invalidates refs\n";
+    std::cout << "OK deblock writeback contract: filtered samples precede MB commit; writeback precedes frame-boundary DPB ref_ready; IDR invalidates refs\n";
 }
 
 } // namespace
@@ -620,6 +661,7 @@ int main(int argc, char** argv) {
     dut.reset = 0;
     dut.pipe_valid_i = 0;
     dut.idr_frame_start = 0;
+    dut.filtered_sample_valid = 0;
     dut.filtered_mb_valid = 0;
     dut.filtered_mb_addr = 0;
     dut.filtered_mb_is_ref = 0;

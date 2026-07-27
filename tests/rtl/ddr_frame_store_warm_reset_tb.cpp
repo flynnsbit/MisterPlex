@@ -14,7 +14,9 @@ namespace {
 constexpr uint32_t kBasePhys = 0x30000000u;
 constexpr uint32_t kBankStrideBytes = 65536u;
 constexpr uint32_t kDoorbellPhys = 0x3001F000u;
+constexpr uint32_t kFrameMailboxPhys = 0x3001F118u;
 constexpr uint32_t kMagic = 0x504C584Bu;
+constexpr uint32_t kFrameMailboxMagic = 0x504C5846u;
 constexpr int kW = 80;
 constexpr int kH = 48;
 constexpr int kYQ = kW / 8;
@@ -113,6 +115,21 @@ public:
     void ringDoorbell(int bank, uint32_t seq, int format = kDoorbellFormatYuv420p) {
         const uint32_t off = offQ(kDoorbellPhys);
         mem[off] = static_cast<uint64_t>(doorbellHi(seq, bank, format)) << 32 | kMagic;
+    }
+
+    uint64_t frameMailbox() const {
+        return mem[offQ(kFrameMailboxPhys)];
+    }
+
+    bool waitForFrameDebug(uint8_t debug, int maxCycles) {
+        for (int i = 0; i < maxCycles; ++i) {
+            const uint64_t mbox = frameMailbox();
+            if (static_cast<uint32_t>(mbox) == kFrameMailboxMagic &&
+                static_cast<uint8_t>((mbox >> 40) & 0xffu) == debug)
+                return true;
+            tick();
+        }
+        return false;
     }
 
     void serviceDdrStart() {
@@ -445,6 +462,12 @@ bool runRejectNonYuvDoorbell() {
                       << int(kDebugFormatError) << std::dec << "\n";
             std::exit(1);
         }
+        if (!sim.waitForFrameDebug(kDebugFormatError, 20000)) {
+            std::cerr << "FAIL ddr_frame_store warm-reset: non-YUV doorbell did not publish"
+                      << " PLXF frame_debug=0x" << std::hex << int(kDebugFormatError)
+                      << " mailbox=0x" << sim.frameMailbox() << std::dec << "\n";
+            std::exit(1);
+        }
         sim.ringDoorbell(1, 2, kDoorbellFormatYuv420p);
         if (!sim.waitForFrame(50000))
             throw std::runtime_error("valid YUV doorbell did not recover after live non-YUV reject");
@@ -467,14 +490,21 @@ bool runRejectNonYuvDoorbell() {
                   << int(kDebugFormatError) << std::dec << "\n";
         std::exit(1);
     }
+    if (!sim.waitForFrameDebug(kDebugFormatError, 20000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: non-YUV doorbell did not publish"
+                  << " PLXF frame_debug=0x" << std::hex << int(kDebugFormatError)
+                  << " mailbox=0x" << sim.frameMailbox() << std::dec << "\n";
+        std::exit(1);
+    }
 
     sim.ringDoorbell(1, 4, kDoorbellFormatYuv420p);
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("valid YUV doorbell did not recover after non-YUV reject");
     expectFreshSample("non-YUV reject then YUV accept", sim, 213);
 
-    std::cout << "ddr_frame_store warm-reset raw: non_yuv_reject bad_format=0 debug=0x"
+    std::cout << "ddr_frame_store warm-reset raw: non_yuv_reject rejected_format=0 frame_debug=0x"
               << std::hex << int(kDebugFormatError) << std::dec
+              << " frame_mailbox_magic=0x" << std::hex << kFrameMailboxMagic << std::dec
               << " fresh_format=1 seq=4 stale_bank=0 fresh_bank=1 no_frame_cycles=25000"
               << " frames=" << sim.top.frames_done << " sample_r=213 underruns="
               << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";

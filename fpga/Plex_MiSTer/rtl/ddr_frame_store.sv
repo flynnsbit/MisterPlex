@@ -109,7 +109,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
-	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1;
+	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
 	assign DDRAM_CLK = clk_ddr;
 	assign DDRAM_BE = 8'hFF;
@@ -733,6 +733,7 @@ module ddr_frame_store #(
 			if (db_bad_format) begin
 				format_error <= 1'b1;
 				doorbell_ok <= 1'b0;
+				frame_mbox_req <= 1'b1;
 			end
 			if (db_token_new) begin
 				last_seq <= db_token;

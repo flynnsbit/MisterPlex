@@ -28,6 +28,7 @@ QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
+MB_COMMIT_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_mb_commit_fault"
 WRITEBACK_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_writeback_fault"
 GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
 ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
@@ -70,6 +71,27 @@ if ! grep -q 'multi-frame drift' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK h264_deblock RTL red-check: swapped edge order produced drift mismatch"
+
+mkdir -p "$MB_COMMIT_FAULT_BUILD"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$MB_COMMIT_FAULT_BUILD" \
+  --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_MB_COMMIT_EARLY \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+MB_COMMIT_FAULT_OUT="$("$MB_COMMIT_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+MB_COMMIT_FAULT_RC=$?
+set -e
+printf '%s\n' "$MB_COMMIT_FAULT_OUT"
+if [[ "$MB_COMMIT_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: early MB commit fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'MB commit before all filtered samples' <<<"$MB_COMMIT_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: expected filtered-sample/MB-commit diagnostic" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: early MB commit before filtered samples failed"
 
 mkdir -p "$WRITEBACK_FAULT_BUILD"
 "$RUN_VERILATOR" --cc --exe --build \
