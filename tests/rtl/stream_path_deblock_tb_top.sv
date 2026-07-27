@@ -91,6 +91,12 @@ module stream_path_deblock_tb (
 	wire [7:0] sps_profile, sps_level, slice_type, first_mb_type;
 	wire [15:0] sps_width, sps_height;
 	wire has_mb_type;
+	wire first_mb_p_skip;
+	wire [7:0] p_skip_run;
+	wire [2:0] first_mb_part_mode;
+	wire [2:0] first_mb_part_count;
+	wire first_mb_uses_sub_mb;
+	wire first_mb_intra;
 	wire [4:0] residual_tc;
 	wire [1:0] residual_t1;
 	wire signed [7:0] residual_dc;
@@ -127,6 +133,9 @@ module stream_path_deblock_tb (
 		.sps_width(sps_width), .sps_height(sps_height), .sps_mb_w(sps_mb_w), .sps_mb_h(sps_mb_h),
 		.pps_valid(pps_valid), .slice_valid(slice_valid), .slice_type(slice_type),
 		.slice_is_i(slice_is_i), .first_mb_type(first_mb_type), .has_mb_type(has_mb_type),
+		.first_mb_p_skip(first_mb_p_skip), .p_skip_run(p_skip_run),
+		.first_mb_part_mode(first_mb_part_mode), .first_mb_part_count(first_mb_part_count),
+		.first_mb_uses_sub_mb(first_mb_uses_sub_mb), .first_mb_intra(first_mb_intra),
 		.slice_qp(slice_qp),
 		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
 		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),

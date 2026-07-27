@@ -65,17 +65,19 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 EXE="$BUILD/Vstream_path_deblock_tb"
 "$EXE" --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
 
-set +e
-FAULT_OUT="$($EXE --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-bs 2>&1)"
-FAULT_RC=$?
-set -e
-printf '%s\n' "$FAULT_OUT"
-if [[ "$FAULT_RC" -eq 0 ]]; then
-  echo "FAIL stream_path/deblock red-check: wrong bS unexpectedly passed" >&2
-  exit 1
-fi
-if ! grep -q 'wrong bS red-check' <<<"$FAULT_OUT"; then
-  echo "FAIL stream_path/deblock red-check: expected wrong bS diagnostic" >&2
-  exit 1
-fi
-echo "OK stream_path/deblock red-check: wrong boundary strength perturbs in-loop reference"
+for fault in bs threshold chroma boundary loop slice-controls; do
+  set +e
+  FAULT_OUT="$($EXE --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" "--fault-$fault" 2>&1)"
+  FAULT_RC=$?
+  set -e
+  printf '%s\n' "$FAULT_OUT"
+  if [[ "$FAULT_RC" -eq 0 ]]; then
+    echo "FAIL stream_path/deblock red-check: $fault unexpectedly passed" >&2
+    exit 1
+  fi
+  if ! grep -q 'expected .* red-check' <<<"$FAULT_OUT"; then
+    echo "FAIL stream_path/deblock red-check: expected diagnostic for $fault" >&2
+    exit 1
+  fi
+  echo "OK stream_path/deblock red-check: $fault property trips"
+done

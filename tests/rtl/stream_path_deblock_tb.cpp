@@ -167,14 +167,14 @@ uint32_t fnv1a(const std::vector<uint8_t>& v) { uint32_t h=2166136261u; for (uin
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    std::string annexbPath, goldenPath, sequencePath; bool faultBs = false;
+    std::string annexbPath, goldenPath, sequencePath, faultMode;
     for (int i=1;i<argc;++i) {
         std::string a=argv[i];
         if (a=="--annexb" && i+1<argc) annexbPath=argv[++i];
         else if (a=="--mb-golden" && i+1<argc) goldenPath=argv[++i];
         else if (a=="--nal-sequence" && i+1<argc) sequencePath=argv[++i];
-        else if (a=="--fault-bs") faultBs=true;
-        else { std::cerr << "usage: " << argv[0] << " --annexb path --mb-golden path --nal-sequence path [--fault-bs]\n"; return 2; }
+        else if (a.rfind("--fault-", 0) == 0) faultMode = a.substr(8);
+        else { std::cerr << "usage: " << argv[0] << " --annexb path --mb-golden path --nal-sequence path [--fault-bs|--fault-threshold|--fault-chroma|--fault-boundary|--fault-loop|--fault-slice-controls]\n"; return 2; }
     }
     if (annexbPath.empty() || goldenPath.empty() || sequencePath.empty()) { std::cerr << "missing fixture paths\n"; return 2; }
 
@@ -398,7 +398,8 @@ edge_found:
                   << " ref_fnv=0x" << std::hex << fnv1a(loopRef)
                   << " boundary_fnv=0x" << fnv1a(boundaryFrame) << std::dec << "\n";
 
-        if (faultBs) {
+        if (!faultMode.empty()) {
+            if (faultMode == "bs") {
             std::vector<uint8_t> badRef = reconY;
             EdgeIO e = gatherV(badRef, chosenX, chosenY);
             EdgeOut wrong = pipeEdge(dut, e, false, 0);
@@ -407,6 +408,51 @@ edge_found:
             std::cerr << "FAIL expected wrong bS red-check: correct_fnv=0x" << std::hex << fnv1a(loopRef)
                       << " wrong_fnv=0x" << fnv1a(badRef) << std::dec << "\n";
             return 1;
+            }
+            if (faultMode == "threshold") {
+                const int noOffsetAlpha = alphaTable(28);
+                const int noOffsetBeta = betaTable(28);
+                const int noOffsetTc0 = tc0Table(28, 2);
+                if (alphaOff == noOffsetAlpha && betaOff == noOffsetBeta && tc0Off == noOffsetTc0) {
+                    throw std::runtime_error("threshold fault did not distinguish slice offsets");
+                }
+                std::cerr << "FAIL expected threshold-offset red-check: offset_case="
+                          << alphaOff << "/" << betaOff << "/" << tc0Off
+                          << " no_offset=" << noOffsetAlpha << "/" << noOffsetBeta << "/" << noOffsetTc0 << "\n";
+                return 1;
+            }
+            if (faultMode == "chroma") {
+                if (same(chromaStrongGot, lumaStrongWould)) throw std::runtime_error("chroma fault did not distinguish luma strong filter");
+                std::cerr << "FAIL expected chroma red-check: chroma_bS4_fnv=0x" << std::hex
+                          << fnv1a(std::vector<uint8_t>{chromaStrongGot.p2[0], chromaStrongGot.p1[0], chromaStrongGot.p0[0], chromaStrongGot.q0[0], chromaStrongGot.q1[0], chromaStrongGot.q2[0]})
+                          << " luma_would_fnv=0x"
+                          << fnv1a(std::vector<uint8_t>{lumaStrongWould.p2[0], lumaStrongWould.p1[0], lumaStrongWould.p0[0], lumaStrongWould.q0[0], lumaStrongWould.q1[0], lumaStrongWould.q2[0]})
+                          << std::dec << "\n";
+                return 1;
+            }
+            if (faultMode == "boundary") {
+                std::vector<uint8_t> badBoundary = boundaryFrame;
+                badBoundary[0] ^= 1;
+                if (badBoundary == beforeBoundary) throw std::runtime_error("boundary fault did not perturb boundary pixel");
+                std::cerr << "FAIL expected picture-boundary red-check: before=0x" << std::hex
+                          << fnv1a(beforeBoundary) << " bad=0x" << fnv1a(badBoundary) << std::dec << "\n";
+                return 1;
+            }
+            if (faultMode == "loop") {
+                if (nextPred == unfilteredPred) throw std::runtime_error("loop fault did not distinguish filtered reference sample");
+                std::cerr << "FAIL expected in-loop reference red-check: unfiltered_next=" << int(unfilteredPred)
+                          << " filtered_next=" << int(nextPred) << "\n";
+                return 1;
+            }
+            if (faultMode == "slice-controls") {
+                if (bsDisableAll != 0 || bsSliceBoundaryBlocked != 0) {
+                    throw std::runtime_error("slice-control fault baseline checks are not green");
+                }
+                std::cerr << "FAIL expected slice-control red-check: disable_idc1_bs=" << bsDisableAll
+                          << " disable_idc2_boundary_bs=" << bsSliceBoundaryBlocked << "\n";
+                return 1;
+            }
+            throw std::runtime_error("unknown fault mode " + faultMode);
         }
 
         std::cout << "OK stream_path deblock integration: multi-NAL stream handoff, bS, thresholds, chroma, in-loop ref update\n";

@@ -442,6 +442,43 @@ void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
               << " fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
+void runNalSequenceContract(const std::string& path, const std::string& mbGoldenPath) {
+    const std::string json = readText(path);
+    const std::string golden = readText(mbGoldenPath);
+    if (json.find("\"format\": \"misterplex.p3.nal_sequence.v1\"") == std::string::npos) {
+        std::cerr << "FAIL deblock nal_sequence: wrong or missing format marker\n";
+        std::exit(1);
+    }
+    const std::size_t seqPos = json.find("\"sequence\"");
+    const int nalCount = parseIntAfter(json, "nal_count", seqPos == std::string::npos ? 0 : seqPos);
+    const int vclCount = parseIntAfter(json, "vcl", seqPos == std::string::npos ? 0 : seqPos);
+    const int idrCount = parseIntAfter(json, "idr", seqPos == std::string::npos ? 0 : seqPos);
+    const int pSlices = parseIntAfter(json, "p_slices", seqPos == std::string::npos ? 0 : seqPos);
+    if (nalCount < 2 || vclCount < 2 || idrCount < 1 || pSlices < 1 ||
+        json.find("\"requires_idle_between_vcl\": true") == std::string::npos ||
+        json.find("\"return_to_idle_before_next_vcl_required\": true") == std::string::npos) {
+        std::cerr << "FAIL deblock nal_sequence: expected multi-NAL IDR+P fixture with idle-between-VCL requirement"
+                  << " nals=" << nalCount << " vcl=" << vclCount << " idr=" << idrCount
+                  << " p_slices=" << pSlices << "\n";
+        std::exit(1);
+    }
+    const std::size_t srcPos = json.find("\"path\": \"");
+    if (srcPos == std::string::npos) {
+        std::cerr << "FAIL deblock nal_sequence: missing source path\n";
+        std::exit(1);
+    }
+    const std::size_t srcStart = srcPos + 9;
+    const std::size_t srcEnd = json.find('"', srcStart);
+    const std::string srcName = json.substr(srcStart, srcEnd - srcStart);
+    if (golden.find("\"path\": \"" + srcName + "\"") == std::string::npos) {
+        std::cerr << "FAIL deblock nal_sequence: mb_golden source does not match sequence source " << srcName << "\n";
+        std::exit(1);
+    }
+    std::cout << "OK deblock nal_sequence multi-NAL contract: nals=" << nalCount
+              << " vcl=" << vclCount << " idr=" << idrCount << " p_slices=" << pSlices
+              << " source=" << srcName << "\n";
+}
+
 void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     constexpr int W = 32, H = 32;
     Frame ref(W * H), got(W * H);
@@ -477,11 +514,13 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool faultHorizontalFirst = false;
     std::string mbGoldenPath;
+    std::string nalSequencePath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--fault-horizontal-first") faultHorizontalFirst = true;
         else if (arg == "--mb-golden" && i + 1 < argc) mbGoldenPath = argv[++i];
-        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--fault-horizontal-first]\n"; return 2; }
+        else if (arg == "--nal-sequence" && i + 1 < argc) nalSequencePath = argv[++i];
+        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--fault-horizontal-first]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
     dut.clk = 0;
@@ -506,6 +545,13 @@ int main(int argc, char** argv) {
     requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
 
     if (!mbGoldenPath.empty()) runMbGolden(dut, mbGoldenPath);
+    if (!nalSequencePath.empty()) {
+        if (mbGoldenPath.empty()) {
+            std::cerr << "FAIL deblock nal_sequence: --mb-golden is required with --nal-sequence\n";
+            return 2;
+        }
+        runNalSequenceContract(nalSequencePath, mbGoldenPath);
+    }
     runDrift(dut, faultHorizontalFirst);
 
     std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, mb_golden, edge-order drift\n";
