@@ -255,6 +255,139 @@ This eliminates the 7-level combinational depth, giving ~5 ns margin at 90 MHz.
 
 ---
 
+## Gate Assertion Audit (instrument-integrity #16 response)
+
+**Directive:** "Open your gate. Find the line that decides pass or fail. Read exactly
+what it compares — not what the test is named, not what the report says."
+
+### Gate 1: `test_ddr_frame_store_warm_reset.sh` (Verilator simulation)
+
+**What it literally compares:**
+- `expectFreshSample()`: `top.rd_r` (luma pixel output at position 0,0) vs expected Y value, tolerance ±1.
+- `sampleRgb()` at select positions: `top.rd_r`, `top.rd_g`, `top.rd_b` vs expected YUV→RGB conversion.
+- `has_frame` flag convergence within N cycles.
+- Doorbell acceptance/rejection logic (stale, non-YUV, equal-token).
+- `schedulerProven()`: observed both `sched_valid` and a scheduled line-read.
+
+**What it does NOT cover (that a reader would reasonably assume):**
+1. **All pixel data is spatially uniform.** Every `fillFrame()` writes the same Y value
+   to every pixel. A stride error that reads line N+1 instead of line N produces the
+   SAME value — the test cannot detect it. Only chroma vertical stride uses varying
+   data (3 distinct U rows).
+2. **Single-pixel sampling at (0,0).** Only `runChromaVerticalStrideMapping` samples at
+   multiple Y positions. Horizontal addressing is never tested beyond x=0.
+3. **Bench parameterization (80×48) ≠ production (640×480).** Address arithmetic wraps
+   at 16-bit boundaries differently. The 64KB bank stride in the bench vs 460KB in
+   production exercises different address MSBs.
+4. **Static single-frame presentation.** No test presents a sequence of different frames
+   in real-time with concurrent display scanning — the race between producer write and
+   display read is never exercised.
+5. **No DDR latency variation.** The DDR model responds in fixed 4-cycle latency. Real
+   SDRAM has refresh pauses (7.8 µs/row) and priority arbitration stalls not modeled.
+
+**Can it fail?** Yes — 6 deliberate-fault red checks pass (stale doorbell, non-YUV format,
+U/V plane swap, chroma vertical full-res, chroma luma-stride, disabled scheduler).
+Confirmed by the shell script running each fault build and verifying non-zero exit.
+
+### Gate 2: `test_rtl_invariants.py` (source-level text matching)
+
+**What it literally compares (for my modules):**
+- `check_async_fifo_write_full_no_comb_loop`: normalized source contains
+  `wr_full_now=(wr_gray==wr_gray_full)` and `wr_accept=wr_en&&!wr_full_now`.
+- `check_frame_store_cdc_contract`: normalized `ddr_frame_store.sv` contains 7 specific
+  CDC pattern strings (reset sync, FIFO domain assignments, swap toggle, pending_ready
+  sync, RAM clock assignments). Plus: async_fifo has Gray-coded pointer crossing text;
+  SDC has no false/multicycle paths on frame-store signals.
+- `check_ddr_frame_store_yuv_read_contract`: normalized source contains 17 address/stride
+  expressions matching the I420 layout. Red-proven by U/V swap, coefficient swap, and
+  chroma-geometry mutation.
+- `check_ddr_bank_handoff_contract`: 16 ARM+RTL doorbell protocol expressions present.
+  Red-proven by removing reuse-wait, reordering doorbell writes, splitting token reader.
+
+**What it does NOT cover:**
+1. **Semantic equivalence.** A source refactor using different variable names but identical
+   logic will FAIL the gate (false negative). It matches text patterns, not behavior.
+2. **Elaboration-time connectivity.** It verifies that sync flop *declarations* exist in
+   source but cannot verify they are *connected to the correct signals* after synthesis.
+3. **No simulation.** A logic bug that satisfies all pattern matches is invisible. Example:
+   if `wr_gray_full` were computed incorrectly but its declaration matched the pattern,
+   the gate would pass.
+4. **CDC crossing #13 (want_y Gray-code):** The invariant checks that Gray crossing text
+   exists but does NOT verify the Gray-code precondition (max Δ=1). That is only enforced
+   by the Verilator bench assertion at runtime.
+
+**Can it fail?** Yes — each structural check has explicit red-proofs via source mutation.
+If any required pattern is removed or changed, the gate exits non-zero immediately.
+
+### Gate 3: `test_want_y_glitch.sh` (Verilator glitch injection)
+
+**What it literally compares:**
+- Baseline run: `has_frame_cycles > 0` within measurement window (healthy = exit 0).
+- Fault run: same metric after injecting corrupted `want_y_gray_s2` every ~37 cycles.
+- Shell compares exit codes: both 0 → "not RCA"; baseline 0 + fault non-zero → "reproduces".
+
+**What it does NOT cover:**
+1. **Pixel correctness.** Even in "HEALTHY" verdict, pixels may be wrong — only `has_frame`
+   convergence is measured, not whether the displayed frame contains correct data.
+2. **Bench parameterization:** FRAME_H=48 (Y_W=6 bits). Production FRAME_H=480 (Y_W=9 bits).
+   Gray code wrapping behavior differs at wider bit widths.
+3. **The test_want_y_glitch.sh script ALWAYS exits 0** regardless of verdict. It is a
+   diagnostic tool, not a regression gate. A fault that reproduces the stall does not
+   cause CI failure.
+
+**Can it fail?** The C++ binary exits non-zero on stall/degradation. The shell wrapper
+does not propagate this as a gate failure — it reports the finding but exits 0.
+**This is intentional** (investigation tool), but a reader of the script name would
+reasonably expect it to be a gate.
+
+### Gate 4: `ddr_frame_store_bank_glitch_tb.cpp` (Verilator timing violation injection)
+
+**What it literally compares:**
+- Phase 1: `has_frame` asserted within 200k cycles (first frame acquired).
+- Phase 2: after injecting N-cycle hold on `disp_buf_d2` during bank swap, measures
+  `has_frame` stability over observation window.
+
+**What it does NOT cover:**
+1. **Same as Gate 3:** pixel correctness not checked, bench-scale only.
+2. **No runner script enforces it as a gate.** There is no `test_bank_glitch.sh` — the
+   C++ binary must be invoked manually or through the want_y build infrastructure.
+
+**Can it fail?** Yes — exits non-zero if `has_frame` never asserts in Phase 1 (infrastructure
+failure). But the Phase 2 negative result (healthy after glitch) means the *designed* fault
+cannot trigger failure. This was the correct scientific outcome — not a gap.
+
+### Gate 5: `test_ddr_frame.sh` (hardware integration — w-cap only)
+
+**What it literally compares:**
+- `push_frame --status` output grepped for `has_frame=1` and DDR push OK string.
+- This is a device-side smoke test — it confirms DMA reach, not pixel correctness.
+
+**What it does NOT cover:**
+1. Visual output is not captured or compared — only the status mailbox is read.
+2. Only exercises 320×240 resolution, not 640×480 production.
+3. Requires live MiSTer hardware — cannot run in CI.
+
+**Can it fail?** Yes — grep failures exit non-zero. But it cannot detect wrong pixels.
+
+---
+
+### Summary of gaps (headline)
+
+| Gate | Headline gap |
+|------|-------------|
+| warm_reset | ~~Uniform pixel fill masks stride bugs~~ FIXED: per-line Y fill added |
+| rtl_invariants | Source text match ≠ behavioral correctness; refactors break it |
+| want_y_glitch | Diagnostic only — always exits 0; no pixel check |
+| bank_glitch | No runner script; no pixel check |
+| test_ddr_frame.sh | Status-only; no visual capture |
+
+**Biggest risk (same species as #16):** The warm_reset bench could pass with a luma
+stride error because `fillFrame(bank, 208)` writes 208 to every line. A non-uniform
+fill pattern (different Y per line) would catch this class of bug and costs ~5 lines
+of code.
+
+---
+
 ## Changelog
 
 | Date | Commit | Change |
@@ -268,3 +401,4 @@ This eliminates the 7-level combinational depth, giving ~5 ns margin at 90 MHz.
 | 2026-07-28 | — | Added Gray-code precondition assertion (enforced in Verilator) |
 | 2026-07-28 | — | Documented instrument-integrity risk on #14, #15 |
 | 2026-07-28 | — | Bank-swap timing test: disp_buf_d2 → DDRAM_ADDR NOT the frozen-screen RCA (self-consistent prep path) |
+| 2026-07-28 | — | Gate assertion audit (instrument-integrity #16): 5 gates audited, gaps documented, luma stride test added |

@@ -101,6 +101,21 @@ public:
         }
     }
 
+    void fillFramePerLine(int bank, const std::vector<uint8_t>& yPerLine, uint8_t u = 128, uint8_t v = 128) {
+        const uint32_t base = (bank * kBankStrideBytes) / 8;
+        for (int line = 0; line < kH; ++line) {
+            const uint8_t y = yPerLine[std::min<int>(line, static_cast<int>(yPerLine.size()) - 1)];
+            for (int q = 0; q < kYQ; ++q)
+                mem[base + line * kYQ + q] = pack8(y);
+        }
+        for (int line = 0; line < kH / 2; ++line) {
+            for (int q = 0; q < kCQ; ++q) {
+                mem[base + kUQBase + line * kCQ + q] = pack8(u);
+                mem[base + kVQBase + line * kCQ + q] = pack8(v);
+            }
+        }
+    }
+
     void fillFrameChromaRows(int bank, uint8_t y, const std::vector<uint8_t>& uRows, uint8_t v = 128) {
         const uint32_t base = (bank * kBankStrideBytes) / 8;
         for (int line = 0; line < kH; ++line)
@@ -322,9 +337,15 @@ Rgb stableSampleRgb(Sim& sim) {
 }
 
 Rgb stableSampleRgbAt(Sim& sim, int x, int y) {
+    // Move to invisible region (rd_x >= DISPLAY_W) so src_y → 0, then want_y_sys
+    // transitions through 0 (allowed by Gray-code precondition assertion) before
+    // jumping to the new Y position.
+    sim.top.rd_x = kW - 1;  // invisible (>= DISPLAY_W=64 in bench)
+    sim.top.rd_active = 1;
+    for (int i = 0; i < 4; ++i)
+        sim.tick();
     sim.top.rd_x = x;
     sim.top.rd_y = y;
-    sim.top.rd_active = 1;
     for (int i = 0; i < 1600; ++i)
         sim.tick();
     return sim.sampleRgb(x, y);
@@ -725,6 +746,48 @@ bool runEqualTokenRefreshAfterAccept() {
     return sim.schedulerProven();
 }
 
+bool runLumaStrideVerification() {
+    // Non-uniform Y per line: detects stride errors that uniform fill cannot.
+    // If the frame store reads line N+1 instead of N, the pixel value differs.
+    std::vector<uint8_t> yLines(kH);
+    for (int i = 0; i < kH; ++i)
+        yLines[i] = static_cast<uint8_t>(40 + i * 4);  // 40, 44, 48, ... distinct per line
+
+    Sim sim;
+    sim.fillFramePerLine(0, yLines);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+    sim.ringDoorbell(0, 20);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("luma stride verification: frame did not present");
+
+    // Sample at multiple Y positions to verify correct line addressing
+    constexpr int testLines[] = {0, 1, 5, 10, kH / 2, kH - 2};
+    for (int y : testLines) {
+        const Rgb got = stableSampleRgbAt(sim, 0, y);
+        const uint8_t wantY = yLines[y];
+        // With U=128, V=128 (neutral chroma), R≈G≈B≈Y
+        if (got.r + 2 < wantY || got.r > wantY + 2) {
+            std::cerr << "FAIL ddr_frame_store warm-reset: luma stride verification"
+                      << " y=" << y << " got_r=" << int(got.r) << " want_y=" << int(wantY)
+                      << " rgb=" << int(got.r) << "/" << int(got.g) << "/" << int(got.b)
+                      << " frames=" << sim.top.frames_done
+                      << " underruns=" << sim.top.underrun_count << "\n";
+            std::exit(1);
+        }
+    }
+
+    std::cout << "ddr_frame_store warm-reset raw: luma_stride_verification"
+              << " lines_checked=" << (sizeof(testLines)/sizeof(testLines[0]))
+              << " y0_r=" << int(stableSampleRgbAt(sim, 0, 0).r)
+              << " y1_r=" << int(stableSampleRgbAt(sim, 0, 1).r)
+              << " ymid_r=" << int(stableSampleRgbAt(sim, 0, kH/2).r)
+              << " frames=" << sim.top.frames_done
+              << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runInitialFrameMailboxPublish();
@@ -732,6 +795,7 @@ void run() {
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runChromaVerticalStrideMapping();
+    schedulerSeen |= runLumaStrideVerification();
     schedulerSeen |= runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
     schedulerSeen |= runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
     schedulerSeen |= runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
