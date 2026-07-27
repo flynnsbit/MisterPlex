@@ -1,10 +1,16 @@
-// Exhaustive QP 0–51 dequant sweep testbench for h264_dequant4x4.
+// QP 0–51 dequant sweep for h264_dequant4x4 — LUMA AC ONLY, MODULE-LEVEL.
 //
-// Reference model derived INDEPENDENTLY from ITU-T H.264 clause 8.5.12.1,
-// NOT transcribed from the RTL.
+// WHAT THIS COMPARES: specDequant(coeff, qp, row, col) vs dut.dequant[pos]
+//   specDequant = independent C++ model from ITU-T H.264 clause 8.5.12.1
+//   dut.dequant = Verilator simulation of h264_dequant4x4.sv
 //
-// Sweeps all 52 QP values × all 16 positions × multiple coefficient values.
-// Reports PASS/FAIL per QP, with total coverage count.
+// WHAT THIS DOES NOT COVER:
+//   - IDCT, reconstruction, coefficient delivery (parser → dequant pipeline)
+//   - Chroma dequant (QPc mapping not in RTL)
+//   - Luma DC / chroma DC Hadamard (not in RTL)
+//   - End-to-end frame decode
+//
+// Any spec≠RTL mismatch is a hard failure. No overflow classification.
 
 #include "Vh264_dequant_qp_sweep_tb.h"
 #include "verilated.h"

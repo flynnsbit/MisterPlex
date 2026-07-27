@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
-"""Exhaustive QP 0–51 dequantisation sweep for h264_dequant4x4.
+"""QP 0–51 dequant sweep for h264_dequant4x4 — LUMA AC ONLY, MODULE-LEVEL.
 
-Verifies the RTL dequant formula against an INDEPENDENT reference model
-derived from ITU-T H.264 clause 8.5.12.1 (LevelScale4x4 table and scaling
-process for residual 4×4 blocks).
+WHAT THIS TEST COVERS:
+  - The h264_dequant4x4 module IN ISOLATION (not the full decode pipeline)
+  - Luma AC 4×4 dequantisation only
+  - All 52 QP values (0–51), all positions, coefficients ±256
+  - Bit-width overflow detection at the dequant output
+  - 4 RED proofs (broken LUT / shift / decomposition / position class)
+
+WHAT THIS TEST DOES NOT COVER (instrument audit, 2026-07-27):
+  - IDCT (h264_idct4x4) — not tested, same file but separate module
+  - Reconstruction (h264_recon4x4) — not tested
+  - Coefficient delivery: CAVLC → slice_hdr_parser → stream_path → dequant
+    (the 9-bit truncation at lev_of() is invisible to this test because
+    we feed coeff[] directly to the module port)
+  - Chroma dequant with QPc mapping (qPI→QPc, Table 8-15) — NOT IN RTL
+  - Luma DC (16×16 Hadamard) dequant — not tested
+  - Chroma DC (2×2 Hadamard) — NOT IN RTL
+  - End-to-end frame reconstruction — see test_p3_intra_frame_verilator.py
+
+The Python "formula equivalence" test (section 3) compares two Python
+implementations and would pass even if the RTL were deleted. Only the
+Verilator sweep (section 9) touches real RTL.
 
 The reference model is intentionally written from the specification,
 NOT transcribed from the RTL, to avoid proving we typed the same thing twice.
 
-Coverage:
-  - All 52 QP values (0–51)
-  - All 6 rows of the LevelScale table (qP%6 = 0..5)
-  - All 3 position classes (a: both-even, b: both-odd, c: mixed)
-  - Boundary cases: QP 0, QP 51, qP/6 and qP%6 at every value
-  - Bit-width overflow detection at high QP
-  - RED proof: deliberately broken LUT / shift / decomposition → must FAIL
+RED proof: deliberately broken LUT / shift / decomposition → must FAIL
 
 INSTRUMENT FAILURE #14 (2026-07-27):
   The original version of this test ran 14,144 Verilator vectors and
@@ -659,8 +671,10 @@ endmodule
 
 
 def main() -> int:
-    print("test_dequant_qp_sweep: Exhaustive QP 0–51 dequantisation verification")
+    print("test_dequant_qp_sweep: h264_dequant4x4 module-level QP 0–51 sweep (LUMA AC ONLY)")
     print("=" * 72)
+    print("SCOPE: dequant module in isolation — not IDCT, not recon, not chroma,")
+    print("       not coefficient delivery (CAVLC/parser), not end-to-end decode.")
     total_errors = 0
 
     # 1. LevelScale LUT verification
@@ -723,8 +737,10 @@ def main() -> int:
     print(f"QP values exercised: 52/52")
 
     if total_errors == 0:
-        print(f"\ntest_dequant_qp_sweep: OK — all QP 0–51 verified, "
-              f"4 RED proofs passed, LUT+formula+decomposition correct")
+        print(f"\ntest_dequant_qp_sweep: OK — h264_dequant4x4 luma AC correct at QP 0–51, "
+              f"4 RED proofs passed.")
+        print(f"  NOT COVERED: IDCT, recon, chroma QPc, luma/chroma DC Hadamard, "
+              f"coefficient delivery path.")
         return 0
     else:
         print(f"\nFAIL dequant-qp-sweep: {total_errors} error(s)")
