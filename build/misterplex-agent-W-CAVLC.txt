@@ -167,3 +167,255 @@ make rtl-sim: PASS exit 0
 
 $ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
 make unit: PASS exit 0
+
+Full-frame multi-frame reference compare gate (main bd3f1cb):
+- Added `tests/unit/test_stream_path_full_frame_compare.sh`, a Verilator gate that drives real product `stream_path.sv` with the 12-frame Baseline/CAVLC P16 fixture and compares every presented RGB pixel against FFmpeg reference decode.
+- The gate uses ffprobe geometry rather than assuming 640; current checked-in multi-frame fixture is 320x240, 12 frames (1 IDR + 11 P). It is parameterized so a future 624x480 shared fixture can replace `FULL_FRAME_BITSTREAM`.
+- Current result is expected RED and localized: divergence starts at frame 0 because current product RTL still paints decode_stub diagnostic RGB rather than full decoded reference pixels. This is not weakened to a pass; unit mode requires the strict comparison to diverge until the decoder is complete.
+- Behavioral red-check builds a second testbench with `FAULT_PIXEL_XOR=1`; strict comparison fails on the faulted pixel stream.
+- No Quartus fit or device access was used; this gate is Verilator/reference-decoder only.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=60 pixels=76800 mae=108.717044 max_abs=222
+FULL_FRAME_COMPARE raw frame=1 plane=R exact=63 pixels=76800 mae=120.390586 max_abs=247
+FULL_FRAME_COMPARE raw frame=1 plane=G exact=1299 pixels=76800 mae=122.766836 max_abs=255
+FULL_FRAME_COMPARE raw frame=1 plane=B exact=74 pixels=76800 mae=108.642370 max_abs=231
+FULL_FRAME_COMPARE raw frame=2 plane=R exact=88 pixels=76800 mae=120.818841 max_abs=247
+FULL_FRAME_COMPARE raw frame=2 plane=G exact=1240 pixels=76800 mae=122.622773 max_abs=255
+FULL_FRAME_COMPARE raw frame=2 plane=B exact=54 pixels=76800 mae=108.488971 max_abs=231
+FULL_FRAME_COMPARE raw frame=3 plane=R exact=99 pixels=76800 mae=121.004167 max_abs=247
+FULL_FRAME_COMPARE raw frame=3 plane=G exact=1224 pixels=76800 mae=122.333268 max_abs=255
+FULL_FRAME_COMPARE raw frame=3 plane=B exact=49 pixels=76800 mae=108.490469 max_abs=231
+FULL_FRAME_COMPARE raw frame=4 plane=R exact=74 pixels=76800 mae=121.217891 max_abs=247
+FULL_FRAME_COMPARE raw frame=4 plane=G exact=1169 pixels=76800 mae=122.163646 max_abs=255
+FULL_FRAME_COMPARE raw frame=4 plane=B exact=75 pixels=76800 mae=108.326276 max_abs=231
+FULL_FRAME_COMPARE raw frame=5 plane=R exact=72 pixels=76800 mae=121.223867 max_abs=247
+FULL_FRAME_COMPARE raw frame=5 plane=G exact=1170 pixels=76800 mae=122.011602 max_abs=255
+FULL_FRAME_COMPARE raw frame=5 plane=B exact=71 pixels=76800 mae=108.225755 max_abs=231
+FULL_FRAME_COMPARE raw frame=6 plane=R exact=74 pixels=76800 mae=121.058828 max_abs=247
+FULL_FRAME_COMPARE raw frame=6 plane=G exact=1184 pixels=76800 mae=121.862422 max_abs=255
+FULL_FRAME_COMPARE raw frame=6 plane=B exact=67 pixels=76800 mae=108.289518 max_abs=231
+FULL_FRAME_COMPARE raw frame=7 plane=R exact=80 pixels=76800 mae=120.842734 max_abs=247
+FULL_FRAME_COMPARE raw frame=7 plane=G exact=1176 pixels=76800 mae=121.611055 max_abs=255
+FULL_FRAME_COMPARE raw frame=7 plane=B exact=66 pixels=76800 mae=108.151732 max_abs=231
+FULL_FRAME_COMPARE raw frame=8 plane=R exact=57 pixels=76800 mae=120.621745 max_abs=247
+FULL_FRAME_COMPARE raw frame=8 plane=G exact=1172 pixels=76800 mae=121.559049 max_abs=255
+FULL_FRAME_COMPARE raw frame=8 plane=B exact=69 pixels=76800 mae=108.138073 max_abs=231
+FULL_FRAME_COMPARE raw frame=9 plane=R exact=57 pixels=76800 mae=120.359661 max_abs=247
+FULL_FRAME_COMPARE raw frame=9 plane=G exact=1166 pixels=76800 mae=121.497982 max_abs=255
+FULL_FRAME_COMPARE raw frame=9 plane=B exact=198 pixels=76800 mae=108.138971 max_abs=239
+FULL_FRAME_COMPARE raw frame=10 plane=R exact=94 pixels=76800 mae=120.030078 max_abs=247
+FULL_FRAME_COMPARE raw frame=10 plane=G exact=1180 pixels=76800 mae=121.506706 max_abs=255
+FULL_FRAME_COMPARE raw frame=10 plane=B exact=515 pixels=76800 mae=108.173464 max_abs=247
+FULL_FRAME_COMPARE raw frame=11 plane=R exact=82 pixels=76800 mae=119.720026 max_abs=247
+FULL_FRAME_COMPARE raw frame=11 plane=G exact=1173 pixels=76800 mae=121.705781 max_abs=255
+FULL_FRAME_COMPARE raw frame=11 plane=B exact=938 pixels=76800 mae=108.723672 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.576081 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ python3 tests/unit/test_bench_rtl_filelists.py
+bench RTL file lists OK (56 benches checked against 46 modules)
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+Latest-base refresh after main b079b97:
+- Rebased full-frame gate onto origin/main b079b97 after visual default fix merge. Full-frame Verilator/reference results unchanged.
+- No Quartus fit or device access was used.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=60 pixels=76800 mae=108.717044 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.576081 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+Latest-base refresh after main 644088a:
+- Rebased full-frame gate onto origin/main 644088a after remote-fit capacity merge. Full-frame Verilator/reference results unchanged.
+- No Quartus fit or device access was used.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=60 pixels=76800 mae=108.717044 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.576081 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+C1B sequence manifest integration:
+- Consumed `misterplex.p3.nal_sequence.v1` from `tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json`; the full-frame gate now validates manifest format, source sha256/size, geometry, VCL counts, frame_num/slice_kind metadata, and the declared ioctl injection route before comparing pixels.
+- Added per-run JSON report `build/p3_full_frame/frame_planes_compare.json` with additive format `misterplex.p3.frame_planes_compare.v1`: source sha256, sequence manifest path, geometry, frame_index/frame_num/slice_kind, and per-plane exact_pixels/total_pixels/mae/max_abs.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=60 pixels=76800 mae=108.717044 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.576081 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ python3 tests/unit/test_bench_rtl_filelists.py
+bench RTL file lists OK (57 benches checked against 46 modules)
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+Latest-base refresh after main 5055eda:
+- Rebased full-frame sequence-manifest gate onto origin/main 5055eda after skipped-RTL-gate enforcement. Results unchanged.
+- No Quartus fit or device access was used.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=60 pixels=76800 mae=108.717044 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.576081 max_abs=255
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+Latest-base refresh after main 7a18ac0:
+- Rebased full-frame sequence-manifest gate onto origin/main 7a18ac0 after P-slice partition MV prediction and deblock fixture merges. Full-frame compare remains expected RED at frame 0; B-plane exact count changed with upstream RTL.
+- Visual default is now trustworthy only for its 160x120 ROI; this branch's correctness gate remains Verilator/reference-decoder full-frame compare and does not use the hardware visual ROI gate.
+- No Quartus fit or device access was used.
+
+Raw command output:
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=34 pixels=76800 mae=108.728503 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.555456 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
+
+Skipped-RTL-gate hardening after main 5055eda:
+- Audited the new full-frame stream_path gate for missing-Verilator behavior. It now refuses to report PASS when Verilator is unavailable, exiting 3 unless `ALLOW_MISSING_VERILATOR=1` is explicitly set.
+- This matches the main 5055eda policy: a skipped RTL gate is not a pass.
+- Validation was run with low local memory noted (`Mem available=3GB`, `Swap 3/3GB full`); results reproduced cleanly.
+
+Raw command output:
+$ OSS_CAD_SUITE=/nonexistent tests/unit/test_stream_path_full_frame_compare.sh
+SKIP RTL SIM: Verilator not found; full-frame stream_path comparison was NOT run.
+Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
+RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation.
+A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified.
+rc=3
+
+$ OSS_CAD_SUITE=/nonexistent ALLOW_MISSING_VERILATOR=1 tests/unit/test_stream_path_full_frame_compare.sh
+SKIP RTL SIM: Verilator not found; full-frame stream_path comparison was NOT run.
+Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
+rc=0
+
+$ tests/unit/test_stream_path_full_frame_compare.sh 2>&1 | grep -E 'RTL SIM:|FULL_FRAME_COMPARE raw frame=0 plane=|FULL_FRAME_COMPARE summary|OK full-frame|FAIL full-frame'
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (stream_path_full_frame_compare 320x240 frames=12)
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=57 pixels=76800 mae=119.169375 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=1295 pixels=76800 mae=124.415534 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=34 pixels=76800 mae=108.728503 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+FULL_FRAME_COMPARE raw frame=0 plane=R exact=135 pixels=76800 mae=131.078385 max_abs=247
+FULL_FRAME_COMPARE raw frame=0 plane=G exact=567 pixels=76800 mae=124.823451 max_abs=255
+FULL_FRAME_COMPARE raw frame=0 plane=B exact=6 pixels=76800 mae=138.555456 max_abs=222
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 cycles=953698 first_bad_frame=0 strict_pass=0 mode=strict
+FAIL full-frame strict: stream_path pixels differ from reference decoder at frame 0
+OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+
+$ make rtl-lint >/dev/null 2>&1 && echo 'make rtl-lint: PASS exit 0'
+make rtl-lint: PASS exit 0
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
