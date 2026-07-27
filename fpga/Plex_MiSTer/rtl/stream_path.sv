@@ -1,7 +1,10 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 
-module stream_path (
+module stream_path #(
+	parameter int FRAME_W = 320,
+	parameter int FRAME_H = 240
+)(
 	input  wire        clk,
 	input  wire        reset,
 
@@ -189,8 +192,8 @@ module stream_path (
 	assign residual_dc   = sl_rdc;
 
 	decode_stub #(
-		.WIDTH(320),
-		.HEIGHT(240)
+		.WIDTH(FRAME_W),
+		.HEIGHT(FRAME_H)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),

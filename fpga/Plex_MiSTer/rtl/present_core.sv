@@ -2,6 +2,9 @@
 // Display owns VSync; unique content advances only when present_cadence says so.
 
 module present_core #(
+	parameter int FRAME_W = 320,
+	parameter int FRAME_H = 240,
+	parameter int FRAME_STRIDE = FRAME_W,
 	parameter int SDRAM_REFRESH_CYCLES = 780,
 `ifdef FRAME_CMD_FIFO_AW4
 	parameter int FRAME_CMD_FIFO_AW = 4,
@@ -16,6 +19,8 @@ module present_core #(
 	parameter int FRAME_LINE_COUNT = 4
 `elsif FRAME_LINES_8
 	parameter int FRAME_LINE_COUNT = 8
+`elsif FRAME_LINES_16
+	parameter int FRAME_LINE_COUNT = 16
 `else
 	parameter int FRAME_LINE_COUNT = 4
 `endif
@@ -51,6 +56,30 @@ module present_core #(
 	output wire  [1:0] sdram_bs,
 	output wire        sdram_refresh,
 
+`ifdef DDR_FRAME_STORE
+	input  wire        ddr_start_req,
+	input  wire        ddr_bank_sel,
+	input  wire [15:0] ddr_status_osd,
+	input  wire        ddr_input_cmd_valid,
+	input  wire  [7:0] ddr_input_cmd,
+	input  wire  [3:0] ddr_sdram_test_state,
+	input  wire  [3:0] ddr_sdram_size_code,
+	input  wire [15:0] ddr_sdram_error_count,
+	input  wire        clk_ddr,
+	output wire        DDRAM_CLK,
+	input  wire        DDRAM_BUSY,
+	output wire  [7:0] DDRAM_BURSTCNT,
+	output wire [28:0] DDRAM_ADDR,
+	input  wire [63:0] DDRAM_DOUT,
+	input  wire        DDRAM_DOUT_READY,
+	output wire        DDRAM_RD,
+	output wire [63:0] DDRAM_DIN,
+	output wire  [7:0] DDRAM_BE,
+	output wire        DDRAM_WE,
+	output wire [15:0] ddr_frames_done,
+	output wire        ddr_doorbell_ok,
+`endif
+
 	// audio_fifo write (from audio_ingest)
 	input  wire        af_wr_en,
 	input  wire [31:0] af_wr_data,
@@ -72,7 +101,7 @@ module present_core #(
 	output wire [31:0] stat_content_index,
 	output wire        stat_advance,
 	output wire        stat_has_frame,
-	output wire [18:0] stat_wr_count,
+	output wire [31:0] stat_wr_count,
 	output wire        stat_has_audio,
 	output wire        stat_audio_underrun,
 	output wire        stat_swap_pending,
@@ -123,14 +152,23 @@ module present_core #(
 		.b(bb)
 	);
 
-	// Stretch 320×240 frame_store across full Template DE — match colorbars in_content.
+	localparam int FRAME_X_W = $clog2(FRAME_W);
+	localparam int FRAME_Y_W = $clog2(FRAME_H);
+
+	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
 	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
 	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
 	localparam H_DE    = 10'd529;
-	localparam H_STORE = 10'd320;
+	localparam V_STORE = 10'd240;
+	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
+	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
+	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
+	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
+	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-	wire in_content = (hc < H_DE) && (py < 10'd240) && ~hb && ~vb;
+	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
 	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
 	// Drive the address straight from the clamped counter, with no blank-time special
@@ -141,10 +179,10 @@ module present_core #(
 	// the clamp naturally holds column 319 through the right overhang, and hc wraps to
 	// 0 early in the left blank so column 0 is ready before DE opens.
 	wire [9:0] read_hc = hc;
-	wire [25:0] store_x_prod = read_hc * 16'd39647;
-	wire [9:0]  store_x_comb = store_x_prod[25:16];
-	wire [9:0]  store_x_clamped =
-		(store_x_comb >= H_STORE) ? (H_STORE - 10'd1) : store_x_comb;
+	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
+	wire [15:0] store_x_comb = store_x_prod[31:16];
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
 
 	// colorbars moves the V blank edges at hc == H_SYNC_S, i.e. AFTER each line's
 	// active region, so VBlank releases a line early with respect to the content
@@ -156,18 +194,22 @@ module present_core #(
 	// Blank it, and clamp the address so an out-of-range row can never be fetched.
 	wire       past_last_row = (py >= 10'd240);
 	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
+	wire [15:0] store_y_comb = store_y_prod[31:16];
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
 
-	reg [9:0] store_x;
-	reg [9:0] store_y;
+	reg [FRAME_X_W-1:0] store_x;
+	reg [FRAME_Y_W-1:0] store_y;
 	reg       de_r; // registered in_content for frame_store read align
 	always @(posedge clk) begin
 		if (reset) begin
-			store_x <= 10'd0;
-			store_y <= 10'd0;
+			store_x <= 0;
+			store_y <= '0;
 			de_r    <= 1'b0;
 		end else if (ce_pix_i) begin
 			de_r    <= in_content;
-			store_y <= store_y_clamped;
+			store_y <= store_y_addr;
 			store_x <= store_x_clamped;
 		end
 	end
@@ -175,14 +217,82 @@ module present_core #(
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
 	wire       swap_pending;
-	wire [18:0] wr_count;
+	wire [31:0] wr_count;
 	wire        wr_done;
 	wire [15:0] frame_underruns;
 	wire [7:0]  frame_sdram_state;
 
+`ifdef DDR_FRAME_STORE
+	assign fs_wr_ready = 1'b1;
+	assign wr_count = 32'd0;
+	assign wr_done = 1'b0;
+	assign sdram_sel = 1'b0;
+	assign sdram_addr = 26'd0;
+	assign sdram_din = 16'd0;
+	assign sdram_wr = 1'b0;
+	assign sdram_rd = 1'b0;
+	assign sdram_bs = 2'b11;
+	assign sdram_refresh = 1'b0;
+
+`include "ddr_frame_layout_params.svh"
+
+	ddr_frame_store #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.FRAME_STRIDE(FRAME_STRIDE),
+		.CODED_W(DDR_FRAME_CODED_WIDTH),
+		.CODED_H(DDR_FRAME_CODED_HEIGHT),
+		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
+		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
+		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
+		.CROP_TOP(DDR_FRAME_CROP_TOP),
+		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
+		.PRESENT_Y(0),
+		.LINE_COUNT(FRAME_LINE_COUNT),
+		.PHYS_BASE(32'h3000_0000),
+		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)
+	) fstore (
+		.clk(clk),
+		.clk_ddr(clk_ddr),
+		.reset(reset),
+		.rd_x(store_x),
+		.rd_y(store_y),
+		.rd_active(de_r),
+		.rd_r(fr),
+		.rd_g(fg),
+		.rd_b(fb),
+		.start_req(ddr_start_req),
+		.bank_sel(ddr_bank_sel),
+		.status_osd(ddr_status_osd),
+		.input_cmd_valid(ddr_input_cmd_valid),
+		.input_cmd(ddr_input_cmd),
+		.sdram_test_state(ddr_sdram_test_state),
+		.sdram_size_code(ddr_sdram_size_code),
+		.sdram_error_count(ddr_sdram_error_count),
+		.DDRAM_CLK(DDRAM_CLK),
+		.DDRAM_BUSY(DDRAM_BUSY),
+		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+		.DDRAM_ADDR(DDRAM_ADDR),
+		.DDRAM_DOUT(DDRAM_DOUT),
+		.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+		.DDRAM_RD(DDRAM_RD),
+		.DDRAM_DIN(DDRAM_DIN),
+		.DDRAM_BE(DDRAM_BE),
+		.DDRAM_WE(DDRAM_WE),
+		.vsync_pulse(fstart),
+		.has_frame(has_frame),
+		.swap_pending(swap_pending),
+		.underrun_count(frame_underruns),
+		.frames_done(ddr_frames_done),
+		.doorbell_ok(ddr_doorbell_ok),
+		.debug_state(frame_sdram_state)
+	);
+`else
 	frame_store #(
-		.WIDTH(320),
-		.HEIGHT(240),
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.FRAME_STRIDE(FRAME_STRIDE),
 		.REFRESH_CYCLES(SDRAM_REFRESH_CYCLES),
 		.CMD_FIFO_AW(FRAME_CMD_FIFO_AW),
 		.LINE_COUNT(FRAME_LINE_COUNT)
@@ -220,6 +330,7 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+`endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
 	// Pattern no longer steals cast (old pattern!=0 force caused bars/grid under video).

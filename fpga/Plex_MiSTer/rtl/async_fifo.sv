@@ -24,14 +24,15 @@ module async_fifo #(
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
+	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};
 
 	function automatic [AW:0] bin2gray(input [AW:0] b);
 		bin2gray = (b >> 1) ^ b;
 	endfunction
 
-	wire [AW:0] wr_bin_next  = wr_bin + ((wr_en && !wr_full) ? 1'b1 : 1'b0);
+	wire [AW:0] wr_bin_next  = wr_bin + ((wr_en && !wr_full) ? PTR_ONE : '0);
 	wire [AW:0] wr_gray_next = bin2gray(wr_bin_next);
-	wire [AW:0] rd_bin_next  = rd_bin + ((rd_en && !rd_empty) ? 1'b1 : 1'b0);
+	wire [AW:0] rd_bin_next  = rd_bin + ((rd_en && !rd_empty) ? PTR_ONE : '0);
 	wire [AW:0] rd_gray_next = bin2gray(rd_bin_next);
 
 	assign wr_full = (wr_gray_next == {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]});

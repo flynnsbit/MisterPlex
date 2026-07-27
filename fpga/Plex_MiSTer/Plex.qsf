@@ -79,6 +79,11 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 # Disable ALSA audio output to save some resources
 #set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
+set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
+set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
+set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.
 source sys/sys.tcl
