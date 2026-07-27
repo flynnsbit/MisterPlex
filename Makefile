@@ -3,7 +3,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 
-.PHONY: all unit rtl-sim arm-plexd arm-ddr-bench ddr-bench present-harness clean help plexd package
+.PHONY: all unit rtl-sim arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package
 
 all: unit
 
@@ -16,6 +16,7 @@ help:
 	@echo "  make test       - alias for unit"
 	@echo "  make package    - dist tarball (ARM + conf + docs + Plex.rbf if present)"
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
+	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
 test: unit
@@ -261,6 +262,12 @@ $(ROOT)/build/present_loop_harness: $(ROOT)/tools/present_loop_harness.cpp
 
 present-harness: $(ROOT)/build/present_loop_harness
 
+$(ROOT)/build/ffmpeg_cpu_probe: $(ROOT)/tools/ffmpeg_cpu_probe.cpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/ffmpeg_cpu_probe.cpp
+
+profile-tools: $(ROOT)/build/ffmpeg_cpu_probe $(ROOT)/build/ddr_write_bench $(ROOT)/build/present_loop_harness
+
 # ARM hard-float for MiSTer (try common cross compilers + local mistercast toolchain)
 ARM_TOOLCHAIN_BIN ?= $(HOME)/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin
 ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || command -v arm-linux-gnueabihf-g++ 2>/dev/null || command -v armv7l-linux-gnueabihf-g++ 2>/dev/null || ls $(ARM_TOOLCHAIN_BIN)/arm-none-linux-gnueabihf-g++ 2>/dev/null)
@@ -275,6 +282,19 @@ arm-ddr-bench:
 		$(ROOT)/tools/ddr_write_bench.cpp \
 		-static
 	@file $(ROOT)/build/arm/ddr_write_bench
+
+arm-profile-tools: arm-ddr-bench
+	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
+	@mkdir -p $(ROOT)/build/arm
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
+		-o $(ROOT)/build/arm/ffmpeg_cpu_probe \
+		$(ROOT)/tools/ffmpeg_cpu_probe.cpp \
+		-static
+	$(ARM_CXX) -std=c++17 -O2 -Wall -pthread \
+		-o $(ROOT)/build/arm/present_loop_harness \
+		$(ROOT)/tools/present_loop_harness.cpp \
+		-static
+	@file $(ROOT)/build/arm/ffmpeg_cpu_probe $(ROOT)/build/arm/present_loop_harness
 
 arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
