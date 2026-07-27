@@ -276,12 +276,29 @@ void testBs(Vh264_deblock_tb& dut) {
     if (eval() != 3) { std::cerr << "FAIL bS intra internal\n"; std::exit(1); }
     dut.p_intra = 0; dut.q_nonzero = 1;
     if (eval() != 2) { std::cerr << "FAIL bS residual\n"; std::exit(1); }
+    dut.q_nonzero = 0; dut.p_nonzero = 1;
+    if (eval() != 2) { std::cerr << "FAIL bS residual p-side\n"; std::exit(1); }
+    dut.p_nonzero = 0;
     dut.q_nonzero = 0; dut.q_mvx = 4;
     if (eval() != 1) { std::cerr << "FAIL bS mv threshold\n"; std::exit(1); }
     dut.q_mvx = 3;
     if (eval() != 0) { std::cerr << "FAIL bS mv below threshold\n"; std::exit(1); }
+    dut.q_mvx = -4;
+    if (eval() != 1) { std::cerr << "FAIL bS negative mvx threshold\n"; std::exit(1); }
+    dut.q_mvx = 0; dut.q_mvy = 4;
+    if (eval() != 1) { std::cerr << "FAIL bS mvy threshold\n"; std::exit(1); }
+    dut.q_mvy = -4;
+    if (eval() != 1) { std::cerr << "FAIL bS negative mvy threshold\n"; std::exit(1); }
+    dut.q_mvy = 0; dut.p_mvx = 4;
+    if (eval() != 1) { std::cerr << "FAIL bS p-side mvx threshold\n"; std::exit(1); }
+    dut.p_mvx = 0; dut.p_mvy = -4;
+    if (eval() != 1) { std::cerr << "FAIL bS p-side negative mvy threshold\n"; std::exit(1); }
+    dut.p_mvy = 0;
     dut.q_ref = 1;
     if (eval() != 1) { std::cerr << "FAIL bS ref diff\n"; std::exit(1); }
+    dut.q_ref = 0; dut.p_ref = 1;
+    if (eval() != 1) { std::cerr << "FAIL bS p-side ref diff\n"; std::exit(1); }
+    dut.p_ref = 0;
     dut.slice_boundary_blocked = 1;
     if (eval() != 0) { std::cerr << "FAIL bS disable idc2 boundary\n"; std::exit(1); }
     dut.slice_boundary_blocked = 0; dut.disable_all = 1;
@@ -308,6 +325,11 @@ void testThresholds(Vh264_deblock_tb& dut) {
     dutEdge(dut, e, false, 1, 51, 12, 12);
     if (dut.alpha_dbg != 255 || dut.beta_dbg != 18 || dut.tc0_dbg != 13) {
         std::cerr << "FAIL thresholds high clip\n";
+        std::exit(1);
+    }
+    dutEdge(dut, e, false, 3, 4, -12, -12);
+    if (dut.alpha_dbg != 0 || dut.beta_dbg != 0 || dut.tc0_dbg != 0) {
+        std::cerr << "FAIL thresholds low clip\n";
         std::exit(1);
     }
 }
