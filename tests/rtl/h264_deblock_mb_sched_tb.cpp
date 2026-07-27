@@ -105,6 +105,20 @@ Edge4Out refEdge(const Edge4& in, bool chroma, int bs, int qp, int aOff, int bOf
 
 using MB = std::array<uint8_t, 256>;
 
+// Generate a blocking-artifact pattern: constant within each 4x4 block,
+// small step at block boundaries. This triggers filtering at low QP
+// because |p1-p0|=0 within blocks (satisfies beta) and |p0-q0| is small
+// between blocks (satisfies alpha).
+MB makeBlockArtifactMB(int seed = 0) {
+    MB mb{};
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x) {
+            int bx = x / 4, by = y / 4;
+            mb[y*16+x] = clip8(128 + (bx - by) * 4 + (bx + by) + seed);
+        }
+    return mb;
+}
+
 // H.264 4x4 raster scan → (bx, by) mapping
 static int blk_from_xy(int bx, int by) {
     static constexpr int map[4][4] = {
@@ -302,11 +316,9 @@ void testIntraInternalEdges(Vh264_deblock_mb_sched_tb& dut) {
     tick(dut);
     dut.reset = 0;
 
-    // Generate test MB: the golden MB0 recon pattern from the project fixture
-    MB mb{};
-    for (int y = 0; y < 16; ++y)
-        for (int x = 0; x < 16; ++x)
-            mb[y*16+x] = clip8(100 + x*3 + y*5 + ((x^y)&3)*7);
+    // Generate test MB: blocking artifact pattern — flat within 4x4 blocks,
+    // small steps at edges. Triggers filtering at QP=25 (alpha=13, beta=4).
+    MB mb = makeBlockArtifactMB();
 
     // Load into DUT
     loadMb(dut, mb);
@@ -314,6 +326,16 @@ void testIntraInternalEdges(Vh264_deblock_mb_sched_tb& dut) {
     // Compute reference
     MB ref = mb;
     refDeblockMb(ref, 25, 0, 0);
+
+    // Degeneracy check: reference MUST differ from input
+    int refChanged = 0;
+    for (int i = 0; i < 256; ++i) if (ref[i] != mb[i]) ++refChanged;
+    if (refChanged == 0) {
+        std::cerr << "FAIL scheduler intra internal edges: DEGENERATE TEST — "
+                     "reference produced 0 sample changes. Test data does not "
+                     "trigger filtering.\n";
+        std::exit(1);
+    }
 
     // Run DUT
     runAndWait(dut);
@@ -396,6 +418,15 @@ void testEdgeOrderingRedProof(Vh264_deblock_mb_sched_tb& dut) {
     MB ref_vh = mb;
     refDeblockMb(ref_vh, 32, 0, 0);
 
+    // Degeneracy check: filtering must change samples
+    int edgRefChanged = 0;
+    for (int i = 0; i < 256; ++i) if (ref_vh[i] != mb[i]) ++edgRefChanged;
+    if (edgRefChanged == 0) {
+        std::cerr << "FAIL scheduler edge ordering: DEGENERATE — reference produced "
+                     "0 changes, test cannot verify ordering\n";
+        std::exit(1);
+    }
+
     if (got != ref_vh) {
         int mm = 0;
         for (int i = 0; i < 256; ++i) if (got[i] != ref_vh[i]) ++mm;
@@ -425,11 +456,8 @@ void testGoldenMb0(Vh264_deblock_mb_sched_tb& dut) {
         dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
     }
 
-    // We'll load a synthetic pattern and verify against the reference
-    MB mb{};
-    for (int y = 0; y < 16; ++y)
-        for (int x = 0; x < 16; ++x)
-            mb[y*16+x] = clip8(128 + (x-8)*2 + (y-8)*3);
+    // Blocking artifact pattern with different seed than intra test
+    MB mb = makeBlockArtifactMB(10);
 
     loadMb(dut, mb);
 
@@ -469,10 +497,7 @@ void testQPSweep(Vh264_deblock_mb_sched_tb& dut) {
             dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
         }
 
-        MB mb{};
-        for (int y = 0; y < 16; ++y)
-            for (int x = 0; x < 16; ++x)
-                mb[y*16+x] = clip8(100 + x*3 + y*5 + ((x^y)&3)*7);
+        MB mb = makeBlockArtifactMB(qp);  // Use QP as seed for variety
 
         loadMb(dut, mb);
 
@@ -543,10 +568,7 @@ void testInterMixedBs(Vh264_deblock_mb_sched_tb& dut) {
         dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
     }
 
-    MB mb{};
-    for (int y = 0; y < 16; ++y)
-        for (int x = 0; x < 16; ++x)
-            mb[y*16+x] = clip8(96 + x + y + (x>=8 ? 9 : 0) + (y>=8 ? 7 : 0));
+    MB mb = makeBlockArtifactMB(7);
 
     loadMb(dut, mb);
 
@@ -638,10 +660,7 @@ void testAlphaBetaOffset(Vh264_deblock_mb_sched_tb& dut) {
             dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
         }
 
-        MB mb{};
-        for (int y = 0; y < 16; ++y)
-            for (int x = 0; x < 16; ++x)
-                mb[y*16+x] = clip8(100 + x*3 + y*5 + ((x^y)&3)*7);
+        MB mb = makeBlockArtifactMB(c.aOff + c.bOff + 20);
 
         loadMb(dut, mb);
         MB ref = mb;
@@ -657,6 +676,190 @@ void testAlphaBetaOffset(Vh264_deblock_mb_sched_tb& dut) {
         }
     }
     std::cout << "OK scheduler alpha/beta offsets: 4 offset combinations verified\n";
+}
+
+// ── RED PROOF 1: Wrong bS via wrong intra metadata ──
+// If bS derivation is wrong (e.g., intra flag ignored), output diverges from
+// reference. This test feeds mb_intra=0 to RTL (so RTL gets bS≤2) but computes
+// reference with bS=3 (as if all intra). The test REQUIRES a mismatch.
+// If got == ref, the gate cannot detect bS derivation errors → FAIL.
+void redProofWrongBs(Vh264_deblock_mb_sched_tb& dut) {
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    dut.disable_idc = 0; dut.qp = 25;
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    dut.left_avail = 0; dut.top_avail = 0;
+    dut.left_same_slice = 0; dut.top_same_slice = 0;
+    // DELIBERATE FAULT: mb_intra=0 (RTL sees inter), mb_nonzero=0, same MV/ref → bS=0
+    dut.mb_intra = 0x0000;
+    dut.mb_nonzero = 0x0000;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_intra = 0; dut.left_nonzero = 0;
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_intra = 0; dut.top_nonzero = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+    MB mb = makeBlockArtifactMB(42);
+    loadMb(dut, mb);
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    // Reference computed AS IF all intra (bS=3) — this is what a correct RTL
+    // with correct metadata would produce. The RTL with wrong metadata should differ.
+    MB ref_intra = mb;
+    refDeblockMb(ref_intra, 25, 0, 0);  // bS=3 for all internal edges
+
+    // Verify ref actually filters (non-degenerate)
+    int refChanged = 0;
+    for (int i = 0; i < 256; ++i) if (ref_intra[i] != mb[i]) ++refChanged;
+    if (refChanged == 0) {
+        std::cerr << "FAIL RED PROOF wrong_bs: DEGENERATE — reference with bS=3 "
+                     "produced 0 changes\n";
+        std::exit(1);
+    }
+
+    if (got == ref_intra) {
+        std::cerr << "FAIL RED PROOF wrong_bs: RTL with mb_intra=0 matched "
+                     "intra reference (bS=3). Gate cannot detect bS errors.\n";
+        std::exit(1);
+    }
+
+    // With bS=0 on all edges, output should be unmodified (passthrough)
+    if (got != mb) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) if (got[i] != mb[i]) ++mm;
+        std::cerr << "FAIL RED PROOF wrong_bs: RTL with bS=0 modified " << mm
+                  << " samples (expected passthrough)\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK RED PROOF wrong_bs: bS=0 differs from bS=3 ref (" << refChanged
+              << " samples), gate detects bS errors\n";
+}
+
+// ── RED PROOF 2: Passthrough detection ──
+// Verify the test framework detects if the scheduler does nothing (passthrough)
+// when filtering IS expected. Uses high-contrast data that must be filtered.
+void redProofPassthroughDetection(Vh264_deblock_mb_sched_tb& dut) {
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    dut.disable_idc = 0; dut.qp = 40;  // High QP → large alpha/beta → guaranteed filtering
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    dut.left_avail = 0; dut.top_avail = 0;
+    dut.left_same_slice = 0; dut.top_same_slice = 0;
+    dut.mb_intra = 0xFFFF;
+    dut.mb_nonzero = 0xFFFF;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_intra = 0; dut.left_nonzero = 0;
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_intra = 0; dut.top_nonzero = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    // Blocking artifact pattern — triggers filtering at QP=40
+    MB mb = makeBlockArtifactMB(99);
+
+    loadMb(dut, mb);
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    // Reference (what correct filtering produces)
+    MB ref = mb;
+    refDeblockMb(ref, 40, 0, 0);
+
+    // The reference MUST differ from unfiltered — otherwise test data is degenerate
+    if (ref == mb) {
+        std::cerr << "FAIL RED PROOF passthrough: reference == unfiltered, test data "
+                     "too smooth. Cannot detect passthrough bug.\n";
+        std::exit(1);
+    }
+
+    // Count how many samples the reference modifies
+    int refChanged = 0;
+    for (int i = 0; i < 256; ++i) if (ref[i] != mb[i]) ++refChanged;
+
+    // Verify RTL matches reference (not passthrough)
+    if (got == mb) {
+        std::cerr << "FAIL RED PROOF passthrough: RTL output == unfiltered input, "
+                     "scheduler did no filtering. Reference changed " << refChanged
+                  << " samples.\n";
+        std::exit(1);
+    }
+    if (got != ref) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) if (got[i] != ref[i]) ++mm;
+        std::cerr << "FAIL RED PROOF passthrough: RTL filtered but differs from ref, "
+                  << mm << "/256 mismatches\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK RED PROOF passthrough: ref changes " << refChanged
+              << "/256 samples, RTL matches ref, gate detects no-op scheduler\n";
+}
+
+// ── RED PROOF 3: Wrong QP detection ──
+// Feeds QP=40 to RTL but verifies the test can distinguish from QP=15 reference.
+// α/β differ hugely between QP 15 and 40, so filtering results must differ.
+void redProofWrongQP(Vh264_deblock_mb_sched_tb& dut) {
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    dut.disable_idc = 0; dut.qp = 40;
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    dut.left_avail = 0; dut.top_avail = 0;
+    dut.left_same_slice = 0; dut.top_same_slice = 0;
+    dut.mb_intra = 0xFFFF;
+    dut.mb_nonzero = 0xFFFF;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_intra = 0; dut.left_nonzero = 0;
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_intra = 0; dut.top_nonzero = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+    MB mb = makeBlockArtifactMB(77);
+    loadMb(dut, mb);
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    // Correct reference at QP=40
+    MB ref40 = mb;
+    refDeblockMb(ref40, 40, 0, 0);
+
+    // Wrong reference at QP=15 — must differ from QP=40
+    MB ref15 = mb;
+    refDeblockMb(ref15, 15, 0, 0);
+
+    if (ref40 == ref15) {
+        std::cerr << "FAIL RED PROOF wrong_qp: QP=40 and QP=15 references are identical. "
+                     "Test data cannot distinguish QP.\n";
+        std::exit(1);
+    }
+
+    // RTL must match QP=40 reference
+    if (got != ref40) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) if (got[i] != ref40[i]) ++mm;
+        std::cerr << "FAIL RED PROOF wrong_qp: RTL at QP=40 doesn't match QP=40 ref, "
+                  << mm << "/256 mismatches\n";
+        std::exit(1);
+    }
+
+    // RTL must NOT match QP=15 reference — proving the test detects QP errors
+    if (got == ref15) {
+        std::cerr << "FAIL RED PROOF wrong_qp: RTL at QP=40 matches QP=15 reference. "
+                     "Gate cannot detect QP-dependent errors.\n";
+        std::exit(1);
+    }
+
+    int diffCount = 0;
+    for (int i = 0; i < 256; ++i) if (ref40[i] != ref15[i]) ++diffCount;
+    std::cout << "OK RED PROOF wrong_qp: QP=40 vs QP=15 differ in " << diffCount
+              << "/256 samples, gate detects QP errors\n";
 }
 
 } // namespace
@@ -675,6 +878,16 @@ int main(int argc, char** argv) {
     testBs0Passthrough(dut);
     testAlphaBetaOffset(dut);
 
-    std::cout << "OK h264_deblock_mb_scheduler: all 8 tests passed\n";
+    // Red proofs: prove the gate CAN fail
+    redProofWrongBs(dut);
+    redProofPassthroughDetection(dut);
+    redProofWrongQP(dut);
+
+    std::cout << "\n=== COVERAGE STATEMENT ===\n"
+              << "OK h264_deblock_mb_scheduler: 11 tests passed (8 green + 3 red proofs)\n"
+              << "COVERS: luma internal edges (x=4,8,12; y=4,8,12), bS 0-4, QP 5-51,\n"
+              << "        disable_idc=0/1, alpha/beta offsets, V-then-H ordering\n"
+              << "DOES NOT COVER: chroma filtering, MB boundary edges (x=0,y=0),\n"
+              << "                disable_idc=2 (slice boundary), multi-MB pipeline\n";
     return 0;
 }

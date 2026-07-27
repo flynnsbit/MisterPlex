@@ -262,7 +262,9 @@ def deblock_macroblock_luma_inplace(
         return list(mb)
 
     W = 16
-    buf = list(mb)
+    # Work on the caller's list so modifications are truly in-place.
+    # Also return the list for convenience.
+    buf = mb
 
     def get(x, y):
         return buf[y * W + x]
@@ -662,19 +664,28 @@ def _test_qp_range():
 
 def _test_mb_golden_inplace():
     """
-    Test full-MB deblocking with in-place updates matches multi-pass approach.
-    Uses a synthetic macroblock pattern.
+    Test full-MB deblocking with in-place updates.
+    Uses a blocking-artifact pattern: constant within each 4x4 block,
+    small step at block boundaries. This triggers filtering at QP=25
+    (alpha=13, beta=4) because |p0-q0|<13 and |p1-p0|=0<4.
     """
-    import random
-    rng = random.Random(12345)
-    mb = [rng.randint(100, 200) for _ in range(256)]
-    qp = 25
+    # Blocking artifact pattern: each 4x4 block is flat, steps between blocks
+    mb_orig = [0] * 256
+    for y in range(16):
+        for x in range(16):
+            bx, by = x // 4, y // 4
+            mb_orig[y * 16 + x] = clip1(8, 128 + (bx - by) * 4 + (bx + by))
 
+    qp = 25
+    mb = list(mb_orig)
     result = deblock_macroblock_luma_inplace(mb, qp)
 
-    # Verify something changed (at QP=25, alpha=13, beta=4 — filtering should
-    # happen at some edges where the gradient is small enough)
-    diffs = sum(1 for a, b in zip(mb, result) if a != b)
+    # mb and result are the same object (in-place). Compare against original.
+    diffs = sum(1 for a, b in zip(mb_orig, result) if a != b)
+    assert diffs > 0, (
+        f"MB golden inplace: 0/256 samples changed at QP={qp}. "
+        f"Test data does not trigger filtering — degenerate test."
+    )
     print(f"OK MB golden inplace: {diffs}/256 samples modified at QP={qp}")
     return result
 
