@@ -1,7 +1,7 @@
 {
   "format": "misterplex.decode_throughput_ratchet.v1",
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
-  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. This is a cycle ratchet for the current implemented stream_path path, not a claim that all final inter/deblock/product-DDR stages are implemented.",
+  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on integrated stream_path_full_frame_tb after DPB/MC liveness wiring. This is a cycle ratchet for the current implemented stream_path path, not a claim that all final inter/deblock/product-DDR stages are implemented.",
   "target": {
     "fps": 25.0,
     "stream_path_clock_hz": 20000000,
@@ -10,25 +10,25 @@
   "measured_baseline": {
     "frames": 12,
     "mbs_per_frame": 300,
-    "cycles_total": 969210,
-    "cycles_per_frame": 80767.5,
-    "cycles_per_mb": 269.225,
+    "cycles_total": 1085328,
+    "cycles_per_frame": 90444.0,
+    "cycles_per_mb": 301.48,
     "budget_cycles_per_frame": 800000.0,
     "budget_cycles_per_mb": 2666.6666666667,
-    "budget_margin_ratio": 9.9049741542
+    "budget_margin_ratio": 8.8452523108
   },
   "thresholds": {
-    "max_cycles_total": 1017671,
-    "max_cycles_per_frame": 84805.875,
-    "max_cycles_per_mb": 282.68625,
+    "max_cycles_total": 1139595,
+    "max_cycles_per_frame": 94966.2,
+    "max_cycles_per_mb": 316.554,
     "min_budget_margin_ratio": 8.0
   },
   "stage_coverage": [
     {
       "name": "stream_path_total_current",
       "status": "measured",
-      "cycles_per_mb": 269.225,
-      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, and diagnostic frame emission in the existing full-frame RTL simulation."
+      "cycles_per_mb": 301.48,
+      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, stream MC/DPB liveness wiring, and diagnostic frame emission in the existing full-frame RTL simulation."
     },
     {
       "name": "parse_cavlc_dequant_idct_intra_breakdown",
