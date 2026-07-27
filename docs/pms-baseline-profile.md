@@ -110,16 +110,50 @@ pass.
 
 The guard uses the same production transcode URL and FFmpeg headers as
 `misterplexd`, extracts the delivered H.264 elementary stream, parses SPS/PPS,
-and fails with an actionable message if PMS silently falls back to High/CABAC:
+and fails with an actionable message if PMS silently falls back to a stream the
+FPGA cannot decode. The contract is exact:
 
 ```text
-FAIL pms_baseline_profile: PMS delivered profile_idc=100, expected 66;
-entropy_cabac=1, expected 0 — is MiSTerPlex.xml still installed in the PMS
-Profiles directory and has the plex container been restarted?
+profile_idc=66
+entropy_cabac=0
+max_num_ref_frames=1
+B-slices=0
+coded=624x480
+display=618x480
 ```
 
-Searchable symptom for missing/inactive profile: **PMS delivered
-profile_idc=100 expected 66 MiSTerPlex.xml still installed**.
+Raw delivered numbers are printed before interpretation:
+
+```text
+PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 max_num_ref_frames=1 coded=624x480 display=618x480 ...
+PMS_BASELINE_SLICES vcl=300 idr=6 nonidr=294 i=6 p=294 b=0 other=0 ...
+```
+
+Failure names the violated field, for example:
+
+```text
+FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p FPGA contract:
+profile_idc=100, expected 66; entropy_cabac=1, expected 0; ...
+```
+
+Searchable symptom for missing/inactive profile: **delivered stream violates
+MiSTerPlex 480p FPGA contract profile_idc=100 expected 66 MiSTerPlex.xml still
+installed**.
+
+`make unit` also runs `tests/unit/test_pms_baseline_gate.sh`, which points the
+same parser at generated Annex-B streams and proves the gate goes red for each
+fault it exists to catch:
+
+| Injected stream | Required red symptom |
+| --- | --- |
+| High-profile SPS | `profile_idc=100, expected 66` |
+| CABAC PPS | `entropy_cabac=1, expected 0` |
+| Four reference frames | `max_num_ref_frames=4, expected 1` |
+| B-slice VCL | `b_slices=1, expected 0` |
+
+The unit proof also checks the live wrapper's absent-dependency path: missing
+`PLEX_BASE`/`PLEX_TOKEN`/`MISTERPLEX_BASELINE_KEY` returns `77` and prints
+`SKIP-NOT-PASS`, never a green pass.
 
 ## Rollback
 
@@ -149,6 +183,21 @@ The GOP flags are honored: `keyint=50:min-keyint=25:scenecut=0` produced
 exactly 6 IDR frames across 300 VCL slices, i.e. one IDR every 50 frames at
 25 fps. Geometry remains coded `624x480` with right crop to display `618x480`;
 the profile constrains codec tools, not padding to 640.
+
+The presentation pipeline remains 640x480 by adding 11-pixel pillars around the
+618x480 display window. The coded frame is 39x30 macroblocks (1170 MBs) with no
+partial macroblocks, so DDR plane offsets stay `Y=0`, `U=299520`, `V=374400`
+and strides stay `624/312/312`. If a future PMS/profile change produces any
+other coded or display geometry, `pms-baseline-check` fails before anyone can
+misdiagnose it as an RTL decode bug.
+
+Pixel-format ownership is intentionally not duplicated here. This PMS/SPS gate
+proves the codec tools and geometry of the delivered H.264 bitstream; the
+hardware visual contract proves the DDR/presentation pixel format via the
+golden `.provenance.json` sidecar and `--expected-pixel-format yuv420p`. The
+canonical value for the RGB565→YUV420 migration is `yuv420p` (`i420` is accepted
+only as an alias by the visual harness), matching w-osd's frame-format status
+token and avoiding a second, competing pixel-format declaration in the PMS XML.
 
 ## Direct Play / Direct Stream check for the current test item
 
