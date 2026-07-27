@@ -105,6 +105,32 @@ Edge4Out refEdge(const Edge4& in, bool chroma, int bs, int qp, int aOff, int bOf
 
 using MB = std::array<uint8_t, 256>;
 
+// H.264 4x4 raster scan → (bx, by) mapping
+static int blk_from_xy(int bx, int by) {
+    static constexpr int map[4][4] = {
+        {0, 1, 4, 5}, {2, 3, 6, 7}, {8, 9, 12, 13}, {10, 11, 14, 15}
+    };
+    return map[by][bx];
+}
+
+// Reference bS derivation matching H.264 clause 8.7.2.1
+static int refBs(bool pIntra, bool qIntra, bool pNz, bool qNz,
+                 int pRef, int qRef, int pMvx, int pMvy, int qMvx, int qMvy,
+                 bool mbBoundary) {
+    if (pIntra || qIntra) return mbBoundary ? 4 : 3;
+    if (pNz || qNz) return 2;
+    if (pRef != qRef) return 1;
+    if (std::abs(pMvx - qMvx) >= 4 || std::abs(pMvy - qMvy) >= 4) return 1;
+    return 0;
+}
+
+struct BlockMeta {
+    bool intra;
+    bool nonzero;
+    int mvx, mvy;
+    int ref;
+};
+
 void refDeblockMb(MB& mb, int qp, int aOff, int bOff) {
     auto at = [&](int x, int y) -> uint8_t& { return mb[y*16+x]; };
 
@@ -136,6 +162,66 @@ void refDeblockMb(MB& mb, int qp, int aOff, int bOff) {
                 e.q0[c]=at(x,ey); e.q1[c]=at(x,ey+1); e.q2[c]=at(x,ey+2); e.q3[c]=at(x,ey+3);
             }
             auto o = refEdge(e, false, 3, qp, aOff, bOff);
+            for (int c = 0; c < 4; ++c) {
+                int x = sx + c;
+                at(x,ey-3)=o.p2[c]; at(x,ey-2)=o.p1[c]; at(x,ey-1)=o.p0[c];
+                at(x,ey)=o.q0[c]; at(x,ey+1)=o.q1[c]; at(x,ey+2)=o.q2[c];
+            }
+        }
+    }
+}
+
+// Reference MB-level deblock with per-block metadata for bS derivation
+void refDeblockMbMeta(MB& mb, int qp, int aOff, int bOff,
+                      const std::array<BlockMeta, 16>& meta) {
+    auto at = [&](int x, int y) -> uint8_t& { return mb[y*16+x]; };
+
+    // Vertical edges: x = 4, 8, 12
+    for (int eidx = 1; eidx <= 3; ++eidx) {
+        int ex = eidx * 4;
+        for (int sidx = 0; sidx < 4; ++sidx) {
+            int sy = sidx * 4;
+            int pBlk = blk_from_xy(eidx - 1, sidx);
+            int qBlk = blk_from_xy(eidx, sidx);
+            int bs = refBs(meta[pBlk].intra, meta[qBlk].intra,
+                          meta[pBlk].nonzero, meta[qBlk].nonzero,
+                          meta[pBlk].ref, meta[qBlk].ref,
+                          meta[pBlk].mvx, meta[pBlk].mvy,
+                          meta[qBlk].mvx, meta[qBlk].mvy, false);
+            Edge4 e{};
+            for (int r = 0; r < 4; ++r) {
+                int y = sy + r;
+                e.p3[r]=at(ex-4,y); e.p2[r]=at(ex-3,y); e.p1[r]=at(ex-2,y); e.p0[r]=at(ex-1,y);
+                e.q0[r]=at(ex,y); e.q1[r]=at(ex+1,y); e.q2[r]=at(ex+2,y); e.q3[r]=at(ex+3,y);
+            }
+            auto o = refEdge(e, false, bs, qp, aOff, bOff);
+            for (int r = 0; r < 4; ++r) {
+                int y = sy + r;
+                at(ex-3,y)=o.p2[r]; at(ex-2,y)=o.p1[r]; at(ex-1,y)=o.p0[r];
+                at(ex,y)=o.q0[r]; at(ex+1,y)=o.q1[r]; at(ex+2,y)=o.q2[r];
+            }
+        }
+    }
+
+    // Horizontal edges: y = 4, 8, 12
+    for (int eidx = 1; eidx <= 3; ++eidx) {
+        int ey = eidx * 4;
+        for (int sidx = 0; sidx < 4; ++sidx) {
+            int sx = sidx * 4;
+            int pBlk = blk_from_xy(sidx, eidx - 1);
+            int qBlk = blk_from_xy(sidx, eidx);
+            int bs = refBs(meta[pBlk].intra, meta[qBlk].intra,
+                          meta[pBlk].nonzero, meta[qBlk].nonzero,
+                          meta[pBlk].ref, meta[qBlk].ref,
+                          meta[pBlk].mvx, meta[pBlk].mvy,
+                          meta[qBlk].mvx, meta[qBlk].mvy, false);
+            Edge4 e{};
+            for (int c = 0; c < 4; ++c) {
+                int x = sx + c;
+                e.p3[c]=at(x,ey-4); e.p2[c]=at(x,ey-3); e.p1[c]=at(x,ey-2); e.p0[c]=at(x,ey-1);
+                e.q0[c]=at(x,ey); e.q1[c]=at(x,ey+1); e.q2[c]=at(x,ey+2); e.q3[c]=at(x,ey+3);
+            }
+            auto o = refEdge(e, false, bs, qp, aOff, bOff);
             for (int c = 0; c < 4; ++c) {
                 int x = sx + c;
                 at(x,ey-3)=o.p2[c]; at(x,ey-2)=o.p1[c]; at(x,ey-1)=o.p0[c];
@@ -407,6 +493,125 @@ void testQPSweep(Vh264_deblock_mb_sched_tb& dut) {
     std::cout << "OK scheduler QP sweep: " << tested << " QP values verified\n";
 }
 
+void testInterMixedBs(Vh264_deblock_mb_sched_tb& dut) {
+    // Test with inter blocks producing mixed bS values:
+    // - Blocks 0-3 (top-left 8x8): inter, same MV, same ref, nonzero → bS=2 at edges
+    // - Blocks 4-7 (top-right 8x8): inter, same MV, same ref, zero → bS=0 at some edges
+    // - Blocks 8-11 (bottom-left 8x8): inter, different MVs → bS=1
+    // - Blocks 12-15 (bottom-right 8x8): inter, different refs → bS=1
+    dut.reset = 1;
+    tick(dut);
+    dut.reset = 0;
+    dut.disable_idc = 0;
+    dut.qp = 32;
+    dut.alpha_offset = 0;
+    dut.beta_offset = 0;
+    dut.left_avail = 0;
+    dut.top_avail = 0;
+    dut.left_same_slice = 0;
+    dut.top_same_slice = 0;
+    dut.mb_intra = 0x0000;  // all inter
+
+    // Set up per-block metadata
+    std::array<BlockMeta, 16> meta{};
+    uint16_t nz_mask = 0;
+    for (int i = 0; i < 16; ++i) {
+        meta[i].intra = false;
+        meta[i].ref = 0;
+        meta[i].mvx = 0; meta[i].mvy = 0;
+    }
+    // Top-left 8x8 (blocks 0,1,2,3): nonzero coefficients
+    for (int bi : {0, 1, 2, 3}) { meta[bi].nonzero = true; nz_mask |= (1 << bi); }
+    // Top-right 8x8 (blocks 4,5,6,7): zero coefficients, same MV/ref
+    for (int bi : {4, 5, 6, 7}) { meta[bi].nonzero = false; }
+    // Bottom-left 8x8 (blocks 8,9,10,11): different MVs (>= 4 qpel apart)
+    meta[8].mvx = 0;  meta[9].mvx = 4;  meta[10].mvx = 0; meta[11].mvx = 4;
+    meta[8].mvy = 0;  meta[9].mvy = 0;  meta[10].mvy = 4; meta[11].mvy = 4;
+    // Bottom-right 8x8 (blocks 12,13,14,15): different refs
+    meta[12].ref = 0; meta[13].ref = 1; meta[14].ref = 0; meta[15].ref = 1;
+
+    dut.mb_nonzero = nz_mask;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = meta[i].mvx;
+        dut.mb_mvy[i] = meta[i].mvy;
+        dut.mb_ref[i] = meta[i].ref;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_intra = 0; dut.left_nonzero = 0;
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_intra = 0; dut.top_nonzero = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    MB mb{};
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x)
+            mb[y*16+x] = clip8(96 + x + y + (x>=8 ? 9 : 0) + (y>=8 ? 7 : 0));
+
+    loadMb(dut, mb);
+
+    MB ref = mb;
+    refDeblockMbMeta(ref, 32, 0, 0, meta);
+
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    if (got != ref) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) {
+            if (got[i] != ref[i]) {
+                if (mm < 5) {
+                    std::cerr << "  inter mismatch at (" << (i%16) << "," << (i/16)
+                              << "): got=" << int(got[i]) << " want=" << int(ref[i]) << "\n";
+                }
+                ++mm;
+            }
+        }
+        std::cerr << "FAIL scheduler inter mixed bS: " << mm << "/256 mismatches\n";
+        std::exit(1);
+    }
+    std::cout << "OK scheduler inter mixed bS: fnv=0x" << std::hex << fnv1a(got)
+              << std::dec << " cycles=" << int(dut.cycle_count) << "\n";
+}
+
+void testBs0Passthrough(Vh264_deblock_mb_sched_tb& dut) {
+    // When all blocks are inter with same MV, same ref, no nonzero coefficients,
+    // bS=0 everywhere → no filtering should occur
+    dut.reset = 1;
+    tick(dut);
+    dut.reset = 0;
+    dut.disable_idc = 0;
+    dut.qp = 40;
+    dut.alpha_offset = 0;
+    dut.beta_offset = 0;
+    dut.left_avail = 0;
+    dut.top_avail = 0;
+    dut.mb_intra = 0x0000;
+    dut.mb_nonzero = 0x0000;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    MB mb{};
+    for (int i = 0; i < 256; ++i) mb[i] = (i * 7 + 42) & 0xFF;
+
+    loadMb(dut, mb);
+    runAndWait(dut);
+    MB got = readMb(dut);
+
+    if (got != mb) {
+        int mm = 0;
+        for (int i = 0; i < 256; ++i) if (got[i] != mb[i]) ++mm;
+        std::cerr << "FAIL scheduler bS=0 passthrough: " << mm << " samples modified\n";
+        std::exit(1);
+    }
+    std::cout << "OK scheduler bS=0 passthrough: no filtering applied\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -419,7 +624,9 @@ int main(int argc, char** argv) {
     testEdgeOrderingRedProof(dut);
     testGoldenMb0(dut);
     testQPSweep(dut);
+    testInterMixedBs(dut);
+    testBs0Passthrough(dut);
 
-    std::cout << "OK h264_deblock_mb_scheduler: all tests passed\n";
+    std::cout << "OK h264_deblock_mb_scheduler: all 7 tests passed\n";
     return 0;
 }
