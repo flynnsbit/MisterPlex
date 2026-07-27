@@ -189,9 +189,10 @@ RGB565/border artifact cannot masquerade as decode evidence.
 
 Native-I420 ratchets (`tests/fixtures/p3_multinal/*full_frame_ratchet_v1.json`,
 generated/checked by `tests/unit/test_stream_path_full_frame_compare.sh` and
-`tools/score_h264_native_frames.cpp`) were the next evidence instrument, but
-their first baseline is also retired: the FFmpeg reference silently included
-in-loop deblocking while the RTL candidate did not.
+`tools/score_h264_native_frames.cpp`) are now regenerated against no-deblock
+reference planes (`-skip_loop_filter all`) with loop-filter state recorded and
+refused on mismatch. The host/native intra scorer is bit-exact on the checked
+fixtures:
 
 ```text
 Loop filter state is explicit: both sides are undeblocked (`-skip_loop_filter all`).
@@ -223,10 +224,43 @@ The scorer reports intra and inter populations separately and can consume an
 optional `misterplex.p3.inter_mb_metadata.v1` file to break P exactness down by
 `P_Skip`/`P_16x16`/`P_16x8`/`P_8x16`/`P_8x8` (unknown MBs are `P_UNKNOWN`).
 `first_bad_inter` includes MB type, ref index, MV, candidate/reference sample
-blocks, and predicted sample blocks when the metadata supplies them. Until
-`stream_path` exposes a native-I420 inter candidate, the existing full-frame RTL
-candidate remains `I420_FROM_RGB565` diagnostic output and is refused as a
-correctness source.
+blocks, and predicted sample blocks when the metadata supplies them. The
+existing RGB565 full-frame RTL candidate remains diagnostic output and is
+refused as a correctness source; use the separately exported native candidate
+for inter scoring.
+
+`tests/unit/test_stream_path_full_frame_compare.sh` also exports the current
+RTL DPB/MC native-inter candidate as `I420_NATIVE`, with a companion
+`misterplex.p3.inter_mb_metadata.v1` file carrying parsed first-P-MB mode,
+zero-MVD/ref0 context, predicted Y/U/V blocks, and a refusing provenance
+contract. The candidate declares `h264_loop_filter=disabled` and
+`reconstruction_stage=mc_prediction_only_pre_deblock_no_residual_add`.
+The reference-picture state is also explicit:
+`diagnostic_filtered_reference_via_deblock_writeback_ctrl` from a generated I420
+pattern, not an actually decoded/deblocked prior frame. Therefore this measures
+MC arithmetic and parser-to-DPB plumbing only; it is not an end-to-end H.264 P
+conformance score. The candidate is scored by w-cabac's
+`tools/score_i420_candidate.py`, not by the RGB565 presentation round-trip:
+
+```text
+FULL_FRAME_COMPARE summary ... native_inter_mb_captures=21 native_inter_ignored=0
+I420_CANDIDATE_SCORE summary intra=0/300 inter=0/3300 strict_pass=0
+OK native inter candidate score: intra=0/300 inter=0/3300 first_bad_inter_mb=0 plane=Y
+first_bad_inter: frame=1 mb=0 plane=Y got=32 ref=80 abs=48 mb_type=P_L0_16x16 mv_l0=(0,0)
+OK native inter provenance: candidate_stage=mc_prediction_only_pre_deblock_no_residual_add reference_state=diagnostic_filtered_reference_via_deblock_writeback_ctrl reference_h264_loop_filter=disabled
+
+624x480 scorer self-check:
+candidate bytes=5,391,360
+I420_CANDIDATE_SCORE summary intra=0/1170 inter=0/12870 strict_pass=0
+first_bad_inter: frame=1 mb=0 plane=Y got=32 ref=77 abs=45 mb_type=P_L0_16x16 mv_l0=(0,0)
+```
+
+This is still a measured red, not a decode PASS: only the parser-driven first-P
+DPB/MC predictions are exported into a mostly-empty native candidate. It is the
+first non-RGB instrument that can quantify inter separately while declaring both
+candidate/reference colorspace and loop-filter state. The behavioral
+pixel-XOR/colorspace red-checks still fail strict compare/refuse RGB565-derived
+candidates.
 
 ## Hardware gate plan
 

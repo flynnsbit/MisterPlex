@@ -147,7 +147,11 @@ module decode_stub #(
 	genvar pred_i;
 	generate
 		for (pred_i = 0; pred_i < 16; pred_i = pred_i + 1) begin : gen_idct_pred
-			assign idct_pred[pred_i] = 8'd128;
+			// Inter MBs: use MC prediction from DPB reference.
+			// Intra MBs: 128 placeholder (real intra prediction not yet wired).
+			// This maps the first 4x4 block of dpb_pred_y into the recon path.
+			assign idct_pred[pred_i] = (lat_p_inter && dpb_ref_ready) ?
+			                           dpb_pred_y[pred_i] : 8'd128;
 		end
 	endgenerate
 
@@ -421,37 +425,23 @@ module decode_stub #(
 	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
 	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
 	                                 dpb_pred_y_valid[0];
-	function automatic [7:0] dpb_ref_byte;
-		input [31:0] addr;
-		input [31:0] base;
-		reg [31:0] rel;
-		reg [31:0] coord;
-		reg [15:0] rx;
-		reg [15:0] ry;
-		begin
-			rel = addr - base;
-			if (addr < base) begin
-				dpb_ref_byte = 8'h00;
-			end else if (rel < (WIDTH * HEIGHT)) begin
-				coord = rel % WIDTH;
-				rx = coord[15:0];
-				coord = rel / WIDTH;
-				ry = coord[15:0];
-				dpb_ref_byte = 8'h20 ^ rx[7:0] ^ {ry[4:0], 3'b000};
-			end else if (rel < (WIDTH * HEIGHT) + ((WIDTH / 2) * (HEIGHT / 2))) begin
-				rel = rel - (WIDTH * HEIGHT);
-				coord = rel % (WIDTH / 2);
-				rx = coord[15:0];
-				dpb_ref_byte = 8'h80 + {2'd0, rx[5:0]};
-			end else begin
-				rel = rel - (WIDTH * HEIGHT) - ((WIDTH / 2) * (HEIGHT / 2));
-				coord = rel / (WIDTH / 2);
-				ry = coord[15:0];
-				dpb_ref_byte = 8'h80 + {2'd0, ry[5:0]};
-			end
-		end
-	endfunction
-	assign dpb_mem_rdata = dpb_ref_byte(dpb_mem_raddr_q, dpb_reference_base);
+	// DPB local memory — two banks for ping-pong (current/reference).
+	// In simulation, backed by SRAM; testbench pre-fills reference bank
+	// with real IDR decode data for honest inter measurement.
+	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
+	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
+	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
+	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
+
+	// DPB write port (from fill path)
+	always @(posedge clk) begin
+		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
+			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+	end
+
+	// DPB read port (for MC reference fetch) — 1-cycle latency
+	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
+	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
 
 	h264_deblock_writeback_ctrl #(
 		.MB_COUNT(DPB_MB_COUNT),
@@ -476,7 +466,10 @@ module decode_stub #(
 		.commit_order_error(deblock_commit_order_error)
 	);
 
-	h264_dpb_one_ref #(.FRAME_W(WIDTH), .FRAME_H(HEIGHT)) u_stream_dpb (
+	h264_dpb_one_ref #(
+		.FRAME_W(WIDTH), .FRAME_H(HEIGHT),
+		.BANK0_BASE(0), .BANK1_BASE(DPB_FRAME_BYTES)
+	) u_stream_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(dpb_idr_start),
 		.frame_done(ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse),
