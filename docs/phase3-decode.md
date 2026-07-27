@@ -291,19 +291,26 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   Baseline/CAVLC, `bframes=0`, `ref=1`, `weightp=0`, `partitions=none` → deterministic
   12-frame Annex-B vector (`27653` bytes, md5 `fe5ba815b4d67b5b24d7de496facb15b`) with
   `I=1 P=11 B=0`, refs=1, only P16×16 motion vectors, max motion 18×9 px.
+  **PMS profile update:** `main` now requests 480p PMS universal as
+  `videoResolution=640x480&maxVideoBitrate=2500&videoCodec=h264&videoProfile=baseline&videoLevel=30`.
+  Baseline makes inter prediction tractable: no B-slices, no CABAC, no weighted prediction, no
+  field/interlaced coding. Treat this as a request until delivered-stream probing proves profile_idc=66
+  and CAVLC PPS; source XML may still describe the original Main-profile input.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
   (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
   `test_p3_inter_pred_vectors` regenerates byte-identically, exports libav motion vectors, and
-  verifies the fixtures; red perturbions cover MV and MAE rows.
+  verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbions cover MV and MAE rows.
   **Architecture:** inter prediction requires DDR3-backed YUV reference storage; BRAM is not viable
-  for 480p references. 640×480 P16×16 quarter-pel is roughly 1.8 MB/frame total external traffic
-  (~54 MB/s @30, ~108 MB/s @60 before inefficiency); sub-MB partitions raise that toward
-  ~132–156 MB/s at 60. Current ~160 MB/s DDR3 is marginal for 480p60; the faster DDRAM clock path
-  would make it comfortable. SDRAM remains unsuitable until its hardware bring-up is green.
-  **Coordination:** `w-a4` asked to confirm whether PMS can force Baseline/CAVLC P-only, one-ref,
-  weighted prediction off, and ideally P16×16-only partitions; current universal URL only sets
-  resolution/bitrate/quality.
+  for 480p references. Level 3.0 worst-case DPB is `floor(8100 / 1200) = 6` 640×480 refs:
+  2.76 MB YUV420 for references, ~3.23 MB including current reconstruction. One-ref P16×16 480p
+  is roughly 1.6 MB/frame with native YUV420 DDR/present (~94 MB/s @60 before inefficiency) or
+  ~1.8 MB/frame with RGB565 output (~108 MB/s @60). Sub-MB partitions raise that toward
+  ~132–156 MB/s at 60 on the RGB565 path, ~25% less if `w-c2` YUV420 DDR lands. Current ~160 MB/s
+  DDR3 is plausible for the narrow Baseline/YUV path; faster DDRAM clock makes it comfortable.
+  SDRAM remains unsuitable until its hardware bring-up is green.
+  **Detection rule:** unexpected B-slice, CABAC PPS, non-Baseline profile, over-level stream, or
+  `max_num_ref_frames` above the implemented DPB must fail closed and report unsupported.
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**

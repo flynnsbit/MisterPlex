@@ -111,6 +111,8 @@ $(ROOT)/build/test_p3_idct_reference_model: $(ROOT)/tests/unit/test_p3_idct_refe
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp
 
 $(ROOT)/build/test_p3_inter_pred_vectors: $(ROOT)/tests/unit/test_p3_inter_pred_vectors.cpp \
+		$(ROOT)/host/libmisterplex/h264_nal.hpp \
+		$(ROOT)/host/libmisterplex/h264_sps.hpp \
 		$(ROOT)/scripts/gen_test_annexb_inter.py \
 		$(ROOT)/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
 		$(ROOT)/tests/fixtures/p3_inter_pred/pframe1_mb_v1.json \

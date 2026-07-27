@@ -3,7 +3,7 @@
 This is the host-side scoping note for moving beyond IDR-only decode. No device access or
 Quartus fit was used.
 
-## Survey first: what we have to support
+## Survey first: what Baseline inter actually leaves
 
 Available host-side assets already used as Plex-library/test content are H.264 Constrained
 Baseline and contain **I/P only** (no B frames). Exported decoder motion vectors show quarter-pel
@@ -26,14 +26,32 @@ x264: cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none
 motion vectors=3095, partition set={16x16}, max motion=(72,36) quarter-pel = 18.00×9.00 px
 ```
 
-**Conclusion:** if `w-a4`/PMS can force Baseline/CAVLC, `bframes=0`, `ref=1`, `weightp=0`, and
-P16×16-only partitions, the first hardware inter rung is much smaller: one past reference frame,
-one vector per inter MB, no B reference list, no weighted prediction, no CABAC, and no sub-MB
-partition scheduler. Quarter-pel interpolation remains mandatory.
+`main` now requests the 480p PMS universal transcode as H.264 Baseline Level 3.0:
 
-If PMS cannot disable sub-MB partitions, the survey says we must support at least P16×16, P16×8,
-P8×16, and P8×8. B-frames and weighted prediction did not appear in the surveyed Baseline assets,
-but direct H.264 Parts can still be High/CABAC and must not be assumed safe.
+```text
+videoResolution=640x480&maxVideoBitrate=2500&videoCodec=h264
+&videoProfile=baseline&videoLevel=30
+```
+
+**Baseline changes the feasibility verdict:** inter prediction is no longer “general H.264”.
+It is a tractable P-slice/CAVLC problem if the delivered stream really honors the request. Baseline
+removes B-slices, CABAC, weighted prediction, and interlaced/field coding from the hardware scope.
+That eliminates bidirectional reference lists, CABAC arithmetic decode, and weighted sample math.
+
+What remains for 480p Baseline:
+
+- P-slice macroblock syntax and CAVLC residuals.
+- Motion-vector prediction and `ref_idx_l0` parsing.
+- Luma quarter-pel interpolation and chroma eighth-pel/bilinear interpolation.
+- P16×16 at minimum; likely P16×8/P8×16/P8×8 unless PMS/x264 can be constrained to
+  `partitions=none`.
+- Reference-picture storage and frame-num/MMCO guardrails.
+
+If PMS can force `bframes=0`, `ref=1`, `weightp=0`, and P16×16-only partitions, the first hardware
+inter rung is much smaller: one past reference frame and one vector per inter MB. Quarter-pel
+interpolation remains mandatory. If PMS cannot disable sub-MB partitions, the survey says we must
+support at least P16×16, P16×8, P8×16, and P8×8. Direct H.264 Parts can still be Main/High/CABAC
+and must be detected/rejected rather than silently fed to the Baseline decoder.
 
 ## Goldens added
 
@@ -46,8 +64,10 @@ but direct H.264 Parts can still be High/CABAC and must not be assumed safe.
   Y-plane MAE versus FFmpeg decode.
 
 `test_p3_inter_pred_vectors` regenerates the vector byte-for-byte, decodes with libav motion-vector
-export, verifies the narrow profile (`I=1 P=11 B=0 refs=1 parts=16x16`), and checks the JSON/CSV
-fixtures. Red perturbions cover both MV data and MAE rows.
+export, verifies the narrow profile (`profile_idc=66`, `level_idc<=30`, CAVLC PPS, `I=1 P=11 B=0
+refs=1 parts=16x16`), and checks the JSON/CSV fixtures. Red perturbions cover MV data, MAE rows,
+and byte-identical regeneration. The guard is intentionally fail-closed: an unexpected B/CABAC or
+non-Baseline stream must be reported as unsupported, not decoded incorrectly.
 
 ## Hardware cost and memory path
 
@@ -59,27 +79,51 @@ Inter prediction is external-memory work, not BRAM work.
 | 640×480 | 460,800 B | 614,400 B | not BRAM-resident; needs external memory |
 | 720p | 1,382,400 B | 1,843,200 B | DDR3-only territory |
 
-For 640×480 P16×16 quarter-pel, a rough per-frame memory budget is:
+Level 3.0 caps the decoded picture buffer at **8100 macroblocks**. A 640×480 frame is
+`40×30 = 1200` macroblocks, so the Level 3.0 worst-case DPB is:
+
+```text
+floor(8100 / 1200) = 6 decoded reference frames
+6 × 640×480 YUV420 = 6 × 460,800 B = 2,764,800 B
+current reconstruction frame = +460,800 B
+worst-case YUV decode/reference working set ≈ 3.23 MB
+```
+
+That is impossible in BRAM but easy in HPS DDR3 capacity. It is still more complex than the desired
+`ref=1` subset because ref-index parsing and reference-list addressing become real hardware state.
+Therefore the first product target should **measure the actual delivered SPS `max_num_ref_frames`**
+and fail closed above the implemented reference count.
+
+For 640×480 P16×16 quarter-pel with one active reference, a rough per-frame memory budget is:
 
 - reference read: ~0.72 MB/frame (luma 6-tap halo + chroma bilinear halo)
 - decoded YUV reference write: 0.46 MB/frame
-- RGB565 present write: 0.61 MB/frame
-- total: ~1.8 MB/frame → ~54 MB/s at 30 fps, ~108 MB/s at 60 fps before burst inefficiency
+- decoded YUV reference write: 0.46 MB/frame
+- present/output write:
+  - RGB565 path: 0.61 MB/frame
+  - YUV420 DDR path (`w-c2` direction): 0.46 MB/frame
+- total:
+  - RGB565 present: ~1.8 MB/frame → ~54 MB/s at 30 fps, ~108 MB/s at 60 fps before inefficiency
+  - YUV420 present/reference: ~1.6 MB/frame → ~47 MB/s at 30 fps, ~94 MB/s at 60 fps
 
 If P8×8/sub-MB partitions are allowed, interpolation halos increase reference reads; budget closer
 to ~2.2–2.6 MB/frame at 640×480 is a safer planning number (~66–78 MB/s at 30 fps, ~132–156 MB/s
-at 60 fps). Multiple references multiply the reference-read pressure and require a reference-list
-manager.
+at 60 fps on the RGB565 path, about 25% lower if YUV420 remains native through DDR/present).
+Multiple references primarily increase storage and address/ref-list complexity; each partition
+still reads from one selected reference, but the decoder must keep enough prior frames resident.
 
-**Architecture implication:** inter prediction should target the DDR3-backed frame/reference store.
+**Architecture implication:** inter prediction should target the DDR3-backed YUV reference store.
 The SDRAM path is currently not dependable, and BRAM cannot hold even one 640×480 RGB565 frame.
-The reported DDR3 path around ~160 MB/s is barely enough for 640×480p60 P16×16 with tight bursts;
-raising the DDRAM clock toward the expected ~800 MB/s class would make 480p60 comfortable and leave
-headroom for sub-MB partitions. Until then, 320×240 or 480p30 is the safer inter-prediction target.
+The reported DDR3 path around ~160 MB/s is enough for 640×480p30 and plausibly enough for
+640×480p60 in the narrow P16×16/YUV420 case, but it is tight for sub-MB partitions plus RGB565
+conversion traffic. Raising the DDRAM clock toward the expected ~800 MB/s class would make 480p60
+comfortable and leave headroom for sub-MB partitions and deblock.
 
 ## Coordination note for `w-a4`
 
-Request sent to `w-a4`: confirm whether the 480p Plex transcode profile can force Baseline/CAVLC,
-P-only, one reference, weighted prediction off, and ideally P16×16-only partitions. The current
-`buildUniversal()` request only sets resolution/bitrate/quality; it does not explicitly request
-these H.264 encoder constraints.
+`w-a4` landed the 480p profile request (`videoProfile=baseline&videoLevel=30`) and PMS accepted the
+request. The remaining required proof is the actual delivered stream, not source metadata: source
+XML may still show `videoProfile="main"` for the input file. Before hardware depends on Baseline,
+capture/probe the emitted stream and verify profile_idc=66, PPS `entropy_coding_mode_flag=0`,
+slice types I/P only, `max_num_ref_frames` within the implemented count, and no unsupported
+partitions beyond the rung being tested.

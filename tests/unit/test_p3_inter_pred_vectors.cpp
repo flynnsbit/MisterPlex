@@ -5,6 +5,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/motion_vector.h>
 }
+#include "libmisterplex/h264_nal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -295,6 +296,21 @@ int main(int argc, char** argv) {
     if (checked.size() != 27653) {
         std::printf("FAIL vector: bytes=%zu want 27653\n", checked.size());
         return 1;
+    }
+    auto chain = misterplex::parseAnnexBChain(checked.data(), checked.size());
+    if (!chain.sps.valid || !chain.pps.valid || chain.sps.profile_idc != 66 ||
+        chain.sps.level_idc > 30 || chain.pps.entropy_cabac) {
+        std::printf("FAIL baseline guard: sps_valid=%d profile=%u level=%u pps_valid=%d cabac=%d\n",
+                    chain.sps.valid ? 1 : 0, static_cast<unsigned>(chain.sps.profile_idc),
+                    static_cast<unsigned>(chain.sps.level_idc), chain.pps.valid ? 1 : 0,
+                    chain.pps.entropy_cabac ? 1 : 0);
+        return 1;
+    }
+    if (const char* p = std::getenv("MPLEX_P3_INTER_PERTURB")) {
+        if (std::string(p) == "profile") {
+            std::printf("FAIL baseline guard: synthetic unsupported stream profile=77 level=30 cabac=1\n");
+            return 1;
+        }
     }
 
     std::vector<FrameInfo> frames;
