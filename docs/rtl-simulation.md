@@ -69,3 +69,17 @@ fault macros are accepted only when declared in
 `tests/fixtures/define_parity_allowlist.json`.
 
 `quartus-sv-subset` first proves a real Quartus toolchain is reachable, then scans the product Quartus file list for observed Quartus 17.0.2 SystemVerilog subset hazards that Verilator accepted: function-result part-selects, the observed `ref_win[...]` function-body concatenation pattern, and `localparam` declarations in module parameter lists. If Quartus is absent it refuses with `QUARTUS_SV_SUBSET_REFUSED(exit=4)`. This is still a static curated guard, not Analysis & Elaboration; unsupported inference, generate/parameter scoping, latch inference, and other elaboration-only Quartus failures can still reach a fit unless caught by a real Quartus analysis pass.
+
+After a remote fit, run the hierarchy resource guard against copied Quartus reports:
+
+```bash
+make post-fit-hierarchy FIT_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.fit.rpt \
+  MAP_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.map.rpt \
+  COMPILE_LOG=fpga/Plex_MiSTer/remote_out/<slot>/compile.log
+```
+
+`post-fit-hierarchy` prints the fitted hierarchy resources for critical modules
+declared in `tests/fixtures/critical_fit_hierarchy.json` and refuses if one is
+missing, optimized down below the declared resource floor, or has removal/tie-off
+warnings in the compile log. `scripts/build_rbf_remote.sh` copies the map report
+and compile log and runs this check automatically when copy-back is enabled.

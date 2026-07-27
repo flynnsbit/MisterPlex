@@ -237,13 +237,18 @@ export MISTER_DEV=$HOME/Projects/misterfpga-dev
 make define-parity       # Quartus product macros match Verilator/lint macros
 make quartus-sv-subset   # curated Quartus SV subset guard; no fit/RBF
 make build-rbf
+make post-fit-hierarchy FIT_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.fit.rpt \
+  MAP_RPT=fpga/Plex_MiSTer/remote_out/<slot>/Plex.map.rpt \
+  COMPILE_LOG=fpga/Plex_MiSTer/remote_out/<slot>/compile.log
 ```
 
 `make rtl-lint` is a Verilator parse/lint regression gate, not a Quartus
 buildability proof, but it now injects the product Quartus macro set. `make
 define-parity` refuses undeclared macro drift. `make quartus-sv-subset` catches
 the known Quartus subset syntax hazards but is still static and does not replace
-Analysis & Elaboration.
+Analysis & Elaboration. `make post-fit-hierarchy` refuses a fit where critical
+modules such as `ddr_frame_store` disappear or collapse to trivial resource
+usage.
 
 Built cores are not tracked in git; each release ships one as an asset.
 
