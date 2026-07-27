@@ -229,7 +229,10 @@ wire [7:0] content_fps = 8'd24;
 // Refresh interval = floor((f_MHz * 64_000us / 8192 rows) - 1). The
 // counter toggles refresh after REFRESH_CYCLES+1 clocks, so every option
 // refreshes at least as often as the 7.8125us SDRAM row budget.
-`ifdef SDRAM_CLK_133
+`ifdef SDRAM_CLK_142
+localparam int SDRAM_CLK_HZ = 142_000_000;
+localparam int SDRAM_REFRESH_CYCLES = 1108;
+`elsif SDRAM_CLK_133
 localparam int SDRAM_CLK_HZ = 133_333_333;
 localparam int SDRAM_REFRESH_CYCLES = 1040;
 `elsif SDRAM_CLK_120

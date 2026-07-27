@@ -50,6 +50,12 @@ set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 set_global_assignment -name SEED 6
 
+# SDRAM hardware target: official MemTest_MiSTer passed on this DE10-Nano at
+# 142 MHz with zero failures, so product builds target the proven board speed
+# using CAS latency 3.
+set_global_assignment -name VERILOG_MACRO "SDRAM_CLK_142=1"
+set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
+
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 
 #enable it only if 8bit indexed mode is used in core
