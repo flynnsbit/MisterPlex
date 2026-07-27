@@ -1,0 +1,85 @@
+{
+  "format": "misterplex.p3.rtl_datapath_ratchet.v1",
+  "description": "Monotonic coverage ratchet for RTL decode datapath. Coverage may ONLY go up. A change that reduces covered pixels/blocks/MBs is a FAIL regardless of correctness.",
+  "verification_target": "RTL",
+  "host_involvement": "golden_reference_only",
+  "stages": {
+    "luma_residual": {
+      "description": "dequant + IDCT + clip (no prediction). Tests residual arithmetic pipeline.",
+      "min_blocks_exact": 1,
+      "min_pixels_exact": 16,
+      "min_mbs_covered": 1,
+      "degeneracy_min_nontrivial": 1,
+      "notes": "Currently: 1 block of MB(0,0). Prediction hardcoded to 128 at decode_stub.sv:151."
+    },
+    "luma_prediction": {
+      "description": "Intra prediction (I4x4, I16x16). RTL intra_pred modules.",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "NOT INSTANTIATED. h264_intra4x4_pred and h264_intra16x16_pred exist in source but are wired nowhere in fpga/Plex_MiSTer/rtl/. Coverage legitimately 0."
+    },
+    "luma_reconstruction": {
+      "description": "prediction + residual = final luma pixel. Full path.",
+      "min_blocks_exact": 1,
+      "min_pixels_exact": 16,
+      "min_mbs_covered": 1,
+      "degeneracy_min_nontrivial": 1,
+      "notes": "Only MB(0,0) block 0. Prediction is 128 (not real intra), so recon = clip(128 + residual)."
+    },
+    "chroma_residual": {
+      "description": "Chroma AC dequant + IDCT. Same modules as luma but chroma QP.",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "NOT WIRED. Chroma path absent from decode_stub. Zero coverage is honest."
+    },
+    "chroma_dc_hadamard": {
+      "description": "2x2 inverse Hadamard for chroma DC coefficients.",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "NOT IN RTL. w-plane implementing (57518d2). Absent from all 33 RTL files."
+    },
+    "chroma_prediction": {
+      "description": "Chroma intra prediction (DC, H, V, Plane modes).",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "Module exists and is verified at module-level (300/300 chroma pred). NOT instantiated in pipeline."
+    },
+    "chroma_reconstruction": {
+      "description": "Chroma prediction + residual = final U/V pixel.",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "Blocked on chroma_residual + chroma_prediction + chroma_dc_hadamard."
+    },
+    "deblock": {
+      "description": "In-loop deblocking filter applied to reconstructed frame.",
+      "min_blocks_exact": 0,
+      "min_pixels_exact": 0,
+      "min_mbs_covered": 0,
+      "degeneracy_min_nontrivial": 0,
+      "notes": "w-deblock building. Not instantiated in pipeline."
+    }
+  },
+  "aggregate": {
+    "min_luma_pixels_exact": 16,
+    "min_chroma_u_pixels_exact": 0,
+    "min_chroma_v_pixels_exact": 0,
+    "total_luma_pixels": 76800,
+    "total_chroma_u_pixels": 19200,
+    "total_chroma_v_pixels": 19200,
+    "frame_geometry": "320x240"
+  },
+  "monotonic_rule": "A commit that reduces any min_* value is a HARD FAIL. Coverage may only increase. This ratchet is rebaselined only when a new stage is wired, never when one regresses.",
+  "created": "2026-07-27T18:35:00-05:00",
+  "created_by": "w-cabac",
+  "baseline_commit": "bbcfe25"
+}
