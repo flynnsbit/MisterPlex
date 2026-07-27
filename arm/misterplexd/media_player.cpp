@@ -932,7 +932,7 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
 }
 
 void MediaPlayer::streamPump(int sfd) {
-    // Phase 3.3i/product: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
+    // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
     // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
@@ -963,9 +963,7 @@ void MediaPlayer::streamPump(int sfd) {
 
     std::vector<uint8_t> spsNal; // includes start code
     std::vector<uint8_t> ppsNal;
-    std::vector<uint16_t> rgbNative;
-    std::vector<uint16_t> rgb320(320 * 240);
-    std::vector<uint8_t> rgb565le;
+    std::vector<uint8_t> yuv420p;
     char buf[4096];
     size_t f3Total = 0;
     size_t f3Pushes = 0;
@@ -974,11 +972,9 @@ void MediaPlayer::streamPump(int sfd) {
     size_t idrSeen = 0;
     size_t iSliceSeen = 0;
     bool cabacLogged = cabacSkip_.load();
-    // Throttle F1 SPI: ~100–150ms/frame; present every Nth successful recon
+    // Throttle sparse host recon F1 publishing; product rawvideo owns continuous playback.
     constexpr size_t kReconPresentEvery = 1;
-    // Frame-store geometry (Plex core F1)
-    constexpr int kFsW = 320;
-    constexpr int kFsH = 240;
+    bool reconDdrMismatchLogged = false;
 
     auto pushF3UpTo = [&](size_t end) {
         if (!wantF3 || end <= f3Off)
@@ -997,55 +993,53 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     auto presentRecon = [&](const recon::ReconResult& rec) {
-        if (rec.y.empty() || rec.width <= 0 || rec.height <= 0)
+        if (rec.y.empty() || rec.u.empty() || rec.v.empty() || rec.width <= 0 ||
+            rec.height <= 0 || (rec.width & 1) || (rec.height & 1))
             return false;
-        recon::yuv420ToRgb565(rec.y.data(), rec.u.data(), rec.v.data(), rec.width, rec.height,
-                              rgbNative);
-        scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
-        auto ensureRgb565Le = [&]() -> const uint8_t* {
-            if (rgb565le.empty()) {
-                rgb565le.resize(static_cast<size_t>(kFsW) * kFsH * 2);
-                for (int i = 0; i < kFsW * kFsH; ++i)
-                    pixel::storeLe16(rgb565le.data() + static_cast<size_t>(i) * 2,
-                                     rgb320[static_cast<size_t>(i)]);
+        const size_t yBytes = static_cast<size_t>(rec.width) * static_cast<size_t>(rec.height);
+        const size_t cBytes = yBytes / 4u;
+        if (rec.y.size() < yBytes || rec.u.size() < cBytes || rec.v.size() < cBytes)
+            return false;
+        auto ensureYuv420p = [&]() -> const uint8_t* {
+            if (yuv420p.empty()) {
+                yuv420p.resize(yBytes + 2u * cBytes);
+                std::memcpy(yuv420p.data(), rec.y.data(), yBytes);
+                std::memcpy(yuv420p.data() + yBytes, rec.u.data(), cBytes);
+                std::memcpy(yuv420p.data() + yBytes + cBytes, rec.v.data(), cBytes);
             }
-            return rgb565le.data();
+            return yuv420p.data();
         };
-        rgb565le.clear();
+        yuv420p.clear();
         bool any = false;
         if (wantF1) {
-            // Prefer DDR bulk (3.1b); fall back to SPI F1 if RBF lacks path.
+            // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                ensureRgb565Le();
-                if (fpga_.setDdrFrameSize(kFsW, kFsH))
-                    ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
-                ddrBank_ ^= 1;
-                if (!ok) {
-                    useDdrF1_ = false;
-                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                } else if ((reconOk % 30) == 0) {
-                    log("media: recon F1 via DDR " +
-                        std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
-                }
-            }
-            if (!ok) {
-                // SPI path: sendFileTx clears stale err_ from DDR probe.
-                if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
-                    ok = true;
-                    if (reconOk == 1 || (reconOk % 8) == 0)
-                        log("media: recon F1 via SPI " +
+                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+                if (rec.width == g.coded_width && rec.height == g.coded_height) {
+                    ensureYuv420p();
+                    clearYuv420pCropPadding(yuv420p.data(), g);
+                    ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
+                    ddrBank_ ^= 1;
+                    if (!ok) {
+                        useDdrF1_ = false;
+                        log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
+                    } else if ((reconOk % 30) == 0) {
+                        log("media: recon F1 via YUV420 DDR " +
                             std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
-                } else {
-                    log("media: recon F1 SPI: " + fpga_.lastError());
+                    }
+                } else if (!reconDdrMismatchLogged) {
+                    reconDdrMismatchLogged = true;
+                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
+                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
                 }
             }
             if (ok)
                 any = true;
         }
         if (reconToFb && fb_.ok()) {
-            ensureRgb565Le();
-            if (fb_.blitRgb565Le(rgb565le.data(), kFsW, kFsH))
+            ensureYuv420p();
+            if (fb_.blitYuv420p(yuv420p.data(), rec.width, rec.height))
                 any = true;
         }
         if (any) {

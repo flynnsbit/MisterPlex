@@ -420,6 +420,12 @@ def check_yuv_ddr_writer_contract() -> None:
         "but not in the daemon's active present loop.",
     )
     check(
+        "sendRgb565FrameDdr" not in media,
+        "media_player.cpp can still write RGB565 payloads to the DDR frame-store doorbell. "
+        "C3 RTL is YUV-only; use sendYuv420pFrameDdr for F1 DDR or skip the presentation "
+        "rather than producing decoder-looking garbage.",
+    )
+    check(
         "DDR_FRAME_FORMAT" in main_cpp
         and "fixed to yuv420p" in main_cpp
         and "DdrFrameFormat::Rgb565" not in main_cpp,
