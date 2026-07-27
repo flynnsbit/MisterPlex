@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -125,8 +126,17 @@ def run(cmd, *, expect_success=True):
     return proc.returncode
 
 
+def source_fingerprint(name: str, negative: bool) -> str:
+    h = hashlib.sha256()
+    h.update(name.encode("utf-8"))
+    h.update(b"negative" if negative else b"positive")
+    for path in [RTL / "h264_iq_idct_4x4.sv", RTL / "h264_intra_pred.sv", TB, FIXTURE]:
+        h.update(path.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def build_and_run(name: str, negative: bool) -> int:
-    build_dir = ROOT / f"build/obj_{name}"
+    build_dir = ROOT / f"build/obj_{name}_{source_fingerprint(name, negative)}"
     cpp = ROOT / f"build/{name}_main.cpp"
     build_dir.mkdir(parents=True, exist_ok=True)
     cpp.parent.mkdir(parents=True, exist_ok=True)
@@ -231,7 +241,7 @@ int main(int argc, char** argv) {
 
 
 def build_and_run_guard() -> int:
-    build_dir = ROOT / "build/obj_p3_intra_guard"
+    build_dir = ROOT / f"build/obj_p3_intra_guard_{source_fingerprint('guard', False)}"
     cpp = ROOT / "build/p3_intra_guard_main.cpp"
     build_dir.mkdir(parents=True, exist_ok=True)
     cpp.parent.mkdir(parents=True, exist_ok=True)
