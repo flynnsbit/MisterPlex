@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all unit rtl-sim rtl-lint arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package
+.PHONY: all unit rtl-sim rtl-lint arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -14,6 +14,7 @@ help:
 	@echo "  make unit       - host unit tests (cadence, resolve, companion HTTP)"
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
 	@echo "  make rtl-lint   - run Verilator width/implicit lint with baseline regression gate"
+	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
 	@echo "  make arm-plexd  - cross-build ARM misterplexd (if toolchain present)"
 	@echo "  make build-rbf  - build Plex.rbf via misterfpga-dev (long)"
 	@echo "  make test       - alias for unit"
@@ -26,7 +27,7 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -51,6 +52,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	$(ROOT)/build/test_p3_host_recon_vectors
+	$(ROOT)/tests/unit/test_h264_golden_extractor.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
@@ -76,6 +78,7 @@ rtl-sim:
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py
+h264-golden-tools: $(ROOT)/build/extract_h264_golden
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
@@ -102,6 +105,14 @@ $(ROOT)/build/test_p3_host_recon_vectors: $(ROOT)/tests/unit/test_p3_host_recon_
 		$(ROOT)/tests/fixtures/p3_host_recon/frame_mae_v1.csv
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_host_recon_vectors.cpp
+
+$(ROOT)/build/extract_h264_golden: $(ROOT)/tools/extract_h264_golden.cpp \
+		$(ROOT)/host/libmisterplex/h264_recon.hpp \
+		$(ROOT)/host/libmisterplex/h264_slice_walk.hpp \
+		$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
+		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/extract_h264_golden.cpp
 
 $(ROOT)/build/test_p3_idct_reference_model: $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
