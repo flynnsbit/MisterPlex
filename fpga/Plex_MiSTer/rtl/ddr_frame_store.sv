@@ -765,7 +765,18 @@ module ddr_frame_store #(
 					pending_ready_ddr <= swap_pending_d2 &&
 					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
+					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= FRAME_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {underrun_count, debug_state, frame_mbox_seq + 8'd1, MAGIC_F};
+						DDRAM_WE <= 1'b1;
+						frame_mbox_seq <= frame_mbox_seq + 8'd1;
+						frame_mbox_last <= {underrun_count, debug_state};
+						frame_mbox_valid <= 1'b1;
+						frame_mbox_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
@@ -861,16 +872,6 @@ module ddr_frame_store #(
 						sdram_mbox_last <= sdram_status_d2;
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
-						state_ddr <= S_WRITE_WAIT;
-					end else if (frame_mbox_req && poll_div[7:0] == 8'd224 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= FRAME_MAILBOX_W;
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {underrun_count, debug_state, frame_mbox_seq + 8'd1, MAGIC_F};
-						DDRAM_WE <= 1'b1;
-						frame_mbox_seq <= frame_mbox_seq + 8'd1;
-						frame_mbox_last <= {underrun_count, debug_state};
-						frame_mbox_valid <= 1'b1;
-						frame_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
 					end
 				end

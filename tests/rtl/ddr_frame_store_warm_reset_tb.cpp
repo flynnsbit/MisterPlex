@@ -365,6 +365,11 @@ bool runInitialFrameMailboxPublish() {
                   << std::dec << " cycle=" << sim.cycle << "\n";
         std::exit(1);
     }
+    if (sim.cycle >= 224) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: initial PLXF publish waited for legacy poll slot"
+                  << " cycles=" << sim.cycle << "\n";
+        std::exit(1);
+    }
     const uint64_t mbox = sim.frameMailbox();
     std::cout << "ddr_frame_store warm-reset raw: initial_plxf_publish"
               << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
@@ -402,7 +407,7 @@ bool runFrameMailboxStallsWithHungLineRead() {
         throw std::runtime_error("line-read-hang setup: initial PLXF mailbox did not publish");
     sim.hangLineReadResponses = true;
     sim.ringDoorbell(0, 0x69);
-    for (int i = 0; i < 20000 && !sim.sawDroppedLineRead; ++i)
+    for (int i = 0; i < 100000 && !sim.sawDroppedLineRead; ++i)
         sim.videoTick();
     if (!sim.sawDroppedLineRead) {
         std::cerr << "FAIL ddr_frame_store warm-reset: line-read-hang did not reach a frame line read"

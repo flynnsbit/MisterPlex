@@ -27,6 +27,7 @@ H264_DEBLOCK = Path(
     os.environ.get("H264_DEBLOCK", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv")
 )
 H264_DPB = Path(os.environ.get("H264_DPB", ROOT / "fpga/Plex_MiSTer/rtl/h264_dpb.sv"))
+ASYNC_FIFO = Path(os.environ.get("ASYNC_FIFO", ROOT / "fpga/Plex_MiSTer/rtl/async_fifo.sv"))
 FPGA_SPI_HPP = Path(os.environ.get("FPGA_SPI_HPP", ROOT / "arm/misterplexd/fpga_spi.hpp"))
 FPGA_SPI_CPP = Path(os.environ.get("FPGA_SPI_CPP", ROOT / "arm/misterplexd/fpga_spi.cpp"))
 DDR_FRAME_LAYOUT_HPP = Path(
@@ -364,6 +365,33 @@ def check_quartus_syntax_tripwires() -> None:
     if not missing_quartus_requirements(deblock, fault_dpb):
         fail("deliberate h264_dpb function-call part-select fault did not go red")
     print("PASS Quartus syntax tripwires for known Verilator-clean fit failures")
+
+
+def check_async_fifo_write_full_no_comb_loop() -> None:
+    text = strip_comments(read(ASYNC_FIFO))
+    nt = norm(text)
+    check(
+        "wr_full_now=(wr_gray==wr_gray_full)" in nt,
+        "async_fifo wr_full must be based on the registered write pointer. The old "
+        "wr_bin_next->wr_gray_next->wr_full->wr_bin_next dependency formed a Quartus "
+        "combinational loop inside ddr_frame_store input_fifo.",
+    )
+    check(
+        "wr_bin_next=wr_bin+(wr_accept?PTR_ONE:'0)" in nt
+        and "wr_accept=wr_en&&!wr_full_now" in nt,
+        "async_fifo write pointer advance must use a separate wr_accept from registered "
+        "full state; do not feed wr_full back through wr_bin_next.",
+    )
+    fault = nt.replace(
+        "wr_accept=wr_en&&!wr_full_now",
+        "wr_bin_next=wr_bin+((wr_en&&!wr_full)?PTR_ONE:'0)",
+    )
+    check(
+        "wr_bin_next=wr_bin+((wr_en&&!wr_full)?PTR_ONE:'0)" not in nt
+        and "wr_bin_next=wr_bin+((wr_en&&!wr_full)?PTR_ONE:'0)" in fault,
+        "async_fifo deliberate write-full feedback fault did not go red",
+    )
+    print("PASS async_fifo write-full path has no source-level combinational loop")
 
 
 def check_mailboxes() -> None:
@@ -1317,6 +1345,7 @@ def main() -> int:
     check_phase_a_surface()
     check_plex_reset_domains()
     check_quartus_syntax_tripwires()
+    check_async_fifo_write_full_no_comb_loop()
     check_mailboxes()
     check_ddr_bitstream_ring()
     check_status_telemetry()
