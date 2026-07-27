@@ -54,7 +54,7 @@ module stream_path_inter_tb #(
 	output wire        fs_wr_reset,
 	output wire        fs_swap
 );
-	wire signed [8:0] residual_coeff [0:15];
+	wire signed [15:0] residual_coeff [0:15];
 	wire [15:0] fs_wr_pixel_raw;
 	assign fs_wr_pixel = FAULT_INTER_DIAG_PIXEL ? (fs_wr_pixel_raw ^ 16'hffff) : fs_wr_pixel_raw;
 	wire ddr_bus_want;

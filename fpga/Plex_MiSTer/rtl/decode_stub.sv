@@ -37,7 +37,7 @@ module decode_stub #(
 	input  wire signed [7:0] residual_dc,
 	input  wire        residual_valid,
 	input  wire [5:0]  slice_qp,
-	input  wire signed [8:0] residual_coeff [0:15],
+	input  wire signed [15:0] residual_coeff [0:15],
 
 	output reg  [7:0]  recon_sig,
 	output reg  [7:0]  recon_dbg,
@@ -78,7 +78,7 @@ module decode_stub #(
 	reg [4:0]      lat_res_tc;
 	reg signed [7:0] lat_res_dc;
 	reg [5:0]      lat_qp;
-	reg signed [8:0] lat_coeff [0:15];
+	reg signed [15:0] lat_coeff [0:15];
 	reg [11:0]     wait_cnt;
 	reg            lat_wait_res;
 	reg            lat_p_inter;
@@ -131,7 +131,7 @@ module decode_stub #(
 	always @* begin
 		recon_dbg_comb = 8'd0;
 		for (dbg_i = 0; dbg_i < 16; dbg_i = dbg_i + 1) begin
-			if (lat_coeff[dbg_i] != 9'sd0)
+			if (lat_coeff[dbg_i] != 16'sd0)
 				recon_dbg_comb[0] = 1'b1; // coefficients seen by recon path are non-zero
 			if (idct_dequant[dbg_i] != 22'sd0)
 				recon_dbg_comb[3] = 1'b1; // dequant stage produced a non-zero value
@@ -567,7 +567,7 @@ module decode_stub #(
 			lat_res_dc    <= 0;
 			lat_qp        <= 0;
 			for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
-				lat_coeff[coeff_i] <= 9'sd0;
+				lat_coeff[coeff_i] <= 16'sd0;
 			recon_sig     <= 0;
 			recon_dbg     <= 0;
 			recon_dbg_valid <= 0;
@@ -655,7 +655,7 @@ module decode_stub #(
 				recon_valid <= 1'b0;
 				recon_dbg_valid <= 1'b0;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
-					lat_coeff[coeff_i] <= 9'sd0;
+					lat_coeff[coeff_i] <= 16'sd0;
 				dpb_fetch_start <= 1'b1;
 			end
 			end else if (phase == PH_WAIT) begin

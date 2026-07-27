@@ -49,7 +49,7 @@ module stream_path_full_frame_tb #(
 	output wire [1:0]  trace_residual_t1,
 	output wire signed [7:0] trace_residual_dc,
 	output wire [7:0]  trace_residual_csum,
-	output wire signed [8:0] trace_residual_coeff [0:15],
+	output wire signed [15:0] trace_residual_coeff [0:15],
 	output wire signed [21:0] trace_idct_dequant [0:15],
 	output wire signed [21:0] trace_idct_residual [0:15],
 	output wire [7:0]  trace_recon_px [0:15],
@@ -86,7 +86,7 @@ module stream_path_full_frame_tb #(
 	wire residual_ok;
 	wire signed [7:0] residual_dc;
 	wire [7:0] residual_csum;
-	wire signed [8:0] residual_coeff [0:15];
+	wire signed [15:0] residual_coeff [0:15];
 	wire residual_place_pulse;
 	wire recon_dbg_valid;
 	wire [15:0] fs_wr_pixel_dut;

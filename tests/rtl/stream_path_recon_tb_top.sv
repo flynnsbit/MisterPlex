@@ -40,7 +40,7 @@ module stream_path_recon_tb (
 	wire [4:0]  residual_tc;
 	wire [1:0]  residual_t1;
 	wire signed [7:0] residual_dc;
-	wire signed [8:0] residual_coeff [0:15];
+	wire signed [15:0] residual_coeff [0:15];
 	wire        fs_wr_en, fs_wr_reset, fs_swap;
 	wire [15:0] fs_wr_pixel;
 	wire ddr_bus_want;

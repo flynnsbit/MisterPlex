@@ -80,7 +80,7 @@ module stream_path #(
 	// 3.3l-1: residualCsum8=XOR sat8(coeff[0:15]); full coeffs for 3.3l-2 inv_quant.
 	// residual_coeff may be left unconnected at top until inv_quant; kept below.
 	output wire [7:0]  residual_csum,
-	output wire signed [8:0] residual_coeff [0:15],
+	output wire signed [15:0] residual_coeff [0:15],
 	// R-csum6 Rank3: 1-cycle ST_PLACE pulse for status residual sticky freeze
 	output wire        residual_place_pulse,
 	output wire [7:0]  recon_sig,
@@ -224,7 +224,7 @@ module stream_path #(
 	wire [1:0] sl_place_t1;
 	wire signed [7:0] sl_place_dc;
 	wire [5:0] sl_place_qp;
-	wire signed [8:0] sl_place_coeff [0:15];
+	wire signed [15:0] sl_place_coeff [0:15];
 
 	// residual_csum / residual_coeff connect straight to module outputs (no
 	// unpacked-array continuous assign — Quartus-friendly).
