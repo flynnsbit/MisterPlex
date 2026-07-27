@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
 
     int failures = 0;
     int tests = 0;
+    int nontrivial_outputs = 0; // degeneracy guard: count outputs that differ from input
 
     // Coefficient test patterns:
     // Single nonzero at each scan position, with various magnitudes
@@ -156,9 +157,27 @@ int main(int argc, char** argv) {
                     ++failures;
                 }
             }
+            // Degeneracy guard: at least one output must differ from raw input
+            for (int i = 0; i < 16; ++i) {
+                int32_t rtl_val = dut->dequant[i];
+                if (rtl_val & (1 << 28)) rtl_val |= ~((1 << 29) - 1);
+                if (rtl_val != static_cast<int32_t>(pat.coeffs[i])) {
+                    ++nontrivial_outputs;
+                    break;
+                }
+            }
             ++tests;
         }
     }
+
+    // DEGENERACY ASSERTION: if dequant never changed any output from its input,
+    // the transform was never exercised and the test compared nothing against nothing.
+    if (nontrivial_outputs == 0) {
+        fprintf(stderr, "DEQUANT QP SWEEP DEGENERATE: zero tests produced output != input\n");
+        return 1;
+    }
+    printf("Degeneracy check: %d/%d test vectors produced nontrivial output\n",
+           nontrivial_outputs, tests);
 
     // Print QP→dequant summary for spot-checking
     printf("QP sweep summary (coefficient=1 at scan pos 0, mi=0):\n");

@@ -430,6 +430,7 @@ int main(int argc, char** argv) {
     int mbExact = 0;
     int noAboveBlocks = 0, noLeftBlocks = 0, topRightReplicatedBlocks = 0;
     int failures = 0;
+    int reconDifferedFromPred = 0; // degeneracy guard: recon must differ from pred somewhere
 
     for (int mb = 0; mb < rec.mb_total; ++mb) {
         misterplex::recon::ReconTrace trace;
@@ -504,6 +505,8 @@ int main(int argc, char** argv) {
                         mbOk = false;
                         break;
                     }
+                    if (dut.i4_recon[i] != dut.i4_pred[i])
+                        ++reconDifferedFromPred;
                 }
                 if (blk.pred_mode >= 0 && blk.pred_mode < 9)
                     ++i4Pass[static_cast<size_t>(blk.pred_mode)];
@@ -556,6 +559,8 @@ int main(int argc, char** argv) {
                         mbOk = false;
                         break;
                     }
+                    if (dut.recon_out[i] != dut.recon_pred[i])
+                        ++reconDifferedFromPred;
                 }
                 for (int yy = 0; yy < 4; ++yy)
                     for (int xx = 0; xx < 4; ++xx)
@@ -644,6 +649,14 @@ int main(int argc, char** argv) {
         ++failures;
     }
 
+    // DEGENERACY ASSERTION: reconstruction must differ from prediction somewhere.
+    // If recon == pred for every pixel, the residual path (dequant/IDCT) was never
+    // exercised and this test compared prediction against itself.
+    if (reconDifferedFromPred == 0) {
+        std::cerr << "DEGENERATE: recon never differed from pred — residual path untested\n";
+        ++failures;
+    }
+
     if (failures) {
         std::cerr << "P3 intra frame-wide Verilator exact check FAILED: failures=" << failures
                   << " mb_exact=" << mbExact << "/" << rec.mb_total << "\n";
@@ -652,7 +665,8 @@ int main(int argc, char** argv) {
 
     std::cout << "P3 intra frame-wide Verilator exact check PASS: mb_exact=" << mbExact << "/"
               << rec.mb_total << " frame=" << width << "x" << height
-              << " luma_pixels=" << rtlY.size() << " frame_mae_fixture=max_abs_y_zero\n";
+              << " luma_pixels=" << rtlY.size() << " frame_mae_fixture=max_abs_y_zero"
+              << " recon_differed_from_pred=" << reconDifferedFromPred << "\n";
     std::cout << "I4 pass counts: V=" << i4Pass[0] << " H=" << i4Pass[1]
               << " DC=" << i4Pass[2] << " DDL=" << i4Pass[3] << " DDR=" << i4Pass[4]
               << " VR=" << i4Pass[5] << " HD=" << i4Pass[6] << " VL=" << i4Pass[7]
