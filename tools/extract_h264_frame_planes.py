@@ -15,6 +15,9 @@ from typing import Any
 FORMAT = "misterplex.p3.frame_planes_golden.v1"
 SEQUENCE_FORMAT = "misterplex.p3.nal_sequence.v1"
 NATIVE_I420 = "I420_NATIVE"
+LOOP_FILTER_DISABLED = "disabled"
+LOOP_FILTER_ENABLED = "enabled"
+LOOP_FILTER_STATES = (LOOP_FILTER_DISABLED, LOOP_FILTER_ENABLED)
 
 
 class ProvenanceRefusal(Exception):
@@ -122,13 +125,19 @@ def require_sequence_matches(
     return sha256_file(sequence_path), coded_w, coded_h, vcl
 
 
-def decode_i420(ffmpeg: str, bitstream: Path, planes_out: Path) -> list[str]:
+def decode_i420(ffmpeg: str, bitstream: Path, planes_out: Path, h264_loop_filter: str) -> list[str]:
     planes_out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         ffmpeg,
         "-v",
         "error",
         "-y",
+    ]
+    if h264_loop_filter == LOOP_FILTER_DISABLED:
+        cmd += ["-skip_loop_filter", "all"]
+    elif h264_loop_filter != LOOP_FILTER_ENABLED:
+        refuse(f"unknown H.264 loop-filter state {h264_loop_filter!r}")
+    cmd += [
         "-i",
         str(bitstream),
         "-an",
@@ -139,8 +148,11 @@ def decode_i420(ffmpeg: str, bitstream: Path, planes_out: Path) -> list[str]:
         str(planes_out),
     ]
     subprocess.check_call(cmd)
-    return ["ffmpeg", "-v", "error", "-y", "-i", rel(bitstream), "-an", "-f", "rawvideo",
-            "-pix_fmt", "yuv420p", rel(planes_out)]
+    out = ["ffmpeg", "-v", "error", "-y"]
+    if h264_loop_filter == LOOP_FILTER_DISABLED:
+        out += ["-skip_loop_filter", "all"]
+    out += ["-i", rel(bitstream), "-an", "-f", "rawvideo", "-pix_fmt", "yuv420p", rel(planes_out)]
+    return out
 
 
 def build_manifest(
@@ -157,6 +169,7 @@ def build_manifest(
     width: int,
     height: int,
     frames: int,
+    h264_loop_filter: str,
 ) -> dict[str, Any]:
     if width % 2 or height % 2:
         raise SystemExit(f"I420 requires even geometry, got {width}x{height}")
@@ -184,12 +197,20 @@ def build_manifest(
             "ffmpeg_version": version_line(ffmpeg),
             "ffprobe_version": version_line(ffprobe),
             "command": " ".join(ffmpeg_cmd),
+            "command_argv": ffmpeg_cmd,
+            "input_format": "Annex-B H.264",
+            "output_format": "rawvideo",
             "pix_fmt": "yuv420p",
+            "h264_loop_filter": h264_loop_filter,
+            "h264_loop_filter_ffmpeg": "-skip_loop_filter all"
+            if h264_loop_filter == LOOP_FILTER_DISABLED
+            else "ffmpeg default",
         },
         "provenance": {
             "source_domain": "decoded H.264 planes",
             "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
             "colorspace": NATIVE_I420,
+            "h264_loop_filter": h264_loop_filter,
             "rgb_roundtrip": False,
             "rgb565_roundtrip": False,
             "presentation_border_or_pillar_mask": False,
@@ -250,7 +271,13 @@ def build_manifest(
     return meta
 
 
-def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: Path, planes_path: Path) -> None:
+def validate_manifest(
+    manifest: dict[str, Any],
+    bitstream: Path,
+    sequence_path: Path,
+    planes_path: Path,
+    expected_h264_loop_filter: str | None,
+) -> None:
     if manifest.get("format") != FORMAT:
         raise SystemExit(f"manifest format is not {FORMAT}")
     src = manifest.get("source", {})
@@ -266,9 +293,40 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
     decoder = manifest.get("decoder", {})
     if decoder.get("pix_fmt") != "yuv420p":
         refuse("frame-plane golden decoder pix_fmt is not yuv420p")
+    if not expected_h264_loop_filter:
+        refuse("expected H.264 loop-filter state is undeclared; pass --expected-h264-loop-filter")
+    if expected_h264_loop_filter not in LOOP_FILTER_STATES:
+        refuse(f"unknown expected H.264 loop-filter state {expected_h264_loop_filter!r}")
+    decoder_loop_filter = decoder.get("h264_loop_filter")
+    if decoder_loop_filter not in LOOP_FILTER_STATES:
+        refuse("frame-plane golden decoder does not declare H.264 loop-filter state")
+    if decoder_loop_filter != expected_h264_loop_filter:
+        refuse(
+            "frame-plane golden H.264 loop-filter mismatch: "
+            f"golden={decoder_loop_filter} expected={expected_h264_loop_filter}"
+        )
+    command_argv = decoder.get("command_argv")
+    if not isinstance(command_argv, list) or not all(isinstance(v, str) for v in command_argv):
+        refuse("frame-plane golden decoder command_argv is missing or invalid")
+    has_skip_all = any(
+        command_argv[i] == "-skip_loop_filter" and i + 1 < len(command_argv) and command_argv[i + 1] == "all"
+        for i in range(len(command_argv))
+    )
+    if decoder_loop_filter == LOOP_FILTER_DISABLED and not has_skip_all:
+        refuse(
+            "frame-plane golden declares H.264 loop filter disabled but decoder command "
+            "does not include '-skip_loop_filter all'"
+        )
+    if decoder_loop_filter == LOOP_FILTER_ENABLED and has_skip_all:
+        refuse(
+            "frame-plane golden declares H.264 loop filter enabled but decoder command "
+            "includes '-skip_loop_filter all'"
+        )
     provenance = manifest.get("provenance", {})
     if provenance.get("colorspace") != NATIVE_I420 or provenance.get("pixel_format") != "I420/YUV420p planar 8-bit 4:2:0":
         refuse("frame-plane golden provenance does not declare native I420/YUV420p")
+    if provenance.get("h264_loop_filter") != decoder_loop_filter:
+        refuse("frame-plane golden provenance does not match decoder H.264 loop-filter state")
     if provenance.get("rgb_roundtrip") is not False or provenance.get("rgb565_roundtrip") is not False:
         refuse("frame-plane golden provenance allows an RGB/RGB565 round-trip")
     if provenance.get("presentation_border_or_pillar_mask") is not False:
@@ -364,7 +422,9 @@ def generate(args: argparse.Namespace) -> int:
         raise SystemExit(f"decoded width {width} != expected {args.expect_width}")
     if args.expect_height and height != args.expect_height:
         raise SystemExit(f"decoded height {height} != expected {args.expect_height}")
-    cmd = decode_i420(ffmpeg, bitstream, planes_out)
+    if not args.h264_loop_filter:
+        refuse("H.264 loop-filter state is required for generation; pass --h264-loop-filter")
+    cmd = decode_i420(ffmpeg, bitstream, planes_out, args.h264_loop_filter)
     manifest = build_manifest(
         bitstream,
         sequence_path,
@@ -379,6 +439,7 @@ def generate(args: argparse.Namespace) -> int:
         width,
         height,
         frames,
+        args.h264_loop_filter,
     )
     manifest_out.parent.mkdir(parents=True, exist_ok=True)
     manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8")
@@ -391,7 +452,13 @@ def generate(args: argparse.Namespace) -> int:
 
 def verify(args: argparse.Namespace) -> int:
     manifest = read_json(Path(args.manifest))
-    validate_manifest(manifest, Path(args.input), Path(args.sequence), Path(args.planes))
+    validate_manifest(
+        manifest,
+        Path(args.input),
+        Path(args.sequence),
+        Path(args.planes),
+        args.expected_h264_loop_filter,
+    )
     if args.candidate_planes:
         exact = compare_candidate(
             manifest, Path(args.planes), Path(args.candidate_planes), args.candidate_colorspace
@@ -418,6 +485,10 @@ def main() -> int:
     ap.add_argument("--sequence", required=True, help="misterplex.p3.nal_sequence.v1 manifest")
     ap.add_argument("--planes-out", help="output I420 plane blob")
     ap.add_argument("--manifest-out", help="output frame-plane golden JSON")
+    ap.add_argument("--h264-loop-filter", choices=LOOP_FILTER_STATES,
+                    help="reference decoder in-loop deblock state for generated planes")
+    ap.add_argument("--expected-h264-loop-filter", choices=LOOP_FILTER_STATES,
+                    help="required expected loop-filter state when verifying/comparing")
     ap.add_argument("--expect-width", type=int, default=0)
     ap.add_argument("--expect-height", type=int, default=0)
     ap.add_argument("--verify", action="store_true")
