@@ -107,11 +107,6 @@ inline void rgb565ToRgb24(const uint16_t* src, int w, int h, std::vector<uint8_t
     }
 }
 
-inline void packRgb24ToRgb565Le(const uint8_t* rgb, int w, int h, std::vector<uint8_t>& out) {
-    out.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 2);
-    pixel::rgb24ToRgb565Le(rgb, out.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
-}
-
 // Local annex-B elementary H.264 (skip remux BSF when possible).
 inline bool looksElementaryH264(const std::string& url) {
     if (url.empty() || url.rfind("http", 0) == 0 || url.rfind("lavfi", 0) == 0)
@@ -417,14 +412,23 @@ void MediaPlayer::paintIdle() {
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok())
         fb_.blitRgb24(buf.data(), w, h);
-    // F1 latches the last frame written, so the frame store must be repainted too —
-    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga. Use the
-    // same DDR-bulk-then-SPI ladder as the present loop; the SPI path alone does
-    // not reliably land a frame on a core that has been running the DDR path.
+    // F1 latches the last frame written, so the frame store must be repainted too.
+    // C3 frame-store DDR is YUV-only; use a deterministic black I420 frame for
+    // the FPGA idle clear rather than ringing the doorbell with an RGB payload.
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
-            ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
+            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            std::vector<uint8_t> yuv(makeDdrFrameLayout(g, kDdrFramePhysBase,
+                                                        kDdrFrameStrideAlign,
+                                                        DdrFrameFormat::Yuv420p)
+                                         .frame_bytes);
+            const size_t yBytes = static_cast<size_t>(g.coded_width) * g.coded_height;
+            const size_t cBytes = yBytes / 4u;
+            std::memset(yuv.data(), kYuv420BlackY, yBytes);
+            std::memset(yuv.data() + yBytes, kYuv420BlackU, cBytes);
+            std::memset(yuv.data() + yBytes + cBytes, kYuv420BlackV, cBytes);
+            ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
             ddrBank_ ^= 1;
         }
         if (!ok)
@@ -937,7 +941,7 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
 }
 
 void MediaPlayer::streamPump(int sfd) {
-    // Phase 3.3i/product: demux annex-B → host I-slice recon → RGB565 F1 (+ optional fb0).
+    // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
     // Also feed F3 for FPGA decode_stub / residual probes (diagnostic).
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
     const bool wantF3 = fpga_.ok();
@@ -968,9 +972,7 @@ void MediaPlayer::streamPump(int sfd) {
 
     std::vector<uint8_t> spsNal; // includes start code
     std::vector<uint8_t> ppsNal;
-    std::vector<uint16_t> rgbNative;
-    std::vector<uint16_t> rgb320(320 * 240);
-    std::vector<uint8_t> rgb565le;
+    std::vector<uint8_t> yuv420p;
     char buf[4096];
     size_t f3Total = 0;
     size_t f3Pushes = 0;
@@ -979,11 +981,9 @@ void MediaPlayer::streamPump(int sfd) {
     size_t idrSeen = 0;
     size_t iSliceSeen = 0;
     bool cabacLogged = cabacSkip_.load();
-    // Throttle F1 SPI: ~100–150ms/frame; present every Nth successful recon
+    // Throttle sparse host recon F1 publishing; product rawvideo owns continuous playback.
     constexpr size_t kReconPresentEvery = 1;
-    // Frame-store geometry (Plex core F1)
-    constexpr int kFsW = 320;
-    constexpr int kFsH = 240;
+    bool reconDdrMismatchLogged = false;
 
     auto pushF3UpTo = [&](size_t end) {
         if (!wantF3 || end <= f3Off)
@@ -1002,55 +1002,53 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     auto presentRecon = [&](const recon::ReconResult& rec) {
-        if (rec.y.empty() || rec.width <= 0 || rec.height <= 0)
+        if (rec.y.empty() || rec.u.empty() || rec.v.empty() || rec.width <= 0 ||
+            rec.height <= 0 || (rec.width & 1) || (rec.height & 1))
             return false;
-        recon::yuv420ToRgb565(rec.y.data(), rec.u.data(), rec.v.data(), rec.width, rec.height,
-                              rgbNative);
-        scaleRgb565(rgbNative.data(), rec.width, rec.height, rgb320.data(), kFsW, kFsH);
-        auto ensureRgb565Le = [&]() -> const uint8_t* {
-            if (rgb565le.empty()) {
-                rgb565le.resize(static_cast<size_t>(kFsW) * kFsH * 2);
-                for (int i = 0; i < kFsW * kFsH; ++i)
-                    pixel::storeLe16(rgb565le.data() + static_cast<size_t>(i) * 2,
-                                     rgb320[static_cast<size_t>(i)]);
+        const size_t yBytes = static_cast<size_t>(rec.width) * static_cast<size_t>(rec.height);
+        const size_t cBytes = yBytes / 4u;
+        if (rec.y.size() < yBytes || rec.u.size() < cBytes || rec.v.size() < cBytes)
+            return false;
+        auto ensureYuv420p = [&]() -> const uint8_t* {
+            if (yuv420p.empty()) {
+                yuv420p.resize(yBytes + 2u * cBytes);
+                std::memcpy(yuv420p.data(), rec.y.data(), yBytes);
+                std::memcpy(yuv420p.data() + yBytes, rec.u.data(), cBytes);
+                std::memcpy(yuv420p.data() + yBytes + cBytes, rec.v.data(), cBytes);
             }
-            return rgb565le.data();
+            return yuv420p.data();
         };
-        rgb565le.clear();
+        yuv420p.clear();
         bool any = false;
         if (wantF1) {
-            // Prefer DDR bulk (3.1b); fall back to SPI F1 if RBF lacks path.
+            // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                ensureRgb565Le();
-                if (fpga_.setDdrFrameSize(kFsW, kFsH))
-                    ok = fpga_.sendRgb565FrameDdr(rgb565le.data(), rgb565le.size(), ddrBank_);
-                ddrBank_ ^= 1;
-                if (!ok) {
-                    useDdrF1_ = false;
-                    log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                } else if ((reconOk % 30) == 0) {
-                    log("media: recon F1 via DDR " +
-                        std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
-                }
-            }
-            if (!ok) {
-                // SPI path: sendFileTx clears stale err_ from DDR probe.
-                if (fpga_.sendRgb565Frame(rgb320.data(), kFsW, kFsH, /*F1*/ 1)) {
-                    ok = true;
-                    if (reconOk == 1 || (reconOk % 8) == 0)
-                        log("media: recon F1 via SPI " +
+                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+                if (rec.width == g.coded_width && rec.height == g.coded_height) {
+                    ensureYuv420p();
+                    clearYuv420pCropPadding(yuv420p.data(), g);
+                    ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
+                    ddrBank_ ^= 1;
+                    if (!ok) {
+                        useDdrF1_ = false;
+                        log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
+                    } else if ((reconOk % 30) == 0) {
+                        log("media: recon F1 via YUV420 DDR " +
                             std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
-                } else {
-                    log("media: recon F1 SPI: " + fpga_.lastError());
+                    }
+                } else if (!reconDdrMismatchLogged) {
+                    reconDdrMismatchLogged = true;
+                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
+                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
                 }
             }
             if (ok)
                 any = true;
         }
         if (reconToFb && fb_.ok()) {
-            ensureRgb565Le();
-            if (fb_.blitRgb565Le(rgb565le.data(), kFsW, kFsH))
+            ensureYuv420p();
+            if (fb_.blitYuv420p(yuv420p.data(), rec.width, rec.height))
                 any = true;
         }
         if (any) {
@@ -1768,8 +1766,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // STREAM=1 recon is ~1 fps (keyframe only) and is the wrong interactive cast path.
         const bool wantFpgaFrameStore =
             fpga_.ok() && (presentMode_ == "fpga" || presentMode_ == "both");
-        const bool wantYuvDdr = wantFpgaFrameStore && presentMode_ == "fpga" &&
-                                ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
+        const bool wantYuvDdr = wantFpgaFrameStore && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
         RawVideoFormat videoFmt = RawVideoFormat::Rgb24;
         if (wantYuvDdr) {
             videoFmt = RawVideoFormat::Yuv420p;
@@ -1786,6 +1783,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " display=" + std::to_string(rawDisplayW) + "x" +
                 std::to_string(rawDisplayH) +
                 " clock=wall-48k-audio+every-frame-present");
+        if (wantYuvDdr && presentMode_ == "both" && fb_.ok())
+            log("media: PRESENT=both uses yuv420p DDR frame-store path; fb0 blit converts the "
+                "same frame");
         usedRgb = true;
         presentCount_ = 0;
         audioBytes_.store(0);
@@ -1964,7 +1964,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
-        std::vector<uint8_t> rgb565Frame;
         std::vector<uint8_t> fbOverlayBackup;
 
         struct PresentProfileAccum {
@@ -2074,7 +2073,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 fbOk = fb_.blitBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
-                return;
+                fbOk = fb_.blitYuv420p(data, rawW, rawH);
+                break;
             case RawVideoFormat::Rgb24:
             default:
                 fbOk = fb_.blitRgb24(data, rawW, rawH);
@@ -2169,21 +2169,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (!reconOwnsF1 && wantFpgaFrameStore) {
                 const uint8_t* txFrame = cleanFrame;
                 size_t txBytes = frameBytes;
-                if (videoFmt == RawVideoFormat::Rgb24) {
-                    if (profilePresent) {
-                        const auto pix0 = std::chrono::steady_clock::now();
-                        const int64_t pixCpu0 = threadCpuMicros();
-                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
-                        const int64_t pixCpu1 = threadCpuMicros();
-                        const auto pix1 = std::chrono::steady_clock::now();
-                        prof.pixelUs += microsBetween(pix0, pix1);
-                        prof.pixelCpuUs += pixCpu1 - pixCpu0;
-                    } else {
-                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
-                    }
-                    txFrame = rgb565Frame.data();
-                    txBytes = rgb565Frame.size();
-                }
 
                 // Serialise with the OSD poller / idle painter: FpgaSpi keeps
                 // transaction state, so overlapping ioctls corrupt each other.
@@ -2193,8 +2178,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
                         ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
-                    } else if (fpga_.setDdrFrameLayout(ddrGeometry, DdrFrameFormat::Rgb565)) {
-                        ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
+                    } else {
+                        ok = false;
                     }
                     if (profilePresent && ok) {
                         const int64_t ddrCpu1 = threadCpuMicros();

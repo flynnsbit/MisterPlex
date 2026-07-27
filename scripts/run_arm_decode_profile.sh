@@ -85,13 +85,13 @@ remote_run "synthetic present-loop pipe/copy at 60 fps" \
   "'$PRESENT' --frames '$FRAMES' --width '$WIDTH' --height '$HEIGHT' --fps '60' --pipe-size '$PIPE_SIZE'"
 
 remote_run "DDR write path: O_SYNC /dev/mem" \
-  "'$DDR' --sync --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --sync --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 remote_run "DDR write path: no O_SYNC /dev/mem" \
-  "'$DDR' --no-sync --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --no-sync --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 remote_run "DDR write path: no O_SYNC + ARM cacheflush" \
-  "'$DDR' --no-sync --flush --format rgb565 --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
+  "'$DDR' --no-sync --flush --format yuv420p --width '$WIDTH' --height '$HEIGHT' --loops '$LOOPS'"
 
 log ""
 log "DONE evidence=$EVIDENCE"

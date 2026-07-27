@@ -15,16 +15,10 @@
 namespace {
 
 constexpr uint32_t kDdrFrameBase = 0x30000000u;
-constexpr size_t kDefaultFrameBytes = 320 * 240 * 2;
+constexpr size_t kDefaultFrameBytes = 320 * 240 * 3 / 2;
 
-const char* formatName(misterplex::DdrFrameFormat f) {
-    switch (f) {
-    case misterplex::DdrFrameFormat::Yuv420p:
-        return "yuv420p";
-    case misterplex::DdrFrameFormat::Rgb565:
-    default:
-        return "rgb565";
-    }
+const char* formatName(misterplex::DdrFrameFormat) {
+    return "yuv420p";
 }
 
 double nowSec() {
@@ -72,7 +66,7 @@ void fillPattern(uint8_t* buf, size_t len) {
 void usage(const char* argv0) {
     std::printf(
         "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
-        "          [--format rgb565|yuv420p] [--geometry auto|exact|plex480p]\n"
+        "          [--format yuv420p] [--geometry auto|exact|plex480p]\n"
         "          [--width W --height H | --len BYTES]\n"
         "          [--loops N] [--bank 0|1]\n"
         "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n"
@@ -93,7 +87,7 @@ int main(int argc, char** argv) {
     int height = 240;
     bool lenSet = false;
     std::string geometryMode = "auto";
-    misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Rgb565;
+    misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Yuv420p;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -111,12 +105,11 @@ int main(int argc, char** argv) {
             height = std::atoi(argv[++i]);
         } else if (a == "--format" && i + 1 < argc) {
             std::string v = argv[++i];
-            if (v == "rgb565") {
-                format = misterplex::DdrFrameFormat::Rgb565;
-            } else if (v == "yuv420p" || v == "yuv420") {
+            if (v == "yuv420p" || v == "yuv420" || v == "i420") {
                 format = misterplex::DdrFrameFormat::Yuv420p;
             } else {
-                std::fprintf(stderr, "unknown format: %s\n", v.c_str());
+                std::fprintf(stderr, "unsupported DDR format: %s (C3 frame store is yuv420p only)\n",
+                             v.c_str());
                 return 2;
             }
         } else if (a == "--geometry" && i + 1 < argc) {

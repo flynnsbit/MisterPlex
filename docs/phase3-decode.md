@@ -394,7 +394,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
     - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
-    - ARM: `FpgaSpi::sendRgb565FrameDdr` / `sendRgb24FrameDdr` (single SpiExclusive kick)
+    - ARM: `FpgaSpi::sendYuv420pFrameDdr` (I420 planar DDR payload + doorbell)
     - Tool: `push_frame --ddr [--bank 0|1] file.rgb565`
     - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only
       was a false negative — see diagnosis below

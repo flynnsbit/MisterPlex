@@ -12,7 +12,7 @@ LOOPS="${LOOPS:-1000}"
 WIDTH="${WIDTH:-320}"
 HEIGHT="${HEIGHT:-240}"
 GEOMETRY="${GEOMETRY:-auto}"
-FORMATS="${FORMATS:-rgb565}"
+FORMATS="${FORMATS:-yuv420p}"
 REMOTE="/media/fat/misterplex/bin/ddr_write_bench"
 
 make -C "$ROOT" arm-ddr-bench >/dev/null

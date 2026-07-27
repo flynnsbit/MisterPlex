@@ -1049,17 +1049,17 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
-bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) {
-    if (!rgb565le || len != ddrLayout_.frame_bytes) {
-        setErr("sendRgb565FrameDdr: frame size does not match DDR geometry");
+bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
+    if (!payload || len != ddrLayout_.frame_bytes) {
+        setErr("sendDdrFrame: frame size does not match DDR geometry");
         return false;
     }
     if (bank < 0 || bank > 1) {
-        setErr("sendRgb565FrameDdr: bank must be 0 or 1");
+        setErr("sendDdrFrame: bank must be 0 or 1");
         return false;
     }
     if (ddrKickMode_ < 0) {
-        setErr("sendRgb565FrameDdr: DDR path previously unavailable");
+        setErr("sendDdrFrame: DDR path previously unavailable");
         return false;
     }
     if (!ok() && !open())
@@ -1081,14 +1081,14 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, rgb565le, len);
+    std::memcpy(ddrMap_ + bankOff, payload, len);
     __sync_synchronize();
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
     if (!ddrMemSync_ && ddrMemFlush_) {
         auto tFlush0 = std::chrono::steady_clock::now();
         if (!cleanDcacheRange(ddrMap_ + bankOff, len)) {
-            setErr("sendRgb565FrameDdr: cache clean failed");
+            setErr("sendDdrFrame: cache clean failed");
             return false;
         }
         __sync_synchronize();
@@ -1143,7 +1143,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
                 ddrKickMode_ = -1;
-                setErr("sendRgb565FrameDdr: no kick/frame via SPI or doorbell");
+                setErr("sendDdrFrame: no kick/frame via SPI or doorbell");
                 return false;
             }
             ddrKickMode_ = 2;
@@ -1153,7 +1153,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
-        setErr("sendRgb565FrameDdr: could not kick DDR path");
+        setErr("sendDdrFrame: could not kick DDR path");
         return false;
     }
 
@@ -1171,20 +1171,6 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     lastDdrTiming_ = timing;
     clearErr();
     return true;
-}
-
-bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
-    if (!rgb || w <= 0 || h <= 0) {
-        setErr("sendRgb24FrameDdr: bad RGB24 frame");
-        return false;
-    }
-    if (w != ddrLayout_.width || h != ddrLayout_.height) {
-        if (!setDdrFrameSize(w, h))
-            return false;
-    }
-    std::vector<uint8_t> packed(ddrLayout_.frame_bytes);
-    pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
-    return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
@@ -1207,7 +1193,7 @@ bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
         if (!setDdrFrameLayout(geometry, DdrFrameFormat::Yuv420p))
             return false;
     }
-    return sendRgb565FrameDdr(yuv420p, len, bank);
+    return sendDdrFrame(yuv420p, len, bank);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,

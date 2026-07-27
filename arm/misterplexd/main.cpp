@@ -72,15 +72,6 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
     return weak;
 }
 
-misterplex::DdrFrameFormat parseDdrFrameFormat(const std::string& v,
-                                               misterplex::DdrFrameFormat fallback) {
-    if (v == "yuv420p" || v == "yuv420" || v == "i420")
-        return misterplex::DdrFrameFormat::Yuv420p;
-    if (v == "rgb565" || v == "rgb565le" || v == "rgb")
-        return misterplex::DdrFrameFormat::Rgb565;
-    return fallback;
-}
-
 } // namespace
 
 namespace {
@@ -232,15 +223,11 @@ int main(int argc, char** argv) {
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
         v = loadConf(confPath, "DDR_FRAME_FORMAT");
-        if (!v.empty()) {
-            auto parsed = parseDdrFrameFormat(v, ddrFrameFormat);
-            if (parsed == ddrFrameFormat && v != "rgb565" && v != "rgb565le" && v != "rgb" &&
-                v != "yuv420p" && v != "yuv420" && v != "i420") {
-                std::fprintf(stderr,
-                             "misterplexd: unknown DDR_FRAME_FORMAT=%s (keeping yuv420p)\n",
-                             v.c_str());
-            }
-            ddrFrameFormat = parsed;
+        if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
+            std::fprintf(stderr,
+                         "misterplexd: DDR_FRAME_FORMAT=%s ignored; DDR frame store is "
+                         "fixed to yuv420p\n",
+                         v.c_str());
         }
         v = loadConf(confPath, "DDR_MEM_SYNC");
         if (!v.empty())
@@ -433,8 +420,7 @@ int main(int argc, char** argv) {
     }
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
-    std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=%s\n",
-                 ddrFrameFormat == misterplex::DdrFrameFormat::Yuv420p ? "yuv420p" : "rgb565");
+    std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");

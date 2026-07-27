@@ -24,6 +24,12 @@ FPGA_SPI_CPP = Path(os.environ.get("FPGA_SPI_CPP", ROOT / "arm/misterplexd/fpga_
 DDR_FRAME_LAYOUT_HPP = Path(
     os.environ.get("DDR_FRAME_LAYOUT_HPP", ROOT / "host/libmisterplex/ddr_frame_layout.hpp")
 )
+MEDIA_PLAYER_CPP = Path(
+    os.environ.get("MEDIA_PLAYER_CPP", ROOT / "arm/misterplexd/media_player.cpp")
+)
+MISTERPLEXD_MAIN_CPP = Path(
+    os.environ.get("MISTERPLEXD_MAIN_CPP", ROOT / "arm/misterplexd/main.cpp")
+)
 INPUT_MAILBOX_HPP = Path(
     os.environ.get("INPUT_MAILBOX_HPP", ROOT / "host/libmisterplex/input_mailbox.hpp")
 )
@@ -398,12 +404,50 @@ def check_ddr_frame_layout_contract() -> None:
     print("PASS DDR frame layout ARM/RTL contract")
 
 
+def check_yuv_ddr_writer_contract() -> None:
+    media = strip_comments(read(MEDIA_PLAYER_CPP))
+    main_cpp = strip_comments(read(MISTERPLEXD_MAIN_CPP))
+    fpga_h = strip_comments(read(FPGA_SPI_HPP))
+    fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
+    layout_h = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
+    ddr_writer_sources = "\n".join([media, main_cpp, fpga_h, fpga_cpp, layout_h])
+    check(
+        "packRgb24ToRgb565Le" not in media,
+        "media_player.cpp reintroduced RGB24→RGB565 packing in the rawvideo present path. "
+        "The C3 DDR frame store consumes planar YUV420p directly; do not leave a dead RGB565 "
+        "alternate hot path that can drift from the RTL reader.",
+    )
+    check(
+        "DdrFrameFormat::Rgb565" not in ddr_writer_sources,
+        "ARM DDR writer code still exposes DdrFrameFormat::Rgb565. C3 RTL interprets DDR as "
+        "I420/YUV420p unconditionally; retaining an RGB565 DDR enum/config is a silent "
+        "cross-module format mismatch waiting to render garbage.",
+    )
+    check(
+        "sendRgb565FrameDdr" not in ddr_writer_sources
+        and "sendRgb24FrameDdr" not in ddr_writer_sources,
+        "ARM code can still write RGB payloads to the DDR frame-store doorbell. C3 RTL is "
+        "YUV-only; use sendYuv420pFrameDdr for DDR or fail loudly rather than producing "
+        "decoder-looking garbage.",
+    )
+    check(
+        "DDR_FRAME_FORMAT" in main_cpp
+        and "fixed to yuv420p" in main_cpp
+        and "DdrFrameFormat::Rgb565" not in main_cpp,
+        "misterplexd main must not allow DDR_FRAME_FORMAT=rgb565 to reactivate the old "
+        "writer. Keep any legacy config key as an ignored warning and leave production fixed "
+        "to yuv420p.",
+    )
+    print("PASS ARM DDR writer uses product yuv420p frame-store path only")
+
+
 def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_mailboxes()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
+    check_yuv_ddr_writer_contract()
     return 0
 
 

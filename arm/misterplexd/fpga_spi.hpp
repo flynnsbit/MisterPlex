@@ -85,26 +85,18 @@ public:
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
-    // Phase 3.1b+: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000).
-    // Product path: mmap frame + doorbell (no SPI kick).
-    // Fallback: status[12]/[13] SPI kick if doorbell fails first verify.
-    // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
-    // Default frame geometry is 320×240. The 480p contract is coded 624×480,
-    // display 618×480, pillarboxed into the 640×480 VGA output.
+    // C3 DDR frame-store path: planar I420/YUV420p via HPS DDR
+    // (/dev/mem @ 0x30000000) plus format-tagged doorbell. RGB565 is not a
+    // valid DDR payload for this RTL; keep RGB565 only on the legacy SPI F1 path.
     bool setDdrFrameLayout(const DdrFrameGeometry& geometry,
-                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
+                           DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     bool setDdrFrameLayout(int width, int height,
-                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
-    bool setDdrFrameSize(int width, int height) {
-        return setDdrFrameLayout(width, height, DdrFrameFormat::Rgb565);
-    }
+                           DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
-    bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
-    bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -246,6 +238,7 @@ private:
     // Caller holds SpiExclusive + user mode.
     void writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
+    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;

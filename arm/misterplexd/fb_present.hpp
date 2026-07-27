@@ -28,6 +28,8 @@ public:
     bool blitBgra32(const uint8_t* bgra, int w, int h);
     // Copy packed RGB565 little-endian (w*h*2).
     bool blitRgb565Le(const uint8_t* rgb565le, int w, int h);
+    // Convert planar YUV420p/I420 (Y, U, V) into the mapped framebuffer.
+    bool blitYuv420p(const uint8_t* yuv420p, int w, int h);
 
     // Clear to black
     void clear();

@@ -45,4 +45,20 @@ inline void rgb565LeToBgra8888(const uint8_t* rgb565le, uint8_t* bgra, size_t pi
     }
 }
 
+inline uint8_t clamp8(int v) {
+    if (v < 0)
+        return 0;
+    if (v > 255)
+        return 255;
+    return static_cast<uint8_t>(v);
+}
+
+inline void yuvToRgb(uint8_t y, uint8_t u, uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
+    const int uu = static_cast<int>(u) - 128;
+    const int vv = static_cast<int>(v) - 128;
+    r = clamp8((static_cast<int>(y) * 256 + 359 * vv) >> 8);
+    g = clamp8((static_cast<int>(y) * 256 - 88 * uu - 183 * vv) >> 8);
+    b = clamp8((static_cast<int>(y) * 256 + 454 * uu) >> 8);
+}
+
 } // namespace misterplex::pixel

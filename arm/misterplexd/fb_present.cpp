@@ -229,4 +229,60 @@ bool FbPresent::blitRgb565Le(const uint8_t* rgb565le, int w, int h) {
     return false;
 }
 
+bool FbPresent::blitYuv420p(const uint8_t* yuv420p, int w, int h) {
+    if (!ok() || !yuv420p || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return false;
+
+    const int dstW = width_;
+    const int dstH = height_;
+    const int x0 = (dstW > w) ? (dstW - w) / 2 : 0;
+    const int y0 = (dstH > h) ? (dstH - h) / 2 : 0;
+    const int copyW = (w < dstW) ? w : dstW;
+    const int copyH = (h < dstH) ? h : dstH;
+    const uint8_t* yPlane = yuv420p;
+    const uint8_t* uPlane = yPlane + static_cast<size_t>(w) * static_cast<size_t>(h);
+    const uint8_t* vPlane = uPlane + static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
+
+    if (bpp_ == 32 || bpp_ == 24) {
+        const int dstStep = bpp_ / 8;
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* yRow = yPlane + static_cast<size_t>(y) * w;
+            const uint8_t* uRow = uPlane + static_cast<size_t>(y / 2) * (w / 2);
+            const uint8_t* vRow = vPlane + static_cast<size_t>(y / 2) * (w / 2);
+            uint8_t* dst = mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                           static_cast<size_t>(x0) * static_cast<size_t>(dstStep);
+            for (int x = 0; x < copyW; ++x) {
+                uint8_t r = 0, g = 0, b = 0;
+                pixel::yuvToRgb(yRow[x], uRow[x / 2], vRow[x / 2], r, g, b);
+                dst[0] = b;
+                dst[1] = g;
+                dst[2] = r;
+                if (dstStep == 4)
+                    dst[3] = 0xFF;
+                dst += dstStep;
+            }
+        }
+        return true;
+    }
+
+    if (bpp_ == 16) {
+        for (int y = 0; y < copyH; ++y) {
+            const uint8_t* yRow = yPlane + static_cast<size_t>(y) * w;
+            const uint8_t* uRow = uPlane + static_cast<size_t>(y / 2) * (w / 2);
+            const uint8_t* vRow = vPlane + static_cast<size_t>(y / 2) * (w / 2);
+            uint16_t* dst = reinterpret_cast<uint16_t*>(
+                mem_ + static_cast<size_t>(y0 + y) * static_cast<size_t>(stride_) +
+                static_cast<size_t>(x0) * 2);
+            for (int x = 0; x < copyW; ++x) {
+                uint8_t r = 0, g = 0, b = 0;
+                pixel::yuvToRgb(yRow[x], uRow[x / 2], vRow[x / 2], r, g, b);
+                *dst++ = pixel::packRgb565(r, g, b);
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
 } // namespace misterplex
