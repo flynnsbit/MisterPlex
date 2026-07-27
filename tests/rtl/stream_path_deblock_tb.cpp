@@ -252,19 +252,27 @@ int main(int argc, char** argv) {
         if (alpha != alphaTable(goldenQp) || beta != betaTable(goldenQp) || tc0 != tc0Table(goldenQp, 3)) throw std::runtime_error("thresholds do not match stream QP average");
 
         std::vector<uint8_t> loopRef = reconY;
-        bool foundChanged = false; int chosenX = -1, chosenY = -1; EdgeOut chosenOut{};
+        bool foundChanged = false; int chosenX = -1, chosenY = -1; int chosenSampleX = -1, chosenSampleY = -1; EdgeOut chosenOut{};
         for (int x : {4,8,12}) for (int y : {0,4,8,12}) {
             EdgeIO e = gatherV(loopRef, x, y);
             EdgeOut want = refEdge(e, false, 3, goldenQp, 0, 0);
             EdgeOut got = pipeEdge(dut, e, false, 3);
             if (!same(want, got)) throw std::runtime_error("luma deblock output mismatch");
-            if (got.p0 != e.p0 || got.q0 != e.q0 || got.p1 != e.p1 || got.q1 != e.q1) { foundChanged=true; chosenX=x; chosenY=y; chosenOut=got; goto edge_found; }
+            for (int r = 0; r < 4 && !foundChanged; ++r) {
+                if (got.p2[r] != e.p2[r]) { chosenSampleX = x - 3; chosenSampleY = y + r; foundChanged = true; }
+                else if (got.p1[r] != e.p1[r]) { chosenSampleX = x - 2; chosenSampleY = y + r; foundChanged = true; }
+                else if (got.p0[r] != e.p0[r]) { chosenSampleX = x - 1; chosenSampleY = y + r; foundChanged = true; }
+                else if (got.q0[r] != e.q0[r]) { chosenSampleX = x; chosenSampleY = y + r; foundChanged = true; }
+                else if (got.q1[r] != e.q1[r]) { chosenSampleX = x + 1; chosenSampleY = y + r; foundChanged = true; }
+                else if (got.q2[r] != e.q2[r]) { chosenSampleX = x + 2; chosenSampleY = y + r; foundChanged = true; }
+            }
+            if (foundChanged) { chosenX=x; chosenY=y; chosenOut=got; goto edge_found; }
         }
 edge_found:
         if (!foundChanged) throw std::runtime_error("no changing luma edge found in mb_golden fixture");
-        uint8_t unfilteredPred = loopRef[chosenY * 16 + chosenX];
+        uint8_t unfilteredPred = loopRef[chosenSampleY * 16 + chosenSampleX];
         scatterV(loopRef, chosenX, chosenY, chosenOut);
-        uint8_t nextPred = loopRef[chosenY * 16 + chosenX];
+        uint8_t nextPred = loopRef[chosenSampleY * 16 + chosenSampleX];
         if (nextPred == unfilteredPred) throw std::runtime_error("in-loop reference did not feed filtered sample to next prediction");
 
         EdgeIO chroma{{118,119,120,121},{120,121,122,123},{122,123,124,125},{125,126,127,128},{131,132,133,134},{136,137,138,139},{138,139,140,141},{140,141,142,143}};
@@ -275,6 +283,7 @@ edge_found:
         std::cout << "deblock raw: bs_mb=" << bsMb << " bs_internal=" << bsInternal
                   << " bs_residual=" << bsResidual << " alpha=" << alpha << " beta=" << beta
                   << " tc0=" << tc0 << " loop_edge=x" << chosenX << "y" << chosenY
+                  << " changed_sample=x" << chosenSampleX << "y" << chosenSampleY
                   << " unfiltered_next=" << int(unfilteredPred) << " filtered_next=" << int(nextPred)
                   << " ref_fnv=0x" << std::hex << fnv1a(loopRef) << std::dec << "\n";
 
