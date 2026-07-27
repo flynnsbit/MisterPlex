@@ -1,7 +1,12 @@
-// H.264 Motion Compensation Interpolation Engine — v3
+// H.264 Motion Compensation Interpolation Engine — v3 (shift-add, zero DSPs)
 // Block-level luma quarter-pel and chroma eighth-pel interpolation.
 //
-// Budget: 250 cycles/MB (37% of 684 total at 20 MHz).
+// Resource target: ZERO DSP blocks. All FIR taps implemented via shift-add:
+//   x*5 = (x<<<2)+x; x*20 = (x<<<4)+(x<<<2). Chroma weights use multstyle=logic.
+//
+// Budget: 250 cycles/MB (w-c1 allocation).
+// At 45 MHz (w-arch v6): 1,250 cycles/MB available → 5× headroom.
+// At 20 MHz (legacy, FAILS arithmetic per w-arch): 556 cycles/MB → still fits.
 //
 // *** PERFORMANCE CAVEAT ***
 // The measured 220 cycles/MB is a LOWER BOUND under ideal memory conditions:
@@ -148,15 +153,24 @@ module h264_mc_interp #(
 		end
 	endfunction
 
+	// 6-tap FIR: coefficients {1, -5, 20, 20, -5, 1} via shift-add (zero DSPs)
+	// x*5 = (x<<<2)+x; x*20 = (x<<<4)+(x<<<2)
 	function automatic signed [20:0] luma_h6_raw;
 		input [9:0] base;
+		reg signed [20:0] s0, s1, s2, s3, s4, s5;
 		begin
-			luma_h6_raw = $signed({1'b0, 12'd0, ref_buf[base - 10'd2]})
-			            - $signed({1'b0, 12'd0, ref_buf[base - 10'd1]}) * 21'sd5
-			            + $signed({1'b0, 12'd0, ref_buf[base]})         * 21'sd20
-			            + $signed({1'b0, 12'd0, ref_buf[base + 10'd1]}) * 21'sd20
-			            - $signed({1'b0, 12'd0, ref_buf[base + 10'd2]}) * 21'sd5
-			            + $signed({1'b0, 12'd0, ref_buf[base + 10'd3]});
+			s0 = $signed({1'b0, 12'd0, ref_buf[base - 10'd2]});
+			s1 = $signed({1'b0, 12'd0, ref_buf[base - 10'd1]});
+			s2 = $signed({1'b0, 12'd0, ref_buf[base]});
+			s3 = $signed({1'b0, 12'd0, ref_buf[base + 10'd1]});
+			s4 = $signed({1'b0, 12'd0, ref_buf[base + 10'd2]});
+			s5 = $signed({1'b0, 12'd0, ref_buf[base + 10'd3]});
+			luma_h6_raw = s0
+			            - ((s1 <<< 2) + s1)
+			            + ((s2 <<< 4) + (s2 <<< 2))
+			            + ((s3 <<< 4) + (s3 <<< 2))
+			            - ((s4 <<< 2) + s4)
+			            + s5;
 		end
 	endfunction
 
@@ -186,24 +200,26 @@ module h264_mc_interp #(
 	wire signed [20:0] b0_raw = luma_h6_raw(ridx(lr0, lc0));
 	wire [7:0] half_b0 = clip1((b0_raw + 21'sd16) >>> 5);
 
-	// Vertical half-pel 'h0' at (lr0, lc0)
-	wire signed [20:0] h0_raw =
-		$signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc0)]})
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc0)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc0)]}) * 21'sd20
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc0)]}) * 21'sd20
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc0)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc0)]});
+	// Vertical half-pel 'h0' at (lr0, lc0) — shift-add (zero DSPs)
+	wire signed [20:0] h0_s0 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc0)]});
+	wire signed [20:0] h0_s1 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc0)]});
+	wire signed [20:0] h0_s2 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc0)]});
+	wire signed [20:0] h0_s3 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc0)]});
+	wire signed [20:0] h0_s4 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc0)]});
+	wire signed [20:0] h0_s5 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc0)]});
+	wire signed [20:0] h0_raw = h0_s0 - ((h0_s1<<<2)+h0_s1) + ((h0_s2<<<4)+(h0_s2<<<2))
+	                          + ((h0_s3<<<4)+(h0_s3<<<2)) - ((h0_s4<<<2)+h0_s4) + h0_s5;
 	wire [7:0] half_h0 = clip1((h0_raw + 21'sd16) >>> 5);
 
 	// Vertical half-pel 'k0' at (lr0, lc0+1) — reused as h1 for sample 1
-	wire signed [20:0] k0_raw =
-		$signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc0 + 5'd1)]})
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc0 + 5'd1)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc0 + 5'd1)]}) * 21'sd20
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc0 + 5'd1)]}) * 21'sd20
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc0 + 5'd1)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc0 + 5'd1)]});
+	wire signed [20:0] k0_s0 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc0 + 5'd1)]});
+	wire signed [20:0] k0_s1 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc0 + 5'd1)]});
+	wire signed [20:0] k0_s2 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc0 + 5'd1)]});
+	wire signed [20:0] k0_s3 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc0 + 5'd1)]});
+	wire signed [20:0] k0_s4 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc0 + 5'd1)]});
+	wire signed [20:0] k0_s5 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc0 + 5'd1)]});
+	wire signed [20:0] k0_raw = k0_s0 - ((k0_s1<<<2)+k0_s1) + ((k0_s2<<<4)+(k0_s2<<<2))
+	                          + ((k0_s3<<<4)+(k0_s3<<<2)) - ((k0_s4<<<2)+k0_s4) + k0_s5;
 	wire [7:0] half_k0 = clip1((k0_raw + 21'sd16) >>> 5);
 
 	// Horizontal half-pel 's0' at (lr0+1, lc0) — below b0
@@ -224,8 +240,19 @@ module h264_mc_interp #(
 	wire signed [20:0] j0_h3 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h3_raw)}) : j0_h3_raw;
 	wire signed [20:0] j0_h4 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h4_raw)}) : j0_h4_raw;
 	wire signed [20:0] j0_h5 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j0_h5_raw)}) : j0_h5_raw;
-	wire signed [31:0] j0_sum = j0_h0 - 32'sd5 * j0_h1 + 32'sd20 * j0_h2
-	                          + 32'sd20 * j0_h3 - 32'sd5 * j0_h4 + j0_h5;
+	// j0 vertical 6-tap via shift-add (zero DSPs)
+	wire signed [31:0] j0_e0 = {{11{j0_h0[20]}}, j0_h0};
+	wire signed [31:0] j0_e1 = {{11{j0_h1[20]}}, j0_h1};
+	wire signed [31:0] j0_e2 = {{11{j0_h2[20]}}, j0_h2};
+	wire signed [31:0] j0_e3 = {{11{j0_h3[20]}}, j0_h3};
+	wire signed [31:0] j0_e4 = {{11{j0_h4[20]}}, j0_h4};
+	wire signed [31:0] j0_e5 = {{11{j0_h5[20]}}, j0_h5};
+	wire signed [31:0] j0_sum = j0_e0
+	    - ((j0_e1 <<< 2) + j0_e1)
+	    + ((j0_e2 <<< 4) + (j0_e2 <<< 2))
+	    + ((j0_e3 <<< 4) + (j0_e3 <<< 2))
+	    - ((j0_e4 <<< 2) + j0_e4)
+	    + j0_e5;
 	wire signed [31:0] j0_round = FAULT_BAD_ROUND_OFFSET ? 32'sd256 : 32'sd512;
 	wire [7:0] half_j0 = clip1((j0_sum + j0_round) >>> 10);
 
@@ -271,14 +298,15 @@ module h264_mc_interp #(
 	// Vertical half-pel 'h1' = k0 (reused)
 	wire [7:0] half_h1 = half_k0;
 
-	// Vertical half-pel 'k1' at (lr0, lc1+1)
-	wire signed [20:0] k1_raw =
-		$signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc1 + 5'd1)]})
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc1 + 5'd1)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc1 + 5'd1)]}) * 21'sd20
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc1 + 5'd1)]}) * 21'sd20
-		- $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc1 + 5'd1)]}) * 21'sd5
-		+ $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc1 + 5'd1)]});
+	// Vertical half-pel 'k1' at (lr0, lc1+1) — shift-add (zero DSPs)
+	wire signed [20:0] k1_s0 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd2, lc1 + 5'd1)]});
+	wire signed [20:0] k1_s1 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 - 5'd1, lc1 + 5'd1)]});
+	wire signed [20:0] k1_s2 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0,        lc1 + 5'd1)]});
+	wire signed [20:0] k1_s3 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd1, lc1 + 5'd1)]});
+	wire signed [20:0] k1_s4 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd2, lc1 + 5'd1)]});
+	wire signed [20:0] k1_s5 = $signed({1'b0, 12'd0, ref_buf[ridx(lr0 + 5'd3, lc1 + 5'd1)]});
+	wire signed [20:0] k1_raw = k1_s0 - ((k1_s1<<<2)+k1_s1) + ((k1_s2<<<4)+(k1_s2<<<2))
+	                          + ((k1_s3<<<4)+(k1_s3<<<2)) - ((k1_s4<<<2)+k1_s4) + k1_s5;
 	wire [7:0] half_k1 = clip1((k1_raw + 21'sd16) >>> 5);
 
 	// Horizontal half-pel 's1' at (lr0+1, lc1)
@@ -298,8 +326,19 @@ module h264_mc_interp #(
 	wire signed [20:0] j1_h3 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h3_raw)}) : j1_h3_raw;
 	wire signed [20:0] j1_h4 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h4_raw)}) : j1_h4_raw;
 	wire signed [20:0] j1_h5 = FAULT_NO_INTERMEDIATE_CLIP ? $signed({13'd0, clip1(j1_h5_raw)}) : j1_h5_raw;
-	wire signed [31:0] j1_sum = j1_h0 - 32'sd5 * j1_h1 + 32'sd20 * j1_h2
-	                          + 32'sd20 * j1_h3 - 32'sd5 * j1_h4 + j1_h5;
+	// j1 vertical 6-tap via shift-add (zero DSPs)
+	wire signed [31:0] j1_e0 = {{11{j1_h0[20]}}, j1_h0};
+	wire signed [31:0] j1_e1 = {{11{j1_h1[20]}}, j1_h1};
+	wire signed [31:0] j1_e2 = {{11{j1_h2[20]}}, j1_h2};
+	wire signed [31:0] j1_e3 = {{11{j1_h3[20]}}, j1_h3};
+	wire signed [31:0] j1_e4 = {{11{j1_h4[20]}}, j1_h4};
+	wire signed [31:0] j1_e5 = {{11{j1_h5[20]}}, j1_h5};
+	wire signed [31:0] j1_sum = j1_e0
+	    - ((j1_e1 <<< 2) + j1_e1)
+	    + ((j1_e2 <<< 4) + (j1_e2 <<< 2))
+	    + ((j1_e3 <<< 4) + (j1_e3 <<< 2))
+	    - ((j1_e4 <<< 2) + j1_e4)
+	    + j1_e5;
 	wire signed [31:0] j1_round = FAULT_BAD_ROUND_OFFSET ? 32'sd256 : 32'sd512;
 	wire [7:0] half_j1 = clip1((j1_sum + j1_round) >>> 10);
 
@@ -346,17 +385,24 @@ module h264_mc_interp #(
 	wire [3:0] cwx1 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? {1'b0, chroma_dy} : {1'b0, chroma_dx};
 	wire [3:0] cwy1 = FAULT_CHROMA_WEIGHT_TRANSPOSE ? {1'b0, chroma_dx} : {1'b0, chroma_dy};
 
-	wire [15:0] chr0_sum = cwx0 * cwy0 * {8'd0, c0_p00}
-	                     + cwx1 * cwy0 * {8'd0, c0_p10}
-	                     + cwx0 * cwy1 * {8'd0, c0_p01}
-	                     + cwx1 * cwy1 * {8'd0, c0_p11}
+	// Chroma bilinear weights — all logic, zero DSPs
+	// Weight products: 4×4 = 7 bits max (64). Weighted pixels: 7×8 = 15 bits max.
+	(* multstyle = "logic" *) wire [6:0] cw00 = cwx0 * cwy0;
+	(* multstyle = "logic" *) wire [6:0] cw10 = cwx1 * cwy0;
+	(* multstyle = "logic" *) wire [6:0] cw01 = cwx0 * cwy1;
+	(* multstyle = "logic" *) wire [6:0] cw11 = cwx1 * cwy1;
+
+	(* multstyle = "logic" *) wire [15:0] chr0_sum = {9'd0, cw00} * {8'd0, c0_p00}
+	                     + {9'd0, cw10} * {8'd0, c0_p10}
+	                     + {9'd0, cw01} * {8'd0, c0_p01}
+	                     + {9'd0, cw11} * {8'd0, c0_p11}
 	                     + 16'd32;
 	wire [7:0] chroma0 = chr0_sum[13:6];
 
-	wire [15:0] chr1_sum = cwx0 * cwy0 * {8'd0, c1_p00}
-	                     + cwx1 * cwy0 * {8'd0, c1_p10}
-	                     + cwx0 * cwy1 * {8'd0, c1_p01}
-	                     + cwx1 * cwy1 * {8'd0, c1_p11}
+	(* multstyle = "logic" *) wire [15:0] chr1_sum = {9'd0, cw00} * {8'd0, c1_p00}
+	                     + {9'd0, cw10} * {8'd0, c1_p10}
+	                     + {9'd0, cw01} * {8'd0, c1_p01}
+	                     + {9'd0, cw11} * {8'd0, c1_p11}
 	                     + 16'd32;
 	wire [7:0] chroma1 = chr1_sum[13:6];
 
