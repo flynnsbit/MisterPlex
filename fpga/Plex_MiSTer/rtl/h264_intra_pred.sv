@@ -2,7 +2,7 @@
 // Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
 // Plex vector. All intra modes supported: I4x4 (9 modes), I16x16 (4 modes incl.
 // Plane per clause 8.3.3.4), Chroma 8x8 (4 modes incl. Plane per clause 8.3.4.4).
-// I_PCM (mb_type 25) accepted by mode guard; bitstream parsing is in stream_path.
+// I_PCM (mb_type 25) remains UNSUPPORTED — mode guard fires unsupported_code for it.
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -331,10 +331,10 @@ module h264_intra_mode_guard (
 			unsupported_code  <= 4'd0;
 			unsupported_mb    <= 16'd0;
 			unsupported_block <= 5'd0;
-		end else if (mb_valid && bad_type) begin
+		end else if (mb_valid && (is_ipcm || bad_type)) begin
 			unsupported_valid <= 1'b1;
 			unsupported_seen  <= 1'b1;
-			unsupported_code  <= UNSUP_MB_TYPE;
+			unsupported_code  <= is_ipcm ? UNSUP_IPCM : UNSUP_MB_TYPE;
 			unsupported_mb    <= mb_index;
 			unsupported_block <= block_index;
 		end

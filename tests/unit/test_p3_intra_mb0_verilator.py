@@ -221,14 +221,15 @@ int main(int argc, char** argv) {
     expect(dut.unsupported_valid == 0, "I16 Plane should NOT pulse unsupported_valid (now implemented)");
     expect(dut.unsupported_seen == 0, "I16 Plane should NOT set sticky unsupported_seen (now implemented)");
 
-    // I_PCM is now supported — should NOT trigger unsupported
+    // I_PCM remains unsupported — should still trigger unsupported
     reset(dut);
     dut.mb_valid = 1;
     dut.mb_type = 25;
     dut.i16_pred_mode = 0;
     tick(dut);
-    expect(dut.unsupported_valid == 0, "IPCM should NOT pulse unsupported_valid (now accepted)");
-    expect(dut.unsupported_seen == 0, "IPCM should NOT set sticky unsupported_seen (now accepted)");
+    expect(dut.unsupported_valid == 1, "IPCM should pulse unsupported_valid (still unsupported)");
+    expect(dut.unsupported_code == 2, "IPCM should report code 2");
+    expect(dut.unsupported_seen == 1, "IPCM should set sticky unsupported_seen");
 
     // Bad MB type should still trigger unsupported
     reset(dut);
@@ -264,7 +265,7 @@ int main(int argc, char** argv) {
         std::cerr << "P3 intra mode guard Verilator check FAILED: " << failures << " mismatches\n";
         return 1;
     }
-    std::cout << "P3 intra mode guard Verilator check PASS: I16 Plane+IPCM now accepted, bad type still caught.\n";
+    std::cout << "P3 intra mode guard Verilator check PASS: I16 Plane accepted, IPCM+bad type still caught.\n";
     return 0;
 }
 '''
