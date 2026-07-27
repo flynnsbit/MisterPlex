@@ -67,3 +67,30 @@ test_h264_golden_extractor: OK deterministic MB0 golden; ref csum=0x14 recon_sig
 
 $ make unit > /dev/null 2>&1 && echo 'make unit: PASS exit 0'
 make unit: PASS exit 0
+
+W-C1B latency-aware fixture update consumed:
+- Rebased/replayed CAVLC residual RTL onto current origin/main 2c530bd, then cherry-picked W-C1B `feat/c1b-latency-fixtures` @ 9fc0e64.
+- The shared `misterplex.p3.mb_golden.v1` fixture now carries explicit latency red-check signatures: MB0 true recon signature is 0x3b, while pred-only and one-cycle-delayed residual models are both 0x00.
+- For CAVLC/hardware validation, 0x00 is a required reject, not an alternate golden. Any visual/telemetry hardware gate must prove residual valid/data is aligned with prediction rather than accepting pred-only or one-cycle-delayed output.
+
+Command output — latency-aware shared golden extractor:
+$ make h264-golden-tools && tests/unit/test_h264_golden_extractor.sh
+g++ -std=c++17 -O2 -Wall -Wextra -I/home/shawn/Projects/mp-wt-cavlc/host -o /home/shawn/Projects/mp-wt-cavlc/build/extract_h264_golden /home/shawn/Projects/mp-wt-cavlc/tools/extract_h264_golden.cpp
+extract_h264_golden: OK input=tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 mb=0 frame=320x240 csum=0x14 recon_sig=0x3b ref=match
+extract_h264_golden: OK input=tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 mb=0 frame=320x240 csum=0x14 recon_sig=0x3b ref=match
+test_h264_golden_extractor: OK deterministic MB0 golden; nA/nB/nC/table diagnostics; latency red-check pred-only=0x00 vs recon=0x3b
+
+Command output — CAVLC/sim/lint after latency update:
+$ tests/unit/test_h264_cavlc_residual_verilator.sh
+RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=1)
+H264 CAVLC residual Verilator PASS: prefix-free tables checked; roundtrip_cases=526 including all coeff_token tables, luma/chroma total_zeros, run_before, nC edges, suffix escalation
+
+$ scripts/rtl_lint.py
+RTL lint: parsed 66 Quartus RTL/context files; reporting 26 owned files
+RTL lint: PASS no warning regressions above /home/shawn/Projects/mp-wt-cavlc/tests/fixtures/rtl_lint_baseline.json
+
+$ make rtl-sim >/dev/null 2>&1 && echo 'make rtl-sim: PASS exit 0'
+make rtl-sim: PASS exit 0
+
+$ make unit >/dev/null 2>&1 && echo 'make unit: PASS exit 0'
+make unit: PASS exit 0
