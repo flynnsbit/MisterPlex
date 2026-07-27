@@ -391,7 +391,7 @@ module h264_deblock_writeback_ctrl #(
 	parameter int MB_COUNT = 1170,
 	parameter int FRAME_SLOT_W = 2,
 	parameter int SAMPLES_PER_MB = 384,
-	localparam int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
+	parameter int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
 ) (
 	input  wire                   clk,
 	input  wire                   reset,
