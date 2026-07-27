@@ -376,6 +376,10 @@ module h264_luma_qpel_block_16x16 (
 		avg2 = (a + b + 1) >>> 1;
 	endfunction
 
+	function automatic [7:0] u8(input integer v);
+		u8 = v[7:0];
+	endfunction
+
 	function automatic integer hraw_at(input integer row, input integer col);
 		hraw_at = pix(row, col - 2) - 5 * pix(row, col - 1) +
 		          20 * pix(row, col) + 20 * pix(row, col + 1) -
@@ -409,22 +413,22 @@ module h264_luma_qpel_block_16x16 (
 			col = x + 2;
 			row = y + 2;
 			case ({frac_y, frac_x})
-			4'b0000: qpel_at = pix(row, col)[7:0];
-			4'b0001: qpel_at = avg2(pix(row, col), half_h_at(row, col))[7:0];
-			4'b0010: qpel_at = half_h_at(row, col)[7:0];
-			4'b0011: qpel_at = avg2(half_h_at(row, col), pix(row, col + 1))[7:0];
-			4'b0100: qpel_at = avg2(pix(row, col), half_v_at(row, col))[7:0];
-			4'b0101: qpel_at = avg2(half_h_at(row, col), half_v_at(row, col))[7:0];
-			4'b0110: qpel_at = avg2(half_h_at(row, col), half_c_at(row, col))[7:0];
-			4'b0111: qpel_at = avg2(half_h_at(row, col), half_v_at(row, col + 1))[7:0];
-			4'b1000: qpel_at = half_v_at(row, col)[7:0];
-			4'b1001: qpel_at = avg2(half_v_at(row, col), half_c_at(row, col))[7:0];
-			4'b1010: qpel_at = half_c_at(row, col)[7:0];
-			4'b1011: qpel_at = avg2(half_c_at(row, col), half_v_at(row, col + 1))[7:0];
-			4'b1100: qpel_at = avg2(half_v_at(row, col), pix(row + 1, col))[7:0];
-			4'b1101: qpel_at = avg2(half_h_at(row + 1, col), half_v_at(row, col))[7:0];
-			4'b1110: qpel_at = avg2(half_c_at(row, col), half_h_at(row + 1, col))[7:0];
-			default: qpel_at = avg2(half_h_at(row + 1, col), half_v_at(row, col + 1))[7:0];
+			4'b0000: qpel_at = u8(pix(row, col));
+			4'b0001: qpel_at = u8(avg2(pix(row, col), half_h_at(row, col)));
+			4'b0010: qpel_at = u8(half_h_at(row, col));
+			4'b0011: qpel_at = u8(avg2(half_h_at(row, col), pix(row, col + 1)));
+			4'b0100: qpel_at = u8(avg2(pix(row, col), half_v_at(row, col)));
+			4'b0101: qpel_at = u8(avg2(half_h_at(row, col), half_v_at(row, col)));
+			4'b0110: qpel_at = u8(avg2(half_h_at(row, col), half_c_at(row, col)));
+			4'b0111: qpel_at = u8(avg2(half_h_at(row, col), half_v_at(row, col + 1)));
+			4'b1000: qpel_at = u8(half_v_at(row, col));
+			4'b1001: qpel_at = u8(avg2(half_v_at(row, col), half_c_at(row, col)));
+			4'b1010: qpel_at = u8(half_c_at(row, col));
+			4'b1011: qpel_at = u8(avg2(half_c_at(row, col), half_v_at(row, col + 1)));
+			4'b1100: qpel_at = u8(avg2(half_v_at(row, col), pix(row + 1, col)));
+			4'b1101: qpel_at = u8(avg2(half_h_at(row + 1, col), half_v_at(row, col)));
+			4'b1110: qpel_at = u8(avg2(half_c_at(row, col), half_h_at(row + 1, col)));
+			default: qpel_at = u8(avg2(half_h_at(row + 1, col), half_v_at(row, col + 1)));
 			endcase
 		end
 	endfunction

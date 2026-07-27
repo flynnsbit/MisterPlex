@@ -391,7 +391,7 @@ module h264_deblock_writeback_ctrl #(
 	parameter int MB_COUNT = 1170,
 	parameter int FRAME_SLOT_W = 2,
 	parameter int SAMPLES_PER_MB = 384,
-	localparam int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
+	parameter int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
 ) (
 	input  wire                   clk,
 	input  wire                   reset,
@@ -412,11 +412,12 @@ module h264_deblock_writeback_ctrl #(
 	output reg                    commit_order_error
 );
 	localparam int SAMPLE_COUNT_W = $clog2(SAMPLES_PER_MB + 1);
+	localparam [SAMPLE_COUNT_W-1:0] SAMPLES_PER_MB_COUNT = SAMPLES_PER_MB;
 
 	reg                    ref_pending;
 	reg [FRAME_SLOT_W-1:0] ref_pending_slot;
 	reg [SAMPLE_COUNT_W-1:0] sample_count;
-	wire samples_complete = (sample_count == SAMPLE_COUNT_W'(SAMPLES_PER_MB));
+	wire samples_complete = (sample_count == SAMPLES_PER_MB_COUNT);
 `ifdef H264_DEBLOCK_FAULT_MB_COMMIT_EARLY
 	wire commit_now = filtered_mb_valid;
 `else

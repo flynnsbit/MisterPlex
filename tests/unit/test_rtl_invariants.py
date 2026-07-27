@@ -22,6 +22,10 @@ DDR_FRAME_LAYOUT_SVH = Path(
 DDR_FRAME_STORE = Path(
     os.environ.get("DDR_FRAME_STORE", ROOT / "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv")
 )
+H264_DEBLOCK = Path(
+    os.environ.get("H264_DEBLOCK", ROOT / "fpga/Plex_MiSTer/rtl/h264_deblock.sv")
+)
+H264_DPB = Path(os.environ.get("H264_DPB", ROOT / "fpga/Plex_MiSTer/rtl/h264_dpb.sv"))
 FPGA_SPI_HPP = Path(os.environ.get("FPGA_SPI_HPP", ROOT / "arm/misterplexd/fpga_spi.hpp"))
 FPGA_SPI_CPP = Path(os.environ.get("FPGA_SPI_CPP", ROOT / "arm/misterplexd/fpga_spi.cpp"))
 DDR_FRAME_LAYOUT_HPP = Path(
@@ -314,6 +318,40 @@ def check_plex_reset_domains() -> None:
     if not missing_reset_requirements(faulted):
         fail("deliberately tying DDR present reset to sdram_startup_busy did not make the reset gate red")
     print("PASS Plex.sv DDR presenter reset is not held behind SDRAM startup")
+
+
+def check_quartus_syntax_tripwires() -> None:
+    deblock = strip_comments(read(H264_DEBLOCK))
+    dpb = strip_comments(read(H264_DPB))
+
+    def missing_quartus_requirements(deblock_text: str, dpb_text: str) -> list[str]:
+        missing: list[str] = []
+        m = re.search(r"module\s+h264_deblock_writeback_ctrl\s*#\s*\((.*?)\)\s*\(", deblock_text, re.S)
+        if not m or re.search(r"\blocalparam\b", m.group(1)):
+            missing.append(
+                "h264_deblock_writeback_ctrl parameter port list contains localparam. "
+                "Verilator accepts this, but Quartus rejected the fit source; keep "
+                "derived port widths as parameters or move them out of the port list."
+            )
+        if re.search(r"\)\s*\[[^\]]+\]", dpb_text):
+            missing.append(
+                "h264_dpb.sv contains a part-select directly on a function/expression "
+                "result. Quartus rejected this around qpel_at; assign through a sized "
+                "helper/value instead."
+            )
+        return missing
+
+    missing = missing_quartus_requirements(deblock, dpb)
+    if missing:
+        fail(f"Quartus syntax tripwire: {missing[0]}")
+
+    fault_deblock = deblock.replace("parameter int MB_AW =", "localparam int MB_AW =", 1)
+    if not missing_quartus_requirements(fault_deblock, dpb):
+        fail("deliberate h264_deblock localparam-in-parameter-list fault did not go red")
+    fault_dpb = dpb.replace("u8(pix(row, col))", "pix(row, col)[7:0]", 1)
+    if not missing_quartus_requirements(deblock, fault_dpb):
+        fail("deliberate h264_dpb function-call part-select fault did not go red")
+    print("PASS Quartus syntax tripwires for known Verilator-clean fit failures")
 
 
 def check_mailboxes() -> None:
@@ -930,6 +968,7 @@ def main() -> int:
     check_present_core()
     check_phase_a_surface()
     check_plex_reset_domains()
+    check_quartus_syntax_tripwires()
     check_mailboxes()
     check_ddr_bitstream_ring()
     check_status_telemetry()
