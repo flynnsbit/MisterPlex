@@ -19,6 +19,7 @@ struct EdgeOut { std::array<uint8_t,4> p2{}, p1{}, p0{}, q0{}, q1{}, q2{}; };
 int clip(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 int clip8(int v) { return clip(v, 0, 255); }
 int absdiff(int a, int b) { return a >= b ? a - b : b - a; }
+int sign5(int v) { v &= 31; return (v & 16) ? v - 32 : v; }
 
 std::vector<uint8_t> readBytes(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
@@ -127,12 +128,12 @@ EdgeOut refEdge(const EdgeIO& in, bool chroma, int bs, int qp, int alphaOff, int
 
 void tick(Vstream_path_deblock_tb& dut) { dut.clk = 0; dut.eval(); dut.clk = 1; dut.eval(); }
 
-void setEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int bs) {
-    dut.db_is_chroma = chroma; dut.db_bs_in = bs; dut.db_alpha_off = 0; dut.db_beta_off = 0;
+void setEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int bs, int alphaOff = 0, int betaOff = 0) {
+    dut.db_is_chroma = chroma; dut.db_bs_in = bs; dut.db_alpha_off = alphaOff; dut.db_beta_off = betaOff;
     for (int i=0;i<4;++i) { dut.db_p3_in[i]=e.p3[i]; dut.db_p2_in[i]=e.p2[i]; dut.db_p1_in[i]=e.p1[i]; dut.db_p0_in[i]=e.p0[i]; dut.db_q0_in[i]=e.q0[i]; dut.db_q1_in[i]=e.q1[i]; dut.db_q2_in[i]=e.q2[i]; dut.db_q3_in[i]=e.q3[i]; }
 }
-EdgeOut pipeEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int bs) {
-    setEdge(dut, e, chroma, bs); dut.db_valid_i = 1; tick(dut);
+EdgeOut pipeEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int bs, int alphaOff = 0, int betaOff = 0) {
+    setEdge(dut, e, chroma, bs, alphaOff, betaOff); dut.db_valid_i = 1; tick(dut);
     EdgeIO poison{}; setEdge(dut, poison, false, 0); dut.db_valid_i = 0; tick(dut);
     if (!dut.db_valid_o) throw std::runtime_error("deblock pipe did not assert valid_o after registered latency");
     EdgeOut out{};
@@ -142,14 +143,22 @@ EdgeOut pipeEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int
 }
 bool same(const EdgeOut& a, const EdgeOut& b) { return a.p2==b.p2 && a.p1==b.p1 && a.p0==b.p0 && a.q0==b.q0 && a.q1==b.q1 && a.q2==b.q2; }
 
-EdgeIO gatherV(const std::vector<uint8_t>& f, int x, int y) {
-    EdgeIO e{}; int w=16;
+EdgeIO gatherV(const std::vector<uint8_t>& f, int x, int y, int w = 16) {
+    EdgeIO e{};
     for (int r=0;r<4;++r) { int yy=y+r; e.p3[r]=f[yy*w+x-4]; e.p2[r]=f[yy*w+x-3]; e.p1[r]=f[yy*w+x-2]; e.p0[r]=f[yy*w+x-1]; e.q0[r]=f[yy*w+x]; e.q1[r]=f[yy*w+x+1]; e.q2[r]=f[yy*w+x+2]; e.q3[r]=f[yy*w+x+3]; }
     return e;
 }
-void scatterV(std::vector<uint8_t>& f, int x, int y, const EdgeOut& o) {
-    int w=16;
+void scatterV(std::vector<uint8_t>& f, int x, int y, const EdgeOut& o, int w = 16) {
     for (int r=0;r<4;++r) { int yy=y+r; f[yy*w+x-3]=o.p2[r]; f[yy*w+x-2]=o.p1[r]; f[yy*w+x-1]=o.p0[r]; f[yy*w+x]=o.q0[r]; f[yy*w+x+1]=o.q1[r]; f[yy*w+x+2]=o.q2[r]; }
+}
+
+EdgeIO gatherH(const std::vector<uint8_t>& f, int w, int x, int y) {
+    EdgeIO e{};
+    for (int c=0;c<4;++c) { int xx=x+c; e.p3[c]=f[(y-4)*w+xx]; e.p2[c]=f[(y-3)*w+xx]; e.p1[c]=f[(y-2)*w+xx]; e.p0[c]=f[(y-1)*w+xx]; e.q0[c]=f[y*w+xx]; e.q1[c]=f[(y+1)*w+xx]; e.q2[c]=f[(y+2)*w+xx]; e.q3[c]=f[(y+3)*w+xx]; }
+    return e;
+}
+void scatterH(std::vector<uint8_t>& f, int w, int x, int y, const EdgeOut& o) {
+    for (int c=0;c<4;++c) { int xx=x+c; f[(y-3)*w+xx]=o.p2[c]; f[(y-2)*w+xx]=o.p1[c]; f[(y-1)*w+xx]=o.p0[c]; f[y*w+xx]=o.q0[c]; f[(y+1)*w+xx]=o.q1[c]; f[(y+2)*w+xx]=o.q2[c]; }
 }
 
 uint32_t fnv1a(const std::vector<uint8_t>& v) { uint32_t h=2166136261u; for (uint8_t b:v) { h^=b; h*=16777619u; } return h; }
@@ -240,16 +249,46 @@ int main(int argc, char** argv) {
         if (dut.residual_csum != 0x14 || dut.recon_sig != 0x3b) throw std::runtime_error("stream_path handoff did not preserve residual into recon");
         if ((dut.recon_dbg & 0x79) != 0x79) throw std::runtime_error("recon debug bits do not show coeff/dequant/idct/recon/valid path");
         if (int(dut.slice_qp) != goldenQp) throw std::runtime_error("stream QP differs from mb_golden QP");
+        if (int(dut.disable_deblocking_filter_idc) != 0 || sign5(dut.slice_alpha_c0_offset_div2) != 0 ||
+            sign5(dut.slice_beta_offset_div2) != 0 || sign5(dut.slice_alpha_c0_offset) != 0 ||
+            sign5(dut.slice_beta_offset) != 0) {
+            throw std::runtime_error("fixture slice deblocking controls are not the expected idc=0 offsets=0 baseline");
+        }
 
         dut.bs_disable_all=0; dut.bs_slice_boundary_blocked=0; dut.bs_p_nonzero=0; dut.bs_q_nonzero=0; dut.bs_p_ref=0; dut.bs_q_ref=0; dut.bs_p_mvx=0; dut.bs_p_mvy=0; dut.bs_q_mvx=0; dut.bs_q_mvy=0; dut.use_stream_intra=1;
         dut.bs_mb_boundary=1; dut.eval(); int bsMb = dut.bs_derived;
         dut.bs_mb_boundary=0; dut.eval(); int bsInternal = dut.bs_derived;
         dut.use_stream_intra=0; dut.bs_p_intra=0; dut.bs_q_intra=0; dut.bs_p_nonzero=1; dut.eval(); int bsResidual = dut.bs_derived;
-        if (bsMb != 4 || bsInternal != 3 || bsResidual != 2) throw std::runtime_error("boundary-strength derivation failed");
+        dut.bs_p_nonzero=0; dut.bs_q_nonzero=1; dut.eval(); int bsResidualQ = dut.bs_derived;
+        dut.bs_q_nonzero=0; dut.bs_q_mvx=3; dut.bs_q_mvy=0; dut.eval(); int bsMvBelow = dut.bs_derived;
+        dut.bs_q_mvx=4; dut.eval(); int bsMvXPos = dut.bs_derived;
+        dut.bs_q_mvx=-4; dut.eval(); int bsMvXNeg = dut.bs_derived;
+        dut.bs_q_mvx=0; dut.bs_q_mvy=4; dut.eval(); int bsMvYPos = dut.bs_derived;
+        dut.bs_q_mvy=-4; dut.eval(); int bsMvYNeg = dut.bs_derived;
+        dut.bs_q_mvy=0; dut.bs_q_ref=1; dut.eval(); int bsRefDiff = dut.bs_derived; int unsupportedRefOk = dut.bs_unsupported_ref;
+        dut.bs_q_ref=2; dut.eval(); int unsupportedRefLoud = dut.bs_unsupported_ref;
+        dut.bs_q_ref=0; dut.bs_slice_boundary_blocked=1; dut.bs_p_nonzero=1; dut.eval(); int bsSliceBoundaryBlocked = dut.bs_derived;
+        dut.bs_slice_boundary_blocked=0; dut.bs_disable_all=1; dut.eval(); int bsDisableAll = dut.bs_derived;
+        if (bsMb != 4 || bsInternal != 3 || bsResidual != 2 || bsResidualQ != 2 ||
+            bsMvBelow != 0 || bsMvXPos != 1 || bsMvXNeg != 1 || bsMvYPos != 1 ||
+            bsMvYNeg != 1 || bsRefDiff != 1 || unsupportedRefOk || !unsupportedRefLoud ||
+            bsSliceBoundaryBlocked != 0 || bsDisableAll != 0) {
+            throw std::runtime_error("boundary-strength derivation completeness sweep failed");
+        }
 
         dut.use_stream_qp=1; dut.db_bs_in=3; dut.db_alpha_off=0; dut.db_beta_off=0; dut.eval();
         int alpha = dut.db_alpha, beta = dut.db_beta, tc0 = dut.db_tc0;
         if (alpha != alphaTable(goldenQp) || beta != betaTable(goldenQp) || tc0 != tc0Table(goldenQp, 3)) throw std::runtime_error("thresholds do not match stream QP average");
+        dut.use_stream_qp=0; dut.db_qp_avg=28; dut.db_bs_in=2; dut.db_alpha_off=6; dut.db_beta_off=-6; dut.eval();
+        int alphaOff = dut.db_alpha, betaOff = dut.db_beta, tc0Off = dut.db_tc0;
+        if (alphaOff != alphaTable(34) || betaOff != betaTable(22) || tc0Off != tc0Table(34, 2)) throw std::runtime_error("nonzero slice filter offsets did not index threshold tables");
+        dut.db_qp_avg=51; dut.db_bs_in=1; dut.db_alpha_off=12; dut.db_beta_off=12; dut.eval();
+        int alphaClip = dut.db_alpha, betaClip = dut.db_beta, tc0Clip = dut.db_tc0;
+        if (alphaClip != alphaTable(51) || betaClip != betaTable(51) || tc0Clip != tc0Table(51, 1)) throw std::runtime_error("high filter offset clipping failed");
+        dut.db_qp_avg=4; dut.db_bs_in=3; dut.db_alpha_off=-12; dut.db_beta_off=-12; dut.eval();
+        int alphaLowClip = dut.db_alpha, betaLowClip = dut.db_beta, tc0LowClip = dut.db_tc0;
+        if (alphaLowClip != 0 || betaLowClip != 0 || tc0LowClip != 0) throw std::runtime_error("low filter offset clipping failed");
+        dut.use_stream_qp=1;
 
         std::vector<uint8_t> loopRef = reconY;
         bool foundChanged = false; int chosenX = -1, chosenY = -1; int chosenSampleX = -1, chosenSampleY = -1; EdgeOut chosenOut{};
@@ -279,13 +318,66 @@ edge_found:
         EdgeOut chromaWant = refEdge(chroma, true, 2, goldenQp, 0, 0);
         EdgeOut chromaGot = pipeEdge(dut, chroma, true, 2);
         if (!same(chromaWant, chromaGot)) throw std::runtime_error("chroma deblock output mismatch");
+        EdgeIO chromaStrong{{110,111,112,113},{112,113,114,115},{114,115,116,117},{120,121,122,123},{124,125,126,127},{128,129,130,131},{130,131,132,133},{132,133,134,135}};
+        dut.use_stream_qp = 0; dut.db_qp_avg = 40;
+        EdgeOut chromaStrongGot = pipeEdge(dut, chromaStrong, true, 4);
+        EdgeOut chromaStrongWant = refEdge(chromaStrong, true, 4, 40, 0, 0);
+        EdgeOut lumaStrongWould = refEdge(chromaStrong, false, 4, 40, 0, 0);
+        dut.use_stream_qp = 1;
+        if (!same(chromaStrongWant, chromaStrongGot)) throw std::runtime_error("chroma bS4 short filter mismatch");
+        if (chromaStrongGot.p1 != chromaStrong.p1 || chromaStrongGot.p2 != chromaStrong.p2 ||
+            chromaStrongGot.q1 != chromaStrong.q1 || chromaStrongGot.q2 != chromaStrong.q2 ||
+            same(chromaStrongGot, lumaStrongWould)) {
+            throw std::runtime_error("chroma bS4 used luma strong-filter behaviour");
+        }
+
+        constexpr int codedMbW = 39, codedMbH = 30, codedW = codedMbW * 16, codedH = codedMbH * 16;
+        static_assert(codedW == 624 && codedH == 480, "settled coded geometry changed");
+        const int verticalSegments = codedMbH * 4 * ((codedMbW - 1) + codedMbW * 3);
+        const int horizontalSegments = codedMbW * 4 * ((codedMbH - 1) + codedMbH * 3);
+        const int skippedPictureBoundarySegments = (2 * codedMbH * 4) + (2 * codedMbW * 4);
+        if (codedW == 640 || verticalSegments != 18600 || horizontalSegments != 18564 || skippedPictureBoundarySegments != 552) {
+            throw std::runtime_error("coded geometry or picture-boundary edge count is wrong");
+        }
+        std::vector<uint8_t> boundaryFrame(32 * 32);
+        for (int y=0; y<32; ++y) for (int x=0; x<32; ++x) {
+            boundaryFrame[y*32+x] = (x == 0 || y == 0 || x == 31 || y == 31) ? 0xee : static_cast<uint8_t>(clip8(96 + x + y + (x >= 16 ? 9 : 0) + (y >= 16 ? 7 : 0)));
+        }
+        std::vector<uint8_t> beforeBoundary = boundaryFrame;
+        for (int x : {4,8,12,16,20,24,28}) for (int y=0; y<32; y+=4) {
+            scatterV(boundaryFrame, x, y, pipeEdge(dut, gatherV(boundaryFrame, x, y, 32), false, x == 16 ? 4 : 2), 32);
+        }
+        for (int y : {4,8,12,16,20,24,28}) for (int x=0; x<32; x+=4) {
+            scatterH(boundaryFrame, 32, x, y, pipeEdge(dut, gatherH(boundaryFrame, 32, x, y), false, y == 16 ? 4 : 2));
+        }
+        for (int i=0; i<32; ++i) {
+            if (boundaryFrame[i] != beforeBoundary[i] || boundaryFrame[31*32+i] != beforeBoundary[31*32+i] ||
+                boundaryFrame[i*32] != beforeBoundary[i*32] || boundaryFrame[i*32+31] != beforeBoundary[i*32+31]) {
+                throw std::runtime_error("picture-boundary pixels changed");
+            }
+        }
 
         std::cout << "deblock raw: bs_mb=" << bsMb << " bs_internal=" << bsInternal
-                  << " bs_residual=" << bsResidual << " alpha=" << alpha << " beta=" << beta
-                  << " tc0=" << tc0 << " loop_edge=x" << chosenX << "y" << chosenY
+                  << " bs_residual_pq=" << bsResidual << "/" << bsResidualQ
+                  << " bs_mv=below" << bsMvBelow << "/x+" << bsMvXPos << "/x-" << bsMvXNeg
+                  << "/y+" << bsMvYPos << "/y-" << bsMvYNeg
+                  << " bs_refdiff=" << bsRefDiff << " idc2_boundary_bs=" << bsSliceBoundaryBlocked
+                  << " idc1_disable_bs=" << bsDisableAll
+                  << " slice_deblock_idc=" << int(dut.disable_deblocking_filter_idc)
+                  << " slice_offsets_div2=" << sign5(dut.slice_alpha_c0_offset_div2) << "/" << sign5(dut.slice_beta_offset_div2)
+                  << " slice_offsets=" << sign5(dut.slice_alpha_c0_offset) << "/" << sign5(dut.slice_beta_offset)
+                  << " alpha=" << alpha << " beta=" << beta << " tc0=" << tc0
+                  << " offset_case_alpha_beta_tc0=" << alphaOff << "/" << betaOff << "/" << tc0Off
+                  << " clip_hi_alpha_beta_tc0=" << alphaClip << "/" << betaClip << "/" << tc0Clip
+                  << " clip_lo_alpha_beta_tc0=" << alphaLowClip << "/" << betaLowClip << "/" << tc0LowClip
+                  << " chroma_bS4_p1_unchanged=" << int(chromaStrongGot.p1[0])
+                  << " boundary_segments_vh=" << verticalSegments << "/" << horizontalSegments
+                  << " skipped_picture_boundary_segments=" << skippedPictureBoundarySegments
+                  << " loop_edge=x" << chosenX << "y" << chosenY
                   << " changed_sample=x" << chosenSampleX << "y" << chosenSampleY
                   << " unfiltered_next=" << int(unfilteredPred) << " filtered_next=" << int(nextPred)
-                  << " ref_fnv=0x" << std::hex << fnv1a(loopRef) << std::dec << "\n";
+                  << " ref_fnv=0x" << std::hex << fnv1a(loopRef)
+                  << " boundary_fnv=0x" << fnv1a(boundaryFrame) << std::dec << "\n";
 
         if (faultBs) {
             std::vector<uint8_t> badRef = reconY;

@@ -44,6 +44,11 @@ module stream_path #(
 	output wire [7:0]  first_mb_type,
 	output wire        has_mb_type,
 	output wire [5:0]  slice_qp,
+	output wire [1:0]  disable_deblocking_filter_idc,
+	output wire signed [4:0] slice_alpha_c0_offset_div2,
+	output wire signed [4:0] slice_beta_offset_div2,
+	output wire signed [4:0] slice_alpha_c0_offset,
+	output wire signed [4:0] slice_beta_offset,
 	output wire [4:0]  residual_tc,
 	output wire [1:0]  residual_t1,
 	output wire        residual_ok,
@@ -151,6 +156,8 @@ module stream_path #(
 	wire [7:0] sl_type, sl_pps, sl_mbt;
 	wire signed [7:0] sl_qpd, sl_rdc;
 	wire [5:0] sl_qp;
+	wire [1:0] sl_deblock_idc;
+	wire signed [4:0] sl_alpha_div2, sl_beta_div2, sl_alpha_off, sl_beta_off;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
 	wire sl_place_ok;
@@ -178,6 +185,11 @@ module stream_path #(
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
 		.is_i_slice(sl_is_i),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
+		.disable_deblocking_filter_idc(sl_deblock_idc),
+		.slice_alpha_c0_offset_div2(sl_alpha_div2),
+		.slice_beta_offset_div2(sl_beta_div2),
+		.slice_alpha_c0_offset(sl_alpha_off),
+		.slice_beta_offset(sl_beta_off),
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
@@ -198,6 +210,11 @@ module stream_path #(
 	assign first_mb_type = sl_mbt;
 	assign has_mb_type   = sl_has_mbt;
 	assign slice_qp      = sl_qp;
+	assign disable_deblocking_filter_idc = sl_deblock_idc;
+	assign slice_alpha_c0_offset_div2 = sl_alpha_div2;
+	assign slice_beta_offset_div2 = sl_beta_div2;
+	assign slice_alpha_c0_offset = sl_alpha_off;
+	assign slice_beta_offset = sl_beta_off;
 	assign residual_tc   = sl_rtc;
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
