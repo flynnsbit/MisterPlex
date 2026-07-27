@@ -31,6 +31,13 @@ module h264_deblock_tb (
 	input  wire signed [11:0] p_mvy,
 	input  wire signed [11:0] q_mvx,
 	input  wire signed [11:0] q_mvy,
+	input  wire              idr_frame_start,
+	input  wire              filtered_mb_valid,
+	input  wire [10:0]       filtered_mb_addr,
+	input  wire              filtered_mb_is_ref,
+	input  wire              filtered_frame_done,
+	input  wire [1:0]        frame_slot_i,
+	input  wire              frame_boundary,
 	output wire [2:0]        bs_derived,
 	output wire              unsupported_ref,
 	output wire [7:0]        p2_out [0:3],
@@ -48,7 +55,13 @@ module h264_deblock_tb (
 	output wire [7:0]        pipe_p0_out [0:3],
 	output wire [7:0]        pipe_q0_out [0:3],
 	output wire [7:0]        pipe_q1_out [0:3],
-	output wire [7:0]        pipe_q2_out [0:3]
+	output wire [7:0]        pipe_q2_out [0:3],
+	output wire              wb_valid,
+	output wire [10:0]       wb_mb_addr,
+	output wire              wb_is_ref,
+	output wire              dpb_invalidate_refs,
+	output wire              ref_ready_pulse,
+	output wire [1:0]        ref_ready_slot
 );
 	h264_deblock_bs u_bs (
 		.disable_all(disable_all),
@@ -95,6 +108,24 @@ module h264_deblock_tb (
 		.valid_o(pipe_valid_o),
 		.p2_out(pipe_p2_out), .p1_out(pipe_p1_out), .p0_out(pipe_p0_out),
 		.q0_out(pipe_q0_out), .q1_out(pipe_q1_out), .q2_out(pipe_q2_out)
+	);
+
+	h264_deblock_writeback_ctrl #(.MB_COUNT(1170), .FRAME_SLOT_W(2)) u_writeback (
+		.clk(clk),
+		.reset(reset),
+		.idr_frame_start(idr_frame_start),
+		.filtered_mb_valid(filtered_mb_valid),
+		.filtered_mb_addr(filtered_mb_addr),
+		.filtered_mb_is_ref(filtered_mb_is_ref),
+		.filtered_frame_done(filtered_frame_done),
+		.frame_slot_i(frame_slot_i),
+		.frame_boundary(frame_boundary),
+		.wb_valid(wb_valid),
+		.wb_mb_addr(wb_mb_addr),
+		.wb_is_ref(wb_is_ref),
+		.dpb_invalidate_refs(dpb_invalidate_refs),
+		.ref_ready_pulse(ref_ready_pulse),
+		.ref_ready_slot(ref_ready_slot)
 	);
 
 endmodule

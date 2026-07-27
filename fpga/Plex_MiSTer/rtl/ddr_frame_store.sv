@@ -253,7 +253,11 @@ module ddr_frame_store #(
 	reg [SLOT_W-1:0] y_hit_idx_now, c_hit_idx_now;
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
+`ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
+	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-2:0];
+`else
 	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
+`endif
 	always @* begin
 		y_hit_now = 1'b0;
 		c_hit_now = 1'b0;
@@ -392,7 +396,6 @@ module ddr_frame_store #(
 	reg have_seq;
 	reg doorbell_primed;
 	reg format_error;
-	reg accepted_db_after_reset;
 	reg [STALE_DB_POLL_W-1:0] stale_db_polls;
 	reg [15:0] mbox_seq, mbox_last;
 	reg mbox_req, mbox_valid;
@@ -560,7 +563,11 @@ module ddr_frame_store #(
 	reg [15:0] imbox_seq;
 	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
 	wire [28:0] fill_y_qword = {{(29-Y_W){1'b0}}, fill_y} * Y_LINE_QWORDS_W;
+`ifdef DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE
+	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * Y_LINE_QWORDS_W;
+`else
 	wire [28:0] fill_cy_qword = {{(30-Y_W){1'b0}}, fill_cy} * C_LINE_QWORDS_W;
+`endif
 	wire [28:0] fill_qword_y = {{(29-Y_QW_AW){1'b0}}, fill_qword[Y_QW_AW-1:0]};
 	wire [28:0] fill_qword_c = {{(29-C_QW_AW){1'b0}}, fill_qword[C_QW_AW-1:0]};
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
@@ -583,7 +590,7 @@ module ddr_frame_store #(
 	wire db_token_new = db_valid_token && (!have_seq || (db_token != last_seq));
 	wire db_token_same = db_valid_token && have_seq && (db_token == last_seq);
 	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
-	                         doorbell_primed && !accepted_db_after_reset &&
+	                         doorbell_primed &&
 	                         (stale_db_polls == STALE_DB_POLL_W'(STALE_DB_POLL_MAX));
 	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
 	                  db_stale_fallback;
@@ -638,7 +645,6 @@ module ddr_frame_store #(
 			have_seq <= 1'b0;
 			doorbell_primed <= 1'b0;
 			format_error <= 1'b0;
-			accepted_db_after_reset <= 1'b0;
 			stale_db_polls <= '0;
 			doorbell_ok <= 1'b0;
 			start_d1 <= 1'b0;
@@ -733,7 +739,7 @@ module ddr_frame_store #(
 				have_seq <= 1'b1;
 				format_error <= 1'b0;
 			end
-			if (db_magic_ok && doorbell_primed && !accepted_db_after_reset && !db_token_new && !db_stale_fallback) begin
+			if (db_magic_ok && doorbell_primed && !db_token_new && !db_stale_fallback) begin
 				if (stale_db_polls != STALE_DB_POLL_W'(STALE_DB_POLL_MAX))
 					stale_db_polls <= stale_db_polls + 1'b1;
 			end
@@ -743,7 +749,6 @@ module ddr_frame_store #(
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
-				accepted_db_after_reset <= 1'b1;
 				stale_db_polls <= '0;
 			end
 			if (spi_edge_ddr) begin

@@ -28,6 +28,7 @@ QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
+WRITEBACK_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_writeback_fault"
 GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
 ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
@@ -69,3 +70,24 @@ if ! grep -q 'multi-frame drift' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK h264_deblock RTL red-check: swapped edge order produced drift mismatch"
+
+mkdir -p "$WRITEBACK_FAULT_BUILD"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$WRITEBACK_FAULT_BUILD" \
+  --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_REF_READY_EARLY \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+WRITEBACK_FAULT_OUT="$("$WRITEBACK_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+WRITEBACK_FAULT_RC=$?
+set -e
+printf '%s\n' "$WRITEBACK_FAULT_OUT"
+if [[ "$WRITEBACK_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: early DPB ref_ready fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'DPB ref ready before frame boundary' <<<"$WRITEBACK_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: expected writeback/ref_ready diagnostic" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: early DPB ref_ready fault failed"

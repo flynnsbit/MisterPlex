@@ -387,4 +387,62 @@ module h264_deblock_edge_pipe (
 	end
 endmodule
 
+module h264_deblock_writeback_ctrl #(
+	parameter int MB_COUNT = 1170,
+	parameter int FRAME_SLOT_W = 2,
+	localparam int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT)
+) (
+	input  wire                   clk,
+	input  wire                   reset,
+	input  wire                   idr_frame_start,
+	input  wire                   filtered_mb_valid,
+	input  wire [MB_AW-1:0]       filtered_mb_addr,
+	input  wire                   filtered_mb_is_ref,
+	input  wire                   filtered_frame_done,
+	input  wire [FRAME_SLOT_W-1:0] frame_slot_i,
+	input  wire                   frame_boundary,
+	output reg                    wb_valid,
+	output reg  [MB_AW-1:0]       wb_mb_addr,
+	output reg                    wb_is_ref,
+	output reg                    dpb_invalidate_refs,
+	output reg                    ref_ready_pulse,
+	output reg  [FRAME_SLOT_W-1:0] ref_ready_slot
+);
+	reg                    ref_pending;
+	reg [FRAME_SLOT_W-1:0] ref_pending_slot;
+
+	always @(posedge clk) begin
+		if (reset) begin
+			wb_valid <= 1'b0;
+			wb_mb_addr <= '0;
+			wb_is_ref <= 1'b0;
+			dpb_invalidate_refs <= 1'b0;
+			ref_ready_pulse <= 1'b0;
+			ref_ready_slot <= '0;
+			ref_pending <= 1'b0;
+			ref_pending_slot <= '0;
+		end else begin
+			wb_valid <= filtered_mb_valid;
+			wb_mb_addr <= filtered_mb_addr;
+			wb_is_ref <= filtered_mb_is_ref;
+			dpb_invalidate_refs <= idr_frame_start;
+`ifdef H264_DEBLOCK_FAULT_REF_READY_EARLY
+			ref_ready_pulse <= filtered_mb_valid && filtered_frame_done && filtered_mb_is_ref;
+			ref_ready_slot <= frame_slot_i;
+`else
+			ref_ready_pulse <= frame_boundary && ref_pending;
+			ref_ready_slot <= ref_pending_slot;
+`endif
+			if (idr_frame_start)
+				ref_pending <= 1'b0;
+			if (filtered_mb_valid && filtered_frame_done && filtered_mb_is_ref) begin
+				ref_pending <= 1'b1;
+				ref_pending_slot <= frame_slot_i;
+			end
+			if (frame_boundary && ref_pending)
+				ref_pending <= 1'b0;
+		end
+	end
+endmodule
+
 `default_nettype wire
