@@ -336,6 +336,64 @@ int main() {
 
         // Torn read
         CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
+
+        // --- Independent RTL cross-check ---
+        // This word is constructed from the RTL packing expression in
+        // ddr_frame_store.sv (b187df5), NOT from the spec constants.
+        // It proves the C++ decoder matches what the FPGA actually writes,
+        // not just that the codec is self-consistent.
+        //
+        // RTL packing (from ddr_frame_store.sv line 829-837):
+        //   DDRAM_DIN <= {bank_vsync_count,           // [63:48]
+        //                 12'd0,                       // [47:36]
+        //                 swap_pending_d2,             // [35]
+        //                 disp_bank_d2,                // [34]
+        //                 swap_pending_d2 ? 2'b00 :    // [33:32]
+        //                   (disp_bank_d2 ? 2'b01 : 2'b10),
+        //                 MAGIC_D};                    // [31:0]
+        //
+        // Test case: disp_bank=1, swap_pending=0, bank_vsync_count=7
+        //   free_bank_mask = disp_bank ? 0b01 : 0b10 = 0b01
+        //   bits: [63:48]=7, [35]=0, [34]=1, [33:32]=01, [31:0]=0x504C5844
+        //   upper word = (7 << 16) | (0 << 3) | (1 << 2) | 0x01 = 0x00070005
+        //   full word  = 0x0007000500000000 | 0x504C5844
+        constexpr uint64_t rtl_word_a = 0x0007000500000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_a, br));
+        CHECK(br.free_bank_mask == 0x01);
+        CHECK(br.bank0Free());
+        CHECK(!br.bank1Free());
+        CHECK(br.disp_bank == 1);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 7);
+
+        // Test case: disp_bank=0, swap_pending=1, bank_vsync_count=0x1234
+        //   free_bank_mask = swap_pending ? 0b00 : ... = 0b00
+        //   bits: [63:48]=0x1234, [35]=1, [34]=0, [33:32]=00, [31:0]=0x504C5844
+        //   upper word = (0x1234 << 16) | (1 << 3) | (0 << 2) | 0x00 = 0x12340008
+        //   full word  = 0x1234000800000000 | 0x504C5844
+        constexpr uint64_t rtl_word_b = 0x1234000800000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_b, br));
+        CHECK(br.free_bank_mask == 0x00);
+        CHECK(!br.anyFree());
+        CHECK(br.freeBank() == -1);
+        CHECK(br.disp_bank == 0);
+        CHECK(br.swap_pending);
+        CHECK(br.frames_done == 0x1234);
+
+        // Test case: disp_bank=0, swap_pending=0, bank_vsync_count=0xFFFF
+        //   free_bank_mask = 0 ? 0b01 : 0b10 = 0b10
+        //   bits: [63:48]=0xFFFF, [35]=0, [34]=0, [33:32]=10, [31:0]=0x504C5844
+        //   upper word = (0xFFFF << 16) | (0 << 3) | (0 << 2) | 0x02 = 0xFFFF0002
+        //   full word  = 0xFFFF000200000000 | 0x504C5844
+        constexpr uint64_t rtl_word_c = 0xFFFF000200000000ull | 0x504C5844ull;
+        CHECK(decodeBankReleaseWord(rtl_word_c, br));
+        CHECK(br.free_bank_mask == 0x02);
+        CHECK(!br.bank0Free());
+        CHECK(br.bank1Free());
+        CHECK(br.freeBank() == 1);
+        CHECK(br.disp_bank == 0);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 0xFFFF);
     }
 
     if (fails) {
