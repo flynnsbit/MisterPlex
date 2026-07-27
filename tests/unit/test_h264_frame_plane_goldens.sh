@@ -62,6 +62,37 @@ check_fixture \
   tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_frame_planes_v1.json \
   624 480
 
+ENABLED_PLANES="$OUT/plex_inter_p16_320x240_12f_deblocked.i420"
+ENABLED_MANIFEST="$OUT/plex_inter_p16_320x240_12f_deblocked.json"
+"$TOOL" \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes-out "$ENABLED_PLANES" \
+  --manifest-out "$ENABLED_MANIFEST" \
+  --h264-loop-filter enabled
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes "$ENABLED_PLANES" \
+  --manifest "$ENABLED_MANIFEST" \
+  --expected-h264-loop-filter enabled
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes "$ENABLED_PLANES" \
+  --manifest "$ENABLED_MANIFEST" \
+  --expected-h264-loop-filter disabled \
+  > "$OUT/enabled_ref_as_disabled.log" 2>&1
+ENABLED_AS_DISABLED_RC=$?
+set -e
+if [[ "$ENABLED_AS_DISABLED_RC" -ne 9 ]]; then
+  cat "$OUT/enabled_ref_as_disabled.log"
+  echo "FAIL frame-plane red-check: deblocked reference rc=$ENABLED_AS_DISABLED_RC, want rc=9 refusal under disabled contract" >&2
+  exit 1
+fi
+grep -q 'loop-filter mismatch\|disabled H.264 loop filter\|loop_filter is not skip_loop_filter=all' "$OUT/enabled_ref_as_disabled.log"
+
 set +e
 "$TOOL" --verify \
   --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \

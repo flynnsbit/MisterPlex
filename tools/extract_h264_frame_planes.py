@@ -311,6 +311,8 @@ def validate_manifest(
     decoder_loop_filter_alias = decoder.get("loop_filter")
     if decoder_loop_filter == LOOP_FILTER_DISABLED and decoder_loop_filter_alias != "skip_loop_filter=all":
         refuse("frame-plane golden decoder loop_filter is not skip_loop_filter=all")
+    if decoder_loop_filter == LOOP_FILTER_ENABLED and decoder_loop_filter_alias == "skip_loop_filter=all":
+        refuse("frame-plane golden decoder loop_filter disables H.264 deblock")
     command_argv = decoder.get("command_argv")
     if not isinstance(command_argv, list) or not all(isinstance(v, str) for v in command_argv):
         refuse("frame-plane golden decoder command_argv is missing or invalid")
