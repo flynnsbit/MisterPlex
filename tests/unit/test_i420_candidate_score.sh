@@ -11,6 +11,8 @@ SCORE_JSON="$OUT/score.json"
 FAULT="$OUT/plex_inter_p16_320x240_12f_fault.i420"
 FAULT_JSON="$OUT/score_fault.json"
 MB_META="$OUT/inter_mb_metadata.json"
+ENABLED_PLANES="$OUT/plex_inter_p16_320x240_12f_deblocked.i420"
+ENABLED_MANIFEST="$OUT/plex_inter_p16_320x240_12f_deblocked.json"
 
 python3 - "$MB_META" <<'PY'
 import json
@@ -51,6 +53,22 @@ PY
   --candidate-h264-loop-filter disabled \
   --mb-metadata "$MB_META" \
   --output "$SCORE_JSON"
+
+"$ROOT/tools/extract_h264_frame_planes.py" \
+  --input "$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264" \
+  --sequence "$SEQ" \
+  --planes-out "$ENABLED_PLANES" \
+  --manifest-out "$ENABLED_MANIFEST" \
+  --h264-loop-filter enabled
+"$ROOT/tools/score_i420_candidate.py" \
+  --sequence "$SEQ" \
+  --golden-manifest "$ENABLED_MANIFEST" \
+  --golden-planes "$ENABLED_PLANES" \
+  --candidate-planes "$ENABLED_PLANES" \
+  --candidate-colorspace I420_NATIVE \
+  --reference-h264-loop-filter enabled \
+  --candidate-h264-loop-filter enabled \
+  --output "$OUT/score_enabled.json" >/dev/null
 
 python3 - "$SCORE_JSON" <<'PY'
 import json

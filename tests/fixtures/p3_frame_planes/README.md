@@ -22,8 +22,15 @@ hash before comparing. `tools/extract_h264_frame_planes.py --verify` performs th
 check. Candidate comparisons must declare `--candidate-colorspace I420_NATIVE`;
 unknown or RGB565-derived candidates are refused with rc=9 before byte comparison, as are
 manifests that declare any RGB/RGB565 round-trip or presentation border/pillar masking.
-Goldens with an unknown or enabled loop filter are also refused before comparison.
+Goldens with an unknown or enabled loop filter are also refused before comparison
+unless the caller explicitly requests `--expect-h264-loop-filter enabled`.
 Accepted native I420 candidates are compared plane-by-plane with raw exact/MAE/max_abs.
+
+For future post-deblock inter candidates, the generator can also produce an
+explicitly deblocked reference with `--h264-loop-filter enabled`; its manifest
+records `decoder.loop_filter=default` and `provenance.h264_loop_filter=enabled`.
+Do not compare those against pre-deblock candidates or disabled-loop-filter
+ratchets.
 
 Regenerate and verify:
 
@@ -34,7 +41,8 @@ tests/unit/test_h264_frame_plane_goldens.sh
 The unit gate regenerates all blobs, compares them to the checked-in goldens, verifies
 provenance, then flips one byte in frame 0 U and proves the plane comparison goes RED.
 It also proves unknown and mismatched candidate colorspaces go RED instead of grading stale
-or RGB-round-tripped data as native planes.
+or RGB-round-tripped data as native planes, and proves a deblocked manifest is rc=9 under
+the default disabled-loop-filter contract.
 
 The checked-in coverage includes:
 
