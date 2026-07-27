@@ -220,7 +220,7 @@ if [[ "$rc" -ne 0 ]]; then
   tail -80 "$log_file" >&2
   exit "$rc"
 fi
-for f in "$remote_project/output_files/Plex.rbf" "$remote_project/output_files/Plex.sta.rpt" "$remote_project/output_files/Plex.fit.rpt"; do
+for f in "$remote_project/output_files/Plex.rbf" "$remote_project/output_files/Plex.sta.rpt" "$remote_project/output_files/Plex.fit.rpt" "$remote_project/output_files/Plex.map.rpt"; do
   if [[ ! -f "$f" ]]; then
     echo "Build succeeded but missing artifact: $f" >&2
     exit 1
@@ -233,6 +233,8 @@ if [[ "$COPY_BACK" == "1" ]]; then
   rsync -a "$HOST:$REMOTE_PROJECT/output_files/Plex.rbf" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_PROJECT/output_files/Plex.sta.rpt" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_PROJECT/output_files/Plex.fit.rpt" "$LOCAL_OUT/"
+  rsync -a "$HOST:$REMOTE_PROJECT/output_files/Plex.map.rpt" "$LOCAL_OUT/"
+  rsync -a "$HOST:$REMOTE_SLOT/build_remote/compile.log" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/summary.txt" "$LOCAL_OUT/"
   rsync -a "$HOST:$REMOTE_SLOT/build_remote/docker_stats.tsv" "$LOCAL_OUT/"
   RBF="$LOCAL_OUT/Plex.rbf"
