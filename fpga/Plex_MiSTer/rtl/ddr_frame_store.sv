@@ -114,6 +114,20 @@ module ddr_frame_store #(
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
+	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
+	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
+		y_bin2gray = b ^ (b >> 1);
+	endfunction
+
+	function automatic [Y_W-1:0] y_gray2bin(input [Y_W-1:0] g);
+		integer gi;
+		begin
+			y_gray2bin[Y_W-1] = g[Y_W-1];
+			for (gi = Y_W-2; gi >= 0; gi = gi - 1)
+				y_gray2bin[gi] = y_gray2bin[gi+1] ^ g[gi];
+		end
+	endfunction
+
 	assign DDRAM_CLK = clk_ddr;
 	assign DDRAM_BE = 8'hFF;
 
@@ -263,6 +277,14 @@ module ddr_frame_store #(
 	reg [Y_W-2:0] c_line_v1 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v2 [0:LINE_SLOTS-1];
 	reg [Y_W-1:0] want_y_sys;
+	reg [Y_W-1:0] want_y_gray;  // Gray-encoded want_y for safe CDC
+
+	// Toggle-snapshot registers for multi-bit CDC (clk → clk_ddr)
+	reg [15:0] status_osd_hold;
+	reg        status_osd_toggle;
+	reg [23:0] sdram_status_hold;
+	reg        sdram_status_toggle;
+
 	reg rd_active_r, rd_active_d, rd_visible_r, rd_visible_d, miss_d;
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
@@ -331,6 +353,11 @@ module ddr_frame_store #(
 			miss_d <= 1'b0;
 			underrun_count <= 16'd0;
 			want_y_sys <= '0;
+			want_y_gray <= '0;
+			status_osd_hold <= 16'd0;
+			status_osd_toggle <= 1'b0;
+			sdram_status_hold <= 24'd0;
+			sdram_status_toggle <= 1'b0;
 			y_valid_v1 <= '0;
 			y_valid_v2 <= '0;
 			c_valid_v1 <= '0;
@@ -363,6 +390,19 @@ module ddr_frame_store #(
 
 			if (Y_W'(src_y) != want_y_sys)
 				want_y_sys <= Y_W'(src_y);
+			want_y_gray <= y_bin2gray(want_y_sys);
+
+			// Toggle-snapshot: status_osd (clk → clk_ddr)
+			if (status_osd != status_osd_hold) begin
+				status_osd_hold <= status_osd;
+				status_osd_toggle <= ~status_osd_toggle;
+			end
+
+			// Toggle-snapshot: sdram_status (clk → clk_ddr)
+			if ({sdram_error_count, sdram_size_code, sdram_test_state} != sdram_status_hold) begin
+				sdram_status_hold <= {sdram_error_count, sdram_size_code, sdram_test_state};
+				sdram_status_toggle <= ~sdram_status_toggle;
+			end
 
 			rd_active_r <= rd_active;
 			rd_active_d <= rd_active_r;
@@ -406,7 +446,7 @@ module ddr_frame_store #(
 	reg has_frame_d1, has_frame_d2;
 	reg swap_pending_d1, swap_pending_d2;
 	reg pending_bank_d1, pending_bank_d2;
-	reg [Y_W-1:0] want_y_s1, want_y_s2;
+	reg [Y_W-1:0] want_y_gray_s1, want_y_gray_s2;  // Gray-coded 2-FF sync
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
@@ -432,8 +472,12 @@ module ddr_frame_store #(
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
-	reg [15:0] status_osd_d1, status_osd_d2;
-	reg [23:0] sdram_status_d1, sdram_status_d2;
+
+	// Toggle-snapshot CDC receivers (clk → clk_ddr)
+	reg        status_osd_tog_s1, status_osd_tog_s2, status_osd_tog_seen;
+	reg [15:0] status_osd_safe;
+	reg        sdram_status_tog_s1, sdram_status_tog_s2, sdram_status_tog_seen;
+	reg [23:0] sdram_status_safe;
 
 	wire cmd_empty;
 	wire [7:0] cmd_rdata;
@@ -657,8 +701,8 @@ module ddr_frame_store #(
 			swap_pending_d2 <= 1'b0;
 			pending_bank_d1 <= 1'b0;
 			pending_bank_d2 <= 1'b0;
-			want_y_s1 <= '0;
-			want_y_s2 <= '0;
+			want_y_gray_s1 <= '0;
+			want_y_gray_s2 <= '0;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
 				desired_y_r[ti] <= '0;
 			pending_ready_ddr <= 1'b0;
@@ -677,10 +721,14 @@ module ddr_frame_store #(
 			start_seen <= 1'b0;
 			bank_sel_d1 <= 1'b0;
 			bank_sel_d2 <= 1'b0;
-			status_osd_d1 <= 16'd0;
-			status_osd_d2 <= 16'd0;
-			sdram_status_d1 <= 24'd0;
-			sdram_status_d2 <= 24'd0;
+			status_osd_tog_s1 <= 1'b0;
+			status_osd_tog_s2 <= 1'b0;
+			status_osd_tog_seen <= 1'b0;
+			status_osd_safe <= 16'd0;
+			sdram_status_tog_s1 <= 1'b0;
+			sdram_status_tog_s2 <= 1'b0;
+			sdram_status_tog_seen <= 1'b0;
+			sdram_status_safe <= 24'd0;
 			mbox_seq <= 16'd0;
 			mbox_last <= 16'd0;
 			mbox_req <= 1'b1;
@@ -740,24 +788,39 @@ module ddr_frame_store #(
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
-			want_y_s1 <= want_y_sys;
-			want_y_s2 <= want_y_s1;
+
+			// want_y: Gray-coded 2-FF sync (crossing #13)
+			want_y_gray_s1 <= want_y_gray;
+			want_y_gray_s2 <= want_y_gray_s1;
 			for (ti = 0; ti < LINE_COUNT; ti = ti + 1)
-				desired_y_r[ti] <= clamp_ahead(want_y_s1, ti);
+				desired_y_r[ti] <= clamp_ahead(y_gray2bin(want_y_gray_s2), ti);
+
 			start_d1 <= start_req;
 			start_d2 <= start_d1;
 			bank_sel_d1 <= bank_sel;
 			bank_sel_d2 <= bank_sel_d1;
-			status_osd_d1 <= status_osd;
-			status_osd_d2 <= status_osd_d1;
-			sdram_status_d1 <= {sdram_error_count, sdram_size_code, sdram_test_state};
-			sdram_status_d2 <= sdram_status_d1;
+
+			// status_osd: toggle-snapshot CDC (crossing #14)
+			status_osd_tog_s1 <= status_osd_toggle;
+			status_osd_tog_s2 <= status_osd_tog_s1;
+			if (status_osd_tog_s2 != status_osd_tog_seen) begin
+				status_osd_safe <= status_osd_hold;
+				status_osd_tog_seen <= status_osd_tog_s2;
+			end
+
+			// sdram_status: toggle-snapshot CDC (crossing #15)
+			sdram_status_tog_s1 <= sdram_status_toggle;
+			sdram_status_tog_s2 <= sdram_status_tog_s1;
+			if (sdram_status_tog_s2 != sdram_status_tog_seen) begin
+				sdram_status_safe <= sdram_status_hold;
+				sdram_status_tog_seen <= sdram_status_tog_s2;
+			end
 
 			mbox_hb <= mbox_hb + 18'd1;
-			if (!mbox_valid || (status_osd_d2 != mbox_last) || (mbox_hb == 18'd0))
+			if (!mbox_valid || (status_osd_safe != mbox_last) || (mbox_hb == 18'd0))
 				mbox_req <= 1'b1;
 			sdram_mbox_hb <= sdram_mbox_hb + 18'd1;
-			if (!sdram_mbox_valid || (sdram_status_d2 != sdram_mbox_last) || (sdram_mbox_hb == 18'd0))
+			if (!sdram_mbox_valid || (sdram_status_safe != sdram_mbox_last) || (sdram_mbox_hb == 18'd0))
 				sdram_mbox_req <= 1'b1;
 			frame_mbox_hb <= frame_mbox_hb + 18'd1;
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
@@ -921,20 +984,20 @@ module ddr_frame_store #(
 					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_d2, MAGIC_S};
+						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_safe, MAGIC_S};
 						DDRAM_WE <= 1'b1;
 						mbox_seq <= mbox_seq + 16'd1;
-						mbox_last <= status_osd_d2;
+						mbox_last <= status_osd_safe;
 						mbox_valid <= 1'b1;
 						mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (sdram_mbox_req && poll_div[7:0] == 8'd192 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= SDRAM_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {sdram_status_d2, sdram_mbox_seq + 8'd1, MAGIC_M};
+						DDRAM_DIN <= {sdram_status_safe, sdram_mbox_seq + 8'd1, MAGIC_M};
 						DDRAM_WE <= 1'b1;
 						sdram_mbox_seq <= sdram_mbox_seq + 8'd1;
-						sdram_mbox_last <= sdram_status_d2;
+						sdram_mbox_last <= sdram_status_safe;
 						sdram_mbox_valid <= 1'b1;
 						sdram_mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
