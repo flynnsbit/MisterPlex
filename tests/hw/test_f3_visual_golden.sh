@@ -18,7 +18,11 @@ CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
 CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
-COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
+if [[ "${VISUAL_FULL_FRAME:-0}" == "1" ]]; then
+  COMPARE_BOX="${VISUAL_COMPARE_BOX:-active}" # full 618x480 active display region
+else
+  COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
+fi
 RBF="${VISUAL_RBF:-${1:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"

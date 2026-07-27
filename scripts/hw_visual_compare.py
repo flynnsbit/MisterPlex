@@ -248,7 +248,7 @@ def capture_v4l2(path: Path, dev: str, input_format: str, size: str, framerate: 
 
 
 def parse_compare_box(spec: str | None, g: Geometry) -> tuple[int, int, int, int]:
-    if not spec:
+    if not spec or spec == "active":
         return g.active_box
     try:
         x, y, w, h = [int(p) for p in spec.split(",")]
@@ -281,6 +281,8 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
     diff = ca - ga
     ad = np.abs(diff)
     per_plane_mae = ad.reshape(-1, 3).mean(axis=0)
+    per_plane_exact = (ad == 0).reshape(-1, 3).sum(axis=0)
+    per_plane_max = ad.reshape(-1, 3).max(axis=0)
     exact = np.all(ad == 0, axis=2)
     worst_flat = int(np.argmax(ad))
     wy, wx, wc = np.unravel_index(worst_flat, ad.shape)
@@ -289,7 +291,10 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
         "active_pixels": int(exact.size),
         "exact_match_pixels": int(exact.sum()),
         "exact_match_ratio": float(exact.sum() / exact.size),
+        "per_plane_exact_match_pixels_rgb": [int(x) for x in per_plane_exact],
+        "per_plane_exact_match_ratio_rgb": [float(x / exact.size) for x in per_plane_exact],
         "per_plane_mae_rgb": [float(x) for x in per_plane_mae],
+        "per_plane_max_abs_rgb": [int(x) for x in per_plane_max],
         "overall_mae": float(ad.mean()),
         "max_abs": int(ad[wy, wx, wc]),
         "worst": {

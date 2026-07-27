@@ -44,12 +44,25 @@ For the current default 320×240 F3 vector, the hardware script narrows the comp
 can contain reload-dependent/uninitialized pixels on rollback `57674f2e`; comparing the whole active 618×480 area
 was the false-red failure mode.
 
+`VISUAL_FULL_FRAME=1` is the opt-in investigation path for the full **618×480** active display region. It keeps
+the same geometry parsing, noise calibration, stale rejection, corrupt-log `rc=4` guard, per-plane exact counts,
+and per-plane MAE reporting; do not treat it as a product gate until it is proven green on `57674f2e` and red on
+`fe7673bc` with one consistent vector/golden pair.
+
+For full-frame expansion, consume the shared multi-NAL fixtures from `tests/fixtures/p3_multinal/` rather than
+forking new streams. The first hardware candidate is `wcap_residual14_idr_plus_p.264` with
+`wcap_residual14_idr_plus_p_sequence_v1.json` (`nal_count=5`, `vcl=2`, IDR+P, Baseline/CAVLC, 320×240). That keeps
+the hardware visual gate aligned with the simulation-side multi-NAL stream-path gate and makes sim-vs-silicon
+disagreements directly actionable.
+
 ## Metrics and failure artifact
 
 `scripts/hw_visual_compare.py compare` reports:
 
 - active pixel count and exact-match pixel count
+- per-plane exact-match counts and ratios
 - per-plane RGB mean absolute error
+- per-plane max absolute error
 - overall MAE
 - worst mismatch location in presented and display coordinates
 - worst mismatch plane, golden value, captured value, and delta
