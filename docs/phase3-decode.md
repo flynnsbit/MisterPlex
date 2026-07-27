@@ -398,7 +398,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
     - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
     - ARM: `FpgaSpi::sendYuv420pFrameDdr` (I420 planar DDR payload + doorbell)
-    - Tool: `push_frame --ddr [--bank 0|1] file.rgb565`
+    - Tool: `push_frame --ddr [--bank 0|1] --yuv420p WxH file.yuv420p`
     - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only
       was a false negative — see diagnosis below
     - status_in[79] = ddr_busy during copy (`{ddr_busy,0,qp}` @ [79:72])

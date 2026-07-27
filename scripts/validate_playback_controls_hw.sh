@@ -23,8 +23,8 @@ REMOTE_DIR="/media/fat/misterplex/validation"
 REMOTE_PROBE="$REMOTE_DIR/input_mailbox_probe"
 REMOTE_PUSH="$REMOTE_DIR/push_frame"
 REMOTE_KEYS="$REMOTE_DIR/osd_keys.py"
-REMOTE_EDGE="$REMOTE_DIR/edge_markers.rgb"
-LOCAL_EDGE="$STATE_DIR/edge_markers.rgb"
+REMOTE_EDGE="$REMOTE_DIR/edge_markers.yuv420p"
+LOCAL_EDGE="$STATE_DIR/edge_markers.yuv420p"
 MODE="run"
 RBF=""
 DAEMON=""
@@ -414,9 +414,9 @@ check_edges() {
   log "7b. G-VID1 edge alignment"
   EDGE_CAP="$STATE_DIR/edge_prev.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
     python3 "$ROOT/scripts/check_edges.py" --capture-only --out "$STATE_DIR/edge_prev.png"
-  python3 "$ROOT/scripts/gen_edge_markers.py" "$LOCAL_EDGE"
+  python3 "$ROOT/scripts/gen_edge_markers.py" --format yuv420p "$LOCAL_EDGE"
   "${SCP[@]}" "$LOCAL_EDGE" "$USER@$HOST:$REMOTE_EDGE" >/dev/null
-  remote "'$REMOTE_PUSH' --ddr --rgb24 320x240 '$REMOTE_EDGE'"
+  remote "'$REMOTE_PUSH' --ddr --yuv420p 320x240 '$REMOTE_EDGE'"
   EDGE_CAP="$STATE_DIR/edge_cap.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
     python3 "$ROOT/scripts/check_edges.py" --previous "$STATE_DIR/edge_prev.png" \
     --out "$STATE_DIR/edge_cap.png" | tee "$STATE_DIR/check_edges.log"

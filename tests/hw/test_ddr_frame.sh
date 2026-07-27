@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 3.1b: push 320×240 RGB565 via DDR bulk and check has_frame.
+# Phase 3.1b: push 320×240 YUV420p via DDR bulk and check has_frame.
 # Requires Plex.rbf with ddram_frame_rd on the MiSTer.
 set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -7,7 +7,10 @@ USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="${ROOT}/build/arm/push_frame"
-FRAME="${FRAME:-/tmp/plex_test_320x240.rgb565}"
+FRAME="${FRAME:-${ROOT}/build/plex_test_320x240.yuv420p}"
+RGB_FRAME="${RGB_FRAME:-${ROOT}/build/plex_test_320x240.rgb565}"
+REMOTE_FRAME="/tmp/plex_test_320x240.yuv420p"
+REMOTE_RGB_FRAME="/tmp/plex_test_320x240.rgb565"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
@@ -19,7 +22,12 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 if [[ ! -f "$FRAME" ]]; then
-  python3 "${ROOT}/scripts/gen_test_frame.py" "$FRAME"
+  mkdir -p "$(dirname "$FRAME")"
+  python3 "${ROOT}/scripts/gen_edge_markers.py" --format yuv420p "$FRAME"
+fi
+if [[ ! -f "$RGB_FRAME" ]]; then
+  mkdir -p "$(dirname "$RGB_FRAME")"
+  python3 "${ROOT}/scripts/gen_test_frame.py" "$RGB_FRAME"
 fi
 
 echo "=== ensure Plex core loaded ==="
@@ -33,12 +41,12 @@ fi
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "== scp push_frame + frame to $HOST =="
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" \
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -q "$BIN" "$FRAME" "$RGB_FRAME" \
   "$USER@$HOST:/tmp/"
 
 echo "== SPI baseline =="
 SPI_OUT=$(ssh_m 'chmod +x /tmp/push_frame
-/tmp/push_frame /tmp/plex_test_320x240.rgb565
+/tmp/push_frame '"$REMOTE_RGB_FRAME"'
 ' 2>&1)
 echo "$SPI_OUT"
 SPI_MS=$(echo "$SPI_OUT" | grep -oE '[0-9]+\.[0-9]+ ms' | head -1 | grep -oE '^[0-9]+' || echo 0)
@@ -47,7 +55,7 @@ echo "== DDR push =="
 # Reset so has_frame 0→1 is a strong proof of DMA (not stale SPI frame).
 OUT=$(ssh_m '/tmp/push_frame --pulse 0 >/dev/null
 sleep 0.05
-/tmp/push_frame --ddr /tmp/plex_test_320x240.rgb565
+/tmp/push_frame --ddr --yuv420p 320x240 '"$REMOTE_FRAME"'
 /tmp/push_frame --status
 ' 2>&1)
 echo "$OUT"

@@ -46,6 +46,16 @@ INPUT_MAILBOX_HPP = Path(
 STATUS_TELEMETRY_HPP = Path(
     os.environ.get("STATUS_TELEMETRY_HPP", ROOT / "host/libmisterplex/status_telemetry.hpp")
 )
+VALIDATE_PLAYBACK_HW_SH = Path(
+    os.environ.get(
+        "VALIDATE_PLAYBACK_HW_SH", ROOT / "scripts/validate_playback_controls_hw.sh"
+    )
+)
+TEST_DDR_FRAME_SH = Path(
+    os.environ.get("TEST_DDR_FRAME_SH", ROOT / "tests/hw/test_ddr_frame.sh")
+)
+HW_README_MD = Path(os.environ.get("HW_README_MD", ROOT / "tests/hw/README.md"))
+PHASE3_DECODE_MD = Path(os.environ.get("PHASE3_DECODE_MD", ROOT / "docs/phase3-decode.md"))
 
 
 def read(path: Path) -> str:
@@ -499,6 +509,25 @@ def check_yuv_ddr_writer_contract() -> None:
         "memset(yuv.data(),kYuv420BlackY,yBytes)" not in compact_media,
         "MediaPlayer::paintIdle still constructs an all-black DDR idle payload. That is only "
         "valid for IDLE_SCREEN=black; logo/screensaver modes must preserve the idle renderer.",
+    )
+    tooling = "\n".join(
+        [
+            strip_comments(read(VALIDATE_PLAYBACK_HW_SH)),
+            strip_comments(read(TEST_DDR_FRAME_SH)),
+            read(HW_README_MD),
+            read(PHASE3_DECODE_MD),
+        ]
+    )
+    check(
+        "--ddr --rgb24" not in tooling,
+        "DDR helper tooling still invokes push_frame --ddr --rgb24. The DDR frame-store path "
+        "is YUV420p only; RGB helpers must remain SPI-only or the hardware gate will now "
+        "fail before presenting a frame.",
+    )
+    check(
+        "push_frame --ddr" not in tooling or "file.rgb565" not in tooling,
+        "DDR helper documentation still describes push_frame --ddr with RGB565 input. That "
+        "call site was orphaned when 28c6c79 removed RGB DDR writes; use --yuv420p/I420.",
     )
     print("PASS ARM DDR writer uses product yuv420p frame-store path only")
 
