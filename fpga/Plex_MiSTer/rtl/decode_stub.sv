@@ -84,6 +84,7 @@ module decode_stub #(
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
 	// First MB (0,0) filled with recon stub gray when residual_ok
 	wire mb0 = (x < 10'd16) && (y < 10'd16);
+	wire inter_diag_tile = (x >= 10'd16) && (x < 10'd32) && (y < 10'd16);
 	// 3.3l-2: first 4x4 inv_quant + IDCT (pred=128) from the shared
 	// h264_iq_idct_4x4.sv RTL. The signature is XOR of reconstructed samples.
 	wire signed [17:0] idct_dequant [0:15];
@@ -137,6 +138,70 @@ module decode_stub #(
 		.recon(recon_px)
 	);
 
+	// P3 inter-prediction product diagnostic: keep the motion/interpolation RTL
+	// instantiated in the shipped bitstream and paint a visible pass/fail tile.
+	wire signed [15:0] inter_pred_x, inter_pred_y, inter_mv_x, inter_mv_y;
+	wire               inter_skip_zero;
+	wire [7:0]         inter_luma_ref [0:80];
+	wire [7:0]         inter_luma_sample;
+	wire [7:0]         inter_chroma_sample;
+	wire [15:0]        inter_fetch_x, inter_fetch_y;
+	genvar inter_ref_i;
+	generate
+		for (inter_ref_i = 0; inter_ref_i < 81; inter_ref_i = inter_ref_i + 1) begin : gen_inter_ref
+			assign inter_luma_ref[inter_ref_i] =
+				(((inter_ref_i / 9) * 37 + (inter_ref_i % 9) * 19 +
+				  ((inter_ref_i / 9) * (inter_ref_i % 9) * 7)) ^
+				 (((inter_ref_i / 9) + 3) * 11)) & 8'hff;
+		end
+	endgenerate
+
+	h264_mv_pred_16x16 u_inter_mv_diag (
+		.avail_a(1'b1), .avail_b(1'b1), .avail_c(1'b1), .avail_d(1'b0),
+		.mv_a_x(16'sd4), .mv_a_y(-16'sd2),
+		.mv_b_x(-16'sd8), .mv_b_y(16'sd6),
+		.mv_c_x(16'sd12), .mv_c_y(16'sd10),
+		.mv_d_x(16'sd0), .mv_d_y(16'sd0),
+		.mvd_x(16'sd1), .mvd_y(-16'sd1), .p_skip(1'b0),
+		.pred_x(inter_pred_x), .pred_y(inter_pred_y),
+		.mv_x(inter_mv_x), .mv_y(inter_mv_y), .skip_zero(inter_skip_zero)
+	);
+
+	h264_luma_qpel_sample u_inter_luma_diag (
+		.ref_pix(inter_luma_ref), .frac_x(2'd3), .frac_y(2'd2), .sample(inter_luma_sample)
+	);
+
+	h264_chroma_epel_sample u_inter_chroma_diag (
+		.p00(8'd23), .p10(8'd101), .p01(8'd77), .p11(8'd209),
+		.frac_x(3'd3), .frac_y(3'd5), .sample(inter_chroma_sample)
+	);
+
+	h264_luma_ref_tap_addr u_inter_fetch_diag (
+		.base_x(16'sd100), .base_y(16'sd50), .tap_idx(7'd80),
+		.width(16'd624), .height(16'd480), .tap_x(inter_fetch_x), .tap_y(inter_fetch_y)
+	);
+
+	wire [7:0] inter_diag_sig = inter_pred_x[7:0] ^ inter_pred_y[7:0] ^
+	                            inter_mv_x[7:0] ^ inter_mv_y[7:0] ^
+	                            inter_luma_sample ^ inter_chroma_sample ^
+	                            inter_fetch_x[7:0] ^ inter_fetch_y[7:0];
+	wire inter_mv_ok = !inter_skip_zero && (inter_pred_x == 16'sd4) && (inter_pred_y == 16'sd6) &&
+	                   (inter_mv_x == 16'sd5) && (inter_mv_y == 16'sd5);
+	wire inter_luma_ok = (inter_luma_sample == 8'd105);
+	wire inter_chroma_ok = (inter_chroma_sample == 8'd99);
+	wire inter_fetch_ok = (inter_fetch_x == 16'd104) && (inter_fetch_y == 16'd54);
+	wire inter_diag_ok = (inter_diag_sig == 8'h56) && inter_mv_ok && inter_luma_ok &&
+	                     inter_chroma_ok && inter_fetch_ok;
+	wire [1:0] inter_diag_band = x[3:2];
+	wire inter_band_ok = (inter_diag_band == 2'd0) ? inter_mv_ok :
+	                     (inter_diag_band == 2'd1) ? inter_luma_ok :
+	                     (inter_diag_band == 2'd2) ? inter_chroma_ok :
+	                                                  inter_fetch_ok;
+	wire [7:0] inter_band_sig = (inter_diag_band == 2'd0) ? (inter_pred_x[7:0] ^ inter_pred_y[7:0] ^ inter_mv_x[7:0] ^ inter_mv_y[7:0]) :
+	                            (inter_diag_band == 2'd1) ? inter_luma_sample :
+	                            (inter_diag_band == 2'd2) ? inter_chroma_sample :
+	                                                         (inter_fetch_x[7:0] ^ inter_fetch_y[7:0]);
+
 	// 3.3k fallback: paint from residual_dc (scan coeff0 → 128+dc)
 	wire signed [9:0] recon_sum = 10'sd128 + lat_res_dc;
 	wire [7:0] recon_from_dc =
@@ -151,18 +216,21 @@ module decode_stub #(
 
 	wire [7:0] rr =
 		border   ? 8'h10 :
+		inter_diag_tile ? (inter_band_ok ? 8'h10 : 8'hf0) :
 		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? {lat_type[4:0], 3'b000} :
 		mb_line  ? (is_i_frame ? 8'h20 : 8'h80) :
 		           (8'h08 + {4'b0, mb_hash[3:0]});
 	wire [7:0] gg =
 		border   ? (idr_style ? 8'hE0 : 8'hC0) :
+		inter_diag_tile ? (inter_band_ok ? 8'hf0 : 8'h10) :
 		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? lat_idr :
 		mb_line  ? (is_i_frame ? 8'hE0 : 8'h40) :
 		           (8'h18 + {3'b0, mb_hash[4:0]});
 	wire [7:0] bb =
 		border   ? (idr_style ? 8'h20 : 8'hE0) :
+		inter_diag_tile ? inter_band_sig :
 		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? 8'h20 :
 		mb_line  ? 8'h30 :
