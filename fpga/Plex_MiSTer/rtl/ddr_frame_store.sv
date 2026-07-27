@@ -25,7 +25,10 @@ module ddr_frame_store #(
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
 	parameter int DDR_BURST_MAX = 128,
-	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1
+	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
+	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
+	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
+	parameter bit STRICT_YUV_DOORBELL = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -105,6 +108,8 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
+	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
+	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1;
 
 	assign DDRAM_CLK = clk_ddr;
 	assign DDRAM_BE = 8'hFF;
@@ -374,15 +379,21 @@ module ddr_frame_store #(
 	reg [Y_W-2:0] c_line [0:LINE_SLOTS-1];
 	reg disp_bank_d1, disp_bank_d2;
 	reg disp_buf_d1, disp_buf_d2;
+	reg has_frame_d1, has_frame_d2;
 	reg swap_pending_d1, swap_pending_d2;
 	reg pending_bank_d1, pending_bank_d2;
 	reg [Y_W-1:0] want_y_s1, want_y_s2;
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
-	reg [30:0] last_seq;
+	localparam int STALE_DB_POLL_MAX = (STALE_DOORBELL_FALLBACK_POLLS < 1) ? 1 : STALE_DOORBELL_FALLBACK_POLLS;
+	localparam int STALE_DB_POLL_W = $clog2(STALE_DB_POLL_MAX + 1);
+	reg [31:0] last_seq;
 	reg have_seq;
 	reg doorbell_primed;
+	reg format_error;
+	reg accepted_db_after_reset;
+	reg [STALE_DB_POLL_W-1:0] stale_db_polls;
 	reg [15:0] mbox_seq, mbox_last;
 	reg mbox_req, mbox_valid;
 	reg [17:0] mbox_hb;
@@ -424,6 +435,11 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y;
 	reg [Y_W-2:0] desired_c;
 	reg [SLOT_W-1:0] cur_base_idx, prep_base_idx;
+	reg sched_valid, sched_is_y, sched_for_pending;
+	reg sched_bank, sched_pending_ready;
+	reg [Y_W-1:0] sched_y;
+	reg [Y_W-2:0] sched_cy;
+	reg [SLOT_W-1:0] sched_idx;
 	always @* begin
 		cur_base_idx = disp_buf_d2 ? SECOND_SET_BASE : '0;
 		prep_base_idx = disp_buf_d2 ? '0 : SECOND_SET_BASE;
@@ -554,12 +570,21 @@ module ddr_frame_store #(
 	wire [Y_QW_AW:0] burst_cap = (qwords_remaining > DDR_BURST_MAX_QWORDS) ? DDR_BURST_MAX_QWORDS : qwords_remaining;
 	wire [7:0] burst_this = burst_cap[7:0];
 	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
-	wire [30:0] db_token = DDRAM_DOUT[62:32];
-	wire db_token_new = db_magic_ok && (!have_seq || (db_token != last_seq));
-	wire db_new_seq = db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed);
+	wire [31:0] db_token = DDRAM_DOUT[63:32];
+	wire [1:0] db_format = db_token[30:29];
+	wire db_format_ok = (db_format == DOORBELL_FORMAT_YUV420P) || !STRICT_YUV_DOORBELL;
+	wire db_bad_format = db_magic_ok && !db_format_ok;
+	wire db_valid_token = db_magic_ok && db_format_ok;
+	wire db_token_new = db_valid_token && (!have_seq || (db_token != last_seq));
+	wire db_token_same = db_valid_token && have_seq && (db_token == last_seq);
+	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
+	                         doorbell_primed && !accepted_db_after_reset &&
+	                         (stale_db_polls == STALE_DB_POLL_W'(STALE_DB_POLL_MAX));
+	wire db_new_seq = (db_token_new && (!IGNORE_STALE_DOORBELL_AFTER_RESET || doorbell_primed)) ||
+	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	assign debug_state = {LINE_COUNT[2:0], |y_valid, state_ddr};
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
 	always @(posedge clk_ddr) begin
 		if (reset) begin
@@ -589,6 +614,8 @@ module ddr_frame_store #(
 			disp_bank_d2 <= 1'b0;
 			disp_buf_d1 <= 1'b0;
 			disp_buf_d2 <= 1'b0;
+			has_frame_d1 <= 1'b0;
+			has_frame_d2 <= 1'b0;
 			swap_pending_d1 <= 1'b0;
 			swap_pending_d2 <= 1'b0;
 			pending_bank_d1 <= 1'b0;
@@ -602,9 +629,12 @@ module ddr_frame_store #(
 			swap_req_t_ddr <= 1'b0;
 			poll_div <= 16'd0;
 			poll_pending <= 1'b0;
-			last_seq <= 31'd0;
+			last_seq <= 32'd0;
 			have_seq <= 1'b0;
 			doorbell_primed <= 1'b0;
+			format_error <= 1'b0;
+			accepted_db_after_reset <= 1'b0;
+			stale_db_polls <= '0;
 			doorbell_ok <= 1'b0;
 			start_d1 <= 1'b0;
 			start_d2 <= 1'b0;
@@ -631,6 +661,14 @@ module ddr_frame_store #(
 			frame_mbox_valid <= 1'b0;
 			frame_mbox_hb <= 18'd0;
 			cmd_pop <= 1'b0;
+			sched_valid <= 1'b0;
+			sched_is_y <= 1'b0;
+			sched_for_pending <= 1'b0;
+			sched_bank <= 1'b0;
+			sched_pending_ready <= 1'b0;
+			sched_y <= '0;
+			sched_cy <= '0;
+			sched_idx <= '0;
 			imbox_seq <= 16'd0;
 			imbox_cmd_seq <= 8'd0;
 			fill_qword <= '0;
@@ -652,6 +690,8 @@ module ddr_frame_store #(
 			disp_bank_d2 <= disp_bank_d1;
 			disp_buf_d1 <= disp_buf;
 			disp_buf_d2 <= disp_buf_d1;
+			has_frame_d1 <= has_frame;
+			has_frame_d2 <= has_frame_d1;
 			swap_pending_d1 <= swap_pending;
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
@@ -679,47 +719,103 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
+			if (db_bad_format) begin
+				format_error <= 1'b1;
+				doorbell_ok <= 1'b0;
+			end
 			if (db_token_new) begin
 				last_seq <= db_token;
 				have_seq <= 1'b1;
+				format_error <= 1'b0;
 			end
+			if (db_magic_ok && doorbell_primed && !accepted_db_after_reset && !db_token_new && !db_stale_fallback) begin
+				if (stale_db_polls != STALE_DB_POLL_W'(STALE_DB_POLL_MAX))
+					stale_db_polls <= stale_db_polls + 1'b1;
+			end
+			if (db_token_new)
+				stale_db_polls <= '0;
 			if (db_new_seq) begin
 				pending_bank_ddr <= DDRAM_DOUT[63];
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
+				accepted_db_after_reset <= 1'b1;
+				stale_db_polls <= '0;
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
-				pending_bank_ddr <= bank_sel_d2;
-				swap_req_t_ddr <= ~swap_req_t_ddr;
+				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+					pending_bank_ddr <= bank_sel_d2;
+					swap_req_t_ddr <= ~swap_req_t_ddr;
+				end
 			end
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= swap_pending_d2 && pending_ready_c;
+					pending_ready_ddr <= swap_pending_d2 &&
+					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
-					if (need_y_cur_c || (swap_pending_d2 && need_y_prep_c)) begin
-						fill_bank <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_y <= need_y_cur_c ? target_y_cur_c : target_y_prep_c;
-						fill_idx <= need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c;
-						y_valid[need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c] <= 1'b0;
-						y_bank[need_y_cur_c ? target_y_idx_cur_c : target_y_idx_prep_c] <= need_y_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_is_chroma <= 1'b0;
+					if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
+						fill_bank <= sched_bank;
+						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
 						fill_qword <= '0;
-						qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+						sched_valid <= 1'b0;
+						if (sched_is_y) begin
+							fill_y <= sched_y;
+							y_valid[sched_idx] <= 1'b0;
+							y_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							fill_is_chroma <= 1'b0;
+						end else begin
+							fill_cy <= sched_cy;
+							c_valid[sched_idx] <= 1'b0;
+							c_bank[sched_idx] <= sched_bank;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							fill_is_chroma <= 1'b1;
+						end
 						state_ddr <= S_LINE_ISSUE;
-					end else if (need_c_cur_c || (swap_pending_d2 && need_c_prep_c)) begin
-						fill_bank <= need_c_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_cy <= need_c_cur_c ? target_c_cur_c : target_c_prep_c;
-						fill_idx <= need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c;
-						c_valid[need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c] <= 1'b0;
-						c_bank[need_c_cur_c ? target_c_idx_cur_c : target_c_idx_prep_c] <= need_c_cur_c ? disp_bank_d2 : pending_bank_d2;
-						fill_is_chroma <= 1'b1;
-						fill_plane_v <= 1'b0;
-						fill_qword <= '0;
-						qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
-						state_ddr <= S_LINE_ISSUE;
+					end else if ((swap_pending_d2 && need_y_prep_c) || (has_frame_d2 && need_y_cur_c)) begin
+						if (PIPELINE_REFILL_SCHEDULER) begin
+							sched_valid <= 1'b1;
+							sched_is_y <= 1'b1;
+							sched_for_pending <= swap_pending_d2 && need_y_prep_c;
+							sched_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							sched_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+							sched_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+							sched_pending_ready <= pending_ready_c;
+						end else begin
+							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
+							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
+							y_valid[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= 1'b0;
+							y_bank[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_is_chroma <= 1'b0;
+							fill_plane_v <= 1'b0;
+							fill_qword <= '0;
+							qwords_remaining <= Y_LINE_QWORDS[Y_QW_AW:0];
+							state_ddr <= S_LINE_ISSUE;
+						end
+					end else if ((swap_pending_d2 && need_c_prep_c) || (has_frame_d2 && need_c_cur_c)) begin
+						if (PIPELINE_REFILL_SCHEDULER) begin
+							sched_valid <= 1'b1;
+							sched_is_y <= 1'b0;
+							sched_for_pending <= swap_pending_d2 && need_c_prep_c;
+							sched_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							sched_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+							sched_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+							sched_pending_ready <= pending_ready_c;
+						end else begin
+							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
+							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
+							c_valid[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= 1'b0;
+							c_bank[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_is_chroma <= 1'b1;
+							fill_plane_v <= 1'b0;
+							fill_qword <= '0;
+							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
+							state_ddr <= S_LINE_ISSUE;
+						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;

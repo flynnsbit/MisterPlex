@@ -672,6 +672,24 @@ bool FpgaSpi::ensureDdrMap() {
 
     ddrMap_ = static_cast<uint8_t*>(p);
     ddrMapLen_ = kLen;
+    const size_t doorbellOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
+    if (doorbellOff + 8 <= ddrMapLen_) {
+        volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + doorbellOff);
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            const uint32_t lo0 = dw[0];
+            const uint32_t hi = dw[1];
+            const uint32_t lo1 = dw[0];
+            if (lo0 != lo1)
+                continue;
+            uint32_t seq = 0;
+            int bank = 0;
+            if (decodeDdrDoorbell(lo0, hi, ddrLayout_.format, seq, bank)) {
+                (void)bank;
+                doorbellSeq_ = seq;
+            }
+            break;
+        }
+    }
     return true;
 }
 
