@@ -35,6 +35,7 @@ constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
 constexpr uint8_t UIO_GET_STRING = 0x14;
+constexpr int kDdrBankReuseMinUs = 40000;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
@@ -763,8 +764,13 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
     const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
     const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
-    dw[0] = kDdrDoorbellMagic;
+    // Publish the complete token before magic. On a cold mailbox this prevents
+    // the reader from seeing PLXK paired with a zero/old format; on a warm
+    // mailbox the already-valid magic may expose the new token immediately,
+    // which is safe because sendDdrFrame fences payload writes before this call.
     dw[1] = hi;
+    __sync_synchronize();
+    dw[0] = kDdrDoorbellMagic;
     __sync_synchronize();
     return true;
 }
@@ -1318,11 +1324,26 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
-    // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
-    // (status latch is sparse and was adding ~100 ms → pfps collapse).
+    // Brief yield so previous DMA (~1–3 ms) is done, plus a two-vsync
+    // same-bank reuse floor so a writer faster than the display cannot
+    // immediately overwrite the bank it just published. RTL still owns the
+    // actual vsync flip; there is no cheap per-frame bank-release mailbox yet,
+    // and SPI-polling swap_pending every frame previously added ~100 ms and
+    // collapsed pfps.
     auto tPrep0 = std::chrono::steady_clock::now();
     usleep(1500);
+    const double nowMs = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+    const double lastBankMs = lastDdrBankDoorbellMs_[bank];
+    if (lastBankMs >= 0.0) {
+        const int64_t sinceUs = static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
+        if (sinceUs < kDdrBankReuseMinUs) {
+            const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
+            usleep(static_cast<useconds_t>(waitUs));
+            timing.bank_reuse_wait_us = waitUs;
+        }
+    }
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
@@ -1420,6 +1441,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
         setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
     }
+    lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count();
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.

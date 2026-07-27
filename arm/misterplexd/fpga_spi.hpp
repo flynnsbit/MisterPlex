@@ -112,6 +112,7 @@ public:
         int64_t doorbell_us = 0;
         int64_t post_wait_us = 0;
         int64_t total_us = 0;
+        int64_t bank_reuse_wait_us = 0;
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     struct DdrDoorbellStatus {
@@ -284,6 +285,7 @@ private:
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
+    double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
