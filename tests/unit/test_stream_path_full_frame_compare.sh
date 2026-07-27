@@ -380,6 +380,23 @@ print(
     f"RGB565 diagnostic first_bad now plane={fb['plane']} x={fb['x']} y={fb['y']} "
     f"got={fb['got']} ref={fb['ref']} abs={fb['abs']}"
 )
+# Gate audit coverage declaration (parent directive #16):
+# RTL reconstruction is verified for MB0 first-4x4-block LUMA ONLY.
+# Chroma reconstruction has never been tested in RTL.
+# The recon[] trace captures 16 luma pixels; chroma is not wired.
+rtl_y_pixels_verified = 16
+rtl_chroma_pixels_verified = 0
+frame_w = gold.get("frame", {}).get("width", 320)
+frame_h = gold.get("frame", {}).get("height", 240)
+total_y = frame_w * frame_h
+total_c = total_y // 2
+total_mbs = ((frame_w + 15) // 16) * ((frame_h + 15) // 16)
+print(
+    f"COVERAGE rtl_recon_y={rtl_y_pixels_verified}/{total_y} "
+    f"rtl_recon_chroma={rtl_chroma_pixels_verified}/{total_c} "
+    f"rtl_mbs_verified=1/{total_mbs} "
+    "NOTE: intra_mb_exact is HOST-ONLY (C++ reconISlice vs FFmpeg), not RTL"
+)
 PY
 python3 - "$NATIVE_SCORE_JSON" "$RATCHET" <<'PY'
 import json
@@ -451,7 +468,7 @@ if failures:
     raise SystemExit(1)
 
 print(
-    "OK native full-frame ratchet: "
+    "OK native full-frame ratchet (HOST-ONLY scorer, NOT RTL): "
     f"intra_mb_exact={actual_summary['intra_mb_exact']}/{actual_summary['intra_mb_total']} "
     f"inter_expected_red_frames={actual_summary['inter_expected_red_frames']} "
     f"plane_metrics={len(ratchet['metrics'])}"
