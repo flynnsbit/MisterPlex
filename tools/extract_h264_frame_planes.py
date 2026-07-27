@@ -13,6 +13,7 @@ from typing import Any
 
 FORMAT = "misterplex.p3.frame_planes_golden.v1"
 SEQUENCE_FORMAT = "misterplex.p3.nal_sequence.v1"
+NATIVE_I420 = "I420_NATIVE"
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -181,6 +182,7 @@ def build_manifest(
             "coded_height": height,
             "display_width": int(seq_frame.get("display_width", width)),
             "display_height": int(seq_frame.get("display_height", height)),
+            "colorspace": NATIVE_I420,
             "planes": [
                 {"plane": "Y", "width": width, "height": height, "stride": width},
                 {"plane": "U", "width": uv_w, "height": uv_h, "stride": uv_w},
@@ -244,6 +246,14 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
     plane_blob = manifest.get("plane_blob", {})
     if plane_blob.get("sha256") != sha256_bytes(blob) or int(plane_blob.get("bytes", -1)) != len(blob):
         raise SystemExit("frame-plane golden blob hash/size mismatch")
+    decoder = manifest.get("decoder", {})
+    if decoder.get("pix_fmt") != "yuv420p":
+        raise SystemExit("frame-plane golden decoder pix_fmt is not yuv420p")
+    geom = manifest.get("geometry", {})
+    if geom.get("colorspace") != NATIVE_I420:
+        raise SystemExit("frame-plane golden colorspace is unknown or not I420_NATIVE")
+    if plane_blob.get("layout") != "I420 planar per frame: Y then U then V":
+        raise SystemExit("frame-plane golden plane layout is unknown or not I420")
 
     frame_bytes = int(plane_blob.get("frame_bytes", 0))
     frames = manifest.get("frames", [])
@@ -265,7 +275,16 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
                 )
 
 
-def compare_candidate(manifest: dict[str, Any], golden_path: Path, candidate_path: Path) -> bool:
+def compare_candidate(
+    manifest: dict[str, Any], golden_path: Path, candidate_path: Path, candidate_colorspace: str | None
+) -> bool:
+    golden_colorspace = manifest.get("geometry", {}).get("colorspace")
+    if not candidate_colorspace:
+        raise SystemExit("candidate colorspace is unknown; refusing plane comparison")
+    if candidate_colorspace != golden_colorspace:
+        raise SystemExit(
+            f"candidate colorspace mismatch: candidate={candidate_colorspace} golden={golden_colorspace}"
+        )
     golden = golden_path.read_bytes()
     candidate = candidate_path.read_bytes()
     if len(candidate) != len(golden):
@@ -350,7 +369,9 @@ def verify(args: argparse.Namespace) -> int:
     manifest = read_json(Path(args.manifest))
     validate_manifest(manifest, Path(args.input), Path(args.sequence), Path(args.planes))
     if args.candidate_planes:
-        exact = compare_candidate(manifest, Path(args.planes), Path(args.candidate_planes))
+        exact = compare_candidate(
+            manifest, Path(args.planes), Path(args.candidate_planes), args.candidate_colorspace
+        )
         if args.expect_red:
             if exact:
                 raise SystemExit("candidate unexpectedly matched golden in expect-red mode")
@@ -379,6 +400,7 @@ def main() -> int:
     ap.add_argument("--planes", help="existing I420 plane blob to verify")
     ap.add_argument("--manifest", help="existing frame-plane golden JSON to verify")
     ap.add_argument("--candidate-planes", help="optional I420 candidate blob to compare against the golden")
+    ap.add_argument("--candidate-colorspace", help="required with --candidate-planes; must match manifest colorspace")
     ap.add_argument("--expect-red", action="store_true", help="candidate comparison must fail strict equality")
     args = ap.parse_args()
     if args.verify:

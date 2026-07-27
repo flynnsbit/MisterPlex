@@ -22,6 +22,7 @@
     "coded_height": 240,
     "display_width": 320,
     "display_height": 240,
+    "colorspace": "I420_NATIVE",
     "planes": [
       {
         "plane": "Y",

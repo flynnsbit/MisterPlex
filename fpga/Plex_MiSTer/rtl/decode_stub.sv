@@ -233,23 +233,23 @@ module decode_stub #(
 	wire idr_style = is_idr_frame || (lat_type[4:0] == 5'd5);
 
 	wire [7:0] rr =
+		(mb0 && lat_res_ok) ? recon_y :
 		border   ? 8'h10 :
 		inter_diag_tile ? (inter_band_ok ? 8'h10 : 8'hf0) :
-		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? {lat_type[4:0], 3'b000} :
 		mb_line  ? (is_i_frame ? 8'h20 : 8'h80) :
 		           (8'h08 + {4'b0, mb_hash[3:0]});
 	wire [7:0] gg =
+		(mb0 && lat_res_ok) ? recon_y :
 		border   ? (idr_style ? 8'hE0 : 8'hC0) :
 		inter_diag_tile ? (inter_band_ok ? 8'hf0 : 8'h10) :
-		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? lat_idr :
 		mb_line  ? (is_i_frame ? 8'hE0 : 8'h40) :
 		           (8'h18 + {3'b0, mb_hash[4:0]});
 	wire [7:0] bb =
+		(mb0 && lat_res_ok) ? recon_y :
 		border   ? (idr_style ? 8'h20 : 8'hE0) :
 		inter_diag_tile ? inter_band_sig :
-		(mb0 && lat_res_ok) ? recon_y :
 		strip    ? 8'h20 :
 		mb_line  ? 8'h30 :
 		           (8'h40 + {mb_hash[5:0], 2'b00});
