@@ -34,7 +34,7 @@ check_fixture() {
   cmp -s "$gen_planes" "$planes"
   "$TOOL" --verify --input "$bitstream" --sequence "$sequence" --planes "$planes" --manifest "$manifest"
   "$TOOL" --verify --input "$bitstream" --sequence "$sequence" --planes "$planes" --manifest "$manifest" \
-    --candidate-planes "$gen_planes"
+    --candidate-planes "$gen_planes" --candidate-colorspace I420_NATIVE
 }
 
 check_fixture \
@@ -75,6 +75,7 @@ set +e
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
+  --candidate-colorspace I420_NATIVE \
   > "$OUT/corrupt_compare.log" 2>&1
 RED_RC=$?
 set -e
@@ -91,6 +92,42 @@ grep -q 'candidate plane comparison diverged from golden' "$OUT/corrupt_compare.
   --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
   --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
+  --candidate-colorspace I420_NATIVE \
   --expect-red
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
+  > "$OUT/unknown_colorspace_compare.log" 2>&1
+UNKNOWN_RC=$?
+set -e
+if [[ "$UNKNOWN_RC" -eq 0 ]]; then
+  cat "$OUT/unknown_colorspace_compare.log"
+  echo "FAIL frame-plane red-check: unknown candidate colorspace unexpectedly compared" >&2
+  exit 1
+fi
+grep -q 'candidate colorspace is unknown' "$OUT/unknown_colorspace_compare.log"
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json \
+  --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
+  --candidate-colorspace I420_FROM_RGB565 \
+  > "$OUT/mismatched_colorspace_compare.log" 2>&1
+MISMATCH_RC=$?
+set -e
+if [[ "$MISMATCH_RC" -eq 0 ]]; then
+  cat "$OUT/mismatched_colorspace_compare.log"
+  echo "FAIL frame-plane red-check: mismatched candidate colorspace unexpectedly compared" >&2
+  exit 1
+fi
+grep -q 'candidate colorspace mismatch' "$OUT/mismatched_colorspace_compare.log"
 
 echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane RED checked"

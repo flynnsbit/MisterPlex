@@ -31,6 +31,7 @@ struct Args {
     std::string sequenceJson;
     std::string sourceSha256;
     std::string jsonOut;
+    std::string traceJsonOut;
     int width = 0;
     int height = 0;
     bool expectRed = false;
@@ -51,6 +52,7 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--sequence") a.sequenceJson = need("--sequence");
         else if (k == "--source-sha256") a.sourceSha256 = need("--source-sha256");
         else if (k == "--json-out") a.jsonOut = need("--json-out");
+        else if (k == "--trace-json-out") a.traceJsonOut = need("--trace-json-out");
         else if (k == "--width") a.width = std::stoi(need("--width"));
         else if (k == "--height") a.height = std::stoi(need("--height"));
         else if (k == "--expect-red") a.expectRed = true;
@@ -183,6 +185,28 @@ std::array<uint8_t, 3> rgb888ToRgb565Expanded(uint8_t r, uint8_t g, uint8_t b) {
     return rgb565ToRgb(static_cast<uint16_t>(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)));
 }
 
+template <typename T>
+int signExtend(T value, int bits) {
+    const int mask = 1 << (bits - 1);
+    const int full = 1 << bits;
+    int v = static_cast<int>(value) & (full - 1);
+    return (v & mask) ? (v - full) : v;
+}
+
+struct Mb0Trace {
+    bool valid = false;
+    uint64_t cycle = 0;
+    int qp = 0;
+    int totalCoeff = 0;
+    int trailingOnes = 0;
+    int dc = 0;
+    int csum = 0;
+    std::array<int, 16> coeff{};
+    std::array<int, 16> dequant{};
+    std::array<int, 16> idct{};
+    std::array<int, 16> recon{};
+};
+
 class Sim {
 public:
     explicit Sim(int w, int h) : width(w), height(h), framePixels(static_cast<std::size_t>(w) * h) {}
@@ -194,8 +218,24 @@ public:
     std::size_t framePixels = 0;
     std::vector<std::vector<uint8_t>> frames;
     std::vector<uint8_t> cur;
+    Mb0Trace mb0Trace;
 
     void capturePosedge() {
+        if (top.recon_valid && !mb0Trace.valid) {
+            mb0Trace.valid = true;
+            mb0Trace.cycle = cycles;
+            mb0Trace.qp = static_cast<int>(top.trace_slice_qp);
+            mb0Trace.totalCoeff = static_cast<int>(top.trace_residual_tc);
+            mb0Trace.trailingOnes = static_cast<int>(top.trace_residual_t1);
+            mb0Trace.dc = signExtend(top.trace_residual_dc, 8);
+            mb0Trace.csum = static_cast<int>(top.trace_residual_csum);
+            for (int i = 0; i < 16; ++i) {
+                mb0Trace.coeff[static_cast<std::size_t>(i)] = signExtend(top.trace_residual_coeff[i], 9);
+                mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 18);
+                mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 18);
+                mb0Trace.recon[static_cast<std::size_t>(i)] = static_cast<int>(top.trace_recon_px[i]);
+            }
+        }
         if (top.fs_wr_reset) cur.clear();
         if (!top.fs_wr_en) return;
         const auto rgb = rgb565ToRgb(static_cast<uint16_t>(top.fs_wr_pixel));
@@ -257,6 +297,65 @@ public:
         return top.stub_frames >= want && frames.size() >= want && !top.stub_busy;
     }
 };
+
+void printArray(std::ostream& out, const std::array<int, 16>& a) {
+    out << "[";
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (i) out << ",";
+        out << a[i];
+    }
+    out << "]";
+}
+
+void printMb0Trace(const Mb0Trace& t) {
+    if (!t.valid) {
+        std::cout << "MB0_PIPELINE_TRACE missing\n";
+        return;
+    }
+    std::cout << "MB0_PIPELINE_TRACE cycle=" << t.cycle
+              << " qp=" << t.qp
+              << " total_coeff=" << t.totalCoeff
+              << " trailing_ones=" << t.trailingOnes
+              << " residual_dc=" << t.dc
+              << " residual_csum=0x" << std::hex << std::setw(2) << std::setfill('0') << t.csum
+              << std::dec << std::setfill(' ')
+              << " coeff=";
+    printArray(std::cout, t.coeff);
+    std::cout << " dequant=";
+    printArray(std::cout, t.dequant);
+    std::cout << " idct=";
+    printArray(std::cout, t.idct);
+    std::cout << " recon=";
+    printArray(std::cout, t.recon);
+    std::cout << "\n";
+}
+
+void writeTraceJson(const std::string& path, const Mb0Trace& t) {
+    if (path.empty()) return;
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write MB0 trace JSON: " + path);
+    out << "{\n";
+    out << "  \"format\": \"misterplex.p3.mb0_pipeline_trace.v1\",\n";
+    out << "  \"colorspace\": \"I420_NATIVE\",\n";
+    out << "  \"valid\": " << (t.valid ? "true" : "false");
+    if (t.valid) {
+        out << ",\n  \"cycle\": " << t.cycle << ",\n";
+        out << "  \"qp\": " << t.qp << ",\n";
+        out << "  \"total_coeff\": " << t.totalCoeff << ",\n";
+        out << "  \"trailing_ones\": " << t.trailingOnes << ",\n";
+        out << "  \"residual_dc\": " << t.dc << ",\n";
+        out << "  \"residual_csum\": " << t.csum << ",\n";
+        out << "  \"coefficients_zigzag\": ";
+        printArray(out, t.coeff);
+        out << ",\n  \"dequant\": ";
+        printArray(out, t.dequant);
+        out << ",\n  \"idct\": ";
+        printArray(out, t.idct);
+        out << ",\n  \"recon\": ";
+        printArray(out, t.recon);
+    }
+    out << "\n}\n";
+}
 
 struct PlaneStats {
     uint64_t exact = 0;
@@ -562,7 +661,8 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                if (!sim.waitForFrames(expectedFrames, 200000))
+                const int frameWaitCycles = std::max(200000, args.width * args.height * 2);
+                if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {
                 for (int i = 0; i < 256; ++i) sim.tick();
@@ -573,6 +673,9 @@ int main(int argc, char** argv) {
             throw std::runtime_error("captured frame count does not match reference");
         if (sim.top.sps_width != args.width || sim.top.sps_height != args.height)
             throw std::runtime_error("SPS geometry does not match ffprobe geometry");
+
+        printMb0Trace(sim.mb0Trace);
+        writeTraceJson(args.traceJsonOut, sim.mb0Trace);
 
         const CompareResult cr = compareFrames(sim.frames, golden, args.width, args.height);
         if (!args.candidateI420Out.empty()) {

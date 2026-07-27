@@ -6,7 +6,8 @@
 module stream_path_full_frame_tb #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
-	parameter bit FAULT_PIXEL_XOR = 1'b0
+	parameter bit FAULT_PIXEL_XOR = 1'b0,
+	parameter bit FAULT_TRACE_COEFF0_PLUS1 = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -43,6 +44,15 @@ module stream_path_full_frame_tb #(
 	output wire [7:0]  recon_sig,
 	output wire [7:0]  recon_dbg,
 	output wire        recon_valid,
+	output wire [5:0]  trace_slice_qp,
+	output wire [4:0]  trace_residual_tc,
+	output wire [1:0]  trace_residual_t1,
+	output wire signed [7:0] trace_residual_dc,
+	output wire [7:0]  trace_residual_csum,
+	output wire signed [8:0] trace_residual_coeff [0:15],
+	output wire signed [17:0] trace_idct_dequant [0:15],
+	output wire signed [17:0] trace_idct_residual [0:15],
+	output wire [7:0]  trace_recon_px [0:15],
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
@@ -71,6 +81,12 @@ module stream_path_full_frame_tb #(
 	wire signed [4:0] slice_beta_offset_div2;
 	wire signed [4:0] slice_alpha_c0_offset;
 	wire signed [4:0] slice_beta_offset;
+	wire first_mb_p_skip_w;
+	wire [7:0] p_skip_run_w;
+	wire [2:0] first_mb_part_mode_w;
+	wire [2:0] first_mb_part_count_w;
+	wire first_mb_uses_sub_mb_w;
+	wire first_mb_intra_w;
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
@@ -126,6 +142,12 @@ module stream_path_full_frame_tb #(
 		.slice_is_i(slice_is_i),
 		.first_mb_type(first_mb_type),
 		.has_mb_type(has_mb_type),
+		.first_mb_p_skip(first_mb_p_skip_w),
+		.p_skip_run(p_skip_run_w),
+		.first_mb_part_mode(first_mb_part_mode_w),
+		.first_mb_part_count(first_mb_part_count_w),
+		.first_mb_uses_sub_mb(first_mb_uses_sub_mb_w),
+		.first_mb_intra(first_mb_intra_w),
 		.slice_qp(slice_qp),
 		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
 		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
@@ -150,6 +172,22 @@ module stream_path_full_frame_tb #(
 	);
 
 	assign fs_wr_pixel = FAULT_PIXEL_XOR ? (fs_wr_pixel_dut ^ 16'hffff) : fs_wr_pixel_dut;
+	assign trace_slice_qp = dut.stub.lat_qp;
+	assign trace_residual_tc = dut.stub.lat_res_tc;
+	assign trace_residual_t1 = dut.sl_place_t1;
+	assign trace_residual_dc = dut.stub.lat_res_dc;
+	assign trace_residual_csum = residual_csum;
+	genvar trace_i;
+	generate
+		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
+			assign trace_residual_coeff[trace_i] =
+				(FAULT_TRACE_COEFF0_PLUS1 && trace_i == 0) ?
+					(dut.stub.lat_coeff[trace_i] + 9'sd1) : dut.stub.lat_coeff[trace_i];
+			assign trace_idct_dequant[trace_i] = dut.stub.idct_dequant[trace_i];
+			assign trace_idct_residual[trace_i] = dut.stub.idct_residual[trace_i];
+			assign trace_recon_px[trace_i] = dut.stub.recon_px[trace_i];
+		end
+	endgenerate
 endmodule
 
 `default_nettype wire
