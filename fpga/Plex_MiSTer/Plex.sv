@@ -547,6 +547,33 @@ wire        stub_wr_en;
 wire [15:0] stub_wr_pixel;
 wire        stub_wr_reset;
 wire        stub_swap;
+wire        stream_ddr_active;
+wire [31:0] stream_ddr_bytes_out;
+wire [15:0] stream_ddr_underruns;
+wire [15:0] stream_ddr_overruns;
+wire [31:0] stream_ddr_host_write;
+wire [31:0] stream_ddr_fpga_read;
+wire        stream_ddr_bus_want;
+wire        stream_ddr_busy;
+wire  [7:0] stream_ddr_burstcnt;
+wire [28:0] stream_ddr_addr;
+wire [63:0] stream_ddr_dout;
+wire        stream_ddr_dout_ready;
+wire        stream_ddr_rd;
+wire [63:0] stream_ddr_din;
+wire  [7:0] stream_ddr_be;
+wire        stream_ddr_we;
+`ifdef DDR_FRAME_STORE
+wire        stream_ddr_enable = 1'b1;
+`else
+wire        stream_ddr_enable = 1'b0;
+`endif
+
+`ifndef DDR_FRAME_STORE
+assign stream_ddr_busy = 1'b1;
+assign stream_ddr_dout = 64'd0;
+assign stream_ddr_dout_ready = 1'b0;
+`endif
 
 stream_path #(
 	.FRAME_W(FRAME_W),
@@ -559,12 +586,29 @@ stream_path #(
 	.ioctl_dout(ioctl_dout),
 	.enable(is_stream_dl),
 	.flush(status[11]),
+	.ddr_stream_enable(stream_ddr_enable),
+	.ddr_bus_want(stream_ddr_bus_want),
+	.ddr_busy(stream_ddr_busy),
+	.ddr_burstcnt(stream_ddr_burstcnt),
+	.ddr_addr(stream_ddr_addr),
+	.ddr_dout(stream_ddr_dout),
+	.ddr_dout_ready(stream_ddr_dout_ready),
+	.ddr_rd(stream_ddr_rd),
+	.ddr_din(stream_ddr_din),
+	.ddr_be(stream_ddr_be),
+	.ddr_we(stream_ddr_we),
 	.has_stream(has_stream),
 	.nalu_count(nalu_count),
 	.last_nal_type(last_nal_type),
 	.bytes_in(stream_bytes_in),
 	.bytes_seen(stream_bytes_seen),
 	.fifo_level(stream_fifo_level),
+	.stream_ddr_active(stream_ddr_active),
+	.stream_ddr_bytes_out(stream_ddr_bytes_out),
+	.stream_ddr_underruns(stream_ddr_underruns),
+	.stream_ddr_overruns(stream_ddr_overruns),
+	.stream_ddr_host_write(stream_ddr_host_write),
+	.stream_ddr_fpga_read(stream_ddr_fpga_read),
 	.has_idr(has_idr),
 	.idr_count(idr_count),
 	.sps_count(sps_count),
@@ -634,6 +678,18 @@ wire [31:0] disp_i, cont_i;
 wire advance;
 // swap_pending declared above (fed back into ddram_frame_rd hold-off)
 
+`ifdef DDR_FRAME_STORE
+wire        present_ddr_busy;
+wire  [7:0] present_ddr_burstcnt;
+wire [28:0] present_ddr_addr;
+wire [63:0] present_ddr_dout;
+wire        present_ddr_dout_ready;
+wire        present_ddr_rd;
+wire [63:0] present_ddr_din;
+wire  [7:0] present_ddr_be;
+wire        present_ddr_we;
+`endif
+
 present_core #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
@@ -679,15 +735,15 @@ present_core #(
 	.ddr_sdram_error_count(sdram_error_count),
 	.clk_ddr(clk_ddr),
 	.DDRAM_CLK(DDRAM_CLK),
-	.DDRAM_BUSY(DDRAM_BUSY),
-	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
-	.DDRAM_ADDR(DDRAM_ADDR),
-	.DDRAM_DOUT(DDRAM_DOUT),
-	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
-	.DDRAM_RD(DDRAM_RD),
-	.DDRAM_DIN(DDRAM_DIN),
-	.DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE),
+	.DDRAM_BUSY(present_ddr_busy),
+	.DDRAM_BURSTCNT(present_ddr_burstcnt),
+	.DDRAM_ADDR(present_ddr_addr),
+	.DDRAM_DOUT(present_ddr_dout),
+	.DDRAM_DOUT_READY(present_ddr_dout_ready),
+	.DDRAM_RD(present_ddr_rd),
+	.DDRAM_DIN(present_ddr_din),
+	.DDRAM_BE(present_ddr_be),
+	.DDRAM_WE(present_ddr_we),
 	.ddr_frames_done(ddr_frames),
 	.ddr_doorbell_ok(ddr_doorbell_ok),
 `endif
@@ -716,6 +772,41 @@ present_core #(
 	.stat_frame_underruns(frame_underruns),
 	.stat_frame_sdram_state(frame_sdram_state)
 );
+
+`ifdef DDR_FRAME_STORE
+ddr_bus_arbiter ddr_arb (
+	.clk(clk_sys),
+	.reset(reset),
+	.m1_want(stream_ddr_bus_want),
+	.m0_busy(present_ddr_busy),
+	.m0_burstcnt(present_ddr_burstcnt),
+	.m0_addr(present_ddr_addr),
+	.m0_dout(present_ddr_dout),
+	.m0_dout_ready(present_ddr_dout_ready),
+	.m0_rd(present_ddr_rd),
+	.m0_din(present_ddr_din),
+	.m0_be(present_ddr_be),
+	.m0_we(present_ddr_we),
+	.m1_busy(stream_ddr_busy),
+	.m1_burstcnt(stream_ddr_burstcnt),
+	.m1_addr(stream_ddr_addr),
+	.m1_dout(stream_ddr_dout),
+	.m1_dout_ready(stream_ddr_dout_ready),
+	.m1_rd(stream_ddr_rd),
+	.m1_din(stream_ddr_din),
+	.m1_be(stream_ddr_be),
+	.m1_we(stream_ddr_we),
+	.DDRAM_BUSY(DDRAM_BUSY),
+	.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+	.DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+	.DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE),
+	.DDRAM_WE(DDRAM_WE)
+);
+`endif
 
 assign CLK_VIDEO = clk_sys;
 assign CE_PIXEL  = ce_pix;
@@ -899,6 +990,9 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	residual_coeff[8], residual_coeff[9], residual_coeff[10], residual_coeff[11],
 	residual_coeff[12], residual_coeff[13], residual_coeff[14], residual_coeff[15],
 	stub_frames, slice_valid, slice_is_i, sps_mb_w, sps_mb_h, has_mb_type, idr_count,
-	stream_fifo_level, ddr_frames, _host_wr_unused};
+	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
+	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
+	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
+	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
 
 endmodule

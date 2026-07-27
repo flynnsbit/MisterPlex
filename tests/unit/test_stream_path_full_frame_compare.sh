@@ -43,6 +43,7 @@ RTL_DIR="$ROOT/fpga/Plex_MiSTer/rtl"
 PRODUCT_RTL=(
   stream_path.sv
   stream_ingest.sv
+  ddr_bitstream_reader.sv
   bitstream_fifo.sv
   nalu_scanner.sv
   sps_parser.sv

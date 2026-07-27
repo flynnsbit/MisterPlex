@@ -59,6 +59,18 @@ module stream_path_full_frame_tb #(
 	wire residual_place_pulse;
 	wire recon_dbg_valid;
 	wire [15:0] fs_wr_pixel_dut;
+	wire ddr_bus_want, ddr_rd, ddr_we;
+	wire [7:0] ddr_burstcnt, ddr_be;
+	wire [28:0] ddr_addr;
+	wire [63:0] ddr_din;
+	wire stream_ddr_active;
+	wire [31:0] stream_ddr_bytes_out, stream_ddr_host_write, stream_ddr_fpga_read;
+	wire [15:0] stream_ddr_underruns, stream_ddr_overruns;
+	wire [1:0] disable_deblocking_filter_idc;
+	wire signed [4:0] slice_alpha_c0_offset_div2;
+	wire signed [4:0] slice_beta_offset_div2;
+	wire signed [4:0] slice_alpha_c0_offset;
+	wire signed [4:0] slice_beta_offset;
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
@@ -71,12 +83,29 @@ module stream_path_full_frame_tb #(
 		.ioctl_dout(ioctl_dout),
 		.enable(1'b1),
 		.flush(flush),
+		.ddr_stream_enable(1'b0),
+		.ddr_bus_want(ddr_bus_want),
+		.ddr_busy(1'b1),
+		.ddr_burstcnt(ddr_burstcnt),
+		.ddr_addr(ddr_addr),
+		.ddr_dout(64'd0),
+		.ddr_dout_ready(1'b0),
+		.ddr_rd(ddr_rd),
+		.ddr_din(ddr_din),
+		.ddr_be(ddr_be),
+		.ddr_we(ddr_we),
 		.has_stream(has_stream),
 		.nalu_count(nalu_count),
 		.last_nal_type(last_nal_type),
 		.bytes_in(bytes_in),
 		.bytes_seen(bytes_seen),
 		.fifo_level(fifo_level),
+		.stream_ddr_active(stream_ddr_active),
+		.stream_ddr_bytes_out(stream_ddr_bytes_out),
+		.stream_ddr_underruns(stream_ddr_underruns),
+		.stream_ddr_overruns(stream_ddr_overruns),
+		.stream_ddr_host_write(stream_ddr_host_write),
+		.stream_ddr_fpga_read(stream_ddr_fpga_read),
 		.has_idr(has_idr),
 		.idr_count(idr_count),
 		.sps_count(sps_count),
@@ -98,6 +127,11 @@ module stream_path_full_frame_tb #(
 		.first_mb_type(first_mb_type),
 		.has_mb_type(has_mb_type),
 		.slice_qp(slice_qp),
+		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
+		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
+		.slice_beta_offset_div2(slice_beta_offset_div2),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
 		.residual_tc(residual_tc),
 		.residual_t1(residual_t1),
 		.residual_ok(residual_ok),

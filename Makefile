@@ -87,18 +87,24 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
+	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 
 rtl-sim:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
+	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 

@@ -40,6 +40,7 @@ make -s -C "$ROOT" h264-golden-tools
 "$ROOT/build/extract_h264_golden" --input "$SRC_ANNEXB" --mb 0 --output "$GOLDEN" --verify-mb0-reference "$ROOT/tests/fixtures/p3_host_recon/mb0_luma_v1.json" >/dev/null
 RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_ingest.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/bitstream_fifo.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/nalu_scanner.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
