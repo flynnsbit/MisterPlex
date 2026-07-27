@@ -147,7 +147,11 @@ module decode_stub #(
 	genvar pred_i;
 	generate
 		for (pred_i = 0; pred_i < 16; pred_i = pred_i + 1) begin : gen_idct_pred
-			assign idct_pred[pred_i] = 8'd128;
+			// Inter MBs: use MC prediction from DPB reference.
+			// Intra MBs: 128 placeholder (real intra prediction not yet wired).
+			// This maps the first 4x4 block of dpb_pred_y into the recon path.
+			assign idct_pred[pred_i] = (lat_p_inter && dpb_ref_ready) ?
+			                           dpb_pred_y[pred_i] : 8'd128;
 		end
 	endgenerate
 
