@@ -493,6 +493,110 @@ def check_mailboxes() -> None:
     print("PASS DDR mailbox host/RTL ABI constants")
 
 
+def check_mailbox_map_collisions() -> None:
+    """Verify the authoritative mailbox map has no address or magic collisions,
+    and that RTL constants match the registry for every entry that has an
+    rtl_addr_param.  This is the single-source-of-truth gate the parent
+    required after the PLXA/PLXD ABI collision."""
+    import json
+
+    map_path = ROOT / "docs" / "plx_mailbox_map.json"
+    check(map_path.exists(), f"Mailbox registry missing: {map_path}")
+    registry = json.loads(map_path.read_text())
+    mailboxes = registry["mailboxes"]
+    ring = registry.get("bitstream_ring", {})
+
+    # ── Collect ALL addresses and magics across both sections ──
+    all_addrs: dict[int, str] = {}
+    all_magics: dict[int, str] = {}
+
+    for mb in mailboxes:
+        name = mb["name"]
+        addr = int(mb["address"], 16)
+        if addr in all_addrs:
+            fail(f"Mailbox address collision: {name} and {all_addrs[addr]} both at 0x{addr:08X}")
+        all_addrs[addr] = name
+        magic_s = mb.get("magic")
+        if magic_s is not None:
+            magic = int(magic_s, 16)
+            if magic in all_magics:
+                fail(f"Mailbox magic collision: {name} and {all_magics[magic]} both use 0x{magic:08X}")
+            all_magics[magic] = name
+
+    for rname, rval in ring.items():
+        if rname.startswith("_"):
+            continue
+        addr = int(rval["address"], 16)
+        if addr in all_addrs:
+            fail(f"Ring address collision: {rname} and {all_addrs[addr]} both at 0x{addr:08X}")
+        all_addrs[addr] = rname
+        magic = int(rval["magic"], 16)
+        if magic in all_magics:
+            fail(f"Ring magic collision: {rname} and {all_magics[magic]} both use 0x{magic:08X}")
+        all_magics[magic] = rname
+
+    # ── Cross-check RTL constants against registry ──
+    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
+    ddram_frame_rd_rtl = strip_comments(read(DDRAM_FRAME_RD))
+
+    for mb in mailboxes:
+        name = mb["name"]
+        rtl_addr_param = mb.get("rtl_addr_param")
+        rtl_magic_param = mb.get("rtl_magic_param")
+        expected_addr = int(mb["address"], 16)
+
+        if rtl_addr_param is None:
+            continue
+
+        # Try ddr_frame_store first, fall back to ddram_frame_rd
+        ra = None
+        for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
+            m = re.search(
+                rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_addr_param)}\s*=\s*([^,\n;)]+)",
+                rtl_src,
+            )
+            if m:
+                ra = parse_num(m.group(1))
+                break
+
+        check(
+            ra is not None,
+            f"Mailbox map references RTL param {rtl_addr_param} for {name}, "
+            "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
+        )
+        check(
+            ra == expected_addr,
+            f"Mailbox map drift: {name} RTL {rtl_addr_param}=0x{ra:08X} != "
+            f"registry 0x{expected_addr:08X}. Update docs/plx_mailbox_map.json OR the RTL "
+            "— they must agree. This gate exists because the PLXA/PLXD ABI collision "
+            "proved that two hand-maintained copies WILL drift.",
+        )
+
+        if rtl_magic_param is not None:
+            expected_magic = int(mb["magic"], 16)
+            rm = None
+            for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
+                m = re.search(
+                    rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_magic_param)}\s*=\s*([^,\n;)]+)",
+                    rtl_src,
+                )
+                if m:
+                    rm = parse_num(m.group(1))
+                    break
+            check(
+                rm is not None,
+                f"Mailbox map references RTL param {rtl_magic_param} for {name}, "
+                "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
+            )
+            check(
+                rm == expected_magic,
+                f"Mailbox map drift: {name} RTL {rtl_magic_param}=0x{rm:08X} != "
+                f"registry 0x{expected_magic:08X}. Update docs/plx_mailbox_map.json OR the RTL.",
+            )
+
+    print(f"PASS mailbox map collision guard ({len(all_addrs)} addresses, {len(all_magics)} magics, 0 collisions)")
+
+
 def check_ddr_bitstream_ring() -> None:
     rtl = strip_comments(read(DDR_BITSTREAM_READER))
     host = strip_comments(read(DDR_BITSTREAM_RING_HPP))
@@ -1146,6 +1250,7 @@ def main() -> int:
     check_async_fifo_write_full_no_comb_loop()
     check_frame_store_cdc_contract()
     check_mailboxes()
+    check_mailbox_map_collisions()
     check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
