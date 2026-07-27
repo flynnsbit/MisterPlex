@@ -1189,7 +1189,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "color_provenance": color_provenance,
             "freshness": None,
             "delivery_freshness": {"error": str(e)},
-            "stats": {"visual_verdict": delivery_failure_verdict(e)},
+            "delivery_verdict": delivery_failure_verdict(e),
+            "stats": None,
             "thresholds": None,
         }
         if args.report:
