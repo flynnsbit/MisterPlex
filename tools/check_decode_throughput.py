@@ -102,34 +102,6 @@ def derive(compare: dict, ratchet: dict) -> dict:
                 "note": "NOT PRODUCTION. decode_stub paints WxH={}x{} diagnostic pixels per frame "
                         "at 1 pixel/cycle. This will not exist in the production decoder.".format(width, height),
             },
-            "mc_interpolation": {
-                "cycles": None,
-                "cycles_per_mb": None,
-                "status": "not_implemented",
-                "method": None,
-                "note": "Inter prediction, motion compensation, and DPB reference fetch are NOT YET "
-                        "IMPLEMENTED in the measured pipeline. h264_inter_pred.sv exists but is only "
-                        "exercised as a diagnostic self-check, not in the decode data path. THIS STAGE "
-                        "WILL ADD SIGNIFICANT COST when it is built — possibly hundreds of cycles/MB "
-                        "for qpel interpolation + DDR reference fetch latency.",
-            },
-            "deblock": {
-                "cycles": None,
-                "cycles_per_mb": None,
-                "status": "not_implemented",
-                "method": None,
-                "note": "H.264 deblocking filter (h264_deblock.sv) exists as RTL but is not in the "
-                        "measured stream_path pipeline. Deblocking is compute-intensive: up to ~100 "
-                        "cycles/MB for strong filtering across 16 edges per MB.",
-            },
-            "ddr_write": {
-                "cycles": None,
-                "cycles_per_mb": None,
-                "status": "not_implemented",
-                "method": None,
-                "note": "Product DDR frame writeback is not instrumented. The ddr_frame_store module "
-                        "exists but its write latency is not part of the measured pipeline cycle count.",
-            },
             "injection_overhead": {
                 "cycles": injection_total,
                 "cycles_per_mb": injection_total / total_mbs if total_mbs else 0.0,
@@ -138,6 +110,11 @@ def derive(compare: dict, ratchet: dict) -> dict:
                 "note": "TESTBENCH ARTIFACT. Real hardware uses DDR DMA, not ioctl byte-by-byte injection. "
                         "This cost does not exist in the product pipeline.",
             },
+            # mc_interpolation, deblock, ddr_write are NOT included here when
+            # the sim has no data for them.  Their status comes from the ratchet
+            # fixture declaration (typically "not_implemented").  When these
+            # stages are built and the sim produces measurements, add them here
+            # with status="measured" and real cycle counts.
         }
 
     # Build stage_coverage from ratchet declarations + measured data
@@ -321,10 +298,31 @@ def main() -> int:
 
     print_raw(report)
     failures = check_report(report)
+
+    # Structural coverage gate: unimplemented budgeted stages make the
+    # verdict INCOMPLETE regardless of whether measured stages pass.
+    unimplemented = [
+        s["name"] for s in report["stage_coverage"]
+        if s["status"] == "not_implemented"
+        and s["name"] not in ("diagnostic_paint", "injection_overhead")
+    ]
+
     if failures:
         for item in failures:
             print("FAIL decode throughput: " + item)
         return 1
+    if unimplemented:
+        print(
+            "INCOMPLETE decode throughput: "
+            f"cycles_per_mb={report['measured']['cycles_per_mb']:.3f} "
+            f"budget={report['budget']['cycles_per_mb']:.3f} "
+            f"margin={report['budget']['margin_ratio']:.3f}x "
+            f"UNBUDGETED_STAGES={','.join(unimplemented)}"
+        )
+        # Exit 0 — the implemented stages pass, but the verdict is
+        # explicitly INCOMPLETE, not OK.  A downstream gate that
+        # requires OK will not match this output.
+        return 0
     print(
         "OK decode throughput: "
         f"cycles_per_mb={report['measured']['cycles_per_mb']:.3f} "

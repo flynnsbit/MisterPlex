@@ -149,4 +149,45 @@ grep -q "budget margin 2.636 < required 3.000" <<<"$RED_OUT"
 grep -q "stage parse_cavlc cycles_per_mb" <<<"$RED_OUT"
 grep -q "stage diagnostic_paint cycles_per_mb" <<<"$RED_OUT"
 echo "RED OK decode throughput ratchet rejects cycle, margin, and per-stage regressions"
+
+# ---- INCOMPLETE verdict gate ----
+# The ratchet MUST emit INCOMPLETE (not OK) when unimplemented stages exist.
+# This is a structural gate: the report cannot be green-read while MC/deblock/DDR are missing.
+PASS_OUT="$("$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$COMPARE" --ratchet "$RATCHET" 2>&1)"
+# Must contain INCOMPLETE, not OK
+if grep -q "^OK decode throughput" <<<"$PASS_OUT"; then
+  echo "FAIL structural gate: ratchet emitted OK with unimplemented stages" >&2
+  printf '%s\n' "$PASS_OUT" >&2
+  exit 1
+fi
+grep -q "INCOMPLETE decode throughput" <<<"$PASS_OUT"
+grep -q "UNBUDGETED_STAGES=" <<<"$PASS_OUT"
+# Must name the specific missing stages
+grep -q "mc_interpolation" <<<"$PASS_OUT"
+grep -q "deblock" <<<"$PASS_OUT"
+grep -q "ddr_write" <<<"$PASS_OUT"
+echo "RED OK incomplete verdict: ratchet refuses OK when stages are not_implemented"
+
+# Red proof the other direction: if we mark all stages as implemented, verdict should be OK.
+# Create a ratchet where all stages are "measured" (no not_implemented)
+ALL_IMPL_RATCHET="$WORK/all_impl_ratchet.json"
+python3 - "$RATCHET" "$ALL_IMPL_RATCHET" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+for s in r["stage_coverage"]:
+    if s["status"] == "not_implemented":
+        s["status"] = "measured"
+        s["cycles_per_mb"] = 0.0
+json.dump(r, open(sys.argv[2], "w"), indent=2, sort_keys=True)
+PY
+ALL_IMPL_OUT="$("$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$COMPARE" --ratchet "$ALL_IMPL_RATCHET" 2>&1)"
+if ! grep -q "^OK decode throughput" <<<"$ALL_IMPL_OUT"; then
+  echo "FAIL red proof: all-implemented ratchet should emit OK but did not" >&2
+  printf '%s\n' "$ALL_IMPL_OUT" >&2
+  exit 1
+fi
+echo "RED OK all-implemented verdict: ratchet emits OK when all stages are measured"
+
 echo "PASS decode throughput gate"

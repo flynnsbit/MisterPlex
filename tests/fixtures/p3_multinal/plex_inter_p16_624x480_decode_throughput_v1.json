@@ -17,6 +17,53 @@
     "budget_cycles_per_mb": 683.7606837607,
     "budget_margin_ratio": 2.636020729
   },
+  "budget_allocation": {
+    "owner": "w-c1",
+    "date": "2026-07-27",
+    "status": "ESTIMATE — no stage below is measured except parse_cavlc",
+    "total_budget_cycles_per_mb": 684,
+    "stages": {
+      "parse_cavlc_full": {
+        "allocated": 50,
+        "unit": "cycles/MB",
+        "reasoning": "Current first-MB-only parse is 3 cycles/MB. Full MB parsing (mb_type, CBP, per-block CAVLC for up to 24 blocks in I420, Intra_16x16 Plane mode, I_PCM passthrough) will be much higher. CAVLC is fundamentally serial — each coefficient depends on the previous — and complex MBs at low QP can have 16 non-zero coefficients per block × 24 blocks. 50 cycles/MB provides headroom for content-dependent worst cases."
+      },
+      "dequant_idct": {
+        "allocated": 48,
+        "unit": "cycles/MB",
+        "reasoning": "24 blocks/MB (16Y + 4Cb + 4Cr). Currently combinational for one block. Production pipeline must clock through all 24 blocks sequentially. At 2 cycles/block (dequant + IDCT in a 2-stage pipeline): 48 cycles. The current combinational h264_dequant4x4/h264_idct4x4 modules work at 20 MHz for single-block use but will need registered outputs when processing all blocks."
+      },
+      "intra_pred": {
+        "allocated": 30,
+        "unit": "cycles/MB",
+        "reasoning": "DC mode is trivial (~1 cycle/block) but directional modes (Vert, Horiz, DDL, DDR, VR, HD, VL, HU) need neighbor sample reads. Intra_16x16 Plane mode is a 16x16-sample computation with per-pixel multiply-accumulate. I_PCM is 384 raw bytes (bypass). Averaged across a realistic I-frame with mixed modes: ~30 cycles/MB. P-frames with inter-coded MBs skip this for most MBs."
+      },
+      "mc_interpolation": {
+        "allocated": 250,
+        "unit": "cycles/MB",
+        "reasoning": "THE DOMINANT COST. Quarter-pel luma needs a 9x9 reference window per 4x4 sub-block (6-tap filter: 5 extra samples). For P_L0_16x16, that is a 21x21 = 441-sample reference window. DDR reference fetch: 441 luma + 162 chroma = 603 bytes. At 8 bytes/beat with alignment overhead: ~100 DDR beats. Each beat has arbitration latency (arbiter shares with frame_store display reads). Interpolation compute: 6-tap horizontal then vertical per sample, 16 multiplies per sample position. Chroma bilinear is lighter (~20 cycles). Adjacent-MB overlap: horizontally adjacent MBs with similar MVs share ~60% of the 21-column reference window. A line buffer can amortise this to ~40 fresh reads/MB instead of 100, but requires per-row pipeline state. WITHOUT overlap exploit: ~250 cycles. WITH overlap: ~150. Allocating 250 (no-overlap case) as the safe target. Note: sub-MB partitions (8x8, 8x16, 16x8, 4x4) may have DIFFERENT MVs per partition, multiplying fetch count. P_Skip with zero MV is essentially free (copy from co-located reference)."
+      },
+      "deblock": {
+        "allocated": 100,
+        "unit": "cycles/MB",
+        "reasoning": "16 edges per MB luma (4 vertical + 4 horizontal internal, plus shared boundary edges). Each edge: read 4+4 samples, compute BS, threshold lookup, conditional 4-tap filter. At ~6 cycles/edge for the full BS→threshold→filter pipeline: 96 cycles for luma. Chroma adds ~16 edges at ~2 cycles/edge: 32 cycles. But luma and chroma edges can pipeline if the filter has 2-cycle throughput. Practical estimate: 100 cycles/MB. The existing h264_deblock_bs and h264_deblock_thresholds are combinational — the cycle cost is in the edge scheduling and sample read/write pattern."
+      },
+      "ddr_write": {
+        "allocated": 50,
+        "unit": "cycles/MB",
+        "reasoning": "Write 384 bytes/MB (256Y + 64Cb + 64Cr) to the current picture in DDR. At 8 bytes/beat: 48 beats minimum. Burst writes amortise bus setup, but arbitration contention with MC reference reads and display line reads adds overhead. 50 cycles allows ~1 cycle/beat overhead for arbitration turnaround."
+      },
+      "control_overhead": {
+        "allocated": 30,
+        "unit": "cycles/MB",
+        "reasoning": "Pipeline stalls, MB-boundary bookkeeping (slice header re-parse at slice boundaries, QP delta application, CBP decode, macroblock address increment). Also includes arbitration pipeline bubbles between DDR requesters."
+      }
+    },
+    "sum_allocated": 558,
+    "remaining_margin": 126,
+    "margin_ratio": 1.23,
+    "verdict": "TIGHT BUT FEASIBLE if MC exploits adjacent-MB reference overlap and DDR coalesces to 64-bit beats. Without overlap exploitation, the 250 cycle MC estimate plus 100 cycle deblock leaves only 126 cycles margin for content variation and arbitration contention. Worst-case content (complex MBs, sub-MB partitions, high QP with strong deblocking) could exceed this. The margin is NOT comfortable."
+  },
   "thresholds": {
     "max_cycles_total": 3823946,
     "max_cycles_per_frame": 318662.1375,
@@ -36,19 +83,19 @@
       "name": "parse_cavlc",
       "status": "measured",
       "cycles_per_mb": null,
-      "note": "Annex-B parse, SPS/PPS/slice header, CAVLC residual decode. Measured as stub_busy rise to fs_wr_reset per VCL frame. Populated from sim stage_cycles."
+      "note": "Annex-B parse, SPS/PPS/slice header, CAVLC residual decode. Measured as stub_busy rise to fs_wr_reset per VCL frame. Populated from sim stage_cycles. Budget allocation: 50 cycles/MB."
     },
     {
       "name": "dequant_idct",
       "status": "measured",
       "cycles_per_mb": 0.0,
-      "note": "Zero clock cycles. h264_dequant4x4, h264_idct4x4, h264_recon4x4 are combinational modules that settle within one clock period."
+      "note": "Zero clock cycles today (combinational). Budget allocation: 48 cycles/MB when processing all 24 blocks per MB in a clocked pipeline."
     },
     {
       "name": "intra_pred",
       "status": "measured",
       "cycles_per_mb": 0.0,
-      "note": "Zero additional clock cycles. DC Intra_4x4 prediction (pred=128) is combinational inside h264_recon4x4."
+      "note": "Zero additional clock cycles today (DC pred=128 only). Budget allocation: 30 cycles/MB for directional modes + Intra_16x16 Plane."
     },
     {
       "name": "diagnostic_paint",
@@ -60,19 +107,22 @@
       "name": "mc_interpolation",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "Inter prediction, motion compensation, and DPB reference fetch are NOT YET IMPLEMENTED. Will add significant cost: qpel interpolation + DDR reference fetch latency."
+      "budget_allocated": 250,
+      "note": "NOT IMPLEMENTED. Budget allocation: 250 cycles/MB (no adjacent-MB overlap). Includes DDR reference fetch (~100 beats with arbitration) and qpel 6-tap interpolation compute. This is the single largest stage and the primary schedule risk."
     },
     {
       "name": "deblock",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "H.264 deblocking filter exists as RTL but is not in the measured pipeline."
+      "budget_allocated": 100,
+      "note": "NOT IMPLEMENTED. Budget allocation: 100 cycles/MB for 16 luma edges + chroma at ~6 cycles/edge with BS/threshold/filter pipeline."
     },
     {
       "name": "ddr_write",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "Product DDR frame writeback is not instrumented in the measured pipeline."
+      "budget_allocated": 50,
+      "note": "NOT IMPLEMENTED. Budget allocation: 50 cycles/MB for 48 coalesced 64-bit beats plus arbitration overhead."
     },
     {
       "name": "injection_overhead",

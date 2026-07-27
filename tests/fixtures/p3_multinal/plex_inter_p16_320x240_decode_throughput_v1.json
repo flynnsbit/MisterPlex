@@ -60,19 +60,22 @@
       "name": "mc_interpolation",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "Inter prediction and motion compensation are NOT YET IMPLEMENTED."
+      "budget_allocated": 250,
+      "note": "NOT IMPLEMENTED. Budget allocation: 250 cycles/MB (no adjacent-MB overlap). See 624x480 ratchet for detailed reasoning."
     },
     {
       "name": "deblock",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "Deblocking filter is not in the measured pipeline."
+      "budget_allocated": 100,
+      "note": "NOT IMPLEMENTED. Budget allocation: 100 cycles/MB."
     },
     {
       "name": "ddr_write",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "note": "Product DDR frame writeback is not instrumented."
+      "budget_allocated": 50,
+      "note": "NOT IMPLEMENTED. Budget allocation: 50 cycles/MB."
     },
     {
       "name": "injection_overhead",

@@ -140,13 +140,65 @@ losses. Raw bandwidth should be enough, but this is not a pass: the bitstream
 reader, DPB, and frame store contend for the same `DDRAM_*` path, and the live
 PLXF-missing fault means arbitration/liveness remains a first-class risk.
 
+## Per-stage budget allocation (estimated, 2026-07-27)
+
+**Owner: w-c1. Status: ESTIMATE — no unbuilt stage is measured.**
+
+Total budget: **684 cycles/MB** at 20 MHz / 25 fps / 1170 MB per frame.
+
+After 64-bit coalesced DPB traffic (~124 beats/MB for reference fetch + frame
+write), approximately **560 cycles/MB** remain for computation.
+
+| Stage | Allocated | Reasoning |
+| --- | ---:| --- |
+| parse_cavlc (full) | 50 | Current 3 cycles/MB is first-MB-only. Full MB parsing (mb_type, CBP, per-block CAVLC for 24 blocks I420, Intra_16x16 Plane, I_PCM) will be much higher. CAVLC is fundamentally serial. |
+| dequant_idct | 48 | 24 blocks/MB at 2 cycles/block in a 2-stage pipeline. Currently combinational for single blocks; needs registered outputs for all-block throughput. |
+| intra_pred | 30 | DC is trivial but directional modes need neighbor reads. Intra_16x16 Plane requires per-pixel MAC. I_PCM bypasses 384 bytes. |
+| **mc_interpolation** | **250** | **DOMINANT COST.** 21×21 luma qpel window through 6-tap filter + DDR reference fetch (~100 beats with arbitration). Without adjacent-MB overlap exploitation: ~250. With overlap: ~150. Sub-MB partitions multiply fetch count. |
+| deblock | 100 | 16 luma edges × ~6 cycles/edge (BS→threshold→filter) + chroma. Pipeline-able if filter has 2-cycle throughput. |
+| ddr_write | 50 | 48 coalesced 64-bit beats + arbitration turnaround. |
+| control_overhead | 30 | Pipeline stalls, MB-boundary bookkeeping, QP delta, slice header re-parse, arbitration bubbles. |
+| **TOTAL** | **558** | |
+| **Remaining margin** | **126** | 684 − 558 = 126 cycles/MB = **1.23× margin** |
+
+### Adjacent-MB reference overlap (key to MC feasibility)
+
+For P_L0_16x16 with similar MVs on horizontally adjacent MBs, the 21×21
+reference window overlaps by ~16 columns. A line buffer can amortise this to
+~40 fresh DDR reads/MB instead of ~100, saving ~60 cycles. **This is the
+difference between MC being feasible and MC blowing the budget.** w-rel should
+design the reference fetch with overlap exploitation from the start.
+
+### What this excludes
+
+- **Intra_16x16 Plane mode** (not implemented per w-cabac coverage audit, QP 5–27 only)
+- **I_PCM** (not implemented in RTL)
+- Arbitration contention from display reads (frame_store consumer)
+- Content variation (high-motion P-frames with sub-MB partitions)
+- CABAC (not relevant — Baseline profile uses CAVLC only)
+
 ## Verdict
 
-**MARGINAL.** The current 480p aggregate path measures 259.391 cycles/MB against
-a 683.761 cycles/MB 20 MHz budget, leaving 2.636× headroom. That is encouraging,
-but not a FEASIBLE verdict because the remaining P-slice correctness path,
-deblock cost, and product DDR arbitration are still UNKNOWN. Treat any missing
-stage as a named gap, not as zero cost.
+**TIGHT BUT FEASIBLE — conditionally.** The estimated 558 cycles/MB against the
+684 budget leaves a 1.23× margin. This is NOT comfortable:
+
+- MC interpolation alone (250 cycles) consumes 37% of the entire budget
+- Deblock (100 cycles) consumes another 15%
+- The 126-cycle margin is consumed by ONE bad assumption
+
+The budget is achievable IF:
+1. MC exploits adjacent-MB reference overlap (line buffer for shared columns)
+2. DDR coalesces to 64-bit beats (not byte-serial — byte-serial at 987 cycles/MB is 1.44× over budget before any computation)
+3. The deblock filter pipelines at ≤6 cycles/edge
+4. Parse/CAVLC for full MBs stays under 50 cycles/MB
+
+**If ANY of these conditions fails, 25 fps at 20 MHz is not achievable** and the
+project needs an architecture conversation about moving decode stages to the
+90 MHz `clk_ddr` domain or re-deriving the PLL. That conversation is cheaper
+now than after MC is built.
+
+The honest answer to "is this feasible?": **yes, but with essentially no safety
+margin, and MC is the make-or-break stage.**
 
 ## Ratchet
 
