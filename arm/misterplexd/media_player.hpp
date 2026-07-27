@@ -244,7 +244,7 @@ private:
 
     FbPresent fb_;
     FpgaSpi fpga_;
-    DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Rgb565;
+    DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
     bool useDdrF1_ = true; // prefer DDR bulk (3.1b); cleared on first failure
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp

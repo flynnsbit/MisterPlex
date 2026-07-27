@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     std::string confToken;
     int decodeW = 320, decodeH = 240;
     std::string presentMode = "fb0";
-    misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Rgb565;
+    misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
     bool presentProfile = false;
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
             if (parsed == ddrFrameFormat && v != "rgb565" && v != "rgb565le" && v != "rgb" &&
                 v != "yuv420p" && v != "yuv420" && v != "i420") {
                 std::fprintf(stderr,
-                             "misterplexd: unknown DDR_FRAME_FORMAT=%s (keeping rgb565)\n",
+                             "misterplexd: unknown DDR_FRAME_FORMAT=%s (keeping yuv420p)\n",
                              v.c_str());
             }
             ddrFrameFormat = parsed;

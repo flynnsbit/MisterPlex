@@ -24,10 +24,18 @@ constexpr int kPlex480pYuvLumaLineQwords = 78;
 constexpr int kPlex480pYuvChromaLineQwords = 39;
 constexpr int kPlex480pRgb565Bytes = 599040;
 constexpr int kPlex480pYuv420pBytes = 449280;
+constexpr int kPlex480pYPlaneOffset = 0;
+constexpr int kPlex480pUPlaneOffset = 299520;
+constexpr int kPlex480pVPlaneOffset = 374400;
+constexpr int kPlex480pYStrideBytes = 624;
+constexpr int kPlex480pChromaStrideBytes = 312;
 constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+constexpr uint8_t kYuv420BlackY = 16;
+constexpr uint8_t kYuv420BlackU = 128;
+constexpr uint8_t kYuv420BlackV = 128;
 
 enum class DdrFramePlacement {
     None,
@@ -46,7 +54,10 @@ enum class DdrFramePlacement {
 //   the VGA presentation area. The measured 480p PMS stream is coded 624x480,
 //   display-cropped to 618x480 (right crop = 6), then pillarboxed into 640x480
 //   with 11 black pixels at each side. The stored payload is the coded frame;
-//   the reader applies crop + pillarbox at scanout.
+//   the reader applies crop + pillarbox at scanout. Pillarbox pixels are not
+//   stored in DDR; the RTL reader emits deterministic video black
+//   (Y=16,U=128,V=128) for those columns. The ARM writer also clears cropped
+//   padding inside the coded frame to the same black.
 // - Doorbell high word is [31]=bank, [30:29]=format, [28:0]=sequence.
 //   Format 0=RGB565, 1=YUV420p. RGB565 preserves the historical bank bit and
 //   still presents a monotonically changing sequence to older readers.

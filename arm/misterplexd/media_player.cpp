@@ -188,6 +188,46 @@ inline size_t rawVideoPackedBytesPerPixel(RawVideoFormat f) {
     }
 }
 
+inline void clearYuv420pCropPadding(uint8_t* yuv, const DdrFrameGeometry& g) {
+    if (!yuv || (g.crop_left == 0 && g.crop_right == 0 && g.crop_top == 0 && g.crop_bottom == 0))
+        return;
+    const int w = g.coded_width;
+    const int h = g.coded_height;
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return;
+
+    auto clearPlane = [](uint8_t* plane, int stride, int width, int height, int cropLeft,
+                         int cropRight, int cropTop, int cropBottom, uint8_t value) {
+        const int topRows = std::max(0, std::min(cropTop, height));
+        const int bottomRows = std::max(0, std::min(cropBottom, height - topRows));
+        for (int y = 0; y < topRows; ++y)
+            std::memset(plane + static_cast<size_t>(y) * stride, value, width);
+        for (int y = height - bottomRows; y < height; ++y)
+            std::memset(plane + static_cast<size_t>(y) * stride, value, width);
+        const int first = topRows;
+        const int last = height - bottomRows;
+        const int left = std::max(0, std::min(cropLeft, width));
+        const int right = std::max(0, std::min(cropRight, width - left));
+        for (int y = first; y < last; ++y) {
+            uint8_t* row = plane + static_cast<size_t>(y) * stride;
+            if (left)
+                std::memset(row, value, left);
+            if (right)
+                std::memset(row + width - right, value, right);
+        }
+    };
+
+    const int yBytes = w * h;
+    const int cW = w / 2;
+    const int cH = h / 2;
+    clearPlane(yuv, w, w, h, g.crop_left, g.crop_right, g.crop_top, g.crop_bottom,
+               kYuv420BlackY);
+    clearPlane(yuv + yBytes, cW, cW, cH, g.crop_left / 2, g.crop_right / 2, g.crop_top / 2,
+               g.crop_bottom / 2, kYuv420BlackU);
+    clearPlane(yuv + yBytes + cW * cH, cW, cW, cH, g.crop_left / 2, g.crop_right / 2,
+               g.crop_top / 2, g.crop_bottom / 2, kYuv420BlackV);
+}
+
 inline int64_t microsBetween(std::chrono::steady_clock::time_point a,
                              std::chrono::steady_clock::time_point b) {
     return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
@@ -1549,7 +1589,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         vf += std::string("scale=") + displayScale +
               ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
               std::to_string(ddrGeometry.crop_left) + ":" +
-              std::to_string(ddrGeometry.crop_top);
+              std::to_string(ddrGeometry.crop_top) + ":color=black";
     } else {
         vf += std::string("scale=") + scale +
               ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
@@ -2336,6 +2376,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 break;
             }
             got = 0;
+
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                if (profilePresent) {
+                    const auto pix0 = std::chrono::steady_clock::now();
+                    const int64_t pixCpu0 = threadCpuMicros();
+                    clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                    const int64_t pixCpu1 = threadCpuMicros();
+                    const auto pix1 = std::chrono::steady_clock::now();
+                    prof.pixelUs += microsBetween(pix0, pix1);
+                    prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                } else {
+                    clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                }
+            }
 
             ++frameIndex;
             if (profilePresent) {
