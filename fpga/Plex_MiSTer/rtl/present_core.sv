@@ -164,24 +164,24 @@ module present_core #(
 	// That surplus row is the "bottom line": nothing gates it on py, so it reads
 	// store_y = 240, one row past the end of the 240-row store.
 	// Blank it, and clamp the address so an out-of-range row can never be fetched.
-	wire       past_last_row = (py >= V_STORE);
-	wire [31:0] store_y_prod = py * STORE_Y_SCALE;
+	wire       past_last_row = (py >= 10'd240);
+	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_scaled =
+	wire [FRAME_Y_W-1:0] store_y_addr =
 		(store_y_comb >= FRAME_H) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
-	wire [FRAME_Y_W-1:0] store_y_clamped = past_last_row ? FRAME_LAST_Y : store_y_scaled;
 
 	reg [FRAME_X_W-1:0] store_x;
 	reg [FRAME_Y_W-1:0] store_y;
 	reg       de_r; // registered in_content for frame_store read align
 	always @(posedge clk) begin
 		if (reset) begin
-			store_x <= '0;
+			store_x <= 10'd0;
 			store_y <= '0;
 			de_r    <= 1'b0;
 		end else if (ce_pix_i) begin
 			de_r    <= in_content;
-			store_y <= store_y_clamped;
+			store_y <= store_y_addr;
 			store_x <= store_x_clamped;
 		end
 	end
