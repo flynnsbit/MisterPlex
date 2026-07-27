@@ -377,6 +377,23 @@ int runDeblockContentGate(bool skipDeblock) {
         return 1;
     }
 
+    // --- DEGENERACY ASSERTION: raw and deblocked patterns must be DIFFERENT. ---
+    // If rawMatch == lumaTotal then the two patterns are identical and the gate
+    // could never distinguish filtered from unfiltered.  This would happen if
+    // someone accidentally made rawPattern == planePattern.
+    if (lumaRawMatch == lumaTotal) {
+        std::cerr << "FAIL deblock-content-gate DEGENERACY: raw pattern matches deblocked"
+                  << " for ALL " << lumaTotal << " luma samples — test vectors are"
+                  << " identical, gate cannot distinguish filtered from unfiltered\n";
+        return 1;
+    }
+    if (chromaRawMatch == chromaTotal) {
+        std::cerr << "FAIL deblock-content-gate DEGENERACY: raw pattern matches deblocked"
+                  << " for ALL " << chromaTotal << " chroma samples — test vectors are"
+                  << " identical, gate cannot distinguish filtered from unfiltered\n";
+        return 1;
+    }
+
     // --- Step 6: compute MC prediction from deblocked vs raw windows and
     // prove they differ.  This is the measurement that proves deblocking is
     // not cosmetic for inter prediction. ---
@@ -668,6 +685,37 @@ int main(int argc, char** argv) {
                       << " u=" << uc << " v=" << vc << " done=" << sawDone << "\n";
             return 1;
         }
+
+        // --- DEGENERACY ASSERTION #1: fetched data differs from initial buffer. ---
+        // Memory was initialised to 0xee.  If the fetch returns all-0xee, the
+        // filtered sample writes never reached memory or the fetch read stale data.
+        {
+            int lumaStale = 0, chromaStale = 0;
+            for (int i = 0; i < 441; ++i)
+                if (luma[i] == 0xee) ++lumaStale;
+            for (int i = 0; i < 81; ++i) {
+                if (u[i] == 0xee) ++chromaStale;
+                if (v[i] == 0xee) ++chromaStale;
+            }
+            // Allow a few coincidental 0xee values from the pattern, but not all.
+            if (lumaStale == 441) {
+                std::cerr << "FAIL h264_dpb_mc DEGENERACY: ALL 441 fetched luma samples"
+                          << " equal initial fill 0xee — DPB write or fetch is a no-op\n";
+                return 1;
+            }
+            if (chromaStale == 162) {
+                std::cerr << "FAIL h264_dpb_mc DEGENERACY: ALL 162 fetched chroma samples"
+                          << " equal initial fill 0xee — DPB write or fetch is a no-op\n";
+                return 1;
+            }
+            // Stronger: the majority must NOT be stale.
+            if (lumaStale > 441 / 2) {
+                std::cerr << "FAIL h264_dpb_mc DEGENERACY: " << lumaStale << "/441 luma samples"
+                          << " are stale (0xee) — most of the fetch returned uninitialised data\n";
+                return 1;
+            }
+        }
+
         if (static_cast<int16_t>(s.top.luma_origin_x) != -2 || static_cast<int16_t>(s.top.luma_origin_y) != -2 ||
             static_cast<int16_t>(s.top.chroma_origin_x) != -1 || static_cast<int16_t>(s.top.chroma_origin_y) != -1 ||
             s.top.luma_frac_x != 3 || s.top.luma_frac_y != 1 ||
@@ -712,6 +760,44 @@ int main(int argc, char** argv) {
         checkPartMc(s, luma, u, v, 8, 4, 3, 1);
         checkPartMc(s, luma, u, v, 4, 8, 3, 1);
         checkPartMc(s, luma, u, v, 4, 4, 3, 1);
+
+        // --- DEGENERACY ASSERTION #2: MC prediction differs from raw reference. ---
+        // At frac=(3,1), the 6-tap filter MUST change pixels vs pass-through.
+        // If prediction equals the integer-pel reference for every pixel, the
+        // interpolation filter is a no-op and the test is comparing nothing.
+        {
+            int mcLumaSame = 0;
+            for (int y = 0; y < 16; ++y) {
+                for (int x = 0; x < 16; ++x) {
+                    uint8_t integerPel = luma[(y + 2) * 21 + (x + 2)];
+                    uint8_t predicted = s.top.pred_y[y * 16 + x];
+                    if (predicted == integerPel) ++mcLumaSame;
+                }
+            }
+            if (mcLumaSame == 256) {
+                std::cerr << "FAIL h264_dpb_mc DEGENERACY: ALL 256 MC luma predictions"
+                          << " equal the integer-pel reference — interpolation filter"
+                          << " produced no change at frac=(3,1), which is impossible\n";
+                return 1;
+            }
+            int mcChromaSame = 0;
+            for (int y = 0; y < 8; ++y) {
+                for (int x = 0; x < 8; ++x) {
+                    uint8_t integerPel = u[y * 9 + x];
+                    uint8_t predicted = s.top.pred_u[y * 8 + x];
+                    if (predicted == integerPel) ++mcChromaSame;
+                }
+            }
+            if (mcChromaSame == 64) {
+                std::cerr << "FAIL h264_dpb_mc DEGENERACY: ALL 64 MC chroma-U predictions"
+                          << " equal the integer-pel reference — bilinear filter"
+                          << " produced no change at frac=(3,1), which is impossible\n";
+                return 1;
+            }
+            std::cout << "  degeneracy: luma frac-same=" << mcLumaSame << "/256"
+                      << " chroma-U frac-same=" << mcChromaSame << "/64"
+                      << " (non-degenerate)\n";
+        }
 
         s.top.idr_start = 1;
         s.tick();
