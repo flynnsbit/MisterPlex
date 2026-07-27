@@ -35,7 +35,8 @@ module nalu_scanner (
 	output reg         sl_cap_en,
 	output reg  [7:0]  sl_cap_data,
 	output reg         sl_cap_end,
-	output reg         sl_is_idr
+	output reg         sl_is_idr,
+	output reg         sl_nal_ref_idc_nonzero
 );
 
 	reg [1:0] zrun;
@@ -45,6 +46,7 @@ module nalu_scanner (
 	reg [1:0] epb_z;
 	reg [5:0] cap_len;
 	reg       sl_idr_r;
+	reg       sl_ref_r;
 	reg       sl_done; // slice header already ended (still draining NAL)
 
 	wire [4:0] nal_t = rd_data[4:0];
@@ -86,6 +88,8 @@ module nalu_scanner (
 			sl_cap_data   <= 0;
 			sl_cap_end    <= 0;
 			sl_is_idr     <= 0;
+			sl_nal_ref_idc_nonzero <= 0;
+			sl_ref_r      <= 0;
 		end else begin
 			vcl_pulse     <= 1'b0;
 			sps_cap_clear <= 1'b0;
@@ -111,6 +115,7 @@ module nalu_scanner (
 					else if (cap_tgt == 2'd3 && !sl_done) begin
 						sl_cap_end <= 1'b1;
 						sl_is_idr  <= sl_idr_r;
+						sl_nal_ref_idc_nonzero <= sl_ref_r;
 					end
 
 					last_nal_type <= rd_data;
@@ -138,6 +143,7 @@ module nalu_scanner (
 							vcl_pulse    <= 1'b1;
 							cap_tgt      <= 2'd3;
 							sl_idr_r     <= 1'b1;
+							sl_ref_r     <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
 						end
 						5'd1: begin
@@ -145,6 +151,7 @@ module nalu_scanner (
 							vcl_pulse    <= 1'b1;
 							cap_tgt      <= 2'd3;
 							sl_idr_r     <= 1'b0;
+							sl_ref_r     <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
 						end
 						default: cap_tgt <= 2'd0;
@@ -167,6 +174,7 @@ module nalu_scanner (
 						if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
 							sl_cap_end <= 1'b1;
 							sl_is_idr  <= sl_idr_r;
+							sl_nal_ref_idc_nonzero <= sl_ref_r;
 							sl_done    <= 1'b1;
 						end
 					end
@@ -176,6 +184,7 @@ module nalu_scanner (
 					else if (cap_tgt == 2'd3 && !sl_done) begin
 						sl_cap_end <= 1'b1;
 						sl_is_idr  <= sl_idr_r;
+						sl_nal_ref_idc_nonzero <= sl_ref_r;
 					end
 					cap_tgt   <= 2'd0;
 					sl_done   <= 0;
@@ -200,6 +209,7 @@ module nalu_scanner (
 							if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
 								sl_cap_end <= 1'b1;
 								sl_is_idr  <= sl_idr_r;
+								sl_nal_ref_idc_nonzero <= sl_ref_r;
 								sl_done    <= 1'b1;
 							end
 						end
