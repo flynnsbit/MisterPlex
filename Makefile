@@ -2,6 +2,8 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CXX  ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
+FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
+FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
 .PHONY: all unit rtl-sim rtl-lint arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package
 
@@ -24,7 +26,7 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -50,10 +52,12 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	$(ROOT)/build/test_p3_host_recon_vectors
 	$(ROOT)/build/test_p3_idct_reference_model
+	$(ROOT)/build/test_p3_inter_pred_vectors
+	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
-	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
@@ -114,6 +118,16 @@ $(ROOT)/build/test_p3_idct_reference_model: $(ROOT)/tests/unit/test_p3_idct_refe
 		$(ROOT)/tests/fixtures/p3_host_recon/frame_mae_v1.csv
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_idct_reference_model.cpp
+
+$(ROOT)/build/test_p3_inter_pred_vectors: $(ROOT)/tests/unit/test_p3_inter_pred_vectors.cpp \
+		$(ROOT)/host/libmisterplex/h264_nal.hpp \
+		$(ROOT)/host/libmisterplex/h264_sps.hpp \
+		$(ROOT)/scripts/gen_test_annexb_inter.py \
+		$(ROOT)/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+		$(ROOT)/tests/fixtures/p3_inter_pred/pframe1_mb_v1.json \
+		$(ROOT)/tests/fixtures/p3_inter_pred/frame_mae_v1.csv
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) $(FFMPEG_CFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_inter_pred_vectors.cpp $(FFMPEG_LIBS)
 
 $(ROOT)/build/test_cavlc_dc: $(ROOT)/tests/unit/test_cavlc_dc.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \

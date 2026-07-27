@@ -287,6 +287,59 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
   **Product:** host F1 recon stays until FPGA mae competitive; F3 diagnostic until then.
   **Non-goals:** deblock, P-slice/MC, CABAC, Quartus-only bring-up without unit goldens.
 
+Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
+  **Survey result:** checked-in Plex/test MP4 assets are Constrained Baseline **I/P only** with
+  no B-frames, but still use quarter-pel motion (`motion_scale=4`). Natural encodes include mostly
+  P16×16 plus small counts of P16×8/P8×16/P8×8; see `docs/phase3-inter-prediction.md`.
+  **Profile lever:** `scripts/gen_test_annexb_inter.py` demonstrates the narrow hardware target:
+  Baseline/CAVLC, `bframes=0`, `ref=1`, `weightp=0`, `partitions=none` → deterministic
+  12-frame Annex-B vector (`27653` bytes, md5 `fe5ba815b4d67b5b24d7de496facb15b`) with
+  `I=1 P=11 B=0`, refs=1, only P16×16 motion vectors, max motion 18×9 px.
+  **PMS profile update:** `main` now requests 480p PMS universal as
+  `videoResolution=640x480&maxVideoBitrate=2500&videoCodec=h264&videoProfile=baseline&videoLevel=30`.
+  Baseline makes inter prediction tractable: no B-slices, no CABAC, no weighted prediction, no
+  field/interlaced coding. Treat this as a request until delivered-stream probing proves profile_idc=66
+  and CAVLC PPS; source XML may still describe the original Main-profile input.
+  **Actual PMS probe (W-A4 2026-07-26):** the server did **not** honor Baseline. Delivered stream
+  probed on `feat/a4-sps-baseline` @ `b28e863` as H.264 High, `profile_idc=100`, `level_idc=30`,
+  `width=618`, `height=480`, PPS `entropy_cabac=1`, video-only bitrate ~1344.3 kbps, and a 12 s
+  slice scan found `i=22 p=165 b=115`. The request still carried `videoResolution=640x480`,
+  `maxVideoBitrate=2500`, `videoProfile=baseline`, `videoLevel=30`; PMS mpegts universal target
+  produced data while final mp4 returned an empty body. Therefore Baseline-only FPGA inter decode
+  is architecturally tractable but **not yet product-safe for PMS 480p**; product must fail closed /
+  fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
+  **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
+  (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
+  (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
+  `test_p3_inter_pred_vectors` regenerates byte-identically, exports libav motion vectors, and
+  verifies Baseline/CAVLC/profile constraints plus the fixtures; red perturbations cover MV, MAE rows,
+  and unsupported-profile handling.
+  **Architecture:** inter prediction requires DDR3-backed YUV reference storage; BRAM is not viable
+  for 480p references. Level 3.0 worst-case DPB is `floor(8100 / 1200) = 6` 640×480 refs:
+  2.76 MB YUV420 for references, ~3.23 MB including current reconstruction. One-ref P16×16 480p
+  is roughly 1.6 MB/frame with native YUV420 DDR/present (~94 MB/s @60 before inefficiency) or
+  ~1.8 MB/frame with RGB565 output (~108 MB/s @60). Sub-MB partitions raise that toward
+  ~132–156 MB/s at 60 on the RGB565 path, ~25% less if `w-c2` YUV420 DDR lands. Current ~160 MB/s
+  DDR3 is plausible for the narrow Baseline/YUV path; faster DDRAM clock makes it comfortable.
+  SDRAM remains unsuitable until its hardware bring-up is green.
+  **Detection rule:** unexpected B-slice, CABAC PPS, non-Baseline profile, over-level stream, or
+  `max_num_ref_frames` above the implemented DPB must fail closed and report unsupported; unit
+  `test_p3_inter_pred_vectors` includes a generated High/CABAC/B probe for this guard.
+
+Phase 3.3n (real PMS High/CABAC/B sizing — W-REL 2026-07-26 host-only):
+  `docs/phase3-high-cabac-scope.md` sizes the final W-A4 sweep result: client-only Baseline forcing
+  failed, delivered stream is High/CABAC/B with 624×480 coded / 618×480 display, 39×30=1170 macroblocks,
+  25 fps, `max_num_ref_frames=4`, PPS CABAC, and `i=22 p=165 b=115` over 12 s. CABAC planning
+  number is **8.775 Mbin/s** (300 bins/macroblock); stress is **17.550 Mbin/s** (600 bins/macroblock). At current
+  20 MHz `clk_sys`/DDRAM clock, an optimistic 1-bin/cycle CABAC engine barely covers stress
+  (1.14×), a 2-cycle engine fails stress, and a 3-cycle engine fails planning. 4 refs + current
+  YUV420 is 2.25 MB; +present/reorder is 2.70 MB, so DDR3 is required and SDRAM/BRAM are not viable.
+  Existing 4×4 IQ/IDCT/recon survives below the entropy layer, but the CAVLC walker does not; High
+  also requires detection/support for 8×8 transform and B-slice DPB/list machinery. Verdict:
+  decoding PMS as delivered is a full High-profile decoder project and not a sane near-term path
+  without a faster/proven clock+DDR plan; server-side Baseline XML or ARM/FFmpeg fallback is now a
+  hard strategic requirement.
+
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
     Historical SPI chunk sweep (earlier lab):
