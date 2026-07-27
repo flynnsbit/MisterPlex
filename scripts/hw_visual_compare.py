@@ -142,6 +142,15 @@ FORMAT_CODES = {
 FORMAT_ERROR_DEBUG_FIELDS = ("frame_debug", "frame_dbg", "ddr_debug", "ddr_dbg", "debug_state")
 SURFACED_DEBUG_FIELDS = FORMAT_ERROR_DEBUG_FIELDS + ("recon_dbg",)
 NON_YUV_DOORBELL_ERROR = "frame store refused non-YUV doorbell (0xE1); non-YUV DDR doorbell format error"
+PLXF_ABSENT_ERROR = "frame store status unavailable (PLXF mailbox absent/unwritten)"
+STATUS_SNAPSHOT_KEYS = {
+    "bytes_in", "nalu", "has_frame", "has_stream", "has_idr", "frame_status",
+    "frame_bank", "ddr_bank", "bank", "frame_format", "ddr_format", "format",
+    "frame_seq", "ddr_seq", "doorbell_seq", "seq", "doorbell", "ddr_doorbell",
+    "frame_doorbell", "doorbell_hi", "ddr_doorbell_hi", "frame_doorbell_hi",
+    *SURFACED_DEBUG_FIELDS,
+    "plxf_magic", "frame_magic", "frame_store_magic",
+}
 
 
 def normalize_md5(value: str | None) -> str | None:
@@ -364,7 +373,7 @@ def parse_status_fields(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in text.splitlines():
         kv = dict(STATUS_FIELD_RE.findall(line))
-        if kv and ("bytes_in" in kv or line.strip().startswith("status")):
+        if kv and (line.strip().startswith("status") or STATUS_SNAPSHOT_KEYS.intersection(kv)):
             fields = kv
     return fields
 
@@ -418,10 +427,25 @@ def extract_frame_token(fields: dict[str, str]) -> dict | None:
 
 def load_status_snapshot(path: str) -> dict:
     p = Path(path)
-    fields = parse_status_fields(p.read_text(encoding="utf-8", errors="replace"))
-    if not fields:
+    text = p.read_text(encoding="utf-8", errors="replace")
+    fields = parse_status_fields(text)
+    status_errors = []
+    if PLXF_ABSENT_ERROR.lower() in text.lower():
+        status_errors.append(PLXF_ABSENT_ERROR)
+    if not fields and not status_errors:
         raise DeliveryFreshnessError(f"NO_FRESH_FRAME: no key=value status line in {p}")
     ints = {k: v for k, raw in fields.items() if (v := parse_int_value(raw)) is not None}
+    frame_status = fields.get("frame_status")
+    if frame_status and frame_status.strip().lower().rstrip(",") in {
+        "absent", "unavailable", "missing", "none", "no_frame",
+    }:
+        status_errors.append(f"frame_status={frame_status} ({PLXF_ABSENT_ERROR})")
+    has_frame = ints.get("has_frame")
+    if has_frame == 0:
+        status_errors.append(f"has_frame=0 ({PLXF_ABSENT_ERROR})")
+    plxf_magic = status_int(fields, "plxf_magic", "frame_magic", "frame_store_magic")
+    if plxf_magic == 0:
+        status_errors.append(f"PLXF magic=0x00000000 ({PLXF_ABSENT_ERROR})")
     debug_flags = []
     for name in SURFACED_DEBUG_FIELDS:
         val = ints.get(name)
@@ -436,6 +460,7 @@ def load_status_snapshot(path: str) -> dict:
         "ints": ints,
         "frame_token": extract_frame_token(fields),
         "debug_flags": debug_flags,
+        "status_errors": status_errors,
     }
 
 
@@ -503,6 +528,7 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
     for flag in current["debug_flags"]:
         if flag.get("meaning") == NON_YUV_DOORBELL_ERROR:
             problems.append(f"{flag['field']}={flag['hex']} {NON_YUV_DOORBELL_ERROR}")
+    problems.extend(current["status_errors"])
 
     report = {
         "status": current,

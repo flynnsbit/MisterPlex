@@ -183,6 +183,11 @@ If status exposes the frame-store debug byte, `0xe1` is surfaced as
 and is treated as a freshness/setup refusal, not a visual mismatch. The visual
 gate consumes `frame_debug` directly when w-osd's ARM status output exposes it;
 `debug_state`/DDR debug aliases remain accepted only for compatibility.
+Likewise, w-osd's absent-frame surface is authoritative: `frame_status=absent`,
+`has_frame=0`, `PLXF magic=0`, or the text
+`frame store status unavailable (PLXF mailbox absent/unwritten)` all return
+`rc=7` before pixel grading. A channel-skewed PNG cannot be reported as
+`COLOUR_PATH_DEFECT` while ARM status says PLXF absent or non-YUV-refused.
 
 ## Visual verdict: absent frame vs colour path
 
@@ -214,6 +219,12 @@ allowed to masquerade as colour defects; when `--shift-radius` finds a
 substantially better offset, the verdict becomes `GEOMETRY_CONTENT_DEFECT`.
 High-error cases in the band between flat/no-frame and skewed/colour return
 `INDETERMINATE` and the compare command exits non-zero without guessing.
+
+Colour-path classification is only trusted for delivered frames: PLXF status
+must be present, no `0xe1` refusal may be surfaced, required `has_frame`/stream
+fields must pass, and token freshness must pass when requested. If those status
+checks fail, the comparator reports delivery failure instead of interpreting
+pixels.
 
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before
