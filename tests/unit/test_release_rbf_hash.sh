@@ -21,8 +21,9 @@ scanned_artifact=0
 
 artifact_is_current() {
   [[ "$scan_all" == "1" ]] && return 0
-  local name="$1"
-  [[ "$name" == "misterplex-$version" || "$name" == "misterplex-${version%-dirty}" ]]
+  # Exact match only: a dirty tree is a different build from the tagged one,
+  # so it must not be validated against the tagged tree's package.
+  [[ "$1" == "misterplex-$version" ]]
 }
 
 report() {
@@ -74,6 +75,12 @@ if [[ "$scan_all" == "1" || "$scanned_artifact" == "1" ]] && [[ -d dist/stage-mi
   fi
 elif [[ -d dist/stage-misterplex ]]; then
   echo "test_release_rbf_hash: skipping stale dist/stage-misterplex (no $version tarball to date it against); SCAN_ARTIFACTS=1 to include it"
+fi
+
+# Release gate: refuse to report success without having actually inspected a
+# package, so a version/naming mismatch cannot turn this into a no-op.
+if [[ "${REQUIRE_ARTIFACT:-0}" == "1" && "$scanned_artifact" != "1" ]]; then
+  report "REQUIRE_ARTIFACT=1 but no package for $version was found to scan"
 fi
 
 exit "$status"

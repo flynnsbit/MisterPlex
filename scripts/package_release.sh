@@ -19,11 +19,15 @@ FFMPEG_ARMHF="${FFMPEG_ARMHF:-$HOME/Projects/mistercast-linux/third_party/ffmpeg
 
 echo "=== package_release $VERSION ==="
 
-if [[ ! -f "$ARM_BIN" ]]; then
-  echo "Building arm misterplexd…"
-  export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
-  make -C "$ROOT" arm-plexd
-fi
+# Always rebuild rather than reusing whatever happens to sit in build/arm.
+# A stale binary here silently shipped a pre-cleanup daemon that still carried
+# a hardcoded private PMS address, so "the file exists" is not evidence that it
+# matches the source being released. make handles the up-to-date check properly
+# via its dependencies; a missing toolchain now fails loudly instead of
+# packaging an unrelated build.
+echo "Building arm misterplexd…"
+export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
+make -C "$ROOT" arm-plexd
 [[ -f "$ARM_BIN" ]] || { echo "missing $ARM_BIN"; exit 1; }
 
 rm -rf "$STAGE"

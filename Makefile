@@ -244,8 +244,8 @@ build-rbf:
 package:
 	$(ROOT)/scripts/package_release.sh
 	@chmod +x $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh
-	SCAN_ARTIFACTS=1 $(ROOT)/tests/unit/test_no_private_data.sh
-	SCAN_ARTIFACTS=1 $(ROOT)/tests/unit/test_release_rbf_hash.sh
+	REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_no_private_data.sh
+	REQUIRE_ARTIFACT=1 $(ROOT)/tests/unit/test_release_rbf_hash.sh
 
 clean:
 	rm -rf $(ROOT)/build
