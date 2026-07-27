@@ -193,7 +193,7 @@ module h264_intra16x16_pred (
 	end
 
 	integer x, y, i;
-	integer sum;
+	integer sum, sa_lo, sa_hi, sl_lo, sl_hi;
 	reg [7:0] dc_v;
 	integer val;
 
@@ -233,9 +233,19 @@ module h264_intra16x16_pred (
 					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= left[y];
 				valid <= 1'b1;
 			end else begin
-				sum = 0;
-				if (has_above) for (i = 0; i < 16; i = i + 1) sum = sum + above[i];
-				if (has_left)  for (i = 0; i < 16; i = i + 1) sum = sum + left[i];
+				// Balanced tree: 5 add levels guaranteed vs up to 32 in linear chain
+				sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+				      + ((above[4]+above[5]) + (above[6]+above[7]));
+				sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+				      + ((above[12]+above[13]) + (above[14]+above[15]));
+				sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+				      + ((left[4]+left[5]) + (left[6]+left[7]));
+				sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+				      + ((left[12]+left[13]) + (left[14]+left[15]));
+				if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
+				else if (has_above) sum = sa_lo + sa_hi;
+				else if (has_left) sum = sl_lo + sl_hi;
+				else sum = 0;
 				if (has_above && has_left) dc_v = (sum + 16) >>> 5;
 				else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
 				else dc_v = 8'd128;
@@ -247,14 +257,22 @@ module h264_intra16x16_pred (
 endmodule
 
 module h264_chroma8x8_pred (
-	input  wire [1:0] mode,
-	input  wire [7:0] above [0:7],
-	input  wire [7:0] left [0:7],
-	input  wire [7:0] top_left,
-	input  wire       has_above,
-	input  wire       has_left,
-	output reg  [7:0] pred [0:63]
+	input  wire        clk,
+	input  wire        start,
+	input  wire [1:0]  mode,
+	input  wire [7:0]  above [0:7],
+	input  wire [7:0]  left [0:7],
+	input  wire [7:0]  top_left,
+	input  wire        has_above,
+	input  wire        has_left,
+	output reg         valid,
+	output reg  [7:0]  pred [0:63]
 );
+	// 2-cycle pipeline for Chroma Plane prediction (ITU-T H.264 clause 8.3.4.4).
+	// Cycle 1: gradient accumulation → b, c → pre-compute 16 products bx[]/cy[]
+	// Cycle 2: 64 pixels from registered a + bx[x] + cy[y] → clip
+	// Modes DC/H/V: 1 cycle (register combinational result on start).
+
 	function automatic [7:0] clip8;
 		input integer v;
 		begin
@@ -264,72 +282,105 @@ module h264_chroma8x8_pred (
 		end
 	endfunction
 
-	task automatic fill4;
-		input int x0;
-		input int y0;
-		input int v;
-		integer x, y;
-		begin
-			for (y = 0; y < 4; y = y + 1)
-				for (x = 0; x < 4; x = x + 1) pred[(y0 + y) * 8 + x0 + x] = clip8(v);
+	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
+	reg phase = 1'b0;
+
+	// Registered intermediates for Plane pipeline (16 products, not 64)
+	reg signed [15:0] a_r;
+	reg signed [15:0] bx_r [0:7];
+	reg signed [15:0] cy_r [0:7];
+
+	// Combinational gradient computation (clause 8.3.4.4)
+	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
+	integer gi;
+	always @* begin
+		hgrad_c = 0;
+		vgrad_c = 0;
+		for (gi = 0; gi < 4; gi = gi + 1) begin
+			hgrad_c = hgrad_c + (gi + 1) * ($signed({1'b0, above[4 + gi]}) - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, above[2 - gi]})));
+			vgrad_c = vgrad_c + (gi + 1) * ($signed({1'b0, left[4 + gi]})  - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, left[2 - gi]})));
 		end
-	endtask
+		a_c = 16 * ($signed({1'b0, above[7]}) + $signed({1'b0, left[7]}));
+		b_c = (17 * hgrad_c + 16) >>> 5;
+		c_c = (17 * vgrad_c + 16) >>> 5;
+	end
 
 	integer x, y, i;
-	integer hgrad, vgrad, a, b, c, val;
 	integer sum_a0, sum_a1, sum_l0, sum_l1;
-	integer ai [0:7];
-	integer li [0:7];
-	integer tli;
-	always @* begin
-		hgrad = 0;
-		vgrad = 0;
-		a = 0;
-		b = 0;
-		c = 0;
-		val = 0;
-		for (i = 0; i < 64; i = i + 1) pred[i] = 8'd128;
-		for (i = 0; i < 8; i = i + 1) begin
-			ai[i] = above[i];
-			li[i] = left[i];
-		end
-		tli = top_left;
-		sum_a0 = ai[0] + ai[1] + ai[2] + ai[3];
-		sum_a1 = ai[4] + ai[5] + ai[6] + ai[7];
-		sum_l0 = li[0] + li[1] + li[2] + li[3];
-		sum_l1 = li[4] + li[5] + li[6] + li[7];
-		if (mode == 2'd0) begin
-			if (has_above && has_left) begin
-				fill4(0, 0, (sum_a0 + sum_l0 + 4) >>> 3);
-				fill4(4, 0, (sum_a1 + 2) >>> 2);
-				fill4(0, 4, (sum_l1 + 2) >>> 2);
-				fill4(4, 4, (sum_a1 + sum_l1 + 4) >>> 3);
-			end else if (has_above) begin
-				fill4(0, 0, (sum_a0 + 2) >>> 2); fill4(4, 0, (sum_a1 + 2) >>> 2);
-				fill4(0, 4, (sum_a0 + 2) >>> 2); fill4(4, 4, (sum_a1 + 2) >>> 2);
-			end else if (has_left) begin
-				fill4(0, 0, (sum_l0 + 2) >>> 2); fill4(4, 0, (sum_l0 + 2) >>> 2);
-				fill4(0, 4, (sum_l1 + 2) >>> 2); fill4(4, 4, (sum_l1 + 2) >>> 2);
-			end
-		end else if (mode == 2'd1) begin
-			for (y = 0; y < 8; y = y + 1)
-				for (x = 0; x < 8; x = x + 1) pred[y * 8 + x] = left[y];
-		end else if (mode == 2'd2) begin
-			for (y = 0; y < 8; y = y + 1)
-				for (x = 0; x < 8; x = x + 1) pred[y * 8 + x] = above[x];
-		end else begin
-			for (i = 0; i < 4; i = i + 1) begin
-				hgrad = hgrad + (i + 1) * (ai[4 + i] - ((i == 3) ? tli : ai[2 - i]));
-				vgrad = vgrad + (i + 1) * (li[4 + i]  - ((i == 3) ? tli : li[2 - i]));
-			end
-			a = 16 * (ai[7] + li[7]);
-			b = (17 * hgrad + 16) >>> 5;
-			c = (17 * vgrad + 16) >>> 5;
+	integer val;
+	reg [7:0] dc_tl, dc_tr, dc_bl, dc_br;
+
+	always @(posedge clk) begin
+		valid <= 1'b0;
+
+		if (phase) begin
+			// Plane cycle 2: evaluate 64 pixels from 16 registered products
 			for (y = 0; y < 8; y = y + 1)
 				for (x = 0; x < 8; x = x + 1) begin
-					val = (a + b * (x - 3) + c * (y - 3) + 16) >>> 5;
-					pred[y * 8 + x] = clip8(val);
+					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+					pred[y * 8 + x] <= clip8(val);
 				end
+			valid <= 1'b1;
+			phase <= 1'b0;
+		end else if (start) begin
+			if (mode == 2'd3) begin
+				if (has_above && has_left) begin
+					// Plane cycle 1: register a and 16 pre-computed products
+					a_r <= a_c[15:0];
+					for (i = 0; i < 8; i = i + 1) begin
+						bx_r[i] <= b_c * (i - 3);
+						cy_r[i] <= c_c * (i - 3);
+					end
+					phase <= 1'b1;
+				end else begin
+					for (i = 0; i < 64; i = i + 1) pred[i] <= 8'd128;
+					valid <= 1'b1;
+				end
+			end else if (mode == 2'd0) begin
+				// DC with 4 quadrant sub-averages (clause 8.3.4.1)
+				sum_a0 = (above[0]+above[1]) + (above[2]+above[3]);
+				sum_a1 = (above[4]+above[5]) + (above[6]+above[7]);
+				sum_l0 = (left[0]+left[1]) + (left[2]+left[3]);
+				sum_l1 = (left[4]+left[5]) + (left[6]+left[7]);
+				if (has_above && has_left) begin
+					dc_tl = clip8((sum_a0 + sum_l0 + 4) >>> 3);
+					dc_tr = clip8((sum_a1 + 2) >>> 2);
+					dc_bl = clip8((sum_l1 + 2) >>> 2);
+					dc_br = clip8((sum_a1 + sum_l1 + 4) >>> 3);
+				end else if (has_above) begin
+					dc_tl = clip8((sum_a0 + 2) >>> 2);
+					dc_tr = clip8((sum_a1 + 2) >>> 2);
+					dc_bl = dc_tl;
+					dc_br = dc_tr;
+				end else if (has_left) begin
+					dc_tl = clip8((sum_l0 + 2) >>> 2);
+					dc_tr = dc_tl;
+					dc_bl = clip8((sum_l1 + 2) >>> 2);
+					dc_br = dc_bl;
+				end else begin
+					dc_tl = 8'd128; dc_tr = 8'd128;
+					dc_bl = 8'd128; dc_br = 8'd128;
+				end
+				for (y = 0; y < 4; y = y + 1)
+					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_tl;
+				for (y = 0; y < 4; y = y + 1)
+					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_tr;
+				for (y = 4; y < 8; y = y + 1)
+					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_bl;
+				for (y = 4; y < 8; y = y + 1)
+					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_br;
+				valid <= 1'b1;
+			end else if (mode == 2'd1) begin
+				// Horizontal
+				for (y = 0; y < 8; y = y + 1)
+					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= left[y];
+				valid <= 1'b1;
+			end else begin
+				// Vertical (mode 2)
+				for (y = 0; y < 8; y = y + 1)
+					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= above[x];
+				valid <= 1'b1;
+			end
 		end
 	end
 endmodule

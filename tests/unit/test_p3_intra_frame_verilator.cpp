@@ -408,6 +408,19 @@ int runI16Pred(Vp3_intra_frame_tb& dut) {
     return cycles;
 }
 
+// Run chroma prediction pipeline until valid
+int runChromaPred(Vp3_intra_frame_tb& dut) {
+    dut.chroma_start = 1;
+    tickFrame(dut);
+    dut.chroma_start = 0;
+    int cycles = 1;
+    while (!dut.chroma_valid && cycles < 10) {
+        tickFrame(dut);
+        ++cycles;
+    }
+    return cycles;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -607,7 +620,7 @@ int main(int argc, char** argv) {
                 dut.chroma_has_left = hl;
                 dut.chroma_top_left = tl;
                 misterplex::recon::detail_r::predChroma8(cm, exp, 8, above, left, tl, ha, hl);
-                dut.eval();
+                runChromaPred(dut);
                 for (int i = 0; i < 64; ++i) {
                     if (dut.chroma_pred[i] != exp[i]) {
                         std::cerr << "mb " << mb << " chroma plane " << plane << " mode " << cm

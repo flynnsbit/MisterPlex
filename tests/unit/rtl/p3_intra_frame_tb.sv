@@ -23,12 +23,14 @@ module p3_intra_frame_tb (
 	output wire       i16_valid,
 	output wire [7:0] i16_pred [0:255],
 
+	input  wire        chroma_start,
 	input  wire [1:0] chroma_mode,
 	input  wire [7:0] chroma_above [0:7],
 	input  wire [7:0] chroma_left [0:7],
 	input  wire [7:0] chroma_top_left,
 	input  wire       chroma_has_above,
 	input  wire       chroma_has_left,
+	output wire       chroma_valid,
 	output wire [7:0] chroma_pred [0:63],
 
 	input  wire [7:0] recon_pred [0:15],
@@ -83,12 +85,15 @@ module p3_intra_frame_tb (
 	);
 
 	h264_chroma8x8_pred pred_chroma (
+		.clk(clk),
+		.start(chroma_start),
 		.mode(chroma_mode),
 		.above(chroma_above),
 		.left(chroma_left),
 		.top_left(chroma_top_left),
 		.has_above(chroma_has_above),
 		.has_left(chroma_has_left),
+		.valid(chroma_valid),
 		.pred(chroma_pred)
 	);
 
