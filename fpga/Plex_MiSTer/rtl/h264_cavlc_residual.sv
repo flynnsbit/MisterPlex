@@ -48,8 +48,8 @@ module h264_cavlc_residual_block #(
     output reg [4:0]          total_coeff,
     output reg [1:0]          trailing_ones,
     output reg [3:0]          total_zeros,
-    output reg signed [8:0]   coeff [0:15],
-    output reg signed [8:0]   level_dbg [0:15],
+    output reg signed [15:0]  coeff [0:15],
+    output reg signed [15:0]  level_dbg [0:15],
     output reg [3:0]          run_dbg [0:15]
 );
     localparam [4:0]
@@ -79,14 +79,14 @@ module h264_cavlc_residual_block #(
     reg [2:0] suffix_length;
     reg [5:0] prefix;
     reg [4:0] suffix_left;
-    reg [15:0] suffix_acc;
+    reg [31:0] suffix_acc;
     reg first_non_t1;
-    reg [15:0] level_code;
+    reg [31:0] level_code;
     reg [3:0] zeros_left;
     reg [4:0] place_i;
     reg signed [5:0] coeff_num;
 
-    wire cur_bit = (bit_pos < bit_len) ? rbsp[bit_pos[9:3]][3'd7 - bit_pos[2:0]] : 1'b0;
+    wire cur_bit = (bit_pos < bit_len) ? rbsp[bit_pos[8:3]][3'd7 - bit_pos[2:0]] : 1'b0;
     wire token_too_long = (coeff_token_table == 3'd3) ? (code_len >= 5'd6) :
                           (coeff_token_table == 3'd4) ? (code_len >= 5'd8) : (code_len >= 5'd16);
     wire tz_is_chroma = (max_coeff == 5'd4);
@@ -568,38 +568,46 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    function automatic signed [8:0] level_from_code(input [15:0] code_in);
-        reg signed [8:0] mask;
-        reg signed [8:0] t;
+    function automatic signed [15:0] level_from_code(input [31:0] code_in);
+        reg signed [15:0] mask;
+        reg signed [15:0] t;
+        reg [31:0] half;
         begin
-            mask = code_in[0] ? -9'sd1 : 9'sd0;
-            t = ($signed({1'b0, code_in}) + 9'sd2) >>> 1;
+            mask = code_in[0] ? -16'sd1 : 16'sd0;
+            half = (code_in + 32'd2) >> 1;
+            t = $signed(half[15:0]);
             level_from_code = (t ^ mask) - mask;
         end
     endfunction
 
-    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [8:0] lvl);
+    function automatic [3:0] idx4(input [4:0] v);
+        begin
+            idx4 = v[3:0];
+        end
+    endfunction
+
+    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
         begin
             if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
                 suffix_next_first = 3'd2;
             else
-                suffix_next_first = 3'd1 + ((lvl + 9'sd3) > 9'sd6);
+                suffix_next_first = 3'd1 + ((lvl + 16'sd3) > 16'sd6);
         end
     endfunction
 
-    function automatic [2:0] suffix_next(input [2:0] cur_suf, input signed [8:0] lvl);
-        reg [8:0] lim;
+    function automatic [2:0] suffix_next(input [2:0] cur_suf, input signed [15:0] lvl);
+        reg [15:0] lim;
         begin
             case (cur_suf)
-            3'd0: lim = 9'd0;
-            3'd1: lim = 9'd3;
-            3'd2: lim = 9'd6;
-            3'd3: lim = 9'd12;
-            3'd4: lim = 9'd24;
-            default: lim = 9'd48;
+            3'd0: lim = 16'd0;
+            3'd1: lim = 16'd3;
+            3'd2: lim = 16'd6;
+            3'd3: lim = 16'd12;
+            3'd4: lim = 16'd24;
+            default: lim = 16'd48;
             endcase
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && (lim + lvl[8:0]) > (lim << 1))
+            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
                 suffix_next = cur_suf + 3'd1;
         end
     endfunction
@@ -608,8 +616,8 @@ module h264_cavlc_residual_block #(
         integer i;
         begin
             for (i = 0; i < 16; i = i + 1) begin
-                coeff[i] <= 9'sd0;
-                level_dbg[i] <= 9'sd0;
+                coeff[i] <= 16'sd0;
+                level_dbg[i] <= 16'sd0;
                 run_dbg[i] <= 4'd0;
             end
         end
@@ -619,7 +627,9 @@ module h264_cavlc_residual_block #(
         reg [7:0] tok;
         reg [4:0] zlk;
         reg [4:0] rlk;
-        reg signed [8:0] lvl_tmp;
+        reg signed [15:0] lvl_tmp;
+        reg signed [5:0] next_coeff_num;
+        reg level_bad;
         integer ci;
 
         done <= 1'b0;
@@ -673,7 +683,7 @@ module h264_cavlc_residual_block #(
                     t1_r <= tok[1:0];
                     total_coeff <= tok[6:2];
                     trailing_ones <= tok[1:0];
-                    if (tok[6:2] > max_coeff || tok[1:0] > tok[6:2])
+                    if (tok[6:2] > max_coeff || {3'd0, tok[1:0]} > tok[6:2])
                         st <= ST_FAIL;
                     else if (tok[6:2] == 5'd0) begin
                         ok <= 1'b1;
@@ -697,7 +707,7 @@ module h264_cavlc_residual_block #(
             ST_SIGN: begin
                 if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin
-                    level_dbg[idx] <= cur_bit ? -9'sd1 : 9'sd1;
+                    level_dbg[idx[3:0]] <= cur_bit ? -16'sd1 : 16'sd1;
                     bit_pos <= bit_pos + 10'd1;
                     if (idx + 5'd1 >= {3'd0, t1_r}) begin
                         idx <= {3'd0, t1_r};
@@ -721,7 +731,7 @@ module h264_cavlc_residual_block #(
                         prefix <= prefix + 6'd1;
                         if (prefix >= 6'd31) st <= ST_FAIL;
                     end else begin
-                        suffix_acc <= 16'd0;
+                        suffix_acc <= 32'd0;
                         if (first_non_t1) begin
                             if (prefix < 6'd14) suffix_left <= {2'd0, suffix_length};
                             else if (prefix == 6'd14) suffix_left <= (suffix_length != 0) ? {2'd0, suffix_length} : 5'd4;
@@ -740,47 +750,56 @@ module h264_cavlc_residual_block #(
                     st <= ST_LVL_STORE;
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin
-                    suffix_acc <= {suffix_acc[14:0], cur_bit};
+                    suffix_acc <= {suffix_acc[30:0], cur_bit};
                     suffix_left <= suffix_left - 5'd1;
                     bit_pos <= bit_pos + 10'd1;
                 end
             end
 
             ST_LVL_STORE: begin
+                level_bad = 1'b0;
                 if (first_non_t1) begin
                     if (prefix < 6'd14) begin
-                        level_code = ({10'd0, prefix} << suffix_length) + suffix_acc;
+                        level_code = ({26'd0, prefix} << suffix_length) + suffix_acc;
                     end else if (prefix == 6'd14) begin
-                        if (suffix_length != 0) level_code = (16'd14 << suffix_length) + suffix_acc;
-                        else level_code = 16'd14 + suffix_acc;
+                        if (suffix_length != 0) level_code = (32'd14 << suffix_length) + suffix_acc;
+                        else level_code = 32'd14 + suffix_acc;
                     end else begin
-                        level_code = 16'd30;
-                        if (prefix >= 6'd16) level_code = level_code + (16'd1 << (prefix - 6'd3)) - 16'd4096;
+                        level_code = 32'd30;
+                        if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
-                    if (t1_r < 2'd3) level_code = level_code + 16'd2;
-                    lvl_tmp = level_from_code(level_code);
-                    level_dbg[idx] <= lvl_tmp;
-                    suffix_length <= suffix_next_first(prefix, suffix_length, lvl_tmp);
-                    first_non_t1 <= 1'b0;
+                    if (t1_r < 2'd3) level_code = level_code + 32'd2;
+                    level_bad = (idx >= 5'd16 || level_code > 32'd65535);
+                    if (!level_bad) begin
+                        lvl_tmp = level_from_code(level_code);
+                        level_dbg[idx[3:0]] <= lvl_tmp;
+                        suffix_length <= suffix_next_first(prefix, suffix_length, lvl_tmp);
+                        first_non_t1 <= 1'b0;
+                    end
                 end else begin
                     if (prefix < 6'd15) begin
-                        level_code = ({10'd0, prefix} << suffix_length) + suffix_acc;
+                        level_code = ({26'd0, prefix} << suffix_length) + suffix_acc;
                     end else begin
-                        level_code = (16'd15 << suffix_length);
-                        if (prefix >= 6'd16) level_code = level_code + (16'd1 << (prefix - 6'd3)) - 16'd4096;
+                        level_code = (32'd15 << suffix_length);
+                        if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
-                    lvl_tmp = level_from_code(level_code);
-                    level_dbg[idx] <= lvl_tmp;
-                    suffix_length <= suffix_next(suffix_length, lvl_tmp);
+                    level_bad = (idx >= 5'd16 || level_code > 32'd65535);
+                    if (!level_bad) begin
+                        lvl_tmp = level_from_code(level_code);
+                        level_dbg[idx[3:0]] <= lvl_tmp;
+                        suffix_length <= suffix_next(suffix_length, lvl_tmp);
+                    end
                 end
-                if (idx + 5'd1 >= tc_r) begin
+                if (level_bad) begin
+                    st <= ST_FAIL;
+                end else if (idx + 5'd1 >= tc_r) begin
                     code <= 16'd0; code_len <= 5'd0; st <= ST_TZ_BIT;
                 end else begin
                     idx <= idx + 5'd1;
                     prefix <= 6'd0;
-                    suffix_acc <= 16'd0;
+                    suffix_acc <= 32'd0;
                     st <= ST_LVL_PRE;
                 end
             end
@@ -808,7 +827,7 @@ module h264_cavlc_residual_block #(
                     idx <= 5'd0;
                     code <= 16'd0; code_len <= 5'd0;
                     if (tc_r <= 5'd1 || zlk[3:0] == 4'd0) begin
-                        run_dbg[tc_r - 5'd1] <= zlk[3:0];
+                        run_dbg[idx4(tc_r - 5'd1)] <= zlk[3:0];
                         st <= ST_PLACE_INIT;
                     end else st <= ST_RUN_BIT;
                 end else if (code_len >= (tz_is_chroma ? 5'd3 : 5'd9)) st <= ST_FAIL;
@@ -817,7 +836,7 @@ module h264_cavlc_residual_block #(
 
             ST_RUN_BIT: begin
                 if (idx >= tc_r - 5'd1 || zeros_left == 4'd0) begin
-                    run_dbg[tc_r - 5'd1] <= zeros_left;
+                    run_dbg[idx4(tc_r - 5'd1)] <= zeros_left;
                     st <= ST_PLACE_INIT;
                 end else if (bit_pos >= bit_len) st <= ST_FAIL;
                 else begin
@@ -833,11 +852,11 @@ module h264_cavlc_residual_block #(
                 if (rlk[4]) begin
                     if (rlk[3:0] > zeros_left) st <= ST_FAIL;
                     else begin
-                        run_dbg[idx] <= rlk[3:0];
+                        run_dbg[idx[3:0]] <= rlk[3:0];
                         zeros_left <= zeros_left - rlk[3:0];
                         code <= 16'd0; code_len <= 5'd0;
                         if (idx + 5'd1 >= tc_r - 5'd1 || (zeros_left - rlk[3:0]) == 4'd0) begin
-                            run_dbg[tc_r - 5'd1] <= zeros_left - rlk[3:0];
+                            run_dbg[idx4(tc_r - 5'd1)] <= zeros_left - rlk[3:0];
                             st <= ST_PLACE_INIT;
                         end else begin
                             idx <= idx + 5'd1;
@@ -850,7 +869,7 @@ module h264_cavlc_residual_block #(
 
             ST_PLACE_INIT: begin
                 for (ci = 0; ci < 16; ci = ci + 1)
-                    coeff[ci] <= 9'sd0;
+                    coeff[ci] <= 16'sd0;
                 coeff_num <= -6'sd1;
                 place_i <= tc_r;
                 st <= ST_PLACE_STEP;
@@ -863,9 +882,10 @@ module h264_cavlc_residual_block #(
                     st <= ST_DONE;
                 end else begin
                     place_i <= place_i - 5'd1;
-                    coeff_num <= coeff_num + {2'd0, run_dbg[place_i - 5'd1]} + 6'sd1;
-                    if ((coeff_num + {2'd0, run_dbg[place_i - 5'd1]} + 6'sd1) < 6'sd16)
-                        coeff[coeff_num + {2'd0, run_dbg[place_i - 5'd1]} + 6'sd1] <= level_dbg[place_i - 5'd1];
+                    next_coeff_num = coeff_num + {2'd0, run_dbg[idx4(place_i - 5'd1)]} + 6'sd1;
+                    coeff_num <= next_coeff_num;
+                    if (next_coeff_num < 6'sd16)
+                        coeff[next_coeff_num[3:0]] <= level_dbg[idx4(place_i - 5'd1)];
                     else st <= ST_FAIL;
                 end
             end

@@ -40,9 +40,9 @@ static void tick(Vh264_cavlc_residual_tb_top& dut) {
     dut.eval();
 }
 
-static int sx9(int v) {
-    v &= 0x1ff;
-    return (v & 0x100) ? (v - 0x200) : v;
+static int sx16(int v) {
+    v &= 0xffff;
+    return (v & 0x8000) ? (v - 0x10000) : v;
 }
 
 static void put_bits(std::vector<int>& out, int bits, int len) {
@@ -272,7 +272,7 @@ static void run_case(Vh264_cavlc_residual_tb_top& dut, const char* name, const s
         bad = true;
     }
     for (int i = 0; i < 16; ++i) {
-        if (sx9(dut.coeff[i]) != coeff[i])
+        if (sx16(dut.coeff[i]) != coeff[i])
             bad = true;
     }
     if (bad) {
@@ -282,7 +282,7 @@ static void run_case(Vh264_cavlc_residual_tb_top& dut, const char* name, const s
                   << " tz=" << int(dut.total_zeros) << "/" << enc.total_zeros
                   << " bits=" << int(dut.bit_offset_end) << "/" << enc.bits.size() << " coeff=";
         for (int i = 0; i < 16; ++i)
-            std::cerr << ' ' << sx9(dut.coeff[i]) << '(' << coeff[i] << ')';
+            std::cerr << ' ' << sx16(dut.coeff[i]) << '(' << coeff[i] << ')';
         std::cerr << "\n";
         ++failures;
     }
@@ -422,9 +422,9 @@ int main(int argc, char** argv) {
     }
     {
         std::array<int, 16> c{};
-        int vals[] = {255, -256, 64, -33, 17, -8, 4, -2, 1, -1};
-        for (int i = 0; i < 10; ++i) c[i] = vals[i];
-        run_case(dut, "large_suffix", c, 0, 16);
+        int vals[] = {300, -301, 255, -256, 64, -33, 17, -8, 4, -2, 1, -1};
+        for (int i = 0; i < 12; ++i) c[i] = vals[i];
+        run_case(dut, "large_suffix_gt9bit", c, 0, 16);
         ++cases;
     }
 
