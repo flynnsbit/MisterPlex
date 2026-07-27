@@ -569,6 +569,39 @@ def build_report() -> list[GateReport]:
             observed_failing_real=True,
             observed_failing_note="rc=1 on slot11 Plex.map.rpt: decode_stub present in product hierarchy (1,438 ALMs, 32 DSPs). This is the finding that prompted gate creation.",
         ),
+        GateReport(
+            id="module-instantiation",
+            script="scripts/check_module_instantiation.py",
+            makefile_target="module-instantiation",
+            proves=(
+                "Every RTL module in the source tree is either: (a) present in the "
+                "Quartus product hierarchy, (b) explicitly declared bench-only with "
+                "reason, or (c) tracked as pending integration with owner. "
+                "A new module that is none of these fails the gate. "
+                "THIS IS THE GATE THAT WOULD HAVE CAUGHT #19 — 30 verified modules "
+                "instantiated nowhere in the product, invisible because every other "
+                "gate tested modules in isolation."
+            ),
+            does_not_prove=(
+                "Does NOT prove pending modules will ever be integrated. Does NOT "
+                "prove product modules are correctly wired (only that they appear in "
+                "the synthesis hierarchy). Does NOT prove bench-only modules are "
+                "truly unnecessary for the product. Requires map report from a fit."
+            ),
+            red_proof_method=(
+                "Add unaccounted _red_proof.sv module → rc=1 REJECTED. "
+                "Remove it → rc=0 (all 58 modules accounted for)."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note="Requires MAP_RPT from a remote Quartus build. slot11 available locally.",
+            owner="w-c2",
+            verification_target="STATIC",
+            verification_target_note="Cross-references RTL source declarations against Quartus map report hierarchy. No RTL execution.",
+            exit_codes={"green": 0, "red_unaccounted": 1, "refuse_no_report": 4},
+            observed_failing_real=True,
+            observed_failing_note="First run established: 30 of 58 RTL modules are pending integration (instantiated nowhere in product). This IS instrument failure #19 — the entire decode pipeline exists only as individually-tested modules connected to nothing.",
+        ),
     ]
     return gates
 
