@@ -11,3 +11,47 @@ These files are stable inputs/outputs for RTL testbenches.
 
 Do not change field names, ordering, or vector bytes without updating the format version and
 coordinating with RTL consumers.
+
+## Shared macroblock golden extractor
+
+`tools/extract_h264_golden.cpp` emits deterministic per-macroblock JSON in
+`format=misterplex.p3.mb_golden.v1`. Each luma 4×4 block records CAVLC diagnostics
+needed by entropy/inter/deblock consumers: `nA`/`nB` availability and TotalCoeff,
+predicted `nC`, selected `coeff_token_table`, parsed `total_coeff`, bit offsets,
+scan-order coefficients, dequant, IDCT, prediction, and reconstruction samples.
+The current checked-in red/green unit uses the proven 320×240 IDR vector and
+independently grades MB0 against `mb0_luma_v1.json`, `residual_gold::kCsum8 == 0x14`,
+and the established first-4×4 recon signature `0x3b`.
+
+Regenerate the deterministic MB0 JSON used by the unit guard:
+
+```bash
+make h264-golden-tools
+./build/extract_h264_golden \
+  --input tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 \
+  --mb 0 \
+  --output build/p3_golden/mb0.json \
+  --verify-mb0-reference tests/fixtures/p3_host_recon/mb0_luma_v1.json
+```
+
+The JSON schema reserves the inter-prediction fields (`motion_vectors`, partition mode, and
+per-block residual bit offsets) so `w-cabac` and `w-rel` consume the same shape. In this branch,
+the extractor deliberately supports Baseline/CAVLC **I-slice luma** macroblocks only; it must not
+fabricate P-slice residual or motion-vector goldens before the real 624×480 stream asset is
+captured and graded.
+
+## Real 624×480 Baseline stream fixture
+
+The required real PMS Baseline/CAVLC stream asset is still capture-dependent: this worktree has no
+scheduled MiSTer/PMS device token, so no 624×480 bytes are checked in here. When the device window is
+granted, capture the stream without committing URLs or tokens:
+
+```bash
+MISTERPLEX_STREAM_URL='http://YOUR-PLEX-SERVER:32400/...&X-Plex-Token=REDACTED' \
+  OUT=build/p3_baseline_480p/plex_real_baseline_624x480_12s.264 \
+  scripts/capture_baseline_annexb_fixture.sh
+```
+
+Expected geometry for that future asset is coded **624×480** = **39×30** macroblocks, display
+**618×480** via right crop of 6 px. The committed extractor computes coded size as the macroblock
+grid (`mb_width * 16`) so consumers must not assume 640-wide frames.
