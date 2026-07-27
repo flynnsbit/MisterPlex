@@ -359,10 +359,18 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex480pYuvChromaLineQwords", "DDR_FRAME_YUV_CHROMA_LINE_QWORDS"),
         ("kPlex480pRgb565Bytes", "DDR_FRAME_RGB565_BYTES"),
         ("kPlex480pYuv420pBytes", "DDR_FRAME_YUV420P_BYTES"),
+        ("kPlex480pYPlaneOffset", "DDR_FRAME_Y_PLANE_OFFSET"),
+        ("kPlex480pUPlaneOffset", "DDR_FRAME_U_PLANE_OFFSET"),
+        ("kPlex480pVPlaneOffset", "DDR_FRAME_V_PLANE_OFFSET"),
+        ("kPlex480pYStrideBytes", "DDR_FRAME_Y_STRIDE_BYTES"),
+        ("kPlex480pChromaStrideBytes", "DDR_FRAME_CHROMA_STRIDE_BYTES"),
         ("kPlex480pRgb565BankStride", "DDR_FRAME_RGB565_BANK_STRIDE"),
         ("kPlex480pYuv420pBankStride", "DDR_FRAME_YUV420P_BANK_STRIDE"),
         ("kPlex480pRgb565DoorbellPhys", "DDR_FRAME_RGB565_DOORBELL_PHYS"),
         ("kPlex480pYuv420pDoorbellPhys", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+        ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
+        ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
+        ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)

@@ -105,6 +105,17 @@ int main() {
     checkLayout(p480, 599040, 0xC0000, 0x3017F000, 156);
     checkLayout(p480, 449280, 0x80000, 0x300FF000, 78,
                 misterplex::DdrFrameFormat::Yuv420p, 39);
+    const auto yuv480 =
+        misterplex::makeDdrFrameLayout(p480, 0x30000000u, 0x40000u,
+                                       misterplex::DdrFrameFormat::Yuv420p);
+    CHECK(yuv480.y_offset == misterplex::kPlex480pYPlaneOffset);
+    CHECK(yuv480.u_offset == misterplex::kPlex480pUPlaneOffset);
+    CHECK(yuv480.v_offset == misterplex::kPlex480pVPlaneOffset);
+    CHECK(yuv480.line_bytes == misterplex::kPlex480pYStrideBytes);
+    CHECK(yuv480.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
+    CHECK(misterplex::kYuv420BlackY == 16);
+    CHECK(misterplex::kYuv420BlackU == 128);
+    CHECK(misterplex::kYuv420BlackV == 128);
     CHECK(misterplex::ddrFrameFormatCode(misterplex::DdrFrameFormat::Rgb565) == 0);
     CHECK(misterplex::ddrFrameFormatCode(misterplex::DdrFrameFormat::Yuv420p) == 1);
     CHECK(misterplex::ddrDoorbellHi(0x1234, 0, misterplex::DdrFrameFormat::Rgb565) == 0x1234u);
