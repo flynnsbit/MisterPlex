@@ -69,8 +69,8 @@ module h264_dequant4x4 (
 				mi = 2'd1;
 			else
 				mi = 2'd2;
-			qmod = q % 6;
-			qdiv = q / 6;
+			qmod = q % 6'd6;
+			qdiv = q / 6'd6;
 			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
 			qmul = qmul <<< (qdiv + 4'd2);
 			v = ($signed(c) * qmul + 32'sd32) >>> 6;
@@ -105,7 +105,7 @@ module h264_idct4x4 (
 		input signed [31:0] v;
 		begin
 			if (v > 32'sd131071) sat18 = 18'sd131071;
-			else if (v < -32'sd131072) sat18 = -18'sd131072;
+			else if (v < -32'sd131072) sat18 = -18'sd131071 - 18'sd1;
 			else sat18 = v[17:0];
 		end
 	endfunction
