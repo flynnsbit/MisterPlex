@@ -566,6 +566,36 @@ bool runEqualTokenFallback() {
     return sim.schedulerProven();
 }
 
+bool runLiveValidYuvResetPrimedDoorbell() {
+    Sim sim;
+    sim.fillFrame(1, 218);
+    sim.ringDoorbell(1, 0x68, kDoorbellFormatYuv420p);
+    sim.resetCore();
+    if (!sim.waitCyclesNoFrame(25000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: live valid YUV reset-primed token"
+                  << " presented before fallback window cycle=" << sim.cycle
+                  << " frames=" << sim.top.frames_done
+                  << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec << "\n";
+        std::exit(1);
+    }
+    if (sim.top.debug_state == kDebugFormatError) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: live valid YUV token raised 0x"
+                  << std::hex << int(kDebugFormatError) << std::dec << "\n";
+        std::exit(1);
+    }
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("live valid YUV reset-primed token did not recover through fallback");
+    expectFreshSample("live valid YUV reset-primed token", sim, 218);
+
+    std::cout << "ddr_frame_store warm-reset raw: live_valid_yuv_reset_primed"
+              << " doorbell_hi=0xa0000068 bank=1 format=1 seq=0x68"
+              << " no_frame_cycles=25000 frame_debug=0x00"
+              << " frames=" << sim.top.frames_done << " sample_r=218"
+              << " underruns=" << sim.top.underrun_count
+              << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 bool runEqualTokenRefreshAfterAccept() {
     Sim sim;
     sim.fillFrame(0, 96);
@@ -611,6 +641,7 @@ void run() {
     schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
     schedulerSeen |= runEqualTokenFallback();
+    schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
     schedulerSeen |= runEqualTokenRefreshAfterAccept();
     if (!schedulerSeen) {
         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
