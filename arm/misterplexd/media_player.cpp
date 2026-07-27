@@ -1319,8 +1319,16 @@ void MediaPlayer::streamPump(int sfd) {
                     }
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
-                    log("media: recon F1 skipped: YUV DDR frame-store requires coded 624x480, got " +
-                        std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    log("ERROR media: recon F1 REFUSED: frame-store requires coded " +
+                        std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height) +
+                        ", got " + std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                        " — ALL subsequent recon frames will be SKIPPED until geometry matches. "
+                        "This produces no video on the FPGA output (indistinguishable from frozen screen).");
+                } else if ((reconFrames_.load() % 300) == 0) {
+                    // Re-log periodically so a geometry mismatch cannot hide as a stall.
+                    log("media: recon F1 still skipping: coded " +
+                        std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height) +
+                        " != " + std::to_string(rec.width) + "x" + std::to_string(rec.height));
                 }
             }
             if (ok)
