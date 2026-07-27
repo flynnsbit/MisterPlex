@@ -30,12 +30,13 @@ command -v ffprobe >/dev/null || { echo "RTL SIM ERROR: ffprobe not found" >&2; 
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 BITSTREAM="${FULL_FRAME_BITSTREAM:-$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264}"
 SEQUENCE="${FULL_FRAME_SEQUENCE:-}"
-RATCHET="${FULL_FRAME_RATCHET:-$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_full_frame_ratchet_v1.json}"
+RATCHET="${FULL_FRAME_RATCHET:-}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
 COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
+NATIVE_SCORE_JSON="$REF_DIR/native_frame_score.json"
 MB0_TRACE_JSON="$REF_DIR/mb0_pipeline_trace.json"
 FAULT_TRACE_JSON="$REF_DIR/mb0_pipeline_trace_fault.json"
 MB0_GOLDEN_JSON="$REF_DIR/current_mb0_trace.json"
@@ -58,7 +59,7 @@ PRODUCT_RTL=(
   decode_stub.sv
 )
 
-for f in "$QIP" "$BITSTREAM" "$RATCHET" "$TOP" "$TB"; do
+for f in "$QIP" "$BITSTREAM" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -107,6 +108,23 @@ if [[ -z "$SEQUENCE" ]]; then
       exit 2
       ;;
   esac
+fi
+if [[ -z "$RATCHET" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_full_frame_ratchet_v1.json"
+      ;;
+    9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9)
+      RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_624x480_full_frame_ratchet_v1.json"
+      ;;
+    9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62)
+      RATCHET="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_full_frame_ratchet_v1.json"
+      ;;
+  esac
+fi
+if [[ -z "$RATCHET" || ! -f "$RATCHET" ]]; then
+  echo "RTL SIM ERROR: missing native full-frame ratchet for bitstream: ${RATCHET:-<unset>}" >&2
+  exit 2
 fi
 if [[ ! -f "$SEQUENCE" ]]; then
   echo "RTL SIM ERROR: missing required file: $SEQUENCE" >&2
@@ -188,6 +206,8 @@ grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
 make -s -C "$ROOT" h264-golden-tools
 "$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --output "$MB0_GOLDEN_JSON" >/dev/null
+"$ROOT/build/score_h264_native_frames" \
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --output "$NATIVE_SCORE_JSON"
 python3 - "$MB0_TRACE_JSON" "$MB0_GOLDEN_JSON" "$COMPARE_JSON" <<'PY'
 import json
 import sys
@@ -238,18 +258,20 @@ print(
     f"got={fb['got']} ref={fb['ref']} abs={fb['abs']}"
 )
 PY
-python3 - "$COMPARE_JSON" "$RATCHET" <<'PY'
+python3 - "$NATIVE_SCORE_JSON" "$RATCHET" <<'PY'
 import json
 import sys
 
 actual = json.load(open(sys.argv[1]))
 ratchet = json.load(open(sys.argv[2]))
-if ratchet.get("format") != "misterplex.p3.frame_planes_ratchet.v1":
-    raise SystemExit("FAIL full-frame ratchet: unknown ratchet format")
+if actual.get("format") != "misterplex.p3.native_frame_score.v1":
+    raise SystemExit("FAIL native full-frame ratchet: unknown score format")
+if ratchet.get("format") != "misterplex.p3.native_frame_score_ratchet.v1":
+    raise SystemExit("FAIL native full-frame ratchet: unknown ratchet format")
 if actual["source"]["sha256"] != ratchet.get("source_sha256"):
-    raise SystemExit("FAIL full-frame ratchet: source sha256 mismatch")
-if actual["geometry"].get("colorspace") != ratchet.get("colorspace"):
-    raise SystemExit("FAIL full-frame ratchet: colorspace mismatch")
+    raise SystemExit("FAIL native full-frame ratchet: source sha256 mismatch")
+if actual.get("colorspace") != ratchet.get("colorspace"):
+    raise SystemExit("FAIL native full-frame ratchet: colorspace mismatch")
 
 planes = {}
 for frame in actual["frames"]:
@@ -258,6 +280,19 @@ for frame in actual["frames"]:
 
 failures = []
 eps = 1e-6
+summary = ratchet["summary"]
+actual_summary = actual["summary"]
+for key in ("frames", "i_frames", "p_frames", "inter_expected_red_frames"):
+    if actual_summary[key] != summary[key]:
+        failures.append(f"summary {key} {actual_summary[key]} != {summary[key]}")
+if actual_summary["intra_mb_exact"] < summary["min_intra_mb_exact"]:
+    failures.append(
+        f"intra_mb_exact {actual_summary['intra_mb_exact']} < {summary['min_intra_mb_exact']}"
+    )
+if actual_summary["intra_mb_total"] != summary["intra_mb_total"]:
+    failures.append(
+        f"intra_mb_total {actual_summary['intra_mb_total']} != {summary['intra_mb_total']}"
+    )
 for metric in ratchet["metrics"]:
     key = (metric["frame_index"], metric["plane"])
     got = planes.get(key)
@@ -270,14 +305,30 @@ for metric in ratchet["metrics"]:
         failures.append(f"frame={key[0]} plane={key[1]} mae {got['mae']} > {metric['max_mae']}")
     if got["max_abs"] > metric["max_abs"]:
         failures.append(f"frame={key[0]} plane={key[1]} max_abs {got['max_abs']} > {metric['max_abs']}")
+    frame = actual["frames"][metric["frame_index"]]
+    if frame["mb_exact"] < metric["mb_exact"] or frame["mb_total"] != metric["mb_total"]:
+        failures.append(
+            f"frame={metric['frame_index']} mb_exact {frame['mb_exact']}/{frame['mb_total']} "
+            f"outside ratchet {metric['mb_exact']}/{metric['mb_total']}"
+        )
+
+for expected in ratchet["inter_frames"]:
+    frame = actual["frames"][expected["frame_index"]]
+    if frame.get("implemented") or not frame.get("expected_red"):
+        failures.append(f"frame={expected['frame_index']} inter expected-red classification changed")
 
 if failures:
-    print("FAIL full-frame ratchet: divergence metrics regressed")
+    print("FAIL native full-frame ratchet: divergence metrics regressed")
     for item in failures[:20]:
         print("  " + item)
     raise SystemExit(1)
 
-print(f"OK full-frame ratchet: {len(ratchet['metrics'])} frame/plane metrics did not regress")
+print(
+    "OK native full-frame ratchet: "
+    f"intra_mb_exact={actual_summary['intra_mb_exact']}/{actual_summary['intra_mb_total']} "
+    f"inter_expected_red_frames={actual_summary['inter_expected_red_frames']} "
+    f"plane_metrics={len(ratchet['metrics'])}"
+)
 PY
 
 set +e
