@@ -23,6 +23,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Locked paint contract (must match residual_gold / test_idct_quant)
 GOLD_Y00=73
 GOLD_MEAN=62
+GOLD_RECON_SIG=59
 GOLD_PRED=128
 GOLD_RES_DC=-24
 GOLD_RES_CSUM=20
@@ -85,25 +86,20 @@ else
   echo "test_f3_idct_mb0: res_csum soft skip (need 3.3l-1 RBF for csum=${GOLD_RES_CSUM})"
 fi
 
-# --- 3.3l-2 recon soft→hard when status packs recon_* ---
-# push_frame may print recon_y00= / recon_mean= after paint RBF + ARM status map.
+# --- 3.3l-2 recon hard gate when status packs recon_sig ---
+# recon_sig = XOR of the first 4x4 reconstructed Y samples from mb0_luma_v1.json:
+# 73,72,76,76,72,74,71,73,76,71,32,27,76,73,27,24 -> 0x3b.
 RECON_OK=0
-if echo "$ST" | grep -qE "recon_y00=${GOLD_Y00}\\b"; then
-  if echo "$ST" | grep -qE "recon_mean(=|4x4=)${GOLD_MEAN}\\b|recon_mean4x4=${GOLD_MEAN}\\b"; then
-    echo "test_f3_idct_mb0: recon_y00=${GOLD_Y00} recon_mean=${GOLD_MEAN} HARD PASS (pred=${GOLD_PRED})"
-    RECON_OK=1
-  else
-    echo "test_f3_idct_mb0: recon_y00=${GOLD_Y00} seen but mean != ${GOLD_MEAN} — FAIL"
-    echo "$ST"
-    exit 1
-  fi
-elif echo "$ST" | grep -qE 'recon_y00='; then
-  GOT=$(echo "$ST" | sed -n 's/.*recon_y00=\([-0-9][0-9]*\).*/\1/p' | head -1)
-  echo "test_f3_idct_mb0: recon_y00=${GOT} want ${GOLD_Y00} — FAIL (not stub ${GOLD_STUB_Y})"
+if echo "$ST" | grep -qE "recon_sig=${GOLD_RECON_SIG}\\b"; then
+  echo "test_f3_idct_mb0: recon_sig=${GOLD_RECON_SIG}/0x3b HARD PASS (pred=${GOLD_PRED}; y00=${GOLD_Y00} mean=${GOLD_MEAN})"
+  RECON_OK=1
+elif echo "$ST" | grep -qE 'recon_sig='; then
+  GOT=$(echo "$ST" | sed -n 's/.*recon_sig=\([0-9][0-9]*\).*/\1/p' | head -1)
+  echo "test_f3_idct_mb0: recon_sig=${GOT} want ${GOLD_RECON_SIG}/0x3b — FAIL"
   exit 1
 else
-  echo "test_f3_idct_mb0: recon_* soft skip (need 3.3l-2 paint RBF + status recon_y00=${GOLD_Y00} mean=${GOLD_MEAN})"
-  echo "  host paint contract: y00=${GOLD_Y00} mean=${GOLD_MEAN} pred=${GOLD_PRED} ≠ stub ${GOLD_STUB_Y}"
+  echo "test_f3_idct_mb0: recon_sig soft skip (need 3.3l-2 paint RBF + status recon_sig=${GOLD_RECON_SIG}/0x3b)"
+  echo "  host paint contract: y00=${GOLD_Y00} mean=${GOLD_MEAN} pred=${GOLD_PRED} sig=0x3b ≠ stub ${GOLD_STUB_Y}"
   echo "  frame_store top-left 4×4 @W=320: 0..3,320..323,640..643,960..963 RGB565 y00=0x4A49"
 fi
 

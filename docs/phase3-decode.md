@@ -232,7 +232,7 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     **soft-skip ≠ hard PASS**. Do **not** thrash-redeploy dabdaeb0.
     RCA guard added: `tests/unit/test_status_telemetry.cpp` + `test_rtl_invariants.py`
     lock the status ABI so `raw[12]=residual_dc`, `raw[13]=residual_csum`, and
-    `raw[14]=stream_bytes[7:0]`; the old pre-3.3l-1 layout preserved dc but put
+    (pre-3.3l-2) `raw[14]=stream_bytes[7:0]`; the old pre-3.3l-1 layout preserved dc but put
     stream low at raw[13], explaining the +file_size%256 walk without implicating
     XOR residual math. Scheduled hardware discriminator:
     `MISTER_HOST=... scripts/res_csum_size_probe.sh` (no deploy) pushes baseline
@@ -244,13 +244,6 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     **R-csum2** (multi-cycle + DIAG force 0x14): LIVE from 12:30:36; log **BUILD END 12:37:32
     exit=0** → host RBF **`4deaf6cc`** ≠ dabdaeb0 (log-proven only; no lab hard PASS invent).
     Detail: `docs/phase3-3l-idct.md` **L-csum-note5** (+ concurrent note6 banner).
-  **3.3l-2 host goldens + post-3l1 handoff done; paint BLOCKED:** inv_quant+IDCT first 4×4 onto
-    **pred=128** → y00=**73** mean=**62**; deq/Y tables + paint RGB565 **0x4A49**; unit
-    `3l2-table`/`3l2-real` + `FPGA_GOLD recon_*`; HW draft `tests/hw/test_f3_idct_mb0.sh`;
-    RTL checklist in `docs/phase3-3l-idct.md`. **P3-3l2 paint remains BLOCKED** until hard
-    `res_csum=0x14` on a **non-DIAG / non-force product RBF** (contingency §D ACTIVE after
-    dabdaeb0 FAIL reference; DIAG force-0x14 alone ≠ product unblock; **soft-skip ≠ hard PASS**;
-    do not thrash-redeploy dabdaeb0).
   **3.3l-2 RTL module + reference-model prep done (W-REL 2026-07-27; no hardware/no Quartus):**
     `fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv` adds combinational inverse-quant, 4×4 IDCT
     residual, and prediction-add modules for the first residual handoff. Unit
@@ -262,9 +255,20 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     `frame_mae_v1.csv`. Evidence: green output
     `vector_bytes=6739 coeff_csum=0x14 ... mb0_blocks=16 ... frame_mae_rows=300 maeY=0.000000 y00=73 mean=62`;
     red directions perturb AC dequant and frame-MAE grading. This does **not** replace the
-    incoming Verilator/Icarus behavioural RTL testbench. Parent/w-cap closed the P3-3l1
-    residual checksum gate on silicon on 2026-07-26, so the next host-side gate is genuine
-    RTL elaboration/execution before spending a product IDCT fit.
+    Verilator behavioural RTL testbench.
+  **3.3l-2 product RTL staged (W-CAP):** `decode_stub.sv` now consumes proven
+    `residual_coeff[0:15]` + `slice_qp` and instantiates the shared
+    `h264_iq_idct_4x4.sv` modules for first-4×4 inverse quant + H.264 integer IDCT onto
+    **pred=128**. It paints the true first 4×4 into F3 diagnostic MB0 and publishes
+    `recon_sig=0x3b` (XOR of reconstructed Y samples) at `raw[14]/status[119:112]`.
+    ABI v3: `raw[12]=res_dc`, `raw[13]=res_csum`, `raw[14]=recon_sig`,
+    `raw[15]=stream_low_debug` (AR may mask bits). Unit `test_p3_idct_rtl_model.py`
+    locks product integration and promotes the Verilator path to a hard failure with
+    `P3_IDCT_REQUIRE_RTL_SIM=1`; `make rtl-sim` elaborates the real product RTL source.
+    **Gate design before fit:** push baseline 6739B and padded 6776B vectors; PASS requires
+    `res_csum=0x14` and `recon_sig=0x3b` invariant for both while raw[15]/stream debug changes.
+    This is the P3-3l2 analogue of the size-invariant csum gate; no DIAG/constant force.
+
   **3.3l-3 host full-MB golden done (W-REL 2026-07-26):** `h264_recon.hpp` now has an optional
     `ReconTrace` that records MB0 luma prediction, 16 dequantized coefficients per 4×4, signed
     post-IDCT residual samples, and final reconstructed pixels. Stable RTL fixture:

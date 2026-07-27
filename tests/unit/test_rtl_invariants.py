@@ -256,19 +256,22 @@ def check_status_telemetry() -> None:
         "kResidualDcBitHi": 103,
         "kResidualCsumBitLo": 104,
         "kResidualCsumBitHi": 111,
-        "kStreamBytesBitLo": 112,
-        "kStreamBytesBitHi": 127,
+        "kReconSigBitLo": 112,
+        "kReconSigBitHi": 119,
+        "kStreamByteLowDebugBitLo": 120,
+        "kStreamByteLowDebugBitHi": 127,
         "kResidualDcByte": 12,
         "kResidualCsumByte": 13,
-        "kStreamBytesLoByte": 14,
-        "kStreamBytesHiByte": 15,
+        "kReconSigByte": 14,
+        "kStreamByteLowDebugByte": 15,
+        "kReconSigMb0Block0": 0x3B,
     }
     for name, value in expected.items():
         got = cpp_const(status_h, name)
         check(
             got == value,
-            f"status_telemetry.hpp {name}={got}, expected {value}. raw[13] is the residual "
-            "checksum ABI byte; moving it requires updating Plex.sv, parseCoreStatus, "
+            f"status_telemetry.hpp {name}={got}, expected {value}. This is a status telemetry "
+            "ABI position; moving it requires updating Plex.sv, parseCoreStatus, "
             "tests/parse_res_csum_status.py, and a hardware re-gate note.",
         )
 
@@ -285,9 +288,15 @@ def check_status_telemetry() -> None:
             "P3-3l1 remains blocked. Restore csum at raw[13] or re-gate with a new ABI.",
         ),
         (
-            r"status_telem_r\s*\[\s*127\s*:\s*112\s*\]\s*<=\s*stream_bytes_in\s*\[\s*15\s*:\s*0\s*\]",
-            "Plex.sv no longer starts stream_bytes at status[127:112]/raw[14]. The old "
-            "pre-3.3l-1 layout started stream_bytes at raw[13] and masqueraded as res_csum.",
+            r"status_telem_r\s*\[\s*119\s*:\s*112\s*\]\s*<=\s*st_recon_sig_sticky",
+            "Plex.sv no longer packs reconstructed-pixel signature into status[119:112]/raw[14]. "
+            "P3-3l2 hardware must publish an IDCT-sensitive signature; restore recon_sig at "
+            "raw[14] or update the documented ABI and hardware gate.",
+        ),
+        (
+            r"status_telem_r\s*\[\s*127\s*:\s*120\s*\]\s*<=\s*st_stream_low",
+            "Plex.sv no longer keeps stream low debug in status[127:120]/raw[15]. This byte is "
+            "the perturbation witness for baseline-vs-padded gates; restore it or redesign the gate.",
         ),
     ]
     for pat, msg in checks:
@@ -300,20 +309,25 @@ def check_status_telemetry() -> None:
         "exactly the +file_size%256 failure signature.",
     )
     check(
-        "status_telem_masked={status_telem_r[127:112],st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}" in nt,
-        "Plex.sv residual mask no longer structurally forces {stream, csum, dc}. This mask "
-        "prevents residual_csum from aliasing live stream bytes; restore it or add an "
-        "equivalent guarded pack with a simulation proof.",
+        "status_telem_masked={status_telem_r[127:120],st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}" in nt,
+        "Plex.sv residual/recon mask no longer structurally forces {stream_low, recon_sig, csum, dc}. "
+        "This mask prevents residual_csum/recon_sig from aliasing live stream bytes; restore it or "
+        "add an equivalent guarded pack with a simulation proof.",
     )
     check(
         "raw[kResidualCsumByte]" in fpga_spi
-        and "raw[kStreamBytesLoByte]" in fpga_spi
-        and "raw[kStreamBytesHiByte]" in fpga_spi,
+        and "raw[kReconSigByte]" in fpga_spi
+        and "raw[kStreamByteLowDebugByte]" in fpga_spi,
         "parseCoreStatus is not using the shared status_telemetry byte constants. The host "
-        "must decode raw[13] as residual_csum and raw[14:15] as stream bytes; restore the "
+        "must decode raw[13] as residual_csum, raw[14] as recon_sig and raw[15] as stream debug; restore the "
         "shared constants to avoid silent host/RTL ABI drift.",
     )
-    print("PASS residual status telemetry ABI (raw[12]=dc raw[13]=csum raw[14]=stream_low)")
+    check(
+        ".recon_sig(recon_sig)" in plex and ".recon_valid(recon_valid)" in plex,
+        "Plex.sv/stream_path no longer wire decode_stub recon telemetry to status. "
+        "P3-3l2 requires product RTL to publish an IDCT-sensitive signature.",
+    )
+    print("PASS residual/recon status telemetry ABI (raw[12]=dc raw[13]=csum raw[14]=recon_sig)")
 
 
 def main() -> int:

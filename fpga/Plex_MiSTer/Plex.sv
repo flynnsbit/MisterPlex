@@ -115,6 +115,8 @@ wire signed [7:0] residual_dc;
 wire [7:0]   residual_csum;
 wire signed [8:0] residual_coeff [0:15];
 wire         residual_place_pulse;
+wire [7:0]   recon_sig;
+wire         recon_valid;
 wire [31:0]  stream_bytes_in, stream_bytes_seen;
 wire [15:0]  stream_fifo_level;
 wire [18:0]  wr_count;
@@ -533,6 +535,8 @@ stream_path spath (
 	.residual_csum(residual_csum),
 	.residual_coeff(residual_coeff),
 	.residual_place_pulse(residual_place_pulse),
+	.recon_sig(recon_sig),
+	.recon_valid(recon_valid),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -665,8 +669,9 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [87:80]   sps_mb_w         [95:88] sps_mb_h  (pixels = mb*16)
 //   [103:96]  residual_dc      (3.3k regression; clean of AR)
 //   [111:104] residual_csum    (3.3l-1 XOR sat8(coeff[0:15]); Baseline golden 0x14)
-//   [127:112] stream_bytes_in[15:0]  (was 24b; 16b enough for F3 bring-up)
-//   [122:121] forced from status (Aspect ratio) — overlaps stream MSBs only
+//   [119:112] recon_sig        (3.3l-2 XOR recon Y[0:15]; MB0 block0 golden 0x3b)
+//   [127:120] stream_bytes_in[7:0] debug only (AR splice overlaps bits [122:121])
+//   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -678,13 +683,14 @@ wire [7:0] telem_flags = {
 //
 // Rank1: st_res_word_sticky samples on residual_place_pulse (primary) or residual_ok_rise
 //        (tc=0 / no-place paths). NEVER continuous/level while residual_ok (walk class).
-// Rank2: residual half forced from sticky via status_telem_masked; stream ONLY [127:112].
+// Rank2: residual/recon bytes forced from sticky via status_telem_masked; stream debug ONLY [127:120].
 // Rank3: slice residual_place_pulse + place_* private; product residual_csum<=cs at ST_PLACE.
 // DIAG STRIPPED: no residual_csum<=8'h14 force (parent product path).
-// Layout unchanged for ARM: raw[12]=dc, raw[13]=csum, raw[14:15]=stream LE.
+// Layout for ARM: raw[12]=dc, raw[13]=csum, raw[14]=recon_sig, raw[15]=stream low debug.
 (* preserve *) reg [15:0] st_res_word;         // live bond {csum,dc} debug ONLY — never status
 (* preserve *) reg [15:0] st_res_word_sticky;  // ONLY status residual source {csum,dc}
-(* preserve *) reg [15:0] st_stream_lo;        // stream lo debug; separate from residual
+(* preserve *) reg [7:0]  st_recon_sig_sticky; // ONLY status recon signature source
+(* preserve *) reg [7:0]  st_stream_low;       // stream low debug; separate from residual/recon
 (* preserve *) reg [127:0] status_telem_r;
 (* preserve *) reg        residual_ok_d_st;
 wire residual_ok_rise = residual_ok & ~residual_ok_d_st;
@@ -697,6 +703,7 @@ always @(posedge clk_sys) begin
 	if (reset) begin
 		st_res_word        <= 16'd0;
 		st_res_word_sticky <= 16'd0;
+		st_recon_sig_sticky <= 8'd0;
 		residual_ok_d_st   <= 1'b0;
 	end else begin
 		st_res_word      <= {residual_csum, residual_dc}; // debug bond
@@ -707,6 +714,8 @@ always @(posedge clk_sys) begin
 		// Secondary: residual_ok rise for tc=0 / paths without ST_PLACE
 		else if (residual_ok_rise)
 			st_res_word_sticky <= {residual_csum, residual_dc};
+		if (recon_valid)
+			st_recon_sig_sticky <= recon_sig;
 		// else HOLD sticky — frozen between intentional place/ok edges
 	end
 end
@@ -714,12 +723,12 @@ end
 // Always block B: stream lo debug ONLY
 always @(posedge clk_sys) begin
 	if (reset)
-		st_stream_lo <= 16'd0;
+		st_stream_low <= 8'd0;
 	else
-		st_stream_lo <= stream_bytes_in[15:0];
+		st_stream_low <= stream_bytes_in[7:0];
 end
 
-// Always block C: assemble status_telem from sticky residual + live stream half
+// Always block C: assemble status_telem from sticky residual/recon + live stream debug
 always @(posedge clk_sys) begin
 	if (reset) begin
 		status_telem_r <= 128'd0;
@@ -737,13 +746,15 @@ always @(posedge clk_sys) begin
 		// residual half from sticky ONLY (never live residual_csum, never stream)
 		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
-		status_telem_r[127:112] <= stream_bytes_in[15:0];
+		status_telem_r[119:112] <= st_recon_sig_sticky;
+		status_telem_r[127:120] <= st_stream_low;
 	end
 end
 
-// Rank2 structural mask: force residual bytes from sticky before AR splice
+// Rank2 structural mask: force residual/recon bytes from sticky before AR splice
 wire [127:0] status_telem_masked = {
-	status_telem_r[127:112],      // stream
+	status_telem_r[127:120],      // stream-low debug
+	st_recon_sig_sticky,          // recon signature forced from sticky
 	st_res_word_sticky[15:8],     // csum forced from sticky
 	st_res_word_sticky[7:0],      // dc forced from sticky
 	status_telem_r[95:0]
@@ -763,6 +774,7 @@ reg [7:0]  prev_sltype;
 reg        prev_sps, prev_pps;
 reg [7:0]  prev_csum;
 reg signed [7:0] prev_dc;
+reg [7:0]  prev_recon_sig;
 reg [14:0] st_div;
 always @(posedge clk_sys) begin
 	if (reset) begin
@@ -773,13 +785,14 @@ always @(posedge clk_sys) begin
 		prev_pps   <= 0;
 		prev_csum  <= 0;
 		prev_dc    <= 0;
+		prev_recon_sig <= 0;
 		st_div     <= 0;
 	end else begin
 		status_set <= 0;
 		st_div <= st_div + 1'd1;
 		if (nalu_count != prev_nalu || slice_type != prev_sltype || sps_valid != prev_sps ||
 		    pps_valid != prev_pps || st_res_csum != prev_csum || st_res_dc != prev_dc ||
-		    st_div == 0) begin
+		    st_recon_sig_sticky != prev_recon_sig || st_div == 0) begin
 			status_set <= 1'b1;
 			prev_nalu  <= nalu_count;
 			prev_sltype <= slice_type;
@@ -787,6 +800,7 @@ always @(posedge clk_sys) begin
 			prev_pps   <= pps_valid;
 			prev_csum  <= st_res_csum;
 			prev_dc    <= st_res_dc;
+			prev_recon_sig <= st_recon_sig_sticky;
 		end
 	end
 end

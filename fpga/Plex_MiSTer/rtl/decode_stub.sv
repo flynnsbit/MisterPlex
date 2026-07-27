@@ -27,6 +27,11 @@ module decode_stub #(
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
 	input  wire signed [7:0] residual_dc,
+	input  wire [5:0]  slice_qp,
+	input  wire signed [8:0] residual_coeff [0:15],
+
+	output reg  [7:0]  recon_sig,
+	output reg         recon_valid,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -55,9 +60,12 @@ module decode_stub #(
 	reg            lat_res_ok;
 	reg [4:0]      lat_res_tc;
 	reg signed [7:0] lat_res_dc;
+	reg [5:0]      lat_qp;
+	reg signed [8:0] lat_coeff [0:15];
 	reg [11:0]     wait_cnt;
 	reg            slice_valid_d;
 	reg            residual_ok_d;
+	integer        coeff_i;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -73,12 +81,51 @@ module decode_stub #(
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
 	// First MB (0,0) filled with recon stub gray when residual_ok
 	wire mb0 = (x < 10'd16) && (y < 10'd16);
-	// 3.3k: paint from residual_dc (scan coeff0 → 128+dc); fallback 128+tc
+	// 3.3l-2: first 4x4 inv_quant + IDCT (pred=128) from the shared
+	// h264_iq_idct_4x4.sv RTL. The signature is XOR of reconstructed samples.
+	wire signed [17:0] idct_dequant [0:15];
+	wire signed [17:0] idct_residual [0:15];
+	wire [7:0] idct_pred [0:15];
+	wire [7:0] recon_px [0:15];
+	wire [7:0] recon_sig_comb = recon_px[0]  ^ recon_px[1]  ^ recon_px[2]  ^ recon_px[3] ^
+	                            recon_px[4]  ^ recon_px[5]  ^ recon_px[6]  ^ recon_px[7] ^
+	                            recon_px[8]  ^ recon_px[9]  ^ recon_px[10] ^ recon_px[11] ^
+	                            recon_px[12] ^ recon_px[13] ^ recon_px[14] ^ recon_px[15];
+
+	genvar pred_i;
+	generate
+		for (pred_i = 0; pred_i < 16; pred_i = pred_i + 1) begin : gen_idct_pred
+			assign idct_pred[pred_i] = 8'd128;
+		end
+	endgenerate
+
+	h264_dequant4x4 u_h264_dequant4x4 (
+		.coeff(lat_coeff),
+		.qp(lat_qp),
+		.max_coeff(5'd16),
+		.dequant(idct_dequant)
+	);
+
+	h264_idct4x4 u_h264_idct4x4 (
+		.dequant(idct_dequant),
+		.residual(idct_residual)
+	);
+
+	h264_recon4x4 u_h264_recon4x4 (
+		.pred(idct_pred),
+		.residual(idct_residual),
+		.recon(recon_px)
+	);
+
+	// 3.3k fallback: paint from residual_dc (scan coeff0 → 128+dc)
 	wire signed [9:0] recon_sum = 10'sd128 + lat_res_dc;
 	wire [7:0] recon_from_dc =
 		(recon_sum < 10'sd0)   ? 8'd0 :
 		(recon_sum > 10'sd255) ? 8'd255 : recon_sum[7:0];
-	wire [7:0] recon_y = lat_res_ok ? recon_from_dc : (8'd128 + {3'b0, lat_res_tc});
+	wire first4 = mb0 && (x < 10'd4) && (y < 10'd4);
+	wire [3:0] first4_idx = {y[1:0], x[1:0]};
+	wire [7:0] recon_y = (lat_res_ok && first4) ? recon_px[first4_idx] :
+	                     (lat_res_ok ? recon_from_dc : (8'd128 + {3'b0, lat_res_tc}));
 
 	wire idr_style = is_idr_frame || (lat_type[4:0] == 5'd5);
 
@@ -132,6 +179,11 @@ module decode_stub #(
 			lat_res_ok    <= 0;
 			lat_res_tc    <= 0;
 			lat_res_dc    <= 0;
+			lat_qp        <= 0;
+			for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
+				lat_coeff[coeff_i] <= 9'sd0;
+			recon_sig     <= 0;
+			recon_valid   <= 0;
 			wait_cnt      <= 0;
 			wr_pixel      <= 0;
 			slice_valid_d <= 0;
@@ -163,11 +215,19 @@ module decode_stub #(
 				lat_res_ok   <= residual_ok;
 				lat_res_tc   <= residual_tc;
 				lat_res_dc   <= residual_dc;
+				lat_qp       <= slice_qp;
+				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
+					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
+				recon_valid  <= 1'b0;
 			end
 		end else begin
 			// Paint full frame
 			wr_en    <= 1'b1;
 			wr_pixel <= px_comb;
+			if (pix_i == 0) begin
+				recon_sig   <= lat_res_ok ? recon_sig_comb : 8'd0;
+				recon_valid <= lat_res_ok;
+			end
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin
 				phase      <= 2'd0;
