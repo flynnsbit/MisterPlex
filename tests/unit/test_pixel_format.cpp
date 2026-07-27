@@ -40,5 +40,12 @@ int main() {
     assert((bgra[4] == 0 && bgra[5] == 255 && bgra[6] == 0 && bgra[7] == 255));
     assert((bgra[8] == 255 && bgra[9] == 0 && bgra[10] == 0 && bgra[11] == 255));
 
+    yuvToRgb(128, 128, 128, r, g, b);
+    assert(r == 128 && g == 128 && b == 128);
+    yuvToRgb(16, 128, 128, r, g, b);
+    assert(r == 16 && g == 16 && b == 16);
+    yuvToRgb(76, 85, 255, r, g, b);
+    assert(r == 254 && g == 0 && b == 0);
+
     return 0;
 }
