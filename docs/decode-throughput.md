@@ -303,78 +303,117 @@ accounting.
    `present_core`/`CLK_VIDEO` stay on `clk_sys`. The only CDC needed is the
    frame-store handoff (already crosses domains via `fs_swap`/`fs_wr_reset`).
 
-### Implication for the budget (updated for deblock=100 → total=558)
+### Clock upside — what is real vs what was premature (CORRECTED 2026-07-27)
+
+**The provenance finding stands:** 20 MHz is genuinely an untouched
+Template_MiSTer default that nobody chose. The separation path (4th PLL output
+for decode, video stays on `clk_sys`) is architecturally clean.
+
+**However, discovering that a limit was never chosen is not the same as
+discovering the hardware can exceed it.** w-cap has produced fitter-measured
+numbers that refute the estimated frequency targets:
+
+#### Fitter-measured intra-domain Fmax (from `Plex.sta.rpt`)
+
+| Domain | Fmax (MEASURED) | Critical path | Slack at current clock |
+| --- | ---:| ---:| ---:|
+| `clk_sys` (20 MHz) | **25.09 MHz** | **39.86 ns** | +10.14 ns |
+| `clk_ddr` (90 MHz) | 88.31 MHz | 11.33 ns | -0.21 ns |
+
+**The decode fabric cannot currently run above ~25 MHz.** To reach 45 MHz
+(22.22 ns period) the critical path must shrink by 17.6 ns. For 60 MHz
+(16.67 ns) by 23.2 ns. That is 2–3 pipeline stages of real work, not a PLL
+parameter change.
+
+#### w-arch's estimate vs fitter measurement
+
+w-arch estimated the critical path at 12 logic levels ≈ 12.3 ns. The fitter
+measured **39.86 ns** — a factor of **3.2× longer**, because the fitter includes
+routing delay and the logic-level count does not. **All clock targets derived
+from that estimate (40, 48, 60 MHz) were based on a number that was wrong by
+3.2×.** They are withdrawn from this document as planning targets.
+
+#### Cross-domain timing relationships (from w-cap)
+
+Even if the fabric could be pipelined to a higher frequency, the cross-domain
+relationship to `clk_ddr` (90 MHz) constrains which frequencies are safe:
+
+| Decode clock | DDR ratio | Worst-case setup | Assessment |
+| ---:| ---:| ---:| --- |
+| 20 MHz (current) | 2:9 | 11.111 ns | +10.14 ns slack (MEASURED) |
+| 40 MHz | 4:9 | 2.778 ns | HALF the budget that already failed at -2.137 ns |
+| **45 MHz** | **1:2 exact** | **11.111 ns** | **Edges align every cycle — safest** |
+| 60 MHz | 2:3 | 5.556 ns | SAME zone that produced the -2.137 ns failure |
+
+**45 MHz is the only comfortable candidate** — integer 1:2 ratio to clk_ddr,
+edges align every cycle. But the fabric cannot reach it without ~17.6 ns of
+critical-path reduction.
+
+#### PLL VCO constraint (VERIFIED from STA)
+
+w-cap verified the PLL VCO from `Plex.sta.rpt`:
+```
+create_generated_clock ... -divide_by 5 -multiply_by 36 ...
+```
+50 MHz × 36 / 5 = **360 MHz** VCO (not 720 or 1260 as w-arch estimated).
+Corroborated by `fractional_vco_multiplier = "false"` in `pll_0002.v`.
+
+#### What a clock increase requires
+
+A clock increase is **not** a PLL parameter change — it requires:
+1. Identify the 39.86 ns critical path (which module, which signal)
+2. Pipeline it to reduce the path to ≤22.22 ns (for 45 MHz)
+3. Re-fit and get positive STA slack at the new frequency
+4. Verify cross-domain timing closes with the 1:2 ratio
+
+This is real engineering work that nobody has scheduled. **Do not budget
+against it.**
+
+### Implication for the budget
 
 | Decode clock | Budget cycles/MB | Margin at 558 total | Status |
 | ---:| ---:| ---:| --- |
-| 20 MHz (current) | 684 | 1.23× (126 cycles) | Feasible but not comfortable |
-| 40 MHz | 1,368 | 2.45× (810 cycles) | Comfortable |
-| **48 MHz (fallback)** | **1,641** | **2.94× (1,083 cycles)** | **Comfortable** |
-| **60 MHz (w-arch target)** | **2,052** | **3.68× (1,494 cycles)** | **Recommended target** |
-| 90 MHz | 3,077 | 5.51× (2,519 cycles) | Surplus to allocate |
+| **20 MHz (current, VERIFIED)** | **684** | **1.23× (126 cycles)** | **Working number** |
+| 25 MHz (fabric Fmax, MEASURED) | 855 | 1.53× (297 cycles) | Reachable with clean fit |
+| 45 MHz (requires pipelining) | 1,538 | 2.76× (980 cycles) | Conditional on ~17.6 ns path reduction |
 
-**w-arch has confirmed: decode can be clock-separated from video.** The
-separation path is clean — `stream_path` takes a dedicated `clk_decode`,
-`present_core`/`CLK_VIDEO` stay on `clk_sys`. CDC cost is ~1 async FIFO +
-4 two-FF syncs (w-arch estimates 2-3 days). Cross-reference: `ao486_MiSTer`
-(shipping production core, same device family) uses 90 MHz for `clk_sys`.
-
-### w-arch v3.1 frequency target: 60 MHz (ESTIMATED)
-
-w-arch (`0ef3e85`) analysed fabric depth and recommends **60 MHz** as the
-decode clock target, up from the initial 40 MHz investigation:
-- Critical path: `parse_cavlc` and `deblock`, both at 12 logic levels
-- At 1.0 ns/level conservative estimate: 12.3 ns → max theoretical 81 MHz
-- 60 MHz period is 16.7 ns → **+4.1 ns slack** (ESTIMATED, not from STA)
-- 40 MHz wasted 75% of the clock period — same pattern as 20 MHz
-
-**Binding constraint: w-plane's I16 Plane prediction.** Cycle 1 (gradient →
-products) is 18 LUT levels ≈ 18.3 ns at 1.0 ns/level (ESTIMATED FROM RTL
-STRUCTURE by w-plane). This exceeds 16.7 ns at 60 MHz. Options:
-1. w-plane adds a 3rd pipeline stage to split cycle 1 (preferred)
-2. Accept 48 MHz as fallback (still 2.94× margin, comfortable)
-3. Plane mode is rare in Baseline — accept that all-Plane I-frames stall
-
-**Provenance:** both the 60 MHz target and the 12-level critical path are
-ESTIMATES from first-principles analysis. The only honest validation is a
-post-synthesis STA report from a fit. The fallback ladder is PLL-parameter-only:
-60 → 48 → 40 → 20 MHz.
+**684 cycles/MB is the working budget.** The ~25 MHz Fmax suggests modest
+upside (~1.53× margin at 855 cycles/MB) may be reachable with a clean fit,
+but that is upside, not a planning assumption. Treat any clock increase as
+a bonus that arrives if and when a fit proves it.
 
 ## Verdict
 
-**FEASIBLE at 20 MHz. Comfortable at ≥40 MHz. Target 60 MHz pending w-plane fix.**
+**FEASIBLE at 20 MHz. Budget is 558/684 = 1.23×. Design to 684, not higher.**
 
-Updated budget: **558/684 = 1.23× margin at 20 MHz.** This is an improvement
-from the previous 608/684 = 1.12×, driven by w-deblock's measured 100 cycles
-(down from 150 ESTIMATED). MC breaking point is now **376 cycles/MB** — MC can
-overrun by 50% and still fit.
+Budget total: **558 cycles/MB**, margin **126 cycles (1.23×)** at the
+verified 20 MHz decode clock. MC breaking point: **376 cycles/MB** — MC
+can overrun its 250 estimate by 50% and still fit.
 
 The budget has three provenance tiers:
 - **EXTRAPOLATED from measurement:** deblock (100, from w-deblock sim at `feat/deblock`)
 - **ESTIMATED for unbuilt modules:** MC (250), DDR write (50), parse_full (50), dequant (48)
 - **ALLOWANCE:** intra_pred (30), control (30)
 
-**The clock constraint is confirmed imaginary.** Both w-c1 and w-arch
-independently verified that 20 MHz is the Template_MiSTer default, never
-chosen. w-arch's v3.1 study (`0ef3e85`) targets **60 MHz** for the decode
-clock, with a fallback ladder to 48/40/20. Even the most conservative
-fallback (40 MHz) provides 2.45× margin.
+58% of the total (MC + deblock + DDR write = 400 cycles) is for unbuilt
+modules. **At 1.23× margin with 58% ESTIMATED, feasibility is tight but
+workable — not comfortable.**
 
-**At 20 MHz:** MC overlap is recommended (moves to 1.49×) but not mandatory.
-MC must stay under 376 cycles/MB.
+The 20 MHz clock is a template default that nobody chose, **but the fabric
+cannot currently exceed ~25 MHz** (39.86 ns critical path, MEASURED by
+fitter). A clock increase to 45 MHz (the only safe cross-domain candidate)
+requires ~17.6 ns of critical-path reduction — real pipelining work, not
+a PLL change.
 
-**At ≥40 MHz:** all architectural optimisations become optional. A
-straightforward MC design fits trivially. w-mc should build the simplest
-correct implementation first.
+**Consequence for MC:** adjacent-MB overlap exploitation is **recommended**
+at 20 MHz. Without it, MC must stay under 376 cycles/MB. With it (~180
+cycles/MB estimated), margin improves to 1.49×. This is not mandatory but
+it is the difference between a tight budget and a comfortable one.
 
-**At 60 MHz (target):** 3.68× margin. Budget conversation is over. The only
-open item is w-plane's Plane prediction critical path (18 LUT levels vs 16.7 ns
-period). If w-plane cannot add a pipeline stage, fall back to 48 MHz (still
-2.94×, still comfortable).
-
-**Recommendation to parent:** approve the PLL change at 60 MHz. If w-plane's
-Plane path blocks 60, approve 48 MHz. Either way, the budget is no longer the
-constraint — the fit and STA are.
+**Do not report "comfortable" at 20 MHz.** 1.23× margin on a budget whose
+majority is estimates is workable, not comfortable. The clock may eventually
+provide real headroom, but **it has not been demonstrated and must not be
+assumed.**
 
 ## Ratchet
 
