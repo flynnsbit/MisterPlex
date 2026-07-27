@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PRESENT_CORE = Path(os.environ.get("PRESENT_CORE", ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv"))
 PLEX_SV = Path(os.environ.get("PLEX_SV", ROOT / "fpga/Plex_MiSTer/Plex.sv"))
 PLEX_QSF = Path(os.environ.get("PLEX_QSF", ROOT / "fpga/Plex_MiSTer/Plex.qsf"))
+PLEX_SDC = Path(os.environ.get("PLEX_SDC", ROOT / "fpga/Plex_MiSTer/Plex.sdc"))
+SYS_TOP_SDC = Path(os.environ.get("SYS_TOP_SDC", ROOT / "fpga/Plex_MiSTer/sys/sys_top.sdc"))
 DDRAM_FRAME_RD = Path(
     os.environ.get("DDRAM_FRAME_RD", ROOT / "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv")
 )
@@ -393,6 +395,63 @@ def check_async_fifo_write_full_no_comb_loop() -> None:
         "async_fifo deliberate write-full feedback fault did not go red",
     )
     print("PASS async_fifo write-full path has no source-level combinational loop")
+
+
+def check_frame_store_cdc_contract() -> None:
+    fs = strip_comments(read(DDR_FRAME_STORE))
+    afifo = strip_comments(read(ASYNC_FIFO))
+    sdc = strip_comments(read(PLEX_SDC) + "\n" + read(SYS_TOP_SDC))
+    nft = norm(fs)
+    nt_afifo = norm(afifo)
+
+    requirements = [
+        (
+            "always@(posedgeclk_ddr)beginif(reset)beginreset_ddr_s1<=1'b1;reset_ddr_s2<=1'b1;",
+            "ddr_frame_store must synchronously assert and release reset into clk_ddr before first DDR command",
+        ),
+        (
+            ".wr_clk(clk),.wr_reset(reset)",
+            "input FIFO write side must stay in the clk domain",
+        ),
+        (
+            ".rd_clk(clk_ddr),.rd_reset(reset_ddr)",
+            "input FIFO read side must use the clk_ddr-synchronised reset",
+        ),
+        (
+            "swap_req_s1<=swap_req_t_ddr;swap_req_s2<=swap_req_s1;",
+            "DDR-to-present frame-swap request must be a two-flop toggle crossing",
+        ),
+        (
+            "pending_ready_s1<=pending_ready_ddr;pending_ready_s2<=pending_ready_s1;",
+            "DDR-to-present pending-ready flag must be two-flop synchronised",
+        ),
+        (
+            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)",
+            "frame line-buffer RAM writes must remain in clk_ddr",
+        ),
+        (
+            ".rd_clk(clk),.rd_addr(y_rd_addr)",
+            "frame line-buffer RAM reads must remain in clk",
+        ),
+    ]
+    for needle, msg in requirements:
+        check(needle in nft, f"ddr_frame_store CDC contract: {msg}")
+
+    check(
+        "wr_gray" in nt_afifo
+        and "rd_gray_w1<=rd_gray;rd_gray_w2<=rd_gray_w1;" in nt_afifo
+        and "wr_gray_r1<=wr_gray;wr_gray_r2<=wr_gray_r1;" in nt_afifo,
+        "async_fifo CDC contract: pointers must cross as gray-coded values through two flops",
+    )
+    check(
+        not re.search(
+            r"set_(?:false|multicycle)_path[^\n]*(?:fstore|ddr_frame_store|DDRAM|present_ddr|stream_ddr|ddr_arb|async_fifo)",
+            sdc,
+            re.I,
+        ),
+        "SDC must not hide frame-store/DDR/arbiter timing with false or multicycle paths",
+    )
+    print("PASS frame-store CDC contract (clk/clk_ddr crossings and DDR timing constraints)")
 
 
 def check_mailboxes() -> None:
@@ -1527,6 +1586,7 @@ def main() -> int:
     check_plex_reset_domains()
     check_quartus_syntax_tripwires()
     check_async_fifo_write_full_no_comb_loop()
+    check_frame_store_cdc_contract()
     check_mailboxes()
     check_ddr_bitstream_ring()
     check_status_telemetry()

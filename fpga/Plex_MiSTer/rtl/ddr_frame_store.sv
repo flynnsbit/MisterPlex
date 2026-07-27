@@ -172,6 +172,18 @@ module ddr_frame_store #(
 	reg pending_ready_s1, pending_ready_s2;
 	reg pending_ready_ddr;
 	reg swap_req_t_ddr;
+	reg reset_ddr_s1, reset_ddr_s2;
+	wire reset_ddr = reset_ddr_s2;
+
+	always @(posedge clk_ddr) begin
+		if (reset) begin
+			reset_ddr_s1 <= 1'b1;
+			reset_ddr_s2 <= 1'b1;
+		end else begin
+			reset_ddr_s1 <= 1'b0;
+			reset_ddr_s2 <= reset_ddr_s1;
+		end
+	end
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -417,7 +429,7 @@ module ddr_frame_store #(
 		.wr_clk(clk), .wr_reset(reset),
 		.wr_en(input_cmd_valid && (input_cmd != 8'd0)), .wr_data(input_cmd),
 		.wr_full(), .wr_almost_full(),
-		.rd_clk(clk_ddr), .rd_reset(reset), .rd_en(cmd_pop), .rd_data(cmd_rdata), .rd_empty(cmd_empty)
+		.rd_clk(clk_ddr), .rd_reset(reset_ddr), .rd_en(cmd_pop), .rd_data(cmd_rdata), .rd_empty(cmd_empty)
 	);
 
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
@@ -599,7 +611,7 @@ module ddr_frame_store #(
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
 	always @(posedge clk_ddr) begin
-		if (reset) begin
+		if (reset_ddr) begin
 			state_ddr <= S_IDLE;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
