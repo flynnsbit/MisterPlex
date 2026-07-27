@@ -18,7 +18,11 @@ CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
 CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
-COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
+if [[ "${VISUAL_FULL_FRAME:-0}" == "1" ]]; then
+  COMPARE_BOX="${VISUAL_COMPARE_BOX:-active}" # full 618x480 active display region
+else
+  COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
+fi
 RBF="${VISUAL_RBF:-${1:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
@@ -28,6 +32,11 @@ TOOL="$ROOT/scripts/hw_visual_compare.py"
 if [[ "$(basename "$BITSTREAM")" == "plex_visual_624x480_1f.264" && "${VISUAL_ALLOW_UNPROVEN_624:-0}" != "1" ]]; then
   echo "FAIL: 624x480 visual fixture is not a proven hardware gate on rollback 57674f2e." >&2
   echo "Use the default 320x240 proven vector/golden, or set VISUAL_ALLOW_UNPROVEN_624=1 for investigation only." >&2
+  exit 2
+fi
+if [[ "${VISUAL_FULL_FRAME:-0}" == "1" && "${VISUAL_ALLOW_UNPROVEN_FULL:-0}" != "1" ]]; then
+  echo "FAIL: full-frame visual gate is not proven on rollback 57674f2e." >&2
+  echo "Use the proven default ROI gate, or set VISUAL_ALLOW_UNPROVEN_FULL=1 for scheduled investigation only." >&2
   exit 2
 fi
 
