@@ -32,6 +32,22 @@ constexpr uint32_t kStat6Magic = 0x504C5851u; // PLXQ, desync/state flags
 
 constexpr size_t kRecordHeaderBytes = 32u;
 
+constexpr int kErrTelemetrySeqShift = 32;
+constexpr int kErrUnderrunStickyBit = 45;
+constexpr int kErrOverrunStickyBit = 46;
+constexpr int kErrActiveBit = 47;
+constexpr int kErrUnderrunCountShift = 48;
+constexpr int kErrOverrunCountShift = 56;
+
+constexpr int kStat6StateFlagsShift = 32;
+constexpr int kStat6UnderrunFlagBit = 6;
+constexpr int kStat6OverrunFlagBit = 7;
+constexpr int kStat6ActiveFlagBit = 8;
+constexpr int kStat6PausedFlagBit = 9;
+constexpr int kStat6DesyncFlagBit = 10;
+constexpr int kStat6FatalFlagBit = 11;
+constexpr int kStat6DesyncCountShift = 48;
+
 enum class Event : uint8_t {
     Begin = 1,
     Nal = 2,
@@ -75,6 +91,41 @@ struct Status {
     bool fatal = false;
 };
 
+inline bool decodeErrStatusWord(uint64_t word, Status& status) {
+    if (static_cast<uint32_t>(word) != kErrMagic)
+        return false;
+    status.underrun = ((word >> kErrUnderrunStickyBit) & 1u) != 0;
+    status.overrun = ((word >> kErrOverrunStickyBit) & 1u) != 0;
+    status.active = ((word >> kErrActiveBit) & 1u) != 0;
+    status.underrun_count = static_cast<uint8_t>(word >> kErrUnderrunCountShift);
+    status.overrun_count = static_cast<uint8_t>(word >> kErrOverrunCountShift);
+    return true;
+}
+
+inline bool decodeStat5StatusWord(uint64_t word, Status& status) {
+    if (static_cast<uint32_t>(word) != kStat5Magic)
+        return false;
+    const uint32_t counts = static_cast<uint32_t>(word >> 32);
+    status.overrun_count = static_cast<uint16_t>(counts);
+    status.underrun_count = static_cast<uint16_t>(counts >> 16);
+    return true;
+}
+
+inline bool decodeStat6StatusWord(uint64_t word, Status& status) {
+    if (static_cast<uint32_t>(word) != kStat6Magic)
+        return false;
+    const uint32_t ds = static_cast<uint32_t>(word >> 32);
+    status.desync_count = static_cast<uint16_t>(ds >> 16);
+    const uint16_t flags = static_cast<uint16_t>(ds);
+    status.underrun = status.underrun || ((flags >> kStat6UnderrunFlagBit) & 1u);
+    status.overrun = status.overrun || ((flags >> kStat6OverrunFlagBit) & 1u);
+    status.active = status.active || ((flags >> kStat6ActiveFlagBit) & 1u);
+    status.paused = ((flags >> kStat6PausedFlagBit) & 1u) != 0;
+    status.desync = ((flags >> kStat6DesyncFlagBit) & 1u) != 0;
+    status.fatal = ((flags >> kStat6FatalFlagBit) & 1u) != 0;
+    return true;
+}
+
 // CTRL @ kCtrlPhys:
 //   [31:0]  PLXB
 //   [62:32] absolute producer byte count modulo 2^31
@@ -84,10 +135,10 @@ struct Status {
 //   [63:32] absolute FPGA consumer byte count
 // ERR @ kErrPhys:
 //   [31:0]  PLXE
-//   [39:32] seq
-//   [40]    underrun sticky
-//   [41]    overrun sticky
-//   [42]    active
+//   [39:32] telemetry publish seq
+//   [45]    underrun sticky
+//   [46]    overrun sticky
+//   [47]    active
 //   [55:48] saturated underrun count low byte
 //   [63:56] saturated overrun count low byte
 // RECORD header, little-endian, exactly kRecordHeaderBytes:

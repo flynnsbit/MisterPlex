@@ -134,6 +134,7 @@ h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_na
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
 		$(ROOT)/host/libmisterplex/status_telemetry.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp

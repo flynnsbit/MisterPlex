@@ -161,7 +161,7 @@ def parse_hex_tokens(tokens: Sequence[str]) -> Optional[List[int]]:
 
 
 def extract_from_status_line(line: str) -> Optional[Tuple[int, int, Optional[int]]]:
-    """Return (res_dc_signed, res_csum_u, bytes_in|None) from push_frame --status."""
+    """Return (res_dc_signed, res_csum_u, stream_liveness|None) from push_frame --status."""
     m_dc = re.search(r"res_dc=(-?\d+)", line)
     m_cs = re.search(r"res_csum=(\d+)", line)
     if not m_dc or not m_cs:
@@ -189,7 +189,7 @@ def extract_from_raw_line(line: str) -> Optional[List[int]]:
         return [int(x, 16) for x in hx]
 
     # Only accept free-form hex if line looks like a pure dump (no key=value telem).
-    if re.search(r"\b(?:res_dc|res_csum|has_frame|bytes_in)=", line):
+    if re.search(r"\b(?:res_dc|res_csum|has_frame|bytes_in|stream_nalus)=", line):
         return None
     hx = re.findall(r"\b([0-9a-fA-F]{2})\b", line)
     if len(hx) >= 16:
@@ -215,7 +215,7 @@ def handle_text(text: str) -> int:
             b3 = ((stream16 >> 8) & 0xFF) if stream16 is not None else 0
             print("--- decode push_frame --status ---")
             print(f"  res_dc={dc} (u8=0x{dc_u8:02x})  res_csum={csum} (0x{csum:02x})  "
-                  f"bytes_in={stream if stream is not None else '?'}")
+                  f"stream_liveness={stream if stream is not None else '?'}")
             if stream16 is not None:
                 print(f"  mapped raw[12..15] ≈ {dc_u8:02x} {csum:02x} {b2:02x} {b3:02x}"
                       " (pre-3.3l-2 stream mapping; P3-3l2 raw[14] is recon_sig)")
@@ -272,12 +272,12 @@ def self_test() -> int:
     # status line — must prefer res_dc=/res_csum= over qp=25 hex scrapes
     line = ("status has_frame=1 has_audio=0 has_stream=1 underrun=0 has_idr=1 stub_busy=0 "
             "sps_valid=1 pps_valid=1 nalu=4 last_nal=0x05 slice_type=7 mb0=0 qp=25 "
-            "res_ok=1 res_tc=8 res_t1=3 res_dc=-24 res_csum=20 ddr_busy=0 sps=320x240 bytes_in=42")
+            "res_ok=1 res_tc=8 res_t1=3 res_dc=-24 res_csum=20 ddr_busy=0 sps=320x240 stream_nalus=4")
     print("self-test status line:")
     # Capture that status path yields HARD_PASS
     st = extract_from_status_line(line)
-    if st is None or st[0] != -24 or st[1] != 20:
-        print(f"SELF-TEST FAIL: status parse got {st} want (-24, 20, 42)")
+    if st is None or st[0] != -24 or st[1] != 20 or st[2] is not None:
+        print(f"SELF-TEST FAIL: status parse got {st} want (-24, 20, None)")
         ok = False
     # Ensure free-hex scrape does NOT steal status line
     if extract_from_raw_line(line) is not None:
@@ -299,7 +299,7 @@ def self_test() -> int:
 
     # FAIL status (820484a6 class example: dc ok, csum wrong)
     fail_line = ("status has_frame=1 has_stream=1 res_ok=1 res_tc=8 res_t1=3 "
-                 "res_dc=-24 res_csum=239 bytes_in=42")
+                 "res_dc=-24 res_csum=239 stream_nalus=4")
     print("self-test FAIL status (csum!=20):")
     stf = extract_from_status_line(fail_line)
     if stf is None or stf[0] != -24 or stf[1] != 239:

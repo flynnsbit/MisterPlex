@@ -249,13 +249,27 @@ int main(int argc, char** argv) {
         std::printf(
             "status has_frame=%d has_audio=%d has_stream=%d underrun=%d "
             "has_idr=%d sps_valid=%d pps_valid=%d nalu=%u last_nal=0x%02x "
-            "res_csum=%u recon_sig=%u recon_dbg=0x%02x sps=%ux%u bytes_in=%u\n",
+            "res_csum=%u recon_sig=%u recon_dbg=0x%02x sps=%ux%u "
+            "stream_nalus=%u bytes_in_unavailable=1",
             st.has_frame ? 1 : 0, st.has_audio ? 1 : 0, st.has_stream ? 1 : 0,
             st.audio_underrun ? 1 : 0, st.has_idr ? 1 : 0,
             st.sps_valid ? 1 : 0, st.pps_valid ? 1 : 0, st.nalu_count, st.last_nal_type,
             static_cast<unsigned>(st.residual_csum), static_cast<unsigned>(st.recon_sig),
             static_cast<unsigned>(st.recon_dbg),
-            st.sps_width, st.sps_height, st.stream_bytes_in);
+            st.sps_width, st.sps_height, st.stream_nalus);
+        misterplex::FpgaSpi::DdrDoorbellStatus tok;
+        if (spi.readDdrDoorbellStatus(tok)) {
+            std::printf(" frame_bank=%d frame_format=yuv420p frame_seq=%u",
+                        tok.bank, tok.seq);
+        }
+        misterplex::FpgaSpi::FrameStoreStatus fs;
+        if (spi.readFrameStoreStatus(fs)) {
+            std::printf(" frame_debug=0x%02x frame_underruns=%u frame_status_seq=%u",
+                        static_cast<unsigned>(fs.debug_state),
+                        static_cast<unsigned>(fs.underrun_count),
+                        static_cast<unsigned>(fs.seq));
+        }
+        std::printf("\n");
     }
     return 0;
 }

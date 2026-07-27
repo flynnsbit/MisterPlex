@@ -938,7 +938,7 @@ wire [127:0] status_telem_masked = {
 	status_telem_r[95:0]
 };
 
-// Preserve Aspect ratio OSD bits (may stomp stream_bytes high bits — OK)
+// Preserve Aspect ratio OSD bits (may stomp recon_dbg bits [2:1] — OK)
 // status_set replaces entire word in Main; residual bits stay below AR splice.
 assign status_in = {
 	status_telem_masked[127:123],

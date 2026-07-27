@@ -468,7 +468,20 @@ def validate_delivery_freshness(args: argparse.Namespace) -> dict | None:
     if args.min_bytes_in is not None:
         bytes_in = current["ints"].get("bytes_in")
         if bytes_in is None:
-            problems.append("bytes_in missing")
+            stream_nalus = current["ints"].get("stream_nalus")
+            if stream_nalus is not None:
+                problems.append(
+                    "STATUS_TELEMETRY_LAYER: "
+                    f"status exposes stream_nalus={stream_nalus}, not a byte-delivery counter; "
+                    "--min-bytes-in cannot prove freshness on this ABI"
+                )
+            elif current["ints"].get("bytes_in_unavailable") == 1:
+                problems.append(
+                    "STATUS_TELEMETRY_LAYER: byte-delivery counter is not exposed by this "
+                    "status ABI; use DDR frame-token freshness or raw capture provenance"
+                )
+            else:
+                problems.append("bytes_in missing")
         elif bytes_in < args.min_bytes_in:
             nalu = current["ints"].get("nalu")
             if nalu is not None and bytes_in == nalu:

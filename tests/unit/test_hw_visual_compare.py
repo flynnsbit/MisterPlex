@@ -386,6 +386,28 @@ def main() -> int:
             f"stdout={stale_delivery.stdout}\nstderr={stale_delivery.stderr}")
     print("PASS natural bytes_in=4/nalu=4 stale-screen fixture is rejected as telemetry-layer aliasing")
 
+    renamed_status = WORK / "status_stream_nalus_no_bytes.txt"
+    renamed_status.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "stream_nalus=4 bytes_in_unavailable=1\n",
+        encoding="utf-8",
+    )
+    renamed_delivery = run(
+        "compare",
+        "--golden", str(RELOAD_STALE_CAPTURE),
+        *COLOR_ARGS,
+        *LEGACY_PROVENANCE_ARGS,
+        "--capture", str(RELOAD_STALE_CAPTURE),
+        "--noise-report", str(noise),
+        "--status-log", str(renamed_status),
+        "--min-bytes-in", "512",
+    )
+    require(renamed_delivery.returncode == 7 and
+            "status exposes stream_nalus=4, not a byte-delivery counter" in renamed_delivery.stderr,
+            "renamed stream_nalus status must not satisfy --min-bytes-in byte freshness\n"
+            f"stdout={renamed_delivery.stdout}\nstderr={renamed_delivery.stderr}")
+    print("PASS stream_nalus status cannot satisfy byte-delivery freshness gate")
+
     fresh_status_before = WORK / "status_before_token.txt"
     fresh_status_after = WORK / "status_after_token.txt"
     fresh_status_before.write_text(
