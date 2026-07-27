@@ -1,0 +1,39 @@
+{
+  "format": "misterplex.hw_visual.golden.v1",
+  "golden_image": {
+    "path": "tests/fixtures/hw_visual/plex_visual_640x480_golden.png",
+    "bytes": 52556,
+    "sha256": "2c997671e328dd795620d1dc9b806d5656547f235021b57d7a6aa56295076413",
+    "width": 640,
+    "height": 480
+  },
+  "source_rbf": {
+    "md5": null,
+    "label": "host_reference",
+    "path": null,
+    "required_for_grading": false,
+    "usage": "future_target_not_hardware_captured"
+  },
+  "geometry": {
+    "coded_width": 624,
+    "coded_height": 480,
+    "display_width": 618,
+    "display_height": 480,
+    "presented_width": 640,
+    "presented_height": 480,
+    "pillarbox_left": 11,
+    "pillarbox_right": 11
+  },
+  "capture": {
+    "color_matrix": "bt601",
+    "color_range": "full",
+    "decoder_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "capture_note": "software-rendered 624x480 target reference; not captured from an RBF and not a default hardware gate",
+    "compare_box": "active"
+  },
+  "consumer_contract": {
+    "must_verify_loaded_rbf_md5": true,
+    "mismatch_exit_code": 8,
+    "must_refuse_unbound_golden_without_explicit_expected_md5": true
+  }
+}

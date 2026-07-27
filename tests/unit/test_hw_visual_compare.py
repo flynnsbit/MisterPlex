@@ -15,12 +15,20 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "scripts" / "hw_visual_compare.py"
 WORK = ROOT / "build" / "hw-visual-unit"
 GOLDEN = ROOT / "tests" / "fixtures" / "hw_visual" / "plex_visual_640x480_golden.png"
+ROLLBACK_GOLDEN = (
+    ROOT / "tests" / "fixtures" / "hw_visual" /
+    "plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png"
+)
 COLOR_ARGS = (
     "--golden-color-matrix", "bt601",
     "--golden-color-range", "full",
     "--capture-color-matrix", "bt601",
     "--capture-color-range", "full",
 )
+RBF_MD5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+OTHER_RBF_MD5 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+ROLLBACK_RBF_MD5 = "57674f2e4c11551898275e99bd4c3067"
+RBF_ARGS = ("--expected-rbf-md5", RBF_MD5, "--actual-rbf-md5", RBF_MD5)
 WCAP_CORRUPT_LOG = (
     ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
     "wcap_fe7673bc_yuyv422_corrupt.log"
@@ -90,6 +98,7 @@ def main() -> int:
         "compare",
         "--golden", str(GOLDEN),
         *COLOR_ARGS,
+        *RBF_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--report", str(good_report),
@@ -110,11 +119,62 @@ def main() -> int:
             f"good compare did not record golden colour provenance: {gr}")
     require(gr["color_provenance"]["capture"] == {"matrix": "bt601", "range": "full"},
             f"good compare did not record capture colour provenance: {gr}")
+    require(gr["rbf_identity"]["expected_md5"] == RBF_MD5 and gr["rbf_identity"]["match"],
+            f"good compare did not record matching RBF provenance: {gr}")
     print("PASS known-good frame exact-matches active display region")
+
+    wrong_core = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", RBF_MD5,
+        "--actual-rbf-md5", OTHER_RBF_MD5,
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+    )
+    require(wrong_core.returncode == 8 and "loaded core md5 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" in wrong_core.stderr,
+            "wrong loaded RBF md5 must be refused before an exact pixel match can pass, "
+            f"not graded\nstdout={wrong_core.stdout}\nstderr={wrong_core.stderr}")
+    undeclared_core = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        *COLOR_ARGS,
+        "--actual-rbf-md5", RBF_MD5,
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+    )
+    require(undeclared_core.returncode == 8 and "does not declare a source RBF md5" in undeclared_core.stderr,
+            "unbound visual golden plus loaded RBF md5 must be refused unless expected md5 is explicit, "
+            f"not graded\nstdout={undeclared_core.stdout}\nstderr={undeclared_core.stderr}")
+    rollback_ok = run(
+        "compare",
+        "--golden", str(ROLLBACK_GOLDEN),
+        *COLOR_ARGS,
+        "--actual-rbf-md5", ROLLBACK_RBF_MD5,
+        "--capture", str(ROLLBACK_GOLDEN),
+        "--noise-report", str(noise),
+    )
+    require(rollback_ok.returncode == 0,
+            "rollback visual golden should grade only when loaded RBF md5 matches its sidecar, "
+            f"stdout={rollback_ok.stdout}\nstderr={rollback_ok.stderr}")
+    rollback_wrong_requested = run(
+        "compare",
+        "--golden", str(ROLLBACK_GOLDEN),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", OTHER_RBF_MD5,
+        "--actual-rbf-md5", OTHER_RBF_MD5,
+        "--capture", str(ROLLBACK_GOLDEN),
+        "--noise-report", str(noise),
+    )
+    require(rollback_wrong_requested.returncode == 8 and "does not match golden source RBF md5" in rollback_wrong_requested.stderr,
+            "explicitly requesting a different RBF for the rollback golden must be refused, "
+            f"not graded\nstdout={rollback_wrong_requested.stdout}\nstderr={rollback_wrong_requested.stderr}")
+    print("PASS wrong or undeclared loaded RBF identity is rejected before pixel grading")
 
     missing_colour = run(
         "compare",
         "--golden", str(GOLDEN),
+        *RBF_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
     )
@@ -126,6 +186,7 @@ def main() -> int:
         "--golden", str(GOLDEN),
         "--golden-color-matrix", "bt601",
         "--golden-color-range", "full",
+        *RBF_ARGS,
         "--capture", str(cap2),
         "--capture-color-matrix", "bt709",
         "--capture-color-range", "full",
@@ -148,6 +209,7 @@ def main() -> int:
         "compare",
         "--golden", str(GOLDEN),
         *COLOR_ARGS,
+        *RBF_ARGS,
         "--capture", str(bad_path),
         "--noise-report", str(noise),
         "--report", str(bad_report),
@@ -175,6 +237,7 @@ def main() -> int:
         "compare",
         "--golden", str(GOLDEN),
         *COLOR_ARGS,
+        *RBF_ARGS,
         "--previous", str(cap1),
         "--capture", str(cap1),
         "--noise-report", str(noise),
@@ -204,6 +267,7 @@ def main() -> int:
         "compare",
         "--golden", str(GOLDEN),
         *COLOR_ARGS,
+        *RBF_ARGS,
         "--capture", str(cap2),
         "--capture-log", str(WCAP_CORRUPT_LOG),
         "--noise-report", str(noise),

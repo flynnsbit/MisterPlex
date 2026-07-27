@@ -161,6 +161,9 @@ def build_manifest(
         raise SystemExit(f"{planes_path}: byte count {len(blob)} != expected {expected}")
 
     seq_frame = sequence.get("frame", {})
+    seq_counts = sequence.get("sequence", {})
+    p_slices = int(seq_counts.get("p_slices", 0))
+    idr_slices = int(seq_counts.get("idr", 0))
     meta = {
         "format": FORMAT,
         "source": {"path": rel(bitstream), "bytes": source_bytes, "sha256": source_sha},
@@ -175,6 +178,12 @@ def build_manifest(
             "ffprobe_version": version_line(ffprobe),
             "command": " ".join(ffmpeg_cmd),
             "pix_fmt": "yuv420p",
+        },
+        "core_identity": {
+            "source": "software_reference_decoder",
+            "rbf_md5": None,
+            "required_for_visual_grading": False,
+            "note": "Frame-plane goldens are direct I420 software-decoder references, not hardware captures. Hardware visual goldens must separately declare and verify source_rbf.md5.",
         },
         "geometry": {
             "coded_width": width,
@@ -193,6 +202,14 @@ def build_manifest(
             "sha256": sha256_bytes(blob),
             "layout": "I420 planar per frame: Y then U then V",
             "frame_bytes": frame_bytes,
+        },
+        "coverage": {
+            "frames": frames,
+            "idr": idr_slices,
+            "p_slices": p_slices,
+            "b_slices": int(seq_counts.get("b_slices", 0)),
+            "p_slice_ratio": p_slices / frames if frames else 0.0,
+            "accumulation_visible": p_slices > 0 and frames > 2,
         },
         "frames": [],
     }
@@ -251,6 +268,16 @@ def validate_manifest(manifest: dict[str, Any], bitstream: Path, sequence_path: 
         raise SystemExit("frame-plane golden must contain >=2 frames")
     if len(blob) != frame_bytes * len(frames):
         raise SystemExit("frame-plane golden blob size does not match frame count")
+    coverage = manifest.get("coverage", {})
+    if coverage:
+        if int(coverage.get("frames", -1)) != len(frames):
+            raise SystemExit("frame-plane golden coverage frame count mismatch")
+        p_frames = sum(1 for fr in frames if str(fr.get("slice_kind")) == "P")
+        if int(coverage.get("p_slices", -1)) != p_frames:
+            raise SystemExit("frame-plane golden coverage P-slice count mismatch")
+    core = manifest.get("core_identity", {})
+    if core and core.get("source") != "software_reference_decoder":
+        raise SystemExit("frame-plane golden core_identity source is not software_reference_decoder")
     for f, frame in enumerate(frames):
         if int(frame.get("frame_index", -1)) != f:
             raise SystemExit("frame indices are not contiguous")

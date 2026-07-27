@@ -17,6 +17,12 @@
     "command": "ffmpeg -v error -y -i tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/wcap_residual14_idr_plus_p_i420.yuv",
     "pix_fmt": "yuv420p"
   },
+  "core_identity": {
+    "source": "software_reference_decoder",
+    "rbf_md5": null,
+    "required_for_visual_grading": false,
+    "note": "Frame-plane goldens are direct I420 software-decoder references, not hardware captures. Hardware visual goldens must separately declare and verify source_rbf.md5."
+  },
   "geometry": {
     "coded_width": 320,
     "coded_height": 240,
@@ -49,6 +55,14 @@
     "sha256": "5cabc69088f0e5d0365cc3bb37d43bacb69da89fdacc72a40ce0045db530b5c9",
     "layout": "I420 planar per frame: Y then U then V",
     "frame_bytes": 115200
+  },
+  "coverage": {
+    "frames": 2,
+    "idr": 1,
+    "p_slices": 1,
+    "b_slices": 0,
+    "p_slice_ratio": 0.5,
+    "accumulation_visible": false
   },
   "frames": [
     {

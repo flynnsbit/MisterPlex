@@ -30,6 +30,8 @@ DEFAULT_WARMUP = 60
 DEFAULT_ATTEMPTS = 5
 COLOR_MATRICES = ("bt601", "bt709")
 COLOR_RANGES = ("full", "limited")
+VISUAL_GOLDEN_FORMAT = "misterplex.hw_visual.golden.v1"
+MD5_RE = re.compile(r"\b([0-9a-fA-F]{32})\b")
 
 
 class HarnessError(RuntimeError):
@@ -50,6 +52,10 @@ class CaptureAbsentError(HarnessError):
 
 class CaptureBusyError(HarnessError):
     exit_code = 6
+
+
+class RbfIdentityError(HarnessError):
+    exit_code = 8
 
 
 CORRUPT_LOG_PATTERNS = (
@@ -84,31 +90,119 @@ def reject_corrupt_capture_log(path: str | None) -> None:
         )
 
 
-def require_color_provenance(args: argparse.Namespace) -> dict:
-    fields = (
-        args.golden_color_matrix,
-        args.golden_color_range,
-        args.capture_color_matrix,
-        args.capture_color_range,
+def normalize_md5(value: str | None) -> str | None:
+    if value is None:
+        return None
+    m = MD5_RE.search(value)
+    return m.group(1).lower() if m else None
+
+
+def default_golden_manifest_path(golden: Path) -> Path:
+    return golden.with_name(f"{golden.stem}_visual_golden_v1.json")
+
+
+def load_visual_golden_manifest(golden: Path, explicit: str | None) -> dict:
+    manifest_path = Path(explicit) if explicit else default_golden_manifest_path(golden)
+    if not manifest_path.exists():
+        raise RbfIdentityError(
+            f"visual golden manifest missing for {golden}; expected {manifest_path}. "
+            "Golden RBF provenance is required before grading."
+        )
+    obj = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if obj.get("format") != VISUAL_GOLDEN_FORMAT:
+        raise RbfIdentityError(f"{manifest_path}: format is not {VISUAL_GOLDEN_FORMAT}")
+    image = obj.get("golden_image", {})
+    if image.get("sha256") != sha(golden) or int(image.get("bytes", -1)) != golden.stat().st_size:
+        raise RbfIdentityError(f"{manifest_path}: golden image hash/size does not match {golden}")
+    obj["_manifest_path"] = str(manifest_path)
+    return obj
+
+
+def validate_rbf_identity(args: argparse.Namespace, manifest: dict) -> dict:
+    src_rbf = manifest.get("source_rbf", {})
+    manifest_md5 = normalize_md5(src_rbf.get("md5"))
+    cli_expected = normalize_md5(args.expected_rbf_md5)
+    if manifest_md5 and cli_expected and manifest_md5 != cli_expected:
+        raise RbfIdentityError(
+            f"RBF_IDENTITY: requested RBF md5 {cli_expected} does not match golden source RBF md5 "
+            f"{manifest_md5}; not grading pixels"
+        )
+    expected = manifest_md5 or cli_expected
+    actual_src = args.actual_rbf_md5
+    log_path = None
+    if args.rbf_md5_log:
+        log_path = str(args.rbf_md5_log)
+        actual_src = Path(args.rbf_md5_log).read_text(encoding="utf-8", errors="replace")
+    actual = normalize_md5(actual_src)
+    if expected is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: visual golden does not declare a source RBF md5; refusing to grade"
+        )
+    if actual is None:
+        raise RbfIdentityError(
+            "RBF_IDENTITY: loaded /media/fat/_Utility/Plex.rbf md5 was not supplied; refusing to grade"
+        )
+    report = {
+        "expected_md5": expected,
+        "actual_md5": actual,
+        "source": "golden_manifest" if manifest_md5 else "cli",
+        "golden_manifest": manifest.get("_manifest_path"),
+        "rbf_md5_log": log_path,
+        "match": actual == expected,
+    }
+    if actual != expected:
+        raise RbfIdentityError(
+            f"RBF_IDENTITY: loaded core md5 {actual} != golden/source RBF md5 {expected}; not grading pixels"
+        )
+    return report
+
+
+def validate_manifest_geometry(manifest: dict, g: Geometry) -> dict:
+    declared = manifest.get("geometry", {})
+    actual = asdict(g)
+    keys = (
+        "coded_width",
+        "coded_height",
+        "display_width",
+        "display_height",
+        "presented_width",
+        "presented_height",
+        "pillarbox_left",
+        "pillarbox_right",
     )
+    mismatches = {
+        k: {"golden": declared.get(k), "current": actual[k]}
+        for k in keys
+        if declared.get(k) is not None and int(declared.get(k)) != actual[k]
+    }
+    if mismatches:
+        raise HarnessError(f"visual golden geometry does not match current layout: {mismatches}")
+    return declared
+
+
+def require_color_provenance(args: argparse.Namespace, manifest: dict) -> dict:
+    capture_meta = manifest.get("capture", {})
+    golden_matrix = args.golden_color_matrix or capture_meta.get("color_matrix")
+    golden_range = args.golden_color_range or capture_meta.get("color_range")
+    fields = (golden_matrix, golden_range, args.capture_color_matrix, args.capture_color_range)
     if any(v is None for v in fields):
         raise HarnessError(
             "colour matrix/range provenance is required; pass "
             "--golden-color-matrix, --golden-color-range, "
             "--capture-color-matrix, and --capture-color-range"
         )
-    if (args.golden_color_matrix, args.golden_color_range) != (
+    if (golden_matrix, golden_range) != (
         args.capture_color_matrix, args.capture_color_range
     ):
         raise HarnessError(
             "refusing to compare images with different colour provenance: "
-            f"golden={args.golden_color_matrix}/{args.golden_color_range} "
+            f"golden={golden_matrix}/{golden_range} "
             f"capture={args.capture_color_matrix}/{args.capture_color_range}"
         )
     return {
         "golden": {
-            "matrix": args.golden_color_matrix,
-            "range": args.golden_color_range,
+            "matrix": golden_matrix,
+            "range": golden_range,
         },
         "capture": {
             "matrix": args.capture_color_matrix,
@@ -527,7 +621,10 @@ def cmd_noise(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
     box = parse_compare_box(args.compare_box, g)
-    color_provenance = require_color_provenance(args)
+    golden_manifest = load_visual_golden_manifest(Path(args.golden), args.golden_manifest)
+    manifest_geometry = validate_manifest_geometry(golden_manifest, g)
+    rbf_identity = validate_rbf_identity(args, golden_manifest)
+    color_provenance = require_color_provenance(args, golden_manifest)
     reject_corrupt_capture_log(args.capture_log)
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
@@ -554,6 +651,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "golden": str(args.golden),
         "capture": str(args.capture),
         "capture_log": str(args.capture_log) if args.capture_log else None,
+        "golden_manifest": golden_manifest.get("_manifest_path"),
+        "rbf_identity": rbf_identity,
+        "golden_provenance": {
+            "format": golden_manifest.get("format"),
+            "source_rbf": golden_manifest.get("source_rbf"),
+            "capture": golden_manifest.get("capture"),
+            "geometry": manifest_geometry,
+        },
         "geometry": asdict(g),
         "compare_box": list(box),
         "color_provenance": color_provenance,
@@ -609,9 +714,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("compare", help="compare a capture against the checked-in golden")
     p.add_argument("--golden", required=True)
+    p.add_argument("--golden-manifest",
+                   help="misterplex.hw_visual.golden.v1 sidecar; defaults to *_visual_golden_v1.json")
     p.add_argument("--capture", required=True)
     p.add_argument("--capture-log",
                    help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
+    p.add_argument("--expected-rbf-md5",
+                   help="declared md5 of the RBF artifact this run intends to grade")
+    p.add_argument("--actual-rbf-md5",
+                   help="actual loaded /media/fat/_Utility/Plex.rbf md5, or md5sum output")
+    p.add_argument("--rbf-md5-log",
+                   help="file containing device md5sum /media/fat/_Utility/Plex.rbf output")
     p.add_argument("--previous", help="previous-condition frame for stale-capture rejection")
     p.add_argument("--noise-report")
     p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")

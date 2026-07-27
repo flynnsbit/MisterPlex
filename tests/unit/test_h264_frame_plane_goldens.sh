@@ -93,4 +93,15 @@ grep -q 'candidate plane comparison diverged from golden' "$OUT/corrupt_compare.
   --candidate-planes build/p3_frame_planes/plex_inter_p16_320x240_12f_corrupt.i420 \
   --expect-red
 
+python3 - <<'PY'
+import json
+m = json.load(open("tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_frame_planes_v1.json"))
+assert m["core_identity"]["source"] == "software_reference_decoder"
+assert m["coverage"]["frames"] == 12
+assert m["coverage"]["idr"] == 1
+assert m["coverage"]["p_slices"] == 11
+assert m["coverage"]["accumulation_visible"] is True
+assert m["geometry"]["coded_width"] == 624 and m["geometry"]["coded_height"] == 480
+PY
+
 echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane RED checked"

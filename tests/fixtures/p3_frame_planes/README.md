@@ -9,7 +9,10 @@ Each JSON manifest records:
 - bitstream path, byte count and SHA-256
 - `misterplex.p3.nal_sequence.v1` manifest path, byte count and SHA-256
 - FFmpeg/FFprobe version and decode command
+- `core_identity.source=software_reference_decoder`; these are direct I420 software-decoder
+  references, not hardware captures from an RBF
 - coded/display geometry and I420 plane strides
+- multi-frame coverage counts, including P-slice count/ratio for accumulation tracking
 - per-frame frame number, slice kind, plane byte offsets and per-plane SHA-256
 
 Consumers must verify the source hash, sequence hash, geometry, frame count and plane blob
@@ -23,7 +26,8 @@ tests/unit/test_h264_frame_plane_goldens.sh
 ```
 
 The unit gate regenerates all blobs, compares them to the checked-in goldens, verifies
-provenance, then flips one byte in frame 0 U and proves the plane comparison goes RED.
+provenance, asserts the 624×480 fixture has 11 P frames after the IDR for accumulation
+debugging, then flips one byte in frame 0 U and proves the plane comparison goes RED.
 
 The checked-in coverage includes:
 

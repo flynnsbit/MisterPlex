@@ -37,7 +37,7 @@ visual unit tests/debug output instead of stopping at Verilator.
 | **Branch** | `feat/c1-hw-visual` |
 | **Harness** | `tests/hw/test_f3_visual_golden.sh` |
 | **Comparator** | `scripts/hw_visual_compare.py` |
-| **Goldens** | default pair: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264` + `tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png` |
+| **Goldens** | no current default; each run must set `VISUAL_GOLDEN` whose `*_visual_golden_v1.json` source RBF md5 matches the loaded core |
 | **Docs** | [`hw-visual-regression.md`](hw-visual-regression.md) |
 | **Status** | Real HDMI capture achieved; `57674f2e` grades GREEN and characterized bad `fe7673bc` grades RED |
 
@@ -50,9 +50,10 @@ layout active region for future 624×480 gates.
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
 corrupts one active pixel and fails with exact worst coordinate + diff artifact.
 
-**Capture integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame, `4` =
-V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device. Capture-rig failure is never accepted
-as either green or known-red core evidence.
+**Capture/provenance integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame,
+`4` = V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device, `8` = loaded RBF md5 does not
+match the visual golden/source RBF. Capture-rig or wrong-core failure is never accepted as either green or
+known-red core evidence.
 
 **Hardware evidence (W-C1 token window):**
 
@@ -71,9 +72,11 @@ as either green or known-red core evidence.
 - Red specimen `fe7673bc`: telemetry has `res_csum=20`/`raw[13]=0x14` class signal while reconstruction is known
   bad; visual compare exact ROI pixels `0/19200`, MAE RGB `[112.7730,59.8615,61.0523]`, max_abs `242`,
   `rc=1`, diff artifact emitted.
-- Tooling now enforces the proven default pair. The 624×480 fixture/golden are retained only as a future target
-  and are not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default
-  active-region compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
+- The old `57674f2e` rollback golden is retired as a default. It is still a valid record of that exact RBF md5,
+  but rollback predates the current YUV420 frame-store contract; using it against a current I420 pipeline now
+  fails provenance before pixel grading. The 624×480 fixture/golden are retained only as a future target and are
+  not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default active-region
+  compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
 
 **Hardware TODO:**
 
@@ -81,7 +84,10 @@ as either green or known-red core evidence.
 - [x] Record real HDMI capture noise floor from `build/hw_visual_accept/noise_good_57674f2e.json`.
 - [x] Prove green visual compare against rollback `57674f2e`.
 - [x] Prove red path on hardware with known-bad `fe7673bc`.
-- [x] Promote the proven 320×240 vector + hardware-captured `57674f2e` golden to default gate inputs.
+- [x] Historical: promoted the proven 320×240 vector + hardware-captured `57674f2e` golden before the YUV420
+  pipeline mismatch was identified.
+- [x] Retire the `57674f2e` rollback golden as a default and require visual-golden RBF md5 provenance (`rc=8`
+  on mismatch/missing identity) before grading pixels.
 - [x] Refuse full-frame `VISUAL_FULL_FRAME=1` coverage by default. Hardware investigation of the 618×480 active
   region false-reded on known-good `57674f2e` despite zero within-run noise: exact `281458/296640`,
   Y/U/V MAE `[5.1175,3.3041,1.9793]` vs checked golden, and `281249/296640`, Y/U/V MAE

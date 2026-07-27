@@ -17,6 +17,12 @@
     "command": "ffmpeg -v error -y -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
     "pix_fmt": "yuv420p"
   },
+  "core_identity": {
+    "source": "software_reference_decoder",
+    "rbf_md5": null,
+    "required_for_visual_grading": false,
+    "note": "Frame-plane goldens are direct I420 software-decoder references, not hardware captures. Hardware visual goldens must separately declare and verify source_rbf.md5."
+  },
   "geometry": {
     "coded_width": 624,
     "coded_height": 480,
@@ -49,6 +55,14 @@
     "sha256": "647c592950647393cc196dbdb83216ae5c59b21794c30768c31a82f9c4c74c88",
     "layout": "I420 planar per frame: Y then U then V",
     "frame_bytes": 449280
+  },
+  "coverage": {
+    "frames": 12,
+    "idr": 1,
+    "p_slices": 11,
+    "b_slices": 0,
+    "p_slice_ratio": 0.9166666666666666,
+    "accumulation_visible": true
   },
   "frames": [
     {

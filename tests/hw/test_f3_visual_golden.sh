@@ -26,9 +26,11 @@ else
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-11,0,160,120}" # stable top-left decoded ROI containing MB0
 fi
 RBF="${VISUAL_RBF:-${1:-}}"
+EXPECTED_RBF_MD5="${VISUAL_EXPECTED_RBF_MD5:-${VISUAL_RBF_MD5:-}}"
 EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means known-bad RBF must mismatch golden)
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
-GOLDEN="${VISUAL_GOLDEN:-$ROOT/tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png}"
+GOLDEN="${VISUAL_GOLDEN:-}"
+GOLDEN_MANIFEST="${VISUAL_GOLDEN_MANIFEST:-}"
 TOOL="$ROOT/scripts/hw_visual_compare.py"
 
 if [[ "$(basename "$BITSTREAM")" == "plex_visual_624x480_1f.264" && "${VISUAL_ALLOW_UNPROVEN_624:-0}" != "1" ]]; then
@@ -41,6 +43,34 @@ if [[ "${VISUAL_FULL_FRAME:-0}" == "1" && "${VISUAL_ALLOW_UNPROVEN_FULL:-0}" != 
   echo "Use the proven default ROI gate, or set VISUAL_ALLOW_UNPROVEN_FULL=1 for scheduled investigation only." >&2
   exit 2
 fi
+if [[ -z "$GOLDEN" ]]; then
+  echo "FAIL: no default hardware visual golden is safe for the current YUV420 pipeline." >&2
+  echo "Set VISUAL_GOLDEN to a golden whose sidecar records the intended RBF md5." >&2
+  echo "The rollback 57674f2e golden is retired as a default and may only be used explicitly." >&2
+  exit 2
+fi
+if [[ -z "$GOLDEN_MANIFEST" ]]; then
+  GOLDEN_MANIFEST="${GOLDEN%.png}_visual_golden_v1.json"
+fi
+if [[ -n "$RBF" && -z "$EXPECTED_RBF_MD5" ]]; then
+  EXPECTED_RBF_MD5="$(md5sum "$RBF" | awk '{print tolower($1)}')"
+fi
+if [[ -z "$EXPECTED_RBF_MD5" ]]; then
+  EXPECTED_RBF_MD5="$(
+    python3 - "$GOLDEN_MANIFEST" <<'PY'
+import json, sys
+try:
+    md5 = json.load(open(sys.argv[1], encoding="utf-8")).get("source_rbf", {}).get("md5")
+except FileNotFoundError:
+    md5 = None
+print(md5 or "")
+PY
+  )"
+fi
+if [[ -z "$EXPECTED_RBF_MD5" ]]; then
+  echo "FAIL: expected RBF md5 is not declared by VISUAL_RBF, VISUAL_EXPECTED_RBF_MD5, or the golden manifest." >&2
+  exit 2
+fi
 
 mkdir -p "$OUT"
 
@@ -49,6 +79,17 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
 ssh_m() {
   "${SSH[@]}" "$@"
+}
+
+verify_loaded_rbf() {
+  echo "=== verify loaded Plex.rbf md5 (expected $EXPECTED_RBF_MD5) ==="
+  ssh_m "md5sum /media/fat/_Utility/Plex.rbf" | tee "$OUT/rbf_md5.txt"
+  local actual
+  actual="$(sed -n 's/^\([0-9a-fA-F]\{32\}\).*/\1/p' "$OUT/rbf_md5.txt" | tr 'A-F' 'a-f' | head -1)"
+  if [[ "$actual" != "$EXPECTED_RBF_MD5" ]]; then
+    echo "FAIL: loaded core md5 $actual != expected $EXPECTED_RBF_MD5; refusing to grade" >&2
+    exit 8
+  fi
 }
 
 restore_mode() {
@@ -67,6 +108,7 @@ else
   echo "=== no VISUAL_RBF supplied; verifying existing Plex core ==="
   ssh_m "ps | grep -q '[P]lex.rbf'"
 fi
+verify_loaded_rbf
 
 capture() {
   python3 "$TOOL" capture --device "$DEV" --input-format "$CAP_FMT" \
@@ -78,6 +120,7 @@ COMPARE_ARGS=()
 if [[ -n "$COMPARE_BOX" ]]; then
   COMPARE_ARGS=(--compare-box "$COMPARE_BOX")
 fi
+RBF_COMPARE_ARGS=(--golden-manifest "$GOLDEN_MANIFEST" --expected-rbf-md5 "$EXPECTED_RBF_MD5" --rbf-md5-log "$OUT/rbf_md5.txt")
 
 echo "=== set HDMI mode preset $VIDEO_MODE for capture ($CAP_FMT $CAP_SIZE@$CAP_FPS) ==="
 ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
@@ -101,6 +144,7 @@ if [[ -z "$RBF" && "${VISUAL_PREVIOUS_MENU:-1}" == "1" ]]; then
     sleep 1
   done
   ssh_m "cat /tmp/CORENAME 2>/dev/null || true" | grep -qi plex
+  verify_loaded_rbf
   ssh_m "printf '%s\n' 'video_mode $VIDEO_MODE' > /dev/MiSTer_cmd"
   sleep 2
 else
@@ -159,6 +203,7 @@ echo "=== compare capture against checked-in golden ==="
 set +e
 python3 "$TOOL" compare \
   "${COMPARE_ARGS[@]}" \
+  "${RBF_COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
   --golden-color-matrix "$COLOR_MATRIX" \
   --golden-color-range "$COLOR_RANGE" \
@@ -186,8 +231,8 @@ case "$EXPECT:$compare_rc" in
     echo "FAIL: VISUAL_EXPECT=fail but capture matched golden; red specimen did not go red" >&2
     exit 1
     ;;
-  *:3|*:4|*:5|*:6)
-    echo "FAIL: capture integrity error rc=$compare_rc (stale/corrupt/absent/busy), not a core result" >&2
+  *:3|*:4|*:5|*:6|*:8)
+    echo "FAIL: capture/provenance integrity error rc=$compare_rc (stale/corrupt/absent/busy/wrong-rbf), not a core result" >&2
     exit "$compare_rc"
     ;;
   *)
@@ -211,6 +256,7 @@ PY
   set +e
   python3 "$TOOL" compare \
     "${COMPARE_ARGS[@]}" \
+    "${RBF_COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
     --golden-color-matrix "$COLOR_MATRIX" \
     --golden-color-range "$COLOR_RANGE" \

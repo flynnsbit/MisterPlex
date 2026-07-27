@@ -1,0 +1,39 @@
+{
+  "format": "misterplex.hw_visual.golden.v1",
+  "golden_image": {
+    "path": "tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png",
+    "bytes": 34162,
+    "sha256": "64d3724402fa975e1375335ca4531f6418623573c2fe3bc270c400fcf08b9b68",
+    "width": 1280,
+    "height": 720
+  },
+  "source_rbf": {
+    "md5": "57674f2e4c11551898275e99bd4c3067",
+    "label": "rollback_57674f2e",
+    "path": "/media/fat/_Utility/Plex.rbf",
+    "required_for_grading": true,
+    "usage": "retired_rollback_record"
+  },
+  "geometry": {
+    "coded_width": 624,
+    "coded_height": 480,
+    "display_width": 618,
+    "display_height": 480,
+    "presented_width": 640,
+    "presented_height": 480,
+    "pillarbox_left": 11,
+    "pillarbox_right": 11
+  },
+  "capture": {
+    "color_matrix": "bt601",
+    "color_range": "full",
+    "decoder_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "capture_note": "MJPEG 1280x720@60 /dev/video4 hardware capture; retired as default for current YUV420 pipeline",
+    "compare_box": "11,0,160,120"
+  },
+  "consumer_contract": {
+    "must_verify_loaded_rbf_md5": true,
+    "mismatch_exit_code": 8,
+    "must_refuse_unbound_golden_without_explicit_expected_md5": true
+  }
+}
