@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import subprocess
 import sys
 import hashlib
@@ -52,6 +53,10 @@ def build_and_run(name: str, negative: bool) -> int:
 def main() -> int:
     if not VERILATOR.exists():
         print(f"SKIP P3_INTRA_FRAME_VERILATOR: Verilator not found at {VERILATOR}; frame-wide RTL behavioural test NOT run")
+        if os.environ.get("ALLOW_MISSING_VERILATOR", "0") != "1":
+            print("RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation.")
+            print("A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified.")
+            return 3
         return 0
     neg_rc = build_and_run("p3_intra_frame_neg", True)
     if neg_rc == 0:

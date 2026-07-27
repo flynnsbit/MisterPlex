@@ -12,6 +12,11 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; stream_path integrated reconstruction simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
 SKIP
+  if [[ "${ALLOW_MISSING_VERILATOR:-0}" != "1" ]]; then
+    echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation." >&2
+    echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
+    exit 3
+  fi
   exit 0
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
