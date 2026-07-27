@@ -66,6 +66,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	$(ROOT)/build/test_p3_inter_pred_vectors
 	python3 $(ROOT)/tests/unit/test_no_conflict_markers.py
 	python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
+	python3 $(ROOT)/tests/unit/test_quartus_subset_lint.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
