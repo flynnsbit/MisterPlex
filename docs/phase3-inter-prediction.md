@@ -43,10 +43,14 @@ captured 640×480 universal transcode request with `videoProfile=baseline&videoL
 H.264 **High** profile instead:
 
 ```text
+W-A4 branch: feat/a4-sps-baseline @ b28e863
+requested: videoResolution=640x480 maxVideoBitrate=2500 videoProfile=baseline videoLevel=30
 ffprobe delivered stream: h264 High, width=618 height=480, level=30, 25/1
 host SPS parse: profile_idc=100, level_idc=30, width=618, height=480
 PPS parse: entropy_cabac=1
 12 s VCL scan: vcl=302 idr=8 nonidr=294 i=22 p=165 b=115
+video-only bitrate: ~1344.3 kbps over 12 s
+PMS target note: mpegts universal target produced data; final mp4 target returned an empty body
 ```
 
 So the Baseline-only decoder is feasible as an architecture, but **not yet a safe assumption for
@@ -137,7 +141,9 @@ comfortable and leave headroom for sub-MB partitions and deblock.
 ## Coordination note for `w-a4`
 
 `w-a4` landed the 480p profile request (`videoProfile=baseline&videoLevel=30`) and PMS accepted the
-request. W-A4's first delivered-stream probe is **negative**: High/CABAC/B was delivered despite
-the request. Before hardware depends on Baseline, either make PMS actually deliver profile_idc=66
+request, and follow-up branch `feat/a4-sps-baseline` keeps guards that the request remains
+Baseline/L3.0. W-A4's delivered-stream probe is still **negative**: High/CABAC/B was delivered
+despite the request, with mpegts as the working PMS universal target and final mp4 returning an
+empty body. Before hardware depends on Baseline, either make PMS actually deliver profile_idc=66
 with PPS `entropy_coding_mode_flag=0`, I/P only, and `max_num_ref_frames` within the implemented
 count, or keep the ARM/FFmpeg fallback for that stream.

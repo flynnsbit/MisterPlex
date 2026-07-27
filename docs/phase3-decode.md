@@ -297,11 +297,13 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   field/interlaced coding. Treat this as a request until delivered-stream probing proves profile_idc=66
   and CAVLC PPS; source XML may still describe the original Main-profile input.
   **Actual PMS probe (W-A4 2026-07-26):** the server did **not** honor Baseline. Delivered stream
-  probed as H.264 High, `profile_idc=100`, `level_idc=30`, `width=618`, `height=480`, PPS
-  `entropy_cabac=1`, and a 12 s slice scan found `i=22 p=165 b=115`. Therefore Baseline-only
-  FPGA inter decode is architecturally tractable but **not yet product-safe for PMS 480p**; product
-  must fail closed / fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder
-  exists.
+  probed on `feat/a4-sps-baseline` @ `b28e863` as H.264 High, `profile_idc=100`, `level_idc=30`,
+  `width=618`, `height=480`, PPS `entropy_cabac=1`, video-only bitrate ~1344.3 kbps, and a 12 s
+  slice scan found `i=22 p=165 b=115`. The request still carried `videoResolution=640x480`,
+  `maxVideoBitrate=2500`, `videoProfile=baseline`, `videoLevel=30`; PMS mpegts universal target
+  produced data while final mp4 returned an empty body. Therefore Baseline-only FPGA inter decode
+  is architecturally tractable but **not yet product-safe for PMS 480p**; product must fail closed /
+  fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
   (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, maeY=0). Unit
