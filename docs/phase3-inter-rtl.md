@@ -181,6 +181,28 @@ making the loop-filter state match current RTL output. The strict reference comp
 where expected, and the behavioral pixel-XOR/colorspace/loop-filter-provenance red-checks still
 fail strict compare/refuse contaminated candidates.
 
+`tools/score_i420_candidate.py` is the native-plane handoff scorer for inter
+quality. It accepts only raw planar I420/YUV420p candidates in VCL decode order
+and refuses RGB/RGB565-derived candidates with rc=9. For the 624×480 fixture,
+each frame is 449,280 bytes: Y offset 0 stride 624 bytes 299,520, U offset
+299,520 stride 312 bytes 74,880, V offset 374,400 stride 312 bytes 74,880
+(offsets are relative to `frame_index * 449280`). The current correctness
+contract is explicit about H.264 loop-filter state: a pre-deblock/native
+reconstruction candidate must declare `candidate_h264_loop_filter=disabled`
+and is graded against manifests declaring `decoder.loop_filter=skip_loop_filter=all`
+and `provenance.h264_loop_filter=disabled`. A post-deblock product candidate
+must not be compared to those goldens; it needs a separate enabled-deblock
+manifest so MC references are not silently mismatched.
+
+The scorer reports intra and inter populations separately and can consume an
+optional `misterplex.p3.inter_mb_metadata.v1` file to break P exactness down by
+`P_Skip`/`P_16x16`/`P_16x8`/`P_8x16`/`P_8x8` (unknown MBs are `P_UNKNOWN`).
+`first_bad_inter` includes MB type, ref index, MV, candidate/reference sample
+blocks, and predicted sample blocks when the metadata supplies them. Until
+`stream_path` exposes a native-I420 inter candidate, the existing full-frame RTL
+candidate remains `I420_FROM_RGB565` diagnostic output and is refused as a
+correctness source.
+
 ## Hardware gate plan
 
 Deploy the branch RBF after Quartus scheduling and load the Baseline 624×480 elementary stream
