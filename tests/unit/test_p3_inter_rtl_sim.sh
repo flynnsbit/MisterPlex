@@ -31,6 +31,7 @@ TOP="$ROOT/tests/rtl/h264_inter_pred_tb_top.sv"
 FIXTURE="$ROOT/tests/fixtures/p3_inter_pred/inter_mc_v1.json"
 BUILD="$ROOT/build/verilator/h264_inter_pred"
 BUILD_FAULT="$ROOT/build/verilator/h264_inter_pred_bad_round"
+BUILD_PART_FAULT="$ROOT/build/verilator/h264_inter_pred_bad_part_mv"
 REGEN="$ROOT/build/p3_inter_mc_v1.regen.json"
 
 for f in "$RTL" "$QIP" "$TB" "$TOP" "$FIXTURE"; do
@@ -44,7 +45,7 @@ if ! grep -q 'rtl/h264_inter_pred.sv' "$QIP"; then
   exit 2
 fi
 
-mkdir -p "$BUILD" "$BUILD_FAULT"
+mkdir -p "$BUILD" "$BUILD_FAULT" "$BUILD_PART_FAULT"
 python3 "$ROOT/scripts/gen_p3_inter_mc_fixture.py" "$REGEN" >/dev/null
 if ! cmp -s "$FIXTURE" "$REGEN"; then
   echo "RTL SIM ERROR: inter MC fixture is not byte-identical to generator" >&2
@@ -78,3 +79,23 @@ if ! grep -q 'luma qpel frac mismatch' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK h264_inter_pred RTL red-check: bad rounding fault failed golden"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_PART_FAULT" \
+  --top-module h264_inter_pred_tb -GFAULT_BAD_PART_MV=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+PART_FAULT_OUT="$($BUILD_PART_FAULT/Vh264_inter_pred_tb "$FIXTURE" 2>&1)"
+PART_FAULT_RC=$?
+set -e
+printf '%s\n' "$PART_FAULT_OUT"
+if [[ "$PART_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_inter_pred RTL red-check: bad partition MV unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'partition MV case mismatch' <<<"$PART_FAULT_OUT"; then
+  echo "FAIL h264_inter_pred RTL red-check: expected partition MV mismatch" >&2
+  exit 1
+fi
+echo "OK h264_inter_pred RTL red-check: bad partition MV fault failed golden"

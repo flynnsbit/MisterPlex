@@ -32,7 +32,12 @@ unsupported-stream guard must stay in product code if the PMS profile is removed
 Product RTL added in `fpga/Plex_MiSTer/rtl/h264_inter_pred.sv`:
 
 - `h264_mv_pred_16x16`: single-reference median MV predictor for P_L0_16x16, C→D fallback, MVD
-  add, and P_Skip zero-vector rule for unavailable/zero A/B neighbours.
+  add, and P_Skip zero-vector rule for unavailable/zero A/B neighbours; P_Skip ignores MVD because
+  skipped macroblocks carry no MVD syntax.
+- `h264_mv_pred_part`: partition-aware P MV predictor for P_Skip, P_L0_16x16, P_L0_16x8,
+  P_L0_8x16, P_8x8 and sub-MB partitions. With `max_num_ref_frames=1`, refIdx comparisons collapse
+  to availability; 16x8 top uses B and bottom uses A when available, 8x16 left uses A and right uses C
+  when available, and P_8x8/sub partitions use the median/C→D fallback.
 - `h264_luma_qpel_sample`: H.264 quarter-pel luma sample from a padded 9×9 reference window. It
   uses the six-tap half-pel filter `(1,-5,20,20,-5,1)` with `+16 >> 5` rounding for one-axis
   half-pels, `+512 >> 10` for the center half/half sample, clipping, and quarter-pel averaging.
@@ -48,7 +53,7 @@ in `files.qip`; test-only fault injection lives only in the testbench top.
 cannot optimize the block away before hardware bring-up. It paints the second macroblock in the
 top row as four 4-pixel-wide stage bands (MV, luma qpel, chroma epel, fetch): each band is green
 when that stage matches the fixture and red on mismatch, with the blue channel carrying the stage
-signature. The aggregate inter signature remains `0x56`. The first macroblock remains the existing IQ/IDCT
+signature. The MV band also includes a visible partition-predictor witness; the aggregate inter signature is `0x57`. The first macroblock remains the existing IQ/IDCT
 residual/recon diagnostic.
 
 Silicon-divergence audit after the IQ/IDCT `0x3b`→`0x00` hardware failure: this inter primitive
@@ -64,7 +69,8 @@ the qpel consumer from registered fetch data.
 `scripts/gen_p3_inter_mc_fixture.py` and checked byte-identical by `test_p3_inter_rtl_sim.sh`
 before simulation. The fixture covers:
 
-- five MV predictor cases, including C→D fallback and P_Skip zero-vector cases;
+- six 16x16 MV predictor cases, including C→D fallback, P_Skip zero-vector cases, and non-zero P_Skip prediction with MVD ignored;
+- ten partition predictor cases covering P_Skip, P_L0_16x16, both P_L0_16x8 halves, both P_L0_8x16 halves, C-missing fallback, P_8x8, and sub-MB median prediction;
 - all 16 luma quarter-pel positions for a deterministic 9×9 padded reference window;
 - three chroma eighth-pel cases;
 - three edge-clamp cases plus five 9×9 luma reference fetch address cases for the 624×480 coded picture.
@@ -73,9 +79,10 @@ Evidence command:
 
 ```text
 tests/unit/test_p3_inter_rtl_sim.sh
-OK real RTL sim: h264_inter_pred product RTL mv_cases=5 luma_qpel=16 chroma_epel=3 clamp=3 fetch=5 fixture=.../inter_mc_v1.json
+OK real RTL sim: h264_inter_pred product RTL mv_cases=6 partition_cases=10 frame_mv_cases=9090 frame_modes=690/720/720/690/690 luma_qpel=16 chroma_epel=3 clamp=3 fetch=5 fixture=.../inter_mc_v1.json
 FAIL h264_inter_pred RTL: luma qpel frac mismatch
 OK h264_inter_pred RTL red-check: bad rounding fault failed golden
+OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
 ```
 
 The red path perturbs interpolation behaviour in the testbench wrapper (`FAULT_BAD_ROUND=1`), not
@@ -91,7 +98,7 @@ Current evidence:
 ```text
 OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal
 OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal
-FAIL stream_path inter diag pixel: x=16 y=4 band=0 got=0xe87f want=0x1780
+FAIL stream_path inter diag pixel: x=16 y=4 band=0 got=0xe87b want=0x1784
 OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 ```
 

@@ -73,7 +73,7 @@ public:
         if (top.fs_wr_en) {
             if (pxY >= 4 && pxY < 16 && pxX >= 16 && pxX < 32) {
                 const int band = (pxX - 16) / 4;
-                const uint8_t sigs[4] = {0x02, 0x69, 0x63, 0x5e};
+                const uint8_t sigs[4] = {0x22, 0x69, 0x63, 0x5e};
                 const uint16_t want = rgb565(0x10, 0xf0, sigs[band]);
                 if (top.fs_wr_pixel == want) {
                     interBandSamples[band]++;

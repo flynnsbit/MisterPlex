@@ -65,8 +65,80 @@ module h264_mv_pred_16x16 (
 	                              ((mv_b_x == 16'sd0) && (mv_b_y == 16'sd0)));
 	assign pred_x = skip_zero ? 16'sd0 : median_x;
 	assign pred_y = skip_zero ? 16'sd0 : median_y;
-	assign mv_x = pred_x + mvd_x;
-	assign mv_y = pred_y + mvd_y;
+	// P_Skip carries no MVD; its motion vector is the derived predictor.
+	assign mv_x = p_skip ? pred_x : (pred_x + mvd_x);
+	assign mv_y = p_skip ? pred_y : (pred_y + mvd_y);
+endmodule
+
+module h264_mv_pred_part (
+	input  wire [2:0]         part_mode,
+	input  wire [1:0]         part_idx,
+	input  wire               avail_a,
+	input  wire               avail_b,
+	input  wire               avail_c,
+	input  wire               avail_d,
+	input  wire signed [15:0] mv_a_x,
+	input  wire signed [15:0] mv_a_y,
+	input  wire signed [15:0] mv_b_x,
+	input  wire signed [15:0] mv_b_y,
+	input  wire signed [15:0] mv_c_x,
+	input  wire signed [15:0] mv_c_y,
+	input  wire signed [15:0] mv_d_x,
+	input  wire signed [15:0] mv_d_y,
+	input  wire signed [15:0] mvd_x,
+	input  wire signed [15:0] mvd_y,
+	input  wire               p_skip,
+	output reg  signed [15:0] pred_x,
+	output reg  signed [15:0] pred_y,
+	output wire signed [15:0] mv_x,
+	output wire signed [15:0] mv_y,
+	output wire               skip_zero
+);
+	localparam [2:0] PART_P16x16 = 3'd0;
+	localparam [2:0] PART_P16x8  = 3'd1;
+	localparam [2:0] PART_P8x16  = 3'd2;
+	localparam [2:0] PART_P8x8   = 3'd3;
+	localparam [2:0] PART_SUB    = 3'd4;
+
+	wire signed [15:0] median_pred_x, median_pred_y, unused_mv_x, unused_mv_y;
+	wire unused_skip_zero;
+	h264_mv_pred_16x16 u_median (
+		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
+		.mv_a_x(mv_a_x), .mv_a_y(mv_a_y), .mv_b_x(mv_b_x), .mv_b_y(mv_b_y),
+		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
+		.mvd_x(16'sd0), .mvd_y(16'sd0), .p_skip(1'b0),
+		.pred_x(median_pred_x), .pred_y(median_pred_y),
+		.mv_x(unused_mv_x), .mv_y(unused_mv_y), .skip_zero(unused_skip_zero)
+	);
+
+	assign skip_zero = p_skip && (!avail_a || !avail_b ||
+	                              ((mv_a_x == 16'sd0) && (mv_a_y == 16'sd0)) ||
+	                              ((mv_b_x == 16'sd0) && (mv_b_y == 16'sd0)));
+
+	always @* begin
+		pred_x = median_pred_x;
+		pred_y = median_pred_y;
+		if (skip_zero) begin
+			pred_x = 16'sd0;
+			pred_y = 16'sd0;
+		end else if (part_mode == PART_P16x8 && part_idx == 2'd0 && avail_b) begin
+			pred_x = mv_b_x;
+			pred_y = mv_b_y;
+		end else if (part_mode == PART_P16x8 && part_idx == 2'd1 && avail_a) begin
+			pred_x = mv_a_x;
+			pred_y = mv_a_y;
+		end else if (part_mode == PART_P8x16 && part_idx == 2'd0 && avail_a) begin
+			pred_x = mv_a_x;
+			pred_y = mv_a_y;
+		end else if (part_mode == PART_P8x16 && part_idx == 2'd1 && avail_c) begin
+			pred_x = mv_c_x;
+			pred_y = mv_c_y;
+		end
+	end
+
+	assign mv_x = p_skip ? pred_x : (pred_x + mvd_x);
+	assign mv_y = p_skip ? pred_y : (pred_y + mvd_y);
+	(* keep = 1 *) wire _keep_part_modes = (part_mode == PART_P16x16) | (part_mode == PART_P8x8) | (part_mode == PART_SUB);
 endmodule
 
 module h264_luma_qpel_sample (

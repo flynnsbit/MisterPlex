@@ -143,6 +143,8 @@ module decode_stub #(
 	wire               inter_skip_zero;
 	wire [7:0]         inter_luma_ref [0:80];
 	wire [7:0]         inter_luma_sample;
+	wire signed [15:0] inter_part_pred_x, inter_part_pred_y, inter_part_mv_x, inter_part_mv_y;
+	wire               inter_part_skip_zero;
 	wire [7:0]         inter_chroma_sample;
 	wire [15:0]        inter_fetch_x, inter_fetch_y;
 	genvar inter_ref_i;
@@ -166,6 +168,18 @@ module decode_stub #(
 		.mv_x(inter_mv_x), .mv_y(inter_mv_y), .skip_zero(inter_skip_zero)
 	);
 
+	h264_mv_pred_part u_inter_part_diag (
+		.part_mode(3'd1), .part_idx(2'd0),
+		.avail_a(1'b1), .avail_b(1'b1), .avail_c(1'b1), .avail_d(1'b0),
+		.mv_a_x(16'sd100), .mv_a_y(16'sd0),
+		.mv_b_x(16'sd1), .mv_b_y(16'sd2),
+		.mv_c_x(16'sd50), .mv_c_y(16'sd0),
+		.mv_d_x(16'sd0), .mv_d_y(16'sd0),
+		.mvd_x(16'sd3), .mvd_y(16'sd4), .p_skip(1'b0),
+		.pred_x(inter_part_pred_x), .pred_y(inter_part_pred_y),
+		.mv_x(inter_part_mv_x), .mv_y(inter_part_mv_y), .skip_zero(inter_part_skip_zero)
+	);
+
 	h264_luma_qpel_sample u_inter_luma_diag (
 		.ref_pix(inter_luma_ref), .frac_x(2'd3), .frac_y(2'd2), .sample(inter_luma_sample)
 	);
@@ -180,23 +194,28 @@ module decode_stub #(
 		.width(16'd624), .height(16'd480), .tap_x(inter_fetch_x), .tap_y(inter_fetch_y)
 	);
 
+	wire [7:0] inter_part_sig = inter_part_pred_x[7:0] ^ inter_part_pred_y[7:0] ^
+	                            inter_part_mv_x[7:0] ^ inter_part_mv_y[7:0];
 	wire [7:0] inter_diag_sig = inter_pred_x[7:0] ^ inter_pred_y[7:0] ^
-	                            inter_mv_x[7:0] ^ inter_mv_y[7:0] ^
+	                            inter_mv_x[7:0] ^ inter_mv_y[7:0] ^ inter_part_sig ^
 	                            inter_luma_sample ^ inter_chroma_sample ^
 	                            inter_fetch_x[7:0] ^ inter_fetch_y[7:0];
+	wire inter_part_ok = !inter_part_skip_zero && (inter_part_pred_x == 16'sd1) &&
+	                     (inter_part_pred_y == 16'sd2) && (inter_part_mv_x == 16'sd4) &&
+	                     (inter_part_mv_y == 16'sd6);
 	wire inter_mv_ok = !inter_skip_zero && (inter_pred_x == 16'sd4) && (inter_pred_y == 16'sd6) &&
-	                   (inter_mv_x == 16'sd5) && (inter_mv_y == 16'sd5);
+	                   (inter_mv_x == 16'sd5) && (inter_mv_y == 16'sd5) && inter_part_ok;
 	wire inter_luma_ok = (inter_luma_sample == 8'd105);
 	wire inter_chroma_ok = (inter_chroma_sample == 8'd99);
 	wire inter_fetch_ok = (inter_fetch_x == 16'd104) && (inter_fetch_y == 16'd54);
-	wire inter_diag_ok = (inter_diag_sig == 8'h56) && inter_mv_ok && inter_luma_ok &&
+	wire inter_diag_ok = (inter_diag_sig == 8'h57) && inter_mv_ok && inter_luma_ok &&
 	                     inter_chroma_ok && inter_fetch_ok;
 	wire [1:0] inter_diag_band = x[3:2];
 	wire inter_band_ok = (inter_diag_band == 2'd0) ? inter_mv_ok :
 	                     (inter_diag_band == 2'd1) ? inter_luma_ok :
 	                     (inter_diag_band == 2'd2) ? inter_chroma_ok :
 	                                                  inter_fetch_ok;
-	wire [7:0] inter_band_sig = (inter_diag_band == 2'd0) ? (inter_pred_x[7:0] ^ inter_pred_y[7:0] ^ inter_mv_x[7:0] ^ inter_mv_y[7:0]) :
+	wire [7:0] inter_band_sig = (inter_diag_band == 2'd0) ? (inter_pred_x[7:0] ^ inter_pred_y[7:0] ^ inter_mv_x[7:0] ^ inter_mv_y[7:0] ^ {inter_part_sig[2:0], 5'b0}) :
 	                            (inter_diag_band == 2'd1) ? inter_luma_sample :
 	                            (inter_diag_band == 2'd2) ? inter_chroma_sample :
 	                                                         (inter_fetch_x[7:0] ^ inter_fetch_y[7:0]);
