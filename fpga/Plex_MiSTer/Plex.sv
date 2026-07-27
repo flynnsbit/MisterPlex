@@ -426,6 +426,12 @@ sdram #(
 );
 `endif
 
+`ifdef DDR_FRAME_STORE
+wire present_reset = reset;
+`else
+wire present_reset = reset | sdram_startup_busy;
+`endif
+
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
 // F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
@@ -699,7 +705,7 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
-	.reset(reset | sdram_startup_busy),
+	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
 	.content_fps(content_fps),
