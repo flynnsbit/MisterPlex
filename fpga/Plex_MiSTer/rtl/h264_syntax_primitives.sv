@@ -67,6 +67,669 @@ module h264_rbsp_filter (
 	end
 endmodule
 
+module h264_baseline_syntax_parser #(
+	parameter int MAX_RBSP_BYTES = 8192
+) (
+	input  wire              clk,
+	input  wire              reset,
+	input  wire              clear,
+
+	input  wire [1:0]        mode, // 0=PPS, 1=slice header, 2=macroblock layer
+	input  wire [15:0]       start_bit,
+	input  wire [4:0]        nal_unit_type,
+	input  wire [1:0]        nal_ref_idc,
+	input  wire [4:0]        log2_max_frame_num,
+	input  wire [4:0]        log2_max_pic_order_cnt_lsb,
+	input  wire [2:0]        poc_type_in,
+	input  wire signed [7:0] pps_pic_init_qp,
+	input  wire              pps_deblock_ctrl,
+	input  wire [7:0]        active_slice_type,
+	input  wire signed [7:0] qp_in,
+	input  wire [2:0]        num_ref_idx_l0_active_minus1,
+
+	input  wire              in_valid,
+	input  wire [7:0]        in_byte,
+	input  wire              in_last,
+	output wire              in_ready,
+
+	output reg               valid,
+	output reg               error,
+	output reg               unsupported,
+	output reg               busy,
+	output reg [15:0]        rbsp_bits_consumed,
+
+	output reg [7:0]         pps_id,
+	output reg [7:0]         sps_id,
+	output reg               entropy_cabac,
+	output reg [7:0]         num_ref_idx_l0_default_minus1,
+	output reg signed [7:0]  pic_init_qp,
+	output reg               deblock_ctrl,
+
+	output reg [15:0]        first_mb_in_slice,
+	output reg [7:0]         slice_type,
+	output reg [15:0]        frame_num,
+	output reg [15:0]        pic_order_cnt_lsb,
+	output reg [15:0]        idr_pic_id,
+	output reg signed [7:0]  slice_qp_delta,
+	output reg signed [7:0]  slice_qp,
+	output reg [1:0]         disable_deblocking_idc,
+	output reg signed [7:0]  slice_alpha_c0_offset_div2,
+	output reg signed [7:0]  slice_beta_offset_div2,
+	output reg [15:0]        macroblock_bit_offset,
+
+	output reg [15:0]        mb_skip_run,
+	output reg               mb_skipped,
+	output reg [7:0]         mb_type,
+	output reg [3:0]         partition_mode,
+	output reg [15:0]        intra4x4_pred_mode_flags,
+	output reg [47:0]        intra4x4_rem_modes,
+	output reg [2:0]         intra_chroma_pred_mode,
+	output reg [5:0]         coded_block_pattern,
+	output reg signed [7:0]  mb_qp_delta,
+	output reg signed [7:0]  mb_qp,
+	output reg [15:0]        residual_bit_offset
+);
+	localparam int MAX_BITS = MAX_RBSP_BYTES * 8;
+	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2;
+	localparam [3:0]
+		PART_UNKNOWN = 4'd0,
+		PART_P_SKIP  = 4'd1,
+		PART_P16X16  = 4'd2,
+		PART_P16X8   = 4'd3,
+		PART_P8X16   = 4'd4,
+		PART_P8X8    = 4'd5,
+		PART_I_NXN   = 4'd6,
+		PART_I16X16  = 4'd7,
+		PART_IPCM    = 4'd8;
+
+	reg [MAX_BITS-1:0] rbsp_bits;
+	reg [15:0] rbsp_len;
+	reg [15:0] bit_pos;
+	reg [7:0] st;
+	reg [7:0] ret_st;
+	reg [7:0] fixed_left;
+	reg [31:0] fixed_acc;
+	reg [7:0] ue_zero;
+	reg [7:0] ue_suffix_left;
+	reg [31:0] ue_suffix;
+	reg [31:0] ue_value;
+	reg [7:0] i_mb_type;
+	reg [4:0] i4_idx;
+	reg [7:0] mvd_pairs_left;
+	reg [2:0] sub_idx;
+	reg [5:0] cbp_mapped;
+
+	assign in_ready = !busy && (rbsp_len < MAX_RBSP_BYTES[15:0]);
+
+	function automatic bit rbsp_bit_at;
+		input [15:0] idx;
+		integer byte_i;
+		integer bit_i;
+		begin
+			byte_i = $signed({16'd0, idx}) >>> 3;
+			bit_i = 7 - ($signed({16'd0, idx}) & 32'd7);
+			rbsp_bit_at = rbsp_bits[byte_i * 8 + bit_i];
+		end
+	endfunction
+
+	function automatic signed [7:0] se8_from_ue;
+		input [31:0] code;
+		reg signed [31:0] tmp;
+		begin
+			if (code[0])
+				tmp = $signed({1'b0, code[31:1]}) + 32'sd1;
+			else
+				tmp = -$signed({1'b0, code[31:1]});
+			se8_from_ue = tmp[7:0];
+		end
+	endfunction
+
+	function automatic [5:0] cbp_intra_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_intra_map = 6'd47; 6'd1: cbp_intra_map = 6'd31; 6'd2: cbp_intra_map = 6'd15; 6'd3: cbp_intra_map = 6'd0;
+			6'd4: cbp_intra_map = 6'd23; 6'd5: cbp_intra_map = 6'd27; 6'd6: cbp_intra_map = 6'd29; 6'd7: cbp_intra_map = 6'd30;
+			6'd8: cbp_intra_map = 6'd7; 6'd9: cbp_intra_map = 6'd11; 6'd10: cbp_intra_map = 6'd13; 6'd11: cbp_intra_map = 6'd14;
+			6'd12: cbp_intra_map = 6'd39; 6'd13: cbp_intra_map = 6'd43; 6'd14: cbp_intra_map = 6'd45; 6'd15: cbp_intra_map = 6'd46;
+			6'd16: cbp_intra_map = 6'd16; 6'd17: cbp_intra_map = 6'd3; 6'd18: cbp_intra_map = 6'd5; 6'd19: cbp_intra_map = 6'd10;
+			6'd20: cbp_intra_map = 6'd12; 6'd21: cbp_intra_map = 6'd19; 6'd22: cbp_intra_map = 6'd21; 6'd23: cbp_intra_map = 6'd26;
+			6'd24: cbp_intra_map = 6'd28; 6'd25: cbp_intra_map = 6'd35; 6'd26: cbp_intra_map = 6'd37; 6'd27: cbp_intra_map = 6'd42;
+			6'd28: cbp_intra_map = 6'd44; 6'd29: cbp_intra_map = 6'd1; 6'd30: cbp_intra_map = 6'd2; 6'd31: cbp_intra_map = 6'd4;
+			6'd32: cbp_intra_map = 6'd8; 6'd33: cbp_intra_map = 6'd17; 6'd34: cbp_intra_map = 6'd18; 6'd35: cbp_intra_map = 6'd20;
+			6'd36: cbp_intra_map = 6'd24; 6'd37: cbp_intra_map = 6'd6; 6'd38: cbp_intra_map = 6'd9; 6'd39: cbp_intra_map = 6'd22;
+			6'd40: cbp_intra_map = 6'd25; 6'd41: cbp_intra_map = 6'd32; 6'd42: cbp_intra_map = 6'd33; 6'd43: cbp_intra_map = 6'd34;
+			6'd44: cbp_intra_map = 6'd36; 6'd45: cbp_intra_map = 6'd40; 6'd46: cbp_intra_map = 6'd38; 6'd47: cbp_intra_map = 6'd41;
+			default: cbp_intra_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	function automatic [5:0] cbp_inter_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_inter_map = 6'd0; 6'd1: cbp_inter_map = 6'd16; 6'd2: cbp_inter_map = 6'd1; 6'd3: cbp_inter_map = 6'd2;
+			6'd4: cbp_inter_map = 6'd4; 6'd5: cbp_inter_map = 6'd8; 6'd6: cbp_inter_map = 6'd32; 6'd7: cbp_inter_map = 6'd3;
+			6'd8: cbp_inter_map = 6'd5; 6'd9: cbp_inter_map = 6'd10; 6'd10: cbp_inter_map = 6'd12; 6'd11: cbp_inter_map = 6'd15;
+			6'd12: cbp_inter_map = 6'd47; 6'd13: cbp_inter_map = 6'd7; 6'd14: cbp_inter_map = 6'd11; 6'd15: cbp_inter_map = 6'd13;
+			6'd16: cbp_inter_map = 6'd14; 6'd17: cbp_inter_map = 6'd6; 6'd18: cbp_inter_map = 6'd9; 6'd19: cbp_inter_map = 6'd31;
+			6'd20: cbp_inter_map = 6'd35; 6'd21: cbp_inter_map = 6'd37; 6'd22: cbp_inter_map = 6'd42; 6'd23: cbp_inter_map = 6'd44;
+			6'd24: cbp_inter_map = 6'd33; 6'd25: cbp_inter_map = 6'd34; 6'd26: cbp_inter_map = 6'd36; 6'd27: cbp_inter_map = 6'd40;
+			6'd28: cbp_inter_map = 6'd39; 6'd29: cbp_inter_map = 6'd43; 6'd30: cbp_inter_map = 6'd45; 6'd31: cbp_inter_map = 6'd46;
+			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
+			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
+			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			default: cbp_inter_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	function automatic is_i_slice;
+		input [7:0] t;
+		begin
+			is_i_slice = (t == 8'd2) || (t == 8'd7);
+		end
+	endfunction
+
+	function automatic is_p_slice;
+		input [7:0] t;
+		begin
+			is_p_slice = (t == 8'd0) || (t == 8'd5);
+		end
+	endfunction
+
+	function automatic [7:0] sub_mb_mvd_pairs;
+		input [31:0] sub_type;
+		begin
+			case (sub_type[1:0])
+			2'd0: sub_mb_mvd_pairs = 8'd1; // P_L0_8x8
+			2'd1: sub_mb_mvd_pairs = 8'd2; // P_L0_8x4
+			2'd2: sub_mb_mvd_pairs = 8'd2; // P_L0_4x8
+			default: sub_mb_mvd_pairs = 8'd4; // P_L0_4x4
+			endcase
+		end
+	endfunction
+
+	function automatic [5:0] i16_cbp_from_type;
+		input [7:0] t;
+		reg [7:0] x;
+		reg [7:0] c;
+		reg [5:0] luma;
+		reg [5:0] chroma;
+		begin
+			x = t - 8'd1;
+			c = (x / 8'd4) % 8'd3;
+			luma = (x >= 8'd12) ? 6'd15 : 6'd0;
+			chroma = {4'd0, c[1:0]};
+			i16_cbp_from_type = luma | (chroma << 4);
+		end
+	endfunction
+
+	localparam [7:0]
+		ST_IDLE             = 8'd0,
+		ST_BITS             = 8'd1,
+		ST_UE_ZERO          = 8'd2,
+		ST_UE_SUFFIX        = 8'd3,
+		ST_DISPATCH         = 8'd4,
+		ST_FINISH           = 8'd5,
+		ST_FAIL             = 8'd6,
+		ST_PPS_ID           = 8'd10,
+		ST_PPS_SPS          = 8'd11,
+		ST_PPS_ENTROPY      = 8'd12,
+		ST_PPS_BOTTOM       = 8'd13,
+		ST_PPS_GROUPS       = 8'd14,
+		ST_PPS_REF0         = 8'd15,
+		ST_PPS_REF1         = 8'd16,
+		ST_PPS_WEIGHTED     = 8'd17,
+		ST_PPS_WEIGHTED_BI  = 8'd18,
+		ST_PPS_QP           = 8'd19,
+		ST_PPS_QS           = 8'd20,
+		ST_PPS_CHROMA       = 8'd21,
+		ST_PPS_DEBLOCK      = 8'd22,
+		ST_PPS_CONSTRAINED  = 8'd23,
+		ST_PPS_REDUNDANT    = 8'd24,
+		ST_SL_FIRST         = 8'd40,
+		ST_SL_TYPE          = 8'd41,
+		ST_SL_PPS           = 8'd42,
+		ST_SL_FRAME         = 8'd43,
+		ST_SL_IDR           = 8'd44,
+		ST_SL_POC           = 8'd45,
+		ST_SL_IDR_MARK0     = 8'd46,
+		ST_SL_IDR_MARK1     = 8'd47,
+		ST_SL_REF_MARK      = 8'd48,
+		ST_SL_QP_DELTA      = 8'd49,
+		ST_SL_DEBLOCK_IDC   = 8'd50,
+		ST_SL_ALPHA         = 8'd51,
+		ST_SL_BETA          = 8'd52,
+		ST_MB_START         = 8'd70,
+		ST_MB_P_SKIP        = 8'd71,
+		ST_MB_TYPE          = 8'd72,
+		ST_MB_I4_FLAG       = 8'd73,
+		ST_MB_I4_REM        = 8'd74,
+		ST_MB_CHROMA        = 8'd75,
+		ST_MB_CBP_INTRA     = 8'd76,
+		ST_MB_CBP_INTER     = 8'd77,
+		ST_MB_QP_DELTA      = 8'd78,
+		ST_MB_SUB_TYPE      = 8'd79,
+		ST_MB_MVD_X         = 8'd80,
+		ST_MB_MVD_Y         = 8'd81,
+		ST_MB_MVD_PAIR_DONE = 8'd82;
+
+	task automatic start_bits;
+		input [7:0] nbits;
+		input [7:0] next_st;
+		begin
+			fixed_left <= nbits;
+			fixed_acc <= 32'd0;
+			ret_st <= next_st;
+			st <= ST_BITS;
+		end
+	endtask
+
+	task automatic start_ue;
+		input [7:0] next_st;
+		begin
+			ue_zero <= 8'd0;
+			ue_suffix_left <= 8'd0;
+			ue_suffix <= 32'd0;
+			ue_value <= 32'd0;
+			ret_st <= next_st;
+			st <= ST_UE_ZERO;
+		end
+	endtask
+
+	task automatic fail;
+		begin
+			error <= 1'b1;
+			valid <= 1'b0;
+			busy <= 1'b0;
+			st <= ST_FAIL;
+		end
+	endtask
+
+	task automatic finish_ok;
+		begin
+			rbsp_bits_consumed <= bit_pos;
+			valid <= 1'b1;
+			busy <= 1'b0;
+			st <= ST_IDLE;
+		end
+	endtask
+
+	task automatic reset_outputs;
+		begin
+			valid <= 1'b0;
+			error <= 1'b0;
+			unsupported <= 1'b0;
+			rbsp_bits_consumed <= 16'd0;
+			pps_id <= 8'd0;
+			sps_id <= 8'd0;
+			entropy_cabac <= 1'b0;
+			num_ref_idx_l0_default_minus1 <= 8'd0;
+			pic_init_qp <= 8'sd26;
+			deblock_ctrl <= 1'b0;
+			first_mb_in_slice <= 16'd0;
+			slice_type <= 8'd0;
+			frame_num <= 16'd0;
+			pic_order_cnt_lsb <= 16'd0;
+			idr_pic_id <= 16'd0;
+			slice_qp_delta <= 8'sd0;
+			slice_qp <= 8'sd26;
+			disable_deblocking_idc <= 2'd0;
+			slice_alpha_c0_offset_div2 <= 8'sd0;
+			slice_beta_offset_div2 <= 8'sd0;
+			macroblock_bit_offset <= 16'd0;
+			mb_skip_run <= 16'd0;
+			mb_skipped <= 1'b0;
+			mb_type <= 8'd0;
+			partition_mode <= PART_UNKNOWN;
+			intra4x4_pred_mode_flags <= 16'd0;
+			intra4x4_rem_modes <= 48'd0;
+			intra_chroma_pred_mode <= 3'd0;
+			coded_block_pattern <= 6'd0;
+			mb_qp_delta <= 8'sd0;
+			mb_qp <= qp_in;
+			residual_bit_offset <= 16'd0;
+			i_mb_type <= 8'd0;
+			i4_idx <= 5'd0;
+			mvd_pairs_left <= 8'd0;
+			sub_idx <= 3'd0;
+			cbp_mapped <= 6'd0;
+		end
+	endtask
+
+	always @(posedge clk) begin
+		if (reset || clear) begin
+			rbsp_len <= 16'd0;
+			bit_pos <= 16'd0;
+			busy <= 1'b0;
+			st <= ST_IDLE;
+			ret_st <= ST_IDLE;
+			fixed_left <= 8'd0;
+			fixed_acc <= 32'd0;
+			ue_zero <= 8'd0;
+			ue_suffix_left <= 8'd0;
+			ue_suffix <= 32'd0;
+			ue_value <= 32'd0;
+			reset_outputs();
+		end else begin
+			if (!busy && in_valid && in_ready) begin
+				rbsp_bits[rbsp_len * 8 +: 8] <= in_byte;
+				rbsp_len <= rbsp_len + 16'd1;
+				if (in_last) begin
+					reset_outputs();
+					busy <= 1'b1;
+					bit_pos <= start_bit;
+					st <= ST_DISPATCH;
+				end
+			end else if (busy) begin
+				case (st)
+				ST_BITS: begin
+					if (fixed_left == 8'd0) begin
+						st <= ret_st;
+					end else if (bit_pos >= (rbsp_len * 16'd8)) begin
+						fail();
+					end else begin
+						fixed_acc <= (fixed_acc << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+						bit_pos <= bit_pos + 16'd1;
+						fixed_left <= fixed_left - 8'd1;
+						if (fixed_left == 8'd1)
+							st <= ret_st;
+					end
+				end
+				ST_UE_ZERO: begin
+					if (bit_pos >= (rbsp_len * 16'd8)) begin
+						fail();
+					end else if (!rbsp_bit_at(bit_pos)) begin
+						bit_pos <= bit_pos + 16'd1;
+						if (ue_zero >= 8'd24)
+							fail();
+						else
+							ue_zero <= ue_zero + 8'd1;
+					end else begin
+						bit_pos <= bit_pos + 16'd1;
+						if (ue_zero == 8'd0) begin
+							ue_value <= 32'd0;
+							st <= ret_st;
+						end else begin
+							ue_suffix_left <= ue_zero;
+							ue_suffix <= 32'd0;
+							st <= ST_UE_SUFFIX;
+						end
+					end
+				end
+				ST_UE_SUFFIX: begin
+					if (bit_pos >= (rbsp_len * 16'd8)) begin
+						fail();
+					end else begin
+						ue_suffix <= (ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+						bit_pos <= bit_pos + 16'd1;
+						if (ue_suffix_left == 8'd1) begin
+							ue_value <= ((32'd1 << ue_zero) - 32'd1) + ((ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)});
+							st <= ret_st;
+						end
+						ue_suffix_left <= ue_suffix_left - 8'd1;
+					end
+				end
+				ST_DISPATCH: begin
+					if (mode == MODE_PPS)
+						start_ue(ST_PPS_ID);
+					else if (mode == MODE_SLICE)
+						start_ue(ST_SL_FIRST);
+					else if (mode == MODE_MB)
+						st <= ST_MB_START;
+					else
+						fail();
+				end
+				ST_FINISH: finish_ok();
+
+				ST_PPS_ID: begin pps_id <= ue_value[7:0]; start_ue(ST_PPS_SPS); end
+				ST_PPS_SPS: begin sps_id <= ue_value[7:0]; start_bits(8'd1, ST_PPS_ENTROPY); end
+				ST_PPS_ENTROPY: begin entropy_cabac <= fixed_acc[0]; start_bits(8'd1, ST_PPS_BOTTOM); end
+				ST_PPS_BOTTOM: start_ue(ST_PPS_GROUPS);
+				ST_PPS_GROUPS: begin
+					if (ue_value != 32'd0) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						start_ue(ST_PPS_REF0);
+					end
+				end
+				ST_PPS_REF0: begin num_ref_idx_l0_default_minus1 <= ue_value[7:0]; start_ue(ST_PPS_REF1); end
+				ST_PPS_REF1: start_bits(8'd1, ST_PPS_WEIGHTED);
+				ST_PPS_WEIGHTED: start_bits(8'd2, ST_PPS_WEIGHTED_BI);
+				ST_PPS_WEIGHTED_BI: start_ue(ST_PPS_QP);
+				ST_PPS_QP: begin pic_init_qp <= 8'sd26 + se8_from_ue(ue_value); start_ue(ST_PPS_QS); end
+				ST_PPS_QS: start_ue(ST_PPS_CHROMA);
+				ST_PPS_CHROMA: start_bits(8'd1, ST_PPS_DEBLOCK);
+				ST_PPS_DEBLOCK: begin deblock_ctrl <= fixed_acc[0]; start_bits(8'd1, ST_PPS_CONSTRAINED); end
+				ST_PPS_CONSTRAINED: start_bits(8'd1, ST_PPS_REDUNDANT);
+				ST_PPS_REDUNDANT: begin
+					if (entropy_cabac) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						st <= ST_FINISH;
+					end
+				end
+
+				ST_SL_FIRST: begin first_mb_in_slice <= ue_value[15:0]; start_ue(ST_SL_TYPE); end
+				ST_SL_TYPE: begin slice_type <= ue_value[7:0]; start_ue(ST_SL_PPS); end
+				ST_SL_PPS: begin pps_id <= ue_value[7:0]; start_bits({3'd0, log2_max_frame_num}, ST_SL_FRAME); end
+				ST_SL_FRAME: begin
+					frame_num <= fixed_acc[15:0];
+					if (nal_unit_type == 5'd5)
+						start_ue(ST_SL_IDR);
+					else if (poc_type_in == 3'd0)
+						start_bits({3'd0, log2_max_pic_order_cnt_lsb}, ST_SL_POC);
+					else if (nal_ref_idc != 2'd0)
+						start_bits(8'd1, ST_SL_REF_MARK);
+					else
+						start_ue(ST_SL_QP_DELTA);
+				end
+				ST_SL_IDR: begin idr_pic_id <= ue_value[15:0]; start_bits(8'd1, ST_SL_IDR_MARK0); end
+				ST_SL_POC: begin
+					pic_order_cnt_lsb <= fixed_acc[15:0];
+					if (nal_ref_idc != 2'd0)
+						start_bits(8'd1, ST_SL_REF_MARK);
+					else
+						start_ue(ST_SL_QP_DELTA);
+				end
+				ST_SL_IDR_MARK0: start_bits(8'd1, ST_SL_IDR_MARK1);
+				ST_SL_IDR_MARK1: start_ue(ST_SL_QP_DELTA);
+				ST_SL_REF_MARK: begin
+					if (fixed_acc[0]) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						start_ue(ST_SL_QP_DELTA);
+					end
+				end
+				ST_SL_QP_DELTA: begin
+					slice_qp_delta <= se8_from_ue(ue_value);
+					slice_qp <= pps_pic_init_qp + se8_from_ue(ue_value);
+					if (pps_deblock_ctrl)
+						start_ue(ST_SL_DEBLOCK_IDC);
+					else begin
+						macroblock_bit_offset <= bit_pos;
+						st <= ST_FINISH;
+					end
+				end
+				ST_SL_DEBLOCK_IDC: begin
+					disable_deblocking_idc <= ue_value[1:0];
+					if (ue_value != 32'd1)
+						start_ue(ST_SL_ALPHA);
+					else begin
+						macroblock_bit_offset <= bit_pos;
+						st <= ST_FINISH;
+					end
+				end
+				ST_SL_ALPHA: begin slice_alpha_c0_offset_div2 <= se8_from_ue(ue_value); start_ue(ST_SL_BETA); end
+				ST_SL_BETA: begin
+					slice_beta_offset_div2 <= se8_from_ue(ue_value);
+					macroblock_bit_offset <= bit_pos;
+					st <= ST_FINISH;
+				end
+
+				ST_MB_START: begin
+					if (is_p_slice(active_slice_type))
+						start_ue(ST_MB_P_SKIP);
+					else if (is_i_slice(active_slice_type))
+						start_ue(ST_MB_TYPE);
+					else begin
+						unsupported <= 1'b1;
+						fail();
+					end
+				end
+				ST_MB_P_SKIP: begin
+					mb_skip_run <= ue_value[15:0];
+					if (ue_value != 32'd0) begin
+						mb_skipped <= 1'b1;
+						partition_mode <= PART_P_SKIP;
+						residual_bit_offset <= bit_pos;
+						mb_qp <= qp_in;
+						st <= ST_FINISH;
+					end else begin
+						start_ue(ST_MB_TYPE);
+					end
+				end
+				ST_MB_TYPE: begin
+					mb_type <= ue_value[7:0];
+					mb_qp <= qp_in;
+					if (is_p_slice(active_slice_type) && ue_value <= 32'd4) begin
+						if (num_ref_idx_l0_active_minus1 != 3'd0) begin
+							unsupported <= 1'b1;
+							fail();
+						end else begin
+							case (ue_value[2:0])
+							3'd0: begin partition_mode <= PART_P16X16; mvd_pairs_left <= 8'd1; st <= ST_MB_MVD_X; end
+							3'd1: begin partition_mode <= PART_P16X8;  mvd_pairs_left <= 8'd2; st <= ST_MB_MVD_X; end
+							3'd2: begin partition_mode <= PART_P8X16;  mvd_pairs_left <= 8'd2; st <= ST_MB_MVD_X; end
+							default: begin partition_mode <= PART_P8X8; sub_idx <= 3'd0; mvd_pairs_left <= 8'd0; start_ue(ST_MB_SUB_TYPE); end
+							endcase
+						end
+					end else begin
+						i_mb_type <= is_p_slice(active_slice_type) ? (ue_value[7:0] - 8'd5) : ue_value[7:0];
+						if ((is_p_slice(active_slice_type) && ue_value > 32'd30) || (!is_p_slice(active_slice_type) && ue_value > 32'd25)) begin
+							unsupported <= 1'b1;
+							fail();
+						end else if ((is_p_slice(active_slice_type) ? (ue_value[7:0] - 8'd5) : ue_value[7:0]) == 8'd25) begin
+							partition_mode <= PART_IPCM;
+							unsupported <= 1'b1;
+							residual_bit_offset <= bit_pos;
+							st <= ST_FINISH;
+						end else if ((is_p_slice(active_slice_type) ? (ue_value[7:0] - 8'd5) : ue_value[7:0]) == 8'd0) begin
+							partition_mode <= PART_I_NXN;
+							i4_idx <= 5'd0;
+							start_bits(8'd1, ST_MB_I4_FLAG);
+						end else begin
+							partition_mode <= PART_I16X16;
+							coded_block_pattern <= i16_cbp_from_type(is_p_slice(active_slice_type) ? (ue_value[7:0] - 8'd5) : ue_value[7:0]);
+							start_ue(ST_MB_CHROMA);
+						end
+					end
+				end
+				ST_MB_I4_FLAG: begin
+					if (fixed_acc[0]) begin
+						intra4x4_pred_mode_flags[i4_idx[3:0]] <= 1'b1;
+						if (i4_idx == 5'd15)
+							start_ue(ST_MB_CHROMA);
+						else begin
+							i4_idx <= i4_idx + 5'd1;
+							start_bits(8'd1, ST_MB_I4_FLAG);
+						end
+					end else begin
+						start_bits(8'd3, ST_MB_I4_REM);
+					end
+				end
+				ST_MB_I4_REM: begin
+					intra4x4_rem_modes[i4_idx * 3 +: 3] <= fixed_acc[2:0];
+					if (i4_idx == 5'd15)
+						start_ue(ST_MB_CHROMA);
+					else begin
+						i4_idx <= i4_idx + 5'd1;
+						start_bits(8'd1, ST_MB_I4_FLAG);
+					end
+				end
+				ST_MB_CHROMA: begin
+					intra_chroma_pred_mode <= ue_value[2:0];
+					if (partition_mode == PART_I16X16)
+						start_ue(ST_MB_QP_DELTA);
+					else
+						start_ue(ST_MB_CBP_INTRA);
+				end
+				ST_MB_CBP_INTRA: begin
+					if (ue_value >= 32'd48) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						cbp_mapped <= cbp_intra_map(ue_value[5:0]);
+						coded_block_pattern <= cbp_intra_map(ue_value[5:0]);
+						if (cbp_intra_map(ue_value[5:0]) != 6'd0)
+							start_ue(ST_MB_QP_DELTA);
+						else begin
+							residual_bit_offset <= bit_pos;
+							st <= ST_FINISH;
+						end
+					end
+				end
+				ST_MB_SUB_TYPE: begin
+					if (ue_value > 32'd3) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						mvd_pairs_left <= mvd_pairs_left + sub_mb_mvd_pairs(ue_value);
+						if (sub_idx == 3'd3)
+							st <= ST_MB_MVD_X;
+						else begin
+							sub_idx <= sub_idx + 3'd1;
+							start_ue(ST_MB_SUB_TYPE);
+						end
+					end
+				end
+				ST_MB_MVD_X: begin
+					if (mvd_pairs_left == 8'd0)
+						start_ue(ST_MB_CBP_INTER);
+					else
+						start_ue(ST_MB_MVD_Y);
+				end
+				ST_MB_MVD_Y: begin
+					start_ue(ST_MB_MVD_PAIR_DONE);
+				end
+				ST_MB_MVD_PAIR_DONE: begin
+					mvd_pairs_left <= mvd_pairs_left - 8'd1;
+					st <= ST_MB_MVD_X;
+				end
+				ST_MB_CBP_INTER: begin
+					if (ue_value >= 32'd48) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						coded_block_pattern <= cbp_inter_map(ue_value[5:0]);
+						if (cbp_inter_map(ue_value[5:0]) != 6'd0)
+							start_ue(ST_MB_QP_DELTA);
+						else begin
+							residual_bit_offset <= bit_pos;
+							st <= ST_FINISH;
+						end
+					end
+				end
+				ST_MB_QP_DELTA: begin
+					mb_qp_delta <= se8_from_ue(ue_value);
+					mb_qp <= qp_in + se8_from_ue(ue_value);
+					residual_bit_offset <= bit_pos;
+					st <= ST_FINISH;
+				end
+				ST_FAIL: busy <= 1'b0;
+				default: fail();
+				endcase
+			end
+		end
+	end
+endmodule
+
 module h264_exp_golomb_reader #(
 	parameter int MAX_LEADING_ZERO = 24
 ) (
