@@ -3,6 +3,7 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -301,6 +302,146 @@ bool ffmpegHasAudioStream(const std::string& ffmpeg, const std::string& url,
     }
     return WIFEXITED(st) && WEXITSTATUS(st) == 0;
 }
+class FpgaBitstreamProducer final : public h264stream::IBitstreamProducer {
+public:
+    explicit FpgaBitstreamProducer(FpgaSpi& fpga) : fpga_(fpga) {}
+
+    h264stream::ControlResult begin(uint64_t session_id) override {
+        if (active_)
+            return h264stream::ControlResult::ActiveSession;
+        if (!fpga_.ok() || !fpga_.beginBitstreamSession(session_id, 250))
+            return h264stream::ControlResult::Fatal;
+        session_id_ = session_id;
+        producer_seq_ = 0;
+        consumer_seq_ = 0;
+        bytes_accepted_ = 0;
+        nal_accepted_ = 0;
+        desync_count_ = 0;
+        last_bad_seq_ = 0;
+        active_ = true;
+        paused_ = false;
+        return h264stream::ControlResult::Ok;
+    }
+
+    h264stream::PushResult pushNal(const h264stream::NalView& nal) override {
+        if (!active_ || nal.session_id != session_id_ || !nal.annexb || nal.len == 0)
+            return h264stream::PushResult::Fatal;
+        if (nal.seq != producer_seq_) {
+            ++desync_count_;
+            last_bad_seq_ = nal.seq;
+            return h264stream::PushResult::Desync;
+        }
+        // Contract: copy-on-push. The caller may reuse the demux accumulator as
+        // soon as this function returns, even if a future transport is DMA-backed.
+        std::vector<uint8_t> copy(nal.annexb, nal.annexb + nal.len);
+        FpgaSpi::BitstreamNal fpgaNal;
+        fpgaNal.session_id = nal.session_id;
+        fpgaNal.seq = nal.seq;
+        fpgaNal.nal_type = nal.nal_type;
+        fpgaNal.annexb = copy.data();
+        fpgaNal.len = copy.size();
+        const auto r = fpga_.pushBitstreamNal(fpgaNal, 0);
+        if (r == FpgaSpi::BitstreamPushResult::Full)
+            return h264stream::PushResult::Full;
+        if (r == FpgaSpi::BitstreamPushResult::Desync) {
+            syncStatus();
+            return h264stream::PushResult::Desync;
+        }
+        if (r != FpgaSpi::BitstreamPushResult::Ok)
+            return h264stream::PushResult::Fatal;
+        ++producer_seq_;
+        bytes_accepted_ += copy.size();
+        ++nal_accepted_;
+        return h264stream::PushResult::Ok;
+    }
+
+    h264stream::ControlResult flush(uint64_t session_id) override {
+        if (!active_ || session_id != session_id_)
+            return h264stream::ControlResult::NoSession;
+        if (!fpga_.flushBitstreamSession(session_id, 250))
+            return h264stream::ControlResult::Fatal;
+        consumer_seq_ = producer_seq_;
+        return h264stream::ControlResult::Ok;
+    }
+
+    h264stream::ControlResult end(uint64_t session_id) override {
+        if (!active_ || session_id != session_id_)
+            return h264stream::ControlResult::NoSession;
+        if (!fpga_.endBitstreamSession(session_id, 250))
+            return h264stream::ControlResult::Fatal;
+        active_ = false;
+        paused_ = false;
+        return h264stream::ControlResult::Ok;
+    }
+
+    h264stream::ControlResult pause(uint64_t session_id) override {
+        if (!active_ || session_id != session_id_)
+            return h264stream::ControlResult::NoSession;
+        if (!fpga_.pauseBitstreamSession(session_id, 250))
+            return h264stream::ControlResult::Fatal;
+        paused_ = true;
+        return h264stream::ControlResult::Ok;
+    }
+
+    h264stream::ControlResult resume(uint64_t session_id) override {
+        if (!active_ || session_id != session_id_)
+            return h264stream::ControlResult::NoSession;
+        if (!fpga_.resumeBitstreamSession(session_id, 250))
+            return h264stream::ControlResult::Fatal;
+        paused_ = false;
+        return h264stream::ControlResult::Ok;
+    }
+
+    h264stream::Telemetry status() const override {
+        h264stream::Telemetry t;
+        t.session_id = session_id_;
+        t.bytes_accepted = bytes_accepted_;
+        t.nal_accepted = nal_accepted_;
+        t.producer_seq = producer_seq_;
+        t.consumer_seq = consumer_seq_;
+        t.desync_count = desync_count_;
+        t.last_bad_seq = last_bad_seq_;
+        t.active = active_;
+        t.paused = paused_;
+        FpgaSpi::BitstreamStatus s;
+        if (fpga_.readBitstreamStatus(s)) {
+            t.session_id = s.session_id ? s.session_id : t.session_id;
+            t.ring_level_bytes = s.ring_level;
+            t.ring_capacity_bytes = s.ring_capacity;
+            t.consumer_seq = s.consumer_seq;
+            t.underrun_count = s.underrun_count;
+            t.overrun_count = s.overrun_count;
+            t.desync_count = s.desync_count;
+            t.last_bad_seq = s.last_bad_seq;
+            t.active = s.active;
+            t.paused = s.paused;
+        }
+        return t;
+    }
+
+private:
+    void syncStatus() {
+        FpgaSpi::BitstreamStatus s;
+        if (!fpga_.readBitstreamStatus(s))
+            return;
+        consumer_seq_ = s.consumer_seq;
+        desync_count_ = s.desync_count;
+        last_bad_seq_ = s.last_bad_seq;
+        paused_ = s.paused;
+        active_ = s.active;
+    }
+
+    FpgaSpi& fpga_;
+    uint64_t session_id_ = 0;
+    uint32_t producer_seq_ = 0;
+    uint32_t consumer_seq_ = 0;
+    uint64_t bytes_accepted_ = 0;
+    uint64_t nal_accepted_ = 0;
+    uint64_t desync_count_ = 0;
+    uint32_t last_bad_seq_ = 0;
+    bool active_ = false;
+    bool paused_ = false;
+};
 
 } // namespace
 
@@ -658,12 +799,15 @@ bool MediaPlayer::initPresent() {
 }
 
 void MediaPlayer::signalChildren(int sig) {
-    // Pause/resume both RGB/audio FFmpeg and STREAM demux process groups.
+    // Pause/resume RGB/audio FFmpeg. STREAM demux stays alive on pause.
     pid_t p = childPid_.load();
     if (p > 0)
         kill(-p, sig);
     pid_t sp = streamPid_.load();
-    if (sp > 0)
+    // Do not SIGSTOP the H.264 source demux on pause: PMS can tear down an HTTP
+    // transcode session that stops being consumed. streamPump keeps reading and
+    // drops NALs while paused; the FPGA freezes on the last decoded frame.
+    if (sp > 0 && sig != SIGSTOP && sig != SIGCONT)
         kill(-sp, sig);
 }
 
@@ -1032,8 +1176,6 @@ void MediaPlayer::streamPump(int sfd) {
     const bool reconToFb =
         fb_.ok() && (presentMode_ == "fb0" || presentMode_.empty());
 
-    if (wantF3)
-        fpga_.flushBitstreamDdr();
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
@@ -1042,15 +1184,36 @@ void MediaPlayer::streamPump(int sfd) {
         (wantF1 ? " →F1" : "") + (wantF3 ? " +DDR-bitstream" : "") +
         (reconToFb ? " +fb0" : ""));
 
-    constexpr size_t kF3Chunk = 8192;
     // Bound NAL scan buffer (SPS+PPS+IDR can be large at 720p; cap for dual-A9)
     constexpr size_t kMaxAcc = 2 * 1024 * 1024;
     std::vector<uint8_t> acc;
     acc.reserve(64 * 1024);
-    // Unsent F3 tail offset into acc (bytes [f3Off, acc.size()) not yet pushed)
-    size_t f3Off = 0;
     // Last complete NAL start (start-code index) still in acc; incomplete NAL retained
     size_t parseFrom = 0;
+
+    FpgaBitstreamProducer f3Producer(fpga_);
+    h264stream::DispatchConfig f3Cfg;
+    f3Cfg.max_full_retries = 50;    // Full is transient: retry for ~100 ms.
+    f3Cfg.full_retry_sleep_ms = 2;
+    h264stream::NalDispatcher f3Dispatch(f3Producer, f3Cfg);
+    bool f3Active = false;
+    bool f3Fatal = false;
+    bool f3Paused = false;
+    static std::atomic<uint64_t> nextStreamSession{1};
+    const uint64_t streamSession = nextStreamSession.fetch_add(1);
+    if (wantF3) {
+        const auto br = f3Dispatch.begin(streamSession);
+        if (br == h264stream::ControlResult::Ok) {
+            f3Active = true;
+            log("media: F3 NAL producer begin session=" + std::to_string(streamSession));
+        } else {
+            f3Fatal = true;
+            log("media: F3 NAL producer begin failed " +
+                std::string(h264stream::toString(br)) + " — F3 disabled");
+        }
+    }
+    const auto streamWall0 = std::chrono::steady_clock::now();
+    const int64_t streamCpu0 = threadCpuMicros();
 
     std::vector<uint8_t> spsNal; // includes start code
     std::vector<uint8_t> ppsNal;
@@ -1067,21 +1230,59 @@ void MediaPlayer::streamPump(int sfd) {
     constexpr size_t kReconPresentEvery = 1;
     bool reconDdrMismatchLogged = false;
 
-    auto pushF3UpTo = [&](size_t end) {
-        if (!wantF3 || end <= f3Off)
+    auto syncF3Pause = [&]() {
+        if (!f3Active || f3Fatal)
             return;
-        while (f3Off + kF3Chunk <= end && !stop_.load()) {
-            if (fpga_.sendBitstreamChunkDdr(acc.data() + f3Off, kF3Chunk)) {
-                f3Total += kF3Chunk;
-                ++f3Pushes;
-                if ((f3Pushes % 64) == 0)
-                    log("media: DDR bitstream bytes=" + std::to_string(f3Total));
-            } else if ((f3Pushes % 16) == 0) {
-                log("media: DDR bitstream backpressure: " + fpga_.lastError());
-                break;
+        const bool paused = paused_.load();
+        if (paused && !f3Paused) {
+            const auto r = f3Dispatch.pause();
+            if (r == h264stream::ControlResult::Ok) {
+                f3Paused = true;
+                log("media: F3 NAL producer pause session=" + std::to_string(streamSession) +
+                    " (HTTP demux kept alive; FPGA holds last frame)");
+            } else {
+                f3Fatal = true;
+                log("media: F3 NAL producer pause failed " +
+                    std::string(h264stream::toString(r)));
             }
-            f3Off += kF3Chunk;
+        } else if (!paused && f3Paused) {
+            const auto r = f3Dispatch.resume();
+            if (r == h264stream::ControlResult::Ok) {
+                f3Paused = false;
+                log("media: F3 NAL producer resume session=" + std::to_string(streamSession) +
+                    " (SPS/PPS will replay before next VCL)");
+            } else {
+                f3Fatal = true;
+                log("media: F3 NAL producer resume failed " +
+                    std::string(h264stream::toString(r)));
+            }
         }
+    };
+
+    auto pushF3Nal = [&](const uint8_t* nalSc, size_t nalLen) {
+        if (!f3Active || f3Fatal || !wantF3)
+            return;
+        const uint64_t beforeNals = f3Dispatch.stats().nal_pushed;
+        const auto r = f3Dispatch.handleNal(nalSc, nalLen);
+        const auto& after = f3Dispatch.stats();
+        f3Total = static_cast<size_t>(after.bytes_pushed);
+        f3Pushes = static_cast<size_t>(after.nal_pushed);
+        if (r == h264stream::PushResult::Ok) {
+            if (after.nal_pushed != beforeNals && (after.nal_pushed % 64) == 0)
+                log("media: F3 NAL stream nals=" + std::to_string(after.nal_pushed) +
+                    " bytes=" + std::to_string(after.bytes_pushed));
+            return;
+        }
+        if (r == h264stream::PushResult::Full) {
+            f3Fatal = true;
+            log("media: F3 NAL producer Full persisted after bounded retry; resetting session");
+        } else {
+            f3Fatal = true;
+            log("media: F3 NAL producer " + std::string(h264stream::toString(r)) +
+                " — resetting session");
+        }
+        if (f3Active)
+            f3Dispatch.end();
     };
 
     auto presentRecon = [&](const recon::ReconResult& rec) {
@@ -1303,6 +1504,7 @@ void MediaPlayer::streamPump(int sfd) {
             const size_t nalLen = j - i;
             if (i + sc < j) {
                 const uint8_t ntype = acc[i + sc] & 0x1f;
+                pushF3Nal(acc.data() + i, nalLen);
                 if (ntype == 7) {
                     // SPS alone does not change entropy mode — keep sticky CABAC.
                     spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
@@ -1311,7 +1513,7 @@ void MediaPlayer::streamPump(int sfd) {
                     ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(i),
                                   acc.begin() + static_cast<std::ptrdiff_t>(j));
                     applyPpsEntropy(acc.data() + i, nalLen);
-                } else if (ntype == 5 || ntype == 1) {
+                } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
                     tryReconNal(acc.data() + i, nalLen, ntype);
                 }
             }
@@ -1321,32 +1523,27 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     auto compactAcc = [&]() {
-        // Drop bytes already pushed to F3 and fully parsed; keep incomplete NAL + unsent F3.
-        size_t drop = std::min(f3Off, parseFrom);
+        // Drop fully parsed bytes; keep the trailing incomplete NAL.
+        size_t drop = parseFrom;
         if (drop == 0)
             return;
         // Never drop past incomplete NAL start
         drop = std::min(drop, parseFrom);
         if (drop > 0 && drop <= acc.size()) {
             acc.erase(acc.begin(), acc.begin() + static_cast<std::ptrdiff_t>(drop));
-            f3Off -= drop;
             parseFrom -= drop;
         }
         // Hard cap
         if (acc.size() > kMaxAcc) {
             log("media: STREAM acc overflow — reset NAL state");
             acc.clear();
-            f3Off = 0;
             parseFrom = 0;
             // Keep last SPS/PPS so multi-IDR can recover after overflow gap
         }
     };
 
     while (!stop_.load()) {
-        if (paused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
+        syncF3Pause();
         ssize_t n = ::read(sfd, buf, sizeof(buf));
         if (n < 0) {
             if (errno == EINTR)
@@ -1357,8 +1554,6 @@ void MediaPlayer::streamPump(int sfd) {
             break; // demux EOF or killed (seek/stop closes pipe)
         acc.insert(acc.end(), buf, buf + n);
         consumeCompleteNals();
-        // Feed F3 up through fully parsed bytes (safe: complete NALs only)
-        pushF3UpTo(parseFrom);
         compactAcc();
     }
 
@@ -1369,6 +1564,7 @@ void MediaPlayer::streamPump(int sfd) {
         if (sc && parseFrom + sc < acc.size()) {
             const size_t nalLen = acc.size() - parseFrom;
             const uint8_t ntype = acc[parseFrom + sc] & 0x1f;
+            pushF3Nal(acc.data() + parseFrom, nalLen);
             if (ntype == 7) {
                 spsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
@@ -1376,7 +1572,7 @@ void MediaPlayer::streamPump(int sfd) {
                 ppsNal.assign(acc.begin() + static_cast<std::ptrdiff_t>(parseFrom),
                               acc.end());
                 applyPpsEntropy(acc.data() + parseFrom, nalLen);
-            } else if (ntype == 5 || ntype == 1) {
+            } else if ((ntype == 5 || ntype == 1) && !paused_.load()) {
                 tryReconNal(acc.data() + parseFrom, nalLen, ntype);
             }
             parseFrom = acc.size();
@@ -1386,17 +1582,28 @@ void MediaPlayer::streamPump(int sfd) {
     // Flush remaining complete NALs and F3 tail (only if not mid-stop)
     if (!stop_.load()) {
         consumeCompleteNals();
-        pushF3UpTo(parseFrom);
-        if (wantF3 && f3Off < acc.size()) {
-            size_t rem = acc.size() - f3Off;
-            if (rem && fpga_.sendBitstreamChunkDdr(acc.data() + f3Off, rem))
-                f3Total += rem;
-        }
     }
 
+    if (f3Active)
+        f3Dispatch.end();
     ::close(sfd);
     streamActive_.store(false);
+    const auto streamWall1 = std::chrono::steady_clock::now();
+    const int64_t streamCpu1 = threadCpuMicros();
+    const int64_t streamWallMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(streamWall1 - streamWall0).count();
+    const int64_t streamCpuUs = std::max<int64_t>(0, streamCpu1 - streamCpu0);
+    const auto f3Stats = f3Dispatch.stats();
+    const auto f3Status = f3Producer.status();
     log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
+        " f3_nals=" + std::to_string(f3Status.nal_accepted) +
+        " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
+        " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
+        " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
+        " f3_desync=" + std::to_string(f3Status.desync_count) +
+        " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +
+        " stream_wall_ms=" + std::to_string(streamWallMs) +
+        " stream_cpu_us=" + std::to_string(streamCpuUs) +
         " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
         " idr=" + std::to_string(idrSeen) + " i_slices=" + std::to_string(iSliceSeen) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
