@@ -62,6 +62,9 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh $(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh $(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh $(ROOT)/tests/unit/test_stream_path_deblock_integration.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
+	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
+	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh $(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py $(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh $(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
@@ -89,6 +92,8 @@ rtl-sim:
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+	$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
+	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 
 rtl-lint:
 	$(ROOT)/scripts/rtl_lint.py

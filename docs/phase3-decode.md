@@ -344,6 +344,29 @@ Phase 3.3n (real PMS High/CABAC/B sizing — W-REL 2026-07-26 host-only):
   decoding PMS as delivered is a full High-profile decoder project and not a sane near-term path
   without a faster/proven clock+DDR plan; server-side Baseline XML or ARM/FFmpeg fallback is now a
   hard strategic requirement.
+Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
+  Server-side PMS XML profile is now the required path: W-A4 proved delivered Baseline/L3.0 with
+  `profile_idc=66`, `max_num_ref_frames=1`, `entropy_cabac=0`, `i=6 p=294 b=0`, coded
+  **624×480** (39×30=1170 macroblocks) and display 618×480. Client-only Baseline forcing remains failed,
+  so unsupported-stream guards stay mandatory. Local x264 proxy with the exact `VideoEncodeFlags`
+  plus `partitions=none` measured P frames as intra 4.8%, **P16×16 17.6%**, sub-MB partitions 0%,
+  **skip 77.7%**; first RTL rung implements only P_Skip + P_L0_16x16.
+  RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, luma qpel six-tap
+  interpolation, chroma eighth-pel bilinear interpolation, and 9×9 reference fetch address
+  clamping. `decode_stub.sv` instantiates the inter RTL in the shipped artifact and paints a
+  top-row MB1 diagnostic tile as four green/red stage bands (MV, luma qpel, chroma epel, fetch; aggregate signature `0x56`).
+  Verilator: `tests/unit/test_p3_inter_rtl_sim.sh` elaborates the real product RTL listed in
+  `files.qip` through `tests/rtl/h264_inter_pred_tb_top.sv`, compares against
+  `tests/fixtures/p3_inter_pred/inter_mc_v1.json`, and red-checks bad interpolation rounding via a
+  testbench-only fault. The integrated gate `tests/unit/test_p3_inter_stream_path_rtl_sim.sh` now
+  elaborates product `stream_path.sv` plus parsers/`decode_stub`/inter RTL, feeds paced multi-NAL
+  Annex-B vectors, and requires idle return after each VCL: IDR fixture `nals=4 frames=1`, P fixture
+  `nals=15 idr=1 p=11 frames=12`, all four MB1 inter diagnostic bands green. This is a
+  stream-path/diagnostic gate; parsed P MB syntax is not yet driving MC. DDR/YUV update: one
+  624×480 YUV420 ref + current = 898,560 B; +present = 1,347,840 B. At 25 fps, narrow P16×16/P_Skip
+  YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
+  80 MHz DDR/YUV path; SDRAM remains out of scope.
+
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
