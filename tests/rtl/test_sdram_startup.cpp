@@ -75,6 +75,10 @@ bool refresh_ok(uint64_t refresh_cycles, uint64_t hz) {
     return period_cycles * 8192ULL * 1'000'000ULL <= hz * 64'000ULL;
 }
 
+bool cas_ok(uint64_t cas_latency, uint64_t hz) {
+    return cas_latency >= 2 && (hz <= 100'000'000ULL || cas_latency >= 3);
+}
+
 void tick(Vsdram_startup_top& top, uint64_t& cycle) {
     top.clk = 0;
     top.eval();
@@ -150,6 +154,7 @@ int main(int argc, char** argv) {
     top.eval();
     const uint64_t startup_cycles = top.startup_cycles;
     const uint64_t refresh_cycles = top.refresh_cycles;
+    const uint64_t cas_latency = top.configured_cas_latency;
     if (!startup_ok(startup_cycles, freq_hz)) {
         std::cerr << "FAIL: computed startup cycles " << startup_cycles
                   << " are below 100us at " << freq_hz << " Hz\n";
@@ -161,9 +166,15 @@ int main(int argc, char** argv) {
                   << freq_hz << " Hz\n";
         return 4;
     }
+    if (!cas_ok(cas_latency, freq_hz)) {
+        std::cerr << "FAIL: configured CAS latency " << cas_latency
+                  << " is not valid for " << freq_hz << " Hz\n";
+        return 5;
+    }
     std::cout << "Computed timing constants: SDRAM_CLK_HZ=" << freq_hz
               << " startup_cycles=" << startup_cycles
-              << " refresh_cycles=" << refresh_cycles << "\n";
+              << " refresh_cycles=" << refresh_cycles
+              << " cas_latency=" << cas_latency << "\n";
     if (constants_only) {
         std::cout << "PASS: computed startup/refresh constants satisfy SDRAM timing\n";
         return 0;

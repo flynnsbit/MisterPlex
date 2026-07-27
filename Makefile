@@ -60,6 +60,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
+	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh $(ROOT)/tests/unit/test_no_private_data.sh $(ROOT)/tests/unit/test_capture_rig.sh $(ROOT)/tests/unit/test_rtl_invariants.sh $(ROOT)/tests/unit/test_mister_ini_plex_guard.sh $(ROOT)/tests/unit/test_confstr_guard.sh $(ROOT)/tests/unit/test_release_rbf_hash.sh $(ROOT)/tests/unit/test_sdram_startup_verilator.sh $(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
@@ -69,6 +70,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
+	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/scripts/rtl_lint.py
