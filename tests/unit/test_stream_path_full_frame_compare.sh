@@ -37,6 +37,7 @@ REF_DIR="$ROOT/build/p3_full_frame"
 COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
 NATIVE_SCORE_JSON="$REF_DIR/native_frame_score.json"
+BAD_LOOP_MANIFEST="$REF_DIR/bad_loop_filter_manifest.json"
 MB0_TRACE_JSON="$REF_DIR/mb0_pipeline_trace.json"
 FAULT_TRACE_JSON="$REF_DIR/mb0_pipeline_trace_fault.json"
 MB0_GOLDEN_JSON="$REF_DIR/current_mb0_trace.json"
@@ -205,9 +206,20 @@ echo "OK full-frame colorspace red-check: RGB565-derived diagnostic candidate re
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
 make -s -C "$ROOT" h264-golden-tools
+python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+data["decoder"]["loop_filter"] = "default"
+data["provenance"]["h264_loop_filter"] = "enabled"
+with open(sys.argv[2], "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
 set +e
 LOOP_FILTER_OUT="$("$ROOT/build/score_h264_native_frames" \
-  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --loop-filter-state enabled 2>&1)"
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --manifest "$BAD_LOOP_MANIFEST" 2>&1)"
 LOOP_FILTER_RC=$?
 set -e
 if [[ "$LOOP_FILTER_RC" -ne 9 ]]; then
@@ -215,11 +227,11 @@ if [[ "$LOOP_FILTER_RC" -ne 9 ]]; then
   echo "FAIL native score red-check: enabled loop filter rc=$LOOP_FILTER_RC, want rc=9 refusal" >&2
   exit 1
 fi
-grep -q 'refusing loop_filter_state=enabled' <<<"$LOOP_FILTER_OUT"
+grep -q 'provenance.h264_loop_filter=disabled' <<<"$LOOP_FILTER_OUT"
 echo "OK native score loop-filter red-check: deblocked references are refused"
 "$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --output "$MB0_GOLDEN_JSON" >/dev/null
 "$ROOT/build/score_h264_native_frames" \
-  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --loop-filter-state disabled --output "$NATIVE_SCORE_JSON"
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" --output "$NATIVE_SCORE_JSON"
 python3 - "$MB0_TRACE_JSON" "$MB0_GOLDEN_JSON" "$COMPARE_JSON" <<'PY'
 import json
 import sys
@@ -286,6 +298,8 @@ if actual.get("colorspace") != ratchet.get("colorspace"):
     raise SystemExit("FAIL native full-frame ratchet: colorspace mismatch")
 if actual.get("loop_filter") != ratchet.get("loop_filter"):
     raise SystemExit("FAIL native full-frame ratchet: loop-filter mismatch")
+if actual.get("h264_loop_filter") != ratchet.get("h264_loop_filter"):
+    raise SystemExit("FAIL native full-frame ratchet: H.264 loop-filter mismatch")
 
 planes = {}
 for frame in actual["frames"]:

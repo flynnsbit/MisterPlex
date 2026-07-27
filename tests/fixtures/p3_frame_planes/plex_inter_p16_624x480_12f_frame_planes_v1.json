@@ -16,13 +16,13 @@
     "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
     "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
     "pix_fmt": "yuv420p",
-    "loop_filter": "disabled"
+    "loop_filter": "skip_loop_filter=all"
   },
   "provenance": {
     "source_domain": "decoded H.264 planes",
     "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
     "colorspace": "I420_NATIVE",
-    "loop_filter": "disabled",
+    "h264_loop_filter": "disabled",
     "rgb_roundtrip": false,
     "rgb565_roundtrip": false,
     "presentation_border_or_pillar_mask": false

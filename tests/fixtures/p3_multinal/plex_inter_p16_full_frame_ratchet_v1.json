@@ -2,8 +2,9 @@
   "format": "misterplex.p3.native_frame_score_ratchet.v1",
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
   "colorspace": "I420_NATIVE",
-  "loop_filter": "disabled",
-  "mechanism": "Rebaseline after correcting two measurement mismatches: old full-frame ratchets used RGB565 presentation diagnostics with border masking, then native I420 goldens that still had FFmpeg in-loop deblocking enabled. These metrics compare undeblocked native CAVLC/intra reconstruction directly to FFmpeg yuv420p decoded with -skip_loop_filter all; P frames remain expected-red until inter/DPB native plane output is wired.",
+  "loop_filter": "skip_loop_filter=all",
+  "h264_loop_filter": "disabled",
+  "mechanism": "Rebaseline after correcting two measurement mismatches: old full-frame ratchets used RGB565 presentation diagnostics with border masking, then native I420 goldens that still had FFmpeg in-loop deblocking enabled. These metrics compare undeblocked native CAVLC/intra reconstruction directly to FFmpeg yuv420p goldens whose manifests declare decoder.loop_filter=skip_loop_filter=all and provenance.h264_loop_filter=disabled; P frames remain expected-red until inter/DPB native plane output is wired.",
   "summary": {
     "frames": 12,
     "i_frames": 1,
