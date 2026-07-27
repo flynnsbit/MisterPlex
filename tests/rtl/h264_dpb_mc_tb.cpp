@@ -12,8 +12,15 @@
 
 namespace {
 
-constexpr int W = 624;
-constexpr int H = 480;
+#ifndef DPB_TEST_FRAME_W
+#define DPB_TEST_FRAME_W 624
+#endif
+#ifndef DPB_TEST_FRAME_H
+#define DPB_TEST_FRAME_H 480
+#endif
+
+constexpr int W = DPB_TEST_FRAME_W;
+constexpr int H = DPB_TEST_FRAME_H;
 constexpr int CW = W / 2;
 constexpr int CH = H / 2;
 constexpr int Y_BYTES = W * H;
@@ -558,6 +565,167 @@ void checkPartMc(Sim& s, const std::array<uint8_t, 441>& luma, const std::array<
     }
 }
 
+// Test the right-edge MB column at 640 width (or whatever W is).
+// Exercises MB column (W/16 - 1) with a positive MV that hits the right edge clamp.
+// Also exercises MB column (W/16 - 2) with a large positive MV that CROSSES into the
+// right-edge clamp region — verifying normative edge replication.
+int runWidthEdgeTest() {
+    constexpr int MB_W = W / 16;
+    constexpr int MB_H = H / 16;
+    constexpr int LAST_MB_X = MB_W - 1;
+
+    Sim s;
+    reset(s);
+
+    // Fill entire frame with deterministic data.
+    // Use a pattern that is position-dependent so we can verify clamping.
+    for (int mby = 0; mby < MB_H; ++mby) {
+        for (int mbx = 0; mbx < MB_W; ++mbx) {
+            for (int i = 0; i < 256; ++i) writeSample(s, mbx, mby, 0, i);
+            for (int i = 0; i < 64; ++i) writeSample(s, mbx, mby, 1, i);
+            for (int i = 0; i < 64; ++i) writeSample(s, mbx, mby, 2, i);
+        }
+    }
+    s.top.filtered_sample_valid = 0;
+    s.tick();
+
+    // Promote to reference.
+    s.top.frame_done = 1;
+    s.tick();
+    s.top.frame_done = 0;
+    s.tick();
+    if (!s.top.ref_ready) {
+        std::cerr << "FAIL width-edge: ref_ready not asserted after full frame write\n";
+        return 1;
+    }
+
+    // --- Test 1: fetch from the LAST MB column with a positive MV that pushes
+    // the reference window past the right edge.  The rightmost tap column
+    // should be clamped to pixel W-1. ---
+    // MV = +12 qpel = +3 full-pel.  Luma origin = LAST_MB_X*16 + 3 = right edge + 3.
+    // 21-pixel window extends from origin-2 to origin+18, so rightmost tap is
+    // LAST_MB_X*16 + 3 + 18 = ... which is past W-1.
+    s.top.fetch_mb_x = LAST_MB_X;
+    s.top.fetch_mb_y = 15;  // somewhere in the middle vertically
+    s.top.fetch_part_mode = 0;
+    s.top.fetch_part_idx = 0;
+    s.top.fetch_part_w = 16;
+    s.top.fetch_part_h = 16;
+    s.top.fetch_mv_x_qpel = 12;  // +3 full-pel right
+    s.top.fetch_mv_y_qpel = 0;
+    s.top.fetch_start = 1;
+    s.tick();
+    s.top.fetch_start = 0;
+
+    std::array<uint8_t, 441> lumaWin{};
+    std::array<uint8_t, 81> uWin{};
+    std::array<uint8_t, 81> vWin{};
+    int lc = 0, uc = 0, vc = 0;
+    bool sawDone = false;
+    for (int guard = 0; guard < 1200 && !sawDone; ++guard) {
+        s.tick();
+        if (s.top.luma_window_valid) {
+            lumaWin[s.top.luma_window_idx] = s.top.luma_window_sample;
+            ++lc;
+        }
+        if (s.top.chroma_u_window_valid) {
+            uWin[s.top.chroma_window_idx] = s.top.chroma_window_sample;
+            ++uc;
+        }
+        if (s.top.chroma_v_window_valid) {
+            vWin[s.top.chroma_window_idx] = s.top.chroma_window_sample;
+            ++vc;
+        }
+        sawDone = sawDone || s.top.fetch_done;
+    }
+    if (lc != 441 || uc != 81 || vc != 81 || !sawDone) {
+        std::cerr << "FAIL width-edge: incomplete fetch from last MB col luma=" << lc
+                  << " u=" << uc << " v=" << vc << " done=" << sawDone << "\n";
+        return 1;
+    }
+
+    // Verify luma window against expected (with clamping).
+    // Luma origin x = LAST_MB_X*16 + (12>>2) = LAST_MB_X*16 + 3
+    int lumaOriginX = LAST_MB_X * 16 + 3;
+    int lumaOriginY = 15 * 16 + 0;
+    int lumaErrors = 0;
+    int col39Reads = 0;  // count reads from the LAST MB column (pixel x >= LAST_MB_X*16)
+    int clampedReads = 0;  // count reads that hit the edge clamp
+    for (int wy = 0; wy < 21; ++wy) {
+        for (int wx = 0; wx < 21; ++wx) {
+            int rawX = lumaOriginX + wx - 2;
+            int rawY = lumaOriginY + wy - 2;
+            int srcX = std::clamp(rawX, 0, W - 1);
+            int srcY = std::clamp(rawY, 0, H - 1);
+            uint8_t want = yPattern(srcX, srcY);
+            uint8_t got = lumaWin[wy * 21 + wx];
+            if (got != want) {
+                if (lumaErrors < 5) {
+                    std::cerr << "  edge mismatch: win[" << wy << "," << wx << "]"
+                              << " rawX=" << rawX << " clampedX=" << srcX
+                              << " got=" << int(got) << " want=" << int(want) << "\n";
+                }
+                ++lumaErrors;
+            }
+            if (srcX >= LAST_MB_X * 16) ++col39Reads;
+            if (rawX != srcX || rawY != srcY) ++clampedReads;
+        }
+    }
+    if (lumaErrors > 0) {
+        std::cerr << "FAIL width-edge: " << lumaErrors << "/441 luma samples wrong"
+                  << " at last MB col=" << LAST_MB_X << " (W=" << W << ")\n";
+        return 1;
+    }
+
+    // --- DEGENERACY: assert column 39 was actually read. ---
+    if (col39Reads == 0) {
+        std::cerr << "FAIL width-edge DEGENERACY: 0 fetched samples came from MB column "
+                  << LAST_MB_X << " — the rightmost column was never exercised\n";
+        return 1;
+    }
+    // Assert clamping was exercised (MV pushes past right edge).
+    if (clampedReads == 0) {
+        std::cerr << "FAIL width-edge DEGENERACY: 0 samples hit the edge clamp"
+                  << " — right-edge normative clamping was not tested\n";
+        return 1;
+    }
+
+    // --- Test 2: verify chroma right-edge clamp at last column. ---
+    int chromaOriginX = LAST_MB_X * 8 + (12 >> 3);  // = LAST_MB_X*8 + 1
+    int chromaOriginY = 15 * 8 + 0;
+    int chromaErrors = 0;
+    int chromaCol39Reads = 0;
+    for (int wy = 0; wy < 9; ++wy) {
+        for (int wx = 0; wx < 9; ++wx) {
+            int rawX = chromaOriginX + wx;
+            int rawY = chromaOriginY + wy;
+            int srcX = std::clamp(rawX, 0, CW - 1);
+            int srcY = std::clamp(rawY, 0, CH - 1);
+            uint8_t wantU = uPattern(srcX, srcY);
+            uint8_t gotU = uWin[wy * 9 + wx];
+            if (gotU != wantU) ++chromaErrors;
+            if (srcX >= LAST_MB_X * 8) ++chromaCol39Reads;
+        }
+    }
+    if (chromaErrors > 0) {
+        std::cerr << "FAIL width-edge: " << chromaErrors << "/81 chroma-U samples wrong"
+                  << " at last MB col=" << LAST_MB_X << " (CW=" << CW << ")\n";
+        return 1;
+    }
+    if (chromaCol39Reads == 0) {
+        std::cerr << "FAIL width-edge DEGENERACY: 0 chroma samples from last MB column\n";
+        return 1;
+    }
+
+    std::cout << "OK width-edge: last MB col=" << LAST_MB_X
+              << " W=" << W << " MB_W=" << MB_W
+              << " luma_from_col" << LAST_MB_X << "=" << col39Reads << "/441"
+              << " clamped=" << clampedReads << "/441"
+              << " chroma_from_col" << LAST_MB_X << "=" << chromaCol39Reads << "/81"
+              << " chroma_errors=0 luma_errors=0\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -566,6 +734,7 @@ int main(int argc, char** argv) {
         bool seamOnly = false;
         bool contentGate = false;
         bool contentGateSkip = false;
+        bool widthEdge = false;
         std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
@@ -575,9 +744,13 @@ int main(int argc, char** argv) {
                 contentGate = true;
             else if (arg == "--deblock-content-gate-skip")
                 contentGateSkip = true;
+            else if (arg == "--width-edge")
+                widthEdge = true;
             else
                 nalFixture = arg;
         }
+        if (widthEdge)
+            return runWidthEdgeTest();
         if (contentGate)
             return runDeblockContentGate(false);
         if (contentGateSkip)

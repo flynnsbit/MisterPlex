@@ -167,3 +167,35 @@ If someone changed the encoder output to 640×480 (40 MBs):
 | Is there a live stride bug? | **No.** Every DDR address is computed from CODED_W=624. |
 | Target for future? | Keep 624 for decode. Production DPB must use DDR_FRAME_CODED_WIDTH, not FRAME_W. |
 | Blocker? | **No.** This does not block the fit or any current work. |
+
+---
+
+## 8. ADDENDUM: w-osd finding — STREAM path delivers 640 coded (2026-07-27)
+
+w-osd independently established that the STREAM path (the one needed for
+FPGA-native H.264 decode) receives **640×480 coded** from PMS. The 624
+value came from the rawvideo path's forced ffmpeg `-vf scale=624:480` — the
+"measurement" was measuring our own scale filter.
+
+**This does not contradict §3–5** — those correctly describe the rawvideo
+path as currently deployed. But it reopens the target question: the STREAM
+path produces 40 MB columns, which has now been **measured on RTL at 640**
+(width-edge test, commit below).
+
+### Target recommendation
+
+**640 coded is the correct target for the production decoder.**
+
+Rationale:
+1. It is what PMS actually transcodes when asked for 480p
+2. The DPB RTL passes at FRAME_W=640 with zero errors
+3. The bandwidth budget still closes (667 cycles/MB, 1.56× pipelined margin)
+4. DDR bank stride (0x80000 = 524,288) fits 640×480×1.5 = 460,800 ✓
+5. No hardcoded assumptions break
+6. All MB counters are parameterised AND now measured at 40 columns
+
+The ARM-side `media_player.cpp:1322` gate that rejects non-624 frames will
+need updating (w-osd's assignment, already underway per `cf2629f`). The
+`ddr_frame_layout_params.svh` constants need a coordinated update across ARM
+and RTL when the STREAM path is activated. That update is straightforward
+but must be **atomic across both sides** to avoid stride mismatch.

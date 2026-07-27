@@ -37,6 +37,7 @@ BUILD_MC_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_mc_round"
 BUILD_REF_FAULT="$ROOT/build/verilator/h264_dpb_mc_early_ref"
 BUILD_PART_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_part_mask"
 BUILD_CONTENT_GATE="$ROOT/build/verilator/h264_dpb_mc_content_gate"
+BUILD_W640="$ROOT/build/verilator/h264_dpb_mc_w640"
 
 for f in "$RTL" "$DEBLOCK_RTL" "$QIP" "$TB" "$TOP" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
@@ -69,7 +70,7 @@ fi
 
 mkdir -p "$BUILD" "$BUILD_SEAM" "$BUILD_SEAM_MB_FAULT" "$BUILD_SEAM_REF_FAULT" \
   "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT" "$BUILD_PART_FAULT" \
-  "$BUILD_CONTENT_GATE"
+  "$BUILD_CONTENT_GATE" "$BUILD_W640"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -226,3 +227,13 @@ if ! grep -q 'DETECTED unfiltered reference' <<<"$CONTENT_OUT"; then
   exit 1
 fi
 echo "OK h264_dpb_mc RTL red-check: deblock content gate detected unfiltered reference"
+
+# ── Width-640 test: exercise the 40th MB column and right-edge clamp ──
+# Build with FRAME_W=640 in both RTL and C++.
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_W640" \
+  --top-module h264_dpb_mc_tb -GFRAME_W=640 -GFRAME_H=480 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2 -DDPB_TEST_FRAME_W=640 -DDPB_TEST_FRAME_H=480" \
+  "$TOP" "$RTL" "$DEBLOCK_RTL" "$TB"
+"$BUILD_W640/Vh264_dpb_mc_tb" --width-edge
+echo "OK h264_dpb_mc RTL: width-640 right-edge test passed — MB column 39 exercised"

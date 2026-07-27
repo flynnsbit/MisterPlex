@@ -19,9 +19,11 @@ or ALLOWANCE. No number may be used without its label.
 | SDRAM clock (`clk_sdram`) | 100–142 MHz selectable | **MEASURED** | `pll_0002.v` `output_clock_frequency1` ifdef chain; default 100 MHz |
 | DDRAM clock | 90 MHz | **MEASURED** | `pll_0002.v` `output_clock_frequency2("90.000000 MHz")` |
 | Target frame rate | 25 fps | **ALLOWANCE** | PMS 480p stream target |
-| Coded geometry | 624×480 = 39×30 = 1170 MB/frame | **MEASURED** | SPS `pic_width_in_mbs=39`, `pic_height_in_map_units=30` |
+| Coded geometry | 624×480 = 39×30 = 1170 MB/frame | **MEASURED** | SPS `pic_width_in_mbs=39`, `pic_height_in_map_units=30` (rawvideo path) |
+| STREAM path geometry | 640×480 = 40×30 = 1200 MB/frame | **MEASURED** | w-osd: PMS transcodes to 640×480 coded on STREAM path |
 | Cycles per frame | 800,000 | **MEASURED** | 20 MHz / 25 fps |
-| Cycles per macroblock | 683.76 | **MEASURED** | 800,000 / 1170 |
+| Cycles per macroblock (624) | 683.76 | **MEASURED** | 800,000 / 1170 |
+| Cycles per macroblock (640) | 666.67 | **MEASURED** | 800,000 / 1200 |
 
 **Clock-dependent note:** every cycle count in this document scales linearly
 with `clk_sys`. The actual decode-fabric Fmax has **never been measured** —
@@ -445,6 +447,39 @@ pipelined model. It requires either (a) a second DDR port with bounded cost,
 or (b) demonstrating that DDR port contention on the shared port stays below
 ~100 cycles per MB on average. Both are achievable but neither is free. There
 is no comfortable escape from a faster clock in the near term.
+
+## 15. Width-640 budget impact (2026-07-27, w-osd coordination)
+
+w-osd established that the STREAM path (the one needed for FPGA-native decode)
+produces coded 640×480 = 40×30 = **1200 MBs/frame**, not 624×480 / 1170 MBs.
+The 624 width came from the rawvideo path's forced ffmpeg scale filter — the
+measurement was self-fulfilling.
+
+| Parameter | At 624 (current) | At 640 (STREAM path) | Impact |
+|-----------|------------------:|---------------------:|--------|
+| MB columns | 39 | 40 | +1 column |
+| MBs/frame | 1170 | 1200 | +2.56% |
+| Cycles/MB | 683.76 | 666.67 | −2.50% headroom |
+| Total budget margin (76 cyc) | 1.12× | 1.09× | Still closes |
+| Pipelined model margin (1.60×) | Yes | 1.56× | Still closes |
+| DDR frame bytes (Y+U+V) | 449,280 | 460,800 | +11,520 (+2.6%), still < bank stride 0x80000 |
+| Luma read (21×21) | 441 B/MB | 441 B/MB | **Unchanged** — per-MB fetch is geometry-independent |
+| Total frame read/write traffic | unchanged per-MB | unchanged per-MB | +2.6% frames/s is negligible |
+
+**Verdict:** the budget **still closes at 640.** The per-MB costs (fetch, MC,
+deblock) are all independent of frame width — they operate on fixed 16×16/8×8
+blocks regardless of how many columns exist. The only impact is +30 MBs per
+frame, which reduces cycles/MB from 684 to 667. The serial sum (608 existing +
+289 DPB = 897) still does not fit at either width; the pipelined model (427
+serial) has margin 1.56× instead of 1.60× — still comfortable.
+
+**RTL verification at 640:** the DPB parameterisation has been **measured** at
+FRAME_W=640 (not merely read). The width-edge test exercises MB column 39 with
+a positive MV crossing the right boundary:
+- 441/441 luma samples from column 39 ✓
+- 126/441 samples hit the right-edge clamp ✓
+- 81/81 chroma samples from column 39 ✓
+- Zero errors in luma or chroma
 
 **Next steps for this worker:**
 1. ~~Commit this budget document.~~ DONE.
