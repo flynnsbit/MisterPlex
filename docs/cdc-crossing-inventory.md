@@ -115,9 +115,9 @@ See `rtl/tb_arb_beat_conservation.sv` for the reference implementation.
 | 10 | `vsync_toggle` | clk→clk_ddr | 1 | toggle | 2-FF sync (`vsync_t_d1/d2`) + toggle protocol | SAFE |
 | 11 | `start_req` | clk→clk_ddr | 1 | toggle | 2-FF sync (`start_d1/d2`) + toggle protocol | SAFE |
 | 12 | `bank_sel` | clk→clk_ddr | 1 | level | 2-FF sync (`bank_sel_d1/d2`), stable before start toggle | SAFE |
-| 13 | `want_y` | clk→clk_ddr | 9 | multi-bit | 2-FF sync (`want_y_s1/s2`) | UNSAFE — but tolerable: prefetch hint only, worst case = redundant line read, not data corruption |
-| 14 | `status_osd` | clk_ddr→clk | 16 | multi-bit | 2-FF sync (`status_osd_d1/d2`) | UNSAFE — diagnostic only, not on data path |
-| 15 | `sdram_status` | clk_ddr→clk | 24 | multi-bit | 2-FF sync (`sdram_status_d1/d2`) | UNSAFE — diagnostic only, not on data path |
+| 13 | `want_y` | clk→clk_ddr | 9 | multi-bit | Gray-coded 2-FF sync (`want_y_gray` → `want_y_gray_s1/s2` → `y_gray2bin`) | SAFE (fixed: was 1-FF binary sync, `want_y_s2` dead code) |
+| 14 | `status_osd` | clk→clk_ddr | 16 | multi-bit | Toggle-snapshot (`status_osd_toggle` 2-FF sync, data captured on edge) | SAFE (fixed: was 2-FF binary sync, fed PLXS mailbox) |
+| 15 | `sdram_status` | clk→clk_ddr | 24 | multi-bit | Toggle-snapshot (`sdram_status_toggle` 2-FF sync, data captured on edge) | SAFE (fixed: was 2-FF binary sync, fed PLXM mailbox) |
 | 16 | `input_fifo` data | clk→clk_ddr | 8 | data stream | `async_fifo` Gray-coded, AW=2 (4 deep) | SAFE |
 | 17 | line_buf_ram ×48 | clk_ddr→clk | 64 | data | Dual-port M10K, wr_clk=clk_ddr, rd_clk=clk | SAFE |
 
@@ -155,13 +155,11 @@ See `rtl/tb_arb_beat_conservation.sv` for the reference implementation.
 
 | Status | Count | Details |
 |--------|-------|---------|
-| SAFE | 27 | Properly synchronized or same-domain |
-| UNSAFE (tolerable) | 3 | #13 want_y (prefetch hint), #14 status_osd (diagnostic), #15 sdram_status (diagnostic) |
-| UNSAFE (fixed this session) | 4 | #21 m1_busy, #22-23 m1_dout/ready, #26-27 audio_fifo pointers |
+| SAFE | 30 | All crossings properly synchronized |
+| UNSAFE (fixed this session) | 7 | #13 want_y (Gray-coded), #14 status_osd (toggle-snapshot), #15 sdram_status (toggle-snapshot), #21 m1_busy, #22-23 m1_dout/ready, #26-27 audio_fifo pointers |
 | N/A (same domain) | 2 | #24-25 m0_dout/ready |
 
-**30 crossings total. 27 proven safe. 3 known-unsound but non-data-path (diagnostic/prefetch).
-4 were genuinely unsafe and are now fixed.**
+**30 crossings total. All 30 proven safe. 7 were genuinely unsafe and are now fixed.**
 
 ---
 
