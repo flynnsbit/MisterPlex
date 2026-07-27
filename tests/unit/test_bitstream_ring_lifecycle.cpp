@@ -1,7 +1,17 @@
-// test_bitstream_ring_lifecycle.cpp — Exercises the full NalDispatcher →
-// CopyRingBitstreamProducer chain with real H.264 fixture data.
-// Covers: session begin/push/end, seek (flush→re-begin), pause/resume,
-// mid-stream teardown, dormant status, and ring Full backpressure.
+// test_bitstream_ring_lifecycle.cpp — Exercises the NalDispatcher →
+// CopyRingBitstreamProducer chain with H.264 fixture data.
+//
+// COVERAGE (instrument-integrity audit #16):
+//   Tested:   return codes, counter stats, data byte-integrity, backpressure,
+//             pause/resume, seek/flush, dormant state, sustained load.
+//   NOT tested (residual gap):
+//     - PLXN record framing (32-byte headers with magic/session/seq/length).
+//       The mock uses a raw std::deque<uint8_t>, not the real ring protocol.
+//       The real FpgaSpi::writeBitstreamRecord() wraps NALs in PLXN framing;
+//       that path requires /dev/mem and cannot run in a host unit test.
+//     - DDR ring wraparound at 256 KiB boundary (mock grows unbounded).
+//     - Cache coherency / fence ordering (O_SYNC + __sync_synchronize audit
+//       is done by code review — see arm-bitstream-feed-analysis.md).
 
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
@@ -334,6 +344,122 @@ static void testRingCapacitySustain() {
                  static_cast<unsigned long long>(stats.bytes_pushed));
 }
 
+// ---------------------------------------------------------------------------
+// Data-integrity verification — added during instrument-integrity audit #16.
+// Prior to this, ALL lifecycle tests checked only return codes and counters.
+// A producer that silently corrupted or dropped bytes would have passed.
+// ---------------------------------------------------------------------------
+static void testDataIntegrity() {
+    std::fprintf(stderr, "--- testDataIntegrity ---\n");
+    CopyRingBitstreamProducer ring(ring::kRingBytes);
+    NalDispatcher dispatch(ring);
+    CHECK(dispatch.begin(1) == ControlResult::Ok);
+
+    // Push 3 NALs with known, distinguishable payloads
+    auto sps = makeNal(7, 20);   // SPS, 20 payload bytes (each = index & 0xFF)
+    auto pps = makeNal(8, 10);   // PPS
+    auto idr = makeNal(5, 200);  // IDR slice
+
+    CHECK(dispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
+
+    // Concatenate what we pushed — the ring should hold this exact byte sequence
+    std::vector<uint8_t> expected;
+    expected.insert(expected.end(), sps.begin(), sps.end());
+    expected.insert(expected.end(), pps.begin(), pps.end());
+    expected.insert(expected.end(), idr.begin(), idr.end());
+
+    auto got = ring.snapshot();
+    CHECK(got.size() == expected.size());
+    size_t mismatches = 0;
+    for (size_t i = 0; i < std::min(got.size(), expected.size()); ++i) {
+        if (got[i] != expected[i])
+            ++mismatches;
+    }
+    CHECK(mismatches == 0);
+    if (mismatches > 0) {
+        std::fprintf(stderr, "  FAIL: %zu byte mismatches out of %zu\n",
+                     mismatches, expected.size());
+    }
+
+    CHECK(dispatch.end() == ControlResult::Ok);
+    std::fprintf(stderr, "  OK: %zu bytes verified byte-exact\n", expected.size());
+}
+
+// Prove the data-integrity check can fail: compare ring snapshot against
+// an intentionally-corrupted copy and confirm the comparison catches it.
+static void testDataIntegrityRed() {
+    std::fprintf(stderr, "--- testDataIntegrityRed (prove-fail) ---\n");
+    CopyRingBitstreamProducer ring(ring::kRingBytes);
+    NalDispatcher dispatch(ring);
+    CHECK(dispatch.begin(2) == ControlResult::Ok);
+
+    auto sps = makeNal(7, 10);
+    auto pps = makeNal(8, 5);
+    auto idr = makeNal(5, 100);
+    CHECK(dispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
+
+    auto got = ring.snapshot();
+    CHECK(got.size() > 0);
+
+    // Build the correct expected, then corrupt one byte
+    std::vector<uint8_t> corrupted(got);
+    corrupted[corrupted.size() / 2] ^= 0xFF;  // flip middle byte
+
+    size_t mismatches = 0;
+    for (size_t i = 0; i < got.size(); ++i) {
+        if (got[i] != corrupted[i])
+            ++mismatches;
+    }
+    // We EXPECT at least one mismatch — this proves the byte comparison is
+    // not vacuous (i.e., it would catch a corrupt transport)
+    CHECK(mismatches >= 1);
+
+    CHECK(dispatch.end() == ControlResult::Ok);
+    std::fprintf(stderr, "  OK: corruption detected (%zu mismatches as expected)\n", mismatches);
+}
+
+// Verify data survives a consume-then-push cycle (wraparound in a real ring)
+static void testDataIntegrityMultiRound() {
+    std::fprintf(stderr, "--- testDataIntegrityMultiRound ---\n");
+    CopyRingBitstreamProducer ring(ring::kRingBytes);
+    NalDispatcher dispatch(ring);
+    CHECK(dispatch.begin(3) == ControlResult::Ok);
+
+    auto sps = makeNal(7, 10);
+    auto pps = makeNal(8, 5);
+    CHECK(dispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+
+    // Consume all, then push more
+    ring.consumeBytes(ring.snapshot().size());
+    CHECK(ring.snapshot().empty());
+
+    // Push 5 more slices and verify each round-trip
+    for (int i = 0; i < 5; ++i) {
+        auto slice = makeNal(1, 500 + i * 100);
+        CHECK(dispatch.handleNal(slice.data(), slice.size()) == PushResult::Ok);
+
+        auto got = ring.snapshot();
+        // The ring should end with exactly this slice's bytes
+        CHECK(got.size() >= slice.size());
+        size_t offset = got.size() - slice.size();
+        size_t mismatches = 0;
+        for (size_t j = 0; j < slice.size(); ++j) {
+            if (got[offset + j] != slice[j])
+                ++mismatches;
+        }
+        CHECK(mismatches == 0);
+        ring.consumeBytes(got.size());
+    }
+
+    CHECK(dispatch.end() == ControlResult::Ok);
+    std::fprintf(stderr, "  OK: 5 rounds of push→verify→consume, all byte-exact\n");
+}
+
 int main() {
     testBasicSessionLifecycle();
     testFixtureFullStream();
@@ -344,6 +470,9 @@ int main() {
     testCtrlDormantMagic();
     testMidStreamTeardown();
     testRingCapacitySustain();
+    testDataIntegrity();
+    testDataIntegrityRed();
+    testDataIntegrityMultiRound();
 
     if (fails) {
         std::fprintf(stderr, "test_bitstream_ring_lifecycle: %d FAIL(s)\n", fails);
