@@ -25,7 +25,12 @@ The decode pipeline is clocked by `clk_sys`, not `clk_sdram`. Therefore the
 ## Raw measured cycle counts
 
 Measured with Verilator 5.051 using the existing
-`tests/unit/test_stream_path_full_frame_compare.sh` harness.
+`tests/unit/test_stream_path_full_frame_compare.sh` harness. The authoritative
+cycle source is `build/p3_full_frame/frame_planes_compare.json` field
+`summary.cycles`; this is full testbench time from reset/byte injection through
+diagnostic frame output. It is not a native decode-quality metric and has no
+stage breakdown. `build/p3_full_frame/native_frame_score.json` is the companion
+quality scoreboard and has no cycle fields.
 
 | Fixture | Frames | Geometry | Total cycles | cycles/frame | cycles/MB | Budget cycles/MB | Margin |
 | --- | ---:| --- | ---:| ---:| ---:| ---:| ---:|
@@ -38,6 +43,7 @@ Additional raw integration signal:
 | Harness | Raw signal | Value | Meaning |
 | --- | --- | ---:| --- |
 | `test_stream_path_deblock_integration.sh` on `wcap_residual14_idr_plus_p.264` | `recon_sig_3b_cycles` | 16,523 | deblock/stream integration liveness counter, not a per-stage cycle cost |
+| `test_h264_multinal_stream_path.sh` 320×240 12f fixture | `recon_sig_3b_cycles` / `cycles` | 39,780 / 55,319 | P-slice DPB/MC liveness context from w-cabac; not full-frame P quality and not a stage cost |
 
 ## Stage coverage
 
@@ -49,6 +55,10 @@ Additional raw integration signal:
 | MC/DPB fetch for correct P-slices | **UNKNOWN** | not yet bit-exact in this branch |
 | Deblock cost | **UNKNOWN** | liveness tested, no per-frame cost counter |
 | Product DDR writeback/present arbitration | **UNKNOWN** | current full-frame sim emits diagnostic RGB/I420 comparison, not full product arbitration |
+
+Do not use stale `build/p3_full_frame_624/native_score_624.json` artifacts if
+present. The full-frame candidate stream is `I420_FROM_RGB565` diagnostic output;
+the cycle number is useful, but its pixel quality is not native-I420 evidence.
 
 ## DDR bandwidth
 
@@ -91,5 +101,7 @@ stage as a named gap, not as zero cost.
 
 `tools/check_decode_throughput.py` consumes the existing full-frame comparison
 JSON and a `misterplex.decode_throughput_ratchet.v1` manifest. The full-frame
-RTL gate now runs it for known fixtures, and `tests/unit/test_decode_throughput_gate.sh`
-proves RED by lowering the cycle and margin thresholds.
+RTL gate now writes a separate report under `build/realtime_throughput/` for
+known fixtures, copying run label, fixture source, and geometry into the JSON.
+`tests/unit/test_decode_throughput_gate.sh` proves RED by lowering the cycle and
+margin thresholds.
