@@ -36,6 +36,8 @@ class GateReport:
     owner: str
     coverage_level: str = "green"  # green | refuses_here | partial | dead
     exit_codes: dict[str, int] = field(default_factory=dict)
+    observed_failing_real: bool = False  # Has this gate ever been observed failing on REAL (non-sabotage) input?
+    observed_failing_note: str = ""  # Evidence: when, what input, what rc
 
 
 def check_tool(cmd: str) -> bool:
@@ -106,6 +108,8 @@ def build_report() -> list[GateReport]:
             runnable_note="Pure Python, no external tools needed.",
             owner="w-c2",
             exit_codes={"green": 0, "red_drop_macro": 1},
+            observed_failing_real=False,
+            observed_failing_note="Never observed failing on real input — DDR_FRAME_STORE has been present in both flows since gate creation.",
         ),
         GateReport(
             id="quartus-sv-subset",
@@ -138,6 +142,8 @@ def build_report() -> list[GateReport]:
             owner="w-c2",
             coverage_level="refuses_here" if not has_quartus else "green",
             exit_codes={"refuse_no_toolchain": 4},
+            observed_failing_real=False,
+            observed_failing_note="Cannot be observed failing locally (rc=4 REFUSE). Has caught real syntax issues on remote Quartus in prior sessions.",
         ),
         GateReport(
             id="post-fit-hierarchy",
@@ -172,6 +178,8 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"green": 0, "red_optimized_away": 1, "red_comb_loop": 1, "refuse_missing": 4},
+            observed_failing_real=True,
+            observed_failing_note="slot11 compile.log: rc=1 REJECTED — 2 combinational loops (332125) in emu|present|fstore|input_fifo (async_fifo.sv pre-fix source).",
         ),
         GateReport(
             id="post-fit-timing",
@@ -194,6 +202,8 @@ def build_report() -> list[GateReport]:
             runnable_note="Requires STA_RPT= from a remote Quartus build. Wired into build_rbf_remote.sh.",
             owner="w-c2",
             exit_codes={"green": 0, "red_negative_slack": 1, "refuse_missing": 4},
+            observed_failing_real=True,
+            observed_failing_note="slot11 Plex.sta.rpt: rc=1 REJECTED — worst setup slack -2.137ns (PATH 1: f2sdram~FF_1937→current_session[51], PATH 2: rsp_left[6]→y_valid[7]).",
         ),
         GateReport(
             id="timing-exclusion",
@@ -228,6 +238,8 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"green": 0, "red_new_async": 1, "red_missing_clock": 1, "red_empty_sta": 1},
+            observed_failing_real=False,
+            observed_failing_note="slot11 SDC+STA passed (rc=0). No real exclusion evasion observed yet. Gate is new — first real test was slot11.",
         ),
         GateReport(
             id="confstr-guard",
@@ -254,6 +266,8 @@ def build_report() -> list[GateReport]:
             runnable_note="Pure Python, no external tools.",
             owner="w-c2",
             exit_codes={"green": 0, "red_malformed": 1},
+            observed_failing_real=False,
+            observed_failing_note="CONF_STR has not been observed malformed since gate creation. Gate exists to prevent regressions.",
         ),
         GateReport(
             id="mister-ini-plex-guard",
@@ -278,6 +292,8 @@ def build_report() -> list[GateReport]:
             runnable_note="Pure Python, no external tools.",
             owner="w-c2",
             exit_codes={"green": 0, "red_missing_key": 1, "red_commented": 1},
+            observed_failing_real=False,
+            observed_failing_note="MiSTer.ini [Plex] section has not been observed malformed since gate creation.",
         ),
         GateReport(
             id="edges",
@@ -314,6 +330,8 @@ def build_report() -> list[GateReport]:
             owner="w-c2 (gate logic), w-cap (device/capture)",
             coverage_level="partial" if not has_grabber else "green",
             exit_codes={"green_synthetic": 0, "red_hwrap": 1, "red_vshift": 1, "red_stale": 2, "no_device": 2},
+            observed_failing_real=False,
+            observed_failing_note="No live capture available on this host. Synthetic tests pass. Live geometry grading not yet exercised on device host.",
         ),
         GateReport(
             id="rtl-lint",
@@ -344,6 +362,8 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"green": 0, "refuse_no_verilator": 3},
+            observed_failing_real=True,
+            observed_failing_note="Observed rc=1 when w-a3 audio_fifo.sv width warnings exceeded baseline (this session, pre-Gray-code fix). Also rc=3 REFUSE when Verilator absent.",
         ),
         GateReport(
             id="cdc-crossings",
@@ -378,6 +398,8 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"green": 0, "red_unprotected": 1, "refuse_no_manifest": 4},
+            observed_failing_real=True,
+            observed_failing_note="Currently rc=1 on real manifest: 2 unprotected fast→slow crossings from w-a3 arbiter fix (60df5a2). Intentionally tracked as hazard.",
         ),
         GateReport(
             id="test-suppression",
@@ -414,6 +436,8 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"green": 0, "red_suppression": 1, "refuse_missing": 4},
+            observed_failing_real=True,
+            observed_failing_note="Currently rc=1 on real codebase: 26 active findings (16 ALLOW_MISSING_VERILATOR + gate_coverage_report.py self-references + test_rtl_invariants.sh red-proof fixtures). The 16 ALLOW_MISSING_VERILATOR are the exact structural anti-pattern that caused 14 gates to silently pass.",
         ),
     ]
     return gates
@@ -446,6 +470,10 @@ def format_report(gates: list[GateReport]) -> str:
         lines.append(f"  NOT prove: {g.does_not_prove}")
         lines.append(f"  Red proof: {g.red_proof_method}")
         lines.append(f"  Red ok:    {g.red_proof_passed}")
+        fail_icon = "✅ YES" if g.observed_failing_real else "⚠️ NEVER"
+        lines.append(f"  Observed failing on real input: {fail_icon}")
+        if g.observed_failing_note:
+            lines.append(f"    Evidence: {g.observed_failing_note}")
         lines.append(f"  Runnable:  {g.runnable_here} — {g.runnable_note}")
         lines.append(f"  Exit codes: {g.exit_codes}")
         lines.append("")
