@@ -209,9 +209,21 @@ echo "OK full-frame colorspace red-check: RGB565-derived diagnostic candidate re
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
 make -s -C "$ROOT" h264-golden-tools
+set +e
+LOOP_FILTER_OUT="$("$ROOT/build/score_h264_native_frames" \
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --loop-filter-state enabled 2>&1)"
+LOOP_FILTER_RC=$?
+set -e
+if [[ "$LOOP_FILTER_RC" -ne 9 ]]; then
+  printf '%s\n' "$LOOP_FILTER_OUT"
+  echo "FAIL native score red-check: enabled loop filter rc=$LOOP_FILTER_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'refusing loop_filter_state=enabled' <<<"$LOOP_FILTER_OUT"
+echo "OK native score loop-filter red-check: deblocked references are refused"
 "$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --output "$MB0_GOLDEN_JSON" >/dev/null
 "$ROOT/build/score_h264_native_frames" \
-  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --output "$NATIVE_SCORE_JSON"
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --loop-filter-state disabled --output "$NATIVE_SCORE_JSON"
 python3 - "$MB0_TRACE_JSON" "$MB0_GOLDEN_JSON" "$COMPARE_JSON" <<'PY'
 import json
 import sys
@@ -276,6 +288,8 @@ if actual["source"]["sha256"] != ratchet.get("source_sha256"):
     raise SystemExit("FAIL native full-frame ratchet: source sha256 mismatch")
 if actual.get("colorspace") != ratchet.get("colorspace"):
     raise SystemExit("FAIL native full-frame ratchet: colorspace mismatch")
+if actual.get("loop_filter") != ratchet.get("loop_filter"):
+    raise SystemExit("FAIL native full-frame ratchet: loop-filter mismatch")
 
 planes = {}
 for frame in actual["frames"]:

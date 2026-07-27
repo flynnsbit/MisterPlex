@@ -463,6 +463,16 @@ inline int chromaQp(int qpy, int offset) {
     return kChromaQP[q];
 }
 
+inline int wrapQpY(int qpy, int delta) {
+    // H.264 8.5.1: QP_Y advances modulo 52 for 8-bit video. Clamping negative
+    // deltas to zero corrupts later low-QP macroblocks after rate-control wraps.
+    int v = qpy + delta;
+    v %= 52;
+    if (v < 0)
+        v += 52;
+    return v;
+}
+
 // Inverse chroma DC 2x2 Hadamard + dequant (4:2:0).
 // coeff[] is CAVLC scan order matching FFmpeg ff_h264_chroma_dc_scan:
 //   scan 0 → (0,0), 1 → (1,0), 2 → (0,1), 3 → (1,1).
@@ -854,11 +864,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 }
                 if (cbp != 0) {
                     int d = br.se();
-                    qp += d;
-                    if (qp < 0)
-                        qp = 0;
-                    if (qp > 51)
-                        qp = 51;
+                    qp = wrapQpY(qp, d);
                 }
                 if (traceMb) {
                     trace->mb.qp = qp;
@@ -1046,11 +1052,7 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 int cbp_l = (x / 12) ? 15 : 0;
                 int chromaMode = static_cast<int>(br.ue());
                 int d = br.se();
-                qp += d;
-                if (qp < 0)
-                    qp = 0;
-                if (qp > 51)
-                    qp = 51;
+                qp = wrapQpY(qp, d);
                 if (traceMb) {
                     trace->mb.qp = qp;
                     trace->mb.chroma_mode = chromaMode;
