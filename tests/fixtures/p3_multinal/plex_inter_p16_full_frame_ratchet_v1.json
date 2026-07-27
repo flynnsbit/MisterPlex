@@ -64,7 +64,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 51,
-      "max_mae": 82.809818,
+      "max_mae": 82.807318,
       "max_abs": 220
     },
     {
@@ -91,7 +91,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 81,
-      "max_mae": 82.726758,
+      "max_mae": 82.723164,
       "max_abs": 220
     },
     {
@@ -99,8 +99,8 @@
       "frame_num": 3,
       "slice_kind": "P",
       "plane": "U",
-      "min_exact_pixels": 27,
-      "max_mae": 84.868945,
+      "min_exact_pixels": 26,
+      "max_mae": 84.86569,
       "max_abs": 202
     },
     {
@@ -109,7 +109,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 31,
-      "max_mae": 81.777083,
+      "max_mae": 81.780833,
       "max_abs": 219
     },
     {
@@ -118,7 +118,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 67,
-      "max_mae": 82.680586,
+      "max_mae": 82.676992,
       "max_abs": 220
     },
     {
@@ -127,7 +127,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 15,
-      "max_mae": 85.501914,
+      "max_mae": 85.498164,
       "max_abs": 202
     },
     {
@@ -136,7 +136,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 34,
-      "max_mae": 81.473945,
+      "max_mae": 81.477695,
       "max_abs": 219
     },
     {
@@ -145,7 +145,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 32,
-      "max_mae": 82.58375,
+      "max_mae": 82.580156,
       "max_abs": 220
     },
     {
@@ -154,7 +154,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 37,
-      "max_mae": 86.140755,
+      "max_mae": 86.137005,
       "max_abs": 217
     },
     {
@@ -163,7 +163,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 32,
-      "max_mae": 81.180247,
+      "max_mae": 81.183997,
       "max_abs": 219
     },
     {
@@ -172,7 +172,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 15,
-      "max_mae": 82.38543,
+      "max_mae": 82.381836,
       "max_abs": 220
     },
     {
@@ -181,7 +181,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 52,
-      "max_mae": 86.776771,
+      "max_mae": 86.773021,
       "max_abs": 217
     },
     {
@@ -190,7 +190,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 51,
-      "max_mae": 81.105794,
+      "max_mae": 81.109544,
       "max_abs": 219
     },
     {
@@ -199,7 +199,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 22,
-      "max_mae": 82.172904,
+      "max_mae": 82.16931,
       "max_abs": 220
     },
     {
@@ -208,7 +208,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 51,
-      "max_mae": 87.28875,
+      "max_mae": 87.285,
       "max_abs": 221
     },
     {
@@ -217,7 +217,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 44,
-      "max_mae": 80.849336,
+      "max_mae": 80.853086,
       "max_abs": 219
     },
     {
@@ -226,7 +226,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 34,
-      "max_mae": 81.976745,
+      "max_mae": 81.973151,
       "max_abs": 220
     },
     {
@@ -235,7 +235,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 55,
-      "max_mae": 87.989505,
+      "max_mae": 87.985755,
       "max_abs": 221
     },
     {
@@ -244,7 +244,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 53,
-      "max_mae": 80.680039,
+      "max_mae": 80.683789,
       "max_abs": 219
     },
     {
@@ -253,7 +253,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 28,
-      "max_mae": 81.774453,
+      "max_mae": 81.770859,
       "max_abs": 220
     },
     {
@@ -262,7 +262,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 58,
-      "max_mae": 88.656393,
+      "max_mae": 88.652643,
       "max_abs": 223
     },
     {
@@ -271,7 +271,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 45,
-      "max_mae": 80.55763,
+      "max_mae": 80.56138,
       "max_abs": 219
     },
     {
@@ -280,7 +280,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 32,
-      "max_mae": 81.645247,
+      "max_mae": 81.641654,
       "max_abs": 220
     },
     {
@@ -289,7 +289,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 63,
-      "max_mae": 89.334401,
+      "max_mae": 89.330651,
       "max_abs": 223
     },
     {
@@ -298,7 +298,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 78,
-      "max_mae": 80.484062,
+      "max_mae": 80.487813,
       "max_abs": 219
     },
     {
@@ -307,7 +307,7 @@
       "slice_kind": "P",
       "plane": "Y",
       "min_exact_pixels": 30,
-      "max_mae": 81.670273,
+      "max_mae": 81.66668,
       "max_abs": 220
     },
     {
@@ -316,7 +316,7 @@
       "slice_kind": "P",
       "plane": "U",
       "min_exact_pixels": 40,
-      "max_mae": 90.186185,
+      "max_mae": 90.182435,
       "max_abs": 227
     },
     {
@@ -325,7 +325,7 @@
       "slice_kind": "P",
       "plane": "V",
       "min_exact_pixels": 121,
-      "max_mae": 80.344857,
+      "max_mae": 80.348607,
       "max_abs": 219
     }
   ]

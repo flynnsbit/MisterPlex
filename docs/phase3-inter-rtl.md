@@ -45,6 +45,10 @@ Product RTL added in `fpga/Plex_MiSTer/rtl/h264_inter_pred.sv`:
   rounding.
 - `h264_ref_clamp`: edge padding/clamping for reference fetch addresses.
 - `h264_luma_ref_tap_addr`: 9×9 luma reference-window tap address generation with edge clamp.
+- `h264_p_mb_type_decode`: P-slice macroblock/sub-macroblock type classifier for P_Skip,
+  P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8, P_8x8ref0 and the P sub-MB shapes
+  8x8/8x4/4x8/4x4. Intra-in-P macroblocks are classified as intra rather than silently treated
+  as inter.
 
 The Verilator top in `tests/rtl/h264_inter_pred_tb_top.sv` instantiates the real product RTL listed
 in `files.qip`; test-only fault injection lives only in the testbench top.
@@ -88,6 +92,14 @@ OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
 The red path perturbs interpolation behaviour in the testbench wrapper (`FAULT_BAD_ROUND=1`), not
 source text or synthesised RTL.
 
+`tests/unit/test_h264_p_slice_modes_rtl_sim.sh` separately exercises the product P MB type decoder:
+
+```text
+h264 P-slice mode RTL check PASS: cases=10 skip=1 p16x16=1 p16x8=1 p8x16=1 p8x8_mb=4 subpartitions=4 intra_map=1 unsupported=1
+FAIL p-slice mode P_L0_16x8 part_mode got=2 want=1
+OK h264_p_slice_modes red-check: swapped 16x8 partition fault failed golden
+```
+
 
 ## Integrated stream-path simulation
 
@@ -102,7 +114,33 @@ FAIL stream_path inter diag pixel: x=16 y=4 band=0 got=0xe87b want=0x1784
 OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 ```
 
+The shared multi-NAL gate also now proves the P-slice header handoff parses non-IDR reference marking,
+`mb_skip_run`, and first P macroblock type instead of misreading those bits as QP/residual syntax:
+
+```text
+multi-NAL stream_path raw: bytes=27653 ... nalu=15 ... slice=11 ... recon_sig_3b_cycles=0 ... p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 ... final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1
+```
+
+Those 11 first-P-MB classifications cover P_L0_16x16, P_L0_16x8 and P_L0_8x16 through the real
+`stream_path` parser. P_Skip and P_8x8/sub-MB modes are covered by product RTL synthetic mode cases
+until the shared fixtures contain those syntax modes at the first macroblock or expose full P-MB
+goldens.
+
 The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
+
+The full-frame reference gate remains the decode scoreboard and still reports honest RED at frame 0;
+this slice moves P syntax/mode classification, not full-frame MC/reconstruction:
+
+```text
+FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=Y exact=189/76800 mae=82.082448 max_abs=210
+FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=U exact=51/76800 mae=84.779232 max_abs=195
+FULL_FRAME_COMPARE raw frame=0 colorspace=YUV444_FROM_RGB565 plane=V exact=29/76800 mae=84.160716 max_abs=217
+FULL_FRAME_COMPARE summary ... frames=12 nals=15 idr=1 p=11 ... first_bad_frame=0 strict_pass=0 mode=expect-red
+```
+
+The ratchet fixture was regenerated from this parser-correct diagnostic baseline because the prior
+baseline included pixels produced while the P slice was being misread as intra syntax. The strict
+reference comparator remains RED and the behavioral pixel-XOR red-check still fails strict compare.
 
 ## Hardware gate plan
 
