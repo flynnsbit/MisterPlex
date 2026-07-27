@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "scripts" / "hw_visual_compare.py"
 WORK = ROOT / "build" / "hw-visual-unit"
 GOLDEN = ROOT / "tests" / "fixtures" / "hw_visual" / "plex_visual_640x480_golden.png"
+COLOR_ARGS = (
+    "--golden-color-matrix", "bt601",
+    "--golden-color-range", "full",
+    "--capture-color-matrix", "bt601",
+    "--capture-color-range", "full",
+)
 WCAP_CORRUPT_LOG = (
     ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
     "wcap_fe7673bc_yuyv422_corrupt.log"
@@ -83,6 +89,7 @@ def main() -> int:
     c = run(
         "compare",
         "--golden", str(GOLDEN),
+        *COLOR_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--report", str(good_report),
@@ -99,7 +106,35 @@ def main() -> int:
             [gr["stats"]["active_pixels"]] * 3,
             f"known-good YUV per-plane exact counts wrong: {gr}")
     require(good_diff.exists() and good_diff.stat().st_size > 0, "good diff artifact missing")
+    require(gr["color_provenance"]["golden"] == {"matrix": "bt601", "range": "full"},
+            f"good compare did not record golden colour provenance: {gr}")
+    require(gr["color_provenance"]["capture"] == {"matrix": "bt601", "range": "full"},
+            f"good compare did not record capture colour provenance: {gr}")
     print("PASS known-good frame exact-matches active display region")
+
+    missing_colour = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        "--capture", str(cap2),
+        "--noise-report", str(noise),
+    )
+    require(missing_colour.returncode == 2 and "colour matrix/range provenance is required" in missing_colour.stderr,
+            "compare without colour provenance must be refused, "
+            f"not graded\nstdout={missing_colour.stdout}\nstderr={missing_colour.stderr}")
+    mismatched_colour = run(
+        "compare",
+        "--golden", str(GOLDEN),
+        "--golden-color-matrix", "bt601",
+        "--golden-color-range", "full",
+        "--capture", str(cap2),
+        "--capture-color-matrix", "bt709",
+        "--capture-color-range", "full",
+        "--noise-report", str(noise),
+    )
+    require(mismatched_colour.returncode == 2 and "different colour provenance" in mismatched_colour.stderr,
+            "compare with mismatched colour provenance must be refused, "
+            f"not graded\nstdout={mismatched_colour.stdout}\nstderr={mismatched_colour.stderr}")
+    print("PASS unknown/mismatched colour provenance refused before grading")
 
     bad = golden.copy()
     # Corrupt one active pixel, not a pillarbox pixel; this is the red-path proof
@@ -112,6 +147,7 @@ def main() -> int:
     b = run(
         "compare",
         "--golden", str(GOLDEN),
+        *COLOR_ARGS,
         "--capture", str(bad_path),
         "--noise-report", str(noise),
         "--report", str(bad_report),
@@ -138,6 +174,7 @@ def main() -> int:
     stale = run(
         "compare",
         "--golden", str(GOLDEN),
+        *COLOR_ARGS,
         "--previous", str(cap1),
         "--capture", str(cap1),
         "--noise-report", str(noise),
@@ -166,6 +203,7 @@ def main() -> int:
     corrupt_logged = run(
         "compare",
         "--golden", str(GOLDEN),
+        *COLOR_ARGS,
         "--capture", str(cap2),
         "--capture-log", str(WCAP_CORRUPT_LOG),
         "--noise-report", str(noise),

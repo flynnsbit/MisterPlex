@@ -23,6 +23,12 @@ The capture defaults are intentionally conservative for the current lab dongle:
 `VISUAL_CAPTURE_FORMAT=yuyv422` only when the rig proves clean in that mode; corrupted buffers are a harness
 failure (`rc=4`), never a core result.
 
+The capture/compare path pins colour provenance instead of relying on FFmpeg's
+resolution-based defaults: `VISUAL_COLOR_MATRIX=bt601` and `VISUAL_COLOR_RANGE=full`
+by default. `scripts/hw_visual_compare.py compare` refuses to grade images unless
+both golden and capture matrix/range are stated, and also refuses mismatched
+provenance.
+
 ## What is compared
 
 - Default input bitstream: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`.
@@ -97,6 +103,7 @@ Y/U/V max   = [230, 220, 171]
 - overall MAE
 - worst mismatch location in presented and display coordinates
 - worst mismatch plane, golden value, captured value, and delta
+- colour matrix/range provenance for both the golden and the capture
 
 On failure it emits a PNG with **golden | captured | amplified diff**, so the failure is visually debuggable.
 

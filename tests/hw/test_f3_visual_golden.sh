@@ -17,6 +17,8 @@ CAP_FMT="${VISUAL_CAPTURE_FORMAT:-mjpeg}"
 CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
 CAP_ATTEMPTS="${VISUAL_CAPTURE_ATTEMPTS:-5}"
+COLOR_MATRIX="${VISUAL_COLOR_MATRIX:-bt601}"
+COLOR_RANGE="${VISUAL_COLOR_RANGE:-full}"
 VIDEO_MODE="${VISUAL_VIDEO_MODE:-0}"  # MiSTer preset 0 = 1280x720@60
 if [[ "${VISUAL_FULL_FRAME:-0}" == "1" ]]; then
   COMPARE_BOX="${VISUAL_COMPARE_BOX:-active}" # full 618x480 active display region
@@ -68,7 +70,8 @@ fi
 
 capture() {
   python3 "$TOOL" capture --device "$DEV" --input-format "$CAP_FMT" \
-    --video-size "$CAP_SIZE" --framerate "$CAP_FPS" --attempts "$CAP_ATTEMPTS" "$@"
+    --video-size "$CAP_SIZE" --framerate "$CAP_FPS" --attempts "$CAP_ATTEMPTS" \
+    --color-matrix "$COLOR_MATRIX" --color-range "$COLOR_RANGE" "$@"
 }
 
 COMPARE_ARGS=()
@@ -157,8 +160,12 @@ set +e
 python3 "$TOOL" compare \
   "${COMPARE_ARGS[@]}" \
   --golden "$GOLDEN" \
+  --golden-color-matrix "$COLOR_MATRIX" \
+  --golden-color-range "$COLOR_RANGE" \
   --previous "$OUT/previous.png" \
   --capture "$OUT/cap_4.png" \
+  --capture-color-matrix "$COLOR_MATRIX" \
+  --capture-color-range "$COLOR_RANGE" \
   --noise-report "$OUT/noise.json" \
   --report "$OUT/compare.json" \
   --diff "$OUT/diff.png" | tee "$OUT/compare.txt"
@@ -205,7 +212,11 @@ PY
   python3 "$TOOL" compare \
     "${COMPARE_ARGS[@]}" \
     --golden "$GOLDEN" \
+    --golden-color-matrix "$COLOR_MATRIX" \
+    --golden-color-range "$COLOR_RANGE" \
     --capture "$OUT/cap_bad.png" \
+    --capture-color-matrix "$COLOR_MATRIX" \
+    --capture-color-range "$COLOR_RANGE" \
     --noise-report "$OUT/noise.json" \
     --report "$OUT/compare_bad_expected_fail.json" \
     --diff "$OUT/diff_bad_expected_fail.png" | tee "$OUT/compare_bad_expected_fail.txt"

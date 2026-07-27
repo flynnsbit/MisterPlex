@@ -8,6 +8,8 @@ Checked-in inputs for `tests/hw/test_f3_visual_golden.sh`.
   `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`. The default
   hardware gate compares only ROI `11,0,160,120` because pixels outside the stable
   decoded top-left region can vary after core reloads on this rollback RBF.
+  The visual harness now requires explicit colour provenance; this default gate is
+  declared as BT.601/full-range to match the product YUV→RGB path.
 - `plex_visual_624x480_1f.264` — one-frame H.264 Baseline/CAVLC Annex-B vector,
   generated from `testsrc2=size=624x480:rate=1` with `cabac=0`, one IDR, no B-slices.
   This is a future target fixture, not the default hardware gate, because it has

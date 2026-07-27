@@ -28,6 +28,8 @@ DEFAULT_SIZE = "1280x720"
 DEFAULT_FPS = "60"
 DEFAULT_WARMUP = 60
 DEFAULT_ATTEMPTS = 5
+COLOR_MATRICES = ("bt601", "bt709")
+COLOR_RANGES = ("full", "limited")
 
 
 class HarnessError(RuntimeError):
@@ -80,6 +82,39 @@ def reject_corrupt_capture_log(path: str | None) -> None:
         raise CorruptCaptureError(
             f"capture log {p} reports corrupted V4L2/FFmpeg data; not grading image"
         )
+
+
+def require_color_provenance(args: argparse.Namespace) -> dict:
+    fields = (
+        args.golden_color_matrix,
+        args.golden_color_range,
+        args.capture_color_matrix,
+        args.capture_color_range,
+    )
+    if any(v is None for v in fields):
+        raise HarnessError(
+            "colour matrix/range provenance is required; pass "
+            "--golden-color-matrix, --golden-color-range, "
+            "--capture-color-matrix, and --capture-color-range"
+        )
+    if (args.golden_color_matrix, args.golden_color_range) != (
+        args.capture_color_matrix, args.capture_color_range
+    ):
+        raise HarnessError(
+            "refusing to compare images with different colour provenance: "
+            f"golden={args.golden_color_matrix}/{args.golden_color_range} "
+            f"capture={args.capture_color_matrix}/{args.capture_color_range}"
+        )
+    return {
+        "golden": {
+            "matrix": args.golden_color_matrix,
+            "range": args.golden_color_range,
+        },
+        "capture": {
+            "matrix": args.capture_color_matrix,
+            "range": args.capture_color_range,
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -193,12 +228,18 @@ def save_rgb(path: Path, frame: np.ndarray) -> None:
 
 
 def capture_v4l2_once(path: Path, dev: str, input_format: str, size: str, framerate: str,
-                      warmup: int) -> tuple[np.ndarray | None, str, int]:
+                      warmup: int, color_matrix: str,
+                      color_range: str) -> tuple[np.ndarray | None, str, int]:
+    vf = (
+        f"select=gte(n\\,{warmup}),"
+        f"scale=in_color_matrix={color_matrix}:in_range={color_range}:out_range=full,"
+        "format=rgb24"
+    )
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning",
         "-f", "v4l2", "-input_format", input_format, "-video_size", size,
         "-framerate", framerate, "-i", dev,
-        "-vf", f"select=gte(n\\,{warmup})", "-frames:v", "1", "-update", "1",
+        "-vf", vf, "-frames:v", "1", "-update", "1",
         "-y", str(path),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30 + warmup)
@@ -207,11 +248,17 @@ def capture_v4l2_once(path: Path, dev: str, input_format: str, size: str, framer
         return None, log, r.returncode
     if classify_capture_log(log) == "corrupt":
         return None, log, 4
+    sidecar = path.with_suffix(path.suffix + ".color.json")
+    sidecar.write_text(json.dumps({
+        "color_matrix": color_matrix,
+        "color_range": color_range,
+        "ffmpeg_filter": vf,
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return np.array(Image.open(path).convert("RGB"), dtype=np.uint8), log, 0
 
 
 def capture_v4l2(path: Path, dev: str, input_format: str, size: str, framerate: str,
-                 warmup: int, attempts: int) -> np.ndarray:
+                 warmup: int, attempts: int, color_matrix: str, color_range: str) -> np.ndarray:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not Path(dev).exists():
         raise CaptureAbsentError(f"capture device {dev} is absent")
@@ -225,7 +272,9 @@ def capture_v4l2(path: Path, dev: str, input_format: str, size: str, framerate: 
     corrupt_logs: list[str] = []
     other_logs: list[str] = []
     for attempt in range(1, attempts + 1):
-        frame, log, rc = capture_v4l2_once(path, dev, input_format, size, framerate, warmup)
+        frame, log, rc = capture_v4l2_once(
+            path, dev, input_format, size, framerate, warmup, color_matrix, color_range
+        )
         if frame is not None:
             if attempt > 1:
                 print(f"capture recovered after {attempt - 1} corrupt/failed attempt(s)",
@@ -451,8 +500,12 @@ def cmd_geometry(_args: argparse.Namespace) -> int:
 
 def cmd_capture(args: argparse.Namespace) -> int:
     capture_v4l2(Path(args.out), args.device, args.input_format, args.video_size,
-                 args.framerate, args.warmup, args.attempts)
-    print(f"captured {args.out} ({args.input_format} {args.video_size}@{args.framerate})")
+                 args.framerate, args.warmup, args.attempts,
+                 args.color_matrix, args.color_range)
+    print(
+        f"captured {args.out} ({args.input_format} {args.video_size}@{args.framerate} "
+        f"{args.color_matrix}/{args.color_range})"
+    )
     return 0
 
 
@@ -474,6 +527,7 @@ def cmd_noise(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
     box = parse_compare_box(args.compare_box, g)
+    color_provenance = require_color_provenance(args)
     reject_corrupt_capture_log(args.capture_log)
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
@@ -502,6 +556,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
         "compare_box": list(box),
+        "color_provenance": color_provenance,
         "freshness": freshness,
         "stats": stats,
         "thresholds": {
@@ -540,6 +595,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
     p.add_argument("--attempts", type=int, default=DEFAULT_ATTEMPTS,
                    help="retry corrupt-buffer grabs; only a clean attempt is returned")
+    p.add_argument("--color-matrix", choices=COLOR_MATRICES, default="bt601",
+                   help="explicit input YCbCr matrix for ffmpeg capture conversion")
+    p.add_argument("--color-range", choices=COLOR_RANGES, default="full",
+                   help="explicit input YCbCr range for ffmpeg capture conversion")
     p.set_defaults(func=cmd_capture)
 
     p = sub.add_parser("noise", help="measure capture noise from repeated static frames")
@@ -556,6 +615,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--previous", help="previous-condition frame for stale-capture rejection")
     p.add_argument("--noise-report")
     p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")
+    p.add_argument("--golden-color-matrix", choices=COLOR_MATRICES)
+    p.add_argument("--golden-color-range", choices=COLOR_RANGES)
+    p.add_argument("--capture-color-matrix", choices=COLOR_MATRICES)
+    p.add_argument("--capture-color-range", choices=COLOR_RANGES)
     p.add_argument("--max-mae", type=float, default=0.0)
     p.add_argument("--max-abs", type=int, default=0)
     p.add_argument("--shift-radius", type=int, default=0,
