@@ -13,10 +13,10 @@ module h264_intra4x4_pred (
 	output reg  [7:0] pred [0:15]
 );
 	function automatic [7:0] clip8;
-		input signed [10:0] v;
+		input integer v;
 		begin
-			if (v < 11'sd0) clip8 = 8'd0;
-			else if (v > 11'sd255) clip8 = 8'd255;
+			if (v < 0) clip8 = 8'd0;
+			else if (v > 255) clip8 = 8'd255;
 			else clip8 = v[7:0];
 		end
 	endfunction
@@ -26,18 +26,18 @@ module h264_intra4x4_pred (
 		input int y;
 		input int v;
 		begin
-			pred[y * 4 + x] = clip8(v[10:0]);
+			pred[y * 4 + x] = clip8(v);
 		end
 	endtask
 
 	integer x, y, i;
 	reg [3:0] m;
-	reg [7:0] t0, t1, t2, t3, t4, t5, t6, t7;
-	reg [7:0] l0, l1, l2, l3;
-	reg [9:0] dc_sum;
+	integer t0, t1, t2, t3, t4, t5, t6, t7;
+	integer l0, l1, l2, l3;
+	integer dc_sum;
 	reg [7:0] dc_v;
 	always @* begin
-		dc_sum = 10'd0;
+		dc_sum = 0;
 		dc_v = 8'd128;
 		for (i = 0; i < 16; i = i + 1) pred[i] = 8'd128;
 		m = mode;
@@ -62,13 +62,13 @@ module h264_intra4x4_pred (
 		4'd2: begin // DC
 			if (has_above && has_left) begin
 				dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
-				dc_v = dc_sum[9:3];
+				dc_v = dc_sum >>> 3;
 			end else if (has_above) begin
 				dc_sum = t0 + t1 + t2 + t3 + 10'd2;
-				dc_v = dc_sum[9:2];
+				dc_v = dc_sum >>> 2;
 			end else if (has_left) begin
 				dc_sum = l0 + l1 + l2 + l3 + 10'd2;
-				dc_v = dc_sum[9:2];
+				dc_v = dc_sum >>> 2;
 			end else begin
 				dc_v = 8'd128;
 			end
@@ -151,10 +151,10 @@ module h264_intra16x16_pred (
 	output reg  [7:0] pred [0:255]
 );
 	function automatic [7:0] clip8;
-		input signed [11:0] v;
+		input integer v;
 		begin
-			if (v < 12'sd0) clip8 = 8'd0;
-			else if (v > 12'sd255) clip8 = 8'd255;
+			if (v < 0) clip8 = 8'd0;
+			else if (v > 255) clip8 = 8'd255;
 			else clip8 = v[7:0];
 		end
 	endfunction
@@ -164,6 +164,8 @@ module h264_intra16x16_pred (
 	reg [7:0] dc_v;
 	always @* begin
 		unsupported = 1'b0;
+		sum = 0;
+		dc_v = 8'd128;
 		for (i = 0; i < 256; i = i + 1) pred[i] = 8'd128;
 		if (mode == 2'd3) begin
 			unsupported = 1'b1;
@@ -195,10 +197,10 @@ module h264_chroma8x8_pred (
 	output reg  [7:0] pred [0:63]
 );
 	function automatic [7:0] clip8;
-		input signed [11:0] v;
+		input integer v;
 		begin
-			if (v < 12'sd0) clip8 = 8'd0;
-			else if (v > 12'sd255) clip8 = 8'd255;
+			if (v < 0) clip8 = 8'd0;
+			else if (v > 255) clip8 = 8'd255;
 			else clip8 = v[7:0];
 		end
 	endfunction
@@ -210,19 +212,33 @@ module h264_chroma8x8_pred (
 		integer x, y;
 		begin
 			for (y = 0; y < 4; y = y + 1)
-				for (x = 0; x < 4; x = x + 1) pred[(y0 + y) * 8 + x0 + x] = clip8(v[11:0]);
+				for (x = 0; x < 4; x = x + 1) pred[(y0 + y) * 8 + x0 + x] = clip8(v);
 		end
 	endtask
 
 	integer x, y, i;
 	integer hgrad, vgrad, a, b, c, val;
 	integer sum_a0, sum_a1, sum_l0, sum_l1;
+	integer ai [0:7];
+	integer li [0:7];
+	integer tli;
 	always @* begin
+		hgrad = 0;
+		vgrad = 0;
+		a = 0;
+		b = 0;
+		c = 0;
+		val = 0;
 		for (i = 0; i < 64; i = i + 1) pred[i] = 8'd128;
-		sum_a0 = above[0] + above[1] + above[2] + above[3];
-		sum_a1 = above[4] + above[5] + above[6] + above[7];
-		sum_l0 = left[0] + left[1] + left[2] + left[3];
-		sum_l1 = left[4] + left[5] + left[6] + left[7];
+		for (i = 0; i < 8; i = i + 1) begin
+			ai[i] = above[i];
+			li[i] = left[i];
+		end
+		tli = top_left;
+		sum_a0 = ai[0] + ai[1] + ai[2] + ai[3];
+		sum_a1 = ai[4] + ai[5] + ai[6] + ai[7];
+		sum_l0 = li[0] + li[1] + li[2] + li[3];
+		sum_l1 = li[4] + li[5] + li[6] + li[7];
 		if (mode == 2'd0) begin
 			if (has_above && has_left) begin
 				fill4(0, 0, (sum_a0 + sum_l0 + 4) >>> 3);
@@ -243,19 +259,17 @@ module h264_chroma8x8_pred (
 			for (y = 0; y < 8; y = y + 1)
 				for (x = 0; x < 8; x = x + 1) pred[y * 8 + x] = above[x];
 		end else begin
-			hgrad = 0;
-			vgrad = 0;
 			for (i = 0; i < 4; i = i + 1) begin
-				hgrad = hgrad + (i + 1) * (above[4 + i] - ((i == 3) ? top_left : above[2 - i]));
-				vgrad = vgrad + (i + 1) * (left[4 + i]  - ((i == 3) ? top_left : left[2 - i]));
+				hgrad = hgrad + (i + 1) * (ai[4 + i] - ((i == 3) ? tli : ai[2 - i]));
+				vgrad = vgrad + (i + 1) * (li[4 + i]  - ((i == 3) ? tli : li[2 - i]));
 			end
-			a = 16 * (above[7] + left[7]);
+			a = 16 * (ai[7] + li[7]);
 			b = (17 * hgrad + 16) >>> 5;
 			c = (17 * vgrad + 16) >>> 5;
 			for (y = 0; y < 8; y = y + 1)
 				for (x = 0; x < 8; x = x + 1) begin
 					val = (a + b * (x - 3) + c * (y - 3) + 16) >>> 5;
-					pred[y * 8 + x] = clip8(val[11:0]);
+					pred[y * 8 + x] = clip8(val);
 				end
 		end
 	end
