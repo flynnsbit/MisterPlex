@@ -93,8 +93,8 @@ chmod +x /media/fat/misterplex/bin/*
 
 ### Playback controls
 
-MiSTerPlex can publish local keyboard/controller playback commands from the core to the
-daemon. In builds that include the input-mailbox dispatcher, the controls are:
+MiSTerPlex publishes local keyboard/controller playback commands from the core to the
+daemon. The controls are:
 
 | Keyboard | Action |
 |---|---|
