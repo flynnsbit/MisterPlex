@@ -1,16 +1,28 @@
-# Decode throughput budget
+# Decode throughput budget — DESIGN TARGET, not a pipeline measurement
+
+**Critical context (#19, 2026-07-27):** There is **no decode pipeline in the
+FPGA**. `decode_stub.sv` is a telemetry probe that processes one 4×4 block
+(dequant + IDCT, `pred=128` constant, XOR into `recon_sig`). Intra prediction
+modules exist and are tested at module level but are **instantiated nowhere
+in the synthesised design**. This document describes a **cycle budget for a
+pipeline that does not yet exist** — a design target, not a description.
 
 **Instrument-integrity note (2026-07-27):** This gate tests the **checker
 logic** (`check_decode_throughput.py`), not the simulation. The test input
 is a synthetic JSON with hardcoded cycle counts. The actual Verilator sim is
 run by `test_stream_path_full_frame_compare.sh` (a separate gate). The
 `effective_fps` headline (65.9) is 98.7% diagnostic paint — it measures the
-diagnostic pixel-painting rate, not the decode rate. See "Instrument-integrity
-audit" section below.
+diagnostic pixel-painting rate of `decode_stub`, not a decode pipeline.
 
-This note is a realtime ratchet for the FPGA decode path. It deliberately
-separates measured cost from unknown future cost; unknown stages are not counted
-as free.
+**What is in the product bitstream:**
+```
+parse → extract residual → dequant + IDCT (ONE 4×4 block) → XOR into recon_sig
+```
+That is a probe, not a decoder. Everything in this document is either:
+- Measuring the probe's cycle behaviour (valid as timing of the probe)
+- Budgeting for a future pipeline (valid as a design target)
+
+Neither should be confused with measuring a decoder's throughput.
 
 ## Clock provenance (traced and verified 2026-07-27)
 
@@ -86,25 +98,25 @@ Additional raw integration signal:
 
 ## Stage coverage (per-stage cycle accounting, 2026-07-27)
 
-**Instrument-integrity note (#17):** these are TIMING measurements — they
-report how many clock cycles each stage takes. They do NOT verify
-CORRECTNESS. The RTL has been verified on 16 of 76,800 luma pixels (0.021%)
-and 0 of 38,400 chroma pixels (0%). A module that runs in 0 cycles but
-produces wrong output will show 0 cycles/MB here. See #17 in PHASE_BACKLOG.
+**#19 context: these measurements are of `decode_stub`, a telemetry probe.**
+`decode_stub.sv` processes ONE 4×4 block (dequant + IDCT, pred=128 constant),
+then paints W×H diagnostic pixels at 1 px/cycle. There is no intra prediction,
+no chroma reconstruction, no multi-MB pipeline. The "per-stage" measurements
+below are timing of the probe, not of a decode pipeline.
 
 The aggregate 259 cycles/MB was **98.7% decode_stub diagnostic paint overhead**.
 Per-stage instrumentation (via `stub_busy`/`fs_wr_reset`/`fs_swap` phase
-transitions in the Verilator testbench) reveals the true breakdown:
+transitions in the Verilator testbench) reveals the breakdown of the **probe**:
 
 | Stage | cycles/MB | Status | Method |
 | --- | ---:| --- | --- |
-| parse_cavlc | 3.2 | **measured (TIMING)** | stub_busy rise → fs_wr_reset transition |
-| dequant_idct | 0 | **measured (TIMING)** | combinational (h264_dequant4x4 + h264_idct4x4) |
-| intra_pred | 0 | **measured (TIMING)** | combinational (DC pred=128 in h264_recon4x4) |
+| parse_cavlc | 3.2 | **measured [RTL probe]** | stub_busy rise → fs_wr_reset transition |
+| dequant_idct | 0 | **measured [RTL probe]** | combinational (one 4×4 block only) |
+| intra_pred | 0 | **N/A — not instantiated** | `decode_stub:151` uses `pred=128` constant |
 | diagnostic_paint | 256 | measured, **NOT PRODUCTION** | fs_wr_reset → fs_swap; WxH pixels at 1 px/cycle |
-| mc_interpolation | **?** | **NOT IMPLEMENTED** | h264_inter_pred.sv is diagnostic-only |
-| deblock | **?** | **NOT IMPLEMENTED** | h264_deblock.sv exists but not in pipeline |
-| ddr_write | **?** | **NOT IMPLEMENTED** | ddr_frame_store not instrumented |
+| mc_interpolation | **?** | **NOT INSTANTIATED** | modules exist, not in synthesised design |
+| deblock | **?** | **NOT INSTANTIATED** | modules exist, not in synthesised design |
+| ddr_write | **?** | **NOT INSTANTIATED** | ddr_frame_store writes diagnostic pixels only |
 | injection_overhead | 10 | measured, **TESTBENCH ARTIFACT** | ioctl 2 cycles/byte; product uses DDR DMA |
 
 **What "MARGINAL 2.64x" actually measured:** the ratio of the realtime budget
@@ -154,16 +166,19 @@ losses. Raw bandwidth should be enough, but this is not a pass: the bitstream
 reader, DPB, and frame store contend for the same `DDRAM_*` path, and the live
 PLXF-missing fault means arbitration/liveness remains a first-class risk.
 
-## Per-stage budget allocation (revised 2026-07-27, v3)
+## Per-stage budget allocation — DESIGN TARGET (revised 2026-07-27, v3)
 
-**Owner: w-c1. Every line is labelled MEASURED, ESTIMATED, EXTRAPOLATED, or ALLOWANCE.**
+**Owner: w-c1. This is a DESIGN TARGET for a pipeline that does not yet exist.**
+Every line is labelled MEASURED, ESTIMATED, EXTRAPOLATED, or ALLOWANCE. None of
+the stages below (except parse) are instantiated in the synthesised design (#19).
 
 **⚠ CLOCK CONSTRAINT STATUS:** The 684 cycles/MB budget assumes `clk_sys` =
-20 MHz. w-arch's architecture study (`ab073d7`) and w-c1's independent trace
-(`547d5e4`) both confirm **20 MHz is the Template_MiSTer default that was never
-chosen.** Decode can be clock-separated from video via a 4th PLL output. At
-40 MHz the budget becomes 1,368 cycles/MB and all architectural optimisations
-become optional. **The ratchet retains 20 MHz until the PLL is actually changed.**
+20 MHz. The fabric frequency limit is **UNMEASURED** (the only Fmax figure was
+from `decode_stub` dead code). 20 MHz is the Template_MiSTer default that was
+never chosen. Decode can be clock-separated from video via a 4th PLL output, but
+reaching 45 MHz (the only safe CDC candidate) requires ~17.6 ns of critical-path
+reduction from the production pipeline — which does not exist yet to measure.
+**The ratchet retains 20 MHz until a production-pipeline fit reports otherwise.**
 
 Total budget: **684 cycles/MB** at 20 MHz / 25 fps / 1170 MB per frame.
 
@@ -400,49 +415,49 @@ Do not budget against any higher clock until a production-module fit reports it.
 
 ## Verdict
 
-**FEASIBLE at 20 MHz. Budget is 558/684 = 1.23×. Design to 684, not higher.**
+**THIS IS A DESIGN TARGET. There is no decode pipeline to measure (#19).**
 
-Budget total: **558 cycles/MB**, margin **126 cycles (1.23×)** at the
-verified 20 MHz decode clock. MC breaking point: **376 cycles/MB** — MC
-can overrun its 250 estimate by 50% and still fit.
+Budget total: **558 cycles/MB**, margin **126 cycles (1.23×)** at 20 MHz.
+MC breaking point: **376 cycles/MB**. These numbers are design constraints
+for a pipeline that w-rel is building — they are not measured throughput
+of an existing decoder.
 
 The budget has three provenance tiers:
 - **EXTRAPOLATED from measurement:** deblock (100, from w-deblock sim at `feat/deblock`)
 - **ESTIMATED for unbuilt modules:** MC (250), DDR write (50), parse_full (50), dequant (48)
 - **ALLOWANCE:** intra_pred (30), control (30)
 
-58% of the total (MC + deblock + DDR write = 400 cycles) is for unbuilt
-modules. **At 1.23× margin with 58% ESTIMATED, feasibility is tight but
-workable — not comfortable.**
-
-The 20 MHz clock is a template default that nobody chose, and the fabric
-Fmax is **UNMEASURED** (the 25.09 MHz figure was `decode_stub` dead code,
-not the production decoder). A clock increase to 45 MHz (the only safe
-cross-domain candidate) may be achievable but requires a production-module
-fit to determine. **Do not design against it.**
+**100% of the budget is for modules not instantiated in the synthesised design.**
+Parse (3.2 cycles/MB measured) is the only stage in the probe, and it accounts
+for 0.6% of the budget. The remaining 99.4% is design target.
 
 **Consequence for MC:** adjacent-MB overlap exploitation is **recommended**
 at 20 MHz. Without it, MC must stay under 376 cycles/MB. With it (~180
-cycles/MB estimated), margin improves to 1.49×. This is not mandatory but
-it is the difference between a tight budget and a comfortable one.
+cycles/MB estimated), margin improves to 1.49×.
 
-**Do not report "comfortable" at 20 MHz.** 1.23× margin on a budget whose
-majority is estimates is workable, not comfortable. The clock may eventually
-provide real headroom, but **it has not been measured and must not be
-assumed.**
+**Do not report this budget as "measured throughput."** It is a feasibility
+analysis based on module-level measurements and engineering estimates. The
+first real throughput measurement will come when the integration datapath
+exists and the full-frame sim exercises it.
 
-## Critical path status (2026-07-27, CORRECTED ×2)
+## Critical path status (2026-07-27, CORRECTED ×3)
 
-**The 39.86 ns / 25.09 MHz figure was `decode_stub` dead code.** All 10 worst
-`clk_sys` intra-domain paths run through `decode_stub|lat_qp[4]` →
+**The 39.86 ns / 25.09 MHz Fmax IS `decode_stub` — and `decode_stub` IS the
+decode path (#19).** There is nothing behind it. All 10 worst `clk_sys`
+intra-domain paths run through `decode_stub|lat_qp[4]` →
 `decode_stub|recon_dbg[5]` (22 logic levels, routing variants only).
-`decode_stub` is a simulation/diagnostic shim that the production decoder
-replaces. When it goes, the path goes with it.
 
-**The production decode fabric's frequency limit has never been measured.**
-It requires a fit containing the real decode modules. Until then:
-- Do not cite 25.09 MHz as the fabric Fmax — it was dead code
-- Do not cite w-arch's 12.3 ns estimate — it excluded routing delay
+Previous corrections treated decode_stub as "contamination" or "dead code" in
+the measurement. **It is not dead code — it is the only decode logic in the
+synthesised design.** The 25.09 MHz figure IS the fabric Fmax of the current
+product build. What it is NOT is the Fmax of a future production pipeline,
+because that pipeline does not exist to measure.
+
+**When the integration datapath replaces `decode_stub`:**
+- The 39.86 ns path disappears (it was internal to the probe)
+- A new critical path emerges from the real pipeline
+- That path's delay determines whether 45 MHz is achievable
+- Until then: design to 20 MHz / 684 cycles/MB
 - Design to 684 cycles/MB (20 MHz). "Unknown limit" is not "high limit"
 
 **The `clk_ddr` violation IS real and in the product path:**
