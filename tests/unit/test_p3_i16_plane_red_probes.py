@@ -25,23 +25,23 @@ VERILATOR = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
 MUTATIONS = {
     "wrong_shift_b": {
         "desc": "b = (5*H+32) >>> 5 instead of >>> 6",
-        "find": "(5 * hgrad + 32) >>> 6",
-        "replace": "(5 * hgrad + 32) >>> 5",
+        "find": "(5 * hgrad_c + 32) >>> 6",
+        "replace": "(5 * hgrad_c + 32) >>> 5",
     },
     "wrong_shift_c": {
         "desc": "c = (5*V+32) >>> 5 instead of >>> 6",
-        "find": "(5 * vgrad + 32) >>> 6",
-        "replace": "(5 * vgrad + 32) >>> 5",
+        "find": "(5 * vgrad_c + 32) >>> 6",
+        "replace": "(5 * vgrad_c + 32) >>> 5",
     },
     "missing_clip": {
-        "desc": "pred = val without clip8",
-        "find": "pred[y * 16 + x] = clip8(val);",
-        "replace": "pred[y * 16 + x] = val[7:0];",
+        "desc": "pred = val without clip8 in pixel evaluation",
+        "find": "pred[y * 16 + x] <= clip8(val);",
+        "replace": "pred[y * 16 + x] <= val[7:0];",
     },
     "swapped_hv": {
         "desc": "b uses vgrad, c uses hgrad (swapped)",
-        "find": "b = (5 * hgrad + 32) >>> 6;\n\t\t\t\tc = (5 * vgrad + 32) >>> 6;",
-        "replace": "b = (5 * vgrad + 32) >>> 6;\n\t\t\t\tc = (5 * hgrad + 32) >>> 6;",
+        "find": "b_c = (5 * hgrad_c + 32) >>> 6;\n\t\tc_c = (5 * vgrad_c + 32) >>> 6;",
+        "replace": "b_c = (5 * vgrad_c + 32) >>> 6;\n\t\tc_c = (5 * hgrad_c + 32) >>> 6;",
     },
 }
 

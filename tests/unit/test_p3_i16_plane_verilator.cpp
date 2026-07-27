@@ -105,6 +105,26 @@ static ChromaPlaneRef spec_chroma_plane(
 static int g_failures = 0;
 static int g_tests = 0;
 
+static void tick(Vp3_i16_plane_tb& dut) {
+    dut.clk = 0;
+    dut.eval();
+    dut.clk = 1;
+    dut.eval();
+}
+
+// Run prediction and wait for valid — returns cycle count
+static int run_pred(Vp3_i16_plane_tb& dut) {
+    dut.start = 1;
+    tick(dut);
+    dut.start = 0;
+    int cycles = 1;
+    while (!dut.valid && cycles < 10) {
+        tick(dut);
+        ++cycles;
+    }
+    return cycles;
+}
+
 struct TestCase {
     std::string name;
     uint8_t above[16];
@@ -124,10 +144,16 @@ static void run_plane_test(Vp3_i16_plane_tb& dut, const TestCase& tc) {
     dut.mode = 3;  // Plane
     dut.has_above = tc.has_above;
     dut.has_left = tc.has_left;
-    dut.eval();
+    int cycles = run_pred(dut);
 
     if (dut.unsupported) {
         std::cerr << "FAIL " << tc.name << ": RTL reports unsupported for Plane mode\n";
+        ++g_failures;
+        return;
+    }
+
+    if (!dut.valid) {
+        std::cerr << "FAIL " << tc.name << ": valid never asserted after " << cycles << " cycles\n";
         ++g_failures;
         return;
     }
@@ -177,8 +203,9 @@ static void run_mode012_regression(Vp3_i16_plane_tb& dut) {
         dut.mode = 0;
         dut.has_above = 1;
         dut.has_left = 1;
-        dut.eval();
+        run_pred(dut);
         if (dut.unsupported) { std::cerr << "FAIL mode0 regression: unsupported\n"; ++g_failures; return; }
+        if (!dut.valid) { std::cerr << "FAIL mode0 regression: no valid\n"; ++g_failures; return; }
         for (int y = 0; y < 16; ++y)
             for (int x = 0; x < 16; ++x)
                 if (dut.pred[y * 16 + x] != above[x]) {
@@ -197,8 +224,9 @@ static void run_mode012_regression(Vp3_i16_plane_tb& dut) {
         dut.mode = 1;
         dut.has_above = 1;
         dut.has_left = 1;
-        dut.eval();
+        run_pred(dut);
         if (dut.unsupported) { std::cerr << "FAIL mode1 regression: unsupported\n"; ++g_failures; return; }
+        if (!dut.valid) { std::cerr << "FAIL mode1 regression: no valid\n"; ++g_failures; return; }
         for (int y = 0; y < 16; ++y)
             for (int x = 0; x < 16; ++x)
                 if (dut.pred[y * 16 + x] != left[y]) {
@@ -217,8 +245,9 @@ static void run_mode012_regression(Vp3_i16_plane_tb& dut) {
         dut.mode = 2;
         dut.has_above = 1;
         dut.has_left = 1;
-        dut.eval();
+        run_pred(dut);
         if (dut.unsupported) { std::cerr << "FAIL mode2 regression: unsupported\n"; ++g_failures; return; }
+        if (!dut.valid) { std::cerr << "FAIL mode2 regression: no valid\n"; ++g_failures; return; }
         int expected_dc = (100 * 16 + 200 * 16 + 16) >> 5;  // = (1600+3200+16)/32 = 150
         for (int i = 0; i < 256; ++i)
             if (dut.pred[i] != expected_dc) {

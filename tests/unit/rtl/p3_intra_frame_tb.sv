@@ -1,4 +1,6 @@
 module p3_intra_frame_tb (
+	input  wire        clk,
+
 	input  wire [3:0] i4_mode,
 	input  wire [7:0] i4_above [0:7],
 	input  wire [7:0] i4_left [0:3],
@@ -10,6 +12,7 @@ module p3_intra_frame_tb (
 	output wire [7:0] i4_pred [0:15],
 	output wire [7:0] i4_recon [0:15],
 
+	input  wire        i16_start,
 	input  wire [1:0] i16_mode,
 	input  wire [7:0] i16_above [0:15],
 	input  wire [7:0] i16_left [0:15],
@@ -17,6 +20,7 @@ module p3_intra_frame_tb (
 	input  wire       i16_has_above,
 	input  wire       i16_has_left,
 	output wire       i16_unsupported,
+	output wire       i16_valid,
 	output wire [7:0] i16_pred [0:255],
 
 	input  wire [1:0] chroma_mode,
@@ -65,6 +69,8 @@ module p3_intra_frame_tb (
 	);
 
 	h264_intra16x16_pred pred16 (
+		.clk(clk),
+		.start(i16_start),
 		.mode(i16_mode),
 		.above(i16_above),
 		.left(i16_left),
@@ -72,6 +78,7 @@ module p3_intra_frame_tb (
 		.has_above(i16_has_above),
 		.has_left(i16_has_left),
 		.unsupported(i16_unsupported),
+		.valid(i16_valid),
 		.pred(i16_pred)
 	);
 

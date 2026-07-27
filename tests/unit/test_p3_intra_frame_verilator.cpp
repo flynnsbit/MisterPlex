@@ -388,6 +388,26 @@ bool runFallbackProbe(Vp3_intra_frame_tb& dut) {
     return ok;
 }
 
+void tickFrame(Vp3_intra_frame_tb& dut) {
+    dut.clk = 0;
+    dut.eval();
+    dut.clk = 1;
+    dut.eval();
+}
+
+// Run I16 prediction pipeline until valid
+int runI16Pred(Vp3_intra_frame_tb& dut) {
+    dut.i16_start = 1;
+    tickFrame(dut);
+    dut.i16_start = 0;
+    int cycles = 1;
+    while (!dut.i16_valid && cycles < 10) {
+        tickFrame(dut);
+        ++cycles;
+    }
+    return cycles;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -523,7 +543,7 @@ int main(int argc, char** argv) {
                 dut.i16_left[t] = (mbx > 0) ? yAt(rtlY, width, height, baseX - 1, baseY + t) : 128;
             }
             dut.i16_top_left = (mby > 0 && mbx > 0) ? yAt(rtlY, width, height, baseX - 1, baseY - 1) : 128;
-            dut.eval();
+            runI16Pred(dut);
             if (dut.i16_unsupported) {
                 std::cerr << "unexpected I16 unsupported at mb " << mb << " mode " << predMode << "\n";
                 ++failures;
