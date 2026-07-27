@@ -399,6 +399,12 @@ void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
         std::cerr << "FAIL deblock mb_golden: wrong or missing format marker\n";
         std::exit(1);
     }
+    if (json.find("\"first_recon_signature8_hex\": \"0x3b\"") == std::string::npos ||
+        json.find("\"first_pred_only_signature8_hex\": \"0x00\"") == std::string::npos ||
+        json.find("\"first_one_cycle_delayed_signature8_hex\": \"0x00\"") == std::string::npos) {
+        std::cerr << "FAIL deblock mb_golden: latency signatures must be true=0x3b pred-only=0x00 delayed=0x00\n";
+        std::exit(1);
+    }
     const std::size_t mbPos = json.find("\"macroblock\"");
     const int qp = parseIntAfter(json, "qp", mbPos == std::string::npos ? 0 : mbPos);
     const std::size_t samplesPos = json.find("\"samples\"");
@@ -432,7 +438,7 @@ void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
             }
         }
     }
-    std::cout << "OK deblock mb_golden.v1 MB0 intra-edge pass qp=" << qp
+    std::cout << "OK deblock mb_golden.v1 MB0 latency-reject true=0x3b pred-only=0x00 delayed=0x00 intra-edge pass qp=" << qp
               << " fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
