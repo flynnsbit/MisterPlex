@@ -281,4 +281,29 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
     return true;
 }
 
+// Maximum coded width the RTL frame store can present (ddr_frame_store.sv FRAME_W).
+constexpr int kDdrFrameStoreMaxWidth = 640;
+constexpr int kDdrFrameStoreMaxHeight = 480;
+
+// Check whether a decoded frame resolution is acceptable for the DDR frame store.
+// Requirements:
+//   1. MB-aligned (width and height are multiples of 16)
+//   2. Width <= RTL FRAME_W (640) and Height <= RTL FRAME_H (480)
+//   3. YUV420p payload fits within bank stride (currently 512 KiB)
+// This replaces the old hardcoded equality check against 624x480 and accepts
+// any valid resolution the frame store can handle, including 640x480 streams.
+inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
+    if (codedWidth <= 0 || codedHeight <= 0)
+        return false;
+    if ((codedWidth & 15) != 0 || (codedHeight & 15) != 0)
+        return false; // not MB-aligned
+    if (codedWidth > kDdrFrameStoreMaxWidth || codedHeight > kDdrFrameStoreMaxHeight)
+        return false;
+    const size_t frameBytes = yuv420pFrameBytes(codedWidth, codedHeight);
+    if (frameBytes == 0)
+        return false;
+    const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
+    return bankStride <= kPlex480pYuv420pBankStride;
+}
+
 } // namespace misterplex

@@ -1363,6 +1363,26 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
         int plxdIters = 0;
         if (readBankRelease(brs)) {
+            // One-shot provenance diagnostic on first PLXD contact.
+            if (!plxdLivenessProven_ && plxdStaleCount_ == 0 &&
+                plxdLastFramesDone_ == 0) {
+                auto diag = diagnosePlxdProvenance();
+                const char* label = "?";
+                switch (diag.provenance) {
+                case PlxdProvenance::Absent:    label = "ABSENT"; break;
+                case PlxdProvenance::Residue:   label = "RESIDUE(reserved!=0)"; break;
+                case PlxdProvenance::InitOnly:  label = "INIT_ONLY(frames_done=0)"; break;
+                case PlxdProvenance::Alive:     label = "ALIVE(frames_done>0,static)"; break;
+                case PlxdProvenance::LiveAdvance: label = "LIVE_ADVANCE"; break;
+                }
+                fprintf(stderr,
+                        "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
+                        "frames_done=%u free_mask=%u disp=%u swap=%d reserved=0x%03x\n",
+                        label, diag.raw_hi, diag.raw_lo,
+                        diag.frames_done, diag.free_bank_mask,
+                        diag.disp_bank, diag.swap_pending, diag.reserved_bits);
+            }
+
             // --- Degeneracy defence (instrument-integrity #18) ---
             // A DDR word that happens to contain PLXD magic by coincidence
             // (boot residue) would pass the magic check and return valid-
@@ -1609,6 +1629,99 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
     }
     setErr("readFrameStoreStatus: PLXF mailbox not valid/stable");
     return false;
+}
+
+bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    setErr("readBankRelease: PLXD mailbox absent or unstable");
+    return false;
+}
+
+FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
+    PlxdDiag d{};
+    if ((!ok() && !open()) || !ensureDdrMap())
+        return d; // Absent
+    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base)
+        return d;
+    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_)
+        return d;
+
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    __sync_synchronize();
+    d.raw_lo = mw[0];
+    d.raw_hi = mw[1];
+    __sync_synchronize();
+
+    // Check magic
+    if (d.raw_lo != mailbox_abi::kPlxdMagic) {
+        d.provenance = PlxdProvenance::Absent;
+        return d;
+    }
+
+    // Decode fields from raw_hi per PLXD layout:
+    // [33:32] = raw_hi[1:0] = free_bank_mask
+    // [34]    = raw_hi[2]   = disp_bank
+    // [35]    = raw_hi[3]   = swap_pending
+    // [47:36] = raw_hi[15:4]= reserved (should be 0)
+    // [63:48] = raw_hi[31:16]= frames_done
+    d.free_bank_mask = d.raw_hi & 0x03;
+    d.disp_bank = (d.raw_hi >> 2) & 0x01;
+    d.swap_pending = ((d.raw_hi >> 3) & 0x01) != 0;
+    d.reserved_bits = (d.raw_hi >> 4) & 0x0FFF;
+    d.frames_done = static_cast<uint16_t>(d.raw_hi >> 16);
+
+    // Reserved bits should be zero if RTL wrote this. Non-zero = suspect residue.
+    if (d.reserved_bits != 0) {
+        d.provenance = PlxdProvenance::Residue;
+        return d;
+    }
+
+    // Valid magic, clean reserved bits. Check frames_done.
+    if (d.frames_done == 0) {
+        d.provenance = PlxdProvenance::InitOnly;
+        return d;
+    }
+
+    // frames_done > 0 — at least one bank swap occurred. Now check liveness
+    // by reading again after a short delay to see if it advances.
+    usleep(5000); // 5 ms — one vsync at 60 Hz is ~16.7 ms
+    __sync_synchronize();
+    const uint32_t hi2 = mw[1];
+    __sync_synchronize();
+    const uint16_t frames_done2 = static_cast<uint16_t>(hi2 >> 16);
+
+    if (frames_done2 != d.frames_done) {
+        d.provenance = PlxdProvenance::LiveAdvance;
+    } else {
+        d.provenance = PlxdProvenance::Alive;
+    }
+    return d;
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,

@@ -1358,8 +1358,14 @@ void MediaPlayer::streamPump(int sfd) {
             // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-                if (rec.width == g.coded_width && rec.height == g.coded_height) {
+                // Accept any MB-aligned resolution within the frame store's capacity.
+                // This replaces the old hardcoded 624x480 gate that rejected 640x480
+                // STREAM-mode frames even though the RTL FRAME_W=640 accepts them.
+                if (ddrFrameStoreAcceptsResolution(rec.width, rec.height)) {
+                    const DdrFrameGeometry g = makeDdrFrameGeometry(
+                        rec.width, rec.height, rec.width, rec.height,
+                        kPlex480pPresentedWidth, kPlex480pPresentedHeight,
+                        DdrFramePlacement::Pillarbox);
                     ensureYuv420p();
                     clearYuv420pCropPadding(yuv420p.data(), g);
                     DdrPublishFrame frame{yuv420p.data(), yuv420p.size(), g,
@@ -1372,20 +1378,21 @@ void MediaPlayer::streamPump(int sfd) {
                             (ddrErr.empty() ? fpga_.lastError() : ddrErr));
                     } else if ((reconOk % 30) == 0) {
                         log("media: recon F1 via YUV420 DDR " +
-                            std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                            std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                            " " + std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
                     }
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
-                    log("ERROR media: recon F1 REFUSED: frame-store requires coded " +
-                        std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height) +
+                    log("ERROR media: recon F1 REFUSED: frame-store requires MB-aligned "
+                        "resolution <= " + std::to_string(kDdrFrameStoreMaxWidth) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight) +
                         ", got " + std::to_string(rec.width) + "x" + std::to_string(rec.height) +
-                        " — ALL subsequent recon frames will be SKIPPED until geometry matches. "
-                        "This produces no video on the FPGA output (indistinguishable from frozen screen).");
+                        " — ALL subsequent recon frames will be SKIPPED. "
+                        "This produces no video on the FPGA output.");
                 } else if ((reconFrames_.load() % 300) == 0) {
-                    // Re-log periodically so a geometry mismatch cannot hide as a stall.
-                    log("media: recon F1 still skipping: coded " +
-                        std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height) +
-                        " != " + std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    log("media: recon F1 still skipping: " +
+                        std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                        " exceeds frame-store capacity");
                 }
             }
             if (ok)
