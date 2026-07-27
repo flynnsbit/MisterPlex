@@ -40,6 +40,12 @@ uint8_t expectedRgb(uint8_t y) {
     return y;
 }
 
+struct Rgb {
+    uint8_t r = 0;
+    uint8_t g = 0;
+    uint8_t b = 0;
+};
+
 class Sim {
 public:
     Vddr_frame_store_warm_reset_tb top{};
@@ -236,6 +242,21 @@ public:
         return top.rd_r;
     }
 
+    Rgb sampleRgb(int x, int y) {
+        const int saveX = scanX;
+        const int saveY = scanY;
+        top.rd_x = x;
+        top.rd_y = y;
+        top.rd_active = 1;
+        for (int i = 0; i < 18; ++i)
+            tick();
+        top.rd_active = 0;
+        tick();
+        scanX = saveX;
+        scanY = saveY;
+        return {top.rd_r, top.rd_g, top.rd_b};
+    }
+
     bool schedulerProven() const { return sawSchedValid && sawScheduledLineRead; }
 };
 
@@ -243,6 +264,12 @@ uint8_t stableSample(Sim& sim) {
     for (int i = 0; i < 1000; ++i)
         sim.tick();
     return sim.sample(0, 0);
+}
+
+Rgb stableSampleRgb(Sim& sim) {
+    for (int i = 0; i < 1000; ++i)
+        sim.tick();
+    return sim.sampleRgb(0, 0);
 }
 
 void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
@@ -268,6 +295,42 @@ bool runFreshNoStale() {
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
     expectFreshSample("first fresh no-stale", sim, 208);
+    return sim.schedulerProven();
+}
+
+bool runChromaPlaneReadMapping() {
+    Sim sim;
+    sim.fillFrame(0, 128, 255, 0);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+    sim.ringDoorbell(0, 11);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("chroma U/V read mapping: frame did not present");
+
+    const Rgb got = stableSampleRgb(sim);
+    if (!(got.r <= 8 && got.b >= 248 && got.g >= 160 && got.g <= 190)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: U/V read mapping got rgb="
+                  << int(got.r) << "/" << int(got.g) << "/" << int(got.b)
+                  << " want blue-dominant from Y=128 U=255 V=0"
+                  << " u_base_qwords=" << kUQBase << " v_base_qwords=" << kVQBase
+                  << " y_stride_qwords=" << kYQ << " c_stride_qwords=" << kCQ
+                  << " frames=" << sim.top.frames_done
+                  << " underruns=" << sim.top.underrun_count << "\n";
+        std::exit(1);
+    }
+
+    std::cout << "ddr_frame_store chroma raw: U_base_qwords=" << kUQBase
+              << " V_base_qwords=" << kVQBase
+              << " U_base_bytes=" << (kUQBase * 8)
+              << " V_base_bytes=" << (kVQBase * 8)
+              << " Y_stride_qwords=" << kYQ
+              << " C_stride_qwords=" << kCQ
+              << " Y_stride_bytes=" << (kYQ * 8)
+              << " C_stride_bytes=" << (kCQ * 8)
+              << " sample_rgb=" << int(got.r) << "/" << int(got.g) << "/" << int(got.b)
+              << " frames=" << sim.top.frames_done
+              << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -413,6 +476,7 @@ bool runEqualTokenFallback() {
 void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runFreshNoStale();
+    schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
     schedulerSeen |= runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
     schedulerSeen |= runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");

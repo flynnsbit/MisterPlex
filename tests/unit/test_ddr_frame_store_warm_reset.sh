@@ -26,7 +26,8 @@ BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset"
 FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_fault"
 SCHED_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_sched_fault"
 FORMAT_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_format_fault"
-mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD"
+UV_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_uv_fault"
+mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$UV_FAULT_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -86,6 +87,30 @@ if ! grep -q 'accepted non-YUV doorbell' <<<"$FORMAT_FAULT_OUT"; then
   exit 1
 fi
 echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$UV_FAULT_BUILD" \
+  --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_SWAP_UV_READ -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  -CFLAGS "-std=c++17 -O2" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
+set +e
+UV_FAULT_OUT="$("$UV_FAULT_BUILD/Vddr_frame_store_warm_reset_tb" 2>&1)"
+UV_FAULT_RC=$?
+set -e
+printf '%s\n' "$UV_FAULT_OUT"
+if [[ "$UV_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL ddr_frame_store warm-reset red-check: U/V read-swap fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'U/V read mapping' <<<"$UV_FAULT_OUT"; then
+  echo "FAIL ddr_frame_store warm-reset red-check: expected U/V read mapping diagnostic" >&2
+  exit 1
+fi
+echo "OK ddr_frame_store warm-reset red-check: U/V read-swap fault failed"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$SCHED_FAULT_BUILD" \

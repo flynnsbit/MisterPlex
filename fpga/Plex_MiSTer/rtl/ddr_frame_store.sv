@@ -566,7 +566,12 @@ module ddr_frame_store #(
 	wire [28:0] y_addr = fill_bank_base + fill_y_qword + fill_qword_y;
 	wire [28:0] u_addr = fill_bank_base + U_PLANE_BASE + fill_cy_qword + fill_qword_c;
 	wire [28:0] v_addr = fill_bank_base + V_PLANE_BASE + fill_cy_qword + fill_qword_c;
-	wire [28:0] line_addr = fill_is_chroma ? (fill_plane_v ? v_addr : u_addr) : y_addr;
+`ifdef DDR_FRAME_STORE_FAULT_SWAP_UV_READ
+	wire [28:0] chroma_addr = fill_plane_v ? u_addr : v_addr;
+`else
+	wire [28:0] chroma_addr = fill_plane_v ? v_addr : u_addr;
+`endif
+	wire [28:0] line_addr = fill_is_chroma ? chroma_addr : y_addr;
 	wire [Y_QW_AW:0] burst_cap = (qwords_remaining > DDR_BURST_MAX_QWORDS) ? DDR_BURST_MAX_QWORDS : qwords_remaining;
 	wire [7:0] burst_this = burst_cap[7:0];
 	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
