@@ -110,7 +110,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
-	localparam [31:0] MAGIC_A = 32'h504C_5841; // PLXA bank-release ACK
+	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -763,7 +763,7 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
-			// PLXA bank-release: vsync toggle sync and heartbeat
+			// PLXD bank-release: vsync toggle sync and heartbeat
 			vsync_t_d1 <= vsync_toggle;
 			vsync_t_d2 <= vsync_t_d1;
 			if (vsync_t_d2 != vsync_t_seen) begin
@@ -823,13 +823,18 @@ module ddr_frame_store #(
 						state_ddr <= S_WRITE_WAIT;
 					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						// PLXA bank-release ACK: tell ARM which bank is safe to write
+						// PLXD bank-release: tell ARM which bank is safe to write
+						// Layout: [63:48] frames_done, [35] swap_pending,
+						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {bank_vsync_count,
-						              {7'd0, disp_bank_d2},
-						              {!swap_pending_d2, 6'd0, ~disp_bank_d2},
-						              MAGIC_A};
+						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+						              12'd0,                                // [47:36] reserved
+						              swap_pending_d2,                      // [35]
+						              disp_bank_d2,                         // [34]
+						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
+						                (disp_bank_d2 ? 2'b01 : 2'b10),
+						              MAGIC_D};                             // [31:0]
 						DDRAM_WE <= 1'b1;
 						bank_mbox_seq <= bank_mbox_seq + 8'd1;
 						bank_mbox_valid <= 1'b1;
