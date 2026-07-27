@@ -160,6 +160,7 @@ def derive(compare: dict, ratchet: dict) -> dict:
             "cycles_total": cycles_total,
             "cycles_per_frame": cycles_per_frame,
             "cycles_per_mb": cycles_per_mb,
+            "effective_fps": clock_hz / cycles_per_frame if cycles_per_frame > 0 else 0.0,
         },
         "budget": {
             "cycles_per_frame": budget_cycles_per_frame,
@@ -199,6 +200,11 @@ def check_report(report: dict) -> list[str]:
             f"measured frame cost {measured['cycles_per_frame']:.3f} exceeds realtime budget "
             f"{budget['cycles_per_frame']:.3f}"
         )
+    min_fps = thresholds.get("min_effective_fps")
+    if min_fps is not None and measured["effective_fps"] < float(min_fps):
+        failures.append(
+            f"effective_fps {measured['effective_fps']:.3f} < ratchet {float(min_fps):.3f}"
+        )
     # Per-stage ratchet checks
     stage_thresholds = thresholds.get("stages", {})
     for stage in report["stage_coverage"]:
@@ -228,6 +234,7 @@ def print_raw(report: dict) -> None:
         f"frames={g['frames']} mbs_per_frame={g['mbs_per_frame']} "
         f"cycles_total={m['cycles_total']} cycles_per_frame={m['cycles_per_frame']:.3f} "
         f"cycles_per_mb={m['cycles_per_mb']:.3f} "
+        f"effective_fps={m['effective_fps']:.3f} "
         f"budget_cycles_per_frame={b['cycles_per_frame']:.3f} "
         f"budget_cycles_per_mb={b['cycles_per_mb']:.3f} "
         f"margin_ratio={b['margin_ratio']:.3f}"
@@ -317,6 +324,7 @@ def main() -> int:
             f"cycles_per_mb={report['measured']['cycles_per_mb']:.3f} "
             f"budget={report['budget']['cycles_per_mb']:.3f} "
             f"margin={report['budget']['margin_ratio']:.3f}x "
+            f"effective_fps={report['measured']['effective_fps']:.3f} "
             f"UNBUDGETED_STAGES={','.join(unimplemented)}"
         )
         # Exit 0 — the implemented stages pass, but the verdict is
@@ -327,7 +335,8 @@ def main() -> int:
         "OK decode throughput: "
         f"cycles_per_mb={report['measured']['cycles_per_mb']:.3f} "
         f"budget={report['budget']['cycles_per_mb']:.3f} "
-        f"margin={report['budget']['margin_ratio']:.3f}x"
+        f"margin={report['budget']['margin_ratio']:.3f}x "
+        f"effective_fps={report['measured']['effective_fps']:.3f}"
     )
     return 0
 

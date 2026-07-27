@@ -22,6 +22,7 @@
     "max_cycles_per_frame": 84049.875,
     "max_cycles_per_mb": 280.16625,
     "min_budget_margin_ratio": 8.0,
+    "min_effective_fps": 220.0,
     "stages": {
       "parse_cavlc": {
         "max_cycles_per_mb": 15.0
@@ -67,8 +68,8 @@
       "name": "deblock",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "budget_allocated": 100,
-      "note": "NOT IMPLEMENTED. Budget allocation: 100 cycles/MB."
+      "budget_allocated": 150,
+      "note": "NOT IMPLEMENTED. Budget allocation: 150 cycles/MB (revised from 100). See 624x480 ratchet for detailed reasoning."
     },
     {
       "name": "ddr_write",

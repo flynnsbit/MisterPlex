@@ -140,7 +140,7 @@ losses. Raw bandwidth should be enough, but this is not a pass: the bitstream
 reader, DPB, and frame store contend for the same `DDRAM_*` path, and the live
 PLXF-missing fault means arbitration/liveness remains a first-class risk.
 
-## Per-stage budget allocation (estimated, 2026-07-27)
+## Per-stage budget allocation (estimated, revised 2026-07-27)
 
 **Owner: w-c1. Status: ESTIMATE — no unbuilt stage is measured.**
 
@@ -155,18 +155,18 @@ write), approximately **560 cycles/MB** remain for computation.
 | dequant_idct | 48 | 24 blocks/MB at 2 cycles/block in a 2-stage pipeline. Currently combinational for single blocks; needs registered outputs for all-block throughput. |
 | intra_pred | 30 | DC is trivial but directional modes need neighbor reads. Intra_16x16 Plane requires per-pixel MAC. I_PCM bypasses 384 bytes. |
 | **mc_interpolation** | **250** | **DOMINANT COST.** 21×21 luma qpel window through 6-tap filter + DDR reference fetch (~100 beats with arbitration). Without adjacent-MB overlap exploitation: ~250. With overlap: ~150. Sub-MB partitions multiply fetch count. |
-| deblock | 100 | 16 luma edges × ~6 cycles/edge (BS→threshold→filter) + chroma. Pipeline-able if filter has 2-cycle throughput. |
+| **deblock** | **150** | **REVISED UP from 100.** 48 edge segments per MB (32 luma + 16 chroma). `h264_deblock_edge_pipe` is a 2-stage pipeline (register→filter→register), 4 samples/segment. Steady-state 1 segment/cycle → ~50 cycles for filtering alone. Scheduler SRAM overhead: each segment needs read p0-p3/q0-q3 (2 reads for 32-bit SRAM) + write-back modified samples. Single-port MB SRAM: 48 × (1 filter + 2 SRAM) ≈ 144. Vertical→horizontal data dependency forces pipeline drain between passes (+2). **Dual-port MB SRAM would drop this to ~100** — flag to w-a3. |
 | ddr_write | 50 | 48 coalesced 64-bit beats + arbitration turnaround. |
 | control_overhead | 30 | Pipeline stalls, MB-boundary bookkeeping, QP delta, slice header re-parse, arbitration bubbles. |
-| **TOTAL** | **558** | |
-| **Remaining margin** | **126** | 684 − 558 = 126 cycles/MB = **1.23× margin** |
+| **TOTAL** | **608** | |
+| **Remaining margin** | **76** | 684 − 608 = 76 cycles/MB = **1.12× margin** |
 
 ### Adjacent-MB reference overlap (key to MC feasibility)
 
 For P_L0_16x16 with similar MVs on horizontally adjacent MBs, the 21×21
 reference window overlaps by ~16 columns. A line buffer can amortise this to
 ~40 fresh DDR reads/MB instead of ~100, saving ~60 cycles. **This is the
-difference between MC being feasible and MC blowing the budget.** w-rel should
+difference between MC being feasible and MC blowing the budget.** w-mc should
 design the reference fetch with overlap exploitation from the start.
 
 ### What this excludes
@@ -175,30 +175,122 @@ design the reference fetch with overlap exploitation from the start.
 - **I_PCM** (not implemented in RTL)
 - Arbitration contention from display reads (frame_store consumer)
 - Content variation (high-motion P-frames with sub-MB partitions)
+- w-a3's m1 response async FIFO latency (added at `3c6d1d2`)
 - CABAC (not relevant — Baseline profile uses CAVLC only)
+
+## Sensitivity analysis
+
+The 1.12× margin rests on estimates for three unbuilt stages (MC 250 + deblock
+150 + DDR write 50 = 450 cycles = 74% of the 608 total). This section states
+the breaking points.
+
+### MC breaking point
+
+Non-MC stages sum to 358 cycles/MB. The budget breaks when MC exceeds:
+
+```
+684 − 358 = 326 cycles/MB    ← MC breaking point
+```
+
+The current MC estimate is 250. That is **76 cycles of headroom** — a 30%
+overrun on a module that does not exist yet.
+
+### 50% overrun on all unbuilt stages
+
+| Stage | Base | +50% |
+| --- | ---:| ---:|
+| mc_interpolation | 250 | 375 |
+| deblock | 150 | 225 |
+| ddr_write | 50 | 75 |
+| Subtotal unbuilt | 450 | 675 |
+| + built stages | 158 | 158 |
+| **Total** | **608** | **833** |
+| vs 684 budget | 1.12× OK | **1.22× OVER — FAILS** |
+
+At 50% overrun, the pipeline exceeds the budget by **149 cycles/MB** (22%).
+This would require either a clock increase or architectural parallelism.
+
+### Scenario table
+
+| Scenario | MC | Deblock | Total | Margin | Verdict |
+| --- | ---:| ---:| ---:| ---:| --- |
+| Base estimate | 250 | 150 | 608 | 1.12× | TIGHT |
+| MC with overlap exploit | 150 | 150 | 508 | 1.35× | FEASIBLE |
+| MC with overlap + dual-port deblock | 150 | 100 | 458 | 1.49× | COMFORTABLE |
+| MC no overlap, single-port deblock | 250 | 150 | 608 | 1.12× | TIGHT |
+| MC overruns 30% | 325 | 150 | 683 | 1.00× | BREAK EVEN |
+| MC overruns 50% | 375 | 150 | 733 | 0.93× | **FAILS** |
+| All unbuilt +50% | 375 | 225 | 833 | 0.82× | **FAILS BADLY** |
+| MC at 400 (complex content) | 400 | 150 | 758 | 0.90× | **FAILS** |
+
+### What would save the budget
+
+1. **Adjacent-MB overlap in MC** — saves ~100 cycles, moves from 1.12× to 1.35×
+2. **Dual-port MB SRAM for deblock** — saves ~50 cycles, moves from 1.12× to 1.20×
+3. **Both together** — 1.49× margin, which is the first scenario I would call "comfortable"
+4. **Move decode to 90 MHz `clk_ddr`** — budget becomes 3,077 cycles/MB (4.5× the current), eliminates all timing risk but requires CDC on every decode↔system interface
+
+### Honest assessment
+
+The **base estimate (1.12×) is not a comfortable number**. Three of the four
+largest stages are estimates for unbuilt FPGA modules. FPGA estimates are
+usually optimistic: synthesis constraints, routing congestion, and arbitration
+contention all add cycles that paper analysis misses.
+
+**The budget probably works IF the two architectural optimisations land** (MC
+overlap + dual-port deblock → 1.49×). Without them, a single stage overrunning
+by 30% breaks the budget.
+
+**If MC lands above 326 cycles/MB, 25 fps at 20 MHz is not achievable.** That
+is the number w-mc should treat as a hard ceiling, not 250.
+
+## End-to-end effective fps
+
+`check_decode_throughput.py` now reports **effective_fps**: the frame rate the
+simulation actually achieves, computed as `clock_hz × frames / cycles_total`.
+This is an end-to-end measurement that includes all pipeline overhead, stalls,
+contention, and stage handoff bubbles — it cannot be gamed by summing optimistic
+per-stage estimates.
+
+Current measured values (non-production — includes diagnostic paint, excludes
+MC/deblock/DDR):
+
+| Fixture | effective_fps | Target fps | Note |
+| --- | ---:| ---:| --- |
+| 624×480 12f | 65.9 | 25 | Inflated: workload is diagnostic paint, not production decode |
+| 320×240 12f | 247.6 | 25 | Lower resolution, much more headroom |
+| wcap residual14 2f | 249.9 | 25 | Same resolution as 320×240 |
+
+**These numbers are currently meaningless as production metrics** because the
+three most expensive stages are missing. When MC, deblock, and DDR write are
+implemented, effective_fps will become the definitive throughput measurement —
+it will automatically capture DDR arbitration contention, pipeline stalls, and
+any overhead that per-stage accounting misses.
+
+The ratchet enforces `min_effective_fps` as a hard floor. If a code change
+degrades throughput, it will show up here before it shows up in per-stage
+accounting.
 
 ## Verdict
 
-**TIGHT BUT FEASIBLE — conditionally.** The estimated 558 cycles/MB against the
-684 budget leaves a 1.23× margin. This is NOT comfortable:
+**TIGHT — 1.12× margin, down from 1.23× after deblock revision.** The revised
+estimate of 608 cycles/MB against the 684 budget is not comfortable:
 
-- MC interpolation alone (250 cycles) consumes 37% of the entire budget
-- Deblock (100 cycles) consumes another 15%
-- The 126-cycle margin is consumed by ONE bad assumption
+- MC (250) + deblock (150) = 400 cycles = **66% of the total allocation**
+- The MC breaking point is **326 cycles/MB** — a 30% overrun breaks the budget
+- At 50% overrun on all unbuilt stages, the pipeline exceeds the budget by 22%
+- The 76-cycle margin would be consumed by arbitration contention alone if the
+  m0/m1 DDR arbiter introduces ≥1 stall cycle per MB
 
-The budget is achievable IF:
-1. MC exploits adjacent-MB reference overlap (line buffer for shared columns)
-2. DDR coalesces to 64-bit beats (not byte-serial — byte-serial at 987 cycles/MB is 1.44× over budget before any computation)
-3. The deblock filter pipelines at ≤6 cycles/edge
-4. Parse/CAVLC for full MBs stays under 50 cycles/MB
+**The budget probably works with both architectural optimisations:**
+1. Adjacent-MB overlap in MC (250 → 150, saving 100 cycles)
+2. Dual-port MB SRAM for deblock (150 → 100, saving 50 cycles)
 
-**If ANY of these conditions fails, 25 fps at 20 MHz is not achievable** and the
-project needs an architecture conversation about moving decode stages to the
-90 MHz `clk_ddr` domain or re-deriving the PLL. That conversation is cheaper
-now than after MC is built.
+These together yield 1.49× margin — the first comfortable scenario.
 
-The honest answer to "is this feasible?": **yes, but with essentially no safety
-margin, and MC is the make-or-break stage.**
+**Without both, the honest answer is: marginal, and any single stage overrunning
+30% triggers the architecture conversation** about moving decode stages to
+`clk_ddr` (90 MHz) or re-deriving the PLL.
 
 ## Ratchet
 

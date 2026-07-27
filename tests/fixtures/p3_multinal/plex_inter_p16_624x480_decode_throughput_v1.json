@@ -44,9 +44,9 @@
         "reasoning": "THE DOMINANT COST. Quarter-pel luma needs a 9x9 reference window per 4x4 sub-block (6-tap filter: 5 extra samples). For P_L0_16x16, that is a 21x21 = 441-sample reference window. DDR reference fetch: 441 luma + 162 chroma = 603 bytes. At 8 bytes/beat with alignment overhead: ~100 DDR beats. Each beat has arbitration latency (arbiter shares with frame_store display reads). Interpolation compute: 6-tap horizontal then vertical per sample, 16 multiplies per sample position. Chroma bilinear is lighter (~20 cycles). Adjacent-MB overlap: horizontally adjacent MBs with similar MVs share ~60% of the 21-column reference window. A line buffer can amortise this to ~40 fresh reads/MB instead of 100, but requires per-row pipeline state. WITHOUT overlap exploit: ~250 cycles. WITH overlap: ~150. Allocating 250 (no-overlap case) as the safe target. Note: sub-MB partitions (8x8, 8x16, 16x8, 4x4) may have DIFFERENT MVs per partition, multiplying fetch count. P_Skip with zero MV is essentially free (copy from co-located reference)."
       },
       "deblock": {
-        "allocated": 100,
+        "allocated": 150,
         "unit": "cycles/MB",
-        "reasoning": "16 edges per MB luma (4 vertical + 4 horizontal internal, plus shared boundary edges). Each edge: read 4+4 samples, compute BS, threshold lookup, conditional 4-tap filter. At ~6 cycles/edge for the full BS→threshold→filter pipeline: 96 cycles for luma. Chroma adds ~16 edges at ~2 cycles/edge: 32 cycles. But luma and chroma edges can pipeline if the filter has 2-cycle throughput. Practical estimate: 100 cycles/MB. The existing h264_deblock_bs and h264_deblock_thresholds are combinational — the cycle cost is in the edge scheduling and sample read/write pattern."
+        "reasoning": "REVISED UPWARD from 100 after RTL analysis. h264_deblock_edge_pipe is a 2-stage pipeline processing 4 samples/segment. Per-MB edge count: 32 luma segments (4 vert boundaries × 4 + 4 horiz × 4) + 16 chroma segments (2 boundaries × 2 × 2 planes × 2 directions) = 48 total. Filter pipeline at 1 segment/cycle steady-state: ~50 cycles for filtering alone. But the scheduler must also: (a) generate addresses to read p0-p3/q0-q3 from MB SRAM buffer — 2 reads per segment for 32-bit SRAM; (b) write back modified samples; (c) handle vertical→horizontal data dependency (horizontal pass reads modified vertical results, forcing pipeline drain between passes); (d) load/store boundary neighbor data for left/top MBs. With single-port MB SRAM: 48 × (1 filter + 2 SRAM) ≈ 144. Dual-port can overlap: 48 × 2 ≈ 96. Allocating 150 to cover single-port case + boundary neighbor management. Flag to w-a3: dual-port MB SRAM drops this to ~100."
       },
       "ddr_write": {
         "allocated": 50,
@@ -59,16 +59,17 @@
         "reasoning": "Pipeline stalls, MB-boundary bookkeeping (slice header re-parse at slice boundaries, QP delta application, CBP decode, macroblock address increment). Also includes arbitration pipeline bubbles between DDR requesters."
       }
     },
-    "sum_allocated": 558,
-    "remaining_margin": 126,
-    "margin_ratio": 1.23,
-    "verdict": "TIGHT BUT FEASIBLE if MC exploits adjacent-MB reference overlap and DDR coalesces to 64-bit beats. Without overlap exploitation, the 250 cycle MC estimate plus 100 cycle deblock leaves only 126 cycles margin for content variation and arbitration contention. Worst-case content (complex MBs, sub-MB partitions, high QP with strong deblocking) could exceed this. The margin is NOT comfortable."
+    "sum_allocated": 608,
+    "remaining_margin": 76,
+    "margin_ratio": 1.12,
+    "verdict": "TIGHT — reduced from 1.23x to 1.12x after deblock revision from 100 to 150 cycles/MB. MC (250) + deblock (150) = 400 cycles = 66% of total 608. Adjacent-MB reference overlap in MC is mandatory. Dual-port MB SRAM for deblock would recover ~50 cycles. Budget BREAKS if MC exceeds 326 cycles/MB (non-MC stages sum to 358). At 50% overrun on all unbuilt stages (MC=375, deblock=225, DDR=75), total=733 which EXCEEDS the 684 budget by 7%. This is a schedule risk."
   },
   "thresholds": {
     "max_cycles_total": 3823946,
     "max_cycles_per_frame": 318662.1375,
     "max_cycles_per_mb": 272.3608012821,
     "min_budget_margin_ratio": 2.3,
+    "min_effective_fps": 60.0,
     "stages": {
       "parse_cavlc": {
         "max_cycles_per_mb": 10.0
@@ -114,8 +115,8 @@
       "name": "deblock",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "budget_allocated": 100,
-      "note": "NOT IMPLEMENTED. Budget allocation: 100 cycles/MB for 16 luma edges + chroma at ~6 cycles/edge with BS/threshold/filter pipeline."
+      "budget_allocated": 150,
+      "note": "NOT IMPLEMENTED. Budget allocation: 150 cycles/MB (revised from 100). 48 edge segments × (1 filter + 2 SRAM) with single-port buffer. Dual-port MB SRAM drops to ~100. Flag to w-a3."
     },
     {
       "name": "ddr_write",

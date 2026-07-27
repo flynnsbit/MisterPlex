@@ -80,6 +80,13 @@ assert abs(r["measured"]["cycles_per_mb"] - 259.3912393162) < 1e-6, r
 assert abs(r["budget"]["cycles_per_mb"] - 683.7606837607) < 1e-6, r
 assert r["budget"]["margin_ratio"] > 2.6, r
 
+# Verify effective_fps is present and correct
+assert "effective_fps" in r["measured"], f"effective_fps not in measured: {list(r['measured'].keys())}"
+efps = r["measured"]["effective_fps"]
+expected_efps = 20_000_000 / r["measured"]["cycles_per_frame"]
+assert abs(efps - expected_efps) < 0.01, f"effective_fps {efps} != {expected_efps}"
+assert efps > 60.0, f"effective_fps {efps} too low"
+
 # Verify per-stage data is present and sensible
 stages = {s["name"]: s for s in r["stage_coverage"]}
 assert "parse_cavlc" in stages, f"missing parse_cavlc stage, got: {list(stages.keys())}"
@@ -125,6 +132,8 @@ r["thresholds"]["max_cycles_total"] = 3_000_000
 r["thresholds"]["max_cycles_per_frame"] = 250_000.0
 r["thresholds"]["max_cycles_per_mb"] = 220.0
 r["thresholds"]["min_budget_margin_ratio"] = 3.0
+# Set impossibly high effective_fps requirement too
+r["thresholds"]["min_effective_fps"] = 100.0
 # Tighten per-stage ratchet
 r["thresholds"]["stages"] = {
     "parse_cavlc": {"max_cycles_per_mb": 0.1},
@@ -145,6 +154,7 @@ if [[ "$RED_RC" -eq 0 ]]; then
 fi
 grep -q "cycles_total 3641853 > ratchet 3000000" <<<"$RED_OUT"
 grep -q "budget margin 2.636 < required 3.000" <<<"$RED_OUT"
+grep -q "effective_fps .* < ratchet 100.0" <<<"$RED_OUT"
 # Verify per-stage ratchet failures
 grep -q "stage parse_cavlc cycles_per_mb" <<<"$RED_OUT"
 grep -q "stage diagnostic_paint cycles_per_mb" <<<"$RED_OUT"
@@ -163,6 +173,7 @@ if grep -q "^OK decode throughput" <<<"$PASS_OUT"; then
 fi
 grep -q "INCOMPLETE decode throughput" <<<"$PASS_OUT"
 grep -q "UNBUDGETED_STAGES=" <<<"$PASS_OUT"
+grep -q "effective_fps=" <<<"$PASS_OUT"
 # Must name the specific missing stages
 grep -q "mc_interpolation" <<<"$PASS_OUT"
 grep -q "deblock" <<<"$PASS_OUT"
