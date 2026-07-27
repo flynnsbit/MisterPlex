@@ -15,6 +15,7 @@ module pps_parser (
 	output reg         entropy_cabac,
 	output reg  [7:0]  num_ref_l0,
 	output reg  signed [7:0] pic_init_qp,
+	output reg  signed [4:0] chroma_qp_index_offset,  // se(), range [-12, +12]
 	output reg         deblock_ctrl,
 	output reg         busy
 );
@@ -86,6 +87,7 @@ module pps_parser (
 			entropy_cabac <= 0;
 			num_ref_l0 <= 0;
 			pic_init_qp <= 8'sd26;
+			chroma_qp_index_offset <= 5'sd0;
 			deblock_ctrl <= 0;
 			bbyte <= 0;
 			bpos <= 3'd7;
@@ -161,7 +163,11 @@ module pps_parser (
 				zcnt <= 0; ue_cont <= ST_QS; st <= ST_UE_Z;
 			end
 			ST_QS: begin zcnt <= 0; ue_cont <= ST_CHR; st <= ST_UE_Z; end
-			ST_CHR: begin nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS; end
+			ST_CHR: begin
+				// se(chroma_qp_index_offset), range [-12,+12]; default 0
+				chroma_qp_index_offset <= se_of(ue_val)[4:0];
+				nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS;
+			end
 			ST_DB: begin
 				deblock_ctrl <= acc[0];
 				nleft <= 5'd1; acc <= 0; cont <= ST_CI; st <= ST_GETBITS;
