@@ -292,9 +292,9 @@ int runDeblockContentGate(bool skipDeblock) {
         return 1;
     }
 
-    // --- Step 5: verify every fetched luma sample matches the DEBLOCKED
-    // pattern, not the raw reconstruction pattern. ---
-    // MV=(4,4) qpel = (1,1) full-pel. Luma origin = (1,1).
+    // --- Step 5: verify every fetched luma AND CHROMA sample matches the
+    // DEBLOCKED pattern, not the raw reconstruction pattern. ---
+    // MV=(4,4) qpel = (1,1) full-pel. Luma origin = (1,1), chroma origin = (0,0).
     // Window spans from (origin-2, origin-2) to (origin+18, origin+18) with clamping.
     int lumaDeblockMatch = 0;
     int lumaRawMatch = 0;
@@ -311,31 +311,69 @@ int runDeblockContentGate(bool skipDeblock) {
         }
     }
 
+    // Chroma: MV=(4,4) qpel, chroma origin = (4>>3, 4>>3) = (0, 0).
+    // 9x9 window from (0-0, 0-0) to (0+8, 0+8) with clamping.
+    int chromaDeblockMatch = 0;
+    int chromaRawMatch = 0;
+    int chromaTotal = 81 * 2;  // U + V
+    for (int wy = 0; wy < 9; ++wy) {
+        for (int wx = 0; wx < 9; ++wx) {
+            int srcX = std::clamp(wx, 0, CW - 1);
+            int srcY = std::clamp(wy, 0, CH - 1);
+            // U plane
+            uint8_t fetchedU = uWin[wy * 9 + wx];
+            uint8_t deblockedU = uPattern(srcX, srcY);
+            uint8_t rawU = rawUPattern(srcX, srcY);
+            if (fetchedU == deblockedU) ++chromaDeblockMatch;
+            if (fetchedU == rawU) ++chromaRawMatch;
+            // V plane
+            uint8_t fetchedV = vWin[wy * 9 + wx];
+            uint8_t deblockedV = vPattern(srcX, srcY);
+            uint8_t rawV = rawVPattern(srcX, srcY);
+            if (fetchedV == deblockedV) ++chromaDeblockMatch;
+            if (fetchedV == rawV) ++chromaRawMatch;
+        }
+    }
+
     // If skipDeblock: the bank has raw values, so rawMatch should be high
-    // and deblockMatch low.  If correct: deblockMatch should be 441/441.
+    // and deblockMatch low.  If correct: deblockMatch should be 441/441 luma
+    // and 162/162 chroma.
     if (skipDeblock) {
         if (lumaRawMatch < lumaTotal * 9 / 10) {
             std::cerr << "FAIL deblock-content-gate (skip-deblock fault): expected raw data in reference"
-                      << " rawMatch=" << lumaRawMatch << "/" << lumaTotal << "\n";
+                      << " lumaRawMatch=" << lumaRawMatch << "/" << lumaTotal << "\n";
+            return 1;
+        }
+        if (chromaRawMatch < chromaTotal * 9 / 10) {
+            std::cerr << "FAIL deblock-content-gate (skip-deblock fault): expected raw chroma in reference"
+                      << " chromaRawMatch=" << chromaRawMatch << "/" << chromaTotal << "\n";
             return 1;
         }
         // The gate DETECTS the fault: deblocked pattern should NOT match.
-        if (lumaDeblockMatch == lumaTotal) {
+        if (lumaDeblockMatch == lumaTotal && chromaDeblockMatch == chromaTotal) {
             std::cerr << "FAIL deblock-content-gate: fault injected but reference still matches deblocked pattern"
                       << " — gate did not detect unfiltered reference\n";
             return 1;
         }
-        std::cerr << "deblock-content-gate DETECTED unfiltered reference: "
-                  << lumaDeblockMatch << "/" << lumaTotal << " deblock-match vs "
-                  << lumaRawMatch << "/" << lumaTotal << " raw-match\n";
+        std::cerr << "deblock-content-gate DETECTED unfiltered reference:"
+                  << " luma=" << lumaDeblockMatch << "/" << lumaTotal
+                  << " chroma=" << chromaDeblockMatch << "/" << chromaTotal
+                  << " (raw luma=" << lumaRawMatch << "/" << lumaTotal
+                  << " chroma=" << chromaRawMatch << "/" << chromaTotal << ")\n";
         return 1;  // Return non-zero: the red-check EXPECTS failure.
     }
 
     // Normal path: every sample must match the deblocked pattern.
     if (lumaDeblockMatch != lumaTotal) {
-        std::cerr << "FAIL deblock-content-gate: reference data is not fully deblocked"
+        std::cerr << "FAIL deblock-content-gate: luma reference data is not fully deblocked"
                   << " deblockMatch=" << lumaDeblockMatch << "/" << lumaTotal
                   << " rawMatch=" << lumaRawMatch << "/" << lumaTotal << "\n";
+        return 1;
+    }
+    if (chromaDeblockMatch != chromaTotal) {
+        std::cerr << "FAIL deblock-content-gate: chroma reference data is not fully deblocked"
+                  << " deblockMatch=" << chromaDeblockMatch << "/" << chromaTotal
+                  << " rawMatch=" << chromaRawMatch << "/" << chromaTotal << "\n";
         return 1;
     }
 
@@ -372,8 +410,10 @@ int runDeblockContentGate(bool skipDeblock) {
     }
 
     std::cout << "OK deblock-content-gate: reference is post-deblock"
-              << " deblockMatch=" << lumaDeblockMatch << "/" << lumaTotal
-              << " rawMatch=" << lumaRawMatch << "/" << lumaTotal
+              << " lumaMatch=" << lumaDeblockMatch << "/" << lumaTotal
+              << " chromaMatch=" << chromaDeblockMatch << "/" << chromaTotal
+              << " lumaRawMatch=" << lumaRawMatch << "/" << lumaTotal
+              << " chromaRawMatch=" << chromaRawMatch << "/" << chromaTotal
               << " mc_pixel_diff=" << diffCount << "/256"
               << " mc_mean_abs_diff=" << (static_cast<double>(diffSum) / 256.0)
               << " mc_max_diff=" << maxDiff << "\n";
