@@ -937,6 +937,133 @@ def check_present_geometry_stride_contract() -> None:
     )
 
 
+def check_ddr_bank_handoff_contract() -> None:
+    fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
+    fpga_h = strip_comments(read(FPGA_SPI_HPP))
+    media = strip_comments(read(MEDIA_PLAYER_CPP))
+    frame_store = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    fpga_nt = norm(fpga_cpp)
+    fpga_h_nt = norm(fpga_h)
+    media_nt = norm(media)
+    frame_nt = norm(frame_store)
+
+    def missing_handoff_requirements(
+        cpp_norm: str, h_norm: str, media_norm: str, rtl_norm: str
+    ) -> list[str]:
+        required = [
+            (
+                cpp_norm,
+                "constexprintkDdrBankReuseMinUs=40000;",
+                "ARM DDR writer must enforce a same-bank reuse floor of at least two vsyncs",
+            ),
+            (
+                h_norm,
+                "doublelastDdrBankDoorbellMs_[2]={-1.0,-1.0};",
+                "ARM DDR writer must remember when each bank was last published",
+            ),
+            (
+                h_norm,
+                "int64_tbank_reuse_wait_us=0;",
+                "DDR timing telemetry must expose any same-bank reuse wait",
+            ),
+            (
+                media_norm,
+                "ddr_bank_reuse_wait_us_p=",
+                "present_profile logs must surface same-bank reuse waits by name",
+            ),
+            (
+                media_norm,
+                "prof.ddrBankReuseWaitUs+=dt.bank_reuse_wait_us;",
+                "present_profile must accumulate writer-side same-bank reuse waits",
+            ),
+            (
+                cpp_norm,
+                "constdoublelastBankMs=lastDdrBankDoorbellMs_[bank];",
+                "sendDdrFrame must check the selected bank's last doorbell time before copying",
+            ),
+            (
+                cpp_norm,
+                "if(sinceUs<kDdrBankReuseMinUs)",
+                "sendDdrFrame must wait rather than reusing the same bank before the reuse floor",
+            ),
+            (
+                cpp_norm,
+                "timing.bank_reuse_wait_us=waitUs;",
+                "same-bank reuse waits must be externally visible in DDR timing telemetry",
+            ),
+            (
+                cpp_norm,
+                "std::memcpy(ddrMap_+bankOff,payload,len);__sync_synchronize();",
+                "payload writes must be fenced before any doorbell can publish the bank",
+            ),
+            (
+                cpp_norm,
+                "dw[1]=hi;__sync_synchronize();dw[0]=kDdrDoorbellMagic;__sync_synchronize();",
+                "doorbell must publish the bank/format/seq token before PLXK magic so a cold "
+                "mailbox cannot expose magic with a zero/old format",
+            ),
+            (
+                cpp_norm,
+                "lastDdrBankDoorbellMs_[bank]=std::chrono::duration<double,std::milli>",
+                "sendDdrFrame must record the successful publish time for the bank it just rang",
+            ),
+            (
+                rtl_norm,
+                "db_token=DDRAM_DOUT[63:32]",
+                "frame-store reader must capture bank/format/seq as one 32-bit token from one DDR read",
+            ),
+            (
+                rtl_norm,
+                "db_format=db_token[30:29]",
+                "frame-store reader must decode format from the same token as seq/bank",
+            ),
+            (
+                rtl_norm,
+                "db_token_new=db_valid_token&&(!have_seq||(db_token!=last_seq))",
+                "frame-store reader must compare the whole token, not bank and seq from separate reads",
+            ),
+            (
+                rtl_norm,
+                "pending_bank_ddr<=DDRAM_DOUT[63];",
+                "frame-store reader must latch the bank bit from the same DDR word that supplied seq",
+            ),
+            (
+                rtl_norm,
+                "last_seq<=db_token;",
+                "frame-store reader must store the full token it consumed, preventing bank/seq torn reads",
+            ),
+        ]
+        return [msg for haystack, needle, msg in required if needle not in haystack]
+
+    missing = missing_handoff_requirements(fpga_nt, fpga_h_nt, media_nt, frame_nt)
+    if missing:
+        fail(f"DDR bank handoff contract: {missing[0]}")
+
+    no_reuse_wait = fpga_nt.replace(
+        "if(sinceUs<kDdrBankReuseMinUs)",
+        "if(false)",
+    )
+    if not missing_handoff_requirements(no_reuse_wait, fpga_h_nt, media_nt, frame_nt):
+        fail("deliberately removed same-bank reuse wait did not make the handoff gate red")
+    bad_doorbell_order = fpga_nt.replace(
+        "dw[1]=hi;__sync_synchronize();dw[0]=kDdrDoorbellMagic;__sync_synchronize();",
+        "dw[0]=kDdrDoorbellMagic;dw[1]=hi;__sync_synchronize();",
+    )
+    if not missing_handoff_requirements(bad_doorbell_order, fpga_h_nt, media_nt, frame_nt):
+        fail("deliberately reordered doorbell magic before token did not make the handoff gate red")
+    torn_token_reader = frame_nt.replace(
+        "last_seq<=db_token;",
+        "last_seq<=DDRAM_DOUT[62:32];",
+    )
+    if not missing_handoff_requirements(fpga_nt, fpga_h_nt, media_nt, torn_token_reader):
+        fail("deliberately split bank/seq token in RTL reader did not make the handoff gate red")
+
+    print(
+        "PASS DDR bank handoff publishes fenced frames and guards same-bank reuse "
+        "(no FPGA bank-release ACK exists yet)"
+    )
+
+
 def check_yuv_ddr_writer_contract() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
     fb_present = strip_comments(read(FB_PRESENT_CPP))
@@ -1485,6 +1612,7 @@ def main() -> int:
     check_ddr_frame_layout_contract()
     check_ddr_frame_store_yuv_read_contract()
     check_present_geometry_stride_contract()
+    check_ddr_bank_handoff_contract()
     check_yuv_ddr_writer_contract()
     check_present_path_degradation_contract()
     check_ddr_bitstream_product_path()

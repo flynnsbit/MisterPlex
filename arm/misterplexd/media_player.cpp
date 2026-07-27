@@ -2315,6 +2315,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrFlushUs = 0;
             int64_t ddrDoorbellUs = 0;
             int64_t ddrPostWaitUs = 0;
+            int64_t ddrBankReuseWaitUs = 0;
             int64_t ddrTotalUs = 0;
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
@@ -2368,6 +2369,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_flush_us_p=" + std::to_string(avgPresented(prof.ddrFlushUs)) +
                 " ddr_doorbell_us_p=" + std::to_string(avgPresented(prof.ddrDoorbellUs)) +
                 " ddr_post_wait_us_p=" + std::to_string(avgPresented(prof.ddrPostWaitUs)) +
+                " ddr_bank_reuse_wait_us_p=" +
+                    std::to_string(avgPresented(prof.ddrBankReuseWaitUs)) +
                 " ddr_accounted_us_p=" + std::to_string(avgPresented(ddrAccountedUs)) +
                 " ddr_unaccounted_us_p=" +
                     std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
@@ -2508,6 +2511,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         prof.ddrFlushUs += dt.flush_us;
                         prof.ddrDoorbellUs += dt.doorbell_us;
                         prof.ddrPostWaitUs += dt.post_wait_us;
+                        prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
                         prof.ddrTotalUs += dt.total_us;
                         prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
                         if (dt.total_us > accounted)
