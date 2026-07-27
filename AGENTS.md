@@ -30,7 +30,9 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 | Action | Command |
 |--------|---------|
+| Define parity | `make define-parity` — Quartus product macros must match Verilator/lint macros |
 | Quartus SV subset | `make quartus-sv-subset` — curated static Quartus syntax guard; no fit/RBF |
+| Post-fit hierarchy | `make post-fit-hierarchy FIT_RPT=...` — critical modules must survive fitting |
 | RBF (sole) | Project Quartus via `misterfpga-dev` / `scripts/build_rbf.sh` — **one at a time** |
 | Unit | `make unit` |
 | Package | `make package` / `scripts/package_release.sh` |

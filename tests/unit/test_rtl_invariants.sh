@@ -63,3 +63,59 @@ else
   grep -q "localparam in module parameter list" "$FAULT_DIR/injected_red.err"
 fi
 echo "OK red-check: Quartus SV subset guard rejects injected localparam/function-select/unpacked-concat faults and refuses missing toolchain"
+
+if "$ROOT/scripts/check_define_parity.py" --drop-verilator-macro DDR_FRAME_STORE \
+     >"$FAULT_DIR/define_parity_red.out" 2>"$FAULT_DIR/define_parity_red.err"; then
+  echo "FAIL: define parity guard accepted Verilator/lint without DDR_FRAME_STORE" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "DDR_FRAME_STORE: set by Quartus" "$FAULT_DIR/define_parity_red.err"; then
+    echo "FAIL: define parity missing-DDR_FRAME_STORE red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/define_parity_red.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: define parity guard rejects missing shared DDR_FRAME_STORE"
+
+FIT_GREEN="$FAULT_DIR/fake_fit_green.rpt"
+FIT_RED="$FAULT_DIR/fake_fit_red.rpt"
+FIT_CFG="$FAULT_DIR/critical_fit_one_module.json"
+cat >"$FIT_CFG" <<'JSON'
+{
+  "schema": "misterplex.critical_fit_hierarchy.v1",
+  "modules": [
+    {
+      "name": "ddr_frame_store",
+      "entity": "ddr_frame_store",
+      "hierarchy_contains": "ddr_frame_store:fstore",
+      "min_comb_aluts": 1000,
+      "min_registers": 500,
+      "min_block_memory_bits": 100000,
+      "min_m10ks": 1
+    }
+  ]
+}
+JSON
+cat >"$FIT_GREEN" <<'RPT'
+; Compilation Hierarchy Node ; ALMs needed [=A-B+C] ; [A] ALMs used in final placement ; [B] Estimate of ALMs recoverable by dense packing ; [C] Estimate of ALMs unavailable ; ALMs used for memory ; Combinational ALUTs ; Dedicated Logic Registers ; I/O Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ; Pins ; Virtual Pins ; Full Hierarchy Name ; Entity Name ; Library Name ;
+;          |ddr_frame_store:fstore| ; 2974.3 (2951.7) ; 3416.0 (3386.2) ; 603.6 (595.9) ; 161.9 (161.4) ; 0.0 (0.0) ; 4116 (4085) ; 1828 (1794) ; 0 (0) ; 159744 ; 96 ; 6 ; 0 ; 0 ; |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore ; ddr_frame_store ; work ;
+RPT
+cat >"$FIT_RED" <<'RPT'
+; Compilation Hierarchy Node ; ALMs needed [=A-B+C] ; [A] ALMs used in final placement ; [B] Estimate of ALMs recoverable by dense packing ; [C] Estimate of ALMs unavailable ; ALMs used for memory ; Combinational ALUTs ; Dedicated Logic Registers ; I/O Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ; Pins ; Virtual Pins ; Full Hierarchy Name ; Entity Name ; Library Name ;
+;          |ddr_frame_store:fstore| ; 0 ; 0 ; 0 ; 0 ; 0 ; 2 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore ; ddr_frame_store ; work ;
+RPT
+"$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" --config "$FIT_CFG" >/dev/null
+if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_RED" --config "$FIT_CFG" \
+     >"$FAULT_DIR/fit_hierarchy_red.out" 2>"$FAULT_DIR/fit_hierarchy_red.err"; then
+  echo "FAIL: fit hierarchy guard accepted optimized-away ddr_frame_store" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "ddr_frame_store: registers 0 < required 500" "$FAULT_DIR/fit_hierarchy_red.err"; then
+    echo "FAIL: fit hierarchy red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/fit_hierarchy_red.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: fit hierarchy guard rejects optimized-away ddr_frame_store"

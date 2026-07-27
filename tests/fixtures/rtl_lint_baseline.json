@@ -11,12 +11,21 @@
     "fpga/Plex_MiSTer/rtl/audio_tone.sv",
     "fpga/Plex_MiSTer/rtl/bitstream_fifo.sv",
     "fpga/Plex_MiSTer/rtl/colorbars.sv",
+    "fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv",
+    "fpga/Plex_MiSTer/rtl/ddr_bus_arbiter.sv",
+    "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
     "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv",
     "fpga/Plex_MiSTer/rtl/decode_stub.sv",
     "fpga/Plex_MiSTer/rtl/frame_ingest.sv",
     "fpga/Plex_MiSTer/rtl/frame_store.sv",
+    "fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv",
+    "fpga/Plex_MiSTer/rtl/h264_deblock.sv",
+    "fpga/Plex_MiSTer/rtl/h264_dpb.sv",
+    "fpga/Plex_MiSTer/rtl/h264_inter_pred.sv",
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv",
     "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv",
+    "fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv",
+    "fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv",
     "fpga/Plex_MiSTer/rtl/line_buf_ram.sv",
     "fpga/Plex_MiSTer/rtl/nalu_scanner.sv",
     "fpga/Plex_MiSTer/rtl/pps_parser.sv",
@@ -39,136 +48,122 @@
     "IMPLICIT*"
   ],
   "warning_details": {
-    "fpga/Plex_MiSTer/rtl/async_fifo.sv": [
-      "WIDTHEXPAND:32: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/async_fifo.sv:32:59: Operator COND expects 6 bits on the Conditional False, but Conditional False's CONST '1'h0' generates 1 bits.",
-      "WIDTHEXPAND:32: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/async_fifo.sv:32:59: Operator COND expects 6 bits on the Conditional True, but Conditional True's CONST '1'h1' generates 1 bits.",
-      "WIDTHEXPAND:34: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/async_fifo.sv:34:60: Operator COND expects 6 bits on the Conditional False, but Conditional False's CONST '1'h0' generates 1 bits.",
-      "WIDTHEXPAND:34: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/async_fifo.sv:34:60: Operator COND expects 6 bits on the Conditional True, but Conditional True's CONST '1'h1' generates 1 bits."
-    ],
     "fpga/Plex_MiSTer/rtl/audio_fifo.sv": [
-      "WIDTHEXPAND:84: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/audio_fifo.sv:84:31: Operator SUB expects 16 bits on the LHS, but LHS's SEL generates 11 bits.",
-      "WIDTHEXPAND:84: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/audio_fifo.sv:84:31: Operator SUB expects 16 bits on the RHS, but RHS's SEL generates 11 bits."
+      "WIDTHEXPAND:84: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/audio_fifo.sv:84:31: Operator SUB expects 16 bits on the LHS, but LHS's SEL generates 11 bits.",
+      "WIDTHEXPAND:84: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/audio_fifo.sv:84:31: Operator SUB expects 16 bits on the RHS, but RHS's SEL generates 11 bits."
     ],
     "fpga/Plex_MiSTer/rtl/colorbars.sv": [
-      "WIDTHEXPAND:131: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/colorbars.sv:131:34: Operator DIV expects 13 bits on the RHS, but RHS's VARREF 'H_DE' generates 10 bits.",
-      "WIDTHTRUNC:131: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/colorbars.sv:131:23: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's DIV generates 13 bits."
+      "WIDTHEXPAND:131: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/colorbars.sv:131:34: Operator DIV expects 13 bits on the RHS, but RHS's VARREF 'H_DE' generates 10 bits.",
+      "WIDTHTRUNC:131: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/colorbars.sv:131:23: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's DIV generates 13 bits."
+    ],
+    "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv": [
+      "WIDTHEXPAND:272: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:272:34: Operator EQ expects 9 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:277: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:277:34: Operator EQ expects 8 bits on the LHS, but LHS's ARRAYSEL generates 7 bits.",
+      "WIDTHEXPAND:344: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:344:14: Operator NEQ expects 9 bits on the RHS, but RHS's VARREF 'want_y_sys' generates 8 bits.",
+      "WIDTHTRUNC:345: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:345:16: Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's VARREF 'src_y' generates 9 bits."
     ],
     "fpga/Plex_MiSTer/rtl/decode_stub.sv": [
-      "WIDTHEXPAND:121: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/decode_stub.sv:121:41: Operator ADD expects 10 bits on the RHS, but RHS's VARREF 'lat_res_dc' generates 8 bits.",
-      "WIDTHEXPAND:79: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/decode_stub.sv:79:17: Operator ASSIGNW expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:80: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/decode_stub.sv:80:17: Operator ASSIGNW expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits."
+      "WIDTHEXPAND:224: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/decode_stub.sv:224:41: Operator ADD expects 10 bits on the RHS, but RHS's VARREF 'lat_res_dc' generates 8 bits.",
+      "WIDTHEXPAND:81: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/decode_stub.sv:81:17: Operator ASSIGNW expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits.",
+      "WIDTHEXPAND:82: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/decode_stub.sv:82:17: Operator ASSIGNW expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits."
     ],
     "fpga/Plex_MiSTer/rtl/frame_store.sv": [
-      "WIDTHEXPAND:304: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/frame_store.sv:304:15: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'base' generates 10 bits.",
-      "WIDTHEXPAND:394: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/frame_store.sv:394:66: Operator ADD expects 18 bits on the RHS, but RHS's VARREF 'fill_x' generates 10 bits.",
-      "WIDTHTRUNC:56: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/frame_store.sv:56:26: Operator VAR 'PIXELS_WORDS' expects 18 bits on the Initial value, but Initial value's VARREF 'PIXELS' generates 32 bits.",
-      "WIDTHTRUNC:60: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/frame_store.sv:60:20: Operator VAR 'PIXELS_COUNT' expects 19 bits on the Initial value, but Initial value's VARREF 'PIXELS' generates 32 bits."
+      "WIDTHEXPAND:312: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/frame_store.sv:312:8: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's VARREF 'base' generates 8 bits."
     ],
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv": [
-      "WIDTHEXPAND:101: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:101:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:101: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:101:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:104: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:104:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:107: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:107:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:107: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:107:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:109: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:111: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:111: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:180: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:180:60: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:181: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:181:60: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:234: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:234:10: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:235: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:235:10: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:237: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:237:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
-      "WIDTHEXPAND:64: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:64:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.",
-      "WIDTHEXPAND:67: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.",
-      "WIDTHEXPAND:70: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.",
-      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:96: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:96:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHEXPAND:96: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:96:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
-      "WIDTHTRUNC:182: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:182:36: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
-      "WIDTHTRUNC:183: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:183:41: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
-      "WIDTHTRUNC:65: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:65:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
-      "WIDTHTRUNC:68: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:68:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
-      "WIDTHTRUNC:71: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:71:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits."
+      "WIDTHEXPAND:101: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:101:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:101: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:101:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:104: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:104:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:107: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:107:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:107: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:107:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:109: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:111: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:111: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:180: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:180:60: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:181: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:181:60: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:234: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:234:10: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:235: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:235:10: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:237: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:237:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:49: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:49:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:50: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:50:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:51: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.",
+      "WIDTHEXPAND:64: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:64:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.",
+      "WIDTHEXPAND:67: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.",
+      "WIDTHEXPAND:70: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.",
+      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:89: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:89:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:91: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:96: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:96:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHEXPAND:96: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:96:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
+      "WIDTHTRUNC:182: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:182:36: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
+      "WIDTHTRUNC:183: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:183:41: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
+      "WIDTHTRUNC:65: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:65:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
+      "WIDTHTRUNC:68: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:68:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.",
+      "WIDTHTRUNC:71: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:71:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits."
     ],
     "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv": [
-      "WIDTHEXPAND:113: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:113:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:113: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:113:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '18'sh20' generates 18 bits.",
-      "WIDTHEXPAND:114: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:114:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:115: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:115:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:116: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:116:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:117: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:117:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:118: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:118:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:119: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:119:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:120: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:120:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:121: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:121:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:122: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:123: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:123:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:124: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:124:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:125: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:125:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:126: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:126:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:127: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:127:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:128: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:128:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
-      "WIDTHEXPAND:177: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:177:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:178: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:178:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:179: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:179:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:180: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:180:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:181: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:181:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:182: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:182:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:183: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:183:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:184: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:184:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:185: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:185:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:186: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:186:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:187: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:187:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:188: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:188:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:189: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:189:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:190: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:190:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:191: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:191:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHEXPAND:192: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:192:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
-      "WIDTHTRUNC:72: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:72:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.",
-      "WIDTHTRUNC:73: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:73:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits."
+      "WIDTHEXPAND:113: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:113:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:113: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:113:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '18'sh20' generates 18 bits.",
+      "WIDTHEXPAND:114: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:114:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:115: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:115:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:116: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:116:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:117: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:117:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:118: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:118:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:119: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:119:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:120: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:120:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:121: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:121:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:122: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:122:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:123: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:123:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:124: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:124:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:125: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:125:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:126: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:126:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:127: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:127:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:128: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:128:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 18 bits.",
+      "WIDTHEXPAND:177: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:177:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:178: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:178:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:179: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:179:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:180: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:180:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:181: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:181:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:182: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:182:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:183: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:183:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:184: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:184:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:185: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:185:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:186: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:186:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:187: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:187:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:188: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:188:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:189: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:189:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:190: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:190:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:191: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:191:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHEXPAND:192: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:192:53: Operator ADD expects 19 bits on the LHS, but LHS's SIGNED generates 9 bits.",
+      "WIDTHTRUNC:72: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:72:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.",
+      "WIDTHTRUNC:73: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:73:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits."
     ],
     "fpga/Plex_MiSTer/rtl/present_cadence.sv": [
-      "WIDTHEXPAND:26: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/present_cadence.sv:26:26: Operator DIV expects 32 bits on the RHS, but RHS's VARREF 'dh' generates 8 bits."
-    ],
-    "fpga/Plex_MiSTer/rtl/sdram.sv": [
-      "IMPLICITSTATIC:133: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:133:13: Variable's lifetime implicitly set to static (IEEE 1800-2023 6.21)",
-      "IMPLICITSTATIC:134: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:134:13: Variable's lifetime implicitly set to static (IEEE 1800-2023 6.21)",
-      "WIDTHTRUNC:198: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:198:9: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'refresh_count' generates 14 bits.",
-      "WIDTHTRUNC:262: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:262:22: Bit extraction of var[2:0] requires 2 bit index, not 3 bits.",
-      "WIDTHTRUNC:268: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:268:30: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'cpcnt' generates 9 bits.",
-      "WIDTHTRUNC:273: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram.sv:273:8: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'cpcnt' generates 9 bits."
+      "WIDTHEXPAND:26: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/present_cadence.sv:26:26: Operator DIV expects 32 bits on the RHS, but RHS's VARREF 'dh' generates 8 bits."
     ],
     "fpga/Plex_MiSTer/rtl/sdram_memtest.sv": [
-      "WIDTHTRUNC:43: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:43:20: Operator VAR 'ADDR_16_MB' expects 26 bits on the Initial value, but Initial value's VARREF 'WORDS_16_MB' generates 27 bits.",
-      "WIDTHTRUNC:44: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:44:20: Operator VAR 'ADDR_32_MB' expects 26 bits on the Initial value, but Initial value's VARREF 'WORDS_32_MB' generates 27 bits.",
-      "WIDTHTRUNC:46: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:46:20: Operator VAR 'REFRESH_LIMIT' expects 16 bits on the Initial value, but Initial value's VARREF 'REFRESH_CYCLES' generates 32 bits."
+      "WIDTHTRUNC:43: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:43:20: Operator VAR 'ADDR_16_MB' expects 26 bits on the Initial value, but Initial value's VARREF 'WORDS_16_MB' generates 27 bits.",
+      "WIDTHTRUNC:44: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:44:20: Operator VAR 'ADDR_32_MB' expects 26 bits on the Initial value, but Initial value's VARREF 'WORDS_32_MB' generates 27 bits.",
+      "WIDTHTRUNC:46: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/sdram_memtest.sv:46:20: Operator VAR 'REFRESH_LIMIT' expects 16 bits on the Initial value, but Initial value's VARREF 'REFRESH_CYCLES' generates 32 bits."
     ],
     "fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv": [
-      "WIDTHEXPAND:124: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:124:31: Operator ADD expects 17 bits on the RHS, but RHS's CONST '9'sh2' generates 9 bits.",
-      "WIDTHTRUNC:124: /home/shawn/Projects/mp-wt-buildfarm/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:124:6: Operator ASSIGN expects 9 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits."
+      "WIDTHEXPAND:143: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:143:31: Operator ADD expects 17 bits on the RHS, but RHS's CONST '9'sh2' generates 9 bits.",
+      "WIDTHTRUNC:143: /home/shawn/Projects/mp-wt-c2/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:143:6: Operator ASSIGN expects 9 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits."
     ]
   },
   "warnings": {
-    "fpga/Plex_MiSTer/rtl/async_fifo.sv": {
-      "WIDTHEXPAND": 4
-    },
     "fpga/Plex_MiSTer/rtl/audio_fifo.sv": {
       "WIDTHEXPAND": 2
     },
@@ -176,12 +171,15 @@
       "WIDTHEXPAND": 1,
       "WIDTHTRUNC": 1
     },
+    "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv": {
+      "WIDTHEXPAND": 3,
+      "WIDTHTRUNC": 1
+    },
     "fpga/Plex_MiSTer/rtl/decode_stub.sv": {
       "WIDTHEXPAND": 3
     },
     "fpga/Plex_MiSTer/rtl/frame_store.sv": {
-      "WIDTHEXPAND": 2,
-      "WIDTHTRUNC": 2
+      "WIDTHEXPAND": 1
     },
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv": {
       "WIDTHEXPAND": 36,
@@ -193,10 +191,6 @@
     },
     "fpga/Plex_MiSTer/rtl/present_cadence.sv": {
       "WIDTHEXPAND": 1
-    },
-    "fpga/Plex_MiSTer/rtl/sdram.sv": {
-      "IMPLICITSTATIC": 2,
-      "WIDTHTRUNC": 4
     },
     "fpga/Plex_MiSTer/rtl/sdram_memtest.sv": {
       "WIDTHTRUNC": 3

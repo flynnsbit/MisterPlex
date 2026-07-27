@@ -10,6 +10,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from check_define_parity import verilator_define_args
+
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "fpga" / "Plex_MiSTer"
 DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "rtl_lint_baseline.json"
@@ -163,7 +165,7 @@ def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
         "-Wno-MULTITOP", "-Wno-EOFNEWLINE", "-Wno-GENUNNAMED",
         f"-I{PROJECT}", f"-I{PROJECT / 'sys'}", f"-I{PROJECT / 'rtl'}",
         str(stub),
-    ] + [f"+define+{macro}" for macro in macros] + [str(p) for p in ordered_files]
+    ] + verilator_define_args() + [str(p) for p in ordered_files]
     proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.returncode, proc.stdout
 
