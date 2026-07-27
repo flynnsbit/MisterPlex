@@ -129,8 +129,8 @@ public:
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
-    static constexpr uint32_t kDdrDoorbellPhys = 0x3007F000u;
-    static constexpr uint32_t kDdrDoorbellMagic = 0x504C584Bu; // "PLXK"
+    static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
+    static constexpr uint32_t kDdrDoorbellMagic = mailbox_abi::kPlxkMagic;
     static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------

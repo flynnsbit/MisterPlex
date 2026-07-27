@@ -1338,53 +1338,54 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // --- Bank selection via PLXA bank-release ACK ---
-    // If the FPGA publishes a valid PLXA mailbox, use it to determine which
+    // --- Bank selection via PLXD bank-release ACK ---
+    // If the FPGA publishes a valid PLXD mailbox, use it to determine which
     // bank is free instead of relying on fixed delays.  Fall back to the old
-    // timing-based mitigation only when PLXA is absent (pre-PLXA RBF).
+    // timing-based mitigation only when PLXD is absent (pre-PLXD RBF).
     //
-    // PLXA semantics (w-a3 534f361):
-    //   valid=1 → free_bank is safe to write (the other bank is being displayed)
-    //   valid=0 → swap pending, both banks in use; poll until valid or timeout
+    // PLXD semantics (w-a3 b187df5):
+    //   free_bank_mask != 0 → at least one bank is safe to write
+    //   free_bank_mask == 0 → swap pending, both banks in use; poll or timeout
     auto tPrep0 = std::chrono::steady_clock::now();
-    bool plxaUsed = false;
+    bool plxdUsed = false;
     {
         BankReleaseStatus brs;
-        constexpr int kPlxaPollMaxIters = 50;  // 50 × 1ms = 50ms max
-        int plxaIters = 0;
+        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        int plxdIters = 0;
         if (readBankRelease(brs)) {
-            // PLXA present — use it for bank selection.
-            if (brs.free_bank_valid) {
-                bank = brs.free_bank;
-                plxaUsed = true;
+            // PLXD present — use it for bank selection.
+            if (brs.anyFree()) {
+                bank = brs.freeBank();
+                plxdUsed = true;
             } else {
                 // Both banks in use (swap pending). Poll until free or timeout.
-                for (int i = 0; i < kPlxaPollMaxIters; ++i) {
+                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
                     usleep(1000);
-                    ++plxaIters;
-                    if (readBankRelease(brs) && brs.free_bank_valid) {
-                        bank = brs.free_bank;
-                        plxaUsed = true;
+                    ++plxdIters;
+                    if (readBankRelease(brs) && brs.anyFree()) {
+                        bank = brs.freeBank();
+                        plxdUsed = true;
                         break;
                     }
                 }
-                if (!plxaUsed) {
+                if (!plxdUsed) {
                     // LOUD timeout — never silently fall back to old delay.
                     fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXA bank-release timeout after %d ms "
-                            "(valid never asserted, vsync_count=%u disp_bank=%u)\n",
-                            plxaIters, static_cast<unsigned>(brs.vsync_count),
-                            static_cast<unsigned>(brs.disp_bank));
+                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
+                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
+                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(brs.disp_bank),
+                            static_cast<int>(brs.swap_pending));
                     // Use the opposite of disp_bank as a best-effort guess.
                     bank = brs.disp_bank ^ 1;
                 }
             }
-            auto tPlxa1 = std::chrono::steady_clock::now();
-            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxa1);
-            timing.plxa_poll_iters = plxaIters;
-            timing.plxa_used = plxaUsed || (!plxaUsed && plxaIters > 0);
+            auto tPlxd1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+            timing.plxa_poll_iters = plxdIters;
+            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
         } else {
-            // PLXA absent — pre-PLXA RBF or mailbox not yet written.
+            // PLXD absent — pre-PLXD RBF or mailbox not yet written.
             // Fall back to the old timing-based mitigation: brief yield for
             // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
             usleep(1500);
@@ -1579,12 +1580,12 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
     if (!ensureDdrMap())
         return false;
     if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
-        setErr("readBankRelease: PLXA mailbox is outside DDR frame window");
+        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
         return false;
     }
     const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
-        setErr("readBankRelease: PLXA mailbox is outside mapped DDR frame window");
+        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
         return false;
     }
     volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
@@ -1600,7 +1601,7 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         }
         usleep(200);
     }
-    setErr("readBankRelease: PLXA mailbox absent or unstable");
+    setErr("readBankRelease: PLXD mailbox absent or unstable");
     return false;
 }
 

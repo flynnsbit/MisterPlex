@@ -1,12 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include "mailbox_abi_spec.hpp"
 
 namespace misterplex::sdram_mailbox {
 
-constexpr std::uint32_t kSummaryMagic = 0x504c584d; // PLXM
-constexpr std::uintptr_t kSummaryPhys = 0x3007f110;
-constexpr std::uintptr_t kDiagPhys = 0x3007f120;
+constexpr std::uint32_t kSummaryMagic = mailbox_abi::kPlxmMagic;
+constexpr std::uintptr_t kSummaryPhys = mailbox_abi::kPlxmAddr;
+constexpr std::uintptr_t kDiagPhys = mailbox_abi::kSdramDiagAddr;
 constexpr std::uint8_t kDiagVersion = 1;
 
 struct Summary {

@@ -3,21 +3,27 @@
 //
 // The daemon must read these from DDR; it must not poll keyboard/controller
 // state through SPI because MiSTer Main owns the HPS<->FPGA SPI handshake.
+//
+// Mailbox addresses and magics are defined ONCE in mailbox_abi_spec.hpp.
+// This file re-exports them under the legacy names for backward compatibility,
+// and provides the decoders for each mailbox.
 
 #include <cstdint>
+#include "mailbox_abi_spec.hpp"
 
 namespace misterplex {
 
-constexpr uint32_t kDdrStatusMailboxPhys = 0x3007F100u;
-constexpr uint32_t kDdrStatusMailboxMagic = 0x504C5853u; // "PLXS"
-constexpr uint32_t kInputMailboxPhys = 0x3007F108u;
-constexpr uint32_t kInputMailboxMagic = 0x504C5849u; // "PLXI"
-constexpr uint32_t kMemtestMailboxPhys = 0x3007F110u;
-constexpr uint32_t kMemtestMailboxMagic = 0x504C584Du; // "PLXM"
-constexpr uint32_t kUnderrunMailboxPhys = 0x3007F118u;
-constexpr uint32_t kUnderrunMailboxMagic = 0x504C5846u; // "PLXF"
-constexpr uint32_t kBankReleaseMailboxPhys = 0x3007F128u;
-constexpr uint32_t kBankReleaseMailboxMagic = 0x504C5841u; // "PLXA" (PLX Ack)
+// Re-export from the single-source-of-truth spec.
+constexpr uint32_t kDdrStatusMailboxPhys   = mailbox_abi::kPlxsAddr;
+constexpr uint32_t kDdrStatusMailboxMagic  = mailbox_abi::kPlxsMagic;
+constexpr uint32_t kInputMailboxPhys       = mailbox_abi::kPlxiAddr;
+constexpr uint32_t kInputMailboxMagic      = mailbox_abi::kPlxiMagic;
+constexpr uint32_t kMemtestMailboxPhys     = mailbox_abi::kPlxmAddr;
+constexpr uint32_t kMemtestMailboxMagic    = mailbox_abi::kPlxmMagic;
+constexpr uint32_t kUnderrunMailboxPhys    = mailbox_abi::kPlxfAddr;
+constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
+constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
+constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 
 enum class PlaybackCommand : uint8_t {
@@ -54,48 +60,50 @@ inline const char* frameStoreStatusUnavailableDescription() {
     return "frame store status unavailable (PLXF mailbox absent/unwritten)";
 }
 
-// PLXA — FPGA→ARM bank-release acknowledgement.
+// PLXD — FPGA→ARM bank-release acknowledgement.
 //
 // The FPGA publishes which DDR frame bank the ARM may safely overwrite.
 // Without this, the ARM must use a fixed delay to avoid overwriting a bank
 // the FPGA is still reading — which is a timing-based MITIGATION, not a
-// handshake. PLXA makes it a real handshake.
+// handshake. PLXD makes it a real handshake.
 //
-// Layout (64 bits at kBankReleaseMailboxPhys = 0x3007F128):
-//   [31:0]   magic 0x504C5841 "PLXA"
-//   [32]     free_bank index (0 or 1) — the bank NOT being read
-//   [39]     free_bank valid (1 = safe to write; 0 = both banks in use)
-//   [38:33]  reserved (0)
-//   [40]     disp_bank index (currently displayed)
-//   [47:41]  reserved (0)
-//   [63:48]  vsync_count[15:0] — monotonic, increments every vsync_pulse
-//
-// Semantics:
-//   !swap_pending → valid=1, free_bank=~disp_bank
-//   swap_pending  → valid=0 (both banks in use)
-//   On vsync swap: old disp_bank becomes free, valid=1, vsync_count++
-//   On idle vsync: vsync_count++ still increments (forward-progress)
+// Layout: see mailbox_abi_spec.hpp (SINGLE SOURCE OF TRUTH).
 //
 // ARM protocol:
-//   1. Read PLXA. If valid=1, write frame to free_bank.
-//   2. If valid=0, poll at 1ms intervals up to 50ms (~3 vsyncs at 60Hz).
+//   1. Read PLXD. If free_bank_mask has a set bit, write to that bank.
+//   2. If free_bank_mask == 0, poll at 1ms intervals up to 50ms (~3 vsyncs).
 //   3. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
 //   4. Ring PLXK doorbell with the bank just written.
 struct BankReleaseStatus {
-    uint8_t free_bank = 0;     // 0 or 1
-    bool free_bank_valid = false;
-    uint8_t disp_bank = 0;    // 0 or 1
-    uint16_t vsync_count = 0;
+    uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
+    uint8_t disp_bank = 0;     // 0 or 1
+    bool swap_pending = false;
+    uint16_t frames_done = 0;  // monotonic swap count
+
+    bool bank0Free() const { return free_bank_mask & 1u; }
+    bool bank1Free() const { return (free_bank_mask >> 1) & 1u; }
+    bool anyFree() const { return free_bank_mask != 0; }
+    // Pick the lowest-numbered free bank, or -1 if none free.
+    int freeBank() const {
+        if (free_bank_mask & 1u) return 0;
+        if (free_bank_mask & 2u) return 1;
+        return -1;
+    }
 };
 
 inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     if (static_cast<uint32_t>(word) != kBankReleaseMailboxMagic)
         return false;
-    const uint8_t fb = static_cast<uint8_t>((word >> 32) & 0xFFu);
-    out.free_bank = fb & 1u;
-    out.free_bank_valid = ((fb >> 7) & 1u) != 0;
-    out.disp_bank = static_cast<uint8_t>((word >> 40) & 1u);
-    out.vsync_count = static_cast<uint16_t>((word >> 48) & 0xFFFFu);
+    const uint32_t hi = static_cast<uint32_t>(word >> 32);
+    out.free_bank_mask = static_cast<uint8_t>(
+        (hi >> mailbox_abi::kPlxdFreeBankMaskBit) &
+        ((1u << mailbox_abi::kPlxdFreeBankMaskWidth) - 1u));
+    out.disp_bank = static_cast<uint8_t>(
+        (hi >> mailbox_abi::kPlxdDispBankBit) & 1u);
+    out.swap_pending = ((hi >> mailbox_abi::kPlxdSwapPendingBit) & 1u) != 0;
+    out.frames_done = static_cast<uint16_t>(
+        (hi >> mailbox_abi::kPlxdFramesDoneBit) &
+        ((1u << mailbox_abi::kPlxdFramesDoneWidth) - 1u));
     return true;
 }
 
