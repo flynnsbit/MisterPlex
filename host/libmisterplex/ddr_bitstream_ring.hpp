@@ -2,11 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "mailbox_abi_spec.hpp"
 
 namespace misterplex::ddr_bitstream_ring {
 
 constexpr uint32_t kDataPhys = 0x30100000u;
-constexpr uint32_t kCtrlPhys = 0x30140000u;
+constexpr uint32_t kCtrlPhys = mailbox_abi::kPlxbAddr;
 constexpr uint32_t kReadPhys = 0x30140008u;
 constexpr uint32_t kErrPhys = 0x30140010u;
 constexpr uint32_t kStat0Phys = 0x30140018u;
@@ -18,7 +19,7 @@ constexpr uint32_t kStat5Phys = 0x30140040u;
 constexpr uint32_t kStat6Phys = 0x30140048u;
 constexpr size_t kRingBytes = 262144u;
 
-constexpr uint32_t kCtrlMagic = 0x504C5842u; // PLXB, HPS -> FPGA
+constexpr uint32_t kCtrlMagic = mailbox_abi::kPlxbMagic;
 constexpr uint32_t kReadMagic = 0x504C5852u; // PLXR, FPGA -> HPS
 constexpr uint32_t kErrMagic = 0x504C5845u;  // PLXE, FPGA -> HPS
 constexpr uint32_t kRecordMagic = 0x504C584Eu; // PLXN, record header

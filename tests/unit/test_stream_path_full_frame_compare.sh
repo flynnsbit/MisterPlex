@@ -40,6 +40,9 @@ COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
 NATIVE_SCORE_JSON="$REF_DIR/native_frame_score.json"
 BAD_LOOP_MANIFEST="$REF_DIR/bad_loop_filter_manifest.json"
+NATIVE_CANDIDATE_I420="$REF_DIR/native_inter_candidate.i420"
+NATIVE_CANDIDATE_JSON="$REF_DIR/native_inter_candidate_score.json"
+INTER_METADATA_JSON="$REF_DIR/native_inter_metadata.json"
 MB0_TRACE_JSON="$REF_DIR/mb0_pipeline_trace.json"
 FAULT_TRACE_JSON="$REF_DIR/mb0_pipeline_trace_fault.json"
 MB0_GOLDEN_JSON="$REF_DIR/current_mb0_trace.json"
@@ -208,7 +211,9 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}
 
 "$BUILD/Vstream_path_full_frame_tb" \
   --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
-  --candidate-i420-out "$CANDIDATE_I420" --sequence "$SEQUENCE" \
+  --candidate-i420-out "$CANDIDATE_I420" \
+  --native-candidate-i420-out "$NATIVE_CANDIDATE_I420" \
+  --inter-metadata-out "$INTER_METADATA_JSON" --sequence "$SEQUENCE" \
   --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
   --json-out "$COMPARE_JSON" --trace-json-out "$MB0_TRACE_JSON" --expect-red
 set +e
@@ -233,6 +238,72 @@ grep -q '"sequence_manifest":' "$COMPARE_JSON"
   --ratchet "$THROUGHPUT_RATCHET" \
   --label "$(basename "$BITSTREAM"):${WIDTH}x${HEIGHT}" \
   --report "$THROUGHPUT_DIR/decode_throughput_${WIDTH}x${HEIGHT}.json"
+NATIVE_CANDIDATE_OUT="$("$ROOT/tools/score_i420_candidate.py" \
+  --sequence "$SEQUENCE" \
+  --golden-manifest "$GOLDEN_MANIFEST" \
+  --golden-planes "$GOLDEN_PLANES" \
+  --candidate-planes "$NATIVE_CANDIDATE_I420" \
+  --candidate-colorspace I420_NATIVE \
+  --reference-h264-loop-filter disabled \
+  --candidate-h264-loop-filter disabled \
+  --mb-metadata "$INTER_METADATA_JSON" \
+  --output "$NATIVE_CANDIDATE_JSON" \
+  --expect-red)"
+printf '%s\n' "$NATIVE_CANDIDATE_OUT" | grep -E 'I420_CANDIDATE_SCORE summary|score_i420_candidate: OK'
+python3 - "$NATIVE_CANDIDATE_JSON" <<'PY'
+import json
+import sys
+
+score = json.load(open(sys.argv[1]))
+if score.get("format") != "misterplex.p3.i420_candidate_score.v1":
+    raise SystemExit("FAIL native inter candidate score: unknown score format")
+if score.get("colorspace") != "I420_NATIVE":
+    raise SystemExit("FAIL native inter candidate score: not native I420")
+summary = score["summary"]
+inter = summary["inter"]
+if inter["mb_total"] == 0:
+    raise SystemExit("FAIL native inter candidate score: no inter MB population")
+if summary["first_bad_inter"] is None:
+    raise SystemExit("FAIL native inter candidate score: expected-red had no first_bad_inter")
+print(
+    "OK native inter candidate score: "
+    f"intra={summary['intra']['mb_exact']}/{summary['intra']['mb_total']} "
+    f"inter={inter['mb_exact']}/{inter['mb_total']} "
+    f"first_bad_inter_mb={summary['first_bad_inter']['mb_index']} "
+    f"plane={summary['first_bad_inter']['plane']}"
+)
+PY
+python3 - "$INTER_METADATA_JSON" "$GOLDEN_MANIFEST" <<'PY'
+import json
+import sys
+
+meta = json.load(open(sys.argv[1]))
+gold = json.load(open(sys.argv[2]))
+if meta.get("format") != "misterplex.p3.inter_mb_metadata.v1":
+    raise SystemExit("FAIL native inter metadata: unknown format")
+candidate = meta.get("candidate", {})
+expected = {
+    "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
+    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
+    "reference_picture_state": "diagnostic_filtered_reference_via_deblock_writeback_ctrl",
+    "reference_picture_source": "generated_i420_pattern_not_decoded_prior_frame",
+}
+for key, want in expected.items():
+    got = candidate.get(key)
+    if got != want:
+        raise SystemExit(f"FAIL native inter metadata: candidate.{key}={got!r} want {want!r}")
+if gold.get("decoder", {}).get("loop_filter") != "skip_loop_filter=all":
+    raise SystemExit("FAIL native inter metadata: golden decoder.loop_filter is not skip_loop_filter=all")
+if gold.get("provenance", {}).get("h264_loop_filter") != "disabled":
+    raise SystemExit("FAIL native inter metadata: golden h264_loop_filter is not disabled")
+print(
+    "OK native inter provenance: "
+    f"candidate_stage={candidate['reconstruction_stage']} "
+    f"reference_state={candidate['reference_picture_state']} "
+    "reference_h264_loop_filter=disabled"
+)
+PY
 make -s -C "$ROOT" h264-golden-tools
 python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
 import json

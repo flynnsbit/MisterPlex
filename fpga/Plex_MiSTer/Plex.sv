@@ -781,7 +781,8 @@ present_core #(
 
 `ifdef DDR_FRAME_STORE
 ddr_bus_arbiter ddr_arb (
-	.clk(clk_sys),
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
 	.reset(reset),
 	.m1_want(stream_ddr_bus_want),
 	.m0_busy(present_ddr_busy),

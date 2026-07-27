@@ -24,6 +24,7 @@ module ddr_frame_store #(
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = 32'h3007_F110,
 	parameter [31:0] FRAME_MAILBOX_PHYS = 32'h3007_F118,
+	parameter [31:0] BANK_MAILBOX_PHYS  = 32'h3007_F128,
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
@@ -96,6 +97,7 @@ module ddr_frame_store #(
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
 	localparam [28:0] FRAME_MAILBOX_W = FRAME_MAILBOX_PHYS[31:3];
+	localparam [28:0] BANK_MAILBOX_W  = BANK_MAILBOX_PHYS[31:3];
 	localparam [28:0] Y_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 8);
 	localparam [28:0] C_PLANE_QWORDS = 29'((CODED_W * CODED_H) / 32);
 	localparam [28:0] U_PLANE_BASE = Y_PLANE_QWORDS;
@@ -108,6 +110,7 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
+	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
 
@@ -172,6 +175,7 @@ module ddr_frame_store #(
 	reg pending_ready_s1, pending_ready_s2;
 	reg pending_ready_ddr;
 	reg swap_req_t_ddr;
+	reg vsync_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
 
@@ -193,6 +197,7 @@ module ddr_frame_store #(
 			has_frame <= 1'b0;
 			swap_pending <= 1'b0;
 			frames_done <= 16'd0;
+			vsync_toggle <= 1'b0;
 			swap_req_s1 <= 1'b0;
 			swap_req_s2 <= 1'b0;
 			swap_req_seen <= 1'b0;
@@ -220,6 +225,9 @@ module ddr_frame_store #(
 				has_frame <= 1'b1;
 				swap_pending <= 1'b0;
 				frames_done <= frames_done + 16'd1;
+				vsync_toggle <= ~vsync_toggle;
+			end else if (vsync_pulse) begin
+				vsync_toggle <= ~vsync_toggle;
 			end
 		end
 	end
@@ -417,6 +425,11 @@ module ddr_frame_store #(
 	reg sdram_mbox_req, sdram_mbox_valid;
 	reg frame_mbox_req, frame_mbox_valid;
 	reg [17:0] sdram_mbox_hb, frame_mbox_hb;
+	reg bank_mbox_req, bank_mbox_valid;
+	reg [17:0] bank_mbox_hb;
+	reg [7:0] bank_mbox_seq;
+	reg [15:0] bank_vsync_count;
+	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
 	reg [15:0] status_osd_d1, status_osd_d2;
@@ -683,6 +696,14 @@ module ddr_frame_store #(
 			frame_mbox_req <= 1'b1;
 			frame_mbox_valid <= 1'b0;
 			frame_mbox_hb <= 18'd0;
+			bank_mbox_req <= 1'b1;
+			bank_mbox_valid <= 1'b0;
+			bank_mbox_hb <= 18'd0;
+			bank_mbox_seq <= 8'd0;
+			bank_vsync_count <= 16'd0;
+			vsync_t_d1 <= 1'b0;
+			vsync_t_d2 <= 1'b0;
+			vsync_t_seen <= 1'b0;
 			cmd_pop <= 1'b0;
 			sched_valid <= 1'b0;
 			sched_is_y <= 1'b0;
@@ -742,6 +763,18 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
+			// PLXD bank-release: vsync toggle sync and heartbeat
+			vsync_t_d1 <= vsync_toggle;
+			vsync_t_d2 <= vsync_t_d1;
+			if (vsync_t_d2 != vsync_t_seen) begin
+				vsync_t_seen <= vsync_t_d2;
+				bank_vsync_count <= bank_vsync_count + 16'd1;
+				bank_mbox_req <= 1'b1;
+			end
+			bank_mbox_hb <= bank_mbox_hb + 18'd1;
+			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
+				bank_mbox_req <= 1'b1;
+
 			if (db_bad_format) begin
 				format_error <= 1'b1;
 				doorbell_ok <= 1'b0;
@@ -787,6 +820,26 @@ module ddr_frame_store #(
 						frame_mbox_last <= {underrun_count, debug_state};
 						frame_mbox_valid <= 1'b1;
 						frame_mbox_req <= 1'b0;
+						state_ddr <= S_WRITE_WAIT;
+					end else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160)
+					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// PLXD bank-release: tell ARM which bank is safe to write
+						// Layout: [63:48] frames_done, [35] swap_pending,
+						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
+						DDRAM_ADDR <= BANK_MAILBOX_W;
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+						              12'd0,                                // [47:36] reserved
+						              swap_pending_d2,                      // [35]
+						              disp_bank_d2,                         // [34]
+						              swap_pending_d2 ? 2'b00 :             // [33:32] free_bank_mask
+						                (disp_bank_d2 ? 2'b01 : 2'b10),
+						              MAGIC_D};                             // [31:0]
+						DDRAM_WE <= 1'b1;
+						bank_mbox_seq <= bank_mbox_seq + 8'd1;
+						bank_mbox_valid <= 1'b1;
+						bank_mbox_req <= 1'b0;
+						bank_mbox_hb <= 18'd0;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;

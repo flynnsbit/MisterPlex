@@ -50,13 +50,34 @@ module stream_path_full_frame_tb #(
 	output wire signed [7:0] trace_residual_dc,
 	output wire [7:0]  trace_residual_csum,
 	output wire signed [8:0] trace_residual_coeff [0:15],
-	output wire signed [17:0] trace_idct_dequant [0:15],
-	output wire signed [17:0] trace_idct_residual [0:15],
+	output wire signed [21:0] trace_idct_dequant [0:15],
+	output wire signed [21:0] trace_idct_residual [0:15],
 	output wire [7:0]  trace_recon_px [0:15],
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
-	output wire        fs_swap
+	output wire        fs_swap,
+
+	output wire        native_inter_valid,
+	output wire [15:0] native_inter_frame_idx,
+	output wire [7:0]  native_inter_mb_x,
+	output wire [7:0]  native_inter_mb_y,
+	output wire        native_inter_p_skip,
+	output wire [2:0]  native_inter_part_mode,
+	output wire [7:0]  native_inter_pred_y [0:255],
+	output wire [7:0]  native_inter_pred_u [0:63],
+	output wire [7:0]  native_inter_pred_v [0:63],
+
+	// Native I420 DPB write tap — per-sample stream from reconstruction path
+	output wire        native_i420_wr_en,
+	output wire [31:0] native_i420_wr_offset,
+	output wire [7:0]  native_i420_wr_data,
+	output wire [15:0] native_i420_wr_frame,
+
+	// DPB reference pre-fill — testbench injects real IDR reference data
+	input  wire        dpb_prefill_en,
+	input  wire [31:0] dpb_prefill_addr,
+	input  wire [7:0]  dpb_prefill_data
 );
 	wire [7:0] sps_level;
 	wire [5:0] slice_qp;
@@ -177,6 +198,12 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
+	assign native_inter_valid = dut.stub.dpb_fetch_done && dut.stub.dpb_inter_ok;
+	assign native_inter_frame_idx = dut.stub.frames_out;
+	assign native_inter_mb_x = dut.stub.lat_p_mb_x;
+	assign native_inter_mb_y = dut.stub.lat_p_mb_y;
+	assign native_inter_p_skip = dut.stub.lat_p_skip;
+	assign native_inter_part_mode = dut.stub.lat_p_part_mode;
 	genvar trace_i;
 	generate
 		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
@@ -188,6 +215,36 @@ module stream_path_full_frame_tb #(
 			assign trace_recon_px[trace_i] = dut.stub.recon_px[trace_i];
 		end
 	endgenerate
+	genvar native_y_i;
+	generate
+		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
+			assign native_inter_pred_y[native_y_i] = dut.stub.dpb_pred_y[native_y_i];
+		end
+	endgenerate
+	genvar native_c_i;
+	generate
+		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
+			assign native_inter_pred_u[native_c_i] = dut.stub.dpb_pred_u[native_c_i];
+			assign native_inter_pred_v[native_c_i] = dut.stub.dpb_pred_v[native_c_i];
+		end
+	endgenerate
+
+	// Native I420 DPB write tap: captures every sample written to the DPB
+	// (IDR intra frames during DPB fill; eventually inter reconstruction too).
+	wire [31:0] dpb_wr_addr_raw = dut.stub.dpb_mem_waddr;
+	wire [31:0] dpb_cur_base    = dut.stub.dpb_current_base;
+	assign native_i420_wr_en     = dut.stub.dpb_mem_we;
+	assign native_i420_wr_offset = dpb_wr_addr_raw - dpb_cur_base;
+	assign native_i420_wr_data   = dut.stub.dpb_mem_wdata;
+	assign native_i420_wr_frame  = dut.stub.frames_out;
+
+	// DPB reference pre-fill: inject real decoded IDR samples into the
+	// DPB SRAM. The testbench writes to the REFERENCE bank so that MC
+	// fetches see real data instead of synthetic patterns.
+	always @(posedge clk) begin
+		if (dpb_prefill_en)
+			dut.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
+	end
 endmodule
 
 `default_nettype wire

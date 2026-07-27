@@ -611,13 +611,13 @@ void MediaPlayer::paintIdle() {
                                   idlePhase_.load())) {
                 ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
             }
-            ddrBank_ ^= 1;
+            if (ok)
+                ddrBank_ ^= 1;
         }
-        if (!ok)
-            log("media: idle paint refused legacy RGB F1 path; frame store requires DDR YUV420p");
         if (!ok) {
             if (!idleWarned_.exchange(true))
-                log("media: idle paint failed (will retry): " + fpga_.lastError());
+                log("media: idle paint DDR failed (will retry on re-probe): " +
+                    fpga_.lastError());
         } else {
             // Arm the warning again so a later failure is not swallowed — the core
             // is briefly out of user mode right after a heal/reload and the first
@@ -1309,7 +1309,8 @@ void MediaPlayer::streamPump(int sfd) {
                     ensureYuv420p();
                     clearYuv420pCropPadding(yuv420p.data(), g);
                     ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
-                    ddrBank_ ^= 1;
+                    if (ok)
+                        ddrBank_ ^= 1;
                     if (!ok) {
                         log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
                     } else if ((reconOk % 30) == 0) {
@@ -2517,7 +2518,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         if (dt.total_us > accounted)
                             prof.ddrUnaccountedUs += dt.total_us - accounted;
                     }
-                    ddrBank_ ^= 1;
+                    if (ok)
+                        ddrBank_ ^= 1;
                     if (!ok)
                         log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
                 }

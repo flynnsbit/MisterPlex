@@ -157,3 +157,91 @@ else
   fi
 fi
 echo "OK red-check: timing guard rejects negative slack"
+
+# ── timing-exclusion gate red-checks ──
+STA_EXCL_GREEN="$FAULT_DIR/fake_timing_excl_green.sta.rpt"
+cat >"$STA_EXCL_GREEN" <<'RPT'
+; Setup Summary ;
+; Clock ; Slack ; End Point TNS ;
+; general[0].gpll ; 0.245 ; 0.000 ;
+; general[2].gpll ; 0.100 ; 0.000 ;
+;
+; Hold Summary ;
+; Clock ; Slack ; End Point TNS ;
+; general[0].gpll ; 0.125 ; 0.000 ;
+; general[2].gpll ; 0.200 ; 0.000 ;
+RPT
+
+EXCL_EVIL_SDC="$FAULT_DIR/evil_async.sdc"
+cat >"$EXCL_EVIL_SDC" <<'SDC'
+set_clock_groups -asynchronous \
+   -group [get_clocks { *|pll|pll_inst|altera_pll_i|general[0].*|divclk}] \
+   -group [get_clocks { *|pll|pll_inst|altera_pll_i|general[2].*|divclk}]
+SDC
+
+# Green: existing SDC files only
+"$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EXCL_GREEN" >/dev/null
+echo "OK green: timing exclusion gate passes with baseline SDC and good STA"
+
+# Red: new -asynchronous clock group
+if "$ROOT/scripts/check_timing_exclusions.py" \
+     --sdc "$ROOT/fpga/Plex_MiSTer/sys/sys_top.sdc" \
+     --sdc "$ROOT/fpga/Plex_MiSTer/Plex.sdc" \
+     --sdc "$EXCL_EVIL_SDC" \
+     --sta-rpt "$STA_EXCL_GREEN" \
+     >"$FAULT_DIR/excl_evil.out" 2>"$FAULT_DIR/excl_evil.err"; then
+  echo "FAIL: timing exclusion gate accepted new -asynchronous clock group" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "HIGH RISK" "$FAULT_DIR/excl_evil.err"; then
+    echo "FAIL: timing exclusion evil-SDC red-check returned rc=$rc, want rejection rc=1 with HIGH RISK" >&2
+    cat "$FAULT_DIR/excl_evil.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: timing exclusion gate rejects new -asynchronous clock group"
+
+# Red: missing expected clock in STA
+STA_MISSING_CLK="$FAULT_DIR/sta_missing_clock.rpt"
+cat >"$STA_MISSING_CLK" <<'RPT'
+; Setup Summary ;
+; Clock ; Slack ; End Point TNS ;
+; general[0].gpll ; 0.245 ; 0.000 ;
+;
+; Hold Summary ;
+; Clock ; Slack ; End Point TNS ;
+; general[0].gpll ; 0.125 ; 0.000 ;
+RPT
+if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_MISSING_CLK" \
+     >"$FAULT_DIR/excl_missing.out" 2>"$FAULT_DIR/excl_missing.err"; then
+  echo "FAIL: timing exclusion gate accepted STA missing general[2].gpll" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "general\[2\].gpll" "$FAULT_DIR/excl_missing.err"; then
+    echo "FAIL: timing exclusion missing-clock red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/excl_missing.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: timing exclusion gate rejects missing expected clock"
+
+# Red: empty STA (zero analysed rows)
+STA_EMPTY="$FAULT_DIR/sta_empty.rpt"
+cat >"$STA_EMPTY" <<'RPT'
+; Quartus Prime TimeQuest Timing Analyzer Report
+RPT
+if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EMPTY" \
+     >"$FAULT_DIR/excl_empty.out" 2>"$FAULT_DIR/excl_empty.err"; then
+  echo "FAIL: timing exclusion gate accepted empty STA report" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "ZERO analysed" "$FAULT_DIR/excl_empty.err"; then
+    echo "FAIL: timing exclusion empty-STA red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/excl_empty.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: timing exclusion gate rejects empty STA (zero checked paths)"

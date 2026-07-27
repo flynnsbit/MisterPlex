@@ -495,7 +495,8 @@ def main() -> int:
     ap.add_argument("--manifest-out", help="output frame-plane golden JSON")
     ap.add_argument("--h264-loop-filter", choices=LOOP_FILTER_STATES,
                     help="reference decoder in-loop deblock state for generated planes")
-    ap.add_argument("--expected-h264-loop-filter", choices=LOOP_FILTER_STATES,
+    ap.add_argument("--expected-h264-loop-filter", "--expect-h264-loop-filter",
+                    dest="expected_h264_loop_filter", choices=LOOP_FILTER_STATES,
                     help="required expected loop-filter state when verifying/comparing")
     ap.add_argument("--expect-width", type=int, default=0)
     ap.add_argument("--expect-height", type=int, default=0)

@@ -118,8 +118,8 @@ module decode_stub #(
 	wire inter_diag_tile = (x >= 10'd16) && (x < 10'd32) && (y < 10'd16);
 	// 3.3l-2: first 4x4 inv_quant + IDCT (pred=128) from the shared
 	// h264_iq_idct_4x4.sv RTL. The signature is XOR of reconstructed samples.
-	wire signed [17:0] idct_dequant [0:15];
-	wire signed [17:0] idct_residual [0:15];
+	wire signed [21:0] idct_dequant [0:15];
+	wire signed [21:0] idct_residual [0:15];
 	wire [7:0] idct_pred [0:15];
 	wire [7:0] recon_px [0:15];
 	wire [7:0] recon_sig_comb = recon_px[0]  ^ recon_px[1]  ^ recon_px[2]  ^ recon_px[3] ^
@@ -133,9 +133,9 @@ module decode_stub #(
 		for (dbg_i = 0; dbg_i < 16; dbg_i = dbg_i + 1) begin
 			if (lat_coeff[dbg_i] != 9'sd0)
 				recon_dbg_comb[0] = 1'b1; // coefficients seen by recon path are non-zero
-			if (idct_dequant[dbg_i] != 18'sd0)
+			if (idct_dequant[dbg_i] != 22'sd0)
 				recon_dbg_comb[3] = 1'b1; // dequant stage produced a non-zero value
-			if (idct_residual[dbg_i] != 18'sd0)
+			if (idct_residual[dbg_i] != 22'sd0)
 				recon_dbg_comb[4] = 1'b1; // IDCT residual contribution is non-zero
 			if (recon_px[dbg_i] != 8'd128)
 				recon_dbg_comb[5] = 1'b1; // recon differs from pred-only 128
@@ -147,7 +147,11 @@ module decode_stub #(
 	genvar pred_i;
 	generate
 		for (pred_i = 0; pred_i < 16; pred_i = pred_i + 1) begin : gen_idct_pred
-			assign idct_pred[pred_i] = 8'd128;
+			// Inter MBs: use MC prediction from DPB reference.
+			// Intra MBs: 128 placeholder (real intra prediction not yet wired).
+			// This maps the first 4x4 block of dpb_pred_y into the recon path.
+			assign idct_pred[pred_i] = (lat_p_inter && dpb_ref_ready) ?
+			                           dpb_pred_y[pred_i] : 8'd128;
 		end
 	endgenerate
 
@@ -315,6 +319,7 @@ module decode_stub #(
 	// the reference becomes usable only through the same deblock writeback
 	// controller seam that owns filtered-MB commit and frame-boundary promotion.
 	reg               dpb_fetch_start;
+	reg               dpb_frame_done_pulse;
 	localparam int DPB_MB_W = (WIDTH + 15) / 16;
 	localparam int DPB_MB_H = (HEIGHT + 15) / 16;
 	localparam int DPB_MB_COUNT = DPB_MB_W * DPB_MB_H;
@@ -368,7 +373,8 @@ module decode_stub #(
 	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
 	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
 	wire              dpb_fill_sample_phase = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx < 9'd384);
-	wire              dpb_filtered_sample_valid = dpb_fill_sample_phase;
+	wire              dpb_diag_sample_phase = !ENABLE_DPB_REF_SEAM && (phase == PH_PAINT) && is_idr_frame && (pix_i == 0);
+	wire              dpb_filtered_sample_valid = dpb_fill_sample_phase || dpb_diag_sample_phase;
 	wire              dpb_filtered_mb_valid = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx == 9'd384);
 	wire              dpb_filtered_frame_done = dpb_filtered_mb_valid && (dpb_fill_mb_addr == DPB_LAST_MB_ADDR);
 	wire              dpb_frame_boundary = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx == 9'd385);
@@ -397,7 +403,12 @@ module decode_stub #(
 	wire [7:0]        dpb_filtered_sample = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
 	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
 	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
-	wire              dpb_idr_start = deblock_dpb_invalidate_refs;
+	wire [7:0]        dpb_filtered_mb_x_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_x : 8'd0;
+	wire [7:0]        dpb_filtered_mb_y_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_y : 8'd0;
+	wire [1:0]        dpb_filtered_plane_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_plane : 2'd0;
+	wire [7:0]        dpb_filtered_sample_idx_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_sample_idx : 8'd0;
+	wire [7:0]        dpb_filtered_sample_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_sample : 8'h3b;
+	wire              dpb_idr_start = deblock_dpb_invalidate_refs | (vcl_pulse && (last_nal_type[4:0] == 5'd5));
 	wire [15:0]       p_mb_width = (mb_w == 0) ? 16'd20 : {8'd0, mb_w};
 	wire [15:0]       p_req_mb_x16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr % p_mb_width);
 	wire [15:0]       p_req_mb_y16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr / p_mb_width);
@@ -414,37 +425,23 @@ module decode_stub #(
 	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
 	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
 	                                 dpb_pred_y_valid[0];
-	function automatic [7:0] dpb_ref_byte;
-		input [31:0] addr;
-		input [31:0] base;
-		reg [31:0] rel;
-		reg [31:0] coord;
-		reg [15:0] rx;
-		reg [15:0] ry;
-		begin
-			rel = addr - base;
-			if (addr < base) begin
-				dpb_ref_byte = 8'h00;
-			end else if (rel < (WIDTH * HEIGHT)) begin
-				coord = rel % WIDTH;
-				rx = coord[15:0];
-				coord = rel / WIDTH;
-				ry = coord[15:0];
-				dpb_ref_byte = 8'h20 ^ rx[7:0] ^ {ry[4:0], 3'b000};
-			end else if (rel < (WIDTH * HEIGHT) + ((WIDTH / 2) * (HEIGHT / 2))) begin
-				rel = rel - (WIDTH * HEIGHT);
-				coord = rel % (WIDTH / 2);
-				rx = coord[15:0];
-				dpb_ref_byte = 8'h80 + {2'd0, rx[5:0]};
-			end else begin
-				rel = rel - (WIDTH * HEIGHT) - ((WIDTH / 2) * (HEIGHT / 2));
-				coord = rel / (WIDTH / 2);
-				ry = coord[15:0];
-				dpb_ref_byte = 8'h80 + {2'd0, ry[5:0]};
-			end
-		end
-	endfunction
-	assign dpb_mem_rdata = dpb_ref_byte(dpb_mem_raddr_q, dpb_reference_base);
+	// DPB local memory — two banks for ping-pong (current/reference).
+	// In simulation, backed by SRAM; testbench pre-fills reference bank
+	// with real IDR decode data for honest inter measurement.
+	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
+	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
+	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
+	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
+
+	// DPB write port (from fill path)
+	always @(posedge clk) begin
+		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
+			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+	end
+
+	// DPB read port (for MC reference fetch) — 1-cycle latency
+	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
+	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
 
 	h264_deblock_writeback_ctrl #(
 		.MB_COUNT(DPB_MB_COUNT),
@@ -469,16 +466,19 @@ module decode_stub #(
 		.commit_order_error(deblock_commit_order_error)
 	);
 
-	h264_dpb_one_ref #(.FRAME_W(WIDTH), .FRAME_H(HEIGHT)) u_stream_dpb (
+	h264_dpb_one_ref #(
+		.FRAME_W(WIDTH), .FRAME_H(HEIGHT),
+		.BANK0_BASE(0), .BANK1_BASE(DPB_FRAME_BYTES)
+	) u_stream_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(dpb_idr_start),
-		.frame_done(deblock_ref_ready_pulse),
+		.frame_done(ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse),
 		.ref_ready(dpb_ref_ready),
 		.current_base(dpb_current_base),
 		.reference_base(dpb_reference_base),
 		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_x(dpb_fill_mb_x), .filtered_mb_y(dpb_fill_mb_y), .filtered_plane(dpb_filtered_plane),
-		.filtered_sample_idx(dpb_filtered_sample_idx), .filtered_sample(dpb_filtered_sample),
+		.filtered_mb_x(dpb_filtered_mb_x_out), .filtered_mb_y(dpb_filtered_mb_y_out), .filtered_plane(dpb_filtered_plane_out),
+		.filtered_sample_idx(dpb_filtered_sample_idx_out), .filtered_sample(dpb_filtered_sample_out),
 		.mem_we(dpb_mem_we), .mem_waddr(dpb_mem_waddr), .mem_wdata(dpb_mem_wdata),
 		.fetch_start(dpb_fetch_start),
 		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
@@ -536,6 +536,7 @@ module decode_stub #(
 		wr_reset_ptr  <= 1'b0;
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
+		dpb_frame_done_pulse <= 1'b0;
 		dpb_mem_rvalid <= dpb_mem_rd_q;
 		dpb_mem_rd_q <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
@@ -592,6 +593,7 @@ module decode_stub #(
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
 			dpb_fetch_start <= 0;
+			dpb_frame_done_pulse <= 0;
 			dpb_fill_mb_addr <= '0;
 			dpb_fill_sample_idx <= 9'd0;
 			dpb_mem_rd_q <= 0;
@@ -744,6 +746,8 @@ module decode_stub #(
 				pix_i      <= 0;
 				x          <= 0;
 				y          <= 0;
+				if (is_idr_frame && !ENABLE_DPB_REF_SEAM)
+					dpb_frame_done_pulse <= 1'b1;
 			end else begin
 				pix_i <= pix_i + 1'd1;
 				if (x == (width_w - 10'd1)) begin
