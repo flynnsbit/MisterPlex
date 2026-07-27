@@ -135,8 +135,11 @@ The shared multi-NAL gate also now proves the P-slice header handoff parses non-
 `mb_skip_run`, and first P macroblock type instead of misreading those bits as QP/residual syntax. The
 first parsed P macroblock is now latched into the DPB/MC requester (`first_mb` → `mb_x/mb_y`,
 parsed P partition mode/count → `part_w/part_h`, single-ref zero-MVD request for this profile rung).
-IDR starts invalidate the one-ref DPB, the diagnostic filtered sample is presented before frame
-promotion, and the frame-boundary promotion enables P fetches from the previous reference.
+The stream path now instantiates the product `h264_deblock_writeback_ctrl`: IDR start drives
+`dpb_invalidate_refs` into `h264_dpb_one_ref.idr_start`, generated filtered I420 sample writes precede
+each `filtered_mb_valid`, terminal commit is followed by `frame_boundary`, and the controller's
+`ref_ready_pulse` is the only signal promoted into `h264_dpb_one_ref.frame_done`. That makes the
+parser→DPB/MC liveness path and the deblock commit-barrier seam one wired RTL path.
 
 ```text
 multi-NAL stream_path raw: bytes=27653 bytes_in=27653 bytes_seen=27652 nalu=15 sps=1 pps=1 idr=1 slice=11 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=39780 frames=10 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 ... final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1
@@ -148,19 +151,36 @@ Those 11 first-P-MB classifications cover P_L0_16x16, P_L0_16x8 and P_L0_8x16 th
 until the shared fixtures contain those syntax modes at the first macroblock or expose full P-MB
 goldens. `recon_sig_3b_cycles` moving from zero is a liveness signal only: it proves the parsed
 P path can issue a DPB reference fetch, fill the 21×21/9×9 MC windows, and publish a reconstructed-P
-signature. It is not a quality PASS.
+signature after product deblock-writeback reference promotion. It is not a quality PASS.
 
-The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`) to perturb integrated visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated them; no synthesised RTL is changed. This is an integrated path/diagnostic gate, not a claim that parsed P macroblock syntax is already driving the MC datapath. The next RTL step is to consume the shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured, then wire P_Skip and P_L0_16x16 syntax into the reference fetch pipeline with explicit registered-memory latency.
+The older inter diagnostic red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`)
+to perturb visual-diagnostic pixels after the product `stream_path`/`decode_stub` path has generated
+them; no synthesised RTL is changed. The newer liveness red path forces `recon_sig=0` after the parsed
+P request would otherwise complete, proving the parser→DPB/MC signature is required. The next RTL step
+is to consume shared `misterplex.p3.mb_golden.v1` P-macroblock records once captured and replace the
+single-ref zero-MVD rung with parsed motion-vector deltas for full P quality.
 
-The full-frame reference gate is now the native-I420 scoreboard and still reports honest RED at frame 0. The older RGB565-derived numbers are retired as decode evidence because they passed through presentation diagnostics and border masking. This slice moves P syntax/mode classification plus DPB/MC liveness, not full-frame MC/reconstruction quality:
+The full-frame gate now also reports per-frame MB-exact counts so inter is measured rather than
+only classified as expected-red. The current product output is still the RGB565 diagnostic presenter
+converted back to I420 by the testbench (`colorspace=I420_FROM_RGB565`), so these are quality numbers
+for the observable stream-path product output, not a native-I420 decode PASS. Against a corrected
+FFmpeg reference generated with `-skip_loop_filter all`, the current 320×240 12-frame fixture is:
 
 ```text
-FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=Y exact=1082 pixels=76800 mae=76.597201 max_abs=194
-FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=U exact=73 pixels=19200 mae=74.762708 max_abs=180
-FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=V exact=150 pixels=19200 mae=75.251771 max_abs=211
-FULL_FRAME_COMPARE summary ... frames=12 nals=15 idr=1 p=11 ... first_bad_frame=0 strict_pass=0 mode=expect-red
-OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison
+I_QUALITY frames=1  mb_exact=0/300
+I_QUALITY plane=Y exact=1078/76800 mae=76.605599
+I_QUALITY plane=U exact=70/19200    mae=74.763698
+I_QUALITY plane=V exact=160/19200   mae=75.252813
+P_QUALITY frames=11 mb_exact=0/3300
+P_QUALITY plane=Y exact=4066/844800 mae=76.468417
+P_QUALITY plane=U exact=1074/211200 mae=77.961619
+P_QUALITY plane=V exact=314/211200  mae=71.610904
 ```
+
+The first inter quality ratchet is therefore `P mb_exact=0/3300` with Y MAE `76.468417` on the
+declared `I420_FROM_RGB565` candidate vs `ffmpeg -skip_loop_filter all` reference. The per-MB compare
+is intentionally separated from the native MB0 arithmetic trace (`got=73 ref=73 abs=0`) so the old
+RGB565/border artifact cannot masquerade as decode evidence.
 
 Native-I420 ratchets (`tests/fixtures/p3_multinal/*full_frame_ratchet_v1.json`,
 generated/checked by `tests/unit/test_stream_path_full_frame_compare.sh` and

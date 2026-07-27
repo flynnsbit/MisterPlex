@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
             }
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                if (!sim.waitForFrames(expectedFrames, 160000)) {
+                if (!sim.waitForFrames(expectedFrames, std::max(200000, kFrameW * kFrameH * 3))) {
                     return fail("decode_stub did not return idle after VCL frame " + std::to_string(expectedFrames)) ? 0 : 1;
                 }
             } else {

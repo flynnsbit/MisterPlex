@@ -35,7 +35,8 @@ module decode_stub_recon_tb #(
 
 	decode_stub #(
 		.WIDTH(320),
-		.HEIGHT(240)
+		.HEIGHT(240),
+		.ENABLE_DPB_REF_SEAM(1'b0)
 	) dut (
 		.clk(clk),
 		.reset(reset),

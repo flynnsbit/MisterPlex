@@ -6,7 +6,8 @@
 
 module decode_stub #(
 	parameter int WIDTH  = 320,
-	parameter int HEIGHT = 240
+	parameter int HEIGHT = 240,
+	parameter bit ENABLE_DPB_REF_SEAM = 1'b1
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -58,8 +59,14 @@ module decode_stub #(
 
 	reg [ADDR_W:0] pix_i;
 	reg [9:0]      x, y;
-	// 0 idle, 1 wait residual/slice, 2 paint, 3 wait first-P-MB DPB/MC fetch
-	reg [1:0]      phase;
+	// 0 idle, 1 wait residual/slice, 2 paint, 3 wait first-P-MB DPB/MC fetch,
+	// 4 publish deblocked I420 samples into the DPB before reference promotion.
+	reg [2:0]      phase;
+	localparam [2:0] PH_IDLE = 3'd0;
+	localparam [2:0] PH_WAIT = 3'd1;
+	localparam [2:0] PH_PAINT = 3'd2;
+	localparam [2:0] PH_FETCH = 3'd3;
+	localparam [2:0] PH_DPB_FILL = 3'd4;
 	reg            is_idr_frame;
 	reg            is_i_frame;
 	reg [7:0]      lat_type;
@@ -103,8 +110,8 @@ module decode_stub #(
 	// Macroblock grid lines every 16 px when SPS known
 	wire mb_line = lat_sps && ((x[3:0] == 4'd0) || (y[3:0] == 4'd0));
 	// MB index colour hash
-	wire [7:0] mbx = x[9:4];
-	wire [7:0] mby = y[9:4];
+	wire [7:0] mbx = {2'd0, x[9:4]};
+	wire [7:0] mby = {2'd0, y[9:4]};
 	wire [7:0] mb_hash = mbx + mby + lat_nalu[7:0];
 	// First MB (0,0) filled with recon stub gray when residual_ok
 	wire mb0 = (x < 10'd16) && (y < 10'd16);
@@ -246,7 +253,7 @@ module decode_stub #(
 	                                                         (inter_fetch_x[7:0] ^ inter_fetch_y[7:0]);
 
 	// 3.3k fallback: paint from residual_dc (scan coeff0 → 128+dc)
-	wire signed [9:0] recon_sum = 10'sd128 + lat_res_dc;
+	wire signed [9:0] recon_sum = 10'sd128 + {{2{lat_res_dc[7]}}, lat_res_dc};
 	wire [7:0] recon_from_dc =
 		(recon_sum < 10'sd0)   ? 8'd0 :
 		(recon_sum > 10'sd255) ? 8'd255 : recon_sum[7:0];
@@ -304,13 +311,26 @@ module decode_stub #(
 		end
 	endfunction
 
-	// First-P-MB DPB/MC liveness path. Until the frame deblock scheduler exposes
-	// full-MB filtered writeback, publication is frame-boundary-gated from the
-	// prior IDR diagnostic frame and the DPB read port is fed by that reference
-	// model. The MC request itself is driven by parsed P macroblock syntax.
+	// First-P-MB DPB/MC path. Parsed P macroblock syntax drives the MC request;
+	// the reference becomes usable only through the same deblock writeback
+	// controller seam that owns filtered-MB commit and frame-boundary promotion.
 	reg               dpb_fetch_start;
-	reg               dpb_frame_done_pulse;
+	localparam int DPB_MB_W = (WIDTH + 15) / 16;
+	localparam int DPB_MB_H = (HEIGHT + 15) / 16;
+	localparam int DPB_MB_COUNT = DPB_MB_W * DPB_MB_H;
+	localparam int DPB_MB_AW = (DPB_MB_COUNT <= 1) ? 1 : $clog2(DPB_MB_COUNT);
+	localparam [31:0] DPB_LAST_MB_ADDR_32 = DPB_MB_COUNT - 1;
+	localparam [15:0] DPB_LAST_MB_ADDR = DPB_LAST_MB_ADDR_32[15:0];
+	reg [15:0]        dpb_fill_mb_addr;
+	reg [8:0]         dpb_fill_sample_idx;
 	wire              dpb_ref_ready;
+	wire              deblock_wb_valid;
+	wire [DPB_MB_AW-1:0] deblock_wb_mb_addr;
+	wire              deblock_wb_is_ref;
+	wire              deblock_dpb_invalidate_refs;
+	wire              deblock_ref_ready_pulse;
+	wire [1:0]        deblock_ref_ready_slot;
+	wire              deblock_commit_order_error;
 	wire [31:0]       dpb_current_base;
 	wire [31:0]       dpb_reference_base;
 	wire              dpb_mem_we;
@@ -347,9 +367,37 @@ module decode_stub #(
 	wire              dpb_pred_v_valid [0:63];
 	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
 	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
-	wire              dpb_filtered_sample_valid = (phase == 2'd2) && is_idr_frame && (pix_i == 0);
-	wire [7:0]        dpb_filtered_sample = 8'h3b;
-	wire              dpb_idr_start = vcl_pulse && (last_nal_type[4:0] == 5'd5);
+	wire              dpb_fill_sample_phase = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx < 9'd384);
+	wire              dpb_filtered_sample_valid = dpb_fill_sample_phase;
+	wire              dpb_filtered_mb_valid = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx == 9'd384);
+	wire              dpb_filtered_frame_done = dpb_filtered_mb_valid && (dpb_fill_mb_addr == DPB_LAST_MB_ADDR);
+	wire              dpb_frame_boundary = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx == 9'd385);
+	wire [31:0]       dpb_fill_mb_addr32 = {16'd0, dpb_fill_mb_addr};
+	wire [31:0]       dpb_fill_mb_x32 = dpb_fill_mb_addr32 % DPB_MB_W;
+	wire [31:0]       dpb_fill_mb_y32 = dpb_fill_mb_addr32 / DPB_MB_W;
+	wire [15:0]       dpb_fill_mb_x16 = dpb_fill_mb_x32[15:0];
+	wire [15:0]       dpb_fill_mb_y16 = dpb_fill_mb_y32[15:0];
+	wire [7:0]        dpb_fill_mb_x = dpb_fill_mb_x16[7:0];
+	wire [7:0]        dpb_fill_mb_y = dpb_fill_mb_y16[7:0];
+	wire [1:0]        dpb_filtered_plane = (dpb_fill_sample_idx < 9'd256) ? 2'd0 :
+	                                       (dpb_fill_sample_idx < 9'd320) ? 2'd1 : 2'd2;
+	wire [8:0]        dpb_sample_u_idx9 = dpb_fill_sample_idx - 9'd256;
+	wire [8:0]        dpb_sample_v_idx9 = dpb_fill_sample_idx - 9'd320;
+	wire [7:0]        dpb_filtered_sample_idx = (dpb_filtered_plane == 2'd0) ? dpb_fill_sample_idx[7:0] :
+	                                            (dpb_filtered_plane == 2'd1) ? dpb_sample_u_idx9[7:0] :
+	                                                                           dpb_sample_v_idx9[7:0];
+	wire [7:0]        dpb_sample_x = (dpb_filtered_plane == 2'd0) ? {4'd0, dpb_filtered_sample_idx[3:0]} :
+	                                                                  {5'd0, dpb_filtered_sample_idx[2:0]};
+	wire [7:0]        dpb_sample_y = (dpb_filtered_plane == 2'd0) ? {4'd0, dpb_filtered_sample_idx[7:4]} :
+	                                                                  {5'd0, dpb_filtered_sample_idx[5:3]};
+	wire [15:0]       dpb_abs_x = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_x, 4'd0} + {8'd0, dpb_sample_x}) :
+	                                                             ({5'd0, dpb_fill_mb_x, 3'd0} + {8'd0, dpb_sample_x});
+	wire [15:0]       dpb_abs_y = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_y, 4'd0} + {8'd0, dpb_sample_y}) :
+	                                                             ({5'd0, dpb_fill_mb_y, 3'd0} + {8'd0, dpb_sample_y});
+	wire [7:0]        dpb_filtered_sample = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
+	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
+	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	wire              dpb_idr_start = deblock_dpb_invalidate_refs;
 	wire [15:0]       p_mb_width = (mb_w == 0) ? 16'd20 : {8'd0, mb_w};
 	wire [15:0]       p_req_mb_x16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr % p_mb_width);
 	wire [15:0]       p_req_mb_y16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr / p_mb_width);
@@ -369,22 +417,68 @@ module decode_stub #(
 	function automatic [7:0] dpb_ref_byte;
 		input [31:0] addr;
 		input [31:0] base;
+		reg [31:0] rel;
+		reg [31:0] coord;
+		reg [15:0] rx;
+		reg [15:0] ry;
 		begin
-			dpb_ref_byte = ((addr >= base) && (addr[3:0] == 4'd0)) ? 8'h3b : 8'h00;
+			rel = addr - base;
+			if (addr < base) begin
+				dpb_ref_byte = 8'h00;
+			end else if (rel < (WIDTH * HEIGHT)) begin
+				coord = rel % WIDTH;
+				rx = coord[15:0];
+				coord = rel / WIDTH;
+				ry = coord[15:0];
+				dpb_ref_byte = 8'h20 ^ rx[7:0] ^ {ry[4:0], 3'b000};
+			end else if (rel < (WIDTH * HEIGHT) + ((WIDTH / 2) * (HEIGHT / 2))) begin
+				rel = rel - (WIDTH * HEIGHT);
+				coord = rel % (WIDTH / 2);
+				rx = coord[15:0];
+				dpb_ref_byte = 8'h80 + {2'd0, rx[5:0]};
+			end else begin
+				rel = rel - (WIDTH * HEIGHT) - ((WIDTH / 2) * (HEIGHT / 2));
+				coord = rel / (WIDTH / 2);
+				ry = coord[15:0];
+				dpb_ref_byte = 8'h80 + {2'd0, ry[5:0]};
+			end
 		end
 	endfunction
 	assign dpb_mem_rdata = dpb_ref_byte(dpb_mem_raddr_q, dpb_reference_base);
 
+	h264_deblock_writeback_ctrl #(
+		.MB_COUNT(DPB_MB_COUNT),
+		.FRAME_SLOT_W(2),
+		.SAMPLES_PER_MB(384)
+	) u_stream_dpb_wb (
+		.clk(clk), .reset(reset),
+		.idr_frame_start(vcl_pulse && (last_nal_type[4:0] == 5'd5)),
+		.filtered_sample_valid(dpb_filtered_sample_valid),
+		.filtered_mb_valid(dpb_filtered_mb_valid),
+		.filtered_mb_addr(dpb_fill_mb_addr[DPB_MB_AW-1:0]),
+		.filtered_mb_is_ref(1'b1),
+		.filtered_frame_done(dpb_filtered_frame_done),
+		.frame_slot_i(2'd0),
+		.frame_boundary(dpb_frame_boundary),
+		.wb_valid(deblock_wb_valid),
+		.wb_mb_addr(deblock_wb_mb_addr),
+		.wb_is_ref(deblock_wb_is_ref),
+		.dpb_invalidate_refs(deblock_dpb_invalidate_refs),
+		.ref_ready_pulse(deblock_ref_ready_pulse),
+		.ref_ready_slot(deblock_ref_ready_slot),
+		.commit_order_error(deblock_commit_order_error)
+	);
+
 	h264_dpb_one_ref #(.FRAME_W(WIDTH), .FRAME_H(HEIGHT)) u_stream_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(dpb_idr_start),
-		.frame_done(dpb_frame_done_pulse),
+		.frame_done(deblock_ref_ready_pulse),
 		.ref_ready(dpb_ref_ready),
 		.current_base(dpb_current_base),
 		.reference_base(dpb_reference_base),
 		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_x(8'd0), .filtered_mb_y(8'd0), .filtered_plane(2'd0),
-		.filtered_sample_idx(8'd0), .filtered_sample(dpb_filtered_sample),
+		.filtered_mb_x(dpb_fill_mb_x), .filtered_mb_y(dpb_fill_mb_y), .filtered_plane(dpb_filtered_plane),
+		.filtered_sample_idx(dpb_filtered_sample_idx), .filtered_sample(dpb_filtered_sample),
 		.mem_we(dpb_mem_we), .mem_waddr(dpb_mem_waddr), .mem_wdata(dpb_mem_wdata),
 		.fetch_start(dpb_fetch_start),
 		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
@@ -427,7 +521,10 @@ module decode_stub #(
 	                                   |dpb_inter_sig |
 	                                   lat_p_skip | |lat_p_part_count | lat_p_uses_sub_mb |
 	                                   lat_p_intra | |lat_p_mb_x | |lat_p_mb_y |
-	                                   pending_p_skip | pending_p_uses_sub_mb | pending_p_intra;
+	                                   pending_p_skip | pending_p_uses_sub_mb | pending_p_intra |
+	                                   deblock_wb_valid | |deblock_wb_mb_addr |
+	                                   deblock_wb_is_ref | deblock_ref_ready_pulse |
+	                                   |deblock_ref_ready_slot | deblock_commit_order_error;
 
 	// Latch on the producer's explicit place-time pulse; residual_ok/coefficients
 	// are sticky payload, not a safe valid edge.
@@ -439,7 +536,6 @@ module decode_stub #(
 		wr_reset_ptr  <= 1'b0;
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
-		dpb_frame_done_pulse <= 1'b0;
 		dpb_mem_rvalid <= dpb_mem_rd_q;
 		dpb_mem_rd_q <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
@@ -451,7 +547,7 @@ module decode_stub #(
 			dpb_v_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
 
 		if (reset) begin
-			phase         <= 2'd0;
+			phase         <= PH_IDLE;
 			busy          <= 0;
 			pix_i         <= 0;
 			x             <= 0;
@@ -496,7 +592,8 @@ module decode_stub #(
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
 			dpb_fetch_start <= 0;
-			dpb_frame_done_pulse <= 0;
+			dpb_fill_mb_addr <= '0;
+			dpb_fill_sample_idx <= 9'd0;
 			dpb_mem_rd_q <= 0;
 			dpb_mem_raddr_q <= 0;
 			dpb_mem_rvalid <= 0;
@@ -516,10 +613,10 @@ module decode_stub #(
 				p_candidate_seen <= 1'b0;
 			else if (p_fetch_candidate)
 				p_candidate_seen <= 1'b1;
-			if (phase == 2'd0) begin
+			if (phase == PH_IDLE) begin
 			// Idle: on VCL wait for this NAL's place-time residual pulse.
 			if (vcl_pulse) begin
-				phase    <= 2'd1;
+				phase    <= PH_WAIT;
 				busy     <= 1'b1;
 				wait_cnt <= WAIT_MAX[11:0];
 				lat_type <= last_nal_type;
@@ -528,7 +625,7 @@ module decode_stub #(
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
 			end else if (pending_p_fetch && dpb_ref_ready) begin
-				phase <= 2'd3;
+				phase <= PH_FETCH;
 				busy <= 1'b1;
 				lat_type <= 8'd1;
 				lat_nalu <= nalu_count;
@@ -559,11 +656,11 @@ module decode_stub #(
 					lat_coeff[coeff_i] <= 9'sd0;
 				dpb_fetch_start <= 1'b1;
 			end
-			end else if (phase == 2'd1) begin
+			end else if (phase == PH_WAIT) begin
 			if (wait_cnt != 12'd0)
 				wait_cnt <= wait_cnt - 12'd1;
 			if (wait_done) begin
-				phase        <= 2'd2;
+				phase        <= ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM ? PH_DPB_FILL : PH_PAINT);
 				pix_i        <= 0;
 				x            <= 0;
 				y            <= 0;
@@ -586,24 +683,47 @@ module decode_stub #(
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				lat_p_intra  <= first_mb_intra;
+				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
+					dpb_fill_mb_addr <= '0;
+					dpb_fill_sample_idx <= 9'd0;
+				end
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
 				if (p_fetch_candidate && dpb_ref_ready) begin
-					phase <= 2'd3;
+					phase <= PH_FETCH;
 					dpb_fetch_start <= 1'b1;
 					pending_p_fetch <= 1'b0;
 				end
 			end
-			end else if (phase == 2'd3) begin
+			end else if (phase == PH_FETCH) begin
 			if (dpb_fetch_done) begin
-				phase <= 2'd2;
+				phase <= PH_PAINT;
 				pix_i <= 0;
 				x <= 0;
 				y <= 0;
 				wr_reset_ptr <= 1'b1;
 				lat_inter_recon_ok <= dpb_inter_ok;
+			end
+			end else if (phase == PH_DPB_FILL) begin
+			if (dpb_fill_sample_idx < 9'd384) begin
+				dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;
+			end else if (dpb_fill_sample_idx == 9'd384) begin
+				if (dpb_fill_mb_addr == DPB_LAST_MB_ADDR) begin
+					dpb_fill_sample_idx <= 9'd385;
+				end else begin
+					dpb_fill_mb_addr <= dpb_fill_mb_addr + 1'b1;
+					dpb_fill_sample_idx <= 9'd0;
+				end
+			end else if (dpb_fill_sample_idx == 9'd385) begin
+				dpb_fill_sample_idx <= 9'd386;
+			end else if (deblock_ref_ready_pulse) begin
+				phase <= PH_PAINT;
+				pix_i <= 0;
+				x <= 0;
+				y <= 0;
+				wr_reset_ptr <= 1'b1;
 			end
 			end else begin
 			// Paint full frame
@@ -617,15 +737,13 @@ module decode_stub #(
 			end
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin
-				phase      <= 2'd0;
+				phase      <= PH_IDLE;
 				busy       <= 1'b0;
 				swap_req   <= 1'b1;
 				frames_out <= frames_out + 1'd1;
 				pix_i      <= 0;
 				x          <= 0;
 				y          <= 0;
-				if (is_idr_frame)
-					dpb_frame_done_pulse <= 1'b1;
 			end else begin
 				pix_i <= pix_i + 1'd1;
 				if (x == (width_w - 10'd1)) begin
