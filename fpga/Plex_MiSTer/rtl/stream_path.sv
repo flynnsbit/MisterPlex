@@ -61,6 +61,12 @@ module stream_path #(
 	output wire        slice_is_i,
 	output wire [7:0]  first_mb_type,
 	output wire        has_mb_type,
+	output wire        first_mb_p_skip,
+	output wire [7:0]  p_skip_run,
+	output wire [2:0]  first_mb_part_mode,
+	output wire [2:0]  first_mb_part_count,
+	output wire        first_mb_uses_sub_mb,
+	output wire        first_mb_intra,
 	output wire [5:0]  slice_qp,
 	output wire [1:0]  disable_deblocking_filter_idc,
 	output wire signed [4:0] slice_alpha_c0_offset_div2,
@@ -151,7 +157,7 @@ module stream_path #(
 	wire [7:0] sps_cap_data;
 	wire pps_cap_clear, pps_cap_en, pps_cap_end;
 	wire [7:0] pps_cap_data;
-	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr;
+	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr, sl_nal_ref_idc_nonzero;
 	wire [7:0] sl_cap_data;
 
 	nalu_scanner scan (
@@ -166,7 +172,8 @@ module stream_path #(
 		.pps_cap_clear(pps_cap_clear), .pps_cap_en(pps_cap_en),
 		.pps_cap_data(pps_cap_data), .pps_cap_end(pps_cap_end),
 		.sl_cap_clear(sl_cap_clear), .sl_cap_en(sl_cap_en),
-		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr)
+		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr),
+		.sl_nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero)
 	);
 
 	assign has_idr     = has_idr_w;
@@ -226,6 +233,7 @@ module stream_path #(
 		.cap_clear(sl_cap_clear), .cap_en(sl_cap_en),
 		.cap_data(sl_cap_data), .cap_end(sl_cap_end),
 		.is_idr_nal(sl_is_idr),
+		.nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
 		.log2_max_frame_num(log2_fn),
 		.poc_type(poc_t),
 		.sps_ready(sps_valid),
@@ -243,6 +251,12 @@ module stream_path #(
 		.slice_alpha_c0_offset(sl_alpha_off),
 		.slice_beta_offset(sl_beta_off),
 		.first_mb_type(sl_mbt), .has_mb_type(sl_has_mbt),
+		.first_mb_p_skip(first_mb_p_skip),
+		.p_skip_run(p_skip_run),
+		.first_mb_part_mode(first_mb_part_mode),
+		.first_mb_part_count(first_mb_part_count),
+		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
+		.first_mb_intra(first_mb_intra),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
 		.residual_csum(residual_csum),
