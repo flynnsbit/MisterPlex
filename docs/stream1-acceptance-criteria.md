@@ -126,8 +126,18 @@ for those 16 pixels — it does NOT prove full-frame correctness. Signal 2 is
 valid as a narrow existence proof ("decode math ran and got the right answer for
 MB0 block0"), not as a frame-level accuracy claim.
 
-This proves the FPGA **processed** NAL data. Combined with Signal 1, it proves
-end-to-end: ARM produced → FPGA consumed → FPGA parsed → FPGA decoded.
+**WARNING (instrument #19):** Those 16 pixels are not a "sample" — they are the
+ENTIRE reconstruction path. `decode_stub.sv` reconstructs only the first 4×4
+block of MB(0,0). The intra prediction modules (`h264_intra4x4_pred`,
+`h264_intra16x16_pred`) are declared but **instantiated nowhere** in the
+synthesised design. `recon_sig` proves the dequant/IDCT/add pipeline works on
+one block with `pred=128` (flat grey). It cannot prove frame-level decode
+because there is no frame-level decode path in the FPGA.
+
+This proves the FPGA **parsed and partially processed** NAL data on one block.
+It does NOT prove decode. Combined with Signal 1, it proves: ARM produced →
+FPGA consumed → FPGA parsed → FPGA ran IQ/IDCT on block(0,0). **Full decode
+proof requires the integration datapath (not yet built).**
 
 **Signal 3: Frame store origin bit (presentation proof)**
 ```

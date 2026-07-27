@@ -132,9 +132,19 @@ The fixes at `60df5a2` (clk domain) and `3c6d1d2` (response FIFO) are on the
 DDR bus arbiter which is shared by both paths. Those fixes matter for the frame
 store path too, not just the bitstream ring.
 
-**The bitstream producer is ready. The consumer (FPGA decoder) is what's being
-built. Nobody needs to "fix" the feed — they need to enable it when the decoder
-is ready, by setting `STREAM=1`.**
+**UPDATE (instrument #19):** The "FPGA decoder" does not exist as a decode
+pipeline. `decode_stub.sv` is a telemetry probe that reconstructs ONE 4×4 block
+of macroblock (0,0) into `recon_sig`. The intra prediction modules
+(`h264_intra4x4_pred`, `h264_intra16x16_pred`) are **declared but instantiated
+nowhere** in the synthesised design. All individually-verified H.264 modules
+(intra, chroma DC, deblock, MC, DPB) are unconnected. The integration datapath
+is the project's critical path.
+
+**The bitstream producer is ready. The consumer path is `decode_stub` — a
+single-block telemetry probe, not a decoder. The integration datapath that
+connects the verified modules into a pipeline does not yet exist.** `STREAM=1`
+will deliver real content to this probe; it cannot decode frames until the
+datapath is built.
 
 ---
 
