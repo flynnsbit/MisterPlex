@@ -234,8 +234,13 @@ The ARM build needs an `arm-none-linux-gnueabihf` (or `arm-linux-gnueabihf`) cro
 
 ```bash
 export MISTER_DEV=$HOME/Projects/misterfpga-dev
+make quartus-sv-subset   # curated Quartus SV subset guard; no fit/RBF
 make build-rbf
 ```
+
+`make rtl-lint` is a Verilator parse/lint regression gate, not a Quartus
+buildability proof. `make quartus-sv-subset` catches the known Quartus subset
+syntax hazards but is still static and does not replace Analysis & Elaboration.
 
 Built cores are not tracked in git; each release ships one as an asset.
 

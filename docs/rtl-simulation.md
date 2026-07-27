@@ -44,7 +44,7 @@ For multi-file RTL, list every required `.sv` on the Verilator command line or u
 
 ## Whole-project RTL lint baseline
 
-Run the Verilator lint gate without starting Quartus:
+Run the Verilator parse/lint gate without starting Quartus:
 
 ```bash
 make rtl-lint
@@ -52,6 +52,14 @@ make rtl-lint
 scripts/rtl_lint.py --write-baseline
 ```
 
-`rtl-lint` parses `fpga/Plex_MiSTer/Plex.qsf` plus sourced `.qip`/`.tcl` assignments, runs Verilator on owned RTL, and reports only warnings physically located in MiSTerPlex-owned sources. Vendor/generated context (`sys/`, `rtl/pll/`, Intel primitive stubs) is excluded from the ranked counts so it does not bury project warnings.
+`rtl-lint` parses `fpga/Plex_MiSTer/Plex.qsf` plus sourced `.qip`/`.tcl` assignments, runs Verilator on owned RTL, and reports only warnings physically located in MiSTerPlex-owned sources. Vendor/generated context (`sys/`, `rtl/pll/`, Intel primitive stubs) is excluded from the ranked counts so it does not bury project warnings. This is not a Quartus synthesis/buildability check.
 
-The checked-in baseline is `tests/fixtures/rtl_lint_baseline.json`. Existing `WIDTHTRUNC`, `WIDTHEXPAND`, `WIDTH`, `UNSIGNED`, and `IMPLICIT*` counts are allowed; any count above baseline fails. The baseline stores both per-file/type counts and `warning_details` entries with line/message text so a diff shows which warning moved or appeared. `make unit` runs this gate after the RTL simulations. If Verilator is absent, the target prints `SKIP RTL LINT` loudly and exits 0, matching the RTL sim degrade path.
+The checked-in baseline is `tests/fixtures/rtl_lint_baseline.json`. Existing `WIDTHTRUNC`, `WIDTHEXPAND`, `WIDTH`, `UNSIGNED`, and `IMPLICIT*` counts are allowed; any count above baseline fails. The baseline stores both per-file/type counts and `warning_details` entries with line/message text so a diff shows which warning moved or appeared. `make unit` runs this gate after the RTL simulations. If Verilator is absent, the target refuses with `RTL LINT REFUSED(exit=3)` rather than silently passing.
+
+Run the curated Quartus subset guard before requesting a full fit:
+
+```bash
+make quartus-sv-subset
+```
+
+`quartus-sv-subset` first proves a real Quartus toolchain is reachable, then scans the product Quartus file list for observed Quartus 17.0.2 SystemVerilog subset hazards that Verilator accepted: function-result part-selects, the observed `ref_win[...]` function-body concatenation pattern, and `localparam` declarations in module parameter lists. If Quartus is absent it refuses with `QUARTUS_SV_SUBSET_REFUSED(exit=4)`. This is still a static curated guard, not Analysis & Elaboration; unsupported inference, generate/parameter scoping, latch inference, and other elaboration-only Quartus failures can still reach a fit unless caught by a real Quartus analysis pass.

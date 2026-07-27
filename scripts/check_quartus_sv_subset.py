@@ -160,14 +160,19 @@ def check_file(path: Path) -> list[str]:
             "is rejected by Quartus; assign through a typed helper/temp first."
         )
 
-    arrays = unpacked_arrays(text)
+    # Observed Quartus 17.0.2 failure: h264_dpb ref_win[...] was concatenated
+    # inside helper functions. Do not generalize this to every unpacked-array
+    # concatenation: Quartus accepts some non-function and small helper cases in
+    # this tree, and a false-positive "syntax" gate is also a lying instrument.
+    arrays = {name for name in unpacked_arrays(text) if name == "ref_win"}
     for fn_start, fn_body in function_blocks(text):
         for name in arrays:
             concat_array = re.compile(r"\{[^{}\n;]*\b" + re.escape(name) + r"\s*\[[^{}\n;]*\][^{}\n;]*\}")
             for m in concat_array.finditer(fn_body):
                 errors.append(
                     f"{path}:{line_no(text, fn_start + m.start())}: unpacked array element `{name}[...]` "
-                    "inside a function-body concatenation is rejected by Quartus; read it into a scalar temp first."
+                    "inside a function-body concatenation matched the observed Quartus rejection; "
+                    "read it into a scalar temp first."
                 )
 
     return errors
