@@ -50,8 +50,8 @@ static const Block kBlocks[] = {{
 {',\n'.join(inits)}
 }};
 
-static uint32_t signed18(int v) {{
-    return static_cast<uint32_t>(v) & ((1u << 18) - 1u);
+static uint32_t signed22(int v) {{
+    return static_cast<uint32_t>(v) & ((1u << 22) - 1u);
 }}
 
 int main(int argc, char** argv) {{
@@ -76,10 +76,10 @@ int main(int argc, char** argv) {{
         }}
         for (int i = 0; i < 4; ++i) {{
             dut.left[i] = dut.has_left ? current[b.y + i][b.x - 1] : 128;
-            dut.residual[i] = signed18(b.idct[i]);
-            dut.residual[i + 4] = signed18(b.idct[i + 4]);
-            dut.residual[i + 8] = signed18(b.idct[i + 8]);
-            dut.residual[i + 12] = signed18(b.idct[i + 12]);
+            dut.residual[i] = signed22(b.idct[i]);
+            dut.residual[i + 4] = signed22(b.idct[i + 4]);
+            dut.residual[i + 8] = signed22(b.idct[i + 8]);
+            dut.residual[i + 12] = signed22(b.idct[i + 12]);
         }}
 
         dut.eval();
