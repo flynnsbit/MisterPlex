@@ -63,3 +63,17 @@ else
   grep -q "localparam in module parameter list" "$FAULT_DIR/injected_red.err"
 fi
 echo "OK red-check: Quartus SV subset guard rejects injected localparam/function-select/unpacked-concat faults and refuses missing toolchain"
+
+if "$ROOT/scripts/check_define_parity.py" --drop-verilator-macro DDR_FRAME_STORE \
+     >"$FAULT_DIR/define_parity_red.out" 2>"$FAULT_DIR/define_parity_red.err"; then
+  echo "FAIL: define parity guard accepted Verilator/lint without DDR_FRAME_STORE" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "DDR_FRAME_STORE: set by Quartus" "$FAULT_DIR/define_parity_red.err"; then
+    echo "FAIL: define parity missing-DDR_FRAME_STORE red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$FAULT_DIR/define_parity_red.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: define parity guard rejects missing shared DDR_FRAME_STORE"

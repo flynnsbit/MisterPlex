@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset define-parity pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -15,6 +15,7 @@ help:
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
 	@echo "  make rtl-lint   - run Verilator parse/lint width/implicit regression gate (not Quartus synthesis)"
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard with toolchain presence probe"
+	@echo "  make define-parity - verify Quartus product macros match Verilator/lint macros"
 	@echo "  make pms-baseline-check - live PMS delivered-SPS guard (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make pms-nal-stats      - live PMS NAL size/jitter probe (requires PLEX_BASE/TOKEN/KEY)"
 	@echo "  make h264-golden-tools - build shared H.264 golden fixture extractor"
@@ -82,6 +83,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
+	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
@@ -127,6 +129,9 @@ rtl-lint:
 
 quartus-sv-subset:
 	$(ROOT)/scripts/check_quartus_sv_subset.py $$($(ROOT)/scripts/rtl_lint.py --list-files)
+
+define-parity:
+	$(ROOT)/scripts/check_define_parity.py
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 	$(ROOT)/tests/hw/test_pms_baseline_profile.sh
