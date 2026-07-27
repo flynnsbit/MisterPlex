@@ -57,6 +57,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_h264_golden_extractor.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
+	python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
