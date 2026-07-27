@@ -63,6 +63,22 @@
         "FAIL stream_path inter RTL: missing green inter diagnostic band 2",
         "FAIL stream_path inter RTL: missing green inter diagnostic band 3"
       ]
+    },
+    {
+      "id": "h264_mc_interp_bad_luma",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "Bad luma rounding fault (+1 to output) must fail the MC interpolation golden.",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: luma mismatch"
+      ]
+    },
+    {
+      "id": "h264_mc_interp_bad_chroma",
+      "owner": "tests/unit/test_mc_interp_rtl_sim.sh",
+      "why": "Bad chroma weight fault (XOR corruption) must fail the MC interpolation golden.",
+      "required_substrings": [
+        "FAIL h264_mc_interp RTL: chroma mismatch"
+      ]
     }
   ]
 }
