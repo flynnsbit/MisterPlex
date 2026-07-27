@@ -1527,6 +1527,37 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
     return false;
 }
 
+bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    setErr("readBankRelease: PLXD mailbox absent or unstable");
+    return false;
+}
+
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                                   const DdrFrameGeometry& geometry, int bank) {
     if (!yuv420p || geometry.coded_width <= 0 || geometry.coded_height <= 0 ||

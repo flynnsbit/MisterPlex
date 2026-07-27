@@ -391,6 +391,17 @@ def check_mailboxes() -> None:
             "a silent host/FPGA mismatch breaks controls/status with no compile error. Update both "
             "sides together and adjust this test only with an ABI migration note.",
         )
+    # PLXB bank-release: host constants declared, RTL not yet implemented (w-a3 pending).
+    # Gate the address and magic so they cannot drift or overlap before RTL lands.
+    plxb_addr = cpp_const(host, "kBankReleaseMailboxPhys")
+    plxb_magic = cpp_const(host, "kBankReleaseMailboxMagic")
+    check(plxb_addr == 0x3007F128,
+          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxb_addr:08X})")
+    check(plxb_magic == 0x504C5844,
+          f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxb_magic:08X})")
+    existing_addrs = {expected_addr for _, _, _, _, _, _, expected_addr, _ in cases}
+    check(plxb_addr not in existing_addrs,
+          f"PLXD address 0x{plxb_addr:08X} overlaps existing mailbox")
     print("PASS DDR mailbox host/RTL ABI constants")
 
 

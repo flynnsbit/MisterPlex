@@ -274,6 +274,69 @@ int main() {
         CHECK(!tr.playing);
     }
 
+    // --- PLXD bank-release mailbox tests ---
+    {
+        BankReleaseStatus br;
+
+        // Helper: build a PLXD word.
+        // Layout: [31:0]=magic, [33:32]=free_bank_mask, [34]=disp_bank, [35]=swap_pending, [63:48]=frames_done
+        auto plxd = [](uint8_t fbm, uint8_t db, bool sp, uint16_t fd) -> uint64_t {
+            return static_cast<uint64_t>(kBankReleaseMailboxMagic) |
+                   (static_cast<uint64_t>(fbm & 3u) << 32) |
+                   (static_cast<uint64_t>(db & 1u) << 34) |
+                   (static_cast<uint64_t>(sp ? 1u : 0u) << 35) |
+                   (static_cast<uint64_t>(fd) << 48);
+        };
+
+        // Bank 0 free, disp_bank=1, no swap pending, frames_done=42
+        const uint64_t w1 = plxd(0x01, 1, false, 42);
+        CHECK(decodeBankReleaseWord(w1, br));
+        CHECK(br.free_bank_mask == 0x01);
+        CHECK(br.bank0Free());
+        CHECK(!br.bank1Free());
+        CHECK(br.anyFree());
+        CHECK(br.freeBank() == 0);
+        CHECK(br.disp_bank == 1);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 42);
+
+        // Bank 1 free, disp_bank=0, swap pending, frames_done=1000
+        const uint64_t w2 = plxd(0x02, 0, true, 1000);
+        CHECK(decodeBankReleaseWord(w2, br));
+        CHECK(br.free_bank_mask == 0x02);
+        CHECK(!br.bank0Free());
+        CHECK(br.bank1Free());
+        CHECK(br.freeBank() == 1);
+        CHECK(br.disp_bank == 0);
+        CHECK(br.swap_pending);
+        CHECK(br.frames_done == 1000);
+
+        // Both banks free (idle — no pending frame)
+        const uint64_t w3 = plxd(0x03, 0, false, 500);
+        CHECK(decodeBankReleaseWord(w3, br));
+        CHECK(br.free_bank_mask == 0x03);
+        CHECK(br.bank0Free() && br.bank1Free());
+        CHECK(br.freeBank() == 0); // picks lowest
+
+        // No bank free (both in use — swap pending)
+        const uint64_t w4 = plxd(0x00, 1, true, 99);
+        CHECK(decodeBankReleaseWord(w4, br));
+        CHECK(br.free_bank_mask == 0x00);
+        CHECK(!br.anyFree());
+        CHECK(br.freeBank() == -1);
+        CHECK(br.swap_pending);
+
+        // Bad magic
+        CHECK(!decodeBankReleaseWord(0xDEADBEEFu, br));
+
+        // Stable decode
+        CHECK(decodeStableBankRelease(lo(w1), hi(w1), lo(w1), hi(w1), br));
+        CHECK(br.bank0Free() && br.disp_bank == 1);
+
+        // Torn read
+        CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_input_mailbox: %d failure(s)\n", fails);
         return 1;
