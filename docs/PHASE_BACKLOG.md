@@ -27,6 +27,54 @@ Update this file when work finishes. Loop agents claim items and mark `DONE` / `
 
 ---
 
+## ACTIVE — Hardware visual decode regression harness (**HW RED/GREEN PROVEN** 2026-07-27)
+
+User directive: after simulation, build realtime, push to MiSTer, and validate on real DE10-Nano hardware with
+visual unit tests/debug output instead of stopping at Verilator.
+
+| | |
+|--|--|
+| **Branch** | `feat/c1-hw-visual` |
+| **Harness** | `tests/hw/test_f3_visual_golden.sh` |
+| **Comparator** | `scripts/hw_visual_compare.py` |
+| **Goldens** | `tests/fixtures/hw_visual/plex_visual_624x480_1f.264`, `plex_visual_640x480_golden.png` |
+| **Docs** | [`hw-visual-regression.md`](hw-visual-regression.md) |
+| **Status** | Real HDMI capture achieved; `57674f2e` grades GREEN and characterized bad `fe7673bc` grades RED |
+
+**Design:** push a known Baseline/CAVLC F3 vector, capture HDMI, derive thresholds from five repeated static
+captures, compare only the active 618×480 display region (using shared host/RTL DDR layout headers), and emit
+`golden | captured | amplified-diff` PNG plus JSON metrics.
+
+**Dry-run evidence:** `make unit` exit 0. Synthetic/checked-in noise floor is zero
+(`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
+corrupts one active pixel and fails with exact worst coordinate + diff artifact.
+
+**Capture integrity:** compare exit codes are distinct: `1` = real visual mismatch, `3` = stale frame, `4` =
+V4L2/FFmpeg corrupted buffer/data, `5` = absent device, `6` = busy device. Capture-rig failure is never accepted
+as either green or known-red core evidence.
+
+**Hardware evidence (W-C1 token window):**
+
+- HDMI capture is trustworthy through `/dev/video4` with MJPEG `1280x720@60`; YUYV currently emits corrupted
+  V4L2 buffers and is rejected as `rc=4`, not graded.
+- Measured static capture noise floor on `57674f2e`: `max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`; thresholds
+  `[1,1,1]` / `2`.
+- Green rollback `57674f2e`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0`.
+- Red specimen `fe7673bc`: telemetry `raw[13]=0x14`, `raw[14]=0x00`; visual compare exact active pixels
+  `62125/296640`, MAE RGB `[14.3978,51.0105,90.1486]`, max_abs `255`, `rc=1`, diff artifact emitted.
+- Caveat: the checked-in 624×480 fixture did not yet exercise the rollback RBF reliably; the red/green proof used
+  the existing 320×240 F3 baseline vector and a hardware-captured good golden.
+
+**Hardware TODO:**
+
+- [ ] Get W-CAP's actual corrupted V4L2 command/log/device/artifacts and add it as a harness specimen if usable.
+- [x] Record real HDMI capture noise floor from `build/hw_visual_accept/noise_good_57674f2e.json`.
+- [x] Prove green visual compare against rollback `57674f2e`.
+- [x] Prove red path on hardware with known-bad `fe7673bc`.
+- [ ] Promote a checked-in host/good golden for the final shipping-artifact gate once the 624×480 vector is live.
+
+---
+
 ## ACTIVE — A/V lipsync + Plex Web seek/resume (**IN_PROGRESS** 2026-07-25)
 
 | | |

@@ -65,6 +65,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
+	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
