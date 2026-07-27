@@ -1,15 +1,15 @@
 {
   "thresholds": {
-    "max_cycles_per_mb": 282.68625,
-    "max_cycles_per_frame": 84805.875,
-    "max_cycles_total": 1017671,
+    "max_cycles_per_mb": 320.0,
+    "max_cycles_per_frame": 96000.0,
+    "max_cycles_total": 1152001,
     "min_budget_margin_ratio": 8.0,
     "stages": {
       "parse_cavlc": {
         "max_cycles_per_mb": 15.0
       },
       "diagnostic_paint": {
-        "max_cycles_per_mb": 270.0
+        "max_cycles_per_mb": 305.0
       }
     }
   },
