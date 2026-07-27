@@ -112,6 +112,30 @@ int main() {
           0x20001234u);
     CHECK(misterplex::ddrDoorbellHi(0x1234, 1, misterplex::DdrFrameFormat::Yuv420p) ==
           0xA0001234u);
+
+    // Hardware nondeterminism bbox from reload captures. Presentation x includes
+    // the 11px pillarbox, so map it back to coded 624-wide YUV420 offsets.
+    constexpr int kBboxX0 = 192, kBboxX1 = 360, kBboxY0 = 37, kBboxY1 = 325;
+    constexpr int kSrcX0 = kBboxX0 - misterplex::kPlex480pPillarboxLeft;
+    constexpr int kSrcX1 = kBboxX1 - misterplex::kPlex480pPillarboxLeft;
+    CHECK(kSrcX0 == 181);
+    CHECK(kSrcX1 == 349);
+    CHECK(kSrcX0 / 8 == 22);
+    CHECK(kSrcX1 / 8 == 43);
+    CHECK(kSrcX0 / 16 == 11);
+    CHECK(kSrcX1 / 16 == 21);
+    CHECK(kBboxY0 * misterplex::kPlex480pYStrideBytes + kSrcX0 == 23269);
+    CHECK(kBboxY1 * misterplex::kPlex480pYStrideBytes + kSrcX1 == 203149);
+    CHECK(misterplex::kPlex480pUPlaneOffset + (kBboxY0 / 2) *
+              misterplex::kPlex480pChromaStrideBytes + (kSrcX0 / 2) ==
+          305226u);
+    CHECK(misterplex::kPlex480pVPlaneOffset + (kBboxY1 / 2) *
+              misterplex::kPlex480pChromaStrideBytes + (kSrcX1 / 2) ==
+          425118u);
+    CHECK((kSrcX0 / 8) / misterplex::kPlex480pYuvLumaLineQwords == 0);
+    CHECK((kSrcX1 / 8) / misterplex::kPlex480pYuvLumaLineQwords == 0);
+    CHECK((kSrcX0 / 16) / misterplex::kPlex480pYuvChromaLineQwords == 0);
+    CHECK((kSrcX1 / 16) / misterplex::kPlex480pYuvChromaLineQwords == 0);
     checkConversion(320, 240);
     checkConversion(640, 480);
 
