@@ -36,6 +36,9 @@ BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
 COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
+MB0_TRACE_JSON="$REF_DIR/mb0_pipeline_trace.json"
+FAULT_TRACE_JSON="$REF_DIR/mb0_pipeline_trace_fault.json"
+MB0_GOLDEN_JSON="$REF_DIR/current_mb0_trace.json"
 CANDIDATE_I420="$REF_DIR/candidate.i420"
 FAULT_I420="$REF_DIR/candidate_fault.i420"
 TOP="$ROOT/tests/rtl/stream_path_full_frame_tb_top.sv"
@@ -158,7 +161,7 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
-  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" -GFAULT_PIXEL_XOR=1 -Wno-fatal \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" -GFAULT_PIXEL_XOR=1 -GFAULT_TRACE_COEFF0_PLUS1=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL_ARGS[@]}" "$TB"
 
@@ -166,13 +169,56 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}
   --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
   --candidate-i420-out "$CANDIDATE_I420" --sequence "$SEQUENCE" \
   --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
-  --json-out "$COMPARE_JSON" --expect-red
+  --json-out "$COMPARE_JSON" --trace-json-out "$MB0_TRACE_JSON" --expect-red
 "$ROOT/tools/extract_h264_frame_planes.py" --verify \
   --input "$BITSTREAM" --sequence "$SEQUENCE" \
   --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" \
   --candidate-planes "$CANDIDATE_I420" --expect-red
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
+make -s "$ROOT/build/extract_h264_golden"
+"$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --output "$MB0_GOLDEN_JSON" >/dev/null
+python3 - "$MB0_TRACE_JSON" "$MB0_GOLDEN_JSON" "$COMPARE_JSON" <<'PY'
+import json
+import sys
+
+trace = json.load(open(sys.argv[1]))
+gold = json.load(open(sys.argv[2]))
+compare = json.load(open(sys.argv[3]))
+if trace.get("format") != "misterplex.p3.mb0_pipeline_trace.v1" or not trace.get("valid"):
+    raise SystemExit("FAIL full-frame MB0 trace: missing valid RTL pipeline trace")
+if gold.get("format") != "misterplex.p3.mb_golden.v1":
+    raise SystemExit("FAIL full-frame MB0 trace: unknown golden format")
+if gold["slice"]["nal_type"] != 5 or gold["macroblock"]["index"] != 0:
+    raise SystemExit("FAIL full-frame MB0 trace: golden is not frame0 IDR MB(0,0)")
+
+block0 = gold["residual"]["luma4x4"][0]
+recon_first4 = [gold["samples"]["recon_y"][y * 16 + x] for y in range(4) for x in range(4)]
+checks = [
+    ("qp", trace["qp"], gold["macroblock"]["qp"]),
+    ("total_coeff", trace["total_coeff"], block0["total_coeff"]),
+    ("residual_csum", trace["residual_csum"], gold["checks"]["first_residual_checksum8"]),
+    ("coefficients_zigzag", trace["coefficients_zigzag"], block0["coefficients_zigzag"]),
+    ("dequant", trace["dequant"], block0["dequant"]),
+    ("idct", trace["idct"], block0["idct"]),
+    ("recon", trace["recon"], recon_first4),
+]
+failures = [name for name, got, want in checks if got != want]
+if failures:
+    print("FAIL full-frame MB0 trace: RTL/reference mismatch in " + ", ".join(failures))
+    for name, got, want in checks:
+        if got != want:
+            print(f"  {name}: got={got} want={want}")
+    raise SystemExit(1)
+
+fb = compare["summary"]["first_bad"]
+if fb != {"frame_index": 0, "plane": "Y", "x": 0, "y": 0, "mb_x": 0, "mb_y": 0,
+          "pixel_in_mb_x": 0, "pixel_in_mb_y": 0, "got": 142, "ref": 73, "abs": 69}:
+    raise SystemExit(f"FAIL full-frame MB0 trace: first_bad drifted unexpectedly: {fb}")
+
+print("OK full-frame MB0 trace: frame0 MB(0,0) block0 RTL CAVLC/dequant/IDCT/recon matches host "
+      f"(Y00={trace['recon'][0]}); scoreboard first_bad got=142 is decode_stub border presentation, not residual")
+PY
 python3 - "$COMPARE_JSON" "$RATCHET" <<'PY'
 import json
 import sys
@@ -220,7 +266,7 @@ FAULT_OUT="$("$BUILD_FAULT/Vstream_path_full_frame_tb" \
   --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
   --candidate-i420-out "$FAULT_I420" --sequence "$SEQUENCE" \
   --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
-  --json-out "$FAULT_JSON" 2>&1)"
+  --json-out "$FAULT_JSON" --trace-json-out "$FAULT_TRACE_JSON" 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT" | grep -E 'FULL_FRAME_COMPARE summary|FAIL full-frame strict|FULL_FRAME_COMPARE raw frame=0 .*plane='
@@ -232,4 +278,17 @@ if ! grep -q 'FAIL full-frame strict:' <<<"$FAULT_OUT"; then
   echo "FAIL full-frame red-check: strict comparator did not report the fault" >&2
   exit 1
 fi
+python3 - "$FAULT_TRACE_JSON" "$MB0_GOLDEN_JSON" <<'PY'
+import json
+import sys
+
+trace = json.load(open(sys.argv[1]))
+gold = json.load(open(sys.argv[2]))
+block0 = gold["residual"]["luma4x4"][0]
+if trace["coefficients_zigzag"] == block0["coefficients_zigzag"]:
+    raise SystemExit("FAIL full-frame MB0 trace red-check: faulted trace unexpectedly matched coefficients")
+if trace["coefficients_zigzag"][0] != block0["coefficients_zigzag"][0] + 1:
+    raise SystemExit("FAIL full-frame MB0 trace red-check: injected coefficient fault was not observed")
+print("OK full-frame MB0 trace red-check: injected coeff0 fault rejected by trace comparator")
+PY
 echo "OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison"
