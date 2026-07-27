@@ -68,6 +68,7 @@ public:
     bool sawScheduledLineRead = false;
     bool hangLineReadResponses = false;
     bool sawDroppedLineRead = false;
+    bool forceDdrBusy = false;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -171,7 +172,7 @@ public:
         top.DDRAM_DOUT_READY = 0;
         if (busy > 0)
             --busy;
-        top.DDRAM_BUSY = busy > 0;
+        top.DDRAM_BUSY = forceDdrBusy || (busy > 0);
         if (rdDelay >= 0) {
             if (rdDelay > 0) {
                 --rdDelay;
@@ -369,6 +370,27 @@ bool runInitialFrameMailboxPublish() {
               << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
               << " frame_debug=0x" << int((mbox >> 40) & 0xffu)
               << std::dec << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
+bool runInitialFrameMailboxAbsentWhenDdrBusy() {
+    Sim sim;
+    sim.forceDdrBusy = true;
+    sim.resetCore();
+    for (int i = 0; i < 20000; ++i)
+        sim.tick();
+    const uint64_t mbox = sim.frameMailbox();
+    if (static_cast<uint32_t>(mbox) != 0 || sim.top.has_frame) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: forced DDR busy should leave PLXF absent"
+                  << " mailbox=0x" << std::hex << mbox
+                  << " has_frame=" << std::dec << int(sim.top.has_frame) << "\n";
+        std::exit(1);
+    }
+    std::cout << "ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy"
+              << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
+              << " full_mailbox=0x" << mbox
+              << std::dec << " has_frame=" << int(sim.top.has_frame)
+              << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -701,6 +723,7 @@ bool runEqualTokenRefreshAfterAccept() {
 void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runInitialFrameMailboxPublish();
+    schedulerSeen |= runInitialFrameMailboxAbsentWhenDdrBusy();
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runChromaVerticalStrideMapping();

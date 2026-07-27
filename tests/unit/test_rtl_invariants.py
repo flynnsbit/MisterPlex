@@ -362,6 +362,7 @@ def check_quartus_syntax_tripwires() -> None:
 
 def check_mailboxes() -> None:
     rtl = strip_comments(read(DDRAM_FRAME_RD))
+    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
     input_h = strip_comments(read(INPUT_MAILBOX_HPP))
     host = fpga_spi + "\n" + input_h
@@ -383,6 +384,24 @@ def check_mailboxes() -> None:
             f"0x{expected_addr:08X}/0x{expected_magic:08X}. The ARM daemon reads fixed DDR offsets; "
             "a silent host/FPGA mismatch breaks controls/status with no compile error. Update both "
             "sides together and adjust this test only with an ABI migration note.",
+        )
+    frame_store_cases = [
+        ("PLXS", "status", "MAILBOX_PHYS", "MAGIC_S", "kDdrMailboxPhys", "kDdrMailboxMagic", 0x3007F100, 0x504C5853),
+        ("PLXI", "input", "INPUT_MAILBOX_PHYS", "MAGIC_I", "kInputMailboxPhys", "kInputMailboxMagic", 0x3007F108, 0x504C5849),
+        ("PLXM", "memtest", "SDRAM_MAILBOX_PHYS", "MAGIC_M", "kMemtestMailboxPhys", "kMemtestMailboxMagic", 0x3007F110, 0x504C584D),
+        ("PLXF", "frame", "FRAME_MAILBOX_PHYS", "MAGIC_F", "kUnderrunMailboxPhys", "kUnderrunMailboxMagic", 0x3007F118, 0x504C5846),
+    ]
+    for magic, label, rtl_addr, rtl_magic, host_addr, host_magic, expected_addr, expected_magic in frame_store_cases:
+        ra = sv_const(frame_store_rtl, rtl_addr)
+        rm = sv_const(frame_store_rtl, rtl_magic)
+        ha = cpp_const(host, host_addr)
+        hm = cpp_const(host, host_magic)
+        check(
+            ra == ha == expected_addr and rm == hm == expected_magic,
+            f"DDR frame-store mailbox `{magic}` {label} mismatch: RTL {rtl_addr}=0x{ra:08X}/"
+            f"{rtl_magic}=0x{rm:08X}, host {host_addr}=0x{ha:08X}/{host_magic}=0x{hm:08X}, "
+            f"expected 0x{expected_addr:08X}/0x{expected_magic:08X}. A PLXF reader/writer "
+            "offset mismatch would look exactly like an absent mailbox on silicon.",
         )
     print("PASS DDR mailbox host/RTL ABI constants")
 
@@ -665,7 +684,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
             ),
             ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
             (
-                "c_line_v2[video_slot]==rd_cy",
+                "c_line_v2[video_slot]==(Y_W-1)'(rd_cy)",
                 "chroma line-buffer hit must compare against the halved source Y",
             ),
             ("c_sel_r<=src_x[3:1]", "chroma byte select must halve the source X"),
