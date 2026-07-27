@@ -156,8 +156,8 @@ masked.write_text(json.dumps(data, indent=2) + "\n")
 
 filtered = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_filtered_provenance.json")
 data = json.loads(src.read_text())
-data["decoder"]["loop_filter"] = "enabled"
-data["provenance"]["loop_filter"] = "enabled"
+data["decoder"]["loop_filter"] = "default"
+data["provenance"]["h264_loop_filter"] = "enabled"
 filtered.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
@@ -222,6 +222,6 @@ if [[ "$FILTERED_RC" -ne 9 ]]; then
   echo "FAIL frame-plane red-check: loop-filtered manifest rc=$FILTERED_RC, want rc=9 refusal" >&2
   exit 1
 fi
-grep -q 'loop_filter is not disabled\|disabled loop filter' "$OUT/filtered_provenance_compare.log"
+grep -q 'loop_filter is not skip_loop_filter=all\|disabled H.264 loop filter' "$OUT/filtered_provenance_compare.log"
 
 echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane/provenance RED checked"
