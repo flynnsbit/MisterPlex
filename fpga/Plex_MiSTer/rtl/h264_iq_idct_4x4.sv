@@ -105,7 +105,7 @@ module h264_idct4x4 (
 		input signed [31:0] v;
 		begin
 			if (v > 32'sd2097151) sat22 = 22'sd2097151;
-			else if (v < -32'sd2097152) sat22 = -22'sd2097152;
+			else if (v < -32'sd2097152) sat22 = ~22'sd2097151;
 			else sat22 = v[21:0];
 		end
 	endfunction
