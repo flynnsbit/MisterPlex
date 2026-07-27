@@ -396,12 +396,12 @@ def check_mailboxes() -> None:
     plxb_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxb_magic = cpp_const(host, "kBankReleaseMailboxMagic")
     check(plxb_addr == 0x3007F128,
-          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxb_addr:08X})")
-    check(plxb_magic == 0x504C5844,
-          f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxb_magic:08X})")
+          f"PLXA bank-release address must be 0x3007F128 (got 0x{plxb_addr:08X})")
+    check(plxb_magic == 0x504C5841,
+          f"PLXA bank-release magic must be 0x504C5841 'PLXA' (got 0x{plxb_magic:08X})")
     existing_addrs = {expected_addr for _, _, _, _, _, _, expected_addr, _ in cases}
     check(plxb_addr not in existing_addrs,
-          f"PLXD address 0x{plxb_addr:08X} overlaps existing mailbox")
+          f"PLXA address 0x{plxb_addr:08X} overlaps existing mailbox")
     print("PASS DDR mailbox host/RTL ABI constants")
 
 
@@ -1071,7 +1071,7 @@ def check_ddr_bank_handoff_contract() -> None:
 
     print(
         "PASS DDR bank handoff publishes fenced frames and guards same-bank reuse "
-        "(no FPGA bank-release ACK exists yet)"
+        "(PLXA bank-release ACK at 0x3007F128)"
     )
 
 

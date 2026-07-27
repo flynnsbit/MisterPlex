@@ -113,6 +113,9 @@ public:
         int64_t post_wait_us = 0;
         int64_t total_us = 0;
         int64_t bank_reuse_wait_us = 0;
+        int64_t plxa_poll_us = 0;     // PLXA bank-release poll time (0 = fallback)
+        int plxa_poll_iters = 0;      // number of PLXA poll iterations
+        bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     struct DdrDoorbellStatus {

@@ -17,7 +17,7 @@ constexpr uint32_t kMemtestMailboxMagic = 0x504C584Du; // "PLXM"
 constexpr uint32_t kUnderrunMailboxPhys = 0x3007F118u;
 constexpr uint32_t kUnderrunMailboxMagic = 0x504C5846u; // "PLXF"
 constexpr uint32_t kBankReleaseMailboxPhys = 0x3007F128u;
-constexpr uint32_t kBankReleaseMailboxMagic = 0x504C5844u; // "PLXD" (display-bank)
+constexpr uint32_t kBankReleaseMailboxMagic = 0x504C5841u; // "PLXA" (PLX Ack)
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 
 enum class PlaybackCommand : uint8_t {
@@ -54,50 +54,48 @@ inline const char* frameStoreStatusUnavailableDescription() {
     return "frame store status unavailable (PLXF mailbox absent/unwritten)";
 }
 
-// PLXD — FPGA→ARM bank-release acknowledgement.
+// PLXA — FPGA→ARM bank-release acknowledgement.
 //
 // The FPGA publishes which DDR frame bank the ARM may safely overwrite.
 // Without this, the ARM must use a fixed delay to avoid overwriting a bank
 // the FPGA is still reading — which is a timing-based MITIGATION, not a
-// handshake. PLXD makes it a real handshake.
+// handshake. PLXA makes it a real handshake.
 //
 // Layout (64 bits at kBankReleaseMailboxPhys = 0x3007F128):
-//   [31:0]   magic 0x504C5844 "PLXD"
-//   [33:32]  free_bank_mask[1:0] — bit i = 1 means bank i is safe to overwrite
-//   [34]     disp_bank           — currently displayed bank (0 or 1)
-//   [35]     swap_pending        — a doorbell was received, vsync flip pending
-//   [47:36]  reserved
-//   [63:48]  frames_done[15:0]   — monotonic bank-swap counter (wraps at 65535)
+//   [31:0]   magic 0x504C5841 "PLXA"
+//   [32]     free_bank index (0 or 1) — the bank NOT being read
+//   [39]     free_bank valid (1 = safe to write; 0 = both banks in use)
+//   [38:33]  reserved (0)
+//   [40]     disp_bank index (currently displayed)
+//   [47:41]  reserved (0)
+//   [63:48]  vsync_count[15:0] — monotonic, increments every vsync_pulse
+//
+// Semantics:
+//   !swap_pending → valid=1, free_bank=~disp_bank
+//   swap_pending  → valid=0 (both banks in use)
+//   On vsync swap: old disp_bank becomes free, valid=1, vsync_count++
+//   On idle vsync: vsync_count++ still increments (forward-progress)
 //
 // ARM protocol:
-//   1. Read PLXD. If free_bank_mask has a set bit, write to that bank.
-//   2. If free_bank_mask == 0, poll at 1ms intervals up to 50ms (~3 vsyncs).
+//   1. Read PLXA. If valid=1, write frame to free_bank.
+//   2. If valid=0, poll at 1ms intervals up to 50ms (~3 vsyncs at 60Hz).
 //   3. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
 //   4. Ring PLXK doorbell with the bank just written.
 struct BankReleaseStatus {
-    uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
-    uint8_t disp_bank = 0;     // 0 or 1
-    bool swap_pending = false;
-    uint16_t frames_done = 0;  // monotonic swap count
-
-    bool bank0Free() const { return free_bank_mask & 1u; }
-    bool bank1Free() const { return (free_bank_mask >> 1) & 1u; }
-    bool anyFree() const { return free_bank_mask != 0; }
-    // Pick the lowest-numbered free bank, or -1 if none free.
-    int freeBank() const {
-        if (free_bank_mask & 1u) return 0;
-        if (free_bank_mask & 2u) return 1;
-        return -1;
-    }
+    uint8_t free_bank = 0;     // 0 or 1
+    bool free_bank_valid = false;
+    uint8_t disp_bank = 0;    // 0 or 1
+    uint16_t vsync_count = 0;
 };
 
 inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     if (static_cast<uint32_t>(word) != kBankReleaseMailboxMagic)
         return false;
-    out.free_bank_mask = static_cast<uint8_t>((word >> 32) & 0x03u);
-    out.disp_bank = static_cast<uint8_t>((word >> 34) & 1u);
-    out.swap_pending = ((word >> 35) & 1u) != 0;
-    out.frames_done = static_cast<uint16_t>((word >> 48) & 0xFFFFu);
+    const uint8_t fb = static_cast<uint8_t>((word >> 32) & 0xFFu);
+    out.free_bank = fb & 1u;
+    out.free_bank_valid = ((fb >> 7) & 1u) != 0;
+    out.disp_bank = static_cast<uint8_t>((word >> 40) & 1u);
+    out.vsync_count = static_cast<uint16_t>((word >> 48) & 0xFFFFu);
     return true;
 }
 

@@ -1338,24 +1338,69 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // Brief yield so previous DMA (~1–3 ms) is done, plus a two-vsync
-    // same-bank reuse floor so a writer faster than the display cannot
-    // immediately overwrite the bank it just published. RTL still owns the
-    // actual vsync flip; there is no cheap per-frame bank-release mailbox yet,
-    // and SPI-polling swap_pending every frame previously added ~100 ms and
-    // collapsed pfps.
+    // --- Bank selection via PLXA bank-release ACK ---
+    // If the FPGA publishes a valid PLXA mailbox, use it to determine which
+    // bank is free instead of relying on fixed delays.  Fall back to the old
+    // timing-based mitigation only when PLXA is absent (pre-PLXA RBF).
+    //
+    // PLXA semantics (w-a3 534f361):
+    //   valid=1 → free_bank is safe to write (the other bank is being displayed)
+    //   valid=0 → swap pending, both banks in use; poll until valid or timeout
     auto tPrep0 = std::chrono::steady_clock::now();
-    usleep(1500);
-    const double nowMs = std::chrono::duration<double, std::milli>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-    const double lastBankMs = lastDdrBankDoorbellMs_[bank];
-    if (lastBankMs >= 0.0) {
-        const int64_t sinceUs = static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
-        if (sinceUs < kDdrBankReuseMinUs) {
-            const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
-            usleep(static_cast<useconds_t>(waitUs));
-            timing.bank_reuse_wait_us = waitUs;
+    bool plxaUsed = false;
+    {
+        BankReleaseStatus brs;
+        constexpr int kPlxaPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        int plxaIters = 0;
+        if (readBankRelease(brs)) {
+            // PLXA present — use it for bank selection.
+            if (brs.free_bank_valid) {
+                bank = brs.free_bank;
+                plxaUsed = true;
+            } else {
+                // Both banks in use (swap pending). Poll until free or timeout.
+                for (int i = 0; i < kPlxaPollMaxIters; ++i) {
+                    usleep(1000);
+                    ++plxaIters;
+                    if (readBankRelease(brs) && brs.free_bank_valid) {
+                        bank = brs.free_bank;
+                        plxaUsed = true;
+                        break;
+                    }
+                }
+                if (!plxaUsed) {
+                    // LOUD timeout — never silently fall back to old delay.
+                    fprintf(stderr,
+                            "[STALL] sendDdrFrame: PLXA bank-release timeout after %d ms "
+                            "(valid never asserted, vsync_count=%u disp_bank=%u)\n",
+                            plxaIters, static_cast<unsigned>(brs.vsync_count),
+                            static_cast<unsigned>(brs.disp_bank));
+                    // Use the opposite of disp_bank as a best-effort guess.
+                    bank = brs.disp_bank ^ 1;
+                }
+            }
+            auto tPlxa1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxa1);
+            timing.plxa_poll_iters = plxaIters;
+            timing.plxa_used = plxaUsed || (!plxaUsed && plxaIters > 0);
+        } else {
+            // PLXA absent — pre-PLXA RBF or mailbox not yet written.
+            // Fall back to the old timing-based mitigation: brief yield for
+            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
+            usleep(1500);
+            const double nowMs = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+            const double lastBankMs = lastDdrBankDoorbellMs_[bank];
+            if (lastBankMs >= 0.0) {
+                const int64_t sinceUs =
+                    static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
+                if (sinceUs < kDdrBankReuseMinUs) {
+                    const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
+                    usleep(static_cast<useconds_t>(waitUs));
+                    timing.bank_reuse_wait_us = waitUs;
+                }
+            }
         }
     }
     auto tPrep1 = std::chrono::steady_clock::now();
@@ -1467,8 +1512,9 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.
+    // When PLXA is active, skip: the next frame's PLXA poll handles the wait.
     auto tPost0 = std::chrono::steady_clock::now();
-    if (!first)
+    if (!first && !timing.plxa_used)
         usleep(500);
     auto tPost1 = std::chrono::steady_clock::now();
     timing.post_wait_us = elapsedUs(tPost0, tPost1);
@@ -1533,12 +1579,12 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
     if (!ensureDdrMap())
         return false;
     if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
-        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
+        setErr("readBankRelease: PLXA mailbox is outside DDR frame window");
         return false;
     }
     const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
-        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
+        setErr("readBankRelease: PLXA mailbox is outside mapped DDR frame window");
         return false;
     }
     volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
@@ -1554,7 +1600,7 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         }
         usleep(200);
     }
-    setErr("readBankRelease: PLXD mailbox absent or unstable");
+    setErr("readBankRelease: PLXA mailbox absent or unstable");
     return false;
 }
 
