@@ -370,17 +370,6 @@ sdram #(
 	.cpbusy()
 );
 
-// Map OSD content FPS
-reg [7:0] content_fps;
-always @(*) begin
-	case (status[5:4])
-		2'd0: content_fps = 8'd24;
-		2'd1: content_fps = 8'd30;
-		2'd2: content_fps = 8'd60;
-		default: content_fps = 8'd12;
-	endcase
-end
-
 wire [7:0] display_hz = status[2] ? 8'd50 : 8'd60; // PAL/NTSC family
 
 // F1 = frame (1), F2 = audio (2), F3 = elementary bitstream (3)
