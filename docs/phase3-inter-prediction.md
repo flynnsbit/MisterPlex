@@ -57,6 +57,10 @@ So the Baseline-only decoder is feasible as an architecture, but **not yet a saf
 actual Plex 480p output**. Until PMS delivery is proven Baseline/CAVLC/I-P, product code must detect
 High/CABAC/B streams and fall back/report unsupported; silent decode is forbidden.
 
+Follow-up: W-A4's full client-side sweep found Baseline forcing is impossible with URL/profile
+parameters alone. The measured real-decoder scope for PMS-as-delivered (High/CABAC/B, 4 refs,
+coded 624×480) is in [phase3-high-cabac-scope.md](phase3-high-cabac-scope.md).
+
 What remains for 480p Baseline:
 
 - P-slice macroblock syntax and CAVLC residuals.
