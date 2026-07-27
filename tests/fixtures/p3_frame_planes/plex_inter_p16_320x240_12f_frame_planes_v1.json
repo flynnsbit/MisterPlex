@@ -14,13 +14,34 @@
   "decoder": {
     "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
     "ffprobe_version": "ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
-    "command": "ffmpeg -v error -y -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
-    "pix_fmt": "yuv420p"
+    "command": "ffmpeg -v error -y -skip_loop_filter all -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+    "command_argv": [
+      "ffmpeg",
+      "-v",
+      "error",
+      "-y",
+      "-skip_loop_filter",
+      "all",
+      "-i",
+      "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264",
+      "-an",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "yuv420p",
+      "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv"
+    ],
+    "input_format": "Annex-B H.264",
+    "output_format": "rawvideo",
+    "pix_fmt": "yuv420p",
+    "h264_loop_filter": "disabled",
+    "h264_loop_filter_ffmpeg": "-skip_loop_filter all"
   },
   "provenance": {
     "source_domain": "decoded H.264 planes",
     "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
     "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
     "rgb_roundtrip": false,
     "rgb565_roundtrip": false,
     "presentation_border_or_pillar_mask": false
@@ -55,7 +76,7 @@
   "plane_blob": {
     "path": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
     "bytes": 1382400,
-    "sha256": "c1bde3ac3828be208d63a45641e34920c945e8fc774e7a533f39fe40a04edb9d",
+    "sha256": "8be37ec608bb9b536b3831ec6fe850f6e0f99179403b592597db717d5ef96268",
     "layout": "I420 planar per frame: Y then U then V",
     "frame_bytes": 115200
   },
@@ -74,7 +95,7 @@
           "stride": 320,
           "offset": 0,
           "bytes": 76800,
-          "sha256": "2a4a099f43310efce1a2b584ac8dcdd8d54af6374548314d913b7d344497f94c"
+          "sha256": "bd9cebc7efd557032e5642da12b723a2993133b97738ecb3129887053019e3ff"
         },
         {
           "plane": "U",
@@ -83,7 +104,7 @@
           "stride": 160,
           "offset": 76800,
           "bytes": 19200,
-          "sha256": "5d50b344792be76a92bf0d3bc75d4a5fc365ff683deab23dc69054468d353d4c"
+          "sha256": "4110a0752e884e6aea2f83fb41d269a72a8d559216922f3ea3d5412207737d12"
         },
         {
           "plane": "V",
@@ -92,7 +113,7 @@
           "stride": 160,
           "offset": 96000,
           "bytes": 19200,
-          "sha256": "e0124f743c01f484e1c7f9e47d02f469e48af4abc7d22c787580b79106d979aa"
+          "sha256": "6cbeab885af61f52261a715c5524794f88a7231c2b1c05a8c93d695c7247eb12"
         }
       ]
     },
@@ -110,7 +131,7 @@
           "stride": 320,
           "offset": 115200,
           "bytes": 76800,
-          "sha256": "792862ee14b1a695bdf5755d4a39a28e46487c3d5456c3d3c513b7674df5b808"
+          "sha256": "8a1b54d7e85dc62e60e8dc37377bc6fbf9eb7a37efd6ec63b6f59afc858d58ac"
         },
         {
           "plane": "U",
@@ -119,7 +140,7 @@
           "stride": 160,
           "offset": 192000,
           "bytes": 19200,
-          "sha256": "e37804acb5cafc652ad2e54c2b7fc8ce16fb41dc3594ac1e6603608b8f217672"
+          "sha256": "f9a8cfbe5d31f32898421206200503ccdd847cc26b364303bc2130b824b43486"
         },
         {
           "plane": "V",
@@ -128,7 +149,7 @@
           "stride": 160,
           "offset": 211200,
           "bytes": 19200,
-          "sha256": "c6b74a9c1e2e7f2f4f55722030c3626e85d58ebc9258afee0f29b33db5f87fc3"
+          "sha256": "9629087241668355d66d6f88d57fe2482acb56fe2902b29440d45b572b04aa53"
         }
       ]
     },
@@ -146,7 +167,7 @@
           "stride": 320,
           "offset": 230400,
           "bytes": 76800,
-          "sha256": "ef4f2e78f8cdc03dac10d153077c0c83cd348db91d48091dd354023d68836e61"
+          "sha256": "9eae99b11613e67e3f5a4f842af37be19922448d2b127157d9255bd3cdf45989"
         },
         {
           "plane": "U",
@@ -155,7 +176,7 @@
           "stride": 160,
           "offset": 307200,
           "bytes": 19200,
-          "sha256": "2cc0ab92949207491fdb83251d749f38ebed6aade27e6acf33a5f22482cbbf66"
+          "sha256": "5b5d90ee0a6e2e61f89a3345d2a2520f0086685f19e4185d17e7ef0c7c1b46af"
         },
         {
           "plane": "V",
@@ -164,7 +185,7 @@
           "stride": 160,
           "offset": 326400,
           "bytes": 19200,
-          "sha256": "c4b0a2838a87f0d92d36248ddff6149f70e5543b111c3fa01c3cd1973ccd02cd"
+          "sha256": "0b50f64126cc92d37c266ff2814639079e301cfb3bd0df7ca0644ff1251dc64d"
         }
       ]
     },
@@ -182,7 +203,7 @@
           "stride": 320,
           "offset": 345600,
           "bytes": 76800,
-          "sha256": "79210485f148626a97ea291c8d34e6c0ca3c9c3afd3c0f6fd2d1dbc40c5299a0"
+          "sha256": "9683e0c4240b2c03215a110002c0913d5d65fee98f90cb29b6cd3c4580f4bdaf"
         },
         {
           "plane": "U",
@@ -191,7 +212,7 @@
           "stride": 160,
           "offset": 422400,
           "bytes": 19200,
-          "sha256": "efc815dd2cc145b67e042c579c0cadd33b926c0f43d8369ad8a3730e67c55936"
+          "sha256": "4171e94a6422417a27e52e723fece623fc5a9152a7704012eb18762876619bae"
         },
         {
           "plane": "V",
@@ -200,7 +221,7 @@
           "stride": 160,
           "offset": 441600,
           "bytes": 19200,
-          "sha256": "7579121426a38ae64fc27d90b52cd090a930e76d80cd5e8ca28e5d25b6d6e684"
+          "sha256": "24b0632c23317349d37991137313230a3436c7fd290754085395b9e09c3ccd76"
         }
       ]
     },
@@ -218,7 +239,7 @@
           "stride": 320,
           "offset": 460800,
           "bytes": 76800,
-          "sha256": "b724dc29fc9c92e5cb45f490c169d27a561dee3ca91e2ed709767fe4bf8207d3"
+          "sha256": "b277558d202ca09c2fcf21f9a396d0a2bf0c7d43d81f1abdd00e1a633876227c"
         },
         {
           "plane": "U",
@@ -227,7 +248,7 @@
           "stride": 160,
           "offset": 537600,
           "bytes": 19200,
-          "sha256": "1da3be8d521b1c1ff9b4a5fab751f731c26655a07bba9b914e5d32ee64e481f9"
+          "sha256": "195de4e0a5de09df6d4169c17883604ac37fd516efa3a43d0d27ab45a3910f59"
         },
         {
           "plane": "V",
@@ -236,7 +257,7 @@
           "stride": 160,
           "offset": 556800,
           "bytes": 19200,
-          "sha256": "11bb08d9b35f10c2b7cd3b81353e1a567cc88d68858598330e0eac3222e82973"
+          "sha256": "0aa42476070cb372a910ccfa9aca94b52d88f3de7635daf8e28be9afcd8aa213"
         }
       ]
     },
@@ -254,7 +275,7 @@
           "stride": 320,
           "offset": 576000,
           "bytes": 76800,
-          "sha256": "de21c9bcdb68f9690a686b784fcc73a77a045a0aaf5681872a4f258c15ba325d"
+          "sha256": "6ddb27dad12ef417453dc98eafa7c3b9135a3de1a82b464a7eb8f0479f9863e4"
         },
         {
           "plane": "U",
@@ -263,7 +284,7 @@
           "stride": 160,
           "offset": 652800,
           "bytes": 19200,
-          "sha256": "7cacc6f06d0b5c0fa63a0fb61bdd272c92bd79517502447829b00805086abe5e"
+          "sha256": "de5363c21884f9ca06a688e8029307435db65efc9beb2af4af18aa70a38e4ceb"
         },
         {
           "plane": "V",
@@ -272,7 +293,7 @@
           "stride": 160,
           "offset": 672000,
           "bytes": 19200,
-          "sha256": "7884bf689121fcede2eedcfc8f48cd1b7767790f521369a48acab6189a33b5c1"
+          "sha256": "240ea107cc3afb00e4c8ae55097e7ae354dd8fb2152d41802f0e6ac5df10f23e"
         }
       ]
     },
@@ -290,7 +311,7 @@
           "stride": 320,
           "offset": 691200,
           "bytes": 76800,
-          "sha256": "067872eaeb8e09db90c631a66bce522e8e53a5d274744288234bb8b85866241f"
+          "sha256": "31c8a9d40865755065a55bcd230f735f79bb9d748ca6b4faa90d9f2ed6795ca4"
         },
         {
           "plane": "U",
@@ -299,7 +320,7 @@
           "stride": 160,
           "offset": 768000,
           "bytes": 19200,
-          "sha256": "3e56ffd0c406d70c506e9db0c62af426bd3b439362d0402bce12657c2de3e945"
+          "sha256": "45607bbb8e390f0ec864bb113d1a3228c4095631f0450efff82d53b37407a8c9"
         },
         {
           "plane": "V",
@@ -308,7 +329,7 @@
           "stride": 160,
           "offset": 787200,
           "bytes": 19200,
-          "sha256": "3e8d8f137a9cb59666926f945e5a6a9c7967b4941c655d56b2bda42f4376eec2"
+          "sha256": "43cb676d98d1ba32d79f5ef217fd7c80c02c31271508e3a08ad245bc93e843d9"
         }
       ]
     },
@@ -326,7 +347,7 @@
           "stride": 320,
           "offset": 806400,
           "bytes": 76800,
-          "sha256": "55253cc62883ad37e7dc53bf52869418d7ce6069441b29489a7393b5fc6e2181"
+          "sha256": "446fd3da82bc8ec9ddd89f79922d0b629944866edb8cdd8968b40ee5dfc8002b"
         },
         {
           "plane": "U",
@@ -335,7 +356,7 @@
           "stride": 160,
           "offset": 883200,
           "bytes": 19200,
-          "sha256": "6b7c25c7ef2dd1eac794eebdfe07344d9085e247cc3448c9e4d148934074a00e"
+          "sha256": "2319b1d1422fd57440269607ad318bcce8e39c359a51db9f3f9f01a01c6b15a0"
         },
         {
           "plane": "V",
@@ -344,7 +365,7 @@
           "stride": 160,
           "offset": 902400,
           "bytes": 19200,
-          "sha256": "7232cd7d729515afa5c6fc1117bb30b7b026aed118a744ea1195da5e02b82e38"
+          "sha256": "008b843aabac40ad6034937465dbed2eca055d8cf9b5cd3ef8c99673c5cd3b7b"
         }
       ]
     },
@@ -362,7 +383,7 @@
           "stride": 320,
           "offset": 921600,
           "bytes": 76800,
-          "sha256": "ec9165c46edbb1e8911da9d159b5b2f4d42640d715f92193abd9cbe9b639f500"
+          "sha256": "22121bca136aa2867d02b95886d2167712d85e57545d010614f3b48737c39ca3"
         },
         {
           "plane": "U",
@@ -371,7 +392,7 @@
           "stride": 160,
           "offset": 998400,
           "bytes": 19200,
-          "sha256": "de2b574620238386db66c226ea8eaad4508d6d3ad9554cbe376d3facc65db132"
+          "sha256": "b7752c5ac673b3ec8a489b8eef878e0b63ccfdb0dfd78b2c12aae1ea5ce3de3e"
         },
         {
           "plane": "V",
@@ -380,7 +401,7 @@
           "stride": 160,
           "offset": 1017600,
           "bytes": 19200,
-          "sha256": "b94060c64c3904c22b04638b595050e73de329abfcc4ebc093f369c696b15134"
+          "sha256": "c5873530ef1e80237b73049c6b34d80ae2e91580f13865d40c121721d90f6e85"
         }
       ]
     },
@@ -398,7 +419,7 @@
           "stride": 320,
           "offset": 1036800,
           "bytes": 76800,
-          "sha256": "a47b3babae6b6d453b4e4c620484aa0ebd773560691d63de532303cfb53b8e82"
+          "sha256": "58d60a07cbbf813edd0400a8d79897a2d233b8838f405da329fbfa265fe623f6"
         },
         {
           "plane": "U",
@@ -407,7 +428,7 @@
           "stride": 160,
           "offset": 1113600,
           "bytes": 19200,
-          "sha256": "824f9108a58377779440cbabeca0697625bd357f6522ef65ea0a27affc79e4b7"
+          "sha256": "a8f5bc55c93df065d3498c91dc63553accf50d3a091f036a064d783f0b380cf1"
         },
         {
           "plane": "V",
@@ -416,7 +437,7 @@
           "stride": 160,
           "offset": 1132800,
           "bytes": 19200,
-          "sha256": "8d840daebbb4bcc958a9d15c459eb0cc46be99b4cce50d8e2baec12cb271b32d"
+          "sha256": "8feebb758299e1eb723785f89ca5a93bba150a073383ec193d28a0410b19a8e3"
         }
       ]
     },
@@ -434,7 +455,7 @@
           "stride": 320,
           "offset": 1152000,
           "bytes": 76800,
-          "sha256": "3e51259841b736d130d9c0b2d5cc14504cbbc0440886f6c7370109bb02b3dc6c"
+          "sha256": "b80b2bbaabd61c2504665c443fab2963ff8a654e8a0307b4cc78d67ba81f9286"
         },
         {
           "plane": "U",
@@ -443,7 +464,7 @@
           "stride": 160,
           "offset": 1228800,
           "bytes": 19200,
-          "sha256": "60afd12991c63f38add230d8936b3b08e3525537143739c17b47e5d50bd10d76"
+          "sha256": "5caae7c60996963b5a950f169ed4f75e523e8a55ef3b45b8bd79f4dfb4d4c381"
         },
         {
           "plane": "V",
@@ -452,7 +473,7 @@
           "stride": 160,
           "offset": 1248000,
           "bytes": 19200,
-          "sha256": "2479b8d88b37642603ce5a7d5f03dd0c8e4e88c50c34c6dfb93c0c0bddbe4a73"
+          "sha256": "efdacc41cc16971894628f5526582bfd8b73bea252db6b82aa252c4b0d7a6e22"
         }
       ]
     },
@@ -470,7 +491,7 @@
           "stride": 320,
           "offset": 1267200,
           "bytes": 76800,
-          "sha256": "9773681cdd49c7efef3a190ed9a112ead4f40b0c2b1d6d8d5c60e03b59433a02"
+          "sha256": "9116d1d078f3164cae273267634ab5dee01fc5b53ea3a99d46be3dd190dae2e3"
         },
         {
           "plane": "U",
@@ -479,7 +500,7 @@
           "stride": 160,
           "offset": 1344000,
           "bytes": 19200,
-          "sha256": "614943625b10fa951536e847740138a4db09419958956be831f85c4aa210851b"
+          "sha256": "0479fe1ffe0da72f5cd62bcd794ecf4854cff8722e33584c99386859b8c044da"
         },
         {
           "plane": "V",
@@ -488,7 +509,7 @@
           "stride": 160,
           "offset": 1363200,
           "bytes": 19200,
-          "sha256": "7c66314fe9cb08b2bd49776253f48e779ff01700a92fb7a8980d6024a0295d67"
+          "sha256": "cd9caff7e1c532486077e2c312da8d83ca6839420a998f7d24e214c4658c45d0"
         }
       ]
     }
