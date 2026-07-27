@@ -89,8 +89,10 @@ public:
     // Product path: mmap frame + doorbell (no SPI kick).
     // Fallback: status[12]/[13] SPI kick if doorbell fails first verify.
     // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
-    // Default frame geometry is 320×240. Call setDdrFrameSize() before present
-    // for larger DDR-backed cores such as 640×480.
+    // Default frame geometry is 320×240. The 480p contract is coded 624×480,
+    // display 618×480, pillarboxed into the 640×480 VGA output.
+    bool setDdrFrameLayout(const DdrFrameGeometry& geometry,
+                           DdrFrameFormat format = DdrFrameFormat::Rgb565);
     bool setDdrFrameLayout(int width, int height,
                            DdrFrameFormat format = DdrFrameFormat::Rgb565);
     bool setDdrFrameSize(int width, int height) {
@@ -98,6 +100,8 @@ public:
     }
     DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
+    bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
+                             const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);

@@ -1525,8 +1525,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
+    const bool fpgaOnlyPresent = (presentMode_ == "fpga");
+    const DdrFrameGeometry ddrGeometry =
+        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
+                        : makeDdrFrameGeometry(outW_, outH_);
+    const int rawW = ddrGeometry.coded_width;
+    const int rawH = ddrGeometry.coded_height;
+    const int rawDisplayW = ddrGeometry.display_width;
+    const int rawDisplayH = ddrGeometry.display_height;
+
     char scale[64];
-    std::snprintf(scale, sizeof(scale), "%d:%d", outW_, outH_);
+    std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
     std::string vf;
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
     // time then holds by construction (even if PMS emits a different rate than its
@@ -1534,8 +1543,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (fpsNum_ > 0 && fpsDen_ > 0) {
         vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
     }
-    vf += std::string("scale=") + scale +
-          ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+    if (rawDisplayW != rawW || rawDisplayH != rawH) {
+        char displayScale[64];
+        std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
+        vf += std::string("scale=") + displayScale +
+              ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
+              std::to_string(ddrGeometry.crop_left) + ":" +
+              std::to_string(ddrGeometry.crop_top);
+    } else {
+        vf += std::string("scale=") + scale +
+              ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+    }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
     // STREAM=0 + local file: optional FFmpeg subtitles filter (burn-in). Network/PMS
@@ -1723,6 +1741,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log("media: STREAM=0 rawvideo(" + std::string(ffmpegPixFmt(videoFmt)) +
                 ")→F1 PRESENT=" + presentMode_ +
                 " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                " coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
+                " display=" + std::to_string(rawDisplayW) + "x" +
+                std::to_string(rawDisplayH) +
                 " clock=wall-48k-audio+every-frame-present");
         usedRgb = true;
         presentCount_ = 0;
@@ -1765,6 +1786,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("rawvideo");
             args.push_back("-pix_fmt");
             args.push_back(ffmpegPixFmt(videoFmt));
+            args.push_back("-vf");
+            args.push_back(vf);
             args.push_back("pipe:1");
             if (wantAudio) {
                 args.push_back("-map");
@@ -1898,7 +1921,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         }
 
-        const size_t frameBytes = rawVideoFrameBytes(videoFmt, outW_, outH_);
+        const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
         std::vector<uint8_t> rgb565Frame;
         std::vector<uint8_t> fbOverlayBackup;
@@ -2004,16 +2027,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             bool fbOk = false;
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
-                fbOk = fb_.blitRgb565Le(data, outW_, outH_);
+                fbOk = fb_.blitRgb565Le(data, rawW, rawH);
                 break;
             case RawVideoFormat::Bgra32:
-                fbOk = fb_.blitBgra32(data, outW_, outH_);
+                fbOk = fb_.blitBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
                 return;
             case RawVideoFormat::Rgb24:
             default:
-                fbOk = fb_.blitRgb24(data, outW_, outH_);
+                fbOk = fb_.blitRgb24(data, rawW, rawH);
                 break;
             }
             if (!fbOk)
@@ -2023,16 +2046,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto renderOverlay = [&](uint8_t* data) {
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
-                overlay_.renderRgb565Le(data, outW_, outH_);
+                overlay_.renderRgb565Le(data, rawW, rawH);
                 break;
             case RawVideoFormat::Bgra32:
-                overlay_.renderBgra32(data, outW_, outH_);
+                overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
                 break;
             case RawVideoFormat::Rgb24:
             default:
-                overlay_.renderRgb24(data, outW_, outH_);
+                overlay_.renderRgb24(data, rawW, rawH);
                 break;
             }
         };
@@ -2048,7 +2071,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             fbOverlayBackup.resize(rowBytes * static_cast<size_t>(dirty.h));
             for (int yy = 0; yy < dirty.h; ++yy) {
                 const size_t src =
-                    (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * bpp;
+                    (static_cast<size_t>(dirty.y + yy) * rawW + dirty.x) * bpp;
                 std::memcpy(fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
                             cleanFrame + src, rowBytes);
             }
@@ -2063,7 +2086,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const size_t rowBytes = static_cast<size_t>(dirty.w) * bpp;
             for (int yy = 0; yy < dirty.h; ++yy) {
                 const size_t dst =
-                    (static_cast<size_t>(dirty.y + yy) * outW_ + dirty.x) * bpp;
+                    (static_cast<size_t>(dirty.y + yy) * rawW + dirty.x) * bpp;
                 std::memcpy(cleanFrame + dst,
                             fbOverlayBackup.data() + rowBytes * static_cast<size_t>(yy),
                             rowBytes);
@@ -2071,7 +2094,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
-            const OverlayRect dirty = overlay_.dirtyBounds(outW_, outH_);
+            const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
             if (!dirty.empty()) {
                 if (profilePresent) {
@@ -2109,13 +2132,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (profilePresent) {
                         const auto pix0 = std::chrono::steady_clock::now();
                         const int64_t pixCpu0 = threadCpuMicros();
-                        packRgb24ToRgb565Le(cleanFrame, outW_, outH_, rgb565Frame);
+                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
                         const int64_t pixCpu1 = threadCpuMicros();
                         const auto pix1 = std::chrono::steady_clock::now();
                         prof.pixelUs += microsBetween(pix0, pix1);
                         prof.pixelCpuUs += pixCpu1 - pixCpu0;
                     } else {
-                        packRgb24ToRgb565Le(cleanFrame, outW_, outH_, rgb565Frame);
+                        packRgb24ToRgb565Le(cleanFrame, rawW, rawH, rgb565Frame);
                     }
                     txFrame = rgb565Frame.data();
                     txBytes = rgb565Frame.size();
@@ -2128,8 +2151,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
-                        ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, outW_, outH_, ddrBank_);
-                    } else if (fpga_.setDdrFrameLayout(outW_, outH_, DdrFrameFormat::Rgb565)) {
+                        ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
+                    } else if (fpga_.setDdrFrameLayout(ddrGeometry, DdrFrameFormat::Rgb565)) {
                         ok = fpga_.sendRgb565FrameDdr(txFrame, txBytes, ddrBank_);
                     }
                     if (profilePresent && ok) {

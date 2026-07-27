@@ -458,13 +458,22 @@ bool FpgaSpi::ensureDdrMap() {
     return true;
 }
 
-bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
-    DdrFrameLayout next = makeDdrFrameLayout(width, height, kDdrFrameBase, 0x40000u, format);
+bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat format) {
+    DdrFrameLayout next =
+        makeDdrFrameLayout(geometry, kDdrFrameBase, kDdrFrameStrideAlign, format);
     if (!ddrFrameLayoutValid(next)) {
         setErr("setDdrFrameLayout: invalid DDR frame layout");
         return false;
     }
-    if (next.width == ddrLayout_.width && next.height == ddrLayout_.height &&
+    if (next.coded_width == ddrLayout_.coded_width &&
+        next.coded_height == ddrLayout_.coded_height &&
+        next.display_width == ddrLayout_.display_width &&
+        next.display_height == ddrLayout_.display_height &&
+        next.presented_width == ddrLayout_.presented_width &&
+        next.presented_height == ddrLayout_.presented_height &&
+        next.crop_left == ddrLayout_.crop_left && next.crop_right == ddrLayout_.crop_right &&
+        next.crop_top == ddrLayout_.crop_top && next.crop_bottom == ddrLayout_.crop_bottom &&
+        next.present_x == ddrLayout_.present_x && next.present_y == ddrLayout_.present_y &&
         next.format == ddrLayout_.format)
         return true;
     ddrLayout_ = next;
@@ -473,6 +482,10 @@ bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
     doorbellSeq_ = 0;
     clearErr();
     return true;
+}
+
+bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
+    return setDdrFrameLayout(makeDdrFrameGeometry(width, height), format);
 }
 
 void FpgaSpi::setDdrMemSync(bool on) {
@@ -1174,18 +1187,32 @@ bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
     return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }
 
-bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
-                                  int bank) {
-    if (!yuv420p || width <= 0 || height <= 0 || (width & 1) || (height & 1)) {
+bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
+                                  const DdrFrameGeometry& geometry, int bank) {
+    if (!yuv420p || geometry.coded_width <= 0 || geometry.coded_height <= 0 ||
+        (geometry.coded_width & 1) || (geometry.coded_height & 1)) {
         setErr("sendYuv420pFrameDdr: bad YUV420p frame");
         return false;
     }
-    if (width != ddrLayout_.width || height != ddrLayout_.height ||
+    if (geometry.coded_width != ddrLayout_.coded_width ||
+        geometry.coded_height != ddrLayout_.coded_height ||
+        geometry.display_width != ddrLayout_.display_width ||
+        geometry.display_height != ddrLayout_.display_height ||
+        geometry.presented_width != ddrLayout_.presented_width ||
+        geometry.presented_height != ddrLayout_.presented_height ||
+        geometry.crop_left != ddrLayout_.crop_left || geometry.crop_right != ddrLayout_.crop_right ||
+        geometry.crop_top != ddrLayout_.crop_top || geometry.crop_bottom != ddrLayout_.crop_bottom ||
+        geometry.present_x != ddrLayout_.present_x || geometry.present_y != ddrLayout_.present_y ||
         ddrLayout_.format != DdrFrameFormat::Yuv420p) {
-        if (!setDdrFrameLayout(width, height, DdrFrameFormat::Yuv420p))
+        if (!setDdrFrameLayout(geometry, DdrFrameFormat::Yuv420p))
             return false;
     }
     return sendRgb565FrameDdr(yuv420p, len, bank);
+}
+
+bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
+                                  int bank) {
+    return sendYuv420pFrameDdr(yuv420p, len, makeDdrFrameGeometry(width, height), bank);
 }
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {

@@ -5,6 +5,35 @@
 
 namespace misterplex {
 
+constexpr int kPlex480pCodedWidth = 624;
+constexpr int kPlex480pCodedHeight = 480;
+constexpr int kPlex480pDisplayWidth = 618;
+constexpr int kPlex480pDisplayHeight = 480;
+constexpr int kPlex480pPresentedWidth = 640;
+constexpr int kPlex480pPresentedHeight = 480;
+constexpr int kPlex480pCropLeft = 0;
+constexpr int kPlex480pCropRight = 6;
+constexpr int kPlex480pCropTop = 0;
+constexpr int kPlex480pCropBottom = 0;
+constexpr int kPlex480pPillarboxLeft = 11;
+constexpr int kPlex480pPillarboxRight = 11;
+constexpr uint32_t kDdrFramePhysBase = 0x30000000u;
+constexpr uint32_t kDdrFrameStrideAlign = 0x40000u;
+constexpr int kPlex480pRgb565LineQwords = 156;
+constexpr int kPlex480pYuvLumaLineQwords = 78;
+constexpr int kPlex480pYuvChromaLineQwords = 39;
+constexpr int kPlex480pRgb565Bytes = 599040;
+constexpr int kPlex480pYuv420pBytes = 449280;
+constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
+constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
+constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
+constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+
+enum class DdrFramePlacement {
+    None,
+    Pillarbox,
+};
+
 // HPS DDR frame-store contract shared by misterplexd and RTL:
 // - Two banks start at phys_base and phys_base+bank_stride.
 // - Doorbell is the final 4 KiB page of the mapped window.
@@ -13,6 +42,11 @@ namespace misterplex {
 //   V at v_offset. Luma stride is line_bytes; chroma stride is
 //   chroma_line_bytes. The RTL reader schedules line_qwords for luma bursts and
 //   chroma_line_qwords for U/V bursts.
+// - Geometry separates coded pixels in memory from cropped display pixels and
+//   the VGA presentation area. The measured 480p PMS stream is coded 624x480,
+//   display-cropped to 618x480 (right crop = 6), then pillarboxed into 640x480
+//   with 11 black pixels at each side. The stored payload is the coded frame;
+//   the reader applies crop + pillarbox at scanout.
 // - Doorbell high word is [31]=bank, [30:29]=format, [28:0]=sequence.
 //   Format 0=RGB565, 1=YUV420p. RGB565 preserves the historical bank bit and
 //   still presents a monotonically changing sequence to older readers.
@@ -31,6 +65,22 @@ inline uint32_t ddrFrameFormatCode(DdrFrameFormat f) {
     }
 }
 
+struct DdrFrameGeometry {
+    int coded_width = 0;
+    int coded_height = 0;
+    int display_width = 0;
+    int display_height = 0;
+    int presented_width = 0;
+    int presented_height = 0;
+    int crop_left = 0;
+    int crop_right = 0;
+    int crop_top = 0;
+    int crop_bottom = 0;
+    int present_x = 0;
+    int present_y = 0;
+    DdrFramePlacement placement = DdrFramePlacement::None;
+};
+
 struct DdrFrameLayout {
     uint32_t phys_base = 0;
     uint32_t bank_stride = 0;
@@ -47,6 +97,19 @@ struct DdrFrameLayout {
     uint32_t u_offset = 0;
     uint32_t v_offset = 0;
     uint32_t doorbell_format = 0;
+    int coded_width = 0;
+    int coded_height = 0;
+    int display_width = 0;
+    int display_height = 0;
+    int presented_width = 0;
+    int presented_height = 0;
+    int crop_left = 0;
+    int crop_right = 0;
+    int crop_top = 0;
+    int crop_bottom = 0;
+    int present_x = 0;
+    int present_y = 0;
+    DdrFramePlacement placement = DdrFramePlacement::None;
     DdrFrameFormat format = DdrFrameFormat::Rgb565;
 };
 
@@ -60,26 +123,78 @@ inline size_t yuv420pFrameBytes(int width, int height) {
     return static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
 }
 
-inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
-                                         uint32_t physBase = 0x30000000u,
-                                         uint32_t strideAlign = 0x40000u,
+inline DdrFrameGeometry makeDdrFrameGeometry(int codedWidth, int codedHeight,
+                                             int displayWidth = 0, int displayHeight = 0,
+                                             int presentedWidth = 0, int presentedHeight = 0,
+                                             DdrFramePlacement placement =
+                                                 DdrFramePlacement::None) {
+    DdrFrameGeometry g{};
+    g.coded_width = codedWidth;
+    g.coded_height = codedHeight;
+    g.display_width = displayWidth > 0 ? displayWidth : codedWidth;
+    g.display_height = displayHeight > 0 ? displayHeight : codedHeight;
+    g.presented_width = presentedWidth > 0 ? presentedWidth : g.display_width;
+    g.presented_height = presentedHeight > 0 ? presentedHeight : g.display_height;
+    g.crop_left = 0;
+    g.crop_top = 0;
+    g.crop_right = codedWidth - g.display_width;
+    g.crop_bottom = codedHeight - g.display_height;
+    g.placement = placement;
+    if (placement == DdrFramePlacement::Pillarbox) {
+        g.present_x = (g.presented_width - g.display_width) / 2;
+        g.present_y = (g.presented_height - g.display_height) / 2;
+    }
+    return g;
+}
+
+inline DdrFrameGeometry plex480pDdrFrameGeometry() {
+    DdrFrameGeometry g = makeDdrFrameGeometry(
+        kPlex480pCodedWidth, kPlex480pCodedHeight, kPlex480pDisplayWidth,
+        kPlex480pDisplayHeight, kPlex480pPresentedWidth, kPlex480pPresentedHeight,
+        DdrFramePlacement::Pillarbox);
+    g.crop_left = kPlex480pCropLeft;
+    g.crop_right = kPlex480pCropRight;
+    g.crop_top = kPlex480pCropTop;
+    g.crop_bottom = kPlex480pCropBottom;
+    g.present_x = kPlex480pPillarboxLeft;
+    g.present_y = 0;
+    return g;
+}
+
+inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
+    if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
+        return plex480pDdrFrameGeometry();
+    return makeDdrFrameGeometry(width, height);
+}
+
+inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
+                                         uint32_t physBase = kDdrFramePhysBase,
+                                         uint32_t strideAlign = kDdrFrameStrideAlign,
                                          DdrFrameFormat format = DdrFrameFormat::Rgb565) {
     DdrFrameLayout out{};
-    if (width <= 0 || height <= 0)
+    if (geom.coded_width <= 0 || geom.coded_height <= 0 || geom.display_width <= 0 ||
+        geom.display_height <= 0 || geom.presented_width <= 0 || geom.presented_height <= 0)
+        return out;
+    if (geom.display_width + geom.crop_left + geom.crop_right != geom.coded_width)
+        return out;
+    if (geom.display_height + geom.crop_top + geom.crop_bottom != geom.coded_height)
+        return out;
+    if (geom.presented_width < geom.display_width || geom.presented_height < geom.display_height)
         return out;
 
     uint64_t lineBytes = 0;
     uint64_t frameBytes = 0;
     uint64_t chromaLineBytes = 0;
     if (format == DdrFrameFormat::Yuv420p) {
-        if ((width & 1) || (height & 1))
+        if ((geom.coded_width & 1) || (geom.coded_height & 1))
             return out;
-        lineBytes = static_cast<uint64_t>(width);
-        chromaLineBytes = static_cast<uint64_t>(width / 2);
-        frameBytes = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 3u / 2u;
+        lineBytes = static_cast<uint64_t>(geom.coded_width);
+        chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
+        frameBytes = static_cast<uint64_t>(geom.coded_width) *
+                     static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
     } else {
-        lineBytes = static_cast<uint64_t>(width) * 2u;
-        frameBytes = lineBytes * static_cast<uint64_t>(height);
+        lineBytes = static_cast<uint64_t>(geom.coded_width) * 2u;
+        frameBytes = lineBytes * static_cast<uint64_t>(geom.coded_height);
     }
     if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
         return out;
@@ -87,15 +202,28 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
     out.phys_base = physBase;
     out.format = format;
     out.doorbell_format = ddrFrameFormatCode(format);
-    out.width = width;
-    out.height = height;
+    out.width = geom.coded_width;
+    out.height = geom.coded_height;
+    out.coded_width = geom.coded_width;
+    out.coded_height = geom.coded_height;
+    out.display_width = geom.display_width;
+    out.display_height = geom.display_height;
+    out.presented_width = geom.presented_width;
+    out.presented_height = geom.presented_height;
+    out.crop_left = geom.crop_left;
+    out.crop_right = geom.crop_right;
+    out.crop_top = geom.crop_top;
+    out.crop_bottom = geom.crop_bottom;
+    out.present_x = geom.present_x;
+    out.present_y = geom.present_y;
+    out.placement = geom.placement;
     out.line_bytes = static_cast<int>(lineBytes);
     out.line_qwords = static_cast<int>(lineBytes / 8u);
     out.chroma_line_bytes = static_cast<int>(chromaLineBytes);
     out.chroma_line_qwords = static_cast<int>(chromaLineBytes / 8u);
     out.frame_bytes = static_cast<size_t>(frameBytes);
     if (format == DdrFrameFormat::Yuv420p) {
-        const uint32_t yBytes = static_cast<uint32_t>(width * height);
+        const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
         const uint32_t cBytes = yBytes / 4u;
         out.y_offset = 0;
         out.u_offset = yBytes;
@@ -107,8 +235,28 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
     return out;
 }
 
+inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
+                                         uint32_t physBase = kDdrFramePhysBase,
+                                         uint32_t strideAlign = kDdrFrameStrideAlign,
+                                         DdrFrameFormat format = DdrFrameFormat::Rgb565) {
+    return makeDdrFrameLayout(makeDdrFrameGeometry(width, height), physBase, strideAlign, format);
+}
+
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)
+        return false;
+    if (l.coded_width != l.width || l.coded_height != l.height)
+        return false;
+    if (l.display_width <= 0 || l.display_height <= 0 || l.presented_width <= 0 ||
+        l.presented_height <= 0)
+        return false;
+    if (l.crop_left + l.display_width + l.crop_right != l.coded_width)
+        return false;
+    if (l.crop_top + l.display_height + l.crop_bottom != l.coded_height)
+        return false;
+    if (l.present_x < 0 || l.present_y < 0 ||
+        l.present_x + l.display_width > l.presented_width ||
+        l.present_y + l.display_height > l.presented_height)
         return false;
     if (l.bank_stride < l.frame_bytes)
         return false;

@@ -2,7 +2,10 @@
 //
 // Physical layout (HPS /dev/mem view):
 //   Bank 0: 0x30000000
-//   Bank 1: 0x30040000  (256 KiB stride; frame is 153600 B)
+//   Bank 1: phys_base + bank_stride. Legacy 320x240 RGB565 uses 0x40000.
+//           The measured 480p contract is coded 624x480/display 618x480/
+//           presented 640x480; see ddr_frame_layout_params.svh and the host
+//           ddr_frame_layout.hpp guard for its RGB/YUV strides and doorbells.
 //   Doorbell: 0x3007F000  (one 64-bit word — product hot path, no SPI kick)
 //     [31:0]  magic 0x504C584B ("PLXK")
 //     [62:32] seq   (monotonic)
@@ -109,6 +112,8 @@ module ddram_frame_rd #(
 	output reg  [15:0] frames_done,
 	output reg         doorbell_ok
 );
+
+`include "ddr_frame_layout_params.svh"
 
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int QWORDS = PIXELS / 4;
