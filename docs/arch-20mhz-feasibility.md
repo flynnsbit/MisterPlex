@@ -390,14 +390,25 @@ At 60 MHz, even a naive implementation with headroom to spare.
 
 ## 3. Per-Stage Cycle Model
 
-### 3.1 Measured stages (provenance: w-c1 ratchet measurements)
+### 3.1 Stages present in RTL (provenance: structural trace)
+
+**⚠ CRITICAL CAVEAT (failure #17):** The cycle counts below are traced from
+RTL structure — the modules exist and have the stated combinational depth.
+**But "exists in RTL" ≠ "verified to produce correct output."** The project's
+headline claim of "intra decode bit-exact, 1170/1170" was found to compare
+HOST C++ against ffmpeg with ZERO RTL involvement. Actual RTL verification
+covers **16 of 76,800 luma pixels (0.021%) and 0% of chroma.** The cycle
+model is about timing, not correctness — **these stages may produce wrong
+results and still take zero cycles to do it.**
 
 | Stage | Cycles/MB | Type | Provenance |
 |-------|-----------|------|------------|
 | `parse_cavlc` | 3.2 | Sequential | w-c1 measured on test vector |
 | `dequant_idct` | 0 | Combinational | Traced: `h264_dequant4x4` + `h264_idct4x4` are pure wires |
-| | | | **⚠ COVERS 4×4 AC ONLY — chroma DC 2×2 Hadamard is absent from RTL (failure #16)** |
+| | | | **⚠ COVERS 4×4 AC ONLY — chroma DC 2×2 Hadamard absent from RTL (#16)** |
+| | | | **⚠ RTL correctness UNVERIFIED — 0.021% luma, 0% chroma coverage (#17)** |
 | `intra_pred` | 0 | Combinational | Traced: `h264_intra4x4_pred` etc. are pure `always @*` |
+| | | | **⚠ RTL correctness UNVERIFIED (#17) — host model is bit-exact, RTL is not tested** |
 
 **CAVLC provenance caveat:** The 3.2 cycles/MB figure is an average that
 includes a high fraction of P_Skip macroblocks (which have zero residual
@@ -1149,6 +1160,9 @@ one pipeline register stage reduces the 7-level path to meet the
 | **45 MHz is the only safe CDC candidate** | CDC gap analysis: 1:2 ratio → 11.111 ns gap | **COMPUTED (v4)** |
 | **40 MHz has WORSE CDC gap (2.778 ns) than 20 MHz (5.556 ns)** | CDC gap analysis: 4:9 ratio | **COMPUTED (v4)** |
 | ~~39.86 ns path likely in h264_luma_qpel_block_16x16~~ | ~~RTL: 256 parallel qpel in `always @*`, 6×6 FIR cascade~~ | **WRONG (v5) — path is in decode_stub** |
+| **"intra bit-exact 1170/1170" = HOST vs ffmpeg, no RTL** | w-rel `3dbef6a`: `score_h264_native_frames.cpp:301` calls `reconISlice()` (host C++) not Verilator | **VERIFIED (v5.2, failure #17)** |
+| **RTL intra verification = 0.021% luma, 0% chroma** | w-rel: 16/76800 pixels via MB0 pipeline trace only | **VERIFIED (v5.2, failure #17)** |
+| **Chroma DC 2×2 Hadamard absent from all 33 RTL files** | w-plane: no Hadamard inverse in any source file | **VERIFIED (v5.1, failure #16)** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
@@ -1268,25 +1282,23 @@ should be clearly subordinate to any measurement.
 
 ### 2. What does it NOT cover that a reader would assume?
 
-**Three gaps identified:**
+**Four gaps identified:**
 
-**Gap A: The chroma DC 2×2 Hadamard inverse transform is absent from RTL.**
-w-plane has established this (failure #16). My cycle model (§3) lists
-`dequant_idct` as "0 cycles, combinational" — this was traced from the
-existing RTL (`h264_dequant4x4` + `h264_idct4x4`). But those modules only
-handle the 4×4 AC transform. The H.264 spec requires a 2×2 Hadamard
-inverse on chroma DC coefficients before dequant. **That transform does
-not exist in hardware.** My model silently assumes chroma reconstruction
-works correctly because the 4×4 IDCT exists. It does not.
+**Gap A (CRITICAL, failure #17): The cycle model assumes intra decode works.**
+w-rel established that "intra bit-exact 1170/1170" compares HOST C++ against
+ffmpeg — no RTL, no Verilator, no FPGA. Actual RTL verification covers
+16/76,800 luma pixels (0.021%) and 0% chroma. **The cycle model budgets time
+for stages whose correctness is essentially unverified in hardware.** The
+model is about timing, not correctness — but a reader of "dequant_idct = 0
+cycles, combinational (traced)" might reasonably assume the traced module
+produces correct output. It might. We do not know.
 
-**Impact on cycle budget:** The 2×2 Hadamard is 4 additions on 4 values —
-trivially combinational or 1 pipeline cycle. Budget impact is negligible
-(≤1 cycle/MB). But the chroma reconstruction PATH being untested means
-the cycle model's "dequant+IDCT = combinational" is true of a pipeline
-that produces wrong chroma output for ~50% of macroblocks containing
-skin tones. **The model is right about timing and wrong about correctness.**
+**Gap B (failure #16): Chroma DC 2×2 Hadamard absent from RTL.**
+w-plane established this. Cycle impact ≤1 cycle/MB. Correctness impact:
+wrong chroma for ~50% of skin-tone MBs. The model is right about timing
+and wrong about correctness.
 
-**Gap B: The cycle model's weighted average assumes specific MB type ratios.**
+**Gap C: The cycle model's weighted average assumes specific MB type ratios.**
 "70% P_Skip, 20% P_Motion, 10% Intra" is stated as an assumption (§3.3)
 but a reader might take the resulting "215 cycles/MB weighted average"
 as more authoritative than it is. Different content produces very different
@@ -1326,10 +1338,19 @@ RTL changes.
 | Item | Status |
 |------|--------|
 | Provenance labels | Honest — discredited items marked, no false VERIFIED |
-| Chroma DC Hadamard | **MISSING from model** — cycle impact negligible, correctness impact severe |
+| **RTL correctness assumed but unverified** | **GAP (#17) — 0.021% luma, 0% chroma verified in HW** |
+| Chroma DC Hadamard | **MISSING from RTL (#16)** — cycle impact negligible, correctness impact severe |
 | Delay estimates | Systematically optimistic (3 of 3 wrong in same direction) |
 | Automated regression | None — study is a snapshot document |
 | Recommendations actionability | Sound — 684 cyc/MB working number confirmed by parent |
+
+**This study is about TIMING, not CORRECTNESS.** It answers "can 684
+cycles/MB fit the pipeline stages?" — not "do the pipeline stages produce
+the right answer?" Those are independent questions. Failure #17 does not
+change the cycle model (the stages exist and have the stated depths). It
+changes the confidence that the stages being budgeted are actually working.
+A correct-but-slow pipeline is a timing problem. A fast-but-wrong pipeline
+is a verification problem. **This project has both, and they are not the same.**
 
 ---
 
