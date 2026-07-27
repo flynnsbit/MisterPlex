@@ -187,7 +187,8 @@ Likewise, w-osd's absent-frame surface is authoritative: `frame_status=absent`,
 `has_frame=0`, `PLXF magic=0`, or the text
 `frame store status unavailable (PLXF mailbox absent/unwritten)` all return
 `rc=7` before pixel grading. A channel-skewed PNG cannot be reported as
-`COLOUR_PATH_DEFECT` while ARM status says PLXF absent or non-YUV-refused.
+`COLOUR_PATH_DEFECT` while ARM status says PLXF absent or non-YUV-refused; the
+report's stable `stats.visual_verdict.id` is `NO_FRAME_DELIVERED`.
 
 ## Visual verdict: absent frame vs colour path
 
@@ -197,6 +198,10 @@ reported first; the verdict records the same numbers plus the dispersion metric:
 
 - `max_min_ratio = max(R,G,B MAE) / min(R,G,B MAE)`
 - `coefficient_of_variation = stddev(R,G,B MAE) / mean(R,G,B MAE)`
+
+The stable verdict identifiers are literal: `NO_FRAME_DELIVERED`,
+`COLOUR_PATH_DEFECT`, `GEOMETRY_CONTENT_DEFECT`, and `INDETERMINATE` for
+failures; exact matches report `EXACT_MATCH`.
 
 The thresholds are derived from synthetic 624×480 active-region cases generated
 from the checked-in 480p fixture, plus the live frozen-screen capture:

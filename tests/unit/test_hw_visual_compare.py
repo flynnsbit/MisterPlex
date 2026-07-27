@@ -639,10 +639,14 @@ def main() -> int:
             "frame_status=absent" in absent_guard.stderr and
             "PLXF mailbox absent/unwritten" in absent_guard.stderr and
             "COLOUR_PATH_DEFECT" not in (absent_guard.stdout + absent_guard.stderr) and
-            not absent_status_report.exists(),
+            absent_status_report.exists(),
             "ARM frame_status=absent/has_frame=0 must refuse before a channel-skewed image "
             "can be labelled as a colour defect\n"
             f"stdout={absent_guard.stdout}\nstderr={absent_guard.stderr}")
+    absent_report = json.loads(absent_status_report.read_text())
+    require(absent_report["stats"]["visual_verdict"]["id"] == "NO_FRAME_DELIVERED" and
+            absent_report["stats"]["visual_verdict"]["delivery_reason"] == "no_fresh_frame_delivery",
+            f"PLXF absent status must map to stable NO_FRAME_DELIVERED verdict: {absent_report}")
 
     absent_text_status = WORK / "status_plxf_absent_text.txt"
     absent_text_status.write_text(
@@ -660,7 +664,8 @@ def main() -> int:
         "--min-bytes-in", "512",
     )
     require(absent_text_guard.returncode == 7 and
-            "frame store status unavailable (PLXF mailbox absent/unwritten)" in absent_text_guard.stderr,
+            "frame store status unavailable (PLXF mailbox absent/unwritten)" in absent_text_guard.stderr and
+            '"id": "NO_FRAME_DELIVERED"' in absent_text_guard.stdout,
             "plain PLXF absent/unwritten status text must be a named delivery refusal, "
             f"not graded\nstdout={absent_text_guard.stdout}\nstderr={absent_text_guard.stderr}")
 
@@ -682,7 +687,8 @@ def main() -> int:
     )
     require(non_yuv.returncode == 7 and
             "frame store refused non-YUV doorbell (0xE1)" in non_yuv.stderr and
-            "non-YUV DDR doorbell format error" in non_yuv.stderr,
+            "non-YUV DDR doorbell format error" in non_yuv.stderr and
+            '"id": "NO_FRAME_DELIVERED"' in non_yuv.stdout,
             "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
             f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
 
@@ -705,6 +711,7 @@ def main() -> int:
     require(debug_state_non_yuv.returncode == 7 and
             "debug_state=0xe1" in debug_state_non_yuv.stderr and
             "frame store refused non-YUV doorbell (0xE1)" in debug_state_non_yuv.stderr and
+            '"delivery_reason": "non_yuv_doorbell_refusal"' in debug_state_non_yuv.stdout and
             "COLOUR_PATH_DEFECT" not in (debug_state_non_yuv.stdout + debug_state_non_yuv.stderr),
             "debug_state low byte 0xe1 must refuse before a channel-skewed image can be "
             "labelled as a colour defect\n"

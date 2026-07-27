@@ -1116,6 +1116,26 @@ def compare_ok(stats: dict, noise: dict | None, max_mae: float | None, max_abs: 
     return all(maes[i] <= mae_limits[i] for i in range(3)) and stats["max_abs"] <= abs_limit
 
 
+def delivery_failure_verdict(error: DeliveryFreshnessError) -> dict:
+    msg = str(error)
+    if NON_YUV_DOORBELL_ERROR in msg:
+        reason = "non_yuv_doorbell_refusal"
+        note = "ARM status reports PLXF non-YUV doorbell refusal; delivery failed before pixels are eligible for colour classification"
+    elif PLXF_ABSENT_ERROR in msg or "NO_FRESH_FRAME" in msg:
+        reason = "no_fresh_frame_delivery"
+        note = "ARM status reports absent/unfresh PLXF frame delivery; do not diagnose colour or geometry from panel pixels"
+    else:
+        reason = "delivery_freshness_failure"
+        note = "delivery freshness gate failed before pixels are eligible for colour classification"
+    return {
+        "id": "NO_FRAME_DELIVERED",
+        "confidence": "high",
+        "delivery_reason": reason,
+        "note": note,
+        "delivery_error": msg,
+    }
+
+
 def cmd_geometry(_args: argparse.Namespace) -> int:
     print(json.dumps(asdict(load_geometry()), indent=2, sort_keys=True))
     return 0
@@ -1154,7 +1174,31 @@ def cmd_compare(args: argparse.Namespace) -> int:
     golden_provenance = validate_golden_provenance(args, g, box, rbf_identity)
     color_provenance = require_color_provenance(args, golden_provenance)
     reject_corrupt_capture_log(args.capture_log)
-    delivery_freshness = validate_delivery_freshness(args)
+    try:
+        delivery_freshness = validate_delivery_freshness(args)
+    except DeliveryFreshnessError as e:
+        report = {
+            "ok": False,
+            "golden": str(args.golden),
+            "capture": str(args.capture),
+            "capture_log": str(args.capture_log) if args.capture_log else None,
+            "geometry": asdict(g),
+            "compare_box": list(box),
+            "rbf_identity": rbf_identity,
+            "golden_provenance": golden_provenance,
+            "color_provenance": color_provenance,
+            "freshness": None,
+            "delivery_freshness": {"error": str(e)},
+            "stats": {"visual_verdict": delivery_failure_verdict(e)},
+            "thresholds": None,
+        }
+        if args.report:
+            out = Path(args.report)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(json.dumps(report, indent=2, sort_keys=True))
+        print(f"ERROR: {e}", file=sys.stderr)
+        return e.exit_code
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
     freshness = None
