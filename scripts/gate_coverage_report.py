@@ -468,6 +468,44 @@ def build_report() -> list[GateReport]:
             observed_failing_real=True,
             observed_failing_note="Currently rc=1 on real codebase: 26 active findings (16 ALLOW_MISSING_VERILATOR + gate_coverage_report.py self-references + test_rtl_invariants.sh red-proof fixtures). The 16 ALLOW_MISSING_VERILATOR are the exact structural anti-pattern that caused 14 gates to silently pass.",
         ),
+        GateReport(
+            id="test-degeneracy",
+            script="scripts/check_test_degeneracy.py",
+            makefile_target="test-degeneracy",
+            proves=(
+                "Every test file that performs comparison assertions also asserts "
+                "the reference/golden output differs from the input (degeneracy guard). "
+                "Catches the w-deblock #18 pattern: test compares A vs B where B==A "
+                "trivially, producing a green result that proves nothing."
+            ),
+            does_not_prove=(
+                "Does NOT prove the degeneracy guard is CORRECT — only that one exists. "
+                "Does NOT prove the test stimuli cover all paths. Does NOT prove the "
+                "comparison itself is meaningful (that is test-suppression's job). "
+                "Regex-based, not AST-based — may miss unusual comparison patterns. "
+                "Infrastructure tests (parsers, formatters) are allowlisted and not "
+                "checked. Does NOT detect a test that ALWAYS modifies but by a WRONG amount."
+            ),
+            red_proof_method=(
+                "Synthetic degenerate test (np.array_equal with no != input guard) → "
+                "rc=1. Remove synthetic file → back to 2 real findings (rc=1). "
+                "Add degeneracy guard to synthetic → no longer flagged."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note=(
+                "Pure Python, no external tools. Currently REJECTS (rc=1) with 2 "
+                "active findings: test_p3_intra_frame_verilator.cpp (#16) and "
+                "score_h264_native_frames.cpp (#17) — exactly the two instruments "
+                "that caused the largest failures this session."
+            ),
+            owner="w-c2",
+            verification_target="STATIC",
+            verification_target_note="Scans test source text for presence/absence of degeneracy guards. No RTL execution.",
+            exit_codes={"green": 0, "red_degenerate": 1, "refuse_no_tests": 4},
+            observed_failing_real=True,
+            observed_failing_note="Currently rc=1 on real codebase: 2 active findings — test_p3_intra_frame_verilator.cpp (instrument failure #16) and score_h264_native_frames.cpp (#17). Both are the exact instruments that produced misleading headline numbers.",
+        ),
     ]
     return gates
 

@@ -1,0 +1,45 @@
+{
+  "description": "Allowlist for check_test_degeneracy.py. Each entry justifies why a file without a degeneracy guard is acceptable.",
+  "entries": [
+    {
+      "file": "tests/unit/test_avclock.cpp",
+      "justification": "Pure arithmetic: frame timing math (ms→frames). Input is an integer, output is a different integer by definition. No signal path where output==input is possible."
+    },
+    {
+      "file": "tests/unit/test_frame_store_math.cpp",
+      "justification": "Pure geometry math: stride/offset calculations. Output is a layout struct computed from dimensions. Not a signal transform — cannot be degenerate."
+    },
+    {
+      "file": "tests/unit/test_input_mailbox.cpp",
+      "justification": "Protocol state machine: tests command parsing and state transitions. Input is a byte sequence, output is a decoded command enum. Not a signal transform."
+    },
+    {
+      "file": "tests/unit/test_mraudio_status.cpp",
+      "justification": "String parser: parses audio status lines into integers. Input is text, output is a number — structurally different types, cannot be identity."
+    },
+    {
+      "file": "tests/unit/test_pixel_format.cpp",
+      "justification": "Bit-packing: converts (R,G,B) triplets to packed uint16. Input and output are different types/widths. Not a signal filter."
+    },
+    {
+      "file": "tests/unit/test_pms_timeline.cpp",
+      "justification": "Network protocol: tests PMS timeline request/response sequencing. Input is a media state, output is HTTP messages. Different domains."
+    },
+    {
+      "file": "tests/unit/test_resolve.cpp",
+      "justification": "URL resolver: tests URI decoding, path resolution, redirect chains. Input is a URL string, output is a different URL string. Not a signal path."
+    },
+    {
+      "file": "tests/unit/test_playback_overlay.cpp",
+      "justification": "UI overlay rendering: tests that overlay pixels are painted. Comparison is size/position, not signal integrity. Not a decode transform."
+    },
+    {
+      "file": "tests/unit/test_h264_bitstream_source.cpp",
+      "justification": "Ring buffer mechanics: tests begin/end/wrap of a circular reader. Output is ControlResult enum + byte position, not reconstructed pixels."
+    },
+    {
+      "file": "tests/hw/test_stream_recon.sh",
+      "justification": "Hardware integration smoke test (on-device only). Comparison is a log grep for error strings, not a signal comparison. Degeneracy N/A."
+    }
+  ]
+}
