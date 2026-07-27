@@ -186,7 +186,7 @@ int mbExactAllPlanes(const misterplex::recon::ReconResult& rec, const std::vecto
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string input, planes, output;
+    std::string input, planes, output, loopFilterState;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto need = [&](const char* n) -> std::string {
@@ -199,14 +199,22 @@ int main(int argc, char** argv) {
         if (a == "--input") input = need("--input");
         else if (a == "--planes") planes = need("--planes");
         else if (a == "--output") output = need("--output");
+        else if (a == "--loop-filter-state") loopFilterState = need("--loop-filter-state");
         else {
-            std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv [--output out.json]\n";
+            std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv "
+                         "--loop-filter-state disabled [--output out.json]\n";
             return 2;
         }
     }
-    if (input.empty() || planes.empty()) {
-        std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv [--output out.json]\n";
+    if (input.empty() || planes.empty() || loopFilterState.empty()) {
+        std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv "
+                     "--loop-filter-state disabled [--output out.json]\n";
         return 2;
+    }
+    if (loopFilterState != "disabled") {
+        std::cerr << "FAIL native score: current recon output is undeblocked; refusing loop_filter_state="
+                  << loopFilterState << "\n";
+        return 9;
     }
     auto blob = readFile(input);
     auto golden = readFile(planes);
@@ -348,7 +356,8 @@ int main(int argc, char** argv) {
     out << "  \"source\": {\"path\": \"" << jsonEscape(input) << "\", \"bytes\": " << blob.size()
         << ", \"sha256\": \"" << sha256Hex(blob) << "\"},\n";
     out << "  \"colorspace\": \"I420_NATIVE\",\n";
-    out << "  \"mechanism\": \"Native score compares host CAVLC/intra reconstructed I420 planes directly to FFmpeg yuv420p goldens; no RGB/RGB565 round-trip or presentation border is in the reference path.\",\n";
+    out << "  \"loop_filter\": \"disabled\",\n";
+    out << "  \"mechanism\": \"Native score compares host CAVLC/intra reconstructed I420 planes directly to FFmpeg yuv420p goldens decoded with -skip_loop_filter all; no RGB/RGB565 round-trip, loop-filter mismatch, or presentation border is in the reference path.\",\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height
         << ", \"mb_total_per_frame\": " << mbTotal << "},\n";
     out << "  \"summary\": {\"frames\": " << frameIndex << ", \"idr\": " << idr

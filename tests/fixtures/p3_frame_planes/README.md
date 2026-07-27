@@ -2,15 +2,17 @@
 
 These fixtures are additive to `misterplex.p3.mb_golden.v1`. They use
 `format=misterplex.p3.frame_planes_golden.v1` and provide byte-exact I420/YUV420p
-reference planes decoded by FFmpeg from the checked-in Annex-B multi-NAL streams.
+reference planes decoded by FFmpeg from the checked-in Annex-B multi-NAL streams
+with the in-loop deblocking filter disabled (`-skip_loop_filter all`), matching
+the current stream-path/RTL output contract.
 
 Each JSON manifest records:
 
 - bitstream path, byte count and SHA-256
 - `misterplex.p3.nal_sequence.v1` manifest path, byte count and SHA-256
-- FFmpeg/FFprobe version and decode command
+- FFmpeg/FFprobe version, decode command, and `loop_filter=disabled`
 - provenance that declares native decoded planes, I420/YUV420p pixel format, no
-  RGB/RGB565 round-trip, and no presentation border/pillar mask
+  RGB/RGB565 round-trip, no presentation border/pillar mask, and disabled loop filter
 - coded/display geometry, `colorspace=I420_NATIVE`, and I420 plane strides
 - per-frame frame number, slice kind, plane byte offsets and per-plane SHA-256
 
@@ -19,6 +21,7 @@ hash before comparing. `tools/extract_h264_frame_planes.py --verify` performs th
 check. Candidate comparisons must declare `--candidate-colorspace I420_NATIVE`;
 unknown or RGB565-derived candidates are refused with rc=9 before byte comparison, as are
 manifests that declare any RGB/RGB565 round-trip or presentation border/pillar masking.
+Goldens with an unknown or enabled loop filter are also refused before comparison.
 Accepted native I420 candidates are compared plane-by-plane with raw exact/MAE/max_abs.
 
 Regenerate and verify:

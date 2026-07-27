@@ -164,19 +164,17 @@ their first baseline is also retired: the FFmpeg reference silently included
 in-loop deblocking while the RTL candidate did not.
 
 ```text
-624x480 12f intra: 510/1170 MB exact, Y MAE 17.765057; P frames 11/11 expected-red
-320x240 12f intra: 155/300  MB exact, Y MAE 6.050521 max 96; P frames 11/11 expected-red
-wcap residual14 fixture: 207/300 intra MB exact; P frames 1/1 expected-red
+Loop filter state is explicit: both sides are undeblocked (`-skip_loop_filter all`).
+624x480 12f intra: 1170/1170 MB exact, Y/U/V MAE 0.0; P frames 11/11 expected-red
+320x240 12f intra: 300/300  MB exact, Y/U/V MAE 0.0; P frames 11/11 expected-red
+wcap residual14 fixture: 300/300 intra MB exact, Y/U/V MAE 0.0; P frames 1/1 expected-red
 MB0 phantom resolved on native I420: got=73 ref=73 abs=0 (retired RGB565 path reported got=142 ref=65)
 ```
 
-The ratchet must be regenerated against no-deblock reference planes
-(`-skip_loop_filter all`) with loop-filter state recorded/refused in provenance.
-The first real no-deblock mismatch is localized to MB 182 `(26,4)`, luma
-`Y(420,72)`: `got=107 ref=145`, I16x16 vertical, QP 0, pred=106, AC all zero,
-dequant DC=60, IDCT=1, which points at DC scaling collapse rather than MB0,
-prediction, or CAVLC. The behavioral pixel-XOR/colorspace red-checks still
-fail strict compare/refuse RGB565-derived candidates.
+The ratchet fixture was regenerated after removing RGB565 scoreboard contamination and after
+making the loop-filter state match current RTL output. The strict reference comparator remains RED
+where expected, and the behavioral pixel-XOR/colorspace/loop-filter-provenance red-checks still
+fail strict compare/refuse contaminated candidates.
 
 ## Hardware gate plan
 

@@ -153,6 +153,12 @@ masked = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_masked_provenanc
 data = json.loads(src.read_text())
 data["provenance"]["presentation_border_or_pillar_mask"] = True
 masked.write_text(json.dumps(data, indent=2) + "\n")
+
+filtered = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_filtered_provenance.json")
+data = json.loads(src.read_text())
+data["decoder"]["loop_filter"] = "enabled"
+data["provenance"]["loop_filter"] = "enabled"
+filtered.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
 set +e
@@ -196,5 +202,26 @@ if [[ "$MASKED_RC" -ne 9 ]]; then
   exit 1
 fi
 grep -q 'presentation masking' "$OUT/masked_provenance_compare.log"
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest build/p3_frame_planes/plex_inter_p16_320x240_12f_filtered_provenance.json \
+  > "$OUT/filtered_provenance_compare.log" 2>&1
+FILTERED_RC=$?
+set -e
+if [[ "$FILTERED_RC" -eq 0 ]]; then
+  cat "$OUT/filtered_provenance_compare.log"
+  echo "FAIL frame-plane red-check: loop-filtered manifest provenance unexpectedly verified" >&2
+  exit 1
+fi
+if [[ "$FILTERED_RC" -ne 9 ]]; then
+  cat "$OUT/filtered_provenance_compare.log"
+  echo "FAIL frame-plane red-check: loop-filtered manifest rc=$FILTERED_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'loop_filter is not disabled\|disabled loop filter' "$OUT/filtered_provenance_compare.log"
 
 echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane/provenance RED checked"

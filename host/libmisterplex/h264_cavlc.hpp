@@ -573,11 +573,9 @@ inline int reconFirstI16DcMeanY(const uint8_t* annexb, size_t n, int16_t yOut[16
                 return -1; // I_NxN — recon path is I16 DC only
             br.ue(); // intra_chroma_pred_mode
             int dlt = br.se();
-            qp = chain.slice.slice_qp + dlt;
+            qp = (chain.slice.slice_qp + dlt) % 52;
             if (qp < 0)
-                qp = 0;
-            if (qp > 51)
-                qp = 51;
+                qp += 52;
         }
     }
     int16_t dc[4][4]{};
