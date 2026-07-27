@@ -1,6 +1,8 @@
 #include "Vddr_frame_store_warm_reset_tb.h"
 #include "verilated.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -87,6 +89,20 @@ public:
             for (int q = 0; q < kYQ; ++q)
                 mem[base + line * kYQ + q] = pack8(y);
         for (int line = 0; line < kH / 2; ++line) {
+            for (int q = 0; q < kCQ; ++q) {
+                mem[base + kUQBase + line * kCQ + q] = pack8(u);
+                mem[base + kVQBase + line * kCQ + q] = pack8(v);
+            }
+        }
+    }
+
+    void fillFrameChromaRows(int bank, uint8_t y, const std::vector<uint8_t>& uRows, uint8_t v = 128) {
+        const uint32_t base = (bank * kBankStrideBytes) / 8;
+        for (int line = 0; line < kH; ++line)
+            for (int q = 0; q < kYQ; ++q)
+                mem[base + line * kYQ + q] = pack8(y);
+        for (int line = 0; line < kH / 2; ++line) {
+            const uint8_t u = uRows.empty() ? 128 : uRows[std::min<int>(line, static_cast<int>(uRows.size()) - 1)];
             for (int q = 0; q < kCQ; ++q) {
                 mem[base + kUQBase + line * kCQ + q] = pack8(u);
                 mem[base + kVQBase + line * kCQ + q] = pack8(v);
@@ -272,6 +288,15 @@ Rgb stableSampleRgb(Sim& sim) {
     return sim.sampleRgb(0, 0);
 }
 
+Rgb stableSampleRgbAt(Sim& sim, int x, int y) {
+    sim.top.rd_x = x;
+    sim.top.rd_y = y;
+    sim.top.rd_active = 1;
+    for (int i = 0; i < 1600; ++i)
+        sim.tick();
+    return sim.sampleRgb(x, y);
+}
+
 void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
     const uint8_t got = stableSample(sim);
     if (got + 1 < want || got > want + 1) {
@@ -331,6 +356,44 @@ bool runChromaPlaneReadMapping() {
               << " sample_rgb=" << int(got.r) << "/" << int(got.g) << "/" << int(got.b)
               << " frames=" << sim.top.frames_done
               << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
+bool runChromaVerticalStrideMapping() {
+    Sim sim;
+    sim.fillFrameChromaRows(0, 128, {128, 180, 70});
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+    sim.ringDoorbell(0, 12);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("chroma vertical/stride mapping: frame did not present");
+
+    const Rgb y0 = stableSampleRgbAt(sim, 0, 0);
+    const Rgb y1 = stableSampleRgbAt(sim, 0, 1);
+    const Rgb y2 = stableSampleRgbAt(sim, 0, 2);
+    if (!(std::abs(int(y0.b) - 128) <= 8 && std::abs(int(y1.b) - 128) <= 8 && y2.b >= 205)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: chroma vertical subsampling/stride"
+                  << " y0_rgb=" << int(y0.r) << "/" << int(y0.g) << "/" << int(y0.b)
+                  << " y1_rgb=" << int(y1.r) << "/" << int(y1.g) << "/" << int(y1.b)
+                  << " y2_rgb=" << int(y2.r) << "/" << int(y2.g) << "/" << int(y2.b)
+                  << " want y0/y1 from chroma row0 and y2 from chroma row1"
+                  << " bench_y_stride_bytes=" << (kYQ * 8)
+                  << " bench_c_stride_bytes=" << (kCQ * 8)
+                  << " product_c_stride_bytes=312"
+                  << " frames=" << sim.top.frames_done
+                  << " underruns=" << sim.top.underrun_count << "\n";
+        std::exit(1);
+    }
+
+    std::cout << "ddr_frame_store chroma vertical/stride raw: y0_rgb="
+              << int(y0.r) << "/" << int(y0.g) << "/" << int(y0.b)
+              << " y1_rgb=" << int(y1.r) << "/" << int(y1.g) << "/" << int(y1.b)
+              << " y2_rgb=" << int(y2.r) << "/" << int(y2.g) << "/" << int(y2.b)
+              << " bench_Y_stride_bytes=" << (kYQ * 8)
+              << " bench_C_stride_bytes=" << (kCQ * 8)
+              << " product_Y_stride_bytes=624 product_C_stride_bytes=312"
+              << " frames=" << sim.top.frames_done << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -473,10 +536,44 @@ bool runEqualTokenFallback() {
     return sim.schedulerProven();
 }
 
+bool runEqualTokenRefreshAfterAccept() {
+    Sim sim;
+    sim.fillFrame(0, 96);
+    sim.resetCore();
+    for (int i = 0; i < 3000; ++i)
+        sim.tick();
+    sim.ringDoorbell(0, 13);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("equal-token refresh: initial frame did not present");
+    expectFreshSample("equal-token refresh initial", sim, 96);
+
+    const int prevFrames = sim.top.frames_done;
+    sim.fillFrame(0, 217);
+    sim.ringDoorbell(0, 13);
+    if (!sim.waitForFrameCountStatic(prevFrames + 1, 800000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: equal-token refresh after accept did not present"
+                  << " prev_frames=" << prevFrames << " frames=" << sim.top.frames_done
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " swap_pending=" << int(sim.top.swap_pending)
+                  << " doorbell_ok=" << int(sim.top.doorbell_ok)
+                  << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec
+                  << " cycle=" << sim.cycle << "\n";
+        throw std::runtime_error("equal-token refresh after accept did not present");
+    }
+    expectFreshSample("equal-token refresh after accept", sim, 217);
+
+    std::cout << "ddr_frame_store warm-reset raw: equal_token_refresh_after_accept"
+              << " seq=13 bank=0 prev_frames=" << prevFrames
+              << " frames=" << sim.top.frames_done << " sample_r=217 underruns="
+              << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 void run() {
     bool schedulerSeen = false;
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
+    schedulerSeen |= runChromaVerticalStrideMapping();
     schedulerSeen |= runWarmResetChanged(1, 2, 0, 1, expectedRgb(208), "increment");
     schedulerSeen |= runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
     schedulerSeen |= runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
@@ -484,6 +581,7 @@ void run() {
     schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
     schedulerSeen |= runEqualTokenFallback();
+    schedulerSeen |= runEqualTokenRefreshAfterAccept();
     if (!schedulerSeen) {
         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";
         std::exit(1);

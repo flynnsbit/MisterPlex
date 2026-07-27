@@ -530,6 +530,77 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     std::cout << "OK deblock multi-frame drift fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
+void testWritebackContract(Vh264_deblock_tb& dut) {
+    dut.reset = 1;
+    dut.idr_frame_start = 0;
+    dut.filtered_mb_valid = 0;
+    dut.filtered_mb_addr = 0;
+    dut.filtered_mb_is_ref = 0;
+    dut.filtered_frame_done = 0;
+    dut.frame_slot_i = 0;
+    dut.frame_boundary = 0;
+    tick(dut);
+    dut.reset = 0;
+
+    dut.idr_frame_start = 1;
+    tick(dut);
+    if (!dut.dpb_invalidate_refs || dut.ref_ready_pulse) {
+        std::cerr << "FAIL deblock writeback: IDR invalidate/ref_ready got invalidate="
+                  << int(dut.dpb_invalidate_refs) << " ready=" << int(dut.ref_ready_pulse) << "\n";
+        std::exit(1);
+    }
+    dut.idr_frame_start = 0;
+
+    dut.filtered_mb_valid = 1;
+    dut.filtered_mb_addr = 17;
+    dut.filtered_mb_is_ref = 1;
+    dut.filtered_frame_done = 0;
+    dut.frame_slot_i = 2;
+    tick(dut);
+    if (!dut.wb_valid || dut.wb_mb_addr != 17 || !dut.wb_is_ref || dut.ref_ready_pulse) {
+        std::cerr << "FAIL deblock writeback: nonterminal writeback/ready wb=" << int(dut.wb_valid)
+                  << " addr=" << int(dut.wb_mb_addr) << " ref=" << int(dut.wb_is_ref)
+                  << " ready=" << int(dut.ref_ready_pulse) << "\n";
+        std::exit(1);
+    }
+
+    dut.filtered_mb_addr = 1169;
+    dut.filtered_frame_done = 1;
+    tick(dut);
+    if (!dut.wb_valid || dut.wb_mb_addr != 1169 || dut.ref_ready_pulse) {
+        std::cerr << "FAIL deblock writeback: DPB ref ready before frame boundary"
+                  << " wb=" << int(dut.wb_valid) << " addr=" << int(dut.wb_mb_addr)
+                  << " ready=" << int(dut.ref_ready_pulse) << "\n";
+        std::exit(1);
+    }
+
+    dut.filtered_mb_valid = 0;
+    dut.filtered_frame_done = 0;
+    dut.frame_boundary = 0;
+    tick(dut);
+    if (dut.ref_ready_pulse) {
+        std::cerr << "FAIL deblock writeback: ref ready without frame boundary\n";
+        std::exit(1);
+    }
+
+    dut.frame_boundary = 1;
+    tick(dut);
+    if (!dut.ref_ready_pulse || dut.ref_ready_slot != 2 || dut.wb_valid) {
+        std::cerr << "FAIL deblock writeback: frame-boundary ref promotion got ready="
+                  << int(dut.ref_ready_pulse) << " slot=" << int(dut.ref_ready_slot)
+                  << " wb=" << int(dut.wb_valid) << "\n";
+        std::exit(1);
+    }
+    dut.frame_boundary = 0;
+    tick(dut);
+    if (dut.ref_ready_pulse) {
+        std::cerr << "FAIL deblock writeback: ref ready pulse did not clear\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK deblock writeback contract: writeback precedes frame-boundary DPB ref_ready; IDR invalidates refs\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -548,9 +619,17 @@ int main(int argc, char** argv) {
     dut.clk = 0;
     dut.reset = 0;
     dut.pipe_valid_i = 0;
+    dut.idr_frame_start = 0;
+    dut.filtered_mb_valid = 0;
+    dut.filtered_mb_addr = 0;
+    dut.filtered_mb_is_ref = 0;
+    dut.filtered_frame_done = 0;
+    dut.frame_slot_i = 0;
+    dut.frame_boundary = 0;
 
     testBs(dut);
     testThresholds(dut);
+    testWritebackContract(dut);
 
     const EdgeIO lumaNormal{{116,118,120,122},{118,120,122,124},{120,122,124,126},{126,127,128,129},
                             {132,133,134,135},{138,139,140,141},{140,141,142,143},{142,143,144,145}};
@@ -576,6 +655,6 @@ int main(int argc, char** argv) {
     }
     runDrift(dut, faultHorizontalFirst);
 
-    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, mb_golden, edge-order drift\n";
+    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
     return 0;
 }
