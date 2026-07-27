@@ -616,6 +616,54 @@ def main() -> int:
             f"not graded\nstdout={undeclared_core.stdout}\nstderr={undeclared_core.stderr}")
     print("PASS wrong or undeclared loaded RBF identity is rejected before pixel grading")
 
+    status_skewed_colour = WORK / "status_skewed_colour.png"
+    write_png(status_skewed_colour, wrong_709)
+    absent_status = WORK / "status_frame_absent.txt"
+    absent_status.write_text(
+        "status frame_status=absent has_frame=0 has_stream=1 has_idr=1 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    absent_status_report = WORK / "status_absent_must_not_colour.json"
+    absent_guard = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(absent_status),
+        "--min-bytes-in", "512",
+        "--report", str(absent_status_report),
+    )
+    require(absent_guard.returncode == 7 and
+            "frame_status=absent" in absent_guard.stderr and
+            "PLXF mailbox absent/unwritten" in absent_guard.stderr and
+            "COLOUR_PATH_DEFECT" not in (absent_guard.stdout + absent_guard.stderr) and
+            not absent_status_report.exists(),
+            "ARM frame_status=absent/has_frame=0 must refuse before a channel-skewed image "
+            "can be labelled as a colour defect\n"
+            f"stdout={absent_guard.stdout}\nstderr={absent_guard.stderr}")
+
+    absent_text_status = WORK / "status_plxf_absent_text.txt"
+    absent_text_status.write_text(
+        "frame store status unavailable (PLXF mailbox absent/unwritten)\n",
+        encoding="utf-8",
+    )
+    absent_text_guard = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(absent_text_status),
+        "--min-bytes-in", "512",
+    )
+    require(absent_text_guard.returncode == 7 and
+            "frame store status unavailable (PLXF mailbox absent/unwritten)" in absent_text_guard.stderr,
+            "plain PLXF absent/unwritten status text must be a named delivery refusal, "
+            f"not graded\nstdout={absent_text_guard.stdout}\nstderr={absent_text_guard.stderr}")
+
     non_yuv_status = WORK / "status_non_yuv_debug.txt"
     non_yuv_status.write_text(
         "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
@@ -637,7 +685,31 @@ def main() -> int:
             "non-YUV DDR doorbell format error" in non_yuv.stderr,
             "frame_debug=0xe1 must be surfaced as a named non-YUV doorbell freshness failure, "
             f"not graded\nstdout={non_yuv.stdout}\nstderr={non_yuv.stderr}")
-    print("PASS frame-store 0xe1 non-YUV doorbell debug is surfaced as a named refusal")
+
+    debug_state_non_yuv_status = WORK / "status_non_yuv_debug_state.txt"
+    debug_state_non_yuv_status.write_text(
+        "status has_frame=1 has_stream=1 has_idr=1 sps_valid=1 pps_valid=1 "
+        "frame_bank=1 frame_format=yuv420p frame_seq=44 debug_state=0x1234e1 bytes_in=6227\n",
+        encoding="utf-8",
+    )
+    debug_state_non_yuv = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(status_skewed_colour),
+        "--noise-report", str(noise),
+        "--status-log", str(debug_state_non_yuv_status),
+        "--min-bytes-in", "512",
+    )
+    require(debug_state_non_yuv.returncode == 7 and
+            "debug_state=0xe1" in debug_state_non_yuv.stderr and
+            "frame store refused non-YUV doorbell (0xE1)" in debug_state_non_yuv.stderr and
+            "COLOUR_PATH_DEFECT" not in (debug_state_non_yuv.stdout + debug_state_non_yuv.stderr),
+            "debug_state low byte 0xe1 must refuse before a channel-skewed image can be "
+            "labelled as a colour defect\n"
+            f"stdout={debug_state_non_yuv.stdout}\nstderr={debug_state_non_yuv.stderr}")
+    print("PASS ARM absent/0xe1 status overrides colour-shape classification before grading pixels")
 
     v4l2_log = "[video4linux2,v4l2 @ 0x123] Dequeued v4l2 buffer contains corrupted data (0 bytes)."
     require(hw_visual_compare.classify_capture_log(v4l2_log) == "corrupt",
