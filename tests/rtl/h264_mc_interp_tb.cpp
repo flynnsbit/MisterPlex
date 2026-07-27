@@ -17,6 +17,7 @@
 
 static int g_fail_count = 0;
 static int g_pass_count = 0;
+static int g_degen_count = 0;  // degeneracy: filter produced no change
 
 static void fail(const char* msg) {
     std::cerr << "FAIL h264_mc_interp RTL: " << msg << "\n";
@@ -203,6 +204,38 @@ static void test_luma_all_positions(Vh264_mc_interp_tb& top,
                 fail(buf);
             }
             if (match) ++g_pass_count;
+
+            // Degeneracy assertion: non-integer positions MUST change pixels
+            // UNLESS the reference window is uniform (all same value), in which
+            // case integer-pel output is mathematically correct (the filter is
+            // a unity gain filter for constant input).
+            if (match && (fx != 0 || fy != 0)) {
+                // Check if ref window has any variation
+                bool ref_uniform = true;
+                uint8_t first_val = ref_win[0];
+                for (size_t i = 1; i < ref_win.size() && ref_uniform; i++)
+                    if (ref_win[i] != first_val) ref_uniform = false;
+
+                if (!ref_uniform) {
+                    // Integer-pel values are at centre of the ref window: row+2, col+2
+                    int win_w = blk_w + 5;
+                    bool any_differ = false;
+                    for (int r = 0; r < blk_h && !any_differ; r++)
+                        for (int c = 0; c < blk_w && !any_differ; c++)
+                            if (got[r * blk_w + c] != ref_win[(r + 2) * win_w + (c + 2)])
+                                any_differ = true;
+                    if (!any_differ) {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf),
+                                 "DEGENERACY luma frac=(%d,%d) blk=%dx%d: "
+                                 "filter output identical to integer-pel reference",
+                                 fx, fy, blk_w, blk_h);
+                        fail(buf);
+                        ++g_degen_count;
+                    }
+                }
+            }
+
             ++total_luma;
             if (cycles > 0) total_cycles += cycles;
         }
@@ -256,6 +289,34 @@ static void test_chroma_grid(Vh264_mc_interp_tb& top,
                 fail(buf);
             }
             if (match) ++g_pass_count;
+
+            // Degeneracy assertion: non-integer chroma positions MUST change pixels
+            // (exempt uniform reference windows — bilinear on constant = constant).
+            if (match && (dx != 0 || dy != 0)) {
+                bool ref_uniform = true;
+                uint8_t first_val = ref_win[0];
+                for (size_t i = 1; i < ref_win.size() && ref_uniform; i++)
+                    if (ref_win[i] != first_val) ref_uniform = false;
+
+                if (!ref_uniform) {
+                    int win_w = blk_w + 1;
+                    bool any_differ = false;
+                    for (int r = 0; r < blk_h && !any_differ; r++)
+                        for (int c = 0; c < blk_w && !any_differ; c++)
+                            if (got[r * blk_w + c] != ref_win[r * win_w + c])
+                                any_differ = true;
+                    if (!any_differ) {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf),
+                                 "DEGENERACY chroma frac=(%d,%d) blk=%dx%d: "
+                                 "filter output identical to integer-pel reference",
+                                 dx, dy, blk_w, blk_h);
+                        fail(buf);
+                        ++g_degen_count;
+                    }
+                }
+            }
+
             ++total_chroma;
             if (cycles > 0) total_cycles += cycles;
         }
@@ -561,7 +622,10 @@ int main(int argc, char** argv) {
                     + extreme_luma + skip_tests;
     if (g_fail_count > 0) {
         std::cerr << "FAIL h264_mc_interp RTL: " << g_fail_count
-                  << " failures out of " << total_tests << " tests\n";
+                  << " failures out of " << total_tests << " tests";
+        if (g_degen_count > 0)
+            std::cerr << " (including " << g_degen_count << " DEGENERACY failures)";
+        std::cerr << "\n";
         return 1;
     }
 
@@ -574,6 +638,7 @@ int main(int argc, char** argv) {
               << " skip_zero=" << skip_tests
               << " total=" << total_tests
               << " pass=" << g_pass_count
+              << " degen=0"
               << " cycles_per_mb=" << budget_cycles
               << " skip_16x16_cyc=" << skip_cycles
               << "\n";
