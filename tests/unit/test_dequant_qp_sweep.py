@@ -19,6 +19,15 @@ WHAT THIS TEST DOES NOT COVER (instrument audit, 2026-07-27):
   - Chroma DC (2×2 Hadamard) — NOT IN RTL
   - End-to-end frame reconstruction — see test_p3_intra_frame_verilator.py
 
+INTEGRATION CONTEXT (#19, 2026-07-27):
+  h264_dequant4x4 IS instantiated in decode_stub.sv:158, but only processes
+  ONE 4×4 block (MB0, block 0) as a diagnostic probe — not a full decode
+  pipeline. The intra predictors (h264_intra4x4_pred, h264_intra16x16_pred)
+  are declared but NEVER instantiated. h264_chroma_qp and
+  h264_chroma_dc_hadamard_inv are likewise uninstantiated.
+  This test verifies the MODULE is correct. Connecting it into a real
+  datapath is a separate (and currently unbuilt) integration task.
+
 The Python "formula equivalence" test (section 3) compares two Python
 implementations and would pass even if the RTL were deleted. Only the
 Verilator sweep (section 9) touches real RTL.
