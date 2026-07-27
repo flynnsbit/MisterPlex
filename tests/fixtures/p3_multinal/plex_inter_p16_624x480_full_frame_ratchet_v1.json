@@ -1,14 +1,14 @@
 {
   "format": "misterplex.p3.native_frame_score_ratchet.v1",
-  "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
+  "source_sha256": "9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9",
   "colorspace": "I420_NATIVE",
   "mechanism": "Rebaseline after removing RGB565 scoreboard contamination: old numbers were RGB565 presentation diagnostics with border masking; these metrics compare native I420 CAVLC/intra reconstruction directly to FFmpeg yuv420p planes and classify P frames as expected-red until inter/DPB native plane output is wired.",
   "summary": {
     "frames": 12,
     "i_frames": 1,
     "p_frames": 11,
-    "min_intra_mb_exact": 155,
-    "intra_mb_total": 300,
+    "min_intra_mb_exact": 510,
+    "intra_mb_total": 1170,
     "inter_expected_red_frames": 11
   },
   "metrics": [
@@ -16,31 +16,31 @@
       "frame_index": 0,
       "slice_kind": "I",
       "plane": "Y",
-      "min_exact_pixels": 60779,
-      "max_mae": 6.050521,
-      "max_abs": 96,
-      "mb_exact": 155,
-      "mb_total": 300
+      "min_exact_pixels": 162020,
+      "max_mae": 17.765057,
+      "max_abs": 132,
+      "mb_exact": 510,
+      "mb_total": 1170
     },
     {
       "frame_index": 0,
       "slice_kind": "I",
       "plane": "U",
-      "min_exact_pixels": 14298,
-      "max_mae": 7.050573,
-      "max_abs": 75,
-      "mb_exact": 155,
-      "mb_total": 300
+      "min_exact_pixels": 38329,
+      "max_mae": 13.404447,
+      "max_abs": 141,
+      "mb_exact": 510,
+      "mb_total": 1170
     },
     {
       "frame_index": 0,
       "slice_kind": "I",
       "plane": "V",
-      "min_exact_pixels": 14432,
-      "max_mae": 11.005677,
-      "max_abs": 206,
-      "mb_exact": 155,
-      "mb_total": 300
+      "min_exact_pixels": 38207,
+      "max_mae": 19.802284,
+      "max_abs": 165,
+      "mb_exact": 510,
+      "mb_total": 1170
     }
   ],
   "inter_frames": [
@@ -49,77 +49,77 @@
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 2,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 3,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 4,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 5,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 6,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 7,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 8,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 9,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 10,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     },
     {
       "frame_index": 11,
       "slice_kind": "P",
       "implemented": false,
       "expected_red": true,
-      "mb_total": 300
+      "mb_total": 1170
     }
   ]
 }

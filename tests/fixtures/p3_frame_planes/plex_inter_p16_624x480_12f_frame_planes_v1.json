@@ -17,6 +17,14 @@
     "command": "ffmpeg -v error -y -i tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 -an -f rawvideo -pix_fmt yuv420p tests/fixtures/p3_frame_planes/plex_inter_p16_624x480_12f_i420.yuv",
     "pix_fmt": "yuv420p"
   },
+  "provenance": {
+    "source_domain": "decoded H.264 planes",
+    "pixel_format": "I420/YUV420p planar 8-bit 4:2:0",
+    "colorspace": "I420_NATIVE",
+    "rgb_roundtrip": false,
+    "rgb565_roundtrip": false,
+    "presentation_border_or_pillar_mask": false
+  },
   "geometry": {
     "coded_width": 624,
     "coded_height": 480,

@@ -110,6 +110,11 @@ if [[ "$UNKNOWN_RC" -eq 0 ]]; then
   echo "FAIL frame-plane red-check: unknown candidate colorspace unexpectedly compared" >&2
   exit 1
 fi
+if [[ "$UNKNOWN_RC" -ne 9 ]]; then
+  cat "$OUT/unknown_colorspace_compare.log"
+  echo "FAIL frame-plane red-check: unknown candidate colorspace rc=$UNKNOWN_RC, want rc=9 refusal" >&2
+  exit 1
+fi
 grep -q 'candidate colorspace is unknown' "$OUT/unknown_colorspace_compare.log"
 
 set +e
@@ -128,6 +133,68 @@ if [[ "$MISMATCH_RC" -eq 0 ]]; then
   echo "FAIL frame-plane red-check: mismatched candidate colorspace unexpectedly compared" >&2
   exit 1
 fi
+if [[ "$MISMATCH_RC" -ne 9 ]]; then
+  cat "$OUT/mismatched_colorspace_compare.log"
+  echo "FAIL frame-plane red-check: mismatched candidate colorspace rc=$MISMATCH_RC, want rc=9 refusal" >&2
+  exit 1
+fi
 grep -q 'candidate colorspace mismatch' "$OUT/mismatched_colorspace_compare.log"
 
-echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane RED checked"
+python3 - <<'PY'
+import json
+from pathlib import Path
+src = Path("tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_frame_planes_v1.json")
+bad = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_bad_provenance.json")
+data = json.loads(src.read_text())
+data["provenance"]["rgb565_roundtrip"] = True
+bad.write_text(json.dumps(data, indent=2) + "\n")
+
+masked = Path("build/p3_frame_planes/plex_inter_p16_320x240_12f_masked_provenance.json")
+data = json.loads(src.read_text())
+data["provenance"]["presentation_border_or_pillar_mask"] = True
+masked.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest build/p3_frame_planes/plex_inter_p16_320x240_12f_bad_provenance.json \
+  > "$OUT/bad_provenance_compare.log" 2>&1
+PROVENANCE_RC=$?
+set -e
+if [[ "$PROVENANCE_RC" -eq 0 ]]; then
+  cat "$OUT/bad_provenance_compare.log"
+  echo "FAIL frame-plane red-check: RGB565-tainted manifest provenance unexpectedly verified" >&2
+  exit 1
+fi
+if [[ "$PROVENANCE_RC" -ne 9 ]]; then
+  cat "$OUT/bad_provenance_compare.log"
+  echo "FAIL frame-plane red-check: RGB565-tainted manifest rc=$PROVENANCE_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'RGB/RGB565 round-trip' "$OUT/bad_provenance_compare.log"
+
+set +e
+"$TOOL" --verify \
+  --input tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  --sequence tests/fixtures/p3_multinal/plex_inter_p16_sequence_v1.json \
+  --planes tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv \
+  --manifest build/p3_frame_planes/plex_inter_p16_320x240_12f_masked_provenance.json \
+  > "$OUT/masked_provenance_compare.log" 2>&1
+MASKED_RC=$?
+set -e
+if [[ "$MASKED_RC" -eq 0 ]]; then
+  cat "$OUT/masked_provenance_compare.log"
+  echo "FAIL frame-plane red-check: border/pillar-masked manifest provenance unexpectedly verified" >&2
+  exit 1
+fi
+if [[ "$MASKED_RC" -ne 9 ]]; then
+  cat "$OUT/masked_provenance_compare.log"
+  echo "FAIL frame-plane red-check: border/pillar-masked manifest rc=$MASKED_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'presentation masking' "$OUT/masked_provenance_compare.log"
+
+echo "test_h264_frame_plane_goldens: OK regenerated I420 goldens, provenance verified, corrupt-plane/provenance RED checked"
