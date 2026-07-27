@@ -17,6 +17,16 @@ namespace {
 constexpr uint32_t kDdrFrameBase = 0x30000000u;
 constexpr size_t kDefaultFrameBytes = 320 * 240 * 2;
 
+const char* formatName(misterplex::DdrFrameFormat f) {
+    switch (f) {
+    case misterplex::DdrFrameFormat::Yuv420p:
+        return "yuv420p";
+    case misterplex::DdrFrameFormat::Rgb565:
+    default:
+        return "rgb565";
+    }
+}
+
 double nowSec() {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -62,7 +72,8 @@ void fillPattern(uint8_t* buf, size_t len) {
 void usage(const char* argv0) {
     std::printf(
         "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
-        "          [--width W --height H | --len BYTES] [--loops N] [--bank 0|1]\n"
+        "          [--format rgb565|yuv420p] [--width W --height H | --len BYTES]\n"
+        "          [--loops N] [--bank 0|1]\n"
         "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n"
         "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n",
         argv0);
@@ -80,6 +91,7 @@ int main(int argc, char** argv) {
     int width = 320;
     int height = 240;
     bool lenSet = false;
+    misterplex::DdrFrameFormat format = misterplex::DdrFrameFormat::Rgb565;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -95,6 +107,16 @@ int main(int argc, char** argv) {
             width = std::atoi(argv[++i]);
         } else if (a == "--height" && i + 1 < argc) {
             height = std::atoi(argv[++i]);
+        } else if (a == "--format" && i + 1 < argc) {
+            std::string v = argv[++i];
+            if (v == "rgb565") {
+                format = misterplex::DdrFrameFormat::Rgb565;
+            } else if (v == "yuv420p" || v == "yuv420") {
+                format = misterplex::DdrFrameFormat::Yuv420p;
+            } else {
+                std::fprintf(stderr, "unknown format: %s\n", v.c_str());
+                return 2;
+            }
         } else if (a == "--loops" && i + 1 < argc) {
             loops = std::atoi(argv[++i]);
         } else if (a == "--len" && i + 1 < argc) {
@@ -115,13 +137,16 @@ int main(int argc, char** argv) {
     misterplex::DdrFrameLayout layout =
         lenSet ? misterplex::makeDdrFrameLayout(320, static_cast<int>(len / (320 * 2)),
                                                 kDdrFrameBase)
-               : misterplex::makeDdrFrameLayout(width, height, kDdrFrameBase);
+               : misterplex::makeDdrFrameLayout(width, height, kDdrFrameBase, 0x40000u, format);
     if (lenSet) {
         layout.width = 0;
         layout.height = 0;
         layout.line_bytes = 0;
         layout.line_qwords = 0;
+        layout.chroma_line_bytes = 0;
+        layout.chroma_line_qwords = 0;
         layout.frame_bytes = len;
+        layout.format = format;
         layout.bank_stride = misterplex::alignUpU32(static_cast<uint32_t>(len), 0x40000u);
         layout.doorbell_phys = kDdrFrameBase + layout.bank_stride * 2u - 0x1000u;
         layout.map_bytes = layout.bank_stride * 2u;
@@ -149,12 +174,14 @@ int main(int argc, char** argv) {
         const double frameMs = (wallSec * 1000.0) / static_cast<double>(loops);
         const double frameCpuMs = (cpuSec * 1000.0) / static_cast<double>(loops);
         std::printf("ddr_write_bench host_copy=%d sync=%d flush=%d loops=%d len=%zu bank=%d "
-                    "width=%d height=%d line_bytes=%d line_qwords=%d bank_stride=0x%X "
+                    "format=%s width=%d height=%d line_bytes=%d line_qwords=%d "
+                    "chroma_line_bytes=%d chroma_line_qwords=%d bank_stride=0x%X "
                     "map_bytes=0x%X seconds=%.6f cpu_seconds=%.6f MiB=%.3f MiBps=%.3f "
                     "frame_ms=%.3f frame_cpu_ms=%.3f fps30_budget_pct=%.1f "
                     "fps60_budget_pct=%.1f\n",
                     hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
-                    layout.width, layout.height, layout.line_bytes, layout.line_qwords,
+                    formatName(layout.format), layout.width, layout.height, layout.line_bytes,
+                    layout.line_qwords, layout.chroma_line_bytes, layout.chroma_line_qwords,
                     layout.bank_stride, layout.map_bytes, wallSec, cpuSec, mib, mib / wallSec,
                     frameMs, frameCpuMs, 100.0 * frameMs / 33.333333,
                     100.0 * frameMs / 16.666667);

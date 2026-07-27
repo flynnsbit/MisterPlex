@@ -9,6 +9,9 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 LOOPS="${LOOPS:-1000}"
+WIDTH="${WIDTH:-320}"
+HEIGHT="${HEIGHT:-240}"
+FORMATS="${FORMATS:-rgb565}"
 REMOTE="/media/fat/misterplex/bin/ddr_write_bench"
 
 make -C "$ROOT" arm-ddr-bench >/dev/null
@@ -23,7 +26,9 @@ run_remote() {
     "chmod +x '$REMOTE' && '$REMOTE' --loops '$LOOPS' $*"
 }
 
-echo "host=$HOST loops=$LOOPS frame_bytes=153600"
-run_remote "O_SYNC /dev/mem (current product mapping)" --sync
-run_remote "no O_SYNC /dev/mem" --no-sync
-run_remote "no O_SYNC + ARM cacheflush" --no-sync --flush
+echo "host=$HOST loops=$LOOPS width=$WIDTH height=$HEIGHT formats=$FORMATS"
+for fmt in $FORMATS; do
+  run_remote "O_SYNC /dev/mem format=$fmt" --sync --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
+  run_remote "no O_SYNC /dev/mem format=$fmt" --no-sync --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
+  run_remote "no O_SYNC + ARM cacheflush format=$fmt" --no-sync --flush --format "$fmt" --width "$WIDTH" --height "$HEIGHT"
+done

@@ -194,7 +194,7 @@ RunStats consumeFrames(int fd, int frames, size_t frameBytes, bool doCopy) {
 }
 
 RunStats runPipeCase(const char* label, int frames, int w, int h, double fps, bool limited,
-                     size_t chunkBytes) {
+                     size_t chunkBytes, int pipeSize) {
     const size_t frameBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 2;
     int p[2] = {-1, -1};
     if (pipe(p) != 0) {
@@ -203,7 +203,11 @@ RunStats runPipeCase(const char* label, int frames, int w, int h, double fps, bo
     }
 
 #ifdef F_SETPIPE_SZ
-    (void)fcntl(p[0], F_SETPIPE_SZ, static_cast<int>(frameBytes));
+    if (pipeSize > 0)
+        (void)fcntl(p[0], F_SETPIPE_SZ, pipeSize);
+    const int actualPipeSize = fcntl(p[0], F_GETPIPE_SZ, 0);
+#else
+    const int actualPipeSize = -1;
 #endif
 
     std::atomic<bool> stop{false};
@@ -220,6 +224,7 @@ RunStats runPipeCase(const char* label, int frames, int w, int h, double fps, bo
     const int64_t readLoopUs =
         std::max<int64_t>(0, r.wall_us - r.syscall_wall_us - r.sleep_wall_us);
     std::printf("pipe_case=%s frames=%d frame_bytes=%zu fps=%.3f mode=%s chunk=%zu "
+                "pipe_size_req=%d pipe_size_actual=%d "
                 "read_wall_us_f=%lld read_cpu_us_f=%lld read_syscall_wall_us_f=%lld "
                 "read_syscall_cpu_us_f=%lld read_sleep_wall_us_f=%lld "
                 "read_sleep_cpu_us_f=%lld read_loop_overhead_us_f=%lld "
@@ -228,7 +233,8 @@ RunStats runPipeCase(const char* label, int frames, int w, int h, double fps, bo
                 "read_max_bytes_call=%lld copy_wall_us_f=%lld copy_cpu_us_f=%lld "
                 "copy_mib_s=%.1f checksum=%llu\n",
                 label, r.frames, frameBytes, fps, limited ? "limited" : "unthrottled",
-                chunkBytes, static_cast<long long>(r.wall_us / readFrames),
+                chunkBytes, pipeSize, actualPipeSize,
+                static_cast<long long>(r.wall_us / readFrames),
                 static_cast<long long>(r.cpu_us / readFrames),
                 static_cast<long long>(r.syscall_wall_us / readFrames),
                 static_cast<long long>(r.syscall_cpu_us / readFrames),
@@ -287,6 +293,7 @@ int main(int argc, char** argv) {
     int h = 240;
     double fps = 25.0;
     size_t chunk = 32768;
+    int pipeSize = 0;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -307,9 +314,11 @@ int main(int argc, char** argv) {
             fps = std::atof(need("--fps"));
         else if (a == "--chunk")
             chunk = static_cast<size_t>(std::strtoull(need("--chunk"), nullptr, 0));
+        else if (a == "--pipe-size")
+            pipeSize = std::atoi(need("--pipe-size"));
         else if (a == "-h" || a == "--help") {
             std::puts("Usage: present_loop_harness [--frames N] [--width W] [--height H] "
-                      "[--fps N] [--chunk BYTES]");
+                      "[--fps N] [--chunk BYTES] [--pipe-size BYTES]");
             return 0;
         } else {
             std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -324,8 +333,8 @@ int main(int argc, char** argv) {
 
     std::printf("present_loop_harness frame=%dx%d rgb565 bytes=%zu frames=%d fps=%.3f\n", w, h,
                 static_cast<size_t>(w) * static_cast<size_t>(h) * 2, frames, fps);
-    runPipeCase("unthrottled", frames, w, h, fps, false, chunk);
-    runPipeCase("rate_limited", frames, w, h, fps, true, chunk);
+    runPipeCase("unthrottled", frames, w, h, fps, false, chunk, pipeSize);
+    runPipeCase("rate_limited", frames, w, h, fps, true, chunk, pipeSize);
     runCopyScale();
     return 0;
 }
