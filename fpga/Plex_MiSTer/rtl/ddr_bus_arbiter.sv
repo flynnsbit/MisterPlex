@@ -93,7 +93,30 @@ module ddr_bus_arbiter (
 	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
 
 	assign m0_busy = DDRAM_BUSY | grant_m1 | (rsp_active & rsp_owner_m1);
-	assign m1_busy = DDRAM_BUSY | !grant_m1 | (rsp_active & !rsp_owner_m1);
+
+	// m1_busy: register on clk_ddr to eliminate combinational glitches,
+	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
+	// only as a level gate (!busy before issuing commands), so the ~100ns
+	// sync latency just delays the next command — no protocol breakage.
+	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 | (rsp_active & !rsp_owner_m1);
+	reg  m1_busy_r;
+	always @(posedge clk) begin
+		if (rst)
+			m1_busy_r <= 1'b1;
+		else
+			m1_busy_r <= m1_busy_comb;
+	end
+	reg m1_busy_s1, m1_busy_s2;
+	always @(posedge clk_m1) begin
+		if (reset) begin
+			m1_busy_s1 <= 1'b1;
+			m1_busy_s2 <= 1'b1;
+		end else begin
+			m1_busy_s1 <= m1_busy_r;
+			m1_busy_s2 <= m1_busy_s1;
+		end
+	end
+	assign m1_busy = m1_busy_s2;
 
 	assign DDRAM_BURSTCNT = use_m1 ? m1_burstcnt : m0_burstcnt;
 	assign DDRAM_ADDR     = use_m1 ? m1_addr      : m0_addr;
