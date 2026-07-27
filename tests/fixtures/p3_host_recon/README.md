@@ -23,6 +23,12 @@ The current checked-in red/green unit uses the proven 320×240 IDR vector and
 independently grades MB0 against `mb0_luma_v1.json`, `residual_gold::kCsum8 == 0x14`,
 and the established first-4×4 recon signature `0x3b`.
 
+The JSON also carries latency red-checks for the simulation-versus-silicon trap seen
+on P3-3l2: MB0 true recon is `0x3b`, while pred-only and one-cycle-delayed residual
+models are both `0x00`. Hardware consumers must align residual valid/data with the
+prediction stage and reject these latency-error signatures; a fixture that accepts
+pred-only `0x00` is certifying the exact failure observed on the DE10-Nano.
+
 Regenerate the deterministic MB0 JSON used by the unit guard:
 
 ```bash
