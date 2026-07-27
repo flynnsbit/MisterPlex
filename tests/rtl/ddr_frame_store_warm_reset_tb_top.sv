@@ -5,7 +5,8 @@
 module ddr_frame_store_warm_reset_tb #(
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
-	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1
+	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
+	parameter bit STRICT_YUV_DOORBELL = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -59,7 +60,8 @@ module ddr_frame_store_warm_reset_tb #(
 		.DDR_BURST_MAX(8),
 		.IGNORE_STALE_DOORBELL_AFTER_RESET(IGNORE_STALE_DOORBELL_AFTER_RESET),
 		.STALE_DOORBELL_FALLBACK_POLLS(STALE_DOORBELL_FALLBACK_POLLS),
-		.PIPELINE_REFILL_SCHEDULER(PIPELINE_REFILL_SCHEDULER)
+		.PIPELINE_REFILL_SCHEDULER(PIPELINE_REFILL_SCHEDULER),
+		.STRICT_YUV_DOORBELL(STRICT_YUV_DOORBELL)
 	) dut (
 		.clk(clk),
 		.clk_ddr(clk_ddr),

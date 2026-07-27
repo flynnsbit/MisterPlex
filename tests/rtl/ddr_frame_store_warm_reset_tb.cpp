@@ -20,9 +20,13 @@ constexpr int kCQ = kW / 16;
 constexpr int kUQBase = (kW * kH) / 8;
 constexpr int kVQBase = kUQBase + (kW * kH) / 32;
 constexpr uint32_t kSeqMask = 0x1fffffffu;
+constexpr int kDoorbellFormatRgb565 = 0;
+constexpr int kDoorbellFormatYuv420p = 1;
+constexpr uint8_t kDebugFormatError = 0xE1;
 
-uint32_t doorbellHi(uint32_t seq, int bank) {
-    return (static_cast<uint32_t>(bank & 1) << 31) | (1u << 29) | (seq & 0x1fffffffu);
+uint32_t doorbellHi(uint32_t seq, int bank, int format = kDoorbellFormatYuv420p) {
+    return (static_cast<uint32_t>(bank & 1) << 31) |
+           (static_cast<uint32_t>(format & 0x3) << 29) | (seq & 0x1fffffffu);
 }
 
 uint64_t pack8(uint8_t v) {
@@ -84,9 +88,9 @@ public:
         }
     }
 
-    void ringDoorbell(int bank, uint32_t seq) {
+    void ringDoorbell(int bank, uint32_t seq, int format = kDoorbellFormatYuv420p) {
         const uint32_t off = offQ(kDoorbellPhys);
-        mem[off] = static_cast<uint64_t>(doorbellHi(seq, bank)) << 32 | kMagic;
+        mem[off] = static_cast<uint64_t>(doorbellHi(seq, bank, format)) << 32 | kMagic;
     }
 
     void serviceDdrStart() {
@@ -295,6 +299,62 @@ bool runWarmResetChanged(uint32_t staleSeq, uint32_t freshSeq, int staleBank, in
     return sim.schedulerProven();
 }
 
+bool runRejectNonYuvDoorbell() {
+    {
+        Sim sim;
+        sim.fillFrame(0, 61);
+        sim.fillFrame(1, 213);
+        sim.resetCore();
+        for (int i = 0; i < 3000; ++i)
+            sim.tick();
+        sim.ringDoorbell(0, 2, kDoorbellFormatRgb565);
+        if (!sim.waitCyclesNoFrame(25000)) {
+            std::cerr << "FAIL ddr_frame_store warm-reset: accepted non-YUV doorbell"
+                      << " cycle=" << sim.cycle << " frames=" << sim.top.frames_done << "\n";
+            std::exit(1);
+        }
+        if (sim.top.debug_state != kDebugFormatError) {
+            std::cerr << "FAIL ddr_frame_store warm-reset: non-YUV doorbell debug=0x"
+                      << std::hex << int(sim.top.debug_state) << " want=0x"
+                      << int(kDebugFormatError) << std::dec << "\n";
+            std::exit(1);
+        }
+        sim.ringDoorbell(1, 2, kDoorbellFormatYuv420p);
+        if (!sim.waitForFrame(50000))
+            throw std::runtime_error("valid YUV doorbell did not recover after live non-YUV reject");
+        expectFreshSample("live non-YUV reject then YUV accept", sim, 213);
+    }
+
+    Sim sim;
+    sim.fillFrame(0, 60);
+    sim.fillFrame(1, 213);
+    sim.ringDoorbell(0, 4, kDoorbellFormatRgb565);
+    sim.resetCore();
+    if (!sim.waitCyclesNoFrame(25000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: accepted non-YUV doorbell"
+                  << " cycle=" << sim.cycle << " frames=" << sim.top.frames_done << "\n";
+        std::exit(1);
+    }
+    if (sim.top.debug_state != kDebugFormatError) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: non-YUV doorbell debug=0x"
+                  << std::hex << int(sim.top.debug_state) << " want=0x"
+                  << int(kDebugFormatError) << std::dec << "\n";
+        std::exit(1);
+    }
+
+    sim.ringDoorbell(1, 4, kDoorbellFormatYuv420p);
+    if (!sim.waitForFrame(50000))
+        throw std::runtime_error("valid YUV doorbell did not recover after non-YUV reject");
+    expectFreshSample("non-YUV reject then YUV accept", sim, 213);
+
+    std::cout << "ddr_frame_store warm-reset raw: non_yuv_reject bad_format=0 debug=0x"
+              << std::hex << int(kDebugFormatError) << std::dec
+              << " fresh_format=1 seq=4 stale_bank=0 fresh_bank=1 no_frame_cycles=25000"
+              << " frames=" << sim.top.frames_done << " sample_r=213 underruns="
+              << sim.top.underrun_count << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 bool runRunningArmRestartLower() {
     Sim sim;
     sim.fillFrame(0, 96);
@@ -357,6 +417,7 @@ void run() {
     schedulerSeen |= runWarmResetChanged(7, 1, 0, 1, expectedRgb(209), "restart_lower_seq");
     schedulerSeen |= runWarmResetChanged(3, 3, 0, 1, expectedRgb(210), "equal_seq_changed_bank");
     schedulerSeen |= runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
+    schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
     schedulerSeen |= runEqualTokenFallback();
     if (!schedulerSeen) {

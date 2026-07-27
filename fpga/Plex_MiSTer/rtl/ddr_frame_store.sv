@@ -27,7 +27,8 @@ module ddr_frame_store #(
 	parameter int DDR_BURST_MAX = 128,
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
-	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1
+	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
+	parameter bit STRICT_YUV_DOORBELL = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -107,6 +108,8 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
 	localparam [31:0] MAGIC_M = 32'h504C_584D;
 	localparam [31:0] MAGIC_F = 32'h504C_5846;
+	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
+	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1;
 
 	assign DDRAM_CLK = clk_ddr;
 	assign DDRAM_BE = 8'hFF;
@@ -388,6 +391,7 @@ module ddr_frame_store #(
 	reg [31:0] last_seq;
 	reg have_seq;
 	reg doorbell_primed;
+	reg format_error;
 	reg accepted_db_after_reset;
 	reg [STALE_DB_POLL_W-1:0] stale_db_polls;
 	reg [15:0] mbox_seq, mbox_last;
@@ -567,8 +571,12 @@ module ddr_frame_store #(
 	wire [7:0] burst_this = burst_cap[7:0];
 	wire db_magic_ok = poll_pending && DDRAM_DOUT_READY && (DDRAM_DOUT[31:0] == MAGIC);
 	wire [31:0] db_token = DDRAM_DOUT[63:32];
-	wire db_token_new = db_magic_ok && (!have_seq || (db_token != last_seq));
-	wire db_token_same = db_magic_ok && have_seq && (db_token == last_seq);
+	wire [1:0] db_format = db_token[30:29];
+	wire db_format_ok = (db_format == DOORBELL_FORMAT_YUV420P) || !STRICT_YUV_DOORBELL;
+	wire db_bad_format = db_magic_ok && !db_format_ok;
+	wire db_valid_token = db_magic_ok && db_format_ok;
+	wire db_token_new = db_valid_token && (!have_seq || (db_token != last_seq));
+	wire db_token_same = db_valid_token && have_seq && (db_token == last_seq);
 	wire db_stale_fallback = db_token_same && IGNORE_STALE_DOORBELL_AFTER_RESET &&
 	                         doorbell_primed && !accepted_db_after_reset &&
 	                         (stale_db_polls == STALE_DB_POLL_W'(STALE_DB_POLL_MAX));
@@ -576,7 +584,7 @@ module ddr_frame_store #(
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	assign debug_state = {LINE_COUNT[2:0], |y_valid, state_ddr};
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
 
 	always @(posedge clk_ddr) begin
 		if (reset) begin
@@ -624,6 +632,7 @@ module ddr_frame_store #(
 			last_seq <= 32'd0;
 			have_seq <= 1'b0;
 			doorbell_primed <= 1'b0;
+			format_error <= 1'b0;
 			accepted_db_after_reset <= 1'b0;
 			stale_db_polls <= '0;
 			doorbell_ok <= 1'b0;
@@ -710,9 +719,14 @@ module ddr_frame_store #(
 			if (!frame_mbox_valid || ({underrun_count, debug_state} != frame_mbox_last) || (frame_mbox_hb == 18'd0))
 				frame_mbox_req <= 1'b1;
 
+			if (db_bad_format) begin
+				format_error <= 1'b1;
+				doorbell_ok <= 1'b0;
+			end
 			if (db_token_new) begin
 				last_seq <= db_token;
 				have_seq <= 1'b1;
+				format_error <= 1'b0;
 			end
 			if (db_magic_ok && doorbell_primed && !accepted_db_after_reset && !db_token_new && !db_stale_fallback) begin
 				if (stale_db_polls != STALE_DB_POLL_W'(STALE_DB_POLL_MAX))
@@ -729,8 +743,10 @@ module ddr_frame_store #(
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
-				pending_bank_ddr <= bank_sel_d2;
-				swap_req_t_ddr <= ~swap_req_t_ddr;
+				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
+					pending_bank_ddr <= bank_sel_d2;
+					swap_req_t_ddr <= ~swap_req_t_ddr;
+				end
 			end
 
 			case (state_ddr)

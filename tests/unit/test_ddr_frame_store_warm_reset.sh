@@ -25,7 +25,8 @@ fi
 BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset"
 FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_fault"
 SCHED_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_sched_fault"
-mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD"
+FORMAT_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_format_fault"
+mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -61,6 +62,30 @@ if ! grep -q 'accepted stale doorbell' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK ddr_frame_store warm-reset red-check: stale-doorbell fault failed"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$FORMAT_FAULT_BUILD" \
+  --top-module ddr_frame_store_warm_reset_tb -GSTRICT_YUV_DOORBELL=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  -CFLAGS "-std=c++17 -O2" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
+set +e
+FORMAT_FAULT_OUT="$("$FORMAT_FAULT_BUILD/Vddr_frame_store_warm_reset_tb" 2>&1)"
+FORMAT_FAULT_RC=$?
+set -e
+printf '%s\n' "$FORMAT_FAULT_OUT"
+if [[ "$FORMAT_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL ddr_frame_store warm-reset red-check: non-YUV doorbell fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'accepted non-YUV doorbell' <<<"$FORMAT_FAULT_OUT"; then
+  echo "FAIL ddr_frame_store warm-reset red-check: expected non-YUV diagnostic" >&2
+  exit 1
+fi
+echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$SCHED_FAULT_BUILD" \
