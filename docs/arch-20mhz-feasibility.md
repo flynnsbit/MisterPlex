@@ -394,29 +394,38 @@ Compare to v2's analysis of full clk_ddr migration: 6 crossing groups, ~285 sign
 
 ---
 
-## 2. Frame Budget (Confirmed — extended with clk_decode scenarios)
+## 2. Frame Budget — CORRECTED v6
+
+**v6 correction:** w-osd found the STREAM path delivers **640×480** (not 624×480).
+Frame rate is **30 fps** (not 25). This tightens the budget significantly.
 
 ```
-Resolution:       624 × 480 = 39 × 30 = 1170 macroblocks/frame
-Frame rate:       25 fps
-MB throughput:    1170 × 25 = 29,250 MB/s
+Resolution:       640 × 480 = 40 × 30 = 1200 macroblocks/frame
+Frame rate:       30 fps
+MB throughput:    1200 × 30 = 36,000 MB/s
 clk_sys:          20,000,000 Hz
-Budget @ 20 MHz:  20,000,000 / 29,250 = 683.76 ≈ 684 cycles/MB
+Budget @ 20 MHz:  20,000,000 / 36,000 = 555.6 ≈ 556 cycles/MB   ← TIGHTER THAN 684!
+Budget @ 45 MHz:  45,000,000 / 36,000 = 1,250 cycles/MB
 ```
 
-**With a dedicated decode clock:**
+**The 20 MHz budget dropped from 684 to 556.** The w-c1 allocation of 558
+cycles now EXCEEDS the budget by 2 cycles. **At 20 MHz, the pipeline does
+not fit with the official allocation — not even marginally.**
 
-| clk_decode | Cycles/MB | vs. 608 total | Margin | MC ceiling |
-|------------|-----------|---------------|--------|------------|
-| 20 MHz     | 684       | 1.12×         | 76     | 250 (TIGHT) |
-| 40 MHz     | 1,368     | 2.25×         | 760    | 1,010 |
-| 60 MHz     | 2,051     | 3.37×         | 1,443  | 1,693 |
-| 90 MHz     | 3,077     | 5.06×         | 2,469  | 2,719 |
+| clk_decode | Cycles/MB | vs. 558 total | Margin | Status |
+|------------|-----------|---------------|--------|--------|
+| **20 MHz** | **556** | **0.997×** | **-2** | **FAILS** |
+| 30 MHz     | 833       | 1.49×         | 275    | Safe (1:3 ratio) |
+| **45 MHz** | **1,250** | **2.24×** | **692** | **Safe (1:2 ratio)** |
 
-At 40 MHz, MC gets 1,010 cycles — **byte-serial DPB reference fetch (988
-cycles) fits, and the 64-bit coalesced DPB changes from mandatory to optional
-for budget reasons.** Adjacent-MB cache changes from mandatory to nice-to-have.
-At 60 MHz, even a naive implementation with headroom to spare.
+**This changes the architectural conclusion: 20 MHz is not merely "tight",
+it is arithmetically impossible with the current allocation. The pipeline
+REQUIRES a faster clock.**
+
+Previous budget (retained for reference, now SUPERSEDED):
+```
+SUPERSEDED: 624 × 480 = 1170 MB, 25 fps → 684 cycles/MB
+```
 
 ---
 
@@ -707,7 +716,93 @@ for quality; Plane mode is uncommon). But it must be tracked.
 
 ---
 
-## 4. Verdict — REVISED in v3
+## 3B. Resource Budget — Can It Fit? (NEW v6)
+
+**This is the question the parent asked: "if the answer is 'it does not fit
+at any frequency', that is the single most important thing you could tell
+this project."**
+
+### Current device utilization (from fit report, `808e2b0`)
+
+| Resource | Used | Available | Free | % Used |
+|----------|------|-----------|------|--------|
+| **ALMs** | 14,357 | 41,910 | **27,553** | 34% |
+| **DSP blocks** | 73 | 112 | **39** | 65% |
+| **M10K blocks** | 197 | 553 | **356** (~435 KB) | 36% |
+| Registers | 15,928 | 83,820 | 67,892 | 19% |
+
+**Largest current consumers:**
+- `ddr_frame_store` (present path): 4,116 ALMs, 96 M10K, 0 DSP
+- `decode_stub` (probe, to be replaced): ~1,438 ALMs, 32 DSP
+
+### Estimated decode pipeline resource needs
+
+**WARNING: These are ESTIMATES from first principles and comparable open-source
+H.264 decoders. I am 0-for-3 on estimates this session. Treat as order-of-magnitude.**
+
+| Module | ALMs (est) | DSPs (est) | M10K (est) | Basis |
+|--------|-----------|-----------|-----------|-------|
+| CAVLC parser | 800–1,200 | 0 | 2–4 (exp-Golomb tables) | FSM + barrel shifter |
+| Dequant + IDCT 4×4 | 400–600 | 8–16 | 0 | 16 multiplies (DSP), butterfly adds |
+| Chroma DC Hadamard | 50–100 | 0 | 0 | 4 adds, trivial |
+| Intra prediction (all modes) | 1,500–2,500 | 0–4 | 4–8 (neighbour line buf) | Mode select + 9 directional + Plane |
+| MC interpolation (4-wide FIR) | 2,000–3,500 | 24–32 | 4–8 (ref window buf) | 4× 6-tap FIR + averaging |
+| Deblocking filter | 1,500–2,500 | 0 | 8–16 (edge line bufs) | 48 edges/MB, conditional filter |
+| DPB fetch controller | 500–800 | 0 | 2–4 | FSM + address gen |
+| Pipeline control / glue | 500–1,000 | 0 | 2–4 | Stage handshaking, stall logic |
+| Neighbour MB storage | 200–400 | 0 | 8–20 (40 cols × ~32B/col) | Above-row data for intra/deblock |
+| **TOTAL DECODE** | **7,450–12,600** | **32–52** | **30–64** | |
+
+### Does it fit?
+
+| Resource | Available | Decode needs | Remainder | Verdict |
+|----------|-----------|-------------|-----------|---------|
+| **ALMs** | 27,553 | 7,450–12,600 | 15,000–20,000 | **YES — comfortably** |
+| **DSPs** | 39 | 32–52 | -13 to +7 | **⚠ TIGHT — may not fit at high end** |
+| **M10K** | 356 | 30–64 | 292–326 | **YES — comfortably** |
+
+**DSPs are the binding constraint.** The current design uses 73/112 (65%),
+leaving only 39. MC interpolation alone needs 24–32 if using DSP multipliers.
+Dequant/IDCT needs 8–16. **If both modules use DSPs heavily, the design MAY
+exceed the 112-block limit.**
+
+**Mitigation:** On Cyclone V, 18×18 multiplies can be implemented in logic
+(ALMs) instead of DSP blocks — at roughly 80–120 ALMs per multiplier and
+worse timing. The 6-tap FIR's coefficient symmetry ({1,-5,20,20,-5,1}) means
+only 3 unique multiplies, and `×20 = ×16 + ×4` and `×5 = ×4 + ×1` can use
+shift-add (zero DSPs, ~50 ALMs each). **w-mc's shift-add FIR decomposition
+eliminates DSP pressure entirely for MC.** If adopted, the DSP budget relaxes
+to: decode needs 8–16 DSPs (dequant/IDCT only), with 23–31 remaining.
+
+**ANSWER TO THE PARENT'S QUESTION: The pipeline fits.** ALMs and M10K have
+generous headroom. DSPs are tight but manageable with shift-add MC (which
+w-mc was already planning). **The design does NOT fail on resources. It fails
+on integration — the pieces exist but are not connected.**
+
+### Where pipeline stages need depth (and where they can be lazy)
+
+**For w-ctl, w-dpb, w-rel — actionable guidance:**
+
+| Stage | Needs pipelining? | Why / why not |
+|-------|------------------|---------------|
+| CAVLC parser | **No** — inherently sequential | FSM processes 1 bit/cycle, depth is ~5 levels |
+| Dequant | **Maybe** — DSP multiply is 1-cycle pipelined inherently | DSP blocks have built-in pipeline registers |
+| IDCT butterfly | **Yes** — 4-stage butterfly should be pipelined | 4 add/sub levels + clip, at 45 MHz ≈ 4 cycles latency |
+| Intra 4×4 pred | **No** — combinational, ≤10 levels narrow | Mode select + neighbor extrapolation, small fan-in |
+| Intra Plane | **Yes** — already pipelined by w-plane (2 cycles) | Gradient accumulator was 55+ levels before |
+| MC 6-tap FIR | **Yes** — must be time-multiplexed + pipelined | 6-tap × 2 (horizontal + vertical) = 2 pipeline stages minimum |
+| Deblock edge | **Yes** — already 2-cycle pipe in RTL | Threshold compare + 4-tap filter, registered |
+| DPB address gen | **No** — simple FSM, ~5 levels | Counter + base address add |
+| DDR writeback | **No** — burst controller, ≤5 levels | Sequential, bandwidth-limited not logic-limited |
+
+**The deepest stages — MC and deblock — are also the longest-running (250 +
+150 = 400 of 558 cycles). Pipelining them adds latency but NOT extra cycles
+to the budget, because they already dominate the schedule.** The control
+overhead is in the handshaking between stages, not the stage depths.
+
+---
+
+## 4. Verdict — REVISED v6
 
 ### v1–v2 verdict: "20 MHz is tight but feasible" — SUPERSEDED
 
@@ -720,46 +815,65 @@ correct **given the assumption that 20 MHz was a fixed constraint.**
 The 20 MHz frequency was never intentionally chosen (§1A). It is a template
 default that has been overridden by every non-trivial MiSTer core. The decode
 pipeline does not need to share a clock with the present path (§1C) — their
-coupling goes through DDR memory, which already lives in a different clock
-domain.
+### v6 verdict: 20 MHz FAILS. 45 MHz is required. The pipeline fits in resources.
 
-**Continuing to optimise the decode pipeline under a 684-cycle ceiling
-is engineering effort spent solving a problem that a PLL parameter deletes.**
+**Three things are now established:**
 
-The conditions from v1–v2 remain **good engineering** (wider DPB and efficient
-MC are valuable for power and thermal headroom), but they change from
-**architectural requirements** to **optimisations** once the clock ceiling lifts.
+1. **20 MHz does not work.** With corrected frame parameters (640×480, 30 fps),
+   the budget is 556 cycles/MB — 2 cycles LESS than the w-c1 allocation of 558.
+   The arithmetic is decisive. A faster clock is not optional.
+
+2. **45 MHz is the answer.** It is the only candidate with a safe CDC relationship
+   to clk_ddr (1:2 ratio, 11.111 ns gap). At 45 MHz the budget is 1,250 cycles/MB
+   — 2.24× the allocation, with 692 cycles of margin. This is comfortable.
+
+3. **The pipeline fits on the device.** ALMs: 7.5–12.6K needed out of 27.5K free.
+   M10K: 30–64 needed out of 356 free. DSPs: tight (32–52 needed out of 39 free)
+   but resolved by shift-add MC (zero DSPs for FIR).
+
+**The architectural recommendation is now unconditional:**
+- Add `clk_decode = 45 MHz` as a 4th PLL output (VCO=360, C=8)
+- Run decode pipeline on `clk_decode`
+- Leave `clk_sys` at 20 MHz for video
+- CDC cost: 1 async FIFO + ~4 two-FF syncs (2–3 days)
+- Build the integration datapath connecting verified modules
+
+**The blocker is not the clock, not the resources, and not the module
+correctness. It is that the modules are not connected.**
+
+### Previous verdicts (superseded)
+
+v1–v2: "20 MHz is tight but feasible" — WRONG (corrected frame params fail it)
+v3: "Give decode its own clock at 40 MHz" — WRONG frequency (CDC gap), right idea
+v3.1: "60 MHz" — WRONG (same CDC gap as the -2.137 ns failure)
+v4: "45 MHz, conditional on critical path elimination" — path was dead code
+v5: "fabric limit UNMEASURED, clock question open" — correct but incomplete
 
 ### The recommendation
 
-**Add a 4th PLL output (`clk_decode`) in the range 40–90 MHz.** Run the
-decode pipeline on it. Leave `clk_sys` at 20 MHz for video timing. The CDC
-cost is 1 async FIFO (bitstream_fifo) + ~4 two-FF synchronizers — roughly
-2–3 days of work, not weeks. See §1B and §1C for the full crossing analysis.
+**Add a 4th PLL output (`clk_decode`) at 45 MHz.** Run the decode pipeline
+on it. Leave `clk_sys` at 20 MHz for video timing. The CDC cost is 1 async
+FIFO (bitstream_fifo) + ~4 two-FF synchronizers — roughly 2–3 days of work.
 
-**Suggested starting point: 40 MHz.** This is conservative:
-- Budget: 1,368 cycles/MB (2× current)
-- MC gets ~500 cycles (relaxes the 250 ceiling that drives the entire
-  parallelism architecture)
-- Likely achievable without timing closure struggle (well below ao486's
-  proven 90 MHz)
-- If 40 MHz proves comfortable, the same PLL can be adjusted upward later
+At 45 MHz / 1,250 cycles per MB:
+- MC gets ~692 surplus beyond the 558-cycle allocation
+- Byte-serial DPB (988 cycles) fits without coalescing
+- Adjacent-MB cache is optional, not mandatory
+- Deblock has generous room for a simpler implementation
+- Even worst-case scenarios (all I-frames, dense CAVLC) fit easily
 
-**Why not jump straight to 90 MHz?** Because it is unnecessary for this
-resolution/framerate, and because every incremental MHz makes timing closure
-harder. 40 MHz doubles the budget; the remaining uncertainty in MC and
-deblock easily fits in 1,368 cycles.
-
-### What this changes for other workers
+### What this changes for other workers (UPDATED v6)
 
 | Worker | Impact |
 |--------|--------|
-| **w-mc** | 250-cycle ceiling relaxes to ~500 (at 40 MHz). Adjacent-MB cache becomes nice-to-have, not mandatory. 64-bit DPB still recommended for efficiency but byte-serial doesn't break the budget. |
-| **w-c1** | Ratchet budget doubles; TIGHT → COMFORTABLE. All three unbuilt stages have generous allocations. |
-| **w-a3** | One new async FIFO (bitstream), which is a repeat of their arbiter pattern. Not a new category of risk. |
-| **w-cap** | PLL modification needed; must confirm VCO and achievable C-counter values. Owns the re-fit. |
-| **w-plane** | I16 Plane's ~70 cycles no longer eat the margin — there IS no margin problem. |
-| **w-deblock** | 150 cycles easily available, with room for a simpler implementation. |
+| **w-rel** | Integration datapath is the project's critical path. Clock constraints are settled. |
+| **w-mc** | 250-cycle target is still good engineering but no longer a hard ceiling. Shift-add FIR preferred (saves DSPs). |
+| **w-c1** | Budget at 45 MHz is 1,250 cyc/MB. Allocation of 558 fits with 2.24× margin. |
+| **w-dpb** | Byte-serial DPB (988 cycles) fits at 45 MHz. 64-bit coalescing is optimization, not requirement. |
+| **w-deblock** | 150 cycles easily available within 1,250 budget. |
+| **w-cap** | PLL: add C3 output at 45 MHz (VCO=360, C=8). SDC: constrain clk_decode at 45 MHz with 1:2 relationship to clk_ddr. |
+| **w-a3** | One new async FIFO (bitstream). Same pattern as arbiter response FIFO. |
+| **w-plane** | Plane pipelining ensures intra doesn't become timing bottleneck at 45 MHz. |
 
 ---
 
@@ -1224,7 +1338,8 @@ one pipeline register stage reduces the 7-level path to meet the
 | **clk_sys critical path = decode_stub\|lat_qp[4] → recon_dbg[5]** | w-cap `quartus_sta` intra-domain extraction, all 10 worst paths | **VERIFIED (v5)** |
 | **Decode fabric Fmax = UNMEASURED** | No fit with real decode modules exists; decode_stub dominates all 10 paths | **ESTABLISHED (v5)** |
 | **clk_ddr critical path = ddr_frame_store\|disp_buf_d2 → DDRAM_ADDR** | w-cap `quartus_sta` intra-domain extraction, all 10 worst paths | **VERIFIED (v5)** |
-| **Fmax clk_ddr = 88.31 MHz (critical path 10.72 ns, slack -0.213 ns)** | `Plex.sta.rpt` Fmax Summary, intra-domain | **VERIFIED (v4, endpoints v5)** |
+| **Fmax clk_ddr = 88.31 → 94 MHz after CDC fixes** | Pre-fix: -0.213 ns slack. Post-fix (`808e2b0`): PASS. Parent predicted worse; it improved. | **VERIFIED (v4→v6)** |
+| **Adding logic to clk_ddr IMPROVED it (arbiter removal removed crossing)** | Parent's prediction of degradation was wrong — 7th wrong call. Mechanism: removing a crossing > adding carry depth | **OBSERVED (v6)** |
 | **disp_buf_d2 → DDRAM_ADDR is frozen-screen candidate** | Bank select failing setup → wrong bank read → has_frame=0 | **HYPOTHESIS (v5)** |
 | ~~Critical path = 12 levels (~12.3 ns)~~ | ~~First-principles depth analysis~~ | **WRONG (v3.1) — fitter says 39.86 ns** |
 | ~~60 MHz target closes with +4.1 ns margin~~ | ~~Estimate~~ | **WRONG (v3.1) — rejected: same CDC gap as failure** |
@@ -1236,6 +1351,11 @@ one pipeline register stage reduces the 7-level path to meet the
 | **Chroma DC 2×2 Hadamard absent from all 33 RTL files** | w-plane: no Hadamard inverse in any source file | **VERIFIED (v5.1, failure #16)** |
 | **NO DECODER IN THE FPGA — decode_stub is 1-block probe** | w-cap: intra predictors declared but instantiated nowhere; `decode_stub.sv:151` uses `pred=128` | **VERIFIED (v6, failure #19)** |
 | **Cycle model is a DESIGN TARGET, not a description** | Consequence of #19: modules exist but are not connected in the synthesised design | **ESTABLISHED (v6)** |
+| **Frame params: 640×480, 30 fps (not 624×480, 25 fps)** | w-osd: STREAM path delivers 640×480; rate is 30 fps | **Reported (v6)** |
+| **Budget @ 20 MHz = 556 cyc/MB (w-c1 alloc 558 → FAILS)** | 20M / (1200×30) = 555.6 | **COMPUTED (v6)** |
+| **Budget @ 45 MHz = 1,250 cyc/MB (2.24× margin)** | 45M / (1200×30) = 1250 | **COMPUTED (v6)** |
+| **Device: 27.5K ALMs free, 39 DSPs free, 356 M10K free** | Fitter report `808e2b0` | **VERIFIED (v6)** |
+| **Pipeline resource est: 7.5–12.6K ALMs, 32–52 DSPs, 30–64 M10K** | First-principles estimate from module complexity | **ESTIMATED (v6) — 0-for-3 track record** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
