@@ -1,16 +1,48 @@
-# Architecture Study: Can H.264 Decode Fit at 20 MHz?
+# Architecture Study: H.264 Decode Clock and Cycle Budget
 
 **Author:** w-arch  
 **Date:** 2026-07-27  
 **Branch:** feat/arch-study  
-**Status:** v5 — **The 39.86 ns critical path was in `decode_stub` (dead code).
-The real decode fabric's frequency limit has NEVER BEEN MEASURED.
-45 MHz remains the only safe CDC candidate. The clk_ddr violating path
-(`disp_buf_d2 → DDRAM_ADDR`) is a candidate mechanism for the frozen screen.**
+**Status:** v6 — **REFRAMED. There is no decoder in the FPGA. The modules
+exist individually and are verified, but `decode_stub` (a 1-block telemetry
+probe) is the only decode path in the synthesised design. This study is a
+DESIGN TARGET for the pipeline that must be built, not a description of
+existing hardware. Clock constraints (VCO=360, 45 MHz sole safe candidate,
+fabric Fmax UNMEASURED) remain valid as they constrain what CAN be built.**
 
 ---
 
 ## Executive Summary
+
+### v6: There is no decoder in the FPGA (failure #19)
+
+**This study must be reframed.** w-cap found that the intra prediction
+subsystem is instantiated NOWHERE in the synthesised design. `decode_stub`
+— previously treated as "dead code contaminating timing measurements" —
+IS the only decode path. It processes ONE 4×4 block of one macroblock
+and XORs it into a debug signature. There is no intra prediction, no
+chroma reconstruction, no multi-MB pipeline. The product bitstream
+contains a telemetry probe, not a decoder.
+
+**What this means for this study:** The cycle model (§3) was budgeting
+time for stages that exist as verified modules but are not connected to
+anything. That makes it a **DESIGN TARGET** for the integration datapath
+that must be built — not a description of existing hardware. The budget
+numbers are still the right constraints; they just constrain a design
+that does not yet exist rather than one that does.
+
+**What remains valid:**
+- Clock constraints: VCO=360 MHz, 45 MHz sole safe CDC candidate,
+  decode↔video coupling through DDR (all traced from PLL/RTL/STA)
+- Cycle budget: 684 cycles/MB at 20 MHz as the DESIGN TARGET
+- CDC cost: 1 async FIFO + ~4 two-FF syncs (traced from port list)
+- "20 MHz was never chosen" (traced from git history)
+- w-c1's allocation (558/684) as the DESIGN SPECIFICATION
+
+**What is invalidated:**
+- Any claim that the pipeline "exists" or "works" at the system level
+- The framing "can the decode pipeline fit?" (there is no pipeline)
+- Any implication that verified modules = verified system
 
 ### v5: The 39.86 ns path was dead code — fabric limit is UNMEASURED
 
@@ -388,14 +420,24 @@ At 60 MHz, even a naive implementation with headroom to spare.
 
 ---
 
-## 3. Per-Stage Cycle Model
+## 3. Per-Stage Cycle Model — **THIS IS A DESIGN TARGET (v6)**
 
-### 3.1 Stages present in RTL (provenance: structural trace)
+**⚠⚠⚠ REFRAMING (failure #19): THE PIPELINE THIS SECTION MODELS DOES NOT
+EXIST IN THE SYNTHESISED DESIGN.** The modules are real, individually
+verified, and have the stated combinational depths. But they are not
+instantiated in the product bitstream. `decode_stub` processes ONE 4×4
+block. The cycle model below is a DESIGN SPECIFICATION for the integration
+datapath that must be built — not a description of running hardware.
 
-**⚠ CRITICAL CAVEAT (failure #17):** The cycle counts below are traced from
-RTL structure — the modules exist and have the stated combinational depth.
-**But "exists in RTL" ≠ "verified to produce correct output."** The project's
-headline claim of "intra decode bit-exact, 1170/1170" was found to compare
+### 3.1 Stages present in RTL source (NOT in the synthesised design)
+
+**⚠ CRITICAL CAVEAT (failures #17, #19):** The cycle counts below are traced
+from RTL module source files. The modules exist and have the stated depths.
+**But they are not instantiated in the synthesised design** (failure #19),
+and their correctness is unverified at system level (failure #17, 0.021%
+luma coverage, 0% chroma). The project's headline "bit-exact 1170/1170"
+compared HOST C++ against ffmpeg — no RTL. The cycle model is a DESIGN
+TARGET for timing, not a description of working hardware.
 HOST C++ against ffmpeg with ZERO RTL involvement. Actual RTL verification
 covers **16 of 76,800 luma pixels (0.021%) and 0% of chroma.** The cycle
 model is about timing, not correctness — **these stages may produce wrong
@@ -607,9 +649,12 @@ leaves comfortable headroom.
 
 ---
 
-## 3A. Official w-c1 Allocation (f31c61a)
+## 3A. Official w-c1 Allocation — DESIGN SPECIFICATION (f31c61a)
 
-w-c1 owns per-stage cycle ratchets and delivered this binding allocation:
+w-c1 owns per-stage cycle ratchets and delivered this binding allocation.
+**v6 note: this is a design specification for a pipeline that must be built,
+not a measurement of running hardware. The stages below are individually
+verified modules that are NOT instantiated in the synthesised design.**
 
 | Stage | Cycles/MB | % of 684 | Status |
 |-------|-----------|----------|--------|
@@ -1189,6 +1234,8 @@ one pipeline register stage reduces the 7-level path to meet the
 | **"intra bit-exact 1170/1170" = HOST vs ffmpeg, no RTL** | w-rel `3dbef6a`: `score_h264_native_frames.cpp:301` calls `reconISlice()` (host C++) not Verilator | **VERIFIED (v5.2, failure #17)** |
 | **RTL intra verification = 0.021% luma, 0% chroma** | w-rel: 16/76800 pixels via MB0 pipeline trace only | **VERIFIED (v5.2, failure #17)** |
 | **Chroma DC 2×2 Hadamard absent from all 33 RTL files** | w-plane: no Hadamard inverse in any source file | **VERIFIED (v5.1, failure #16)** |
+| **NO DECODER IN THE FPGA — decode_stub is 1-block probe** | w-cap: intra predictors declared but instantiated nowhere; `decode_stub.sv:151` uses `pred=128` | **VERIFIED (v6, failure #19)** |
+| **Cycle model is a DESIGN TARGET, not a description** | Consequence of #19: modules exist but are not connected in the synthesised design | **ESTABLISHED (v6)** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
@@ -1372,19 +1419,25 @@ RTL changes.
 | Item | Status |
 |------|--------|
 | Provenance labels | Honest — discredited items marked, no false VERIFIED |
+| **Pipeline does not exist in synthesised design** | **GAP (#19) — modules verified individually, not instantiated** |
 | **RTL correctness assumed but unverified** | **GAP (#17) — 0.021% luma, 0% chroma verified in HW** |
 | Chroma DC Hadamard | **MISSING from RTL (#16)** — cycle impact negligible, correctness impact severe |
 | Delay estimates | Systematically optimistic (3 of 3 wrong in same direction) |
 | Automated regression | None — study is a snapshot document |
-| Recommendations actionability | Sound — 684 cyc/MB working number confirmed by parent |
+| Recommendations actionability | Sound as DESIGN TARGET — 684 cyc/MB confirmed by parent |
 
-**This study is about TIMING, not CORRECTNESS.** It answers "can 684
-cycles/MB fit the pipeline stages?" — not "do the pipeline stages produce
-the right answer?" Those are independent questions. Failure #17 does not
-change the cycle model (the stages exist and have the stated depths). It
-changes the confidence that the stages being budgeted are actually working.
-A correct-but-slow pipeline is a timing problem. A fast-but-wrong pipeline
-is a verification problem. **This project has both, and they are not the same.**
+**v6 reframing.** This study answers "when we BUILD the pipeline, can 684
+cycles/MB fit at 20 MHz?" — not "does the pipeline work?" or even "does it
+exist?" **The pipeline does not exist** (failure #19). The modules do. They
+are not connected. The study is a design specification for the integration
+datapath — it constrains what must be built and at what speed.
+
+**The three independent problems this project has:**
+1. **Integration** — modules exist but are not connected (#19)
+2. **Verification** — modules connected or not, correctness is unproven (#17)
+3. **Timing** — can the connected pipeline meet 684 cyc/MB? (this study)
+
+All three must be solved. They are independent. This study addresses only #3.
 
 ---
 
