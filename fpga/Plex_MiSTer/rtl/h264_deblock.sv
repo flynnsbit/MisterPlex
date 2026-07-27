@@ -223,6 +223,7 @@ module h264_deblock_edge (
 	reg signed [13:0] delta;
 	reg signed [13:0] adj;
 	reg signed [13:0] p0s, p1s, p2s, p3s, q0s, q1s, q2s, q3s;
+	reg [7:0] p0v, p1v, p2v, p3v, q0v, q1v, q2v, q3v;
 
 	always @* begin
 		for (i = 0; i < 4; i = i + 1) begin
@@ -233,8 +234,10 @@ module h264_deblock_edge (
 			q1_out[i] = q1_in[i];
 			q2_out[i] = q2_in[i];
 
-			p0s = {6'b000000, p0_in[i]}; p1s = {6'b000000, p1_in[i]}; p2s = {6'b000000, p2_in[i]}; p3s = {6'b000000, p3_in[i]};
-			q0s = {6'b000000, q0_in[i]}; q1s = {6'b000000, q1_in[i]}; q2s = {6'b000000, q2_in[i]}; q3s = {6'b000000, q3_in[i]};
+			p0v = p0_in[i]; p1v = p1_in[i]; p2v = p2_in[i]; p3v = p3_in[i];
+			q0v = q0_in[i]; q1v = q1_in[i]; q2v = q2_in[i]; q3v = q3_in[i];
+			p0s = {6'b000000, p0v}; p1s = {6'b000000, p1v}; p2s = {6'b000000, p2v}; p3s = {6'b000000, p3v};
+			q0s = {6'b000000, q0v}; q1s = {6'b000000, q1v}; q2s = {6'b000000, q2v}; q3s = {6'b000000, q3v};
 			tc = 14'sd0;
 			delta = 14'sd0;
 			adj = 14'sd0;
