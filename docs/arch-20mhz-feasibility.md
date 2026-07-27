@@ -3,8 +3,8 @@
 **Author:** w-arch  
 **Date:** 2026-07-27  
 **Branch:** feat/arch-study  
-**Status:** v3 — **20 MHz is an inherited default, not a design choice.
-Decode should have its own clock.**
+**Status:** v3.1 — **20 MHz is an inherited default, not a design choice.
+Decode should have its own clock at 60 MHz (ESTIMATED — pending fit validation).**
 
 ---
 
@@ -94,24 +94,40 @@ for telemetry. Estimated effort: 2–3 days, not weeks.**
 
 ### Recommendation
 
-**Add a 4th PLL output (`clk_decode`) at 60–90 MHz.** Run the decode
+**Add a 4th PLL output (`clk_decode`) at 60 MHz.** Run the decode
 pipeline — from bitstream FIFO read port through CAVLC, dequant/IDCT, intra
 pred, MC interpolation, deblocking, to DPB writeback — on `clk_decode`.
 Leave everything else on `clk_sys` (20 MHz) untouched.
 
 | Clock | Frequency | Budget (cyc/MB) | Margin over 608 total |
 |-------|-----------|-----------------|----------------------|
-| 60 MHz | 60 MHz | 2,051 | 3.4× |
-| 90 MHz | 90 MHz | 3,077 | 5.1× |
+| 40 MHz | 40 MHz | 1,368 | 2.25× (fallback) |
+| **60 MHz** | **60 MHz** | **2,051** | **3.37×** |
+| 90 MHz | 90 MHz | 3,077 | 5.1× (not recommended — timing risk) |
+
+**Why 60, not 40 (v3's target)?** Fabric analysis (§6) shows the critical
+path is ~12 logic levels (parse_cavlc, deblock — both sequential, not
+pipelinable). At conservative 1.0 ns/level, the critical path is 12.3 ns.
+60 MHz (16.7 ns period) closes with **4.1 ns margin**. 40 MHz (25.0 ns)
+wastes 75% of the period. The CDC cost is identical at either frequency.
+If 60 MHz fails timing, fall back to 48 → 40 MHz (PLL parameter only, no
+structural changes).
 
 At 60 MHz, the 250-cycle MC target becomes **750 cycles**, and the
-adjacent-MB overlap cache changes from MANDATORY to nice-to-have. At
-90 MHz, even byte-serial DPB (988 cycles) fits trivially.
+adjacent-MB overlap cache changes from MANDATORY to nice-to-have. Even
+byte-serial DPB (988 cycles) fits trivially at 2,051.
 
 **This does NOT mean parallelism work is wasted.** A wider DPB and
 efficient MC are still good engineering. But they become optimisations
 that buy power and thermal headroom, not architectural requirements that
 gate the project.
+
+**STATUS: 60 MHz target is ESTIMATED, not MEASURED. The critical path
+analysis is first-principles (§6). The only honest validation is a fit.
+Until w-cap confirms VCO and runs a trial fit with the 4th output,
+every frequency claim in this document is an estimate and should be
+quoted as such. Do not let "60 MHz" acquire the same false authority
+that "100 MHz / 3418 cycles" had.**
 
 ---
 
@@ -136,28 +152,52 @@ All three outputs come from **the same physical PLL** and are **synchronous**
 (same reference, deterministic phase). This is confirmed by w-cap's clock
 relationship analysis.
 
-### PLL spare output analysis
+### PLL spare output analysis — REVISED v3.1
 
 Cyclone V GPLL VCO range (speed grade 7, I-grade): **600–1300 MHz**.
 
 The fitter must find M, N such that VCO = 50 × M/N lands in [600, 1300] and
-VCO/C produces all three requested frequencies. Because 142 and 20 share no
-convenient common multiple below 1300 MHz, the fitter likely uses the closest
-achievable approximation for 142 MHz (e.g., VCO=720: 720/5=144 MHz ≈ 142 MHz,
-720/36=20 MHz, 720/8=90 MHz — off by ~1.4% on SDRAM clock, within spec).
+VCO/C produces all three requested frequencies. The altera_pll IP takes
+requested frequencies as targets and finds the best M/N/C combination
+minimising total error across all outputs.
 
-If VCO ≈ 720 MHz, achievable 4th-output candidates:
-- **40 MHz** (720/18) — 2× clk_sys, half-integer relationship
-- **45 MHz** (720/16) — 2.25× clk_sys
-- **60 MHz** (720/12) — 3× clk_sys
-- **80 MHz** (720/9) — 4× clk_sys
-- **90 MHz** (already exists)
-- **360 MHz** (720/2) — probably infeasible for timing closure
+**VCO candidates (computed, see Provenance):**
 
-**Provenance note:** The exact VCO is unknown without running the fitter.
-The above assumes VCO ≈ 720 MHz; if the fitter chose a different VCO (e.g.,
-~1260 MHz for tighter SDRAM accuracy), the available frequencies differ.
-w-cap owns this fact and should confirm before any PLL modification.
+| VCO (MHz) | M | N | C0→20 | C1→142 (actual) | C2→90 | Feasible? |
+|-----------|---|---|-------|------------------|-------|-----------|
+| **720** | 72 | 5 | 36 (exact 20) | 5 (→144, err 1.4%) | 8 (exact 90) | **Most likely** |
+| 900 | 18 | 1 | 45 (exact 20) | 6 (→150, err 5.6%) | 10 (exact 90) | 142 error too high |
+| 1080 | 108 | 5 | 54 (exact 20) | 8 (→135, err 4.9%) | 12 (exact 90) | 142 error too high |
+| 1260 | 126 | 5 | 63 (exact 20) | 9 (→140, err 1.4%) | 14 (exact 90) | Possible |
+
+**VCO = 720 MHz is the most likely choice** — it gives exact 20 and 90,
+and the SDRAM clock error (144 vs 142 = 1.4%) is within SDRAM tolerance.
+VCO = 1260 gives 140 MHz (also 1.4% off), but a higher VCO is chosen only
+if needed for jitter or other reasons. **Provenance: COMPUTED from PLL
+constraints, UNVERIFIED until w-cap confirms from fitter output.**
+
+**Available 4th-output frequencies (VCO = 720 MHz):**
+
+| Frequency | C-counter | Period | Budget (cyc/MB) | vs. 608 total |
+|-----------|-----------|--------|-----------------|---------------|
+| 120 MHz | 6 | 8.3 ns | 4,103 | 6.75× |
+| 90 MHz | 8 | 11.1 ns | 3,077 | 5.06× |
+| 80 MHz | 9 | 12.5 ns | 2,735 | 4.50× |
+| 72 MHz | 10 | 13.9 ns | 2,462 | 4.05× |
+| **60 MHz** | **12** | **16.7 ns** | **2,051** | **3.37×** |
+| 48 MHz | 15 | 20.8 ns | 1,641 | 2.70× |
+| 45 MHz | 16 | 22.2 ns | 1,538 | 2.53× |
+| 40 MHz | 18 | 25.0 ns | 1,368 | 2.25× |
+| 36 MHz | 20 | 27.8 ns | 1,231 | 2.02× |
+| 30 MHz | 24 | 33.3 ns | 1,026 | 1.69× |
+
+If VCO = 1260 MHz, additional options include 63, 70, 84, and 105 MHz.
+The set is wide enough that frequency choice is NOT PLL-constrained — it
+is fabric-timing-constrained (see §6).
+
+**Provenance: COMPUTED from Integer-N PLL arithmetic. UNVERIFIED VCO.
+The frequency set is correct for VCO=720; different VCO → different set.
+w-cap must confirm VCO from fitter output before committing to a target.**
 
 ### 1A. Provenance of the 20 MHz Value (NEW in v3)
 
@@ -767,7 +807,7 @@ intra-domain timing failures**. This means the 20 MHz domain has
 significant timing margin — possibly 20–30 ns of positive slack (we
 need w-cap's post-fix STA to confirm the exact number).
 
-### v3: Achievable frequency ceiling for decode fabric
+### v3.1: Decode fabric frequency ceiling (REVISED — sourced analysis)
 
 **Known datapoints:**
 1. **ao486** (shipping production core, same device family) closes timing
@@ -781,64 +821,173 @@ need w-cap's post-fix STA to confirm the exact number).
 3. **No intra-domain timing failures at 20 MHz.** The 50 ns period gives
    enormous margin for ALM-based combinational logic.
 
-**Estimate:** A properly pipelined decode path (no purely combinational
-multi-MB blocks, registered FIR taps) should close timing at **40–60 MHz**
-conservatively on Cyclone V speed grade 7. This is supported by:
-- Cyclone V ALM typical delay: 0.5–1.0 ns per logic level
-- MC 6-tap FIR (deepest path): ~15 logic levels = 15 ns worst case
-- At 40 MHz (25 ns period): 10 ns positive slack
-- At 60 MHz (16.7 ns period): ~2 ns positive slack (tight but doable
-  with pipelining)
-- At 90 MHz (11.1 ns period): needs aggressive pipelining, may be
-  marginal for the FIR path
+4. **w-plane demonstrated that combinational depth is a property of RTL
+   quality, not algorithmic complexity.** I16 Plane went from 55–70 levels
+   (combinational, 512 multipliers) to 18/8 levels (2-cycle pipeline, 32
+   multipliers) by pre-computing the 32 distinct products. A sixteen-fold
+   multiplier reduction and four-fold depth reduction for two cycles.
 
-**Note on w-cabac's wider arithmetic:** The residual pipeline widening
-from `signed [17:0]` to `signed [21:0]` adds ~4 bits of carry chain.
-At Cyclone V speeds this is ~1–2 ns of additional propagation delay.
-At 40 MHz (25 ns period), this is absorbed easily. At 60 MHz it begins
-to matter. **This is another reason to start at 40 MHz, not 90 MHz.**
+**Combinational depth analysis of each decode stage (with proper pipelining):**
 
-### Recommendation: start at 40 MHz
+| Stage | Depth (levels) | Notes | Pipelinable? |
+|-------|---------------|-------|-------------|
+| parse_cavlc | **12** | Exp-Golomb: shift register + comparator + mux | **No** — sequential state machine |
+| deblock | **12** | Threshold compare + conditional 4-tap filter | **No** — data-dependent decisions |
+| dequant_idct | 10 | Pipelined butterfly, 2 stages of 10 | Yes, at 2-cycle cost |
+| intra_pred | 10 | Mode mux + boundary interpolation | Partially |
+| mc_chroma | 8 | 2×2 bilinear, shift+add | Yes |
+| i16_plane | 8 | After w-plane pipelining (cy2) | Already done |
+| residual_add | 8 | signed [21:0] add + clip (w-cabac widened) | N/A — single operation |
+| ddr_addr | 8 | 28-bit add + base offset | N/A — single operation |
+| **mc_fir_h/v** | **7** | **6-tap FIR with shift+add (see below)** | Yes, registered between H/V |
+| mc_qpel_avg | 3 | add + shift + clip | N/A — trivial |
 
-40 MHz is the sweet spot:
-- Well within ao486-proven capability (less than half the frequency)
-- Doubles the cycle budget (684 → 1,368)
-- Generous timing margin (~10 ns for the worst FIR path)
-- Can be raised to 60 MHz later by changing one PLL parameter, no
-  structural changes needed
+**Critical path: parse_cavlc and deblock, both at 12 levels.** These are
+NOT easily pipelinable because they involve sequential state machines and
+data-dependent branching. **They set the hard frequency ceiling.**
 
-**Do not attempt 90 MHz for decode.** It is unnecessary for this
-resolution/framerate, and it forces aggressive pipelining that adds
-latency and complexity for no benefit.
+**Key insight: the 6-tap MC FIR is NOT the critical path** (contrary to v3).
+The H.264 half-pel coefficients {1, -5, 20, 20, -5, 1} decompose via
+symmetry:
+
+```
+result = (a+f) + 20*(c+d) - 5*(b+e)
+where: 20x = (x<<4) + (x<<2)   ← shift+add, no DSP
+        5x = (x<<2) + x        ← shift+add, no DSP
+```
+
+This gives **~7 logic levels** per FIR pass (3 parallel adds → shift+add
+for 20× and 5× → 2 combines → round+shift → clip). With a register between
+horizontal and vertical passes, the FIR contributes 7 levels to the critical
+path — **less than parse_cavlc or deblock.** No DSP blocks are needed for
+the standard FIR coefficients.
+
+**Frequency ceiling estimate (critical path = 12 levels):**
+
+| Routing model | Delay estimate | Max frequency | Status |
+|--------------|---------------|---------------|--------|
+| 0.70 ns/level (aggressive, short routes) | 12×0.70+0.3 = 8.7 ns | **115 MHz** | ESTIMATED |
+| 0.85 ns/level (moderate) | 12×0.85+0.3 = 10.5 ns | **95 MHz** | ESTIMATED |
+| **1.00 ns/level (conservative)** | **12×1.0+0.3 = 12.3 ns** | **81 MHz** | **ESTIMATED** |
+| 1.20 ns/level (pessimistic, long routes) | 12×1.2+0.3 = 14.7 ns | **68 MHz** | ESTIMATED |
+
+**Conservative estimate: the fabric can close at 60–80 MHz.** Even at
+the pessimistic 1.2 ns/level model, 60 MHz closes with +2.0 ns margin.
+
+**Factors cutting against frequency:**
+
+1. **w-cabac's wider residual (signed [21:0]):** Adds ~4 bits of carry chain.
+   On Cyclone V, the dedicated carry chain runs at ~0.07 ns/bit, so the
+   impact is ~0.3 ns. **Negligible at any frequency below 90 MHz.** This
+   was a concern in v3; it is not a concern with measured carry-chain speed.
+
+2. **Deblock filter (unbuilt):** Estimated at 12 levels but this is an
+   estimate — w-deblock is building it now. If the filter turns out deeper
+   (e.g., 15-18 levels due to complex conditional logic), the ceiling drops.
+   w-c1's revised allowance of 150 cycles gives w-deblock room to pipeline.
+
+3. **Routing congestion:** High device utilisation can force the placer to
+   use longer routes, increasing per-level delay. The current design is not
+   near utilisation limits (`ddr_frame_store` is ~4116 ALUTs; total decode
+   path is estimated at <15K ALUTs of 41K available), so this is unlikely
+   to dominate.
+
+### v3.1 conclusion: why 60 MHz, not 40
+
+**v3 recommended 40 MHz. That was a comfortable doubling, not a sourced
+limit.** The parent correctly identified this as the same pattern that
+produced 20 MHz — a round number nobody examined.
+
+The fabric analysis says:
+- 40 MHz closes with **12.4 ns margin** — wasting 75% of the period
+- 60 MHz closes with **4.1 ns margin** — reasonable engineering margin
+- 72 MHz closes with **1.3 ns margin** — tight, risky on speed grade 7
+- 80+ MHz closes only at moderate or aggressive routing assumptions
+
+**60 MHz is the right target** because:
+1. It closes conservatively (4.1 ns margin at 1.0 ns/level)
+2. Budget = **2,051 cycles/MB** (3× the 20 MHz budget)
+3. MC ceiling relaxes to ~750, well above even a naive implementation
+4. CDC cost is identical to 40 MHz (same crossings, same FIFOs)
+5. Available from VCO=720 as C=12 (exact integer division)
+6. Available from VCO=1260 as C=21 (exact integer division)
+7. **Still conservative** — ao486 closes at 90 MHz, and 60 is 2/3 of that
+
+**The fallback ladder costs nothing structural:**
+
+```
+60 MHz → timing fails? → 48 MHz (PLL parameter change only)
+48 MHz → timing fails? → 40 MHz (PLL parameter change only)
+40 MHz → timing fails? → 20 MHz + v1-v2 tight architecture
+```
+
+Each step is a single PLL parameter edit in `pll_0002.v`. No structural
+changes, no CDC re-work, no module redesign. The async FIFO and 2-FF
+synchronizers work identically at any of these frequencies.
+
+**Why not go higher?** 72 MHz has only 1.3 ns margin (conservative model),
+which is uncomfortably close for speed grade 7. 80+ MHz requires aggressive
+routing assumptions. 90 MHz matches clk_ddr (which is already proven) but
+eliminates the benefit of a separate clock — if decode runs at 90 MHz, it
+might as well share clk_ddr, and then we are back to the full CDC migration
+that v2 priced at 4–6 weeks.
+
+**Why not go straight to 90 MHz "since the CDC cost is the same"?** Because
+the CDC cost is NOT the only cost — timing closure effort is proportional to
+the inverse of the slack margin. At 60 MHz with 4.1 ns margin, the fitter has
+room to place and route without constraint pressure. At 90 MHz with negative
+margin, every synthesis iteration becomes a timing-closure battle. This
+project has **never successfully fitted with positive slack** (the -2.137 ns
+was a CDC error, but we do not yet have a clean baseline). Starting with a
+target that has a 4 ns margin gives us a known-good baseline before pushing.
+
+**STATUS: ALL ESTIMATES until post-fix STA confirms intra-domain slack. The
+12-level critical path is a first-principles model, not a synthesis result.
+The only honest measurement is a fit with the 4th PLL output at 60 MHz.**
 
 ---
 
-## 7. Recommendations — REVISED v3
+## 7. Recommendations — REVISED v3.1
 
-### 7.1 Primary recommendation: dedicated decode clock
+### 7.1 Primary recommendation: dedicated decode clock at 60 MHz
 
-**Add a 4th PLL output (`clk_decode`), initially at 40 MHz.** Run the decode
+**Add a 4th PLL output (`clk_decode`) at 60 MHz.** Run the decode
 pipeline on it. Leave `clk_sys` at 20 MHz for video, HPS, OSD.
 
-**Implementation steps:**
+**Why 60, not 40 (answering parent's challenge):**
 
-1. **w-cap:** Run a trial fit to determine the actual VCO frequency. Confirm
-   that 40 MHz (or another reasonable value) is achievable from the existing
-   PLL with a 4th C-counter output. Add the output to `pll_0002.v`. Owns
-   the SDC constraints for the new clock.
+| Criterion | 40 MHz | 60 MHz | 90 MHz |
+|-----------|--------|--------|--------|
+| Period | 25.0 ns | 16.7 ns | 11.1 ns |
+| Margin vs 12-level critical path (conservative) | +12.4 ns | **+4.1 ns** | -1.2 ns |
+| Budget (cyc/MB) | 1,368 | **2,051** | 3,077 |
+| MC ceiling | ~500 | ~750 | ~1,100 |
+| CDC cost | Same | Same | Same |
+| Fallback if timing fails | → 36 MHz | **→ 48 MHz → 40 MHz** | → 80 MHz → 72 MHz |
+| Risk | Wastes 75% of period | Reasonable margin | Timing closure battle |
 
-2. **w-a3:** Convert `bitstream_fifo` from synchronous to `async_fifo`
-   (write port on `clk_sys`, read port on `clk_decode`). This is a repeat
-   of the arbiter response FIFO pattern from `3c6d1d2`. Add 2-FF
-   synchronizers for status/control signals (residual_csum, recon_sig,
-   decode_active, flush, reset). **Estimated effort: 2–3 days.**
+40 MHz was v3's recommendation. It was a comfortable doubling — the same
+pattern that produced the 20 MHz default. The fabric analysis (§6) shows
+the critical path is ~12 levels (parse_cavlc, deblock), giving a conservative
+ceiling of ~81 MHz. 40 MHz wastes 75% of the available period. 60 MHz uses
+it efficiently while retaining 4.1 ns margin. **The CDC work is identical.**
+
+**Implementation steps (unchanged from v3 except frequency):**
+
+1. **w-cap:** Confirm actual VCO frequency from fitter output. Add 4th
+   output at 60 MHz (VCO=720: C=12, exact; VCO=1260: C=21, exact).
+   Add SDC constraint: `create_clock -period 16.667 [get_pins {pll|...outclk_3}]`.
+
+2. **w-a3:** Convert `bitstream_fifo` to `async_fifo` (write clk_sys,
+   read clk_decode). Add 2-FF synchronizers for status/control.
+   **Estimated effort: 2–3 days.**
 
 3. **w-rel:** Wire `clk_decode` to `stream_path` in place of `clk_sys`.
-   All submodules of `stream_path` move together — they remain synchronous
-   to each other, only the domain boundary shifts outward.
 
-4. **w-c1:** Re-derive cycle budget at the new frequency. At 40 MHz:
-   1,368 cycles/MB, margin 2.25× over 608. Adjust allocations accordingly.
+4. **w-c1:** Re-derive budget at 60 MHz: 2,051 cycles/MB. Reallocate.
+
+5. **w-mc:** Design to the relaxed ceiling (~750 cycles). Pipelining
+   discipline remains important for timing closure, not for cycle budget.
 
 5. **w-mc:** Design MC interpolation with a **relaxed ceiling** (~500 cycles
    at 40 MHz). Adjacent-MB cache is still good engineering but no longer
@@ -852,7 +1001,24 @@ pipeline on it. Leave `clk_sys` at 20 MHz for video, HPS, OSD.
 - Every MiSTer framework module (OSD, scaler, gamma) sees the changed clock
 - **Risk is MUCH higher than adding a PLL output** for no additional benefit
 
-### 7.3 v1–v2 recommendations preserved (still valid as good engineering)
+### 7.3 Why not 90 MHz "since the CDC cost is the same"?
+
+The CDC cost IS the same — but timing closure effort is not.
+
+1. **No clean baseline exists.** This project has never fitted with positive
+   intra-domain slack. The -2.137 ns was a CDC error, but we do not yet have
+   an honest slack figure for any domain.
+2. **Timing closure effort is proportional to 1/margin.** At 60 MHz the
+   fitter has 4.1 ns of routing slack. At 90 MHz it has -1.2 ns (conservative
+   model) and every synthesis iteration becomes a constraint battle.
+3. **90 MHz on clk_decode eliminates the rationale for a separate clock.**
+   If decode runs at 90 MHz, it could share clk_ddr (which already exists
+   at 90 MHz) — but that is the full CDC migration v2 priced at 4–6 weeks.
+4. **Fallback from 90 MHz failure is expensive.** If 90 MHz doesn't close,
+   you must re-fit at a lower frequency AND possibly rework pipelining.
+   Fallback from 60 MHz failure is a PLL parameter change.
+
+### 7.4 v1–v2 recommendations preserved (still valid as good engineering)
 
 The following remain recommended even with a faster decode clock, because
 they reduce power, DDR bandwidth contention, and leave headroom for future
@@ -861,24 +1027,55 @@ resolution increases:
 1. **64-bit coalesced DPB** — reduces DDR bus pressure 8× for reference fetch
 2. **Adjacent-MB reference cache** — reduces redundant DDR traffic
 3. **P_Skip fast path** — bypasses FIR for zero-MV blocks (60–80% of P-MBs)
-4. **Time-multiplexed MC FIR** (4-wide) — area-efficient on Cyclone V DSPs
+4. **Shift+add MC FIR** — the H.264 half-pel coefficients {1,-5,20,20,-5,1}
+   decompose to shift+add via symmetry, eliminating DSP block usage entirely
+   for the standard FIR. DSP blocks remain available for chroma interpolation
+   or future extensions.
 
-### 7.4 Monitoring and escalation (relaxed)
+### 7.5 Pipelining discipline (NEW — informed by w-plane's result)
 
-At 40 MHz, the monitoring table becomes:
+w-plane demonstrated that I16 Plane went from 55–70 combinational levels
+to 18/8 levels by pre-computing the 32 distinct products into registers.
+**This technique applies across the decode path.** Any stage that will run
+on `clk_decode` at 60 MHz (16.7 ns period) must limit its combinational
+depth to ~12 levels. Specifically:
 
-| Metric | Target | Hard limit (1368) | Action if exceeded |
+- **w-mc:** The 6-tap FIR with shift+add decomposition is ~7 levels per
+  pass. Register between horizontal and vertical passes. **This is already
+  below the ceiling.**
+- **w-deblock:** The threshold-compare + conditional filter must stay at
+  ≤12 levels. If the logic is deeper, pipeline with a register between
+  the threshold decision and the filter application.
+- **w-plane:** Already pipelined (cy1=18 levels is slightly above 12 — may
+  need one more pipeline stage at 60 MHz. At 40 MHz fallback, it fits.)
+
+### 7.6 Monitoring and escalation
+
+At 60 MHz, the monitoring table becomes:
+
+| Metric | Target | Hard limit (2051) | Action if exceeded |
 |--------|--------|-------------------|-------------------|
-| MC cycles/MB | ≤500 | ≤760 | >760 → raise clk_decode to 60 MHz |
-| DPB fetch cycles/MB | ≤168 | ≤500 | >500 → must implement 64-bit |
-| Total pipeline cycles/MB | ≤800 | ≤1368 | >1368 → raise clk_decode |
+| MC cycles/MB | ≤750 | ≤1200 | >1200 → investigate implementation, not clock |
+| DPB fetch cycles/MB | ≤168 | ≤988 | Even byte-serial fits at 2051 |
+| Deblock cycles/MB | ≤150 | ≤400 | >400 → pipeline deeper |
+| Total pipeline cycles/MB | ≤1000 | ≤2051 | >2051 → frame drops |
 
-**If total exceeds 1368 at 40 MHz:** raise `clk_decode` to 60 MHz (PLL
-change only, no additional CDC work). Budget: 2,051 cycles/MB.
+**If timing closure fails at 60 MHz:** drop to 48 MHz (PLL parameter only).
+Budget: 1,641 cycles/MB (2.70× over 608). Still comfortable.
 
-**If timing closure fails at 40 MHz:** this is new information. Fall back
-to 20 MHz and apply v1–v2 recommendations (tight but feasible per w-c1).
-No work is wasted — the async FIFO and synchronizers remain valid.
+**If timing closure fails at 48 MHz:** drop to 40 MHz. Budget: 1,368 cycles/MB
+(2.25× over 608). Still adequate.
+
+**If timing closure fails at 40 MHz:** this is genuinely surprising and suggests
+a deeper problem (routing congestion, placement failures). Fall back to 20 MHz
+and apply v1–v2 tight-budget architecture. No CDC work is wasted.
+
+**Critical: w-plane's I16 Plane at 18 levels (cy1) may be the binding constraint
+for 60 MHz.** At 1.0 ns/level, 18 levels = 18.3 ns > 16.7 ns period. Either:
+(a) add one pipeline stage to Plane cy1 (splitting it to 9+9), or
+(b) accept 48 MHz as the ceiling for the Plane case (18×1.0+0.3 = 18.3 ns →
+    max 54 MHz), since Plane MBs are rare in typical content.
+This should be coordinated with w-plane.
 
 ---
 
@@ -912,7 +1109,14 @@ No work is wasted — the async FIFO and synchronizers remain valid.
 | MC interpolation = 96 cyc/MB | First-principles estimate, 4-wide FIR | **Estimate** |
 | Deblocking = 126 cyc/MB | First-principles estimate, 48 edges × 2 + overhead | **Estimate** |
 | P_Skip fraction = 60–80% | Typical movie content heuristic | **Assumption** |
-| VCO ≈ 720 MHz | Inference from PLL constraints | **Unverified** |
+| VCO ≈ 720 MHz | Computed from PLL constraints: LCM(20,90) with VCO in [600,1300] | **COMPUTED, UNVERIFIED** |
+| **VCO=720: available outputs 30,36,40,45,48,60,72,80,90,120 MHz** | Integer-N PLL arithmetic: VCO/C for integer C | **COMPUTED (v3.1)** |
+| **Critical path = 12 logic levels (parse_cavlc, deblock)** | First-principles depth analysis, all decode stages | **ESTIMATED (v3.1)** |
+| **6-tap FIR = ~7 levels with shift+add symmetry decomposition** | {1,-5,20,20,-5,1}: (a+f)+20(c+d)-5(b+e), 20x=x<<4+x<<2 | **DERIVED (v3.1)** |
+| **Conservative max freq = ~81 MHz (12 levels × 1.0 ns + 0.3 ns)** | Cyclone V ALM delay model, conservative routing | **ESTIMATED (v3.1)** |
+| **60 MHz target closes with +4.1 ns margin (conservative model)** | 16.7 ns period - 12.3 ns critical path | **ESTIMATED (v3.1)** |
+| **w-plane I16 Plane: 55-70 → 18/8 levels after pipelining** | w-plane report: pre-computed 32 products, 512→32 multipliers | **Reported (v3.1)** |
+| **w-cabac carry chain impact: ~0.3 ns (4 extra bits)** | Cyclone V carry chain: ~0.07 ns/bit × 4 bits | **ESTIMATED (v3.1)** |
 | **CDC cost for decode-only separation: 1 async FIFO + ~4 2-FF syncs** | Traced from stream_path ports and DDR_FRAME_STORE architecture | **Traced ✓ (v3)** |
 | **Full clock migration: 6 groups, ~285 signals** | Enumerated from stream_path + DDR interface | Counted ✓ |
 
@@ -931,12 +1135,12 @@ intra-domain timing. Once those crossings are fixed, the slack tells us
 the INTRA-domain timing margin, which is what matters for the decode clock
 frequency question. **Still need numbers from w-cap after the re-fit.**
 
-### New questions (v3)
+### New questions (v3.1)
 
 8. **VCO confirmation for 4th output.** What VCO does the fitter actually
-   choose for the current 3-output PLL? Can a 4th output at 40 MHz (or 60,
-   or 80) be added without changing the VCO and thus without affecting the
-   existing clk_sdram/clk_ddr frequencies? **w-cap owns this.**
+   choose for the current 3-output PLL? Can a 4th output at 60 MHz be
+   added without changing the VCO? At VCO=720: C=12 (exact). At VCO=1260:
+   C=21 (exact). Both work. **w-cap owns this.**
 
 9. **Intra-domain slack at 20 MHz.** After the CDC fixes land, what is the
    worst-case intra-domain slack for `clk_sys`? This directly tells us the
@@ -950,22 +1154,31 @@ frequency question. **Still need numbers from w-cap after the re-fit.**
     At 40 MHz (25 ns period), a few ns of additional carry chain is likely
     fine; at 90 MHz (11.1 ns), it matters.
 
-### Still open from v1–v2
+### Still open from v1–v2 (updated for 60 MHz context)
 
 2. **Actual CAVLC worst-case** — 50-cycle allocation needs validation on
-   complex I-frames.
+   complex I-frames. CAVLC is one of the 12-level critical paths. If it
+   turns out deeper in practice, it may be the frequency ceiling.
 
 3. **DDR arbitration contention** — worst-case latency bounds under
-   multi-port contention.
+   multi-port contention. Less critical at 60 MHz (triple the budget).
 
 4. **Sub-MB partitions** — P_L0_16×8, P_L0_8×16, P_8×8ref impact on MC
-   cycles. Less critical at 40 MHz (500-cycle ceiling) but still should
-   be measured.
+   cycles. Not critical at 60 MHz (750-cycle ceiling).
 
-5. **I16 Plane DSP budget** — w-plane must use shift-add, not DSP multipliers.
+5. **I16 Plane DSP budget** — w-plane's shift-add approach preserves DSPs.
+   **Additionally:** their cy1 at 18 levels may exceed 60 MHz ceiling.
+   Coordinate with w-plane on whether a 3rd pipeline stage is needed.
 
-6. **Adjacent-MB cache miss rate** — less critical at 40 MHz but still
-   affects efficiency. Measure on w-cabac's graded P-slice ladder.
+6. **Adjacent-MB cache miss rate** — optimisation only at 60 MHz.
+
+11. **w-plane I16 Plane cy1 = 18 levels vs 60 MHz.** At conservative
+    1.0 ns/level, 18 levels = 18.3 ns > 16.7 ns period (60 MHz). Options:
+    (a) split cy1 into two pipeline stages (9+9 levels, 3 total cycles),
+    (b) accept that Plane MBs are rare and tolerate a local timing
+    exception (multicycle path constraint), or (c) target 48 MHz.
+    **This is potentially the binding constraint for 60 MHz.** Coordinate
+    with w-plane immediately.
 
 ---
 
