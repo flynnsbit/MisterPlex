@@ -167,22 +167,34 @@ uint32_t fnv1a(const std::vector<uint8_t>& v) { uint32_t h=2166136261u; for (uin
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    std::string annexbPath, goldenPath; bool faultBs = false;
+    std::string annexbPath, goldenPath, sequencePath; bool faultBs = false;
     for (int i=1;i<argc;++i) {
         std::string a=argv[i];
         if (a=="--annexb" && i+1<argc) annexbPath=argv[++i];
         else if (a=="--mb-golden" && i+1<argc) goldenPath=argv[++i];
+        else if (a=="--nal-sequence" && i+1<argc) sequencePath=argv[++i];
         else if (a=="--fault-bs") faultBs=true;
-        else { std::cerr << "usage: " << argv[0] << " --annexb path --mb-golden path [--fault-bs]\n"; return 2; }
+        else { std::cerr << "usage: " << argv[0] << " --annexb path --mb-golden path --nal-sequence path [--fault-bs]\n"; return 2; }
     }
-    if (annexbPath.empty() || goldenPath.empty()) { std::cerr << "missing fixture paths\n"; return 2; }
+    if (annexbPath.empty() || goldenPath.empty() || sequencePath.empty()) { std::cerr << "missing fixture paths\n"; return 2; }
 
     try {
         auto bytes = readBytes(annexbPath);
         std::string json = readText(goldenPath);
+        std::string seqJson = readText(sequencePath);
         int inputNalCount = countNals(bytes);
         if (inputNalCount < 2) throw std::runtime_error("fixture has fewer than 2 NALs");
         if (json.find("\"format\": \"misterplex.p3.mb_golden.v1\"") == std::string::npos) throw std::runtime_error("missing mb_golden.v1 format");
+        if (seqJson.find("\"format\": \"misterplex.p3.nal_sequence.v1\"") == std::string::npos) throw std::runtime_error("missing nal_sequence.v1 format");
+        size_t seqPos = seqJson.find("\"sequence\"");
+        int expectNalCount = parseIntAfter(seqJson, "nal_count", seqPos);
+        int expectVclCount = parseIntAfter(seqJson, "vcl", seqPos);
+        int expectIdrCount = parseIntAfter(seqJson, "idr", seqPos);
+        int expectNonIdrCount = parseIntAfter(seqJson, "non_idr", seqPos);
+        int expectPSlices = parseIntAfter(seqJson, "p_slices", seqPos);
+        if (expectNalCount != inputNalCount || expectVclCount < 2 || expectPSlices < 1 || expectNonIdrCount < 1) {
+            throw std::runtime_error("nal_sequence.v1 expectations do not describe a multi-VCL IDR+P fixture");
+        }
         if (json.find("\"first_recon_signature8_hex\": \"0x3b\"") == std::string::npos || json.find("\"first_pred_only_signature8_hex\": \"0x00\"") == std::string::npos) throw std::runtime_error("missing latency signature rejects");
         size_t mbPos = json.find("\"macroblock\"");
         size_t samplesPos = json.find("\"samples\"");
@@ -199,9 +211,14 @@ int main(int argc, char** argv) {
         int frameEvents = 0;
         std::vector<int> frameSigs, frameDbg;
         int placePulses = 0;
+        int sawExpectedCsum = 0;
+        int reconSig3bCycles = 0;
+        int residualQp = -1;
         auto tickObs = [&]() {
             tick(dut);
-            if (dut.residual_place_pulse) ++placePulses;
+            if (dut.residual_place_pulse) { ++placePulses; residualQp = int(dut.slice_qp); }
+            if (static_cast<uint8_t>(dut.residual_csum) == 0x14) sawExpectedCsum = 1;
+            if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b) ++reconSig3bCycles;
             if (dut.stub_frames != lastFrames) {
                 lastFrames = dut.stub_frames;
                 ++frameEvents;
@@ -215,8 +232,9 @@ int main(int argc, char** argv) {
                 dut.ioctl_dout = b;
                 dut.ioctl_wr = 1;
                 tickObs();
+                dut.ioctl_wr = 0;
+                tickObs();
             }
-            dut.ioctl_wr = 0;
             dut.ioctl_download = 0;
             tickObs();
         };
@@ -229,36 +247,37 @@ int main(int argc, char** argv) {
         tickObs();
 
         feedBytes();
-        runUntilFrames(1, 500000);
-        feedBytes();
-        runUntilFrames(2, 500000);
+        runUntilFrames(expectVclCount, 1000000);
 
-        const int totalInputNals = inputNalCount * 2;
-        const size_t totalInputBytes = bytes.size() * 2;
-        std::cout << "stream_path raw: input_nals=" << totalInputNals << " bytes=" << totalInputBytes
+        std::cout << "stream_path raw: input_nals=" << inputNalCount << " bytes=" << bytes.size()
                   << " bytes_in=" << dut.bytes_in << " bytes_seen=" << dut.bytes_seen
                   << " nalu_count=" << dut.nalu_count << " sps=" << int(dut.sps_count)
                   << " pps=" << int(dut.pps_count) << " idr=" << int(dut.idr_count)
                   << " slices=" << int(dut.slice_count) << " frames=" << dut.stub_frames
-                  << " residual_place_pulses=" << placePulses << " qp=" << int(dut.slice_qp)
+                  << " expected_vcl=" << expectVclCount
+                  << " residual_place_pulses=" << placePulses
+                  << " saw_expected_csum=" << sawExpectedCsum
+                  << " recon_sig_3b_cycles=" << reconSig3bCycles
+                  << " final_qp=" << int(dut.slice_qp) << " residual_qp=" << residualQp
                   << " mb=" << int(dut.sps_mb_w) << "x" << int(dut.sps_mb_h)
                   << " residual_csum=0x" << std::hex << int(dut.residual_csum)
                   << " recon_sig=0x" << int(dut.recon_sig) << " recon_dbg=0x" << int(dut.recon_dbg) << std::dec << "\n";
-        if (frameEvents < 2 || (int(dut.idr_count) + int(dut.slice_count)) < 2) throw std::runtime_error("multi-NAL stream did not produce at least two decoded VCL frames");
-        if (placePulses < 2) throw std::runtime_error("expected residual place pulse for both VCLs");
-        if (dut.residual_csum != 0x14 || dut.recon_sig != 0x3b) throw std::runtime_error("stream_path handoff did not preserve residual into recon");
+        if (frameEvents < expectVclCount || (int(dut.idr_count) + int(dut.slice_count)) < expectVclCount) throw std::runtime_error("multi-NAL stream did not produce expected decoded VCL frames");
+        if (int(dut.nalu_count) != expectNalCount || int(dut.idr_count) < expectIdrCount || int(dut.slice_count) < expectNonIdrCount) throw std::runtime_error("stream_path counts do not match nal_sequence.v1 expectations");
+        if (placePulses < 1) throw std::runtime_error("expected IDR residual place pulse");
+        if (!sawExpectedCsum || reconSig3bCycles == 0) throw std::runtime_error("stream_path handoff did not preserve residual into recon");
         if ((dut.recon_dbg & 0x79) != 0x79) throw std::runtime_error("recon debug bits do not show coeff/dequant/idct/recon/valid path");
-        if (int(dut.slice_qp) != goldenQp) throw std::runtime_error("stream QP differs from mb_golden QP");
+        if (residualQp != goldenQp) throw std::runtime_error("stream residual QP differs from mb_golden QP");
         if (int(dut.disable_deblocking_filter_idc) != 0 || sign5(dut.slice_alpha_c0_offset_div2) != 0 ||
             sign5(dut.slice_beta_offset_div2) != 0 || sign5(dut.slice_alpha_c0_offset) != 0 ||
             sign5(dut.slice_beta_offset) != 0) {
             throw std::runtime_error("fixture slice deblocking controls are not the expected idc=0 offsets=0 baseline");
         }
 
-        dut.bs_disable_all=0; dut.bs_slice_boundary_blocked=0; dut.bs_p_nonzero=0; dut.bs_q_nonzero=0; dut.bs_p_ref=0; dut.bs_q_ref=0; dut.bs_p_mvx=0; dut.bs_p_mvy=0; dut.bs_q_mvx=0; dut.bs_q_mvy=0; dut.use_stream_intra=1;
+        dut.bs_disable_all=0; dut.bs_slice_boundary_blocked=0; dut.bs_p_nonzero=0; dut.bs_q_nonzero=0; dut.bs_p_ref=0; dut.bs_q_ref=0; dut.bs_p_mvx=0; dut.bs_p_mvy=0; dut.bs_q_mvx=0; dut.bs_q_mvy=0; dut.use_stream_intra=0; dut.bs_p_intra=1; dut.bs_q_intra=0;
         dut.bs_mb_boundary=1; dut.eval(); int bsMb = dut.bs_derived;
         dut.bs_mb_boundary=0; dut.eval(); int bsInternal = dut.bs_derived;
-        dut.use_stream_intra=0; dut.bs_p_intra=0; dut.bs_q_intra=0; dut.bs_p_nonzero=1; dut.eval(); int bsResidual = dut.bs_derived;
+        dut.bs_p_intra=0; dut.bs_q_intra=0; dut.bs_p_nonzero=1; dut.eval(); int bsResidual = dut.bs_derived;
         dut.bs_p_nonzero=0; dut.bs_q_nonzero=1; dut.eval(); int bsResidualQ = dut.bs_derived;
         dut.bs_q_nonzero=0; dut.bs_q_mvx=3; dut.bs_q_mvy=0; dut.eval(); int bsMvBelow = dut.bs_derived;
         dut.bs_q_mvx=4; dut.eval(); int bsMvXPos = dut.bs_derived;
@@ -276,7 +295,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("boundary-strength derivation completeness sweep failed");
         }
 
-        dut.use_stream_qp=1; dut.db_bs_in=3; dut.db_alpha_off=0; dut.db_beta_off=0; dut.eval();
+        dut.use_stream_qp=0; dut.db_qp_avg=residualQp; dut.db_bs_in=3; dut.db_alpha_off=0; dut.db_beta_off=0; dut.eval();
         int alpha = dut.db_alpha, beta = dut.db_beta, tc0 = dut.db_tc0;
         if (alpha != alphaTable(goldenQp) || beta != betaTable(goldenQp) || tc0 != tc0Table(goldenQp, 3)) throw std::runtime_error("thresholds do not match stream QP average");
         dut.use_stream_qp=0; dut.db_qp_avg=28; dut.db_bs_in=2; dut.db_alpha_off=6; dut.db_beta_off=-6; dut.eval();
@@ -288,7 +307,7 @@ int main(int argc, char** argv) {
         dut.db_qp_avg=4; dut.db_bs_in=3; dut.db_alpha_off=-12; dut.db_beta_off=-12; dut.eval();
         int alphaLowClip = dut.db_alpha, betaLowClip = dut.db_beta, tc0LowClip = dut.db_tc0;
         if (alphaLowClip != 0 || betaLowClip != 0 || tc0LowClip != 0) throw std::runtime_error("low filter offset clipping failed");
-        dut.use_stream_qp=1;
+        dut.use_stream_qp=0; dut.db_qp_avg=residualQp;
 
         std::vector<uint8_t> loopRef = reconY;
         bool foundChanged = false; int chosenX = -1, chosenY = -1; int chosenSampleX = -1, chosenSampleY = -1; EdgeOut chosenOut{};
@@ -323,7 +342,7 @@ edge_found:
         EdgeOut chromaStrongGot = pipeEdge(dut, chromaStrong, true, 4);
         EdgeOut chromaStrongWant = refEdge(chromaStrong, true, 4, 40, 0, 0);
         EdgeOut lumaStrongWould = refEdge(chromaStrong, false, 4, 40, 0, 0);
-        dut.use_stream_qp = 1;
+        dut.use_stream_qp = 0; dut.db_qp_avg = residualQp;
         if (!same(chromaStrongWant, chromaStrongGot)) throw std::runtime_error("chroma bS4 short filter mismatch");
         if (chromaStrongGot.p1 != chromaStrong.p1 || chromaStrongGot.p2 != chromaStrong.p2 ||
             chromaStrongGot.q1 != chromaStrong.q1 || chromaStrongGot.q2 != chromaStrong.q2 ||

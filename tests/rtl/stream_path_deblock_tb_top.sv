@@ -98,7 +98,7 @@ module stream_path_deblock_tb (
 	wire fs_wr_en, fs_wr_reset, fs_swap;
 	wire [15:0] fs_wr_pixel;
 
-	stream_path #(.FRAME_W(320), .FRAME_H(240)) u_stream (
+	stream_path #(.FRAME_W(16), .FRAME_H(16)) u_stream (
 		.clk(clk), .reset(reset),
 		.ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
 		.enable(enable), .flush(flush),

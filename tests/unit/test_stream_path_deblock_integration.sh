@@ -31,9 +31,9 @@ for src in rtl/stream_path.sv rtl/h264_deblock.sv rtl/decode_stub.sv rtl/slice_h
   fi
 done
 
-SRC_ANNEXB="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
+SRC_ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
+SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
 BUILD_FIX="$ROOT/build/p3_stream_path_deblock"
-ANNEXB2="$SRC_ANNEXB"
 GOLDEN="$BUILD_FIX/mb0.json"
 mkdir -p "$BUILD_FIX"
 make -s -C "$ROOT" h264-golden-tools
@@ -62,10 +62,10 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   -CFLAGS "-std=c++17 -O2" \
   "${RTL[@]}" "$TOP" "$TB"
 EXE="$BUILD/Vstream_path_deblock_tb"
-"$EXE" --annexb "$ANNEXB2" --mb-golden "$GOLDEN"
+"$EXE" --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
 
 set +e
-FAULT_OUT="$($EXE --annexb "$ANNEXB2" --mb-golden "$GOLDEN" --fault-bs 2>&1)"
+FAULT_OUT="$($EXE --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-bs 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT"
