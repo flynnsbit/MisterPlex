@@ -105,6 +105,58 @@ def write_provenance(path: Path, *, rbf: str = VALID_RBF_MD5,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def rgb_to_yuv601(rgb: np.ndarray) -> np.ndarray:
+    r = rgb[..., 0].astype(np.float64)
+    g = rgb[..., 1].astype(np.float64)
+    b = rgb[..., 2].astype(np.float64)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    u = -0.168736 * r - 0.331264 * g + 0.5 * b + 128.0
+    v = 0.5 * r - 0.418688 * g - 0.081312 * b + 128.0
+    return np.stack([y, u, v], axis=-1)
+
+
+def rgb_to_yuv709(rgb: np.ndarray) -> np.ndarray:
+    r = rgb[..., 0].astype(np.float64)
+    g = rgb[..., 1].astype(np.float64)
+    b = rgb[..., 2].astype(np.float64)
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    u = -0.114572 * r - 0.385428 * g + 0.5 * b + 128.0
+    v = 0.5 * r - 0.454153 * g - 0.045847 * b + 128.0
+    return np.stack([y, u, v], axis=-1)
+
+
+def yuv_to_rgb601(yuv: np.ndarray) -> np.ndarray:
+    y = yuv[..., 0]
+    u = yuv[..., 1] - 128.0
+    v = yuv[..., 2] - 128.0
+    r = y + 1.402 * v
+    g = y - 0.344136 * u - 0.714136 * v
+    b = y + 1.772 * u
+    return np.clip(np.rint(np.stack([r, g, b], axis=-1)), 0, 255).astype(np.uint8)
+
+
+def yuv_to_rgb709(yuv: np.ndarray) -> np.ndarray:
+    y = yuv[..., 0]
+    u = yuv[..., 1] - 128.0
+    v = yuv[..., 2] - 128.0
+    r = y + 1.5748 * v
+    g = y - 0.187324 * u - 0.468124 * v
+    b = y + 1.8556 * u
+    return np.clip(np.rint(np.stack([r, g, b], axis=-1)), 0, 255).astype(np.uint8)
+
+
+def print_verdict_case(name: str, report: dict) -> None:
+    verdict = report["stats"]["visual_verdict"]
+    disp = verdict["dispersion"]
+    mae = [round(x, 6) for x in disp["per_channel_mae_rgb"]]
+    print(
+        f"VISUAL_VERDICT_CASE {name} id={verdict['id']} "
+        f"mae_rgb={mae} ratio={disp['max_min_ratio']:.6f} "
+        f"cv={disp['coefficient_of_variation']:.6f} "
+        f"exact={report['stats']['exact_match_ratio']:.6f}"
+    )
+
+
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
 
@@ -170,6 +222,8 @@ def main() -> int:
     require(gr["stats"]["per_plane_exact_match_pixels_yuv"] ==
             [gr["stats"]["active_pixels"]] * 3,
             f"known-good YUV per-plane exact counts wrong: {gr}")
+    require(gr["stats"]["visual_verdict"]["id"] == "EXACT_MATCH",
+            f"known-good visual verdict wrong: {gr['stats']['visual_verdict']}")
     require(good_diff.exists() and good_diff.stat().st_size > 0, "good diff artifact missing")
     require(gr["color_provenance"]["golden"] == {"matrix": "bt601", "range": "full"},
             f"good compare did not record golden colour provenance: {gr}")
@@ -318,6 +372,74 @@ def main() -> int:
             f"shift sweep should prefer no shift for single-pixel corruption: {br['shift_sweep'][:3]}")
     require(bad_diff.exists() and bad_diff.stat().st_size > 0, "bad diff artifact missing")
     print("PASS corrupted active pixel rejected with precise worst mismatch + diff artifact")
+
+    def compare_variant(name: str, pixels: np.ndarray, expected_id: str,
+                        expected_rc: int = 1, shift_radius: int = 0) -> dict:
+        path = WORK / f"{name}.png"
+        report = WORK / f"{name}.json"
+        write_png(path, pixels)
+        args = [
+            "compare",
+            "--golden", str(valid_golden),
+            *COLOR_ARGS,
+            *VALID_PROVENANCE_ARGS,
+            "--capture", str(path),
+            "--report", str(report),
+        ]
+        if shift_radius:
+            args.extend(["--shift-radius", str(shift_radius)])
+        proc = run(*args)
+        require(proc.returncode == expected_rc,
+                f"{name} rc={proc.returncode}, want {expected_rc}\nstdout={proc.stdout}\nstderr={proc.stderr}")
+        data = json.loads(report.read_text())
+        print_verdict_case(name, data)
+        require(data["stats"]["visual_verdict"]["id"] == expected_id,
+                f"{name} verdict wrong: {data['stats']['visual_verdict']}")
+        return data
+
+    exact_case = compare_variant("verdict_exact", golden, "EXACT_MATCH", expected_rc=0)
+    require(exact_case["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] == 1.0,
+            f"exact dispersion should be ratio 1: {exact_case['stats']['visual_verdict']}")
+
+    rng = np.random.default_rng(12345)
+    unrelated = rng.integers(0, 256, golden.shape, dtype=np.uint8)
+    no_frame = compare_variant("verdict_unrelated_random", unrelated, "NO_FRAME_DELIVERED")
+    require(no_frame["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] < 1.02,
+            f"unrelated/random should be flat channel error: {no_frame['stats']['visual_verdict']}")
+
+    wrong_709 = yuv_to_rgb709(rgb_to_yuv601(golden))
+    matrix = compare_variant("verdict_601_encoded_709_decoded", wrong_709, "COLOUR_PATH_DEFECT")
+    require(matrix["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] > 30.0,
+            f"601/709 matrix mismatch should be strongly channel-skewed: {matrix['stats']['visual_verdict']}")
+
+    yuv = rgb_to_yuv601(golden)
+    uv_swapped_yuv = yuv.copy()
+    uv_swapped_yuv[..., 1] = yuv[..., 2]
+    uv_swapped_yuv[..., 2] = yuv[..., 1]
+    uv_swap = compare_variant("verdict_uv_swap", yuv_to_rgb601(uv_swapped_yuv), "COLOUR_PATH_DEFECT")
+    require(uv_swap["stats"]["visual_verdict"]["dispersion"]["max_min_ratio"] > 5.0,
+            f"U/V swap should be channel-skewed: {uv_swap['stats']['visual_verdict']}")
+
+    shifted = golden.copy()
+    shifted[:, 5:, :] = golden[:, :-5, :]
+    shifted[:, :5, :] = 0
+    shifted_case = compare_variant("verdict_shift_x5", shifted, "GEOMETRY_CONTENT_DEFECT",
+                                   shift_radius=6)
+    require(shifted_case["stats"]["visual_verdict"]["id"] != "COLOUR_PATH_DEFECT",
+            f"pixel shift must not be labelled colour: {shifted_case['stats']['visual_verdict']}")
+    require(shifted_case["stats"]["visual_verdict"]["best_shift"]["captured_dx"] == 5,
+            f"shift verdict did not identify +5px capture shift: {shifted_case['stats']['visual_verdict']}")
+
+    ambiguous = golden.copy().astype(np.int16)
+    ambiguous[:, :, 0] = np.clip(ambiguous[:, :, 0] + 80, 0, 255)
+    ambiguous[:, :, 1] = np.clip(ambiguous[:, :, 1] + 50, 0, 255)
+    ambiguous[:, :, 2] = np.clip(ambiguous[:, :, 2] + 40, 0, 255)
+    ambiguous_case = compare_variant("verdict_ambiguous_dispersion", ambiguous.astype(np.uint8),
+                                     "INDETERMINATE", expected_rc=2)
+    disp = ambiguous_case["stats"]["visual_verdict"]["dispersion"]
+    require(1.15 < disp["max_min_ratio"] < 5.0 and disp["coefficient_of_variation"] < 0.50,
+            f"ambiguous case must land in the refused unsafe band: {disp}")
+    print("PASS visual verdict classifies exact/no-frame/colour/geometry and refuses ambiguous dispersion")
 
     uniform_sig = hw_visual_compare.classify_error_signatures({
         "active_pixels": 296640,

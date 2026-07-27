@@ -808,6 +808,123 @@ def classify_error_signatures(stats: dict) -> list[dict]:
     return sigs
 
 
+def channel_dispersion(mae: list[float]) -> dict:
+    arr = np.array(mae, dtype=np.float64)
+    avg = float(arr.mean()) if arr.size else 0.0
+    min_v = float(arr.min()) if arr.size else 0.0
+    max_v = float(arr.max()) if arr.size else 0.0
+    ratio = float(max_v / min_v) if min_v > 1.0e-9 else (float("inf") if max_v > 0 else 1.0)
+    cv = float(arr.std() / avg) if avg > 1.0e-9 else 0.0
+    return {
+        "metric": "rgb_mae_channel_dispersion",
+        "per_channel_mae_rgb": [float(x) for x in mae],
+        "mean": avg,
+        "min": min_v,
+        "max": max_v,
+        "max_min_ratio": ratio,
+        "coefficient_of_variation": cv,
+        "threshold_basis": {
+            # Synthetic 624x480 active-region evidence in tests/unit/test_hw_visual_compare.py:
+            # unrelated/random: ratio=1.007 cv=0.003; unrelated/solid: ratio=1.046 cv=0.018;
+            # live frozen-screen report: ratio≈1.06 cv≈0.024.  These are intentionally below
+            # the flat/no-frame cutoffs.  Colour-path cases are far above them: 601→709
+            # ratio≈38.8 cv≈1.27, 709→601 ratio≈15.8 cv≈0.74, U/V swap ratio≈7.1 cv≈0.56.
+            "no_frame_delivered": {
+                "mean_mae_min": 20.0,
+                "exact_match_ratio_max": 0.05,
+                "max_min_ratio_max": 1.15,
+                "coefficient_of_variation_max": 0.06,
+            },
+            "colour_path_defect": {
+                "mean_mae_min": 5.0,
+                "exact_match_ratio_max": 0.20,
+                "max_min_ratio_min": 5.0,
+                "coefficient_of_variation_min": 0.50,
+            },
+        },
+    }
+
+
+def classify_visual_verdict(stats: dict, shift_rows: list[dict] | None = None) -> dict:
+    """Classify mismatch shape without hiding raw numbers.
+
+    The verdict is diagnostic, not a pass/fail threshold.  Ambiguous high-error
+    channel dispersion is deliberately refused by cmd_compare instead of being
+    guessed as either a colour defect or absent frame.
+    """
+    dispersion = channel_dispersion([float(x) for x in stats["per_plane_mae_rgb"]])
+    exact_ratio = float(stats["exact_match_ratio"])
+    mean_mae = dispersion["mean"]
+    ratio = dispersion["max_min_ratio"]
+    cv = dispersion["coefficient_of_variation"]
+    if stats["exact_match_pixels"] == stats["active_pixels"]:
+        return {
+            "id": "EXACT_MATCH",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "captured active region exactly matches the declared golden",
+        }
+
+    current_avg = mean_mae
+    if shift_rows:
+        best = shift_rows[0]
+        best_avg = float(sum(best["per_plane_mae_rgb"]) / 3.0)
+        best_exact = float(best["exact_match_ratio"])
+        if (
+            (best["captured_dx"] != 0 or best["captured_dy"] != 0)
+            and (best_exact >= exact_ratio + 0.20 or best_avg <= current_avg * 0.25)
+        ):
+            return {
+                "id": "GEOMETRY_CONTENT_DEFECT",
+                "confidence": "high",
+                "dispersion": dispersion,
+                "best_shift": best,
+                "note": "a shifted capture overlap explains the mismatch better than channel dispersion; check geometry, crop, pillar, or content alignment",
+            }
+
+    no_frame = (
+        mean_mae >= 20.0
+        and exact_ratio <= 0.05
+        and ratio <= 1.15
+        and cv <= 0.06
+    )
+    if no_frame:
+        return {
+            "id": "NO_FRAME_DELIVERED",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "RGB MAE is high and nearly channel-uniform; treat as absent/stale panel content (e.g. PLXF mailbox/frame delivery), not a colour conversion defect",
+        }
+
+    colour = (
+        mean_mae >= 5.0
+        and exact_ratio <= 0.20
+        and (ratio >= 5.0 or cv >= 0.50)
+    )
+    if colour:
+        return {
+            "id": "COLOUR_PATH_DEFECT",
+            "confidence": "high",
+            "dispersion": dispersion,
+            "note": "RGB MAE is strongly channel-skewed; check matrix/range or U/V/chroma path before delivery plumbing",
+        }
+
+    if mean_mae < 5.0 or exact_ratio >= 0.10:
+        return {
+            "id": "GEOMETRY_CONTENT_DEFECT",
+            "confidence": "medium",
+            "dispersion": dispersion,
+            "note": "mismatch is sparse/structured or low-amplitude rather than flat absent-frame or strongly channel-skewed colour error",
+        }
+
+    return {
+        "id": "INDETERMINATE",
+        "confidence": "none",
+        "dispersion": dispersion,
+        "note": "RGB MAE dispersion is in the unsafe band between flat no-frame and skewed colour-path signatures; refusing to guess",
+    }
+
+
 def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
                box: tuple[int, int, int, int] | None = None) -> dict:
     ga = active_view(golden, g, box).astype(np.int16)
@@ -868,6 +985,7 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
         },
     }
     stats["diagnostic_signatures"] = classify_error_signatures(stats)
+    stats["visual_verdict"] = classify_visual_verdict(stats)
     return stats
 
 
@@ -1055,11 +1173,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
         report["diff"] = str(args.diff)
     if args.shift_radius:
         report["shift_sweep"] = shift_sweep(golden, captured, g, box, args.shift_radius)
+        stats["visual_verdict"] = classify_visual_verdict(stats, report["shift_sweep"])
     if args.report:
         out = Path(args.report)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, sort_keys=True))
+    if not ok and stats["visual_verdict"]["id"] == "INDETERMINATE":
+        return 2
     return 0 if ok else 1
 
 
