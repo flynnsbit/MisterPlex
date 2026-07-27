@@ -646,7 +646,7 @@ def run_verilator_sweep() -> int:
         info("SKIP Verilator RTL sweep (testbench C++ not found)")
         return 0
 
-    # Read the product RTL output width and generate a matching SV wrapper
+    # Read the product RTL input/output widths and generate a matching SV wrapper
     import re
     rtl_text = rtl_src.read_text()
     m = re.search(r'output\s+wire\s+signed\s+\[(\d+):0\]\s+dequant', rtl_text)
@@ -654,6 +654,8 @@ def run_verilator_sweep() -> int:
         info("SKIP Verilator RTL sweep (cannot parse dequant output width)")
         return 0
     msb = int(m.group(1))
+    m_in = re.search(r'input\s+wire\s+signed\s+\[(\d+):0\]\s+coeff', rtl_text)
+    coeff_msb = int(m_in.group(1)) if m_in else 8  # fallback to 8 for old versions
 
     build_dir = ROOT / "build/verilator_qp_sweep"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -664,7 +666,7 @@ def run_verilator_sweep() -> int:
 // Auto-generated testbench wrapper — width [{msb}:0] from product RTL.
 `default_nettype none
 module h264_dequant_qp_sweep_tb (
-    input  wire signed [8:0]  coeff    [0:15],
+    input  wire signed [{coeff_msb}:0]  coeff    [0:15],
     input  wire        [4:0]  max_coeff,
     input  wire        [5:0]  qp,
     output wire signed [{msb}:0] dequant  [0:15]
