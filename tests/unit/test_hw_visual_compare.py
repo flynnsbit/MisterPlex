@@ -61,6 +61,8 @@ def main() -> int:
     require(geom["display_width"] == 618, f"display width wrong: {geom}")
     require(geom["presented_width"] == 640, f"presented width wrong: {geom}")
     require(geom["pillarbox_left"] == 11, f"pillarbox wrong: {geom}")
+    box = hw_visual_compare.parse_compare_box("11,0,160,120", hw_visual_compare.load_geometry())
+    require(box == (11, 0, 171, 120), f"compare-box parsing wrong: {box}")
     print("PASS shared host/RTL geometry parsed")
 
     golden = np.array(Image.open(GOLDEN).convert("RGB"), dtype=np.uint8)

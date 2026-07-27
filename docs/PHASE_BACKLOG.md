@@ -37,13 +37,14 @@ visual unit tests/debug output instead of stopping at Verilator.
 | **Branch** | `feat/c1-hw-visual` |
 | **Harness** | `tests/hw/test_f3_visual_golden.sh` |
 | **Comparator** | `scripts/hw_visual_compare.py` |
-| **Goldens** | `tests/fixtures/hw_visual/plex_visual_624x480_1f.264`, `plex_visual_640x480_golden.png` |
+| **Goldens** | default pair: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264` + `tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png` |
 | **Docs** | [`hw-visual-regression.md`](hw-visual-regression.md) |
 | **Status** | Real HDMI capture achieved; `57674f2e` grades GREEN and characterized bad `fe7673bc` grades RED |
 
 **Design:** push a known Baseline/CAVLC F3 vector, capture HDMI, derive thresholds from five repeated static
-captures, compare only the active 618×480 display region (using shared host/RTL DDR layout headers), and emit
-`golden | captured | amplified-diff` PNG plus JSON metrics.
+captures, compare the stable decoded ROI (default `VISUAL_COMPARE_BOX=11,0,160,120`, containing MB0), and emit
+`golden | captured | amplified-diff` PNG plus JSON metrics. The comparator can still use the shared host/RTL DDR
+layout active region for future 624×480 gates.
 
 **Dry-run evidence:** `make unit` exit 0. Synthetic/checked-in noise floor is zero
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
@@ -64,14 +65,15 @@ as either green or known-red core evidence.
 - W-CAP's real `fe7673bc959f37fd7da44e8a865f7db3` YUYV failure logs (`Dequeued v4l2 buffer contains corrupted
   data`, `/dev/video4`, 10 fps, 1280×720 corrupt bytes `1843200`, 640×480 corrupt bytes `614400`) are now checked
   in as capture-log fixtures and force `compare --capture-log ...` to return `rc=4` before pixel grading.
-- Measured static capture noise floor on `57674f2e`: `max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`; thresholds
-  `[1,1,1]` / `2`.
-- Green rollback `57674f2e`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0`.
+- Measured static capture noise floor on `57674f2e` default ROI: `max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`;
+  thresholds `[1,1,1]` / `2`.
+- Green rollback `57674f2e`: exact ROI pixels `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0`.
 - Red specimen `fe7673bc`: telemetry has `res_csum=20`/`raw[13]=0x14` class signal while reconstruction is known
-  bad; visual compare exact active pixels `0/296640`, MAE RGB `[4.9069,66.3937,151.4916]`, max_abs `255`,
+  bad; visual compare exact ROI pixels `0/19200`, MAE RGB `[112.7730,59.8615,61.0523]`, max_abs `242`,
   `rc=1`, diff artifact emitted.
-- Caveat: the checked-in 624×480 fixture did not yet exercise the rollback RBF reliably; the red/green proof used
-  the existing 320×240 F3 baseline vector and a hardware-captured good golden.
+- Tooling now enforces the proven default pair. The 624×480 fixture/golden are retained only as a future target
+  and are not the default because that unproven pairing false-reded on known-good `57674f2e`; full-frame/default
+  active-region compare also false-reded due reload-dependent pixels outside the stable 320×240 ROI.
 
 **Hardware TODO:**
 
@@ -79,7 +81,8 @@ as either green or known-red core evidence.
 - [x] Record real HDMI capture noise floor from `build/hw_visual_accept/noise_good_57674f2e.json`.
 - [x] Prove green visual compare against rollback `57674f2e`.
 - [x] Prove red path on hardware with known-bad `fe7673bc`.
-- [ ] Promote a checked-in host/good golden for the final shipping-artifact gate once the 624×480 vector is live.
+- [x] Promote the proven 320×240 vector + hardware-captured `57674f2e` golden to default gate inputs.
+- [ ] Promote a checked-in host/good 624×480 golden only after that vector is live and green on rollback hardware.
 
 ---
 

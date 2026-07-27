@@ -247,8 +247,24 @@ def capture_v4l2(path: Path, dev: str, input_format: str, size: str, framerate: 
     )
 
 
-def active_view(frame: np.ndarray, g: Geometry) -> np.ndarray:
-    x0, y0, x1, y1 = g.active_box
+def parse_compare_box(spec: str | None, g: Geometry) -> tuple[int, int, int, int]:
+    if not spec:
+        return g.active_box
+    try:
+        x, y, w, h = [int(p) for p in spec.split(",")]
+    except ValueError as e:
+        raise HarnessError(f"invalid compare box {spec!r}; expected x,y,w,h") from e
+    x0, y0, x1, y1 = x, y, x + w, y + h
+    if x0 < 0 or y0 < 0 or w <= 0 or h <= 0 or x1 > g.presented_width or y1 > g.presented_height:
+        raise HarnessError(
+            f"compare box {spec!r} outside presented frame {g.presented_width}x{g.presented_height}"
+        )
+    return x0, y0, x1, y1
+
+
+def active_view(frame: np.ndarray, g: Geometry,
+                box: tuple[int, int, int, int] | None = None) -> np.ndarray:
+    x0, y0, x1, y1 = box if box else g.active_box
     return frame[y0:y1, x0:x1, :]
 
 
@@ -256,9 +272,10 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry) -> dict:
-    ga = active_view(golden, g).astype(np.int16)
-    ca = active_view(captured, g).astype(np.int16)
+def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry,
+               box: tuple[int, int, int, int] | None = None) -> dict:
+    ga = active_view(golden, g, box).astype(np.int16)
+    ca = active_view(captured, g, box).astype(np.int16)
     if ga.shape != ca.shape:
         raise HarnessError(f"active region shape mismatch golden={ga.shape} captured={ca.shape}")
     diff = ca - ga
@@ -267,7 +284,7 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry) -> dict:
     exact = np.all(ad == 0, axis=2)
     worst_flat = int(np.argmax(ad))
     wy, wx, wc = np.unravel_index(worst_flat, ad.shape)
-    x0, y0, _x1, _y1 = g.active_box
+    x0, y0, _x1, _y1 = box if box else g.active_box
     return {
         "active_pixels": int(exact.size),
         "exact_match_pixels": int(exact.sum()),
@@ -288,8 +305,9 @@ def diff_stats(golden: np.ndarray, captured: np.ndarray, g: Geometry) -> dict:
     }
 
 
-def diff_artifact(golden: np.ndarray, captured: np.ndarray, g: Geometry, out: Path) -> None:
-    x0, y0, x1, y1 = g.active_box
+def diff_artifact(golden: np.ndarray, captured: np.ndarray, g: Geometry, out: Path,
+                  box: tuple[int, int, int, int] | None = None) -> None:
+    x0, y0, x1, y1 = box if box else g.active_box
     gg = golden.copy()
     cc = captured.copy()
     # Highlight compared active rectangle without altering the interior.
@@ -300,18 +318,19 @@ def diff_artifact(golden: np.ndarray, captured: np.ndarray, g: Geometry, out: Pa
         frame[y0:y0 + 1, x0:x1] = color
         frame[y1 - 1:y1, x0:x1] = color
     d = np.zeros_like(golden)
-    active_diff = np.abs(active_view(captured, g).astype(np.int16) -
-                         active_view(golden, g).astype(np.int16))
+    active_diff = np.abs(active_view(captured, g, box).astype(np.int16) -
+                         active_view(golden, g, box).astype(np.int16))
     d[y0:y1, x0:x1, :] = np.clip(active_diff * 8, 0, 255).astype(np.uint8)
     sep = np.full((g.presented_height, 8, 3), 32, dtype=np.uint8)
     tiled = np.concatenate([gg, sep, cc, sep, d], axis=1)
     save_rgb(out, tiled)
 
 
-def measured_noise(frames: list[np.ndarray], g: Geometry) -> dict:
+def measured_noise(frames: list[np.ndarray], g: Geometry,
+                   box: tuple[int, int, int, int] | None = None) -> dict:
     if len(frames) < 2:
         raise HarnessError("noise measurement needs at least two frames")
-    base = active_view(frames[0], g).astype(np.int16)
+    base = active_view(frames[0], g, box).astype(np.int16)
     maes = []
     worst = 0
     exact = []
@@ -319,7 +338,7 @@ def measured_noise(frames: list[np.ndarray], g: Geometry) -> dict:
     for fr in frames:
         hashes.append(hashlib.sha256(fr.tobytes()).hexdigest())
     for fr in frames[1:]:
-        cur = active_view(fr, g).astype(np.int16)
+        cur = active_view(fr, g, box).astype(np.int16)
         ad = np.abs(cur - base)
         maes.append(ad.reshape(-1, 3).mean(axis=0))
         worst = max(worst, int(ad.max()))
@@ -367,9 +386,11 @@ def cmd_capture(args: argparse.Namespace) -> int:
 
 def cmd_noise(args: argparse.Namespace) -> int:
     g = load_geometry()
+    box = parse_compare_box(args.compare_box, g)
     frames = [load_rgb(Path(p), g) for p in args.frames]
-    report = measured_noise(frames, g)
+    report = measured_noise(frames, g, box)
     report["geometry"] = asdict(g)
+    report["compare_box"] = list(box)
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -380,6 +401,7 @@ def cmd_noise(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     g = load_geometry()
+    box = parse_compare_box(args.compare_box, g)
     reject_corrupt_capture_log(args.capture_log)
     golden = load_rgb(Path(args.golden), g)
     captured = load_rgb(Path(args.capture), g)
@@ -396,7 +418,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "capture_sha256": hashlib.sha256(captured.tobytes()).hexdigest(),
             "byte_identical": False,
         }
-    stats = diff_stats(golden, captured, g)
+    stats = diff_stats(golden, captured, g, box)
     noise = None
     if args.noise_report:
         noise = json.loads(Path(args.noise_report).read_text(encoding="utf-8"))
@@ -407,6 +429,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "capture": str(args.capture),
         "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
+        "compare_box": list(box),
         "freshness": freshness,
         "stats": stats,
         "thresholds": {
@@ -416,7 +439,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         },
     }
     if args.diff:
-        diff_artifact(golden, captured, g, Path(args.diff))
+        diff_artifact(golden, captured, g, Path(args.diff), box)
         report["diff"] = str(args.diff)
     if args.report:
         out = Path(args.report)
@@ -447,6 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("noise", help="measure capture noise from repeated static frames")
     p.add_argument("--frames", nargs="+", required=True)
+    p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")
     p.add_argument("--out")
     p.set_defaults(func=cmd_noise)
 
@@ -457,6 +481,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="ffmpeg/V4L2 log for this capture; corrupt logs return rc=4 before grading")
     p.add_argument("--previous", help="previous-condition frame for stale-capture rejection")
     p.add_argument("--noise-report")
+    p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")
     p.add_argument("--max-mae", type=float, default=0.0)
     p.add_argument("--max-abs", type=int, default=0)
     p.add_argument("--diff", help="PNG artifact: golden | captured | amplified diff")

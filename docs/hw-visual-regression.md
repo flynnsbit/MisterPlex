@@ -25,15 +25,24 @@ failure (`rc=4`), never a core result.
 
 ## What is compared
 
-- Input bitstream: `tests/fixtures/hw_visual/plex_visual_624x480_1f.264`.
-- Golden: `tests/fixtures/hw_visual/plex_visual_640x480_golden.png`.
+- Default input bitstream: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`.
+- Default golden: `tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`.
 - Geometry source of truth:
   - `host/libmisterplex/ddr_frame_layout.hpp`
   - `fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh`
 
+The default pair is the one proven on hardware: rollback `57674f2e` grades green and bad `fe7673bc` grades red.
+The 624×480 fixture/golden remain checked in as a future target only; they are not defaults because that pair
+previously false-reded on the known-good rollback core.
+
 The comparator refuses to run if host and RTL constants diverge. It compares the active displayed picture only:
 coded **624×480**, display **618×480** after right crop of 6 px, presented **640×480** with **11 px** pillars on
 each side. Pillarbox columns are not compared against picture content.
+
+For the current default 320×240 F3 vector, the hardware script narrows the compare to
+`VISUAL_COMPARE_BOX=11,0,160,120`: the stable top-left decoded region containing MB0. The rest of the 480p frame
+can contain reload-dependent/uninitialized pixels on rollback `57674f2e`; comparing the whole active 618×480 area
+was the false-red failure mode.
 
 ## Metrics and failure artifact
 
@@ -134,8 +143,8 @@ Hardware proof on the actual rig with the repaired MJPEG 1280×720@60 path:
 
 | Specimen | Result | Evidence |
 |---|---|---|
-| `57674f2e` known-good | GREEN | `green_compare_57674f2e.json`: exact active pixels `296640/296640`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
-| `fe7673bc` known-bad | RED | `red_compare_fe7673bc.json`: exact active pixels `0/296640`, MAE RGB `[4.9069,66.3937,151.4916]`, max_abs `255`, `rc=1`; diff PNG emitted |
+| `57674f2e` known-good | GREEN | default script: compare box `11,0,160,120`, exact `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
+| `fe7673bc` known-bad | RED | same defaults: exact `0/19200`, MAE RGB `[112.7730,59.8615,61.0523]`, max_abs `242`, `rc=1`; diff PNG emitted |
 
 That acceptance used a good hardware capture as the golden and the existing 320×240 baseline F3 vector, because
 the checked-in 624×480 fixture did not yet exercise the current rollback RBF reliably. Keep the 624×480 fixture as
