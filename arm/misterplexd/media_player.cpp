@@ -594,8 +594,8 @@ void MediaPlayer::paintIdle() {
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
 
     std::lock_guard<std::mutex> lk(presentMu_);
-    if (fb_.ok())
-        fb_.blitRgb24(buf.data(), w, h);
+    if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
+        log("media: idle fb0 blit failed");
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
     // instead of ringing the doorbell with an RGB payload.

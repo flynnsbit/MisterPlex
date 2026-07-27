@@ -1075,6 +1075,174 @@ def check_yuv_ddr_writer_contract() -> None:
     print("PASS ARM DDR writer uses product yuv420p frame-store path only")
 
 
+def check_present_path_degradation_contract() -> None:
+    media = strip_comments(read(MEDIA_PLAYER_CPP))
+    fb_present = strip_comments(read(FB_PRESENT_CPP))
+    status_sources = "\n".join(
+        [
+            strip_comments(read(FPGA_SPI_CPP)),
+            strip_comments(read(PUSH_FRAME_CPP)),
+            strip_comments(read(SET_STATUS_CPP)),
+            strip_comments(read(INPUT_MAILBOX_HPP)),
+        ]
+    )
+
+    media_nt = norm(media)
+    fb_nt = norm(fb_present)
+    status_nt = norm(status_sources)
+
+    def present_degradation_violations(
+        media_norm: str, fb_norm: str, fpga_norm: str
+    ) -> list[str]:
+        violations: list[str] = []
+        media_joined = media_norm.replace('""', "")
+        fpga_joined = fpga_norm.replace('""', "")
+        forbidden = [
+            (
+                "useDdrF1_=false",
+                "F1 DDR failures must not latch-disable future DDR attempts; keep retrying so "
+                "PLXF/frame_status remains observable at the point of failure",
+            ),
+            (
+                "if(!ok)ok=",
+                "present path must not try X and quietly assign ok from an alternate sender; "
+                "fallbacks must be removed or logged/statused before any alternate mechanism",
+            ),
+            (
+                "sendRgb24Frame(buf.data(),w,h,1)",
+                "idle paint must not fall back to legacy RGB/SPI F1; frame store F1 is DDR "
+                "YUV420p-only",
+            ),
+            (
+                "sendRgb24Frame(buf.data(),w,h,/*F1*/1)",
+                "idle paint must not fall back to legacy RGB/SPI F1; frame store F1 is DDR "
+                "YUV420p-only",
+            ),
+            (
+                "sendRgb565Bytes(txFrame,txBytes,1)",
+                "rawvideo presentation must not fall back to legacy RGB565/SPI F1 after a DDR "
+                "failure",
+            ),
+            (
+                "sendRgb565Bytes(txFrame,txBytes,/*F1*/1)",
+                "rawvideo presentation must not fall back to legacy RGB565/SPI F1 after a DDR "
+                "failure",
+            ),
+        ]
+        violations.extend(msg for needle, msg in forbidden if needle in media_joined)
+
+        required_media = [
+            (
+                'log("media:idlefb0blitfailed");',
+                "idle fb0 blit failure must be logged; a silent idle-present failure looks like "
+                "a screensaver regression",
+            ),
+            (
+                'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
+                "idle F1 failure must name that legacy RGB F1 was refused and DDR YUV420p is "
+                "required",
+            ),
+            (
+                'log("media:idlepaintfailed(willretry):"+fpga_.lastError());',
+                "idle DDR failure must remain visible and retryable instead of being swallowed",
+            ),
+            (
+                'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
+                "STREAM recon DDR failure must log the named DDR/YUV failure and keep retrying",
+            ),
+            (
+                'log("media:non-YUVF1framerefusedbeforesend;framestorerequiresDDRYUV420p");',
+                "rawvideo non-YUV F1 attempts must be refused before send with a named reason",
+            ),
+            (
+                'log("media:DDRYUV420pF1unavailable:"+fpga_.lastError());',
+                "rawvideo DDR failure must be externally visible instead of falling back to a "
+                "different present path",
+            ),
+            (
+                'log("media:fpgaframe_tx:"+fpga_.lastError());',
+                "rawvideo frame_tx errors must surface the low-level frame-store status "
+                "(including frame_status=absent or frame_debug=0xE1)",
+            ),
+            (
+                'log("media:reconF1skipped:YUVDDRframe-storerequirescoded624x480,got"+',
+                "geometry fallback/skip in STREAM recon must be a named skip, not a quiet "
+                "absence of F1 frames",
+            ),
+            (
+                'log("media:blitfailedfmt="+std::string(ffmpegPixFmt(videoFmt)));',
+                "fb0 present failures must be logged; changing bpp/geometry must not silently "
+                "erase the reference surface",
+            ),
+        ]
+        violations.extend(msg for needle, msg in required_media if needle not in media_joined)
+
+        for m in re.finditer(r"catch\s*\([^)]*\)\s*\{([^{}]*)\}", media_joined):
+            if "log(" not in m.group(1):
+                violations.append(
+                    "present thread catch blocks must log before continuing or stopping; "
+                    "exceptions cannot silently degrade playback"
+                )
+
+        required_fpga = [
+            (
+                'setErr("non-YUVframesendrefused:SPIF1RGBframepathisdisabled;useDDRYUV420p(sendYuv420pFrameDdr/push_frame--ddr--yuv420p)");',
+                "low-level F1/SPI frame sends must fail at point of use with a named non-YUV "
+                "refusal",
+            ),
+            (
+                'frameStoreStatusSuffix()',
+                "DDR send failures must append PLXF/frame_status details so absent/0xE1 is "
+                "visible to operators",
+            ),
+            (
+                'frame_status=absent',
+                "unwritten PLXF mailbox must surface as frame_status=absent, not as a generic "
+                "present failure",
+            ),
+            (
+                'framestorestatusunavailable(PLXFmailboxabsent/unwritten)',
+                "PLXF absent/unwritten must have a human-legible diagnostic string",
+            ),
+            (
+                'framestorerefusednon-YUVdoorbell(0xE1)',
+                "PLXF frame_debug 0xE1 must be named as non-YUV doorbell refusal",
+            ),
+        ]
+        violations.extend(msg for needle, msg in required_fpga if needle not in fpga_joined)
+
+        if "returnfalse;" not in fb_norm:
+            violations.append("fb_present must return false on unsupported/failed blits")
+        return violations
+
+    missing = present_degradation_violations(media_nt, fb_nt, status_nt)
+    if missing:
+        fail(f"ARM present-path degradation contract: {missing[0]}")
+
+    rgb_fallback_media = media_nt.replace(
+        'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
+        "ok=fpga_.sendRgb24Frame(buf.data(),w,h,1);",
+    )
+    if not present_degradation_violations(rgb_fallback_media, fb_nt, status_nt):
+        fail("deliberately reintroduced idle RGB/SPI F1 fallback did not make the gate red")
+
+    latched_disable_media = media_nt.replace(
+        'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
+        'useDdrF1_=false;',
+    )
+    if not present_degradation_violations(latched_disable_media, fb_nt, status_nt):
+        fail("deliberately reintroduced one-shot DDR disable did not make the gate red")
+
+    silent_ddr_media = media_nt.replace(
+        'log("media:DDRYUV420pF1unavailable:"+fpga_.lastError());',
+        "",
+    )
+    if not present_degradation_violations(silent_ddr_media, fb_nt, status_nt):
+        fail("deliberately silenced rawvideo DDR failure did not make the gate red")
+
+    print("PASS ARM present path has no silent fallback/degradation without named status")
+
+
 
 def check_ddr_bitstream_product_path() -> None:
     media = strip_comments(read(MEDIA_PLAYER_CPP))
@@ -1136,6 +1304,7 @@ def main() -> int:
     check_ddr_frame_layout_contract()
     check_ddr_frame_store_yuv_read_contract()
     check_yuv_ddr_writer_contract()
+    check_present_path_degradation_contract()
     check_ddr_bitstream_product_path()
     check_h264_quartus_subset()
     return 0
