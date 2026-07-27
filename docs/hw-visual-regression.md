@@ -8,10 +8,10 @@ output, and compares it to a checked-in golden image with quantified pixel metri
 
 | Task | Command |
 |---|---|
-| Scheduled hardware gate | `VISUAL_RBF=/path/to/Plex.rbf VISUAL_FAULT_DEMO=1 tests/hw/test_f3_visual_golden.sh` |
-| Known-bad red specimen | `VISUAL_RBF=/path/to/fe7673bc.rbf VISUAL_EXPECT=fail tests/hw/test_f3_visual_golden.sh` |
-| Known-good rollback | `VISUAL_RBF=/path/to/57674f2e.rbf VISUAL_EXPECT=pass tests/hw/test_f3_visual_golden.sh` |
-| Use already-loaded Plex core | `tests/hw/test_f3_visual_golden.sh` |
+| Scheduled hardware gate | `VISUAL_RBF=/path/to/Plex.rbf VISUAL_GOLDEN=/path/to/current_yuv420p_golden.png VISUAL_EXPECTED_CONTENT_SIZE=624x480 VISUAL_PIXEL_FORMAT=yuv420p VISUAL_FAULT_DEMO=1 tests/hw/test_f3_visual_golden.sh` |
+| Wrong-core provenance red specimen | `VISUAL_RBF=/path/to/fe7673bc.rbf VISUAL_GOLDEN=/path/to/57674f2e_golden.png tests/hw/test_f3_visual_golden.sh` (returns `rc=8`, not a visual result) |
+| Legacy rollback evidence | `VISUAL_RBF=/path/to/57674f2e.rbf VISUAL_GOLDEN=tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png VISUAL_EXPECTED_CONTENT_SIZE=320x240 VISUAL_PIXEL_FORMAT=rgb565 VISUAL_EXPECT=pass tests/hw/test_f3_visual_golden.sh` |
+| Use already-loaded Plex core | `VISUAL_EXPECTED_RBF_MD5=<loaded-md5> VISUAL_GOLDEN=/path/to/matching_source_golden.png tests/hw/test_f3_visual_golden.sh` |
 | Comparator unit/red-path test | `python3 tests/unit/test_hw_visual_compare.py` |
 | Print geometry used by comparator | `python3 scripts/hw_visual_compare.py geometry` |
 
@@ -41,25 +41,34 @@ arrived. When the shared DDR frame-store token is exposed, set
 from `status_before.txt` to `status.txt`.
 
 Artifact identity is another precondition. `tests/hw/test_f3_visual_golden.sh`
-will not grade an unspecified loaded core: either pass `VISUAL_RBF` (the script
-derives its md5) or set `VISUAL_EXPECTED_RBF_MD5`/`VISUAL_RBF_MD5` for an
-already-loaded core. The script records `md5sum /media/fat/_Utility/Plex.rbf` in
-`rbf_md5.txt`, verifies it immediately after deploy/reload, and passes that log
-into the comparator. A mismatch returns `rc=8` before pixel grading, which
-prevents testing a current I420/624×480 ARM pipeline against an old RGB565-era
-rollback core by accident.
+will not grade an unspecified loaded core or an unspecified golden. Pass
+`VISUAL_RBF` (the script derives its md5) or set
+`VISUAL_EXPECTED_RBF_MD5`/`VISUAL_RBF_MD5` for an already-loaded core, and always
+set `VISUAL_GOLDEN`. The script records `md5sum /media/fat/_Utility/Plex.rbf`
+in `rbf_md5.txt`, verifies it immediately after deploy/reload, and passes that
+log into the comparator. A loaded-core mismatch returns `rc=8` before pixel
+grading.
+
+Each hardware golden must have a sibling `*.png.provenance.json` sidecar with:
+source RBF md5, content/presented geometry and compare box, frame-store pixel
+format, and colour matrix/range. Missing or mismatched geometry/format/colour
+returns `rc=9`; a golden whose source RBF differs from the loaded core returns
+`rc=8` and names both core md5s. This prevents testing a current I420/624×480
+ARM pipeline against an old RGB565-era rollback core by accident.
 
 ## What is compared
 
 - Default input bitstream: `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`.
-- Default golden: `tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`.
+- Default golden: **none**. `VISUAL_GOLDEN` must be explicit.
 - Geometry source of truth:
   - `host/libmisterplex/ddr_frame_layout.hpp`
   - `fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh`
 
-The default pair is the one proven on hardware: rollback `57674f2e` grades green and bad `fe7673bc` grades red.
-The 624×480 fixture/golden remain checked in as a future target only; they are not defaults because that pair
-previously false-reded on the known-good rollback core.
+The former default `plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`
+is quarantined as legacy evidence for rollback `57674f2e` only. Its provenance
+declares 320×240/RGB565/BT.601-full and will not grade against a current
+YUV420 artifact. The 624×480 fixture/reference remains checked in as a future
+target only; it is marked `generated_reference`, not a hardware-captured golden.
 
 The comparator refuses to run if host and RTL constants diverge. It compares the active displayed picture only:
 coded **624×480**, display **618×480** after right crop of 6 px, presented **640×480** with **11 px** pillars on
@@ -141,6 +150,10 @@ format correctly. The harness now refuses to grade unless the loaded
 - worst mismatch location in presented and display coordinates
 - worst mismatch plane, golden value, captured value, and delta
 - colour matrix/range provenance for both the golden and the capture
+- `diagnostic_signatures` derived from the raw per-channel MAE shape (for
+  example uniform high RGB error vs green-dominant transform/chroma error vs
+  red/blue-dominant U/V-order suspicion). These are hints only; the raw numbers
+  remain the evidence.
 
 On failure it emits a PNG with **golden | captured | amplified diff**, so the failure is visually debuggable.
 
@@ -156,7 +169,8 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 5 | capture device absent |
 | 6 | capture device busy/exclusive-open |
 | 7 | no fresh frame delivery proven (`bytes_in`/required status/token freshness failed) |
-| 8 | loaded `/media/fat/_Utility/Plex.rbf` md5 does not match the declared artifact |
+| 8 | loaded `/media/fat/_Utility/Plex.rbf` md5 does not match the declared artifact, or golden source RBF does not match the loaded core |
+| 9 | missing or mismatched golden provenance (geometry, pixel format, colour, or non-hardware reference) |
 
 If status exposes the frame-store debug byte, `0xe1` is surfaced as
 `non-YUV DDR doorbell/debug format error` and is treated as a freshness/setup
@@ -165,6 +179,8 @@ refusal, not a visual mismatch.
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before
 looking at pixels, so a noisy PNG cannot be mislabeled as a core mismatch.
+An absent capture device returns `rc=5`; a missing `ffmpeg` binary is a setup
+error (`rc=2`), not a green/no-op capture path.
 
 ## Capture noise threshold
 
@@ -226,8 +242,8 @@ W-CAP build artifacts, not goldens; the checked-in unit test proves those logs f
 ## Red-path proof
 
 `VISUAL_FAULT_DEMO=1` deliberately corrupts one active captured pixel after the green compare and requires the
-comparator to fail with a precise location and a diff PNG. This is a harness self-test; a future scheduled window
-must also run a known-bad RBF or corrupted F3 input when one is available.
+comparator to fail with a precise location and a diff PNG. This is the visual red-path self-test. A different
+loaded RBF paired with a golden captured from another RBF is now a provenance refusal (`rc=8`), not a visual red.
 
 The current characterized hardware red specimen is **`fe7673bc`**: residual telemetry stays green
 (`raw[13]=0x14`) but reconstruction signature is `raw[14]=0x00` instead of the simulated `0x3b`, matching a
@@ -237,8 +253,8 @@ Hardware proof on the actual rig with the repaired MJPEG 1280×720@60 path:
 
 | Specimen | Result | Evidence |
 |---|---|---|
-| `57674f2e` known-good | GREEN | default script: compare box `11,0,160,120`, exact `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
-| `fe7673bc` known-bad | RED | same defaults: exact `0/19200`, MAE RGB `[112.7730,59.8615,61.0523]`, max_abs `242`, `rc=1`; diff PNG emitted |
+| `57674f2e` legacy rollback | GREEN only when explicit legacy contract is declared | compare box `11,0,160,120`, exact `19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0` |
+| `fe7673bc` against `57674f2e` golden | PROVENANCE RED | now refused before pixel grading as wrong golden source (`rc=8`) |
 
 That acceptance used a good hardware capture as the golden and the existing 320×240 baseline F3 vector, because
 the checked-in 624×480 fixture did not yet exercise the current rollback RBF reliably. Keep the 624×480 fixture as

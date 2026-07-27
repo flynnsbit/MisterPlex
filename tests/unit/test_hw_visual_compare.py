@@ -14,12 +14,27 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "scripts" / "hw_visual_compare.py"
 WORK = ROOT / "build" / "hw-visual-unit"
-GOLDEN = ROOT / "tests" / "fixtures" / "hw_visual" / "plex_visual_640x480_golden.png"
+GENERATED_REFERENCE = ROOT / "tests" / "fixtures" / "hw_visual" / "plex_visual_640x480_golden.png"
+VALID_RBF_MD5 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+OTHER_RBF_MD5 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+LEGACY_RBF_MD5 = "57674f2e4c11551898275e99bd4c3067"
 COLOR_ARGS = (
     "--golden-color-matrix", "bt601",
     "--golden-color-range", "full",
     "--capture-color-matrix", "bt601",
     "--capture-color-range", "full",
+)
+VALID_PROVENANCE_ARGS = (
+    "--expected-rbf-md5", VALID_RBF_MD5,
+    "--actual-rbf-md5", f"{VALID_RBF_MD5}  /media/fat/_Utility/Plex.rbf",
+    "--expected-content-size", "624x480",
+    "--expected-pixel-format", "yuv420p",
+)
+LEGACY_PROVENANCE_ARGS = (
+    "--expected-rbf-md5", LEGACY_RBF_MD5,
+    "--actual-rbf-md5", f"{LEGACY_RBF_MD5}  /media/fat/_Utility/Plex.rbf",
+    "--expected-content-size", "320x240",
+    "--expected-pixel-format", "rgb565",
 )
 WCAP_CORRUPT_LOG = (
     ROOT / "tests" / "fixtures" / "hw_visual" / "capture_logs" /
@@ -65,6 +80,31 @@ def write_png(path: Path, pixels: np.ndarray) -> None:
     Image.fromarray(pixels.astype(np.uint8), "RGB").save(path)
 
 
+def write_provenance(path: Path, *, rbf: str = VALID_RBF_MD5,
+                     content_size: tuple[int, int] = (624, 480),
+                     pixel_format: str = "yuv420p",
+                     matrix: str = "bt601",
+                     color_range: str = "full",
+                     compare_box: list[int] | None = None) -> None:
+    if compare_box is None:
+        compare_box = [11, 0, 618, 480]
+    path.with_suffix(path.suffix + ".provenance.json").write_text(json.dumps({
+        "schema": "misterplex.hw_visual_golden.v1",
+        "source_type": "hardware_capture",
+        "source_rbf_md5": rbf,
+        "source_rbf_label": "synthetic unit-test capture provenance",
+        "pixel_format": pixel_format,
+        "geometry": {
+            "content_width": content_size[0],
+            "content_height": content_size[1],
+            "presented_width": 640,
+            "presented_height": 480,
+            "compare_box": compare_box,
+        },
+        "color": {"matrix": matrix, "range": color_range},
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +119,23 @@ def main() -> int:
     require(box == (11, 0, 171, 120), f"compare-box parsing wrong: {box}")
     print("PASS shared host/RTL geometry parsed")
 
-    golden = np.array(Image.open(GOLDEN).convert("RGB"), dtype=np.uint8)
+    generated_reference_refusal = run(
+        "compare",
+        "--golden", str(GENERATED_REFERENCE),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(GENERATED_REFERENCE),
+    )
+    require(generated_reference_refusal.returncode == 9 and "not a hardware-captured golden" in generated_reference_refusal.stderr,
+            "generated reference PNG must be quarantined from hardware grading, "
+            f"not accepted as a captured golden\nstdout={generated_reference_refusal.stdout}\n"
+            f"stderr={generated_reference_refusal.stderr}")
+    print("PASS generated reference golden is quarantined by machine-readable provenance")
+
+    golden = np.array(Image.open(GENERATED_REFERENCE).convert("RGB"), dtype=np.uint8)
+    valid_golden = WORK / "valid_yuv420_624x480_golden.png"
+    write_png(valid_golden, golden)
+    write_provenance(valid_golden)
     cap1 = WORK / "cap1.png"
     cap2 = WORK / "cap2.png"
     write_png(cap1, golden)
@@ -96,8 +152,9 @@ def main() -> int:
     good_diff = WORK / "good_diff.png"
     c = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--report", str(good_report),
@@ -122,7 +179,8 @@ def main() -> int:
 
     missing_colour = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
     )
@@ -131,18 +189,97 @@ def main() -> int:
             f"not graded\nstdout={missing_colour.stdout}\nstderr={missing_colour.stderr}")
     mismatched_colour = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         "--golden-color-matrix", "bt601",
         "--golden-color-range", "full",
+        "--expected-rbf-md5", VALID_RBF_MD5,
+        "--actual-rbf-md5", f"{VALID_RBF_MD5}  /media/fat/_Utility/Plex.rbf",
+        "--expected-content-size", "624x480",
+        "--expected-pixel-format", "yuv420p",
         "--capture", str(cap2),
         "--capture-color-matrix", "bt709",
         "--capture-color-range", "full",
         "--noise-report", str(noise),
     )
-    require(mismatched_colour.returncode == 2 and "different colour provenance" in mismatched_colour.stderr,
+    require(mismatched_colour.returncode == 9 and "different colour provenance" in mismatched_colour.stderr,
             "compare with mismatched colour provenance must be refused, "
             f"not graded\nstdout={mismatched_colour.stdout}\nstderr={mismatched_colour.stderr}")
     print("PASS unknown/mismatched colour provenance refused before grading")
+
+    no_sidecar = WORK / "no_sidecar_golden.png"
+    write_png(no_sidecar, golden)
+    missing_provenance = run(
+        "compare",
+        "--golden", str(no_sidecar),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(cap2),
+    )
+    require(missing_provenance.returncode == 9 and "missing" in missing_provenance.stderr,
+            "golden without machine-readable sidecar must be refused, "
+            f"not graded\nstdout={missing_provenance.stdout}\nstderr={missing_provenance.stderr}")
+
+    wrong_geometry_prov = WORK / "wrong_geometry.provenance.json"
+    write_provenance(valid_golden, content_size=(320, 240))
+    valid_golden.with_suffix(valid_golden.suffix + ".provenance.json").replace(wrong_geometry_prov)
+    write_provenance(valid_golden)
+    wrong_geometry = run(
+        "compare",
+        "--golden", str(valid_golden),
+        "--golden-provenance", str(wrong_geometry_prov),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(cap2),
+    )
+    require(wrong_geometry.returncode == 9 and "content geometry 320x240 != expected 624x480" in wrong_geometry.stderr,
+            "golden content geometry mismatch must be refused, "
+            f"not graded\nstdout={wrong_geometry.stdout}\nstderr={wrong_geometry.stderr}")
+
+    wrong_format = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", VALID_RBF_MD5,
+        "--actual-rbf-md5", f"{VALID_RBF_MD5}  /media/fat/_Utility/Plex.rbf",
+        "--expected-content-size", "624x480",
+        "--expected-pixel-format", "rgb565",
+        "--capture", str(cap2),
+    )
+    require(wrong_format.returncode == 9 and "pixel format yuv420p != expected rgb565" in wrong_format.stderr,
+            "golden pixel-format mismatch must be refused, "
+            f"not graded\nstdout={wrong_format.stdout}\nstderr={wrong_format.stderr}")
+
+    wrong_color_prov = WORK / "wrong_color.provenance.json"
+    write_provenance(valid_golden, matrix="bt709")
+    valid_golden.with_suffix(valid_golden.suffix + ".provenance.json").replace(wrong_color_prov)
+    write_provenance(valid_golden)
+    wrong_color = run(
+        "compare",
+        "--golden", str(valid_golden),
+        "--golden-provenance", str(wrong_color_prov),
+        *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
+        "--capture", str(cap2),
+    )
+    require(wrong_color.returncode == 9 and "CLI golden colour does not match sidecar" in wrong_color.stderr,
+            "golden colour provenance mismatch must be refused, "
+            f"not graded\nstdout={wrong_color.stdout}\nstderr={wrong_color.stderr}")
+
+    golden_source_mismatch = run(
+        "compare",
+        "--golden", str(valid_golden),
+        *COLOR_ARGS,
+        "--expected-rbf-md5", OTHER_RBF_MD5,
+        "--actual-rbf-md5", f"{OTHER_RBF_MD5}  /media/fat/_Utility/Plex.rbf",
+        "--expected-content-size", "624x480",
+        "--expected-pixel-format", "yuv420p",
+        "--capture", str(cap2),
+    )
+    require(golden_source_mismatch.returncode == 8 and
+            f"golden was produced by core {VALID_RBF_MD5} but loaded core is {OTHER_RBF_MD5}" in golden_source_mismatch.stderr,
+            "golden source RBF mismatch must say which core produced it and which is loaded, "
+            f"not graded\nstdout={golden_source_mismatch.stdout}\nstderr={golden_source_mismatch.stderr}")
+    print("PASS golden provenance refuses missing sidecar, geometry, format, colour, and source-RBF mismatches")
 
     bad = golden.copy()
     # Corrupt one active pixel, not a pillarbox pixel; this is the red-path proof
@@ -154,8 +291,9 @@ def main() -> int:
     bad_diff = WORK / "bad_diff.png"
     b = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(bad_path),
         "--noise-report", str(noise),
         "--report", str(bad_report),
@@ -174,15 +312,50 @@ def main() -> int:
             f"bad per-plane exact count should isolate one green-plane pixel: {br}")
     require(br["stats"]["per_plane_mae_yuv"][0] > 0,
             f"bad YUV per-plane MAE did not report the injected pixel: {br}")
+    require(br["stats"]["diagnostic_signatures"][0]["id"] == "unclassified_visual_mismatch",
+            f"single-pixel red path should not be over-classified: {br['stats']['diagnostic_signatures']}")
     require(br["shift_sweep"][0]["captured_dx"] == 0 and br["shift_sweep"][0]["captured_dy"] == 0,
             f"shift sweep should prefer no shift for single-pixel corruption: {br['shift_sweep'][:3]}")
     require(bad_diff.exists() and bad_diff.stat().st_size > 0, "bad diff artifact missing")
     print("PASS corrupted active pixel rejected with precise worst mismatch + diff artifact")
 
+    uniform_sig = hw_visual_compare.classify_error_signatures({
+        "active_pixels": 296640,
+        "exact_match_pixels": 0,
+        "exact_match_ratio": 0.0,
+        "per_plane_mae_rgb": [112.09, 111.50, 111.60],
+        "max_abs": 255,
+        "mismatch_bbox": {"display": [0, 0, 617, 479], "presented": [11, 0, 628, 479], "pixels": 296640},
+    })
+    require(any(s["id"] == "uniform_high_rgb_error_wrong_scheme_or_core" for s in uniform_sig),
+            f"flat high RGB error shape not flagged: {uniform_sig}")
+    green_sig = hw_visual_compare.classify_error_signatures({
+        "active_pixels": 19200,
+        "exact_match_pixels": 10,
+        "exact_match_ratio": 10 / 19200,
+        "per_plane_mae_rgb": [17.77, 157.31, 20.42],
+        "max_abs": 255,
+        "mismatch_bbox": {"display": [0, 0, 159, 119], "presented": [11, 0, 170, 119], "pixels": 19190},
+    })
+    require(any(s["id"] == "green_dominant_colour_transform_or_chroma_path" for s in green_sig),
+            f"green-dominant colour/chroma shape not flagged: {green_sig}")
+    uv_sig = hw_visual_compare.classify_error_signatures({
+        "active_pixels": 19200,
+        "exact_match_pixels": 100,
+        "exact_match_ratio": 100 / 19200,
+        "per_plane_mae_rgb": [96.0, 24.0, 102.0],
+        "max_abs": 240,
+        "mismatch_bbox": {"display": [0, 0, 159, 119], "presented": [11, 0, 170, 119], "pixels": 19100},
+    })
+    require(any(s["id"] == "red_blue_dominant_possible_uv_swap" for s in uv_sig),
+            f"red/blue-dominant U/V-swap shape not flagged: {uv_sig}")
+    print("PASS per-channel error-shape diagnostics flag wrong-scheme, green-dominant, and U/V-swap patterns")
+
     stale = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--previous", str(cap1),
         "--capture", str(cap1),
         "--noise-report", str(noise),
@@ -197,6 +370,7 @@ def main() -> int:
         "compare",
         "--golden", str(RELOAD_STALE_CAPTURE),
         *COLOR_ARGS,
+        *LEGACY_PROVENANCE_ARGS,
         "--capture", str(RELOAD_STALE_CAPTURE),
         "--noise-report", str(noise),
         "--status-log", str(RELOAD_STALE_STATUS),
@@ -225,10 +399,9 @@ def main() -> int:
     fresh_report = WORK / "fresh_delivery.json"
     fresh_delivery = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
-        "--expected-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "--actual-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /media/fat/_Utility/Plex.rbf",
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--status-log", str(fresh_status_after),
@@ -252,8 +425,9 @@ def main() -> int:
 
     unchanged_token = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--status-log", str(fresh_status_before),
@@ -271,7 +445,7 @@ def main() -> int:
 
     wrong_core = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
         "--expected-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "--actual-rbf-md5", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  /media/fat/_Utility/Plex.rbf",
@@ -285,7 +459,7 @@ def main() -> int:
             f"not graded\nstdout={wrong_core.stdout}\nstderr={wrong_core.stderr}")
     undeclared_core = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
         "--actual-rbf-md5", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /media/fat/_Utility/Plex.rbf",
         "--capture", str(cap2),
@@ -304,8 +478,9 @@ def main() -> int:
     )
     non_yuv = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--noise-report", str(noise),
         "--status-log", str(non_yuv_status),
@@ -335,8 +510,9 @@ def main() -> int:
             "W-CAP fe7673bc 640x480 corrupt capture log fixture was not classified as corrupt")
     corrupt_logged = run(
         "compare",
-        "--golden", str(GOLDEN),
+        "--golden", str(valid_golden),
         *COLOR_ARGS,
+        *VALID_PROVENANCE_ARGS,
         "--capture", str(cap2),
         "--capture-log", str(WCAP_CORRUPT_LOG),
         "--noise-report", str(noise),
@@ -345,6 +521,33 @@ def main() -> int:
             "compare with W-CAP corrupt capture log must return capture-integrity rc=4, "
             f"not grade pixels\nstdout={corrupt_logged.stdout}\nstderr={corrupt_logged.stderr}")
     print("PASS V4L2 corrupt-buffer diagnostics classified distinctly")
+
+    absent_capture = run(
+        "capture",
+        "--out", str(WORK / "absent_capture.png"),
+        "--device", str(WORK / "no_such_video_device"),
+    )
+    require(absent_capture.returncode == 5 and "is absent" in absent_capture.stderr,
+            "absent capture device must not silently pass, "
+            f"stdout={absent_capture.stdout}\nstderr={absent_capture.stderr}")
+    original_run = hw_visual_compare.subprocess.run
+    try:
+        def missing_ffmpeg(*_args, **_kwargs):
+            raise FileNotFoundError("ffmpeg")
+
+        hw_visual_compare.subprocess.run = missing_ffmpeg
+        try:
+            hw_visual_compare.capture_v4l2_once(
+                WORK / "ffmpeg_missing.png", str(WORK / "fake_video_device"),
+                "mjpeg", "1280x720", "60", 0, "bt601", "full"
+            )
+        except hw_visual_compare.HarnessError as e:
+            require("ffmpeg" in str(e), f"missing ffmpeg refusal was unclear: {e}")
+        else:
+            raise AssertionError("missing ffmpeg dependency did not raise a harness error")
+    finally:
+        hw_visual_compare.subprocess.run = original_run
+    print("PASS absent capture device/dependency paths are explicit refusals")
     return 0
 
 
