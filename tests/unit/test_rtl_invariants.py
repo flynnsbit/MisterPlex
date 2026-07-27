@@ -12,9 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PRESENT_CORE = Path(os.environ.get("PRESENT_CORE", ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv"))
 PLEX_SV = Path(os.environ.get("PLEX_SV", ROOT / "fpga/Plex_MiSTer/Plex.sv"))
-PLEX_QSF = Path(os.environ.get("PLEX_QSF", ROOT / "fpga/Plex_MiSTer/Plex.qsf"))
 PLEX_SDC = Path(os.environ.get("PLEX_SDC", ROOT / "fpga/Plex_MiSTer/Plex.sdc"))
 SYS_TOP_SDC = Path(os.environ.get("SYS_TOP_SDC", ROOT / "fpga/Plex_MiSTer/sys/sys_top.sdc"))
+PLEX_QSF = Path(os.environ.get("PLEX_QSF", ROOT / "fpga/Plex_MiSTer/Plex.qsf"))
 DDRAM_FRAME_RD = Path(
     os.environ.get("DDRAM_FRAME_RD", ROOT / "fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv")
 )
@@ -58,6 +58,9 @@ DDR_BITSTREAM_RING_HPP = Path(
 )
 INPUT_MAILBOX_HPP = Path(
     os.environ.get("INPUT_MAILBOX_HPP", ROOT / "host/libmisterplex/input_mailbox.hpp")
+)
+MAILBOX_ABI_SPEC = Path(
+    os.environ.get("MAILBOX_ABI_SPEC", ROOT / "host/libmisterplex/mailbox_abi_spec.hpp")
 )
 STATUS_TELEMETRY_HPP = Path(
     os.environ.get("STATUS_TELEMETRY_HPP", ROOT / "host/libmisterplex/status_telemetry.hpp")
@@ -203,6 +206,14 @@ def cpp_const(text: str, name: str) -> int:
             for part in expr.split("|"):
                 value |= resolve(part)
             return value
+        # Handle namespace::symbol references (e.g. mailbox_abi::kPlxsAddr)
+        if "::" in expr:
+            bare = expr.rsplit("::", 1)[1]
+            if bare in consts:
+                if bare in seen:
+                    fail(f"host constant alias cycle while resolving {name}")
+                seen.add(bare)
+                return resolve(consts[bare])
         if re.fullmatch(r"\w+", expr) and expr in consts:
             if expr in seen:
                 fail(f"host constant alias cycle while resolving {name}")
@@ -455,54 +466,246 @@ def check_frame_store_cdc_contract() -> None:
 
 
 def check_mailboxes() -> None:
+    # --- Single-source-of-truth gate ---
+    # All mailbox addresses and magics are defined ONCE in mailbox_abi_spec.hpp.
+    # This gate verifies that BOTH the RTL (SystemVerilog) and the ARM C++
+    # (input_mailbox.hpp, sdram_mailbox.hpp, ddr_bitstream_ring.hpp, fpga_spi.hpp)
+    # consume from the spec and haven't drifted.
+    spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
     rtl = strip_comments(read(DDRAM_FRAME_RD))
-    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
+    ddr_fs = strip_comments(read(DDR_FRAME_STORE))
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
     input_h = strip_comments(read(INPUT_MAILBOX_HPP))
-    host = fpga_spi + "\n" + input_h
-    cases = [
-        ("PLXS", "status", "MAILBOX_PHYS", "MAGIC_S", "kDdrMailboxPhys", "kDdrMailboxMagic", 0x3007F100, 0x504C5853),
-        ("PLXI", "input", "INPUT_MAILBOX_PHYS", "MAGIC_I", "kInputMailboxPhys", "kInputMailboxMagic", 0x3007F108, 0x504C5849),
-        ("PLXM", "memtest", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", "kMemtestMailboxPhys", "kMemtestMailboxMagic", 0x3007F110, 0x504C584D),
-        ("PLXF", "underrun", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", "kUnderrunMailboxPhys", "kUnderrunMailboxMagic", 0x3007F118, 0x504C5846),
+    host = spec_text + "\n" + fpga_spi + "\n" + input_h
+
+    # --- Verify spec declares authoritative values ---
+    spec_entries = {
+        "PLXK": ("kPlxkAddr", "kPlxkMagic", 0x3007F000, 0x504C584B),
+        "PLXS": ("kPlxsAddr", "kPlxsMagic", 0x3007F100, 0x504C5853),
+        "PLXI": ("kPlxiAddr", "kPlxiMagic", 0x3007F108, 0x504C5849),
+        "PLXM": ("kPlxmAddr", "kPlxmMagic", 0x3007F110, 0x504C584D),
+        "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
+        "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
+        "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
+    }
+    for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
+        sa = cpp_const(spec_text, addr_sym)
+        check(sa == exp_addr,
+              f"mailbox_abi_spec.hpp {addr_sym}=0x{sa:08X}, expected 0x{exp_addr:08X}. "
+              "The spec file is the single source of truth; fix it there.")
+        if magic_sym and exp_magic:
+            sm = cpp_const(spec_text, magic_sym)
+            check(sm == exp_magic,
+                  f"mailbox_abi_spec.hpp {magic_sym}=0x{sm:08X}, expected 0x{exp_magic:08X}. "
+                  "The spec file is the single source of truth; fix it there.")
+
+    # --- Verify C++ consumers re-export from the spec (not hardcoded) ---
+    # input_mailbox.hpp must use mailbox_abi:: references, not literal hex.
+    input_raw = read(INPUT_MAILBOX_HPP)
+    for cpp_name in ["kDdrStatusMailboxPhys", "kDdrStatusMailboxMagic",
+                     "kInputMailboxPhys", "kInputMailboxMagic",
+                     "kMemtestMailboxPhys", "kMemtestMailboxMagic",
+                     "kUnderrunMailboxPhys", "kUnderrunMailboxMagic",
+                     "kBankReleaseMailboxPhys", "kBankReleaseMailboxMagic"]:
+        check("mailbox_abi::" in input_raw or "mailbox_abi_spec" in input_raw,
+              f"input_mailbox.hpp must import from mailbox_abi_spec.hpp, "
+              f"not hardcode {cpp_name}. Two copies will drift.")
+
+    # --- Cross-check RTL against spec for frame-store mailboxes ---
+    rtl_cases = [
+        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853),
+        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849),
+        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D),
+        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846),
     ]
-    for magic, label, rtl_addr, rtl_magic, host_addr, host_magic, expected_addr, expected_magic in cases:
+    for magic, rtl_addr, rtl_magic, expected_addr, expected_magic in rtl_cases:
         ra = sv_const(rtl, rtl_addr)
         rm = sv_const(rtl, rtl_magic)
-        ha = cpp_const(host, host_addr)
-        hm = cpp_const(host, host_magic)
+        host_addr = cpp_const(host, {"PLXS": "kDdrMailboxPhys",
+                                     "PLXI": "kInputMailboxPhys",
+                                     "PLXM": "kMemtestMailboxPhys",
+                                     "PLXF": "kUnderrunMailboxPhys"}[magic])
+        host_magic = cpp_const(host, {"PLXS": "kDdrMailboxMagic",
+                                      "PLXI": "kInputMailboxMagic",
+                                      "PLXM": "kMemtestMailboxMagic",
+                                      "PLXF": "kUnderrunMailboxMagic"}[magic])
         check(
-            ra == ha == expected_addr and rm == hm == expected_magic,
-            f"DDR mailbox `{magic}` {label} mismatch: RTL {rtl_addr}=0x{ra:08X}/{rtl_magic}=0x{rm:08X}, "
-            f"host {host_addr}=0x{ha:08X}/{host_magic}=0x{hm:08X}, expected "
-            f"0x{expected_addr:08X}/0x{expected_magic:08X}. The ARM daemon reads fixed DDR offsets; "
-            "a silent host/FPGA mismatch breaks controls/status with no compile error. Update both "
-            "sides together and adjust this test only with an ABI migration note.",
+            ra == host_addr == expected_addr and rm == host_magic == expected_magic,
+            f"DDR mailbox `{magic}` mismatch: RTL {rtl_addr}=0x{ra:08X}/{rtl_magic}=0x{rm:08X}, "
+            f"host=0x{host_addr:08X}/0x{host_magic:08X}, spec=0x{expected_addr:08X}/0x{expected_magic:08X}. "
+            "All three must agree — see mailbox_abi_spec.hpp.",
         )
-    frame_store_cases = [
-        ("PLXS", "status", "MAILBOX_PHYS", "MAGIC_S", "kDdrMailboxPhys", "kDdrMailboxMagic", 0x3007F100, 0x504C5853),
-        ("PLXI", "input", "INPUT_MAILBOX_PHYS", "MAGIC_I", "kInputMailboxPhys", "kInputMailboxMagic", 0x3007F108, 0x504C5849),
-        ("PLXM", "memtest", "SDRAM_MAILBOX_PHYS", "MAGIC_M", "kMemtestMailboxPhys", "kMemtestMailboxMagic", 0x3007F110, 0x504C584D),
-        ("PLXF", "frame", "FRAME_MAILBOX_PHYS", "MAGIC_F", "kUnderrunMailboxPhys", "kUnderrunMailboxMagic", 0x3007F118, 0x504C5846),
-    ]
-    for magic, label, rtl_addr, rtl_magic, host_addr, host_magic, expected_addr, expected_magic in frame_store_cases:
-        ra = sv_const(frame_store_rtl, rtl_addr)
-        rm = sv_const(frame_store_rtl, rtl_magic)
-        ha = cpp_const(host, host_addr)
-        hm = cpp_const(host, host_magic)
+
+    # --- Cross-check PLXD bank-release against spec ---
+    plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
+    plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
+    check(plxd_addr == 0x3007F128,
+          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
+    check(plxd_magic == 0x504C5844,
+          f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
+
+    # Verify PLXD bit-field positions in the spec are what the RTL packs.
+    check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,
+          "PLXD free_bank_mask starts at bit 0 of upper word (bits [33:32])")
+    check(cpp_const(spec_text, "kPlxdFreeBankMaskWidth") == 2,
+          "PLXD free_bank_mask is 2 bits wide")
+    check(cpp_const(spec_text, "kPlxdDispBankBit") == 2,
+          "PLXD disp_bank at bit 2 of upper word (bit [34])")
+    check(cpp_const(spec_text, "kPlxdSwapPendingBit") == 3,
+          "PLXD swap_pending at bit 3 of upper word (bit [35])")
+    check(cpp_const(spec_text, "kPlxdFramesDoneBit") == 16,
+          "PLXD frames_done starts at bit 16 of upper word (bits [63:48])")
+    check(cpp_const(spec_text, "kPlxdFramesDoneWidth") == 16,
+          "PLXD frames_done is 16 bits wide")
+
+    # --- Address collision detection ---
+    # Reject any two mailboxes at the same physical address.
+    all_addrs: dict[int, str] = {}
+    for name, (addr_sym, _, exp_addr, _) in spec_entries.items():
+        if exp_addr in all_addrs:
+            check(False,
+                  f"ADDRESS COLLISION: {name} at 0x{exp_addr:08X} overlaps "
+                  f"{all_addrs[exp_addr]}. Check mailbox_abi_spec.hpp.")
+        all_addrs[exp_addr] = name
+
+    # --- Magic collision detection ---
+    # Reject any two mailboxes sharing the same magic value.
+    all_magics: dict[int, str] = {}
+    for name, (_, magic_sym, _, exp_magic) in spec_entries.items():
+        if exp_magic is None:
+            continue
+        if exp_magic in all_magics:
+            check(False,
+                  f"MAGIC COLLISION: {name} magic 0x{exp_magic:08X} overlaps "
+                  f"{all_magics[exp_magic]}. Check mailbox_abi_spec.hpp.")
+        all_magics[exp_magic] = name
+
+    # Also check bitstream ring magics for collisions with mailbox magics.
+    ring_magics = {
+        "PLXR": 0x504C5852, "PLXE": 0x504C5845, "PLXN": 0x504C584E,
+        "PLXT": 0x504C5854, "PLXU": 0x504C5855, "PLXV": 0x504C5856,
+        "PLXW": 0x504C5857, "PLXY": 0x504C5859, "PLXZ": 0x504C585A,
+        "PLXQ": 0x504C5851,
+    }
+    for rname, rmagic in ring_magics.items():
+        if rmagic in all_magics:
+            check(False,
+                  f"MAGIC COLLISION: ring {rname} magic 0x{rmagic:08X} overlaps "
+                  f"mailbox {all_magics[rmagic]}. Check mailbox_abi_spec.hpp.")
+        all_magics[rmagic] = f"ring:{rname}"
+
+    print("PASS DDR mailbox host/RTL ABI constants (single-source-of-truth spec gate)")
+
+
+def check_mailbox_map_collisions() -> None:
+    """Verify the authoritative mailbox map has no address or magic collisions,
+    and that RTL constants match the registry for every entry that has an
+    rtl_addr_param.  This is the single-source-of-truth gate the parent
+    required after the PLXA/PLXD ABI collision."""
+    import json
+
+    map_path = ROOT / "docs" / "plx_mailbox_map.json"
+    check(map_path.exists(), f"Mailbox registry missing: {map_path}")
+    registry = json.loads(map_path.read_text())
+    mailboxes = registry["mailboxes"]
+    ring = registry.get("bitstream_ring", {})
+
+    # ── Collect ALL addresses and magics across both sections ──
+    all_addrs: dict[int, str] = {}
+    all_magics: dict[int, str] = {}
+
+    for mb in mailboxes:
+        name = mb["name"]
+        addr = int(mb["address"], 16)
+        if addr in all_addrs:
+            fail(f"Mailbox address collision: {name} and {all_addrs[addr]} both at 0x{addr:08X}")
+        all_addrs[addr] = name
+        magic_s = mb.get("magic")
+        if magic_s is not None:
+            magic = int(magic_s, 16)
+            if magic in all_magics:
+                fail(f"Mailbox magic collision: {name} and {all_magics[magic]} both use 0x{magic:08X}")
+            all_magics[magic] = name
+
+    for rname, rval in ring.items():
+        if rname.startswith("_"):
+            continue
+        addr = int(rval["address"], 16)
+        if addr in all_addrs:
+            fail(f"Ring address collision: {rname} and {all_addrs[addr]} both at 0x{addr:08X}")
+        all_addrs[addr] = rname
+        magic = int(rval["magic"], 16)
+        if magic in all_magics:
+            fail(f"Ring magic collision: {rname} and {all_magics[magic]} both use 0x{magic:08X}")
+        all_magics[magic] = rname
+
+    # ── Cross-check RTL constants against registry ──
+    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
+    ddram_frame_rd_rtl = strip_comments(read(DDRAM_FRAME_RD))
+
+    for mb in mailboxes:
+        name = mb["name"]
+        rtl_addr_param = mb.get("rtl_addr_param")
+        rtl_magic_param = mb.get("rtl_magic_param")
+        expected_addr = int(mb["address"], 16)
+
+        if rtl_addr_param is None:
+            continue
+
+        # Try ddr_frame_store first, fall back to ddram_frame_rd
+        ra = None
+        for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
+            m = re.search(
+                rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_addr_param)}\s*=\s*([^,\n;)]+)",
+                rtl_src,
+            )
+            if m:
+                ra = parse_num(m.group(1))
+                break
+
         check(
-            ra == ha == expected_addr and rm == hm == expected_magic,
-            f"DDR frame-store mailbox `{magic}` {label} mismatch: RTL {rtl_addr}=0x{ra:08X}/"
-            f"{rtl_magic}=0x{rm:08X}, host {host_addr}=0x{ha:08X}/{host_magic}=0x{hm:08X}, "
-            f"expected 0x{expected_addr:08X}/0x{expected_magic:08X}. A PLXF reader/writer "
-            "offset mismatch would look exactly like an absent mailbox on silicon.",
+            ra is not None,
+            f"Mailbox map references RTL param {rtl_addr_param} for {name}, "
+            "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
         )
-    print("PASS DDR mailbox host/RTL ABI constants")
+        check(
+            ra == expected_addr,
+            f"Mailbox map drift: {name} RTL {rtl_addr_param}=0x{ra:08X} != "
+            f"registry 0x{expected_addr:08X}. Update docs/plx_mailbox_map.json OR the RTL "
+            "— they must agree. This gate exists because the PLXA/PLXD ABI collision "
+            "proved that two hand-maintained copies WILL drift.",
+        )
+
+        if rtl_magic_param is not None:
+            expected_magic = int(mb["magic"], 16)
+            rm = None
+            for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
+                m = re.search(
+                    rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_magic_param)}\s*=\s*([^,\n;)]+)",
+                    rtl_src,
+                )
+                if m:
+                    rm = parse_num(m.group(1))
+                    break
+            check(
+                rm is not None,
+                f"Mailbox map references RTL param {rtl_magic_param} for {name}, "
+                "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
+            )
+            check(
+                rm == expected_magic,
+                f"Mailbox map drift: {name} RTL {rtl_magic_param}=0x{rm:08X} != "
+                f"registry 0x{expected_magic:08X}. Update docs/plx_mailbox_map.json OR the RTL.",
+            )
+
+    print(f"PASS mailbox map collision guard ({len(all_addrs)} addresses, {len(all_magics)} magics, 0 collisions)")
 
 
 def check_ddr_bitstream_ring() -> None:
     rtl = strip_comments(read(DDR_BITSTREAM_READER))
-    host = strip_comments(read(DDR_BITSTREAM_RING_HPP))
+    spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
+    host = spec_text + "\n" + strip_comments(read(DDR_BITSTREAM_RING_HPP))
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
     cases = [
         ("DATA_PHYS", "kDataPhys", 0x30100000),
@@ -1166,7 +1369,7 @@ def check_ddr_bank_handoff_contract() -> None:
 
     print(
         "PASS DDR bank handoff publishes fenced frames and guards same-bank reuse "
-        "(no FPGA bank-release ACK exists yet)"
+        "(PLXD bank-release ACK at 0x3007F128)"
     )
 
 
@@ -1552,13 +1755,8 @@ def check_present_path_degradation_contract() -> None:
                 "a screensaver regression",
             ),
             (
-                'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
-                "idle F1 failure must name that legacy RGB F1 was refused and DDR YUV420p is "
-                "required",
-            ),
-            (
-                'log("media:idlepaintfailed(willretry):"+fpga_.lastError());',
-                "idle DDR failure must remain visible and retryable instead of being swallowed",
+                'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
+                "idle DDR failure must name DDR and the re-probe recovery path",
             ),
             (
                 'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
@@ -1634,7 +1832,7 @@ def check_present_path_degradation_contract() -> None:
         fail(f"ARM present-path degradation contract: {missing[0]}")
 
     rgb_fallback_media = media_nt.replace(
-        'log("media:idlepaintrefusedlegacyRGBF1path;framestorerequiresDDRYUV420p");',
+        'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
         "ok=fpga_.sendRgb24Frame(buf.data(),w,h,1);",
     )
     if not present_degradation_violations(rgb_fallback_media, fb_nt, status_nt):
@@ -1715,6 +1913,7 @@ def main() -> int:
     check_async_fifo_write_full_no_comb_loop()
     check_frame_store_cdc_contract()
     check_mailboxes()
+    check_mailbox_map_collisions()
     check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()

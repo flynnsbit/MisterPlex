@@ -113,6 +113,9 @@ public:
         int64_t post_wait_us = 0;
         int64_t total_us = 0;
         int64_t bank_reuse_wait_us = 0;
+        int64_t plxa_poll_us = 0;     // PLXA bank-release poll time (0 = fallback)
+        int plxa_poll_iters = 0;      // number of PLXA poll iterations
+        bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     struct DdrDoorbellStatus {
@@ -122,11 +125,12 @@ public:
     };
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
+    bool readBankRelease(BankReleaseStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
-    static constexpr uint32_t kDdrDoorbellPhys = 0x3007F000u;
-    static constexpr uint32_t kDdrDoorbellMagic = 0x504C584Bu; // "PLXK"
+    static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
+    static constexpr uint32_t kDdrDoorbellMagic = mailbox_abi::kPlxkMagic;
     static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------
@@ -292,6 +296,7 @@ private:
     double mboxSeqMs_ = 0.0;
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
+    double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();
