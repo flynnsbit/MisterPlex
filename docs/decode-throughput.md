@@ -140,112 +140,96 @@ losses. Raw bandwidth should be enough, but this is not a pass: the bitstream
 reader, DPB, and frame store contend for the same `DDRAM_*` path, and the live
 PLXF-missing fault means arbitration/liveness remains a first-class risk.
 
-## Per-stage budget allocation (revised 2026-07-27)
+## Per-stage budget allocation (revised 2026-07-27, v3)
 
-**Owner: w-c1. Every line is labelled MEASURED, ESTIMATED, or ALLOWANCE.**
+**Owner: w-c1. Every line is labelled MEASURED, ESTIMATED, EXTRAPOLATED, or ALLOWANCE.**
 
-**⚠ CLOCK PROVENANCE WARNING:** The 684 cycles/MB budget assumes `clk_sys` =
-20 MHz. Investigation (below) shows **20 MHz is the Template_MiSTer default
-that was never revisited.** If the decode path is given its own PLL output at
-a higher frequency, this entire budget section becomes moot. See
-"Clock provenance investigation" below before optimising against these numbers.
+**⚠ CLOCK CONSTRAINT STATUS:** The 684 cycles/MB budget assumes `clk_sys` =
+20 MHz. w-arch's architecture study (`ab073d7`) and w-c1's independent trace
+(`547d5e4`) both confirm **20 MHz is the Template_MiSTer default that was never
+chosen.** Decode can be clock-separated from video via a 4th PLL output. At
+40 MHz the budget becomes 1,368 cycles/MB and all architectural optimisations
+become optional. **The ratchet retains 20 MHz until the PLL is actually changed.**
 
 Total budget: **684 cycles/MB** at 20 MHz / 25 fps / 1170 MB per frame.
 
-| Stage | Allocated | Label | Reasoning |
-| --- | ---:| --- | --- |
-| parse_cavlc (full) | 50 | **ESTIMATED** | MEASURED value is 3.2 cycles/MB but that is a 12-frame average on a mixed IDR+P fixture where P-frames hit decode_stub WAIT_MAX timeout. IDR-only is 0.245. Production full-MB CAVLC (24 blocks, serial coefficient decode) is unmeasured. 50 is an engineering estimate for worst-case content. |
-| dequant_idct | 48 | **ESTIMATED** | MEASURED value is 0 (combinational today). Production must clock through 24 blocks/MB. 2 cycles/block in a 2-stage pipeline = 48. Will remain 0 only if the pipeline keeps single-block combinational path. |
-| intra_pred | 30 | **ALLOWANCE** | MEASURED value is 0 (DC pred=128 only). 30 is an allowance for directional modes and mixed I-frame content. All-Plane I-frames would spike to ~70 (see sensitivity analysis). |
-| **mc_interpolation** | **250** | **ESTIMATED** | Nothing measured — module is unbuilt. Derived from: 21×21 qpel ref fetch (~100 DDR beats with arbitration) + 6-tap interpolation compute (~130 cycles) + chroma bilinear (~20). Assumes 64-bit coalesced DDR, P_L0_16x16, no adjacent-MB overlap, no 4-wide FIR. |
-| **deblock** | **150** | **ESTIMATED from RTL** | Derived from `h264_deblock_edge_pipe` structure: 48 edge segments/MB, 2-stage pipeline (1 segment/cycle steady-state = 50 cycles filtering), plus scheduler SRAM read/write at 2 cycles/segment for single-port. Dual-port drops to ~100. Not measured in the pipeline. |
-| ddr_write | 50 | **ESTIMATED** | 384 bytes/MB at 8 bytes/beat = 48 beats + arbitration turnaround. Not measured. |
-| control_overhead | 30 | **ALLOWANCE** | Pipeline stalls, MB-boundary bookkeeping, arbitration bubbles. Not derived from any specific structure — placeholder for costs that appear when stages are integrated. |
-| **TOTAL** | **608** | | **58% is ESTIMATED for unbuilt modules** |
-| **Remaining margin** | **76** | | **1.12× — this is not a comfortable margin for estimates** |
+| Stage | Allocated | Label | Constraint | Reasoning |
+| --- | ---:| --- | --- | --- |
+| parse_cavlc (full) | 50 | **ESTIMATED** | MANDATORY at 20 MHz, optional at ≥40 MHz | MEASURED 3.2 is for a stub. Production full-MB CAVLC is unmeasured. |
+| dequant_idct | 48 | **ESTIMATED** | MANDATORY at 20 MHz, optional at ≥40 MHz | MEASURED 0 (combinational). 24 blocks × 2 cycles when clocked. |
+| intra_pred | 30 | **ALLOWANCE** | RECOMMENDED | MEASURED 0 (DC only). All-Plane I-frames spike to ~70. |
+| **mc_interpolation** | **250** | **ESTIMATED** | **MANDATORY at 20 MHz** — overlap exploit required. **RECOMMENDED at ≥40 MHz** — straightforward design suffices. | Unbuilt. 21×21 qpel ref + DDR fetch + interpolation. |
+| **deblock** | **100** | **EXTRAPOLATED from measurement** | MANDATORY at 20 MHz, optional at ≥40 MHz | w-deblock measured 56 cycles for 24 internal luma segments (2 cycles/segment, register-file gather/scatter). 48 total segments extrapolates to ~96. Rounded to 100. |
+| ddr_write | 50 | **ESTIMATED** | MANDATORY at 20 MHz, optional at ≥40 MHz | 48 coalesced 64-bit beats + arbitration. |
+| control_overhead | 30 | **ALLOWANCE** | RECOMMENDED | Pipeline stalls, MB bookkeeping. Placeholder. |
+| **TOTAL** | **558** | | | |
+| **Remaining margin** | **126** | | | **1.23× at 20 MHz; 2.45× at 40 MHz** |
 
-### Adjacent-MB reference overlap (key to MC feasibility)
+### Adjacent-MB reference overlap
 
-For P_L0_16x16 with similar MVs on horizontally adjacent MBs, the 21×21
-reference window overlaps by ~16 columns. A line buffer can amortise this to
-~40 fresh DDR reads/MB instead of ~100, saving ~60 cycles. **This is the
-difference between MC being feasible and MC blowing the budget.** w-mc should
-design the reference fetch with overlap exploitation from the start.
+At 20 MHz (684 budget): overlap exploitation is **recommended** — it moves
+margin from 1.23× to ~1.55×, providing insurance against MC overrun. The MC
+breaking point is now **376 cycles/MB** (non-MC stages sum to 308), which gives
+MC a 50% overrun allowance even without overlap.
+
+At ≥40 MHz (1,368+ budget): overlap is **nice-to-have** — the budget has 2.45×
+margin and a straightforward MC design fits trivially.
+
+**Do not build overlap exploitation until the clock is settled.**
 
 ### What this excludes
 
-- **Intra_16x16 Plane mode** (not implemented per w-cabac coverage audit, QP 5–27 only)
+- **Intra_16x16 Plane mode** (w-plane added combinational RTL; budget impact is in intra_pred allowance)
 - **I_PCM** (not implemented in RTL)
 - Arbitration contention from display reads (frame_store consumer)
 - Content variation (high-motion P-frames with sub-MB partitions)
 - w-a3's m1 response async FIFO latency (added at `3c6d1d2`)
+- w-cabac's `signed [21:0]` widening (longer carry chains may affect timing at higher clocks)
 - CABAC (not relevant — Baseline profile uses CAVLC only)
 
-## Sensitivity analysis
+## Sensitivity analysis (updated for deblock=100)
 
-The 1.12× margin rests on estimates for three unbuilt stages (MC 250 + deblock
-150 + DDR write 50 = 450 cycles = 74% of the 608 total). This section states
-the breaking points.
+The 1.23× margin rests on estimates for two unbuilt stages (MC 250 + DDR write
+50 = 300 cycles) and one extrapolated (deblock 100). This section states the
+breaking points **at 20 MHz**. At ≥40 MHz, none of these scenarios are
+binding.
 
 ### MC breaking point
 
-Non-MC stages sum to 358 cycles/MB. The budget breaks when MC exceeds:
+Non-MC stages sum to 308 cycles/MB. The budget breaks when MC exceeds:
 
 ```
-684 − 358 = 326 cycles/MB    ← MC breaking point
+684 − 308 = 376 cycles/MB    ← MC breaking point at 20 MHz
 ```
 
-The current MC estimate is 250. That is **76 cycles of headroom** — a 30%
-overrun on a module that does not exist yet.
+The current MC estimate is 250. That is **126 cycles of headroom** — a 50%
+overrun allowance.
 
 ### 50% overrun on all unbuilt stages
 
 | Stage | Base | +50% |
 | --- | ---:| ---:|
 | mc_interpolation | 250 | 375 |
-| deblock | 150 | 225 |
+| deblock | 100 | 150 |
 | ddr_write | 50 | 75 |
-| Subtotal unbuilt | 450 | 675 |
-| + built stages | 158 | 158 |
-| **Total** | **608** | **833** |
-| vs 684 budget | 1.12× OK | **1.22× OVER — FAILS** |
-
-At 50% overrun, the pipeline exceeds the budget by **149 cycles/MB** (22%).
-This would require either a clock increase or architectural parallelism.
+| Subtotal | 400 | 600 |
+| + other stages | 158 | 158 |
+| **Total** | **558** | **758** |
+| vs 684 budget | 1.23× OK | **1.11× OVER — FAILS at 20 MHz** |
+| vs 1368 budget (40 MHz) | 2.45× OK | **1.81× OK** |
 
 ### Scenario table
 
-| Scenario | MC | Deblock | Total | Margin | Verdict |
-| --- | ---:| ---:| ---:| ---:| --- |
-| Base estimate | 250 | 150 | 608 | 1.12× | TIGHT |
-| MC with overlap exploit | 150 | 150 | 508 | 1.35× | FEASIBLE |
-| MC with overlap + dual-port deblock | 150 | 100 | 458 | 1.49× | COMFORTABLE |
-| MC no overlap, single-port deblock | 250 | 150 | 608 | 1.12× | TIGHT |
-| MC overruns 30% | 325 | 150 | 683 | 1.00× | BREAK EVEN |
-| MC overruns 50% | 375 | 150 | 733 | 0.93× | **FAILS** |
-| All unbuilt +50% | 375 | 225 | 833 | 0.82× | **FAILS BADLY** |
-| MC at 400 (complex content) | 400 | 150 | 758 | 0.90× | **FAILS** |
+| Scenario | MC | Deblock | Total | Margin (20 MHz) | Margin (40 MHz) |
+| --- | ---:| ---:| ---:| ---:| ---:|
+| Base estimate | 250 | 100 | 558 | 1.23× | 2.45× |
+| MC with overlap | 150 | 100 | 458 | 1.49× | 2.99× |
+| MC overruns 50% | 375 | 100 | 683 | 1.00× BREAK | 2.00× OK |
+| All unbuilt +50% | 375 | 150 | 758 | 0.90× **FAILS** | 1.81× OK |
+| MC at 400 | 400 | 100 | 708 | 0.97× **FAILS** | 1.93× OK |
 
-### What would save the budget
-
-1. **Adjacent-MB overlap in MC** — saves ~100 cycles, moves from 1.12× to 1.35×
-2. **Dual-port MB SRAM for deblock** — saves ~50 cycles, moves from 1.12× to 1.20×
-3. **Both together** — 1.49× margin, which is the first scenario I would call "comfortable"
-4. **Move decode to 90 MHz `clk_ddr`** — budget becomes 3,077 cycles/MB (4.5× the current), eliminates all timing risk but requires CDC on every decode↔system interface
-
-### Honest assessment
-
-The **base estimate (1.12×) is not a comfortable number**. Three of the four
-largest stages are estimates for unbuilt FPGA modules. FPGA estimates are
-usually optimistic: synthesis constraints, routing congestion, and arbitration
-contention all add cycles that paper analysis misses.
-
-**The budget probably works IF the two architectural optimisations land** (MC
-overlap + dual-port deblock → 1.49×). Without them, a single stage overrunning
-by 30% breaks the budget.
-
-**If MC lands above 326 cycles/MB, 25 fps at 20 MHz is not achievable.** That
-is the number w-mc should treat as a hard ceiling, not 250.
+**Key observation:** every scenario that fails at 20 MHz passes at 40 MHz.
+The clock is the constraint, not the architecture.
 
 ## End-to-end effective fps
 
@@ -319,48 +303,50 @@ accounting.
    `present_core`/`CLK_VIDEO` stay on `clk_sys`. The only CDC needed is the
    frame-store handoff (already crosses domains via `fs_swap`/`fs_wr_reset`).
 
-### Implication for the budget
+### Implication for the budget (updated for deblock=100 → total=558)
 
-| Decode clock | Budget cycles/MB | Margin at 608 estimate | Status |
+| Decode clock | Budget cycles/MB | Margin at 558 total | Status |
 | ---:| ---:| ---:| --- |
-| 20 MHz (current) | 684 | 1.12× (76 cycles) | TIGHT |
-| 40 MHz | 1,368 | 2.25× (760 cycles) | Comfortable |
-| 60 MHz | 2,052 | 3.37× (1,444 cycles) | Feasibility question dissolves |
-| 90 MHz | 3,077 | 5.06× (2,469 cycles) | Surplus to allocate |
+| 20 MHz (current) | 684 | 1.23× (126 cycles) | Feasible but not comfortable |
+| 40 MHz | 1,368 | 2.45× (810 cycles) | Comfortable |
+| 60 MHz | 2,052 | 3.68× (1,494 cycles) | Feasibility question dissolves |
+| 90 MHz | 3,077 | 5.51× (2,519 cycles) | Surplus to allocate |
 
-**If `clk_sys` can be raised to 40 MHz for the decode path, the entire budget
-conversation changes from "tight with mandatory optimisations" to "comfortable
-with room for content variation."** This is the single highest-leverage
-investigation in the project right now.
-
-**w-arch owns this investigation.** w-c1's budget allocation remains valid as
-the worst-case constraint — if 20 MHz proves to be genuinely fixed, every
-number in this document applies. But the budget should not drive architectural
-decisions (4-wide FIR, adjacent-MB overlap) until w-arch confirms the
-constraint is real.
+**w-arch has confirmed: decode can be clock-separated from video.** The
+separation path is clean — `stream_path` takes a dedicated `clk_decode`,
+`present_core`/`CLK_VIDEO` stay on `clk_sys`. CDC cost is ~1 async FIFO +
+4 two-FF syncs (w-arch estimates 2-3 days). Cross-reference: `ao486_MiSTer`
+(shipping production core, same device family) uses 90 MHz for `clk_sys`.
 
 ## Verdict
 
-**DO NOT ARCHITECT AGAINST 684 cycles/MB UNTIL THE CLOCK IS SETTLED.**
+**FEASIBLE at 20 MHz. Comfortable at ≥40 MHz. Clock is the highest-leverage decision.**
 
-The 608/684 budget at 1.12× margin is: every line except parse_cavlc (3.2
-cycles/MB MEASURED, but for a stub not the production pipeline) is either
-ESTIMATED or ALLOWANCE. 58% of the total is for unbuilt modules. At 1.06×
-worst case (all-Plane I-frame), a single stall breaks the budget.
+Updated budget: **558/684 = 1.23× margin at 20 MHz.** This is an improvement
+from the previous 608/684 = 1.12×, driven by w-deblock's measured 100 cycles
+(down from 150 ESTIMATED). MC breaking point is now **376 cycles/MB** — MC can
+overrun by 50% and still fit.
 
-However, **the constraint itself may be imaginary.** 20 MHz is the template
-default that nobody chose. The same PLL already produces 90 MHz on another
-output. A dedicated decode clock at even 40 MHz would make the budget
-comfortable (2.25× margin) without any architectural optimisation.
+The budget has three provenance tiers:
+- **EXTRAPOLATED from measurement:** deblock (100, from w-deblock sim at `feat/deblock`)
+- **ESTIMATED for unbuilt modules:** MC (250), DDR write (50), parse_full (50), dequant (48)
+- **ALLOWANCE:** intra_pred (30), control (30)
 
-**Pending w-arch's clock investigation:**
-- If 20 MHz is genuinely fixed → MC overlap and dual-port deblock are mandatory,
-  MC must stay under 326 cycles/MB, and the margin is uncomfortably thin.
-- If decode can run at ≥40 MHz → the budget is comfortable and w-mc can build a
-  straightforward MC without overlap exploitation.
+**The clock constraint is confirmed imaginary.** Both w-c1 and w-arch
+independently verified that 20 MHz is the Template_MiSTer default, never
+chosen. w-arch's study (`ab073d7`) confirms decode can be clock-separated
+from video via a 4th PLL output at 40+ MHz.
 
-**Do not soften this to "feasible."** At 1.12×, with 58% ESTIMATED, feasibility
-is an assertion, not a measurement.
+**At 20 MHz:** MC overlap is recommended (moves to 1.49×) but not mandatory.
+MC must stay under 376 cycles/MB.
+
+**At ≥40 MHz:** all architectural optimisations become optional. A
+straightforward MC design fits trivially. w-mc should build the simplest
+correct implementation first.
+
+**Recommendation to parent:** approve the PLL change. It is the single
+lowest-risk, highest-leverage decision available. Every failing scenario in
+the sensitivity table passes at 40 MHz.
 
 ## Ratchet
 

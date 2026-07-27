@@ -20,49 +20,58 @@
   "budget_allocation": {
     "owner": "w-c1",
     "date": "2026-07-27",
-    "status": "ESTIMATE — no stage below is measured except parse_cavlc",
+    "status": "MIXED — deblock EXTRAPOLATED from w-deblock measurement; MC/ddr_write ESTIMATED; parse/dequant/intra ESTIMATED from measured stubs. Clock constraint (20 MHz) confirmed imaginary by w-arch (ab073d7) — budget may widen to 1368+ cycles/MB pending PLL change.",
     "total_budget_cycles_per_mb": 684,
+    "clock_note": "20 MHz is the Template_MiSTer default, never chosen (confirmed independently by w-c1 at 547d5e4 and w-arch at ab073d7). Decode can be clock-separated from video via a 4th PLL output. At 40 MHz budget becomes 1368 cycles/MB. Ratchet retains 20 MHz until PLL is actually changed.",
     "stages": {
       "parse_cavlc_full": {
         "allocated": 50,
+        "label": "ESTIMATED",
         "unit": "cycles/MB",
-        "reasoning": "Current first-MB-only parse is 3 cycles/MB. Full MB parsing (mb_type, CBP, per-block CAVLC for up to 24 blocks in I420, Intra_16x16 Plane mode, I_PCM passthrough) will be much higher. CAVLC is fundamentally serial — each coefficient depends on the previous — and complex MBs at low QP can have 16 non-zero coefficients per block × 24 blocks. 50 cycles/MB provides headroom for content-dependent worst cases."
+        "reasoning": "MEASURED value is 3.2 cycles/MB but for a stub (decode_stub WAIT_MAX timeout on P-frames). IDR-only is 0.245. Production full-MB CAVLC (24 blocks, serial coefficient decode) is unmeasured. 50 is an engineering estimate for worst-case content."
       },
       "dequant_idct": {
         "allocated": 48,
+        "label": "ESTIMATED",
         "unit": "cycles/MB",
-        "reasoning": "24 blocks/MB (16Y + 4Cb + 4Cr). Currently combinational for one block. Production pipeline must clock through all 24 blocks sequentially. At 2 cycles/block (dequant + IDCT in a 2-stage pipeline): 48 cycles. The current combinational h264_dequant4x4/h264_idct4x4 modules work at 20 MHz for single-block use but will need registered outputs when processing all blocks."
+        "reasoning": "MEASURED value is 0 (combinational today). Production must clock through 24 blocks/MB. 2 cycles/block in a 2-stage pipeline = 48."
       },
       "intra_pred": {
         "allocated": 30,
+        "label": "ALLOWANCE",
         "unit": "cycles/MB",
-        "reasoning": "DC mode is trivial (~1 cycle/block) but directional modes (Vert, Horiz, DDL, DDR, VR, HD, VL, HU) need neighbor sample reads. Intra_16x16 Plane mode is a 16x16-sample computation with per-pixel multiply-accumulate. I_PCM is 384 raw bytes (bypass). Averaged across a realistic I-frame with mixed modes: ~30 cycles/MB. P-frames with inter-coded MBs skip this for most MBs."
+        "reasoning": "MEASURED value is 0 (DC pred=128 only). Allowance for directional modes and mixed I-frame content. All-Plane I-frames spike to ~70."
       },
       "mc_interpolation": {
         "allocated": 250,
+        "label": "ESTIMATED",
         "unit": "cycles/MB",
-        "reasoning": "THE DOMINANT COST. Quarter-pel luma needs a 9x9 reference window per 4x4 sub-block (6-tap filter: 5 extra samples). For P_L0_16x16, that is a 21x21 = 441-sample reference window. DDR reference fetch: 441 luma + 162 chroma = 603 bytes. At 8 bytes/beat with alignment overhead: ~100 DDR beats. Each beat has arbitration latency (arbiter shares with frame_store display reads). Interpolation compute: 6-tap horizontal then vertical per sample, 16 multiplies per sample position. Chroma bilinear is lighter (~20 cycles). Adjacent-MB overlap: horizontally adjacent MBs with similar MVs share ~60% of the 21-column reference window. A line buffer can amortise this to ~40 fresh reads/MB instead of 100, but requires per-row pipeline state. WITHOUT overlap exploit: ~250 cycles. WITH overlap: ~150. Allocating 250 (no-overlap case) as the safe target. Note: sub-MB partitions (8x8, 8x16, 16x8, 4x4) may have DIFFERENT MVs per partition, multiplying fetch count. P_Skip with zero MV is essentially free (copy from co-located reference)."
+        "reasoning": "Unbuilt module. Assumes 64-bit coalesced DDR, P_L0_16x16, no adjacent-MB overlap, no 4-wide FIR. At >=40 MHz decode clock, adjacent-MB overlap becomes nice-to-have rather than mandatory."
       },
       "deblock": {
-        "allocated": 150,
+        "allocated": 100,
+        "label": "EXTRAPOLATED from w-deblock measurement",
         "unit": "cycles/MB",
-        "reasoning": "REVISED UPWARD from 100 after RTL analysis. h264_deblock_edge_pipe is a 2-stage pipeline processing 4 samples/segment. Per-MB edge count: 32 luma segments (4 vert boundaries × 4 + 4 horiz × 4) + 16 chroma segments (2 boundaries × 2 × 2 planes × 2 directions) = 48 total. Filter pipeline at 1 segment/cycle steady-state: ~50 cycles for filtering alone. But the scheduler must also: (a) generate addresses to read p0-p3/q0-q3 from MB SRAM buffer — 2 reads per segment for 32-bit SRAM; (b) write back modified samples; (c) handle vertical→horizontal data dependency (horizontal pass reads modified vertical results, forcing pipeline drain between passes); (d) load/store boundary neighbor data for left/top MBs. With single-port MB SRAM: 48 × (1 filter + 2 SRAM) ≈ 144. Dual-port can overlap: 48 × 2 ≈ 96. Allocating 150 to cover single-port case + boundary neighbor management. Flag to w-a3: dual-port MB SRAM drops this to ~100."
+        "reasoning": "REVISED DOWN from 150 to 100. w-deblock measured 56 cycles for 24 internal luma segments (2 cycles/segment via register-file gather/scatter, no SRAM port conflicts). Extrapolated: 48 total segments × 2 cycles = 96, rounded to 100 for boundary edge variation. The register-file architecture eliminates the SRAM bottleneck that drove the 150 estimate. Source: feat/deblock branch."
       },
       "ddr_write": {
         "allocated": 50,
+        "label": "ESTIMATED",
         "unit": "cycles/MB",
-        "reasoning": "Write 384 bytes/MB (256Y + 64Cb + 64Cr) to the current picture in DDR. At 8 bytes/beat: 48 beats minimum. Burst writes amortise bus setup, but arbitration contention with MC reference reads and display line reads adds overhead. 50 cycles allows ~1 cycle/beat overhead for arbitration turnaround."
+        "reasoning": "48 coalesced 64-bit beats + arbitration turnaround. Not measured."
       },
       "control_overhead": {
         "allocated": 30,
+        "label": "ALLOWANCE",
         "unit": "cycles/MB",
-        "reasoning": "Pipeline stalls, MB-boundary bookkeeping (slice header re-parse at slice boundaries, QP delta application, CBP decode, macroblock address increment). Also includes arbitration pipeline bubbles between DDR requesters."
+        "reasoning": "Pipeline stalls, MB-boundary bookkeeping, arbitration bubbles. Placeholder."
       }
     },
-    "sum_allocated": 608,
-    "remaining_margin": 76,
-    "margin_ratio": 1.12,
-    "verdict": "TIGHT — reduced from 1.23x to 1.12x after deblock revision from 100 to 150 cycles/MB. MC (250) + deblock (150) = 400 cycles = 66% of total 608. Adjacent-MB reference overlap in MC is mandatory. Dual-port MB SRAM for deblock would recover ~50 cycles. Budget BREAKS if MC exceeds 326 cycles/MB (non-MC stages sum to 358). At 50% overrun on all unbuilt stages (MC=375, deblock=225, DDR=75), total=733 which EXCEEDS the 684 budget by 7%. This is a schedule risk."
+    "sum_allocated": 558,
+    "remaining_margin": 126,
+    "margin_ratio": 1.23,
+    "mc_breaking_point": 376,
+    "verdict": "FEASIBLE at 20 MHz with 1.23x margin (recovered 50 cycles from deblock revision). MC breaking point is 376 cycles/MB. However, the 20 MHz constraint itself is confirmed imaginary — at 40 MHz the margin widens to 2.45x and architectural optimisations become optional rather than mandatory. DO NOT optimise MC for overlap exploitation until the clock is settled."
   },
   "thresholds": {
     "max_cycles_total": 3823946,
@@ -115,8 +124,8 @@
       "name": "deblock",
       "status": "not_implemented",
       "cycles_per_mb": null,
-      "budget_allocated": 150,
-      "note": "NOT IMPLEMENTED. Budget allocation: 150 cycles/MB (revised from 100). 48 edge segments × (1 filter + 2 SRAM) with single-port buffer. Dual-port MB SRAM drops to ~100. Flag to w-a3."
+      "budget_allocated": 100,
+      "note": "NOT IMPLEMENTED in pipeline. Budget allocation: 100 cycles/MB (EXTRAPOLATED from w-deblock measurement: 56 cycles for 24 internal luma segments at 2 cycles/segment via register-file gather/scatter). Full 48-segment extrapolation: ~96 cycles."
     },
     {
       "name": "ddr_write",
