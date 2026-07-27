@@ -29,7 +29,8 @@ TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
 GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
-ANNEXB="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
+ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
+SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
 MB0_REF="$ROOT/tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 
 for f in "$RTL" "$QIP" "$TOP" "$TB"; do
@@ -52,10 +53,10 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --top-module h264_deblock_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL" "$TB"
-"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN"
+"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
 
 set +e
-FAULT_OUT="$($BUILD/Vh264_deblock_tb --fault-horizontal-first 2>&1)"
+FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-horizontal-first 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT"
