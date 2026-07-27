@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 static int fails = 0;
@@ -47,27 +48,35 @@ int main() {
         CHECK(d.audioClockTrimEnabled);
         CHECK(d.resyncEnabled);
         CHECK(d.idleMode == 0);
+        CHECK(d.contentResolution.width == 320);
+        CHECK(d.contentResolution.height == 240);
+        CHECK(std::string(d.contentResolution.label) == "320x240");
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
     CHECK(!decodeOsdWord(1u << 3).audioClockTrimEnabled); // O[3] Audio clock trim
+    CHECK(decodeOsdWord(1u << 4).contentResolution.width == 640); // O[4] Content resolution
+    CHECK(decodeOsdWord(1u << 4).contentResolution.height == 480);
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
     CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
     // Core-owned bits must not leak into user settings.
-    for (int bit : {0, 2, 4, 5, 10, 11, 12, 13}) {
+    for (int bit : {0, 2, 5, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.resyncEnabled);
         CHECK(d.audioClockTrimEnabled);
         CHECK(d.idleMode == 0);
+        CHECK(d.contentResolution.width == 320);
     }
+    CHECK(contentResolutionFromSize(320, 240).width == 320);
+    CHECK(contentResolutionFromSize(640, 480).width == 640);
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during
     // playback; reacting to them would re-log and re-apply settings every frame.
-    for (int bit : {0, 2, 4, 5, 10, 11, 12, 13})
+    for (int bit : {0, 2, 5, 10, 11, 12, 13})
         CHECK(!osdChanged(0, static_cast<uint16_t>(1u << bit)));
-    for (int bit : {1, 3, 6, 7, 8, 9, 14, 15})
+    for (int bit : {1, 3, 4, 6, 7, 8, 9, 14, 15})
         CHECK(osdChanged(0, static_cast<uint16_t>(1u << bit)));
 
     // --- idle mode bits match CONF_STR order ---

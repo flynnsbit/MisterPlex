@@ -109,7 +109,7 @@ public:
     void stopIdle();
 
     // Live OSD menu control. Only enable against a core whose CONF_STR uses the
-    // v3 bit layout (see libmisterplex/osd_menu.hpp) — the old layout puts Pattern
+    // v7 bit layout (see libmisterplex/osd_menu.hpp) — older layouts put Pattern
     // and Content FPS on the same bits, which would be read as an A/V offset.
     void setOsdControl(bool on) { osdControl_ = on; }
     void startOsdPoll();

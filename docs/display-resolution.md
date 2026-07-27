@@ -108,6 +108,41 @@ mode as HDMI. If you use VGA, stay at:
 Higher HDMI modes can work well over HDMI, but they also push VGA to that same higher mode. If your VGA
 display cannot sync above 800×600@60, choosing a high HDMI mode may make the VGA output unusable.
 
+## Native/content resolution selector
+
+The Plex core now exposes a runtime OSD selector for the **native content resolution**:
+
+```text
+F12 → Content resolution → 320x240 or 640x480
+```
+
+This is deliberately separate from `video_mode`. For example:
+
+- `video_mode=8` + `Content resolution=320x240` = a 1080p output signal carrying the proven
+  320×240 content path scaled by MiSTer.
+- `video_mode=8` + `Content resolution=640x480` = a 1080p output signal carrying a 640×480
+  native frame, once the 480p pipeline pieces are present.
+
+The selector is one core, not a separate "480p build". `320x240` is still the default so existing
+installs keep the proven path. The ARM daemon reads the same OSD status word (`O[4]`) that the RTL
+uses, via the DDR OSD mailbox, before starting playback. That keeps Plex server resolution,
+ARM decode size, and the core's native-resolution selector tied to one source of truth instead of
+separate ARM/RTL copies.
+
+### 480p status
+
+Choose `640x480` only for 480p test builds that include all three required pieces:
+
+1. DDR-backed frame store in the core, so the frame buffer is not limited to the old BRAM-sized
+   320×240 path.
+2. ARM RGB565 conversion and DDR frame writes sized for 640×480.
+3. Plex weak-ladder resolve requesting a 640×480 stream.
+
+Current claim level: **fits and closes timing / within modelled bandwidth**. The 480p path is not
+hardware-validated yet, so do not describe it as supported until a lab run proves playback on
+silicon. The output-mode sweep above remains valid: output signal resolution is effectively free;
+native 480p content is the part that needs validation.
+
 ## What this does and does not mean
 
 The sweep shows that **output resolution is effectively free** for the current path: MiSTer's scaler does

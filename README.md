@@ -165,6 +165,10 @@ section's `video_mode`, `video_mode_ntsc`, and `video_mode_pal`, then soft-reboo
 mode `5`, or use `6` (640×480@60), because `vga_scaler=1` makes VGA follow the same mode as
 HDMI.
 
+Native content resolution is a separate OSD setting (**F12 → Content resolution**). `320x240`
+remains the proven default; `640x480` is for 480p test builds that include the DDR frame-store,
+ARM DDR write, and 640×480 Plex ladder pieces.
+
 Full guidance and the supported matrix: [docs/display-resolution.md](docs/display-resolution.md).
 Draft v0.3.0 release notes: [docs/release-notes-v0.3.0.md](docs/release-notes-v0.3.0.md).
 
