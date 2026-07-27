@@ -48,13 +48,13 @@ build_variant() {
 build_variant cl2 1 0
 "$OUT/cl2/Vsdram_dq_turnaround_top" >"$OUT/cl2.log" 2>&1
 cat "$OUT/cl2.log"
-grep -q 'PASS: read capture lands inside the model drive window without contention' "$OUT/cl2.log"
+grep -q 'PASS: read capture aligns with the model drive window without contention' "$OUT/cl2.log"
 grep -q 'Mode CAS latency decoded by model: 2' "$OUT/cl2.log"
 
 build_variant cl3 1 1
 "$OUT/cl3/Vsdram_dq_turnaround_top" >"$OUT/cl3.log" 2>&1
 cat "$OUT/cl3.log"
-grep -q 'PASS: read capture lands inside the model drive window without contention' "$OUT/cl3.log"
+grep -q 'PASS: read capture aligns with the model drive window without contention' "$OUT/cl3.log"
 grep -q 'Mode CAS latency decoded by model: 3' "$OUT/cl3.log"
 
 build_variant floating 0 0

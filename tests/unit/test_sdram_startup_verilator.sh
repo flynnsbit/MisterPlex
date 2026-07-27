@@ -70,13 +70,21 @@ grep -q 'PASS: no ACTIVE/READ/WRITE before first MODE_REGISTER_SET' "$OUT/cold-g
 "$OUT/Vsdram_startup_top" --freq-hz=100000000 --force-ready-init-high >"$OUT/ready-high.log" 2>&1
 cat "$OUT/ready-high.log"
 grep -q 'PASS: no ACTIVE/READ/WRITE before first MODE_REGISTER_SET' "$OUT/ready-high.log"
-grep -q 'First memtest sel+(rd|wr) observed at cycle 10' "$OUT/ready-high.log"
+! grep -q 'First memtest sel+(rd|wr) observed at cycle 10' "$OUT/ready-high.log"
 
 build_variant 133333333 "$OUT/freq133" 1
 "$OUT/freq133/Vsdram_startup_top" --freq-hz=133333333 --constants-only >"$OUT/freq133.log" 2>&1
 cat "$OUT/freq133.log"
 grep -q 'PASS: computed startup/refresh constants satisfy SDRAM timing' "$OUT/freq133.log"
 grep -q 'cas_latency=3' "$OUT/freq133.log"
+
+build_variant 142000000 "$OUT/freq142" 1
+"$OUT/freq142/Vsdram_startup_top" --freq-hz=142000000 --constants-only >"$OUT/freq142.log" 2>&1
+cat "$OUT/freq142.log"
+grep -q 'PASS: computed startup/refresh constants satisfy SDRAM timing' "$OUT/freq142.log"
+grep -q 'startup_cycles=17182' "$OUT/freq142.log"
+grep -q 'refresh_cycles=1108' "$OUT/freq142.log"
+grep -q 'cas_latency=3' "$OUT/freq142.log"
 
 build_variant 75000000 "$OUT/freq75"
 "$OUT/freq75/Vsdram_startup_top" --freq-hz=75000000 --constants-only >"$OUT/freq75.log" 2>&1

@@ -17,7 +17,9 @@ module  pll_0002(
 	output wire locked
 );
 
-`ifdef SDRAM_CLK_133
+`ifdef SDRAM_CLK_142
+`define MISTERPLEX_SDRAM_PLL_FREQ "142.000000 MHz"
+`elsif SDRAM_CLK_133
 `define MISTERPLEX_SDRAM_PLL_FREQ "133.333333 MHz"
 `elsif SDRAM_CLK_120
 `define MISTERPLEX_SDRAM_PLL_FREQ "120.000000 MHz"

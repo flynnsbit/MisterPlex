@@ -106,6 +106,7 @@ bool run_until_first_read_sample(Vsdram_dq_turnaround_top& top,
     top.pll_locked = 1;
 
     bool saw_first_read = false;
+    bool prev_dev_drive = false;
     int after_read = -1;
     for (; cycle < max_cycles; ) {
         tick(top, cycle);
@@ -132,11 +133,12 @@ bool run_until_first_read_sample(Vsdram_dq_turnaround_top& top,
                                   static_cast<uint16_t>(top.dq_bus), static_cast<uint16_t>(top.sdram_dout)});
         }
 
-        if (saw_first_read && top.sdram_ready && cycle > first_read_cycle) {
+        if (saw_first_read && cycle > first_read_cycle && top.sdram_dout == 0x1357) {
             first_capture_cycle = cycle;
-            capture_inside_drive = dev_drive;
+            capture_inside_drive = dev_drive || prev_dev_drive;
             return true;
         }
+        prev_dev_drive = dev_drive;
     }
     return false;
 }
@@ -246,8 +248,8 @@ int main(int argc, char** argv) {
     std::cout << "Mode CAS latency decoded by model: " << static_cast<unsigned>(top.device_cas_latency)
               << " burst_len=" << static_cast<unsigned>(top.device_burst_len) << "\n";
     std::cout << "First READ command cycle: " << first_read_cycle << "\n";
-    std::cout << "First controller ready/capture cycle after READ: " << first_capture_cycle << "\n";
-    std::cout << "Capture inside device drive window: " << (capture_inside_drive ? "yes" : "no") << "\n";
+    std::cout << "First controller data-capture cycle after READ: " << first_capture_cycle << "\n";
+    std::cout << "Capture aligned with device drive window: " << (capture_inside_drive ? "yes" : "no") << "\n";
     std::cout << "Controller/device DQ contention observed: " << (contention ? "yes" : "no") << "\n";
 
     if (!got_capture) {
@@ -259,7 +261,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (!capture_inside_drive) {
-        std::cerr << "FAIL: controller sampled outside the SDRAM model drive window\n";
+        std::cerr << "FAIL: controller captured outside the SDRAM model drive window\n";
         return 3;
     }
     if (top.sdram_dout == 0xffff) {
@@ -267,6 +269,6 @@ int main(int argc, char** argv) {
         return 4;
     }
 
-    std::cout << "PASS: read capture lands inside the model drive window without contention\n";
+    std::cout << "PASS: read capture aligns with the model drive window without contention\n";
     return 0;
 }

@@ -1,65 +1,48 @@
+//============================================================================
+// MiSTerPlex SDRAM controller.
 //
-// sdram.v
+// Reworked 2026-07 from the known-good MemTest_MiSTer controller command
+// schedule after MemTest_MiSTer passed on the project DE10-Nano at 142 MHz.
 //
-// Static RAM controller implementation using SDRAM MT48LC16M16A2
+// Original reference:
+//   https://github.com/MiSTer-devel/MemTest_MiSTer/blob/86f89561b325d329ab96dfa6097d895e79ded36a/rtl/sdram.v
+//   Copyright (c) MiSTer-devel / Sorgelig, GPL-2.0-or-later as distributed in
+//   MemTest_MiSTer.
 //
-// Copyright (c) 2015-2019 Sorgelig
-//
-// Some parts of SDRAM code used from project:
-// http://hamsterworks.co.nz/mediawiki/index.php/Simple_SDRAM_Controller
-//
-// This source file is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This source file is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
-//
-// ------------------------------------------
-//
-// furrtek 2019-01-24 : Added ugly burst reading
-// Sorgelig 2019-08   : rework, support mem copy and larger chips.
-//
-// Vendored into MiSTerPlex 2026-07-26 from:
-//   https://github.com/MiSTer-devel/NeoGeo_MiSTer/blob/227d4f418fd908a66712329400a6f619ca4fee77/rtl/mem/sdram.sv
-// License: GPL-3.0-or-later, as stated above.
-// Local bring-up adaptation: CAS latency can be selected at synthesis time with
-// SDRAM_CL3. Static timing can close CL2, but only hardware can prove the
-// external SDRAM chip returns valid data at that CAS latency.
+// This adaptation preserves the MiSTerPlex random single-word client interface
+// while adopting the conservative bus timing shape proven by MemTest: CL3-capable
+// mode setup, >=tRCD spacing between ACTIVE and READ/WRITE, explicit
+// auto-precharge recovery before ready is reasserted, and fully initialised
+// reset/ready state.
+//============================================================================
 
 module sdram
 #(
 	parameter int unsigned SDRAM_CLK_HZ = 100_000_000
 )(
-	input             init,        // reset to initialize RAM
-	input             clk,         // clock ~100MHz
+	input             init,
+	input             clk,
 
-	inout  reg [15:0] SDRAM_DQ,    // 16 bit bidirectional data bus
-	output reg [12:0] SDRAM_A,     // 13 bit multiplexed address bus
-	output            SDRAM_DQML,  // two byte masks
-	output            SDRAM_DQMH,  //
-	output reg  [1:0] SDRAM_BA,    // two banks
-	output            SDRAM_nCS,   // a single chip select
-	output            SDRAM_nWE,   // write enable
-	output            SDRAM_nRAS,  // row address select
-	output            SDRAM_nCAS,  // columns address select
-	output            SDRAM_CKE,   // clock enable
+	inout  reg [15:0] SDRAM_DQ,
+	output reg [12:0] SDRAM_A,
+	output            SDRAM_DQML,
+	output            SDRAM_DQMH,
+	output reg  [1:0] SDRAM_BA,
+	output            SDRAM_nCS,
+	output            SDRAM_nWE,
+	output            SDRAM_nRAS,
+	output            SDRAM_nCAS,
+	output            SDRAM_CKE,
 	output            SDRAM_CLK,
-	input             SDRAM_EN,    // clock enable
+	input             SDRAM_EN,
 
 	input             sel,
-	input      [26:1] addr,        // 25 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
-	output reg [15:0] dout,        // data output to cpu
-	input      [15:0] din,         // data input from cpu
-	input             wr,          // request write
-	input       [1:0] bs,          // bit1 - write high byte, bit0 - write low byte, Ignored while reading.
-	input             rd,          // request read
+	input      [26:1] addr,
+	output reg [15:0] dout,
+	input      [15:0] din,
+	input             wr,
+	input       [1:0] bs,
+	input             rd,
 	output reg        ready,
 	input             refresh,
 
@@ -75,222 +58,237 @@ assign SDRAM_nCS  = chip;
 assign SDRAM_nRAS = command[2];
 assign SDRAM_nCAS = command[1];
 assign SDRAM_nWE  = command[0];
-assign SDRAM_CKE  = 1;
-assign {SDRAM_DQMH,SDRAM_DQML} = SDRAM_A[12:11];
+assign SDRAM_CKE  = 1'b1;
+assign {SDRAM_DQMH, SDRAM_DQML} = SDRAM_A[12:11];
 
-localparam BURST_LENGTH        = 4;
-localparam BURST_CODE          = (BURST_LENGTH == 8) ? 3'b011 : (BURST_LENGTH == 4) ? 3'b010 : (BURST_LENGTH == 2) ? 3'b001 : 3'b000;  // 000=1, 001=2, 010=4, 011=8
-localparam ACCESS_TYPE         = 1'b0;     // 0=sequential, 1=interleaved
+localparam int BURST_LENGTH        = 4;
+localparam [2:0] BURST_CODE        = 3'b010; // burst length 4, matching MemTest_MiSTer
+localparam ACCESS_TYPE             = 1'b0;
 `ifdef SDRAM_CL3
-localparam CAS_LATENCY         = 3'd3;     // conservative default for >100MHz sweeps
+localparam [2:0] CAS_LATENCY       = 3'd3;
 `else
-localparam CAS_LATENCY         = 3'd2;     // 100MHz B2 default
+localparam [2:0] CAS_LATENCY       = 3'd2;
 `endif
-localparam OP_MODE             = 2'b00;    // only 00 (standard operation) allowed
-localparam NO_WRITE_BURST      = 1'b1;     // 0= write burst enabled, 1=only single access write
-localparam MODE                = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_CODE};
+localparam [1:0] OP_MODE           = 2'b00;
+localparam NO_WRITE_BURST          = 1'b1; // random single-word client writes
+localparam [12:0] MODE             = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_CODE};
 
-localparam longint unsigned sdram_startup_cycles_calc = ((longint'(SDRAM_CLK_HZ) * 121) + 999_999) / 1_000_000;
-localparam longint unsigned cycles_per_refresh_calc   = ((longint'(SDRAM_CLK_HZ) * 64_000) / (8192 * 1_000_000)) - 1;
-localparam [13:0] sdram_startup_cycles = sdram_startup_cycles_calc[13:0]; // 121us, preserves 12100 @ 100MHz
-localparam [13:0] cycles_per_refresh   = cycles_per_refresh_calc[13:0];   // max interval <= 64ms/8192 rows
-localparam startup_refresh_max = 14'b11111111111111;
+localparam longint unsigned STARTUP_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 121) + 999_999) / 1_000_000;
+localparam longint unsigned REFRESH_CYCLES_CALC = ((longint'(SDRAM_CLK_HZ) * 64_000) / (8192 * 1_000_000)) - 1;
+localparam longint unsigned T_RCD_CALC          = ((longint'(SDRAM_CLK_HZ) * 20) + 999_999_999) / 1_000_000_000;
+localparam longint unsigned T_RP_CALC           = ((longint'(SDRAM_CLK_HZ) * 20) + 999_999_999) / 1_000_000_000;
+localparam longint unsigned T_RFC_CALC          = ((longint'(SDRAM_CLK_HZ) * 66) + 999_999_999) / 1_000_000_000;
+localparam int unsigned SDRAM_STARTUP_CYCLES    = STARTUP_CYCLES_CALC[31:0];
+localparam int unsigned CYCLES_PER_REFRESH      = REFRESH_CYCLES_CALC[31:0];
+localparam int unsigned T_RCD_CYCLES            = (T_RCD_CALC < 2) ? 2 : T_RCD_CALC[31:0];
+localparam int unsigned T_RP_CYCLES             = (T_RP_CALC  < 2) ? 2 : T_RP_CALC[31:0];
+localparam int unsigned T_RFC_CYCLES            = (T_RFC_CALC < 8) ? 8 : T_RFC_CALC[31:0];
+localparam int unsigned POST_CAS_CYCLES         = BURST_LENGTH + T_RP_CYCLES;
 
-// SDRAM commands
-wire [2:0] CMD_NOP             = 3'b111;
-wire [2:0] CMD_ACTIVE          = 3'b011;
-wire [2:0] CMD_READ            = 3'b101;
-wire [2:0] CMD_WRITE           = 3'b100;
-wire [2:0] CMD_PRECHARGE       = 3'b010;
-wire [2:0] CMD_AUTO_REFRESH    = 3'b001;
-wire [2:0] CMD_LOAD_MODE       = 3'b000;
+localparam [2:0] CMD_NOP             = 3'b111;
+localparam [2:0] CMD_ACTIVE          = 3'b011;
+localparam [2:0] CMD_READ            = 3'b101;
+localparam [2:0] CMD_WRITE           = 3'b100;
+localparam [2:0] CMD_PRECHARGE       = 3'b010;
+localparam [2:0] CMD_AUTO_REFRESH    = 3'b001;
+localparam [2:0] CMD_LOAD_MODE       = 3'b000;
 
-reg [13:0] refresh_count = startup_refresh_max - sdram_startup_cycles;
-reg  [2:0] command;
+localparam [4:0] ST_INIT_WAIT        = 5'd0;
+localparam [4:0] ST_INIT_PRECHARGE   = 5'd1;
+localparam [4:0] ST_INIT_AR1         = 5'd2;
+localparam [4:0] ST_INIT_AR2         = 5'd3;
+localparam [4:0] ST_INIT_MRS         = 5'd4;
+localparam [4:0] ST_WAIT             = 5'd5;
+localparam [4:0] ST_IDLE             = 5'd6;
+localparam [4:0] ST_REFRESH          = 5'd7;
+localparam [4:0] ST_ACTIVE_WAIT      = 5'd8;
+localparam [4:0] ST_CAS              = 5'd9;
+localparam [4:0] ST_READ_WAIT        = 5'd10;
+localparam [4:0] ST_POST_CAS         = 5'd11;
+
+reg [4:0]  state;
+reg [4:0]  wait_return;
+reg [31:0] wait_count;
+reg [31:0] startup_count;
+reg [31:0] refresh_count;
+reg        refresh_old;
+reg [12:0] cas_addr;
+reg [15:0] saved_data;
+reg        saved_wr;
 reg        chip;
+reg [2:0]  command;
+reg [15:0] dq_sample;
 
-localparam STATE_STARTUP =  0;
-localparam STATE_WAIT    =  1;
-localparam STATE_RW      =  2;
-localparam STATE_WAITCP  =  3;
-localparam STATE_CP      =  4;
-localparam STATE_IDLE    =  5;
-localparam STATE_IDLE_1  =  6;
-localparam STATE_IDLE_2  =  7;
-localparam STATE_IDLE_3  =  8;
-localparam STATE_IDLE_4  =  9;
-localparam STATE_IDLE_5  = 10;
-localparam STATE_RFSH    = 11;
-
+wire request = sel & (rd | wr);
 
 always @(posedge clk) begin
-	reg [CAS_LATENCY:0] data_ready_delay;
+	SDRAM_DQ <= 16'hZZZZ;
+	command  <= CMD_NOP;
+	cprd     <= 1'b0;
+	dq_sample <= SDRAM_DQ;
 
-	reg        saved_wr;
-	reg [12:0] cas_addr;
-	reg [15:0] saved_data;
-	reg  [8:0] cpcnt;
-	reg        old_cpreq = 0;
-	reg  [3:0] state = STATE_STARTUP;
-	reg        refresh_old;
+	if (init) begin
+		state         <= ST_INIT_WAIT;
+		wait_return   <= ST_IDLE;
+		wait_count    <= 32'd0;
+		startup_count <= SDRAM_STARTUP_CYCLES;
+		refresh_count <= 32'd0;
+		refresh_old   <= refresh;
+		ready         <= 1'b0;
+		cpbusy        <= 1'b0;
+		cprd          <= 1'b0;
+		dout          <= 16'd0;
+		SDRAM_A       <= 13'd0;
+		SDRAM_BA      <= 2'd0;
+		chip          <= 1'b1;
+		cas_addr      <= 13'd0;
+		saved_data    <= 16'd0;
+		saved_wr      <= 1'b0;
+	end else if (!SDRAM_EN) begin
+		state         <= ST_IDLE;
+		ready         <= 1'b1;
+		cpbusy        <= 1'b0;
+		cprd          <= 1'b0;
+		dout          <= 16'd0;
+		SDRAM_A       <= 13'd0;
+		SDRAM_BA      <= 2'd0;
+		chip          <= 1'b1;
+		command       <= CMD_NOP;
+	end else begin
+		if (refresh_count != 32'hFFFF_FFFF)
+			refresh_count <= refresh_count + 32'd1;
 
-	refresh_count <= refresh_count+1'b1;
-
-	data_ready_delay <= data_ready_delay>>1;
-	if(data_ready_delay[0]) ready <= 1;
-
-	dout <= SDRAM_DQ;
-	SDRAM_DQ <= 'Z;
-
-	if(SDRAM_EN) begin
-		command <= CMD_NOP;
 		case (state)
-			STATE_STARTUP: begin
-				//------------------------------------------------------------------------
-				//-- This is the initial startup state, where we wait for at least 100us
-				//-- before starting the start sequence
-				//--
-				//-- The initialisation is sequence is
-				//--  * de-assert SDRAM_CKE
-				//--  * 100us wait,
-				//--  * assert SDRAM_CKE
-				//--  * wait at least one cycle,
-				//--  * PRECHARGE
-				//--  * wait 2 cycles
-				//--  * REFRESH,
-				//--  * tREF wait
-				//--  * REFRESH,
-				//--  * tREF wait
-				//--  * LOAD_MODE_REG
-				//--  * 2 cycles wait
-				//------------------------------------------------------------------------
-				SDRAM_A    <= 0;
-				SDRAM_BA   <= 0;
-
-				if (refresh_count == (startup_refresh_max-64)) chip <= 0;
-				if (refresh_count == (startup_refresh_max-32)) chip <= 1;
-
-				// All the commands during the startup are NOPS, except these
-				if (refresh_count == startup_refresh_max-63 || refresh_count == startup_refresh_max-31) begin
-					// ensure all rows are closed
-					command     <= CMD_PRECHARGE;
-					SDRAM_A[10] <= 1;  // all banks
-					SDRAM_BA    <= 2'b00;
+			ST_INIT_WAIT: begin
+				ready <= 1'b0;
+				chip  <= 1'b1;
+				if (startup_count != 0) begin
+					startup_count <= startup_count - 32'd1;
+				end else begin
+					state <= ST_INIT_PRECHARGE;
 				end
-				if (refresh_count == startup_refresh_max-55 || refresh_count == startup_refresh_max-23) begin
-					// these refreshes need to be at least tREF (66ns) apart
-					command     <= CMD_AUTO_REFRESH;
-				end
-				if (refresh_count == startup_refresh_max-47 || refresh_count == startup_refresh_max-15) begin
-					command     <= CMD_AUTO_REFRESH;
-				end
-				if (refresh_count == startup_refresh_max-39 || refresh_count == startup_refresh_max-7) begin
-					// Now load the mode register
-					command     <= CMD_LOAD_MODE;
-					SDRAM_A     <= MODE;
-				end
-
-				//------------------------------------------------------
-				//-- if startup is complete then go into idle mode,
-				//-- get prepared to accept a new command, and schedule
-				//-- the first refresh cycle
-				//------------------------------------------------------
-				if (!refresh_count) begin
-					state   <= STATE_IDLE;
-					ready   <= 1;
-					refresh_count <= 0;
-				end
-				cpbusy <= 0;
 			end
 
-			STATE_RFSH: begin
-				state         <= STATE_IDLE_5;
-				command       <= CMD_AUTO_REFRESH;
-				chip          <= 1;
+			ST_INIT_PRECHARGE: begin
+				chip        <= 1'b0;
+				SDRAM_A     <= 13'd0;
+				SDRAM_A[10] <= 1'b1;
+				SDRAM_BA    <= 2'b00;
+				command     <= CMD_PRECHARGE;
+				wait_count  <= T_RP_CYCLES - 1;
+				wait_return <= ST_INIT_AR1;
+				state       <= ST_WAIT;
 			end
 
-			STATE_IDLE_5: state <= STATE_IDLE_4;
-			STATE_IDLE_4: state <= STATE_IDLE_3;
-			STATE_IDLE_3: state <= STATE_IDLE_2;
-			STATE_IDLE_2: state <= STATE_IDLE_1;
-			STATE_IDLE_1: state <= STATE_IDLE;
+			ST_INIT_AR1: begin
+				chip        <= 1'b0;
+				command     <= CMD_AUTO_REFRESH;
+				wait_count  <= T_RFC_CYCLES - 1;
+				wait_return <= ST_INIT_AR2;
+				state       <= ST_WAIT;
+			end
 
-			STATE_IDLE: begin
-				if (refresh ^ refresh_old) begin
-					state      <= STATE_RFSH;
-					command    <= CMD_AUTO_REFRESH;
-					chip       <= 0;
-					refresh_old<= refresh;
+			ST_INIT_AR2: begin
+				chip        <= 1'b0;
+				command     <= CMD_AUTO_REFRESH;
+				wait_count  <= T_RFC_CYCLES - 1;
+				wait_return <= ST_INIT_MRS;
+				state       <= ST_WAIT;
+			end
+
+			ST_INIT_MRS: begin
+				chip        <= 1'b0;
+				SDRAM_BA    <= 2'b00;
+				SDRAM_A     <= MODE;
+				command     <= CMD_LOAD_MODE;
+				wait_count  <= 32'd2;
+				wait_return <= ST_IDLE;
+				refresh_count <= 32'd0;
+				state       <= ST_WAIT;
+			end
+
+			ST_WAIT: begin
+				if (wait_count != 0) begin
+					wait_count <= wait_count - 32'd1;
+				end else begin
+					state <= wait_return;
 				end
-				else if (sel & (rd | wr)) begin
-					{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {~wr ? 2'b00 : ~bs, 1'b1, addr[25:1]};
+			end
+
+			ST_IDLE: begin
+				ready  <= 1'b1;
+				cpbusy <= 1'b0;
+				chip   <= 1'b1;
+				if ((refresh ^ refresh_old) || (refresh_count >= CYCLES_PER_REFRESH)) begin
+					ready         <= 1'b0;
+					refresh_old   <= refresh;
+					refresh_count <= 32'd0;
+					state         <= ST_REFRESH;
+				end else if (request) begin
+					ready      <= 1'b0;
+					{cas_addr[12:9], SDRAM_BA, SDRAM_A, cas_addr[8:0]} <= {wr ? ~bs : 2'b00, 1'b1, addr[25:1]};
 					chip       <= addr[26];
 					saved_data <= din;
 					saved_wr   <= wr;
 					command    <= CMD_ACTIVE;
-					state      <= STATE_WAIT;
-					ready      <= 0;
-				end
-				else begin
-					cpbusy     <= 0;
-					cprd       <= 0;
-					old_cpreq  <= cpreq;
-					if(~old_cpreq & cpreq & cpsel) begin
-						{cas_addr[12:9],SDRAM_BA,SDRAM_A,cas_addr[8:0]} <= {2'b00, 1'b0, cpaddr[25:1]};
-						chip    <= cpaddr[26];
-						cpbusy  <= 1;
-						cpcnt   <= 511;
-						command <= CMD_ACTIVE;
-						state   <= STATE_WAITCP;
-						cprd    <= 1;
-					end
+					wait_count <= T_RCD_CYCLES - 1;
+					state      <= ST_ACTIVE_WAIT;
+				end else if (~refresh_old) begin
+					refresh_old <= refresh;
 				end
 			end
 
-			STATE_WAIT: state <= STATE_RW;
-			STATE_RW: begin
-				// Wait at least 4 cycles @96MHz (2 CAS_LATENCY + 2 PRECHARGE (tRP 21ns))
-				state         <= STATE_IDLE_4;
-				SDRAM_A       <= cas_addr;
-				if(saved_wr) begin
-					command    <= CMD_WRITE;
-					SDRAM_DQ   <= saved_data;
-					ready      <= 1;
-				end
-				else begin
-					command    <= CMD_READ;
-					data_ready_delay[CAS_LATENCY] <= 1;
+			ST_REFRESH: begin
+				chip        <= 1'b0;
+				command     <= CMD_AUTO_REFRESH;
+				wait_count  <= T_RFC_CYCLES - 1;
+				wait_return <= ST_IDLE;
+				state       <= ST_WAIT;
+			end
+
+			ST_ACTIVE_WAIT: begin
+				if (wait_count != 0) begin
+					wait_count <= wait_count - 32'd1;
+				end else begin
+					state <= ST_CAS;
 				end
 			end
 
-			STATE_WAITCP: state <= STATE_CP;
-			STATE_CP: begin
-				SDRAM_A       <= {2'b00, !cpcnt, cas_addr[9:0]};
-				cas_addr[8:0] <= cas_addr[8:0] + 1'd1;
-				cpcnt         <= cpcnt - 1'd1;
-				command       <= CMD_WRITE;
-				SDRAM_DQ      <= cpdin;
-				if(!cpcnt) begin
-					state      <= STATE_IDLE_4;
-					cprd       <= 0;
+			ST_CAS: begin
+				SDRAM_A <= cas_addr;
+				if (saved_wr) begin
+					command     <= CMD_WRITE;
+					SDRAM_DQ    <= saved_data;
+					wait_count  <= POST_CAS_CYCLES - 1;
+					wait_return <= ST_IDLE;
+					state       <= ST_POST_CAS;
+				end else begin
+					command     <= CMD_READ;
+					wait_count  <= {29'd0, CAS_LATENCY} + 32'd1;
+					state       <= ST_READ_WAIT;
 				end
 			end
+
+			ST_READ_WAIT: begin
+				if (wait_count != 0) begin
+					wait_count <= wait_count - 32'd1;
+				end else begin
+					dout       <= dq_sample;
+					wait_count <= POST_CAS_CYCLES - 1;
+					state      <= ST_POST_CAS;
+				end
+			end
+
+			ST_POST_CAS: begin
+				if (wait_count != 0) begin
+					wait_count <= wait_count - 32'd1;
+				end else begin
+					state <= ST_IDLE;
+				end
+			end
+
+			default: state <= ST_INIT_WAIT;
 		endcase
-
-		if (init) begin
-			state         <= STATE_STARTUP;
-			refresh_count <= startup_refresh_max - sdram_startup_cycles;
-		end
-	end
-	else begin
-		ready    <= 1;
-		cpbusy   <= 0;
-		cprd     <= 0;
-		dout     <= 0;
-		SDRAM_A  <= 0;
-		SDRAM_BA <= 0;
-		command  <= 0;
-		chip     <= 0;
 	end
 end
 
@@ -318,5 +316,7 @@ sdramclk_ddr
 	.sclr(1'b0),
 	.sset(1'b0)
 );
+
+wire _unused = &{cpsel, cpaddr, cpdin, cpreq};
 
 endmodule

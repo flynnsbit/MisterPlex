@@ -10,7 +10,7 @@ MiSTerPlex now drives the single MiSTer SDRAM stick instead of tying the pins of
 
 ## Clock sweep macros
 
-The default SDRAM PLL output is 100 MHz. Define one of these Quartus Verilog macros for sweep variants: `SDRAM_CLK_50`, `SDRAM_CLK_75`, `SDRAM_CLK_80`, `SDRAM_CLK_110`, `SDRAM_CLK_120`, `SDRAM_CLK_133`. `Plex.sv` also adjusts the refresh toggle interval for the selected clock.
+The default SDRAM PLL output is 100 MHz; post-MemTest hardware bring-up targets `SDRAM_CLK_142` with `SDRAM_CL3`. Define one of these Quartus Verilog macros for sweep variants: `SDRAM_CLK_50`, `SDRAM_CLK_75`, `SDRAM_CLK_80`, `SDRAM_CLK_110`, `SDRAM_CLK_120`, `SDRAM_CLK_133`, `SDRAM_CLK_142`. `Plex.sv` also adjusts the refresh toggle interval for the selected clock.
 
 Refresh interval arithmetic uses `floor(f_MHz * 64000 / 8192) - 1` because the refresh counter fires after `REFRESH_CYCLES+1` clocks and each of 8192 rows must be refreshed within 64 ms.
 
