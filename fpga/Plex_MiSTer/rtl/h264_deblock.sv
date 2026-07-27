@@ -289,4 +289,102 @@ module h264_deblock_edge (
 	end
 endmodule
 
+
+module h264_deblock_edge_pipe (
+	input  wire              clk,
+	input  wire              reset,
+	input  wire              valid_i,
+	input  wire              is_chroma,
+	input  wire [2:0]        bs,
+	input  wire [5:0]        qp_avg,
+	input  wire signed [4:0] slice_alpha_c0_offset,
+	input  wire signed [4:0] slice_beta_offset,
+	input  wire [7:0]        p3_in [0:3],
+	input  wire [7:0]        p2_in [0:3],
+	input  wire [7:0]        p1_in [0:3],
+	input  wire [7:0]        p0_in [0:3],
+	input  wire [7:0]        q0_in [0:3],
+	input  wire [7:0]        q1_in [0:3],
+	input  wire [7:0]        q2_in [0:3],
+	input  wire [7:0]        q3_in [0:3],
+	output reg               valid_o,
+	output reg  [7:0]        p2_out [0:3],
+	output reg  [7:0]        p1_out [0:3],
+	output reg  [7:0]        p0_out [0:3],
+	output reg  [7:0]        q0_out [0:3],
+	output reg  [7:0]        q1_out [0:3],
+	output reg  [7:0]        q2_out [0:3]
+);
+	reg              valid_s1;
+	reg              is_chroma_r;
+	reg [2:0]        bs_r;
+	reg [5:0]        qp_avg_r;
+	reg signed [4:0] alpha_off_r;
+	reg signed [4:0] beta_off_r;
+	reg [7:0]        p3_r [0:3];
+	reg [7:0]        p2_r [0:3];
+	reg [7:0]        p1_r [0:3];
+	reg [7:0]        p0_r [0:3];
+	reg [7:0]        q0_r [0:3];
+	reg [7:0]        q1_r [0:3];
+	reg [7:0]        q2_r [0:3];
+	reg [7:0]        q3_r [0:3];
+
+	wire [7:0] edge_p2 [0:3];
+	wire [7:0] edge_p1 [0:3];
+	wire [7:0] edge_p0 [0:3];
+	wire [7:0] edge_q0 [0:3];
+	wire [7:0] edge_q1 [0:3];
+	wire [7:0] edge_q2 [0:3];
+	wire [7:0] alpha_unused;
+	wire [7:0] beta_unused;
+	wire [5:0] tc0_unused;
+
+	h264_deblock_edge u_edge (
+		.is_chroma(is_chroma_r),
+		.bs(bs_r),
+		.qp_avg(qp_avg_r),
+		.slice_alpha_c0_offset(alpha_off_r),
+		.slice_beta_offset(beta_off_r),
+		.p3_in(p3_r), .p2_in(p2_r), .p1_in(p1_r), .p0_in(p0_r),
+		.q0_in(q0_r), .q1_in(q1_r), .q2_in(q2_r), .q3_in(q3_r),
+		.p2_out(edge_p2), .p1_out(edge_p1), .p0_out(edge_p0),
+		.q0_out(edge_q0), .q1_out(edge_q1), .q2_out(edge_q2),
+		.alpha_dbg(alpha_unused), .beta_dbg(beta_unused), .tc0_dbg(tc0_unused)
+	);
+
+	integer i;
+	always @(posedge clk) begin
+		if (reset) begin
+			valid_s1 <= 1'b0;
+			valid_o  <= 1'b0;
+			is_chroma_r <= 1'b0;
+			bs_r <= 3'd0;
+			qp_avg_r <= 6'd0;
+			alpha_off_r <= 5'sd0;
+			beta_off_r <= 5'sd0;
+			for (i = 0; i < 4; i = i + 1) begin
+				p3_r[i] <= 8'd0; p2_r[i] <= 8'd0; p1_r[i] <= 8'd0; p0_r[i] <= 8'd0;
+				q0_r[i] <= 8'd0; q1_r[i] <= 8'd0; q2_r[i] <= 8'd0; q3_r[i] <= 8'd0;
+				p2_out[i] <= 8'd0; p1_out[i] <= 8'd0; p0_out[i] <= 8'd0;
+				q0_out[i] <= 8'd0; q1_out[i] <= 8'd0; q2_out[i] <= 8'd0;
+			end
+		end else begin
+			valid_s1 <= valid_i;
+			valid_o <= valid_s1;
+			is_chroma_r <= is_chroma;
+			bs_r <= bs;
+			qp_avg_r <= qp_avg;
+			alpha_off_r <= slice_alpha_c0_offset;
+			beta_off_r <= slice_beta_offset;
+			for (i = 0; i < 4; i = i + 1) begin
+				p3_r[i] <= p3_in[i]; p2_r[i] <= p2_in[i]; p1_r[i] <= p1_in[i]; p0_r[i] <= p0_in[i];
+				q0_r[i] <= q0_in[i]; q1_r[i] <= q1_in[i]; q2_r[i] <= q2_in[i]; q3_r[i] <= q3_in[i];
+				p2_out[i] <= edge_p2[i]; p1_out[i] <= edge_p1[i]; p0_out[i] <= edge_p0[i];
+				q0_out[i] <= edge_q0[i]; q1_out[i] <= edge_q1[i]; q2_out[i] <= edge_q2[i];
+			end
+		end
+	end
+endmodule
+
 `default_nettype wire

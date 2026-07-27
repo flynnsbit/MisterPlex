@@ -2,6 +2,9 @@
 `default_nettype none
 
 module h264_deblock_tb (
+	input  wire              clk,
+	input  wire              reset,
+	input  wire              pipe_valid_i,
 	input  wire              is_chroma,
 	input  wire [2:0]        bs_in,
 	input  wire [5:0]        qp_avg,
@@ -38,7 +41,14 @@ module h264_deblock_tb (
 	output wire [7:0]        q2_out [0:3],
 	output wire [7:0]        alpha_dbg,
 	output wire [7:0]        beta_dbg,
-	output wire [5:0]        tc0_dbg
+	output wire [5:0]        tc0_dbg,
+	output wire              pipe_valid_o,
+	output wire [7:0]        pipe_p2_out [0:3],
+	output wire [7:0]        pipe_p1_out [0:3],
+	output wire [7:0]        pipe_p0_out [0:3],
+	output wire [7:0]        pipe_q0_out [0:3],
+	output wire [7:0]        pipe_q1_out [0:3],
+	output wire [7:0]        pipe_q2_out [0:3]
 );
 	h264_deblock_bs u_bs (
 		.disable_all(disable_all),
@@ -70,6 +80,23 @@ module h264_deblock_tb (
 		.q0_out(q0_out), .q1_out(q1_out), .q2_out(q2_out),
 		.alpha_dbg(alpha_dbg), .beta_dbg(beta_dbg), .tc0_dbg(tc0_dbg)
 	);
+
+	h264_deblock_edge_pipe u_edge_pipe (
+		.clk(clk),
+		.reset(reset),
+		.valid_i(pipe_valid_i),
+		.is_chroma(is_chroma),
+		.bs(bs_in),
+		.qp_avg(qp_avg),
+		.slice_alpha_c0_offset(alpha_off),
+		.slice_beta_offset(beta_off),
+		.p3_in(p3_in), .p2_in(p2_in), .p1_in(p1_in), .p0_in(p0_in),
+		.q0_in(q0_in), .q1_in(q1_in), .q2_in(q2_in), .q3_in(q3_in),
+		.valid_o(pipe_valid_o),
+		.p2_out(pipe_p2_out), .p1_out(pipe_p1_out), .p0_out(pipe_p0_out),
+		.q0_out(pipe_q0_out), .q1_out(pipe_q1_out), .q2_out(pipe_q2_out)
+	);
+
 endmodule
 
 `default_nettype wire

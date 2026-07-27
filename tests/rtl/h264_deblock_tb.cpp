@@ -216,6 +216,56 @@ void requireEdge(Vh264_deblock_tb& dut, const std::string& name, const EdgeIO& i
     }
 }
 
+
+EdgeOut pipeOut(const Vh264_deblock_tb& dut) {
+    EdgeOut out{};
+    for (int i = 0; i < 4; ++i) {
+        out.p2[i] = dut.pipe_p2_out[i]; out.p1[i] = dut.pipe_p1_out[i]; out.p0[i] = dut.pipe_p0_out[i];
+        out.q0[i] = dut.pipe_q0_out[i]; out.q1[i] = dut.pipe_q1_out[i]; out.q2[i] = dut.pipe_q2_out[i];
+    }
+    return out;
+}
+
+void tick(Vh264_deblock_tb& dut) {
+    dut.clk = 0;
+    dut.eval();
+    dut.clk = 1;
+    dut.eval();
+}
+
+void testPipeLatency(Vh264_deblock_tb& dut, const EdgeIO& in) {
+    dut.reset = 1;
+    dut.pipe_valid_i = 0;
+    tick(dut);
+    if (dut.pipe_valid_o) {
+        std::cerr << "FAIL deblock pipe: valid_o high during reset\n";
+        std::exit(1);
+    }
+    dut.reset = 0;
+    const EdgeOut want = dutEdge(dut, in, false, 2, 32, 0, 0);
+    dut.pipe_valid_i = 1;
+    tick(dut);
+    if (dut.pipe_valid_o) {
+        std::cerr << "FAIL deblock pipe: valid_o asserted without registered edge latency\n";
+        std::exit(1);
+    }
+    EdgeIO poison{};
+    (void)dutEdge(dut, poison, false, 0, 0, 0, 0);
+    dut.pipe_valid_i = 0;
+    tick(dut);
+    const EdgeOut got = pipeOut(dut);
+    if (!dut.pipe_valid_o || !same(got, want)) {
+        std::cerr << "FAIL deblock pipe latency got_valid=" << int(dut.pipe_valid_o)
+                  << " got " << edgeString(got) << " want " << edgeString(want) << "\n";
+        std::exit(1);
+    }
+    tick(dut);
+    if (dut.pipe_valid_o) {
+        std::cerr << "FAIL deblock pipe: valid_o did not drain after one result\n";
+        std::exit(1);
+    }
+}
+
 void testBs(Vh264_deblock_tb& dut) {
     auto eval = [&]() { dut.eval(); return int(dut.bs_derived); };
     dut.disable_all = 0; dut.slice_boundary_blocked = 0; dut.mb_boundary = 1;
@@ -428,6 +478,9 @@ int main(int argc, char** argv) {
         else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--fault-horizontal-first]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
+    dut.clk = 0;
+    dut.reset = 0;
+    dut.pipe_valid_i = 0;
 
     testBs(dut);
     testThresholds(dut);
@@ -435,6 +488,7 @@ int main(int argc, char** argv) {
     const EdgeIO lumaNormal{{116,118,120,122},{118,120,122,124},{120,122,124,126},{126,127,128,129},
                             {132,133,134,135},{138,139,140,141},{140,141,142,143},{142,143,144,145}};
     requireEdge(dut, "luma bS2 normal", lumaNormal, false, 2, 32, 0, 0);
+    testPipeLatency(dut, lumaNormal);
 
     const EdgeIO lumaStrong{{110,111,112,113},{112,113,114,115},{114,115,116,117},{120,121,122,123},
                             {124,125,126,127},{128,129,130,131},{130,131,132,133},{132,133,134,135}};
@@ -448,6 +502,6 @@ int main(int argc, char** argv) {
     if (!mbGoldenPath.empty()) runMbGolden(dut, mbGoldenPath);
     runDrift(dut, faultHorizontalFirst);
 
-    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, mb_golden, edge-order drift\n";
+    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, mb_golden, edge-order drift\n";
     return 0;
 }
