@@ -51,6 +51,8 @@ module stream_path (
 	output wire signed [8:0] residual_coeff [0:15],
 	// R-csum6 Rank3: 1-cycle ST_PLACE pulse for status residual sticky freeze
 	output wire        residual_place_pulse,
+	output wire [7:0]  recon_sig,
+	output wire        recon_valid,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -203,6 +205,10 @@ module stream_path (
 		.residual_ok(sl_res_ok),
 		.residual_tc(sl_rtc),
 		.residual_dc(sl_rdc),
+		.slice_qp(sl_qp),
+		.residual_coeff(residual_coeff),
+		.recon_sig(recon_sig),
+		.recon_valid(recon_valid),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),
@@ -217,6 +223,7 @@ module stream_path (
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
-	             residual_coeff[0][0] | residual_coeff[1][0] | residual_coeff[15][0];
+	             recon_valid | |recon_sig | residual_coeff[0][0] | residual_coeff[1][0] |
+	             residual_coeff[15][0];
 
 endmodule

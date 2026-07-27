@@ -12,13 +12,21 @@ inline constexpr int kResidualDcBitLo = 96;
 inline constexpr int kResidualDcBitHi = 103;
 inline constexpr int kResidualCsumBitLo = 104;
 inline constexpr int kResidualCsumBitHi = 111;
-inline constexpr int kStreamBytesBitLo = 112;
-inline constexpr int kStreamBytesBitHi = 127;
+inline constexpr int kReconSigBitLo = 112;
+inline constexpr int kReconSigBitHi = 119;
+inline constexpr int kStreamByteLowDebugBitLo = 120;
+inline constexpr int kStreamByteLowDebugBitHi = 127;
 
 inline constexpr int kResidualDcByte = 12;
 inline constexpr int kResidualCsumByte = 13;
-inline constexpr int kStreamBytesLoByte = 14;
-inline constexpr int kStreamBytesHiByte = 15;
+inline constexpr int kReconSigByte = 14;
+inline constexpr int kStreamByteLowDebugByte = 15;
+
+// P3-3l2 first 4x4 reconstructed-pixel signature:
+// XOR of the 16 reconstructed Y samples after inverse quant + IDCT + pred=128.
+// MB0 block0 golden recon is:
+//   73,72,76,76, 72,74,71,73, 76,71,32,27, 76,73,27,24
+inline constexpr int kReconSigMb0Block0 = 0x3B;
 
 } // namespace status_telemetry
 } // namespace misterplex

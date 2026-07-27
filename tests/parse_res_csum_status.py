@@ -2,7 +2,8 @@
 """Host-only residual_csum RCA helper (post-R-csum1 re-gate).
 
 No SPI / no lab thrash. Decodes push_frame --status / --raw lines or raw hex
-for status bytes [12]=res_dc, [13]=res_csum, [14:15]=stream_bytes[15:0].
+for status bytes [12]=res_dc, [13]=res_csum. On P3-3l2+ raw[14] is
+recon_sig and raw[15] is stream-low debug; pre-3.3l-2 used raw[14:15] for stream.
 
 Host golden (locked in host/libmisterplex/h264_residual_gold.hpp):
   res_dc   = -24 = 0xE8 (sat8(coeff[0]))
@@ -11,7 +12,7 @@ Host golden (locked in host/libmisterplex/h264_residual_gold.hpp):
 Usage:
   python3 tests/parse_res_csum_status.py              # print goldens + map
   python3 tests/parse_res_csum_status.py --self-test  # offline checks
-  python3 tests/parse_res_csum_status.py e8 14 2a 00  # raw[12..15] or 16B
+  python3 tests/parse_res_csum_status.py e8 14 3b 53  # raw[12..15] or 16B
   echo 'status ... res_dc=-24 res_csum=20 ...' | python3 tests/parse_res_csum_status.py -
   echo 'raw[0]: .. e8 ef 2a 00  lo=...' | python3 tests/parse_res_csum_status.py -
 """
@@ -26,6 +27,7 @@ GOLD_RES_DC = -24
 GOLD_RES_DC_U8 = 0xE8
 GOLD_RES_CSUM = 20
 GOLD_RES_CSUM_HEX = 0x14
+GOLD_RECON_SIG = 0x3B
 STALE_ARITH_SUM = -20
 STALE_SUM_U8 = 0xEC
 # Full scan for documentation / self-check (matches residual_gold::kCoeffScan).
@@ -65,7 +67,8 @@ def print_goldens() -> None:
     print("  status map (post-3.3l-1 pack):")
     print("    raw[12]     residual_dc      status[103:96]   expect 0xe8 (-24)")
     print("    raw[13]     residual_csum8   status[111:104]  expect 0x14 (20)")
-    print("    raw[14:15]  stream_bytes[15:0] status[127:112]  LE uint16")
+    print("    raw[14]     recon_sig8      status[119:112]  expect 0x3b after 3.3l-2")
+    print("    raw[15]     stream_low_dbg  status[127:120]  perturbation witness; AR may mask bits")
     print("  hard gate:    res_dc=-24 AND res_csum=20 (raw[13]=0x14)")
     print("  soft-skip:    test_f3_residual EXIT=0 on csum miss is NOT hard PASS")
     print("  SoT: host/libmisterplex/h264_residual_gold.hpp + tests/unit/test_idct_quant.cpp")
@@ -130,7 +133,9 @@ def decode_bytes(raw12_15: Sequence[int], label: str = "") -> None:
           f"expect 0x{GOLD_RES_DC_U8:02x} ({GOLD_RES_DC})")
     print(f"  raw[13] res_csum  = 0x{csum_u8:02x}  unsigned={csum_u8}   "
           f"expect 0x{GOLD_RES_CSUM_HEX:02x} ({GOLD_RES_CSUM})")
-    print(f"  raw[14:15] stream = 0x{stream16:04x}  ({stream16})  LE from [{b[2]:02x} {b[3]:02x}]")
+    print(f"  raw[14] recon_sig = 0x{b[2]:02x}  unsigned={b[2]}   "
+          f"expect 0x{GOLD_RECON_SIG:02x} ({GOLD_RECON_SIG}) after 3.3l-2")
+    print(f"  raw[15] stream_lo = 0x{b[3]:02x}  ({b[3]})  debug only (AR may mask bits)")
     print_expected_vs_actual(dc_u8, csum_u8, stream16)
     print(f"  class:      {classify(dc_u8, csum_u8, stream16)}")
 
@@ -213,7 +218,7 @@ def handle_text(text: str) -> int:
                   f"bytes_in={stream if stream is not None else '?'}")
             if stream16 is not None:
                 print(f"  mapped raw[12..15] ≈ {dc_u8:02x} {csum:02x} {b2:02x} {b3:02x}"
-                      " (stream from bytes_in low16)")
+                      " (pre-3.3l-2 stream mapping; P3-3l2 raw[14] is recon_sig)")
             else:
                 print(f"  mapped raw[12..13] ≈ {dc_u8:02x} {csum:02x}  (stream unknown)")
             print_expected_vs_actual(dc_u8, csum, stream16)
@@ -248,9 +253,9 @@ def self_test() -> int:
         print("SELF-TEST FAIL: csum equals stale sum")
         ok = False
 
-    # PASS vector
-    print("self-test PASS vector e8 14 2a 00:")
-    decode_bytes([0xE8, 0x14, 0x2A, 0x00], label="PASS")
+    # PASS vector (P3-3l2 ABI: raw[14]=recon_sig 0x3b, raw[15]=stream-low debug)
+    print("self-test PASS vector e8 14 3b 53:")
+    decode_bytes([0xE8, 0x14, 0x3B, 0x53], label="PASS")
     # aa146c17-class stream alias
     print("self-test stream-alias vector e8 53 53 02:")
     decode_bytes([0xE8, 0x53, 0x53, 0x02], label="alias")
@@ -284,7 +289,7 @@ def self_test() -> int:
         ok = False
 
     # --raw form must still work
-    raw_line = "raw[0]: 20 22 15 01 80 00 00 00 00 00 00 00 e8 14 2a 00"
+    raw_line = "raw[0]: 20 22 15 01 80 00 00 00 00 00 00 00 e8 14 3b 53"
     print("self-test raw line:")
     raw = extract_from_raw_line(raw_line)
     if raw is None or len(raw) < 16 or raw[12] != 0xE8 or raw[13] != 0x14:

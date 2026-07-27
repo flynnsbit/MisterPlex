@@ -17,6 +17,21 @@
 **R-multidrive-rca14 (docs stamp; 2026-07-24):** dual-gate multi-drive RCA **RCA_OK** (recipe-era **FIT_GO=NO** until parent). Root class **MULTI_DRIVE wire ownership of status[111:104]/raw[13]** (annex_len_lo **+0x53** = 6739&0xFF). Evidence: **H-gate-rcsum5d** lab **`8832824e`** sticky0x14=**0/12** seq **16/69/bc/0f/62/b5/08**; **H-gate-ec21** lab **`ec21e133`** sticky0x14=**0/3** series **08→5b→ae→01** (3/3 +0x53; PRE latch continuity from B3). res_dc PASS both; ideal `e8 14 xx` NEVER; **NOT PACK_PROVEN**. WIDE Fix-2 ≠ residual fix. **Superseded for FIT_GO by L-csum-note38:** parent **FIT_GO=YES** product **Rank1+2+3 place_pulse sticky** exclusive sole **R-csum6 LIVE** — **ZERO invent BUILD_OK**. Hard expect sticky raw[13]==**0x14 ≥2** reject +0x53 res_dc=−24. Thrash **FORBIDDEN** `8832824e`/`75da8bb1`/`4d6ee356`/`ec21e133`. soft-skip ≠ PASS; DIAG ≠ product PASS; **3l2 BLOCKED**. Report: `/tmp/misterplex-agent-R-multidrive-rca14.txt`. Plan: `/tmp/misterplex-agent-R-csum-rtl6-plan.txt`.
 
 
+**Current P3-3l2 ABI/work item (W-CAP 2026-07-26):** product `decode_stub.sv`
+now instantiates the shared `h264_iq_idct_4x4.sv` modules copied from
+`feat/p3-idct-sim` for first-4×4 inverse quant + H.264 integer IDCT from
+`residual_coeff[0:15]` and `slice_qp`; it paints the reconstructed top-left 4×4
+and publishes `raw[14]=recon_sig=0x3b` (XOR of MB0 block0 reconstructed Y) while
+preserving `raw[12]=res_dc` and `raw[13]=res_csum`. `raw[15]` is stream-low debug
+only (AR may mask bits) for the baseline-vs-padded perturbation witness. Gate
+before fit: 6739B baseline and 6776B padded vectors must both read
+`res_csum=0x14` and `recon_sig=0x3b`; raw[15]/stream debug must move. Fixture
+source of truth: `tests/fixtures/p3_host_recon/mb0_luma_v1.json`. Real Verilator
+behavioral sim now gates both the shared IQ/IDCT modules and product `decode_stub.sv`:
+`make rtl-sim` must show `OK real RTL sim`, `OK decode_stub RTL sim: ... recon_sig=0x3b`,
+and the pred-only red-check `recon_sig got 0x0 want 0x3b` before any Quartus/device gate.
+
+
 ## Goal
 
 Move from **coeff probe** (`residual_dc = scan coeff[0]`) to **real recon pixels** on FPGA:

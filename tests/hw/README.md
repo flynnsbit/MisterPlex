@@ -152,7 +152,7 @@ python3 tests/parse_res_csum_status.py --self-test
 
 # decode a captured status / raw line → EXPECTED vs ACTUAL + GATE
 echo 'status ... res_dc=-24 res_csum=20 ...' | python3 tests/parse_res_csum_status.py -
-python3 tests/parse_res_csum_status.py e8 14 2a 00   # raw[12..15]
+python3 tests/parse_res_csum_status.py e8 14 3b 53   # raw[12..15]
 # class CSUM_FAIL_DC_OK / STREAM_BYTES_ALIAS / STALE_ARITH_SUM_FOLD
 ```
 
@@ -160,7 +160,8 @@ python3 tests/parse_res_csum_status.py e8 14 2a 00   # raw[12..15]
 |-----|-------|-------------|------------|
 | `[12]` | residual_dc | `0xe8` (−24) | `parseCoreStatus` → `residual_dc = (int8_t)raw[12]` |
 | `[13]` | residual_csum8 | `0x14` (20) XOR — never arith `0xEC` | `residual_csum = raw[13]` |
-| `[14:15]` | stream_bytes[15:0] | LE uint16 (not csum) | `stream_bytes_in = raw[14]\|(raw[15]<<8)` |
+| `[14]` | recon_sig8 | `0x3b` (59) after P3-3l2 | `recon_sig = raw[14]` |
+| `[15]` | stream_low_debug | perturbation witness only (AR may mask bits) | `stream_bytes_in = raw[15]` |
 
 Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h264_residual_gold.hpp` (`kCsum8==0x14`); `tools/push_frame.cpp` `res_csum=%u`.
 

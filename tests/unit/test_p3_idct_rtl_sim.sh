@@ -9,7 +9,7 @@ VERILATOR_RC=$?
 set -e
 if [[ "$VERILATOR_RC" -eq 127 ]]; then
   cat >&2 <<SKIP
-SKIP RTL SIM: Verilator not found; h264_iq_idct_4x4 real RTL simulation was NOT run.
+SKIP RTL SIM: Verilator not found; h264_iq_idct_4x4/decode_stub real RTL simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
 SKIP
   exit 0
@@ -19,25 +19,63 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   exit "$VERILATOR_RC"
 fi
 
-RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
-TB="$ROOT/tests/rtl/h264_iq_idct_4x4_tb.cpp"
-TBTOP="$ROOT/tests/rtl/h264_iq_idct_4x4_tb_top.sv"
+RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
+QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
+TB_IQ="$ROOT/tests/rtl/h264_iq_idct_4x4_tb.cpp"
+TOP_IQ="$ROOT/tests/rtl/h264_iq_idct_4x4_tb_top.sv"
+TB_DECODE="$ROOT/tests/rtl/decode_stub_recon_tb.cpp"
+TOP_DECODE="$ROOT/tests/rtl/decode_stub_recon_tb_top.sv"
 FIXTURE="$ROOT/tests/fixtures/p3_host_recon/mb0_luma_v1.json"
-BUILD_DIR="$ROOT/build/verilator/h264_iq_idct_4x4"
+BUILD_ROOT="$ROOT/build/verilator"
+BUILD_IQ="$BUILD_ROOT/h264_iq_idct_4x4"
+BUILD_DECODE="$BUILD_ROOT/decode_stub_recon"
+BUILD_DECODE_FAULT="$BUILD_ROOT/decode_stub_recon_pred_only"
 
-if [[ ! -f "$RTL" || ! -f "$TB" || ! -f "$FIXTURE" ]]; then
-  echo "RTL SIM ERROR: missing RTL, testbench, or fixture" >&2
-  echo "  RTL=$RTL" >&2
-  echo "  TB=$TB" >&2
-  echo "  FIXTURE=$FIXTURE" >&2
+for f in "$RTL_IQ" "$RTL_DECODE" "$QIP" "$TB_IQ" "$TOP_IQ" "$TB_DECODE" "$TOP_DECODE" "$FIXTURE"; do
+  if [[ ! -f "$f" ]]; then
+    echo "RTL SIM ERROR: missing required file: $f" >&2
+    exit 2
+  fi
+done
+if ! grep -q 'rtl/h264_iq_idct_4x4.sv' "$QIP" || ! grep -q 'rtl/decode_stub.sv' "$QIP"; then
+  echo "RTL SIM ERROR: files.qip does not list the product RTL under simulation" >&2
   exit 2
 fi
 
-mkdir -p "$BUILD_DIR"
+mkdir -p "$BUILD_IQ" "$BUILD_DECODE" "$BUILD_DECODE_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+
 "$RUN_VERILATOR" --cc --exe --build \
-  --Mdir "$BUILD_DIR" \
+  --Mdir "$BUILD_IQ" \
   --top-module h264_iq_idct_4x4 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TBTOP" "$RTL" "$TB"
-"$BUILD_DIR/Vh264_iq_idct_4x4" "$FIXTURE"
+  "$TOP_IQ" "$RTL_IQ" "$TB_IQ"
+"$BUILD_IQ/Vh264_iq_idct_4x4" "$FIXTURE"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DECODE" \
+  --top-module decode_stub_recon_tb -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_DECODE" "$TB_DECODE"
+"$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DECODE_FAULT" \
+  --top-module decode_stub_recon_tb -GFAULT_PRED_ONLY=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_DECODE" "$TB_DECODE"
+set +e
+FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
+FAULT_RC=$?
+set -e
+printf '%s\n' "$FAULT_OUT"
+if [[ "$FAULT_RC" -eq 0 ]]; then
+  echo "FAIL decode_stub RTL red-check: pred-only fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -qi 'recon_sig got 0x0 want 0x3b' <<<"$FAULT_OUT"; then
+  echo "FAIL decode_stub RTL red-check: expected pred-only recon_sig 0x00 vs 0x3b" >&2
+  exit 1
+fi
+echo "OK decode_stub RTL red-check: pred-only residual drop produced recon_sig=0x00 and failed golden 0x3b"
