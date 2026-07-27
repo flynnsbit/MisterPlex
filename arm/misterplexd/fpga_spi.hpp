@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {
@@ -84,11 +85,14 @@ public:
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
-    // Phase 3.1b: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000).
-    // Product path: mmap frame + doorbell @ 0x3007F000 (no SPI kick).
+    // Phase 3.1b+: bulk RGB565 via DDR3 (/dev/mem @ 0x30000000).
+    // Product path: mmap frame + doorbell (no SPI kick).
     // Fallback: status[12]/[13] SPI kick if doorbell fails first verify.
     // Waits for !ddr_busy and !swap_pending so next write bank is free after vsync.
-    // Frame must be 320×240×2 = 153600 B. bank 0 → 0x30000000, bank 1 → 0x30040000.
+    // Default frame geometry is 320×240. Call setDdrFrameSize() before present
+    // for larger DDR-backed cores such as 640×480.
+    bool setDdrFrameSize(int width, int height);
+    DdrFrameLayout ddrFrameLayout() const { return ddrLayout_; }
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
@@ -240,6 +244,7 @@ private:
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
+    DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
@@ -252,6 +257,12 @@ private:
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
     bool kickDdrDoorbell(int bank);
+    uint32_t ddrStatusMailboxPhys() const {
+        return ddrLayout_.doorbell_phys + (kDdrMailboxPhys - kDdrDoorbellPhys);
+    }
+    uint32_t ddrInputMailboxPhys() const {
+        return ddrLayout_.doorbell_phys + (kInputMailboxPhys - kDdrDoorbellPhys);
+    }
     static constexpr uint32_t kMgrBase = 0xFF706000;
     static constexpr uint32_t kMapBase = 0xFF000000;
     static constexpr size_t kMapSize = 0x01000000;

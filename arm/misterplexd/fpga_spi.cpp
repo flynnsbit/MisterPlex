@@ -433,9 +433,9 @@ bool FpgaSpi::ensureDdrMap() {
     if (ddrMap_ && ddrMemFd_ >= 0)
         return true;
     releaseDdrMap();
-    // Map both banks (2×256KiB) + space through doorbell at 0x3007F000.
-    // Base 0x30000000, length 0x80000 covers 0x30000000..0x3007FFFF.
-    constexpr size_t kLen = 0x80000u;
+    // Map both frame banks plus the final doorbell/mailbox page. 320×240 keeps
+    // the historical 0x80000 window; larger cores grow this at runtime.
+    const size_t kLen = ddrLayout_.map_bytes;
     int flags = O_RDWR | O_CLOEXEC;
     if (ddrMemSync_)
         flags |= O_SYNC;
@@ -445,15 +445,32 @@ bool FpgaSpi::ensureDdrMap() {
         return false;
     }
     void* p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, ddrMemFd_,
-                   static_cast<off_t>(kDdrFrameBase));
+                   static_cast<off_t>(ddrLayout_.phys_base));
     if (p == MAP_FAILED) {
         setErr("ensureDdrMap: mmap frame window failed");
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
         return false;
     }
+
     ddrMap_ = static_cast<uint8_t*>(p);
     ddrMapLen_ = kLen;
+    return true;
+}
+
+bool FpgaSpi::setDdrFrameSize(int width, int height) {
+    DdrFrameLayout next = makeDdrFrameLayout(width, height, kDdrFrameBase);
+    if (!ddrFrameLayoutValid(next)) {
+        setErr("setDdrFrameSize: invalid DDR frame layout");
+        return false;
+    }
+    if (next.width == ddrLayout_.width && next.height == ddrLayout_.height)
+        return true;
+    ddrLayout_ = next;
+    releaseDdrMap();
+    ddrKickMode_ = 0;
+    doorbellSeq_ = 0;
+    clearErr();
     return true;
 }
 
@@ -507,8 +524,7 @@ bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
 bool FpgaSpi::kickDdrDoorbell(int bank) {
     if (!ddrMap_ || bank < 0 || bank > 1)
         return false;
-    // Doorbell is at phys 0x3007F000 → offset 0x7F000 from map base 0x30000000
-    constexpr size_t kOff = 0x7F000u;
+    const size_t kOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
     if (kOff + 8 > ddrMapLen_)
         return false;
     volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
@@ -526,7 +542,7 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
 bool FpgaSpi::readOsdMailbox(uint16_t& osd) {
     if (!ensureDdrMap())
         return false;
-    constexpr size_t kOff = kDdrMailboxPhys - kDdrFrameBase;
+    const size_t kOff = static_cast<size_t>(ddrStatusMailboxPhys() - ddrLayout_.phys_base);
     if (kOff + 8 > ddrMapLen_)
         return false;
     volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
@@ -574,7 +590,7 @@ bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
     command = PlaybackCommand::None;
     if (!ensureDdrMap())
         return false;
-    constexpr size_t kOff = kInputMailboxPhys - kDdrFrameBase;
+    const size_t kOff = static_cast<size_t>(ddrInputMailboxPhys() - ddrLayout_.phys_base);
     if (kOff + 8 > ddrMapLen_)
         return false;
     volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
@@ -1021,8 +1037,8 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
 }
 
 bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) {
-    if (!rgb565le || len != kDdrFrameBytes) {
-        setErr("sendRgb565FrameDdr: need 320x240 RGB565 (153600 B)");
+    if (!rgb565le || len != ddrLayout_.frame_bytes) {
+        setErr("sendRgb565FrameDdr: frame size does not match DDR geometry");
         return false;
     }
     if (bank < 0 || bank > 1) {
@@ -1050,7 +1066,7 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
-    const size_t bankOff = static_cast<size_t>(bank) * kDdrFrameStride;
+    const size_t bankOff = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, rgb565le, len);
     __sync_synchronize();
@@ -1145,11 +1161,15 @@ bool FpgaSpi::sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank) 
 }
 
 bool FpgaSpi::sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank) {
-    if (!rgb || w != 320 || h != 240) {
-        setErr("sendRgb24FrameDdr: need 320x240 RGB24");
+    if (!rgb || w <= 0 || h <= 0) {
+        setErr("sendRgb24FrameDdr: bad RGB24 frame");
         return false;
     }
-    std::vector<uint8_t> packed(kDdrFrameBytes);
+    if (w != ddrLayout_.width || h != ddrLayout_.height) {
+        if (!setDdrFrameSize(w, h))
+            return false;
+    }
+    std::vector<uint8_t> packed(ddrLayout_.frame_bytes);
     pixel::rgb24ToRgb565Le(rgb, packed.data(), static_cast<size_t>(w) * static_cast<size_t>(h));
     return sendRgb565FrameDdr(packed.data(), packed.size(), bank);
 }

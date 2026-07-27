@@ -10,16 +10,22 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include "libmisterplex/ddr_frame_layout.hpp"
+
 namespace {
 
 constexpr uint32_t kDdrFrameBase = 0x30000000u;
-constexpr uint32_t kDdrFrameStride = 0x40000u;
-constexpr size_t kDdrMapLen = 0x80000u;
 constexpr size_t kDefaultFrameBytes = 320 * 240 * 2;
 
 double nowSec() {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1e9;
+}
+
+double threadCpuSec() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1e9;
 }
 
@@ -55,8 +61,10 @@ void fillPattern(uint8_t* buf, size_t len) {
 
 void usage(const char* argv0) {
     std::printf(
-        "Usage: %s [--sync|--no-sync] [--flush] [--loops N] [--len BYTES] [--bank 0|1]\n"
-        "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n",
+        "Usage: %s [--sync|--no-sync] [--flush] [--host-copy]\n"
+        "          [--width W --height H | --len BYTES] [--loops N] [--bank 0|1]\n"
+        "Writes a DDR frame window only; it does not touch SPI or kick the frame reader.\n"
+        "--host-copy avoids /dev/mem and measures memcpy scaling on the build host.\n",
         argv0);
 }
 
@@ -65,9 +73,13 @@ void usage(const char* argv0) {
 int main(int argc, char** argv) {
     bool useSync = true;
     bool flush = false;
+    bool hostCopy = false;
     int loops = 1000;
     size_t len = kDefaultFrameBytes;
     int bank = 0;
+    int width = 320;
+    int height = 240;
+    bool lenSet = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -77,10 +89,17 @@ int main(int argc, char** argv) {
             useSync = false;
         } else if (a == "--flush") {
             flush = true;
+        } else if (a == "--host-copy") {
+            hostCopy = true;
+        } else if (a == "--width" && i + 1 < argc) {
+            width = std::atoi(argv[++i]);
+        } else if (a == "--height" && i + 1 < argc) {
+            height = std::atoi(argv[++i]);
         } else if (a == "--loops" && i + 1 < argc) {
             loops = std::atoi(argv[++i]);
         } else if (a == "--len" && i + 1 < argc) {
             len = static_cast<size_t>(std::strtoull(argv[++i], nullptr, 0));
+            lenSet = true;
         } else if (a == "--bank" && i + 1 < argc) {
             bank = std::atoi(argv[++i]);
         } else if (a == "-h" || a == "--help") {
@@ -93,9 +112,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    misterplex::DdrFrameLayout layout =
+        lenSet ? misterplex::makeDdrFrameLayout(320, static_cast<int>(len / (320 * 2)),
+                                                kDdrFrameBase)
+               : misterplex::makeDdrFrameLayout(width, height, kDdrFrameBase);
+    if (lenSet) {
+        layout.width = 0;
+        layout.height = 0;
+        layout.line_bytes = 0;
+        layout.line_qwords = 0;
+        layout.frame_bytes = len;
+        layout.bank_stride = misterplex::alignUpU32(static_cast<uint32_t>(len), 0x40000u);
+        layout.doorbell_phys = kDdrFrameBase + layout.bank_stride * 2u - 0x1000u;
+        layout.map_bytes = layout.bank_stride * 2u;
+    } else {
+        len = layout.frame_bytes;
+    }
+
     if (loops <= 0 || len == 0 || bank < 0 || bank > 1 ||
-        static_cast<size_t>(bank) * kDdrFrameStride + len > kDdrMapLen) {
-        std::fprintf(stderr, "bad loops/len/bank\n");
+        layout.bank_stride < len ||
+        static_cast<size_t>(bank) * layout.bank_stride + len > layout.map_bytes) {
+        std::fprintf(stderr, "bad loops/size/bank\n");
         return 2;
     }
 
@@ -107,6 +144,48 @@ int main(int argc, char** argv) {
     uint8_t* src = static_cast<uint8_t*>(srcRaw);
     fillPattern(src, len);
 
+    const auto printResult = [&](double wallSec, double cpuSec) {
+        const double mib = (static_cast<double>(len) * loops) / (1024.0 * 1024.0);
+        const double frameMs = (wallSec * 1000.0) / static_cast<double>(loops);
+        const double frameCpuMs = (cpuSec * 1000.0) / static_cast<double>(loops);
+        std::printf("ddr_write_bench host_copy=%d sync=%d flush=%d loops=%d len=%zu bank=%d "
+                    "width=%d height=%d line_bytes=%d line_qwords=%d bank_stride=0x%X "
+                    "map_bytes=0x%X seconds=%.6f cpu_seconds=%.6f MiB=%.3f MiBps=%.3f "
+                    "frame_ms=%.3f frame_cpu_ms=%.3f fps30_budget_pct=%.1f "
+                    "fps60_budget_pct=%.1f\n",
+                    hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
+                    layout.width, layout.height, layout.line_bytes, layout.line_qwords,
+                    layout.bank_stride, layout.map_bytes, wallSec, cpuSec, mib, mib / wallSec,
+                    frameMs, frameCpuMs, 100.0 * frameMs / 33.333333,
+                    100.0 * frameMs / 16.666667);
+    };
+
+    if (hostCopy) {
+        void* dstRaw = nullptr;
+        if (posix_memalign(&dstRaw, 64, len) != 0) {
+            std::perror("posix_memalign dst");
+            std::free(srcRaw);
+            return 1;
+        }
+        uint8_t* dst = static_cast<uint8_t*>(dstRaw);
+        std::memcpy(dst, src, len);
+        const double t0 = nowSec();
+        const double c0 = threadCpuSec();
+        uint64_t checksum = 0;
+        for (int i = 0; i < loops; ++i) {
+            src[static_cast<size_t>(i) % len] ^= static_cast<uint8_t>(i);
+            std::memcpy(dst, src, len);
+            checksum += dst[(static_cast<size_t>(i) * 257) % len];
+        }
+        const double c1 = threadCpuSec();
+        const double t1 = nowSec();
+        printResult(t1 - t0, c1 - c0);
+        std::printf("checksum=%llu\n", static_cast<unsigned long long>(checksum));
+        std::free(dstRaw);
+        std::free(srcRaw);
+        return 0;
+    }
+
     int flags = O_RDWR | O_CLOEXEC;
     if (useSync)
         flags |= O_SYNC;
@@ -117,8 +196,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    void* map =
-        mmap(nullptr, kDdrMapLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, kDdrFrameBase);
+    void* map = mmap(nullptr, layout.map_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                     kDdrFrameBase);
     if (map == MAP_FAILED) {
         std::perror("mmap");
         ::close(fd);
@@ -126,41 +205,38 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    uint8_t* dst = static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * kDdrFrameStride;
+    uint8_t* dst = static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * layout.bank_stride;
     std::memcpy(dst, src, len);
     __sync_synchronize();
     if (flush && !cleanDcacheRange(dst, len)) {
         std::perror("cacheflush warmup");
-        munmap(map, kDdrMapLen);
+        munmap(map, layout.map_bytes);
         ::close(fd);
         std::free(srcRaw);
         return 1;
     }
 
     const double t0 = nowSec();
+    const double c0 = threadCpuSec();
     for (int i = 0; i < loops; ++i) {
         src[static_cast<size_t>(i) % len] ^= static_cast<uint8_t>(i);
         std::memcpy(dst, src, len);
         __sync_synchronize();
         if (flush && !cleanDcacheRange(dst, len)) {
             std::perror("cacheflush");
-            munmap(map, kDdrMapLen);
+            munmap(map, layout.map_bytes);
             ::close(fd);
             std::free(srcRaw);
             return 1;
         }
     }
     __sync_synchronize();
+    const double c1 = threadCpuSec();
     const double t1 = nowSec();
 
-    const double sec = t1 - t0;
-    const double mib = (static_cast<double>(len) * loops) / (1024.0 * 1024.0);
-    std::printf("ddr_write_bench sync=%d flush=%d loops=%d len=%zu bank=%d seconds=%.6f "
-                "MiB=%.3f MiBps=%.3f frame_ms=%.3f\n",
-                useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank, sec, mib, mib / sec,
-                (sec * 1000.0) / static_cast<double>(loops));
+    printResult(t1 - t0, c1 - c0);
 
-    munmap(map, kDdrMapLen);
+    munmap(map, layout.map_bytes);
     ::close(fd);
     std::free(srcRaw);
     return 0;
