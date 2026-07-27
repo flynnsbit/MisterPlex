@@ -1,6 +1,8 @@
 // Phase 3.3l-3: H.264 intra prediction helpers.
 // Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
-// Plex vector. I16 Plane is deliberately detected as unsupported for this rung.
+// Plex vector. All intra modes supported: I4x4 (9 modes), I16x16 (4 modes incl.
+// Plane per clause 8.3.3.4), Chroma 8x8 (4 modes incl. Plane per clause 8.3.4.4).
+// I_PCM (mb_type 25) accepted by mode guard; bitstream parsing is in stream_path.
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -162,13 +164,37 @@ module h264_intra16x16_pred (
 	integer x, y, i;
 	integer sum;
 	reg [7:0] dc_v;
+	integer hgrad, vgrad, a, b, c, val;
 	always @* begin
 		unsupported = 1'b0;
 		sum = 0;
 		dc_v = 8'd128;
+		hgrad = 0;
+		vgrad = 0;
+		a = 0;
+		b = 0;
+		c = 0;
+		val = 0;
 		for (i = 0; i < 256; i = i + 1) pred[i] = 8'd128;
 		if (mode == 2'd3) begin
-			unsupported = 1'b1;
+			// Plane prediction (ITU-T H.264 clause 8.3.3.4)
+			if (has_above && has_left) begin
+				hgrad = 0;
+				for (i = 0; i < 8; i = i + 1)
+					hgrad = hgrad + (i + 1) * ($signed({1'b0, above[8 + i]}) - ((i == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - i]})));
+				vgrad = 0;
+				for (i = 0; i < 8; i = i + 1)
+					vgrad = vgrad + (i + 1) * ($signed({1'b0, left[8 + i]}) - ((i == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - i]})));
+				a = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+				b = (5 * hgrad + 32) >>> 6;
+				c = (5 * vgrad + 32) >>> 6;
+				for (y = 0; y < 16; y = y + 1)
+					for (x = 0; x < 16; x = x + 1) begin
+						val = (a + b * (x - 7) + c * (y - 7) + 16) >>> 5;
+						pred[y * 16 + x] = clip8(val);
+					end
+			end
+			// else: neighbours unavailable, pred stays at 128 default
 		end else if (mode == 2'd0 && has_above) begin
 			for (y = 0; y < 16; y = y + 1)
 				for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] = above[x];
@@ -296,7 +322,6 @@ module h264_intra_mode_guard (
 	wire is_i16 = (mb_type >= 8'd1) && (mb_type <= 8'd24);
 	wire is_i4  = (mb_type == 8'd0);
 	wire is_ipcm = (mb_type == 8'd25);
-	wire i16_plane = is_i16 && (i16_pred_mode == 2'd3);
 	wire bad_type = !(is_i4 || is_i16 || is_ipcm);
 
 	always @(posedge clk) begin
@@ -306,10 +331,10 @@ module h264_intra_mode_guard (
 			unsupported_code  <= 4'd0;
 			unsupported_mb    <= 16'd0;
 			unsupported_block <= 5'd0;
-		end else if (mb_valid && (i16_plane || is_ipcm || bad_type)) begin
+		end else if (mb_valid && bad_type) begin
 			unsupported_valid <= 1'b1;
 			unsupported_seen  <= 1'b1;
-			unsupported_code  <= i16_plane ? UNSUP_I16_PLANE : (is_ipcm ? UNSUP_IPCM : UNSUP_MB_TYPE);
+			unsupported_code  <= UNSUP_MB_TYPE;
 			unsupported_mb    <= mb_index;
 			unsupported_block <= block_index;
 		end

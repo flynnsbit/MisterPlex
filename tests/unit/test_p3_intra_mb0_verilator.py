@@ -211,31 +211,26 @@ int main(int argc, char** argv) {
     reset(dut);
     expect(dut.unsupported_seen == 0, "reset should clear sticky unsupported_seen");
 
+    // I16 Plane is now supported — should NOT trigger unsupported
     dut.mb_valid = 1;
     dut.mb_type = 1;
     dut.i16_pred_mode = 3;
     dut.mb_index = 42;
     dut.block_index = 7;
     tick(dut);
-    expect(dut.unsupported_valid == 1, "I16 Plane should pulse unsupported_valid");
-    expect(dut.unsupported_seen == 1, "I16 Plane should set sticky unsupported_seen");
-    expect(dut.unsupported_code == 1, "I16 Plane should report code 1");
-    expect(dut.unsupported_mb == 42, "I16 Plane should latch MB index");
-    expect(dut.unsupported_block == 7, "I16 Plane should latch block index");
+    expect(dut.unsupported_valid == 0, "I16 Plane should NOT pulse unsupported_valid (now implemented)");
+    expect(dut.unsupported_seen == 0, "I16 Plane should NOT set sticky unsupported_seen (now implemented)");
 
-    dut.mb_valid = 0;
-    tick(dut);
-    expect(dut.unsupported_valid == 0, "unsupported_valid should be a pulse");
-    expect(dut.unsupported_seen == 1, "unsupported_seen should remain sticky after pulse");
-
+    // I_PCM is now supported — should NOT trigger unsupported
     reset(dut);
     dut.mb_valid = 1;
     dut.mb_type = 25;
     dut.i16_pred_mode = 0;
     tick(dut);
-    expect(dut.unsupported_valid == 1, "IPCM should pulse unsupported_valid");
-    expect(dut.unsupported_code == 2, "IPCM should report code 2");
+    expect(dut.unsupported_valid == 0, "IPCM should NOT pulse unsupported_valid (now accepted)");
+    expect(dut.unsupported_seen == 0, "IPCM should NOT set sticky unsupported_seen (now accepted)");
 
+    // Bad MB type should still trigger unsupported
     reset(dut);
     dut.mb_valid = 1;
     dut.mb_type = 99;
@@ -244,11 +239,32 @@ int main(int argc, char** argv) {
     expect(dut.unsupported_valid == 1, "unknown MB type should pulse unsupported_valid");
     expect(dut.unsupported_code == 3, "unknown MB type should report code 3");
 
+    // Normal I16 modes (0, 1, 2) should still NOT trigger unsupported
+    for (int m = 0; m < 3; ++m) {
+        reset(dut);
+        dut.mb_valid = 1;
+        dut.mb_type = 1;
+        dut.i16_pred_mode = m;
+        tick(dut);
+        if (dut.unsupported_valid) {
+            std::cerr << "I16 mode " << m << " falsely triggered unsupported\n";
+            ++failures;
+        }
+    }
+
+    // Normal I4 (mb_type=0) should still NOT trigger unsupported
+    reset(dut);
+    dut.mb_valid = 1;
+    dut.mb_type = 0;
+    dut.i16_pred_mode = 0;
+    tick(dut);
+    expect(dut.unsupported_valid == 0, "I4 should NOT pulse unsupported_valid");
+
     if (failures) {
-        std::cerr << "P3 intra unsupported-mode guard Verilator check FAILED: " << failures << " mismatches\n";
+        std::cerr << "P3 intra mode guard Verilator check FAILED: " << failures << " mismatches\n";
         return 1;
     }
-    std::cout << "P3 intra unsupported-mode guard Verilator check PASS: I16 Plane, IPCM, and bad MB type raise sticky telemetry.\n";
+    std::cout << "P3 intra mode guard Verilator check PASS: I16 Plane+IPCM now accepted, bad type still caught.\n";
     return 0;
 }
 '''
