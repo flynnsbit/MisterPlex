@@ -56,7 +56,17 @@ module stream_path_full_frame_tb #(
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
-	output wire        fs_swap
+	output wire        fs_swap,
+
+	output wire        native_inter_valid,
+	output wire [15:0] native_inter_frame_idx,
+	output wire [7:0]  native_inter_mb_x,
+	output wire [7:0]  native_inter_mb_y,
+	output wire        native_inter_p_skip,
+	output wire [2:0]  native_inter_part_mode,
+	output wire [7:0]  native_inter_pred_y [0:255],
+	output wire [7:0]  native_inter_pred_u [0:63],
+	output wire [7:0]  native_inter_pred_v [0:63]
 );
 	wire [7:0] sps_level;
 	wire [5:0] slice_qp;
@@ -177,6 +187,12 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
+	assign native_inter_valid = dut.stub.dpb_fetch_done && dut.stub.dpb_inter_ok;
+	assign native_inter_frame_idx = dut.stub.frames_out;
+	assign native_inter_mb_x = dut.stub.lat_p_mb_x;
+	assign native_inter_mb_y = dut.stub.lat_p_mb_y;
+	assign native_inter_p_skip = dut.stub.lat_p_skip;
+	assign native_inter_part_mode = dut.stub.lat_p_part_mode;
 	genvar trace_i;
 	generate
 		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
@@ -186,6 +202,19 @@ module stream_path_full_frame_tb #(
 			assign trace_idct_dequant[trace_i] = dut.stub.idct_dequant[trace_i];
 			assign trace_idct_residual[trace_i] = dut.stub.idct_residual[trace_i];
 			assign trace_recon_px[trace_i] = dut.stub.recon_px[trace_i];
+		end
+	endgenerate
+	genvar native_y_i;
+	generate
+		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
+			assign native_inter_pred_y[native_y_i] = dut.stub.dpb_pred_y[native_y_i];
+		end
+	endgenerate
+	genvar native_c_i;
+	generate
+		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
+			assign native_inter_pred_u[native_c_i] = dut.stub.dpb_pred_u[native_c_i];
+			assign native_inter_pred_v[native_c_i] = dut.stub.dpb_pred_v[native_c_i];
 		end
 	endgenerate
 endmodule
