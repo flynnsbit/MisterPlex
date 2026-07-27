@@ -107,10 +107,11 @@ The red path uses a testbench-only wrapper parameter (`FAULT_INTER_DIAG_PIXEL=1`
 ## Hardware gate plan
 
 Deploy the branch RBF after Quartus scheduling and load the Baseline 624×480 elementary stream
-through F3 before any host F1 frame owns the frame store. Do **not** treat the no-argument
-`tests/hw/test_f3_visual_golden.sh` default as an inter gate until w-c1 re-proves its default
-fixture/golden on rollback `57674f2e`; use direct screen/capture observation or an explicitly
-proven visual-gate configuration only.
+through F3 before any host F1 frame owns the frame store. The no-argument visual gate is now
+trusted for its proven 160×120 ROI on rollback `57674f2e`, but it is not a full-frame correctness
+or colour-path gate. This branch intentionally changes the MB1 inter diagnostic witness, so use
+telemetry first and treat visual output as ROI corroboration/direct MB1 band evidence unless a
+branch-specific golden is generated.
 
 Pass:
 
