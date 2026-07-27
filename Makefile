@@ -95,7 +95,9 @@ $(ROOT)/build/test_slice_hdr: $(ROOT)/tests/unit/test_slice_hdr.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_slice_hdr.cpp
 
-$(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp
+$(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_frame_store_math.cpp
 
@@ -179,6 +181,7 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_cavlc.hpp \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
 	$(ROOT)/host/libmisterplex/h264_sps.hpp \
+	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
 	$(ROOT)/host/libmisterplex/pixel_format.hpp
@@ -226,7 +229,7 @@ ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || comman
 arm-ddr-bench:
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
-	$(ARM_CXX) -std=c++17 -O2 -Wall \
+	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/ddr_write_bench \
 		$(ROOT)/tools/ddr_write_bench.cpp \
 		-static
