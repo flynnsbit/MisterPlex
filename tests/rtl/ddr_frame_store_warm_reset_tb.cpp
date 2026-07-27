@@ -66,6 +66,8 @@ public:
     bool schedulerArmed = false;
     bool sawSchedValid = false;
     bool sawScheduledLineRead = false;
+    bool hangLineReadResponses = false;
+    bool sawDroppedLineRead = false;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -146,6 +148,10 @@ public:
             if (schedulerArmed) {
                 sawScheduledLineRead = true;
                 schedulerArmed = false;
+            }
+            if (hangLineReadResponses && top.DDRAM_ADDR != (kDoorbellPhys >> 3)) {
+                sawDroppedLineRead = true;
+                return;
             }
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
@@ -363,6 +369,43 @@ bool runInitialFrameMailboxPublish() {
               << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
               << " frame_debug=0x" << int((mbox >> 40) & 0xffu)
               << std::dec << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
+bool runFrameMailboxStallsWithHungLineRead() {
+    Sim sim;
+    sim.fillFrame(0, 218);
+    sim.resetCore();
+    if (!sim.waitForFrameMailboxMagic(20000))
+        throw std::runtime_error("line-read-hang setup: initial PLXF mailbox did not publish");
+    sim.hangLineReadResponses = true;
+    sim.ringDoorbell(0, 0x69);
+    for (int i = 0; i < 20000 && !sim.sawDroppedLineRead; ++i)
+        sim.videoTick();
+    if (!sim.sawDroppedLineRead) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: line-read-hang did not reach a frame line read"
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " debug=0x" << std::hex << int(sim.top.debug_state)
+                  << " mailbox=0x" << sim.frameMailbox() << std::dec << "\n";
+        std::exit(1);
+    }
+    const uint64_t staleMbox = sim.frameMailbox();
+    for (int i = 0; i < 20000; ++i)
+        sim.videoTick();
+    const uint64_t laterMbox = sim.frameMailbox();
+    if (sim.top.has_frame || laterMbox != staleMbox) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: hung line read did not leave PLXF stale"
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " before=0x" << std::hex << staleMbox
+                  << " after=0x" << laterMbox
+                  << " live_debug=0x" << int(sim.top.debug_state) << std::dec << "\n";
+        std::exit(1);
+    }
+    std::cout << "ddr_frame_store warm-reset raw: line_read_hang_plxf_stale"
+              << " plxf=0x" << std::hex << laterMbox
+              << " live_debug=0x" << int(sim.top.debug_state)
+              << std::dec << " has_frame=" << int(sim.top.has_frame)
+              << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -667,6 +710,7 @@ void run() {
     schedulerSeen |= runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
     schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
+    schedulerSeen |= runFrameMailboxStallsWithHungLineRead();
     schedulerSeen |= runEqualTokenFallback();
     schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
     schedulerSeen |= runEqualTokenRefreshAfterAccept();
