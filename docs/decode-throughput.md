@@ -1,5 +1,13 @@
 # Decode throughput budget
 
+**Instrument-integrity note (2026-07-27):** This gate tests the **checker
+logic** (`check_decode_throughput.py`), not the simulation. The test input
+is a synthetic JSON with hardcoded cycle counts. The actual Verilator sim is
+run by `test_stream_path_full_frame_compare.sh` (a separate gate). The
+`effective_fps` headline (65.9) is 98.7% diagnostic paint — it measures the
+diagnostic pixel-painting rate, not the decode rate. See "Instrument-integrity
+audit" section below.
+
 This note is a realtime ratchet for the FPGA decode path. It deliberately
 separates measured cost from unknown future cost; unknown stages are not counted
 as free.
@@ -507,3 +515,59 @@ RTL gate now writes a separate report under `build/realtime_throughput/` for
 known fixtures, copying run label, fixture source, and geometry into the JSON.
 `tests/unit/test_decode_throughput_gate.sh` proves RED by lowering the cycle and
 margin thresholds.
+
+## Instrument-integrity audit (2026-07-27, per parent directive #16)
+
+### Gate 1: Throughput ratchet (`test_decode_throughput_gate.sh`)
+
+**Q1 — What does the pass/fail assertion literally compare?**
+
+`check_report()` compares: `measured.cycles_total` vs `max_cycles_total`,
+`cycles_per_frame` vs max, `cycles_per_mb` vs max, `budget.margin_ratio` vs
+min, `effective_fps` vs min, and per-stage `cycles_per_mb` vs stage thresholds.
+Structural gate: if any production stage is `not_implemented`, emit INCOMPLETE.
+
+**Q2 — What does it NOT cover?**
+
+1. **The gate does NOT run a simulation.** It feeds synthetic JSON with hardcoded
+   cycle counts to `check_decode_throughput.py`. A reader seeing "PASS decode
+   throughput gate" might assume a sim ran. It did not — that is
+   `test_stream_path_full_frame_compare.sh`, a separate gate.
+2. **`effective_fps` is 98.7% diagnostic paint.** The 65.9 fps headline measures
+   the pixel-painting rate of `decode_stub`, not the decoder. The real decode
+   cost is 3.2 cycles/MB; the rest is painting diagnostics at 1 px/cycle.
+3. **Only 624x480 fixture is exercised.** 320x240 and wcap fixtures are not
+   tested by this gate (they would be tested by the full-frame sim gate).
+
+**Q3 — Can it fail?** YES. Red-proven in three dimensions: tightened thresholds
+→ rc≠0; INCOMPLETE with unimplemented stages; OK when all measured. Specific
+failure messages verified by grep.
+
+### Gate 2: Visual verdict classifier (`test_hw_visual_compare.py`)
+
+**Q1 — What does the pass/fail assertion literally compare?**
+
+Synthetic images → `hw_visual_compare.py` → verdict ID. Five branches tested:
+EXACT_MATCH (dispersion ratio=1.0), NO_FRAME_DELIVERED (ratio<1.02),
+COLOUR_PATH_DEFECT (BT.601/709 ratio>30.0, U/V swap ratio>5.0),
+GEOMETRY_CONTENT_DEFECT (dx=5 detected), INDETERMINATE (rc=2). Plus delivery
+short-circuit paths for `frame_status=absent` and non-YUV colorspace.
+
+**Q2 — What does it NOT cover?**
+
+1. **Synthetic images only, no device validation.** By design — STA is not
+   closed. But a reader might assume device-validated.
+2. **No gradual degradation.** All inputs are clear cases. A 95%-correct image
+   with 5% chroma error in one region has not been tested.
+3. **No chroma-DC-specific defect test.** Given instrument failure #16 (chroma
+   DC Hadamard missing from RTL), a chroma-only error (correct luma, wrong
+   chroma reconstruction) would produce subtle colour shifts. The U/V swap test
+   is the closest proxy but less subtle than a real chroma DC defect.
+
+**Q3 — Can it fail?** YES. Every classification branch red-proven with synthetic
+input. Re-verified on this host after migration.
+
+### Gaps stated in headline
+
+- Throughput gate tests checker logic, not sim. `effective_fps` is paint rate.
+- Visual gate is synthetic-only, not device-validated. No chroma-DC test.
