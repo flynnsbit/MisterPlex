@@ -1297,3 +1297,30 @@ better than "very likely cannot fit": retirement takes M10K pressure from 82 % t
   cross-build comparison and I am not hiding that.
 * M10K is the binding constraint today. Freeing it may expose ALUT or DSP as the
   next limit; DSP was already **74/74** on `2f165ed`.
+
+### 22.4 Control: the network path is healthy, only the device is absent
+
+Before attributing the outage to the DE10-Nano I ran the obvious control -- "is it
+my host that fell off the LAN?" It is not.
+
+```
+my interface       192.168.1.24/24 on wlp89s0, up
+default gateway    192.168.1.1            ping rc=0
+build farm         ssh docker (node-worker1) rc=0
+internet           8.8.8.8                ping rc=0
+other LAN hosts    3 entries REACHABLE in the ARP cache
+MiSTer             192.168.1.183          ping rc=1, arp FAILED
+```
+
+Scope: 6 probes, 5 green, 1 red. My NIC, my LAN segment, my gateway, my route to
+the build farm and my route off-site are all fine, and three other hosts on the
+same subnet answer ARP. **`192.168.1.183` alone is unreachable, and it fails at
+layer 2** -- no ARP reply at all, not a refused TCP connection.
+
+That eliminates local network failure as the explanation and narrows it to the
+device: powered off, hung, or its NIC is down. It does **not** discriminate among
+those three, which is precisely why W-E2E-O5's HDMI capture is now the deciding
+instrument (§22.2): HDMI does not traverse the network.
+
+Cumulative: **38/38 pings lost between 12:44 and 13:02**, ARP `FAILED` throughout.
+No deploy is possible in this state, so the fit/deploy token remains unspent.
