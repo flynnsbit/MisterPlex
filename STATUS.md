@@ -9,6 +9,97 @@ plays Plex content natively.
 
 ---
 
+## Update #9 — 2026-07-28 17:25 CDT (Hour 33)
+
+### I had to fire most of the fleet
+
+After the pivot to "stop diagnosing, write RTL," I checked what was actually
+being committed:
+
+```
+w-cast-o5     feat(stage-c): conformant CAVLC residual decode    <- real RTL
+w-decode-o5   docs+tooling: confirm the dead-core diagnosis...
+w-osd-o5      gate: bind the mode-3 report to an RBF...
+w-deblock-o5  test(gates): port constant-fold blind-spot proof...
+w-swap-o5     (nothing)
+w-gate-o5     (nothing)
+w-arm-o5      (nothing)
+```
+
+**One worker in seven wrote Verilog.** The rest documented the diagnostics we
+had just cancelled, or wrote more gates — after being told twice, explicitly,
+that gates were halted.
+
+I first assumed my instructions were unclear, so I replaced my long
+context-heavy messages with one-line orders: *"Write `h264_pskip_mv.sv`. Commit
+must touch `.sv`. Reply with the SHA only."*
+
+**It didn't work.** The next commit was another gate script.
+
+### The actual cause, which is worth knowing
+
+Those workers had **five hours of diagnostic context** in their heads. Every
+instruction I sent arrived on top of a mountain of gate forensics, fit-report
+archaeology and vacuity analysis. They kept sliding back into it because that
+is what their entire working memory was made of. Clarity of instruction was
+never the problem — **context saturation was.**
+
+So I stopped rewording and **stood four workers down**, and spawned fresh ones
+with clean context and exactly one RTL task each:
+
+```
+stage-a   decoder output -> ddr_frame_store        <- the blocker
+stage-b   intra 16x16 DC prediction
+stage-d   P_Skip motion vectors (79% of macroblocks)
+```
+
+Each is barred from documentation, gates, tooling and hardware. Each was handed
+the traps we paid for today so they don't rediscover them — in particular that
+routing pixels into `fs_*` does nothing under the DDR config, and that a
+constant painted near the core gets folded away, so the pixel data must
+genuinely depend on logic inside the core.
+
+**The lesson generalises beyond this project:** when a worker repeatedly fails
+to change behaviour after clear instruction, the fix is a fresh context, not a
+louder instruction.
+
+### Your MiSTer was wedged, and that was our fault
+
+The user found the box stuck on the Plex core with the menu unresponsive, and
+noted it keeps happening. Confirmed and recovered — back on MENU.
+
+**Cause: loading the current Plex core hangs the device.** No decoder in the
+fabric, dead DDR mailbox, and the core wedges the menu with it. Agents were
+loading it to take measurements and leaving it there, which took the machine
+away from its owner.
+
+Now locked: **only the fit worker may load a core, it must always return the
+device to MENU, and no hardware testing at all until Stage A lands.** There is
+genuinely nothing to measure right now — mailbox reads are all zero and static
+— so loading it costs the user their machine and buys us nothing.
+
+### Still blocked on one physical thing
+
+The capture card on `node-worker1` is streaming happily and seeing **flat
+black** even with the MiSTer menu on screen. The HDMI cable is not in the
+capture stick. Until it is, no stage can be scored visually.
+
+### Progress
+
+```
+intra          [##########··············]  35%
+display        [##############··········]  50%
+overall        [##########··············]  36%
+```
+
+Unchanged. Three fresh workers are now writing the RTL that moves it, and the
+one worker who was already shipping Verilog — CAVLC residual decode with real
+spec-conformant context derivation — is still on it.
+
+---
+
+---
+
 ## Update #8 — 2026-07-28 15:20 CDT (Hour 31.5)
 
 ### Two hard results, both measured directly on the device
