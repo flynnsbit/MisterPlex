@@ -1129,3 +1129,58 @@ framing, not the clk_ddr-window framing** -- under the wrong framing, a working
 Plausible mechanism if SDC is the cause: bounding previously-cut CDC paths at
 50 ns forces the fitter to place and route them, changing placement on paths that
 were deliberately unconstrained.
+
+---
+
+## 22. STEP 2 BLOCKED — the MiSTer is off the network
+
+`3b1e8435` passed every precondition and was staged and ready. It was not
+deployed, because the device became unreachable before W-E2E-O5's STEP 1
+capture completed.
+
+```
+12:07:56  ssh OK    fb4bad84 resident, CORENAME=Plex, fpga_manager=operating,
+                    misterplexd pid 7518
+12:44     ssh       "No route to host"
+12:45-12:47  ping   10/10 attempts failed, 100% packet loss
+             arp    192.168.1.183 dev wlp89s0 -> FAILED, then INCOMPLETE
+```
+
+ARP is INCOMPLETE: the host is absent from the network, so this is not an
+sshd/service fault. **I did not touch the device between those timestamps** --
+all work in that window was on the remote build farm and in the local repo -- and
+I have not deployed, because the parent's STEP 1 blocks STEP 2 and no capture has
+been reported.
+
+### 22.1 `3b1e8435` readiness (all green, staged, unspent)
+
+| precondition | result |
+|---|---|
+| two-slot bit-identity | `wfit-hour27-a` == `-b` == `3b1e84355f5fe4e7e137b70a841244fa` |
+| banned md5 set | clear |
+| `make post-fit-timing` | **rc=0**, no negative setup/hold/recovery/removal/min-pulse |
+| `make post-fit-hierarchy` | **rc=0**, critical modules present with real resources |
+| entity hierarchy | `ddr_frame_store` PRESENT under `present_core` (subtree 482), `present_core` under `emu` |
+| `Plex.rbf.bak` escape hatch | intact on device as of 12:07 |
+
+### 22.2 The capture now answers a question nothing else can
+
+HDMI is independent of the network path, so one frame discriminates:
+
+* **NO SIGNAL** -> board lost power / hung / stopped driving video; the network
+  loss is a symptom of the same event.
+* **VALID (black or logo)** -> board is alive and driving HDMI and only its
+  network link is down. The FPGA would then be fine, this becomes an Ethernet
+  investigation, and the "fabric writes nothing to DDR" result stands on its own.
+
+The perishability argument has **inverted**: I cannot deploy while the device is
+unreachable, so there is no longer any risk of destroying the hand-made state
+before it is photographed.
+
+### 22.3 Not done, and why
+
+* **No deploy.** Blocked twice over: parent's STEP 1 is unreported, and the
+  device is unreachable. Not attempted.
+* **No power-cycle request.** The human is permanently out of the test loop by
+  explicit instruction, so I did not ask anyone to check the board.
+* **No rollback.** `Plex.rbf.bak` remains untouched.
