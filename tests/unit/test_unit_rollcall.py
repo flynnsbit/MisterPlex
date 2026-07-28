@@ -112,6 +112,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_play_file_delivery.sh",
     "$(ROOT)/tests/unit/test_no_private_data.sh",
     "$(ROOT)/tests/unit/test_capture_rig.sh",
+    "$(ROOT)/tests/unit/test_capture_preflight.sh",
     "$(ROOT)/tests/unit/test_resource_preflight.sh",
     "$(ROOT)/scripts/check_define_parity.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",

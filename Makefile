@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright capture-rig-preflight
 
 all: unit
 
@@ -34,6 +34,7 @@ help:
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 	@echo "  make cast-timeline-gate      - live cast/timeline HTTP gate (requires MiSTer + PMS)"
 	@echo "  make cast-timeline-playwright - live cast/timeline Playwright browser fidelity check"
+	@echo "  make capture-rig-preflight   - HDMI capture rig probe (device, liveness, signal state)"
 
 test: unit
 
@@ -111,6 +112,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
+	$(ROOT)/tests/unit/test_capture_preflight.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
@@ -591,3 +593,12 @@ cast-timeline-gate:
 cast-timeline-playwright:
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label cast-timeline-playwright -- \
 	  node $(ROOT)/tests/hw/e2e/test_cast_timeline_playwright.js
+
+# ── HDMI capture rig preflight ────────────────────────────────────────────────
+# Enumerates /dev/video* capture nodes, probes format/resolution/fps, grabs N
+# live frames to prove liveness, and classifies the signal as CONTENT_PRESENT /
+# BLACK_SIGNAL / NO_SIGNAL.  Exits 77 (UNSCORED) when no capture hardware is
+# present.  BLACK_SIGNAL is a known state for resident RBF 00eebd5e.
+capture-rig-preflight:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label capture-rig-preflight -- \
+	  bash $(ROOT)/tests/hw/test_capture_preflight.sh
