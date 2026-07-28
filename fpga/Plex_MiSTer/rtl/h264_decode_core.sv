@@ -158,17 +158,17 @@ module h264_decode_core #(
     //             nC context comes from h264_cavlc_nc_predictor.
     //
     // h264_dequant4x4 (w-cabac):
-    //   IN:  coeff signed [8:0] [0:15], qp[5:0], max_coeff[4:0]
-    //   OUT: dequant signed [17:0] [0:15]
-    //   CONTRACT: Combinational. Width: 29 bits internal (sat to 18 out).
+    //   IN:  coeff signed [15:0] [0:15], qp[5:0], max_coeff[4:0]
+    //   OUT: dequant signed [28:0] [0:15]
+    //   CONTRACT: Combinational. Width: 29 bits end-to-end.
     //
     // h264_idct4x4 (w-cabac):
-    //   IN:  dequant signed [17:0] [0:15]
-    //   OUT: residual signed [17:0] [0:15]
+    //   IN:  dequant signed [28:0] [0:15]
+    //   OUT: residual signed [28:0] [0:15]
     //   CONTRACT: Combinational. Butterfly + shift.
     //
     // h264_recon4x4 (w-cabac):
-    //   IN:  pred[7:0] [0:15], residual signed [17:0] [0:15]
+    //   IN:  pred[7:0] [0:15], residual signed [28:0] [0:15]
     //   OUT: recon[7:0] [0:15]
     //   CONTRACT: Combinational. clip(pred + (residual >> 6), 0, 255).
     //

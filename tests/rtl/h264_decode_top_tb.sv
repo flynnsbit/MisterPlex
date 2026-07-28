@@ -20,10 +20,10 @@ module h264_decode_top_tb (
 
     input  wire        tb_block_valid,
     input  wire [3:0]  tb_block_index,
-    input  wire signed [8:0] tb_block_coeff [0:15],
+    input  wire signed [15:0] tb_block_coeff [0:15],
 
     input  wire        tb_i16_dc_valid,
-    input  wire signed [17:0] tb_i16_dc [0:15],
+    input  wire signed [28:0] tb_i16_dc [0:15],
 
     input  wire [3:0]  tb_i4_modes [0:15],
 
