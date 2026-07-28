@@ -218,7 +218,28 @@ def self_test() -> int:
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
-    inv = summarize(registry_skips("make-unit"))
+    saved_env = {
+        key: os.environ.get(key)
+        for key in (
+            "PLEX_BASE",
+            "PLEX_TOKEN",
+            "MISTERPLEX_BASELINE_KEY",
+            "PLEX_KEY",
+            "MISTERPLEX_CONF",
+            "MISTER_CONF",
+        )
+    }
+    try:
+        for key in saved_env:
+            os.environ.pop(key, None)
+        os.environ["MISTERPLEX_CONF"] = str(ROOT / "assets" / "missing-self-test.conf")
+        inv = summarize(registry_skips("make-unit"))
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     expected_geometry = pms_geometry_contract_summary()
     if expected_geometry not in inv:
         print(inv)

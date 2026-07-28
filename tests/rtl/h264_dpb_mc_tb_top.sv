@@ -6,6 +6,7 @@ module h264_dpb_mc_tb #(
 	parameter FAULT_BAD_MC_ROUND = 0,
 	parameter FAULT_EARLY_REF = 0,
 	parameter FAULT_BAD_PART_MASK = 0,
+	parameter FAULT_SWAP_PRE_POST_TAPS = 0,
 	parameter USE_DEBLOCK_WB_CTRL = 0
 )(
 	input  wire               clk,
@@ -21,6 +22,7 @@ module h264_dpb_mc_tb #(
 	input  wire [7:0]         filtered_mb_y,
 	input  wire [1:0]         filtered_plane,
 	input  wire [7:0]         filtered_sample_idx,
+	input  wire [7:0]         filtered_sample_pre_tap,
 	input  wire [7:0]         filtered_sample,
 	input  wire               filtered_mb_valid,
 	input  wire [10:0]        filtered_mb_addr,
@@ -77,7 +79,21 @@ module h264_dpb_mc_tb #(
 	output wire [7:0]         pred_u [0:63],
 	output wire               pred_u_valid [0:63],
 	output wire [7:0]         pred_v [0:63],
-	output wire               pred_v_valid [0:63]
+	output wire               pred_v_valid [0:63],
+
+	input  wire [7:0]         tap_mb_x,
+	input  wire [7:0]         tap_mb_y,
+	input  wire [7:0]         tap_mb_width,
+	input  wire               tap_mb_start,
+	input  wire [3:0]         tap_block_idx,
+	input  wire               tap_block_valid,
+	input  wire [7:0]         tap_pre_recon [0:15],
+	input  wire [7:0]         tap_post_deblock [0:15],
+	output wire [7:0]         tap_above [0:7],
+	output wire [7:0]         tap_left [0:3],
+	output wire [7:0]         tap_top_left,
+	output wire               tap_has_above,
+	output wire               tap_has_left
 );
 	wire ref_ready_good;
 	wire luma_window_valid_good;
@@ -94,6 +110,10 @@ module h264_dpb_mc_tb #(
 	wire [7:0] pred_v_good [0:63];
 	wire pred_v_valid_good [0:63];
 	wire dpb_frame_done;
+	reg  dpb_frame_done_after_deblock;
+	wire [7:0] dpb_filtered_sample = FAULT_SWAP_PRE_POST_TAPS ? filtered_sample_pre_tap : filtered_sample;
+	wire [7:0] nb_recon_pixels [0:15];
+	genvar i;
 
 	generate
 		if (USE_DEBLOCK_WB_CTRL) begin : gen_deblock_wb
@@ -118,7 +138,7 @@ module h264_dpb_mc_tb #(
 				.ref_ready_slot(deblock_ref_ready_slot),
 				.commit_order_error(deblock_commit_order_error)
 			);
-			assign dpb_frame_done = deblock_ref_ready_pulse;
+			assign dpb_frame_done = dpb_frame_done_after_deblock;
 		end else begin : gen_direct_frame_done
 			assign deblock_wb_valid = 1'b0;
 			assign deblock_wb_mb_addr = 11'd0;
@@ -128,6 +148,28 @@ module h264_dpb_mc_tb #(
 		end
 	endgenerate
 
+	always @(posedge clk) begin
+		if (reset)
+			dpb_frame_done_after_deblock <= 1'b0;
+		else
+			dpb_frame_done_after_deblock <= deblock_ref_ready_pulse;
+	end
+
+	generate
+		for (i = 0; i < 16; i = i + 1) begin : gen_nb_tap
+			assign nb_recon_pixels[i] = FAULT_SWAP_PRE_POST_TAPS ? tap_post_deblock[i] : tap_pre_recon[i];
+		end
+	endgenerate
+
+	h264_intra_nb_ctx #(.MB_WIDTH_MAX(40)) u_tap_nb_ctx (
+		.clk(clk), .reset(reset),
+		.mb_x(tap_mb_x), .mb_y(tap_mb_y), .mb_width(tap_mb_width), .mb_start(tap_mb_start),
+		.block_idx(tap_block_idx), .block_valid(tap_block_valid),
+		.recon_pixels(nb_recon_pixels),
+		.above(tap_above), .left(tap_left), .top_left(tap_top_left),
+		.has_above(tap_has_above), .has_left(tap_has_left)
+	);
+
 	h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(idr_start), .frame_done(dpb_frame_done),
@@ -135,7 +177,7 @@ module h264_dpb_mc_tb #(
 		.filtered_sample_valid(filtered_sample_valid),
 		.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
 		.filtered_plane(filtered_plane), .filtered_sample_idx(filtered_sample_idx),
-		.filtered_sample(filtered_sample),
+		.filtered_sample(dpb_filtered_sample),
 		.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
 		.fetch_start(fetch_start),
 		.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
@@ -178,7 +220,6 @@ module h264_dpb_mc_tb #(
 	assign chroma_window_idx = chroma_window_idx_good;
 	assign chroma_window_sample = chroma_window_sample_good;
 
-	genvar i;
 	generate
 		for (i = 0; i < 256; i = i + 1) begin : gen_pred_y
 			assign pred_y[i] = (FAULT_BAD_MC_ROUND && i == 0) ? (pred_y_good[i] + 8'd1) : pred_y_good[i];
