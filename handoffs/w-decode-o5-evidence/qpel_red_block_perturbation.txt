@@ -1,0 +1,30 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (qpel_equivalence_neg)
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+EXPECTED_RED qpel_block_vs_sample_equivalence: rc=1 matched 2 manifest substring(s) (tests/unit/test_qpel_equivalence_verilator.sh)
+FAIL qpel mismatch pattern=random frac=(0,0) pos=(0,0) block=48 sample=49
+FAIL qpel mismatch pattern=random frac=(0,0) pos=(1,0) block=101 sample=100
+FAIL qpel mismatch pattern=random frac=(0,0) pos=(2,0) block=125 sample=124
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (qpel_equivalence_pos)
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(0,0) block=50 sample=51
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(1,0) block=122 sample=123
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(6,0) block=178 sample=179
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(7,0) block=209 sample=210
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(9,0) block=45 sample=46
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(10,0) block=215 sample=216
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(11,0) block=237 sample=238
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(15,0) block=58 sample=59
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(5,1) block=190 sample=191
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(10,1) block=213 sample=214
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(11,1) block=106 sample=107
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(14,1) block=180 sample=181
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(15,1) block=43 sample=44
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(0,2) block=170 sample=171
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(2,2) block=40 sample=41
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(5,2) block=83 sample=84
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(8,2) block=137 sample=138
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(9,2) block=253 sample=254
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(12,2) block=211 sample=212
+FAIL qpel mismatch pattern=random frac=(1,0) pos=(15,2) block=52 sample=53
+QPEL EQUIVALENCE FAILED mismatches=3542 compares=20480
+h264_luma_qpel_block_16x16 (h264_dpb.sv) and h264_luma_qpel_sample (h264_inter_pred.sv) do not implement the same function.

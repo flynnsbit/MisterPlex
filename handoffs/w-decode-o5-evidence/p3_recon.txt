@@ -1,0 +1,6 @@
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-o5/build/verilator/stream_path_recon'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
+OK stream_path integrated sim: slice_hdr_parser->decode_stub handoff two_pushes=PASS recon_sig=0x3b recon_dbg=0xf9 residual_csum=0x14 nalu=8 bytes=13478 frames=2 last_place_cyc=194167 last_recon_cyc=386470 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-o5/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264
