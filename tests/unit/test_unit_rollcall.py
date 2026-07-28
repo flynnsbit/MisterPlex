@@ -120,6 +120,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py",
     "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl --require h264_inter_mc_part --require h264_inter_mc_16x16 --require h264_dpb_one_ref --require h264_luma_qpel_block_16x16 --require h264_chroma_epel_block_8x8 --require h264_luma_ref_tap_addr --require h264_ref_clamp",
     "python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_reachability_redgreen.py",
+    "python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_elab_hierarchy.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",
     "$(ROOT)/tests/unit/test_rtl_invariants.sh",

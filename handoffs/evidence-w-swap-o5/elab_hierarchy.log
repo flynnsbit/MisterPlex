@@ -1,0 +1,18 @@
+Scope: elaboration-aware (Verilator AST) reachability for 8 required MC/DPB/reference modules under h264_decode_core, with a cut-instantiation red proof for each
+ELAB_MODULE_REACHABLE h264_inter_mc_part root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_inter_mc_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_qpel_block_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_chroma_epel_block_8x8 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_dpb_one_ref root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_ref_tap_addr root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_ref_clamp root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_deblock_writeback_ctrl root=h264_decode_core
+OK h264_decode_core elab red-check: h264_inter_mc_part absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_inter_mc_16x16 absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_luma_qpel_block_16x16 absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_chroma_epel_block_8x8 absent from the elaborated subtree when its 2 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_dpb_one_ref absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_luma_ref_tap_addr absent from the elaborated subtree when its 2 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_ref_clamp absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_deblock_writeback_ctrl absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core MC elaboration hierarchy: 8/8 required modules present in the elaborated subtree; decode_stub not elaborated under this root; elaborated_modules=32 subtree_modules=20 dump=Vh264_decode_core_p16z_tb_009_param.tree.json

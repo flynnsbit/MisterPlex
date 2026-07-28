@@ -73,6 +73,80 @@ OK h264_decode_core MC reachability red/green: 8/8 required modules proved reach
 
 Registered in `Makefile` and `tests/unit/test_unit_rollcall.py`, so the requirement is permanent.
 
+### 4a. Second, independent oracle: elaboration-aware hierarchy (parent caveat #4)
+
+The parent's binding standard notes the registered checker is **source/regex level**, not
+elaboration aware, so a core-subtree rc=0 is *necessary but not sufficient*. Quartus post-fit
+hierarchy is the strongest oracle but Quartus is a sole exclusive slot I must not touch, so I built
+the strongest oracle available to me instead.
+
+`tests/unit/test_h264_decode_core_mc_elab_hierarchy.py` (new, registered) elaborates the product
+core with Verilator (`--lint-only --dump-tree-json`), reconstructs the **real module instance graph**
+from post-parameter `CELL -> MODULE` links, and checks two properties:
+
+1. all 8 required modules are in the elaborated subtree of `h264_decode_core`;
+2. **`decode_stub` is not elaborated at all under this root** - so the masking effect that made
+   plain `emu` reachability worthless is structurally impossible here, not merely assumed absent.
+
+A module can only appear in this graph if the elaborator actually built it, so regex blind spots do
+not apply. Red proof is by **cutting the instantiation out of the source** and requiring the module
+to disappear. rc=0 (`handoffs/evidence-w-swap-o5/elab_hierarchy.log`):
+
+```
+Scope: elaboration-aware (Verilator AST) reachability for 8 required MC/DPB/reference modules under h264_decode_core, with a cut-instantiation red proof for each
+ELAB_MODULE_REACHABLE h264_inter_mc_part root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_inter_mc_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_qpel_block_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_chroma_epel_block_8x8 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_dpb_one_ref root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_ref_tap_addr root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_ref_clamp root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_deblock_writeback_ctrl root=h264_decode_core
+OK ... elab red-check: h264_inter_mc_part absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK ... elab red-check: h264_inter_mc_16x16 absent ... 1 site(s) cut
+OK ... elab red-check: h264_luma_qpel_block_16x16 absent ... 1 site(s) cut
+OK ... elab red-check: h264_chroma_epel_block_8x8 absent ... 2 site(s) cut
+OK ... elab red-check: h264_dpb_one_ref absent ... 1 site(s) cut
+OK ... elab red-check: h264_luma_ref_tap_addr absent ... 2 site(s) cut
+OK ... elab red-check: h264_ref_clamp absent ... 1 site(s) cut
+OK ... elab red-check: h264_deblock_writeback_ctrl absent ... 1 site(s) cut
+OK h264_decode_core MC elaboration hierarchy: 8/8 required modules present in the elaborated subtree;
+decode_stub not elaborated under this root; elaborated_modules=32 subtree_modules=20
+dump=Vh264_decode_core_p16z_tb_009_param.tree.json
+```
+
+It cannot exit 0 without doing work: a missing Verilator gives **rc=3** with an explicit refusal, a
+failed elaboration gives rc=1, and sources are restored in a `finally` block.
+
+### 4b. Structural corroboration (read the RTL, per the standard)
+
+Independent of both instruments, the chain read directly out of the RTL - all instantiations
+unconditional, none inside a `generate ... if`:
+
+```
+h264_decode_core
+├── h264_inter_mc_part          u_product_p16_mc        (h264_decode_core.sv:562)
+│   └── h264_inter_mc_16x16     u_full
+│       ├── h264_luma_qpel_block_16x16   u_luma
+│       └── h264_chroma_epel_block_8x8   u_chroma_u, u_chroma_v
+├── h264_dpb_one_ref            u_product_dpb_ref       (h264_decode_core.sv:789)
+│   ├── h264_dpb_mb_write_addr  u_write_addr → h264_dpb_i420_addr u_addr
+│   └── h264_luma_ref_tap_addr  u_luma_win_addr, u_chroma_win_addr
+│       └── h264_ref_clamp      u_clamp
+└── h264_deblock_writeback_ctrl u_core_deblock_wb       (h264_decode_core.sv:742)
+```
+
+### 4c. Functional corroboration (strongest of the three)
+
+The full-frame gate in section 5 roots at the decode-core testbench top whose **only** DUT instance
+is `h264_decode_core`, and it produces 449280 exactly-correct qpel/epel samples covering 16/16 luma
+and 64/64 chroma sub-pel phases. Those samples cannot exist unless the MC chain is instantiated
+inside the core and load-bearing; the `drop_pred` red-check confirms removing it fails the
+scoreboard. This is behaviour, not a name lookup.
+
+**Still not sufficient:** none of these is post-fit. `make post-fit-hierarchy` remains the strongest
+oracle and requires the Quartus slot I must not take.
+
 ## 5. Full-frame MC correctness (deliverable #4), rc=0
 
 `tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh` (`handoffs/evidence-w-swap-o5/ff_final.log`):
@@ -193,9 +267,12 @@ native inter score moved from `inter=0/3300` to `inter=1610/3300`. That path is 
 | `scripts/check_pipe_exit_safety.py` | 0 |
 | `tests/unit/test_unit_rollcall.py` | 0 |
 | `make quartus-sv-subset` | 0 |
-| **`make unit`** | **0** (`handoffs/evidence-w-swap-o5/make_unit_final.log`) |
+| `test_h264_decode_core_mc_elab_hierarchy.py` (elaboration oracle) | 0 |
+| **`make unit`** | **0** (`handoffs/evidence-w-swap-o5/make_unit_with_elab.log`) |
 
-`make unit` was rc=0 at HEAD (`handoffs/evidence-w-swap-o5/make_unit_final.log`, `MAKE_UNIT_RC=0`).
+`make unit` was rc=0 at HEAD with the new elaboration gate registered and executing inside the
+suite (`handoffs/evidence-w-swap-o5/make_unit_with_elab.log`, `MAKE_UNIT_RC=0`;
+`UNIT_ROLLCALL_OK actual_commands=97 protected_commands=94 expected_commands=94`).
 It reports 2 **declared** gate skips (`GATE_SKIP CRITICAL live-pms-baseline-profile` and the
 `skip-not-pass` red-check), both because live PMS credentials (`PLEX_BASE`/`PLEX_TOKEN`/
 `MISTERPLEX_BASELINE_KEY`) are absent in this environment. Nothing was silently skipped and no guard
@@ -256,7 +333,18 @@ Evidence:
    it is the sole exclusive slot.
 5. `PHASE_BACKLOG` row "P-slice / motion compensation full-frame output" is stale (see section 7).
 
-## 10. Rules that cost me time - obey them
+## 10. Compliance with the parent reachability-evidence standard
+
+- I have **never** cited plain `emu` reachability for any product-completeness claim; every claim in
+  this handoff is rooted at `h264_decode_core`. **Nothing to withdraw.**
+- Every reachability green ships with its red, at two independent levels (regex checker: mutate
+  instantiation name; elaboration checker: cut the instantiation), plus a functional red-check.
+- The `decode_stub` masking caveat is discharged positively, not assumed: the elaboration gate
+  asserts `decode_stub` is **not elaborated at all** under this root.
+- Caveat carried forward: core-subtree rc=0 is necessary, not sufficient. Post-fit hierarchy
+  evidence is still absent and I did not take the Quartus slot to get it.
+
+## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
 - Confirm the checker actually parses your flags before trusting a green (it silently ignored them

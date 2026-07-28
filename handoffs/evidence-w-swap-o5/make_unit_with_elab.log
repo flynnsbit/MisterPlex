@@ -1,0 +1,72 @@
+resource-preflight: waiting for exclusive heavy-validation slot: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/resource-preflight.lock
+resource-preflight: acquired slot for: python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/scripts/run_with_skip_summary.py --label make-unit -- make unit-rollcall unit-unlocked
+preflight: paging 0 pages/s over 2s (limit 200)
+preflight: MemAvailable 72066MB (floor 4096MB)
+preflight: SwapFree 7804MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 72066MB available, 7804MB swap free
+resource-preflight: preflight OK on attempt 1; running command
+make[1]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5'
+python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_unit_rollcall.py
+UNIT_ROLLCALL_OK actual_prereqs=33 expected_prereqs=33 actual_commands=97 protected_commands=94 expected_commands=94 actual_ignored_commands=3 expected_ignored_commands=3 makefile=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/Makefile
+preflight: paging 0 pages/s over 2s (limit 200)
+preflight: MemAvailable 72111MB (floor 4096MB)
+... [middle elided for repo hygiene; reproduce with 'make unit'] ...
+OK h264_decode_core MC reachability red-check: h264_dpb_one_ref unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_luma_qpel_block_16x16 unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_chroma_epel_block_8x8 unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_luma_ref_tap_addr unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_ref_clamp unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red/green: 8/8 required modules proved reachable via a mutated-red edge; RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=21 bench_only=18 root=h264_decode_core
+python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_decode_core_mc_elab_hierarchy.py
+Scope: elaboration-aware (Verilator AST) reachability for 8 required MC/DPB/reference modules under h264_decode_core, with a cut-instantiation red proof for each
+ELAB_MODULE_REACHABLE h264_inter_mc_part root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_inter_mc_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_qpel_block_16x16 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_chroma_epel_block_8x8 root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_dpb_one_ref root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_luma_ref_tap_addr root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_ref_clamp root=h264_decode_core
+ELAB_MODULE_REACHABLE h264_deblock_writeback_ctrl root=h264_decode_core
+OK h264_decode_core elab red-check: h264_inter_mc_part absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_inter_mc_16x16 absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_luma_qpel_block_16x16 absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_chroma_epel_block_8x8 absent from the elaborated subtree when its 2 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_dpb_one_ref absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_luma_ref_tap_addr absent from the elaborated subtree when its 2 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_ref_clamp absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core elab red-check: h264_deblock_writeback_ctrl absent from the elaborated subtree when its 1 product instantiation site(s) are cut
+OK h264_decode_core MC elaboration hierarchy: 8/8 required modules present in the elaborated subtree; decode_stub not elaborated under this root; elaborated_modules=32 subtree_modules=20 dump=Vh264_decode_core_p16z_tb_009_param.tree.json
+python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_hw_visual_compare.py
+PASS shared host/RTL geometry parsed
+PASS generated reference golden is quarantined by machine-readable provenance
+... [elided] ...
+cropped_624_to_618 crop_right mismatch
+h264 SPS geometry RTL check FAILED: 4 failures
+OK h264_sps_geometry red-check: crop/display perturbation failed geometry checks
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+I-slice MB coverage: total=300 I_NxN=83 I16x16=217
+h264 baseline syntax RTL check PASS: PPS, slice header/deblock offsets, 300/300 real I macroblocks, synthetic P_Skip/P16x16/rare P8x8
+make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax_p8_fault'
+make[2]: Nothing to be done for 'default'.
+make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax_p8_fault'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.316 MB
+I-slice MB coverage: total=300 I_NxN=83 I16x16=217
+rare P8x8 partition did not execute
+h264 baseline syntax RTL check FAILED: 1 failures
+OK h264_baseline_syntax red-check: rare P8x8 perturbation failed partition check
+make[1]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5'
+GATE_SKIP_SUMMARY_BEGIN
+GATE_SKIP_SUMMARY total=2 critical=1 high=1 advisory=0
+GATE_SKIP CRITICAL live-pms-baseline-profile: reason=GATE_SKIP CRITICAL live-pms-baseline-profile: reason=SKIP-NOT-PASS test_pms_baseline_profile: set PLEX_BASE, PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY for the live PMS Baseline check.; would_catch=PMS delivered-stream violations of Baseline/CAVLC/ref=1/no-B FPGA decode contract; source=log; would_catch=PMS delivered-stream violations of Baseline/CAVLC/ref=1/no-B FPGA decode contract; source=log
+GATE_SKIP HIGH skip-not-pass: reason=OK red-check: live PMS wrapper missing deps return SKIP-NOT-PASS rc=77; would_catch=a named non-pass gate condition; source=log
+GATE_SKIP_SUMMARY_END
+MAKE_UNIT_RC=0
