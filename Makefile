@@ -555,7 +555,8 @@ arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
 
 $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
-		$(ROOT)/host/libmisterplex/input_mailbox.hpp
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \

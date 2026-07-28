@@ -1951,7 +1951,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
     const bool fpgaOnlyPresent = (presentMode_ == "fpga");
     const DdrFrameGeometry ddrGeometry =
-        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
+        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(ddrPresentedSize(outW_, outH_))
                         : makeDdrFrameGeometry(outW_, outH_);
     const int rawW = ddrGeometry.coded_width;
     const int rawH = ddrGeometry.coded_height;

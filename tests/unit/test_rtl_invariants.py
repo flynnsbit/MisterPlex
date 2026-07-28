@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import importlib.util
+import ast
 from pathlib import Path
 
 
@@ -420,6 +421,52 @@ def cpp_const(text: str, name: str) -> int:
         )
     seen: set[str] = set()
 
+    def eval_cpp_const_expr(expr: str) -> int:
+        expr = expr.strip()
+        expr = re.sub(r"static_cast<[^>]+>\(([^()]+)\)", r"(\1)", expr)
+        expr = re.sub(r"(?<=\d)[uUlL]+\b", "", expr)
+
+        def eval_node(node: ast.AST) -> int:
+            if isinstance(node, ast.Expression):
+                return eval_node(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, int):
+                return int(node.value)
+            if isinstance(node, ast.Name):
+                if node.id not in consts:
+                    raise ValueError(expr)
+                if node.id in seen:
+                    fail(f"host constant alias cycle while resolving {name}")
+                seen.add(node.id)
+                try:
+                    return resolve(consts[node.id])
+                finally:
+                    seen.remove(node.id)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+                return -eval_node(node.operand)
+            if isinstance(node, ast.BinOp):
+                lhs = eval_node(node.left)
+                rhs = eval_node(node.right)
+                if isinstance(node.op, ast.Add):
+                    return lhs + rhs
+                if isinstance(node.op, ast.Sub):
+                    return lhs - rhs
+                if isinstance(node.op, ast.Mult):
+                    return lhs * rhs
+                if isinstance(node.op, (ast.Div, ast.FloorDiv)):
+                    return lhs // rhs
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                args = [eval_node(arg) for arg in node.args]
+                if node.func.id == "alignUpU32" and len(args) == 2:
+                    v, align = args
+                    return v if align == 0 else (v + align - 1) & ~(align - 1)
+                if node.func.id == "rgb565FrameBytes" and len(args) == 2:
+                    return args[0] * args[1] * 2
+                if node.func.id == "yuv420pFrameBytesConst" and len(args) == 2:
+                    return args[0] * args[1] * 3 // 2
+            raise ValueError(expr)
+
+        return eval_node(ast.parse(expr, mode="eval"))
+
     def resolve(expr: str) -> int:
         expr = expr.strip()
         if "|" in expr:
@@ -440,7 +487,10 @@ def cpp_const(text: str, name: str) -> int:
                 fail(f"host constant alias cycle while resolving {name}")
             seen.add(expr)
             return resolve(consts[expr])
-        return parse_num(expr)
+        try:
+            return eval_cpp_const_expr(expr)
+        except Exception:
+            return parse_num(expr)
 
     return resolve(consts[name])
 
@@ -1500,7 +1550,7 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 host_norm,
-                "if(width==kPlex480pPresentedWidth&&height==kPlex480pPresentedHeight)returnplex480pDdrFrameGeometry();",
+                "if(presented.presented_width==kPlex480pPresentedWidth&&presented.presented_height==kPlex480pPresentedHeight)returnplex480pDdrFrameGeometry();",
                 "640x480 presentation must map to the declared 624x480 coded / 618x480 display geometry",
             ),
             (

@@ -146,7 +146,7 @@ bool parseGeometry(const std::string& spec, misterplex::DdrFrameGeometry& out) {
     int w = 0;
     int h = 0;
     if (std::sscanf(spec.c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
-        out = misterplex::ddrFrameGeometryForPresentedSize(w, h);
+        out = misterplex::ddrFrameGeometryForPresentedSize(misterplex::ddrPresentedSize(w, h));
         return true;
     }
     return false;

@@ -8,6 +8,7 @@ region, and reports quantified pixel errors plus a side-by-side diff artifact.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -587,13 +588,50 @@ class Geometry:
 
 def _parse_cpp_constants(path: Path) -> dict[str, int]:
     text = path.read_text(encoding="utf-8")
-    out: dict[str, int] = {}
+    raw: dict[str, str] = {}
     for name, value in re.findall(r"constexpr\s+int\s+kPlex480p([A-Za-z0-9_]+)\s*=\s*([^;]+);", text):
-        value = value.strip()
-        if value.startswith("0x"):
-            out[name] = int(value, 16)
-        else:
-            out[name] = int(value)
+        raw[name] = value.strip()
+
+    def resolve(expr: str, seen: set[str] | None = None) -> int:
+        seen = seen or set()
+        expr = re.sub(r"(?<=\d)[uUlL]+\b", "", expr.strip())
+
+        def eval_node(node: ast.AST) -> int:
+            if isinstance(node, ast.Expression):
+                return eval_node(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, int):
+                return int(node.value)
+            if isinstance(node, ast.Name):
+                cpp_name = node.id
+                if cpp_name.startswith("kPlex480p"):
+                    cpp_name = cpp_name[len("kPlex480p"):]
+                if cpp_name not in raw or cpp_name in seen:
+                    raise ValueError(expr)
+                return resolve(raw[cpp_name], seen | {cpp_name})
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+                return -eval_node(node.operand)
+            if isinstance(node, ast.BinOp):
+                lhs = eval_node(node.left)
+                rhs = eval_node(node.right)
+                if isinstance(node.op, ast.Add):
+                    return lhs + rhs
+                if isinstance(node.op, ast.Sub):
+                    return lhs - rhs
+                if isinstance(node.op, ast.Mult):
+                    return lhs * rhs
+                if isinstance(node.op, (ast.Div, ast.FloorDiv)):
+                    return lhs // rhs
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                args = [eval_node(arg) for arg in node.args]
+                if node.func.id == "rgb565FrameBytes" and len(args) == 2:
+                    return args[0] * args[1] * 2
+                if node.func.id == "yuv420pFrameBytesConst" and len(args) == 2:
+                    return args[0] * args[1] * 3 // 2
+            raise ValueError(expr)
+
+        return eval_node(ast.parse(expr, mode="eval"))
+
+    out = {name: resolve(value) for name, value in raw.items()}
     return out
 
 

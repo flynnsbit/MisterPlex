@@ -5,6 +5,18 @@
 
 namespace misterplex {
 
+constexpr uint32_t alignUpU32(uint32_t v, uint32_t align) {
+    return align == 0 ? v : static_cast<uint32_t>((v + align - 1u) & ~(align - 1u));
+}
+
+constexpr int rgb565FrameBytes(int codedWidth, int codedHeight) {
+    return codedWidth * codedHeight * 2;
+}
+
+constexpr int yuv420pFrameBytesConst(int codedWidth, int codedHeight) {
+    return codedWidth * codedHeight * 3 / 2;
+}
+
 constexpr int kPlex480pCodedWidth = 624;
 constexpr int kPlex480pCodedHeight = 480;
 constexpr int kPlex480pDisplayWidth = 618;
@@ -12,27 +24,36 @@ constexpr int kPlex480pDisplayHeight = 480;
 constexpr int kPlex480pPresentedWidth = 640;
 constexpr int kPlex480pPresentedHeight = 480;
 constexpr int kPlex480pCropLeft = 0;
-constexpr int kPlex480pCropRight = 6;
+constexpr int kPlex480pCropRight = kPlex480pCodedWidth - kPlex480pDisplayWidth;
 constexpr int kPlex480pCropTop = 0;
-constexpr int kPlex480pCropBottom = 0;
-constexpr int kPlex480pPillarboxLeft = 11;
-constexpr int kPlex480pPillarboxRight = 11;
+constexpr int kPlex480pCropBottom = kPlex480pCodedHeight - kPlex480pDisplayHeight;
+constexpr int kPlex480pPillarboxLeft =
+    (kPlex480pPresentedWidth - kPlex480pDisplayWidth) / 2;
+constexpr int kPlex480pPillarboxRight =
+    kPlex480pPresentedWidth - kPlex480pDisplayWidth - kPlex480pPillarboxLeft;
 constexpr uint32_t kDdrFramePhysBase = 0x30000000u;
 constexpr uint32_t kDdrFrameStrideAlign = 0x40000u;
-constexpr int kPlex480pRgb565LineQwords = 156;
-constexpr int kPlex480pYuvLumaLineQwords = 78;
-constexpr int kPlex480pYuvChromaLineQwords = 39;
-constexpr int kPlex480pRgb565Bytes = 599040;
-constexpr int kPlex480pYuv420pBytes = 449280;
+constexpr int kPlex480pRgb565LineQwords = (kPlex480pCodedWidth * 2) / 8;
+constexpr int kPlex480pYuvLumaLineQwords = kPlex480pCodedWidth / 8;
+constexpr int kPlex480pYuvChromaLineQwords = (kPlex480pCodedWidth / 2) / 8;
+constexpr int kPlex480pRgb565Bytes =
+    rgb565FrameBytes(kPlex480pCodedWidth, kPlex480pCodedHeight);
+constexpr int kPlex480pYuv420pBytes =
+    yuv420pFrameBytesConst(kPlex480pCodedWidth, kPlex480pCodedHeight);
 constexpr int kPlex480pYPlaneOffset = 0;
-constexpr int kPlex480pUPlaneOffset = 299520;
-constexpr int kPlex480pVPlaneOffset = 374400;
-constexpr int kPlex480pYStrideBytes = 624;
-constexpr int kPlex480pChromaStrideBytes = 312;
-constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
-constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
-constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
-constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
+constexpr int kPlex480pUPlaneOffset = kPlex480pCodedWidth * kPlex480pCodedHeight;
+constexpr int kPlex480pVPlaneOffset =
+    kPlex480pUPlaneOffset + (kPlex480pCodedWidth / 2) * (kPlex480pCodedHeight / 2);
+constexpr int kPlex480pYStrideBytes = kPlex480pCodedWidth;
+constexpr int kPlex480pChromaStrideBytes = kPlex480pCodedWidth / 2;
+constexpr uint32_t kPlex480pRgb565BankStride =
+    alignUpU32(static_cast<uint32_t>(kPlex480pRgb565Bytes), kDdrFrameStrideAlign);
+constexpr uint32_t kPlex480pYuv420pBankStride =
+    alignUpU32(static_cast<uint32_t>(kPlex480pYuv420pBytes), kDdrFrameStrideAlign);
+constexpr uint32_t kPlex480pRgb565DoorbellPhys =
+    kDdrFramePhysBase + kPlex480pRgb565BankStride * 2u - 0x1000u;
+constexpr uint32_t kPlex480pYuv420pDoorbellPhys =
+    kDdrFramePhysBase + kPlex480pYuv420pBankStride * 2u - 0x1000u;
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK
 constexpr uint32_t kDdrFrameDoorbellSeqMask = 0x1FFFFFFFu;
 constexpr uint8_t kYuv420BlackY = 16;
@@ -43,6 +64,15 @@ enum class DdrFramePlacement {
     None,
     Pillarbox,
 };
+
+struct DdrPresentedSize {
+    int presented_width = 0;
+    int presented_height = 0;
+};
+
+constexpr DdrPresentedSize ddrPresentedSize(int presentedWidth, int presentedHeight) {
+    return {presentedWidth, presentedHeight};
+}
 
 // HPS DDR frame-store contract shared by misterplexd and RTL:
 // - Two banks start at phys_base and phys_base+bank_stride.
@@ -118,10 +148,6 @@ struct DdrFrameLayout {
     DdrFrameFormat format = DdrFrameFormat::Yuv420p;
 };
 
-inline uint32_t alignUpU32(uint32_t v, uint32_t align) {
-    return align == 0 ? v : static_cast<uint32_t>((v + align - 1u) & ~(align - 1u));
-}
-
 inline size_t yuv420pFrameBytes(int width, int height) {
     if (width <= 0 || height <= 0 || (width & 1) || (height & 1))
         return 0;
@@ -166,10 +192,11 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
-inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
-    if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
+inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(DdrPresentedSize presented) {
+    if (presented.presented_width == kPlex480pPresentedWidth &&
+        presented.presented_height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();
-    return makeDdrFrameGeometry(width, height);
+    return makeDdrFrameGeometry(presented.presented_width, presented.presented_height);
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,

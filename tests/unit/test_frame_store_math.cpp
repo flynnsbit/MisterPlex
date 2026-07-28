@@ -121,6 +121,10 @@ static void checkDdrBankConsumerEncoding() {
 
 static void checkDdrPublishGeometrySwitch() {
     const auto g320 = misterplex::makeDdrFrameGeometry(320, 240);
+    const auto expected320 =
+        misterplex::makeDdrFrameLayout(g320, misterplex::kDdrFramePhysBase,
+                                       misterplex::kDdrFrameStrideAlign,
+                                       misterplex::DdrFrameFormat::Yuv420p);
     std::vector<uint8_t> yuv320(misterplex::yuv420pFrameBytes(320, 240), 0x10);
     misterplex::DdrPublishFrame f320{yuv320.data(), yuv320.size(), g320,
                                      misterplex::DdrFrameFormat::Yuv420p};
@@ -130,20 +134,29 @@ static void checkDdrPublishGeometrySwitch() {
         std::fprintf(stderr, "DDR publish geometry failed for 320x240: %s\n", err.c_str());
         ++fails;
     } else {
-        if (p320.layout.bank_stride != 0x40000u || p320.bank_offset != 0x40000u ||
-            p320.bank_phys != 0x30040000u || p320.layout.doorbell_phys != 0x3007F000u) {
+        const uint32_t expectedBank1 = expected320.phys_base + expected320.bank_stride;
+        if (p320.layout.bank_stride != expected320.bank_stride ||
+            p320.bank_offset != expected320.bank_stride || p320.bank_phys != expectedBank1 ||
+            p320.layout.doorbell_phys != expected320.doorbell_phys) {
             std::fprintf(stderr,
                          "DDR publish geometry failed for 320x240: stride=0x%05x "
-                         "bank1=0x%08x doorbell=0x%08x, expected 0x40000/0x30040000/"
-                         "0x3007F000\n",
+                         "bank1=0x%08x doorbell=0x%08x, expected derived "
+                         "0x%05x/0x%08x/0x%08x\n",
                          static_cast<unsigned>(p320.layout.bank_stride),
                          static_cast<unsigned>(p320.bank_phys),
-                         static_cast<unsigned>(p320.layout.doorbell_phys));
+                         static_cast<unsigned>(p320.layout.doorbell_phys),
+                         static_cast<unsigned>(expected320.bank_stride),
+                         static_cast<unsigned>(expectedBank1),
+                         static_cast<unsigned>(expected320.doorbell_phys));
             ++fails;
         }
     }
 
     const auto g480 = misterplex::plex480pDdrFrameGeometry();
+    const auto expected480 =
+        misterplex::makeDdrFrameLayout(g480, misterplex::kDdrFramePhysBase,
+                                       misterplex::kDdrFrameStrideAlign,
+                                       misterplex::DdrFrameFormat::Yuv420p);
     std::vector<uint8_t> yuv480(misterplex::yuv420pFrameBytes(g480.coded_width, g480.coded_height),
                                 0x10);
     misterplex::DdrPublishFrame f480{yuv480.data(), yuv480.size(), g480,
@@ -153,15 +166,20 @@ static void checkDdrPublishGeometrySwitch() {
         std::fprintf(stderr, "DDR publish geometry failed for 624x480: %s\n", err.c_str());
         ++fails;
     } else {
-        if (p480.layout.bank_stride != 0x80000u || p480.bank_offset != 0x80000u ||
-            p480.bank_phys != 0x30080000u || p480.layout.doorbell_phys != 0x300FF000u) {
+        const uint32_t expectedBank1 = expected480.phys_base + expected480.bank_stride;
+        if (p480.layout.bank_stride != expected480.bank_stride ||
+            p480.bank_offset != expected480.bank_stride || p480.bank_phys != expectedBank1 ||
+            p480.layout.doorbell_phys != expected480.doorbell_phys) {
             std::fprintf(stderr,
                          "DDR publish geometry failed for 624x480: stride=0x%05x "
-                         "bank1=0x%08x doorbell=0x%08x, expected 0x80000/0x30080000/"
-                         "0x300FF000\n",
+                         "bank1=0x%08x doorbell=0x%08x, expected derived "
+                         "0x%05x/0x%08x/0x%08x\n",
                          static_cast<unsigned>(p480.layout.bank_stride),
                          static_cast<unsigned>(p480.bank_phys),
-                         static_cast<unsigned>(p480.layout.doorbell_phys));
+                         static_cast<unsigned>(p480.layout.doorbell_phys),
+                         static_cast<unsigned>(expected480.bank_stride),
+                         static_cast<unsigned>(expectedBank1),
+                         static_cast<unsigned>(expected480.doorbell_phys));
             ++fails;
         }
         if (p320.bank_phys == p480.bank_phys) {
@@ -181,6 +199,24 @@ static void checkDdrPublishGeometrySwitch() {
                      "624x480 geometry\n");
         ++fails;
     }
+}
+
+static void checkPlex480pNamedConstantsAreDerived() {
+    const auto geom = misterplex::plex480pDdrFrameGeometry();
+    const auto layout =
+        misterplex::makeDdrFrameLayout(geom, misterplex::kDdrFramePhysBase,
+                                       misterplex::kDdrFrameStrideAlign,
+                                       misterplex::DdrFrameFormat::Yuv420p);
+    CHECK(misterplex::kPlex480pCropRight ==
+          misterplex::kPlex480pCodedWidth - misterplex::kPlex480pDisplayWidth);
+    CHECK(misterplex::kPlex480pPillarboxLeft + misterplex::kPlex480pDisplayWidth +
+              misterplex::kPlex480pPillarboxRight ==
+          misterplex::kPlex480pPresentedWidth);
+    CHECK(misterplex::kPlex480pYuv420pBytes == layout.frame_bytes);
+    CHECK(misterplex::kPlex480pYuv420pBankStride == layout.bank_stride);
+    CHECK(misterplex::kPlex480pYuv420pDoorbellPhys == layout.doorbell_phys);
+    CHECK(misterplex::kPlex480pYuvLumaLineQwords == layout.line_qwords);
+    CHECK(misterplex::kPlex480pYuvChromaLineQwords == layout.chroma_line_qwords);
 }
 
 static void checkDdrPublishAlternationSequence() {
@@ -265,7 +301,11 @@ int main() {
     CHECK(p480.crop_right == 6);
     CHECK(p480.present_x == 11);
     CHECK(p480.placement == misterplex::DdrFramePlacement::Pillarbox);
-    checkLayout(p480, 449280, 78, misterplex::DdrFrameFormat::Yuv420p, 39);
+    checkPlex480pNamedConstantsAreDerived();
+    checkLayout(p480, misterplex::kPlex480pYuv420pBytes,
+                misterplex::kPlex480pYuvLumaLineQwords,
+                misterplex::DdrFrameFormat::Yuv420p,
+                misterplex::kPlex480pYuvChromaLineQwords);
     const auto yuv480 =
         misterplex::makeDdrFrameLayout(p480, 0x30000000u, 0x40000u,
                                        misterplex::DdrFrameFormat::Yuv420p);
