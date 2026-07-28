@@ -116,6 +116,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
+	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
@@ -141,6 +142,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
+	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
@@ -283,6 +285,7 @@ $(ROOT)/build/test_slice_hdr: $(ROOT)/tests/unit/test_slice_hdr.cpp \
 
 $(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/ddr_present_bank.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_frame_store_math.cpp

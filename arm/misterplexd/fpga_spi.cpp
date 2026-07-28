@@ -903,15 +903,9 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
             word[1] = live[1];
         }
     }
-    word[0] = static_cast<uint8_t>(word[0] & ~0x01);
-    if (bank)
-        word[1] = static_cast<uint8_t>(word[1] | 0x20);
-    else
-        word[1] = static_cast<uint8_t>(word[1] & ~0x20);
-    word[1] = static_cast<uint8_t>(word[1] & ~0x10);
-    word[1] = static_cast<uint8_t>(word[1] & ~0x02);
+    encodeDdrSpiKickStatusWord(word, bank, false, word);
     writeStatusWordRaw(word);
-    word[1] = static_cast<uint8_t>(word[1] | 0x10);
+    encodeDdrSpiKickStatusWord(word, bank, true, word);
     writeStatusWordRaw(word);
     if (first_verify) {
         for (int i = 0; i < 40; ++i) {
@@ -930,7 +924,7 @@ bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_
             usleep(200);
         }
     }
-    word[1] = static_cast<uint8_t>(word[1] & ~0x10);
+    encodeDdrSpiKickStatusWord(word, bank, false, word);
     writeStatusWordRaw(word);
     if (first_verify) {
         uint8_t raw[16]{};

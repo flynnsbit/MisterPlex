@@ -9,6 +9,7 @@
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
+#include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {

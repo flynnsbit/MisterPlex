@@ -6,7 +6,8 @@
 //           The measured 480p contract is coded 624x480/display 618x480/
 //           presented 640x480; see ddr_frame_layout_params.svh and the host
 //           ddr_frame_layout.hpp guard for its RGB/YUV strides and doorbells.
-//   Doorbell: 0x3007F000  (one 64-bit word — product hot path, no SPI kick)
+//   Doorbell: phys_base + alignUp(frame_bytes, 0x40000)*2 - 0x1000
+//             (one 64-bit word — product hot path, no SPI kick)
 //     [31:0]  magic 0x504C584B ("PLXK")
 //     [62:32] seq   (monotonic)
 //     [63]    bank  (0/1)

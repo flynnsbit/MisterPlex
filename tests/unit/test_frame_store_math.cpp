@@ -1,11 +1,13 @@
 // Sanity checks for the C3 YUV420 DDR frame-store sizing / ABI.
 #include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 static int fails = 0;
@@ -21,11 +23,15 @@ static uint16_t rgb565(unsigned r, unsigned g, unsigned b) {
     return static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, uint32_t stride,
-                        uint32_t doorbell, int lineQwords,
+static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, int lineQwords,
                         misterplex::DdrFrameFormat fmt = misterplex::DdrFrameFormat::Yuv420p,
                         int chromaLineQwords = 0) {
-    const auto l = misterplex::makeDdrFrameLayout(g, 0x30000000u, 0x40000u, fmt);
+    constexpr uint32_t physBase = 0x30000000u;
+    constexpr uint32_t strideAlign = 0x40000u;
+    const auto l = misterplex::makeDdrFrameLayout(g, physBase, strideAlign, fmt);
+    const uint32_t derivedStride =
+        misterplex::alignUpU32(static_cast<uint32_t>(bytes), strideAlign);
+    const uint32_t derivedDoorbell = physBase + derivedStride * 2u - 0x1000u;
     CHECK(misterplex::ddrFrameLayoutValid(l));
     CHECK(l.frame_bytes == bytes);
     CHECK(l.width == g.coded_width);
@@ -42,20 +48,75 @@ static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, uin
     CHECK(l.u_offset == static_cast<uint32_t>(g.coded_width * g.coded_height));
     CHECK(l.v_offset == static_cast<uint32_t>(g.coded_width * g.coded_height +
                                               (g.coded_width / 2) * (g.coded_height / 2)));
-    CHECK(l.bank_stride == stride);
+    CHECK(l.bank_stride == derivedStride);
     CHECK(l.phys_base + l.bank_stride >= l.phys_base + l.frame_bytes);
     CHECK(l.phys_base + l.bank_stride + l.frame_bytes <= l.doorbell_phys);
-    CHECK(l.doorbell_phys == doorbell);
+    CHECK(l.doorbell_phys == derivedDoorbell);
     CHECK(l.map_bytes == l.bank_stride * 2u);
     CHECK(l.doorbell_format == misterplex::ddrFrameFormatCode(fmt));
 }
 
-static void checkLayout(int w, int h, size_t bytes, uint32_t stride, uint32_t doorbell,
-                        int lineQwords,
+static void checkLayout(int w, int h, size_t bytes, int lineQwords,
                         misterplex::DdrFrameFormat fmt = misterplex::DdrFrameFormat::Yuv420p,
                         int chromaLineQwords = 0) {
-    checkLayout(misterplex::makeDdrFrameGeometry(w, h), bytes, stride, doorbell, lineQwords, fmt,
-                chromaLineQwords);
+    checkLayout(misterplex::makeDdrFrameGeometry(w, h), bytes, lineQwords, fmt, chromaLineQwords);
+}
+
+static std::string seqString(const std::vector<int>& seq) {
+    std::string out;
+    for (size_t i = 0; i < seq.size(); ++i) {
+        if (i)
+            out += ",";
+        out += std::to_string(seq[i]);
+    }
+    return out;
+}
+
+static void checkDdrBankConsumerEncoding() {
+    const std::vector<int> wantSent{0, 1, 1, 0};
+    const std::vector<bool> sendOk{true, false, true, true};
+    std::vector<int> sawDoorbell;
+    std::vector<int> sawSpi;
+    uint8_t raw[16]{};
+    raw[0] = 0xFF;
+    raw[1] = 0xFF;
+    int bank = 0;
+    for (size_t i = 0; i < sendOk.size(); ++i) {
+        const uint32_t hi =
+            misterplex::ddrDoorbellHi(static_cast<uint32_t>(i + 1), bank,
+                                      misterplex::DdrFrameFormat::Yuv420p);
+        uint32_t decodedSeq = 0;
+        int decodedBank = -1;
+        CHECK((hi & 0x80000000u) == (bank ? 0x80000000u : 0u));
+        CHECK(misterplex::decodeDdrDoorbell(misterplex::kDdrFrameDoorbellMagic, hi,
+                                            misterplex::DdrFrameFormat::Yuv420p, decodedSeq,
+                                            decodedBank));
+        sawDoorbell.push_back(decodedBank);
+
+        uint8_t idle[16]{};
+        uint8_t pulse[16]{};
+        misterplex::encodeDdrSpiKickStatusWord(raw, bank, false, idle);
+        misterplex::encodeDdrSpiKickStatusWord(idle, bank, true, pulse);
+        CHECK((idle[1] & misterplex::kDdrSpiStartBitHi) == 0);
+        CHECK((pulse[1] & misterplex::kDdrSpiStartBitHi) != 0);
+        CHECK((pulse[1] & misterplex::kDdrSpiBankBitHi) ==
+              (bank ? misterplex::kDdrSpiBankBitHi : 0));
+        CHECK((pulse[0] & misterplex::kDdrSpiResetBitLo) == 0);
+        CHECK((pulse[1] & misterplex::kDdrSpiFlushBitHi) == 0);
+        sawSpi.push_back((pulse[1] & misterplex::kDdrSpiBankBitHi) ? 1 : 0);
+
+        bank = misterplex::nextDdrPresentBank(bank, sendOk[i]);
+    }
+    if (sawDoorbell != wantSent) {
+        std::fprintf(stderr, "DDR bank alternation failed for doorbell: saw %s; expected %s\n",
+                     seqString(sawDoorbell).c_str(), seqString(wantSent).c_str());
+        ++fails;
+    }
+    if (sawSpi != wantSent) {
+        std::fprintf(stderr, "DDR bank alternation failed for SPI status[13]: saw %s; expected %s\n",
+                     seqString(sawSpi).c_str(), seqString(wantSent).c_str());
+        ++fails;
+    }
 }
 
 static void checkConversion(int w, int h) {
@@ -83,10 +144,8 @@ int main() {
     constexpr int BYTES = PIXELS * 3 / 2;
     CHECK(PIXELS == 76800);
     CHECK(BYTES == 115200);
-    checkLayout(320, 240, 115200, 0x40000, 0x3007F000, 40,
-                misterplex::DdrFrameFormat::Yuv420p, 20);
-    checkLayout(640, 480, 460800, 0x80000, 0x300FF000, 80,
-                misterplex::DdrFrameFormat::Yuv420p, 40);
+    checkLayout(320, 240, 115200, 40, misterplex::DdrFrameFormat::Yuv420p, 20);
+    checkLayout(640, 480, 460800, 80, misterplex::DdrFrameFormat::Yuv420p, 40);
     const auto p480 = misterplex::plex480pDdrFrameGeometry();
     CHECK(p480.coded_width == 624);
     CHECK(p480.display_width == 618);
@@ -94,8 +153,7 @@ int main() {
     CHECK(p480.crop_right == 6);
     CHECK(p480.present_x == 11);
     CHECK(p480.placement == misterplex::DdrFramePlacement::Pillarbox);
-    checkLayout(p480, 449280, 0x80000, 0x300FF000, 78,
-                misterplex::DdrFrameFormat::Yuv420p, 39);
+    checkLayout(p480, 449280, 78, misterplex::DdrFrameFormat::Yuv420p, 39);
     const auto yuv480 =
         misterplex::makeDdrFrameLayout(p480, 0x30000000u, 0x40000u,
                                        misterplex::DdrFrameFormat::Yuv420p);
@@ -127,6 +185,7 @@ int main() {
     CHECK(!misterplex::decodeDdrDoorbell(0, 0xA0000005u,
                                          misterplex::DdrFrameFormat::Yuv420p, decodedSeq,
                                          decodedBank));
+    checkDdrBankConsumerEncoding();
 
     // Hardware nondeterminism bbox from reload captures. Presentation x includes
     // the 11px pillarbox, so map it back to coded 624-wide YUV420 offsets.
