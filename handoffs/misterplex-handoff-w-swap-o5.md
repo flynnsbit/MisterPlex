@@ -344,6 +344,64 @@ Evidence:
 - Caveat carried forward: core-subtree rc=0 is necessary, not sufficient. Post-fit hierarchy
   evidence is still absent and I did not take the Quartus slot to get it.
 
+## 10a. Compliance with the REVISED standard (both directions, files.qip)
+
+The parent's revised ruling followed `w-audit` breaking the core-subtree gate: on `w-deblock-seam`
+`7225e00` a module was provably inside `h264_decode_core` while `h264_decode_core` was provably not
+connected to `emu`. A subtree proof without a trunk proof is vacuous.
+
+**Measured on this branch, the trunk is alive.** Regex checker:
+
+```
+$ python3 scripts/check_rtl_module_instantiations.py --root emu --require h264_decode_core ; echo rc=$?
+REQUIRED_RTL_MODULE_REACHABLE h264_decode_core root=emu
+RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=50 bench_only=18 root=emu
+rc=0
+```
+
+That is a source/regex result, so it is only a pre-filter. `tests/unit/test_h264_decode_core_trunk_elab.py`
+(new, registered in `Makefile` and `test_unit_rollcall.py`) is the elaboration-aware version, and it
+answers all four of w-audit's mutations. Raw output in `handoffs/evidence-w-swap-o5/trunk_elab.log`,
+rc=0:
+
+```
+FILES_QIP_PRESENT h264_deblock.sv / h264_decode_core.sv / h264_dpb.sv / h264_inter_pred.sv
+ELAB_STAGE dump=Vemu_022_const.tree.json (post-elaboration, dead generate arms pruned)
+TRUNK_REACHABLE h264_decode_core root=emu
+ELAB_MODULE_REACHABLE x8 root=emu
+OK trunk red-check A: h264_decode_core unreachable from emu when its instantiation is cut
+OK trunk red-check B: h264_decode_core unreachable from emu when its instantiation is wrapped in
+                      a disabled if(0) generate
+OK trunk red-check C: MC modules unreachable from emu when h264_dpb.sv is dropped from files.qip
+OK trunk mutation-check D: escaped instance name still resolves; h264_decode_core and 8/8 MC
+                      modules remain reachable from emu
+OK ... quartus_files=66 red_proofs=4
+```
+
+Design decisions worth keeping:
+
+- The file list is **not** hardcoded. It comes from `rtl_lint.discover_design()`, which parses
+  `Plex.qsf` + `files.qip`. So w-audit's attack 3 (RTL tracked in git but absent from `files.qip`)
+  cannot pass by construction: an unlisted file is never handed to the elaborator. Red-check C
+  proves that empirically.
+- **The AST dump stage is load-bearing and was measured, not assumed.** With the core instantiation
+  wrapped in `if (1'b0)`, `h264_decode_core` is still present at `002_cellsort`, `008_linkinc`,
+  `009_param` and `010_linkdotparam`; it disappears at `014_width` (emu subtree 49 -> 42). From
+  `033_inline` onward the dump has no CELL nodes at all. **The only usable window is stages 14..32.**
+  Reading below 14 produces a false pass; reading above 32 produces an empty graph. My first
+  implementation read `009_param` and w-audit's attack 1 defeated it — caught by the gate's own red
+  check, which is exactly what red checks are for.
+- Verilator's `V3Param` dies with an internal error on the Altera PLL megafunctions, which is why the
+  earlier probe could only reach pre-param dumps. The gate substitutes local PLL stubs
+  (`PLL_STUB`), after which elaboration runs through to `990_final`.
+- No literal RTL filename appears in the gate source; owning files are resolved from module
+  declarations. Hardcoding them both goes stale and makes `test_bench_rtl_filelists.py` misread the
+  `files.qip` assertion as a Verilator input list.
+
+**Still-honest limits.** Elaboration is stronger than regex but is still not the fitted design.
+`make post-fit-hierarchy` remains the only real oracle and I have not run Quartus (sole exclusive
+slot). And no frame has been decoded or displayed by the FPGA.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
