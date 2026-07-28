@@ -491,6 +491,16 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
+$(ROOT)/build/plex_bitstream_feed: $(ROOT)/tools/plex_bitstream_feed.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/fpga_bitstream_producer.hpp \
+		$(ROOT)/host/libmisterplex/h264_nal_dispatch.hpp \
+		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ \
+		$(ROOT)/tools/plex_bitstream_feed.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+
 plexd: $(ROOT)/build/misterplexd
 
 # Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
@@ -562,12 +572,16 @@ arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 		-o $(ROOT)/build/arm/set_status \
 		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
 		-static
+	$(ARM_CXX) -std=c++17 -O2 -Wall -pthread $(MPLEX_INC) \
+		-o $(ROOT)/build/arm/plex_bitstream_feed \
+		$(ROOT)/tools/plex_bitstream_feed.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/input_mailbox_probe \
 		$(ROOT)/tools/input_mailbox_probe.cpp \
 		-static
 	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
+	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe + plex_bitstream_feed"
 
 $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp

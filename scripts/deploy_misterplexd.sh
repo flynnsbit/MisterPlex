@@ -29,6 +29,13 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
    done
    sleep 0.8'
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
+# Decoder bring-up: feed a fixed local Annex-B file into the DDR bitstream ring
+# without needing a Plex session. Optional; only present after `make arm-plexd`.
+if [[ -f "$ROOT/build/arm/plex_bitstream_feed" ]]; then
+  sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \
+    "$ROOT/build/arm/plex_bitstream_feed" \
+    "$USER@$HOST:/media/fat/misterplex/bin/plex_bitstream_feed"
+fi
 # On-device browse / menu (Phase 4 UX)
 if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \
@@ -39,6 +46,7 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
 chmod +x /media/fat/misterplex/bin/misterplexd
+chmod +x /media/fat/misterplex/bin/plex_bitstream_feed 2>/dev/null || true
 chmod +x /media/fat/misterplex/scripts/plex_browse.sh /media/fat/misterplex/scripts/plex_menu.sh 2>/dev/null || true
 # Startup hook (idempotent)
 HOOK=/media/fat/linux/_user-startup.sh

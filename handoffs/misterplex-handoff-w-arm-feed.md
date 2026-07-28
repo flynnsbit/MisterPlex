@@ -178,3 +178,56 @@ decoder will never use.
 
 Default **off** — the product path is unchanged. W-DECODE flips the conf key
 when Stage B is being brought up; no rebuild, no fit.
+
+---
+
+# `plex_bitstream_feed` — standalone ring feeder for Stage A/B bring-up
+
+**For W-DECODE and W-FIT.** Built by `make arm-plexd`, shipped to
+`/media/fat/misterplex/bin/plex_bitstream_feed` by
+`scripts/deploy_misterplexd.sh` (ARM static, no libs).
+
+```
+plex_bitstream_feed --file <annexb.264> [--idr-only] [--loop N] [--fps N]
+                    [--session ID] [--hold-ms N] [--dry-run]
+```
+
+## Why
+
+Getting bytes in front of the decoder otherwise requires a whole Plex playback
+session: network, PMS, transcode profile, ffmpeg, demux. That is a lot of
+moving parts between *"the decoder did not work"* and *"the decoder did not
+work **because**"*. This feeds a fixed local file, so the input is
+byte-identical on every run and anything that changes on screen can only have
+come from the fabric.
+
+`--idr-only` is the Stage-B mode: keyframes only, each self-contained.
+`--loop 0 --fps 24` holds a repeating stream up against the decoder
+indefinitely, which is what you want while probing.
+
+## It is the daemon's own code path
+
+`FpgaBitstreamProducer` was moved out of `media_player.cpp` into
+`arm/misterplexd/fpga_bitstream_producer.hpp` and both the daemon and this tool
+now include it. A feeder with its own ring-writing code would prove nothing
+about the daemon — this way, if the tool feeds the decoder successfully, the
+daemon will too.
+
+## Exit codes
+
+| rc | meaning |
+|---|---|
+| 0 | fed; `FEED_OK` and full dispatcher stats printed |
+| 1 | bad input or a fatal producer result |
+| 77 | no device (`/dev/mem` unavailable) |
+
+77 is separate on purpose: a bring-up script must not read *"there is no FPGA
+here"* as *"the feed succeeded"*. The input report (`INPUT ... nals= vcl= idr=`)
+is printed **before** any hardware is touched, so a bad file can never be
+misreported as a hardware problem, and a file with no IDR is rejected outright
+because a decoder would have no entry point.
+
+Verified on this host: rc=0 dry-run on two real fixtures, rc=77 against absent
+`/dev/mem`, rc=1 for a missing file and for a file with no IDR.
+
+**Not run on the device** — it is offline. The ARM binary is built and static.
