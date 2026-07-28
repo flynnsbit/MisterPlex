@@ -53,16 +53,79 @@ HDL_SUFFIXES = (".sv", ".v", ".vhd", ".vhdl")
 
 # Quartus assignments that hand a *source* file to the compiler. SDC/RBF/etc.
 # are deliberately excluded: they are not RTL.
+# Quartus allows options such as `-library "pll"` or `-entity "x"` before
+# -name. rtl/pll.qip uses exactly that form, and requiring -name to follow
+# set_global_assignment immediately made four genuinely compiled files read as
+# absent -- a false NOT_COMPILED, which trains people to write allowlist
+# entries instead of fixing the file list.
+_OPTS = r"(?:-\w+\s+(?:\"[^\"]*\"|\S+)\s+)*"
 SOURCE_ASSIGNMENT = re.compile(
-    r"set_global_assignment\s+-name\s+"
-    r"(SYSTEMVERILOG_FILE|VERILOG_FILE|VHDL_FILE|AHDL_FILE)\s+(\S+)",
+    r"set_global_assignment\s+" + _OPTS + r"-name\s+"
+    r"(SYSTEMVERILOG_FILE|VERILOG_FILE|VHDL_FILE|AHDL_FILE)\s+(.+?)\s*$",
     re.I,
 )
-QIP_ASSIGNMENT = re.compile(r"set_global_assignment\s+-name\s+QIP_FILE\s+(\S+)", re.I)
+QIP_ASSIGNMENT = re.compile(
+    r"set_global_assignment\s+" + _OPTS + r"-name\s+QIP_FILE\s+(.+?)\s*$", re.I
+)
 # Plex.qsf pulls files.qip and the MiSTer sys lists in with Tcl `source`.
-SOURCE_DIRECTIVE = re.compile(r"^\s*source\s+(\S+)")
+SOURCE_DIRECTIVE = re.compile(r"^\s*source\s+(.+?)\s*$")
 
 MAX_INCLUDE_DEPTH = 8
+
+# `sys/sys.qip` writes its paths as Tcl expressions. Quartus defines
+# $::quartus(qip_path) as the directory holding the .qip being read, so the
+# common `[file join $::quartus(qip_path) name.v]` form is statically
+# resolvable. The MiSTer framework also builds a version-dependent name with
+# `[join [list $::quartus(qip_path) pll_q [regexp ...] .qip] {}]`, which is not
+# -- for that one the literal fragments are globbed. Anything still containing
+# a substitution is reported UNEVALUATED_TCL_PATH and counted, never guessed.
+TCL_FILE_JOIN = re.compile(
+    r"^\[\s*file\s+join\s+\$::quartus\(qip_path\)\s+(.+?)\s*\]$"
+)
+TCL_JOIN_LIST = re.compile(
+    r"^\[\s*join\s+\[\s*list\s+\$::quartus\(qip_path\)\s+(.*?)\s*\]\s*\{\}\s*\]$"
+)
+
+
+def resolve_tcl_path(raw, qip_dir):
+    """Resolve a Quartus Tcl path expression.
+
+    Returns (paths, unevaluated). `paths` may hold more than one candidate when
+    the expression is version-dependent: MiSTer's `pll_q<version>.qip` glob
+    matches both pll_q13.qip and pll_q17.qip in this tree, and which one
+    Quartus takes depends on runtime state this gate cannot read. The union is
+    used for coverage -- a file reachable under *any* resolution was not
+    "never handed to Quartus" -- and the ambiguity is printed, never hidden.
+    """
+    raw = raw.strip()
+    if not raw.startswith("["):
+        return [], False
+
+    m = TCL_FILE_JOIN.match(raw)
+    if m:
+        return [qip_dir / m.group(1).strip().strip('"')], False
+
+    m = TCL_JOIN_LIST.match(raw)
+    if m:
+        parts = m.group(1)
+        # Keep the literal head and tail around the unevaluatable middle and
+        # glob across it, e.g. `pll_q [regexp ...] .qip` -> `pll_q*.qip`.
+        # A naive bracket-balanced substitution is not enough: the MiSTer
+        # expression embeds `{[0-9]+}`, whose `]` closes the wrong bracket.
+        first = min(
+            (i for i in (parts.find("["), parts.find("$")) if i >= 0),
+            default=-1,
+        )
+        last = parts.rfind("]")
+        if first >= 0 and last > first:
+            head = parts[:first].strip()
+            tail = parts[last + 1 :].strip()
+            hits = sorted(qip_dir.glob(f"{head}*{tail}"))
+            if hits:
+                return hits, len(hits) > 1
+        return [], True
+
+    return [], True
 
 
 def strip_comment(line):
@@ -95,11 +158,45 @@ def collect_file_assignments(entry_points):
     """Walk the Quartus project and return every source file it names.
 
     Returns (assignments, visited). Each assignment records the raw path, the
-    path resolved against its own list file, and where it was declared.
+    resolved path, and where it was declared.
+
+    Path base semantics, learned the hard way (see the audit doc section 14.10):
+    a bare relative path in `set_global_assignment` resolves against the
+    **project directory**, not against the list file that declares it. The
+    proof is in fpga/Plex_MiSTer/rtl/pll.qip, which writes
+    `[file join $::quartus(qip_path) "pll.cmp"]` explicitly when it wants a
+    qip-relative path -- so bare relatives are not qip-relative. Resolving
+    against the declaring file first made `sys/sys.tcl`'s
+    `QIP_FILE sys/sys.qip` resolve to sys/sys/sys.qip, silently truncating the
+    walk and reporting four genuinely compiled files as NOT_COMPILED.
     """
     assignments = []
     visited = []
+    unevaluated = []
     seen = set()
+
+    def candidates(base, rel):
+        """Project-relative first (Quartus semantics), declaring dir second."""
+        rel_path = Path(rel)
+        if rel_path.is_absolute():
+            return [rel_path]
+        return [PROJECT_DIR / rel_path, base / rel_path]
+
+    def pick(base, rel, origin, lineno):
+        """Resolve a path to one or more candidates, or record it unevaluatable."""
+        rel = rel.strip().strip('"')
+        if rel.startswith("[") or "$" in rel:
+            paths, ambiguous = resolve_tcl_path(rel, base)
+            if paths and not ambiguous:
+                return paths
+            record = {"raw": rel, "origin": origin, "lineno": lineno,
+                      "candidates": [str(p) for p in paths]}
+            unevaluated.append(record)
+            return paths
+        for opt in candidates(base, rel):
+            if opt.exists():
+                return [opt]
+        return [candidates(base, rel)[0]]
 
     def walk(path, depth):
         path = Path(path)
@@ -118,28 +215,31 @@ def collect_file_assignments(entry_points):
                 continue
             m = SOURCE_ASSIGNMENT.search(line)
             if m:
-                rel = m.group(2).strip('"')
-                assignments.append(
-                    {
-                        "kind": m.group(1).upper(),
-                        "raw": rel,
-                        "resolved": base / rel,
-                        "origin": path,
-                        "lineno": lineno,
-                    }
-                )
+                rel = m.group(2)
+                for resolved in pick(base, rel, path, lineno):
+                    assignments.append(
+                        {
+                            "kind": m.group(1).upper(),
+                            "raw": rel,
+                            "resolved": resolved,
+                            "origin": path,
+                            "lineno": lineno,
+                        }
+                    )
                 continue
             m = QIP_ASSIGNMENT.search(line)
             if m:
-                walk(base / m.group(1).strip('"'), depth + 1)
+                for nxt in pick(base, m.group(1), path, lineno):
+                    walk(nxt, depth + 1)
                 continue
             m = SOURCE_DIRECTIVE.match(line)
             if m:
-                walk(base / m.group(1).strip('"'), depth + 1)
+                for nxt in pick(base, m.group(1), path, lineno):
+                    walk(nxt, depth + 1)
 
     for entry in entry_points:
         walk(entry, 0)
-    return assignments, visited
+    return assignments, visited, unevaluated
 
 
 def resolved_set(assignments):
@@ -213,7 +313,7 @@ def main(argv=None):
         return 77
 
     entry_points = [p for p in (QSF, QIP) if p.exists()]
-    assignments, visited = collect_file_assignments(entry_points)
+    assignments, visited, unevaluated = collect_file_assignments(entry_points)
     compiled = resolved_set(assignments)
     tracked = tracked_rtl()
 
@@ -222,6 +322,13 @@ def main(argv=None):
         f"Quartus list file(s); {len(tracked)} tracked HDL files under rtl/"
     )
     print("  entry points: " + ", ".join(str(p.relative_to(ROOT)) for p in visited))
+    print(f"UNEVALUATED_TCL_PATHS count={len(unevaluated)}")
+    for u in unevaluated:
+        cands = u.get("candidates") or []
+        tag = "AMBIGUOUS_TCL_INCLUDE" if cands else "UNEVALUATED_TCL_PATH"
+        print(f"  {tag} {u['origin'].name}:{u['lineno']} {u['raw']}")
+        for c in cands:
+            print(f"    candidate (counted as compiled): {c}")
     if not assignments or not tracked:
         print("REFUSED: Scope: 0 on one side -- a PASS cannot be claimed")
         return 2

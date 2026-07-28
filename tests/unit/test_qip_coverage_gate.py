@@ -325,6 +325,114 @@ def case_sdc_and_rbf_assignments_are_not_counted_as_rtl(tmp):
     return "SDC/RBF assignments excluded from Scope, rc=0"
 
 
+@case
+def case_options_before_name_are_parsed(tmp):
+    """A6: `-library "pll"` before -name must not hide a real assignment.
+
+    Measured on the real project: rtl/pll.qip writes
+    `set_global_assignment -library "pll" -name VERILOG_FILE ...`. Requiring
+    -name to follow set_global_assignment immediately reported four genuinely
+    compiled files as NOT_COMPILED -- a false red, which trains people to add
+    allowlist entries instead of fixing the file list.
+    """
+    g = build_project(
+        tmp / "a6",
+        ["alpha.sv"],
+        ['set_global_assignment -library "pll" -entity "alpha" '
+         "-name SYSTEMVERILOG_FILE rtl/alpha.sv"],
+    )
+    rc, out = run(g)
+    assert rc == 0, f"-library before -name hid a real assignment\n{out}"
+    assert "Scope: 1 source assignments" in out, out
+    return "-library/-entity options before -name parsed, rc=0"
+
+
+@case
+def case_tcl_qip_path_join_is_resolved(tmp):
+    """A7: `[file join $::quartus(qip_path) x.v]` resolves to the qip's dir."""
+    root = tmp / "a7"
+    g = build_project(
+        root,
+        ["alpha.sv"],
+        ["set_global_assignment -name QIP_FILE rtl/gen.qip"],
+    )
+    (g.RTL_DIR / "gen.qip").write_text(
+        'set_global_assignment -library "x" -name SYSTEMVERILOG_FILE '
+        '[file join $::quartus(qip_path) "alpha.sv"]\n'
+    )
+    rc, out = run(g)
+    assert rc == 0, f"$::quartus(qip_path) join not resolved\n{out}"
+    assert "UNEVALUATED_TCL_PATHS count=0" in out, out
+    return "[file join $::quartus(qip_path) x] resolved, 0 unevaluated"
+
+
+@case
+def case_ambiguous_tcl_include_is_declared_not_guessed(tmp):
+    """A7b: a version-dependent include must print its candidates.
+
+    The real sys/sys.qip builds `pll_q<version>.qip` from $quartus(version),
+    which this gate cannot evaluate, and *two* candidates exist in the tree.
+    Counting the union is the safe direction for a NOT_COMPILED verdict, but
+    the ambiguity must be visible rather than silently resolved.
+    """
+    root = tmp / "a7b"
+    g = build_project(
+        root,
+        ["alpha.sv", "beta.sv"],
+        ["set_global_assignment -name QIP_FILE [join [list $::quartus(qip_path) "
+         "gen_q [regexp -inline {[0-9]+} $quartus(version)] .qip] {}]"],
+    )
+    (g.PROJECT_DIR / "gen_q13.qip").write_text(qline("rtl/alpha.sv") + "\n")
+    (g.PROJECT_DIR / "gen_q17.qip").write_text(qline("rtl/beta.sv") + "\n")
+    rc, out = run(g)
+    assert rc == 0, f"ambiguous include not counted as coverage\n{out}"
+    assert "AMBIGUOUS_TCL_INCLUDE" in out, out
+    assert "gen_q13.qip" in out and "gen_q17.qip" in out, out
+    return "ambiguous version include: union counted, both candidates printed"
+
+
+@case
+def case_unevaluatable_tcl_path_is_not_silently_coverage(tmp):
+    """A7c: a Tcl path this gate cannot resolve must be declared, not counted."""
+    g = build_project(
+        tmp / "a7c",
+        ["alpha.sv"],
+        ["set_global_assignment -name SYSTEMVERILOG_FILE "
+         "[file join $some_var alpha.sv]",
+         qline("rtl/keep_scope.sv")],
+    )
+    (g.RTL_DIR / "keep_scope.sv").write_text("module k; endmodule\n")
+    rc, out = run(g)
+    assert rc == 1, f"unresolvable Tcl path silently counted as coverage\n{out}"
+    assert "UNEVALUATED_TCL_PATH" in out, out
+    assert "NOT_COMPILED" in out and "alpha.sv" in out, out
+    return "unresolvable Tcl path declared, alpha.sv still NOT_COMPILED rc=1"
+
+
+@case
+def case_project_relative_base_not_declaring_file_base(tmp):
+    """A8: bare relative paths resolve against the project dir.
+
+    Resolving against the declaring file made sys/sys.tcl's
+    `QIP_FILE sys/sys.qip` become sys/sys/sys.qip, truncating the walk.
+    """
+    root = tmp / "a8"
+    g = build_project(
+        root,
+        ["alpha.sv"],
+        ["# empty"],
+        qsf_lines=["source sys/sys.tcl"],
+    )
+    sysdir = g.PROJECT_DIR / "sys"
+    sysdir.mkdir(parents=True, exist_ok=True)
+    (sysdir / "sys.tcl").write_text("set_global_assignment -name QIP_FILE sys/inner.qip\n")
+    (sysdir / "inner.qip").write_text(qline("rtl/alpha.sv") + "\n")
+    rc, out = run(g)
+    assert rc == 0, f"project-relative include base not honoured\n{out}"
+    assert "sys/inner.qip" in out, out
+    return "project-relative QIP_FILE base honoured through sys.tcl, rc=0"
+
+
 def main():
     if not GATE.exists():
         print(f"Scope: 0 -- {GATE} not found")

@@ -15,5 +15,13 @@ cos.sv  # unused helper, never instantiated by the product
 h264_decode_skeleton.sv  # retired lineage (architectural ruling); not a product module
 lfsr.v  # legacy MiSTer template leftover, no product instantiation
 mycore.v  # legacy MiSTer template leftover, no product instantiation
-pll.v  # Quartus-generated PLL wrapper; compiled via the generated pll.qip when used
-pll/pll_0002.v  # Quartus-generated PLL megafunction body, driven by pll/pll_0002.qip
+
+# Withdrawn 2026-07-28 by W-GATE-O5: pll.v and pll/pll_0002.v were listed
+# here with a plausible-sounding excuse. They are in fact compiled, via
+# Plex.qsf -> sys/sys.tcl -> sys/sys.qip -> sys/pll_q17.qip -> rtl/pll.qip.
+# The gate could not see that chain because rtl/pll.qip writes
+# `set_global_assignment -library "pll" -name VERILOG_FILE ...`, and the
+# parser required -name to follow set_global_assignment immediately.
+# Confirmed compiled by the deployed fit's A&S source list (fb4bad84):
+#   'Found entity 1: pll File: /build/rtl/pll.v'
+# The four entries above are confirmed ABSENT from that same source list.

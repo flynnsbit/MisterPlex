@@ -909,3 +909,149 @@ limits before being asked:
 As with every other instrument here: `make post-fit-hierarchy` and the fit
 evidence ladder remain the strongest oracles, and this is a cheap pre-filter
 that catches one specific, real, previously-invisible failure.
+
+## 14.10 The gate found a defect in itself, and the ratchet caught its author
+
+The first version of §14's hardened gate shipped four **false NOT_COMPILED**
+verdicts, and I had papered over them with plausible-sounding allowlist
+entries. That is this project's signature failure — a true number about the
+wrong thing — committed by me, inside the instrument built to prevent it. The
+sequence is recorded in full because the recovery is the transferable part.
+
+**What I wrote in the allowlist:**
+
+```
+pll.v           # Quartus-generated PLL wrapper; compiled via the generated pll.qip when used
+pll/pll_0002.v  # Quartus-generated PLL megafunction body, driven by pll/pll_0002.qip
+```
+
+Confident, technically fluent, and **false**. `rtl/pll.v` is compiled. The
+deployed design's analysis-and-synthesis source list says so directly:
+
+```
+Info (12021): Found 1 design units, including 1 entities, in source file rtl/pll.v
+    Info (12023): Found entity 1: pll File: /build/rtl/pll.v Line: 8
+```
+
+I caught it only because I checked whether `pll` was instantiated in product
+RTL before trusting my own excuse — `Plex.sv` instantiates it — which made the
+excuse incoherent.
+
+**Three parser defects, each a false red:**
+
+1. **Include base semantics.** Bare relative paths in `set_global_assignment`
+   resolve against the **project directory**, not the declaring file. Resolving
+   against the declaring file turned `sys/sys.tcl`'s `QIP_FILE sys/sys.qip`
+   into `sys/sys/sys.qip`, silently truncating the walk after 4 list files.
+   The proof that project-relative is right is in the tree: `rtl/pll.qip`
+   writes `[file join $::quartus(qip_path) "pll.cmp"]` *explicitly* when it
+   wants a qip-relative path, so bare relatives are not qip-relative.
+
+2. **Options before `-name`.** `rtl/pll.qip:331` is
+   `set_global_assignment -library "pll" -name VERILOG_FILE [file join ...]`.
+   A regex demanding `-name` immediately after `set_global_assignment` misses
+   every one of them.
+
+3. **Tcl path expressions.** `sys/sys.qip` writes its paths as Tcl. The
+   `[file join $::quartus(qip_path) x]` form is statically resolvable, since
+   Quartus defines that variable as the directory of the `.qip` being read.
+   The version-dependent form is not:
+
+   ```
+   [join [list $::quartus(qip_path) pll_q [regexp -inline {[0-9]+} $quartus(version)] .qip] {}]
+   ```
+
+   Two candidates exist in this tree — `sys/pll_q13.qip` and `sys/pll_q17.qip`
+   — and which one Quartus takes is runtime state. The gate now counts the
+   **union** (safe for a NOT_COMPILED verdict: a file reachable under any
+   resolution was not "never handed to Quartus") and prints
+   `AMBIGUOUS_TCL_INCLUDE` with every candidate. Anything it cannot resolve at
+   all is `UNEVALUATED_TCL_PATH` — declared, never counted as coverage, and
+   never guessed. Same parser-bias principle as the undecidable generate
+   blocks in §10: **the parser must not invent presence or absence.**
+
+**Effect on the measured Scope:**
+
+| | before | after |
+|---|---|---|
+| Quartus list files walked | 4 | **17** |
+| source assignments | 36 | **84** |
+| product RTL compiled | 35 | **37** |
+| allowlist entries | 6 | **4** |
+
+**The ratchet worked on its own author.** I did not have to remember to revisit
+those two lines. The moment the parser was fixed, the gate printed:
+
+```
+STALE_ALLOWED_ABSENT pll.v -- now compiled; remove it from qip_allowed_absent.txt
+STALE_ALLOWED_ABSENT pll/pll_0002.v -- now compiled; remove it from qip_allowed_absent.txt
+```
+
+and refused to pass until they were withdrawn. This is the argument for
+building allowlists as two-directional ratchets rather than plain exemption
+lists, and it is now the second time in this document that a manifest caught
+unrecorded progress rather than a regression.
+
+**The four surviving entries are corroborated by the strongest oracle.**
+Against the deployed fit `fb4bad84`'s A&S source list, `grep -c "source file
+rtl/<name>"`: `cos.sv` 0, `h264_decode_skeleton.sv` 0, `lfsr.v` 0,
+`mycore.v` 0, and `pll.v` **1**. Every remaining excuse is now backed by
+silicon-side evidence rather than by my own prose.
+
+**Re-measured cross-branch with the corrected parser** (superseding the §14.7
+and §14.8 figures, which were produced by the buggy walk — those numbers were
+*right about the two decode files* but drawn from a 4-file walk instead of 17):
+
+```
+w-decode-hour27      2f165ed  rc=0  84 assignments / 17 list files
+                                    REQUIRED_FILE_COMPILED h264_decode_core.sv
+                                    REQUIRED_FILE_COMPILED h264_decode_top.sv
+                                    REQUIRED_FILE_COMPILED h264_intra_nb_ctx.sv
+                                    QIP_COVERAGE_OK product=41 compiled=37
+parent/integ-hour27  5779e9f  rc=1  82 assignments / 17 list files
+                                    NOT_COMPILED h264_decode_top.sv
+                                    NOT_COMPILED h264_intra_nb_ctx.sv
+                                    QIP_COVERAGE_FAIL unexplained_absent=2
+```
+
+W-FIT's merge-base ruling survives the stricter oracle unchanged, and the
+verdict on their two named files is unchanged. What changed is that the earlier
+green was green for a partly wrong reason, and a green for a wrong reason is
+the thing this file exists to record.
+
+Five further regression cases pin the three parser defects
+(`QIP_COVERAGE_REGRESSION_OK cases=19`).
+
+## 14.11 Handed off, not gated: DDR mailbox residue in hardware gates
+
+W-FIT-O5 generalised their `sample_plxd_telemetry.sh` fix as: *any hardware gate
+that reads a DDR mailbox after a core load can be reading a previous bitstream's
+residue*, because DDR survives FPGA reconfiguration. I looked for a static gate
+and concluded one would be worse than the finding. Recording the measurement and
+handing it over instead.
+
+Population on this branch: **4** files reference the PLX mailbox addresses, of
+which **2** are hardware scripts. Both are better built than a crude gate would
+credit — `tests/hw/test_bank_release_visual.sh:67` already reasons explicitly
+about residue ("stale PLXK words from a previous geometry can legally remain in
+DDR and must not win merely because their magic is present") and both use an
+`unscored_exit` helper, so my first instrument, `grep -c 'exit 77'`, returned 0
+for both and would have libelled them. That is the same measurement error the
+rest of this document is about, so it is recorded rather than quietly fixed.
+
+Two real residual gaps, for whoever owns the hardware gates:
+
+* `tests/hw/test_bank_release_visual.sh:127` treats `PLXS_MAGIC == 0x00000000`
+  as "core not running" → UNSCORED. The discriminator is **one-sided**: it
+  catches a *zeroed* mailbox but not a *stale non-zero* one. `0x504C5853` left
+  in DDR by a previous bitstream passes.
+* `tests/hw/test_idle_screen_telemetry.sh:159` scores a non-advancing doorbell
+  as `fail_exit "screensaver-doorbell-not-advancing"`. After a core load,
+  non-advancing can mean dead fabric, which is **unscoreable**, not a FAIL.
+  This is W-FIT's exact class, and it is currently a FAIL where 77 is correct.
+
+Both need a sentinel poke — write a known value, read it back — which requires
+opening the device, and that is not my lane. A static gate over a population of
+two, discriminating on semantics a regex cannot see, would produce exactly the
+kind of confident-looking green this project has been burned by. Declared and
+handed over rather than gated.
