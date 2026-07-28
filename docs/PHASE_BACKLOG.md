@@ -1084,3 +1084,56 @@ This is the answer the parent had been asking for since Hour-23 and is recorded 
 - **Named confidence gaps, unprompted:** repeat runs, a 2000/2500 kbps A/B, a thermal/load run, and end-to-end A/V. **The parent had offered "I cannot tell without measuring X" as an acceptable answer; W-FEED gave a position *and* named its X's, which is strictly better.**
 
 **Programme consequence:** Phase 3 FPGA decode is now justified by measurement rather than by assumption. Until it lands, **the honest description of this device to a user is a 24 fps cast target with thin margin, and the parent will describe it that way.**
+
+### Hour-27 — the product decode core is instantiated and vacuous; `decode_stub` contained, not retired (W-DECODE-O5 `e9d5fab`, `272b0db`)
+
+`docs/decode-stub-retirement.md` carries the full argument. Headline measurements,
+all taken on branch `w-decode-o5`, none inherited:
+
+- **`stream_path` roots `h264_decode_core`, and the core does nothing.** Measured
+  by `scripts/check_decode_core_seam.py`: **30 of 53** core inputs are tied to
+  constants and **13 of 13** core outputs terminate in the `_keep` anti-prune
+  wire. `rbsp_byte`→0, `recon_y`→0, `recon_u/v`→128, `recon_mb_valid`→0,
+  `p16_zero_mv_valid`→0, `dpb_rd_data`→0, all MVs→0. **Every pixel written to the
+  frame store still comes from `decode_stub`** (`presentation_driver=decode_stub`).
+  Instantiation was being read as connection; it is not. The topology ruling
+  (`stream_path -> h264_decode_core` is THE product decoder) stands as a
+  *structural* statement and must not be quoted as a functional one.
+- **The `emu` reachability number was inflated by 8.** With diagnostic subtrees
+  pruned: `reachable=50` but `product_reachable=42`, `diagnostic_debt=7`.
+  `scripts/check_rtl_module_instantiations.py` now answers `--require` from the
+  pruned graph, so `--require h264_inter_mc_16x16` is **rc=1** at `root=emu` with
+  `reachable_only_via_diagnostic_root=1`. **`decode_stub` can no longer
+  manufacture a product green anywhere in the fleet.**
+- **`decode_stub` cannot be retired yet, and the blockers are named**: (A) it is
+  the sole driver of `fs_wr_*`/`fs_swap`; (B) seven real MC/DPB modules hang off
+  it and belong to W-SWAP; (C) `stream_path_full_frame_tb_top.sv` probes ~20 stub
+  internals and prefills `stub.dpb_mem`. Retirement order is in the doc.
+- **Two inherited greens were not true.** `make define-parity` was **rc=1** at
+  `ddb7c97` — that commit added three `H264_INTRA_NB_CTX_FAULT_*` macros without
+  declaring them in the allowlist — while the handoff recorded rc=0. And
+  `cd9fe29` renamed the `gen_decode_stub` generate block to
+  `gen_diagnostic_present`, leaving `tests/unit/test_stream_path_full_frame_compare.sh`
+  (a `make unit` prerequisite) failing Verilator elaboration with **46 errors**.
+  Both fixed; both had passed review as green.
+- **`h264_cavlc_residual_block` is now core-reachable and still cannot fire in
+  product.** One instance, `u_product_p16_residual0`, sits on the P16 zero-MV
+  path only; its `.rbsp()` is the constant-zero window and its `.start()` needs
+  `p16_zero_mv_valid`, tied to `1'b0`. Real intra residual reaches the core
+  through the `luma4x4_*` ports instead — all 16 blocks, but with **synthetic
+  `total_coeff=5'd16` and `trailing_ones=2'd0`**, which the seam gate cannot see
+  because it is a register default rather than a port tie.
+- **`h264_decode_skeleton.sv` is not a fourth decoder lineage.** It is w-rel's
+  area-estimation harness, is **not listed in `files.qip`**, is unreachable from
+  `emu`, and is already correctly declared bench-only. It only pollutes
+  `parents=` diagnostics. No action needed.
+
+**Both new manifests are exact-match in both directions**, so vacuity and
+diagnostic debt can only shrink, and every reduction shows up in a diff rather
+than being silently absorbed. Red-checks recorded in the commit message and
+reproduced in `docs/decode-stub-retirement.md`.
+
+**Denominator reminder:** the frame is **1170 MBs** (39x30). The best full-frame
+green in the tree self-labels as `INTEGRATED_PIPELINE_COVERAGE: 16/76800 =
+0.021% (decode_stub single 4x4 block)`. **Zero frames have been decoded and
+displayed by the FPGA.**
