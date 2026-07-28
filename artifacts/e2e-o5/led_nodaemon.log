@@ -1,0 +1,7 @@
+Scope: 12 scored frames from artifacts/e2e-o5/plex_nodaemon/frames (dropped 2 flat/warmup)
+noise floor (chevron interior temporal std): 0.0
+artifact band temporal std                 : 5.6796
+dark frac artifact/control                 : 0.3081 / 0.0018 (ratio 171.0x)
+raggedness single vs frame-averaged        : 20.41 -> 10.47 (collapse 0.487)
+pillar edge column stable across frames    : True (128)
+LEFT_EDGE_DYNAMICS: MOVING — artifact temporal std 5.6796 vs capture noise floor 0.0 (SNR 113.6x); per-row dark width varies 16.45 px between frames

@@ -1,0 +1,7 @@
+PASS moving artifact -> MOVING
+PASS static artifact -> STATIC
+PASS static + heavy noise -> REFUSE (never MOVING)
+PASS no artifact -> REFUSE
+PASS too few frames -> REFUSE
+
+5/5 self-test checks passed

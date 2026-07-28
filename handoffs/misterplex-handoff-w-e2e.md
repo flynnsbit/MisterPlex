@@ -886,3 +886,80 @@ correct reading of a different, brighter, animating screen during the core-load
 transition. Once stable, the same detector reports 14928 px on 12/12 frames.
 Recorded because "gate said absent, logo was there" would otherwise look like a
 false negative to the next reader.
+
+## §18 — Chevron detector scored the MiSTer MAIN MENU as "Plex chevron PRESENT"
+
+**Measured false positive on live hardware**, not a hypothetical. With
+`CORENAME=MENU` on screen, `score_idle_screen.py` printed `PLEX_CHEVRON:
+PRESENT — 8959 px ... bbox [368, 0, 486, 719]` and `PASS`. That bbox is
+119x720: a full-height column of orange **menu text**. The detector used
+colour + pixel count + centroid and had **no shape constraint**.
+
+| | bbox | aspect | fill |
+|---|---|---|---|
+| real Plex chevron | 224x241 | 0.929 | 0.277 |
+| MENU text column | 119x720 | 0.165 | 0.105 |
+
+Added `CHEVRON_ASPECT_RANGE=(0.40, 2.50)` and `CHEVRON_MIN_FILL=0.18`.
+Red/green replayed on **real stored frames** both ways. Mutation testing then
+showed my first regression case was **vacuous** — the text column was rejected
+on aspect alone, so both fill mutations survived. Added a square-but-sparse
+orange block that isolates fill. Now 14/14 mutants killed.
+
+## §19 — `misterplexd` is DEAD, and the screen is unchanged
+
+Device rebooted ~14:16 (uptime 1926s -> 172s), came back on `MENU`, then Plex
+was loaded. `misterplexd` **did not restart**:
+
+```
+ps w                    -> 95 processes, /media/fat/MiSTer /media/fat/_Utility/Plex.rbf running
+                           NO misterplexd
+netstat -lnt | grep 3005 -> no listener
+```
+
+With **no ARM daemon at all**, provenance-locked capture (`corename=Plex`,
+`rbf_md5=fb4bad84`) still shows:
+
+```
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=36.33  spatial_std=22.3  unique=12/12
+PLEX_CHEVRON: PRESENT — 14928 px, centroid [595,359], bbox [484,239,707,479]
+```
+
+**14928 px and the identical bbox** — the same numbers as the daemon-alive
+STEP 1 capture. The chevron does not require a live `misterplexd`.
+
+## §20 — The left-edge artifact MOVES, and killing the ARM daemon does not change it
+
+New instrument `scripts/analyze_left_edge_dynamics.py` (self-test 5/5, gate
+`tests/unit/test_left_edge_dynamics.py` 8/8). It takes its **noise floor from
+the capture itself** — the temporal std inside the saturated chevron interior —
+so motion is measured against a real, per-capture noise estimate.
+
+A first attempt using IoU of the dark mask suggested motion (0.61 vs 1.00) and
+was **discarded as unsound**: the artifact sits near the black threshold, so
+IoU mostly measures threshold proximity. Density-matched controls could not be
+constructed (the control band's luma distribution is discrete). The chevron
+noise floor settled it properly.
+
+| | daemon ALIVE (STEP 1) | daemon DEAD |
+|---|---|---|
+| artifact temporal std | 5.81 | 5.68 |
+| capture noise floor | 0.00 | 0.00 |
+| dark ratio vs control | 179.0x | 171.0x |
+| per-row width variation | 16.84 px | 16.45 px |
+| raggedness collapse on averaging | 0.449 | 0.487 |
+| pillar edge column | 128 | 128 |
+| verdict | MOVING | MOVING |
+
+**~2% difference.** Removing the ARM writer entirely leaves the artifact
+statistically unchanged.
+
+**This refutes the stated mechanism for the left-edge artifact** ("ARM writes
+into the bank being scanned out", owner `w-arm-o5`) *for this state*: there is
+no ARM writer, and the artifact is unchanged in magnitude, raggedness and
+motion. The stable pillar edge at **column 128** in 12/12 frames of both
+captures points at the present/scanout path, not at an ARM/DDR write race.
+
+Scope limit, stated: this compares two captures of the same resident RBF taken
+either side of a reboot. Both are provenance-locked to `corename=Plex`,
+`rbf_md5=fb4bad84`. It does not identify what *does* move the pattern.

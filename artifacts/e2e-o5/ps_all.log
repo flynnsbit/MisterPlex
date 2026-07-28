@@ -1,0 +1,17 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+95
+--- sample ---
+ 1808 root     [kworker/0:0-mm_]
+ 1843 root     [kworker/1:3-eve]
+ 1917 root     [kworker/u4:2-ev]
+ 1938 root     /media/fat/MiSTer /media/fat/_Utility/Plex.rbf
+ 2147 root     [kworker/0:1H]
+ 2212 root     [kworker/0:1-eve]
+ 2217 root     [kworker/1:0-mm_]
+ 2456 root     sleep 5
+ 2457 root     sshd: root@notty
+ 2461 root     bash -c ps w 2>&1 | wc -l; echo "--- sample ---"; ps w 2>&1 | tail -12
+ 2464 root     ps w
+ 2465 root     tail -12

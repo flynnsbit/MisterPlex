@@ -1,0 +1,9 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+now=14:38:36
+uptime=1327s
+corename=Plex
+fpga=operating
+daemon=0
+fb4bad849ad2db782a5004ce5a3471ce  /media/fat/_Utility/Plex.rbf
