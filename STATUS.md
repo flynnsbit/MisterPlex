@@ -9,6 +9,115 @@ plays Plex content natively.
 
 ---
 
+## Update #6 — 2026-07-28 13:56 CDT (Hour 30.5)
+
+### ✅ MiSTer is back — and it came back at the best possible moment
+
+```
+192.168.1.183   ping OK   ARP REACHABLE   ssh OK
+uptime 0:09  ->  power-cycled ~13:44
+resident RBF md5 = fb4bad84   (unchanged)
+```
+
+It was down ~2h07m. Nothing was lost — no locks, no half-finished operation.
+
+**Why the reboot is useful rather than annoying.** Every scrap of accumulated
+state is gone: the poisoned mailbox I zeroed by hand, and hours of probing
+residue. This is the **first clean cold-boot observation of `fb4bad84` we have
+ever had**, and it is perishable — the next deploy destroys it.
+
+So I inverted the order. Capture first, deploy second.
+
+### Two experiments now running, strictly sequenced
+
+**STEP 1 — `w-e2e-o5`: what is actually on your screen right now?**
+
+The gate must return three *distinguishable* states, because of a trap that has
+burned us before: the core paints black, so *"capture succeeded"* and *"the
+screen is black"* are simultaneously true, and a naive check reports success
+while showing you nothing.
+
+| state | meaning |
+|---|---|
+| `NO_SIGNAL` | no valid HDMI stream at all |
+| `VALID_BLACK` | stream is fine, frames arriving, content uniformly black |
+| `VALID_CONTENT` | actual pixels — logo? test pattern? left-edge artifact? |
+
+It is also re-reading the four mailbox words from cold boot. **This may
+invalidate the regression itself:** if they are live from a cold start, then
+"the fabric writes nothing to DDR" was a property of accumulated state, not of
+the bitstream. That pre-condition gates step 2.
+
+**STEP 2 — `w-fit-o5`: the constraints-vs-code A/B.** Held behind step 1.
+
+| build | code | constraints | result |
+|---|---|---|---|
+| `00eebd5e` | older | old | advancing ~68/s |
+| `3b1e8435` | new | **old** | **?** |
+| `fb4bad84` | new | **new** | **silent** |
+
+If `3b1e8435` advances, **a constraints change I personally authorized this
+morning broke your display.** If it stays silent, that's exonerated and the
+fault is in the code delta. Either answer is progress; one of them is my fault.
+
+### Meanwhile: the auditor broke my own ruling, one hour after I made it
+
+I declared it mandatory that any gate reading a build report must be bound to
+the exact bitstream md5, and that an unbound report *"must never pass."* I held
+up one gate as the model of that discipline. The `gpt-5.5` auditor then ran it:
+
+```
+check_fitted_line_buffer.py      (unbound)
+  -> prints "UNBOUND"
+  -> prints "LINE_BUFFER_OK"
+  -> exit 0
+```
+
+**It announces that it cannot evaluate, then reports success.** The word
+`UNBOUND` went into a log nobody greps; the exit code — the thing every script
+actually reads — said green.
+
+That is now being fixed as a *class*, not an instance. New fleet-wide contract:
+
+```
+0  = evaluated and passed
+1  = evaluated and failed
+77 = could not evaluate
+```
+
+Nothing else. **A gate that cannot distinguish "I checked and it's fine" from
+"I couldn't check" is worse than no gate — it manufactures confidence.** Every
+script is being swept for that shape.
+
+### The thing I keep coming back to
+
+This is not a decoder problem. Look at the actual history: a coverage gate that
+couldn't see an uncompiled file; a reachability check that reached through a
+stub; a timing gate that passed with no timing report; 24 code paths returning
+success instead of "couldn't run"; my own control experiment that never varied
+the thing it was testing; and now a gate that prints the word "unbound" and
+returns success.
+
+**It is a measurement problem that has been producing green checkmarks over a
+black screen for months.** Fix the instruments and the decoder work becomes
+tractable. Leave them, and every hour we spend from here is unfalsifiable too.
+
+### Progress — unchanged, deliberately
+
+```
+intra          [##########··············]  35%
+display        [##############··········]  50%
+overall        [##########··············]  36%
+```
+
+Still flat. Two experiments are in flight that could move it in either
+direction within the hour; I'd rather report the number after they land than
+credit work that hasn't been measured.
+
+---
+
+---
+
 ## Update #5 — 2026-07-28 13:25 CDT (Hour 30)
 
 ### ⚠️ MiSTer still offline — 45 minutes
