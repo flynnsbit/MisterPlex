@@ -49,6 +49,10 @@ struct Sim {
             throw std::runtime_error("read latency contract: unexpected extra DPB fetch read at cycle " +
                                      std::to_string(cycle));
         }
+        // Current h264_dpb implementation order is luma[441], then U[81],
+        // then V[81]. This is an implementation-order guard, not an H.264
+        // external contract; update this scoreboard if the RTL is deliberately
+        // reworked to issue a different legal order.
         int n = nextFetchRead++;
         ReadTag tag;
         tag.valid = true;
@@ -147,6 +151,18 @@ uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
 uint8_t yPattern(int x, int y) { return static_cast<uint8_t>((17 + x * 3 + y * 5) & 0xff); }
 uint8_t uPattern(int x, int y) { return static_cast<uint8_t>((83 + x * 7 + y * 11) & 0xff); }
 uint8_t vPattern(int x, int y) { return static_cast<uint8_t>((191 + x * 13 + y * 3) & 0xff); }
+
+void assertDistinctChromaPatterns() {
+    int distinct = 0;
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            if (uPattern(x, y) != vPattern(x, y)) ++distinct;
+        }
+    }
+    if (distinct == 0) {
+        throw std::runtime_error("chroma fixture degeneracy: U and V patterns alias across 8x8 probe");
+    }
+}
 
 uint8_t planePattern(int plane, int x, int y) {
     if (plane == 0) return yPattern(x, y);
@@ -409,6 +425,7 @@ int main(int argc, char** argv) {
             std::cerr << "FAIL h264_dpb_mc RTL: bench requires >=2 NAL units, got " << nals << "\n";
             return 1;
         }
+        assertDistinctChromaPatterns();
 
         Sim s;
         reset(s);

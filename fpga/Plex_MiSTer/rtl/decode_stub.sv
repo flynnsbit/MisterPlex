@@ -357,6 +357,10 @@ module decode_stub #(
 	reg [31:0]        dpb_mem_raddr_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;
+`ifdef VERILATOR
+	reg               dpb_mem_rd_dbg_q;
+	reg [31:0]        dpb_mem_raddr_dbg_q;
+`endif
 	wire              dpb_luma_window_valid;
 	wire [8:0]        dpb_luma_window_idx;
 	wire [7:0]        dpb_luma_window_sample;
@@ -552,6 +556,14 @@ module decode_stub #(
 		// pending_valid_d1 capture window.
 		dpb_mem_rvalid <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
+`ifdef VERILATOR
+		if (!reset && dpb_mem_rd_dbg_q && !dpb_mem_rvalid) begin
+			$display("FAIL decode_stub DPB read latency contract: dpb_mem_rvalid did not follow dpb_mem_rd addr=0x%08x", dpb_mem_raddr_dbg_q);
+			$fatal;
+		end
+		dpb_mem_rd_dbg_q <= reset ? 1'b0 : dpb_mem_rd;
+		dpb_mem_raddr_dbg_q <= dpb_mem_raddr;
+`endif
 		if (dpb_luma_window_valid)
 			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
 		if (dpb_chroma_u_window_valid)
@@ -614,6 +626,10 @@ module decode_stub #(
 			dpb_fill_sample_idx <= 9'd0;
 			dpb_mem_raddr_q <= 0;
 			dpb_mem_rvalid <= 0;
+`ifdef VERILATOR
+			dpb_mem_rd_dbg_q <= 1'b0;
+			dpb_mem_raddr_dbg_q <= 32'd0;
+`endif
 			wr_pixel      <= 0;
 		end else begin
 			if (p_fetch_edge) begin
