@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import importlib.util
 from pathlib import Path
@@ -1135,18 +1136,43 @@ def check_runtime_ddr_layout_literal_sweep() -> None:
     arithmetic are the host layout helper and the RTL mirror constants. Runtime
     code must consume those helpers or derive from geometry at the point of use.
     """
+    offenders = runtime_ddr_layout_literal_offenders()
+    if offenders:
+        fail(
+            "runtime DDR frame layout literals must route through ddr_frame_layout derivation; "
+            "found " + "; ".join(offenders[:8])
+        )
+    print("PASS runtime DDR frame layout literals are quarantined to layout derivation sources")
+
+
+def tracked_product_relevant_files() -> list[Path]:
+    """Return committed runtime/product files, excluding ignored worktree debris."""
+    roots = [
+        "arm",
+        "host",
+        "tools",
+        "scripts",
+        "tests/hw",
+        "fpga/Plex_MiSTer/rtl",
+    ]
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", "--", *roots],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as e:
+        fail(f"could not enumerate tracked product files with git ls-files: {e}")
+    return [ROOT / line for line in out.splitlines() if line]
+
+
+def runtime_ddr_layout_literal_offenders() -> list[str]:
     banned = re.compile(
         r"\b(?:0x3007_?F000|0x300F_?F000|0x3004_?0000|0x3008_?0000|"
         r"0x0008_?0000|0x0004_?0000|449280|115200)(?:u|U|ul|UL|ull|ULL)?\b",
         re.I,
     )
-    scan_roots = [
-        ROOT / "arm",
-        ROOT / "tools",
-        ROOT / "scripts",
-        ROOT / "captures",
-        ROOT / "fpga/Plex_MiSTer/rtl",
-    ]
     allow = {
         DDR_FRAME_LAYOUT_HPP,
         DDR_FRAME_LAYOUT_SVH,
@@ -1154,22 +1180,36 @@ def check_runtime_ddr_layout_literal_sweep() -> None:
     }
     suffixes = {".cpp", ".hpp", ".h", ".sv", ".svh", ".v", ".py", ".sh"}
     offenders: list[str] = []
-    for root in scan_roots:
-        if not root.exists():
+    for path in tracked_product_relevant_files():
+        if not path.is_file() or path.suffix not in suffixes or path in allow:
             continue
-        for path in root.rglob("*"):
-            if not path.is_file() or path.suffix not in suffixes or path in allow:
-                continue
-            text = strip_comments(read(path))
-            for lineno, line in enumerate(text.splitlines(), 1):
-                if banned.search(line):
-                    offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
-    if offenders:
-        fail(
-            "runtime DDR frame layout literals must route through ddr_frame_layout derivation; "
-            "found " + "; ".join(offenders[:8])
+        text = strip_comments(read(path))
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if banned.search(line):
+                offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
+    return offenders
+
+
+def check_runtime_ddr_layout_literal_ignores_untracked_debris() -> None:
+    probe = ROOT / "arm/misterplexd/wgate_untracked_ddr_layout_literal_probe.cpp"
+    check(not probe.exists(), f"untracked DDR layout literal probe already exists: {probe}")
+    try:
+        probe.write_text(
+            "static constexpr unsigned kBadDdrStride = 0x80000u;\n"
+            "static constexpr unsigned kBadDdrFrameBytes = 449280u;\n"
         )
-    print("PASS runtime DDR frame layout literals are quarantined to layout derivation sources")
+        offenders = runtime_ddr_layout_literal_offenders()
+        rel_probe = str(probe.relative_to(ROOT))
+        check(
+            not any(offender.startswith(f"{rel_probe}:") for offender in offenders),
+            "runtime DDR frame layout literal scan must ignore untracked worktree debris",
+        )
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+    print("PASS runtime DDR layout literal scan ignores untracked worktree debris")
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
@@ -2183,6 +2223,7 @@ def main() -> int:
     check_status_telemetry()
     check_ddr_frame_layout_contract()
     check_runtime_ddr_layout_literal_sweep()
+    check_runtime_ddr_layout_literal_ignores_untracked_debris()
     check_ddr_frame_store_yuv_read_contract()
     check_present_geometry_stride_contract()
     check_ddr_bank_handoff_contract()
