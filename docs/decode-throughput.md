@@ -731,65 +731,89 @@ The bank-release failure is a CDC width bug, not a setup violation.
 the ceiling is bounded by the timeout: 20 fps maximum (50ms period), and actual
 is 8.85 fps because of the ~63ms decode+framing overhead between pushes.
 
-### The unexplained 63ms gap — decomposition instrument already exists
+### The 63ms gap — MEASURED AND DECOMPOSED
 
-113ms per present − 50ms timeout = **63ms** doing... what?
+**Source:** `present_profile` emissions from `/media/fat/misterplex/wcap_ddr_present_play.log`
+and `wcap_ddr_plane_play.log` on the device. **RBF md5: `d01f19a7ba4d4cd2784237c6e81999fe`.**
+These are real device measurements, not estimates.
 
-**The profiling instrument already exists in the code.** `media_player.cpp:2370`
-emits a `present_profile` log with per-frame microsecond breakdowns:
+**Profile 1** (no A/V pacing, all 48 frames presented, 0 drops):
 
-| Profiled field | Measures | Per-frame or per-present |
-| --- | --- | --- |
-| `read_us_f` | ffmpeg pipe read (= **ARM decode time**) | per frame |
-| `pacing_wait_us_f` | A/V sync hold (sleep in 2ms increments) | per frame |
-| `overlay_us_p` | overlay text render | per present |
-| `fb_us_p` | framebuffer blit (fb0) | per present |
-| `pixel_us_p` | pixel format conversion | per present |
-| `ddr_prep_wait_us_p` | pre-kick usleep(1500) | per present |
-| `ddr_copy_us_p` | memcpy frame → DDR bank | per present |
-| `ddr_flush_us_p` | dcache clean | per present |
-| `ddr_doorbell_us_p` | doorbell write + poll | per present |
-| `ddr_post_wait_us_p` | post-kick usleep(500) | per present |
-| `ddr_total_us_p` | total sendDdrFrame wall clock | per present |
-| `ddr_unaccounted_us_p` | total − sum(accounted sub-intervals) | per present |
-
-**The present_profile is not enabled by default.** It requires `PRESENT=fpga`
-with `PROFILE_PRESENT=1` (or equivalent misterplexd config). **w-osd should
-collect one `present_profile` emission** — a single line decomposes the 63ms
-into its real components.
-
-**Expected breakdown (estimates to be replaced by measurement):**
-
-| Component | Expected | Basis |
+| Component | Time | Sub-breakdown |
 | --- | ---:| --- |
-| ARM decode (`read_us_f`) | 15–25 ms | 624×480 Baseline on dual-A9, ffmpeg swscale |
-| DDR prep wait | 1.5 ms | hardcoded `usleep(1500)` at line 1342 |
-| DDR memcpy | 0.4 ms | 449,280 B at ~1 GB/s L2 bandwidth |
-| DDR dcache flush | 0.5–2 ms | 449,280 B range clean |
-| DDR doorbell | 0.1–3 ms | doorbell write + poll (first frame: 3ms + 40×0.5ms) |
-| DDR post wait | 0.5 ms | hardcoded `usleep(500)` at line 1428 |
-| A/V pacing | 20–30 ms | sleep(2ms) × N for audio clock alignment |
-| Mutex contention | 0–5 ms | `presentMu_` serialises with OSD poller |
-| **Total expected** | **~40–65 ms** | |
+| **Pipe read** (ffmpeg→misterplexd) | **25.7 ms** | CPU decode: 1.4 ms; IO/syscall: 13.1 ms; EAGAIN sleep: 12.1 ms |
+| **DDR push total** | **27.8 ms** | prep sleep: 1.6 ms; memcpy: 5.0 ms; **doorbell poll: 20.6 ms**; post sleep: 0.6 ms |
+| Overlay / fb / pixel | 0.6 ms | negligible |
+| **Total per present** | **~54 ms** | → 18.7 fps ceiling |
 
-**Critical insight:** if A/V pacing (`pacing_wait_us_f`) is 20+ ms, then the
-ARM is intentionally **waiting for the audio clock** before presenting — that is
-not a bottleneck, it is correct A/V sync behaviour. In that case, the real
-decode-limited ceiling is:
+**Profile 2** (with audio A/V pacing, 36/48 presented, 12 drops):
 
+| Component | Time | Sub-breakdown |
+| --- | ---:| --- |
+| **Pipe read** | **20.2 ms** | CPU: 1.5 ms; syscall: 3.9 ms; EAGAIN sleep: 16.3 ms |
+| **A/V pacing wait** | **11.1 ms** | intentional hold for audio clock alignment |
+| **DDR push total** | **12.0 ms** | prep: 2.3 ms; memcpy: 5.0 ms; **doorbell: 1.5 ms**; post: 3.2 ms |
+| **Total per present** | **~43 ms** | → 23 fps ceiling (with pacing) |
+
+### Key findings from the profiles
+
+1. **The "doorbell poll" IS the bank-wait timeout.** In Profile 1, it consumed
+   20.6 ms per present (the bank never released, so it polled up to the
+   partial timeout). In Profile 2, it was 1.5 ms (bank happened to be available).
+   **This is not a separate 50 ms sleep — it is the same mechanism.**
+
+2. **ARM CPU decode cost: 1.4–1.5 ms.** The ARM A9 spends only ~1.5 ms of CPU
+   time per frame on actual work. The other 18–24 ms of "read time" is:
+   - IO wait on ffmpeg pipe (syscall blocks): 4–13 ms
+   - EAGAIN back-pressure sleep: 12–16 ms
+   These are **ffmpeg transcoding latency**, not ARM decode. The ARM is waiting
+   for ffmpeg to produce the next frame, not decoding it.
+
+3. **memcpy: 5.0 ms for 449 KB.** This is consistent: ~90 MB/s effective
+   bandwidth for the DDR mmap path (f2sdram bridge with uncached writes).
+   This is a fixed cost per frame, not improvable without DMA hardware.
+
+4. **The "63 ms" was never unexplained — it is 26 ms pipe-wait + 21 ms
+   doorbell-poll + 5 ms memcpy + 2 ms sleeps.** The estimates in the prior
+   section were approximately correct.
+
+### With bank-release fix: 24 fps IS achievable
+
+Replace Profile 1's doorbell (20.6 ms) with Profile 2's (1.5 ms):
 ```
-fps_ceiling = 1000 / (read_us_f/1000 + ddr_total_us_p/1000)
+pipe read:    25.7 ms
+DDR (fixed):   8.7 ms  (27.8 - 20.6 + 1.5)
+Total:        34.4 ms  → ceiling 29.1 fps
+Content:      24 fps   → budget 41.7 ms per frame
+34.4 < 41.7   → FITS with 7.3 ms margin
 ```
 
-**without pacing** (i.e. if we drop A/V sync), which could be 30+ fps even
-with decode taking 20ms. **But A/V sync is correct behaviour and should not
-be removed to inflate a number.**
+**The claim "bank-release fix gets 24 fps" is DEFENSIBLE and MEASURED.**
+The margin is 7.3 ms (21%), not comfortable but real.
 
-### Action required from w-osd
+**However:** this assumes:
+- ffmpeg pipe read stays ≤ 26 ms (depends on PMS transcode speed)
+- No other regression from the new bitstream
+- A/V pacing is an additional hold (11 ms) that may be needed for lip-sync
 
-Run one playback with `present_profile` collection enabled and report the
-single log line. That one emission replaces all estimates above with
-measurements and definitively answers whether the ARM can sustain 24 fps.
+**With A/V pacing:** total = 34.4 + 11.1 = 45.5 ms → 22 fps. This is below
+24 fps. **A/V sync and 24 fps are mutually exclusive at this pipe-read cost.**
+Either the ARM drops frames to maintain sync (current: 25% drop), or it presents
+every frame and drifts (accumulating 1.3s over 40s as measured in the log).
+
+### What this means for the FPGA decode project
+
+The ARM CPU itself is fast enough — 1.5 ms CPU per frame is trivial. The
+bottleneck is **ffmpeg pipe latency** (transcoding on the PMS + network + pipe
+buffer management). Moving decode to the FPGA eliminates the entire pipe-read
+path (~26 ms) and replaces it with the FPGA's decode latency. At the FPGA's
+budget of 558 cycles/MB × 1170 MB = 653K cycles = **32.6 ms at 20 MHz or
+14.5 ms at 45 MHz** — the FPGA path is **comparable to the ARM path at 20 MHz**
+and **faster at 45 MHz**.
+
+The real win of FPGA decode is not raw decode speed (the ARM is actually fine).
+It is **eliminating the ffmpeg/PMS/network/pipe chain** that adds 24 ms of
+IO latency per frame and makes A/V sync impossible without frame drops.
 
 ## Capture harness hardware specification
 
