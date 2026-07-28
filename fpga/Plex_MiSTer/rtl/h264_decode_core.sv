@@ -123,6 +123,19 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Product present pixel stream (decoded luma → display path) ──
+    // Reconstructed luma samples leave the core here, one sample per cycle, as
+    // the writeback FSM walks a macroblock.  present_tag carries a live
+    // fingerprint of the decode FSM so the display keeps changing while the
+    // decoder advances.  These are the outputs the present path consumes, which
+    // is what roots this whole datapath in the synthesised netlist.
+    output wire        present_wr_en,
+    output wire [7:0]  present_wr_idx,       // raster index inside the 16×16 luma MB
+    output wire [7:0]  present_wr_luma,      // reconstructed luma sample
+    output wire [7:0]  present_mb_x,
+    output wire [7:0]  present_mb_y,
+    output wire [7:0]  present_tag,          // decode-progress fingerprint
+
     // ── Status/debug ──
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
@@ -973,6 +986,45 @@ module h264_decode_core #(
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
+
+    // ── Product present pixel stream ────────────────────────────────────
+    // Every luma sample the writeback FSM commits is also handed to the
+    // present path.  The sample value comes from lat_recon_y (intra recon
+    // pipeline) or the P16 prediction+residual clip, so the pixel data is
+    // genuinely produced by this module's datapath.
+    reg        present_wr_en_r;
+    reg [7:0]  present_wr_idx_r;
+    reg [7:0]  present_wr_luma_r;
+    reg [7:0]  present_mb_x_r;
+    reg [7:0]  present_mb_y_r;
+    wire       present_luma_phase = (wb_idx < 9'd256);
+    wire       present_wb_active = (wb_state == ST_WRITE) || (wb_state == ST_P16_WRITE);
+
+    always @(posedge clk) begin
+        present_wr_en_r <= 1'b0;
+        if (reset) begin
+            present_wr_idx_r <= 8'd0;
+            present_wr_luma_r <= 8'd0;
+            present_mb_x_r <= 8'd0;
+            present_mb_y_r <= 8'd0;
+        end else if (present_wb_active && present_luma_phase) begin
+            present_wr_en_r <= 1'b1;
+            present_wr_idx_r <= wb_idx[7:0];
+            present_wr_luma_r <= (wb_state == ST_P16_WRITE) ? clip_u8(p16_recon_sum)
+                                                            : wb_data;
+            present_mb_x_r <= wb_mb_x;
+            present_mb_y_r <= wb_mb_y;
+        end
+    end
+
+    assign present_wr_en = present_wr_en_r;
+    assign present_wr_idx = present_wr_idx_r;
+    assign present_wr_luma = present_wr_luma_r;
+    assign present_mb_x = present_mb_x_r;
+    assign present_mb_y = present_mb_y_r;
+    assign present_tag = mb_count_r[7:0] ^ wb_state ^ syntax_mb_addr_r[7:0] ^
+                         {3'd0, product_intra_blocks_done};
+
     assign busy = (wb_state != ST_IDLE) || intra_active_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;

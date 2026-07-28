@@ -42,6 +42,17 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
 
+	// Product decode present stream (from h264_decode_core via stream_path).
+	// Reconstructed luma samples are captured into a macroblock tile and
+	// painted as a stripe over the left edge of the display, so pixels the
+	// decoder produced are visible on screen.
+	input  wire        decode_px_wr_en,
+	input  wire [7:0]  decode_px_idx,
+	input  wire [7:0]  decode_px_luma,
+	input  wire [7:0]  decode_px_mb_x,
+	input  wire [7:0]  decode_px_mb_y,
+	input  wire [7:0]  decode_px_tag,
+
 	input  wire        start_req,
 	input  wire        bank_sel,
 	input  wire [15:0] status_osd,
@@ -161,6 +172,56 @@ module ddr_frame_store #(
 	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
+
+	// ── Product decode overlay ──────────────────────────────────────────
+	// One 16×16 luma macroblock tile, written sample-by-sample by
+	// h264_decode_core's writeback stream and magnified 4× so the decoded
+	// samples are large enough to see. The tile is repeated down a stripe on
+	// the left edge of the display; the stripe's blue channel carries the
+	// core's live decode fingerprint, so the picture keeps moving with the
+	// decoder even before a full macroblock has committed.
+	localparam int OVL_W = (DISPLAY_W >= 64) ? (DISPLAY_W / 4) : DISPLAY_W;
+	localparam [X_W-1:0] OVL_W_L = X_W'(OVL_W);
+
+	wire ovl_region = rd_visible && (display_x < OVL_W_L);
+	wire [7:0] ovl_addr = {display_y[5:2], display_x[5:2]};
+
+	reg [7:0] ovl_tile [0:255];
+	reg [7:0] ovl_tile_q;
+	reg [7:0] ovl_pix_d;
+	reg       ovl_active;
+	reg       ovl_hit_r, ovl_hit_d;
+	reg [7:0] ovl_tag_r, ovl_tag_d;
+	reg [7:0] ovl_mb_r, ovl_mb_d;
+
+	always @(posedge clk) begin
+		if (decode_px_wr_en)
+			ovl_tile[decode_px_idx] <= decode_px_luma;
+		ovl_tile_q <= ovl_tile[ovl_addr];
+		ovl_pix_d  <= ovl_tile_q;
+		if (reset) begin
+			ovl_active <= 1'b0;
+			ovl_hit_r <= 1'b0;
+			ovl_hit_d <= 1'b0;
+			ovl_tag_r <= 8'd0;
+			ovl_tag_d <= 8'd0;
+			ovl_mb_r  <= 8'd0;
+			ovl_mb_d  <= 8'd0;
+		end else begin
+			if (decode_px_wr_en)
+				ovl_active <= 1'b1;
+			ovl_hit_r <= ovl_region && ovl_active;
+			ovl_hit_d <= ovl_hit_r;
+			ovl_tag_r <= decode_px_tag;
+			ovl_tag_d <= ovl_tag_r;
+			ovl_mb_r  <= decode_px_mb_x ^ decode_px_mb_y;
+			ovl_mb_d  <= ovl_mb_r;
+		end
+	end
+
+	wire [7:0] ovl_r = ovl_pix_d;
+	wire [7:0] ovl_g = ovl_pix_d ^ {ovl_mb_d[3:0], 4'd0};
+	wire [7:0] ovl_b = ovl_tag_d;
 
 	genvar li;
 	generate
@@ -415,7 +476,11 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+			if (ovl_hit_d) begin
+				rd_r <= ovl_r;
+				rd_g <= ovl_g;
+				rd_b <= ovl_b;
+			end else if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);

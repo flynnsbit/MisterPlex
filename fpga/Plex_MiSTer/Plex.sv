@@ -553,6 +553,13 @@ wire        stub_wr_en;
 wire [15:0] stub_wr_pixel;
 wire        stub_wr_reset;
 wire        stub_swap;
+// Product decode present stream: reconstructed luma out of h264_decode_core.
+wire        decode_px_wr_en;
+wire  [7:0] decode_px_idx;
+wire  [7:0] decode_px_luma;
+wire  [7:0] decode_px_mb_x;
+wire  [7:0] decode_px_mb_y;
+wire  [7:0] decode_px_tag;
 wire        stream_ddr_active;
 wire [31:0] stream_ddr_bytes_out;
 wire [15:0] stream_ddr_underruns;
@@ -650,7 +657,13 @@ stream_path #(
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
-	.fs_swap(stub_swap)
+	.fs_swap(stub_swap),
+	.decode_px_wr_en(decode_px_wr_en),
+	.decode_px_idx(decode_px_idx),
+	.decode_px_luma(decode_px_luma),
+	.decode_px_mb_x(decode_px_mb_x),
+	.decode_px_mb_y(decode_px_mb_y),
+	.decode_px_tag(decode_px_tag)
 );
 
 // Phase 3.3j / 3.1b hybrid present:

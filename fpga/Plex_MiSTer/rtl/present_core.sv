@@ -45,6 +45,16 @@ module present_core #(
 	input  wire        fs_swap,
 	output wire        fs_wr_ready,
 
+	// Product decode present stream (from stream_path/h264_decode_core).
+	// Only the DDR-backed frame store consumes this; the SDRAM frame_store
+	// path keeps it observed so it is never silently dropped.
+	input  wire        decode_px_wr_en,
+	input  wire  [7:0] decode_px_idx,
+	input  wire  [7:0] decode_px_luma,
+	input  wire  [7:0] decode_px_mb_x,
+	input  wire  [7:0] decode_px_mb_y,
+	input  wire  [7:0] decode_px_tag,
+
 	// SDRAM-backed frame_store port
 	input  wire [15:0] sdram_dout,
 	input  wire        sdram_ready,
@@ -262,6 +272,12 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.decode_px_wr_en(decode_px_wr_en),
+		.decode_px_idx(decode_px_idx),
+		.decode_px_luma(decode_px_luma),
+		.decode_px_mb_x(decode_px_mb_x),
+		.decode_px_mb_y(decode_px_mb_y),
+		.decode_px_tag(decode_px_tag),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -335,7 +351,17 @@ module present_core #(
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
 	// Pattern no longer steals cast (old pattern!=0 force caused bars/grid under video).
 	// Pattern=None (0) + no frame → black (nothing “runs” behind cast).
-	wire use_ext = has_frame && !use_frame_store;
+	// Decoded pixels count as content too: once h264_decode_core has emitted any
+	// reconstructed sample the frame store is shown, otherwise the decode overlay
+	// would stay masked until the host happened to deliver a frame.
+	reg decode_px_seen;
+	always @(posedge clk) begin
+		if (reset)
+			decode_px_seen <= 1'b0;
+		else if (decode_px_wr_en)
+			decode_px_seen <= 1'b1;
+	end
+	wire use_ext = (has_frame || decode_px_seen) && !use_frame_store;
 	wire show_pattern = !use_ext && (use_frame_store || (pattern != 2'd0));
 	// --- Align sync/blank to the pixel pipeline -------------------------------
 	// hc -> fr costs 5 clk: store_x registers on ce_pix (2 clk) then frame_store
@@ -433,5 +459,13 @@ module present_core #(
 	assign stat_swap_pending  = swap_pending;
 	assign stat_frame_underruns = frame_underruns;
 	assign stat_frame_sdram_state = frame_sdram_state;
+
+`ifndef DDR_FRAME_STORE
+	// The SDRAM frame_store has no decode overlay port; keep the stream observed
+	// so it cannot silently become a dangling input in that build.
+	(* keep = 1 *) wire _keep_decode_px = |decode_px_idx | |decode_px_luma |
+	                                      |decode_px_mb_x | |decode_px_mb_y |
+	                                      |decode_px_tag;
+`endif
 
 endmodule

@@ -95,7 +95,16 @@ module stream_path #(
 	output logic        fs_wr_en,
 	output logic [15:0] fs_wr_pixel,
 	output logic        fs_wr_reset,
-	output logic        fs_swap
+	output logic        fs_swap,
+
+	// Product decode present stream: reconstructed luma leaving
+	// h264_decode_core, routed to ddr_frame_store by present_core.
+	output wire         decode_px_wr_en,
+	output wire  [7:0]  decode_px_idx,
+	output wire  [7:0]  decode_px_luma,
+	output wire  [7:0]  decode_px_mb_x,
+	output wire  [7:0]  decode_px_mb_y,
+	output wire  [7:0]  decode_px_tag
 );
 
 	wire        si_wr_en;
@@ -547,6 +556,12 @@ module stream_path #(
 		.dpb_rd_valid(core_dpb_rd_valid),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.present_wr_en(decode_px_wr_en),
+		.present_wr_idx(decode_px_idx),
+		.present_wr_luma(decode_px_luma),
+		.present_mb_x(decode_px_mb_x),
+		.present_mb_y(decode_px_mb_y),
+		.present_tag(decode_px_tag),
 		.busy(core_busy),
 		.decode_state(core_decode_state),
 		.current_mb_addr(core_current_mb_addr),
