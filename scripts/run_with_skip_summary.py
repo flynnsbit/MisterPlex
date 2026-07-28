@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "ADVISORY": 2}
+DDR_FRAME_LAYOUT_HPP = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,22 @@ def live_pms_missing_reason() -> str:
     return ", ".join(missing)
 
 
+def cpp_int_const(name: str) -> int:
+    text = DDR_FRAME_LAYOUT_HPP.read_text(encoding="utf-8")
+    m = re.search(rf"\bconstexpr\s+int\s+{re.escape(name)}\s*=\s*([0-9]+)\s*;", text)
+    if not m:
+        raise RuntimeError(f"missing {name} in {DDR_FRAME_LAYOUT_HPP}")
+    return int(m.group(1))
+
+
+def pms_geometry_contract_summary() -> str:
+    coded_w = cpp_int_const("kPlex480pCodedWidth")
+    coded_h = cpp_int_const("kPlex480pCodedHeight")
+    display_w = cpp_int_const("kPlex480pDisplayWidth")
+    display_h = cpp_int_const("kPlex480pDisplayHeight")
+    return f"coded {coded_w}x{coded_h}/display {display_w}x{display_h}"
+
+
 def registry_skips(label: str) -> list[SkipRecord]:
     skips: list[SkipRecord] = []
     if label == "make-unit":
@@ -81,7 +98,7 @@ def registry_skips(label: str) -> list[SkipRecord]:
                     would_catch=(
                         "PMS drift away from the FPGA decoder contract: "
                         "Baseline profile_idc=66, CAVLC, ref=1, no B-slices, "
-                        "coded 624x480/display 618x480"
+                        + pms_geometry_contract_summary()
                     ),
                     source="make-unit coverage inventory",
                 )
@@ -196,10 +213,18 @@ def self_test() -> int:
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
+    inv = summarize(registry_skips("make-unit"))
+    expected_geometry = pms_geometry_contract_summary()
+    if expected_geometry not in inv:
+        print(inv)
+        print(f"missing derived geometry contract: {expected_geometry}")
+        return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
     print("SELFTEST_GREEN_SUMMARY")
     print(green)
+    print("SELFTEST_INVENTORY_SUMMARY")
+    print(inv)
     return 0
 
 

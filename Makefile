@@ -110,7 +110,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --self-test
+	python3 $(ROOT)/scripts/check_pipe_exit_safety.py
 	$(ROOT)/scripts/check_define_parity.py
+	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
