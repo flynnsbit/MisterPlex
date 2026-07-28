@@ -65,6 +65,11 @@ module slice_hdr_parser (
 	output reg  signed [7:0] residual_place_dc,
 	output reg  [5:0]  residual_place_qp,
 	(* keep = 1 *) output reg signed [15:0] residual_place_coeff [0:15],
+	output reg  [9:0]  first_mb_residual_bit_offset,
+	output reg  [3:0]  first_mb_cbp_luma,
+	output reg  [1:0]  first_mb_cbp_chroma,
+	output reg  [15:0] first_mb_i4_pred_mode_flags,
+	output reg  [47:0] first_mb_i4_rem_modes,
 	output reg         busy
 );
 
@@ -95,6 +100,7 @@ module slice_hdr_parser (
 	reg [4:0]  i4_i;       // 0..15 I_NxN pred-mode index
 	reg [1:0]  i4_sub;     // 0=flag, 1..3=rem bits
 	reg        i4_need_rem;
+	reg [2:0]  i4_rem_acc;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
@@ -171,6 +177,36 @@ module slice_hdr_parser (
 			else                    sat8 = v[7:0];
 		end
 	endfunction
+
+	function automatic [9:0] bit_offset_now;
+		input [5:0] by;
+		input [2:0] bp;
+		begin
+			bit_offset_now = {by, 3'd0} + {7'd0, (3'd7 - bp)};
+		end
+	endfunction
+
+	function automatic [5:0] cbp_intra_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_intra_map = 6'd47; 6'd1: cbp_intra_map = 6'd31; 6'd2: cbp_intra_map = 6'd15; 6'd3: cbp_intra_map = 6'd0;
+			6'd4: cbp_intra_map = 6'd23; 6'd5: cbp_intra_map = 6'd27; 6'd6: cbp_intra_map = 6'd29; 6'd7: cbp_intra_map = 6'd30;
+			6'd8: cbp_intra_map = 6'd7; 6'd9: cbp_intra_map = 6'd11; 6'd10: cbp_intra_map = 6'd13; 6'd11: cbp_intra_map = 6'd14;
+			6'd12: cbp_intra_map = 6'd39; 6'd13: cbp_intra_map = 6'd43; 6'd14: cbp_intra_map = 6'd45; 6'd15: cbp_intra_map = 6'd46;
+			6'd16: cbp_intra_map = 6'd16; 6'd17: cbp_intra_map = 6'd3; 6'd18: cbp_intra_map = 6'd5; 6'd19: cbp_intra_map = 6'd10;
+			6'd20: cbp_intra_map = 6'd12; 6'd21: cbp_intra_map = 6'd19; 6'd22: cbp_intra_map = 6'd21; 6'd23: cbp_intra_map = 6'd26;
+			6'd24: cbp_intra_map = 6'd28; 6'd25: cbp_intra_map = 6'd35; 6'd26: cbp_intra_map = 6'd37; 6'd27: cbp_intra_map = 6'd42;
+			6'd28: cbp_intra_map = 6'd44; 6'd29: cbp_intra_map = 6'd1; 6'd30: cbp_intra_map = 6'd2; 6'd31: cbp_intra_map = 6'd4;
+			6'd32: cbp_intra_map = 6'd8; 6'd33: cbp_intra_map = 6'd17; 6'd34: cbp_intra_map = 6'd18; 6'd35: cbp_intra_map = 6'd20;
+			6'd36: cbp_intra_map = 6'd24; 6'd37: cbp_intra_map = 6'd6; 6'd38: cbp_intra_map = 6'd9; 6'd39: cbp_intra_map = 6'd22;
+			6'd40: cbp_intra_map = 6'd25; 6'd41: cbp_intra_map = 6'd32; 6'd42: cbp_intra_map = 6'd33; 6'd43: cbp_intra_map = 6'd34;
+			6'd44: cbp_intra_map = 6'd36; 6'd45: cbp_intra_map = 6'd40; 6'd46: cbp_intra_map = 6'd38; 6'd47: cbp_intra_map = 6'd41;
+			default: cbp_intra_map = 6'd0;
+			endcase
+		end
+	endfunction
+	wire [5:0] cbp_intra_now = cbp_intra_map(ue_val[5:0]);
 
 	function automatic is_p_slice_type;
 		input [7:0] t;
@@ -328,6 +364,11 @@ module slice_hdr_parser (
 			residual_place_t1 <= 2'd0;
 			residual_place_dc <= 8'sd0;
 			residual_place_qp <= 6'd0;
+			first_mb_residual_bit_offset <= 10'd0;
+			first_mb_cbp_luma <= 4'd0;
+			first_mb_cbp_chroma <= 2'd0;
+			first_mb_i4_pred_mode_flags <= 16'd0;
+			first_mb_i4_rem_modes <= 48'd0;
 			place_csum_r <= 8'd0;
 			place_dc_r <= 8'sd0;
 			begin : rst_coeff
@@ -366,6 +407,11 @@ module slice_hdr_parser (
 			tzbits <= 0;
 			runcode <= 0;
 			runbits <= 0;
+			i4_i <= 5'd0;
+			i4_sub <= 2'd0;
+			i4_need_rem <= 1'b0;
+			i4_rem_acc <= 3'd0;
+			cbp_me <= 6'd0;
 			place_did <= 0;
 			csum_i <= 0;
 			csum_acc <= 0;
@@ -388,6 +434,11 @@ module slice_hdr_parser (
 			residual_dc <= 0;
 			// residual_csum intentionally NOT cleared
 			residual_place_pulse <= 1'b0;
+			first_mb_residual_bit_offset <= 10'd0;
+			first_mb_cbp_luma <= 4'd0;
+			first_mb_cbp_chroma <= 2'd0;
+			first_mb_i4_pred_mode_flags <= 16'd0;
+			first_mb_i4_rem_modes <= 48'd0;
 			begin : clr_coeff_cap
 				integer ci;
 				for (ci = 0; ci < 16; ci = ci + 1)
@@ -416,6 +467,11 @@ module slice_hdr_parser (
 					residual_tc <= 0;
 					residual_t1 <= 0;
 					residual_dc <= 0;
+					first_mb_residual_bit_offset <= 10'd0;
+					first_mb_cbp_luma <= 4'd0;
+					first_mb_cbp_chroma <= 2'd0;
+					first_mb_i4_pred_mode_flags <= 16'd0;
+					first_mb_i4_rem_modes <= 48'd0;
 					// residual_csum sticky held until ST_PLACE overwrites
 					disable_deblocking_filter_idc <= 0;
 					slice_alpha_c0_offset_div2 <= 0;
@@ -604,7 +660,9 @@ module slice_hdr_parser (
 					if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
 						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 					end else if (ue_val == 16'd0) begin
-						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0;
+						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0; i4_rem_acc <= 3'd0;
+						first_mb_i4_pred_mode_flags <= 16'd0;
+						first_mb_i4_rem_modes <= 48'd0;
 						st <= ST_I4MODE;
 					end else
 						st <= ST_DONE;
@@ -628,6 +686,7 @@ module slice_hdr_parser (
 					if (i4_sub == 2'd0) begin
 						// prev_intra4x4_pred_mode_flag
 						if (bitv) begin
+							first_mb_i4_pred_mode_flags[i4_i[3:0]] <= 1'b1;
 							// flag=1: mode=pred, next block
 							if (i4_i >= 5'd15) begin
 								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
@@ -636,11 +695,14 @@ module slice_hdr_parser (
 							end
 						end else begin
 							// flag=0: need 3 rem bits
+							i4_rem_acc <= 3'd0;
 							i4_sub <= 2'd1;
 						end
 					end else begin
 						// consuming rem bits 1..3
+						i4_rem_acc <= {i4_rem_acc[1:0], bitv};
 						if (i4_sub >= 2'd3) begin
+							first_mb_i4_rem_modes[i4_i * 3 +: 3] <= {i4_rem_acc[1:0], bitv};
 							i4_sub <= 0;
 							if (i4_i >= 5'd15) begin
 								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
@@ -663,6 +725,8 @@ module slice_hdr_parser (
 			ST_CBP: begin
 				// ue(coded_block_pattern me) — me==3 → cbp=0 (no qpδ)
 				cbp_me <= ue_val[5:0];
+				first_mb_cbp_luma <= cbp_intra_now[3:0];
+				first_mb_cbp_chroma <= cbp_intra_now[5:4];
 				if (ue_val == 16'd3) begin
 					// cbp=0: no residual (shouldn't happen on real first MB)
 					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
@@ -672,6 +736,7 @@ module slice_hdr_parser (
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
+				first_mb_residual_bit_offset <= bit_offset_now(bbyte, bpos);
 				tcode <= 0;
 				tbits <= 0;
 				st <= ST_TOK_BIT;

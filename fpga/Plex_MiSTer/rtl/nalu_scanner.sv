@@ -1,5 +1,6 @@
 // Phase 3.3–3.3d: annex-B scan + typed counts + RBSP capture (SPS/PPS/slice hdr).
-// EPB (00 00 03) stripped. Slice capture stores first 32 bytes then ends parse.
+// EPB (00 00 03) stripped. Slice capture stores first 128 bytes for product
+// syntax/residual staging.
 
 module nalu_scanner (
 	input  wire        clk,
@@ -44,7 +45,7 @@ module nalu_scanner (
 	reg       data_valid;
 	reg [1:0] cap_tgt; // 0 none, 1 sps, 2 pps, 3 slice
 	reg [1:0] epb_z;
-	reg [5:0] cap_len;
+	reg [7:0] cap_len;
 	reg       sl_idr_r;
 	reg       sl_ref_r;
 	reg       sl_done; // slice header already ended (still draining NAL)
@@ -52,7 +53,7 @@ module nalu_scanner (
 	wire [4:0] nal_t = rd_data[4:0];
 	// Slice header + first mb_type fit in ~48 bytes of RBSP
 	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
-	                       !(cap_tgt == 2'd3 && cap_len >= 6'd48);
+	                       !(cap_tgt == 2'd3 && cap_len >= 8'd128);
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -170,8 +171,7 @@ module nalu_scanner (
 							sl_cap_en <= 1'b1; sl_cap_data <= 8'h00;
 						end
 						cap_len <= cap_len + 1'd1;
-						// slice: end after storing 32nd byte
-						if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
+						if (cap_tgt == 2'd3 && cap_len == 8'd127) begin
 							sl_cap_end <= 1'b1;
 							sl_is_idr  <= sl_idr_r;
 							sl_nal_ref_idc_nonzero <= sl_ref_r;
@@ -206,7 +206,7 @@ module nalu_scanner (
 							end
 							cap_len <= cap_len + 1'd1;
 							epb_z <= 0;
-							if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
+							if (cap_tgt == 2'd3 && cap_len == 8'd127) begin
 								sl_cap_end <= 1'b1;
 								sl_is_idr  <= sl_idr_r;
 								sl_nal_ref_idc_nonzero <= sl_ref_r;

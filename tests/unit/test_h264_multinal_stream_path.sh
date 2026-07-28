@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+echo "Scope: stream_path multi-NAL product RTL sim over one residual IDR+P fixture and one 12-frame P16 fixture; checks parsed residual/DPB/MC liveness, not HDMI output"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
 VERILATOR_RC=$?
@@ -41,6 +42,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/sps_parser.sv \
   fpga/Plex_MiSTer/rtl/pps_parser.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
+  fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv \
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
@@ -76,6 +79,8 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/sps_parser.sv \
   fpga/Plex_MiSTer/rtl/pps_parser.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
+  fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv \
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \

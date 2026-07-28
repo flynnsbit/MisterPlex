@@ -19,6 +19,11 @@ RTL_DIR = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 PRODUCT_TOP = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
 BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
 PRODUCT_ROOT = "emu"
+REQUIRED_PRODUCT_REACHABLE = {
+    "h264_cavlc_residual_block",
+    "h264_luma4x4_residual_source",
+    "h264_intra4x4_mode_deriver",
+}
 
 
 @dataclass(frozen=True)
@@ -150,6 +155,12 @@ def reachable_from(root: str, graph: dict[str, set[str]]) -> set[str]:
 
 
 def main() -> int:
+    print(
+        "Scope: all tracked fpga/Plex_MiSTer/rtl modules must be reachable from "
+        f"product root {PRODUCT_ROOT}, unless explicitly bench-only; "
+        "CAVLC residual and intra4x4 mode producers are mandatory product modules.",
+        flush=True,
+    )
     rtl_paths = git_files("fpga/Plex_MiSTer/rtl")
     paths = rtl_paths + [PRODUCT_TOP]
     modules = parse_modules(paths)
@@ -171,6 +182,13 @@ def main() -> int:
         fail(
             "bench-only modules are now reachable from product root; remove the declaration: "
             + ", ".join(reachable_bench)
+        )
+
+    missing_required = sorted(name for name in REQUIRED_PRODUCT_REACHABLE if name not in reachable)
+    if missing_required:
+        fail(
+            "required product modules are not reachable from "
+            f"{PRODUCT_ROOT}: " + ", ".join(missing_required)
         )
 
     missing = sorted(name for name in rtl_modules if name not in reachable and name not in bench_only)
