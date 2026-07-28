@@ -278,6 +278,12 @@ def check_phase_a_surface() -> None:
             f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
             "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries.",
         )
+    check(
+        "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" in strings,
+        "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] with "
+        "option order Logo/Black/Screensaver/LastFrame; update libmisterplex/osd_menu.hpp "
+        "and its red-check if the CONF_STR layout intentionally changes.",
+    )
     for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
         check(
             label in strings and "J1," in strings,

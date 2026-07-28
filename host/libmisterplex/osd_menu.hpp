@@ -58,6 +58,7 @@ constexpr int kOsdAvOffsetStepMs = 20;
 // THIS clock; a value tuned against the old submitted-byte clock is not
 // comparable, because it silently absorbed that session's ring depth.
 constexpr int kOsdAvOffsetDefaultMs = 0;
+constexpr uint16_t kOsdIdleMask = 0xC000;
 
 struct ContentResolution {
     int width = 320;
@@ -121,6 +122,21 @@ constexpr uint16_t kOsdOwnedMask = 0xC3DA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {
     return ((a ^ b) & kOsdOwnedMask) != 0;
+}
+
+inline bool osdIdleChanged(uint16_t a, uint16_t b) {
+    return ((a ^ b) & kOsdIdleMask) != 0;
+}
+
+inline bool shouldApplyOsdIdle(bool osdSeenBefore, uint16_t previousWord, uint16_t word) {
+#ifdef OSD_MENU_FAULT_APPLY_INITIAL_IDLE
+    (void)osdSeenBefore;
+    (void)previousWord;
+    (void)word;
+    return true;
+#else
+    return osdSeenBefore && osdIdleChanged(previousWord, word);
+#endif
 }
 
 } // namespace misterplex
