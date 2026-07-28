@@ -1175,3 +1175,112 @@ modules. Retiring the stub **without relocating them under `h264_decode_core`
 in the same change** would cut emu-reachable decode capability from 23 to 15
 and regress condition 4 while condition 3 goes green. The two conditions must
 be satisfied by one change, not by two independent ones.
+
+---
+
+## 16. Failure mode 3 — elaborated, then optimized away
+
+W-FIT-O5's Analysis & Synthesis run on `w-decode-hour27` `2f165ed` is the most
+uncomfortable result this audit has recorded, because **fit conditions 1 and 2
+were both green at that commit**:
+
+```
+cond 1  --root emu --require h264_decode_core   rc=0   GREEN
+cond 2  check_qip_coverage.py                   rc=0   GREEN
+cond 4  Quartus A&S, 825 entity rows
+        h264_decode_core   ABSENT   ELABORATED_BUT_OPTIMIZED_AWAY
+        decode_stub        PRESENT  instances=1
+```
+
+The instantiation at `stream_path.sv:484` is unconditional — no generate, no
+ifdef. Source reachability is **correct**, and a fifth decoder-less bitstream
+would have been fitted on it.
+
+### 16.1 What source can still see
+
+Reachability cannot see pruning, but it can see the *reason the synthesiser is
+entitled to prune*: **nothing reads what the instance drives.** On the merge
+base all thirteen output nets of `h264_decode_core` are consumed by exactly one
+expression — a reduction wire `_keep` at `stream_path.sv:608` — and `_keep` is
+read by nobody. A keep-alive that is never read keeps nothing. Quartus says the
+same thing in its own words at `h264_decode_core.sv:997`:
+
+```
+Warning (10036): object "_keep_decode_core_inputs" assigned a value but never read
+```
+
+`scripts/check_dead_logic_pruning.py` asks exactly one question: **can this
+instance influence the design at all?** It answers in about two seconds, and on
+the merge base it agrees with the four-minute A&S run on both modules:
+
+| module | this gate | Quartus A&S |
+|---|---|---|
+| `h264_decode_core` | rc=1, 13/13 output nets dead, `const_tied_inputs=23/53` | ABSENT, optimized away |
+| `decode_stub` | rc=0, 10/10 output nets live | PRESENT, instances=1 |
+
+Two modules, same commit, opposite verdicts, both confirmed by the stronger
+oracle. That is the red/green — it is not synthetic.
+
+### 16.2 The remedy, named precisely
+
+The stub is alive because its outputs leave the module: `wr_en / wr_pixel /
+wr_reset_ptr / swap_req` connect to `fs_wr_en / fs_wr_pixel / fs_wr_reset /
+fs_swap`, which are **ports of `stream_path`** feeding the frame store. The
+core's outputs reach no port and no sibling instance.
+
+So the fix is not to wire the instantiation — it is already wired. **The core
+has to drive the same frame-store ports the stub drives.** Its inputs are also
+constant-tied at `stream_path.sv:447-459` (`core_rbsp_byte` all `8'd0`, recon
+and residual constant), 23 of 53 by this gate's count, which will keep it
+collapsing even after the outputs are consumed.
+
+### 16.3 Bias, and the two defects this gate had
+
+Bias is deliberately **toward calling a net live**: a false RED would block
+another worker's real work on my say-so, and A&S is only four minutes away as
+the real oracle. Unknown constructs count as consumption. The cost is that this
+gate can miss dead logic; it must not invent it.
+
+Both defects it had while being written produced a *confident* wrong answer,
+and both are now regression cases:
+
+1. **`outputs=0` was scored as deadness.** The first port parser used one
+   greedy regex per direction keyword, whose name group swallowed every
+   following port across the commas — so `h264_decode_core` reported **zero**
+   outputs and the gate failed it for having no live outputs. A true rc=1 about
+   nothing, in the gate written to police exactly that. Verilog direction
+   persists across comma-separated items, so the list has to be split first and
+   the direction carried forward. `outputs=0` is now a `Scope: 0` and returns
+   **rc=2 REFUSED**.
+2. **`if (` registered as a sibling instantiation.** Sibling instances were
+   detected with a bare `identifier (` regex, so nearly every net in the file
+   became a "sink" and `h264_decode_core` came out **GREEN**, contradicting
+   Quartus. Only a name that is actually a module in the design counts now.
+   Mutation-proved: restoring the permissive regex flips a dead module to green
+   and the suite fails.
+
+### 16.4 Declared limits
+
+- It reasons inside the instantiating module only; a net escaping through a
+  parent port is called live without asking whether the parent is itself dead.
+  The trunk gate covers orphaned parents.
+- It does not evaluate expressions: `assign x = 1'b0 & y;` reads as consuming y.
+- `(* keep *)` / `(* preserve *)` are honoured as live sinks because Quartus
+  honours them — a stale keep attribute will therefore hide deadness.
+- Partial deadness is reported but does not fail. If 1 of 20 outputs is live,
+  Quartus keeps only the cone feeding it and prunes the rest; the gate prints
+  every `DEAD_OUTPUT_NET` so this is visible, but only a **wholly** dead
+  instance is a hard fail.
+- **This is a pre-filter, not an oracle.** `scripts/check_prefit_elaboration.sh`
+  (A&S, 4m23s) and post-fit hierarchy remain the deciding evidence.
+
+### 16.5 The necessary conditions, updated
+
+1. compiled — in a tracked `.qip` (`check_qip_coverage.py`)
+2. instantiated — reachable from `emu` (`check_rtl_module_instantiations.py`)
+3. **able to influence the design — outputs reach a live sink** (this gate) ← new
+4. under the *product* decode subtree, not a masking lineage
+5. survives A&S, then survives the fitter (W-FIT's oracles)
+
+Conditions 1 and 2 were both satisfied by a module that is not in the design.
+No single one of these is sufficient, and they are cheapest in this order.
