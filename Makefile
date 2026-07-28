@@ -19,7 +19,7 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.h264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -27,6 +27,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_main_guard
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_pms_timeline
+	$(ROOT)/build/test_companion_eof
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
@@ -111,6 +112,13 @@ $(ROOT)/build/test_pms_timeline: $(ROOT)/tests/unit/test_pms_timeline.cpp \
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
 		$(ROOT)/tests/unit/test_pms_timeline.cpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
+
+$(ROOT)/build/test_companion_eof: $(ROOT)/tests/unit/test_companion_eof.cpp \
+		$(ROOT)/arm/misterplexd/companion.cpp \
+		$(ROOT)/arm/misterplexd/companion.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
+		$(ROOT)/tests/unit/test_companion_eof.cpp $(ROOT)/arm/misterplexd/companion.cpp
 
 # Native host daemon for local smoke
 MPLEX_SRC := \

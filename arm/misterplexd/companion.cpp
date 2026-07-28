@@ -355,10 +355,19 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
-    // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
-    // time so a plant seek + step is not clobbered by demux short-read teardown.
-    // Natural EOF with content uses "ended" and may update time to duration.
+    // Natural EOF with no auto-next comes back through setState("stopped", duration,
+    // duration) after the PMS side has already been flushed. Converge it onto the
+    // explicit-stop local state too; otherwise wantPlay_/pendingKey_ keep polls in
+    // fullScreenVideo/buffering forever even though playback ended.
     if (state == "stopped" && wantPlay_) {
+        const int64_t knownDur = durationMs > 0 ? durationMs : durationMs_;
+        const int64_t eofSlackMs = 2000;
+        if (knownDur > 0 && timeMs >= knownDur - eofSlackMs) {
+            clearMediaLocked();
+            return;
+        }
+        // Empty/failed session end (no frames): player reports stopped@0. Keep scrubber
+        // time so a plant seek + step is not clobbered by demux short-read teardown.
         state_ = state;
         if (durationMs > 0)
             durationMs_ = durationMs;
@@ -508,8 +517,7 @@ void Companion::stagePlay(const PlayRequest& req) {
         serverMachineId_ = req.serverMachineId;
 }
 
-void Companion::clearMedia() {
-    std::lock_guard<std::mutex> lock(mu_);
+void Companion::clearMediaLocked() {
     // Drop media binding so polls are a clean idle (no key/container).
     // Web: video state=stopped WITH key still idles the cast player and freezes scrubber.
     pendingKey_.clear();
@@ -527,6 +535,11 @@ void Companion::clearMedia() {
     // fresh mirror. Pure stopped polls idle the dialog — keep buffering@navigation.
     if (castBound_)
         prePlayHold_ = true;
+}
+
+void Companion::clearMedia() {
+    std::lock_guard<std::mutex> lock(mu_);
+    clearMediaLocked();
 }
 
 bool Companion::start() {
