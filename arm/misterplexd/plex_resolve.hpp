@@ -79,7 +79,7 @@ struct PlexTranscodeProfile {
 };
 
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
-// 480p is the server-negotiation half of the new 640x480 pipeline.
+// 480p requests 624x480 coded (39 MB columns) to match the proven DDR frame-store geometry.
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
 
 // Match by profile name ("240p"/"480p") or exact WxH resolution.

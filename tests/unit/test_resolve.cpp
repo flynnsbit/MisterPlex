@@ -61,7 +61,7 @@ int main() {
     WeakLadder w480;
     CHECK(applyPlexTranscodeProfile("480p", w480));
     CHECK(w480.profileName == "480p");
-    CHECK(w480.videoResolution == "640x480");
+    CHECK(w480.videoResolution == "624x480");
     CHECK(w480.maxVideoBitrateKbps == 2500);
     CHECK(w480.videoQuality == 60);
     CHECK(w480.videoCodec == "h264");
@@ -72,14 +72,14 @@ int main() {
     CHECK(validateWeakLadder(w480));
     // Resolution alias selects the 480p profile too.
     WeakLadder byRes;
-    CHECK(applyPlexTranscodeProfile("640x480", byRes));
+    CHECK(applyPlexTranscodeProfile("624x480", byRes));
     CHECK(byRes.profileName == "480p");
 
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
                                    "sess480", 1500, w480);
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
-    CHECK(start480.find("videoResolution=640x480") != std::string::npos);
+    CHECK(start480.find("videoResolution=624x480") != std::string::npos);
     CHECK(start480.find("maxVideoBitrate=2500") != std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
@@ -95,10 +95,10 @@ int main() {
     CHECK(extra480.find("name=video.profile&list=baseline") != std::string::npos);
     CHECK(extra480.find("name=video.level&value=30") != std::string::npos);
     CHECK(extra480.find("scope=videoTranscodeTarget&scopeName=h264") != std::string::npos);
-    CHECK(extra480.find("name=video.width&value=640") != std::string::npos);
+    CHECK(extra480.find("name=video.width&value=624") != std::string::npos);
     CHECK(extra480.find("name=video.height&value=480") != std::string::npos);
     const auto caps480 = plexClientCapabilities(w480);
-    CHECK(caps480.find("videoDecoders=h264{profile:baseline&resolution:640x480&level:30}") !=
+    CHECK(caps480.find("videoDecoders=h264{profile:baseline&resolution:624x480&level:30}") !=
           std::string::npos);
     const auto headers480 = plexFfmpegHeaders("sess480", "tok", w480);
     CHECK(headers480.find("X-Plex-Client-Profile-Name: MiSTerPlex") != std::string::npos);
