@@ -115,17 +115,18 @@ int main() {
     // the rawvideo pipe open without producing another full frame. The media loop
     // must classify that as terminal EOF once it is past known duration with no
     // partial frame in flight; otherwise timeline polls stay playing@duration.
-    CHECK(!knownDurationEofStall(0, 30021, 29900, 0, 1200));
-    CHECK(!knownDurationEofStall(0, 30021, 31500, 128, 1200));
-    CHECK(!knownDurationEofStall(1260000, 1286942, 27050, 0, 200));
-    CHECK(!knownDurationEofStall(0, 0, 600000, 0, 600000));
-    CHECK(!knownDurationEofStall(0, -1, 600000, 0, 600000));
-    CHECK(!knownDurationEofStall(0, 60000, 59000, 0, 5000));
-    CHECK(!knownDurationEofStall(0, 60000, 61000, 0, 999));
-    CHECK(!knownDurationEofStall(0, 60000, 61200, 0, 1200));
-    CHECK(!knownDurationEofStall(0, 60000, 64000, 0, 4000));
-    CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000));
-    CHECK(knownDurationEofStall(1260000, 1286942, 33050, 0, 6000));
+    CHECK(!knownDurationEofStall(0, 30021, 29900, 0, 1200, 1200));
+    CHECK(!knownDurationEofStall(0, 30021, 31500, 128, 1200, 1200));
+    CHECK(!knownDurationEofStall(1260000, 1286942, 27050, 0, 200, 200));
+    CHECK(!knownDurationEofStall(0, 0, 600000, 0, 600000, 600000));
+    CHECK(!knownDurationEofStall(0, -1, 600000, 0, 600000, 600000));
+    CHECK(!knownDurationEofStall(0, 60000, 59000, 0, 5000, 5000));
+    CHECK(!knownDurationEofStall(0, 60000, 61000, 0, 999, 999));
+    CHECK(!knownDurationEofStall(0, 60000, 61200, 0, 1200, 1200));
+    CHECK(!knownDurationEofStall(0, 60000, 64000, 0, 4000, 4000));
+    CHECK(!knownDurationEofStall(0, 60000, 66000, 0, 6000, 200));
+    CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000, 6000));
+    CHECK(knownDurationEofStall(1260000, 1286942, 33050, 0, 6000, 6000));
 
     // --- rawvideo terminal-signal inventory ---
     CHECK(rawVideoTerminalSignal(true, false, false, false, false));  // explicit stop/seek

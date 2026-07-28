@@ -76,13 +76,14 @@ inline bool rawVideoTerminalSignal(bool explicitStopOrSeek, bool readZero, bool 
 // producing rawvideo, but leave the pipe open. Only fire with no partial frame:
 // a partial frame is treated as a real short-read so diagnostics can report it.
 inline bool knownDurationEofStall(int64_t startMs, int64_t durationMs, int64_t elapsedMs,
-                                  int64_t partialFrameBytes, int64_t noVideoMs,
+                                  int64_t partialFrameBytes, int64_t noVideoMs, int64_t noAudioMs,
                                   int64_t graceMs = 5000) {
     if (durationMs <= 0 || elapsedMs < 0 || partialFrameBytes != 0)
         return false;
     if (graceMs < 0)
         graceMs = 0;
-    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs;
+    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs &&
+           noAudioMs >= graceMs;
 }
 
 } // namespace misterplex

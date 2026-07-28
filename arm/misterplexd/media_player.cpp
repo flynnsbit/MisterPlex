@@ -2655,6 +2655,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
         std::chrono::steady_clock::time_point lastVideoByte = t0;
+        std::chrono::steady_clock::time_point lastAudioByte = t0;
+        int64_t lastAudioBytesForEof = audioBytes_.load();
         bool eofStallLogged = false;
         size_t got = 0;
         while (!stop_.load()) {
@@ -2724,8 +2726,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                 now - lastVideoByte)
                                 .count();
+                        const int64_t audioNow = audioBytes_.load();
+                        if (audioNow > lastAudioBytesForEof) {
+                            lastAudioBytesForEof = audioNow;
+                            lastAudioByte = now;
+                        }
+                        const bool audioSeen = lastAudioBytesForEof > 0;
+                        const int64_t noAudioMs =
+                            (!wantAudio || !audioSeen)
+                                ? noVideoMs
+                                : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      now - lastAudioByte)
+                                      .count();
                         const bool knownDurationStall = misterplex::knownDurationEofStall(
-                            startMs, durationMs, elapsedMs, static_cast<int64_t>(got), noVideoMs);
+                            startMs, durationMs, elapsedMs, static_cast<int64_t>(got), noVideoMs,
+                            noAudioMs);
                         if (misterplex::rawVideoTerminalSignal(
                                 /*explicitStopOrSeek=*/false, /*readZero=*/false,
                                 /*readError=*/false, /*shortRead=*/false,
@@ -2736,7 +2751,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 log("media: known-duration EOF after rawvideo stall elapsed_ms=" +
                                     std::to_string(elapsedMs) +
                                     " duration_ms=" + std::to_string(durationMs) +
-                                    " no_video_ms=" + std::to_string(noVideoMs));
+                                    " no_video_ms=" + std::to_string(noVideoMs) +
+                                    " no_audio_ms=" + std::to_string(noAudioMs));
                             }
                             break;
                         }
