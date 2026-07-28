@@ -233,4 +233,14 @@ REMOTE
     ;;
 esac
 
+# --- Provenance stamp: always report what is now on the device ---
+# Every device measurement should open with the resident RBF md5.
+# This makes attribution unambiguous regardless of who measures next.
+RESIDENT_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf' 2>/dev/null | awk '{print $1}' || echo "UNREADABLE")
+echo ""
+echo "═══════════════════════════════════════════════════════"
+echo " PROVENANCE: resident RBF md5 = ${RESIDENT_MD5}"
+echo " Deploy time (UTC): $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "═══════════════════════════════════════════════════════"
+echo ""
 echo "Done."
