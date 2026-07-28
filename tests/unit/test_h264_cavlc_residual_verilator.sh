@@ -7,6 +7,8 @@ TOP="$ROOT/tests/rtl/h264_cavlc_residual_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_cavlc_residual_tb.cpp"
 OSS_CAD_SUITE="${OSS_CAD_SUITE:-$HOME/.local/oss-cad-suite-20260726}"
 
+echo "Scope: RTL CAVLC residual block plus luma4x4 source; 16/16 luma residual blocks for real IDR MB0 (1/300 MBs in 320x240 fixture) and synthetic table coverage"
+
 set +e
 VERILATOR_VERSION="$(OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --version 2>&1)"
 VERILATOR_RC=$?
@@ -16,12 +18,8 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; h264_cavlc_residual real RTL simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite-20260726 or set VERILATOR=/path/to/verilator.
 SKIP
-  if [[ "${ALLOW_MISSING_VERILATOR:-0}" != "1" ]]; then
-    echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation." >&2
-    echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
-    exit 3
-  fi
-  exit 0
+  echo "RTL SIM SKIP-NOT-PASS: Verilator missing; returning rc=77, not PASS." >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
