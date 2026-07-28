@@ -3723,3 +3723,35 @@ observable reported twice**, not two independent passes.
 
 `disp_bank` never toggles — and that remains **UNSCORED, not FAILED**: the idle
 logo is static, so there is no second frame to swap to. It needs active playback.
+
+### 52.7 My own capture gate false-greened on the black screen
+
+When the bare `load_core` produced a flat black screen, `check_capture_lock.py`
+scored it **LOCKED, rc=0**:
+```
+f_06.png  luma 7.00  std 0.00  lag1 1.000  lag4 1.000  lag16 1.000  flat 100.0%  LOCKED
+```
+A uniform frame **maximises both metrics**: autocorrelation is 1.000 at every lag
+and 100% of blocks are flat. The gate was built to separate snow from content and
+I never considered the degenerate direction — so "no picture at all" scored better
+than real content (lag16 0.798, flat 91.6%).
+
+Fixed: degeneracy is tested **first**, before either structure test, with its own
+verdict `FLAT` and exit code **3**. Proven in all four directions, exit codes read
+directly and never through a pipe:
+
+| input | verdict | rc |
+|---|---|---|
+| flat no-signal `f_06.png` | FLAT | **3** |
+| snow `transition_frame_0202` | SNOW | **1** |
+| content `content_midpoint_0500` | LOCKED | **0** |
+| real Plex logo `03-plex.png` | LOCKED | **0** |
+
+I first "verified" the snow case as rc=0 because I read `$?` through `tail -3` —
+my own standing rule, broken in the act of enforcing another one. The pipe
+returns the exit status of the last command. It is worth re-stating because it
+produced a wrong PASS in the same session in which I documented the rule.
+
+**Generalisation, since this is now the third instance:** a metric defended at one
+end can be trivially satisfied at the other. Ask of every threshold: *what input
+maximises this without being the thing I am trying to detect?*
