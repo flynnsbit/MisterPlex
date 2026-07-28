@@ -674,6 +674,13 @@ module h264_decode_core #(
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
     wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip;
+    // intra_mb_x_r/intra_mb_y_r only take the new macroblock position on the
+    // edge AFTER mb_start, but the neighbour-context store and the prediction
+    // front-end both latch their state ON mb_start.  Feeding them the stale
+    // register shifts every macroblock's neighbours one position to the left,
+    // which is fatal once the raster sweep walks a whole frame.
+    wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
+    wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
@@ -723,8 +730,8 @@ module h264_decode_core #(
     ) u_product_intra_nb_ctx (
         .clk(clk),
         .reset(reset),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
@@ -765,8 +772,8 @@ module h264_decode_core #(
         .mb_start(product_intra_mb_start),
         .mb_type(product_intra_mb_type),
         .mb_qp_y(luma4x4_qp),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .i16_pred_mode(product_intra_i16_mode),
         .block_valid(luma4x4_valid),
         .block_index(luma4x4_idx),
