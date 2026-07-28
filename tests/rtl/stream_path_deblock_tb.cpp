@@ -1,6 +1,7 @@
 #include "Vstream_path_deblock_tb.h"
 #include "verilated.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdint>
@@ -143,6 +144,25 @@ EdgeOut pipeEdge(Vstream_path_deblock_tb& dut, const EdgeIO& e, bool chroma, int
 }
 bool same(const EdgeOut& a, const EdgeOut& b) { return a.p2==b.p2 && a.p1==b.p1 && a.p0==b.p0 && a.q0==b.q0 && a.q1==b.q1 && a.q2==b.q2; }
 
+int countModified(const EdgeIO& in, const EdgeOut& out) {
+    int n = 0;
+    for (int i = 0; i < 4; ++i) {
+        n += (out.p2[i] != in.p2[i]);
+        n += (out.p1[i] != in.p1[i]);
+        n += (out.p0[i] != in.p0[i]);
+        n += (out.q0[i] != in.q0[i]);
+        n += (out.q1[i] != in.q1[i]);
+        n += (out.q2[i] != in.q2[i]);
+    }
+    return n;
+}
+
+int countFrameDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    int n = 0;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) n += (a[i] != b[i]);
+    return n;
+}
+
 EdgeIO gatherV(const std::vector<uint8_t>& f, int x, int y, int w = 16) {
     EdgeIO e{};
     for (int r=0;r<4;++r) { int yy=y+r; e.p3[r]=f[yy*w+x-4]; e.p2[r]=f[yy*w+x-3]; e.p1[r]=f[yy*w+x-2]; e.p0[r]=f[yy*w+x-1]; e.q0[r]=f[yy*w+x]; e.q1[r]=f[yy*w+x+1]; e.q2[r]=f[yy*w+x+2]; e.q3[r]=f[yy*w+x+3]; }
@@ -249,7 +269,8 @@ int main(int argc, char** argv) {
         feedBytes();
         runUntilFrames(expectVclCount, 1000000);
 
-        std::cout << "stream_path raw: input_nals=" << inputNalCount << " bytes=" << bytes.size()
+        std::ostringstream streamRaw;
+        streamRaw << "stream_path raw: input_nals=" << inputNalCount << " bytes=" << bytes.size()
                   << " bytes_in=" << dut.bytes_in << " bytes_seen=" << dut.bytes_seen
                   << " nalu_count=" << dut.nalu_count << " sps=" << int(dut.sps_count)
                   << " pps=" << int(dut.pps_count) << " idr=" << int(dut.idr_count)
@@ -310,12 +331,17 @@ int main(int argc, char** argv) {
         dut.use_stream_qp=0; dut.db_qp_avg=residualQp;
 
         std::vector<uint8_t> loopRef = reconY;
+        int scopeFilteredSamples = 0;
+        int scopeLumaBs4 = 0;
+        int scopeChromaBs4 = 0;
+        int scopeRealFixtureModified = 0;
         bool foundChanged = false; int chosenX = -1, chosenY = -1; int chosenSampleX = -1, chosenSampleY = -1; EdgeOut chosenOut{};
         for (int x : {4,8,12}) for (int y : {0,4,8,12}) {
             EdgeIO e = gatherV(loopRef, x, y);
             EdgeOut want = refEdge(e, false, 3, goldenQp, 0, 0);
             EdgeOut got = pipeEdge(dut, e, false, 3);
             if (!same(want, got)) throw std::runtime_error("luma deblock output mismatch");
+            scopeRealFixtureModified += countModified(e, got);
             for (int r = 0; r < 4 && !foundChanged; ++r) {
                 if (got.p2[r] != e.p2[r]) { chosenSampleX = x - 3; chosenSampleY = y + r; foundChanged = true; }
                 else if (got.p1[r] != e.p1[r]) { chosenSampleX = x - 2; chosenSampleY = y + r; foundChanged = true; }
@@ -331,12 +357,14 @@ edge_found:
         uint8_t unfilteredPred = loopRef[chosenSampleY * 16 + chosenSampleX];
         scatterV(loopRef, chosenX, chosenY, chosenOut);
         uint8_t nextPred = loopRef[chosenSampleY * 16 + chosenSampleX];
-        if (nextPred == unfilteredPred) throw std::runtime_error("in-loop reference did not feed filtered sample to next prediction");
+        if (nextPred == unfilteredPred) throw std::runtime_error("post-deblock reference did not retain filtered sample");
+        scopeFilteredSamples += scopeRealFixtureModified;
 
         EdgeIO chroma{{118,119,120,121},{120,121,122,123},{122,123,124,125},{125,126,127,128},{131,132,133,134},{136,137,138,139},{138,139,140,141},{140,141,142,143}};
         EdgeOut chromaWant = refEdge(chroma, true, 2, goldenQp, 0, 0);
         EdgeOut chromaGot = pipeEdge(dut, chroma, true, 2);
         if (!same(chromaWant, chromaGot)) throw std::runtime_error("chroma deblock output mismatch");
+        scopeFilteredSamples += countModified(chroma, chromaGot);
         EdgeIO chromaStrong{{110,111,112,113},{112,113,114,115},{114,115,116,117},{120,121,122,123},{124,125,126,127},{128,129,130,131},{130,131,132,133},{132,133,134,135}};
         dut.use_stream_qp = 0; dut.db_qp_avg = 40;
         EdgeOut chromaStrongGot = pipeEdge(dut, chromaStrong, true, 4);
@@ -344,6 +372,8 @@ edge_found:
         EdgeOut lumaStrongWould = refEdge(chromaStrong, false, 4, 40, 0, 0);
         dut.use_stream_qp = 0; dut.db_qp_avg = residualQp;
         if (!same(chromaStrongWant, chromaStrongGot)) throw std::runtime_error("chroma bS4 short filter mismatch");
+        scopeChromaBs4 = countModified(chromaStrong, chromaStrongGot);
+        scopeFilteredSamples += scopeChromaBs4;
         if (chromaStrongGot.p1 != chromaStrong.p1 || chromaStrongGot.p2 != chromaStrong.p2 ||
             chromaStrongGot.q1 != chromaStrong.q1 || chromaStrongGot.q2 != chromaStrong.q2 ||
             same(chromaStrongGot, lumaStrongWould)) {
@@ -364,10 +394,20 @@ edge_found:
         }
         std::vector<uint8_t> beforeBoundary = boundaryFrame;
         for (int x : {4,8,12,16,20,24,28}) for (int y=0; y<32; y+=4) {
-            scatterV(boundaryFrame, x, y, pipeEdge(dut, gatherV(boundaryFrame, x, y, 32), false, x == 16 ? 4 : 2), 32);
+            const int bs = x == 16 ? 4 : 2;
+            EdgeIO e = gatherV(boundaryFrame, x, y, 32);
+            EdgeOut got = pipeEdge(dut, e, false, bs);
+            if (bs == 4) scopeLumaBs4 += countModified(e, got);
+            scopeFilteredSamples += countModified(e, got);
+            scatterV(boundaryFrame, x, y, got, 32);
         }
         for (int y : {4,8,12,16,20,24,28}) for (int x=0; x<32; x+=4) {
-            scatterH(boundaryFrame, 32, x, y, pipeEdge(dut, gatherH(boundaryFrame, 32, x, y), false, y == 16 ? 4 : 2));
+            const int bs = y == 16 ? 4 : 2;
+            EdgeIO e = gatherH(boundaryFrame, 32, x, y);
+            EdgeOut got = pipeEdge(dut, e, false, bs);
+            if (bs == 4) scopeLumaBs4 += countModified(e, got);
+            scopeFilteredSamples += countModified(e, got);
+            scatterH(boundaryFrame, 32, x, y, got);
         }
         for (int i=0; i<32; ++i) {
             if (boundaryFrame[i] != beforeBoundary[i] || boundaryFrame[31*32+i] != beforeBoundary[31*32+i] ||
@@ -375,7 +415,21 @@ edge_found:
                 throw std::runtime_error("picture-boundary pixels changed");
             }
         }
+        if (scopeRealFixtureModified <= 0 || scopeLumaBs4 <= 0 || scopeChromaBs4 <= 0 || scopeFilteredSamples <= 0) {
+            throw std::runtime_error("Scope: filtered_samples=" + std::to_string(scopeFilteredSamples) +
+                                     " real_fixture=" + std::to_string(scopeRealFixtureModified) +
+                                     " luma_bS4=" + std::to_string(scopeLumaBs4) +
+                                     " chroma_bS4=" + std::to_string(scopeChromaBs4) +
+                                     " (bS=4/chroma/real fixture must modify samples)");
+        }
 
+        std::cout << "Scope: filtered_samples=" << scopeFilteredSamples
+                  << " real_fixture_filtered_samples=" << scopeRealFixtureModified
+                  << " luma_bS4=" << scopeLumaBs4
+                  << " chroma_bS4=" << scopeChromaBs4
+                  << " real_fixture_qp_range=" << goldenQp << ".." << goldenQp
+                  << " synthetic_qp_range=4..51\n";
+        std::cout << streamRaw.str();
         std::cout << "deblock raw: bs_mb=" << bsMb << " bs_internal=" << bsInternal
                   << " bs_residual_pq=" << bsResidual << "/" << bsResidualQ
                   << " bs_mv=below" << bsMvBelow << "/x+" << bsMvXPos << "/x-" << bsMvXNeg
@@ -440,7 +494,7 @@ edge_found:
             }
             if (faultMode == "loop") {
                 if (nextPred == unfilteredPred) throw std::runtime_error("loop fault did not distinguish filtered reference sample");
-                std::cerr << "FAIL expected in-loop reference red-check: unfiltered_next=" << int(unfilteredPred)
+                std::cerr << "FAIL expected post-deblock reference red-check: unfiltered_next=" << int(unfilteredPred)
                           << " filtered_next=" << int(nextPred) << "\n";
                 return 1;
             }
@@ -455,7 +509,7 @@ edge_found:
             throw std::runtime_error("unknown fault mode " + faultMode);
         }
 
-        std::cout << "OK stream_path deblock integration: multi-NAL stream handoff, bS, thresholds, chroma, in-loop ref update\n";
+        std::cout << "OK stream_path deblock integration: multi-NAL stream handoff, bS, thresholds, chroma, post-deblock ref update\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL stream_path deblock integration: " << e.what() << "\n";
