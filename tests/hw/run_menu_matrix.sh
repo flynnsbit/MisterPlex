@@ -24,10 +24,25 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no)
 mkdir -p "$OUT"
 REPORT="$OUT/REPORT.md"
 CHECKLIST="$OUT/CHECKLIST.md"
-STATUS_FILE=/tmp/misterplex-menu-agent-status.txt
+STATUS_FILE="$OUT/menu-agent-status.txt"
 
 log() { echo "$*" | tee -a "$STATUS_FILE"; }
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable\|store now' || true; }
+
+capture_preflight() {
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=missing_ffmpeg" >&2
+    exit 20
+  fi
+  if [[ ! -e "$DEVICE" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=absent" >&2
+    exit 20
+  fi
+  if [[ ! -c "$DEVICE" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEVICE reason=not_char_device" >&2
+    exit 20
+  fi
+}
 
 mean_luma() {
   python3 - "$1" <<'PY'
@@ -44,6 +59,7 @@ PY
 capture() {
   local name="$1"
   local dest="$OUT/${name}.jpg"
+  rm -f "$OUT/${name}_f"*.jpg "$dest" 2>/dev/null || true
   fuser -k "$DEVICE" 2>/dev/null || true
   sleep "$SETTLE"
   ffmpeg -y -hide_banner -loglevel error \
@@ -51,11 +67,11 @@ capture() {
     -i "$DEVICE" -frames:v "$FRAMES" -q:v 3 "$OUT/${name}_f%02d.jpg" 2>/dev/null || true
   # pick brightest frame (skip black warmup)
   local best="$dest"
-  python3 - "$OUT" "$name" "$dest" <<'PY'
+  python3 - "$OUT" "$name" "$dest" "$DEVICE" <<'PY'
 import sys
 from pathlib import Path
 from PIL import Image
-out, name, dest = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+out, name, dest, dev = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), sys.argv[4]
 cands = sorted(out.glob(f"{name}_f*.jpg"))
 best, best_m = None, -1.0
 for p in cands:
@@ -68,12 +84,25 @@ for p in cands:
     except Exception:
         pass
 if best is None:
-    dest.write_bytes(b"")
-    print("0.0 0")
-else:
-    dest.write_bytes(best.read_bytes())
-    print(f"{best_m:.1f} {best.stat().st_size}")
+    print(f"CAPTURE_FAILED name={name} dev={dev} reason=no_frame", file=sys.stderr)
+    raise SystemExit(20)
+dest.write_bytes(best.read_bytes())
+print(f"{best_m:.1f} {best.stat().st_size}")
 PY
+}
+
+capture_values() {
+  local name="$1"
+  local out rc
+  set +e
+  out=$(capture "$name")
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "MENU_CAPTURE_FAILED step=$name exit=$rc" >&2
+    exit 20
+  fi
+  read -r mean sz <<<"$out"
 }
 
 set_status() {
@@ -117,6 +146,7 @@ pass_or_fail() {
 
 # --- ensure tools + RBF ---
 log "=== menu matrix start $(date -Iseconds) ==="
+capture_preflight
 if ! ping -c 1 -W 3 "$HOST" >/dev/null 2>&1; then
   log "MiSTer unreachable"
   exit 2
@@ -153,7 +183,7 @@ set_status --status || true
 # Seed safe defaults: NTSC, bars, force bars YES (visible even with has_frame), fps 30, audio on
 log "seed defaults force-bars"
 set_status --pattern bars --force-bars 1 --tv ntsc --fps 30 --audio on --raw || true
-read -r mean sz < <(capture baseline_forced)
+capture_values baseline_forced
 pass_or_fail BASE baseline_forced "$mean" 20
 
 declare -A RESULTS=()
@@ -168,7 +198,7 @@ do
   set -- $spec
   id=$1; pat=$2; name=$3
   set_status --pattern "$pat" --force-bars 1 --tv ntsc --raw || true
-  read -r mean sz < <(capture "$name")
+  capture_values "$name"
   RESULTS[$id]=$(pass_or_fail "$id" "$name" "$mean" 20)
 done
 
@@ -196,11 +226,11 @@ PY
 
 # Force bars yes/no — with pattern bars (0) force matters for has_frame path
 set_status --pattern bars --force-bars 1 --raw || true
-read -r mean sz < <(capture force_bars_yes)
+capture_values force_bars_yes
 RESULTS[FBAR_Y]=$(pass_or_fail FBAR force_bars_yes "$mean" 20)
 
 set_status --pattern bars --force-bars 0 --raw || true
-read -r mean sz < <(capture force_bars_no)
+capture_values force_bars_no
 # may show frame_store (could be dark) — record only
 if python3 -c "import sys; sys.exit(0 if float('$mean')>=15 else 1)"; then
   update_checklist_row FBAR "PASS" "yes/no captured; no_mean=$mean"
@@ -212,11 +242,11 @@ fi
 
 # TV modes
 set_status --pattern grid --force-bars 1 --tv ntsc --raw || true
-read -r mean sz < <(capture tv_ntsc)
+capture_values tv_ntsc
 RESULTS[TV0]=$(pass_or_fail TV0 tv_ntsc "$mean" 20)
 
 set_status --pattern grid --force-bars 1 --tv pal --raw || true
-read -r mean sz < <(capture tv_pal)
+capture_values tv_pal
 # restore NTSC immediately (do not dwell on PAL)
 set_status --tv ntsc --pattern bars --force-bars 1 || true
 if python3 -c "import sys; sys.exit(0 if float('$mean')>=10 else 1)"; then
@@ -234,17 +264,17 @@ for spec in "FPS0 24 fps_24" "FPS1 30 fps_30" "FPS2 60 fps_60" "FPS3 12 fps_12";
   set -- $spec
   id=$1; fps=$2; name=$3
   set_status --pattern bars_block --force-bars 1 --fps "$fps" --tv ntsc --raw || true
-  read -r mean sz < <(capture "$name")
+  capture_values "$name"
   RESULTS[$id]=$(pass_or_fail "$id" "$name" "$mean" 20)
 done
 
 # Audio — status only
 set_status --audio on --pattern bars --force-bars 1 --raw || true
-read -r mean sz < <(capture audio_on)
+capture_values audio_on
 update_checklist_row AUD0 "PASS" "no mic probe; status set On; mean=$mean"
 RESULTS[AUD0]=PASS
 set_status --audio off --raw || true
-read -r mean sz < <(capture audio_off)
+capture_values audio_off
 update_checklist_row AUD1 "PASS" "no mic probe; status set Off; mean=$mean"
 RESULTS[AUD1]=PASS
 set_status --audio on || true
@@ -261,7 +291,7 @@ RESULTS[T11]=PASS
 set_status --pulse 0 --raw || true
 sleep 0.35
 set_status --pattern bars --force-bars 1 --tv ntsc --raw || true
-read -r mean sz < <(capture after_reset)
+capture_values after_reset
 RESULTS[T0]=$(pass_or_fail T0 after_reset "$mean" 20)
 update_checklist_row R0 "PASS" "same path as T0 via SPI"
 
@@ -270,7 +300,7 @@ for spec in "AR0 original ar_original" "AR1 full ar_full" "AR2 arc1 ar_arc1" "AR
   set -- $spec
   id=$1; ar=$2; name=$3
   set_status --ar "$ar" --pattern grid --force-bars 1 --tv ntsc --raw || true
-  read -r mean sz < <(capture "$name")
+  capture_values "$name"
   RESULTS[$id]=$(pass_or_fail "$id" "$name" "$mean" 15)
 done
 

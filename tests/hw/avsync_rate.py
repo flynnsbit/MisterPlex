@@ -65,6 +65,8 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     if args.reuse:
         args.no_cast = True
+    else:
+        av.capture_preflight()
     if not args.no_cast:
         print(f"cast RK{args.rating_key} ...")
         av.cast(args.rating_key, args.token, 0)
@@ -131,4 +133,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except av.CaptureFailure as e:
+        print(e, file=sys.stderr)
+        sys.exit(20)
