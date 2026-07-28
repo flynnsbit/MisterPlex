@@ -612,7 +612,15 @@ independently derives the same parentage from source:
 `h264_dpb_i420_addr=LIVE [emu|stream_path|decode_stub|h264_dpb_one_ref|h264_dpb_mb_write_addr|h264_dpb_i420_addr]`.
 
 **MEASURED on `w-deblock-o5-converge`. Denominator: 62 modules declared in the
-36 `files.qip` sources. 42 LIVE / 20 DEAD_SINK.** The gate is not trivially red
+36 `files.qip` sources. 43 LIVE / 19 DEAD_SINK**, `output_nets_examined=540`,
+`unusedsignal_warnings=84`.
+
+> Correction to my own commit message on `66b1dd0`, which says 42 LIVE / 20
+> DEAD_SINK. That was the inventory taken *before* the indexed-binding fix
+> described below, when `line_buf_ram` was still a false DEAD_SINK. The correct
+> figure is 43/19. No presence/absence conclusion changes -- every module named
+> below is still DEAD_SINK -- but the denominator I published was wrong and the
+> commit message cannot be edited. The gate is not trivially red
 — the entire display/present/framework path is LIVE. But:
 
 ```
