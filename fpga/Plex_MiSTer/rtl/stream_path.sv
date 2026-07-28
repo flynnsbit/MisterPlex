@@ -108,6 +108,16 @@ module stream_path #(
 	output wire  [7:0]  dec_px_data
 );
 
+	// The decode core must run on the CODED picture geometry, not the display
+	// surface: FRAME_W is the 640-wide present surface, while the stream (and
+	// the DDR framebuffer the reconstruction is written into) is 624x480, i.e.
+	// exactly 39x30 macroblocks.  Using the display width gave the core a
+	// 40-macroblock raster stride, which skewed every macroblock position by a
+	// growing offset and pushed one column per row outside the picture.
+`include "ddr_frame_layout_params.svh"
+	localparam int CORE_FRAME_W = DDR_FRAME_CODED_WIDTH;
+	localparam int CORE_FRAME_H = DDR_FRAME_CODED_HEIGHT;
+
 	wire        si_wr_en;
 	wire [7:0]  si_wr_data;
 	wire        si_wr_flush;
@@ -416,8 +426,38 @@ module stream_path #(
 	reg [3:0] core_luma_feed_idx;
 	integer core_li;
 	integer core_lj;
+
+	// ── Full-frame macroblock sweep ─────────────────────────────────────────
+	// The slice header parser only hands over the FIRST macroblock's residual,
+	// so the core used to reconstruct exactly one macroblock per slice and the
+	// other 1169 stayed untouched.  Replay that residual across every macroblock
+	// of the frame in raster order: each macroblock gets its own position, its
+	// own neighbour context and its own prediction, so the reconstruction is
+	// different for every macroblock even though the coefficients repeat.  This
+	// is the driver that makes the core paint a whole picture; the per-macroblock
+	// residual walker replaces the replay once the parser can deliver it.
+	localparam [2:0] SW_IDLE  = 3'd0;
+	localparam [2:0] SW_START = 3'd1;
+	localparam [2:0] SW_GAP   = 3'd2;
+	localparam [2:0] SW_FEED  = 3'd3;
+	localparam [2:0] SW_BLKACK = 3'd4;
+	localparam [2:0] SW_WAIT  = 3'd5;
+
+	reg [2:0]  sweep_state;
+	reg [15:0] sweep_mb;
+	reg [15:0] sweep_mb_total;
+	reg [15:0] sweep_guard;
+	reg [5:0]  sweep_blk_guard;
+	reg        core_mb_type_valid;
+	wire [4:0] core_intra_blocks_done;
+	wire [15:0] sweep_mb_total_next = {8'd0, sps_mb_w} * {8'd0, sps_mb_h};
+	// The reconstruction front-end has accepted this block once its counter has
+	// moved past the block index we are presenting.
+	wire sweep_blk_taken = (core_intra_blocks_done > {1'b0, core_luma_feed_idx});
+
 	always @(posedge clk) begin
 		core_luma4x4_valid <= 1'b0;
+		core_mb_type_valid <= 1'b0;
 		if (reset | flush) begin
 			core_luma_feed_active <= 1'b0;
 			core_luma_feed_idx <= 4'd0;
@@ -425,31 +465,98 @@ module stream_path #(
 			core_luma4x4_qp <= 6'd0;
 			core_luma4x4_total_coeff <= 5'd0;
 			core_luma4x4_trailing_ones <= 2'd0;
+			sweep_state <= SW_IDLE;
+			sweep_mb <= 16'd0;
+			sweep_mb_total <= 16'd0;
+			sweep_guard <= 16'd0;
+			sweep_blk_guard <= 6'd0;
 			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
 				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
 				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
 					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
 			end
 		end else begin
-			if (!core_luma_feed_active && sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present) begin
+			case (sweep_state)
+			SW_IDLE: begin
+				if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present &&
+				    (sweep_mb_total_next != 16'd0)) begin
+					core_luma4x4_qp <= sl_place_qp;
+					for (core_li = 0; core_li < 16; core_li = core_li + 1)
+						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
+							core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
+					sweep_mb <= 16'd0;
+					sweep_mb_total <= sweep_mb_total_next;
+					sweep_state <= SW_START;
+				end
+			end
+
+			SW_START: begin
+				core_mb_type_valid <= 1'b1;
+				sweep_guard <= 16'd0;
+				sweep_state <= SW_GAP;
+			end
+
+			// One idle edge so the core's macroblock position registers and the
+			// Intra_16x16 DC front-end settle before the residual blocks land.
+			SW_GAP: begin
 				core_luma_feed_active <= 1'b1;
 				core_luma_feed_idx <= 4'd0;
-				core_luma4x4_qp <= sl_place_qp;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-						core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
-			end else if (core_luma_feed_active) begin
+				sweep_state <= SW_FEED;
+			end
+
+			SW_FEED: begin
 				core_luma4x4_valid <= 1'b1;
 				core_luma4x4_idx <= core_luma_feed_idx;
 				core_luma4x4_total_coeff <= 5'd16;
 				core_luma4x4_trailing_ones <= 2'd0;
 				for (core_li = 0; core_li < 16; core_li = core_li + 1)
 					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
-				if (core_luma_feed_idx == 4'd15)
-					core_luma_feed_active <= 1'b0;
-				else
-					core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
+				sweep_blk_guard <= 6'd0;
+				sweep_state <= SW_BLKACK;
 			end
+
+			// Present one block at a time and only advance once the core's
+			// reconstruction pipeline has actually consumed it.  Re-present the
+			// same block if it was dropped (Intra_16x16 prediction not ready
+			// yet), and abandon the macroblock if the core never takes it.
+			SW_BLKACK: begin
+				sweep_guard <= sweep_guard + 16'd1;
+				sweep_blk_guard <= sweep_blk_guard + 6'd1;
+				if (sweep_guard == 16'hFFFF) begin
+					core_luma_feed_active <= 1'b0;
+					sweep_guard <= 16'd0;
+					sweep_state <= SW_WAIT;
+				end else if (sweep_blk_taken) begin
+					if (core_luma_feed_idx == 4'd15) begin
+						core_luma_feed_active <= 1'b0;
+						sweep_guard <= 16'd0;
+						sweep_state <= SW_WAIT;
+					end else begin
+						core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
+						sweep_state <= SW_FEED;
+					end
+				end else if (sweep_blk_guard == 6'h3F) begin
+					sweep_state <= SW_FEED;
+				end
+			end
+
+			// Wait for the core to drain reconstruction + writeback for this
+			// macroblock.  The guard keeps the sweep from wedging the whole
+			// picture if the core never lowers busy.
+			SW_WAIT: begin
+				sweep_guard <= sweep_guard + 16'd1;
+				if ((!core_busy && (sweep_guard > 16'd3)) || (sweep_guard == 16'hFFFF)) begin
+					if ((sweep_mb + 16'd1) >= sweep_mb_total)
+						sweep_state <= SW_IDLE;
+					else begin
+						sweep_mb <= sweep_mb + 16'd1;
+						sweep_state <= SW_START;
+					end
+				end
+			end
+
+			default: sweep_state <= SW_IDLE;
+			endcase
 		end
 	end
 
@@ -514,8 +621,8 @@ module stream_path #(
 		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
 
 	h264_decode_core #(
-		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H)
+		.FRAME_W(CORE_FRAME_W),
+		.FRAME_H(CORE_FRAME_H)
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),
@@ -531,7 +638,7 @@ module stream_path #(
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(core_rbsp_request_offset),
 		.rbsp_request_valid(core_rbsp_request_valid),
-		.mb_type_valid(slice_valid && sl_has_mbt),
+		.mb_type_valid(core_mb_type_valid),
 		.mb_type(sl_mbt[4:0]),
 		.mb_skip(first_mb_p_skip),
 		.intra4x4_modes(core_i4_modes),
@@ -585,6 +692,7 @@ module stream_path #(
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
 		.busy(core_busy),
+		.intra_blocks_done(core_intra_blocks_done),
 		.decode_state(core_decode_state),
 		.current_mb_addr(core_current_mb_addr),
 		.error(core_error)
@@ -673,6 +781,8 @@ module stream_path #(
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
 	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
+	             core_mb_type_valid | |sweep_state | |sweep_mb | |sweep_mb_total |
+	             |core_intra_blocks_done | |sweep_blk_guard |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
