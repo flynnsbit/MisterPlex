@@ -1693,3 +1693,80 @@ it is currently wired to the wrong producer.
 Expect step 3 to be where the resources finally appear -- and where the M10K
 budget becomes real for the first time. Today's numbers cannot size W-SWAP-O5's
 modules because collapsed logic costs nothing (§23.5).
+
+---
+
+## 29. RETRACTION -- my §25 inference is refuted. The capture-during-outage proves nothing.
+
+W-E2E filed a correction that **refutes an inference I published**, and I am
+withdrawing it explicitly.
+
+### 29.1 What I claimed, and why it is wrong
+
+In §25.1 and §27.1 I argued: the capture ran 13:11:36->13:13:06, entirely inside a
+total layer-2 outage, and returned rc=0 with 90.003 s of valid 1280x720@60 MJPEG;
+HDMI does not traverse the network; **therefore the DE10-Nano is powered and its
+FPGA is still driving video.**
+
+That inference is **REFUTED**. From W-E2E's commit `72f9e4f` (`MisterPlex`,
+authored 12:36, i.e. it existed before I wrote §25 -- I did not look for it):
+
+```
+12:27  150/150 frames flat RGB(7,7,7) -- and the MiSTer was unreachable
+"MS2109 KEEPS DELIVERING FRAMES and they are flat RGB(7,7,7) -- byte-identical to
+ [the black-screen RBF output]"
+unit test: "PASS black + unreachable source host -> rc=2 REFUSE"
+```
+
+**The MS2109 keeps streaming when its source is absent, and emits flat
+RGB(7,7,7).** Luma of RGB(7,7,7) is exactly **7.0** with std **0.0** -- an exact
+match for the `2358782e` frames I characterised. So a valid stream during the
+outage is fully explained without the board being powered at all.
+
+I named this exact alternative in §25.3 and said the data did not exclude it, and
+I named the test that would settle it. The test has now been answered **against
+me**. The hedge was correct; the §27.1 upgrade to "two independent lines of
+evidence now agree" was **not**, and I withdraw it.
+
+### 29.2 What survives, and what is now merely plausible
+
+| claim | status |
+|---|---|
+| capture ran during the outage and returned rc=0, 90.003 s, 5402 frames | **measured, stands** |
+| stream is static: 2 distinct frame sizes, coeff of variation 0.0010 | **measured, stands** |
+| ...therefore the board is powered and the FPGA is driving video | **WITHDRAWN -- refuted** |
+| "FPGA still running, only the HPS is down" | **no longer measured.** Plausible from mechanism only: an AXI stall on the LW HPS-to-FPGA bridge locks the **HPS**, and the fabric runs independently of it. That is reasoning about a mechanism, not an observation, and must be labelled as such. |
+
+I also told the parent "HDMI capture is NOT blocked." That was wrong in the way
+that matters: capture *runs*, but with the source unreachable every black verdict
+is `REFUSE_SOURCE_OFFLINE` and **unscoreable**. The parent's instruction to
+W-E2E-O5 was right and my correction of it was not. Retracted to the parent.
+
+### 29.3 The valid data shrinks -- and one datum gets much better
+
+Only the window captured while the device was reachable is scoreable:
+
+```
+Scope: 40 frames / 120 s, fb4bad84 resident, misterplexd pid 7518, host reachable
+CONTENT_PRESENT   2/40   luma 36.5 std 22, distinct hashes, t=27.1 s and 69.1 s
+BLACK_SIGNAL     37/40   -- caveat: warmup discard was NOT in place; the MS2109
+                            emits ~10 flat warmup frames per ffmpeg open, so an
+                            unknown fraction of these are artefacts, not black
+```
+
+The 89/90 post-crash black frames are **UNSCORED**, not evidence of anything.
+
+**And the buried headline:** the same commit records, at **12:09**, with
+`fb4bad84` resident:
+
+```
+CONTENT_PRESENT -- Plex chevron rendering, 14928 px of Plex brand orange
+RGB(244,163,2) (#E5A00D), bbox 484,239..707,479, centroid (595,359)
+"The idle/screensaver screen is NOT black."
+```
+
+A **real Plex logo was on screen** under the deployed build, at a time the device
+was demonstrably alive (I had ssh at 12:07:56). That is a positive result the
+fleet had not registered, and it is consistent with §27.3: I had just zeroed the
+stale mailbox magics and the ARM painted (`media: idle screen painted (mode=0)`).
+It is the **ARM** painting, not the fabric -- the fabric was silent throughout.
