@@ -1470,3 +1470,59 @@ If the board is powered and only its network is down, then the FPGA is running
 measurements predict (§11: the fabric writes nothing, so nothing ever changes on
 screen). The two independent instruments would then agree. It also means the
 device may return without a power cycle, and STEP 2 becomes possible again.
+
+---
+
+## 26. STEP 1 is satisfied; STEP 2 is armed and waiting on the network
+
+### 26.1 STEP 1 -- done
+
+The parent's STEP 1 was "capture the failure state; report signal / black /
+content", and it blocked STEP 2. W-E2E has now delivered it against the resident
+`fb4bad84`:
+
+```
+Scope: 30 frames (90 s)
+CONTENT_PRESENT  0 / 30
+BLACK_SIGNAL    30 / 30     luma 7.0  std 0.0  sha 2358782e identical
+NO_SIGNAL        0 / 30
+```
+
+**This is the first HDMI grading of `fb4bad84`, and it is BLACK_SIGNAL --
+valid stream, no content.** It corroborates the DDR measurement from an
+independent instrument: the fabric writes nothing (§11), so the screen never
+changes (§25.2, coefficient of variation 0.0010 across 5402 frames).
+
+The grade for the authorized deploy of `fb4bad84` therefore moves from
+**UNSCORED** to **graded, and negative**: no picture. Still not a verdict on
+W-SWAP's livelock fix, which cannot be exercised by a fabric that never writes.
+
+### 26.2 STEP 2 -- armed, blocked only by reachability
+
+Everything else is ready:
+
+| item | state |
+|---|---|
+| authorization | parent, ONE deploy of `3b1e8435`, `DEPLOY_LOAD=menu` |
+| artefact | `fpga/Plex_MiSTer/remote_out/wfit-hour27-a/Plex.rbf` = `3b1e84355f5fe4e7e137b70a841244fa` |
+| two-slot bit-identity | `-a` == `-b` |
+| banned set | clear |
+| `make post-fit-timing` | rc=0 |
+| `make post-fit-hierarchy` | rc=0 |
+| STEP 1 gate | satisfied (§26.1) |
+| escape hatch | `Plex.rbf.bak` untouched |
+| **blocker** | **66/66 pings lost 12:44 -> 13:24; arp FAILED** |
+
+Command, the moment the device answers:
+
+```
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh \
+    fpga/Plex_MiSTer/remote_out/wfit-hour27-a/Plex.rbf
+scripts/sample_plxd_telemetry.sh
+```
+
+Read the result under the **§21** framing, not the clk_ddr framing: the only input
+difference between `3b1e8435` and `fb4bad84` is `Plex.sdc` (RTL byte-identical,
+`diff -r` rc=0). So PLXD advancing => the SDC change caused the regression; PLXD
+still silent => SDC is properly exonerated and the cause is elsewhere. Parent's
+instruction stands: **if `3b1e8435` is also silent, stop and report.**
