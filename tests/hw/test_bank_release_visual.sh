@@ -16,9 +16,11 @@ set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 TOKEN="${PLEX_TOKEN:-${MISTERPLEX_TOKEN:-}}"
+EXPECTED_RBF_MD5="${EXPECTED_RBF_MD5:-}"
 SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$HOST"
 DDR_BASE=$((0x30000000))
 DDR_ALIGN=$((256 * 1024))
+RBF_VERIFIED=0
 
 unscored_exit() {
     echo "HUMAN_RESULT=UNSCORED reason=$1"
@@ -86,6 +88,18 @@ echo ""
 echo "━━━ PROVENANCE (automated) ━━━"
 RBF_MD5=$(ssh_read 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}')
 echo "  Resident RBF md5: $RBF_MD5"
+if [ -n "$EXPECTED_RBF_MD5" ]; then
+    echo "  Expected RBF md5: $EXPECTED_RBF_MD5"
+    if [ "$RBF_MD5" != "$EXPECTED_RBF_MD5" ]; then
+        echo "  UNSCORED: resident RBF does not match the expected bitstream"
+        unscored_exit "rbf-md5-mismatch"
+    fi
+    RBF_VERIFIED=1
+else
+    echo "  Expected RBF md5: <unset>"
+    echo "  ⚠ RBF identity is recorded but not asserted; valid human answers"
+    echo "    will be UNSCORED rather than PASS/FAIL."
+fi
 echo "  Capture time:     $(date -u '+%Y-%m-%dT%H:%M:%SZ') (UTC)"
 echo ""
 
@@ -206,7 +220,7 @@ echo ""
 STATS=$(ssh_read 'grep "pfps=" /media/fat/misterplex/misterplexd.log | tail -1')
 echo "  Last stats: $STATS"
 echo ""
-echo "TELEMETRY_RAW rbf=$RBF_MD5 stride=$(hex_addr "$DDR_STRIDE") bank0=$DDR_BANK0_HEX bank1=$DDR_BANK1_HEX doorbell=$DDR_DOORBELL_HEX plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0_words=$BANK0_W0,$BANK0_W1 bank1_words=$BANK1_W0,$BANK1_W1 stats=\"$STATS\""
+echo "TELEMETRY_RAW rbf=$RBF_MD5 expected_rbf=${EXPECTED_RBF_MD5:-unset} rbf_verified=$RBF_VERIFIED stride=$(hex_addr "$DDR_STRIDE") bank0=$DDR_BANK0_HEX bank1=$DDR_BANK1_HEX doorbell=$DDR_DOORBELL_HEX plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0_words=$BANK0_W0,$BANK0_W1 bank1_words=$BANK1_W0,$BANK1_W1 stats=\"$STATS\""
 echo ""
 
 # ─── HUMAN QUESTIONNAIRE ─────────────────────────────────────────────────────
@@ -274,7 +288,7 @@ score_human_answers() {
     local q1="${Q1:-}" q2="${Q2:-}" q3="${Q3:-}" q4="${Q4:-}" q5="${Q5:-}"
     local missing=0
     echo "HUMAN_ANSWERS Q1=${q1:-_} Q2=${q2:-_} Q3=${q3:-_} Q4=${q4:-_} Q5=${q5:-_}"
-    echo "HUMAN_TELEMETRY plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0=$BANK0_W0,$BANK0_W1 bank1=$BANK1_W0,$BANK1_W1 stride=$(hex_addr "$DDR_STRIDE")"
+    echo "HUMAN_TELEMETRY rbf=$RBF_MD5 expected_rbf=${EXPECTED_RBF_MD5:-unset} rbf_verified=$RBF_VERIFIED plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0=$BANK0_W0,$BANK0_W1 bank1=$BANK1_W0,$BANK1_W1 stride=$(hex_addr "$DDR_STRIDE")"
     for q in q1 q2 q3 q4 q5; do
         [ -n "${!q}" ] || missing=1
     done
@@ -287,6 +301,10 @@ score_human_answers() {
     case "$q3" in A|B|C|D|E) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q3"; return 0 ;; esac
     case "$q4" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q4"; return 0 ;; esac
     case "$q5" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q5"; return 0 ;; esac
+    if [ "$RBF_VERIFIED" != "1" ]; then
+        echo "HUMAN_RESULT=UNSCORED reason=rbf-provenance-unverified"
+        return 0
+    fi
 
     if [ "$q1" = "A" ] && [ "$q2" = "A" ] && [ "$q3" = "A" ] &&
        [ "$q4" = "A" ] && { [ "$q5" = "A" ] || [ "$q5" = "B" ]; }; then
