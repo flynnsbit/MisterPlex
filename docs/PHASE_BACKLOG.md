@@ -933,3 +933,33 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
 - (done **merges this hour**, each independently re-gated; integration `2cfdf81`, `make unit rc=0`, assertions **91**, unique tests **44**): W-INTER `cca1957` MV-neighbour + `a942ece` P16 CAVLC residual scheduling · W-CAST `f15e0f8` bounded EOF guard + `66580ab` terminal policy defence · W-TIME `67287bb` RTL invariant hardening · W-MCFIX `968e564` mutation taxonomy · W-OSD `6eda7f7` RTL cross-check + loud geometry mismatch, `2cfdf81` PLXD degeneracy/provenance + 624×480 profile · W-GATE `15ae470` scoped sweep · W-FEED `2ad3688` rebased ring-lifecycle chain.
 - (**stale-base near-miss, recorded as the most dangerous diff of the session**) W-FEED was **nine commits behind** on a base diverging at `2726d35f`. Its `Makefile` side of `unit-unlocked` predated the roll-call guard and three merged tests, so a mechanical union would have **deleted the guard and the tests it protects in one commit, with `make unit` still green afterwards**. Its `ddr_bitstream_ring.hpp` side also reintroduced `0x504C5842u` as a literal after that constant had been centralised into `mailbox_abi`. Returned for a real rebase; the rebased chain merged cleanly and `test_bitstream_ring_lifecycle: ALL PASS`. **Parent process change: workers must now quote their merge-base against the integration tip when handing over SHAs**, so drift is visible immediately rather than at merge time.
 - (**parent-resolved conflict, provable superset**) `tests/hw/README.md` — W-FEED's text asserts everything HEAD asserted (`bank1`, `0x30040000`, `0x30080000`, `status[12]`/`[13]`) **plus** doorbell derivation and the mmap doorbell bank bit, with no contradiction. Taken as a superset. Semantic conflicts continue to go back to their authors (W-OSD's PLXD-vs-timed bank-selection strategy did, and was resolved correctly by its author).
+
+### Hour-24 — parent-run mutation verification, derived validation asset, scope correction on three decode claims
+
+- (**parent mutation-verified W-CAST's audio-silence EOF term rather than accepting worker evidence**) `0725224` narrows `knownDurationEofStall()` to require **both** video and audio silence, and raises default grace 1000 → 5000 ms. Removing the audio term:
+  ```
+  MUTATED (noAudioMs >= graceMs removed) rc=1
+  FAIL /home/flynnsbit/Projects/MisterPlex/tests/unit/test_avclock.cpp:127: !knownDurationEofStall(0, ...
+  test_avclock: 1 failures
+  RESTORED rc=0 ; tree clean
+  ```
+  **The term is load-bearing, not decorative.** Design note worth reusing: requiring audio silence is what makes the *short-lying-duration* case safe — if a container understates duration, audio still flows, `noAudioMs` stays 0, and the guard cannot fire. The detector is now keyed on **the stream actually being dead** rather than on the clock passing a number the container supplied. W-CAST found that case after **scoring its own earlier prediction wrong**.
+  - **Open inverse risk, handed back to W-CAST:** a stream with **no audio track** may never advance `noAudioMs`, which would make the guard **vacuous for that entire class of content** — stricter-looking but unfirable. Same defect family as every instrument problem this session. Prediction to be pre-registered before testing.
+- (**parent mutation-verified W-TIME's roll-call fix in the previously-untested direction**) `b19ceaa`:
+  ```
+  steady: actual_prereqs=33 expected_prereqs=33 actual_commands=86 protected_commands=83 ignored_commands=3
+  mutated (unregistered prereq added): UNIT_ROLLCALL_FAIL actual=34 expected=33
+                                       UNREGISTERED_PREREQ ... register this unit-unlocked prerequisite
+  ```
+  Closes the hole where the guard printed `len(EXPECTED_PREREQS)`=30 against 33 real prerequisites and checked one direction only.
+- (**AUTHORISED DERIVED VALIDATION ASSET GENERATED — W-FEED — and independently re-probed by the parent**) `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4`, 12,720,086 bytes. Parent's own `ffprobe`, not the worker's:
+  ```
+  codec_name=h264  profile=Constrained Baseline  width=624  height=480
+  has_b_frames=0   level=30   nb_frames=1800
+  ```
+  Matches W-FEED's reported `profile_idc=66 entropy_cabac=0 max_num_ref_frames=1 coded=624x480`, slices `i=36 p=1764 b=0`. Re-encoded from the **real HEVC source** so it carries real-world image statistics — **low-entropy synthetic content is exactly what lets a broken residual path score green.**
+  - **Outstanding risk at time of writing:** the asset is **untracked under `build/`** with **no committed provenance record**. `build/` is disposable; a probe screenshot quoted in a later report is not. **An unlabelled derived asset is how "validated on real content" silently becomes a false claim about the user's library, which contains zero real H.264 at ≤480p.** Provenance + regeneration command returned to W-FEED as a tracked commit.
+- (**SCOPE CORRECTION — three `docs/phase3-decode.md` claims were measured on HEVC / >480p, not on the H.264 path the fabric targets**) W-FEED's enumeration, open for two cycles, now answered: **W-A4 PMS probe** (~line 332), **Phase 3.3n High/CABAC/B sizing** (~line 360), **Phase 3.3p PMS Baseline XML** (~line 374). All derive from HEVC `/metadata/3` via PMS transcode. **They remain valid evidence about the transcode path; what was wrong was the unstated scope.** To be annotated in place, not deleted — a reader who finds a deleted number learns nothing; one who finds a scoped number learns the boundary.
+- (**merge**) W-INTER `84a198f` — P16 residual traversal extended from one CAVLC/IDCT block to two sequential blocks, carrying `cavlc_bit_offset_end` into the next start. **assertions 91 → 92, unique tests 44, `make unit` rc=0.**
+  - **Handoff hazard recorded:** the commit was based on `aef6232`, which does **not** contain W-INTER's own previously-merged one-block commit `a942ece` — same feature family, adjacent regions of `h264_decode_core.sv`, different patch-ids, externally indistinguishable from a duplicate or amended rework. **Resolved empirically (cherry-pick onto tip, observe clean apply, then gate) rather than by reasoning about it** — consistent with the lesson that inferring cause from a diff of symptoms is what produced two retracted diagnoses in Hour-23.
+- (**device queue advanced**) W-FEED released the device and removed its remote profile scratch. W-OSD took it (first in queue), W-CAST second. **Neither FBAR nor 3l2 is affected: still UNSCOREABLE / BLOCKED pending physically attached HDMI capture hardware.**
