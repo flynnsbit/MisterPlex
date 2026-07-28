@@ -706,20 +706,21 @@ The remaining 52% of decoded frames are dropped by the ARM-side frame-skip
 logic (correct behaviour under back-pressure).
 
 **This is NOT a throughput or decode problem.** It is a **bank-release handshake
-failure**. The root cause is w-a3's `clk_ddr` STA violation:
-```
-FROM: ddr_frame_store|disp_buf_d2
-TO:   DDRAM_ADDR[9,15,18,23,...]
-slack: -0.213 ns, 7 logic levels
-```
-The display buffer bank select fails setup, causing the FPGA to read wrong
-addresses (frozen/stale frame), and the bank-release signal to never propagate.
+failure**. The root cause (w-a3, landed at `664399e`):
+
+> `pending_ready_ddr` — the CDC pulse is one `clk_ddr` cycle wide (11.111 ns)
+> and the `clk_sys` sampler runs every 50 ns at a 4.5:1 ratio. The pulse is missed.
+
+This is distinct from the `clk_ddr` STA violation (`disp_buf_d2 → DDRAM_ADDR`,
+-0.213 ns) which is a separate fanout timing issue on the display read path.
+The bank-release failure is a CDC width bug, not a setup violation.
 
 ### What "removing the 50ms timeout gets 30 fps" actually requires
 
-1. **Fix the bank-release mechanism** — the `disp_buf_d2` setup violation
-   must close. One pipeline register (w-a3 owns). Until that happens,
-   `free_bank_mask` stays 0 and timeout stays necessary.
+1. **Fix the bank-release mechanism** — the `pending_ready_ddr` CDC pulse is
+   missed because it is one `clk_ddr` cycle (11.111 ns) wide and `clk_sys`
+   samples every 50 ns. w-a3 landed the fix at `664399e`. Until a bitstream
+   with that fix is deployed, `free_bank_mask` stays 0 and timeout stays necessary.
 2. **Confirm DMA push time** — theoretical ~0.6ms at 90 MHz DDR. Even with
    arbiter contention and 10× overhead, that's 6ms → 166 fps capacity.
 3. **Content rate is not the bottleneck** — `content_fps=24` means only 24
@@ -730,18 +731,65 @@ addresses (frozen/stale frame), and the bank-release signal to never propagate.
 the ceiling is bounded by the timeout: 20 fps maximum (50ms period), and actual
 is 8.85 fps because of the ~63ms decode+framing overhead between pushes.
 
-### The unexplained 63ms gap
+### The unexplained 63ms gap — decomposition instrument already exists
 
-113ms per present − 50ms timeout = **63ms** doing... what? Candidates:
-- ARM H.264 decode of one frame (~15-20ms at 624×480 on A9)
-- FFmpeg frame extraction overhead (~5ms per frame)
-- DMA setup + f2sdram arbitration (~1-5ms)
-- Python/companion process IPC overhead
+113ms per present − 50ms timeout = **63ms** doing... what?
 
-**This warrants measurement.** If the 63ms is mostly ARM decode, then fixing the
-bank-release gets us to ~15 fps (not 30). Getting to 30 fps additionally
-requires the ARM decode to be < ~33 - 1 = 32ms per frame — which is likely
-met for 624×480 Baseline on the dual-A9, but unmeasured in this config.
+**The profiling instrument already exists in the code.** `media_player.cpp:2370`
+emits a `present_profile` log with per-frame microsecond breakdowns:
+
+| Profiled field | Measures | Per-frame or per-present |
+| --- | --- | --- |
+| `read_us_f` | ffmpeg pipe read (= **ARM decode time**) | per frame |
+| `pacing_wait_us_f` | A/V sync hold (sleep in 2ms increments) | per frame |
+| `overlay_us_p` | overlay text render | per present |
+| `fb_us_p` | framebuffer blit (fb0) | per present |
+| `pixel_us_p` | pixel format conversion | per present |
+| `ddr_prep_wait_us_p` | pre-kick usleep(1500) | per present |
+| `ddr_copy_us_p` | memcpy frame → DDR bank | per present |
+| `ddr_flush_us_p` | dcache clean | per present |
+| `ddr_doorbell_us_p` | doorbell write + poll | per present |
+| `ddr_post_wait_us_p` | post-kick usleep(500) | per present |
+| `ddr_total_us_p` | total sendDdrFrame wall clock | per present |
+| `ddr_unaccounted_us_p` | total − sum(accounted sub-intervals) | per present |
+
+**The present_profile is not enabled by default.** It requires `PRESENT=fpga`
+with `PROFILE_PRESENT=1` (or equivalent misterplexd config). **w-osd should
+collect one `present_profile` emission** — a single line decomposes the 63ms
+into its real components.
+
+**Expected breakdown (estimates to be replaced by measurement):**
+
+| Component | Expected | Basis |
+| --- | ---:| --- |
+| ARM decode (`read_us_f`) | 15–25 ms | 624×480 Baseline on dual-A9, ffmpeg swscale |
+| DDR prep wait | 1.5 ms | hardcoded `usleep(1500)` at line 1342 |
+| DDR memcpy | 0.4 ms | 449,280 B at ~1 GB/s L2 bandwidth |
+| DDR dcache flush | 0.5–2 ms | 449,280 B range clean |
+| DDR doorbell | 0.1–3 ms | doorbell write + poll (first frame: 3ms + 40×0.5ms) |
+| DDR post wait | 0.5 ms | hardcoded `usleep(500)` at line 1428 |
+| A/V pacing | 20–30 ms | sleep(2ms) × N for audio clock alignment |
+| Mutex contention | 0–5 ms | `presentMu_` serialises with OSD poller |
+| **Total expected** | **~40–65 ms** | |
+
+**Critical insight:** if A/V pacing (`pacing_wait_us_f`) is 20+ ms, then the
+ARM is intentionally **waiting for the audio clock** before presenting — that is
+not a bottleneck, it is correct A/V sync behaviour. In that case, the real
+decode-limited ceiling is:
+
+```
+fps_ceiling = 1000 / (read_us_f/1000 + ddr_total_us_p/1000)
+```
+
+**without pacing** (i.e. if we drop A/V sync), which could be 30+ fps even
+with decode taking 20ms. **But A/V sync is correct behaviour and should not
+be removed to inflate a number.**
+
+### Action required from w-osd
+
+Run one playback with `present_profile` collection enabled and report the
+single log line. That one emission replaces all estimates above with
+measurements and definitively answers whether the ARM can sustain 24 fps.
 
 ## Capture harness hardware specification
 
