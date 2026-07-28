@@ -40,6 +40,17 @@ module h264_intra_nb_ctx #(
     output reg         has_left,
     output reg         has_above_right,
 
+    // MB-level luma neighbour adapter for h264_decode_top. Same PRE-deblock
+    // storage/tap as the block-level ports above.
+    output reg         mb_avail_left,
+    output reg         mb_avail_top,
+    output reg         mb_avail_topright,
+    output reg         mb_avail_topleft,
+    output reg  [7:0]  nb_top [0:15],
+    output reg  [7:0]  nb_left [0:15],
+    output reg  [7:0]  nb_topleft,
+    output reg  [7:0]  nb_topright [0:3],
+
     output reg  [7:0]  chroma_u_above [0:7],
     output reg  [7:0]  chroma_v_above [0:7],
     output reg  [7:0]  chroma_u_left [0:7],
@@ -216,7 +227,9 @@ module h264_intra_nb_ctx #(
         has_chroma_left = (mb_x != 8'd0);
 `endif
         has_above_right = 1'b0;
+        mb_avail_topright = 1'b0;
         top_left = 8'd128;
+        nb_topleft = 8'd128;
         chroma_u_top_left = 8'd128;
         chroma_v_top_left = 8'd128;
         for (oi = 0; oi < 8; oi = oi + 1) begin
@@ -225,8 +238,32 @@ module h264_intra_nb_ctx #(
             chroma_v_above[oi] = 8'd128;
             chroma_u_left[oi] = 8'd128;
             chroma_v_left[oi] = 8'd128;
-            if (oi < 4)
+            if (oi < 4) begin
                 left[oi] = 8'd128;
+                nb_topright[oi] = 8'd128;
+            end
+        end
+
+`ifdef H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE
+        mb_avail_top = 1'b1;
+        mb_avail_left = 1'b1;
+        mb_avail_topleft = 1'b1;
+`else
+        mb_avail_top = (mb_y != 8'd0);
+        mb_avail_left = (mb_x != 8'd0);
+        mb_avail_topleft = (mb_x != 8'd0) && (mb_y != 8'd0);
+`endif
+        mb_avail_topright = mb_avail_top && ((mb_x + 8'd1) < active_mb_width);
+        for (oi = 0; oi < 16; oi = oi + 1) begin
+            nb_top[oi] = mb_avail_top ?
+                         maybe_fault_luma(above_y_row[luma_addr(mb_x, oi[3:0])]) : 8'd128;
+            nb_left[oi] = mb_avail_left ?
+                          maybe_fault_luma(left_y_col[oi]) : 8'd128;
+        end
+        nb_topleft = (mb_avail_top && mb_avail_left) ? maybe_fault_luma(tl_y_corner) : 8'd128;
+        if (mb_avail_topright) begin
+            for (oi = 0; oi < 4; oi = oi + 1)
+                nb_topright[oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
         end
 
         if (has_above) begin

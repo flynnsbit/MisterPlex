@@ -11,12 +11,17 @@ Raw findings / scope first:
   (`39*16`), chroma U/V above rows (`39*8` each), luma/chroma left columns, above-left
   corners, and luma above-right; picture/slice edges report unavailable so DC `128` remains
   the correct fallback only at real edges.
+- W-DECODE seam adapter added after coordination: the producer now also exposes the exact luma
+  port shape already consumed by `h264_decode_top` (`mb_avail_left/top/topright/topleft`,
+  `nb_top[0:15]`, `nb_left[0:15]`, `nb_topleft`, `nb_topright[0:3]`). MB0 external neighbours
+  correctly report unavailable, so MB0 mismatches are not explained by this external line buffer.
 - Seam statement for W-DEBLOCK: intra prediction reads this module's **PRE-deblock** reconstructed
   samples. The DPB/reference path must consume **POST-deblock** samples from the deblock commit path;
   these taps are intentionally separate.
 - Gate: `python3 tests/unit/test_h264_intra_nb_ctx_verilator.py` prints `Scope:` first and compares
-  exact luma/chroma neighbour bytes across a 39-MB row and row transition. It does not cover entropy
-  parsing, residual math, deblock filtering, DPB post-deblock storage, inter prediction, or HDMI.
+  exact block-level and `h264_decode_top` MB-level luma/chroma neighbour bytes across a 39-MB row
+  and row transition. It does not cover entropy parsing, residual math, deblock filtering,
+  DPB post-deblock storage, inter prediction, or HDMI.
 - Red checks: `H264_INTRA_NB_CTX_FAULT_STUB_NEIGHBORS` fails by forcing neighbour bytes back to 128;
   `H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV` fails the chroma scoreboard. Both are registered in the
   expected-red manifest and define-parity allowlist.

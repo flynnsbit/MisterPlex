@@ -14,8 +14,9 @@ EXPECTED_RED = ROOT / "tests/unit/expected_red.py"
 
 GREEN_SCOPE = (
     "Scope: h264_intra_nb_ctx full-width pre-deblock reconstructed-neighbour context; "
-    "coded=624x480, mb_grid=39x30, luma above/left/top-left/above-right plus chroma U/V "
-    "above/left/top-left. It does not cover entropy parsing, residual math, deblock filtering, "
+    "coded=624x480, mb_grid=39x30, luma block-level and h264_decode_top MB-level "
+    "above/left/top-left/above-right plus chroma U/V above/left/top-left. "
+    "It does not cover entropy parsing, residual math, deblock filtering, "
     "DPB post-deblock storage, inter prediction, or HDMI presentation."
 )
 
@@ -111,9 +112,17 @@ static void check_edge_mb00(Vh264_intra_nb_ctx_tb& dut) {
     check_bool("mb00_has_left", dut.ctx_has_left, false);
     check_bool("mb00_has_chroma_above", dut.ctx_has_chroma_above, false);
     check_bool("mb00_has_chroma_left", dut.ctx_has_chroma_left, false);
+    check_bool("mb00_mb_avail_top", dut.ctx_mb_avail_top, false);
+    check_bool("mb00_mb_avail_left", dut.ctx_mb_avail_left, false);
+    check_bool("mb00_mb_avail_topright", dut.ctx_mb_avail_topright, false);
+    check_bool("mb00_mb_avail_topleft", dut.ctx_mb_avail_topleft, false);
     check_u8("mb00_top_left", 0, dut.ctx_top_left, 128);
-    for (int i = 0; i < 16; ++i)
+    check_u8("mb00_nb_topleft", 0, dut.ctx_nb_topleft, 128);
+    for (int i = 0; i < 16; ++i) {
         check_u8("mb00_dc_pred", i, dut.pred[i], 128);
+        check_u8("mb00_nb_top", i, dut.ctx_nb_top[i], 128);
+        check_u8("mb00_nb_left", i, dut.ctx_nb_left[i], 128);
+    }
 }
 
 static void check_mb1_row0_left(Vh264_intra_nb_ctx_tb& dut) {
@@ -122,8 +131,13 @@ static void check_mb1_row0_left(Vh264_intra_nb_ctx_tb& dut) {
     dut.eval();
     check_bool("mb10_has_above", dut.ctx_has_above, false);
     check_bool("mb10_has_left", dut.ctx_has_left, true);
+    check_bool("mb10_mb_avail_left", dut.ctx_mb_avail_left, true);
+    check_bool("mb10_mb_avail_top", dut.ctx_mb_avail_top, false);
+    check_bool("mb10_mb_avail_topleft", dut.ctx_mb_avail_topleft, false);
     for (int i = 0; i < 4; ++i)
         check_u8("mb10_left_y", i, dut.ctx_left[i], yval(0, 0, 15, i));
+    for (int i = 0; i < 16; ++i)
+        check_u8("mb10_nb_left_y", i, dut.ctx_nb_left[i], yval(0, 0, 15, i));
     check_bool("mb10_has_chroma_left", dut.ctx_has_chroma_left, true);
     for (int i = 0; i < 8; ++i) {
         check_u8("mb10_left_u", i, dut.ctx_chroma_u_left[i], uval(0, 0, 7, i));
@@ -137,10 +151,17 @@ static void check_row1_above_and_corner(Vh264_intra_nb_ctx_tb& dut) {
     dut.eval();
     check_bool("mb01_has_above", dut.ctx_has_above, true);
     check_bool("mb01_has_left", dut.ctx_has_left, false);
+    check_bool("mb01_mb_avail_top", dut.ctx_mb_avail_top, true);
+    check_bool("mb01_mb_avail_left", dut.ctx_mb_avail_left, false);
+    check_bool("mb01_mb_avail_topright", dut.ctx_mb_avail_topright, true);
     for (int i = 0; i < 4; ++i)
         check_u8("mb01_above_y", i, dut.ctx_above[i], yval(0, 0, i, 15));
     for (int i = 0; i < 4; ++i)
         check_u8("mb01_above_right_y", i, dut.ctx_above[4 + i], yval(0, 0, 4 + i, 15));
+    for (int i = 0; i < 16; ++i)
+        check_u8("mb01_nb_top_y", i, dut.ctx_nb_top[i], yval(0, 0, i, 15));
+    for (int i = 0; i < 4; ++i)
+        check_u8("mb01_nb_topright_y", i, dut.ctx_nb_topright[i], yval(1, 0, i, 15));
     check_bool("mb01_has_chroma_above", dut.ctx_has_chroma_above, true);
     for (int i = 0; i < 8; ++i) {
         check_u8("mb01_above_u", i, dut.ctx_chroma_u_above[i], uval(0, 0, i, 7));
@@ -154,7 +175,11 @@ static void check_mb11_both(Vh264_intra_nb_ctx_tb& dut) {
     dut.eval();
     check_bool("mb11_has_above", dut.ctx_has_above, true);
     check_bool("mb11_has_left", dut.ctx_has_left, true);
+    check_bool("mb11_mb_avail_top", dut.ctx_mb_avail_top, true);
+    check_bool("mb11_mb_avail_left", dut.ctx_mb_avail_left, true);
+    check_bool("mb11_mb_avail_topleft", dut.ctx_mb_avail_topleft, true);
     check_u8("mb11_top_left_y", 0, dut.ctx_top_left, yval(0, 0, 15, 15));
+    check_u8("mb11_nb_topleft_y", 0, dut.ctx_nb_topleft, yval(0, 0, 15, 15));
     check_u8("mb11_top_left_u", 0, dut.ctx_chroma_u_top_left, uval(0, 0, 7, 7));
     check_u8("mb11_top_left_v", 0, dut.ctx_chroma_v_top_left, vval(0, 0, 7, 7));
     for (int i = 0; i < 4; ++i) {
@@ -176,6 +201,7 @@ static void check_above_right(Vh264_intra_nb_ctx_tb& dut) {
     dut.pred_mode = 3;
     dut.eval();
     check_bool("mb38_above_right_unavailable", dut.ctx_has_above_right, false);
+    check_bool("mb38_mb_avail_topright_unavailable", dut.ctx_mb_avail_topright, false);
     for (int i = 0; i < 4; ++i)
         check_u8("mb38_above_right_replicate", i, dut.ctx_above[4 + i], dut.ctx_above[3]);
 }
