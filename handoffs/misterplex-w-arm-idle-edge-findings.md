@@ -739,3 +739,165 @@ resource figures for `ddr_frame_store`.
 `present_core` bound to `fb4bad84`. And none of this touches the actual defect —
 whether `ddr_frame_store`'s miss-to-black policy is what the user sees remains
 unobserved, because no one has captured the pixels.
+
+---
+
+## 14. Two landmines found in the mandated evidence path
+
+Triggered by the parent's note that `check_rtl_module_instantiations.py` on
+`parent/integ-hour27` silently ignores unknown args. I checked my own branch
+first, then the mandated merge base. Raw numbers first.
+
+### 14.1 The landmine was on MY branch, and my own §13 published the command lines
+
+`w-arm-idle-edge` shipped the argument-ignoring checker (6919 bytes, no
+`argparse`, `def main() -> int:` taking no argv). Measured before the fix:
+
+```
+scripts/check_rtl_module_instantiations.py --root emu --require h264_decode_core
+  rc=0   RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=44 bench_only=24 root=emu
+
+scripts/check_rtl_module_instantiations.py --help
+  rc=0   RTL_MODULE_INSTANTIATION_OK ... root=emu
+```
+
+`h264_decode_core` is **ABSENT from the fitted silicon of `fb4bad84`**. So my
+branch would hand a reviewer a confident rc=0 for the single module that the
+strongest oracle proves is not in the chip. My §13 quotes those exact command
+lines, so I published the instructions for generating that false green.
+
+**My own measurements are unaffected.** I ran every reachability check through
+`build/check_rtl_core_rooted.py`, the argparse version extracted from
+`w-deblock-seam`, and the differential proves the flag was honoured:
+`--root emu` reports `reachable=44` while `--root present_core` reports
+`reachable=11`. An ignored flag cannot produce two different numbers. The
+argparse version also rejects unknown args with rc=2.
+
+Fixed by adopting the argparse version on this branch. After the fix:
+
+```
+--bogus                                  rc=2  unrecognized arguments
+--root emu --require h264_decode_core    rc=1
+  REQUIRED_RTL_MODULE_UNREACHABLE h264_decode_core parents=<none>
+```
+
+rc=1 with `parents=<none>` now **agrees with post-fit hierarchy**. Three oracles
+concur on this branch, where before the tool disagreed with silicon.
+
+This is convergence with the version already on `w-deblock-seam`, not a
+competing change; **W-GATE-O5 owns the canonical fix.**
+
+### 14.2 New gate: `scripts/check_reachability_tool_integrity.py`
+
+Registered in `make unit` and rollcall (`expected_commands=92`). Proves the
+checker is *listening*, which is prior to whether its answer is right:
+
+```
+OK unknown argument rejected rc=2
+OK --root honoured differentially: emu reachable=44 vs present_core reachable=11
+OK --require honoured for a nonexistent module rc=1
+RESULT PASS reachability tool integrity 3/3
+```
+
+The red is **not synthetic** — it restores the actual defective file from
+`origin/w-decode-hour27` and re-runs:
+
+```
+FAIL unknown argument was silently accepted (rc=0); flags may be ignored
+FAIL --root appears ignored: emu and present_core both report reachable=44
+FAIL --require accepted a nonexistent module (rc=0); flag may be ignored
+RESULT FAIL reachability tool integrity failures=3/3
+```
+
+The differential `--root` check is the load-bearing one: it cannot be satisfied
+by a tool that discards the flag, because two roots must yield two counts.
+
+### 14.3 The mandated merge base ships the defective checker
+
+Measured on `origin/w-decode-hour27` `2f165ed`, in a disposable worktree:
+
+```
+scripts/check_rtl_module_instantiations.py = 6919 bytes, no argparse
+mandated command line -> rc=0  reachable=50 bench_only=18 root=emu   (VACUOUS)
+```
+
+**Ruling 3 condition 1 cannot be verified using the merge base's own script.**
+Anyone confirming it from `w-decode-hour27` gets rc=0 unconditionally.
+
+**The parent's Ruling 1 conclusion is nevertheless CORRECT.** Re-measured on the
+same sources with the strict checker:
+
+```
+--root emu --require h264_decode_core   rc=0  REQUIRED_RTL_MODULE_REACHABLE
+--root emu --require decode_stub        rc=0  REQUIRED_RTL_MODULE_REACHABLE
+```
+
+The core genuinely is connected to `emu` on `2f165ed`. The ruling stands; only
+the means of re-verifying it is broken. Use a strict checker, not the branch's.
+
+### 14.4 Ruling 3 condition 2 is ALREADY satisfied on the merge base
+
+Ran `w-fit-o5`'s `check_qip_coverage.py` (`ee2ed89`, from
+`origin/parent/integ-hour27`) against `2f165ed`:
+
+```
+Scope: 36 files in files.qip; 39 .sv tracked under rtl/; product RTL 37
+tracked but NOT compiled: 2 / 37
+  ALLOWED_ABSENT cos.sv
+  ALLOWED_ABSENT h264_decode_skeleton.sv
+QIP_COVERAGE_OK product=37 compiled=35        rc=0
+```
+
+`h264_decode_top.sv` and `h264_intra_nb_ctx.sv` are **both already in
+`files.qip` on `2f165ed`**. The `NOT_COMPILED` failure was a property of the
+deployed branch, not the merge base. **W-DECODE-O5: that part of your assignment
+may already be done — verify before editing `files.qip`, or you will add
+duplicate entries.** Note `check_qip_coverage.py` does not exist on `2f165ed`
+and must be carried over to run condition 2 from there.
+
+### 14.5 Sequencing hazard between Ruling 2 and Ruling 1
+
+Core-subtree membership on `2f165ed`, strict checker, **denominator 16 modules**:
+
+```
+UNDER_CORE  8/16   h264_decode_top, h264_intra_nb_ctx, h264_mv_pred_16x16,
+                   h264_mv_pred_part, h264_luma_qpel_sample,
+                   h264_chroma_epel_sample, h264_dpb_i420_addr,
+                   h264_dpb_mb_write_addr
+
+NOT_UNDER   8/16   h264_inter_mc_part          parents=decode_stub
+                   h264_inter_mc_16x16         parents=h264_inter_mc_part
+                   h264_luma_qpel_block_16x16  parents=h264_inter_mc_16x16
+                   h264_chroma_epel_block_8x8  parents=h264_inter_mc_16x16
+                   h264_dpb_one_ref            parents=decode_stub,h264_decode_skeleton
+                   h264_luma_ref_tap_addr      parents=decode_stub,h264_decode_skeleton
+                   h264_ref_clamp              parents=h264_luma_ref_tap_addr
+                   h264_deblock_writeback_ctrl parents=decode_stub,h264_decode_skeleton
+```
+
+**Every one of the 8 NOT_UNDER modules traces back to `decode_stub`**, directly
+or transitively. Ruling 2 orders `decode_stub` retired for M10K capacity, and
+Ruling 1 requires the core connected. Done in the wrong order these conflict:
+
+> **Retiring `decode_stub` before re-parenting these 8 under `h264_decode_core`
+> will orphan all 8 at once.** They move from "reachable via the wrong parent" to
+> `parents=<none>`, the blanket sweep fails, and the tempting repair —
+> bench-listing them — makes them vanish from the product silently, which is the
+> exact failure class we are trying to stop.
+
+**Recommended order: re-parent first, retire second, re-run both directions
+after each step.** For W-DECODE-O5 and W-SWAP-O5.
+
+Also note `h264_deblock_writeback_ctrl` is NOT under the core on `2f165ed`
+(`parents=decode_stub,h264_decode_skeleton`) — the mirror image of w-audit's
+finding on `w-deblock-seam`, where it was under the core but the core was
+orphaned. **Neither branch currently has both properties**, which is precisely
+why the convergence is necessary rather than cosmetic.
+
+### 14.6 Scope limits of everything in §14
+
+All of §14 is source-level, measured on `2f165ed` and on this branch. It is
+necessary, not sufficient. I hold no post-fit evidence for any of it, and
+`present_core` post-fit confirmation for `fb4bad84` remains outstanding from
+W-FIT. Nothing in §14 changes any conclusion in §1-§13: the ARM write path is
+correct and live, and the idle artifact remains RTL-side and unobserved.

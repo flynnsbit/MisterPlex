@@ -83,6 +83,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_idle_ddr_frame.py --self-test",
     "python3 $(ROOT)/scripts/ddr_layout_consts.py --self-test",
     "python3 $(ROOT)/scripts/check_present_path_synthesis.py --self-test",
+    "python3 $(ROOT)/scripts/check_reachability_tool_integrity.py",
     "$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)",
     "$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)",
     "$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)",
