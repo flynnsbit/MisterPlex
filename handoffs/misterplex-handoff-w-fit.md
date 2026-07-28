@@ -2190,3 +2190,75 @@ W-E2E's ssh problem entirely.
 **No bounce is coming** -- the deploy already happened, `fb4bad84` is resident and
 loaded, and `3b1e8435` is parent-suspended. Waiting for one is waiting for an
 event that will not occur. Token held, unspent.
+
+## 35. "It moves" is CONFIRMED -- the user's bug report is now fully corroborated
+
+W-E2E's fourth message pointed at their own handoff commit `4d5f4ff` (13:00:52).
+I verified it in git rather than taking the summary:
+
+```
+26.86% dark pixels in cols 84-200 vs 0.19% in the 300-1200 control = 143.3x
+present in 59/59 scored frames
+it moves: median 7304 pixels change in the band per frame
+```
+
+**"Moving" was the last unconfirmed element of the user's report.** Jagged,
+black, left edge, idle logo, grey background were all already corroborated
+(SS30). This closes the description with a number and a denominator.
+
+### 35.1 Independent reproduction
+
+Two instruments, two windows, two frames, same phenomenon:
+
+| | window | asymmetry |
+|---|---|---|
+| W-FIT SS30 | x[20:150] 70.0% vs x[150:300] 0.6% | **117x** |
+| W-E2E `4d5f4ff` | cols 84-200 26.86% vs 300-1200 0.19% | **143.3x** |
+
+Chevron also agrees: **14928 px** bbox 484,239->707,479 (theirs) vs **14479 px**
+bbox x484..703 y240..479 (mine).
+
+Combined with SS30's finding that the **DDR source is clean from column 0** while
+the **display drops cols 0-23**, this is a **scanout/readback defect downstream of
+DDR**, not an ARM painting defect, and it **predates the deploy**. Prime suspect
+remains line-buffer fill latency in `ddr_frame_store` (24 px x 16-bit = 48 bytes,
+near a DDR burst boundary).
+
+### 35.2 Correction: `00eebd5e` never went back into fabric
+
+W-E2E inferred "somewhere between 12:09 and your register read, `00eebd5e` went
+back into fabric". It did not. Measured 14:13:31:
+
+```
+fb4bad849ad2db782a5004ce5a3471ce  /media/fat/_Utility/Plex.rbf
+CORENAME=Plex   fpga_manager=operating   uptime 1764 s
+```
+
+`fb4bad84` has been the sole resident RBF since this morning; `00eebd5e` exists
+only as `Plex.rbf.bak` and **has never been loaded**. I hold the sole deploy
+token and did not deploy it.
+
+The inference requires a fabric swap to explain the black frames. **The outage
+already explains them** -- both clips fall inside 12:44 -> 13:44 and every frame
+is a single flat RGB(7,7,7) plane. No fabric change is needed, and none occurred.
+
+### 35.3 Caveat on the 12:09 PASS
+
+The 12:09 chevron was real but appeared **after I hand-zeroed the stale mailbox
+magics**, unblocking the ARM fallback painter. It proves the **display path can
+carry content**; it does **not** prove the fabric is healthy. The clean-boot poke
+probe still returns `rc=77 UNSCORED`.
+
+### 35.4 The question now open, and cheaply answerable
+
+Clean boot 13:44, DDR zeroed, **no hand-poked memory**, daemon pid 3905 painting
+(`idle screen painted (mode=0/1/2)`, log mtime 14:13).
+
+**Does the chevron appear WITHOUT manual intervention?**
+
+- Yes -> the first genuinely unassisted content in this project's history.
+- No  -> fault isolated to the stale-mailbox deadlock recovery path.
+
+Either answer beats another baseline, and it needs **no deploy**. I declined to
+say "deploy now" because it would have been false: the deploy happened this
+morning, `fb4bad84` is loaded, and `3b1e8435` is parent-suspended.
