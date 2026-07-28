@@ -240,7 +240,32 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-OSD3 all four controls decode and apply live — `0x00c0`→+60 ms, `0x40c0`→idle=1, `0x40ca`→trim+resync off, `0x020a`→−160 ms; verified **mid-playback**
 - [x] G-OSD4 A/V offset measurably moves lipsync — OSD +140 ms → median **−62.15 ms** vs baseline **+94.0 ms** = **−156 ms** delta
 - [x] G-IDLE idle screen replaces the stuck last frame — `/tmp/idle3.png`, `/tmp/idle_afterstop.png`; amber chevron on near-black after stop
-- [ ] G-IDLE2 **the other three idle modes are UNPROVEN on hardware (2026-07-28)** — `Plex.sv:73` declares four modes
+- [x] G-IDLE2a **`Black` idle mode PROVEN (2026-07-28)** — `black_poststop_bank0_Y.pgm` has **exactly one unique Y value (16)** across all
+  299,520 pixels: uniform video-black, entered only after setting `lo=0x4000`. Distinguished from the original black-screen
+  **bug** by the fact that the other modes render correctly on the same build.
+- [x] G-IDLE2b **`Screensaver` idle mode PROVEN (2026-07-28)** — two time-separated captures differ by **7,656 / 299,520 pixels**;
+  rendering shows the chevron **centred** in the logo baseline and **shifted hard left** in the screensaver captures. It is a
+  bouncing-logo screensaver and genuinely animates (position change, not noise).
+- [ ] G-IDLE2c **`Last frame` idle mode is BROKEN — holds a TORN COMPOSITE, not a decoded frame (2026-07-28)**
+  `lastframe_poststop == lastframe_paused_reference` (md5 `26cc25a728f1…`, diff `0`) — but that only proves **stability**, not
+  **correctness**: both sides share the same defect, so the equality can never expose it. Per-band luma analysis of
+  `lastframe_poststop_bank0_Y.pgm`:
+
+  | Rows | Unique Y values | Range | Reading |
+  |---|---|---|---|
+  | 0–185 (top) | **189** | 15–203 | real decoded video |
+  | 190–380 (**middle**) | **2** (45, 157) | — | **synthetic logo graphics, not video** |
+  | 390–480 (bottom) | **134** | 15–203 | real decoded video |
+
+  The middle band is **93.1%** pixel-identical to `screensaver_poststop` and **92.2%** identical to the logo baseline, i.e. the
+  middle third of the frame buffer was **never overwritten** and retains stale content from the preceding mode. A user selecting
+  "Last frame" sees a torn image.
+  **Open questions:** compare bank0 vs bank1 — if only one bank tears this is a **bank-swap/`swap_pending` defect in the present
+  path**, not an idle-mode bug, and is considerably more serious. Also re-run from a clean state to confirm the stale content
+  really originates from the previous test rather than a fresh-boot tear.
+  **Method note worth keeping:** comparing two artifacts that share a defect always reports agreement. Validating "does X hold the
+  right content" requires comparison against **known-good** content, not against another instance of X.
+- [ ] G-IDLE2 **the other three idle modes were UNPROVEN on hardware (2026-07-28)** — `Plex.sv:73` declares four modes
   (`"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;"`) but every eyes-on capture to date exercises only
   **`Plex logo`** (`[15:14]=00`): idle = Plex chevron, playback counter advanced 46→154, post-stop byte-identical to idle.
   **`Black`, `Screensaver` and `Last frame` have never been exercised on device**, and the merged idle fix (`0fd39d9`)
