@@ -54,6 +54,20 @@ fi
 echo "RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=$NEG_RC)" >&2
 sed -n '1,5p' "$ROOT/build/h264_cavlc_residual_negative.log" >&2
 
+build_one h264_cavlc_residual_byte_index_wrap -DCAVLC_FAULT_BYTE_INDEX_WRAP
+WRAP_EXE="$ROOT/build/verilator/h264_cavlc_residual_byte_index_wrap/Vh264_cavlc_residual_tb_top"
+set +e
+"$WRAP_EXE" > "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" 2>&1
+WRAP_RC=$?
+set -e
+if [[ "$WRAP_RC" -eq 0 ]]; then
+  echo "RTL SIM ERROR: byte-index wrap perturbation unexpectedly passed" >&2
+  cat "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2
+  exit 1
+fi
+echo "RTL SIM RED proof: CAVLC_FAULT_BYTE_INDEX_WRAP failed as expected (rc=$WRAP_RC)" >&2
+grep -m 1 'actual_mb0_.*block11\|actual_mb0_luma4x4_source' "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2 || sed -n '1,8p' "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2
+
 build_one h264_cavlc_residual_pos ''
 POS_EXE="$ROOT/build/verilator/h264_cavlc_residual_pos/Vh264_cavlc_residual_tb_top"
 "$POS_EXE"

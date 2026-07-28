@@ -437,6 +437,16 @@ static void run_actual_mb0_block11(Vh264_cavlc_residual_tb_top& dut) {
         std::cerr << "\n";
         ++failures;
     }
+    if (!bad) {
+        std::cout << "CAVLC_REAL_MB0_BLOCK11 high_nC_high_TC PASS: block=11 nC=" << target_nc
+                  << " table=" << table_from_nc(target_nc)
+                  << " total_coeff=" << gold.total_coeff
+                  << " trailing_ones=" << gold.trailing_ones
+                  << " bit_start=" << start
+                  << " bit_end=" << end
+                  << " crosses_bit512=" << ((start < 512 && end > 512) ? 1 : 0)
+                  << "\n";
+    }
 
     dut.src_bit_offset_start = 77;
     dut.src_bit_len = block_end[15];
@@ -473,6 +483,12 @@ static void run_actual_mb0_block11(Vh264_cavlc_residual_tb_top& dut) {
                   << " seen=" << seen << " end=" << int(dut.src_bit_offset_end)
                   << "/" << block_end[15] << "\n";
         ++failures;
+    }
+    if (src_guard > 0 && dut.src_ok && seen == 16 && dut.src_bit_offset_end == block_end[15]) {
+        std::cout << "CAVLC_REAL_MB0_ALL16 PASS: blocks=16/16 final_bit_end=" << block_end[15]
+                  << " block11_bit_end=" << block_end[11]
+                  << " high_nC_block11_tc=" << block_tc[11]
+                  << "\n";
     }
     std::cout << "Scope: luma4x4 source 16/16 luma residual blocks for real IDR MB0 (1/300 MBs in 320x240 fixture); coeff order=zigzag; qp="
               << int(chain.slice.slice_qp) << "\n";

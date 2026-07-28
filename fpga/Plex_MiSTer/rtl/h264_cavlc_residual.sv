@@ -260,7 +260,11 @@ module h264_cavlc_residual_block #(
     reg [4:0] place_i;
     reg signed [5:0] coeff_num;
 
+`ifdef CAVLC_FAULT_BYTE_INDEX_WRAP
+    wire [RBSP_IDX_W-1:0] rbsp_byte_idx = bit_pos[8:3];
+`else
     wire [RBSP_IDX_W-1:0] rbsp_byte_idx = bit_pos[RBSP_IDX_W+2:3];
+`endif
     wire cur_bit = (bit_pos < bit_len) ? rbsp[rbsp_byte_idx][3'd7 - bit_pos[2:0]] : 1'b0;
     wire token_too_long = (coeff_token_table == 3'd3) ? (code_len >= 5'd6) :
                           (coeff_token_table == 3'd4) ? (code_len >= 5'd8) : (code_len >= 5'd16);
