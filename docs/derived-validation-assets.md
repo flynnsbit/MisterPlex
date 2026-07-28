@@ -69,3 +69,8 @@ PMS_BASELINE_DELIVERED profile_idc=66 level_idc=30 pps_valid=1 entropy_cabac=0 m
 PMS_BASELINE_SLICES vcl=1800 idr=36 nonidr=1764 i=36 p=1764 b=0 other=0 bytes=12713118
 test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B 624x480 stream
 ```
+
+The later live-PMS gate expects the server-profile crop contract
+`display=618x480`; this derived asset is intentionally full-frame
+`display=624x480`. If a regenerated run of `pms_baseline_probe` fails only the
+display-crop check, that is not a profile/entropy/ref/B-slice failure.

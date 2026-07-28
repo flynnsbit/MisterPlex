@@ -410,6 +410,55 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   YUV traffic is ~40 MB/s before overhead (~50–70 MB/s planning), comfortable for the validated
   80 MHz DDR/YUV path; SDRAM remains out of scope.
 
+Phase 3.3q (derived real-statistic H.264 ARM boundary profile — W-FEED 2026-07-28):
+  **Scope:** measured on the tracked-provenance derived asset in
+  `docs/derived-validation-assets.md`: HEVC `/metadata/3` source re-encoded to H.264 Constrained
+  Baseline/CAVLC/ref=1/no-B, 624×480, 1800 frames. This is the first real-image-statistics
+  H.264 workload at the target geometry, but it remains **derived**, not original library content
+  and not original-Part direct-play evidence. The W-A4 / 3.3n / 3.3p numbers above remain
+  HEVC-source PMS-transcode evidence, not original-Part H.264 evidence.
+
+  **Pre-registered before summarising the retained ARM run:** (P1) real-statistic content should
+  be harder than the synthetic P16 fixtures by compressed bytes/frame and bytes/macroblock; (P2)
+  the ARM boundary should be near the live ~31 ms decode+pipe decomposition plus present, barely
+  fitting 24 fps and missing 25 fps; (P3) any existing correctness score that goes green on this
+  asset without a derived golden/reference is insensitive rather than reassuring.
+
+  **Raw ARM profile buckets** (`PROFILE_FRAMES=1800`, sample
+  `/media/fat/misterplex/profile/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4`,
+  raw evidence retained in `build/misterplex-agent-W-FEED-arm-profile.txt`):
+  - ffmpeg decode/null: `wall_s=38.811395`, `child_cpu_s=41.160496` →
+    **21.5619 ms/f wall**, **22.8669 ms/f child CPU**.
+  - decode+scale/pad+yuv420p/null: `wall_s=44.129199`, `child_cpu_s=54.256972` →
+    scale/format delta **2.9543 ms/f wall**, **7.2758 ms/f child CPU**.
+  - decode+scale/pad+yuv420p pipe drain/copy: `wall_s=53.603296`,
+    `child_cpu_s=60.109691`, `read_wall_s=53.592391`, `copy_wall_s=4.156984` →
+    pipe delta **5.2634 ms/f wall**, parent copy **2.3094 ms/f wall**,
+    total decode+scale+pipe **29.7796 ms/f wall**.
+  - present/DDR: product-present bucket from the timing-closed 624×480 path is
+    **10.4106 ms/f wall**, **4.9162 ms/f CPU**. The raw DDR microbench in the same ARM profile
+    measured no-sync `/dev/mem` at **7.199 ms/f wall**, **4.707 ms/f CPU** (`sync=1`:
+    7.378/4.755; `flush=1`: 13.246/9.147), so the product-present bucket is the conservative
+    end-to-end number to budget.
+  - bucket sum with product present: **40.1902 ms/f**. That leaves **+1.476 ms/f** against
+    24 fps (41.667 ms) and misses 25 fps (40.000 ms) by **0.190 ms/f**. This is a measured
+    component sum, not a hardware A/V playback PASS.
+  - Unattributed residual inside the ffmpeg sub-buckets is **0 by construction** because the
+    scale and pipe numbers are deltas from nested probes
+    (`29.7796 − 21.5619 − 2.9543 − 5.2634`). That is not an independent zero measurement;
+    product integration overhead beyond these probes remains unmeasured.
+
+  **Synthetic comparison:** the derived Annex-B is 12,713,118 B / 1800 frames /
+  1170 MB/frame = **7062.8 B/f**, **6.037 B/MB**. The synthetic 624×480 P16 fixture is
+  70,348 B / 12 frames / 1170 MB/frame = **5862.3 B/f**, **5.011 B/MB**; P-frame packet mean
+  is **6924.8 B** derived vs **5344.9 B** synthetic. P1 is therefore confirmed: the derived
+  sustained workload is ~20.5% larger per MB overall and ~29.6% larger per P frame than the
+  624×480 synthetic P16 blip. The 320×240 synthetic fixtures remain useful stress/unit vectors
+  (`7.681 B/MB` P16, `15.100 B/MB` two-frame residual14), but their geometry and sample length
+  make them poor sustained 624×480 throughput proxies. P2 is confirmed by the 40.1902 ms/f sum.
+  P3 is not scored as a green correctness result: no derived golden/reference is wired, so this
+  profile is performance/boundary evidence only.
+
 
 Phase 3.1b (DDR bulk path — implemented this fire):
   **Measured F1 (lab 2026-07-24, 192.168.1.183, 320×240 RGB565 = 153600 B):**
