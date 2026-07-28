@@ -44,21 +44,34 @@ evidence the fabric writes DDR.
 comes back on **`CORENAME=MENU`**, not Plex. The parent's "device unreachable"
 report was this reboot in progress, not a dead device — it is up now.
 
-### 2. `misterplexd` IS NOT RUNNING
-It did not restart after the reboot. Two independent oracles:
+### 2. `misterplexd` WAS DOWN for part of this shift — check it before you probe
+At **14:38–14:39** two independent oracles said it was absent (process grep
+count 0; **no listener on port 3005**). At **14:56** it is definitively back:
 ```
-ps w  -> 95 procs, /media/fat/MiSTer /media/fat/_Utility/Plex.rbf present, NO misterplexd
-netstat -lnt | grep 3005 -> no listener
+pid 3823  /media/fat/misterplex/bin/misterplexd --port 3005 --pms http://192.168.1.41:32400
+netstat -lnt -> :3005 listening
 ```
-**Your poke-probe run now would be measuring a system with no ARM daemon.**
-That is a different experiment from the one you ran before. Either restart it
-first or record the difference — otherwise the A/B against `3b1e8435` is
-confounded.
+So it went down across the ~14:16 reboot and was restarted later. **Assert the
+daemon state immediately before and after your poke-probe** — a probe that
+straddles a daemon restart is not the experiment you think you ran.
 
-### 3. The capture above was taken with the daemon dead
-And it is **identical** to the daemon-alive STEP 1 capture: same 14928 px, same
-bbox. So the chevron on screen is **not** proof that your mailbox-zeroing
-worked — it survives the painter being gone entirely.
+**Two silent probe traps** that nearly made me report this wrong, both worth
+knowing fleet-wide:
+- `ps w | grep -i "misterplex\|Main"` returns **empty even when the process
+  exists** — busybox grep does not treat `\|` as BRE alternation, so the whole
+  pattern is matched literally.
+- Nested double quotes inside a single-quoted `ssh '...'` command terminate the
+  outer string early and silently change what grep receives; this handed me a
+  bogus `daemon=1`, which I retracted rather than reported.
+
+Reliable form: pipe a script file to `ssh 'bash -s'` — see
+`artifacts/e2e-o5/daemon_probe.sh`.
+
+### 3. The chevron survives the painter being gone entirely
+The capture above was taken **with the daemon dead**, and it is identical to
+both daemon-alive captures: same 14928 px, same bbox. So the chevron on screen
+is **not** proof that your mailbox-zeroing worked — it persists with no ARM
+painter running at all.
 
 ---
 
