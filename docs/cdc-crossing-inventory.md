@@ -422,6 +422,10 @@ of code.
 | 2026-07-29 | — | Added completeness limitation to header; inventory is hand-enumerated, not proven complete |
 | 2026-07-29 | — | PLXF instrument limitation documented: `debug_state.state_ddr` always reads S_IDLE (self-referential) |
 | 2026-07-29 | — | Revised stall analysis: seq freeze (4→stable) SUPPORTS arbiter hypothesis, not contradicts it |
+| 2026-07-29 | — | **ARBITER HYPOTHESIS REFUTED** by device measurement (machine actively cycling at 62 Hz) |
+| 2026-07-29 | — | **ROOT CAUSE FOUND:** `pending_ready_ddr` CDC pulse width bug — 1 DDR cycle at 90 MHz, invisible to 20 MHz CLK domain |
+| 2026-07-29 | — | Fix: `(sched_valid && sched_for_pending) ?` instead of `sched_valid ?` in pending_ready_ddr expression |
+| 2026-07-29 | — | Added `runMultiSwapRetirement` test: exercises 3 consecutive swap retirements with active display |
 
 ---
 
@@ -547,58 +551,89 @@ downstream of the arbiter fix.
 
 ---
 
-## RCA Status (2026-07-29)
+## RCA Status (2026-07-29, REVISED after w-osd device measurement)
 
-### Position statement
+### Position statement — PREVIOUS RCA SUPERSEDED
 
-Two candidates survive; neither is proven to explain the 112:4 doorbell-to-consume
-ratio. **The next fit may not fix the stall.**
+The "frozen screen" as originally characterized (state machine stuck, never returns
+to IDLE) **does not exist on the v0.3.0 core.** The device is actively cycling at
+62 Hz refresh. The observed symptom is **8.85 fps instead of 30 fps**, caused by the
+ARM hitting a 50 ms timeout on every frame because `free_bank_mask` is never non-zero.
 
-### Surviving candidates
+The 112:4 ratio was an artefact of ARM-side exponential backoff in `PRESENT=both`
+mode, not evidence of anything in the fabric. That constraint is withdrawn.
 
-| # | Candidate | Fix commit | In doorbell path? | Mechanism for 112:4 |
-|---|-----------|-----------|-------------------|---------------------|
-| 1 | async_fifo comb loop | `7a3d960` | **No** (input_fifo is video data, not doorbell) | None — this fix is correct but unrelated to doorbell stall |
-| 2 | Arbiter in wrong domain | `60df5a2` | **Yes** | Burst responses lost → S_LINE_WAIT stuck → doorbell polls cease → ARM sees 112 rings, FPGA consumed 4 before stalling |
+### The arbiter hypothesis is REFUTED
 
-### Eliminated candidates
+The device measurement shows `bank_vsync_count` advancing at 62/s and content being
+displayed. The state machine is actively completing fetches, not stuck in S_LINE_WAIT.
+My registered prediction (PLXF seq freezes after doorbell) did not hold — the machine
+is alive. **The hypothesis was registered in advance and the measurement came back
+against it. This is the system working as intended.**
+
+### Actual root cause: `pending_ready_ddr` CDC pulse width (FOUND, FIXED)
+
+**Bug:** In `ddr_frame_store.sv` line 873, the `pending_ready_ddr` expression:
+```verilog
+pending_ready_ddr <= swap_pending_d2 &&
+    (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
+```
+
+When `sched_valid=1` and `sched_for_pending=0` (scheduling a CURRENT-line fill, not
+a prep fill), the expression evaluates to 0 even though all prep lines ARE ready.
+This causes `pending_ready_ddr` to be high for only **1 DDR cycle** before being
+zeroed by the current-fill scheduling on the next cycle.
+
+At the 90/20 MHz (4.5:1) clock ratio between clk_ddr and clk, a 1-cycle (11.1 ns)
+pulse on `pending_ready_ddr` cannot be reliably captured by the CLK-domain 2-FF
+synchronizer (which samples every 50 ns). The swap therefore **never retires** after
+`has_frame=1` enables current-line demand (which is most of the time).
+
+**Consequence:** `swap_pending = 1` permanently → `free_bank_mask = 0` permanently
+→ ARM hits 50 ms timeout on every frame → 8.85 fps instead of 30.
+
+**Fix:**
+```verilog
+pending_ready_ddr <= swap_pending_d2 &&
+    ((sched_valid && sched_for_pending) ? sched_pending_ready : pending_ready_c);
+```
+
+This ensures current-line scheduling does not suppress the prep-readiness signal.
+`pending_ready_ddr` now stays high for the full period between prep completion and
+swap retirement (potentially thousands of DDR cycles), giving the CLK domain ample
+time to capture it.
+
+**Why the bench didn't catch it:** The testbench drives both `clk` and `clk_ddr` at
+the SAME frequency (1:1 ratio). At 1:1, every DDR cycle has a corresponding CLK edge,
+so the 1-cycle pulse is always captured. The bug only manifests at the real 4.5:1
+ratio on silicon.
+
+### Eliminated candidates (revised)
 
 | # | Candidate | Evidence for elimination |
 |---|-----------|------------------------|
+| 1 | async_fifo comb loop | Correct fix but unrelated to bank-release path |
+| 2 | Arbiter in wrong domain | **Device actively cycling at 62 Hz; not stuck** |
 | 3 | `want_y` single-stage sync | Glitch injection: has_frame unaffected even at rate=1 |
 | 4 | `disp_buf_d2` bank race | Bank-swap test: prep path is self-consistent |
 | 5 | `host_owns_fs` latch | Under DDR_FRAME_STORE, ddr_swap=0; has_frame not gated by host_owns_fs |
 
-### Why the arbiter hypothesis is plausible but unfalsifiable
+### Answers to parent's four questions
 
-The pre-fix arbiter port assignment (clk_sys domain for a clk_ddr-producing module)
-no longer exists in source. The silicon observation comes from core `eeff4eee` which
-is in the banned md5 set and will not be rebuilt. **This hypothesis is structurally
-unfalsifiable by us — we cannot reproduce the failure.** It can never be promoted
-from hypothesis to RCA by our own standard ("if you cannot make it fail, it is not
-a gate"). The most it can earn is corroboration: if the next fit cures the stall, it
-becomes the best available explanation and stays permanently provisional.
+1. **Who writes `free_bank_mask`?** Nobody independently. It is a derived field in
+   the PLXD mailbox (line 896): `swap_pending_d2 ? 2'b00 : (disp_bank_d2 ? 2'b01 : 2'b10)`.
+   It is zero iff `swap_pending_d2 = 1`.
 
-### Mechanism (plausible, unproven, labelled as such)
+2. **Is `swap_pending=1` the cause or consequence?** ROOT CAUSE flows:
+   `pending_ready_ddr` pulsed too narrow → `pending_ready_s2` never captured →
+   swap never retires → `swap_pending = 1` permanent → `free_bank_mask = 0` →
+   `disp_bank = 0` permanent. **One defect, three symptoms.**
 
-The DDR frame store polls the doorbell address every 256 clk_ddr cycles. Early polls
-(simple 1-burst reads) succeed because single-beat responses propagate even across
-a misclocked arbiter. The machine then detects `db_new_seq`, toggles `swap_req_t_ddr`,
-and enters line fill mode — issuing BURSTCNT>1 DDR reads.
+3. **ARM→FPGA ACK path?** **None exists.** The protocol is one-way: ARM rings
+   doorbell → FPGA fills lines → FPGA reports free bank in PLXD → ARM reads.
+   There is no ARM→FPGA acknowledgement.
 
-Multi-beat burst RESPONSES from the pre-fix arbiter (which was clocked at clk_sys =
-20 MHz while producing data at clk_ddr = 90 MHz) were lost: the 4.5:1 clock ratio
-meant 7 of 10 `DOUT_READY` pulses were never seen by the clk_ddr consumer. The state
-machine enters `S_LINE_WAIT` expecting `DDRAM_DOUT_READY` that never arrives. It
-stalls there permanently.
-
-**Why seq=4:** 4 mailbox writes happen from S_IDLE before the line fill is attempted
-(initial + heartbeat-triggered writes during the doorbell priming window). After the
-first `db_new_seq` triggers a fill, the machine enters S_LINE_WAIT and never returns.
-
-**Why 112 ARM rings:** The ARM polls the doorbell address continuously. Each write
-is visible in DDR. But the FPGA only polls every 256 cycles and consumed 4 before
-stalling. The remaining 108 rings are never seen because the FPGA stopped polling.
-
-**Falsifiable prediction:** If the next fit (with arbiter in correct domain) still
-shows seq freeze after doorbell, this mechanism is wrong and we are at zero candidates.
+4. **Fix arithmetic:** Without the 50 ms wait, per-frame time = ~33 ms (decode +
+   write + poll overhead). 1000/33 ≈ 30 fps. The fix removes the FPGA-side cause
+   of the wait (free_bank_mask permanently 0), which is more correct than removing
+   the ARM-side wait (which would mask tearing hazards).

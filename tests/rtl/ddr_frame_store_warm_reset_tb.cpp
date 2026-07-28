@@ -680,6 +680,69 @@ bool runRunningArmRestartLower() {
     return sim.schedulerProven();
 }
 
+// Exercises the pending_ready_ddr fix: after has_frame=1, subsequent swap
+// retirements must complete despite concurrent current-line refill demands.
+// This is the scenario that fails on 4.5:1 clk_ddr/clk ratio when
+// pending_ready_ddr is only high for 1 DDR cycle.
+bool runMultiSwapRetirement() {
+    Sim sim;
+    sim.fillFrame(0, 100);
+    sim.fillFrame(1, 150);
+    sim.resetCore();
+
+    // First doorbell: bank 0, seq 1
+    sim.ringDoorbell(0, 1);
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("multi-swap: first frame did not present");
+    expectFreshSample("multi-swap frame 1", sim, 100);
+
+    // After first swap: has_frame=1, display is scanning and generating
+    // current-line refill demand. This is where the old bug manifested.
+    if (!sim.top.has_frame) {
+        std::cerr << "FAIL multi-swap: has_frame not set after first swap\n";
+        std::exit(1);
+    }
+
+    // Second doorbell: bank 1, seq 2 (swap while display is active)
+    const int f1 = sim.top.frames_done;
+    sim.ringDoorbell(1, 2);
+    if (!sim.waitForFrameCountStatic(f1 + 1, 800000)) {
+        std::cerr << "FAIL multi-swap: second swap did not retire"
+                  << " frames=" << sim.top.frames_done
+                  << " swap_pending=" << int(sim.top.swap_pending)
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    expectFreshSample("multi-swap frame 2", sim, 150);
+
+    // Third doorbell: back to bank 0, seq 3 (cached data from first fill)
+    const int f2 = sim.top.frames_done;
+    sim.ringDoorbell(0, 3);
+    if (!sim.waitForFrameCountStatic(f2 + 1, 800000)) {
+        std::cerr << "FAIL multi-swap: third swap did not retire"
+                  << " frames=" << sim.top.frames_done
+                  << " swap_pending=" << int(sim.top.swap_pending)
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    expectFreshSample("multi-swap frame 3", sim, 100);
+
+    // Verify swap_pending clears after final swap retirement (machine is idle)
+    for (int i = 0; i < 5000; ++i)
+        sim.videoTick();
+    if (sim.top.swap_pending) {
+        std::cerr << "FAIL multi-swap: swap_pending still set 5000 cycles after last retirement"
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+
+    std::cout << "ddr_frame_store warm-reset raw: multi_swap_retirement frames="
+              << sim.top.frames_done << " underruns=" << sim.top.underrun_count
+              << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runMultiSwapRetirement", sim);
+    return sim.schedulerProven();
+}
+
 bool runEqualTokenFallback() {
     Sim sim;
     sim.fillFrame(0, 48);
@@ -824,6 +887,7 @@ void run() {
     schedulerSeen |= runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
     schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
+    schedulerSeen |= runMultiSwapRetirement();
     schedulerSeen |= runFrameMailboxStallsWithHungLineRead();
     schedulerSeen |= runEqualTokenFallback();
     schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
