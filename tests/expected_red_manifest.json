@@ -64,6 +64,30 @@
         "FAIL stream_path inter RTL: missing green inter diagnostic band 2",
         "FAIL stream_path inter RTL: missing green inter diagnostic band 3"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_pred",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping prediction must fail the exact P16x16 real-P pred+residual reconstruction scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=19 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping residual must fail differently from dropping prediction in the exact P16x16 real-P scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_perturb_mv",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Perturbing the P16x16 motion vector by one half-pel must fail the independent read-address/sample scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 0 got_addr=0x400d want_addr=0x400c"
+      ]
     }
   ]
 }
