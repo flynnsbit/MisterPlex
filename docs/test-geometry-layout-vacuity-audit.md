@@ -34,3 +34,13 @@ fixed ABI page and must not be moved when frame geometry moves.
 | RGB565 fixed constants | Change `kPlex480pRgb565BankStride` to `0x80000`. | `rc=1`; `FAIL ... test_frame_store_math.cpp:286 kPlex480pRgb565BankStride == alignUpU32(...)`; `FAIL ...:289 kPlex480pRgb565DoorbellPhys == ...`. | Sound. |
 | Coded-width constant alone | Change `kPlex480pCodedWidth 624->608`. | `test_osd_menu rc=0`; `test_resolve rc=0`; `test_frame_store_math rc=1` with `FAIL ... p480.coded_width == 624` and layout validity failures. | Sound split: consumers derive; layout proof demands a coordinated geometry update. |
 | Fixed mailbox page PLXS/PLXF/PLXD | Move each to the geometry doorbell page family (`0x300FF1xx`). | PLXS: `FAIL ... test_input_mailbox.cpp:95: kDdrStatusMailboxPhys == 0x3007F100u`; PLXF: `FAIL ...:101`; PLXD: `FAIL ...:103`. | Sound; mailbox control page is fixed ABI, not geometry-derived. |
+
+## Build-staleness follow-up
+
+The PLXD mailbox mutation exposed a Makefile dependency hole: after restoring
+`mailbox_abi_spec.hpp`, `make unit` reused a stale mutant
+`build/test_input_mailbox` binary because the target depended on
+`input_mailbox.hpp` but not the ABI header it includes. `eb5db4f` fixed the
+geometry/layout tests; the follow-up Makefile commit adds
+`mailbox_abi_spec.hpp` to both mailbox unit targets so restored ABI mutations
+force a rebuild instead of a false red/green from an old binary.

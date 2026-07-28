@@ -309,7 +309,8 @@ $(ROOT)/build/test_sdram_memtest_sim: $(ROOT)/tests/unit/test_sdram_memtest_sim.
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_sdram_memtest_sim.cpp
 
 $(ROOT)/build/test_sdram_mailbox: $(ROOT)/tests/unit/test_sdram_mailbox.cpp \
-		$(ROOT)/host/libmisterplex/sdram_mailbox.hpp
+		$(ROOT)/host/libmisterplex/sdram_mailbox.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_sdram_mailbox.cpp
 
@@ -357,7 +358,8 @@ $(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
 
 $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
-		$(ROOT)/host/libmisterplex/input_mailbox.hpp
+		$(ROOT)/host/libmisterplex/input_mailbox.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_input_mailbox.cpp
 
