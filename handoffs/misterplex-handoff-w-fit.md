@@ -2871,3 +2871,113 @@ ls: Plex.3b1e8435.bak.rbf  Plex.e9b71d95.bak.rbf  Plex.fb4bad84.bak.rbf
 Verified after: `Plex.rbf` md5 still `3b1e8435`, `fpga_manager=operating`,
 `misterplexd` pid 3823 with `--pms` intact. Copies only; nothing overwritten,
 nothing loaded, resident core untouched.
+
+---
+
+## 44. ★ THE BOARD SEES NO HDMI SINK. Measured on the transmitter, upstream of the entire capture chain.
+
+W-E2E has 258 frames of flat RGB(7,7,7) and correctly said no software path can
+tell "FPGA outputs black" from "source absent". They proposed a coordinated bounce
+as the only remaining instrument. **There is a better one, on the board, and it
+does not need the deploy token, a bounce, or their cooperation.**
+
+The DE10-Nano's HDMI transmitter is an ADV7513 and it is reachable from the HPS on
+`/dev/i2c-1` at `0x39`. Nobody in this project has ever read it.
+
+```
+Scope: 4/4 ADV7513 registers read from device:root@192.168.1.183 bus1 0x39
+reg0x00 chip_rev = 0x13   -> ADV7513 confirmed (identity, not assumed)
+reg0x42 status   = 0x98   -> HPD(bit6)=0   MONITOR_SENSE(bit5)=0
+reg0x41 power    = 0x10   -> POWER_DOWN(bit6)=0  transmitter powered up
+reg0xd6 power2   = 0xc0   -> HPD_SRC=NONE
+0x42 sampled 9x over ~15s: 0x98 every time
+NO_SINK   rc=1
+```
+
+**HPD and Rx-sense are both LOW. Nothing is plugged into this board's HDMI output
+and asserting hot-plug detect.** Two independent bits, stable, on a chip whose
+identity is confirmed by its revision register.
+
+### Bit definitions are cited, not remembered
+
+I first decoded `0x98` from memory as "HPD high" and **that was wrong**. I fetched
+`drivers/gpu/drm/bridge/adv7511/adv7511.h` from the Linux tree rather than trust it:
+
+```
+ADV7511_REG_STATUS            0x42
+ADV7511_STATUS_HPD            BIT(6)
+ADV7511_STATUS_MONITOR_SENSE  BIT(5)
+ADV7511_REG_POWER             0x41 / ADV7511_POWER_POWER_DOWN BIT(6)
+ADV7511_REG_POWER2            0xd6 / HPD_SRC_MASK 0xc0, HPD_SRC_NONE 0xc0
+```
+
+`0x98 = 1001 1000` -> bit6=0, bit5=0. My memory had inverted the bit positions and
+would have published the exact opposite conclusion.
+
+### What this does and does not establish
+
+**Does:** the board is not seeing a connected, HPD-asserting sink. Every HDMI
+capture taken while this holds is **unattributable** — the same defect class as the
+no-source hash `2358782e`, but now provable from the source side instead of argued
+from pixels.
+
+**Does not:**
+- It does not prove the TMDS output is off. `HPD_SRC=NONE` means MiSTer told the
+  transmitter to ignore HPD, so the output may well still be driven.
+- It does not prove *when* this started. **I have no baseline.** I never read `0x42`
+  earlier today, so I cannot show it changed, and I will not claim the 12:09
+  chevron measurement was taken under a different value.
+- It does not distinguish "cable out" from "dongle unpowered" from "adapter that
+  does not pass HPD" from "dongle plugged into a different source".
+
+### Consequence for the pending experiment
+
+**The bounce test should not be run.** It would spend a coordinated window on a
+chain the board says is not attached, and a null result would be read as evidence
+about the core. That is the vacuous-control pattern again, one layer down: the
+experiment cannot vary what it claims to test if the signal path is open.
+
+Independently, the board is on **MENU** right now (§43) — a bright 1024x768 UI. A
+capture taken this second needs no bounce and no token: if MENU does not appear,
+the fault is at or before the capture input, not in `Plex.rbf`. That discriminator
+has been free and available all along.
+
+**Third option nobody enumerated.** W-E2E framed this as A (FPGA outputs black) vs
+B (video timing dead). The measurement points at **C: the capture chain is not
+electrically attached to this MiSTer.** C explains 258 identical frames better than
+any RTL hypothesis, and it is the one option that no amount of RTL work can fix.
+
+### Answering W-E2E's direct question
+
+`misterplexd` is running: pid **3823**, `/media/fat/misterplex/bin/misterplexd
+--name MiSTerPlex --id misterplex-183 --port 3005 --conf
+/media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400`, same boot
+(14:16:28), full argv with `--pms` intact.
+
+But the inference they wanted to draw from it does not survive: they proposed that
+"daemon running + no content = option B". With `NO_SINK` measured, daemon state
+carries no information about the display path at all.
+
+### `scripts/check_hdmi_sink.sh`
+
+Permanent instrument. `Scope:` first, cited bit definitions in the header, scope
+limits printed in the output rather than buried in docs, `--from-file` so it is
+testable offline. rc 0 sink / 1 no sink / 77 UNSCORED / 2 usage. It **cannot**
+return a FAIL when it did not read anything — unreadable is 77, never 1.
+
+Red/green, six cases:
+
+```
+red_nosink       0x42=0x98 both clear      rc=1  NO_SINK
+green_sink       0x42=0xd8 HPD set         rc=0  SINK_PRESENT
+green_senseonly  0x42=0xb8 sense only      rc=0  SINK_PRESENT
+skip_wrongchip   0x00=0x24 not ADV7513     rc=77 UNSCORED
+skip_empty       no registers              rc=77 UNSCORED  Scope: 0/4
+missing fixture  file absent               rc=77 UNSCORED  Scope: 0
+live device                                rc=1  NO_SINK
+```
+
+**This is a physical-layer check the user can act on in seconds** — reseat the HDMI
+cable at the DE10-Nano and confirm the dongle is powered, then re-run the script.
+`SINK_PRESENT` would mean the capture chain is finally trustworthy, and every
+display verdict this project has recorded should be re-derived from that point.
