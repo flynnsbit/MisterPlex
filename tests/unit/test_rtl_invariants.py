@@ -764,13 +764,31 @@ def check_frame_store_cdc_contract() -> None:
         and "wr_gray_r1<=wr_gray;wr_gray_r2<=wr_gray_r1;" in nt_afifo,
         "async_fifo CDC contract: pointers must cross as gray-coded values through two flops",
     )
-    check(
-        not re.search(
-            r"set_(?:false|multicycle)_path[^\n]*(?:fstore|ddr_frame_store|DDRAM|present_ddr|stream_ddr|ddr_arb|async_fifo)",
-            sdc,
+    allowed_cdc_false_paths = (
+        "set_false_path -to [get_keepers {*ddr_arb|m1_want_s1}]",
+        "set_false_path -to [get_keepers {*ddr_arb|reset_s1}]",
+        "set_false_path -to [get_keepers {*m1_rsp_fifo|wr_gray_r1[*]}]",
+        "set_false_path -to [get_keepers {*m1_rsp_fifo|rd_gray_w1[*]}]",
+        "set_false_path -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get_keepers {*ddr_frame_store*frame_mbox_last[*]}]",
+    )
+    suspect_sdc_cuts = []
+    for line in sdc.splitlines():
+        if not re.search(
+            r"set_(?:false|multicycle)_path[^\n]*(?:fstore|ddr_frame_store|DDRAM|present_ddr|stream_ddr|ddr_arb|async_fifo|m1_rsp_fifo)",
+            line,
             re.I,
-        ),
-        "SDC must not hide frame-store/DDR/arbiter timing with false or multicycle paths",
+        ):
+            continue
+        if line.strip() not in allowed_cdc_false_paths:
+            suspect_sdc_cuts.append(line.strip())
+    check(
+        not suspect_sdc_cuts,
+        "SDC must not hide frame-store/DDR/arbiter timing with unreviewed false or multicycle paths: "
+        + "; ".join(suspect_sdc_cuts[:3]),
+    )
+    check(
+        "set_max_delay -from [get_keepers {*ddr_arb*m1_rsp_fifo|mem*}] 50.0" in sdc,
+        "async FIFO RAM data path must be bounded with set_max_delay, not hidden with false_path",
     )
     print("PASS frame-store CDC contract (clk/clk_ddr crossings and DDR timing constraints)")
 
