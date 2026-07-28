@@ -271,6 +271,12 @@ module h264_decode_core #(
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
     localparam [7:0] ST_P16_WIN_START = 8'd9;
+    // Chroma DC (H.264 7.3.5.3): when cbp_chroma != 0 the two 2x2 chroma DC
+    // blocks are coded ahead of every chroma AC block, so they must be parsed
+    // first or the AC parse starts on the wrong bit and the macroblock
+    // desynchronises.
+    localparam [7:0] ST_P16_CDC_START = 8'd10;
+    localparam [7:0] ST_P16_CDC_WAIT  = 8'd11;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -298,6 +304,16 @@ module h264_decode_core #(
     //   the next block and desynchronises the rest of the macroblock.
     reg [3:0]  p16_cbp_luma_r;
     reg [1:0]  p16_cbp_chroma_r;
+    //   chroma DC: the 2x2 DC of each chroma component is coded as its own
+    //   block (coeff_token table 4, max_coeff 4), inverse-Hadamard transformed
+    //   and scaled at QPc, then injected as coefficient 0 of the matching
+    //   chroma AC block (8.5.11). Kept dequantised, one entry per chroma 4x4
+    //   block: 0..3 = Cb, 4..7 = Cr.
+    reg        p16_cdc_active;
+    reg        p16_cdc_comp;
+    reg        p16_cdc_done_r;
+    reg signed [28:0] p16_cdc_dc [0:7];
+    integer    p16_cdc_i;
     //   nC: coeff_token table selection (H.264 9.2.1) needs total_coeff of the
     //   left and upper 4x4 neighbours. Kept as this macroblock's 16 values, the
     //   right column of the macroblock to the left, and a per-column line buffer
@@ -496,8 +512,7 @@ module h264_decode_core #(
     wire [15:0] res_mb_index = ({8'd0, wb_mb_y} * {8'd0, mb_width}) + {8'd0, wb_mb_x};
 
     wire [4:0] res_nC;
-    wire [2:0] res_coeff_token_table;
-    h264_cavlc_nc_predictor u_product_res_nc (
+    wire [2:0] res_coeff_token_table;    h264_cavlc_nc_predictor u_product_res_nc (
         .mb_x(wb_mb_x),
         .mb_y(wb_mb_y),
         .mb_index(res_mb_index),
@@ -515,14 +530,81 @@ module h264_decode_core #(
         .coeff_token_table(res_coeff_token_table)
     );
 
+    // QPc (H.264 8.5.8): chroma dequant runs at a mapped QP, not at QPy. Above
+    // qPI 29 the mapping is a table, not a shift, and pps_chroma_qp_index_offset
+    // moves the whole curve.
+    function automatic [5:0] chroma_qp_map(input [5:0] qpi);
+        begin
+            case (qpi)
+            6'd30: chroma_qp_map = 6'd29; 6'd31: chroma_qp_map = 6'd30;
+            6'd32: chroma_qp_map = 6'd31; 6'd33: chroma_qp_map = 6'd32;
+            6'd34: chroma_qp_map = 6'd32; 6'd35: chroma_qp_map = 6'd33;
+            6'd36: chroma_qp_map = 6'd34; 6'd37: chroma_qp_map = 6'd34;
+            6'd38: chroma_qp_map = 6'd35; 6'd39: chroma_qp_map = 6'd35;
+            6'd40: chroma_qp_map = 6'd36; 6'd41: chroma_qp_map = 6'd36;
+            6'd42: chroma_qp_map = 6'd37; 6'd43: chroma_qp_map = 6'd37;
+            6'd44: chroma_qp_map = 6'd37; 6'd45: chroma_qp_map = 6'd38;
+            6'd46: chroma_qp_map = 6'd38; 6'd47: chroma_qp_map = 6'd38;
+            6'd48: chroma_qp_map = 6'd39; 6'd49: chroma_qp_map = 6'd39;
+            6'd50: chroma_qp_map = 6'd39; 6'd51: chroma_qp_map = 6'd39;
+            default: chroma_qp_map = qpi;
+            endcase
+        end
+    endfunction
+    function automatic [4:0] chroma_norm_adjust0(input [2:0] qmod);
+        begin
+            case (qmod)
+            3'd0: chroma_norm_adjust0 = 5'd10;
+            3'd1: chroma_norm_adjust0 = 5'd11;
+            3'd2: chroma_norm_adjust0 = 5'd13;
+            3'd3: chroma_norm_adjust0 = 5'd14;
+            3'd4: chroma_norm_adjust0 = 5'd16;
+            default: chroma_norm_adjust0 = 5'd18;
+            endcase
+        end
+    endfunction
+
+    wire signed [7:0] res_qpi_sum = $signed({2'd0, slice_qp_y}) +
+                                    $signed({{3{pps_chroma_qp_index_offset[4]}}, pps_chroma_qp_index_offset});
+    wire [5:0] res_qpi = (res_qpi_sum < 8'sd0)  ? 6'd0 :
+                         (res_qpi_sum > 8'sd51) ? 6'd51 : res_qpi_sum[5:0];
+    wire [5:0] res_qp_c = chroma_qp_map(res_qpi);
+
+    // 8.5.11.2 for 4:2:0: dcC = ((f * LevelScale(QPc%6,0,0)) << (QPc/6)) >> 5.
+    // LevelScale is 16*normAdjust with the flat scaling matrix, and this core's
+    // dequant convention already folds the /16, so the residual scale is
+    // (f * normAdjust) << (QPc/6) >> 1.
+    function automatic signed [28:0] chroma_dc_scale(input signed [19:0] f);
+        reg signed [39:0] v;
+        begin
+            v = $signed(f) * $signed({1'b0, chroma_norm_adjust0(res_qp_c % 6)});
+            v = v <<< (res_qp_c / 6);
+            v = v >>> 1;
+            chroma_dc_scale = v[28:0];
+        end
+    endfunction
+
+    wire signed [19:0] cdc_c0 = {{4{cavlc_coeff[0][15]}}, cavlc_coeff[0]};
+    wire signed [19:0] cdc_c1 = {{4{cavlc_coeff[1][15]}}, cavlc_coeff[1]};
+    wire signed [19:0] cdc_c2 = {{4{cavlc_coeff[2][15]}}, cavlc_coeff[2]};
+    wire signed [19:0] cdc_c3 = {{4{cavlc_coeff[3][15]}}, cavlc_coeff[3]};
+    // Inverse 2x2 Hadamard, chroma DC scan order is raster (8.5.11.1).
+    wire signed [19:0] cdc_f [0:3];
+    assign cdc_f[0] = cdc_c0 + cdc_c1 + cdc_c2 + cdc_c3;
+    assign cdc_f[1] = cdc_c0 - cdc_c1 + cdc_c2 - cdc_c3;
+    assign cdc_f[2] = cdc_c0 + cdc_c1 - cdc_c2 - cdc_c3;
+    assign cdc_f[3] = cdc_c0 - cdc_c1 - cdc_c2 + cdc_c3;
+
     h264_cavlc_residual_block u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
         // Chroma AC has no neighbour context stored yet, so it still predicts
-        // from table 0; luma is fully contexted.
-        .coeff_token_table(res_is_luma ? res_coeff_token_table : 3'd0),
-        .max_coeff(5'd16),
+        // from table 0; luma is fully contexted. Chroma DC uses table 4 with
+        // its own 2x2 total_zeros tables (nC is defined as -1 there).
+        .coeff_token_table(p16_cdc_active ? 3'd4 :
+                           (res_is_luma ? res_coeff_token_table : 3'd0)),
+        .max_coeff(p16_cdc_active ? 5'd4 : (res_is_luma ? 5'd16 : 5'd15)),
         .bit_offset_start(p16_res_bit_offset_r),
         .bit_len(10'd512),
         .rbsp(rbsp_byte),
@@ -538,15 +620,40 @@ module h264_decode_core #(
         .run_dbg(cavlc_run_dbg)
     );
     wire signed [28:0] p16_res_dequant [0:15];
+    wire signed [28:0] p16_res_dequant_dc [0:15];
     wire signed [28:0] p16_res_idct [0:15];
+    // Chroma residual blocks are AC-only: the CAVLC block returns 15
+    // coefficients that occupy scan positions 1..15, so shift them up one and
+    // leave scan 0 to the chroma DC path.
+    wire signed [15:0] res_dequant_in [0:15];
+    genvar res_scan_i;
+    generate
+        for (res_scan_i = 0; res_scan_i < 16; res_scan_i = res_scan_i + 1) begin : g_res_dequant_in
+            if (res_scan_i == 0)
+                assign res_dequant_in[0] = res_is_luma ? cavlc_dequant_coeff[0] : 16'sd0;
+            else
+                assign res_dequant_in[res_scan_i] = res_is_luma ? cavlc_dequant_coeff[res_scan_i]
+                                                                : cavlc_dequant_coeff[res_scan_i - 1];
+        end
+    endgenerate
     h264_dequant4x4 u_product_p16_res_dequant (
-        .coeff(cavlc_dequant_coeff),
-        .qp(slice_qp_y),
+        .coeff(res_dequant_in),
+        .qp(res_is_luma ? slice_qp_y : res_qp_c),
         .max_coeff(5'd16),
         .dequant(p16_res_dequant)
     );
+    genvar res_dc_i;
+    generate
+        for (res_dc_i = 0; res_dc_i < 16; res_dc_i = res_dc_i + 1) begin : g_res_dequant_dc
+            if (res_dc_i == 0)
+                assign p16_res_dequant_dc[0] = res_is_luma ? p16_res_dequant[0]
+                                                           : p16_cdc_dc[p16_res_block_idx[2:0]];
+            else
+                assign p16_res_dequant_dc[res_dc_i] = p16_res_dequant[res_dc_i];
+        end
+    endgenerate
     h264_idct4x4 u_product_p16_res_idct (
-        .dequant(p16_res_dequant),
+        .dequant(p16_res_dequant_dc),
         .residual(p16_res_idct)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
