@@ -124,6 +124,11 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/scripts/check_onchip_ram_budget.py
 	bash $(ROOT)/tests/unit/test_decode_core_seam_audit_reds.sh
 	bash $(ROOT)/tests/unit/test_rtl_instantiation_unmerged_paths.sh
+
+	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core \
+		--require h264_cavlc_residual_block --require h264_luma4x4_residual_source \
+		--require h264_intra4x4_mode_deriver
+	python3 $(ROOT)/scripts/check_decode_core_syntax_feed.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
