@@ -295,6 +295,18 @@ public:
         return false;
     }
 
+    // Like waitForFrameCountStatic but with active video scanning.
+    // This exercises the Y>C scheduler priority path that silicon hits
+    // but waitForFrameCountStatic (rd_active=0) does not.
+    bool waitForFrameCountWithVideo(int minFrames, int maxCycles) {
+        for (int i = 0; i < maxCycles; ++i) {
+            videoTick();
+            if (top.frames_done >= minFrames)
+                return true;
+        }
+        return false;
+    }
+
     uint8_t sample(int x, int y) {
         const int saveX = scanX;
         const int saveY = scanY;
@@ -740,6 +752,71 @@ bool runMultiSwapRetirement() {
               << sim.top.frames_done << " underruns=" << sim.top.underrun_count
               << " cycles=" << sim.cycle << "\n";
     assertNonDegenerate("runMultiSwapRetirement", sim);
+    return sim.schedulerProven();
+}
+
+// Same as runMultiSwapRetirement but keeps display scanning active during
+// the second and third swap waits. This exercises the Y>C scheduler priority
+// contention that exists on silicon but which waitForFrameCountStatic masks
+// by setting rd_active=0.
+bool runMultiSwapWithActiveDisplay() {
+    Sim sim;
+    sim.fillFrame(0, 100);
+    sim.fillFrame(1, 150);
+    sim.resetCore();
+
+    // First doorbell: bank 0, seq 1.  Use static wait (no display yet).
+    sim.ringDoorbell(0, 1);
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("active-disp: first frame did not present");
+    expectFreshSample("active-disp frame 1", sim, 100);
+
+    if (!sim.top.has_frame) {
+        std::cerr << "FAIL active-disp: has_frame not set after first swap\n";
+        std::exit(1);
+    }
+
+    // Second doorbell while display is actively scanning (rd_active=1).
+    // This is the condition that fails on silicon (d01f19a7): first swap
+    // succeeds because display is idle, second fails because cur-line
+    // refills compete with prep-line fills for the new bank.
+    const int f1 = sim.top.frames_done;
+    sim.ringDoorbell(1, 2);
+    if (!sim.waitForFrameCountWithVideo(f1 + 1, 800000)) {
+        std::cerr << "FAIL active-disp: second swap did not retire"
+                  << " frames=" << sim.top.frames_done
+                  << " swap_pending=" << (int)sim.top.swap_pending
+                  << " pending_ready=" << (int)sim.top.pending_ready_s2
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    expectFreshSample("active-disp frame 2", sim, 150);
+
+    // Third doorbell: back to bank 0, still with active display
+    const int f2 = sim.top.frames_done;
+    sim.ringDoorbell(0, 3);
+    if (!sim.waitForFrameCountWithVideo(f2 + 1, 800000)) {
+        std::cerr << "FAIL active-disp: third swap did not retire"
+                  << " frames=" << sim.top.frames_done
+                  << " swap_pending=" << (int)sim.top.swap_pending
+                  << " pending_ready=" << (int)sim.top.pending_ready_s2
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    expectFreshSample("active-disp frame 3", sim, 100);
+
+    for (int i = 0; i < 5000; ++i)
+        sim.videoTick();
+    if (sim.top.swap_pending) {
+        std::cerr << "FAIL active-disp: swap_pending still set after final swap"
+                  << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+
+    std::cout << "ddr_frame_store warm-reset raw: multi_swap_active_display frames="
+              << sim.top.frames_done << " underruns=" << sim.top.underrun_count
+              << " cycles=" << sim.cycle << "\n";
+    assertNonDegenerate("runMultiSwapWithActiveDisplay", sim);
     return sim.schedulerProven();
 }
 
