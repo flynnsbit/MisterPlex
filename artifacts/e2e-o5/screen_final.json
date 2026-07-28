@@ -1,0 +1,36 @@
+{
+  "source": "v4l2:/dev/video0 (warmup dropped 12)",
+  "scored_frames": 8,
+  "signal": {
+    "state": "BLACK_SIGNAL",
+    "unique_hashes": 1,
+    "total_frames": 8,
+    "mean_luma": 7.0,
+    "spatial_std": 0.0,
+    "note": "signal is black (mean luma 7.00 < threshold 8.0); HDMI source is outputting a black screen. Before blaming the core, confirm this is not capture warmup: the MS2109 emits flat RGB(7,7,7) frames after each device open until the receiver locks. Re-run with a larger --warmup-discard and check warmup_frames_discarded in the report. A real black screen stays black for every scored frame regardless of warmup."
+  },
+  "chevron": {
+    "orange_px": 0,
+    "orange_frac": 0.0,
+    "min_px": 2000,
+    "present": false,
+    "reason": "only 0 Plex-orange px (< 2000); no chevron"
+  },
+  "left_edge_artifact": {
+    "measurable": true,
+    "background_luma": 7.0,
+    "dark_threshold": 3.5,
+    "artifact_band": [
+      84,
+      200
+    ],
+    "control_band": [
+      300,
+      1200
+    ],
+    "artifact_dark_frac": 0.0,
+    "control_dark_frac": 0.0,
+    "ratio": "inf",
+    "present": false
+  }
+}

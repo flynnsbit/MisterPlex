@@ -529,3 +529,103 @@ This means we have **NO confirmed evidence** that `fb4bad84` outputs displayable
    - NO_SIGNAL seen briefly → HDMI alive → option A (DDR write path dead, timing OK)
    - No NO_SIGNAL ever → HDMI already dead → option B (timing dead or clk_ddr stuck)
 
+
+## 14. UPDATE — W-E2E-O5: the hardware "decode golden" is an idle screen (2026-07-28)
+
+**Branch `w-e2e-playwright`, commits `0867f21` (gate) and `a4ba3e6` (record correction).**
+
+### 14.1 Finding (MEASURED, not assumed)
+
+`tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`
+— the fixture the repo used as its **hardware decode golden** — does **not depict
+decoded video**. It is a capture of the **Plex chevron idle screen**.
+
+Method: host-decode the bitstream its own `.provenance.json` names
+(`tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`) with ffmpeg,
+then compare.
+
+| | golden | host decode of the declared bitstream |
+|---|---|---|
+| content | dark background + orange chevron | bright testsrc2 colour bars + timecode |
+| overall mean luma | **23.6** | **123** |
+| luma std | 20.2 | **65.53** |
+| ROI `11,0,160,120` (declared "stable top-left decoded ROI containing MB0") | **9 distinct colours, std 5.35**, mean RGB (13,25,23) | MB0 16×16 std **53.22** |
+| correlation (luma NCC) | **−0.0735 — uncorrelated** | — |
+
+### 14.2 Why it matters: the historical green was vacuous
+
+`docs/PHASE_BACKLOG.md` recorded *"Green rollback `57674f2e`: exact ROI pixels
+`19200/19200`, MAE `[0,0,0]`, max_abs `0`, `rc=0`"*.
+**19200 = 160×120 = the compare_box.** That ROI is flat background in the golden.
+So the celebrated green matched **flat background against flat background**. It is
+evidence about the display/present path only, and never about decoding.
+
+This is consistent with — and independently corroborates — `w-fit-o5`'s post-fit
+proof that deployed `fb4bad84` contains no decoder, and with the project's honest
+statement that **zero frames have ever been decoded and displayed**.
+
+### 14.3 The fix: `scripts/prove_decoded_frame.py`
+
+A painter-proof decode oracle. It takes the one position a painter cannot fake:
+
+> a core has decoded only if the screen **agrees with the host decode of the exact
+> bitstream that was pushed**.
+
+Verdicts: `0 DECODE_PROVEN` / `1 NOT_DECODED` / `2 REFUSE`.
+Flat or absent signal **always REFUSES** — never passes, never fails — because a
+black screen carries no evidence about decoding. A degenerate (flat) reference
+also REFUSES, since it would otherwise match anything.
+
+Hermetic `--self-test` (no hardware), **9/9**, every green shipped with its red:
+
+```
+true-decode-clean             DECODE_PROVEN  ncc  0.9816
+true-decode-noisy             DECODE_PROVEN  ncc  0.9855
+chevron-idle-golden           NOT_DECODED    ncc -0.0735
+live-capture-no-decoder-core  NOT_DECODED    ncc  0.1425
+mirrored-reference            NOT_DECODED    ncc -0.8680
+block-shuffled-reference      NOT_DECODED    ncc -0.1044
+flat-black / flat-grey-painter / degenerate-reference   REFUSE
+```
+
+Threshold `0.75` sits in an empty gap between `0.1425` and `0.9816`.
+Mutation-verified non-vacuous — 4/4 mutations turn it red:
+always-DECODE_PROVEN, no-flat-refusal, threshold=−1, no-degenerate-ref-guard.
+
+Note `plex_visual_640x480_golden.png` is **not** used as a negative: it is the
+same testsrc2 content at another resolution and the gate correctly scores it as
+agreeing. The structural negatives (mirror, block-shuffle) prove the gate keys on
+picture structure rather than colour histogram.
+
+Usage when a decoder-bearing RBF finally lands:
+```bash
+python3 scripts/prove_decoded_frame.py \
+  --reference tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 \
+  --device /dev/video0
+```
+
+Registered in `Makefile` and `tests/unit/test_unit_rollcall.py`
+(`tests/unit/test_prove_decoded_frame.py`, 15/15). Rollcall now 90 protected commands.
+
+### 14.4 Baseline honesty
+
+`make unit` is **rc=2 with 37 `FAIL` lines both with and without** the new gate
+(measured, logs in `artifacts/e2e-o5/`). Pre-existing and unrelated to this work;
+failures are in C++ (`test_osd_menu`, `test_last_frame_latch`), RTL DPB/MC seam,
+and live-PMS gates.
+
+### 14.5 Hardware still DOWN
+
+`192.168.1.183` unreachable all shift (100% packet loss; ARP INCOMPLETE).
+`/dev/video0` free and unclaimed. Live re-score correctly returned **rc=2 REFUSE**:
+
+```
+REFUSE: frames are flat black BUT source host is unreachable — a powered-off
+MiSTer produces identical flat RGB(7,7,7) frames. Screen state is UNSCORED;
+this is NOT evidence of a core defect.
+Scope: 8 scored frames, warmup dropped 12
+```
+
+That is the host-liveness fix from §12 working live. **No capture request can be
+served until the MiSTer returns**; this likely needs a physical power-cycle, which
+conflicts with the no-human-in-the-loop directive and should be escalated.
