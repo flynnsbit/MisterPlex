@@ -160,6 +160,14 @@
       "required_substrings": [
         "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=176 want=164 pred=157 residual=7"
       ]
+    },
+    {
+      "id": "h264_decode_core_real_slice_swap_chroma_read",
+      "owner": "tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
+      "why": "Swapping U/V chroma reference reads must fail against the always-on real-content I420 slice, proving the decode-core chroma path is not only green on authored synthetic fixtures.",
+      "required_substrings": [
+        "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) read_ordinal 20736 got_addr=0x5f6a8 want_addr=0x4d228"
+      ]
     }
   ]
 }
