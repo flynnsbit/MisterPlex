@@ -1,0 +1,6 @@
+PASS synthetic known-good aligned frame
+PASS synthetic 1-source-pixel horizontal wrap rejected on H edge
+PASS synthetic 1-source-pixel vertical shift rejected
+PASS file-backed capture mode grades changed good frame
+PASS byte-identical consecutive grabs rejected as STALE
+PASS synthetic stale source rejected before grading
