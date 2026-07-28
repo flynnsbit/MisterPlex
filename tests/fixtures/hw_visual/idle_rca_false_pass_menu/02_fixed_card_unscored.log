@@ -1,0 +1,22 @@
+Scope: read-only idle-screen root cause. Reads DDR bank content and the doorbell-derived PLXK/PLXD/PLXF mailboxes on the MiSTer, then captures two HDMI frames locally and grades per-row left-edge integrity, to name ONE of NOT_DRAWN / DRAWN_NOT_PRESENTED / DRAWN_OVERWRITTEN / PRESENTED_CORRUPT / PRESENTED_CLEAN. It does not identify which picture is shown, does not verify colours, does not change any configuration, and does not prove RBF identity (tests/hw/test_rbf_provenance.sh owns that).
+Derived window: doorbell=0x300FF000 bank0=0x30000000 stride=0x80000 frame=449280 bytes
+PLXK_LO=0x00000000
+PLXK_HI=0x00000000
+PLXS_LO=0x00000000
+PLXS_HI=0x00000000
+PLXF_LO=0x00000000
+PLXF_HI=0x00000000
+PLXD_LO=0x00000000
+PLXD_HI=0x00000000
+BANK0_Y= 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+BANK0_U=0x00000000
+BANK0_V=0x00000000
+BANK1_Y= 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+BANK1_U=0x00000000
+BANK1_V=0x00000000
+DAEMON_PID=none
+CORENAME=MENU
+RBF_MD5=fb4bad849ad2db782a5004ce5a3471ce
+IDLE_RCA_RESULT=UNSCORED reason=no-PLXK-at-derived-doorbell got=0x00000000
+  The running core is not using the doorbell this card derived; do not
+  fall back to another address, that is how frozen values get believed.

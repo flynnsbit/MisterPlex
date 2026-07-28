@@ -61,8 +61,14 @@ EOF
 
 CONTENT=0x2D2D2D2D
 BLACKY=0x10101010
-SWAP_OK=0x9A9E0002     # disp_bank=0 swap_pending=0 free=0b10
-SWAP_STUCK=0x9A9E0008  # disp_bank=0 swap_pending=1 free=0b00
+SWAP_OK=0x9A9E0002     # vsync=0x9A9E disp_bank=0 swap_pending=0 free=0b10
+SWAP_STUCK=0x9A9E0008  # vsync=0x9A9E disp_bank=0 swap_pending=1 free=0b00
+# Probe L is the scanout-liveness resample: same state, vsync advanced. The card
+# requires the bank vsync counter to move, because a core that is loaded but
+# held in reset publishes its mailbox magics once and then freezes, and a frozen
+# core in front of a static screen grades CLEAN.
+SWAP_OK_L=0x9A9F0002   # vsync advanced by 1
+SWAP_STUCK_L=0x9A9F0008
 
 run_case() {
     local name="$1" want_verdict="$2" want_rc="$3"
@@ -89,44 +95,52 @@ mkprobe "$WORK/p_stuck.txt"     0x200097D5 "$SWAP_STUCK" "$CONTENT"
 mkprobe "$WORK/p_ok_a.txt"      0x200097D5 "$SWAP_OK"    "$CONTENT"
 mkprobe "$WORK/p_ok_b.txt"      0x200097D5 "$SWAP_OK"    "$CONTENT"
 mkprobe "$WORK/p_ring_b.txt"    0x200097E1 "$SWAP_OK"    "$CONTENT"
+mkprobe "$WORK/p_live.txt"      0x200097D5 "$SWAP_OK_L"  "$CONTENT"
+mkprobe "$WORK/p_live_stuck.txt" 0x200097D5 "$SWAP_STUCK_L" "$CONTENT"
 sed 's/^PLXK_LO=.*/PLXK_LO=0xDEADBEEF/' "$WORK/p_ok_a.txt" >"$WORK/p_badmagic.txt"
+# Plex fabric absent: the ARM daemon still publishes PLXK, but the FPGA-written
+# PLXD/PLXF magics are gone. This is the real state a MiSTer sitting on the MENU
+# core returns, and the card graded it PRESENTED_CLEAN until this case existed.
+sed -e 's/^PLXD_LO=.*/PLXD_LO=0x00000000/' \
+    -e 's/^PLXF_LO=.*/PLXF_LO=0x00000000/' \
+    -e 's/^CORENAME=.*/CORENAME=MENU/' "$WORK/p_ok_a.txt" >"$WORK/p_nofabric.txt"
 
 # 1. Nothing in the displayed bank.
 run_case not_drawn NOT_DRAWN 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_notdrawn.txt" IDLE_RCA_PROBE_B="$WORK/p_notdrawn.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_notdrawn.txt" IDLE_RCA_PROBE_B="$WORK/p_notdrawn.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
 
 # 2. Frame present, swap wedged for a full sample interval.
 run_case wedged DRAWN_NOT_PRESENTED 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_stuck.txt" IDLE_RCA_PROBE_B="$WORK/p_stuck.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_stuck.txt" IDLE_RCA_PROBE_B="$WORK/p_stuck.txt" IDLE_RCA_PROBE_L="$WORK/p_live_stuck.txt" \
     IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
 
 # 3. Frame present and swapping, screen black.
 run_case black_screen DRAWN_OVERWRITTEN 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/black.png" IDLE_RCA_CAP_B="$WORK/black.png"
 
 # 4. Damaged pixels with the producer idle -> presentation path is at fault.
 run_case corrupt_idle_producer PRESENTED_CORRUPT 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/ragged.png" IDLE_RCA_CAP_B="$WORK/ragged2.png"
 
 # 5. Same damage, but the producer rang the doorbell in between: the ARM cannot
 #    be excluded, so the verdict must change. This is what keeps branch 4 honest.
 run_case corrupt_active_producer DRAWN_OVERWRITTEN 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ring_b.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ring_b.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/ragged.png" IDLE_RCA_CAP_B="$WORK/ragged2.png"
 
 # 6. The only PASS branch.
 run_case clean PRESENTED_CLEAN 0 \
-    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
 
 # 7. Wrong doorbell magic must be UNSCORED (77), never a verdict. This is the
 #    stale-mailbox trap: 0x3007F1xx still answers with valid magics on a device
 #    running the 0x80000-stride core.
 run_case bad_magic "" 77 \
-    IDLE_RCA_PROBE_A="$WORK/p_badmagic.txt" IDLE_RCA_PROBE_B="$WORK/p_badmagic.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_badmagic.txt" IDLE_RCA_PROBE_B="$WORK/p_badmagic.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
 
 # 8. The card must derive its window from the layout header, not a literal.
@@ -147,9 +161,53 @@ fi
 #    succeeding. Feed the PASS fixture set but break the grader's budget so a
 #    clean frame is rejected; the card must stop passing.
 run_case clean_but_strict PRESENTED_CORRUPT 1 \
-    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
     IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png" \
     IDLE_RCA_INTEGRITY_ARGS="--max-spread -1"
+
+# 10. No Plex fabric loaded. PLXK is written by misterplexd, so it is still
+#     valid; only the FPGA-published PLXD/PLXF magics are gone. This is not a
+#     hypothetical: run against a MiSTer sitting on the MENU core with the
+#     daemon up, this card returned IDLE_RCA_RESULT=PASS verdict=PRESENTED_CLEAN.
+#     It graded the menu screen, whose left edges are naturally clean, and DDR
+#     had kept the previous core's frame bytes across the warm boot so even the
+#     "is anything drawn" sample looked like a picture. Everything about that
+#     run was green and none of it was about Plex.
+run_case no_plex_fabric "" 77 \
+    IDLE_RCA_PROBE_A="$WORK/p_nofabric.txt" IDLE_RCA_PROBE_B="$WORK/p_nofabric.txt" IDLE_RCA_PROBE_L="$WORK/p_live.txt" \
+    IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
+if grep -q 'reason=plex-fabric-not-loaded' "$WORK/no_plex_fabric.log"; then
+    echo "OK no_plex_fabric names the missing FPGA-published magic"
+else
+    echo "FAIL no_plex_fabric did not name plex-fabric-not-loaded"
+    FAILED=1
+fi
+
+# 11. Fabric loaded but not scanning out: magics present, bank vsync frozen.
+#     A held-in-reset core in front of a static picture would otherwise grade
+#     CLEAN, because nothing else this card reads has to change over time.
+run_case scanout_frozen "" 77 \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" IDLE_RCA_PROBE_L="$WORK/p_ok_a.txt" \
+    IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
+if grep -q 'reason=scanout-frozen' "$WORK/scanout_frozen.log"; then
+    echo "OK scanout_frozen names the frozen bank vsync counter"
+else
+    echo "FAIL scanout_frozen did not name scanout-frozen"
+    FAILED=1
+fi
+
+# 12. Fixture mode must be total. Supplying probe A and B but not probe L used
+#     to make the card SSH to the device for the one probe nobody provided, so
+#     this "hermetic" file silently depended on the state of a real MiSTer.
+run_case fixture_mode_partial "" 77 \
+    IDLE_RCA_PROBE_A="$WORK/p_ok_a.txt" IDLE_RCA_PROBE_B="$WORK/p_ok_b.txt" \
+    IDLE_RCA_CAP_A="$WORK/clean.png" IDLE_RCA_CAP_B="$WORK/clean.png"
+if grep -q 'reason=fixture-mode-missing-probe' "$WORK/fixture_mode_partial.log"; then
+    echo "OK fixture_mode_partial refuses to answer a missing fixture from the device"
+else
+    echo "FAIL fixture_mode_partial did not refuse the live fallback"
+    FAILED=1
+fi
 
 if [ "$FAILED" -eq 0 ]; then
     echo "IDLE_RCA_LOGIC_RESULT=PASS"

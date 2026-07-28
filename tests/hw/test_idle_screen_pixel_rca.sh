@@ -102,6 +102,17 @@ probe() {
         cat "$fixture"
         return $?
     fi
+    # Fixture mode is all-or-nothing. A caller that supplies probe A but not
+    # probe L must not have the missing one quietly answered by a live device:
+    # that is how a hermetic-looking unit test ends up depending on whatever
+    # core happens to be loaded, and how a fixture case passes for the wrong
+    # reason.
+    if [ -n "${IDLE_RCA_PROBE_A:-}" ]; then
+        echo "IDLE_RCA_RESULT=UNSCORED reason=fixture-mode-missing-probe probe=$which" >&2
+        echo "  IDLE_RCA_PROBE_A is set, so this run is in fixture mode, but" >&2
+        echo "  $fixture_var is not set. Refusing to contact the device." >&2
+        exit "$RC_UNSCORED"
+    fi
     "${SSH[@]}" "DOORBELL=$DOORBELL BANK0=$BANK0 BANK_STRIDE=$BANK_STRIDE \
 Y_OFF=$Y_OFF U_OFF=$U_OFF V_OFF=$V_OFF bash -s" <<'REMOTE' 2>/dev/null
 set -u
@@ -161,6 +172,46 @@ if [ "$PLXK_LO" != "0x504C584B" ]; then
     echo "IDLE_RCA_RESULT=UNSCORED reason=no-PLXK-at-derived-doorbell got=$PLXK_LO"
     echo "  The running core is not using the doorbell this card derived; do not"
     echo "  fall back to another address, that is how frozen values get believed."
+    exit "$RC_UNSCORED"
+fi
+
+# --- Is the Plex FABRIC loaded, or just the ARM writer? --------------------
+# PLXK is written by misterplexd, so it survives with no Plex core loaded at
+# all. This card was observed returning PRESENTED_CLEAN while the device sat on
+# the MiSTer MENU core: it read the daemon's own doorbell, graded a menu screen
+# whose left edges are naturally clean, and passed. DDR keeps the previous
+# core's frame bytes across a warm boot, so even the "is anything drawn" sample
+# came back looking like a picture.
+#
+# PLXD and PLXF are published by the FPGA. Their magics are the only evidence
+# in this probe that Plex fabric exists. Require both.
+PLEX_FABRIC_MISSING=""
+[ "$PLXD_LO" = "0x504C5844" ] || PLEX_FABRIC_MISSING="$PLEX_FABRIC_MISSING PLXD=$PLXD_LO(want 0x504C5844)"
+[ "$PLXF_LO" = "0x504C5846" ] || PLEX_FABRIC_MISSING="$PLEX_FABRIC_MISSING PLXF=$PLXF_LO(want 0x504C5846)"
+if [ -n "$PLEX_FABRIC_MISSING" ]; then
+    echo "IDLE_RCA_RESULT=UNSCORED reason=plex-fabric-not-loaded corename=$(val CORENAME "$PROBE_A")"
+    echo "  Missing FPGA-published mailbox magic:$PLEX_FABRIC_MISSING"
+    echo "  PLXK is written by misterplexd and proves only that the daemon is"
+    echo "  running. Grading pixels now would grade whatever core is loaded."
+    exit "$RC_UNSCORED"
+fi
+
+# --- Is that fabric actually scanning out? ---------------------------------
+# PLXD bits [31:16] of the upper word are the bank vsync counter (~66/s). A core
+# that is loaded but held in reset publishes its magics and then freezes, which
+# would still let a static screen grade CLEAN.
+PROBE_L="$OUTDIR/probe_live.txt"
+VSYNC_A=$(( ( $(printf '%d' "$PLXD_HI") >> 16 ) & 0xFFFF ))
+sleep "${IDLE_RCA_LIVENESS_SETTLE:-1}"
+probe L >"$PROBE_L" || true
+PLXD_HI_L="$(val PLXD_HI "$PROBE_L")"
+VSYNC_L=$(( ( $(printf '%d' "${PLXD_HI_L:-0x0}") >> 16 ) & 0xFFFF ))
+echo "SCANOUT_LIVENESS vsync=$VSYNC_A -> $VSYNC_L"
+if [ "$VSYNC_A" -eq "$VSYNC_L" ]; then
+    echo "IDLE_RCA_RESULT=UNSCORED reason=scanout-frozen vsync=$VSYNC_A"
+    echo "  The bank vsync counter did not advance across a full second, so the"
+    echo "  frame store is not scanning out. Any pixels captured now came from"
+    echo "  somewhere this card cannot reason about."
     exit "$RC_UNSCORED"
 fi
 

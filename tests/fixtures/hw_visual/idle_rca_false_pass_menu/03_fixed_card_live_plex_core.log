@@ -1,0 +1,34 @@
+Scope: read-only idle-screen root cause. Reads DDR bank content and the doorbell-derived PLXK/PLXD/PLXF mailboxes on the MiSTer, then captures two HDMI frames locally and grades per-row left-edge integrity, to name ONE of NOT_DRAWN / DRAWN_NOT_PRESENTED / DRAWN_OVERWRITTEN / PRESENTED_CORRUPT / PRESENTED_CLEAN. It does not identify which picture is shown, does not verify colours, does not change any configuration, and does not prove RBF identity (tests/hw/test_rbf_provenance.sh owns that).
+Derived window: doorbell=0x300FF000 bank0=0x30000000 stride=0x80000 frame=449280 bytes
+PLXK_LO=0x504C584B
+PLXK_HI=0x2000000B
+PLXS_LO=0x504C5853
+PLXS_HI=0x9D104000
+PLXF_LO=0x504C5846
+PLXF_HI=0xFFFF1096
+PLXD_LO=0x504C5844
+PLXD_HI=0x1B670002
+BANK0_Y= 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D
+BANK0_U=0x82828282
+BANK0_V=0x7E7E7E7E
+BANK1_Y= 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D
+BANK1_U=0x00000000
+BANK1_V=0x7E7E7E7E
+DAEMON_PID=2965
+CORENAME=Plex
+RBF_MD5=fb4bad849ad2db782a5004ce5a3471ce
+SCANOUT_LIVENESS vsync=7015 -> 7180
+MAILBOX disp_bank=0 swap_pending=0 free_mask=2 underrun=65296 debug_state=0x96
+DEVICE rbf_md5=fb4bad849ad2db782a5004ce5a3471ce plxd=0x504C5844/0x1B670002 plxf=0x504C5846/0xFFFF1096
+DISPLAYED_BANK bank=0 luma_samples=  0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D
+MAILBOX_RESAMPLE disp_bank=0 swap_pending=1 doorbell_hi=0x2000000B -> 0x2000000B
+CAPTURE class_a=VALID_CONTENT class_b=VALID_CONTENT
+IDLE_INTEGRITY verdict=RAGGED_LEFT mean=36.04 nonblack_fraction=0.8907 picture_rows=719 left_edge_p5=84 left_edge_median=128 left_edge_p95=136 left_edge_spread=52
+IDLE_INTEGRITY instability={'comparable': True, 'left_region_px': 144, 'left_changed_fraction': 0.1255}
+IDLE_INTEGRITY reason: picture rows start between x=84 and x=136 (spread 52 > 8); each scanline is losing a different leading run
+IDLE_INTEGRITY_RESULT=FAIL verdict=RAGGED_LEFT
+The doorbell sequence did not advance between the two graded captures,
+so no ARM frame write overlapped them; the damage is produced inside the
+presentation path. underrun=65296 debug_state=0x96
+IDLE_RCA_VERDICT=PRESENTED_CORRUPT
+IDLE_RCA_RESULT=FAIL

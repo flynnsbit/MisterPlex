@@ -1,0 +1,30 @@
+Scope: read-only idle-screen root cause. Reads DDR bank content and the doorbell-derived PLXK/PLXD/PLXF mailboxes on the MiSTer, then captures two HDMI frames locally and grades per-row left-edge integrity, to name ONE of NOT_DRAWN / DRAWN_NOT_PRESENTED / DRAWN_OVERWRITTEN / PRESENTED_CORRUPT / PRESENTED_CLEAN. It does not identify which picture is shown, does not verify colours, does not change any configuration, and does not prove RBF identity (tests/hw/test_rbf_provenance.sh owns that).
+Derived window: doorbell=0x300FF000 bank0=0x30000000 stride=0x80000 frame=449280 bytes
+PLXK_LO=0x504C584B
+PLXK_HI=0x2000000A
+PLXS_LO=0x00000000
+PLXS_HI=0x00000000
+PLXF_LO=0x00000000
+PLXF_HI=0x00000000
+PLXD_LO=0x00000000
+PLXD_HI=0x00000000
+BANK0_Y= 0x10101010 0x7271706F 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D
+BANK0_U=0x82828282
+BANK0_V=0x7E7E7E7E
+BANK1_Y= 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+BANK1_U=0x00000000
+BANK1_V=0x00000000
+DAEMON_PID=983
+CORENAME=MENU
+RBF_MD5=fb4bad849ad2db782a5004ce5a3471ce
+MAILBOX disp_bank=0 swap_pending=0 free_mask=0 underrun=0 debug_state=0x00
+DEVICE rbf_md5=fb4bad849ad2db782a5004ce5a3471ce plxd=0x00000000/0x00000000 plxf=0x00000000/0x00000000
+DISPLAYED_BANK bank=0 luma_samples=  0x10101010 0x7271706F 0x2D2D2D2D 0x2D2D2D2D 0x2D2D2D2D
+MAILBOX_RESAMPLE disp_bank=0 swap_pending=0 doorbell_hi=0x2000000A -> 0x2000000A
+CAPTURE class_a=VALID_CONTENT class_b=VALID_CONTENT
+IDLE_INTEGRITY verdict=CLEAN mean=27.01 nonblack_fraction=0.5508 picture_rows=720 left_edge_p5=0 left_edge_median=0 left_edge_p95=0 left_edge_spread=0
+IDLE_INTEGRITY instability={'comparable': True, 'left_region_px': 8, 'left_changed_fraction': 0.0}
+IDLE_INTEGRITY reason: every picture row starts within 0px of x=0
+IDLE_INTEGRITY_RESULT=PASS
+IDLE_RCA_VERDICT=PRESENTED_CLEAN
+IDLE_RCA_RESULT=PASS
