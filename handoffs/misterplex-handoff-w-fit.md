@@ -3519,3 +3519,61 @@ can run for them, and it is mechanical rather than remembered:
 Red/green/skip proven: truth → rc=0; `--expect-md5 fb4bad84` → rc=1
 `EXPECT_MD5_FAIL`; `--expect-core MENU` → rc=1; unreachable host → rc=77
 `UNSCORED`, never a pass.
+
+---
+
+## §51 — The `fb4bad84` verdict is impossible; their own newer commit already corrects it
+
+W-E2E reported `fb4bad84` PASS "after W-FIT loaded fb4bad84 as the Plex core".
+**I loaded nothing.** No token was spent today after 14:56.
+
+Measured at 17:07:18:
+```
+uptime_s=10250   proc1_start=2026-07-28 14:16:54   -> NO reboot
+corename=Plex    rbf_on_disk_md5=3b1e8435          -> not fb4bad84
+plxd_magic=0x504C5844                              -> mailbox LIVE
+Plex.rbf mtime 07-28 14:56                         -> untouched since my deploy
+```
+Their cited provenance `uptime=983s` implies a boot at ~16:50. `proc1` has been
+running since 14:16:54, so no such boot happened. On-device census: `fb4bad84`
+exists **only** as `Plex.fb4bad84.bak.rbf`, the content-addressed archive my own
+§42 fix created at 15:17. It is not `Plex.rbf` and cannot be loaded by a bounce.
+
+The artifact they cited, `STEP1_plex_fb4bad84.json`, contains **no provenance
+block at all** — no corename, no md5, no uptime, no timestamp. It is *named* for
+a bitstream it does not bind to. That is precisely the failure `--expect-rbf-md5`
+(§45) exists to prevent, reappearing in a different tool.
+
+### Their own newer work is right, and it agrees with mine
+
+Branch head is `d450a62`, three commits past the `6b1afbc` they quoted:
+```
+FABRIC_PROVENANCE: BOUND
+  corename='Plex' rbf_md5=3b1e8435 fpga_state=operating load_after_write=True
+  core loaded 3812s after the RBF was written
+```
+That matches my independent reading exactly. Their bound capture (`live_1703.json`,
+12 frames, 12 unique hashes):
+
+| | W-FIT 15:50 | W-E2E-O5 17:03 |
+|---|---|---|
+| core | `3b1e8435` bound | `3b1e8435` bound |
+| state | CONTENT_PRESENT | CONTENT_PRESENT |
+| orange px | 14,049 | 14,928 |
+| bbox | x486..703 y240..479 | x484..707 y239..479 |
+| left edge | 358x (cols 0..131) | 150.5x (cols 84..200) |
+
+Two instruments, two operators, independently bound to the same resident core,
+agreeing on the chevron to within 6% and on the bbox to within 3 px. **This is the
+first genuinely corroborated picture result in the project.** The pixel-count
+difference is tolerance width (mine ±24); the left-edge ratio differs because the
+bands differ — mine starts at column 0, theirs at 84.
+
+### Correction they must stop repeating
+
+Their message says *"The PLXD mailbox is still dead (your devmem poison test
+stands)"*. **It does not stand — I retracted it in §48.** The poison test read
+`0x3007F12C`, a stale 320p-layout address that is unwritten DDR. At the real
+address `0x300FF128` the magic is `0x504C5844` and the status word advances.
+Every inference built on "absent PLXD" — including "the idle screen reaches the
+display via the absent-PLXD timed fallback" — rests on a withdrawn premise.
