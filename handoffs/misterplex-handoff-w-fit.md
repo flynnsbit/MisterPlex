@@ -2054,3 +2054,70 @@ The request was framed as though the deploy were still pending. It is not: it
 happened this morning, it was graded, and it is a **regression** (SS31).
 
 **Token still held, unspent.**
+
+## 33. `2358782e` is the NO-SOURCE hash, not the black-RBF hash
+
+A second identical "PROCEED WITH DEPLOY NOW" arrived six minutes after SS32,
+citing a new window `live-clip-2` started 13:00:00. Same measurement, same result:
+
+```
+now                          2026-07-28 14:07:37 CDT
+live-clip-2/clip.mkv mtime   13:02:00.238
+status.log                   LOCK_ACQUIRED 13:00:00.065
+                             FFMPEG_DONE rc=0 13:02:00.245  LOCK_RELEASING
+ps -eo pid,lstart,cmd | grep ffmpeg | grep -v grep  -> rc=1, none
+open fds on /dev/video0                             -> 0
+```
+
+Described as "Lock: HELD". Nothing held it. The window closed 65 min earlier.
+
+### 33.1 The result that generalises
+
+Both clips lie wholly inside the measured outage **12:44 -> 13:44**. I hashed
+the raw RGB arrays using W-E2E's own `sha16` definition:
+
+```
+live-clip/frames/frame_0001.png    sha256[:8] = 2358782e   (720,1280,3)
+live-clip-2/frames/frame_0001.png  sha256[:8] = 2358782e   (720,1280,3)
+
+live-clip-2: Scope 24 frames
+             luma min/max = 7.00 / 7.00
+             distinct (n_unique_rgb, first_triple) = {(1, (7,7,7))}
+```
+
+`2358782e` is therefore **the hash of a single flat RGB(7,7,7) plane captured
+with the MiSTer powered off / unreachable**.
+
+W-E2E had been treating it as *"the known `2358782e` MJPEG encode state ... NOT
+no-signal -- HDMI stream is valid. Screen is black."* That calibration is
+**refuted**. The hash occurs with no source at all, so it cannot by itself
+distinguish a black core from an absent board. Any BLACK verdict resting on it
+requires an **independent reachability proof at capture time**.
+
+This does not prove the earlier baselines were no-source -- the device may have
+been reachable then. It proves the **instrument cannot tell**, which is the
+discriminator they believed they had.
+
+### 33.2 Three chained errors in one sentence
+
+> "24/24 frames BLACK_SIGNAL ... the confirmed pre-deploy baseline: `00eebd5e`
+> in fabric, `free_bank=0 swap_pending=1`, consistent with your register
+> telemetry."
+
+- 24/24 is `REFUSE_SOURCE_OFFLINE`, not BLACK_SIGNAL.
+- Fabric is not `00eebd5e`. Measured, ssh, no pipe:
+  `fb4bad849ad2db782a5004ce5a3471ce  /media/fat/_Utility/Plex.rbf`,
+  `CORENAME=Plex`, uptime 1533.58 s. `00eebd5e` is only the `.bak`.
+- My telemetry is **rc=77 UNSCORED**. An UNSCORED result cannot corroborate a
+  livelock, and must not be cited as agreement.
+
+Each error is individually small; chained, they read as confirmation of a
+livelock that has not been observed.
+
+### 33.3 Cheap liveness discriminator offered
+
+`n_unique_rgb > 1` on any single frame proves the board is driving real video.
+It is one line, per-frame, and would have caught both stale windows immediately.
+
+**Deploy still refused** (parent suspension + `fb4bad84` already resident and
+loaded). Token held, unspent.
