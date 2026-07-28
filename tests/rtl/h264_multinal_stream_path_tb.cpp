@@ -78,25 +78,25 @@ int main(int argc, char** argv) {
                 sawExpectedCsum = 1;
             if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b)
                 ++reconSig3bCycles;
-            if (dut.cavlc_luma4x4_valid) {
+            if (dut.luma4x4_valid) {
                 ++cavlcLumaPulses;
-                const int idx = static_cast<int>(dut.cavlc_luma4x4_idx);
+                const int idx = static_cast<int>(dut.luma4x4_idx);
                 if (idx >= 0 && idx < 16)
                     cavlcLumaMask |= (1u << idx);
-                if (dut.cavlc_luma4x4_total_coeff != 0)
+                if (dut.luma4x4_total_coeff != 0)
                     ++cavlcNonzeroTc;
-                if (dut.cavlc_first_mb_cbp_luma != 0)
+                if (dut.first_mb_cbp_luma != 0)
                     cavlcCbpNonzeroSeen = 1;
-                cavlcCbpLumaSeen = static_cast<int>(dut.cavlc_first_mb_cbp_luma);
-                cavlcCbpChromaSeen = static_cast<int>(dut.cavlc_first_mb_cbp_chroma);
-                cavlcLastQp = static_cast<int>(dut.cavlc_luma4x4_qp);
-                cavlcI4Mode0 = static_cast<int>(dut.cavlc_i4_mode0);
-                cavlcI4Mode7 = static_cast<int>(dut.cavlc_i4_mode7);
-                cavlcI4Mode15 = static_cast<int>(dut.cavlc_i4_mode15);
+                cavlcCbpLumaSeen = static_cast<int>(dut.first_mb_cbp_luma);
+                cavlcCbpChromaSeen = static_cast<int>(dut.first_mb_cbp_chroma);
+                cavlcLastQp = static_cast<int>(dut.luma4x4_qp);
+                cavlcI4Mode0 = static_cast<int>(dut.i4_mode0);
+                cavlcI4Mode7 = static_cast<int>(dut.i4_mode7);
+                cavlcI4Mode15 = static_cast<int>(dut.i4_mode15);
             }
-            if (dut.cavlc_luma_src_done) {
+            if (dut.luma4x4_source_done) {
                 ++cavlcDone;
-                if (!dut.cavlc_luma_src_ok)
+                if (!dut.luma4x4_source_ok)
                     ++cavlcBadDone;
             }
             if (dut.slice_valid && !prevSliceValid) {
@@ -213,7 +213,7 @@ int main(int argc, char** argv) {
                   << " cavlc_qp=" << cavlcLastQp
                   << " cavlc_cbp_luma_seen=0x" << std::hex << cavlcCbpLumaSeen
                   << " cavlc_cbp_chroma_seen=0x" << cavlcCbpChromaSeen
-                  << " cavlc_i4_modes_0_7_15=" << std::dec
+                  << " i4_modes_0_7_15=" << std::dec
                   << cavlcI4Mode0 << "/" << cavlcI4Mode7 << "/" << cavlcI4Mode15
                   << " saw_expected_csum=" << sawExpectedCsum
                   << " recon_sig_3b_cycles=" << reconSig3bCycles
