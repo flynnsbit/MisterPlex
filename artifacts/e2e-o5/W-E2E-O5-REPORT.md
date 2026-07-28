@@ -220,3 +220,78 @@ Capture path end-to-end healthy. Note MENU now correctly reports chevron
 **Load Plex and say the word — I will have a scored answer within ~90 s.**
 Allow ~60 s after the core load before trusting any capture: HDMI re-lock takes
 several seconds and the gate will now REFUSE rather than mis-grade during it.
+
+---
+
+# ADDENDUM 16:05 — STEP 2 IS SCORED. `3b1e8435` CAPTURED, PROVENANCE-LOCKED.
+
+Branch `w-e2e-playwright`. Device measured live, not assumed.
+
+## 1. Two corrections to the parent's status
+
+* **The device is NOT offline.** Parent's message cites *"last responding 11:37; now 13:21 -> ping 100% loss"*. Measured by me: up at 15:08, 15:49 (`ping_rc=0`), 16:01, 16:03. Same boot throughout (uptime monotonic 5567 -> 6427 s).
+* **The `3b1e8435` deploy has ALREADY HAPPENED.** It is resident now. The re-authorization is for a deploy that is already spent. At 15:49 the device was parked on `CORENAME=MENU`; by 16:01 Plex was loaded and I captured it.
+
+## 2. STEP 2 SCORED — `3b1e8435` = **VALID WITH CONTENT**
+
+Provenance asserted **before and after** grading pixels:
+`corename=Plex  md5=3b1e8435  uptime 6280 -> 6427 s (same boot)`
+
+Denominator: **10 scored frames** (12 grabbed, 2 warmup dropped).
+
+```
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=36.37  spatial_std=22.27  unique=10/10
+PLEX_CHEVRON: PRESENT  14928 px  bbox [484,239,707,479]
+LEFT_EDGE_ARTIFACT: PRESENT  dark 29.7% vs control 0.2%  (ratio 161.0x)
+rc=0
+```
+
+**Raw numbers vs thresholds, as asked:**
+
+| quantity | measured | threshold | verdict |
+|---|---|---|---|
+| mean luma | **36.37** | black if < 8.0 | 4.5x above -> not black |
+| spatial std | **22.27** | flat if < 3.0 | 7.4x above -> real structure |
+| filler frac RGB(7,7,7) | **0.0001** | no-signal if >= 0.50 | HDMI genuinely locked |
+| unique frame hashes | **10/10** | stale if 1 | not frozen |
+
+**Answer to `w-fit-o5`'s falsifiable prediction: CONFIRMED, not refuted.** It predicted that if the DDR *write* path is dead but video timing alive, I would see a VALID signal. I see a valid signal with content. So **the board is alive and driving HDMI**, and the earlier network drop was a network-stack/link event, not an FPGA death.
+
+**A free natural red control.** Frame `f1` came back **100% filler RGB(7,7,7), spatial std 0.000** — the unlocked-capture state — and frames 3..12 came back as content, in the same burst, on the same device. That is the exact confusion that made me mis-score this device earlier today, now graded correctly as NO_SIGNAL/warmup rather than "black screen". The filler fix is validated on live hardware, not just synthetic fixtures.
+
+## 3. The A/B the parent actually asked for — and its limits
+
+Direct pixel comparison, `fb4bad84` frames vs `3b1e8435` frames, both provenance-locked at capture time:
+
+```
+fb4bad84 : chevron 14905 px  bbox (484,240,705,479)
+3b1e8435 : chevron 14905 px  bbox (484,240,705,479)
+chevron mask IoU = 1.0000  (14905/14905)   masks bit-identical: True
+```
+
+Left-edge dynamics, same oracle, both builds:
+
+| | `fb4bad84` | `3b1e8435` |
+|---|---|---|
+| verdict | MOVING | **MOVING** |
+| artifact temporal std | 5.68 / 5.81 / 6.19 | **5.7048** |
+| noise floor (chevron interior) | 0.00 | 0.0573 |
+| dark ratio artifact/control | ~171x | **172.8x** |
+| pillar edge column | 128 (12/12 frames) | **128 (stable)** |
+
+**Measured conclusion: the SDC change is invisible in the display path.** Two different bitstreams paint a *bit-identical* image and produce a statistically identical moving artifact.
+
+### Applying the parent's own vacuous-control test to my own result
+
+*"Does this comparison actually differ in the thing it claims to test?"*
+
+* **Yes on the input side.** The two bitstreams genuinely differ (md5 verified on the device at capture time), and per `w-fit-o5` their RTL is byte-identical while `Plex.sdc` differs by 38 lines. The independent variable **is** varied. This is not the four-builds-one-SDC mistake.
+* **But partially NO on the output side, and this is the limit of my instrument.** I previously measured the chevron as **pixel-identical with `misterplexd` dead and across a reboot**. So the chevron is scanned out of DDR content that survives without a live writer. **The chevron is largely insensitive to the DDR write path the SDC is suspected of breaking**, which makes it a weak probe for that specific question.
+
+**So state my result precisely:** I have exonerated the **video timing and DDR scanout/present path** on both builds — neither is a blank-screen or lost-sync failure. I have **not** discriminated the SDC hypothesis, because the feature I can see does not depend on the path under suspicion. **`w-fit-o5`'s PLXD poke-probe remains the discriminator; my capture cannot substitute for it.**
+
+One datum that does bear on it: the left-edge artifact is **MOVING** on `3b1e8435` (SNR 99.6x above a noise floor taken from the capture itself). Something is changing that memory between frames. What it is not: the ARM daemon, which I showed earlier makes no statistical difference to this artifact.
+
+## 4. `w-fit-o5` — the answer you were blocked on
+
+**`capture done, proceed`.** Grade **VALID WITH CONTENT**, mean luma **36.37** against a black threshold of **8.0**, filler **0.01%** against a no-signal threshold of **50%**. The board is alive and driving HDMI. Nothing perishable is left to protect — `3b1e8435` is already resident and already captured, so you are unblocked.

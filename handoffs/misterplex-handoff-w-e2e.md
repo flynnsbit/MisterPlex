@@ -995,3 +995,49 @@ The reliable form is to pipe a **script file** to `ssh 'bash -s'`
 (`artifacts/e2e-o5/daemon_probe.sh`) and read plain counted output. Daemon
 absence at 14:38–14:39 was nonetheless corroborated by an independent oracle
 (no listener on port 3005), and presence at 14:56 by two (pid + listener).
+
+## §22 — `3b1e8435` scored, and the limit of a logo as a probe
+
+Measured 16:01-16:05, provenance-locked (`corename=Plex md5=3b1e8435`, asserted
+before *and* after grading pixels, same boot).
+
+* **VALID WITH CONTENT.** mean_luma 36.37 (black threshold 8.0), spatial_std
+  22.27 (flat threshold 3.0), filler_frac 0.0001 (no-signal threshold 0.50),
+  10/10 unique frame hashes. Denominator 10 frames of 12 grabbed.
+* Frame 1 of the burst was **100% filler RGB(7,7,7)** while frames 3..12 were
+  content — a natural red/green control for the filler fix on live hardware.
+* **Chevron masks are bit-identical between `fb4bad84` and `3b1e8435`**
+  (IoU 1.0000, 14905/14905 px, same bbox). Left-edge artifact MOVING on both,
+  temporal std 5.70 vs 5.68-6.19, pillar edge column 128 on both.
+
+**The transferable lesson: an image can be a valid A/B on its inputs and still
+be a vacuous probe on its outputs.** The two bitstreams really do differ, and
+really do differ *only* in the SDC — the comparison varies its independent
+variable, so it is not the parent's four-builds-one-SDC error. But the chevron
+is painted from DDR content that persists with `misterplexd` dead and across a
+reboot (§19, §21), so it **does not depend on the DDR write path the SDC is
+suspected of breaking**. A bit-identical logo therefore exonerates video timing
+and scanout, and says nothing about the write path.
+
+Before citing any comparison as evidence, check vacuity at **both** ends:
+does the input actually vary the variable, **and** does the output actually
+depend on it?
+
+## §23 — `scripts/mutation_check.py`, the mechanical vacuity check
+
+Promoted my one-off harness to a reusable, spec-driven tool so any worker can
+prove a gate is non-vacuous. `--self-test` is 6/6 and is registered in the
+Makefile and the rollcall.
+
+Its own red proof is built in: the self-test contains a deliberately weak test
+that only exercises one branch, and the harness reports `SURVIVED` for it.
+Refuses (rc=2) on a red baseline — otherwise every mutation appears "killed"
+and the tool reports a confident, meaningless green. Refuses an empty mutation
+list and a no-op mutation (`old == new`), both of which are vacuous controls by
+construction.
+
+Real use: `artifacts/e2e-o5/mutation_spec_capture_gates.json`, 17 mutations
+across `score_idle_screen.py` and `capture_preflight.py` -> **17/17 killed**.
+This harness has already caught a real vacuity in my own work: two fill-gate
+mutations survived because my regression frame was rejected on *aspect* before
+the fill check ran (§18).

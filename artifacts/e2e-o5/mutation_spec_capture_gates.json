@@ -1,0 +1,110 @@
+{
+  "test": [
+    "python3",
+    "tests/unit/test_capture_gate_states.py"
+  ],
+  "mutations": [
+    {
+      "name": "filler-check-removed",
+      "target": "scripts/capture_preflight.py",
+      "old": "    if filler >= FILLER_DOMINANCE_THRESHOLD:",
+      "new": "    if False:"
+    },
+    {
+      "name": "filler-threshold-unreachable",
+      "target": "scripts/capture_preflight.py",
+      "old": "FILLER_DOMINANCE_THRESHOLD: float = 0.50",
+      "new": "FILLER_DOMINANCE_THRESHOLD: float = 1.10"
+    },
+    {
+      "name": "filler-graded-as-BLACK-blaming-the-core",
+      "target": "scripts/capture_preflight.py",
+      "old": "            \"state\": \"NO_SIGNAL\",\n            \"unique_hashes\": unique,\n            \"total_frames\": total,\n            \"mean_luma\": round(luma, 2),\n            \"spatial_std\": round(std, 2),\n            \"filler_frac\": round(filler, 4),",
+      "new": "            \"state\": \"BLACK_SIGNAL\",\n            \"unique_hashes\": unique,\n            \"total_frames\": total,\n            \"mean_luma\": round(luma, 2),\n            \"spatial_std\": round(std, 2),\n            \"filler_frac\": round(filler, 4),"
+    },
+    {
+      "name": "always-pass",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    state = signal[\"state\"]\n",
+      "new": "    state = signal[\"state\"]\n    return EXIT_PASS\n"
+    },
+    {
+      "name": "no-signal-passes",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    if state == \"NO_SIGNAL\":\n        print(\"REFUSE: no usable HDMI signal",
+      "new": "    if state == \"NO_SIGNAL\":\n        return EXIT_PASS\n        print(\"REFUSE: no usable HDMI signal"
+    },
+    {
+      "name": "stale-passes",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    if state == \"STALE_CAPTURE\":\n        print(\"REFUSE: capture is frozen",
+      "new": "    if state == \"STALE_CAPTURE\":\n        return EXIT_PASS\n        print(\"REFUSE: capture is frozen"
+    },
+    {
+      "name": "black-blamed-on-core-regardless-of-host",
+      "target": "scripts/score_idle_screen.py",
+      "old": "        if args.host and not host_reachable(args.host):",
+      "new": "        if False:"
+    },
+    {
+      "name": "black-always-refuses",
+      "target": "scripts/score_idle_screen.py",
+      "old": "        print(\"FAIL: valid signal but the screen is BLACK",
+      "new": "        return EXIT_REFUSE\n        print(\"FAIL: valid signal but the screen is BLACK"
+    },
+    {
+      "name": "chevron-always-present",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    chevron = score_chevron(frame)",
+      "new": "    chevron = score_chevron(frame)\n    chevron[\"present\"] = True"
+    },
+    {
+      "name": "chevron-never-present",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    chevron = score_chevron(frame)",
+      "new": "    chevron = score_chevron(frame)\n    chevron[\"present\"] = False"
+    },
+    {
+      "name": "left-edge-never-detected",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    edge = score_left_edge(frame)",
+      "new": "    edge = score_left_edge(frame)\n    edge[\"present\"] = False"
+    },
+    {
+      "name": "left-edge-always-detected",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    edge = score_left_edge(frame)",
+      "new": "    edge = score_left_edge(frame)\n    edge[\"present\"] = True"
+    },
+    {
+      "name": "chevron-aspect-gate-removed",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    if not (lo <= aspect <= hi):",
+      "new": "    if False:"
+    },
+    {
+      "name": "chevron-fill-gate-removed",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    if fill < CHEVRON_MIN_FILL:",
+      "new": "    if False:"
+    },
+    {
+      "name": "chevron-aspect-range-widened-to-anything",
+      "target": "scripts/score_idle_screen.py",
+      "old": "CHEVRON_ASPECT_RANGE = (0.40, 2.50)",
+      "new": "CHEVRON_ASPECT_RANGE = (0.0, 1000.0)"
+    },
+    {
+      "name": "chevron-fill-threshold-zeroed",
+      "target": "scripts/score_idle_screen.py",
+      "old": "CHEVRON_MIN_FILL = 0.18",
+      "new": "CHEVRON_MIN_FILL = 0.0"
+    },
+    {
+      "name": "provenance-check-removed",
+      "target": "scripts/score_idle_screen.py",
+      "old": "    if args.expect_corename or args.expect_rbf_md5:",
+      "new": "    if False:"
+    }
+  ]
+}
