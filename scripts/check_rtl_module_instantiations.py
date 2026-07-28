@@ -380,6 +380,52 @@ def parse_define_args(items: list[str]) -> dict[str, int | None]:
     return out
 
 
+def tracked_qip_sources() -> set[Path]:
+    """Every RTL/HDL source file referenced by any tracked .qip in the project."""
+    out: set[Path] = set()
+    try:
+        listing = subprocess.check_output(
+            ["git", "ls-files", "--", "fpga/Plex_MiSTer"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        fail(f"could not enumerate tracked Quartus IP files: {exc}")
+    for rel in listing.splitlines():
+        if not rel.endswith(".qip"):
+            continue
+        qip = ROOT / rel
+        base = qip.parent
+        for line in qip.read_text(encoding="utf-8", errors="ignore").splitlines():
+            for token in re.findall(r"[\w./\\-]+\.s?v\b", line):
+                out.add((base / token.replace("\\", "/")).resolve())
+    return out
+
+
+def qip_membership_gaps(
+    modules: dict[str, ModuleDef], reachable: set[str]
+) -> list[tuple[str, str]]:
+    """Product-reachable modules whose source file no tracked .qip compiles.
+
+    Source-graph reachability proves a module is instantiated.  It does not prove
+    Quartus ever reads the file: a module can be instantiated from the product
+    root and still be missing from files.qip, in which case it is absent from the
+    bitstream no matter how green the instantiation gate is.
+    """
+    compiled = tracked_qip_sources()
+    gaps: list[tuple[str, str]] = []
+    for name in sorted(reachable):
+        mod = modules.get(name)
+        if mod is None:
+            continue
+        path = mod.path.resolve()
+        if path == PRODUCT_TOP.resolve() or path in compiled:
+            continue
+        gaps.append((name, str(path.relative_to(ROOT))))
+    return gaps
+
+
 def build_reachable(paths: list[Path], macro_overrides: dict[str, int | None] | None = None) -> tuple[dict[str, ModuleDef], dict[str, set[str]], set[str]]:
     modules = parse_modules(paths, macro_overrides)
     graph = instantiation_graph(modules)
@@ -526,6 +572,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_reachable:
         for name in sorted(override_reachable & rtl_module_names):
             print(f"REACHABLE_MODULE {name}")
+
+    qip_missing = qip_membership_gaps(default_modules, default_reachable)
+    for name, rel in qip_missing:
+        print(f"REACHABLE_MODULE_NOT_COMPILED {name} file={rel}", file=sys.stderr)
+    if qip_missing:
+        fail(
+            "product-reachable modules whose source file is in no tracked .qip are absent from the "
+            "Quartus compile and therefore from the bitstream: "
+            + ", ".join(name for name, _ in qip_missing)
+        )
 
     variant_summary = ",".join(
         f"{macro}={'<undefined>' if value is None else value}"

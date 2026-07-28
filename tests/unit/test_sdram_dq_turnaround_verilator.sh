@@ -13,7 +13,7 @@ fi
 
 if [[ -z "$VERILATOR_BIN" ]]; then
   echo "SKIP: Verilator runner not found; SDRAM DQ turnaround co-sim was not run." >&2
-  exit 0
+  exit 77
 fi
 
 OUT="$ROOT/build/verilator_sdram_dq"

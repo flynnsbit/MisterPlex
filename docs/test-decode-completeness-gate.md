@@ -118,3 +118,15 @@ python3 scripts/check_decode_completeness.py --synthetic-complete rc=0
 python3 scripts/check_decode_completeness.py              rc=1 (expected current baseline)
 python3 tests/unit/test_unit_rollcall.py                  rc=0
 ```
+
+## Hour 28 additions
+
+The gate no longer scores capabilities over the whole product-reachable set.
+Categories are scored inside the `h264_decode_core` subtree, and any module that
+satisfies a category only via a non-product lineage is reported as
+`donated_by_non_product_lineage=` and still counted missing.
+
+A new `DECODE_OUTPUT_SINK` line asserts the product decoder's outputs reach a
+real consumer rather than a dangling anti-prune net. Rationale, raw
+measurements, red/green proofs and known limits are in
+[`test-decode-product-presence-audit.md`](test-decode-product-presence-audit.md).

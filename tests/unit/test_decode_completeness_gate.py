@@ -67,6 +67,35 @@ def main() -> int:
         f"stdout={bad_topology.stdout}\nstderr={bad_topology.stderr}",
     )
     print("PASS synthetic retired-decoder topology mutation goes red")
+
+    dead = run_gate("--synthetic-complete", "--synthetic-dead-outputs")
+    dead_combined = dead.stdout + dead.stderr
+    require(
+        dead.returncode == 1
+        and "DECODE_OUTPUT_SINK config=synthetic" in dead_combined
+        and "status=FAIL" in dead_combined
+        and "all_outputs_dead_end" in dead_combined
+        and "required_output_not_live=dpb_wr_en:dead_end" in dead_combined,
+        "synthetic dead-output decoder did not go red\n"
+        f"stdout={dead.stdout}\nstderr={dead.stderr}",
+    )
+    live = run_gate("--synthetic-complete")
+    require(
+        "DECODE_OUTPUT_SINK config=synthetic decoder=h264_decode_core parent=stream_path status=PASS" in live.stdout
+        and "live=4 dead_end=0" in live.stdout,
+        f"synthetic live-output decoder did not pass the sink check\n{live.stdout}",
+    )
+    print("PASS anti-prune-only decoder outputs go red, real sinks stay green")
+
+    require(
+        "scope=product_decoder_subtree" in combined,
+        f"capability scope must be the product decoder subtree, not the whole product graph\n{combined}",
+    )
+    require(
+        "donated_by_non_product_lineage=" in combined,
+        f"capability lines must report modules donated by non-product lineages\n{combined}",
+    )
+    print("PASS capabilities are scored inside the product decoder subtree")
     return 0
 
 

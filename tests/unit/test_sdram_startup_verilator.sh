@@ -16,7 +16,7 @@ fi
 if [[ -z "$VERILATOR_BIN" || ! -x "$VERILATOR_BIN" ]]; then
   echo "SKIP: Verilator not found; SDRAM startup command-bus co-sim was not run." >&2
   echo "SKIP: set VERILATOR=/path/to/verilator or install oss-cad-suite under ~/.local." >&2
-  exit 0
+  exit 77
 fi
 
 OUT="$ROOT/build/verilator_sdram_startup"

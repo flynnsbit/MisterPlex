@@ -9,7 +9,7 @@ set -e
 if [[ "$VERILATOR_RC" -eq 127 ]]; then
   if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
     echo "SKIP RTL SIM: Verilator not found and ALLOW_MISSING_VERILATOR=1; DDR warm-reset simulation was NOT run." >&2
-    exit 0
+    exit 77
   fi
   cat >&2 <<'ERR'
 RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation.
