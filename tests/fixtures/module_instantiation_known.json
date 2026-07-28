@@ -1,0 +1,197 @@
+{
+  "description": "Known non-product modules from files.qip. Each is in the Quartus source list but absent from the product map report hierarchy. DEFAULT-RED: any module NOT listed here that is absent from product will FAIL the gate.",
+  "product_config": "DDR_FRAME_STORE=1 (Plex.qsf:82)",
+  "note": "This gate goes RED by default. Without this file, 36 modules fail. The two defining instances of #19 (h264_intra4x4_pred, h264_intra16x16_pred) are in this list \u2014 they would fail without acknowledgement.",
+  "findings": [
+    {
+      "module": "beat_conservation_assert",
+      "owner": "w-c2",
+      "reason": "bench-only: Simulation-only SVA assertion module. Ifdef SIM_ONLY. Never synthesised."
+    },
+    {
+      "module": "cos",
+      "owner": "w-c2",
+      "reason": "bench-only: Lookup table used only by testbench (IDCT reference model). Not part of product RTL."
+    },
+    {
+      "module": "audio_tone",
+      "owner": "w-c2",
+      "reason": "bench-only: Test tone generator for bench audio verification. Not part of product."
+    },
+    {
+      "module": "sdram",
+      "owner": "w-c2",
+      "reason": "bench-only: SDRAM simulation model (behavioural). Product uses real SDRAM chip, not this model."
+    },
+    {
+      "module": "sdram_memtest",
+      "owner": "w-c2",
+      "reason": "bench-only: SDRAM power-on memory test. Excluded from product build (not in Plex.qsf file list)."
+    },
+    {
+      "module": "frame_store",
+      "owner": "w-c2",
+      "reason": "bench-only: Original SDRAM-based frame store. Replaced by ddr_frame_store in product. Retained for SDRAM bench testing."
+    },
+    {
+      "module": "frame_ingest",
+      "owner": "w-c2",
+      "reason": "bench-only: SDRAM-era frame ingester. Replaced by DDR path. Retained for bench testing."
+    },
+    {
+      "module": "ddram_frame_rd",
+      "owner": "w-c2",
+      "reason": "bench-only: DDR frame reader sub-module used only in testbench configurations. Product uses ddr_frame_store directly."
+    },
+    {
+      "module": "h264_intra4x4_pred",
+      "owner": "w-plane",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_intra16x16_pred",
+      "owner": "w-plane",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_intra_mode_guard",
+      "owner": "w-plane",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_chroma8x8_pred",
+      "owner": "w-plane",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_chroma_epel_block_8x8",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_chroma_epel_sample",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_luma_qpel_block_16x16",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_luma_qpel_sample",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_luma_ref_tap_addr",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_inter_mc_16x16",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_inter_mc_part",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_mv_pred_16x16",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_mv_pred_part",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_p_mb_type_decode",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_ref_clamp",
+      "owner": "w-mc",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_deblock_bs",
+      "owner": "w-deblock",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_deblock_edge",
+      "owner": "w-deblock",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_deblock_edge_pipe",
+      "owner": "w-deblock",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_deblock_thresholds",
+      "owner": "w-deblock",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_deblock_writeback_ctrl",
+      "owner": "w-deblock",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_dpb_i420_addr",
+      "owner": "w-dpb",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_dpb_mb_write_addr",
+      "owner": "w-dpb",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_dpb_one_ref",
+      "owner": "w-dpb",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_baseline_syntax_parser",
+      "owner": "w-rel",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_cavlc_nc_predictor",
+      "owner": "w-cabac",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_cavlc_residual_block",
+      "owner": "w-cabac",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_exp_golomb_reader",
+      "owner": "w-cabac",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_rbsp_filter",
+      "owner": "w-rel",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "h264_sps_geometry_parser",
+      "owner": "w-rel",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    },
+    {
+      "module": "present_cadence",
+      "owner": "w-c1",
+      "reason": "pending integration: module verified at module level but not yet instantiated in product datapath"
+    }
+  ]
+}

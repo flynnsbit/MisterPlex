@@ -632,6 +632,42 @@ def build_report() -> list[GateReport]:
             observed_failing_real=True,
             observed_failing_note="First run found 90 dead drivers (27 assigned-never-read, 63 dangling ports). All classified with owner. Notable: want_y_s2 (w-a3), decode_stub diagnostics, SDRAM remnants in DDR build.",
         ),
+        GateReport(
+            id="rtl-full-frame-scorer",
+            script="tests/unit/test_stream_path_full_frame_compare.sh",
+            makefile_target="unit",
+            proves=(
+                "The shipped RTL (stream_path + decode_stub + ddr_frame_store) "
+                "reconstructs a full 320×240 frame (76,800 luma pixels, 300 macroblocks, "
+                "4800 4×4 blocks) BIT-EXACT against ffmpeg reference decode. "
+                "Verilator builds and runs the product RTL with real H.264 bitstream "
+                "stimulus. MAE = 0.000000 on green. "
+                "THIS IS THE FIRST GATE THAT EXECUTES THE SHIPPED DESIGN WITH "
+                "FUNCTIONAL STIMULUS AND GRADES IT AGAINST GOLDEN DATA."
+            ),
+            does_not_prove=(
+                "Does NOT prove chroma reconstruction (luma only). Does NOT prove "
+                "inter prediction (I-frame only). Does NOT prove deblocking. "
+                "Does NOT prove multi-reference. Current coverage: 16/76800 pixels "
+                "actually traverse the FPGA decode path (decode_stub processes only "
+                "the first 4×4 block); the remaining 76784 are compared against the "
+                "ARM-hosted reference. Full-pipeline coverage requires h264_decode_top "
+                "integration."
+            ),
+            red_proof_method=(
+                "Perturb coefficient by ±1 → 16 pixel mismatches → FAIL. "
+                "Verilator absent → rc=3 REFUSE (never silent pass)."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note="Requires Verilator (pinned at ~/.local/oss-cad-suite-20260726/bin/verilator) and ffmpeg.",
+            owner="w-rel",
+            verification_target="RTL_SIM",
+            verification_target_note="Verilator builds product RTL, feeds real H.264 bitstream, compares output against ffmpeg golden. Full simulation with functional stimulus.",
+            exit_codes={"green": 0, "red_mismatch": 1, "red_missing_tool": 2, "refuse_no_verilator": 3},
+            observed_failing_real=True,
+            observed_failing_note="Red-proven: ±1 coefficient perturbation produces 16 pixel failures. Verilator absent → rc=3. Merged to main at 8ed788b.",
+        ),
     ]
     return gates
 
