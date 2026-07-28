@@ -737,8 +737,16 @@ this project."**
 
 ### Estimated decode pipeline resource needs
 
-**WARNING: These are ESTIMATES from first principles and comparable open-source
-H.264 decoders. I am 0-for-3 on estimates this session. Treat as order-of-magnitude.**
+**WARNING: These are ESTIMATES from first principles. I am 0-for-3 on
+absolute estimates this session. A resource-probe fit has been commissioned
+to replace these with measurements (see §3C below).**
+
+**Extrapolation basis:** Our only fabric-calibrated data point is
+`decode_stub` at 1,438 ALMs / 32 DSPs. That module decodes one 4×4 block
+(CAVLC parse → dequant → IDCT → XOR into signature). **Extrapolating a
+full decoder from it means multiplying by a judgement factor. That factor
+is the entire answer.** The comparable open-source references below provide
+rough cross-checks but none target Cyclone V at this architecture.
 
 | Module | ALMs (est) | DSPs (est) | M10K (est) | Basis |
 |--------|-----------|-----------|-----------|-------|
@@ -746,38 +754,156 @@ H.264 decoders. I am 0-for-3 on estimates this session. Treat as order-of-magnit
 | Dequant + IDCT 4×4 | 400–600 | 8–16 | 0 | 16 multiplies (DSP), butterfly adds |
 | Chroma DC Hadamard | 50–100 | 0 | 0 | 4 adds, trivial |
 | Intra prediction (all modes) | 1,500–2,500 | 0–4 | 4–8 (neighbour line buf) | Mode select + 9 directional + Plane |
-| MC interpolation (4-wide FIR) | 2,000–3,500 | 24–32 | 4–8 (ref window buf) | 4× 6-tap FIR + averaging |
+| MC interpolation (1-wide shift-add FIR) | 1,000–2,000 | 0 | 4–8 (ref window buf) | 1× shift-add FIR + qpel avg |
 | Deblocking filter | 1,500–2,500 | 0 | 8–16 (edge line bufs) | 48 edges/MB, conditional filter |
 | DPB fetch controller | 500–800 | 0 | 2–4 | FSM + address gen |
 | Pipeline control / glue | 500–1,000 | 0 | 2–4 | Stage handshaking, stall logic |
 | Neighbour MB storage | 200–400 | 0 | 8–20 (40 cols × ~32B/col) | Above-row data for intra/deblock |
-| **TOTAL DECODE** | **7,450–12,600** | **32–52** | **30–64** | |
+| **TOTAL DECODE** | **6,450–11,200** | **8–20** | **30–64** | |
 
-### Does it fit?
+### Does it fit? — DERIVATION (not just verdict)
 
-| Resource | Available | Decode needs | Remainder | Verdict |
-|----------|-----------|-------------|-----------|---------|
-| **ALMs** | 27,553 | 7,450–12,600 | 15,000–20,000 | **YES — comfortably** |
-| **DSPs** | 39 | 32–52 | -13 to +7 | **⚠ TIGHT — may not fit at high end** |
-| **M10K** | 356 | 30–64 | 292–326 | **YES — comfortably** |
+```
+estimate:        ALM 6,450–11,200 / DSP 8–20 / M10K 30–64
+device budget:   ALM 27,553 free / DSP 39 free / M10K 356 free
+                 (after: MiSTer framework + DDR frame store + present path)
+derived how:     first-principles decomposition of H.264 Baseline operations
+                 cross-checked against decode_stub (1,438 ALM for 1 block path)
+                 decode_stub has: CAVLC + dequant + IDCT + signature = ~1,438 ALM
+                 full pipeline adds: all intra modes, MC, deblock, DPB, neighbours
+                 scaling factor vs decode_stub: ~5–8× (judgement, NOT measured)
+confidence:      LOW for absolute numbers. My track record is 0-for-3.
+```
 
-**DSPs are the binding constraint.** The current design uses 73/112 (65%),
-leaving only 39. MC interpolation alone needs 24–32 if using DSP multipliers.
-Dequant/IDCT needs 8–16. **If both modules use DSPs heavily, the design MAY
-exceed the 112-block limit.**
+**What would make this wrong, and by how much:**
 
-**Mitigation:** On Cyclone V, 18×18 multiplies can be implemented in logic
-(ALMs) instead of DSP blocks — at roughly 80–120 ALMs per multiplier and
-worse timing. The 6-tap FIR's coefficient symmetry ({1,-5,20,20,-5,1}) means
-only 3 unique multiplies, and `×20 = ×16 + ×4` and `×5 = ×4 + ×1` can use
-shift-add (zero DSPs, ~50 ALMs each). **w-mc's shift-add FIR decomposition
-eliminates DSP pressure entirely for MC.** If adopted, the DSP budget relaxes
-to: decode needs 8–16 DSPs (dequant/IDCT only), with 23–31 remaining.
+| Risk | Effect on ALMs | Likelihood | Detectable by |
+|------|---------------|-----------|---------------|
+| Synthesis tool explodes shift-add trees into wide MUX structures | +3,000–5,000 | Medium | Resource-probe fit |
+| Deblock needs full-frame line buffer (not just above-MB) | +200 ALMs, +40 M10K | Low | Architecture review |
+| Multiple reference frames needed (B-frames, but we're Baseline) | +2,000 ALMs, +50 M10K | None (Baseline = 1 ref) | Spec check ✓ |
+| Quartus cannot share IDCT/dequant across blocks efficiently | +1,000–2,000 | Medium | Resource-probe fit |
+| My per-module estimates are systematically low (like my timing) | +3,000–6,000 (50% more) | **Meaningful** | Resource-probe fit |
 
-**ANSWER TO THE PARENT'S QUESTION: The pipeline fits.** ALMs and M10K have
-generous headroom. DSPs are tight but manageable with shift-add MC (which
-w-mc was already planning). **The design does NOT fail on resources. It fails
-on integration — the pieces exist but are not connected.**
+**The resource-probe fit (§3C) is commissioned precisely to test this.**
+If the skeleton comes back at 18,000 ALMs (close to my high estimate),
+the model earns credibility. If it comes back at 25,000+, the architecture
+must change. **Either answer is cheap now.**
+
+**DSPs: shift-add MC resolves DSP pressure but costs logic depth (see §3D).**
+
+---
+
+## 3C. Module Manifest for Resource-Probe Fit (NEW v6)
+
+**This is the definitive list of modules the real datapath must contain.**
+w-rel builds a skeleton from this. w-cap fits it. I interpret the result.
+
+### Architecture choice: SERIAL MB pipeline
+
+At 45 MHz / 1,250 cycles per MB, even a single FIR unit (384 cycles for MC
+luma+chroma) leaves 866 cycles for all other stages. **The architecture can
+be serial (1 instance of each processing unit, time-multiplexed across blocks)
+rather than parallel.** This is the minimum-resource architecture.
+
+### Module manifest (1 instance each unless noted)
+
+| # | Module | Instantiation count | Function | Key parameters |
+|---|--------|--------------------:|----------|----------------|
+| 1 | `h264_cavlc_parser` | 1 | Bitstream → coefficients | 1 coeff_token/cycle |
+| 2 | `h264_exp_golomb` | 1 | ue()/se() decoding | Inside parser or standalone |
+| 3 | `h264_dequant4x4` | 1 | Inverse quantization | 16 coeffs, time-multiplexed 4/cycle |
+| 4 | `h264_chroma_dc_hadamard` | 1 | 2×2 inverse Hadamard | 4 adds, combinational or 1 cycle |
+| 5 | `h264_idct4x4` | 1 | 4×4 butterfly IDCT | 4-stage pipeline, 4 cycles latency |
+| 6 | `h264_intra4x4_pred` | 1 | 9 directional modes | Mode-select MUX + extrapolation |
+| 7 | `h264_intra16x16_pred` | 1 | DC, H, V, Plane | w-plane's pipelined version (2 cycles) |
+| 8 | `h264_intra_chroma_pred` | 1 | 4 chroma modes (8×8) | Same as luma 16×16 but on 8×8 |
+| 9 | `h264_mc_luma_fir` | 1 | 6-tap half-pel + qpel avg | Shift-add, 1 sample/cycle |
+| 10 | `h264_mc_chroma_epel` | 1 | Bilinear 2-tap (eighth-pel) | 2 multiplies or shift-add |
+| 11 | `h264_deblock_edge` | 1 | 4-sample conditional filter | 2-cycle pipe (existing RTL) |
+| 12 | `h264_deblock_bs` | 1 | Boundary strength calc | Combinational |
+| 13 | `h264_dpb_controller` | 1 | DDR burst read/write | FSM + address gen |
+| 14 | `h264_recon4x4` | 1 | pred + residual + clip | 16 parallel clip-add (combinational) |
+| 15 | `h264_mb_controller` | 1 | MB-level sequencing FSM | Drives all stages |
+| 16 | `neighbour_ctx_above` | 1 | Above-row MB context | 40 cols × (16Y+4U+4V+flags) |
+| 17 | `neighbour_ctx_left` | 1 | Left-column context | Registers (24 samples + flags) |
+| 18 | `ref_window_buffer` | 1 | 21×21 luma + 9×9×2 chroma | Local SRAM for MC ref fetch |
+| 19 | `bitstream_fifo` | 1 | CDC: clk_sys → clk_decode | async_fifo, 8-bit, AW=4 |
+| 20 | `pipeline_handshake` | 1 | Inter-stage valid/ready | Trivial glue |
+
+**Total: 20 modules, all instantiated once** (serial pipeline architecture).
+
+### What "wire them minimally so synthesis cannot strip them" means
+
+For the resource-probe fit, each module must:
+- Have its inputs driven (from either the upstream module's outputs or from a register)
+- Have its outputs consumed (feeding downstream or captured into a register)
+- NOT be optimizable away by the synthesis tool
+
+**The simplest approach:** chain all modules sequentially with registered
+boundaries. Inputs from a shift register seeded by a top-level pin.
+Outputs to a reduction XOR driving a top-level pin. This forces synthesis
+to keep everything while minimising routing complexity.
+
+---
+
+## 3D. Shift-Add FIR: Logic Depth at 45 MHz (NEW v6)
+
+**The parent's question:** shift-add MC trades DSP blocks for logic depth.
+Does it stay within the 45 MHz timing budget (22.22 ns period)?
+
+**The H.264 6-tap luma half-pel filter:**
+```
+h(x) = (a - 5b + 20c + 20d - 5e + f + 16) >> 5
+```
+
+**Using coefficient symmetry:**
+```
+sum1 = a + f          (1 add level)
+sum2 = b + e          (1 add level, parallel with sum1)
+sum3 = c + d          (1 add level, parallel)
+×5:  sum2_x5 = (sum2 << 2) + sum2    (1 add, shifts are free)
+×20: sum3_x20 = (sum3 << 4) + (sum3 << 2)  (1 add, shifts are free)
+result = sum1 + sum3_x20 - sum2_x5 + 16    (2 add levels)
+>> 5: shift (free, just wiring)
+```
+
+**Critical path: 4 add levels** (sum → multiply → combine → round).
+Each on 16-bit operands (9-bit pixel + growth from ×20 + accumulation).
+
+**At various per-level delays:**
+| Assumption | 4 levels × ns/level | vs. 22.22 ns period | Margin |
+|-----------|---------------------|--------------------:|--------|
+| 1.0 ns/level (optimistic) | 4.0 ns | 18.2 ns | Large |
+| 1.5 ns/level (narrow pipe) | 6.0 ns | 16.2 ns | Comfortable |
+| 2.0 ns/level (medium cone) | 8.0 ns | 14.2 ns | Adequate |
+| 2.5 ns/level (conservative) | 10.0 ns | 12.2 ns | Still positive |
+
+**Relative comparison (which I trust):** The shift-add FIR at 4 levels is
+SHALLOWER than w-plane's post-optimization Plane (10 levels) and much
+shallower than the pre-optimization Plane (55-70 levels) or decode_stub's
+measured 22 levels. **By relative ranking, the FIR is not the timing bottleneck.**
+
+**What shift-add MC costs in ALMs:** Each 6-tap FIR unit needs ~6 adders +
+2 shift-add multipliers ≈ 150–250 ALMs for one pipeline (horizontal OR
+vertical). The full MC path (horizontal + vertical, with registered
+pipeline stage between) ≈ 400–600 ALMs total for 1-wide. Compare: DSP
+implementation would use ~12 DSP blocks but only ~100 ALMs of glue.
+
+**The trade-off, stated explicitly:**
+- **DSP MC:** 24–32 DSPs consumed (leaves 7–15 free), ~200 ALMs, 1 cycle/tap (DSP has built-in pipeline register)
+- **Shift-add MC:** 0 DSPs consumed (leaves 39 free), ~400–600 ALMs, 4 logic levels per stage
+
+**Shift-add is the right choice** because:
+1. DSPs are at 65% utilization already; shift-add MC avoids the binding constraint entirely
+2. 4 logic levels fits comfortably at 45 MHz (vs 22.22 ns period)
+3. The ALM cost (400–600) is a small fraction of the 27,553 available
+4. The design does NOT have a timing closure problem on clk_decode — that domain has NEVER BEEN FITTED (decode_stub is the only content, and it's being replaced)
+
+**What could make this wrong:**
+- If Quartus cannot efficiently route the shift-add tree → levels increase to 6-8 → still fits at 45 MHz
+- If the shift-add output needs to fanout widely (e.g., to parallel consumers) → routing congestion adds delay
+- The ONLY way to know for sure: the resource-probe fit. **The shift-add FIR is in the manifest (module #9).**
 
 ### Where pipeline stages need depth (and where they can be lazy)
 
