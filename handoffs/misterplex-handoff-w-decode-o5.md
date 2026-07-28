@@ -433,3 +433,140 @@ N3 unevaluatable block RAM (no silent pass); N4 `FRAME_W` removed from QSF;
 O1 `DECODE_REAL_INTRA=1` in QSF. All restore to green.
 
 **Still zero frames decoded and displayed by the FPGA.** Denominator: 1170 MBs.
+
+---
+
+## Addendum 3 — the w-cast merge, and what it did and did not achieve
+
+Branch `w-decode-o5`, merge commit **`1e7509b`** (pushed twice; `git rev-parse HEAD`
+== `origin/w-decode-o5`). Merges `origin/w-cast-play-state` (`3d4607e..667a237`).
+
+### The headline, stated at its true size
+
+`h264_cavlc_residual_block` was reachable in **neither** historical config, and at
+the seam it was **double-gated shut**: `.rbsp(rbsp_byte)` was tied `8'd0` and
+`.start` depended on `p16_zero_mv_valid`, tied `1'b0`. Both gates are now open:
+
+| | before | after |
+|---|---|---|
+| `rbsp_byte` | `8'd0` | `sl_rbsp` — real captured slice RBSP |
+| enable | `p16_zero_mv_valid` (tied 0) | `p16_zero_mv_valid \|\| syntax_p16_launch` |
+
+`p16_zero_mv_valid` is **still tied `1'b0`**. The path is opened solely by the new
+syntax-driven term.
+
+**Denominator — the part that must not be overstated.** At the seam,
+`mb_type_valid` is `slice_valid & ~slice_valid_d`: a one-shot on the slice-header
+valid edge. Every syntax input beside it is `sl_first_mb_*`. So CAVLC now runs for
+the **first MB of each slice only — 1 of 1170 MBs per frame.** That is not a
+decoded frame. **Zero frames have been decoded and displayed by the FPGA.**
+
+What it *does* establish is the root cause of "only block0 ever has residual data":
+it is **first-MB-only staging**, not unreachability. Reachability is fixed; the
+per-MB walker is the remaining work and is the natural next task.
+
+### Two things the merge tried to delete, and how they were caught
+
+1. **w-deblock's controller.** `h264_decode_core.sv` theirs had
+   `h264_deblock_writeback_ctrl` count **0**; mine had **1**. Taking theirs
+   wholesale would have deleted landed peer work — the project's signature failure
+   mode. Resolved as a union.
+2. **My `gen_diagnostic_present` generate scope.** Taking theirs for
+   `stream_path.sv` silently dropped the named generate scope containing
+   `decode_stub`. Only `test_stream_path_full_frame_compare.sh` caught it, via a
+   TB scope error (`Known scopes under 'dut': ... stub`). Restored.
+
+Neither was reported by any reachability, qip, or RAM gate. **A green gate sweep
+does not detect a merge that deletes work; only a diff against both parents does.**
+
+### A false positive in my own seam gate
+
+`synthetic_reg_inputs()` matched an indexed reg write with `\[[^\]]*\]`, which
+cannot span a *nested* index. So `sl_rbsp[sl_rbsp_len[6:0]] <= sl_cap_data;` was
+invisible, only the reset-loop `<= 8'd0` matched, and real data was reported as
+synthetic. Fixed to `\[(?:[^\[\]]|\[[^\[\]]*\])*\]`.
+
+Red/green pair (both measured): real data → rc=0 not flagged; mutate that
+assignment to `8'd0` → rc=1 `UNDECLARED_SYNTHETIC_CORE_INPUT rbsp_byte`; restore →
+rc=0. The fix removed a false positive **without** weakening the true positive.
+
+### A false red in the fleet reachability checker — worth knowing about
+
+Mid-merge, the trunk proof failed with:
+
+```
+RTL_MODULE_INSTANTIATION_FAIL: duplicate module h264_decode_core:
+  fpga/Plex_MiSTer/rtl/h264_decode_core.sv and fpga/Plex_MiSTer/rtl/h264_decode_core.sv
+```
+
+**The same path on both sides.** There is exactly one `module h264_decode_core` in
+the tree. Cause: `git ls-files` emits an **unmerged** path once per stage (1/2/3),
+so the checker parsed the file repeatedly. Measured: one file, four emissions.
+
+This matters because the trunk proof is now the measurement the fleet is *required*
+to cite. A checker that cannot survive a mid-merge tree will be worked around.
+Fixed with an order-preserving dedupe; permanent regression test
+`tests/unit/test_rtl_instantiation_unmerged_paths.sh` recreates the condition with
+a `git` shim, and still proves a **genuine** cross-file duplicate is rejected rc=1.
+
+### decode_stub: NOT retirable, and precisely why
+
+Re-measured on `1e7509b`:
+
+- **Blocker A (hard).** `decode_stub` is the **sole** driver of `fs_wr_en`,
+  `fs_wr_pixel`, `fs_wr_reset`, `fs_swap` (`stream_path.sv:539-542`).
+  `h264_decode_core` has **no pixel-presentation output port at all** — its only
+  write port is `dpb_wr_en` (DPB, not frame store). Retiring the stub today yields
+  a frame store with no driver: no picture at all. **The core cannot paint pixels
+  because the ports do not exist yet.** That is the blocker, stated exactly.
+- **Blocker C.** 22 probes into the stub scope in `stream_path_full_frame_tb_top.sv`.
+
+Per the mission's fallback, it is instead **structurally contained**, and that
+containment is proven load-bearing rather than asserted:
+
+```
+--root emu --require h264_luma_qpel_sample        rc=1
+  REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_qpel_sample
+  parents=decode_stub,h264_decode_skeleton reachable_only_via_diagnostic_root=1
+--root emu --require h264_luma_qpel_block_16x16   rc=0   (control)
+```
+
+A module reachable **only** through the stub cannot satisfy a product proof.
+
+### `h264_decode_skeleton.sv` — answered: NOT a fourth decoder lineage
+
+887 lines, self-documented *"THIS IS NOT A DECODER... It exists solely to hold area
+in the fitter so we get a real resource measurement."* It defines one module,
+instantiated **nowhere** (measured), and is correctly `ALLOWED_ABSENT` from
+`files.qip`. It is a resource-estimation scaffold.
+
+It is, however, exactly the same hazard class as `decode_stub` — it instantiates
+one of everything — and the red proof above confirms it is **already** treated as a
+diagnostic root, so it cannot manufacture product greens either.
+
+### Evidence on `1e7509b`
+
+| gate | rc |
+|---|---|
+| `--root emu --require h264_decode_core --require stream_path` (**trunk**) | 0 |
+| `--root h264_decode_core --require {deblock_writeback_ctrl, inter_mc_16x16, dpb_one_ref, cavlc_residual_block, luma_qpel_block_16x16, chroma_epel_block_8x8}` (**subtree**) | 0 |
+| `check_qip_coverage.py` (w-fit's, unmodified) | 0 `product=37 compiled=35` |
+| `check_onchip_ram_budget.py` | 0 |
+| `check_decode_core_seam.py` | 0 `synthetic_reg_inputs=0 core_subtree=23/23 in qip` |
+| `test_unit_rollcall.py` | 0 `expected_commands=100` |
+| **RTL gate sweep** | **53/53 rc=0, 0 skips** |
+
+Seam debt was updated **entry by entry**: deleted `rbsp_byte`,
+`mb_residual_bit_offset`, `cbp_luma`, `cbp_chroma` (measured progress) and both
+`[synthetic_reg_inputs]` entries (the fabricated `5'd16`/`2'd0` are gone because
+those ports reversed direction and are now core **outputs**); added `dpb_rd_valid`,
+`intra16x16_mode`, `intra4x4_modes`, `mb_qp_delta` as new honest debt.
+`constant_inputs` 30 → 29.
+
+### Still true, and still the reason nothing displays
+
+- `stream_path.sv` ties `.dpb_rd_data(8'd0)` and now `.dpb_rd_valid(1'b0)`:
+  **every reference pixel MC reads is 0x00.** Inter prediction cannot be correct.
+- The product DPB must be **DDR-backed**. `decode_stub.dpb_mem` is 7,372,800 bits =
+  **1.30× the whole device**; on-chip is arithmetically impossible.
+- All 12→13 core outputs still terminate in the `_keep` anti-prune wire.
