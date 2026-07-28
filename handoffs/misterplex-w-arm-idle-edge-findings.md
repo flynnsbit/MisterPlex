@@ -271,3 +271,188 @@ Unchanged on `w-arm-bitstream-feed` (`a9d6d73`). The interface agreed with
 W-CAST (raw Annex-B out of `ddr_bitstream_reader.out_valid/out_byte`,
 `out_flush` on Begin/Flush/End/reset, EOF = End + inactive, backpressure via
 `out_full`) is honoured; I did not change it and did not renegotiate it.
+
+---
+
+## 11. Addendum — reachability red proof, second-bitstream reproduction, two self-caught defects
+
+Added after the parent's REACHABILITY EVIDENCE STANDARD ruling. Raw numbers
+first.
+
+### 11.1 Nothing to withdraw
+
+The ruling requires withdrawing any product-completeness claim resting on plain
+`emu`-rooted reachability. I audited every claim in this document: **I made no
+`emu` reachability claim.** Nothing to withdraw.
+
+### 11.2 Reachability green *and* its red, core-rooted
+
+Instrument: `scripts/check_rtl_module_instantiations.py` from `w-deblock-seam`
+`7225e00` (my branch's copy predates `--root`/`--require`; I used the newer one
+verbatim without modifying it).
+
+```
+GREEN   --root present_core --require ddr_frame_store   rc=0
+        REQUIRED_RTL_MODULE_REACHABLE ddr_frame_store root=present_core
+        rtl_modules=68 reachable=11 bench_only=24
+
+RED     rename the instantiation at present_core.sv:239 to
+        ddr_frame_store_RENAMED                          rc=1
+        REQUIRED_RTL_MODULE_UNREACHABLE ddr_frame_store
+        file=fpga/Plex_MiSTer/rtl/ddr_frame_store.sv parents=<none>
+
+RESTORE git checkout -- present_core.sv                  rc=0 (green returns)
+```
+
+The mutation was performed in a **disposable linked git worktree**
+(`git worktree add --detach build/redproof HEAD`, removed afterwards), never in
+the shared tree. Verified after teardown: `git diff --name-only fpga/` returned
+**0 files**. This satisfies hard rule 3 (no mid-fit edits to sources under a
+live compile) unconditionally, rather than by checking whether a fit happened to
+be running.
+
+### 11.3 The checker's false-reachable blind spot, demonstrated concretely
+
+The parent's caveat is not theoretical here. `present_core.sv:225` is
+`` `ifdef DDR_FRAME_STORE ``, with `ddr_frame_store` instantiated in the then-branch
+(line 239) and `frame_store` in the else-branch (line 293). Measured:
+
+```
+--root present_core --require ddr_frame_store   rc=0
+--root present_core --require frame_store       rc=0
+```
+
+**Both branches of a mutually exclusive `ifdef` report reachable.** Only one can
+be in any bitstream, so `reachable=11` over-counts the present path by at least
+one module. Source-level reachability cannot settle which is in the product.
+
+### 11.4 Hardware oracle that settles it
+
+Stronger than post-fit hierarchy, because it interrogates the running device:
+
+- `ddr_frame_store.sv` is the **only** RTL file that defines the PLXF
+  (`0x504C5846`) and PLXD (`0x504C5844`) magics and the `FRAME_MAILBOX_PHYS` /
+  `BANK_MAILBOX_PHYS` writers. `ddram_frame_rd.sv` mentions them in comments
+  only.
+- Those magics are readable in live DDR with an advancing heartbeat:
+  `PLXF lo=0x504C5846 hi=0xFFFF10D5`.
+
+⇒ `ddr_frame_store` is in the resident bitstream. Measured, not inferred, and it
+resolves the `ifdef` ambiguity that the regex checker cannot.
+
+Caveat carried: source-level reachability is **necessary, not sufficient**. The
+hardware oracle is what makes this claim safe, not the checker.
+
+### 11.5 The ARM-side result reproduces on a second, different bitstream
+
+The resident RBF changed under me during this session (W-FIT deployed):
+
+```
+was  00eebd5e...  (banned / known black screen)
+now  fb4bad849ad2db782a5004ce5a3471ce   NOT on the banned list
+core = Plex, from /media/fat/_Utility/Plex.rbf
+```
+
+Re-ran the gate unchanged against the new bitstream:
+
+```
+bank 0  rc=0  luma_mismatch=0/299520  u=0/74880  v=0/74880   compared=449280/449280
+bank 1  rc=0  luma_mismatch=0/299520  u=0/74880  v=0/74880   compared=449280/449280
+```
+
+I previously *asserted* the ARM-side result was RBF-independent. It is now
+**demonstrated** across two different bitstreams. The ARM write path is correct;
+the artifact is not on the ARM side.
+
+Note for whoever owns the visual gate: the precondition I flagged in §7 — that no
+HDMI before/after capture can mean anything while a banned black-screen build is
+resident — **may now be satisfied**. `fb4bad84` is not on the banned list. That
+is a fact about the md5, not a claim that the display shows content; only a
+capture that distinguishes no-signal / valid-but-black / valid-with-content can
+say that.
+
+### 11.6 Defect I introduced and caught: a false skip
+
+While hardening this gate I added a daemon-liveness precondition using
+`pgrep -x misterplexd`. It reported `DAEMON_DOWN` and the gate returned 77.
+
+That was wrong. Measured on the device:
+
+```
+pgrep -x misterplexd   ->  bash: pgrep: command not found   rc=127
+ps w                   ->  6091 root /media/fat/misterplex/bin/misterplexd ...
+```
+
+The MiSTer userland is busybox and has **no `pgrep`**; rc=127 is falsy, so the
+`||` branch fired and the check declared the daemon dead while it was running as
+PID 6091. This is the house failure mode — a true number (`rc=127`) about the
+wrong thing (daemon liveness). Its damage class is a **false skip**: less
+dangerous than a false green, but it would have silently disabled this gate
+forever while looking disciplined. Fixed to use `ps`, plus an explicit skip if
+process enumeration itself fails. Found by re-measuring the device instead of
+trusting the gate I had just written.
+
+### 11.7 Defect I introduced and caught: my earlier `make unit` green did not cover my own files
+
+`make unit` was rc=0 in §9. It then went rc=2 with no relevant source change:
+
+```
+FAIL: runtime DDR frame layout literals must route through ddr_frame_layout
+derivation; found scripts/ddr_frame_dump_device.py:28: BANK_STRIDE = 0x00080000;
+:29: FRAME_BYTES = 449280; :31: DOORBELL_PHYS = 0x300FF000
+```
+
+Cause: `runtime_ddr_layout_literal_offenders()` iterates
+`tracked_product_relevant_files()`. When I ran §9 the file was still
+**untracked**, so the sweep never looked at it. Committing it is what made it
+visible.
+
+**Generalisation worth carrying fleet-wide: a `make unit` green taken before you
+`git add` does not cover the files you are adding.** Any gate keyed on
+`git ls-files` is blind to your work-in-progress. Re-run `make unit` *after*
+staging, not before. (The sweep's untracked-blindness is deliberate — there is a
+`check_runtime_ddr_layout_literal_ignores_untracked_debris` test asserting it —
+so this is a property to know, not a bug to fix.)
+
+Fix, and why it is better than silencing the regex: the device script is piped
+to the MiSTer over bare stdin and cannot import the repo's layout helpers, which
+is why the addresses had been restated. They are now **derived** instead. New
+`scripts/ddr_layout_consts.py` parses the single source of truth
+(`host/libmisterplex/ddr_frame_layout.hpp`, plus `mailbox_abi_spec.hpp` for the
+mailbox addresses) and emits them as argv; `ddr_frame_dump_device.py` now has
+**no layout literals and no layout defaults** — the six address arguments are
+`required=True`, so a caller that forgets them gets an error rather than a
+plausible-looking dump of the wrong memory.
+
+Verified the derived values equal the ones I had hardcoded:
+
+```
+--ddr-base 0x30000000 --bank-stride 0x80000 --frame-bytes 449280
+--doorbell-phys 0x300ff000 --plxd-phys 0x3007f128 --plxf-phys 0x3007f118
+```
+
+This is also independent confirmation that the readback in §1 addressed the
+memory the layout contract specifies.
+
+### 11.8 Gate inventory after this addendum
+
+| Gate | Scope | Green | Red |
+|---|---|---|---|
+| `scripts/check_idle_ddr_frame.py --self-test` | 4 synthetic cases | rc=0 | 3 of the 4 are must-fail cases |
+| `scripts/ddr_layout_consts.py --self-test` | 8 parsed constants, 3 mutations | rc=0 | 3 must-fail header mutations, header restored (`git diff` = 0 lines) |
+| `tests/hw/test_idle_ddr_frame.sh` | 449280 bytes/bank, both banks | rc=0 on `fb4bad84` | `IDLE_DDR_RED=1` -> rc=1, 480/480 lines bad from col 0 |
+| `tests/hw/test_idle_ddr_frame.sh` unreachable host | — | — | `MISTER_HOST=192.0.2.1` -> **rc=77**, not 1 |
+| core-rooted reachability | `rtl_modules=68 reachable=11` | rc=0 | renamed instantiation -> rc=1 `parents=<none>` |
+
+`make unit` after all of the above: **rc=0**, 2 declared skips (live PMS
+baseline needs credentials, plus its own 77 red-check). Rollcall:
+`actual_commands=93 protected_commands=90 expected_commands=90`.
+
+### 11.9 Still not mine, still blocked
+
+Unchanged from §7: the underrun **rate** needs a core reset (W-FIT) then
+`ddr_frame_dump_device.py --watch`; the left-edge **pixel positions** need W-E2E
+capture; the fix itself (prefetch depth `FRAME_LINE_COUNT`, and/or changing the
+miss policy from black to last-good-pixel in `ddr_frame_store.sv`) is RTL-owned.
+The underrun counter still reads saturated (`0xFFFF`), which proves ">=65535
+misses since reset", **not** a current rate.

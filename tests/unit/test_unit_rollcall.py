@@ -81,6 +81,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_annexb_count",
     "python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py",
     "python3 $(ROOT)/scripts/check_idle_ddr_frame.py --self-test",
+    "python3 $(ROOT)/scripts/ddr_layout_consts.py --self-test",
     "$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)",
     "$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)",
     "$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)",

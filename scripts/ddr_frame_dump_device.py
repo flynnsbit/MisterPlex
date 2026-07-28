@@ -5,7 +5,14 @@ read(2) on /dev/mem returns EFAULT on this kernel, so the dump must go through
 mmap. Emits gzip+base64 on stdout so it survives an ssh pipe unmangled.
 
 Usage (from the host):
-    ssh root@MISTER 'python3 - --bank 0' < scripts/ddr_frame_dump_device.py
+    ssh root@MISTER 'python3 - --bank 0 <layout args>' < scripts/ddr_frame_dump_device.py
+
+The layout arguments are mandatory and carry no defaults. This script runs on
+the MiSTer over a bare stdin pipe, so it cannot import the repo's layout
+helpers; instead the caller derives every address from the single source of
+truth (host/libmisterplex/ddr_frame_layout.hpp, via scripts/ddr_layout_consts.py)
+and passes them in. Hardcoding them here would fork the layout contract and is
+rejected by the runtime DDR layout literal sweep in test_rtl_invariants.py.
 
 Output format (stdout, line oriented):
     DOORBELL lo=0x... hi=0x...
@@ -24,13 +31,8 @@ import os
 import sys
 import time
 
-DDR_BASE = 0x30000000
-BANK_STRIDE = 0x00080000
-FRAME_BYTES = 449280  # 624*480*3/2
-MAP_BYTES = BANK_STRIDE * 2
-DOORBELL_PHYS = 0x300FF000
-PLXD_PHYS = 0x3007F128
-PLXF_PHYS = 0x3007F118
+def auto_int(text):
+    return int(text, 0)
 
 
 def rd32(buf, off):
@@ -40,12 +42,28 @@ def rd32(buf, off):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bank", type=int, default=0, choices=(0, 1))
-    ap.add_argument("--len", type=int, default=FRAME_BYTES)
+    ap.add_argument("--ddr-base", type=auto_int, required=True)
+    ap.add_argument("--bank-stride", type=auto_int, required=True)
+    ap.add_argument("--frame-bytes", type=auto_int, required=True)
+    ap.add_argument("--doorbell-phys", type=auto_int, required=True)
+    ap.add_argument("--plxd-phys", type=auto_int, required=True)
+    ap.add_argument("--plxf-phys", type=auto_int, required=True)
+    ap.add_argument("--len", type=auto_int, default=None)
     ap.add_argument("--no-data", action="store_true")
     ap.add_argument("--watch", type=int, default=0,
                     help="sample the mailboxes N times instead of dumping a bank")
     ap.add_argument("--interval", type=float, default=1.0)
     args = ap.parse_args()
+
+    DDR_BASE = args.ddr_base
+    BANK_STRIDE = args.bank_stride
+    FRAME_BYTES = args.frame_bytes
+    DOORBELL_PHYS = args.doorbell_phys
+    PLXD_PHYS = args.plxd_phys
+    PLXF_PHYS = args.plxf_phys
+    MAP_BYTES = BANK_STRIDE * 2
+    if args.len is None:
+        args.len = FRAME_BYTES
 
     if not os.path.exists("/dev/mem"):
         print("SKIP no /dev/mem", file=sys.stderr)
