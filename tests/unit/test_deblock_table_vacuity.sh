@@ -22,6 +22,9 @@
 #
 # Exit codes: 0 pass, 1 fail.  Never 77 (77 inside make unit aborts the chain).
 set -u
+# Never read an exit code through a pipe: the repo enforces this mechanically
+# via scripts/check_pipe_exit_safety.py, which caught this file.
+set -o pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 RTL=fpga/Plex_MiSTer/rtl/h264_deblock.sv
