@@ -31,6 +31,7 @@ opening the hardware grabber.
 
 | Script | What |
 |--------|------|
+| `test_idle_present_split.sh` | non-visual idle-logo split: mutate `PRESENT=fb0`, verify fb0 logo bytes, restore original `PRESENT`, record FPGA PLXD; exits `77` without eyes/capture |
 | `test_media_fb.sh` | play/pause/resume/stop via companion |
 | `test_playqueue_bind.sh` | scrubber play-queue fields |
 | `test_audio_mraudio.sh` | `/dev/MrAudio` PCM path |

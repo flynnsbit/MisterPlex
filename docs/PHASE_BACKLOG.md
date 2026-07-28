@@ -2,6 +2,29 @@
 
 Update this file when work finishes. Loop agents claim items and mark `DONE` / `IN_PROGRESS` / `BLOCKED`.
 
+## ACTIVE — W-OSD idle Plex-logo split (**UNSCORED, non-visual only** 2026-07-28)
+
+Raw findings, no HDMI/capture PASS claimed:
+
+- Device conf restored after the probe: `PRESENT=fpga STREAM=0 DECODE=624x480 OSD_CONTROL=0`.
+- `PRESENT=fb0` readback from `/dev/fb0` after daemon restart matched the idle-logo renderer:
+  background pixel `26_23_1f_ff` at `(240,180)` and foreground pixel `0d_a0_e5_ff` at `(360,260)`.
+- Restored `PRESENT=fpga` immediately reported PLXD `free_bank_mask=0 swap_pending=1`
+  (`hi=0x94FB0008`, `frames_done=38139`) and daemon logs contained
+  `[STALL] sendDdrFrame: PLXD bank-release timeout ... swap_pending=1`.
+- The new card `tests/hw/test_idle_present_split.sh` encodes this split and exits `77`:
+  `FB0_PROXY=PASS scope=framebuffer-readback-not-hdmi`,
+  `FPGA_PROXY=BLOCKED_BY_BANK_RELEASE_LIVELOCK scope=mailbox-not-hdmi`,
+  `IDLE_SPLIT_RESULT=UNSCORED reason=no-hdmi-capture-or-human-eyes`.
+- Mutation evidence: `FB0_EXPECT_FG=00_00_00_00 tests/hw/test_idle_present_split.sh`
+  failed with `rc=1` / `fb0-logo-foreground-mismatch`; restoring the operand returned to the
+  normal UNSCORED card with the fb0 proxy passing.
+
+Conclusion from the measured split: the logo asset/idle renderer/fb0 presentation path are not the
+black-screen root cause. The current `PRESENT=fpga` symptom is not separate from the W-SWAP-owned
+bank-release livelock until a post-fix RBF proves otherwise. User-visible picture still needs eyes or
+capture after W-SWAP lands.
+
 ## PRODUCT MILESTONE — VSync present / product A/V cast (**DONE** 2026-07-25)
 
 | | |
