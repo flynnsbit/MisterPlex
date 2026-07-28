@@ -146,14 +146,6 @@ module h264_dpb_one_ref #(
 		end
 	endfunction
 
-	function automatic [15:0] clamp_coord(input signed [15:0] v, input [15:0] limit);
-		begin
-			if (v < 0) clamp_coord = 16'd0;
-			else if ($signed({1'b0, v}) >= $signed({1'b0, limit})) clamp_coord = limit - 16'd1;
-			else clamp_coord = v[15:0];
-		end
-	endfunction
-
 	function automatic [31:0] i420_addr(
 		input [31:0] base,
 		input [1:0]  plane,
@@ -171,10 +163,6 @@ module h264_dpb_one_ref #(
 
 	reg [2:0] phase;
 	reg [8:0] issue_idx;
-	wire [8:0] issue_mod9 = issue_idx % 9'd9;
-	wire [8:0] issue_div9 = issue_idx / 9'd9;
-	wire signed [15:0] issue_mod9_s = $signed({7'd0, issue_mod9});
-	wire signed [15:0] issue_div9_s = $signed({7'd0, issue_div9});
 	reg [1:0] pending_plane;
 	reg [8:0] pending_idx;
 	reg       pending_valid;
@@ -184,38 +172,46 @@ module h264_dpb_one_ref #(
 	reg [1:0] pending_plane_d1;
 	reg [8:0] pending_idx_d1;
 	reg       pending_valid_d1;
-	reg signed [15:0] lx;
-	reg signed [15:0] ly;
-	reg signed [15:0] cx;
-	reg signed [15:0] cy;
 	reg [1:0] lat_part_w_lo;
 	reg [1:0] lat_part_h_lo;
-	reg signed [15:0] sx;
-	reg signed [15:0] sy;
 	reg [15:0] clamped_x;
 	reg [15:0] clamped_y;
 
+	// Reference-window tap addressing is delegated to the shared clamped tap
+	// address generator so the fetch window and the per-sample qpel tap path
+	// share one clamp implementation (h264_ref_clamp).
+	wire [15:0] luma_win_x;
+	wire [15:0] luma_win_y;
+	h264_luma_ref_tap_addr #(.TAP_COLS(21), .TAP_ORIGIN(2)) u_luma_win_addr (
+		.base_x(luma_origin_x),
+		.base_y(luma_origin_y),
+		.tap_idx(issue_idx),
+		.width(FRAME_W[15:0]),
+		.height(FRAME_H[15:0]),
+		.tap_x(luma_win_x),
+		.tap_y(luma_win_y)
+	);
+	wire [15:0] chroma_win_x;
+	wire [15:0] chroma_win_y;
+	h264_luma_ref_tap_addr #(.TAP_COLS(9), .TAP_ORIGIN(0)) u_chroma_win_addr (
+		.base_x(chroma_origin_x),
+		.base_y(chroma_origin_y),
+		.tap_idx(issue_idx),
+		.width(C_W[15:0]),
+		.height(C_H[15:0]),
+		.tap_x(chroma_win_x),
+		.tap_y(chroma_win_y)
+	);
+
 	always @* begin
-		lx = luma_origin_x;
-		ly = luma_origin_y;
-		cx = chroma_origin_x;
-		cy = chroma_origin_y;
-		sx = 16'sd0;
-		sy = 16'sd0;
-		clamped_x = 16'd0;
-		clamped_y = 16'd0;
 		case (phase)
 		PH_LUMA: begin
-			sx = lx + $signed({7'd0, (issue_idx % 9'd21)}) - 16'sd2;
-			sy = ly + $signed({7'd0, (issue_idx / 9'd21)}) - 16'sd2;
-			clamped_x = clamp_coord(sx, FRAME_W[15:0]);
-			clamped_y = clamp_coord(sy, FRAME_H[15:0]);
+			clamped_x = luma_win_x;
+			clamped_y = luma_win_y;
 		end
 		default: begin
-			sx = cx + issue_mod9_s;
-			sy = cy + issue_div9_s;
-			clamped_x = clamp_coord(sx, C_W[15:0]);
-			clamped_y = clamp_coord(sy, C_H[15:0]);
+			clamped_x = chroma_win_x;
+			clamped_y = chroma_win_y;
 		end
 		endcase
 	end

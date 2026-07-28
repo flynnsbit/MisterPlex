@@ -32,10 +32,5 @@
 decode_stub: retired diagnostic frame-store painter; still the sole driver of stream_path fs_wr_*/fs_swap until h264_decode_core owns presentation.
 
 [debt]
-h264_inter_mc_16x16: P16x16 luma+chroma MC; owned by W-SWAP, must land under h264_decode_core.
-h264_inter_mc_part: partitioned inter MC; owned by W-SWAP, must land under h264_decode_core.
-h264_dpb_one_ref: single-reference DPB fetch; owned by W-SWAP, must land under h264_decode_core.
-h264_luma_qpel_block_16x16: quarter-pel luma block interpolator; owned by W-SWAP, must land under h264_decode_core.
-h264_chroma_epel_block_8x8: eighth-pel chroma block interpolator; owned by W-SWAP, must land under h264_decode_core.
-h264_luma_ref_tap_addr: luma reference tap addressing; owned by W-SWAP, must land under h264_decode_core.
-h264_ref_clamp: reference sample edge clamp; owned by W-SWAP, must land under h264_decode_core.
+h264_luma_qpel_sample: sample-level quarter-pel luma interpolator; was h264_decode_core's u_product_p16_luma_pred until w-swap-o5-mc 4f4312b replaced it with h264_luma_qpel_block_16x16, which reimplements the 6-tap FIR locally instead of instantiating this module. TWO independent qpel implementations now exist; only decode_stub still reaches this one. Owner W-SWAP: delete it or prove equivalence.
+h264_chroma_epel_sample: sample-level eighth-pel chroma interpolator; was h264_decode_core's u_product_p16_chroma_pred until 4f4312b, now superseded by h264_chroma_epel_block_8x8 and reachable only through decode_stub. Owner W-SWAP.
