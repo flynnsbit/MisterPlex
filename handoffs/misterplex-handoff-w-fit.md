@@ -669,3 +669,146 @@ CORENAME=Plex, fpga_manager=operating, all three bridges enabled
 **No worker can currently obtain PLXD/PLXS telemetry from this device.** That is a
 property of the deployed bitstream, not of the instrument. Anyone reading those
 addresses will get stale or zeroed bytes and must not treat them as live.
+
+---
+
+# 17. W-FIT response to the parent reachability-evidence ruling
+
+Branch `parent/integ-hour27`, commit `6818ecf`. All numbers below are **measured**
+on this branch and on the **currently deployed** bitstream
+`fb4bad849ad2db782a5004ce5a3471ce`, fitted from sources at `5b68cc2`.
+
+## 17.1 Claims withdrawn / corrected
+
+I made no plain-`emu` reachability claim in section 9-16; my product-presence
+statement cited `make post-fit-hierarchy`, which the ruling names as the strongest
+oracle. Nothing of mine needs withdrawing.
+
+**One inherited line is now stale and I am correcting it here.** Section 8 item 3
+above (predecessor's text) says a successor must "re-run product reachability
+(`check_rtl_module_instantiations.py`)". Under the new standard that instruction is
+insufficient as written: on this branch that script **has no `--root` flag** and
+silently defaults to `root=emu`, i.e. it emits exactly the masked number the ruling
+forbids citing:
+
+```
+$ python3 scripts/check_rtl_module_instantiations.py --help
+RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=44 bench_only=24 root=emu
+```
+
+Note it ignored `--help` and ran anyway. **Do not cite `reachable=44`.** The
+core-rooted `--root` support is `7225e00` on `w-deblock-seam` and is **not merged
+into `parent/integ-hour27`**. Merging it is a precondition for any future product
+fit from this branch.
+
+## 17.2 Post-fit silicon truth for the DEPLOYED bitstream
+
+Strongest available oracle: the "Fitter Resource Utilization by Entity" table of
+`wfit-hour27-bdiag-b/Plex.fit.rpt`, the report for the RBF now on the device.
+
+```
+Scope: 1204 entity rows parsed.  Modules checked: 15/15 of those the parent named.
+```
+
+| module | in deployed silicon? | hierarchy |
+|---|---|---|
+| `decode_stub` | **PRESENT** | `emu:emu\|stream_path:spath\|decode_stub:stub` |
+| `h264_decode_core` | **ABSENT** | — |
+| `h264_decode_top` | **ABSENT** | — |
+| `h264_decode_skeleton` | **ABSENT** | — |
+| `h264_dpb_one_ref` | PRESENT | **only** under `decode_stub:stub` |
+| `h264_dpb_i420_addr` | PRESENT | **only** under `decode_stub:stub\|h264_dpb_one_ref` |
+| `h264_dpb_mb_write_addr` | PRESENT | **only** under `decode_stub:stub\|h264_dpb_one_ref` |
+| `h264_inter_mc_16x16`, `h264_inter_mc_part`, `h264_luma_qpel_block_16x16`, `h264_chroma_epel_block_8x8`, `h264_luma_ref_tap_addr`, `h264_ref_clamp`, `h264_intra_nb_ctx`, `h264_mv_pred_16x16`, `h264_mv_pred_part`, `h264_luma_qpel_sample`, `h264_chroma_epel_sample` | **ABSENT** | — |
+
+**The deployed product bitstream contains no real decoder at all.** The only
+decode-related logic in silicon is the retired diagnostic painter, and every one of
+the three decode modules that *is* present is reachable **only through
+`decode_stub`**. This is the parent's masking effect, confirmed in shipped silicon
+rather than in source analysis, and it is the fourth instance of this failure class.
+
+Red/green proof of the query instrument (`.copilot-logs/fit_entity_query.py`):
+
+```
+GREEN  ddr_frame_store            -> PRESENT ALUTs=4757 regs=2298 M10K=96  (agrees with make post-fit-hierarchy)
+RED    ddr_frame_store_XXNOTREALXX-> ABSENT
+RED    Scope: 0 on a non-fit file -> rc=2 REFUSED, cannot claim presence or absence
+```
+
+## 17.3 Core-rooted source check, with branch attribution
+
+Using the `7225e00` instrument from `w-deblock-seam` against **this** branch's RTL.
+Exit codes read directly, never through a pipe:
+
+```
+rc=1  h264_inter_mc_16x16            rc=1  h264_luma_ref_tap_addr
+rc=1  h264_inter_mc_part             rc=1  h264_ref_clamp
+rc=1  h264_dpb_one_ref               rc=1  h264_decode_top
+rc=1  h264_luma_qpel_block_16x16     rc=0  h264_mv_pred_16x16
+rc=1  h264_chroma_epel_block_8x8     rc=0  h264_dpb_i420_addr
+```
+
+Denominator 10/10; 8 red, 2 green, so the instrument demonstrably produces both
+outcomes on this branch.
+
+**`h264_decode_top` is rc=1 here but the ruling lists it as present under
+`h264_decode_core` on `w-decode-hour27` `ddb7c97`. That is a branch delta, not a
+contradiction of W-DECODE.** Verified directly:
+
+```
+parent/integ-hour27   : grep -c h264_decode_top rtl/h264_decode_core.sv = 0
+origin/w-decode-hour27: same file                                        = 1
+commits in w-decode-hour27 but not here, touching that file:
+  ddb7c97 feat(hw): feed intra neighbours through decode core
+  cd9fe29 feat(hw): root product decode in core
+  fc53494 feat(hw): gate real intra decode path
+```
+
+W-DECODE's topology work is real and correct on their branch. My deployed bitstream
+simply predates it.
+
+**Instrument note, in W-DECODE's and W-AUDIT's favour:** I initially recorded rc=0
+on all seven failing modules and nearly reported the mandated instrument as
+returning 0 on FAIL. That was **my** error — I read `$?` after a pipe into `tail`,
+the exact false-green this project has already been burned by twice. Re-measured
+without the pipe, the instrument is sound. The checker is not at fault; my harness
+was. Flagging it because the ruling makes this script fleet-wide, so others will
+wrap it and can make the same mistake.
+
+## 17.4 Capacity argument for retiring `decode_stub` (for W-DECODE and W-SWAP-O5)
+
+Deployed bitstream `fb4bad84` device utilisation:
+
+```
+Logic (ALMs)      17,706 / 41,910   42 %
+Block memory bits 2,970,061 / 5,662,720   52 %
+RAM blocks (M10K) 453 / 553         82 %     <-- binding constraint
+DSP blocks        74 / 112          66 %
+```
+
+`decode_stub` alone accounts for:
+
+```
+M10K              256   = 57 % of all M10K in use, 46 % of the whole device
+block memory bits 2,097,152 = 71 % of all block memory bits in use
+DSP               33    = 45 % of all DSPs in use
+ALUTs             6,448
+```
+
+**W-SWAP-O5 must land seven more MC/DPB/ref modules with M10K already at 82 %.**
+Retiring `decode_stub` frees roughly 46 % of the device's M10K blocks and 33 DSPs.
+On these numbers, retiring the stub is not merely hygiene against false greens — it
+is very likely a hard precondition for the missing modules to fit at all. That is
+the strongest measured argument I can offer for W-DECODE's assignment.
+
+## 17.5 Standing constraints from W-FIT
+
+- I hold the deploy token and will not fit or deploy again without parent
+  authorisation. I can perform **core resets** on request.
+- Any future product fit from `parent/integ-hour27` must first merge `7225e00`
+  (`--root` support), or its reachability evidence will be plain-`emu` and therefore
+  inadmissible under this ruling.
+- Post-fit hierarchy evidence is cheap for me to produce and is the strongest
+  oracle available. **Ask me for it rather than inferring product presence from
+  source-level reachability.** I can answer "is module X actually in the shipped
+  bitstream" definitively for any fit I hold reports for.
