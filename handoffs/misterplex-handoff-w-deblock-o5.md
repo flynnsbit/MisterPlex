@@ -704,3 +704,68 @@ turn LIVE in one step:
 `LIVE [emu|stream_path|h264_decode_core|h264_deblock_mb_filter]`. Note also that
 the core's inputs are tied to constants at `stream_path.sv:447-459`, so it will
 keep collapsing until both ends are real.
+
+
+## §0e — "No source-level tool can ever detect mode 3" is measured FALSE
+
+The parent ruled that mode 3 is detectable by "real synthesis ONLY" and that
+source-level tools are "blind by construction". **Measured otherwise on
+`w-deblock-o5-converge`.** `scripts/check_deadlogic_sink.py` is a source-level
+tool and it detects the real defect in ~60s with no Quartus and no fit token:
+
+```
+h264_decode_core        DEAD_SINK [stream_path:0/13_live_outputs]
+h264_deblock_mb_filter  DEAD_SINK [DEAD_PARENT[...]->h264_deblock_mb_filter]
+decode_stub             LIVE      [emu|stream_path|decode_stub]
+```
+
+It agrees with Quartus A&S on `h264_decode_core`, `h264_decode_top` and
+`h264_intra_nb_ctx`, and with post-fit hierarchy of `fb4bad84` on `decode_stub`
+and the DPB parentage. Denominator 62 modules, 43 LIVE / 19 DEAD_SINK.
+
+The mechanism is why: Quartus deletes logic that cannot observably affect an
+output, and **observability is computable from source**. Verilator already
+reports the leaves of the unobservable set as `UNUSEDSIGNAL`; the work is
+propagating that backwards and requiring liveness to be transitive to `emu`.
+
+**This matters practically.** If "A&S only" stands, every check of this class
+costs 4m23s *and* the Quartus slot, which one worker holds. The ~60s version
+runs in `make unit` on every branch, for every worker, concurrently with a live
+fit. It belongs at **step 2.5** of the parent's gate order, not in place of
+step 3.
+
+### My own boundary, measured, so nobody repeats the parent's error with my gate
+
+The parent's claim is too strong; **mine would be too if I stopped here.**
+Observability is necessary for survival, not sufficient. A module whose outputs
+are observable can still fold to a constant, contribute zero resources, and be
+deleted anyway — and my gate reports it LIVE.
+
+Proved, not asserted: probe `dl_probe_constfold` (output routed to a port of
+`emu`, driven by `8'd0`) gives `dl_probe_constfold=LIVE` rc=0 for a module
+Quartus will certainly delete. Red proof 6 in
+`tests/unit/test_deadlogic_sink_redproof.sh` **asserts this false green**, so if
+anyone later teaches the gate constant propagation the test fails and forces the
+docstring, the `DEADLOGIC_SINK_OK` line and this handoff to be corrected
+together. A gate must not become quietly stronger than its own documentation.
+
+**This is live on the current branch, and it redirects the remedy again.**
+`h264_decode_core`'s inputs are tied to constants at `stream_path.sv:447-459`
+(`core_rbsp_byte` all `8'd0`, recon and residual constant). So when
+`w-decode-o5` consumes the core's outputs, **my gate will turn green and Quartus
+may still delete the core** by constant propagation from the input side.
+Consuming the outputs and un-tying the inputs are **one task, not two**. A green
+from `check_deadlogic_sink.py` is never grounds to request a fit; step 3 stays
+mandatory. Both the gate's OK line and
+`tests/unit/test_product_deadlogic_status.sh` now say so on every run.
+
+### Status of the parent's assignments in my lane
+
+* "Make the two cheap gates print a warning that they cannot detect
+  optimize-away" (assigned to `w-gate-o5`) is **done for the gate I own**:
+  `check_prefit_hierarchy.py` prints `detects=modes_1_2_only
+  mode3_optimized_away=UNCHECKED`, and `check_deadlogic_sink.py` prints
+  `detects=unobservable_outputs BLIND_SPOT=constant_fold_collapse_NOT_detected`.
+* `check_prefit_elaboration.sh` / `check_map_hierarchy.py` are adopted unchanged
+  on both my branches so A&S can be run here without a rebase. **I have not run
+  them — I do not hold the Quartus slot.**
