@@ -7,7 +7,7 @@ a `files.qip` cross-check mandatory.
 
 | File | Shows |
 |---|---|
-| `quartus_file_list_sys_osd.log` | The true Quartus file list is **80** source files, not the **35** in `files.qip`. `sys/osd.v` and `sys/hps_io.sv` are in the design and absent from `files.qip`. |
+| `quartus_file_list_sys_osd.log` | The true Quartus file list is **93** source files, not the **35** in `files.qip`. `sys/osd.v` and `sys/hps_io.sv` are in the design and absent from `files.qip`. |
 | `build_id_delivery_ok.log` | All five links of the build-ID delivery chain are intact on this branch. |
 | `test_build_identity_pass.log` | The full gate, including the six delivery reds and four resolver reds. |
 
@@ -25,6 +25,12 @@ sys/sys.qip  set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_
 so a naive check reports `sys/osd.v` — the OSD compositor that draws the build id —
 as *not in the design*. It is in the design; the core does not boot without the
 framework. Use `scripts/quartus_file_list.py --gate --require <path>` instead.
+
+The resolver caught a matching bug in itself. `rtl/pll.qip` writes
+`set_global_assignment -entity "pll" -library "pll" -name VERILOG_FILE ...`; the
+first regex required `-name` directly after `set_global_assignment` and skipped
+those lines **silently**, dropping all 13 PLL IP sources (80 resolved, not 93).
+A regression red pins it and fails on the old regex.
 
 The resolver's governing property is that **an unresolved reference is never
 reported as absent**. Anything it cannot resolve is `UNRESOLVED` and `--gate`

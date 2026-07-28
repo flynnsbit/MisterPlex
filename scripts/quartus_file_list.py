@@ -72,12 +72,20 @@ NON_SOURCE_FILE_KINDS = {
     # jtag.cdf is written by sys/build_id.tcl during the pre-flow; it is a
     # programming chain description, never a compiled source.
     "CDF_FILE",
+    # IP component descriptions emitted alongside a .qip; not compiled.
+    "MISC_FILE",
 }
 
-ASSIGN_RE = re.compile(r"set_global_assignment\s+-name\s+(\S+)\s+(.*)$")
+# Options such as -entity/-library/-section_id may precede -name. Requiring
+# -name to follow set_global_assignment directly made this regex skip every
+# entry in rtl/pll.qip *silently* - the exact drop-on-the-floor behaviour
+# this module exists to prevent. Match -name wherever it appears.
+ASSIGN_RE = re.compile(
+    r"set_global_assignment\s+(?:.*?\s)?-name\s+(\S+)\s+(.*?)\s*$"
+)
 SOURCE_RE = re.compile(r"^\s*source\s+(\S+)\s*$")
 QIP_PATH_JOIN_RE = re.compile(
-    r"\[\s*file\s+join\s+\$::quartus\(qip_path\)\s+([^\]\s]+)\s*\]"
+    r"\[\s*file\s+join\s+\$::quartus\(qip_path\)\s+\"?([^\]\s\"]+)\"?\s*\]"
 )
 # [join [list $::quartus(qip_path) pll_q [regexp -inline {[0-9]+} $quartus(version)] .qip] {}]
 QIP_VERSION_JOIN_RE = re.compile(

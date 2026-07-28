@@ -320,6 +320,29 @@ else
     fail "could not stage the qfl_unresolved project copy"
 fi
 
+# REGRESSION: a qip may write options before -name, e.g.
+#   set_global_assignment -entity "pll" -library "pll" -name VERILOG_FILE ...
+# An earlier version of the resolver required -name to follow
+# set_global_assignment directly and therefore skipped every such line
+# *silently* -- not even reported as unresolved. That dropped all 13 PLL IP
+# source files, which are unquestionably in the bitstream. Silent omission is
+# the one behaviour this resolver must never have, so it is pinned here.
+if "$QFL" --project "$REALPROJ" --gate \
+        --require rtl/pll.v --require sys/pll_hdmi.v --require sys/pll_audio.v \
+        --require sys/pll_cfg/pll_cfg.v \
+        >"$WORK/qfl_pll.log" 2>&1; then
+    ok "resolver follows set_global_assignment lines with options before -name (PLL IP)"
+else
+    fail "resolver dropped qip entries that carry -entity/-library before -name: $(cat "$WORK/qfl_pll.log")"
+fi
+
+# and the quoted [file join $::quartus(qip_path) "x.v"] form must resolve too
+if grep -q 'file join $::quartus(qip_path) "pll.v"' "$REALPROJ/rtl/pll.qip"; then
+    ok "premise holds: rtl/pll.qip uses the quoted file-join form"
+else
+    fail "premise changed: rtl/pll.qip no longer uses the quoted file-join form"
+fi
+
 # an empty resolved file list is a broken parse, never a valid answer
 mkdir -p "$WORK/emptyproj"
 printf '%s\n' '# a project file that references nothing' > "$WORK/emptyproj/Empty.qsf"

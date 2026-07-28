@@ -28,5 +28,7 @@ OK premise holds: sys/osd.v is absent from files.qip
 OK RED OK for the naive check: files.qip says sys/osd.v is not in the design, the resolver proves it is
 OK RED OK resolver rejects a file that is not in the Quartus file list
 OK RED OK resolver --gate refuses to answer with an unresolved reference
+OK resolver follows set_global_assignment lines with options before -name (PLL IP)
+OK premise holds: rtl/pll.qip uses the quoted file-join form
 OK RED OK resolver --gate refuses an empty file list
 BUILD_IDENTITY_RESULT=PASS

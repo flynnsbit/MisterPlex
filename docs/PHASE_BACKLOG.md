@@ -1263,7 +1263,7 @@ Measured on branch `w-osd-o5`:
 
 ```
 files.qip                     35 source references
-true Quartus file list        80 source files
+true Quartus file list        93 source files
 ```
 
 The gap is the entire MiSTer framework, pulled in through Tcl:
@@ -1287,6 +1287,21 @@ resolve is emitted as `UNRESOLVED` and `--gate` fails, because silently dropping
 a reference it did not understand is exactly how a checker produces a short file
 list that hides a real input. `--gate` also refuses an empty file list, since a
 zero-file answer is a broken parse rather than a project with nothing in it.
+
+That property immediately caught a bug in the resolver itself. `rtl/pll.qip`
+writes `set_global_assignment -entity "pll" -library "pll" -name VERILOG_FILE ...`,
+and my first regex required `-name` to follow `set_global_assignment` directly, so
+it skipped every such line **silently** — not even flagged `UNRESOLVED`. That
+dropped 13 files (80 resolved, not 93): every PLL IP source in the design, main,
+audio, HDMI and cfg. The resolver would have reported the design's PLLs as "not in
+the design". Fixed, and pinned by a regression red that fails on the old regex.
+
+Also surfaced, for W-DECODE-O5: `rtl/h264_decode_skeleton.sv` is tracked in git and
+is **not** in the Quartus file list. The other uncompiled RTL is expected
+(`tb_*.sv` testbenches, and the `cos.sv`/`lfsr.v`/`mycore.v` MiSTer template
+leftovers). On this branch `h264_deblock_writeback_ctrl` lives inside
+`rtl/h264_deblock.sv`, which **is** compiled — so the parent's mutation-#3 concern
+does not apply to it here.
 
 For W-GATE-O5, who owns the mandated cross-check: use
 `scripts/quartus_file_list.py --gate --require <path>` rather than grepping
