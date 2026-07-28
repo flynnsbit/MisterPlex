@@ -118,6 +118,17 @@ int tc0Table(int idx, int bs) {
     return t[clip(idx, 0, 51)][bs - 1];
 }
 
+int chromaQp(int qpy, int offset) {
+    static constexpr int qpc[52] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 29, 30, 31, 32, 32,
+        33, 34, 34, 35, 35, 36, 36, 37, 37, 37, 38,
+        38, 38, 39, 39, 39, 39
+    };
+    return qpc[clip(qpy + offset, 0, 51)];
+}
+
 EdgeOut refEdge(const EdgeIO& in, bool chroma, int bs, int qp, int alphaOff, int betaOff) {
     EdgeOut out{in.p2, in.p1, in.p0, in.q0, in.q1, in.q2};
     const int indexA = clip(qp + alphaOff, 0, 51);
@@ -664,14 +675,16 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool faultHorizontalFirst = false;
+    bool faultChromaQpy = false;
     std::string mbGoldenPath;
     std::string nalSequencePath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--fault-horizontal-first") faultHorizontalFirst = true;
+        else if (arg == "--fault-chroma-qpy") faultChromaQpy = true;
         else if (arg == "--mb-golden" && i + 1 < argc) mbGoldenPath = argv[++i];
         else if (arg == "--nal-sequence" && i + 1 < argc) nalSequencePath = argv[++i];
-        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--fault-horizontal-first]\n"; return 2; }
+        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--fault-horizontal-first] [--fault-chroma-qpy]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
     dut.clk = 0;
@@ -710,6 +723,34 @@ int main(int argc, char** argv) {
     scopeFilteredSamples += requireEdge(dut, "chroma bS2", chromaNormal, true, 2, 32, 0, 0);
     scopeChromaBs4 = requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
     scopeFilteredSamples += scopeChromaBs4;
+    const int highQpy = 40;
+    const int highQpc = chromaQp(highQpy, 0);
+    const EdgeIO chromaQpcTrap{{77,77,77,77},{78,78,78,78},{69,69,69,69},{80,80,80,80},
+                               {81,81,81,81},{92,92,92,92},{83,83,83,83},{84,84,84,84}};
+    const EdgeOut highWant = refEdge(chromaQpcTrap, true, 1, highQpc, 0, 0);
+    const EdgeOut highGot = dutEdge(dut, chromaQpcTrap, true, 1, faultChromaQpy ? highQpy : highQpc, 0, 0);
+    const EdgeOut highWrongQpy = refEdge(chromaQpcTrap, true, 1, highQpy, 0, 0);
+    if (same(highWant, highWrongQpy)) {
+        std::cerr << "FAIL h264_deblock RTL sim: chroma QPc trap vector does not distinguish QPy="
+                  << highQpy << " QPc=" << highQpc << "\n";
+        return 1;
+    }
+    if (faultChromaQpy) {
+        if (same(highWant, highGot)) {
+            std::cerr << "FAIL h264_deblock RTL sim: chroma QPc fault did not perturb high-QP vector\n";
+            return 1;
+        }
+        std::cerr << "FAIL expected chroma QPc red-check: QPy=" << highQpy
+                  << " substituted_for_QPc=" << highQpc << "\n";
+        return 1;
+    }
+    if (!same(highWant, highGot)) {
+        std::cerr << "FAIL h264_deblock RTL sim: chroma QPc high-QP mismatch QPy="
+                  << highQpy << " QPc=" << highQpc << " got " << edgeString(highGot)
+                  << " want " << edgeString(highWant) << "\n";
+        return 1;
+    }
+    scopeFilteredSamples += countModified(chromaQpcTrap, highGot);
 
     if (!mbGoldenPath.empty()) {
         const std::string json = readText(mbGoldenPath);
@@ -738,7 +779,8 @@ int main(int argc, char** argv) {
               << " chroma_bS4=" << scopeChromaBs4
               << " real_fixture_qp_range="
               << (fixtureQpMin == 52 ? -1 : fixtureQpMin) << ".." << fixtureQpMax
-              << " synthetic_qp_range=4..51\n";
+              << " synthetic_qp_range=4..51"
+              << " chroma_qpc_trap_qpy_qpc=" << highQpy << "/" << highQpc << "\n";
 
     std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
     return 0;

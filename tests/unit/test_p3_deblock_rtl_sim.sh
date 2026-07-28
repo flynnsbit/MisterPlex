@@ -58,6 +58,21 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
 
 set +e
+QPC_FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-chroma-qpy 2>&1)"
+QPC_FAULT_RC=$?
+set -e
+printf '%s\n' "$QPC_FAULT_OUT"
+if [[ "$QPC_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: chroma QPy substitution unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'chroma QPc red-check' <<<"$QPC_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: expected chroma QPc diagnostic" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: chroma QPy/QPc substitution failed high-QP trap"
+
+set +e
 FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-horizontal-first 2>&1)"
 FAULT_RC=$?
 set -e
