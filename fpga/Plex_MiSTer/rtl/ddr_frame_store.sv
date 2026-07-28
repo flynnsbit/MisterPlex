@@ -630,11 +630,31 @@ module ddr_frame_store #(
 				target_c_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
+			slot_keep = 1'b0;
+			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
+					slot_keep = 1'b1;
+			end
+`ifdef DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY
 			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
+`else
+			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
+`endif
 				found_slot_y_prep = 1'b1;
 				target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
 			end
+			slot_keep = 1'b0;
+			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
+					slot_keep = 1'b1;
+			end
+`ifdef DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY
 			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+`else
+			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
+`endif
 				found_slot_c_prep = 1'b1;
 				target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
 			end
