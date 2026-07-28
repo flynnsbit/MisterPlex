@@ -104,6 +104,27 @@ printf 'Running fast pre-synthesis gates before taking remote Quartus slot...\n'
 "$ROOT/scripts/check_quartus_sv_subset.py" $("$ROOT/scripts/rtl_lint.py" --list-files)
 "$ROOT/scripts/check_verilator_elab.py"
 
+# The container compiles a bare copy of $PROJECT at /build with no .git, so
+# sys/build_id.tcl cannot read the repository and would stamp every remote fit
+# "nogit" — an identity shared by every build made that day. Generate the stamp
+# here, where the repository is visible, so it rsyncs with the project and the
+# OSD sidebar V entry names the exact source that was fitted.
+printf 'Generating build identity stamp...\n'
+"$ROOT/scripts/gen_build_stamp.py" --project "$PROJECT" --repo "$ROOT" --require-git
+BUILD_ID_STAMP="$PROJECT/build_id_stamp.txt"
+if [[ ! -f "$BUILD_ID_STAMP" ]]; then
+  echo "Build identity stamp missing after generation: $BUILD_ID_STAMP" >&2
+  exit 4
+fi
+STAMP_BUILD_ID="$(awk -F= '$1=="BUILD_ID"{print $2}' "$BUILD_ID_STAMP")"
+STAMP_SRC_FULL="$(awk -F= '$1=="SRC_FULL"{print $2}' "$BUILD_ID_STAMP")"
+STAMP_GIT="$(awk -F= '$1=="GIT"{print $2}' "$BUILD_ID_STAMP")"
+if [[ -z "$STAMP_BUILD_ID" || "$STAMP_BUILD_ID" == *nogit* ]]; then
+  echo "Refusing to fit with an unusable BUILD_ID ('${STAMP_BUILD_ID:-empty}')." >&2
+  exit 4
+fi
+printf 'BUILD_ID: %s\n' "$STAMP_BUILD_ID"
+
 ssh "$HOST" bash -s -- "$REMOTE_SLOT" "$REMOTE_PROJECT" "$REMOTE_DEV" <<'REMOTE_PREP'
 set -euo pipefail
 remote_slot="$1"
@@ -295,3 +316,17 @@ printf 'Artifacts: %s\n' "$([[ "$COPY_BACK" == "1" ]] && printf '%s' "$LOCAL_OUT
 printf 'Plex.rbf md5: %s\n' "$MD5"
 printf 'Negative-slack rows: %s\n' "$NEG_SLACK_COUNT"
 printf 'Logic utilization: %s\n' "${LOGIC_UTILIZATION:-not found}"
+
+# Record md5 -> BUILD_ID so a bitstream found on an SD card can be traced back to
+# the source that produced it. Without this the only identity a deployed RBF has
+# is its filename, which is exactly how a stale root-of-SD copy got mistaken for
+# the deploy target.
+if [[ "$COPY_BACK" == "1" ]]; then
+  "$ROOT/scripts/rbf_provenance.py" record \
+    --rbf "$RBF" \
+    --build-id "$STAMP_BUILD_ID" \
+    --git "$STAMP_GIT" \
+    --src-full "$STAMP_SRC_FULL" \
+    --slot "$SLOT" \
+    --out "$LOCAL_OUT/rbf_manifest.json"
+fi
