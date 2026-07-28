@@ -114,9 +114,11 @@ module stream_path #(
 	// exactly 39x30 macroblocks.  Using the display width gave the core a
 	// 40-macroblock raster stride, which skewed every macroblock position by a
 	// growing offset and pushed one column per row outside the picture.
-`include "ddr_frame_layout_params.svh"
-	localparam int CORE_FRAME_W = DDR_FRAME_CODED_WIDTH;
-	localparam int CORE_FRAME_H = DDR_FRAME_CODED_HEIGHT;
+	// Values mirror DDR_FRAME_CODED_WIDTH/HEIGHT in ddr_frame_layout_params.svh.
+	// They are spelled out here rather than `include`d because stream_path is
+	// elaborated by benches that do not put rtl/ on the include path.
+	localparam int CORE_FRAME_W = 624;
+	localparam int CORE_FRAME_H = 480;
 
 	wire        si_wr_en;
 	wire [7:0]  si_wr_data;
@@ -617,6 +619,20 @@ module stream_path #(
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
 	wire core_error;
+	// h264_decode_core.slice_start is a PULSE: it hard-resets the intra
+	// reconstruction front-end and the DPB slice state.  slice_valid from the
+	// slice header parser is a LEVEL that stays high for the rest of the run,
+	// so wiring it straight through held h264_decode_top in permanent reset and
+	// no macroblock was ever reconstructed.  Edge-detect it.
+	reg core_slice_valid_d;
+	always @(posedge clk) begin
+		if (reset | flush)
+			core_slice_valid_d <= 1'b0;
+		else
+			core_slice_valid_d <= slice_valid;
+	end
+	wire core_slice_start = slice_valid & ~core_slice_valid_d;
+
 	wire [1:0] core_i16_pred_mode =
 		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
 
@@ -626,7 +642,7 @@ module stream_path #(
 	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),
-		.slice_start(slice_valid),
+		.slice_start(core_slice_start),
 		.slice_is_idr(sl_is_idr),
 		.slice_is_i(sl_is_i),
 		.slice_qp_y(sl_qp),
