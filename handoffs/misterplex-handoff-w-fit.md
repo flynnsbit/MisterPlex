@@ -2415,3 +2415,101 @@ be a remarkable coincidence.
 **Who rebooted the device at 14:16:28?** I have been reporting it as held still.
 I asked W-E2E directly. If the board is being changed under my measurements, my
 "device held still" assurances are worthless and I need to know now.
+
+## 38. THE DEPLOY SCRIPT KILLS THE DAEMON AND NEVER RESTARTS IT -- and that refutes SS36(b)
+
+### 38.1 The confound, in my own tooling
+
+`scripts/deploy_plex_core.sh:97-106`:
+
+```
+# Soft-stop misterplexd so it is not mid-SPI when FPGA reloads
+if ps | grep -v grep | grep -q '[m]isterplexd'; then
+  killall misterplexd 2>/dev/null
+  ... killall -9 misterplexd 2>/dev/null
+fi
+```
+
+**There is no restart anywhere in the script.** Verified directly after my
+14:34:27 core load:
+
+```
+14:38:57  pidof misterplexd -> empty
+          netstat -ltnp | grep 3005 -> not listening
+          misterplexd.log frozen at 14:34:26, last line "companion: stopped"
+```
+
+**Project-wide consequence.** Every deploy in this project's history has left the
+ARM painter dead. With no daemon nothing writes the frame store, so the screen is
+black **for that reason alone**. Any picture grading performed shortly after a
+deploy is confounded -- including the standing claim that no frame has ever been
+displayed on this hardware.
+
+It does **not** rescue the fabric-silence result: the poke probe does not need the
+daemon. It invalidates *picture* grading after a deploy.
+
+### 38.2 RETRACTION of SS36(b)
+
+SS36 reported `bank1 nonzero_bytes_frac = 0.0000` and concluded "the ping-pong is
+dead ... a complete and sufficient mechanism for the black screen". I also gave
+W-E2E a falsifiable prediction (expect bimodal chevron/black, no intermediates).
+
+**Refuted by my own follow-up.** bank1 was empty because the daemon had been
+killed, not because the allocator is stuck. With Plex loaded and the daemon
+restarted:
+
+```
+t=14:41:14  bank0 sum=33177600  bank1 sum=33177600  door_hi=0x20000002 door_lo=PLXK
+t=14:41:18  bank0 sum=33177600  bank1 sum=33177600
+t=14:41:23  bank0 sum=33177600  bank1 sum=33177600
+t=14:41:27  bank0 sum=33177600  bank1 sum=33177600
+```
+
+**Both banks painted, identical sums.** Prediction withdrawn to W-E2E before they
+could grade against it.
+
+### 38.3 A second near-miss I caught
+
+The log contained heavy `sendDdrFrame: DDR path previously unavailable` and
+`readFrameStoreStatus: PLXF mailbox absent/unwritten (lo=0x00000000 hi=0x00000000)`,
+plus a real session `frames=4182 present=fpga`. It is tempting to report that as
+`fb4bad84` failing. **It is not** -- those lines are from the window when the
+board was sitting on **MENU**, which publishes no Plex mailbox. Timestamps
+(log frozen 14:34:26; Plex loaded 14:34:27) separate the two regimes.
+
+With Plex loaded and the daemon restarted the ARM instead reports:
+
+```
+media: FPGA frame path OK (PRESENT=fpga -> DDR YUV420p only)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: idle screen painted (mode=0)
+media: OSD via DDR mailbox (no SPI)
+```
+
+**"FPGA frame path OK"** is a positive datum for `fb4bad84` that I did not have
+before. Note `STREAM=0, producer dormant`.
+
+### 38.4 What still stands
+
+```
+Scope: 40 samples interval=0.25s reg=0x3007F12C
+resident_rbf_md5 = fb4bad84...   corename = Plex
+instrument_liveness: restored=0   rc=77 UNSCORED
+```
+
+Measured with Plex loaded **and** a live painting daemon -- the strongest
+conditions yet. The PLXD regression stands.
+
+### 38.5 Best device state of the day, held for capture
+
+14:41:27: `CORENAME=Plex`, `fpga_manager=operating`, RBF `fb4bad84`,
+`misterplexd` pid 2515 painting, **both** banks carrying identical content, core
+loaded at a known instant (14:34:27). Every earlier window today was either
+inside the outage or taken with the daemon dead. **First time the full chain has
+been simultaneously verified alive.**
+
+### 38.6 Action item for the fleet
+
+`deploy_plex_core.sh` should restart `misterplexd` after a successful load, or at
+minimum print a loud warning that the painter is down. Leaving it dead makes
+every post-deploy capture black by construction.
