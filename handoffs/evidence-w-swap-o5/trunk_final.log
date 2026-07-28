@@ -1,0 +1,2 @@
+REQUIRED_RTL_MODULE_REACHABLE h264_decode_core root=emu
+RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=50 bench_only=18 root=emu
