@@ -2,8 +2,13 @@
 
 **Author:** w-c1 (spec only; implementation is w-osd or w-a3 scope)
 **Date:** 2026-07-27
-**Purpose:** Enable remote visual verification of the FPGA present path without
-HDMI capture hardware.
+**Status:** ELEVATED PRIORITY — the USB HDMI capture device is no longer reachable.
+This ~50 ALM module is now the **only possible automated check** on the FPGA present
+path. Without it, the only verification of DDR→HDMI is a human looking at a screen.
+
+**What this replaces:** The HDMI grabber (`hw_visual_compare.py`, rc=0/3/7/8) is
+shelved because the hardware moved. This spec delivers the same coverage for all
+defects except HDMI PHY — and it works remotely, permanently, without physical presence.
 
 ## Problem
 

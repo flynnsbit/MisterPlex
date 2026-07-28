@@ -864,42 +864,36 @@ Does NOT cover:
 - Every classification branch (EXACT_MATCH, NO_FRAME_DELIVERED, COLOUR_PATH_DEFECT,
   GEOMETRY_CONTENT_DEFECT, INDETERMINATE) red-proven with synthetic inputs.
 
-### No-hardware verification path (feasibility assessment)
+### No-hardware verification path — NOW THE PRIMARY PATH
 
-**Question:** Can the FPGA grade its own output without a grabber?
+**STATUS CHANGE (2026-07-27):** The USB HDMI capture device is no longer reachable
+(machine move). The grabber harness (`hw_visual_compare.py`) is **shelved**. All
+verification must work over SSH without a screen.
 
-**Current instruments inside the fabric:**
-- `recon_sig` (8-bit XOR of one 4×4 block's reconstruction) — too small; covers 16 pixels
-- `status_telem_r` mailbox — carries `recon_sig`, `recon_dbg`, decode progress;
-  no per-frame pixel checksum
-- w-osd's `fb0` pixel readback — reads DDR frame store directly via ARM mmap at `0x30000000`
+**Tier 1 — ARM-side DDR frame CRC (BUILT, RED-PROVEN):**
+`scripts/verify_ddr_frame_crc.sh` — reads Y/U/V planes from DDR at `0x30000000`
+via SSH + devmem, computes `cksum`, compares against golden. Red-proven:
+single-byte corruption in any plane → rc=1 with named mismatch.
+- ✅ Remote (SSH only, no physical presence)
+- ✅ Deterministic (no capture noise)
+- ✅ Covers ARM decode + DDR write correctness
+- ❌ Does NOT cover FPGA present path (DDR→HDMI)
+- ❌ Does NOT prove what the user sees
 
-**The most viable path: ARM-side frame-store CRC.** The ARM already writes the
-frame at `0x30000000` and can read it back. A CRC-32 over the Y plane (299,520
-bytes for 624×480) takes < 1ms on the A9 and could be compared against a
-declared golden CRC. This is:
-- ✅ Remote (no physical hardware beyond the MiSTer itself)
-- ✅ Deterministic (no capture noise, no HDMI jitter)
-- ✅ Covers the DDR write path (proves ARM→DDR is correct)
-- ❌ Does NOT cover the present path (DDR→HDMI via ddr_frame_store readout)
-- ❌ Does NOT prove what the user sees on screen
+**Tier 2 — Scanout CRC (~50 ALMs, spec at `docs/scanout-crc-spec.md`):**
+CRC-32 over `{R,G,B}` at `ce_pix` during active display. Read via mailbox.
+Would cover: DDR read, YUV→RGB, crop, pillarbox — everything except HDMI PHY.
+Status: SPECIFIED, not built. Scope: w-osd or w-a3.
 
-**For a complete no-hardware verification of what the user sees:** the FPGA
-would need to compute a CRC of the actual scanout pixels (from `present_core`'s
-video output, after YUV→RGB conversion and scaling). This does not exist today.
-Adding it would require ~50 ALMs and zero M10K (running CRC over the
-`{VDE, R, G, B}` bus). **This is architecturally trivial but is w-osd's or
-w-a3's scope, not mine — I can specify the interface but not build it.**
+**With the grabber gone, the scanout CRC is the ONLY possible automated check
+on the FPGA present path.** It has gone from nice-to-have to highest-value small
+RTL item. Without it, the only present-path verification is a human reporting
+what they see on a screen — the weakest evidence class this project has.
 
-**Recommendation:** Two-tier verification:
-1. **Tier 1 (remote, no grabber):** ARM-side CRC of DDR frame store plane data.
-   Proves ARM→DDR correctness. Can be deployed today with ~20 lines in misterplexd.
-2. **Tier 2 (requires grabber):** Full HDMI capture via `hw_visual_compare.py`.
-   Proves end-to-end including FPGA present path and analogue HDMI.
+**Tier 3 — HDMI capture (SHELVED):**
+`hw_visual_compare.py` with MacroSilicon `534d:2109` grabber. Proves end-to-end
+including HDMI PHY. Hardware is $10 and may return. Spec preserved in tree.
 
-Tier 1 is sufficient for grading decode correctness (which is what we need now).
-Tier 2 is required for grading presentation correctness (colour matrix, timing,
-crop, blank). **For the current milestone — "is the picture right?" — Tier 1
-would catch every defect that matters, because the ARM decode is known-correct
-and the present path's failure mode is frozen/stale (which we already catch via
-bank/token freshness checks), not wrong-pixels.**
+**For the current milestone:** Tier 1 catches all decode defects. The picture
+on the screen is produced by the ARM decoder, not the FPGA — any decode error
+shows in the DDR frame store CRC before it reaches the display.
