@@ -115,6 +115,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_capture_preflight.sh",
     "python3 $(ROOT)/tests/unit/test_capture_warmup.py",
     "python3 $(ROOT)/tests/unit/test_idle_screen_score.py",
+    "python3 $(ROOT)/tests/unit/test_prove_decoded_frame.py",
     "$(ROOT)/tests/unit/test_capture_lock_shared.sh",
     "$(ROOT)/tests/unit/test_resource_preflight.sh",
     "$(ROOT)/scripts/check_define_parity.py",

@@ -1,0 +1,12 @@
+  PASS true-decode-clean: DECODE_PROVEN (ncc=0.9816 signal=STALE_CAPTURE)
+  PASS true-decode-noisy: DECODE_PROVEN (ncc=0.9855 signal=CONTENT_PRESENT)
+  PASS chevron-idle-golden: NOT_DECODED (ncc=-0.0735 signal=STALE_CAPTURE)
+  PASS live-capture-no-decoder-core: NOT_DECODED (ncc=0.1425 signal=STALE_CAPTURE)
+  PASS flat-black: REFUSE (ncc=None signal=BLACK_SIGNAL)
+  PASS flat-grey-painter: REFUSE (ncc=None signal=NO_SIGNAL)
+  PASS degenerate-reference: REFUSE (ncc=None signal=STALE_CAPTURE)
+  PASS mirrored-reference: NOT_DECODED (ncc=-0.868 signal=STALE_CAPTURE)
+  PASS block-shuffled-reference: NOT_DECODED (ncc=-0.1044 signal=STALE_CAPTURE)
+
+self-test: 9/9 checks passed
+SELF_TEST_OK
