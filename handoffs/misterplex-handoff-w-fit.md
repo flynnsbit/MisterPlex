@@ -812,3 +812,96 @@ the strongest measured argument I can offer for W-DECODE's assignment.
   oracle available. **Ask me for it rather than inferring product presence from
   source-level reachability.** I can answer "is module X actually in the shipped
   bitstream" definitively for any fit I hold reports for.
+
+---
+
+## 18. Revised reachability standard — measured response (W-FIT-O5)
+
+Parent's revised ruling: reachability rc=0 is necessary-not-sufficient; **both
+directions** required; **cross-check `files.qip`**; post-fit hierarchy is the
+only real oracle. All four items below are measured, with red/green pairs.
+
+### 18.1 `files.qip` cross-check — the parent's worst-named defect, CONFIRMED
+
+New gate `scripts/check_qip_coverage.py` (this commit). Raw, on the **deployed**
+branch `parent/integ-hour27`:
+
+```
+Scope: 34 files in fpga/Plex_MiSTer/files.qip; 39 .sv tracked under rtl/
+product RTL: 37  (testbenches excluded: 2)
+tracked but NOT compiled: 4 / 37
+  ALLOWED_ABSENT cos.sv
+  ALLOWED_ABSENT h264_decode_skeleton.sv
+  NOT_COMPILED   h264_decode_top.sv
+  NOT_COMPILED   h264_intra_nb_ctx.sv
+QIP_COVERAGE_FAIL unexplained_absent=2                                    rc=1
+```
+
+`h264_decode_top.sv` and `h264_intra_nb_ctx.sv` are tracked in git, unit-tested,
+and **were never handed to Quartus**. They cannot be in `fb4bad84` by
+construction — no reachability graph could have saved this.
+
+### 18.2 Cross-oracle agreement (three independent instruments, deployed branch)
+
+| Oracle | `h264_decode_top` / `h264_intra_nb_ctx` | `h264_decode_core` |
+|---|---|---|
+| `files.qip` coverage | NOT COMPILED | compiled |
+| source reachability | n/a | trunk `emu->core` **rc=1 `parents=<none>`** |
+| **post-fit hierarchy** (`fb4bad84`) | **ABSENT** | **ABSENT** |
+
+Two distinct failure modes coexist on the deployed branch:
+1. `h264_decode_core.sv` **is** compiled but **is never instantiated** -> synthesised away.
+2. `h264_decode_top.sv`, `h264_intra_nb_ctx.sv` are **not compiled at all**.
+
+Independent cross-branch confirmation of `w-audit`'s finding, corroborated by
+the strongest oracle. The deployed bitstream contains **no real decoder**.
+
+### 18.3 The dead core is NOT a property of every branch
+
+Measured on `w-decode-hour27` at **`2f165ed`** (parent cited `ddb7c97`; HEAD has moved):
+
+```
+--root emu               --require h264_decode_core   rc=0   REACHABLE   <- TRUNK PASSES
+--root h264_decode_core  --require h264_decode_top    rc=0
+--root h264_decode_core  --require h264_intra_nb_ctx  rc=0
+--root h264_decode_core  --require h264_inter_mc_16x16 rc=1
+--root h264_decode_core  --require h264_dpb_one_ref   rc=1
+qip coverage --require decode_top --require intra_nb_ctx --require decode_core   rc=0
+```
+
+| branch | trunk `emu->core` | `files.qip` complete | `decode_stub` |
+|---|---|---|---|
+| `parent/integ-hour27` (DEPLOYED `fb4bad84`) | **rc=1 orphaned** | **NO** | present |
+| `w-deblock-seam` `7225e00` | **rc=1 orphaned** (w-audit) | **NO** | present |
+| `w-decode-hour27` `2f165ed` | **rc=0 CONNECTED** | **YES** | still present |
+
+**`w-decode-hour27` is the only viable merge base** and it is green on both new
+criteria. The orphaned core is a property of the two *older* branches. The gate
+was not useless — it correctly reported rc=1 where the core really is
+disconnected; what was insufficient was citing a *subtree* proof alone.
+
+`decode_stub` is still instantiated on `w-decode-hour27`
+(`rtl/stream_path.sv:562`), so its `reachable=50` at `root=emu` is still
+stub-inflated. Retiring the stub remains outstanding.
+
+### 18.4 Red/green pairs for the new gate (every green ships its red)
+
+| # | Condition | rc | Meaning |
+|---|---|---|---|
+| A | deployed branch, as-is | **1** | true red — real defect caught |
+| B | `--require h264_decode_top` on deployed branch | **1** | targeted red |
+| C | `w-decode-hour27`, 3x `--require` | **0** | green |
+| D | mutation: drop `h264_deblock.sv` from qip | **1** | red-proof |
+| D' | restore | **0** | green restored |
+| E | empty `files.qip` | **2** | `Scope: 0` refusal, cannot claim PASS |
+| F | `files.qip` absent | **77** | skip, never 0 |
+
+`files.qip` verified unmodified after all mutations.
+
+### 18.5 Scope limit of this gate (stated, not hidden)
+
+It is a **file-list** oracle only. It proves a file is compiled; it does **not**
+prove the module inside it is instantiated, and it is filename-based. It does
+not fix the checker's `if (0)` generate or escaped-identifier defects — those
+remain W-GATE-O5's. Necessary, not sufficient. Pair with both reachability
+directions and `make post-fit-hierarchy`.
