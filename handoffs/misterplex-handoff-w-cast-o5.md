@@ -265,3 +265,68 @@ invented here. Half-landing it would have been worse than reporting it.
 **Zero frames have still been decoded and displayed by the FPGA.** Stage C
 changes nothing about that; Stage A must land first, and "screen or it didn't
 happen" is the only acceptance criterion that counts.
+
+---
+
+# Stage C composed on `w-swap-o5`'s block-MC core — `w-cast-o5-mc`
+
+Per the parent's sequencing ruling ("compose on `w-swap-o5`'s block-MC core, not
+the old per-sample MC lineage"), Stage C now exists on a branch based directly
+on `origin/w-swap-o5-mc` (`694fa7c`) rather than on the old lineage.
+
+**Use `w-cast-o5-mc` for integration, not `w-cast-o5`.** `w-cast-o5` still
+carries the per-sample MC lineage inherited from the predecessor; its Stage C
+commits are the same three, cherry-picked. A full branch merge produced 17
+conflicted files across the tree, so I deliberately did not own that merge —
+cherry-picking Stage C onto swap's tip confines the resolution to
+`h264_decode_core.sv` and the p16z fixture, which is my code.
+
+## Conflict resolutions, stated explicitly
+
+- Took swap's `h264_cavlc_residual_block u_product_p16_residual0` header (no
+  `MAX_BYTES` override) and inserted only the Stage C nC context above it. The
+  predecessor's `u_product_core_i4_mode_deriver` /
+  `u_product_core_luma4x4_residual_source` anchors were **dropped**: they come
+  from commits that are not on this base and their signals do not exist here.
+- Both residual roll sites now hand off to swap's `ST_P16_REF_SEED`, not the old
+  `ST_P16_TAP_REQ`. Getting this wrong would have silently bypassed block MC.
+- `bit_len(10'd512)` is left alone here and is **correct on this base**: swap's
+  core takes a 64-byte `rbsp_byte [0:63]` window, so 512 bits is the right
+  budget. The `bit_len(rbsp_bit_len)` fix on `w-cast-o5` applies only to that
+  branch's 128-byte window.
+- **Exactly one `MAX_BYTES` index fix survives**, as instructed: swap's
+  `BYTE_IDX_W = $clog2(MAX_BYTES)` (`h264_cavlc_residual.sv:92`). My
+  `RBSP_IDX_W` / `CAVLC_FAULT_BYTE_INDEX_WRAP` variant was not carried across,
+  because Stage C does not touch that expression. If someone later merges
+  `w-cast-o5` wholesale, check this line: two fixes in one expression is how the
+  bug comes back.
+
+## Evidence on `w-cast-o5-mc`
+
+| result | check |
+|---|---|
+| green | `test_h264_decode_core_p16z_rtl_sim.sh` rc=0 — 60 coded + 12 cbp-uncoded blocks over 3 macroblocks; `reads=1809` (block MC, 603/MB) where the old lineage reported `reads=63744`, which is how you can tell the lineage actually changed |
+| green | `test_h264_decode_core_full_frame_mc_rtl_sim.sh` rc=0 — **1170/1170 P16x16 macroblocks predicted exactly, 449280/449280 samples**, swap's proof intact with Stage C on top |
+| green | `test_h264_decode_core_mc_elab_hierarchy.py` rc=0 — **10/10** required modules present in the elaborated subtree, `decode_stub` not elaborated under this root; `h264_cavlc_nc_predictor` and `h264_cavlc_residual_block` added to `REQUIRED` and each carries its own cut red |
+| green | `test_h264_decode_core_mc_reachability_redgreen.py`, `test_h264_decode_core_trunk_elab.py`, `test_h264_decode_core_real_slice_rtl_sim.sh` |
+| green | `check_rtl_module_instantiations.py --root h264_decode_core` — `REQUIRED_RTL_MODULE_REACHABLE h264_cavlc_nc_predictor` and `h264_cavlc_residual_block`; `rtl_modules=68 reachable=22 bench_only=17` |
+
+The reachability checker on this base **does** parse `--root`/`--require`; the
+parent's warning applies to `w-cast-play-state`, whose checker ignores unknown
+args. Verified here rather than inherited.
+
+## Still true, still not fixed
+
+- Elaboration survival is a Verilator AST result, **not** a Quartus one. Only
+  `check_prefit_elaboration.sh` or a real fit can settle mode 3, and neither is
+  mine to run.
+- Chroma: no DC blocks in the traversal, `max_coeff` fixed at 16, chroma AC on
+  table 0. Must land together; `max_coeff=15` alone would desynchronise.
+- `stream_path.sv` still caps the slice RBSP capture and never consumes the
+  core's window-request handshake, so residual past the window is unreachable on
+  real content regardless of how correct the decoder is. On this base the core
+  window is only **64 bytes**, so the ceiling is lower here than on `w-cast-o5`.
+  This is the single biggest thing standing between Stage C and visible detail,
+  and it is an architecture call for `w-decode-o5` / `w-swap-o5`.
+
+**Zero frames have still been decoded and displayed by the FPGA.**
