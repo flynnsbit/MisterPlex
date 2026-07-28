@@ -9,7 +9,6 @@ plays Plex content natively.
 
 ---
 
-## Update #1 — 2026-07-28 11:12 CDT (Hour 28)
 ## Update #2 — 2026-07-28 11:40 CDT (Hour 28.5)
 
 ### Headline: the new RBF is on the hardware
@@ -131,6 +130,10 @@ still migrating  w-cast  w-e2e
 
 ~30 minutes, leading with whether `fb4bad84` produces a toggling display bank on
 real hardware.
+
+---
+
+## Update #1 — 2026-07-28 11:12 CDT (Hour 28)
 
 ### Headline
 
