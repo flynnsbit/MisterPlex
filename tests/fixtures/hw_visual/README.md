@@ -3,11 +3,28 @@
 Checked-in inputs for `tests/hw/test_f3_visual_golden.sh`.
 
 - `plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png` — **quarantined
-  legacy rollback golden**, captured from `57674f2e4c11551898275e99bd4c3067`
-  through the repaired `/dev/video4` MJPEG 1280×720@60 path after pushing
-  `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264`. It is no
-  longer a default because `57674f2e` predates the current YUV420 frame-store
-  contract. Its `.provenance.json` declares source RBF, 320×240 geometry,
+  legacy rollback golden. MEASURED NOT TO DEPICT DECODED VIDEO.** It was
+  captured from `57674f2e4c11551898275e99bd4c3067` through the repaired
+  `/dev/video4` MJPEG 1280×720@60 path after pushing
+  `tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264` — but what it
+  actually shows is the **Plex chevron idle screen**, not that bitstream
+  decoded. W-E2E-O5 host-decoded the very bitstream its provenance names and
+  compared:
+
+  | | golden | host decode of declared bitstream |
+  |---|---|---|
+  | ROI `11,0,160,120` (declared "MB0") | 9 distinct colours, std 5.35 | MB0 16×16 std 53.22 |
+  | overall mean luma | 23.6 | 123 |
+  | content | dark background + orange chevron | bright testsrc2 colour bars |
+
+  Correlation of the golden against the reference decode is **ncc −0.0735**, i.e.
+  uncorrelated. **Do not cite this file as evidence that any core decoded
+  anything**, and note that its `compare_box` grades flat background against
+  flat background. For decode claims use `scripts/prove_decoded_frame.py`, which
+  requires the screen to agree with the host decode of the pushed bitstream.
+  It remains valid only as legacy display/present evidence, and it is not a
+  default because `57674f2e` predates the current YUV420 frame-store contract.
+  Its `.provenance.json` declares source RBF, 320×240 geometry,
   RGB565 legacy pixel format, BT.601/full colour, and ROI `11,0,160,120`; the
   harness refuses to grade it unless those declarations match the loaded core
   and command-line contract.

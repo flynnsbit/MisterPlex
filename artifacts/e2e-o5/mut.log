@@ -1,0 +1,31 @@
+PASS gate script exists
+FAIL self-test exits 0 rc=1
+  PASS true-decode-clean: DECODE_PROVEN (ncc=0.9816 signal=STALE_CAPTURE)
+  PASS true-decode-noisy: DECODE_PROVEN (ncc=0.9855 signal=CONTENT_PRESENT)
+  PASS chevron-idle-golden: NOT_DECODED (ncc=-0.0735 signal=STALE_CAPTURE)
+  PASS live-capture-no-decoder-core: NOT_DECODED (ncc=0.1425 signal=STALE_CAPTURE)
+  PASS flat-black: REFUSE (ncc=None signal=BLACK_SIGNAL)
+  PASS flat-grey-painter: REFUSE (ncc=None signal=NO_SIGNAL)
+  FAIL degenerate-reference: expected REFUSE, got NOT_DECODED (ncc=0.0 signal=STALE_CAPTURE)
+  PASS mirrored-reference: NOT_DECODED (ncc=-0.868 signal=STALE_CAPTURE)
+  PASS block-shuffled-reference: NOT_DECODED (ncc=-0.1044 signal=STALE_CAPTURE)
+
+self-test: 8/9 checks passed
+SELF_TEST_FAIL: degenerate-reference
+
+FAIL self-test reports SELF_TEST_OK 
+PASS self-test has a true-decode green
+PASS self-test rejects the chevron idle golden
+PASS self-test rejects a real decoder-less capture
+PASS self-test refuses flat black
+PASS self-test refuses a degenerate reference
+PASS self-test rejects structural scrambles
+PASS reference fixture present
+PASS chevron golden fixture present
+PASS true decode scores above threshold with margin
+PASS chevron painter scores below threshold with margin
+PASS positive and negative are widely separated
+PASS checked-in hw golden does NOT agree with its own reference decode
+
+13/15 checks passed
+FAILURES: self-test exits 0, self-test reports SELF_TEST_OK

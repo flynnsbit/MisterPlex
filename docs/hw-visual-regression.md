@@ -10,7 +10,9 @@ output, and compares it to a checked-in golden image with quantified pixel metri
 |---|---|
 | Scheduled hardware gate | `VISUAL_RBF=/path/to/Plex.rbf VISUAL_GOLDEN=/path/to/current_yuv420p_golden.png VISUAL_EXPECTED_CONTENT_SIZE=624x480 VISUAL_PIXEL_FORMAT=yuv420p VISUAL_FAULT_DEMO=1 tests/hw/test_f3_visual_golden.sh` |
 | Wrong-core provenance red specimen | `VISUAL_RBF=/path/to/fe7673bc.rbf VISUAL_GOLDEN=/path/to/57674f2e_golden.png tests/hw/test_f3_visual_golden.sh` (returns `rc=8`, not a visual result) |
-| Legacy rollback evidence | `VISUAL_RBF=/path/to/57674f2e.rbf VISUAL_GOLDEN=tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png VISUAL_EXPECTED_CONTENT_SIZE=320x240 VISUAL_PIXEL_FORMAT=rgb565 VISUAL_EXPECT=pass tests/hw/test_f3_visual_golden.sh` |
+| Legacy rollback evidence (display/present only — **NOT a decode claim**; its ROI is flat background) | `VISUAL_RBF=/path/to/57674f2e.rbf VISUAL_GOLDEN=tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png VISUAL_EXPECTED_CONTENT_SIZE=320x240 VISUAL_PIXEL_FORMAT=rgb565 VISUAL_EXPECT=pass tests/hw/test_f3_visual_golden.sh` |
+| **Prove decoded frames are on screen** (painter-proof) | `python3 scripts/prove_decoded_frame.py --reference tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264 --device /dev/video0` — `0` DECODE_PROVEN, `1` NOT_DECODED, `2` REFUSE |
+| Decode-oracle self-test (hermetic red/green, no hardware) | `python3 scripts/prove_decoded_frame.py --self-test` |
 | Use already-loaded Plex core | `VISUAL_EXPECTED_RBF_MD5=<loaded-md5> VISUAL_GOLDEN=/path/to/matching_source_golden.png tests/hw/test_f3_visual_golden.sh` |
 | Comparator unit/red-path test | `python3 tests/unit/test_hw_visual_compare.py` |
 | Print geometry used by comparator | `python3 scripts/hw_visual_compare.py geometry` |
@@ -65,10 +67,21 @@ ARM pipeline against an old RGB565-era rollback core by accident.
   - `fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh`
 
 The former default `plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`
-is quarantined as legacy evidence for rollback `57674f2e` only. Its provenance
+is quarantined as legacy evidence for rollback `57674f2e` only, and **W-E2E-O5
+measured that it does not depict decoded video at all** — it shows the Plex
+chevron idle screen, and its `compare_box 11,0,160,120` ROI is flat background
+(9 distinct colours, luma std 5.35), uncorrelated (`ncc −0.0735`) with the host
+decode of the bitstream its own provenance names. Its historical
+`19200/19200 MAE 0` green therefore matched flat background against flat
+background and is **not** evidence of decoding. Its provenance
 declares 320×240/RGB565/BT.601-full and will not grade against a current
 YUV420 artifact. The 624×480 fixture/reference remains checked in as a future
 target only; it is marked `generated_reference`, not a hardware-captured golden.
+
+To claim that decoded frames are on screen, use `scripts/prove_decoded_frame.py`.
+It requires the captured picture to agree with the **host decode of the exact
+bitstream pushed**, which a painter or idle screen cannot fake, and it REFUSES
+(rc=2) on flat/absent signal rather than passing or failing.
 
 The comparator refuses to run if host and RTL constants diverge. It compares the active displayed picture only:
 coded **624×480**, display **618×480** after right crop of 6 px, presented **640×480** with **11 px** pillars on

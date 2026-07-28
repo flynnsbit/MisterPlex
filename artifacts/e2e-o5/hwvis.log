@@ -1,0 +1,24 @@
+PASS shared host/RTL geometry parsed
+PASS generated reference golden is quarantined by machine-readable provenance
+PASS zero-noise floor measured from identical static frames
+PASS known-good frame exact-matches active display region
+PASS unknown/mismatched colour provenance refused before grading
+PASS golden provenance refuses missing sidecar, geometry, format, colour, and source-RBF mismatches
+PASS corrupted active pixel rejected with precise worst mismatch + diff artifact
+VISUAL_VERDICT_CASE verdict_exact id=EXACT_MATCH mae_rgb=[0.0, 0.0, 0.0] ratio=1.000000 cv=0.000000 exact=1.000000
+VISUAL_VERDICT_CASE verdict_unrelated_random id=NO_FRAME_DELIVERED mae_rgb=[124.278944, 125.010932, 124.861246] ratio=1.005890 cv=0.002532 exact=0.000000
+VISUAL_VERDICT_CASE verdict_601_encoded_709_decoded id=COLOUR_PATH_DEFECT mae_rgb=[1.170796, 25.243194, 0.649858] ratio=38.844144 cv=1.271725 exact=0.000543
+VISUAL_VERDICT_CASE verdict_uv_swap id=COLOUR_PATH_DEFECT mae_rgb=[155.461077, 23.610076, 167.87616] ratio=7.110361 cv=0.564453 exact=0.000593
+VISUAL_VERDICT_CASE verdict_shift_x5 id=GEOMETRY_CONTENT_DEFECT mae_rgb=[15.644637, 9.89379, 4.500182] ratio=3.476445 cv=0.454463 exact=0.791394
+VISUAL_VERDICT_CASE verdict_ambiguous_dispersion id=INDETERMINATE mae_rgb=[43.226844, 26.001878, 21.984624] ratio=1.966231 cv=0.303046 exact=0.000000
+PASS visual verdict classifies exact/no-frame/colour/geometry and refuses ambiguous dispersion
+PASS per-channel error-shape diagnostics flag wrong-scheme, green-dominant, and U/V-swap patterns
+PASS stale previous-condition capture rejected
+PASS natural bytes_in=4/nalu=4 stale-screen fixture is rejected as telemetry-layer aliasing
+PASS stream_nalus status cannot satisfy byte-delivery freshness gate
+PASS fresh delivery counters, matching RBF md5, and shared {bank,format,seq} token allow grading
+PASS unchanged shared frame token is rejected before pixel grading
+PASS wrong or undeclared loaded RBF identity is rejected before pixel grading
+PASS ARM absent/0xe1 status overrides colour-shape classification before grading pixels
+PASS V4L2 corrupt-buffer diagnostics classified distinctly
+PASS absent capture device/dependency paths are explicit refusals
