@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked rtl-sim rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -40,7 +40,7 @@ preflight:
 	@bash $(ROOT)/scripts/test_resource_preflight.sh
 
 unit:
-	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- $(MAKE) unit-unlocked
+	@bash $(ROOT)/scripts/run_with_resource_preflight.sh -- python3 $(ROOT)/scripts/run_with_skip_summary.py --label make-unit -- $(MAKE) unit-unlocked
 
 unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
@@ -124,6 +124,9 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 
 rtl-sim:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label rtl-sim -- $(MAKE) rtl-sim-unlocked
+
+rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
@@ -171,10 +174,10 @@ timing-exclusion:
 	$(ROOT)/scripts/check_timing_exclusions.py $(if $(STA_RPT),--sta-rpt "$(STA_RPT)",)
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
-	$(ROOT)/tests/hw/test_pms_baseline_profile.sh
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label pms-baseline-check -- $(ROOT)/tests/hw/test_pms_baseline_profile.sh
 
 pms-nal-stats: $(ROOT)/build/pms_nal_stats
-	bash $(ROOT)/tests/hw/test_pms_nal_stats.sh
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label pms-nal-stats -- bash $(ROOT)/tests/hw/test_pms_nal_stats.sh
 
 h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_native_frames $(ROOT)/build/analyze_h264_intra_mbs
 

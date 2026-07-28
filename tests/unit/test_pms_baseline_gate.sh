@@ -173,10 +173,10 @@ missing_out="$(env -u PLEX_BASE -u PLEX_TOKEN -u MISTERPLEX_BASELINE_KEY -u PLEX
   "$ROOT/tests/hw/test_pms_baseline_profile.sh" 2>&1)"
 missing_rc=$?
 set -e
-printf '%s\n' "$missing_out"
 if [[ $missing_rc -ne 77 || "$missing_out" != *"SKIP-NOT-PASS"* ]]; then
   echo "FAIL: absent live PMS inputs must be SKIP-NOT-PASS rc=77, got rc=$missing_rc" >&2
   exit 1
 fi
+echo "OK red-check: live PMS wrapper missing deps return SKIP-NOT-PASS rc=77"
 
 echo "test_pms_baseline_gate: OK green plus red proofs for profile/cabac/ref/B and absent deps"
