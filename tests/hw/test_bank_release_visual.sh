@@ -16,7 +16,7 @@ set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 TOKEN="${PLEX_TOKEN:-${MISTERPLEX_TOKEN:-}}"
-SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no root@$HOST"
+SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$HOST"
 DDR_BASE=$((0x30000000))
 DDR_ALIGN=$((256 * 1024))
 
@@ -44,20 +44,37 @@ devmem_read() {
 }
 
 derive_ddr_layout_from_plxk() {
-    local mult stride doorbell lo
+    local mult stride doorbell lo hi0 hi1 fmt seq changed score
+    local best_score=-1 best_stride=0 best_doorbell=0
     for mult in 1 2 3 4 5 6 7 8; do
         stride=$((DDR_ALIGN * mult))
         doorbell=$((DDR_BASE + stride * 2 - 4096))
         lo="$(devmem_read "$doorbell")"
-        if [ "$lo" = "0x504C584B" ]; then
-            DDR_STRIDE=$stride
-            DDR_DOORBELL=$doorbell
-            DDR_BANK0=$DDR_BASE
-            DDR_BANK1=$((DDR_BASE + DDR_STRIDE))
-            return 0
+        [ "$lo" = "0x504C584B" ] || continue
+        hi0="$(devmem_read $((doorbell + 4)))"
+        sleep 0.2
+        hi1="$(devmem_read $((doorbell + 4)))"
+        fmt=$(( (hi1 >> 29) & 3 ))
+        [ "$fmt" = "1" ] || continue
+        seq=$(( hi1 & 0x1fffffff ))
+        changed=0
+        [ "$hi0" != "$hi1" ] && changed=1
+        # Prefer a doorbell that is actively advancing; stale PLXK words from a
+        # previous geometry can legally remain in DDR and must not win merely
+        # because their magic is present.
+        score=$((changed * 0x20000000 + seq))
+        if [ "$score" -gt "$best_score" ]; then
+            best_score=$score
+            best_stride=$stride
+            best_doorbell=$doorbell
         fi
     done
-    return 1
+    [ "$best_stride" -gt 0 ] || return 1
+    DDR_STRIDE=$best_stride
+    DDR_DOORBELL=$best_doorbell
+    DDR_BANK0=$DDR_BASE
+    DDR_BANK1=$((DDR_BASE + DDR_STRIDE))
+    return 0
 }
 
 echo "╔══════════════════════════════════════════════════════════════════╗"
