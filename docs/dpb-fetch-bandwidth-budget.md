@@ -3,7 +3,14 @@
 **Owner:** w-dpb  
 **Branch:** `feat/dpb-fetch`  
 **Date:** 2026-07-27  
-**Status:** BUDGET DRAFT — no RTL committed against this yet
+**Status:** DESIGN TARGET — byte-serial RTL exists, 64-bit coalesced does NOT
+
+> **ARCHITECTURAL STATUS (v6.2 response):**
+> Current `h264_dpb_one_ref` is **byte-serial**: `mem_rdata[7:0]`, 1 read/cycle,
+> **607 cycles/fetch** (441 luma + 81 U + 81 V + 4 overhead).
+> This exceeds the 120-cycle allocation by **5.06×**.
+> The 64-bit coalesced path (§5: 99–120 beats) is designed here but **not yet RTL**.
+> Implementing it is the critical path to closing the budget at 45 MHz.
 
 This document is the single source of truth for the decoded picture buffer
 fetch and writeback cycle budget. Every number is labelled MEASURED, ESTIMATED,
