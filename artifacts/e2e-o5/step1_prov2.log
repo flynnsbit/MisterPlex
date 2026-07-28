@@ -1,0 +1,12 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+CORENAME=[MENU]
+fpga_state=operating
+uptime=523s
+--- misterplexd via ps ---
+2
+  983 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400
+ 2097 root     bash -c echo "CORENAME=[$(cat /tmp/CORENAME 2>/dev/null)]"; echo "fpga_state=$(cat /sys/class/fpga_manager/fpga0/state)"; echo "uptime=$(cut -d. -f1 /proc/uptime)s"; echo "--- misterplexd via ps ---"; ps aux 2>/dev/null | grep -c "[m]isterplexd"; ps aux 2>/dev/null | grep "[m]isterplexd" | head -2; echo "--- Main ---"; ps aux 2>/dev/null | grep -c "[M]iSTer"
+--- Main ---
+2

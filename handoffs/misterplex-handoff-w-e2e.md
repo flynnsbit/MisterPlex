@@ -683,3 +683,58 @@ Fixed, and guarded three ways in `tests/unit/test_prove_decoded_frame.py`
 `inspect.signature(...).bind(...)`-checked, and the source call form is asserted.
 Red-proven: re-transposing the arguments turns the gate red on exactly that check.
 Live path now verified against hardware — returns `rc=2 REFUSE` cleanly.
+
+## 16. CORRECTION — the STEP 1 capture is the MENU core, not `fb4bad84`
+
+**I got this wrong in commit `1c9ee4e` and am correcting it within the shift.**
+
+I captured content at 13:47–13:48 and attributed the 7-bar gradient pattern to
+Plex's own `fpga/Plex_MiSTer/rtl/colorbars.sv`, and derived `has_frame==0` from
+`present_core.sv:338`. **That attribution is void.** A provenance check
+afterwards showed:
+
+```
+CORENAME    = [MENU]          <- NOT Plex
+fpga_state  = operating
+uptime      = 523s            <- device REBOOTED ~13:44
+md5 /media/fat/_Utility/Plex.rbf = fb4bad849ad2db782a5004ce5a3471ce  (on disk only)
+misterplexd = running, pid 983 (restarted at boot)
+```
+
+The MiSTer **rebooted at ~13:44**, which explains the 12:27–13:44 network
+outage (§15) and its sudden return. On reboot it loaded the **Menu core**.
+`fb4bad84` is present on the SD card but **is not loaded into the FPGA**.
+
+Therefore:
+- The captured colour bars are the **MiSTer Menu core's** output. They are not
+  evidence about Plex, `colorbars.sv`, `present_core`, `has_frame`, or the DDR
+  frame path. My `has_frame==0` inference is withdrawn.
+- The transient state the parent asked me to photograph — the ARM-painted
+  `media: idle screen painted (mode=0)` on `fb4bad84` — was **destroyed by the
+  reboot**, not by any deploy. It is unrecoverable.
+- **STEP 1 is unachievable as specified.** There is no `fb4bad84` screen state
+  left to capture.
+
+### 16.1 What the capture legitimately does establish
+
+Genuinely useful, and independent of which core is loaded:
+
+- The **capture rig is healthy and correctly targeted**: `/dev/video0`, MS2109,
+  MJPG 1280x720@60, 21/24 frames with content, luma spatial std **max 24.05**
+  (threshold 1.0), mean luma up to **27.0** (black threshold 8.0).
+- The **three-state gate discriminates correctly on live hardware**: it reported
+  NO SIGNAL while the device was down (all frames byte-identical to the no-lock
+  filler) and VALID WITH CONTENT once it returned — with no code change.
+- The **decode oracle survived a real adversarial case**: the Menu core's
+  gradient colour bars superficially resemble the testsrc2 colour-bar reference,
+  and `prove_decoded_frame.py` still returned **`ncc 0.1675 NOT_DECODED` (rc=1)**.
+  That is a live false-positive test against a painter, passed.
+
+### 16.2 Lesson
+
+Signal state and *provenance* are independent axioms. A capture is only evidence
+about a bitstream if the loaded-core identity is checked **at capture time**.
+`score_idle_screen.py --host` probes host liveness but does **not** verify
+`CORENAME`/loaded RBF; a capture can therefore be perfectly valid and still be
+about the wrong core. Any capture gate used for grading a deploy must assert
+`CORENAME` and the resident RBF md5 alongside the pixels.
