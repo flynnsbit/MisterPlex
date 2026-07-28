@@ -1,0 +1,456 @@
+{
+  "description": "Known dead driver findings from Quartus compile.log (Warning 10036) and map report (Port Connectivity). Product config: DDR_FRAME_STORE=1. All findings classified with owner and justification.",
+  "product_config": "DDR_FRAME_STORE=1 (Plex.qsf:82)",
+  "findings": [
+    {
+      "key": "Plex.sv:227:content_width",
+      "owner": "w-c1",
+      "reason": "DDR path uses ddr_width/ddr_height instead; content geometry unused in DDR_FRAME_STORE=1"
+    },
+    {
+      "key": "Plex.sv:228:content_height",
+      "owner": "w-c1",
+      "reason": "DDR path uses ddr_width/ddr_height instead; content geometry unused in DDR_FRAME_STORE=1"
+    },
+    {
+      "key": "Plex.sv:313:sdram_read_sample",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:314:sdram_first_fail_valid",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:315:sdram_first_fail_addr",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:316:sdram_first_fail_expect",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:318:sdram_test_pass",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:321:sdram_test_active",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "Plex.sv:873:st_res_word",
+      "owner": "w-rel",
+      "reason": "stream_path residual word output not yet consumed by decode datapath"
+    },
+    {
+      "key": "Plex.sv:1002:_unused",
+      "owner": "w-c2",
+      "reason": "Explicit _unused collector \u2014 intentional dead signal"
+    },
+    {
+      "key": "stream_path.sv:332:_keep",
+      "owner": "w-rel",
+      "reason": "stream_path output signal awaiting datapath consumer"
+    },
+    {
+      "key": "slice_hdr_parser.sv:97:i4_need_rem",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:98:cbp_me",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:105:suf_left",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:115:tok_ok",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:119:place_did",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:120:csum_i",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:122:place_csum_r",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "slice_hdr_parser.sv:123:place_dc_r",
+      "owner": "w-rel",
+      "reason": "Parser output signals not yet consumed by decode datapath integration"
+    },
+    {
+      "key": "decode_stub.sv:61:lat_mb_w",
+      "owner": "w-a3",
+      "reason": "decode_stub latched MB dimensions \u2014 only first 4x4 block processed"
+    },
+    {
+      "key": "decode_stub.sv:61:lat_mb_h",
+      "owner": "w-a3",
+      "reason": "decode_stub latched MB dimensions \u2014 only first 4x4 block processed"
+    },
+    {
+      "key": "decode_stub.sv:212:inter_diag_ok",
+      "owner": "w-a3",
+      "reason": "Diagnostic signal in decode_stub \u2014 probe infrastructure"
+    },
+    {
+      "key": "decode_stub.sv:261:_slice_valid_observe",
+      "owner": "w-a3",
+      "reason": "Diagnostic signal in decode_stub \u2014 probe infrastructure"
+    },
+    {
+      "key": "h264_inter_pred.sv:28:avail_count",
+      "owner": "w-mc",
+      "reason": "Inter predictor in diagnostic-only instantiation"
+    },
+    {
+      "key": "h264_inter_pred.sv:141:_keep_part_modes",
+      "owner": "w-mc",
+      "reason": "Inter predictor in diagnostic-only instantiation"
+    },
+    {
+      "key": "present_core.sv:221:wr_done",
+      "owner": "w-c1",
+      "reason": "present_core write-done signal unused in current DDR topology"
+    },
+    {
+      "key": "ddr_frame_store.sv:389:want_y_s2",
+      "owner": "w-a3",
+      "reason": "Half-built synchroniser; feeds cache eviction logic not yet integrated"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_sel",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_addr",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_din",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_wr",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_rd",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_bs",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|sdram_refresh",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|present_core:present|ddr_frames_done",
+      "owner": "w-c1",
+      "reason": "DDR frame delivery status \u2014 present_core does not use these in current topology"
+    },
+    {
+      "key": "emu:emu|present_core:present|ddr_doorbell_ok",
+      "owner": "w-c1",
+      "reason": "DDR frame delivery status \u2014 present_core does not use these in current topology"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_display_index",
+      "owner": "w-c1",
+      "reason": "Presentation statistics port \u2014 no OSD or host consumer wired"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_content_index",
+      "owner": "w-c1",
+      "reason": "Presentation statistics port \u2014 no OSD or host consumer wired"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_advance",
+      "owner": "w-c1",
+      "reason": "Presentation statistics port \u2014 no OSD or host consumer wired"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_wr_count",
+      "owner": "w-c1",
+      "reason": "Presentation statistics port \u2014 no OSD or host consumer wired"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_frame_underruns",
+      "owner": "w-c1",
+      "reason": "Presentation statistics port \u2014 no OSD or host consumer wired"
+    },
+    {
+      "key": "emu:emu|present_core:present|stat_frame_sdram_state",
+      "owner": "w-c2",
+      "reason": "SDRAM test infrastructure dead in DDR_FRAME_STORE=1 build"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|decode_stub:stub|h264_mv_pred_part:u_inter_part_diag|h264_mv_pred_16x16:u_median|mv_x",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|decode_stub:stub|h264_mv_pred_part:u_inter_part_diag|h264_mv_pred_16x16:u_median|mv_y",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|decode_stub:stub|h264_mv_pred_part:u_inter_part_diag|h264_mv_pred_16x16:u_median|skip_zero",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|first_mb",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|pps_id",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|frame_num",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|idr_pic_id",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|slice_qp_delta",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|residual_place_t1",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_hdr_parser:slp|busy",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_parser:pps|pps_id",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_parser:pps|sps_id",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_parser:pps|entropy_cabac",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_parser:pps|num_ref_l0",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_parser:pps|busy",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_parser:sps|busy",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|bitstream_fifo:bfifo|has_data",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ingest:si|active",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|bytes_in",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|bytes_seen",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|fifo_level",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_active",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_bytes_out",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_underruns",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_overruns",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_host_write",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stream_ddr_fpga_read",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|idr_count",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_count",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|pps_count",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_count",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|stub_frames",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_profile",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_level",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_width",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|sps_height",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_valid",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|slice_is_i",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|has_mb_type",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|stream_path:spath|residual_coeff",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|audio_ingest:ainst|active",
+      "owner": "w-feed",
+      "reason": "Audio ingest active signal unused \u2014 audio path not yet consuming status"
+    },
+    {
+      "key": "emu:emu|frame_ingest:finst|pixels_written",
+      "owner": "w-feed",
+      "reason": "Ingest/stream status port not yet consumed"
+    },
+    {
+      "key": "emu:emu|pll:pll|locked",
+      "owner": "w-cap",
+      "reason": "PLL output clock not consumed in current config"
+    },
+    {
+      "key": "emu:emu|hps_io:hps_io|buttons[0]",
+      "owner": "w-osd",
+      "reason": "Unused HPS IO signal in current build configuration"
+    },
+    {
+      "key": "emu:emu|hps_io:hps_io|status[127..123]",
+      "owner": "w-osd",
+      "reason": "Unused HPS IO signal in current build configuration"
+    },
+    {
+      "key": "emu:emu|hps_io:hps_io|status[120..16]",
+      "owner": "w-osd",
+      "reason": "Unused HPS IO signal in current build configuration"
+    },
+    {
+      "key": "emu:emu|hps_io:hps_io|joystick_0[31..8]",
+      "owner": "w-osd",
+      "reason": "Unused HPS IO signal in current build configuration"
+    },
+    {
+      "key": "emu:emu|hps_io:hps_io|joystick_0[3..0]",
+      "owner": "w-osd",
+      "reason": "Unused HPS IO signal in current build configuration"
+    }
+  ]
+}

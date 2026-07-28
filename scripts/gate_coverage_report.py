@@ -602,6 +602,36 @@ def build_report() -> list[GateReport]:
             observed_failing_real=True,
             observed_failing_note="First run established: 30 of 58 RTL modules are pending integration (instantiated nowhere in product). This IS instrument failure #19 — the entire decode pipeline exists only as individually-tested modules connected to nothing.",
         ),
+        GateReport(
+            id="dead-drivers",
+            script="scripts/check_dead_drivers.py",
+            makefile_target="dead-drivers",
+            proves=(
+                "Every signal driven in owned RTL has a real consumer in the product "
+                "build (DDR_FRAME_STORE=1). Catches Warning 10036 (assigned but never "
+                "read) and Port Connectivity dangling logic. Highlighted finding: "
+                "want_y_s2 in ddr_frame_store.sv:389 — w-a3's half-built synchroniser."
+            ),
+            does_not_prove=(
+                "Does NOT catch fs_swap class: signals that are syntactically connected "
+                "but dead inside an ifdef branch. Quartus silently optimizes these "
+                "without warning. Future: source-level ifdef analysis using "
+                "define-parity's macro extraction."
+            ),
+            red_proof_method=(
+                "Inject synthetic Warning 10036 into compile.log → rc=1. "
+                "Remove → rc=0. Missing compile.log with explicit --compile-log → rc=4 REFUSE."
+            ),
+            red_proof_passed=True,
+            runnable_here=True,
+            runnable_note="Requires compile.log and/or map report from Quartus build. slot11 available locally.",
+            owner="w-c2",
+            verification_target="STATIC",
+            verification_target_note="Parses Quartus synthesis warnings and port connectivity. No RTL execution.",
+            exit_codes={"green": 0, "red_new_finding": 1, "refuse_no_input": 4},
+            observed_failing_real=True,
+            observed_failing_note="First run found 90 dead drivers (27 assigned-never-read, 63 dangling ports). All classified with owner. Notable: want_y_s2 (w-a3), decode_stub diagnostics, SDRAM remnants in DDR build.",
+        ),
     ]
     return gates
 

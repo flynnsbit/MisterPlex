@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion cdc-crossings test-suppression test-degeneracy rtl-claim product-hierarchy module-instantiation pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit rtl-sim rtl-lint quartus-sv-subset define-parity post-fit-hierarchy post-fit-timing timing-exclusion cdc-crossings test-suppression test-degeneracy rtl-claim product-hierarchy module-instantiation dead-drivers pms-baseline-check pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -110,6 +110,7 @@ unit: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/bu
 	$(ROOT)/scripts/check_rtl_claim.py
 	@if [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot11/Plex.map.rpt" ] || [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot12/Plex.map.rpt" ]; then $(ROOT)/scripts/check_product_hierarchy.py --known-findings $(ROOT)/tests/fixtures/product_hierarchy_known_findings.json; fi
 	@if [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot11/Plex.map.rpt" ] || [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot12/Plex.map.rpt" ]; then $(ROOT)/scripts/check_module_instantiation.py; fi
+	@if [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot11/compile.log" ] || [ -f "$(ROOT)/fpga/Plex_MiSTer/remote_out/slot12/compile.log" ]; then $(ROOT)/scripts/check_dead_drivers.py; fi
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
@@ -166,11 +167,14 @@ test-degeneracy:
 rtl-claim:
 	$(ROOT)/scripts/check_rtl_claim.py
 
-product-hierarchy module-instantiation:
+product-hierarchy:
 	$(ROOT)/scripts/check_product_hierarchy.py --known-findings $(ROOT)/tests/fixtures/product_hierarchy_known_findings.json
 
 module-instantiation:
 	$(ROOT)/scripts/check_module_instantiation.py
+
+dead-drivers:
+	$(ROOT)/scripts/check_dead_drivers.py
 
 pms-baseline-check: $(ROOT)/build/pms_baseline_probe
 	$(ROOT)/tests/hw/test_pms_baseline_profile.sh
