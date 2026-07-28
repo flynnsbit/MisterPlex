@@ -1,0 +1,6 @@
+PASS default lock path is under the shared git common dir (/home/flynnsbit/Projects/MisterPlex/.git/video0.lock)
+PASS concurrent acquirers of the shared lock serialise (contender rc=77 UNSCORED)
+PASS lock is released on exit (no permanent wedge)
+PASS distinct lock files do NOT serialise (documents the old per-worktree bug)
+
+test_capture_lock_shared: OK (4 tests)

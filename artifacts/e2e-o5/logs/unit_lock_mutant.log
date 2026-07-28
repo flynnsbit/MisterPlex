@@ -1,0 +1,1 @@
+FAIL: lock path '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/build/video0.lock' is not under the shared git common dir '/home/flynnsbit/Projects/MisterPlex/.git'; per-worktree locks do not serialise concurrent agents
