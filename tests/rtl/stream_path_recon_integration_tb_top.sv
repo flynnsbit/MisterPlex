@@ -43,7 +43,11 @@ module stream_path_recon_integration_tb_top #(
 	output wire [7:0]  recon_sig,
 	output wire [7:0]  recon_dbg,
 	output wire        recon_dbg_valid,
-	output wire        recon_valid
+	output wire        recon_valid,
+	output wire        fs_wr_en_o,
+	output wire [15:0] fs_wr_pixel_o,
+	output wire        fs_wr_reset_o,
+	output wire        fs_swap_o
 );
 	wire [7:0] sps_profile;
 	wire [7:0] sps_level;
@@ -144,6 +148,10 @@ module stream_path_recon_integration_tb_top #(
 	);
 
 	assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;
+	assign fs_wr_en_o = fs_wr_en;
+	assign fs_wr_pixel_o = fs_wr_pixel;
+	assign fs_wr_reset_o = fs_wr_reset;
+	assign fs_swap_o = fs_swap;
 endmodule
 
 `default_nettype wire
