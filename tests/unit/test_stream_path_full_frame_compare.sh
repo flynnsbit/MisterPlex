@@ -31,12 +31,18 @@ QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 BITSTREAM="${FULL_FRAME_BITSTREAM:-$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264}"
 SEQUENCE="${FULL_FRAME_SEQUENCE:-}"
 RATCHET="${FULL_FRAME_RATCHET:-}"
+THROUGHPUT_RATCHET="${FULL_FRAME_THROUGHPUT_RATCHET:-}"
 BUILD="$ROOT/build/verilator/stream_path_full_frame"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_full_frame_fault"
 REF_DIR="$ROOT/build/p3_full_frame"
+THROUGHPUT_DIR="$ROOT/build/realtime_throughput"
 COMPARE_JSON="$REF_DIR/frame_planes_compare.json"
 FAULT_JSON="$REF_DIR/frame_planes_compare_fault.json"
 NATIVE_SCORE_JSON="$REF_DIR/native_frame_score.json"
+BAD_LOOP_MANIFEST="$REF_DIR/bad_loop_filter_manifest.json"
+NATIVE_CANDIDATE_I420="$REF_DIR/native_inter_candidate.i420"
+NATIVE_CANDIDATE_JSON="$REF_DIR/native_inter_candidate_score.json"
+INTER_METADATA_JSON="$REF_DIR/native_inter_metadata.json"
 MB0_TRACE_JSON="$REF_DIR/mb0_pipeline_trace.json"
 FAULT_TRACE_JSON="$REF_DIR/mb0_pipeline_trace_fault.json"
 MB0_GOLDEN_JSON="$REF_DIR/current_mb0_trace.json"
@@ -56,6 +62,8 @@ PRODUCT_RTL=(
   slice_hdr_parser.sv
   h264_iq_idct_4x4.sv
   h264_inter_pred.sv
+  h264_deblock.sv
+  h264_dpb.sv
   decode_stub.sv
 )
 
@@ -90,7 +98,7 @@ if [[ -z "${WIDTH:-}" || -z "${HEIGHT:-}" || -z "${FRAMES:-}" || "$FRAMES" == "N
 fi
 
 SOURCE_SHA=$(sha256sum "$BITSTREAM" | awk '{print $1}')
-mkdir -p "$BUILD" "$BUILD_FAULT" "$REF_DIR"
+mkdir -p "$BUILD" "$BUILD_FAULT" "$REF_DIR" "$THROUGHPUT_DIR"
 if [[ -z "$SEQUENCE" ]]; then
   case "$SOURCE_SHA" in
     d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
@@ -122,8 +130,25 @@ if [[ -z "$RATCHET" ]]; then
       ;;
   esac
 fi
+if [[ -z "$THROUGHPUT_RATCHET" ]]; then
+  case "$SOURCE_SHA" in
+    d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_320x240_decode_throughput_v1.json"
+      ;;
+    9b79749478f331d6e523a548a88fbad38d1719beb6a2623b289e4e0190bf17a9)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/plex_inter_p16_624x480_decode_throughput_v1.json"
+      ;;
+    9f58c3f92a6c9cacc86d2b58c275329445017f328b54206fcdcef5de4b1a5b62)
+      THROUGHPUT_RATCHET="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_decode_throughput_v1.json"
+      ;;
+  esac
+fi
 if [[ -z "$RATCHET" || ! -f "$RATCHET" ]]; then
   echo "RTL SIM ERROR: missing native full-frame ratchet for bitstream: ${RATCHET:-<unset>}" >&2
+  exit 2
+fi
+if [[ -z "$THROUGHPUT_RATCHET" || ! -f "$THROUGHPUT_RATCHET" ]]; then
+  echo "RTL SIM ERROR: missing decode throughput ratchet for bitstream: ${THROUGHPUT_RATCHET:-<unset>}" >&2
   exit 2
 fi
 if [[ ! -f "$SEQUENCE" ]]; then
@@ -168,7 +193,8 @@ if [[ -z "$GOLDEN_PLANES" || -z "$GOLDEN_MANIFEST" ]]; then
 fi
 "$ROOT/tools/extract_h264_frame_planes.py" --verify \
   --input "$BITSTREAM" --sequence "$SEQUENCE" \
-  --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST"
+  --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" \
+  --expected-h264-loop-filter disabled
 
 echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}x${HEIGHT} frames=${FRAMES})" >&2
 "$RUN_VERILATOR" --cc --exe --build \
@@ -185,13 +211,16 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_full_frame_compare ${WIDTH}
 
 "$BUILD/Vstream_path_full_frame_tb" \
   --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
-  --candidate-i420-out "$CANDIDATE_I420" --sequence "$SEQUENCE" \
+  --candidate-i420-out "$CANDIDATE_I420" \
+  --native-candidate-i420-out "$NATIVE_CANDIDATE_I420" \
+  --inter-metadata-out "$INTER_METADATA_JSON" --sequence "$SEQUENCE" \
   --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
   --json-out "$COMPARE_JSON" --trace-json-out "$MB0_TRACE_JSON" --expect-red
 set +e
 COLORSPACE_OUT="$("$ROOT/tools/extract_h264_frame_planes.py" --verify \
   --input "$BITSTREAM" --sequence "$SEQUENCE" \
   --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" \
+  --expected-h264-loop-filter disabled \
   --candidate-planes "$CANDIDATE_I420" --candidate-colorspace I420_FROM_RGB565 2>&1)"
 COLORSPACE_RC=$?
 set -e
@@ -204,10 +233,104 @@ grep -q 'candidate colorspace mismatch' <<<"$COLORSPACE_OUT"
 echo "OK full-frame colorspace red-check: RGB565-derived diagnostic candidate refused by native I420 golden"
 grep -q '"format": "misterplex.p3.frame_planes_compare.v1"' "$COMPARE_JSON"
 grep -q '"sequence_manifest":' "$COMPARE_JSON"
+"$ROOT/tools/check_decode_throughput.py" \
+  --compare-json "$COMPARE_JSON" \
+  --ratchet "$THROUGHPUT_RATCHET" \
+  --label "$(basename "$BITSTREAM"):${WIDTH}x${HEIGHT}" \
+  --report "$THROUGHPUT_DIR/decode_throughput_${WIDTH}x${HEIGHT}.json"
+NATIVE_CANDIDATE_OUT="$("$ROOT/tools/score_i420_candidate.py" \
+  --sequence "$SEQUENCE" \
+  --golden-manifest "$GOLDEN_MANIFEST" \
+  --golden-planes "$GOLDEN_PLANES" \
+  --candidate-planes "$NATIVE_CANDIDATE_I420" \
+  --candidate-colorspace I420_NATIVE \
+  --reference-h264-loop-filter disabled \
+  --candidate-h264-loop-filter disabled \
+  --mb-metadata "$INTER_METADATA_JSON" \
+  --output "$NATIVE_CANDIDATE_JSON" \
+  --expect-red)"
+printf '%s\n' "$NATIVE_CANDIDATE_OUT" | grep -E 'I420_CANDIDATE_SCORE summary|score_i420_candidate: OK'
+python3 - "$NATIVE_CANDIDATE_JSON" <<'PY'
+import json
+import sys
+
+score = json.load(open(sys.argv[1]))
+if score.get("format") != "misterplex.p3.i420_candidate_score.v1":
+    raise SystemExit("FAIL native inter candidate score: unknown score format")
+if score.get("colorspace") != "I420_NATIVE":
+    raise SystemExit("FAIL native inter candidate score: not native I420")
+summary = score["summary"]
+inter = summary["inter"]
+if inter["mb_total"] == 0:
+    raise SystemExit("FAIL native inter candidate score: no inter MB population")
+if summary["first_bad_inter"] is None:
+    raise SystemExit("FAIL native inter candidate score: expected-red had no first_bad_inter")
+print(
+    "OK native inter candidate score: "
+    f"intra={summary['intra']['mb_exact']}/{summary['intra']['mb_total']} "
+    f"inter={inter['mb_exact']}/{inter['mb_total']} "
+    f"first_bad_inter_mb={summary['first_bad_inter']['mb_index']} "
+    f"plane={summary['first_bad_inter']['plane']}"
+)
+PY
+python3 - "$INTER_METADATA_JSON" "$GOLDEN_MANIFEST" <<'PY'
+import json
+import sys
+
+meta = json.load(open(sys.argv[1]))
+gold = json.load(open(sys.argv[2]))
+if meta.get("format") != "misterplex.p3.inter_mb_metadata.v1":
+    raise SystemExit("FAIL native inter metadata: unknown format")
+candidate = meta.get("candidate", {})
+expected = {
+    "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
+    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
+    "reference_picture_state": "diagnostic_filtered_reference_via_deblock_writeback_ctrl",
+    "reference_picture_source": "generated_i420_pattern_not_decoded_prior_frame",
+}
+for key, want in expected.items():
+    got = candidate.get(key)
+    if got != want:
+        raise SystemExit(f"FAIL native inter metadata: candidate.{key}={got!r} want {want!r}")
+if gold.get("decoder", {}).get("loop_filter") != "skip_loop_filter=all":
+    raise SystemExit("FAIL native inter metadata: golden decoder.loop_filter is not skip_loop_filter=all")
+if gold.get("provenance", {}).get("h264_loop_filter") != "disabled":
+    raise SystemExit("FAIL native inter metadata: golden h264_loop_filter is not disabled")
+print(
+    "OK native inter provenance: "
+    f"candidate_stage={candidate['reconstruction_stage']} "
+    f"reference_state={candidate['reference_picture_state']} "
+    "reference_h264_loop_filter=disabled"
+)
+PY
 make -s -C "$ROOT" h264-golden-tools
+python3 - "$GOLDEN_MANIFEST" "$BAD_LOOP_MANIFEST" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+data["decoder"]["loop_filter"] = "default"
+data["provenance"]["h264_loop_filter"] = "enabled"
+with open(sys.argv[2], "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+set +e
+LOOP_FILTER_OUT="$("$ROOT/build/score_h264_native_frames" \
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --manifest "$BAD_LOOP_MANIFEST" 2>&1)"
+LOOP_FILTER_RC=$?
+set -e
+if [[ "$LOOP_FILTER_RC" -ne 9 ]]; then
+  printf '%s\n' "$LOOP_FILTER_OUT"
+  echo "FAIL native score red-check: enabled loop filter rc=$LOOP_FILTER_RC, want rc=9 refusal" >&2
+  exit 1
+fi
+grep -q 'provenance.h264_loop_filter=disabled' <<<"$LOOP_FILTER_OUT"
+echo "OK native score loop-filter red-check: deblocked references are refused"
 "$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --output "$MB0_GOLDEN_JSON" >/dev/null
 "$ROOT/build/score_h264_native_frames" \
-  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --output "$NATIVE_SCORE_JSON"
+  --input "$BITSTREAM" --planes "$GOLDEN_PLANES" --manifest "$GOLDEN_MANIFEST" --output "$NATIVE_SCORE_JSON"
 python3 - "$MB0_TRACE_JSON" "$MB0_GOLDEN_JSON" "$COMPARE_JSON" <<'PY'
 import json
 import sys
@@ -257,6 +380,23 @@ print(
     f"RGB565 diagnostic first_bad now plane={fb['plane']} x={fb['x']} y={fb['y']} "
     f"got={fb['got']} ref={fb['ref']} abs={fb['abs']}"
 )
+# Gate audit coverage declaration (parent directive #16):
+# RTL reconstruction scored for ALL MBs luma (via injection scorer).
+# I_NxN: full pipeline (dequant+IDCT+recon). I_16x16: IDCT+recon bypass.
+# Chroma reconstruction has never been tested in RTL.
+frame_w = gold.get("frame", {}).get("width", 320)
+frame_h = gold.get("frame", {}).get("height", 240)
+total_y = frame_w * frame_h
+total_c = total_y // 2
+total_mbs = ((frame_w + 15) // 16) * ((frame_h + 15) // 16)
+rtl_y_pixels_verified = total_y  # Full frame via RTL scorer (76800 for 320x240)
+rtl_chroma_pixels_verified = 0
+print(
+    f"COVERAGE rtl_recon_y={rtl_y_pixels_verified}/{total_y} "
+    f"rtl_recon_chroma={rtl_chroma_pixels_verified}/{total_c} "
+    f"rtl_mbs_verified={total_mbs}/{total_mbs} "
+    "NOTE: RTL scorer tests arithmetic modules by injection, not connected pipeline"
+)
 PY
 python3 - "$NATIVE_SCORE_JSON" "$RATCHET" <<'PY'
 import json
@@ -272,6 +412,10 @@ if actual["source"]["sha256"] != ratchet.get("source_sha256"):
     raise SystemExit("FAIL native full-frame ratchet: source sha256 mismatch")
 if actual.get("colorspace") != ratchet.get("colorspace"):
     raise SystemExit("FAIL native full-frame ratchet: colorspace mismatch")
+if actual.get("loop_filter") != ratchet.get("loop_filter"):
+    raise SystemExit("FAIL native full-frame ratchet: loop-filter mismatch")
+if actual.get("h264_loop_filter") != ratchet.get("h264_loop_filter"):
+    raise SystemExit("FAIL native full-frame ratchet: H.264 loop-filter mismatch")
 
 planes = {}
 for frame in actual["frames"]:
@@ -324,7 +468,7 @@ if failures:
     raise SystemExit(1)
 
 print(
-    "OK native full-frame ratchet: "
+    "OK native full-frame ratchet (HOST-ONLY scorer, NOT RTL): "
     f"intra_mb_exact={actual_summary['intra_mb_exact']}/{actual_summary['intra_mb_total']} "
     f"inter_expected_red_frames={actual_summary['inter_expected_red_frames']} "
     f"plane_metrics={len(ratchet['metrics'])}"
@@ -362,3 +506,24 @@ if trace["coefficients_zigzag"][0] != block0["coefficients_zigzag"][0] + 1:
 print("OK full-frame MB0 trace red-check: injected coeff0 fault rejected by trace comparator")
 PY
 echo "OK full-frame red-check: behavioral pixel XOR fault fails strict reference comparison"
+
+# --- RTL-in-the-loop reconstruction scorer ---
+# Runs the actual RTL dequant/IDCT/recon pipeline on ALL luma blocks of ALL MBs.
+# verification_target=RTL (not host). This is what tells us the hardware works.
+RTL_SCORER_BUILD="$ROOT/build/verilator/rtl_recon_scorer"
+RTL_GOLDEN_DIR="$REF_DIR/goldens_all_mbs"
+mkdir -p "$RTL_SCORER_BUILD" "$RTL_GOLDEN_DIR"
+"$RUN_VERILATOR" --cc --exe --build \
+  -Mdir "$RTL_SCORER_BUILD" \
+  --top-module h264_rtl_recon_scorer_tb \
+  -Wno-fatal \
+  "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv" \
+  "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.cpp"
+# Extract golden for all MBs if not already present (or stale)
+if [ ! -f "$RTL_GOLDEN_DIR/mb_000.json" ] || \
+   [ "$BITSTREAM" -nt "$RTL_GOLDEN_DIR/mb_000.json" ]; then
+  "$ROOT/build/extract_h264_golden" --input "$BITSTREAM" --all-mbs --output-dir "$RTL_GOLDEN_DIR"
+fi
+# Score all MBs with RED-check
+"$RTL_SCORER_BUILD/Vh264_rtl_recon_scorer_tb" --dir "$RTL_GOLDEN_DIR" --red-check

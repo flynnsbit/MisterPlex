@@ -179,8 +179,58 @@ Exit codes are deliberately distinct so a capture-rig failure cannot be mistaken
 | 9 | missing or mismatched golden provenance (geometry, pixel format, colour, or non-hardware reference) |
 
 If status exposes the frame-store debug byte, `0xe1` is surfaced as
-`non-YUV DDR doorbell/debug format error` and is treated as a freshness/setup
-refusal, not a visual mismatch.
+`frame store refused non-YUV doorbell (0xE1); non-YUV DDR doorbell format error`
+and is treated as a freshness/setup refusal, not a visual mismatch. The visual
+gate consumes `frame_debug` directly when w-osd's ARM status output exposes it;
+`debug_state`/DDR debug aliases remain accepted only for compatibility.
+Likewise, w-osd's absent-frame surface is authoritative: `frame_status=absent`,
+`has_frame=0`, `PLXF magic=0`, or the text
+`frame store status unavailable (PLXF mailbox absent/unwritten)` all return
+`rc=7` before pixel grading. A channel-skewed PNG cannot be reported as
+`COLOUR_PATH_DEFECT` while ARM status says PLXF absent or non-YUV-refused; the
+diagnostic report uses `delivery_verdict.id=NO_FRAME_DELIVERED` and leaves
+pixel `stats` unset because no pixels were graded.
+
+## Visual verdict: absent frame vs colour path
+
+The JSON report includes `stats.visual_verdict` so deploy-window evidence does
+not require humans to infer a root class from three MAE numbers. Raw MAE is
+reported first; the verdict records the same numbers plus the dispersion metric:
+
+- `max_min_ratio = max(R,G,B MAE) / min(R,G,B MAE)`
+- `coefficient_of_variation = stddev(R,G,B MAE) / mean(R,G,B MAE)`
+
+The stable verdict identifiers are literal: `NO_FRAME_DELIVERED`,
+`COLOUR_PATH_DEFECT`, `GEOMETRY_CONTENT_DEFECT`, and `INDETERMINATE` for
+failures; exact matches report `EXACT_MATCH`.
+
+The thresholds are derived from synthetic 624×480 active-region cases generated
+from the checked-in 480p fixture, plus the live frozen-screen capture:
+
+| Case | RGB MAE | max/min | CV | Verdict |
+| --- | --- | ---:| ---:| --- |
+| exact frame | `[0.000000, 0.000000, 0.000000]` | `1.000000` | `0.000000` | `EXACT_MATCH` |
+| unrelated/random frame | `[124.278944, 125.010932, 124.861246]` | `1.005890` | `0.002532` | `NO_FRAME_DELIVERED` |
+| live frozen screen | `[120.43, 116.88, 113.61]` | `≈1.06` | `≈0.024` | `NO_FRAME_DELIVERED` shape |
+| BT.601 encoded / BT.709 decoded | `[1.170796, 25.243194, 0.649858]` | `38.844144` | `1.271725` | `COLOUR_PATH_DEFECT` |
+| U/V swap | `[155.461077, 23.610076, 167.876160]` | `7.110361` | `0.564453` | `COLOUR_PATH_DEFECT` |
+| +5 px horizontal shift | `[15.644637, 9.893790, 4.500182]` | `3.476445` | `0.454463` | `GEOMETRY_CONTENT_DEFECT` |
+| unsafe synthetic band | `[43.226844, 26.001878, 21.984624]` | `1.966231` | `0.303046` | `INDETERMINATE` |
+
+`NO_FRAME_DELIVERED` requires high error with near-flat channels
+(`mean MAE ≥ 20`, exact ratio `≤ 0.05`, max/min `≤ 1.15`, CV `≤ 0.06`).
+`COLOUR_PATH_DEFECT` requires channel-skewed error (`mean MAE ≥ 5`, exact ratio
+`≤ 0.20`, and max/min `≥ 5` or CV `≥ 0.50`). Shifts/content defects are not
+allowed to masquerade as colour defects; when `--shift-radius` finds a
+substantially better offset, the verdict becomes `GEOMETRY_CONTENT_DEFECT`.
+High-error cases in the band between flat/no-frame and skewed/colour return
+`INDETERMINATE` and the compare command exits non-zero without guessing.
+
+Colour-path classification is only trusted for delivered frames: PLXF status
+must be present, no `0xe1` refusal may be surfaced, required `has_frame`/stream
+fields must pass, and token freshness must pass when requested. If those status
+checks fail, the comparator reports delivery failure instead of interpreting
+pixels.
 
 When grading a frame captured outside `scripts/hw_visual_compare.py capture`, pass its FFmpeg/V4L2 log with
 `--capture-log`. If the log contains the real W-CAP corrupted-buffer diagnostics, compare exits `rc=4` before

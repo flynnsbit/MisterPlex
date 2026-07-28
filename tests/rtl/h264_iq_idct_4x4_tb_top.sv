@@ -12,21 +12,21 @@ module h264_iq_idct_4x4 (
 	input  wire        [4:0]  max_coeff,
 	input  wire        [5:0]  qp,
 	input  wire        [7:0]  pred     [0:15],
-	output wire signed [17:0] dequant  [0:15],
-	output wire signed [17:0] idct     [0:15],
+	output wire signed [28:0] dequant  [0:15],
+	output wire signed [28:0] idct     [0:15],
 	output wire        [7:0]  recon    [0:15]
 );
-	// Product RTL takes 9-bit signed coefficients; the testbench drives 16-bit.
-	wire signed [8:0] coeff9 [0:15];
+	// Product RTL now takes full 16-bit signed coefficients.
+	wire signed [15:0] coeff16 [0:15];
 	genvar i;
 	generate
-		for (i = 0; i < 16; i = i + 1) begin : g_narrow
-			assign coeff9[i] = coeff[i][8:0];
+		for (i = 0; i < 16; i = i + 1) begin : g_pass
+			assign coeff16[i] = coeff[i];
 		end
 	endgenerate
 
 	h264_dequant4x4 u_dequant (
-		.coeff(coeff9),
+		.coeff(coeff16),
 		.qp(qp),
 		.max_coeff(max_coeff),
 		.dequant(dequant)

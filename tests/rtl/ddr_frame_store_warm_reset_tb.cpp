@@ -66,6 +66,9 @@ public:
     bool schedulerArmed = false;
     bool sawSchedValid = false;
     bool sawScheduledLineRead = false;
+    bool hangLineReadResponses = false;
+    bool sawDroppedLineRead = false;
+    bool forceDdrBusy = false;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -132,11 +135,24 @@ public:
         return false;
     }
 
+    bool waitForFrameMailboxMagic(int maxCycles) {
+        for (int i = 0; i < maxCycles; ++i) {
+            if (static_cast<uint32_t>(frameMailbox()) == kFrameMailboxMagic)
+                return true;
+            tick();
+        }
+        return false;
+    }
+
     void serviceDdrStart() {
         if (top.DDRAM_RD && busy == 0 && rdDelay < 0 && rdLeft == 0) {
             if (schedulerArmed) {
                 sawScheduledLineRead = true;
                 schedulerArmed = false;
+            }
+            if (hangLineReadResponses && top.DDRAM_ADDR != (kDoorbellPhys >> 3)) {
+                sawDroppedLineRead = true;
+                return;
             }
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
@@ -156,7 +172,7 @@ public:
         top.DDRAM_DOUT_READY = 0;
         if (busy > 0)
             --busy;
-        top.DDRAM_BUSY = busy > 0;
+        top.DDRAM_BUSY = forceDdrBusy || (busy > 0);
         if (rdDelay >= 0) {
             if (rdDelay > 0) {
                 --rdDelay;
@@ -337,6 +353,86 @@ bool runFreshNoStale() {
     if (!sim.waitForFrame(50000))
         throw std::runtime_error("first fresh doorbell without stale magic did not produce a frame");
     expectFreshSample("first fresh no-stale", sim, 208);
+    return sim.schedulerProven();
+}
+
+bool runInitialFrameMailboxPublish() {
+    Sim sim;
+    sim.resetCore();
+    if (!sim.waitForFrameMailboxMagic(20000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: PLXF frame mailbox did not publish"
+                  << " after reset mailbox=0x" << std::hex << sim.frameMailbox()
+                  << std::dec << " cycle=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    if (sim.cycle >= 224) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: initial PLXF publish waited for legacy poll slot"
+                  << " cycles=" << sim.cycle << "\n";
+        std::exit(1);
+    }
+    const uint64_t mbox = sim.frameMailbox();
+    std::cout << "ddr_frame_store warm-reset raw: initial_plxf_publish"
+              << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
+              << " frame_debug=0x" << int((mbox >> 40) & 0xffu)
+              << std::dec << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
+bool runInitialFrameMailboxAbsentWhenDdrBusy() {
+    Sim sim;
+    sim.forceDdrBusy = true;
+    sim.resetCore();
+    for (int i = 0; i < 20000; ++i)
+        sim.tick();
+    const uint64_t mbox = sim.frameMailbox();
+    if (static_cast<uint32_t>(mbox) != 0 || sim.top.has_frame) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: forced DDR busy should leave PLXF absent"
+                  << " mailbox=0x" << std::hex << mbox
+                  << " has_frame=" << std::dec << int(sim.top.has_frame) << "\n";
+        std::exit(1);
+    }
+    std::cout << "ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy"
+              << " frame_mailbox_magic=0x" << std::hex << static_cast<uint32_t>(mbox)
+              << " full_mailbox=0x" << mbox
+              << std::dec << " has_frame=" << int(sim.top.has_frame)
+              << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
+bool runFrameMailboxStallsWithHungLineRead() {
+    Sim sim;
+    sim.fillFrame(0, 218);
+    sim.resetCore();
+    if (!sim.waitForFrameMailboxMagic(20000))
+        throw std::runtime_error("line-read-hang setup: initial PLXF mailbox did not publish");
+    sim.hangLineReadResponses = true;
+    sim.ringDoorbell(0, 0x69);
+    for (int i = 0; i < 100000 && !sim.sawDroppedLineRead; ++i)
+        sim.videoTick();
+    if (!sim.sawDroppedLineRead) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: line-read-hang did not reach a frame line read"
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " debug=0x" << std::hex << int(sim.top.debug_state)
+                  << " mailbox=0x" << sim.frameMailbox() << std::dec << "\n";
+        std::exit(1);
+    }
+    const uint64_t staleMbox = sim.frameMailbox();
+    for (int i = 0; i < 20000; ++i)
+        sim.videoTick();
+    const uint64_t laterMbox = sim.frameMailbox();
+    if (sim.top.has_frame || laterMbox != staleMbox) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: hung line read did not leave PLXF stale"
+                  << " has_frame=" << int(sim.top.has_frame)
+                  << " before=0x" << std::hex << staleMbox
+                  << " after=0x" << laterMbox
+                  << " live_debug=0x" << int(sim.top.debug_state) << std::dec << "\n";
+        std::exit(1);
+    }
+    std::cout << "ddr_frame_store warm-reset raw: line_read_hang_plxf_stale"
+              << " plxf=0x" << std::hex << laterMbox
+              << " live_debug=0x" << int(sim.top.debug_state)
+              << std::dec << " has_frame=" << int(sim.top.has_frame)
+              << " cycles=" << sim.cycle << "\n";
     return sim.schedulerProven();
 }
 
@@ -566,6 +662,36 @@ bool runEqualTokenFallback() {
     return sim.schedulerProven();
 }
 
+bool runLiveValidYuvResetPrimedDoorbell() {
+    Sim sim;
+    sim.fillFrame(1, 218);
+    sim.ringDoorbell(1, 0x68, kDoorbellFormatYuv420p);
+    sim.resetCore();
+    if (!sim.waitCyclesNoFrame(25000)) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: live valid YUV reset-primed token"
+                  << " presented before fallback window cycle=" << sim.cycle
+                  << " frames=" << sim.top.frames_done
+                  << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec << "\n";
+        std::exit(1);
+    }
+    if (sim.top.debug_state == kDebugFormatError) {
+        std::cerr << "FAIL ddr_frame_store warm-reset: live valid YUV token raised 0x"
+                  << std::hex << int(kDebugFormatError) << std::dec << "\n";
+        std::exit(1);
+    }
+    if (!sim.waitForFrame(800000))
+        throw std::runtime_error("live valid YUV reset-primed token did not recover through fallback");
+    expectFreshSample("live valid YUV reset-primed token", sim, 218);
+
+    std::cout << "ddr_frame_store warm-reset raw: live_valid_yuv_reset_primed"
+              << " doorbell_hi=0xa0000068 bank=1 format=1 seq=0x68"
+              << " no_frame_cycles=25000 frame_debug=0x00"
+              << " frames=" << sim.top.frames_done << " sample_r=218"
+              << " underruns=" << sim.top.underrun_count
+              << " cycles=" << sim.cycle << "\n";
+    return sim.schedulerProven();
+}
+
 bool runEqualTokenRefreshAfterAccept() {
     Sim sim;
     sim.fillFrame(0, 96);
@@ -601,6 +727,8 @@ bool runEqualTokenRefreshAfterAccept() {
 
 void run() {
     bool schedulerSeen = false;
+    schedulerSeen |= runInitialFrameMailboxPublish();
+    schedulerSeen |= runInitialFrameMailboxAbsentWhenDdrBusy();
     schedulerSeen |= runFreshNoStale();
     schedulerSeen |= runChromaPlaneReadMapping();
     schedulerSeen |= runChromaVerticalStrideMapping();
@@ -610,7 +738,9 @@ void run() {
     schedulerSeen |= runWarmResetChanged(kSeqMask, 0, 0, 1, expectedRgb(211), "seq_wrap");
     schedulerSeen |= runRejectNonYuvDoorbell();
     schedulerSeen |= runRunningArmRestartLower();
+    schedulerSeen |= runFrameMailboxStallsWithHungLineRead();
     schedulerSeen |= runEqualTokenFallback();
+    schedulerSeen |= runLiveValidYuvResetPrimedDoorbell();
     schedulerSeen |= runEqualTokenRefreshAfterAccept();
     if (!schedulerSeen) {
         std::cerr << "FAIL ddr_frame_store warm-reset: refill scheduler pipeline not observed\n";

@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 static int fails = 0;
@@ -22,6 +23,12 @@ static uint64_t word(uint16_t seq, uint8_t cmdSeq, misterplex::PlaybackCommand c
 
 static uint32_t lo(uint64_t v) { return static_cast<uint32_t>(v); }
 static uint32_t hi(uint64_t v) { return static_cast<uint32_t>(v >> 32); }
+
+static uint64_t frameWord(uint8_t seq, uint8_t debug, uint16_t underrun,
+                          uint32_t magic = misterplex::kUnderrunMailboxMagic) {
+    return static_cast<uint64_t>(magic) | (static_cast<uint64_t>(seq) << 32) |
+           (static_cast<uint64_t>(debug) << 40) | (static_cast<uint64_t>(underrun) << 48);
+}
 
 struct FakeTransport {
     bool playing = true;
@@ -102,6 +109,27 @@ int main() {
     CHECK(!decodeInputMailboxWord(static_cast<uint64_t>(kInputMailboxMagic) |
                                       (static_cast<uint64_t>(0x7Fu) << 32),
                                   s));
+
+    FrameStoreStatus fs;
+    CHECK(decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17), fs));
+    CHECK(fs.seq == 4);
+    CHECK(fs.debug_state == kFrameStoreDebugFormatError);
+    CHECK(fs.underrun_count == 17);
+    CHECK(fs.nonYuvDoorbellRejected());
+    CHECK(std::string(frameStoreDebugDescription(fs.debug_state)) ==
+          "frame store refused non-YUV doorbell (0xE1)");
+    CHECK(std::string(frameStoreStatusUnavailableDescription()) ==
+          "frame store status unavailable (PLXF mailbox absent/unwritten)");
+    CHECK(!decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17, 0), fs));
+    CHECK(decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
+                                       hi(frameWord(5, 0x23, 7)),
+                                       lo(frameWord(5, 0x23, 7)),
+                                       hi(frameWord(5, 0x23, 7)), fs));
+    CHECK(fs.seq == 5 && fs.debug_state == 0x23 && fs.underrun_count == 7);
+    CHECK(!decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
+                                        hi(frameWord(5, 0x23, 7)),
+                                        lo(frameWord(6, 0x23, 7)),
+                                        hi(frameWord(6, 0x23, 7)), fs));
 
     const uint64_t good = word(10, 1, PlaybackCommand::PlayPause);
     CHECK(decodeStableInputMailbox(lo(good), hi(good), lo(good), hi(good), s));
@@ -244,6 +272,70 @@ int main() {
                                       1500, tr);
         CHECK(tr.stops == 1);
         CHECK(!tr.playing);
+    }
+
+    // --- PLXD bank-release mailbox tests ---
+    {
+        BankReleaseStatus br;
+
+        // Helper: build a PLXD word matching w-a3's RTL layout (b187df5).
+        // [31:0]=magic, [33:32]=free_bank_mask, [34]=disp_bank,
+        // [35]=swap_pending, [63:48]=frames_done
+        auto plxd = [](uint8_t fbm, uint8_t db, bool sp, uint16_t fd) -> uint64_t {
+            return static_cast<uint64_t>(kBankReleaseMailboxMagic) |
+                   (static_cast<uint64_t>(fbm & 3u) << 32) |
+                   (static_cast<uint64_t>(db & 1u) << 34) |
+                   (static_cast<uint64_t>(sp ? 1u : 0u) << 35) |
+                   (static_cast<uint64_t>(fd) << 48);
+        };
+
+        // Bank 0 free, disp_bank=1, no swap pending, frames_done=42
+        const uint64_t w1 = plxd(0x01, 1, false, 42);
+        CHECK(decodeBankReleaseWord(w1, br));
+        CHECK(br.free_bank_mask == 0x01);
+        CHECK(br.bank0Free());
+        CHECK(!br.bank1Free());
+        CHECK(br.anyFree());
+        CHECK(br.freeBank() == 0);
+        CHECK(br.disp_bank == 1);
+        CHECK(!br.swap_pending);
+        CHECK(br.frames_done == 42);
+
+        // Bank 1 free, disp_bank=0, swap pending, frames_done=1000
+        const uint64_t w2 = plxd(0x02, 0, true, 1000);
+        CHECK(decodeBankReleaseWord(w2, br));
+        CHECK(br.free_bank_mask == 0x02);
+        CHECK(!br.bank0Free());
+        CHECK(br.bank1Free());
+        CHECK(br.freeBank() == 1);
+        CHECK(br.disp_bank == 0);
+        CHECK(br.swap_pending);
+        CHECK(br.frames_done == 1000);
+
+        // Both banks free (idle — no pending frame)
+        const uint64_t w3 = plxd(0x03, 0, false, 500);
+        CHECK(decodeBankReleaseWord(w3, br));
+        CHECK(br.free_bank_mask == 0x03);
+        CHECK(br.bank0Free() && br.bank1Free());
+        CHECK(br.freeBank() == 0); // picks lowest
+
+        // No bank free (both in use — swap pending)
+        const uint64_t w4 = plxd(0x00, 1, true, 99);
+        CHECK(decodeBankReleaseWord(w4, br));
+        CHECK(br.free_bank_mask == 0x00);
+        CHECK(!br.anyFree());
+        CHECK(br.freeBank() == -1);
+        CHECK(br.swap_pending);
+
+        // Bad magic
+        CHECK(!decodeBankReleaseWord(0xDEADBEEFu, br));
+
+        // Stable decode
+        CHECK(decodeStableBankRelease(lo(w1), hi(w1), lo(w1), hi(w1), br));
+        CHECK(br.bank0Free() && br.disp_bank == 1);
+
+        // Torn read
+        CHECK(!decodeStableBankRelease(lo(w1), hi(w1), lo(w2), hi(w2), br));
     }
 
     if (fails) {

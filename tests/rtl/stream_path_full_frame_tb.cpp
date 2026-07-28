@@ -28,6 +28,8 @@ struct Args {
     std::string goldenPlanes;
     std::string goldenManifest;
     std::string candidateI420Out;
+    std::string nativeCandidateI420Out;
+    std::string interMetadataOut;
     std::string sequenceJson;
     std::string sourceSha256;
     std::string jsonOut;
@@ -49,6 +51,8 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--golden-planes") a.goldenPlanes = need("--golden-planes");
         else if (k == "--golden-manifest") a.goldenManifest = need("--golden-manifest");
         else if (k == "--candidate-i420-out") a.candidateI420Out = need("--candidate-i420-out");
+        else if (k == "--native-candidate-i420-out") a.nativeCandidateI420Out = need("--native-candidate-i420-out");
+        else if (k == "--inter-metadata-out") a.interMetadataOut = need("--inter-metadata-out");
         else if (k == "--sequence") a.sequenceJson = need("--sequence");
         else if (k == "--source-sha256") a.sourceSha256 = need("--source-sha256");
         else if (k == "--json-out") a.jsonOut = need("--json-out");
@@ -193,6 +197,14 @@ int signExtend(T value, int bits) {
     return (v & mask) ? (v - full) : v;
 }
 
+struct FrameStageCycles {
+    uint64_t vcl_arrive = 0;     // cycle when stub_busy rises (VCL begins)
+    uint64_t paint_start = 0;    // cycle when fs_wr_reset fires (parse done)
+    uint64_t paint_end = 0;      // cycle when fs_swap fires (paint done)
+    uint64_t parse_cycles() const { return paint_start - vcl_arrive; }
+    uint64_t paint_cycles() const { return paint_end - paint_start; }
+};
+
 struct Mb0Trace {
     bool valid = false;
     uint64_t cycle = 0;
@@ -207,6 +219,17 @@ struct Mb0Trace {
     std::array<int, 16> recon{};
 };
 
+struct InterMbCapture {
+    int frame = 0;
+    int mbX = 0;
+    int mbY = 0;
+    bool pSkip = false;
+    int partMode = 0;
+    std::array<uint8_t, 256> predY{};
+    std::array<uint8_t, 64> predU{};
+    std::array<uint8_t, 64> predV{};
+};
+
 class Sim {
 public:
     explicit Sim(int w, int h) : width(w), height(h), framePixels(static_cast<std::size_t>(w) * h) {}
@@ -218,9 +241,79 @@ public:
     std::size_t framePixels = 0;
     std::vector<std::vector<uint8_t>> frames;
     std::vector<uint8_t> cur;
+    std::vector<uint8_t> nativeCandidate;
+    std::vector<InterMbCapture> interCaptures;
+    std::size_t nativeFrameCount = 0;
+    std::size_t nativeFrameBytes = 0;
+    std::size_t nativeI420DpbWrites = 0;
+    int ignoredInterCaptures = 0;
+    bool nativeInterValidQ = false;
     Mb0Trace mb0Trace;
+    std::vector<FrameStageCycles> stageCycles;
+    bool prevStubBusy = false;
+    uint64_t injectionCycles = 0;
+    uint64_t nonVclIdleCycles = 0;
+    uint64_t resetCycles = 0;
+
+    void initNativeCandidate(std::size_t frameCount) {
+        nativeFrameCount = frameCount;
+        nativeFrameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
+        nativeCandidate.assign(frameCount * nativeFrameBytes, 0);
+    }
+
+    void writeNativeInterMb(const InterMbCapture& cap) {
+        if (nativeCandidate.empty()) return;
+        const int mbW = width / 16;
+        const int mbH = height / 16;
+        if (cap.frame < 0 || cap.mbX < 0 || cap.mbY < 0 ||
+            cap.mbX >= mbW || cap.mbY >= mbH)
+            throw std::runtime_error("native inter MB capture outside coded frame");
+        const std::size_t yBytes = static_cast<std::size_t>(width) * height;
+        const int cw = width / 2;
+        const int ch = height / 2;
+        const std::size_t cBytes = static_cast<std::size_t>(cw) * ch;
+        const std::size_t frameBytes = yBytes + cBytes * 2;
+        const std::size_t base = static_cast<std::size_t>(cap.frame) * frameBytes;
+        if (base + frameBytes > nativeCandidate.size())
+            return;
+        const std::size_t yBase = base;
+        const std::size_t uBase = base + yBytes;
+        const std::size_t vBase = uBase + cBytes;
+        for (int yy = 0; yy < 16; ++yy) {
+            for (int xx = 0; xx < 16; ++xx) {
+                const int x = cap.mbX * 16 + xx;
+                const int y = cap.mbY * 16 + yy;
+                nativeCandidate[yBase + static_cast<std::size_t>(y) * width + x] =
+                    cap.predY[static_cast<std::size_t>(yy * 16 + xx)];
+            }
+        }
+        for (int yy = 0; yy < 8; ++yy) {
+            for (int xx = 0; xx < 8; ++xx) {
+                const int x = cap.mbX * 8 + xx;
+                const int y = cap.mbY * 8 + yy;
+                const std::size_t ci = static_cast<std::size_t>(y) * cw + x;
+                const std::size_t bi = static_cast<std::size_t>(yy * 8 + xx);
+                nativeCandidate[uBase + ci] = cap.predU[bi];
+                nativeCandidate[vBase + ci] = cap.predV[bi];
+            }
+        }
+    }
 
     void capturePosedge() {
+        // Track decode_stub phase transitions for per-stage cycle accounting.
+        if (top.stub_busy && !prevStubBusy) {
+            FrameStageCycles fsc;
+            fsc.vcl_arrive = cycles;
+            stageCycles.push_back(fsc);
+        }
+        if (top.fs_wr_reset && !stageCycles.empty() && stageCycles.back().paint_start == 0) {
+            stageCycles.back().paint_start = cycles;
+        }
+        if (top.fs_swap && !stageCycles.empty() && stageCycles.back().paint_end == 0) {
+            stageCycles.back().paint_end = cycles;
+        }
+        prevStubBusy = top.stub_busy;
+
         if (top.recon_valid && !mb0Trace.valid) {
             mb0Trace.valid = true;
             mb0Trace.cycle = cycles;
@@ -231,11 +324,44 @@ public:
             mb0Trace.csum = static_cast<int>(top.trace_residual_csum);
             for (int i = 0; i < 16; ++i) {
                 mb0Trace.coeff[static_cast<std::size_t>(i)] = signExtend(top.trace_residual_coeff[i], 9);
-                mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 18);
-                mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 18);
+                mb0Trace.dequant[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_dequant[i], 29);
+                mb0Trace.idct[static_cast<std::size_t>(i)] = signExtend(top.trace_idct_residual[i], 29);
                 mb0Trace.recon[static_cast<std::size_t>(i)] = static_cast<int>(top.trace_recon_px[i]);
             }
         }
+        // Native I420 DPB write tap: capture per-sample I420 data from the
+        // reconstruction path (DPB fill for IDR, eventually inter writeback).
+        if (top.native_i420_wr_en && !nativeCandidate.empty()) {
+            const auto offset = static_cast<std::size_t>(top.native_i420_wr_offset);
+            const int frame = static_cast<int>(top.native_i420_wr_frame);
+            if (frame >= 0 && static_cast<std::size_t>(frame) < nativeFrameCount &&
+                offset < nativeFrameBytes) {
+                nativeCandidate[static_cast<std::size_t>(frame) * nativeFrameBytes + offset] =
+                    static_cast<uint8_t>(top.native_i420_wr_data);
+                ++nativeI420DpbWrites;
+            }
+        }
+        if (top.native_inter_valid && !nativeInterValidQ) {
+            InterMbCapture cap;
+            cap.frame = static_cast<int>(top.native_inter_frame_idx);
+            cap.mbX = static_cast<int>(top.native_inter_mb_x);
+            cap.mbY = static_cast<int>(top.native_inter_mb_y);
+            cap.pSkip = static_cast<bool>(top.native_inter_p_skip);
+            cap.partMode = static_cast<int>(top.native_inter_part_mode);
+            for (int i = 0; i < 256; ++i)
+                cap.predY[static_cast<std::size_t>(i)] = static_cast<uint8_t>(top.native_inter_pred_y[i]);
+            for (int i = 0; i < 64; ++i) {
+                cap.predU[static_cast<std::size_t>(i)] = static_cast<uint8_t>(top.native_inter_pred_u[i]);
+                cap.predV[static_cast<std::size_t>(i)] = static_cast<uint8_t>(top.native_inter_pred_v[i]);
+            }
+            if (cap.frame >= 0 && static_cast<std::size_t>(cap.frame) < nativeFrameCount) {
+                writeNativeInterMb(cap);
+                interCaptures.push_back(cap);
+            } else {
+                ++ignoredInterCaptures;
+            }
+        }
+        nativeInterValidQ = static_cast<bool>(top.native_inter_valid);
         if (top.fs_wr_reset) cur.clear();
         if (!top.fs_wr_en) return;
         const auto rgb = rgb565ToRgb(static_cast<uint16_t>(top.fs_wr_pixel));
@@ -267,10 +393,41 @@ public:
         top.ioctl_download = 0;
         top.ioctl_wr = 0;
         top.ioctl_dout = 0;
+        top.dpb_prefill_en = 0;
+        top.dpb_prefill_addr = 0;
+        top.dpb_prefill_data = 0;
         for (int i = 0; i < 8; ++i) tick();
         top.reset = 0;
         for (int i = 0; i < 4; ++i) tick();
+        resetCycles = cycles;
     }
+
+    // Pre-fill the DPB reference bank with real IDR frame data.
+    // The h264_dpb_one_ref starts with current_base=BANK0, reference_base=BANK1.
+    // After IDR fill + frame_done, banks swap: current=BANK1, reference=BANK0.
+    // So for the FIRST P-slice, the reference is in BANK0.
+    // We pre-fill BANK0 (addr 0..frameBytes-1) with the IDR frame.
+    void prefillDpbReference(const std::vector<uint8_t>& goldenPlanes) {
+        const std::size_t frameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
+        if (goldenPlanes.size() < frameBytes) {
+            std::cerr << "WARNING: golden planes too small for DPB prefill ("
+                      << goldenPlanes.size() << " < " << frameBytes << ")\n";
+            return;
+        }
+        // Write frame 0 (IDR) into BANK0 of DPB SRAM
+        for (std::size_t i = 0; i < frameBytes; ++i) {
+            top.dpb_prefill_en = 1;
+            top.dpb_prefill_addr = static_cast<uint32_t>(i);
+            top.dpb_prefill_data = goldenPlanes[i];
+            tick();
+        }
+        top.dpb_prefill_en = 0;
+        dpbPrefilled = true;
+        std::cout << "DPB_PREFILL wrote " << frameBytes
+                  << " bytes of IDR reference into BANK0\n";
+    }
+
+    bool dpbPrefilled = false;
 
     void feedByte(uint8_t v) {
         top.ioctl_download = 1;
@@ -357,6 +514,103 @@ void writeTraceJson(const std::string& path, const Mb0Trace& t) {
     out << "\n}\n";
 }
 
+void printStageCycles(const Sim& sim, int mbsPerFrame) {
+    uint64_t totalParse = 0, totalPaint = 0;
+    for (std::size_t f = 0; f < sim.stageCycles.size(); ++f) {
+        const auto& sc = sim.stageCycles[f];
+        const uint64_t parse = sc.parse_cycles();
+        const uint64_t paint = sc.paint_cycles();
+        totalParse += parse;
+        totalPaint += paint;
+        std::cout << "STAGE_CYCLES frame=" << f
+                  << " parse_cycles=" << parse
+                  << " paint_cycles=" << paint
+                  << " parse_per_mb=" << std::fixed << std::setprecision(3)
+                  << (static_cast<double>(parse) / mbsPerFrame)
+                  << " paint_per_mb="
+                  << (static_cast<double>(paint) / mbsPerFrame) << "\n";
+    }
+    const int totalMbs = mbsPerFrame * static_cast<int>(sim.stageCycles.size());
+    std::cout << "STAGE_CYCLES_TOTAL"
+              << " frames=" << sim.stageCycles.size()
+              << " parse_total=" << totalParse
+              << " paint_total=" << totalPaint
+              << " injection_total=" << sim.injectionCycles
+              << " nonvcl_idle_total=" << sim.nonVclIdleCycles
+              << " reset_total=" << sim.resetCycles
+              << " parse_per_mb=" << std::fixed << std::setprecision(3)
+              << (totalMbs > 0 ? static_cast<double>(totalParse) / totalMbs : 0.0)
+              << " paint_per_mb="
+              << (totalMbs > 0 ? static_cast<double>(totalPaint) / totalMbs : 0.0)
+              << " injection_per_mb="
+              << (totalMbs > 0 ? static_cast<double>(sim.injectionCycles) / totalMbs : 0.0) << "\n";
+}
+
+const char* partModeName(bool pSkip, int mode) {
+    if (pSkip) return "P_Skip";
+    switch (mode) {
+    case 0: return "P_L0_16x16";
+    case 1: return "P_L0_16x8";
+    case 2: return "P_L0_8x16";
+    case 3: return "P_8x8";
+    case 4: return "P_8x8ref0";
+    default: return "P_UNKNOWN";
+    }
+}
+
+template <std::size_t N>
+void writeByteArray(std::ostream& out, const std::array<uint8_t, N>& a) {
+    out << "[";
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (i) out << ",";
+        out << static_cast<int>(a[i]);
+    }
+    out << "]";
+}
+
+void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCapture>& caps,
+                            int width, int height) {
+    if (path.empty()) return;
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write inter metadata JSON: " + path);
+    out << "{\n";
+    out << "  \"format\": \"misterplex.p3.inter_mb_metadata.v1\",\n";
+    out << "  \"producer\": \"stream_path_full_frame_tb.native_inter_candidate\",\n";
+    out << "  \"candidate\": {\n";
+    out << "    \"colorspace\": \"I420_NATIVE\",\n";
+    out << "    \"h264_loop_filter\": \"disabled\",\n";
+    out << "    \"reconstruction_stage\": \"mc_prediction_only_pre_deblock_no_residual_add\",\n";
+    out << "    \"reference_picture_state\": \"diagnostic_filtered_reference_via_deblock_writeback_ctrl\",\n";
+    out << "    \"reference_picture_source\": \"generated_i420_pattern_not_decoded_prior_frame\",\n";
+    out << "    \"conformance_scope\": \"MC arithmetic and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
+    out << "  },\n";
+    out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
+    out << "  \"macroblocks\": [\n";
+    for (std::size_t i = 0; i < caps.size(); ++i) {
+        const auto& c = caps[i];
+        const int mbIndex = c.mbY * (width / 16) + c.mbX;
+        out << "    {\"frame_index\": " << c.frame
+            << ", \"mb_index\": " << mbIndex
+            << ", \"mb_x\": " << c.mbX
+            << ", \"mb_y\": " << c.mbY
+            << ", \"mb_type\": \"" << partModeName(c.pSkip, c.partMode) << "\""
+            << ", \"part_mode\": " << c.partMode
+            << ", \"ref_idx_l0\": 0"
+            << ", \"mv_l0\": {\"x\": 0, \"y\": 0}"
+            << ", \"pred_y\": ";
+        writeByteArray(out, c.predY);
+        out << ", \"pred_u\": ";
+        writeByteArray(out, c.predU);
+        out << ", \"pred_v\": ";
+        writeByteArray(out, c.predV);
+        out << "}";
+        if (i + 1 != caps.size()) out << ",";
+        out << "\n";
+    }
+    out << "  ]\n";
+    out << "}\n";
+}
+
 struct PlaneStats {
     uint64_t exact = 0;
     uint64_t sumAbs = 0;
@@ -379,6 +633,8 @@ struct BadPixel {
 struct FrameCompareStats {
     std::array<PlaneStats, 3> plane;
     std::array<BadPixel, 3> firstBad;
+    int mbExact = 0;
+    int mbTotal = 0;
 };
 
 struct CompareResult {
@@ -420,6 +676,35 @@ std::array<PlaneView, 3> framePlaneViews(std::size_t frame, int width, int heigh
         {base + pixels, uvPixels, uvW, uvH},
         {base + pixels + uvPixels, uvPixels, uvW, uvH},
     }};
+}
+
+bool mbExactAllPlanes(const std::vector<uint8_t>& got, const std::vector<uint8_t>& ref,
+                      std::size_t frame, int width, int height, int mbX, int mbY) {
+    const auto views = framePlaneViews(frame, width, height);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const int px = mbX * 16 + x;
+            const int py = mbY * 16 + y;
+            if (px >= width || py >= height) continue;
+            const std::size_t i = views[0].offset + static_cast<std::size_t>(py) * width + px;
+            if (got[i] != ref[i]) return false;
+        }
+    }
+    const int cw = width / 2;
+    const int ch = height / 2;
+    for (int p = 1; p < 3; ++p) {
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                const int px = mbX * 8 + x;
+                const int py = mbY * 8 + y;
+                if (px >= cw || py >= ch) continue;
+                const std::size_t i = views[static_cast<std::size_t>(p)].offset +
+                                      static_cast<std::size_t>(py) * cw + px;
+                if (got[i] != ref[i]) return false;
+            }
+        }
+    }
+    return true;
 }
 
 void writeCandidateFrameI420(const std::vector<uint8_t>& rgb,
@@ -527,6 +812,15 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
                           << " abs=" << first.abs << "\n";
             }
         }
+        frameStats.mbTotal = ((width + 15) / 16) * ((height + 15) / 16);
+        for (int my = 0; my < (height + 15) / 16; ++my) {
+            for (int mx = 0; mx < (width + 15) / 16; ++mx) {
+                frameStats.mbExact += mbExactAllPlanes(result.candidateI420, ref, f, width, height, mx, my) ? 1 : 0;
+            }
+        }
+        std::cout << "FULL_FRAME_COMPARE mb frame=" << f
+                  << " exact=" << frameStats.mbExact
+                  << " total=" << frameStats.mbTotal << "\n";
         result.frames.push_back(frameStats);
     }
     result.exact = (result.firstBadFrame < 0) && (got.size() == refFrames);
@@ -535,7 +829,7 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
 
 void writeJsonReport(const std::string& path, const Args& args, const SequenceMeta& seq,
                      const CompareResult& cr, int nals, int idr, int p, std::size_t bytes,
-                     uint64_t cycles) {
+                     uint64_t cycles, const Sim& sim) {
     if (path.empty()) return;
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write compare JSON: " + path);
@@ -574,7 +868,8 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
         const int frameNum = f < seq.frames.size() ? seq.frames[f].frameNum : static_cast<int>(f);
         const std::string kind = f < seq.frames.size() ? seq.frames[f].sliceKind : "?";
         out << "    {\"frame_index\": " << f << ", \"frame_num\": " << frameNum
-            << ", \"slice_kind\": \"" << kind << "\", \"planes\": [";
+            << ", \"slice_kind\": \"" << kind << "\", \"mb_exact\": " << cr.frames[f].mbExact
+            << ", \"mb_total\": " << cr.frames[f].mbTotal << ", \"planes\": [";
         for (int pi = 0; pi < 3; ++pi) {
             const auto& st = cr.frames[f].plane[static_cast<std::size_t>(pi)];
             if (pi) out << ", ";
@@ -603,7 +898,31 @@ void writeJsonReport(const std::string& path, const Args& args, const SequenceMe
         if (f + 1 != cr.frames.size()) out << ",";
         out << "\n";
     }
-    out << "  ]\n";
+    out << "  ],\n";
+    // Per-stage cycle accounting
+    uint64_t totalParse = 0, totalPaint = 0;
+    out << "  \"stage_cycles\": {\n";
+    out << "    \"method\": \"Per-frame phase tracking via stub_busy/fs_wr_reset/fs_swap transitions in Verilator sim\",\n";
+    out << "    \"injection_cycles\": " << sim.injectionCycles << ",\n";
+    out << "    \"nonvcl_idle_cycles\": " << sim.nonVclIdleCycles << ",\n";
+    out << "    \"reset_cycles\": " << sim.resetCycles << ",\n";
+    out << "    \"frames\": [\n";
+    for (std::size_t f = 0; f < sim.stageCycles.size(); ++f) {
+        const auto& sc = sim.stageCycles[f];
+        const uint64_t parse = sc.parse_cycles();
+        const uint64_t paint = sc.paint_cycles();
+        totalParse += parse;
+        totalPaint += paint;
+        out << "      {\"frame\": " << f
+            << ", \"parse_cycles\": " << parse
+            << ", \"paint_cycles\": " << paint << "}";
+        if (f + 1 != sim.stageCycles.size()) out << ",";
+        out << "\n";
+    }
+    out << "    ],\n";
+    out << "    \"parse_total\": " << totalParse << ",\n";
+    out << "    \"paint_total\": " << totalPaint << "\n";
+    out << "  }\n";
     out << "}\n";
 }
 
@@ -649,11 +968,21 @@ int main(int argc, char** argv) {
             throw std::runtime_error("sequence manifest VCL metadata count does not match reference frame count");
 
         Sim sim(args.width, args.height);
+        sim.initNativeCandidate(refFrames);
         sim.reset();
+
+        // Pre-fill DPB reference bank with real IDR frame data.
+        // This gives MC an honest reference for P-slice prediction.
+        sim.prefillDpbReference(golden);
+        // Prefill ticks are setup cost, not decode; reset cycle counter.
+        sim.cycles = 0;
+
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
         for (const auto& n : nals) {
+            const uint64_t injectStart = sim.cycles;
             for (std::size_t i = n.start; i < n.end; ++i) sim.feedByte(annexb[i]);
+            sim.injectionCycles += (sim.cycles - injectStart);
             fed += static_cast<uint32_t>(n.end - n.start);
             sim.top.ioctl_download = 0;
             sim.tick();
@@ -661,11 +990,13 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                const int frameWaitCycles = std::max(200000, args.width * args.height * 2);
+                const int frameWaitCycles = std::max(200000, args.width * args.height * 3);
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {
+                const uint64_t idleStart = sim.cycles;
                 for (int i = 0; i < 256; ++i) sim.tick();
+                sim.nonVclIdleCycles += (sim.cycles - idleStart);
             }
         }
 
@@ -677,6 +1008,38 @@ int main(int argc, char** argv) {
         printMb0Trace(sim.mb0Trace);
         writeTraceJson(args.traceJsonOut, sim.mb0Trace);
 
+        // Degeneracy assertion (parent directive #18): MB0 IDCT must produce
+        // non-zero residuals. If all 16 IDCT outputs are 0, the transform
+        // never ran (all-zero coefficients) and recon == pred trivially.
+        if (sim.mb0Trace.valid) {
+            bool allIdctZero = true;
+            for (int i = 0; i < 16; ++i) {
+                if (sim.mb0Trace.idct[static_cast<std::size_t>(i)] != 0) {
+                    allIdctZero = false;
+                    break;
+                }
+            }
+            if (allIdctZero) {
+                std::cerr << "FAIL degeneracy: MB0 IDCT residual is all-zero — "
+                             "transform was never exercised. Comparison is vacuous.\n";
+                return 1;
+            }
+            // Also: recon must differ from prediction (128). If recon==pred for
+            // all 16 pixels, the residual add had no effect.
+            bool allRecon128 = true;
+            for (int i = 0; i < 16; ++i) {
+                if (sim.mb0Trace.recon[static_cast<std::size_t>(i)] != 128) {
+                    allRecon128 = false;
+                    break;
+                }
+            }
+            if (allRecon128) {
+                std::cerr << "FAIL degeneracy: MB0 recon is all-128 — "
+                             "reconstruction did not change prediction.\n";
+                return 1;
+            }
+        }
+
         const CompareResult cr = compareFrames(sim.frames, golden, args.width, args.height);
         if (!args.candidateI420Out.empty()) {
             std::ofstream cand(args.candidateI420Out, std::ios::binary);
@@ -685,8 +1048,48 @@ int main(int argc, char** argv) {
                        static_cast<std::streamsize>(cr.candidateI420.size()));
             if (!cand) throw std::runtime_error("short write candidate I420: " + args.candidateI420Out);
         }
+        if (!args.nativeCandidateI420Out.empty()) {
+            std::ofstream cand(args.nativeCandidateI420Out, std::ios::binary);
+            if (!cand) throw std::runtime_error("cannot write native candidate I420: " + args.nativeCandidateI420Out);
+            cand.write(reinterpret_cast<const char*>(sim.nativeCandidate.data()),
+                       static_cast<std::streamsize>(sim.nativeCandidate.size()));
+            if (!cand) throw std::runtime_error("short write native candidate I420: " + args.nativeCandidateI420Out);
+        }
+        writeInterMetadataJson(args.interMetadataOut, sim.interCaptures, args.width, args.height);
+
+        // Degeneracy assertion (parent directive #18): DPB fetch must return
+        // non-trivial data. If all 256 Y pixels in a prediction are identical,
+        // the DPB fetch returned a constant fill (uninitialised/zero/stuck) and
+        // any comparison against it is meaningless — it would pass trivially.
+        int degenerateCaptures = 0;
+        for (const auto& cap : sim.interCaptures) {
+            bool allSame = true;
+            const uint8_t first = cap.predY[0];
+            for (int i = 1; i < 256; ++i) {
+                if (cap.predY[static_cast<std::size_t>(i)] != first) {
+                    allSame = false;
+                    break;
+                }
+            }
+            if (allSame) ++degenerateCaptures;
+        }
+        if (!sim.interCaptures.empty() && degenerateCaptures == static_cast<int>(sim.interCaptures.size())) {
+            std::cerr << "FAIL degeneracy: ALL " << sim.interCaptures.size()
+                      << " inter MB captures have constant Y prediction (value="
+                      << static_cast<int>(sim.interCaptures[0].predY[0])
+                      << "). DPB fetch returned no real data.\n";
+            return 1;
+        }
+        if (degenerateCaptures > 0) {
+            std::cout << "DEGENERACY_WARNING inter_captures_constant_y="
+                      << degenerateCaptures << "/" << sim.interCaptures.size()
+                      << " (partial DPB corruption)\n";
+        }
+
         writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
-                        annexb.size(), sim.cycles);
+                        annexb.size(), sim.cycles, sim);
+        const int mbsPerFrame = (args.width / 16) * (args.height / 16);
+        printStageCycles(sim, mbsPerFrame);
         std::cout << "FULL_FRAME_COMPARE summary width=" << args.width
                   << " height=" << args.height
                   << " frames=" << sim.frames.size()
@@ -694,6 +1097,9 @@ int main(int argc, char** argv) {
                   << " idr=" << idr
                   << " p=" << p
                   << " bytes=" << annexb.size()
+                  << " native_inter_mb_captures=" << sim.interCaptures.size()
+                  << " native_inter_ignored=" << sim.ignoredInterCaptures
+                  << " native_i420_dpb_writes=" << sim.nativeI420DpbWrites
                   << " cycles=" << sim.cycles
                   << " first_bad_frame=" << cr.firstBadFrame
                   << " strict_pass=" << (cr.exact ? 1 : 0)

@@ -76,19 +76,20 @@ public:
     static bool mainAlive();
 
     // Push a complete raw buffer as an ioctl download (index = OSD F# entry).
-    // For Plex core F1 frame store, index is typically 1.
+    // F1 frame presentation is not accepted here: the product frame-store
+    // contract is DDR YUV420p only.
     bool sendFileTx(const uint8_t* data, size_t len, uint8_t index = 1);
 
-    // Convenience: RGB24 WxH → RGB565 LE then sendFileTx.
+    // Convenience for non-F1 legacy/debug slots: RGB24 WxH → RGB565 LE then sendFileTx.
     bool sendRgb24Frame(const uint8_t* rgb, int w, int h, uint8_t index = 1);
 
-    // Push packed RGB565 LE (host word order: lo,hi per pixel). len must be w*h*2.
+    // Push packed RGB565 LE to non-F1 legacy/debug slots. len must be w*h*2.
     bool sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index = 1);
     bool sendRgb565Bytes(const uint8_t* rgb565le, size_t len, uint8_t index = 1);
 
     // C3 DDR frame-store path: planar I420/YUV420p via HPS DDR
     // (/dev/mem @ 0x30000000) plus format-tagged doorbell. RGB565 is not a
-    // valid DDR payload for this RTL; keep RGB565 only on the legacy SPI F1 path.
+    // valid F1 frame-store payload for this RTL.
     bool setDdrFrameLayout(const DdrFrameGeometry& geometry,
                            DdrFrameFormat format = DdrFrameFormat::Yuv420p);
     bool setDdrFrameLayout(int width, int height,
@@ -111,6 +112,10 @@ public:
         int64_t doorbell_us = 0;
         int64_t post_wait_us = 0;
         int64_t total_us = 0;
+        int64_t bank_reuse_wait_us = 0;
+        int64_t plxa_poll_us = 0;     // PLXA bank-release poll time (0 = fallback)
+        int plxa_poll_iters = 0;      // number of PLXA poll iterations
+        bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
     struct DdrDoorbellStatus {
@@ -118,18 +123,14 @@ public:
         int bank = 0;
         DdrFrameFormat format = DdrFrameFormat::Yuv420p;
     };
-    struct FrameStoreStatus {
-        uint8_t seq = 0;
-        uint8_t debug_state = 0;
-        uint16_t underrun_count = 0;
-    };
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
+    bool readBankRelease(BankReleaseStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
-    static constexpr uint32_t kDdrDoorbellPhys = 0x3007F000u;
-    static constexpr uint32_t kDdrDoorbellMagic = 0x504C584Bu; // "PLXK"
+    static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
+    static constexpr uint32_t kDdrDoorbellMagic = mailbox_abi::kPlxkMagic;
     static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------
@@ -288,12 +289,14 @@ private:
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
+    double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
     double mboxSeqMs_ = 0.0;
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
+    double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

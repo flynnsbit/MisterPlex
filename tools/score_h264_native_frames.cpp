@@ -186,7 +186,7 @@ int mbExactAllPlanes(const misterplex::recon::ReconResult& rec, const std::vecto
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string input, planes, output;
+    std::string input, planes, manifest, output;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         auto need = [&](const char* n) -> std::string {
@@ -198,21 +198,40 @@ int main(int argc, char** argv) {
         };
         if (a == "--input") input = need("--input");
         else if (a == "--planes") planes = need("--planes");
+        else if (a == "--manifest") manifest = need("--manifest");
         else if (a == "--output") output = need("--output");
         else {
-            std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv [--output out.json]\n";
+            std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv "
+                         "--manifest frame_planes.json [--output out.json]\n";
             return 2;
         }
     }
-    if (input.empty() || planes.empty()) {
-        std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv [--output out.json]\n";
+    if (input.empty() || planes.empty() || manifest.empty()) {
+        std::cerr << "usage: score_h264_native_frames --input stream.264 --planes golden.yuv "
+                     "--manifest frame_planes.json [--output out.json]\n";
         return 2;
     }
     auto blob = readFile(input);
     auto golden = readFile(planes);
+    auto manifestBlob = readFile(manifest);
     if (blob.empty() || golden.empty()) {
         std::cerr << "FAIL native score: missing input or planes\n";
         return 1;
+    }
+    if (manifestBlob.empty()) {
+        std::cerr << "FAIL native score: missing frame-plane manifest\n";
+        return 1;
+    }
+    const std::string manifestText(manifestBlob.begin(), manifestBlob.end());
+    if (manifestText.find("\"format\": \"misterplex.p3.frame_planes_golden.v1\"") == std::string::npos) {
+        std::cerr << "FAIL native score: unknown frame-plane manifest format\n";
+        return 2;
+    }
+    if (manifestText.find("\"loop_filter\": \"skip_loop_filter=all\"") == std::string::npos ||
+        manifestText.find("\"h264_loop_filter\": \"disabled\"") == std::string::npos) {
+        std::cerr << "FAIL native score: current recon output is undeblocked; refusing manifest without "
+                     "decoder.loop_filter=skip_loop_filter=all and provenance.h264_loop_filter=disabled\n";
+        return 9;
     }
     auto nals = splitAnnexB(blob);
     if (nals.size() < 2) {
@@ -348,7 +367,10 @@ int main(int argc, char** argv) {
     out << "  \"source\": {\"path\": \"" << jsonEscape(input) << "\", \"bytes\": " << blob.size()
         << ", \"sha256\": \"" << sha256Hex(blob) << "\"},\n";
     out << "  \"colorspace\": \"I420_NATIVE\",\n";
-    out << "  \"mechanism\": \"Native score compares host CAVLC/intra reconstructed I420 planes directly to FFmpeg yuv420p goldens; no RGB/RGB565 round-trip or presentation border is in the reference path.\",\n";
+    out << "  \"loop_filter\": \"skip_loop_filter=all\",\n";
+    out << "  \"h264_loop_filter\": \"disabled\",\n";
+    out << "  \"golden_manifest\": \"" << jsonEscape(manifest) << "\",\n";
+    out << "  \"mechanism\": \"Native score compares host CAVLC/intra reconstructed I420 planes directly to FFmpeg yuv420p goldens whose manifest declares decoder.loop_filter=skip_loop_filter=all and provenance.h264_loop_filter=disabled; no RGB/RGB565 round-trip, loop-filter mismatch, or presentation border is in the reference path.\",\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height
         << ", \"mb_total_per_frame\": " << mbTotal << "},\n";
     out << "  \"summary\": {\"frames\": " << frameIndex << ", \"idr\": " << idr

@@ -115,7 +115,8 @@ def main(path, fmt):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs="?", default="build/edge_markers.rgb")
-    parser.add_argument("--format", choices=("rgb24", "yuv420p"), default="rgb24")
+    parser.add_argument("path", nargs="?", default="build/edge_markers.yuv420p")
+    parser.add_argument("--format", choices=("rgb24", "yuv420p"), default="yuv420p",
+                        help="YUV420p is the frame-store-safe default; rgb24 is for offline image analysis only")
     args = parser.parse_args()
     main(args.path, args.format)

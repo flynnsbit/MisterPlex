@@ -69,6 +69,7 @@ inline PpsInfo parsePpsRbsp(const uint8_t* payload, size_t len) {
 }
 
 inline SliceHeader parseSliceHeaderRbsp(const uint8_t* payload, size_t len, uint8_t nal_type,
+                                        uint8_t nal_ref_idc,
                                         uint8_t log2_max_frame_num, uint8_t /*poc_type*/,
                                         const PpsInfo& pps) {
     SliceHeader out;
@@ -83,14 +84,55 @@ inline SliceHeader parseSliceHeaderRbsp(const uint8_t* payload, size_t len, uint
     out.is_idr = (nal_type == 5);
     if (out.is_idr)
         out.idr_pic_id = br.ue();
-    // poc_type 0/1 not handled (Baseline IDR uses poc_type 2 → no POC syntax)
-    // dec_ref_pic_marking() when nal_ref_idc != 0 (IDR always refs):
-    //   IDR: no_output_of_prior_pics_flag + long_term_reference_flag
-    //   non-IDR: adaptive_ref_pic_marking_mode_flag (+ MMCO loop if set)
-    // Host parses IDR path; non-IDR I/P with adaptive marking is out of scope for 3.3h.
-    if (out.is_idr) {
-        br.u(1); // no_output_of_prior_pics_flag
-        br.u(1); // long_term_reference_flag
+    // poc_type 0/1 not handled (Baseline uses poc_type 2 → no POC syntax)
+
+    // num_ref_idx_active_override (P/B slices only, not I/SI)
+    bool is_p_or_b = !isISliceType(out.slice_type) && (out.slice_type % 5) != 4;
+    if (is_p_or_b) {
+        uint32_t override = br.u(1);
+        if (override) {
+            br.ue(); // num_ref_idx_l0_active_minus1
+            // B-slice would also read l1; baseline has no B-slices
+        }
+    }
+
+    // ref_pic_list_modification (P/B slices only)
+    if (is_p_or_b) {
+        uint32_t rplm_flag = br.u(1);
+        if (rplm_flag) {
+            uint32_t idc;
+            do {
+                idc = br.ue();
+                if (idc == 0 || idc == 1)
+                    br.ue(); // abs_diff_pic_num_minus1
+                else if (idc == 2)
+                    br.ue(); // long_term_pic_num
+            } while (idc != 3 && br.ok);
+        }
+    }
+
+    // dec_ref_pic_marking
+    if (nal_ref_idc != 0) {
+        if (out.is_idr) {
+            br.u(1); // no_output_of_prior_pics_flag
+            br.u(1); // long_term_reference_flag
+        } else {
+            uint32_t adaptive = br.u(1);
+            if (adaptive) {
+                uint32_t mmco;
+                do {
+                    mmco = br.ue();
+                    if (mmco == 1 || mmco == 3)
+                        br.ue(); // difference_of_pic_nums_minus1
+                    if (mmco == 2)
+                        br.ue(); // long_term_pic_num
+                    if (mmco == 3 || mmco == 6)
+                        br.ue(); // long_term_frame_idx
+                    if (mmco == 4)
+                        br.ue(); // max_long_term_frame_idx_plus1
+                } while (mmco != 0 && br.ok);
+            }
+        }
     }
     out.slice_qp_delta = static_cast<int8_t>(br.se());
     int qp = static_cast<int>(pps.pic_init_qp) + out.slice_qp_delta;
@@ -170,7 +212,8 @@ inline NalChainInfo parseAnnexBChain(const uint8_t* data, size_t n) {
                 info.pps = parsePpsRbsp(pay, plen);
             } else if ((t == 1 || t == 5) && info.sps.valid && info.pps.valid &&
                        info.log2_max_frame_num) {
-                info.slice = parseSliceHeaderRbsp(pay, plen, t, info.log2_max_frame_num,
+                uint8_t nri = (hdr >> 5) & 3;
+                info.slice = parseSliceHeaderRbsp(pay, plen, t, nri, info.log2_max_frame_num,
                                                   info.poc_type, info.pps);
                 if (info.slice.valid)
                     break;

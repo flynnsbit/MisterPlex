@@ -3,7 +3,9 @@
 // ioctl_wr / ioctl_dout route into stream_path.sv.
 `default_nettype none
 
-module h264_multinal_stream_path_tb (
+module h264_multinal_stream_path_tb #(
+    parameter bit FAULT_RECON_SIG_ZERO = 1'b0
+) (
     input  wire        clk,
     input  wire        reset,
     input  wire        ioctl_download,
@@ -57,7 +59,8 @@ module h264_multinal_stream_path_tb (
     wire [1:0] residual_t1;
     wire residual_ok;
     wire signed [7:0] residual_dc;
-    wire signed [8:0] residual_coeff [0:15];
+    wire signed [15:0] residual_coeff [0:15];
+    wire [7:0] recon_sig_dut;
     wire recon_dbg_valid;
     wire fs_wr_en, fs_wr_reset, fs_swap;
     wire [15:0] fs_wr_pixel;
@@ -99,11 +102,12 @@ module h264_multinal_stream_path_tb (
         .residual_tc(residual_tc), .residual_t1(residual_t1),
         .residual_ok(residual_ok), .residual_dc(residual_dc), .residual_csum(residual_csum),
         .residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
-        .recon_sig(recon_sig), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
+        .recon_sig(recon_sig_dut), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
         .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
         .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
     );
 
+    assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;
     assign slice_parser_state = dut.slp.st;
 endmodule
 

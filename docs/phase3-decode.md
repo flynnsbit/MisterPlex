@@ -137,12 +137,13 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
   Host: FULL residual walk exists, but the former full-frame **maeY=U=V=0**
         status is **UNSUBSTANTIATED** as product decode evidence. Native-I420
         scoreboard evidence replaces it: the old MB0 phantom (`got=142 ref=65`
-        through RGB565) is clean (`got=73 ref=73 abs=0`), while full-frame
-        intra remains partial: 624×480 12f `510/1170` MB exact, Y MAE
-        `17.765057`; 320×240 12f `155/300`, Y MAE `6.050521` max `96`;
-        wcap fixture `207/300`. `h264_recon.hpp` still produces YUV420/RGB565
-        host references, but full-frame green must cite native-I420 plane
-        evidence, not RGB565 presentation output.
+        through RGB565) is clean (`got=73 ref=73 abs=0`). The first native-I420
+        full-frame ratchet numbers (624×480 `510/1170`, 320×240 `155/300`,
+        wcap `207/300`) are also retired because the reference silently kept
+        in-loop deblocking enabled while RTL output was no-deblock. Full-frame
+        green must cite native-I420 plane evidence with loop-filter state
+        declared/refused in provenance, not RGB565 presentation output or a
+        silent FFmpeg default.
   FPGA: ST_CHRPRED (I16) + ST_I4MODE/ST_CBP (I_NxN); gray I16 HW green earlier
   **Next was 3.3i (now done):** host SPI present + STREAM wire — see below.
     - Optional deblock filter (not needed for no-LF gold)
@@ -150,9 +151,9 @@ Phase 3.3h (host I-slice recon — **MB0/root-cause evidence backed; frame-wide 
 
 Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   STREAM=1: annex-B demux → retain SPS/PPS → IDR/I VCL → `recon::reconISlice`
-    → YUV420 → RGB565 → scale 320×240 → **F1** `sendRgb565Frame` (frame_store)
+    → I420/YUV420p → **F1** `sendYuv420pFrameDdr` (frame_store)
   Still feeds **F3** for FPGA decode_stub / residual probes (diagnostic)
-  FFmpeg RGB: fallback F1 until first recon present; then recon owns F1
+  FFmpeg RGB: fb0 fallback only; F1 frame-store sends remain YUV420p DDR-only
   PRESENT=both: FFmpeg continuous fb0 + recon F1; companion :3005 unchanged
   Logs: `recon frame ok #N WxH mb=…`; session `recon=N`
   Unit: `test_cavlc_dc` FULL walk + recon host check; ARM `-I host`.
@@ -160,8 +161,8 @@ Phase 3.3i (done — host I-slice recon → F1 in misterplexd STREAM path):
   paired with native-I420 plane provenance.
   **HW lab 192.168.1.183 (this fire):**
     - Baseline smoke: `recon_ok=3 recon_fail=0 present=3` f1ms≈170
-    - High/CABAC `test.mp4`: fail_reason=`cabac` → FFmpeg RGB F1 continues (frames>0)
-    - Manual F1 push recon RGB565: `has_frame=1` (~172–200 ms / 153600 B ≈ 0.75–0.9 MB/s SPI)
+    - High/CABAC `test.mp4`: fail_reason=`cabac` → fb0 fallback continues when enabled
+    - Legacy manual RGB565 F1 push is retired; use DDR YUV420p frame pushes
     - F3 residual: `res_ok=1 res_tc=8 res_t1=3` (test_f3_residual.sh green)
 
 Phase 3.3j (done this fire — hybrid present + residual-ready stub paint):
@@ -301,12 +302,13 @@ Phase 3.3l (plan — inv quant + 4×4 IDCT + Intra pred):
     formerly reported `vector_bytes=6739 mb=300/300 frame=320x240 maeY=0.000000`.
     That is now **UNSUBSTANTIATED** for product full-frame decode because the
     measurement path was RGB565/presentation-contaminated. The evidence-backed
-    native-I420 ratchets are:
-    - `plex_inter_p16_624x480_12f`: intra `510/1170` MB exact, Y MAE `17.765057`;
-      11 P frames expected-red.
-    - `plex_inter_p16_320x240_12f`: intra `155/300` MB exact, Y MAE `6.050521`,
-      max `96`; 11 P frames expected-red.
-    - `wcap_residual14_idr_plus_p`: intra `207/300` MB exact; 1 P frame expected-red.
+    first native-I420 ratchets (`plex_inter_p16_624x480_12f` `510/1170`,
+    `plex_inter_p16_320x240_12f` `155/300`, `wcap_residual14_idr_plus_p`
+    `207/300`) are also retired because their reference silently had in-loop
+    deblocking enabled while RTL output did not. Current full-frame status waits
+    for no-deblock native-I420 ratchets; first real localized mismatch is MB 182
+    `(26,4)`, `Y(420,72)`, `got=107 ref=145`, I16x16 vertical, QP 0, pred=106,
+    AC all zero, dequant DC=60, IDCT=1.
     The host CSV can remain a source-level regression fixture, but it must not be
     cited as a full-frame product PASS.
   **Milestones:** 3.3l-0 ✅ → 3.3l-1 host/status ✅ / RBF dabdaeb0 hard csum FAIL → 3.3l-2 MB0 host+handoff ✅ / paint **BLOCKED** →
@@ -409,7 +411,7 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     **Wall time after ARM kick batching + kick/frame verify (not busy-only):**
     | path | wall time | effective | unique fps |
     |------|-----------|-----------|------------|
-    | SPI F1 `push_frame --index 1` | **~112 ms** (5 runs: 110.9–116.6) | **~1.37 MB/s** | **≈8.9 fps** |
+    | legacy SPI F1 RGB path | retired/refused (non-YUV frame-store payload) | n/a | n/a |
     | DDR `push_frame --ddr` | **~16.5 ms** (5 runs: 16.0–16.8) | **~9.3 MB/s** | **≈60 fps** |
     mmap alone ~1.9 ms; remainder is one MainPause SPI session + DMA settle.
     Log: `/tmp/misterplex-ddr-agent.txt`. DDR ≈ **7× SPI** → real-time 24/30 @320×240 OK.
@@ -432,12 +434,13 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     - Functional proof: after reset `has_frame=0` → mmap + status[12] 0→1 → `has_frame=1`.
     - `ddr_busy` rarely latched: status_req updates only on status_set; DMA ~1–3 ms so
       busy clears before SPI poll samples. Idle busy=0 is expected, not missing IP.
-  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; SPI F1 still works.
+  **Does not break** Phase 2: PRESENT=fb0 never opens FPGA path; F1 remains DDR YUV420p-only.
 
   **RBF rebuild status (lab 2026-07-24):** Sole Quartus with `NUM_PARALLEL_PROCESSORS=2`
   completed map→fit→asm (ALMs ~22%, M10K ~74%). Deployed `_Utility/Plex.rbf` includes
-  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **prefers DDR
-  with SPI fallback** (fallback only if kick/frame verify fails).
+  Template HSync, residual_dc, and `ddram_frame_rd` RTL. Product **uses DDR
+  YUV420p only for F1**; kick/frame failures stay visible instead of falling
+  back to legacy RGB/SPI.
 
   **Build / lab status:**
     - ARM static: `make arm-plexd` green (`misterplexd` + `push_frame --ddr` OK ~16 ms)
@@ -454,9 +457,9 @@ Phase 3.1b (DDR bulk path — implemented this fire):
 
 1. Build RBF: `make build-rbf` (Quartus via misterfpga-dev).
 2. Deploy: `./scripts/deploy_plex_core.sh`.
-3. `python3 scripts/gen_test_frame.py /tmp/plex_test_320x240.rgb565` and copy to SD.
-4. OSD: load frame via **F1**, set **Video source = Frame store**.
-5. Expect yellow border + color bars + orange diagonal (not internal pattern block).
+3. `python3 scripts/gen_edge_markers.py --format yuv420p build/plex_test_320x240.yuv420p`.
+4. Push with `push_frame --ddr --yuv420p 320x240 build/plex_test_320x240.yuv420p`.
+5. Expect edge-marker frame and `has_frame=1`.
 
 ## H.264 soft-core evaluation notes
 

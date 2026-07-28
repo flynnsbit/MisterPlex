@@ -20,11 +20,11 @@ module decode_stub_recon_tb #(
 	output wire        busy,
 	output wire [15:0] frames_out
 );
-	wire signed [8:0] coeff9 [0:15];
+	wire signed [15:0] coeff16 [0:15];
 	genvar i;
 	generate
 		for (i = 0; i < 16; i = i + 1) begin : g_coeff
-			assign coeff9[i] = FAULT_PRED_ONLY ? 9'sd0 : coeff[i][8:0];
+			assign coeff16[i] = FAULT_PRED_ONLY ? 16'sd0 : coeff[i];
 		end
 	endgenerate
 
@@ -35,7 +35,8 @@ module decode_stub_recon_tb #(
 
 	decode_stub #(
 		.WIDTH(320),
-		.HEIGHT(240)
+		.HEIGHT(240),
+		.ENABLE_DPB_REF_SEAM(1'b0)
 	) dut (
 		.clk(clk),
 		.reset(reset),
@@ -50,12 +51,19 @@ module decode_stub_recon_tb #(
 		.slice_type(8'd7),
 		.slice_is_i(1'b1),
 		.slice_valid(1'b0),
+		.first_mb_addr(16'd0),
+		.has_mb_type(1'b0),
+		.first_mb_p_skip(1'b0),
+		.first_mb_part_mode(3'd0),
+		.first_mb_part_count(3'd0),
+		.first_mb_uses_sub_mb(1'b0),
+		.first_mb_intra(1'b1),
 		.residual_ok(residual_ok),
 		.residual_tc(5'd8),
 		.residual_dc(coeff[0][7:0]),
 		.residual_valid(residual_ok),
 		.slice_qp(slice_qp),
-		.residual_coeff(coeff9),
+		.residual_coeff(coeff16),
 		.recon_sig(recon_sig),
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),

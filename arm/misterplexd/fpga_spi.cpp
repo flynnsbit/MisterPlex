@@ -35,6 +35,7 @@ constexpr uint8_t FIO_FILE_INDEX = 0x55;
 constexpr uint8_t UIO_SET_STATUS2 = 0x1e;
 constexpr uint8_t UIO_GET_STATUS = 0x29;
 constexpr uint8_t UIO_GET_STRING = 0x14;
+constexpr int kDdrBankReuseMinUs = 40000;
 
 // Serialize all HPS↔FPGA SPI (F1/F2/F3 + status). Audio + video + stream threads
 // share one FpgaSpi; concurrent sendFileTx without this races GPO and Main pause.
@@ -428,6 +429,7 @@ void FpgaSpi::close() {
         fd_ = -1;
     }
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
 }
 
@@ -696,6 +698,7 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat
     ddrLayout_ = next;
     releaseDdrMap();
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
     doorbellSeq_ = 0;
     clearErr();
     return true;
@@ -711,6 +714,7 @@ void FpgaSpi::setDdrMemSync(bool on) {
     ddrMemSync_ = on;
     releaseDdrMap();
     ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
 }
 
 void FpgaSpi::releaseDdrMap() {
@@ -763,8 +767,13 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
     const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
     const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
-    dw[0] = kDdrDoorbellMagic;
+    // Publish the complete token before magic. On a cold mailbox this prevents
+    // the reader from seeing PLXK paired with a zero/old format; on a warm
+    // mailbox the already-valid magic may expose the new token immediately,
+    // which is safe because sendDdrFrame fences payload writes before this call.
     dw[1] = hi;
+    __sync_synchronize();
+    dw[0] = kDdrDoorbellMagic;
     __sync_synchronize();
     return true;
 }
@@ -837,30 +846,6 @@ bool FpgaSpi::readDdrDoorbellStatus(DdrDoorbellStatus& status) {
         status.seq = seq;
         status.bank = bank;
         status.format = ddrLayout_.format;
-        return true;
-    }
-    return false;
-}
-
-bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& status) {
-    status = FrameStoreStatus{};
-    if (!ensureDdrMap())
-        return false;
-    const size_t kOff = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
-    if (kOff + 8 > ddrMapLen_)
-        return false;
-    volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo = mb[0];
-        const uint32_t hi = mb[1];
-        __sync_synchronize();
-        if (mb[0] != lo || mb[1] != hi)
-            continue;
-        if (lo != kUnderrunMailboxMagic)
-            return false;
-        status.seq = static_cast<uint8_t>(hi & 0xFFu);
-        status.debug_state = static_cast<uint8_t>((hi >> 8) & 0xFFu);
-        status.underrun_count = static_cast<uint16_t>(hi >> 16);
         return true;
     }
     return false;
@@ -1236,6 +1221,11 @@ bool FpgaSpi::setStatusBits(const int* bit_val_pairs, int n_pairs) {
 }
 
 bool FpgaSpi::sendFileTx(const uint8_t* data, size_t len, uint8_t index) {
+    if (index == 1) {
+        setErr("non-YUV frame send refused: SPI F1 RGB frame path is disabled; use DDR "
+               "YUV420p (sendYuv420pFrameDdr / push_frame --ddr --yuv420p)");
+        return false;
+    }
     if (!ok() || !data || !len) {
         setErr("sendFileTx: not open or empty");
         return false;
@@ -1326,8 +1316,19 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
         return false;
     }
     if (ddrKickMode_ < 0) {
-        setErr("sendDdrFrame: DDR path previously unavailable");
-        return false;
+        // Allow re-probe after a cooldown so transient FPGA stalls (e.g. core
+        // reload, timing recovery) don't permanently kill the frame path.
+        constexpr double kReprobeIntervalMs = 5000.0;
+        const double nowMs = std::chrono::duration<double, std::milli>(
+                                 std::chrono::steady_clock::now().time_since_epoch())
+                                 .count();
+        if (ddrKickFailMs_ >= 0.0 && (nowMs - ddrKickFailMs_) < kReprobeIntervalMs) {
+            setErr("sendDdrFrame: DDR path previously unavailable (re-probe in " +
+                   std::to_string(static_cast<int>(kReprobeIntervalMs - (nowMs - ddrKickFailMs_))) +
+                   " ms)");
+            return false;
+        }
+        ddrKickMode_ = 0;
     }
     if (!ok() && !open())
         return false;
@@ -1337,11 +1338,72 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
 
-    // Brief pre-kick yield so previous DMA (~1–3 ms) is done. Tear-free display
-    // is handled in RTL (swap on vsync); do NOT SPI-poll swap_pending every frame
-    // (status latch is sparse and was adding ~100 ms → pfps collapse).
+    // --- Bank selection via PLXD bank-release ACK ---
+    // If the FPGA publishes a valid PLXD mailbox, use it to determine which
+    // bank is free instead of relying on fixed delays.  Fall back to the old
+    // timing-based mitigation only when PLXD is absent (pre-PLXD RBF).
+    //
+    // PLXD semantics (w-a3 b187df5):
+    //   free_bank_mask != 0 → at least one bank is safe to write
+    //   free_bank_mask == 0 → swap pending, both banks in use; poll or timeout
     auto tPrep0 = std::chrono::steady_clock::now();
-    usleep(1500);
+    bool plxdUsed = false;
+    {
+        BankReleaseStatus brs;
+        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        int plxdIters = 0;
+        if (readBankRelease(brs)) {
+            // PLXD present — use it for bank selection.
+            if (brs.anyFree()) {
+                bank = brs.freeBank();
+                plxdUsed = true;
+            } else {
+                // Both banks in use (swap pending). Poll until free or timeout.
+                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+                    usleep(1000);
+                    ++plxdIters;
+                    if (readBankRelease(brs) && brs.anyFree()) {
+                        bank = brs.freeBank();
+                        plxdUsed = true;
+                        break;
+                    }
+                }
+                if (!plxdUsed) {
+                    // LOUD timeout — never silently fall back to old delay.
+                    fprintf(stderr,
+                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
+                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
+                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(brs.disp_bank),
+                            static_cast<int>(brs.swap_pending));
+                    // Use the opposite of disp_bank as a best-effort guess.
+                    bank = brs.disp_bank ^ 1;
+                }
+            }
+            auto tPlxd1 = std::chrono::steady_clock::now();
+            timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
+            timing.plxa_poll_iters = plxdIters;
+            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+        } else {
+            // PLXD absent — pre-PLXD RBF or mailbox not yet written.
+            // Fall back to the old timing-based mitigation: brief yield for
+            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
+            usleep(1500);
+            const double nowMs = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+            const double lastBankMs = lastDdrBankDoorbellMs_[bank];
+            if (lastBankMs >= 0.0) {
+                const int64_t sinceUs =
+                    static_cast<int64_t>((nowMs - lastBankMs) * 1000.0);
+                if (sinceUs < kDdrBankReuseMinUs) {
+                    const int64_t waitUs = kDdrBankReuseMinUs - sinceUs;
+                    usleep(static_cast<useconds_t>(waitUs));
+                    timing.bank_reuse_wait_us = waitUs;
+                }
+            }
+        }
+    }
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
@@ -1367,6 +1429,21 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     bool saw_kick = false;
     bool saw_frame = false;
     const bool first = (ddrKickMode_ == 0);
+    auto frameStoreStatusSuffix = [this]() -> std::string {
+        FrameStoreStatus st{};
+        if (readFrameStoreStatus(st)) {
+            if (st.nonYuvDoorbellRejected())
+                return std::string(": ") + frameStoreDebugDescription(st.debug_state);
+            char buf[128]{};
+            std::snprintf(buf, sizeof(buf),
+                          ": frame-store status frame_debug=0x%02x frame_seq=%u "
+                          "frame_underrun=%u",
+                          static_cast<unsigned>(st.debug_state), static_cast<unsigned>(st.seq),
+                          static_cast<unsigned>(st.underrun_count));
+            return std::string(buf);
+        }
+        return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
+    };
 
     // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
     bool kicked = false;
@@ -1410,7 +1487,11 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
             const bool ok = saw_busy || (saw_kick && saw_frame) || saw_frame;
             if (!ok) {
                 ddrKickMode_ = -1;
-                setErr("sendDdrFrame: no kick/frame via SPI or doorbell");
+                ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count();
+                setErr("sendDdrFrame: no kick/frame via SPI or doorbell" +
+                       frameStoreStatusSuffix());
                 return false;
             }
             ddrKickMode_ = 2;
@@ -1420,14 +1501,21 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.doorbell_us = elapsedUs(tKick0, tKick1);
     if (first && ddrKickMode_ == 0) {
         ddrKickMode_ = -1;
-        setErr("sendDdrFrame: could not kick DDR path");
+        ddrKickFailMs_ = std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+        setErr("sendDdrFrame: could not kick DDR path" + frameStoreStatusSuffix());
         return false;
     }
+    lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count();
 
     // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
     // in frame_store prevents tears without host blocking on swap_pending.
+    // When PLXA is active, skip: the next frame's PLXA poll handles the wait.
     auto tPost0 = std::chrono::steady_clock::now();
-    if (!first)
+    if (!first && !timing.plxa_used)
         usleep(500);
     auto tPost1 = std::chrono::steady_clock::now();
     timing.post_wait_us = elapsedUs(tPost0, tPost1);
@@ -1438,6 +1526,83 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     lastDdrTiming_ = timing;
     clearErr();
     return true;
+}
+
+bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
+        setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    uint32_t lastLo = 0;
+    uint32_t lastHi = 0;
+    bool stable = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        lastLo = lo1;
+        lastHi = hi1;
+        stable = (lo0 == lo1 && hi0 == hi1);
+        if (decodeStableFrameStoreStatus(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    if (stable && lastLo != kUnderrunMailboxMagic) {
+        char buf[160]{};
+        std::snprintf(buf, sizeof(buf),
+                      "readFrameStoreStatus: PLXF mailbox absent/unwritten "
+                      "(lo=0x%08x hi=0x%08x)",
+                      static_cast<unsigned>(lastLo), static_cast<unsigned>(lastHi));
+        setErr(buf);
+        return false;
+    }
+    setErr("readFrameStoreStatus: PLXF mailbox not valid/stable");
+    return false;
+}
+
+bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        usleep(200);
+    }
+    setErr("readBankRelease: PLXD mailbox absent or unstable");
+    return false;
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,

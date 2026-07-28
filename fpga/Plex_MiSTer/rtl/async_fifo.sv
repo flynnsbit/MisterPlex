@@ -30,14 +30,17 @@ module async_fifo #(
 		bin2gray = (b >> 1) ^ b;
 	endfunction
 
-	wire [AW:0] wr_bin_next  = wr_bin + ((wr_en && !wr_full) ? PTR_ONE : '0);
+	wire [AW:0] wr_gray_full = {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]};
+	wire        wr_full_now  = (wr_gray == wr_gray_full);
+	wire        wr_accept    = wr_en && !wr_full_now;
+	wire [AW:0] wr_bin_next  = wr_bin + (wr_accept ? PTR_ONE : '0);
 	wire [AW:0] wr_gray_next = bin2gray(wr_bin_next);
 	wire [AW:0] rd_bin_next  = rd_bin + ((rd_en && !rd_empty) ? PTR_ONE : '0);
 	wire [AW:0] rd_gray_next = bin2gray(rd_bin_next);
 
-	assign wr_full = (wr_gray_next == {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]});
+	assign wr_full = wr_full_now;
 	wire [AW:0] wr_bin_plus4_gray = bin2gray(wr_bin + {{AW-2{1'b0}}, 3'd4});
-	assign wr_almost_full = wr_full || (wr_bin_plus4_gray == {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]});
+	assign wr_almost_full = wr_full_now || (wr_bin_plus4_gray == wr_gray_full);
 	assign rd_empty = (rd_gray == wr_gray_r2);
 	assign rd_data = mem[rd_bin[AW-1:0]];
 
@@ -50,7 +53,7 @@ module async_fifo #(
 		end else begin
 			rd_gray_w1 <= rd_gray;
 			rd_gray_w2 <= rd_gray_w1;
-			if (wr_en && !wr_full) begin
+			if (wr_accept) begin
 				mem[wr_bin[AW-1:0]] <= wr_data;
 				wr_bin <= wr_bin_next;
 				wr_gray <= wr_gray_next;

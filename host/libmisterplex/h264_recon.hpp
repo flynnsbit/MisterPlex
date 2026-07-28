@@ -53,6 +53,9 @@ struct LumaMbTrace {
     int mb_type = 0;
     int qp = 0;
     int pred_mode = -1;
+    int chroma_mode = -1;
+    int cbp_luma = -1;
+    int cbp_chroma = -1;
     std::array<uint8_t, 256> pred{};
     std::array<uint8_t, 256> recon{};
     std::array<Luma4x4Trace, 16> blocks{};
@@ -460,6 +463,16 @@ inline int chromaQp(int qpy, int offset) {
     return kChromaQP[q];
 }
 
+inline int wrapQpY(int qpy, int delta) {
+    // H.264 8.5.1: QP_Y advances modulo 52 for 8-bit video. Clamping negative
+    // deltas to zero corrupts later low-QP macroblocks after rate-control wraps.
+    int v = qpy + delta;
+    v %= 52;
+    if (v < 0)
+        v += 52;
+    return v;
+}
+
 // Inverse chroma DC 2x2 Hadamard + dequant (4:2:0).
 // coeff[] is CAVLC scan order matching FFmpeg ff_h264_chroma_dc_scan:
 //   scan 0 → (0,0), 1 → (1,0), 2 → (0,1), 3 → (1,1).
@@ -844,13 +857,14 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 int cbp = walk_detail::kMeIntra[code];
                 int cbp_l = cbp & 15;
                 int cbp_c = cbp >> 4;
+                if (traceMb) {
+                    trace->mb.chroma_mode = chromaMode;
+                    trace->mb.cbp_luma = cbp_l;
+                    trace->mb.cbp_chroma = cbp_c;
+                }
                 if (cbp != 0) {
                     int d = br.se();
-                    qp += d;
-                    if (qp < 0)
-                        qp = 0;
-                    if (qp > 51)
-                        qp = 51;
+                    qp = wrapQpY(qp, d);
                 }
                 if (traceMb) {
                     trace->mb.qp = qp;
@@ -1038,13 +1052,13 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
                 int cbp_l = (x / 12) ? 15 : 0;
                 int chromaMode = static_cast<int>(br.ue());
                 int d = br.se();
-                qp += d;
-                if (qp < 0)
-                    qp = 0;
-                if (qp > 51)
-                    qp = 51;
-                if (traceMb)
+                qp = wrapQpY(qp, d);
+                if (traceMb) {
                     trace->mb.qp = qp;
+                    trace->mb.chroma_mode = chromaMode;
+                    trace->mb.cbp_luma = cbp_l;
+                    trace->mb.cbp_chroma = cbp_c;
+                }
 
                 uint8_t above[16], left[16], tl = 128;
                 for (int t = 0; t < 16; ++t) {

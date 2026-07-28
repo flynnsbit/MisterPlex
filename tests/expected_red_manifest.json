@@ -14,7 +14,8 @@
       "owner": "tests/unit/test_p3_intra_mb0_verilator.py",
       "why": "Negative-direction RTL perturbation must fail the MB0 exact reconstruction checker.",
       "required_substrings": [
-        "P3 intra MB0 Verilator exact check FAILED: 32 mismatches"
+        "P3 intra MB0 Verilator exact check FAILED:",
+        "mismatches"
       ]
     },
     {

@@ -113,7 +113,7 @@ wire [4:0]   residual_tc;
 wire [1:0]   residual_t1;
 wire signed [7:0] residual_dc;
 wire [7:0]   residual_csum;
-wire signed [8:0] residual_coeff [0:15];
+wire signed [15:0] residual_coeff [0:15];
 wire         residual_place_pulse;
 wire [7:0]   recon_sig;
 wire [7:0]   recon_dbg;
@@ -781,7 +781,8 @@ present_core #(
 
 `ifdef DDR_FRAME_STORE
 ddr_bus_arbiter ddr_arb (
-	.clk(clk_sys),
+	.clk(clk_ddr),
+	.clk_m1(clk_sys),
 	.reset(reset),
 	.m1_want(stream_ddr_bus_want),
 	.m0_busy(present_ddr_busy),
