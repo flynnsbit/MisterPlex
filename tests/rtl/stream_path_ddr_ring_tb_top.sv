@@ -145,6 +145,7 @@ module stream_path_ddr_ring_tb_top #(
 		.residual_dc(residual_dc),
 		.residual_csum(residual_csum),
 		.residual_coeff(residual_coeff),
+		.mb_syntax_accept(1'b1),
 		.residual_place_pulse(residual_place_pulse),
 		.recon_sig(recon_sig),
 		.recon_dbg(recon_dbg),

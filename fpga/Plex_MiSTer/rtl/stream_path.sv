@@ -99,6 +99,28 @@ module stream_path #(
 	output wire [9:0]  first_mb_residual_bit_offset,
 	output wire [3:0]  first_mb_cbp_luma,
 	output wire [1:0]  first_mb_cbp_chroma,
+	output wire        mb_syntax_valid,
+	output wire [15:0] mb_syntax_addr,
+	output wire [7:0]  mb_syntax_x,
+	output wire [7:0]  mb_syntax_y,
+	output wire [3:0]  mb_syntax_class,
+	output wire [4:0]  mb_syntax_type,
+	output wire        mb_syntax_p_skip,
+	output wire [2:0]  mb_syntax_part_mode,
+	output wire [2:0]  mb_syntax_part_count,
+	output wire        mb_syntax_uses_sub_mb,
+	output wire        mb_syntax_unsupported,
+	output wire [1:0]  mb_syntax_ref_idx_l0 [0:3],
+	output wire signed [15:0] mb_syntax_mvd_x_qpel [0:3],
+	output wire signed [15:0] mb_syntax_mvd_y_qpel [0:3],
+	output wire [1:0]  mb_syntax_sub_mb_type [0:3],
+	output wire [3:0]  mb_syntax_cbp_luma,
+	output wire [1:0]  mb_syntax_cbp_chroma,
+	output wire signed [5:0] mb_syntax_mb_qp_delta,
+	output wire [5:0]  mb_syntax_qpy,
+	output wire [5:0]  mb_syntax_qpc,
+	output wire [15:0] mb_syntax_residual_bit_offset,
+	input  wire        mb_syntax_accept,
 	// R-csum6 Rank3: 1-cycle ST_PLACE pulse for status residual sticky freeze
 	output wire        residual_place_pulse,
 	output wire [7:0]  recon_sig,
@@ -424,6 +446,28 @@ module stream_path #(
 		.luma4x4_source_ok(luma4x4_source_ok),
 		.luma4x4_source_bit_end(luma4x4_source_bit_end),
 		.core_i4_modes(i4_modes),
+		.mb_syntax_accept(mb_syntax_accept),
+		.mb_syntax_valid(mb_syntax_valid),
+		.mb_syntax_addr(mb_syntax_addr),
+		.mb_syntax_x(mb_syntax_x),
+		.mb_syntax_y(mb_syntax_y),
+		.mb_syntax_class(mb_syntax_class),
+		.mb_syntax_type(mb_syntax_type),
+		.mb_syntax_p_skip(mb_syntax_p_skip),
+		.mb_syntax_part_mode(mb_syntax_part_mode),
+		.mb_syntax_part_count(mb_syntax_part_count),
+		.mb_syntax_uses_sub_mb(mb_syntax_uses_sub_mb),
+		.mb_syntax_unsupported(mb_syntax_unsupported),
+		.mb_syntax_ref_idx_l0(mb_syntax_ref_idx_l0),
+		.mb_syntax_mvd_x_qpel(mb_syntax_mvd_x_qpel),
+		.mb_syntax_mvd_y_qpel(mb_syntax_mvd_y_qpel),
+		.mb_syntax_sub_mb_type(mb_syntax_sub_mb_type),
+		.mb_syntax_cbp_luma(mb_syntax_cbp_luma),
+		.mb_syntax_cbp_chroma(mb_syntax_cbp_chroma),
+		.mb_syntax_mb_qp_delta(mb_syntax_mb_qp_delta),
+		.mb_syntax_qpy(mb_syntax_qpy),
+		.mb_syntax_qpc(mb_syntax_qpc),
+		.mb_syntax_residual_bit_offset(mb_syntax_residual_bit_offset),
 		.busy(decode_core_busy),
 		.decode_state(decode_core_state),
 		.current_mb_addr(decode_core_current_mb_addr),
@@ -512,6 +556,14 @@ module stream_path #(
 	             |decode_core_frame_mb_count | |decode_core_current_mb_addr |
 	             |decode_core_rbsp_request_offset | decode_core_rbsp_request_valid |
 	             decode_core_busy | decode_core_error |
+	             mb_syntax_valid | |mb_syntax_addr | |mb_syntax_x | |mb_syntax_y |
+	             |mb_syntax_class | |mb_syntax_type | mb_syntax_p_skip |
+	             |mb_syntax_part_mode | |mb_syntax_part_count | mb_syntax_uses_sub_mb |
+	             mb_syntax_unsupported | |mb_syntax_ref_idx_l0[0] |
+	             |mb_syntax_mvd_x_qpel[0] | |mb_syntax_mvd_y_qpel[0] |
+	             |mb_syntax_sub_mb_type[0] | |mb_syntax_cbp_luma | |mb_syntax_cbp_chroma |
+	             |mb_syntax_mb_qp_delta | |mb_syntax_qpy | |mb_syntax_qpc |
+	             |mb_syntax_residual_bit_offset |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
 

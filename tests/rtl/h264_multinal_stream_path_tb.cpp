@@ -65,6 +65,14 @@ int main(int argc, char** argv) {
         int cavlcI4Mode0 = -1;
         int cavlcI4Mode7 = -1;
         int cavlcI4Mode15 = -1;
+        int mbSyntaxRecords = 0;
+        int mbSyntaxINxN = 0;
+        int mbSyntaxP16 = 0;
+        int mbSyntaxP16x8 = 0;
+        int mbSyntaxP8x16 = 0;
+        int mbSyntaxUnsupported = 0;
+        int mbSyntaxBadQp = 0;
+        int mbSyntaxBadCbp = 0;
 
         auto tick = [&]() {
             dut.clk = 0;
@@ -98,6 +106,24 @@ int main(int argc, char** argv) {
                 ++cavlcDone;
                 if (!dut.luma4x4_source_ok)
                     ++cavlcBadDone;
+            }
+            if (dut.mb_syntax_valid) {
+                ++mbSyntaxRecords;
+                const int cls = static_cast<int>(dut.mb_syntax_class);
+                if (cls == 7)
+                    ++mbSyntaxINxN;
+                else if (cls == 2)
+                    ++mbSyntaxP16;
+                else if (cls == 3)
+                    ++mbSyntaxP16x8;
+                else if (cls == 4)
+                    ++mbSyntaxP8x16;
+                if (dut.mb_syntax_unsupported)
+                    ++mbSyntaxUnsupported;
+                if (dut.mb_syntax_qpy > 51 || dut.mb_syntax_qpc > 51)
+                    ++mbSyntaxBadQp;
+                if (dut.mb_syntax_p_skip && (dut.mb_syntax_cbp_luma != 0 || dut.mb_syntax_cbp_chroma != 0))
+                    ++mbSyntaxBadCbp;
             }
             if (dut.slice_valid && !prevSliceValid) {
                 const uint8_t st = static_cast<uint8_t>(dut.slice_type) % 5;
@@ -182,6 +208,12 @@ int main(int argc, char** argv) {
         expect(cavlcNonzeroTc > 0, "product CAVLC luma handoff saw no coded residual coefficients");
         expect(cavlcCbpNonzeroSeen, "product CAVLC first MB cbp_luma was zero during handoff");
         expect(cavlcLastQp >= 0, "product CAVLC luma handoff never published QP");
+        expect(mbSyntaxRecords >= 2, "decode_core MB syntax handoff did not publish I and P records");
+        expect(mbSyntaxINxN >= 1, "decode_core MB syntax handoff missed I_NxN record");
+        expect(mbSyntaxP16 >= 1, "decode_core MB syntax handoff missed P_L0_16x16 record");
+        expect(mbSyntaxUnsupported == 0, "decode_core MB syntax handoff flagged supported fixture unsupported");
+        expect(mbSyntaxBadQp == 0, "decode_core MB syntax handoff published invalid QPy/QPc");
+        expect(mbSyntaxBadCbp == 0, "decode_core MB syntax handoff published nonzero CBP for P_Skip");
         expect(sawI, "I-slice parse not observed");
         expect(idleBetweenVcl, "slice_hdr_parser ST_IDLE was not observed between IDR and P VCLs");
         expect(sawP, "P-slice parse not observed after IDR; parser did not prove idle/re-entry");
@@ -191,6 +223,10 @@ int main(int argc, char** argv) {
             expect(pFirstMbMode1 == 2, "expected two first-MB P_L0_16x8 slices");
             expect(pFirstMbMode2 == 1, "expected one first-MB P_L0_8x16 slice");
             expect(pFirstMbBad == 0, "unexpected first P macroblock syntax/classification");
+            expect(mbSyntaxRecords >= 12, "expected decode_core syntax records for IDR plus 11 P slices");
+            expect(mbSyntaxP16 == 8, "expected eight decode_core P_L0_16x16 syntax records");
+            expect(mbSyntaxP16x8 == 2, "expected two decode_core P_L0_16x8 syntax records");
+            expect(mbSyntaxP8x16 == 1, "expected one decode_core P_L0_8x16 syntax record");
             expect(reconSig3bCycles > 0, "parsed P DPB/MC recon signature missing");
         }
         expect(dut.stub_frames >= 2, "decode_stub did not consume multiple VCL pulses");
@@ -215,6 +251,12 @@ int main(int argc, char** argv) {
                   << " cavlc_cbp_chroma_seen=0x" << cavlcCbpChromaSeen
                   << " i4_modes_0_7_15=" << std::dec
                   << cavlcI4Mode0 << "/" << cavlcI4Mode7 << "/" << cavlcI4Mode15
+                  << " mb_syntax_records=" << mbSyntaxRecords
+                  << " mb_syntax_classes_i/p16/p16x8/p8x16="
+                  << mbSyntaxINxN << "/" << mbSyntaxP16 << "/" << mbSyntaxP16x8 << "/" << mbSyntaxP8x16
+                  << " mb_syntax_unsupported=" << mbSyntaxUnsupported
+                  << " mb_syntax_bad_qp=" << mbSyntaxBadQp
+                  << " mb_syntax_bad_cbp=" << mbSyntaxBadCbp
                   << " saw_expected_csum=" << sawExpectedCsum
                   << " recon_sig_3b_cycles=" << reconSig3bCycles
                   << " frames=" << dut.stub_frames

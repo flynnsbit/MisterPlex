@@ -119,6 +119,7 @@ module h264_decode_core_wb_tb #(
 		.dpb_rd_valid(1'b0),
 		.frame_done(frame_done),
 		.frame_mb_count(frame_mb_count),
+		.mb_syntax_accept(1'b1),
 		.busy(busy),
 		.decode_state(decode_state),
 		.current_mb_addr(current_mb_addr),

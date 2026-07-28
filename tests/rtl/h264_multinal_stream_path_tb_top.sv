@@ -4,7 +4,8 @@
 `default_nettype none
 
 module h264_multinal_stream_path_tb #(
-    parameter bit FAULT_RECON_SIG_ZERO = 1'b0
+    parameter bit FAULT_RECON_SIG_ZERO = 1'b0,
+    parameter bit FAULT_MB_SYNTAX_UNSUPPORTED = 1'b0
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -49,6 +50,16 @@ module h264_multinal_stream_path_tb #(
     output wire        luma4x4_source_ok,
     output wire [3:0]  first_mb_cbp_luma,
     output wire [1:0]  first_mb_cbp_chroma,
+    output wire        mb_syntax_valid,
+    output wire [15:0] mb_syntax_addr,
+    output wire [3:0]  mb_syntax_class,
+    output wire        mb_syntax_p_skip,
+    output wire [2:0]  mb_syntax_part_mode,
+    output wire [3:0]  mb_syntax_cbp_luma,
+    output wire [1:0]  mb_syntax_cbp_chroma,
+    output wire [5:0]  mb_syntax_qpy,
+    output wire [5:0]  mb_syntax_qpc,
+    output wire        mb_syntax_unsupported,
     output wire [3:0]  i4_mode0,
     output wire [3:0]  i4_mode7,
     output wire [3:0]  i4_mode15,
@@ -77,6 +88,17 @@ module h264_multinal_stream_path_tb #(
     wire [9:0] luma4x4_bit_offset_end;
     wire [9:0] luma4x4_source_bit_end;
     wire [3:0] i4_modes [0:15];
+    wire [1:0] mb_syntax_ref_idx_l0 [0:3];
+    wire signed [15:0] mb_syntax_mvd_x_qpel [0:3];
+    wire signed [15:0] mb_syntax_mvd_y_qpel [0:3];
+    wire [1:0] mb_syntax_sub_mb_type [0:3];
+    wire mb_syntax_unsupported_dut;
+    wire [7:0] mb_syntax_x, mb_syntax_y;
+    wire [4:0] mb_syntax_type;
+    wire [2:0] mb_syntax_part_count;
+    wire mb_syntax_uses_sub_mb;
+    wire signed [5:0] mb_syntax_mb_qp_delta;
+    wire [15:0] mb_syntax_residual_bit_offset;
     wire [15:0] i4_pred_mode_flags;
     wire [47:0] i4_rem_modes;
     wire [9:0] first_mb_residual_bit_offset;
@@ -139,6 +161,28 @@ module h264_multinal_stream_path_tb #(
         .first_mb_residual_bit_offset(first_mb_residual_bit_offset),
         .first_mb_cbp_luma(first_mb_cbp_luma),
         .first_mb_cbp_chroma(first_mb_cbp_chroma),
+        .mb_syntax_valid(mb_syntax_valid),
+        .mb_syntax_addr(mb_syntax_addr),
+        .mb_syntax_x(mb_syntax_x),
+        .mb_syntax_y(mb_syntax_y),
+        .mb_syntax_class(mb_syntax_class),
+        .mb_syntax_type(mb_syntax_type),
+        .mb_syntax_p_skip(mb_syntax_p_skip),
+        .mb_syntax_part_mode(mb_syntax_part_mode),
+        .mb_syntax_part_count(mb_syntax_part_count),
+        .mb_syntax_uses_sub_mb(mb_syntax_uses_sub_mb),
+        .mb_syntax_unsupported(mb_syntax_unsupported_dut),
+        .mb_syntax_ref_idx_l0(mb_syntax_ref_idx_l0),
+        .mb_syntax_mvd_x_qpel(mb_syntax_mvd_x_qpel),
+        .mb_syntax_mvd_y_qpel(mb_syntax_mvd_y_qpel),
+        .mb_syntax_sub_mb_type(mb_syntax_sub_mb_type),
+        .mb_syntax_cbp_luma(mb_syntax_cbp_luma),
+        .mb_syntax_cbp_chroma(mb_syntax_cbp_chroma),
+        .mb_syntax_mb_qp_delta(mb_syntax_mb_qp_delta),
+        .mb_syntax_qpy(mb_syntax_qpy),
+        .mb_syntax_qpc(mb_syntax_qpc),
+        .mb_syntax_residual_bit_offset(mb_syntax_residual_bit_offset),
+        .mb_syntax_accept(1'b1),
         .residual_place_pulse(residual_place_pulse),
         .recon_sig(recon_sig_dut), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
         .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
@@ -146,6 +190,7 @@ module h264_multinal_stream_path_tb #(
     );
 
     assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;
+    assign mb_syntax_unsupported = FAULT_MB_SYNTAX_UNSUPPORTED ? mb_syntax_valid : mb_syntax_unsupported_dut;
     assign slice_parser_state = dut.slp.st;
     assign i4_mode0 = i4_modes[0];
     assign i4_mode7 = i4_modes[7];

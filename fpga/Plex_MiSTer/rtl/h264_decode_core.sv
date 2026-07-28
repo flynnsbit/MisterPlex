@@ -129,6 +129,28 @@ module h264_decode_core #(
     output wire        luma4x4_source_ok,
     output wire [9:0]  luma4x4_source_bit_end,
     output wire [3:0]  core_i4_modes [0:15],
+    input  wire        mb_syntax_accept,
+    output reg         mb_syntax_valid,
+    output reg [15:0]  mb_syntax_addr,
+    output reg [7:0]   mb_syntax_x,
+    output reg [7:0]   mb_syntax_y,
+    output reg [3:0]   mb_syntax_class,
+    output reg [4:0]   mb_syntax_type,
+    output reg         mb_syntax_p_skip,
+    output reg [2:0]   mb_syntax_part_mode,
+    output reg [2:0]   mb_syntax_part_count,
+    output reg         mb_syntax_uses_sub_mb,
+    output reg         mb_syntax_unsupported,
+    output reg [1:0]   mb_syntax_ref_idx_l0 [0:3],
+    output reg signed [15:0] mb_syntax_mvd_x_qpel [0:3],
+    output reg signed [15:0] mb_syntax_mvd_y_qpel [0:3],
+    output reg [1:0]   mb_syntax_sub_mb_type [0:3],
+    output reg [3:0]   mb_syntax_cbp_luma,
+    output reg [1:0]   mb_syntax_cbp_chroma,
+    output reg signed [5:0] mb_syntax_mb_qp_delta,
+    output reg [5:0]   mb_syntax_qpy,
+    output reg [5:0]   mb_syntax_qpc,
+    output reg [15:0]  mb_syntax_residual_bit_offset,
 
     // ── Status/debug ──
     output wire        busy,
@@ -282,6 +304,16 @@ module h264_decode_core #(
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
     localparam [15:0] CHROMA_H16 = 16'(FRAME_H / 2);
     localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
+    localparam [3:0]
+        MB_CLASS_UNSUPPORTED = 4'd0,
+        MB_CLASS_P_SKIP      = 4'd1,
+        MB_CLASS_P_L0_16X16  = 4'd2,
+        MB_CLASS_P_L0_16X8   = 4'd3,
+        MB_CLASS_P_L0_8X16   = 4'd4,
+        MB_CLASS_P_8X8       = 4'd5,
+        MB_CLASS_INTRA_IN_P  = 4'd6,
+        MB_CLASS_I_NXN       = 4'd7,
+        MB_CLASS_I16X16      = 4'd8;
 
     reg [7:0]  wb_state;
     reg [8:0]  wb_idx;
@@ -367,6 +399,78 @@ module h264_decode_core #(
     function automatic [7:0] luma4x4_index(input [3:0] block, input [3:0] sample);
         begin
             luma4x4_index = {block[3:2], sample[3:2], block[1:0], sample[1:0]};
+        end
+    endfunction
+
+    function automatic [5:0] clip_qp6(input signed [7:0] value);
+        begin
+            if (value < 8'sd0)
+                clip_qp6 = 6'd0;
+            else if (value > 8'sd51)
+                clip_qp6 = 6'd51;
+            else
+                clip_qp6 = value[5:0];
+        end
+    endfunction
+
+    function automatic [5:0] chroma_qp_from_y(input [5:0] qpy, input signed [4:0] offset);
+        reg signed [7:0] qpi;
+        reg [5:0] qpi_clip;
+        begin
+            qpi = $signed({2'd0, qpy}) + {{3{offset[4]}}, offset};
+            qpi_clip = clip_qp6(qpi);
+            case (qpi_clip)
+            6'd30: chroma_qp_from_y = 6'd29;
+            6'd31: chroma_qp_from_y = 6'd30;
+            6'd32: chroma_qp_from_y = 6'd31;
+            6'd33: chroma_qp_from_y = 6'd32;
+            6'd34: chroma_qp_from_y = 6'd32;
+            6'd35: chroma_qp_from_y = 6'd33;
+            6'd36: chroma_qp_from_y = 6'd34;
+            6'd37: chroma_qp_from_y = 6'd34;
+            6'd38: chroma_qp_from_y = 6'd35;
+            6'd39: chroma_qp_from_y = 6'd35;
+            6'd40: chroma_qp_from_y = 6'd36;
+            6'd41: chroma_qp_from_y = 6'd36;
+            6'd42: chroma_qp_from_y = 6'd37;
+            6'd43: chroma_qp_from_y = 6'd37;
+            6'd44: chroma_qp_from_y = 6'd37;
+            6'd45: chroma_qp_from_y = 6'd38;
+            6'd46: chroma_qp_from_y = 6'd38;
+            6'd47: chroma_qp_from_y = 6'd38;
+            6'd48: chroma_qp_from_y = 6'd39;
+            6'd49: chroma_qp_from_y = 6'd39;
+            6'd50: chroma_qp_from_y = 6'd39;
+            6'd51: chroma_qp_from_y = 6'd39;
+            default: chroma_qp_from_y = qpi_clip;
+            endcase
+        end
+    endfunction
+
+    function automatic [3:0] syntax_class_of(
+        input is_i_or_idr,
+        input skipped,
+        input [4:0] mb_type_i,
+        input [2:0] mode
+    );
+        begin
+            if (skipped)
+                syntax_class_of = MB_CLASS_P_SKIP;
+            else if (is_i_or_idr)
+                syntax_class_of = (mb_type_i == 5'd0) ? MB_CLASS_I_NXN :
+                                  (mb_type_i <= 5'd24) ? MB_CLASS_I16X16 : MB_CLASS_UNSUPPORTED;
+            else if (mb_type_i >= 5'd5 && mb_type_i <= 5'd30)
+                syntax_class_of = MB_CLASS_INTRA_IN_P;
+            else begin
+                case (mode)
+                3'd0: syntax_class_of = MB_CLASS_P_L0_16X16;
+                3'd1: syntax_class_of = MB_CLASS_P_L0_16X8;
+                3'd2: syntax_class_of = MB_CLASS_P_L0_8X16;
+                3'd3: syntax_class_of = MB_CLASS_P_8X8;
+                3'd4: syntax_class_of = MB_CLASS_P_8X8;
+                default: syntax_class_of = MB_CLASS_UNSUPPORTED;
+                endcase
+            end
         end
     endfunction
 
@@ -700,6 +804,29 @@ module h264_decode_core #(
             p16_wr_en_r <= 1'b0;
             p16_wr_addr_r <= 32'd0;
             p16_wr_data_r <= 8'd0;
+            mb_syntax_valid <= 1'b0;
+            mb_syntax_addr <= 16'd0;
+            mb_syntax_x <= 8'd0;
+            mb_syntax_y <= 8'd0;
+            mb_syntax_class <= MB_CLASS_UNSUPPORTED;
+            mb_syntax_type <= 5'd0;
+            mb_syntax_p_skip <= 1'b0;
+            mb_syntax_part_mode <= 3'd7;
+            mb_syntax_part_count <= 3'd0;
+            mb_syntax_uses_sub_mb <= 1'b0;
+            mb_syntax_unsupported <= 1'b0;
+            mb_syntax_cbp_luma <= 4'd0;
+            mb_syntax_cbp_chroma <= 2'd0;
+            mb_syntax_mb_qp_delta <= 6'sd0;
+            mb_syntax_qpy <= 6'd0;
+            mb_syntax_qpc <= 6'd0;
+            mb_syntax_residual_bit_offset <= 16'd0;
+            for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1) begin
+                mb_syntax_ref_idx_l0[wb_i] <= 2'd0;
+                mb_syntax_mvd_x_qpel[wb_i] <= 16'sd0;
+                mb_syntax_mvd_y_qpel[wb_i] <= 16'sd0;
+                mb_syntax_sub_mb_type[wb_i] <= 2'd0;
+            end
             for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                 lat_recon_y[wb_i] <= 8'd0;
             for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
@@ -723,6 +850,40 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
+            if (mb_syntax_valid && mb_syntax_accept)
+                mb_syntax_valid <= 1'b0;
+            if (mb_type_valid && (!mb_syntax_valid || mb_syntax_accept)) begin
+                mb_syntax_valid <= 1'b1;
+                mb_syntax_addr <= syntax_mb_addr_r;
+                mb_syntax_x <= syntax_mb_x;
+                mb_syntax_y <= syntax_mb_y;
+                mb_syntax_class <= syntax_class_of(slice_is_i || slice_is_idr, mb_skip, mb_type, part_mode);
+                mb_syntax_type <= mb_type;
+                mb_syntax_p_skip <= mb_skip;
+                mb_syntax_part_mode <= part_mode;
+                mb_syntax_part_count <= mb_skip ? 3'd1 : part_mode == 3'd0 ? 3'd1 : 3'd2;
+                mb_syntax_uses_sub_mb <= (part_mode == 3'd3) || (part_mode == 3'd4);
+                mb_syntax_unsupported <= (ref_idx_l0 != 2'd0) ||
+                                         ((part_mode == 3'd3) || (part_mode == 3'd4)) ||
+                                         (syntax_class_of(slice_is_i || slice_is_idr, mb_skip, mb_type, part_mode) == MB_CLASS_UNSUPPORTED);
+                mb_syntax_cbp_luma <= mb_skip ? 4'd0 : cbp_luma;
+                mb_syntax_cbp_chroma <= mb_skip ? 2'd0 : cbp_chroma;
+                mb_syntax_mb_qp_delta <= mb_qp_delta;
+                mb_syntax_qpy <= slice_qp_y;
+                mb_syntax_qpc <= chroma_qp_from_y(slice_qp_y, pps_chroma_qp_index_offset);
+                mb_syntax_residual_bit_offset <= mb_residual_bit_offset;
+                for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1) begin
+                    mb_syntax_ref_idx_l0[wb_i] <= 2'd0;
+                    mb_syntax_mvd_x_qpel[wb_i] <= 16'sd0;
+                    mb_syntax_mvd_y_qpel[wb_i] <= 16'sd0;
+                    mb_syntax_sub_mb_type[wb_i] <= 2'd0;
+                end
+                if (!mb_skip && !(slice_is_i || slice_is_idr)) begin
+                    mb_syntax_ref_idx_l0[0] <= ref_idx_l0;
+                    mb_syntax_mvd_x_qpel[0] <= mvd_x_qpel;
+                    mb_syntax_mvd_y_qpel[0] <= mvd_y_qpel;
+                end
+            end
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
@@ -904,6 +1065,14 @@ module h264_decode_core #(
         luma4x4_source_busy | luma4x4_source_done | luma4x4_source_ok |
         luma4x4_valid | |luma4x4_idx | |luma4x4_qp | |luma4x4_total_coeff |
         |luma4x4_trailing_ones | |luma4x4_bit_offset_end |
-        |luma4x4_coeff_zigzag[0] | |luma4x4_source_bit_end | |core_i4_modes[0];
+        |luma4x4_coeff_zigzag[0] | |luma4x4_source_bit_end | |core_i4_modes[0] |
+        mb_syntax_accept | mb_syntax_valid | |mb_syntax_addr | |mb_syntax_x |
+        |mb_syntax_y | |mb_syntax_class | |mb_syntax_type | mb_syntax_p_skip |
+        |mb_syntax_part_mode | |mb_syntax_part_count | mb_syntax_uses_sub_mb |
+        mb_syntax_unsupported | |mb_syntax_ref_idx_l0[0] |
+        |mb_syntax_mvd_x_qpel[0] | |mb_syntax_mvd_y_qpel[0] |
+        |mb_syntax_sub_mb_type[0] | |mb_syntax_cbp_luma | |mb_syntax_cbp_chroma |
+        |mb_syntax_mb_qp_delta | |mb_syntax_qpy | |mb_syntax_qpc |
+        |mb_syntax_residual_bit_offset;
 
 endmodule

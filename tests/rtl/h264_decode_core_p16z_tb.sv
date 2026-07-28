@@ -130,6 +130,7 @@ module h264_decode_core_p16z_tb #(
 		.dpb_rd_valid(dpb_rd_valid),
 		.frame_done(frame_done),
 		.frame_mb_count(frame_mb_count),
+		.mb_syntax_accept(1'b1),
 		.busy(busy),
 		.decode_state(decode_state),
 		.current_mb_addr(current_mb_addr),
