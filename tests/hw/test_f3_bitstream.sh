@@ -5,12 +5,15 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
 }
 
 echo "=== core is Plex ==="
+hw_require_expected_rbf_md5 "test_f3_bitstream" "$HOST" "$PASS" "$USER" \
+  "${EXPECTED_RBF_MD5:-${HW_EXPECTED_RBF_MD5:-}}"
 ssh_m 'grep -q Plex /tmp/CORENAME'
 
 echo "=== generate annex-B test blob ==="

@@ -284,7 +284,8 @@ play_one() {
     local t1
     t1=$(timeline_time_ms "$poll")
     if [[ "${t1:-0}" -le "${t0:-0}" ]]; then
-      log "WARN: timeline did not advance (${t0}→${t1}) — continuing"
+      log "timeline did not advance (${t0}→${t1})"
+      return 1
     else
       log "progress ${t0}→${t1} ms"
     fi

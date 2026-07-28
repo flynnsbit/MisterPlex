@@ -8,12 +8,15 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 
 ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$USER@$HOST" "$@"
 }
 
 echo "=== ensure Plex core (safe — no kill-9 + load_core thrash) ==="
+hw_require_expected_rbf_md5 "test_f3_residual" "$HOST" "$PASS" "$USER" \
+  "${EXPECTED_RBF_MD5:-${HW_EXPECTED_RBF_MD5:-}}"
 # Free SPI gently; only bounce core if not already Plex (load_core mid-session wedges lab)
 ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
 sleep 1
@@ -59,8 +62,8 @@ echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
 # 3.3k residual_dc (scan coeff0) — host golden coeff[0]=-24 after runv-clear RBF
 echo "$ST" | grep -qE 'res_dc=-24'
-# 3.3l-1 soft: res_csum=20 (0x14) = XOR sat8(full coeff[16]) at status[111:104].
-# Pre-3.3l-1 / pre-R-csum1 RBF: do not hard-fail (soft skip ≠ hard PASS).
+# 3.3l-1 hard: res_csum=20 (0x14) = XOR sat8(full coeff[16]) at status[111:104].
+# Pre-3.3l-1 / pre-R-csum1 RBF is unscored and exits 77; soft skip ≠ hard PASS.
 # Host golden locked: residual_gold::kCsum8=0x14 — RCA helper prints raw[12..15] map.
 RCA_HELPER="$ROOT/tests/parse_res_csum_status.py"
 if [[ -f "$RCA_HELPER" ]]; then
@@ -72,7 +75,7 @@ if echo "$ST" | grep -qE 'res_csum=20\b'; then
   echo "test_f3_residual: res_csum=20 HARD-class green (3.3l-1 XOR sat8=0x14)"
 else
   GOT_CSUM=$(echo "$ST" | sed -n 's/.*res_csum=\([0-9][0-9]*\).*/\1/p' | head -1)
-  echo "test_f3_residual: res_csum soft skip (got res_csum=${GOT_CSUM:-?} want 20/0x14; host golden locked)"
-  echo "test_f3_residual: soft-skip EXIT=0 is NOT hard PASS — re-gate after R-csum1 deploy"
+  hw_skip_not_pass "test_f3_residual" \
+    "res_csum unscored (got ${GOT_CSUM:-?}, want 20/0x14); re-gate after R-csum1 deploy"
 fi
 echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"

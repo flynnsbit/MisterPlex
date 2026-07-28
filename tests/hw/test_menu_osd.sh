@@ -7,6 +7,11 @@
 # Run on the *build host* (needs sshpass + /dev/video4 MacroSilicon).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
+if [[ "${MENU_OSD_ALLOW_OBSOLETE:-0}" != "1" ]]; then
+  hw_skip_not_pass "test_menu_osd" \
+    "obsolete v2 debug-menu card that only captures baseline; use run_menu_matrix.sh for current OSD work"
+fi
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "root@$HOST")

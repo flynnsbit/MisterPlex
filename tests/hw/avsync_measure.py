@@ -42,6 +42,10 @@ class CaptureFailure(RuntimeError):
     """HDMI capture did not produce data; not a product measurement."""
 
 
+class UnscoredMeasurement(RuntimeError):
+    """The hardware/card ran, but the result is not scoreable evidence."""
+
+
 def sh(cmd: list[str], timeout: int = 60) -> str:
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     return r.stdout
@@ -247,6 +251,7 @@ def main() -> int:
     capture_preflight()
     result: dict = {"label": args.label, "rating_key": args.rating_key}
 
+    saw_playing = args.no_cast
     if not args.no_cast:
         stop()
         time.sleep(2)
@@ -259,10 +264,11 @@ def main() -> int:
         tl = timeline()
         if tl.get("state") == "playing" and int(tl.get("time", "0") or 0) > 0:
             t_start = time.time() - int(tl["time"]) / 1000.0
+            saw_playing = True
             break
         time.sleep(1)
     else:
-        print("WARN: never saw state=playing", flush=True)
+        raise UnscoredMeasurement("UNSCORED avsync_measure reason=timeline-never-playing")
     result["timeline_at_start"] = timeline()
 
     points = [("early", args.early_at)]
@@ -281,6 +287,11 @@ def main() -> int:
         print(f"capture {name} at playback {pos_ms/1000:.1f}s -> {cap.name}", flush=True)
         capture(cap, args.window)
         w = measure_window(cap)
+        if w["matches"] < 4 or "median_offset_ms" not in w:
+            raise UnscoredMeasurement(
+                f"UNSCORED avsync_measure reason=insufficient-av-events "
+                f"window={name} flashes={w['flashes']} beeps={w['beeps']} matches={w['matches']}"
+            )
         w["playback_pos_s"] = round(pos_ms / 1000.0, 2)
         w["state"] = tl.get("state")
         result[name] = w
@@ -320,3 +331,6 @@ if __name__ == "__main__":
     except CaptureFailure as e:
         print(e, file=sys.stderr)
         sys.exit(20)
+    except UnscoredMeasurement as e:
+        print(e, file=sys.stderr)
+        sys.exit(77)
