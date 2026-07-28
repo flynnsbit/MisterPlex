@@ -623,7 +623,26 @@ module h264_decode_core #(
     // Syntax context as of this cycle.  mb_type_valid may land on the same
     // cycle as recon_mb_valid, so the capture below has to see the combinational
     // value, not last macroblock's registered copy.
+    // QPy accumulation per clause 7.4.5:
+    //   QPy = ((QPy_prev + mb_qp_delta + 52) % 52)   for 8-bit (QpBdOffsetY = 0)
+    // The +52 bias is not optional and the sum must not be evaluated in 6 bits.
+    // The previous form added a two's-complement mb_qp_delta into a 6-bit
+    // unsigned accumulator, so a negative delta wrapped mod 64 before the mod 52
+    // ever ran: 442 of the 2704 (QPy_prev, delta) pairs came out wrong, every one
+    // of them a negative delta.  w-cast measured the same bug class from the
+    // parser side and reports QPy_range=3..33 for the real 624x480 P frame.
+    // Sum range is [0-26+52, 51+25+52] = [26, 128], so 8 bits suffice and two
+    // conditional subtractions replace the modulo -- exact, and cheaper than the
+    // divider the `%` was inferring.
+    wire [7:0] db_qp_biased = {2'd0, db_qp_run} + {{2{mb_qp_delta[5]}}, mb_qp_delta} + 8'd52;
+`ifdef H264_DECODE_CORE_FAULT_QP_WRAP_LINEAR
+    // Red proof: restore the 6-bit wrapping form this replaced.
     wire [5:0] db_qp_next = (db_qp_run + {{1{mb_qp_delta[5]}}, mb_qp_delta[4:0]}) % 6'd52;
+`else
+    wire [7:0] db_qp_sub1 = (db_qp_biased >= 8'd104) ? (db_qp_biased - 8'd104) : db_qp_biased;
+    wire [7:0] db_qp_sub2 = (db_qp_sub1   >= 8'd52)  ? (db_qp_sub1   - 8'd52)  : db_qp_sub1;
+    wire [5:0] db_qp_next = db_qp_sub2[5:0];
+`endif
     wire       db_syn_intra_now = mb_type_valid ? (slice_is_i || (!mb_skip && (mb_type >= 5'd5)))
                                                 : db_syn_intra;
     wire [5:0] db_syn_qp_now    = mb_type_valid ? db_qp_next : db_syn_qp;

@@ -173,11 +173,16 @@ restore "$WORK/stream_path.sv.orig" "$STREAM"
 expect_green "stream_path.sv restored" "${BASE_ARGS[@]}"
 
 trap - EXIT
-if ! git -C "$ROOT" diff --quiet -- "$QIP" "$STREAM" "$CORE"; then
-  echo "FAIL reach-redproof: mutated files were not restored cleanly" >&2
-  git -C "$ROOT" --no-pager diff --stat -- "$QIP" "$STREAM" "$CORE" >&2
-  exit 1
-fi
+# Compare against the pre-mutation snapshots, not against git HEAD: HEAD would
+# also flag legitimate uncommitted work in the tree as "not restored".
+for pair in "$WORK/files.qip.orig:$QIP" "$WORK/stream_path.sv.orig:$STREAM" \
+            "$WORK/h264_decode_core.sv.orig:$CORE"; do
+  if ! cmp -s "${pair%%:*}" "${pair#*:}"; then
+    echo "FAIL reach-redproof: mutated file ${pair#*:} was not restored cleanly" >&2
+    diff -u "${pair%%:*}" "${pair#*:}" >&2 || true
+    exit 1
+  fi
+done
 
 echo "OK check_product_reachability red-proofs: 5 mutations detected, tree restored clean"
 echo "NOTE: source-level reachability is a pre-filter in both directions."

@@ -19,6 +19,7 @@ module h264_decode_core_deblock_tb #(
 	input  wire        slice_is_idr,
 	input  wire        slice_is_i,
 	input  wire [5:0]  slice_qp_y,
+	input  wire signed [5:0] mb_qp_delta,
 	input  wire [1:0]  slice_disable_deblocking_filter_idc,
 	input  wire signed [4:0] slice_alpha_c0_offset,
 	input  wire signed [4:0] slice_beta_offset,
@@ -57,7 +58,9 @@ module h264_decode_core_deblock_tb #(
 	output wire [15:0] obs_luma_modified,
 	output wire [15:0] obs_chroma_modified,
 	output wire [5:0]  obs_last_chroma_qp,
-	output wire        obs_filter_pipe_error
+	output wire        obs_filter_pipe_error,
+	output wire [5:0]  obs_qp_run,
+	output wire [5:0]  obs_qp_next
 );
 	wire [7:0] rbsp_byte [0:63];
 	wire [3:0] intra4x4_modes [0:15];
@@ -116,7 +119,7 @@ module h264_decode_core_deblock_tb #(
 		.chroma_pred_mode(2'd0),
 		.cbp_luma(cbp_luma),
 		.cbp_chroma(2'd2),
-		.mb_qp_delta(6'sd0),
+		.mb_qp_delta(mb_qp_delta),
 		.mb_residual_bit_offset(16'd0),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
@@ -167,6 +170,10 @@ module h264_decode_core_deblock_tb #(
 	assign obs_chroma_modified       = dut.db_chroma_modified;
 	assign obs_last_chroma_qp        = dut.db_last_chroma_qp;
 	assign obs_filter_pipe_error     = dut.db_pipe_error;
+	// QPy accumulation observability: the mb_qp_delta path was tied to zero here
+	// until w-cast's QPy_range=3..33 measurement showed it had never been driven.
+	assign obs_qp_run                = dut.db_qp_run;
+	assign obs_qp_next               = dut.db_qp_next;
 
 	(* keep = 1 *) wire _keep_unused = dpb_rd_en | |dpb_rd_addr | |rbsp_request_offset |
 	                                   rbsp_request_valid;
