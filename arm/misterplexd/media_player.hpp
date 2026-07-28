@@ -60,6 +60,9 @@ public:
     void setPresentProfile(bool on) { presentProfile_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
+    // F3_IDR_ONLY=1: feed only keyframes into the DDR bitstream ring. For
+    // decoder bring-up stages that reconstruct intra only.
+    void setBitstreamIdrOnly(bool on) { bitstreamIdrOnly_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
     // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
@@ -207,6 +210,7 @@ private:
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
+    bool bitstreamIdrOnly_ = false; // F3 ring carries keyframes only
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;

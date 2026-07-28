@@ -1367,7 +1367,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         if (readBankRelease(brs)) {
             // One-shot provenance diagnostic on first PLXD contact.
             if (!plxdLivenessProven_ && plxdStaleCount_ == 0 &&
-                plxdLastFramesDone_ == 0) {
+                !plxdFramesDoneSeeded_) {
                 auto diag = diagnosePlxdProvenance();
                 const char* label = "?";
                 switch (diag.provenance) {
@@ -1391,7 +1391,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             // looking fields. Defence: check frames_done advances between
             // successive frames. If it never advances, the mailbox is stale
             // (never written by the FPGA) and we must not trust it.
-            if (brs.frames_done != plxdLastFramesDone_) {
+            if (!plxdFramesDoneSeeded_) {
+                // First observation of the session. Residue left in DDR by a
+                // previous run carries an arbitrary frames_done, and DDR
+                // survives FPGA reconfiguration -- so comparing it against the
+                // initial 0 would "prove" liveness from a single stale read and
+                // permanently disable the staleness escape below. Seed only.
+                plxdFramesDoneSeeded_ = true;
+                plxdStaleCount_ = 0;
+            } else if (brs.frames_done != plxdLastFramesDone_) {
                 plxdLivenessProven_ = true;
                 plxdStaleCount_ = 0;
             } else {
@@ -1399,13 +1407,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             }
             plxdLastFramesDone_ = brs.frames_done;
             constexpr int kPlxdStaleLimitFrames = 10;
-            if (!plxdLivenessProven_ && plxdStaleCount_ >= kPlxdStaleLimitFrames) {
-                // frames_done has not advanced in 10 consecutive reads.
-                // This is almost certainly boot residue, not a live mailbox.
+            // Not gated on !plxdLivenessProven_. A fabric that was alive and
+            // then stopped wedges exactly as hard as one that never started,
+            // and liveness proven minutes ago says nothing about now.
+            if (plxdStaleCount_ >= kPlxdStaleLimitFrames) {
                 fprintf(stderr,
                         "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
-                        "%d frames — treating as boot residue, falling back to timed delay\n",
-                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_);
+                        "%d frames (liveness_ever_proven=%d) — falling back to timed delay\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
+                        static_cast<int>(plxdLivenessProven_));
                 timedFallback = true;
             }
 

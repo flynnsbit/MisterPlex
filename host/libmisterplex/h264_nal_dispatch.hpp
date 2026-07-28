@@ -44,6 +44,12 @@ struct DispatchConfig {
     // not, and leaves the decoder looking at a stale ring through no fault of
     // its own.
     bool resync_on_full = true;
+    // Stage-B bring-up: feed keyframes only. Non-IDR slices are dropped, so
+    // the ring carries nothing but self-contained pictures -- 7 per title for
+    // the measured content instead of 350. A decoder that can only do intra
+    // then has a stream it can consume in full rather than a stream where 98%
+    // of the NALs are ones it must silently ignore. Off in the product path.
+    bool idr_only = false;
     std::function<void(int)> sleep_ms = [](int ms) {
         std::this_thread::sleep_for(std::chrono::milliseconds(ms));
     };
@@ -61,6 +67,7 @@ struct DispatchStats {
     uint64_t desync_or_fatal = 0;
     uint64_t resyncs = 0;            // times the ring stayed full and we dropped to the next IDR
     uint64_t nal_dropped_resync = 0; // NALs discarded while waiting for that IDR
+    uint64_t nal_dropped_idr_only = 0; // non-IDR slices dropped by idr_only
 };
 
 class AnnexBFramer {
@@ -233,6 +240,11 @@ public:
             resyncing_ = false;
             sps_delivered_ = false;
             pps_delivered_ = false;
+        }
+
+        if (cfg_.idr_only && type == 1) {
+            ++stats_.nal_dropped_idr_only;
+            return PushResult::Ok;
         }
 
         // An IDR is a random-access point only if the parameter sets precede

@@ -104,7 +104,7 @@ bool everyIdrIsSelfContained(const std::vector<Pushed>& pushed) {
 } // namespace
 
 int main() {
-    std::printf("Scope: 4 (IDR self-containment; full-ring resync; seq continuity; no-regress)\n");
+    std::printf("Scope: 5 (IDR self-containment; full-ring resync; seq continuity; no-regress; idr_only)\n");
 
     // 1. Every IDR carries its own SPS/PPS.
     {
@@ -205,6 +205,37 @@ int main() {
                 monotonic = false;
         CHECK(monotonic);
         CHECK(!p.pushed.empty() && p.pushed.front().seq == 0);
+    }
+
+    // 5. Stage-B mode: keyframes only. The ring must carry nothing but
+    // self-contained pictures, and the P slices must be dropped rather than
+    // costing ring space a decoder that cannot use them would have to skip.
+    {
+        FakeProducer p;
+        DispatchConfig cfg;
+        cfg.idr_only = true;
+        NalDispatcher d(p, cfg);
+        CHECK(d.begin(1) == ControlResult::Ok);
+        feed(d, 7);
+        feed(d, 8);
+        for (int gop = 0; gop < 3; ++gop) {
+            feed(d, 5);
+            for (int i = 0; i < 9; ++i)
+                feed(d, 1);
+        }
+        int idrs = 0, pslices = 0;
+        for (const auto& x : p.pushed) {
+            if (x.type == 5)
+                ++idrs;
+            if (x.type == 1)
+                ++pslices;
+        }
+        CHECK(idrs == 3);
+        CHECK(pslices == 0);
+        CHECK(d.stats().nal_dropped_idr_only == 27);
+        CHECK(everyIdrIsSelfContained(p.pushed));
+        // Degeneracy: the mode must drop P slices, not everything.
+        CHECK(!p.pushed.empty());
     }
 
     if (fails) {

@@ -108,7 +108,19 @@ struct BankReleaseDecision {
 
 struct BankReleasePolicyState {
     bool release_stuck = false;
+    // Consecutive SkipFrame verdicts. A fabric that is permanently silent --
+    // free_bank_mask stuck at 0 AND frames_done frozen -- otherwise yields
+    // SkipFrame forever, and because the host then never writes and never
+    // rings the doorbell, the fabric can never change its mind. That is a
+    // self-sustaining deadlock, not backpressure. Bounded here.
+    int consecutive_skips = 0;
 };
+
+// How many consecutive skips are allowed before the host stops waiting for a
+// handshake that is not coming. At ~24-30 sends/s this is about a second of a
+// completely frozen mailbox, which is far longer than any legitimate busy
+// window (the fabric swaps at 60 Hz).
+inline constexpr int kBankReleaseSkipLimitFrames = 30;
 
 inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyState& state,
                                                            int plannedBank,
@@ -120,6 +132,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     if (state.release_stuck) {
         if (initial.anyFree()) {
             state.release_stuck = false;
+            state.consecutive_skips = 0;
             out.kind = BankReleaseDecisionKind::UseFreeBank;
             out.bank = initial.freeBank();
             out.release_stuck = false;
@@ -132,12 +145,14 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     }
 
     if (initial.anyFree()) {
+        state.consecutive_skips = 0;
         out.kind = BankReleaseDecisionKind::UseFreeBank;
         out.bank = initial.freeBank();
         out.release_stuck = false;
         return out;
     }
     if (final.anyFree()) {
+        state.consecutive_skips = 0;
         out.kind = BankReleaseDecisionKind::UseFreeBank;
         out.bank = final.freeBank();
         out.release_stuck = false;
@@ -146,6 +161,19 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
 
     if (final.frames_done != initial.frames_done) {
         state.release_stuck = true;
+        state.consecutive_skips = 0;
+        out.kind = BankReleaseDecisionKind::UseTimedFallback;
+        out.bank = plannedBank;
+        out.release_stuck = true;
+        return out;
+    }
+
+    // Nothing free and frames_done frozen: the fabric is busy, or it is dead.
+    // Skipping is right for the first case and fatal for the second, so skip
+    // is allowed only for a bounded number of consecutive frames.
+    if (++state.consecutive_skips >= kBankReleaseSkipLimitFrames) {
+        state.release_stuck = true;
+        state.consecutive_skips = 0;
         out.kind = BankReleaseDecisionKind::UseTimedFallback;
         out.bank = plannedBank;
         out.release_stuck = true;

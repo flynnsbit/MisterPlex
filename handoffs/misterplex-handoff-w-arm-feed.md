@@ -98,3 +98,83 @@ Nothing here has run against hardware. The device has been offline since ~11:37
 (HPS locked, needs a physical power cycle). These are the two defects that would
 have blocked Stage B on a live device; that they are fixed in the header is not
 the same as pixels on a screen.
+
+---
+
+# The stale-mailbox deadlock (product bug, fixed)
+
+`chooseDdrPresentBankFromRelease` returned `SkipFrame` whenever
+`free_bank_mask == 0` in both samples **and** `frames_done` did not advance
+during the poll window. For a busy fabric that is correct. For a **silent**
+one it is a self-sustaining deadlock:
+
+```
+mask=0, frames_done frozen  ->  SkipFrame
+SkipFrame                   ->  host does not write, does not ring PLXK
+host silent                 ->  fabric state cannot change
+next read identical         ->  SkipFrame ...  forever
+```
+
+The host waits for the fabric; the fabric is waiting for the host; nothing
+times out. The visible symptom is a display that never updates while the
+daemon reports itself healthy.
+
+## Two independent defects, both fixed
+
+**1. A single stale read "proved" liveness.** `plxdLastFramesDone_` starts at
+0, so the *first* observation of a residue mailbox with any non-zero
+`frames_done` compared unequal and set `plxdLivenessProven_ = true`. DDR
+survives FPGA reconfiguration, so residue with a plausible `frames_done` is
+the normal case, not an exotic one. Because `plxdLivenessProven_` is sticky
+and the staleness escape was gated on `!plxdLivenessProven_`, **one stale read
+disabled the only escape for the rest of the session.**
+Fixed: the first read *seeds* the comparison, it does not prove anything
+(`plxdFramesDoneSeeded_`).
+
+**2. The escape did not cover a fabric that died after being alive.** It was
+gated on `!plxdLivenessProven_`. A fabric that ran and then stopped wedges
+exactly as hard as one that never started, and liveness proven minutes ago
+says nothing about now. Fixed: the escape is ungated; the log line reports
+`liveness_ever_proven` so the two cases stay distinguishable.
+
+**3. The policy itself now bounds skipping.** `BankReleasePolicyState` gained
+`consecutive_skips`; after `kBankReleaseSkipLimitFrames = 30` consecutive
+skips (~1 s at 24-30 sends/s, against a fabric that swaps at 60 Hz) the policy
+escapes to the timed fallback. It heals automatically: any `free_bank_mask`
+observation clears both the stuck flag and the counter.
+
+This is a pure function with no device dependency, so the escape is covered by
+unit tests rather than by hardware observation.
+
+## Evidence
+
+`tests/unit/test_input_mailbox.cpp`, added cases:
+
+| case | asserts |
+|---|---|
+| permanently silent fabric | skips **are** taken first (backpressure is real), then bounded, then escape to `UseTimedFallback`, then heal on the first free mask |
+| busy fabric recovering inside the window | never escapes, and `consecutive_skips` resets to 0 |
+
+Red-proved: deleting the escape → rc=1 (skips run to the loop bound, no
+fallback); removing the counter reset on `UseFreeBank` → rc=1 (isolated busy
+frames across a session would eventually trip the escape).
+
+**Not verified on hardware.** The device is offline. What is proven is that
+the host can no longer wait forever on a handshake that is not coming.
+
+---
+
+# Stage-B keyframe-only feed
+
+`DispatchConfig::idr_only`, exposed as conf key **`F3_IDR_ONLY=1`**
+(`main.cpp` → `MediaPlayer::setBitstreamIdrOnly`). Non-IDR slices are dropped
+and counted in `nal_dropped_idr_only`; SPS, PPS and IDR still flow, and every
+IDR is still self-contained.
+
+For the measured content this turns 350 VCL NALs into **7 keyframes**. A
+Stage-B decoder that reconstructs intra only then consumes the whole ring
+instead of skipping 98 % of it, and the ring cannot be filled by P slices the
+decoder will never use.
+
+Default **off** — the product path is unchanged. W-DECODE flips the conf key
+when Stage B is being brought up; no rebuild, no fit.

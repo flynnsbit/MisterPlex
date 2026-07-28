@@ -327,6 +327,7 @@ private:
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     // PLXD liveness: detect stale/residue mailbox by checking frames_done advances.
     uint16_t plxdLastFramesDone_ = 0;
+    bool plxdFramesDoneSeeded_ = false; // first read seeds, it does not prove
     int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
     BankReleasePolicyState plxdBankReleasePolicy_{};

@@ -1243,6 +1243,7 @@ void MediaPlayer::streamPump(int sfd) {
     h264stream::DispatchConfig f3Cfg;
     f3Cfg.max_full_retries = 50;    // Full is transient: retry for ~100 ms.
     f3Cfg.full_retry_sleep_ms = 2;
+    f3Cfg.idr_only = bitstreamIdrOnly_;
     h264stream::NalDispatcher f3Dispatch(f3Producer, f3Cfg);
     bool f3Active = false;
     bool f3Fatal = false;
@@ -1708,6 +1709,7 @@ void MediaPlayer::streamPump(int sfd) {
         " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
         " f3_resyncs=" + std::to_string(f3Stats.resyncs) +
         " f3_dropped_resync=" + std::to_string(f3Stats.nal_dropped_resync) +
+        " f3_dropped_idr_only=" + std::to_string(f3Stats.nal_dropped_idr_only) +
         " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
         " f3_desync=" + std::to_string(f3Status.desync_count) +
         " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +

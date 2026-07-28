@@ -457,6 +457,71 @@ int main() {
             CHECK(!d.release_stuck);
             CHECK(!policy.release_stuck);
         }
+
+        // --- Permanently silent fabric must not wedge the host forever ---
+        // free_bank_mask stuck at 0 AND frames_done frozen is indistinguishable
+        // from "busy" for one frame, and from "dead" after a second. Because a
+        // skip means the host neither writes nor rings the doorbell, an
+        // unbounded skip is self-sustaining: the fabric can never change its
+        // mind, so the next read is identical, so we skip again. Forever.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus dead{0x00, 0, false, 7}; // frozen, nothing free
+            int skips = 0;
+            BankReleaseDecision d{};
+            for (int i = 0; i < kBankReleaseSkipLimitFrames + 5; ++i) {
+                d = chooseDdrPresentBankFromRelease(policy, 1, dead, dead);
+                if (d.kind == BankReleaseDecisionKind::SkipFrame) {
+                    ++skips;
+                    continue;
+                }
+                break;
+            }
+            // Skipping is still the first response -- backpressure is real.
+            CHECK(skips > 0);
+            CHECK(skips < kBankReleaseSkipLimitFrames + 5);
+            // But it is bounded, and the escape writes a bank rather than
+            // waiting on a handshake that is not coming.
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(d.bank == 1);
+            CHECK(policy.release_stuck);
+
+            // And it stays escaped while the fabric stays silent...
+            d = chooseDdrPresentBankFromRelease(policy, 0, dead, dead);
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(d.bank == 0);
+
+            // ...but heals the moment the fabric releases a bank again.
+            d = chooseDdrPresentBankFromRelease(policy, 0,
+                                                BankReleaseStatus{0x02, 0, false, 8},
+                                                BankReleaseStatus{0x02, 0, false, 8});
+            CHECK(d.kind == BankReleaseDecisionKind::UseFreeBank);
+            CHECK(d.bank == 1);
+            CHECK(!policy.release_stuck);
+            CHECK(policy.consecutive_skips == 0);
+        }
+
+        // A busy fabric that recovers within the window must NOT be escaped:
+        // the bound must not turn legitimate backpressure into a bank guess.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus busy{0x00, 0, true, 500};
+            for (int i = 0; i < kBankReleaseSkipLimitFrames - 1; ++i) {
+                BankReleaseDecision d =
+                    chooseDdrPresentBankFromRelease(policy, 1, busy, busy);
+                CHECK(d.kind == BankReleaseDecisionKind::SkipFrame);
+            }
+            CHECK(!policy.release_stuck);
+            BankReleaseDecision d =
+                chooseDdrPresentBankFromRelease(policy, 1,
+                                                BankReleaseStatus{0x01, 0, false, 500},
+                                                BankReleaseStatus{0x01, 0, false, 500});
+            CHECK(d.kind == BankReleaseDecisionKind::UseFreeBank);
+            CHECK(d.bank == 0);
+            // The counter must reset, or a run of isolated busy frames spread
+            // across a whole session would eventually trip the escape.
+            CHECK(policy.consecutive_skips == 0);
+        }
     }
 
     if (fails) {

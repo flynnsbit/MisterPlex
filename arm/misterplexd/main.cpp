@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
     bool ddrMemFlush = false;
     bool presentProfile = false;
     bool streamEnabled = false;
+    bool bitstreamIdrOnly = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
@@ -258,6 +259,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "F3_IDR_ONLY");
+        if (!v.empty())
+            bitstreamIdrOnly = confTruthy(v);
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -367,6 +371,7 @@ int main(int argc, char** argv) {
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
     player.setStreamEnabled(streamEnabled);
+    player.setBitstreamIdrOnly(bitstreamIdrOnly);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
     std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
