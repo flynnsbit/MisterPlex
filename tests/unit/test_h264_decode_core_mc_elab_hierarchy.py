@@ -60,6 +60,8 @@ REQUIRED = [
     "h264_luma_ref_tap_addr",
     "h264_ref_clamp",
     "h264_deblock_writeback_ctrl",
+    "h264_cavlc_nc_predictor",
+    "h264_cavlc_residual_block",
 ]
 
 # module -> (source file, instantiation anchor). Cutting the anchor's instantiation
@@ -73,6 +75,8 @@ CUT_SITES = {
     "h264_luma_ref_tap_addr": (RTL / "h264_dpb.sv", "h264_luma_ref_tap_addr #(.TAP_COLS(21)"),
     "h264_ref_clamp": (RTL / "h264_inter_pred.sv", "h264_ref_clamp u_clamp"),
     "h264_deblock_writeback_ctrl": (RTL / "h264_decode_core.sv", "h264_deblock_writeback_ctrl #("),
+    "h264_cavlc_nc_predictor": (RTL / "h264_decode_core.sv", "h264_cavlc_nc_predictor u_product_res_nc"),
+    "h264_cavlc_residual_block": (RTL / "h264_decode_core.sv", "h264_cavlc_residual_block u_product_p16_residual0"),
 }
 
 # h264_chroma_epel_block_8x8 and h264_luma_ref_tap_addr each have a second product
