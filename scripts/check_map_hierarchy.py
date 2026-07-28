@@ -34,16 +34,37 @@ import sys
 # leading-space count is required to recover each node's parent chain.
 SECTION_RE = re.compile(r"Resource Utilization by Entity", re.I)
 NODE_RE = re.compile(r"^;(\s+)\|([A-Za-z_][\w$]*)(?::([^|]*))?\|?\s*$")
+RULE_RE = re.compile(r"^\+[-+]+\+?\s*$")
 
 
 def parse_entities(path):
-    """Return a list of module chains (root..node) for every entity row."""
+    """Return a list of module chains (root..node) for every entity row.
+
+    The table is BOUNDED: parsing starts at the section header and stops at the
+    table's closing rule. An unbounded scan can absorb rows from a later,
+    unrelated table and false-green a presence check, so the end delimiter is
+    treated as significant rather than skipped.
+    """
     rows = []
-    stack = {}  # indent -> module name
+    stack = {}
+    in_section = False
+    seen_node = False
     with open(path, errors="ignore") as fh:
         for line in fh:
             if SECTION_RE.search(line):
                 stack = {}
+                in_section = True
+                seen_node = False
+                continue
+            if not in_section:
+                continue
+            if RULE_RE.match(line):
+                # Quartus brackets the table with +---+ rules: one before the
+                # header, one after it, and one closing the body. Only the rule
+                # that follows at least one node row terminates the table.
+                if seen_node:
+                    in_section = False
+                    seen_node = False
                 continue
             if not line.startswith(";"):
                 continue
@@ -60,6 +81,7 @@ def parse_entities(path):
             for k in [k for k in stack if k >= indent]:
                 del stack[k]
             stack[indent] = module
+            seen_node = True
             rows.append([stack[k] for k in sorted(stack)])
     return rows
 
@@ -165,12 +187,26 @@ def main():
         if args.under and not any(args.under in c[: c.index(mod)] for c in hits):
             print(f"  MISPARENTED {mod} -- never appears beneath {args.under}")
             rc = 1
-        if args.forbid_only_under and parents == {args.forbid_only_under}:
-            print(
-                f"  MASKED {mod} -- reachable ONLY through {args.forbid_only_under}; "
-                "this is not product reachability"
-            )
-            rc = 1
+        if args.forbid_only_under:
+            # W-AUDIT broke the previous form, which compared only the IMMEDIATE
+            # parent: h264_dpb_i420_addr nested under h264_dpb_one_ref under
+            # decode_stub false-greened because its parent was not the stub.
+            # Masking is an ANCESTOR property, so scan the whole chain above the
+            # module in every occurrence.
+            def masked(chain):
+                return args.forbid_only_under in chain[: chain.index(mod)]
+
+            occurrences = exact or hits
+            clean = [c for c in occurrences if not masked(c)]
+            if not clean:
+                print(
+                    f"  MASKED {mod} -- every occurrence is beneath "
+                    f"{args.forbid_only_under}; this is not product reachability"
+                )
+                # parents= alone can hide a stub ancestor, so cite full paths.
+                for chain in occurrences[:3]:
+                    print(f"    hierarchy_path: {'|'.join(chain)}")
+                rc = 1
 
     print(
         "PREFIT_HIERARCHY_OK" if rc == 0 else "PREFIT_HIERARCHY_FAIL",

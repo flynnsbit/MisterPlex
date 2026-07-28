@@ -2644,3 +2644,76 @@ report"* -- I am stopping. **Token spent: 1 of 1 authorized. No further deploys.
 - W-SWAP's `|| !slot_keep` fix: still neither validated nor refuted. The parent's
   nuance ("if the SDC turns out to be the cause, your fix may have been working
   all along") is now **closed off** -- the SDC was not the cause.
+
+## 41. W-AUDIT's two holes in `check_map_hierarchy.py` -- both closed, red/green proven
+
+Parent assigned: *"fix to a forbidden-ancestor check over the full chain, and
+bound the entity table."*
+
+### 41.1 Hole 1 -- `--forbid-only-under` tested only the IMMEDIATE parent
+
+```python
+if args.forbid_only_under and parents == {args.forbid_only_under}:
+```
+`h264_dpb_one_ref` directly under `decode_stub` -> correctly RED. But
+`h264_dpb_i420_addr` nested one level deeper had `parents={h264_dpb_one_ref}`,
+which is not equal to `{decode_stub}` -> **false GREEN**, even though every
+occurrence sits under the stub.
+
+Masking is an **ancestor** property, not a parent property. Now scans the whole
+chain above the module in every occurrence, and fails only when **no clean
+occurrence exists**:
+
+```python
+def masked(chain):
+    return args.forbid_only_under in chain[: chain.index(mod)]
+clean = [c for c in occurrences if not masked(c)]
+if not clean: ... rc = 1
+```
+
+Also per W-AUDIT: `parents=` summaries can hide a stub ancestor, so the failure
+now cites **full hierarchy paths**.
+
+### 41.2 Hole 2 -- the entity table was unbounded
+
+`parse_entities` began at the section header and never stopped, so node-shaped
+rows from any **later** table were appended and could false-green a presence
+check. Now bounded: `RULE_RE = ^\+[-+]+\+?$` closes the table, but only after at
+least one node row (Quartus emits rules before and after the header too).
+
+### 41.3 Red/green matrix -- four cases, all measured
+
+```
+RED1  nested under stub (W-AUDIT's false-green)
+      PRESENT h264_dpb_i420_addr ... parents=h264_dpb_one_ref
+      MASKED ... every occurrence is beneath decode_stub
+      hierarchy_path: emu|stream_path|decode_stub|h264_dpb_one_ref|h264_dpb_i420_addr
+      rc=1     (was rc=0 before the fix)
+
+GREEN also present outside the stub -- must NOT over-reject
+      PRESENT h264_dpb_i420_addr instances=2 parents=decode_stub,h264_decode_core
+      rc=0
+
+RED2  direct child under stub -- no regression
+      MASKED h264_dpb_one_ref ... rc=1
+
+BOUND require a module that exists only in a LATER table
+      Scope: 5 entity rows      (6 if the table were unbounded)
+      ABSENT bogus_module ... rc=1
+```
+
+Fixtures committed at `build/wfit-gate-attack/`.
+
+### 41.4 Ground-truth regression -- real report, unchanged
+
+```
+Scope: 827 entity rows parsed from .../wfit-hour27-a/Plex.fit.rpt [fit (post-fit)]
+PRESENT decode_stub       instances=1 subtree_rows=61  parents=stream_path
+ABSENT  h264_decode_core  -- not in the fit (post-fit) hierarchy
+PRESENT ddr_frame_store   instances=1 subtree_rows=482 parents=present_core
+rc=1
+```
+
+**827 rows** -- identical to the corrected figure, so the bounding change does not
+alter real-world parsing, and the load-bearing optimize-away conclusion is
+untouched. The fix closes the holes without moving the ground truth.
