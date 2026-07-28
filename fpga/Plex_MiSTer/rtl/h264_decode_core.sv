@@ -257,7 +257,7 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
-    localparam [1:0] P16_LUMA_RES_BLOCKS = 2'd2;
+    localparam [2:0] P16_RES_BLOCKS = 3'd4;
     localparam [15:0] FRAME_W16 = 16'(FRAME_W);
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
@@ -276,7 +276,7 @@ module h264_decode_core #(
     reg [1:0]  p16_ref_idx_l0_r;
     reg [6:0]  p16_tap_idx;
     reg [9:0]  p16_res_bit_offset_r;
-    reg [1:0]  p16_res_block_idx;
+    reg [2:0]  p16_res_block_idx;
     reg        cavlc_start_r;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -506,10 +506,16 @@ module h264_decode_core #(
     wire [15:0] p16_ref_y = (wb_plane == 2'd0) ?
         clamp_coord(p16_luma_base_y + p16_luma_tap_row, FRAME_H16) :
         clamp_coord(p16_chroma_base_y + $signed({14'd0, p16_chroma_tap_y}), CHROMA_H16);
+`ifdef H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ
+    wire [1:0] p16_rd_plane = (wb_plane == 2'd1) ? 2'd2 :
+                              (wb_plane == 2'd2) ? 2'd1 : wb_plane;
+`else
+    wire [1:0] p16_rd_plane = wb_plane;
+`endif
     wire [31:0] p16_rd_addr;
     h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_p16_rd_addr (
         .base(p16_ref_base_r),
-        .plane(wb_plane),
+        .plane(p16_rd_plane),
         .x(p16_ref_x),
         .y(p16_ref_y),
         .addr(p16_rd_addr)
@@ -586,7 +592,7 @@ module h264_decode_core #(
             p16_ref_idx_l0_r <= 2'd0;
             p16_tap_idx <= 7'd0;
             p16_res_bit_offset_r <= 10'd0;
-            p16_res_block_idx <= 2'd0;
+            p16_res_block_idx <= 3'd0;
             cavlc_start_r <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
@@ -652,7 +658,7 @@ module h264_decode_core #(
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
-                    p16_res_block_idx <= 2'd0;
+                    p16_res_block_idx <= 3'd0;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -686,13 +692,13 @@ module h264_decode_core #(
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
                         for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
-                            lat_p16_residual_y[((wb_i / 4) * 16) + {28'd0, p16_res_block_idx, 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
+                            lat_p16_residual_y[((wb_i / 4) * 16) + {27'd0, p16_res_block_idx, 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
                     end
 `endif
-                    if (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 2'd1)) begin
+                    if (p16_res_block_idx == (P16_RES_BLOCKS - 3'd1)) begin
                         wb_state <= ST_P16_TAP_REQ;
                     end else begin
-                        p16_res_block_idx <= p16_res_block_idx + 2'd1;
+                        p16_res_block_idx <= p16_res_block_idx + 3'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         wb_state <= ST_P16_RES_START;
                     end

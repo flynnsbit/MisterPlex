@@ -20,18 +20,23 @@ constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int MV_Y_QPEL = 0;
-constexpr int kMeasuredP16RealPCycles = 85910;
+constexpr int kMeasuredP16RealPCycles = 86078;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
-constexpr int kScheduledLumaBlocks = 2;
-constexpr int kResidualBlockSamples[2][kScheduledLumaBlocks][16] = {
+constexpr int kScheduledLumaBlocks = 4;
+constexpr int kScheduledBlocks = kScheduledLumaBlocks;
+constexpr int kResidualBlockSamples[2][kScheduledBlocks][16] = {
     {
         {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
         {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
+        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
+        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
     },
     {
         {264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256},
         {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
+        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
+        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
     },
 };
 
@@ -54,7 +59,7 @@ struct MbCase {
 
 const std::vector<MbCase> kCases = {
     {1, 0, 2, 0, 0, 0, 2, 0, 296},
-    {2, 0, 3, 0, 2, 0, 5, 0, 344},
+    {2, 0, 3, 0, 2, 0, 5, 0, 400},
 };
 
 uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
@@ -213,7 +218,7 @@ bool checkResidualFixture() {
     int nonzero = 0;
     int positionDependent = 0;
     for (int mb = 0; mb < static_cast<int>(kCases.size()); ++mb) {
-        for (int block = 0; block < kScheduledLumaBlocks; ++block) {
+        for (int block = 0; block < kScheduledBlocks; ++block) {
             bool anyNonzero = false;
             bool differsFromFirst = false;
             for (int i = 0; i < 16; ++i) {
@@ -229,13 +234,22 @@ bool checkResidualFixture() {
             ++positionDependent;
         }
     }
+    int uvDiff = 0;
+    for (int y = 0; y < C_H; ++y)
+        for (int x = 0; x < C_W; ++x)
+            uvDiff += (refSample(1, x, y) != refSample(2, x, y));
     if (kResidualBlockSamples[0][0][0] == kResidualBlockSamples[0][0][1]) {
         std::cerr << "FAIL h264_decode_core residual fixture: scan-order sentinel aliases coeff positions\n";
         return false;
     }
+    if (uvDiff < C_BYTES - 2) {
+        std::cerr << "FAIL h264_decode_core residual fixture: U/V reference planes are not distinguishable\n";
+        return false;
+    }
     std::cout << "INFO h264_decode_core residual fixture: " << positionDependent
               << " scheduled luma CAVLC blocks are nonzero and position-dependent; nonzero_samples="
-              << nonzero << " scan_order_sentinel=19/11\n";
+              << nonzero << " uv_ref_distinguishable_samples=" << uvDiff
+              << " scan_order_sentinel=19/11\n";
     return true;
 }
 
@@ -355,10 +369,18 @@ void loadScheduledResidualRbsp(Sim& s) {
     putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
     bitOffset += 19;
     putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
+    bitOffset += 8;
+    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
+    bitOffset += 19;
+    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
     bitOffset = kCases.at(1).residualBitOffset;
     putBits(bitOffset, "00010000000000000000001000001111110111"); // scan coeffs [80, 1]
     bitOffset += 38;
     putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
+    bitOffset += 8;
+    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
+    bitOffset += 19;
+    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
 }
 
 void reset(Sim& s) {
@@ -447,6 +469,8 @@ int checkScoreboard(const Sim& s) {
         }
     }
     int clipped = 0;
+    int clipLow = 0;
+    int clipHigh = 0;
     for (std::size_t mbIdx = 0; mbIdx < kCases.size(); ++mbIdx) {
         const MbCase& mb = kCases.at(mbIdx);
         for (int local = 0; local < 384; ++local) {
@@ -463,7 +487,13 @@ int checkScoreboard(const Sim& s) {
             const int pred = predSample(mb, local);
             const int residual = residualSample(static_cast<int>(mbIdx), local);
             const uint8_t want = expectedRecon(static_cast<int>(mbIdx), mb, local);
-            if (pred + residual < 0 || pred + residual > 255) ++clipped;
+            if (pred + residual < 0) {
+                ++clipped;
+                ++clipLow;
+            } else if (pred + residual > 255) {
+                ++clipped;
+                ++clipHigh;
+            }
             if (w.data != want) {
                 std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
                           << ") sample " << local << " plane=" << planeName(local)
@@ -484,14 +514,15 @@ int checkScoreboard(const Sim& s) {
                   << int(s.top.frame_mb_count) << " want=" << kCases.size() << "\n";
         return 1;
     }
-    if (clipped < 2) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: clipped_samples="
-                  << clipped << " want>=2\n";
+    if (clipLow < 1 || clipHigh < 1) {
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: clip_low="
+                  << clipLow << " clip_high=" << clipHigh << " want>=1 each\n";
         return 1;
     }
     std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor+CAVLC-residual path "
-              << "384x2 exact clipped pred+2-block scheduled-residual samples landed at DPB addresses; reads="
+              << "384x2 exact clipped pred+4Y scheduled-residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
+              << " clip_low=" << clipLow << " clip_high=" << clipHigh
               << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
               << "; nonterminal frame_done stayed low\n";
