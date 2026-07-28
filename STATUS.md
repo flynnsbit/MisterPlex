@@ -9,6 +9,123 @@ plays Plex content natively.
 
 ---
 
+## Update #5 — 2026-07-28 13:25 CDT (Hour 30)
+
+### ⚠️ MiSTer still offline — 45 minutes
+
+```
+last seen responding   11:37
+ping / arp / ssh       100% loss, ARP FAILED, no route to host
+```
+
+No locks or pending operations were left on it. Most likely powered off, rebooted
+without network, or off WiFi. **If you switched it off, ignore this.** Otherwise
+it will want a physical power-cycle when you're back. All hardware verification
+is blocked; simulation and build work continues.
+
+### I published something false in Update #4, and it points at my own decision
+
+In Update #4 I told you the timing-constraint change was **"netlist-neutral —
+exonerated by measurement rather than argument."** That was wrong, and the way it
+was wrong is worth explaining, because I was the one who authorized that change
+this morning.
+
+The exoneration rested on four build variants all producing an identical
+bitstream. A worker went and checked what those variants actually differed in:
+
+```
+build A (3b1e8435) vs build B (fb4bad84)
+
+rtl/ checksum        325ac380…  ==  325ac380…     IDENTICAL
+diff -r A/rtl B/rtl  rc=0, 0 lines, 48 files      IDENTICAL
+Plex.sv / Plex.qsf / files.qip                     IDENTICAL
+Plex.sdc             9a312bcb  vs  13e7312e       ** DIFFERS, 38 lines **
+```
+
+**All four "independent" builds carried the same new constraint file.** The
+comparison never varied the thing it claimed to be testing. It proved the
+compiler is deterministic — that identical inputs give identical outputs — and
+nothing whatsoever about the constraints.
+
+Two builds differing **only** in that file produce **different bitstreams**. So
+the constraint change does alter the design, and it remains a live suspect for
+the regression I reported in Update #4.
+
+To be direct about what that means: I approved that change this morning on the
+grounds that measurements looked identical with and without it. That reasoning
+was sound but the supporting control was empty, and **the change I personally
+signed off may be the thing that broke the display path.** Not proven — but no
+longer excluded, and I had told you it was.
+
+### The test I authorized would have produced the opposite conclusion
+
+I had authorized deploying build `3b1e8435` as an A/B test to narrow down four
+suspect changes to the memory-clock logic. The same worker checked before
+spending it, and found that build's RTL is **byte-identical** to the current one
+— so it contains all four suspects. **It cannot eliminate any of them.**
+
+What it actually is, is a clean test of *constraints vs code*:
+
+| build | code | constraints | display telemetry |
+|---|---|---|---|
+| `00eebd5e` (old) | older | old | **advancing ~68/s** |
+| `3b1e8435` | new | **old** | ? |
+| `fb4bad84` (resident) | new | **new** | **silent** |
+
+If `3b1e8435` comes back alive, **the constraint change caused the regression.**
+
+Under my original framing, that exact result would have been read as *"the
+memory-clock changes are innocent"* — the precise opposite of what it shows. I
+would have run the right experiment, gotten a real result, and drawn a backwards
+conclusion from it. The test is still worth running; it now answers a different
+and better question. It is queued for when your MiSTer returns.
+
+### The generalisable lesson
+
+The worker named the pattern better than I would have: **a control that does not
+vary the independent variable proves only that your process is repeatable.** Four
+builds agreeing on identical inputs feels like overwhelming evidence and is
+worth nothing.
+
+That is the same shape as the other failures we've hit today — a gate that passes
+without running, a reachability proof that reaches through a retired module, a
+byte-value check that can't see a wrong address. All of them *look* like
+evidence. It's being added as a permanent check: *does this comparison actually
+differ in the thing it claims to test?*
+
+### Also this hour
+
+The adversarial auditor attacked the new fast pre-fit tool and found a real gap:
+its "is this module hiding under the test-pattern painter?" check only inspects
+direct children, so a module nested two levels deep passes when it should fail.
+It could **not** break the central finding — that the decoder is being optimized
+away — which is the load-bearing claim.
+
+### Progress
+
+```
+ARM / Plex client        ████████████████░░░░  85%
+Integrity / release      ████████████████░░░░  80%
+Display path (frame st.) ██████████░░░░░░░░░░  50%
+Shippable builds         ████████████░░░░░░░░  60%
+Picture: intra (stills)  ███████░░░░░░░░░░░░░  35%
+Bitstream parse / CAVLC  ████████░░░░░░░░░░░░  40%
+Deblocking filter        ██████░░░░░░░░░░░░░░  30%
+Picture: inter / motion  ██░░░░░░░░░░░░░░░░░░  10%
+                                              ─────
+OVERALL                  ███████░░░░░░░░░░░░░  36%
+```
+
+Unchanged. Nothing was verified on hardware this half hour because the hardware
+is offline. I'd rather hold the number flat than credit unverified work.
+
+### Next update
+
+~30 minutes: whether the MiSTer is back, and whether the decoder survives
+synthesis for the first time.
+
+---
+
 ## Update #4 — 2026-07-28 12:45 CDT (Hour 29.5)
 
 ### First, a correction to Update #3
