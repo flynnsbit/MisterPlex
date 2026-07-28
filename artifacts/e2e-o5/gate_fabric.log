@@ -1,0 +1,40 @@
+PASS gate exists
+PASS loopback is reachable (host probe is live, not mocked)
+PASS TEST-NET-1 is unreachable (dead-source condition is real)
+PASS NO_SIGNAL refuses (rc=2)
+PASS NO_SIGNAL names the state
+PASS NO_SIGNAL is explicitly not a pass
+PASS MS2109 no-lock filler REFUSES (rc=2) even with a reachable host
+PASS filler is reported as NO_SIGNAL, not BLACK_SIGNAL
+PASS filler refusal names the filler explicitly
+PASS BLACK + unreachable host refuses (rc=2)
+PASS BLACK + unreachable host is NOT blamed on the core
+PASS BLACK + reachable host FAILS (rc=1)
+PASS BLACK + reachable host is attributed to the core
+PASS STALE_CAPTURE refuses (rc=2)
+PASS STALE names the state
+PASS CONTENT passes (rc=0)
+PASS CONTENT names the state
+PASS CONTENT without chevron FAILS --expect-chevron (rc=1)
+PASS CONTENT with chevron passes --expect-chevron (rc=0)
+PASS chevron reported PRESENT
+PASS orange text column is NOT reported as a chevron
+PASS text column rejected on shape, not on colour or count
+PASS orange text column FAILS --expect-chevron (rc=1)
+PASS sparse square orange block is NOT a chevron
+PASS sparse block rejected specifically on fill density
+PASS left-edge artifact detected
+PASS clean frames report no left-edge artifact
+PASS unverifiable provenance refuses (rc=2) even with good pixels
+PASS provenance refusal says UNSCORED
+PASS --expect-corename without --host refuses (rc=2)
+PASS file-only md5 check PASSES the stale fabric (the bug being fixed)
+PASS RBF written AFTER core load refuses (rc=2) despite CONTENT pixels
+PASS stale-fabric refusal is reported as UNSCORED
+PASS stale-fabric refusal names the DEPLOY_LOAD=none mechanism
+PASS core loaded AFTER the RBF write passes (rc=0)
+PASS provenance line reports load_after_write=True
+PASS unknown load-ordering refuses (rc=2) rather than assuming
+
+37/37 checks passed
+CAPTURE_GATE_OFFLINE_REDPROOF_OK

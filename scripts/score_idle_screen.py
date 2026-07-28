@@ -175,13 +175,33 @@ def loaded_core_identity(host: str, timeout_s: int = 10) -> dict:
     SD card.  Pixels alone cannot detect that; only the loaded-core identity can.
 
     Returns {"ok": bool, "corename": str, "rbf_md5": str, "uptime_s": int,
+             "rbf_mtime": int, "load_mtime": int, "load_after_write": bool|None,
              "error": str}.  Never raises.
+
+    FABRIC vs FILE (added after w-e2e's handoff, 2026-07-28).  `rbf_md5` is the
+    md5 of the RBF *file on the SD card*.  It is NOT proof of what is configured
+    into the fabric, and the two routinely diverge: `scripts/deploy_plex_core.sh`
+    defaults to `DEPLOY_LOAD=none`, which copies the RBF and deliberately does
+    not call load_core.  After a default deploy the file is new and the fabric is
+    still running the previous bitstream, so an `--expect-rbf-md5` check passes
+    while every pixel on screen belongs to a different build.
+
+    There is no bitstream readback on this part and no fabric-published build ID
+    (the DDR mailbox words survive reconfiguration, so they cannot identify the
+    fabric either).  Identity is therefore established by ORDERING: /tmp/CORENAME
+    is (re)written by the Main binary when a core is loaded, so if
+    mtime(Plex.rbf) <= mtime(/tmp/CORENAME) the load happened after the file was
+    in place and necessarily configured the fabric from these bytes.
     """
     import subprocess
     cmd = ("echo \"CORENAME=$(cat /tmp/CORENAME 2>/dev/null)\"; "
            "echo \"RBFMD5=$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | cut -d' ' -f1)\"; "
+           "echo \"RBFMTIME=$(date -r /media/fat/_Utility/Plex.rbf +%s 2>/dev/null)\"; "
+           "echo \"LOADMTIME=$(date -r /tmp/CORENAME +%s 2>/dev/null)\"; "
            "echo \"UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null)\"")
-    info = {"ok": False, "corename": "", "rbf_md5": "", "uptime_s": -1, "error": ""}
+    info = {"ok": False, "corename": "", "rbf_md5": "", "uptime_s": -1,
+            "rbf_mtime": -1, "load_mtime": -1, "load_after_write": None,
+            "error": ""}
     try:
         r = subprocess.run(
             ["sshpass", "-p", os.environ.get("MISTER_PASS", "1"), "ssh",
@@ -201,6 +221,18 @@ def loaded_core_identity(host: str, timeout_s: int = 10) -> dict:
                     info["uptime_s"] = int(line.split("=", 1)[1].strip())
                 except ValueError:
                     pass
+            elif line.startswith("RBFMTIME="):
+                try:
+                    info["rbf_mtime"] = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+            elif line.startswith("LOADMTIME="):
+                try:
+                    info["load_mtime"] = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+        if info["rbf_mtime"] >= 0 and info["load_mtime"] >= 0:
+            info["load_after_write"] = info["load_mtime"] >= info["rbf_mtime"]
         info["ok"] = bool(info["corename"])
         if not info["ok"]:
             info["error"] = "device returned no CORENAME"
@@ -272,7 +304,14 @@ def main(argv: list[str] | None = None) -> int:
                          "core is verified AT CAPTURE TIME; a rebooted device can "
                          "come back on MENU with the RBF unloaded on disk.")
     ap.add_argument("--expect-rbf-md5", default=None,
-                    help="REFUSE unless /media/fat/_Utility/Plex.rbf matches this md5.")
+                    help="REFUSE unless /media/fat/_Utility/Plex.rbf matches this md5. "
+                         "NOTE: this matches the FILE, not the fabric; pair it with "
+                         "--require-fabric-provenance.")
+    ap.add_argument("--require-fabric-provenance", action="store_true",
+                    help="With --expect-rbf-md5, also REFUSE unless the core was "
+                         "loaded AFTER the RBF file was written. Without this, a "
+                         "DEPLOY_LOAD=none deploy makes the md5 check pass while the "
+                         "fabric still runs the previous bitstream.")
     ap.add_argument("--json-out")
     args = ap.parse_args(argv)
 
@@ -292,7 +331,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"{ident['error']}; screen state is UNSCORED", file=sys.stderr)
             return EXIT_REFUSE
         print(f"PROVENANCE: corename={ident['corename']!r} "
-              f"rbf_md5={ident['rbf_md5'][:8]} uptime={ident['uptime_s']}s")
+              f"rbf_md5={ident['rbf_md5'][:8]} uptime={ident['uptime_s']}s"
+              + (f" load_after_write={ident['load_after_write']}"
+                 f" (rbf_mtime={ident['rbf_mtime']} load_mtime={ident['load_mtime']},"
+                 f" delta={ident['load_mtime'] - ident['rbf_mtime']}s)"
+                 if ident["load_after_write"] is not None else
+                 " load_after_write=UNKNOWN"))
         if args.expect_corename and ident["corename"] != args.expect_corename:
             print(f"REFUSE: loaded core is {ident['corename']!r}, expected "
                   f"{args.expect_corename!r}. The capture would be about the WRONG "
@@ -304,6 +348,23 @@ def main(argv: list[str] | None = None) -> int:
                   f"{args.expect_rbf_md5[:8]}; screen state is UNSCORED",
                   file=sys.stderr)
             return EXIT_REFUSE
+        if args.expect_rbf_md5 and args.require_fabric_provenance:
+            # The md5 above matched the FILE.  That is not the fabric: a default
+            # `DEPLOY_LOAD=none` deploy rewrites the RBF without loading it, so
+            # the file can carry the expected md5 while the previous bitstream is
+            # still configured and painting every pixel we are about to grade.
+            if ident["load_after_write"] is None:
+                print("REFUSE: cannot establish load-ordering (missing RBF/CORENAME "
+                      "mtimes), so the md5 proves the FILE only, not the fabric; "
+                      "screen state is UNSCORED", file=sys.stderr)
+                return EXIT_REFUSE
+            if not ident["load_after_write"]:
+                print(f"REFUSE: RBF file was written {ident['rbf_mtime'] - ident['load_mtime']}s "
+                      f"AFTER the core was loaded, so the fabric is running a "
+                      f"DIFFERENT bitstream than {args.expect_rbf_md5[:8]} "
+                      f"(classic DEPLOY_LOAD=none divergence). Load the core, then "
+                      f"re-capture; screen state is UNSCORED.", file=sys.stderr)
+                return EXIT_REFUSE
 
     try:
         frames, source = load_frames(args)

@@ -1,0 +1,5 @@
+Scope: 21 mutations across 2 file(s); test = python3 tests/unit/test_capture_gate_states.py
+SURVIVED  unknown-ordering-assumed-good  — test still green, behaviour UNCONSTRAINED
+
+Scope: 21 mutations; killed 20, survived 1
+SURVIVORS (vacuous coverage): unknown-ordering-assumed-good

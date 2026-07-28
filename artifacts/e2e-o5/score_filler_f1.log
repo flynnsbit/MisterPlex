@@ -1,0 +1,6 @@
+REFUSE: no usable HDMI signal; screen state is UNSCORED (not a pass, not a skip)
+Scope: 1 scored frames from file
+SIGNAL_STATE: NO_SIGNAL  mean_luma=7.0 spatial_std=0.0 unique=1/1
+PLEX_CHEVRON: ABSENT — only 0 Plex-orange px (< 2000); no chevron
+LEFT_EDGE_ARTIFACT: clean — dark 0.0% in cols [84, 200] vs 0.0% in control [300, 1200] (ratio infx)
+  note: 100.0% of pixels are exactly RGB(7, 7, 7), the MS2109's no-lock filler (threshold 50%; locked captures measure <0.1%). The receiver is not locked to the source, so the screen contents are UNSCORED. This is NOT evidence of a black screen and NOT evidence of a core defect — it commonly occurs for several seconds after a core load while HDMI re-locks.

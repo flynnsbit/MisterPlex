@@ -105,6 +105,30 @@
       "target": "scripts/score_idle_screen.py",
       "old": "    if args.expect_corename or args.expect_rbf_md5:",
       "new": "    if False:"
+    },
+    {
+      "name": "fabric-provenance-check-removed",
+      "target": "scripts/score_idle_screen.py",
+      "old": "        if args.expect_rbf_md5 and args.require_fabric_provenance:",
+      "new": "        if False:"
+    },
+    {
+      "name": "stale-fabric-accepted",
+      "target": "scripts/score_idle_screen.py",
+      "old": "            if not ident[\"load_after_write\"]:",
+      "new": "            if False:"
+    },
+    {
+      "name": "unknown-ordering-assumed-good",
+      "target": "scripts/score_idle_screen.py",
+      "old": "            if ident[\"load_after_write\"] is None:",
+      "new": "            if False:"
+    },
+    {
+      "name": "ordering-comparison-inverted",
+      "target": "scripts/score_idle_screen.py",
+      "old": "            info[\"load_after_write\"] = info[\"load_mtime\"] >= info[\"rbf_mtime\"]",
+      "new": "            info[\"load_after_write\"] = info[\"load_mtime\"] <= info[\"rbf_mtime\"]"
     }
   ]
 }

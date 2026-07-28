@@ -24,6 +24,7 @@ unroutable, which is exactly the powered-off-MiSTer condition.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -118,16 +119,40 @@ def inputs(paths: list[str]) -> list[str]:
     return out
 
 
-def run(args: list[str], d: Path) -> subprocess.CompletedProcess:
+def run(args: list[str], d: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     r = subprocess.run(
         [sys.executable, str(GATE), "--out-dir", str(d / "out")] + args,
-        capture_output=True, text=True)
+        capture_output=True, text=True, env=env)
     # argparse exits 2 on a usage error, which collides with EXIT_REFUSE.  A
     # test that accepted rc=2 blindly would go green on a command-line typo --
     # that happened during development of this file.
     if "usage:" in r.stderr and "error:" in r.stderr:
         raise AssertionError(f"gate rejected the command line, not the pixels:\n{r.stderr[:400]}")
     return r
+
+
+def fake_sshpass(d: Path, corename: str, md5: str, rbf_mtime: int,
+                 load_mtime: int) -> dict:
+    """PATH shim so the gate's real ssh probe returns controlled identity.
+
+    Stubbing at the process boundary keeps the gate's own parsing and ordering
+    logic under test; mocking loaded_core_identity() would test nothing but the
+    mock.
+    """
+    bindir = d / f"bin_{corename}_{load_mtime}"
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = bindir / "sshpass"
+    shim.write_text(
+        "#!/bin/sh\n"
+        f"echo 'CORENAME={corename}'\n"
+        f"echo 'RBFMD5={md5}'\n"
+        f"echo 'RBFMTIME={rbf_mtime}'\n"
+        f"echo 'LOADMTIME={load_mtime}'\n"
+        "echo 'UPTIME=1234'\n")
+    shim.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    return env
 
 
 def main() -> int:
@@ -261,6 +286,52 @@ def main() -> int:
         r = run(inputs(pc) + ["--expect-corename", "Plex"], d)
         check("--expect-corename without --host refuses (rc=2)",
               r.returncode == 2, f"rc={r.returncode}")
+
+        # 11. FABRIC vs FILE (w-e2e handoff, 2026-07-28).  `scripts/deploy_plex_core.sh`
+        #     defaults to DEPLOY_LOAD=none: it rewrites the RBF and does NOT load it.
+        #     The md5 of the FILE then matches the build under test while the fabric
+        #     still runs the previous bitstream and paints every pixel we grade.
+        #     These frames are CONTENT, so without the ordering check the gate
+        #     returns a confident PASS attributed to the wrong build.
+        MD5 = "3b1e8435aaaaaaaaaaaaaaaaaaaaaaaa"
+        env_bad = fake_sshpass(d, "Plex", MD5, rbf_mtime=2000, load_mtime=1000)
+        prov = ["--host", REACHABLE, "--expect-corename", "Plex",
+                "--expect-rbf-md5", "3b1e8435"]
+
+        r = run(inputs(pc) + prov, d, env=env_bad)
+        check("file-only md5 check PASSES the stale fabric (the bug being fixed)",
+              r.returncode == 0, f"rc={r.returncode} {r.stderr[:200]}")
+
+        r = run(inputs(pc) + prov + ["--require-fabric-provenance"], d, env=env_bad)
+        check("RBF written AFTER core load refuses (rc=2) despite CONTENT pixels",
+              r.returncode == 2, f"rc={r.returncode} {r.stdout[-200:]}")
+        check("stale-fabric refusal is reported as UNSCORED",
+              "UNSCORED" in r.stderr, r.stderr[:300])
+        check("stale-fabric refusal names the DEPLOY_LOAD=none mechanism",
+              "DEPLOY_LOAD=none" in r.stderr, r.stderr[:300])
+
+        # Green side: same frames, same flag, load AFTER the write -> PASS.
+        # Without this the refusal above could come from anything at all.
+        env_ok = fake_sshpass(d, "Plex", MD5, rbf_mtime=1000, load_mtime=2000)
+        r = run(inputs(pc) + prov + ["--require-fabric-provenance"], d, env=env_ok)
+        check("core loaded AFTER the RBF write passes (rc=0)",
+              r.returncode == 0, f"rc={r.returncode} {r.stderr[:300]}")
+        check("provenance line reports load_after_write=True",
+              "load_after_write=True" in r.stdout, r.stdout[:300])
+
+        # Missing mtimes must REFUSE, not silently fall back to the file-only check.
+        # Assert the SPECIFIC message: rc=2 alone is vacuous here, because with
+        # this branch deleted `not None` is True and the stale-fabric branch
+        # refuses anyway -- while printing a fabricated "written 0s AFTER" delta
+        # computed from two -1 sentinels. Mutation testing found this.
+        env_unk = fake_sshpass(d, "Plex", MD5, rbf_mtime=-1, load_mtime=-1)
+        r = run(inputs(pc) + prov + ["--require-fabric-provenance"], d, env=env_unk)
+        check("unknown load-ordering refuses (rc=2) rather than assuming",
+              r.returncode == 2, f"rc={r.returncode} {r.stdout[-200:]}")
+        check("unknown ordering says it cannot establish ordering, and does NOT "
+              "invent a delta from sentinel mtimes",
+              "cannot establish load-ordering" in r.stderr
+              and "AFTER the core was loaded" not in r.stderr, r.stderr[:300])
 
     print(f"\n{checks - len(failures)}/{checks} checks passed")
     if failures:

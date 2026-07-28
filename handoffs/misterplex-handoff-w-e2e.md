@@ -1041,3 +1041,64 @@ across `score_idle_screen.py` and `capture_preflight.py` -> **17/17 killed**.
 This harness has already caught a real vacuity in my own work: two fill-gate
 mutations survived because my regression frame was rejected on *aspect* before
 the fill check ran (§18).
+
+## §24 — FABRIC vs FILE: w-e2e's §12.1 correction is right, and here is the mechanism
+
+The outgoing w-e2e warned that "file != fabric" and that the 12:09 content was
+probably `00eebd5e` rather than `fb4bad84`. **That warning is correct and it
+applied to my own provenance guard.** `--expect-rbf-md5` hashes
+`/media/fat/_Utility/Plex.rbf` — the file on the SD card — which is not proof of
+what is configured into the fabric.
+
+**Mechanism (measured, `scripts/deploy_plex_core.sh:34,191-194`):**
+`DEPLOY_LOAD` defaults to **`none`**, which copies the RBF and deliberately does
+*not* call `load_core` ("RBF on SD only; not calling load_core (safest)").
+So after a default deploy the file carries the new md5 while the fabric still
+runs the previous bitstream and paints every pixel you are about to grade. The
+md5 check passes and the capture is attributed to the wrong build.
+
+**Why there is no readback.** No bitstream readback exists on this part, and
+there is no fabric-published build ID — I searched the RTL and
+`host/libmisterplex/mailbox_abi_spec.hpp`; the mailbox words are DDR, which
+survives reconfiguration, so they cannot identify the fabric either.
+
+**The fix is ORDERING.** `/tmp/CORENAME` is rewritten by Main when a core loads,
+so mtime of the RBF <= mtime of /tmp/CORENAME proves the load happened after the
+file was in place and therefore configured the fabric from those bytes. Added
+`--require-fabric-provenance` to `scripts/score_idle_screen.py`; without it the
+md5 flag is a file check only, and its `--help` now says so.
+
+Measured on the live device: rbf_mtime=14:56:44, CORENAME mtime=16:00:16,
+**delta +3812 s** -> my 16:01 capture of `3b1e8435` is fabric-sound.
+
+**Correction to my own §22.** The `3b1e8435` side of that A/B is now
+fabric-proven; the `fb4bad84` side is **file-provenance only** — I never recorded
+the load-ordering for those 14:xx captures and cannot reconstruct it. So
+"chevron bit-identical between fb4bad84 and 3b1e8435" must be downgraded to
+"bit-identical between the fabric running at 14:xx (file said fb4bad84) and the
+fabric proven to be 3b1e8435 at 16:01". The display-path exoneration survives;
+the build label on one side does not.
+
+## §25 — RGB(7,7,7) is not a black screen, and it is not an ambiguous result
+
+w-e2e reported an 18-frame clip and a 240-frame bounce probe as
+`BLACK_SIGNAL, flat RGB(7,7,7), std=0.0`, and called it AMBIGUOUS between
+"MiSTer offline" and "valid but black". **It is neither.** RGB(7,7,7) is the
+MS2109 capture device's own no-lock filler: it is emitted by the *receiver* when
+it is not locked to a source, so it carries no information about the FPGA at all.
+
+Because 7 < the black-luma threshold of 8.0, the old classifier tested luma
+before flatness and graded a completely unlocked capture as a black screen —
+then blamed the core whenever the host happened to be pingable. Fixed in
+`capture_preflight.classify_signal` (filler dominance is tested first).
+
+Verified today on a live frame with exactly that signature
+(mean_luma=7.0 spatial_std=0.0, 100% filler): the gate now returns
+**rc=2 NO_SIGNAL / UNSCORED**, with a note stating it is not evidence of a black
+screen and not evidence of a core defect.
+
+**Consequence for the proposed bounce discriminator:** watching for a NO_SIGNAL
+gap during a core bounce cannot work when the capture is *already* unlocked —
+there is no locked state to drop out of. The question it was meant to answer is
+answered directly instead: this device has since produced CONTENT_PRESENT frames
+(mean luma 36.37), so the HDMI output path is alive, not dead.

@@ -1,0 +1,31 @@
+capture: prove fabric provenance by load ordering, not just file md5
+
+w-e2e's handoff warned that the RBF file md5 is not proof of what is in the
+fabric. The warning is correct and it applied to my own provenance guard.
+
+Mechanism, measured: scripts/deploy_plex_core.sh defaults to DEPLOY_LOAD=none,
+which copies the RBF and deliberately does not call load_core. After a default
+deploy the file carries the new md5 while the fabric still runs the previous
+bitstream, so --expect-rbf-md5 passes and the capture is attributed to the
+wrong build.
+
+There is no bitstream readback and no fabric-published build ID (the mailbox
+words live in DDR, which survives reconfiguration), so identity is established
+by ordering instead: /tmp/CORENAME is rewritten when a core loads, so an RBF
+mtime at or before the CORENAME mtime proves the load read those bytes.
+Adds --require-fabric-provenance and reports the measured delta.
+
+Red proof, 38/38: same CONTENT frames and same md5, only the ordering differs,
+and the verdict flips 0 to 2. The test also asserts the file-only check still
+PASSES the stale fabric, documenting the bug the flag exists to fix.
+
+Mutation testing found a vacuity in this very change: the unknown-ordering
+case returned rc=2 for the wrong reason, because with the branch deleted the
+next branch refused anyway while printing a fabricated delta from two -1
+sentinels. Now asserts the specific message. 21/21 mutations killed.
+
+Also records that RGB(7,7,7) is the MS2109 no-lock filler rather than a black
+screen, so the earlier all-flat clips were UNSCORED captures, not evidence of
+a dead HDMI output.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
