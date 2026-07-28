@@ -439,46 +439,55 @@ module decode_stub #(
 	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
 	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
 	                                 dpb_pred_y_valid[0];
-	// DPB local memory — two banks for ping-pong (current/reference).
-	// In simulation, backed by SRAM; testbench pre-fills reference bank
-	// with real IDR decode data for honest inter measurement.
-	localparam int DPB_FRAME_BYTES = WIDTH * HEIGHT + 2 * ((WIDTH/2) * (HEIGHT/2));
-	localparam int DPB_BANK1_BASE = DPB_FRAME_BYTES;
-	localparam int DPB_MEM_BYTES  = 2 * DPB_FRAME_BYTES;
-	(* ram_style = "block" *) reg [7:0] dpb_mem [0:DPB_MEM_BYTES-1];
+	// ---------------------------------------------------------------------
+	// DPB/MC diagnostic block REMOVED (w-decode-o5).
+	//
+	// This block held `dpb_mem`, an on-chip array declared
+	//     2 * (WIDTH*HEIGHT + 2*((WIDTH/2)*(HEIGHT/2)))
+	// = 921,600 bytes = 7,372,800 bits at the fitted 640x480 geometry, which is
+	// 1.30x the ENTIRE device's block RAM (553 M10K x 10,240 = 5,662,720 bits).
+	// It could never be built as declared; w-fit-o5 measured the fitted design
+	// giving decode_stub 256 M10K = 46% of the whole device, i.e. only 28% of
+	// the array, silently truncated.  That 46% is the reason the product
+	// MC/DPB modules do not fit.
+	//
+	// It also instantiated h264_deblock_writeback_ctrl, h264_dpb_one_ref and
+	// h264_inter_mc_part.  Post-fit hierarchy of fb4bad84 showed those were the
+	// ONLY decode modules in shipped silicon, and reachable ONLY through this
+	// retired diagnostic painter.  All three are now instantiated under
+	// h264_decode_core, which is where the product decoder lives, so removing
+	// the stub's private copies does not remove them from the design.
+	//
+	// The painter itself is preserved: it remains the sole driver of
+	// fs_wr_en/fs_wr_pixel/fs_wr_reset/fs_swap.  What is lost is the stub's
+	// inter-prediction diagnostic tile, which now paints its "no reference"
+	// value.  Every signal below is tied off rather than deleted so that the
+	// painter's structure and every reference to it stay intact and reviewable.
+	// ---------------------------------------------------------------------
+	assign dpb_mem_rdata   = 8'h00;
+	assign dpb_mem_we      = 1'b0;
+	assign dpb_mem_waddr   = 32'd0;
+	assign dpb_mem_wdata   = 8'd0;
+	assign dpb_mem_rd      = 1'b0;
+	assign dpb_mem_raddr   = 32'd0;
 
-	// DPB write port (from fill path)
-	always @(posedge clk) begin
-		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
-			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
-	end
-
-	// DPB read port (for MC reference fetch) — 1-cycle latency
-	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
-	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
-
-	h264_deblock_writeback_ctrl #(
-		.MB_COUNT(DPB_MB_COUNT),
-		.FRAME_SLOT_W(2),
-		.SAMPLES_PER_MB(384)
-	) u_stream_dpb_wb (
-		.clk(clk), .reset(reset),
-		.idr_frame_start(vcl_pulse && (last_nal_type[4:0] == 5'd5)),
-		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_valid(dpb_filtered_mb_valid),
-		.filtered_mb_addr(dpb_fill_mb_addr[DPB_MB_AW-1:0]),
-		.filtered_mb_is_ref(1'b1),
-		.filtered_frame_done(dpb_filtered_frame_done),
-		.frame_slot_i(2'd0),
-		.frame_boundary(dpb_frame_boundary),
-		.wb_valid(deblock_wb_valid),
-		.wb_mb_addr(deblock_wb_mb_addr),
-		.wb_is_ref(deblock_wb_is_ref),
-		.dpb_invalidate_refs(deblock_dpb_invalidate_refs),
-		.ref_ready_pulse(deblock_ref_ready_pulse),
-		.ref_ready_slot(deblock_ref_ready_slot),
-		.commit_order_error(deblock_commit_order_error)
-	);
+	assign deblock_wb_valid            = 1'b0;
+	assign deblock_wb_mb_addr          = {DPB_MB_AW{1'b0}};
+	assign deblock_wb_is_ref           = 1'b0;
+	assign deblock_dpb_invalidate_refs = 1'b0;
+	// LIVENESS, not just a value: the painter's phase machine leaves PH_DPB_FILL
+	// only on deblock_ref_ready_pulse and leaves PH_FETCH only on
+	// dpb_fetch_done.  Tying either flat to 0 deadlocks the painter and it stops
+	// driving fs_wr_*, which is a black screen rather than a freed device.  The
+	// handshakes are therefore preserved and complete immediately; only the
+	// reference DATA is gone (predictions are neutral grey).
+	// PH_DPB_FILL leaves only on this pulse, and only from the terminal
+	// dpb_fill_sample_idx == 386 step (the else-if chain consumes 384 and 385
+	// first).  Keying it off dpb_frame_boundary (idx == 385) stalls the painter
+	// forever at 386 -- measured as "did not return idle after VCL frame 1".
+	assign deblock_ref_ready_pulse     = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx == 9'd386);
+	assign deblock_ref_ready_slot      = 2'd0;
+	assign deblock_commit_order_error  = 1'b0;
 
 	always @(posedge clk) begin
 		if (reset)
@@ -487,53 +496,71 @@ module decode_stub #(
 			dpb_frame_done_after_deblock <= deblock_ref_ready_pulse;
 	end
 
-	h264_dpb_one_ref #(
-		.FRAME_W(WIDTH), .FRAME_H(HEIGHT),
-		.BANK0_BASE(0), .BANK1_BASE(DPB_FRAME_BYTES)
-	) u_stream_dpb (
-		.clk(clk), .reset(reset),
-		.idr_start(dpb_idr_start),
-		.frame_done(ENABLE_DPB_REF_SEAM ? dpb_frame_done_after_deblock : dpb_frame_done_pulse),
-		.ref_ready(dpb_ref_ready),
-		.current_base(dpb_current_base),
-		.reference_base(dpb_reference_base),
-		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_x(dpb_filtered_mb_x_out), .filtered_mb_y(dpb_filtered_mb_y_out), .filtered_plane(dpb_filtered_plane_out),
-		.filtered_sample_idx(dpb_filtered_sample_idx_out), .filtered_sample(dpb_filtered_sample_out),
-		.mem_we(dpb_mem_we), .mem_waddr(dpb_mem_waddr), .mem_wdata(dpb_mem_wdata),
-		.fetch_start(dpb_fetch_start),
-		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
-		.fetch_part_mode(lat_p_part_mode), .fetch_part_idx(2'd0),
-		.fetch_part_w(dpb_part_w), .fetch_part_h(dpb_part_h),
-		.fetch_mv_x_qpel(16'sd0), .fetch_mv_y_qpel(16'sd0),
-		.fetch_busy(dpb_fetch_busy), .fetch_done(dpb_fetch_done),
-		.fetch_error_no_ref(dpb_fetch_error_no_ref),
-		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
-		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
-		.luma_origin_x(dpb_luma_origin_x), .luma_origin_y(dpb_luma_origin_y),
-		.chroma_origin_x(dpb_chroma_origin_x), .chroma_origin_y(dpb_chroma_origin_y),
-		.mem_rd(dpb_mem_rd), .mem_raddr(dpb_mem_raddr),
-		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid),
-		.luma_window_valid(dpb_luma_window_valid),
-		.luma_window_idx(dpb_luma_window_idx),
-		.luma_window_sample(dpb_luma_window_sample),
-		.chroma_u_window_valid(dpb_chroma_u_window_valid),
-		.chroma_v_window_valid(dpb_chroma_v_window_valid),
-		.chroma_window_idx(dpb_chroma_window_idx),
-		.chroma_window_sample(dpb_chroma_window_sample)
-	);
+	// Held HIGH.  The reference MEMORY is gone but the reference HANDSHAKE is
+	// not: predictions are neutral grey (128) and marked valid, so PH_FETCH
+	// stays reachable and the stub's inter diagnostic keeps producing its
+	// recon signature.  This costs zero block RAM.  Holding it low instead
+	// makes PH_FETCH unreachable and silently deletes that coverage.
+	assign dpb_ref_ready          = 1'b1;
+	assign dpb_current_base       = 32'd0;
+	assign dpb_reference_base     = 32'd0;
+	// h264_dpb's fetch_done is a LEVEL, not a pulse: cleared when a fetch is
+	// accepted (h264_dpb.sv:293) and set on completion (h264_dpb.sv:318/326).
+	// decode_stub's dpb_fetch_start is a level that is never cleared outside
+	// reset, so the launch event to key off is p_fetch_launch_pending, which
+	// every launch site sets.  PH_FETCH needs done LOW for one cycle after the
+	// launch (to clear p_fetch_launch_pending) and HIGH afterwards.
+	reg [2:0] dpb_fetch_cnt;
+	reg       dpb_fetch_done_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			dpb_fetch_cnt    <= 3'd0;
+			dpb_fetch_done_r <= 1'b0;
+		end else if (p_fetch_launch_pending) begin
+			dpb_fetch_done_r <= 1'b0;
+			dpb_fetch_cnt    <= 3'd1;
+		end else if (dpb_fetch_cnt != 3'd0) begin
+			if (dpb_fetch_cnt == 3'd3) begin
+				dpb_fetch_done_r <= 1'b1;
+				dpb_fetch_cnt    <= 3'd0;
+			end else begin
+				dpb_fetch_cnt <= dpb_fetch_cnt + 3'd1;
+			end
+		end
+	end
+	assign dpb_fetch_busy         = (dpb_fetch_cnt != 3'd0);
+	assign dpb_fetch_done         = dpb_fetch_done_r;
+	assign dpb_fetch_error_no_ref = 1'b0;
+	assign dpb_luma_frac_x        = 2'd0;
+	assign dpb_luma_frac_y        = 2'd0;
+	assign dpb_chroma_frac_x      = 3'd0;
+	assign dpb_chroma_frac_y      = 3'd0;
+	assign dpb_luma_origin_x      = 16'sd0;
+	assign dpb_luma_origin_y      = 16'sd0;
+	assign dpb_chroma_origin_x    = 16'sd0;
+	assign dpb_chroma_origin_y    = 16'sd0;
 
-	h264_inter_mc_part u_stream_mc (
-		.luma_ref_win(dpb_luma_win),
-		.chroma_u_ref_win(dpb_u_win),
-		.chroma_v_ref_win(dpb_v_win),
-		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
-		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
-		.part_w(dpb_part_w), .part_h(dpb_part_h),
-		.pred_y(dpb_pred_y), .pred_y_valid(dpb_pred_y_valid),
-		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
-		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
-	);
+	assign dpb_luma_window_valid     = 1'b0;
+	assign dpb_luma_window_idx       = 9'd0;
+	assign dpb_luma_window_sample    = 8'd0;
+	assign dpb_chroma_u_window_valid = 1'b0;
+	assign dpb_chroma_v_window_valid = 1'b0;
+	assign dpb_chroma_window_idx     = 7'd0;
+	assign dpb_chroma_window_sample  = 8'd0;
+
+	genvar dpb_ty;
+	generate
+		for (dpb_ty = 0; dpb_ty < 256; dpb_ty = dpb_ty + 1) begin : gen_dpb_pred_y_tie
+			assign dpb_pred_y[dpb_ty]       = 8'd128;
+			assign dpb_pred_y_valid[dpb_ty] = 1'b1;
+		end
+		for (dpb_ty = 0; dpb_ty < 64; dpb_ty = dpb_ty + 1) begin : gen_dpb_pred_c_tie
+			assign dpb_pred_u[dpb_ty]       = 8'd128;
+			assign dpb_pred_u_valid[dpb_ty] = 1'b1;
+			assign dpb_pred_v[dpb_ty]       = 8'd128;
+			assign dpb_pred_v_valid[dpb_ty] = 1'b1;
+		end
+	endgenerate
 	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
 	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
 	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |

@@ -9,4 +9,3 @@
 # STALE_ONCHIP_RAM_BUDGET_ENTRY.  Debt can only shrink.
 
 [over_budget]
-decode_stub.sv:dpb_mem: diagnostic painter's DPB, declared 2*(640*480 + 2*(320*240)) = 921,600 bytes = 7,372,800 bits = 1.30x the device's 553 M10K. It cannot be implemented as declared; w-fit-o5 measured the fitted design giving decode_stub 256 M10K = 262,144 bytes, i.e. 28% of it. Retires with decode_stub. The product DPB (h264_dpb_one_ref) is memory-external by design and must be DDR-backed, never on-chip.

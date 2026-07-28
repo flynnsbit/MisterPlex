@@ -239,13 +239,23 @@ module stream_path_full_frame_tb #(
 	assign native_i420_wr_data   = dut.gen_diagnostic_present.stub.dpb_mem_wdata;
 	assign native_i420_wr_frame  = dut.gen_diagnostic_present.stub.frames_out;
 
-	// DPB reference pre-fill: inject real decoded IDR samples into the
-	// DPB SRAM. The testbench writes to the REFERENCE bank so that MC
-	// fetches see real data instead of synthetic patterns.
-	always @(posedge clk) begin
-		if (dpb_prefill_en)
-			dut.gen_diagnostic_present.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
-	end
+	// DPB reference pre-fill: RETIRED with decode_stub's dpb_mem (w-decode-o5).
+	//
+	// This wrote real decoded IDR samples into the diagnostic painter's private
+	// on-chip DPB so its MC fetches saw real data.  That array was 1.30x the
+	// device's total block RAM and consumed 46% of the fitted device, which is
+	// why the product MC/DPB modules could not fit; it has been removed and the
+	// painter's DPB/MC diagnostic block tied off.
+	//
+	// The product DPB is h264_dpb_one_ref under h264_decode_core.  It is
+	// memory-external by design and must be DDR-backed, so the honest successor
+	// to this prefill is a DDR reference-frame preload driven through the core's
+	// dpb_rd_* port -- NOT a poke into a module's internal array.  Until that
+	// exists there is no inter measurement here, and this bench must not be
+	// read as evidence about inter prediction.
+	//
+	// Owner: W-SWAP-O5 (product MC/DPB), with W-DECODE-O5 for the core seam.
+	wire _unused_dpb_prefill = dpb_prefill_en | |dpb_prefill_addr | |dpb_prefill_data;
 endmodule
 
 `default_nettype wire

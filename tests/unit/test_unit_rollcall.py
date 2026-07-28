@@ -139,7 +139,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_level_width_verilator.sh",
     "$(ROOT)/tests/unit/test_stream_path_recon_integration.sh",
     "$(ROOT)/tests/unit/test_stream_path_real_intra_rtl_sim.sh",
-    "$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh",
+    "$(ROOT)/tests/unit/test_rtl_recon_scorer.sh",
     "$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh",
     "python3 $(ROOT)/tests/parse_res_csum_status.py --self-test",
     "$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh",

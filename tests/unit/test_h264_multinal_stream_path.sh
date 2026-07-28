@@ -127,8 +127,11 @@ echo "test_h264_multinal_stream_path: OK red-check forced recon_sig=0 rejected p
   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
+  fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
+  fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv \
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
   fpga/Plex_MiSTer/rtl/h264_dpb.sv \
+  fpga/Plex_MiSTer/rtl/h264_decode_top.sv \
   fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
   tests/rtl/h264_multinal_stream_path_tb.cpp

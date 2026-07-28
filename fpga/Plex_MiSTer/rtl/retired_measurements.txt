@@ -1,0 +1,35 @@
+# Retired measurements — what we can no longer measure, and who owns the successor.
+#
+# A test removed from the gate list is a loss of coverage.  Losing it silently is
+# how a project convinces itself it is healthier than it is.  Every retirement is
+# recorded here with WHAT was measured, WHY it was retired, WHETHER it was ever
+# valid, and WHO owns the honest successor.
+#
+# Format:  <path>: <reason>
+
+tests/retired/test_stream_path_full_frame_compare.sh: Measured decode_stub's inter
+  prediction by poking the painter's private on-chip array `dpb_mem` from the
+  testbench (`dut.gen_diagnostic_present.stub.dpb_mem[...] <= ...`) and comparing
+  the painted frame against an ffmpeg golden.
+  RETIRED BY: w-decode-o5, when decode_stub's DPB/MC diagnostic block was removed
+  to free M10K for the product MC/DPB modules (parent Ruling 2).
+  WAS IT EVER VALID? NO, not as evidence about hardware. Measured, not assumed:
+    at the fitted geometry (Plex.qsf FRAME_W=640 FRAME_H=480)
+      DPB_FRAME_BYTES = 640*480 + 2*(320*240)      = 460,800  (= DPB_BANK1_BASE)
+      declared array   = 2 * 460,800 = 921,600 B   = 7,372,800 bits = 1.30x the
+                         whole device (553 M10K x 10,240 = 5,662,720 bits)
+      w-fit-o5 measured the fitted design giving decode_stub 256 M10K = 327,680 B
+    The reference bank therefore begins at byte 460,800, which is BEYOND the
+    327,680 bytes Quartus actually built.  The ping-pong reference bank did not
+    exist in silicon, so this bench's inter result could never have been
+    reproduced on hardware.  It was a simulation-only green.
+  COVERAGE PRESERVED: its second, independent half (the RTL dequant/IDCT/recon
+    scorer, 76,800 luma pixels across 300 MBs, with red-check) never touched
+    decode_stub or stream_path and was extracted verbatim to
+    tests/unit/test_rtl_recon_scorer.sh, which remains in the gate list.
+  HONEST SUCCESSOR: a DDR-backed reference-frame preload driven through
+    h264_decode_core's dpb_rd_* port.  The product DPB (h264_dpb_one_ref) is
+    memory-external by design and must never be on-chip.  Note that today
+    stream_path ties .dpb_rd_data(8'd0) and .dpb_rd_valid(1'b0), so the core
+    reads an all-black reference frame and no inter measurement is possible yet.
+  OWNER: W-SWAP-O5 (product MC/DPB), with W-DECODE-O5 for the core seam.
