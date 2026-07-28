@@ -1473,9 +1473,10 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             timedFallback = true;
         }
         if (timedFallback) {
-            // PLXD absent, stale, or proven stuck on current silicon. Use the
-            // host-planned bank plus the same-bank reuse floor; do not add fixed
-            // sleeps when the bank has not been reused inside the measured floor.
+            // PLXD absent, stale, or proven stuck on current silicon. For a
+            // proven stuck live mailbox, choose the bank not currently scanned
+            // out; for absent/stale mailboxes, use the host-planned bank. Keep
+            // the same-bank reuse floor as the structural fallback interlock.
             const double nowMs = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();

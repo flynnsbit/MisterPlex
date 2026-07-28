@@ -92,6 +92,9 @@ static bool pollWord(misterplex::InputMailboxEdgeDetector& edge, FakeTransport& 
 int main() {
     using namespace misterplex;
 
+    std::printf("Scope: 1 (PLXD stuck-release fallback bank policy)\n");
+    std::fflush(stdout);
+
     CHECK(kDdrStatusMailboxPhys == 0x3007F100u);
     CHECK(kDdrStatusMailboxMagic == 0x504C5853u);
     CHECK(kInputMailboxPhys == 0x3007F108u);
@@ -410,7 +413,9 @@ int main() {
         // --- ARM bank-release policy ---
         // Operand A: initial/final PLXD samples. Operand B: host-planned bank.
         // Covers bank choice and stale-release classification only; it does not
-        // cover real /dev/mem timing or the RTL allocator itself.
+        // cover real /dev/mem timing or the RTL allocator itself. Red operand:
+        // if the stuck-release path returns the host-planned/displayed bank
+        // instead of the non-display bank, this block must fail.
         {
             BankReleasePolicyState policy{};
             BankReleaseDecision d =
@@ -436,15 +441,15 @@ int main() {
             BankReleaseDecision d =
                 chooseDdrPresentBankFromRelease(policy, 1,
                                                 BankReleaseStatus{0x00, 0, true, 100},
-                                                BankReleaseStatus{0x00, 0, true, 101});
+                                                BankReleaseStatus{0x00, 1, true, 101});
             CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
-            CHECK(d.bank == 1);
+            CHECK(d.bank == 0);
             CHECK(d.release_stuck);
             CHECK(policy.release_stuck);
 
-            d = chooseDdrPresentBankFromRelease(policy, 0,
-                                                BankReleaseStatus{0x00, 0, true, 102},
-                                                BankReleaseStatus{0x00, 0, true, 102});
+            d = chooseDdrPresentBankFromRelease(policy, 1,
+                                                BankReleaseStatus{0x00, 1, true, 102},
+                                                BankReleaseStatus{0x00, 1, true, 102});
             CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
             CHECK(d.bank == 0);
             CHECK(policy.release_stuck);

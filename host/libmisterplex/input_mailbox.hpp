@@ -110,10 +110,15 @@ struct BankReleasePolicyState {
     bool release_stuck = false;
 };
 
+inline int displayAvoidingFallbackBank(const BankReleaseStatus& status) {
+    return (static_cast<int>(status.disp_bank) ^ 1) & 1;
+}
+
 inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyState& state,
                                                            int plannedBank,
                                                            const BankReleaseStatus& initial,
                                                            const BankReleaseStatus& final) {
+    (void)plannedBank;
     BankReleaseDecision out{};
     out.release_stuck = state.release_stuck;
 
@@ -126,7 +131,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
             return out;
         }
         out.kind = BankReleaseDecisionKind::UseTimedFallback;
-        out.bank = plannedBank;
+        out.bank = displayAvoidingFallbackBank(initial);
         out.release_stuck = true;
         return out;
     }
@@ -147,7 +152,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     if (final.frames_done != initial.frames_done) {
         state.release_stuck = true;
         out.kind = BankReleaseDecisionKind::UseTimedFallback;
-        out.bank = plannedBank;
+        out.bank = displayAvoidingFallbackBank(final);
         out.release_stuck = true;
         return out;
     }
