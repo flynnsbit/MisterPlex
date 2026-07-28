@@ -1,6 +1,7 @@
 #include "Vh264_inter_pred_tb.h"
 #include "verilated.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdlib>
@@ -70,6 +71,87 @@ bool check(bool ok, const std::string& msg) {
 
 int16_t s16(int v) { return static_cast<int16_t>(v); }
 
+int clip1(int v) {
+    return v < 0 ? 0 : (v > 255 ? 255 : v);
+}
+
+int avg2(int a, int b) {
+    return (a + b + 1) >> 1;
+}
+
+int pix9(const std::array<uint8_t, 81>& ref, int r, int c) {
+    return ref[static_cast<std::size_t>(r * 9 + c)];
+}
+
+int hraw9(const std::array<uint8_t, 81>& ref, int row, int col) {
+    return pix9(ref, row, col - 2) - 5 * pix9(ref, row, col - 1) +
+           20 * pix9(ref, row, col) + 20 * pix9(ref, row, col + 1) -
+           5 * pix9(ref, row, col + 2) + pix9(ref, row, col + 3);
+}
+
+int halfH9(const std::array<uint8_t, 81>& ref, int rowoff, int coloff) {
+    return clip1((hraw9(ref, 4 + rowoff, 4 + coloff) + 16) >> 5);
+}
+
+int halfV9(const std::array<uint8_t, 81>& ref, int rowoff, int coloff) {
+    const int col = 4 + coloff;
+    return clip1((pix9(ref, 2 + rowoff, col) - 5 * pix9(ref, 3 + rowoff, col) +
+                  20 * pix9(ref, 4 + rowoff, col) + 20 * pix9(ref, 5 + rowoff, col) -
+                  5 * pix9(ref, 6 + rowoff, col) + pix9(ref, 7 + rowoff, col) + 16) >> 5);
+}
+
+int halfC9(const std::array<uint8_t, 81>& ref, int rowoff, int coloff) {
+    const int row = 4 + rowoff;
+    const int col = 4 + coloff;
+    const int sum = hraw9(ref, row - 2, col) - 5 * hraw9(ref, row - 1, col) +
+                    20 * hraw9(ref, row, col) + 20 * hraw9(ref, row + 1, col) -
+                    5 * hraw9(ref, row + 2, col) + hraw9(ref, row + 3, col);
+    return clip1((sum + 512) >> 10);
+}
+
+uint8_t refQpel9(const std::array<uint8_t, 81>& ref, int fx, int fy) {
+    const int p44 = pix9(ref, 4, 4);
+    const int h0 = halfH9(ref, 0, 0);
+    const int h1 = halfH9(ref, 1, 0);
+    const int v0 = halfV9(ref, 0, 0);
+    const int v1 = halfV9(ref, 0, 1);
+    const int c = halfC9(ref, 0, 0);
+    switch ((fy << 2) | fx) {
+    case 0x0: return static_cast<uint8_t>(p44);
+    case 0x1: return static_cast<uint8_t>(avg2(p44, h0));
+    case 0x2: return static_cast<uint8_t>(h0);
+    case 0x3: return static_cast<uint8_t>(avg2(h0, pix9(ref, 4, 5)));
+    case 0x4: return static_cast<uint8_t>(avg2(p44, v0));
+    case 0x5: return static_cast<uint8_t>(avg2(h0, v0));
+    case 0x6: return static_cast<uint8_t>(avg2(h0, c));
+    case 0x7: return static_cast<uint8_t>(avg2(h0, v1));
+    case 0x8: return static_cast<uint8_t>(v0);
+    case 0x9: return static_cast<uint8_t>(avg2(v0, c));
+    case 0xa: return static_cast<uint8_t>(c);
+    case 0xb: return static_cast<uint8_t>(avg2(c, v1));
+    case 0xc: return static_cast<uint8_t>(avg2(v0, pix9(ref, 5, 4)));
+    case 0xd: return static_cast<uint8_t>(avg2(h1, v0));
+    case 0xe: return static_cast<uint8_t>(avg2(c, h1));
+    default: return static_cast<uint8_t>(avg2(h1, v1));
+    }
+}
+
+uint8_t refChroma(int p00, int p10, int p01, int p11, int fx, int fy) {
+    return static_cast<uint8_t>(((8 - fx) * (8 - fy) * p00 + fx * (8 - fy) * p10 +
+                                (8 - fx) * fy * p01 + fx * fy * p11 + 32) >> 6);
+}
+
+std::array<uint8_t, 81> makeLumaRef(int seed) {
+    std::array<uint8_t, 81> out{};
+    for (int r = 0; r < 9; ++r) {
+        for (int c = 0; c < 9; ++c) {
+            out[static_cast<std::size_t>(r * 9 + c)] =
+                static_cast<uint8_t>((seed * 29 + r * 37 + c * 19 + r * c * 7 + ((r + seed) ^ (c * 11))) & 0xff);
+        }
+    }
+    return out;
+}
+
 struct Mv { int x = 0; int y = 0; bool valid = false; };
 
 int median3i(int a, int b, int c) {
@@ -107,6 +189,7 @@ int main(int argc, char** argv) {
         const std::string js = readText(argv[1]);
         Vh264_inter_pred_tb top;
         int mvCases = 0, partCases = 0, lumaCases = 0, chromaCases = 0, clampCases = 0, fetchCases = 0;
+        int lumaStressCases = 0, chromaStressCases = 0, fetchStressCases = 0;
 
         const auto ref = parseArrayAfter(js, "\"luma_ref_9x9\"");
         if (!check(ref.size() == 81, "luma_ref_9x9 size")) return 1;
@@ -278,6 +361,49 @@ int main(int argc, char** argv) {
             ++chromaCases;
         }
 
+        for (int seed = 0; seed < 8; ++seed) {
+            const auto refStress = makeLumaRef(seed);
+            for (std::size_t i = 0; i < refStress.size(); ++i) top.luma_ref[i] = refStress[i];
+            for (int fy = 0; fy < 4; ++fy) {
+                for (int fx = 0; fx < 4; ++fx) {
+                    top.luma_frac_x = fx;
+                    top.luma_frac_y = fy;
+                    top.eval();
+                    const uint8_t want = refQpel9(refStress, fx, fy);
+                    if (top.luma_sample != want) {
+                        std::cerr << "FAIL h264_inter_pred RTL: luma qpel stress mismatch seed="
+                                  << seed << " frac=(" << fx << "," << fy << ") got="
+                                  << int(top.luma_sample) << " want=" << int(want) << "\n";
+                        return 1;
+                    }
+                    ++lumaStressCases;
+                }
+            }
+        }
+
+        for (int seed = 0; seed < 16; ++seed) {
+            const int p00 = (13 + seed * 17) & 0xff;
+            const int p10 = (101 + seed * 29 + (seed & 3) * 7) & 0xff;
+            const int p01 = (77 + seed * 41 + (seed >> 1) * 11) & 0xff;
+            const int p11 = (209 + seed * 53 + seed * seed) & 0xff;
+            top.c_p00 = p00; top.c_p10 = p10; top.c_p01 = p01; top.c_p11 = p11;
+            for (int fy = 0; fy < 8; ++fy) {
+                for (int fx = 0; fx < 8; ++fx) {
+                    top.chroma_frac_x = fx;
+                    top.chroma_frac_y = fy;
+                    top.eval();
+                    const uint8_t want = refChroma(p00, p10, p01, p11, fx, fy);
+                    if (top.chroma_sample != want) {
+                        std::cerr << "FAIL h264_inter_pred RTL: chroma epel stress mismatch seed="
+                                  << seed << " frac=(" << fx << "," << fy << ") got="
+                                  << int(top.chroma_sample) << " want=" << int(want) << "\n";
+                        return 1;
+                    }
+                    ++chromaStressCases;
+                }
+            }
+        }
+
         std::size_t fetchStart = js.find("\"fetch_cases\"");
         for (std::size_t p = js.find("\"xy\"", clampStart); p != std::string::npos && p < fetchStart;
              p = js.find("\"xy\"", p + 4)) {
@@ -304,14 +430,41 @@ int main(int argc, char** argv) {
             ++fetchCases;
         }
 
+        for (int mby = 0; mby < 30; ++mby) {
+            for (int mbx = 0; mbx < 39; ++mbx) {
+                for (int tap : {0, 40, 80}) {
+                    const int baseX = mbx * 16;
+                    const int baseY = mby * 16;
+                    const int wantX = std::max(0, std::min(623, baseX + (tap % 9) - 4));
+                    const int wantY = std::max(0, std::min(479, baseY + (tap / 9) - 4));
+                    top.fetch_base_x = s16(baseX);
+                    top.fetch_base_y = s16(baseY);
+                    top.fetch_tap_idx = tap;
+                    top.fetch_w = 624;
+                    top.fetch_h = 480;
+                    top.eval();
+                    if (top.fetch_x != wantX || top.fetch_y != wantY) {
+                        std::cerr << "FAIL h264_inter_pred RTL: full-frame fetch tap mismatch mb=("
+                                  << mbx << "," << mby << ") tap=" << tap << " got=("
+                                  << top.fetch_x << "," << top.fetch_y << ") want=("
+                                  << wantX << "," << wantY << ")\n";
+                        return 1;
+                    }
+                    ++fetchStressCases;
+                }
+            }
+        }
+
         std::cout << "OK real RTL sim: h264_inter_pred product RTL "
                   << "mv_cases=" << mvCases << " partition_cases=" << partCases
                   << " frame_mv_cases=" << frameMvCases
+                  << " frame_mv_mbs=" << (3 * 39 * 30) << "/1170"
                   << " frame_modes=" << frameModeCounts[0] << "/" << frameModeCounts[1] << "/"
                   << frameModeCounts[2] << "/" << frameModeCounts[3] << "/" << frameModeCounts[4]
-                  << " luma_qpel=" << lumaCases
-                  << " chroma_epel=" << chromaCases << " clamp=" << clampCases
-                  << " fetch=" << fetchCases
+                  << " luma_qpel=" << lumaCases << "+" << lumaStressCases
+                  << " chroma_epel=" << chromaCases << "+" << chromaStressCases
+                  << " clamp=" << clampCases
+                  << " fetch=" << fetchCases << "+" << fetchStressCases
                   << " fixture=" << argv[1] << "\n";
         return 0;
     } catch (const std::exception& e) {

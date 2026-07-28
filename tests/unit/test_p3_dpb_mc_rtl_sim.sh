@@ -2,6 +2,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+echo "Scope: h264_dpb_one_ref + h264_inter_mc_part product RTL; MC reads post-deblock committed DPB reference samples via filtered writeback/deblock seam; covers 624x480 one-ref fetch/clamp/MC arithmetic and seam ordering, not full-frame H.264 residual/recon quality; QPc not covered."
+
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"

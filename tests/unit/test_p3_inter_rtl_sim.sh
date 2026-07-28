@@ -2,6 +2,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+echo "Scope: h264_inter_pred product RTL primitives only; no hierarchical RTL pokes; covers Baseline single-ref P MV prediction, P_Skip, luma qpel, chroma epel, clamp/fetch address math; not full-frame decode/reconstruction; QPc not covered (prediction-only, no QP)."
+
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"

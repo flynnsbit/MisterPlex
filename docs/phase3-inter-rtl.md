@@ -81,15 +81,20 @@ before simulation. The fixture covers:
 
 - six 16x16 MV predictor cases, including C→D fallback, P_Skip zero-vector cases, and non-zero P_Skip prediction with MVD ignored;
 - ten partition predictor cases covering P_Skip, P_L0_16x16, both P_L0_16x8 halves, both P_L0_8x16 halves, C-missing fallback, P_8x8, and sub-MB median prediction;
-- all 16 luma quarter-pel positions for a deterministic 9×9 padded reference window;
-- three chroma eighth-pel cases;
-- three edge-clamp cases plus five 9×9 luma reference fetch address cases for the 624×480 coded picture.
+- all 16 luma quarter-pel positions for a deterministic 9×9 padded reference window, plus an RTL
+  stress sweep over 8 additional deterministic windows (128 more qpel comparisons);
+- three fixture chroma eighth-pel cases, plus an RTL stress sweep over all 64 eighth-pel positions
+  across 16 U/V-distinct patterns (1024 more chroma comparisons);
+- three edge-clamp cases plus five 9×9 luma reference fetch address cases for the 624×480 coded
+  picture, plus a full 39×30 macroblock origin sweep of three representative taps
+  (`3510/1170` MB-tap equivalents).
 
 Evidence command:
 
 ```text
 tests/unit/test_p3_inter_rtl_sim.sh
-OK real RTL sim: h264_inter_pred product RTL mv_cases=6 partition_cases=10 frame_mv_cases=9090 frame_modes=690/720/720/690/690 luma_qpel=16 chroma_epel=3 clamp=3 fetch=5 fixture=.../inter_mc_v1.json
+Scope: h264_inter_pred product RTL primitives only; no hierarchical RTL pokes; covers Baseline single-ref P MV prediction, P_Skip, luma qpel, chroma epel, clamp/fetch address math; not full-frame decode/reconstruction; QPc not covered (prediction-only, no QP).
+OK real RTL sim: h264_inter_pred product RTL mv_cases=6 partition_cases=10 frame_mv_cases=9090 frame_mv_mbs=3510/1170 frame_modes=690/720/720/690/690 luma_qpel=16+128 chroma_epel=3+1024 clamp=3 fetch=5+3510 fixture=.../inter_mc_v1.json
 FAIL h264_inter_pred RTL: luma qpel frac mismatch
 OK h264_inter_pred RTL red-check: bad rounding fault failed golden
 OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
@@ -102,7 +107,11 @@ source text or synthesised RTL.
 inter fixture:
 
 ```text
-OK real RTL sim: h264_dpb_mc product RTL nals=15 i420_writes=1536 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64 part_modes=16x8/8x16/8x8/8x4/4x8/4x4
+Scope: h264_dpb_one_ref + h264_inter_mc_part product RTL; MC reads post-deblock committed DPB reference samples via filtered writeback/deblock seam; covers 624x480 one-ref fetch/clamp/MC arithmetic and seam ordering, not full-frame H.264 residual/recon quality; QPc not covered.
+OK real RTL sim: h264_dpb_mc product RTL nals=15 tap=post-deblock-committed-DPB i420_writes=1536 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64 mc_mb_fraction=1/1170 fetch_mb_fraction=2/1170 part_modes=16x8/8x16/8x8/8x4/4x8/4x4
+OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; terminal wb_valid precedes frame_done/ref_ready; MC reference tap is post-deblock committed DPB
+OK h264_dpb_mc RTL red-check: deblock early MB commit fault failed seam
+OK h264_dpb_mc RTL red-check: deblock early frame_done fault failed seam
 OK h264_dpb_mc RTL red-check: bad edge clamp fault failed golden
 OK h264_dpb_mc RTL red-check: bad MC arithmetic fault failed golden
 OK h264_dpb_mc RTL red-check: early reference publication fault failed golden

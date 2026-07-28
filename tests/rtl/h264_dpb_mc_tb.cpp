@@ -351,6 +351,7 @@ int runDeblockDpbSeam(const std::string& nalFixture) {
 
     std::cout << "OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; "
               << "terminal wb_valid precedes frame_done/ref_ready"
+              << "; MC reference tap is post-deblock committed DPB"
               << " nals=" << nals << " fixture=" << nalFixture << "\n";
     return 0;
 }
@@ -661,10 +662,13 @@ int main(int argc, char** argv) {
 
         std::cout << "OK real RTL sim: h264_dpb_mc product RTL"
                   << " nals=" << nals
+                  << " tap=post-deblock-committed-DPB"
                   << " i420_writes=" << (4 * (256 + 64 + 64))
                   << " luma_window=" << lc
                   << " chroma_windows=" << uc << "/" << vc
                   << " mc_pixels=256/64/64"
+                  << " mc_mb_fraction=1/1170"
+                  << " fetch_mb_fraction=2/1170"
                   << " part_modes=16x8/8x16/8x8/8x4/4x8/4x4"
                   << " fixture=" << nalFixture << "\n";
         return 0;
