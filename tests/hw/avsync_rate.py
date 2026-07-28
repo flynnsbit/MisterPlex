@@ -33,6 +33,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import avsync_measure as av  # noqa: E402
 
 
+class UnscoredMeasurement(RuntimeError):
+    """The hardware/card ran, but the result is not scoreable evidence."""
+
+
 def fit_period(times: list[float]) -> tuple[float, int, float]:
     """Least-squares period of events nominally 1 s apart.
 
@@ -67,14 +71,18 @@ def main() -> int:
         args.no_cast = True
     else:
         av.capture_preflight()
+    saw_playing = args.no_cast
     if not args.no_cast:
         print(f"cast RK{args.rating_key} ...")
         av.cast(args.rating_key, args.token, 0)
         deadline = time.time() + 30
         while time.time() < deadline:
             if av.timeline().get("state") == "playing":
+                saw_playing = True
                 break
             time.sleep(0.5)
+        if not saw_playing:
+            raise UnscoredMeasurement("UNSCORED avsync_rate reason=timeline-never-playing")
         print(f"settling {args.settle}s")
         time.sleep(args.settle)
 
@@ -89,6 +97,11 @@ def main() -> int:
     flashes = av.rising_edges(luma, vt)
     env, sr = av.audio_env(cap)
     beeps = av.beep_times(env, sr)
+    if len(flashes) < 8 or len(beeps) < 8:
+        raise UnscoredMeasurement(
+            f"UNSCORED avsync_rate reason=insufficient-av-events "
+            f"flashes={len(flashes)} beeps={len(beeps)}"
+        )
 
     # Offset drift measured INSIDE one capture. Two separate captures cannot be
     # compared: each ffmpeg invocation starts the v4l2 and pulse streams with its
@@ -106,6 +119,10 @@ def main() -> int:
         c = np.polyfit(ft, fo, 1)
         off_slope = float(c[0]) * 60.0
         off_mid = float(np.polyval(c, float(np.median(ft))))
+    else:
+        raise UnscoredMeasurement(
+            f"UNSCORED avsync_rate reason=insufficient-flash-beep-pairs pairs={len(pairs)}"
+        )
 
     vper, vn, vres = fit_period(flashes)
     aper, an, ares = fit_period(beeps)
@@ -138,3 +155,6 @@ if __name__ == "__main__":
     except av.CaptureFailure as e:
         print(e, file=sys.stderr)
         sys.exit(20)
+    except UnscoredMeasurement as e:
+        print(e, file=sys.stderr)
+        sys.exit(77)

@@ -31,6 +31,9 @@ POLL=$("${CURL[@]}" "$BASE/player/timeline/poll?commandID=8")
 echo "$POLL" | grep -q 'location="navigation"'
 echo "$POLL" | grep -Eq 'state="(buffering|stopped)"'
 # Must not keep fullScreenVideo + key after stop (Web idles scrubber)
-echo "$POLL" | grep -qv 'fullScreenVideo' || true
+if echo "$POLL" | grep -q 'fullScreenVideo'; then
+  echo "FAIL: stop retained fullScreenVideo after navigation: $POLL" >&2
+  exit 1
+fi
 
 echo "test_media_fb: OK on $HOST"

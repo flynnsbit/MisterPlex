@@ -3,6 +3,7 @@
 # Host-side. Requires MiSTer up, set_status deployed, Plex core loaded.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
@@ -174,6 +175,10 @@ fi
 REMOTE_MD5=$(ssh_q "md5sum /media/fat/_Utility/Plex.rbf" | awk '{print $1}')
 CORE=$(ssh_q 'cat /tmp/CORENAME')
 log "remote RBF md5=$REMOTE_MD5 CORENAME=$CORE"
+if [[ "$REMOTE_MD5" != "$EXPECTED_MD5" ]] || ! echo "$CORE" | grep -qi plex; then
+  hw_skip_not_pass "run_menu_matrix" \
+    "resident core provenance mismatch after deploy attempt (remote=${REMOTE_MD5:-unset} expected=$EXPECTED_MD5 core=${CORE:-unset})"
+fi
 
 # Verify SPI
 log "status raw:"
@@ -333,7 +338,12 @@ set_status --pattern bars --force-bars 1 --tv ntsc --fps 60 --audio on --raw || 
 log "=== matrix done (left on bars) ==="
 # Summary
 fail=0
+skip=0
 for k in "${!RESULTS[@]}"; do
   [[ "${RESULTS[$k]}" == FAIL ]] && fail=1
+  [[ "${RESULTS[$k]}" == SKIP ]] && skip=1
 done
+if [[ "$skip" -ne 0 ]]; then
+  hw_skip_not_pass "run_menu_matrix" "one or more rows were SKIP; see $REPORT and $CHECKLIST"
+fi
 exit $fail

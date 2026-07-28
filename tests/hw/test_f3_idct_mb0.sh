@@ -10,8 +10,8 @@
 #   recon soft→hard: recon_y00=73 recon_mean=62 (optional status until telem packs)
 #   paint contrast: true recon y00=73 ≠ 3.3k stub (128+dc)=104
 #
-# Pre-3.3l-2 RBF: residual may still pass; recon_* fields absent → soft skip (exit 0).
-# Pre-3.3l-1 RBF: res_csum soft skip (same as test_f3_residual).
+# Pre-3.3l-2 RBF: residual may still pass; recon_* fields absent → SKIP-NOT-PASS (77).
+# Pre-3.3l-1 RBF: res_csum SKIP-NOT-PASS (same as test_f3_residual).
 #
 # F3-only diagnostic; hybrid host_owns_fs not latched. No load_core thrash.
 set -euo pipefail
@@ -19,6 +19,7 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 
 # Locked paint contract (must match residual_gold / test_idct_quant)
 GOLD_Y00=73
@@ -35,6 +36,8 @@ ssh_m() {
 
 echo "=== test_f3_idct_mb0: host goldens y00=${GOLD_Y00} mean=${GOLD_MEAN} pred=${GOLD_PRED} ==="
 echo "=== ensure Plex core (safe — no kill-9 + load_core thrash) ==="
+hw_require_expected_rbf_md5 "test_f3_idct_mb0" "$HOST" "$PASS" "$USER" \
+  "${EXPECTED_RBF_MD5:-${HW_EXPECTED_RBF_MD5:-}}"
 ssh_m 'killall misterplexd 2>/dev/null || true; killall -CONT MiSTer 2>/dev/null || true; rm -f /tmp/misterplex_spi.lock'
 sleep 1
 if ! ssh_m 'cat /tmp/CORENAME' 2>/dev/null | grep -qi plex; then
@@ -79,11 +82,12 @@ echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
 echo "$ST" | grep -qE "res_dc=${GOLD_RES_DC}"
 
-# res_csum: hard after 3.3l-1 RBF; soft skip on pre-csum bitstream
+# res_csum: hard after 3.3l-1 RBF; SKIP-NOT-PASS on pre-csum bitstream
 if echo "$ST" | grep -qE "res_csum=${GOLD_RES_CSUM}\\b"; then
   echo "test_f3_idct_mb0: res_csum=${GOLD_RES_CSUM} (3.3l-1 XOR sat8=0x14 green)"
 else
-  echo "test_f3_idct_mb0: res_csum soft skip (need 3.3l-1 RBF for csum=${GOLD_RES_CSUM})"
+  hw_skip_not_pass "test_f3_idct_mb0" \
+    "res_csum unscored; need 3.3l-1 RBF for csum=${GOLD_RES_CSUM}"
 fi
 
 # --- 3.3l-2 recon hard gate when status packs recon_sig ---
@@ -98,13 +102,13 @@ elif echo "$ST" | grep -qE 'recon_sig='; then
   echo "test_f3_idct_mb0: recon_sig=${GOT} want ${GOLD_RECON_SIG}/0x3b — FAIL"
   exit 1
 else
-  echo "test_f3_idct_mb0: recon_sig soft skip (need 3.3l-2 paint RBF + status recon_sig=${GOLD_RECON_SIG}/0x3b)"
+  echo "test_f3_idct_mb0: recon_sig unscored (need 3.3l-2 paint RBF + status recon_sig=${GOLD_RECON_SIG}/0x3b)"
   echo "  host paint contract: y00=${GOLD_Y00} mean=${GOLD_MEAN} pred=${GOLD_PRED} sig=0x3b ≠ stub ${GOLD_STUB_Y}"
   echo "  frame_store top-left 4×4 @W=320: 0..3,320..323,640..643,960..963 RGB565 y00=0x4A49"
+  hw_skip_not_pass "test_f3_idct_mb0" \
+    "recon_sig unscored; need 3.3l-2 paint RBF + status recon_sig=${GOLD_RECON_SIG}/0x3b"
 fi
 
 if [[ "$RECON_OK" -eq 1 ]]; then
   echo "test_f3_idct_mb0: OK on $HOST — residual + recon paint goldens green"
-else
-  echo "test_f3_idct_mb0: OK residual path on $HOST — recon paint pending (host goldens locked)"
 fi

@@ -19,6 +19,12 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$(cd "$(dirname "$0")/../.." && pwd)/captures/menu}"
 DEV="${HDMI_DEV:-/dev/video4}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
+if [[ "${FBAR_ALLOW_OBSOLETE:-0}" != "1" ]]; then
+  hw_skip_not_pass "test_fbar_fast" \
+    "obsolete v2 debug-menu card; set FBAR_ALLOW_OBSOLETE=1 only for pre-v3 RBF archaeology"
+fi
 mkdir -p "$OUT"
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "root@$HOST")
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable\|store now' || true; }
