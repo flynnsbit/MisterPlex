@@ -1055,3 +1055,123 @@ opening the device, and that is not my lane. A static gate over a population of
 two, discriminating on semantics a regex cannot see, would produce exactly the
 kind of confident-looking green this project has been burned by. Declared and
 handed over rather than gated.
+
+---
+
+## 15. Measuring another branch without transplanting the instrument
+
+### 15.1 RULING 3 condition 1 is unsatisfiable-as-written on the merge base
+
+The parent's RULING 3 gates the next fit on, first, running
+
+```
+scripts/check_rtl_module_instantiations.py --root emu --require h264_decode_core
+```
+
+from `w-decode-hour27`. Run verbatim on `w-decode-hour27` `2f165ed`, in a
+scratch worktree, that branch's own copy answers:
+
+| command on `w-decode-hour27` `2f165ed` | rc |
+|---|---|
+| `--root emu --require h264_decode_core` | **0** |
+| `--require w_gate_totally_fictional_module` | **0** |
+| `--this-flag-does-not-exist` | **0** |
+
+The second row is decisive: a module by that name exists in no file in the
+repository. That branch carries the 200-line variant which **never reads
+`sys.argv`** — verified by reading the file, after first mis-measuring it with
+`grep -c argparse`, which counts a word, not a behaviour. Condition 1 as
+written therefore passes for every module, real or fictional, and prints the
+stub-inflated `reachable=50`. **The guarded checker must land on the merge base
+before condition 1 can be cited as evidence.**
+
+This is recorded as probe #5, `require_fictional_module_is_fatal`, in
+`scripts/check_reachability_gate_capability.py`. It is the strongest portable
+probe in the set because it needs no knowledge of the checker's flags,
+internals or repository: whatever a reachability checker is, being told to find
+a module that exists nowhere must not be a pass. Scores: canonical checker 5/5
+OK rc=0; the merge-base copy 5/5 FAIL rc=1.
+
+The near-miss it exists for is now a regression case
+(`case_argparse_but_vacuous_require_is_caught`): a copy that *does* parse every
+flag, rejects a bad `--root`, prints `TRUNK_PROOF`, and still stamps
+`REQUIRED_RTL_MODULE_REACHABLE` on whatever name it is handed. Probes 1–3 score
+it OK. Only probe 5 catches it. Accepting a flag is not answering the question.
+
+### 15.2 `--project-root`: rebind the paths, never copy the parser
+
+The obvious way to measure another branch is to copy the guarded checker into
+it. That is unsafe here, and the failure is instructive: the foreign tree has
+no `nondefault_config_modules.txt`, so the transplanted checker dies with
+
+```
+RTL_MODULE_INSTANTIATION_FAIL: missing explicit NONDEFAULT_CONFIG_REACHABLE list
+```
+
+which reads as a finding **about the target branch** when it is an artefact of
+the transplant. My own first implementation of `--project-root` reproduced this
+exactly, because the manifest reads happened before the code knew the query was
+foreign.
+
+`--project-root` now rebinds only the path globals — one guarded parser, many
+trees — and **skips this branch's bench-only / nondefault / drop policy
+entirely** for a foreign root, printing:
+
+```
+FOREIGN_PROJECT_ROOT <path> -- structural claims only; this branch's
+bench-only/nondefault/drop policy was NOT applied
+```
+
+A structural question gets a structural answer; a policy question is not
+answerable across branches and is not answered.
+
+**Proving the flag is not a no-op.** Both trees report `rtl_files=43
+rtl_modules=68`, so identical scope lines prove nothing. The discriminator is a
+module whose *position* differs between the branches:
+
+```
+--project-root <merge base> --root h264_decode_core --require h264_intra_nb_ctx   rc=0
+                            --root h264_decode_core --require h264_intra_nb_ctx   rc=1  parents=<none>
+```
+
+Same flags, opposite verdicts, and the difference is a real branch delta. A
+non-MiSTerPlex directory exits **77** with `Scope: 0`, never green.
+
+Five regression cases in `tests/unit/test_rtl_require_root_guard.py` build a
+synthetic foreign checkout that deliberately carries **no manifests**: the
+green case, the scope-describes-the-target case (untracked files must not
+count), this repo's modules not existing over there, an orphan being
+unreachable rather than excused, and the non-checkout skip.
+
+### 15.3 What the merge base actually contains
+
+Measured with the guarded parser over `rtl/*.sv` + `Plex.sv` on
+`w-decode-hour27` `2f165ed`:
+
+- **RULING 3 c1 — TRUNK `emu -> stream_path -> h264_decode_core` PRESENT**, not
+  laundered through `decode_stub`. W-FIT's ruling is confirmed by an
+  independent parser.
+- `emu_reachable=46 core_subtree=15 stub_subtree=18 stub_masked=8`
+- **RULING 3 c4 — only 15 of 36 `h264_*` modules are UNDER_CORE.** 8 are
+  reachable **only via `decode_stub`**; 13 are reachable from nothing at all,
+  including the entire bitstream/entropy category
+  (`h264_baseline_syntax_parser`, `h264_exp_golomb_reader`, `h264_rbsp_filter`,
+  `h264_cavlc_nc_predictor`, `h264_p_mb_type_decode`,
+  `h264_sps_geometry_parser`).
+
+### 15.4 RULING 2 and RULING 3 c4 are in tension
+
+Retiring `decode_stub` (RULING 2, a capacity precondition) removes the **only**
+path to those 8 modules:
+
+```
+h264_chroma_epel_block_8x8   h264_deblock_writeback_ctrl   h264_dpb_one_ref
+h264_inter_mc_16x16          h264_inter_mc_part            h264_luma_qpel_block_16x16
+h264_luma_ref_tap_addr       h264_ref_clamp
+```
+
+That set includes W-DEBLOCK's writeback controller and five of W-SWAP's seven
+modules. Retiring the stub **without relocating them under `h264_decode_core`
+in the same change** would cut emu-reachable decode capability from 23 to 15
+and regress condition 4 while condition 3 goes green. The two conditions must
+be satisfied by one change, not by two independent ones.

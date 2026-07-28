@@ -68,6 +68,33 @@ def git_files(*roots: str) -> list[Path]:
     return [ROOT / line for line in out.splitlines() if line.endswith((".sv", ".v"))]
 
 
+def rebind_project_root(raw: str) -> Path:
+    """Point every path global at another checkout.
+
+    Cross-tree instrument transplant is unsafe in this repo: copying the guarded
+    checker into a foreign worktree makes it die on that tree's missing manifest
+    lists, and the death reads as a finding about the target rather than about
+    the transplant. Rebinding keeps one guarded parser and moves only the paths.
+    """
+    root = Path(raw).expanduser().resolve()
+    top = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if not top.is_file():
+        print(f"Scope: 0 -- {top} not found")
+        print("SKIP: --project-root does not name a MiSTerPlex checkout")
+        raise SystemExit(77)
+
+    global ROOT, RTL_DIR, PRODUCT_TOP, PRODUCT_QSF
+    global BENCH_ONLY, NONDEFAULT_CONFIG, DEFAULT_OFF_DROPS
+    ROOT = root
+    RTL_DIR = root / "fpga" / "Plex_MiSTer" / "rtl"
+    PRODUCT_TOP = top
+    PRODUCT_QSF = root / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
+    NONDEFAULT_CONFIG = RTL_DIR / "nondefault_config_modules.txt"
+    DEFAULT_OFF_DROPS = RTL_DIR / "default_off_drop_modules.txt"
+    return root
+
+
 def strip_comments(text: str) -> str:
     out: list[str] = []
     i = 0
@@ -756,6 +783,19 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     ap.add_argument(
+        "--project-root",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Measure another checkout's RTL with THIS branch's guarded parser, instead of "
+            "copying this script into that tree. Copying is unsafe: the manifests are branch "
+            "state, so a transplanted checker dies on the target's missing lists and the "
+            "failure looks like a finding about the target. With --project-root only "
+            "STRUCTURAL claims are made (graph, trunk, subtree, --require); this branch's "
+            "bench-only/nondefault/drop policy is NOT applied to a foreign tree."
+        ),
+    )
+    ap.add_argument(
         "--allow-non-product-root",
         action="store_true",
         help=(
@@ -765,13 +805,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    foreign = None
+    if args.project_root is not None:
+        foreign = rebind_project_root(args.project_root)
+
     rtl_paths = git_files("fpga/Plex_MiSTer/rtl")
     paths = rtl_paths + [PRODUCT_TOP]
     default_modules, default_graph, default_reachable = build_reachable(paths)
-    bench_only = parse_reason_file(BENCH_ONLY, "bench-only")
-    nondefault_declared = parse_reason_file(NONDEFAULT_CONFIG, "NONDEFAULT_CONFIG_REACHABLE")
-    drop_declared = parse_drop_file()
-    variants = nondefault_variants(paths)
+    # A foreign tree is measured structurally only: its manifests are its own
+    # branch state, and judging it by this branch's lists would report a
+    # transplant artefact as a finding about the target.
+    bench_only = {} if foreign else parse_reason_file(BENCH_ONLY, "bench-only")
+    nondefault_declared = (
+        {} if foreign else parse_reason_file(NONDEFAULT_CONFIG, "NONDEFAULT_CONFIG_REACHABLE")
+    )
+    drop_declared = {} if foreign else parse_drop_file()
+    variants = [] if foreign else nondefault_variants(paths)
     override_macros = parse_define_args(args.define)
     _, override_graph, override_reachable = build_reachable(paths, override_macros)
 
@@ -807,6 +856,17 @@ def main(argv: list[str] | None = None) -> int:
         default_reachable,
         args.allow_non_product_root,
     )
+
+    if foreign is not None:
+        print(
+            "FOREIGN_PROJECT_ROOT %s -- structural claims only; this branch's "
+            "bench-only/nondefault/drop policy was NOT applied" % foreign
+        )
+        print(
+            "RTL_MODULE_STRUCTURE_OK rtl_modules=%d reachable=%d root=%s"
+            % (len(rtl_modules), len(default_reachable), args.root)
+        )
+        return 0
 
     unknown_bench = sorted(set(bench_only) - set(rtl_modules))
     if unknown_bench:

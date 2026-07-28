@@ -132,10 +132,35 @@ def probe_emits_trunk_and_undecidability(checker: Path) -> str | None:
     return None
 
 
+def probe_require_fictional_module_is_fatal(checker: Path) -> str | None:
+    """The strongest portable probe: it needs no knowledge of the checker.
+
+    Whatever a reachability checker's internals are, being told to require a
+    module that exists nowhere in the tree must not be a pass. Measured on
+    `w-decode-hour27` `2f165ed` -- the merge base the parent has declared the
+    only viable one -- the shipped copy answers rc=0 to
+    `--require w_gate_totally_fictional_module`, so RULING 3's condition 1 is
+    unsatisfiable-as-written there: it passes for every module, real or not.
+    """
+    rc, out = run(checker, ["--require", "w_gate_totally_fictional_module"])
+    if rc == 0:
+        return (
+            "exits 0 when required to find a module that exists nowhere in the "
+            "tree, so a --require pass from it carries no information at all"
+        )
+    if "not exist" not in out:
+        return (
+            "rejects a fictional --require without saying the module does not "
+            f"exist: {out.strip()[:160]!r}"
+        )
+    return None
+
+
 PROBES = (
     ("rejects_unknown_flag", probe_rejects_unknown_flag),
     ("help_advertises_flags", probe_help_advertises_flags),
     ("bad_root_is_fatal", probe_bad_root_is_fatal),
+    ("require_fictional_module_is_fatal", probe_require_fictional_module_is_fatal),
     ("emits_trunk_and_undecidability", probe_emits_trunk_and_undecidability),
 )
 

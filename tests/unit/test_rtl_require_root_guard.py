@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import io
 import contextlib
+import os
+import tempfile
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +67,99 @@ def call(required, root, allow=False):
         product_reachable=PRODUCT_REACHABLE,
         allow_non_product_root=allow,
     )
+
+
+def build_foreign_checkout(base: Path) -> Path:
+    """A minimal MiSTerPlex-shaped checkout that shares no module with this one.
+
+    It deliberately carries *no* bench-only / nondefault / drop manifests: the
+    first --project-root implementation read this branch's manifest policy
+    before it knew the query was foreign, so a foreign tree died with
+    "missing explicit NONDEFAULT_CONFIG_REACHABLE list" -- a transplant
+    artefact reported as a finding about the target.
+    """
+    proj = base / "fpga" / "Plex_MiSTer"
+    rtl_dir = proj / "rtl"
+    rtl_dir.mkdir(parents=True)
+    (proj / "Plex.sv").write_text(
+        "module emu();\n  foreign_widget u_w();\nendmodule\n"
+    )
+    (proj / "Plex.qsf").write_text(
+        "set_global_assignment -name TOP_LEVEL_ENTITY emu\nsource files.qip\n"
+    )
+    (proj / "files.qip").write_text(
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/foreign_widget.sv\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/foreign_orphan.sv\n"
+    )
+    (rtl_dir / "foreign_widget.sv").write_text("module foreign_widget();\nendmodule\n")
+    (rtl_dir / "foreign_orphan.sv").write_text("module foreign_orphan();\nendmodule\n")
+    (rtl_dir / "foreign_untracked.sv").write_text("module foreign_untracked();\nendmodule\n")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "w-gate",
+        "GIT_AUTHOR_EMAIL": "w-gate@example.invalid",
+        "GIT_COMMITTER_NAME": "w-gate",
+        "GIT_COMMITTER_EMAIL": "w-gate@example.invalid",
+    }
+    subprocess.run(["git", "init", "-q"], cwd=base, check=True, env=env)
+    subprocess.run(
+        ["git", "add", "fpga/Plex_MiSTer/Plex.sv", "fpga/Plex_MiSTer/Plex.qsf",
+         "fpga/Plex_MiSTer/files.qip",
+         "fpga/Plex_MiSTer/rtl/foreign_widget.sv",
+         "fpga/Plex_MiSTer/rtl/foreign_orphan.sv"],
+        cwd=base, check=True, env=env,
+    )
+    subprocess.run(["git", "commit", "-qm", "foreign"], cwd=base, check=True, env=env)
+    return base
+
+
+def run_gate(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_rtl_module_instantiations.py"), *args],
+        capture_output=True,
+        text=True,
+    )
+
+
+def check_foreign_project_root() -> int:
+    scratch = ROOT / "build" / "w-gate-o5-scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    cases = 0
+    with tempfile.TemporaryDirectory(prefix="foreignroot-", dir=str(scratch)) as td:
+        far = build_foreign_checkout(Path(td))
+
+        # GREEN: a foreign tree with no manifests answers a structural question.
+        proc = run_gate("--project-root", str(far), "--root", "emu", "--require", "foreign_widget")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "FOREIGN_PROJECT_ROOT" in proc.stdout, proc.stdout
+        assert "policy was NOT applied" in proc.stdout, proc.stdout
+        cases += 1
+
+        # The numbers must describe the TARGET, not this checkout.  Without this
+        # assertion --project-root could be a no-op and every result would still
+        # look plausible, because both trees report rtl_modules=68.
+        scope = proc.stdout.splitlines()[0]
+        assert "rtl_modules=2" in scope, scope
+        assert "rtl_files=2" in scope, scope  # untracked file must not count
+        cases += 1
+
+        # RED: this repo's modules do not exist over there.
+        proc = run_gate("--project-root", str(far), "--root", "emu", "--require", "h264_decode_core")
+        assert proc.returncode == 1 and "not exist" in proc.stderr, proc.stdout + proc.stderr
+        cases += 1
+
+        # RED: an orphan in the foreign tree is unreachable, not excused.
+        proc = run_gate("--project-root", str(far), "--root", "emu", "--require", "foreign_orphan")
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "REQUIRED_RTL_MODULE_UNREACHABLE foreign_orphan" in proc.stderr, proc.stderr
+        cases += 1
+
+    # SKIP: a directory that is not a MiSTerPlex checkout is unscored, never green.
+    proc = run_gate("--project-root", str(ROOT / "docs"))
+    assert proc.returncode == 77, proc.stdout + proc.stderr
+    assert proc.stdout.splitlines()[0].startswith("Scope: 0"), proc.stdout
+    cases += 1
+    return cases
 
 
 def main() -> int:
@@ -123,7 +218,9 @@ def main() -> int:
     )
     assert "NON_PRODUCT_ROOT h264_decode_skeleton" in proc.stderr, proc.stderr
 
-    print("RTL_REQUIRE_ROOT_GUARD_OK cases=7 e2e=1")
+    foreign_cases = check_foreign_project_root()
+
+    print(f"RTL_REQUIRE_ROOT_GUARD_OK cases=7 e2e=1 foreign_project_root={foreign_cases}")
     return 0
 
 

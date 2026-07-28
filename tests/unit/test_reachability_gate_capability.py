@@ -60,9 +60,28 @@ a = ap.parse_args()
 if a.root != "emu":
     print(f"--root names a module that does not exist: {a.root}", file=sys.stderr)
     raise SystemExit(1)
+for name in a.require:
+    if name != "emu":
+        print(f"--require names modules that do not exist: {name}", file=sys.stderr)
+        raise SystemExit(1)
 print("Scope: rtl_modules=1")
 print("UNDECIDABLE_GENERATE_MODULES count=0 <none>")
 print("TRUNK_PROOF emu path=emu hops=0 via_masking_lineage=no")
+"""
+
+ARGPARSE_BUT_VACUOUS_REQUIRE = """
+import argparse, sys
+ap = argparse.ArgumentParser()
+ap.add_argument("--root", default="emu")
+ap.add_argument("--require", action="append", default=[])
+a = ap.parse_args()
+if a.root != "emu":
+    print(f"--root names a module that does not exist: {a.root}", file=sys.stderr)
+    raise SystemExit(1)
+print("Scope: rtl_modules=1")
+print("UNDECIDABLE_GENERATE_MODULES count=0 <none>")
+print("TRUNK_PROOF emu path=emu hops=0 via_masking_lineage=no")
+print("REQUIRED_RTL_MODULE_REACHABLE " + " ".join(a.require))
 """
 
 NO_ARGPARSE = """
@@ -79,8 +98,24 @@ raise SystemExit(1)
 def case_capable_passes() -> None:
     rc, out, err = run(write_checker("capable", CAPABLE))
     assert rc == 0, (out, err)
-    assert "REACHABILITY_GATE_CAPABLE probes=4" in out, out
-    assert out.startswith("Scope: reachability_capability_probes=4"), out
+    assert "REACHABILITY_GATE_CAPABLE probes=5" in out, out
+    assert out.startswith("Scope: reachability_capability_probes=5"), out
+
+
+def case_argparse_but_vacuous_require_is_caught() -> None:
+    """The dangerous near-miss: it parses every flag and still proves nothing.
+
+    Adding argparse to a degraded copy would silence the first three probes
+    while leaving `--require` a rubber stamp -- it prints REACHABLE for
+    whatever name you hand it. Only the fictional-module probe separates a
+    checker that answers the question from one that merely accepts it.
+    """
+    rc, out, err = run(write_checker("vacuous_require", ARGPARSE_BUT_VACUOUS_REQUIRE))
+    assert rc == 1, (out, err)
+    assert "PROBE rejects_unknown_flag OK" in out, out
+    assert "PROBE bad_root_is_fatal OK" in out, out
+    assert "PROBE require_fictional_module_is_fatal FAIL" in out, out
+    assert "exists nowhere in the tree" in err, err
 
 
 def case_no_argparse_is_caught() -> None:
@@ -132,6 +167,7 @@ def case_runs_checker_in_its_own_tree() -> None:
 def main() -> int:
     cases = [
         case_capable_passes,
+        case_argparse_but_vacuous_require_is_caught,
         case_no_argparse_is_caught,
         case_nonzero_for_unrelated_reason_is_not_evidence,
         case_missing_checker_is_fatal_not_skipped,
