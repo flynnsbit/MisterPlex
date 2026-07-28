@@ -432,10 +432,92 @@ def build_reachable(paths: list[Path], macro_overrides: dict[str, int | None] | 
     return modules, graph, reachable_from(PRODUCT_ROOT, graph)
 
 
+def instantiating_parents(child: str, graph: dict[str, set[str]]) -> list[str]:
+    return sorted(parent for parent, kids in graph.items() if child in kids)
+
+
+def check_required_modules(
+    required: list[str],
+    root: str,
+    graph: dict[str, set[str]],
+    modules: dict[str, ModuleDef],
+    product_reachable: set[str],
+    allow_non_product_root: bool,
+) -> None:
+    """Evaluate --require, refusing to dress a subtree claim up as product evidence."""
+    if root not in modules:
+        fail(f"--root names a module that does not exist: {root}")
+
+    root_is_product = root == PRODUCT_ROOT or root in product_reachable
+    if not root_is_product:
+        parents = instantiating_parents(root, graph)
+        detail = ",".join(parents) if parents else "<none>"
+        print(
+            f"NON_PRODUCT_ROOT {root} product_reachable=no instantiating_parents={detail}",
+            file=sys.stderr,
+        )
+        if not allow_non_product_root:
+            fail(
+                f"--root {root} is not reachable from the product root {PRODUCT_ROOT}; a requirement "
+                "proved from it is a subtree claim, not product presence. Wire the root into the "
+                "product or pass --allow-non-product-root and report it as SUBTREE_ONLY_CLAIM."
+            )
+
+    if not required:
+        return
+
+    reachable = reachable_from(root, graph) if root in graph else {root}
+    missing = [name for name in required if name not in modules]
+    if missing:
+        fail("--require names modules that do not exist: " + ", ".join(sorted(missing)))
+
+    unreachable = [name for name in required if name not in reachable]
+    for name in unreachable:
+        parents = instantiating_parents(name, graph)
+        detail = ",".join(parents) if parents else "<none>"
+        print(
+            f"REQUIRED_RTL_MODULE_UNREACHABLE {name} root={root} instantiating_parents={detail}",
+            file=sys.stderr,
+        )
+    if unreachable:
+        fail(f"required RTL modules are not reachable from {root}: " + ", ".join(sorted(unreachable)))
+
+    label = "REQUIRED_RTL_MODULE_PRODUCT_REACHABLE" if root_is_product else "SUBTREE_ONLY_CLAIM"
+    for name in required:
+        print(f"{label} {name} root={root} product_reachable={'yes' if root_is_product else 'no'}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--define", action="append", default=[], help="Override a Verilog macro for reachability reporting, e.g. DECODE_REAL_INTRA=1")
     ap.add_argument("--list-reachable", action="store_true", help="Print modules reachable under the requested --define configuration")
+    ap.add_argument(
+        "--root",
+        default=PRODUCT_ROOT,
+        help=(
+            f"Root module for --require queries. Defaults to the product root {PRODUCT_ROOT!r}. "
+            "Any other root only proves subtree containment, never product presence."
+        ),
+    )
+    ap.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help=(
+            "Require MODULE to be reachable from --root. With the product root this is a "
+            "product-presence claim; with any other root it is only a subtree claim and the root "
+            "must itself be product-reachable, or --allow-non-product-root must be passed."
+        ),
+    )
+    ap.add_argument(
+        "--allow-non-product-root",
+        action="store_true",
+        help=(
+            "Permit --root to name a module that is not product-reachable. Results are then "
+            "labelled SUBTREE_ONLY_CLAIM and must never be reported as product evidence."
+        ),
+    )
     args = ap.parse_args(argv)
 
     rtl_paths = git_files("fpga/Plex_MiSTer/rtl")
@@ -454,6 +536,23 @@ def main(argv: list[str] | None = None) -> int:
         if RTL_DIR in mod.path.parents or mod.path == RTL_DIR
     }
     rtl_module_names = set(rtl_modules)
+
+    print(
+        "Scope: rtl_files=%d rtl_modules=%d product_root=%s query_root=%s requires=%d"
+        % (len(rtl_paths), len(rtl_modules), PRODUCT_ROOT, args.root, len(args.require)),
+        flush=True,
+    )
+    if not rtl_modules:
+        fail("Scope: 0 RTL modules parsed; the gate cannot claim a PASS over an empty set")
+
+    check_required_modules(
+        args.require,
+        args.root,
+        default_graph,
+        default_modules,
+        default_reachable,
+        args.allow_non_product_root,
+    )
 
     unknown_bench = sorted(set(bench_only) - set(rtl_modules))
     if unknown_bench:

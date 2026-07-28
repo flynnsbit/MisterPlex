@@ -246,3 +246,96 @@ Stated plainly for W-AUDIT.
   survives fitting. `make post-fit-hierarchy` remains the authority for that.
 * All of this is source-structural. **A green result here still proves nothing
   about pixels.** No FPGA-decoded frame has ever been displayed.
+
+## 7. Non-product query roots (`--root` / `--require`)
+
+Added after auditing W-DEBLOCK commit `7225e00` on `w-deblock-seam`.
+
+### 7.1 What was claimed
+
+> `h264_decode_core` now instantiates `h264_deblock_writeback_ctrl` … structural
+> gate registered in `make unit`:
+> `check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl`
+
+### 7.2 Raw measurements on `origin/w-deblock-seam` (`2c2cb83`)
+
+| Measurement | Value |
+|---|---|
+| `h264_decode_core.sv:627` instantiates `h264_deblock_writeback_ctrl` | **yes** — the claim is literally true |
+| decode roots instantiated in `stream_path.sv` | `decode_stub` **only** (line 289) |
+| `DECODE_REAL_INTRA` references in `stream_path.sv` | **0** |
+| `h264_decode_core` product-reachable from `emu` | **no** — `instantiating_parents=<none>` |
+| `h264_deblock_writeback_ctrl` product-reachable from `emu` | **yes**, via `decode_stub` |
+| `default_reachable` before the change | 41 |
+| `default_reachable` after the change | 41 |
+
+### 7.3 Adversarial control
+
+The core's writeback instantiation was renamed to a non-existent module in a
+scratch worktree. Product reachability was then re-measured:
+
+```
+default_reachable=41   REACHABLE_MODULE h264_deblock_writeback_ctrl   rc=0
+```
+
+Identical. **Commit `7225e00` is product-neutral by structural measurement.**
+The registered gate cannot fail for a product reason, because the capability it
+requires was already reachable through `decode_stub` and remains so with the new
+instantiation destroyed.
+
+### 7.4 The vacuity
+
+The `w-deblock-seam` variant of the checker skips its bench-only cross-check
+whenever `--root != emu` and never asks whether the root is itself in the
+product. Measured consequence:
+
+```
+--root h264_decode_core     --require h264_deblock_writeback_ctrl  -> rc=0
+--root h264_decode_skeleton --require h264_deblock_writeback_ctrl  -> rc=0
+```
+
+`h264_decode_skeleton` is confirmed dead code: zero instantiating parents, in no
+`.qip`. **A gate that passes identically when rooted at dead code carries no
+product evidence.** Its help text nevertheless reads "Require a specific RTL
+module to be product-reachable from the product root".
+
+### 7.5 The guard
+
+`--root` / `--require` are now implemented on the canonical checker with the
+missing precondition:
+
+* `Scope:` is printed first, always, including `product_root` and `query_root`.
+* A `--root` that is not itself product-reachable is a **hard fail**
+  (`NON_PRODUCT_ROOT`), naming its instantiating parents.
+* `--allow-non-product-root` permits the query but downgrades every result to
+  `SUBTREE_ONLY_CLAIM … product_reachable=no`. The string
+  `REQUIRED_RTL_MODULE_PRODUCT_REACHABLE` is never emitted for such a root.
+
+Run under the guard, W-DEBLOCK's registered command becomes:
+
+```
+Scope: rtl_files=43 rtl_modules=68 product_root=emu query_root=h264_decode_core requires=1
+NON_PRODUCT_ROOT h264_decode_core product_reachable=no instantiating_parents=<none>
+RTL_MODULE_INSTANTIATION_FAIL: --root h264_decode_core is not reachable from the product root emu
+rc=1
+```
+
+Red/green in `tests/unit/test_rtl_require_root_guard.py` (7 synthetic cases plus
+one end-to-end). Mutation-proved: disabling the `NON_PRODUCT_ROOT` fail makes the
+test rc=1 with `a requirement rooted at a non-product module must not pass
+silently`.
+
+### 7.6 Three variants of one filename
+
+`check_rtl_module_instantiations.py` currently exists in three divergent forms:
+
+| Branch | Lines | `--root`/`--require` |
+|---|---|---|
+| `w-decode-hour27` | 200 | no |
+| `w-deblock-seam` | 237 | yes, unguarded |
+| `w-gate-hour28` | 665 | yes, guarded |
+
+They report different numbers for the same tree. Any quoted figure must name the
+branch that produced it. On integration the canonical version must win, or
+W-DEBLOCK's registered `make unit` line will either break on unknown arguments
+or silently revert to the unguarded semantics.
