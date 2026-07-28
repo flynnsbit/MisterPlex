@@ -93,6 +93,7 @@ private:
     std::string timelineXml(const std::string& commandId) const;
     std::string lanIp() const;
     void log(const std::string& s) const;
+    void clearMediaLocked();
     static std::string xmlEsc(const std::string& s);
 
     std::string name_ = "MiSTerPlex";
