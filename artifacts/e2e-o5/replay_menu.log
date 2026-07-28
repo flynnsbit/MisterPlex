@@ -1,0 +1,5 @@
+Scope: 12 scored frames from file
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=82.23 spatial_std=93.24 unique=4/12
+PLEX_CHEVRON: ABSENT — orange bbox 119x720 has aspect 0.17 outside [0.4, 2.5]; a streak or column of text, not a logo
+LEFT_EDGE_ARTIFACT: clean — dark 52.6% in cols [84, 200] vs 40.1% in control [300, 1200] (ratio 1.3x)
+PASS: valid signal with picture content

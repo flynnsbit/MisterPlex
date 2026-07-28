@@ -1,0 +1,7 @@
+PING 192.168.1.183 (192.168.1.183) 56(84) bytes of data.
+64 bytes from 192.168.1.183: icmp_seq=1 ttl=64 time=8.19 ms
+64 bytes from 192.168.1.183: icmp_seq=2 ttl=64 time=4.43 ms
+
+--- 192.168.1.183 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1000ms
+rtt min/avg/max/mdev = 4.426/6.310/8.194/1.884 ms

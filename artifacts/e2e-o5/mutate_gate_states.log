@@ -8,7 +8,11 @@ KILLED    chevron-always-present  (rc=1)
 KILLED    chevron-never-present  (rc=1)
 KILLED    left-edge-never-detected  (rc=1)
 KILLED    left-edge-always-detected  (rc=1)
+KILLED    chevron-aspect-gate-removed  (rc=1)
+KILLED    chevron-fill-gate-removed  (rc=1)
+KILLED    chevron-aspect-range-widened-to-anything  (rc=1)
+KILLED    chevron-fill-threshold-zeroed  (rc=1)
 KILLED    provenance-check-removed  (rc=1)
 
-Scope: 10 mutations; killed 10, survived 0
+Scope: 14 mutations; killed 14, survived 0
 MUTATION_OK — every mutation turned the test red

@@ -1,0 +1,5 @@
+Scope: 12 scored frames from file
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=36.36 spatial_std=22.28 unique=12/12
+PLEX_CHEVRON: PRESENT — 14928 px of Plex-orange [244, 163, 2] centred at [595, 359], bbox [484, 239, 707, 479]
+LEFT_EDGE_ARTIFACT: PRESENT — dark 29.5% in cols [84, 200] vs 0.2% in control [300, 1200] (ratio 159.1x)
+PASS: valid signal with picture content including the Plex chevron

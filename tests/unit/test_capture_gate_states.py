@@ -68,7 +68,8 @@ def flat(value: int, n: int = 4) -> list[np.ndarray]:
 
 
 def content(n: int = 4, seed: int = 3, chevron: bool = False,
-            artifact: bool = False) -> list[np.ndarray]:
+            artifact: bool = False, text_column: bool = False,
+            sparse_block: bool = False) -> list[np.ndarray]:
     """Frames with genuine spatial structure and frame-to-frame variation."""
     out = []
     rng = np.random.default_rng(seed)
@@ -82,6 +83,22 @@ def content(n: int = 4, seed: int = 3, chevron: bool = False,
         arm = (np.abs((yy - 360)) > 0) & (np.abs(xx - 480 - np.abs(yy - 360)) < 42)
         blob = arm & (np.abs(yy - 360) < 130)
         base[blob] = [244, 163, 2]
+    if text_column:
+        # REGRESSION: the MiSTer main menu is a full-height column of orange
+        # text.  It satisfies colour, pixel count and centroid, and this gate
+        # scored it "PLEX_CHEVRON: PRESENT" on a live MENU capture
+        # (bbox 119x720, aspect 0.165, fill 0.105).  Shape gates must reject it.
+        yy, xx = np.mgrid[0:H, 0:W]
+        col = (np.abs(xx - 430) < 60) & (yy % 24 < 11)
+        base[col] = [244, 163, 2]
+    if sparse_block:
+        # Roughly SQUARE, centred block of orange text lines: passes the
+        # colour, count, centroid AND aspect gates, and is separated from a
+        # solid logo only by fill density.  Without this case the fill gate
+        # is unexercised -- mutation testing caught exactly that.
+        yy, xx = np.mgrid[0:H, 0:W]
+        blk = (np.abs(xx - 640) < 120) & (np.abs(yy - 360) < 120) & (yy % 16 < 2)
+        base[blk] = [244, 163, 2]
     for i in range(n):
         f = base + rng.normal(0, 4, base.shape)
         if artifact:
@@ -182,6 +199,28 @@ def main() -> int:
         check("CONTENT with chevron passes --expect-chevron (rc=0)",
               r.returncode == 0, f"rc={r.returncode} {r.stdout[-300:]}")
         check("chevron reported PRESENT", "PLEX_CHEVRON: PRESENT" in r.stdout)
+
+        # 7b. REGRESSION -- a full-height orange text column (the MiSTer main
+        # menu) must NOT be mistaken for the Plex chevron.  Measured live:
+        # MENU scored PRESENT before the aspect/fill gates were added.
+        pt = save(content(chevron=False, text_column=True, seed=11), d, "menucol")
+        r = run(inputs(pt) + ["--host", REACHABLE], d)
+        check("orange text column is NOT reported as a chevron",
+              "PLEX_CHEVRON: ABSENT" in r.stdout, r.stdout.strip().splitlines()[-2:])
+        check("text column rejected on shape, not on colour or count",
+              "aspect" in r.stdout or "fill" in r.stdout, r.stdout)
+        r = run(inputs(pt) + ["--host", REACHABLE, "--expect-chevron"], d)
+        check("orange text column FAILS --expect-chevron (rc=1)",
+              r.returncode == 1, f"rc={r.returncode}")
+
+        # 7c. A square, centred but SPARSE orange block clears colour, count,
+        # centroid and aspect; only fill density separates it from a logo.
+        ps = save(content(chevron=False, sparse_block=True, seed=13), d, "sparse")
+        r = run(inputs(ps) + ["--host", REACHABLE], d)
+        check("sparse square orange block is NOT a chevron",
+              "PLEX_CHEVRON: ABSENT" in r.stdout, r.stdout.strip().splitlines()[-2:])
+        check("sparse block rejected specifically on fill density",
+              "fills only" in r.stdout, r.stdout)
 
         # 8. Left-edge artifact detection, with its clean control.
         pa = save(content(artifact=True, seed=5), d, "art")

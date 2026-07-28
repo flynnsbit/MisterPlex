@@ -15,11 +15,16 @@ PASS CONTENT names the state
 PASS CONTENT without chevron FAILS --expect-chevron (rc=1)
 PASS CONTENT with chevron passes --expect-chevron (rc=0)
 PASS chevron reported PRESENT
+PASS orange text column is NOT reported as a chevron
+PASS text column rejected on shape, not on colour or count
+PASS orange text column FAILS --expect-chevron (rc=1)
+PASS sparse square orange block is NOT a chevron
+PASS sparse block rejected specifically on fill density
 PASS left-edge artifact detected
 PASS clean frames report no left-edge artifact
 PASS unverifiable provenance refuses (rc=2) even with good pixels
 PASS provenance refusal says UNSCORED
 PASS --expect-corename without --host refuses (rc=2)
 
-22/22 checks passed
+27/27 checks passed
 CAPTURE_GATE_OFFLINE_REDPROOF_OK

@@ -1,0 +1,52 @@
+{
+  "source": "v4l2:/dev/video0 (warmup dropped 2)",
+  "scored_frames": 10,
+  "signal": {
+    "state": "CONTENT_PRESENT",
+    "unique_hashes": 3,
+    "total_frames": 10,
+    "mean_luma": 82.23,
+    "spatial_std": 93.24,
+    "note": "live signal with picture content (mean luma 82.23 \u2265 8.0, spatial std 93.24 \u2265 3.0)"
+  },
+  "chevron": {
+    "orange_px": 8959,
+    "orange_frac": 0.009721,
+    "min_px": 2000,
+    "present": true,
+    "reason": "8959 px of Plex-orange [173, 175, 0] centred at [435, 320], bbox [368, 0, 486, 719]",
+    "bbox": [
+      368,
+      0,
+      486,
+      719
+    ],
+    "centroid": [
+      435,
+      320
+    ],
+    "mean_rgb": [
+      173,
+      175,
+      0
+    ],
+    "vertical_offset_frac": 0.0552
+  },
+  "left_edge_artifact": {
+    "measurable": true,
+    "background_luma": 64.33,
+    "dark_threshold": 32.17,
+    "artifact_band": [
+      84,
+      200
+    ],
+    "control_band": [
+      300,
+      1200
+    ],
+    "artifact_dark_frac": 0.5259,
+    "control_dark_frac": 0.4012,
+    "ratio": 1.3,
+    "present": false
+  }
+}
