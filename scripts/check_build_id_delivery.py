@@ -50,6 +50,7 @@ so explicitly rather than letting a source-level green be mistaken for proof.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -68,6 +69,11 @@ SCOPE = (
 # If these are optimised away, no CONF_STR wiring can put a build id on screen.
 OSD_RENDER_MODULES = ("hps_io", "osd")
 
+# Present in every product build's hierarchy. Its absence means the report could
+# not be read as a product hierarchy, which is different from the OSD path being
+# absent from the design.
+HIERARCHY_ANCHOR = "emu"
+
 MODE3_WARNING = (
     "NOTE source-level checks cannot detect optimize-away: a module can be "
     "compiled, instantiated and elaborated, then deleted by synthesis for "
@@ -76,11 +82,51 @@ MODE3_WARNING = (
 )
 
 
-def check_synthesis_survival(rpt: Path) -> int:
-    """Mode-3 check: did the OSD render path survive real synthesis?"""
+def check_synthesis_survival(rpt: Path, expect_rbf_md5: str | None) -> int:
+    """Mode-3 check: did the OSD render path survive real synthesis?
+
+    Two things this must not do, both learned the hard way:
+
+    * **Read an unbound report.** 55 fit reports exist in this worktree and most
+      describe builds nobody is running. A report proves nothing about a
+      bitstream unless it is tied to that bitstream's md5, so without
+      ``--expect-rbf-md5`` this returns 77 (cannot evaluate) and prints no
+      verdict line, rather than a green about an unrelated build.
+    * **Confuse "absent" with "unseen".** If the module is missing we can only
+      call it optimized away when we have positive evidence the hierarchy was
+      actually parsed. The anchor below supplies that. Otherwise a truncated or
+      wrong-format report would produce a confident false "optimized away" --
+      a self-imposed scope limit silently becoming a claim about the world.
+    """
     if not rpt.is_file():
         print(f"FAIL --fit-rpt not found: {rpt}")
         return 1
+
+    rbf = rpt.parent / "Plex.rbf"
+    if expect_rbf_md5:
+        if not rbf.is_file():
+            print(f"UNBOUND: no sibling Plex.rbf beside {rpt}")
+            return 1
+        got = hashlib.md5(rbf.read_bytes()).hexdigest()
+        if not got.startswith(expect_rbf_md5.lower()):
+            print(
+                f"BINDING_FAIL sibling Plex.rbf md5={got[:8]} "
+                f"expected={expect_rbf_md5}"
+            )
+            return 1
+        print(f"BOUND report -> Plex.rbf md5={got[:8]}")
+    else:
+        # Printing UNBOUND while returning 0 is the print/exit divergence that
+        # gets cited as a pass: the text says "do not cite me" and the exit code
+        # says green, and every wrapper reads the exit code.
+        print(
+            f"UNBOUND: no --expect-rbf-md5 given; {rpt.name} may describe a build "
+            "that is not deployed anywhere"
+        )
+        print("SKIP-NOT-PASS cannot evaluate mode 3 without an RBF binding",
+              file=sys.stderr)
+        return 77
+
     text = rpt.read_text(errors="replace")
     # Quartus hierarchy rows name instances as |module:instance
     found = set(re.findall(r"\|([A-Za-z_][A-Za-z_0-9]*):", text))
@@ -90,6 +136,18 @@ def check_synthesis_survival(rpt: Path) -> int:
             "an empty parse is a broken report, not a design with no modules"
         )
         return 1
+    if HIERARCHY_ANCHOR not in found:
+        print(
+            f"UNSEEN: {rpt.name} parsed {len(found)} module names but not the "
+            f"anchor {HIERARCHY_ANCHOR!r}. Every product build has it, so this "
+            "report cannot be read as a product hierarchy. Reporting the OSD "
+            "path as absent from it would be a claim about the report, not the "
+            "design."
+        )
+        print("SKIP-NOT-PASS mode-3 arm unreadable: anchor missing", file=sys.stderr)
+        return 2
+
+    print(f"Scope: {len(found)} distinct modules in {rpt.name}, anchor {HIERARCHY_ANCHOR} present")
     rc = 0
     for mod in OSD_RENDER_MODULES:
         if mod in found:
@@ -250,6 +308,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Quartus fit/map report; proves the OSD render path survived synthesis",
     )
+    ap.add_argument(
+        "--expect-rbf-md5",
+        help="bind --fit-rpt to a bitstream: the sibling Plex.rbf must have this "
+        "md5 (full or leading prefix). Without it the mode-3 arm is UNBOUND and "
+        "cannot be evaluated.",
+    )
     args = ap.parse_args(argv)
 
     if not args.project.is_dir():
@@ -260,7 +324,15 @@ def main(argv: list[str] | None = None) -> int:
     rc = check_chain(args.project, args.quartus_version)
 
     if args.fit_rpt is not None:
-        rc |= check_synthesis_survival(args.fit_rpt)
+        src = check_synthesis_survival(args.fit_rpt, args.expect_rbf_md5)
+        if rc == 0 and src in (2, 77):
+            # The source chain is fine but the mode-3 arm could not be
+            # evaluated. Emit no verdict line at all, so no caller can grep
+            # BUILD_ID_DELIVERY OK out of a run that proved nothing about
+            # synthesis survival.
+            return src
+        if src != 0:
+            rc = 1
     else:
         print(MODE3_WARNING)
 

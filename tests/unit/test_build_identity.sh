@@ -369,6 +369,7 @@ mkdir -p "$M3"
 cat > "$M3/good.rpt" <<'RPT'
 ; Fitter Resource Utilization by Entity
 ; |Plex                       ;
+; |Plex|emu:emu               ;
 ; |Plex|hps_io:hps_io         ;
 ; |Plex|osd:vga_osd           ;
 ; |Plex|osd:hdmi_osd          ;
@@ -376,8 +377,12 @@ RPT
 grep -v '|osd:' "$M3/good.rpt" > "$M3/no_osd.rpt"
 grep -v 'hps_io:' "$M3/good.rpt" > "$M3/no_hps.rpt"
 printf 'a fit report with no hierarchy table at all\n' > "$M3/empty.rpt"
+# A report is only evidence about a bitstream it is bound to, so every fixture
+# needs a sibling RBF to bind against.
+printf 'synthetic-rbf-for-mode3-fixtures' > "$M3/Plex.rbf"
+M3MD5="$(md5sum "$M3/Plex.rbf" | cut -c1-8)"
 
-if "$DELIV" --project "$REALPROJ" --fit-rpt "$M3/good.rpt" >"$M3/good.log" 2>&1; then
+if "$DELIV" --project "$REALPROJ" --fit-rpt "$M3/good.rpt" --expect-rbf-md5 "$M3MD5" >"$M3/good.log" 2>&1; then
     ok "mode 3: OSD render path present in the synthesis report"
 else
     fail "mode 3 green failed on a report containing osd and hps_io: $(cat "$M3/good.log")"
@@ -386,7 +391,7 @@ fi
 # red_mode3 <name> <report> <expected substring>
 red_mode3() {
     local name="$1" rpt="$2" want="$3" out rc
-    out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$rpt" 2>&1)"
+    out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$rpt" --expect-rbf-md5 "$M3MD5" 2>&1)"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         fail "RED mode3 $name: optimized-away design still reported OK"
@@ -410,6 +415,93 @@ if "$DELIV" --project "$REALPROJ" 2>&1 | grep -q "cannot detect optimize-away"; 
     ok "source-only mode warns that it cannot detect optimize-away"
 else
     fail "source-only mode does not warn about optimize-away blindness"
+fi
+
+# ---------------------------------------------------------------- section 8
+# Report binding, and absent-vs-unseen.
+#
+# 55 fit reports exist in this worktree and most describe builds nobody runs.
+# Reading the wrong one is silent and undetectable, so an unbound report must
+# never be a pass. Separately, concluding "optimized away" from a report we
+# could not actually parse turns a limit of our own instrument into a claim
+# about the design -- these two are different failures with the same output.
+
+# red: unbound must be 77 (cannot evaluate) and must emit NO verdict line, so
+# nothing downstream can grep BUILD_ID_DELIVERY OK out of it.
+out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$M3/good.rpt" 2>&1)"; rc=$?
+if [ "$rc" -eq 77 ]; then
+    ok "RED OK binding: unbound report returns 77, not a pass"
+else
+    fail "RED binding: unbound report returned rc=$rc, expected 77"
+fi
+if printf '%s' "$out" | grep -qF -- "UNBOUND"; then
+    ok "RED OK binding: unbound run says UNBOUND"
+else
+    fail "RED binding: unbound run did not say UNBOUND"
+fi
+if printf '%s' "$out" | grep -qF -- "BUILD_ID_DELIVERY"; then
+    fail "RED binding: unbound run printed a verdict line that could be grepped as a pass"
+else
+    ok "RED OK binding: unbound run prints no BUILD_ID_DELIVERY verdict at all"
+fi
+
+# red: bound to the wrong bitstream
+out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$M3/good.rpt" --expect-rbf-md5 deadbeef 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF -- "BINDING_FAIL"; then
+    ok "RED OK binding: wrong expected md5 is BINDING_FAIL (rc=$rc)"
+else
+    fail "RED binding: wrong md5 did not fail (rc=$rc): $out"
+fi
+
+# red: --expect given but no sibling RBF to bind to
+NORBF="$WORK/mode3_norbf"; mkdir -p "$NORBF"; cp "$M3/good.rpt" "$NORBF/"
+out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$NORBF/good.rpt" --expect-rbf-md5 deadbeef 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qF -- "no sibling Plex.rbf"; then
+    ok "RED OK binding: missing sibling RBF cannot be bound (rc=$rc)"
+else
+    fail "RED binding: missing sibling RBF did not fail (rc=$rc): $out"
+fi
+
+# red: a report that parses but is not a product hierarchy must be UNSEEN, not
+# "optimized away". The old code called this absence and was confidently wrong.
+UNS="$WORK/mode3_unseen"; mkdir -p "$UNS"
+printf '|widget:w1\n|gadget:g1\n' > "$UNS/x.rpt"
+printf 'synthetic' > "$UNS/Plex.rbf"
+UNSMD5="$(md5sum "$UNS/Plex.rbf" | cut -c1-8)"
+out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$UNS/x.rpt" --expect-rbf-md5 "$UNSMD5" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ]; then
+    ok "RED OK unseen: unreadable hierarchy returns 2 (cannot evaluate)"
+else
+    fail "RED unseen: expected rc=2 for a report with no anchor, got rc=$rc"
+fi
+if printf '%s' "$out" | grep -qF -- "UNSEEN"; then
+    ok "RED OK unseen: says UNSEEN rather than absent"
+else
+    fail "RED unseen: did not say UNSEEN: $out"
+fi
+if printf '%s' "$out" | grep -qF -- "optimized away"; then
+    fail "RED unseen: claimed 'optimized away' from a report it could not parse"
+else
+    ok "RED OK unseen: does not claim optimize-away from an unreadable report"
+fi
+if printf '%s' "$out" | grep -qF -- "BUILD_ID_DELIVERY"; then
+    fail "RED unseen: printed a verdict line for an unevaluable run"
+else
+    ok "RED OK unseen: prints no verdict line for an unevaluable run"
+fi
+
+# green: the real report bound to the RESIDENT bitstream, when it is available.
+# NOTE, not skip, so this never halts make unit -- and never silently degrades.
+RESIDENT_RPT="$ROOT/../w-arm-idle-edge/build/rpt/bdiag-b/Plex.fit.rpt"
+if [ -f "$RESIDENT_RPT" ] && [ -f "$(dirname "$RESIDENT_RPT")/Plex.rbf" ]; then
+    out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$RESIDENT_RPT" --expect-rbf-md5 fb4bad84 2>&1)"; rc=$?
+    if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF -- "BOUND report -> Plex.rbf md5=fb4bad84"; then
+        ok "bonus: OSD path survives synthesis in the RESIDENT fb4bad84 bitstream"
+    else
+        fail "bonus: resident-bound mode-3 check failed (rc=$rc): $out"
+    fi
+else
+    echo "NOTE resident fb4bad84 fit report not present here; synthetic mode-3 reds still ran"
 fi
 
 if [ "$FAILED" -eq 0 ]; then
