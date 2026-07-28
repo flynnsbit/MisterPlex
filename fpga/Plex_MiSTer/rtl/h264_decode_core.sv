@@ -121,6 +121,11 @@ module h264_decode_core #(
     // Backpressure from a variable-latency DPB (the DDR-resident store).
     // Tie low for a fixed-latency on-chip SRAM.
     input  wire        dpb_rd_stall,
+    // Pulses on the exact edge the internal reference address generator moves
+    // its current/reference bank pointers. A DDR-resident DPB must sequence
+    // its own flush/invalidate from this, not from the frame_done output,
+    // which is a later status signal.
+    output wire        dpb_ref_swap,
 
     // ── Product present writeback (decoded samples to the display store) ──
     // Same committed sample stream as dpb_wr_*, but expressed as plane +
@@ -1012,6 +1017,8 @@ module h264_decode_core #(
     // post-frame-boundary promotion), or seeded once when the outer level hands
     // this core an externally-owned reference bank via dpb_ref_base.
     wire [7:0] dpb_ref_filtered_sample = p16_sample_wb_en ? clip_u8(p16_recon_sum) : wb_data;
+    wire product_dpb_ref_swap = deblock_ref_ready_pulse | p16_ref_seed_r;
+    assign dpb_ref_swap = product_dpb_ref_swap;
     h264_dpb_one_ref #(
         .FRAME_W(FRAME_W),
         .FRAME_H(FRAME_H)
@@ -1019,7 +1026,7 @@ module h264_decode_core #(
         .clk(clk),
         .reset(reset),
         .idr_start(slice_start && slice_is_idr),
-        .frame_done(deblock_ref_ready_pulse | p16_ref_seed_r),
+        .frame_done(product_dpb_ref_swap),
         .ref_ready(dpb_ref_ready),
         .current_base(dpb_ref_current_base),
         .reference_base(dpb_ref_reference_base),

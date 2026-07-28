@@ -552,6 +552,7 @@ module stream_path #(
 	wire [31:0] core_dpb_rd_addr;
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
+	wire core_dpb_ref_swap;
 	wire        core_dpb_rd_valid;
 	wire  [7:0] core_dpb_rd_data;
 	wire        core_dpb_rd_stall;
@@ -577,7 +578,7 @@ module stream_path #(
 		.clk(clk),
 		.reset(reset | flush),
 		.idr_start(1'b0),
-		.frame_done_req(core_frame_done),
+		.frame_done_req(core_dpb_ref_swap),
 		.frame_done_ack(dpb_frame_done_ack),
 		.swap_busy(dpb_swap_busy),
 		.ref_ready(dpb_ref_ready),
@@ -677,6 +678,7 @@ module stream_path #(
 		.dpb_rd_data(core_dpb_rd_data),
 		.dpb_rd_valid(core_dpb_rd_valid),
 		.dpb_rd_stall(core_dpb_rd_stall),
+		.dpb_ref_swap(core_dpb_ref_swap),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
