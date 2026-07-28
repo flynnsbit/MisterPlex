@@ -1,4 +1,5 @@
 #include "Vh264_dpb_mc_tb.h"
+#include "tests/rtl/h264_real_p_scope.hpp"
 #include "verilated.h"
 
 #include <algorithm>
@@ -400,6 +401,135 @@ int runDeblockDpbSeam(const std::string& nalFixture) {
     return 0;
 }
 
+int runFullFrameDeblockDpbSeam(const std::string& nalFixture, bool faultSkipBypass) {
+    const auto scope = h264_real_p_scope::parseFirstPFrameScope(nalFixture);
+    if (scope.coded_w != W || scope.coded_h != H || scope.mb_w != 39 || scope.mb_h != 30 ||
+        scope.total_mbs != 1170 || scope.skipped_mbs != 928 || scope.inter_mbs != 197 ||
+        scope.intra_mbs != 45 || scope.p16x16 != 197) {
+        std::cerr << "FAIL h264_dpb_mc RTL: real P frame scope changed"
+                  << " coded=" << scope.coded_w << "x" << scope.coded_h
+                  << " mbs=" << scope.total_mbs
+                  << " skipped=" << scope.skipped_mbs
+                  << " inter=" << scope.inter_mbs
+                  << " intra=" << scope.intra_mbs
+                  << " P16x16=" << scope.p16x16 << "\n";
+        return 1;
+    }
+
+    Sim s;
+    reset(s);
+    int filteredMbs = 0;
+    int filteredSamples = 0;
+    int skippedFilteredMbs = 0;
+    int skippedFilteredSamples = 0;
+    int cropPaddingSamples = 0;
+    int wbCommits = 0;
+    const int chromaDisplayW = (scope.display_w + 1) / 2;
+
+    for (int mbAddr = 0; mbAddr < scope.total_mbs; ++mbAddr) {
+        const int mbx = mbAddr % scope.mb_w;
+        const int mby = mbAddr / scope.mb_w;
+        const auto& mb = scope.mbs.at(static_cast<size_t>(mbAddr));
+        const bool skipped = h264_real_p_scope::isSkip(mb);
+        if (faultSkipBypass && skipped) {
+            commitFilteredMb(s, mbAddr, mbAddr == scope.total_mbs - 1);
+            std::cerr << "FAIL h264_dpb_mc RTL: skipped MB bypassed filtered writeback"
+                      << " mb=" << mbAddr
+                      << " wb=" << int(s.top.deblock_wb_valid)
+                      << " order_error=" << int(s.top.deblock_commit_order_error) << "\n";
+            return s.top.deblock_commit_order_error ? 1 : 0;
+        }
+
+        for (int i = 0; i < 256; ++i) {
+            writeSample(s, mbx, mby, 0, i);
+            const int absX = mbx * 16 + (i & 15);
+            if (absX >= scope.display_w) ++cropPaddingSamples;
+        }
+        for (int i = 0; i < 64; ++i) {
+            writeSample(s, mbx, mby, 1, i);
+            const int absX = mbx * 8 + (i & 7);
+            if (absX >= chromaDisplayW) ++cropPaddingSamples;
+        }
+        for (int i = 0; i < 64; ++i) {
+            writeSample(s, mbx, mby, 2, i);
+            const int absX = mbx * 8 + (i & 7);
+            if (absX >= chromaDisplayW) ++cropPaddingSamples;
+        }
+        filteredSamples += 384;
+        ++filteredMbs;
+        if (skipped) {
+            ++skippedFilteredMbs;
+            skippedFilteredSamples += 384;
+        }
+
+        commitFilteredMb(s, mbAddr, mbAddr == scope.total_mbs - 1);
+        if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != mbAddr || s.top.deblock_commit_order_error ||
+            s.top.ref_ready || s.top.deblock_ref_ready_pulse) {
+            std::cerr << "FAIL h264_dpb_mc RTL: full-frame deblock-DPB MB commit/order mismatch"
+                      << " mb=" << mbAddr
+                      << " wb=" << int(s.top.deblock_wb_valid)
+                      << " wb_addr=" << int(s.top.deblock_wb_mb_addr)
+                      << " order_error=" << int(s.top.deblock_commit_order_error)
+                      << " pulse=" << int(s.top.deblock_ref_ready_pulse)
+                      << " ref_ready=" << int(s.top.ref_ready) << "\n";
+            return 1;
+        }
+        ++wbCommits;
+        s.tick();
+    }
+
+    s.top.frame_boundary = 1;
+    s.tick();
+    s.top.frame_boundary = 0;
+    if (!s.top.deblock_ref_ready_pulse || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame terminal frame_boundary/ref_ready phase"
+                  << " pulse=" << int(s.top.deblock_ref_ready_pulse)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame explicit post-boundary delay"
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+    if (!s.top.ref_ready || s.top.reference_base != 0 || s.top.current_base != FRAME_BYTES) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame DPB promotion mismatch"
+                  << " ref_ready=" << int(s.top.ref_ready)
+                  << " ref_base=" << s.top.reference_base
+                  << " cur_base=" << s.top.current_base << "\n";
+        return 1;
+    }
+
+    if (filteredMbs != 1170 || skippedFilteredMbs != 928 || filteredSamples != 449280 ||
+        wbCommits != 1170 || cropPaddingSamples != 4320) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame scope accounting mismatch"
+                  << " filtered_mbs=" << filteredMbs
+                  << " skipped_filtered_mbs=" << skippedFilteredMbs
+                  << " filtered_samples=" << filteredSamples
+                  << " wb_commits=" << wbCommits
+                  << " crop_padding_samples=" << cropPaddingSamples << "\n";
+        return 1;
+    }
+
+    std::cout << "Scope: full_frame_seam_filtered_mbs=" << filteredMbs << "/1170"
+              << " filtered_samples=" << filteredSamples
+              << " skipped_filtered_mbs=" << skippedFilteredMbs << "/" << scope.skipped_mbs
+              << " skipped_filtered_samples=" << skippedFilteredSamples
+              << " inter_mbs=" << scope.inter_mbs
+              << " intra_mbs=" << scope.intra_mbs
+              << " syntax_groups=" << scope.syntax_groups
+              << " qp_range=" << scope.qp_min << ".." << scope.qp_max
+              << " coded=" << scope.coded_w << "x" << scope.coded_h
+              << " display=" << scope.display_w << "x" << scope.display_h
+              << " crop_padding_samples_written=" << cropPaddingSamples
+              << "\n";
+    std::cout << "OK h264_dpb_mc full-frame deblock-DPB seam: every real P-frame MB, including skipped MBs, "
+              << "writes 384 POST-deblock samples before DPB ref promotion\n";
+    return 0;
+}
+
 int runTapDirectionSeam() {
     Sim s;
     reset(s);
@@ -526,19 +656,27 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
         bool seamOnly = false;
+        bool fullFrameSeamOnly = false;
         bool tapDirectionOnly = false;
+        bool faultSkipBypass = false;
         std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--deblock-dpb-seam")
                 seamOnly = true;
+            else if (arg == "--deblock-dpb-full-frame")
+                fullFrameSeamOnly = true;
             else if (arg == "--tap-direction-seam")
                 tapDirectionOnly = true;
+            else if (arg == "--fault-skip-bypass")
+                faultSkipBypass = true;
             else
                 nalFixture = arg;
         }
         if (tapDirectionOnly)
             return runTapDirectionSeam();
+        if (fullFrameSeamOnly)
+            return runFullFrameDeblockDpbSeam(nalFixture, faultSkipBypass);
         if (seamOnly)
             return runDeblockDpbSeam(nalFixture);
         int nals = countAnnexBNals(nalFixture);
