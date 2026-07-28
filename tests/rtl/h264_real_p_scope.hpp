@@ -32,6 +32,10 @@ struct MbInfo {
     int ref = 0;
     int mvx = 0;
     int mvy = 0;
+    // Per-4x4 luma coded-block mask, bit (blky*4+blkx).  Measured from the
+    // real CAVLC residual walk; deblocking bS=2 is a per-4x4 decision, so a
+    // per-MB nonzero flag is not enough scope for a real-frame bS gate.
+    uint16_t nz4 = 0;
 };
 
 struct FrameScope {
@@ -437,6 +441,12 @@ inline FrameScope parseFirstPFrameScope(const std::string& path) {
         ++mb_addr;
     }
     if (!br.ok) throw std::runtime_error("real P fixture bitreader failed during MB walk");
+    for (int a = 0; a < out.total_mbs; ++a) {
+        uint16_t mask = 0;
+        for (int b = 0; b < 16; ++b)
+            if (tc_luma[static_cast<size_t>(a * 16 + b)] > 0) mask |= static_cast<uint16_t>(1u << b);
+        out.mbs[static_cast<size_t>(a)].nz4 = mask;
+    }
     if (out.skipped_mbs + out.inter_mbs + out.intra_mbs != out.total_mbs)
         throw std::runtime_error("real P fixture MB accounting mismatch");
     return out;

@@ -114,7 +114,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/scripts/check_pipe_exit_safety.py
 	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py
-	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl
+	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl --require h264_deblock_mb_filter --require h264_deblock_edge_pipe --require h264_deblock_edge --require h264_deblock_thresholds --require h264_deblock_bs --require h264_deblock_qpc
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
@@ -131,6 +131,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
+	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
@@ -146,6 +148,8 @@ rtl-sim:
 rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
+	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh

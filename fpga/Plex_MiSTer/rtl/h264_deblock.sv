@@ -469,4 +469,449 @@ module h264_deblock_writeback_ctrl #(
 	end
 endmodule
 
+// ════════════════════════════════════════════════════════════════════════
+// Chroma QP mapping (Table 8-15).  Deblocking of chroma edges uses QPc,
+// derived from QPy and pps_chroma_qp_index_offset.  Below qPI 30 the tables
+// agree, so a gate that only exercises low QP cannot tell QPy from QPc.
+// ════════════════════════════════════════════════════════════════════════
+module h264_deblock_qpc (
+	input  wire [5:0]        qp_y,
+	input  wire signed [4:0] chroma_qp_index_offset,
+	output wire [5:0]        qp_c
+);
+	wire signed [7:0] qpi_raw = $signed({2'b00, qp_y}) +
+	                            {{3{chroma_qp_index_offset[4]}}, chroma_qp_index_offset};
+	wire [5:0] qpi = (qpi_raw < 8'sd0)  ? 6'd0  :
+	                 (qpi_raw > 8'sd51) ? 6'd51 : qpi_raw[5:0];
+
+	function automatic [5:0] qpc_map;
+		input [5:0] idx;
+		begin
+			case (idx)
+			6'd30: qpc_map = 6'd29; 6'd31: qpc_map = 6'd30; 6'd32: qpc_map = 6'd31;
+			6'd33: qpc_map = 6'd32; 6'd34: qpc_map = 6'd32; 6'd35: qpc_map = 6'd33;
+			6'd36: qpc_map = 6'd34; 6'd37: qpc_map = 6'd34; 6'd38: qpc_map = 6'd35;
+			6'd39: qpc_map = 6'd35; 6'd40: qpc_map = 6'd36; 6'd41: qpc_map = 6'd36;
+			6'd42: qpc_map = 6'd37; 6'd43: qpc_map = 6'd37; 6'd44: qpc_map = 6'd37;
+			6'd45: qpc_map = 6'd38; 6'd46: qpc_map = 6'd38; 6'd47: qpc_map = 6'd38;
+			6'd48: qpc_map = 6'd39; 6'd49: qpc_map = 6'd39; 6'd50: qpc_map = 6'd39;
+			6'd51: qpc_map = 6'd39;
+			default: qpc_map = idx;
+			endcase
+		end
+	endfunction
+
+	assign qp_c = qpc_map(qpi);
+endmodule
+
+// ════════════════════════════════════════════════════════════════════════
+// Macroblock in-loop deblocking filter (clause 8.7).
+//
+// This is the scheduler that was missing from the product decode lineage:
+// h264_deblock_bs / h264_deblock_edge_pipe are per-edge-segment primitives
+// and cannot filter a macroblock on their own.  This module walks one MB's
+// edges in normative order and drives those primitives.
+//
+// Sample interface is a macroblock *neighbourhood*: the current MB plus the
+// four sample columns of the left MB and the four sample rows of the top MB,
+// because filtering an MB edge normatively rewrites p2/p1/p0 on the
+// neighbour side.  The caller supplies the neighbourhood and writes back the
+// filtered neighbourhood; the current-MB region is the POST-deblock MB.
+//
+//   luma   : 20x20, index = row*20 + col, row/col 0..3 are the neighbour
+//            skirt, so sample (x,y) of the current MB is at (y+4)*20 + x + 4
+//   chroma : 12x12, index = row*12 + col, same skirt convention
+//
+// Edge order per 8.7.1: all vertical edges left-to-right, then all
+// horizontal edges top-to-bottom.  Luma edges are walked in 4-sample
+// segments; chroma edges are walked in 2-sample half-segments because a
+// 4:2:0 chroma segment straddles two co-located luma 4x4 blocks and bS is
+// derived from luma.
+// ════════════════════════════════════════════════════════════════════════
+module h264_deblock_mb_filter (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        start,
+	output reg         busy,
+	output reg         done,
+
+	// ── slice/PPS filter configuration ──
+	input  wire [1:0]        disable_deblocking_filter_idc,
+	input  wire signed [4:0] slice_alpha_c0_offset,
+	input  wire signed [4:0] slice_beta_offset,
+	input  wire signed [4:0] chroma_qp_index_offset,
+	input  wire              left_mb_avail,
+	input  wire              top_mb_avail,
+	input  wire              left_mb_other_slice,
+	input  wire              top_mb_other_slice,
+
+	// ── current MB coding context ──
+	input  wire         cur_intra,
+	input  wire [5:0]   cur_qp_y,
+	input  wire [15:0]  cur_nz,     // per 4x4 luma block, raster blky*4+blkx
+	input  wire [191:0] cur_mvx,    // 16 x signed 12-bit, quarter-pel
+	input  wire [191:0] cur_mvy,
+	input  wire [31:0]  cur_ref,    // 16 x 2-bit ref_idx_l0
+
+	// ── left neighbour MB coding context ──
+	input  wire         left_intra,
+	input  wire [5:0]   left_qp_y,
+	input  wire [15:0]  left_nz,
+	input  wire [191:0] left_mvx,
+	input  wire [191:0] left_mvy,
+	input  wire [31:0]  left_ref,
+
+	// ── top neighbour MB coding context ──
+	input  wire         top_intra,
+	input  wire [5:0]   top_qp_y,
+	input  wire [15:0]  top_nz,
+	input  wire [191:0] top_mvx,
+	input  wire [191:0] top_mvy,
+	input  wire [31:0]  top_ref,
+
+	// ── sample neighbourhood ──
+	input  wire [7:0] nb_y_i [0:399],
+	input  wire [7:0] nb_u_i [0:143],
+	input  wire [7:0] nb_v_i [0:143],
+	output wire [7:0] nb_y_o [0:399],
+	output wire [7:0] nb_u_o [0:143],
+	output wire [7:0] nb_v_o [0:143],
+
+	// ── observability (non-vacuity evidence) ──
+	output reg [15:0] luma_modified_samples,
+	output reg [15:0] chroma_modified_samples,
+	output reg [15:0] edge_segments_filtered,
+	output reg [15:0] bs4_segments,
+	output reg [5:0]  last_chroma_qp_avg,
+	output reg        filter_pipe_error,
+	output wire       unsupported_ref
+);
+	localparam int LUMA_DIM   = 20;
+	localparam int CHROMA_DIM = 12;
+	localparam int LUMA_N     = LUMA_DIM * LUMA_DIM;
+	localparam int CHROMA_N   = CHROMA_DIM * CHROMA_DIM;
+
+	localparam [1:0] ST_IDLE  = 2'd0;
+	localparam [1:0] ST_ISSUE = 2'd1;
+	localparam [1:0] ST_WAIT  = 2'd2;
+	localparam [1:0] ST_CAP   = 2'd3;
+
+	reg [1:0] state;
+	reg [5:0] step;
+
+	reg [7:0] buf_y [0:LUMA_N-1];
+	reg [7:0] buf_u [0:CHROMA_N-1];
+	reg [7:0] buf_v [0:CHROMA_N-1];
+
+	genvar gi;
+	generate
+		for (gi = 0; gi < LUMA_N; gi = gi + 1) begin : gen_y_out
+			assign nb_y_o[gi] = buf_y[gi];
+		end
+		for (gi = 0; gi < CHROMA_N; gi = gi + 1) begin : gen_c_out
+			assign nb_u_o[gi] = buf_u[gi];
+			assign nb_v_o[gi] = buf_v[gi];
+		end
+	endgenerate
+
+	// ── step decode ──
+	// eff_step exists so red-check builds can permute the normative edge
+	// schedule without disturbing the counter that sequences the pipe.
+`ifdef H264_DEBLOCK_MB_FAULT_HORIZ_FIRST
+	wire [5:0] eff_step = step[5] ? {step[5:4], ~step[3], step[2:0]}
+	                              : {step[5], ~step[4], step[3:0]};
+`else
+	wire [5:0] eff_step = step;
+`endif
+	wire       st_chroma  = eff_step[5];
+	wire       st_is_v    = eff_step[4];          // chroma: U=0, V=1
+	wire       horiz      = st_chroma ? eff_step[3] : eff_step[4];
+	wire [1:0] luma_e     = eff_step[3:2];
+	wire [1:0] luma_s     = eff_step[1:0];
+	wire       chroma_e   = eff_step[2];
+	wire [1:0] chroma_h   = eff_step[1:0];
+
+	wire [1:0] edge_blk   = st_chroma ? (chroma_e ? 2'd2 : 2'd0) : luma_e;
+	wire [1:0] along_blk  = st_chroma ? chroma_h : luma_s;
+
+	wire [1:0] q_blkx = horiz ? along_blk : edge_blk;
+	wire [1:0] q_blky = horiz ? edge_blk  : along_blk;
+	wire       mb_boundary = (edge_blk == 2'd0);
+	wire [1:0] p_blkx = horiz ? along_blk : (mb_boundary ? 2'd3 : (edge_blk - 2'd1));
+	wire [1:0] p_blky = horiz ? (mb_boundary ? 2'd3 : (edge_blk - 2'd1)) : along_blk;
+
+	wire [3:0] q_blk = {q_blky, q_blkx};
+	wire [3:0] p_blk = {p_blky, p_blkx};
+
+	wire use_left = mb_boundary && !horiz;
+	wire use_top  = mb_boundary &&  horiz;
+
+	wire         p_intra = use_left ? left_intra : use_top ? top_intra : cur_intra;
+	wire [15:0]  p_nz_v  = use_left ? left_nz    : use_top ? top_nz    : cur_nz;
+	wire [191:0] p_mvx_v = use_left ? left_mvx   : use_top ? top_mvx   : cur_mvx;
+	wire [191:0] p_mvy_v = use_left ? left_mvy   : use_top ? top_mvy   : cur_mvy;
+	wire [31:0]  p_ref_v = use_left ? left_ref   : use_top ? top_ref   : cur_ref;
+	wire [5:0]   p_qp_y  = use_left ? left_qp_y  : use_top ? top_qp_y  : cur_qp_y;
+
+	wire signed [11:0] p_mvx_sel = p_mvx_v[p_blk * 12 +: 12];
+	wire signed [11:0] p_mvy_sel = p_mvy_v[p_blk * 12 +: 12];
+	wire signed [11:0] q_mvx_sel = cur_mvx[q_blk * 12 +: 12];
+	wire signed [11:0] q_mvy_sel = cur_mvy[q_blk * 12 +: 12];
+	wire [1:0] p_ref_sel = p_ref_v[p_blk * 2 +: 2];
+	wire [1:0] q_ref_sel = cur_ref[q_blk * 2 +: 2];
+	wire p_nz_sel = p_nz_v[p_blk];
+	wire q_nz_sel = cur_nz[q_blk];
+
+	wire edge_unavailable = (use_left && !left_mb_avail) || (use_top && !top_mb_avail);
+`ifdef H264_DEBLOCK_MB_FAULT_DROP_CHROMA
+	wire fault_edge_off = st_chroma;
+`elsif H264_DEBLOCK_MB_FAULT_MB_EDGE_ONLY
+	wire fault_edge_off = !mb_boundary;
+`else
+	wire fault_edge_off = 1'b0;
+`endif
+	wire edge_disable_all = (disable_deblocking_filter_idc == 2'd1) || edge_unavailable ||
+	                        fault_edge_off;
+	wire edge_slice_blocked = (disable_deblocking_filter_idc == 2'd2) &&
+	                          ((use_left && left_mb_other_slice) || (use_top && top_mb_other_slice));
+
+	wire [2:0] step_bs;
+	h264_deblock_bs u_step_bs (
+		.disable_all(edge_disable_all),
+		.slice_boundary_blocked(edge_slice_blocked),
+		.mb_boundary(mb_boundary),
+		.p_intra(p_intra),
+		.q_intra(cur_intra),
+		.p_nonzero(p_nz_sel),
+		.q_nonzero(q_nz_sel),
+		.p_ref(p_ref_sel),
+		.q_ref(q_ref_sel),
+		.p_mvx(p_mvx_sel),
+		.p_mvy(p_mvy_sel),
+		.q_mvx(q_mvx_sel),
+		.q_mvy(q_mvy_sel),
+		.bs(step_bs),
+		.unsupported_ref(unsupported_ref)
+	);
+
+	wire [5:0] p_qp_c;
+	wire [5:0] q_qp_c;
+	h264_deblock_qpc u_qpc_p (
+		.qp_y(p_qp_y),
+		.chroma_qp_index_offset(chroma_qp_index_offset),
+		.qp_c(p_qp_c)
+	);
+	h264_deblock_qpc u_qpc_q (
+		.qp_y(cur_qp_y),
+		.chroma_qp_index_offset(chroma_qp_index_offset),
+		.qp_c(q_qp_c)
+	);
+	wire [6:0] qp_sum_y = {1'b0, p_qp_y} + {1'b0, cur_qp_y} + 7'd1;
+	wire [6:0] qp_sum_c = {1'b0, p_qp_c} + {1'b0, q_qp_c}   + 7'd1;
+`ifdef H264_DEBLOCK_MB_FAULT_QPY_FOR_QPC
+	wire [5:0] step_qp_avg = qp_sum_y[6:1];
+`else
+	wire [5:0] step_qp_avg = st_chroma ? qp_sum_c[6:1] : qp_sum_y[6:1];
+`endif
+
+	// ── neighbourhood addressing for the current step ──
+	// flat index of tap t, lane i = base + i*lane_stride + t*tap_stride
+	wire [31:0] chroma_edge_off = chroma_e ? 32'd4 : 32'd0;
+	wire [31:0] luma_s32   = {30'd0, luma_s};
+	wire [31:0] luma_e32   = {30'd0, luma_e};
+	wire [31:0] chroma_h32 = {30'd0, chroma_h};
+	wire [31:0] luma_base_v = (32'd4 + 32'd4 * luma_s32) * LUMA_DIM + 32'd4 * luma_e32;
+	wire [31:0] luma_base_h = (32'd4 * luma_e32) * LUMA_DIM + 32'd4 + 32'd4 * luma_s32;
+	wire [31:0] chr_base_v  = (32'd4 + 32'd2 * chroma_h32) * CHROMA_DIM + chroma_edge_off;
+	wire [31:0] chr_base_h  = chroma_edge_off * CHROMA_DIM + 32'd4 + 32'd2 * chroma_h32;
+
+	wire [31:0] step_base = st_chroma ? (horiz ? chr_base_h : chr_base_v)
+	                                  : (horiz ? luma_base_h : luma_base_v);
+	wire [31:0] step_lane_stride = st_chroma ? (horiz ? 32'd1 : 32'd12)
+	                                         : (horiz ? 32'd1 : 32'd20);
+	wire [31:0] step_tap_stride  = st_chroma ? (horiz ? 32'd12 : 32'd1)
+	                                         : (horiz ? 32'd20 : 32'd1);
+	wire [31:0] step_lanes = st_chroma ? 32'd2 : 32'd4;
+
+	// ── tap fetch ──
+	reg [7:0] tap_p3 [0:3];
+	reg [7:0] tap_p2 [0:3];
+	reg [7:0] tap_p1 [0:3];
+	reg [7:0] tap_p0 [0:3];
+	reg [7:0] tap_q0 [0:3];
+	reg [7:0] tap_q1 [0:3];
+	reg [7:0] tap_q2 [0:3];
+	reg [7:0] tap_q3 [0:3];
+
+	integer li;
+	integer lane_idx;
+	always @* begin
+		for (li = 0; li < 4; li = li + 1) begin
+			lane_idx = step_base + li * step_lane_stride;
+			if (st_chroma && li >= 2) lane_idx = step_base;
+			if (!st_chroma) begin
+				tap_p3[li] = buf_y[lane_idx + 0 * step_tap_stride];
+				tap_p2[li] = buf_y[lane_idx + 1 * step_tap_stride];
+				tap_p1[li] = buf_y[lane_idx + 2 * step_tap_stride];
+				tap_p0[li] = buf_y[lane_idx + 3 * step_tap_stride];
+				tap_q0[li] = buf_y[lane_idx + 4 * step_tap_stride];
+				tap_q1[li] = buf_y[lane_idx + 5 * step_tap_stride];
+				tap_q2[li] = buf_y[lane_idx + 6 * step_tap_stride];
+				tap_q3[li] = buf_y[lane_idx + 7 * step_tap_stride];
+			end else if (!st_is_v) begin
+				tap_p3[li] = buf_u[lane_idx + 0 * step_tap_stride];
+				tap_p2[li] = buf_u[lane_idx + 1 * step_tap_stride];
+				tap_p1[li] = buf_u[lane_idx + 2 * step_tap_stride];
+				tap_p0[li] = buf_u[lane_idx + 3 * step_tap_stride];
+				tap_q0[li] = buf_u[lane_idx + 4 * step_tap_stride];
+				tap_q1[li] = buf_u[lane_idx + 5 * step_tap_stride];
+				tap_q2[li] = buf_u[lane_idx + 6 * step_tap_stride];
+				tap_q3[li] = buf_u[lane_idx + 7 * step_tap_stride];
+			end else begin
+				tap_p3[li] = buf_v[lane_idx + 0 * step_tap_stride];
+				tap_p2[li] = buf_v[lane_idx + 1 * step_tap_stride];
+				tap_p1[li] = buf_v[lane_idx + 2 * step_tap_stride];
+				tap_p0[li] = buf_v[lane_idx + 3 * step_tap_stride];
+				tap_q0[li] = buf_v[lane_idx + 4 * step_tap_stride];
+				tap_q1[li] = buf_v[lane_idx + 5 * step_tap_stride];
+				tap_q2[li] = buf_v[lane_idx + 6 * step_tap_stride];
+				tap_q3[li] = buf_v[lane_idx + 7 * step_tap_stride];
+			end
+		end
+	end
+
+	wire       pipe_valid_o;
+	wire [7:0] pipe_p2 [0:3];
+	wire [7:0] pipe_p1 [0:3];
+	wire [7:0] pipe_p0 [0:3];
+	wire [7:0] pipe_q0 [0:3];
+	wire [7:0] pipe_q1 [0:3];
+	wire [7:0] pipe_q2 [0:3];
+
+	h264_deblock_edge_pipe u_mb_edge_pipe (
+		.clk(clk),
+		.reset(reset),
+		.valid_i(state == ST_ISSUE),
+		.is_chroma(st_chroma),
+		.bs(step_bs),
+		.qp_avg(step_qp_avg),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
+		.p3_in(tap_p3), .p2_in(tap_p2), .p1_in(tap_p1), .p0_in(tap_p0),
+		.q0_in(tap_q0), .q1_in(tap_q1), .q2_in(tap_q2), .q3_in(tap_q3),
+		.valid_o(pipe_valid_o),
+		.p2_out(pipe_p2), .p1_out(pipe_p1), .p0_out(pipe_p0),
+		.q0_out(pipe_q0), .q1_out(pipe_q1), .q2_out(pipe_q2)
+	);
+
+	// The pipe latches its inputs one cycle after valid_i, so the taps that
+	// were presented during ST_ISSUE must be held stable until capture.  The
+	// step counter therefore only advances in ST_CAP.
+	integer i;
+	integer idx;
+	integer wlane;
+	reg [15:0] luma_mod_acc;
+	reg [15:0] chroma_mod_acc;
+
+	always @(posedge clk) begin
+		if (reset) begin
+			state <= ST_IDLE;
+			step <= 6'd0;
+			busy <= 1'b0;
+			done <= 1'b0;
+			filter_pipe_error <= 1'b0;
+			luma_modified_samples <= 16'd0;
+			chroma_modified_samples <= 16'd0;
+			edge_segments_filtered <= 16'd0;
+			bs4_segments <= 16'd0;
+			last_chroma_qp_avg <= 6'd0;
+			for (i = 0; i < LUMA_N; i = i + 1) buf_y[i] <= 8'd0;
+			for (i = 0; i < CHROMA_N; i = i + 1) begin
+				buf_u[i] <= 8'd0;
+				buf_v[i] <= 8'd0;
+			end
+		end else begin
+			done <= 1'b0;
+			case (state)
+			ST_IDLE: begin
+				busy <= 1'b0;
+				if (start) begin
+					for (i = 0; i < LUMA_N; i = i + 1) buf_y[i] <= nb_y_i[i];
+					for (i = 0; i < CHROMA_N; i = i + 1) begin
+						buf_u[i] <= nb_u_i[i];
+						buf_v[i] <= nb_v_i[i];
+					end
+					step <= 6'd0;
+					busy <= 1'b1;
+					luma_modified_samples <= 16'd0;
+					chroma_modified_samples <= 16'd0;
+					edge_segments_filtered <= 16'd0;
+					bs4_segments <= 16'd0;
+					state <= ST_ISSUE;
+				end
+			end
+			ST_ISSUE: begin
+				state <= ST_WAIT;
+			end
+			ST_WAIT: begin
+				state <= ST_CAP;
+			end
+			ST_CAP: begin
+				if (!pipe_valid_o) begin
+					filter_pipe_error <= 1'b1;
+				end
+				if (step_bs != 3'd0) begin
+					edge_segments_filtered <= edge_segments_filtered + 16'd1;
+					if (step_bs == 3'd4) bs4_segments <= bs4_segments + 16'd1;
+				end
+				if (st_chroma) last_chroma_qp_avg <= step_qp_avg;
+				luma_mod_acc = luma_modified_samples;
+				chroma_mod_acc = chroma_modified_samples;
+				for (wlane = 0; wlane < 4; wlane = wlane + 1) begin
+					if (wlane < $signed(step_lanes)) begin
+						idx = step_base + wlane * step_lane_stride;
+						if (!st_chroma) begin
+							if (buf_y[idx + 1 * step_tap_stride] != pipe_p2[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							if (buf_y[idx + 2 * step_tap_stride] != pipe_p1[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							if (buf_y[idx + 3 * step_tap_stride] != pipe_p0[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							if (buf_y[idx + 4 * step_tap_stride] != pipe_q0[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							if (buf_y[idx + 5 * step_tap_stride] != pipe_q1[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							if (buf_y[idx + 6 * step_tap_stride] != pipe_q2[wlane]) luma_mod_acc = luma_mod_acc + 16'd1;
+							buf_y[idx + 1 * step_tap_stride] <= pipe_p2[wlane];
+							buf_y[idx + 2 * step_tap_stride] <= pipe_p1[wlane];
+							buf_y[idx + 3 * step_tap_stride] <= pipe_p0[wlane];
+							buf_y[idx + 4 * step_tap_stride] <= pipe_q0[wlane];
+							buf_y[idx + 5 * step_tap_stride] <= pipe_q1[wlane];
+							buf_y[idx + 6 * step_tap_stride] <= pipe_q2[wlane];
+						end else if (!st_is_v) begin
+							if (buf_u[idx + 3 * step_tap_stride] != pipe_p0[wlane]) chroma_mod_acc = chroma_mod_acc + 16'd1;
+							if (buf_u[idx + 4 * step_tap_stride] != pipe_q0[wlane]) chroma_mod_acc = chroma_mod_acc + 16'd1;
+							buf_u[idx + 3 * step_tap_stride] <= pipe_p0[wlane];
+							buf_u[idx + 4 * step_tap_stride] <= pipe_q0[wlane];
+						end else begin
+							if (buf_v[idx + 3 * step_tap_stride] != pipe_p0[wlane]) chroma_mod_acc = chroma_mod_acc + 16'd1;
+							if (buf_v[idx + 4 * step_tap_stride] != pipe_q0[wlane]) chroma_mod_acc = chroma_mod_acc + 16'd1;
+							buf_v[idx + 3 * step_tap_stride] <= pipe_p0[wlane];
+							buf_v[idx + 4 * step_tap_stride] <= pipe_q0[wlane];
+						end
+					end
+				end
+				luma_modified_samples <= luma_mod_acc;
+				chroma_modified_samples <= chroma_mod_acc;
+				if (step == 6'd63) begin
+					done <= 1'b1;
+					busy <= 1'b0;
+					state <= ST_IDLE;
+				end else begin
+					step <= step + 6'd1;
+					state <= ST_ISSUE;
+				end
+			end
+			default: state <= ST_IDLE;
+			endcase
+		end
+	end
+
+endmodule
+
 `default_nettype wire

@@ -25,7 +25,13 @@ module h264_decode_core #(
     parameter int FRAME_H   = 240,
     parameter int MB_W      = (FRAME_W + 15) / 16,
     parameter int MB_H      = (FRAME_H + 15) / 16,
-    parameter int MB_COUNT  = MB_W * MB_H
+    parameter int MB_COUNT  = MB_W * MB_H,
+    // In-loop deblocking.  0 keeps the pre-deblock writeback behaviour that the
+    // existing core writeback/p16z/real-slice gates were captured against; the
+    // product instantiation in stream_path.sv sets 1.  The filter is always
+    // elaborated -- only the DPB data selection and the extra writeback states
+    // are parameterised -- so this is a feature flag, never a painter switch.
+    parameter bit DEBLOCK_IN_LOOP = 1'b0
 )(
     input  wire        clk,
     input  wire        reset,
@@ -41,6 +47,11 @@ module h264_decode_core #(
 
     // ── PPS parameters ──
     input  wire signed [4:0] pps_chroma_qp_index_offset, // se(), range [-12,+12]
+
+    // -- Slice deblocking filter control (from slice_hdr_parser) --
+    input  wire [1:0]        slice_disable_deblocking_filter_idc,
+    input  wire signed [4:0] slice_alpha_c0_offset,
+    input  wire signed [4:0] slice_beta_offset,
 
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
     // The CAVLC residual block decoder needs random-access to RBSP bits.
@@ -259,6 +270,9 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
+    localparam [7:0] ST_DB_LOAD        = 8'd9;
+    localparam [7:0] ST_DB_RUN         = 8'd10;
+    localparam [7:0] ST_DB_STORE       = 8'd11;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -561,9 +575,330 @@ module h264_decode_core #(
         .addr(p16_rd_addr)
     );
 
-    wire [7:0] wb_data = (wb_plane == 2'd0) ? lat_recon_y[wb_sample_idx] :
-                         (wb_plane == 2'd1) ? lat_recon_u[wb_sample_idx[5:0]] :
-                                               lat_recon_v[wb_sample_idx[5:0]];
+    // ==================================================================
+    // In-loop deblocking filter (W-DEBLOCK-O5)
+    // ------------------------------------------------------------------
+    // The reconstructed macroblock is filtered before it reaches the DPB.
+    // The filter needs a 4-sample skirt on the left and top edges because
+    // clause 8.7 rewrites p2/p1/p0 on the neighbour side of a macroblock
+    // edge, so the core keeps:
+    //   * left context in registers (last filtered MB of this row)
+    //   * top  context in a per-MB-column line buffer, staged in and out
+    //     one byte per cycle so it infers a RAM instead of a register file.
+    // Scope note (do not overstate): the current-macroblock portion of the
+    // filtered neighbourhood is what gets committed to the DPB.  Rewriting
+    // the skirt of already-committed neighbour macroblocks needs a one-MB
+    // commit delay and is OPEN.  The normatively complete filter behaviour
+    // is proven at 1170/1170 real P-frame macroblocks by
+    // tests/unit/test_h264_deblock_mb_full_frame.sh.
+    // ==================================================================
+    localparam int DB_TOP_Y_WORDS = MB_W * 64;
+    localparam int DB_TOP_C_WORDS = MB_W * 32;
+
+    reg [7:0] db_top_y [0:DB_TOP_Y_WORDS-1];
+    reg [7:0] db_top_u [0:DB_TOP_C_WORDS-1];
+    reg [7:0] db_top_v [0:DB_TOP_C_WORDS-1];
+    reg [7:0] db_topbuf_y [0:63];
+    reg [7:0] db_topbuf_u [0:31];
+    reg [7:0] db_topbuf_v [0:31];
+    reg [7:0] db_left_y [0:63];
+    reg [7:0] db_left_u [0:31];
+    reg [7:0] db_left_v [0:31];
+    reg [6:0] db_seq_idx;
+    reg       db_start_r;
+
+    // Per-macroblock coding context needed for the bS derivation.  QPy tracks
+    // the normative running slice QP; the per-4x4 coded-block mask is derived
+    // from cbp_luma at 8x8 granularity (an over-approximation that can raise
+    // bS from 1 to 2 but never lowers it) because the core does not expose a
+    // per-4x4 mask yet.
+    reg        db_syn_intra;
+    reg [5:0]  db_syn_qp;
+    reg [15:0] db_syn_nz;
+    reg signed [11:0] db_syn_mvx;
+    reg signed [11:0] db_syn_mvy;
+    reg [1:0]  db_syn_ref;
+    reg [5:0]  db_qp_run;
+
+    // Syntax context as of this cycle.  mb_type_valid may land on the same
+    // cycle as recon_mb_valid, so the capture below has to see the combinational
+    // value, not last macroblock's registered copy.
+    wire [5:0] db_qp_next = (db_qp_run + {{1{mb_qp_delta[5]}}, mb_qp_delta[4:0]}) % 6'd52;
+    wire       db_syn_intra_now = mb_type_valid ? (slice_is_i || (!mb_skip && (mb_type >= 5'd5)))
+                                                : db_syn_intra;
+    wire [5:0] db_syn_qp_now    = mb_type_valid ? db_qp_next : db_syn_qp;
+    wire [15:0] db_syn_nz_now   = mb_type_valid ? {{4{cbp_luma[3]}}, {4{cbp_luma[2]}},
+                                                  {4{cbp_luma[1]}}, {4{cbp_luma[0]}}}
+                                                : db_syn_nz;
+    wire signed [11:0] db_syn_mvx_now = mb_type_valid ? mv_x_qpel[11:0] : db_syn_mvx;
+    wire signed [11:0] db_syn_mvy_now = mb_type_valid ? mv_y_qpel[11:0] : db_syn_mvy;
+    wire [1:0] db_syn_ref_now   = mb_type_valid ? ref_idx_l0 : db_syn_ref;
+
+    reg        db_cur_intra;
+    reg [5:0]  db_cur_qp;
+    reg [15:0] db_cur_nz;
+    reg signed [11:0] db_cur_mvx;
+    reg signed [11:0] db_cur_mvy;
+    reg [1:0]  db_cur_ref;
+
+    reg        db_left_intra;
+    reg [5:0]  db_left_qp;
+    reg [15:0] db_left_nz;
+    reg signed [11:0] db_left_mvx;
+    reg signed [11:0] db_left_mvy;
+    reg [1:0]  db_left_ref;
+    reg        db_left_avail;
+
+    reg        db_top_intra [0:MB_W-1];
+    reg [5:0]  db_top_qp    [0:MB_W-1];
+    reg [15:0] db_top_nz    [0:MB_W-1];
+    reg signed [11:0] db_top_mvx [0:MB_W-1];
+    reg signed [11:0] db_top_mvy [0:MB_W-1];
+    reg [1:0]  db_top_ref   [0:MB_W-1];
+    reg        db_top_avail [0:MB_W-1];
+
+    wire [MB_IDX_W-1:0] db_mb_col = wb_mb_x[MB_IDX_W-1:0];
+    wire [31:0] db_top_y_base = {{(32-MB_IDX_W){1'b0}}, db_mb_col} * 32'd64;
+    wire [31:0] db_top_c_base = {{(32-MB_IDX_W){1'b0}}, db_mb_col} * 32'd32;
+
+    wire [7:0] db_nb_y_i [0:399];
+    wire [7:0] db_nb_u_i [0:143];
+    wire [7:0] db_nb_v_i [0:143];
+    wire [7:0] db_nb_y_o [0:399];
+    wire [7:0] db_nb_u_o [0:143];
+    wire [7:0] db_nb_v_o [0:143];
+
+    genvar dbr, dbc;
+    generate
+        for (dbr = 0; dbr < 20; dbr = dbr + 1) begin : g_db_nb_y_row
+            for (dbc = 0; dbc < 20; dbc = dbc + 1) begin : g_db_nb_y_col
+                if (dbr < 4 && dbc < 4)
+                    assign db_nb_y_i[dbr*20 + dbc] = 8'd128; // corner is never a tap
+                else if (dbr < 4)
+                    assign db_nb_y_i[dbr*20 + dbc] = db_topbuf_y[dbr*16 + (dbc-4)];
+                else if (dbc < 4)
+                    assign db_nb_y_i[dbr*20 + dbc] = db_left_y[(dbr-4)*4 + dbc];
+                else
+                    assign db_nb_y_i[dbr*20 + dbc] = lat_recon_y[(dbr-4)*16 + (dbc-4)];
+            end
+        end
+        for (dbr = 0; dbr < 12; dbr = dbr + 1) begin : g_db_nb_c_row
+            for (dbc = 0; dbc < 12; dbc = dbc + 1) begin : g_db_nb_c_col
+                if (dbr < 4 && dbc < 4) begin : g_db_c_corner
+                    assign db_nb_u_i[dbr*12 + dbc] = 8'd128;
+                    assign db_nb_v_i[dbr*12 + dbc] = 8'd128;
+                end else if (dbr < 4) begin : g_db_c_top
+                    assign db_nb_u_i[dbr*12 + dbc] = db_topbuf_u[dbr*8 + (dbc-4)];
+                    assign db_nb_v_i[dbr*12 + dbc] = db_topbuf_v[dbr*8 + (dbc-4)];
+                end else if (dbc < 4) begin : g_db_c_left
+                    assign db_nb_u_i[dbr*12 + dbc] = db_left_u[(dbr-4)*4 + dbc];
+                    assign db_nb_v_i[dbr*12 + dbc] = db_left_v[(dbr-4)*4 + dbc];
+                end else begin : g_db_c_cur
+                    assign db_nb_u_i[dbr*12 + dbc] = lat_recon_u[(dbr-4)*8 + (dbc-4)];
+                    assign db_nb_v_i[dbr*12 + dbc] = lat_recon_v[(dbr-4)*8 + (dbc-4)];
+                end
+            end
+        end
+    endgenerate
+
+    wire db_busy;
+    wire db_done;
+    wire [15:0] db_luma_modified;
+    wire [15:0] db_chroma_modified;
+    wire [15:0] db_edge_segments;
+    wire [15:0] db_bs4_segments;
+    wire [5:0]  db_last_chroma_qp;
+    wire        db_pipe_error;
+    wire        db_unsupported_ref;
+
+    h264_deblock_mb_filter u_core_deblock_mb (
+        .clk(clk),
+        .reset(reset),
+        .start(db_start_r),
+        .busy(db_busy),
+        .done(db_done),
+        .disable_deblocking_filter_idc(slice_disable_deblocking_filter_idc),
+        .slice_alpha_c0_offset(slice_alpha_c0_offset),
+        .slice_beta_offset(slice_beta_offset),
+        .chroma_qp_index_offset(pps_chroma_qp_index_offset),
+        .left_mb_avail(db_left_avail),
+        .top_mb_avail(db_top_avail[db_mb_col]),
+        .left_mb_other_slice(1'b0),
+        .top_mb_other_slice(1'b0),
+        .cur_intra(db_cur_intra),
+        .cur_qp_y(db_cur_qp),
+        .cur_nz(db_cur_nz),
+        .cur_mvx({16{db_cur_mvx}}),
+        .cur_mvy({16{db_cur_mvy}}),
+        .cur_ref({16{db_cur_ref}}),
+        .left_intra(db_left_intra),
+        .left_qp_y(db_left_qp),
+        .left_nz(db_left_nz),
+        .left_mvx({16{db_left_mvx}}),
+        .left_mvy({16{db_left_mvy}}),
+        .left_ref({16{db_left_ref}}),
+        .top_intra(db_top_intra[db_mb_col]),
+        .top_qp_y(db_top_qp[db_mb_col]),
+        .top_nz(db_top_nz[db_mb_col]),
+        .top_mvx({16{db_top_mvx[db_mb_col]}}),
+        .top_mvy({16{db_top_mvy[db_mb_col]}}),
+        .top_ref({16{db_top_ref[db_mb_col]}}),
+        .nb_y_i(db_nb_y_i),
+        .nb_u_i(db_nb_u_i),
+        .nb_v_i(db_nb_v_i),
+        .nb_y_o(db_nb_y_o),
+        .nb_u_o(db_nb_u_o),
+        .nb_v_o(db_nb_v_o),
+        .luma_modified_samples(db_luma_modified),
+        .chroma_modified_samples(db_chroma_modified),
+        .edge_segments_filtered(db_edge_segments),
+        .bs4_segments(db_bs4_segments),
+        .last_chroma_qp_avg(db_last_chroma_qp),
+        .filter_pipe_error(db_pipe_error),
+        .unsupported_ref(db_unsupported_ref)
+    );
+
+    wire [31:0] db_wb_y_off = ({28'd0, wb_sample_idx[7:4]} + 32'd4) * 32'd20 +
+                              {28'd0, wb_sample_idx[3:0]} + 32'd4;
+    wire [31:0] db_wb_c_off = ({29'd0, wb_sample_idx[5:3]} + 32'd4) * 32'd12 +
+                              {29'd0, wb_sample_idx[2:0]} + 32'd4;
+    wire [7:0] db_wb_data = (wb_plane == 2'd0) ? db_nb_y_o[db_wb_y_off] :
+                            (wb_plane == 2'd1) ? db_nb_u_o[db_wb_c_off] :
+                                                  db_nb_v_o[db_wb_c_off];
+    wire [7:0] recon_wb_data = (wb_plane == 2'd0) ? lat_recon_y[wb_sample_idx] :
+                               (wb_plane == 2'd1) ? lat_recon_u[wb_sample_idx[5:0]] :
+                                                     lat_recon_v[wb_sample_idx[5:0]];
+`ifdef H264_DECODE_CORE_FAULT_PRE_DEBLOCK_TO_DPB
+    wire [7:0] wb_data = recon_wb_data;
+`else
+    wire [7:0] wb_data = DEBLOCK_IN_LOOP ? db_wb_data : recon_wb_data;
+`endif
+
+    integer db_i;
+    always @(posedge clk) begin
+        db_start_r <= 1'b0;
+        if (reset) begin
+            db_seq_idx <= 7'd0;
+            db_left_avail <= 1'b0;
+            db_left_intra <= 1'b0;
+            db_left_qp <= 6'd0;
+            db_left_nz <= 16'd0;
+            db_left_mvx <= 12'sd0;
+            db_left_mvy <= 12'sd0;
+            db_left_ref <= 2'd0;
+            db_cur_intra <= 1'b0;
+            db_cur_qp <= 6'd0;
+            db_cur_nz <= 16'd0;
+            db_cur_mvx <= 12'sd0;
+            db_cur_mvy <= 12'sd0;
+            db_cur_ref <= 2'd0;
+            db_syn_intra <= 1'b0;
+            db_syn_qp <= 6'd0;
+            db_syn_nz <= 16'd0;
+            db_syn_mvx <= 12'sd0;
+            db_syn_mvy <= 12'sd0;
+            db_syn_ref <= 2'd0;
+            db_qp_run <= 6'd0;
+            for (db_i = 0; db_i < MB_W; db_i = db_i + 1) begin
+                db_top_avail[db_i] <= 1'b0;
+                db_top_intra[db_i] <= 1'b0;
+                db_top_qp[db_i] <= 6'd0;
+                db_top_nz[db_i] <= 16'd0;
+                db_top_mvx[db_i] <= 12'sd0;
+                db_top_mvy[db_i] <= 12'sd0;
+                db_top_ref[db_i] <= 2'd0;
+            end
+            for (db_i = 0; db_i < 64; db_i = db_i + 1) begin
+                db_left_y[db_i] <= 8'd0;
+                db_topbuf_y[db_i] <= 8'd0;
+            end
+            for (db_i = 0; db_i < 32; db_i = db_i + 1) begin
+                db_left_u[db_i] <= 8'd0;
+                db_left_v[db_i] <= 8'd0;
+                db_topbuf_u[db_i] <= 8'd0;
+                db_topbuf_v[db_i] <= 8'd0;
+            end
+        end else begin
+            if (slice_start) begin
+                db_qp_run <= slice_qp_y;
+                db_left_avail <= 1'b0;
+                if (slice_is_idr) begin
+                    for (db_i = 0; db_i < MB_W; db_i = db_i + 1)
+                        db_top_avail[db_i] <= 1'b0;
+                end
+            end
+            if (mb_type_valid) begin
+                db_syn_intra <= db_syn_intra_now;
+                db_syn_qp <= db_syn_qp_now;
+                db_qp_run <= db_qp_next;
+                db_syn_nz <= db_syn_nz_now;
+                db_syn_mvx <= db_syn_mvx_now;
+                db_syn_mvy <= db_syn_mvy_now;
+                db_syn_ref <= db_syn_ref_now;
+            end
+            if (wb_state == ST_IDLE && recon_mb_valid) begin
+                db_cur_intra <= db_syn_intra_now;
+                db_cur_qp <= db_syn_qp_now;
+                db_cur_nz <= db_syn_nz_now;
+                db_cur_mvx <= db_syn_mvx_now;
+                db_cur_mvy <= db_syn_mvy_now;
+                db_cur_ref <= db_syn_ref_now;
+                db_seq_idx <= 7'd0;
+                if (recon_mb_x == 8'd0) db_left_avail <= 1'b0;
+            end
+            if (wb_state == ST_DB_LOAD) begin
+                db_topbuf_y[db_seq_idx[5:0]] <= db_top_y[db_top_y_base + {25'd0, db_seq_idx}];
+                if (!db_seq_idx[5]) begin
+                    db_topbuf_u[db_seq_idx[4:0]] <= db_top_u[db_top_c_base + {27'd0, db_seq_idx[4:0]}];
+                    db_topbuf_v[db_seq_idx[4:0]] <= db_top_v[db_top_c_base + {27'd0, db_seq_idx[4:0]}];
+                end
+                db_seq_idx <= db_seq_idx + 7'd1;
+                if (db_seq_idx == 7'd63) begin
+                    db_seq_idx <= 7'd0;
+                    db_start_r <= 1'b1;
+                end
+            end
+            if (wb_state == ST_DB_STORE) begin
+                // bottom four rows of the filtered MB become the next row's top
+                db_top_y[db_top_y_base + {25'd0, db_seq_idx}] <=
+                    db_nb_y_o[(12 + {30'd0, db_seq_idx[5:4]} + 32'd4) * 32'd20 +
+                              {28'd0, db_seq_idx[3:0]} + 32'd4];
+                if (!db_seq_idx[5]) begin
+                    db_top_u[db_top_c_base + {27'd0, db_seq_idx[4:0]}] <=
+                        db_nb_u_o[(4 + {30'd0, db_seq_idx[4:3]} + 32'd4) * 32'd12 +
+                                  {29'd0, db_seq_idx[2:0]} + 32'd4];
+                    db_top_v[db_top_c_base + {27'd0, db_seq_idx[4:0]}] <=
+                        db_nb_v_o[(4 + {30'd0, db_seq_idx[4:3]} + 32'd4) * 32'd12 +
+                                  {29'd0, db_seq_idx[2:0]} + 32'd4];
+                end
+                db_seq_idx <= db_seq_idx + 7'd1;
+                if (db_seq_idx == 7'd63) begin
+                    db_seq_idx <= 7'd0;
+                    db_top_avail[db_mb_col] <= 1'b1;
+                    db_top_intra[db_mb_col] <= db_cur_intra;
+                    db_top_qp[db_mb_col] <= db_cur_qp;
+                    db_top_nz[db_mb_col] <= db_cur_nz;
+                    db_top_mvx[db_mb_col] <= db_cur_mvx;
+                    db_top_mvy[db_mb_col] <= db_cur_mvy;
+                    db_top_ref[db_mb_col] <= db_cur_ref;
+                    db_left_avail <= 1'b1;
+                    db_left_intra <= db_cur_intra;
+                    db_left_qp <= db_cur_qp;
+                    db_left_nz <= db_cur_nz;
+                    db_left_mvx <= db_cur_mvx;
+                    db_left_mvy <= db_cur_mvy;
+                    db_left_ref <= db_cur_ref;
+                    for (db_i = 0; db_i < 64; db_i = db_i + 1)
+                        db_left_y[db_i] <= db_nb_y_o[((db_i / 4) + 4) * 20 + (db_i % 4) + 16];
+                    for (db_i = 0; db_i < 32; db_i = db_i + 1) begin
+                        db_left_u[db_i] <= db_nb_u_o[((db_i / 4) + 4) * 12 + (db_i % 4) + 8];
+                        db_left_v[db_i] <= db_nb_v_o[((db_i / 4) + 4) * 12 + (db_i % 4) + 8];
+                    end
+                end
+            end
+        end
+    end
+
     wire signed [15:0] p16_residual_sample =
         (wb_plane == 2'd0) ? lat_p16_residual_y[wb_sample_idx] :
         (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
@@ -613,7 +948,14 @@ module h264_decode_core #(
 `endif
     wire p16_sample_wb_en = (wb_state == ST_P16_WRITE);
     wire deblock_filtered_sample_valid = product_wb_en | p16_sample_wb_en;
+`ifdef H264_DECODE_CORE_FAULT_COMMIT_BEFORE_SAMPLES
+    // Commit the macroblock while its filtered sample run is still in flight.
+    // This is the ordering-contract violation that an integration change is
+    // most likely to introduce, so it has to be caught, not assumed.
+    wire deblock_filtered_mb_valid = (wb_state == ST_WRITE) && (wb_idx == 9'd300);
+`else
     wire deblock_filtered_mb_valid = (wb_state == ST_COMMIT);
+`endif
     wire deblock_filtered_frame_done = deblock_filtered_mb_valid && wb_last_mb;
     wire deblock_frame_boundary = (wb_state == ST_FRAME_BOUNDARY);
     wire deblock_wb_valid;
@@ -759,8 +1101,17 @@ module h264_decode_core #(
                         lat_recon_u[wb_i] <= recon_u[wb_i];
                         lat_recon_v[wb_i] <= recon_v[wb_i];
                     end
-                    wb_state <= ST_WRITE;
+                    wb_state <= DEBLOCK_IN_LOOP ? ST_DB_LOAD : ST_WRITE;
                 end
+            end
+            ST_DB_LOAD: begin
+                if (db_seq_idx == 7'd63) wb_state <= ST_DB_RUN;
+            end
+            ST_DB_RUN: begin
+                if (db_done) wb_state <= ST_DB_STORE;
+            end
+            ST_DB_STORE: begin
+                if (db_seq_idx == 7'd63) wb_state <= ST_WRITE;
             end
             ST_P16_RES_START: begin
                 cavlc_start_r <= 1'b1;
@@ -895,6 +1246,8 @@ module h264_decode_core #(
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         deblock_wb_valid | |deblock_wb_mb_addr | deblock_wb_is_ref |
         deblock_dpb_invalidate_refs | deblock_ref_ready_pulse |
-        |deblock_ref_ready_slot | deblock_commit_order_error;
+        |deblock_ref_ready_slot | deblock_commit_order_error |
+        db_busy | |db_luma_modified | |db_chroma_modified | |db_edge_segments |
+        |db_bs4_segments | |db_last_chroma_qp | db_pipe_error | db_unsupported_ref;
 
 endmodule
