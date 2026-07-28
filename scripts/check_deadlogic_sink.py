@@ -37,6 +37,24 @@ same property and reports its leaves as UNUSEDSIGNAL.  So:
   * if every output net of the module is dead, the module drives nothing
     observable and synthesis is entitled to delete it.
 
+MEASURED BLIND SPOT -- read before treating a LIVE verdict as permission.
+
+Observability is necessary for survival but not sufficient.  A module whose
+outputs are observable can still fold to a constant, contribute zero resources,
+and be deleted.  This gate reports it LIVE.  Proved with the dl_probe_constfold
+probe in tests/unit/test_deadlogic_sink_redproof.sh, which is asserted to be a
+false LIVE so that the boundary cannot rot silently.
+
+This is not hypothetical on the current branch: h264_decode_core's inputs are
+tied to constants at stream_path.sv:447-459 (core_rbsp_byte all 8'd0, recon and
+residual constant).  So even after someone consumes the core's outputs and this
+gate turns green, Quartus may STILL delete the core by constant propagation.
+Consuming the outputs and un-tying the inputs are one task, not two.
+
+Therefore: rc=1 here is strong evidence of a defect; rc=0 is a cheap pre-filter
+result and NEVER grounds to request a fit.  Step 3 of the gate order
+(check_prefit_elaboration.sh, Quartus A&S) remains mandatory.
+
 This is a cheap approximation of Quartus, not a replacement for it.  It is
 deliberately CONSERVATIVE: anything it cannot resolve (a port connection to
 another instance, a hierarchical reference) counts as a LIVE reader.  It
@@ -492,7 +510,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(f"DEADLOGIC_SINK_OK label={args.label} modules={len(args.require_live)} "
           f"output_nets_examined={checked_nets} "
-          f"note=conservative_approximation_quartus_AandS_remains_the_oracle")
+          f"detects=unobservable_outputs "
+          f"BLIND_SPOT=constant_fold_collapse_NOT_detected "
+          f"(a module whose outputs ARE observable but which folds to a "
+          f"constant contributes zero resources and Quartus deletes it anyway; "
+          f"measured false-LIVE on probe dl_probe_constfold. This rc=0 is NOT "
+          f"sufficient to request a fit -- run check_prefit_elaboration.sh)")
     return 0
 
 

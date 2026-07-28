@@ -123,9 +123,38 @@ else
 	bad "GATE NOT RESTORED"
 fi
 
+echo "== red 6: the DOCUMENTED BLIND SPOT must stay documented =="
+# Not a defect proof -- a boundary proof.  dl_probe_constfold has an observable
+# output and folds to a constant, so Quartus deletes it while this gate reports
+# LIVE.  Asserting the false green keeps the limitation honest: if anyone later
+# teaches the gate constant propagation, THIS TEST FAILS and forces the
+# docstring, the OK line and the handoff to be corrected together, instead of
+# the gate quietly becoming stronger than its own documentation.
+cp "$SP" "$SNAP" || exit 1
+python3 tests/unit/deadlogic_probe_mutate.py --constfold
+if [ $? -ne 0 ]; then
+	cp "$SNAP" "$SP"
+	bad "could not apply the constant-fold probe mutation"
+else
+	$GATE --require-live dl_probe_constfold --label blindspot > build/deadlogic_r6.txt 2>&1
+	r6=$?
+	if [ "$r6" -eq 0 ] && grep -q "dl_probe_constfold=LIVE" build/deadlogic_r6.txt; then
+		pass "constant-fold collapse reports LIVE -- blind spot present as documented"
+	else
+		bad "constant-fold probe gave rc=$r6, not the documented false LIVE -- the gate has changed behaviour and its documented boundary is now WRONG; update the docstring, the OK line and the handoff"
+		sed 's/^/    /' build/deadlogic_r6.txt
+	fi
+	cp "$SNAP" "$SP"
+fi
+if cmp -s "$SNAP" "$SP"; then
+	pass "source restored (cmp -s against pre-mutation snapshot)"
+else
+	bad "SOURCE NOT RESTORED -- $SP differs from $SNAP"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
-	echo "DEADLOGIC_SINK_REDPROOF_OK mutations=5 all_flipped=yes"
+	echo "DEADLOGIC_SINK_REDPROOF_OK mutations=6 all_flipped=yes blind_spot=constant_fold_documented"
 	exit 0
 fi
 echo "DEADLOGIC_SINK_REDPROOF_FAIL failures=$fails"

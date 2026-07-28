@@ -32,6 +32,10 @@ sed 's/^/  /' build/deadlogic_product.txt
 
 if [ "$rc" -eq 0 ]; then
 	echo "DEADLOGIC_PRODUCT_OK decode lineage drives something observable"
+	echo "  NOT SUFFICIENT FOR A FIT: this gate cannot see constant-fold" \
+	     "collapse, and the core's inputs are still tied to constants at" \
+	     "stream_path.sv:447-459. Step 3 (check_prefit_elaboration.sh," \
+	     "Quartus A&S) is mandatory before requesting a fit."
 	exit 0
 fi
 
