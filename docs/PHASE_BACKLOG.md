@@ -862,3 +862,45 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
 - **Cause: it breaks W-OSD's LastFrame latch on the *green* path, not a red-check.** `test_last_frame_latch: FAILED checks=29 failures=6` with `s.data == latch.frame().data()`, `s.frame_layout.bank_stride == capturedLayout.bank_stride`, `s.frame_layout.doorbell_phys == capturedLayout.doorbell_phys` all failing. Assertion line numbers moved 69/71/72 → 71/73/74, so the commit edited that test's fixture or the layout type it depends on.
 - **Isolation, single-variable:** integration `157c38e` → `rc=0`, assertions **89**, per-test **66**; integration `6b2041c` (same tree + `f806990`) → `rc=2`, assertions **33**. Nothing else differed. Integration reset to `157c38e`; the commit is intact in the worker's worktree.
 - **Not parent-resolved, deliberately.** Two conflicts *were* parent-resolved this hour (`Makefile` test-list union; `media_player.cpp:2572` union) because both were provably independent changes the compiler could settle. **This one is a semantic disagreement about what the canonical DDR layout derivation yields** — W-GATE's helper versus W-OSD's captured-layout invariant. One side is wrong about the contract, and editing an assertion until it passes is the same failure mode rejected in Hour-21's centralisation. Returned to W-GATE to determine which side is correct, with an explicit instruction **not** to edit W-OSD's test (it owns that contract) and to confirm both latch red-checks still fire afterwards.
+
+### Hour-23 — W-GATE sweep exonerated; the rejection above was wrong twice (parent error)
+
+- (**RETRACTED — the stated cause of the Hour-22 rejection**) The section immediately above attributes W-GATE's `rc=2` to *"it breaks W-OSD's LastFrame latch on the green path"*. **That is false and is withdrawn.** `git show --stat` proves neither `f806990` nor the rebased `9a0f7d7` touches `test_last_frame_latch.cpp`; the assertion-line shift 69/71/72 → 71/73/74 that I cited as evidence came from **W-OSD's own announce commit `986a1a3`**, which landed in between. The worker was sent to fix a defect that did not exist.
+- (**RETRACTED — the second parent inference**) I then attributed the failure to product tests (`pms_baseline_profile`, `h264_dpb_mc`). Also false. The assertion collapse **89 → 33** was **log truncation, not failures** — the run aborted early at the invariants stage (3424 lines vs 6600), so most tests never executed. **An assertion-count drop is not by itself evidence of failing tests.**
+- (**W-GATE's commit is correct — proven four ways**) (1) pristine worktree at `9a0f7d7`: `make unit rc=0`, assertions **89**; (2) the worker's own worktree, re-run by the parent: `rc=0`, assertions **89**; (3) tree-hash comparison of `9a0f7d7` against the parent's cherry-pick: **only `docs/PHASE_BACKLOG.md` differs** — source identical; (4) controlled A/B below.
+- (**REAL DEFECT — a gate whose verdict depends on untracked working-directory debris**) The new invariant scans the **filesystem**, so it tripped over W-OSD's *gitignored* throwaway device-probe scripts:
+  ```
+  FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation;
+  found captures/wosd-idle-modes/remote_probe2.sh:45: BASE=0x30000000; STRIDE=0x80000; FRAME=449280; ...
+         captures/wosd-idle-modes/remote_scan_window.sh:47,60,61,86,99: ...
+  ```
+  Single-variable A/B on the **same commit and same tree**:
+  ```
+  debris present      -> tests/unit/test_rtl_invariants.sh rc=1, 1 FAIL
+  debris moved aside  -> tests/unit/test_rtl_invariants.sh rc=0, 0 FAIL
+  ```
+- **Why this is worth more than the spurious red.** A gate that is **not a function of the committed source** cannot gate anything: it passes on a clean checkout and fails on a developer's machine, or the reverse. It is the same defect family tracked all session — instruments reporting something other than the property under test — **inverted**: instead of manufacturing PASS from *absence* of evidence, it manufactures FAIL from *presence of irrelevant* evidence. Returned to W-GATE to scope the scan via `git ls-files`, with a mutation proof that real violations in tracked files still fire and a regression check that untracked debris cannot change the verdict.
+- **Process lesson recorded against the parent, not the worker.** Both wrong diagnoses shared one root: **inferring a cause from a diff of symptoms (line numbers, counts) instead of isolating the variable.** The A/B that settled it took two minutes and should have been the first step, not the fourth. A worker lost a full cycle to this.
+
+### Hour-23 — measurement correction #2: `grep -c ': OK'` is not a valid metric
+
+- (**CORRECTED — per-test "passes" count is build-state dependent**) `grep -c ': OK'` counts *occurrences*, and `extract_h264_golden` emits **one line per golden it regenerates** — 6 on a clean build, 5 on a warm one. The same source therefore reports **66 or 67 per-test passes with no code change**, which is exactly the unexplained drift seen while gating this hour.
+  ```
+  extract_h264_frame_planes: OK  x14      test_h264_multinal_stream_path: OK  x5
+  extract_h264_golden:       OK  x6 / x5  test_status_telemetry:          OK  x2
+  ```
+- **Replacement metric:** assertions `grep -c '^OK'` **plus unique test count** `grep -o '^[a-zA-Z0-9_]*: OK' | sort -u | wc -l`. Verified stable at **44 unique tests** across all runs this hour, including the 66 vs 67 pair — **no test was ever lost**, which is what the raw count appeared to imply. All workers instructed to stop quoting `: OK`.
+- **This is the second parent measurement error published this session** (the first: calling `^OK` assertion lines "tests" for 22 hours). Neither changed an accept/reject decision. Both were found by chasing a number that moved without a cause.
+
+### Hour-23 — merges
+
+- (done **W-INTER `cca1957`** — P16 MV neighbour / `ref_idx` state) parent-verified `make unit rc=0`, assertions **89 → 90**, unique tests **44** (none lost). Five red-checks all localise, including the new `drop neighbour: mb=(2,0) got_addr=0x401c want_addr=0x401d`. `make rtl-lint` `PASS no warning regressions`. Worker **three-for-three** on pre-registered predictions.
+- (done **W-CAST `f15e0f8`** — bounded EOF stall guard + explicit terminal cleanup) parent-verified `make unit rc=0`, assertions **90**, unique tests **44**. The commit **added test cases without moving the assertion count** (its checks live inside `test_avclock`'s single summary line), which is precisely the shape a decorative test takes — so the parent **independently reproduced the mutation** rather than accepting the worker's evidence:
+  ```
+  knownDurationEofStall -> return true  =>  test_avclock: 7 failures
+     FAIL !knownDurationEofStall(0, 60000, 59000, 0, 5000)   # elapsed < duration
+     FAIL !knownDurationEofStall(0, 60000, 61000, 0, 999)    # inside grace
+  restored                              =>  test_avclock: OK
+  ```
+  The guard is genuinely exercised and the over-broad cases are genuinely defended.
+- (**pre-registered prediction scored WRONG, reported plainly by the worker**) W-CAST predicted a **duration-independent** stall path would exist; it traced the source and concluded it does **not** — an `EAGAIN`-only detector cannot be distinguished from a slow/stuttering source absent `read()==0`, a read error/short read, or an explicit stop/seek. **A traced negative is a real result**; it is now the load-bearing justification for shipping a duration-keyed guard and nothing broader, and has been sent back to be defended by tests rather than by a trace in a report.
