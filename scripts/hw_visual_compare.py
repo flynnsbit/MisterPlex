@@ -22,7 +22,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 HOST_LAYOUT = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
 RTL_LAYOUT = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh"
-DEFAULT_DEV = "/dev/video4"
+DEFAULT_DEV = "/dev/video0"
 DEFAULT_FORMAT = "mjpeg"
 DEFAULT_SIZE = "1280x720"
 DEFAULT_FPS = "60"
@@ -31,6 +31,7 @@ DEFAULT_ATTEMPTS = 5
 COLOR_MATRICES = ("bt601", "bt709")
 COLOR_RANGES = ("full", "limited")
 PIXEL_FORMATS = ("yuv420p", "i420", "rgb565")
+RAW_UVC_FORMATS = {"yuyv", "yuyv422"}
 
 
 class HarnessError(RuntimeError):
@@ -1142,6 +1143,11 @@ def cmd_geometry(_args: argparse.Namespace) -> int:
 
 
 def cmd_capture(args: argparse.Namespace) -> int:
+    if args.input_format.lower() in RAW_UVC_FORMATS:
+        raise HarnessError(
+            "raw UVC capture formats are forbidden on the MS2109 lab grabber; "
+            "use MJPEG 1280x720@60 via /dev/video0"
+        )
     capture_v4l2(Path(args.out), args.device, args.input_format, args.video_size,
                  args.framerate, args.warmup, args.attempts,
                  args.color_matrix, args.color_range)
@@ -1266,7 +1272,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True)
     p.add_argument("--device", default=DEFAULT_DEV)
     p.add_argument("--input-format", default=DEFAULT_FORMAT,
-                   help="v4l2 input format (default: mjpeg; use yuyv422 for luma-critical edges)")
+                   help="v4l2 input format (default: mjpeg; raw YUYV modes are refused)")
     p.add_argument("--video-size", default=DEFAULT_SIZE)
     p.add_argument("--framerate", default=DEFAULT_FPS)
     p.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)

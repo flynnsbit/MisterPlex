@@ -2,12 +2,12 @@
 """Capture or load the MiSTer HDMI output and grade the luma edge-marker frame.
 
 Companion to gen_edge_markers.py. Assumes the marker frame is already on screen.
-Captures the grabber in uncompressed YUYV -- MJPEG's chroma subsampling and block
-artifacts destroy the 1-pixel edge detail we are measuring -- and reports, for
-each axis, where the first and last source column/row actually landed.
+Captures the lab MS2109 grabber in MJPEG mode. The node-worker1 device exposes
+MJPEG only; raw YUYV capture paths are refused because archived raw-mode logs
+showed corrupted/torn frames from the wrong instrument configuration.
 
 The core upscales 320 store columns across 529 display pixels, so a correctly
-displayed edge column occupies 1-2 display pixels (roughly 4-7 pixels of a 1920
+displayed edge column occupies 1-2 display pixels (roughly 3-5 pixels of a 1280
 wide capture). A markedly wider run means that column is being repeated, which is
 exactly the "bar" symptom on the right/bottom edge.
 
@@ -24,9 +24,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-DEFAULT_DEV = "/dev/video4"
+DEFAULT_DEV = "/dev/video0"
 DEFAULT_CAP = "build/edge_cap.png"
-DEFAULT_SIZE = "1920x1080"
+DEFAULT_FORMAT = "mjpeg"
+DEFAULT_SIZE = "1280x720"
 WARMUP = 60
 
 MAX_EDGE_PX = 9  # widest a single source column may legitimately appear
@@ -77,14 +78,19 @@ def check_device_ready(dev):
         raise CaptureError(f"capture device {dev} is busy/exclusive-open ({holders})")
 
 
-def capture_v4l2_frame(path, dev, video_size, warmup):
+def capture_v4l2_frame(path, dev, input_format, video_size, warmup):
+    if input_format.lower() in {"yuyv", "yuyv422"}:
+        raise CaptureError(
+            "raw UVC capture formats are forbidden on the MS2109 lab grabber; "
+            "use MJPEG 1280x720@60 via /dev/video0"
+        )
     check_device_ready(dev)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-f", "v4l2",
-        "-input_format", "yuyv422",
+        "-input_format", input_format,
         "-video_size", video_size,
         "-i", dev,
         "-vf", f"select=gte(n\\,{warmup})",
@@ -95,14 +101,14 @@ def capture_v4l2_frame(path, dev, video_size, warmup):
     if r.returncode != 0:
         detail = (r.stderr or r.stdout or "").strip()
         raise CaptureError(
-            f"ffmpeg capture failed for {dev} using yuyv422 {video_size}: {detail}"
+            f"ffmpeg capture failed for {dev} using {input_format} {video_size}: {detail}"
         )
     if not path.exists() or path.stat().st_size == 0:
         raise CaptureError(f"ffmpeg reported success but produced no image at {path}")
     return load_image(path)
 
 
-def capture_v4l2(path, dev, video_size, warmup, previous_path=None, capture_only=False):
+def capture_v4l2(path, dev, input_format, video_size, warmup, previous_path=None, capture_only=False):
     path = Path(path)
     previous = None
     if previous_path:
@@ -110,7 +116,7 @@ def capture_v4l2(path, dev, video_size, warmup, previous_path=None, capture_only
     elif path.exists() and not capture_only:
         previous = load_image(path)
 
-    current = capture_v4l2_frame(path, dev, video_size, warmup)
+    current = capture_v4l2_frame(path, dev, input_format, video_size, warmup)
     if capture_only:
         return current
     if previous is None:
@@ -275,7 +281,7 @@ def load_capture(args):
     if args.source == "file":
         return file_capture(args.inputs, args.previous)
     return capture_v4l2(
-        args.out, args.device, args.video_size, args.warmup,
+        args.out, args.device, args.input_format, args.video_size, args.warmup,
         previous_path=args.previous, capture_only=args.capture_only,
     )
 
@@ -299,6 +305,7 @@ def build_arg_parser():
     ap.add_argument("--out", default=os.environ.get("EDGE_CAP", DEFAULT_CAP),
                     help="capture output path for v4l2/capture-only")
     ap.add_argument("--device", default=os.environ.get("HDMI_DEV", DEFAULT_DEV))
+    ap.add_argument("--input-format", default=os.environ.get("EDGE_INPUT_FORMAT", DEFAULT_FORMAT))
     ap.add_argument("--video-size", default=os.environ.get("EDGE_VIDEO_SIZE", DEFAULT_SIZE))
     ap.add_argument("--warmup", type=int, default=int(os.environ.get("EDGE_WARMUP", WARMUP)),
                     help="frames to discard before a v4l2 grab")

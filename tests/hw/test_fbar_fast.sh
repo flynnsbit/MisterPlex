@@ -18,7 +18,7 @@ set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$(cd "$(dirname "$0")/../.." && pwd)/captures/menu}"
-DEV="${HDMI_DEV:-/dev/video4}"
+DEV="${HDMI_DEV:-/dev/video0}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/tests/hw/hw_gate_common.sh"
 if [[ "${FBAR_ALLOW_OBSOLETE:-0}" != "1" ]]; then
@@ -52,11 +52,23 @@ capture_preflight() {
 
 snap() {
   local name=$1
-  rm -f "$OUT/${name}_"*.jpg "$OUT/${name}.jpg" 2>/dev/null || true
-  fuser -k "$DEV" 2>/dev/null || true
+  python3 - "$OUT" "$name" <<'PY'
+from pathlib import Path
+import sys
+out, name = Path(sys.argv[1]), sys.argv[2]
+for p in list(out.glob(f"{name}_*.jpg")) + [out / f"{name}.jpg"]:
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+PY
+  if fuser "$DEV" >/dev/null 2>&1; then
+    echo "CAPTURE_BUSY name=$name dev=$DEV reason=exclusive-open" >&2
+    return 20
+  fi
   sleep 0.15
   ffmpeg -y -hide_banner -loglevel error \
-    -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
+    -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 60 \
     -i "$DEV" -frames:v 2 -q:v 3 "$OUT/${name}_%02d.jpg" 2>/dev/null || true
   # pick last frame
   local f

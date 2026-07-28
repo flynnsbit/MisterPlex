@@ -4,7 +4,7 @@
 # the video delay. Use `set_status --confstr` to read the live menu instead.
 #
 # Exercise Plex core OSD options via status bits + HDMI capture.
-# Run on the *build host* (needs sshpass + /dev/video4 MacroSilicon).
+# Run on the *build host* (needs sshpass + /dev/video0 MS2109).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/tests/hw/hw_gate_common.sh"
@@ -19,7 +19,7 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no)
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
 mkdir -p "$OUT"
 REPORT="$OUT/REPORT.md"
-DEVICE="${HDMI_DEV:-/dev/video4}"
+DEVICE="${HDMI_DEV:-/dev/video0}"
 PUSH=/media/fat/misterplex/bin/push_frame
 
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable' || true; }
@@ -46,12 +46,13 @@ capture() {
   sleep 0.6
   set +e
   ffmpeg -y -hide_banner -loglevel error \
-    -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
+    -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 60 \
     -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
   local rc=$?
   if [[ "$rc" -ne 0 ]]; then
     ffmpeg -y -hide_banner -loglevel error \
-      -f v4l2 -video_size 800x600 -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
+      -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 60 \
+      -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
     rc=$?
   fi
   set -e

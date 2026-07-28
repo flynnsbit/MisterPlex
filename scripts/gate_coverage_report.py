@@ -75,7 +75,7 @@ def check_quartus() -> bool:
 
 
 def has_v4l2_device() -> bool:
-    return Path("/dev/video4").exists()
+    return Path("/dev/video0").exists()
 
 
 def build_report() -> list[GateReport]:
@@ -338,7 +338,7 @@ def build_report() -> list[GateReport]:
             runnable_here=has_numpy,
             runnable_note=(
                 f"numpy/Pillow: {'available (build/.venv)' if has_numpy else 'MISSING'}. "
-                f"V4L2 grabber (/dev/video4): {'present' if has_grabber else 'ABSENT — live capture requires w-cap device host'}. "
+                f"V4L2 grabber (/dev/video0): {'present' if has_grabber else 'ABSENT — live capture requires w-e2e device lease'}. "
                 f"Synthetic and file modes work on this host. "
                 f"Live v4l2 capture requires HDMI grabber attached to MiSTer output."
             ),

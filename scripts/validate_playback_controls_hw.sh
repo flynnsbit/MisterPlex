@@ -2,8 +2,9 @@
 # End-to-end lab validation for MiSTerPlex playback controls.
 # This script is meant for the single deploy-token window: it can safely deploy
 # one candidate RBF (Menu bounce exactly once), stage the daemon/helper, then run
-# the scriptable checks while the operator performs the keyboard/controller
-# presses and eyes-on observations.
+# the scriptable checks while automation performs keyboard/controller presses.
+# Human eyes are not a scoring instrument; visual/browser checks must be graded
+# by the HDMI capture or Playwright harness.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,7 +43,7 @@ usage:
   $0 rollback [--yes]
 
 Environment:
-  MISTER_HOST=$HOST, MISTER_PASS, HDMI_DEV=/dev/video4
+  MISTER_HOST=$HOST, MISTER_PASS, HDMI_DEV=/dev/video0
   PMS_BASE, PMS_TOKEN, PMS_RATING_KEY enable scripted PMS resume verification.
   MAX_ABS_AV_DRIFT_MS=250 MAX_DROPS_DELTA=10 MAX_CPU_PCT=95 tune no-regression gates.
 
@@ -74,13 +75,11 @@ manual() { printf 'MANUAL: %s\n' "$*"; MANUALS=$((MANUALS + 1)); }
 confirm() {
   local prompt="$1"
   if [[ "$ASSUME_YES" == 1 ]]; then
-    printf 'CHECK: %s [assumed yes]\n' "$prompt"
-    return 0
+    fail "human confirmation is retired; refused --yes for: $prompt"
+    return 1
   fi
-  local ans
-  printf '\n%s [y/N] ' "$prompt"
-  read -r ans
-  [[ "$ans" == y || "$ans" == Y || "$ans" == yes || "$ans" == YES ]]
+  fail "human confirmation is retired; automate via /dev/video0 or Playwright: $prompt"
+  return 1
 }
 
 remote() { "${SSH[@]}" "$@"; }
@@ -229,8 +228,8 @@ TEXT
   remote "python3 '$REMOTE_KEYS' --hold 14 f12" >"$keylog" 2>&1 &
   local keypid=$!
   sleep 8
-  if ffmpeg -hide_banner -loglevel error -f v4l2 -input_format yuyv422 \
-      -video_size 1920x1080 -i "${HDMI_DEV:-/dev/video4}" \
+  if ffmpeg -hide_banner -loglevel error -f v4l2 -input_format mjpeg \
+      -video_size 1280x720 -framerate 60 -i "${HDMI_DEV:-/dev/video0}" \
       -vf 'select=gte(n\,60)' -frames:v 1 -y "$cap"; then
     pass "captured F12 OSD evidence at $cap"
     if command -v tesseract >/dev/null 2>&1; then
@@ -247,7 +246,7 @@ TEXT
       manual "F12 OSD captured at $cap; install tesseract locally for scripted OCR."
     fi
   else
-    fail "could not capture F12 OSD via ${HDMI_DEV:-/dev/video4}"
+    fail "could not capture F12 OSD via ${HDMI_DEV:-/dev/video0}"
   fi
   wait "$keypid" || true
   if confirm "Do all three F12 Load lines render cleanly as described?"; then pass "F12 Load lines clean"; else fail "F12 Load lines still garbled"; fi
@@ -341,7 +340,7 @@ TEXT
 }
 
 check_overlay() {
-  log "4. Overlay eyes-on"
+  log "4. Overlay capture automation pending"
   cat <<'TEXT'
 During the Play/Pause and Skip checks, the overlay must:
   - show the correct state icon (pause while paused, play while playing),
@@ -349,7 +348,7 @@ During the Play/Pause and Skip checks, the overlay must:
   - flash the correct skip direction/delta for Right/Left,
   - auto-hide without leaving dirty pixels.
 TEXT
-  if confirm "Overlay behavior matched the checklist and auto-hid cleanly?"; then pass "overlay eyes-on"; else fail "overlay eyes-on failed"; fi
+  if confirm "Overlay behavior matched the checklist and auto-hid cleanly?"; then pass "overlay capture"; else fail "overlay capture automation missing"; fi
 }
 
 check_pms_progress() {
@@ -361,8 +360,8 @@ check_pms_progress() {
     view=$(sed -n 's/.*viewOffset="\([0-9][0-9]*\)".*/\1/p' <<<"$xml" | head -1)
     if [[ "$view" =~ ^[0-9]+$ && "$view" -gt 0 ]]; then pass "PMS viewOffset persisted ($view ms)"; else fail "PMS viewOffset missing/zero for ratingKey $PMS_RATING_KEY"; fi
   else
-    manual "Set PMS_BASE/PMS_TOKEN/PMS_RATING_KEY for scripted PMS check, or confirm in Plex UI that the stopped real item shows Resume/On Deck."
-    if confirm "Plex UI shows Resume/On Deck for the stopped real library item?"; then pass "PMS progress eyes-on"; else fail "PMS progress did not persist"; fi
+    manual "Set PMS_BASE/PMS_TOKEN/PMS_RATING_KEY for scripted PMS check; Plex UI confirmation must be automated with Playwright."
+    if confirm "Plex UI shows Resume/On Deck for the stopped real library item?"; then pass "PMS progress browser automation"; else fail "PMS progress automation missing"; fi
   fi
 }
 
@@ -412,12 +411,12 @@ REMOTE
 
 check_edges() {
   log "7b. G-VID1 edge alignment"
-  EDGE_CAP="$STATE_DIR/edge_prev.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
+  EDGE_CAP="$STATE_DIR/edge_prev.png" HDMI_DEV="${HDMI_DEV:-/dev/video0}" \
     python3 "$ROOT/scripts/check_edges.py" --capture-only --out "$STATE_DIR/edge_prev.png"
   python3 "$ROOT/scripts/gen_edge_markers.py" --format yuv420p "$LOCAL_EDGE"
   "${SCP[@]}" "$LOCAL_EDGE" "$USER@$HOST:$REMOTE_EDGE" >/dev/null
   remote "'$REMOTE_PUSH' --ddr --yuv420p 320x240 '$REMOTE_EDGE'"
-  EDGE_CAP="$STATE_DIR/edge_cap.png" HDMI_DEV="${HDMI_DEV:-/dev/video4}" \
+  EDGE_CAP="$STATE_DIR/edge_cap.png" HDMI_DEV="${HDMI_DEV:-/dev/video0}" \
     python3 "$ROOT/scripts/check_edges.py" --previous "$STATE_DIR/edge_prev.png" \
     --out "$STATE_DIR/edge_cap.png" | tee "$STATE_DIR/check_edges.log"
   if grep -q 'PASS: all four edges correct' "$STATE_DIR/check_edges.log"; then pass "G-VID1 all four edges correct"; else fail "G-VID1 edge check failed"; fi

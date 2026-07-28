@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-VIDEO_DEV = os.environ.get("HDMI_DEV", "/dev/video4")
+VIDEO_DEV = os.environ.get("HDMI_DEV", "/dev/video0")
 # PipeWire/Pulse source (matches the harness the -60 ms RK10 baseline was measured
 # with). Capturing ALSA hw: directly adds a large, silent A/V mux skew.
 PULSE_SRC = "alsa_input.usb-MACROSILICON_2109-02.analog-stereo"

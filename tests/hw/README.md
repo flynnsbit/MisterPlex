@@ -4,16 +4,15 @@ Require a live MiSTer (`MISTER_HOST`, default `192.168.1.183`).
 
 ## HDMI capture (lab MacroSilicon)
 
-Capture card: `/dev/video4` (UVC `534d:2109`), MJPG/YUYV **800×600**.
+Capture card: `/dev/video0` (UVC `534d:2109`), MJPG **1280×720@60**. `/dev/video1`
+is a decoy that enumerates no usable formats. Do not use raw YUYV modes on this
+host; the MS2109 path is MJPEG-only for scored gates.
 
 ```bash
-# Prefer: skip cold MJPG frames (first ~30 often solid black ~4KB — capture artifact)
-ffmpeg -y -f v4l2 -input_format mjpeg -video_size 800x600 -i /dev/video4 \
-  -vf 'select=gte(n\,30)' -frames:v 1 -update 1 captures/mister_hdmi_latest.jpg
-
-# Or YUYV (locks faster on this dongle)
-ffmpeg -y -f v4l2 -input_format yuyv422 -video_size 800x600 -i /dev/video4 \
-  -frames:v 1 -update 1 captures/mister_hdmi_yuyv.jpg
+# Skip warm-up frames; cold single-frame grabs can be solid black capture artifacts.
+ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 60 \
+  -i /dev/video0 -vf 'select=gte(n\,60)' -frames:v 1 -update 1 \
+  captures/mister_hdmi_latest.jpg
 ```
 
 **Warm** capture shows color bars: SMPTE bars in **left ~content** region; **right-side black DE**
@@ -21,7 +20,7 @@ ffmpeg -y -f v4l2 -input_format yuyv422 -video_size 800x600 -i /dev/video4 \
 solid black (~4 KB) — a capture-card artifact, **not** proof the core is dead.
 
 For **G-VID1 edge alignment**, use `scripts/check_edges.py` rather than an ad-hoc
-grab. The checker forces `yuyv422`, discards 60 warm-up frames, and refuses to
+grab. The checker uses MJPEG 1280×720@60, discards 60 warm-up frames, and refuses to
 grade unless the frame differs from a previous baseline (`--capture-only` before
 the marker push, then `--previous` for the graded capture). Its `--source file`
 and `--source synthetic` modes exercise the same grading/staleness logic without

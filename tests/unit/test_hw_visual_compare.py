@@ -753,6 +753,17 @@ def main() -> int:
             f"not grade pixels\nstdout={corrupt_logged.stdout}\nstderr={corrupt_logged.stderr}")
     print("PASS V4L2 corrupt-buffer diagnostics classified distinctly")
 
+    raw_refusal = run(
+        "capture",
+        "--out", str(WORK / "raw_refusal.png"),
+        "--device", str(WORK / "no_such_video_device"),
+        "--input-format", "yuyv422",
+    )
+    require(raw_refusal.returncode == 2 and "raw UVC capture formats are forbidden" in raw_refusal.stderr,
+            "raw YUYV capture must be refused before touching the device, "
+            f"stdout={raw_refusal.stdout}\nstderr={raw_refusal.stderr}")
+    print("PASS raw YUYV capture mode refused before device access")
+
     absent_capture = run(
         "capture",
         "--out", str(WORK / "absent_capture.png"),

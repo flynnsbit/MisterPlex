@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# test_bank_release_visual.sh — Human visual verification for bank-release fix
+# test_bank_release_visual.sh — telemetry-only bank-release visual preflight
 #
-# Runs automated telemetry checks over SSH, then prints a discriminating
-# questionnaire for the human observer. The human answers ONLY what a screen
-# uniquely provides; all telemetry is captured by us.
+# Runs automated telemetry checks over SSH, then refuses to score. The old human
+# questionnaire was retired; display-path scoring now requires an automated HDMI
+# capture grader.
 #
 # IMPORTANT: The picture on this screen is produced by the ARM decoder (FFmpeg).
 # This test verifies the DISPLAY PATH (DDR frame store → HDMI scanout), NOT
@@ -226,120 +226,12 @@ echo ""
 echo "TELEMETRY_RAW rbf=$RBF_MD5 expected_rbf=${EXPECTED_RBF_MD5:-unset} rbf_verified=$RBF_VERIFIED stride=$(hex_addr "$DDR_STRIDE") bank0=$DDR_BANK0_HEX bank1=$DDR_BANK1_HEX doorbell=$DDR_DOORBELL_HEX plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0_words=$BANK0_W0,$BANK0_W1 bank1_words=$BANK1_W0,$BANK1_W1 stats=\"$STATS\""
 echo ""
 
-# ─── HUMAN QUESTIONNAIRE ─────────────────────────────────────────────────────
-echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  HUMAN OBSERVER — PLEASE ANSWER THESE QUESTIONS                ║"
-echo "║  (Look at the MiSTer HDMI output RIGHT NOW)                    ║"
-echo "╠══════════════════════════════════════════════════════════════════╣"
-echo "║                                                                ║"
-echo "║  RBF: $RBF_MD5                          ║"
-echo "║                                                                ║"
-echo "║  Q1. MOTION: Is the image...                                   ║"
-echo "║      A) Moving (video playing normally)                        ║"
-echo "║      B) Frozen/static (single still image)                     ║"
-echo "║      C) Black screen / no signal                               ║"
-echo "║      D) MiSTer menu / OSD (not our core)                       ║"
-echo "║                                                                ║"
-echo "║  Q2. TEARING: Do you see... (LOOK CAREFULLY)                   ║"
-echo "║      A) Clean motion, no splits                                ║"
-echo "║      B) Horizontal line where top/bottom halves don't match    ║"
-echo "║      C) Image flickers between two different frames            ║"
-echo "║      D) Diagonal tearing / shearing during motion              ║"
-echo "║      → B/C/D = bank race confirmed (the defect we are hunting)║"
-echo "║                                                                ║"
-echo "║  Q3. COLOUR: The video content is a movie scene. Are colours...║"
-echo "║      A) Normal (skin tones, correct hues)                      ║"
-echo "║      B) All green / pink / purple tint                         ║"
-echo "║      C) Blue-and-red swap (faces look blue)                    ║"
-echo "║      D) Grayscale / washed out                                 ║"
-echo "║      E) Uniform dark gray (no recognizable content)            ║"
-echo "║      → E = display frozen on idle painter (known pre-fix)      ║"
-echo "║      → B/C = channel swap or YUV coefficient error             ║"
-echo "║                                                                ║"
-echo "║  Q4. GEOMETRY: Does the image...                               ║"
-echo "║      A) Fill the screen properly (maybe small black bars)      ║"
-echo "║      B) Have a large black area on one side                    ║"
-echo "║      C) Look stretched or squished                             ║"
-echo "║      D) Show content shifted/offset from center                ║"
-echo "║                                                                ║"
-echo "║  Q5. AUDIO: Is there...                                        ║"
-echo "║      A) Audio playing, in sync with video                      ║"
-echo "║      B) Audio playing, but ahead/behind video                  ║"
-echo "║      C) No audio                                               ║"
-echo "║      D) Audio stuttering / crackling                           ║"
-echo "║                                                                ║"
-echo "╠══════════════════════════════════════════════════════════════════╣"
-echo "║  WHAT A PASS LOOKS LIKE:                                       ║"
-echo "║    Q1=A, Q2=A, Q3=A, Q4=A, Q5=A or Q5=B                       ║"
-echo "║    (Minor lip-sync drift is acceptable; tearing is NOT)        ║"
-echo "║                                                                ║"
-echo "║  EXPECTED FAILURES ON THE KNOWN DEFECT (pre bank-release fix): ║"
-echo "║    Q1=B + Q3=E = display frozen on idle painter bank           ║"
-echo "║    Q1=A + Q2=B/C = bank-release race (ARM overwrites active)   ║"
-echo "║                                                                ║"
-echo "║  ⚠ CAVEAT: This picture is ARM-decoded (FFmpeg). It does NOT   ║"
-echo "║  prove FPGA decode. A pass here means the display path works.  ║"
-echo "╚══════════════════════════════════════════════════════════════════╝"
-echo ""
-echo "Please reply with: Q1=_ Q2=_ Q3=_ Q4=_ Q5=_"
-echo ""
-
-# Optional non-interactive scoring for the operator who re-runs this script
-# after collecting the human card. Missing or contradictory answers are UNSCORED,
-# never PASS.
-score_human_answers() {
-    local q1="${Q1:-}" q2="${Q2:-}" q3="${Q3:-}" q4="${Q4:-}" q5="${Q5:-}"
-    local missing=0
-    echo "HUMAN_ANSWERS Q1=${q1:-_} Q2=${q2:-_} Q3=${q3:-_} Q4=${q4:-_} Q5=${q5:-_}"
-    echo "HUMAN_TELEMETRY rbf=$RBF_MD5 expected_rbf=${EXPECTED_RBF_MD5:-unset} rbf_verified=$RBF_VERIFIED plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0=$BANK0_W0,$BANK0_W1 bank1=$BANK1_W0,$BANK1_W1 stride=$(hex_addr "$DDR_STRIDE")"
-    for q in q1 q2 q3 q4 q5; do
-        [ -n "${!q}" ] || missing=1
-    done
-    if [ "$missing" = "1" ]; then
-        echo "HUMAN_RESULT=UNSCORED reason=missing-answer"
-        return "$RC_UNSCORED"
-    fi
-    case "$q1" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q1"; return "$RC_UNSCORED" ;; esac
-    case "$q2" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q2"; return "$RC_UNSCORED" ;; esac
-    case "$q3" in A|B|C|D|E) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q3"; return "$RC_UNSCORED" ;; esac
-    case "$q4" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q4"; return "$RC_UNSCORED" ;; esac
-    case "$q5" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q5"; return "$RC_UNSCORED" ;; esac
-    if [ "$RBF_VERIFIED" != "1" ]; then
-        echo "HUMAN_RESULT=UNSCORED reason=rbf-provenance-unverified"
-        return "$RC_UNSCORED"
-    fi
-
-    if [ "$q1" = "A" ] && [ "$q2" = "A" ] && [ "$q3" = "A" ] &&
-       [ "$q4" = "A" ] && { [ "$q5" = "A" ] || [ "$q5" = "B" ]; }; then
-        echo "HUMAN_RESULT=PASS scope=display-path-only"
-        return "$RC_PASS"
-    fi
-    if [ "$q1" = "B" ] && [ "$q3" = "E" ]; then
-        echo "HUMAN_RESULT=FAIL reason=frozen-idle-painter"
-        return "$RC_FAIL"
-    fi
-    if [ "$q1" = "A" ] && { [ "$q2" = "B" ] || [ "$q2" = "C" ]; }; then
-        echo "HUMAN_RESULT=FAIL reason=bank-race"
-        return "$RC_FAIL"
-    fi
-    if [ "$q3" = "B" ] || [ "$q3" = "C" ]; then
-        echo "HUMAN_RESULT=FAIL reason=color-channel-or-yuv-error"
-        return "$RC_FAIL"
-    fi
-    if { [ "$q1" = "C" ] || [ "$q1" = "D" ]; } &&
-       { [ "$q2" != "A" ] || [ "$q3" != "A" ] || [ "$q4" != "A" ]; }; then
-        echo "HUMAN_RESULT=UNSCORED reason=not-product-picture"
-        return "$RC_UNSCORED"
-    fi
-    echo "HUMAN_RESULT=UNSCORED reason=inconsistent-or-unclassified"
-    return "$RC_UNSCORED"
-}
-
-set +e
-score_human_answers
-SCORE_RC=$?
-set -e
-
-# ─── STOP PLAYBACK after 60s (cleanup) ───────────────────────────────────────
-echo "(Playback will auto-stop at content end. To stop early: curl http://$HOST:3005/player/playback/stop)"
-exit "$SCORE_RC"
+# ─── RETIRED HUMAN VISUAL CARD ───────────────────────────────────────────────
+# This script intentionally no longer accepts observer answers. The old card
+# could report PASS from human eyes; current project policy requires an
+# automated /dev/video0 capture grader that distinguishes no-signal, valid-black,
+# and valid-with-content before any display-path result is scored.
+echo "BANK_RELEASE_RESULT=FAIL reason=human-visual-card-retired"
+echo "AUTOMATION_REQUIRED instrument=/dev/video0 format=mjpeg size=1280x720 fps=60 owner=w-e2e"
+echo "TELEMETRY_ONLY rbf=$RBF_MD5 expected_rbf=${EXPECTED_RBF_MD5:-unset} rbf_verified=$RBF_VERIFIED plxd_t0=$PLXD_T0 plxd_t1=$PLXD_T1 plxk_t0=$PLXK_T0 plxk_t1=$PLXK_T1 bank0=$BANK0_W0,$BANK0_W1 bank1=$BANK1_W0,$BANK1_W1 stride=$(hex_addr "$DDR_STRIDE")"
+exit "$RC_FAIL"

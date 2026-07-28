@@ -7,7 +7,7 @@ source "$ROOT/tests/hw/hw_gate_common.sh"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
-DEVICE="${HDMI_DEV:-/dev/video4}"
+DEVICE="${HDMI_DEV:-/dev/video0}"
 RBF_LOCAL="${RBF_LOCAL:-$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf}"
 # MENU_FAST=1 (default): short dwell — user-visible mode flips stay <0.5s
 # MENU_FAST=0: slower multi-frame capture for flaky grabbers
@@ -60,11 +60,23 @@ PY
 capture() {
   local name="$1"
   local dest="$OUT/${name}.jpg"
-  rm -f "$OUT/${name}_f"*.jpg "$dest" 2>/dev/null || true
-  fuser -k "$DEVICE" 2>/dev/null || true
+  python3 - "$OUT" "$name" "$dest" <<'PY'
+from pathlib import Path
+import sys
+out, name, dest = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+for p in list(out.glob(f"{name}_f*.jpg")) + [dest]:
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+PY
+  if fuser "$DEVICE" >/dev/null 2>&1; then
+    echo "CAPTURE_BUSY name=$name dev=$DEVICE reason=exclusive-open" >&2
+    return 20
+  fi
   sleep "$SETTLE"
   ffmpeg -y -hide_banner -loglevel error \
-    -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
+    -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 60 \
     -i "$DEVICE" -frames:v "$FRAMES" -q:v 3 "$OUT/${name}_f%02d.jpg" 2>/dev/null || true
   # pick brightest frame (skip black warmup)
   local best="$dest"
