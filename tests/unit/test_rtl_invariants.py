@@ -99,12 +99,54 @@ ACTIVE_C_MACROS = {
     "__arm__",
 }
 
+PRODUCT_AUDIT_ROOTS = (
+    "arm",
+    "host",
+    "tools",
+    "scripts",
+    "tests/hw",
+    "fpga/Plex_MiSTer/rtl",
+)
+
 
 def read(path: Path) -> str:
     try:
         return path.read_text()
     except OSError as e:
         fail(f"could not read {path}: {e}")
+
+
+def tracked_files_under(*roots: str) -> list[Path]:
+    """Return committed files under the given roots; ignored worktree debris is out of scope."""
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", "--", *roots],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as e:
+        fail(f"could not enumerate tracked files with git ls-files: {e}")
+    return [ROOT / line for line in out.splitlines() if line]
+
+
+def strip_hash_comments(text: str) -> str:
+    """Drop shell/python comments for literal sweeps without parsing strings."""
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("#") and not stripped.startswith("#!"):
+            out.append("\n" if line.endswith("\n") else "")
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def active_audit_text(path: Path) -> str:
+    text = strip_comments(read(path))
+    if path.suffix in {".py", ".sh"}:
+        text = strip_hash_comments(text)
+    return text
 
 
 def strip_comments(text: str) -> str:
@@ -415,25 +457,56 @@ def check_present_core() -> None:
 
 def check_phase_a_surface() -> None:
     text = strip_comments(read(PLEX_SV))
-    strings = " ".join(re.findall(r'"([^"]*)"', text))
-    for entry in ("F1,raw", "F2,raw", "F3,264"):
+
+    def conf_str_payload(src: str) -> str:
+        m = re.search(r"\blocalparam\s+CONF_STR\s*=\s*\{(.*?)\n\s*\}\s*;", src, re.S)
         check(
-            entry in strings,
-            f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
-            "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries.",
+            m is not None,
+            "Plex.sv missing active CONF_STR localparam. Phase A menu/input labels must be "
+            "proved from the hps_io CONF_STR payload, not unrelated string literals.",
         )
-    check(
-        "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" in strings,
-        "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] with "
-        "option order Logo/Black/Screensaver/LastFrame; update libmisterplex/osd_menu.hpp "
-        "and its red-check if the CONF_STR layout intentionally changes.",
-    )
-    for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
+        payload = " ".join(re.findall(r'"([^"]*)"', m.group(1)))
+        hps_instances = re.findall(r"hps_io\s*#\s*\(([^;]*?)\)\s+\w+\s*\(", src, re.S)
         check(
-            label in strings and "J1," in strings,
-            f"Plex.sv J1 controller mapper missing `{label}`. Phase A playback controls must "
-            "remain exposed to MiSTer's mapper; restore the J1 Play/Pause/Stop/Skip labels.",
+            len(hps_instances) == 1 and re.search(r"\.CONF_STR\s*\(\s*CONF_STR\s*\)", hps_instances[0]),
+            "Plex.sv hps_io must consume the audited CONF_STR localparam. Do not satisfy "
+            "the Phase A menu guard with an unrelated or unbound string literal.",
         )
+        return payload
+
+    def phase_a_menu_violations(src: str) -> list[str]:
+        strings = conf_str_payload(src)
+        violations: list[str] = []
+        for entry in ("F1,raw", "F2,raw", "F3,264"):
+            if entry not in strings:
+                violations.append(
+                    f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
+                    "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries."
+                )
+        if "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" not in strings:
+            violations.append(
+                "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] "
+                "with option order Logo/Black/Screensaver/LastFrame; update "
+                "libmisterplex/osd_menu.hpp and its red-check if the CONF_STR layout "
+                "intentionally changes."
+            )
+        for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
+            if not (label in strings and "J1," in strings):
+                violations.append(
+                    f"Plex.sv J1 controller mapper missing `{label}`. Phase A playback controls "
+                    "must remain exposed to MiSTer's mapper; restore the J1 Play/Pause/Stop/Skip labels."
+                )
+        return violations
+
+    missing_menu = phase_a_menu_violations(text)
+    if missing_menu:
+        fail(f"Plex.sv Phase A feature surface: {missing_menu[0]}")
+
+    decoy_menu = text.replace('"F1,raw,RGB565 frame (320x240);"', '"F1,bad,decoy removed;"', 1)
+    decoy_menu += '\nlocalparam W_GATE_DECOY_CONF_STR = "F1,raw,RGB565 frame (320x240);";\n'
+    if not phase_a_menu_violations(decoy_menu):
+        fail("decoy string outside CONF_STR satisfied the Phase A menu surface guard")
+
     hps_instances = re.findall(r"hps_io\s*#\s*\([^;]*?\)\s+\w+\s*\((.*?)\n\s*\);", text, re.S)
     check(
         len(hps_instances) == 1,
@@ -1147,24 +1220,7 @@ def check_runtime_ddr_layout_literal_sweep() -> None:
 
 def tracked_product_relevant_files() -> list[Path]:
     """Return committed runtime/product files, excluding ignored worktree debris."""
-    roots = [
-        "arm",
-        "host",
-        "tools",
-        "scripts",
-        "tests/hw",
-        "fpga/Plex_MiSTer/rtl",
-    ]
-    try:
-        out = subprocess.check_output(
-            ["git", "ls-files", "--", *roots],
-            cwd=ROOT,
-            text=True,
-            stderr=subprocess.PIPE,
-        )
-    except (OSError, subprocess.CalledProcessError) as e:
-        fail(f"could not enumerate tracked product files with git ls-files: {e}")
-    return [ROOT / line for line in out.splitlines() if line]
+    return tracked_files_under(*PRODUCT_AUDIT_ROOTS)
 
 
 def runtime_ddr_layout_literal_offenders() -> list[str]:
@@ -1183,7 +1239,7 @@ def runtime_ddr_layout_literal_offenders() -> list[str]:
     for path in tracked_product_relevant_files():
         if not path.is_file() or path.suffix not in suffixes or path in allow:
             continue
-        text = strip_comments(read(path))
+        text = active_audit_text(path)
         for lineno, line in enumerate(text.splitlines(), 1):
             if banned.search(line):
                 offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
@@ -1992,23 +2048,44 @@ def check_yuv_ddr_writer_contract() -> None:
         re.compile(r"DdrFrameFormat::Rgb565"),
     ]
     allowed_paths = {Path("tests/unit/test_rtl_invariants.py")}
-    for path in ROOT.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(ROOT)
-        if rel in allowed_paths or any(part in {".git", "build", "__pycache__"} for part in rel.parts):
-            continue
+
+    def forbidden_ddr_rgb_offenders() -> list[str]:
+        offenders: list[str] = []
+        for path in tracked_files_under(*PRODUCT_AUDIT_ROOTS, "docs"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(ROOT)
+            if rel in allowed_paths:
+                continue
+            text = read(path) if path.suffix == ".md" else active_audit_text(path)
+            for lineno, line in enumerate(text.splitlines(), 1):
+                for pat in forbidden_repo_patterns:
+                    if pat.search(line):
+                        offenders.append(f"{rel}:{lineno}: {pat.pattern!r}: {line.strip()}")
+        return offenders
+
+    for offender in forbidden_ddr_rgb_offenders():
+        check(
+            False,
+            f"{offender} still contains forbidden DDR RGB/YUV migration pattern. "
+            "DDR frame-store entrypoints and docs must be YUV420p-only; RGB helpers are "
+            "allowed only outside DDR contexts.",
+        )
+
+    rgb_debris = ROOT / "arm/misterplexd/wgate_untracked_rgb_fallback_probe.cpp"
+    check(not rgb_debris.exists(), f"untracked DDR RGB probe already exists: {rgb_debris}")
+    try:
+        rgb_debris.write_text("void probe(){ sendRgb24Frame(buf.data(), w, h, 1); }\n")
+        rel_probe = str(rgb_debris.relative_to(ROOT))
+        check(
+            not any(offender.startswith(f"{rel_probe}:") for offender in forbidden_ddr_rgb_offenders()),
+            "forbidden DDR RGB migration sweep must ignore untracked worktree debris",
+        )
+    finally:
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for pat in forbidden_repo_patterns:
-            check(
-                not pat.search(text),
-                f"{rel} still contains forbidden DDR RGB/YUV migration pattern {pat.pattern!r}. "
-                "DDR frame-store entrypoints and docs must be YUV420p-only; RGB helpers are "
-                "allowed only outside DDR contexts.",
-            )
+            rgb_debris.unlink()
+        except FileNotFoundError:
+            pass
     set_status = strip_comments(read(SET_STATUS_CPP))
     input_mailbox = strip_comments(read(INPUT_MAILBOX_HPP))
     fpga_status_sources = "\n".join([fpga_h, fpga_cpp, push_frame, set_status, input_mailbox])
