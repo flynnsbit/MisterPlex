@@ -1,0 +1,44 @@
+test_plex_web_player_baseline: BEGIN
+Scope: 1 browser session, Plex Web native player, item /library/metadata/3, 35s watch window
+Server reachable; item /library/metadata/3 = The Garden of Delights
+BROWSER navigating to http://192.168.1.41:32400/web/index.html
+  browser console: [appModelInitializer] Failed to read clientID from storage
+  browser console: [appModelInitializer] Failed to read anonymousClientID from storage
+  browser console: [Player] com.apple.fps.1_0 is unavailable: NotSupportedError
+  browser console: [Player] com.microsoft.playready is unavailable: NotSupportedError
+  browser console: [Player] com.widevine.alpha is unavailable: NotSupportedError
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: the server responded with a status of 406 (Not Acceptable)
+  browser console: Failed to load resource: the server responded with a status of 406 (Not Acceptable)
+  browser console: [Connections] All connections to [Bundled] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+BROWSER navigating to details for ratingKey 3
+  browser console: Failed to load resource: net::ERR_ADDRESS_UNREACHABLE
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+BROWSER no play button matched; navigating directly to the playback route
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+
+PLAYER: video_element=false samples=0 currentTime 0 -> 0 (advance 0s)
+SERVER: sessions=0 viewOffset=null
+REFUSE: no <video> element ever appeared — Plex Web UI was not drivable in this environment, so the 0:00 symptom is UNSCORED (not a pass, not a fail). Artefacts in /home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/build/web_baseline

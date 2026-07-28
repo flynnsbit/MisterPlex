@@ -1,0 +1,6 @@
+SELF-TEST: validating the position detector against real Chromium playback
+  playing video : samples=6 advance=5.015s advanced=true
+  PASS playing video detected as ADVANCING
+  paused video  : samples=6 advance=0s advanced=false
+  PASS paused video detected as STUCK (detector is not vacuous)
+SELF-TEST OK: detector separates ADVANCING from STUCK using real playback
