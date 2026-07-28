@@ -2262,3 +2262,87 @@ Clean boot 13:44, DDR zeroed, **no hand-poked memory**, daemon pid 3905 painting
 Either answer beats another baseline, and it needs **no deploy**. I declined to
 say "deploy now" because it would have been false: the deploy happened this
 morning, `fb4bad84` is loaded, and `3b1e8435` is parent-suspended.
+
+## 36. Clean-boot DDR dump: the ARM paints unaided, bank1 is DEAD, and the left edge is provably scanout-side
+
+W-E2E's fifth message claimed a live recording "since 13:11:36" -- a window that
+closed at 13:13:06, over an hour earlier. Fourth stale window in a row:
+
+```
+14:21:21   ps -eo pid,cmd | grep -c [f]fmpeg   -> 0
+           open fds on /dev/video0             -> 0
+```
+
+Rather than issue a fourth identical correction, I answered SS35.4's open question
+with an instrument I own and that does not touch `/dev/video0`.
+
+### 36.1 Pre-declared scope limit
+
+`docs/PHASE_BACKLOG.md:828` states the constraint, and I am bound by it:
+
+> **DDR dump != picture PASS.** `wcap_dump_ddr` proves what the ARM wrote into
+> the frame store; FBAR proves what the FPGA scans out to HDMI. A scanout-side
+> defect (pillar/stride/`PRESENT_END_X`) is invisible to a DDR dump.
+
+**Nothing below is a picture PASS.** It is evidence about what the ARM wrote.
+
+### 36.2 Raw
+
+Clean boot (13:44), no hand-poked memory, daemon pid 3905 painting, 14:23:12:
+
+```
+dumped bank=0 bytes=449280 door_hi=0x2000000f door_lo=0x504c584b sum=33177600  rc=0
+dumped bank=1 bytes=449280 door_hi=0x2000000f door_lo=0x504c584b sum=0         rc=0
+```
+449280 = 624*480*1.5 -> I420 624x480. `door_lo=0x504c584b` = ASCII **"PLXK"**.
+
+```
+=== bank0
+  luma mean=46.91 std=14.52   nonzero_bytes_frac=1.0000
+  plex_orange_px=4800   bbox x234..341 y160..319   centroid=(288,240)
+=== bank1
+  luma mean=0.00 std=0.00     nonzero_bytes_frac=0.0000
+  plex_orange_px=0
+```
+
+### 36.3 Three findings
+
+**(a) The ARM paints the chevron with no manual intervention.** 4800 px of Plex
+brand orange, centred at (288,240) in a 624x480 frame. SS35.4 asked whether the
+chevron appears without the hand-zeroing I did at 12:09. **On the ARM side, yes.**
+
+**(b) bank1 is entirely zero -- the ping-pong is dead.** `nonzero_bytes_frac =
+0.0000`, not merely dark. Only bank0 is ever written. This is an independent,
+non-telemetry corroboration of the frame-store defect: with `free_bank_mask=0`
+and `swap_pending=1` the ARM can only ever write one bank. **If the fabric scans
+out bank1, the screen is black** -- and that is a complete, sufficient mechanism
+for the user's black screen that does not depend on the dead `0x3007F1xx`
+mailbox. It is measured, not inferred from telemetry that no longer publishes.
+
+**(c) The left-edge artifact is definitively scanout-side.**
+
+```
+Scope: DDR bank0 luma plane, clean boot, no intervention
+per-column mean, cols 0..31: 45 45 45 45 ... 45   (all identical)
+cols0-23    mean=45.00  frac_dark(<16)=0.0000
+cols84-199  mean=45.00  frac_dark(<16)=0.0000
+cols300-599 mean=46.37  frac_dark(<16)=0.0000
+```
+
+**Zero dark pixels in cols 0-23 in DDR**, on a build and a day different from the
+11:01 prior art that measured "luma=44 from col 0, NO left-edge clip". Two
+builds, two days, same result. Yet the display shows cols 0-23 fully black and
+26.86% dark in cols 84-200 (W-E2E `4d5f4ff`).
+
+**The ARM's pixels are perfect. The corruption is introduced entirely in the
+fabric readback/scanout path.** W-ARM's `3798793` targets ARM bank selection and
+therefore **cannot** be the fix for the left-edge artifact -- though it may still
+matter for (b). PHASE_BACKLOG:828 predicted exactly this class ("invisible to a
+DDR dump"); here the dump is what proves the defect is *not* in the ARM.
+
+### 36.4 What is still NOT shown
+
+- No claim the screen displays the chevron. That needs a capture. Scope limit.
+- Which bank the fabric scans out is **unmeasured** -- the mailbox is dead
+  (rc=77). (b) is a sufficient mechanism, not a confirmed one.
+- W-SWAP's `|| !slot_keep` fix remains neither validated nor refuted.
