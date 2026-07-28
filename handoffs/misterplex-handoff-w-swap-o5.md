@@ -842,6 +842,71 @@ override, `MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1`. **Do not use it to make a red g
 the process to exit and re-ran clean at rc=0. A refusal is not a failure, and silencing a refusal is
 how a suite stops meaning anything.
 
+## 10i. The telemetry cannot report the failure it instruments (measured)
+
+`w-fit-o5` reported that all four PLXD/PLXS mailbox words on `fb4bad84` were poked to `0xA5A5A5A5`
+and were still unchanged 6 s later, and read that as "the fabric does not run". The mailboxes are
+written by `ddr_frame_store`, which **is** in that bitstream with real resources, so this is not a
+mode-3 optimize-away. I measured what it actually is.
+
+**Structure** (`fpga/Plex_MiSTer/rtl/ddr_frame_store.sv`, byte-identical to the deployed tree over
+the whole clk_ddr block - verified by diff, 0 lines):
+
+- Every mailbox word is emitted from **one place**: the `S_IDLE` arm of the `always @(posedge
+  clk_ddr)` machine, each gated on a specific `poll_div[7:0]` phase (`:931`, `:942`, `:1039`,
+  `:1049`, `:1058`).
+- `poll_div` is incremented at **exactly one site** (`:930`) - inside `S_IDLE`.
+- The four wait states have **no timeout**: `S_LINE_ISSUE` waits on `!DDRAM_BUSY`, `S_LINE_WAIT` and
+  `S_POLL_WAIT` wait on `DDRAM_DOUT_READY`, `S_WRITE_WAIT` waits on `!DDRAM_BUSY` - each an `if`
+  with no `else`, no counter, no watchdog.
+- The heartbeats (`mbox_hb`, `bank_mbox_hb`, ...) *do* free-run outside the case statement, so
+  requests keep being raised. They are simply never granted.
+
+**Measurement** - `tests/unit/test_ddr_frame_store_telemetry_liveness.sh` +
+`tests/rtl/ddr_frame_store_telemetry_liveness_tb.cpp`, reusing the existing warm-reset TB top so no
+RTL changed. Two identical 70-frame windows (longer than the 2^18-cycle heartbeat); the **only**
+difference between them is whether DDR read responses come back:
+
+```
+control                    mailbox_writes_total=639  bank_plxd=321 frame=316 sdram=1 status=1
+                           ddr_reads_issued=20684
+read_response_withheld     mailbox_writes_total=0    ddr_reads_issued=1
+                                                                                        rc=1
+```
+
+One withheld read response. One further read issued, then silence for 268,800 cycles.
+
+**Anti-vacuity, three ways** (the parent's standing check, applied before publishing):
+
+1. The bench refuses to score any mailbox word that did not publish during the control window -
+   `input` is dormant because this bench sends no host command, and is reported as dormant rather
+   than counted as evidence.
+2. It aborts if the control window published nothing, or issued no DDR reads, since then withholding
+   a response could not change anything.
+3. `TELEMETRY_LIVENESS_NO_FAULT=1` runs the identical second window **without** the fault:
+   `638 writes over 4 words, rc=0`. So the red is caused by the injected variable, not by the bench.
+
+**What this means for everyone else's evidence:**
+
+- Dead mailboxes do **not** imply a dead `clk_ddr` domain, and do not imply a dead DDR controller
+  either. A single lost handshake anywhere produces exactly the observed signature.
+- It also does not imply the frame store is livelocked. A parked machine and a running-but-
+  unproductive machine are **indistinguishable through this instrument**.
+- So this observation cannot score my predecessor's `|| !slot_keep` fix in either direction. It
+  remains neither validated nor refuted, and I still claim neither.
+- `disp_bank` frozen + ARM fallback painting on its own timer is consistent with *any* of these.
+
+**Deliberately not registered in `make unit`** while it is red - same reason as
+`check_output_sink_liveness.py`. Registering a failing gate is how allowlists are born. Whoever owns
+the remedy should register it the moment it goes green.
+
+**Remedy shape** (not implemented by me - `ddr_frame_store` is under active regression investigation
+by others and I will not change its semantics underneath them): the telemetry writer must not share
+a liveness dependency with the machine it observes. Either give the four wait states a timeout that
+returns to `S_IDLE` and records the stall in the mailbox payload, or advance `poll_div` unconditionally
+and give the mailbox emitter its own small arbiter. The second is strictly better: a stalled frame
+store would then *publish the stall*, which is the whole point of the instrument.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.

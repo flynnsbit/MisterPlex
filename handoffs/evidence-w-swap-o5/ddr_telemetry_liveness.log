@@ -1,0 +1,16 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_telemetry_liveness'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_telemetry_liveness'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+Scope: ddr_frame_store clk_ddr telemetry liveness; cold reset, one doorbell, 70-frame control sweep (longer than the 2^18-cycle mailbox heartbeat) then an identical sweep with DDR read responses withheld. Counts real DDRAM_WE writes to the five mailbox qwords.
+Audit: this measures publication liveness only. It does not check mailbox payload correctness, does not model DDR controller behaviour beyond the handshake, and cannot distinguish a stalled DDR controller from a stopped clk_ddr on real hardware — it shows only that the two are indistinguishable through this instrument.
+Raw: phase=control mailbox_writes_total=639 bank_plxd=321 frame=316 input=0 sdram=1 status=1 frame_line_writes=0 ddr_reads_issued=20684 debug_state=0x12 frames_done=1 cycle=337933
+Raw: words live in control = bank_plxd frame sdram status | dormant (not scored, no stimulus in this bench) = input
+Raw: phase=read_response_withheld mailbox_writes_total=0 bank_plxd=0 frame=0 input=0 sdram=0 status=0 frame_line_writes=0 ddr_reads_issued=1 debug_state=0x12 frames_done=1 cycle=606733
+Raw: independent variable varied: DDRAM_DOUT_READY withheld for reads issued after the control window; every other stimulus identical.
+Raw: control_mailbox_writes=639 fault_mailbox_writes=0 control_reads=20684 fault_reads=1
+FAIL ddr_frame_store telemetry liveness: one withheld DDR read response permanently silenced every mailbox word that this bench exercises (control=639 over 4 words, fault=0). poll_div advances only in S_IDLE and the four wait states have no timeout, so the instrument goes dark exactly when the frame store stops. Dead mailboxes on hardware therefore do NOT imply a dead clk_ddr domain.
+rc=1

@@ -1,0 +1,17 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_telemetry_liveness'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o ddr_frame_store_telemetry_liveness_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/ddr_frame_store_telemetry_liveness_tb.cpp
+g++    ddr_frame_store_telemetry_liveness_tb.o verilated.o verilated_threads.o Vddr_frame_store_warm_reset_tb__ALL.a    -pthread -lpthread -latomic   -o Vddr_frame_store_warm_reset_tb
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_telemetry_liveness'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.808 s (elab=0.000, cvt=0.000, bld=0.807); cpu 0.001 s on 1 threads; allocated 20.316 MB
+Scope: ddr_frame_store clk_ddr telemetry liveness; cold reset, one doorbell, 70-frame control sweep (longer than the 2^18-cycle mailbox heartbeat) then an identical sweep with DDR read responses withheld. Counts real DDRAM_WE writes to the five mailbox qwords.
+Audit: this measures publication liveness only. It does not check mailbox payload correctness, does not model DDR controller behaviour beyond the handshake, and cannot distinguish a stalled DDR controller from a stopped clk_ddr on real hardware — it shows only that the two are indistinguishable through this instrument.
+Raw: phase=control mailbox_writes_total=639 bank_plxd=321 frame=316 input=0 sdram=1 status=1 frame_line_writes=0 ddr_reads_issued=20684 debug_state=0x12 frames_done=1 cycle=337933
+Raw: words live in control = bank_plxd frame sdram status | dormant (not scored, no stimulus in this bench) = input
+Raw: phase=selfcheck_no_fault mailbox_writes_total=638 bank_plxd=322 frame=314 input=0 sdram=1 status=1 frame_line_writes=0 ddr_reads_issued=20694 debug_state=0x12 frames_done=2 cycle=606733
+Raw: independent variable varied: DDRAM_DOUT_READY withheld for reads issued after the control window; every other stimulus identical.
+Raw: control_mailbox_writes=639 fault_mailbox_writes=638 control_reads=20684 fault_reads=20694
+OK ddr_frame_store telemetry liveness: bench self-check, no fault injected, second window still publishes (638 writes over 4 words).
+rc=0
