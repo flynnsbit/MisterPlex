@@ -1,0 +1,24 @@
+# Modules that are reachable in the checked-in product graph but disappear when
+# a checked-in default-off define is flipped on.  Each line is:
+#   module: category: reason
+#
+# Categories:
+#   stub-only           fallback scaffolding that should disappear with the stub
+#   real-decode-bypass  real decoder/deblock/DPB/memory machinery lost by the flip
+
+decode_stub: stub-only: DECODE_REAL_INTRA=1 replaces the diagnostic fallback stub itself.
+
+h264_chroma_epel_block_8x8: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's chroma interpolation block path.
+h264_chroma_epel_sample: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's chroma interpolation sample primitive.
+h264_deblock_writeback_ctrl: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's deblock/writeback/DPB reference-publication control.
+h264_dpb_i420_addr: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's DPB native-I420 address helper.
+h264_dpb_mb_write_addr: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's macroblock write-address helper.
+h264_dpb_one_ref: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's one-reference DPB fetch path.
+h264_inter_mc_16x16: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's 16x16 inter motion-compensation path.
+h264_inter_mc_part: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's partitioned inter motion-compensation path.
+h264_luma_qpel_block_16x16: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's luma quarter-pel block interpolation path.
+h264_luma_qpel_sample: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's luma quarter-pel sample primitive.
+h264_luma_ref_tap_addr: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's luma reference tap-address helper.
+h264_mv_pred_16x16: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's 16x16 motion-vector predictor.
+h264_mv_pred_part: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's partition motion-vector predictor.
+h264_ref_clamp: real-decode-bypass: DECODE_REAL_INTRA=1 drops decode_stub's reference-window clamp helper.

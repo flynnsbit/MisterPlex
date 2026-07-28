@@ -9,6 +9,9 @@ instantiations from emu, then requires all rtl/ module declarations to be either
 * NONDEFAULT_CONFIG_REACHABLE: reachable only when checked-in product macros
   differ from the QSF defaults, with an explicit reason in
   rtl/nondefault_config_modules.txt; or
+* DEFAULT_OFF_DEFINE_DROPS_*: default-reachable modules lost when a
+  product-default-off define is flipped on, classified in
+  rtl/default_off_drop_modules.txt; or
 * bench-only, with an explicit reason in rtl/bench_only_modules.txt.
 """
 from __future__ import annotations
@@ -26,7 +29,9 @@ PRODUCT_TOP = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
 PRODUCT_QSF = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
 BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
 NONDEFAULT_CONFIG = RTL_DIR / "nondefault_config_modules.txt"
+DEFAULT_OFF_DROPS = RTL_DIR / "default_off_drop_modules.txt"
 PRODUCT_ROOT = "emu"
+DROP_CATEGORIES = {"stub-only", "real-decode-bypass"}
 
 
 @dataclass(frozen=True)
@@ -281,6 +286,33 @@ def parse_reason_file(path: Path, label: str) -> dict[str, str]:
     return entries
 
 
+def parse_drop_file() -> dict[str, tuple[str, str]]:
+    if not DEFAULT_OFF_DROPS.exists():
+        fail(f"missing explicit default-off drop list {DEFAULT_OFF_DROPS.relative_to(ROOT)}")
+    entries: dict[str, tuple[str, str]] = {}
+    for lineno, raw in enumerate(DEFAULT_OFF_DROPS.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [part.strip() for part in line.split(":", 2)]
+        if len(parts) != 3:
+            fail(f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}:{lineno}: expected 'module: category: reason'")
+        name, category, reason = parts
+        if not re.fullmatch(r"[A-Za-z_]\w*", name):
+            fail(f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}:{lineno}: invalid module name {name!r}")
+        if category not in DROP_CATEGORIES:
+            fail(
+                f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}:{lineno}: invalid category {category!r}; "
+                f"expected one of {sorted(DROP_CATEGORIES)}"
+            )
+        if len(reason) < 12:
+            fail(f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}:{lineno}: drop reason is too vague")
+        if name in entries:
+            fail(f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}:{lineno}: duplicate default-off drop module {name}")
+        entries[name] = (category, reason)
+    return entries
+
+
 def instantiation_graph(modules: dict[str, ModuleDef]) -> dict[str, set[str]]:
     graph: dict[str, set[str]] = {name: set() for name in modules}
     known = sorted(modules, key=len, reverse=True)
@@ -365,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     default_modules, default_graph, default_reachable = build_reachable(paths)
     bench_only = parse_reason_file(BENCH_ONLY, "bench-only")
     nondefault_declared = parse_reason_file(NONDEFAULT_CONFIG, "NONDEFAULT_CONFIG_REACHABLE")
+    drop_declared = parse_drop_file()
     variants = nondefault_variants(paths)
     override_macros = parse_define_args(args.define)
     _, override_graph, override_reachable = build_reachable(paths, override_macros)
@@ -384,18 +417,26 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_nondefault:
         fail("NONDEFAULT_CONFIG_REACHABLE list names modules that do not exist: " + ", ".join(unknown_nondefault))
 
+    unknown_drops = sorted(set(drop_declared) - set(rtl_modules))
+    if unknown_drops:
+        fail("default-off drop list names modules that do not exist: " + ", ".join(unknown_drops))
+
     overlap = sorted(set(bench_only) & set(nondefault_declared))
     if overlap:
         fail("modules cannot be both bench-only and NONDEFAULT_CONFIG_REACHABLE: " + ", ".join(overlap))
 
     discovered_nondefault: dict[str, list[str]] = {}
     default_value_by_module: dict[str, list[int | None]] = {}
+    discovered_drops: dict[str, list[str]] = {}
     for macro, default_value, variant_value in variants:
         _, _, enabled_reachable = build_reachable(paths, {macro: variant_value})
         for name in sorted((enabled_reachable - default_reachable) & rtl_module_names):
             value_text = "<undefined>" if variant_value is None else str(variant_value)
             discovered_nondefault.setdefault(name, []).append(f"{macro}={value_text}")
             default_value_by_module.setdefault(name, []).append(default_value)
+        if default_value == 0 and variant_value == 1:
+            for name in sorted((default_reachable - enabled_reachable) & rtl_module_names):
+                discovered_drops.setdefault(name, []).append(f"{macro}=1")
 
     reachable_bench = sorted(name for name in bench_only if name in default_reachable)
     if reachable_bench:
@@ -428,6 +469,23 @@ def main(argv: list[str] | None = None) -> int:
             + ", ".join(stale_nondefault)
         )
 
+    undisclosed_drops = sorted(set(discovered_drops) - set(drop_declared))
+    if undisclosed_drops:
+        for name in undisclosed_drops:
+            macros = ",".join(discovered_drops[name])
+            print(f"DEFAULT_OFF_DEFINE_DROP_UNDECLARED {name} defines={macros}", file=sys.stderr)
+        fail(
+            "modules lost when product-default-off defines are enabled must be classified in "
+            f"{DEFAULT_OFF_DROPS.relative_to(ROOT)}"
+        )
+
+    stale_drops = sorted(set(drop_declared) - set(discovered_drops))
+    if stale_drops:
+        fail(
+            "default-off drop declarations are not dropped by any discovered product-default-off define: "
+            + ", ".join(stale_drops)
+        )
+
     missing = sorted(
         name
         for name in rtl_modules
@@ -456,6 +514,15 @@ def main(argv: list[str] | None = None) -> int:
             prefix = "NONDEFAULT_CONFIG_REACHABLE_MODULE"
         print(f"{prefix} {name} defines={macros}")
 
+    for name in sorted(drop_declared):
+        macros = ",".join(discovered_drops[name])
+        category, _ = drop_declared[name]
+        if category == "stub-only":
+            prefix = "DEFAULT_OFF_DEFINE_DROPS_STUB_ONLY_MODULE"
+        else:
+            prefix = "DEFAULT_OFF_DEFINE_DROPS_REAL_DECODE_MODULE"
+        print(f"{prefix} {name} defines={macros}")
+
     if args.list_reachable:
         for name in sorted(override_reachable & rtl_module_names):
             print(f"REACHABLE_MODULE {name}")
@@ -470,6 +537,8 @@ def main(argv: list[str] | None = None) -> int:
         f"rtl_modules={len(rtl_modules)} "
         f"default_reachable={sum(1 for n in rtl_modules if n in default_reachable)} "
         f"nondefault_config_reachable={len(nondefault_declared)} "
+        f"default_off_dropouts={len(drop_declared)} "
+        f"default_off_real_decode_dropouts={sum(1 for v in drop_declared.values() if v[0] == 'real-decode-bypass')} "
         f"bench_only={len(bench_only)} "
         f"config_reachable={sum(1 for n in rtl_modules if n in override_reachable)} "
         f"nondefault_variants={variant_summary} "
