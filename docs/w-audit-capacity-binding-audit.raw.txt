@@ -1,0 +1,26 @@
+FIT_RPT /home/flynnsbit/Projects/mp-wt-integ/fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/Plex.fit.rpt
+FIT_ENTITY_ROWS 827
+SIBLING_RBF_MD5 fb4bad849ad2db782a5004ce5a3471ce
+DECODE_STUB bits=2097152 m10k=256 dsp=33 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub
+  STUB_DIRECT_CHILD entity=altsyncram bits=2097152 m10k=256 dsp=0 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|altsyncram:dpb_mem_rtl_0
+  STUB_DIRECT_CHILD entity=h264_dequant4x4 bits=0 m10k=0 dsp=32 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_dequant4x4:u_h264_dequant4x4
+STUB_M10K_ACCOUNTING all_stub_m10k_in_single_direct_altsyncram=YES
+ENTITY present_core count=1
+  path=|sys_top|emu:emu|present_core:present bits=225280 m10k=103 dsp=7
+ENTITY ddr_frame_store count=1
+  path=|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore bits=159744 m10k=96 dsp=6
+ENTITY frame_store count=0
+PRESENT_PATH_FIT present_core_to_ddr_frame_store=YES
+LINE_GATE_MODE /home/flynnsbit/Projects/MisterPlex/.worktrees/w-arm-idle-edge/scripts/check_fitted_line_buffer.py mode=644
+LINE_GATE unbound rc=0 flags=UNBOUND,LINE_BUFFER_OK
+  UNBOUND: no --expect-rbf-md5 given; this report may describe a build that is not deployed anywhere
+  MATCH  159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+  LINE_BUFFER_OK predicted=159744 instances=1 rows=827
+LINE_GATE bound_expected rc=0 flags=BOUND,LINE_BUFFER_OK
+  BOUND report -> Plex.rbf md5=fb4bad84
+  MATCH  159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+  LINE_BUFFER_OK predicted=159744 instances=1 rows=827
+LINE_GATE bound_wrong rc=1 flags=BINDING_FAIL,LINE_BUFFER_FAIL
+  BINDING_FAIL sibling Plex.rbf md5=fb4bad84 expected=00000000
+  MATCH  159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+  LINE_BUFFER_FAIL predicted=159744 instances=1 rows=827

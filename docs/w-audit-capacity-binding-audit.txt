@@ -1,0 +1,86 @@
+W-AUDIT CAPACITY / PRESENT-PATH / RBF-BINDING AUDIT
+===================================================
+
+Scope
+-----
+I audited the new capacity ruling and the fitted-line-buffer gate using the
+resident-bitstream fit report:
+
+  /home/flynnsbit/Projects/mp-wt-integ/fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/Plex.fit.rpt
+  sibling RBF md5 fb4bad849ad2db782a5004ce5a3471ce
+
+Reproducer
+----------
+  ./scripts/w_audit_capacity_binding_audit.py
+
+Raw evidence
+------------
+  docs/w-audit-capacity-binding-audit.raw.txt
+
+Findings
+--------
+
+1. COULD NOT BREAK: the "46% free M10K" correction is right as a fit-report
+   fact.
+
+   decode_stub row:
+     bits=2,097,152  M10K=256  DSP=33
+
+   direct resource-bearing children:
+     altsyncram:dpb_mem_rtl_0  bits=2,097,152  M10K=256  DSP=0
+     h264_dequant4x4           bits=0          M10K=0    DSP=32
+
+   Therefore all fitted stub M10K is the single DPB RAM, not painter logic.
+   Retiring decode_stub removes this RAM, but a product decoder still needs a
+   DPB.  The fit report supports the corrected planning rule: do not treat the
+   stub's 256 M10K as MC headroom.
+
+   Narrowing: "product DPB must move to DDR" is an architectural conclusion,
+   not proven by this report alone.  What the report proves is that the promised
+   256-M10K free tenant pool does not exist.
+
+2. COULD NOT BREAK: the present path is not another mode-3 absence in the
+   resident bitstream.
+
+   present_core     count=1  path=|sys_top|emu:emu|present_core:present
+   ddr_frame_store  count=1  path=|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+   frame_store      count=0
+
+   The display path survives fitting with real resources:
+     ddr_frame_store bits=159,744  M10K=96  DSP=6
+
+   So DDR/display silence is behavioural or timing/constraint related, not an
+   optimize-away absence of present_core/ddr_frame_store.
+
+3. BROKE: check_fitted_line_buffer.py is not yet enforcing "RBF-md5 binding is
+   mandatory" at the process-result level.
+
+   Without --expect-rbf-md5 it prints UNBOUND, but still exits 0 and prints
+   LINE_BUFFER_OK:
+
+     LINE_GATE unbound rc=0 flags=UNBOUND,LINE_BUFFER_OK
+     UNBOUND: no --expect-rbf-md5 given; this report may describe a build that
+              is not deployed anywhere
+     MATCH 159744 bits ... ddr_frame_store:fstore
+     LINE_BUFFER_OK predicted=159744 instances=1 rows=827
+
+   Correct binding behaves as expected:
+     --expect-rbf-md5 fb4bad84  -> rc=0, BOUND, LINE_BUFFER_OK
+     --expect-rbf-md5 00000000  -> rc=1, BINDING_FAIL, LINE_BUFFER_FAIL
+
+   Recommendation: if the fleet rule is "unbound report must be UNBOUND, never a
+   pass", then no --expect-rbf-md5 should return a distinct non-pass code (2 or
+   77) and should not print LINE_BUFFER_OK.  Textual UNBOUND is not sufficient;
+   automation and humans both over-weight rc=0.
+
+4. Operational nit: in the w-arm-idle-edge worktree both new scripts have a
+   shebang but file mode 0644, so direct execution fails with Permission denied.
+   Running via python3 works.  If these are to be make/CI gates, set executable
+   mode or invoke them explicitly with python3.
+
+Conclusion
+----------
+The resource decomposition and present-path survival claims stand.  The new
+line-buffer gate is valuable, but its binding discipline is currently weaker
+than the published standard: an unbound report is still a green process exit and
+LINE_BUFFER_OK.
