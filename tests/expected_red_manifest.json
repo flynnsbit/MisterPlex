@@ -96,6 +96,14 @@
       "required_substrings": [
         "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got=38 want=37 residual_bit_offset=296"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_mv_neighbor",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping MV neighbour state must fail the second P16x16 macroblock address/sample scoreboard without changing earlier mutation diagnostics.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(2,0) read_ordinal 21248 got_addr=0x401c want_addr=0x401d"
+      ]
     }
   ]
 }

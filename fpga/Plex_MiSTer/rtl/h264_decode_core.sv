@@ -67,6 +67,9 @@ module h264_decode_core #(
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
     input  wire [2:0]  part_mode,            // partition mode
     input  wire [1:0]  part_idx,             // sub-partition index
+    input  wire signed [15:0] mvd_x_qpel,    // quarter-pel MVD x for current P partition
+    input  wire signed [15:0] mvd_y_qpel,    // quarter-pel MVD y for current P partition
+    input  wire [1:0]  ref_idx_l0,           // reference index for current P partition
 
     // ── Reconstructed macroblock input (from the decode/recon pipeline) ──
     // This is the product handoff into DPB writeback.  It is intentionally
@@ -255,6 +258,7 @@ module h264_decode_core #(
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
     localparam [15:0] CHROMA_H16 = 16'(FRAME_H / 2);
+    localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
 
     reg [7:0]  wb_state;
     reg [8:0]  wb_idx;
@@ -265,10 +269,19 @@ module h264_decode_core #(
     reg [31:0] p16_ref_base_r;
     reg signed [15:0] p16_mv_x_qpel_r;
     reg signed [15:0] p16_mv_y_qpel_r;
+    reg [1:0]  p16_ref_idx_l0_r;
     reg [6:0]  p16_tap_idx;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
+    reg signed [15:0] mv_top_x [0:MB_W-1];
+    reg signed [15:0] mv_top_y [0:MB_W-1];
+    reg [1:0]  mv_top_ref [0:MB_W-1];
+    reg        mv_top_valid [0:MB_W-1];
+    reg signed [15:0] mv_left_x;
+    reg signed [15:0] mv_left_y;
+    reg [1:0]  mv_left_ref;
+    reg        mv_left_valid;
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        dpb_rd_en_r;
@@ -336,6 +349,8 @@ module h264_decode_core #(
     wire [31:0] syntax_mb_y32 = syntax_mb_addr32 / MB_W;
     wire [7:0] syntax_mb_x = syntax_mb_x32[7:0];
     wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
+    wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
+    wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
@@ -345,6 +360,52 @@ module h264_decode_core #(
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
     wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
+
+    wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
+    wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
+    wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x32 + 32'd1 < MB_W) ?
+                                      (syntax_mb_idx + MB_IDX_W'(1)) : syntax_mb_idx;
+    wire syntax_has_top_right = (syntax_mb_x32 + 32'd1 < MB_W) &&
+                                mv_top_valid[syntax_top_right_idx] &&
+                                (mv_top_ref[syntax_top_right_idx] == ref_idx_l0);
+`ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
+    wire mv_avail_a = 1'b0;
+    wire mv_avail_b = 1'b0;
+    wire mv_avail_c = 1'b0;
+`else
+    wire mv_avail_a = syntax_has_left;
+    wire mv_avail_b = syntax_has_top;
+    wire mv_avail_c = syntax_has_top_right;
+`endif
+    wire signed [15:0] syntax_mv_x;
+    wire signed [15:0] syntax_mv_y;
+    wire signed [15:0] syntax_mv_pred_x;
+    wire signed [15:0] syntax_mv_pred_y;
+    wire syntax_mv_skip_zero;
+    h264_mv_pred_part u_product_p16_mv_pred (
+        .part_mode(3'd0),
+        .part_idx(2'd0),
+        .avail_a(mv_avail_a),
+        .avail_b(mv_avail_b),
+        .avail_c(mv_avail_c),
+        .avail_d(1'b0),
+        .mv_a_x(mv_left_x),
+        .mv_a_y(mv_left_y),
+        .mv_b_x(mv_top_x[syntax_mb_idx]),
+        .mv_b_y(mv_top_y[syntax_mb_idx]),
+        .mv_c_x(mv_top_x[syntax_top_right_idx]),
+        .mv_c_y(mv_top_y[syntax_top_right_idx]),
+        .mv_d_x(16'sd0),
+        .mv_d_y(16'sd0),
+        .mvd_x(mvd_x_qpel),
+        .mvd_y(mvd_y_qpel),
+        .p_skip(mb_skip),
+        .pred_x(syntax_mv_pred_x),
+        .pred_y(syntax_mv_pred_y),
+        .mv_x(syntax_mv_x),
+        .mv_y(syntax_mv_y),
+        .skip_zero(syntax_mv_skip_zero)
+    );
     wire [6:0] p16_luma_tap_col7 = p16_tap_idx % 7'd9;
     wire [6:0] p16_luma_tap_row7 = p16_tap_idx / 7'd9;
     wire signed [15:0] p16_luma_tap_col = $signed({9'd0, p16_luma_tap_col7}) - 16'sd4;
@@ -442,10 +503,15 @@ module h264_decode_core #(
             p16_ref_base_r <= 32'd0;
             p16_mv_x_qpel_r <= 16'sd0;
             p16_mv_y_qpel_r <= 16'sd0;
+            p16_ref_idx_l0_r <= 2'd0;
             p16_tap_idx <= 7'd0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
+            mv_left_x <= 16'sd0;
+            mv_left_y <= 16'sd0;
+            mv_left_ref <= 2'd0;
+            mv_left_valid <= 1'b0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             dpb_rd_en_r <= 1'b0;
@@ -469,6 +535,12 @@ module h264_decode_core #(
                 p16_luma_ref[wb_i] <= 8'd0;
             for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1)
                 p16_chroma_ref[wb_i] <= 8'd0;
+            for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
+                mv_top_x[wb_i] <= 16'sd0;
+                mv_top_y[wb_i] <= 16'sd0;
+                mv_top_ref[wb_i] <= 2'd0;
+                mv_top_valid[wb_i] <= 1'b0;
+            end
         end else begin
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
@@ -490,11 +562,12 @@ module h264_decode_core #(
                     wb_base <= dpb_write_base;
                     p16_ref_base_r <= dpb_ref_base;
 `ifdef H264_DECODE_CORE_FAULT_PERTURB_MV
-                    p16_mv_x_qpel_r <= mv_x_qpel + 16'sd2;
+                    p16_mv_x_qpel_r <= (p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x) + 16'sd2;
 `else
-                    p16_mv_x_qpel_r <= mv_x_qpel;
+                    p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
 `endif
-                    p16_mv_y_qpel_r <= mv_y_qpel;
+                    p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
+                    p16_ref_idx_l0_r <= ref_idx_l0;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -547,8 +620,17 @@ module h264_decode_core #(
                 p16_wr_data_r <= clip_u8(p16_recon_sum);
                 if (wb_last_sample) begin
                     wb_state <= ST_IDLE;
-                    if (wb_mb_is_ref)
+                    if (wb_mb_is_ref) begin
                         mb_count_r <= mb_count_r + 16'd1;
+                        mv_top_x[wb_mb_idx] <= p16_mv_x_qpel_r;
+                        mv_top_y[wb_mb_idx] <= p16_mv_y_qpel_r;
+                        mv_top_ref[wb_mb_idx] <= p16_ref_idx_l0_r;
+                        mv_top_valid[wb_mb_idx] <= 1'b1;
+                        mv_left_x <= p16_mv_x_qpel_r;
+                        mv_left_y <= p16_mv_y_qpel_r;
+                        mv_left_ref <= p16_ref_idx_l0_r;
+                        mv_left_valid <= 1'b1;
+                    end
                     frame_done_r <= wb_mb_is_ref && wb_last_mb;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;

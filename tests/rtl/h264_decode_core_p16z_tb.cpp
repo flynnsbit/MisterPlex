@@ -19,18 +19,30 @@ constexpr int C_H = FRAME_H / 2;
 constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
-constexpr int TEST_MB_X = 1;
-constexpr int TEST_MB_Y = 0;
-constexpr int MV_X_QPEL = 2;
 constexpr int MV_Y_QPEL = 0;
-constexpr int RESIDUAL_BIT_OFFSET = 296;
-constexpr int RESIDUAL_BYTE_OFFSET = RESIDUAL_BIT_OFFSET >> 3;
-constexpr int kMeasuredP16RealPCycles = 42884;
+constexpr int kMeasuredP16RealPCycles = 85767;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
 struct Write {
     uint32_t addr = 0;
     uint8_t data = 0;
+};
+
+struct MbCase {
+    int mbX = 0;
+    int mbY = 0;
+    int mvdX = 0;
+    int mvdY = 0;
+    int predX = 0;
+    int predY = 0;
+    int mvX = 0;
+    int mvY = 0;
+    int residualBitOffset = 0;
+};
+
+const std::vector<MbCase> kCases = {
+    {1, 0, 2, 0, 0, 0, 2, 0, 296},
+    {2, 0, 3, 0, 2, 0, 5, 0, 344},
 };
 
 uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
@@ -39,22 +51,22 @@ uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
     return base + Y_BYTES + C_BYTES + static_cast<uint32_t>(y * C_W + x);
 }
 
-uint32_t expectedWriteAddr(int mbX, int mbY, int idx) {
+uint32_t expectedWriteAddr(const MbCase& mb, int idx) {
     if (idx < 256) {
         const int sx = idx & 15;
         const int sy = idx >> 4;
-        return i420Addr(WRITE_BASE, 0, mbX * 16 + sx, mbY * 16 + sy);
+        return i420Addr(WRITE_BASE, 0, mb.mbX * 16 + sx, mb.mbY * 16 + sy);
     }
     if (idx < 320) {
         const int rel = idx - 256;
         const int sx = rel & 7;
         const int sy = rel >> 3;
-        return i420Addr(WRITE_BASE, 1, mbX * 8 + sx, mbY * 8 + sy);
+        return i420Addr(WRITE_BASE, 1, mb.mbX * 8 + sx, mb.mbY * 8 + sy);
     }
     const int rel = idx - 320;
     const int sx = rel & 7;
     const int sy = rel >> 3;
-    return i420Addr(WRITE_BASE, 2, mbX * 8 + sx, mbY * 8 + sy);
+    return i420Addr(WRITE_BASE, 2, mb.mbX * 8 + sx, mb.mbY * 8 + sy);
 }
 
 const char* planeName(int idx) {
@@ -93,12 +105,12 @@ uint8_t refSampleFromAddr(uint32_t addr) {
     return 0;
 }
 
-int residualSample(int idx) {
-    if (idx == 0) return 19;
-    int r = ((idx * 7) % 43) - 21;
+int residualSample(int globalIdx) {
+    if (globalIdx == 0) return 19;
+    int r = ((globalIdx * 7) % 43) - 21;
     if (r == 0) r = 11;
-    if (idx == 5) r = 35;
-    if (idx == 6) r = -35;
+    if (globalIdx == 5) r = 35;
+    if (globalIdx == 6) r = -35;
     return r;
 }
 
@@ -130,17 +142,17 @@ int halfC(const uint8_t ref[9][9], int rowoff, int coloff) {
     return clip1((sum + 512) >> 10);
 }
 
-uint8_t lumaPred(int sampleIdx, int mvX, int mvY) {
+uint8_t lumaPred(const MbCase& mb, int sampleIdx) {
     const int sx = sampleIdx & 15;
     const int sy = sampleIdx >> 4;
-    const int baseX = TEST_MB_X * 16 + sx + (mvX >> 2);
-    const int baseY = TEST_MB_Y * 16 + sy + (mvY >> 2);
+    const int baseX = mb.mbX * 16 + sx + (mb.mvX >> 2);
+    const int baseY = mb.mbY * 16 + sy + (mb.mvY >> 2);
     uint8_t ref[9][9]{};
     for (int r = 0; r < 9; ++r) {
         for (int c = 0; c < 9; ++c) ref[r][c] = refSample(0, baseX + c - 4, baseY + r - 4);
     }
-    const int fx = mvX & 3;
-    const int fy = mvY & 3;
+    const int fx = mb.mvX & 3;
+    const int fy = mb.mvY & 3;
     switch ((fy << 2) | fx) {
     case 0x0: return ref[4][4];
     case 0x1: return avg2(ref[4][4], halfH(ref, 0, 0));
@@ -161,15 +173,15 @@ uint8_t lumaPred(int sampleIdx, int mvX, int mvY) {
     }
 }
 
-uint8_t chromaPred(int sampleIdx, int mvX, int mvY) {
+uint8_t chromaPred(const MbCase& mb, int sampleIdx) {
     const int plane = (sampleIdx < 320) ? 1 : 2;
     const int rel = (sampleIdx < 320) ? sampleIdx - 256 : sampleIdx - 320;
     const int sx = rel & 7;
     const int sy = rel >> 3;
-    const int baseX = TEST_MB_X * 8 + sx + (mvX >> 3);
-    const int baseY = TEST_MB_Y * 8 + sy + (mvY >> 3);
-    const int fx = mvX & 7;
-    const int fy = mvY & 7;
+    const int baseX = mb.mbX * 8 + sx + (mb.mvX >> 3);
+    const int baseY = mb.mbY * 8 + sy + (mb.mvY >> 3);
+    const int fx = mb.mvX & 7;
+    const int fy = mb.mvY & 7;
     const int p00 = refSample(plane, baseX, baseY);
     const int p10 = refSample(plane, baseX + 1, baseY);
     const int p01 = refSample(plane, baseX, baseY + 1);
@@ -179,23 +191,23 @@ uint8_t chromaPred(int sampleIdx, int mvX, int mvY) {
     return static_cast<uint8_t>(sum >> 6);
 }
 
-uint8_t predSample(int idx, int mvX = MV_X_QPEL, int mvY = MV_Y_QPEL) {
-    return (idx < 256) ? lumaPred(idx, mvX, mvY) : chromaPred(idx, mvX, mvY);
-}
+uint8_t predSample(const MbCase& mb, int idx) { return (idx < 256) ? lumaPred(mb, idx) : chromaPred(mb, idx); }
+uint8_t expectedRecon(const MbCase& mb, int globalIdx, int localIdx) { return clipU8(predSample(mb, localIdx) + residualSample(globalIdx)); }
 
-uint8_t expectedRecon(int idx) { return clipU8(predSample(idx) + residualSample(idx)); }
+std::size_t readsPerMb() { return 256 * 81 + 128 * 4; }
+std::size_t expectedReadCount() { return readsPerMb() * kCases.size(); }
 
-uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
+uint32_t expectedReadAddr(const MbCase& mb, int localOrdinal) {
     int idx = 0;
     int tap = 0;
-    std::size_t cur = 0;
+    int cur = 0;
     for (idx = 0; idx < 384; ++idx) {
         const int taps = (idx < 256) ? 81 : 4;
-        if (ord < cur + static_cast<std::size_t>(taps)) {
-            tap = static_cast<int>(ord - cur);
+        if (localOrdinal < cur + taps) {
+            tap = localOrdinal - cur;
             break;
         }
-        cur += static_cast<std::size_t>(taps);
+        cur += taps;
     }
     if (idx >= 384) return 0;
     if (idx < 256) {
@@ -203,20 +215,24 @@ uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
         const int sy = idx >> 4;
         const int col = tap % 9;
         const int row = tap / 9;
-        const int x = clampInt(TEST_MB_X * 16 + sx + (MV_X_QPEL >> 2) + col - 4, 0, FRAME_W - 1);
-        const int y = clampInt(TEST_MB_Y * 16 + sy + (MV_Y_QPEL >> 2) + row - 4, 0, FRAME_H - 1);
+        const int x = clampInt(mb.mbX * 16 + sx + (mb.mvX >> 2) + col - 4, 0, FRAME_W - 1);
+        const int y = clampInt(mb.mbY * 16 + sy + (mb.mvY >> 2) + row - 4, 0, FRAME_H - 1);
         return i420Addr(REF_BASE, 0, x, y);
     }
     const int plane = (idx < 320) ? 1 : 2;
     const int rel = (idx < 320) ? idx - 256 : idx - 320;
     const int sx = rel & 7;
     const int sy = rel >> 3;
-    const int x = clampInt(TEST_MB_X * 8 + sx + (MV_X_QPEL >> 3) + (tap & 1), 0, C_W - 1);
-    const int y = clampInt(TEST_MB_Y * 8 + sy + (MV_Y_QPEL >> 3) + ((tap >> 1) & 1), 0, C_H - 1);
+    const int x = clampInt(mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1), 0, C_W - 1);
+    const int y = clampInt(mb.mbY * 8 + sy + (mb.mvY >> 3) + ((tap >> 1) & 1), 0, C_H - 1);
     return i420Addr(REF_BASE, plane, x, y);
 }
 
-std::size_t expectedReadCount() { return 256 * 81 + 128 * 4; }
+uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
+    const std::size_t mbIdx = ord / readsPerMb();
+    const int localOrdinal = static_cast<int>(ord % readsPerMb());
+    return expectedReadAddr(kCases.at(mbIdx), localOrdinal);
+}
 
 class Sim {
 public:
@@ -261,15 +277,18 @@ void clearInputs(Sim& s) {
     s.top.mb_type_valid = 0;
     s.top.mb_type = 0;
     s.top.mb_skip = 0;
-    s.top.mb_residual_bit_offset = RESIDUAL_BIT_OFFSET;
+    s.top.mb_residual_bit_offset = 0;
     s.top.p16_zero_mv_valid = 0;
     s.top.p16_mb_x = 0;
     s.top.p16_mb_y = 0;
     s.top.p16_mb_is_ref = 0;
     s.top.dpb_ref_base = REF_BASE;
     s.top.dpb_write_base = WRITE_BASE;
-    s.top.p16_mv_x_qpel = MV_X_QPEL;
-    s.top.p16_mv_y_qpel = MV_Y_QPEL;
+    s.top.p16_mv_x_qpel = 0;
+    s.top.p16_mv_y_qpel = 0;
+    s.top.p16_mvd_x_qpel = 0;
+    s.top.p16_mvd_y_qpel = 0;
+    s.top.p16_ref_idx_l0 = 0;
     s.top.dpb_rd_valid = 0;
     s.top.dpb_rd_data = 0;
     for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = 0;
@@ -288,26 +307,37 @@ void reset(Sim& s) {
     s.tick();
 }
 
-void driveP16(Sim& s) {
-    s.top.first_mb_in_slice = TEST_MB_Y * MB_W + TEST_MB_X;
+void driveSliceStart(Sim& s) {
+    s.top.first_mb_in_slice = kCases.front().mbY * MB_W + kCases.front().mbX;
     s.top.slice_start = 1;
     s.tick();
     s.top.slice_start = 0;
     s.tick();
+}
 
-    for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = residualSample(i);
+void loadResiduals(Sim& s, int mbOrdinal) {
+    const int base = mbOrdinal * 384;
+    for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = residualSample(base + i);
     for (int i = 0; i < 64; ++i) {
-        s.top.p16_residual_u[i] = residualSample(256 + i);
-        s.top.p16_residual_v[i] = residualSample(320 + i);
+        s.top.p16_residual_u[i] = residualSample(base + 256 + i);
+        s.top.p16_residual_v[i] = residualSample(base + 320 + i);
     }
-    s.top.p16_mb_x = TEST_MB_X;
-    s.top.p16_mb_y = TEST_MB_Y;
+}
+
+void driveMb(Sim& s, int mbOrdinal) {
+    const MbCase& mb = kCases.at(mbOrdinal);
+    loadResiduals(s, mbOrdinal);
+    s.top.p16_mb_x = mb.mbX;
+    s.top.p16_mb_y = mb.mbY;
     s.top.p16_mb_is_ref = 1;
     s.top.dpb_ref_base = REF_BASE;
     s.top.dpb_write_base = WRITE_BASE;
-    s.top.p16_mv_x_qpel = MV_X_QPEL;
-    s.top.p16_mv_y_qpel = MV_Y_QPEL;
-    s.top.mb_residual_bit_offset = RESIDUAL_BIT_OFFSET;
+    s.top.p16_mv_x_qpel = mb.mvX;
+    s.top.p16_mv_y_qpel = mb.mvY;
+    s.top.p16_mvd_x_qpel = mb.mvdX;
+    s.top.p16_mvd_y_qpel = mb.mvdY;
+    s.top.p16_ref_idx_l0 = 0;
+    s.top.mb_residual_bit_offset = mb.residualBitOffset;
     s.top.mb_type = 0;
     s.top.mb_skip = 0;
     s.top.mb_type_valid = 1;
@@ -315,89 +345,100 @@ void driveP16(Sim& s) {
     s.top.mb_type_valid = 0;
 }
 
-bool waitForIdle(Sim& s) {
+bool waitForWrites(Sim& s, std::size_t wantWrites) {
     for (int i = 0; i < kP16RealPTimeoutCycles; ++i) {
-        if (!s.top.busy && s.writes.size() >= 384) return true;
+        if (!s.top.busy && s.writes.size() >= wantWrites) return true;
         s.tick();
     }
-    return !s.top.busy && s.writes.size() >= 384;
+    return !s.top.busy && s.writes.size() >= wantWrites;
 }
 
 int checkScoreboard(const Sim& s) {
     const std::size_t wantReads = expectedReadCount();
+    const std::size_t wantWrites = kCases.size() * 384;
     if (s.reads.size() != wantReads) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read count "
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: read count "
                   << s.reads.size() << " want=" << wantReads << "\n";
         return 1;
     }
-    if (s.writes.size() != 384) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) write count "
-                  << s.writes.size() << " want=384\n";
+    if (s.writes.size() != wantWrites) {
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: write count "
+                  << s.writes.size() << " want=" << wantWrites << "\n";
         return 1;
     }
-    if (s.rbspRequests.size() != 1) {
-        std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp request count "
-                  << s.rbspRequests.size() << " want=1\n";
+    if (s.rbspRequests.size() != kCases.size()) {
+        std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: rbsp request count "
+                  << s.rbspRequests.size() << " want=" << kCases.size() << "\n";
         return 1;
     }
-    if (s.rbspRequests.at(0) != RESIDUAL_BYTE_OFFSET) {
-        std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got="
-                  << s.rbspRequests.at(0) << " want=" << RESIDUAL_BYTE_OFFSET
-                  << " residual_bit_offset=" << RESIDUAL_BIT_OFFSET << "\n";
-        return 1;
+    for (std::size_t mb = 0; mb < kCases.size(); ++mb) {
+        const int wantReq = kCases.at(mb).residualBitOffset >> 3;
+        if (s.rbspRequests.at(mb) != wantReq) {
+            std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(" << kCases.at(mb).mbX
+                      << "," << kCases.at(mb).mbY << ") rbsp_request_offset got="
+                      << s.rbspRequests.at(mb) << " want=" << wantReq
+                      << " residual_bit_offset=" << kCases.at(mb).residualBitOffset << "\n";
+            return 1;
+        }
     }
     for (std::size_t i = 0; i < s.reads.size(); ++i) {
         const uint32_t wantReadAddr = expectedReadAddrForOrdinal(i);
         if (s.reads.at(i) != wantReadAddr) {
-            std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal " << i
+            const MbCase& mb = kCases.at(i / readsPerMb());
+            std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
+                      << ") read_ordinal " << i
                       << " got_addr=0x" << std::hex << s.reads.at(i)
                       << " want_addr=0x" << wantReadAddr << std::dec << "\n";
             return 1;
         }
     }
     int clipped = 0;
-    for (int i = 0; i < 384; ++i) {
-        const Write& w = s.writes.at(i);
-        const uint32_t wantWriteAddr = expectedWriteAddr(TEST_MB_X, TEST_MB_Y, i);
-        if (w.addr != wantWriteAddr) {
-            std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) write sample " << i
-                      << " plane=" << planeName(i)
-                      << " got_addr=0x" << std::hex << w.addr
-                      << " want_addr=0x" << wantWriteAddr << std::dec << "\n";
-            return 1;
-        }
-        const int pred = predSample(i);
-        const int residual = residualSample(i);
-        const uint8_t want = clipU8(pred + residual);
-        if (pred + residual < 0 || pred + residual > 255) ++clipped;
-        if (w.data != want) {
-            std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample " << i
-                      << " plane=" << planeName(i)
-                      << " got=" << int(w.data)
-                      << " want=" << int(want)
-                      << " pred=" << pred
-                      << " residual=" << residual << "\n";
-            return 1;
+    for (std::size_t mbIdx = 0; mbIdx < kCases.size(); ++mbIdx) {
+        const MbCase& mb = kCases.at(mbIdx);
+        for (int local = 0; local < 384; ++local) {
+            const int global = static_cast<int>(mbIdx * 384 + local);
+            const Write& w = s.writes.at(global);
+            const uint32_t wantWriteAddr = expectedWriteAddr(mb, local);
+            if (w.addr != wantWriteAddr) {
+                std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
+                          << ") write sample " << local << " plane=" << planeName(local)
+                          << " got_addr=0x" << std::hex << w.addr
+                          << " want_addr=0x" << wantWriteAddr << std::dec << "\n";
+                return 1;
+            }
+            const int pred = predSample(mb, local);
+            const int residual = residualSample(global);
+            const uint8_t want = expectedRecon(mb, global, local);
+            if (pred + residual < 0 || pred + residual > 255) ++clipped;
+            if (w.data != want) {
+                std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
+                          << ") sample " << local << " plane=" << planeName(local)
+                          << " got=" << int(w.data)
+                          << " want=" << int(want)
+                          << " pred=" << pred
+                          << " residual=" << residual << "\n";
+                return 1;
+            }
         }
     }
     if (s.frameDoneSeen) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) nonterminal frame_done asserted\n";
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: nonterminal frame_done asserted\n";
         return 1;
     }
-    if (s.top.frame_mb_count != 1) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) frame_mb_count="
-                  << int(s.top.frame_mb_count) << " want=1\n";
+    if (s.top.frame_mb_count != kCases.size()) {
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: frame_mb_count="
+                  << int(s.top.frame_mb_count) << " want=" << kCases.size() << "\n";
         return 1;
     }
     if (clipped < 2) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) clipped_samples="
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: clipped_samples="
                   << clipped << " want>=2\n";
         return 1;
     }
-    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: mb=(1,0) mv_qpel=(2,0) "
-              << "384 exact clipped pred+residual samples landed at DPB addresses; reads="
+    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor path "
+              << "384x2 exact clipped pred+residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
-              << " rbsp_request_offset=" << s.rbspRequests.at(0)
+              << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
               << "; nonterminal frame_done stayed low\n";
     return 0;
@@ -410,10 +451,13 @@ int main(int argc, char** argv) {
 
     Sim s;
     reset(s);
-    driveP16(s);
-    if (!waitForIdle(s)) {
-        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) did not return idle\n";
-        return 1;
+    driveSliceStart(s);
+    for (std::size_t i = 0; i < kCases.size(); ++i) {
+        driveMb(s, static_cast<int>(i));
+        if (!waitForWrites(s, (i + 1) * 384)) {
+            std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: MB " << i << " did not return idle\n";
+            return 1;
+        }
     }
     return checkScoreboard(s);
 }
