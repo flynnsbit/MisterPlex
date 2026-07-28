@@ -726,3 +726,114 @@ from `parent/integ-hour27` `a8aa8eb`. **I did not run them.** The script states 
 uses the remote Quartus slot and respects the one-at-a-time rule; Quartus is
 w-fit-o5's sole exclusive token and I could not confirm the slot was free.
 **Requested from w-fit-o5 rather than taken.** No A&S claim is made on this branch.
+
+## Addendum 6 — failure mode 3 cured at the real dead end; first real-synthesis CAVLC
+
+Branch `w-decode-o5`. Baseline `6ccb335`. All numbers below are **measured**, by
+Quartus Analysis & Synthesis (no fit, no bitstream, no device).
+
+### The dead end was one level above where everyone was looking
+
+Parent and `w-fit-o5` located failure mode 3 correctly (core elaborated then
+optimized away) and pointed at `stream_path`. The instantiation there is fine.
+The actual dead end is in **`Plex.sv`**, which contains **zero occurrences of
+`luma4x4`**: the core's outputs reach `stream_path`'s port boundary and are then
+left **unconnected at the `emu` instantiation**. `(* keep *) wire _keep` cannot
+save it because `_keep` is itself never read.
+
+### The fix, and exactly what it is not
+
+`decode_stub` drives `recon_dbg` bits 0,3,4,5,6,7 only (`recon_dbg_comb`), so
+bits **2:1 are free by construction**. `stream_path` now publishes two sticky
+core-liveness bits there:
+
+    core -> recon_dbg[2:1] -> Plex.sv st_recon_dbg_sticky -> status_telem -> DDR
+
+This is **INSTRUMENTATION, not presentation.** It publishes whether the product
+core produced residual in silicon. **It does not put a pixel on screen. Zero
+frames have been decoded and displayed by the FPGA.**
+
+The `0x79` deblock mask and the `0x14` residual csum golden are untouched by
+construction. Measured side effect: `recon_dbg` went `0x79` -> `0x7f` in
+`test_stream_path_deblock_integration`, i.e. **both new bits set** — the core's
+CAVLC really is producing nonzero coefficients on that fixture.
+
+### Gate step 3 — before/after on the same toolchain (this IS the red/green pair)
+
+| | `6ccb335` (before) | after |
+|---|---|---|
+| `check_prefit_elaboration.sh` | **rc=1** | **rc=0** |
+| `h264_decode_core` | **ABSENT** | **PRESENT** `parents=stream_path` |
+| entity rows | 786 | 789 |
+
+Survivors under the product core (`--require`, same report):
+
+    PRESENT h264_decode_core              subtree_rows=3  parents=stream_path
+    PRESENT h264_luma4x4_residual_source  subtree_rows=2  parents=h264_decode_core
+    PRESENT h264_cavlc_residual_block     subtree_rows=1  parents=h264_luma4x4_residual_source
+    ABSENT  h264_decode_top / h264_dpb_one_ref / h264_inter_mc_part / h264_deblock_writeback_ctrl
+
+**`subtree_rows=3`. Only the CAVLC chain that feeds my two bits survived.** A
+consumer rescues exactly its own fan-in cone and nothing else. Every other
+subsystem still needs its own consumer. This is a mechanism proof and a
+template, not a decoder.
+
+It does however settle mission item 3: `h264_cavlc_residual_block` — reachable
+in *neither* historical config — is now **present in real synthesis under the
+product core, not via `decode_stub`**. Denominator unchanged: this is first-MB
+staging, 1 of **1170** MBs/frame.
+
+### Ruling 3 condition 3 (capacity) — GREEN, measured
+
+| | `2f165ed` | fitted `fb4bad84` | **`w-decode-o5`** |
+|---|---|---|---|
+| block memory bits | 2,969,677 | 2,970,061 | **872,909** |
+| `decode_stub` subtree rows | 61 | — | **20** |
+
+**−2,096,768 bits**, essentially exactly the 2,097,152 `w-fit-o5` attributed to
+`decode_stub`. Quartus has now confirmed the surgery in `6949e7e`.
+
+Caveat for `w-swap-o5`: 872,909 is still a *collapsed-decoder* number. The core
+survives at `subtree_rows=3`. Capacity will rise as each subsystem gains a
+consumer. **Do not capacity-plan MC/DPB against 872,909.** The DPB must be
+DDR-backed regardless.
+
+### Third harness correction — my sweep denominator was wrong AGAIN
+
+I previously published **102/102**, having already withdrawn **53/53**. Both
+were measured on truncated gate lists. The true denominator is **123**.
+
+Two further bugs, both mine: `grep -E '^\t'` matched a literal backslash-t
+(0 gates ran, and it exited *quietly*), and `UNIT_ANNEXB`'s own value contains
+`$(ROOT)`, so substituting it re-introduced an unexpanded token.
+
+The root cause of all three is the same: the sweep lived in gitignored `build/`,
+so it was rewritten from memory each time. It is now committed as
+**`scripts/sweep_gates.sh`**, derives recipe line ranges instead of hard-coding
+them, and **fails when `total==0`** so a truncated list can never again read as
+a pass. Current: **123/123, 0 fail, 0 skip.**
+
+### Standing evidence
+
+    gate1 check_qip_coverage.py                        rc=0  product=37 compiled=35
+    gate2 --root emu --require h264_decode_core        rc=0  product_reachable=49 diagnostic_debt=2
+          --root h264_decode_core --require cavlc      rc=0  product_reachable=23 diagnostic_debt=0
+    RED   --root emu --require h264_luma_qpel_sample   rc=1  reachable_only_via_diagnostic_root=1
+          check_onchip_ram_budget.py                   rc=0  block_ram_bits=86,016 known_over_budget=0
+    gate3 check_prefit_elaboration.sh                  rc=0  h264_decode_core PRESENT
+
+`h264_decode_skeleton` remains ALLOWED_ABSENT: retired lineage, not a product
+module — the fourth dead lineage the parent asked me to identify.
+
+### Still blocked
+
+**Blocker A stands: `h264_decode_core` has no pixel-presentation output port.**
+`decode_stub` remains the sole driver of `fs_wr_en/fs_wr_pixel/fs_wr_reset/
+fs_swap`. It cannot be retired until the core can paint. Its cost is now 20
+entity rows rather than 46% of the device, so it is no longer a capacity
+emergency — but it is still the reason there is no picture.
+
+**Blocker B (unchanged, Addendum 5): pulse-vs-level.** The core emits per-block
+pulses; `decode_stub` level-samples `residual_*`. Five configurations inverted
+perfectly between the deblock gate and the three recon gates. That is a design
+change to the core's output interface, not a wiring fix.

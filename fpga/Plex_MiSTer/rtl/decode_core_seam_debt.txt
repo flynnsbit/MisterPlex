@@ -71,6 +71,29 @@ mb_qp_delta: tied to 6'sd0; mb_qp_delta is not parsed, so per-MB QP cannot track
 # Every one of these is mentioned only in stream_path `_keep` anti-prune wire.
 # They have no product consumer, so the core behaviour cannot affect the
 # picture, the DPB, or any downstream logic.
+#
+# W-DECODE-O5 measured why this list is not merely untidy but fatal: the
+# `_keep` wire is ITSELF never read (stream_path.sv) and Plex.sv contains zero
+# occurrences of "luma4x4", so the core's outputs terminated at the stream_path
+# port boundary and went nowhere.  Quartus elaborated h264_decode_core and then
+# DELETED it for contributing zero resources (failure mode 3).  Measured on this
+# branch by Quartus Analysis & Synthesis:
+#   before (6ccb335): h264_decode_core ABSENT, 786 entity rows       rc=1
+#   after            : h264_decode_core PRESENT subtree_rows=3       rc=0
+# An entry in this list is therefore a report that a subsystem IS BEING DELETED
+# FROM THE CHIP, not a note to tidy up later.  Do not bulk-accept.
+#
+# NOW OBSERVED (removed from the debt list): luma4x4_valid and
+# luma4x4_coeff_zigzag are consumed by the core-liveness bits published on
+# recon_dbg[2:1], which reach a pin via Plex.sv status_telem -> DDR.  That
+# consumer is what pulled h264_luma4x4_residual_source and
+# h264_cavlc_residual_block into real synthesis for the first time.  It is
+# INSTRUMENTATION, not presentation -- no pixel is produced by it.
+#
+# The entries below remain unobserved and are still deleted from the chip.
+# Each one needs its OWN consumer; observing luma4x4 did not save them.
+# Confirmed ABSENT in the same A&S run: h264_decode_top, h264_dpb_one_ref,
+# h264_inter_mc_part, h264_deblock_writeback_ctrl.
 dpb_wr_en: consumed only by the _keep anti-prune wire; no DPB memory is attached.
 dpb_wr_addr: consumed only by the _keep anti-prune wire.
 dpb_wr_data: consumed only by the _keep anti-prune wire.

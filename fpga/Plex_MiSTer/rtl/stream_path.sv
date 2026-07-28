@@ -533,7 +533,7 @@ module stream_path #(
 			.slice_qp(sl_place_qp),
 			.residual_coeff(sl_place_coeff),
 			.recon_sig(recon_sig),
-			.recon_dbg(recon_dbg),
+			.recon_dbg(stub_recon_dbg),
 			.recon_dbg_valid(recon_dbg_valid),
 			.recon_valid(recon_valid),
 			.wr_en(fs_wr_en),
@@ -545,6 +545,44 @@ module stream_path #(
 		);
 		end
 	endgenerate
+
+	// --- Product core liveness observable (W-DECODE-O5; cures failure mode 3) ---
+	// The core's luma4x4_* outputs reached this module's port boundary and were
+	// then left UNCONNECTED at the emu (Plex.sv) instantiation -- Plex.sv contains
+	// zero occurrences of "luma4x4".  Quartus therefore elaborated
+	// h264_decode_core and deleted it as zero-resource dead logic.  The (* keep *)
+	// _keep wire below cannot prevent that because _keep is itself never read.
+	//
+	// These two sticky bits give the core's CAVLC output the first observable
+	// path that actually reaches a pin:
+	//   core -> recon_dbg[2:1] -> Plex.sv st_recon_dbg_sticky -> status_telem -> DDR
+	//
+	// HONESTY: this is INSTRUMENTATION, not presentation.  It publishes whether
+	// the product core produced residual in silicon; it does not put a pixel on
+	// screen.  recon_dbg[2:1] are the only two bits decode_stub never drives
+	// (see decode_stub.sv recon_dbg_comb: bits 0,3,4,5,6,7 only), so the 0x79
+	// deblock mask and the 0x14 residual csum golden are untouched by construction.
+	wire [7:0] stub_recon_dbg;
+	reg core_live_pulse, core_live_nz;
+	reg core_live_nz_comb;
+	integer core_live_i;
+	always @* begin
+		core_live_nz_comb = 1'b0;
+		for (core_live_i = 0; core_live_i < 16; core_live_i = core_live_i + 1)
+			if (luma4x4_coeff_zigzag[core_live_i] != 16'sd0)
+				core_live_nz_comb = 1'b1;
+	end
+	always @(posedge clk) begin
+		if (reset | flush) begin
+			core_live_pulse <= 1'b0;
+			core_live_nz    <= 1'b0;
+		end else if (luma4x4_valid) begin
+			core_live_pulse <= 1'b1;
+			if (core_live_nz_comb)
+				core_live_nz <= 1'b1;
+		end
+	end
+	assign recon_dbg = stub_recon_dbg | {5'b0, core_live_nz, core_live_pulse, 1'b0};
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
