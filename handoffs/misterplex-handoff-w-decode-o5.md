@@ -648,3 +648,81 @@ already carried both files.
 The stub is the only thing that can drive the frame store. Retiring it outright
 requires adding presentation outputs to the core. That is the next mission, and
 it is a design change, not a deletion.
+
+---
+
+## Addendum 5 — the dead core: confirmed on this branch, remedy attempted, and the precise blocker
+
+**Branch `w-decode-o5`.** w-fit-o5's diagnosis (`a8aa8eb`, `parent/integ-hour27`) is
+**CONFIRMED on this branch**, not merely inherited:
+
+```
+stream_path.sv  (* keep = 1 *) wire _keep = ... 80+ terms including every
+                h264_decode_core output ...
+grep for any READ of _keep  ->  no matches
+```
+**The anti-prune wire is assigned and never read, so it keeps nothing.** Same defect
+w-fit measured at `h264_decode_core.sv:1309` (`_keep_decode_core_inputs`). This is
+failure mode 3: *compiled, instantiated, elaborated, then optimized away as
+zero-resource dead logic* — invisible to every source-level graph.
+
+### What is NOT true of this branch (differs from `2f165ed`, which w-fit measured)
+w-fit reported the core's inputs tied to constants (`core_rbsp_byte` all `8'd0`).
+On this branch the input side is already real: `.rbsp_byte(sl_rbsp)`,
+`.rbsp_bit_len(sl_rbsp_bit_len)`, real slice/cbp/i4 staging. The *output* side is
+the remaining problem, exactly as w-fit said.
+
+### ROOT CAUSE — two parallel CAVLC paths
+`sl_place_*` (slice_hdr_parser's held registers) feeds the picture.
+`luma4x4_*` (h264_decode_core) feeds **only** `_keep`. The core is a duplicate of a
+path that already works, so it contributes nothing and is deleted.
+
+### Remedy attempted, and why it is not shipped
+I routed the painter's residual onto the core (`decode_stub.residual_*` <- core).
+Port widths match **exactly** — this is plainly the seam the core was built for.
+Five configurations were measured:
+
+| # | residual_ok | data | clear policy | deblock | 3 recon gates |
+|---|---|---|---|---|---|
+| 1 | `luma4x4_source_ok` | raw pulses | n/a | **FAIL** | PASS |
+| 2 | held reg | held, block0 | `reset\|flush\|vcl_pulse` | **FAIL** | PASS |
+| 3 | held reg | held, every pulse | `reset\|flush` | PASS | **FAIL** |
+| 4 | held reg | held, block0 | `reset\|flush` | PASS | **FAIL** |
+| 5 | `luma4x4_source_ok` | held | `reset\|flush` | PASS | **FAIL** |
+
+**Perfectly inverted, in every combination.** `test_stream_path_deblock_integration`
+requires a *held level* (it samples `recon_dbg & 0x79` after the slice); the three
+recon gates require the *raw pulse timing*. `decode_stub` level-samples `residual_*`
+when it leaves `PH_WAIT`, while the core emits per-block pulses.
+
+**Reverted. The tree is 102/102 rc=0, 0 skips.** I will not ship a change that
+regresses a peer's gate on a hypothesis.
+
+### Measurements worth keeping
+- `recon_dbg=0x70` in config 2 is **entirely** the inter-flag OR term
+  (`{1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0}`); the residual path
+  contributed nothing. Bits 4/5/6 of `recon_dbg` are **ambiguous** — they are driven
+  by both `recon_dbg_comb` and the inter flags. Anyone reading them as residual
+  evidence is reading a signal with two sources.
+- The core produces **16** luma4x4 pulses on the multinal fixture but only **2** on
+  the real-intra fixture, so any capture policy keyed on a specific block index is
+  fixture-dependent.
+- In config 5 the first 4x4 reached `non128_first4x4=16` — the core *can* drive real
+  pixels; the obstacle is handshake shape, not data.
+
+### PRECISE BLOCKER (as the house rule requires)
+> `h264_decode_core` exposes its residual as a **per-block pulse stream**
+> (`luma4x4_valid` + data valid only during the pulse). `decode_stub` consumes
+> residual as a **held level**, sampled once per MB at `PH_WAIT` exit. Until one of
+> the two changes shape — either the core gains a held per-MB residual output, or the
+> painter gains a pulse-collecting input stage that satisfies both the deblock gate's
+> post-slice sampling and the recon gates' pulse timing — consuming the core's
+> residual regresses one gate set or the other. This is a **design change to the
+> core's output interface**, not a wiring fix.
+
+### NOT verified: pre-fit elaboration
+`scripts/check_prefit_elaboration.sh` / `check_map_hierarchy.py` are imported here
+from `parent/integ-hour27` `a8aa8eb`. **I did not run them.** The script states it
+uses the remote Quartus slot and respects the one-at-a-time rule; Quartus is
+w-fit-o5's sole exclusive token and I could not confirm the slot was free.
+**Requested from w-fit-o5 rather than taken.** No A&S claim is made on this branch.
