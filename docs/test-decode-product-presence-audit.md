@@ -1647,3 +1647,86 @@ Neither was given an exemption. An `--allow-unbound` escape hatch would have
 recreated the defect the moment somebody used it on a real report, and the
 project already has a documented case of a self-imposed exemption silently
 becoming a claim about the world.
+
+## §20 The three-state exit contract, enforced over the scripts directory
+
+The parent's ruling: `0` evaluated and passed, `1` evaluated and failed, `77`
+could not evaluate -- and nothing else. The defect is **print/exit divergence**:
+a gate detects its own inability, announces it in text, and exits 0. The text
+goes to a log nobody greps; the exit code goes to every wrapper, Makefile and CI
+step. A gate that cannot distinguish "I checked and it's fine" from "I couldn't
+check" is worse than no gate, because it manufactures confidence.
+
+`scripts/check_gate_exit_contract.py` enforces this by AST, not by text search.
+Measured on this tree:
+
+```
+Scope: gates_scanned=36 inability_sites=13 divergent=0 contract_ok=11 unresolved=2 unparsed=0
+GATE_EXIT_CONTRACT_OK
+```
+
+**36 gates scanned, 13 inability sites, 0 divergent.** The two `UNRESOLVED`
+sites are both `scripts/fit_report_binding.py:80` and `:89`, which return a
+`Binding` dataclass rather than an exit code; every caller honours `.rc`, and
+the 77 arms of `tests/unit/test_fit_report_binding.py` measure that. They are
+adjudicated by hand as conforming, and are reported as unresolved rather than
+silently counted as passing.
+
+Shell gates were already covered before this ruling: `check_skip_exit_codes.py`
+scans 93 shell files for skip-dominated `exit 0` and reports
+`skip_dominated_exit_zero=0`. So the Python side is the gap this closes.
+
+### §20.1 The cited instance was already fixed -- so it became the red arm
+
+The parent cited `check_fitted_line_buffer.py` printing `UNBOUND`, printing
+`LINE_BUFFER_OK`, and exiting 0. W-ARM-O5 had already fixed it in `9043925` on
+`origin/w-arm-idle-edge`. Rather than build a synthetic replica of the defect,
+the real pre-fix blob (`9043925^`) and its fix (`9043925`) are extracted with
+`git show` and used as the suite's anchors:
+
+```
+pre-fix  9043925^  -> rc=1  DIVERGENT check_fitted_line_buffer.py:282 marker=UNBOUND
+                             ... leaves rc=0 from line 265, then returns it
+post-fix 9043925   -> rc=0
+```
+
+The suite prints `real_defect_anchors=2/2` in its `Scope:` line, so an anchor
+that disappears is visible rather than silently skipped.
+
+### §20.2 The detector gave three confident wrong answers before the specimen forced it right
+
+This is the strongest evidence in this document for the parent's thesis that the
+project is fighting a measurement problem rather than a decoder problem -- the
+gate written *to detect false confidence* produced false confidence three times:
+
+1. **Substring marker matching** flagged `SKIP_EXIT_CODE_OK` and `SKIP_EXITS_ZERO`
+   -- the *success* verdicts of the skip-code gate -- as inability announcements.
+   Two false REDs. Fixed with token-exact matching plus a rule that a message
+   containing a `*_OK` verdict token is a pass announcement, and one that a
+   marker followed by `=` (`unbound=0`) is a metric key.
+2. **Innermost-block-only classification** ignored an enclosing `if` that
+   returns 1, reddening a conforming gate. Fixed by walking the full ancestor
+   block chain.
+3. **The one that matters: it did not catch the real defect.** The first sweep
+   of the pre-fix specimen returned `divergent=0`. The first attempted fix made
+   it *worse* -- it classified the measured defect `CONTRACT_OK` -- because
+   `ast.walk` is BFS, not line-ordered, so an `rc = 1` in a sibling branch that
+   never dominates the announcement was counted as disposing of it. Fixed by
+   using only function-top-level assignments before the site, sorted by lineno.
+
+A synthetic replica would have passed all three of those broken versions. **A
+meta-gate must be proved against a real specimen**, because a replica is written
+by the same person, at the same moment, under the same misunderstanding.
+
+All three fixes are mutation-pinned: reverting to substring matching, to
+`ast.walk`, or to innermost-block-only each reddens
+`tests/unit/test_gate_exit_contract.py`.
+
+### §20.3 Declared limit
+
+`UNRESOLVED` sites are counted and printed but **do not fail** the gate. A false
+RED here blocks other workers on a static guess about control flow, so the gate
+declares what it could not classify rather than guessing. The count is in the
+`Scope:` line; if it grows, that is visible. This is a limit, not a claim that
+those sites conform -- the two current ones conform because they were read by
+hand, not because the gate proved it.

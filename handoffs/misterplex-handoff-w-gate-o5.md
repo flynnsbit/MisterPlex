@@ -708,3 +708,64 @@ found (`bdiag-a`, `bdiag-b`, `sdc-a`, `sdc-b` -> `fb4bad849ad2db78…`), and
 **On "report it as unseen, never as absent":** recorded and already applied --
 A11 states I could not verify the `Plex.sdc` byte-diff locally because
 `remote_out/` holds outputs only. That remains unseen, not refuted.
+
+## A14 — Sweep for print/exit divergence; the three-state contract is now enforced
+
+**The numbers you asked for, first.**
+
+```
+Scope: gates_scanned=36 inability_sites=13 divergent=0 contract_ok=11 unresolved=2 unparsed=0
+```
+
+**36 Python gates swept, 13 sites where a gate announces it cannot evaluate,
+0 with the defect.** Plus the shell side, already covered before this ruling:
+`check_skip_exit_codes.py` scans **93 shell files**, `skip_dominated_exit_zero=0`.
+
+The 2 `UNRESOLVED` are both `fit_report_binding.py:80` and `:89` — they return a
+`Binding` dataclass, not an exit code. Every caller honours `.rc` and the 77 arms
+of `test_fit_report_binding.py` measure it. **Read by hand, adjudicated
+conforming — reported as unresolved rather than counted as passing.**
+
+**The instance you cited was already fixed**, by W-ARM-O5 in `9043925` on
+`origin/w-arm-idle-edge`. So rather than replicate the defect, I pulled the real
+pre-fix blob out of git and made it the red arm:
+
+```
+9043925^  -> rc=1  DIVERGENT check_fitted_line_buffer.py:282 marker=UNBOUND
+                    ... leaves rc=0 from line 265, then returns it
+9043925   -> rc=0
+```
+
+Landed as a meta-gate over `scripts/`, registered in `make unit` (110 → **112**
+commands), so it cannot regress.
+
+### The part worth your attention: the detector was wrong three times
+
+The gate written to detect false confidence produced false confidence — twice as
+a false RED, and once, decisively, as a **false green on the actual defect**:
+
+1. Substring marker matching flagged `SKIP_EXIT_CODE_OK` — the *success* verdict
+   of the skip-code gate — as an inability announcement.
+2. Examining only the innermost block ignored an enclosing `if` that returns 1.
+3. **The first sweep of the real pre-fix specimen returned `divergent=0`.** The
+   first attempted fix made it worse and classified the measured defect
+   `CONTRACT_OK`, because `ast.walk` is BFS rather than line-ordered and an
+   `rc = 1` in a sibling branch that never runs on the announcement's path was
+   counted as disposing of it.
+
+**A synthetic replica would have passed all three broken versions.** It is
+written by the same person, at the same moment, under the same misunderstanding
+that produced the bug. I would make this a standing rule alongside your vacuity
+check: **a meta-gate must be red-proved against a real specimen from git history,
+not a reconstruction.** All three fixes are mutation-pinned — reverting to
+substring matching, to `ast.walk`, or to innermost-block-only each reddens
+`tests/unit/test_gate_exit_contract.py`.
+
+### Declared limit
+
+`UNRESOLVED` sites are printed and counted but **do not fail** the gate; a false
+RED here would block other workers on a static guess about control flow. The
+count is in the `Scope:` line, so growth is visible. This is a limit, not a claim
+that those sites conform.
+
+Detail in `docs/test-decode-product-presence-audit.md` §20–§20.3.
