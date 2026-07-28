@@ -1,0 +1,34 @@
+e2e: mailbox read on 3b1e8435 exonerates the SDC change; adopt 0/1/77 contract
+
+Read-only devmem sample at 17:07, fabric-bound via fabric_provenance (BOUND,
+Plex, 3b1e8435, load_after_write=True). All FPGA-to-ARM mailboxes read
+0x00000000 across three samples 6s apart: PLXS, PLXI, PLXM, PLXF, the SDRAM
+diagnostic and PLXD.
+
+Positive control included, because all-zeros is also what a broken probe
+returns: 0x30140000 reads 0x504C5844, which the ABI spec documents as
+kPlxbDormantMagic (bitstream producer intentionally dormant), so devmem really
+does read live memory.
+
+The obvious confound is that misterplexd is not running and PLXD might only be
+written on a swap. It is not: ddr_frame_store.sv resets bank_mbox_valid to 0
+and publishes PLXD on a free-running heartbeat, unconditionally out of reset
+and on every 2^18 wrap, with no ARM involvement. PLXF and PLXS share that
+structure. The core was loaded 67 minutes before the read, so a working write
+path must have published thousands of times.
+
+That also resolves the residue ambiguity: a frozen counter cannot distinguish
+stale residue from a dead writer, but the magic can, because its writer is
+unconditional and would have overwritten any zeros.
+
+Under the parent's corrected framing, 3b1e8435 silent means the SDC change is
+exonerated and the cause lies in the RTL delta. Narrowed further: DDR reads
+work on this same bitstream (left-edge artifact MOVING at 117x noise floor),
+so this is a write-path fault, not a dead DDR interface.
+
+Also adopts the fleet exit contract with --unevaluable-exit {2,77}. 77 is
+strictly better than 2 because argparse also exits 2 on usage errors, so rc=2
+conflates a refusal with a command-line typo. Verified that a usage error stays
+2 and is never laundered into 77. 42/42 checks, 21/21 mutations killed.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

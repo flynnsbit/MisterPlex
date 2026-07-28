@@ -1208,3 +1208,89 @@ construction, not by bad luck with the timing window.
 That also means the "258 frames all BLACK_SIGNAL" figure should not be carried
 forward as evidence about the FPGA: it is 258 frames of an unlocked receiver,
 which is UNSCORED. Same measurement, correct verdict, opposite implication.
+
+## §29 — MAILBOX READ ON `3b1e8435`: the fabric publishes NOTHING. SDC exonerated.
+
+Read-only `devmem` sample at 17:07, fabric-bound (`FABRIC_PROVENANCE: BOUND`,
+corename=Plex, md5=3b1e8435, load_after_write=True). No writes: poking is
+w-fit-o5's experiment and would have destroyed the state.
+
+```
+0x3007F100 PLXS  = 0x00000000    (expect 0x504C5853)
+0x3007F104        = 0x00000000
+0x3007F108 PLXI  = 0x00000000
+0x3007F110 PLXM  = 0x00000000
+0x3007F118 PLXF  = 0x00000000
+0x3007F120 diag  = 0x00000000
+0x3007F128 PLXD  = 0x00000000    (expect 0x504C5844)
+0x3007F12C        = 0x00000000
+```
+Three samples 6 s apart: all identical. **Every FPGA->ARM mailbox is zero.**
+
+**Positive control, because all-zeros is also what a broken probe returns.**
+`0x30140000` reads `0x504C5844` — non-zero and structured, so `devmem` really
+does read live memory. That value is *not* an anomaly: `mailbox_abi_spec.hpp`
+defines `kPlxbDormantMagic = kPlxdMagic`, i.e. PLXD in the PLXB CTRL slot is the
+documented "bitstream producer intentionally dormant (STREAM=0)" marker.
+
+**`misterplexd` is NOT running** (`pgrep -c` = 0), so PLXK=0 is expected, not a
+fault.
+
+### Why a dead daemon does NOT explain the zeros — the check that makes this sound
+
+The obvious confound is that PLXD might only be written on a swap, which a dead
+daemon can never trigger. **It is not.** `ddr_frame_store.sv`:
+
+```
+793:  bank_mbox_valid <= 1'b0;                      // reset
+887:  bank_mbox_hb   <= bank_mbox_hb + 18'd1;
+888:  if (!bank_mbox_valid || (bank_mbox_hb == 18'd0)) bank_mbox_req <= 1'b1;
+937:  else if (bank_mbox_req && (!bank_mbox_valid || poll_div[7:0] == 8'd160) ...
+```
+
+PLXD is published on a **free-running heartbeat**, with no ARM involvement:
+once unconditionally out of reset (`!bank_mbox_valid`, which also bypasses the
+`poll_div` gate), then on every 2^18 wrap of `bank_mbox_hb`, and on every vsync
+toggle. `PLXF` and `PLXS` have the identical `_hb` structure.
+
+The core was loaded at **16:00:16** and read at **17:07** — 67 minutes. A fabric
+with a working DDR write path must have published the magic thousands of times.
+
+**This also resolves the residue ambiguity w-fit-o5 correctly refused to score.**
+It held that a frozen word cannot distinguish stale residue from a dead writer,
+which was right for a *counter*. It is not right for the *magic*, because the
+writer is unconditional: a healthy fabric would have overwritten any zeros,
+including w-fit-o5's own hand-zeroing. Residue and dead-writer ARE separable here.
+
+### Consequence — read under the parent's corrected framing
+
+Parent's rule: `3b1e8435` advances -> SDC caused the regression; `3b1e8435`
+silent -> SDC exonerated, cause is in the RTL delta.
+
+**`3b1e8435` is silent. The SDC change is exonerated. The cause is in the RTL
+delta** (`abc3b67`, `7a3d960`, `ea31f68`, `3716f1f`).
+
+### Narrowing: it is not a dead DDR interface
+
+The display path is reading DDR successfully on this same bitstream — the
+left-edge artifact is MOVING at 117x the capture noise floor, and that artifact
+is produced by line-buffer refill timing. So DDR **reads** work while mailbox
+**writes** do not land. The fault is specific to the write path or to
+`state_ddr` never reaching `S_IDLE` with a request pending, not to the DDR
+interface as a whole.
+
+## §30 — Fleet exit contract 0/1/77 adopted, and why 77 is strictly better than 2
+
+Added `--unevaluable-exit {2,77}` to `scripts/score_idle_screen.py` (default 2
+for back-compat). Beyond compliance, 77 fixes a real defect: **argparse also
+exits 2 on a usage error**, so rc=2 cannot distinguish "I refused to score" from
+"I rejected your command line" — a collision that produced a false green in this
+repo's own test earlier today. Verified:
+
+```
+REFUSE, default            rc=2
+REFUSE, --unevaluable-exit 77   rc=77
+PASS under 77 contract     rc=0
+--bogus-flag under 77      rc=2   <- usage error stays 2, never laundered into 77
+```
+42/42 gate checks, 21/21 mutations killed.

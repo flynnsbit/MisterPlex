@@ -312,6 +312,14 @@ def main(argv: list[str] | None = None) -> int:
                          "loaded AFTER the RBF file was written. Without this, a "
                          "DEPLOY_LOAD=none deploy makes the md5 check pass while the "
                          "fabric still runs the previous bitstream.")
+    ap.add_argument("--unevaluable-exit", type=int, choices=(2, 77), default=2,
+                    help="Exit code for 'could not evaluate' (REFUSE). The fleet "
+                         "contract is 0=passed, 1=failed, 77=could not evaluate. "
+                         "77 is strictly safer than 2 because argparse also exits "
+                         "2 on a usage error, so rc=2 cannot distinguish 'I refused "
+                         "to score' from 'I rejected your command line' — a "
+                         "collision that has already produced a false green here. "
+                         "Default stays 2 for back-compat with existing callers.")
     ap.add_argument("--json-out")
     args = ap.parse_args(argv)
 
@@ -438,5 +446,19 @@ def main(argv: list[str] | None = None) -> int:
     return EXIT_PASS
 
 
+def _cli() -> int:
+    """Map the internal REFUSE code onto the caller's chosen contract."""
+    argv = sys.argv[1:]
+    rc = main(argv)
+    if rc == EXIT_REFUSE and "--unevaluable-exit" in argv:
+        try:
+            want = int(argv[argv.index("--unevaluable-exit") + 1])
+        except (IndexError, ValueError):
+            return rc
+        if want in (2, 77):
+            return want
+    return rc
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_cli())

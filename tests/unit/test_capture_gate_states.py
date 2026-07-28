@@ -333,6 +333,29 @@ def main() -> int:
               "cannot establish load-ordering" in r.stderr
               and "AFTER the core was loaded" not in r.stderr, r.stderr[:300])
 
+        # 12. Fleet exit contract: 0 passed / 1 failed / 77 could not evaluate.
+        #     77 is strictly safer than 2, because argparse also exits 2 on a
+        #     usage error, so rc=2 conflates "I refused to score" with "I
+        #     rejected your command line" -- a collision that already produced a
+        #     false green in this very file. Under the 77 contract those two
+        #     become separable, and the last check asserts that separation
+        #     rather than just the happy path.
+        nosig = save(flat(80), d, "contract_nosig")
+        r = run(inputs(nosig) + ["--unevaluable-exit", "77"], d)
+        check("no-signal refuses as 77 under the fleet contract",
+              r.returncode == 77, f"rc={r.returncode}")
+        r = run(inputs(nosig), d)
+        check("no-signal still refuses as 2 by default (back-compat)",
+              r.returncode == 2, f"rc={r.returncode}")
+        r = run(inputs(pc) + ["--host", REACHABLE, "--unevaluable-exit", "77"], d)
+        check("content still passes as 0 under the 77 contract",
+              r.returncode == 0, f"rc={r.returncode}")
+        r = subprocess.run(
+            [sys.executable, str(GATE), "--bogus-flag", "--unevaluable-exit", "77"],
+            capture_output=True, text=True)
+        check("argparse usage error stays 2, never 77 — a typo is not an "
+              "unevaluable screen", r.returncode == 2, f"rc={r.returncode}")
+
     print(f"\n{checks - len(failures)}/{checks} checks passed")
     if failures:
         print("FAILURES: " + ", ".join(failures))
