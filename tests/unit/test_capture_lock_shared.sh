@@ -34,13 +34,11 @@ EOF
 chmod +x "$PROBE"
 
 # --- 1. default lock path lives under the shared git common dir -------------
-OUT="$WORK/path.log"
-CAPTURE_LOCK_TIMEOUT_S=5 "$PROBE" 0 > "$OUT" 2>&1
-rc=$?
-[[ $rc -eq 0 ]] || fail "probe could not acquire default lock rc=$rc: $(cat "$OUT")"
-lock_line="$(grep -o 'CAPTURE_LOCK acquired: [^ ]*' "$OUT" | head -1)"
-lock_path="${lock_line#CAPTURE_LOCK acquired: }"
-[[ -n "$lock_path" ]] || fail "no CAPTURE_LOCK line emitted: $(cat "$OUT")"
+# Resolved WITHOUT acquiring: in a live lab the real lock is legitimately held
+# by whichever agent is capturing, and this assertion is about the path, not
+# about availability.
+lock_path="$(cd "$ROOT" && source tests/hw/hw_gate_common.sh && CAPTURE_LOCK_FILE= capture_lock_path)"
+[[ -n "$lock_path" ]] || fail "capture_lock_path produced nothing"
 if [[ "$lock_path" != "$COMMON/"* ]]; then
   fail "lock path '$lock_path' is not under the shared git common dir '$COMMON'; \
 per-worktree locks do not serialise concurrent agents"
@@ -51,20 +49,20 @@ esac
 echo "PASS default lock path is under the shared git common dir ($lock_path)"
 
 # --- 2. GREEN: concurrent acquirers of the DEFAULT lock serialise -----------
-CAPTURE_LOCK_TIMEOUT_S=10 "$PROBE" 4 > "$WORK/holder.log" 2>&1 &
+CAPTURE_LOCK_FILE="$WORK/shared_lock" CAPTURE_LOCK_TIMEOUT_S=10 "$PROBE" 4 > "$WORK/holder.log" 2>&1 &
 holder=$!
 sleep 1
-CAPTURE_LOCK_TIMEOUT_S=1 "$PROBE" 0 > "$WORK/contender.log" 2>&1
+CAPTURE_LOCK_FILE="$WORK/shared_lock" CAPTURE_LOCK_TIMEOUT_S=1 "$PROBE" 0 > "$WORK/contender.log" 2>&1
 crc=$?
 wait "$holder"; hrc=$?
 [[ $hrc -eq 0 ]] || fail "holder failed to take the lock rc=$hrc: $(cat "$WORK/holder.log")"
 [[ $crc -eq 77 ]] || fail "contender should have been blocked with rc=77 (UNSCORED), got rc=$crc: $(cat "$WORK/contender.log")"
 grep -q "could not acquire HDMI capture lock" "$WORK/contender.log" \
   || fail "contender did not report a lock timeout: $(cat "$WORK/contender.log")"
-echo "PASS concurrent acquirers of the shared lock serialise (contender rc=77 UNSCORED)"
+echo "PASS concurrent acquirers of one shared lock file serialise (contender rc=77 UNSCORED)"
 
 # --- 3. lock is released, so a later acquirer succeeds ----------------------
-CAPTURE_LOCK_TIMEOUT_S=5 "$PROBE" 0 > "$WORK/after.log" 2>&1
+CAPTURE_LOCK_FILE="$WORK/shared_lock" CAPTURE_LOCK_TIMEOUT_S=5 "$PROBE" 0 > "$WORK/after.log" 2>&1
 [[ $? -eq 0 ]] || fail "lock was not released after holder exited: $(cat "$WORK/after.log")"
 echo "PASS lock is released on exit (no permanent wedge)"
 

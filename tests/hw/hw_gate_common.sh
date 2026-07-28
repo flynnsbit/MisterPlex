@@ -56,20 +56,30 @@ hw_require_expected_rbf_md5() {
 _CAPTURE_LOCK_FD=9   # file descriptor reserved for the lock
 _CAPTURE_LOCK_HELD=0
 
-capture_lock_acquire() {
-  local timeout="${CAPTURE_LOCK_TIMEOUT_S:-60}"
-  # Determine repo root from this file's location (tests/hw/hw_gate_common.sh)
-  local _gate_root
-  _gate_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+capture_lock_path() {
+  # Single source of truth for the lock location, shared by capture_lock_acquire
+  # and by tests that need to assert the path without taking the live lock.
+  #
   # The lock MUST be shared by every checkout on this machine: /dev/video0 is a
   # single physical device, but this repo runs ~20 git worktrees in parallel and
   # a per-worktree lock path gives each agent its own private lock, serialising
   # nothing.  git's common dir is identical for the main checkout and every
   # linked worktree, so anchoring there yields one real lock per machine.
-  local _lock_anchor
+  if [[ -n "${CAPTURE_LOCK_FILE:-}" ]]; then
+    printf '%s\n' "$CAPTURE_LOCK_FILE"
+    return 0
+  fi
+  local _gate_root _lock_anchor
+  _gate_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   _lock_anchor="$(cd "$_gate_root" && cd "$(git rev-parse --git-common-dir 2>/dev/null || echo .)" && pwd)" \
     || _lock_anchor="$_gate_root"
-  local lock_file="${CAPTURE_LOCK_FILE:-$_lock_anchor/video0.lock}"
+  printf '%s\n' "$_lock_anchor/video0.lock"
+}
+
+capture_lock_acquire() {
+  local timeout="${CAPTURE_LOCK_TIMEOUT_S:-60}"
+  local lock_file
+  lock_file="$(capture_lock_path)"
   mkdir -p "$(dirname "$lock_file")"
   # Open/create the lock file on fd _CAPTURE_LOCK_FD
   eval "exec ${_CAPTURE_LOCK_FD}>\"$lock_file\""
