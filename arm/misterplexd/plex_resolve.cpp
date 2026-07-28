@@ -279,6 +279,81 @@ bool parseResolution(const std::string& res, int& w, int& h) {
 
 } // namespace
 
+DirectPlayGeometryBudget directPlayGeometryBudget(int width, int height) {
+    DirectPlayGeometryBudget b;
+    b.width = width;
+    b.height = height;
+
+    constexpr int64_t kTargetFps = 24;
+    constexpr int64_t kUsPerSec = 1000000;
+    constexpr int64_t kMeasuredBytes = 449280; // 624x480 I420 payload measured on MiSTer.
+    constexpr int64_t kMeasuredCopyUs = 5000;
+    constexpr int64_t kDecodeUs = 1500;
+    constexpr int64_t kDoorbellUs = 20600; // unrecovered bank/doorbell wait.
+    constexpr int64_t kHardSleepUs = 2200;
+    constexpr int kMaxDirectWidth = 640;
+    constexpr int kMaxDirectHeight = 480;
+    constexpr int64_t kCopyBudgetUs =
+        (static_cast<int64_t>(kMaxDirectWidth) * kMaxDirectHeight * 3 / 2) *
+        kMeasuredCopyUs / kMeasuredBytes + 100; // ≈640x480 copy, rounded with guard.
+
+    b.targetFrameUs = kUsPerSec / kTargetFps;
+    b.copyBudgetUs = kCopyBudgetUs;
+
+    auto fail = [&](const std::string& why) {
+        b.detail = why;
+        return b;
+    };
+
+    if (width <= 0 || height <= 0)
+        return fail("unknown source geometry");
+    if ((width & 1) || (height & 1))
+        return fail("source geometry is not YUV420-even");
+
+    b.yuv420pBytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
+    b.predictedCopyUs =
+        static_cast<int64_t>((static_cast<long double>(b.yuv420pBytes) *
+                              static_cast<long double>(kMeasuredCopyUs)) /
+                                 static_cast<long double>(kMeasuredBytes) +
+                             0.5L);
+    b.predictedFrameUs = kDecodeUs + kDoorbellUs + kHardSleepUs + b.predictedCopyUs;
+
+    if (width > kMaxDirectWidth || height > kMaxDirectHeight) {
+        std::ostringstream o;
+        o << "source " << width << "x" << height << " exceeds direct-play 480p cap "
+          << kMaxDirectWidth << "x" << kMaxDirectHeight << " (predicted_copy_us="
+          << b.predictedCopyUs << ")";
+        return fail(o.str());
+    }
+    if (b.predictedCopyUs > b.copyBudgetUs) {
+        std::ostringstream o;
+        o << "source copy " << b.predictedCopyUs << "us exceeds direct-play memcpy budget "
+          << b.copyBudgetUs << "us";
+        return fail(o.str());
+    }
+    if (b.predictedFrameUs > b.targetFrameUs) {
+        std::ostringstream o;
+        o << "source predicted frame " << b.predictedFrameUs
+          << "us exceeds 24fps frame budget " << b.targetFrameUs << "us";
+        return fail(o.str());
+    }
+
+    b.ok = true;
+    std::ostringstream o;
+    o << "source " << width << "x" << height << " yuv420p_bytes=" << b.yuv420pBytes
+      << " predicted_copy_us=" << b.predictedCopyUs << " predicted_frame_us="
+      << b.predictedFrameUs << "/" << b.targetFrameUs;
+    b.detail = o.str();
+    return b;
+}
+
+bool directPlayGeometryAllowed(int width, int height, std::string* detail) {
+    const auto b = directPlayGeometryBudget(width, height);
+    if (detail)
+        *detail = b.detail;
+    return b.ok;
+}
+
 bool applyPlexTranscodeProfile(const std::string& nameOrResolution, WeakLadder& weak) {
     for (const auto& p : plexTranscodeProfiles()) {
         if (nameOrResolution == p.name || nameOrResolution == p.videoResolution) {
@@ -688,10 +763,52 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
+        {
+            auto parsePositive = [](const std::string& s) -> int {
+                if (s.empty())
+                    return 0;
+                char* end = nullptr;
+                long v = std::strtol(s.c_str(), &end, 10);
+                if (end == s.c_str() || v <= 0 || v > 16384)
+                    return 0;
+                return static_cast<int>(v);
+            };
+            auto applyDims = [&](const std::string& w, const std::string& h) {
+                const int iw = parsePositive(w);
+                const int ih = parsePositive(h);
+                if (iw > 0 && ih > 0) {
+                    r.sourceWidth = iw;
+                    r.sourceHeight = ih;
+                }
+            };
+            size_t sp = 0;
+            while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                auto end = xml.find('>', sp);
+                if (end == std::string::npos)
+                    break;
+                const std::string slice = xml.substr(sp, end - sp);
+                const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                     slice.find("type=\"video\"") != std::string::npos;
+                if (isVideo) {
+                    applyDims(attrIn(slice, "codedWidth"), attrIn(slice, "codedHeight"));
+                    if (r.sourceWidth <= 0 || r.sourceHeight <= 0)
+                        applyDims(attrIn(slice, "width"), attrIn(slice, "height"));
+                    break;
+                }
+                sp = end + 1;
+            }
+            if (r.sourceWidth <= 0 || r.sourceHeight <= 0)
+                applyDims(attr(xml, "Media", "width"), attr(xml, "Media", "height"));
+            const auto budget = directPlayGeometryBudget(r.sourceWidth, r.sourceHeight);
+            r.sourceFrameBytes = budget.yuv420pBytes;
+            r.sourceCopyUs = budget.predictedCopyUs;
+            r.sourceFrameBudgetUs = budget.targetFrameUs;
+        }
     }
 
-    // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
-    // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
+    // Product path: prefer a direct H.264 Part when the original source fits the
+    // measured direct-play 480p budget. This avoids starting PMS universal
+    // transcode at all; oversized originals fall back to weak universal.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
     const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
@@ -724,29 +841,39 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    std::string directRefusal;
     if (directH264) {
-        const std::string prof = videoProfileNote();
-        const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
-        auto partKey = attr(xml, "Part", "key");
-        if (!partKey.empty()) {
-            if (partKey[0] != '/')
-                partKey = "/" + partKey;
-            r.playable = plexBase + partKey;
-            if (!token.empty())
-                r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
-                              std::string("X-Plex-Token=") + urlEncodeQuery(token);
-            r.ok = true;
-            r.transcoded = false;
-            r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
-            return r;
-        }
-        auto file = attr(xml, "Part", "file");
-        if (!file.empty()) {
-            r.playable = urlDecode(file);
-            r.ok = true;
-            r.transcoded = false;
-            r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
-            return r;
+        const auto budget = directPlayGeometryBudget(r.sourceWidth, r.sourceHeight);
+        r.sourceFrameBytes = budget.yuv420pBytes;
+        r.sourceCopyUs = budget.predictedCopyUs;
+        r.sourceFrameBudgetUs = budget.targetFrameUs;
+        if (!budget.ok) {
+            directRefusal = budget.detail;
+            r.detail = "direct H.264 Part refused: " + directRefusal + "; trying universal";
+        } else {
+            const std::string prof = videoProfileNote();
+            const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
+            auto partKey = attr(xml, "Part", "key");
+            if (!partKey.empty()) {
+                if (partKey[0] != '/')
+                    partKey = "/" + partKey;
+                r.playable = plexBase + partKey;
+                if (!token.empty())
+                    r.playable += (r.playable.find('?') == std::string::npos ? "?" : "&") +
+                                  std::string("X-Plex-Token=") + urlEncodeQuery(token);
+                r.ok = true;
+                r.transcoded = false;
+                r.detail = "direct H.264 Part (" + budget.detail + profSuffix + ")";
+                return r;
+            }
+            auto file = attr(xml, "Part", "file");
+            if (!file.empty()) {
+                r.playable = urlDecode(file);
+                r.ok = true;
+                r.transcoded = false;
+                r.detail = "direct H.264 Part file (" + budget.detail + profSuffix + ")";
+                return r;
+            }
         }
         // Fall through to universal if Part missing
     }
@@ -762,15 +889,21 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = start;
             r.httpHeaders = plexFfmpegHeaders(session, token, weak);
             r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
-            // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
+            // Direct-play fallthrough: operator can see why a transcode session was used.
             if (preferDirectH264) {
                 if (!metaOk)
-                    r.detail += " (STREAM preferDirect: no metadata)";
+                    r.detail += " (direct-play: no metadata)";
                 else if (!isH264)
-                    r.detail += " (STREAM preferDirect: source not H.264)";
+                    r.detail += " (direct-play: source not H.264)";
+                else if (!directRefusal.empty())
+                    r.detail += " (direct-play refused: " + directRefusal + ")";
                 else
-                    r.detail += " (STREAM preferDirect: H.264 Part missing → universal may be High/CABAC)";
+                    r.detail += " (direct-play: H.264 Part missing)";
             }
+            return r;
+        }
+        if (!directRefusal.empty()) {
+            r.detail = "universal decision failed after direct-play refused: " + directRefusal;
             return r;
         }
         r.detail = "universal decision failed; trying direct part";
@@ -778,6 +911,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
 
     // Fallback: direct Part stream URL from metadata
     if (metaFound) {
+        const auto budget = directPlayGeometryBudget(r.sourceWidth, r.sourceHeight);
+        if (preferDirectH264 && !budget.ok) {
+            r.detail = "direct Part fallback refused: " + budget.detail;
+            return r;
+        }
         auto partKey = attr(xml, "Part", "key");
         if (!partKey.empty()) {
             if (partKey[0] != '/')

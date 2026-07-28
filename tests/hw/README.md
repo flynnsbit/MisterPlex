@@ -65,7 +65,14 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
    - Or: `./tests/hw/test_ddr_frame.sh` (scp + push + status)
 4. Expect wall time **≪ 100 ms** (SPI is ~200 ms) and `has_frame=1`.
 5. misterplexd uses DDR YUV420p for F1 and does not fall back to RGB/SPI.
-   Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
+   Banks are geometry-derived: `bank_stride = alignUp(frame_bytes, 0x40000)`,
+   bank0 = `base`, bank1 = `base + bank_stride`, and doorbell =
+   `base + bank_stride*2 - 0x1000`. With base `0x30000000`, 320×240 I420
+   (`frame_bytes=115200`) uses stride `0x40000`, bank1 `0x30040000`, doorbell
+   `0x3007F000`; 624×480 I420 (`frame_bytes=449280`) uses stride `0x80000`,
+   bank1 `0x30080000`, doorbell `0x300FF000`. These addresses move with
+   geometry. Legacy SPI kick uses status[12] and status[13] = bank; the mmap
+   doorbell high word also carries `[31]=bank`.
 
 ## Phase 3.2 audio FIFO
 

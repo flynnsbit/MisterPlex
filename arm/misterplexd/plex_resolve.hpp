@@ -2,6 +2,7 @@
 // Slim Plex resolve for MiSTerPlex Phase 2/4 (transitional ARM decode).
 // Harvested from mistercast-linux lessons; full feature set ports later.
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -27,6 +28,11 @@ struct ResolveResult {
     // Drives A/V pacing; must NOT be bucketed (23.976 vs 24 = ~1 ms/s of lipsync drift).
     int fpsNum = 0;
     int fpsDen = 0;
+    int sourceWidth = 0;
+    int sourceHeight = 0;
+    size_t sourceFrameBytes = 0;
+    int64_t sourceCopyUs = 0;
+    int64_t sourceFrameBudgetUs = 0;
 };
 
 struct QueueItem {
@@ -106,6 +112,26 @@ struct WeakLadder {
 
 // Guard rails for built-in and configured ladders.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+
+struct DirectPlayGeometryBudget {
+    bool ok = false;
+    int width = 0;
+    int height = 0;
+    size_t yuv420pBytes = 0;
+    int64_t predictedCopyUs = 0;
+    int64_t predictedFrameUs = 0;
+    int64_t targetFrameUs = 0;
+    int64_t copyBudgetUs = 0;
+    std::string detail;
+};
+
+// Direct-play source geometry guard. It is based on measured 624x480 DDR copy
+// cost (449280 B in 5000 us), the unrecovered 20.6 ms doorbell cost, 1.5 ms
+// ARM decode CPU, and 2.2 ms hard sleeps. The product path is allowed only for
+// source geometry at/below 640x480; larger originals fall back to PMS universal.
+DirectPlayGeometryBudget directPlayGeometryBudget(int width, int height);
+bool directPlayGeometryAllowed(int width, int height, std::string* detail = nullptr);
+
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
@@ -120,9 +146,9 @@ bool mediaVideoIsH264(const std::string& plexMetadataXml);
 
 // Resolve a playMedia key against PMS, or pass through local/http paths.
 // weakAlways: always request PMS universal H.264 ladder (recommended on dual A9 / STREAM=0).
-// preferDirectH264: when true (STREAM=1 product path), use direct Part stream if source is
-// already H.264 so host CAVLC recon can run on Baseline/Main without High/CABAC remux.
-// Non-H.264 still falls through to the weak universal ladder.
+// preferDirectH264: when true, use the original direct Part stream if source is H.264
+// and its geometry passes directPlayGeometryBudget(). Non-H.264, unknown geometry,
+// and oversized originals fall through to the weak universal ladder.
 ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::string& plexBase,
                                 const std::string& token, int64_t offsetMs = 0,
                                 bool weakAlways = true, const WeakLadder& weak = {},

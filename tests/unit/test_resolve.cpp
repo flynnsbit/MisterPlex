@@ -123,6 +123,25 @@ int main() {
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
 
+    // --- Direct-play geometry/memcpy budget gate (no network) ---
+    // 640x480 is the largest accepted original: I420 bytes=460800 and predicted
+    // copy is scaled from the measured 624x480 449280 B / 5000 us datapoint.
+    auto dp480 = directPlayGeometryBudget(640, 480);
+    CHECK(dp480.ok);
+    CHECK(dp480.yuv420pBytes == 640u * 480u * 3u / 2u);
+    CHECK(dp480.predictedCopyUs > 5000 && dp480.predictedCopyUs <= dp480.copyBudgetUs);
+    CHECK(dp480.predictedFrameUs <= dp480.targetFrameUs);
+    CHECK(directPlayGeometryAllowed(640, 480));
+    std::string why;
+    CHECK(!directPlayGeometryAllowed(1920, 1080, &why));
+    CHECK(why.find("exceeds direct-play 480p cap") != std::string::npos);
+    auto dp1080 = directPlayGeometryBudget(1920, 1080);
+    CHECK(!dp1080.ok);
+    CHECK(dp1080.predictedCopyUs > dp1080.copyBudgetUs);
+    CHECK(dp1080.predictedFrameUs > dp1080.targetFrameUs);
+    CHECK(!directPlayGeometryAllowed(0, 0, &why));
+    CHECK(why.find("unknown source geometry") != std::string::npos);
+
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");
     CHECK(normalizePlexBase("pms2.lan:32400") == "http://pms2.lan:32400");

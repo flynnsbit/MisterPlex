@@ -424,6 +424,9 @@ int main(int argc, char** argv) {
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr,
+                 "misterplexd: direct-play H.264 enabled for PMS originals at/below 640x480; "
+                 "oversized/unknown sources fall back to PMS universal\n");
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
@@ -523,11 +526,11 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // Prefer original H.264 Part when metadata proves it fits the 480p direct-play
+            // budget; still weakAlways for non-H.264/oversized fallback.
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled);
+                                                 /*preferDirectH264=*/true);
         };
 
         auto resolved = tryBase(selected);
@@ -581,10 +584,14 @@ int main(int argc, char** argv) {
             resolved.fpsNum = 30;
             resolved.fpsDen = 1;
         } else {
-            std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
+            std::fprintf(stderr,
+                         "misterplexd: resolved %s title=%s dur=%lld transcode=%d "
+                         "source=%dx%d copy_us=%lld frame_budget_us=%lld base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
                          static_cast<long long>(resolved.durationMs),
-                         resolved.transcoded ? 1 : 0, base.c_str());
+                         resolved.transcoded ? 1 : 0, resolved.sourceWidth,
+                         resolved.sourceHeight, static_cast<long long>(resolved.sourceCopyUs),
+                         static_cast<long long>(resolved.sourceFrameBudgetUs), base.c_str());
         }
 
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
