@@ -5,8 +5,10 @@
 #include <vector>
 
 static int fails = 0;
+static int checks = 0;
 #define CHECK(cond)                                                                              \
     do {                                                                                         \
+        ++checks;                                                                                \
         if (!(cond)) {                                                                           \
             std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);                 \
             ++fails;                                                                             \
@@ -90,5 +92,11 @@ int main() {
     CHECK(sends.empty());
     CHECK(nextBank == 0);
 
-    return fails ? 1 : 0;
+    if (fails) {
+        std::fprintf(stderr, "test_last_frame_latch: FAILED checks=%d failures=%d\n", checks,
+                     fails);
+        return 1;
+    }
+    std::printf("test_last_frame_latch: OK checks=%d\n", checks);
+    return 0;
 }
