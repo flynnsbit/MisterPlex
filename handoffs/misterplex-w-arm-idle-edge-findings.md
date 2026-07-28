@@ -901,3 +901,219 @@ necessary, not sufficient. I hold no post-fit evidence for any of it, and
 `present_core` post-fit confirmation for `fb4bad84` remains outstanding from
 W-FIT. Nothing in §14 changes any conclusion in §1-§13: the ARM write path is
 correct and live, and the idle artifact remains RTL-side and unobserved.
+
+---
+
+## 15. Post-fit evidence bound to the RESIDENT bitstream, and a correction to §14
+
+Branch `w-arm-idle-edge`. Parent message of 2026-07-28 12:41 established a third
+product-absence mode — **instantiated, elaborated, then optimized away** — that no
+source-level tool can detect. Everything I claimed in §11–§14 about the present path
+is source-level, therefore *all of it was mode-3 blind*. This section closes that.
+
+### 15.1 CORRECTION: I was wrong that no local report binds to `fb4bad84`
+
+In §14 I reported: *"No local `Plex.rbf` has md5 `fb4bad84…`, so I cannot bind any
+local fit report to the resident bitstream."*
+
+**That was false.** Measured now — enumerate every `Plex.fit.rpt` on the host and md5
+its sibling RBF:
+
+```
+2026-07-28_09:47  fb4bad84  mp-wt-integ/.../remote_out/wfit-hour27-sdc-a/Plex.fit.rpt
+2026-07-28_10:01  fb4bad84  mp-wt-integ/.../remote_out/wfit-hour27-sdc-b/Plex.fit.rpt
+2026-07-28_10:23  fb4bad84  mp-wt-integ/.../remote_out/wfit-hour27-bdiag-a/Plex.fit.rpt
+2026-07-28_10:36  fb4bad84  mp-wt-integ/.../remote_out/wfit-hour27-bdiag-b/Plex.fit.rpt
+2026-07-28_01:51  00eebd5e  mp-wt-time/.../remote_out/wtime4/Plex.fit.rpt
+```
+
+Full md5 of the bdiag-b sibling: `fb4bad849ad2db782a5004ce5a3471ce` — **identical to
+the on-device md5 W-FIT read from `/media/fat/_Utility/Plex.rbf`.**
+
+Cause of my error: my earlier scan looked for `Plex.rbf` under paths I had already
+decided were mine to read, and I had excluded `mp-wt-integ` as parent-only. Reading a
+report is not editing a tree. **A self-imposed scope limit silently became a claim
+about the world.** That is the same failure class as everything else in this document,
+committed by me, and it cost a day of "no post-fit evidence available".
+
+### 15.2 The present path IS in the resident silicon (denominator 827)
+
+`scripts/check_map_hierarchy.py` from w-fit-o5 `a8aa8eb`, run against the report bound
+to `fb4bad84`:
+
+```
+Scope: 827 entity rows parsed from Plex.fit.rpt [fit (post-fit)]
+PRESENT present_core     instances=1 subtree_rows=487 parents=emu
+PRESENT ddr_frame_store  instances=1 subtree_rows=482 parents=present_core
+ABSENT  frame_store
+```
+
+Corroborated independently of that tool, by raw indent in the entity table (indent is
+the only nesting encoding Quartus emits):
+
+```
+line   66  ;    |emu:emu|                    indent 4
+line  206  ;       |present_core:present|    indent 7   -> child of emu
+line  211  ;          |ddr_frame_store:fstore| indent 10 -> child of present_core
+line  693  ;       |stream_path:spath|       indent 7
+line  700  ;          |decode_stub:stub|     indent 10
+```
+
+Three consequences:
+
+1. **The present path is not a mode-3 victim.** Unlike `h264_decode_core`, it survives
+   synthesis and fitting, with resources: `present_core` 4939 ALUT / 2514 reg /
+   225,280 block bits / 103 M10K / 7 DSP; `ddr_frame_store` 4757 / 2298 / 159,744 /
+   96 / 6. The trunk `emu -> present_core` and subtree `present_core ->
+   ddr_frame_store` are both proved **in silicon**, not in a regex.
+2. `frame_store` is **ABSENT**, so the `` `ifdef DDR_FRAME_STORE `` else-branch was not
+   taken. §13 resolved that tie *statically* from `Plex.qsf:82`. It is now confirmed
+   post-fit. The static resolution was right; it is no longer the only evidence.
+3. Identical results on `00eebd5e` (819 rows), the previous resident build. The present
+   path did not change across the regression W-FIT reported.
+
+### 15.3 Prefetch depth in silicon is 8 lines — derived, then confirmed arithmetically
+
+New gate `scripts/check_fitted_line_buffer.py`. It does not ask "is the module there";
+it asks **"is the line buffer the size the sources say"**, which is the number the
+artifact actually depends on.
+
+Prediction, every term read from a file, nothing restated as a literal:
+
+```
+Plex.qsf:85                     VERILOG_MACRO "FRAME_LINES_8=1"
+present_core.sv:19-25 ladder    FRAME_LINES_8 -> FRAME_LINE_COUNT = 8
+ddr_frame_store.sv:81           LINE_SLOTS = LINE_COUNT * 2      -> 16
+ddr_frame_layout_params.svh     luma 78 qwords, chroma 39 qwords
+ddr_frame_store.sv:138-140      3 per-slot buffers, 64 bits wide
+
+predicted = 16 * (78 + 39 + 39) * 64 = 159,744 bits
+```
+
+Measured, from the report bound to `fb4bad84`:
+
+```
+Scope: 827 entity rows in Plex.fit.rpt
+BOUND report -> Plex.rbf md5=fb4bad84
+MATCH  159744 bits  |ddr_frame_store:fstore|
+LINE_BUFFER_OK predicted=159744 instances=1 rows=827
+```
+
+Exact, to the bit. And the four source files that feed the prediction are
+**byte-identical (`git hash-object`) to `origin/parent/integ-hour27`**, the branch
+checked out in the fit worktree, so the prediction is about the deployed design and not
+about my branch.
+
+**So: the resident silicon prefetches 8 lines per set.** Not 4, not 16 — measured.
+
+Red/green pair: `--self-test` = 1 green + 4 reds + 1 skip, all passing —
+half-size buffer FAIL(1), module optimized away FAIL(1), zero entity rows REFUSE(2),
+unsatisfiable RBF binding FAIL(1), missing report SKIP(77).
+
+**The binding is the point.** W-FIT's tool takes a report path; nothing in the fleet
+checked that the report describes a bitstream anyone is running. There are 40 fit
+reports on this host and 35 of them describe builds that were never deployed. Without
+`--expect-rbf-md5` this gate prints `UNBOUND` rather than a clean pass.
+
+### 15.4 The artifact mechanism, now structurally complete
+
+```
+ddr_frame_store.sv:312   hit search iterates vi < LINE_COUNT over ONE set
+                         (disp_buf ? SECOND_SET_BASE : 0), so 8 of 16 slots
+                         are searchable at any instant
+ddr_frame_store.sv:332   rd_miss_now = rd_active && rd_visible && has_frame
+                                       && (!y_hit_now || !c_hit_now)
+ddr_frame_store.sv:1105  y_valid[fill_idx] <= 1'b1   -- set ONLY when the whole
+                         line has landed, never incrementally
+ddr_frame_store.sv:422   miss_d -> rd_r/rd_g/rd_b <= 0
+```
+
+Because validity flips **mid-scanline**, a line whose refill completes part-way through
+the active region produces **black pixels from `PRESENT_X` up to the completion point,
+then correct pixels**. Per-line variation in completion point gives a ragged edge;
+per-frame variation makes it move. `rd_visible` already blacks `x < 11`, so the band
+starts exactly at the pillar boundary. All four of the user's particulars — left,
+jagged, moving, needs a fresh core reset (empty prefetch pipeline) — fall out of this.
+
+**Not claimed:** I have still never observed the artifact's pixels, and I have not
+measured the refill *rate*. Capacity is measured; sufficiency is not. This is a
+mechanism consistent with the report, not a proof of it.
+
+### 15.5 The underrun counter saturates by construction — it can never be a rate
+
+`ddr_frame_store.sv:413` increments `underrun_count` once per **missed pixel**, and
+`ddr_frame_store.sv:864` does the same for `frame_underrun_ddr`, both saturating at
+`16'hFFFF`. The visible region is 618 x 480 = 296,640 pixels/frame. Even a 5% miss rate
+saturates 65,535 in under 5 frames.
+
+I previously described this counter as "a dead instrument on this build". **That was
+wrong in an important way**: it is not broken, it is *the wrong instrument*. `0xFFFF`
+means "at least one miss since reset", nothing more. Anyone who reads it as a severity
+or rate is reading a true number about the wrong thing. **A useful instrument would be
+missed pixels per frame, latched at vsync — that does not exist.** [RTL owner]
+
+### 15.6 Renamed a gate of my own that was lying by its name
+
+`scripts/check_present_path_synthesis.py` -> `scripts/check_present_path_compiled.py`.
+
+The old name implied it knew whether the modules survive synthesis. It does not — it
+checks `files.qip` membership, generate-nesting depth and `ifdef` macro definition,
+i.e. modes 1 and 2 only. Anyone grepping the roll-call for "synthesis" would have
+believed the mode-3 question was already covered on this path. It now prints, before
+any verdict:
+
+```
+WARNING this gate CANNOT detect optimize-away (mode 3): a module may pass every
+check here and still contribute zero logic to the bitstream. Use
+check_fitted_line_buffer.py or make post-fit-hierarchy.
+```
+
+This is the same warning the parent assigned to W-GATE-O5 for the two cheap fleet
+gates; I applied it to mine rather than waiting.
+
+### 15.7 Capacity datum that reframes Ruling 2
+
+From the same `fb4bad84` entity table:
+
+```
+emu                              2,585,536 bits  394 M10K  41 DSP
+stream_path                      2,360,256 bits  291 M10K  34 DSP
+  decode_stub                    2,097,152 bits  256 M10K  33 DSP
+    altsyncram:dpb_mem_rtl_0     2,097,152 bits  256 M10K   0 DSP   <-- ALL of it
+present_core                       225,280 bits  103 M10K   7 DSP
+  ddr_frame_store                  159,744 bits   96 M10K   6 DSP
+```
+
+**100% of `decode_stub`'s 256 M10K is a single `altsyncram:dpb_mem` instance.** It is
+not painter logic — it is a DPB. A real decoder needs a DPB too. So retiring the stub
+does not straightforwardly hand 46% of the device to W-SWAP-O5's seven modules; it
+frees a buffer that the replacement will substantially want back, unless the product
+DPB lives in DDR. [parent / W-SWAP-O5 / W-DECODE-O5]
+
+### 15.8 Device unreachable — my hardware gates degrade correctly
+
+Measured myself rather than inheriting the parent's report:
+
+```
+ping -c 3 192.168.1.183   -> 3 transmitted, 0 received, 100% loss,
+                             "Destination Host Unreachable"
+ssh                       -> rc=255 "No route to host"
+
+tests/hw/test_idle_ddr_frame.sh      rc=77  SKIP-NOT-PASS ... unreachable (ssh rc=255)
+tests/hw/test_idle_ddr_freshness.sh  rc=77  SKIP-NOT-PASS ... unreachable
+```
+
+Both exit **77**, neither exits 0. That is the behaviour I claimed for them in §9 and
+it is now demonstrated against a genuinely absent device rather than a simulated one.
+
+### 15.9 What is still not evidence
+
+* Refill *rate* versus scanline time — unmeasured, needs a live device.
+* Artifact pixels — never observed. [W-E2E-O5]
+* Whether raising `FRAME_LINES_8` to `FRAME_LINES_16` in `Plex.qsf:85` fixes it. That
+  is a one-line `.qsf` change, not an RTL redesign, but it is an FPGA build artifact
+  and **I am not touching it**. Cost estimate: the buffer doubles in *depth*, and at
+  159,744 bits across 96 M10K the current packing is only 16% efficient, so the M10K
+  delta is very likely well under +96. **That is an estimate, not a measurement** — the
+  only way to know is to run `check_prefit_elaboration.sh` on the change, which costs
+  4m23s and no fit token. [W-FIT-O5 / RTL owner]

@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Synthesis-reality cross-check for the present path (present_core, ddr_frame_store).
+"""Compilation cross-check for the present path (present_core, ddr_frame_store).
+
+RENAMED, AND WHY IT MATTERS
+---------------------------
+This file was called `check_present_path_synthesis.py`. That name was a lie of
+exactly the kind this project keeps shipping: it implied the gate knew whether
+the modules SURVIVE SYNTHESIS, and it does not. It is a source-and-file-list
+check. The parent's third failure mode -- instantiated, elaborated, then
+optimized away as dead logic because nothing consumes the outputs -- is
+invisible to it, and to every other source-level tool.
+
+For the mode-3 answer on this path use `scripts/check_fitted_line_buffer.py`
+against a Quartus entity report, or `make post-fit-hierarchy`.
 
 WHY THIS EXISTS
 ---------------
@@ -27,6 +39,9 @@ For each present-path module:
 
 WHAT THIS DOES NOT COVER
 ------------------------
+  - MODE 3, OPTIMIZE-AWAY. It cannot tell whether Quartus deleted the module
+    after elaborating it. A module can pass every check here and contribute
+    zero logic to the bitstream. Only real synthesis can see this.
   - It is still source-level. `make post-fit-hierarchy` on a fit report bound to
     a known RBF md5 remains the only real oracle for what is in a bitstream.
   - It does not evaluate generate conditions. Depth 0 is a sufficient condition
@@ -180,26 +195,30 @@ def load_sources() -> dict[Path, str]:
 def run() -> int:
     for path in (QIP, QSF):
         if not path.is_file():
-            print(f"SKIP-NOT-PASS check_present_path_synthesis: missing {path}")
+            print(f"SKIP-NOT-PASS check_present_path_compiled: missing {path}")
             return 77
     for _, (inst_file, decl_file) in PRESENT_PATH.items():
         for path in (inst_file, decl_file):
             if not path.is_file():
-                print(f"SKIP-NOT-PASS check_present_path_synthesis: missing {path}")
+                print(f"SKIP-NOT-PASS check_present_path_compiled: missing {path}")
                 return 77
 
     print(f"Scope: {len(PRESENT_PATH)} present-path modules x 4 checks "
           f"(files.qip membership, instantiation found, generate depth, ifdef macros)")
+    print("WARNING this gate CANNOT detect optimize-away (mode 3): a module may "
+          "pass every check here and still contribute zero logic to the "
+          "bitstream. Use check_fitted_line_buffer.py or make post-fit-hierarchy.")
     checks, failures = grade(QIP.read_text(), QSF.read_text(), load_sources())
     if failures:
         for f in failures:
             print(f"FAIL {f}", file=sys.stderr)
-        print(f"RESULT FAIL present-path synthesis cross-check "
+        print(f"RESULT FAIL present-path compilation cross-check "
               f"checks={checks} failures={len(failures)}")
         return 1
-    print(f"RESULT PASS present-path synthesis cross-check checks={checks} failures=0")
-    print("NOTE necessary, not sufficient: pair with reachability in BOTH directions "
-          "and with make post-fit-hierarchy on a fit report bound to a known RBF md5")
+    print(f"RESULT PASS present-path compilation cross-check checks={checks} failures=0")
+    print("NOTE necessary, not sufficient: pair with reachability in BOTH directions, "
+          "and with a Quartus entity report bound to a known RBF md5 -- this gate is "
+          "blind to optimize-away")
     return 0
 
 
@@ -268,9 +287,9 @@ def self_test() -> int:
         failures += 1
 
     if failures:
-        print(f"RESULT FAIL present-path synthesis self-test failures={failures}")
+        print(f"RESULT FAIL present-path compilation self-test failures={failures}")
         return 1
-    print("RESULT PASS present-path synthesis self-test: 1 green + 4 reds")
+    print("RESULT PASS present-path compilation self-test: 1 green + 4 reds")
     return 0
 
 

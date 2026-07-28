@@ -76,7 +76,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py
 	python3 $(ROOT)/scripts/check_idle_ddr_frame.py --self-test
 	python3 $(ROOT)/scripts/ddr_layout_consts.py --self-test
-	python3 $(ROOT)/scripts/check_present_path_synthesis.py --self-test
+	python3 $(ROOT)/scripts/check_present_path_compiled.py --self-test
+	python3 $(ROOT)/scripts/check_fitted_line_buffer.py --self-test
 	python3 $(ROOT)/scripts/check_reachability_tool_integrity.py
 	@mkdir -p $(ROOT)/build
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
