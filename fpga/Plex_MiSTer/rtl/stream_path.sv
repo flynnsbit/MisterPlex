@@ -163,6 +163,10 @@ module stream_path #(
 	wire [7:0] pps_cap_data;
 	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr, sl_nal_ref_idc_nonzero;
 	wire [7:0] sl_cap_data;
+	// Full slice RBSP: sl_cap_* stops after 96 bytes, which is the slice header
+	// window slice_hdr_parser wants and about 1.3% of a real slice.
+	wire sl_rbsp_clear, sl_rbsp_en, sl_rbsp_end;
+	wire [7:0] sl_rbsp_data;
 
 	nalu_scanner scan (
 		.clk(clk), .reset(reset | flush),
@@ -177,6 +181,8 @@ module stream_path #(
 		.pps_cap_data(pps_cap_data), .pps_cap_end(pps_cap_end),
 		.sl_cap_clear(sl_cap_clear), .sl_cap_en(sl_cap_en),
 		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr),
+		.sl_rbsp_clear(sl_rbsp_clear), .sl_rbsp_en(sl_rbsp_en),
+		.sl_rbsp_data(sl_rbsp_data), .sl_rbsp_end(sl_rbsp_end),
 		.sl_nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero)
 	);
 
@@ -481,8 +487,10 @@ module stream_path #(
 	// `assign core_rbsp_byte[core_gi] = 8'd0;` with `.rbsp_window_base(16'd0)`,
 	// i.e. the product decoder decoded a constant zero bitstream, so no amount
 	// of work on its *output* side could produce real pixels. The bytes come
-	// from the same nalu_scanner slice tap that already feeds slice_hdr_parser,
-	// which is the end of the ARM -> DDR ring -> ddr_bitstream_reader chain.
+	// from nalu_scanner's full-slice port, the end of the ARM -> DDR ring ->
+	// ddr_bitstream_reader chain. Not sl_cap_*, which stops at 96 bytes: that
+	// is slice_hdr_parser's header window, and a decoder fed from it would run
+	// out of bitstream after the first macroblock or two.
 	//
 	// h264_decode_core has no wait handshake on this port: it drives
 	// rbsp_request_offset/valid and reads rbsp_byte against rbsp_window_base
@@ -500,10 +508,10 @@ module stream_path #(
 	h264_rbsp_window u_core_rbsp_window (
 		.clk(clk),
 		.reset(reset | flush),
-		.cap_clear(sl_cap_clear),
-		.cap_en(sl_cap_en),
-		.cap_data(sl_cap_data),
-		.cap_end(sl_cap_end),
+		.cap_clear(sl_rbsp_clear),
+		.cap_en(sl_rbsp_en),
+		.cap_data(sl_rbsp_data),
+		.cap_end(sl_rbsp_end),
 		.request_valid(core_rbsp_request_valid),
 		.request_offset(core_rbsp_request_offset),
 		.byte_out(core_rbsp_byte),

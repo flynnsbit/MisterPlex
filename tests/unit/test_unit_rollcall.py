@@ -101,6 +101,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py",
     "python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py",
     "python3 $(ROOT)/tests/unit/test_h264_rbsp_window_verilator.py",
+    "python3 $(ROOT)/tests/unit/test_nalu_slice_rbsp_verilator.py",
     "python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py",
     "python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py",
     "$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh",

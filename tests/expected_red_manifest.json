@@ -213,6 +213,15 @@
         "FAIL h264_rbsp_window: base960_byte",
         "h264_rbsp_window RTL check FAILED"
       ]
+    },
+    {
+      "id": "nalu_slice_rbsp_header_window_only",
+      "owner": "tests/unit/test_nalu_slice_rbsp_verilator.py",
+      "why": "Restoring the 96-byte slice-header window on the full-slice RBSP port must fail: the decoder would see zeros for about 99% of every slice, which still paints a picture and so cannot be caught by eye.",
+      "required_substrings": [
+        "FAIL nalu_slice_rbsp: idr_bytes_captured",
+        "nalu_slice_rbsp RTL check FAILED"
+      ]
     }
   ]
 }
