@@ -578,6 +578,30 @@ module h264_decode_core #(
         .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y)
     );
 
+    // P_L0_16x16 motion vector prediction, clause 8.4.1.3. The predictor is
+    // shared with P_Skip so a P16x16 macroblock sees P_Skip neighbours (and
+    // vice versa) -- with 79% of a P frame skipped, a predictor that only
+    // tracked coded macroblocks would drift immediately.
+    wire signed [15:0] p16_mvp_x;
+    wire signed [15:0] p16_mvp_y;
+    wire        p16_mvp_directional;
+    h264_pskip_mv_pred u_product_p16_mvp (
+        .ref_idx_l0(ref_idx_l0),
+        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+        .mvp_x(p16_mvp_x),
+        .mvp_y(p16_mvp_y),
+        .directional(p16_mvp_directional)
+    );
+    wire signed [15:0] p16_mv_from_mvd_x = p16_mvp_x + mvd_x_qpel;
+    wire signed [15:0] p16_mv_from_mvd_y = p16_mvp_y + mvd_y_qpel;
+
     wire signed [15:0] pskip_mv_x;
     wire signed [15:0] pskip_mv_y;
     wire [1:0]  pskip_ref_idx_l0;
@@ -1145,11 +1169,11 @@ module h264_decode_core #(
                     wb_base <= dpb_write_base;
                     p16_ref_base_r <= dpb_ref_base;
 `ifdef H264_DECODE_CORE_FAULT_PERTURB_MV
-                    p16_mv_x_qpel_r <= (p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x) + 16'sd2;
+                    p16_mv_x_qpel_r <= (p16_zero_mv_valid ? mv_x_qpel : p16_mv_from_mvd_x) + 16'sd2;
 `else
-                    p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
+                    p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : p16_mv_from_mvd_x;
 `endif
-                    p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
+                    p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : p16_mv_from_mvd_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
@@ -1400,6 +1424,6 @@ module h264_decode_core #(
         |chroma_v_dc_tl | |chroma_v_dc_tr | |chroma_v_dc_bl | |chroma_v_dc_br |
         skiprun_need_run | |skiprun_left | skiprun_coded_pending |
         |pskip_ref_idx_l0 | |pskip_mvp_x | |pskip_mvp_y | pskip_zero_mv |
-        |pskip_zero_reason;
+        |pskip_zero_reason | |syntax_mv_x | |syntax_mv_y | p16_mvp_directional;
 
 endmodule
