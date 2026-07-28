@@ -2513,3 +2513,60 @@ been simultaneously verified alive.**
 `deploy_plex_core.sh` should restart `misterplexd` after a successful load, or at
 minimum print a loud warning that the painter is down. Leaving it dead makes
 every post-deploy capture black by construction.
+
+## 39. FIX: `deploy_plex_core.sh` now restarts the ARM painter it kills
+
+SS38.6 raised the action item; this implements it, red/green proven.
+
+### 39.1 The bug was worse than SS38 said
+
+The soft-stop runs on **every** invocation, including `DEPLOY_LOAD=none` -- the
+mode documented as *"safest"* and the default. So even a copy-only deploy left
+the painter dead.
+
+### 39.2 Change
+
+- Record the live `misterplexd` argv from `/proc/<pid>/cmdline` **before** the
+  soft-stop, into `/media/fat/misterplex/.deploy_last_cmdline`.
+- Only replace that record when a live argv was actually captured, so a run made
+  while the daemon is already down still has the previous invocation's flags.
+- After the load (and for `none` too, since the kill is unconditional), restart
+  from the recorded argv; fall back to a default command line with a loud
+  `DAEMON_WARN`; verify with `pidof` for up to 10 s.
+- `DAEMON_FAIL` on the error path states plainly: *"The frame store has no
+  painter, so the screen will be black regardless of the bitstream. Do NOT grade
+  a picture from this state."*
+- New env `DEPLOY_RESTART_DAEMON=1|0` (default 1) to opt out.
+
+### 39.3 Red/green matrix -- all three measured
+
+```
+RED    DEPLOY_LOAD=none DEPLOY_RESTART_DAEMON=0
+       -> "Done."   pidof misterplexd -> DAEMON_DOWN        (pre-existing bug)
+
+GREEN1 DEPLOY_LOAD=none, no argv on record (daemon already down)
+       -> DAEMON_WARN: no recorded argv; falling back to the default command line
+          DAEMON_OK: misterplexd restarted pid=3049
+       (fallback path exercised; --pms correctly reported as lost via the WARN)
+
+GREEN2 DEPLOY_LOAD=none, live argv recorded
+       -> DAEMON_OK: misterplexd restarted pid=3318   (no WARN)
+          argv after: ... --conf ... --pms http://192.168.1.41:32400
+       (full flags preserved, including --pms)
+```
+
+GREEN1 is a genuine finding, not just a passing test: the naive fallback
+**silently dropped `--pms`**. That is why the argv record is now durable, and why
+the fallback is loud rather than quiet.
+
+### 39.4 Device state after the work
+
+```
+14:51:19  CORENAME=Plex   RBF fb4bad84
+          bank0 sum=33177600   bank1 sum=33177600   door_lo=PLXK door_hi=0x20000009
+          media: idle screen painted (mode=0)
+          media: OSD via DDR mailbox (no SPI)
+```
+Both banks painted, daemon alive with full argv, core loaded. No RBF was copied
+in any of these runs (`Remote already has md5=... — skip scp`), so the deploy
+token remains unspent.
