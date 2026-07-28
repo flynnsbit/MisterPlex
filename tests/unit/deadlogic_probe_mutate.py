@@ -62,7 +62,52 @@ CONSTFOLD_APPEND = (
 )
 
 
+def verify_twins() -> int:
+    """The twin probes must differ ONLY in the independent variable.
+
+    Mechanical, not a matter of remembering. The parent published an
+    exoneration built on four builds that all shared the same value of the
+    variable under test; the comparison proved determinism and nothing else.
+    A twin-probe control has exactly that failure mode: if the two probe bodies
+    ever drift apart, red proof 4 could be discriminating on something other
+    than observability and would still look like evidence.
+    """
+    import re as _re
+
+    def body(name: str) -> str | None:
+        m = _re.search(
+            r"module\s+" + name + r"\b(.*?)endmodule", APPEND, _re.S
+        )
+        return m.group(1) if m else None
+
+    dead = body("dl_probe_dead")
+    live = body("dl_probe_live")
+    if dead is None or live is None:
+        print("TWIN_CONTROL_VACUOUS: could not extract both probe bodies",
+              file=sys.stderr)
+        return 1
+    if dead != live:
+        print("TWIN_CONTROL_VACUOUS: probe bodies differ beyond their names:",
+              file=sys.stderr)
+        print(f"  dead: {dead!r}", file=sys.stderr)
+        print(f"  live: {live!r}", file=sys.stderr)
+        return 1
+    if "dl_probe_live_q" not in INJECT or "has_idr" not in INJECT:
+        print("TWIN_CONTROL_VACUOUS: live probe output is not routed to a port "
+              "of the product top, so both twins are unobservable and red proof "
+              "4 would be comparing two identical situations", file=sys.stderr)
+        return 1
+    if "dl_probe_dead_q" in INJECT.split("assign has_idr")[1]:
+        print("TWIN_CONTROL_VACUOUS: the dead probe's output reaches the "
+              "observable port too -- the twins no longer differ", file=sys.stderr)
+        return 1
+    print("TWIN_CONTROL_OK probe bodies byte-identical; only observability differs")
+    return 0
+
+
 def main() -> int:
+    if MODE == "--verify-twins":
+        return verify_twins()
     if not TARGET.is_file():
         print(f"mutation target missing: {TARGET}", file=sys.stderr)
         return 1

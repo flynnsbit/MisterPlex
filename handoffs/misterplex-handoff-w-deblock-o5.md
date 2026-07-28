@@ -769,3 +769,64 @@ mandatory. Both the gate's OK line and
 * `check_prefit_elaboration.sh` / `check_map_hierarchy.py` are adopted unchanged
   on both my branches so A&S can be run here without a rebase. **I have not run
   them — I do not hold the Quartus slot.**
+
+## §0f — The vacuous-control pattern, applied to my own strongest evidence
+
+The parent's SDC exoneration compared four builds that all carried the **same
+new SDC**. It demonstrated fitter determinism, not SDC neutrality. The general
+test — *does this comparison actually differ in the thing it claims to test?* —
+had a live, unfixed instance in my own lane, which I had flagged and left open:
+my full-frame deblock gate compares the product RTL against
+`tests/rtl/h264_deblock_ref.hpp`, and **if the model's α/β/tc0 tables were the
+same storage as the RTL's, the comparison could never detect a table error.**
+`1170/1170` would then be worth what the parent's four builds were worth.
+
+**Measured, `tests/unit/test_deblock_table_vacuity.sh`, gate runtime 2.3s.**
+
+| perturbation | result |
+|---|---|
+| `alpha[30] 25->0` | **DETECTED** |
+| `beta[30] 8->0` | **DETECTED** |
+| `tc0[idx=30,bS=3] 2->3` | **DETECTED** |
+| `alpha[20] 7->8` (±1) | **DETECTED** |
+| `alpha[30] 25->26` (±1) | not detected |
+| `alpha[28] 20->21` (±1) | not detected |
+| `alpha[33] 36->37` (±1) | not detected |
+| `beta[30] 8->9` (±1) | not detected |
+| `beta[28] 7->8` (±1) | not detected |
+
+**The shared-storage hypothesis is REFUTED by measurement**, not by reading the
+file: gross perturbations go red on all three tables, which they could not do if
+both sides moved together. The model is a genuinely independent oracle.
+
+**But a second, real limitation is now measured rather than assumed:** a ±1
+table error is caught at `alpha[20]` and **missed** at `alpha[28,30,33]` and
+`beta[28,30]`. The filter decision only moves if some sample pair sits exactly
+on the shifted threshold, and this frame's content does not straddle those.
+
+**So the correct reading of my headline number: `1170/1170` is a MACROBLOCK
+denominator, not a table-entry one.** It does not mean every normative table
+entry is verified to ±1. I have been quoting it without that qualification.
+
+Both directions are asserted, not described. The gate fails if a gross
+perturbation stops being detected (the comparison went vacuous) **and** if a ±1
+perturbation starts being detected (the gate outgrew its documented sensitivity
+and the claim must be restated). Same discipline as the constant-fold blind
+spot: an instrument must never become quietly stronger than its own
+documentation.
+
+**Still not proven, and no comparison between these two copies can prove it:**
+that either copy matches the H.264 standard. Both were typed by hand from clause
+8.7.2.2. A transcription error made identically on both sides is invisible here
+and would need a third, independently sourced copy.
+
+**Twin control made mechanical.** Red proof 4 of the dead-logic suite relies on
+two probe modules that are supposed to be identical apart from observability —
+precisely the structure that failed for the parent. `deadlogic_probe_mutate.py
+--verify-twins` now checks the two bodies are byte-identical, that the live
+probe's output really reaches a port of `emu`, and that the dead probe's does
+not. Red-proved by drifting one probe body (`{7'd0, clk}` -> `{6'd0, clk, clk}`)
+-> `TWIN_CONTROL_VACUOUS` rc=1. It runs as the first step of the suite, so the
+control is verified before any verdict built on it.
+
+`make unit` rc=0, `GATE_SKIP_SUMMARY total=3 critical=2 high=1`.
