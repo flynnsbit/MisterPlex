@@ -527,10 +527,41 @@ endmodule
 instance. So this branch would also have fitted a decoder-less bitstream. The MC work is sound and
 is not in silicon.
 
+**The claim that mode 3 is undetectable at source level is measurably false.** The parent ruled
+"No source-level tool can ever detect mode 3 ... They are blind by construction." That is true of
+the three tools we had - reachability, files.qip, RTL reading - but it is not a property of source
+analysis. Two independent source-level signals reproduce the Quartus verdict in about a second:
+
+```
+NO_PATH_TO_PORT h264_decode_core outputs influence none of stream_path's 66 output
+                ports, so synthesis has no reason to keep the instance: predict
+                ELABORATED_BUT_OPTIMIZED_AWAY
+CORE_OUTPUT_NETS 13 traced from 13 declared output ports
+DEAD_END_AGGREGATOR _keep: ORs 47 signals and is never read
+```
+
+Synthesis keeps logic only where it observably affects an output. That is a **dataflow** property,
+and dataflow is visible in source. What was missing was a tool that asked the question, not the
+ability to ask it. Quartus A&S remains the oracle and the arbiter; this is a ~1s pre-filter that
+makes iteration cheap, and its value is precisely that it is 250x faster than the 4m23s oracle.
+
+Getting it conservative took two corrections, both worth carrying:
+
+- Adding graph edges between all connections of one instance over-approximates so badly that every
+  core output appeared to reach **30** of `stream_path`'s ports on a design Quartus had already
+  deleted. Removed: only real continuous assignments create edges.
+- Tracing from *all* port connections rather than only the core's **outputs** counted paths that
+  exist with or without the instance, giving 7 false reached ports. Now the sources are the 13 nets
+  driven by the core's 13 declared output ports, and the answer is 0.
+
+**A predictor of deletion must never emit a false "alive".** It may emit false alarms - a submodule
+that genuinely forwards a signal - and those cost one Quartus A&S run to clear. That asymmetry is
+deliberate.
+
 **`scripts/check_output_sink_liveness.py`** (new) detects this shape at source level in under a
-second instead of four minutes of Quartus, and names the signals. It ships with `--self-test`
-(rc=0) that red-proves the detector on a dead-end fixture and green-proves it on an aggregator that
-is read - a detector that never fires would otherwise look like a clean repo. Against real source it
+second instead of four minutes of Quartus, and names the signals. It ships with `--self-test` (rc=0, four cases) that
+red-proves the dead-end detector and the no-path detector on fixtures with those defects, and
+green-proves both on fixtures without them - a detector that never fires would otherwise look like a clean repo. Against real source it
 returns **rc=1**, matching Quartus:
 
 ```

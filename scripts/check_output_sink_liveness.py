@@ -155,7 +155,65 @@ def self_test():
               % (live,), file=sys.stderr)
         return 1
     print("OK self-test green: an aggregator that is read is not reported")
+
+    dead_ports = module_ports(strip_comments(DEAD_FIXTURE), "fixture")
+    if reaches_port(strip_comments(DEAD_FIXTURE), {"a1"}, dead_ports):
+        print("SELF_TEST_FAIL: claimed a path to a port in a module with none",
+              file=sys.stderr)
+        return 1
+    print("OK self-test red: no path to a port is reported when none exists")
+
+    live_ports = module_ports(strip_comments(LIVE_FIXTURE), "fixture")
+    if "out" not in live_ports:
+        print("SELF_TEST_FAIL: output port not parsed from the fixture header",
+              file=sys.stderr)
+        return 1
+    if reaches_port(strip_comments(LIVE_FIXTURE), {"a1"}, live_ports) != {"out"}:
+        print("SELF_TEST_FAIL: missed a real path from a1 to out", file=sys.stderr)
+        return 1
+    print("OK self-test green: a real path to an output port is found")
     return 0
+
+
+def module_ports(text, module):
+    """Output port names of `module` as declared in its own header."""
+    start = text.find("module " + module)
+    if start < 0:
+        return set()
+    head = text[start:text.find(");", start) + 1]
+    return set(re.findall(r"\boutput\s+(?:wire|reg|logic)?\s*(?:signed\s*)?"
+                          r"(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)", head))
+
+
+def reaches_port(text, sources, ports):
+    """Which of `sources` can influence any name in `ports`, transitively.
+
+    Synthesis keeps logic only where it observably affects an output. This is a
+    coarse source-level dataflow: follow every continuous assignment and every
+    port connection forward from the core's outputs and see whether the parent's
+    own output ports are ever touched. It cannot replace Quartus, but it answers
+    the survival question in about a second instead of four minutes, which is the
+    difference between iterating dozens of times an hour and a few times a day.
+    """
+    edges = {}
+    for match in re.finditer(r"^\s*(?:assign\s+)?(?:wire|logic|reg)?[^;=\n]*?"
+                             r"\b([A-Za-z_]\w*)\s*=\s*([^;]*);", text, re.M):
+        dst, rhs = match.group(1), match.group(2)
+        for src in set(re.findall(r"\b([A-Za-z_]\w*)\b", rhs)):
+            edges.setdefault(src, set()).add(dst)
+    # Deliberately NOT adding edges between the connections of one instance. That
+    # over-approximates badly: it made every core output appear to reach 30 of
+    # stream_path's ports on a design Quartus had already deleted. A predictor of
+    # deletion must never produce a false "alive", so only real assignments count.
+    # The cost is possible false alarms where a submodule genuinely forwards a
+    # signal; those are cheap to confirm with Quartus A&S.
+    seen, stack = set(sources), list(sources)
+    while stack:
+        for nxt in edges.get(stack.pop(), ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return seen & ports
 
 
 def main():
@@ -187,13 +245,34 @@ def main():
               "lets synthesis constant-fold the instance away even once its outputs "
               "are consumed: %s" % (PRODUCT, len(tied), ", ".join(tied)))
 
-    if failures:
-        print("SINK_LIVENESS_FAIL aggregators=%d product=%s parent=%s"
-              % (len(failures), PRODUCT, PARENT), file=sys.stderr)
+    core_text = strip_comments((RTL / (PRODUCT + ".sv")).read_text(errors="replace"))
+    core_outputs = module_ports(core_text, PRODUCT)
+    # Only nets driven BY the core can keep it alive. Tracing from its inputs too
+    # counts paths that exist with or without the instance, which is how an
+    # earlier version reported 30 reached ports on a design Quartus had deleted.
+    core_nets = {v.strip() for port, v in args.items()
+                 if port in core_outputs and v.strip() and not CONST.match(v.strip())}
+    ports = module_ports(text, PARENT)
+    landed = reaches_port(text, core_nets, ports)
+    print("CORE_OUTPUT_NETS %d traced from %d declared output ports"
+          % (len(core_nets), len(core_outputs)))
+    if landed:
+        print("OUTPUTS_REACH_PORTS %s -> %s: %s"
+              % (PRODUCT, PARENT, ", ".join(sorted(landed))))
+    else:
+        print("NO_PATH_TO_PORT %s outputs influence none of %s's %d output ports, so "
+              "synthesis has no reason to keep the instance: predict "
+              "ELABORATED_BUT_OPTIMIZED_AWAY. Confirm with Quartus A&S "
+              "(scripts/check_prefit_elaboration.sh)."
+              % (PRODUCT, PARENT, len(ports)), file=sys.stderr)
+
+    if failures or not landed:
+        print("SINK_LIVENESS_FAIL aggregators=%d path_to_port=%d product=%s parent=%s"
+              % (len(failures), len(landed), PRODUCT, PARENT), file=sys.stderr)
         return 1
 
-    print("SINK_LIVENESS_OK %s outputs reach real sinks; constant_tied_inputs=%d"
-          % (PRODUCT, len(tied)))
+    print("SINK_LIVENESS_OK %s outputs reach %d parent port(s); "
+          "constant_tied_inputs=%d" % (PRODUCT, len(landed), len(tied)))
     return 0
 
 
