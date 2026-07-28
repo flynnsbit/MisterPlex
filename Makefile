@@ -120,6 +120,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_qpel_equivalence_verilator.sh
 	python3 $(ROOT)/scripts/check_decode_core_seam.py
 	python3 $(ROOT)/scripts/check_no_macro_topology.py
+	python3 $(ROOT)/scripts/check_qip_coverage.py
+	python3 $(ROOT)/scripts/check_onchip_ram_budget.py
 	bash $(ROOT)/tests/unit/test_decode_core_seam_audit_reds.sh
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
