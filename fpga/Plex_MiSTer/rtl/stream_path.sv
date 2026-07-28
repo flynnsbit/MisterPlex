@@ -162,6 +162,9 @@ module stream_path #(
 	wire pps_cap_clear, pps_cap_en, pps_cap_end;
 	wire [7:0] pps_cap_data;
 	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr, sl_nal_ref_idc_nonzero;
+	wire [3:0]  sl_first_mb_cbp_luma;
+	wire [1:0]  sl_first_mb_cbp_chroma;
+	wire [15:0] sl_first_mb_residual_bit_offset;
 	wire [7:0] sl_cap_data;
 
 	nalu_scanner scan (
@@ -273,6 +276,9 @@ module stream_path #(
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
+		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
+		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
+		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
 		.residual_csum(residual_csum),
@@ -438,6 +444,22 @@ module stream_path #(
 	end
 
 	wire [7:0] core_rbsp_byte [0:63];
+	// Stage C: the core's RBSP window was tied to zero, so the CAVLC residual
+	// decoder could only ever read an empty bitstream. Capture the same slice
+	// byte stream the header parser consumes (core window is 64 bytes).
+	reg [7:0] core_rbsp_buf [0:63];
+	reg [6:0] core_rbsp_len;
+	integer core_rbsp_ci;
+	always @(posedge clk) begin
+		if (reset | flush | sl_cap_clear) begin
+			core_rbsp_len <= 7'd0;
+			for (core_rbsp_ci = 0; core_rbsp_ci < 64; core_rbsp_ci = core_rbsp_ci + 1)
+				core_rbsp_buf[core_rbsp_ci] <= 8'd0;
+		end else if (sl_cap_en && !core_rbsp_len[6]) begin
+			core_rbsp_buf[core_rbsp_len[5:0]] <= sl_cap_data;
+			core_rbsp_len <= core_rbsp_len + 7'd1;
+		end
+	end
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -446,7 +468,7 @@ module stream_path #(
 	wire signed [15:0] core_p16_residual_v [0:63];
 	generate
 		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
-			assign core_rbsp_byte[core_gi] = 8'd0;
+			assign core_rbsp_byte[core_gi] = core_rbsp_buf[core_gi];
 			assign core_recon_u[core_gi] = 8'd128;
 			assign core_recon_v[core_gi] = 8'd128;
 			assign core_p16_residual_u[core_gi] = 16'sd0;
@@ -505,10 +527,10 @@ module stream_path #(
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(core_i16_pred_mode),
 		.chroma_pred_mode(2'd0),
-		.cbp_luma(4'hf),
-		.cbp_chroma(2'd0),
+		.cbp_luma(sl_first_mb_cbp_luma),
+		.cbp_chroma(sl_first_mb_cbp_chroma),
 		.mb_qp_delta(sl_qpd[5:0]),
-		.mb_residual_bit_offset(16'd0),
+		.mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),

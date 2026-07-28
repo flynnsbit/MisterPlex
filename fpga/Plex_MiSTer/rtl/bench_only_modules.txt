@@ -6,7 +6,6 @@ cos: legacy/template sine-cosine helper; no product consumer in Plex.sv hierarch
 lfsr: legacy/template pattern helper; no product consumer in Plex.sv hierarchy.
 mycore: upstream template/demo core, superseded by Plex.sv/emu product top.
 
-h264_cavlc_nc_predictor: decode-context helper covered by standalone benches only until product residual scheduling is integrated.
 h264_deblock_bs: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
 h264_deblock_thresholds: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
