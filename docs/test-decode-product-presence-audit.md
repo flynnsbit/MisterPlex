@@ -1495,3 +1495,69 @@ in a `finally`. Removing the guard turns that case rc=0 and the suite fails.
 **Generalised rule: every hand-maintained requirement list must publish its
 length in the `Scope:` line and refuse when it is empty.** A requirement list is
 a denominator, and this project has already been bitten by an unpublished one.
+
+### §18.2 Making vacuity detection mechanical, and two false answers it cost me
+
+The parent's instruction was that the check "has to be mechanical, not a matter
+of remembering". `--variable` still requires someone to decide to ask. So the
+gate gained an all-pairs **discovery** mode that asks for everybody:
+
+```
+check_ab_control_validity.py --discover <slot-dir> --ignore '*.log' ... [--require-distinct SLOT]...
+```
+
+It partitions the slots into equivalence classes of byte-identical content. Two
+builds in one class cannot support **any** claim about **any** variable. Measured
+on the real fit slots, with nobody naming a variable:
+
+```
+DISTINCT         members=1  slots=slot11
+VACUOUS_CLUSTER  members=2  slots=wfit-hour27-a,wfit-hour27-b
+VACUOUS_CLUSTER  members=4  slots=wfit-hour27-bdiag-a,wfit-hour27-bdiag-b,wfit-hour27-sdc-a,wfit-hour27-sdc-b
+DISCOVER_SUMMARY slots=7 classes=3 vacuous_clusters=2
+```
+
+The four-slot cluster **is** the published false exoneration, surfaced
+automatically. `--require-distinct` turns the map into an assertion: naming those
+four returns rc=1 `VACUOUS_CONTROL ... sdc-a==bdiag-a`; naming `wfit-hour27-a`
+against `wfit-hour27-sdc-a` returns rc=0 `AB_DISTINCT_OK`.
+
+**The vacuity detector's first answer was itself vacuous.** `collect()` returns
+`rel -> Path`, and discovery compared those maps directly. Paths differ per slot
+by construction, so the first real run reported **all 7 slots DISTINCT,
+`vacuous_clusters=0`** -- a confident false green on the exact cluster the mode
+exists to find, and one that would have told the parent his four slots were fine.
+Fixed to compare `rel -> digest`; regression case
+`case_discovery_compares_content_not_filenames` pins it, and restoring the path
+comparison reddens the suite.
+
+### §18.3 "The only product path" was one shortest path -- a false red in the trunk proof
+
+Auditing my own gates under the same question found a defect in the most
+load-bearing one. `check_rtl_module_instantiations.py` computed **one shortest**
+`emu -> ... -> root` path via BFS, then failed if a masking lineage appeared on
+it, saying *"the only product path ... runs through the retired masking lineage"*.
+That sentence was not what the code measured. Demonstrated:
+
+```
+stream_path -> decode_stub      -> shared_helper      (3 hops, found first)
+stream_path -> h264_decode_core -> mid -> shared_helper (4 hops, clean, ignored)
+-> hard fail: "the only product path ... runs through decode_stub"
+```
+
+This is not hypothetical: it fires the moment a module is instantiated by both
+the painter and the real decoder, which is precisely the state the tree enters
+while `decode_stub` is being retired. A false RED here blocks another worker's
+genuine work and reports a module as stub-masked when it is in the product
+decoder.
+
+Fixed with `unmasked_instantiation_path()`, which searches the graph with the
+masking lineages pruned. A masking verdict is now a statement about **every**
+path: fail only when no unmasked route exists. `TRUNK_PROOF` gained
+`unmasked_path=`, so the claim and its evidence are printed together. Requiring a
+masking lineage *as the root itself* still fails by definition. Three regression
+cases; restoring the shortest-path logic reddens the suite.
+
+**No existing test caught this** -- all four dependent suites stayed green
+through the fix, which is itself the finding: the property had never been tested,
+only assumed.

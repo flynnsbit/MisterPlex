@@ -649,6 +649,30 @@ def instantiation_path(root: str, target: str, graph: dict[str, set[str]]) -> li
     return None
 
 
+def unmasked_instantiation_path(
+    root: str, target: str, graph: dict[str, set[str]]
+) -> list[str] | None:
+    """Shortest root -> target path that traverses no masking lineage.
+
+    `instantiation_path` returns *a* shortest path.  Reporting that as "the only
+    product path" is a true number about the wrong thing: when a module is
+    instantiated by both the retired painter and the real decoder, the stub route
+    is usually shorter, and the gate would hard-fail a module that is genuinely in
+    the product decoder.  A masking claim must be about *every* path, so search
+    the graph with the masking lineages removed.
+    """
+    if root in MASKING_LINEAGES or target in MASKING_LINEAGES:
+        # Asking for the retired painter itself is a masking claim by definition;
+        # there is no clean route to it.
+        return None
+    pruned = {
+        parent: {kid for kid in kids if kid not in MASKING_LINEAGES or kid == target}
+        for parent, kids in graph.items()
+        if parent not in MASKING_LINEAGES or parent == root
+    }
+    return instantiation_path(root, target, pruned)
+
+
 def check_required_modules(
     required: list[str],
     root: str,
@@ -665,18 +689,25 @@ def check_required_modules(
     trunk = instantiation_path(PRODUCT_ROOT, root, graph) if root_is_product else None
     if trunk is not None:
         masked = [lineage for lineage in MASKING_LINEAGES if lineage in trunk]
+        clean = unmasked_instantiation_path(PRODUCT_ROOT, root, graph) if masked else trunk
+        if masked and clean is not None:
+            # The shortest route happens to run through the painter, but a real
+            # product route exists.  Report the clean one; a masking claim is only
+            # true when *every* path is masked.
+            trunk, masked = clean, []
         print(
-            "TRUNK_PROOF %s path=%s hops=%d via_masking_lineage=%s"
+            "TRUNK_PROOF %s path=%s hops=%d via_masking_lineage=%s unmasked_path=%s"
             % (
                 root,
                 "->".join(trunk),
                 len(trunk) - 1,
                 ",".join(masked) if masked else "no",
+                "none" if clean is None else "->".join(clean),
             )
         )
         if masked:
             fail(
-                f"the only product path to --root {root} runs through the retired masking lineage "
+                f"every product path to --root {root} runs through the retired masking lineage "
                 + ",".join(masked)
                 + "; that is not a product decode path"
             )

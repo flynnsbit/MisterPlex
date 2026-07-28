@@ -170,6 +170,14 @@ def case_real_fit_slots_anchor() -> int:
         assert "VACUOUS_CONTROL" in proc.stderr, proc.stderr
         assert "VARIABLE IDENTICAL Plex.rbf" in proc.stdout, proc.stdout
         anchors += 1
+    if SLOTS.is_dir():
+        # The parent's four "exoneration" slots must surface as one cluster with
+        # nobody having named a variable.
+        proc = run("--discover", str(SLOTS), "--ignore", "*.log", "--ignore", "*.tsv",
+                   "--ignore", "*.rpt", "--ignore", "summary.txt")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert ("VACUOUS_CLUSTER members=4 slots=wfit-hour27-bdiag-a,wfit-hour27-bdiag-b,"
+                "wfit-hour27-sdc-a,wfit-hour27-sdc-b") in proc.stdout, proc.stdout
     real = SLOTS / "wfit-hour27-a", SLOTS / "wfit-hour27-bdiag-b"
     if all(p.is_dir() for p in real):
         proc = run("--a", str(real[0]), "--b", str(real[1]),
@@ -178,6 +186,68 @@ def case_real_fit_slots_anchor() -> int:
         assert "VARIABLE DIFFERS Plex.rbf" in proc.stdout, proc.stdout
         anchors += 1
     return anchors
+
+
+def case_discovery_finds_vacuity_without_being_told_what_to_look_for() -> None:
+    """Naming the variable requires remembering to ask.  Discovery asks for everybody."""
+    with scratch() as td:
+        root = Path(td)
+        for name, rbf in (("s1", "AAA"), ("s2", "AAA"), ("s3", "AAA"), ("s4", "BBB")):
+            (root / name).mkdir(parents=True)
+            (root / name / "Plex.rbf").write_text(rbf)
+            (root / name / "compile.log").write_text(f"timing noise {name}\n")
+        proc = run("--discover", str(root), "--ignore", "*.log")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "VACUOUS_CLUSTER members=3 slots=s1,s2,s3" in proc.stdout, proc.stdout
+        assert "DISTINCT members=1 slots=s4" in proc.stdout, proc.stdout
+        assert "vacuous_clusters=1" in proc.stdout, proc.stdout
+
+        # Slots asserted to be distinct that are byte-identical are a hard fail.
+        red = run("--discover", str(root), "--ignore", "*.log",
+                  "--require-distinct", "s1", "--require-distinct", "s2")
+        assert red.returncode == 1, red.stdout + red.stderr
+        assert "s1==s2" in red.stderr, red.stderr
+        green = run("--discover", str(root), "--ignore", "*.log",
+                    "--require-distinct", "s1", "--require-distinct", "s4")
+        assert green.returncode == 0, green.stdout + green.stderr
+        assert "AB_DISTINCT_OK" in green.stdout, green.stdout
+        absent = run("--discover", str(root), "--require-distinct", "nope")
+        assert absent.returncode == 2, absent.stdout + absent.stderr
+        assert "absent slots" in absent.stderr, absent.stderr
+
+
+def case_discovery_compares_content_not_filenames() -> None:
+    """Regression: the first implementation compared rel->Path maps.
+
+    Those differ per slot by construction, so every slot came out DISTINCT and the
+    vacuity detector reported a confident false green on the very cluster it was
+    built to find.
+    """
+    with scratch() as td:
+        root = Path(td)
+        for name in ("x", "y"):
+            (root / name).mkdir(parents=True)
+            (root / name / "Plex.rbf").write_text("SAME")
+        proc = run("--discover", str(root))
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "VACUOUS_CLUSTER members=2 slots=x,y" in proc.stdout, proc.stdout
+        assert "classes=1" in proc.stdout, proc.stdout
+
+
+def case_discovery_needs_two_slots() -> None:
+    with scratch() as td:
+        root = Path(td)
+        (root / "only").mkdir(parents=True)
+        (root / "only" / "Plex.rbf").write_text("A")
+        proc = run("--discover", str(root))
+        assert proc.returncode == 77, proc.stdout + proc.stderr
+        assert "fewer than two slots" in proc.stderr, proc.stderr
+
+
+def case_no_comparison_named_is_refused() -> None:
+    proc = run("--variable", "Plex.sdc")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "give --a and --b, or --discover" in proc.stderr, proc.stderr
 
 
 def main() -> int:
@@ -192,6 +262,10 @@ def main() -> int:
         case_no_common_files_is_refused,
         case_missing_side_is_unscored,
         case_ignore_globs_are_applied,
+        case_discovery_finds_vacuity_without_being_told_what_to_look_for,
+        case_discovery_compares_content_not_filenames,
+        case_discovery_needs_two_slots,
+        case_no_comparison_named_is_refused,
     )
     available = sum(
         1 for a, b in (("wfit-hour27-sdc-a", "wfit-hour27-sdc-b"),

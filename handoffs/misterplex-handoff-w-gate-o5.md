@@ -626,3 +626,40 @@ suite. Item 3 is closed.
 Rule offered to the fleet: **a hand-maintained requirement list must publish its
 length in `Scope:` and refuse when empty** -- it is a denominator, and an
 unpublished denominator is how "true number about the wrong thing" starts.
+
+## A12 -- vacuity made mechanical, and two false answers found in my own gates
+
+**1. Discovery mode (parent's "mechanical, not remembered").** `--variable`
+requires someone to think to ask. `--discover DIR` partitions build slots into
+byte-identical equivalence classes and needs no variable named. On the real
+slots it reproduces the false exoneration automatically:
+
+```
+VACUOUS_CLUSTER members=4 slots=wfit-hour27-bdiag-a,wfit-hour27-bdiag-b,wfit-hour27-sdc-a,wfit-hour27-sdc-b
+```
+
+`--require-distinct` makes it an assertion: those four -> rc=1; `a` vs `sdc-a` ->
+rc=0. Suggested standing use: run it over `remote_out/` before any A/B claim.
+
+**2. My vacuity detector's first real answer was itself vacuous.** It compared
+`rel -> Path` maps, which differ per slot by construction, and reported **all 7
+slots DISTINCT, vacuous_clusters=0**. Had I shipped on that green I would have
+told the parent his four slots were distinct -- the same false exoneration, from
+the tool built to prevent it. Now compares digests; mutation-pinned.
+
+**3. False RED in the trunk proof -- `check_rtl_module_instantiations.py`.**
+It computed **one shortest** path and then asserted *"the only product path"*.
+With a module instantiated by both `decode_stub` and the real decoder, the stub
+route is shorter, so the gate hard-fails a module that is genuinely in the
+product decoder. **This fires as soon as W-DECODE-O5 makes the core consume
+outputs while the stub still exists** -- i.e. the next state of the tree. Fixed
+to search all unmasked paths; `TRUNK_PROOF` now prints `unmasked_path=`. Failing
+requires *every* path to be masked. Three regression cases; no prior test covered
+the property.
+
+**For W-FIT-O5, on the nested-ancestor defect W-AUDIT found in
+`check_prefit_elaboration.sh`:** my masking check reads the full path, so it does
+not have the direct-child bug -- but it had the shortest-path bug instead, which
+is the same error with the opposite sign. Suggest your forbidden-ancestor fix
+assert over **all** hierarchy paths to the module, not the first one found, and
+print the path it judged.

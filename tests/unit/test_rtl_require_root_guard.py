@@ -162,9 +162,64 @@ def check_foreign_project_root() -> int:
     return cases
 
 
+def check_masking_claim_is_about_every_path() -> int:
+    """A masking verdict must be true of ALL product paths, not of one shortest one.
+
+    `instantiation_path` returns *a* shortest path.  When a module is instantiated
+    by both the retired painter and the real decoder -- exactly the state the tree
+    enters while decode_stub is still being retired -- the painter route is
+    usually shorter, so a shortest-path masking test hard-fails a module that is
+    genuinely inside the product decoder.  A false red on this gate blocks another
+    worker's real work and tells the parent something untrue.
+    """
+    cases = 0
+    dual = {
+        "emu": {"stream_path"},
+        "stream_path": {"decode_stub", "h264_decode_core"},
+        "decode_stub": {"shared_helper"},
+        "h264_decode_core": {"mid"},
+        "mid": {"shared_helper"},
+    }
+    modules = {n: None for n in
+               ("emu", "stream_path", "decode_stub", "h264_decode_core", "mid", "shared_helper")}
+    reachable = {"stream_path", "decode_stub", "h264_decode_core", "mid", "shared_helper"}
+
+    # GREEN: a clean product route exists, so the module is NOT stub-masked.
+    rc, out, err = run(required=[], root="shared_helper", graph=dual, modules=modules,
+                       product_reachable=reachable, allow_non_product_root=False)
+    assert rc == 0, f"a module with a clean product path must not be called masked\n{out}{err}"
+    assert "via_masking_lineage=no" in out, out
+    assert "unmasked_path=emu->stream_path->h264_decode_core->mid->shared_helper" in out, out
+    assert "decode_stub" not in out.split("unmasked_path=")[0].split("path=")[1].split()[0], out
+    cases += 1
+
+    # RED: remove the clean route and the very same module must be called masked.
+    stub_only = {
+        "emu": {"stream_path"},
+        "stream_path": {"decode_stub", "h264_decode_core"},
+        "decode_stub": {"shared_helper"},
+        "h264_decode_core": {"mid"},
+        "mid": set(),
+    }
+    rc, out, err = run(required=[], root="shared_helper", graph=stub_only, modules=modules,
+                       product_reachable=reachable, allow_non_product_root=False)
+    assert rc == 1, f"a module reachable only under the painter must fail\n{out}{err}"
+    assert "every product path" in err and "decode_stub" in err, err
+    assert "unmasked_path=none" in out, out
+    cases += 1
+
+    # RED: the retired painter itself is a masking claim by definition.
+    rc, out, err = run(required=[], root="decode_stub", graph=dual, modules=modules,
+                       product_reachable=reachable, allow_non_product_root=False)
+    assert rc == 1, f"requiring the retired painter itself must fail\n{out}{err}"
+    assert "unmasked_path=none" in out, out
+    cases += 1
+    return cases
+
+
 def main() -> int:
     scope = len(MODULES)
-    print(f"Scope: synthetic_modules={scope} cases=7", flush=True)
+    print(f"Scope: synthetic_modules={scope} cases=7 masking_path_cases=3", flush=True)
     assert scope > 0, "Scope: 0 cannot claim a PASS"
 
     # GREEN: product root, module present.
@@ -223,8 +278,12 @@ def main() -> int:
     assert "NON_PRODUCT_ROOT h264_decode_skeleton" in proc.stderr, proc.stderr
 
     foreign_cases = check_foreign_project_root()
+    masking_cases = check_masking_claim_is_about_every_path()
 
-    print(f"RTL_REQUIRE_ROOT_GUARD_OK cases=7 e2e=1 foreign_project_root={foreign_cases}")
+    print(
+        f"RTL_REQUIRE_ROOT_GUARD_OK cases=7 e2e=1 foreign_project_root={foreign_cases} "
+        f"masking_all_paths={masking_cases}"
+    )
     return 0
 
 

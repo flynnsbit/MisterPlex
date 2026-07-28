@@ -61,10 +61,79 @@ def matches(rel: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(rel, pattern) for pattern in patterns)
 
 
+def discover(root: Path, ignore: list[str], require_distinct: list[str]) -> int:
+    """All-pairs vacuity map over a directory of build slots.
+
+    Naming the variable requires remembering to ask.  This asks for everybody:
+    it partitions the slots into equivalence classes of byte-identical content,
+    so any comparison drawn between two members of one class is vacuous for
+    *every* variable, whatever anybody claims it shows.
+    """
+    slots = sorted(d for d in root.iterdir() if d.is_dir())
+    print(f"Scope: discover slots={len(slots)} ignored_globs={len(ignore)} "
+          f"required_distinct={len(require_distinct)}")
+    if len(slots) < 2:
+        print(f"SKIP: fewer than two slots under {root}", file=sys.stderr)
+        return UNSCORED
+
+    # rel -> digest, NOT rel -> Path.  Comparing the Path maps compares file
+    # *names*, which differ per slot by construction, so every slot would come
+    # out DISTINCT -- a false green from the vacuity detector itself.
+    content = {
+        slot.name: {rel: digest(path) for rel, path in collect(slot, ignore).items()}
+        for slot in slots
+    }
+    classes: list[list[str]] = []
+    for name in (s.name for s in slots):
+        for group in classes:
+            if content[name] == content[group[0]]:
+                group.append(name)
+                break
+        else:
+            classes.append([name])
+
+    for group in classes:
+        marker = "VACUOUS_CLUSTER" if len(group) > 1 else "DISTINCT"
+        print(f"{marker} members={len(group)} slots={','.join(group)}")
+    vacuous = [g for g in classes if len(g) > 1]
+    print(f"DISCOVER_SUMMARY slots={len(slots)} classes={len(classes)} "
+          f"vacuous_clusters={len(vacuous)}")
+
+    if not require_distinct:
+        return CONTROLLED
+
+    missing = [name for name in require_distinct if name not in content]
+    if missing:
+        print(f"REFUSED: --require-distinct names absent slots: {','.join(missing)}",
+              file=sys.stderr)
+        return REFUSED
+    home = {name: i for i, group in enumerate(classes) for name in group}
+    collisions = [
+        (x, y)
+        for i, x in enumerate(require_distinct)
+        for y in require_distinct[i + 1:]
+        if home[x] == home[y]
+    ]
+    if collisions:
+        print(
+            "VACUOUS_CONTROL: slots asserted to be distinct are byte-identical, so "
+            "no comparison among them can support any claim: "
+            + "; ".join(f"{x}=={y}" for x, y in collisions),
+            file=sys.stderr,
+        )
+        return NOT_CONTROLLED
+    print(f"AB_DISTINCT_OK slots={','.join(require_distinct)}")
+    return CONTROLLED
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--a", required=True, help="one side of the comparison")
-    ap.add_argument("--b", required=True, help="the other side")
+    ap.add_argument("--a", help="one side of the comparison")
+    ap.add_argument("--b", help="the other side")
+    ap.add_argument("--discover", metavar="DIR",
+                    help="all-pairs vacuity map over a directory of build slots")
+    ap.add_argument("--require-distinct", action="append", default=[], metavar="SLOT",
+                    help="with --discover, fail if any two named slots are identical")
     ap.add_argument("--variable", action="append", default=[], metavar="GLOB",
                     help="the independent variable this comparison claims to vary")
     ap.add_argument("--ignore", action="append", default=[], metavar="GLOB",
@@ -72,6 +141,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--outcome", action="append", default=[], metavar="GLOB",
                     help="the dependent variable, e.g. Plex.rbf")
     args = ap.parse_args(argv)
+
+    if args.discover:
+        root = Path(args.discover)
+        if not root.is_dir():
+            print(f"Scope: 0 -- not a directory: {root}")
+            print(f"SKIP: discovery root missing: {root}", file=sys.stderr)
+            return UNSCORED
+        return discover(root, args.ignore, args.require_distinct)
+
+    if not args.a or not args.b:
+        print("Scope: 0 -- no comparison named")
+        print("REFUSED: give --a and --b, or --discover DIR", file=sys.stderr)
+        return REFUSED
 
     side_a, side_b = Path(args.a), Path(args.b)
     for side in (side_a, side_b):
