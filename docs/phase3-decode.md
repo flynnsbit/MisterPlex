@@ -337,6 +337,10 @@ Phase 3.3m (inter-prediction scope/model — W-REL 2026-07-26 host-only):
   produced data while final mp4 returned an empty body. Therefore Baseline-only FPGA inter decode
   is architecturally tractable but **not yet product-safe for PMS 480p**; product must fail closed /
   fall back on High/CABAC/B until PMS delivery is constrained or a broader decoder exists.
+  **Scope correction (W-FEED 2026-07-28):** this number was taken from HEVC `/metadata/3`
+  source via PMS transcode/delivered-stream probing. It is evidence about the PMS transcode path,
+  not evidence about original-Part H.264 ≤480p direct play, and the current library census found
+  zero real original-Part H.264 ≤480p items.
   **Goldens:** `tests/fixtures/p3_inter_pred/` adds the checked-in vector, `pframe1_mb_v1.json`
   (`format=misterplex.p3.inter_mb.v1`) and `frame_mae_v1.csv`
   (`format=misterplex.p3.inter_frame_mae.v1`, 12×300 MB rows, host-model maeY=0).
@@ -365,6 +369,9 @@ Phase 3.3n (real PMS High/CABAC/B sizing — W-REL 2026-07-26 host-only):
   20 MHz `clk_sys`/DDRAM clock, an optimistic 1-bin/cycle CABAC engine barely covers stress
   (1.14×), a 2-cycle engine fails stress, and a 3-cycle engine fails planning. 4 refs + current
   YUV420 is 2.25 MB; +present/reorder is 2.70 MB, so DDR3 is required and SDRAM/BRAM are not viable.
+  **Scope correction (W-FEED 2026-07-28):** this sizing uses HEVC `/metadata/3` source via PMS
+  transcode/delivered-stream probing. It remains valid High/CABAC/B transcode-path sizing, but it
+  is not evidence about the original-Part H.264 ≤480p path the fabric is being built for.
   Existing 4×4 IQ/IDCT/recon survives below the entropy layer, but the CAVLC walker does not; High
   also requires detection/support for 8×8 transform and B-slice DPB/list machinery. Verdict:
   decoding PMS as delivered is a full High-profile decoder project and not a sane near-term path
@@ -377,6 +384,10 @@ Phase 3.3p (P-slice inter prediction RTL — W-REL 2026-07-26 host-only):
   so unsupported-stream guards stay mandatory. Local x264 proxy with the exact `VideoEncodeFlags`
   plus `partitions=none` measured P frames as intra 4.8%, **P16×16 17.6%**, sub-MB partitions 0%,
   **skip 77.7%**; first RTL rung implements only P_Skip + P_L0_16x16.
+  **Scope correction (W-FEED 2026-07-28):** the PMS Baseline/L3.0 number used HEVC
+  `/metadata/3` source via the server-side PMS transcode/derived path. It proves the constrained
+  delivered stream can match the FPGA contract; it does not prove original-Part H.264 ≤480p
+  direct-play behaviour for the user's library.
   RTL: `h264_inter_pred.sv` adds MV median predictor/MVD add/P_Skip zero rule, partition-aware
   predictors for P_L0_16x8/P_L0_8x16/P_8x8/sub-MB modes, luma qpel six-tap interpolation, chroma
   eighth-pel bilinear interpolation, and 9×9 reference fetch address clamping. `h264_p_slice_modes.sv`
