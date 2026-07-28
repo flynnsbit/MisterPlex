@@ -304,30 +304,27 @@ def classify_signal(frames: list[np.ndarray]) -> dict:
 
     Returns a dict with keys: state, note, mean_luma, spatial_std, unique_hashes.
     Caller converts state to exit code.
+
+    Classification order (important):
+      1. Luma    → BLACK_SIGNAL  (stable black frames from 00eebd5e RBF are byte-identical;
+                                  STALE check must not mask this — low-entropy MJPEG encodes
+                                  black content to the same bytes every time)
+      2. Spatial → NO_SIGNAL     (solid-colour frame = no HDMI signal)
+      3. STALE   → STALE_CAPTURE (byte-identical frames that are NOT black and NOT no-signal
+                                  = genuinely frozen picture of real content)
+      4. Otherwise CONTENT_PRESENT
     """
     hashes = [frame_sha(f) for f in frames]
     unique = len(set(hashes))
     total = len(frames)
 
-    # STALE: only meaningful with ≥2 frames.  With a single frame, unique==1 is
-    # trivially true regardless of content — do not report STALE for n=1.
-    if total >= 2 and unique == 1:
-        return {
-            "state": "STALE_CAPTURE",
-            "unique_hashes": unique,
-            "total_frames": total,
-            "mean_luma": None,
-            "spatial_std": None,
-            "note": (
-                f"all {total} captured frames are byte-identical (same SHA-256 prefix); "
-                "stream is frozen, buffered, or the device is returning a cached frame"
-            ),
-        }
-
     frame = frames[-1]
     luma = mean_luma_bt601(frame)
     std = spatial_std(frame)
 
+    # Check luma FIRST — a black-screen RBF produces stable MJPEG output where
+    # all N frames may share the same SHA-256 prefix.  STALE before luma would
+    # incorrectly report STALE_CAPTURE for a valid-but-black signal.
     if luma < LUMA_BLACK_THRESHOLD:
         return {
             "state": "BLACK_SIGNAL",
@@ -352,6 +349,22 @@ def classify_signal(frames: list[np.ndarray]) -> dict:
             "note": (
                 f"solid-colour frame (spatial std {std:.2f} < threshold {SPATIAL_CONTENT_THRESHOLD}); "
                 "HDMI input may be disconnected or the source has no active output"
+            ),
+        }
+
+    # STALE: only meaningful with ≥2 frames and only for content-level (non-black, non-flat)
+    # frames.  With a single frame, unique==1 is trivially true.
+    if total >= 2 and unique == 1:
+        return {
+            "state": "STALE_CAPTURE",
+            "unique_hashes": unique,
+            "total_frames": total,
+            "mean_luma": round(luma, 2),
+            "spatial_std": round(std, 2),
+            "note": (
+                f"all {total} captured frames are byte-identical (same SHA-256 prefix) "
+                f"but luma ({luma:.2f}) and spatial std ({std:.2f}) indicate real content; "
+                "stream is frozen, buffered, or the device is returning a cached frame"
             ),
         }
 
@@ -395,8 +408,15 @@ def synthetic_frame(case: str) -> np.ndarray:
         # Solid grey: luma≈128, std≈0 → NO_SIGNAL
         return np.full((h, w, 3), 128, dtype=np.uint8)
     if case == "stale":
-        # Any frame — caller duplicates it to simulate frozen stream
-        return np.full((h, w, 3), 64, dtype=np.uint8)
+        # Content-level gradient, pixel-identical across frames — ensures STALE check
+        # is reached (luma ≥ threshold, spatial std ≥ threshold, but all frames frozen).
+        # Using the same gradient as "content" ensures we exercise the STALE branch, not
+        # the NO_SIGNAL branch (which would fire for a solid-colour stale frame).
+        frame = np.zeros((h, w, 3), dtype=np.uint8)
+        for y in range(h):
+            for x in range(w):
+                frame[y, x] = [int(x * 255 / w), int(y * 255 / h), 128]
+        return frame
     raise ValueError(f"unknown synthetic case: {case!r}")
 
 
