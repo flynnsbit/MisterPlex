@@ -437,7 +437,7 @@ module stream_path #(
 		end
 	end
 
-	wire [7:0] core_rbsp_byte [0:63];
+	wire [7:0] core_rbsp_byte [0:63];  // driven by h264_rbsp_window below
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -446,7 +446,6 @@ module stream_path #(
 	wire signed [15:0] core_p16_residual_v [0:63];
 	generate
 		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
-			assign core_rbsp_byte[core_gi] = 8'd0;
 			assign core_recon_u[core_gi] = 8'd128;
 			assign core_recon_v[core_gi] = 8'd128;
 			assign core_p16_residual_u[core_gi] = 16'sd0;
@@ -478,6 +477,44 @@ module stream_path #(
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
 	wire core_error;
+	// The decoder's random-access RBSP view. This used to be
+	// `assign core_rbsp_byte[core_gi] = 8'd0;` with `.rbsp_window_base(16'd0)`,
+	// i.e. the product decoder decoded a constant zero bitstream, so no amount
+	// of work on its *output* side could produce real pixels. The bytes come
+	// from the same nalu_scanner slice tap that already feeds slice_hdr_parser,
+	// which is the end of the ARM -> DDR ring -> ddr_bitstream_reader chain.
+	//
+	// h264_decode_core has no wait handshake on this port: it drives
+	// rbsp_request_offset/valid and reads rbsp_byte against rbsp_window_base
+	// combinationally. h264_rbsp_window therefore registers window_base and
+	// byte_out together and holds the last request, so the core can never see
+	// new bytes labelled with an old base, and an idle cycle never walks the
+	// window backwards.
+	wire [15:0] core_rbsp_bytes_captured;
+	wire core_rbsp_window_valid;
+	wire core_rbsp_slice_complete;
+	wire core_rbsp_overflow;
+	wire core_rbsp_underflow;
+	wire [15:0] core_rbsp_window_base;
+
+	h264_rbsp_window u_core_rbsp_window (
+		.clk(clk),
+		.reset(reset | flush),
+		.cap_clear(sl_cap_clear),
+		.cap_en(sl_cap_en),
+		.cap_data(sl_cap_data),
+		.cap_end(sl_cap_end),
+		.request_valid(core_rbsp_request_valid),
+		.request_offset(core_rbsp_request_offset),
+		.byte_out(core_rbsp_byte),
+		.window_base(core_rbsp_window_base),
+		.window_valid(core_rbsp_window_valid),
+		.bytes_captured(core_rbsp_bytes_captured),
+		.slice_complete(core_rbsp_slice_complete),
+		.overflow(core_rbsp_overflow),
+		.underflow(core_rbsp_underflow)
+	);
+
 	wire [1:0] core_i16_pred_mode =
 		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
 
@@ -496,7 +533,7 @@ module stream_path #(
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
-		.rbsp_window_base(16'd0),
+		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(core_rbsp_request_offset),
 		.rbsp_request_valid(core_rbsp_request_valid),
 		.mb_type_valid(slice_valid && sl_has_mbt),

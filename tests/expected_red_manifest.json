@@ -195,6 +195,24 @@
         "FAIL h264_intra_nb_ctx: mb00_has_above",
         "h264_intra_nb_ctx RTL check FAILED"
       ]
+    },
+    {
+      "id": "h264_rbsp_window_no_wrap",
+      "owner": "tests/unit/test_h264_rbsp_window_verilator.py",
+      "why": "Forcing every lane to read the base row must fail unaligned windows: a 64-byte view starting mid-row spans two rows, and serving one row silently returns bytes from 64 positions away.",
+      "required_substrings": [
+        "FAIL h264_rbsp_window: base1_byte",
+        "h264_rbsp_window RTL check FAILED"
+      ]
+    },
+    {
+      "id": "h264_rbsp_window_stale_tail",
+      "owner": "tests/unit/test_h264_rbsp_window_verilator.py",
+      "why": "Serving RAM contents past bytes_captured must fail: the residue is the previous slice's bytes, which decode into plausible-looking wrong pixels instead of an observable underflow.",
+      "required_substrings": [
+        "FAIL h264_rbsp_window: base960_byte",
+        "h264_rbsp_window RTL check FAILED"
+      ]
     }
   ]
 }
