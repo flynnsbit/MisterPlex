@@ -500,6 +500,71 @@ pipeline stage anywhere in it.
 
 I have not run Quartus and will not; these are analytic figures from the RTL, stated as such.
 
+## 10d. WITHDRAWAL, and the third failure mode detected at source
+
+**I withdraw the implication that my reachability and elaboration greens mean the MC path is in the
+product design. They do not.** w-fit-o5 measured with Quartus Analysis & Synthesis on
+`w-decode-hour27` `2f165ed` that `h264_decode_core` is instantiated unconditionally, compiled,
+elaborated - and then **deleted, because it contributes zero resources**. Every gate I built reports
+GREEN on that design, correctly, because the instantiation genuinely is there. **Source and
+elaboration graphs are structurally incapable of seeing this.** My §10a/§10b greens remain true as
+far as they go, and they go less far than I implied.
+
+Failure modes now enumerated: (1) not compiled - absent from `files.qip`; (2) not instantiated -
+orphaned; (3) **instantiated, compiled, elaborated, then optimized away as dead logic.**
+
+**Measured: mode 3 is present on this branch too.** `stream_path.sv:608-621`:
+
+```
+wire _keep = keep_si | ... | core_dpb_wr_en | |core_dpb_wr_addr | |core_dpb_wr_data |
+             core_dpb_rd_en | ... | core_frame_done | ... | core_error;
+
+endmodule
+```
+
+`_keep` ORs 47 signals, 15 of them the decode core's outputs, and **`_keep` is never read** -
+`endmodule` follows immediately. Synthesis deletes the wire, then everything feeding it, then the
+instance. So this branch would also have fitted a decoder-less bitstream. The MC work is sound and
+is not in silicon.
+
+**`scripts/check_output_sink_liveness.py`** (new) detects this shape at source level in under a
+second instead of four minutes of Quartus, and names the signals. It ships with `--self-test`
+(rc=0) that red-proves the detector on a dead-end fixture and green-proves it on an aggregator that
+is read - a detector that never fires would otherwise look like a clean repo. Against real source it
+returns **rc=1**, matching Quartus:
+
+```
+DEAD_END_AGGREGATOR _keep: ORs 47 signals and is never read ...
+  product signals lost: core_busy, core_current_mb_addr, core_decode_state, core_dpb_rd_addr,
+  core_dpb_rd_en, core_dpb_wr_addr, core_dpb_wr_data, core_dpb_wr_en, core_error,
+  core_frame_done, core_frame_mb_count, core_luma4x4_valid, core_luma_feed_active,
+  core_rbsp_request_offset, core_rbsp_request_valid
+SINK_LIVENESS_FAIL aggregators=1 product=h264_decode_core parent=stream_path
+```
+
+**It is deliberately NOT registered in `make unit`,** because it currently fails on real source and
+registering it would either break the fleet's green or tempt someone to allowlist the defect - which
+is how this project has manufactured false greens four times. Register it the moment the defect is
+fixed; it is cheap and it closes mode 3 permanently.
+
+**A second finding that is specifically MC's problem, and is not fixed by consuming outputs.** The
+same run reports 23 input ports of the core tied to literals at `stream_path.sv:484`:
+
+```
+CONSTANT_TIED_INPUTS h264_decode_core: 23 input ports wired to literals:
+  cbp_chroma, cbp_luma, chroma_pred_mode, dpb_rd_data, dpb_ref_base, dpb_write_base,
+  mb_residual_bit_offset, mv_x_qpel, mv_y_qpel, mvd_x_qpel, mvd_y_qpel, p16_mb_is_ref,
+  p16_mb_x, p16_mb_y, p16_zero_mv_valid, part_idx, pps_chroma_qp_index_offset,
+  rbsp_window_base, recon_mb_is_ref, recon_mb_valid, recon_mb_x, recon_mb_y, ref_idx_l0
+```
+
+Three of those are fatal to motion compensation specifically: **`dpb_rd_data(8'd0)`** makes every
+reference sample a constant zero, and **`mv_x_qpel(16'sd0)` / `mv_y_qpel(16'sd0)`** make every motion
+vector zero. Even after the core's outputs are consumed and the instance survives, the entire qpel
+FIR constant-folds to zero and MC is optimized away a second time. **Consuming outputs is necessary
+but not sufficient for MC.** Whoever lands the parser seam must drive `dpb_rd_data` from real DPB
+reads and the MVs from parsed syntax, or MC will keep vanishing while every gate stays green.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
