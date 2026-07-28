@@ -1509,3 +1509,102 @@ entity paths (ALUTs, block bits, M10Ks, DSP), so it cannot confound the result.
 But note 18.4: if the display path blacks out from refill starvation, then
 "black screen" is **not** evidence against the SDC either. The A/B's only sound
 read-out is the PLXD/PLXS mailbox advancing, not what the screen shows.
+
+---
+
+## 19. Rate, measured — the gap the parent named ("capacity was measured, not rate")
+
+§15 answered *how many lines fit*. It did not answer *can a line be fetched in
+less time than the raster takes to cross one*. That distinction decides whether
+`FRAME_LINES_16` can work at all:
+
+- **bandwidth bound** → extra slots buy nothing; the store falls behind at a
+  fixed rate no matter how deep the buffer is, and a fit spent on
+  `FRAME_LINES_16` is six hours wasted;
+- **bandwidth headroom** → the failure is lead/scheduling, and slots buy
+  exactly the thing that is short.
+
+Shipped `scripts/check_ddr_refill_rate.py`. Nothing is restated: geometry and
+video timing are derived from the RTL, and both clock frequencies are read from
+the STA report **bound to `Plex.rbf` md5 `fb4bad84`**.
+
+### 19.1 Result
+
+```
+Scope: 1 refill-rate budget (macro=FRAME_LINES_8 LINE_COUNT=8 CODED_W=624 ...)
+  report      build/rpt/bdiag-b/Plex.sta.rpt  BOUND md5=fb4bad849ad2db782a5004ce5a3471ce
+  clk_ddr     90.0 MHz   clk_sys 20.0 MHz  ce_pix 20.0 MHz
+  per line    y=78 u=39 v=39 qwords -> slot=156 qwords (CODED_W/8, CODED_W/16)
+  line time   638 ce_pix clocks / 20.0 MHz = 31.900 us
+  refill      156 qwords = 1.733 us
+  headroom    18.40x
+```
+
+Sensitivity, because the ideal figure is not the interesting one:
+
+| burst latency (clk_ddr cyc) | src lines per output line | refill | headroom |
+|---|---|---|---|
+| 0 | 1 | 1.733 us | **18.40x** |
+| 50 | 1 | 3.400 us | 9.38x |
+| 100 | 1 | 5.067 us | 6.30x |
+| 100 | 2 | 10.133 us | 3.15x |
+| 200 | 2 | 16.800 us | **1.90x** |
+
+200 cycles is 2.2 us of latency **per burst**, far beyond anything the f2h
+bridge plausibly costs, combined with double the fetch rate the vertical
+scaling implies. **Even there the budget closes.**
+
+**Conclusion: DDR read bandwidth is not the binding constraint.** A starvation
+fault in this path is a lead/scheduling problem, so `FRAME_LINES_16` is not
+excluded by bandwidth — it addresses the quantity that is actually short.
+
+Corroboration that the timing derivation is sound: 638 clocks/line at 20 MHz
+over 524 lines (`vc` wrap, scandouble) = 16.72 ms = **59.8 Hz**, which matches
+the 60 Hz mode the capture harness sees. The arithmetic reproduces a number
+nobody fed it.
+
+### 19.2 Two ambiguities the gate refused rather than guessed
+
+Both were found on the **real** resident report, not synthetically, and both
+are now non-synthetic red cases.
+
+1. **Unbounded table, again.** `general[2].gpll~PLL_OUTPUT_COUNTER` appears in
+   the Clocks table at 90.0 MHz **and** in the later Fmax Summary at 92.4 MHz —
+   restricted Fmax, a different quantity. An unbounded scan returns whichever
+   it meets first. Same defect class w-audit found in
+   `check_fitted_line_buffer.py`: a table that does not know where it ends.
+   Now bounded to the Clocks section *and* required to match the row's first
+   cell (in Fmax Summary the clock name is the third).
+
+2. **Hierarchy names are not unique by suffix.** `pll_audio` also instantiates
+   an `altera_pll`, so `general[0].gpll~PLL_OUTPUT_COUNTER` matches the core
+   PLL (20.0 MHz) **and** the audio PLL (24.58 MHz). Selecting on the suffix
+   would have silently used the audio clock as the pixel clock and reported a
+   line time 19% wrong. Now anchored on the full `emu|pll|pll_inst|...` prefix.
+
+Neither produced a wrong answer, because in both cases the gate **refused**.
+That is the whole value of refusing on ambiguity instead of taking the first
+match: had either resolved silently, the headroom figure would have looked just
+as authoritative and been wrong.
+
+### 19.3 Why the clock frequencies were not taken from source
+
+`Plex.sdc:8` says in a comment that `clk_ddr` runs at 90 MHz. It happens to be
+right, but a comment is not a measurement. The PLL wrapper's own metadata
+(`rtl/pll.v`) claims **every** output is `20.0` MHz with
+`gui_actual_output_clock_frequency = "0 MHz"` — stale generator output that
+would have given a 4.5x wrong DDR budget. The STA report is the only source
+that describes the silicon, and it is bound to the RBF md5.
+
+### 19.4 Declared limits
+
+Steady-state average-rate bound. It does **not** model DDR refresh, arbiter
+contention with the HPS writer, page misses, or real f2h burst latency — none
+of which exist in any source file, which is why `--latency-cycles` charges
+latency **explicitly** so it appears in the printed arithmetic instead of
+hiding in a fudge factor. A PASS means bandwidth is not the constraint. It is
+**not** evidence that the present path works, not evidence about any frame,
+and it cannot see optimize-away.
+
+`Scope: 24` self-test cases, including 4 measured against the real resident
+report and 13 reds.

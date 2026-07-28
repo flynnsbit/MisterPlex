@@ -84,6 +84,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/ddr_layout_consts.py --self-test",
     "python3 $(ROOT)/scripts/check_present_path_compiled.py --self-test",
     "python3 $(ROOT)/scripts/check_fitted_line_buffer.py --self-test",
+    "python3 $(ROOT)/scripts/check_ddr_refill_rate.py --self-test",
     "python3 $(ROOT)/scripts/check_reachability_tool_integrity.py",
     "$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)",
     "$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)",
