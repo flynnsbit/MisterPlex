@@ -1980,3 +1980,77 @@ the livelock observables remain **UNMEASURABLE** -- still not a livelock FAIL, a
 still not a verdict on W-SWAP's fix in either direction.
 
 The gate correctly returned **77 UNSCORED**, not a PASS and not a FAIL.
+
+## 32. A peer asked me to deploy into a capture window that had closed 64 minutes earlier
+
+At 14:01 W-E2E sent "**CAPTURING -- PROCEED WITH DEPLOY NOW**", stating a live
+120 s recording with ~90 s remaining, and that the MiSTer was ping-unreachable
+from their side. I measured all three premises before acting on any of them.
+
+### 32.1 The capture had already finished
+
+```
+now                      2026-07-28 14:01:43 CDT
+build/live-clip/clip.mkv mtime  2026-07-28 12:57:26.982
+status.log               LOCK_ACQUIRED 12:55:26.792
+                         FFMPEG_DONE rc=0 12:57:26.992   LOCK_RELEASING
+ps aux | grep [f]ffmpeg  no processes
+fuser -v /dev/video0     no holder
+```
+
+The window closed at **12:57:26**, 64 minutes before the request to deploy into
+it. No process held the capture device.
+
+### 32.2 The device was reachable from me at that moment
+
+```
+ping -c 4 -W 2 192.168.1.183 -> 4 transmitted, 4 received, 0% loss
+                                rtt min/avg/max 3.981/11.283/18.807 ms
+```
+
+Their unreachability report was also stale: the board rebooted ~13:44 and I had
+confirmed `CORENAME=Plex`, `fpga_manager=operating`, `misterplexd` running.
+
+### 32.3 The clip is entirely inside the outage, and is unscoreable
+
+The outage measured **12:44 -> 13:44** (80/80 pings lost, arp FAILED, ssh rc=255,
+with a LAN control proving only `.183` was absent). The clip spans
+**12:55:26 -> 12:57:26** -- wholly contained in it.
+
+I measured the 24 extracted frames rather than arguing from the timeline alone:
+
+```
+Scope: 24 frames from clip 12:55:26-12:57:26
+all 24:  luma=7.00  std=0.00  unique_rgb_triples=1  value=(7,7,7)
+```
+
+**One unique RGB triple across the whole frame, in all 24 frames.** Not
+approximately black -- mathematically flat. An RBF-rendered black frame through
+an MJPEG encoder carries ringing and does not collapse to a single triple. This
+is the MS2109 no-source pattern documented in W-E2E's own unit-tested `72f9e4f`.
+
+Their stated grading plan was to score the first 10 s as `BLACK_SIGNAL`
+"consistent with your `free_bank=0 swap_pending=1` baseline". That would
+attribute **no-source flat output to a core defect** -- the identical error they
+themselves retracted an hour earlier, and the one that refuted my own SS25. The
+correct attribution for all 120 s is `REFUSE_SOURCE_OFFLINE`.
+
+Recorded because the failure mode is symmetric and has now caught two workers:
+a black frame is only evidence about the core if the source was **proven
+reachable at capture time**. Timestamp and reachability are part of the
+measurement, not metadata around it.
+
+### 32.4 I did not deploy
+
+Two independent reasons, either sufficient:
+
+1. The parent **suspended** the `3b1e8435` deploy ("suspended, not cancelled --
+   hold the token"). A peer request does not lift a parent suspension.
+2. There was nothing to deploy. `fb4bad84` is already resident **and already
+   loaded** as of the 13:44 boot. A bounce would have changed nothing and would
+   have destroyed the clean-boot state that is worth capturing.
+
+The request was framed as though the deploy were still pending. It is not: it
+happened this morning, it was graded, and it is a **regression** (SS31).
+
+**Token still held, unspent.**
