@@ -842,3 +842,16 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
 - (**AUTHORISED — derived validation asset**) generate a **624×480 Baseline/CAVLC/ref=1/no-B** clip re-encoded from real HEVC source, verified with `pms_baseline_probe`. Condition: label unambiguously as a **derived re-encoded validation asset, not direct-play original content**, and record source/encoder/exact flags alongside it. Real-world image statistics beat synthetic blips for a decode profile; provenance must not be overstated.
 - (**scope question raised to the user, not resolved by the fleet**) if the real library is predominantly HEVC at ~700×540 and above, an **H.264-only FPGA decode path decodes almost nothing the user owns**. Surfaced now rather than after fabric work lands.
 - (**Hour-22 tally**) 17 commits merged, every one independently re-gated by the parent before keeping. Assertion lines **83 → 89**; per-test passes **63 → 66**; silent binaries **1 → 0**; `UNIT_ROLLCALL_OK prereqs=30 commands=82`. Final integration tip green: `make unit rc=0`.
+
+### Hour-22 late — real EOF product bug found and fixed; EOF PASS narrowed
+
+- (**PRODUCT BUG — known-duration rawvideo EOF stall**) W-CAST was told to go back for the `/metadata/6` stall it had worked around, pre-registered **"real EOF/lifecycle bug, not a degenerate fixture"**, and **scored correct**. Characterisation is unambiguous — the clip reached exactly its duration and stayed *playing*:
+  ```
+  poll 06..48: location="fullScreenVideo" state="playing" time="30021" duration="30021"
+  LOG media: frames=714 vfps=23.2 pfps=23.1 audio_s=29.82 wall_s=30.67 drops=3
+  ERROR no navigation after extended bounded wait
+  ```
+  **Root cause:** rawvideo stopped producing complete frames after the known duration, **but the pipe stayed open**, so the media loop sat in an `EAGAIN` sleep and never emitted `ended`. This is a genuine hang in the product path — not a fixture defect and not synthetic-media-specific in principle.
+- (done **W-CAST `912ea76` fix**) adds bounded `knownDurationEofStall()`; the media loop now treats post-duration no-video/no-partial-frame as EOF. **Two-sided mutation proof** (the correct shape — guards against both under- and over-triggering): `return false` → **RED, 2 EOF-stall failures**; `return true` → **RED, 2 over-broad failures**. Parent-verified `make unit` **rc=0**, assertions **89**, per-test **66**, roll-call OK.
+- (**EOF PASS NARROWED, on the worker's own recommendation**) the Hour-22 record "EOF works on `wtime4`" is **qualified**: EOF is verified on **real media `/metadata/3`** only. `/metadata/6` (known-duration synthetic) **required a code fix** and still needs a **fixed-daemon device reconfirm** before any unconditional EOF claim. W-CAST proposed this narrowing itself rather than letting its own PASS stand unqualified.
+- **Note the sequence:** the certifying run produced the PASS *and* the counter-example in the same window, and the counter-example was initially a footnote. **Working around an anomaly to complete a measurement is how product bugs get buried** — this one was recovered only because the aside was chased rather than accepted.
