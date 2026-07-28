@@ -53,7 +53,11 @@ module h264_dpb_one_ref #(
 	parameter int FRAME_W = 624,
 	parameter int FRAME_H = 480,
 	parameter int BANK0_BASE = 0,
-	parameter int BANK1_BASE = 898560 / 2
+	// One I420 picture. Derived rather than a fixed 449280 so the bank stride
+	// tracks FRAME_W/FRAME_H and cannot silently disagree with the store
+	// behind the mem_* port; at 624x480 this is exactly the previous value.
+	parameter int BANK1_BASE = (FRAME_W * FRAME_H) +
+	                           2 * ((FRAME_W / 2) * (FRAME_H / 2))
 )(
 	input  wire               clk,
 	input  wire               reset,
