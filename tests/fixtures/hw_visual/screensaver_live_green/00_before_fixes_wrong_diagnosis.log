@@ -1,0 +1,16 @@
+Scope: drives the core's Idle screen selection to Screensaver and grades whether the picture actually animates, using bright-centroid travel rather than frame difference. It proves the OSD word reaches misterplexd and that the screensaver renderer moves; it does NOT prove the OSD menu navigation works from a real keyboard, does not check the animation's appearance, does not fix the separate per-scanline presentation damage, and restores the OSD selection it changed.
+CONF OSD_CONTROL=1
+DAEMON_LOG_AFTER_SELECTION:
+  (nothing — the daemon did not react to the OSD word)
+IDLE_MOTION point cx=351.24 cy=357.56 bright=0.0075 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_1.png
+IDLE_MOTION point cx=351.15 cy=357.73 bright=0.0076 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_2.png
+IDLE_MOTION point cx=351.24 cy=357.38 bright=0.0075 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_3.png
+IDLE_MOTION point cx=351.41 cy=357.36 bright=0.0076 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_4.png
+IDLE_MOTION verdict=STATIC travel=0.45 span_x=0.26 span_y=0.37
+IDLE_MOTION reason: bright centroid travelled 0.5px across 4 frames (threshold 8.0)
+IDLE_MOTION_RESULT=FAIL verdict=STATIC expected=MOVING
+The daemon never painted idle mode 2 after the OSD word selected
+Screensaver. With OSD_CONTROL=1 the OSD poll thread is
+the first thing to check: startOsdPoll() returns immediately when it
+is 0, so no menu selection is ever applied.
+SCREENSAVER_RESULT=FAIL reason=daemon-did-not-apply-selection osd_control=1

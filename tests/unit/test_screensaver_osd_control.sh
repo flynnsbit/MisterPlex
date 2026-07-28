@@ -109,6 +109,71 @@ else
     FAILED=1
 fi
 
+# 6. Source invariants for three ways this card was observed to report the
+#    wrong thing on real hardware. Each of these was a live run, not a review
+#    comment, so each gets a standing check that the fix has not been undone.
+
+# 6a. A backgrounded child of an ssh command is torn down when the session
+#     closes. The card used to launch the hold loop with a bare "&", check
+#     ssh's exit status, get 0, and grade a screen nobody had asked to change.
+if grep -q 'setsid sh -c' "$CARD"; then
+    echo "OK hold loop is detached with setsid, not a bare ssh background job"
+else
+    echo "FAIL hold loop can be torn down when the ssh session closes"
+    FAILED=1
+fi
+
+# 6b. Launching is not evidence. The only proof the selection reached the
+#     fabric is the OSD word read back out of PLXS.
+if grep -q 'reason=selection-never-reached-osd-word' "$CARD" && \
+   grep -q 'OSD_WORD_OBSERVED' "$CARD"; then
+    echo "OK card reads the OSD word back out of PLXS before grading pixels"
+else
+    echo "FAIL card does not verify the selection reached the OSD word"
+    FAILED=1
+fi
+
+# 6c. The daemon log is corroboration, not a measurement, and it is lossy
+#     because the daemon logs on change. An empty log once overrode a measured
+#     30.8px of centroid travel and produced UNSCORED for a working screensaver.
+#     Motion must be decided before the log is consulted.
+if python3 - "$CARD" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+pass_at = text.find('SCREENSAVER_RESULT=PASS')
+silent_at = text.find('reason=static-picture-and-silent-log')
+never_at = text.find('reason=daemon-did-not-apply-selection')
+if pass_at < 0 or silent_at < 0 or never_at < 0:
+    sys.exit(1)
+# The PASS branch must come before every log-based verdict.
+sys.exit(0 if pass_at < silent_at and pass_at < never_at else 1)
+PY
+then
+    echo "OK measured motion is decided before the daemon log is consulted"
+else
+    echo "FAIL a log-based verdict can pre-empt a measured moving picture"
+    FAILED=1
+fi
+
+# 6d. The log window must not be established by writing a marker into a file
+#     the daemon holds open: the daemon keeps writing at its own offset and the
+#     marker is stranded, so the card reads an empty window and blames the OSD
+#     poll thread for a daemon that was working correctly.
+if grep -q 'MARK ' "$CARD"; then
+    echo "FAIL card still marks the daemon log by writing into it"
+    FAILED=1
+else
+    echo "OK log window is a read-only byte offset, not an injected marker"
+fi
+
+# 6e. The log path must be resolved from the daemon's own stdout, not assumed.
+if grep -q '/proc/\$p/fd/1' "$CARD" && grep -q 'reason=daemon-log-unresolvable' "$CARD"; then
+    echo "OK daemon log path is resolved from the running process, and refused if unknown"
+else
+    echo "FAIL card assumes a hardcoded daemon log path"
+    FAILED=1
+fi
+
 if [ "$FAILED" -eq 0 ]; then
     echo "SCREENSAVER_LOGIC_RESULT=PASS"
     exit 0

@@ -61,6 +61,25 @@ command -v sshpass >/dev/null 2>&1 || {
 
 mkdir -p "$OUTDIR"
 
+# Derive the PLXS window from the shared layout header. Hardcoding 0x3007F1xx
+# here would read a stale window that answers with valid magics and never
+# changes, which is exactly the trap documented in mailbox_abi_spec.hpp.
+LAYOUT="${DDR_FRAME_LAYOUT_HPP:-$ROOT/host/libmisterplex/ddr_frame_layout.hpp}"
+DOORBELL="$(python3 - "$LAYOUT" <<'LAYOUTPY'
+import re, sys
+text = open(sys.argv[1]).read()
+m = re.search(r'\bkPlex480pYuv420pDoorbellPhys\s*=\s*(0x[0-9A-Fa-f]+|\d+)', text)
+if not m:
+    raise SystemExit(1)
+print(int(m.group(1), 0))
+LAYOUTPY
+)"
+if [ -z "$DOORBELL" ]; then
+    echo "SCREENSAVER_RESULT=UNSCORED reason=layout-parse-failed layout=$LAYOUT"
+    exit "$RC_UNSCORED"
+fi
+printf 'Derived PLXS: 0x%08X\n' $((DOORBELL + 0x100))
+
 if ! "${SSH[@]}" 'pidof misterplexd >/dev/null' 2>/dev/null; then
     echo "SCREENSAVER_RESULT=UNSCORED reason=daemon-not-running-or-host-unreachable host=$HOST"
     exit "$RC_UNSCORED"
@@ -72,21 +91,81 @@ OSD_CONTROL="$("${SSH[@]}" \
 echo "CONF OSD_CONTROL=$OSD_CONTROL"
 
 BIN=/media/fat/misterplex/bin
-LOGMARK="screensaver-gate-$$"
 
-"${SSH[@]}" "printf '%s\n' 'MARK $LOGMARK' >>/media/fat/misterplex/misterplexd.log" >/dev/null 2>&1
+# Resolve the log the daemon is ACTUALLY writing, from its own stdout fd, rather
+# than assuming a path. A hardcoded path that the daemon is not writing to makes
+# this card report "the daemon did not react to the OSD word" and point the
+# reader at startOsdPoll(), when the truth is that the card was reading an
+# unrelated file. That happened: the daemon was started with its output
+# redirected elsewhere, every OSD word was applied correctly, and the card
+# blamed the OSD poll thread. A wrong diagnosis is worse than no diagnosis.
+DAEMON_LOG_PATH="$("${SSH[@]}" \
+    'p=$(pidof misterplexd | awk "{print \$1}"); readlink -f /proc/$p/fd/1 2>/dev/null' \
+    2>/dev/null | tr -d ' \r')"
+case "$DAEMON_LOG_PATH" in
+    /*) ;;
+    *) DAEMON_LOG_PATH="" ;;
+esac
+if [ -z "$DAEMON_LOG_PATH" ] || \
+   ! "${SSH[@]}" "[ -f '$DAEMON_LOG_PATH' ] && [ -r '$DAEMON_LOG_PATH' ]" 2>/dev/null; then
+    echo "SCREENSAVER_RESULT=UNSCORED reason=daemon-log-unresolvable got='${DAEMON_LOG_PATH:-none}'"
+    echo "  This card grades the daemon's reaction to the OSD word from its log."
+    echo "  Without the log it cannot tell 'never applied' from 'not observed',"
+    echo "  and those have opposite fixes. Refusing to guess."
+    exit "$RC_UNSCORED"
+fi
+echo "DAEMON_LOG_PATH=$DAEMON_LOG_PATH"
+
+# Read-only byte offset instead of writing a marker line into the log. The
+# daemon holds this file open with its own write offset, so a marker appended by
+# another process is not reliably followed by the daemon's later writes: the
+# daemon keeps writing at ITS offset and the marker ends up stranded at the end.
+# That made the card read an empty window and report the daemon as unresponsive
+# while it was in fact applying every OSD word. stat the size first, then read
+# from there.
+LOG_OFFSET="$("${SSH[@]}" "stat -c %s '$DAEMON_LOG_PATH' 2>/dev/null" 2>/dev/null | tr -d ' \r')"
+case "$LOG_OFFSET" in
+    ''|*[!0-9]*)
+        echo "SCREENSAVER_RESULT=UNSCORED reason=daemon-log-size-unreadable path=$DAEMON_LOG_PATH"
+        exit "$RC_UNSCORED" ;;
+esac
 
 # Assert Screensaver (status[15:14]=10) in the background at the capped rate,
 # then grade frames while it holds.
-"${SSH[@]}" "nohup sh -c 'i=0; while [ \$i -lt $HOLD_WRITES ]; do \
+#
+# setsid, not a bare "&". A backgrounded child of an ssh command is torn down
+# when the session closes, so the previous form here started nothing and still
+# reported success: ssh exited 0, the loop was already dead, and the card went
+# on to grade a screen nobody had asked to change. ssh's exit status describes
+# ssh, not the work.
+HOLD_STAMP="$OUTDIR/hold.pid"
+"${SSH[@]}" "setsid sh -c 'i=0; while [ \$i -lt $HOLD_WRITES ]; do \
 $BIN/set_status --bit 15 1 --bit 14 0 >/dev/null 2>&1; \
-i=\$((i+1)); sleep $HOLD_INTERVAL; done' >/dev/null 2>&1 &" >/dev/null 2>&1
-HOLD_RC=$?
-if [ "$HOLD_RC" -ne 0 ]; then
-    echo "SCREENSAVER_RESULT=UNSCORED reason=could-not-assert-selection rc=$HOLD_RC"
+i=\$((i+1)); sleep $HOLD_INTERVAL; done' </dev/null >/dev/null 2>&1 & echo \$!" \
+    >"$HOLD_STAMP" 2>/dev/null
+sleep 2
+
+# Do not take "the loop was launched" on trust either. The only evidence that
+# the selection reached the fabric is the OSD word itself, read back out of the
+# PLXS mailbox: bits [15:14] must be 0b10. Anything else and the captures cannot
+# be about the screensaver.
+OSD_SEEN=""
+for _ in 1 2 3 4 5 6; do
+    W="$("${SSH[@]}" "devmem $(printf '0x%08X' $((DOORBELL + 0x104))) 32" 2>/dev/null | tr -d ' \r')"
+    case "$W" in
+        0x*) SEL=$(( ( $(printf '%d' "$W") >> 14 ) & 3 ))
+             if [ "$SEL" -eq 2 ]; then OSD_SEEN="$W"; break; fi ;;
+    esac
+    sleep 0.5
+done
+if [ -z "$OSD_SEEN" ]; then
+    echo "SCREENSAVER_RESULT=UNSCORED reason=selection-never-reached-osd-word last=${W:-none}"
+    echo "  The hold loop never drove status[15:14] to 0b10 where the fabric"
+    echo "  publishes it, so nothing was selected and the frames below would be"
+    echo "  of whatever was already on screen."
     exit "$RC_UNSCORED"
 fi
-sleep 2
+echo "OSD_WORD_OBSERVED=$OSD_SEEN (status[15:14]=0b10 Screensaver)"
 
 CAPS=()
 for i in $(seq 1 "$FRAMES"); do
@@ -101,10 +180,10 @@ for i in $(seq 1 "$FRAMES"); do
 done
 
 DAEMON_LOG="$("${SSH[@]}" \
-    "sed -n '/MARK $LOGMARK/,\$p' /media/fat/misterplex/misterplexd.log | \
-     grep -E 'OSD word|idle screen painted' | tail -8" 2>/dev/null)"
-echo "DAEMON_LOG_AFTER_SELECTION:"
-printf '%s\n' "${DAEMON_LOG:-  (nothing — the daemon did not react to the OSD word)}"
+    "tail -c +$((LOG_OFFSET + 1)) '$DAEMON_LOG_PATH' | \
+     grep -E 'OSD word|idle screen painted' | tail -12" 2>/dev/null)"
+echo "DAEMON_LOG_AFTER_SELECTION (from byte $LOG_OFFSET):"
+printf '%s\n' "${DAEMON_LOG:-  (no daemon output at all in the observed window)}"
 
 # Put the selection back where we found it. Idle screen is a user setting.
 "${SSH[@]}" "$BIN/set_status --bit 15 0 --bit 14 1 >/dev/null 2>&1" >/dev/null 2>&1
@@ -115,18 +194,58 @@ MOTION_LOG="$OUTDIR/motion.log"
 MOTION_RC=$?
 grep -E '^IDLE_MOTION' "$MOTION_LOG" || cat "$MOTION_LOG"
 
+# Evidence order matters here. The OSD word read back out of the fabric and
+# the pixels on the wire are both measurements; the daemon log is only
+# corroboration, and it is a lossy one because the daemon logs on CHANGE. If
+# the selection was already applied before the observation window opened,
+# the log is empty while the screensaver is plainly running. An earlier
+# version of this card let that empty log override a measured 30.8px of
+# centroid travel and returned UNSCORED. A silent log cannot unmake a moving
+# picture, so motion is decided first and the log is used only to explain a
+# picture that did NOT move.
+if [ "$MOTION_RC" -eq 0 ]; then
+    echo "SCREENSAVER_RESULT=PASS reason=osd-word-observed-and-picture-animates osd_control=$OSD_CONTROL"
+    exit 0
+fi
+
+# From here the picture was static. Now the log earns its keep: the fixes for
+# 'never selected', 'selected but Main took it back' and 'selected and the
+# renderer is dead' are three different fixes with one symptom.
+if [ -z "$DAEMON_LOG" ]; then
+    echo "The picture did not move, and the daemon logged nothing in the window,"
+    echo "so this card cannot tell a dead renderer from a selection that was"
+    echo "already in effect before the window opened. The daemon logs on change."
+    echo "SCREENSAVER_RESULT=UNSCORED reason=static-picture-and-silent-log path=$DAEMON_LOG_PATH"
+    exit "$RC_UNSCORED"
+fi
+
 if ! printf '%s' "$DAEMON_LOG" | grep -q 'idle screen painted (mode=2)'; then
-    echo "The daemon never painted idle mode 2 after the OSD word selected"
-    echo "Screensaver. With OSD_CONTROL=$OSD_CONTROL the OSD poll thread is"
-    echo "the first thing to check: startOsdPoll() returns immediately when it"
-    echo "is 0, so no menu selection is ever applied."
+    echo "The daemon logged activity but never painted idle mode 2 after the OSD"
+    echo "word selected Screensaver. With OSD_CONTROL=$OSD_CONTROL the OSD poll"
+    echo "thread is the first thing to check: startOsdPoll() returns immediately"
+    echo "when it is 0, so no menu selection is ever applied."
     echo "SCREENSAVER_RESULT=FAIL reason=daemon-did-not-apply-selection osd_control=$OSD_CONTROL"
     exit "$RC_FAIL"
 fi
 
-if [ "$MOTION_RC" -eq 0 ]; then
-    echo "SCREENSAVER_RESULT=PASS reason=daemon-applied-and-picture-animates"
-    exit 0
+# Main owns the OSD status word and restores its own shadow within about a
+# second, so an injected selection is transient by construction. When the log
+# shows the daemon flipping between mode=2 (our injection) and mode=1 (Main's
+# restore), the captured frames are a mixture of both idle screens and a
+# STATIC verdict says nothing about the renderer. That is a limit of injecting
+# the word from outside, not a product defect, so it is UNSCORED. Calling it
+# FAIL would send someone to fix a renderer that works.
+if printf '%s' "$DAEMON_LOG" | grep -q 'idle screen painted (mode=1)'; then
+    echo "The daemon applied Screensaver (mode=2) but the log also shows it"
+    echo "painting mode=1 in the same window: Main restored its own OSD shadow"
+    echo "while frames were being captured, so the frames are a mixture of both"
+    echo "idle screens and the motion verdict is not attributable."
+    echo "Drive the selection through Main's real OSD menu (tests/hw/osd_keys.py)"
+    echo "to make it stick, rather than raising the injection rate — that is what"
+    echo "wedged the device once already."
+    echo "SCREENSAVER_RESULT=UNSCORED reason=selection-not-held-against-main osd_control=$OSD_CONTROL"
+    exit "$RC_UNSCORED"
 fi
+
 echo "SCREENSAVER_RESULT=FAIL reason=selection-applied-but-picture-did-not-move"
 exit "$RC_FAIL"

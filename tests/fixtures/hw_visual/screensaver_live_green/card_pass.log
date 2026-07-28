@@ -1,0 +1,15 @@
+Scope: drives the core's Idle screen selection to Screensaver and grades whether the picture actually animates, using bright-centroid travel rather than frame difference. It proves the OSD word reaches misterplexd and that the screensaver renderer moves; it does NOT prove the OSD menu navigation works from a real keyboard, does not check the animation's appearance, does not fix the separate per-scanline presentation damage, and restores the OSD selection it changed.
+Derived PLXS: 0x300FF100
+CONF OSD_CONTROL=1
+DAEMON_LOG_PATH=/media/fat/misterplex/misterplexd.log
+OSD_WORD_OBSERVED=0xFDB2A000 (status[15:14]=0b10 Screensaver)
+DAEMON_LOG_AFTER_SELECTION (from byte 2476):
+  (no daemon output at all in the observed window)
+IDLE_MOTION point cx=286.3 cy=385.85 bright=0.0096 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_1.png
+IDLE_MOTION point cx=264.7 cy=377.14 bright=0.0093 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_2.png
+IDLE_MOTION point cx=237.7 cy=382.09 bright=0.0094 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_3.png
+IDLE_MOTION point cx=240.44 cy=385.25 bright=0.01 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/screensaver_gate/frame_4.png
+IDLE_MOTION verdict=MOVING travel=49.37 span_x=48.6 span_y=8.71
+IDLE_MOTION reason: bright centroid travelled 49.4px across 4 frames (threshold 8.0)
+IDLE_MOTION_RESULT=PASS verdict=MOVING
+SCREENSAVER_RESULT=PASS reason=osd-word-observed-and-picture-animates osd_control=1
