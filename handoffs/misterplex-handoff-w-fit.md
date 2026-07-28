@@ -416,3 +416,256 @@ I told them W-FIT slot was clear. If preflight still refuses, it is not due to W
 
 6. **The handoff is not at `/tmp`.**
    - This is a process mismatch caused by runtime restrictions, not a project decision. Successor should read this file in `.copilot-logs/`.
+
+---
+
+# W-FIT successor session — AUTHORIZED DEPLOY EXECUTED, RESULT IS A REGRESSION
+
+Successor to the W-FIT worker above. Held the sole Quartus/RBF/deploy token.
+Parent authorized exactly ONE deploy of `fb4bad849ad2db782a5004ce5a3471ce`.
+That deploy was performed. **It did not fix the display. It made the frame-store
+DDR path worse.** Raw evidence below, interpretation after.
+
+## 9. Deploy record
+
+Preconditions re-verified before deploying (all re-run by me, not inherited):
+
+```
+md5 slot A == md5 slot B == fb4bad849ad2db782a5004ce5a3471ce   cmp_rc=0
+banned-set check: prefix fb4bad84 not in {8832824e 75da8bb1 4d6ee356 4deaf6cc
+  dabdaeb0 94bbfe43 ec21e133 eeff4eee 9f364cb1 d01f19a7 00eebd5e}
+make post-fit-timing      rc=0   worst setup +0.289  worst hold +0.245
+                                 recovery +0.375  removal +1.09  min-pulse +1.122
+                                 negative slack rows: 0 (grep found no matches)
+make post-fit-hierarchy   rc=0   ddr_frame_store 4757 ALUT / 2298 reg / 96 M10K
+                                 present_core, stream_path, ddr_bitstream_reader present
+make timing-exclusion     rc=0
+```
+
+Deploy, exactly one menu bounce:
+
+```
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh \
+  fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/Plex.rbf
+DEPLOY_RC=0
+CORENAME=Plex -> MENU -> MENU -> Plex
+on-device md5sum /media/fat/_Utility/Plex.rbf = fb4bad849ad2db782a5004ce5a3471ce
+```
+
+The `Plex -> MENU -> Plex` transition matters: per the deploy script's own comment
+it is the **only** valid Main liveness test. Main was not wedged, so the FPGA
+genuinely reconfigured. This is not a case of "RBF on SD but old bitstream running".
+
+Deploy target was `/media/fat/_Utility/Plex.rbf` only. `ls /media/fat/*.rbf`
+showed only `menu.rbf`; the retired `Plex_20260727.rbf` (`9f364cb1`) is gone.
+
+## 10. Measurement: pre-deploy baseline (old build 00eebd5e)
+
+New gate `scripts/sample_plxd_telemetry.sh` (committed, `839d9cb`). PLXD status
+register `0x3007F12C`, field layout from `tests/hw/test_bank_release_visual.sh`:
+bits[1:0] free_bank_mask, bit2 disp_bank, bit3 swap_pending, bits[31:16] frames_done.
+
+```
+Scope: 40 samples interval=0.25s reg=0x3007F12C
+resident_rbf_md5=00eebd5e685e6cc821b13bfdcff41d0b   corename=Plex
+sample=1  raw=0x49ED000C free_bank_mask=0 disp_bank=1 swap_pending=1 frames_done=18925
+...
+disp_bank_transitions=0 / 39 adjacent pairs
+disp_bank_distinct_values=1
+swap_pending_zero_samples=0 / 40
+free_bank_mask_nonzero_samples=0 / 40
+frames_done_first=18925 frames_done_last=19606 delta=+681
+OBSERVABLES_FAIL
+```
+
++681 counts in ~10 s is ~68/s, i.e. vsync rate. So on the OLD build the fabric was
+writing PLXD once per vsync while the display never swapped. This is the exact
+livelock signature W-OSD and W-ARM reported, reproduced independently on hardware,
+and it is the **red half of a red/green pair** for this gate: the gate demonstrably
+can fail, on real silicon, for the documented reason.
+
+## 11. Measurement: post-deploy (new build fb4bad84) — and why the first reading was invalid
+
+First post-deploy sample looked like an unchanged failure:
+
+```
+resident_rbf_md5=fb4bad849ad2db782a5004ce5a3471ce
+0x3007F12C frozen at 0xA086000C for 40/40 samples, frames_done delta = 0
+```
+
+**I did not report that as a FAIL, because it is not a valid measurement.** DDR
+contents survive FPGA reconfiguration, so a frozen word is indistinguishable from
+stale residue left by the previous bitstream. Discriminating probe:
+
+```
+devmem 0x3007F12C 32 0xDEADBEEF
+t+0.5s .. t+5.0s : 0xDEADBEEF   (never restored)
+```
+
+Then all four mailbox words, both magics and both status words:
+
+```
+poke 0x3007F100 0x3007F104 0x3007F128 0x3007F12C = 0xA5A5A5A5
+t+1s .. t+6s : ALL FOUR still 0xA5A5A5A5
+```
+
+**The fabric is writing nothing to DDR.** PLXS and PLXD are both silent. The
+"PLXD magic present" that the ARM daemon logged was itself stale residue from the
+old bitstream, not a live fabric write.
+
+Control for init ordering (the deploy soft-stops misterplexd, so the core was
+loaded with the daemon down). Repeated the core bounce with the daemon **running**,
+no RBF change:
+
+```
+plexd_pids_before=1 ; md5 on device = fb4bad84...
+CORENAME=Plex -> MENU -> MENU -> Plex
+t+1s .. t+6s : all four words still 0xA5A5A5A5
+```
+
+Same result. Not an init-ordering artifact.
+
+Control for "maybe the ARM was the writer all along":
+`host/libmisterplex/mailbox_abi_spec.hpp:120` declares PLXD
+`{"PLXD", kPlxdAddr, kPlxdMagic, 8, "fpga_to_arm", true}` — direction is
+fpga_to_arm, and no ARM source writes that address. So the pre-deploy advancing
+counter was genuinely fabric-written. The contrast is real.
+
+Platform ruled out:
+
+```
+/sys/class/fpga_manager/fpga0/state = operating
+br0 lwhps2fpga = enabled
+br1 hps2fpga   = enabled
+br2 fpga2hps   = enabled
+python3 scripts/check_confstr_guard.py  rc=0  (status bit mapping sane)
+```
+
+So the fabric *could* reach DDR; it simply is not writing.
+
+### Raw verdict
+
+| observable | old `00eebd5e` | new `fb4bad84` |
+|---|---|---|
+| fabric writes PLXD | yes, ~68/s | **no, 0 in 6 s after poke** |
+| fabric writes PLXS | yes | **no** |
+| disp_bank toggles | no (0/39) | unmeasurable, instrument dead |
+| swap_pending -> 0 | no (0/40) | unmeasurable |
+| free_bank_mask != 0 | no (0/40) | unmeasurable |
+
+**This is a regression, not a fix.** The three binding telemetry observables the
+parent asked for are not merely still-failing, they are **unmeasurable**, because
+the new bitstream stopped publishing the mailboxes that carry them.
+
+**BUILD_OK and DEPLOY_OK were both achieved and neither is success.** No FPGA
+frame has been shown. Stating that plainly, as instructed: this build did not put
+a picture up, and it also removed the telemetry the fleet depends on.
+
+## 12. Side effect worth knowing: the ARM fallback is currently the only thing painting
+
+Before I cleared the stale magic, the ARM refused to paint, because it believed the
+stale `free_bank_mask=0`:
+
+```
+[STALL] sendDdrFrame: PLXD bank-release busy after 20 ms
+        (free_bank_mask=0, frames_done=41094 disp_bank=1 swap_pending=1); skipping frame
+media: idle paint DDR failed (will retry on re-probe)
+```
+
+That is a **deadlock caused by the stale mailbox itself**: ARM reads poison left by
+the dead fabric, refuses to write, fabric never updates, poison persists forever.
+
+After zeroing the magics so the ARM takes its absent-PLXD fallback, with the
+unmodified pre-W-ARM-fix daemon `f8c3d2799e365ad51f288dfb40c935fa`:
+
+```
+media: idle screen painted (mode=0)      # no STALL
+```
+
+So the Plex logo *has* been written into a DDR bank. Whether it reaches the screen
+is not answerable from the ARM side.
+
+## 13. RCA leads — HYPOTHESES, explicitly not measured
+
+I could not observe inside the fabric, so these are candidates, not conclusions.
+The whole clk_ddr block, including every mailbox write, sits inside
+`always @(posedge clk_ddr) if (reset_ddr) ... else ...`
+(`fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:710`). Total silence of every DDR write
+is consistent with, and only with, that block not executing its else branch:
+
+1. `clk_ddr` not running.
+2. `reset_ddr` stuck asserted. Note `ddr_frame_store.sv:196-204` is a **fully
+   synchronous** reset synchroniser (`always @(posedge clk_ddr) if (reset)`),
+   introduced by `7a3d960`. It has no async assert and no initial value.
+3. `DDRAM_BUSY` stuck high. `DDRAM_RD/WE` are only cleared under `if (!DDRAM_BUSY)`
+   (`:817-819`), and every S_IDLE mailbox write is guarded by
+   `!DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE`. A stuck-busy DDR interface produces
+   exactly this symptom: nothing is ever issued.
+4. State machine wedged outside S_IDLE. `S_LINE_WAIT` and `S_POLL_WAIT` block
+   unconditionally on `DDRAM_DOUT_READY` with no timeout (`:1072`, `:1116`), and
+   `S_WRITE_WAIT` blocks on `!DDRAM_BUSY && !DDRAM_WE` (`:1123`). None of these
+   states can self-recover.
+
+Ruled out: platform bridges, FPGA config state, confstr/status-bit mapping,
+daemon init ordering, and `sdram_startup_busy` (inapplicable — with
+`DDR_FRAME_STORE` defined, `Plex.sv:430` gives `present_reset = reset`).
+
+Regression window: `parent/integ-hour27` carries several clk_ddr-domain commits the
+resident `00eebd5e` build predates — `abc3b67` retime ddr telemetry crossings,
+`ea31f68` posedge metadata hold pad, `3716f1f` pending_ready_ddr CDC pulse width,
+`7a3d960` synchronize frame-store DDR reset. `abc3b67` and `7a3d960` touch exactly
+the telemetry/reset machinery that is now silent and are the first places to look.
+
+Useful bisect datum: `wfit-hour27-sdc-a/b` and `wfit-hour27-bdiag-a/b` all produce
+`fb4bad84`, so **the SDC false-path -> set_max_delay correction was netlist-neutral**
+and is not the cause. An earlier fit `wfit-hour27-a/b` produced `3b1e8435`, which is
+a candidate A/B point if parent authorises another deploy.
+
+## 14. Ownership and what I did NOT do
+
+- I never opened `/dev/video0`. I checked ownership with `fuser -v` only, and it was
+  free the entire session. I messaged W-E2E three times requesting a capture window,
+  including a falsifiable prediction (see below). W-E2E did not claim the device.
+- **The visual grade is still outstanding and is the one remaining decisive test.**
+  Prediction handed to W-E2E: if the DDR write path is dead but video timing is
+  alive, capture shows a VALID signal (black or logo); if `clk_ddr`/`reset_ddr` is
+  stuck, capture shows NO SIGNAL. That single observation discriminates hypothesis
+  (1)/(2) from (3)/(4) above.
+- I did **not** roll back. Rolling back would be a second deploy, outside the
+  parent's "exactly ONE deploy" authorisation, and it would destroy the failure
+  state before it has been photographed. The old RBF is still on the device as
+  `/media/fat/_Utility/Plex.rbf.bak` if parent authorises a restore.
+- I did **not** integrate the W-ARM fix. It was explicitly to be sequenced after the
+  RBF was graded, for attributability. Grading did not succeed, so integrating now
+  would produce exactly the unattributable result the parent warned about.
+
+## 15. Note on the W-ARM fix (`3798793`, branch `w-arm-idle-edge`)
+
+Reviewed but not integrated. It replaces the host-planned bank with
+`displayAvoidingFallbackBank()` on the proven-stuck PLXD path, so the ARM stops
+overwriting the bank being scanned out. The logic is sound for the stuck case.
+
+Two observations for whoever integrates it:
+1. `plannedBank` becomes entirely unused on both stuck paths (`(void)plannedBank;`),
+   so the caller's ping-pong plan is now advisory only. That is a real behavioural
+   widening, not just a bug fix.
+2. **If the frame-store fix ever works, this path becomes dead code** — a healthy
+   fabric reports `free_bank_mask != 0`, so the ARM takes the normal path and never
+   reaches the timed fallback. Its value is strictly as a safety net for stuck
+   silicon. That is another reason not to grade it against a broken bitstream: on
+   the current device it is the *only* live path, which would flatter it.
+
+## 16. Current device state (leave-behind)
+
+```
+/media/fat/_Utility/Plex.rbf      = fb4bad849ad2db782a5004ce5a3471ce   (new, regressed)
+/media/fat/_Utility/Plex.rbf.bak  = previous resident (00eebd5e)
+misterplexd                        = running, binary f8c3d2799e365ad51f288dfb40c935fa
+                                     (pre-W-ARM-fix, unchanged all session)
+mailbox words 0x3007F100/104/128/12C = zeroed by me, fabric does not refresh them
+CORENAME=Plex, fpga_manager=operating, all three bridges enabled
+```
+
+**No worker can currently obtain PLXD/PLXS telemetry from this device.** That is a
+property of the deployed bitstream, not of the instrument. Anyone reading those
+addresses will get stale or zeroed bytes and must not treat them as live.
