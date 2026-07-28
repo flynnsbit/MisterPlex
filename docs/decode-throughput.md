@@ -791,7 +791,15 @@ Content:      24 fps   → budget 41.7 ms per frame
 **The claim "bank-release fix gets 24 fps" is DEFENSIBLE and MEASURED.**
 The margin is 7.3 ms (21%), not comfortable but real.
 
+**⚠ BANK-RELEASE: NOT YET DELIVERED (2026-07-27).** w-a3's fix at `664399e`
+has been deployed but w-osd measured that `free_bank_mask` remains 0 and
+`disp_bank` is stuck at 1. **The 20.6 ms credit is NOT booked as recovered.**
+It is recoverable in principle (the root cause is identified: CDC pulse width)
+but the deployed fix has not cleared the symptom. **Until a post-fix measurement
+shows doorbell < 5 ms, the 24 fps figure is CONDITIONAL, not achieved.**
+
 **However:** this assumes:
+- **Bank-release fix actually works** (currently: FAILED ONCE, symptom persists)
 - ffmpeg pipe read stays ≤ 26 ms (depends on PMS transcode speed)
 - No other regression from the new bitstream
 - A/V pacing is an additional hold (11 ms) that may be needed for lip-sync
@@ -800,6 +808,24 @@ The margin is 7.3 ms (21%), not comfortable but real.
 24 fps. **A/V sync and 24 fps are mutually exclusive at this pipe-read cost.**
 Either the ARM drops frames to maintain sync (current: 25% drop), or it presents
 every frame and drifts (accumulating 1.3s over 40s as measured in the log).
+
+### The 2.2 ms of hardcoded usleep — audit (2026-07-27)
+
+**Source:** `fpga_spi.cpp` `sendDdrFrame()` function, lines 1344–1431.
+
+Three usleep calls are on the steady-state hot path (after first-frame probing):
+
+| Location | Duration | Purpose | Verdict |
+| --- | ---:| --- | --- |
+| Line 1344: `usleep(1500)` | **1.5 ms** | "Pre-kick yield so previous DMA is done" | **REDUCIBLE to ~200 µs** — DMA of 449 KB at 90 MB/s = 5 ms, but the NEXT frame's DMA is pipelined against the PREVIOUS frame's memcpy. By the time memcpy finishes (5 ms), the prior DMA is long done. This sleep is defensive against a race that cannot occur in steady state. |
+| Line 1379: `usleep(3000)` | 3.0 ms | First-frame probing only (auto-detect kick mode) | **NOT on hot path** — only executes when `first == true` (ddrKickMode_ == 0). After first frame, never runs. |
+| Line 1396: `usleep(500)` | 0.5 ms | Status poll backoff during first-frame detection | **NOT on hot path** — same first-frame guard. |
+| Line 1431: `usleep(500)` | **0.5 ms** | "Short yield" after kick in steady state | **JUSTIFIED** — gives the FPGA ~50k clk_ddr cycles to latch the doorbell before next frame. Without it, rapid-fire kicks could race the latch. Cost: 0.5 ms. |
+
+**Total hot-path sleep: 2.0 ms** (1.5 ms pre-kick + 0.5 ms post-kick).
+**Recoverable: ~1.3 ms** by reducing pre-kick from 1500 µs to 200 µs.
+**Not worth chasing** — 1.3 ms is 3% of the frame budget. The real wins are
+in bank-release (20.6 ms) and direct-play pipe elimination (24 ms).
 
 ### What this means for the FPGA decode project
 
@@ -814,6 +840,45 @@ and **faster at 45 MHz**.
 The real win of FPGA decode is not raw decode speed (the ARM is actually fine).
 It is **eliminating the ffmpeg/PMS/network/pipe chain** that adds 24 ms of
 IO latency per frame and makes A/V sync impossible without frame drops.
+
+### Direct-play path: potential to eliminate 24 ms TODAY (2026-07-27)
+
+**Context:** w-feed has shown that `directH264` mode (STREAM=1) fetches raw
+H.264 elementary stream URLs from PMS without transcoding. If the ARM can
+decode the raw H.264 locally (it already does via ffmpeg), the pipe-read
+component drops from 25.7 ms to approximately:
+```
+1.5 ms CPU decode + local pipe overhead (~1–3 ms) = ~3–5 ms total
+```
+
+**Projected direct-play present time:**
+```
+pipe read (local):    ~4 ms   (was 25.7 ms via network transcode)
+DDR push (fixed):      8.7 ms  (with bank-release working)
+Total:                12.7 ms  → ceiling 79 fps → 24 fps TRIVIALLY FITS
+```
+
+**Even WITHOUT bank-release fix:**
+```
+pipe read (local):    ~4 ms
+DDR push (broken):   27.8 ms  (including 20.6 ms doorbell timeout)
+Total:               31.8 ms  → ceiling 31.4 fps → 24 fps STILL FITS
+```
+
+**This is the fastest path to 24 fps on hardware that already exists.** It
+requires: (1) confirming direct-play pipe time is < 5 ms (w-feed measuring),
+(2) a ≤480p source file, since memcpy at 90 MB/s means 1080p would cost
+~34 ms for memcpy alone.
+
+**What this does NOT do:** It does not advance FPGA decode. The picture is
+still ARM-decoded. But it proves the full display path end-to-end and gives
+the FPGA decoder a real bitstream source for eventual switchover.
+
+**Caveat on geometry:** direct-play delivers arbitrary resolution. A 1080p
+source requires 1920×1080×1.5 = 3.1 MB per frame → 34 ms memcpy → 24 fps
+is impossible from memcpy alone. A 480p source (449 KB) fits trivially.
+w-feed reports no 4:3 480p sources in the library; **any ≤480p H.264 will
+serve as the discriminating test case.**
 
 ## Capture harness hardware specification
 
