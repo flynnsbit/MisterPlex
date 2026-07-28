@@ -1644,3 +1644,52 @@ recovery         power cycle required
 The fit/deploy token is **unspent**. `3b1e8435` is verified and staged (§26.2);
 `Plex.rbf.bak` is untouched. Nothing further can be measured on hardware until the
 device is power-cycled.
+
+---
+
+## 28. WHICH outputs to consume -- the concrete fix for mode 3
+
+The parent's remedy for the optimize-away failure is "make something consume the
+core's outputs **on a path that reaches a pin**", without naming the signals.
+§23 plus one more trace identifies them exactly.
+
+### 28.1 The pin-reaching path, traced
+
+```
+decode_stub  --(sole driver, stream_path.sv:595-598)-->  stream_path outputs fs_wr_en/pixel/reset/swap  (:95-98)
+             --> present_core inputs                     (present_core.sv:42-45)
+             --> ddr_frame_store                         (:303-305 wr_en/wr_pixel/wr_reset_ptr, :326 swap_banks)
+             --> display scanout --> HDMI pins
+```
+
+`ddr_frame_store` is **in the fitted bitstream with real resources** (4757 ALUT /
+2298 reg / 96 M10K), so this path demonstrably survives synthesis and reaches
+pins. It is not a hypothetical sink.
+
+### 28.2 The single edit that fixes conditions 3 and 4 together
+
+**Hand `fs_wr_en`, `fs_wr_pixel`, `fs_wr_reset`, `fs_swap` from `decode_stub` to
+`h264_decode_core` in `stream_path.sv`.** That one change:
+
+* **consumes the core's outputs** on a pin-reaching path -> the core stops being
+  dead logic -> mode 3 / ruling-3 condition 4 fixed;
+* **removes the stub's only product role** -> ruling-3 condition 3 unblocked;
+* cannot be done as two separate commits (§23.2): retiring the stub alone leaves
+  no driver, and connecting the core alone creates two drivers.
+
+This is why "wire up the instantiation" is the wrong instinct -- the
+instantiation at `stream_path.sv:484` is already correct and unconditional. What
+is missing is a **consumer**, and the consumer already exists and already works;
+it is currently wired to the wrong producer.
+
+### 28.3 Verification order for the fix
+
+1. `check_qip_coverage.py` (seconds)
+2. `--root emu --require h264_decode_core` (seconds)
+3. `scripts/check_prefit_elaboration.sh SLOT --require h264_decode_core --under stream_path`
+   (4m23s) -- must report **PRESENT**, not `ELABORATED_BUT_OPTIMIZED_AWAY`
+4. Only then request a fit
+
+Expect step 3 to be where the resources finally appear -- and where the M10K
+budget becomes real for the first time. Today's numbers cannot size W-SWAP-O5's
+modules because collapsed logic costs nothing (§23.5).
