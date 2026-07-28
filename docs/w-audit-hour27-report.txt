@@ -1,0 +1,45 @@
+W-AUDIT hour27 adversarial report (2026-07-28)
+
+BROKEN / HIGH-RISK CLAIMS
+
+1) scripts/check_rtl_module_instantiations.py is not a sufficient sole oracle for "in the product".
+Raw numbers: current parent gate rc=0: RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=44 bench_only=24 root=emu. Independent current-parent check: stream_path reachable=True, decode_stub reachable=True, h264_decode_core reachable=False, h264_decode_top reachable=False. w-gate snapshot rc=0: default_reachable=41, DECODE_REAL_INTRA=1 config_reachable=29, default_off_dropouts=15, real_decode_dropouts=14. Synthetic adversary: 3/3 constructed blind spots reproduced: QIP omission false-reachable, parameter-generate false-reachable, escaped-instance false-unreachable.
+Repro: python3 scripts/w_audit_gate_hygiene.py > build/w_audit_gate_hygiene.log 2>&1
+Interpretation: source-graph reachability is useful, but it is not equivalent to Quartus elaboration. It does not intrinsically bind reachability to files.qip, does not evaluate parameter-dependent generate conditions, and can miss legal escaped instance names. Also, in current parent, the architectural ruling "h264_decode_core is THE product decoder" is not yet true: stream_path still reaches decode_stub and not h264_decode_core.
+
+2) Skip hygiene is still false-green-capable.
+Raw numbers: W_AUDIT_SKIP_EXIT0 count=24. Examples: tests/unit/test_h264_baseline_syntax_rtl_sim.sh, test_ddr_frame_store_swap_livelock.sh, test_p3_dpb_mc_rtl_sim.sh, test_p3_deblock_rtl_sim.sh, test_stream_path_ddr_ring_integration.sh all contain missing-simulator SKIP paths that can exit 0.
+Repro: python3 scripts/w_audit_gate_hygiene.py > build/w_audit_gate_hygiene.log 2>&1
+Interpretation: this violates the stated rule "skips exit 77, never 0". Verilator exists on node-worker1, so the green runs below were real, but these gates can still report green on a host lacking the simulator or with ALLOW_MISSING_VERILATOR=1.
+
+3) scripts/check_pipe_exit_safety.py is incomplete as a fleet-wide pipe false-green detector.
+Raw numbers: official gate rc=0: PIPE_EXIT_SAFETY_OK files_with_pipes=40 pipe_sites=432. W-AUDIT found W_AUDIT_PIPE_BROAD_UNCHECKED count=51 and W_AUDIT_PIPE_MASKED_AFTER_NARROW_CHECK count=31.
+Repro: python3 scripts/check_pipe_exit_safety.py > build/w_audit_pipe_safety.log 2>&1; python3 scripts/w_audit_gate_hygiene.py > build/w_audit_gate_hygiene.log 2>&1
+Interpretation: the official detector only keys on tail/head/grep/tee and accepts a whole file once pipefail exists. It does not reason about awk/sed/cut/wc/tr status-sink pipelines or deliberate masking with || true/echo. Not every hit is a bug, but the instrument is not complete enough to prove absence of piped-exit false greens.
+
+4) Timing exclusion gate can pass without STA coverage.
+Raw numbers: python3 scripts/check_timing_exclusions.py --sdc fpga/Plex_MiSTer/Plex.sdc --baseline tests/fixtures/timing_exclusion_baseline.json returned rc=0 while printing: "baseline requires STA coverage check but --sta-rpt was not provided". Plex.sdc now has 6 max_delay constraints and no set_false_path in Plex.sdc; line 87 underrun_count->frame_mbox_last is bounded at 50.0 ns.
+Repro: python3 scripts/check_timing_exclusions.py --sdc fpga/Plex_MiSTer/Plex.sdc --baseline tests/fixtures/timing_exclusion_baseline.json > build/w_audit_timing_exclusions.log 2>&1
+Interpretation: the specific line-26/34/85 false_paths have been converted to max_delay, so the original hard cut is gone. But the gate still exits 0 without an STA report even though the baseline asks for expected clocks/min rows. That cannot disprove the known -2.137 ns setup risk; SDC text audit is not timing closure.
+
+5) CAVLC/syntax coverage wording is easy to over-read.
+Raw numbers from w-cast snapshot rc=0: Scope says 1170/1170 real 624x480 P MBs and 300/300 real 320x240 IDR MBs. Detail: 1170/1170 via 331 syntax groups, skipped=928, inter=197, intra=45, P16x16=197, P16x8/P8x16/P8x8=0, EPB_payloads=1. I-slice detail: total=300, I_NxN=83, I16x16=217.
+Repro: build/w_audit_wcast_snapshot/tests/unit/test_h264_baseline_syntax_rtl_sim.sh > build/w_audit_wcast_syntax.log 2>&1
+Interpretation: this is a real syntax-parser gate, not a full per-MB residual/reconstruction validation gate. 928 skipped MBs are represented by skip_run syntax, not 928 independent RTL MB-layer parses. The 300/300 IDR denominator is a 320x240 fixture, not the 624x480 live clip denominator of 1170.
+
+TRIED TO BREAK BUT DID NOT BREAK
+
+A) ddr_frame_store swap livelock fix.
+Raw numbers: current parent rc=0. Normal run final assertion: top.frames_done=4, frames_before_third_plus_one=3, swap_pending=0. Fault run with DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY: top.frames_done=2, frames_before_third_plus_one=3, swap_pending=1 and emitted "no third swap"; wrapper reported OK red-check. The C++ bench banner says no hierarchical y_valid/y_bank/y_line injection; inspected bench only drives public top-level inputs and reads debug outputs.
+Repro: ./tests/unit/test_ddr_frame_store_swap_livelock.sh > build/w_audit_swap_livelock.log 2>&1
+Interpretation: I could not make this red-check artificial. The claim that the unpatched allocator livelocks under the natural 0->1->0 doorbell sequence and the patched design reaches a third swap is sound in this sim.
+
+B) Deblock/DPB seam ordering red-checks.
+Raw numbers from w-deblock-seam snapshot rc=0: product_i420_writes=1536; seam_filtered_samples=768; seam_committed_mbs=2/1170; frame_fraction=0.001709; tap_pre_neighbour_samples=4; tap_post_dpb_samples=4; tap frame_fraction=1/1170. Red-checks failed as intended for swapped PRE/POST taps, early MB commit, early frame_done/ref_ready, bad clamp, bad MC arithmetic, early reference publication, and bad partition mask.
+Repro: build/w_audit_wdeblock_snapshot/tests/unit/test_p3_dpb_mc_rtl_sim.sh > build/w_audit_wdeblock_dpb_mc.log 2>&1
+Interpretation: I could not break the ordering/tap-direction assertions. The limitation is scope, not falsity: the seam covers 2 MBs out of 1170 and the tap direction covers one MB location.
+
+C) Deblock QPc trap.
+Raw numbers from w-deblock-seam snapshot rc=0: filtered_samples=641, luma_bS4=16, chroma_bS4=4, real_fixture_qp_range=25..25, synthetic_qp_range=4..51, chroma_qpc_trap_qpy_qpc=40/36. The QPy-for-QPc fault failed the high-QP trap.
+Repro: build/w_audit_wdeblock_snapshot/tests/unit/test_p3_deblock_rtl_sim.sh > build/w_audit_wdeblock_deblock.log 2>&1
+Interpretation: the trap is honest and catches the substitution, but only because it is synthetic high-QP. The real fixture QP=25 cannot catch QPy/QPc confusion.
