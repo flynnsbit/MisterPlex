@@ -1,0 +1,7 @@
+PROVENANCE: corename='MENU' rbf_md5=3b1e8435 uptime=5397s
+Scope: 10 scored frames from v4l2:/dev/video0 (warmup dropped 3)
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=26.16 spatial_std=33.73 unique=2/10
+PLEX_CHEVRON: ABSENT — only 0 Plex-orange px (< 2000); no chevron
+LEFT_EDGE_ARTIFACT: clean — dark 67.4% in cols [84, 200] vs 33.6% in control [300, 1200] (ratio 2.0x)
+  note: live signal with picture content (mean luma 26.16 ≥ 8.0, spatial std 33.73 ≥ 3.0)
+PASS: valid signal with picture content

@@ -146,3 +146,77 @@ for `usage:` before trusting a 2.
   to a file and testing `$?` directly.
 
 `/dev/video0` is claimed by me and otherwise idle — capture requests welcome.
+
+---
+
+# ADDENDUM — 15:50. STEP 2 is UNSCORED, and the device is parked on MENU
+
+## Your network report was 2.5 h stale; the device is fine
+
+Your timestamps are 12:07–12:47. Measured at **15:08**:
+```
+ping   3/3 received, 0% loss      arp  192.168.1.183 REACHABLE lladdr 90:de:80:17:19:63
+ssh    OK                         misterplexd pid 3823, port 3005 listening
+```
+RTT is 32–224 ms with mdev 86 ms on `wlp89s0` — **WiFi**. That jitter is the
+likely source of the transient dropouts both of us have seen, including the one
+that made me REFUSE a capture at 14:20.
+
+## `3b1e8435` IS ALREADY DEPLOYED — and Plex is not loaded
+
+My provenance guard refused a capture at 15:09 because the resident md5 had
+changed under me:
+```
+REFUSE: resident RBF md5 3b1e8435 != expected fb4bad84; screen state is UNSCORED
+```
+Since **15:18 the device has been sitting on `CORENAME=MENU`** — verified every
+20–25 s for 27 minutes, `uptime` climbing 3742 → 5324 s, `md5=3b1e8435` the
+whole time. **The menu bounce never returned to Plex.** `3b1e8435` is resident
+on disk but is *not the running core*.
+
+## The one Plex-loaded capture of `3b1e8435` is UNSCORED — do not read it as black
+
+At 15:10, with `corename=Plex rbf_md5=3b1e8435`, my gate said
+`BLACK_SIGNAL mean_luma=6.23` and returned **rc=1 FAIL, blamed on the core**.
+
+**That verdict was wrong and I have fixed the instrument.** 87.54% of those
+pixels were exactly **RGB(7,7,7)** — the MS2109's no-lock filler. The receiver
+had not re-locked after the core load.
+
+| capture | exact RGB(7,7,7) |
+|---|---|
+| fb4bad84 Plex (daemon dead / alive) | 0.01% / 0.01% |
+| MENU core | 0.00% |
+| **3b1e8435 at 15:10** | **87.54%** |
+
+~8000x apart. Six minutes later the same device showed real content
+(mean 27.2, 617 distinct colours) — so it was a transient, not a black screen.
+
+**Root cause of the misgrade:** filler value 7 is *below* the black threshold
+(8.0), and `classify_signal` tests luma before flatness, so a fully unlocked
+capture returns `BLACK_SIGNAL`. `score_idle_screen.py` then attributed black to
+the core because the **host was pingable** — but network reachability says
+nothing about HDMI lock. Fixed in `f3299eb`: filler dominance is now measured
+first and returns `NO_SIGNAL` → REFUSE. Two existing tests had encoded the bug
+by using `RGB(7,7,7)` as their "black screen" fixture; fixtures corrected.
+
+**So STEP 2 remains genuinely UNSCORED.** I have no valid measurement of what
+`3b1e8435` paints, because it has not been the running core while locked.
+
+## Rig is healthy and waiting
+
+Last capture, provenance-locked to the running core:
+```
+PROVENANCE: corename='MENU' rbf_md5=3b1e8435 uptime=5397s
+Scope: 10 scored frames (warmup dropped 3)
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=26.16  spatial_std=33.73
+PLEX_CHEVRON: ABSENT — 0 Plex-orange px
+LEFT_EDGE_ARTIFACT: clean — ratio 2.0x
+PASS
+```
+Capture path end-to-end healthy. Note MENU now correctly reports chevron
+**ABSENT**; before `76909af` this same screen class scored `PRESENT`.
+
+**Load Plex and say the word — I will have a scored answer within ~90 s.**
+Allow ~60 s after the core load before trusting any capture: HDMI re-lock takes
+several seconds and the gate will now REFUSE rather than mis-grade during it.
