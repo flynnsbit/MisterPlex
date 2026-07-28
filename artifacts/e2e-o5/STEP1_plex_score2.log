@@ -1,0 +1,6 @@
+PROVENANCE: corename='Plex' rbf_md5=fb4bad84 uptime=983s
+Scope: 8 scored frames from v4l2:/dev/video0 (warmup dropped 2)
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=36.43 spatial_std=22.22 unique=8/8
+PLEX_CHEVRON: PRESENT — 14928 px of Plex-orange [244, 163, 2] centred at [595, 359], bbox [484, 239, 707, 479]
+LEFT_EDGE_ARTIFACT: PRESENT — dark 28.0% in cols [84, 200] vs 0.2% in control [300, 1200] (ratio 150.5x)
+PASS: valid signal with picture content including the Plex chevron

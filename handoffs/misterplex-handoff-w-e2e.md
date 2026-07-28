@@ -788,3 +788,101 @@ These are primary/secondary RGB colors at full saturation — consistent with th
 
 During the 180s clip, `host_alive=True` at analysis time (post-capture ping check). The earlier `host_alive=False` readings were the standing routing issue from this machine, not MiSTer offline. W-FIT had full SSH access throughout.
 
+
+### 15.5 CORRECTION TO SECTION 15 — Content was Menu core, not fb4bad84
+
+**W-E2E-O5 (commit `fbb5177`) identified that the MiSTer REBOOTED at ~13:44.** The content appearing at t=20.183s in the bounce-long clip was the **Menu core** coming up after reboot, not `fb4bad84`'s display.
+
+Evidence: W-E2E-O5 checked provenance via SSH immediately after their concurrent capture: `CORENAME=[MENU] uptime=523s`. The MiSTer had been offline since ~12:27 (devmem crash) and rebooted at ~13:44, landing on the Menu core.
+
+**Implications:**
+- Section 15.1 "Option A CONFIRMED" is WITHDRAWN. The HDMI content was from the Menu core, not fb4bad84.
+- My option A inference was wrong because I did not verify CORENAME at capture time.
+- `fb4bad84` HDMI output is still UNSCORED.
+- The color bars seen are the MiSTer Menu core's startup display.
+
+**Critical lesson: Never claim a bitstream result without asserting CORENAME + RBF md5 at capture time.**
+
+W-E2E-O5's approach is correct: SSH provenance check (`CORENAME` + `md5sum /media/fat/_Utility/Plex.rbf`) must be done BEFORE and AFTER any capture used as evidence about a specific RBF.
+
+**What section 15 captures DO prove (correct claims only):**
+- The capture RIG is healthy (correctly transitions NO_SIGNAL → CONTENT when MiSTer returns)
+- prove_decoded_frame correctly rejects the Menu core's color bars (ncc=0.1675, NOT_DECODED)
+- LEFT_EDGE_ARTIFACT present on Menu core too (215.4× ratio) — may be physical/capture artifact rather than Plex-RTL-specific
+
+**For fb4bad84 scoring:** W-FIT needs to load fb4bad84 via menu bounce to Plex core, confirm CORENAME=Plex, then capture with provenance.
+
+
+## 17. STEP 1 COMPLETE — `fb4bad84` shows the Plex chevron. VALID WITH CONTENT.
+
+**Provenance-locked capture, 2026-07-28 ~13:57.** This supersedes §15 (no signal)
+and §16 (MENU core); both were accurate for their moment.
+
+```
+PROVENANCE: corename='Plex' rbf_md5=fb4bad84 uptime=983s
+Scope: 8 scored frames from v4l2:/dev/video0 mjpeg 1280x720@60 (warmup dropped 2)
+SIGNAL_STATE      : CONTENT_PRESENT   mean_luma=36.43  spatial_std=22.22
+PLEX_CHEVRON      : PRESENT  14928 px Plex-orange, centroid (595,359),
+                             bbox [484,239,707,479]
+LEFT_EDGE_ARTIFACT: PRESENT  28.0% dark in cols[84,200] vs 0.2% control
+                             [300,1200]  = 150.5x enrichment
+rc=0  PASS
+```
+
+**Verdict on the three-state grading: (3) VALID WITH CONTENT.**
+Raw discriminator: luma spatial std **22.22** against a content threshold of
+**1.0**, and 12/12 saved frames independently at std ~21.05 with orange_px
+**14928** (chevron floor 2000). Not black (black threshold mean luma 8.0;
+measured 36.43) and not no-signal.
+
+Artifacts: `artifacts/e2e-o5/STEP1_PLEX_fb4bad84_screen.png`,
+`step1_plex_f00..f11.png`, `STEP1_plex_fb4bad84.json`.
+
+### 17.1 Answer to W-FIT-O5's falsifiable prediction
+
+> DDR write path dead **but video timing alive** -> VALID signal (black, or the ARM-painted logo)
+> `clk_ddr`/`reset_ddr` stuck -> NO SIGNAL
+
+**Prediction CONFIRMED, not refuted.** The signal is valid *and* carries the
+ARM-painted Plex logo. The video timing and present path on `fb4bad84` are
+**alive**, and the ARM's `media: idle screen painted (mode=0)` **does reach the
+display**. The NO-SIGNAL branch is refuted.
+
+Caveat kept deliberately narrow: this proves the **pixel/video clock domain and
+the present path** are alive. It says nothing directly about `clk_ddr`, and the
+chevron is ARM-painted, so it is **not** evidence that the fabric writes to DDR.
+It is fully consistent with w-fit-o5's mailbox result (fabric writes nothing).
+
+### 17.2 Timeline (measured; all three states observed on one shift)
+
+| time | state | evidence |
+|---|---|---|
+| 12:27–13:44 | **NO SIGNAL** | frames byte-identical to no-lock filler; ARP INCOMPLETE |
+| ~13:44 | device **rebooted** | `uptime=523s`, came back on `CORENAME=MENU` |
+| ~13:48 | MENU core bars | misattributed to Plex; corrected in §16 |
+| ~13:57 | **VALID WITH CONTENT** | `CORENAME=Plex`, `rbf_md5=fb4bad84`, chevron present |
+
+The rig produced all three states in one shift and the gate graded each one
+correctly with no code change — including refusing the ambiguous ones.
+
+### 17.3 New guard: provenance is now enforced before pixels
+
+`score_idle_screen.py` gains `--expect-corename` and `--expect-rbf-md5`, which
+read `/tmp/CORENAME` and the resident RBF md5 over SSH and **REFUSE (rc=2)
+before grading any pixel** when they do not match. This is the durable fix for
+the §16 misattribution — it would have caught my error automatically.
+
+Live red/green, both directions, against the real device:
+```
+--expect-corename MENU  while device on Plex  -> rc=2 REFUSE  (red)
+--expect-corename Plex  while device on Plex  -> rc=0 graded  (green)
+```
+
+### 17.4 Note on the transient `ABSENT` chevron reading
+
+An earlier run reported `PLEX_CHEVRON: ABSENT` with `mean_luma=82.94`,
+`spatial_std=72.31`, `unique=8/8`. That was **not** a detector bug: it was a
+correct reading of a different, brighter, animating screen during the core-load
+transition. Once stable, the same detector reports 14928 px on 12/12 frames.
+Recorded because "gate said absent, logo was there" would otherwise look like a
+false negative to the next reader.

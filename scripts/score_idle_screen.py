@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -141,6 +142,50 @@ def score_left_edge(rgb: np.ndarray) -> dict:
     }
 
 
+def loaded_core_identity(host: str, timeout_s: int = 10) -> dict:
+    """Read the CURRENTLY LOADED core identity from the device.
+
+    Signal state and provenance are independent axioms.  A capture can be
+    perfectly valid and still be about the wrong bitstream: on 2026-07-28 this
+    rig rebooted mid-shift, came back on the MENU core, and a capture taken
+    minutes later was briefly attributed to the Plex RBF sitting unloaded on the
+    SD card.  Pixels alone cannot detect that; only the loaded-core identity can.
+
+    Returns {"ok": bool, "corename": str, "rbf_md5": str, "uptime_s": int,
+             "error": str}.  Never raises.
+    """
+    import subprocess
+    cmd = ("echo \"CORENAME=$(cat /tmp/CORENAME 2>/dev/null)\"; "
+           "echo \"RBFMD5=$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | cut -d' ' -f1)\"; "
+           "echo \"UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null)\"")
+    info = {"ok": False, "corename": "", "rbf_md5": "", "uptime_s": -1, "error": ""}
+    try:
+        r = subprocess.run(
+            ["sshpass", "-p", os.environ.get("MISTER_PASS", "1"), "ssh",
+             "-o", "StrictHostKeyChecking=no", "-o", f"ConnectTimeout={timeout_s}",
+             f"root@{host}", cmd],
+            capture_output=True, text=True, timeout=timeout_s + 10)
+        if r.returncode != 0:
+            info["error"] = (r.stderr or "ssh failed").strip()[:200]
+            return info
+        for line in r.stdout.splitlines():
+            if line.startswith("CORENAME="):
+                info["corename"] = line.split("=", 1)[1].strip()
+            elif line.startswith("RBFMD5="):
+                info["rbf_md5"] = line.split("=", 1)[1].strip()
+            elif line.startswith("UPTIME="):
+                try:
+                    info["uptime_s"] = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    pass
+        info["ok"] = bool(info["corename"])
+        if not info["ok"]:
+            info["error"] = "device returned no CORENAME"
+    except Exception as e:  # noqa: BLE001
+        info["error"] = f"{type(e).__name__}: {e}"[:200]
+    return info
+
+
 def host_reachable(host: str, timeout_s: int = 3) -> bool:
     """Cheap liveness probe for the video source host.
 
@@ -198,11 +243,44 @@ def main(argv: list[str] | None = None) -> int:
                          "is REFUSE/UNSCORED rather than a core FAIL, because a "
                          "powered-off source is indistinguishable from a black core on "
                          "this capture device.")
+    ap.add_argument("--expect-corename", default=None,
+                    help="REFUSE unless the device's loaded core matches (e.g. Plex). "
+                         "Pixels are only evidence about a bitstream if the loaded "
+                         "core is verified AT CAPTURE TIME; a rebooted device can "
+                         "come back on MENU with the RBF unloaded on disk.")
+    ap.add_argument("--expect-rbf-md5", default=None,
+                    help="REFUSE unless /media/fat/_Utility/Plex.rbf matches this md5.")
     ap.add_argument("--json-out")
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Provenance BEFORE pixels: a capture is only evidence about a bitstream if
+    # the loaded core is verified at capture time.
+    if args.expect_corename or args.expect_rbf_md5:
+        if not args.host:
+            print("REFUSE: --expect-corename/--expect-rbf-md5 require --host",
+                  file=sys.stderr)
+            return EXIT_REFUSE
+        ident = loaded_core_identity(args.host)
+        if not ident["ok"]:
+            print(f"REFUSE: cannot verify loaded core on {args.host}: "
+                  f"{ident['error']}; screen state is UNSCORED", file=sys.stderr)
+            return EXIT_REFUSE
+        print(f"PROVENANCE: corename={ident['corename']!r} "
+              f"rbf_md5={ident['rbf_md5'][:8]} uptime={ident['uptime_s']}s")
+        if args.expect_corename and ident["corename"] != args.expect_corename:
+            print(f"REFUSE: loaded core is {ident['corename']!r}, expected "
+                  f"{args.expect_corename!r}. The capture would be about the WRONG "
+                  f"core, so it is UNSCORED — not a pass and not a core defect.",
+                  file=sys.stderr)
+            return EXIT_REFUSE
+        if args.expect_rbf_md5 and not ident["rbf_md5"].startswith(args.expect_rbf_md5):
+            print(f"REFUSE: resident RBF md5 {ident['rbf_md5'][:8]} != expected "
+                  f"{args.expect_rbf_md5[:8]}; screen state is UNSCORED",
+                  file=sys.stderr)
+            return EXIT_REFUSE
 
     try:
         frames, source = load_frames(args)
