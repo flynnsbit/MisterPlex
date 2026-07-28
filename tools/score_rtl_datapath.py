@@ -227,25 +227,30 @@ def main():
     print("=" * 72)
 
     # Stage 1: Luma residual (dequant + IDCT)
-    results["luma_residual"] = grade_luma_residual(ratchet)
-    r = results["luma_residual"]
+    results["luma_residual_INTEGRATED"] = grade_luma_residual(ratchet)
+    r = results["luma_residual_INTEGRATED"]
     print(
-        f"[RTL] luma_residual: status={r['status']} "
+        f"[RTL] luma_residual_INTEGRATED: status={r['status']} "
         f"tests={r.get('tests_exact', '?')} "
         f"nontrivial={r.get('nontrivial', '?')} "
         f"coverage={r.get('pixels_covered', 0)}/{ratchet['aggregate']['total_luma_pixels']}px"
     )
     failures.extend(check_monotonic("luma_residual", r, ratchet))
 
-    # Stage 2: Luma reconstruction (module-level)
-    results["luma_reconstruction"] = grade_luma_reconstruction(ratchet)
-    r = results["luma_reconstruction"]
+    # Stage 2: Luma reconstruction (module-level — scope in name, not suffix)
+    results["luma_recon_MODULE"] = grade_luma_reconstruction(ratchet)
+    r = results["luma_recon_MODULE"]
     print(
-        f"[RTL] luma_reconstruction: status={r['status']} "
+        f"[RTL] luma_recon_MODULE: status={r['status']} "
         f"mb_exact={r.get('mb_exact', 0)}/{r.get('mb_total', 0)} "
         f"recon_differed={r.get('recon_differed_from_pred', 0)} "
-        f"coverage={r.get('pixels_covered', 0)}/{ratchet['aggregate']['total_luma_pixels']}px "
-        f"(MODULE-LEVEL, not pipeline)"
+        f"coverage={r.get('pixels_covered', 0)}/{ratchet['aggregate']['total_luma_pixels']}px"
+    )
+    # Always print the integrated counterpart on the SAME line group
+    print(
+        f"[RTL] luma_recon_INTEGRATED: "
+        f"coverage=16/{ratchet['aggregate']['total_luma_pixels']}px "
+        f"({100*16/ratchet['aggregate']['total_luma_pixels']:.3f}%)"
     )
     failures.extend(check_monotonic("luma_reconstruction", r, ratchet))
 
@@ -267,30 +272,58 @@ def main():
         )
         failures.extend(check_monotonic(stage, r, ratchet))
 
-    # Summary
+    # Summary — INTEGRATED number is the HEADLINE, always first
     print("=" * 72)
     total_luma_px = ratchet["aggregate"]["total_luma_pixels"]
     total_chroma_u = ratchet["aggregate"]["total_chroma_u_pixels"]
     total_chroma_v = ratchet["aggregate"]["total_chroma_v_pixels"]
-    luma_covered = results["luma_reconstruction"].get("pixels_covered", 0)
-    chroma_u_covered = 0  # not implemented
-    chroma_v_covered = 0  # not implemented
+    luma_module = results["luma_recon_MODULE"].get("pixels_covered", 0)
+    luma_integrated = 16  # decode_stub MB0 block 0 — the only pipeline-level path
+    chroma_u_covered = 0
+    chroma_v_covered = 0
 
-    print(f"[RTL] AGGREGATE COVERAGE:")
-    print(f"  Y:  {luma_covered}/{total_luma_px} pixels ({100*luma_covered/total_luma_px:.1f}%)")
-    print(f"  U:  {chroma_u_covered}/{total_chroma_u} pixels ({100*chroma_u_covered/total_chroma_u:.1f}%)")
-    print(f"  V:  {chroma_v_covered}/{total_chroma_v} pixels ({100*chroma_v_covered/total_chroma_v:.1f}%)")
-    print(f"  Pipeline-level (integrated): 16/{total_luma_px} pixels ({100*16/total_luma_px:.3f}%)")
-    print(f"  Module-level (individual RTL modules): {luma_covered}/{total_luma_px} pixels")
+    # Count unimplemented stages
+    not_implemented = sum(
+        1 for s in results.values() if s.get("status") == "NOT_IMPLEMENTED"
+    )
+    total_stages = len(results)
+    implemented_stages = total_stages - not_implemented
 
+    # HEADLINE — the integrated number, always printed first, never buried
+    print(f"[RTL] HEADLINE: luma_recon_INTEGRATED={luma_integrated}/{total_luma_px}px "
+          f"({100*luma_integrated/total_luma_px:.3f}%) "
+          f"| luma_recon_MODULE={luma_module}/{total_luma_px}px "
+          f"({100*luma_module/total_luma_px:.1f}%)")
+    print(f"[RTL] HEADLINE: chroma_INTEGRATED=0/{total_chroma_u + total_chroma_v}px (0.0%)")
+    print(f"[RTL] HEADLINE: stages_implemented={implemented_stages}/{total_stages} "
+          f"stages_NOT_IMPLEMENTED={not_implemented}/{total_stages}")
+    print()
+    print(f"[RTL] PER-PLANE COVERAGE (both scopes, never separable):")
+    print(f"  Y INTEGRATED:  {luma_integrated}/{total_luma_px}px ({100*luma_integrated/total_luma_px:.3f}%)")
+    print(f"  Y MODULE:      {luma_module}/{total_luma_px}px ({100*luma_module/total_luma_px:.1f}%)")
+    print(f"  U INTEGRATED:  {chroma_u_covered}/{total_chroma_u}px (0.0%)")
+    print(f"  U MODULE:      {chroma_u_covered}/{total_chroma_u}px (0.0%)")
+    print(f"  V INTEGRATED:  {chroma_v_covered}/{total_chroma_v}px (0.0%)")
+    print(f"  V MODULE:      {chroma_v_covered}/{total_chroma_v}px (0.0%)")
+
+    # Determine exit code:
+    # rc=1: ratchet regression (HARD FAIL)
+    # rc=2: INCOMPLETE — stages NOT_IMPLEMENTED (never renders as success)
+    # rc=0: all stages implemented AND passing (may never happen until decoder is built)
     if failures:
         print(f"\nFAILURES ({len(failures)}):")
         for f in failures:
             print(f"  {f}")
         print(f"\nRTL DATAPATH RATCHET: FAIL — {len(failures)} regression(s)")
         rc = 1
+    elif not_implemented > 0:
+        print(f"\nRTL DATAPATH RATCHET: INCOMPLETE — {not_implemented}/{total_stages} "
+              f"stages NOT_IMPLEMENTED (rc=2)")
+        print(f"  This gate is not green. It cannot be green while the pipeline is unbuilt.")
+        print(f"  rc=2 means 'no regressions but pipeline incomplete' — distinct from PASS.")
+        rc = 2
     else:
-        print(f"\nRTL DATAPATH RATCHET: PASS — no regressions, coverage monotonic")
+        print(f"\nRTL DATAPATH RATCHET: PASS — all stages implemented, coverage monotonic")
         rc = 0
 
     # Write JSON output
@@ -298,18 +331,22 @@ def main():
         output = {
             "format": "misterplex.p3.rtl_datapath_score.v1",
             "verification_target": "RTL",
+            "status": "FAIL" if failures else ("INCOMPLETE" if not_implemented > 0 else "PASS"),
+            "rc": rc,
             "stages": results,
             "aggregate": {
-                "luma_pixels_covered": luma_covered,
+                "luma_pixels_INTEGRATED": luma_integrated,
+                "luma_pixels_MODULE": luma_module,
                 "luma_pixels_total": total_luma_px,
                 "chroma_u_pixels_covered": chroma_u_covered,
                 "chroma_u_pixels_total": total_chroma_u,
                 "chroma_v_pixels_covered": chroma_v_covered,
                 "chroma_v_pixels_total": total_chroma_v,
-                "pipeline_level_pixels": 16,
+                "stages_implemented": implemented_stages,
+                "stages_not_implemented": not_implemented,
+                "stages_total": total_stages,
             },
             "ratchet_failures": failures,
-            "pass": rc == 0,
         }
         with open(args.output, "w") as f:
             json.dump(output, f, indent=2)
