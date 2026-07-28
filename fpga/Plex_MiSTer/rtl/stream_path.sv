@@ -478,6 +478,10 @@ module stream_path #(
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
 	wire core_error;
+	wire core_ref_req_valid;
+	wire [1:0] core_ref_req_plane;
+	wire [15:0] core_ref_req_x;
+	wire [15:0] core_ref_req_y;
 	wire [1:0] core_i16_pred_mode =
 		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
 
@@ -502,6 +506,10 @@ module stream_path #(
 		.mb_type_valid(slice_valid && sl_has_mbt),
 		.mb_type(sl_mbt[4:0]),
 		.mb_skip(first_mb_p_skip),
+		// The parser publishes mb_skip_run once per slice with the first
+		// coded macroblock; the core drains that run into P_Skip macroblocks.
+		.mb_skip_run_valid(slice_valid && !sl_is_i && !sl_is_idr),
+		.mb_skip_run({8'd0, p_skip_run}),
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(core_i16_pred_mode),
 		.chroma_pred_mode(2'd0),
@@ -545,6 +553,16 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
+		// Reference picture sample port. The DDR-backed reference reader is a
+		// separate worker's module; until it lands the port is tied off so
+		// motion compensation stalls rather than reading garbage.
+		.ref_req_valid(core_ref_req_valid),
+		.ref_req_plane(core_ref_req_plane),
+		.ref_req_x(core_ref_req_x),
+		.ref_req_y(core_ref_req_y),
+		.ref_req_ready(1'b0),
+		.ref_rsp_valid(1'b0),
+		.ref_rsp_sample(8'd0),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
 		.busy(core_busy),

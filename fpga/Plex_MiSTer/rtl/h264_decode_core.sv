@@ -55,6 +55,12 @@ module h264_decode_core #(
     input  wire        mb_type_valid,        // pulse: mb_type decoded for current MB
     input  wire [4:0]  mb_type,              // H.264 mb_type for I/P slices
     input  wire        mb_skip,              // P-slice skip
+    // mb_skip_run ue(v) from the CAVLC slice-data parser. In a P slice each
+    // coded macroblock is preceded by a run length; the core drains the run
+    // itself as P_Skip macroblocks, so the parser only has to hand over the
+    // parsed value once per run.
+    input  wire        mb_skip_run_valid,
+    input  wire [15:0] mb_skip_run,
     input  wire [3:0]  intra4x4_modes [0:15], // I_NxN: 9 modes per 4×4 block
     input  wire [1:0]  intra16x16_mode,      // I_16x16: 0=V, 1=H, 2=DC, 3=Plane
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
@@ -118,6 +124,25 @@ module h264_decode_core #(
     output wire [31:0] dpb_rd_addr,
     input  wire [7:0]  dpb_rd_data,
     input  wire        dpb_rd_valid,
+
+    // ── Reference picture sample port for motion compensation ──────────────
+    // Sample-at-a-time request/response into the reference picture. Requests
+    // are (plane, x, y) in the reference frame's own coordinate system, already
+    // clamped to the picture; responses must come back in request order.
+    //
+    // These are POST-deblocking samples: motion compensation reads the filtered
+    // reference picture (clause 8.4.2.2), unlike intra prediction which reads
+    // the pre-deblock neighbour context inside this module.
+    //
+    // The DDR-backed reference buffer that services this port is owned
+    // elsewhere; this module only drives the handshake.
+    output wire        ref_req_valid,
+    output wire [1:0]  ref_req_plane,        // 0 = Y, 1 = Cb, 2 = Cr
+    output wire [15:0] ref_req_x,
+    output wire [15:0] ref_req_y,
+    input  wire        ref_req_ready,
+    input  wire        ref_rsp_valid,
+    input  wire [7:0]  ref_rsp_sample,
 
     // ── Frame output (decoded frame to present path) ──
     output wire        frame_done,           // pulse: complete frame decoded
@@ -276,6 +301,14 @@ module h264_decode_core #(
     localparam [7:0] ST_I16_WAIT     = 8'd7;
     localparam [7:0] ST_I16_COMMIT   = 8'd8;
     localparam [7:0] ST_I16_FLUSH    = 8'd9;
+    // P_Skip: no residual, no transform. The reconstructed macroblock is the
+    // motion compensated prediction straight from the reference picture.
+    //
+    // DEBLOCKING: a skipped macroblock is still filtered by the deblocking
+    // filter (clause 8.7 derives bS from motion vectors and reference indices,
+    // which a skipped MB has). A future deblocking filter must walk these
+    // macroblocks too -- do not use "was skipped" as a skip condition there.
+    localparam [7:0] ST_PSKIP_WAIT   = 8'd10;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -332,6 +365,17 @@ module h264_decode_core #(
     reg        i16_nb_start_r;
     reg        intra_chroma_start_r;
     reg        i16_commit_r;
+    reg        pskip_start_r;
+    reg        wb_is_pskip_r;
+    reg        wb_mv_is_inter_r;
+    reg signed [15:0] pskip_mv_x_r;
+    reg signed [15:0] pskip_mv_y_r;
+    reg        mvcommit_valid_r;
+    reg [7:0]  mvcommit_mb_x_r;
+    reg        mvcommit_is_inter_r;
+    reg [1:0]  mvcommit_ref_r;
+    reg signed [15:0] mvcommit_mv_x_r;
+    reg signed [15:0] mvcommit_mv_y_r;
 
     function automatic [7:0] clip_u8(input signed [17:0] value);
         begin
@@ -409,9 +453,30 @@ module h264_decode_core #(
     wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
+    // ── P_Skip: mb_skip_run tracking ───────────────────────────────────────
+    wire        skiprun_mb_is_skip;
+    wire        skiprun_need_run;
+    wire [15:0] skiprun_left;
+    wire        skiprun_coded_pending;
+    wire        skip_consume;
+    h264_mb_skip_run_track u_product_skip_run (
+        .clk(clk),
+        .reset(reset),
+        .slice_start(slice_start),
+        .skip_run_valid(mb_skip_run_valid),
+        .skip_run(mb_skip_run),
+        .mb_consume(skip_consume),
+        .mb_is_skip(skiprun_mb_is_skip),
+        .need_skip_run(skiprun_need_run),
+        .skip_run_left(skiprun_left),
+        .coded_pending(skiprun_coded_pending)
+    );
+    wire slice_is_p = !slice_is_i && !slice_is_idr;
+    wire pskip_pending = slice_is_p && skiprun_mb_is_skip;
+
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
-                                (mb_skip || (mb_type == 5'd0)) &&
-                                (mb_skip || (part_mode == 3'd0));
+                                !pskip_pending &&
+                                (mb_type == 5'd0) && (part_mode == 3'd0);
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
@@ -473,6 +538,101 @@ module h264_decode_core #(
     // I_16x16 DC is the mode this core reconstructs standalone; V/H/Plane keep
     // going through h264_decode_top.
     wire route_is_i16_dc = (mb_route == ROUTE_INTRA16) && (mb_route_i16_mode == 2'd2);
+
+    // ── P_Skip: MV derivation and MC copy ──────────────────────────────────
+    wire        pskip_nb_a_present, pskip_nb_a_inter;
+    wire [1:0]  pskip_nb_a_ref;
+    wire signed [15:0] pskip_nb_a_mv_x, pskip_nb_a_mv_y;
+    wire        pskip_nb_b_present, pskip_nb_b_inter;
+    wire [1:0]  pskip_nb_b_ref;
+    wire signed [15:0] pskip_nb_b_mv_x, pskip_nb_b_mv_y;
+    wire        pskip_nb_c_present, pskip_nb_c_inter;
+    wire [1:0]  pskip_nb_c_ref;
+    wire signed [15:0] pskip_nb_c_mv_x, pskip_nb_c_mv_y;
+    wire        pskip_nb_d_present, pskip_nb_d_inter;
+    wire [1:0]  pskip_nb_d_ref;
+    wire signed [15:0] pskip_nb_d_mv_x, pskip_nb_d_mv_y;
+    h264_pskip_nb_ctx #(
+        .MB_WIDTH_MAX(MB_W),
+        .MB_WIDTH_DEFAULT(MB_W)
+    ) u_product_pskip_nb_ctx (
+        .clk(clk),
+        .reset(reset),
+        .mb_x(syntax_mb_x),
+        .mb_y(syntax_mb_y),
+        .mb_width(mb_width),
+        .first_mb_in_slice(first_mb_in_slice),
+        .mb_commit(mvcommit_valid_r),
+        .commit_mb_x(mvcommit_mb_x_r),
+        .commit_is_inter(mvcommit_is_inter_r),
+        .commit_ref_idx(mvcommit_ref_r),
+        .commit_mv_x(mvcommit_mv_x_r),
+        .commit_mv_y(mvcommit_mv_y_r),
+        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y)
+    );
+
+    wire signed [15:0] pskip_mv_x;
+    wire signed [15:0] pskip_mv_y;
+    wire [1:0]  pskip_ref_idx_l0;
+    wire signed [15:0] pskip_mvp_x;
+    wire signed [15:0] pskip_mvp_y;
+    wire        pskip_zero_mv;
+    wire [3:0]  pskip_zero_reason;
+    h264_pskip_mv u_product_pskip_mv (
+        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+        .mv_x(pskip_mv_x),
+        .mv_y(pskip_mv_y),
+        .ref_idx_l0(pskip_ref_idx_l0),
+        .mvp_x(pskip_mvp_x),
+        .mvp_y(pskip_mvp_y),
+        .zero_mv(pskip_zero_mv),
+        .zero_reason(pskip_zero_reason)
+    );
+
+    wire       pskip_pred_valid;
+    wire [1:0] pskip_pred_plane;
+    wire [7:0] pskip_pred_idx;
+    wire [7:0] pskip_pred_sample;
+    wire       pskip_busy;
+    wire       pskip_done;
+    h264_pskip_mc_copy u_product_pskip_mc (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(pskip_start_r),
+        .mb_x(wb_mb_x),
+        .mb_y(wb_mb_y),
+        .mv_x_qpel(pskip_mv_x_r),
+        .mv_y_qpel(pskip_mv_y_r),
+        .frame_w(FRAME_W16),
+        .frame_h(FRAME_H16),
+        .ref_req_valid(ref_req_valid),
+        .ref_req_plane(ref_req_plane),
+        .ref_req_x(ref_req_x),
+        .ref_req_y(ref_req_y),
+        .ref_req_ready(ref_req_ready),
+        .ref_rsp_valid(ref_rsp_valid),
+        .ref_rsp_sample(ref_rsp_sample),
+        .pred_valid(pskip_pred_valid),
+        .pred_plane(pskip_pred_plane),
+        .pred_idx(pskip_pred_idx),
+        .pred_sample(pskip_pred_sample),
+        .busy(pskip_busy),
+        .done(pskip_done)
+    );
     h264_mv_pred_part u_product_p16_mv_pred (
         .part_mode(3'd0),
         .part_idx(2'd0),
@@ -853,7 +1013,14 @@ module h264_decode_core #(
     // being free so intra_mb_x_r cannot move while h264_intra_nb_ctx is still
     // flushing the previous macroblock into its line buffers.
     wire i16_dc_launch = mb_type_valid && route_is_i16_dc && (wb_state == ST_IDLE) &&
-                         !p16_launch && !product_recon_mb_valid;
+                         !pskip_pending && !p16_launch && !product_recon_mb_valid;
+    // Skipped macroblocks carry no syntax of their own, so the core issues them
+    // itself while the run is draining. mb_skip_run has already been parsed by
+    // the time the run is non-zero, and the coded macroblock that terminates
+    // the run arrives afterwards as a normal mb_type_valid pulse.
+    wire pskip_launch = pskip_pending && (wb_state == ST_IDLE) &&
+                        !p16_launch && !product_recon_mb_valid && !pskip_busy;
+    assign skip_consume = pskip_launch || (mb_type_valid && !pskip_pending);
     wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
     wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
     wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
@@ -873,6 +1040,8 @@ module h264_decode_core #(
         i16_nb_start_r <= 1'b0;
         intra_chroma_start_r <= 1'b0;
         i16_commit_r <= 1'b0;
+        pskip_start_r <= 1'b0;
+        mvcommit_valid_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -902,6 +1071,17 @@ module h264_decode_core #(
             i16_nb_start_r <= 1'b0;
             intra_chroma_start_r <= 1'b0;
             i16_commit_r <= 1'b0;
+            pskip_start_r <= 1'b0;
+            wb_is_pskip_r <= 1'b0;
+            wb_mv_is_inter_r <= 1'b0;
+            pskip_mv_x_r <= 16'sd0;
+            pskip_mv_y_r <= 16'sd0;
+            mvcommit_valid_r <= 1'b0;
+            mvcommit_mb_x_r <= 8'd0;
+            mvcommit_is_inter_r <= 1'b0;
+            mvcommit_ref_r <= 2'd0;
+            mvcommit_mv_x_r <= 16'sd0;
+            mvcommit_mv_y_r <= 16'sd0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             dpb_rd_en_r <= 1'b0;
@@ -942,7 +1122,8 @@ module h264_decode_core #(
             end
             if (mb_type_valid)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
-            if (product_intra_mb_start || i16_dc_launch) begin
+            if (pskip_launch)
+                syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;            if (product_intra_mb_start || i16_dc_launch) begin
                 intra_active_r <= 1'b1;
                 intra_mb_x_r <= syntax_mb_x;
                 intra_mb_y_r <= syntax_mb_y;
@@ -981,6 +1162,8 @@ module h264_decode_core #(
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
                     wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
+                    wb_is_pskip_r <= 1'b0;
+                    wb_mv_is_inter_r <= 1'b1;
                 end else if (product_recon_mb_valid) begin
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
@@ -994,13 +1177,48 @@ module h264_decode_core #(
                         lat_recon_v[wb_i] <= product_intra_recon_valid ? product_intra_recon_v[wb_i] : recon_v[wb_i];
                     end
                     wb_state <= ST_WRITE;
+                    wb_is_pskip_r <= 1'b0;
+                    wb_mv_is_inter_r <= 1'b0;
                 end else if (i16_dc_launch) begin
                     wb_mb_x <= syntax_mb_x;
                     wb_mb_y <= syntax_mb_y;
                     wb_mb_is_ref <= 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
+                    wb_is_pskip_r <= 1'b0;
+                    wb_mv_is_inter_r <= 1'b0;
                     wb_state <= ST_I16_WAIT;
+                end else if (pskip_launch) begin
+                    wb_mb_x <= syntax_mb_x;
+                    wb_mb_y <= syntax_mb_y;
+                    wb_mb_is_ref <= 1'b1;
+                    wb_base <= dpb_write_base;
+                    wb_idx <= 9'd0;
+                    wb_is_pskip_r <= 1'b1;
+                    wb_mv_is_inter_r <= 1'b1;
+                    // Clause 8.4.1.1: the neighbour taps are read at the
+                    // current macroblock position, so the derived MV must be
+                    // captured before syntax_mb_addr_r advances.
+                    pskip_mv_x_r <= pskip_mv_x;
+                    pskip_mv_y_r <= pskip_mv_y;
+                    pskip_start_r <= 1'b1;
+                    wb_state <= ST_PSKIP_WAIT;
+                end
+            end
+            ST_PSKIP_WAIT: begin
+                // P_Skip has no residual and no transform: the macroblock is
+                // the motion compensated prediction verbatim.
+                if (pskip_pred_valid) begin
+                    if (pskip_pred_plane == 2'd0)
+                        lat_recon_y[pskip_pred_idx] <= pskip_pred_sample;
+                    else if (pskip_pred_plane == 2'd1)
+                        lat_recon_u[pskip_pred_idx[5:0]] <= pskip_pred_sample;
+                    else
+                        lat_recon_v[pskip_pred_idx[5:0]] <= pskip_pred_sample;
+                end
+                if (pskip_done) begin
+                    wb_idx <= 9'd0;
+                    wb_state <= ST_WRITE;
                 end
             end
             ST_I16_WAIT: begin
@@ -1105,6 +1323,12 @@ module h264_decode_core #(
                         mv_left_ref <= p16_ref_idx_l0_r;
                         mv_left_valid <= 1'b1;
                     end
+                    mvcommit_valid_r <= 1'b1;
+                    mvcommit_mb_x_r <= wb_mb_x;
+                    mvcommit_is_inter_r <= 1'b1;
+                    mvcommit_ref_r <= p16_ref_idx_l0_r;
+                    mvcommit_mv_x_r <= p16_mv_x_qpel_r;
+                    mvcommit_mv_y_r <= p16_mv_y_qpel_r;
                     frame_done_r <= wb_mb_is_ref && wb_last_mb;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
@@ -1116,6 +1340,16 @@ module h264_decode_core #(
                     wb_state <= ST_IDLE;
                     if (wb_mb_is_ref)
                         mb_count_r <= mb_count_r + 16'd1;
+                    // Publish this macroblock's L0 motion so the next P_Skip
+                    // derivation sees it as neighbour A/B/C/D. Intra
+                    // macroblocks must still be committed (is_inter = 0) so
+                    // their refIdx reads back as "not 0" in the special cases.
+                    mvcommit_valid_r <= 1'b1;
+                    mvcommit_mb_x_r <= wb_mb_x;
+                    mvcommit_is_inter_r <= wb_mv_is_inter_r;
+                    mvcommit_ref_r <= 2'd0;
+                    mvcommit_mv_x_r <= wb_is_pskip_r ? pskip_mv_x_r : 16'sd0;
+                    mvcommit_mv_y_r <= wb_is_pskip_r ? pskip_mv_y_r : 16'sd0;
                     frame_done_r <= wb_mb_is_ref && wb_last_mb;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
@@ -1137,7 +1371,7 @@ module h264_decode_core #(
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
-    assign busy = (wb_state != ST_IDLE) || intra_active_r;
+    assign busy = (wb_state != ST_IDLE) || intra_active_r || pskip_busy;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
@@ -1158,6 +1392,14 @@ module h264_decode_core #(
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
-        |cavlc_level_dbg[0] | |cavlc_run_dbg[0];
+        |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
+        |mb_route | |mb_route_cbp_chroma | mb_route_cbp_luma_ac |
+        mb_route_is_intra | mb_route_is_inter | mb_route_unsupported |
+        |i16dc_value | chroma_u_dc_valid | chroma_v_dc_valid |
+        |chroma_u_dc_tl | |chroma_u_dc_tr | |chroma_u_dc_bl | |chroma_u_dc_br |
+        |chroma_v_dc_tl | |chroma_v_dc_tr | |chroma_v_dc_bl | |chroma_v_dc_br |
+        skiprun_need_run | |skiprun_left | skiprun_coded_pending |
+        |pskip_ref_idx_l0 | |pskip_mvp_x | |pskip_mvp_y | pskip_zero_mv |
+        |pskip_zero_reason;
 
 endmodule
