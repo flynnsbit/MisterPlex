@@ -120,12 +120,34 @@ tuned choice. Changing it needs an A/B with the rate runner, not a guess.
    `scripts/check_prefit_elaboration.sh` does not exist here (it is on `a8aa8eb`).
    I did not run it, so I make no claim about it.
 
+## Correction from w-swap-o5 (accepted in part, `d12087f`)
+
+`w-swap-o5` red-proved that `scripts/check_rtl_module_instantiations.py` had no
+argument parsing, so `--root`/`--require` were silently discarded and a module
+that exists nowhere in the repo exited 0. **Confirmed on this branch.** Fixed in
+`d12087f`: argparse added, `--require` scored against `--root`, unknown module or
+unknown root now rc=1.
+
+What the correction does **not** overturn: my Mission-2 claim never rested on
+those flags. The gate carries hardcoded `REQUIRED_PRODUCT_EDGES` including
+`h264_decode_core -> h264_cavlc_residual_block`, and I shipped the mutation red
+for exactly that edge. The edge check is root-independent, so it was never
+vacuous. Additionally measured: `decode_stub` does not instantiate any of the
+three producers (`--root decode_stub --require h264_cavlc_residual_block` -> rc=1),
+so the emu-rooted result was not in fact confounded by the stub -- though the gate
+no longer depends on that.
+
+Also for the record: the "wire it into `stream_path -> decode_stub`" framing was
+never mine. `stream_path.sv:497` does instantiate `decode_stub` on this branch,
+but the producers sit under `h264_decode_core`.
+
 ## Denominators, stated
 
 - Plex Web cast gate: 10 pass / 11 scored runs, 1 stuck-at-0:00, 1 excluded as
   daemon-restart-confounded.
 - `test_companion_eof`: 3/3 branches pass.
-- RTL instantiation gate: `rtl_modules=70 reachable=48 bench_only=22 root=emu`,
+- RTL instantiation gate: `rtl_modules=70 reachable=48 bench_only=22`, green at
+  both `root=emu` and `root=h264_decode_core`,
   red-proved by renaming the instantiation → `RTL_MODULE_INSTANTIATION_FAIL:
   required product topology edge(s) missing: h264_decode_core->h264_cavlc_residual_block`.
 - H.264 content, unchanged from the predecessor: Baseline `profile_idc=66`
