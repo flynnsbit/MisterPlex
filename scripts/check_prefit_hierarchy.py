@@ -23,10 +23,30 @@ the known source-level blind spots at once:
   file absent from .qip  -> never compiled                      -> ABSENT
   core orphaned from emu -> not reachable from the top          -> ABSENT
 
-It is NOT a replacement for make post-fit-hierarchy.  Synthesis can still remove
-a module that elaborates fine (an instantiated-but-dead core optimises away),
-and that is precisely how fb4bad84 shipped without a decoder.  This is a cheap
-pre-filter that makes that outcome much less likely to reach a fit.
+SCOPE -- READ BEFORE CITING THIS GATE FOR A PRODUCT CLAIM.
+
+This gate detects failure modes 1 and 2 ONLY:
+
+  1. not compiled      -- file missing from files.qip
+  2. not instantiated  -- module orphaned from the product top
+
+It CANNOT detect failure mode 3 -- compiled, instantiated, elaborated, and then
+deleted by synthesis because the outputs drive nothing observable.  That is not
+a theoretical gap.  w-fit-o5 measured it with Quartus Analysis & Synthesis:
+
+  this gate on w-deblock-o5-converge   h264_decode_core PRESENT
+  Quartus A&S on the same source       h264_decode_core ABSENT,
+                                       ELABORATED_BUT_OPTIMIZED_AWAY
+
+Verilator elaborates the instance faithfully and Quartus then removes it, so a
+GREEN here is fully compatible with a bitstream containing no decoder -- which
+is exactly how fb4bad84 shipped.  I originally offered this gate as satisfying
+RULING 3 condition 4.  That claim was too strong and is withdrawn: it is a
+cheap pre-filter, not an elaboration oracle.
+
+For mode 3 use scripts/check_deadlogic_sink.py (fast, no Quartus, conservative)
+and scripts/check_prefit_elaboration.sh (Quartus A&S, w-fit-o5, authoritative
+pre-fit).  make post-fit-hierarchy remains the only final oracle.
 
 Exit codes: 0 pass, 1 fail, 77 skip (never a pass), 2 usage error.
 """
@@ -276,8 +296,12 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"PREFIT_HIER_OK label={args.label} top={args.top} present={req} "
         f"modules={len(present)} "
-        f"(elaboration-level; make post-fit-hierarchy remains the only oracle "
-        f"for what survives synthesis and fitting)"
+        f"detects=modes_1_2_only mode3_optimized_away=UNCHECKED "
+        f"(elaboration-level. A module can be PRESENT here and still be deleted "
+        f"by synthesis for driving nothing observable -- measured on this very "
+        f"branch for h264_decode_core. Pair with check_deadlogic_sink.py and "
+        f"check_prefit_elaboration.sh; make post-fit-hierarchy remains the only "
+        f"final oracle)"
     )
     return 0
 

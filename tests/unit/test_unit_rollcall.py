@@ -136,6 +136,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_product_reachability_redproof.sh",
     "$(ROOT)/tests/unit/test_prefit_hierarchy_redproof.sh",
+    "$(ROOT)/tests/unit/test_deadlogic_sink_redproof.sh",
+    "$(ROOT)/tests/unit/test_product_deadlogic_status.sh",
     "$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh",
     "$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh",

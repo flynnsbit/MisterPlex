@@ -132,6 +132,27 @@ def classify_skip_line(line: str) -> SkipRecord | None:
                 would_catch="live PMS NAL size/jitter drift used to size the host→FPGA bitstream ring",
                 source="log",
             )
+        if "deadlogic_sink" in line:
+            # Fires when the product decode lineage drives nothing observable,
+            # so synthesis deletes it -- w-fit-o5 measured exactly this with
+            # Quartus A&S. Distinct from the orphaned-core skip above: there the
+            # core is not instantiated, here it IS instantiated and is removed
+            # anyway. Both must stay separately named, because the generic
+            # skip-not-pass record deduplicates and would hide whichever fired
+            # second.
+            return SkipRecord(
+                name="deadlogic-sink-decode-lineage-unobservable",
+                severity="CRITICAL",
+                reason=line.strip(),
+                would_catch=(
+                    "a decode core that is compiled, instantiated AND elaborated "
+                    "and is then optimized away because its outputs drive "
+                    "nothing -- the third and least visible way a bitstream "
+                    "ships without a decoder, invisible to every source-level "
+                    "reachability graph and to Verilator elaboration"
+                ),
+                source="log",
+            )
         if "prefit_hierarchy" in line:
             # Fires only when the product core is absent from the elaborated
             # design, i.e. the branch would fit a bitstream with no decoder in

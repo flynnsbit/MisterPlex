@@ -133,6 +133,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_product_reachability_redproof.sh
 	$(ROOT)/tests/unit/test_prefit_hierarchy_redproof.sh
+	$(ROOT)/tests/unit/test_deadlogic_sink_redproof.sh
+	$(ROOT)/tests/unit/test_product_deadlogic_status.sh
 	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
@@ -152,6 +154,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_product_reachability_redproof.sh
 	$(ROOT)/tests/unit/test_prefit_hierarchy_redproof.sh
+	$(ROOT)/tests/unit/test_deadlogic_sink_redproof.sh
+	$(ROOT)/tests/unit/test_product_deadlogic_status.sh
 	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
