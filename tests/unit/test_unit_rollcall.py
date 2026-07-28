@@ -117,6 +117,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_pipe_exit_safety.py",
     "$(ROOT)/scripts/check_define_parity.py",
     "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py",
+    "python3 $(ROOT)/tests/unit/test_decode_completeness_gate.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",
     "$(ROOT)/tests/unit/test_rtl_invariants.sh",
