@@ -46,9 +46,9 @@ Conclusion: reconstructed-neighbour storage now exists and is non-vacuously gate
 claim that the product decoder works. Live PMS is still mostly P-slices (`343 P / 7 IDR`), so intra
 green alone cannot be read as decode-off-ARM.
 
-## ACTIVE — W-OSD idle Plex-logo split (**UNSCORED, non-visual only** 2026-07-28)
+## ACTIVE — W-OSD idle Plex-logo split (**HDMI SCORED, currently FAILS BLACK** 2026-07-28)
 
-Raw findings, no HDMI/capture PASS claimed:
+Raw findings:
 
 - Device conf restored after the probe: `PRESENT=fpga STREAM=0 DECODE=624x480 OSD_CONTROL=0`.
 - `PRESENT=fb0` readback from `/dev/fb0` after daemon restart matched the idle-logo renderer:
@@ -56,18 +56,24 @@ Raw findings, no HDMI/capture PASS claimed:
 - Restored `PRESENT=fpga` immediately reported PLXD `free_bank_mask=0 swap_pending=1`
   (`hi=0x94FB0008`, `frames_done=38139`) and daemon logs contained
   `[STALL] sendDdrFrame: PLXD bank-release timeout ... swap_pending=1`.
-- The new card `tests/hw/test_idle_present_split.sh` encodes this split and exits `77`:
-  `FB0_PROXY=PASS scope=framebuffer-readback-not-hdmi`,
-  `FPGA_PROXY=BLOCKED_BY_BANK_RELEASE_LIVELOCK scope=mailbox-not-hdmi`,
-  `IDLE_SPLIT_RESULT=UNSCORED reason=no-hdmi-capture-or-human-eyes`.
+- `tests/hw/test_idle_present_split.sh` no longer asks for human eyes. It now prints `Scope:`
+  first, proves the fb0 bytes, restores `PRESENT`, records PLXD, then captures local
+  USB-HDMI `/dev/video0` as MJPEG `1280x720@60` and classifies `NO_SIGNAL`, `VALID_BLACK`,
+  or `VALID_CONTENT`.
+- Real run on resident black-screen build: `FB0_PROXY=PASS`, PLXD
+  `free_bank_mask=0 swap_pending=1`, HDMI capture `VALID_BLACK mean=7 std=0`, and
+  `IDLE_SPLIT_RESULT=FAIL reason=hdmi-valid-black` (`rc=1`). This is a measured fail, not
+  UNSCORED and not PASS.
 - Mutation evidence: `FB0_EXPECT_FG=00_00_00_00 tests/hw/test_idle_present_split.sh`
   failed with `rc=1` / `fb0-logo-foreground-mismatch`; restoring the operand returned to the
-  normal UNSCORED card with the fb0 proxy passing.
+  normal card with the fb0 proxy passing. `scripts/hdmi_capture_classify.py` red-checks black as
+  not content (`/dev/video0` valid black `rc=1`) and no-signal/invalid capture as not content
+  (`/dev/video1` decoy `NO_SIGNAL rc=1`).
 
 Conclusion from the measured split: the logo asset/idle renderer/fb0 presentation path are not the
 black-screen root cause. The current `PRESENT=fpga` symptom is not separate from the W-SWAP-owned
-bank-release livelock until a post-fix RBF proves otherwise. User-visible picture still needs eyes or
-capture after W-SWAP lands.
+bank-release livelock until a post-fix RBF proves otherwise. User-visible picture must be re-scored
+by USB-HDMI capture after W-SWAP lands; human eyes are no longer part of the gate.
 
 ## PRODUCT MILESTONE — VSync present / product A/V cast (**DONE** 2026-07-25)
 

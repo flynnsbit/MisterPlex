@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 # Split the idle Plex-logo defect between the Linux fb0 path and FPGA F1 path.
 #
-# This card deliberately does not claim a user-visible HDMI PASS. It mutates only
-# PRESENT in the on-device conf, restarts the daemon with SIGTERM-by-PID, proves
-# the fb0 path contains the expected logo bytes, restores the original PRESENT,
-# then records the FPGA bank-release mailbox. Without eyes or capture, a clean
-# run exits 77 UNSCORED after publishing the split evidence.
+# This card mutates only PRESENT in the on-device conf, restarts the daemon with
+# SIGTERM-by-PID, proves the fb0 path contains the expected logo bytes, restores
+# the original PRESENT, records the FPGA bank-release mailbox, then captures the
+# actual MiSTer HDMI output locally and classifies no-signal vs valid-black vs
+# valid-content. It does not ask a human to look at the screen.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 FB0_EXPECT_BG="${FB0_EXPECT_BG:-26_23_1f_ff}"
 FB0_EXPECT_FG="${FB0_EXPECT_FG:-0d_a0_e5_ff}"
+HDMI_DEV="${HDMI_DEV:-/dev/video0}"
+CAPTURE_OUT="${IDLE_CAPTURE_OUT:-$ROOT/build/idle_present_split/hdmi.png}"
+CAPTURE_TOOL="$ROOT/scripts/hdmi_capture_classify.py"
 RC_FAIL=1
 RC_UNSCORED=77
 
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "$USER@$HOST")
 
-"${SSH[@]}" \
+echo "Scope: idle-present split; remotely verifies fb0 logo bytes and FPGA PLXD mailbox, then locally captures HDMI MJPEG 1280x720@60 from $HDMI_DEV and classifies NO_SIGNAL vs VALID_BLACK vs VALID_CONTENT. It does not prove exact Plex-logo shape, decoder correctness, or RBF identity."
+
+set +e
+REMOTE_OUT="$("${SSH[@]}" \
     "FB0_EXPECT_BG='$FB0_EXPECT_BG' FB0_EXPECT_FG='$FB0_EXPECT_FG' bash -s" <<'REMOTE'
 set -euo pipefail
 
@@ -160,5 +167,48 @@ else
 fi
 
 echo "IDLE_PRESENT_SPLIT_END"
-die_unscored "no-hdmi-capture-or-human-eyes"
 REMOTE
+)"
+REMOTE_RC=$?
+set -e
+printf '%s\n' "$REMOTE_OUT"
+if [ "$REMOTE_RC" -ne 0 ]; then
+    exit "$REMOTE_RC"
+fi
+
+if [ ! -x "$CAPTURE_TOOL" ]; then
+    echo "IDLE_SPLIT_RESULT=UNSCORED reason=capture-tool-missing path=$CAPTURE_TOOL"
+    exit "$RC_UNSCORED"
+fi
+
+mkdir -p "$(dirname "$CAPTURE_OUT")"
+set +e
+CAPTURE_OUT_TEXT="$(python3 "$CAPTURE_TOOL" --device "$HDMI_DEV" --out "$CAPTURE_OUT" --expect content 2>&1)"
+CAPTURE_RC=$?
+set -e
+printf '%s\n' "$CAPTURE_OUT_TEXT"
+
+if [ "$CAPTURE_RC" -eq 0 ]; then
+    echo "HDMI_PROXY=PASS scope=valid-content-not-human-eyes"
+    echo "IDLE_SPLIT_RESULT=PASS reason=fb0-logo-bytes-and-hdmi-valid-content"
+    exit 0
+fi
+
+if [ "$CAPTURE_RC" -eq "$RC_UNSCORED" ]; then
+    echo "IDLE_SPLIT_RESULT=UNSCORED reason=hdmi-capture-unavailable-or-busy"
+    exit "$RC_UNSCORED"
+fi
+
+if grep -q 'HDMI_CAPTURE_RESULT class=VALID_BLACK' <<<"$CAPTURE_OUT_TEXT"; then
+    echo "HDMI_PROXY=FAIL scope=valid-frame-but-black"
+    echo "IDLE_SPLIT_RESULT=FAIL reason=hdmi-valid-black"
+    exit "$RC_FAIL"
+fi
+if grep -q 'HDMI_CAPTURE_RESULT class=NO_SIGNAL' <<<"$CAPTURE_OUT_TEXT"; then
+    echo "HDMI_PROXY=FAIL scope=no-signal-or-invalid-capture-frame"
+    echo "IDLE_SPLIT_RESULT=FAIL reason=hdmi-no-signal"
+    exit "$RC_FAIL"
+fi
+
+echo "IDLE_SPLIT_RESULT=FAIL reason=hdmi-capture-unclassified rc=$CAPTURE_RC"
+exit "$RC_FAIL"
