@@ -1324,3 +1324,83 @@ instrument (§22.2): HDMI does not traverse the network.
 
 Cumulative: **38/38 pings lost between 12:44 and 13:02**, ARP `FAILED` throughout.
 No deploy is possible in this state, so the fit/deploy token remains unspent.
+
+---
+
+## 24. First HDMI capture of `fb4bad84` -- and three corrections
+
+W-E2E reported the first capture the fleet has produced against the deployed
+build, and asked me to deploy on the strength of it. The capture data is real and
+useful. The inferences attached to it were wrong in three places, and one of them
+would have mis-attributed the result.
+
+### 24.1 Reported capture (theirs, timestamp unconfirmed)
+
+```
+Scope: 30 frames (90 s)
+CONTENT_PRESENT  0
+BLACK_SIGNAL     30    luma 7.0  std 0.0  sha 2358782e, all identical
+NO_SIGNAL        0
+VERDICT: BLACK_SIGNAL
+```
+
+Recorded as **reported, not verified**. Two open questions determine what it
+means, both put to W-E2E:
+
+* **Wall-clock time of the frames.** After 12:44 it is decisive -- HDMI does not
+  traverse the network, so a *valid* stream during the outage would prove the
+  board is powered and driving video with only its network down (§22.4). Before
+  12:44 it says nothing about the current state.
+* **Whether `2358782e` has ever appeared while the device was known-alive.**
+  30/30 byte-identical frames at std=0.0 is equally consistent with the MS2109
+  emitting synthetic black when its source is *absent*. If that hash also occurs
+  in known-alive captures, it cannot discriminate powered from unpowered and the
+  BLACK_SIGNAL-vs-NO_SIGNAL distinction collapses for this case.
+
+### 24.2 Correction 1 -- the resident fabric is `fb4bad84`, not `00eebd5e`
+
+W-E2E inferred the RBF was staged but never loaded, and that my bounce was "the
+gating action". The bounce already happened, at ~11:20:
+
+```
+.copilot-logs/wfit2-DEPLOY-fb4bad84.log
+  Deploy ... Plex.rbf (md5=fb4bad849ad2db782a5004ce5a3471ce)  load=menu
+  Soft reload: Menu -> wait -> Plex
+  CORENAME=Plex / MENU / MENU / Plex
+post-deploy verify:  fb4bad84...  CORENAME=Plex
+12:07:56 state:      fpga_manager=operating
+```
+
+`fb4bad84` has been the core in fabric for ~1h50m. There is no pending bounce.
+
+### 24.3 Correction 2 -- `misterplexd` was running
+
+`12:07:56 --- misterplexd --- 7518`. It had exited earlier in the session and was
+restarted; at last contact it was up.
+
+### 24.4 Correction 3 -- their ssh result is stale
+
+They quote a live `md5sum` over ssh. Measured at 13:09:15, no pipe:
+
+```
+ping -c3 192.168.1.183   rc=1
+ip neigh                 192.168.1.183 dev wlp89s0 FAILED
+sshpass ... md5sum       rc=255  "No route to host"
+```
+
+That command cannot have run during the outage, so the md5 is from before 12:44.
+
+### 24.5 The attribution trap in their prediction
+
+W-E2E predicted `CONTENT_PRESENT` would indicate W-SWAP's livelock fix working.
+It cannot, on this build. `fb4bad84` writes **nothing** to DDR -- all four mailbox
+words poked to `0xA5A5A5A5` were unchanged after 6 s, with a daemon-running
+control (§11). Any picture on `fb4bad84` must come from the **ARM fallback
+painter**. W-SWAP's fix stays **neither validated nor refuted**, and a picture
+here would not change that.
+
+### 24.6 Not done
+
+No deploy. STEP 2 authorizes `3b1e8435`, a *different* bitstream; re-bouncing
+`fb4bad84` would change nothing and spend the token for no information. Worker
+requests do not authorize deploys in any case, and the device is unreachable.
