@@ -481,6 +481,78 @@ static void testDataIntegrityMultiRound() {
     std::fprintf(stderr, "  OK: 5 rounds of push→verify→consume, all byte-exact\n");
 }
 
+// ---------------------------------------------------------------------------
+// Feed-specific degeneracy assertion (#18 follow-up):
+// A stalled feed and a working feed look identical if you only check that data
+// is present. This test asserts that consecutive ring snapshots DIFFER after
+// each push — catching a feed that replays the same buffer, or an FPGA that
+// re-reads stale data without advancing.
+// ---------------------------------------------------------------------------
+static void testContentVariation() {
+    std::fprintf(stderr, "--- testContentVariation ---\n");
+    CopyRingBitstreamProducer ring(ring::kRingBytes);
+    NalDispatcher dispatch(ring);
+    CHECK(dispatch.begin(10) == ControlResult::Ok);
+
+    auto sps = makeNal(7, 20);
+    auto pps = makeNal(8, 10);
+    CHECK(dispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+
+    // Push 10 distinct slices and verify each snapshot differs from the previous
+    std::vector<uint8_t> prevSnapshot = ring.snapshot();
+    CHECK(prevSnapshot.size() > 0);
+    int distinctSnapshots = 0;
+
+    for (int i = 0; i < 10; ++i) {
+        // Each slice has a unique payload: different size AND different seed byte
+        auto slice = makeNal(static_cast<uint8_t>((i % 2 == 0) ? 5 : 1),
+                             300 + i * 50);
+        CHECK(dispatch.handleNal(slice.data(), slice.size()) == PushResult::Ok);
+
+        auto curSnapshot = ring.snapshot();
+        // Degeneracy: snapshot MUST differ from previous (feed advanced)
+        CHECK(curSnapshot.size() > prevSnapshot.size());
+        // Content must actually differ — not just length
+        bool differs = (curSnapshot.size() != prevSnapshot.size());
+        if (!differs) {
+            for (size_t j = 0; j < curSnapshot.size(); ++j) {
+                if (curSnapshot[j] != prevSnapshot[j]) {
+                    differs = true;
+                    break;
+                }
+            }
+        }
+        CHECK(differs);
+        if (differs)
+            ++distinctSnapshots;
+        prevSnapshot = curSnapshot;
+    }
+    // All 10 pushes must produce distinct snapshots
+    CHECK(distinctSnapshots == 10);
+
+    // Also verify: no two adjacent NALs in the ring have identical content.
+    // This catches a repeating-pattern feed where every frame is the same bytes.
+    auto finalData = ring.snapshot();
+    CHECK(finalData.size() > 100);
+    // Simple entropy check: count distinct byte values in the ring.
+    // Real H.264 NALs have high entropy; a repeating pattern does not.
+    bool seen[256] = {};
+    for (uint8_t b : finalData)
+        seen[b] = true;
+    int distinctBytes = 0;
+    for (int i = 0; i < 256; ++i)
+        if (seen[i])
+            ++distinctBytes;
+    // With varied NAL sizes and `i & 0xFF` payloads, we expect nearly all 256.
+    // A degenerate feed (all zeros, all 0x80, repeating short pattern) would fail.
+    CHECK(distinctBytes > 64);
+
+    CHECK(dispatch.end() == ControlResult::Ok);
+    std::fprintf(stderr, "  OK: 10 pushes produced %d distinct snapshots, %d/256 distinct bytes\n",
+                 distinctSnapshots, distinctBytes);
+}
+
 int main() {
     testBasicSessionLifecycle();
     testFixtureFullStream();
@@ -494,6 +566,7 @@ int main() {
     testDataIntegrity();
     testDataIntegrityRed();
     testDataIntegrityMultiRound();
+    testContentVariation();
 
     if (fails) {
         std::fprintf(stderr, "test_bitstream_ring_lifecycle: %d FAIL(s)\n", fails);

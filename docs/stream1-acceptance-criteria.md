@@ -77,6 +77,50 @@ Risk:               Low. Both ARM and FPGA paths active.
 the ARM rawvideo path to stay active even with `PRESENT=fpga`. This is the
 correct lab configuration for testing STREAM=1 without risking a blank screen.
 
+## 2a. Distinguishing "feed broken" from "feed fine, decoder absent" (#19)
+
+After instrument-integrity failure #19, we know the FPGA has no decoder — only
+`decode_stub`, a telemetry probe on one 4×4 block. **A working feed into an
+absent decoder and a broken feed look identical from the ARM side** unless we
+check the right signals. This section defines the observable distinction.
+
+### Observable state matrix
+
+| State | CTRL magic | producer_count | READ magic | consumer_count | ERR | nalu_count | Diagnosis |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|------|
+| STREAM=0 (dormant) | **PLXD** | 0 | none | — | none | 0 | Correctly disabled |
+| Feed never wrote | none | — | none | — | none | 0 | Boot residue; STREAM=0 or broken init |
+| Feed wrote, FPGA consumed | **PLXB** | N>0 | **PLXR** | M≤N | PLXE or none | >0 | **Feed working** |
+| Feed wrote, FPGA stalled | **PLXB** | N>0 | none or PLXR=0 | 0 | none | 0 | Feed OK, consumer hung |
+| Feed wrote, FPGA consumed but no decode | **PLXB** | N>0 | **PLXR** | M≈N | PLXE or none | >0 but recon_sig=0 | **Feed fine, decoder absent** (current #19 state) |
+| Feed wrote garbage | **PLXB** | N>0 | PLXR | low | **PLXE** with fatal/desync | low | Feed framing broken |
+
+### The key diagnostic: "feed fine, decoder absent"
+
+**Expected observable state when STREAM=1 is enabled against the current core:**
+
+1. `CTRL` carries **PLXB** magic with `producer_count > 0` — ARM wrote data ✓
+2. `READ` carries **PLXR** magic with `consumer_count ≈ producer_count` — FPGA consumed it ✓
+3. `nalu_count > 0` in CoreStatus — stream_path parsed NALs ✓
+4. `recon_sig = 0x00` — decode_stub XORs 16 × `pred=128` = 0x00 (no prediction, no real decode)
+5. `ERR` either absent (no PLXE magic) or present with `fatal=0, desync=0`
+6. Frame store shows ARM frames only (host_owns_fs=1)
+
+**This state proves: transport works, parser works, decoder does not exist.**
+
+### Decision rules for the feed owner
+
+| Observation | Conclusion | Action |
+|-------------|------------|--------|
+| CTRL has no magic (not PLXB, not PLXD) | Feed never initialized | Check STREAM config, fpga_.ok(), beginBitstreamSession |
+| CTRL=PLXD | Feed explicitly dormant | Expected for STREAM=0 |
+| CTRL=PLXB, producer_count=0 | Begin succeeded but no NALs pushed | Check streamPump: FFmpeg fork, pipe read, NAL scanner |
+| CTRL=PLXB, producer_count>0, READ absent | FPGA never consumed | Check ddr_bitstream_reader: session ack, ring poll, clk domain |
+| CTRL=PLXB, READ=PLXR, consumer<producer | FPGA consuming but lagging | Possibly bandwidth/latency; check rate |
+| CTRL=PLXB, READ=PLXR, consumer≈producer, nalu>0, recon_sig=0x00 | **Feed works. No decoder.** | This is the #19 state. Awaiting integration datapath. |
+| CTRL=PLXB, READ=PLXR, consumer≈producer, recon_sig≠0 | Feed works, decode ran | Compare recon_sig against golden for correctness |
+| ERR=PLXE with fatal=1 or desync=1 | Transport protocol violation | Check NAL framing, session boundaries, record headers |
+
 ## 3. Frame provenance — how to prove "the FPGA decoded this"
 
 ### The problem
