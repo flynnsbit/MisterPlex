@@ -1,0 +1,6 @@
+Scope: resolves which source files a Quartus project compiles, by following 'source' directives, QIP_FILE includes and the $::quartus(qip_path) idiom. It reads the project's build description only. It does NOT prove a fit ran, does NOT prove a module survived synthesis (use post-fit hierarchy for that), and does NOT prove a module is reachable from the top level.
+project=fpga/Plex_MiSTer quartus_version=17
+resolved_source_files=80
+unresolved_references=0
+OK compiled: sys/osd.v
+OK compiled: sys/hps_io.sv

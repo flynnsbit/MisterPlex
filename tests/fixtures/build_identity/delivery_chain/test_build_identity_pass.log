@@ -1,0 +1,32 @@
+Scope: build-identity contract for the OSD sidebar V entry. Checks that BUILD_ID is generated (never a checked-in constant), that its SRC half is a digest of the exact fit inputs so it cannot silently go stale, that a missing git identity is refused by the fit path, and that an RBF md5 resolves to a BUILD_ID through the provenance ledger. It does NOT execute the Quartus Tcl (no tclsh in this lab), does not run a fit, and does not prove the string is rendered on screen — tests/hw/test_osd_build_identity.sh owns the pixel proof.
+OK BUILD_ID has no checked-in `define (generated only)
+OK build_id.v is not tracked in git
+OK build_id_stamp.txt is not tracked in git
+OK CONF_STR V entry uses `BUILD_ID
+OK Plex.sv includes the generated build_id.v
+OK build_id.tcl consumes build_id_stamp.txt
+OK remote fit generates the stamp before rsync
+OK remote fit refuses a nogit BUILD_ID
+OK SRC ignores Quartus outputs (output_files/) — 18bc1b
+OK RED OK: editing a fitted RTL file changes SRC (18bc1b -> ee85b3)
+OK SRC is reproducible for identical inputs
+OK RED OK: --require-git rejects a tree with no git identity (rc=1)
+OK without --require-git the fallback is visibly 'nogit' (never a fake commit)
+OK provenance record wrote an entry
+OK provenance resolve maps an RBF md5 back to its BUILD_ID
+OK RED OK: an unknown RBF md5 is an untraceable-bitstream FAIL (rc=1)
+OK RED OK: a BUILD_ID mismatch fails (rc=1)
+OK RED OK: editing the RBF makes it untraceable again (rc=1)
+OK build-id delivery chain is intact end to end
+OK RED OK pre-flow hook removed (rc=1): no PRE_FLOW_SCRIPT_FILE is registered
+OK RED OK stamp no longer read (rc=1): does not read build_id_stamp.txt
+OK RED OK V entry hand-edited to a constant (rc=1): no compiled source file references `BUILD_ID
+OK RED OK BUILD_ID not wired to a CONF_STR V entry (rc=1): never as a CONF_STR
+OK RED OK consumer dropped from files.qip (rc=1): no compiled source file references `BUILD_ID
+OK RED OK unresolvable reference (rc=1): unresolved Quartus file reference
+OK premise holds: sys/osd.v is absent from files.qip
+OK RED OK for the naive check: files.qip says sys/osd.v is not in the design, the resolver proves it is
+OK RED OK resolver rejects a file that is not in the Quartus file list
+OK RED OK resolver --gate refuses to answer with an unresolved reference
+OK RED OK resolver --gate refuses an empty file list
+BUILD_IDENTITY_RESULT=PASS

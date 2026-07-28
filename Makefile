@@ -115,6 +115,9 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_hdmi_capture_classify.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
+	$(ROOT)/tests/unit/test_build_identity.sh
+	$(ROOT)/tests/unit/test_idle_screen_rca_logic.sh
+	$(ROOT)/tests/unit/test_screensaver_osd_control.sh
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh

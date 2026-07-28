@@ -161,6 +161,178 @@ else
     fail "an edited RBF still resolved (rc=$RC)"
 fi
 
+# --- 5. the identity must actually be DELIVERED into the design ------------
+# Sections 1-4 all pass even if the generated BUILD_ID never reaches the
+# bitstream, because they only exercise the digest. The delivery chain is:
+#   Plex.qsf -> source sys/sys.tcl -> PRE_FLOW_SCRIPT_FILE sys/build_id.tcl
+#   -> reads build_id_stamp.txt -> writes build_id.v -> Plex.sv CONF_STR "V"
+#   -> Plex.sv is in the Quartus file list
+# Break any link and the OSD keeps showing an identity that used to be true,
+# which is worse than showing none. Each link gets its own red below.
+DELIV="$ROOT/scripts/check_build_id_delivery.py"
+QFL="$ROOT/scripts/quartus_file_list.py"
+REALPROJ="$ROOT/fpga/Plex_MiSTer"
+CHAIN="$WORK/chain"
+mkdir -p "$CHAIN"
+
+if [ ! -f "$DELIV" ] || [ ! -f "$QFL" ]; then
+    fail "delivery-chain checkers are missing ($DELIV / $QFL)"
+fi
+
+# green: the real project's chain is intact
+if OUT="$("$DELIV" --project "$REALPROJ" 2>&1)"; then
+    ok "build-id delivery chain is intact end to end"
+else
+    fail "build-id delivery chain is broken on the real project: $OUT"
+fi
+
+# Build a mutable copy of the real project once; each fault gets its own copy so
+# a mutation cannot leak into the next case.
+mkproj() {
+    local dest="$CHAIN/$1"
+    mkdir -p "$dest"
+    rsync -a --exclude db --exclude incremental_db --exclude output_files \
+        --exclude remote_out --exclude greybox_tmp \
+        "$REALPROJ/" "$dest/" >/dev/null 2>&1 || return 1
+    echo "$dest"
+}
+
+# red_chain <name> <expected substring> ; mutation applied by the caller first
+red_chain() {
+    local name="$1" want="$2" dir="$3"
+    local out rc
+    out="$("$DELIV" --project "$dir" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        fail "RED $name: broken chain still reported OK"
+        return
+    fi
+    if printf '%s' "$out" | grep -qF "$want"; then
+        ok "RED OK $name (rc=$rc): $want"
+    else
+        fail "RED $name failed for the wrong reason (rc=$rc), wanted '$want': $out"
+    fi
+}
+
+# 5a. the pre-flow hook is unregistered -> nothing generates an identity
+if D="$(mkproj no_hook)"; then
+    grep -v 'PRE_FLOW_SCRIPT_FILE' "$REALPROJ/sys/sys.tcl" > "$D/sys/sys.tcl"
+    red_chain "pre-flow hook removed" "no PRE_FLOW_SCRIPT_FILE is registered" "$D"
+else
+    fail "could not stage the no_hook project copy"
+fi
+
+# 5b. the generator stops reading the stamp -> id no longer tracks fit inputs
+if D="$(mkproj no_stamp)"; then
+    sed 's/build_id_stamp\.txt/some_other_file.txt/' "$REALPROJ/sys/build_id.tcl" \
+        > "$D/sys/build_id.tcl"
+    red_chain "stamp no longer read" "does not read build_id_stamp.txt" "$D"
+else
+    fail "could not stage the no_stamp project copy"
+fi
+
+# 5c. the CONF_STR V entry is replaced by a hand-edited constant -- the exact
+#     failure the user warned about: a constant that lies confidently.
+if D="$(mkproj const_id)"; then
+    sed 's/"V,v",`BUILD_ID/"V,v","hand-edited"/' "$REALPROJ/Plex.sv" > "$D/Plex.sv"
+    red_chain "V entry hand-edited to a constant" \
+        "no compiled source file references \`BUILD_ID" "$D"
+else
+    fail "could not stage the const_id project copy"
+fi
+
+# 5d. BUILD_ID still referenced, but not as the OSD V entry -> invisible to users
+if D="$(mkproj not_conf_str)"; then
+    sed 's/"V,v",`BUILD_ID/"V,v","x"};\n`ifdef NEVER\nlocalparam UNUSED = `BUILD_ID;\n`endif\nlocalparam string DEAD = {/' \
+        "$REALPROJ/Plex.sv" > "$D/Plex.sv"
+    red_chain "BUILD_ID not wired to a CONF_STR V entry" \
+        "never as a CONF_STR" "$D"
+else
+    fail "could not stage the not_conf_str project copy"
+fi
+
+# 5e. THE ONE SOURCE-LEVEL GREPS MISS: Plex.sv is tracked in git, contains the
+#     correct code, and is simply absent from the Quartus file list, so it is
+#     not in the design at all.
+if D="$(mkproj not_compiled)"; then
+    grep -v 'Plex\.sv' "$REALPROJ/files.qip" > "$D/files.qip"
+    red_chain "consumer dropped from files.qip" \
+        "no compiled source file references \`BUILD_ID" "$D"
+else
+    fail "could not stage the not_compiled project copy"
+fi
+
+# 5f. an unresolvable file reference must make the checker refuse to answer,
+#     never quietly report the file as absent.
+if D="$(mkproj unresolved)"; then
+    printf '%s\n' \
+        'set_global_assignment -name SYSTEMVERILOG_FILE [file join $::unknown_var mystery.sv]' \
+        >> "$D/files.qip"
+    red_chain "unresolvable reference" "unresolved Quartus file reference" "$D"
+else
+    fail "could not stage the unresolved project copy"
+fi
+
+# --- 6. the Quartus file list resolver itself ------------------------------
+# A membership test is only as good as its notion of "the file list". Reading
+# files.qip is NOT that list: this project pulls the whole MiSTer framework in
+# through `source sys/sys.tcl` -> QIP_FILE sys/sys.qip, whose entries are Tcl
+# expressions. osd.v -- the compositor that draws the build id -- lives there.
+if grep -q 'Plex\.sv' "$REALPROJ/files.qip" && ! grep -q 'osd\.v' "$REALPROJ/files.qip"; then
+    ok "premise holds: sys/osd.v is absent from files.qip"
+    if "$QFL" --project "$REALPROJ" --gate --require sys/osd.v --require sys/hps_io.sv \
+            >"$WORK/qfl_sys.log" 2>&1; then
+        ok "RED OK for the naive check: files.qip says sys/osd.v is not in the design, the resolver proves it is"
+    else
+        fail "resolver could not find sys/osd.v in the design: $(cat "$WORK/qfl_sys.log")"
+    fi
+else
+    fail "premise changed: files.qip no longer has the expected shape"
+fi
+
+# the resolver must fail closed on a file that genuinely is not compiled
+if "$QFL" --project "$REALPROJ" --require rtl/definitely_not_a_real_file.sv \
+        >"$WORK/qfl_missing.log" 2>&1; then
+    fail "resolver accepted a file that is not in the design"
+else
+    if grep -q 'FAIL not in the Quartus file list' "$WORK/qfl_missing.log"; then
+        ok "RED OK resolver rejects a file that is not in the Quartus file list"
+    else
+        fail "resolver rejected for the wrong reason: $(cat "$WORK/qfl_missing.log")"
+    fi
+fi
+
+# and it must report an unresolved reference rather than shrinking the list
+if D="$(mkproj qfl_unresolved)"; then
+    printf '%s\n' \
+        'set_global_assignment -name VERILOG_FILE [file join $::nope ghost.v]' \
+        >> "$D/files.qip"
+    if "$QFL" --project "$D" --gate >"$WORK/qfl_gate.log" 2>&1; then
+        fail "resolver --gate accepted an unresolved reference"
+    else
+        if grep -q 'never be reported as absent' "$WORK/qfl_gate.log"; then
+            ok "RED OK resolver --gate refuses to answer with an unresolved reference"
+        else
+            fail "resolver --gate failed for the wrong reason: $(cat "$WORK/qfl_gate.log")"
+        fi
+    fi
+else
+    fail "could not stage the qfl_unresolved project copy"
+fi
+
+# an empty resolved file list is a broken parse, never a valid answer
+mkdir -p "$WORK/emptyproj"
+printf '%s\n' '# a project file that references nothing' > "$WORK/emptyproj/Empty.qsf"
+if "$QFL" --project "$WORK/emptyproj" --gate >"$WORK/qfl_empty.log" 2>&1; then
+    fail "resolver --gate passed with zero resolved source files"
+else
+    if grep -q 'resolved zero source files' "$WORK/qfl_empty.log"; then
+        ok "RED OK resolver --gate refuses an empty file list"
+    else
+        fail "resolver --gate empty case failed for the wrong reason: $(cat "$WORK/qfl_empty.log")"
+    fi
+fi
+
 if [ "$FAILED" -eq 0 ]; then
     echo "BUILD_IDENTITY_RESULT=PASS"
     exit 0

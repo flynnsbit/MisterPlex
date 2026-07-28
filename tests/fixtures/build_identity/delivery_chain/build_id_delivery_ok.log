@@ -1,0 +1,7 @@
+Scope: proves the generated BUILD_ID actually reaches a compiled source file's CONF_STR. Source-level wiring only; it does not prove a fit ran, that an RBF was deployed, or that the OSD renders the string.
+OK pre-flow hook registered in sys/sys.tcl -> sys/build_id.tcl
+OK pre-flow script reads build_id_stamp.txt (the gen_build_stamp.py output)
+OK pre-flow script writes `define BUILD_ID into build_id.v
+OK `BUILD_ID reaches the OSD via a CONF_STR V entry in Plex.sv
+OK the CONF_STR consumer Plex.sv is in the Quartus file list
+BUILD_ID_DELIVERY OK

@@ -1251,3 +1251,91 @@ This is the answer the parent had been asking for since Hour-23 and is recorded 
 - **Named confidence gaps, unprompted:** repeat runs, a 2000/2500 kbps A/B, a thermal/load run, and end-to-end A/V. **The parent had offered "I cannot tell without measuring X" as an acceptable answer; W-FEED gave a position *and* named its X's, which is strictly better.**
 
 **Programme consequence:** Phase 3 FPGA decode is now justified by measurement rather than by assumption. Until it lands, **the honest description of this device to a user is a 24 fps cast target with thin margin, and the parent will describe it that way.**
+
+### W-OSD-O5 — addendum: attacking the parent's `files.qip` rule (measured)
+
+The parent's revised standard made a `files.qip` cross-check mandatory: *"Not in the
+Quartus file list = not in the design, whatever the graph says."* The intent is
+right. **Reading `files.qip` is not a correct implementation of it**, and the
+naive version returns a confident wrong answer on this project.
+
+Measured on branch `w-osd-o5`:
+
+```
+files.qip                     35 source references
+true Quartus file list        80 source files
+```
+
+The gap is the entire MiSTer framework, pulled in through Tcl:
+
+```
+Plex.qsf     source sys/sys.tcl
+sys/sys.tcl  set_global_assignment -name QIP_FILE sys/sys.qip
+sys/sys.qip  set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) osd.v]
+```
+
+A `files.qip` membership test therefore reports `sys/osd.v` and `sys/hps_io.sv`
+as **not in the design**. Both are false — `osd.v` is the OSD compositor, and the
+core does not boot without `hps_io`. The failure is not cosmetic: it is the same
+"confidently wrong" shape the rule was written to prevent, now inside the
+instrument.
+
+`scripts/quartus_file_list.py` resolves the real list by following `source`,
+`QIP_FILE` and the `$::quartus(qip_path)` idiom. Its governing safety property is
+that **an unresolved reference is never reported as absent** — anything it cannot
+resolve is emitted as `UNRESOLVED` and `--gate` fails, because silently dropping
+a reference it did not understand is exactly how a checker produces a short file
+list that hides a real input. `--gate` also refuses an empty file list, since a
+zero-file answer is a broken parse rather than a project with nothing in it.
+
+For W-GATE-O5, who owns the mandated cross-check: use
+`scripts/quartus_file_list.py --gate --require <path>` rather than grepping
+`files.qip`. It is not Quartus and does not claim to be; `make post-fit-hierarchy`
+remains the only real oracle.
+
+### W-OSD-O5 — addendum: the same defect in my own deliverable
+
+Two findings about my own work, both measured, both of the class the parent
+describes (*a subsystem proven working but not wired into the product*).
+
+**1. The build-ID delivery chain was never gated.** `tests/unit/test_build_identity.sh`
+proved the SRC digest tracks the fit inputs, ignores build outputs, is
+reproducible and refuses a `nogit` tree. Every one of those checks passes even if
+the generated identity never reaches the bitstream, because the digest and the
+delivery are separate concerns and only the digest was gated. The chain is:
+
+```
+Plex.qsf     source sys/sys.tcl
+sys/sys.tcl  PRE_FLOW_SCRIPT_FILE quartus_sh:sys/build_id.tcl
+build_id.tcl reads build_id_stamp.txt, writes build_id.v: `define BUILD_ID
+Plex.sv      "V,v",`BUILD_ID     inside CONF_STR
+Plex.sv      is in the Quartus file list
+```
+
+`scripts/check_build_id_delivery.py` now gates all five links separately, so a
+break names the link. Six reds ship with it; the sharpest is
+`consumer dropped from files.qip`, where `Plex.sv` still contains a perfectly
+correct `"V,v",\`BUILD_ID` on line 83 — any grep-based check calls it green —
+while the file is absent from the Quartus file list and so is not in the design.
+That is the parent's mutation #3, reproduced against the OSD build id and caught.
+
+This matters more than a normal gate gap: the whole value of the OSD build id is
+that it can be trusted. An id that silently stops updating is worse than no id,
+because it keeps reporting an identity that used to be true — precisely what the
+user asked for it to prevent.
+
+**2. My three unit gates were never in `make unit`.** `test_build_identity.sh`,
+`test_idle_screen_rca_logic.sh` and `test_screensaver_osd_control.sh` were all
+unreferenced by the `Makefile`. Every `make unit` rc=0 I have reported ran none
+of them; I had only ever run them by hand. All three are now wired into
+`unit-unlocked` and registered in `tests/unit/test_unit_rollcall.py`
+(91 protected commands, was 88).
+
+`unit-rollcall` could not have caught this: it is an allow-list that guards
+registered commands against removal, so a test that was never registered is
+invisible to it. **Structural gap for W-GATE-O5** (not fixed here, to avoid
+colliding with their ownership of that instrument): the rollcall should also
+assert that every `tests/unit/test_*.sh` is either registered or carries an
+explicit exemption. Four scripts remain unregistered and belong to other workers:
+`test_capture_rig.py`, `test_dequant_qp_sweep.py`,
+`test_p3_chroma_plane_red_probes.py`, `test_p3_i16_plane_red_probes.py`.
