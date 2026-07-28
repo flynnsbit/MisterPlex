@@ -1,0 +1,147 @@
+W-AUDIT LOAD-BEARING CLAIM / DENOMINATOR / SELF-ATTACK / DPB CAPACITY
+=====================================================================
+
+Scope
+-----
+Targets from parent at 2026-07-28 13:52.  No Quartus run, no deploy, no video,
+no hardware.  Evidence is source RTL plus existing fit/map/log artifacts.
+
+Reproducers / raw evidence
+--------------------------
+  ./scripts/w_audit_decode_survival_attack.py
+    -> docs/w-audit-decode-survival-attack.raw.txt
+
+  ./scripts/w_audit_vacuous_control_self_attack.py
+    -> docs/w-audit-vacuous-control-self-attack.raw.txt
+
+  ./scripts/w_audit_dpb_capacity_math.py
+    -> docs/w-audit-dpb-capacity-math.raw.txt
+
+1. Load-bearing decode-core optimize-away claim
+-----------------------------------------------
+Result: COULD NOT BREAK for w-decode-hour27 prefit; important nuance for the
+resident fb4bad84 fit.
+
+Resident fb4bad84 fit report:
+  entity table rows=827, bound to the report already used today.
+  h264_decode_core rows=0
+  h264_decode_top rows=0
+  h264_intra_nb_ctx rows=0
+  h264_decode_skeleton rows=0
+  product_decode_core path rows=0
+  h264 rows=7, all under decode_stub
+
+Resident fb4bad84 compile log:
+  h264_decode_core source was compiled/found, but elab_core count=0.
+
+So the resident bitstream is decoderless, but I would not describe fb4bad84
+itself as the mode-3 example.  On that branch it is compiled but not elaborated
+from product path.  No renamed/merged/inlined product decoder entity is visible:
+there are zero rows containing product_decode_core and zero rows for the core,
+top, nb_ctx, or skeleton; all fitted h264 entities are stub descendants.
+
+w-decode-hour27 / prefit-decode-2f165ed:
+  h264_decode_core source found: yes
+  h264_decode_core elaborated at:
+    emu:emu|stream_path:spath|h264_decode_core:product_decode_core
+  _keep_decode_core_inputs warning: assigned a value but never read
+  stream_path _keep warning: assigned a value but never read
+  prefit map rows=825
+  product_decode_core path rows=0
+  h264_decode_core/top/intra_nb_ctx rows=0
+  h264 rows=7, all under decode_stub:gen_diagnostic_present.stub
+
+That is exactly the load-bearing mechanism: source compiled, trunk instantiated,
+Quartus elaborated product_decode_core and descendants, then the entity/resource
+table contains no product path.  Reading RTL did not find a real consuming path:
+core outputs are referenced only as port wires and in stream_path's `_keep` wire;
+Quartus also says that `_keep` is never read.  Inside h264_decode_core,
+`_keep_decode_core_inputs` has exactly one source reference and Quartus says it
+is never read, so it keeps nothing.
+
+h264_decode_skeleton:
+  qip contains h264_decode_skeleton.sv: 0
+  elab_skeleton count: 0 in fb4bad84 and prefit-decode-2f165ed
+  entity rows: 0
+
+So skeleton is a fourth lineage on disk, but not a live product lineage in these
+artifacts.
+
+2. 827-row denominator
+----------------------
+Result: COULD NOT BREAK for the resident fit report's bounded entity table.
+
+Resident fit table:
+  header_line=6285
+  first_row=6287
+  end_line=7113
+  rows=827
+  headers=1
+  trailing_entity_rows=0
+  root row entity=sys_top path=|sys_top
+  root row bits=2,970,061 m10k=453 dsp=74
+  summary bits=2,970,061 m10k=453 dsp=74
+
+The table is not a dangling substring parse: it has one header, a bounded end,
+zero later entity-shaped rows, and the root row totals match the report summary.
+This does not prove Quartus cannot omit a logically merged resource from entity
+attribution, but it does support using this table for present/absent entity
+claims.
+
+3. Attack on check_vacuous_control.py
+-------------------------------------
+Result: BROKE/NARROWED my own tool.  It is a byte-premise checker, not a semantic
+premise checker.
+
+Vacuous but passes:
+  Two Plex.sdc files differ only in comments.  Effective constraints after
+  stripping comments are identical, so a claim that the constraint changed would
+  be vacuous.  `check_vacuous_control.py --different Plex.sdc` returns rc=0,
+  DIFF_OK, SUMMARY PASS because bytes differ.
+
+Sound but fails:
+  Two RTL directories differ only in a comment.  Synthesizable text after comment
+  stripping is identical, so using them as a controlled SAME input is sound.
+  `check_vacuous_control.py --same rtl` returns rc=1, SAME_FALSE_CONFOUNDED,
+  SUMMARY FAIL because bytes differ.
+
+Recommendation: keep the checker as a raw-input premise guard, but do not call
+it a semantic equivalence guard.  For SDC/RTL experiments that claim semantic
+sameness/difference, add optional normalizers or compare derived manifests
+(e.g. uncommented SDC commands, QSF assignments, preprocessed RTL macro set).
+
+4. Product DPB capacity arithmetic
+----------------------------------
+Result: COULD NOT BREAK the DDR-DPB requirement for live P content.
+
+Known fit/device values:
+  device M10K=553
+  current fit M10K=453
+  stub DPB M10K=256
+  baseline without stub DPB=197 M10K
+  observed 8-bit DPB packing=8192 data bits/M10K
+
+Live content frame:
+  coded 624x480, I420
+  luma=299,520 bytes
+  chroma each=74,880 bytes
+  one frame=449,280 bytes = 3,594,240 bits
+
+One frame only:
+  exact at observed packing: 439 M10K; total 197+439=636 >553
+  power-of-two rounded: 512 M10K; total 709 >553
+  theoretical 10,240-bit exact packing: 351 M10K; total 548 <=553, but leaves
+  five M10Ks and is not sufficient for P decode because it stores only one
+  frame.
+
+Reference + current reconstruction, required for P frames:
+  two frames=898,560 bytes = 7,188,480 bits
+  exact at observed packing: 878 M10K; total 1,075 >553
+  power-of-two rounded: 1,024 M10K; total 1,221 >553
+  theoretical 10,240-bit exact packing: 702 M10K; total 899 >553
+
+Live content has 343 P slices.  A P frame must read the previous reference while
+writing the current reconstruction; overwriting the only reference during decode
+is not a valid one-ref DPB.  Therefore an on-chip product DPB for this content is
+not optional under the present device budget.  DDR (or some off-chip equivalent)
+is forced for product DPB storage.

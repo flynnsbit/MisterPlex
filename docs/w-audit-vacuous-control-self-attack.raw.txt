@@ -1,0 +1,11 @@
+CASE vacuous_but_passes_comment_only_sdc
+  normalized_constraints_same=1
+  checker_rc=0
+    RESULT DIFF_OK distinct=2
+  SUMMARY PASS
+CASE sound_but_fails_comment_only_rtl
+  normalized_rtl_same=1
+  checker_rc=1
+    RESULT SAME_FALSE_CONFOUNDED distinct=2
+  SUMMARY FAIL
+CONCLUSION checker_is_byte_premise_not_semantic_premise

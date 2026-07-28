@@ -1,0 +1,69 @@
+REPORT fb4bad84_fit /home/flynnsbit/Projects/mp-wt-integ/fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/Plex.fit.rpt
+  ENTITY_TABLE rows=827 header_line=6285 first_row=6287 end_line=7113 headers=1 trailing_entity_rows=0
+  ROOT_ROW entity=sys_top path=|sys_top bits=2.97006e+06 m10k=453 dsp=74 summary_bits=2970061 summary_m10k=453 summary_dsp=74
+  PRODUCT_DECODE_CORE_PATH_ROWS 0
+  TARGET h264_decode_core rows=0
+  TARGET h264_decode_skeleton rows=0
+  TARGET h264_decode_top rows=0
+  TARGET h264_intra_nb_ctx rows=0
+  H264_ROWS count=7 only_under_decode_stub=1 entities=h264_deblock_writeback_ctrl,h264_dequant4x4,h264_dpb_i420_addr,h264_dpb_mb_write_addr,h264_dpb_one_ref,h264_idct4x4,h264_recon4x4
+    H264_ROW entity=h264_deblock_writeback_ctrl path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_deblock_writeback_ctrl:u_stream_dpb_wb
+    H264_ROW entity=h264_dequant4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_dequant4x4:u_h264_dequant4x4
+    H264_ROW entity=h264_dpb_one_ref path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_dpb_one_ref:u_stream_dpb
+    H264_ROW entity=h264_dpb_mb_write_addr path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_dpb_one_ref:u_stream_dpb|h264_dpb_mb_write_addr:u_write_addr
+    H264_ROW entity=h264_dpb_i420_addr path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_dpb_one_ref:u_stream_dpb|h264_dpb_mb_write_addr:u_write_addr|h264_dpb_i420_addr:u_addr
+    H264_ROW entity=h264_idct4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_idct4x4:u_h264_idct4x4
+    H264_ROW entity=h264_recon4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:stub|h264_recon4x4:u_h264_recon4x4
+LOG fb4bad84_fit_compile /home/flynnsbit/Projects/mp-wt-integ/fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/compile.log
+  found_core_source count=1
+    236: Info (12023): Found entity 1: h264_decode_core File: /build/rtl/h264_decode_core.sv Line: 23
+  elab_core count=0
+  elab_skeleton count=0
+  keep_core_inputs_never_read count=0
+  stream_keep_never_read count=1
+    904: Warning (10036): Verilog HDL or VHDL warning at stream_path.sv(339): object "_keep" assigned a value but never read File: /build/rtl/stream_path.sv Line: 339
+REPORT prefit_decode_2f165ed_map /home/flynnsbit/Projects/mp-wt-integ/.copilot-logs/prefit-decode-2f165ed/Plex.map.rpt
+  ENTITY_TABLE rows=825 header_line=743 first_row=745 end_line=1569 headers=1 trailing_entity_rows=0
+  ROOT_ROW entity=sys_top path=|sys_top bits=2.96968e+06 m10k=0 dsp=74 summary_bits=<missing> summary_m10k=<missing> summary_dsp=<missing>
+  PRODUCT_DECODE_CORE_PATH_ROWS 0
+  TARGET h264_decode_core rows=0
+  TARGET h264_decode_skeleton rows=0
+  TARGET h264_decode_top rows=0
+  TARGET h264_intra_nb_ctx rows=0
+  H264_ROWS count=7 only_under_decode_stub=1 entities=h264_deblock_writeback_ctrl,h264_dequant4x4,h264_dpb_i420_addr,h264_dpb_mb_write_addr,h264_dpb_one_ref,h264_idct4x4,h264_recon4x4
+    H264_ROW entity=h264_deblock_writeback_ctrl path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_deblock_writeback_ctrl:u_stream_dpb_wb
+    H264_ROW entity=h264_dequant4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_dequant4x4:u_h264_dequant4x4
+    H264_ROW entity=h264_dpb_one_ref path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_dpb_one_ref:u_stream_dpb
+    H264_ROW entity=h264_dpb_mb_write_addr path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_dpb_one_ref:u_stream_dpb|h264_dpb_mb_write_addr:u_write_addr
+    H264_ROW entity=h264_dpb_i420_addr path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_dpb_one_ref:u_stream_dpb|h264_dpb_mb_write_addr:u_write_addr|h264_dpb_i420_addr:u_addr
+    H264_ROW entity=h264_idct4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_idct4x4:u_h264_idct4x4
+    H264_ROW entity=h264_recon4x4 path=|sys_top|emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|h264_recon4x4:u_h264_recon4x4
+LOG prefit_decode_2f165ed /home/flynnsbit/Projects/mp-wt-integ/.copilot-logs/prefit-decode-2f165ed/prefit.log
+  found_core_source count=1
+    243: Info (12023): Found entity 1: h264_decode_core File: /build/rtl/h264_decode_core.sv Line: 23
+  elab_core count=1
+    941: Info (12128): Elaborating entity "h264_decode_core" for hierarchy "emu:emu|stream_path:spath|h264_decode_core:product_decode_core" File: /build/rtl/stream_path.sv Line: 554
+  elab_skeleton count=0
+  keep_core_inputs_never_read count=1
+    948: Warning (10036): Verilog HDL or VHDL warning at h264_decode_core.sv(997): object "_keep_decode_core_inputs" assigned a value but never read File: /build/rtl/h264_decode_core.sv Line: 997
+  stream_keep_never_read count=1
+    911: Warning (10036): Verilog HDL or VHDL warning at stream_path.sv(621): object "_keep" assigned a value but never read File: /build/rtl/stream_path.sv Line: 621
+SOURCE /home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-hour27 stream=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-hour27/fpga/Plex_MiSTer/rtl/stream_path.sv
+  STREAM_REF core_dpb_wr_en count=3 lines=461,541,617
+  STREAM_REF core_dpb_wr_addr count=3 lines=462,542,618
+  STREAM_REF core_dpb_wr_data count=3 lines=463,543,618
+  STREAM_REF core_dpb_rd_en count=4 lines=464,471,544,618
+  STREAM_REF core_dpb_rd_addr count=3 lines=465,545,619
+  STREAM_REF core_frame_done count=3 lines=473,548,619
+  STREAM_REF core_frame_mb_count count=3 lines=474,549,619
+  STREAM_REF core_rbsp_request_valid count=3 lines=476,501,620
+  STREAM_REF core_rbsp_request_offset count=3 lines=475,500,620
+  STREAM_REF core_busy count=3 lines=477,550,620
+  STREAM_REF core_decode_state count=3 lines=478,551,621
+  STREAM_REF core_current_mb_addr count=3 lines=479,552,621
+  STREAM_REF core_error count=3 lines=480,553,621
+  CORE_KEEP_REFS count=1 lines=982
+  QIP_CONTAINS h264_decode_core.sv 1
+  QIP_CONTAINS h264_decode_top.sv 1
+  QIP_CONTAINS h264_intra_nb_ctx.sv 1
+  QIP_CONTAINS h264_decode_skeleton.sv 0

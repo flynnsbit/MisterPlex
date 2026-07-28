@@ -1,0 +1,18 @@
+DEVICE_M10K 553
+CURRENT_FIT_M10K 453
+STUB_DPB_M10K 256
+BASELINE_WITHOUT_STUB_DPB_M10K 197
+FITTED_8BIT_DPB_BITS_PER_M10K 8192
+LIVE_FRAME 624x480 luma=299520 chroma_each=74880 i420_bytes=449280
+SCENARIO banks=1 note=one frame only, not sufficient for P read-prev/write-current
+  bytes=449280 bits=3594240 rounded_addr_bytes=524288 rounded_bits=4194304
+  m10k_exact_at_observed_8bit_packing=439 total_with_current_baseline=636 fits=0
+  m10k_rounded_power2_at_observed_8bit_packing=512 total_with_current_baseline=709 fits=0
+  m10k_theoretical_10240bit_exact=351 total_with_current_baseline=548 fits=1
+SCENARIO banks=2 note=reference plus current reconstruction
+  bytes=898560 bits=7188480 rounded_addr_bytes=1048576 rounded_bits=8388608
+  m10k_exact_at_observed_8bit_packing=878 total_with_current_baseline=1075 fits=0
+  m10k_rounded_power2_at_observed_8bit_packing=1024 total_with_current_baseline=1221 fits=0
+  m10k_theoretical_10240bit_exact=702 total_with_current_baseline=899 fits=0
+CONCLUSION on_chip_product_dpb_for_live_P_content_fits=NO
+REASON live P frames require reading the previous reference while writing the current frame; two banks exceed the device even under ideal packing.
