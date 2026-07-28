@@ -339,3 +339,99 @@ The 2/40 CONTENT frames at ≈42s separation match W-ARM's documented timed-bank
 ### Lock path fix (commit `2a10b5b`)
 
 `capture_deploy_window.py` now uses `git rev-parse --git-common-dir`/video0.lock — the same path as `hw_gate_common.sh`. This is shared across all worktrees on this machine. Previous version used a per-worktree path and serialised nothing.
+
+---
+
+## 12. UPDATE — W-E2E-O5 shift (2026-07-28 12:06–13:0x)
+
+**Branch:** `w-e2e-playwright`. Device `/dev/video0` was claimed and held for the whole shift.
+
+### 12.1 The screen WAS scored — the deploy of `fb4bad84` is no longer UNSCORED
+
+| Time | Verdict | Evidence |
+|------|---------|----------|
+| 12:09 | **VALID SIGNAL WITH CONTENT** — Plex chevron rendering | `artifacts/e2e-o5/screen_now.png` |
+| 12:27 | flat black, **but the MiSTer was off the network** | `artifacts/e2e-o5/warmup_flat_frame.png` |
+
+At 12:09 with RBF `fb4bad84` resident the idle screen showed **14928 px of Plex brand
+orange RGB(244,163,2) (#E5A00D)**, bbox `484,239..707,479`, centroid `(595,359)`, on a
+dark-grey background (median lum 38.7).
+
+**This answers the "one-glance user question" w-osd-o5 left open** ("do you see a Plex
+chevron instead of a pure black screen?"). **Measured answer: YES, the chevron renders.**
+No human was asked.
+
+### 12.2 Three fleet-wide instrument bugs found and fixed
+
+**(a) MS2109 warmup produced a 33% false BLACK_SIGNAL rate.** `grab_frame` opens ffmpeg
+once per frame and each open emits a leading run of flat RGB(7,7,7) frames until the HDMI
+receiver locks (10 leading flat frames in a 60-frame burst, 11 in a 20-frame burst,
+nondeterministic). At the old default of 3 scored frames, **2 of 6 identical live runs
+called a screen with real content BLACK_SIGNAL**, and the emitted note blamed resident RBF
+`00eebd5e`. This is a very likely origin of "the screen is black" reports in this project.
+Fixed in `e89ddc4`; `tests/unit/test_capture_warmup.py`.
+
+**(b) A powered-off source is INDISTINGUISHABLE from a black core.** With the MiSTer
+switched off the capture device **keeps delivering frames** and they are flat RGB(7,7,7) —
+byte-identical to a black core. **Mean luma alone can never separate those two causes.**
+`scripts/score_idle_screen.py --host` probes the source and returns REFUSE/UNSCORED rather
+than a core FAIL. Fixed in `72f9e4f`; `tests/unit/test_idle_screen_score.py`.
+
+**(c) The `/dev/video0` flock serialized nothing.** The lock file was derived from the
+worktree root, so each of the ~20 worktrees got its own private lock. Now anchored at
+`git rev-parse --git-common-dir` = one real lock per machine. Proven with two genuinely
+different worktrees: contender blocked with rc=77. `tests/unit/test_capture_lock_shared.sh`.
+
+### 12.3 Left-edge artifact now has a number (owner: w-arm-o5)
+
+The user-reported "moving jagged black lines on the left edge" is **confirmed and
+quantified** on capture:
+
+- **26.86%** dark pixels in cols 84–200 vs **0.19%** in the 300–1200 control = **143.3x**
+- present in **59/59** scored frames
+- **it moves**: median **7304** pixels change in the band per frame
+
+Reported by `scripts/score_idle_screen.py` as `LEFT_EDGE_ARTIFACT`, never fatal.
+
+### 12.4 Plex Web control — stuck-at-0:00 is OURS, not upstream
+
+`tests/hw/e2e/test_plex_web_player_baseline.js` drives real Plex Web in headless Chromium
+against the real server with **no cast target and no MiSTer**:
+
+- `currentTime` **3.590 → 37.677 = 34.087s advance** over 35s, readyState=4, error=null
+- server cross-check `/status/sessions` size=1, **viewOffset=28000ms**
+
+**Plex Web, the media and the server are healthy for `/library/metadata/3`.** The
+stuck-at-0:00 symptom does **not** reproduce in Plex's own player, so it is a
+**MiSTerPlex-side bug** — that closes off an entire branch of investigation for w-cast.
+
+Two blockers had to be solved, both of which otherwise make the UI unscorable:
+1. **"Select User" profile picker** — with managed accounts nothing renders until a
+   profile is chosen, and a JS `.click()` does not work (React needs a real input event).
+   Use a real Playwright click. `PLEX_WEB_USER=shawnhenderson`.
+2. **`#!/server/auto/` resolves to a loopback connection** the browser cannot reach
+   (`[Connections] All connections to [Loopback] failed`) unless it runs on the PMS host.
+   Route through the real `machineIdentifier` from `/identity`.
+
+Note `PLEX_BASE` is **`http://192.168.1.41:32400`**, not the `127.0.0.1` in the task brief —
+that URL only works from the PMS box itself.
+
+### 12.5 Blocked / not done
+
+- **The MiSTer went off the network at ~12:27** (`No route to host`, ARP `INCOMPLETE`) and
+  had not returned by end of shift. Everything needing hardware is blocked on power-up:
+  full cast E2E, re-scoring the screen, and any per-deploy capture request.
+- The full cast path (`test_cast_timeline_playwright.js`) correctly exits **77** while the
+  daemon is unreachable — that is a skip, **not** a pass.
+- `tests/unit/test_no_private_data.sh` was **already red on HEAD** before this shift
+  (`handoffs/`, `tests/hw/test_cast_timeline_poll.sh`). Not mine, not fixed; this shift
+  added no new hits.
+
+### 12.6 How to re-score the screen the moment the MiSTer is back
+
+```bash
+cd .worktrees/w-e2e
+python3 scripts/score_idle_screen.py --device /dev/video0 \
+  --host 192.168.1.183 --expect-chevron --json-out screen.json
+# 0 = content (+chevron)   1 = genuinely black   2 = UNSCORED   77 = no device
+```
