@@ -1,0 +1,3 @@
+REFUSE: capture failed: ffmpeg capture failed for /dev/video0 (mjpeg 1280x720@60fps) rc=240: [in#0 @ 0x56052a83b680] Error opening input: Device or resource busy
+Error opening input file /dev/video0.
+Error opening input files: Device or resource busy

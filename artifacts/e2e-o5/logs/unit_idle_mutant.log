@@ -1,0 +1,19 @@
+PASS centred Plex-orange chevron detected -> rc=0
+Traceback (most recent call last):
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_idle_screen_score.py", line 139, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_idle_screen_score.py", line 86, in main
+    require(r.returncode == 1,
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^
+            f"content-without-chevron must FAIL, rc={r.returncode}\n{r.stdout}{r.stderr}")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_idle_screen_score.py", line 39, in require
+    raise AssertionError(msg)
+AssertionError: content-without-chevron must FAIL, rc=0
+Scope: 1 scored frames from file
+SIGNAL_STATE: CONTENT_PRESENT  mean_luma=67.93 spatial_std=17.64 unique=1/1
+PLEX_CHEVRON: ABSENT — only 0 Plex-orange px (< 2000); no chevron
+LEFT_EDGE_ARTIFACT: clean — dark 0.0% in cols [84, 200] vs 0.0% in control [300, 1200] (ratio infx)
+PASS: valid signal with picture content
+

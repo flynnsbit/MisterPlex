@@ -44,6 +44,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -64,6 +65,12 @@ SPATIAL_CONTENT_THRESHOLD: float = 3.0
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_SKIP = 77
+
+# ffmpeg is opened once per frame; consecutive opens race the kernel's release
+# of the previous handle and intermittently return EBUSY with no other holder.
+# Bounded so a genuinely held device (OBS, parallel worker) still fails.
+BUSY_RETRIES: int = 6
+BUSY_BACKOFF_S: float = 0.5
 
 # --------------------------------------------------------------------------- #
 # Exceptions
@@ -231,8 +238,18 @@ def _parse_negotiated_format(log: str) -> dict:
     return {"codec": "unknown", "size": m2.group(1) if m2 else "unknown", "fps": "unknown"}
 
 
-def grab_frame(dev: str, fmt: str, size: str, fps: str, out: Path) -> tuple[np.ndarray, str, dict]:
-    """Grab one frame via v4l2.  Returns (image, ffmpeg_log, negotiated_format)."""
+def grab_frame(dev: str, fmt: str, size: str, fps: str, out: Path,
+               busy_retries: int = BUSY_RETRIES,
+               busy_backoff: float = BUSY_BACKOFF_S) -> tuple[np.ndarray, str, dict]:
+    """Grab one frame via v4l2.  Returns (image, ffmpeg_log, negotiated_format).
+
+    ffmpeg is opened once per frame, so consecutive grabs race the kernel's
+    release of the previous handle and intermittently fail with EBUSY even
+    though no other process holds the node.  A bounded retry absorbs that race
+    without masking a genuinely held device: a real exclusive holder (OBS, a
+    parallel worker) stays busy for far longer than the retry window and still
+    raises.
+    """
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "info",
         "-f", "v4l2",
@@ -245,11 +262,22 @@ def grab_frame(dev: str, fmt: str, size: str, fps: str, out: Path) -> tuple[np.n
         "-update", "1",
         "-y", str(out),
     ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
-    except FileNotFoundError:
-        raise PreflightError("ffmpeg not found; cannot capture HDMI")
-    log = (r.stderr + r.stdout).strip()
+    log = ""
+    r = None
+    for attempt in range(busy_retries + 1):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        except FileNotFoundError:
+            raise PreflightError("ffmpeg not found; cannot capture HDMI")
+        log = (r.stderr + r.stdout).strip()
+        ok = r.returncode == 0 and out.exists() and out.stat().st_size > 0
+        if ok:
+            break
+        if attempt < busy_retries and "resource busy" in log.lower():
+            time.sleep(busy_backoff)
+            continue
+        break
+    assert r is not None
     if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         raise PreflightError(
             f"ffmpeg capture failed for {dev} "
