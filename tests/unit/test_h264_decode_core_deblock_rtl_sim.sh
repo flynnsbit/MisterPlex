@@ -59,10 +59,17 @@ if ! grep -q 'rtl/h264_deblock.sv' "$QIP"; then
   exit 2
 fi
 
-# Product-lineage reachability.  Plain emu-rooted reachability is masked by the
-# retired decode_stub painter, so root at the decode core.  This is necessary,
-# not sufficient -- the simulation below is what proves the filter does work.
-python3 "$ROOT/scripts/check_rtl_module_instantiations.py" --root h264_decode_core \
+# Product-lineage reachability, both directions.  Plain emu-rooted reachability
+# is masked by the retired decode_stub painter, so the subtree is rooted at the
+# decode core -- but w-audit proved a core-subtree green can co-exist with a
+# core `emu` cannot reach at all, so the trunk proof and the files.qip
+# cross-check run too.  All of this is necessary, not sufficient: the
+# elaboration + simulation below is what proves the filter does work, and is
+# the part immune to the checker's source-level blind spots (a filter hidden in
+# a disabled generate would elaborate away and the sample counters would
+# collapse to zero).
+python3 "$ROOT/scripts/check_product_reachability.py" \
+  --label h264_decode_core_deblock \
   --require h264_deblock_mb_filter \
   --require h264_deblock_edge_pipe \
   --require h264_deblock_edge \
@@ -126,5 +133,68 @@ rtl_red H264_DEBLOCK_FAULT_REF_READY_EARLY \
 rtl_red H264_DECODE_CORE_FAULT_COMMIT_BEFORE_SAMPLES \
   "macroblock committed before its filtered sample run finished" \
   "FAIL h264_decode_core deblock"
+
+# ── w-audit blind-spot regression: disabled generate ────────────────────────
+# w-audit measured that check_rtl_module_instantiations.py reports an
+# instantiation inside a disabled `if (0)` generate as REACHABLE.  A module can
+# therefore pass every source-level reachability check while elaborating away
+# to nothing.  Elaboration + simulation is immune to that, and this case exists
+# to keep it that way: hide the filter behind `if (1'b0)` and the gate must go
+# red even though the source graph stays green.
+DG_BACKUP="$ROOT/build/w-deblock-o5-core-disabled-generate.orig.sv"
+mkdir -p "$ROOT/build"
+cat "$RTL" > "$DG_BACKUP"
+restore_core() { cat "$DG_BACKUP" > "$RTL"; }
+trap restore_core EXIT
+
+python3 - "$RTL" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+head = "    h264_deblock_mb_filter u_core_deblock_mb ("
+i = text.index(head)
+j = text.index(");", text.index(".unsupported_ref", i)) + 2
+inst = text[i:j]
+open(path, "w").write(
+    text[:i] + "    generate if (1'b0) begin : g_dead_deblock\n" + inst
+    + "\n    end endgenerate\n" + text[j:])
+PY
+
+set +e
+python3 "$ROOT/scripts/check_product_reachability.py" --label disabled_generate_probe \
+  --require h264_deblock_mb_filter > "$ROOT/build/w-deblock-o5-disabled-generate-checker.log" 2>&1
+DG_CHECKER_RC=$?
+set -e
+# Recorded, deliberately not asserted: if w-gate-o5 teaches the checker about
+# disabled generates this should flip to non-zero, and that is an improvement,
+# not a regression of this gate.
+echo "NOTE disabled-generate: source-level check_product_reachability rc=$DG_CHECKER_RC (0 = w-audit's documented false green)"
+
+DG_DIR="$ROOT/build/verilator/h264_decode_core_deblock_disabled_generate"
+set +e
+build_variant "$DG_DIR" > "$ROOT/build/w-deblock-o5-disabled-generate-build.log" 2>&1
+DG_BUILD_RC=$?
+DG_OUT=""
+DG_RUN_RC=0
+if [[ "$DG_BUILD_RC" -eq 0 ]]; then
+  DG_OUT="$("$DG_DIR/Vh264_decode_core_deblock_tb" 2>&1)"
+  DG_RUN_RC=$?
+else
+  DG_RUN_RC=$DG_BUILD_RC
+fi
+set -e
+restore_core
+trap - EXIT
+if ! git -C "$ROOT" diff --quiet -- "$RTL"; then
+  echo "FAIL h264_decode_core deblock red-check: disabled-generate mutation was not restored" >&2
+  exit 1
+fi
+printf '%s\n' "$DG_OUT"
+if [[ "$DG_RUN_RC" -eq 0 ]]; then
+  echo "FAIL h264_decode_core deblock red-check: filter hidden in a disabled generate still passed;" >&2
+  echo "  elaboration is no longer catching what the source checker cannot see." >&2
+  exit 1
+fi
+echo "OK h264_decode_core deblock red-check: filter hidden in a disabled generate was caught by elaboration (sim rc=$DG_RUN_RC) while the source graph stayed rc=$DG_CHECKER_RC"
 
 echo "OK h264_decode_core deblock: in-loop deblocking gate green with red proofs"

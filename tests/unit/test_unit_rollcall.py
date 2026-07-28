@@ -134,6 +134,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/parse_res_csum_status.py --self-test",
     "$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_product_reachability_redproof.sh",
     "$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh",
     "$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh",

@@ -56,15 +56,21 @@ fi
 # The product claim is not "a module exists in a file" but "the filter is
 # reachable from the chosen product decode lineage".  Plain emu-rooted
 # reachability is masked by the retired decode_stub painter, so root at the
-# decode core.
-python3 "$ROOT/scripts/check_rtl_module_instantiations.py" --root h264_decode_core \
-  --require h264_deblock_mb_filter \
-  --require h264_deblock_edge_pipe \
-  --require h264_deblock_edge \
-  --require h264_deblock_thresholds \
-  --require h264_deblock_bs \
-  --require h264_deblock_qpc \
+# decode core -- but w-audit proved a core-subtree green can co-exist with a
+# core that `emu` cannot reach at all.  A subtree proof without a trunk proof
+# is vacuous, so run both directions plus the files.qip cross-check and let the
+# helper print which of PRODUCT_REACHABLE / CORE_SUBTREE_ONLY actually holds.
+REACH_ARGS=(
+  --label h264_deblock_mb_full_frame
+  --require h264_deblock_mb_filter
+  --require h264_deblock_edge_pipe
+  --require h264_deblock_edge
+  --require h264_deblock_thresholds
+  --require h264_deblock_bs
+  --require h264_deblock_qpc
   --require h264_deblock_writeback_ctrl
+)
+python3 "$ROOT/scripts/check_product_reachability.py" "${REACH_ARGS[@]}"
 
 mkdir -p "$BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
