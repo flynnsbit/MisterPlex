@@ -1,10 +1,20 @@
 // Phase 3 motion-compensation decoded picture buffer helpers.
 // One short-term reference picture, one current reconstruction picture.
+// Frame geometry defaults sourced from the shared DDR layout contract
+// (ddr_frame_layout_defs.svh). The `ifndef guards allow the Quartus project to
+// provide these via the .svh include, while standalone Verilator builds fall back
+// to the canonical values here.
+`ifndef DDR_FRAME_CODED_W
+`define DDR_FRAME_CODED_W  624
+`endif
+`ifndef DDR_FRAME_CODED_H
+`define DDR_FRAME_CODED_H  480
+`endif
 `default_nettype none
 
 module h264_dpb_i420_addr #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480
+	parameter int FRAME_W = `DDR_FRAME_CODED_W,
+	parameter int FRAME_H = `DDR_FRAME_CODED_H
 )(
 	input  wire [31:0] base,
 	input  wire [1:0]  plane,
@@ -27,8 +37,8 @@ module h264_dpb_i420_addr #(
 endmodule
 
 module h264_dpb_mb_write_addr #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480
+	parameter int FRAME_W = `DDR_FRAME_CODED_W,
+	parameter int FRAME_H = `DDR_FRAME_CODED_H
 )(
 	input  wire [31:0] bank_base,
 	input  wire [7:0]  mb_x,
@@ -50,10 +60,10 @@ module h264_dpb_mb_write_addr #(
 endmodule
 
 module h264_dpb_one_ref #(
-	parameter int FRAME_W = 624,
-	parameter int FRAME_H = 480,
+	parameter int FRAME_W = `DDR_FRAME_CODED_W,
+	parameter int FRAME_H = `DDR_FRAME_CODED_H,
 	parameter int BANK0_BASE = 0,
-	parameter int BANK1_BASE = 898560 / 2
+	parameter int BANK1_BASE = (FRAME_W * FRAME_H * 3) / 2
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -202,7 +212,11 @@ module h264_dpb_one_ref #(
 		PH_LUMA: begin
 			sx = lx + $signed({7'd0, (issue_idx % 9'd21)}) - 16'sd2;
 			sy = ly + $signed({7'd0, (issue_idx / 9'd21)}) - 16'sd2;
+`ifdef H264_DPB_FAULT_COL39_CLAMP
+			clamped_x = clamp_coord(sx, FRAME_W[15:0] - 16'd16);
+`else
 			clamped_x = clamp_coord(sx, FRAME_W[15:0]);
+`endif
 			clamped_y = clamp_coord(sy, FRAME_H[15:0]);
 		end
 		default: begin

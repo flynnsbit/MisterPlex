@@ -2,6 +2,15 @@
 // The C++ unit/RTL invariant tests compare these values against the host header;
 // update both sides together if the stream geometry or bank layout changes.
 
+// Preprocessor defines for use in module parameter defaults (h264_dpb.sv etc.).
+// These MUST match the localparams below — enforced by test_rtl_invariants.py.
+`ifndef DDR_FRAME_CODED_W
+`define DDR_FRAME_CODED_W  624
+`endif
+`ifndef DDR_FRAME_CODED_H
+`define DDR_FRAME_CODED_H  480
+`endif
+
 localparam int DDR_FRAME_CODED_WIDTH = 624;
 localparam int DDR_FRAME_CODED_HEIGHT = 480;
 localparam int DDR_FRAME_DISPLAY_WIDTH = 618;

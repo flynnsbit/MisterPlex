@@ -38,6 +38,7 @@ BUILD_REF_FAULT="$ROOT/build/verilator/h264_dpb_mc_early_ref"
 BUILD_PART_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_part_mask"
 BUILD_CONTENT_GATE="$ROOT/build/verilator/h264_dpb_mc_content_gate"
 BUILD_W640="$ROOT/build/verilator/h264_dpb_mc_w640"
+BUILD_W640_COL39_FAULT="$ROOT/build/verilator/h264_dpb_mc_w640_col39_fault"
 
 for f in "$RTL" "$DEBLOCK_RTL" "$QIP" "$TB" "$TOP" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
@@ -70,7 +71,7 @@ fi
 
 mkdir -p "$BUILD" "$BUILD_SEAM" "$BUILD_SEAM_MB_FAULT" "$BUILD_SEAM_REF_FAULT" \
   "$BUILD_CLAMP_FAULT" "$BUILD_MC_FAULT" "$BUILD_REF_FAULT" "$BUILD_PART_FAULT" \
-  "$BUILD_CONTENT_GATE" "$BUILD_W640"
+  "$BUILD_CONTENT_GATE" "$BUILD_W640" "$BUILD_W640_COL39_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -237,3 +238,27 @@ echo "OK h264_dpb_mc RTL red-check: deblock content gate detected unfiltered ref
   "$TOP" "$RTL" "$DEBLOCK_RTL" "$TB"
 "$BUILD_W640/Vh264_dpb_mc_tb" --width-edge
 echo "OK h264_dpb_mc RTL: width-640 right-edge test passed — MB column 39 exercised"
+
+# ── Red-check: column 39 clamp fault — proves the width-edge test is sensitive ──
+# Inject H264_DPB_FAULT_COL39_CLAMP which clamps luma X at FRAME_W-16 instead of
+# FRAME_W, simulating a "column 39 doesn't exist" defect.
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_W640_COL39_FAULT" \
+  --top-module h264_dpb_mc_tb -GFRAME_W=640 -GFRAME_H=480 -Wno-fatal \
+  +define+H264_DPB_FAULT_COL39_CLAMP \
+  -CFLAGS "-std=c++17 -O2 -DDPB_TEST_FRAME_W=640 -DDPB_TEST_FRAME_H=480" \
+  "$TOP" "$RTL" "$DEBLOCK_RTL" "$TB"
+set +e
+COL39F_OUT="$("$BUILD_W640_COL39_FAULT/Vh264_dpb_mc_tb" --width-edge 2>&1)"
+COL39F_RC=$?
+set -e
+if [[ $COL39F_RC -eq 0 ]]; then
+  echo "FAIL h264_dpb_mc RTL red-check: col39 clamp fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! echo "$COL39F_OUT" | grep -q "FAIL width-edge"; then
+  echo "FAIL h264_dpb_mc RTL red-check: expected col39 fault diagnostic" >&2
+  echo "$COL39F_OUT" >&2
+  exit 1
+fi
+echo "OK h264_dpb_mc RTL red-check: col39 clamp fault correctly detected (441/441 wrong)"
