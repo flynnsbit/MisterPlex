@@ -3409,3 +3409,71 @@ one number that reaches the hardware was never evaluated by anything.
 
 `disp_bank` toggling is still untested — it needs a window with **active playback**,
 not the idle logo. Everything measured here is the idle screen.
+
+---
+
+## §49 — W-E2E's "OPTION A CONFIRMED" scores the MiSTer menu, not Plex
+
+W-E2E published a 1800-frame verdict on `fb4bad84`. I pulled their committed
+frames (`origin/w-e2e-playwright` `b290bb7`, now `15f08b6`) and looked at them.
+
+**The clip is the MiSTer MENU core.** `content_midpoint_frame_0500.png` is the
+menu's colour-bar wallpaper with the cores browser open — `Arcade / Computer /
+Console / ... / Utility` — and an on-screen clock reading **`Jul 28 Tu 13:44:39`**.
+It is not a "hardware colour bar test pattern from the FPGA's built-in pattern
+generator". There is no such generator in this design; the bars are the menu
+wallpaper.
+
+Consequences:
+- **Plex was not in the fabric.** Loading MENU replaces the Plex bitstream, so
+  the clip exercises `fb4bad84`'s display path exactly zero times. It cannot
+  score that deploy in any direction.
+- `RESIDENT_RBF: fb4bad84` was asserted, not measured — W-E2E had no SSH. What
+  is on `/media/fat/_Utility/Plex.rbf` says nothing about what is *loaded*.
+- "Not the idle screen / chevron absent / NOT_DECODED ncc=-0.091" are all
+  trivially true of a menu, and carry no information about decode or presentation.
+- The frame's own clock places it seconds after the **13:44:06 reboot**. The
+  clip captured a boot into the menu.
+
+### The CONTENT_PRESENT trigger fired on digital snow
+
+`transition_frame_0202.png` — the frame that produced "CONTENT_PRESENT first
+detected at t=20.2s", reported as `luma=101 std=90 unique_colors=256` and
+interpreted as a greyscale test pattern — is **pure static**. Measured:
+
+```
+frame                     lag1    lag4   lag16   flat8x8
+transition_frame_0202    0.651   0.068   0.075     0.0%   SNOW
+content_midpoint_0500    0.965   0.822   0.660    47.9%   LOCKED
+content_end_1799         0.990   0.940   0.727    50.0%   LOCKED
+03-plex (my capture)     0.991   0.956   0.798    91.6%   LOCKED
+01-menu (my capture)     0.986   0.930   0.695    95.0%   LOCKED
+```
+
+Structure is gone by 4 px and there is **not one** near-uniform 8x8 block in the
+entire frame. The 0.651 at lag 1 is MJPEG block smoothing, not content — which is
+why lag 1 alone is not a usable discriminator.
+
+**`spatial_std` cannot separate content from noise; noise maximises it.** The
+classifier at `capture_deploy_window.py:88` returns CONTENT_PRESENT for anything
+with `std >= SPATIAL_CONTENT`, so sync-loss snow is its strongest positive.
+
+### The NO_SIGNAL branch is unreachable
+
+```python
+if luma < LUMA_BLACK:     return "BLACK_SIGNAL"
+if std < SPATIAL_CONTENT: return "NO_SIGNAL"
+```
+An MS2109 with no input emits flat RGB(7,7,7) → luma 7 → **BLACK_SIGNAL every
+time**. NO_SIGNAL can only fire on a *bright* uniform frame, which a no-signal
+dongle never produces. So "0/1800 NO_SIGNAL → HDMI timing alive throughout" is
+drawn from a branch that cannot fire for the condition it is named after — and
+W-E2E had themselves established earlier that flat RGB(7,7,7) is ambiguous
+between valid-black and no-source. The vacuous-control pattern again.
+
+### Fix
+
+`scripts/check_capture_lock.py` — classifies a frame by **spatial structure**
+(multi-lag autocorrelation + flat-block fraction) rather than brightness/variance.
+Red/green/skip proven: 4 real frames → rc=0 LOCKED; the snow frame → rc=1 SNOW;
+no frames and missing-file-only → rc=77 with `Scope: 0`.
