@@ -732,6 +732,75 @@ This is the failure direction I said the tool was allowed to have - a false alar
 alive - and it cost one cross-branch measurement to find. **Seven self-test cases now, every one
 mutation-proved.** The conclusion above was re-measured after the fix and is unchanged.
 
+## 10g. MC sizing harness, and why the convergence merge was aborted
+
+### The merge I tried and stopped
+
+w-fit-o5's capacity numbers cannot be applied to my modules until the core survives synthesis, and
+the only branch where it does is `w-cast-o5`. So I attempted the convergence merge in a scratch
+branch. **I aborted it, deliberately**, and the reason is a design fork, not a textual conflict:
+
+```
+mine   ST_P16_REF_SEED = 8'd2   ST_P16_WIN_FETCH = 8'd3     block window fetch, 603 reads/MB
+theirs ST_P16_TAP_REQ  = 8'd2   ST_P16_TAP_WAIT  = 8'd3     per-sample taps, 21248 reads/MB
+```
+
+Both encode state 2 and 3 differently for two different MC designs. The merge left two dangling
+`ST_P16_TAP_REQ` references that will not compile. Seventeen files conflict; the RTL ones are mostly
+additive and resolvable as take-both, but **seven test harnesses diverge on variable naming**
+(`$RTL_DECODE_CORE` vs `$RTL_CORE`, `$RTL_SYNTAX` added, `$RTL_DECODE_TOP`/`$RTL_NB_CTX` removed) and
+their conflicts are whole-line file lists where take-both produces two `for` loops.
+
+Resolving the FSM fork is a **design decision across two workers**, not a merge decision, and doing it
+unilaterally would produce a plausible core that nobody had reviewed. Recorded resolutions for whoever
+does it, all measured:
+
+| file | resolution |
+|---|---|
+| `h264_decode_core.sv` | take both on all five hunks, then `ST_P16_TAP_REQ` -> `ST_P16_REF_SEED` at both sites |
+| `stream_path.sv` | header comment theirs, `_keep` list both |
+| `nalu_scanner.sv` | theirs - widens capture 96 -> 128 bytes, matches their `MAX_BYTES` |
+| `h264_cavlc_residual.sv` | theirs - their `RBSP_IDX_W` is my `BYTE_IDX_W` formula plus a fault hook |
+| `bench_only_modules.txt` | theirs - they instantiate `h264_cavlc_nc_predictor` in core |
+| `check_rtl_module_instantiations.py` | theirs, a superset; my `--root`/`--require` spelling is unchanged |
+| `Makefile` | both |
+| `test_companion_eof.cpp` | either - we independently made the same order-independence fix |
+| seven `test_*stream_path*.sh` | union of the file lists, by hand; the merged design has both lineages |
+
+### The harness, so MC can be priced without waiting for the merge
+
+w-fit-o5's constraint is exact: my modules cannot be measured while their outputs dangle, because
+Quartus collapses them to zero. So I built a top whose only purpose is to make them un-collapsible.
+
+`fpga/Plex_MiSTer/sizing/mc_sizing_top.sv` + `mc_sizing.qip`. Deliberately **outside** `rtl/` so it is
+not swept into `files.qip` coverage or product reachability - it is not product RTL and must never be
+reachable from `emu`. Verified: `check_qip_coverage` rc=0, trunk rc=0, bench file lists rc=0 with it
+present.
+
+- every input comes from a 64-bit shift register fed by a real pin, so **`constant_tied_inputs=0`**;
+- every output of both instances is XOR-reduced into one registered output pin;
+- measured with my own detector: `OUTPUTS_REACH_PORTS h264_inter_mc_part -> mc_sizing_top: serial_out`
+  and the same for `h264_dpb_one_ref`, both rc=0;
+- Verilator lint rc=0, zero warnings.
+
+Covers five of seven: `h264_inter_mc_part` pulls in `h264_inter_mc_16x16`,
+`h264_luma_qpel_block_16x16`, `h264_chroma_epel_block_8x8`; plus `h264_dpb_one_ref`.
+`h264_luma_ref_tap_addr` and `h264_ref_clamp` are the retired per-sample lineage.
+
+**Ask for w-fit-o5:** run Analysis & Synthesis on `mc_sizing_top` and report ALM, register, DSP and
+M10K. It is not a fit and does not consume the token. My analytic prediction, to be graded against it:
+storage **4,824 bits in flip-flops, zero M10K**, because the 441-entry window is read combinationally
+in full; the cost lands in **ALMs and DSP**, because all four block modules have zero clocked
+processes and emit 384 samples per macroblock in one combinational delta. **If the M10K figure comes
+back non-zero my model is wrong and I want to know.**
+
+### Honest reading of whatever number comes back
+
+It prices the windows and the interpolation, and nothing that drives them. It is a floor. It also does
+not prove the design closes timing at the product clock - a purely combinational 384-sample delta is
+an Fmax risk before it is an area risk, and the remedy if it fails is to time-multiplex the sample
+loop, not to shrink the buffers.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.

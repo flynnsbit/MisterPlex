@@ -1,0 +1,6 @@
+# Motion compensation sizing harness. NOT the product design.
+# Top level is mc_sizing_top. Analysis & Synthesis only; this is not a fit and
+# must never be pointed at Plex.rbf.
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) mc_sizing_top.sv]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) .. rtl h264_dpb.sv]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) .. rtl h264_inter_pred.sv]

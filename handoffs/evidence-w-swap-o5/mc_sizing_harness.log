@@ -1,0 +1,17 @@
+=== verilator lint of the sizing harness ===
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.130 MB sources in 15 modules, into 3.572 MB in 6 C++ files needing 0.000 MB
+- Verilator: Walltime 0.229 s (elab=0.011, cvt=0.178, bld=0.000); cpu 0.228 s on 1 threads; allocated 49.461 MB
+lint rc=0
+
+=== collapse resistance: no constant inputs, all outputs reach a pin ===
+Scope: mc_sizing_top instantiating h264_inter_mc_part - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
+CORE_OUTPUT_NETS 6 traced from 6 declared output ports
+OUTPUTS_REACH_PORTS h264_inter_mc_part -> mc_sizing_top: serial_out
+SINK_LIVENESS_OK h264_inter_mc_part outputs reach 1 parent port(s); constant_tied_inputs=0 gate=path-to-port
+rc=0
+Scope: mc_sizing_top instantiating h264_dpb_one_ref - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
+CORE_OUTPUT_NETS 26 traced from 26 declared output ports
+OUTPUTS_REACH_PORTS h264_dpb_one_ref -> mc_sizing_top: serial_out
+SINK_LIVENESS_OK h264_dpb_one_ref outputs reach 1 parent port(s); constant_tied_inputs=0 gate=path-to-port
+rc=0
