@@ -62,6 +62,15 @@ else
 	bad "unknown module gave rc=$r3 without a named reason"
 fi
 
+echo "== control integrity: do the twins differ ONLY in observability? =="
+python3 tests/unit/deadlogic_probe_mutate.py --verify-twins > build/deadlogic_twins.txt 2>&1
+if [ $? -eq 0 ]; then
+	pass "twin control is not vacuous (probe bodies byte-identical)"
+else
+	bad "twin control is VACUOUS -- red proof 4 may be discriminating on something other than observability"
+	sed 's/^/    /' build/deadlogic_twins.txt
+fi
+
 echo "== red 4: two identical probes, one observable and one not =="
 # Self-contained mutation.  A red proof that depends on the exact shape of a
 # peer's RTL goes stale the moment they refactor; these two probe modules are

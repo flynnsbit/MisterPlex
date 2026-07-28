@@ -114,7 +114,15 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/scripts/check_pipe_exit_safety.py
 	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py
-	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl --require h264_deblock_mb_filter --require h264_deblock_edge_pipe --require h264_deblock_edge --require h264_deblock_thresholds --require h264_deblock_bs --require h264_deblock_qpc
+	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root emu --require h264_decode_core --require stream_path
+	python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl --require h264_deblock_qpc --require h264_deblock_bs --require h264_deblock_thresholds --require h264_deblock_edge_pipe --require h264_deblock_edge --require h264_deblock_mb_filter --require h264_inter_mc_part --require h264_inter_mc_16x16 --require h264_dpb_one_ref --require h264_luma_qpel_block_16x16 --require h264_chroma_epel_block_8x8 --require h264_luma_ref_tap_addr --require h264_ref_clamp
+	python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_reachability_redgreen.py
+	$(ROOT)/tests/unit/test_qpel_equivalence_verilator.sh
+	python3 $(ROOT)/scripts/check_decode_core_seam.py
+	python3 $(ROOT)/scripts/check_no_macro_topology.py
+	python3 $(ROOT)/scripts/check_qip_coverage.py
+	python3 $(ROOT)/scripts/check_onchip_ram_budget.py
+	bash $(ROOT)/tests/unit/test_decode_core_seam_audit_reds.sh
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh
@@ -126,6 +134,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
+	$(ROOT)/tests/unit/test_stream_path_real_intra_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
@@ -135,12 +144,14 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_prefit_hierarchy_redproof.sh
 	$(ROOT)/tests/unit/test_deadlogic_sink_redproof.sh
 	$(ROOT)/tests/unit/test_product_deadlogic_status.sh
+	$(ROOT)/tests/unit/test_deblock_table_vacuity.sh
 	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	bash $(ROOT)/tests/unit/test_ddr_frame_store_swap_livelock.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -156,6 +167,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_prefit_hierarchy_redproof.sh
 	$(ROOT)/tests/unit/test_deadlogic_sink_redproof.sh
 	$(ROOT)/tests/unit/test_product_deadlogic_status.sh
+	$(ROOT)/tests/unit/test_deblock_table_vacuity.sh
 	$(ROOT)/tests/unit/test_h264_deblock_mb_full_frame.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_deblock_rtl_sim.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
@@ -163,6 +175,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	bash $(ROOT)/tests/unit/test_ddr_frame_store_swap_livelock.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
