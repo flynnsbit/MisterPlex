@@ -70,6 +70,35 @@ std::string headerValue(const std::string& req, const char* name) {
     return req.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
 }
 
+std::string requestLine(const std::string& req) {
+    auto end = req.find("\r\n");
+    return req.substr(0, end == std::string::npos ? std::string::npos : end);
+}
+
+std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
+std::string timelineBrief(const std::string& xml) {
+    auto p = xml.find("<Timeline ");
+    if (p == std::string::npos)
+        return xml.substr(0, 160);
+    auto e = xml.find("/>", p);
+    return xml.substr(p, e == std::string::npos ? 240 : std::min<size_t>(e + 2 - p, 240));
+}
+
 void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
     char hdr[320];
     const char* status = (code == 200) ? "OK" : "Not Found";
@@ -621,6 +650,8 @@ void Companion::httpLoop() {
         }
         buf[n] = 0;
         std::string req(buf, static_cast<size_t>(n));
+        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+            log("HTTP IN " + redactSensitive(requestLine(req)));
 
         {
             std::lock_guard<std::mutex> lock(mu_);
@@ -675,7 +706,9 @@ void Companion::httpLoop() {
                 cid = "0";
             if (queryParam(req, "wait") == "1")
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            sendHttp(c, 200, "application/xml", timelineXml(cid));
+            auto body = timelineXml(cid);
+            sendHttp(c, 200, "application/xml", body);
+            log("HTTP OUT 200 timeline " + timelineBrief(body));
             close(c);
             continue;
         }
@@ -801,8 +834,10 @@ void Companion::httpLoop() {
                     std::lock_guard<std::mutex> lock(mu_);
                     ackOff = timeMs_;
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(cid));
+                auto body = timelineXml(cid);
+                sendHttp(c, 200, "application/xml", body);
                 close(c);
+                log("HTTP OUT 200 playMedia " + timelineBrief(body));
                 log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
                 // Invalidate in-flight resolve *before* spawning onPlay_ so a
                 // concurrent doPlay cannot bind/setState over this plant while

@@ -19,6 +19,22 @@ bool defaultSink(const PmsTimelineHttpRequest& req) {
     return plexHttpGetNoBody(req.url, req.headers, 4);
 }
 
+std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
 } // namespace
 
 bool buildPmsTimelineHttpRequest(const PmsTimelineSession& session, const std::string& state,
@@ -176,8 +192,10 @@ bool PmsTimelineReporter::send(const Pending& pending) {
     } catch (...) {
         ok = false;
     }
-    if (!ok && log_)
-        log_("pms timeline: update failed state=" + pending.state);
+    if (log_) {
+        log_(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
+             " state=" + pending.state + " url=" + redactSensitive(pending.request.url));
+    }
     return ok;
 }
 
