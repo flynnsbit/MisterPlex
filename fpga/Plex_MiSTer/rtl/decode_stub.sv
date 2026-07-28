@@ -351,6 +351,7 @@ module decode_stub #(
 	wire              dpb_mem_rd;
 	wire [31:0]       dpb_mem_raddr;
 	reg [31:0]        dpb_mem_raddr_q;
+	reg               dpb_mem_rd_q;
 	reg               dpb_mem_rvalid;
 	wire [7:0]        dpb_mem_rdata;
 	wire              dpb_luma_window_valid;
