@@ -16,7 +16,7 @@ Client-only requests are not enough on this PMS. The sweep in `build/misterplex-
 | `video.profile`/`video.level` profile-extra limitations | `profile_idc=100`, `cabac=1`, B=115/12s |
 | `video.h264Profile`/`video.h264Level` match and notMatch forms | `profile_idc=100`, `cabac=1`, B=115/12s |
 | Generic vs Chrome profile name | `profile_idc=100`, `cabac=1`, B=115/12s |
-| `640x480`, `624x480`, and `width=640&height=480` | coded `624x480`, display `618x480` |
+| `640x480`, `624x480`, and `width=640&height=480` | coded `624x480`, display `618x480` *(16:9 source; output insensitive to request — see §"PMS resolution sensitivity")* |
 
 The prepared server-side profile is `assets/plex-profiles/MiSTerPlex.xml`. It constrains the HTTP streaming target to H.264/AAC in MPEG-TS and adds x264 flags for Baseline/CAVLC, no B-slices, one reference frame, weighted prediction off, no 8x8 DCT, no sub-macroblock partitions, and a bounded GOP.
 
@@ -203,6 +203,12 @@ exactly 6 IDR frames across 300 VCL slices, i.e. one IDR every 50 frames at
 25 fps. Geometry remains coded `624x480` with right crop to display `618x480`;
 the profile constrains codec tools, not padding to 640.
 
+**⚠️ Geometry caveat (see §"PMS resolution sensitivity" below):** the 624 coded
+width was measured from 16:9 content where x264's aspect fit produces 624
+regardless of the requested width. Whether PMS delivers 624 or 640 for natively
+4:3 content is **UNMEASURED**. Do not treat 624 as a guaranteed PMS property
+without the decisive 4:3 experiment.
+
 The presentation pipeline remains 640x480 by adding 11-pixel pillars around the
 618x480 display window. The coded frame is 39x30 macroblocks (1170 MBs) with no
 partial macroblocks, so DDR plane offsets stay `Y=0`, `U=299520`, `V=374400`
@@ -217,6 +223,77 @@ golden `.provenance.json` sidecar and `--expected-pixel-format yuv420p`. The
 canonical value for the RGB565→YUV420 migration is `yuv420p` (`i420` is accepted
 only as an alias by the visual harness), matching w-osd's frame-format status
 token and avoiding a second, competing pixel-format declaration in the PMS XML.
+
+## PMS resolution sensitivity — OPEN QUESTION (corrected 2026-07-27)
+
+**Standing claim:** PMS output was insensitive to requested width across 624–640
+for 16:9 content; whether the request is honoured at all is **UNMEASURED**,
+pending a 4:3 source.
+
+### What was measured
+
+All measurements below used a single test item: HEVC Main 696×540 (≈1.29:1,
+effectively 16:9-derived). x264 fitted this within the requested bound and
+produced 624×480 coded regardless of what width was requested:
+
+| Request | Delivered coded | Status |
+|---------|-----------------|--------|
+| `videoResolution=640x480` | 624×480 | **MEASURED** |
+| `videoResolution=624x480` | 624×480 | **MEASURED** |
+| `width=640&height=480` | 624×480 | **MEASURED** |
+
+**Three different requests produced one identical output.** This is evidence that
+the output was **insensitive to the request** across the range tested — NOT
+evidence that PMS honoured the 624 request.
+
+### Why the previous conclusion ("PMS honours 624") was wrong
+
+The source item's aspect ratio (696/540 ≈ 1.29) means x264's aspect-fit
+produces 624 regardless of the requested width. The mechanism is: x264 fits the
+longest dimension within the bound, rounds to macroblock boundaries, and the
+result happens to be 624 for any request ≥624 against this content. **The
+request could be ignored entirely and the output would be the same.**
+
+This is the same error shape as `a6ec399` (measuring our own ffmpeg scale filter
+and recording it as a property of the source): we measured an output that was
+determined by content aspect ratio, not by our request, and recorded it as "PMS
+honours our request."
+
+### What is NOT measured — the decisive experiment
+
+| Source aspect | Request | Expected if honoured | Expected if ignored | Status |
+|---------------|---------|---------------------|--------------------:|--------|
+| 16:9 (current item) | 640×480 | 624 (aspect fit) | 624 (aspect fit) | **Cannot distinguish** |
+| 16:9 (current item) | 624×480 | 624 | 624 | **Cannot distinguish** |
+| **4:3 native (≥1.30)** | **640×480** | **640** | **640** | **UNMEASURED** |
+| **4:3 native (≥1.30)** | **624×480** | **624** | **640** | **UNMEASURED** — this is the decisive cell |
+
+The only test that can distinguish "PMS honours width" from "PMS ignores width"
+requires a source whose native aspect ratio would produce **different** coded
+widths for 640 vs 624 requests. A natively 4:3 (or wider) source where
+aspect-fit at 640 produces 640, tested against a 624 request, is the minimal
+decisive experiment.
+
+### Risk table for STREAM=1 width (cells labelled)
+
+| Source aspect | Request 640×480 | Request 624×480 | Consequence for STREAM=1 |
+|---------------|-----------------|-----------------|--------------------------|
+| 16:9 (tested) | coded=624 **MEASURED** | coded=624 **MEASURED** | 39 MBs sufficient |
+| 4:3 native | coded=640 **INFERRED** | coded=624 if honoured / 640 if ignored **INFERRED** | If 640: 40th MB column mandatory |
+| Arbitrary (directH264) | passthrough **INFERRED** | passthrough **INFERRED** | Unbounded; MB-aligned gate required |
+
+### Blocker
+
+This host has no `PLEX_BASE` / `PLEX_TOKEN` / 4:3 test item. The decisive
+experiment requires PMS access with a natively 4:3 source. **Options:**
+
+1. Ask w-osd (who has PMS access on the lab host) to run `pms_baseline_probe`
+   with a 4:3 item at both `videoResolution=640x480` and `videoResolution=624x480`.
+2. Parent provides credentials and a 4:3 media key to this host.
+
+Until the decisive experiment is run, **the 40th macroblock column question is
+OPEN** — w-dpb, w-mc, and w-deblock should size their work for 40 MBs (1200)
+as the worst case but need not commit until we have measurement.
 
 ## Salvage verdict for stranded 480p branches
 
