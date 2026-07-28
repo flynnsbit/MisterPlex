@@ -69,6 +69,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/build/test_sdram_memtest_sim
 	$(ROOT)/build/test_sdram_mailbox
 	$(ROOT)/build/test_annexb_count
+	python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py
 	@mkdir -p $(ROOT)/build
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
 	$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)

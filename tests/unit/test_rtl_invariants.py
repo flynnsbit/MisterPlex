@@ -1169,8 +1169,8 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                "ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)",
-                "rawvideo present must send the same declared geometry that selected FFmpeg's coded stride",
+                "DdrPublishFrameframe{txFrame,txBytes,ddrGeometry,DdrFrameFormat::Yuv420p};ok=publishDdrFrame(frame,\"playbackDDR\",&ddrErr)",
+                "rawvideo present must carry the same declared geometry that selected FFmpeg's coded stride into centralized publishDdrFrame",
             ),
             (
                 frame_norm,
@@ -1500,13 +1500,13 @@ def check_yuv_ddr_writer_contract() -> None:
             ),
             (
                 media_norm,
-                "ok=fpga_.sendYuv420pFrameDdr(txFrame,txBytes,ddrGeometry,ddrBank_)",
-                "product rawvideo DDR send must pass the yuv420p frame buffer unchanged",
+                "DdrPublishFrameframe{txFrame,txBytes,ddrGeometry,DdrFrameFormat::Yuv420p};ok=publishDdrFrame(frame,\"playbackDDR\",&ddrErr)",
+                "product rawvideo DDR publish must pass the yuv420p frame buffer and geometry unchanged",
             ),
             (
                 fpga_norm,
-                "returnsendDdrFrame(yuv420p,len,bank)",
-                "sendYuv420pFrameDdr must forward the yuv420p pointer to the DDR copier unchanged",
+                "DdrPublishFrameframe{yuv420p,len,geometry,DdrFrameFormat::Yuv420p};returnpublishDdrFrame(frame,bank)",
+                "sendYuv420pFrameDdr must wrap the yuv420p pointer and geometry without plane remap",
             ),
             (
                 fpga_norm,
@@ -1587,7 +1587,7 @@ def check_yuv_ddr_writer_contract() -> None:
     compact_media = norm(media)
     check(
         "renderIdleYuv420p" in media
-        and "sendYuv420pFrameDdr(yuv.data(),yuv.size(),g,ddrBank_)" in compact_media,
+        and "DdrPublishFrameframe{yuv.data(),yuv.size(),g,DdrFrameFormat::Yuv420p};ok=publishDdrFrame(frame,\"idleDDR\",&ddrErr)" in compact_media,
         "MediaPlayer::paintIdle must send the rendered logo/screensaver through the YUV420p "
         "DDR path. A hard-coded black I420 payload clears stale video but makes the selectable "
         "FPGA idle logo/screensaver disappear under PRESENT=fpga.",
@@ -1761,11 +1761,11 @@ def check_present_path_degradation_contract() -> None:
                 "a screensaver regression",
             ),
             (
-                'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
+                'log("media:idlepaintDDRfailed(willretryonre-probe):"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
                 "idle DDR failure must name DDR and the re-probe recovery path",
             ),
             (
-                'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
+                'log("media:reconYUV420DDRF1unavailable:"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
                 "STREAM recon DDR failure must log the named DDR/YUV failure and keep retrying",
             ),
             (
@@ -1773,12 +1773,12 @@ def check_present_path_degradation_contract() -> None:
                 "rawvideo non-YUV F1 attempts must be refused before send with a named reason",
             ),
             (
-                'log("media:DDRYUV420pF1unavailable:"+fpga_.lastError());',
+                'log("media:DDRYUV420pF1unavailable:"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
                 "rawvideo DDR failure must be externally visible instead of falling back to a "
                 "different present path",
             ),
             (
-                'log("media:fpgaframe_tx:"+fpga_.lastError());',
+                'log("media:fpgaframe_tx:"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
                 "rawvideo frame_tx errors must surface the low-level frame-store status "
                 "(including frame_status=absent or frame_debug=0xE1)",
             ),
@@ -1838,21 +1838,21 @@ def check_present_path_degradation_contract() -> None:
         fail(f"ARM present-path degradation contract: {missing[0]}")
 
     rgb_fallback_media = media_nt.replace(
-        'log("media:idlepaintDDRfailed(willretryonre-probe):"+fpga_.lastError());',
+        'log("media:idlepaintDDRfailed(willretryonre-probe):"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
         "ok=fpga_.sendRgb24Frame(buf.data(),w,h,1);",
     )
     if not present_degradation_violations(rgb_fallback_media, fb_nt, status_nt):
         fail("deliberately reintroduced idle RGB/SPI F1 fallback did not make the gate red")
 
     latched_disable_media = media_nt.replace(
-        'log("media:reconYUV420DDRF1unavailable:"+fpga_.lastError());',
+        'log("media:reconYUV420DDRF1unavailable:"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
         'useDdrF1_=false;',
     )
     if not present_degradation_violations(latched_disable_media, fb_nt, status_nt):
         fail("deliberately reintroduced one-shot DDR disable did not make the gate red")
 
     silent_ddr_media = media_nt.replace(
-        'log("media:DDRYUV420pF1unavailable:"+fpga_.lastError());',
+        'log("media:DDRYUV420pF1unavailable:"+(ddrErr.empty()?fpga_.lastError():ddrErr));',
         "",
     )
     if not present_degradation_violations(silent_ddr_media, fb_nt, status_nt):

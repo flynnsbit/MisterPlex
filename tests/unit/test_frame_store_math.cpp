@@ -183,6 +183,54 @@ static void checkDdrPublishGeometrySwitch() {
     }
 }
 
+static void checkDdrPublishAlternationSequence() {
+    const auto g320 = misterplex::makeDdrFrameGeometry(320, 240);
+    const auto g480 = misterplex::plex480pDdrFrameGeometry();
+    std::vector<uint8_t> yuv320(misterplex::yuv420pFrameBytes(320, 240), 0x10);
+    std::vector<uint8_t> yuv480(misterplex::yuv420pFrameBytes(g480.coded_width, g480.coded_height),
+                                0x10);
+    const std::vector<misterplex::DdrPublishFrame> frames{
+        {yuv320.data(), yuv320.size(), g320, misterplex::DdrFrameFormat::Yuv420p},
+        {yuv480.data(), yuv480.size(), g480, misterplex::DdrFrameFormat::Yuv420p},
+        {yuv320.data(), yuv320.size(), g320, misterplex::DdrFrameFormat::Yuv420p},
+        {yuv480.data(), yuv480.size(), g480, misterplex::DdrFrameFormat::Yuv420p},
+    };
+    const std::vector<bool> sendOk{true, true, false, true};
+    const std::vector<int> wantBanks{0, 1, 0, 0};
+    const std::vector<uint32_t> wantOffsets{0x00000u, 0x80000u, 0x00000u, 0x00000u};
+    std::vector<int> sawBanks;
+    std::vector<uint32_t> sawOffsets;
+    int bank = 0;
+    std::string err;
+    for (size_t i = 0; i < frames.size(); ++i) {
+        misterplex::DdrPublishPlan plan{};
+        if (!misterplex::makeDdrPublishPlan(frames[i], bank, plan, &err)) {
+            std::fprintf(stderr, "DDR publish alternation failed at step %zu: %s\n", i,
+                         err.c_str());
+            ++fails;
+            return;
+        }
+        sawBanks.push_back(plan.bank);
+        sawOffsets.push_back(static_cast<uint32_t>(plan.bank_offset));
+        bank = misterplex::nextDdrPresentBank(bank, sendOk[i]);
+    }
+    if (sawBanks != wantBanks) {
+        std::fprintf(stderr, "DDR publish alternation failed: saw banks %s; expected %s\n",
+                     seqString(sawBanks).c_str(), seqString(wantBanks).c_str());
+        ++fails;
+    }
+    if (sawOffsets != wantOffsets) {
+        std::fprintf(stderr,
+                     "DDR publish alternation failed: offsets were 0x%05x,0x%05x,0x%05x,"
+                     "0x%05x; expected 0x00000,0x80000,0x00000,0x00000\n",
+                     static_cast<unsigned>(sawOffsets[0]),
+                     static_cast<unsigned>(sawOffsets[1]),
+                     static_cast<unsigned>(sawOffsets[2]),
+                     static_cast<unsigned>(sawOffsets[3]));
+        ++fails;
+    }
+}
+
 static void checkConversion(int w, int h) {
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
@@ -251,6 +299,7 @@ int main() {
                                          decodedBank));
     checkDdrBankConsumerEncoding();
     checkDdrPublishGeometrySwitch();
+    checkDdrPublishAlternationSequence();
 
     // Hardware nondeterminism bbox from reload captures. Presentation x includes
     // the 11px pillarbox, so map it back to coded 624-wide YUV420 offsets.
