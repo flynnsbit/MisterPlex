@@ -178,12 +178,6 @@ module h264_dpb_one_ref #(
 	reg [1:0] pending_plane;
 	reg [8:0] pending_idx;
 	reg       pending_valid;
-	// 1-cycle pipeline to align pending metadata with the external SRAM
-	// read latency (decode_stub registers raddr_q → combinational rdata,
-	// so rdata arrives 1 cycle after rvalid's source rd signal).
-	reg [1:0] pending_plane_d1;
-	reg [8:0] pending_idx_d1;
-	reg       pending_valid_d1;
 	reg signed [15:0] lx;
 	reg signed [15:0] ly;
 	reg signed [15:0] cx;
@@ -225,10 +219,6 @@ module h264_dpb_one_ref #(
 		luma_window_valid     <= 1'b0;
 		chroma_u_window_valid <= 1'b0;
 		chroma_v_window_valid <= 1'b0;
-		// Pipeline pending metadata to align with SRAM read latency
-		pending_idx_d1        <= pending_idx;
-		pending_plane_d1      <= pending_plane;
-		pending_valid_d1      <= pending_valid;
 
 		if (reset) begin
 			current_base        <= BANK0_BASE[31:0];
@@ -242,9 +232,6 @@ module h264_dpb_one_ref #(
 			pending_valid       <= 1'b0;
 			pending_plane       <= 2'd0;
 			pending_idx         <= 9'd0;
-			pending_valid_d1    <= 1'b0;
-			pending_plane_d1    <= 2'd0;
-			pending_idx_d1      <= 9'd0;
 			mem_raddr           <= 32'd0;
 			luma_frac_x         <= 2'd0;
 			luma_frac_y         <= 2'd0;
@@ -270,21 +257,21 @@ module h264_dpb_one_ref #(
 				ref_ready      <= 1'b1;
 			end
 
-			if (mem_rvalid && pending_valid_d1) begin
-				case (pending_plane_d1)
+			if (mem_rvalid && pending_valid) begin
+				case (pending_plane)
 				2'd0: begin
 					luma_window_valid  <= 1'b1;
-					luma_window_idx    <= pending_idx_d1;
+					luma_window_idx    <= pending_idx;
 					luma_window_sample <= mem_rdata;
 				end
 				2'd1: begin
 					chroma_u_window_valid <= 1'b1;
-					chroma_window_idx     <= pending_idx_d1[6:0];
+					chroma_window_idx     <= pending_idx[6:0];
 					chroma_window_sample  <= mem_rdata;
 				end
 				default: begin
 					chroma_v_window_valid <= 1'b1;
-					chroma_window_idx     <= pending_idx_d1[6:0];
+					chroma_window_idx     <= pending_idx[6:0];
 					chroma_window_sample  <= mem_rdata;
 				end
 				endcase
@@ -324,7 +311,7 @@ module h264_dpb_one_ref #(
 				end
 			end else if (phase == PH_DRAIN) begin
 				pending_valid <= 1'b0;
-				if (mem_rvalid && pending_valid_d1) begin
+				if (mem_rvalid && pending_valid) begin
 					phase      <= PH_IDLE;
 					fetch_busy <= 1'b0;
 					fetch_done <= 1'b1;
