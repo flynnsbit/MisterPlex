@@ -121,6 +121,7 @@ def main():
     deps = {f: refs_of(f, owner) for f in set(owner.values())}
 
     failures = []
+    checked_benches = 0
     for script in sorted(os.listdir(UNIT_DIR)):
         if not (script.endswith(".sh") or script.endswith(".py")):
             continue
@@ -136,6 +137,7 @@ def main():
         listed = listed_files(text, set(deps))
         if not listed:
             continue
+        checked_benches += 1
 
         # transitive closure of what the listed files actually need
         need, seen = set(), list(listed)
@@ -155,8 +157,8 @@ def main():
                   % (script, cur, mod, dep_file))
         return 1
 
-    print("bench RTL file lists OK (%d benches checked against %d modules)"
-          % (len(os.listdir(UNIT_DIR)), len(owner)))
+    print("bench RTL file lists OK (%d RTL benches checked against %d modules)"
+          % (checked_benches, len(owner)))
     return 0
 
 

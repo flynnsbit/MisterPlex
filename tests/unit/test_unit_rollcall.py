@@ -138,13 +138,13 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh",
 ]
 
-IGNORED_COMMANDS = {
+IGNORED_COMMANDS = [
     # Suite setup/helper commands, not tests. Everything else in unit-unlocked's
     # recipe must be registered above or the guard fails with UNREGISTERED_*.
     "mkdir -p $(ROOT)/build",
     "python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)",
     "chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true",
-}
+]
 
 
 def normalize_command(line: str) -> str:
@@ -181,19 +181,30 @@ def parse_unit_unlocked(makefile: Path) -> tuple[list[str], list[str]]:
 
 def main() -> int:
     prereqs, commands = parse_unit_unlocked(MAKEFILE)
-    protected_commands = [c for c in commands if c not in IGNORED_COMMANDS]
+    ignored_command_set = set(IGNORED_COMMANDS)
+    ignored_commands = [c for c in commands if c in ignored_command_set]
+    protected_commands = [c for c in commands if c not in ignored_command_set]
     missing_prereqs = [p for p in EXPECTED_PREREQS if p not in prereqs]
     unregistered_prereqs = [p for p in prereqs if p not in EXPECTED_PREREQS]
     missing_commands = [c for c in EXPECTED_COMMANDS if c not in protected_commands]
     unregistered_commands = [c for c in protected_commands if c not in EXPECTED_COMMANDS]
+    missing_ignored_commands = [c for c in IGNORED_COMMANDS if c not in ignored_commands]
 
-    if missing_prereqs or unregistered_prereqs or missing_commands or unregistered_commands:
+    if (
+        missing_prereqs
+        or unregistered_prereqs
+        or missing_commands
+        or unregistered_commands
+        or missing_ignored_commands
+    ):
         print("UNIT_ROLLCALL_FAIL")
         print(
             "UNIT_ROLLCALL_COUNTS "
             f"actual_prereqs={len(prereqs)} expected_prereqs={len(EXPECTED_PREREQS)} "
             f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
-            f"expected_commands={len(EXPECTED_COMMANDS)} ignored_commands={len(IGNORED_COMMANDS)}"
+            f"expected_commands={len(EXPECTED_COMMANDS)} "
+            f"actual_ignored_commands={len(ignored_commands)} "
+            f"expected_ignored_commands={len(IGNORED_COMMANDS)}"
         )
         for item in missing_prereqs:
             print(f"MISSING_PREREQ {item}")
@@ -203,13 +214,17 @@ def main() -> int:
             print(f"MISSING_COMMAND {item}")
         for item in unregistered_commands:
             print(f"UNREGISTERED_COMMAND {item} -- register this unit-unlocked command")
+        for item in missing_ignored_commands:
+            print(f"MISSING_IGNORED_COMMAND {item}")
         return 1
 
     print(
         "UNIT_ROLLCALL_OK "
         f"actual_prereqs={len(prereqs)} expected_prereqs={len(EXPECTED_PREREQS)} "
         f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
-        f"expected_commands={len(EXPECTED_COMMANDS)} ignored_commands={len(IGNORED_COMMANDS)} "
+        f"expected_commands={len(EXPECTED_COMMANDS)} "
+        f"actual_ignored_commands={len(ignored_commands)} "
+        f"expected_ignored_commands={len(IGNORED_COMMANDS)} "
         f"makefile={MAKEFILE}"
     )
     return 0

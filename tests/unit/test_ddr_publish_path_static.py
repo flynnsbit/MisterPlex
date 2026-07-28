@@ -29,4 +29,8 @@ if contexts != want_contexts:
 if src.count("nextDdrPresentBank(ddrBank_, ok)") != 1:
     fail("central publish helper must be the only place that advances ddrBank_")
 
-print("test_ddr_publish_path_static: OK 3 DDR call sites use centralized publishDdrFrame")
+print(
+    "test_ddr_publish_path_static: OK "
+    f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
+    "use centralized publishDdrFrame"
+)
