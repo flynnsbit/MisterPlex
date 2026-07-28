@@ -240,6 +240,14 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-OSD3 all four controls decode and apply live — `0x00c0`→+60 ms, `0x40c0`→idle=1, `0x40ca`→trim+resync off, `0x020a`→−160 ms; verified **mid-playback**
 - [x] G-OSD4 A/V offset measurably moves lipsync — OSD +140 ms → median **−62.15 ms** vs baseline **+94.0 ms** = **−156 ms** delta
 - [x] G-IDLE idle screen replaces the stuck last frame — `/tmp/idle3.png`, `/tmp/idle_afterstop.png`; amber chevron on near-black after stop
+- [ ] G-IDLE2 **the other three idle modes are UNPROVEN on hardware (2026-07-28)** — `Plex.sv:73` declares four modes
+  (`"O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;"`) but every eyes-on capture to date exercises only
+  **`Plex logo`** (`[15:14]=00`): idle = Plex chevron, playback counter advanced 46→154, post-stop byte-identical to idle.
+  **`Black`, `Screensaver` and `Last frame` have never been exercised on device**, and the merged idle fix (`0fd39d9`)
+  changed *dispatch* for all four, so three of the four paths it touches are untested. Specific risks: `Black` is
+  visually indistinguishable from the original black-screen **bug** unless you know it was requested; `Last frame` is
+  the most likely to be silently broken; a `Screensaver` that does not animate is a bug and needs two time-separated
+  frames diffed to detect. **This goal was scored 100% on the strength of one mode and has been corrected to 65%.**
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
 - [x] G-OSD6 **F12/OSD invisible (2026-07-26)** — **RESOLVED. Root cause: a wedged MiSTer `Main`.**
@@ -500,6 +508,12 @@ Captured from the live DDR frame store and **visually inspected** (PNGs preserve
 - Idle logo returns after the long run.
 
 **Correction to an earlier figure in this file:** a `vfps=21.3` reading was quoted as a 480p shortfall. That came from a **7-second** run dominated by startup and was **not representative**; sustained rate is **24.75 fps**. `Direct-play` re-scored 60→68 on the strength of the present path being proven at 480p24. **Scope limit unchanged:** this is PMS transcode + ARM rawvideo presenting via FPGA — it validates the **present/DDR path**, *not* direct-play, and it does **not** advance FPGA decode.
+
+**RETRACTION — 2026-07-28, the "20.6 ms doorbell" figure.** A `20.6 ms/frame` doorbell cost was quoted repeatedly as "~49% of the 41.67 ms budget" and used to argue direct-play was borderline. **It no longer describes the shipping path and must not be reused.** Source evidence (`arm/misterplexd/fpga_spi.cpp`): the steady present path is *not* a hard per-frame hardware handshake — it is `usleep(1500)` prep, `memcpy`, mmap doorbell stores, `usleep(500)` post = **2.0 ms** of explicit sleep. First-kick status polling is **one-time/amortised**. The old PLXD `50 × 1 ms` timeout poll that most plausibly produced the 20.6 ms figure was **removed in `6b5878e`**, i.e. the number was measured on a pre-`6b5878e` build.
+
+**Bank-floor theory raised and DISPROVED (same date).** `kDdrBankReuseMinUs = 40000` (40 ms) is suspiciously close to the measured 40.40 ms/frame, raising the possibility that a hard-coded sleep was *setting* the frame rate rather than measuring capability. **Excluded by source:** `arm/misterplexd/media_player.cpp` toggles `ddrBank_ ^= 1` after every successful present, so same-bank reuse interval is **~80–83 ms**, comfortably above the 40 ms floor; drops only widen it. The floor cannot fire at 24 fps. Conclusion: **40.40 ms/frame is source cadence and A/V pacing idle, not work time.** Transport is *not* the direct-play blocker.
+
+**Direct-play 480p — UNRESOLVED, and the blocker is ARM decode, not transport.** Transport budget: `41.67 − 2.0 sleeps − ~5.0 copy ≈ **34.7 ms/f** available for read+decode. The only decode data point is **`13.245 ms/f`, measured on the x86-64 host**, *not* on the DE10-Nano's dual-core **ARM Cortex-A9 @ 800 MHz**. H.264 decode is SIMD- and memory-bandwidth-bound, where the A9 (NEON, small cache, low bandwidth) is plausibly **5–10× slower** than a modern x86 core — at 5× the figure becomes **~66 ms/f, which blows the 34.7 ms budget outright**. **Do not quote a "~21 ms/f margin" without this qualification**; it may be wrong by more than the entire budget. A single *measured ARM* number would settle this and is worth more than any scaling argument. If direct-play proves unachievable on the ARM, that is clean supporting evidence for moving decode into the FPGA.
 
 **Library limitation:** the PMS library contains only sync/blip test clips plus this one animated series — no live-action/film-grain title, so the hardest luma case is still untested.
 
