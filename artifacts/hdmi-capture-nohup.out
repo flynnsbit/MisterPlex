@@ -1,0 +1,2 @@
+2026-07-28T18:29:38 START dev=/dev/video0 1280x720 interval=30.0s warmup=20 score=4 pid=2077251
+2026-07-28T18:29:39 tick=000001 state=VALID_CONTENT mean=  32.82 std=   9.441 distinct= 65 bytes=  17009 delta=  n/a    *** CHANGE None -> VALID_CONTENT ***
