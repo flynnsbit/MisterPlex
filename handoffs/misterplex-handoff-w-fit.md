@@ -2822,3 +2822,52 @@ than `.bak.1`, `.bak.2`.
 
 Both authorized deploys are spent. I am not deploying again without new
 authorization, so the fix protects the next worker, not me.
+
+---
+
+## 43. Device is on MENU again, changed by someone other than me at 15:10:38. I did not load Plex back.
+
+Raw:
+
+```
+15:07:44  CORENAME=Plex   Plex.rbf=3b1e8435  fpga_manager=operating  misterplexd pid 3823
+15:17:42  CORENAME=MENU   Plex.rbf=3b1e8435  fpga_manager=operating  misterplexd pid 3823
+          /tmp/CORENAME mtime = 2026-07-28 15:10:38
+          uptime_s=3673.60 at 15:17:42  ->  boot 14:16:28  (SAME boot, no reboot)
+          /media/fat/_Utility/Plex.rbf mtime = Jul 28 14:56 (unchanged)
+```
+
+The core moved Plex -> MENU at **15:10:38**, on the same boot, with the RBF file
+untouched and the daemon surviving with its full argv. My only device action in
+that window was `cp` of two existing files to new names, which cannot set
+`/tmp/CORENAME`. **A third party changed the resident core.** This is the third
+unattributed device state change today, after the 13:44:06 and 14:16:28 reboots.
+
+### I am deliberately not loading Plex back
+
+One `load_core` would fix it and I am not doing it. I do not know who moved it or
+whether they are mid-experiment, and a contested core load is precisely the
+thrashing the lab rules ban. Overriding another actor's device state without
+coordination is worse than reporting it. It is one command away on parent's word.
+
+**Consequence for W-E2E:** the board is currently showing the **MENU UI**, which is
+a bright 1024x768 screen. Any capture taken now grades MENU, not Plex, and would
+score CONTENT_PRESENT for entirely the wrong reason. That is a false-green waiting
+to happen, and it is the same shape as `2358782e`: a frame that looks like an
+answer to a question it was never measuring. **Do not grade a capture without an
+independent `CORENAME` read at capture time.**
+
+### Protective archive taken (non-destructive, no core change)
+
+Both surviving on-device cores are now content-addressed, so the next deploy cannot
+repeat §42:
+
+```
+ARCHIVED Plex.3b1e8435.bak.rbf from Plex.rbf
+ARCHIVED Plex.fb4bad84.bak.rbf from Plex.rbf.bak
+ls: Plex.3b1e8435.bak.rbf  Plex.e9b71d95.bak.rbf  Plex.fb4bad84.bak.rbf
+```
+
+Verified after: `Plex.rbf` md5 still `3b1e8435`, `fpga_manager=operating`,
+`misterplexd` pid 3823 with `--pms` intact. Copies only; nothing overwritten,
+nothing loaded, resident core untouched.
