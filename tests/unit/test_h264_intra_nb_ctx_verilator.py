@@ -14,8 +14,9 @@ EXPECTED_RED = ROOT / "tests/unit/expected_red.py"
 
 GREEN_SCOPE = (
     "Scope: h264_intra_nb_ctx full-width pre-deblock reconstructed-neighbour context; "
-    "coded=624x480, mb_grid=39x30, luma block-level and h264_decode_top MB-level "
+    "coded=624x480, mb_grid=39x30 denominator=1170 MBs, luma block-level and h264_decode_top MB-level "
     "above/left/top-left/above-right plus chroma U/V above/left/top-left. "
+    "Availability is semantic, including first_mb_in_slice slice boundaries. "
     "It does not cover entropy parsing, residual math, deblock filtering, "
     "DPB post-deblock storage, inter prediction, or HDMI presentation."
 )
@@ -61,14 +62,19 @@ static void set_mb_planes(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
         }
 }
 
-static void start_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
+static void start_mb_slice(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y, int first_mb_in_slice) {
     dut.mb_x = mb_x;
     dut.mb_y = mb_y;
     dut.mb_width = 39;
+    dut.first_mb_in_slice = first_mb_in_slice;
     dut.mb_start = 1;
     tick(dut);
     dut.mb_start = 0;
     tick(dut);
+}
+
+static void start_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
+    start_mb_slice(dut, mb_x, mb_y, 0);
 }
 
 static void commit_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
@@ -88,6 +94,7 @@ static void commit_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
 
 static int failures = 0;
 static int checks = 0;
+static int committed_mbs = 0;
 
 static void check_bool(const char* what, bool got, bool want) {
     ++checks;
@@ -195,8 +202,9 @@ static void check_above_right(Vh264_intra_nb_ctx_tb& dut) {
     check_bool("mb37_above_right_available", dut.ctx_has_above_right, true);
     for (int i = 0; i < 4; ++i)
         check_u8("mb37_above_right_y", i, dut.ctx_above[4 + i], yval(38, 0, i, 15));
+}
 
-    start_mb(dut, 38, 1);
+static void check_right_edge_above_right_unavailable(Vh264_intra_nb_ctx_tb& dut) {
     dut.block_idx = 3;
     dut.pred_mode = 3;
     dut.eval();
@@ -204,6 +212,40 @@ static void check_above_right(Vh264_intra_nb_ctx_tb& dut) {
     check_bool("mb38_mb_avail_topright_unavailable", dut.ctx_mb_avail_topright, false);
     for (int i = 0; i < 4; ++i)
         check_u8("mb38_above_right_replicate", i, dut.ctx_above[4 + i], dut.ctx_above[3]);
+}
+
+static void check_last_mb(Vh264_intra_nb_ctx_tb& dut) {
+    dut.block_idx = 0;
+    dut.pred_mode = 2;
+    dut.eval();
+    check_bool("mb38_29_mb_avail_top", dut.ctx_mb_avail_top, true);
+    check_bool("mb38_29_mb_avail_left", dut.ctx_mb_avail_left, true);
+    check_bool("mb38_29_mb_avail_topleft", dut.ctx_mb_avail_topleft, true);
+    check_bool("mb38_29_mb_avail_topright", dut.ctx_mb_avail_topright, false);
+    check_u8("mb38_29_nb_topleft_y", 0, dut.ctx_nb_topleft, yval(37, 28, 15, 15));
+    for (int i = 0; i < 16; ++i) {
+        check_u8("mb38_29_nb_top_y", i, dut.ctx_nb_top[i], yval(38, 28, i, 15));
+        check_u8("mb38_29_nb_left_y", i, dut.ctx_nb_left[i], yval(37, 29, 15, i));
+    }
+}
+
+static void check_slice_boundary_masks_storage(Vh264_intra_nb_ctx_tb& dut) {
+    const int sx = 5;
+    const int sy = 1;
+    const int first = sy * 39 + sx;
+    start_mb_slice(dut, sx, sy, first);
+    dut.block_idx = 0;
+    dut.pred_mode = 2;
+    dut.eval();
+    check_bool("slice_boundary_top_semantic_unavailable", dut.ctx_mb_avail_top, false);
+    check_bool("slice_boundary_left_semantic_unavailable", dut.ctx_mb_avail_left, false);
+    check_bool("slice_boundary_topleft_semantic_unavailable", dut.ctx_mb_avail_topleft, false);
+    check_bool("slice_boundary_topright_semantic_unavailable", dut.ctx_mb_avail_topright, false);
+    check_u8("slice_boundary_nb_topleft", 0, dut.ctx_nb_topleft, 128);
+    for (int i = 0; i < 16; ++i) {
+        check_u8("slice_boundary_nb_top", i, dut.ctx_nb_top[i], 128);
+        check_u8("slice_boundary_nb_left", i, dut.ctx_nb_left[i], 128);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -216,6 +258,7 @@ int main(int argc, char** argv) {
     dut.block_valid = 0;
     dut.mb_commit = 0;
     dut.mb_width = 39;
+    dut.first_mb_in_slice = 0;
     dut.pred_mode = 2;
     tick(dut);
     tick(dut);
@@ -225,36 +268,65 @@ int main(int argc, char** argv) {
     start_mb(dut, 0, 0);
     check_edge_mb00(dut);
     commit_mb(dut, 0, 0);
+    ++committed_mbs;
 
     start_mb(dut, 1, 0);
     check_mb1_row0_left(dut);
     commit_mb(dut, 1, 0);
+    ++committed_mbs;
 
     for (int x = 2; x < 39; ++x) {
         start_mb(dut, x, 0);
         commit_mb(dut, x, 0);
+        ++committed_mbs;
     }
 
     start_mb(dut, 0, 1);
     check_row1_above_and_corner(dut);
     commit_mb(dut, 0, 1);
+    ++committed_mbs;
 
     start_mb(dut, 1, 1);
     check_mb11_both(dut);
     commit_mb(dut, 1, 1);
+    ++committed_mbs;
 
     for (int x = 2; x < 37; ++x) {
         start_mb(dut, x, 1);
         commit_mb(dut, x, 1);
+        ++committed_mbs;
     }
     start_mb(dut, 37, 1);
     check_above_right(dut);
+    commit_mb(dut, 37, 1);
+    ++committed_mbs;
+
+    start_mb(dut, 38, 1);
+    check_right_edge_above_right_unavailable(dut);
+    commit_mb(dut, 38, 1);
+    ++committed_mbs;
+
+    for (int y = 2; y < 30; ++y) {
+        for (int x = 0; x < 39; ++x) {
+            start_mb(dut, x, y);
+            if (x == 38 && y == 29)
+                check_last_mb(dut);
+            commit_mb(dut, x, y);
+            ++committed_mbs;
+        }
+    }
+
+    check_slice_boundary_masks_storage(dut);
 
     if (failures) {
         std::fprintf(stderr, "h264_intra_nb_ctx RTL check FAILED: failures=%d checks=%d\n", failures, checks);
         return 1;
     }
-    std::printf("h264_intra_nb_ctx RTL check PASS: checks=%d full_width_mbs=39 pre_deblock_tap=1\n", checks);
+    if (committed_mbs != 1170) {
+        std::fprintf(stderr, "FAIL h264_intra_nb_ctx: committed_mbs=%d want=1170\n", committed_mbs);
+        return 1;
+    }
+    std::printf("h264_intra_nb_ctx RTL check PASS: checks=%d full_width_mbs=39 full_height_mbs=30 denominator_mbs=%d pre_deblock_tap=1 slice_boundary_semantic=1\n", checks, committed_mbs);
     return 0;
 }
 '''
@@ -336,7 +408,13 @@ def main() -> int:
     )
     require_expected_red("h264_intra_nb_ctx_swap_chroma_uv", red_chroma)
 
-    print("OK h264_intra_nb_ctx red-checks: stub neighbours and swapped chroma U/V both failed the scoreboard")
+    red_edge = build_and_run(
+        ROOT / "build/verilator/h264_intra_nb_ctx_fault_edge_available",
+        "+define+H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE",
+    )
+    require_expected_red("h264_intra_nb_ctx_edge_available", red_edge)
+
+    print("OK h264_intra_nb_ctx red-checks: stub neighbours, swapped chroma U/V, and false edge/slice availability all failed the scoreboard")
     return 0
 
 

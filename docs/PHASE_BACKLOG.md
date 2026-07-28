@@ -2,7 +2,7 @@
 
 Update this file when work finishes. Loop agents claim items and mark `DONE` / `IN_PROGRESS` / `BLOCKED`.
 
-## ACTIVE — W-OSD reconstructed-neighbour context (**RTL GREEN, no product-decode PASS** 2026-07-28)
+## ACTIVE — W-OSD reconstructed-neighbour context (**REACHABLE UNDER REAL-INTRA, no product-decode PASS** 2026-07-28)
 
 Raw findings / scope first:
 
@@ -15,19 +15,32 @@ Raw findings / scope first:
   port shape already consumed by `h264_decode_top` (`mb_avail_left/top/topright/topleft`,
   `nb_top[0:15]`, `nb_left[0:15]`, `nb_topleft`, `nb_topright[0:3]`). MB0 external neighbours
   correctly report unavailable, so MB0 mismatches are not explained by this external line buffer.
+- `stream_path.sv` now instantiates `h264_intra_nb_ctx` in the `DECODE_REAL_INTRA=1` branch and
+  drives `h264_decode_top`'s luma neighbour ports from that producer instead of hardcoded
+  unavailable/`128` placeholders. The context commits the decoder's reconstructed luma one cycle
+  after `mb_recon_valid`, preserving the PRE-deblock tap; chroma is still tied neutral until the
+  consumer grows chroma neighbour ports.
 - Seam statement for W-DEBLOCK: intra prediction reads this module's **PRE-deblock** reconstructed
   samples. The DPB/reference path must consume **POST-deblock** samples from the deblock commit path;
   these taps are intentionally separate.
 - Gate: `python3 tests/unit/test_h264_intra_nb_ctx_verilator.py` prints `Scope:` first and compares
-  exact block-level and `h264_decode_top` MB-level luma/chroma neighbour bytes across a 39-MB row
-  and row transition. It does not cover entropy parsing, residual math, deblock filtering,
-  DPB post-deblock storage, inter prediction, or HDMI.
+  exact block-level and `h264_decode_top` MB-level luma/chroma neighbour bytes while walking all
+  `1170` MBs (`39x30`), including interior, left edge, top edge, right-edge above-right unavailable,
+  last MB, and a slice-boundary case where storage-valid samples must be semantically unavailable.
+  It does not cover entropy parsing, residual math, deblock filtering, DPB post-deblock storage,
+  inter prediction, or HDMI.
 - Red checks: `H264_INTRA_NB_CTX_FAULT_STUB_NEIGHBORS` fails by forcing neighbour bytes back to 128;
-  `H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV` fails the chroma scoreboard. Both are registered in the
-  expected-red manifest and define-parity allowlist.
-- Validation: neighbour RTL gate `rc=0`; `make define-parity rc=0`; `make quartus-sv-subset rc=0`.
-  Full `make unit` was attempted but correctly refused because the authorised Quartus fit was live
-  (`PREFLIGHT REFUSED: a local Quartus fit is running`); do not score that as a unit failure.
+  `H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV` fails the chroma scoreboard; and
+  `H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE` fails the edge/slice availability scoreboard. All are
+  registered in the expected-red manifest and define-parity allowlist.
+- Reachability: W-GATE's `scripts/check_rtl_module_instantiations.py` reports
+  `DEFAULT_OFF_DEFINE_REACHABLE_MODULE h264_intra_nb_ctx defines=DECODE_REAL_INTRA=1`; with
+  `--define DECODE_REAL_INTRA=1 --list-reachable`, `h264_intra_nb_ctx`, `h264_decode_top`,
+  `h264_intra4x4_pred`, and `h264_intra16x16_pred` are reachable together. This is honest:
+  default `DECODE_REAL_INTRA=0` still ships the stub path.
+- Validation: neighbour RTL gate `rc=0`; stream-path real-intra gate `rc=0`; reachability gate
+  `rc=0` with mutation red `rc=1` / restore green `rc=0`; `make define-parity rc=0`;
+  `make quartus-sv-subset rc=0`; `make unit rc=0`.
 
 Conclusion: reconstructed-neighbour storage now exists and is non-vacuously gated, but this is not a
 claim that the product decoder works. Live PMS is still mostly P-slices (`343 P / 7 IDR`), so intra

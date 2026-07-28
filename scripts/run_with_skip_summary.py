@@ -61,7 +61,12 @@ def live_pms_missing_reason() -> str:
         missing.append("PLEX_BASE")
     if not (os.environ.get("PLEX_TOKEN") or conf_val("PLEX_TOKEN", conf)):
         missing.append("PLEX_TOKEN")
-    if not (os.environ.get("MISTERPLEX_BASELINE_KEY") or os.environ.get("PLEX_KEY")):
+    if not (
+        os.environ.get("MISTERPLEX_BASELINE_KEY")
+        or os.environ.get("PLEX_KEY")
+        or conf_val("MISTERPLEX_BASELINE_KEY", conf)
+        or conf_val("PLEX_KEY", conf)
+    ):
         missing.append("MISTERPLEX_BASELINE_KEY")
     if shutil.which("ffmpeg") is None:
         missing.append("ffmpeg")

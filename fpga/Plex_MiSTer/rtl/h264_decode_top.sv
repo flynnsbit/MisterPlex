@@ -34,11 +34,11 @@ module h264_decode_top (
     // ── Per-block coefficient input ──
     input  wire        block_valid,        // Pulse: coefficients ready
     input  wire [3:0]  block_index,        // 0-15 (H.264 raster-to-zigzag scan order)
-    input  wire signed [8:0] block_coeff [0:15], // CAVLC coefficients (zigzag order)
+    input  wire signed [15:0] block_coeff [0:15], // CAVLC coefficients (zigzag order)
 
     // ── I_16x16 DC bypass (from Hadamard transform) ──
     input  wire        i16_dc_valid,       // Hadamard DC values ready (all 16)
-    input  wire signed [17:0] i16_dc [0:15], // Post-Hadamard DC for each 4x4 block
+    input  wire signed [28:0] i16_dc [0:15], // Post-Hadamard DC for each 4x4 block
 
     // ── I_4x4 prediction modes (from parsing) ──
     input  wire [3:0]  i4_modes [0:15],    // Per-block intra4x4 prediction mode
@@ -117,14 +117,14 @@ module h264_decode_top (
     // ════════════════════════════════════════════════════════════════════
     // SHARED ARITHMETIC PIPELINE (dequant → IDCT → recon)
     // ════════════════════════════════════════════════════════════════════
-    reg signed [8:0]   pipe_coeff [0:15];
+    reg signed [15:0]  pipe_coeff [0:15];
     reg [5:0]          pipe_qp;
     reg [7:0]          pipe_pred [0:15];
     reg [3:0]          pipe_block_idx;
     reg                pipe_valid;
     reg                pipe_is_i16;
 
-    wire signed [17:0] dq_out [0:15];
+    wire signed [28:0] dq_out [0:15];
     h264_dequant4x4 u_dequant (
         .coeff(pipe_coeff),
         .qp(pipe_qp),
@@ -133,8 +133,8 @@ module h264_decode_top (
     );
 
     // For I_16x16 blocks: DC comes from Hadamard, replace dq_out[0]
-    reg signed [17:0] dq_final [0:15];
-    reg signed [17:0] latched_i16_dc [0:15];
+    reg signed [28:0] dq_final [0:15];
+    reg signed [28:0] latched_i16_dc [0:15];
     integer dqi;
     always @* begin
         for (dqi = 0; dqi < 16; dqi = dqi + 1) begin
@@ -145,7 +145,7 @@ module h264_decode_top (
         end
     end
 
-    wire signed [17:0] idct_out [0:15];
+    wire signed [28:0] idct_out [0:15];
     h264_idct4x4 u_idct (
         .dequant(dq_final),
         .residual(idct_out)
@@ -162,8 +162,12 @@ module h264_decode_top (
     // INTRA 16×16 PREDICTION
     // ════════════════════════════════════════════════════════════════════
     wire       i16_unsupported;
+    wire       i16_pred_valid;
+    reg        i16_pred_ready;
     wire [7:0] i16_pred_pixels [0:255];
     h264_intra16x16_pred u_i16_pred (
+        .clk(clk),
+        .start(mb_start && is_i16x16),
         .mode(i16_pred_mode),
         .above(nb_top),
         .left(nb_left),
@@ -171,6 +175,7 @@ module h264_decode_top (
         .has_above(mb_avail_top),
         .has_left(mb_avail_left),
         .unsupported(i16_unsupported),
+        .valid(i16_pred_valid),
         .pred(i16_pred_pixels)
     );
 
@@ -350,11 +355,12 @@ module h264_decode_top (
             pipe_valid    <= 1'b0;
             mb_started    <= 1'b0;
             pipe_is_i16   <= 1'b0;
+            i16_pred_ready <= 1'b0;
             pipe_block_idx <= 4'd0;
             pipe_qp       <= 6'd0;
             for (si = 0; si < 16; si = si + 1) begin
-                pipe_coeff[si] <= 9'sd0;
-                latched_i16_dc[si] <= 18'sd0;
+                pipe_coeff[si] <= 16'sd0;
+                latched_i16_dc[si] <= 29'sd0;
             end
             for (si = 0; si < 256; si = si + 1) begin
                 local_recon[si] <= 8'd0;
@@ -362,6 +368,8 @@ module h264_decode_top (
             end
         end else begin
             mb_recon_valid <= 1'b0;
+            if (i16_pred_valid)
+                i16_pred_ready <= 1'b1;
 
             // Latch I_16x16 DC values when provided
             if (i16_dc_valid)
@@ -373,12 +381,13 @@ module h264_decode_top (
                 blocks_done <= 5'd0;
                 mb_started  <= 1'b1;
                 pipe_is_i16 <= is_i16x16;
+                i16_pred_ready <= !is_i16x16;
                 pipe_qp     <= mb_qp_y;
             end
 
             case (state)
                 ST_IDLE: begin
-                    if (block_valid && mb_started) begin
+                    if (block_valid && mb_started && (!pipe_is_i16 || i16_pred_ready)) begin
                         // Latch coefficients and block index
                         for (si = 0; si < 16; si = si + 1)
                             pipe_coeff[si] <= block_coeff[si];

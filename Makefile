@@ -122,6 +122,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
 	$(ROOT)/tests/unit/test_level_width_verilator.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
+	$(ROOT)/tests/unit/test_stream_path_real_intra_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
@@ -131,6 +132,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	bash $(ROOT)/tests/unit/test_ddr_frame_store_swap_livelock.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -147,6 +149,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+	bash $(ROOT)/tests/unit/test_ddr_frame_store_swap_livelock.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh

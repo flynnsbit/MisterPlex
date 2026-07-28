@@ -15,7 +15,8 @@ conf_val() {
 }
 PLEX_BASE="${PLEX_BASE:-$(conf_val PLEX_BASE "$CONF_FILE")}"
 PLEX_TOKEN="${PLEX_TOKEN:-$(conf_val PLEX_TOKEN "$CONF_FILE")}"
-MISTERPLEX_BASELINE_KEY="${MISTERPLEX_BASELINE_KEY:-${PLEX_KEY:-}}"
+MISTERPLEX_BASELINE_KEY="${MISTERPLEX_BASELINE_KEY:-${PLEX_KEY:-$(conf_val MISTERPLEX_BASELINE_KEY "$CONF_FILE")}}"
+[[ -n "${MISTERPLEX_BASELINE_KEY:-}" ]] || MISTERPLEX_BASELINE_KEY="$(conf_val PLEX_KEY "$CONF_FILE")"
 if [[ -z "${PLEX_BASE:-}" || -z "${PLEX_TOKEN:-}" || -z "${MISTERPLEX_BASELINE_KEY:-}" ]]; then
   echo "SKIP-NOT-PASS test_pms_baseline_profile: set PLEX_BASE, PLEX_TOKEN, and MISTERPLEX_BASELINE_KEY for the live PMS Baseline check." >&2
   echo "SKIP-NOT-PASS: this target is intentionally outside make unit and a skip must not be reported as pass." >&2

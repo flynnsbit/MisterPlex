@@ -16,6 +16,7 @@ module h264_intra_nb_ctx #(
     input  wire [7:0]  mb_x,
     input  wire [7:0]  mb_y,
     input  wire [7:0]  mb_width,
+    input  wire [15:0] first_mb_in_slice,
     input  wire        mb_start,
 
     input  wire [3:0]  block_idx,
@@ -68,6 +69,24 @@ module h264_intra_nb_ctx #(
     wire [3:0] blk_x = {block_idx[1:0], 2'b00};
     wire [3:0] blk_y = {block_idx[3:2], 2'b00};
     wire [7:0] active_mb_width = (mb_width == 8'd0) ? MB_WIDTH_DEFAULT[7:0] : mb_width;
+    wire [15:0] active_mb_width16 = {8'd0, active_mb_width};
+    wire [15:0] cur_mb_index = ({8'd0, mb_y} * active_mb_width16) + {8'd0, mb_x};
+    wire [15:0] top_mb_index = cur_mb_index - active_mb_width16;
+    wire [15:0] top_left_mb_index = top_mb_index - 16'd1;
+    wire [15:0] top_right_mb_index = top_mb_index + 16'd1;
+
+    // H.264 neighbour availability is semantic, not just storage-valid: samples
+    // that exist in the line buffer but fall before first_mb_in_slice are not
+    // available to this slice.
+    wire ext_left_available = (mb_x != 8'd0) &&
+                              ((cur_mb_index - 16'd1) >= first_mb_in_slice);
+    wire ext_top_available = (mb_y != 8'd0) &&
+                             (top_mb_index >= first_mb_in_slice);
+    wire ext_topleft_available = (mb_x != 8'd0) && (mb_y != 8'd0) &&
+                                 (top_left_mb_index >= first_mb_in_slice);
+    wire ext_topright_available = (mb_y != 8'd0) &&
+                                  ((mb_x + 8'd1) < active_mb_width) &&
+                                  (top_right_mb_index >= first_mb_in_slice);
 
     function automatic int luma_addr(input [7:0] x, input [3:0] col);
         begin
@@ -221,10 +240,10 @@ module h264_intra_nb_ctx #(
         has_chroma_above = 1'b1;
         has_chroma_left = 1'b1;
 `else
-        has_above = (mb_y != 8'd0) || (blk_y != 4'd0);
-        has_left = (mb_x != 8'd0) || (blk_x != 4'd0);
-        has_chroma_above = (mb_y != 8'd0);
-        has_chroma_left = (mb_x != 8'd0);
+        has_above = ext_top_available || (blk_y != 4'd0);
+        has_left = ext_left_available || (blk_x != 4'd0);
+        has_chroma_above = ext_top_available;
+        has_chroma_left = ext_left_available;
 `endif
         has_above_right = 1'b0;
         mb_avail_topright = 1'b0;
@@ -249,11 +268,11 @@ module h264_intra_nb_ctx #(
         mb_avail_left = 1'b1;
         mb_avail_topleft = 1'b1;
 `else
-        mb_avail_top = (mb_y != 8'd0);
-        mb_avail_left = (mb_x != 8'd0);
-        mb_avail_topleft = (mb_x != 8'd0) && (mb_y != 8'd0);
+        mb_avail_top = ext_top_available;
+        mb_avail_left = ext_left_available;
+        mb_avail_topleft = ext_topleft_available;
 `endif
-        mb_avail_topright = mb_avail_top && ((mb_x + 8'd1) < active_mb_width);
+        mb_avail_topright = ext_topright_available;
         for (oi = 0; oi < 16; oi = oi + 1) begin
             nb_top[oi] = mb_avail_top ?
                          maybe_fault_luma(above_y_row[luma_addr(mb_x, oi[3:0])]) : 8'd128;
@@ -285,7 +304,7 @@ module h264_intra_nb_ctx #(
                     has_above_right = 1'b1;
                     for (oi = 0; oi < 4; oi = oi + 1)
                         above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x + 4'd4 + oi[3:0])]);
-                end else if ((mb_x + 8'd1) < active_mb_width) begin
+                end else if (ext_topright_available) begin
                     has_above_right = 1'b1;
                     for (oi = 0; oi < 4; oi = oi + 1)
                         above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
@@ -314,7 +333,7 @@ module h264_intra_nb_ctx #(
             else if (blk_x != 4'd0 && blk_y == 4'd0)
                 top_left = has_above ? maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x - 4'd1)]) : 8'd128;
             else
-                top_left = (has_above && has_left) ? maybe_fault_luma(tl_y_corner) : 8'd128;
+                top_left = ext_topleft_available ? maybe_fault_luma(tl_y_corner) : 8'd128;
         end
 
         if (has_chroma_above) begin
@@ -329,8 +348,8 @@ module h264_intra_nb_ctx #(
                 chroma_v_left[oi] = left_v_col[oi];
             end
         end
-        chroma_u_top_left = (has_chroma_above && has_chroma_left) ? tl_u_corner : 8'd128;
-        chroma_v_top_left = (has_chroma_above && has_chroma_left) ? tl_v_corner : 8'd128;
+        chroma_u_top_left = ext_topleft_available ? tl_u_corner : 8'd128;
+        chroma_v_top_left = ext_topleft_available ? tl_v_corner : 8'd128;
     end
 
 endmodule

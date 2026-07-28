@@ -186,6 +186,15 @@
         "FAIL h264_intra_nb_ctx: mb10_left_u[0]",
         "h264_intra_nb_ctx RTL check FAILED"
       ]
+    },
+    {
+      "id": "h264_intra_nb_ctx_edge_available",
+      "owner": "tests/unit/test_h264_intra_nb_ctx_verilator.py",
+      "why": "Forcing edge/slice-boundary neighbours available must fail the semantic availability scoreboard; storage-valid samples across picture or slice boundaries are not legal intra neighbours.",
+      "required_substrings": [
+        "FAIL h264_intra_nb_ctx: mb00_has_above",
+        "h264_intra_nb_ctx RTL check FAILED"
+      ]
     }
   ]
 }
