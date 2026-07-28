@@ -85,20 +85,28 @@ module ddr_bus_arbiter (
 	reg grant_m1;
 	reg rsp_owner_m1;
 	reg [8:0] rsp_left;
+	reg [63:0] rsp_data_r;
+	reg        rsp_valid_r;
+	reg        rsp_owner_m1_r;
 
 	wire rsp_active = rsp_left != 9'd0;
+	wire rsp_pipe_active = rsp_active | rsp_valid_r;
 	wire m0_cmd = m0_rd | m0_we;
 	wire m1_cmd = m1_rd | m1_we;
 	wire use_m1 = grant_m1;
 	wire [7:0] selected_burst = use_m1 ? m1_burstcnt : m0_burstcnt;
 
-	assign m0_busy = DDRAM_BUSY | grant_m1 | (rsp_active & rsp_owner_m1);
+	assign m0_busy = DDRAM_BUSY | grant_m1 |
+	                 (rsp_active & rsp_owner_m1) |
+	                 (rsp_valid_r & rsp_owner_m1_r);
 
 	// m1_busy: register on clk_ddr to eliminate combinational glitches,
 	// then 2-FF sync to clk_m1 for proper CDC.  The consumer uses this
 	// only as a level gate (!busy before issuing commands), so the ~100ns
 	// sync latency just delays the next command — no protocol breakage.
-	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 | (rsp_active & !rsp_owner_m1);
+	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 |
+	                    (rsp_active & !rsp_owner_m1) |
+	                    (rsp_valid_r & !rsp_owner_m1_r);
 	reg  m1_busy_r;
 	always @(posedge clk) begin
 		if (rst)
@@ -125,8 +133,46 @@ module ddr_bus_arbiter (
 	assign DDRAM_BE       = use_m1 ? m1_be        : m0_be;
 	assign DDRAM_WE       = use_m1 ? m1_we        : m0_we;
 
-	assign m0_dout = DDRAM_DOUT;
-	assign m0_dout_ready = DDRAM_DOUT_READY & rsp_active & !rsp_owner_m1;
+	wire [63:0] ddram_dout_pad;
+	wire        ddram_dout_ready_pad;
+	genvar rsp_pad_i;
+	generate
+		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_in_pad
+			mplex_hold_lcell rsp_data_in_pad (
+				.din  (DDRAM_DOUT[rsp_pad_i]),
+				.dout (ddram_dout_pad[rsp_pad_i])
+			);
+		end
+	endgenerate
+	mplex_hold_lcell rsp_ready_in_pad (
+		.din  (DDRAM_DOUT_READY),
+		.dout (ddram_dout_ready_pad)
+	);
+
+	wire [63:0] rsp_data_out_pad;
+	wire        rsp_valid_out_pad;
+	wire        rsp_owner_m1_out_pad;
+	generate
+		for (rsp_pad_i = 0; rsp_pad_i < 64; rsp_pad_i = rsp_pad_i + 1) begin : gen_rsp_out_pad
+			mplex_hold_lcell rsp_data_out_pad_i (
+				.din  (rsp_data_r[rsp_pad_i]),
+				.dout (rsp_data_out_pad[rsp_pad_i])
+			);
+		end
+	endgenerate
+	mplex_hold_lcell rsp_valid_out_pad_i (
+		.din  (rsp_valid_r),
+		.dout (rsp_valid_out_pad)
+	);
+	mplex_hold_lcell rsp_owner_out_pad_i (
+		.din  (rsp_owner_m1_r),
+		.dout (rsp_owner_m1_out_pad)
+	);
+
+	wire rsp_raw_valid = ddram_dout_ready_pad & rsp_active;
+
+	assign m0_dout = rsp_data_out_pad;
+	assign m0_dout_ready = rsp_valid_out_pad & !rsp_owner_m1_out_pad;
 
 	// ── m1 response FIFO (clk_ddr → clk_m1) ──
 	// DDRAM_DOUT_READY is a single clk_ddr pulse per beat.  The clk_m1
@@ -136,13 +182,13 @@ module ddr_bus_arbiter (
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
-	wire        m1_rsp_wr_en = DDRAM_DOUT_READY & rsp_active & rsp_owner_m1;
+	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
 
 	async_fifo #(.WIDTH(64), .AW(3)) m1_rsp_fifo (
 		.wr_clk   (clk),
 		.wr_reset (rst),
 		.wr_en    (m1_rsp_wr_en),
-		.wr_data  (DDRAM_DOUT),
+		.wr_data  (rsp_data_out_pad),
 		.wr_full  (m1_rsp_fifo_full),
 		.wr_almost_full (),
 
@@ -161,11 +207,20 @@ module ddr_bus_arbiter (
 			grant_m1 <= 1'b0;
 			rsp_owner_m1 <= 1'b0;
 			rsp_left <= 9'd0;
+			rsp_data_r <= 64'd0;
+			rsp_valid_r <= 1'b0;
+			rsp_owner_m1_r <= 1'b0;
 		end else begin
+			rsp_valid_r <= rsp_raw_valid;
+			if (rsp_raw_valid) begin
+				rsp_data_r <= ddram_dout_pad;
+				rsp_owner_m1_r <= rsp_owner_m1;
+			end
+
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
-			if (!DDRAM_BUSY && !rsp_active) begin
+			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
 					if (m1_rd) begin
 						rsp_owner_m1 <= 1'b1;
