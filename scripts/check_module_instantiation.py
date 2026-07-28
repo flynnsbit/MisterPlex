@@ -139,6 +139,8 @@ def main() -> int:
             unaccounted.append((module, source))
 
     # Report
+    print(f"Scope: {len(rtl_modules)} RTL module declarations cross-referenced against "
+          f"{len(product_modules)} product hierarchy entries from {map_rpt.name}")
     print(f"Module instantiation coverage: {len(rtl_modules)} RTL modules")
     print(f"  In product:         {len(in_product):3d}")
     print(f"  Bench-only:         {len(in_bench_only):3d}")

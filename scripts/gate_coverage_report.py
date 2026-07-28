@@ -680,16 +680,30 @@ def format_report(gates: list[GateReport]) -> str:
     target_counts = Counter(g.verification_target for g in gates)
     lines.append("## Verification Target Summary")
     lines.append("  (What does each gate actually exercise?)")
-    for target in ["RTL", "HOST", "DEVICE", "STATIC", "NONE"]:
+    for target in ["RTL_SIM", "RTL", "HOST", "DEVICE", "STATIC", "NONE"]:
         count = target_counts.get(target, 0)
         if count:
             names = [g.id for g in gates if g.verification_target == target]
             lines.append(f"  {target:8s}: {count:2d} gate(s) — {', '.join(names)}")
     lines.append("")
-    lines.append("  ⚠️  0 gates exercise RTL with stimulus (simulation).")
-    lines.append("  ⚠️  0 gates exercise HOST decode model.")
-    lines.append("  ⚠️  'rtl-lint' parses RTL but applies NO functional stimulus.")
-    lines.append("  ⚠️  'edges' requires device — NOT runnable in CI.")
+
+    rtl_sim_count = target_counts.get("RTL_SIM", 0)
+    host_count = target_counts.get("HOST", 0)
+    if rtl_sim_count == 0:
+        lines.append("  ⚠️  0 gates exercise RTL with stimulus (simulation).")
+        lines.append("      Criteria for RTL_SIM: gate must (a) invoke Verilator to build+run")
+        lines.append("      a simulation, (b) feed functional stimulus, (c) compare output")
+        lines.append("      against a golden reference, (d) run in make unit.")
+        lines.append("      w-rel's RTL-in-the-loop scorer (76,800 px, MAE 0.000) qualifies")
+        lines.append("      but is not yet wired into this gate suite.")
+    if host_count == 0:
+        lines.append("  ⚠️  0 gates exercise HOST decode model.")
+    rtl_parse = [g for g in gates if g.verification_target == "RTL"]
+    if rtl_parse:
+        lines.append(f"  ⚠️  '{rtl_parse[0].id}' parses RTL but applies NO functional stimulus.")
+    device_gates = [g for g in gates if g.verification_target == "DEVICE"]
+    if device_gates:
+        lines.append(f"  ⚠️  '{device_gates[0].id}' requires device — NOT runnable in CI.")
     lines.append("")
 
     if dead:

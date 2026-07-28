@@ -152,9 +152,13 @@ def main() -> int:
     hierarchy = set()
     if map_rpt.exists():
         hierarchy = parse_hierarchy_from_map_report(map_rpt)
+        print(f"Scope: {len(hierarchy)} modules from {map_rpt.name}, "
+              f"checking {len(denied_modules)} deny-list entries")
         print(f"Product hierarchy: {len(hierarchy)} modules from {map_rpt.name}")
     elif fit_rpt.exists():
         hierarchy = parse_hierarchy_from_fit_report(fit_rpt)
+        print(f"Scope: {len(hierarchy)} modules from {fit_rpt.name}, "
+              f"checking {len(denied_modules)} deny-list entries")
         print(f"Product hierarchy: {len(hierarchy)} modules from {fit_rpt.name}")
 
     if not hierarchy:

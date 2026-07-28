@@ -131,14 +131,18 @@ def main() -> int:
             return 4
 
     findings = []
+    files_scanned = 0
     for scan_dir in scan_dirs:
         for path in sorted(scan_dir.rglob("*")):
             if path.suffix in (".py", ".cpp", ".sh") and path.is_file():
                 if is_infra(path):
                     continue
+                files_scanned += 1
                 result = scan_file(path)
                 if result:
                     findings.append(result)
+
+    print(f"Scope: scanned {files_scanned} test/tool files for RTL claims")
 
     # Load known findings
     known_files: dict[str, str] = {}

@@ -172,6 +172,7 @@ def main() -> int:
     allowlist = load_allowlist(Path(args.allowlist))
 
     all_findings = []
+    files_scanned = 0
     for scan_dir in args.scan_dirs:
         p = Path(scan_dir)
         if not p.exists():
@@ -179,6 +180,7 @@ def main() -> int:
             return 4
         for path in sorted(p.rglob("*")):
             if path.suffix in (".py", ".sh", ".cpp") and path.is_file():
+                files_scanned += 1
                 all_findings.extend(scan_file(path))
 
     # Deduplicate by file+line+pattern
@@ -192,6 +194,8 @@ def main() -> int:
             if f["allowlisted"]:
                 f["allowlist_justification"] = allowlist[key]
             unique.append(f)
+
+    print(f"Scope: scanned {files_scanned} files across {len(args.scan_dirs)} directories")
 
     if args.write_findings:
         out = Path(args.write_findings)

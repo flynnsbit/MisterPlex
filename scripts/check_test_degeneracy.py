@@ -180,6 +180,9 @@ def run(known_findings_path: Path | None = None) -> int:
             continue
         findings.append(result)
 
+    print(f"Scope: scanned {len(test_files)} test/tool files, "
+          f"{len(guarded)} guarded, {len(skipped_infra)} infra-skipped")
+
     # Separate allowlisted from active
     active = []
     allowlisted_findings = []

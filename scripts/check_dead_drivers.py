@@ -164,11 +164,20 @@ def main() -> int:
         return 4
 
     # Gather findings
+    sources_used = []
     findings = []
     if compile_log and compile_log.exists():
+        log_text = compile_log.read_text(errors='replace')
         findings.extend(parse_10036_warnings(compile_log))
+        sources_used.append(f"compile.log ({compile_log.name})")
+        # Canary: verify DDR_FRAME_STORE=1 was active (product config)
+        if 'ddr_frame_store' not in log_text.lower():
+            print("WARNING: compile.log does not show ddr_frame_store elaboration — "
+                  "may not be the DDR_FRAME_STORE=1 product build", file=sys.stderr)
     if map_rpt and map_rpt.exists():
         findings.extend(parse_dangling_ports(map_rpt))
+        sources_used.append(f"map.rpt ({map_rpt.name})")
+    print(f"Scope: {', '.join(sources_used) or 'NONE'}")
 
     # Load known findings
     known_keys: dict[str, str] = {}  # key -> owner/reason

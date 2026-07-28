@@ -168,6 +168,9 @@ def main(argv: list[str]) -> int:
     tests = discover_test_macros()
     allow_test, volatile_values = load_allowlist(args.allowlist)
 
+    print(f"Scope: {len(quartus)} Quartus macros, {len(lint)} Verilator/lint macros, "
+          f"{len(tests)} test-only macros from {args.qsf}")
+
     print("DEFINE_PARITY_TABLE_BEGIN")
     print(format_table(quartus, lint, tests, allow_test, volatile_values))
     print("DEFINE_PARITY_TABLE_END")
