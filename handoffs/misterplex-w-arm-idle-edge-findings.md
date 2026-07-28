@@ -465,3 +465,142 @@ capture; the fix itself (prefetch depth `FRAME_LINE_COUNT`, and/or changing the
 miss policy from black to last-good-pixel in `ddr_frame_store.sv`) is RTL-owned.
 The underrun counter still reads saturated (`0xFFFF`), which proves ">=65535
 misses since reset", **not** a current rate.
+
+---
+
+## 12. WITHDRAWAL and re-proof, after W-FIT's dead-fabric finding
+
+W-FIT deployed `fb4bad84` and then demonstrated that **the fabric writes nothing
+to DDR** under it: poking all four mailbox words to `0xA5A5A5A5` left them
+unrestored after 6 s. DDR survives FPGA reconfiguration, so any "live" mailbox
+value read after that deploy may be residue from the previous bitstream.
+
+That lands directly on two things I wrote in §11. One of them was wrong. I am
+withdrawing it.
+
+### 12.1 WITHDRAWN: the §11.4 "hardware oracle" as applied to `fb4bad84`
+
+I claimed:
+
+> Those magics are readable in live DDR with an advancing heartbeat:
+> `PLXF lo=0x504C5846 hi=0xFFFF10D5` ⇒ `ddr_frame_store` is in the resident
+> bitstream. Measured, not inferred.
+
+**That claim is withdrawn.** It is the house failure mode and I committed it.
+Three separate defects in one sentence:
+
+1. **PLXF is `fpga_to_arm`** (`mailbox_abi_spec.hpp:118`). Under a fabric that
+   writes no DDR, its contents are residue from `00eebd5e`, not evidence about
+   `fb4bad84`.
+2. **The heartbeat was not advancing and I never checked that it was.** Every
+   sample I ever took post-deploy read the identical word. Re-measured
+   deliberately, 12 samples over 60 s:
+   ```
+   t=0..11  PLXF_hi=0xFFFF10D5  underrun=65535 debug=0x10 seq=213   (frozen)
+            PLXD_hi=0x00000000  frames_done=0                       (zeroed)
+   ```
+   `seq=213` is constant across all 12. I inherited "advancing" from the
+   pre-deploy `00eebd5e` observation and attached it to a post-deploy reading
+   that was static. A true number (`0x504C5846` really is the PLXF magic) about
+   the wrong thing (whether *this* bitstream wrote it).
+3. **"Stronger than post-fit hierarchy" was wrong.** A DDR read cannot be
+   stronger than post-fit hierarchy when DDR is not reset by reconfiguration.
+
+What survives: the oracle was sound **for `00eebd5e`**, where W-FIT independently
+reproduced `free=0 disp=1 swap=1` with `frames_done` advancing +681/10 s. So the
+§11.2 reachability green retains hardware corroboration **for the old build
+only**. For `fb4bad84` I have no hardware evidence about which `ifdef` branch is
+resident, and the §11.3 false-reachable blind spot is therefore unresolved on the
+current build. Post-fit hierarchy (W-FIT's `4757 ALUT / 2298 reg / 96 M10K` for
+`ddr_frame_store`) is now the best available oracle, not mine.
+
+### 12.2 NOT withdrawn, and now proven properly: the ARM-side result
+
+The same ambiguity applies in principle to my byte-exact bank comparison — a
+match could be residue from a pre-deploy paint. §11.5 asserted the result was
+"reproduced on a second bitstream"; strictly, what I had shown was that the bytes
+were correct, not that they were *fresh*. That gap is real and I have now closed
+it by measurement instead of argument.
+
+**Poison-and-heal probe** (`tests/hw/test_idle_ddr_freshness.sh`):
+
+```
+ORIGINAL          0x2D2D2D2D x4  at 0x30000000
+poison            devmem <4 words> = 0xDEADBEEF
+POISON_LANDED     4/4 words read back as 0xDEADBEEF
+full-payload gate rc=1  luma_mismatch_bytes=16/299520     <- poison detected
+...wait...
+RESTORED_AFTER_S  51   (timeout 100s)
+full-payload gate rc=0  luma_mismatch_bytes=0/299520 u=0/74880 v=0/74880
+```
+
+The ARM overwrote a deliberate corruption and restored the byte-exact product
+payload in 51 s, under RBF `fb4bad84`, with no fabric participation. Therefore:
+
+- The bank is a **live ARM write, not DDR residue.** §11.5 now stands on
+  measurement.
+- **The ARM write path is correct and active on the current build.** The idle
+  artifact is not on the ARM side. Unchanged conclusion, better evidence.
+- Bonus sensitivity datum: the gate resolved a **16-byte** corruption in 299520
+  luma bytes — 1 part in 18720. "Can you make it fail" is answered at fine
+  granularity, not just by the blunt whole-frame red.
+
+### 12.3 New finding: the doorbell is not a liveness instrument for idle
+
+Measured across the poison/heal cycle:
+
+```
+before heal   DOORBELL_hi=0x200097D5  db_seq=38869
+after  heal   DOORBELL_hi=0x200097D5  db_seq=38869
+```
+
+The ARM **rewrote the entire bank without bumping PLXK seq.** `db_seq` was also
+static across the full 60 s watch. So a stalled doorbell does **not** imply the
+ARM has stopped publishing, and anyone using PLXK seq as an ARM-liveness signal
+will get a false negative on a static idle screen. Only content comparison
+distinguishes them. (PLXK is `arm_to_fpga` and so is *not* void under the dead
+fabric — it is simply the wrong instrument for this question.)
+
+### 12.4 Consequences I accept for my own gates
+
+`tests/hw/test_idle_ddr_frame.sh` prints PLXD/PLXF lines. Those lines are now
+**decoration, not data** — they are informational output and are *not* part of
+the grade, which is purely the positional byte comparison. No result of mine
+depends on a `fpga_to_arm` mailbox. I have left the lines in because seeing
+frozen residue in the log is useful context, but no claim may be built on them
+while the fabric is silent.
+
+### 12.5 On W-FIT's two notes about `3798793`
+
+Both are correct and I am not contesting either.
+
+- `(void)plannedBank;` does widen behaviour: the caller's ping-pong plan becomes
+  advisory on both stuck paths, not merely on the one being fixed. That is a
+  behavioural change, not a pure bug fix, and it should be reviewed as one.
+- **The fallback is flattered by the current broken device.** With `free_mask=0`
+  permanently, the timed fallback is the *only* live path, so any measurement of
+  it taken now is measuring a degenerate case. On a healthy fabric
+  (`free_mask != 0`) the ARM never reaches it and the change is dead code.
+
+Given §1 and §12.2 — the ARM writes byte-exact correct payload, fresh, on the
+current build — `3798793` is **not** the fix for the idle artifact and should not
+be integrated as if it were. Sequencing it after a graded RBF, as W-FIT has done,
+is the right call. I am not asking for it to be integrated.
+
+### 12.6 Gate inventory delta
+
+| Gate | Scope | Green | Red | Skip |
+|---|---|---|---|---|
+| `tests/hw/test_idle_ddr_freshness.sh` | 4 words poisoned, full 449280-byte payload verified | rc=0, restored in 51s | `IDLE_FRESH_NO_RESTORE=1 IDLE_FRESH_TIMEOUT_S=10` -> rc=1, originals restored by the probe | unreachable host -> rc=77 |
+
+The probe is reversible by construction: it records the original words before
+poisoning and writes them back on every failure path, so a red leaves the bank as
+it found it. Verified — the full-payload gate was rc=0 immediately after the red
+run.
+
+### 12.7 What I still cannot say
+
+Unchanged: I have never observed the artifact's pixels. No claim here is about
+what is on the screen. With the fabric writing no DDR at all, the underrun-rate
+measurement in §11.9 is not merely blocked on a core reset — the counter itself
+is a dead instrument on this build.
