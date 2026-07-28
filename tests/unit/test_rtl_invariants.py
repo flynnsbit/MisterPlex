@@ -277,6 +277,25 @@ def sv_const(text: str, name: str) -> int:
     return parse_num(matches[0].group(1))
 
 
+def sv_param_expr(text: str, name: str) -> str:
+    m = re.search(
+        rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(name)}\s*=\s*([^,\n;)]+)",
+        text,
+    )
+    if not m:
+        fail(f"{name} is missing from RTL")
+    return m.group(1).strip()
+
+
+def sv_expr_uses_doorbell_offset(expr: str, offset: int) -> bool:
+    compact = norm(expr).replace("_", "")
+    return compact in {
+        f"DOORBELLPHYS+32'h{offset:X}",
+        f"DOORBELLPHYS+32'h{offset:x}",
+        f"DOORBELLPHYS+{offset}",
+    }
+
+
 def cpp_const_map(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*=\s*([^;]+);", text):
@@ -669,13 +688,13 @@ def check_mailboxes() -> None:
 
     # --- Cross-check RTL against spec for frame-store mailboxes ---
     rtl_cases = [
-        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853),
-        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849),
-        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D),
-        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846),
+        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853, 0x100),
+        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849, 0x108),
+        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D, 0x110),
+        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846, 0x118),
     ]
-    for magic, rtl_addr, rtl_magic, expected_addr, expected_magic in rtl_cases:
-        ra = sv_const(rtl, rtl_addr)
+    for magic, rtl_addr, rtl_magic, expected_addr, expected_magic, offset in rtl_cases:
+        ra_expr = sv_param_expr(rtl, rtl_addr)
         rm = sv_const(rtl, rtl_magic)
         host_addr = cpp_const(host, {"PLXS": "kDdrMailboxPhys",
                                      "PLXI": "kInputMailboxPhys",
@@ -686,11 +705,32 @@ def check_mailboxes() -> None:
                                       "PLXM": "kMemtestMailboxMagic",
                                       "PLXF": "kUnderrunMailboxMagic"}[magic])
         check(
-            ra == host_addr == expected_addr and rm == host_magic == expected_magic,
-            f"DDR mailbox `{magic}` mismatch: RTL {rtl_addr}=0x{ra:08X}/{rtl_magic}=0x{rm:08X}, "
+            sv_expr_uses_doorbell_offset(ra_expr, offset)
+            and host_addr == expected_addr and rm == host_magic == expected_magic,
+            f"DDR mailbox `{magic}` mismatch: RTL {rtl_addr}={ra_expr}/{rtl_magic}=0x{rm:08X}, "
             f"host=0x{host_addr:08X}/0x{host_magic:08X}, spec=0x{expected_addr:08X}/0x{expected_magic:08X}. "
-            "All three must agree — see mailbox_abi_spec.hpp.",
+            "RTL mailbox addresses must derive from DOORBELL_PHYS + the mailbox offset; "
+            "host/spec define the base offsets in mailbox_abi_spec.hpp.",
         )
+        fs_expr = sv_param_expr(ddr_fs, {
+            "PLXS": "MAILBOX_PHYS",
+            "PLXI": "INPUT_MAILBOX_PHYS",
+            "PLXM": "SDRAM_MAILBOX_PHYS",
+            "PLXF": "FRAME_MAILBOX_PHYS",
+        }[magic])
+        check(
+            sv_expr_uses_doorbell_offset(fs_expr, offset),
+            f"ddr_frame_store {magic} mailbox must derive from DOORBELL_PHYS + 0x{offset:X}, "
+            f"got {fs_expr}",
+        )
+    check(
+        sv_expr_uses_doorbell_offset(sv_param_expr(rtl, "MEMTEST_DIAG_MAILBOX_PHYS"), 0x120),
+        "ddram_frame_rd diagnostic mailbox must derive from DOORBELL_PHYS + 0x120",
+    )
+    check(
+        sv_expr_uses_doorbell_offset(sv_param_expr(ddr_fs, "BANK_MAILBOX_PHYS"), 0x128),
+        "ddr_frame_store PLXD mailbox must derive from DOORBELL_PHYS + 0x128",
+    )
 
     # --- Cross-check PLXD bank-release against spec ---
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
@@ -798,6 +838,7 @@ def check_mailbox_map_collisions() -> None:
     # ── Cross-check RTL constants against registry ──
     frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
     ddram_frame_rd_rtl = strip_comments(read(DDRAM_FRAME_RD))
+    mailbox_base = int(next(mb["address"] for mb in mailboxes if mb["name"] == "PLXS"), 16) - 0x100
 
     for mb in mailboxes:
         name = mb["name"]
@@ -810,13 +851,15 @@ def check_mailbox_map_collisions() -> None:
 
         # Try ddr_frame_store first, fall back to ddram_frame_rd
         ra = None
+        ra_expr = None
         for rtl_src in (frame_store_rtl, ddram_frame_rd_rtl):
             m = re.search(
                 rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(rtl_addr_param)}\s*=\s*([^,\n;)]+)",
                 rtl_src,
             )
             if m:
-                ra = parse_num(m.group(1))
+                ra_expr = m.group(1).strip()
+                ra = parse_num(ra_expr)
                 break
 
         check(
@@ -824,12 +867,15 @@ def check_mailbox_map_collisions() -> None:
             f"Mailbox map references RTL param {rtl_addr_param} for {name}, "
             "but it was not found in ddr_frame_store.sv or ddram_frame_rd.sv.",
         )
+        offset = expected_addr - mailbox_base
+        derived = ra_expr is not None and sv_expr_uses_doorbell_offset(ra_expr, offset)
         check(
-            ra == expected_addr,
-            f"Mailbox map drift: {name} RTL {rtl_addr_param}=0x{ra:08X} != "
-            f"registry 0x{expected_addr:08X}. Update docs/plx_mailbox_map.json OR the RTL "
-            "— they must agree. This gate exists because the PLXA/PLXD ABI collision "
-            "proved that two hand-maintained copies WILL drift.",
+            derived or ra == expected_addr,
+            f"Mailbox map drift: {name} RTL {rtl_addr_param}={ra_expr} != "
+            f"registry 0x{expected_addr:08X} or DOORBELL_PHYS+0x{offset:X}. "
+            "Update docs/plx_mailbox_map.json OR the RTL — they must agree. "
+            "This gate exists because the PLXA/PLXD ABI collision proved that two "
+            "hand-maintained copies WILL drift.",
         )
 
         if rtl_magic_param is not None:
@@ -1080,6 +1126,50 @@ def check_ddr_frame_layout_contract() -> None:
         "480p pillarbox math no longer lands display width exactly in presented width",
     )
     print("PASS DDR frame layout ARM/RTL contract")
+
+
+def check_runtime_ddr_layout_literal_sweep() -> None:
+    """Reject runtime reintroductions of fixed 320p/480p DDR frame addresses.
+
+    The only acceptable sources for frame-bank stride, bank base, and doorbell
+    arithmetic are the host layout helper and the RTL mirror constants. Runtime
+    code must consume those helpers or derive from geometry at the point of use.
+    """
+    banned = re.compile(
+        r"\b(?:0x3007_?F000|0x300F_?F000|0x3004_?0000|0x3008_?0000|"
+        r"0x0008_?0000|0x0004_?0000|449280|115200)(?:u|U|ul|UL|ull|ULL)?\b",
+        re.I,
+    )
+    scan_roots = [
+        ROOT / "arm",
+        ROOT / "tools",
+        ROOT / "scripts",
+        ROOT / "captures",
+        ROOT / "fpga/Plex_MiSTer/rtl",
+    ]
+    allow = {
+        DDR_FRAME_LAYOUT_HPP,
+        DDR_FRAME_LAYOUT_SVH,
+        MAILBOX_ABI_SPEC,
+    }
+    suffixes = {".cpp", ".hpp", ".h", ".sv", ".svh", ".v", ".py", ".sh"}
+    offenders: list[str] = []
+    for root in scan_roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in suffixes or path in allow:
+                continue
+            text = strip_comments(read(path))
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if banned.search(line):
+                    offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
+    if offenders:
+        fail(
+            "runtime DDR frame layout literals must route through ddr_frame_layout derivation; "
+            "found " + "; ".join(offenders[:8])
+        )
+    print("PASS runtime DDR frame layout literals are quarantined to layout derivation sources")
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
@@ -2092,6 +2182,7 @@ def main() -> int:
     check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
+    check_runtime_ddr_layout_literal_sweep()
     check_ddr_frame_store_yuv_read_contract()
     check_present_geometry_stride_contract()
     check_ddr_bank_handoff_contract()

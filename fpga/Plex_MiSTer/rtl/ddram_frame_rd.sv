@@ -54,7 +54,7 @@
 //
 // Start paths:
 //   A) SPI: rising status[12] + status[13] bank
-//   B) Doorbell: idle poll of 0x3007F000; new seq → start
+//   B) Doorbell: idle poll of DOORBELL_PHYS; new seq → start
 //
 // swap_req is a request only; frame_store flips display bank on vsync.
 //
@@ -67,12 +67,12 @@ module ddram_frame_rd #(
 	parameter int HEIGHT     = 240,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 262144,
-	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
-	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
-	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
-	parameter [31:0] MEMTEST_MAILBOX_PHYS = 32'h3007_F110,
-	parameter [31:0] UNDERRUN_MAILBOX_PHYS = 32'h3007_F118,
-	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = 32'h3007_F120,
+	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
+	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
+	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
+	parameter [31:0] MEMTEST_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
+	parameter [31:0] UNDERRUN_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
+	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = DOORBELL_PHYS + 32'h120,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,

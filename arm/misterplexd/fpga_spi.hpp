@@ -129,10 +129,8 @@ public:
     bool readFrameStoreStatus(FrameStoreStatus& status);
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
-    static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
     static constexpr uint32_t kDdrDoorbellPhys = mailbox_abi::kPlxkAddr;
     static constexpr uint32_t kDdrDoorbellMagic = mailbox_abi::kPlxkMagic;
-    static constexpr size_t kDdrFrameBytes = 320 * 240 * 2;
 
     // --- OSD status mailbox (core -> HPS, zero SPI) ----------------------------
     // ddram_frame_rd publishes the live OSD word here whenever it changes, plus a

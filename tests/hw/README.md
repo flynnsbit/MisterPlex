@@ -65,7 +65,10 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
    - Or: `./tests/hw/test_ddr_frame.sh` (scp + push + status)
 4. Expect wall time **≪ 100 ms** (SPI is ~200 ms) and `has_frame=1`.
 5. misterplexd uses DDR YUV420p for F1 and does not fall back to RGB/SPI.
-   Banks: `0x30000000` / `0x30040000`; kick = status[12], bank = status[13].
+   Banks are derived from the published geometry:
+   `bank1 = 0x30000000 + alignUp(frame_bytes, 0x40000)`. For the
+   320x240 test vector this is `0x30040000`; 624x480 product frames use
+   `0x30080000`. kick = status[12], bank = status[13].
 
 ## Phase 3.2 audio FIFO
 

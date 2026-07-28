@@ -1,6 +1,7 @@
 // Read/watch the MiSTerPlex DDR playback-input mailbox from /dev/mem.
 // This tool is validation-only: it never touches the HPS<->FPGA SPI register.
 
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 #include <cerrno>
@@ -18,9 +19,9 @@
 
 namespace {
 
-constexpr uint32_t kPageBase = 0x3007F000u;
 constexpr size_t kMapLen = 0x1000u;
-constexpr size_t kMailboxOff = misterplex::kInputMailboxPhys - kPageBase;
+constexpr uint32_t kMailboxOffsetFromDoorbell =
+    misterplex::kInputMailboxPhys - mailbox_abi::kPlxkAddr;
 
 const char* cmdName(misterplex::PlaybackCommand cmd) {
     switch (cmd) {
@@ -69,8 +70,14 @@ bool parseCmd(const std::string& s, misterplex::PlaybackCommand& out, bool& any)
 }
 
 struct Reader {
+    uint32_t pageBase = 0;
+    size_t mailboxOff = 0;
     int fd = -1;
     uint8_t* map = nullptr;
+
+    explicit Reader(uint32_t mailboxPhys)
+        : pageBase(mailboxPhys & ~0xFFFu),
+          mailboxOff(static_cast<size_t>(mailboxPhys - pageBase)) {}
 
     ~Reader() {
         if (map)
@@ -85,9 +92,9 @@ struct Reader {
             std::fprintf(stderr, "open /dev/mem: %s\n", std::strerror(errno));
             return false;
         }
-        void* p = mmap(nullptr, kMapLen, PROT_READ, MAP_SHARED, fd, kPageBase);
+        void* p = mmap(nullptr, kMapLen, PROT_READ, MAP_SHARED, fd, pageBase);
         if (p == MAP_FAILED) {
-            std::fprintf(stderr, "mmap 0x%08x: %s\n", kPageBase, std::strerror(errno));
+            std::fprintf(stderr, "mmap 0x%08x: %s\n", pageBase, std::strerror(errno));
             return false;
         }
         map = static_cast<uint8_t*>(p);
@@ -97,7 +104,7 @@ struct Reader {
     enum class Status { Ok, NoMagic, Torn, Invalid };
 
     Status read(misterplex::InputMailboxSample& out, uint64_t& raw) const {
-        volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(map + kMailboxOff);
+        volatile uint32_t* mb = reinterpret_cast<volatile uint32_t*>(map + mailboxOff);
         for (int attempt = 0; attempt < 4; ++attempt) {
             const uint32_t lo = mb[0];
             const uint32_t hi = mb[1];
@@ -126,9 +133,23 @@ int usage(const char* argv0) {
     std::fprintf(stderr,
                  "usage: %s --once\n"
                  "       %s --expect any|playpause|stop|skipforward|skipback "
-                 "[--timeout-ms N] [--settle-ms N]\n",
+                 "[--timeout-ms N] [--settle-ms N] [--geometry plex480p|WxH]\n",
                  argv0, argv0);
     return 2;
+}
+
+bool parseGeometry(const std::string& spec, misterplex::DdrFrameGeometry& out) {
+    if (spec == "plex480p" || spec == "640x480") {
+        out = misterplex::plex480pDdrFrameGeometry();
+        return true;
+    }
+    int w = 0;
+    int h = 0;
+    if (std::sscanf(spec.c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
+        out = misterplex::ddrFrameGeometryForPresentedSize(w, h);
+        return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -140,6 +161,7 @@ int main(int argc, char** argv) {
     int timeoutMs = 10000;
     int settleMs = 700;
     misterplex::PlaybackCommand expect = misterplex::PlaybackCommand::None;
+    misterplex::DdrFrameGeometry geometry = misterplex::plex480pDdrFrameGeometry();
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -153,6 +175,9 @@ int main(int argc, char** argv) {
             timeoutMs = std::atoi(argv[++i]);
         } else if (arg == "--settle-ms" && i + 1 < argc) {
             settleMs = std::atoi(argv[++i]);
+        } else if (arg == "--geometry" && i + 1 < argc) {
+            if (!parseGeometry(argv[++i], geometry))
+                return usage(argv[0]);
         } else {
             return usage(argv[0]);
         }
@@ -160,7 +185,12 @@ int main(int argc, char** argv) {
     if (once == wait)
         return usage(argv[0]);
 
-    Reader r;
+    const auto layout = misterplex::makeDdrFrameLayout(geometry);
+    if (!misterplex::ddrFrameLayoutValid(layout)) {
+        std::fprintf(stderr, "invalid DDR frame geometry for mailbox probe\n");
+        return 2;
+    }
+    Reader r(layout.doorbell_phys + kMailboxOffsetFromDoorbell);
     if (!r.openMem())
         return 1;
 
