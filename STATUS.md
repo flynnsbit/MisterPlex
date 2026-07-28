@@ -9,6 +9,106 @@ plays Plex content natively.
 
 ---
 
+## Update #8 — 2026-07-28 15:20 CDT (Hour 31.5)
+
+### Two hard results, both measured directly on the device
+
+**1. The capture rig is blind. Every visual check today was worthless.**
+
+```
+host = node-worker1 (correct)     MS2109 present, streaming 1280x720 MJPG
+MiSTer loaded MENU core           <- the populated menu the user can physically see
+capture -> uniform luma 7, min = max = 7, three consecutive identical frames
+```
+
+The card works and delivers frames. It simply **is not fed by the MiSTer's HDMI
+output** — cable not in, or in the wrong port. The user is looking at a menu
+full of text while our capture reports flat black.
+
+This is *exactly* the trap we wrote the three-state gate to prevent —
+`NO_SIGNAL` misreported as `VALID_BLACK` — and it caught us on our own rig.
+Had Stage A landed this hour, the gate would have reported "screen unchanged"
+and we would have debugged a decoder over a loose cable.
+
+**All capture-based verification is suspended** until the cable is in. Nobody
+may cite a capture as evidence in the meantime. `w-e2e-o5` is using the outage
+to build the one distinction that matters: **flat black from a working card
+must not score the same as flat black from an unplugged one.** We have verified
+ground truth for both states right now, which makes this the ideal moment.
+
+**2. My constraints change is exonerated — and I was wrong to suspect it.**
+
+```
+3b1e8435 deployed and resident, Plex core loaded (CORENAME=Plex)
+0x3007F100 / 104 / 128 / 12C = 0x00000000, static, re-read after core load
+```
+
+Silent — **identical to `fb4bad84`**. The two builds have byte-identical Verilog
+and differ only in 38 lines of timing constraints. Silence on both closes it:
+the `set_false_path -> set_max_delay` change I authorized this morning **did not
+cause the regression.**
+
+Earlier today I published that the change was innocent, was refuted, and
+published a correction saying it was a live suspect. **The correction was also
+wrong.** The original claim was right for the wrong reason — the control was
+vacuous, so it proved nothing either way. Now it has been tested properly.
+
+The regression lives in the code delta: `abc3b67`, `7a3d960`, `ea31f68`,
+`3716f1f`.
+
+### And we are not going to chase it
+
+**Stage A replaces the entire data source of the present path.** If decoded
+pixels reach the framebuffer and appear, the regression is moot. If they don't,
+we debug it with a real producer attached instead of a test-pattern stub.
+Hunting it separately is redundant work — so the workers holding on that answer
+have been unblocked and pointed back at RTL.
+
+### The pre-review caught a second dead-code trap
+
+The `gpt-5.5` reviewer, now aimed at Verilog instead of scripts, confirmed the
+load-bearing claim survives attack — the decoder genuinely is absent from the
+shipped bitstream under **any** name, not renamed, inlined or merged. So Stage A
+is fixing something real.
+
+Then it found the trap that would have made Stage A silently do nothing:
+
+```
+present_core.sv:225-290   the DDR path IGNORES fs_wr_en / fs_wr_pixel / fs_swap
+present_core.sv:292-304   those connect ONLY in the non-DDR path
+```
+
+**The obvious way to write Stage A is to route decoded pixels into `fs_*` — and
+under the config the user actually runs, that changes nothing.** Screen
+unchanged, core still deleted, presenting as "Stage A isn't working yet" after
+a six-hour fit.
+
+That's the second instance of the same defect: a connection that is
+syntactically real and semantically dead. The first one fooled everybody for
+weeks. **It was caught before the code was written rather than after the fit** —
+minutes of review against six hours of fitting. The fleet has been told to
+assume a third exists.
+
+### Where the fleet is
+
+All nine workers on RTL. Stage A — decoded pixels consumed by the framebuffer
+so the decoder survives synthesis — is the sole bottleneck, with the fitter
+standing by and under orders to refuse the six-hour build unless the four-minute
+pre-check shows the decoder actually present first.
+
+```
+intra          [##########··············]  35%
+display        [##############··········]  50%
+overall        [##########··············]  36%
+```
+
+Flat, and staying flat. One blocker is now physical: **the HDMI cable into the
+capture card.** Everything else keeps moving without it.
+
+---
+
+---
+
 ## Update #7 — 2026-07-28 14:35 CDT (Hour 31) — ⚠️ STRATEGY PIVOT
 
 ### The user pulled the handbrake, and he was right
