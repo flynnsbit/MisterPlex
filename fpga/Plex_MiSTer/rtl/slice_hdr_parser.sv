@@ -47,6 +47,9 @@ module slice_hdr_parser (
 	output reg  [15:0] first_i4_pred_mode_flags,
 	output reg  [47:0] first_i4_rem_modes,
 	output reg         first_i4_modes_present,
+	// intra_chroma_pred_mode (7.3.5.1): 0=DC, 1=Horizontal, 2=Vertical,
+	// 3=Plane. Parsed for both I_NxN and I_16x16 macroblocks.
+	output reg  [1:0]  first_chroma_pred_mode,
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
 	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
@@ -570,6 +573,7 @@ module slice_hdr_parser (
 			first_i4_pred_mode_flags <= 16'd0;
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
+			first_chroma_pred_mode <= 2'd0;
 			full_luma_cbp <= 4'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
@@ -923,7 +927,8 @@ module slice_hdr_parser (
 				end
 			end
 			ST_CHRPRED: begin
-				// ue(intra_chroma_pred_mode) consumed
+				// ue(intra_chroma_pred_mode)
+				first_chroma_pred_mode <= ue_val[1:0];
 				// I_NxN → cbp me; I_16x16 → mb_qp_delta
 				if (first_mb_type == 8'd0) begin
 					zcnt <= 0; ue_cont <= ST_CBP; st <= ST_UE_Z;

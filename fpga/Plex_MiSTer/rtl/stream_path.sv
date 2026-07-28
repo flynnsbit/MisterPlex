@@ -226,6 +226,7 @@ module stream_path #(
 	wire [15:0] sl_i4_pred_mode_flags;
 	wire [47:0] sl_i4_rem_modes;
 	wire sl_i4_modes_present;
+	wire [1:0] sl_chroma_pred_mode;
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
 	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
@@ -270,6 +271,7 @@ module stream_path #(
 		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
@@ -512,7 +514,7 @@ module stream_path #(
 		.mb_skip_run({8'd0, p_skip_run}),
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(core_i16_pred_mode),
-		.chroma_pred_mode(2'd0),
+		.chroma_pred_mode(sl_chroma_pred_mode),
 		.cbp_luma(4'hf),
 		.cbp_chroma(2'd0),
 		.mb_qp_delta(sl_qpd[5:0]),
