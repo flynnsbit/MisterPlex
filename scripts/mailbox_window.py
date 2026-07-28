@@ -111,6 +111,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--devmem", action="store_true", help="emit devmem commands for the live window"
     )
+    ap.add_argument(
+        "--probed",
+        action="append",
+        default=[],
+        metavar="ADDR",
+        help="validate an address that was actually probed (repeatable). Exits 1 if "
+             "it is not in this build's live window, naming the window it belongs to.",
+    )
     args = ap.parse_args(argv)
 
     if not args.project.is_dir():
@@ -164,6 +172,60 @@ def main(argv: list[str] | None = None) -> int:
         print("\n# live-window probe")
         for off, name, _ in MAILBOXES:
             print(f"devmem 0x{doorbell + off:08X} 32   # {name}")
+
+    if args.probed:
+        return validate_probed(args.probed, doorbell, family)
+    return 0
+
+
+def validate_probed(probed: list[str], doorbell: int, family: str) -> int:
+    """Check that addresses someone actually probed belong to this build's window.
+
+    Exists because of an asymmetry that is easy to miss. A mailbox counter that
+    is *advancing* proves its own instrument: a dead window is frozen, so it can
+    never advance. A counter that is *silent* proves nothing on its own -- a
+    wedged live window and any dead window produce byte-identical evidence.
+
+    So a positive reading is self-authenticating and a null reading is not. Any
+    claim of the form "X is silent / absent / not present" has to carry separate
+    proof that the instrument could have shown otherwise. This turns that from a
+    thing you must remember into a thing you can run.
+    """
+    print("\nprobed-address validation:")
+    known = {doorbell: family}
+    for stride in (0x40000, 0x80000, 0xC0000):
+        known.setdefault(PHYS_BASE_DEFAULT + 2 * stride - 0x1000, f"stride 0x{stride:X}")
+
+    bad = 0
+    for raw in probed:
+        try:
+            addr = int(raw, 16 if raw.lower().startswith("0x") else 0)
+        except ValueError:
+            print(f"  FAIL {raw!r} is not an address")
+            bad += 1
+            continue
+        base = addr & ~0xFFF
+        offset = addr - base
+        label = next((n for off, n, _ in MAILBOXES if off == offset), f"+0x{offset:X}")
+        if base == doorbell:
+            print(f"  OK   0x{addr:08X}  {label} in the live {family} window")
+        else:
+            owner = known.get(base, "no known layout family")
+            print(
+                f"  FAIL 0x{addr:08X}  {label} is in the DEAD window 0x{base:08X} "
+                f"({owner}); this build publishes {label} at 0x{doorbell + offset:08X}"
+            )
+            bad += 1
+
+    if bad:
+        print(
+            f"\nPROBE_WINDOW_FAIL {bad} probed address(es) are not in this build's\n"
+            "window. A read there returns whatever an older core left in DDR, so a\n"
+            "'silent'/'dead'/'absent' verdict taken from it is not evidence about\n"
+            "this build. Re-probe at the live addresses above before scoring."
+        )
+        return 1
+    print("PROBE_WINDOW_OK all probed addresses are in this build's live window")
     return 0
 
 

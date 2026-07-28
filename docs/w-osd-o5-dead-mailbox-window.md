@@ -198,3 +198,92 @@ So for any gate that scans tracked files, the green that counts is the one
 **after** staging. Worth folding into the standard alongside "a skip is not a
 pass": *a green over an empty or truncated scope is not a pass either* — the
 same `Scope: 0` vacuity family already flagged fleet-wide.
+
+---
+
+## Addendum 3 — a hypothesis of mine, refuted by my own measurement
+
+**Hypothesis (mine, now REFUTED).** The parent's re-authorized A/B rests on
+`00eebd5e` reading *PLXD advancing ~68/s* and `fb4bad84` reading *PLXD silent*.
+I proposed that the older build predated the doorbell move, so `0x3007F128`
+would have been *live* for `00eebd5e` and *dead* for `fb4bad84` — making the
+whole difference an instrumentation artifact.
+
+The motivation was real. `ddram_frame_rd.sv` before `a6ec399` documented:
+
+```
+Bank 1: 0x30040000  (256 KiB stride; frame is 153600 B)
+Doorbell: 0x3007F000
+```
+
+So `0x3007F000` genuinely *was* the live doorbell at one point, which is why
+stale magics sit there today.
+
+**Measured refutation.** `00eebd5e` is the `wtime4` fit, fitted HEAD `e1dffa3`
+(2026-07-28 01:40). `a6ec399` (2026-07-26 23:05) is an **ancestor** of it
+(`git merge-base --is-ancestor` → true). Resolving `e1dffa3`'s own tree:
+
+```
+instantiated layout family : YUV420P
+bank stride                : 0x00080000
+doorbell                   : 0x300FF000
+```
+
+**Both builds publish on the same window.** My hypothesis is dead. The
+instrument did not change meaning between the two arms.
+
+## What survives, and it is sharper
+
+Both builds reject `0x3007F128` (`PROBE_WINDOW_FAIL`, rc=1). A dead window is
+**frozen** — so it *cannot* advance. Therefore:
+
+- *"`00eebd5e` PLXD advancing ~68/s"* **can only have come from `0x300FF128`.**
+  A positive reading authenticates its own instrument.
+- *"`fb4bad84` PLXD silent"* is compatible with **both** a wedged live window
+  **and** any dead window. It authenticates nothing.
+
+And `w-fit-o5` explicitly cites probing `0x3007F100/104/128/12C`. If the
+"silent" arm came from there while the "advancing" arm necessarily came from
+`0x300FF128`, **the two arms of the A/B were read at different addresses.**
+Unverified — the device is offline and I do not have their command — but it is
+the one remaining way this experiment returns a confident wrong answer.
+
+### The general principle — the asymmetric-null rule
+
+This is a distinct member of the parent's vacuous-control family, and worth
+stating separately because the mechanical test differs:
+
+> **A positive result can validate its own instrument. A null result never
+> does.** Any claim of the form *silent / absent / dead / no signal / zero
+> frames* must carry independent proof that the instrument could have shown
+> otherwise.
+
+The parent's rule asks *"does this comparison vary the thing it claims to
+test?"* — a property of the **design**. This one asks *"could this measurement
+have come out differently?"* — a property of the **null arm specifically**. A
+comparison can vary its independent variable correctly and still be void
+because only its negative arm was mis-instrumented.
+
+Note how much of this project's history is null claims: `h264_decode_core`
+ABSENT, PLXD silent, `IDLE_SCREEN=black`, zero frames decoded. Each one needs
+its instrument proven live, separately from the comparison being well-designed.
+
+## Mechanised
+
+`--probed ADDR` (repeatable) validates any address a report cites against the
+build under test, so this stops being a thing anyone has to remember:
+
+```
+$ mailbox_window.py --project <fb4bad84 tree> --probed 0x3007F128
+  FAIL 0x3007F128  PLXD is in the DEAD window 0x3007F000 (stride 0x40000);
+                   this build publishes PLXD at 0x300FF128
+PROBE_WINDOW_FAIL ...                                              rc=1
+
+$ mailbox_window.py --project <fb4bad84 tree> --probed 0x300FF128
+  OK   0x300FF128  PLXD in the live YUV420P window
+PROBE_WINDOW_OK                                                    rc=0
+```
+
+Suite now 24 assertions. Red-proven by injecting a validator that accepts any
+address: **rc=1, 7 assertions flip**. `make unit` rc=0,
+`MAILBOX_WINDOW_RESULT=PASS`, literal-sweep offenders 0.
