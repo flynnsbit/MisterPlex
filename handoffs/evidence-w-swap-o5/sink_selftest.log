@@ -1,0 +1,7 @@
+OK self-test red: dead-end aggregator detected (_keep, 7 operands)
+OK self-test green: an aggregator that is read is not reported
+OK self-test red: no path to a port is reported when none exists
+OK self-test green: a real path to an output port is found
+OK self-test red: a parameter cannot carry data to a port
+OK self-test red: a second declarator on one line does not leak a path
+OK self-test green: a path through a register is found

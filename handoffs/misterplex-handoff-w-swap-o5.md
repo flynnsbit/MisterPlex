@@ -682,6 +682,56 @@ go, and neither is mine to remove.
 - The wider detector still exits **1** on the real source and is still **not** registered in
   `make unit`. Registering a failing gate is how a fleet acquires an allowlist.
 
+## 10f. Cross-branch measurement: w-cast-o5 fixes mode 3 and loses MC
+
+`origin/w-cast-o5` `8cd5eed` is the first branch in the fleet where the core is not dead logic.
+Measured with my instrument against their tree:
+
+```
+OUTPUTS_REACH_PORTS h264_decode_core -> stream_path: 33 ports
+  luma4x4_valid, luma4x4_idx, luma4x4_qp, luma4x4_coeff_zigzag, i4_modes,
+  mb_syntax_* (22 of them), luma4x4_source_busy/done/ok/bit_end, ...
+```
+
+Thirty-three of `stream_path`'s output ports now depend on the core. **That is the mode-3 fix**, and it
+is real. Two things do not follow from it.
+
+**1. MC is not in their core at all.** Their core instantiates the *per-sample* predictor lineage:
+
+```
+h264_luma_qpel_sample u_product_p16_luma_pred
+h264_chroma_epel_sample u_product_p16_chroma_pred
+```
+
+`h264_inter_mc_part` appears only in two comments. `h264_dpb_one_ref`, `h264_inter_mc_16x16`,
+`h264_luma_qpel_block_16x16` and `h264_chroma_epel_block_8x8` are absent. My MC commit `4f4312b` is
+**not an ancestor** of their branch, and neither branch is an ancestor of the other. **Converging onto
+their core as-is deletes the block MC landing and reinstates the per-sample tap path at 21248 reads
+per macroblock instead of 603.** A merge must take my core changes, not just resolve conflicts.
+
+**2. Twenty-three constant-tied inputs remain, including all the MC-critical ones.** `dpb_rd_data`,
+`dpb_rd_valid`, `mv_x_qpel`, `mv_y_qpel`, `p16_mb_x`, `p16_mb_y`, `p16_zero_mv_valid`, `ref_idx_l0`,
+`recon_mb_valid`. The core now survives; the *inter* path inside it still constant-folds. This is the
+"necessary but not sufficient" case, now measured on the branch that fixed the necessary half.
+
+### The false alarm this exposed in my own tool, and the fix
+
+My first run on their tree said MC reached nothing, and the reason was **my bug, not their design**:
+
+```
+p16_wr_data_r <= clip_u8(p16_recon_sum);      // procedural, non-blocking
+```
+
+The tracer followed only *continuous* assignments, so every path through a register read as dead -
+which is most real RTL. Procedural assignments are now traced, with the left-hand side required to
+start the line so that `if (a <= b)` cannot be mistaken for an assignment to `a`. Self-test case
+added and mutation-proved: disabling procedural edges gives
+`SELF_TEST_FAIL: missed a path that goes through a register`.
+
+This is the failure direction I said the tool was allowed to have - a false alarm, never a false
+alive - and it cost one cross-branch measurement to find. **Seven self-test cases now, every one
+mutation-proved.** The conclusion above was re-measured after the fix and is unchanged.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.

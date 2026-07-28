@@ -1,0 +1,33 @@
+Cross-branch mode-3 measurement, w-swap-o5 instrument
+subject: origin/w-cast-o5 8cd5eed
+
+--- core inside stream_path (w-cast-o5) ---
+DEAD_END_AGGREGATOR _keep: ORs 77 signals and is never read, so synthesis deletes it and everything feeding it
+SINK_LIVENESS_FAIL aggregators=1 path_to_port=33 product=h264_decode_core parent=stream_path gate=all
+Scope: stream_path instantiating h264_decode_core - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
+CONSTANT_TIED_INPUTS h264_decode_core: 23 input ports are wired to literals, which lets synthesis constant-fold the instance away even once its outputs are consumed: chroma_pred_mode, dpb_rd_data, dpb_rd_valid, dpb_ref_base, dpb_write_base, intra16x16_mode, mb_qp_delta, mv_x_qpel, mv_y_qpel, mvd_x_qpel, mvd_y_qpel, p16_mb_is_ref, p16_mb_x, p16_mb_y, p16_zero_mv_valid, part_idx, pps_chroma_qp_index_offset, rbsp_window_base, recon_mb_is_ref, recon_mb_valid, recon_mb_x, recon_mb_y, ref_idx_l0
+CORE_OUTPUT_NETS 46 traced from 46 declared output ports
+OUTPUTS_REACH_PORTS h264_decode_core -> stream_path: i4_modes, luma4x4_bit_offset_end, luma4x4_coeff_zigzag, luma4x4_idx, luma4x4_qp, luma4x4_source_bit_end, luma4x4_source_busy, luma4x4_source_done, luma4x4_source_ok, luma4x4_total_coeff, luma4x4_trailing_ones, luma4x4_valid, mb_syntax_addr, mb_syntax_cbp_chroma, mb_syntax_cbp_luma, mb_syntax_class, mb_syntax_mb_qp_delta, mb_syntax_mvd_x_qpel, mb_syntax_mvd_y_qpel, mb_syntax_p_skip, mb_syntax_part_count, mb_syntax_part_mode, mb_syntax_qpc, mb_syntax_qpy, mb_syntax_ref_idx_l0, mb_syntax_residual_bit_offset, mb_syntax_sub_mb_type, mb_syntax_type, mb_syntax_unsupported, mb_syntax_uses_sub_mb, mb_syntax_valid, mb_syntax_x, mb_syntax_y
+rc=1
+
+--- h264_inter_mc_part inside the core (w-cast-o5) ---
+DEAD_END_AGGREGATOR _keep_decode_core_inputs: ORs 65 signals and is never read, so synthesis deletes it and everything feeding it; product signals lost: core_i4_modes
+NO_PATH_TO_PORT h264_inter_mc_part outputs influence none of h264_decode_core's 46 output ports, so synthesis has no reason to keep the instance: predict ELABORATED_BUT_OPTIMIZED_AWAY. Confirm with Quartus A&S (scripts/check_prefit_elaboration.sh).
+UNGATED_DEAD_ENDS 1 aggregator(s) reported above are NOT gated by --gate path-to-port; run without it to fail on them
+SINK_LIVENESS_FAIL aggregators=1 path_to_port=0 product=h264_inter_mc_part parent=h264_decode_core gate=path-to-port
+Scope: h264_decode_core instantiating h264_inter_mc_part - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
+CORE_OUTPUT_NETS 0 traced from 6 declared output ports
+rc=1
+
+--- modules the w-cast-o5 core instantiates ---
+507:    h264_dpb_mb_write_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_wb_addr (
+556:    h264_mv_pred_part u_product_p16_mv_pred (
+621:    h264_intra4x4_mode_deriver u_product_core_i4_mode_deriver (
+631:    h264_luma4x4_residual_source #(.MAX_BYTES(128)) u_product_core_luma4x4_residual_source (
+675:    h264_cavlc_nc_predictor u_product_res_nc (
+693:    h264_cavlc_residual_block #(.MAX_BYTES(128)) u_product_p16_residual0 (
+717:    h264_dequant4x4 u_product_p16_res_dequant (
+723:    h264_idct4x4 u_product_p16_res_idct (
+770:    h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_p16_rd_addr (
+786:    h264_luma_qpel_sample u_product_p16_luma_pred (
+793:    h264_chroma_epel_sample u_product_p16_chroma_pred (

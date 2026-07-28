@@ -135,6 +135,20 @@ module pfixture (
 endmodule
 """
 
+SEQ_FIXTURE = """
+module sfixture (
+    input wire clk,
+    input wire [7:0] src,
+    output wire [7:0] dout
+);
+  reg [7:0] stage_r;
+  always_ff @(posedge clk) begin
+    stage_r <= src;
+  end
+  assign dout = stage_r;
+endmodule
+"""
+
 COMMA_FIXTURE = """
 module cfixture (
     input wire [7:0] src,
@@ -261,6 +275,18 @@ def self_test():
               "path to %s" % ", ".join(sorted(leaked)), file=sys.stderr)
         return 1
     print("OK self-test red: a second declarator on one line does not leak a path")
+
+    # A registered path is still a path. Synthesis keeps a flop whose output is
+    # observed, so a tracer that follows only continuous assignments declares
+    # most real pipelines dead. This case was added after it produced exactly
+    # that false alarm on another worker's branch.
+    seq_text = strip_comments(SEQ_FIXTURE)
+    seq_ports = module_ports(seq_text, "sfixture")
+    if reaches_port(seq_text, {"src"}, seq_ports) != {"dout"}:
+        print("SELF_TEST_FAIL: missed a path that goes through a register",
+              file=sys.stderr)
+        return 1
+    print("OK self-test green: a path through a register is found")
     return 0
 
 
@@ -315,6 +341,16 @@ def reaches_port(text, sources, ports):
         if re.match(r"\s*(?:parameter|localparam|input|output|inout)\b", head):
             continue
         dst, rhs = match.group(2), truncate_at_comma(match.group(3))
+        for src in set(re.findall(r"\b([A-Za-z_]\w*)\b", rhs)):
+            edges.setdefault(src, set()).add(dst)
+    # Procedural assignments carry data too. Omitting them cost a real false
+    # alarm: on w-cast-o5 the MC result reaches dpb_wr_data through a register,
+    # `p16_wr_data_r <= clip_u8(p16_recon_sum)`, and a continuous-assignment-only
+    # tracer called that dead. The left-hand side must start the line, optionally
+    # indexed, so `if (a <= b)` cannot be read as an assignment to a.
+    for match in re.finditer(r"^[ \t]*([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)?"
+                             r"(?:<=|=)(?!=)\s*([^;]*);", text, re.M):
+        dst, rhs = match.group(1), truncate_at_comma(match.group(2))
         for src in set(re.findall(r"\b([A-Za-z_]\w*)\b", rhs)):
             edges.setdefault(src, set()).add(dst)
     # Deliberately NOT adding edges between the connections of one instance. That
