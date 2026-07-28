@@ -648,6 +648,49 @@ def check_quartus_syntax_tripwires() -> None:
     print("PASS Quartus syntax tripwires for known Verilator-clean fit failures")
 
 
+def check_h264_deblock_chroma_path_not_tied_off() -> None:
+    deblock = strip_comments(read(H264_DEBLOCK))
+    rtl_text = "\n".join(strip_comments(read(p)) for p in (ROOT / "fpga/Plex_MiSTer/rtl").glob("*.sv"))
+
+    def missing_chroma_path(deblock_text: str, all_rtl_text: str) -> list[str]:
+        missing: list[str] = []
+        if re.search(r"h264_deblock_edge\s+\w+\s*\(.*?\.is_chroma\s*\(\s*1'b0\s*\)", deblock_text, re.S):
+            missing.append(
+                "h264_deblock_edge_pipe must forward registered is_chroma into h264_deblock_edge; "
+                "tying .is_chroma(1'b0) makes chroma deblocking unreachable."
+            )
+        if not re.search(
+            r"h264_deblock_edge\s+\w+\s*\(.*?\.is_chroma\s*\(\s*is_chroma_r\s*\)",
+            deblock_text,
+            re.S,
+        ):
+            missing.append(
+                "h264_deblock_edge_pipe no longer visibly forwards is_chroma_r into h264_deblock_edge."
+            )
+        if re.search(
+            r"h264_deblock_edge_pipe\s+\w+\s*\(.*?\.is_chroma\s*\(\s*1'b0\s*\)",
+            all_rtl_text,
+            re.S,
+        ):
+            missing.append(
+                "A product h264_deblock_edge_pipe instance ties .is_chroma(1'b0); chroma support "
+                "must be wired through callers/schedulers."
+            )
+        return missing
+
+    missing = missing_chroma_path(deblock, rtl_text)
+    if missing:
+        fail(f"H.264 deblock chroma path contract: {missing[0]}")
+
+    fault_deblock = deblock.replace(".is_chroma(is_chroma_r)", ".is_chroma(1'b0)", 1)
+    if not missing_chroma_path(fault_deblock, rtl_text):
+        fail("deliberate h264_deblock .is_chroma(1'b0) fault did not go red")
+    fault_rtl = rtl_text + "\n h264_deblock_edge_pipe u_fault(.is_chroma(1'b0));\n"
+    if not missing_chroma_path(deblock, fault_rtl):
+        fail("deliberate caller-side .is_chroma(1'b0) fault did not go red")
+    print("PASS H.264 deblock chroma path is not tied off")
+
+
 def check_async_fifo_write_full_no_comb_loop() -> None:
     text = sv_module_text(strip_comments(read(ASYNC_FIFO)), "async_fifo")
     nt = norm(text)
@@ -2356,6 +2399,7 @@ def main() -> int:
     check_phase_a_surface()
     check_plex_reset_domains()
     check_quartus_syntax_tripwires()
+    check_h264_deblock_chroma_path_not_tied_off()
     check_async_fifo_write_full_no_comb_loop()
     check_frame_store_cdc_contract()
     check_mailboxes()

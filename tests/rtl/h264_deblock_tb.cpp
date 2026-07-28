@@ -2,6 +2,7 @@
 #include "verilated.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cctype>
@@ -207,13 +208,33 @@ bool same(const EdgeOut& a, const EdgeOut& b) {
     return a.p2 == b.p2 && a.p1 == b.p1 && a.p0 == b.p0 && a.q0 == b.q0 && a.q1 == b.q1 && a.q2 == b.q2;
 }
 
-void requireEdge(Vh264_deblock_tb& dut, const std::string& name, const EdgeIO& in, bool chroma, int bs, int qp, int alphaOff, int betaOff) {
+int countModified(const EdgeIO& in, const EdgeOut& out) {
+    int n = 0;
+    for (int i = 0; i < 4; ++i) {
+        n += (out.p2[i] != in.p2[i]);
+        n += (out.p1[i] != in.p1[i]);
+        n += (out.p0[i] != in.p0[i]);
+        n += (out.q0[i] != in.q0[i]);
+        n += (out.q1[i] != in.q1[i]);
+        n += (out.q2[i] != in.q2[i]);
+    }
+    return n;
+}
+
+int countFrameDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    int n = 0;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) n += (a[i] != b[i]);
+    return n;
+}
+
+int requireEdge(Vh264_deblock_tb& dut, const std::string& name, const EdgeIO& in, bool chroma, int bs, int qp, int alphaOff, int betaOff) {
     const EdgeOut want = refEdge(in, chroma, bs, qp, alphaOff, betaOff);
     const EdgeOut got = dutEdge(dut, in, chroma, bs, qp, alphaOff, betaOff);
     if (!same(want, got)) {
         std::cerr << "FAIL " << name << " got " << edgeString(got) << " want " << edgeString(want) << "\n";
         std::exit(1);
     }
+    return countModified(in, got);
 }
 
 
@@ -415,7 +436,7 @@ uint32_t fnv1a(const Frame& f) {
 }
 
 
-void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
+int runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
     const std::string json = readText(path);
     if (json.find("\"format\": \"misterplex.p3.mb_golden.v1\"") == std::string::npos) {
         std::cerr << "FAIL deblock mb_golden: wrong or missing format marker\n";
@@ -460,8 +481,7 @@ void runMbGolden(Vh264_deblock_tb& dut, const std::string& path) {
             }
         }
     }
-    std::cout << "OK deblock mb_golden.v1 MB0 latency-reject true=0x3b pred-only=0x00 delayed=0x00 intra-edge pass qp=" << qp
-              << " fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
+    return countFrameDiff(recon, got);
 }
 
 void runNalSequenceContract(const std::string& path, const std::string& mbGoldenPath) {
@@ -496,17 +516,15 @@ void runNalSequenceContract(const std::string& path, const std::string& mbGolden
         std::cerr << "FAIL deblock nal_sequence: mb_golden source does not match sequence source " << srcName << "\n";
         std::exit(1);
     }
-    std::cout << "OK deblock nal_sequence multi-NAL contract: nals=" << nalCount
-              << " vcl=" << vclCount << " idr=" << idrCount << " p_slices=" << pSlices
-              << " source=" << srcName << "\n";
 }
 
-void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
+int runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     constexpr int W = 32, H = 32;
     Frame ref(W * H), got(W * H);
     for (int y = 0; y < H; ++y)
         for (int x = 0; x < W; ++x)
             ref[y * W + x] = got[y * W + x] = static_cast<uint8_t>(clip8(96 + x + y + ((x >= 16) ? 9 : 0) + ((y >= 16) ? 7 : 0)));
+    const Frame initial = ref;
     for (int frame = 0; frame < 5; ++frame) {
         for (int i = 0; i < W * H; ++i) {
             const int residual = ((i * 7 + frame * 11) % 5) - 2;
@@ -523,11 +541,11 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
                           << " got=" << int(got[i]) << " want=" << int(ref[i])
                           << " got_fnv=0x" << std::hex << fnv1a(got)
                           << " want_fnv=0x" << fnv1a(ref) << std::dec << "\n";
-                return std::exit(1);
+                std::exit(1);
             }
         }
     }
-    std::cout << "OK deblock multi-frame drift fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
+    return countFrameDiff(initial, got);
 }
 
 void testWritebackContract(Vh264_deblock_tb& dut) {
@@ -639,7 +657,6 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
         std::exit(1);
     }
 
-    std::cout << "OK deblock writeback contract: filtered samples precede MB commit; writeback precedes frame-boundary DPB ref_ready; IDR invalidates refs\n";
 }
 
 } // namespace
@@ -672,22 +689,36 @@ int main(int argc, char** argv) {
     testBs(dut);
     testThresholds(dut);
     testWritebackContract(dut);
+    int scopeFilteredSamples = 0;
+    int scopeLumaBs4 = 0;
+    int scopeChromaBs4 = 0;
+    int fixtureQpMin = 52;
+    int fixtureQpMax = -1;
 
     const EdgeIO lumaNormal{{116,118,120,122},{118,120,122,124},{120,122,124,126},{126,127,128,129},
                             {132,133,134,135},{138,139,140,141},{140,141,142,143},{142,143,144,145}};
-    requireEdge(dut, "luma bS2 normal", lumaNormal, false, 2, 32, 0, 0);
+    scopeFilteredSamples += requireEdge(dut, "luma bS2 normal", lumaNormal, false, 2, 32, 0, 0);
     testPipeLatency(dut, lumaNormal);
 
     const EdgeIO lumaStrong{{110,111,112,113},{112,113,114,115},{114,115,116,117},{120,121,122,123},
                             {124,125,126,127},{128,129,130,131},{130,131,132,133},{132,133,134,135}};
-    requireEdge(dut, "luma bS4 strong", lumaStrong, false, 4, 40, 0, 0);
+    scopeLumaBs4 = requireEdge(dut, "luma bS4 strong", lumaStrong, false, 4, 40, 0, 0);
+    scopeFilteredSamples += scopeLumaBs4;
 
     const EdgeIO chromaNormal{{118,119,120,121},{120,121,122,123},{122,123,124,125},{125,126,127,128},
                               {131,132,133,134},{136,137,138,139},{138,139,140,141},{140,141,142,143}};
-    requireEdge(dut, "chroma bS2", chromaNormal, true, 2, 32, 0, 0);
-    requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
+    scopeFilteredSamples += requireEdge(dut, "chroma bS2", chromaNormal, true, 2, 32, 0, 0);
+    scopeChromaBs4 = requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
+    scopeFilteredSamples += scopeChromaBs4;
 
-    if (!mbGoldenPath.empty()) runMbGolden(dut, mbGoldenPath);
+    if (!mbGoldenPath.empty()) {
+        const std::string json = readText(mbGoldenPath);
+        const std::size_t mbPos = json.find("\"macroblock\"");
+        const int qp = parseIntAfter(json, "qp", mbPos == std::string::npos ? 0 : mbPos);
+        fixtureQpMin = std::min(fixtureQpMin, qp);
+        fixtureQpMax = std::max(fixtureQpMax, qp);
+        scopeFilteredSamples += runMbGolden(dut, mbGoldenPath);
+    }
     if (!nalSequencePath.empty()) {
         if (mbGoldenPath.empty()) {
             std::cerr << "FAIL deblock nal_sequence: --mb-golden is required with --nal-sequence\n";
@@ -695,7 +726,19 @@ int main(int argc, char** argv) {
         }
         runNalSequenceContract(nalSequencePath, mbGoldenPath);
     }
-    runDrift(dut, faultHorizontalFirst);
+    scopeFilteredSamples += runDrift(dut, faultHorizontalFirst);
+    if (scopeLumaBs4 <= 0 || scopeChromaBs4 <= 0 || scopeFilteredSamples <= 0) {
+        std::cerr << "FAIL h264_deblock RTL sim: Scope: filtered_samples=" << scopeFilteredSamples
+                  << " luma_bS4=" << scopeLumaBs4 << " chroma_bS4=" << scopeChromaBs4
+                  << " (bS=4/chroma must modify at least one sample)\n";
+        return 1;
+    }
+    std::cout << "Scope: filtered_samples=" << scopeFilteredSamples
+              << " luma_bS4=" << scopeLumaBs4
+              << " chroma_bS4=" << scopeChromaBs4
+              << " real_fixture_qp_range="
+              << (fixtureQpMin == 52 ? -1 : fixtureQpMin) << ".." << fixtureQpMax
+              << " synthetic_qp_range=4..51\n";
 
     std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
     return 0;
