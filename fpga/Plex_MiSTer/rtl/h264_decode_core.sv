@@ -257,7 +257,9 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
-    localparam [4:0] P16_RES_BLOCKS = 5'd16;
+    localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
+    localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
+    localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
     localparam [15:0] FRAME_W16 = 16'(FRAME_W);
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
@@ -342,6 +344,18 @@ module h264_decode_core #(
                 clamp_coord = limit - 16'd1;
             else
                 clamp_coord = value[15:0];
+        end
+    endfunction
+
+    function automatic [7:0] luma4x4_index(input [3:0] block, input [3:0] sample);
+        begin
+            luma4x4_index = {block[3:2], sample[3:2], block[1:0], sample[1:0]};
+        end
+    endfunction
+
+    function automatic [5:0] chroma4x4_index(input [1:0] block, input [3:0] sample);
+        begin
+            chroma4x4_index = {block[1], sample[3:2], block[0], sample[1:0]};
         end
     endfunction
 
@@ -448,6 +462,13 @@ module h264_decode_core #(
                 assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[0];
             else
                 assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+`elsif H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF
+            if (cavlc_coeff_i == 0)
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[1] : cavlc_coeff[0];
+            else if (cavlc_coeff_i == 1)
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[0] : cavlc_coeff[1];
+            else
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
 `else
             assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
 `endif
@@ -485,6 +506,21 @@ module h264_decode_core #(
         .dequant(p16_res_dequant),
         .residual(p16_res_idct)
     );
+`ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
+    wire p16_drop_this_luma_residual = (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 5'd1));
+`else
+    wire p16_drop_this_luma_residual = 1'b0;
+`endif
+`ifdef H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL
+    wire p16_drop_this_chroma_residual = (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1));
+`else
+    wire p16_drop_this_chroma_residual = 1'b0;
+`endif
+`ifdef H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL
+    wire p16_swap_chroma_residual = 1'b1;
+`else
+    wire p16_swap_chroma_residual = 1'b0;
+`endif
     wire [6:0] p16_luma_tap_col7 = p16_tap_idx % 7'd9;
     wire [6:0] p16_luma_tap_row7 = p16_tap_idx / 7'd9;
     wire signed [15:0] p16_luma_tap_col = $signed({9'd0, p16_luma_tap_col7}) - 16'sd4;
@@ -691,11 +727,26 @@ module h264_decode_core #(
                 if (cavlc_done) begin
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
-                        for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
-`ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
-                            if (p16_res_block_idx != (P16_RES_BLOCKS - 5'd1))
-`endif
-                            lat_p16_residual_y[{24'd0, p16_res_block_idx[3:2], 6'd0} + ((wb_i / 4) * 16) + {28'd0, p16_res_block_idx[1:0], 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
+                        for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
+                            if (p16_res_block_idx < P16_LUMA_RES_BLOCKS) begin
+                                if (!p16_drop_this_luma_residual)
+                                    lat_p16_residual_y[luma4x4_index(p16_res_block_idx[3:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
+                            end else if (p16_res_block_idx < (P16_LUMA_RES_BLOCKS + 5'd4)) begin
+                                if (!p16_drop_this_chroma_residual) begin
+                                    if (p16_swap_chroma_residual)
+                                        lat_p16_residual_v[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
+                                    else
+                                        lat_p16_residual_u[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
+                                end
+                            end else begin
+                                if (!p16_drop_this_chroma_residual) begin
+                                    if (p16_swap_chroma_residual)
+                                        lat_p16_residual_u[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
+                                    else
+                                        lat_p16_residual_v[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
+                                end
+                            end
+                        end
                     end
 `endif
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin

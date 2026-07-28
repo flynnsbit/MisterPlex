@@ -20,11 +20,12 @@ constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int MV_Y_QPEL = 0;
-constexpr int kMeasuredP16RealPCycles = 86806;
+constexpr int kMeasuredP16RealPCycles = 131002;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
 constexpr int kScheduledLumaBlocks = 16;
-constexpr int kScheduledBlocks = kScheduledLumaBlocks;
+constexpr int kScheduledChromaBlocks = 8;
+constexpr int kScheduledBlocks = kScheduledLumaBlocks + kScheduledChromaBlocks;
 
 int residualBlockSample(int mbIdx, int block, int pos) {
     static constexpr int kScan14[16] = {19, 11, -5, -13, 19, 11, -5, -13,
@@ -33,13 +34,17 @@ int residualBlockSample(int mbIdx, int block, int pos) {
                                         7, 5, 1, -1, 7, 5, 1, -1};
     static constexpr int kHighClamp[16] = {264, 262, 258, 256, 264, 262, 258, 256,
                                            264, 262, 258, 256, 264, 262, 258, 256};
-    if (mbIdx == 1 && block == 0) return kHighClamp[pos];
-    return (block & 1) ? kScan11[pos] : kScan14[pos];
+    if (mbIdx == 1 && (block == 0 || block == 16)) return kHighClamp[pos];
+    if (block < kScheduledLumaBlocks) return (block & 1) ? kScan11[pos] : kScan14[pos];
+    if (block < kScheduledLumaBlocks + 4) return kScan11[pos];
+    return kScan14[pos];
 }
 
 const char* residualBlockBits(int mbIdx, int block) {
-    if (mbIdx == 1 && block == 0) return "00010000000000000000001000001111110111"; // scan coeffs [80, 1]
-    return (block & 1) ? "00100111" : "0000011100001100111"; // scan coeffs [1,1] or [1,4]
+    if (mbIdx == 1 && (block == 0 || block == 16)) return "00010000000000000000001000001111110111"; // scan coeffs [80, 1]
+    if (block < kScheduledLumaBlocks)
+        return (block & 1) ? "00100111" : "0000011100001100111"; // scan coeffs [1,1] or [1,4]
+    return (block < kScheduledLumaBlocks + 4) ? "00100111" : "0000011100001100111";
 }
 
 struct Write {
@@ -61,8 +66,9 @@ struct MbCase {
 };
 
 const std::vector<MbCase> kCases = {
-    {1, 0, 2, 0, 0, 0, 2, 0, 296, 0},
+    {1, 0, 2, 0, 0, 0, 2, 0, 296, 32},
     {2, 0, 3, 0, 2, 0, 5, 0, 400, 48},
+    {3, 0, 4, 0, 5, 0, 9, 0, 504, 56},
 };
 
 uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
@@ -130,12 +136,23 @@ int residualSample(int mbIdx, int localIdx) {
         const int sx = localIdx & 15;
         const int sy = localIdx >> 4;
         const int block = (sy >> 2) * 4 + (sx >> 2);
-        if (block < kScheduledLumaBlocks) {
-            const int pos = (sy & 3) * 4 + (sx & 3);
-            return residualBlockSample(mbIdx, block, pos);
-        }
+        const int pos = (sy & 3) * 4 + (sx & 3);
+        return residualBlockSample(mbIdx, block, pos);
     }
-    return 0;
+    if (localIdx < 320) {
+        const int rel = localIdx - 256;
+        const int sx = rel & 7;
+        const int sy = rel >> 3;
+        const int block = kScheduledLumaBlocks + (sy >> 2) * 2 + (sx >> 2);
+        const int pos = (sy & 3) * 4 + (sx & 3);
+        return residualBlockSample(mbIdx, block, pos);
+    }
+    const int rel = localIdx - 320;
+    const int sx = rel & 7;
+    const int sy = rel >> 3;
+    const int block = kScheduledLumaBlocks + 4 + (sy >> 2) * 2 + (sx >> 2);
+    const int pos = (sy & 3) * 4 + (sx & 3);
+    return residualBlockSample(mbIdx, block, pos);
 }
 
 uint8_t clipU8(int value) {
@@ -243,6 +260,12 @@ bool checkResidualFixture() {
     for (int y = 0; y < C_H; ++y)
         for (int x = 0; x < C_W; ++x)
             uvDiff += (refSample(1, x, y) != refSample(2, x, y));
+    int uvResidualDiff = 0;
+    for (int mb = 0; mb < static_cast<int>(kCases.size()); ++mb) {
+        for (int local = 0; local < 64; ++local) {
+            uvResidualDiff += (residualSample(mb, 256 + local) != residualSample(mb, 320 + local));
+        }
+    }
     if (residualBlockSample(0, 0, 0) == residualBlockSample(0, 0, 1)) {
         std::cerr << "FAIL h264_decode_core residual fixture: scan-order sentinel aliases coeff positions\n";
         return false;
@@ -251,9 +274,15 @@ bool checkResidualFixture() {
         std::cerr << "FAIL h264_decode_core residual fixture: U/V reference planes are not distinguishable\n";
         return false;
     }
+    if (uvResidualDiff < static_cast<int>(kCases.size()) * 64) {
+        std::cerr << "FAIL h264_decode_core residual fixture: U/V residual planes alias uv_residual_diff="
+                  << uvResidualDiff << "\n";
+        return false;
+    }
     std::cout << "INFO h264_decode_core residual fixture: " << positionDependent
-              << " scheduled luma CAVLC blocks are nonzero and position-dependent; nonzero_samples="
+              << " scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples="
               << nonzero << " uv_ref_distinguishable_samples=" << uvDiff
+              << " uv_residual_distinguishable_samples=" << uvResidualDiff
               << " scan_order_sentinel=19/11\n";
     return true;
 }
@@ -296,6 +325,25 @@ uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
     const std::size_t mbIdx = ord / readsPerMb();
     const int localOrdinal = static_cast<int>(ord % readsPerMb());
     return expectedReadAddr(kCases.at(mbIdx), localOrdinal);
+}
+
+bool expectedChromaRightClamp(const MbCase& mb, int localOrdinal) {
+    int idx = 0;
+    int tap = 0;
+    int cur = 0;
+    for (idx = 0; idx < 384; ++idx) {
+        const int taps = (idx < 256) ? 81 : 4;
+        if (localOrdinal < cur + taps) {
+            tap = localOrdinal - cur;
+            break;
+        }
+        cur += taps;
+    }
+    if (idx < 256 || idx >= 384) return false;
+    const int rel = (idx < 320) ? idx - 256 : idx - 320;
+    const int sx = rel & 7;
+    const int unclampedX = mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1);
+    return unclampedX > C_W - 1;
 }
 
 class Sim {
@@ -364,26 +412,24 @@ void clearInputs(Sim& s) {
     }
 }
 
-void loadScheduledResidualRbsp(Sim& s) {
+void loadScheduledResidualRbsp(Sim& s, int mbOrdinal) {
+    for (int i = 0; i < 64; ++i) s.top.rbsp_byte_in[i] = 0;
     auto putBits = [&](int bitOffset, const char* bits) {
         for (int i = 0; bits[i] != '\0'; ++i) {
             if (bits[i] == '1') s.top.rbsp_byte_in[(bitOffset + i) >> 3] |= 1u << (7 - ((bitOffset + i) & 7));
         }
     };
-    for (std::size_t mbIdx = 0; mbIdx < kCases.size(); ++mbIdx) {
-        const MbCase& mb = kCases.at(mbIdx);
-        int bitOffset = mb.residualBitOffset - mb.rbspWindowBase * 8;
-        for (int block = 0; block < kScheduledBlocks; ++block) {
-            const char* bits = residualBlockBits(static_cast<int>(mbIdx), block);
-            putBits(bitOffset, bits);
-            bitOffset += static_cast<int>(std::string(bits).size());
-        }
+    const MbCase& mb = kCases.at(mbOrdinal);
+    int bitOffset = mb.residualBitOffset - mb.rbspWindowBase * 8;
+    for (int block = 0; block < kScheduledBlocks; ++block) {
+        const char* bits = residualBlockBits(mbOrdinal, block);
+        putBits(bitOffset, bits);
+        bitOffset += static_cast<int>(std::string(bits).size());
     }
 }
 
 void reset(Sim& s) {
     clearInputs(s);
-    loadScheduledResidualRbsp(s);
     s.top.reset = 1;
     s.tick();
     s.tick();
@@ -400,6 +446,7 @@ void driveSliceStart(Sim& s) {
 }
 
 void driveMb(Sim& s, int mbOrdinal) {
+    loadScheduledResidualRbsp(s, mbOrdinal);
     const MbCase& mb = kCases.at(mbOrdinal);
     s.top.p16_mb_x = mb.mbX;
     s.top.p16_mb_y = mb.mbY;
@@ -456,8 +503,11 @@ int checkScoreboard(const Sim& s) {
             return 1;
         }
     }
+    int chromaRightClampReads = 0;
     for (std::size_t i = 0; i < s.reads.size(); ++i) {
         const uint32_t wantReadAddr = expectedReadAddrForOrdinal(i);
+        const MbCase& readMb = kCases.at(i / readsPerMb());
+        chromaRightClampReads += expectedChromaRightClamp(readMb, static_cast<int>(i % readsPerMb()));
         if (s.reads.at(i) != wantReadAddr) {
             const MbCase& mb = kCases.at(i / readsPerMb());
             std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
@@ -504,6 +554,11 @@ int checkScoreboard(const Sim& s) {
             }
         }
     }
+    if (chromaRightClampReads < 1) {
+        std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: chroma_right_clamp_reads="
+                  << chromaRightClampReads << " want>=1\n";
+        return 1;
+    }
     if (s.frameDoneSeen) {
         std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: nonterminal frame_done asserted\n";
         return 1;
@@ -518,11 +573,13 @@ int checkScoreboard(const Sim& s) {
                   << clipLow << " clip_high=" << clipHigh << " want>=1 each\n";
         return 1;
     }
-    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor+CAVLC-residual path "
-              << "384x2 exact clipped pred+16Y scheduled-residual samples landed at DPB addresses; reads="
+    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 3 MBs syntax+MV-neighbor+CAVLC-residual path "
+              << "384x3 exact clipped pred+16Y+8C scheduled-residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
               << " clip_low=" << clipLow << " clip_high=" << clipHigh
               << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)
+              << "/" << s.rbspRequests.at(2)
+              << " chroma_right_clamp_reads=" << chromaRightClampReads
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
               << "; nonterminal frame_done stayed low\n";
     return 0;
