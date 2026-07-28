@@ -1,0 +1,196 @@
+INTEG_ROOT /home/flynnsbit/Projects/mp-wt-integ
+REMOTE docker
+SLOT wfit-hour27-a
+  REMOTE_MD5 output_files/Plex.rbf 3b1e84355f5fe4e7e137b70a841244fa len=3809932
+  REMOTE_MD5 Plex.sdc 9a312bcbf59f67e17f4989f5c3c5e077 len=4951
+  SDC_FEATURES false_paths=5 max_delay=1 diag_false=1 diag_max=0
+  REMOTE_MD5 Plex.sv f7ae554020f6b3b0c9eb36d619936c77 len=32860
+  REMOTE_MD5 Plex.qsf b3de67401bb49f8ab10ea8dadbd56ac2 len=4544
+  REMOTE_MD5 files.qip f56579936b6083b1673641073d5f55e3 len=2349
+  REMOTE_MD5 build_id.v f767ec440b470a940de35a0970eed5e8 len=27
+  REMOTE_TREE rtl md5=9f8722e1fe16b47270193584f5d99202 files=48
+  REMOTE_TREE sys md5=c43fee94863196d20d1e9acfa3496406 files=57
+  LOCAL_MD5 Plex.rbf 3b1e84355f5fe4e7e137b70a841244fa
+  LOCAL_MD5 Plex.fit.rpt 02818d6b9119f2a8d990630920d35e43
+  LOCAL_MD5 Plex.map.rpt 4a3e05a543d145f7342283c34a41b90c
+  FIT rows=827 util={'alms': (17702, 41910, 42), 'block_bits': (2970061, 5662720, 52), 'm10k': (453, 553, 82), 'dsp': (74, 112, 66)}
+SLOT wfit-hour27-sdc-a
+  REMOTE_MD5 output_files/Plex.rbf fb4bad849ad2db782a5004ce5a3471ce len=3842308
+  REMOTE_MD5 Plex.sdc 6b2557281253196604003962940a8077 len=4511
+  SDC_FEATURES false_paths=0 max_delay=5 diag_false=0 diag_max=0
+  REMOTE_MD5 Plex.sv f7ae554020f6b3b0c9eb36d619936c77 len=32860
+  REMOTE_MD5 Plex.qsf b3de67401bb49f8ab10ea8dadbd56ac2 len=4544
+  REMOTE_MD5 files.qip f56579936b6083b1673641073d5f55e3 len=2349
+  REMOTE_MD5 build_id.v f767ec440b470a940de35a0970eed5e8 len=27
+  REMOTE_TREE rtl md5=9f8722e1fe16b47270193584f5d99202 files=48
+  REMOTE_TREE sys md5=c43fee94863196d20d1e9acfa3496406 files=57
+  LOCAL_MD5 Plex.rbf fb4bad849ad2db782a5004ce5a3471ce
+  LOCAL_MD5 Plex.fit.rpt c70374a0478ed36518ba6bfe67e8a9b0
+  LOCAL_MD5 Plex.map.rpt 7783f53384a47e01d23652cd48d1b356
+  FIT rows=827 util={'alms': (17706, 41910, 42), 'block_bits': (2970061, 5662720, 52), 'm10k': (453, 553, 82), 'dsp': (74, 112, 66)}
+SLOT wfit-hour27-sdc-b
+  REMOTE_MD5 output_files/Plex.rbf fb4bad849ad2db782a5004ce5a3471ce len=3842308
+  REMOTE_MD5 Plex.sdc 6b2557281253196604003962940a8077 len=4511
+  SDC_FEATURES false_paths=0 max_delay=5 diag_false=0 diag_max=0
+  REMOTE_MD5 Plex.sv f7ae554020f6b3b0c9eb36d619936c77 len=32860
+  REMOTE_MD5 Plex.qsf b3de67401bb49f8ab10ea8dadbd56ac2 len=4544
+  REMOTE_MD5 files.qip f56579936b6083b1673641073d5f55e3 len=2349
+  REMOTE_MD5 build_id.v f767ec440b470a940de35a0970eed5e8 len=27
+  REMOTE_TREE rtl md5=9f8722e1fe16b47270193584f5d99202 files=48
+  REMOTE_TREE sys md5=c43fee94863196d20d1e9acfa3496406 files=57
+  LOCAL_MD5 Plex.rbf fb4bad849ad2db782a5004ce5a3471ce
+  LOCAL_MD5 Plex.fit.rpt 8fc2a831db789871065a521062e44870
+  LOCAL_MD5 Plex.map.rpt 552dd1f3d1269de7270b72e6b2b9c270
+  FIT rows=827 util={'alms': (17706, 41910, 42), 'block_bits': (2970061, 5662720, 52), 'm10k': (453, 553, 82), 'dsp': (74, 112, 66)}
+SLOT wfit-hour27-bdiag-a
+  REMOTE_MD5 output_files/Plex.rbf fb4bad849ad2db782a5004ce5a3471ce len=3842308
+  REMOTE_MD5 Plex.sdc 13e7312ecfb1e1d2512d9d2a297d3db0 len=4966
+  SDC_FEATURES false_paths=0 max_delay=6 diag_false=0 diag_max=1
+  REMOTE_MD5 Plex.sv f7ae554020f6b3b0c9eb36d619936c77 len=32860
+  REMOTE_MD5 Plex.qsf b3de67401bb49f8ab10ea8dadbd56ac2 len=4544
+  REMOTE_MD5 files.qip f56579936b6083b1673641073d5f55e3 len=2349
+  REMOTE_MD5 build_id.v f767ec440b470a940de35a0970eed5e8 len=27
+  REMOTE_TREE rtl md5=9f8722e1fe16b47270193584f5d99202 files=48
+  REMOTE_TREE sys md5=c43fee94863196d20d1e9acfa3496406 files=57
+  LOCAL_MD5 Plex.rbf fb4bad849ad2db782a5004ce5a3471ce
+  LOCAL_MD5 Plex.fit.rpt 2f1f2a2cac21fb0c25697171fdbff27a
+  LOCAL_MD5 Plex.map.rpt 0b2e1e0f4293863e8d568d1b3ddd0904
+  FIT rows=827 util={'alms': (17706, 41910, 42), 'block_bits': (2970061, 5662720, 52), 'm10k': (453, 553, 82), 'dsp': (74, 112, 66)}
+SLOT wfit-hour27-bdiag-b
+  REMOTE_MD5 output_files/Plex.rbf fb4bad849ad2db782a5004ce5a3471ce len=3842308
+  REMOTE_MD5 Plex.sdc 13e7312ecfb1e1d2512d9d2a297d3db0 len=4966
+  SDC_FEATURES false_paths=0 max_delay=6 diag_false=0 diag_max=1
+  REMOTE_MD5 Plex.sv f7ae554020f6b3b0c9eb36d619936c77 len=32860
+  REMOTE_MD5 Plex.qsf b3de67401bb49f8ab10ea8dadbd56ac2 len=4544
+  REMOTE_MD5 files.qip f56579936b6083b1673641073d5f55e3 len=2349
+  REMOTE_MD5 build_id.v f767ec440b470a940de35a0970eed5e8 len=27
+  REMOTE_TREE rtl md5=9f8722e1fe16b47270193584f5d99202 files=48
+  REMOTE_TREE sys md5=c43fee94863196d20d1e9acfa3496406 files=57
+  LOCAL_MD5 Plex.rbf fb4bad849ad2db782a5004ce5a3471ce
+  LOCAL_MD5 Plex.fit.rpt de3ef94ba85fb0ab34e9a9033e55680f
+  LOCAL_MD5 Plex.map.rpt 32b4163ca4daea7dd880fa2b48706678
+  FIT rows=827 util={'alms': (17706, 41910, 42), 'block_bits': (2970061, 5662720, 52), 'm10k': (453, 553, 82), 'dsp': (74, 112, 66)}
+SDC_A_TO_BDIAG_DIFF_LINES 82
+  --- wfit-hour27-a/Plex.sdc
+  +++ wfit-hour27-bdiag-b/Plex.sdc
+  @@ -3,13 +3,14 @@
+   
+   # core specific constraints
+   # ─────────────────────────────────────────────────────────────────────────────
+  -# CDC false-path constraints for ddr_bus_arbiter (clk_sys ↔ clk_ddr crossings)
+  +# CDC timing bounds for ddr_bus_arbiter (clk_sys ↔ clk_ddr crossings)
+   #
+   # Context: ddr_bus_arbiter runs on clk_ddr (90 MHz, general[2].gpll).
+   # It receives m1_want from the bitstream reader (clk_sys, 20 MHz) and returns
+   # response data via an async_fifo (m1_rsp_fifo).  These crossings use proper
+  -# CDC mechanisms; timing analysis of these paths is meaningless and must be
+  -# replaced with structural constraints.
+  +# CDC mechanisms; the functional proof is structural, but constraints must
+  +# still keep gross routing delay visible to STA with finite bounds. Do not use
+  +# set_clock_groups -asynchronous here.
+   #
+   # Cross-reference: w-a3 crossing inventory (30/30 SAFE), crossings #21, #22, #30.
+   # Source verification: ddr_bus_arbiter.sv lines 60-81 (syncs), async_fifo.sv (FIFO).
+  @@ -23,7 +24,8 @@
+   #   m1_want_s1 <= m1_want;    // first capture — metastability resolved by s2
+   #   m1_want_s2 <= m1_want_s1;
+   # Safety: metastability at s1 is resolved by s2 before any logic samples it.
+  -set_false_path -to [get_keepers {*ddr_arb|m1_want_s1}]
+  +# Bound rather than false-path so STA still reports gross routing mistakes.
+  +set_max_delay -to [get_keepers {*ddr_arb|m1_want_s1}] 50.0
+   
+   # CONSTRAINT 2: reset synchroniser, first stage (crossing #22)
+   # Source: ddr_bus_arbiter.sv:60-68
+  @@ -31,7 +33,7 @@
+   #   reset_s1 <= 1'b0; (or 1'b1 on async assert)
+   #   reset_s2 <= reset_s1;
+   # Safety: same 2-FF pattern as m1_want; metastability resolved before use.
+  -set_false_path -to [get_keepers {*ddr_arb|reset_s1}]
+  +set_max_delay -to [get_keepers {*ddr_arb|reset_s1}] 50.0
+   
+   # CONSTRAINT 3: async_fifo write-pointer Gray-code sync into read domain
+   # Source: async_fifo.sv:71-72
+  @@ -39,14 +41,14 @@
+   #   wr_gray_r2 <= wr_gray_r1;
+   # Safety: Gray-code guarantees at most 1 bit changes per cycle; metastability
+   # on that single bit is resolved by wr_gray_r2 before rd_empty logic uses it.
+  -set_false_path -to [get_keepers {*m1_rsp_fifo|wr_gray_r1[*]}]
+  +set_max_delay -to [get_keepers {*m1_rsp_fifo|wr_gray_r1[*]}] 50.0
+   
+   # CONSTRAINT 4: async_fifo read-pointer Gray-code sync into write domain
+   # Source: async_fifo.sv:54-55
+   #   rd_gray_w1 <= rd_gray;    // first capture in wr_clk domain
+   #   rd_gray_w2 <= rd_gray_w1;
+   # Safety: same pattern; full/almost_full uses rd_gray_w2 only.
+  -set_false_path -to [get_keepers {*m1_rsp_fifo|rd_gray_w1[*]}]
+  +set_max_delay -to [get_keepers {*m1_rsp_fifo|rd_gray_w1[*]}] 50.0
+   
+   # CONSTRAINT 5: async_fifo RAM data path — set_max_delay, NOT set_false_path
+   # Source: async_fifo.sv:23 (reg [AW:0] wr_bin), line 46 (mem[wr_bin[AW-1:0]])
+  @@ -72,14 +74,14 @@
+   # Combinational nodes (mem~588, mem~844) are read-mux logic, not keepers.
+   set_max_delay -from [get_keepers {*ddr_arb*m1_rsp_fifo|mem*}] 50.0
+   
+  -# CONSTRAINT 6: ddr_frame_store mailbox CDC — underrun_count (clk_sys → clk_ddr)
+  -# Source: ddr_frame_store.sv:826,880,883
+  -#   {underrun_count, debug_state} is read directly in clk_ddr always block (line 670)
+  -#   without a synchroniser.  This is a multi-bit diagnostic crossing used for:
+  -#   - Mailbox change detection (line 826): worst case = missed update, caught by
+  -#     heartbeat (frame_mbox_hb wraps every 2^18 cycles = ~2.9 ms at 90 MHz)
+  -#   - DDR mailbox write (line 880): worst case = garbled diagnostic counter value
+  -#     in a single mailbox slot.  No protocol or functional consequence.
+  -# Cross-reference: w-a3 inventory, crossing in ddr_frame_store (tolerable by design).
+  -# Safety: self-correcting via heartbeat; diagnostic-only data.
+  -set_false_path -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get_keepers {*ddr_frame_store*frame_mbox_last[*]}]
+  +# CONSTRAINT 6: ddr_frame_store diagnostic mailbox path — set_max_delay,
+  +# NOT set_false_path
+  +#
+  +# The old SDC cut underrun_count -> frame_mbox_last with set_false_path.  That
+  +# deleted timing on the frame-store block this fit is meant to validate.  Keep
+  +# any such diagnostic route visible to STA with a finite bound instead.  Current
+  +# RTL transfers underruns into clk_ddr via frame_miss_toggle/frame_underrun_ddr
+  +# before frame_status_ddr/frame_mbox_last, so this bound is intentionally
+  +# harmless for the present netlist but prevents a future direct diagnostic path
+  +# from becoming unconstrained.
+  +set_max_delay -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get_keepers {*ddr_frame_store*frame_mbox_last[*]}] 50.0
+FIT_KEY_DIFF only_a=0 only_b=0 common=827
+FIT_RESOURCE_DIFFS 39
+  RESOURCE_DIFF entity=alsa hierarchy=|sys_top|alsa:alsa aluts=404->404 regs=548->546 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=altshift_taps hierarchy=|sys_top|altshift_taps:dv_d1_rtl_0 aluts=7->7 regs=5->6 bits=228->228 m10k=2->2 dsp=0->0
+  RESOURCE_DIFF entity=altshift_taps hierarchy=|sys_top|yc_out:yc_out|altshift_taps:luma_d0_rtl_0 aluts=14->14 regs=9->8 bits=40->40 m10k=1->1 dsp=0->0
+  RESOURCE_DIFF entity=ascal hierarchy=|sys_top|ascal:ascal aluts=2971->2971 regs=3886->3902 bits=315488->315488 m10k=43->43 dsp=23->23
+  RESOURCE_DIFF entity=async_fifo hierarchy=|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore|async_fifo:input_fifo aluts=29->29 regs=39->41 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=aud_mix_top hierarchy=|sys_top|audio_out:audio_out|aud_mix_top:audmix_l aluts=145->145 regs=121->120 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=aud_mix_top hierarchy=|sys_top|audio_out:audio_out|aud_mix_top:audmix_r aluts=145->145 regs=120->119 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=audio_out hierarchy=|sys_top|audio_out:audio_out aluts=1531->1531 regs=1058->1052 bits=0->0 m10k=0->0 dsp=8->8
+  RESOURCE_DIFF entity=cntr_ohf hierarchy=|sys_top|altshift_taps:dv_d1_rtl_0|shift_taps_3vu:auto_generated|cntr_ohf:cntr1 aluts=5->5 regs=3->4 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=cntr_rhf hierarchy=|sys_top|yc_out:yc_out|altshift_taps:luma_d0_rtl_0|shift_taps_gtu:auto_generated|cntr_rhf:cntr1 aluts=7->7 regs=6->5 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=csync hierarchy=|sys_top|csync:csync_hdmi aluts=46->46 regs=55->57 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=csync hierarchy=|sys_top|csync:csync_vga aluts=46->46 regs=56->58 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=ddr_frame_store hierarchy=|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore aluts=4757->4757 regs=2293->2298 bits=159744->159744 m10k=96->96 dsp=6->6
+  RESOURCE_DIFF entity=decode_stub hierarchy=|sys_top|emu:emu|stream_path:spath|decode_stub:stub aluts=6448->6448 regs=736->734 bits=2.09715e+06->2.09715e+06 m10k=256->256 dsp=33->33
+  RESOURCE_DIFF entity=emu hierarchy=|sys_top|emu:emu aluts=17418->17418 regs=7143->7138 bits=2.58554e+06->2.58554e+06 m10k=394->394 dsp=41->41
+  RESOURCE_DIFF entity=f2sdram_safe_terminator hierarchy=|sys_top|sysmem_lite:sysmem|f2sdram_safe_terminator:f2sdram_safe_terminator_ram1 aluts=126->126 regs=97->98 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=fpll_dprio_init hierarchy=|sys_top|pll_cfg_hdmi:pll_cfg_hdmi|fpll_dprio_init:fpll_dprio_init_inst aluts=12->12 regs=17->16 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=hps_io hierarchy=|sys_top|emu:emu|hps_io:hps_io aluts=760->760 regs=927->919 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=i2c hierarchy=|sys_top|mcp23009:mcp23009|i2c:i2c aluts=116->116 regs=65->66 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=osd hierarchy=|sys_top|osd:hdmi_osd aluts=912->912 regs=605->612 bits=32768->32768 m10k=4->4 dsp=0->0
+  RESOURCE_DIFF entity=osd hierarchy=|sys_top|osd:vga_osd aluts=888->888 regs=621->620 bits=32768->32768 m10k=4->4 dsp=0->0
+  RESOURCE_DIFF entity=pll_cfg_hdmi hierarchy=|sys_top|pll_cfg_hdmi:pll_cfg_hdmi aluts=292->292 regs=196->195 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=pll_hdmi_adj hierarchy=|sys_top|pll_hdmi_adj:pll_hdmi_adj aluts=784->784 regs=508->505 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=present_core hierarchy=|sys_top|emu:emu|present_core:present aluts=4939->4939 regs=2509->2514 bits=225280->225280 m10k=103->103 dsp=7->7
+  RESOURCE_DIFF entity=shadowmask hierarchy=|sys_top|shadowmask:HDMI_shadowmask aluts=254->254 regs=261->258 bits=3140->3140 m10k=4->4 dsp=0->0
+  RESOURCE_DIFF entity=shift_taps_3vu hierarchy=|sys_top|altshift_taps:dv_d1_rtl_0|shift_taps_3vu:auto_generated aluts=7->7 regs=5->6 bits=228->228 m10k=2->2 dsp=0->0
+  RESOURCE_DIFF entity=shift_taps_gtu hierarchy=|sys_top|yc_out:yc_out|altshift_taps:luma_d0_rtl_0|shift_taps_gtu:auto_generated aluts=14->14 regs=9->8 bits=40->40 m10k=1->1 dsp=0->0
+  RESOURCE_DIFF entity=sigma_delta_dac hierarchy=|sys_top|audio_out:audio_out|sigma_delta_dac:sd_r aluts=19->19 regs=19->20 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=spdif hierarchy=|sys_top|audio_out:audio_out|spdif:toslink aluts=41->41 regs=63->59 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=stream_path hierarchy=|sys_top|emu:emu|stream_path:spath aluts=11189->11189 regs=2709->2707 bits=2.36026e+06->2.36026e+06 m10k=291->291 dsp=34->34
+  RESOURCE_DIFF entity=sync_fix hierarchy=|sys_top|sync_fix:sync_v aluts=35->35 regs=35->36 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=sys_top hierarchy=|sys_top aluts=28470->28470 regs=17850->17862 bits=2.97006e+06->2.97006e+06 m10k=453->453 dsp=74->74
+  RESOURCE_DIFF entity=sys_udiv hierarchy=|sys_top|sys_umuldiv:ar_muldiv|sys_udiv:udiv aluts=26->26 regs=60->63 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=sys_umul hierarchy=|sys_top|sys_umuldiv:ar_muldiv|sys_umul:umul aluts=30->30 regs=73->72 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=sys_umuldiv hierarchy=|sys_top|sys_umuldiv:ar_muldiv aluts=57->57 regs=133->135 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=vga_out hierarchy=|sys_top|vga_out:vga_out aluts=230->230 regs=215->214 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=vga_out hierarchy=|sys_top|vga_out:vga_scaler_out aluts=292->292 regs=210->213 bits=93->93 m10k=1->1 dsp=0->0
+  RESOURCE_DIFF entity=video_calc hierarchy=|sys_top|emu:emu|hps_io:hps_io|video_calc:video_calc aluts=434->434 regs=627->626 bits=0->0 m10k=0->0 dsp=0->0
+  RESOURCE_DIFF entity=yc_out hierarchy=|sys_top|yc_out:yc_out aluts=479->479 regs=297->298 bits=40->40 m10k=1->1 dsp=2->2

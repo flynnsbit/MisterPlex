@@ -1,0 +1,101 @@
+W-AUDIT SDC A/B VACUITY AUDIT
+=============================
+
+Scope
+-----
+I audited W-FIT-O5's corrected SDC A/B claim without running Quartus, deploying,
+opening HDMI capture, or reading any exit status through a pipe.  Evidence comes
+from read-only remote build trees under docker:$HOME/mplex-builds and local
+remote_out reports/RBFs in /home/flynnsbit/Projects/mp-wt-integ.
+
+Reproducer
+----------
+  ./scripts/w_audit_sdc_ab_audit.py
+
+Raw run saved at:
+  docs/w-audit-sdc-ab-audit.raw.txt
+
+Raw run status:
+  rc=0
+
+Findings
+--------
+
+1. I could not break the central corrected comparison: wfit-hour27-a and
+   wfit-hour27-bdiag-b differ in SDC while the checked source/build inputs are
+   identical.
+
+   wfit-hour27-a:
+     RBF        3b1e84355f5fe4e7e137b70a841244fa
+     Plex.sdc   9a312bcbf59f67e17f4989f5c3c5e077
+     Plex.sv    f7ae554020f6b3b0c9eb36d619936c77
+     Plex.qsf   b3de67401bb49f8ab10ea8dadbd56ac2
+     files.qip  f56579936b6083b1673641073d5f55e3
+     build_id.v f767ec440b470a940de35a0970eed5e8
+     rtl tree   9f8722e1fe16b47270193584f5d99202, 48 files
+     sys tree   c43fee94863196d20d1e9acfa3496406, 57 files
+
+   wfit-hour27-bdiag-b:
+     RBF        fb4bad849ad2db782a5004ce5a3471ce
+     Plex.sdc   13e7312ecfb1e1d2512d9d2a297d3db0
+     Plex.sv    f7ae554020f6b3b0c9eb36d619936c77
+     Plex.qsf   b3de67401bb49f8ab10ea8dadbd56ac2
+     files.qip  f56579936b6083b1673641073d5f55e3
+     build_id.v f767ec440b470a940de35a0970eed5e8
+     rtl tree   9f8722e1fe16b47270193584f5d99202, 48 files
+     sys tree   c43fee94863196d20d1e9acfa3496406, 57 files
+
+   The generated build_id.v is identical, so BUILD_DATE/generation metadata is
+   not an alternate explanation for the different RBFs.
+
+2. The earlier "SDC neutrality" control was indeed vacuous with respect to the
+   relevant independent variable.  The slots that all fit to fb4bad84 all share
+   the first four CDC constraints as finite set_max_delay constraints, not the
+   old set_false_path constraints:
+
+     wfit-hour27-sdc-a/b: false_paths=0 max_delay=5 diag_max=0 -> fb4bad84
+     wfit-hour27-bdiag-a/b: false_paths=0 max_delay=6 diag_max=1 -> fb4bad84
+
+   Therefore those controls prove determinism across repeated/new-SDC builds,
+   and also show the extra ddr_frame_store diagnostic max_delay is not what
+   changes the RBF.  They do not test the old false_path SDC against the new
+   finite-bound SDC.  The real changed variable between 3b1e8435 and fb4bad84 is
+   the conversion of the four clk_sys/clk_ddr CDC cuts from set_false_path to
+   set_max_delay.
+
+3. The correction should be worded precisely.  Different SDC-only inputs produce
+   different programming files and different fitted resource accounting:
+
+     FIT_KEY_DIFF only_a=0 only_b=0 common=827
+     FIT_RESOURCE_DIFFS 39
+     top util A: ALMs 17702, block bits 2970061, M10K 453, DSP 74
+     top util B: ALMs 17706, block bits 2970061, M10K 453, DSP 74
+
+   That refutes "implementation-neutral" and "RBF-neutral".  It does not, by
+   itself, prove a functional RTL-equivalent netlist changed; a constraint-only
+   change can also alter packing/routing/retiming/resource accounting.  The safe
+   claim is: the SDC change is not neutral to the fitted implementation/RBF, and
+   a hardware A/B of 3b1e8435 vs fb4bad84 must be read as old-SDC vs new-SDC, not
+   as an RTL-window test.
+
+4. Secondary trap found: there are three SDC variants among the historical slots,
+   not just two.
+
+     old:       9a312bcb, 5 false_paths, 1 max_delay, diag false_path
+     new-lite:  6b255728, 0 false_paths, 5 max_delay, no diag max_delay
+     new-bdiag: 13e7312e, 0 false_paths, 6 max_delay, diag max_delay
+
+   new-lite and new-bdiag both fit to fb4bad84.  This isolates the harmlessness
+   of the diagnostic max_delay addition for these builds, but does not rescue the
+   old neutrality claim because neither new-lite nor new-bdiag contains the old
+   four CDC false paths.
+
+Conclusion
+----------
+BROKE/NARROWED: the published shorthand "SDC change changed the netlist" is too
+strong if "netlist" means functional logic.  The evidence proves SDC-only input
+changes alter the fitted implementation/RBF and small resource counts.
+
+COULD NOT BREAK: W-FIT's corrected strategic ruling that 3b1e8435 is a constraints
+vs RTL A/B, not a clk_ddr RTL-window A/B.  The prior exoneration was a control
+that did not vary the relevant SDC variable.
