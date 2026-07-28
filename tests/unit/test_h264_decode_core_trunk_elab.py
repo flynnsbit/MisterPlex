@@ -332,6 +332,21 @@ def cut(text, anchor):
     return text[:line_start], text[line_start:end], text[end:]
 
 
+def differs(original, mutated, what):
+    """A mutation that does not change the input proves nothing.
+
+    Every red proof below asserts this before running the check. The parent's
+    standing test - does this comparison actually differ in the thing it claims
+    to test - has to be mechanical rather than remembered, because a mutation
+    whose anchor has drifted still produces a confident green.
+    """
+    if original == mutated:
+        print("TRUNK_ELAB_FAIL: mutation %r changed nothing, so the red proof that "
+              "follows would be vacuous" % what, file=sys.stderr)
+        return False
+    return True
+
+
 def main():
     probe = subprocess.run(
         [str(ROOT / "scripts" / "run_verilator.sh"), "--version"],
@@ -404,7 +419,10 @@ def main():
     try:
         head, body, tail = cut(sp_original, CORE_ANCHOR)
 
-        STREAM_PATH.write_text(head + "/* CUT\n" + body + "\nCUT */" + tail)
+        cut_text = head + "/* CUT\n" + body + "\nCUT */" + tail
+        if not differs(sp_original, cut_text, "comment out the core instantiation"):
+            return 1
+        STREAM_PATH.write_text(cut_text)
         _rc, red, _m, _n, _d = emu_reach("red_cut")
         if PRODUCT_ROOT in red:
             print("TRUNK_ELAB_FAIL: %s still reachable from %s after cutting its only "
@@ -418,6 +436,8 @@ def main():
 
         disabled = (head + "\tgenerate if (1'b0) begin : g_w_swap_o5_disabled_probe\n"
                     + body + "\n\tend endgenerate\n" + tail)
+        if not differs(sp_original, disabled, "wrap the instantiation in if(0)"):
+            return 1
         STREAM_PATH.write_text(disabled)
         _rc, red, _m, _n, _d = emu_reach("red_gen0")
         gen_caught = PRODUCT_ROOT not in red
@@ -431,8 +451,12 @@ def main():
         print("OK trunk red-check B: %s unreachable from %s when its instantiation "
               "is wrapped in a disabled if(0) generate" % (PRODUCT_ROOT, TOP))
 
-        FILES_QIP.write_text("\n".join(
-            ln for ln in qip_original.splitlines() if DPB_FILE not in ln) + "\n")
+        without_dpb = "\n".join(
+            ln for ln in qip_original.splitlines() if DPB_FILE not in ln) + "\n"
+        if not differs(qip_original, without_dpb,
+                       "drop the DPB source from files.qip"):
+            return 1
+        FILES_QIP.write_text(without_dpb)
         _rc, red, _m, _n, _d = emu_reach("red_qip")
         qip_caught = not any(m in red for m in
                              ("h264_dpb_one_ref", "h264_inter_mc_part", "h264_inter_mc_16x16"))
@@ -451,9 +475,7 @@ def main():
         # regex reads it as absent. A parser must still see it.
         escaped = sp_original.replace(") product_decode_core (",
                                       ") \\product_decode_core  (")
-        if escaped == sp_original:
-            print("TRUNK_ELAB_FAIL: escaped-identifier mutation anchor not found",
-                  file=sys.stderr)
+        if not differs(sp_original, escaped, "escape the instance name"):
             return 1
         STREAM_PATH.write_text(escaped)
         _rc, esc, _m, _n, _d = emu_reach("mut_escaped")
@@ -473,6 +495,9 @@ def main():
         # only the closure-vs-files.qip check can catch it.
         mutated = "\n".join(
             ln for ln in qip_original.splitlines() if DECODE_TOP_FILE not in ln) + "\n"
+        if not differs(qip_original, mutated,
+                       "drop the intra sub-engine source from files.qip"):
+            return 1
         gap = qip_gap(mutated, need_modules)
         if DECODE_TOP_FILE not in gap:
             print("TRUNK_ELAB_FAIL: dropping %s from files.qip did not register as a "

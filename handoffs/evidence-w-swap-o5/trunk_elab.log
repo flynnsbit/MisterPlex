@@ -25,3 +25,4 @@ OK trunk red-check C: MC modules unreachable from emu when h264_dpb.sv is droppe
 OK trunk mutation-check D: escaped instance name still resolves; h264_decode_core and 8/8 MC modules remain reachable from emu
 OK trunk red-check E: dropping h264_decode_top.sv from files.qip is caught as a core closure gap; elaboration alone still reported everything present (elab_blind=True), which is why this check is textual and separate
 OK h264_decode_core trunk: reachable from emu in the elaborated Quartus design; 8/8 required MC modules end-to-end; quartus_files=66 red_proofs=5 (cut instantiation, disabled generate, files.qip removal, escaped identifier (no false negative), core closure vs files.qip)
+trunk_elab rc=0

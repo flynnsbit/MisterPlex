@@ -1,22 +1,17 @@
 resource-preflight: waiting for exclusive heavy-validation slot: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/resource-preflight.lock
 resource-preflight: acquired slot for: python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/scripts/run_with_skip_summary.py --label make-unit -- make unit-rollcall unit-unlocked
 preflight: paging 0 pages/s over 2s (limit 200)
-preflight: MemAvailable 67226MB (floor 4096MB)
-preflight: SwapFree 7376MB (floor 32MB)
-preflight OK: no local Quartus, no active paging, 67226MB available, 7376MB swap free
+preflight: MemAvailable 67299MB (floor 4096MB)
+preflight: SwapFree 7371MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 67299MB available, 7371MB swap free
 resource-preflight: preflight OK on attempt 1; running command
 make[1]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5'
 python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_unit_rollcall.py
 UNIT_ROLLCALL_OK actual_prereqs=33 expected_prereqs=33 actual_commands=100 protected_commands=97 expected_commands=97 actual_ignored_commands=3 expected_ignored_commands=3 makefile=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/Makefile
 preflight: paging 0 pages/s over 2s (limit 200)
-preflight: MemAvailable 67180MB (floor 4096MB)
-preflight: SwapFree 7376MB (floor 32MB)
-preflight OK: no local Quartus, no active paging, 67180MB available, 7376MB swap free
-g++ -std=c++17 -O2 -Wall -Wextra -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/arm/misterplexd -pthread -o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_companion_eof \
-	/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_companion_eof.cpp /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/arm/misterplexd/companion.cpp
-g++ -std=c++17 -O2 -Wall -Wextra -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/arm/misterplexd -pthread -o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_companion_plant_seek \
-	/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_companion_plant_seek.cpp /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/arm/misterplexd/companion.cpp
-g++ -std=c++17 -O2 -Wall -Wextra -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host -o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_p3_idct_reference_model /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_p3_idct_reference_model.cpp
+preflight: MemAvailable 67254MB (floor 4096MB)
+preflight: SwapFree 7371MB (floor 32MB)
+preflight OK: no local Quartus, no active paging, 67254MB available, 7371MB swap free
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_cadence
 test_cadence: OK
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_avclock
@@ -471,24 +466,22 @@ test_i420_candidate_score: OK separated intra/inter score, colorspace/loop-filte
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_multinal_stream_path.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_multinal_stream_path'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_multinal_stream_path_tb.o ../../../tests/rtl/h264_multinal_stream_path_tb.cpp
-g++    h264_multinal_stream_path_tb.o verilated.o verilated_threads.o Vh264_multinal_stream_path_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_multinal_stream_path_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_multinal_stream_path'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.697 s (elab=0.000, cvt=0.000, bld=0.695); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
 test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=2
 multi-NAL stream_path raw: bytes=9060 bytes_in=9060 bytes_seen=9060 nalu=5 sps=1 pps=1 idr=1 slice=1 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=15786 frames=2 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=1 p_first_modes=1/0/0 p_first_bad=0 slice_parser_state=0 final_slice_type=5 final_p_skip_run=0 final_first_mb_type=0 final_first_part_mode=0 expect_csum=0x14 residual_csum=0x14 cycles=18486
 test_h264_multinal_stream_path: OK fixture exercises GREEN class (IDR->P re-entry plus recon 0x3b observed)
 multi-NAL stream_path raw: bytes=27653 bytes_in=27653 bytes_seen=27652 nalu=15 sps=1 pps=1 idr=1 slice=11 place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=35617 frames=10 saw_i=1 idle_between_vcl=1 saw_p=1 p_first_mb_seen=11 p_first_modes=8/2/1 p_first_bad=0 slice_parser_state=0 final_slice_type=5 final_p_skip_run=0 final_first_mb_type=1 final_first_part_mode=1 expect_csum=0x10 residual_csum=0x10 cycles=55319
 test_h264_multinal_stream_path: OK fixture exercises GREEN class (IDR->P re-entry plus recon 0x3b observed)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_multinal_stream_path_recon_zero'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_multinal_stream_path_tb.o ../../../tests/rtl/h264_multinal_stream_path_tb.cpp
-g++    h264_multinal_stream_path_tb.o verilated.o verilated_threads.o Vh264_multinal_stream_path_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_multinal_stream_path_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_multinal_stream_path_recon_zero'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.720 s (elab=0.000, cvt=0.000, bld=0.719); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
 test_h264_multinal_stream_path: OK red-check forced recon_sig=0 rejected parsed P DPB/MC liveness
 test_h264_multinal_stream_path: OK deliberate RED wrong expected checksum rc=1
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/test_p3_idct_reference_model
@@ -510,7 +503,7 @@ g++    p3_intra_mb0_neg_main.o verilated.o verilated_threads.o Vp3_intra_mb0_tb_
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_mb0_neg_25e3c8883b4a'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.569 s (elab=0.000, cvt=0.000, bld=0.568); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.564 s (elab=0.000, cvt=0.000, bld=0.564); cpu 0.001 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED p3_intra_mb0_negative: rc=1 matched 2 manifest substring(s) (tests/unit/test_p3_intra_mb0_verilator.py)
 P3 intra MB0 negative-direction check PASS: RTL perturbation was detected (red path).
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_mb0_99ac5f762060'
@@ -519,7 +512,7 @@ g++    p3_intra_mb0_main.o verilated.o verilated_threads.o Vp3_intra_mb0_tb__ALL
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_mb0_99ac5f762060'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.606 s (elab=0.000, cvt=0.000, bld=0.606); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.549 s (elab=0.000, cvt=0.000, bld=0.549); cpu 0.000 s on 1 threads; allocated 20.316 MB
 P3 intra MB0 Verilator exact check PASS: 16 luma 4x4 blocks matched pred/recon exactly. CAVEAT: MB0 only exercises I4x4 DC/H/V, not full P3-3l3 coverage.
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_guard_d83d6e71e5a3'
 g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o p3_intra_guard_main.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/p3_intra_guard_main.cpp
@@ -527,7 +520,7 @@ g++    p3_intra_guard_main.o verilated.o verilated_threads.o Vh264_intra_mode_gu
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_guard_d83d6e71e5a3'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.574 s (elab=0.000, cvt=0.000, bld=0.573); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.516 s (elab=0.000, cvt=0.000, bld=0.515); cpu 0.001 s on 1 threads; allocated 20.316 MB
 P3 intra mode guard Verilator check PASS: I16 Plane accepted, IPCM+bad type still caught.
 python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_intra_nb_ctx_verilator.py
 Scope: h264_intra_nb_ctx full-width pre-deblock reconstructed-neighbour context; coded=624x480, mb_grid=39x30 denominator=1170 MBs, luma block-level and h264_decode_top MB-level above/left/top-left/above-right plus chroma U/V above/left/top-left. Availability is semantic, including first_mb_in_slice slice boundaries. It does not cover entropy parsing, residual math, deblock filtering, DPB post-deblock storage, inter prediction, or HDMI presentation.
@@ -755,14 +748,14 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_iq_idct_4x4'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks=16 compared_values=768 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_host_recon/mb0_luma_v1.json
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK decode_stub RTL sim: product decode path recon_sig=0x3b recon_dbg=0xf9 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_host_recon/mb0_luma_v1.json
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon_pred_only'
 make[2]: Nothing to be done for 'default'.
@@ -779,7 +772,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_frame_neg_93b97d3cc9c9'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.000 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED p3_intra_frame_negative: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_intra_frame_verilator.py)
 P3 intra frame-wide negative-direction check PASS: rare DDR-mode RTL perturbation was detected (red path).
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_frame_e98b2c8539e6'
@@ -787,7 +780,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/obj_p3_intra_frame_e98b2c8539e6'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.316 MB
 P3 intra frame-wide Verilator exact check PASS: mb_exact=300/300 frame=320x240 luma_pixels=76800 frame_mae_fixture=max_abs_y_zero
 I4 pass counts: V=656 H=298 DC=263 DDL=19 DDR=8 VR=14 HD=37 VL=22 HU=11 I_NxN_MBs=83
 I16 pass counts: V=195 H=13 DC=9 PlaneUnsupportedSeen=0 I16_MBs=217
@@ -800,14 +793,14 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_inter_pred'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK real RTL sim: h264_inter_pred product RTL mv_cases=6 partition_cases=10 frame_mv_cases=9090 frame_modes=690/720/720/690/690 luma_qpel=16 chroma_epel=3 clamp=3 fetch=5 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_inter_pred/inter_mc_v1.json
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_inter_pred_bad_round'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_inter_pred_bad_round'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.001 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED h264_inter_pred_bad_round: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_inter_rtl_sim.sh)
 OK h264_inter_pred RTL red-check: bad rounding fault failed golden
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_inter_pred_bad_part_mv'
@@ -815,7 +808,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_inter_pred_bad_part_mv'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.000 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED h264_inter_pred_bad_part_mv: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_inter_rtl_sim.sh)
 OK h264_inter_pred RTL red-check: bad partition MV fault failed golden
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_p3_dpb_mc_rtl_sim.sh
@@ -825,7 +818,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.000 s on 1 threads; allocated 20.316 MB
 Scope: product_i420_writes=1536 luma_window=441/441 chroma_windows=81/81/81 mc_pixels=256/64/64 frame_fraction=4/1170 coded=624x480 nals=15
 OK real RTL sim: h264_dpb_mc product RTL nals=15 i420_writes=1536 luma_window=441 chroma_windows=81/81 mc_pixels=256/64/64 part_modes=16x8/8x16/8x8/8x4/4x8/4x4 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_deblock_seam'
@@ -833,7 +826,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_deblock_seam'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.316 MB
 Scope: seam_filtered_samples=768 seam_committed_mbs=2/1170 frame_fraction=0.001709 nals=15
 OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; terminal wb_valid precedes frame_done/ref_ready nals=15 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264
 Scope: full_frame_seam_filtered_mbs=1170/1170 filtered_samples=449280 skipped_filtered_mbs=928/928 skipped_filtered_samples=356352 inter_mbs=197 intra_mbs=45 syntax_groups=331 qp_range=3..33 coded=624x480 display=618x480 crop_padding_samples_written=4320
@@ -863,7 +856,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_deblock_seam_ref_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.000 s on 1 threads; allocated 20.320 MB
 FAIL h264_dpb_mc RTL: deblock-DPB seam terminal commit/ref_ready order wb=1 addr=1169 pulse=1 ref_ready=0
 OK h264_dpb_mc RTL red-check: deblock early frame_done fault failed seam
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_clamp'
@@ -871,7 +864,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_clamp'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL h264_dpb_mc RTL: luma window clamp mismatch idx=0 got=18 want=17 src=(0,0)
 OK h264_dpb_mc RTL red-check: bad edge clamp fault failed golden
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_mc_round'
@@ -879,7 +872,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_mc_round'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL h264_dpb_mc RTL: MC luma prediction mismatch idx=0 got=18 want=17
 OK h264_dpb_mc RTL red-check: bad MC arithmetic fault failed golden
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_early_ref'
@@ -887,7 +880,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_early_ref'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL h264_dpb_mc RTL: early reference publication before frame boundary
 OK h264_dpb_mc RTL red-check: early reference publication fault failed golden
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_part_mask'
@@ -895,7 +888,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_dpb_mc_bad_part_mask'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL h264_dpb_mc RTL: part luma prediction/mask mismatch part=16x8 idx=8 valid=0 want_valid=1 got=38 want=38
 FAIL h264_dpb_mc RTL: part luma prediction/mask mismatch
 OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden
@@ -906,7 +899,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_wb'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.012 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.320 MB
 Scope: decode_core_writeback_mbs=2/8 samples=768 frame_done_seen=1
 OK h264_decode_core writeback scoreboard: 2 MBs, 768 native-I420 samples landed at DPB addresses; terminal frame_done observed
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_wb_fault'
@@ -914,148 +907,135 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_wb_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 FAIL h264_decode_core writeback scoreboard: write count 0 < 384
 OK h264_decode_core writeback red-check: dropped writeback fault failed scoreboard
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core P16x16 real-P)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.832 s (elab=0.000, cvt=0.000, bld=0.830); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 OK h264_decode_core p16x16 real-P scoreboard: 3 MBs syntax+MV-neighbor+CAVLC-residual path 384x3 exact clipped pred+16Y+8C scheduled-residual samples landed at DPB addresses; reads=1809 clipped_samples=56 clip_low=10 clip_high=46 rbsp_request_offsets=37/50/63 chroma_right_clamp_reads=36 cycles=5343 timeout_cycles=222704; nonterminal frame_done stayed low
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_pred'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_pred'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.818 s (elab=0.000, cvt=0.000, bld=0.817); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=19 want=92 pred=73 residual=19
 EXPECTED_RED h264_decode_core_p16z_drop_pred: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped prediction fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_residual'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_residual'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.850 s (elab=0.000, cvt=0.000, bld=0.849); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19
 EXPECTED_RED h264_decode_core_p16z_drop_residual: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped residual fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_perturb_mv'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_perturb_mv'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.822 s (elab=0.000, cvt=0.000, bld=0.820); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 0 got_addr=0x400f want_addr=0x400e
 EXPECTED_RED h264_decode_core_p16z_perturb_mv: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: perturbed MV fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_bad_rbsp'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_bad_rbsp'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.772 s (elab=0.000, cvt=0.000, bld=0.771); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got=38 want=37 residual_bit_offset=296
 EXPECTED_RED h264_decode_core_p16z_bad_rbsp_req: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: bad RBSP request fault failed syntax scoreboard
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_mv_neighbor'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_mv_neighbor'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.846 s (elab=0.000, cvt=0.000, bld=0.845); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(2,0) read_ordinal 603 got_addr=0x401e want_addr=0x401f
 EXPECTED_RED h264_decode_core_p16z_drop_mv_neighbor: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped MV neighbor fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_scheduled_residual'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_scheduled_residual'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.902 s (elab=0.000, cvt=0.000, bld=0.901); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19
 EXPECTED_RED h264_decode_core_p16z_drop_scheduled_residual: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped scheduled residual fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_last_luma_residual'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_last_luma_residual'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.901 s (elab=0.000, cvt=0.000, bld=0.900); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 204 plane=Y got=51 want=58 pred=51 residual=7
 EXPECTED_RED h264_decode_core_p16z_drop_last_luma_residual: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped last luma residual fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_last_chroma_residual'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_drop_last_chroma_residual'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.816 s (elab=0.000, cvt=0.000, bld=0.816); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 356 plane=V got=23 want=42 pred=23 residual=19
 EXPECTED_RED h264_decode_core_p16z_drop_last_chroma_residual: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: dropped last chroma residual fault failed exact samples
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_scheduled_coeff'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_scheduled_coeff'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.799 s (elab=0.000, cvt=0.000, bld=0.798); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.012 s (elab=0.000, cvt=0.000, bld=0.011); cpu 0.002 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=90 want=92 pred=73 residual=19
 EXPECTED_RED h264_decode_core_p16z_swap_scheduled_coeff: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: swapped scheduled coefficient fault failed scan-order scoreboard
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_scheduled_coeff'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_scheduled_coeff'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.846 s (elab=0.000, cvt=0.000, bld=0.844); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 320 plane=V got=207 want=209 pred=190 residual=19
 EXPECTED_RED h264_decode_core_p16z_swap_chroma_scheduled_coeff: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: swapped chroma coefficient fault failed scan-order scoreboard
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_read'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_read'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.940 s (elab=0.000, cvt=0.000, bld=0.939); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 441 got_addr=0x4a08 want_addr=0x4808
 EXPECTED_RED h264_decode_core_p16z_swap_chroma_read: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
 OK h264_decode_core p16x16 real-P red-check: swapped chroma read fault failed U/V scoreboard
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_residual'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_p16z_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_p16z_tb.cpp
-g++    h264_decode_core_p16z_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_p16z_swap_chroma_residual'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.768 s (elab=0.000, cvt=0.000, bld=0.767); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
 INFO h264_decode_core residual fixture: 72 scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples=1152 uv_ref_distinguishable_samples=510 uv_residual_distinguishable_samples=192 scan_order_sentinel=19/11
 FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=176 want=164 pred=157 residual=7
 EXPECTED_RED h264_decode_core_p16z_swap_chroma_residual: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)
@@ -1063,21 +1043,19 @@ OK h264_decode_core p16x16 real-P red-check: swapped chroma residual fault faile
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core real-content slice)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_real_slice'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_real_slice_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_real_slice_tb.cpp
 g++    h264_decode_core_real_slice_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_real_slice'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.778 s (elab=0.000, cvt=0.000, bld=0.777); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.047 s (elab=0.000, cvt=0.000, bld=0.046); cpu 0.001 s on 1 threads; allocated 20.320 MB
 test_h264_decode_core_real_slice: OK real-content disabled-loop-filter I420 slice reconstructed 2 P16 MBs exact; residual_nonzero=768 uv_distinct_samples=128 chroma_right_clamp_reads=18 varied-real-content=0->1@(5,0) right-edge-chroma-clamp=0->1@(38,7)
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core real-content slice +define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_real_slice_swap_chroma_read'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_decode_core_real_slice_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_decode_core_real_slice_tb.cpp
 g++    h264_decode_core_real_slice_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_real_slice_swap_chroma_read'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.772 s (elab=0.000, cvt=0.000, bld=0.771); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.041 s (elab=0.000, cvt=0.000, bld=0.040); cpu 0.001 s on 1 threads; allocated 20.320 MB
 FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) read_ordinal 441 got_addr=0x5f6a8 want_addr=0x4d228
 EXPECTED_RED h264_decode_core_real_slice_swap_chroma_read: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh)
 OK h264_decode_core real-slice red-check: swapped U/V chroma read failed real-content scoreboard
@@ -1088,7 +1066,7 @@ g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.039 s (elab=0.000, cvt=0.000, bld=0.038); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.042 s (elab=0.000, cvt=0.000, bld=0.041); cpu 0.001 s on 1 threads; allocated 20.320 MB
 Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
 OK h264_decode_core full-frame MC: 1170/1170 P16x16 macroblocks predicted exactly; samples Y=299520 U=74880 V=74880 total=449280; reads=705510 (all addresses exact); luma_qpel_phases=16/16 chroma_epel_phases=64/64 sub_pel_luma_samples=280064 edge_clamped_mbs=96 differ_from_colocated=230469/299520 pred_range=0..197 cycles=1162986
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core full-frame MC +define+H264_DECODE_CORE_FAULT_PERTURB_MV)
@@ -1097,7 +1075,7 @@ g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_perturb_mv'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.047 s (elab=0.000, cvt=0.000, bld=0.046); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.041 s (elab=0.000, cvt=0.000, bld=0.040); cpu 0.001 s on 1 threads; allocated 20.320 MB
 Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
 FAIL h264_decode_core full-frame MC: 295419 reference read addresses wrong; first read_ordinal 603 got_addr=0x10000b want_addr=0x10000a
 EXPECTED_RED h264_decode_core_full_frame_mc_perturb_mv: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh)
@@ -1108,7 +1086,7 @@ g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_drop_pred'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.062 s (elab=0.000, cvt=0.000, bld=0.061); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.040 s (elab=0.000, cvt=0.000, bld=0.040); cpu 0.001 s on 1 threads; allocated 20.320 MB
 Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
 FAIL h264_decode_core full-frame MC: mb=0 (0,0) mv=(-20,-18) sample 0 plane=Y got_addr=0x400000 want_addr=0x400000 got=0 want=19
 EXPECTED_RED h264_decode_core_full_frame_mc_drop_pred: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh)
@@ -1120,14 +1098,14 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_p_slice_modes'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.005 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.000 s on 1 threads; allocated 20.316 MB
 h264 P-slice mode RTL check PASS: cases=10 skip=1 p16x16=1 p16x8=1 p8x16=1 p8x8_mb=4 subpartitions=4 intra_map=1 unsupported=1
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_p_slice_modes_fault'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_p_slice_modes_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED h264_p_slice_modes_swap_16x8: rc=1 matched 4 manifest substring(s) (tests/unit/test_h264_p_slice_modes_rtl_sim.sh)
 OK h264_p_slice_modes red-check: swapped 16x8 partition fault failed golden
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
@@ -1137,7 +1115,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_inter'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.003 s on 1 threads; allocated 20.320 MB
 OK real RTL sim: stream_path integrated inter vector nals=4 idr=1 p=0 frames=1 bytes=6739 sps=320x240 mb=20x15 inter_band_samples=48/48/48/48 idr-multinal cycles=195783 frame_cycles=180490 max_frame_cycles=180490 frame_timeout_cycles=598532
 OK real RTL sim: stream_path integrated inter vector nals=15 idr=1 p=11 frames=12 bytes=27653 sps=320x240 mb=20x15 inter_band_samples=576/576/576/576 p-slice-multinal cycles=3092221 frame_cycles=183548/258688/259660/258616/258359/259524/258576/258831/260227/259423/259091/260531 max_frame_cycles=260531 frame_timeout_cycles=598532
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_inter_bad_pixel'
@@ -1145,7 +1123,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_inter_bad_pixel'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
 EXPECTED_RED stream_path_inter_bad_pixel: rc=1 matched 5 manifest substring(s) (tests/unit/test_p3_inter_stream_path_rtl_sim.sh)
 OK stream_path inter RTL red-check: bad diagnostic pixel fault failed golden
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_companion_http.sh
@@ -1671,14 +1649,14 @@ misterplexd: resolve failed: no PMS base for key=/library/metadata/61 — test p
 misterplexd: Content FPS hint=30 (SOURCE_FPS=auto pms_vfr=- frameRate=- resolved=30) — exact pacing uses resolved rate; switchres TODO
 misterplexd: content fps exact=30/1 (pms frameRate=- vfr=-)
 misterplexd: PLAY testsrc off=120000 dur=120000
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
+fb open: Permission denied
+media: /dev/fb0 unavailable
+media: audio device /dev/MrAudio unavailable (video-only)
 HTTP IN peer=127.0.0.1 GET /player/timeline/poll?commandID=46b HTTP/1.1
 HTTP OUT 200 timeline <Timeline type="video" state="buffering" time="120000" duration="120000" seekRange="0-120000" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="
-fb open: Permission denied
-media: /dev/fb0 unavailable
-media: audio device /dev/MrAudio unavailable (video-only)
-fb open: Permission denied
-media: /dev/fb0 unavailable
-media: audio device /dev/MrAudio unavailable (video-only)
 HTTP IN peer=127.0.0.1 GET /player/playback/seekTo?startTimeOffset=17000&commandID=47 HTTP/1.1
 misterplexd: seek re-resolve key=/library/metadata/61 offMs=17000
 misterplexd: content resolution=320x240 source=conf/--decode status_word=0x0000 weak=320x240 bitrate=1000
@@ -2635,12 +2613,11 @@ PASS: floating DQ reproduces read_sample=0xffff, first_fail_addr=0, size_code=0
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_cavlc_residual_verilator.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_cavlc_residual_neg)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_cavlc_residual_neg'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2 -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host   -Os  -c -o h264_cavlc_residual_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_cavlc_residual_tb.cpp
-g++    h264_cavlc_residual_tb.o verilated.o verilated_threads.o Vh264_cavlc_residual_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_cavlc_residual_tb_top
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_cavlc_residual_neg'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 1.055 s (elab=0.000, cvt=0.000, bld=1.054); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
 RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=1)
 FAIL coeff_token table=0 max=16 ok=1 tc=0/0 t1=0/0 tz=0/0 bits=1/1 coeff= 1(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0)
 FAIL coeff_token table=0 max=16 ok=1 tc=1/1 t1=0/0 tz=0/0 bits=8/8 coeff= 3(2) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0)
@@ -2649,12 +2626,11 @@ FAIL coeff_token table=0 max=16 ok=1 tc=2/2 t1=0/0 tz=0/0 bits=16/16 coeff= -4(-
 FAIL coeff_token table=0 max=16 ok=1 tc=2/2 t1=1/1 tz=0/0 bits=14/14 coeff= -4(-3) 1(1) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0) 0(0)
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_cavlc_residual_pos)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_cavlc_residual_pos'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2 -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host   -Os  -c -o h264_cavlc_residual_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_cavlc_residual_tb.cpp
-g++    h264_cavlc_residual_tb.o verilated.o verilated_threads.o Vh264_cavlc_residual_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_cavlc_residual_tb_top
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_cavlc_residual_pos'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.986 s (elab=0.000, cvt=0.000, bld=0.985); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
 H264 CAVLC residual Verilator PASS: prefix-free tables checked; roundtrip_cases=526 including all coeff_token tables, luma/chroma total_zeros, run_before, nC edges, suffix escalation
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_level_width_verilator.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
@@ -2663,7 +2639,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/level_width_tb'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
 level_width_tb: coeff[0]=300 QP=4
   gold dequant[0]=4800
   RTL  dequant[0]=4800
@@ -2700,13 +2676,13 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_recon_integration'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_recon_integration_fault'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_recon_integration_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.015 s (elab=0.000, cvt=0.000, bld=0.013); cpu 0.002 s on 1 threads; allocated 20.320 MB
 STREAM_PATH_INTEGRATION raw mode=normal bytes=6739 doubled_bytes=13478 nal_count=8 slice_count=0 idr_count=2 bytes_seen=13478 recon_valid=1 recon_sig=0x3b recon_dbg=0xf9 residual_csum=0x14 cycles_to_recon=90215
 OK stream_path normal: true recon signature matched golden and rejected 0x00 latency signatures
 STREAM_PATH_INTEGRATION raw mode=escape-red bytes=6739 doubled_bytes=13478 nal_count=8 slice_count=0 idr_count=2 bytes_seen=13478 recon_valid=0 recon_sig=0xff recon_dbg=0xff residual_csum=0xff cycles_to_recon=0
@@ -2721,7 +2697,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_real_intra'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.002 s on 1 threads; allocated 20.320 MB
 STREAM_PATH_REAL_INTRA raw residual_pulses=2 recon_pulses=964 recon_sig=0x3b recon_dbg=0xf9 first_pixel=0x4a49 mb0_first4x4_samples=16 non128_first4x4=16 mb0_samples=0 frame_pixels=0 cycles=118135
 OK real-intra gate: displayed first 4x4 contains decoded non-128 pixels
 OK real-intra topology gate: stream_path uses h264_decode_core; h264_decode_top is core sub-engine
@@ -2733,13 +2709,13 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_full_frame'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_full_frame_fault'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_full_frame_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.002 s on 1 threads; allocated 20.320 MB
 DPB_PREFILL wrote 115200 bytes of reference frame 0 into BANK0
 DPB_PREFILL wrote 115200 bytes of reference frame 0 into BANK0
 DPB_PREFILL wrote 115200 bytes of reference frame 1 into BANK0
@@ -2906,7 +2882,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/rtl_recon_scorer'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
 RTL_RECON_SCORER  verification_target=RTL
   module=h264_dequant4x4+h264_idct4x4+h264_recon4x4
   scope=all_mbs_luma
@@ -2928,7 +2904,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddram_frame_rd_bank'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK ddram_frame_rd bank select: SPI status[13] and doorbell DDRAM_DOUT[63] choose derived bank base
 python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/parse_res_csum_status.py --self-test
 === HOST residual csum goldens (locked unit) ===
@@ -3034,21 +3010,21 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_iq_idct_4x4'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks=16 compared_values=768 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_host_recon/mb0_luma_v1.json
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 OK decode_stub RTL sim: product decode path recon_sig=0x3b recon_dbg=0xf9 qp=25 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_host_recon/mb0_luma_v1.json
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon_pred_only'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/decode_stub_recon_pred_only'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.009); cpu 0.001 s on 1 threads; allocated 20.316 MB
 EXPECTED_RED decode_stub_pred_only: rc=1 matched 1 manifest substring(s) (tests/unit/test_p3_idct_rtl_sim.sh)
 OK decode_stub RTL red-check: pred-only residual drop produced recon_sig=0x00 and failed golden 0x3b
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_p3_deblock_rtl_sim.sh
@@ -3058,7 +3034,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_deblock'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.316 MB
 Scope: real_p_bs_mb_boundary_edges=2271/2271 real_p_mbs=1170/1170 skipped_mbs=928 skipped_edges_scored=1949 inter_mbs=197 inter_edges_scored=533 intra_mbs=45 intra_edges_scored=160 bs_counts=160/0/270/43/1798 left_top_unfiltered_edges=69 coded=624x480 display=618x480 crop_padding_samples_in_coded_frame=4320 qp_range=3..33
 Scope: filtered_samples=641 luma_bS4=16 chroma_bS4=4 real_fixture_qp_range=25..25 synthetic_qp_range=4..51 chroma_qpc_trap_qpy_qpc=40/36
 OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift
@@ -3075,7 +3051,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_deblock_mb_commit_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL deblock writeback: MB commit before all filtered samples wb=1 order_error=1
 OK h264_deblock RTL red-check: early MB commit before filtered samples failed
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_deblock_writeback_fault'
@@ -3083,7 +3059,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_deblock_writeback_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL deblock writeback: DPB ref ready before frame boundary wb=1 addr=1169 ready=1
 OK h264_deblock RTL red-check: early DPB ref_ready fault failed
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
@@ -3093,7 +3069,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_recon'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.012 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.003 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.320 MB
 OK stream_path integrated sim: slice_hdr_parser->decode_stub handoff two_pushes=PASS recon_sig=0x3b recon_dbg=0xf9 residual_csum=0x14 nalu=8 bytes=13478 frames=2 last_place_cyc=194167 last_recon_cyc=386470 fixture=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_stream_path_deblock_integration.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
@@ -3102,7 +3078,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_deblock'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.002 s on 1 threads; allocated 20.320 MB
 Scope: filtered_samples=128 real_fixture_filtered_samples=4 luma_bS4=120 chroma_bS4=4 real_fixture_qp_range=25..25 synthetic_qp_range=4..51
 stream_path raw: input_nals=5 bytes=9060 bytes_in=9060 bytes_seen=9060 nalu_count=5 sps=1 pps=1 idr=1 slices=1 frames=2 expected_vcl=2 residual_place_pulses=1 saw_expected_csum=1 recon_sig_3b_cycles=15786 final_qp=15 residual_qp=25 mb=20x15 residual_csum=0x14 recon_sig=0x3b recon_dbg=0x79
 deblock raw: bs_mb=4 bs_internal=3 bs_residual_pq=2/2 bs_mv=below0/x+1/x-1/y+1/y-1 bs_refdiff=1 idc2_boundary_bs=0 idc1_disable_bs=0 slice_deblock_idc=0 slice_offsets_div2=0/0 slice_offsets=0/0 alpha=13 beta=4 tc0=1 offset_case_alpha_beta_tc0=40/3/2 clip_hi_alpha_beta_tc0=255/18/13 clip_lo_alpha_beta_tc0=0/0/0 chroma_bS4_p1_unchanged=114 boundary_segments_vh=18600/18564 skipped_picture_boundary_segments=552 loop_edge=x4y0 changed_sample=x2y1 unfiltered_next=71 filtered_next=72 ref_fnv=0xac3711bc boundary_fnv=0x9e75a695
@@ -3144,7 +3120,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_ddr_ring'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.012 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.002 s on 1 threads; allocated 20.320 MB
 stream_path DDR ring shared fixture raw: fixture_nals=5 payload_bytes=9060 nalu_count=5 bytes_out=9060
 stream_path DDR ring RTL check PASS: ioctl_NALs>=2 wrap_NALs>=2 seq_gap_detected underrun_red_guard overrun_red_guard ring_bytes=262144
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_ddr_ring_wrap_fault'
@@ -3152,7 +3128,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_ddr_ring_wrap_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.010 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.002 s on 1 threads; allocated 20.320 MB
 DDR ring wrap did not deliver two NALs
 DDR ring wrap did not drain all bytes
 DDR ring wrap corrupted PPS NAL type
@@ -3169,7 +3145,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_ddr_ring_underrun_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.013 s (elab=0.000, cvt=0.000, bld=0.011); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.320 MB
 stream_path DDR ring shared fixture raw: fixture_nals=5 payload_bytes=9060 nalu_count=5 bytes_out=9060
 DDR ring underrun telemetry stayed zero
 stream_path DDR ring RTL check FAILED: 1 failures
@@ -3178,7 +3154,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/stream_path_ddr_ring_overrun_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.013 s (elab=0.000, cvt=0.000, bld=0.011); cpu 0.002 s on 1 threads; allocated 20.320 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.002 s on 1 threads; allocated 20.320 MB
 stream_path DDR ring shared fixture raw: fixture_nals=5 payload_bytes=9060 nalu_count=5 bytes_out=9060
 DDR ring overrun telemetry stayed zero
 stream_path DDR ring RTL check FAILED: 1 failures
@@ -3190,7 +3166,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3213,7 +3189,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.015 s (elab=0.000, cvt=0.000, bld=0.015); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3225,7 +3201,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_format_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3241,7 +3217,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_bank_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 FAIL ddr_frame_store warm-reset: alternating bank flip bank1 got r=83 want≈201 frames=1 underruns=99 has_frame=1 swap_pending=0 debug=0x90
 OK ddr_frame_store warm-reset red-check: held display-bank fault failed
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_uv_fault'
@@ -3249,7 +3225,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_uv_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 FAIL ddr_frame_store warm-reset: U/V read mapping got rgb=255/81/0 want blue-dominant from Y=128 U=255 V=0 u_base_qwords=480 v_base_qwords=600 y_stride_qwords=10 c_stride_qwords=5 frames=1 underruns=0
@@ -3259,7 +3235,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_chroma_vertical_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3270,7 +3246,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_chroma_stride_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.012 s (elab=0.000, cvt=0.000, bld=0.012); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3281,7 +3257,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_warm_reset_sched_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 ddr_frame_store warm-reset raw: initial_plxf_publish frame_mailbox_magic=0x504c5846 frame_debug=0x0 cycles=12
 ddr_frame_store warm-reset raw: initial_plxf_absent_when_ddr_busy frame_mailbox_magic=0x0 full_mailbox=0x0 has_frame=0 cycles=20012
 ddr_frame_store chroma raw: U_base_qwords=480 V_base_qwords=600 U_base_bytes=3840 V_base_bytes=4800 Y_stride_qwords=10 C_stride_qwords=5 Y_stride_bytes=80 C_stride_bytes=40 sample_rgb=0/175/255 frames=1 cycles=7872
@@ -3307,7 +3283,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_swap_livelock'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.000 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.316 MB
 Scope: ddr_frame_store natural frame-store swap livelock; cold reset, doorbells 0->1->0, full rd_y sweeps, no hierarchical y_valid/y_bank/y_line injection.
 Audit: assertion compares top.frames_done after final doorbell against frames_before_third + 1; it does not cover pixel color correctness, ARM timeout timing, or injected stale-state recovery.
 Raw: after first full sweep frames_done=1 disp_bank=0 prep_base_idx=0 cycle=81813
@@ -3359,7 +3335,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/ddr_frame_store_swap_livelock_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.009 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
 Scope: ddr_frame_store natural frame-store swap livelock; cold reset, doorbells 0->1->0, full rd_y sweeps, no hierarchical y_valid/y_bank/y_line injection.
 Audit: assertion compares top.frames_done after final doorbell against frames_before_third + 1; it does not cover pixel color correctness, ARM timeout timing, or injected stale-state recovery.
 Raw: after first full sweep frames_done=1 disp_bank=0 prep_base_idx=0 cycle=81813
@@ -3433,14 +3409,14 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_syntax_primitives'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
 h264 syntax primitives RTL check PASS: EPB synthetic=6 real_epb_removed=2 ue=9 se=7 malformed_long=rejected offsets=RBSP-after-EPB
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_syntax_primitives_epb_fault'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_syntax_primitives_epb_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 epb_00 got 0 0 3 want 0 0 0
 epb_01 got 12 0 0 3 3 want 12 0 0 1 34
 epb_02 got 0 0 3 want 0 0 2
@@ -3452,7 +3428,7 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_syntax_primitives_se_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.005); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 se 1 failed got ok=1 se=-1 ue=1
 se -1 failed got ok=1 se=1 ue=2
 se 2 failed got ok=1 se=-2 ue=3
@@ -3468,14 +3444,14 @@ make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_sps_geometry'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 h264 SPS geometry RTL check PASS: baseline_320x240 and cropped coded=624x480 display=618x480 crop_right=3 log2_frame_num=7 poc_type=2
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_sps_geometry_crop_fault'
 make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_sps_geometry_crop_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 baseline_320x240 display geometry mismatch
 baseline_320x240 crop_right mismatch
 cropped_624_to_618 display geometry mismatch
@@ -3485,21 +3461,19 @@ OK h264_sps_geometry red-check: crop/display perturbation failed geometry checks
 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2 -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host   -Os  -c -o h264_baseline_syntax_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_baseline_syntax_tb.cpp
-g++    h264_baseline_syntax_tb.o verilated.o verilated_threads.o Vh264_baseline_syntax_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_baseline_syntax_tb_top
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 1.106 s (elab=0.000, cvt=0.000, bld=1.105); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.008); cpu 0.001 s on 1 threads; allocated 20.316 MB
 I-slice MB coverage: total=300 I_NxN=83 I16x16=217
 h264 baseline syntax RTL check PASS: PPS, slice header/deblock offsets, 300/300 real I macroblocks, synthetic P_Skip/P16x16/rare P8x8
 make[2]: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax_p8_fault'
-g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2 -I/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/host   -Os  -c -o h264_baseline_syntax_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/tests/rtl/h264_baseline_syntax_tb.cpp
-g++    h264_baseline_syntax_tb.o verilated.o verilated_threads.o Vh264_baseline_syntax_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_baseline_syntax_tb_top
+make[2]: Nothing to be done for 'default'.
 make[2]: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_baseline_syntax_p8_fault'
 - V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
 - Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
-- Verilator: Walltime 1.073 s (elab=0.000, cvt=0.000, bld=1.073); cpu 0.001 s on 1 threads; allocated 20.316 MB
+- Verilator: Walltime 0.008 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.316 MB
 I-slice MB coverage: total=300 I_NxN=83 I16x16=217
 rare P8x8 partition did not execute
 h264 baseline syntax RTL check FAILED: 1 failures

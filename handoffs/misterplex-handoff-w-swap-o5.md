@@ -801,6 +801,47 @@ not prove the design closes timing at the product clock - a purely combinational
 an Fmax risk before it is an area risk, and the remedy if it fails is to time-multiplex the sample
 loop, not to shrink the buffers.
 
+## 10h. The vacuous-control test, applied to my own gates
+
+The parent asked for the check *"does this comparison actually differ in the thing it claims to
+test"* to be **mechanical, not remembered**. The first place to apply that is my own red proofs, since
+a worker auditing everyone else's evidence and not their own is the same failure wearing a different
+hat.
+
+Audited all five red proofs in the trunk gate. Every one was self-guarding **by consequence** - a
+mutation whose anchor had drifted would have produced a green run that then failed downstream - but
+only one asserted the mutation had any effect. Consequential self-guarding is luck: it depends on the
+downstream check still being sensitive to the thing that did not change.
+
+`differs(original, mutated, what)` now runs before every mutation, and a mutation that changes nothing
+is a hard failure with the name of the mutation. Proved non-vacuous by drifting an anchor on purpose:
+
+```
+TRUNK_ELAB_FAIL: mutation 'escape the instance name' changed nothing, so the red proof
+                 that follows would be vacuous                                     rc=1
+```
+
+All five red proofs remain green with the guard in place, `make unit` rc=0.
+
+The same shape is already enforced in the MC survival gate as an unmutated-copy control, and in the
+sink-liveness self-test where every one of the seven cases was individually mutation-proved - one of
+which turned out to be **genuinely vacuous** and had to be rewritten.
+
+### An honest interruption worth recording
+
+One `make unit` run came back **rc=2**, and it was not my change:
+
+```
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only)
+    pid=1843346 rss=2488696KB quartus_map
+```
+
+`test_resource_preflight.sh` refused because another worker had a local Quartus Analysis & Synthesis
+running, on the grounds that results produced under memory pressure are not trustworthy. There is an
+override, `MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1`. **Do not use it to make a red go away.** I waited for
+the process to exit and re-ran clean at rc=0. A refusal is not a failure, and silencing a refusal is
+how a suite stops meaning anything.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
