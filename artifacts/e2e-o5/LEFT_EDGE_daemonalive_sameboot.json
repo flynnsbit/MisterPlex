@@ -1,0 +1,37 @@
+{
+  "frames": 12,
+  "artifact_band": [
+    84,
+    200
+  ],
+  "dark_frac_artifact": 0.2836,
+  "dark_frac_control": 0.0018,
+  "dark_ratio": 160.5,
+  "chevron_interior_mean": 80.2,
+  "noise_floor": 0.0,
+  "temporal_std_artifact": 6.1946,
+  "temporal_std_control": 0.0119,
+  "row_width_std_across_frames": 17.9,
+  "row_width_std_across_rows": 21.47,
+  "raggedness_single_frame": 21.47,
+  "raggedness_frame_averaged": 14.13,
+  "raggedness_collapse": 0.342,
+  "pillar_edge_col": [
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128,
+    128
+  ],
+  "pillar_edge_stable": true,
+  "motion_snr": 123.89,
+  "verdict": "MOVING",
+  "reason": "artifact temporal std 6.1946 vs capture noise floor 0.0 (SNR 123.9x); per-row dark width varies 17.9 px between frames"
+}

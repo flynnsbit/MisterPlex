@@ -963,3 +963,35 @@ captures points at the present/scanout path, not at an ARM/DDR write race.
 Scope limit, stated: this compares two captures of the same resident RBF taken
 either side of a reboot. Both are provenance-locked to `corename=Plex`,
 `rbf_md5=fb4bad84`. It does not identify what *does* move the pattern.
+
+## §21 — Same-boot control added; artifact still independent of the ARM daemon
+
+`misterplexd` came back mid-shift (pid 3823, listening on 3005), giving a
+**same-boot** daemon-alive arm and removing the reboot confound declared in
+§20.
+
+| capture | daemon | boot | temporal std | dark ratio | row-width var | pillar edge | verdict |
+|---|---|---|---|---|---|---|---|
+| STEP 1 (pre-reboot) | ALIVE | 13:44 | 5.81 | 179.0x | 16.84 px | 128 | MOVING |
+| 14:41 | **DEAD** | 14:16 | 5.68 | 171.0x | 16.45 px | 128 | MOVING |
+| 14:56 | ALIVE | 14:16 | 6.19 | 160.5x | 17.90 px | 128 | MOVING |
+
+The daemon-dead arm sits **between** the two daemon-alive arms on every
+statistic. There is no daemon-attributable effect. Chevron is **14928 px with
+the identical bbox in all three**.
+
+**Probe-reliability caveat, stated because it nearly misled me.** Two shell
+quoting/portability traps hit this measurement:
+
+1. `ps w | grep -i "misterplex\|Main"` returns **empty even when the process
+   exists** — busybox grep does not treat `\|` as alternation in BRE, so the
+   whole pattern is literal.
+2. Nested double quotes inside a single-quoted `ssh '...'` command
+   (`"daemon=$(... grep -c "[m]isterplexd")"`) terminate the outer string early
+   and silently change what grep receives. This produced a bogus `daemon=1`.
+
+Both failure modes are **silent** and both produce a confident wrong answer.
+The reliable form is to pipe a **script file** to `ssh 'bash -s'`
+(`artifacts/e2e-o5/daemon_probe.sh`) and read plain counted output. Daemon
+absence at 14:38–14:39 was nonetheless corroborated by an independent oracle
+(no listener on port 3005), and presence at 14:56 by two (pid + listener).

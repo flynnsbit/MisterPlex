@@ -1,0 +1,8 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+total_procs=99
+misterplexd_lines=1
+ 3823 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400
+mister_main=1
+1
