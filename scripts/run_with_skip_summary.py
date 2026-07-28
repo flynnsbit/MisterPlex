@@ -132,6 +132,22 @@ def classify_skip_line(line: str) -> SkipRecord | None:
                 would_catch="live PMS NAL size/jitter drift used to size the host→FPGA bitstream ring",
                 source="log",
             )
+        if "prefit_hierarchy" in line:
+            # Fires only when the product core is absent from the elaborated
+            # design, i.e. the branch would fit a bitstream with no decoder in
+            # it. Named separately so it cannot be deduplicated into the generic
+            # skip-not-pass record, which is what hid it the first time.
+            return SkipRecord(
+                name="prefit-hierarchy-core-orphaned",
+                severity="CRITICAL",
+                reason=line.strip(),
+                would_catch=(
+                    "a product decode core that is compiled but absent from the "
+                    "elaborated design under emu -- the fb4bad84 failure mode, "
+                    "where the fitted bitstream contained no decoder at all"
+                ),
+                source="log",
+            )
         return SkipRecord("skip-not-pass", "HIGH", line.strip(), "a named non-pass gate condition", "log")
 
     # Avoid counting ordinary test variable names such as SKIP_EMPTY.
