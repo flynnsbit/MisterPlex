@@ -3,6 +3,8 @@
 #include "libmisterplex/h264_slice_walk.hpp"
 #include "verilated.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -241,7 +243,34 @@ struct MbExpect {
     int cbp = 0;
     int qpDelta = 0;
     int qp = 0;
+    bool hasI4Modes = false;
+    uint16_t i4Flags = 0;
+    uint64_t i4RemModes = 0;
+    std::array<int, 16> i4Modes{};
 };
+
+int i4IndexFromXY(int x, int y) {
+    return (y >= 2 ? 8 : 0) + (x >= 2 ? 4 : 0) + ((y & 1) ? 2 : 0) + (x & 1);
+}
+
+void deriveStandaloneI4Modes(MbExpect& e) {
+    e.i4Modes.fill(2);
+    for (int idx = 0; idx < 16; ++idx) {
+        int x = 0, y = 0;
+        misterplex::walk_detail::blkXY(idx / 4, idx % 4, x, y);
+        const bool leftOk = x > 0;
+        const bool topOk = y > 0;
+        const int leftMode = leftOk ? e.i4Modes[i4IndexFromXY(x - 1, y)] : 2;
+        const int topMode = topOk ? e.i4Modes[i4IndexFromXY(x, y - 1)] : 2;
+        const int predMode = std::min(leftMode, topMode);
+        if ((e.i4Flags >> idx) & 1u) {
+            e.i4Modes[idx] = predMode;
+        } else {
+            const int rem = static_cast<int>((e.i4RemModes >> (idx * 3)) & 7u);
+            e.i4Modes[idx] = (rem < predMode) ? rem : rem + 1;
+        }
+    }
+}
 
 std::vector<MbExpect> collectIHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int startBit, int sliceQp) {
     using namespace misterplex;
@@ -305,9 +334,15 @@ std::vector<MbExpect> collectIHeaders(const std::vector<uint8_t>& rbsp, int mbW,
             e.mbType = static_cast<int>(mt);
             e.part = (mt == 0) ? PART_I_NXN : PART_I16X16;
             if (mt == 0) {
-                for (int k = 0; k < 16; ++k)
-                    if (br.u(1) == 0)
-                        br.u(3);
+                e.hasI4Modes = true;
+                for (int k = 0; k < 16; ++k) {
+                    if (br.u(1)) {
+                        e.i4Flags |= static_cast<uint16_t>(1u << k);
+                    } else {
+                        e.i4RemModes |= static_cast<uint64_t>(br.u(3)) << (k * 3);
+                    }
+                }
+                deriveStandaloneI4Modes(e);
                 e.chroma = static_cast<int>(br.ue());
                 uint32_t code = br.ue();
                 e.cbp = walk_detail::kMeIntra[code];
@@ -479,9 +514,15 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
         const uint32_t it = mt - 5;
         e.part = (it == 0) ? PART_I_NXN : PART_I16X16;
         if (it == 0) {
-            for (int k = 0; k < 16; ++k)
-                if (br.u(1) == 0)
-                    br.u(3);
+            e.hasI4Modes = true;
+            for (int k = 0; k < 16; ++k) {
+                if (br.u(1)) {
+                    e.i4Flags |= static_cast<uint16_t>(1u << k);
+                } else {
+                    e.i4RemModes |= static_cast<uint64_t>(br.u(3)) << (k * 3);
+                }
+            }
+            deriveStandaloneI4Modes(e);
             e.chroma = static_cast<int>(br.ue());
             uint32_t code = br.ue();
             e.cbp = walk_detail::kMeIntra[code];
@@ -651,10 +692,19 @@ void checkRealPpsSliceAndIFrame(Vh264_baseline_syntax_tb_top& dut) {
         expect(static_cast<int8_t>(dut.mb_qp_delta) == e.qpDelta, "I MB qp_delta mismatch at " + std::to_string(i));
         expect(static_cast<int8_t>(dut.mb_qp) == e.qp, "I MB qp mismatch at " + std::to_string(i));
         expect(dut.residual_bit_offset == e.residual, "I MB residual offset mismatch at " + std::to_string(i));
-        if (e.part == PART_I_NXN)
+        if (e.part == PART_I_NXN) {
             ++i4;
-        else if (e.part == PART_I16X16)
+            if (i == 0) {
+                const int expectedMb0[16] = {2, 1, 0, 0, 2, 1, 6, 8, 1, 7, 0, 5, 2, 2, 2, 2};
+                for (int k = 0; k < 16; ++k) {
+                    expect(e.i4Modes[k] == expectedMb0[k], "host MB0 intra4x4 mode gold mismatch at " + std::to_string(k));
+                    expect(dut.derived_i4_modes[k] == e.i4Modes[k],
+                           "I MB0 intra4x4 mode mismatch at " + std::to_string(k));
+                }
+            }
+        } else if (e.part == PART_I16X16) {
             ++i16;
+        }
     }
     expect(mbs.size() == 300, "fixture did not grade all 300 I macroblocks");
     std::cout << "I-slice MB coverage: total=" << mbs.size() << " I_NxN=" << i4 << " I16x16=" << i16 << "\n";

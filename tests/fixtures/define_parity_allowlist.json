@@ -8,6 +8,7 @@
     "DDR_FRAME_STORE_FAULT_PREP_INVALID_ONLY": "Injected DDR frame-store prep-slot invalid-only expected-red fault.",
     "DDR_FRAME_STORE_FAULT_SWAP_UV_READ": "Injected DDR frame-store expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
+    "FAULT_SKIP_EPB": "Injected baseline syntax fault that skips emulation-prevention-byte removal for expected-red simulation only.",
     "H264_DECODE_CORE_FAULT_BAD_RBSP_REQ": "Injected decode-core P16x16 syntax-walker RBSP request expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL": "Injected decode-core P16x16 final scheduled chroma residual expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_PRED": "Injected decode-core P16x16 real-P prediction-drop expected-red fault.",

@@ -67,6 +67,77 @@ module h264_rbsp_filter (
 	end
 endmodule
 
+module h264_intra4x4_mode_deriver (
+	input  wire [15:0] prev_intra4x4_pred_mode_flag,
+	input  wire [47:0] rem_intra4x4_pred_mode,
+	input  wire        left_available,
+	input  wire        top_available,
+	input  wire [3:0]  left_modes [0:3],
+	input  wire [3:0]  top_modes [0:3],
+	output reg  [3:0]  i4_modes [0:15]
+);
+	function automatic [1:0] blk_x(input [3:0] idx);
+		begin
+			case (idx)
+			4'd0, 4'd2, 4'd8, 4'd10: blk_x = 2'd0;
+			4'd1, 4'd3, 4'd9, 4'd11: blk_x = 2'd1;
+			4'd4, 4'd6, 4'd12, 4'd14: blk_x = 2'd2;
+			default: blk_x = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [1:0] blk_y(input [3:0] idx);
+		begin
+			case (idx)
+			4'd0, 4'd1, 4'd4, 4'd5: blk_y = 2'd0;
+			4'd2, 4'd3, 4'd6, 4'd7: blk_y = 2'd1;
+			4'd8, 4'd9, 4'd12, 4'd13: blk_y = 2'd2;
+			default: blk_y = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] xy_index(input [1:0] x, input [1:0] y);
+		begin
+			xy_index = (y[1] ? 4'd8 : 4'd0) + (x[1] ? 4'd4 : 4'd0) +
+			           (y[0] ? 4'd2 : 4'd0) + (x[0] ? 4'd1 : 4'd0);
+		end
+	endfunction
+
+	integer i;
+	reg [1:0] x;
+	reg [1:0] y;
+	reg left_ok;
+	reg top_ok;
+	reg [3:0] left_mode;
+	reg [3:0] top_mode;
+	reg [3:0] pred_mode;
+	reg [2:0] rem_mode;
+	always @* begin
+		for (i = 0; i < 16; i = i + 1)
+			i4_modes[i] = 4'd2;
+		for (i = 0; i < 16; i = i + 1) begin
+			x = blk_x(i[3:0]);
+			y = blk_y(i[3:0]);
+			left_ok = (x != 2'd0) || left_available;
+			top_ok = (y != 2'd0) || top_available;
+			left_mode = (x != 2'd0) ? i4_modes[xy_index(x - 2'd1, y)] : left_modes[y];
+			top_mode = (y != 2'd0) ? i4_modes[xy_index(x, y - 2'd1)] : top_modes[x];
+			if (!left_ok)
+				left_mode = 4'd2;
+			if (!top_ok)
+				top_mode = 4'd2;
+			pred_mode = (left_mode < top_mode) ? left_mode : top_mode;
+			rem_mode = rem_intra4x4_pred_mode[i * 3 +: 3];
+			if (prev_intra4x4_pred_mode_flag[i])
+				i4_modes[i] = pred_mode;
+			else
+				i4_modes[i] = (rem_mode < pred_mode[2:0]) ? {1'b0, rem_mode} : {1'b0, rem_mode} + 4'd1;
+		end
+	end
+endmodule
+
 module h264_baseline_syntax_parser #(
 	parameter int MAX_RBSP_BYTES = 8192
 ) (
