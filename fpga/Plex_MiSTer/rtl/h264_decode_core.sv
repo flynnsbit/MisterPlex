@@ -25,7 +25,12 @@ module h264_decode_core #(
     parameter int FRAME_H   = 240,
     parameter int MB_W      = (FRAME_W + 15) / 16,
     parameter int MB_H      = (FRAME_H + 15) / 16,
-    parameter int MB_COUNT  = MB_W * MB_H
+    parameter int MB_COUNT  = MB_W * MB_H,
+    // 0: motion compensation reference samples are fetched over the existing
+    //    dpb_rd_* port using dpb_ref_base (works today, no new memory).
+    // 1: the external ref_req_*/ref_rsp_* port is authoritative. Set this once
+    //    the dedicated DDR reference reader is attached.
+    parameter bit REF_PORT_EXTERNAL = 1'b0
 )(
     input  wire        clk,
     input  wire        reset,
@@ -370,6 +375,7 @@ module h264_decode_core #(
     reg        wb_mv_is_inter_r;
     reg signed [15:0] pskip_mv_x_r;
     reg signed [15:0] pskip_mv_y_r;
+    reg [31:0] pskip_ref_base_r;
     reg        mvcommit_valid_r;
     reg [7:0]  mvcommit_mb_x_r;
     reg        mvcommit_is_inter_r;
@@ -633,6 +639,25 @@ module h264_decode_core #(
     wire [7:0] pskip_pred_sample;
     wire       pskip_busy;
     wire       pskip_done;
+    // Reference sample sourcing. Until the dedicated DDR reference reader is
+    // attached the requests are serviced over the DPB read port that this
+    // module already owns, so P_Skip reconstructs against real reference
+    // samples instead of stalling on an unconnected port. Either way the
+    // samples are POST-deblock: the DPB holds the filtered picture.
+    localparam bit REF_BRIDGE = !REF_PORT_EXTERNAL;
+    wire        pskip_ref_grant = REF_BRIDGE && (wb_state == ST_PSKIP_WAIT);
+    wire        mc_ref_req_ready = REF_BRIDGE ? pskip_ref_grant : ref_req_ready;
+    wire        mc_ref_rsp_valid = REF_BRIDGE ? (dpb_rd_valid && pskip_ref_grant)
+                                              : ref_rsp_valid;
+    wire [7:0]  mc_ref_rsp_sample = REF_BRIDGE ? dpb_rd_data : ref_rsp_sample;
+    wire [31:0] pskip_ref_addr;
+    h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_pskip_rd_addr (
+        .base(pskip_ref_base_r),
+        .plane(ref_req_plane),
+        .x(ref_req_x),
+        .y(ref_req_y),
+        .addr(pskip_ref_addr)
+    );
     h264_pskip_mc_copy u_product_pskip_mc (
         .clk(clk),
         .reset(reset || slice_start),
@@ -647,9 +672,9 @@ module h264_decode_core #(
         .ref_req_plane(ref_req_plane),
         .ref_req_x(ref_req_x),
         .ref_req_y(ref_req_y),
-        .ref_req_ready(ref_req_ready),
-        .ref_rsp_valid(ref_rsp_valid),
-        .ref_rsp_sample(ref_rsp_sample),
+        .ref_req_ready(mc_ref_req_ready),
+        .ref_rsp_valid(mc_ref_rsp_valid),
+        .ref_rsp_sample(mc_ref_rsp_sample),
         .pred_valid(pskip_pred_valid),
         .pred_plane(pskip_pred_plane),
         .pred_idx(pskip_pred_idx),
@@ -1100,6 +1125,7 @@ module h264_decode_core #(
             wb_mv_is_inter_r <= 1'b0;
             pskip_mv_x_r <= 16'sd0;
             pskip_mv_y_r <= 16'sd0;
+            pskip_ref_base_r <= 32'd0;
             mvcommit_valid_r <= 1'b0;
             mvcommit_mb_x_r <= 8'd0;
             mvcommit_is_inter_r <= 1'b0;
@@ -1225,6 +1251,7 @@ module h264_decode_core #(
                     // captured before syntax_mb_addr_r advances.
                     pskip_mv_x_r <= pskip_mv_x;
                     pskip_mv_y_r <= pskip_mv_y;
+                    pskip_ref_base_r <= dpb_ref_base;
                     pskip_start_r <= 1'b1;
                     wb_state <= ST_PSKIP_WAIT;
                 end
@@ -1389,8 +1416,8 @@ module h264_decode_core #(
     assign dpb_wr_en = product_wb_en | p16_wr_en_r;
     assign dpb_wr_addr = p16_wr_en_r ? p16_wr_addr_r : wb_addr;
     assign dpb_wr_data = p16_wr_en_r ? p16_wr_data_r : wb_data;
-    assign dpb_rd_en = dpb_rd_en_r;
-    assign dpb_rd_addr = dpb_rd_addr_r;
+    assign dpb_rd_en = dpb_rd_en_r | (pskip_ref_grant && ref_req_valid);
+    assign dpb_rd_addr = dpb_rd_en_r ? dpb_rd_addr_r : pskip_ref_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;

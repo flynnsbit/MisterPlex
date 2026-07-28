@@ -553,9 +553,10 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
-		// Reference picture sample port. The DDR-backed reference reader is a
-		// separate worker's module; until it lands the port is tied off so
-		// motion compensation stalls rather than reading garbage.
+		// Reference picture sample port. With REF_PORT_EXTERNAL = 0 (default)
+		// the core services these requests from its own dpb_rd_* port, so the
+		// external side stays tied off until the dedicated DDR reference
+		// reader lands and REF_PORT_EXTERNAL is flipped.
 		.ref_req_valid(core_ref_req_valid),
 		.ref_req_plane(core_ref_req_plane),
 		.ref_req_x(core_ref_req_x),
