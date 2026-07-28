@@ -448,3 +448,60 @@ fixed. Still broken and in active use: `w-decode-hour27`, `w-osd-o5`,
 `parent/integ-hour27` and asserts the contract twice. Red-proved by pointing the
 second path at the real credentialed conf: rc=1 with
 `missing derived geometry contract from registry: coded 624x480/display 618x480`.
+
+## 10. `w-audit` mutations folded in as permanent regressions
+
+`w-audit` (gpt-5.5) attacked the reachability instrument and reported four
+defects. **Important scoping fact, measured:** w-audit ran against the
+**237-line unguarded variant** of `check_rtl_module_instantiations.py` that
+lives on `w-deblock-seam`, and against a *different* `check_qip_coverage.py`
+on `parent/integ-hour27`. Three copies of that filename exist with different
+behaviour, so a defect report must name its branch. Re-testing each attack
+against the ~750-line canonical checker on `w-gate-hour28` gives:
+
+| # | w-audit attack | Status on `w-gate-hour28` before the parent's message | Now |
+|---|---|---|---|
+| 1 | dead root: `--root h264_decode_core --require X` green while the core does not reach `emu` | **already closed** by `ab08ae3` (`NON_PRODUCT_ROOT` precondition) | closed + regression test |
+| 2 | instantiation inside a disabled `if (0)` generate counted as reachable | **genuinely open** | closed by `select_constant_generate_ifs()` |
+| 3 | escaped instance name (`\name `) read as *not* instantiated | **genuinely open** | closed by `INSTANCE_NAME` |
+| 4 | RTL file tracked in git but absent from `files.qip` | **already closed** by the hour-28 `REACHABLE_MODULE_NOT_COMPILED` check | closed + extended to every `--require`d module at every root |
+
+Two further hardenings arising from the same review:
+
+* **Trunk proof is now mandatory and printed.** Every `--require` invocation
+  emits `TRUNK_PROOF <root> path=emu->...->root hops=N via_masking_lineage=...`
+  and **hard-fails** when the only product path launders through a masking
+  lineage (`decode_stub`). A subtree proof without a trunk proof is vacuous;
+  the gate now refuses to issue one silently.
+* **`files.qip` parsing tightened.** `tracked_qip_sources()` strips `#`
+  comments and requires `set_global_assignment` on the line, so a commented-out
+  assignment no longer counts as coverage.
+
+### Red/green table (measured, `w-gate-hour28`)
+
+| Mutation | Expected | Measured |
+|---|---|---|
+| baseline, all fixes in | `default_reachable=41` | `default_reachable=41` (unperturbed) |
+| `if (0)` generate injected in `stream_path.sv` | rc=1 | rc=1 `REQUIRED_RTL_MODULE_UNREACHABLE ... parents=<none>` |
+| same, with `select_constant_generate_ifs` disabled (control) | false green | printed `PRODUCT_REACHABLE ... yes` — fix is load-bearing |
+| escaped `\w_audit.escaped_inst` injected | reachable | `PRODUCT_REACHABLE ... yes` |
+| same, with `INSTANCE_NAME` narrowed (control) | false red | regression suite rc=1 — fix is load-bearing |
+| `nalu_scanner.sv` line commented out in `files.qip` | rc=1 | rc=1 `REACHABLE_MODULE_NOT_COMPILED nalu_scanner` |
+| `--root mycore --require cos --allow-non-product-root` | rc=1 | rc=1 `REQUIRED_RTL_MODULE_NOT_COMPILED cos` |
+| `--root h264_inter_mc_16x16 --require h264_ref_clamp` | rc=1 | rc=1 `TRUNK_PROOF ... via_masking_lineage=decode_stub` |
+
+`tests/unit/test_w_audit_reachability_regressions.py` reproduces all five
+classes on **synthetic** SystemVerilog, so the regressions hold without editing
+tracked RTL and survive the topology rewire. Both parser fixes were
+mutation-proved by disabling them and observing rc=1.
+
+### What this still does not prove
+
+Source-level reachability remains a **pre-filter**. It is not elaboration-aware:
+parameter-dependent and non-literal generate conditions are deliberately
+resolved *towards* reachable, so the tool under-reports absence rather than
+inventing it. `make post-fit-hierarchy` remains the only oracle that reflects
+what survived synthesis. Additionally, on `w-gate-hour28` and `ddb7c97` all 13
+`h264_decode_core` output ports terminate on a fanout-free `_keep` wire with no
+`(* keep *)` attribute, so core-subtree membership does not imply the core
+contributes to a pixel.

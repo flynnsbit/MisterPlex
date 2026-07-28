@@ -31,6 +31,15 @@ BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
 NONDEFAULT_CONFIG = RTL_DIR / "nondefault_config_modules.txt"
 DEFAULT_OFF_DROPS = RTL_DIR / "default_off_drop_modules.txt"
 PRODUCT_ROOT = "emu"
+
+# A Verilog instance name is either a simple identifier or an escaped identifier:
+# a backslash followed by non-whitespace characters and terminated by whitespace.
+# w-audit mutation 2026-07-28: `h264_inter_mc_part \\w_audit.escaped_inst ();` is
+# legal and was reported unreachable.
+INSTANCE_NAME = r"(?:[A-Za-z_]\w*|\\\S+\s)"
+
+# Retired lineages that must never launder a product path.
+MASKING_LINEAGES = ("decode_stub",)
 DROP_CATEGORIES = {"stub-only", "real-decode-bypass"}
 
 
@@ -219,6 +228,79 @@ def select_generate_macro_ifs(text: str, macros: dict[str, int]) -> str:
     return selected
 
 
+def _constant_truth(expr: str) -> int | None:
+    """Return 1/0 if ``expr`` is an unambiguous integer literal, else None.
+
+    Only literals are folded. Parameters and real expressions are left alone, so
+    the parser stays biased toward reporting a module reachable rather than
+    silently dropping a live instantiation.
+    """
+    text = expr.strip()
+    while text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].strip()
+    if not text:
+        return None
+    sized = re.fullmatch(r"(\d+)?'[sS]?([bBoOdDhH])([0-9a-fA-F_]+)", text)
+    if sized:
+        base = {"b": 2, "o": 8, "d": 10, "h": 16}[sized.group(2).lower()]
+        digits = sized.group(3).replace("_", "")
+        try:
+            return 1 if int(digits, base) else 0
+        except ValueError:
+            return None
+    if re.fullmatch(r"\d[\d_]*", text):
+        return 1 if int(text.replace("_", "")) else 0
+    return None
+
+
+def select_constant_generate_ifs(text: str) -> str:
+    """Eliminate ``if (<literal>)`` generate branches.
+
+    w-audit mutation, 2026-07-28: `if (0) begin h264_inter_mc_part u_false(); end`
+    injected under h264_decode_core made the module report as reachable. Quartus
+    elaborates the branch away; the gate must too.
+    """
+    pattern = re.compile(
+        r"\bif\s*\(([^()`]*)\)\s*begin\b(?:\s*:\s*[A-Za-z_]\w*)?",
+        re.S,
+    )
+    out: list[str] = []
+    pos = 0
+    changed = False
+    while True:
+        match = pattern.search(text, pos)
+        if not match:
+            out.append(text[pos:])
+            break
+        truth = _constant_truth(match.group(1))
+        if truth is None:
+            out.append(text[pos : match.end()])
+            pos = match.end()
+            continue
+        out.append(text[pos : match.start()])
+        true_body_start = match.end()
+        true_end_start, true_end_after = matching_end(text, true_body_start)
+        else_match = re.match(
+            r"\s*else\s+begin\b(?:\s*:\s*[A-Za-z_]\w*)?",
+            text[true_end_after:],
+            re.S,
+        )
+        else_body = ""
+        branch_after = true_end_after
+        if else_match:
+            else_body_start = true_end_after + else_match.end()
+            else_end_start, else_end_after = matching_end(text, else_body_start)
+            else_body = text[else_body_start:else_end_start]
+            branch_after = else_end_after
+        out.append(text[true_body_start:true_end_start] if truth else else_body)
+        pos = branch_after
+        changed = True
+    selected = "".join(out)
+    if changed and pattern.search(selected):
+        return select_constant_generate_ifs(selected)
+    return selected
+
+
 def qsf_macros() -> dict[str, int]:
     macros: dict[str, int] = {}
     text = PRODUCT_QSF.read_text(encoding="utf-8", errors="ignore")
@@ -256,6 +338,7 @@ def parse_modules(paths: list[Path], macro_overrides: dict[str, int | None] | No
         text = strip_comments(path.read_text(encoding="utf-8", errors="ignore"))
         text = preprocess_lines(text, macros)
         text = select_generate_macro_ifs(text, macros)
+        text = select_constant_generate_ifs(text)
         for match in re.finditer(r"\bmodule\s+([A-Za-z_]\w*)\b(?P<body>.*?)\bendmodule\b", text, re.S):
             name = match.group(1)
             if name in modules:
@@ -324,7 +407,9 @@ def instantiation_graph(modules: dict[str, ModuleDef]) -> dict[str, set[str]]:
             pattern = (
                 r"\b"
                 + re.escape(candidate)
-                + r"\s*(?:#\s*\(.*?\)\s*)?[A-Za-z_]\w*(?:\s*\[[^\]]+\])?\s*\("
+                + r"\s*(?:#\s*\(.*?\)\s*)?"
+                + INSTANCE_NAME
+                + r"(?:\s*\[[^\]]+\])?\s*\("
             )
             if re.search(pattern, body, re.S):
                 graph[owner].add(candidate)
@@ -397,7 +482,12 @@ def tracked_qip_sources() -> set[Path]:
             continue
         qip = ROOT / rel
         base = qip.parent
-        for line in qip.read_text(encoding="utf-8", errors="ignore").splitlines():
+        for raw in qip.read_text(encoding="utf-8", errors="ignore").splitlines():
+            # Quartus TCL comments start with '#'. A commented-out assignment does
+            # not compile anything, so it must not count as coverage.
+            line = raw.split("#", 1)[0]
+            if "set_global_assignment" not in line:
+                continue
             for token in re.findall(r"[\w./\\-]+\.s?v\b", line):
                 out.add((base / token.replace("\\", "/")).resolve())
     return out
@@ -436,6 +526,24 @@ def instantiating_parents(child: str, graph: dict[str, set[str]]) -> list[str]:
     return sorted(parent for parent, kids in graph.items() if child in kids)
 
 
+def instantiation_path(root: str, target: str, graph: dict[str, set[str]]) -> list[str] | None:
+    """Shortest instantiation path root -> ... -> target, or None."""
+    if root == target:
+        return [root]
+    seen = {root}
+    queue: list[list[str]] = [[root]]
+    while queue:
+        path = queue.pop(0)
+        for child in sorted(graph.get(path[-1], set())):
+            if child in seen:
+                continue
+            if child == target:
+                return path + [child]
+            seen.add(child)
+            queue.append(path + [child])
+    return None
+
+
 def check_required_modules(
     required: list[str],
     root: str,
@@ -449,6 +557,24 @@ def check_required_modules(
         fail(f"--root names a module that does not exist: {root}")
 
     root_is_product = root == PRODUCT_ROOT or root in product_reachable
+    trunk = instantiation_path(PRODUCT_ROOT, root, graph) if root_is_product else None
+    if trunk is not None:
+        masked = [lineage for lineage in MASKING_LINEAGES if lineage in trunk]
+        print(
+            "TRUNK_PROOF %s path=%s hops=%d via_masking_lineage=%s"
+            % (
+                root,
+                "->".join(trunk),
+                len(trunk) - 1,
+                ",".join(masked) if masked else "no",
+            )
+        )
+        if masked:
+            fail(
+                f"the only product path to --root {root} runs through the retired masking lineage "
+                + ",".join(masked)
+                + "; that is not a product decode path"
+            )
     if not root_is_product:
         parents = instantiating_parents(root, graph)
         detail = ",".join(parents) if parents else "<none>"
@@ -481,6 +607,26 @@ def check_required_modules(
         )
     if unreachable:
         fail(f"required RTL modules are not reachable from {root}: " + ", ".join(sorted(unreachable)))
+
+    # A required module that Quartus never compiles is absent from the bitstream
+    # however green the graph is. This runs at every root, not only the product root.
+    compiled = tracked_qip_sources()
+    uncompiled = []
+    for name in required:
+        mod = modules.get(name)
+        if mod is None:
+            continue
+        path = mod.path.resolve()
+        if path == PRODUCT_TOP.resolve() or path in compiled:
+            continue
+        uncompiled.append((name, str(path.relative_to(ROOT))))
+    for name, rel in uncompiled:
+        print(f"REQUIRED_RTL_MODULE_NOT_COMPILED {name} file={rel}", file=sys.stderr)
+    if uncompiled:
+        fail(
+            "required RTL modules are in no tracked .qip, so Quartus never compiles them: "
+            + ", ".join(name for name, _ in uncompiled)
+        )
 
     label = "REQUIRED_RTL_MODULE_PRODUCT_REACHABLE" if root_is_product else "SUBTREE_ONLY_CLAIM"
     for name in required:

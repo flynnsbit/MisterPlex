@@ -147,6 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     core_rtl = core & rtl_names
     stub_masked = sorted((emu_reachable & rtl_names & masking) - core)
 
+    trunk = rtl.instantiation_path(rtl.PRODUCT_ROOT, PRODUCT_DECODER, graph)
+    trunk_via_mask = [n for n in (trunk or []) if n in MASKING_LINEAGES]
+
     print(
         "Scope: rtl_modules=%d emu_reachable=%d core_subtree=%d masking_subtree=%d "
         "capability_categories=%d capability_modules=%d product_decoder=%s "
@@ -165,6 +168,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not rtl_names or not capability_modules:
         fail("Scope: 0 modules or 0 capability modules; the gate cannot claim a PASS")
+
+    print(
+        "DECODE_CORE_TRUNK %s path=%s via_masking_lineage=%s"
+        % (
+            PRODUCT_DECODER,
+            "->".join(trunk) if trunk else "<none>",
+            ",".join(trunk_via_mask) if trunk_via_mask else "no",
+        ),
+        flush=True,
+    )
 
     unknown = [m for m in capability_modules if m not in modules]
     if unknown:
@@ -223,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         "DECODE_CORE_SUBTREE_OK "
+        f"trunk={'->'.join(trunk) if trunk else '<none>'} "
         f"emu_reachable={len(emu_reachable & rtl_names)} "
         f"core_subtree={len(core_rtl)} "
         f"stub_masked={len(stub_masked)} "
