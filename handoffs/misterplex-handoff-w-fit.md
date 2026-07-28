@@ -1899,3 +1899,84 @@ same defect until someone re-measures both with one instrument.**
 
 **Also settled:** the artifact **predates my deploy**. It is present on
 `00eebd5e` at 11:01. `fb4bad84` did not introduce it.
+
+---
+
+## 31. Device returned. Clean-boot control CONFIRMS the DDR silence.
+
+### 31.1 Return state (13:53)
+
+```
+ping rc=0   arp REACHABLE lladdr 90:de:80:17:19:63
+uptime      546.94 s  ->  the board REBOOTED at ~13:44 (a power cycle happened)
+Plex.rbf      fb4bad849ad2db782a5004ce5a3471ce   (deploy intact)
+Plex.rbf.bak  00eebd5e685e6cc821b13bfdcff41d0b   (escape hatch intact)
+CORENAME    MENU        <- booted to the menu; Plex was NOT loaded
+fpga_mgr    operating
+misterplexd RUNNING pid 983
+```
+
+**Instrument error caught in myself (again):** my first check ran `pgrep -x
+misterplexd`, which returned `command not found` -- `pgrep` does not exist on this
+box -- and my `|| echo none` swallowed it into what looked like "not running". I
+re-checked with `ps aux` and the daemon **was** running as pid 983. Same class as
+reading an exit code through a pipe: a missing tool silently became a false
+negative.
+
+### 31.2 Operator error: the first core load failure was MINE, not the device's
+
+My first load returned `LOAD_RC=4  DEPLOY_FAIL: Main accepted MENU but never came
+back to Plex`, and I was one step from reporting that `fb4bad84` no longer loads
+after a cold boot -- a far more severe finding than anything measured today.
+
+It was **my usage**. The board was **already on MENU**, and I used
+`DEPLOY_LOAD=menu`, which loads Menu (a no-op here) and then Plex. The script's
+own documentation says:
+
+```
+DEPLOY_LOAD   menu  -- load Menu, wait, then load Plex (safer switch)
+              core  -- load Plex only (use when already on Menu)
+```
+
+One controlled retry with the documented mode:
+
+```
+DEPLOY_LOAD=core DEPLOY_WAIT_S=30 ./scripts/deploy_plex_core.sh <fb4bad84>
+  Remote already has md5=fb4bad84... -- skip scp
+  CORENAME=MENU
+  CORENAME=Plex
+  LOAD_RC=0
+20 s later: CORENAME=Plex   fpga_manager=operating
+```
+
+**`fb4bad84` loads fine.** There is no load regression. I am recording this
+because the failure mode -- a gate that fails for a usage reason and reads as a
+product defect -- is exactly what this project keeps getting burned by, and
+because `DEPLOY_LOAD=menu` is the mode everyone is told to use. **If the board is
+already on MENU, `menu` mode fails; use `core`.**
+
+This was one bounce plus one controlled retry. No `load_core` thrashing.
+
+### 31.3 ★ Clean-boot control: the DDR silence is REAL
+
+My earlier "the fabric writes nothing" measurement (§11) had a weakness I flagged
+to nobody: it was taken after long uptime, on DDR I had **hand-poked**, in a
+session where I had already zeroed the stale magics. A fresh boot zeroes DDR and
+removes every one of those confounders.
+
+Re-run immediately after the clean-boot load of the same bitstream:
+
+```
+Scope: 40 samples interval=0.25s reg=0x3007F12C
+resident_rbf_md5 = fb4bad849ad2db782a5004ce5a3471ce
+corename         = Plex
+instrument_liveness: restored=0
+rc=77 UNSCORED -- fabric did not rewrite 0x3007F12C within 2 s of a sentinel poke
+```
+
+**`restored=0` on a freshly booted device.** The result reproduces with every
+confounder removed. `fb4bad84` genuinely does not publish the PLXD mailbox, and
+the livelock observables remain **UNMEASURABLE** -- still not a livelock FAIL, and
+still not a verdict on W-SWAP's fix in either direction.
+
+The gate correctly returned **77 UNSCORED**, not a PASS and not a FAIL.
