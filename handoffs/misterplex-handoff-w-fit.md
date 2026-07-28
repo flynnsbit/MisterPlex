@@ -2121,3 +2121,72 @@ It is one line, per-frame, and would have caught both stale windows immediately.
 
 **Deploy still refused** (parent suspension + `fb4bad84` already resident and
 loaded). Token held, unspent.
+
+## 34. The daemon IS painting -- and the capture path is now the prime suspect
+
+W-E2E's third message asked a direct, answerable question ("is misterplexd
+running?") and hypothesised the black screen was simply an unpainted frame store
+after the power cycle. Measured over ssh at 14:13:31, rc read without a pipe:
+
+```
+device date  2026-07-28 14:13:31    uptime 1764.66 s
+ 3905 root /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183
+      --port 3005 --conf ... --pms http://192.168.1.41:32400
+```
+
+`/media/fat/misterplex/misterplexd.log` (mtime 14:13) is live:
+
+```
+media: idle screen painted (mode=0)
+media: OSD via DDR mailbox (no SPI)
+media: idle screen painted (mode=1)
+media: idle screen painted (mode=2)
+media: OSD word=0x6000 ... idle=1
+HTTP IN peer=192.168.1.24 GET /player/timeline/poll?commandID=7001&wait=1
+HTTP OUT 200 timeline <Timeline type="video" state="buffering" ...>
+```
+
+**Hypothesis refuted.** The daemon is up, cycling idle modes, writing content to
+the frame store, and serving Plex traffic. The screen is not black for want of a
+paint.
+
+Note `ps aux | grep [m]isterplexd` also matched my own command line, because the
+line contained the path `/tmp/misterplexd.log`. Harmless here (the real daemon
+row is unambiguous) but the bracket trick does **not** protect against a pattern
+that appears elsewhere in the same command. Same family as SS31's `pgrep` trap.
+
+### 34.1 Both clips predate the reboot
+
+Clips 1 and 2 sit inside the 12:44 -> 13:44 outage; uptime 1764 s confirms the
+board rebooted ~13:44. They therefore predate the current fabric load, the
+current daemon pid, and the current DDR contents. They cannot serve as a
+"pre-deploy baseline" for a deploy that happened this morning.
+
+Their own summary carries the tell: **"NO_SIGNAL events: 0"** over 240 s with
+**1 unique SHA across 48 frames**, luma exactly 7.0, std exactly 0.0. A running
+MiSTer driving real video does not emit a byte-identical frame 48 times running.
+
+### 34.2 New live hypothesis: the fault may be in the capture path
+
+If W-E2E records flat `(7,7,7)` **while** I can ssh the board and watch it paint,
+the fault is in the capture chain -- cable, input select, or MS2109 -- and
+**not in the core**. That is a materially different diagnosis from "black screen
+core defect" and would retro-invalidate a large body of black verdicts. It is now
+directly testable because the two observations can be timestamped side by side.
+
+I offered a paired timestamped reachability + paint log, and committed to holding
+the device still (no core touch, no Quartus, no daemon restart, read-only probes
+only) for 15 minutes so their window is uncontaminated.
+
+### 34.3 One-line liveness gate, no ssh required
+
+```python
+n_unique = len(np.unique(frame.reshape(-1,3), axis=0))
+```
+`==1` -> no source, refuse; `>1` -> board is driving video. Returns **1 for all
+48 frames** of both existing clips. Needs no network, so it also routes around
+W-E2E's ssh problem entirely.
+
+**No bounce is coming** -- the deploy already happened, `fb4bad84` is resident and
+loaded, and `3b1e8435` is parent-suspended. Waiting for one is waiting for an
+event that will not occur. Token held, unspent.
