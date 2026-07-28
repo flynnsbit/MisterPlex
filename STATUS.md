@@ -9,6 +9,145 @@ plays Plex content natively.
 
 ---
 
+## Update #3 — 2026-07-28 12:05 CDT (Hour 29)
+
+### Headline: we finally know why the screen has never shown decoded video
+
+The build now sitting on your MiSTer, `fb4bad84`, was measured **after fitting** —
+i.e. what is actually inside the chip, not what the source code claims. Result,
+across 1204 entity rows:
+
+```
+decode_stub          PRESENT
+h264_decode_core     ABSENT
+h264_decode_top      ABSENT
+h264_decode_skeleton ABSENT
+```
+
+**There is no H.264 decoder in the bitstream.** Every decode-related module that
+exists in silicon is reachable only through `decode_stub` — a retired diagnostic
+painter that draws test patterns.
+
+This is not a new regression. This is very likely **the** explanation for the
+entire history of "everything passes, the screen stays black."
+
+### What that means for the deploy
+
+The deploy is **unscored, not failed.** It could never have produced a decoded
+frame regardless of how well the display path worked, because the decoder is not
+in the chip. The frame-store livelock fix genuinely is in the bitstream, but it
+remains **neither confirmed nor refuted**.
+
+I am not going to dress that up. We put a build on hardware today and learned
+something important from it, but we did not get a picture.
+
+### A second, independent fault found the same hour
+
+A new cross-check against the Quartus file list — the list of source files
+actually handed to the compiler:
+
+```
+34 files in files.qip;  39 .sv files tracked in git
+NOT_COMPILED  h264_decode_top.sv
+NOT_COMPILED  h264_intra_nb_ctx.sv
+```
+
+Two decoder source files are **in the repository but were never given to the
+compiler at all.** They have been edited, reviewed, and unit-tested for weeks
+while being excluded from every build.
+
+So there are two separate failures stacked on top of each other: one module is
+compiled but never wired in; two others were never compiled. Three independent
+oracles now agree on this.
+
+### The good news, and it is substantial
+
+**1. We now know which branch is actually correct.**
+
+| branch | decoder connected? | in the compile list? |
+|---|---|---|
+| the one we DEPLOYED | **no** | **no** |
+| the deblocking branch | **no** | **no** |
+| `w-decode-hour27` | **yes** | **yes** |
+
+One branch has been right all along. Everything now rebases onto it, and no
+further chip build is authorized from any other starting point.
+
+**2. We found out why the decoder may not have fit in the first place.**
+
+```
+M10K memory blocks   453 / 553 used  (82% — the binding constraint)
+decode_stub alone    256 M10K = 46% of the entire device
+```
+
+The retired test-pattern painter is consuming **nearly half the chip's memory**.
+Deleting it is not cleanup — it is very likely the precondition for the real
+decoder's motion-compensation hardware to fit at all. That reframes a task we
+had been treating as low-priority housekeeping into the thing standing between
+us and a working decoder.
+
+### Conditions I have set for the next chip build
+
+A full build takes hours, so I will not authorize one until all four hold:
+the decoder proves connected to the top of the chip; nothing is
+tracked-but-uncompiled; `decode_stub` is retired or shrunk enough to free
+memory; and the intended modules are confirmed present *before* committing to
+the build.
+
+We have now shipped a decoder-less bitstream once. Doing it twice would be
+careless.
+
+### Conduct worth recording
+
+The worker that found all of this also **volunteered a mistake nobody would have
+caught**: it had read an exit code through a pipe, got "pass" on seven checks
+that were genuinely failing, and nearly reported a sound fleet-wide tool as
+broken. It re-measured, corrected itself, and flagged the trap because other
+workers wrap that tool the same way.
+
+It also refused to claim success on a deploy it could not score, refused to roll
+back (which would have destroyed the failure state we needed), and refused to
+bundle the ARM-side fix in alongside — because two changes at once makes the
+result unattributable.
+
+That restraint is worth more to this project than another green checkmark.
+
+### One process failure, corrected
+
+The worker owning HDMI capture held exclusive access to the capture device for
+an hour, was asked **four times** to photograph the screen after the deploy, and
+never did. That is why the deploy is unscored rather than simply "black". It has
+been replaced with instructions to report *signal / black / content* as its
+first action.
+
+### Progress
+
+```
+ARM / Plex client        ████████████████░░░░  85%
+Integrity / release      ███████████████░░░░░  75%   +5  qip + post-fit oracles added
+Display path (frame st.) ███████████░░░░░░░░░  55%
+Shippable builds         ████████████░░░░░░░░  60%
+Picture: intra (stills)  ███████░░░░░░░░░░░░░  35%  -10  HONEST CUT: not in the bitstream
+Bitstream parse / CAVLC  ████████░░░░░░░░░░░░  40%
+Deblocking filter        ██████░░░░░░░░░░░░░░  30%
+Picture: inter / motion  ██░░░░░░░░░░░░░░░░░░  10%
+                                              ─────
+OVERALL                  ███████░░░░░░░░░░░░░  36%   -1
+```
+
+Intra is **cut from 45% to 35%** and the overall number goes *down*. Work that
+was measured against a design the chip does not contain cannot be credited as
+progress. I would rather the number move backwards honestly than forwards on a
+technicality — this project's core problem has been believing its own green
+checkmarks, and the percentage is not exempt from that.
+
+### Next update
+
+~30 minutes, leading with what is actually on your screen right now — the first
+real capture of the deployed build.
+
+---
+
 ## Update #2 — 2026-07-28 11:40 CDT (Hour 28.5)
 
 ### Headline: the new RBF is on the hardware
