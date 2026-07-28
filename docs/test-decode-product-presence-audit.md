@@ -1561,3 +1561,89 @@ cases; restoring the shortest-path logic reddens the suite.
 **No existing test caught this** -- all four dependent suites stayed green
 through the fix, which is itself the finding: the property had never been tested,
 only assumed.
+
+## §19 Binding a report to the bitstream it describes
+
+`scripts/fit_report_binding.py`, `scripts/check_fit_report_binding_policy.py`,
+`tests/unit/test_fit_report_binding.py`.
+
+`w-arm-o5` reported 40 fit reports on this host of which 35 describe builds
+nobody is running. **Measured on my tree the figure is larger: 92 `*.fit.rpt`
+and 99 `Plex.rbf`.** A gate aimed at the wrong one parses cleanly and prints
+entirely true numbers about a build that does not exist. There is no parse error
+for anything downstream to catch. It is the project's signature defect wearing a
+fitter report.
+
+### The state before this change
+
+All four report readers accepted a path and nothing else:
+
+| gate | report args | could name the bitstream? |
+|---|---|---|
+| `check_quartus_fit_hierarchy.py` | `--fit-rpt --map-rpt` | **no** |
+| `check_quartus_timing.py` | `--sta-rpt` | **no** |
+| `check_timing_exclusions.py` | `--sta-rpt` | **no** |
+| `check_fit_evidence_ladder.py` | `--fit-rpt --map-rpt` | **no** |
+
+Any of them could be pointed at any of the 92 reports and would return a
+confident verdict.
+
+### The rule
+
+`--expect-rbf-md5` binds a report to the `Plex.rbf` beside it (or `--rbf`).
+
+| state | rc | meaning |
+|---|---|---|
+| `BOUND` | 0 | the report describes the bitstream claimed |
+| `MISMATCH` | 1 | it describes a *different* bitstream -- hard fail |
+| `UNBOUND` | 77 | no expectation given, or no bitstream beside the report |
+
+**`UNBOUND` is never a pass.** Verified against real fitter output:
+
+```
+sdc-a/Plex.sta.rpt  (no --expect-rbf-md5)      rc=77  UNBOUND
+sdc-a/Plex.sta.rpt  --expect-rbf-md5 fb4bad84  rc=0   BOUND   rbf_md5=fb4bad849ad2db78…
+a/Plex.sta.rpt      --expect-rbf-md5 fb4bad84  rc=1   MISMATCH rbf_md5=3b1e84355f5fe4e7…
+```
+
+The third line is exactly the mistake the rule prevents: a genuine Quartus report,
+read while believing it describes the resident build.
+
+### Enforcement, so it is not a matter of memory
+
+`check_fit_report_binding_policy.py` finds report readers by their arguments and
+requires all three of: import the helper, call `add_binding_args`, call
+`require_binding`. **Importing it and never honouring the answer is the vacuous
+case**, so a partial adoption fails with `missing=require_binding`. An empty scan
+is `REFUSED rc=2`, not a pass -- finding no readers means the detector broke, not
+that the fleet is clean. Registered as a unit command, so a newly added unbound
+reader fails `make unit`.
+
+Mutation proof: deleting the `require_binding` call from `check_quartus_timing.py`
+turns the policy red (`UNBOUND_READER ... missing=require_binding`) and reddens
+the suite; restoring it returns rc=0.
+
+### Consequence for existing callers
+
+`make post-fit-hierarchy FIT_RPT=...` without `--expect-rbf-md5` now exits **77**
+rather than 0. That is the intended behaviour change: an unbound report was never
+evidence, and 77 is the project's established "not a pass". Fixtures were bound
+rather than exempted -- `test_fit_evidence_ladder.py` now writes a synthetic
+`Plex.rbf` and passes its md5, so there is no unbound-but-passing mode anywhere,
+not even in tests.
+
+### §19.1 Fallout, handled by binding rather than exempting
+
+Adopting the rule broke two existing callers, both correctly:
+
+- `tests/unit/test_fit_evidence_ladder.py` fixtures had no bitstream -> `77`.
+  Fixed by writing a synthetic `Plex.rbf` beside the fixtures and passing its md5.
+- `tests/unit/test_rtl_invariants.sh` drives 8 report-reading invocations against
+  fault fixtures -> `77`, which surfaced as `make unit ... Error 77`. Fixed the
+  same way: one synthetic `Plex.rbf` in the fault directory and a shared
+  `BIND=(--expect-rbf-md5 …)` applied to all 8.
+
+Neither was given an exemption. An `--allow-unbound` escape hatch would have
+recreated the defect the moment somebody used it on a real report, and the
+project already has a documented case of a self-imposed exemption silently
+becoming a claim about the world.

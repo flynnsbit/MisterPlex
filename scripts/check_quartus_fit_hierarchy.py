@@ -9,6 +9,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fit_report_binding as binding  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "tests" / "fixtures" / "critical_fit_hierarchy.json"
 
@@ -178,7 +181,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--map-rpt", type=Path)
     ap.add_argument("--log", type=Path, help="Quartus compile log to scan for removal/tie-off warnings")
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    binding.add_binding_args(ap)
     args = ap.parse_args(argv[1:])
+
+    bound = binding.require_binding(args, args.fit_rpt)
+    if bound.rc:
+        return bound.rc
 
     try:
         rows = parse_hierarchy_report(args.fit_rpt)

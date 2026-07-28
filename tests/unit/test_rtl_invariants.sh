@@ -78,6 +78,13 @@ else
 fi
 echo "OK red-check: define parity guard rejects missing shared DDR_FRAME_STORE"
 
+# Every Quartus report must name the bitstream it describes; 92 such reports
+# exist on this host and reading the wrong one is silent. Fixtures are bound,
+# not exempted.
+printf 'synthetic-bitstream-for-rtl-invariants' >"$FAULT_DIR/Plex.rbf"
+FAKE_RBF_MD5="$(md5sum "$FAULT_DIR/Plex.rbf" | awk '{print $1}')"
+BIND=(--expect-rbf-md5 "$FAKE_RBF_MD5")
+
 FIT_GREEN="$FAULT_DIR/fake_fit_green.rpt"
 FIT_RED="$FAULT_DIR/fake_fit_red.rpt"
 FIT_LOOP_LOG="$FAULT_DIR/fake_fit_loop.log"
@@ -107,8 +114,8 @@ cat >"$FIT_RED" <<'RPT'
 ; Compilation Hierarchy Node ; ALMs needed [=A-B+C] ; [A] ALMs used in final placement ; [B] Estimate of ALMs recoverable by dense packing ; [C] Estimate of ALMs unavailable ; ALMs used for memory ; Combinational ALUTs ; Dedicated Logic Registers ; I/O Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ; Pins ; Virtual Pins ; Full Hierarchy Name ; Entity Name ; Library Name ;
 ;          |ddr_frame_store:fstore| ; 0 ; 0 ; 0 ; 0 ; 0 ; 2 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore ; ddr_frame_store ; work ;
 RPT
-"$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" --config "$FIT_CFG" >/dev/null
-if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_RED" --config "$FIT_CFG" \
+"$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" "${BIND[@]}" --config "$FIT_CFG" >/dev/null
+if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_RED" "${BIND[@]}" --config "$FIT_CFG" \
      >"$FAULT_DIR/fit_hierarchy_red.out" 2>"$FAULT_DIR/fit_hierarchy_red.err"; then
   echo "FAIL: fit hierarchy guard accepted optimized-away ddr_frame_store" >&2
   exit 1
@@ -124,7 +131,7 @@ cat >"$FIT_LOOP_LOG" <<'LOG'
 Warning (332125): Found combinational loop of 7 nodes File: /build/rtl/async_fifo.sv Line: 34
     Warning (332126): Node "emu|present|fstore|input_fifo|comb~3|combout"
 LOG
-if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" --log "$FIT_LOOP_LOG" --config "$FIT_CFG" \
+if "$ROOT/scripts/check_quartus_fit_hierarchy.py" --fit-rpt "$FIT_GREEN" "${BIND[@]}" --log "$FIT_LOOP_LOG" --config "$FIT_CFG" \
      >"$FAULT_DIR/fit_loop_red.out" 2>"$FAULT_DIR/fit_loop_red.err"; then
   echo "FAIL: fit hierarchy guard accepted critical-module combinational loop warning" >&2
   exit 1
@@ -144,7 +151,7 @@ cat >"$STA_RED" <<'RPT'
 ; Clock ; Slack ; End Point TNS ;
 ; clk_ddr ; -0.125 ; -1.250 ;
 RPT
-if "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$STA_RED" \
+if "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$STA_RED" "${BIND[@]}" \
      >"$FAULT_DIR/timing_red.out" 2>"$FAULT_DIR/timing_red.err"; then
   echo "FAIL: timing guard accepted negative setup slack" >&2
   exit 1
@@ -180,7 +187,7 @@ set_clock_groups -asynchronous \
 SDC
 
 # Green: existing SDC files only
-"$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EXCL_GREEN" >/dev/null
+"$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EXCL_GREEN" "${BIND[@]}" >/dev/null
 echo "OK green: timing exclusion gate passes with baseline SDC and good STA"
 
 # Red: new -asynchronous clock group
@@ -188,7 +195,7 @@ if "$ROOT/scripts/check_timing_exclusions.py" \
      --sdc "$ROOT/fpga/Plex_MiSTer/sys/sys_top.sdc" \
      --sdc "$ROOT/fpga/Plex_MiSTer/Plex.sdc" \
      --sdc "$EXCL_EVIL_SDC" \
-     --sta-rpt "$STA_EXCL_GREEN" \
+     --sta-rpt "$STA_EXCL_GREEN" "${BIND[@]}" \
      >"$FAULT_DIR/excl_evil.out" 2>"$FAULT_DIR/excl_evil.err"; then
   echo "FAIL: timing exclusion gate accepted new -asynchronous clock group" >&2
   exit 1
@@ -213,7 +220,7 @@ cat >"$STA_MISSING_CLK" <<'RPT'
 ; Clock ; Slack ; End Point TNS ;
 ; general[0].gpll ; 0.125 ; 0.000 ;
 RPT
-if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_MISSING_CLK" \
+if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_MISSING_CLK" "${BIND[@]}" \
      >"$FAULT_DIR/excl_missing.out" 2>"$FAULT_DIR/excl_missing.err"; then
   echo "FAIL: timing exclusion gate accepted STA missing general[2].gpll" >&2
   exit 1
@@ -232,7 +239,7 @@ STA_EMPTY="$FAULT_DIR/sta_empty.rpt"
 cat >"$STA_EMPTY" <<'RPT'
 ; Quartus Prime TimeQuest Timing Analyzer Report
 RPT
-if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EMPTY" \
+if "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$STA_EMPTY" "${BIND[@]}" \
      >"$FAULT_DIR/excl_empty.out" 2>"$FAULT_DIR/excl_empty.err"; then
   echo "FAIL: timing exclusion gate accepted empty STA report" >&2
   exit 1

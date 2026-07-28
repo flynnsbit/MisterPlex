@@ -46,6 +46,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fit_report_binding as binding  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 
 NOT_COMPILED = "NOT_COMPILED"
@@ -123,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Hard-fail unless this module reached the FITTED rung",
     )
+    binding.add_binding_args(ap)
     args = ap.parse_args(argv)
 
     map_path, fit_path = Path(args.map_rpt), Path(args.fit_rpt)
@@ -135,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not modules:
         fail("Scope: 0 modules; the gate cannot claim a PASS over an empty set")
+    if fit_path.is_file():
+        bound = binding.require_binding(args, fit_path)
+        if bound.rc:
+            return bound.rc
     missing = [str(p) for p in (map_path, fit_path) if not p.is_file()]
     if missing:
         # No fit exists to read. That is unmeasurable, not a pass and not a

@@ -663,3 +663,48 @@ not have the direct-child bug -- but it had the shortest-path bug instead, which
 is the same error with the opposite sign. Suggest your forbidden-ancestor fix
 assert over **all** hierarchy paths to the module, not the first one found, and
 print the path it judged.
+
+## A13 -- RBF-md5 binding is now mandatory and enforced
+
+Parent's instruction: *"make RBF-md5 binding mandatory for every gate that reads a
+fit report. An unbound report must be UNBOUND, never a pass."* Done, plus the
+enforcement layer so it does not depend on anyone remembering.
+
+**The hazard is bigger than reported.** `w-arm-o5` cited 40 reports; measured on
+this host: **92 `*.fit.rpt` and 99 `Plex.rbf`**. All four report readers
+(`check_quartus_fit_hierarchy`, `check_quartus_timing`, `check_timing_exclusions`,
+`check_fit_evidence_ladder`) previously accepted a path and nothing else.
+
+**Verified against real fitter output, not fixtures:**
+
+```
+sdc-a/Plex.sta.rpt  no expectation            rc=77 UNBOUND
+sdc-a/Plex.sta.rpt  --expect-rbf-md5 fb4bad84 rc=0  BOUND
+a/Plex.sta.rpt      --expect-rbf-md5 fb4bad84 rc=1  MISMATCH rbf_md5=3b1e8435…
+```
+
+**Enforcement:** `check_fit_report_binding_policy.py` requires import +
+`add_binding_args` + `require_binding`. Importing without honouring is the
+vacuous adoption and fails explicitly. An empty scan **refuses rc=2** rather than
+certifying a clean fleet. Registered in `make unit` (110 commands), so a new
+unbound reader cannot be merged green. Mutation-proved by stripping the call from
+a real reader.
+
+**Two consequences the parent should know:**
+
+1. `make post-fit-hierarchy FIT_RPT=...` **now exits 77 without
+   `--expect-rbf-md5`.** Intended -- an unbound report was never evidence -- but
+   it will surface in other workers' pipelines. Remedy is one flag, not an
+   exemption.
+2. I bound the **fixtures** rather than exempting them: the ladder suite now
+   writes a synthetic `Plex.rbf` and passes its md5. There is deliberately no
+   unbound-but-passing mode anywhere, including tests.
+
+**Corroboration of the parent's report identity claim:** the four local reports
+binding to the resident build are exactly the four-slot cluster my discovery mode
+found (`bdiag-a`, `bdiag-b`, `sdc-a`, `sdc-b` -> `fb4bad849ad2db78…`), and
+`wfit-hour27-a`/`-b` -> `3b1e84355f5fe4e7…`. Two independent instruments agree.
+
+**On "report it as unseen, never as absent":** recorded and already applied --
+A11 states I could not verify the `Plex.sdc` byte-diff locally because
+`remote_out/` holds outputs only. That remains unseen, not refuted.

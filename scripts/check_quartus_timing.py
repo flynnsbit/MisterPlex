@@ -8,6 +8,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fit_report_binding as binding  # noqa: E402
+
 
 @dataclass(frozen=True)
 class SlackRow:
@@ -79,10 +82,15 @@ def parse_fmax_rows(path: Path) -> list[tuple[str, str, str]]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sta-rpt", type=Path, required=True)
+    binding.add_binding_args(ap)
     args = ap.parse_args(argv[1:])
     if not args.sta_rpt.exists():
         print(f"QUARTUS_TIMING_REFUSED(exit=4): missing STA report {args.sta_rpt}", file=sys.stderr)
         return 4
+
+    bound = binding.require_binding(args, args.sta_rpt)
+    if bound.rc:
+        return bound.rc
 
     fmax = parse_fmax_rows(args.sta_rpt)
     slack_rows = parse_slack_rows(args.sta_rpt)

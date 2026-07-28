@@ -8,6 +8,7 @@ by Quartus 17.0.2 in `wfit-hour27-bdiag-b`.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import sys
 from pathlib import Path
@@ -38,12 +39,19 @@ FIT = """
 """
 
 
+SYNTHETIC_RBF = b"synthetic-bitstream-for-the-ladder-fixtures"
+SYNTHETIC_MD5 = hashlib.md5(SYNTHETIC_RBF).hexdigest()
+
+
 def write_reports(name: str, map_text: str = MAP, fit_text: str = FIT) -> tuple[Path, Path]:
     case = SCRATCH / name
     case.mkdir(parents=True, exist_ok=True)
     map_path, fit_path = case / "Plex.map.rpt", case / "Plex.fit.rpt"
     map_path.write_text(map_text)
     fit_path.write_text(fit_text)
+    # Every fit report must name the bitstream it describes; there is no
+    # unbound-but-passing mode, not even for fixtures.
+    (case / "Plex.rbf").write_bytes(SYNTHETIC_RBF)
     return map_path, fit_path
 
 
@@ -60,7 +68,28 @@ def run(argv: list[str]) -> tuple[int, str, str]:
 
 def base(name: str = "base") -> list[str]:
     map_path, fit_path = write_reports(name)
-    return ["--map-rpt", str(map_path), "--fit-rpt", str(fit_path)]
+    return ["--map-rpt", str(map_path), "--fit-rpt", str(fit_path),
+            "--expect-rbf-md5", SYNTHETIC_MD5]
+
+
+def case_unbound_report_cannot_pass() -> None:
+    """92 fit reports exist on this host; reading the wrong one is silent."""
+    map_path, fit_path = write_reports("binding")
+    rc, out, _err = run(["--map-rpt", str(map_path), "--fit-rpt", str(fit_path),
+                         "--module", "mod_fitted"])
+    assert rc == 77, f"an unbound fit report must not be scored, got rc={rc}\n{out}"
+    assert "FIT_REPORT_BINDING UNBOUND" in out, out
+    assert "no_--expect-rbf-md5" in out, out
+
+    rc, out, _err = run(["--map-rpt", str(map_path), "--fit-rpt", str(fit_path),
+                         "--module", "mod_fitted", "--expect-rbf-md5", "deadbeef"])
+    assert rc == 1, f"a report describing another bitstream must hard-fail, got rc={rc}\n{out}"
+    assert "FIT_REPORT_BINDING MISMATCH" in out, out
+
+    rc, out, _err = run(["--map-rpt", str(map_path), "--fit-rpt", str(fit_path),
+                         "--module", "mod_fitted", "--expect-rbf-md5", SYNTHETIC_MD5])
+    assert rc == 0, f"a correctly bound report must score\n{out}"
+    assert "FIT_REPORT_BINDING BOUND" in out, out
 
 
 def case_four_rungs_are_distinguished() -> None:
@@ -148,6 +177,7 @@ def main() -> int:
         case_prefix_is_not_a_match,
         case_missing_reports_skip_77_not_0,
         case_scope_zero_cannot_pass,
+        case_unbound_report_cannot_pass,
     ]
     print(f"Scope: fit_ladder_gate_cases={len(cases)} rungs={len(ladder.RUNGS)}", flush=True)
     assert cases, "Scope: 0 cannot claim a PASS"

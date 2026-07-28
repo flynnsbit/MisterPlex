@@ -30,6 +30,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fit_report_binding as binding  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "timing_exclusion_baseline.json"
 
@@ -200,7 +203,13 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     ap.add_argument("--update-baseline", action="store_true",
                     help="write current exclusions as the new baseline (for initial setup)")
+    binding.add_binding_args(ap)
     args = ap.parse_args(argv[1:])
+
+    if args.sta_rpt is not None:
+        bound = binding.require_binding(args, args.sta_rpt)
+        if bound.rc:
+            return bound.rc
 
     sdc_files = args.sdc or discover_sdc_files(ROOT)
     if not sdc_files:
