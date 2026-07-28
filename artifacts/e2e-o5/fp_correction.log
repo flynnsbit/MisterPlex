@@ -1,0 +1,4 @@
+REFUSE: UNBOUND — any claim about the resident bitstream is UNSCORED (not a pass, not a skip).
+FABRIC_PROVENANCE: UNBOUND
+  host=192.168.1.183 corename='Plex' rbf_md5=3b1e8435 fpga_state=operating load_after_write=True
+  no --expect-rbf-md5 given: this claim has no subject. 40 fit reports exist on this host and 35 describe builds nobody runs.

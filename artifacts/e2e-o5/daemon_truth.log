@@ -1,0 +1,9 @@
+PROC_PID=8288
+ORACLE_A_proc_count=1
+ORACLE_B=1
+ORACLE_C_http_status=404
+ORACLE_C_body=
+TOOL_pgrep=ABSENT_UNMEASURABLE
+TOOL_pidof=present
+TOOL_ss=present
+uptime_s=11874

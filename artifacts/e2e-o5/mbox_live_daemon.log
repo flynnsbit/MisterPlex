@@ -1,0 +1,44 @@
+== mailboxes (read-only) ==
+0x3007F100 = 0x00000000
+0x3007F104 = 0x00000000
+0x3007F128 = 0x00000000
+0x3007F12C = 0x00000000
+== positive control (must be 0x504C5844) ==
+0x30140000 = 0x00000000
+== daemon log location ==
+-rwxr-xr-x 1 root root    6661 Jul 28 14:08 /media/fat/misterplex/daemon-wosdo5.log
+-rwxr-xr-x 1 root root 1241850 Jul 28 17:28 /media/fat/misterplex/misterplexd.log
+-rwxr-xr-x 1 root root    1880 Jul 27 04:29 /media/fat/misterplex/misterplexd_lab.log
+-rwxr-xr-x 1 root root    1881 Jul 27 04:37 /media/fat/misterplex/misterplexd_lab_loop.log
+-rwxr-xr-x 1 root root   67563 Jul 28 08:05 /media/fat/misterplex/warm_baseline.log
+-rwxr-xr-x 1 root root   24772 Jul 28 08:06 /media/fat/misterplex/warm_opt.log
+-rwxr-xr-x 1 root root    2814 Jul 27 06:09 /media/fat/misterplex/wcap_ddr_plane_play.log
+-rwxr-xr-x 1 root root    2810 Jul 27 06:10 /media/fat/misterplex/wcap_ddr_plane_play_nodrop.log
+-rwxr-xr-x 1 root root    2951 Jul 27 06:25 /media/fat/misterplex/wcap_ddr_present_play.log
+== daemon log tail ==
+--- /media/fat/misterplex/misterplexd.log ---
+companion: stopped
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=1
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+companion: GDM + HTTP :3005 name=MiSTerPlex
+misterplexd: running name=MiSTerPlex id=misterplex-183 port=3005 pms=http://192.168.1.41:32400 servers=1 decode=624x480 weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+misterplexd:   server[0]=http://192.168.1.41:32400 (default)
+HTTP: companion on :3005 ip≈192.168.1.183
+GDM: listening UDP 32412
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1 (idle unchanged)
+media: idle screen painted (mode=0)
+media: OSD via DDR mailbox (no SPI)
+media: OSD word=0x0000 av_offset_ms=0 clock_ppm=-638 resync=on idle=0
+media: idle screen painted (mode=1)
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1

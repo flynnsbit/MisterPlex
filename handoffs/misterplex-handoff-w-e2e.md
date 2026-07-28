@@ -1294,3 +1294,105 @@ PASS under 77 contract     rc=0
 --bogus-flag under 77      rc=2   <- usage error stays 2, never laundered into 77
 ```
 42/42 gate checks, 21/21 mutations killed.
+
+## §31 — Three corrections to my own published claims, and one sharpened result
+
+Fabric-bound: `fabric_provenance.py --expect-rbf-md5 3b1e84355f5fe4e7e137b70a841244fa` → **BOUND**
+(`corename=Plex`, `fpga_state=operating`, core loaded 9635 s after the RBF was written).
+All measurements below are on resident **`3b1e8435`** (old SDC, `set_false_path`).
+
+### Correction 1 — `misterplexd` IS RUNNING. I published that it was not.
+
+I told the parent "**`misterplexd` is NOT running** (`pgrep -c` = 0)" (§29, handoff line 1236). **False.**
+
+Root cause: **`pgrep` does not exist on this device.** My probe was
+`pgrep_count=$(pgrep -c misterplexd 2>/dev/null || echo 0)` — the `|| echo 0` converted
+*command not found* into a **measured zero**. A missing tool silently became a claim about the world.
+
+**The aggravating factor is mine, not the tool's.** `daemon_state.sh` had two *sound* oracles, and
+their output sat in the same log directly beneath the broken one:
+```
+pgrep_count=0                                     <- broken oracle, tool absent
+ps_lines:  8288 root /media/fat/misterplex/bin/misterplexd ...   <- ALIVE
+listener_3005: 0.0.0.0:3005 LISTEN 8288/misterplexd              <- ALIVE
+```
+I built the multi-oracle probe specifically to prevent single-point error, then **defeated it by
+reading line 1 only** — because "daemon dead" flattered the fabric-is-silent story I already believed.
+
+Re-verified with three oracles, including a **functional** one:
+| oracle | method | result |
+|---|---|---|
+| A | `/proc/*/comm` scan (kernel truth, no external tool) | pid **8288** |
+| B | listening socket | `:3005` LISTEN |
+| C | **HTTP request to :3005** | **404** |
+
+Oracle C is decisive: a 404 means the daemon accepted TCP, parsed HTTP and generated a response.
+**A dead process cannot 404.** Probe now emits `TOOL_pgrep=ABSENT_UNMEASURABLE` rather than a number.
+
+**Fleet trap #3** (alongside busybox `grep "a\|b"` not being alternation, and nested quotes truncating
+through `ssh`): **`$(tool ... || echo 0)` launders a missing tool into a measurement.** Absent tools
+must report `UNMEASURABLE`, never a value.
+
+### Correction 2 — I read the wrong address for PLXK
+
+Per `mailbox_abi_spec.hpp:38`, **`kPlxkAddr = 0x3007F000`**. The four addresses I was given
+(`0x3007F100/104/128/12C`) contain **no PLXK at all** — `0x3007F100` is **PLXS**, and `+4` words are
+payloads, not magics. My "PLXK = 0" was actually a reading of PLXS. Now measured correctly:
+`PLXK@0x3007F000 = 0x00000000`.
+
+### Correction 3 — "all four words zero ⇒ the fabric writes nothing to DDR" was under-sampled
+
+Widening the scan (56 words, self-contained control: **20 non-zero**) shows the fabric **does** write DDR:
+```
+0x30140008 = 0x504C5852  "PLXR"      <- FPGA->HPS, ddr_bitstream_reader.sv:67
+0x30140010 = 0x504C5845  "PLXE"      <- FPGA->HPS, ddr_bitstream_reader.sv:68
+0x30140018 = 0x504C5854  "PLXT"      <- FPGA->HPS, ddr_bitstream_reader.sv:70
+0x30000000 = 0x10101010              <- framebuffer, Y=16 BT.601 studio black
+```
+My earlier positive control (`0x30140000` = PLXD dormant magic) had meanwhile gone to zero, which
+**by itself made that run UNSCORED** — a control that fails in the same run voids the measurement.
+
+### The sharpened result — split indicators by whether they are stream-gated
+
+The error in both my previous positions was treating all mailbox words as one instrument. They are not:
+
+| indicator | needs an active stream? | measured (16 s, 3 samples) | evidential value |
+|---|---|---|---|
+| `PLXR` read_count, `PLXT` level | **YES** | `0`, `0` | **NULL — proves nothing while idle** |
+| `PLXK` doorbell | **YES** | `0` | **NULL while idle** |
+| `PLXR`/`PLXE`/`PLXT` magics | no (written at init) | **present** | fabric **can** write DDR |
+| **`PLXD`/`PLXF`/`PLXS`** | **NO — free-running** | **`0`** | **REAL FAULT** |
+
+RTL proof of free-running (`ddr_frame_store.sv:887-889`):
+```systemverilog
+bank_mbox_hb <= bank_mbox_hb + 18'd1;
+if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
+        bank_mbox_req <= 1'b1;
+```
+Unconditional out of reset — no dependence on stream, ARM or doorbell — and `vsync_toggle` raises
+`bank_mbox_req` on **every vsync**. Vsync is confirmed running (stable 1280x720@60 captured).
+**So these mailboxes must publish while idle. They do not. That is a real fault.**
+
+The daemon corroborates the idle context, not a fault:
+`media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)`, `idle=1`, `idle screen painted (mode=0/1)`.
+
+### ⚠ Consequence for W-FIT-O5's held deploy — read the RIGHT indicator
+
+**The `3b1e8435` vs `fb4bad84` A/B is valid ONLY if graded on the free-running mailboxes
+(`PLXD`/`PLXF`/`PLXS`).** Graded on `PLXR` read_count, `PLXT` level or `PLXK`, it returns **"silent"
+for BOTH builds regardless of SDC or RTL**, because nothing is streaming — a **guaranteed-null
+experiment that would look like a clean result.** This is the vacuous-control pattern at system level:
+*the stimulus is never applied.*
+
+### Net effect on §29
+
+The §29 **conclusion** survives — `3b1e8435` (old SDC) is silent on the free-running publisher, so under
+the parent's own rule the **SDC change is exonerated and the cause lies in the RTL delta**. But its
+**original justification was unsound** (four zero words, no control). It now rests on a controlled
+measurement with a positive control: *a different fabric block writes DDR fine on the same bitstream.*
+
+**Newly localized:** DDR write capability is globally intact; the fault is specific to
+**`ddr_frame_store.sv`'s mailbox publisher**, not to DDR or the SDC broadly.
+
+**Unaffected:** all capture/scoring results. The chevron, left-edge and provenance findings never
+depended on daemon state.

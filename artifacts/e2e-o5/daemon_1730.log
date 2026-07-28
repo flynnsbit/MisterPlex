@@ -1,0 +1,14 @@
+pgrep_count=0
+ps_lines:
+ 8288 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183 --port 3005 --conf /media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400
+listener_3005:
+tcp        0      0 0.0.0.0:3005            0.0.0.0:*               LISTEN      8288/misterplexd    
+binary:
+  not at /media/fat/linux/misterplexd
+found:
+/media/fat/misterplex/bin/misterplexd
+/media/fat/misterplex/bin/misterplexd.prev-c2
+/media/fat/misterplex/bin/misterplexd.prev-cap
+/media/fat/misterplex/bin/misterplexd.prev-w-cast
+/media/fat/misterplex/bin/misterplexd.prev-wcast-eof-20260728-030246
+uptime_s=11642

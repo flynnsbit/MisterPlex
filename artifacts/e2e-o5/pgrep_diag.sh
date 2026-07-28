@@ -1,0 +1,7 @@
+echo "which_pgrep=$(command -v pgrep)"
+echo "busybox=$(readlink -f $(command -v pgrep) 2>/dev/null)"
+echo "pgrep_c_name=$(pgrep -c misterplexd 2>&1)"
+echo "pgrep_plain=$(pgrep misterplexd 2>&1 | head -3)"
+echo "pgrep_f=$(pgrep -f misterplexd 2>&1 | head -3)"
+echo "comm_of_8288=$(cat /proc/8288/comm 2>/dev/null)"
+echo "cmdline_head=$(tr '\0' ' ' < /proc/8288/cmdline 2>/dev/null | cut -c1-60)"
