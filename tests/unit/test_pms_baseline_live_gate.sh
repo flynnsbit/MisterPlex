@@ -55,6 +55,25 @@ if grep -q "$fake_token" "$WORK/exported_token_refuse.log"; then
   exit 1
 fi
 
+set +e
+env -u PMS_BASELINE_LIVE_SKIP_REASON \
+  DEPLOY_DECODE_PROMOTION=1 \
+  PMS_BASELINE_LIVE_STAMP="$WORK/definitely-missing-pass.stamp" \
+  "$ROOT/scripts/deploy_plex_core.sh" >"$WORK/deploy_refuse.log" 2>&1
+deploy_refuse_rc=$?
+set -e
+if [[ "$deploy_refuse_rc" -ne 4 ]]; then
+  echo "FAIL: DEPLOY_DECODE_PROMOTION missing-stamp path rc=$deploy_refuse_rc, want rc=4" >&2
+  cat "$WORK/deploy_refuse.log" >&2
+  exit 1
+fi
+grep -q "REFUSED: DEPLOY_DECODE_PROMOTION=1 requires live PMS Baseline evidence" "$WORK/deploy_refuse.log"
+if grep -q "^Deploy " "$WORK/deploy_refuse.log"; then
+  echo "FAIL: deploy script reached RBF/device path after missing live PMS stamp" >&2
+  cat "$WORK/deploy_refuse.log" >&2
+  exit 1
+fi
+
 python3 - "$SCRIPT" "$WORK/liveish_prompt.log" <<'PY'
 import os
 import pty
@@ -96,4 +115,4 @@ if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
     raise SystemExit("live-ish unreachable PMS unexpectedly passed")
 PY
 
-echo "test_pms_baseline_live_gate: OK skip rc=77, green Annex-B, red bad_all, exported-token refusal, no token leak"
+echo "test_pms_baseline_live_gate: OK skip rc=77, green Annex-B, red bad_all, deploy refusal rc=4, exported-token refusal, no token leak"
