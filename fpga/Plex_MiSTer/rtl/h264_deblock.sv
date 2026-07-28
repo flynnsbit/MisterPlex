@@ -90,7 +90,7 @@ module h264_deblock_thresholds (
 			6'd16: beta_lut = 8'd2;  6'd17: beta_lut = 8'd2;  6'd18: beta_lut = 8'd2;  6'd19: beta_lut = 8'd3;
 			6'd20: beta_lut = 8'd3;  6'd21: beta_lut = 8'd3;  6'd22: beta_lut = 8'd3;  6'd23: beta_lut = 8'd4;
 			6'd24: beta_lut = 8'd4;  6'd25: beta_lut = 8'd4;  6'd26: beta_lut = 8'd6;  6'd27: beta_lut = 8'd6;
-			6'd28: beta_lut = 8'd7;  6'd29: beta_lut = 8'd7;  6'd30: beta_lut = 8'd8;  6'd31: beta_lut = 8'd8;
+			6'd28: beta_lut = 8'd7;  6'd29: beta_lut = 8'd7;  6'd30: beta_lut = 8'd9;  6'd31: beta_lut = 8'd8;
 			6'd32: beta_lut = 8'd9;  6'd33: beta_lut = 8'd9;  6'd34: beta_lut = 8'd10; 6'd35: beta_lut = 8'd10;
 			6'd36: beta_lut = 8'd11; 6'd37: beta_lut = 8'd11; 6'd38: beta_lut = 8'd12; 6'd39: beta_lut = 8'd12;
 			6'd40: beta_lut = 8'd13; 6'd41: beta_lut = 8'd13; 6'd42: beta_lut = 8'd14; 6'd43: beta_lut = 8'd14;
