@@ -96,6 +96,44 @@ def main() -> int:
         f"capability lines must report modules donated by non-product lineages\n{combined}",
     )
     print("PASS capabilities are scored inside the product decoder subtree")
+
+    # The output contract is a hand-maintained tuple.  Emptying it would make the
+    # sink loop iterate zero times, so every decoder would clear the output check
+    # by asserting nothing about it -- a Scope: 0 wearing a PASS.
+    require(
+        "required_live_output_ports=3" in combined,
+        f"the Scope line must publish how many output ports are actually required\n{combined}",
+    )
+    # The mutant must live beside the gate: it derives ROOT from __file__ and
+    # imports its sibling checker off that path.
+    emptied = GATE.parent / "_w_gate_completeness_empty_contract_probe.py"
+    src = GATE.read_text().replace(
+        'REQUIRED_LIVE_OUTPUT_PORTS = ("dpb_wr_en", "dpb_wr_addr", "dpb_wr_data")',
+        "REQUIRED_LIVE_OUTPUT_PORTS = ()",
+        1,
+    )
+    require(
+        "REQUIRED_LIVE_OUTPUT_PORTS = ()" in src,
+        "mutation did not apply -- the output contract literal was renamed",
+    )
+    emptied.write_text(src)
+    try:
+        mutant = subprocess.run(
+            [sys.executable, str(emptied), "--synthetic-complete"],
+            cwd=ROOT, capture_output=True, text=True, timeout=60,
+        )
+    finally:
+        emptied.unlink(missing_ok=True)
+    require(
+        mutant.returncode == 2,
+        f"an empty output contract must be refused, not scored, got rc={mutant.returncode}\n"
+        f"{mutant.stdout}{mutant.stderr}",
+    )
+    require(
+        "DECODE_COMPLETENESS_REFUSED" in mutant.stderr and "assert nothing" in mutant.stderr,
+        f"refusal must name the vacuity, not fail for some other reason\n{mutant.stderr}",
+    )
+    print("PASS an emptied output contract is refused rather than passing vacuously")
     return 0
 
 

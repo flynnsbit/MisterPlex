@@ -1465,3 +1465,33 @@ product_reachable=no`), and the unnamed-variable refusal here (three distinct
 Mutation proof: forcing `variable_differs` to fall back to all variable files
 makes the vacuous real-slot pair report `AB_CONTROL_OK`; the suite fails rc=1 on
 that line and returns rc=0 when restored.
+
+### §18.1 The same defect inside my own completeness gate
+
+`check_decode_completeness.py` requires the product decoder to drive
+`dpb_wr_en/dpb_wr_addr/dpb_wr_data`. A **rename** of one of those ports was never
+the risk -- it hard-fails with `required_output_absent=<port>`. The real risk is
+the list **emptying**: with `REQUIRED_LIVE_OUTPUT_PORTS = ()` the sink loop runs
+zero times, so every decoder clears the output check by asserting nothing about
+it. Measured with the guard removed:
+
+```
+Scope: decode-completeness synthetic required_categories=7 required_live_output_ports=0 ...
+rc=0   -- a full PASS that checked no output at all
+```
+
+That is `Scope: 0` wearing a PASS. Two fixes, both cheap:
+
+- the count is now published in **both** `Scope:` lines (`required_live_output_ports=3`),
+  so shrinking the contract is visible in the first line of output;
+- an empty contract is **refused rc=2** (`DECODE_COMPLETENESS_REFUSED ... assert
+  nothing`), never scored. A gate that cannot check its property must not return
+  a verdict about it.
+
+The unit suite carries the mutation itself: it emits a copy of the gate with the
+literal emptied, requires rc=2 *and* the named refusal text, and deletes the copy
+in a `finally`. Removing the guard turns that case rc=0 and the suite fails.
+
+**Generalised rule: every hand-maintained requirement list must publish its
+length in the `Scope:` line and refuse when it is empty.** A requirement list is
+a denominator, and this project has already been bitten by an unpublished one.

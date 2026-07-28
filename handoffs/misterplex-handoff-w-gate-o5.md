@@ -604,3 +604,25 @@ text. Seven matched, four were fine, **two were genuinely vacuous and are fixed*
   unnamed-variable case now asserts its specific sentence.
 
 `make unit` rc=0 at 108 commands; `check_scope_discipline.py` rc=0.
+
+### A11.1 -- closing an open item on my own gate, by the same test
+
+Open item 3 in this handoff ("`REQUIRED_LIVE_OUTPUT_PORTS` is hard-coded; a
+rename silently empties it") was **half wrong and I measured it rather than
+repeating it**. A rename does not pass silently -- it fails
+`required_output_absent=<port>`. What passes silently is the list going **empty**:
+the sink loop iterates zero times and the gate returns rc=0 having checked no
+output at all. Measured, guard removed:
+
+```
+Scope: ... required_live_output_ports=0 ... -> rc=0  full PASS, nothing asserted
+```
+
+Fixed: the count is published in both `Scope:` lines, and an empty contract is
+**refused rc=2**, not scored. The unit suite performs the mutation and asserts on
+the refusal text; deleting the guard flips that case to rc=0 and reddens the
+suite. Item 3 is closed.
+
+Rule offered to the fleet: **a hand-maintained requirement list must publish its
+length in `Scope:` and refuse when empty** -- it is a denominator, and an
+unpublished denominator is how "true number about the wrong thing" starts.

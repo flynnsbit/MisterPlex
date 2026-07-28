@@ -50,6 +50,24 @@ class Capability:
     reason: str
 
 
+def refuse(msg: str) -> None:
+    print(f"DECODE_COMPLETENESS_REFUSED: {msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def assert_output_contract_is_non_empty() -> None:
+    """A hand-maintained requirement list that empties is a Scope: 0 in disguise.
+
+    With no required ports the sink loop runs zero times and every decoder passes
+    the output check by asserting nothing about it.
+    """
+    if not REQUIRED_LIVE_OUTPUT_PORTS:
+        refuse(
+            "REQUIRED_LIVE_OUTPUT_PORTS is empty, so the output-sink check would "
+            "assert nothing and pass vacuously"
+        )
+
+
 def fail(msg: str) -> None:
     print(f"DECODE_COMPLETENESS_FAIL: {msg}", file=sys.stderr)
     raise SystemExit(1)
@@ -257,7 +275,9 @@ def product_mode(caps: dict[str, Capability]) -> int:
 
     print(
         "Scope: decode-completeness product_configs=DECODE_REAL_INTRA=0,DECODE_REAL_INTRA=1 "
-        f"required_categories={len(REQUIRED_CATEGORIES)} manifest={CAPABILITY_FILE.relative_to(ROOT)}"
+        f"required_categories={len(REQUIRED_CATEGORIES)} "
+        f"required_live_output_ports={len(REQUIRED_LIVE_OUTPUT_PORTS)} "
+        f"manifest={CAPABILITY_FILE.relative_to(ROOT)}"
     )
 
     all_ok = True
@@ -395,7 +415,9 @@ def synthetic_mode(
         fail(f"unknown synthetic drop category {drop_category!r}")
     print(
         "Scope: decode-completeness synthetic "
-        f"required_categories={len(REQUIRED_CATEGORIES)} drop_category={drop_category or '<none>'} "
+        f"required_categories={len(REQUIRED_CATEGORIES)} "
+        f"required_live_output_ports={len(REQUIRED_LIVE_OUTPUT_PORTS)} "
+        f"drop_category={drop_category or '<none>'} "
         f"bad_topology={int(bad_topology)} dead_outputs={int(dead_outputs)}"
     )
     if bad_topology:
@@ -459,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--synthetic-bad-topology", action="store_true", help="With --synthetic-complete, use retired decode_stub as the product decoder")
     ap.add_argument("--synthetic-dead-outputs", action="store_true", help="With --synthetic-complete, terminate every decoder output on a dangling anti-prune net")
     args = ap.parse_args(argv)
+    assert_output_contract_is_non_empty()
     caps = parse_capabilities()
     if args.synthetic_complete or args.synthetic_drop_category or args.synthetic_bad_topology or args.synthetic_dead_outputs:
         return synthetic_mode(caps, args.synthetic_drop_category, args.synthetic_bad_topology, args.synthetic_dead_outputs)
