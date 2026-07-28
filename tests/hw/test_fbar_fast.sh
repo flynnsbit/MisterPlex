@@ -22,9 +22,31 @@ DEV="${HDMI_DEV:-/dev/video4}"
 mkdir -p "$OUT"
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=6 "root@$HOST")
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable\|store now' || true; }
+CLEANUP_ARMED=0
+cleanup() {
+  [[ "$CLEANUP_ARMED" == "1" ]] || return 0
+  ssh_q '/media/fat/misterplex/bin/set_status --pattern bars --force-bars 1 --tv ntsc --fps 60' >/dev/null || true
+}
+trap cleanup EXIT
+
+capture_preflight() {
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=missing_ffmpeg" >&2
+    exit 20
+  fi
+  if [[ ! -e "$DEV" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=absent" >&2
+    exit 20
+  fi
+  if [[ ! -c "$DEV" ]]; then
+    echo "NO_CAPTURE_DEVICE dev=$DEV reason=not_char_device" >&2
+    exit 20
+  fi
+}
 
 snap() {
   local name=$1
+  rm -f "$OUT/${name}_"*.jpg "$OUT/${name}.jpg" 2>/dev/null || true
   fuser -k "$DEV" 2>/dev/null || true
   sleep 0.15
   ffmpeg -y -hide_banner -loglevel error \
@@ -33,7 +55,10 @@ snap() {
   # pick last frame
   local f
   f=$(ls -1 "$OUT/${name}_"*.jpg 2>/dev/null | tail -1)
-  [[ -n "$f" ]] || { echo "no capture $name"; return 1; }
+  if [[ -z "$f" ]]; then
+    echo "CAPTURE_FAILED name=$name dev=$DEV reason=no_frame" >&2
+    return 20
+  fi
   cp -f "$f" "$OUT/${name}.jpg"
   python3 - "$f" <<'PY'
 import sys
@@ -45,21 +70,37 @@ print(f"{m:.1f}")
 PY
 }
 
+capture_mean() {
+  local name=$1
+  local mean
+  set +e
+  mean=$(snap "$name")
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "FBAR_CAPTURE_FAILED step=$name exit=$rc" >&2
+    exit 20
+  fi
+  printf '%s\n' "$mean"
+}
+
 echo "=== fast FBAR $(date -Iseconds) ==="
+capture_preflight
+CLEANUP_ARMED=1
 ssh_q '/media/fat/misterplex/bin/set_status --tv ntsc --fps 60 --audio on --pattern grid --force-bars 0'
 sleep 0.2
-m0=$(snap fbar_fast_grid_off || echo 0)
+m0=$(capture_mean fbar_fast_grid_off)
 ssh_q '/media/fat/misterplex/bin/set_status --raw' | head -2
 
 ssh_q '/media/fat/misterplex/bin/set_status --pattern grid --force-bars 1'
 sleep 0.2
-m1=$(snap fbar_fast_grid_on || echo 0)
+m1=$(capture_mean fbar_fast_grid_on)
 ssh_q '/media/fat/misterplex/bin/set_status --raw' | head -2
 
 # Leave stable bars (don't leave test pattern up)
 ssh_q '/media/fat/misterplex/bin/set_status --pattern bars --force-bars 1 --tv ntsc --fps 60'
 sleep 0.15
-m2=$(snap fbar_fast_bars || echo 0)
+m2=$(capture_mean fbar_fast_bars)
 
 echo "grid_off mean=$m0  grid_on(force) mean=$m1  bars mean=$m2"
 # After eff_pattern fix, force-on with grid should look like bars (closer to m2 than m0)
