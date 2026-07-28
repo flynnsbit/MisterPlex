@@ -118,6 +118,10 @@ int main() {
     CHECK(!knownDurationEofStall(0, 30021, 29900, 0, 1200));
     CHECK(!knownDurationEofStall(0, 30021, 31500, 128, 1200));
     CHECK(!knownDurationEofStall(1260000, 1286942, 27050, 0, 200));
+    CHECK(!knownDurationEofStall(0, 0, 600000, 0, 600000));
+    CHECK(!knownDurationEofStall(0, -1, 600000, 0, 600000));
+    CHECK(!knownDurationEofStall(0, 60000, 59000, 0, 5000));
+    CHECK(!knownDurationEofStall(0, 60000, 61000, 0, 999));
     CHECK(knownDurationEofStall(0, 30021, 31500, 0, 1200));
     CHECK(knownDurationEofStall(1260000, 1286942, 28050, 0, 1200));
 
