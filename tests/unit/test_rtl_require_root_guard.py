@@ -203,6 +203,10 @@ def main() -> int:
     # The guard must bite even when the orphan root is *itself* required.
     rc, _, err = call(["orphan_core"], "orphan_core")
     assert rc == 1, "self-rooted orphan requirement must not pass"
+    # rc alone is vacuous here: a self-rooted require trivially "finds" itself,
+    # so the failure must name the guard, not some unrelated error.
+    assert "NON_PRODUCT_ROOT orphan_core product_reachable=no" in err, err
+    assert "subtree claim, not product presence" in err, err
 
     # End-to-end: the real repository must always announce Scope first.
     proc = subprocess.run(

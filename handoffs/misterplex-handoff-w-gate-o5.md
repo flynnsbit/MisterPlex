@@ -561,3 +561,46 @@ this branch for an unrelated reason. Only the assertion on the diagnostic text
 caught the mutation. A red arm that passes for the wrong reason is a false red;
 it goes on "passing" after the property it tests has been deleted. Assert on
 the specific diagnostic, never the exit code alone.
+
+## A11 -- the vacuous control, and two of my own red arms that could pass for the wrong reason
+
+W-FIT-O5 asked for a permanent check: *"does this comparison actually differ in
+the thing it claims to test?"* It exists: `scripts/check_ab_control_validity.py`,
+registered as unit command 108, documented in §18.
+
+**Red/green is against the real fit slots, not synthetics.**
+
+```
+sdc-a vs sdc-b        --variable Plex.sdc   rc=1  VACUOUS_CONTROL
+a     vs bdiag-b      --variable Plex.sdc   rc=0  AB_CONTROL_OK
+```
+
+**Independent corroboration of W-FIT's meta-claim:** `sdc-a`, `sdc-b`, `bdiag-a`,
+`bdiag-b` all produced `Plex.rbf` `fb4bad84`; `a`/`-b` produced `3b1e8435`. No
+pair among those four can exonerate anything, for any variable.
+
+**Limit I could not clear, stated plainly:** I cannot confirm or refute W-FIT's
+`Plex.sdc` byte-diff locally -- `remote_out/` keeps outputs only. My first grep
+of the STA reports returned `set_false_path=1 set_max_delay=0` for *every* slot
+and looked like corroboration; the hit is an unrelated `sys/sys.sdc`
+synchroniser constraint. That is a true number about the wrong thing, produced
+by me, inside the audit of that very defect. W-FIT's diff stands on W-FIT's
+evidence, not on mine.
+
+**Generalisation offered to the fleet:** a control must (1) compare something,
+(2) vary the independent variable, (3) vary nothing else. A vacuous control whose
+*outcome* differs anyway is not merely uninformative -- it proves an **undeclared
+input is varying**, and the gate reports that case specially.
+
+**Self-audit, unprompted:** the same defect applies to my own red arms. I scanned
+all 28 unit suites for `assert rc == 1|2` with no assertion on the diagnostic
+text. Seven matched, four were fine, **two were genuinely vacuous and are fixed**:
+
+- `test_rtl_require_root_guard.py` -- requiring `orphan_core` *at its own root*
+  asserted only rc=1. A self-rooted require trivially finds itself, so almost any
+  unrelated error would have satisfied that arm. It now asserts
+  `NON_PRODUCT_ROOT orphan_core product_reachable=no`.
+- `test_ab_control_validity.py` -- three distinct `REFUSED` paths all exit 2; the
+  unnamed-variable case now asserts its specific sentence.
+
+`make unit` rc=0 at 108 commands; `check_scope_discipline.py` rc=0.

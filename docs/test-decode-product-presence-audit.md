@@ -1385,3 +1385,83 @@ pre-filter is biased toward calling nets live, so it can miss deadness. What it
 changes is the **iteration loop** — W-DECODE can test a fix in seconds and only
 spend the four minutes on candidates that already pass. It is inserted as step
 2b, before step 3, never instead of it.
+
+## §18 The vacuous control -- a comparison that does not vary what it claims to vary
+
+`scripts/check_ab_control_validity.py`, `tests/unit/test_ab_control_validity.py`.
+
+W-FIT-O5 refuted a published exoneration ("the SDC correction is netlist-neutral")
+by observing that the four slots supporting it all carried the **same** SDC. The
+comparison demonstrated fitter determinism, not SDC neutrality. This is the same
+family as `Scope: 0` vacuity, one level up:
+
+| failure | meaning |
+|---|---|
+| `Scope: 0` | I compared **nothing** |
+| vacuous control | I compared **two copies of the same thing** |
+| confounded control | I varied the named thing **and other things too** |
+
+### Verdicts
+
+| verdict | rc | meaning |
+|---|---|---|
+| `AB_CONTROL_OK` | 0 | the named variable differs, and nothing outside it does |
+| `VACUOUS_CONTROL` | 1 | the named variable is byte-identical on both sides |
+| `CONFOUNDED` | 2* | something outside the named variable also differs |
+| `REFUSED` | 2 | no `--variable` named, or it matches no file present on both sides |
+| `UNSCORED` | 77 | a side is missing -- never 0 |
+
+A vacuous control whose **outcome differs anyway** is a stronger signal than a
+mere absence of evidence: an undeclared input is varying. The gate says so.
+
+### Red/green against the real fit slots, not synthetics
+
+Measured on `mp-wt-integ/fpga/Plex_MiSTer/remote_out`:
+
+```
+wfit-hour27-sdc-a vs wfit-hour27-sdc-b   --variable Plex.sdc   rc=1  VACUOUS_CONTROL
+wfit-hour27-a     vs wfit-hour27-bdiag-b --variable Plex.sdc   rc=0  AB_CONTROL_OK
+```
+
+The unit suite carries both as an **anchor case** and prints
+`real_fit_slot_anchors=N/2` in its `Scope:` line, so an anchor that silently
+disappears is visible rather than skipped.
+
+### Independent corroboration, and the limit I could not clear
+
+Independently confirmed from the local artifacts: the four slots cited in the
+exoneration -- `sdc-a`, `sdc-b`, `bdiag-a`, `bdiag-b` -- **all produced
+`Plex.rbf` `fb4bad84`**, while `wfit-hour27-a`/`-b` produced `3b1e8435`. Every
+pairwise comparison among those four is therefore vacuous with respect to any
+variable, which corroborates W-FIT's meta-claim without relying on it.
+
+**What I could not verify:** the `Plex.sdc` byte-diff itself. `remote_out/` keeps
+outputs only -- no source trees -- so the disputed constraint is not present
+locally. My first attempt looked like evidence and was not: grepping
+`set_false_path`/`set_max_delay` in the STA reports returned `1/0` for *every*
+slot, because the hit is `Info (332166): set_false_path -to [get_keepers
+{*altera_std_synchronizer:*|din_s1}]` emitted from `sys/sys.sdc` -- unrelated to
+the clk_ddr constraint under dispute. A true number about the wrong thing, the
+project's signature defect, produced by me while auditing that exact defect.
+
+### Generalisation for future comparisons
+
+Before a comparison is allowed to support a claim, it must clear three questions:
+1. did it compare anything at all? (`Scope: 0`)
+2. did it **vary the independent variable**? (vacuous control)
+3. did it vary **only** that? (confounded)
+
+### Self-audit performed at the same time
+
+I scanned all 28 unit suites for red arms asserting on the exit code alone --
+a red arm that can pass for the wrong reason is itself a vacuous control. Seven
+matched; four were text-asserted just outside the scan window; **two were
+genuine and are now fixed**: the self-rooted-orphan case in
+`test_rtl_require_root_guard.py` (rc=1 is trivially satisfiable when a module is
+required at its own root, so it now asserts `NON_PRODUCT_ROOT ...
+product_reachable=no`), and the unnamed-variable refusal here (three distinct
+`REFUSED` paths all exit 2, so it now asserts the specific sentence).
+
+Mutation proof: forcing `variable_differs` to fall back to all variable files
+makes the vacuous real-slot pair report `AB_CONTROL_OK`; the suite fails rc=1 on
+that line and returns rc=0 when restored.
