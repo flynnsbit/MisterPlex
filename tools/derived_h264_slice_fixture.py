@@ -150,10 +150,12 @@ def verify_manifest(manifest: dict[str, Any], slice_path: Path) -> list[str]:
         return failures
     if sha256_file(slice_path) != manifest["slice"]["sha256"]:
         failures.append(f"slice_sha256 got={sha256_file(slice_path)} want={manifest['slice']['sha256']}")
+    actual_records: list[dict[str, Any]] = []
     with slice_path.open("rb") as f:
         for expected in expected_frames:
             chunk = f.read(frame_size)
             got = frame_record(chunk, width, height, int(expected["slice_index"]), int(expected["source_index"]))
+            actual_records.append(got)
             if got["frame_sha256"] != expected["frame_sha256"]:
                 failures.append(
                     f"frame_hash slice={expected['slice_index']} source={expected['source_index']} got={got['frame_sha256']} want={expected['frame_sha256']}"
@@ -163,17 +165,42 @@ def verify_manifest(manifest: dict[str, Any], slice_path: Path) -> list[str]:
                     failures.append(
                         f"plane_hash slice={expected['slice_index']} source={expected['source_index']} plane={plane} got={got['planes'][plane]} want={expected['planes'][plane]}"
                     )
+                if got["stats"][plane] != expected["stats"][plane]:
+                    failures.append(
+                        f"plane_stats slice={expected['slice_index']} source={expected['source_index']} plane={plane} got={got['stats'][plane]} want={expected['stats'][plane]}"
+                    )
             if failures:
                 break
-    uv_distinct = sum(1 for r in expected_frames if r["planes"]["U"] != r["planes"]["V"])
-    unique_y = len({r["planes"]["Y"] for r in expected_frames})
+    records = actual_records if len(actual_records) == len(expected_frames) else expected_frames
+    uv_distinct = sum(1 for r in records if r["planes"]["U"] != r["planes"]["V"])
+    unique_y = len({r["planes"]["Y"] for r in records})
     cov = manifest.get("coverage", {})
+    actual_cov = {
+        "frames": len(records),
+        "unique_y_hashes": unique_y,
+        "uv_distinct_frames": uv_distinct,
+        "y_min": min(r["stats"]["Y"]["min"] for r in records),
+        "y_max": max(r["stats"]["Y"]["max"] for r in records),
+        "u_min": min(r["stats"]["U"]["min"] for r in records),
+        "u_max": max(r["stats"]["U"]["max"] for r in records),
+        "v_min": min(r["stats"]["V"]["min"] for r in records),
+        "v_max": max(r["stats"]["V"]["max"] for r in records),
+    }
+    for key, value in actual_cov.items():
+        if cov.get(key) != value:
+            failures.append(f"coverage {key} got={cov.get(key)} want={value}")
     if uv_distinct != len(expected_frames):
         failures.append(f"uv_distinct_frames got={uv_distinct} want={len(expected_frames)}")
     if unique_y < len(expected_frames) - 1:
         failures.append(f"unique_y_hashes got={unique_y} want>={len(expected_frames)-1}")
-    if cov.get("y_min", 255) > 10 or cov.get("y_max", 0) < 235:
-        failures.append(f"clamp-edge coverage weak y_min={cov.get('y_min')} y_max={cov.get('y_max')}")
+    if actual_cov["y_min"] > 10 or actual_cov["y_max"] < 235:
+        failures.append(f"clamp-edge coverage weak y_min={actual_cov['y_min']} y_max={actual_cov['y_max']}")
+    if actual_cov["u_max"] - actual_cov["u_min"] < 32 or actual_cov["v_max"] - actual_cov["v_min"] < 32:
+        failures.append(
+            "chroma coverage weak "
+            f"u_min={actual_cov['u_min']} u_max={actual_cov['u_max']} "
+            f"v_min={actual_cov['v_min']} v_max={actual_cov['v_max']}"
+        )
     return failures
 
 

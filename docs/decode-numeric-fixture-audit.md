@@ -42,7 +42,7 @@ Observed result after the first pass: **SOUND=7, VACUOUS=2 (both closed here), O
 
 ## Real-content cross-check
 
-The derived 624×480 Constrained Baseline asset is recorded in `docs/derived-validation-assets.md`. As of `01a8aa6`, per-frame Y/U/V hashes are tracked in `tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`, generated with `-skip_loop_filter all` to match the pre-deblock fabric stage. The full media remains untracked under `build/`, so `tests/unit/test_derived_validation_hashes.sh` currently reports `SKIP-NOT-PASS rc=77` unless the asset is regenerated.
+The derived 624×480 Constrained Baseline asset is recorded in `docs/derived-validation-assets.md`. As of `01a8aa6`, per-frame Y/U/V hashes are tracked in `tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`, generated with `-skip_loop_filter all` to match the pre-deblock fabric stage. The full media remains untracked under `build/`; the full 1800-frame check is optional. The always-on committed raw slice is `tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv` with manifest `tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled_v1.json`.
 
 `docs/phase3-decode.md` reports the derived stream as 1800 frames, 12,713,118 Annex-B bytes, and ~20.5% more bytes/MB plus ~29.6% more bytes/P-frame than the synthetic 624×480 P16 fixture. The hash manifest adds scoreability markers: **1790 unique Y-plane hashes**, and **U/V differ on 1774/1800 frames**. The 26 U/V-alias frames are exactly frames `0..25`; they cannot detect a U/V swap and must not be selected as chroma-discrimination slices.
 
@@ -76,3 +76,18 @@ A slice picked for coverage should beat a slice picked for position. From the ha
 5. **Prefer frames with high Y/U/V variation or edge/extreme samples**, but keep explicit synthetic sentinels for exact clamp/saturation boundaries.
 
 Hash-only seed candidates that satisfy U/V distinctness and temporal spread are: `26, 300, 600, 900, 1200, 1500, 1799`. Final committed slices should be refined from raw frame data/residual parsing, not hashes alone: choose the subset with the most nonzero residual blocks, distinct U/V planes, and any edge-near samples. If a chosen slice includes frame `0..25`, document it as luma/startup-only; it is vacuous for chroma-plane discrimination.
+
+## Gap closures after the real-content slice landed
+
+| Gap | Closure | Mutation | Evidence | Verdict |
+| --- | --- | --- | --- | --- |
+| Real-content U/V plane discrimination | The always-on 8-frame slice is selected only from U/V-distinct source frames (`149,392,474,710,937,1183,1349,1675`) and the verifier now checks both hashes and per-plane stats. | Swap U and V in every raw I420 frame. | `DERIVED_SLICE_FAIL plane_hash slice=0 source=149 plane=U ...`; `DERIVED_SLICE_FAIL plane_hash slice=0 source=149 plane=V ...` | Sound |
+| Real-content chroma byte sensitivity | The verifier red-checks independent single-byte corruptions in U and in V, so chroma is not merely protected by a luma hash or by coherent U/V swapping. | Flip the first U byte, then flip the first V byte, in the committed slice. | `DERIVED_SLICE_FAIL plane_hash slice=0 source=149 plane=U ...`; `DERIVED_SLICE_FAIL plane_hash slice=0 source=149 plane=V ...` | Sound |
+| Chroma residual scheduling in the P16 decode scoreboard | The P16 scoreboard now lands 8 scheduled chroma residual blocks per MB and records plane-specific sample failures. | Drop last chroma residual; swap chroma scheduled coefficients; swap U/V chroma residual block classes. | `sample 356 plane=V got=23 want=42 pred=23 residual=19`; `sample 320 plane=V got=207 want=209 pred=190 residual=19`; `sample 256 plane=U got=176 want=164 pred=157 residual=7` | Sound |
+| Chroma read U/V discrimination in the P16 decode scoreboard | The reference read scoreboard names the bad read ordinal and address when V reads U or U reads V. | Swap chroma read plane bases. | `read_ordinal 20736 got_addr=0x4a08 want_addr=0x4808` | Sound |
+
+Remaining priority gaps:
+
+- The always-on real-content slice is still a final-byte/hash oracle; it does not localise CAVLC residual syntax, dequant class, or scan position by itself. Keep the synthetic IDCT/direct-placement and P16 scheduled-residual probes.
+- Real content increases the chance of edge/extreme values, but exact DPB clamp and recon saturation boundaries still require explicit synthetic sentinels.
+- The full 1800-frame derived asset provides better long-run lifecycle/reference diversity when available, but the committed eight-frame slice is the only always-on real-content gate.
