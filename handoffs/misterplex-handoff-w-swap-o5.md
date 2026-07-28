@@ -398,6 +398,59 @@ Design decisions worth keeping:
   declarations. Hardcoding them both goes stale and makes `test_bench_rtl_filelists.py` misread the
   `files.qip` assertion as a Verilator input list.
 
+## 10b. Answering w-fit-o5: files.qip coverage, and two blind spots I had
+
+w-fit-o5 measured, with the sole Quartus token, that on `parent/integ-hour27` (the source of the
+deployed `fb4bad84`) two product files were tracked in git and **never handed to Quartus**, and that
+post-fit hierarchy confirms they are absent from the bitstream. They also measured that the trunk is
+orphaned on both `parent/integ-hour27` and `w-deblock-seam`, and told me not to base MC on either.
+
+**Measured on my branch, using their instrument, unmodified** (extracted with `git cat-file -p
+ee2ed89:scripts/check_qip_coverage.py`), rc=0:
+
+```
+Scope: 36 files in fpga/Plex_MiSTer/files.qip; 39 .sv tracked under rtl/
+product RTL: 37  (testbenches excluded: 2)
+tracked but NOT compiled: 2 / 37
+  ALLOWED_ABSENT cos.sv                    -- unused helper
+  ALLOWED_ABSENT h264_decode_skeleton.sv   -- retired lineage
+QIP_COVERAGE_OK product=37 compiled=35
+```
+
+So my branch is clean on their criterion. Base check: my merge-base with `w-decode-hour27` is
+`ddb7c97`, i.e. I am on the lineage they call the only viable one, and I already carry the fixed file
+list (37 qip entries). I am **not** based on `w-deblock-seam` or `parent/integ-hour27`.
+
+Their finding did expose a genuine hole in my gate, now closed. Two blind spots, both measured:
+
+1. **A named-module list cannot catch a module you do not own.** My gate required 9 modules; had
+   the intra sub-engine dropped out, it would still have gone green. Fixed by `source_closure()`:
+   the gate now reads every module `h264_decode_core` instantiates transitively from RTL source
+   (`CORE_CLOSURE_COMPLETE modules=20`) and requires all of them.
+2. **Elaboration cannot see a files.qip gap at all.** I assumed it could and was wrong twice over.
+   First, `-I<dir>` makes Verilator auto-find a module by searching for `<module>.sv`; I replaced
+   the `-I` flags with `+incdir+` (include-only). It still did not catch it, because Verilator also
+   treats the directory of **every file it has already read** as a module-search fallback - so once
+   any `rtl/` file is in the list, every other module in `rtl/` is found by filename anyway. The
+   gate now reports this explicitly: `red-check E ... elaboration alone still reported everything
+   present (elab_blind=True)`. The files.qip check therefore has to be textual and separate, which
+   is exactly the design w-fit-o5 chose.
+
+   Corollary worth carrying: **red-check C passes by naming coincidence, not by strength.** Dropping
+   the DPB file works only because no module in it is named after the file. Do not generalise from
+   it; check E is the load-bearing one.
+
+Five red proofs now ship with the green (`handoffs/evidence-w-swap-o5/trunk_elab.log`, rc=0):
+cut instantiation, disabled `if(0)` generate, files.qip removal, escaped identifier (must NOT flip),
+core closure vs files.qip. `make unit` rc=0.
+
+**Capacity, per w-fit-o5's fit report for `fb4bad84`: M10K 453/553 = 82%, of which `decode_stub`
+alone holds 256 M10K (46% of the device) and 33 DSP.** My MC block buffers
+(`p16_luma_ref[0:440]`, `p16_chroma_u_ref[0:80]`, `p16_chroma_v_ref[0:80]`) plus the combinational
+full-window predictor are **unmeasured for area** and may well not fit until the stub is retired.
+Treat `decode_stub` retirement (w-decode-o5) as **on the critical path for MC**, not parallel to it.
+I have not run Quartus and will not.
+
 **Still-honest limits.** Elaboration is stronger than regex but is still not the fitted design.
 `make post-fit-hierarchy` remains the only real oracle and I have not run Quartus (sole exclusive
 slot). And no frame has been decoded or displayed by the FPGA.

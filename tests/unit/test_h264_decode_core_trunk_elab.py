@@ -30,6 +30,11 @@ Plus one mutation that must NOT change the verdict:
 
   D. rename the instance to an escaped identifier (w-audit attack 2, which makes
      the regex checker report a false failure).
+
+And one that must, following w-fit-o5's measurement on parent/integ-hour27:
+
+  E. drop the intra sub-engine file from files.qip - a module this worker does
+     not own, so only the source-closure check can see it go.
 """
 
 from __future__ import annotations
@@ -91,6 +96,60 @@ OWNER = owning_files()
 # input list, and this gate hands Verilator the Quartus list instead.
 STREAM_PATH = RTL / OWNER["stream_path"]
 DPB_FILE = OWNER["h264_dpb_one_ref"]
+DECODE_TOP_FILE = OWNER["h264_decode_top"]
+
+
+def source_closure(root):
+    """Every product module the core's RTL instantiates, transitively.
+
+    The REQUIRED list names the modules this worker owns, so on its own it
+    cannot catch a *different* core module dropping out of the design - w-fit-o5
+    measured exactly that on parent/integ-hour27, where the intra sub-engine and
+    neighbour-context files were tracked in git but never handed to Quartus. A
+    missing file does not break elaboration here (unresolved cells are only a
+    warning under -Wno-fatal), so the named-module check would still pass.
+
+    Reading the closure from source and demanding all of it elaborate closes
+    that: anything the core claims to instantiate must actually be in the
+    design, whether or not this worker owns it.
+    """
+    decl = re.compile(r"^\s*module\s+([A-Za-z_]\w*)", re.M)
+    bodies = {}
+    for path in sorted(RTL.iterdir()):
+        if path.suffix not in (".sv", ".v"):
+            continue
+        text = re.sub(r"//[^\n]*", " ", re.sub(r"/\*.*?\*/", " ", path.read_text(errors="replace"),
+                                               flags=re.S))
+        for chunk in re.split(r"^\s*endmodule", text, flags=re.M):
+            found = decl.search(chunk)
+            if found:
+                bodies[found.group(1)] = chunk
+    closure, stack = set(), [root]
+    while stack:
+        body = bodies.get(stack.pop())
+        if body is None:
+            continue
+        for mod in OWNER:
+            if mod in closure or mod == root:
+                continue
+            if re.search(r"\b%s\b\s*(?:#\s*\(|[A-Za-z_]\w*\s*\()" % re.escape(mod), body):
+                closure.add(mod)
+                stack.append(mod)
+    return closure
+
+
+def qip_gap(qip_text, modules):
+    """Modules whose defining RTL file is absent from the Quartus file list.
+
+    This has to be textual. Elaboration cannot see a files.qip gap: Verilator
+    treats the directory of every file it has already read as a module search
+    fallback, so once any rtl/ file is listed, every other module in rtl/ is
+    still found by filename - measured, after +incdir+ had already removed the
+    explicit -I search path. w-fit-o5 measured the real-world case on
+    parent/integ-hour27, where the intra sub-engine and neighbour-context files
+    were tracked in git and never handed to Quartus.
+    """
+    return sorted({OWNER[m] for m in modules if m in OWNER and OWNER[m] not in qip_text})
 
 
 # Verilator's V3Param stage dies with an internal error on the Altera PLL vendor
@@ -160,8 +219,16 @@ def elaborate(tag):
         "-Wno-fatal", "-Wno-DECLFILENAME", "-Wno-PINCONNECTEMPTY", "-Wno-PINMISSING",
         "-Wno-MULTITOP", "-Wno-EOFNEWLINE", "-Wno-GENUNNAMED", "-Wno-PINNOTFOUND",
         "-Wno-MODDUP", "--error-limit", "100000",
-        "-I" + str(ROOT / "build" / "rtl_lint_generated"),
-        "-I" + str(PROJECT), "-I" + str(PROJECT / "sys"), "-I" + str(PROJECT / "rtl"),
+        # +incdir+ and NOT -I: -I additionally makes Verilator auto-find a module
+        # by searching for <module>.sv in that directory, which silently rescues
+        # RTL that is absent from files.qip. That defeats the whole point of
+        # elaborating the Quartus list - measured: with -I on rtl/, dropping the
+        # intra sub-engine file from files.qip changed nothing, because the file
+        # happens to be named after the module it defines. Include paths are still
+        # needed for `include of .svh/.vh headers.
+        "+incdir+" + str(ROOT / "build" / "rtl_lint_generated"),
+        "+incdir+" + str(PROJECT), "+incdir+" + str(PROJECT / "sys"),
+        "+incdir+" + str(PROJECT / "rtl"),
         str(stub), str(pll_stub),
     ] + defines + [str(p) for p in ordered]
     log = mdir / "lint.log"
@@ -291,8 +358,9 @@ def main():
         print("TRUNK_ELAB_FAIL: no RTL file defines: " + ", ".join(undefined),
               file=sys.stderr)
         return 1
-    need_files = sorted({owner[m] for m in wanted})
-    missing_qip = [f for f in need_files if f not in qip_text]
+    need_modules = set(wanted) | source_closure(PRODUCT_ROOT)
+    need_files = sorted({owner[m] for m in need_modules if m in owner})
+    missing_qip = qip_gap(qip_text, need_modules)
     if missing_qip:
         print("TRUNK_ELAB_FAIL: files absent from the Quartus file list (not in the "
               "design at all): " + ", ".join(missing_qip), file=sys.stderr)
@@ -318,6 +386,17 @@ def main():
         return 1
     for m in REQUIRED:
         print("ELAB_MODULE_REACHABLE %s root=%s" % (m, TOP))
+
+    closure = source_closure(PRODUCT_ROOT)
+    dropped = sorted(m for m in closure if m not in reach)
+    if dropped:
+        for m in dropped:
+            print("CORE_CLOSURE_MISSING %s (instantiated under %s but absent from the "
+                  "elaborated design; owning file %s - is it in files.qip?)"
+                  % (m, PRODUCT_ROOT, OWNER.get(m, "?")), file=sys.stderr)
+        return 1
+    print("CORE_CLOSURE_COMPLETE modules=%d (every module the core instantiates, "
+          "transitively, elaborates in the design)" % len(closure))
 
     sp_original = STREAM_PATH.read_text()
     qip_original = qip_text
@@ -388,6 +467,28 @@ def main():
         print("OK trunk mutation-check D: escaped instance name still resolves; "
               "%s and %d/%d MC modules remain reachable from %s"
               % (PRODUCT_ROOT, len(REQUIRED), len(REQUIRED), TOP))
+
+        # w-fit-o5 measured the intra sub-engine file tracked in git but never
+        # handed to Quartus on parent/integ-hour27. This worker does not own that module, so
+        # only the closure-vs-files.qip check can catch it.
+        mutated = "\n".join(
+            ln for ln in qip_original.splitlines() if DECODE_TOP_FILE not in ln) + "\n"
+        gap = qip_gap(mutated, need_modules)
+        if DECODE_TOP_FILE not in gap:
+            print("TRUNK_ELAB_FAIL: dropping %s from files.qip did not register as a "
+                  "closure gap - the check is not load-bearing" % DECODE_TOP_FILE,
+                  file=sys.stderr)
+            return 1
+        FILES_QIP.write_text(mutated)
+        _rc, red, _m, _n, _d = emu_reach("red_closure")
+        FILES_QIP.write_text(qip_original)
+        elab_blind = PRODUCT_ROOT in red and all(
+            m in red for m in source_closure(PRODUCT_ROOT))
+        proved.append("core closure vs files.qip")
+        print("OK trunk red-check E: dropping %s from files.qip is caught as a core "
+              "closure gap; elaboration alone still reported everything present "
+              "(elab_blind=%s), which is why this check is textual and separate"
+              % (DECODE_TOP_FILE, elab_blind))
     finally:
         STREAM_PATH.write_text(sp_original)
         FILES_QIP.write_text(qip_original)

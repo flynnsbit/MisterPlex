@@ -1,8 +1,13 @@
 Scope: elaboration-aware TRUNK proof that h264_decode_core is reachable from emu in the Quartus design (Plex.qsf + files.qip), plus 8 required MC/DPB/reference modules end-to-end, with three mutated red proofs
+FILES_QIP_PRESENT h264_cavlc_residual.sv
 FILES_QIP_PRESENT h264_deblock.sv
 FILES_QIP_PRESENT h264_decode_core.sv
+FILES_QIP_PRESENT h264_decode_top.sv
 FILES_QIP_PRESENT h264_dpb.sv
 FILES_QIP_PRESENT h264_inter_pred.sv
+FILES_QIP_PRESENT h264_intra_nb_ctx.sv
+FILES_QIP_PRESENT h264_intra_pred.sv
+FILES_QIP_PRESENT h264_iq_idct_4x4.sv
 ELAB_STAGE dump=Vemu_022_const.tree.json (post-elaboration, dead generate arms pruned)
 TRUNK_REACHABLE h264_decode_core root=emu
 ELAB_MODULE_REACHABLE h264_inter_mc_part root=emu
@@ -13,8 +18,10 @@ ELAB_MODULE_REACHABLE h264_dpb_one_ref root=emu
 ELAB_MODULE_REACHABLE h264_luma_ref_tap_addr root=emu
 ELAB_MODULE_REACHABLE h264_ref_clamp root=emu
 ELAB_MODULE_REACHABLE h264_deblock_writeback_ctrl root=emu
+CORE_CLOSURE_COMPLETE modules=20 (every module the core instantiates, transitively, elaborates in the design)
 OK trunk red-check A: h264_decode_core unreachable from emu when its instantiation is cut
 OK trunk red-check B: h264_decode_core unreachable from emu when its instantiation is wrapped in a disabled if(0) generate
 OK trunk red-check C: MC modules unreachable from emu when h264_dpb.sv is dropped from files.qip
 OK trunk mutation-check D: escaped instance name still resolves; h264_decode_core and 8/8 MC modules remain reachable from emu
-OK h264_decode_core trunk: reachable from emu in the elaborated Quartus design; 8/8 required MC modules end-to-end; quartus_files=66 red_proofs=4 (cut instantiation, disabled generate, files.qip removal, escaped identifier (no false negative))
+OK trunk red-check E: dropping h264_decode_top.sv from files.qip is caught as a core closure gap; elaboration alone still reported everything present (elab_blind=True), which is why this check is textual and separate
+OK h264_decode_core trunk: reachable from emu in the elaborated Quartus design; 8/8 required MC modules end-to-end; quartus_files=66 red_proofs=5 (cut instantiation, disabled generate, files.qip removal, escaped identifier (no false negative), core closure vs files.qip)

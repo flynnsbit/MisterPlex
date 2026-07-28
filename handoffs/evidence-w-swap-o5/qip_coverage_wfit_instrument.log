@@ -1,0 +1,6 @@
+Scope: 36 files in fpga/Plex_MiSTer/files.qip; 39 .sv tracked under rtl/
+product RTL: 37  (testbenches excluded: 2)
+tracked but NOT compiled: 2 / 37
+  ALLOWED_ABSENT cos.sv  -- unused helper, never instantiated by the product
+  ALLOWED_ABSENT h264_decode_skeleton.sv  -- retired lineage (architectural ruling); not a product module
+QIP_COVERAGE_OK product=37 compiled=35
