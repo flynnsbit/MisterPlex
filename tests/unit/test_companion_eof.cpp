@@ -209,15 +209,28 @@ int main() {
     {
         std::lock_guard<std::mutex> lock(captureMu);
         require(captured.size() == 2, "did not capture both playMedia callbacks");
-        require(captured[0].key == "/library/metadata/4",
-                "path callback key mismatch: " + captured[0].key);
-        require(captured[0].ratingKey == "4", "path callback ratingKey mismatch");
-        require(captured[0].playQueueItemId == "4", "path callback queue item fallback missing");
-        require(captured[1].key == "/library/metadata/3",
-                "uri callback key mismatch: " + captured[1].key);
-        require(captured[1].ratingKey == "3", "uri callback ratingKey mismatch");
-        require(captured[1].serverMachineId == "server-uri",
-                "uri callback server machine id mismatch: " + captured[1].serverMachineId);
+        // The play callback runs after the HTTP response is written, so two
+        // sequential requests can land in either order. Select by key rather
+        // than by arrival index; asserting the order made this test fail about
+        // one run in three for reasons that had nothing to do with the code
+        // under test.
+        const misterplex::PlayRequest* pathReq = nullptr;
+        const misterplex::PlayRequest* uriReq = nullptr;
+        for (const auto& req : captured) {
+            if (req.key == "/library/metadata/4")
+                pathReq = &req;
+            else if (req.key == "/library/metadata/3")
+                uriReq = &req;
+        }
+        require(pathReq != nullptr,
+                "path callback key mismatch: " + captured[0].key + "," + captured[1].key);
+        require(uriReq != nullptr,
+                "uri callback key mismatch: " + captured[0].key + "," + captured[1].key);
+        require(pathReq->ratingKey == "4", "path callback ratingKey mismatch");
+        require(pathReq->playQueueItemId == "4", "path callback queue item fallback missing");
+        require(uriReq->ratingKey == "3", "uri callback ratingKey mismatch");
+        require(uriReq->serverMachineId == "server-uri",
+                "uri callback server machine id mismatch: " + uriReq->serverMachineId);
     }
     {
         std::lock_guard<std::mutex> lock(logMu);
