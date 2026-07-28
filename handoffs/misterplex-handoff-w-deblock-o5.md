@@ -165,6 +165,123 @@ prediction, not a measurement — only a fit can settle it.
 
 ---
 
+## 0b. QPy accumulation bug in `h264_decode_core` — found via w-cast, fixed, red-proved
+
+Branch `w-deblock-o5-converge` **`a242b1f`**; ported to `w-deblock-o5` **`982f6ad`**.
+
+`w-cast` (`ca04fa1`, `origin/w-cast-play-state`) reported fixing a parser-side QPy
+accumulator that produced an impossible range (-96..33). **The core carried the
+same bug class**, in a form that no gate in this repo could see.
+
+`h264_decode_core.sv` computed:
+
+```systemverilog
+wire [5:0] db_qp_next = (db_qp_run + {{1{mb_qp_delta[5]}}, mb_qp_delta[4:0]}) % 6'd52;
+```
+
+`db_qp_run` is 6-bit unsigned, so the add happened in 6 bits and a negative
+delta wrapped **mod 64 before the mod 52 ever ran**.
+
+**Measured over the full legal cross product** (52 QPy_prev x 52 mb_qp_delta):
+
+| | |
+|---|---|
+| legal `(QPy_prev, mb_qp_delta)` pairs | 2704 |
+| pairs the 6-bit form gets wrong | **442 (16.3%)** |
+| of those, pairs where `QPy_prev + mb_qp_delta` leaves 0..51 | **442 / 442 (all of them)** |
+
+**That qualifier is the important half of the finding and I initially omitted
+it.** Whenever the sum stays inside 0..51 the two forms agree exactly. The bug
+only fires on the case clause 7.4.5's normative `+52 then %52` exists to handle
+— an encoder legally wrapping QPy. Example: `prev=3, delta=-5` -> standard 50,
+6-bit form 10.
+
+Replacement (no divider, which matters at M10K 82%):
+
+```systemverilog
+wire [7:0] db_qp_biased = {2'd0, db_qp_run} + {{2{mb_qp_delta[5]}}, mb_qp_delta} + 8'd52;
+wire [7:0] db_qp_sub1   = (db_qp_biased >= 8'd104) ? (db_qp_biased - 8'd104) : db_qp_biased;
+wire [7:0] db_qp_sub2   = (db_qp_sub1   >= 8'd52)  ? (db_qp_sub1   - 8'd52)  : db_qp_sub1;
+wire [5:0] db_qp_next   = db_qp_sub2[5:0];
+```
+
+Sum range is `[0-26+52, 51+25+52] = [26,128]`, so 8 bits suffice and two
+conditional subtractions are exact.
+
+### Why my own gate could not see it
+
+`tests/rtl/h264_decode_core_deblock_tb.sv:119` tied `.mb_qp_delta(6'sd0)` and the
+driver set `slice_qp_y` per macroblock directly. **Clause 7.4.5 accumulation was
+dead code under test.** A gate reporting `core_deblock_mbs=1170/1170` said nothing
+whatever about the QP path. Denominator without coverage is not evidence.
+
+`mb_qp_delta` is now a driven input, `db_qp_run`/`db_qp_next` are observable, and
+a third full-frame pass drives 1170 per-MB deltas.
+
+### The pass is two segments on purpose
+
+| segment | deltas | proves |
+|---|---|---|
+| MBs `[0, 1000)` | `+7 / -24` walk visiting exactly 3..33 | corroborates **w-cast's independently measured `QPy_range=3..33`** |
+| MBs `[1000, 1170)` | alternating `-26 / +25`, both at the legal limit | drives the sum outside 0..51 so the normative wrap actually fires |
+
+Measured green:
+`core_qp_accum_mbs=1170/1170 qp_walk_range=3..33/1000 qp_negative_deltas=310 qp_wrap_events=74 qp_mismatches=0/1170 qp_out_of_range=0/1170`
+
+### The red proof caught me writing a vacuous test
+
+My **first** version of this pass drove only the 3..33 walk. It never wrapped, so
+`H264_DECODE_CORE_FAULT_QP_WRAP_LINEAR` **passed it** — correctly, because the
+buggy form is right on non-wrapping input. Reported as
+`red-check: ... unexpectedly passed`. With the wrap segment the fault now yields
+`qp_mismatches=127/1170`.
+
+A `qp_wrap_events > 0` assertion is now in the driver so this pass fails loudly
+if it ever goes vacuous again. **This is the second time in this worker's life
+that "every green ships with its red" caught a defect in the test rather than in
+the RTL.**
+
+### Latent defect fixed in two of my own gates
+
+`test_h264_decode_core_deblock_rtl_sim.sh` and
+`test_product_reachability_redproof.sh` asserted "mutation was restored" with
+`git diff --quiet`. That compares against **HEAD**, so any legitimate uncommitted
+work in the tree read as an unrestored mutation — which is exactly what happened
+while this fix was in progress. Both now compare against the pre-mutation
+snapshot (`cmp -s`), which is strictly stronger and independent of commit state.
+
+## 0c. Cross-check against w-cast's edge inventory — independently derived, exact
+
+`w-cast` `ca04fa1` published syntax-side counts for the real 624x480 P frame. I
+derived the same quantities from my scheduler's geometry without looking at
+theirs first. All exact:
+
+| quantity | w-cast measured | my derivation | |
+|---|---|---|---|
+| MBs | 1170 | 39 x 30 | OK |
+| `QPy_samples` | 1170 | 1170 | OK |
+| `QPy_range` | 3..33 | 3..33 (`qp_range` in full-frame gate) | OK |
+| `luma4x4_nonzero` | 726/18720 | `measured_nz4_blocks=726/18720` | OK |
+| `mb_neighbor_left_edges` | 1140 | 1170 - 30 | OK |
+| `mb_neighbor_top_edges` | 1131 | 1170 - 39 | OK |
+| `luma4x4_internal_edges` | 28080 | 24 x 1170 | OK |
+| `luma4x4_external_edges` | 9084 | 1140x4 + 1131x4 | OK |
+| `luma4x4_neighbor_edges` | 37164 | 28080 + 9084 | OK |
+
+**Message owed to w-cast, stated here for the record:** their remaining
+limitation — chroma DC/AC not yet exposed as per-block `stream_path` product
+pulses — **does not block deblocking**. Clause 8.7.2.1 derives bS from *luma*
+coded-block and motion data only; chroma edges inherit the co-located luma bS.
+So `chroma_dc_nonzero=210/2340` and `chroma_ac4x4_nonzero=513/9360` are
+interesting for residual validation but are **not** inputs my filter needs.
+Chroma needs QPc (from QPy via Table 8-15) and the luma-derived bS, both of which
+I have. What I *do* need from them is per-MB `mb_qp_delta` and `luma4x4_nonzero`
+at product-pulse granularity.
+
+Also for the record: `ref_l0_identity=all_ref0_max_num_ref_frames_1` means the
+"different reference picture" bS condition can never fire on this content, so bS
+from motion depends solely on `|mv_diff| >= 4` quarter-pel.
+
 ## 1. What I confirm from my predecessor
 
 Measured by reading the RTL and the benches, not inherited:
