@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import sys
 from pathlib import Path
 
@@ -127,7 +128,10 @@ def part_case(name: str, mode: int, idx: int, a: tuple[int, int] | None, b: tupl
 
 
 def main() -> int:
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("tests/fixtures/p3_inter_pred/inter_mc_v1.json")
+    ap = argparse.ArgumentParser(description="Generate the P3 inter-MC fixture.")
+    ap.add_argument("out", nargs="?",
+                    default="tests/fixtures/p3_inter_pred/inter_mc_v1.json")
+    out = Path(ap.parse_args().out)
     ref = [((r * 37 + c * 19 + (r * c * 7)) ^ ((r + 3) * 11)) & 0xFF for r in range(9) for c in range(9)]
     data = {
         "format": "misterplex.p3.inter_mc.v1",

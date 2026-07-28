@@ -19,6 +19,9 @@ import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strict_argv
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -414,6 +417,7 @@ def format_report(gates: list[GateReport]) -> str:
 
 
 def main() -> int:
+    strict_argv.refuse_unrecognised_argv()
     gates = build_report()
     report_text = format_report(gates)
     print(report_text)

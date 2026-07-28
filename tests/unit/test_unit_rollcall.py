@@ -136,6 +136,8 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_fit_report_binding_policy.py",
     "python3 $(ROOT)/tests/unit/test_gate_exit_contract.py",
     "python3 $(ROOT)/scripts/check_gate_exit_contract.py",
+    "python3 $(ROOT)/tests/unit/test_argv_contract.py",
+    "python3 $(ROOT)/scripts/check_argv_contract.py",
     "python3 $(ROOT)/scripts/check_scope_discipline.py",
     "python3 $(ROOT)/tests/unit/test_scope_discipline_gate.py",
     "python3 $(ROOT)/tests/unit/test_skip_exit_code_gate.py",

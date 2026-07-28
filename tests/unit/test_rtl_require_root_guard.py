@@ -217,10 +217,63 @@ def check_masking_claim_is_about_every_path() -> int:
     return cases
 
 
+def check_flag_plumbing_is_live() -> int:
+    """The flags must reach the logic, not just exist in the logic.
+
+    Every other case here drives the checker in-process, which cannot see a
+    script that ignores `sys.argv` entirely. That is the exact layer where this
+    gate was found vacuous on `w-cast-play-state` `667a237` and `ddb7c97`:
+    those copies have zero `add_argument` calls, so
+
+        --root h264_decode_core --require totally_bogus_module_xyz
+
+    was discarded, `root=emu` was checked instead, and a module that exists
+    nowhere in the repository returned rc=0 under an ordinary
+    `RTL_MODULE_INSTANTIATION_OK` line. These assertions are end-to-end on
+    purpose: a bogus name must fail through the real command line.
+    """
+    gate = ROOT / "scripts" / "check_rtl_module_instantiations.py"
+    cases = 0
+
+    proc = subprocess.run(
+        [sys.executable, str(gate), "--require", "totally_bogus_module_xyz"],
+        capture_output=True, text=True)
+    assert proc.returncode == 1, (
+        "a required module that exists nowhere must fail through the CLI; rc=0 "
+        "here means --require was discarded\n" + proc.stdout + proc.stderr)
+    assert "--require names modules that do not exist" in proc.stderr, proc.stderr
+    assert "totally_bogus_module_xyz" in proc.stderr, proc.stderr
+    cases += 1
+
+    proc = subprocess.run(
+        [sys.executable, str(gate), "--root", "totally_bogus_root_xyz"],
+        capture_output=True, text=True)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "totally_bogus_root_xyz" in proc.stderr, proc.stderr
+    cases += 1
+
+    # An unhonoured flag must be refused rather than ignored.
+    proc = subprocess.run(
+        [sys.executable, str(gate), "--totally-unknown-flag-xyz"],
+        capture_output=True, text=True)
+    assert proc.returncode == 2, (
+        "an unrecognised flag must be refused, not discarded\n"
+        + proc.stdout + proc.stderr)
+    cases += 1
+
+    return cases
+
+
 def main() -> int:
     scope = len(MODULES)
-    print(f"Scope: synthetic_modules={scope} cases=7 masking_path_cases=3", flush=True)
+    print(f"Scope: synthetic_modules={scope} cases=7 masking_path_cases=3 flag_plumbing_cases=3", flush=True)
     assert scope > 0, "Scope: 0 cannot claim a PASS"
+
+    # First, because every case below drives the checker in-process and so
+    # cannot see a build of it that ignores sys.argv. Run last, this check was
+    # never reached: a vacuous copy failed an earlier case with an unrelated
+    # AttributeError, which looks like a red for the wrong reason.
+    plumbing_cases = check_flag_plumbing_is_live()
 
     # GREEN: product root, module present.
     rc, out, _ = call(["writeback"], rtl.PRODUCT_ROOT)
@@ -282,7 +335,7 @@ def main() -> int:
 
     print(
         f"RTL_REQUIRE_ROOT_GUARD_OK cases=7 e2e=1 foreign_project_root={foreign_cases} "
-        f"masking_all_paths={masking_cases}"
+        f"masking_all_paths={masking_cases} flag_plumbing={plumbing_cases}"
     )
     return 0
 

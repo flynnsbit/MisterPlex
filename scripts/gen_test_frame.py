@@ -8,6 +8,7 @@ Copy to MiSTer SD and load via OSD F1, then set Video source = Frame store.
 from __future__ import annotations
 
 import struct
+import argparse
 import sys
 from pathlib import Path
 
@@ -17,7 +18,10 @@ def rgb565(r: int, g: int, b: int) -> int:
 
 
 def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "plex_test_320x240.rgb565")
+    ap = argparse.ArgumentParser(description="Generate an RGB565 test frame.")
+    ap.add_argument("out", nargs="?", default="plex_test_320x240.rgb565",
+                    help="output path")
+    out = Path(ap.parse_args().out)
     w, h = 320, 240
     buf = bytearray()
     for y in range(h):

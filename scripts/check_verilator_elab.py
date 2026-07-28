@@ -15,11 +15,15 @@ from pathlib import Path
 
 import rtl_lint
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strict_argv
+
 REFUSE_RC = 3
 REJECT_RC = 1
 
 
 def main() -> int:
+    strict_argv.refuse_unrecognised_argv()
     root = rtl_lint.ROOT
     project = rtl_lint.PROJECT
     probe = subprocess.run(

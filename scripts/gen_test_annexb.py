@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import argparse
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ def nal(unit_type: int, payload: bytes) -> bytes:
 
 
 def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "plex_test_annexb.264")
+    ap = argparse.ArgumentParser(description="Generate a minimal Annex-B stream.")
+    ap.add_argument("out", nargs="?", default="plex_test_annexb.264")
+    out = Path(ap.parse_args().out)
     out.parent.mkdir(parents=True, exist_ok=True)
     # Minimal fake SPS/PPS/IDR-ish NALs with distinct types 7, 8, 5
     blob = b""

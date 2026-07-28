@@ -7,6 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strict_argv
+
 ROOT = Path(__file__).resolve().parents[1]
 SCAN_ROOTS = ("scripts", "tests")
 DANGEROUS_PIPE_RE = re.compile(r"\|\s*(tail|head|grep|tee)\b")
@@ -47,6 +50,7 @@ def strip_comments(text: str) -> str:
 
 
 def main() -> int:
+    strict_argv.refuse_unrecognised_argv()
     offenders: list[str] = []
     pipe_files = 0
     pipe_sites = 0
