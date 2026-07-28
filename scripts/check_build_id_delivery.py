@@ -32,6 +32,19 @@ failure names the link that broke.
 What this does NOT prove: that a fit ran, that the RBF was deployed, or that
 the OSD renders the string on a screen.  It proves the wiring exists in the
 sources a fit would consume.
+
+Mode 3: optimize-away
+---------------------
+Correct source wiring is necessary and not sufficient.  A module can be in the
+file list, be instantiated, elaborate, and then be **deleted by synthesis** for
+contributing zero resources, because nothing downstream observably consumes its
+outputs.  No source-level tool can see that; only real synthesis can.
+
+For the build id the module that must survive is the OSD compositor itself: if
+`osd` or `hps_io` were optimised away, the string could not be rendered however
+correct the CONF_STR wiring is.  Pass `--fit-rpt` (a Quartus fit or map report)
+to check that with the strongest oracle available.  Without it this script says
+so explicitly rather than letting a source-level green be mistaken for proof.
 """
 
 from __future__ import annotations
@@ -48,8 +61,46 @@ from quartus_file_list import compiled_files, resolve  # noqa: E402
 SCOPE = (
     "Scope: proves the generated BUILD_ID actually reaches a compiled source "
     "file's CONF_STR. Source-level wiring only; it does not prove a fit ran, "
-    "that an RBF was deployed, or that the OSD renders the string."
+    "that an RBF was deployed, or that the OSD renders the string. With "
+    "--fit-rpt it additionally proves the OSD compositor survived synthesis."
 )
+
+# If these are optimised away, no CONF_STR wiring can put a build id on screen.
+OSD_RENDER_MODULES = ("hps_io", "osd")
+
+MODE3_WARNING = (
+    "NOTE source-level checks cannot detect optimize-away: a module can be "
+    "compiled, instantiated and elaborated, then deleted by synthesis for "
+    "contributing zero resources. Pass --fit-rpt <Plex.fit.rpt|Plex.map.rpt> "
+    "to check the OSD compositor actually survived."
+)
+
+
+def check_synthesis_survival(rpt: Path) -> int:
+    """Mode-3 check: did the OSD render path survive real synthesis?"""
+    if not rpt.is_file():
+        print(f"FAIL --fit-rpt not found: {rpt}")
+        return 1
+    text = rpt.read_text(errors="replace")
+    # Quartus hierarchy rows name instances as |module:instance
+    found = set(re.findall(r"\|([A-Za-z_][A-Za-z_0-9]*):", text))
+    if not found:
+        print(
+            f"FAIL --fit-rpt {rpt} contains no |module:instance hierarchy rows; "
+            "an empty parse is a broken report, not a design with no modules"
+        )
+        return 1
+    rc = 0
+    for mod in OSD_RENDER_MODULES:
+        if mod in found:
+            print(f"OK survived synthesis: {mod} (from {rpt.name})")
+        else:
+            print(
+                f"FAIL {mod} is absent from {rpt.name}: the OSD render path was "
+                "optimized away, so no build id can reach the screen"
+            )
+            rc = 1
+    return rc
 
 STAMP_NAME = "build_id_stamp.txt"
 GENERATED_HEADER = "build_id.v"
@@ -194,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=SCOPE)
     ap.add_argument("--project", default="fpga/Plex_MiSTer", type=Path)
     ap.add_argument("--quartus-version", default="17")
+    ap.add_argument(
+        "--fit-rpt",
+        type=Path,
+        help="Quartus fit/map report; proves the OSD render path survived synthesis",
+    )
     args = ap.parse_args(argv)
 
     if not args.project.is_dir():
@@ -202,6 +258,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print(SCOPE)
     rc = check_chain(args.project, args.quartus_version)
+
+    if args.fit_rpt is not None:
+        rc |= check_synthesis_survival(args.fit_rpt)
+    else:
+        print(MODE3_WARNING)
+
     print("BUILD_ID_DELIVERY " + ("OK" if rc == 0 else "BROKEN"))
     return rc
 

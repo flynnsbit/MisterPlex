@@ -207,7 +207,7 @@ red_chain() {
         fail "RED $name: broken chain still reported OK"
         return
     fi
-    if printf '%s' "$out" | grep -qF "$want"; then
+    if printf '%s' "$out" | grep -qF -- "$want"; then
         ok "RED OK $name (rc=$rc): $want"
     else
         fail "RED $name failed for the wrong reason (rc=$rc), wanted '$want': $out"
@@ -354,6 +354,62 @@ else
     else
         fail "resolver --gate empty case failed for the wrong reason: $(cat "$WORK/qfl_empty.log")"
     fi
+fi
+
+# --- 7. mode 3: the OSD render path must SURVIVE SYNTHESIS ------------------
+# Sections 1-6 are all source-level, and source-level checks are blind to
+# optimize-away by construction: a module can be in files.qip, be instantiated,
+# elaborate, and then be deleted by synthesis for contributing zero resources.
+# For the build id the module that must survive is the OSD compositor -- if osd
+# or hps_io are optimised away the string cannot reach the screen however
+# correct the CONF_STR wiring is. Reports here are synthetic so the test stays
+# hermetic; validated against a real Quartus fit report separately.
+M3="$WORK/mode3"
+mkdir -p "$M3"
+cat > "$M3/good.rpt" <<'RPT'
+; Fitter Resource Utilization by Entity
+; |Plex                       ;
+; |Plex|hps_io:hps_io         ;
+; |Plex|osd:vga_osd           ;
+; |Plex|osd:hdmi_osd          ;
+RPT
+grep -v '|osd:' "$M3/good.rpt" > "$M3/no_osd.rpt"
+grep -v 'hps_io:' "$M3/good.rpt" > "$M3/no_hps.rpt"
+printf 'a fit report with no hierarchy table at all\n' > "$M3/empty.rpt"
+
+if "$DELIV" --project "$REALPROJ" --fit-rpt "$M3/good.rpt" >"$M3/good.log" 2>&1; then
+    ok "mode 3: OSD render path present in the synthesis report"
+else
+    fail "mode 3 green failed on a report containing osd and hps_io: $(cat "$M3/good.log")"
+fi
+
+# red_mode3 <name> <report> <expected substring>
+red_mode3() {
+    local name="$1" rpt="$2" want="$3" out rc
+    out="$("$DELIV" --project "$REALPROJ" --fit-rpt "$rpt" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        fail "RED mode3 $name: optimized-away design still reported OK"
+        return
+    fi
+    if printf '%s' "$out" | grep -qF -- "$want"; then
+        ok "RED OK mode3 $name (rc=$rc)"
+    else
+        fail "RED mode3 $name failed for the wrong reason (rc=$rc), wanted '$want': $out"
+    fi
+}
+
+red_mode3 "osd optimized away" "$M3/no_osd.rpt" "the OSD render path was optimized away"
+red_mode3 "hps_io optimized away" "$M3/no_hps.rpt" "the OSD render path was optimized away"
+red_mode3 "unparseable report" "$M3/empty.rpt" "an empty parse is a broken report"
+red_mode3 "missing report" "$M3/does_not_exist.rpt" "--fit-rpt not found"
+
+# and without --fit-rpt the tool must SAY it cannot see optimize-away, so a
+# source-level green is never mistaken for proof
+if "$DELIV" --project "$REALPROJ" 2>&1 | grep -q "cannot detect optimize-away"; then
+    ok "source-only mode warns that it cannot detect optimize-away"
+else
+    fail "source-only mode does not warn about optimize-away blindness"
 fi
 
 if [ "$FAILED" -eq 0 ]; then

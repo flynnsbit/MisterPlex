@@ -171,3 +171,67 @@ like "orphaned" and is not. I made that mistake once here before checking, and
 nearly reported a module-absence finding that did not exist. `h264_deblock.sv`
 defines `h264_deblock_bs`, `_thresholds`, `_edge`, `_edge_pipe` and
 `_writeback_ctrl`; there is no module called `h264_deblock`.
+
+---
+
+## 5. Mode 3 applied to the build identity — and it is clean
+
+The parent's third failure mode (*instantiated, elaborated, then optimized away*)
+applies to the build id as much as to the decoder: if the OSD compositor is
+deleted by synthesis, no CONF_STR wiring can put a string on screen. Sections
+1–4 of `tests/unit/test_build_identity.sh` were all source-level and therefore
+blind to it by construction.
+
+`check_build_id_delivery.py` now takes `--fit-rpt`, and without one it prints
+
+```
+NOTE source-level checks cannot detect optimize-away: ...
+```
+
+so a source-level green can no longer be mistaken for proof.
+
+**Measured against a real Quartus 17.0.2 fit report**
+(`fpga/Plex_MiSTer/remote_out/deploy2/Plex.fit.rpt`, RBF md5 `8eb01b79`):
+
+```
+OK survived synthesis: hps_io   (|hps_io:hps_io)
+OK survived synthesis: osd      (|osd:vga_osd, |osd:hdmi_osd)
+```
+
+So the OSD render path **does** survive into real silicon; the build id is not a
+mode-3 casualty. Stated honestly: that report is `8eb01b79`, not the deployed
+`fb4bad84`, so this is strong evidence about framework code that has not changed
+rather than a measurement of the deployed build. No Quartus run was needed — the
+report already existed.
+
+Reds shipped with it (synthetic reports, so the gate stays hermetic): `osd`
+absent, `hps_io` absent, an unparseable report, and a missing report each give
+rc=1 with their own message; and the source-only path is asserted to emit the
+optimize-away warning.
+
+### `confstr_rom` is absent from silicon, and that is correct
+
+Worth recording because it is a live example of w-audit's disabled-generate
+trap. `sys/hps_io.sv:244` has `if(CONF_STR_BRAM) begin ... confstr_rom ... end`,
+and `Plex.sv` never sets `CONF_STR_BRAM`, so it defaults to 0. A source-level
+reader sees `confstr_rom` instantiated; the fit report shows **zero** instances.
+The design uses the combinational mux at `hps_io.sv:248` instead. Anyone
+auditing OSD modules against the RTL by hand will otherwise read this as a
+missing module.
+
+### One bug found in my own red harness
+
+The `missing report` red initially graded FAIL-for-the-wrong-reason. The expected
+substring was `--fit-rpt not found`, and `grep -qF "$want"` parsed a pattern
+beginning with `--` as an option rather than a pattern. Fixed with `grep -qF --`
+in both red helpers. The red was real; my check of it was broken — which is the
+same shape as everything else in this file, one level up.
+
+### CONF_STR truncation: checked, not a risk
+
+`hps_io` derives `STRLEN=$size(CONF_STR)>>3` and
+`MAX_W=$clog2(max(64, STRLEN+2))-1`, and gates the transfer with
+`if(byte_cnt <= STRLEN)`. The counter is sized from the string, so appending
+CONF_STR entries cannot silently truncate the tail. This mattered to check
+because the `V` entry is the **last** item in `CONF_STR`, so any truncation
+would drop precisely the build id and nothing else.
