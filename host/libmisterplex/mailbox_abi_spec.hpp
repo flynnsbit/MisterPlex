@@ -49,7 +49,8 @@ struct MailboxEntry {
 // keeps whatever an older core last wrote at the other one, so reading the
 // stale window returns plausible-looking magics that never change. Derive the
 // window from the doorbell for the format you are actually running; do not
-// hardcode 0x3007F1xx in a probe.
+// hardcode 0x3007F1xx in a probe. Use scripts/mailbox_window.py, which derives
+// the live window from the RTL and names the dead ones.
 
 // PLXK — Doorbell (ARM→FPGA). ARM writes bank|format|seq to trigger a frame swap.
 constexpr uint32_t kPlxkAddr  = 0x3007F000u;
