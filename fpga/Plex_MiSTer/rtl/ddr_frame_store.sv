@@ -373,18 +373,18 @@ module ddr_frame_store #(
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
 		end else begin
-			y_valid_v1 <= y_valid;
+			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
-			c_valid_v1 <= c_valid;
+			c_valid_v1 <= c_valid_hold;
 			c_valid_v2 <= c_valid_v1;
-			y_bank_v1 <= y_bank;
+			y_bank_v1 <= y_bank_hold;
 			y_bank_v2 <= y_bank_v1;
-			c_bank_v1 <= c_bank;
+			c_bank_v1 <= c_bank_hold;
 			c_bank_v2 <= c_bank_v1;
 			for (vi = 0; vi < LINE_SLOTS; vi = vi + 1) begin
-				y_line_v1[vi] <= y_line[vi];
+				y_line_v1[vi] <= y_line_hold[vi];
 				y_line_v2[vi] <= y_line_v1[vi];
-				c_line_v1[vi] <= c_line[vi];
+				c_line_v1[vi] <= c_line_hold[vi];
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
@@ -447,6 +447,10 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] desired_y_r [0:LINE_COUNT-1];
 	reg [15:0] poll_div;
 	reg poll_pending;
+	wire [LINE_SLOTS-1:0] y_valid_hold, c_valid_hold;
+	wire [LINE_SLOTS-1:0] y_bank_hold, c_bank_hold;
+	wire [Y_W-1:0] y_line_hold [0:LINE_SLOTS-1];
+	wire [Y_W-2:0] c_line_hold [0:LINE_SLOTS-1];
 	localparam int STALE_DB_POLL_MAX = (STALE_DOORBELL_FALLBACK_POLLS < 1) ? 1 : STALE_DOORBELL_FALLBACK_POLLS;
 	localparam int STALE_DB_POLL_W = $clog2(STALE_DB_POLL_MAX + 1);
 	reg [31:0] last_seq;
@@ -469,6 +473,22 @@ module ddr_frame_store #(
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
+
+	genvar mi, ybi, cbi;
+	generate
+		for (mi = 0; mi < LINE_SLOTS; mi = mi + 1) begin : gen_meta_hold_pad
+			mplex_hold_lcell y_valid_pad (.din(y_valid[mi]), .dout(y_valid_hold[mi]));
+			mplex_hold_lcell c_valid_pad (.din(c_valid[mi]), .dout(c_valid_hold[mi]));
+			mplex_hold_lcell y_bank_pad  (.din(y_bank[mi]),  .dout(y_bank_hold[mi]));
+			mplex_hold_lcell c_bank_pad  (.din(c_bank[mi]),  .dout(c_bank_hold[mi]));
+			for (ybi = 0; ybi < Y_W; ybi = ybi + 1) begin : gen_y_line_hold_pad
+				mplex_hold_lcell y_line_pad (.din(y_line[mi][ybi]), .dout(y_line_hold[mi][ybi]));
+			end
+			for (cbi = 0; cbi < Y_W-1; cbi = cbi + 1) begin : gen_c_line_hold_pad
+				mplex_hold_lcell c_line_pad (.din(c_line[mi][cbi]), .dout(c_line_hold[mi][cbi]));
+			end
+		end
+	endgenerate
 
 	// clk → clk_ddr telemetry receivers.
 	reg [15:0] status_osd_s1, status_osd_s2, status_osd_s3;
@@ -1084,5 +1104,26 @@ module ddr_frame_store #(
 			endcase
 		end
 	end
+endmodule
 
+module mplex_hold_lcell (
+	input  wire din,
+	output wire dout
+);
+`ifdef VERILATOR
+	assign dout = din;
+`else
+	cyclonev_lcell_comb #(
+		.lut_mask(64'hAAAAAAAAAAAAAAAA),
+		.dont_touch("on")
+	) hold_lcell (
+		.dataa(din),
+		.datab(1'b0),
+		.datac(1'b0),
+		.datad(1'b0),
+		.datae(1'b0),
+		.dataf(1'b0),
+		.combout(dout)
+	);
+`endif
 endmodule
