@@ -1,0 +1,10 @@
+Scope: red/green reachability proof for 8 required RTL modules rooted at h264_decode_core (10 product instantiation sites mutated)
+OK h264_decode_core MC reachability red-check: h264_deblock_writeback_ctrl unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_inter_mc_part unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_inter_mc_16x16 unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_dpb_one_ref unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_luma_qpel_block_16x16 unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_chroma_epel_block_8x8 unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_luma_ref_tap_addr unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red-check: h264_ref_clamp unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red/green: 8/8 required modules proved reachable via a mutated-red edge; RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=21 bench_only=18 root=h264_decode_core

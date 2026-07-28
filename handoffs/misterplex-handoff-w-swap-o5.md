@@ -5,7 +5,8 @@ Commits: `406e583` (merge) -> `4f4312b` (MC integration) -> `650ab98` (full-fram
 Pushed twice to `origin/w-swap-o5-mc`.
 
 All statements below are **measured** unless explicitly marked assumed. Raw logs are committed under
-`build/w-swap-o5-logs/`.
+`handoffs/evidence-w-swap-o5/` (`build/` is gitignored, so anything written there is **not** durable -
+an earlier note in this repo that logs live in `build/w-swap-o5-logs/` was wrong).
 
 ---
 
@@ -35,7 +36,7 @@ REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_ref_tap_addr file=fpga/Plex_MiSTer/rtl
 REQUIRED_RTL_MODULE_UNREACHABLE h264_ref_clamp file=fpga/Plex_MiSTer/rtl/h264_inter_pred.sv parents=h264_luma_ref_tap_addr
 RTL_MODULE_INSTANTIATION_FAIL: required RTL modules are not reachable from h264_decode_core
 ```
-(`build/w-swap-o5-logs/core_require_pre.log`)
+(`handoffs/evidence-w-swap-o5/core_require_pre.log`)
 
 ## 3. Measured GREEN (HEAD), rc=0
 
@@ -55,7 +56,7 @@ RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=21 bench_only=18 root=h264_
 
 `tests/unit/test_h264_decode_core_mc_reachability_redgreen.py` mutates each product instantiation
 site (10 sites, 8 modules), requires rc=1 with `REQUIRED_RTL_MODULE_UNREACHABLE`, restores, and
-requires rc=0. rc=0, `build/w-swap-o5-logs/redgreen_final.log`:
+requires rc=0. rc=0, `handoffs/evidence-w-swap-o5/redgreen_final2.log`:
 
 ```
 Scope: red/green reachability proof for 8 required RTL modules rooted at h264_decode_core (10 product instantiation sites mutated)
@@ -74,7 +75,7 @@ Registered in `Makefile` and `tests/unit/test_unit_rollcall.py`, so the requirem
 
 ## 5. Full-frame MC correctness (deliverable #4), rc=0
 
-`tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh` (`build/w-swap-o5-logs/ff_4.log`):
+`tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh` (`handoffs/evidence-w-swap-o5/ff_final.log`):
 
 ```
 Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real
@@ -192,16 +193,50 @@ native inter score moved from `inter=0/3300` to `inter=1610/3300`. That path is 
 | `scripts/check_pipe_exit_safety.py` | 0 |
 | `tests/unit/test_unit_rollcall.py` | 0 |
 | `make quartus-sv-subset` | 0 |
-| **`make unit`** | **0** (`build/w-swap-o5-logs/make_unit13.log`) |
+| **`make unit`** | **0** (`handoffs/evidence-w-swap-o5/make_unit_final.log`) |
 
-`make unit` needed 13 attempts. Attempts 1-12 were blocked by, in order: the four inherited defects
-above, and the **known unrelated flake** `tests/unit/test_companion_eof`
-(`FAIL: path callback key mismatch: /library/metadata/3`, measured 2/3 pass in isolation). No guard
-was overridden and nothing was skipped to reach green.
+`make unit` was rc=0 at HEAD (`handoffs/evidence-w-swap-o5/make_unit_final.log`, `MAKE_UNIT_RC=0`).
+It reports 2 **declared** gate skips (`GATE_SKIP CRITICAL live-pms-baseline-profile` and the
+`skip-not-pass` red-check), both because live PMS credentials (`PLEX_BASE`/`PLEX_TOKEN`/
+`MISTERPLEX_BASELINE_KEY`) are absent in this environment. Nothing was silently skipped and no guard
+was overridden.
+
+Getting there took 13 attempts, blocked by the four inherited defects in section 7 and by the
+`tests/unit/test_companion_eof` flake. **I root-caused and fixed that flake rather than tolerating
+it** - see section 7a.
 
 Expected-red manifest ordinals were **re-measured**, not guessed, for the 603-read ordering:
 `p16z_perturb_mv` ordinal 0, `p16z_drop_mv_neighbor` ordinal 603, `p16z_swap_chroma_read`
 ordinal 441, `real_slice_swap_chroma_read` ordinal 441.
+
+### 7a. `test_companion_eof` flake - root-caused and fixed (was "known unrelated harness failure")
+
+Measured failure rate of the unmodified test: **1 failure in 6 runs** (`FAIL: path callback key
+mismatch: /library/metadata/3`).
+
+Root cause is a **test defect, not a product defect**. `companion.cpp` (~line 925) dispatches
+`onPlay_` on a **detached thread**, spawned *after* the HTTP ACK has already been written:
+
+```cpp
+if (onPlay_) {
+    std::thread([this, pr]() { ... onPlay_(pr); ... }).detach();
+}
+```
+
+so the arrival order of the two captured `PlayRequest` callbacks is deliberately **not** a product
+guarantee. The test asserted positionally (`captured[0].key == "/library/metadata/4"`), which loses
+whenever the second detached thread is scheduled first.
+
+Fix (test-only, `tests/unit/test_companion_eof.cpp`): match the two callbacks **by key** instead of
+by index. Assertion strength is unchanged - both callbacks are still fully checked
+(`ratingKey`, `playQueueItemId`, `serverMachineId`), and a missing callback still fails.
+
+Evidence:
+- red-proof: mutating the expected key to `/library/metadata/999` gives rc=1 and
+  `FAIL: path callback key mismatch: /library/metadata/4 /library/metadata/3`
+  (`handoffs/evidence-w-swap-o5/ceof_red.log`) - the check is not vacuous.
+- green: restored, rc=0 (`ceof_green.log`).
+- stress: **40 consecutive runs, 0 failures** (`companion_eof_40runs.txt`), versus 1-in-6 before.
 
 ---
 

@@ -1,0 +1,31 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core full-frame MC)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc'
+g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.038 s (elab=0.000, cvt=0.000, bld=0.037); cpu 0.001 s on 1 threads; allocated 20.320 MB
+Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
+OK h264_decode_core full-frame MC: 1170/1170 P16x16 macroblocks predicted exactly; samples Y=299520 U=74880 V=74880 total=449280; reads=705510 (all addresses exact); luma_qpel_phases=16/16 chroma_epel_phases=64/64 sub_pel_luma_samples=280064 edge_clamped_mbs=96 differ_from_colocated=230469/299520 pred_range=0..197 cycles=1162986
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core full-frame MC +define+H264_DECODE_CORE_FAULT_PERTURB_MV)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_perturb_mv'
+g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_perturb_mv'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.050 s (elab=0.000, cvt=0.000, bld=0.049); cpu 0.001 s on 1 threads; allocated 20.320 MB
+Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
+FAIL h264_decode_core full-frame MC: 295419 reference read addresses wrong; first read_ordinal 603 got_addr=0x10000b want_addr=0x10000a
+EXPECTED_RED h264_decode_core_full_frame_mc_perturb_mv: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh)
+OK h264_decode_core full-frame MC red-check: perturbed motion vector failed the 1170-macroblock scoreboard
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod) (h264_decode_core full-frame MC +define+H264_DECODE_CORE_FAULT_DROP_PRED)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_drop_pred'
+g++    h264_decode_core_full_frame_mc_tb.o verilated.o verilated_threads.o Vh264_decode_core_p16z_tb__ALL.a    -pthread -lpthread -latomic   -o Vh264_decode_core_p16z_tb
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-swap-o5/build/verilator/h264_decode_core_full_frame_mc_drop_pred'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.039 s (elab=0.000, cvt=0.000, bld=0.038); cpu 0.001 s on 1 threads; allocated 20.320 MB
+Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real 624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent qpel/epel model
+FAIL h264_decode_core full-frame MC: mb=0 (0,0) mv=(-20,-18) sample 0 plane=Y got_addr=0x400000 want_addr=0x400000 got=0 want=19
+EXPECTED_RED h264_decode_core_full_frame_mc_drop_pred: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh)
+OK h264_decode_core full-frame MC red-check: dropped prediction failed the 1170-macroblock scoreboard

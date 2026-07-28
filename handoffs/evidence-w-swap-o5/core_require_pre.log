@@ -1,0 +1,8 @@
+REQUIRED_RTL_MODULE_UNREACHABLE h264_chroma_epel_block_8x8 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_16x16
+REQUIRED_RTL_MODULE_UNREACHABLE h264_dpb_one_ref file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=decode_stub,h264_decode_skeleton
+REQUIRED_RTL_MODULE_UNREACHABLE h264_inter_mc_16x16 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_part
+REQUIRED_RTL_MODULE_UNREACHABLE h264_inter_mc_part file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=decode_stub
+REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_qpel_block_16x16 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_16x16
+REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_ref_tap_addr file=fpga/Plex_MiSTer/rtl/h264_inter_pred.sv parents=decode_stub,h264_decode_skeleton
+REQUIRED_RTL_MODULE_UNREACHABLE h264_ref_clamp file=fpga/Plex_MiSTer/rtl/h264_inter_pred.sv parents=h264_luma_ref_tap_addr
+RTL_MODULE_INSTANTIATION_FAIL: required RTL modules are not reachable from h264_decode_core
