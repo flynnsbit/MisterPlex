@@ -66,6 +66,7 @@ module ddram_frame_rd #(
 	parameter int WIDTH      = 320,
 	parameter int HEIGHT     = 240,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
+	parameter int HPS_BANK_STRIDE_BYTES = 262144,
 	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
 	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = 32'h3007_F108,
@@ -124,7 +125,8 @@ module ddram_frame_rd #(
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int QWORDS = PIXELS / 4;
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
+	localparam [28:0] HPS_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
+	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];

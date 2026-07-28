@@ -119,6 +119,70 @@ static void checkDdrBankConsumerEncoding() {
     }
 }
 
+static void checkDdrPublishGeometrySwitch() {
+    const auto g320 = misterplex::makeDdrFrameGeometry(320, 240);
+    std::vector<uint8_t> yuv320(misterplex::yuv420pFrameBytes(320, 240), 0x10);
+    misterplex::DdrPublishFrame f320{yuv320.data(), yuv320.size(), g320,
+                                     misterplex::DdrFrameFormat::Yuv420p};
+    misterplex::DdrPublishPlan p320{};
+    std::string err;
+    if (!misterplex::makeDdrPublishPlan(f320, 1, p320, &err)) {
+        std::fprintf(stderr, "DDR publish geometry failed for 320x240: %s\n", err.c_str());
+        ++fails;
+    } else {
+        if (p320.layout.bank_stride != 0x40000u || p320.bank_offset != 0x40000u ||
+            p320.bank_phys != 0x30040000u || p320.layout.doorbell_phys != 0x3007F000u) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed for 320x240: stride=0x%05x "
+                         "bank1=0x%08x doorbell=0x%08x, expected 0x40000/0x30040000/"
+                         "0x3007F000\n",
+                         static_cast<unsigned>(p320.layout.bank_stride),
+                         static_cast<unsigned>(p320.bank_phys),
+                         static_cast<unsigned>(p320.layout.doorbell_phys));
+            ++fails;
+        }
+    }
+
+    const auto g480 = misterplex::plex480pDdrFrameGeometry();
+    std::vector<uint8_t> yuv480(misterplex::yuv420pFrameBytes(g480.coded_width, g480.coded_height),
+                                0x10);
+    misterplex::DdrPublishFrame f480{yuv480.data(), yuv480.size(), g480,
+                                     misterplex::DdrFrameFormat::Yuv420p};
+    misterplex::DdrPublishPlan p480{};
+    if (!misterplex::makeDdrPublishPlan(f480, 1, p480, &err)) {
+        std::fprintf(stderr, "DDR publish geometry failed for 624x480: %s\n", err.c_str());
+        ++fails;
+    } else {
+        if (p480.layout.bank_stride != 0x80000u || p480.bank_offset != 0x80000u ||
+            p480.bank_phys != 0x30080000u || p480.layout.doorbell_phys != 0x300FF000u) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed for 624x480: stride=0x%05x "
+                         "bank1=0x%08x doorbell=0x%08x, expected 0x80000/0x30080000/"
+                         "0x300FF000\n",
+                         static_cast<unsigned>(p480.layout.bank_stride),
+                         static_cast<unsigned>(p480.bank_phys),
+                         static_cast<unsigned>(p480.layout.doorbell_phys));
+            ++fails;
+        }
+        if (p320.bank_phys == p480.bank_phys) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed: 320x240 and 624x480 bank1 both "
+                         "resolved to 0x%08x; geometry was not carried into publish\n",
+                         static_cast<unsigned>(p480.bank_phys));
+            ++fails;
+        }
+    }
+
+    misterplex::DdrPublishFrame badLen{yuv320.data(), yuv320.size(), g480,
+                                       misterplex::DdrFrameFormat::Yuv420p};
+    if (misterplex::makeDdrPublishPlan(badLen, 0, p480, &err)) {
+        std::fprintf(stderr,
+                     "DDR publish geometry failed: accepted a 320x240 payload with "
+                     "624x480 geometry\n");
+        ++fails;
+    }
+}
+
 static void checkConversion(int w, int h) {
     const size_t pixels = static_cast<size_t>(w) * static_cast<size_t>(h);
     std::vector<uint8_t> rgb(pixels * 3);
@@ -186,6 +250,7 @@ int main() {
                                          misterplex::DdrFrameFormat::Yuv420p, decodedSeq,
                                          decodedBank));
     checkDdrBankConsumerEncoding();
+    checkDdrPublishGeometrySwitch();
 
     // Hardware nondeterminism bbox from reload captures. Presentation x includes
     // the 11px pillarbox, so map it back to coded 624-wide YUV420 offsets.

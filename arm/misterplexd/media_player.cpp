@@ -606,6 +606,22 @@ void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
         " idle=" + std::to_string(s.idleMode) + (applyIdle ? "" : " (idle unchanged)"));
 }
 
+bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* context,
+                                  std::string* err) {
+    DdrPublishPlan plan{};
+    std::string localErr;
+    if (!makeDdrPublishPlan(frame, ddrBank_, plan, &localErr)) {
+        if (err)
+            *err = std::string(context ? context : "DDR") + ": " + localErr;
+        return false;
+    }
+    const bool ok = fpga_.publishDdrFrame(frame, ddrBank_);
+    ddrBank_ = nextDdrPresentBank(ddrBank_, ok);
+    if (!ok && err)
+        *err = fpga_.lastError();
+    return ok;
+}
+
 void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
@@ -628,6 +644,7 @@ void MediaPlayer::paintIdle() {
     }
     if (fpga_.ok()) {
         bool ok = false;
+        std::string ddrErr;
         if (useDdrF1_) {
             const DdrFrameGeometry g = plex480pDdrFrameGeometry();
             const DdrFrameLayout layout =
@@ -636,15 +653,14 @@ void MediaPlayer::paintIdle() {
             std::vector<uint8_t> yuv(layout.frame_bytes);
             if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
                                   idlePhase_.load())) {
-                ok = fpga_.sendYuv420pFrameDdr(yuv.data(), yuv.size(), g, ddrBank_);
+                DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+                ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
             }
-            if (ok)
-                ddrBank_ ^= 1;
         }
         if (!ok) {
             if (!idleWarned_.exchange(true))
                 log("media: idle paint DDR failed (will retry on re-probe): " +
-                    fpga_.lastError());
+                    (ddrErr.empty() ? fpga_.lastError() : ddrErr));
         } else {
             // Arm the warning again so a later failure is not swallowed — the core
             // is briefly out of user mode right after a heal/reload and the first
@@ -1335,11 +1351,14 @@ void MediaPlayer::streamPump(int sfd) {
                 if (rec.width == g.coded_width && rec.height == g.coded_height) {
                     ensureYuv420p();
                     clearYuv420pCropPadding(yuv420p.data(), g);
-                    ok = fpga_.sendYuv420pFrameDdr(yuv420p.data(), yuv420p.size(), g, ddrBank_);
-                    if (ok)
-                        ddrBank_ ^= 1;
+                    DdrPublishFrame frame{yuv420p.data(), yuv420p.size(), g,
+                                          DdrFrameFormat::Yuv420p};
+                    std::string ddrErr;
+                    std::lock_guard<std::mutex> lk(presentMu_);
+                    ok = publishDdrFrame(frame, "recon DDR", &ddrErr);
                     if (!ok) {
-                        log("media: recon YUV420 DDR F1 unavailable: " + fpga_.lastError());
+                        log("media: recon YUV420 DDR F1 unavailable: " +
+                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
                     } else if ((reconOk % 30) == 0) {
                         log("media: recon F1 via YUV420 DDR " +
                             std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
@@ -2523,10 +2542,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // transaction state, so overlapping ioctls corrupt each other.
                 std::lock_guard<std::mutex> lk(presentMu_);
                 bool ok = false;
+                std::string ddrErr;
                 if (useDdrF1_) {
                     const int64_t ddrCpu0 = profilePresent ? threadCpuMicros() : 0;
                     if (videoFmt == RawVideoFormat::Yuv420p) {
-                        ok = fpga_.sendYuv420pFrameDdr(txFrame, txBytes, ddrGeometry, ddrBank_);
+                        DdrPublishFrame frame{txFrame, txBytes, ddrGeometry,
+                                              DdrFrameFormat::Yuv420p};
+                        ok = publishDdrFrame(frame, "playback DDR", &ddrErr);
                     } else {
                         ok = false;
                     }
@@ -2546,10 +2568,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         if (dt.total_us > accounted)
                             prof.ddrUnaccountedUs += dt.total_us - accounted;
                     }
-                    if (ok)
-                        ddrBank_ ^= 1;
                     if (!ok)
-                        log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                        log("media: DDR YUV420p F1 unavailable: " +
+                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
                     else if (idleMode() == IdleMode::LastFrame)
                         lastFrameLatch.remember(txFrame, txBytes, ddrGeometry);
                 }
@@ -2559,7 +2580,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 if (!ok) {
                     if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " + fpga_.lastError());
+                        log("media: fpga frame_tx: " +
+                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
                 } else if (countPresent) {
                     ++presentCount_;
                     if (profilePresent)

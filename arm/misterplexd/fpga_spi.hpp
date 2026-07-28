@@ -100,6 +100,7 @@ public:
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -272,7 +273,7 @@ private:
     // Caller holds SpiExclusive + user mode.
     void writeStatusWordRaw(const uint8_t word[16]);
     bool readStatusRaw(uint8_t out[16]);
-    bool sendDdrFrame(const uint8_t* payload, size_t len, int bank);
+    bool sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan);
 
     int fd_ = -1;
     volatile uint32_t* map_ = nullptr;

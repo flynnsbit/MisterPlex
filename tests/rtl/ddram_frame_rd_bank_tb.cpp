@@ -43,7 +43,7 @@ static void init_inputs(Vddram_frame_rd& dut) {
     dut.DDRAM_BUSY = 0;
     dut.DDRAM_DOUT = 0;
     dut.DDRAM_DOUT_READY = 0;
-    dut.wr_ready = 0;
+    dut.wr_ready = 1;
 }
 
 static void reset(Vddram_frame_rd& dut) {
@@ -52,7 +52,6 @@ static void reset(Vddram_frame_rd& dut) {
     tick(dut);
     tick(dut);
     dut.reset = 0;
-    tick(dut);
 }
 
 static uint32_t expected_qword_addr(int bank) {
@@ -105,8 +104,7 @@ static bool wait_frame_read(Vddram_frame_rd& dut, const char* path, int bank) {
     return false;
 }
 
-static bool check_spi_bank(int bank) {
-    Vddram_frame_rd dut;
+static bool check_spi_bank(Vddram_frame_rd& dut, int bank) {
     reset(dut);
     dut.bank_sel = bank;
     dut.start_req = 1;
@@ -115,8 +113,7 @@ static bool check_spi_bank(int bank) {
     return wait_frame_read(dut, "SPI status[13]", bank);
 }
 
-static bool check_doorbell_bank(int bank) {
-    Vddram_frame_rd dut;
+static bool check_doorbell_bank(Vddram_frame_rd& dut, int bank) {
     reset(dut);
     const uint32_t db = doorbell_qword_addr();
     bool saw_poll = false;
@@ -145,10 +142,11 @@ static bool check_doorbell_bank(int bank) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     int fails = 0;
+    Vddram_frame_rd dut;
     for (int bank = 0; bank <= 1; ++bank) {
-        if (!check_spi_bank(bank))
+        if (!check_spi_bank(dut, bank))
             ++fails;
-        if (!check_doorbell_bank(bank))
+        if (!check_doorbell_bank(dut, bank))
             ++fails;
     }
     if (fails)

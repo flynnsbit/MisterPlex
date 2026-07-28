@@ -191,6 +191,8 @@ private:
     void dispatchPlaybackInput(PlaybackCommand command);
     // true when STREAM product path may omit heavy RGB video decode (audio + demux only)
     bool wantSkipRgbVideo() const;
+    bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
+                         std::string* err = nullptr);
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);

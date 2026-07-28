@@ -35,7 +35,9 @@ mkdir -p "$BUILD"
   -I"$ROOT/fpga/Plex_MiSTer/rtl" -I"$ROOT/host" \
   --cc --exe --build \
   --top-module ddram_frame_rd \
-  -GWIDTH="$FRAME_W" -GHEIGHT="$FRAME_H" -GDOORBELL_PHYS="$DOORBELL_PHYS" \
+  -GWIDTH="$FRAME_W" -GHEIGHT="$FRAME_H" -GHPS_BANK_STRIDE_BYTES="$BANK_STRIDE" \
+  -GDOORBELL_PHYS="$DOORBELL_PHYS" \
+  -CFLAGS "-std=c++17 -O2 -I$ROOT/host" \
   --Mdir "$BUILD" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv" \
   "$ROOT/tests/rtl/ddram_frame_rd_bank_tb.cpp"

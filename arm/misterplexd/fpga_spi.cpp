@@ -1300,13 +1300,14 @@ bool FpgaSpi::sendRgb565Frame(const uint16_t* rgb, int w, int h, uint8_t index) 
     return sendFileTx(packed.data(), packed.size(), index);
 }
 
-bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
-    if (!payload || len != ddrLayout_.frame_bytes) {
-        setErr("sendDdrFrame: frame size does not match DDR geometry");
-        return false;
-    }
-    if (bank < 0 || bank > 1) {
-        setErr("sendDdrFrame: bank must be 0 or 1");
+bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& plan) {
+    const uint8_t* payload = frame.payload;
+    const size_t len = frame.len;
+    const int bank = plan.bank;
+    if (!payload || len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
+        plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
+        plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
+        setErr("sendDdrFrame: publish plan does not match active DDR layout");
         return false;
     }
     if (ddrKickMode_ < 0) {
@@ -1356,7 +1357,7 @@ bool FpgaSpi::sendDdrFrame(const uint8_t* payload, size_t len, int bank) {
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
     // Copy frame into bank (persistent map).
-    const size_t bankOff = static_cast<size_t>(bank) * ddrLayout_.bank_stride;
+    const size_t bankOff = plan.bank_offset;
     auto tCopy0 = std::chrono::steady_clock::now();
     std::memcpy(ddrMap_ + bankOff, payload, len);
     __sync_synchronize();
@@ -1523,25 +1524,40 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len,
                                   const DdrFrameGeometry& geometry, int bank) {
-    if (!yuv420p || geometry.coded_width <= 0 || geometry.coded_height <= 0 ||
-        (geometry.coded_width & 1) || (geometry.coded_height & 1)) {
-        setErr("sendYuv420pFrameDdr: bad YUV420p frame");
+    DdrPublishFrame frame{yuv420p, len, geometry, DdrFrameFormat::Yuv420p};
+    return publishDdrFrame(frame, bank);
+}
+
+bool FpgaSpi::publishDdrFrame(const DdrPublishFrame& frame, int bank) {
+    DdrPublishPlan plan{};
+    std::string err;
+    if (!makeDdrPublishPlan(frame, bank, plan, &err)) {
+        setErr(err);
         return false;
     }
-    if (geometry.coded_width != ddrLayout_.coded_width ||
-        geometry.coded_height != ddrLayout_.coded_height ||
-        geometry.display_width != ddrLayout_.display_width ||
-        geometry.display_height != ddrLayout_.display_height ||
-        geometry.presented_width != ddrLayout_.presented_width ||
-        geometry.presented_height != ddrLayout_.presented_height ||
-        geometry.crop_left != ddrLayout_.crop_left || geometry.crop_right != ddrLayout_.crop_right ||
-        geometry.crop_top != ddrLayout_.crop_top || geometry.crop_bottom != ddrLayout_.crop_bottom ||
-        geometry.present_x != ddrLayout_.present_x || geometry.present_y != ddrLayout_.present_y ||
-        ddrLayout_.format != DdrFrameFormat::Yuv420p) {
-        if (!setDdrFrameLayout(geometry, DdrFrameFormat::Yuv420p))
+    if (plan.layout.coded_width != ddrLayout_.coded_width ||
+        plan.layout.coded_height != ddrLayout_.coded_height ||
+        plan.layout.display_width != ddrLayout_.display_width ||
+        plan.layout.display_height != ddrLayout_.display_height ||
+        plan.layout.presented_width != ddrLayout_.presented_width ||
+        plan.layout.presented_height != ddrLayout_.presented_height ||
+        plan.layout.crop_left != ddrLayout_.crop_left ||
+        plan.layout.crop_right != ddrLayout_.crop_right ||
+        plan.layout.crop_top != ddrLayout_.crop_top ||
+        plan.layout.crop_bottom != ddrLayout_.crop_bottom ||
+        plan.layout.present_x != ddrLayout_.present_x ||
+        plan.layout.present_y != ddrLayout_.present_y ||
+        plan.layout.format != ddrLayout_.format) {
+        if (!setDdrFrameLayout(frame.geometry, frame.format))
             return false;
     }
-    return sendDdrFrame(yuv420p, len, bank);
+    if (ddrLayout_.bank_stride != plan.layout.bank_stride ||
+        ddrLayout_.doorbell_phys != plan.layout.doorbell_phys ||
+        ddrLayout_.frame_bytes != plan.layout.frame_bytes) {
+        setErr("publishDdrFrame: active DDR layout disagrees with derived frame geometry");
+        return false;
+    }
+    return sendDdrFrame(frame, plan);
 }
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
