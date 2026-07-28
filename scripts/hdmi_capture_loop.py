@@ -4,11 +4,14 @@
 Scores each tick as NO_SIGNAL / VALID_BLACK / VALID_CONTENT and alerts on change.
 
 MS2109 (534d:2109) facts established by test on this rig:
-  * Every stream open emits 11-12 filler frames of exactly RGB(7,7,7) before
-    the card locks and real content appears (measured over repeated opens:
-    first good frame at index 11, 11, 12).  A short capture therefore ALWAYS
+  * Every stream open emits a run of filler frames of exactly RGB(7,7,7)
+    before the card locks and real content appears.  With a generous capture
+    the first good frame lands at index 11-14, but a SHORT capture can come
+    back entirely filler -- the card does not lock at all if the stream is torn
+    down after a fraction of a second.  A short capture therefore ALWAYS
     yields "uniform luma 7, distinct=1" no matter what the source is sending.
-    Warmup frames must be discarded, with margin.
+    The fix is to hold the stream open for a generous frame count and score
+    only the tail.
   * 1920x1080 is advertised but dead on this input: every frame stays
     RGB(7,7,7).  1280x720 MJPG carries real content.
   * Because the filler is exactly 7 and real video black is 0 (or 16 limited
@@ -92,11 +95,12 @@ def main():
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--interval", type=float, default=20.0)
-    ap.add_argument("--warmup", type=int, default=20,
-                    help="frames discarded per open; card emits ~12 filler frames")
-    ap.add_argument("--score-frames", type=int, default=4)
-    ap.add_argument("--relock-warmup", type=int, default=45,
-                    help="warmup used on the retry when a tick looks all-filler")
+    ap.add_argument("--frames", type=int, default=150,
+                    help="frames pulled per tick; the card needs a long open to lock")
+    ap.add_argument("--score-frames", type=int, default=4,
+                    help="tail frames actually scored")
+    ap.add_argument("--relock-tries", type=int, default=3,
+                    help="re-captures allowed when a tick comes back all-filler")
     ap.add_argument("--history", type=int, default=32)
     ap.add_argument("--delta-alert", type=float, default=1.5,
                     help="mean abs luma delta vs previous tick that counts as CHANGE")
@@ -129,21 +133,23 @@ def main():
     prev_luma = None
     prev_state = None
     emit(f"START dev={args.device} {args.width}x{args.height} interval={args.interval}s "
-         f"warmup={args.warmup} score={args.score_frames} pid={os.getpid()}")
+         f"frames={args.frames} score={args.score_frames} pid={os.getpid()}")
 
+    scored = []
     tick = 0
     while args.ticks == 0 or tick < args.ticks:
         tick += 1
-        frames = capture(args.device, args.width, args.height,
-                         args.warmup + args.score_frames, workdir)
-        scored = frames[args.warmup:]
-        # A tick that is entirely filler may be a slow re-lock rather than a
-        # real loss of signal.  Confirm with one longer capture before we let
-        # NO_SIGNAL stand.
-        if scored and all(classify(analyse(f)) == "NO_SIGNAL" for f in scored):
+        # An all-filler tick may be a slow re-lock rather than a real loss of
+        # signal, so confirm before letting NO_SIGNAL stand.
+        for _attempt in range(args.relock_tries):
             frames = capture(args.device, args.width, args.height,
-                             args.relock_warmup + args.score_frames, workdir)
-            scored = frames[args.relock_warmup:] or frames[-args.score_frames:]
+                             args.frames, workdir)
+            scored = frames[-args.score_frames:]
+            if not scored:
+                break
+            if any(classify(analyse(f)) != "NO_SIGNAL" for f in scored):
+                break
+            time.sleep(2.0)
         if not scored:
             state = "CAPTURE_FAIL"
             rec = {"tick": tick, "ts": time.time(), "state": state,
