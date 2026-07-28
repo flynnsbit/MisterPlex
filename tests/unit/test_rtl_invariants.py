@@ -107,6 +107,7 @@ PRODUCT_AUDIT_ROOTS = (
     "tests/hw",
     "fpga/Plex_MiSTer/rtl",
 )
+DOC_AUDIT_ROOTS = ("docs",)
 
 
 def read(path: Path) -> str:
@@ -128,6 +129,11 @@ def tracked_files_under(*roots: str) -> list[Path]:
     except (OSError, subprocess.CalledProcessError) as e:
         fail(f"could not enumerate tracked files with git ls-files: {e}")
     return [ROOT / line for line in out.splitlines() if line]
+
+
+def tracked_product_and_doc_files() -> list[Path]:
+    """Return committed product/runtime files plus docs that describe product commands."""
+    return tracked_files_under(*PRODUCT_AUDIT_ROOTS, *DOC_AUDIT_ROOTS)
 
 
 def strip_hash_comments(text: str) -> str:
@@ -2079,7 +2085,7 @@ def check_yuv_ddr_writer_contract() -> None:
 
     def forbidden_ddr_rgb_offenders() -> list[str]:
         offenders: list[str] = []
-        for path in tracked_files_under(*PRODUCT_AUDIT_ROOTS, "docs"):
+        for path in tracked_product_and_doc_files():
             if not path.is_file():
                 continue
             rel = path.relative_to(ROOT)
