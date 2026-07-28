@@ -1,0 +1,7 @@
+Scope: 24 frames from v4l2:/dev/video0 mjpeg 1280x720@60 (warmup_discard=0, nothing dropped)
+LUMA SPATIAL STD  : max=24.0521 mean=21.0455 min=0.0000   THRESHOLD for content = 1.0
+MEAN LUMA         : max=26.9992 min=7.0000                          THRESHOLD for black  = 8.0
+DISTINCT FRAMES   : 2/24 unique byte-images
+IDENTICAL TO KNOWN NO-HDMI-LOCK FILLER RGB(7,7,7): 3/24
+
+VERDICT: VALID WITH CONTENT

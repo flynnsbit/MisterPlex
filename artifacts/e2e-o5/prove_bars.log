@@ -1,0 +1,21 @@
+{
+  "active_box": [
+    0,
+    22,
+    1233,
+    698
+  ],
+  "denominator_frames": 1,
+  "mean_luma": 26.16,
+  "ncc": 0.1675,
+  "ncc_threshold": 0.75,
+  "reason": "picture present but does NOT agree with host decode (ncc 0.1675 < 0.75). A painter or idle screen scores here.",
+  "reference": "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264",
+  "reference_std": 65.577,
+  "signal_note": "live signal with picture content (mean luma 26.16 \u2265 8.0, spatial std 33.73 \u2265 3.0)",
+  "signal_state": "CONTENT_PRESENT",
+  "spatial_std": 33.73,
+  "verdict": "NOT_DECODED"
+}
+
+NOT_DECODED: picture present but does NOT agree with host decode (ncc 0.1675 < 0.75). A painter or idle screen scores here.
