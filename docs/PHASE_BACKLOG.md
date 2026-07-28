@@ -2,6 +2,32 @@
 
 Update this file when work finishes. Loop agents claim items and mark `DONE` / `IN_PROGRESS` / `BLOCKED`.
 
+## ACTIVE — W-OSD reconstructed-neighbour context (**RTL GREEN, no product-decode PASS** 2026-07-28)
+
+Raw findings / scope first:
+
+- Added `h264_intra_nb_ctx` as a full-width PRE-deblock reconstructed-neighbour store for the
+  measured coded frame (`624x480`, `39x30` MBs, no partial MBs). It stores luma above row
+  (`39*16`), chroma U/V above rows (`39*8` each), luma/chroma left columns, above-left
+  corners, and luma above-right; picture/slice edges report unavailable so DC `128` remains
+  the correct fallback only at real edges.
+- Seam statement for W-DEBLOCK: intra prediction reads this module's **PRE-deblock** reconstructed
+  samples. The DPB/reference path must consume **POST-deblock** samples from the deblock commit path;
+  these taps are intentionally separate.
+- Gate: `python3 tests/unit/test_h264_intra_nb_ctx_verilator.py` prints `Scope:` first and compares
+  exact luma/chroma neighbour bytes across a 39-MB row and row transition. It does not cover entropy
+  parsing, residual math, deblock filtering, DPB post-deblock storage, inter prediction, or HDMI.
+- Red checks: `H264_INTRA_NB_CTX_FAULT_STUB_NEIGHBORS` fails by forcing neighbour bytes back to 128;
+  `H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV` fails the chroma scoreboard. Both are registered in the
+  expected-red manifest and define-parity allowlist.
+- Validation: neighbour RTL gate `rc=0`; `make define-parity rc=0`; `make quartus-sv-subset rc=0`.
+  Full `make unit` was attempted but correctly refused because the authorised Quartus fit was live
+  (`PREFLIGHT REFUSED: a local Quartus fit is running`); do not score that as a unit failure.
+
+Conclusion: reconstructed-neighbour storage now exists and is non-vacuously gated, but this is not a
+claim that the product decoder works. Live PMS is still mostly P-slices (`343 P / 7 IDR`), so intra
+green alone cannot be read as decode-off-ARM.
+
 ## ACTIVE — W-OSD idle Plex-logo split (**UNSCORED, non-visual only** 2026-07-28)
 
 Raw findings, no HDMI/capture PASS claimed:

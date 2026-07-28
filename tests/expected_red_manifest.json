@@ -168,6 +168,24 @@
       "required_substrings": [
         "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) read_ordinal 20736 got_addr=0x5f6a8 want_addr=0x4d228"
       ]
+    },
+    {
+      "id": "h264_intra_nb_ctx_stub_neighbors",
+      "owner": "tests/unit/test_h264_intra_nb_ctx_verilator.py",
+      "why": "Forcing reconstructed-neighbour outputs back to 128 must fail the full-width luma neighbour scoreboard; otherwise the context can regress to the original pred=128 degeneracy.",
+      "required_substrings": [
+        "FAIL h264_intra_nb_ctx: mb10_left_y[0]",
+        "h264_intra_nb_ctx RTL check FAILED"
+      ]
+    },
+    {
+      "id": "h264_intra_nb_ctx_swap_chroma_uv",
+      "owner": "tests/unit/test_h264_intra_nb_ctx_verilator.py",
+      "why": "Swapping U/V chroma neighbour storage must fail the chroma line-buffer scoreboard independently of luma.",
+      "required_substrings": [
+        "FAIL h264_intra_nb_ctx: mb10_left_u[0]",
+        "h264_intra_nb_ctx RTL check FAILED"
+      ]
     }
   ]
 }
