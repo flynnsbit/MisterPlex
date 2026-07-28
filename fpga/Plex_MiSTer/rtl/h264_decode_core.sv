@@ -257,6 +257,8 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
+    localparam [7:0] ST_COMMIT        = 8'd7;
+    localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -265,6 +267,7 @@ module h264_decode_core #(
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
     localparam [15:0] CHROMA_H16 = 16'(FRAME_H / 2);
     localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
+    localparam int CORE_MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT);
 
     reg [7:0]  wb_state;
     reg [8:0]  wb_idx;
@@ -293,6 +296,7 @@ module h264_decode_core #(
     reg        mv_left_valid;
     reg [15:0] mb_count_r;
     reg        frame_done_r;
+    reg        wb_commit_p16;
     reg        dpb_rd_en_r;
     reg [31:0] dpb_rd_addr_r;
     reg        p16_wr_en_r;
@@ -607,10 +611,46 @@ module h264_decode_core #(
 `else
     wire product_wb_en = (wb_state == ST_WRITE);
 `endif
+    wire p16_sample_wb_en = (wb_state == ST_P16_WRITE);
+    wire deblock_filtered_sample_valid = product_wb_en | p16_sample_wb_en;
+    wire deblock_filtered_mb_valid = (wb_state == ST_COMMIT);
+    wire deblock_filtered_frame_done = deblock_filtered_mb_valid && wb_last_mb;
+    wire deblock_frame_boundary = (wb_state == ST_FRAME_BOUNDARY);
+    wire deblock_wb_valid;
+    wire [CORE_MB_AW-1:0] deblock_wb_mb_addr;
+    wire deblock_wb_is_ref;
+    wire deblock_dpb_invalidate_refs;
+    wire deblock_ref_ready_pulse;
+    wire [1:0] deblock_ref_ready_slot;
+    wire deblock_commit_order_error;
+
+    h264_deblock_writeback_ctrl #(
+        .MB_COUNT(MB_COUNT),
+        .FRAME_SLOT_W(2),
+        .SAMPLES_PER_MB(384)
+    ) u_core_deblock_wb (
+        .clk(clk),
+        .reset(reset),
+        .idr_frame_start(slice_start && slice_is_idr),
+        .filtered_sample_valid(deblock_filtered_sample_valid),
+        .filtered_mb_valid(deblock_filtered_mb_valid),
+        .filtered_mb_addr(wb_mb_addr32[CORE_MB_AW-1:0]),
+        .filtered_mb_is_ref(wb_mb_is_ref),
+        .filtered_frame_done(deblock_filtered_frame_done),
+        .frame_slot_i(2'd0),
+        .frame_boundary(deblock_frame_boundary),
+        .wb_valid(deblock_wb_valid),
+        .wb_mb_addr(deblock_wb_mb_addr),
+        .wb_is_ref(deblock_wb_is_ref),
+        .dpb_invalidate_refs(deblock_dpb_invalidate_refs),
+        .ref_ready_pulse(deblock_ref_ready_pulse),
+        .ref_ready_slot(deblock_ref_ready_slot),
+        .commit_order_error(deblock_commit_order_error)
+    );
 
     integer wb_i;
     always @(posedge clk) begin
-        frame_done_r <= 1'b0;
+        frame_done_r <= deblock_ref_ready_pulse;
         dpb_rd_en_r <= 1'b0;
         p16_wr_en_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
@@ -630,6 +670,7 @@ module h264_decode_core #(
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
+            wb_commit_p16 <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
@@ -697,6 +738,7 @@ module h264_decode_core #(
                     p16_res_block_idx <= 5'd0;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
+                    wb_commit_p16 <= 1'b0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                         lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
@@ -710,6 +752,7 @@ module h264_decode_core #(
                     wb_mb_is_ref <= recon_mb_is_ref;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
+                    wb_commit_p16 <= 1'b0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                         lat_recon_y[wb_i] <= recon_y[wb_i];
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
@@ -785,9 +828,25 @@ module h264_decode_core #(
                 p16_wr_addr_r <= wb_addr;
                 p16_wr_data_r <= clip_u8(p16_recon_sum);
                 if (wb_last_sample) begin
-                    wb_state <= ST_IDLE;
-                    if (wb_mb_is_ref) begin
-                        mb_count_r <= mb_count_r + 16'd1;
+                    wb_commit_p16 <= 1'b1;
+                    wb_state <= ST_COMMIT;
+                end else begin
+                    wb_idx <= wb_idx + 9'd1;
+                    wb_state <= ST_P16_TAP_REQ;
+                end
+            end
+            ST_WRITE: begin
+                if (wb_last_sample) begin
+                    wb_commit_p16 <= 1'b0;
+                    wb_state <= ST_COMMIT;
+                end else begin
+                    wb_idx <= wb_idx + 9'd1;
+                end
+            end
+            ST_COMMIT: begin
+                if (wb_mb_is_ref) begin
+                    mb_count_r <= mb_count_r + 16'd1;
+                    if (wb_commit_p16) begin
                         mv_top_x[wb_mb_idx] <= p16_mv_x_qpel_r;
                         mv_top_y[wb_mb_idx] <= p16_mv_y_qpel_r;
                         mv_top_ref[wb_mb_idx] <= p16_ref_idx_l0_r;
@@ -797,21 +856,11 @@ module h264_decode_core #(
                         mv_left_ref <= p16_ref_idx_l0_r;
                         mv_left_valid <= 1'b1;
                     end
-                    frame_done_r <= wb_mb_is_ref && wb_last_mb;
-                end else begin
-                    wb_idx <= wb_idx + 9'd1;
-                    wb_state <= ST_P16_TAP_REQ;
                 end
+                wb_state <= (wb_mb_is_ref && wb_last_mb) ? ST_FRAME_BOUNDARY : ST_IDLE;
             end
-            ST_WRITE: begin
-                if (wb_last_sample) begin
-                    wb_state <= ST_IDLE;
-                    if (wb_mb_is_ref)
-                        mb_count_r <= mb_count_r + 16'd1;
-                    frame_done_r <= wb_mb_is_ref && wb_last_mb;
-                end else begin
-                    wb_idx <= wb_idx + 9'd1;
-                end
+            ST_FRAME_BOUNDARY: begin
+                wb_state <= ST_IDLE;
             end
             default: begin
                 wb_state <= ST_IDLE;
@@ -843,6 +892,9 @@ module h264_decode_core #(
         |mb_qp_delta | |mb_residual_bit_offset | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
-        |cavlc_level_dbg[0] | |cavlc_run_dbg[0];
+        |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
+        deblock_wb_valid | |deblock_wb_mb_addr | deblock_wb_is_ref |
+        deblock_dpb_invalidate_refs | deblock_ref_ready_pulse |
+        |deblock_ref_ready_slot | deblock_commit_order_error;
 
 endmodule

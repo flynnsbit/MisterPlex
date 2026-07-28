@@ -153,6 +153,11 @@ def reachable_from(root: str, graph: dict[str, set[str]]) -> set[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
+        "--root",
+        default=PRODUCT_ROOT,
+        help="Root module for reachability analysis (default: emu).",
+    )
+    ap.add_argument(
         "--require",
         action="append",
         default=[],
@@ -165,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:
     modules = parse_modules(paths)
     bench_only = parse_bench_only()
     graph = instantiation_graph(modules)
-    reachable = reachable_from(PRODUCT_ROOT, graph)
+    if args.root not in modules:
+        fail(f"root module does not exist: {args.root}")
+    reachable = reachable_from(args.root, graph)
 
     rtl_modules = {
         name: mod
@@ -176,27 +183,28 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_bench:
         fail("bench-only list names modules that do not exist: " + ", ".join(unknown_bench))
 
-    reachable_bench = sorted(name for name in bench_only if name in reachable)
-    if reachable_bench:
-        fail(
-            "bench-only modules are now reachable from product root; remove the declaration: "
-            + ", ".join(reachable_bench)
-        )
-
-    missing = sorted(name for name in rtl_modules if name not in reachable and name not in bench_only)
-    if missing:
-        for name in missing:
-            mod = rtl_modules[name]
-            parents = sorted(src for src, dsts in graph.items() if name in dsts)
-            parent_note = f" parents={','.join(parents)}" if parents else " parents=<none>"
-            print(
-                f"UNINSTANTIATED_RTL_MODULE {name} file={mod.path.relative_to(ROOT)}{parent_note}",
-                file=sys.stderr,
+    if args.root == PRODUCT_ROOT:
+        reachable_bench = sorted(name for name in bench_only if name in reachable)
+        if reachable_bench:
+            fail(
+                "bench-only modules are now reachable from product root; remove the declaration: "
+                + ", ".join(reachable_bench)
             )
-        fail(
-            "RTL modules must be product-reachable from emu or explicitly listed in "
-            f"{BENCH_ONLY.relative_to(ROOT)}"
-        )
+
+        missing = sorted(name for name in rtl_modules if name not in reachable and name not in bench_only)
+        if missing:
+            for name in missing:
+                mod = rtl_modules[name]
+                parents = sorted(src for src, dsts in graph.items() if name in dsts)
+                parent_note = f" parents={','.join(parents)}" if parents else " parents=<none>"
+                print(
+                    f"UNINSTANTIATED_RTL_MODULE {name} file={mod.path.relative_to(ROOT)}{parent_note}",
+                    file=sys.stderr,
+                )
+            fail(
+                "RTL modules must be product-reachable from emu or explicitly listed in "
+                f"{BENCH_ONLY.relative_to(ROOT)}"
+            )
 
     unknown_required = sorted(set(args.require) - set(rtl_modules))
     if unknown_required:
@@ -212,15 +220,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"REQUIRED_RTL_MODULE_UNREACHABLE {name} file={mod.path.relative_to(ROOT)}{parent_note}",
                 file=sys.stderr,
             )
-        fail("required RTL modules are not product-reachable from " + PRODUCT_ROOT)
+        fail("required RTL modules are not reachable from " + args.root)
 
     for name in args.require:
-        print(f"REQUIRED_RTL_MODULE_REACHABLE {name} root={PRODUCT_ROOT}")
+        print(f"REQUIRED_RTL_MODULE_REACHABLE {name} root={args.root}")
 
     print(
         "RTL_MODULE_INSTANTIATION_OK "
         f"rtl_modules={len(rtl_modules)} reachable={sum(1 for n in rtl_modules if n in reachable)} "
-        f"bench_only={len(bench_only)} root={PRODUCT_ROOT}"
+        f"bench_only={len(bench_only)} root={args.root}"
     )
     return 0
 
