@@ -92,15 +92,15 @@ static bool pollWord(misterplex::InputMailboxEdgeDetector& edge, FakeTransport& 
 int main() {
     using namespace misterplex;
 
-    CHECK(kDdrStatusMailboxPhys == 0x3007F100u);
+    CHECK(kDdrStatusMailboxPhys == 0x300FF100u);
     CHECK(kDdrStatusMailboxMagic == 0x504C5853u);
-    CHECK(kInputMailboxPhys == 0x3007F108u);
+    CHECK(kInputMailboxPhys == 0x300FF108u);
     CHECK(kInputMailboxMagic == 0x504C5849u);
-    CHECK(kMemtestMailboxPhys == 0x3007F110u);
+    CHECK(kMemtestMailboxPhys == 0x300FF110u);
     CHECK(kMemtestMailboxMagic == 0x504C584Du);
-    CHECK(kUnderrunMailboxPhys == 0x3007F118u);
+    CHECK(kUnderrunMailboxPhys == 0x300FF118u);
     CHECK(kUnderrunMailboxMagic == 0x504C5846u);
-    CHECK(kBankReleaseMailboxPhys == 0x3007F128u);
+    CHECK(kBankReleaseMailboxPhys == 0x300FF128u);
     CHECK(kBankReleaseMailboxMagic == 0x504C5844u);
     CHECK(kFrameStoreDebugFormatError == 0xE1u);
 

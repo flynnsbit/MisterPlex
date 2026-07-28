@@ -2131,7 +2131,7 @@ after the power cycle. Measured over ssh at 14:13:31, rc read without a pipe:
 ```
 device date  2026-07-28 14:13:31    uptime 1764.66 s
  3905 root /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-183
-      --port 3005 --conf ... --pms http://192.168.1.41:32400
+      --port 3005 --conf ... --pms http://YOUR-PLEX-SERVER:32400
 ```
 
 `/media/fat/misterplex/misterplexd.log` (mtime 14:13) is live:
@@ -2551,7 +2551,7 @@ GREEN1 DEPLOY_LOAD=none, no argv on record (daemon already down)
 
 GREEN2 DEPLOY_LOAD=none, live argv recorded
        -> DAEMON_OK: misterplexd restarted pid=3318   (no WARN)
-          argv after: ... --conf ... --pms http://192.168.1.41:32400
+          argv after: ... --conf ... --pms http://YOUR-PLEX-SERVER:32400
        (full flags preserved, including --pms)
 ```
 
@@ -2951,7 +2951,7 @@ any RTL hypothesis, and it is the one option that no amount of RTL work can fix.
 
 `misterplexd` is running: pid **3823**, `/media/fat/misterplex/bin/misterplexd
 --name MiSTerPlex --id misterplex-183 --port 3005 --conf
-/media/fat/misterplex/misterplex.conf --pms http://192.168.1.41:32400`, same boot
+/media/fat/misterplex/misterplex.conf --pms http://YOUR-PLEX-SERVER:32400`, same boot
 (14:16:28), full argv with `--pms` intact.
 
 But the inference they wanted to draw from it does not survive: they proposed that
@@ -3297,3 +3297,115 @@ evidence still stands but the precedent should be corrected explicitly.
 `CORENAME=Plex`, `Plex.rbf=3b1e8435`, `misterplexd` restarted by the deploy script
 (`DAEMON_OK pid=8288` — §39's fix working in production), logo rendering, lock
 released. Nothing is holding the capture device.
+
+---
+
+## §48 — The mailbox base was wrong. "PLXD silent" never happened.
+
+**No token spent. No fit. No deploy.** The parent's A/B (`3b1e8435` advances → SDC
+caused the regression; silent → cause is in the RTL delta) was answerable from the
+already-resident core, and its premise was false.
+
+### The parent's premise was 2.5 h stale
+
+```
+parent claim : resident fb4bad84, uptime 0:09, power-cycled ~13:44
+measured     : resident 3b1e8435, uptime 6967s, boot 14:16:28, daemon pid 8288
+```
+`3b1e8435` went in at 14:56 and was graded. Both deploys are spent. There was no
+cold-boot window of `fb4bad84` left to protect.
+
+### The bug
+
+`ddr_frame_store` derives `DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES)
+- 0x1000`. For the active 624x480 YUV420p layout (stride `0x80000`) that is
+**`0x300FF000`**. Every mailbox *reader* in the tree used **`0x3007F000`** —
+`0x80000` low, which is `PHYS_BASE + ONE` stride. That is not an arithmetic slip:
+`0x3007F000` is the correct doorbell for the **old 320p layout** (stride `0x40000`),
+and it was never updated when 624x480 became active. `tests/unit/test_frame_store_math.cpp:134`
+still asserts `0x3007F000` for the 320p case and is **correct** — a blind
+search-and-replace would have broken it.
+
+Measured on resident `3b1e8435` (`build/wfit-mailbox-addr/evidence.txt`):
+
+```
+old base 0x3007F : 000 100 108 110 118 128 12C  -> ALL 0x00000000
+new base 0x300FF : PLXK 0x504C584B   PLXS 0x504C5853   PLXM 0x504C584D
+                   PLXF 0x504C5846   PLXD 0x504C5844   (PLXI idle-empty)
+```
+
+Five of six magics match the RTL constants exactly. **The mailbox was never silent.
+The fleet was reading unwritten DDR.** The frame *data* path used the correct
+constant (`host/libmisterplex/ddr_frame_layout.hpp:35`), which is why the logo
+rendered while every mailbox read returned zeros — two divergent bases in one tree.
+
+### What this retracts
+
+- **"PLXD mailbox completely silent / the fabric writes nothing to DDR"** — false.
+- **The livelock RCA's hardware corroboration** (`free_bank_mask=0 swap_pending=1`)
+  — that was a read of unwritten memory. Zeros decode to exactly that state.
+- **The whole SDC-vs-RTL A/B** — both arms would have "measured" silence from an
+  address neither bitstream writes. It could not have produced a valid result in
+  either direction, and would have convicted whichever variable was on trial.
+
+### Live telemetry, corrected instrument
+
+```
+vsync_count 42433 -> 42763 (delta 330)   swap_pending clears 14/20
+free_bank_mask non-zero 14/20            disp_bank transitions 0
+doorbell PLXK 0x2000005C -> 0x2000005C   (static: no frame ever submitted)
+```
+**LIVELOCK_ABSENT.** The predicted latched `swap_pending=1` + `free_bank_mask=0` is
+not present.
+
+### Two further instrument defects found while verifying my own claim
+
+1. **`frames_done[63:48]` is not a swap counter.** It packs `bank_vsync_count`, and
+   `vsync_toggle` flips in **both** arms of the vsync branch
+   (`ddr_frame_store.sv:244` swap, `:246` no-swap). It free-runs at ~60 Hz **with
+   zero frames submitted** — measured at ~67/s while the doorbell never changed.
+   The real swap counter (`:243`) is never published. Anyone who cited "frames_done
+   advancing" as proof the swap chain works measured only that vsync exists.
+2. **`free_bank_mask` is derived from `swap_pending`** in one expression
+   (`:951-953`). "free=0" and "swap=1" are the **same bit reported twice**; citing
+   both as corroboration overstates the evidence by exactly one fact.
+
+I had used both in my own first-pass `LIVELOCK_ABSENT`. Corrected before publishing.
+
+### Why the gate could not catch it — the vacuous-control pattern, mechanically
+
+`tests/unit/test_rtl_invariants.py` had three legs and **all three were circular**:
+
+- `sv_expr_uses_doorbell_offset()` checks the RTL **symbolically** — it proves the
+  source says `DOORBELL_PHYS + 0x128`, never what `DOORBELL_PHYS` evaluates to.
+- `mailbox_base` was derived from the registry's **own PLXS entry**, then used to
+  validate the rest of that same registry.
+- The C++ constants were compared to **hardcoded literals** carrying the same skew.
+
+Registry, header and gate agreed perfectly at `0x3007Fxxx` while the silicon
+answered at `0x300FFxxx`. **A uniform offset error passed every leg**, because the
+one number that reaches the hardware was never evaluated by anything.
+
+### Fixes (all red-proven)
+
+- `mailbox_abi_spec.hpp` — base **derived** from `ddr_frame_layout.hpp`, all seven
+  mailboxes expressed as `kMailboxBase + offset`, plus a `static_assert` against the
+  RTL expression. Literals cannot drift from a base they are computed from.
+- `test_rtl_invariants.py` — new **numeric** check anchoring the registry to
+  `DDR_FRAME_YUV420P_DOORBELL_PHYS`, and a second check that the doorbell equals
+  `PHYS_BASE + 2*stride - 0x1000`. Red-proven twice: skewing the registry → rc=1;
+  using one stride instead of two → rc=1; restored → rc=0. `cpp_const` now resolves
+  `+` so derived forms are checkable.
+- `docs/plx_mailbox_map.json` — addresses corrected; PLXD layout annotated with the
+  vsync-counter and derived-field corrections.
+- `sample_plxd_telemetry.sh` + 3 `tests/hw/` scripts — corrected address; now sample
+  the **doorbell** too, because "disp_bank never toggled" is uninterpretable without
+  it: pinned `disp_bank` is *expected* when nothing was submitted. That case is now
+  **UNSCORED rc=77**, not a FAIL and not a PASS.
+
+`make unit` rc=0 before and after (identical red-proof counts).
+
+### Open
+
+`disp_bank` toggling is still untested — it needs a window with **active playback**,
+not the idle logo. Everything measured here is the idle screen.

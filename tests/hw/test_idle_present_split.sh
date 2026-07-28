@@ -148,8 +148,8 @@ RESTORED=1
 sleep 2
 echo "RESTORED_PRESENT=$(conf_value PRESENT) pid=$(pidof misterplexd 2>/dev/null || echo DEAD)"
 
-PLXD_LO="$(devmem 0x3007F128)"
-PLXD_HI="$(devmem 0x3007F12C)"
+PLXD_LO="$(devmem 0x300FF128)"
+PLXD_HI="$(devmem 0x300FF12C)"
 decode_plxd "$PLXD_HI"
 echo "FPGA_PLXD lo=$PLXD_LO hi=$PLXD_HI free_bank_mask=$PLXD_FREE disp_bank=$PLXD_DISP swap_pending=$PLXD_SWAP frames_done=$PLXD_FRAMES"
 if [ "$ORIG_PRESENT" = "fpga" ] && [ "$PLXD_LO" = "0x504C5844" ] &&

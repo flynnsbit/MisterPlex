@@ -118,9 +118,9 @@ fi
 echo "  ✓ Daemon running (PID $DAEMON_PID)"
 
 # Mailbox state
-PLXS_MAGIC=$(devmem_read $((0x3007F100)))
-PLXF_MAGIC=$(devmem_read $((0x3007F118)))
-PLXD_MAGIC=$(devmem_read $((0x3007F128)))
+PLXS_MAGIC=$(devmem_read $((0x300FF100)))
+PLXF_MAGIC=$(devmem_read $((0x300FF118)))
+PLXD_MAGIC=$(devmem_read $((0x300FF128)))
 echo "  PLXS magic: $PLXS_MAGIC (expect 0x504C5853)"
 echo "  PLXF magic: $PLXF_MAGIC (expect 0x504C5846)"
 echo "  PLXD magic: $PLXD_MAGIC (expect 0x504C5844)"
@@ -161,10 +161,10 @@ echo ""
 echo "━━━ TELEMETRY UNDER LOAD (automated) ━━━"
 
 # Two PLXD reads 2 seconds apart
-PLXD_T0=$(devmem_read $((0x3007F12C)))
+PLXD_T0=$(devmem_read $((0x300FF12C)))
 PLXK_T0=$(devmem_read "$DDR_DOORBELL_DATA")
 sleep 2
-PLXD_T1=$(devmem_read $((0x3007F12C)))
+PLXD_T1=$(devmem_read $((0x300FF12C)))
 PLXK_T1=$(devmem_read "$DDR_DOORBELL_DATA")
 
 echo "  PLXD data t=0: $PLXD_T0"

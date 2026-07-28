@@ -422,10 +422,22 @@ def cpp_const(text: str, name: str) -> int:
 
     def resolve(expr: str) -> int:
         expr = expr.strip()
+        if expr.startswith("(") and expr.endswith(")"):
+            inner = expr[1:-1]
+            if inner.count("(") == inner.count(")"):
+                expr = inner.strip()
         if "|" in expr:
             value = 0
             for part in expr.split("|"):
                 value |= resolve(part)
+            return value
+        # Sums let a header express `kBase + 0x128u` instead of restating a
+        # literal. Restated literals are how the 2026-07-28 mailbox-base skew
+        # survived: the derived form cannot drift from its base.
+        if "+" in expr:
+            value = 0
+            for part in expr.split("+"):
+                value += resolve(part)
             return value
         # Handle namespace::symbol references (e.g. mailbox_abi::kPlxsAddr)
         if "::" in expr:
@@ -792,6 +804,10 @@ def check_mailboxes() -> None:
     # (input_mailbox.hpp, sdram_mailbox.hpp, ddr_bitstream_ring.hpp, fpga_spi.hpp)
     # consume from the spec and haven't drifted.
     spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
+    # kMailboxBase is derived from ddr_frame_layout.hpp; without that text the
+    # resolver cannot evaluate the derived addresses and would read 0.
+    spec_text += "\n" + strip_comments(
+        read(ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"))
     rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
     ddr_fs = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
@@ -800,13 +816,13 @@ def check_mailboxes() -> None:
 
     # --- Verify spec declares authoritative values ---
     spec_entries = {
-        "PLXK": ("kPlxkAddr", "kPlxkMagic", 0x3007F000, 0x504C584B),
-        "PLXS": ("kPlxsAddr", "kPlxsMagic", 0x3007F100, 0x504C5853),
-        "PLXI": ("kPlxiAddr", "kPlxiMagic", 0x3007F108, 0x504C5849),
-        "PLXM": ("kPlxmAddr", "kPlxmMagic", 0x3007F110, 0x504C584D),
-        "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
-        "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
-        "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXK": ("kPlxkAddr", "kPlxkMagic", 0x300FF000, 0x504C584B),
+        "PLXS": ("kPlxsAddr", "kPlxsMagic", 0x300FF100, 0x504C5853),
+        "PLXI": ("kPlxiAddr", "kPlxiMagic", 0x300FF108, 0x504C5849),
+        "PLXM": ("kPlxmAddr", "kPlxmMagic", 0x300FF110, 0x504C584D),
+        "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x300FF118, 0x504C5846),
+        "DIAG": ("kSdramDiagAddr", None, 0x300FF120, None),
+        "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x300FF128, 0x504C5844),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -834,10 +850,10 @@ def check_mailboxes() -> None:
 
     # --- Cross-check RTL against spec for frame-store mailboxes ---
     rtl_cases = [
-        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853, 0x100),
-        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849, 0x108),
-        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D, 0x110),
-        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846, 0x118),
+        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x300FF100, 0x504C5853, 0x100),
+        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x300FF108, 0x504C5849, 0x108),
+        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x300FF110, 0x504C584D, 0x110),
+        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x300FF118, 0x504C5846, 0x118),
     ]
     for magic, rtl_addr, rtl_magic, expected_addr, expected_magic, offset in rtl_cases:
         ra_expr = sv_param_expr(rtl, rtl_addr)
@@ -881,8 +897,8 @@ def check_mailboxes() -> None:
     # --- Cross-check PLXD bank-release against spec ---
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
-    check(plxd_addr == 0x3007F128,
-          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
+    check(plxd_addr == 0x300FF128,
+          f"PLXD bank-release address must be 0x300FF128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
 
@@ -985,6 +1001,44 @@ def check_mailbox_map_collisions() -> None:
     frame_store_rtl = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
     ddram_frame_rd_rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
     mailbox_base = int(next(mb["address"] for mb in mailboxes if mb["name"] == "PLXS"), 16) - 0x100
+
+    # ── The base itself must be checked NUMERICALLY against the RTL. ──────────
+    # 2026-07-28: this check did not exist, and its absence hid a live bug for
+    # the entire life of the project. Every other address check here is either
+    # (a) symbolic — `sv_expr_uses_doorbell_offset` only proves the RTL says
+    # "DOORBELL_PHYS + 0x128", never what DOORBELL_PHYS evaluates to — or
+    # (b) self-referential, because `mailbox_base` is derived from the registry's
+    # own PLXS entry and then used to validate the rest of that same registry.
+    # A uniform offset error therefore passed every leg. The registry, the C++
+    # header and this gate all agreed on 0x3007Fxxx while the silicon answered
+    # at 0x300FFxxx, and no comparison in this file varied the thing it claimed
+    # to test. Anchor to the parameter the instantiation actually passes.
+    layout_params = read(ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh")
+    m = re.search(
+        r"DDR_FRAME_YUV420P_DOORBELL_PHYS\s*=\s*32'h([0-9A-Fa-f_]+)", layout_params)
+    check(m is not None,
+          "cannot locate DDR_FRAME_YUV420P_DOORBELL_PHYS in ddr_frame_layout_params.svh; "
+          "the mailbox base is then unverifiable and this gate must not pass")
+    if m:
+        rtl_doorbell = int(m.group(1).replace("_", ""), 16)
+        check(rtl_doorbell == mailbox_base,
+              f"mailbox base mismatch: RTL DDR_FRAME_YUV420P_DOORBELL_PHYS="
+              f"0x{rtl_doorbell:08X} but docs/plx_mailbox_map.json implies "
+              f"0x{mailbox_base:08X}. These address the same DDR page or nothing "
+              f"works; a uniform skew makes every mailbox read return zeros while "
+              f"the frame data path still renders.")
+        # And the RTL default expression must agree with the override it is given.
+        m_stride = re.search(
+            r"DDR_FRAME_YUV420P_BANK_STRIDE\s*=\s*32'h([0-9A-Fa-f_]+)", layout_params)
+        check(m_stride is not None,
+              "cannot locate DDR_FRAME_YUV420P_BANK_STRIDE; base derivation unverifiable")
+        if m_stride:
+            stride = int(m_stride.group(1).replace("_", ""), 16)
+            derived = 0x30000000 + 2 * stride - 0x1000
+            check(derived == rtl_doorbell,
+                  f"DOORBELL_PHYS 0x{rtl_doorbell:08X} != PHYS_BASE + 2*stride - 0x1000 "
+                  f"= 0x{derived:08X} (stride=0x{stride:X}). Using ONE bank stride "
+                  f"instead of two is exactly the 0x80000 error found on 2026-07-28.")
 
     for mb in mailboxes:
         name = mb["name"]
@@ -1797,7 +1851,7 @@ def check_ddr_bank_handoff_contract() -> None:
 
     print(
         "PASS DDR bank handoff publishes fenced frames and guards same-bank reuse "
-        "(PLXD bank-release ACK at 0x3007F128)"
+        "(PLXD bank-release ACK at 0x300FF128)"
     )
 
 

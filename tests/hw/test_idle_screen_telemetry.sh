@@ -105,9 +105,9 @@ STATE="$(printf '%s' "$TIMELINE" | sed -n 's/.*state=\"\([^\"]*\)\".*/\1/p' | he
 [ -n "$STATE" ] || STATE="unknown"
 echo "TIMELINE state=$STATE"
 
-PLXS_MAGIC=$(devmem_read $((0x3007F100)))
-PLXF_MAGIC=$(devmem_read $((0x3007F118)))
-PLXD_MAGIC=$(devmem_read $((0x3007F128)))
+PLXS_MAGIC=$(devmem_read $((0x300FF100)))
+PLXF_MAGIC=$(devmem_read $((0x300FF118)))
+PLXD_MAGIC=$(devmem_read $((0x300FF128)))
 echo "MAILBOX PLXS=$PLXS_MAGIC PLXF=$PLXF_MAGIC PLXD=$PLXD_MAGIC"
 if [ "$PLXS_MAGIC" != "0x504C5853" ] || [ "$PLXF_MAGIC" != "0x504C5846" ] ||
    [ "$PLXD_MAGIC" != "0x504C5844" ]; then

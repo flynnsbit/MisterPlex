@@ -10,7 +10,7 @@
     {
       "name": "PLXS",
       "purpose": "DDR status (core\u2192HPS)",
-      "address": "0x3007F100",
+      "address": "0x300FF100",
       "magic": "0x504C5853",
       "rtl_file": "rtl/ddr_frame_store.sv",
       "rtl_addr_param": "MAILBOX_PHYS",
@@ -26,7 +26,7 @@
     {
       "name": "PLXI",
       "purpose": "Input command (core\u2192HPS)",
-      "address": "0x3007F108",
+      "address": "0x300FF108",
       "magic": "0x504C5849",
       "rtl_file": "rtl/ddr_frame_store.sv",
       "rtl_addr_param": "INPUT_MAILBOX_PHYS",
@@ -43,7 +43,7 @@
     {
       "name": "PLXM",
       "purpose": "SDRAM memtest (core\u2192HPS)",
-      "address": "0x3007F110",
+      "address": "0x300FF110",
       "magic": "0x504C584D",
       "rtl_file": "rtl/ddr_frame_store.sv",
       "rtl_addr_param": "SDRAM_MAILBOX_PHYS",
@@ -59,7 +59,7 @@
     {
       "name": "PLXF",
       "purpose": "Frame store status (core\u2192HPS)",
-      "address": "0x3007F118",
+      "address": "0x300FF118",
       "magic": "0x504C5846",
       "rtl_file": "rtl/ddr_frame_store.sv",
       "rtl_addr_param": "FRAME_MAILBOX_PHYS",
@@ -76,7 +76,7 @@
     {
       "name": "SDRAM_DIAG",
       "purpose": "SDRAM diagnostic (core\u2192HPS, no magic, raw layout)",
-      "address": "0x3007F120",
+      "address": "0x300FF120",
       "magic": null,
       "rtl_file": "rtl/ddram_frame_rd.sv",
       "rtl_addr_param": "MEMTEST_DIAG_MAILBOX_PHYS",
@@ -90,7 +90,7 @@
     {
       "name": "PLXD",
       "purpose": "Bank-release display-bank ACK (core\u2192HPS)",
-      "address": "0x3007F128",
+      "address": "0x300FF128",
       "magic": "0x504C5844",
       "rtl_file": "rtl/ddr_frame_store.sv",
       "rtl_addr_param": "BANK_MAILBOX_PHYS",
@@ -99,11 +99,11 @@
       "arm_magic_const": null,
       "layout": {
         "31:0": "magic",
-        "33:32": "free_bank_mask[1:0]",
+        "33:32": "free_bank_mask[1:0] - DERIVED from swap_pending/disp_bank in one expression (ddr_frame_store.sv:951-953); not independent evidence",
         "34": "disp_bank",
         "35": "swap_pending",
         "47:36": "reserved",
-        "63:48": "frames_done[15:0]"
+        "63:48": "bank_vsync_count[15:0] - FREE-RUNNING VSYNC COUNTER (historically mislabelled frames_done); advances ~60/s even with zero frames submitted; the real swap counter is ddr_frame_store.sv:243 and is NOT published here"
       },
       "_note": "ARM constants pending w-osd commit alignment to PLXD"
     },
