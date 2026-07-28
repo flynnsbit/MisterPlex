@@ -435,3 +435,97 @@ python3 scripts/score_idle_screen.py --device /dev/video0 \
   --host 192.168.1.183 --expect-chevron --json-out screen.json
 # 0 = content (+chevron)   1 = genuinely black   2 = UNSCORED   77 = no device
 ```
+
+---
+
+## 13. UPDATE — W-FIT deploy + post-deploy capture (2026-07-28 13:10–13:22)
+
+### 13.1 W-FIT deploy confirmed
+
+W-FIT deployed `fb4bad849ad2db782a5004ce5a3471ce` (frame-store livelock fix) and verified on-device:
+- `CORENAME=Plex → MENU → MENU → Plex` — FPGA actually reconfigured (not stale)
+- `on-device md5sum /media/fat/_Utility/Plex.rbf = fb4bad849ad2db782a5004ce5a3471ce`
+
+### 13.2 W-FIT register telemetry — CRITICAL finding: fabric writes NOTHING to DDR
+
+After deploy, W-FIT found `0x3007F12C frozen at 0xA086000C, delta = 0`.
+
+W-FIT poked all four mailbox words with `0xDEADBEEF` / `0xA5A5A5A5` and waited 6s each time. ALL FOUR stayed poisoned — the fabric wrote **nothing** to DDR. Both PLXS and PLXD are completely silent. The pre-deploy advancing counter was genuine (fabric-written, confirmed by `host/libmisterplex/mailbox_abi_spec.hpp:120` declaring PLXD `direction="fpga_to_arm"`) but the new build produces zero writes.
+
+**W-FIT's two candidate explanations:**
+- **(A) DDR write path dead, video timing alive** → HDMI signal present (black or logo)
+- **(B) `clk_ddr`/`reset_ddr` stuck, or video timing dead** → NO_SIGNAL
+
+### 13.3 Post-deploy capture result
+
+**Capture 1 (post-deploy main clip):**
+```
+Scope: 18 frames, t=0..85s, 90s clip, started 13:11:36
+MiSTer host_alive=False (standing routing issue from this host; W-FIT had working SSH)
+ALL 18 frames: BLACK_SIGNAL  luma=7.000  std=0.000  sha=7bc7f229  unique_colors=1
+delta=0.0 on all frames (byte-identical consecutive frames)
+orange_px=0 in all frames
+```
+
+**Capture 2 (bounce-probe, 60s at 4fps = 240 frames):**
+```
+Scope: 240 frames, t=0..60s, 4fps extraction, started 13:18:36
+ALL 240 frames: BLACK_SIGNAL  luma=7.000  std=0.000  sha=7bc7f229  unique_colors=1
+NO_SIGNAL transitions: 0
+CONTENT_PRESENT frames: 0
+```
+
+### 13.4 Why these results are AMBIGUOUS (do not skip this section)
+
+All frames are flat RGB(7,7,7) — IDENTICAL to:
+1. MiSTer powered off (MS2109 flat noise, documented in section 11)
+2. The pre-deploy `00eebd5e` black-screen RBF output
+3. A valid-but-black HDMI signal from the new `fb4bad84` (if timing alive but nothing to show)
+
+The `--host 192.168.1.183` probe returns `False` from THIS host due to the standing routing issue — this does NOT mean MiSTer is offline. W-FIT was successfully doing SSH+devmem during the capture window.
+
+**The sha=7bc7f229 is DIFFERENT from prior clips' sha=2358782e**, but this is because the earlier sha was computed over MJPEG-compressed bytes while the current sha is over decoded RGB numpy arrays. These are incomparable. When I extracted a frame from the old clip using the same pipeline, it ALSO gave sha=7bc7f229 — confirming identical content, not a different source.
+
+### 13.5 Bounce-probe discriminator — INCONCLUSIVE (bounce timing unknown)
+
+I started a 60s recording and asked W-FIT to issue a menu bounce during the window. A live FPGA during reconfiguration produces a brief NO_SIGNAL gap in HDMI (I/Os tri-state during bitstream load). If the bounce happened inside 13:18:36–13:19:36 and HDMI was alive, I'd see a BLACK→NO_SIGNAL→BLACK transition.
+
+**No transitions detected in 240 frames.** This is inconclusive because:
+1. W-FIT may not have bounced during the 60s window (likely — timing is tight)
+2. OR HDMI is dead (option B confirmed by absence of discriminator transition)
+3. OR HDMI was already dead-looking before the bounce, so the bounce added no visible change
+
+**OUTSTANDING: W-FIT asked to confirm whether they issued a bounce during 13:18:36–13:19:36.**
+
+### 13.6 Important correction to section 12.1 (12:09 content claim)
+
+Section 12.1 states: "At 12:09 with RBF `fb4bad84` resident — 14928 px Plex-orange detected."
+
+However: W-FIT's register telemetry confirmed that at the start of the current session, the **file** on disk was `fb4bad84` but the **FPGA fabric** was loaded with `00eebd5e`. Since the prior session (12:09) did not explicitly verify what was in fabric (only what was on disk), the 14928-px chevron at 12:09 was likely rendered by `00eebd5e` via timed-bank-fallback — **not** by `fb4bad84`.
+
+This means we have **NO confirmed evidence** that `fb4bad84` outputs displayable content. The 12:09 measurement must be treated as `00eebd5e` evidence.
+
+### 13.7 Summary of what W-FIT's deploy tells us (what we can and cannot claim)
+
+**Can claim:**
+- `fb4bad84` FPGA fabric writes NOTHING to the PLXD/PLXS DDR mailboxes (6s+ poison test)
+- The livelock fix (`||!slot_keep`) is either not in this build or has no effect on mailbox writes
+- There is NO timed-bank-fallback content visible in the post-deploy captures (unlike pre-deploy)
+
+**Cannot claim:**
+- Whether HDMI output is alive or dead (signal is flat RGB(7,7,7) = ambiguous)
+- Whether `fb4bad84` has the frame-store fix working
+- Whether the absence of mailbox writes is a `clk_ddr` issue (option B) or just the DDR write path being broken while video timing is alive (option A)
+
+### 13.8 Recommended next steps (post-deploy)
+
+1. **W-FIT: confirm bounce timing** — Did you bounce during 13:18:36–13:19:36? If not, please issue one bounce and tell me the exact time. I'll start a 30s clip immediately.
+
+2. **Alternative discriminator:** W-FIT can pipe misterplexd's log. If it says `idle screen painted (mode=0)` but the fabric still outputs all-black, that's strong evidence for option B (scanout dead, ARM writes are lost).
+
+3. **If W-FIT confirms bounce AFTER 13:19:36:** I need to start another capture for the discriminator. Standing ready — just say the word.
+
+4. **Post-bounce scoring:** Once I have a capture that spans a bounce, I can determine:
+   - NO_SIGNAL seen briefly → HDMI alive → option A (DDR write path dead, timing OK)
+   - No NO_SIGNAL ever → HDMI already dead → option B (timing dead or clk_ddr stuck)
+
