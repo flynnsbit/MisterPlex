@@ -15,7 +15,8 @@
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
-    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault."
+    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
+    "LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY": "Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

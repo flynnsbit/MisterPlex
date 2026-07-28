@@ -2,6 +2,7 @@
 
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
@@ -1911,6 +1912,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int rawH = ddrGeometry.coded_height;
     const int rawDisplayW = ddrGeometry.display_width;
     const int rawDisplayH = ddrGeometry.display_height;
+    LastFrameLatch lastFrameLatch;
 
     char scale[64];
     std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
@@ -2548,6 +2550,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         ddrBank_ ^= 1;
                     if (!ok)
                         log("media: DDR YUV420p F1 unavailable: " + fpga_.lastError());
+                    else if (idleMode() == IdleMode::LastFrame)
+                        lastFrameLatch.remember(txFrame, txBytes, ddrGeometry);
                 }
                 if (!ok && videoFmt != RawVideoFormat::Yuv420p) {
                     log("media: non-YUV F1 frame refused before send; frame store requires DDR "
@@ -2897,9 +2901,33 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         else
             onProgress_("stopped", 0, durationMs);
     }
-    // The frame store latches the last frame written; without this the final frame
-    // of the video stays on screen until something else paints over it.
-    paintIdle();
+    if (idleMode() == IdleMode::LastFrame) {
+        bool latched = false;
+        if (lastFrameLatch.haveFrame()) {
+            std::lock_guard<std::mutex> lk(presentMu_);
+            if (!fpga_.ok() && presentMode_ != "none" && fpga_.open())
+                useDdrF1_ = true;
+            if (fpga_.ok() && useDdrF1_) {
+                latched = lastFrameLatch.publishToBothBanks(
+                    [this](const uint8_t* data, size_t len, const DdrFrameGeometry& geometry,
+                           int bank) {
+                        return fpga_.sendYuv420pFrameDdr(data, len, geometry, bank);
+                    },
+                    ddrBank_);
+            }
+        }
+        if (latched) {
+            const DdrFrameGeometry& g = lastFrameLatch.geometry();
+            log("media: LastFrame idle latched complete DDR frame geometry=" +
+                std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height));
+        } else {
+            log("media: LastFrame idle requested but no complete DDR frame was available to latch");
+        }
+    } else {
+        // The frame store latches the last frame written; without this the final frame
+        // of the video stays on screen until something else paints over it.
+        paintIdle();
+    }
     startIdle();
 
     log("media: session end frames=" + std::to_string(frameIndex) +
