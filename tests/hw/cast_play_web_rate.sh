@@ -4,6 +4,7 @@
 # would invalidate that run, so each run is bracketed by a daemon identity probe
 # (pid + /proc start ticks). Runs whose daemon identity changed are reported as
 # CONFOUNDED and excluded from the denominator instead of being scored.
+set -o pipefail
 N=${N:-5}; LOG=${LOG:-build/cast_rate.log}; : > "$LOG"
 HOST=${MISTER_HOST:-192.168.1.183}
 export PLAYWRIGHT_MODULE=${PLAYWRIGHT_MODULE:-/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/hw/e2e/node_modules/playwright}

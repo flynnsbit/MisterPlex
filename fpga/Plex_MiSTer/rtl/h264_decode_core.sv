@@ -641,7 +641,7 @@ module h264_decode_core #(
         .coeff_token_table(3'd0),
         .max_coeff(5'd16),
         .bit_offset_start(p16_res_bit_offset_r),
-        .bit_len(10'd512),
+        .bit_len(rbsp_bit_len),
         .rbsp(rbsp_byte),
         .busy(cavlc_busy),
         .done(cavlc_done),
