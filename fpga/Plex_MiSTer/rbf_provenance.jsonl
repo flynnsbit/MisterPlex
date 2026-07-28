@@ -1,0 +1,5 @@
+# Plex.rbf provenance ledger (JSON Lines), appended by scripts/build_rbf_remote.sh.
+# One entry per fitted bitstream: md5/sha256 of the RBF plus the BUILD_ID baked
+# into its CONF_STR V entry. scripts/rbf_provenance.py resolves an md5 found on a
+# device back to the source that produced it; an md5 that is absent here is
+# reported as an untraceable bitstream and fails, by design.

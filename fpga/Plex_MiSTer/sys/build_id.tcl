@@ -2,6 +2,30 @@
 # Build TimeStamp Verilog Module
 # Jeff Wiencrot - 8/1/2011
 # Sorgelig - 02/11/2019
+# Reads DATE/GIT/SRC written by scripts/gen_build_stamp.py. The remote fit
+# rsyncs only this project directory into a container, so `git` here sees no
+# repository and would stamp every build "nogit"; the stamp is generated on the
+# host, where the repository is visible, and travels with the project.
+proc readBuildStamp {} {
+	set stamp [dict create]
+	set stampFile "build_id_stamp.txt"
+	if {![file exists $stampFile]} {
+		return $stamp
+	}
+	set fh [open $stampFile "r"]
+	set text [read $fh]
+	close $fh
+	foreach line [split $text "\n"] {
+		set line [string trim $line]
+		if {$line eq "" || [string index $line 0] eq "#"} { continue }
+		set eq [string first "=" $line]
+		if {$eq < 1} { continue }
+		dict set stamp [string range $line 0 [expr {$eq - 1}]] \
+			[string range $line [expr {$eq + 1}] end]
+	}
+	return $stamp
+}
+
 proc generateBuildID_Verilog {} {
 
 	# Get the timestamp (see: http://www.altera.com/support/examples/tcl/tcl-date-time-stamp.html)
@@ -15,7 +39,25 @@ proc generateBuildID_Verilog {} {
 			append gitString "D"
 		}
 	}
-	set buildData "`define BUILD_DATE \"$dateString\"\n`define BUILD_ID \"$dateString-$gitString\""
+	set idString "$dateString-$gitString"
+
+	# The host-generated stamp wins when present: it carries the real git
+	# identity plus SRC, a digest of the fit inputs. SRC is what makes the id
+	# honest — it changes whenever the fitted sources change, even if the git
+	# identity is missing, stale, or reused.
+	set stamp [readBuildStamp]
+	if {[dict exists $stamp BUILD_ID] && [dict get $stamp BUILD_ID] ne ""} {
+		set idString [dict get $stamp BUILD_ID]
+		if {[dict exists $stamp DATE] && [dict get $stamp DATE] ne ""} {
+			set dateString [dict get $stamp DATE]
+		}
+		post_message "Build stamp: build_id_stamp.txt -> $idString"
+	} else {
+		post_message -type warning \
+			"No build_id_stamp.txt: BUILD_ID falls back to \"$idString\"; run scripts/gen_build_stamp.py before the fit for a source-derived identity."
+	}
+
+	set buildData "`define BUILD_DATE \"$dateString\"\n`define BUILD_ID \"$idString\""
 
 	# Create a Verilog file for output
 	set outputFileName "build_id.v"

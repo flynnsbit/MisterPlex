@@ -34,3 +34,8 @@ remote_out/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+
+# Generated per-fit build identity (see scripts/gen_build_stamp.py); never committed
+# so a stale stamp cannot outlive the source it claims to identify.
+fpga/Plex_MiSTer/build_id_stamp.txt
+fpga/Plex_MiSTer/build_id.v
