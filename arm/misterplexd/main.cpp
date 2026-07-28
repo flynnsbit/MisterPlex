@@ -442,6 +442,23 @@ int main(int argc, char** argv) {
         osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
         player.setOsdControl(osdControl);
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
+        if (!osdControl) {
+            // OSD_CONTROL=0 does not merely skip one setting: startOsdPoll()
+            // returns immediately, so the daemon never reads the OSD word at
+            // all. Every menu item the core advertises as live — Idle screen,
+            // Video delay, A/V resync, Audio clock trim, Content resolution —
+            // silently does nothing when the user turns it, with no error
+            // anywhere. It was introduced as a workaround for a saved OSD word
+            // overriding IDLE_SCREEN, which shouldApplyOsdIdle() now handles by
+            // treating the first word seen as a baseline. Say so loudly rather
+            // than leaving a dead menu to be rediscovered from the screen.
+            std::fprintf(stderr,
+                         "misterplexd: WARNING OSD_CONTROL=0 disables the OSD poll thread; "
+                         "Idle screen, Video delay, A/V resync, Audio clock trim and Content "
+                         "resolution will not respond to the OSD menu. The shipped default is "
+                         "OSD_CONTROL=1; the stale-saved-word problem it worked around is fixed "
+                         "in shouldApplyOsdIdle().\n");
+        }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
     }
