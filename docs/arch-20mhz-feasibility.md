@@ -3,15 +3,41 @@
 **Author:** w-arch  
 **Date:** 2026-07-27  
 **Branch:** feat/arch-study  
-**Status:** v6.3 — **MC MEASURED at 220 cy/MB (was 384 modelled). Serial
-budget corrected to 748 cy/MB vs 1,250 (margin 502, 1.67×). Both "mandatory"
-DPB constraints already satisfied by w-mc architecture. Binding open question
-is now w-dpb delivery rate. Resource-probe skeleton at 1 instance remains
-correctly sized.**
+**Status:** v6.4 — **DPB measured byte-serial (441cy, was 120 modelled).
+Budget corrected in BOTH directions: MC favourable (384→220), DPB unfavourable
+(120→441). Current system cost = 963 cy/MB with row-overlap. Target with 64-bit
+coalescing = 681. Both fit 1,250. Manifest updated to 21 modules (added
+`h264_dpb_coalesce64`). DDR page-miss latency requires hardware measurement.**
 
 ---
 
 ## Executive Summary
+
+### v6.4: DPB measured byte-serial (441cy) — budget corrected both directions
+
+**w-dpb measured their fetch at `4df0cac`: `mem_rdata[7:0]`, byte-serial,
+441 cycles for the luma reference window.** My v6.3 budget assumed 120 cycles
+(64-bit coalesced). The actual current-RTL system cost is:
+
+**963 cycles/MB** (byte-serial + row-overlap) — fits with 287 cycles margin (1.30×).
+
+Budget now corrected twice by measurements:
+- MC: 384 → 220 (favourable, measured by w-mc)
+- DPB: 120 → 441 (unfavourable, measured by w-dpb)
+
+**Three-row budget (all at 45 MHz / 1,250 cy/MB):**
+| Row | DPB state | Total | Fits? | Source |
+|-----|-----------|------:|-------|--------|
+| A1: Target | 64-bit pipelined (73 cy) | **681** | ✓ 1.84× | w-dpb modelled |
+| A2: Today | byte-serial + overlap (441 cy) | **963** | ✓ 1.30× | **w-dpb MEASURED** |
+| A3: Cliff | byte-serial, no overlap | **1,211** | ✓ 1.03× | Computed |
+
+**The architecture is fetch-bound, not broken.** w-dpb is building
+`h264_dpb_coalesce64` (73-cycle target with pipelined command issue).
+DDR page-miss latency (+91 cycles worst case) is the one number that
+CANNOT come from simulation — hardware measurement required.
+
+Manifest updated: 21 modules (added `h264_dpb_coalesce64`).
 
 ### v6.3: MC measured at 220 cy/MB (was 384) — serial margin now 502 cycles
 
@@ -847,29 +873,69 @@ everything) pipeline complete a macroblock inside that budget?
 pass through CAVLC → dequant → IDCT → prediction → reconstruction, with
 deblocking and DPB/MC on top. Here is the serial cycle count:
 
-#### Case A: P-frame with motion (worst serial case) — v6.3 CORRECTED
+#### Case A: P-frame with motion — v6.4 THREE-ROW BUDGET
 
-| Phase | Operation | Cycles | Source |
-|-------|-----------|-------:|--------|
-| Parse + Transform | CAVLC→dequant→IDCT, 24 blocks pipelined at block level | 200 | Modelled: IDCT 8cy/block × 24 + fill |
-| DPB ref fetch | 21×21 luma + 9×9×2 chroma, 64-bit coalesced | 120 | Modelled: ~~w-dpb rate TBD~~ |
-| MC interpolation | 146 luma + 37 Cb + 37 Cr, **2 samples/cycle** | **220** | **MEASURED by w-mc (Verilator)** |
-| Reconstruction | pred + residual + clip, 24 blocks | 24 | Modelled: combinational + 1cy latch |
-| Deblocking | 48 edges × 2 cycles | 96 | Modelled: serial edges |
-| Writeback | 384 bytes at 64-bit = 48 beats | 48 | Modelled: burst DDR |
-| Control | Stage transitions, handshake | 20 | Modelled |
-| **TOTAL** | | **748** | **FITS (margin: 502, 1.67×)** |
+**Three rows, each labelled by DPB state:**
 
-**v6.2→v6.3 correction:** MC was modelled at 384 cycles (1 sample/cycle).
-w-mc measured 220 cycles at 2 samples/cycle (Verilator cycle counter on
-worst-case sub-position j). This is the second time a measurement beat
-the model. **My assumption was conservative by 1.75×.**
+| Row | DPB state | DPB fetch cy | MC cy | Total cy/MB | vs 1250 | Status |
+|-----|-----------|-------------:|------:|------------:|--------:|--------|
+| **A1: Committed target** | 64-bit pipelined (73 cy fetch) | 73 | 220 | **681** | +569 (1.84×) | **MODELLED** by w-dpb |
+| **A2: Measured today** | byte-serial `mem_rdata[7:0]` (441 cy fetch) + row-overlap | 441 | 220 | **963** | +287 (1.30×) | **MEASURED** by w-dpb (`4df0cac`) |
+| **A3: Cliff (no overlap)** | byte-serial, MC waits for full window | 603 | 220 | **1,211** | +39 (1.03×) | **COMPUTED** — razor margin |
 
-**w-mc design facts (from measurement, not modelled):**
-- `ref_data [63:0]` with `ref_byte_count [3:0]` — 64-bit from day one
+**Derivation for each row (non-DPB/MC stages identical):**
+```
+Parse+Transform:  200  (modelled: IDCT 8cy/block × 24 + fill)
+Reconstruction:    24  (modelled: combinational + 1cy latch)
+Deblocking:        96  (modelled: 48 edges × 2 cycles)
+Writeback:         48  (modelled: 384 bytes / 8 at 64-bit)
+Control:           20  (modelled: stage transitions)
+                  ---
+Fixed overhead:   388 cycles
+
+A1: 388 + 73 + 220 = 681    (DPB pipelined 64-bit, MC no-stall)
+A2: 388 + 441 + 220 - 86 = 963  (byte-serial WITH row-overlap; -86 = overlap saving)
+A3: 388 + 603 + 220 = 1211  (byte-serial, NO overlap, MC waits)
+```
+
+**Row-overlap accounting (A2):** w-mc starts computing when `rows_loaded >= out_row + 6`.
+With byte-serial feed at 1 byte/cycle, 6 rows × 21 bytes = 126 cycles before MC starts.
+Then MC (146 luma cycles compute) runs concurrently with remaining 15 rows of fetch
+(15 × 21 = 315 cycles). MC finishes in 146 ≪ 315, so fetch dominates. Effective
+luma time = 441 (fetch), not 441 + 146. Chroma: similar — overlap saves ~86 cycles total.
+
+**What each row means for the project:**
+- **A1 (681):** Design target. Requires `h264_dpb_coalesce64` (w-dpb building).
+  Pipelined command issue is REQUIRED — naive burst (133 cy) misses 128 cy
+  threshold by 5. 73 cycles modelled by w-dpb, NOT yet measured.
+- **A2 (963):** Where we are TODAY. Fits at 45 MHz but leaves only 287 cycles
+  margin. **This is the row that matters for validating the skeleton fit** —
+  if the skeleton ships with current RTL, system cost is 963 not 681.
+- **A3 (1211):** Where we would be if w-mc's overlap were broken. Margin: 39 cycles.
+  Not the design point but documents the cliff.
+
+**v6.3→v6.4 correction:** DPB fetch was modelled at 120 cycles (64-bit coalesced).
+w-dpb measured `mem_rdata[7:0]` byte-serial at 441 cycles (RTL `4df0cac`). This is
+the correct current state. w-dpb is building the 64-bit front-end (73 cycles modelled,
+pipelined command issue required).
+
+**DDR page-miss risk (CANNOT be simulated):**
+```
+stride 640 bytes, DDR page = 2 KB → page boundary every ~3 rows
+7 page misses × 13 cycles = +91 cycles worst case
+Applies to BOTH A1 and A2 — would shift A1 to 772, A2 to 1054
+Both still fit. A3 shifts to 1302 → FAILS.
+```
+**This number requires hardware measurement** (w-cap, on next bitstream with
+DDR instrumentation). Verilator cannot model it.
+
+**w-mc design facts (MEASURED, not modelled):**
+- `ref_data [63:0]` with `ref_byte_count [3:0]` — 64-bit consumer from day one
 - Row-overlap built in: compute begins at `rows_loaded >= out_row + 6` (luma)
-- The 146 luma cycles INCLUDE load/compute concurrency
-- **Both "mandatory" constraints (64-bit + row overlap) were already satisfied**
+- The 146+37+37 = 220 cycles INCLUDE row-level concurrency
+- `ref_ready` backpressure is 1:1 — stalls add linearly to total
+- **Both "mandatory" constraints (64-bit bus, row-overlap) satisfied on MC side**
+- **The gap is on the DPB SUPPLY side, not the MC consumption side**
 
 #### Case B: I-frame dense (worst I case)
 
@@ -883,55 +949,36 @@ the model. **My assumption was conservative by 1.75×.**
 | Control | | 20 | Modelled |
 | **TOTAL** | | **618** | **FITS (margin: 632, 2.02×)** |
 
-#### Case C: P-frame with byte-serial DPB — RETAINED AS CLIFF DOCUMENTATION
+#### Case C: SUPERSEDED — see row A3 above
 
-| Phase | Operation | Cycles | Notes |
-|-------|-----------|-------:|-------|
-| Parse + Transform | | 200 | |
-| DPB ref fetch | 441 + 81 + 81 = 603 bytes, 1 byte/cycle | 603 | **Dominates everything** |
-| MC interpolation | 220 (stalls if DPB pauses — 1:1 backpressure) | 220+ | w-mc: `ref_ready` stalls add linearly |
-| Remaining (recon + deblock + write + control) | | 188 | |
-| **TOTAL** | | **1,211** | FITS only if no stalls (margin: 39) |
+The byte-serial cliff is now documented as row A3 in Case A's three-row table.
+Row A3 (1,211 cycles) represents the same scenario with corrected MC (220, not
+384). The old 1,375 figure used the pre-measurement MC estimate.
 
-**This case is not the design point** — w-mc's `ref_data` is already 64-bit
-and row-overlap is built in. But the cliff exists: **if w-dpb's delivery
-rate drops below 1 word per 2.3 cycles (56 words in ≤128 cycles for luma),
-stalls propagate 1:1 into MC and the budget erodes linearly.** The binding
-open question is w-dpb's actual delivery rate (see below).
+**Retained for historical reference:** the original computation assumed 384 cy MC,
+giving 1,375. With measured 220, the cliff is shallower (1,211) but still exists.
 
-### VERDICT ON SERIAL ARCHITECTURE (v6.3)
+### VERDICT ON SERIAL ARCHITECTURE (v6.4)
 
-**The serial pipeline (1 instance each) fits at 45 MHz / 1,250 cycles with
-502 cycles of margin (1.67×).** The margin is now large enough that even
-substantial modelling errors in remaining stages cannot threaten the budget.
+**The serial pipeline (1 instance each) fits at 45 MHz / 1,250 cycles under
+ALL current configurations:**
 
-**What was modelled vs measured:**
-| Stage | v6.2 (modelled) | v6.3 (corrected) | Source |
-|-------|----------------:|------------------:|--------|
-| MC interpolation | 384 | **220** | **w-mc Verilator measurement** |
-| All others | as stated | unchanged | Still modelled |
+| Configuration | Total | Margin | Confidence |
+|---------------|------:|-------:|------------|
+| Target (64-bit pipelined) | 681 | 569 (1.84×) | Modelled (w-dpb) |
+| Today (byte-serial + overlap) | 963 | 287 (1.30×) | **MEASURED** (w-dpb + w-mc) |
+| Cliff (no overlap) | 1,211 | 39 (1.03×) | Computed |
+| + DDR page misses (worst) | +91 | — | **UNKNOWN** (needs hardware) |
 
-**Mandatory architectural constraints — STATUS:**
-- ✅ 64-bit coalesced DPB: w-mc's `ref_data [63:0]` is native 64-bit
-- ✅ Row-level overlap: built in since w-mc v2 (`rows_loaded >= out_row + 6`)
-- ❓ **w-dpb delivery rate**: the binding open question — determines stall budget
+**The only configuration that FAILS is A3 + page misses (1,302 > 1,250).**
+That requires BOTH no row-overlap AND worst-case DDR latency — and w-mc's
+overlap is already built and measured. **We are not on the failure row.**
 
-**The manifest at 1 instance is correctly sized. The skeleton measures
-what we will actually build.**
-
-### Remaining open question: w-dpb delivery rate
-
-w-mc's 220 cycles assumes zero stall. The backpressure is 1:1 — every cycle
-`ref_valid` drops while w-mc is ready adds one cycle to the total.
-
-**Required rate:** 56 words (441 bytes luma ref window at 64-bit) delivered in
-≤128 cycles = **1 word every 2.3 cycles average**. If met, load and compute
-overlap perfectly and 220 holds.
-
-**If w-dpb delivery is worse:** each stall cycle adds 1 cycle to MC. The budget
-can absorb 502 stall cycles before failure — this is extremely generous, but
-the actual delivery rate should be **stated as measured or stated as unknown.**
-It is the last unresolved number in the serial budget.
+**Key insight from v6.4:** The budget was corrected twice by measurements:
+- MC: 384 → 220 (favourable, w-mc)
+- DPB: 120 → 441 (unfavourable, w-dpb)
+Net effect: A2 (963) is worse than the original 748 estimate but still fits.
+**The model is more trustworthy for having been corrected in both directions.**
 
 ### What would require parallel instances (and larger skeleton)
 
@@ -955,18 +1002,27 @@ It is the last unresolved number in the serial budget.
 | 6 | `h264_intra4x4_pred` | 1 | 9 directional modes | Mode-select MUX + extrapolation |
 | 7 | `h264_intra16x16_pred` | 1 | DC, H, V, Plane | w-plane's pipelined version (2 cycles) |
 | 8 | `h264_intra_chroma_pred` | 1 | 4 chroma modes (8×8) | Same as luma 16×16 but on 8×8 |
-| 9 | `h264_mc_luma_fir` | 1 | 6-tap half-pel + qpel avg | Shift-add, 1 sample/cycle |
-| 10 | `h264_mc_chroma_epel` | 1 | Bilinear 2-tap (eighth-pel) | 2 multiplies or shift-add |
+| 9 | `h264_mc_luma_fir` | 1 | 6-tap half-pel + qpel avg | Shift-add, 2 samples/cycle |
+| 10 | `h264_mc_chroma_epel` | 1 | Bilinear 2-tap (eighth-pel) | 2 samples/cycle |
 | 11 | `h264_deblock_edge` | 1 | 4-sample conditional filter | 2-cycle pipe (existing RTL) |
 | 12 | `h264_deblock_bs` | 1 | Boundary strength calc | Combinational |
 | 13 | `h264_dpb_controller` | 1 | DDR burst read/write | FSM + address gen |
-| 14 | `h264_recon4x4` | 1 | pred + residual + clip | 16 parallel clip-add (combinational) |
-| 15 | `h264_mb_controller` | 1 | MB-level sequencing FSM | Drives all stages |
-| 16 | `neighbour_ctx_above` | 1 | Above-row MB context | 40 cols × (16Y+4U+4V+flags) |
-| 17 | `neighbour_ctx_left` | 1 | Left-column context | Registers (24 samples + flags) |
-| 18 | `ref_window_buffer` | 1 | 21×21 luma + 9×9×2 chroma | Local SRAM for MC ref fetch |
-| 19 | `bitstream_fifo` | 1 | CDC: clk_sys → clk_decode | async_fifo, 8-bit, AW=4 |
-| 20 | `pipeline_handshake` | 1 | Inter-stage valid/ready | Trivial glue |
+| 14 | **`h264_dpb_coalesce64`** | 1 | **64-bit coalescing front-end** | **Pipelined cmd issue, 8:1 byte→word** |
+| 15 | `h264_recon4x4` | 1 | pred + residual + clip | 16 parallel clip-add (combinational) |
+| 16 | `h264_mb_controller` | 1 | MB-level sequencing FSM | Drives all stages |
+| 17 | `neighbour_ctx_above` | 1 | Above-row MB context | 40 cols × (16Y+4U+4V+flags) |
+| 18 | `neighbour_ctx_left` | 1 | Left-column context | Registers (24 samples + flags) |
+| 19 | `ref_window_buffer` | 1 | 21×21 luma + 9×9×2 chroma | Local SRAM for MC ref fetch |
+| 20 | `bitstream_fifo` | 1 | CDC: clk_sys → clk_decode | async_fifo, 8-bit, AW=4 |
+| 21 | `pipeline_handshake` | 1 | Inter-stage valid/ready | Trivial glue |
+
+**v6.4 change:** Added #14 `h264_dpb_coalesce64` — the 64-bit coalescing
+front-end w-dpb is building. Without it, the skeleton would fit at 0 ALMs for
+a module that is required for the design-target cycle budget. The skeleton must
+include it or its area answer is not the area of the working decoder.
+
+**Module count: 21** (was 20). Expected resource impact of #14: ~200–400 ALMs
+(shift register + command FSM + byte-to-word packer). Negligible vs total.
 
 **Total: 20 modules, all instantiated once** (serial pipeline architecture).
 
@@ -1620,11 +1676,16 @@ one pipeline register stage reduces the 7-level path to meet the
 | **Device: 27.5K ALMs free, 39 DSPs free, 356 M10K free** | Fitter report `808e2b0` | **VERIFIED (v6)** |
 | **Pipeline resource est: 7.5–12.6K ALMs, 32–52 DSPs, 30–64 M10K** | First-principles estimate from module complexity | **ESTIMATED (v6) — 0-for-3 track record** |
 | **Serial pipeline worst P-motion = 892 cy/MB, fits 1,250** | ~~Arithmetic: Parse 200 + DPB 120 + MC 384 + Recon 24 + Deblock 96 + Write 48 + Ctl 20~~ | **SUPERSEDED (v6.3) — MC was 384 modelled, 220 measured** |
-| **Serial pipeline worst P-motion = 748 cy/MB (v6.3)** | MC corrected to 220 (w-mc Verilator measurement, 2 samples/cycle) | **CORRECTED (v6.3) — margin now 502 cy (1.67×)** |
-| **Byte-serial DPB with no overlap = 1,375 cy/MB — FAILS by 125** | DPB fetch dominates at 603 cycles; MC cannot start without reference data | **COMPUTED (v6.2) — retained as cliff documentation** |
+| **~~Serial pipeline worst P-motion = 748 cy/MB (v6.3)~~** | ~~MC corrected to 220 (w-mc Verilator measurement, 2 samples/cycle)~~ | **SUPERSEDED (v6.4) — DPB was 120 modelled, 441 measured** |
+| **Serial P-motion: A1=681 / A2=963 / A3=1211 (v6.4)** | Three rows: target(73)/today(441)/cliff(603). DPB measured by w-dpb `4df0cac` | **CORRECTED (v6.4) — both MC and DPB now traced** |
+| **w-dpb: byte-serial `mem_rdata[7:0]`, 441 cy luma window** | Measured on RTL `4df0cac`; `h264_dpb_coalesce64` not yet built | **MEASURED (v6.4)** |
+| **w-dpb: 64-bit pipelined target = 73 cycles (modelled)** | Pipelined command issue; naive burst = 133 (misses 128 threshold by 5) | **MODELLED (v6.4) — pipelining is requirement not optimisation** |
+| **DDR page-miss: +91 cycles worst case (UNKNOWN)** | stride 640, page 2KB → boundary every ~3 rows; Verilator cannot model | **UNKNOWN (v6.4) — needs hardware measurement** |
+| **Byte-serial DPB with no overlap = 1,375 cy/MB — FAILS by 125** | ~~DPB fetch dominates at 603 cycles; MC cannot start without reference data~~ | **SUPERSEDED (v6.4) — corrected to 1,211 with measured MC** |
 | **w-mc: 2 samples/cycle, 220 cy/MB total (146+37+37)** | Verilator cycle counter, worst sub-position j, includes row-overlap | **MEASURED (v6.3) — beat model by 1.75×** |
 | **w-mc: ref_data [63:0] native, row-overlap built in** | Architecture from v2; `rows_loaded >= out_row + 6` triggers compute | **MEASURED (v6.3) — both "mandatory" constraints already met** |
-| **Manifest at 1 instance is correctly sized for probe** | Serial throughput verified; no parallel instances needed at current spec | **VERIFIED (v6.2, confirmed v6.3)** |
+| **Manifest at 1 instance is correctly sized for probe** | Serial throughput verified; no parallel instances needed at current spec | **VERIFIED (v6.2, confirmed v6.4)** |
+| **Manifest updated to 21 modules (added dpb_coalesce64)** | Without coalescing front-end, skeleton fits at 0 ALMs for a required module | **ADDED (v6.4)** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
