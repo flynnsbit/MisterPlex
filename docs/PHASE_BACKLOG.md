@@ -246,6 +246,15 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
 - [x] G-IDLE2b **`Screensaver` idle mode PROVEN (2026-07-28)** — two time-separated captures differ by **7,656 / 299,520 pixels**;
   rendering shows the chevron **centred** in the logo baseline and **shifted hard left** in the screensaver captures. It is a
   bouncing-logo screensaver and genuinely animates (position change, not noise).
+- [ ] G-EOF1 **Natural end-of-file leaves the local timeline wedged (2026-07-28)** — W-CAST soak, 21.5 min / **32171 frames** of real media (ThunderCats) played to natural EOF. The media session ends and PMS correctly receives `stopped`, **but the local timeline stays `fullScreenVideo`/`buffering` until an explicit stop arrives.** User-visible: watching an episode to the end leaves the device in a fake playing state reporting a stale timeline to anything that polls it. The explicit-stop path works correctly, so the divergence between "explicit stop" and "natural EOF" *is* the bug. Fix should **converge** the two paths, not add a parallel one. Must not depend on `LastFrame` idle mode, which is independently broken (G-IDLE2c). **Survived because every existing test issues an explicit stop; nothing tests natural EOF.** Regression test must be proven to go red against current code first.
+
+- [x] G-SOAK1 **Long-run playback stability PROVEN (2026-07-28)** — same 21.5 min / 32171 frame soak, sampled throughout rather than only at the end:
+  - `vfps/pfps` = **24.9 / 24.9** held for the whole run
+  - `av_drift_ms` bounded **-23..-35**, **non-monotonic** -> **disproves the clock-domain / timebase-leak hypothesis**
+  - drops crept **5 -> 9** = ~0.012% of 32171 frames
+  - RSS **4300 -> 4308 KiB**, PID stable (32159) -> no leak, no respawn
+  This replaces the previous 91-second basis for scoring cast playback. **Note the frame rate here is 24.9 fps vs 24.75 fps in the 91 s run** -- a real difference, relevant to the `kDdrBankReuseMinUs` question, since a rate pinned this tightly for 21.5 minutes is consistent with a hard-coded sleep (not proof; a well-behaved source looks similar).
+
 - [ ] G-IDLE2c **`Last frame` idle mode is BROKEN — holds a TORN COMPOSITE, not a decoded frame (2026-07-28)**
   `lastframe_poststop == lastframe_paused_reference` (md5 `26cc25a728f1…`, diff `0`) — but that only proves **stability**, not
   **correctness**: both sides share the same defect, so the equality can never expose it. Per-band luma analysis of
