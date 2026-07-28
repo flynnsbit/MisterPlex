@@ -1063,3 +1063,69 @@ would read as ABSENT; the `--elab-log` classifier depends on Quartus message
 text. It reports the full elaborated hierarchy path precisely so that
 "elaborated" is never mistaken for "product-elaborated" — `h264_inter_mc_16x16`
 elaborates only under `decode_stub:gen_diagnostic_present.stub`.
+
+---
+
+## 21. CORRECTION: the SDC change is NOT netlist-neutral, and `3b1e8435` is not the A/B we thought
+
+Before spending the authorized deploy I established what `3b1e8435` actually
+varies. Both fits' source trees survive on the remote farm, so this is measured,
+not inferred.
+
+```
+A = ~/mplex-builds/wfit-hour27-a/Plex_MiSTer        -> Plex.rbf 3b1e8435
+B = ~/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer  -> Plex.rbf fb4bad84
+
+rtl/ content-only checksum   A 325ac3803ddc6e8e2b43f1e1cbcbbede
+                             B 325ac3803ddc6e8e2b43f1e1cbcbbede   IDENTICAL
+rtl/ file count              A 48   B 48
+diff -r A/rtl B/rtl          rc=0, 0 lines                        IDENTICAL
+Plex.sv                      A f7ae5540   B f7ae5540              IDENTICAL
+Plex.qsf                     A b3de6740   B b3de6740              IDENTICAL
+files.qip                    A f5657993   B f5657993              IDENTICAL
+Plex.sdc                     A 9a312bcb   B 13e7312e   38 lines   ** DIFFERS **
+```
+
+(First attempt at the tree checksum disagreed because `md5sum` embeds file
+paths, which contain the slot name. Re-measured path-independently; the
+authoritative check is `diff -r`, whose rc was read directly, not through a pipe.)
+
+### 21.1 Two consequences, both decision-relevant
+
+**1. "The SDC correction is netlist-neutral and exonerated" is REFUTED.**
+`3b1e8435` and `fb4bad84` differ in `Plex.sdc` and in **nothing else**, and they
+produce different bitstreams. Therefore the `set_false_path -> set_max_delay 50.0`
+conversion **does** change the netlist.
+
+The earlier exoneration rested on `wfit-hour27-sdc-a/b` and `wfit-hour27-bdiag-a/b`
+all fitting to `fb4bad84`. Those four slots all carry the **same (new)** SDC, so
+that comparison never varied the constraint file. **It was a vacuous control** --
+it demonstrated fitter determinism, not SDC neutrality.
+
+**2. `3b1e8435` is NOT an A/B against the clk_ddr RTL window.** Its RTL is
+byte-identical to `fb4bad84`, so it contains **all four** suspect commits
+(`abc3b67`, `7a3d960`, `ea31f68`, `3716f1f`). Deploying it cannot eliminate any of
+them. Its `ddr_frame_store.sv` is `dd707e68...` = the blob at `3716f1f`, the
+newest commit touching that file.
+
+### 21.2 The deploy is still the right move -- for a different reason
+
+It cleanly separates **constraints** from **RTL**:
+
+| build | RTL | SDC | PLXD |
+|---|---|---|---|
+| `00eebd5e` (old resident) | older | old | **advancing ~68/s** |
+| `3b1e8435` | new | **old** (`set_false_path`) | ? |
+| `fb4bad84` (resident now) | new | **new** (`set_max_delay`) | **silent** |
+
+* `3b1e8435` PLXD **advances** -> the **SDC change** caused the regression.
+* `3b1e8435` PLXD **silent** -> SDC exonerated (properly this time); cause lies in
+  the RTL delta between `00eebd5e` and this tree, i.e. the clk_ddr window.
+
+Either outcome eliminates a candidate. **But the result must be read under this
+framing, not the clk_ddr-window framing** -- under the wrong framing, a working
+`3b1e8435` would be misread as "the clk_ddr window is innocent."
+
+Plausible mechanism if SDC is the cause: bounding previously-cut CDC paths at
+50 ns forces the fitter to place and route them, changing placement on paths that
+were deliberately unconstrained.
