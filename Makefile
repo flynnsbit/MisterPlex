@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright capture-rig-preflight left-edge-clip-gate
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright capture-rig-preflight left-edge-clip-gate rbf-label-check
 
 all: unit
 
@@ -35,6 +35,7 @@ help:
 	@echo "  make cast-timeline-gate      - live cast/timeline HTTP gate (requires MiSTer + PMS)"
 	@echo "  make cast-timeline-playwright - live cast/timeline Playwright browser fidelity check"
 	@echo "  make capture-rig-preflight   - HDMI capture rig probe (device, liveness, signal state)"
+	@echo "  make rbf-label-check         - verify RBF identity label in HDMI idle screen (OCR)"
 
 test: unit
 
@@ -610,4 +611,16 @@ capture-rig-preflight:
 left-edge-clip-gate:
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label left-edge-clip-gate -- \
 	  bash $(ROOT)/tests/hw/test_left_edge_clip.sh
+
+# RBF identity label check.  Verifies that misterplexd's idle-screen label
+# "RBF xxxxxxxx" (first 8 hex chars of Plex.rbf md5) is visible in the HDMI
+# output.  Captures a live frame, OCRs the label region, compares to the
+# md5 fetched from the MiSTer via SSH.
+# Override: EXPECTED_MD5=xxxxxxxx to skip SSH fetch.
+# Example: make rbf-label-check EXPECTED_MD5=fb4bad84
+rbf-label-check:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label rbf-label-check -- \
+	  python3 $(ROOT)/scripts/grade_rbf_label.py \
+	    --capture \
+	    $(if $(EXPECTED_MD5),--expected-md5 $(EXPECTED_MD5),)
 
