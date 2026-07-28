@@ -1,0 +1,11 @@
+PASS tool exists
+PASS self-test passes (rc=0)
+PASS self-test proves a MOVING positive control
+PASS self-test proves a STATIC negative control
+PASS self-test proves noise REFUSES instead of claiming motion
+PASS no arguments REFUSES (rc=2), never a silent pass
+PASS missing frames dir REFUSES (rc=2)
+PASS unknown argument is a hard error, not silently ignored
+
+8/8 checks passed
+LEFT_EDGE_DYNAMICS_GATE_OK

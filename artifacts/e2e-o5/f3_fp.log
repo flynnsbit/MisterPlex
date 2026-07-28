@@ -1,0 +1,20 @@
+REFUSE: UNREACHABLE — any claim about the resident bitstream is UNSCORED (not a pass, not a skip).
+PASS happy path binds
+PASS no expected md5 is UNBOUND, not a pass
+PASS unreachable device is UNREACHABLE, not absent
+PASS wrong md5 is MD5_MISMATCH
+PASS wrong corename is caught
+PASS matching md5 with a stale fabric is STALE_FABRIC, NOT bound
+PASS missing mtimes are ORDER_UNKNOWN, never assumed good
+PASS ordering alone flips the verdict (identical md5, identical corename)
+PASS load after write -> True
+PASS load before write -> False
+PASS equal mtimes -> True (load read those bytes)
+PASS missing rbf mtime -> None
+PASS missing load mtime -> None
+FABRIC_PROVENANCE: UNREACHABLE
+  host=192.0.2.1 corename='' rbf_md5=? fpga_state=? load_after_write=None
+  device did not answer (ssh: connect to host 192.0.2.1 port 22: Connection timed out). The bitstream is UNSEEN, not absent.
+PASS unreachable host exits 2, never 0 (rc=2)
+
+14/14 self-test checks passed

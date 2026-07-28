@@ -1,0 +1,21 @@
+REFUSE: baseline test is not green (rc=1); mutation results would be meaningless — every mutation would appear killed
+REFUSE: mutation 'noop' does not change anything (old == new); it is a vacuous control by construction
+REFUSE: spec has no mutations; an empty mutation list would report success without testing anything
+Scope: 1 mutations across 1 file(s); test = /usr/bin/python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/artifacts/tmp2v073spu/test_good.py
+
+Scope: 1 mutations; killed 1, survived 0
+MUTATION_OK — every mutation turned the test red
+Scope: 1 mutations across 1 file(s); test = /usr/bin/python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/artifacts/tmp2v073spu/test_weak.py
+SURVIVED  threshold-removed  — test still green, behaviour UNCONSTRAINED
+
+Scope: 1 mutations; killed 0, survived 1
+SURVIVORS (vacuous coverage): threshold-removed
+Scope: 1 mutations across 1 file(s); test = /usr/bin/python3 /home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/artifacts/tmp2v073spu/test_red.py
+PASS real test kills the mutation (rc=0)
+PASS VACUOUS test is caught (rc=1)
+PASS source file restored after mutation
+PASS red baseline REFUSES (rc=2), never a false green
+PASS no-op mutation (old == new) is refused
+PASS empty mutation list is refused
+
+6/6 self-test checks passed
