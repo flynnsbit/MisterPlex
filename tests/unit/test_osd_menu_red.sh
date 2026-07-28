@@ -28,3 +28,27 @@ grep -q "shouldApplyOsdIdle(false, 0x0000, 0x4000)" <<<"$OUT" || {
   exit 1
 }
 echo "RED OK: initial 0x4000 OSD idle snapshot does not override IDLE_SCREEN"
+
+rm -f "$BUILD/test_osd_menu_fallback_bitrate_fault"
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DOSD_MENU_FAULT_FALLBACK_624_BITRATE \
+  -o "$BUILD/test_osd_menu_fallback_bitrate_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
+test -x "$BUILD/test_osd_menu_fallback_bitrate_fault" || {
+  echo "FAIL: OSD 480p fallback bitrate mutant did not compile" >&2
+  exit 1
+}
+echo "MUTANT_COMPILED: OSD 480p fallback bitrate"
+
+set +e
+OUT="$("$BUILD/test_osd_menu_fallback_bitrate_fault" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+if [[ "$RC" -eq 0 ]]; then
+  echo "FAIL: OSD 480p fallback bitrate fault unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight)" <<<"$OUT" || {
+  echo "FAIL: OSD 480p fallback bitrate red-check did not hit bitrate equality guard" >&2
+  exit 1
+}
+echo "RED OK: OSD and fallback 480p coded geometry share one bitrate"

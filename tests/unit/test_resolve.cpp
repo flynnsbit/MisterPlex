@@ -1,4 +1,5 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
+#include "libmisterplex/osd_menu.hpp"
 #include "plex_resolve.hpp"
 
 #include <cstdio>
@@ -53,7 +54,7 @@ int main() {
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
     CHECK(w240.videoResolution == "320x240");
-    CHECK(w240.maxVideoBitrateKbps == 1000);
+    CHECK(w240.maxVideoBitrateKbps == kPlex240pWeakBitrateKbps);
     CHECK(w240.h264Profile == "baseline");
     CHECK(w240.h264Level == 30);
     CHECK(validateWeakLadder(w240));
@@ -62,7 +63,7 @@ int main() {
     CHECK(applyPlexTranscodeProfile("480p", w480));
     CHECK(w480.profileName == "480p");
     CHECK(w480.videoResolution == "624x480");
-    CHECK(w480.maxVideoBitrateKbps == 2500);
+    CHECK(w480.maxVideoBitrateKbps == kPlex480pWeakBitrateKbps);
     CHECK(w480.videoQuality == 60);
     CHECK(w480.videoCodec == "h264");
     CHECK(w480.audioCodec == "aac");

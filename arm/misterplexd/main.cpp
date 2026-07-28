@@ -3,6 +3,7 @@
 // Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
 
 #include "companion.hpp"
+#include "libmisterplex/osd_menu.hpp"
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
@@ -327,10 +328,8 @@ int main(int argc, char** argv) {
             weak.profileName = "custom";
             weak.videoResolution = decodeRes;
             if (!weakBitrateExplicit) {
-                if (decodeW >= 640)
-                    weak.maxVideoBitrateKbps = 2500;
-                else if (decodeW >= 480)
-                    weak.maxVideoBitrateKbps = 1500;
+                weak.maxVideoBitrateKbps =
+                    misterplex::weakBitrateKbpsForCodedSize(decodeW, decodeH);
             }
         }
     }

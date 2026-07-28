@@ -339,6 +339,7 @@ $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 
 $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 		$(ROOT)/host/libmisterplex/idle_screen.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
@@ -366,7 +367,9 @@ $(ROOT)/build/test_pixel_format: $(ROOT)/tests/unit/test_pixel_format.cpp \
 
 $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_resolve.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp

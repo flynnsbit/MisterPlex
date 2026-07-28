@@ -1,5 +1,7 @@
 #include "plex_resolve.hpp"
 
+#include "libmisterplex/osd_menu.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -158,8 +160,8 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = {
-        {"240p", "320x240", 1000, 40, "baseline", 30},
-        {"480p", "624x480", 2500, 60, "baseline", 30},
+        {"240p", "320x240", kPlex240pWeakBitrateKbps, 40, "baseline", 30},
+        {"480p", "624x480", kPlex480pWeakBitrateKbps, 60, "baseline", 30},
     };
     return profiles;
 }

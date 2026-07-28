@@ -46,6 +46,9 @@ namespace misterplex {
 // daemon and the tests cannot disagree about what a menu index means.
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
+constexpr int kPlex240pWeakBitrateKbps = 1000;
+constexpr int kPlex360pWeakBitrateKbps = 1500;
+constexpr int kPlex480pWeakBitrateKbps = 2500;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -95,16 +98,41 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
     return i * kOsdAvOffsetStepMs + kOsdAvOffsetDefaultMs;
 }
 
+inline ContentResolution contentResolutionFor480p() {
+    // 624x480 is still the 480p ladder: PMS has a 2000 kbps guard for 480p
+    // and the existing product profile uses 2500 kbps to leave headroom for
+    // the synthetic/high-motion library items while staying dual-A9 safe.
+    return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480",
+            kPlex480pWeakBitrateKbps};
+}
+
+inline ContentResolution contentResolutionFor240p() {
+    return {320, 240, "320x240", kPlex240pWeakBitrateKbps};
+}
+
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     if ((word >> 4) & 1u)
-        return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480", 2500};
-    return {320, 240, "320x240", 1000};
+        return contentResolutionFor480p();
+    return contentResolutionFor240p();
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
-    if (w >= 640 || h >= 480)
-        return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480", 2500};
-    return {320, 240, "320x240", 1000};
+    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight)
+        return contentResolutionFor480p();
+    return contentResolutionFor240p();
+}
+
+inline int weakBitrateKbpsForCodedSize(int w, int h) {
+    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
+#ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
+        return kPlex360pWeakBitrateKbps;
+#else
+        return contentResolutionFor480p().weakBitrateKbps;
+#endif
+    }
+    if (w >= 480 || h >= 360)
+        return kPlex360pWeakBitrateKbps;
+    return contentResolutionFor240p().weakBitrateKbps;
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {
