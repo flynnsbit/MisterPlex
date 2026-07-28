@@ -71,6 +71,14 @@ int64_t elapsedUs(std::chrono::steady_clock::time_point a,
     return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
 }
 
+// Monotonic milliseconds. Used to bound mailbox-handshake wedges in time as
+// well as in frames; must not be a wall clock that can step backwards.
+double nowMonotonicMs() {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
 // Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
 // IMPORTANT: no system()/fork here — multi-threaded misterplexd (F1+F2+F3) must
@@ -1407,16 +1415,30 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             }
             plxdLastFramesDone_ = brs.frames_done;
             constexpr int kPlxdStaleLimitFrames = 10;
+            // Frames are not a clock. During bring-up the feed can run at a few
+            // frames per second, where ten frames is several seconds of a
+            // frozen screen, so bound the wedge in wall-clock time too and take
+            // whichever bound trips first.
+            constexpr double kPlxdStaleLimitMs = 500.0;
+            const double staleNowMs = nowMonotonicMs();
+            if (plxdStaleCount_ == 0)
+                plxdStaleSinceMs_ = -1.0;
+            else if (plxdStaleSinceMs_ < 0.0)
+                plxdStaleSinceMs_ = staleNowMs;
+            const double staleForMs =
+                (plxdStaleSinceMs_ >= 0.0) ? (staleNowMs - plxdStaleSinceMs_) : 0.0;
             // Not gated on !plxdLivenessProven_. A fabric that was alive and
             // then stopped wedges exactly as hard as one that never started,
             // and liveness proven minutes ago says nothing about now.
-            if (plxdStaleCount_ >= kPlxdStaleLimitFrames) {
+            if (plxdStaleCount_ >= kPlxdStaleLimitFrames || staleForMs >= kPlxdStaleLimitMs) {
                 fprintf(stderr,
                         "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
-                        "%d frames (liveness_ever_proven=%d) — falling back to timed delay\n",
-                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
+                        "%d frames / %.0f ms (liveness_ever_proven=%d) — falling back to "
+                        "timed delay\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_, staleForMs,
                         static_cast<int>(plxdLivenessProven_));
                 timedFallback = true;
+                plxdStaleSinceMs_ = -1.0;
             }
 
             BankReleaseStatus finalBrs = brs;
@@ -1437,7 +1459,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 const bool wasStuck = plxdBankReleasePolicy_.release_stuck;
                 const BankReleaseDecision decision =
                     chooseDdrPresentBankFromRelease(plxdBankReleasePolicy_, plannedBank,
-                                                    brs, finalBrs);
+                                                    brs, finalBrs, nowMonotonicMs());
                 if (!wasStuck && decision.release_stuck) {
                     fprintf(stderr,
                             "[STALE] sendDdrFrame: PLXD free_bank_mask stayed 0 while "

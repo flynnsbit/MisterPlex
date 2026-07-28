@@ -329,6 +329,7 @@ private:
     uint16_t plxdLastFramesDone_ = 0;
     bool plxdFramesDoneSeeded_ = false; // first read seeds, it does not prove
     int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
+    double plxdStaleSinceMs_ = -1.0; // monotonic ms when the current stale run began
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
     BankReleasePolicyState plxdBankReleasePolicy_{};
     bool ensureDdrMap();

@@ -114,6 +114,12 @@ struct BankReleasePolicyState {
     // rings the doorbell, the fabric can never change its mind. That is a
     // self-sustaining deadlock, not backpressure. Bounded here.
     int consecutive_skips = 0;
+    // Wall-clock stamp of the first skip in the current run, or < 0 when not
+    // skipping. The count bound alone is a frame bound, and frames are not a
+    // clock: during bring-up, when the fabric is half-built and the feed runs
+    // at a few frames per second, 30 skips is tens of seconds of a frozen
+    // screen. The deadline bounds the wedge in time as well as in frames.
+    double first_skip_ms = -1.0;
 };
 
 // How many consecutive skips are allowed before the host stops waiting for a
@@ -122,10 +128,19 @@ struct BankReleasePolicyState {
 // window (the fabric swaps at 60 Hz).
 inline constexpr int kBankReleaseSkipLimitFrames = 30;
 
+// The same bound expressed in wall-clock time, for feeds too slow for the frame
+// bound to be reached in a useful interval. Half a second of a completely
+// frozen mailbox is already far outside any legitimate 60 Hz busy window, and
+// whichever bound trips first wins.
+inline constexpr double kBankReleaseSkipLimitMs = 500.0;
+
+// now_ms is a monotonic wall clock in milliseconds. Pass a negative value when
+// no clock is available; the frame bound then applies on its own.
 inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyState& state,
                                                            int plannedBank,
                                                            const BankReleaseStatus& initial,
-                                                           const BankReleaseStatus& final) {
+                                                           const BankReleaseStatus& final,
+                                                           double now_ms = -1.0) {
     BankReleaseDecision out{};
     out.release_stuck = state.release_stuck;
 
@@ -133,6 +148,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
         if (initial.anyFree()) {
             state.release_stuck = false;
             state.consecutive_skips = 0;
+            state.first_skip_ms = -1.0;
             out.kind = BankReleaseDecisionKind::UseFreeBank;
             out.bank = initial.freeBank();
             out.release_stuck = false;
@@ -146,6 +162,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
 
     if (initial.anyFree()) {
         state.consecutive_skips = 0;
+        state.first_skip_ms = -1.0;
         out.kind = BankReleaseDecisionKind::UseFreeBank;
         out.bank = initial.freeBank();
         out.release_stuck = false;
@@ -153,6 +170,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     }
     if (final.anyFree()) {
         state.consecutive_skips = 0;
+        state.first_skip_ms = -1.0;
         out.kind = BankReleaseDecisionKind::UseFreeBank;
         out.bank = final.freeBank();
         out.release_stuck = false;
@@ -162,6 +180,7 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     if (final.frames_done != initial.frames_done) {
         state.release_stuck = true;
         state.consecutive_skips = 0;
+        state.first_skip_ms = -1.0;
         out.kind = BankReleaseDecisionKind::UseTimedFallback;
         out.bank = plannedBank;
         out.release_stuck = true;
@@ -169,11 +188,21 @@ inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyStat
     }
 
     // Nothing free and frames_done frozen: the fabric is busy, or it is dead.
-    // Skipping is right for the first case and fatal for the second, so skip
-    // is allowed only for a bounded number of consecutive frames.
-    if (++state.consecutive_skips >= kBankReleaseSkipLimitFrames) {
+    // Skipping is right for the first case and fatal for the second, so skip is
+    // allowed only for a bounded number of consecutive frames AND a bounded
+    // amount of wall-clock time. Either bound alone leaves a hole: the frame
+    // bound never expires on a stalled feed, and the time bound would be
+    // meaningless if the caller had no clock.
+    ++state.consecutive_skips;
+    if (state.consecutive_skips == 1)
+        state.first_skip_ms = now_ms;
+    const bool frames_exhausted = state.consecutive_skips >= kBankReleaseSkipLimitFrames;
+    const bool deadline_passed = (now_ms >= 0.0) && (state.first_skip_ms >= 0.0) &&
+                                 ((now_ms - state.first_skip_ms) >= kBankReleaseSkipLimitMs);
+    if (frames_exhausted || deadline_passed) {
         state.release_stuck = true;
         state.consecutive_skips = 0;
+        state.first_skip_ms = -1.0;
         out.kind = BankReleaseDecisionKind::UseTimedFallback;
         out.bank = plannedBank;
         out.release_stuck = true;

@@ -501,6 +501,81 @@ int main() {
             CHECK(policy.consecutive_skips == 0);
         }
 
+        // --- A slow feed must not be able to outlive the frame bound ---
+        // The frame bound is not a clock. On a half-built fabric during
+        // bring-up the feed can run at a few frames per second, where 30 skips
+        // is tens of seconds of a frozen screen. The wall-clock deadline must
+        // escape first in that case.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus dead{0x00, 0, false, 7};
+            double t = 1000.0;
+            BankReleaseDecision d{};
+            int skips = 0;
+            for (int i = 0; i < 8; ++i) {
+                d = chooseDdrPresentBankFromRelease(policy, 1, dead, dead, t);
+                if (d.kind != BankReleaseDecisionKind::SkipFrame)
+                    break;
+                ++skips;
+                t += 120.0;  // ~8 fps
+            }
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(d.bank == 1);
+            CHECK(policy.release_stuck);
+            // Escaped on time, well before the frame bound could have expired.
+            CHECK(skips < kBankReleaseSkipLimitFrames);
+            CHECK(skips * 120.0 >= kBankReleaseSkipLimitMs - 120.0);
+        }
+
+        // The deadline must not fire inside a legitimate busy window: a fabric
+        // that is briefly busy at 60 Hz stays skipped, not guessed.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus busy{0x00, 0, true, 500};
+            double t = 5000.0;
+            for (int i = 0; i < 20; ++i) {
+                BankReleaseDecision d =
+                    chooseDdrPresentBankFromRelease(policy, 1, busy, busy, t);
+                CHECK(d.kind == BankReleaseDecisionKind::SkipFrame);
+                t += 16.7;
+            }
+            CHECK(!policy.release_stuck);
+        }
+
+        // The deadline is per run of consecutive skips, not per session: an
+        // isolated skip every few seconds must never accumulate into an escape.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus dead{0x00, 0, false, 7};
+            const BankReleaseStatus freeb{0x01, 0, false, 7};
+            double t = 0.0;
+            for (int i = 0; i < 10; ++i) {
+                BankReleaseDecision d =
+                    chooseDdrPresentBankFromRelease(policy, 1, dead, dead, t);
+                CHECK(d.kind == BankReleaseDecisionKind::SkipFrame);
+                t += 3000.0;
+                d = chooseDdrPresentBankFromRelease(policy, 1, freeb, freeb, t);
+                CHECK(d.kind == BankReleaseDecisionKind::UseFreeBank);
+                CHECK(policy.first_skip_ms < 0.0);
+                t += 33.0;
+            }
+            CHECK(!policy.release_stuck);
+        }
+
+        // No clock available: the frame bound must still apply on its own.
+        {
+            BankReleasePolicyState policy{};
+            const BankReleaseStatus dead{0x00, 0, false, 7};
+            BankReleaseDecision d{};
+            for (int i = 0; i < kBankReleaseSkipLimitFrames + 2; ++i) {
+                d = chooseDdrPresentBankFromRelease(policy, 1, dead, dead, -1.0);
+                if (d.kind != BankReleaseDecisionKind::SkipFrame)
+                    break;
+            }
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(policy.release_stuck);
+        }
+
         // A busy fabric that recovers within the window must NOT be escaped:
         // the bound must not turn legitimate backpressure into a bank guess.
         {
