@@ -53,6 +53,18 @@ int main(int argc, char** argv) {
         int pFirstMbMode1 = 0;
         int pFirstMbMode2 = 0;
         int pFirstMbBad = 0;
+        int cavlcLumaPulses = 0;
+        uint32_t cavlcLumaMask = 0;
+        int cavlcDone = 0;
+        int cavlcBadDone = 0;
+        int cavlcNonzeroTc = 0;
+        int cavlcCbpNonzeroSeen = 0;
+        int cavlcCbpLumaSeen = 0;
+        int cavlcCbpChromaSeen = 0;
+        int cavlcLastQp = -1;
+        int cavlcI4Mode0 = -1;
+        int cavlcI4Mode7 = -1;
+        int cavlcI4Mode15 = -1;
 
         auto tick = [&]() {
             dut.clk = 0;
@@ -66,6 +78,27 @@ int main(int argc, char** argv) {
                 sawExpectedCsum = 1;
             if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b)
                 ++reconSig3bCycles;
+            if (dut.cavlc_luma4x4_valid) {
+                ++cavlcLumaPulses;
+                const int idx = static_cast<int>(dut.cavlc_luma4x4_idx);
+                if (idx >= 0 && idx < 16)
+                    cavlcLumaMask |= (1u << idx);
+                if (dut.cavlc_luma4x4_total_coeff != 0)
+                    ++cavlcNonzeroTc;
+                if (dut.cavlc_first_mb_cbp_luma != 0)
+                    cavlcCbpNonzeroSeen = 1;
+                cavlcCbpLumaSeen = static_cast<int>(dut.cavlc_first_mb_cbp_luma);
+                cavlcCbpChromaSeen = static_cast<int>(dut.cavlc_first_mb_cbp_chroma);
+                cavlcLastQp = static_cast<int>(dut.cavlc_luma4x4_qp);
+                cavlcI4Mode0 = static_cast<int>(dut.cavlc_i4_mode0);
+                cavlcI4Mode7 = static_cast<int>(dut.cavlc_i4_mode7);
+                cavlcI4Mode15 = static_cast<int>(dut.cavlc_i4_mode15);
+            }
+            if (dut.cavlc_luma_src_done) {
+                ++cavlcDone;
+                if (!dut.cavlc_luma_src_ok)
+                    ++cavlcBadDone;
+            }
             if (dut.slice_valid && !prevSliceValid) {
                 const uint8_t st = static_cast<uint8_t>(dut.slice_type) % 5;
                 if (st == 2 && dut.slice_is_i)
@@ -142,6 +175,13 @@ int main(int argc, char** argv) {
         expect(dut.sps_width == 320 && dut.sps_height == 240, "unexpected SPS geometry");
         expect(placePulses >= 1, "IDR residual ST_PLACE pulse missing");
         expect(sawExpectedCsum, "expected residual_csum was never observed");
+        expect(cavlcDone >= 1, "product CAVLC luma source did not complete first I_NxN MB");
+        expect(cavlcBadDone == 0, "product CAVLC luma source reported bad completion");
+        expect(cavlcLumaPulses >= 16, "product CAVLC luma source did not emit 16 luma4x4 handoff pulses");
+        expect((cavlcLumaMask & 0xffffu) == 0xffffu, "product CAVLC luma handoff did not cover all 16 block indices");
+        expect(cavlcNonzeroTc > 0, "product CAVLC luma handoff saw no coded residual coefficients");
+        expect(cavlcCbpNonzeroSeen, "product CAVLC first MB cbp_luma was zero during handoff");
+        expect(cavlcLastQp >= 0, "product CAVLC luma handoff never published QP");
         expect(sawI, "I-slice parse not observed");
         expect(idleBetweenVcl, "slice_hdr_parser ST_IDLE was not observed between IDR and P VCLs");
         expect(sawP, "P-slice parse not observed after IDR; parser did not prove idle/re-entry");
@@ -164,6 +204,17 @@ int main(int argc, char** argv) {
                   << " idr=" << static_cast<int>(dut.idr_count)
                   << " slice=" << static_cast<int>(dut.slice_count)
                   << " place_pulses=" << placePulses
+                  << " cavlc_luma_pulses=" << cavlcLumaPulses
+                  << " cavlc_luma_mask=0x" << std::hex << cavlcLumaMask << std::dec
+                  << " cavlc_done=" << cavlcDone
+                  << " cavlc_bad_done=" << cavlcBadDone
+                  << " cavlc_nonzero_tc=" << cavlcNonzeroTc
+                  << " cavlc_cbp_nonzero_seen=" << cavlcCbpNonzeroSeen
+                  << " cavlc_qp=" << cavlcLastQp
+                  << " cavlc_cbp_luma_seen=0x" << std::hex << cavlcCbpLumaSeen
+                  << " cavlc_cbp_chroma_seen=0x" << cavlcCbpChromaSeen
+                  << " cavlc_i4_modes_0_7_15=" << std::dec
+                  << cavlcI4Mode0 << "/" << cavlcI4Mode7 << "/" << cavlcI4Mode15
                   << " saw_expected_csum=" << sawExpectedCsum
                   << " recon_sig_3b_cycles=" << reconSig3bCycles
                   << " frames=" << dut.stub_frames

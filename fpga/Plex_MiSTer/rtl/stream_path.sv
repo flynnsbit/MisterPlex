@@ -81,6 +81,24 @@ module stream_path #(
 	// residual_coeff may be left unconnected at top until inv_quant; kept below.
 	output wire [7:0]  residual_csum,
 	output wire signed [15:0] residual_coeff [0:15],
+	// Product CAVLC handoff: first-I_NxN staging emits one pulse per luma 4x4 block.
+	output wire        cavlc_luma4x4_valid,
+	output wire [3:0]  cavlc_luma4x4_idx,
+	output wire [5:0]  cavlc_luma4x4_qp,
+	output wire [4:0]  cavlc_luma4x4_total_coeff,
+	output wire [1:0]  cavlc_luma4x4_trailing_ones,
+	output wire [9:0]  cavlc_luma4x4_bit_offset_end,
+	output wire signed [15:0] cavlc_luma4x4_coeff_zigzag [0:15],
+	output wire        cavlc_luma_src_busy,
+	output wire        cavlc_luma_src_done,
+	output wire        cavlc_luma_src_ok,
+	output wire [9:0]  cavlc_luma_src_bit_end,
+	output wire [3:0]  cavlc_i4_modes [0:15],
+	output wire [15:0] cavlc_i4_pred_mode_flags,
+	output wire [47:0] cavlc_i4_rem_modes,
+	output wire [9:0]  cavlc_first_mb_residual_bit_offset,
+	output wire [3:0]  cavlc_first_mb_cbp_luma,
+	output wire [1:0]  cavlc_first_mb_cbp_chroma,
 	// R-csum6 Rank3: 1-cycle ST_PLACE pulse for status residual sticky freeze
 	output wire        residual_place_pulse,
 	output wire [7:0]  recon_sig,
@@ -299,7 +317,6 @@ module stream_path #(
 	assign unavailable_i4_modes[1] = 4'd2;
 	assign unavailable_i4_modes[2] = 4'd2;
 	assign unavailable_i4_modes[3] = 4'd2;
-	wire [3:0] product_i4_modes [0:15];
 	h264_intra4x4_mode_deriver product_i4_mode_deriver (
 		.prev_intra4x4_pred_mode_flag(sl_first_mb_i4_flags),
 		.rem_intra4x4_pred_mode(sl_first_mb_i4_rem_modes),
@@ -307,7 +324,7 @@ module stream_path #(
 		.top_available(1'b0),
 		.left_modes(unavailable_i4_modes),
 		.top_modes(unavailable_i4_modes),
-		.i4_modes(product_i4_modes)
+		.i4_modes(cavlc_i4_modes)
 	);
 
 	reg slice_valid_d;
@@ -320,17 +337,6 @@ module stream_path #(
 	wire [9:0] sl_rbsp_bit_len = (sl_rbsp_len >= 8'd128) ? 10'd1023 : {sl_rbsp_len[6:0], 3'd0};
 	wire product_luma_src_start = slice_valid & ~slice_valid_d & sl_is_i & (sl_mbt == 8'd0) &
 	                              (sl_first_mb_cbp_luma != 4'd0);
-	wire product_luma_src_busy;
-	wire product_luma_src_done;
-	wire product_luma_src_ok;
-	wire [9:0] product_luma_src_bit_end;
-	wire product_luma4x4_valid;
-	wire [3:0] product_luma4x4_idx;
-	wire [5:0] product_luma4x4_qp;
-	wire [4:0] product_luma4x4_total_coeff;
-	wire [1:0] product_luma4x4_trailing_ones;
-	wire [9:0] product_luma4x4_bit_offset_end;
-	wire signed [15:0] product_luma4x4_coeff_zigzag [0:15];
 	h264_luma4x4_residual_source #(.MAX_BYTES(128)) product_luma4x4_residual_source (
 		.clk(clk),
 		.reset(reset | flush),
@@ -340,18 +346,23 @@ module stream_path #(
 		.cbp_luma(sl_first_mb_cbp_luma),
 		.qp(sl_qp),
 		.rbsp(sl_rbsp),
-		.busy(product_luma_src_busy),
-		.done(product_luma_src_done),
-		.ok(product_luma_src_ok),
-		.bit_offset_end(product_luma_src_bit_end),
-		.luma4x4_valid(product_luma4x4_valid),
-		.luma4x4_idx(product_luma4x4_idx),
-		.luma4x4_qp(product_luma4x4_qp),
-		.luma4x4_total_coeff(product_luma4x4_total_coeff),
-		.luma4x4_trailing_ones(product_luma4x4_trailing_ones),
-		.luma4x4_bit_offset_end(product_luma4x4_bit_offset_end),
-		.luma4x4_coeff_zigzag(product_luma4x4_coeff_zigzag)
+		.busy(cavlc_luma_src_busy),
+		.done(cavlc_luma_src_done),
+		.ok(cavlc_luma_src_ok),
+		.bit_offset_end(cavlc_luma_src_bit_end),
+		.luma4x4_valid(cavlc_luma4x4_valid),
+		.luma4x4_idx(cavlc_luma4x4_idx),
+		.luma4x4_qp(cavlc_luma4x4_qp),
+		.luma4x4_total_coeff(cavlc_luma4x4_total_coeff),
+		.luma4x4_trailing_ones(cavlc_luma4x4_trailing_ones),
+		.luma4x4_bit_offset_end(cavlc_luma4x4_bit_offset_end),
+		.luma4x4_coeff_zigzag(cavlc_luma4x4_coeff_zigzag)
 	);
+	assign cavlc_i4_pred_mode_flags = sl_first_mb_i4_flags;
+	assign cavlc_i4_rem_modes = sl_first_mb_i4_rem_modes;
+	assign cavlc_first_mb_residual_bit_offset = sl_first_mb_residual_bit_offset;
+	assign cavlc_first_mb_cbp_luma = sl_first_mb_cbp_luma;
+	assign cavlc_first_mb_cbp_chroma = sl_first_mb_cbp_chroma;
 
 	assign slice_type    = sl_type;
 	assign slice_is_i    = sl_is_i;
@@ -419,11 +430,11 @@ module stream_path #(
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             |sl_first_mb_cbp_luma | |sl_first_mb_cbp_chroma |
 	             |sl_first_mb_i4_flags | |sl_first_mb_i4_rem_modes |
-	             product_luma_src_busy | product_luma_src_done | product_luma_src_ok |
-	             product_luma4x4_valid | |product_luma4x4_idx | |product_luma4x4_qp |
-	             |product_luma4x4_total_coeff | |product_luma4x4_trailing_ones |
-	             |product_luma4x4_bit_offset_end | |product_luma4x4_coeff_zigzag[0] |
-	             |product_luma_src_bit_end | |product_i4_modes[0] |
+	             cavlc_luma_src_busy | cavlc_luma_src_done | cavlc_luma_src_ok |
+	             cavlc_luma4x4_valid | |cavlc_luma4x4_idx | |cavlc_luma4x4_qp |
+	             |cavlc_luma4x4_total_coeff | |cavlc_luma4x4_trailing_ones |
+	             |cavlc_luma4x4_bit_offset_end | |cavlc_luma4x4_coeff_zigzag[0] |
+	             |cavlc_luma_src_bit_end | |cavlc_i4_modes[0] |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
 
