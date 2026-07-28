@@ -9,6 +9,104 @@ plays Plex content natively.
 
 ---
 
+## Update #10 — 2026-07-28 18:40 CDT (Hour 34) — CORRECTIONS
+
+### The capture card was always working. I told the user to fix a cable that was already plugged in.
+
+We now have a live capture of the MiSTer menu screensaver, pulled automatically
+from the MS2109 with no human involvement.
+
+**Root cause of the "flat black" readings:** the MS2109 emits a run of filler
+frames of exactly `RGB(7,7,7)` after every stream open. The first real frame
+arrives around index 11. **Every capture I ran requested 1–32 frames, so 100% of
+what I ever received was filler.**
+
+It was a capture-length bug in my own method. Not a resolution problem. Not a
+missing cable. Proven by opening with 150 frames and getting the live menu,
+running clock and all.
+
+I asked the user twice to go check that cable. That is the **third** time today
+I attributed our own defect to their hardware — after twice reporting the MiSTer
+"offline, may need a power-cycle" when in fact our own core had wedged the ARM
+and killed its network stack.
+
+The pattern matters more than any single instance: **I kept reporting the first
+plausible explanation instead of testing it.** New standing rule — never
+attribute a failure to the user's hardware, network or power without ruling out
+our own code first, and resolve open questions by measurement rather than by
+asking them to go look at something.
+
+### I also accused the fleet of not writing RTL. That was a bad `git` query.
+
+Update #9 said "one worker in seven wrote Verilog," and I stood down four
+workers on the strength of it.
+
+**I was querying fixed branch names** — `origin/w-swap-o5`, `origin/w-gate-o5` —
+which were empty. The work was on **derived** branches: `w-swap-o5-mc`,
+`w-cast-o5-mc`, `w-arm-feed-staging`, `w-deblock-o5-converge`, `w-gate-hour28`.
+
+What had actually been committed:
+
+```
+h264_intra16_dc.sv    NEW    Intra 16x16 DC prediction
+h264_pskip_mv.sv      NEW    P_Skip motion vectors
+stream_path.sv   h264_decode_core.sv   present_core.sv
+nalu_scanner.sv  slice_hdr_parser.sv   h264_rbsp_window.sv
+```
+
+Those workers were doing exactly what I asked. I fired them for my own query
+bug. Rule added: **query all branches before judging whether work happened.**
+
+### Salvage: nothing was lost
+
+A worktree showing **257 unpushed commits** looked alarming. It was a stale
+upstream pointer — its HEAD is already reachable from 20+ origin branches. Two
+other branches had the same artifact. Real work is now pushed across ~18
+branches; three genuinely diverged branches were preserved as `salvage/*` rather
+than force-pushed. Nothing overwritten.
+
+### Automated visual verification is live
+
+```
+scripts/hdmi_capture_loop.py   detached, 30s interval, 150 frames/open
+  NO_SIGNAL / VALID_BLACK / VALID_CONTENT / CAPTURE_FAIL
+  flat RGB(7,7,7) -> NO_SIGNAL       flat 0 or 16 -> VALID_BLACK
+  alerts on CHANGE only
+```
+
+Critically, **an unfed card and a genuinely black screen now score
+differently** — the exact confusion that wasted today. Already verified firing on
+a real menu-to-screensaver transition.
+
+### Fleet: 5 agents, all writing RTL
+
+```
+fit         hardware owner + capture loop + salvage
+stage-a     decoded pixels -> ddr_frame_store        <- the blocker
+stage-bd    intra16 DC + P_Skip into reconstruction  (79% of macroblocks)
+stage-c     residual + inverse transform -> pixels
+stage-dpb   DDR reference frame buffer
+```
+
+Hard cap of 5, down from 19. All barred from tests, tooling, gates, docs and
+hardware — every commit must touch a `.sv` file. The orchestrator no longer
+sleeps or blocks, so it stays responsive while the fleet works.
+
+### Progress
+
+```
+intra          [##########··············]  35%
+display        [##############··········]  50%
+overall        [##########··············]  36%
+```
+
+Unchanged. But for the first time the project can **see its own output
+automatically**, which is what every stage from here is graded on.
+
+---
+
+---
+
 ## Update #9 — 2026-07-28 17:25 CDT (Hour 33)
 
 ### I had to fire most of the fleet
