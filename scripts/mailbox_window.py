@@ -8,12 +8,13 @@ Every mailbox offset is relative to a doorbell placed at
     doorbell = PHYS_BASE + 2 * bank_stride - 0x1000
 
 so changing the bank stride moves the **whole window**. Three strides exist in
-this project and only one is instantiated at a time::
-
-    stride 0x40000  -> 0x3007F000   ddram_frame_rd's bare module DEFAULT,
-                                    used by no shipping layout family
-    stride 0x80000  -> 0x300FF000   YUV420p
-    stride 0xC0000  -> 0x3017F000   RGB565
+this project and only one is instantiated at a time: the ``0x40000`` stride is
+``ddram_frame_rd``'s bare module default and is used by no shipping layout
+family; ``0x80000`` is YUV420p; ``0xC0000`` is RGB565. Each one puts the
+mailbox block at a different base, and this script prints the resolved
+addresses rather than repeating them here — the literals belong to
+``ddr_frame_layout_params.svh`` and ``mailbox_abi_spec.hpp``, which are the
+single source of truth for them.
 
 The trap: **all of these addresses exist in the DDR address map**, and DDR keeps
 whatever an older core last wrote there across a warm boot. Probing a window the
