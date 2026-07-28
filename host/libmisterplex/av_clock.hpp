@@ -64,4 +64,17 @@ inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dr
     return AvAction::Present;
 }
 
+// A bounded EOF escape for PMS/FFmpeg streams that reach known duration, stop
+// producing rawvideo, but leave the pipe open. Only fire with no partial frame:
+// a partial frame is treated as a real short-read so diagnostics can report it.
+inline bool knownDurationEofStall(int64_t startMs, int64_t durationMs, int64_t elapsedMs,
+                                  int64_t partialFrameBytes, int64_t noVideoMs,
+                                  int64_t graceMs = 1000) {
+    if (durationMs <= 0 || elapsedMs < 0 || partialFrameBytes != 0)
+        return false;
+    if (graceMs < 0)
+        graceMs = 0;
+    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs;
+}
+
 } // namespace misterplex

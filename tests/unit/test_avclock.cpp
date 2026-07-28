@@ -110,6 +110,17 @@ int main() {
         CHECK(avDriftMs(tNow, frameContentMs(presented, 24000, 1001)) < drop);
     }
 
+    // --- known-duration pipe stall at EOF ---
+    // Some PMS universal transcodes reach their advertised duration and then keep
+    // the rawvideo pipe open without producing another full frame. The media loop
+    // must classify that as terminal EOF once it is past known duration with no
+    // partial frame in flight; otherwise timeline polls stay playing@duration.
+    CHECK(!knownDurationEofStall(0, 30021, 29900, 0, 1200));
+    CHECK(!knownDurationEofStall(0, 30021, 31500, 128, 1200));
+    CHECK(!knownDurationEofStall(1260000, 1286942, 27050, 0, 200));
+    CHECK(knownDurationEofStall(0, 30021, 31500, 0, 1200));
+    CHECK(knownDurationEofStall(1260000, 1286942, 28050, 0, 1200));
+
     if (fails) {
         std::fprintf(stderr, "test_avclock: %d failures\n", fails);
         return 1;

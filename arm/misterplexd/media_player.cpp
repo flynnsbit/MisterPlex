@@ -2623,6 +2623,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         bool pauseClockHeld = false;
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
+        std::chrono::steady_clock::time_point lastVideoByte = t0;
+        bool eofStallLogged = false;
         size_t got = 0;
         while (!stop_.load()) {
             int64_t seekTo = seekReqMs_.exchange(-1);
@@ -2683,6 +2685,27 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         ++frameReadEagain;
+                        const auto now = std::chrono::steady_clock::now();
+                        const int64_t elapsedMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(now - t0)
+                                .count();
+                        const int64_t noVideoMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - lastVideoByte)
+                                .count();
+                        if (misterplex::knownDurationEofStall(
+                                startMs, durationMs, elapsedMs, static_cast<int64_t>(got),
+                                noVideoMs)) {
+                            videoEof = true;
+                            if (!eofStallLogged) {
+                                eofStallLogged = true;
+                                log("media: known-duration EOF after rawvideo stall elapsed_ms=" +
+                                    std::to_string(elapsedMs) +
+                                    " duration_ms=" + std::to_string(durationMs) +
+                                    " no_video_ms=" + std::to_string(noVideoMs));
+                            }
+                            break;
+                        }
                         if (profilePresent) {
                             const auto sleep0 = std::chrono::steady_clock::now();
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -2702,6 +2725,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     break;
                 }
                 got += static_cast<size_t>(n);
+                lastVideoByte = std::chrono::steady_clock::now();
                 ++frameReadOkCalls;
                 frameReadBytes += n;
                 if (n > frameReadMaxBytes)
