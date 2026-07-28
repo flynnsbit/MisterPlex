@@ -669,3 +669,189 @@ input. Re-verified on this host after migration.
 
 - Throughput gate tests checker logic, not sim. `effective_fps` is paint rate.
 - Visual gate is synthetic-only, not device-validated. No chroma-DC test.
+
+## ARM present path analysis (2026-07-27, from w-osd telemetry)
+
+### Raw numbers (from w-osd, not independently measured by w-c1)
+
+| Metric | Value | Source |
+| --- | ---:| --- |
+| frames_done rate | 61.7/s | w-osd telemetry (display refresh, not content) |
+| pfps | 8.85 | w-osd: presented frames per second |
+| present/frame ratio | 432/900 = 48% | w-osd |
+| free_bank_mask | 0 permanently | w-osd: no bank ever released |
+| timeout per push | 50 ms | ARM waits on free_bank_mask, gives up after 50ms |
+| fb0 pixel at centre | 0x0da0e5ff | w-osd: real content, not black/stale |
+
+### Derived (w-c1 analysis)
+
+| Quantity | Value | Method |
+| --- | ---:| --- |
+| Present interval | 113 ms | 1000 / 8.85 |
+| Non-timeout overhead | 63 ms | 113 - 50 (decode + DMA + framing) |
+| DMA push time (theoretical) | ~0.6 ms | 624×480×1.5 bytes / (90 MHz × 8 B/cycle) |
+| Max fps without timeout | ~15.9 | 1000 / 63 (upper bound; assumes timeout is sole cap) |
+| Max fps with bank-release working | **≫ 30** | DMA push < 1ms; bottleneck becomes content rate |
+
+### Why the present rate is 48%, not ~100%
+
+**Because `free_bank_mask = 0` permanently.** The FPGA display path never
+releases a bank. The ARM cannot push a new frame without waiting for a free
+bank. After 50ms, it gives up and pushes anyway (overwriting a bank the FPGA
+may still be reading → tearing risk, but at least it makes progress).
+
+The 48% figure means: the ARM decodes content faster than 8.85 fps (content
+is 24 fps), but can only present 8.85 fps because each present costs 113ms.
+The remaining 52% of decoded frames are dropped by the ARM-side frame-skip
+logic (correct behaviour under back-pressure).
+
+**This is NOT a throughput or decode problem.** It is a **bank-release handshake
+failure**. The root cause is w-a3's `clk_ddr` STA violation:
+```
+FROM: ddr_frame_store|disp_buf_d2
+TO:   DDRAM_ADDR[9,15,18,23,...]
+slack: -0.213 ns, 7 logic levels
+```
+The display buffer bank select fails setup, causing the FPGA to read wrong
+addresses (frozen/stale frame), and the bank-release signal to never propagate.
+
+### What "removing the 50ms timeout gets 30 fps" actually requires
+
+1. **Fix the bank-release mechanism** — the `disp_buf_d2` setup violation
+   must close. One pipeline register (w-a3 owns). Until that happens,
+   `free_bank_mask` stays 0 and timeout stays necessary.
+2. **Confirm DMA push time** — theoretical ~0.6ms at 90 MHz DDR. Even with
+   arbiter contention and 10× overhead, that's 6ms → 166 fps capacity.
+3. **Content rate is not the bottleneck** — `content_fps=24` means only 24
+   pushes/s needed. Even at 50ms timeout, the budget is 20 fps (timeout alone
+   exceeds content rate ÷ 2). With bank-release working, the budget is ~1000 fps.
+
+**The claim "30 fps" is defensible IFF the bank-release is fixed.** Without it,
+the ceiling is bounded by the timeout: 20 fps maximum (50ms period), and actual
+is 8.85 fps because of the ~63ms decode+framing overhead between pushes.
+
+### The unexplained 63ms gap
+
+113ms per present − 50ms timeout = **63ms** doing... what? Candidates:
+- ARM H.264 decode of one frame (~15-20ms at 624×480 on A9)
+- FFmpeg frame extraction overhead (~5ms per frame)
+- DMA setup + f2sdram arbitration (~1-5ms)
+- Python/companion process IPC overhead
+
+**This warrants measurement.** If the 63ms is mostly ARM decode, then fixing the
+bank-release gets us to ~15 fps (not 30). Getting to 30 fps additionally
+requires the ARM decode to be < ~33 - 1 = 32ms per frame — which is likely
+met for 624×480 Baseline on the dual-A9, but unmeasured in this config.
+
+## Capture harness hardware specification
+
+### Required hardware
+
+| Item | Specification |
+| --- | --- |
+| **USB HDMI capture dongle** | Any UVC-class USB 2.0 HDMI grabber. Known-good: MacroSilicon MS2109 (USB ID `534d:2109`). |
+| **Interface** | Must present as `/dev/videoN` with V4L2 API. No proprietary drivers. |
+| **Resolution** | Must support MJPEG or YUYV422 at ≥ 640×480. Default config: 1280×720 @ 60fps MJPEG. |
+| **Cable** | HDMI from MiSTer DE10-Nano output → dongle input. |
+| **Host** | Any Linux machine with `ffmpeg` and USB 2.0 port. No GPU required. |
+
+**Any UVC device works.** The harness has no hardware-specific code. It uses
+`ffmpeg -f v4l2` which works with all UVC-compliant HDMI grabbers. The
+`534d:2109` is simply what was validated first ($10–15 on Amazon/AliExpress,
+"USB HDMI capture card" — the ubiquitous flat black dongle).
+
+### Device path
+
+`/dev/video4` is the **default**, not hardcoded. Override with:
+- `--device /dev/videoN` (command-line argument)
+- `HDMI_DEV=/dev/videoN` (environment variable in some scripts)
+
+The path depends on host hardware (webcam at `/dev/video0-3`, grabber at
+`/dev/video4` is the lab config). `ls /dev/video*` after plugging in the
+dongle; the highest-numbered new device is usually correct.
+
+### Physical topology
+
+```
+MiSTer DE10-Nano HDMI out → HDMI cable → USB capture dongle → USB port on capture host
+```
+
+The capture host must be network-reachable from the worker running
+`hw_visual_compare.py`. Currently: same physical machine (dongle plugged
+directly into the node running the harness). Remote capture is supported via
+SSH+ffmpeg but not currently configured.
+
+### What rc=0 literally asserts (three-question audit)
+
+**Q1 — Operands:**
+- **Golden:** a checked-in PNG (e.g. `tests/fixtures/hw_visual/plex_real_baseline_320x240_57674f2e_mjpeg720_golden.png`)
+  with a provenance JSON declaring which RBF, geometry, format, and colour matrix produced it.
+- **Captured:** a live V4L2 grab from the MiSTer's HDMI output, through the same colour-matrix
+  conversion declared in the golden's provenance.
+- **Comparison:** per-pixel RGB difference in the active region (inside pillars/crop), computing:
+  per-channel MAE, exact-match ratio, channel dispersion (max/min ratio, CV), and shift analysis.
+
+**Q2 — What rc=0 covers and does NOT cover:**
+
+Covers:
+- ✅ The FPGA-presented frame matches the golden within capture noise
+- ✅ The frame is fresh (not stale — previous-frame comparison via `--previous-status-log`)
+- ✅ The RBF loaded is the declared one (md5 check, rc=8 on mismatch)
+- ✅ The delivery path is alive (bytes_in, nalu count, bank/format/seq token freshness)
+
+Does NOT cover:
+- ❌ Temporal correctness (displays the right frame at the right time)
+- ❌ Audio sync
+- ❌ Sub-pixel accuracy (HDMI capture has ±1px jitter; shift analysis compensates but doesn't eliminate)
+- ❌ Dynamic content (static golden only; no per-frame video sequence grading)
+- ❌ Interlaced/pulldown artefacts (Plex content is progressive)
+
+**Q3 — Can it fail?** YES. Red-proven:
+- `rc=3`: byte-identical capture to previous → stale
+- `rc=7`: unchanged DDR frame token (no new frame delivered)
+- `rc=7`: telemetry aliasing (bytes_in=4/nalu=4)
+- `rc=8`: RBF md5 mismatch (wrong core loaded)
+- `rc=4`: V4L2 corrupt buffer
+- `rc=5`: capture device absent (`/dev/videoN` not found)
+- Every classification branch (EXACT_MATCH, NO_FRAME_DELIVERED, COLOUR_PATH_DEFECT,
+  GEOMETRY_CONTENT_DEFECT, INDETERMINATE) red-proven with synthetic inputs.
+
+### No-hardware verification path (feasibility assessment)
+
+**Question:** Can the FPGA grade its own output without a grabber?
+
+**Current instruments inside the fabric:**
+- `recon_sig` (8-bit XOR of one 4×4 block's reconstruction) — too small; covers 16 pixels
+- `status_telem_r` mailbox — carries `recon_sig`, `recon_dbg`, decode progress;
+  no per-frame pixel checksum
+- w-osd's `fb0` pixel readback — reads DDR frame store directly via ARM mmap at `0x30000000`
+
+**The most viable path: ARM-side frame-store CRC.** The ARM already writes the
+frame at `0x30000000` and can read it back. A CRC-32 over the Y plane (299,520
+bytes for 624×480) takes < 1ms on the A9 and could be compared against a
+declared golden CRC. This is:
+- ✅ Remote (no physical hardware beyond the MiSTer itself)
+- ✅ Deterministic (no capture noise, no HDMI jitter)
+- ✅ Covers the DDR write path (proves ARM→DDR is correct)
+- ❌ Does NOT cover the present path (DDR→HDMI via ddr_frame_store readout)
+- ❌ Does NOT prove what the user sees on screen
+
+**For a complete no-hardware verification of what the user sees:** the FPGA
+would need to compute a CRC of the actual scanout pixels (from `present_core`'s
+video output, after YUV→RGB conversion and scaling). This does not exist today.
+Adding it would require ~50 ALMs and zero M10K (running CRC over the
+`{VDE, R, G, B}` bus). **This is architecturally trivial but is w-osd's or
+w-a3's scope, not mine — I can specify the interface but not build it.**
+
+**Recommendation:** Two-tier verification:
+1. **Tier 1 (remote, no grabber):** ARM-side CRC of DDR frame store plane data.
+   Proves ARM→DDR correctness. Can be deployed today with ~20 lines in misterplexd.
+2. **Tier 2 (requires grabber):** Full HDMI capture via `hw_visual_compare.py`.
+   Proves end-to-end including FPGA present path and analogue HDMI.
+
+Tier 1 is sufficient for grading decode correctness (which is what we need now).
+Tier 2 is required for grading presentation correctness (colour matrix, timing,
+crop, blank). **For the current milestone — "is the picture right?" — Tier 1
+would catch every defect that matters, because the ARM decode is known-correct
+and the present path's failure mode is frozen/stale (which we already catch via
+bank/token freshness checks), not wrong-pixels.**
