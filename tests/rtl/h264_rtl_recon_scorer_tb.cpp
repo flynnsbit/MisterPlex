@@ -355,7 +355,11 @@ int main(int argc, char** argv) {
               << "  mae=" << std::fixed << std::setprecision(6) << mae << "\n"
               << "  non_zero_residual_blocks=" << nonZeroResidualBlocks << "/" << totalBlocks << "\n"
               << "  path_full_pipeline(dequant+IDCT+recon)=" << fullPipelineBlocks << " blocks\n"
-              << "  path_idct_recon_only(I16x16_bypass)=" << dequantBypassBlocks << " blocks\n";
+              << "  path_idct_recon_only(I16x16_bypass)=" << dequantBypassBlocks << " blocks\n"
+              << "  SCOPE: module-level injection (golden→RTL→compare), NOT connected pipeline\n"
+              << "  INTEGRATED_PIPELINE_COVERAGE: 16/" << totalPixels
+              << " = " << std::fixed << std::setprecision(3)
+              << (100.0 * 16.0 / (double)totalPixels) << "% (decode_stub single 4x4 block)\n";
 
     if (firstBadMb >= 0) {
         std::cout << "RTL_RECON_SCORER  first_divergence"
