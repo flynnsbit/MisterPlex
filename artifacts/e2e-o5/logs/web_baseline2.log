@@ -1,6 +1,7 @@
 test_plex_web_player_baseline: BEGIN
 Scope: 1 browser session, Plex Web native player, item /library/metadata/3, 35s watch window
 Server reachable; item /library/metadata/3 = The Garden of Delights
+Server machineIdentifier 4edd44aac1de0b731553a3a187104ecd175571a0
 BROWSER navigating to http://<PMS_HOST>:32400/web/index.html
   browser console: [appModelInitializer] Failed to read clientID from storage
   browser console: [appModelInitializer] Failed to read anonymousClientID from storage
@@ -17,15 +18,36 @@ BROWSER navigating to http://<PMS_HOST>:32400/web/index.html
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: Failed to load resource: net::ERR_NAME_NOT_RESOLVED
-BROWSER navigating to details for ratingKey 3
   browser console: Failed to load resource: net::ERR_ADDRESS_UNREACHABLE
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: [Connections] All connections to [Loopback] failed
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
-BROWSER no play button matched; navigating directly to the playback route
+  browser console: [Servers] Failed to request resources through plex.tv
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: [Connections] All connections to [Loopback] failed
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: the server responded with a status of 406 (Not Acceptable)
+  browser console: Failed to load resource: the server responded with a status of 406 (Not Acceptable)
+  browser console: [Connections] All connections to [Bundled] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_NAME_NOT_RESOLVED
+  browser console: Failed to load resource: net::ERR_ADDRESS_UNREACHABLE
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+BROWSER dismissed user picker as profile "shawnhenderson"
+BROWSER navigating to details for ratingKey 3
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+  browser console: [Connections] All connections to [Loopback] failed
+  browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
+BROWSER clicked play via button[data-testid="preplay-play"]
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
   browser console: [Connections] All connections to [Loopback] failed
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
@@ -39,6 +61,7 @@ BROWSER no play button matched; navigating directly to the playback route
   browser console: [Connections] All connections to [Loopback] failed
   browser console: Failed to load resource: net::ERR_CONNECTION_REFUSED
 
-PLAYER: video_element=false samples=0 currentTime 0 -> 0 (advance 0s)
-SERVER: sessions=0 viewOffset=null
-REFUSE: no <video> element ever appeared — Plex Web UI was not drivable in this environment, so the 0:00 symptom is UNSCORED (not a pass, not a fail). Artefacts in /home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/build/web_baseline
+PLAYER: video_element=true samples=35 currentTime 3.59 -> 37.677 (advance 34.087s)
+  last state: paused=false readyState=4 networkState=2 error=null videos=1
+SERVER: sessions=1 viewOffset=28000
+PASS: Plex Web player advanced 34.087s. Plex Web, the media and the server are healthy for /library/metadata/3; a stuck 0:00 while casting is therefore a MiSTerPlex-side bug.

@@ -210,6 +210,39 @@ async function selfTest() {
   return EXIT_PASS;
 }
 
+/**
+ * Plex Web presents a "Select User" profile picker before any content is
+ * reachable when the server has managed accounts.  Until it is dismissed the
+ * SPA renders no library, no details page and no <video> element, so every
+ * playback assertion is UNSCORABLE.  A JS .click() is not enough — the picker
+ * is React-driven and needs a real input event.
+ */
+async function dismissUserPicker(page, preferred) {
+  const onPicker = await page.evaluate(
+    () => /select user/i.test(document.body.innerText.slice(0, 200))
+  ).catch(() => false);
+  if (!onPicker) return { shown: false, picked: null };
+
+  const names = await page.evaluate(() => {
+    const t = document.body.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
+    return t.filter((s) => !/^select user$/i.test(s) && !/^managed account$/i.test(s)
+                           && !/^add user/i.test(s));
+  }).catch(() => []);
+  const target = (preferred && names.includes(preferred)) ? preferred : names[0];
+  if (!target) return { shown: true, picked: null };
+
+  try {
+    await page.getByText(target, { exact: true }).click({ timeout: 15000 });
+  } catch (e) {
+    return { shown: true, picked: null, error: e.message };
+  }
+  await page.waitForTimeout(10000);
+  const stillPicker = await page.evaluate(
+    () => /select user/i.test(document.body.innerText.slice(0, 200))
+  ).catch(() => false);
+  return { shown: true, picked: stillPicker ? null : target, still_on_picker: stillPicker };
+}
+
 // ── main Plex Web baseline ──────────────────────────────────────────────────
 async function main() {
   if (process.argv.includes('--self-test')) {
@@ -221,6 +254,8 @@ async function main() {
   const TOKEN = process.env.PLEX_TOKEN || conf.PLEX_TOKEN || '';
   const KEY = process.env.PLEX_KEY || conf.PLEX_KEY || '/library/metadata/3';
   const WATCH = parseInt(process.env.WEB_BASELINE_SECONDS || '35', 10);
+  const WEB_USER = process.env.PLEX_WEB_USER || conf.PLEX_WEB_USER || '';
+  let SERVER_ID = process.env.PLEX_SERVER_ID || conf.PLEX_SERVER_ID || '';
 
   log('test_plex_web_player_baseline: BEGIN');
   log(`Scope: 1 browser session, Plex Web native player, item ${KEY}, ${WATCH}s watch window`);
@@ -236,6 +271,18 @@ async function main() {
   if (meta.status !== 200) refuse(`item ${KEY} not readable (status ${meta.status})`);
   const titleM = meta.body.match(/\stitle="([^"]*)"/);
   log(`Server reachable; item ${KEY} = ${titleM ? titleM[1] : 'unknown'}`);
+
+  // Route through the server's real machineIdentifier. The "auto" alias makes
+  // Plex Web resolve the server from its advertised connection list, which on
+  // this deployment starts with a loopback URI the browser cannot reach
+  // ("[Connections] All connections to [Loopback] failed") whenever the browser
+  // is not running on the PMS host itself.
+  if (!SERVER_ID) {
+    const idm = ident.body.match(/machineIdentifier="([^"]+)"/);
+    if (!idm) refuse('could not read machineIdentifier from /identity');
+    SERVER_ID = idm[1];
+  }
+  log(`Server machineIdentifier ${SERVER_ID}`);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const { chromium } = loadPlaywright();
@@ -261,10 +308,19 @@ async function main() {
 
     log(`BROWSER navigating to ${BASE}/web/index.html`);
     await page.goto(`${BASE}/web/index.html`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(8000);
+
+    const picker = await dismissUserPicker(page, WEB_USER);
+    report.user_picker = picker;
+    if (picker.shown && !picker.picked) {
+      refuse(`Plex Web "Select User" picker could not be dismissed (tried "${WEB_USER || 'first profile'}"). `
+             + 'No content, and therefore no playback, is reachable; the 0:00 symptom is UNSCORED. '
+             + 'Set PLEX_WEB_USER to a profile name on this server.');
+    }
+    if (picker.shown) log(`BROWSER dismissed user picker as profile "${picker.picked}"`);
 
     const ratingKey = path.basename(KEY);
-    const detailsUrl = `${BASE}/web/index.html#!/server/auto/details?key=${encodeURIComponent(KEY)}`;
+    const detailsUrl = `${BASE}/web/index.html#!/server/${SERVER_ID}/details?key=${encodeURIComponent(KEY)}`;
     log(`BROWSER navigating to details for ratingKey ${ratingKey}`);
     await page.goto(detailsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(5000);
@@ -288,7 +344,7 @@ async function main() {
       }
     }
     if (!pressed) {
-      const playUrl = `${BASE}/web/index.html#!/server/auto/playback?key=${encodeURIComponent(KEY)}`;
+      const playUrl = `${BASE}/web/index.html#!/server/${SERVER_ID}/playback?key=${encodeURIComponent(KEY)}`;
       log('BROWSER no play button matched; navigating directly to the playback route');
       await page.goto(playUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     }

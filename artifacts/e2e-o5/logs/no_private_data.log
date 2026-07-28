@@ -1,0 +1,4 @@
+test_no_private_data: FAIL - hardcoded private Plex server address found; use a PMS_URL env var or a YOUR-PLEX-SERVER placeholder
+artifacts/e2e-o5/logs/web_baseline.log:4:BROWSER navigating to http://<REDACTED_HOST>:32400/web/index.html
+handoffs/misterplex-handoff-w-e2e.md:154:- **Dependencies:** MiSTer at <REDACTED_HOST>, PMS at <REDACTED_HOST>:32400, credentials in `$HOME/.config/misterplex/misterplex.conf`.
+tests/hw/test_cast_timeline_poll.sh:28:#   PLEX_BASE              e.g. http://<REDACTED_HOST>:32400
