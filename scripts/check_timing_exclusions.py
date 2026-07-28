@@ -147,21 +147,29 @@ def parse_sta_clocks(path: Path) -> StaCoverage:
         return cov
     section = ""
     saw_header = False
+    section_rows = 0
     for line in path.read_text(errors="ignore").splitlines():
         m = re.match(r"; (Setup|Hold|Recovery|Removal|Minimum Pulse Width) Summary\s+;", line)
         if m:
             section = m.group(1)
             cov.sections.add(section)
             saw_header = False
+            section_rows = 0
             continue
         if section and "Clock" in line and "Slack" in line:
             saw_header = True
+            continue
+        if section and saw_header and line.startswith("+---") and section_rows > 0:
+            section = ""
+            saw_header = False
+            section_rows = 0
             continue
         if section and saw_header and line.startswith(";"):
             parts = [c.strip() for c in line.strip().strip(";").split(";")]
             if len(parts) >= 3 and parts[0] and not parts[0].startswith("+") and parts[0] != "Clock":
                 cov.clocks.add(parts[0])
                 cov.total_rows += 1
+                section_rows += 1
             continue
     return cov
 
@@ -282,7 +290,7 @@ def main(argv: list[str]) -> int:
                 f"paths may have been excluded from analysis"
             )
         for expected_clk in expected_clocks:
-            if expected_clk not in cov.clocks:
+            if not any(expected_clk == clock or expected_clk in clock for clock in cov.clocks):
                 errors.append(
                     f"expected clock '{expected_clk}' missing from STA report: "
                     f"it may have been excluded by a new set_clock_groups or set_false_path"
