@@ -78,6 +78,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
 	python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
+	python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py
 	python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
 	python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
 	@chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true
