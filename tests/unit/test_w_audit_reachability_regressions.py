@@ -161,24 +161,53 @@ def case_trunk_through_masking_lineage() -> None:
     assert "masking lineage" in err.getvalue(), err.getvalue()
 
 
+def case_trunk_nested_under_masking_lineage() -> None:
+    """The stub ancestor must be found at any depth, not only as a direct parent.
+
+    w-audit's later attack on the sibling post-fit tool (docs/
+    w-audit-prefit-elaboration-attack.md) showed `--forbid-only-under decode_stub`
+    catching direct children only, so a grandchild of the retired painter went
+    green. The same blind spot must not exist here: the trunk walk inspects the
+    whole path, so a module four hops below the stub is still laundered.
+    """
+    graph = {
+        "emu": {"stream_path"},
+        "stream_path": {"decode_stub"},
+        "decode_stub": {"one_ref"},
+        "one_ref": {"mb_write_addr"},
+        "mb_write_addr": {"i420_addr"},
+        "i420_addr": {"leaf"},
+        "leaf": set(),
+    }
+    modules = {n: None for n in graph}
+    out, err = io.StringIO(), io.StringIO()
+    rc = 0
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rtl.check_required_modules(["leaf"], "i420_addr", graph, modules, set(graph), False)
+    except SystemExit as exc:
+        rc = int(exc.code or 0)
+    assert "via_masking_lineage=decode_stub" in out.getvalue(), out.getvalue()
+    assert rc == 1, "a nested descendant of the retired painter must fail the trunk proof"
+    assert "masking lineage" in err.getvalue(), err.getvalue()
+
+
 def case_qip_comment_and_path() -> None:
-    """A commented assignment compiles nothing; a same-basename path is not a match."""
+    """A commented assignment compiles nothing; a same-basename path is not a match.
+
+    Drives the *product* helper `rtl.qip_sources_from_text` rather than a local
+    copy of it, so a regression in the shipped parser fails here.
+    """
     qip_dir = SCRATCH / "qipcase"
     qip_dir.mkdir(parents=True, exist_ok=True)
-    (qip_dir / "files.qip").write_text(
+    body = (
         "set_global_assignment -name SYSTEMVERILOG_FILE rtl/live.sv\n"
         "# set_global_assignment -name SYSTEMVERILOG_FILE rtl/commented.sv\n"
         "set_global_assignment -name SYSTEMVERILOG_FILE rtl_old/moved.sv\n"
         "   # trailing comment set_global_assignment -name SYSTEMVERILOG_FILE rtl/tricky.sv\n"
     )
-    resolved: set[Path] = set()
-    base = qip_dir
-    for raw in (qip_dir / "files.qip").read_text().splitlines():
-        line = raw.split("#", 1)[0]
-        if "set_global_assignment" not in line:
-            continue
-        for token in __import__("re").findall(r"[\w./\\-]+\.s?v\b", line):
-            resolved.add((base / token.replace("\\", "/")).resolve())
+    (qip_dir / "files.qip").write_text(body)
+    resolved = rtl.qip_sources_from_text(body, qip_dir)
     names = {p.name for p in resolved}
     assert "live.sv" in names, names
     assert "commented.sv" not in names, "a commented assignment must not count as coverage"
@@ -197,6 +226,7 @@ def main() -> int:
         case_escaped_instance,
         case_dead_root,
         case_trunk_through_masking_lineage,
+        case_trunk_nested_under_masking_lineage,
         case_qip_comment_and_path,
     ]
     print(f"Scope: w_audit_regression_cases={len(cases)} attacked_gate=check_rtl_module_instantiations.py", flush=True)

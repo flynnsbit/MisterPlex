@@ -490,10 +490,34 @@ Two further hardenings arising from the same review:
 | `--root mycore --require cos --allow-non-product-root` | rc=1 | rc=1 `REQUIRED_RTL_MODULE_NOT_COMPILED cos` |
 | `--root h264_inter_mc_16x16 --require h264_ref_clamp` | rc=1 | rc=1 `TRUNK_PROOF ... via_masking_lineage=decode_stub` |
 
-`tests/unit/test_w_audit_reachability_regressions.py` reproduces all five
+`tests/unit/test_w_audit_reachability_regressions.py` reproduces all six
 classes on **synthetic** SystemVerilog, so the regressions hold without editing
 tracked RTL and survive the topology rewire. Both parser fixes were
 mutation-proved by disabling them and observing rc=1.
+
+### Pre-emptive: the defect that later broke the sibling post-fit tool
+
+w-audit's next attack (`docs/w-audit-prefit-elaboration-attack.md`, branch
+`w-audit` `a9eac7e`) broke `check_map_hierarchy.py` on `parent/integ-hour27`
+because `--forbid-only-under decode_stub` inspects **direct children only**, so
+`h264_dpb_i420_addr` -- a grandchild of `h264_dpb_one_ref` under the stub --
+went green. That parser is not on this branch, but the identical blind spot is
+now a permanent regression here: `case_trunk_nested_under_masking_lineage`
+requires a leaf four hops below `decode_stub` and asserts the trunk proof still
+reports `via_masking_lineage=decode_stub`. Mutation-proved by narrowing the
+lineage test to `trunk[-2]` (the direct parent), which reproduces the sibling
+tool's defect exactly:
+
+```
+AssertionError: TRUNK_PROOF i420_addr
+  path=emu->stream_path->decode_stub->one_ref->mb_write_addr->i420_addr
+  hops=5 via_masking_lineage=no
+```
+
+The `.qip` case was also converted to drive the shipped helper
+`rtl.qip_sources_from_text()` rather than a local re-implementation of it: a
+test that re-implements the logic it is guarding keeps passing after the product
+regresses, which is this project's signature failure in miniature.
 
 ### What this still does not prove
 

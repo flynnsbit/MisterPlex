@@ -465,6 +465,25 @@ def parse_define_args(items: list[str]) -> dict[str, int | None]:
     return out
 
 
+def qip_sources_from_text(text: str, base: Path) -> set[Path]:
+    """Resolve every HDL source a single .qip body compiles, relative to `base`.
+
+    Split out so the regression suite can drive the *product* parser on synthetic
+    .qip bodies instead of re-implementing it; a re-implementation would keep
+    passing after this one regressed.
+    """
+    out: set[Path] = set()
+    for raw in text.splitlines():
+        # Quartus TCL comments start with '#'. A commented-out assignment does
+        # not compile anything, so it must not count as coverage.
+        line = raw.split("#", 1)[0]
+        if "set_global_assignment" not in line:
+            continue
+        for token in re.findall(r"[\w./\\-]+\.s?v\b", line):
+            out.add((base / token.replace("\\", "/")).resolve())
+    return out
+
+
 def tracked_qip_sources() -> set[Path]:
     """Every RTL/HDL source file referenced by any tracked .qip in the project."""
     out: set[Path] = set()
@@ -481,15 +500,9 @@ def tracked_qip_sources() -> set[Path]:
         if not rel.endswith(".qip"):
             continue
         qip = ROOT / rel
-        base = qip.parent
-        for raw in qip.read_text(encoding="utf-8", errors="ignore").splitlines():
-            # Quartus TCL comments start with '#'. A commented-out assignment does
-            # not compile anything, so it must not count as coverage.
-            line = raw.split("#", 1)[0]
-            if "set_global_assignment" not in line:
-                continue
-            for token in re.findall(r"[\w./\\-]+\.s?v\b", line):
-                out.add((base / token.replace("\\", "/")).resolve())
+        out |= qip_sources_from_text(
+            qip.read_text(encoding="utf-8", errors="ignore"), qip.parent
+        )
     return out
 
 
