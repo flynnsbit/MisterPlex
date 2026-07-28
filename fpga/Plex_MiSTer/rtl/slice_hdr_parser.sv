@@ -49,6 +49,11 @@ module slice_hdr_parser (
 	output reg         first_i4_modes_present,
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
+	// Stage C: real coded_block_pattern + residual entry point for the product
+	// decode core, replacing the hardcoded literals in stream_path.
+	output wire [3:0]  first_mb_cbp_luma,
+	output wire [1:0]  first_mb_cbp_chroma,
+	output wire [15:0] first_mb_residual_bit_offset,
 	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
@@ -269,6 +274,14 @@ module slice_hdr_parser (
 			cur_bit_offset = ({3'd0, bbyte} << 3) + {7'd0, (3'd7 - bpos)};
 		end
 	endfunction
+
+	// Stage C exports: real syntax for the product decode core. Scope is the
+	// first macroblock of the slice (denominator: 1 of 1170 MBs/frame) — the
+	// parser does not yet stream per-macroblock cbp.
+	assign first_mb_cbp_luma = full_luma_cbp;
+	wire [5:0] first_mb_cbp_full = cbp_intra_map(cbp_me);
+	assign first_mb_cbp_chroma = first_mb_cbp_full[5:4];
+	assign first_mb_residual_bit_offset = {6'd0, full_start_bit};
 
 	function automatic [1:0] full_i4_bx;
 		input [3:0] idx;
