@@ -114,6 +114,10 @@ module h264_dpb_one_ref #(
 	localparam [2:0] PH_U     = 3'd2;
 	localparam [2:0] PH_V     = 3'd3;
 	localparam [2:0] PH_DRAIN = 3'd4;
+	// Two reads are still in flight when the last address is issued, so the
+	// drain must retire both before fetch_done; retiring only the first loses
+	// the final chroma-V window sample (window index 80).
+	localparam [2:0] PH_DRAIN2 = 3'd5;
 
 	wire [31:0] write_addr;
 	h264_dpb_mb_write_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_write_addr (
@@ -319,6 +323,11 @@ module h264_dpb_one_ref #(
 					end
 				end
 			end else if (phase == PH_DRAIN) begin
+				pending_valid <= 1'b0;
+				if (mem_rvalid && pending_valid_d1) begin
+					phase <= PH_DRAIN2;
+				end
+			end else if (phase == PH_DRAIN2) begin
 				pending_valid <= 1'b0;
 				if (mem_rvalid && pending_valid_d1) begin
 					phase      <= PH_IDLE;

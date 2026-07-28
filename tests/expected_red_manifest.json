@@ -66,6 +66,22 @@
       ]
     },
     {
+      "id": "h264_decode_core_full_frame_mc_perturb_mv",
+      "owner": "tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh",
+      "why": "Perturbing the motion vector must fail the 1170-macroblock full-frame MC reference-read scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core full-frame MC: 295419 reference read addresses wrong; first read_ordinal 603 got_addr=0x10000b want_addr=0x10000a"
+      ]
+    },
+    {
+      "id": "h264_decode_core_full_frame_mc_drop_pred",
+      "owner": "tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh",
+      "why": "Dropping the block-MC prediction must fail the 1170-macroblock full-frame predicted-sample scoreboard.",
+      "required_substrings": [
+        "FAIL h264_decode_core full-frame MC: mb=0 (0,0) mv=(-20,-18) sample 0 plane=Y got_addr=0x400000 want_addr=0x400000 got=0 want=19"
+      ]
+    },
+    {
       "id": "h264_decode_core_p16z_drop_pred",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
       "why": "Dropping prediction must fail the exact P16x16 real-P pred+residual reconstruction scoreboard.",

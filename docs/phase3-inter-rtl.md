@@ -45,7 +45,10 @@ Product RTL added in `fpga/Plex_MiSTer/rtl/h264_inter_pred.sv`:
 - `h264_chroma_epel_sample`: 4:2:0 chroma eighth-pel bilinear interpolation with `+32 >> 6`
   rounding.
 - `h264_ref_clamp`: edge padding/clamping for reference fetch addresses.
-- `h264_luma_ref_tap_addr`: 9×9 luma reference-window tap address generation with edge clamp.
+- `h264_luma_ref_tap_addr`: parameterised reference-window tap address generation with edge clamp.
+  `TAP_COLS`/`TAP_ORIGIN` default to 9/4 (the original centred 9×9 per-sample grid); the block-MC
+  reference fetch instantiates it as 21 columns/origin 2 for luma and 9 columns/origin 0 for
+  chroma, so one address generator serves every window geometry.
 - `h264_p_mb_type_decode`: P-slice macroblock/sub-macroblock type classifier for P_Skip,
   P_L0_16x16, P_L0_16x8, P_L0_8x16, P_8x8, P_8x8ref0 and the P sub-MB shapes
   8x8/8x4/4x8/4x4. Intra-in-P macroblocks are classified as intra rather than silently treated
@@ -55,6 +58,53 @@ Product RTL added in `fpga/Plex_MiSTer/rtl/h264_inter_pred.sv`:
   raw reference-window reads with normative edge replication.
 - `h264_inter_mc_16x16` and `h264_inter_mc_part`: 16×16 qpel/epel MC arithmetic plus partition masks
   for P_L0_16x8, P_L0_8x16, P_8x8 and 8x4/4x8/4x4 sub-partition-sized predictions.
+
+
+## Motion compensation inside the product decode core
+
+`stream_path -> h264_decode_core` is the product decoder. Since `w-swap-o5`, the core's P16×16 path
+is real block motion compensation rather than per-sample taps:
+
+- `h264_decode_core` instantiates `h264_dpb_one_ref` (`u_product_dpb_ref`) as its reference store
+  and window-fetch engine and `h264_inter_mc_part` (`u_product_p16_mc`, `part_w=part_h=16`) as the
+  block predictor. `h264_inter_mc_16x16`, `h264_luma_qpel_block_16x16`, `h264_chroma_epel_block_8x8`,
+  `h264_luma_ref_tap_addr` and `h264_ref_clamp` come in transitively.
+- Reference fetch is one 21×21 luma window plus one 9×9 window per chroma plane — **603 reads per
+  macroblock**, replacing the previous 21248 per-sample tap reads.
+- The reference store is written from `deblock_filtered_sample_valid` and promoted by
+  `deblock_ref_ready_pulse`, so MC consumes **POST-deblock committed samples only**; intra/neighbour
+  taps stay PRE-deblock. `frame_done` remains driven from the deblock controller ref-ready pulse.
+- Bank ownership stays at the outer level: `h264_dpb_one_ref` addresses are rebased onto
+  `dpb_ref_base`/`dpb_write_base` by subtracting its internal `reference_base`/`current_base`.
+  i420 addressing is plane-linear, so the rebase is exact.
+- The external DPB read contract returns data one edge after the address is registered; the
+  reference store aligns returned data two edges after issue. One skid register in the core adapts
+  the former to the latter without reordering reads.
+
+Reachability is enforced, not assumed:
+
+```
+python3 scripts/check_rtl_module_instantiations.py --root h264_decode_core \
+  --require h264_deblock_writeback_ctrl --require h264_inter_mc_part --require h264_inter_mc_16x16 \
+  --require h264_dpb_one_ref --require h264_luma_qpel_block_16x16 \
+  --require h264_chroma_epel_block_8x8 --require h264_luma_ref_tap_addr --require h264_ref_clamp
+```
+
+Plain `emu`-rooted reachability is **masked by the retired `decode_stub` painter** and must never be
+used for an MC completeness claim. `tests/unit/test_h264_decode_core_mc_reachability_redgreen.py`
+mutates each product instantiation site, requires the gate to go red, restores it and requires green
+again, so the green claim cannot be vacuous.
+
+`tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh` drives **1170/1170 macroblocks** of a real
+624×480 frame through the product core as P16×16 inter macroblocks with a motion field covering all
+16 luma quarter-pel phases and all 64 chroma eighth-pel phases, and compares **449280/449280**
+predicted samples against an independent qpel/epel model evaluated directly on the reference picture.
+It red-checks a perturbed motion vector and a dropped prediction.
+
+That full-frame gate found a real RTL defect that the 2–3 macroblock gates missed: `h264_dpb_one_ref`
+retired only one of the two in-flight reads in `PH_DRAIN`, so the final chroma-V window sample
+(window index 80) was lost and only the last sample of each macroblock was wrong. `PH_DRAIN2` now
+retires both.
 
 The Verilator top in `tests/rtl/h264_inter_pred_tb_top.sv` instantiates the real product RTL listed
 in `files.qip`; test-only fault injection lives only in the testbench top.
