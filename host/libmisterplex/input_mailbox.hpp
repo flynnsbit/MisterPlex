@@ -71,9 +71,12 @@ inline const char* frameStoreStatusUnavailableDescription() {
 //
 // ARM protocol:
 //   1. Read PLXD. If free_bank_mask has a set bit, write to that bank.
-//   2. If free_bank_mask == 0, poll at 1ms intervals up to 50ms (~3 vsyncs).
-//   3. If timeout: log STALL loudly. Do NOT silently fall back to a delay.
-//   4. Ring PLXK doorbell with the bank just written.
+//   2. If free_bank_mask == 0, poll for a bounded vsync window.
+//   3. If frames_done advances but free_bank_mask stays 0, the current RTL is
+//      the known stale-release silicon; fall back to host-timed bank reuse.
+//   4. If the timeout expires without proving stale-release silicon, skip the
+//      frame rather than guessing a bank that future fixed RTL says is in use.
+//   5. Ring PLXK doorbell with the bank just written.
 struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
     uint8_t disp_bank = 0;     // 0 or 1
@@ -90,6 +93,70 @@ struct BankReleaseStatus {
         return -1;
     }
 };
+
+enum class BankReleaseDecisionKind {
+    UseFreeBank,
+    UseTimedFallback,
+    SkipFrame,
+};
+
+struct BankReleaseDecision {
+    BankReleaseDecisionKind kind = BankReleaseDecisionKind::SkipFrame;
+    int bank = -1;
+    bool release_stuck = false;
+};
+
+struct BankReleasePolicyState {
+    bool release_stuck = false;
+};
+
+inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyState& state,
+                                                           int plannedBank,
+                                                           const BankReleaseStatus& initial,
+                                                           const BankReleaseStatus& final) {
+    BankReleaseDecision out{};
+    out.release_stuck = state.release_stuck;
+
+    if (state.release_stuck) {
+        if (initial.anyFree()) {
+            state.release_stuck = false;
+            out.kind = BankReleaseDecisionKind::UseFreeBank;
+            out.bank = initial.freeBank();
+            out.release_stuck = false;
+            return out;
+        }
+        out.kind = BankReleaseDecisionKind::UseTimedFallback;
+        out.bank = plannedBank;
+        out.release_stuck = true;
+        return out;
+    }
+
+    if (initial.anyFree()) {
+        out.kind = BankReleaseDecisionKind::UseFreeBank;
+        out.bank = initial.freeBank();
+        out.release_stuck = false;
+        return out;
+    }
+    if (final.anyFree()) {
+        out.kind = BankReleaseDecisionKind::UseFreeBank;
+        out.bank = final.freeBank();
+        out.release_stuck = false;
+        return out;
+    }
+
+    if (final.frames_done != initial.frames_done) {
+        state.release_stuck = true;
+        out.kind = BankReleaseDecisionKind::UseTimedFallback;
+        out.bank = plannedBank;
+        out.release_stuck = true;
+        return out;
+    }
+
+    out.kind = BankReleaseDecisionKind::SkipFrame;
+    out.bank = -1;
+    out.release_stuck = false;
+    return out;
+}
 
 inline bool decodeBankReleaseWord(uint64_t word, BankReleaseStatus& out) {
     if (static_cast<uint32_t>(word) != kBankReleaseMailboxMagic)

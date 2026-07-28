@@ -25,10 +25,9 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
      cp -f /media/fat/misterplex/bin/misterplexd /media/fat/misterplex/bin/misterplexd.prev-c2
    fi
    for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
-     kill -9 "$p" 2>/dev/null || true
+     kill "$p" 2>/dev/null || true
    done
-   sleep 0.4
-   rm -f /media/fat/misterplex/bin/misterplexd'
+   sleep 0.8'
 sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
 # On-device browse / menu (Phase 4 UX)
 if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then

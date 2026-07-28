@@ -1358,9 +1358,11 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // fallback for pre-PLXD cores, mailbox absence, or stale DDR residue.
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
+    bool timedFallback = false;
+    const int plannedBank = bank;
     {
         BankReleaseStatus brs;
-        constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
+        constexpr int kPlxdPollMaxIters = 20;  // bounded one-vsync release window
         int plxdIters = 0;
         if (readBankRelease(brs)) {
             // One-shot provenance diagnostic on first PLXD contact.
@@ -1404,49 +1406,76 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                         "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
                         "%d frames — treating as boot residue, falling back to timed delay\n",
                         static_cast<unsigned>(brs.frames_done), plxdStaleCount_);
-                // Fall through to timed delay below.
-                goto plxd_absent_fallback;
+                timedFallback = true;
             }
 
-            // PLXD present and live — use it for bank selection. Do not also
-            // apply kDdrBankReuseMinUs here; the mailbox is the release proof.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
-                plxdUsed = true;
-            } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
+            BankReleaseStatus finalBrs = brs;
+            if (!timedFallback && !plxdBankReleasePolicy_.release_stuck && !brs.anyFree()) {
                 for (int i = 0; i < kPlxdPollMaxIters; ++i) {
                     usleep(1000);
                     ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
-                        plxdUsed = true;
-                        break;
+                    BankReleaseStatus next{};
+                    if (readBankRelease(next)) {
+                        finalBrs = next;
+                        if (next.anyFree())
+                            break;
                     }
                 }
-                if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to the timed
-                    // interlock after PLXD was accepted as live.
+            }
+
+            if (!timedFallback) {
+                const bool wasStuck = plxdBankReleasePolicy_.release_stuck;
+                const BankReleaseDecision decision =
+                    chooseDdrPresentBankFromRelease(plxdBankReleasePolicy_, plannedBank,
+                                                    brs, finalBrs);
+                if (!wasStuck && decision.release_stuck) {
                     fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
-                            static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
-                    bank = brs.disp_bank ^ 1;
+                            "[STALE] sendDdrFrame: PLXD free_bank_mask stayed 0 while "
+                            "frames_done advanced %u→%u; using timed bank fallback until "
+                            "free_bank_mask is observed\n",
+                            static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(finalBrs.frames_done));
+                }
+                if (wasStuck && !decision.release_stuck && decision.kind ==
+                        BankReleaseDecisionKind::UseFreeBank) {
+                    fprintf(stderr,
+                            "[PLXD-RECOVER] sendDdrFrame: free_bank_mask=%u observed; "
+                            "resuming PLXD bank-release handshake\n",
+                            static_cast<unsigned>(brs.free_bank_mask));
+                }
+                if (decision.kind == BankReleaseDecisionKind::UseFreeBank) {
+                    // PLXD present and live — use it for bank selection. Do
+                    // not also apply kDdrBankReuseMinUs here; the mailbox is
+                    // the release proof.
+                    bank = decision.bank;
+                    plxdUsed = true;
+                } else if (decision.kind == BankReleaseDecisionKind::UseTimedFallback) {
+                    bank = decision.bank;
+                    timedFallback = true;
+                } else {
+                    fprintf(stderr,
+                            "[STALL] sendDdrFrame: PLXD bank-release busy after %d ms "
+                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d); "
+                            "skipping frame rather than guessing a bank\n",
+                            plxdIters, static_cast<unsigned>(finalBrs.frames_done),
+                            static_cast<unsigned>(finalBrs.disp_bank),
+                            static_cast<int>(finalBrs.swap_pending));
+                    setErr("sendDdrFrame: PLXD bank release busy; skipped unsafe overwrite");
+                    return false;
                 }
             }
+
             auto tPlxd1 = std::chrono::steady_clock::now();
             timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
             timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+            timing.plxa_used = plxdUsed;
         } else {
-            plxd_absent_fallback:
-            // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
-            // Fall back to the old timing-based mitigation: brief yield for
-            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
-            usleep(1500);
+            timedFallback = true;
+        }
+        if (timedFallback) {
+            // PLXD absent, stale, or proven stuck on current silicon. Use the
+            // host-planned bank plus the same-bank reuse floor; do not add fixed
+            // sleeps when the bank has not been reused inside the measured floor.
             const double nowMs = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();
@@ -1569,11 +1598,9 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                                        std::chrono::steady_clock::now().time_since_epoch())
                                        .count();
 
-    // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
-    // in frame_store prevents tears without host blocking on swap_pending.
+    // Steady-state: no fixed host sleep. PLXD (when valid), or the same-bank
+    // reuse floor (fallback), is the safety interlock.
     auto tPost0 = std::chrono::steady_clock::now();
-    if (!first)
-        usleep(500);
     auto tPost1 = std::chrono::steady_clock::now();
     timing.post_wait_us = elapsedUs(tPost0, tPost1);
 

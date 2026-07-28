@@ -329,6 +329,7 @@ private:
     uint16_t plxdLastFramesDone_ = 0;
     int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
+    BankReleasePolicyState plxdBankReleasePolicy_{};
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

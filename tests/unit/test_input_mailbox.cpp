@@ -406,6 +406,57 @@ int main() {
         CHECK(br.disp_bank == 0);
         CHECK(!br.swap_pending);
         CHECK(br.frames_done == 0xFFFF);
+
+        // --- ARM bank-release policy ---
+        // Operand A: initial/final PLXD samples. Operand B: host-planned bank.
+        // Covers bank choice and stale-release classification only; it does not
+        // cover real /dev/mem timing or the RTL allocator itself.
+        {
+            BankReleasePolicyState policy{};
+            BankReleaseDecision d =
+                chooseDdrPresentBankFromRelease(policy, 1,
+                                                BankReleaseStatus{0x01, 1, false, 42},
+                                                BankReleaseStatus{0x01, 1, false, 42});
+            CHECK(d.kind == BankReleaseDecisionKind::UseFreeBank);
+            CHECK(d.bank == 0);
+            CHECK(!policy.release_stuck);
+        }
+        {
+            BankReleasePolicyState policy{};
+            BankReleaseDecision d =
+                chooseDdrPresentBankFromRelease(policy, 1,
+                                                BankReleaseStatus{0x00, 0, true, 100},
+                                                BankReleaseStatus{0x00, 0, true, 100});
+            CHECK(d.kind == BankReleaseDecisionKind::SkipFrame);
+            CHECK(d.bank == -1);
+            CHECK(!policy.release_stuck);
+        }
+        {
+            BankReleasePolicyState policy{};
+            BankReleaseDecision d =
+                chooseDdrPresentBankFromRelease(policy, 1,
+                                                BankReleaseStatus{0x00, 0, true, 100},
+                                                BankReleaseStatus{0x00, 0, true, 101});
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(d.bank == 1);
+            CHECK(d.release_stuck);
+            CHECK(policy.release_stuck);
+
+            d = chooseDdrPresentBankFromRelease(policy, 0,
+                                                BankReleaseStatus{0x00, 0, true, 102},
+                                                BankReleaseStatus{0x00, 0, true, 102});
+            CHECK(d.kind == BankReleaseDecisionKind::UseTimedFallback);
+            CHECK(d.bank == 0);
+            CHECK(policy.release_stuck);
+
+            d = chooseDdrPresentBankFromRelease(policy, 0,
+                                                BankReleaseStatus{0x02, 0, false, 103},
+                                                BankReleaseStatus{0x02, 0, false, 103});
+            CHECK(d.kind == BankReleaseDecisionKind::UseFreeBank);
+            CHECK(d.bank == 1);
+            CHECK(!d.release_stuck);
+            CHECK(!policy.release_stuck);
+        }
     }
 
     if (fails) {
