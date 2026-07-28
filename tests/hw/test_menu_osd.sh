@@ -4,7 +4,7 @@
 # the video delay. Use `set_status --confstr` to read the live menu instead.
 #
 # Exercise Plex core OSD options via status bits + HDMI capture.
-# Run on the *build host* (needs sshpass + /dev/video4 MacroSilicon).
+# Run on the *build host* (needs sshpass + HDMI capture device — see capture_preflight.py).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/tests/hw/hw_gate_common.sh"
@@ -19,7 +19,7 @@ SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no)
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
 mkdir -p "$OUT"
 REPORT="$OUT/REPORT.md"
-DEVICE="${HDMI_DEV:-/dev/video4}"
+DEVICE="${HDMI_DEV:-$(python3 "$ROOT/scripts/capture_preflight.py" detect 2>/dev/null || echo /dev/video0)}"
 PUSH=/media/fat/misterplex/bin/push_frame
 
 ssh_q() { "${SSH[@]}" "$@" 2>/dev/null | grep -v 'WARNING\|post-quantum\|vulnerable' || true; }

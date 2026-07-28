@@ -12,7 +12,21 @@ PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${VISUAL_OUT:-$ROOT/build/hw_visual}"
-DEV="${HDMI_DEV:-/dev/video4}"
+
+# HDMI capture device: auto-detect the best MJPG-capable node (rejects metadata
+# decoy nodes such as /dev/video1 that enumerate zero formats).  Override with
+# HDMI_DEV to pin a specific device.  Exits 77 UNSCORED if no capture node found.
+if [[ -n "${HDMI_DEV:-}" ]]; then
+  DEV="$HDMI_DEV"
+else
+  DEV="$(python3 "$ROOT/scripts/capture_preflight.py" detect 2>/dev/null)"
+  DETECT_RC=$?
+  if [[ $DETECT_RC -ne 0 || -z "$DEV" ]]; then
+    echo "SKIP: no HDMI capture device found (capture_preflight.py detect rc=$DETECT_RC)" >&2
+    exit 77
+  fi
+  echo "HDMI_DEV auto-detected: $DEV (override with HDMI_DEV=...)"
+fi
 CAP_FMT="${VISUAL_CAPTURE_FORMAT:-mjpeg}"
 CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"

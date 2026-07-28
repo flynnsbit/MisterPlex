@@ -261,7 +261,16 @@ def test_classify_signal_internals() -> None:
     require(result_stale["state"] == "STALE_CAPTURE",
             f"identical frames should be STALE_CAPTURE: {result_stale}")
 
-    print("PASS internal classify_signal() covers all four states correctly")
+    # Single-frame edge case: must NOT return STALE_CAPTURE (n<2 → unique==1 trivially true)
+    # Regression for the bug where classify_signal([f]) always returned STALE_CAPTURE.
+    frame_single = capture_preflight.synthetic_frame("content")
+    result_single = capture_preflight.classify_signal([frame_single])
+    require(result_single["state"] != "STALE_CAPTURE",
+            f"single content frame must NOT be STALE_CAPTURE (n<2 guard); got {result_single}")
+    require(result_single["state"] == "CONTENT_PRESENT",
+            f"single content frame should be CONTENT_PRESENT; got {result_single}")
+
+    print("PASS internal classify_signal() covers all four states correctly + n=1 edge case")
 
 
 def main() -> int:

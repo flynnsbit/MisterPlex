@@ -309,7 +309,9 @@ def classify_signal(frames: list[np.ndarray]) -> dict:
     unique = len(set(hashes))
     total = len(frames)
 
-    if unique == 1:
+    # STALE: only meaningful with ≥2 frames.  With a single frame, unique==1 is
+    # trivially true regardless of content — do not report STALE for n=1.
+    if total >= 2 and unique == 1:
         return {
             "state": "STALE_CAPTURE",
             "unique_hashes": unique,

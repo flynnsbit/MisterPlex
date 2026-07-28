@@ -18,7 +18,7 @@ set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$(cd "$(dirname "$0")/../.." && pwd)/captures/menu}"
-DEV="${HDMI_DEV:-/dev/video4}"
+DEV="${HDMI_DEV:-$(python3 "$ROOT/scripts/capture_preflight.py" detect 2>/dev/null || echo /dev/video0)}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/tests/hw/hw_gate_common.sh"
 if [[ "${FBAR_ALLOW_OBSOLETE:-0}" != "1" ]]; then

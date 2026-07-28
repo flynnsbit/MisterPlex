@@ -7,7 +7,17 @@ source "$ROOT/tests/hw/hw_gate_common.sh"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 OUT="${MENU_CAPTURE_DIR:-$ROOT/captures/menu}"
-DEVICE="${HDMI_DEV:-/dev/video4}"
+# Auto-detect capture device; override with HDMI_DEV.  Decoy nodes that
+# enumerate zero formats are rejected by capture_preflight.py detect.
+if [[ -n "${HDMI_DEV:-}" ]]; then
+  DEVICE="$HDMI_DEV"
+else
+  DEVICE="$(python3 "$ROOT/scripts/capture_preflight.py" detect 2>/dev/null)"
+  if [[ -z "$DEVICE" ]]; then
+    echo "SKIP: no HDMI capture device detected (set HDMI_DEV to override)" >&2
+    exit 77
+  fi
+fi
 RBF_LOCAL="${RBF_LOCAL:-$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf}"
 # MENU_FAST=1 (default): short dwell — user-visible mode flips stay <0.5s
 # MENU_FAST=0: slower multi-frame capture for flaky grabbers

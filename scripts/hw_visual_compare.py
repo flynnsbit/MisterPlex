@@ -22,7 +22,26 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 HOST_LAYOUT = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
 RTL_LAYOUT = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh"
-DEFAULT_DEV = "/dev/video4"
+
+
+def _detect_hdmi_device() -> str:
+    """Return HDMI_DEV env value if set, else find the first v4l2 MJPG capture node."""
+    if env := __import__("os").environ.get("HDMI_DEV"):
+        return env
+    try:
+        for node in sorted(Path("/dev").glob("video*")):
+            r = subprocess.run(
+                ["v4l2-ctl", "-d", str(node), "--list-formats-ext"],
+                capture_output=True, text=True, timeout=4,
+            )
+            if re.findall(r"\[\d+\]:\s+'([A-Z0-9]{3,4})'", r.stdout + r.stderr):
+                return str(node)
+    except Exception:
+        pass
+    return "/dev/video0"  # best-effort fallback
+
+
+DEFAULT_DEV = _detect_hdmi_device()
 DEFAULT_FORMAT = "mjpeg"
 DEFAULT_SIZE = "1280x720"
 DEFAULT_FPS = "60"

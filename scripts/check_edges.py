@@ -24,10 +24,31 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-DEFAULT_DEV = "/dev/video4"
 DEFAULT_CAP = "build/edge_cap.png"
 DEFAULT_SIZE = "1920x1080"
 WARMUP = 60
+
+
+def _detect_hdmi_device() -> str:
+    """Return HDMI_DEV env value if set, else find the first v4l2 MJPG capture node."""
+    if env := os.environ.get("HDMI_DEV"):
+        return env
+    try:
+        import re
+        import subprocess as _sp
+        for node in sorted(Path("/dev").glob("video*")):
+            r = _sp.run(
+                ["v4l2-ctl", "-d", str(node), "--list-formats-ext"],
+                capture_output=True, text=True, timeout=4,
+            )
+            if re.findall(r"\[\d+\]:\s+'([A-Z0-9]{3,4})'", r.stdout + r.stderr):
+                return str(node)
+    except Exception:
+        pass
+    return "/dev/video0"  # best-effort fallback
+
+
+DEFAULT_DEV = _detect_hdmi_device()
 
 MAX_EDGE_PX = 9  # widest a single source column may legitimately appear
 SYNTH_W = 1920
