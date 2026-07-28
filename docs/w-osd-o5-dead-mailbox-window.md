@@ -126,3 +126,40 @@ gate actually executes and is not merely registered).
 `w-fit-o5`: state which address the PLXD reading was taken at. If
 `0x3007F128`, re-take at `0x300FF128` before the deploy is scored — otherwise
 the A/B produces a confident null.
+
+---
+
+## Addendum — the merge base is very likely how the dead address was obtained
+
+Measured on `w-osd-o5-hour27` (based on the mandated merge base
+`w-decode-hour27` `2f165ed`), **before** this commit:
+
+```
+host/libmisterplex/mailbox_abi_spec.hpp
+  kPlxkAddr      0x3007F000    kPlxsAddr  0x3007F100
+  kPlxiAddr      0x3007F108    kPlxmAddr  0x3007F110
+  kPlxfAddr      0x3007F118    kSdramDiagAddr 0x3007F120
+  kPlxdAddr      0x3007F128
+```
+
+That is the **entire** mailbox address content of the canonical ABI header on
+the branch all product work is being rebased onto. There were **no**
+`kYuv420p*` constants and **no** warning that this block is the dead
+`0x40000`-stride window.
+
+So anyone reading the project's own ABI header on the merge base gets
+`0x3007F100/0x3007F128` as the addresses to probe, with nothing to suggest
+otherwise. **This is the most likely provenance of the reported
+`0x3007F100/104/128/12C` probe, and it is a documentation defect, not a
+reasoning error by whoever used it.**
+
+Fixed here by porting the documented superset (the two versions diff to a strict
+subset — 0 lines were unique to the merge base, so the copy is lossless):
+the dead-window banner, the `kYuv420p*` live constants, `doorbellForStride()`,
+and four `static_assert`s that tie the literals to the stride arithmetic.
+Compile-checked: `g++ -fsyntax-only -std=c++17` → rc=0, all static asserts hold.
+
+The instantiated window on the merge base is **identical** to the deployed
+branch (`YUV420P`, stride `0x80000`, doorbell `0x300FF000`), so a fit from
+`w-decode-hour27` publishes on the same addresses — the probe target does not
+change.
