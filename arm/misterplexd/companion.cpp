@@ -99,14 +99,20 @@ std::string timelineBrief(const std::string& xml) {
     return xml.substr(p, e == std::string::npos ? 240 : std::min<size_t>(e + 2 - p, 240));
 }
 
-void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
-    char hdr[320];
+void sendHttp(int fd, const std::string& clientIdentifier, int code, const char* ctype,
+              const std::string& body) {
+    char hdr[640];
     const char* status = (code == 200) ? "OK" : "Not Found";
     std::snprintf(hdr, sizeof(hdr),
                   "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                  "Connection: close\r\nAccess-Control-Allow-Origin: *\r\n"
-                  "Access-Control-Allow-Headers: *\r\nAccess-Control-Allow-Methods: *\r\n\r\n",
-                  code, status, ctype, body.size());
+                  "Connection: close\r\nX-Plex-Client-Identifier: %s\r\n"
+                  "Access-Control-Allow-Origin: *\r\n"
+                  "Access-Control-Allow-Headers: X-Plex-Token, X-Plex-Client-Identifier, "
+                  "X-Plex-Product, X-Plex-Version, X-Plex-Device, X-Plex-Device-Name, "
+                  "X-Plex-Platform, Content-Type, Accept\r\n"
+                  "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
+                  "Access-Control-Expose-Headers: X-Plex-Client-Identifier\r\n\r\n",
+                  code, status, ctype, body.size(), clientIdentifier.c_str());
     // MSG_NOSIGNAL: a client that hangs up before we flush (Plex's long-poll
     // timeline, or any timed-out request) would otherwise raise SIGPIPE, whose
     // default action kills the daemon silently — no log line, no dmesg entry.
@@ -145,6 +151,40 @@ std::string ratingKeyFromKey(const std::string& key) {
     return key.substr(pos, end - pos);
 }
 
+std::string libraryMetadataKeyFromString(const std::string& value) {
+    const std::string marker = "/library/metadata/";
+    auto pos = value.find(marker);
+    if (pos == std::string::npos)
+        return {};
+    const size_t digits = pos + marker.size();
+    size_t end = digits;
+    while (end < value.size() && std::isdigit(static_cast<unsigned char>(value[end])))
+        ++end;
+    if (end == digits)
+        return {};
+    return value.substr(pos, end - pos);
+}
+
+std::string serverMachineIdFromUri(const std::string& value) {
+    const std::string prefix = "server://";
+    if (value.rfind(prefix, 0) != 0)
+        return {};
+    const size_t start = prefix.size();
+    const auto end = value.find('/', start);
+    if (end == std::string::npos || end == start)
+        return {};
+    return value.substr(start, end - start);
+}
+
+void fillPlayKeyFromFallback(PlayRequest& pr, const std::string& value) {
+    if (value.empty())
+        return;
+    if (pr.key.empty())
+        pr.key = libraryMetadataKeyFromString(value);
+    if (pr.serverMachineId.empty())
+        pr.serverMachineId = serverMachineIdFromUri(value);
+}
+
 PlayRequest parsePlayRequest(const std::string& req) {
     PlayRequest pr;
     pr.key = pctDecode(queryParam(req, "key"));
@@ -152,11 +192,6 @@ PlayRequest parsePlayRequest(const std::string& req) {
     pr.playQueueItemId = queryParam(req, "playQueueItemID");
     pr.playQueueVersion = queryParam(req, "playQueueVersion");
     pr.ratingKey = queryParam(req, "ratingKey");
-    if (pr.ratingKey.empty())
-        pr.ratingKey = ratingKeyFromKey(pr.key);
-    // Web indexes cast queue by playQueueItemID; fall back to ratingKey so scrubber opens.
-    if (pr.playQueueItemId.empty() && !pr.ratingKey.empty())
-        pr.playQueueItemId = pr.ratingKey;
     pr.address = pctDecode(queryParam(req, "address"));
     pr.protocol = queryParam(req, "protocol");
     pr.port = queryParam(req, "port");
@@ -166,6 +201,15 @@ PlayRequest parsePlayRequest(const std::string& req) {
     if (pr.token.empty())
         pr.token = headerValue(req, "X-Plex-Token");
     pr.serverMachineId = queryParam(req, "machineIdentifier");
+    if (pr.key.empty())
+        fillPlayKeyFromFallback(pr, pctDecode(queryParam(req, "path")));
+    if (pr.key.empty())
+        fillPlayKeyFromFallback(pr, pctDecode(queryParam(req, "uri")));
+    if (pr.ratingKey.empty())
+        pr.ratingKey = ratingKeyFromKey(pr.key);
+    // Web indexes cast queue by playQueueItemID; fall back to ratingKey so scrubber opens.
+    if (pr.playQueueItemId.empty() && !pr.ratingKey.empty())
+        pr.playQueueItemId = pr.ratingKey;
     pr.offsetMs = parseOffsetMs(req, &pr.offsetPresent);
     if (pr.containerKey.find("/playQueues/") != std::string::npos) {
         auto rest = pr.containerKey.substr(std::string("/playQueues/").size());
@@ -663,9 +707,13 @@ void Companion::httpLoop() {
         timeval tv{0, 200000};
         if (select(fd + 1, &rfds, nullptr, nullptr, &tv) <= 0)
             continue;
-        int c = accept(fd, nullptr, nullptr);
+        sockaddr_in peer{};
+        socklen_t peerLen = sizeof(peer);
+        int c = accept(fd, reinterpret_cast<sockaddr*>(&peer), &peerLen);
         if (c < 0)
             continue;
+        char peerIp[64] = "?";
+        inet_ntop(AF_INET, &peer.sin_addr, peerIp, sizeof(peerIp));
         char buf[16384];
         ssize_t n = recv(c, buf, sizeof(buf) - 1, 0);
         if (n <= 0) {
@@ -674,24 +722,26 @@ void Companion::httpLoop() {
         }
         buf[n] = 0;
         std::string req(buf, static_cast<size_t>(n));
-        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-            log("HTTP IN " + redactSensitive(requestLine(req)));
+        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos ||
+            req.find("/identity") != std::string::npos)
+            log(std::string("HTTP IN peer=") + peerIp + " " + redactSensitive(requestLine(req)));
 
         {
             std::lock_guard<std::mutex> lock(mu_);
-            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos ||
+                req.find("/identity") != std::string::npos)
                 castBound_ = true;
         }
 
         if (req.find("OPTIONS") == 0) {
-            sendHttp(c, 200, "text/plain", "");
+            sendHttp(c, machineId_, 200, "text/plain", "");
             close(c);
             continue;
         }
 
         if (req.find("GET /resources") != std::string::npos ||
             req.find("GET /identity") != std::string::npos) {
-            sendHttp(c, 200, "application/xml", resourcesXml());
+            sendHttp(c, machineId_, 200, "application/xml", resourcesXml());
             close(c);
             continue;
         }
@@ -707,7 +757,7 @@ void Companion::httpLoop() {
             auto cid = queryParam(req, "commandID");
             if (cid.empty())
                 cid = "0";
-            sendHttp(c, 200, "application/xml", timelineXml(cid));
+            sendHttp(c, machineId_, 200, "application/xml", timelineXml(cid));
             close(c);
             continue;
         }
@@ -731,7 +781,7 @@ void Companion::httpLoop() {
             if (queryParam(req, "wait") == "1")
                 std::this_thread::sleep_for(std::chrono::milliseconds(400));
             auto body = timelineXml(cid);
-            sendHttp(c, 200, "application/xml", body);
+            sendHttp(c, machineId_, 200, "application/xml", body);
             log("HTTP OUT 200 timeline " + timelineBrief(body));
             close(c);
             continue;
@@ -779,7 +829,7 @@ void Companion::httpLoop() {
                 }
                 // else: leave live timeline alone (Web mirror after playMedia must not idle)
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
             log("mirror staged key=" + pr.key);
             close(c);
             continue;
@@ -859,7 +909,7 @@ void Companion::httpLoop() {
                     ackOff = timeMs_;
                 }
                 auto body = timelineXml(cid);
-                sendHttp(c, 200, "application/xml", body);
+                sendHttp(c, machineId_, 200, "application/xml", body);
                 close(c);
                 log("HTTP OUT 200 playMedia " + timelineBrief(body));
                 log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
@@ -898,7 +948,7 @@ void Companion::httpLoop() {
                 // and fullScreenVideo without a media key (scrubber ghost after stop).
                 if (active)
                     setState("paused", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 if (active && onPause_)
                     onPause_();
                 close(c);
@@ -916,7 +966,7 @@ void Companion::httpLoop() {
                 // Idle: ACK only — do not re-arm wantPlay via setState("playing").
                 if (active)
                     setState("playing", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 if (active && onResume_)
                     onResume_();
                 close(c);
@@ -930,7 +980,7 @@ void Companion::httpLoop() {
                 clearMedia();
                 if (onStop_)
                     onStop_();
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 close(c);
                 continue;
             }
@@ -970,7 +1020,7 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 if (active && moved && onSeek_)
                     onSeek_(ms);
                 close(c);
@@ -1016,7 +1066,7 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 // Prefer absolute seek when available so player lands on clamped target
                 // even if positionMs lags companion timeMs_ (progress race).
                 if (active && applied != 0) {
@@ -1034,7 +1084,7 @@ void Companion::httpLoop() {
                     std::lock_guard<std::mutex> lock(mu_);
                     active = wantPlay_;
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
                 if (active && onSkipNext_)
                     onSkipNext_();
@@ -1070,17 +1120,17 @@ void Companion::httpLoop() {
                         wantPlay_ = true;
                     }
                 }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+                sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
                 close(c);
                 continue;
             }
 
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            sendHttp(c, machineId_, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
             close(c);
             continue;
         }
 
-        sendHttp(c, 404, "text/plain", "not found");
+        sendHttp(c, machineId_, 404, "text/plain", "not found");
         close(c);
     }
     close(fd);
