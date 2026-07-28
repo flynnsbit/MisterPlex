@@ -2346,3 +2346,72 @@ DDR dump"); here the dump is what proves the defect is *not* in the ARM.
 - Which bank the fabric scans out is **unmeasured** -- the mailbox is dead
   (rc=77). (b) is a sufficient mechanism, not a confirmed one.
 - W-SWAP's `|| !slot_keep` fix remains neither validated nor refuted.
+
+## 37. UNANNOUNCED REBOOT at 14:16:28 -- and the board is sitting on MENU
+
+### 37.1 Correction to SS36 before anyone else finds it
+
+SS36 attributed the DDR dump to the 13:44 boot. **Wrong.** Boot times, read to the
+second:
+
+```
+14:13:31   uptime = 1764.66 s   -> boot 13:44:06
+14:29:22   uptime =  773.46 s   -> boot 14:16:28   (btime 1785266188)
+```
+
+The board **rebooted at 14:16:28**, between my 14:13:31 probe and my 14:23:12
+dump. Nobody announced it. So the dump was taken ~7 min into a *newer* boot.
+
+### 37.2 The board is on MENU, not Plex
+
+```
+14:30:33  CORENAME = MENU        uptime 844.90 s
+          fb0 = 1024,768 @ 32bpp
+          fpga_manager = operating
+          dmesg: MiSTer_fb 22000000.MiSTer_fb: width=1024 height=768 format=8888
+          Plex.rbf = fb4bad84...   (unchanged on disk)
+          misterplexd = pid 1057   (new pid from the boot)
+```
+
+### 37.3 What survives, what does not
+
+- **(a) ARM paints the chevron unaided -- STRONGER.** Reproduced on a fresher
+  boot **and with the Plex core not loaded at all**. The daemon paints DDR
+  regardless of which core occupies the fabric.
+- **(b) bank1 entirely zero -- stands as ARM-side behaviour**, but the *scanout*
+  half of the mechanism **must be held open**: with MENU in the fabric there is
+  no Plex scanout, so "the fabric scans out an empty bank1" cannot be evaluated
+  from that dump. SS36.3(b) over-reached; retracted to ARM-side only.
+- **(c) DDR cols 0-23 uniform 45.00, frac_dark 0.0000 -- stands.**
+
+### 37.4 A free discriminator, no bounce and no token
+
+The MiSTer main menu is a bright 1024x768 UI, currently being driven. So:
+
+- capture shows the **menu** -> HDMI chain healthy, capture path fine, black
+  verdicts attributable to the core.
+- capture shows **flat RGB(7,7,7)** while ssh reports `CORENAME=MENU` and fb0
+  1024x768 -> **the fault is in the capture path** (cable / input select /
+  MS2109), **not the core** -- and a large body of black verdicts is void.
+
+This is the A-vs-B discriminator W-E2E asked for a menu bounce to produce. The
+board is supplying the bright-picture half for free. I declined the bounce:
+their window opened **13:18:36** (closed >1 h earlier; 0 ffmpeg, 0 `/dev/video0`
+fds at 14:21:21), and a bounce is now redundant.
+
+### 37.5 Their 13:18:36 clip is confirmed no-source, not ambiguous
+
+Previous boot was **13:44:06**. Their clip started **13:18:36 -- 25 minutes
+before the board powered on.** Dead input for its entire duration. Confirmed
+option B, not an open question.
+
+Their claim that an *"old pre-deploy baseline (`00eebd5e` in fabric, MiSTer
+alive) was byte-identical"* deserves the same timestamp check before use: a
+genuinely alive black core producing a frame byte-identical to no-source would
+be a remarkable coincidence.
+
+### 37.6 Open
+
+**Who rebooted the device at 14:16:28?** I have been reporting it as held still.
+I asked W-E2E directly. If the board is being changed under my measurements, my
+"device held still" assurances are worthless and I need to know now.
