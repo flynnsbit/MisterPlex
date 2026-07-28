@@ -673,7 +673,7 @@ int main(int argc, char** argv) {
             pmsTimeline.endSession(t, d);
             // Must not call player.play() on the media thread (join self). Schedule async.
             if (autoNextInFlight.exchange(true)) {
-                comp.setState("stopped", t, d);
+                comp.endMediaSession(t, d);
                 return;
             }
             // Keep scrubber alive while we decide; queue fetch is network-bound.
@@ -687,7 +687,7 @@ int main(int argc, char** argv) {
                 }
                 autoNextInFlight.store(false);
                 if (!advanced)
-                    comp.setState("stopped", t, d);
+                    comp.endMediaSession(t, d);
             }).detach();
             return;
         }

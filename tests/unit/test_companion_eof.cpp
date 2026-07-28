@@ -52,10 +52,10 @@ int main() {
     // local/companion state as explicit stop. MediaPlayer already paints idle at EOF;
     // the companion must clear the media bind so timeline polls are navigation,
     // duration=0, and contain no stale media key. The old path did
-    // buffering@duration while deciding auto-next, then setState("stopped", duration,
-    // duration) without clearMedia(), leaving fullScreenVideo/buffering forever.
+    // buffering@duration while deciding auto-next, then a plain stopped progress
+    // update without clearMedia(), leaving fullScreenVideo/buffering forever.
     comp.setState("buffering", 1286942, 1286942);
-    comp.setState("stopped", 1286942, 1286942);
+    comp.endMediaSession(1286942, 1286942);
     const std::string eof = comp.timelineXml("eof");
     require(has(eof, "location=\"navigation\""), "EOF did not return to navigation: " + eof);
     require(has(eof, "state=\"buffering\""), "EOF stop hold should be buffering@navigation: " + eof);
@@ -70,10 +70,10 @@ int main() {
     require(disconnect.bindMedia(req, 1286942), "bindMedia rejected disconnect play");
     disconnect.setState("playing", 42000, 1286942);
     // Same terminal mechanism, but not at EOF: if the source disconnects after
-    // real playback, MediaPlayer reports a terminal stopped position. That must
-    // also clear the local bind; only stopped@0 is reserved for empty/failed
-    // demux preserving scrubber plants.
-    disconnect.setState("stopped", 42000, 1286942);
+    // real playback, main must drive an explicit terminal transition. It must also
+    // clear the local bind; only non-terminal stopped@0 is reserved for
+    // empty/failed demux preserving scrubber plants.
+    disconnect.endMediaSession(42000, 1286942);
     const std::string disc = disconnect.timelineXml("disconnect");
     require(has(disc, "location=\"navigation\""),
             "source disconnect did not return to navigation: " + disc);
@@ -85,6 +85,9 @@ int main() {
     req = episodeRequest();
     emptyFail.stagePlay(req);
     require(emptyFail.bindMedia(req, 1286942), "bindMedia rejected empty-fail play");
+    // Empty/failed demux is not a terminal-content transition. It arrives as
+    // stopped@0 while a planted seek may still be live; a plain stopped progress
+    // update must preserve media identity and planted time.
     emptyFail.setState("stopped", 0, 1286942);
     const std::string empty = emptyFail.timelineXml("empty-fail");
     require(has(empty, "location=\"fullScreenVideo\""),
