@@ -69,6 +69,7 @@ public:
     bool hangLineReadResponses = false;
     bool sawDroppedLineRead = false;
     bool forceDdrBusy = false;
+    int ddrReadBursts = 0;
 
     Sim() : mem((2 * kBankStrideBytes) / 8, 0) {
         top.clk = 0;
@@ -154,6 +155,8 @@ public:
                 sawDroppedLineRead = true;
                 return;
             }
+            if (top.DDRAM_ADDR != (kDoorbellPhys >> 3))
+                ++ddrReadBursts;
             rdAddr = top.DDRAM_ADDR;
             rdLeft = top.DDRAM_BURSTCNT;
             rdIndex = 0;
@@ -339,6 +342,15 @@ void expectFreshSample(const std::string& label, Sim& sim, uint8_t want) {
                   << " has_frame=" << int(sim.top.has_frame)
                   << " swap_pending=" << int(sim.top.swap_pending)
                   << " debug=0x" << std::hex << int(sim.top.debug_state) << std::dec << "\n";
+        std::exit(1);
+    }
+}
+
+void assertNonDegenerate(const std::string& label, const Sim& sim) {
+    if (sim.ddrReadBursts < 2) {
+        std::cerr << "FAIL ddr_frame_store DEGENERACY: " << label
+                  << " claimed frame presented but only " << sim.ddrReadBursts
+                  << " DDR read bursts were issued\n";
         std::exit(1);
     }
 }
