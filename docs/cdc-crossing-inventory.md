@@ -1,10 +1,27 @@
 # MiSTerPlex CDC Crossing Inventory
 
 **Owner:** w-a3 (DDR frame store, async FIFOs, clock-domain crossing, deblocking)
-**Date:** 2026-07-27
-**Branch:** `feat/a3-frame-store` @ `610c298`
+**Date:** 2026-07-27 (updated 2026-07-29)
+**Branch:** `feat/a3-frame-store` @ `7e3fc41`
 **Scope:** All crossings between `general[0].gpll` (clk_sys, 20 MHz) and
 `general[2].gpll` (clk_ddr, 90 MHz) in the DDR presentation and streaming paths.
+
+### ⚠️ Enumeration method and completeness
+
+This inventory was **hand-enumerated from RTL source** by reading every signal
+whose driver and receiver sit in different clock domains. The list of 30 crossings
+is a true statement about 30 crossings found by reading; **it is not proven
+complete.**
+
+A mechanical derivation — `quartus_sta Plex --report_clock_domain_crossings` —
+would catch crossings through instantiated IP, inferred latches, and combinational
+paths spanning domains without an explicit flop that source reading structurally
+cannot see. This has been requested from w-cap as part of the next fit. When that
+report lands, this inventory will be reconciled against it and either upgraded from
+*enumerated* to *derived*, or extended with any gaps found.
+
+**Until reconciliation: "30/30 SAFE" means 30 hand-found crossings are safe, not
+that all crossings in the design are safe.**
 
 ---
 
@@ -402,3 +419,186 @@ of code.
 | 2026-07-28 | — | Documented instrument-integrity risk on #14, #15 |
 | 2026-07-28 | — | Bank-swap timing test: disp_buf_d2 → DDRAM_ADDR NOT the frozen-screen RCA (self-consistent prep path) |
 | 2026-07-28 | — | Gate assertion audit (instrument-integrity #16): 5 gates audited, gaps documented, luma stride test added |
+| 2026-07-29 | — | Added completeness limitation to header; inventory is hand-enumerated, not proven complete |
+| 2026-07-29 | — | PLXF instrument limitation documented: `debug_state.state_ddr` always reads S_IDLE (self-referential) |
+| 2026-07-29 | — | Revised stall analysis: seq freeze (4→stable) SUPPORTS arbiter hypothesis, not contradicts it |
+
+---
+
+## PLXF Instrument Limitation (discovered 2026-07-29)
+
+### The `state_ddr` field in PLXF is a self-referential instrument
+
+The PLXF mailbox can ONLY be written from `S_IDLE` (line 876 of `ddr_frame_store.sv`).
+The `debug_state` field is `{LINE_COUNT[2:0], |y_valid, state_ddr[3:0]}`, captured
+combinationally at the moment of write. **Therefore `state_ddr` in PLXF is always 0
+(S_IDLE) by construction.**
+
+If the state machine gets stuck in `S_LINE_WAIT`, `S_POLL_WAIT`, or any other state,
+it will NEVER write the mailbox again. The last written `debug_state` will show S_IDLE
+(the state it was in at the last successful write), not the stuck state.
+
+**What PLXF CAN tell us:**
+- `seq` incrementing → machine is alive, returning to S_IDLE regularly
+- `seq` frozen → machine is stuck in a non-IDLE state (cannot write mailbox)
+- `|y_valid` at last write → whether any line cache slots were valid when last in IDLE
+- `underrun_count` → display starved (requested line with no valid cache entry)
+
+**What PLXF CANNOT tell us:**
+- What state the machine is in RIGHT NOW (always reports S_IDLE)
+- Whether the machine is in S_LINE_WAIT vs S_POLL_WAIT after it stalls
+
+### Reinterpretation of silicon `PLXF = 0x00000004`
+
+Silicon shows `frame_mbox_seq=4`, `debug_state=0x00`, stable for 6 seconds:
+- seq=4 and frozen → machine left S_IDLE after 4 writes and NEVER came back
+- |y_valid=0 at last write → no lines were valid before it got stuck
+- state_ddr=0 → **uninformative** (always 0 when captured from IDLE)
+
+**This is CONSISTENT with the arbiter hypothesis:** machine wrote mailbox 4 times
+from S_IDLE (initial + 3 heartbeat/doorbell-triggered writes over ~8.7ms), then
+initiated a line fill, entered S_LINE_WAIT, and the DDR response was lost across
+the unsynchronized arbiter domain crossing. Machine stuck in S_LINE_WAIT forever.
+
+**My earlier statement that `debug_state=S_IDLE` contradicts the arbiter hypothesis
+was WRONG.** The instrument cannot distinguish S_IDLE from S_LINE_WAIT after the
+stall begins, because both produce the same observation: `state_ddr=0` in the last
+written mailbox and no further writes.
+
+### Why PLXS seq=1 / PLXM seq=1 but PLXF seq=4
+
+PLXF gets extra write triggers from doorbell events (`db_bad_format`, `db_token_new`
+set `frame_mbox_req`). PLXS/PLXM are triggered only by state changes and heartbeat.
+In the startup window before stall, the doorbell polling generates PLXF writes but no
+PLXS/PLXM triggers occur (no status_osd change, heartbeat hasn't fired yet).
+
+---
+
+## Frozen-Screen Capture List for w-osd (pre-run predictions)
+
+### What to capture
+
+Before AND after the first ARM doorbell ring, read all mailboxes:
+```
+PLXF  0x3007f118   (frame store state)
+PLXK  0x300ff000   (doorbell / bank selection)
+PLXS  0x3007f100   (frame store status)
+```
+
+Key fields in PLXF upper word `[63:32]`:
+```
+[63:48] underrun_count  (16 bits)
+[47:40] debug_state     (8 bits) = {LINE_COUNT[2:0], |y_valid, state_ddr[3:0]}
+[39:32] frame_mbox_seq  (8 bits, increments on each write)
+```
+
+### Discriminating predictions
+
+**If arbiter hypothesis is correct** (fixed in `60df5a2`, present in next fit):
+- Before doorbell: PLXF seq increments slowly (heartbeat every ~2.9ms)
+- After first doorbell: PLXF seq FREEZES within ~10ms
+- |y_valid remains 0 (bit 12 of upper word stays 0)
+- has_frame remains 0 (from status register)
+- PLXK seq advances (doorbells consumed) but PLXF seq stops
+
+**If swap-toggle CDC hypothesis (alternative)**:
+- After first doorbell: PLXF seq KEEPS incrementing (machine stays in S_IDLE)
+- |y_valid remains 0
+- has_frame remains 0
+- Machine is alive but never initiates line fill
+
+**THE DISCRIMINATOR:** Sample PLXF 3 times over ~100ms after first doorbell.
+- If seq changes between samples → machine alive in IDLE → not arbiter (swap path broken)
+- If seq frozen across samples → machine stuck → arbiter hypothesis supported
+
+### Additional capture: `debug_state` under fix
+
+On the FIXED core (next fit, includes `60df5a2` arbiter domain move):
+- If fix works: |y_valid should become non-zero within a few ms of doorbell
+- Eventually: has_frame=1 (after first vsync with pending_ready)
+- seq keeps incrementing (machine healthy, returns to IDLE between fills)
+
+### What `debug_state` values mean
+
+| debug_state | Meaning |
+|-------------|---------|
+| `0x00` | LINE_COUNT[2:0]=0, no valid lines, state=S_IDLE (always when captured) |
+| `0x10` | LINE_COUNT[2:0]=0, SOME valid lines, state=S_IDLE |
+| `0x80` | LINE_COUNT=8 (bits[2:0]=0 for 8!), no valid lines, state=S_IDLE |
+| `0xF0` | DEBUG_FORMAT_ERROR override (doorbell format bad) |
+
+Note: LINE_COUNT=8 → `LINE_COUNT[2:0] = 3'b000` (8 mod 8 = 0), so values `0x00`
+and `0x80` are indistinguishable unless LINE_COUNT is known.
+Product default `LINE_COUNT=8` → bits[7:5] = `3'b000`.
+
+### Prediction registered in advance (2026-07-29, before w-osd run)
+
+On core `eeff4eee` (pre-fix, OLD arbiter in wrong domain):
+> After ARM rings doorbell, PLXF seq will freeze. The last captured |y_valid will be 0.
+> This is because the line fill enters S_LINE_WAIT and the DDR response is lost across
+> the unsynchronized arbiter boundary. The machine never returns to S_IDLE.
+
+On next fit (includes `60df5a2`):
+> After ARM rings doorbell, PLXF seq will continue incrementing AND |y_valid will
+> become non-zero. Eventually has_frame=1 and video displays.
+
+If the first prediction holds and the second prediction fails, we have a SECOND bug
+downstream of the arbiter fix.
+
+---
+
+## RCA Status (2026-07-29)
+
+### Position statement
+
+Two candidates survive; neither is proven to explain the 112:4 doorbell-to-consume
+ratio. **The next fit may not fix the stall.**
+
+### Surviving candidates
+
+| # | Candidate | Fix commit | In doorbell path? | Mechanism for 112:4 |
+|---|-----------|-----------|-------------------|---------------------|
+| 1 | async_fifo comb loop | `7a3d960` | **No** (input_fifo is video data, not doorbell) | None — this fix is correct but unrelated to doorbell stall |
+| 2 | Arbiter in wrong domain | `60df5a2` | **Yes** | Burst responses lost → S_LINE_WAIT stuck → doorbell polls cease → ARM sees 112 rings, FPGA consumed 4 before stalling |
+
+### Eliminated candidates
+
+| # | Candidate | Evidence for elimination |
+|---|-----------|------------------------|
+| 3 | `want_y` single-stage sync | Glitch injection: has_frame unaffected even at rate=1 |
+| 4 | `disp_buf_d2` bank race | Bank-swap test: prep path is self-consistent |
+| 5 | `host_owns_fs` latch | Under DDR_FRAME_STORE, ddr_swap=0; has_frame not gated by host_owns_fs |
+
+### Why the arbiter hypothesis is plausible but unfalsifiable
+
+The pre-fix arbiter port assignment (clk_sys domain for a clk_ddr-producing module)
+no longer exists in source. The silicon observation comes from core `eeff4eee` which
+is in the banned md5 set and will not be rebuilt. **This hypothesis is structurally
+unfalsifiable by us — we cannot reproduce the failure.** It can never be promoted
+from hypothesis to RCA by our own standard ("if you cannot make it fail, it is not
+a gate"). The most it can earn is corroboration: if the next fit cures the stall, it
+becomes the best available explanation and stays permanently provisional.
+
+### Mechanism (plausible, unproven, labelled as such)
+
+The DDR frame store polls the doorbell address every 256 clk_ddr cycles. Early polls
+(simple 1-burst reads) succeed because single-beat responses propagate even across
+a misclocked arbiter. The machine then detects `db_new_seq`, toggles `swap_req_t_ddr`,
+and enters line fill mode — issuing BURSTCNT>1 DDR reads.
+
+Multi-beat burst RESPONSES from the pre-fix arbiter (which was clocked at clk_sys =
+20 MHz while producing data at clk_ddr = 90 MHz) were lost: the 4.5:1 clock ratio
+meant 7 of 10 `DOUT_READY` pulses were never seen by the clk_ddr consumer. The state
+machine enters `S_LINE_WAIT` expecting `DDRAM_DOUT_READY` that never arrives. It
+stalls there permanently.
+
+**Why seq=4:** 4 mailbox writes happen from S_IDLE before the line fill is attempted
+(initial + heartbeat-triggered writes during the doorbell priming window). After the
+first `db_new_seq` triggers a fill, the machine enters S_LINE_WAIT and never returns.
+
+**Why 112 ARM rings:** The ARM polls the doorbell address continuously. Each write
+is visible in DDR. But the FPGA only polls every 256 cycles and consumed 4 before
+stalling. The remaining 108 rings are never seen because the FPGA stopped polling.
+
+**Falsifiable prediction:** If the next fit (with arbiter in correct domain) still
+shows seq freeze after doorbell, this mechanism is wrong and we are at zero candidates.
