@@ -1,0 +1,23 @@
+{
+  "height": 720,
+  "input": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/idle_screen_rca/frame_b.png",
+  "instability": {
+    "comparable": true,
+    "left_changed_fraction": 0.1432,
+    "left_region_px": 144
+  },
+  "left_edge_max": 558,
+  "left_edge_median": 128,
+  "left_edge_min": 24,
+  "left_edge_p5": 85,
+  "left_edge_p95": 136,
+  "left_edge_spread": 51,
+  "max_spread": 8,
+  "mean": 36.03,
+  "nonblack_fraction": 0.8902,
+  "picture_rows": 719,
+  "previous": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-osd-o5/build/idle_screen_rca/frame_a.png",
+  "reason": "picture rows start between x=85 and x=136 (spread 51 > 8); each scanline is losing a different leading run",
+  "verdict": "RAGGED_LEFT",
+  "width": 1280
+}

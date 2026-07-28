@@ -33,6 +33,21 @@ struct MailboxEntry {
 };
 
 // ---- Core frame-store mailboxes (ddram_frame_rd / ddr_frame_store) ----
+//
+// !! READ THIS BEFORE PROBING A LIVE DEVICE !!
+// The addresses in this block are the *default-parameter* window: they follow
+// from PHYS_BASE=0x30000000 with HPS_BANK_STRIDE_BYTES=262144, which is
+// ddram_frame_rd's default (the RGB565 layout). Every offset is relative to a
+// doorbell placed at PHYS_BASE + 2*stride - 0x1000, so a different bank stride
+// moves the WHOLE window.
+//
+// present_core.sv instantiates ddr_frame_store with the YUV420p stride
+// (524288), which puts the live window at 0x300FF000 — see the
+// kYuv420p* constants below. Both windows exist in the address map, and DDR
+// keeps whatever an older core last wrote at the other one, so reading the
+// stale window returns plausible-looking magics that never change. Derive the
+// window from the doorbell for the format you are actually running; do not
+// hardcode 0x3007F1xx in a probe.
 
 // PLXK — Doorbell (ARM→FPGA). ARM writes bank|format|seq to trigger a frame swap.
 constexpr uint32_t kPlxkAddr  = 0x3007F000u;
@@ -80,6 +95,45 @@ constexpr unsigned kPlxdDispBankBit = 2;      // bit [34] → bit 2 of upper wor
 constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper word
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
+
+// ---- Mailbox window as a function of the doorbell -------------------------
+// The offsets above are fixed relative to the doorbell; only the doorbell moves
+// with the bank stride. Expressing that here means a probe or gate can be
+// pointed at the window the running core actually uses instead of assuming the
+// default-parameter one.
+constexpr uint32_t kMboxOffsetStatus     = 0x100u; // PLXS
+constexpr uint32_t kMboxOffsetInput      = 0x108u; // PLXI
+constexpr uint32_t kMboxOffsetSdram      = 0x110u; // PLXM
+constexpr uint32_t kMboxOffsetFrame      = 0x118u; // PLXF
+constexpr uint32_t kMboxOffsetSdramDiag  = 0x120u; // raw diagnostic
+constexpr uint32_t kMboxOffsetBank       = 0x128u; // PLXD
+
+constexpr uint32_t doorbellForStride(uint32_t phys_base, uint32_t bank_stride_bytes) {
+    return phys_base + 2u * bank_stride_bytes - 0x1000u;
+}
+
+// The window present_core.sv actually instantiates for the shipping I420 path
+// (624x480 planar, bank stride 0x80000). These are the addresses a live probe
+// must use; the 0x3007Fxxx block above belongs to the RGB565 stride.
+constexpr uint32_t kYuv420pDoorbellAddr = doorbellForStride(0x30000000u, 0x80000u);
+constexpr uint32_t kYuv420pPlxsAddr     = kYuv420pDoorbellAddr + kMboxOffsetStatus;
+constexpr uint32_t kYuv420pPlxiAddr     = kYuv420pDoorbellAddr + kMboxOffsetInput;
+constexpr uint32_t kYuv420pPlxmAddr     = kYuv420pDoorbellAddr + kMboxOffsetSdram;
+constexpr uint32_t kYuv420pPlxfAddr     = kYuv420pDoorbellAddr + kMboxOffsetFrame;
+constexpr uint32_t kYuv420pDiagAddr     = kYuv420pDoorbellAddr + kMboxOffsetSdramDiag;
+constexpr uint32_t kYuv420pPlxdAddr     = kYuv420pDoorbellAddr + kMboxOffsetBank;
+
+static_assert(kYuv420pDoorbellAddr == 0x300FF000u,
+              "YUV420p doorbell must match ddr_frame_layout.hpp "
+              "kPlex480pYuv420pDoorbellPhys and present_core.sv");
+static_assert(doorbellForStride(0x30000000u, 0x40000u) == kPlxkAddr,
+              "the 0x3007F block must be the 0x40000-stride window");
+static_assert(kPlxsAddr == kPlxkAddr + kMboxOffsetStatus, "PLXS offset drifted");
+static_assert(kPlxiAddr == kPlxkAddr + kMboxOffsetInput, "PLXI offset drifted");
+static_assert(kPlxmAddr == kPlxkAddr + kMboxOffsetSdram, "PLXM offset drifted");
+static_assert(kPlxfAddr == kPlxkAddr + kMboxOffsetFrame, "PLXF offset drifted");
+static_assert(kSdramDiagAddr == kPlxkAddr + kMboxOffsetSdramDiag, "DIAG offset drifted");
+static_assert(kPlxdAddr == kPlxkAddr + kMboxOffsetBank, "PLXD offset drifted");
 
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
