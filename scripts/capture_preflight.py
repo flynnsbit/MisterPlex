@@ -505,6 +505,16 @@ def run_preflight(args: argparse.Namespace) -> int:
 
     result["selected_node"] = node["dev"]
     result["supported_formats"] = node["formats"]
+
+    # Print full node enumeration with acceptance/rejection evidence
+    # (the parent's key concern: /dev/video1 must be rejected on format evidence, not by index)
+    capture_nodes = [n for n in all_nodes if n["is_capture"]]
+    rejected_nodes = [n for n in all_nodes if not n["is_capture"]]
+    for n in rejected_nodes:
+        print(f"  NODE {n['dev']}: REJECTED  no capture formats (metadata/audio node per v4l2-ctl --list-formats-ext)")
+    for n in capture_nodes:
+        marker = "SELECTED" if n["dev"] == node["dev"] else "candidate"
+        print(f"  NODE {n['dev']}: {marker}  formats={n['formats']}")
     print(f"Scope: 1 device ({node['dev']}), formats={node['formats']}")
 
     # Step 3: Busy check
@@ -571,6 +581,29 @@ def _write_report(out_dir: Path, result: dict) -> None:
         pass
 
 
+def cmd_detect(preferred: Optional[str] = None) -> int:
+    """Enumerate capture nodes and print the best one.
+
+    Prints exactly one line: the selected device path (e.g. /dev/video0).
+    Exit 77 if no capture node found.  Intended for shell script substitution:
+        HDMI_DEV=$(python3 scripts/capture_preflight.py detect)
+    """
+    all_nodes = find_capture_nodes(preferred=preferred)
+    if not all_nodes:
+        print("SKIP: no /dev/video* nodes; capture hardware absent", file=sys.stderr)
+        return EXIT_SKIP
+    try:
+        node = select_capture_node(all_nodes, preferred)
+    except (NoCaptureNodeError, DeviceAbsentError) as e:
+        print(f"SKIP: {e}", file=sys.stderr)
+        return EXIT_SKIP
+    except PreflightError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        return EXIT_FAIL
+    print(node["dev"])
+    return EXIT_PASS
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -578,6 +611,12 @@ def _write_report(out_dir: Path, result: dict) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="subcmd")
+
+    # detect subcommand: just print the best capture device path and exit
+    det = sub.add_parser("detect", help="print best capture device path and exit (77 if absent)")
+    det.add_argument("--device", default=None)
+
     ap.add_argument("--source", choices=("v4l2", "synthetic", "file"), default="v4l2",
                     help="frame source (default: v4l2 for live capture)")
     ap.add_argument("--synthetic-case", choices=("content", "black", "no_signal", "stale"),
@@ -603,6 +642,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.subcmd == "detect":
+            return cmd_detect(getattr(args, "device", None))
         return run_preflight(args)
     except PreflightError as e:
         print(f"FAIL: {e}", file=sys.stderr)
