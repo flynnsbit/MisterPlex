@@ -33,6 +33,8 @@ def main() -> int:
     for cfg in ("DECODE_REAL_INTRA=0", "DECODE_REAL_INTRA=1"):
         require(f"DECODE_COMPLETENESS_CONFIG config={cfg} status=FAIL" in combined,
                 f"missing current FAIL baseline for {cfg}\n{combined}")
+        require(f"DECODE_TOPOLOGY config={cfg} status=FAIL" in combined,
+                f"missing current topology FAIL baseline for {cfg}\n{combined}")
     require("DECODE_LINEAGE_COUNT count=4" in combined, f"lineage count missing\n{combined}")
     require("root=decode_stub classification=product:DECODE_REAL_INTRA=0" in combined,
             "decode_stub lineage classification missing")
@@ -54,6 +56,17 @@ def main() -> int:
     require(red.returncode == 1 and "category=mv_prediction status=FAIL" in red_combined,
             f"synthetic category removal did not go red\nstdout={red.stdout}\nstderr={red.stderr}")
     print("PASS synthetic missing-category mutation goes red")
+
+    bad_topology = run_gate("--synthetic-complete", "--synthetic-bad-topology")
+    bad_topology_combined = bad_topology.stdout + bad_topology.stderr
+    require(
+        bad_topology.returncode == 1
+        and "DECODE_TOPOLOGY config=synthetic status=FAIL" in bad_topology_combined
+        and "retired_decoder_reachable=decode_stub" in bad_topology_combined,
+        "synthetic retired-decoder topology did not go red\n"
+        f"stdout={bad_topology.stdout}\nstderr={bad_topology.stderr}",
+    )
+    print("PASS synthetic retired-decoder topology mutation goes red")
     return 0
 
 

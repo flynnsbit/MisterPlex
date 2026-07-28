@@ -32,6 +32,9 @@ LINEAGE_ROOTS = (
     "h264_decode_core",
     "h264_decode_skeleton",
 )
+REQUIRED_PRODUCT_DECODER = "h264_decode_core"
+RETIRED_PRODUCT_DECODERS = ("decode_stub",)
+SUBENGINE_ONLY_DECODERS = ("h264_decode_top",)
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,49 @@ def check_capabilities(label: str, reachable: set[str], caps: dict[str, Capabili
     return not missing_categories, missing_categories
 
 
+def check_topology(
+    label: str,
+    graph: dict[str, set[str]],
+    reachable: set[str],
+    *,
+    stream_module: str = "stream_path",
+) -> bool:
+    direct_decode_children = sorted(graph.get(stream_module, set()) & set(LINEAGE_ROOTS))
+    core_descendants = descendants(REQUIRED_PRODUCT_DECODER, graph)
+    problems: list[str] = []
+
+    if REQUIRED_PRODUCT_DECODER not in reachable:
+        problems.append(f"missing_product_decoder={REQUIRED_PRODUCT_DECODER}")
+    if REQUIRED_PRODUCT_DECODER not in direct_decode_children:
+        problems.append(f"stream_path_not_instantiating={REQUIRED_PRODUCT_DECODER}")
+
+    for retired in RETIRED_PRODUCT_DECODERS:
+        if retired in reachable:
+            problems.append(f"retired_decoder_reachable={retired}")
+        if retired in direct_decode_children:
+            problems.append(f"retired_decoder_direct_child={retired}")
+
+    for subengine in SUBENGINE_ONLY_DECODERS:
+        if subengine in direct_decode_children:
+            problems.append(f"subengine_used_as_product_decoder={subengine}")
+        if subengine in reachable and subengine not in core_descendants:
+            problems.append(f"subengine_reachable_outside_core={subengine}")
+
+    if "h264_decode_skeleton" in reachable:
+        problems.append("resource_skeleton_product_reachable=h264_decode_skeleton")
+
+    status = "PASS" if not problems else "FAIL"
+    print(
+        f"DECODE_TOPOLOGY config={label} status={status} "
+        f"direct_stream_path_decoders={','.join(direct_decode_children) if direct_decode_children else '<none>'} "
+        f"required_product_decoder={REQUIRED_PRODUCT_DECODER} "
+        f"subengine_only={','.join(SUBENGINE_ONLY_DECODERS)} "
+        f"retired={','.join(RETIRED_PRODUCT_DECODERS)} "
+        f"problems={','.join(problems) if problems else '<none>'}"
+    )
+    return not problems
+
+
 def classify_lineage(root: str, product_roots_by_config: dict[str, set[str]]) -> str:
     configs = [label for label, roots in product_roots_by_config.items() if root in roots]
     if configs:
@@ -143,10 +189,11 @@ def product_mode(caps: dict[str, Capability]) -> int:
         rtl_reachable = reachable & rtl_modules
         product_roots = {root for root in LINEAGE_ROOTS if root in rtl_reachable}
         product_roots_by_config[label] = product_roots
+        topology_ok = check_topology(label, graph, rtl_reachable)
         ok, missing_categories = check_capabilities(label, rtl_reachable, caps)
-        all_ok = all_ok and ok
+        all_ok = all_ok and topology_ok and ok
         print(
-            f"DECODE_COMPLETENESS_CONFIG config={label} status={'PASS' if ok else 'FAIL'} "
+            f"DECODE_COMPLETENESS_CONFIG config={label} status={'PASS' if (topology_ok and ok) else 'FAIL'} "
             f"reachable={len(rtl_reachable)} decode_roots={','.join(sorted(product_roots)) if product_roots else '<none>'} "
             f"missing_categories={','.join(missing_categories) if missing_categories else '<none>'}"
         )
@@ -174,25 +221,44 @@ def product_mode(caps: dict[str, Capability]) -> int:
     return 0
 
 
-def synthetic_mode(caps: dict[str, Capability], drop_category: str | None) -> int:
+def synthetic_mode(caps: dict[str, Capability], drop_category: str | None, bad_topology: bool) -> int:
     if drop_category and drop_category not in caps:
         fail(f"unknown synthetic drop category {drop_category!r}")
     print(
         "Scope: decode-completeness synthetic "
-        f"required_categories={len(REQUIRED_CATEGORIES)} drop_category={drop_category or '<none>'}"
+        f"required_categories={len(REQUIRED_CATEGORIES)} drop_category={drop_category or '<none>'} "
+        f"bad_topology={int(bad_topology)}"
     )
-    reachable = {"synthetic_decode_top"}
+    if bad_topology:
+        graph = {
+            "emu": {"stream_path"},
+            "stream_path": {"decode_stub"},
+            "decode_stub": set(),
+            "h264_decode_core": {"h264_decode_top"},
+            "h264_decode_top": set(),
+        }
+    else:
+        graph = {
+            "emu": {"stream_path"},
+            "stream_path": {"h264_decode_core"},
+            "h264_decode_core": {"h264_decode_top"},
+            "h264_decode_top": set(),
+            "decode_stub": set(),
+        }
+    reachable = descendants("emu", graph)
     for category in REQUIRED_CATEGORIES:
         if category == drop_category:
             continue
         reachable.update(caps[category].modules)
+        graph.setdefault(REQUIRED_PRODUCT_DECODER, set()).update(caps[category].modules)
+    topology_ok = check_topology("synthetic", graph, reachable)
     ok, missing_categories = check_capabilities("synthetic", reachable, caps)
     print(
-        f"DECODE_COMPLETENESS_CONFIG config=synthetic status={'PASS' if ok else 'FAIL'} "
-        f"reachable={len(reachable)} decode_roots=synthetic_decode_top "
+        f"DECODE_COMPLETENESS_CONFIG config=synthetic status={'PASS' if (topology_ok and ok) else 'FAIL'} "
+        f"reachable={len(reachable)} decode_roots={','.join(sorted(reachable & set(LINEAGE_ROOTS)))} "
         f"missing_categories={','.join(missing_categories) if missing_categories else '<none>'}"
     )
-    if ok:
+    if topology_ok and ok:
         print("DECODE_COMPLETENESS_OK synthetic complete graph satisfies every category")
         return 0
     print("DECODE_COMPLETENESS_FAIL synthetic graph missing required categories")
@@ -203,10 +269,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--synthetic-complete", action="store_true", help="Check a synthetic graph containing all mapped capability modules")
     ap.add_argument("--synthetic-drop-category", help="With --synthetic-complete, remove one category to prove red")
+    ap.add_argument("--synthetic-bad-topology", action="store_true", help="With --synthetic-complete, use retired decode_stub as the product decoder")
     args = ap.parse_args(argv)
     caps = parse_capabilities()
-    if args.synthetic_complete or args.synthetic_drop_category:
-        return synthetic_mode(caps, args.synthetic_drop_category)
+    if args.synthetic_complete or args.synthetic_drop_category or args.synthetic_bad_topology:
+        return synthetic_mode(caps, args.synthetic_drop_category, args.synthetic_bad_topology)
     return product_mode(caps)
 
 
