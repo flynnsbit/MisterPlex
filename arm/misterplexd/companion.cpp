@@ -349,19 +349,31 @@ std::string Companion::timelineXml(const std::string& commandId) const {
 
 void Companion::setState(const std::string& state, int64_t timeMs, int64_t durationMs) {
     std::lock_guard<std::mutex> lock(mu_);
+    setStateLocked(state, timeMs, durationMs, false);
+}
+
+void Companion::endMediaSession(int64_t timeMs, int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    setStateLocked("stopped", timeMs, durationMs, true);
+}
+
+void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t durationMs,
+                               bool terminalSession) {
     // After stop clearMedia(), prePlayHold_ is set while wantPlay_ is false. Ignore
     // late media-thread progress so async teardown cannot re-arm fullScreenVideo.
     if (!wantPlay_ && prePlayHold_ &&
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
-    // Natural media-thread termination with content (EOF, source disconnect after
-    // frames, seek-to-end) comes back through setState("stopped", terminalTime,
-    // duration) after the PMS side has already been flushed. Converge it onto the
-    // explicit-stop local state too; otherwise wantPlay_/pendingKey_ keep polls in
-    // fullScreenVideo/buffering forever even though playback ended.
+    // Stopped has two distinct meanings:
+    //  1. endMediaSession(): main already observed a real terminal transition
+    //     ("ended" after content) and flushed PMS. Clear the local bind.
+    //  2. setState("stopped"): explicit-stop teardown after clearMedia(), or an
+    //     empty/failed demux stopped@0 while a seek plant may still be visible.
+    // Do not infer terminal state from timeMs; planted seek safety depends on
+    // stopped@0 preserving media identity until a real terminal transition exists.
     if (state == "stopped" && wantPlay_) {
-        if (timeMs > 0) {
+        if (terminalSession) {
             clearMediaLocked();
             return;
         }

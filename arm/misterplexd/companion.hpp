@@ -60,6 +60,10 @@ public:
     // Update playback clock (ms) + state for timeline polls.
     void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
 
+    // Converge a real terminal media-session transition (natural EOF / terminal
+    // source end after content) onto the same local idle state as explicit stop.
+    void endMediaSession(int64_t timeMs, int64_t durationMs);
+
     // Bind media identity for scrubber (call after resolve / on playMedia).
     // Returns false if session already stopped (late async playMedia after stop)
     // or if a newer cast already planted a different pendingKey (stale resolve).
@@ -94,6 +98,8 @@ private:
     std::string lanIp() const;
     void log(const std::string& s) const;
     void clearMediaLocked();
+    void setStateLocked(const std::string& state, int64_t timeMs, int64_t durationMs,
+                        bool terminalSession);
     static std::string xmlEsc(const std::string& s);
 
     std::string name_ = "MiSTerPlex";
