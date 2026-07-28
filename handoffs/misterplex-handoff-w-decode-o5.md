@@ -53,8 +53,8 @@ as green in a handoff and was red when run. Run the gate; do not quote it.
 connection. Measured by the new `scripts/check_decode_core_seam.py`:
 
 ```
-DECODE_CORE_SEAM_OK core_inputs=53 constant_inputs=29 core_outputs=13 \
-    unobserved_outputs=13 presentation_driver=decode_stub
+DECODE_CORE_SEAM_OK core_inputs=53 constant_inputs=29 synthetic_reg_inputs=2 \
+    core_outputs=13 unobserved_outputs=13 presentation_driver=decode_stub
 DECODE_CORE_SEAM_NOTE product pixels are NOT produced by h264_decode_core; \
     frame-store writes come from decode_stub
 ```
@@ -105,9 +105,19 @@ be silently absorbed. **This gate immediately earned its keep — see §5.**
 product**, double-gated: `.rbsp(rbsp_byte)` is the constant-zero window and
 `.start` depends on `p16_zero_mv_valid`, tied to `1'b0`. Real intra residual
 reaches the core through the `luma4x4_*` ports instead — all 16 blocks — but
-with **synthetic `core_luma4x4_total_coeff <= 5'd16` and `trailing_ones <= 2'd0`**.
-My seam gate does *not* catch that, because it is a register default rather
-than a port tie. **Stated as a known blind spot, not fixed.**
+with **synthetic `core_luma4x4_total_coeff <= 5'd16` and `trailing_ones <= 2'd0`**
+(`stream_path.sv:430–431`) — a fabricated "all 16 coefficients present, no
+trailing ones" wearing the costume of parsed CAVLC data.
+
+**Blind spot now closed (`b7a4f13`).** The seam gate originally saw only literal
+*port ties*, so a port that looks properly wired but is driven by a
+constant-only register escaped it. It now has a `[synthetic_reg_inputs]`
+section, restricted to multi-bit **data** ports so 1-bit strobes like
+`luma4x4_valid` are not false-positived, and the genuinely wired `luma4x4_qp`
+and `luma4x4_idx` are correctly not flagged. Reds both ways: making a real input
+synthetic gives `UNDECLARED_SYNTHETIC_CORE_INPUT`; wiring the real value in
+gives `STALE_SYNTHETIC_CORE_INPUT`, so **w-cast's landing forces the debt lines
+to be deleted in the same commit.**
 
 ### The real bug (`7e470a8`)
 
@@ -239,8 +249,9 @@ is not exercising them — run the block standalone.**
 - `check_rtl_module_instantiations.py` and `check_decode_core_seam.py` are
   **source/regex-level, not elaboration-aware** (w-audit's finding). rc=0 is
   necessary, **not sufficient**. Corroborate with `make post-fit-hierarchy`.
-- The seam gate does not see **register defaults**, only port ties — which is
-  precisely how the synthetic `core_luma4x4_total_coeff <= 5'd16` escapes it.
+- The seam gate now sees constant-only **registers** as well as port ties, but
+  only for multi-bit data ports; a synthetic 1-bit control signal would still
+  pass unnoticed.
 - The qpel gate proves the two implementations agree **with each other**. It does
   **not** prove either matches the H.264 spec.
 - Denominator: the frame is **1170 MBs (39×30)**. Nothing here decoded any of them.
@@ -249,8 +260,9 @@ is not exercising them — run the block standalone.**
 
 1. **Give the core somewhere to write.** Blocker A is the whole ballgame: until
    `fs_wr_*` comes from `h264_decode_core`, every other green is structural.
-2. **Kill the synthetic `total_coeff`/`trailing_ones` register defaults** — they
-   are invisible to the seam gate and will silently falsify residual.
+2. **Kill the synthetic `total_coeff`/`trailing_ones` register defaults** — now
+   declared debt and gated, and w-cast has the real values staged. This is the
+   next concrete landing.
 3. **Move the ~20 tb probes** off `dut.gen_diagnostic_present.stub.*` onto the
    core (blocker C), then delete `decode_stub` and its two remaining debt
    modules.
