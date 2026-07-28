@@ -173,6 +173,29 @@ else
 fi
 rm_rf "$REALDIR"
 
+# ------------------------------------------------- probed-address validation
+# The asymmetry this exists for: an ADVANCING counter proves its own instrument
+# (a dead window is frozen and cannot advance), but a SILENT one does not -- a
+# wedged live window and any dead window are byte-identical. So a null verdict
+# needs separate proof the instrument was live.
+expect_rc 1 "red9: probing the dead 0x3007F128 fails against a YUV420p build" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x3007F128
+expect_says "PROBE_WINDOW_FAIL" "red9: emits a machine-greppable verdict" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x3007F128
+expect_says "this build publishes PLXD at 0x300FF128" \
+  "red9: names the address that should have been used" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x3007F128
+expect_rc 1 "red10: RGB565's 0x3017F128 is also rejected for a YUV420p build" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x3017F128
+expect_rc 1 "red11: a malformed address is rejected, not ignored" \
+  python3 "$TOOL" --project "$WORK/base" --probed notanaddress
+expect_rc 1 "red12: one bad address among good ones still fails" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x300FF128 --probed 0x3007F128
+expect_rc 0 "green: the live PLXD/PLXS addresses validate" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x300FF128 --probed 0x300FF100
+expect_says "PROBE_WINDOW_OK" "green: emits the positive verdict" \
+  python3 "$TOOL" --project "$WORK/base" --probed 0x300FF128
+
 rm_rf "$WORK/mismatch"; rm_rf "$WORK/ambiguous"; rm_rf "$WORK/nofamily"
 rm_rf "$WORK/noheader"; rm_rf "$WORK/base"; rm_rf "$WORK"
 
