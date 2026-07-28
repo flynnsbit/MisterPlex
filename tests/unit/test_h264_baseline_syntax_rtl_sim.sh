@@ -11,7 +11,7 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; h264_baseline_syntax real RTL simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
 SKIP
-  exit 0
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -25,6 +25,7 @@ TB="$ROOT/tests/rtl/h264_baseline_syntax_tb.cpp"
 BUILD_ROOT="$ROOT/build/verilator"
 BUILD_OK="$BUILD_ROOT/h264_baseline_syntax"
 BUILD_FAULT="$BUILD_ROOT/h264_baseline_syntax_p8_fault"
+BUILD_EPB_FAULT="$BUILD_ROOT/h264_baseline_syntax_epb_fault"
 
 for f in "$RTL" "$QIP" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
@@ -37,7 +38,7 @@ if ! grep -q 'rtl/h264_syntax_primitives.sv' "$QIP"; then
   exit 2
 fi
 
-mkdir -p "$BUILD_OK" "$BUILD_FAULT"
+mkdir -p "$BUILD_OK" "$BUILD_FAULT" "$BUILD_EPB_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -66,3 +67,23 @@ if ! grep -q 'rare P8x8 partition' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK h264_baseline_syntax red-check: rare P8x8 perturbation failed partition check"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_EPB_FAULT" \
+  --top-module h264_baseline_syntax_tb_top -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2 -DFAULT_SKIP_EPB=1 -I$ROOT/host" \
+  "$TOP" "$RTL" "$TB"
+set +e
+EPB_FAULT_OUT="$("$BUILD_EPB_FAULT/Vh264_baseline_syntax_tb_top" 2>&1)"
+EPB_FAULT_RC=$?
+set -e
+printf '%s\n' "$EPB_FAULT_OUT"
+if [[ "$EPB_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_baseline_syntax red-check: EPB removal fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'EPB removal failed before SPS/RBSP syntax parse' <<<"$EPB_FAULT_OUT"; then
+  echo "FAIL h264_baseline_syntax red-check: EPB removal fault did not trip RBSP check" >&2
+  exit 1
+fi
+echo "OK h264_baseline_syntax red-check: skipping EPB removal failed RBSP check"

@@ -130,7 +130,7 @@ module h264_baseline_syntax_parser #(
 	output reg [15:0]        residual_bit_offset
 );
 	localparam int MAX_BITS = MAX_RBSP_BYTES * 8;
-	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2;
+	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2, MODE_MB_LAYER = 2'd3;
 	localparam [3:0]
 		PART_UNKNOWN = 4'd0,
 		PART_P_SKIP  = 4'd1,
@@ -303,6 +303,11 @@ module h264_baseline_syntax_parser #(
 		ST_SL_DEBLOCK_IDC   = 8'd50,
 		ST_SL_ALPHA         = 8'd51,
 		ST_SL_BETA          = 8'd52,
+		ST_SL_REF_IDX_OVR   = 8'd53,
+		ST_SL_REF_IDX_L0    = 8'd54,
+		ST_SL_RPLM_FLAG     = 8'd55,
+		ST_SL_RPLM_IDC      = 8'd56,
+		ST_SL_RPLM_ARG      = 8'd57,
 		ST_MB_START         = 8'd70,
 		ST_MB_P_SKIP        = 8'd71,
 		ST_MB_TYPE          = 8'd72,
@@ -480,6 +485,8 @@ module h264_baseline_syntax_parser #(
 						start_ue(ST_SL_FIRST);
 					else if (mode == MODE_MB)
 						st <= ST_MB_START;
+					else if (mode == MODE_MB_LAYER)
+						start_ue(ST_MB_TYPE);
 					else
 						fail();
 				end
@@ -524,6 +531,8 @@ module h264_baseline_syntax_parser #(
 						start_ue(ST_SL_IDR);
 					else if (poc_type_in == 3'd0)
 						start_bits({3'd0, log2_max_pic_order_cnt_lsb}, ST_SL_POC);
+					else if (is_p_slice(slice_type))
+						start_bits(8'd1, ST_SL_REF_IDX_OVR);
 					else if (nal_ref_idc != 2'd0)
 						start_bits(8'd1, ST_SL_REF_MARK);
 					else
@@ -532,13 +541,51 @@ module h264_baseline_syntax_parser #(
 				ST_SL_IDR: begin idr_pic_id <= ue_value[15:0]; start_bits(8'd1, ST_SL_IDR_MARK0); end
 				ST_SL_POC: begin
 					pic_order_cnt_lsb <= fixed_acc[15:0];
-					if (nal_ref_idc != 2'd0)
+					if (is_p_slice(slice_type))
+						start_bits(8'd1, ST_SL_REF_IDX_OVR);
+					else if (nal_ref_idc != 2'd0)
 						start_bits(8'd1, ST_SL_REF_MARK);
 					else
 						start_ue(ST_SL_QP_DELTA);
 				end
 				ST_SL_IDR_MARK0: start_bits(8'd1, ST_SL_IDR_MARK1);
 				ST_SL_IDR_MARK1: start_ue(ST_SL_QP_DELTA);
+				ST_SL_REF_IDX_OVR: begin
+					if (fixed_acc[0])
+						start_ue(ST_SL_REF_IDX_L0);
+					else
+						start_bits(8'd1, ST_SL_RPLM_FLAG);
+				end
+				ST_SL_REF_IDX_L0: begin
+					if (ue_value != 32'd0) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						start_bits(8'd1, ST_SL_RPLM_FLAG);
+					end
+				end
+				ST_SL_RPLM_FLAG: begin
+					if (fixed_acc[0])
+						start_ue(ST_SL_RPLM_IDC);
+					else if (nal_ref_idc != 2'd0)
+						start_bits(8'd1, ST_SL_REF_MARK);
+					else
+						start_ue(ST_SL_QP_DELTA);
+				end
+				ST_SL_RPLM_IDC: begin
+					if (ue_value == 32'd3) begin
+						if (nal_ref_idc != 2'd0)
+							start_bits(8'd1, ST_SL_REF_MARK);
+						else
+							start_ue(ST_SL_QP_DELTA);
+					end else if (ue_value <= 32'd2) begin
+						start_ue(ST_SL_RPLM_ARG);
+					end else begin
+						unsupported <= 1'b1;
+						fail();
+					end
+				end
+				ST_SL_RPLM_ARG: start_ue(ST_SL_RPLM_IDC);
 				ST_SL_REF_MARK: begin
 					if (fixed_acc[0]) begin
 						unsupported <= 1'b1;
