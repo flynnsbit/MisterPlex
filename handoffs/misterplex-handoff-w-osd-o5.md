@@ -1,25 +1,73 @@
 # Handoff — W-OSD-O5
 
 Branch `w-osd-o5` (worktree `.worktrees/w-osd-o5`), based on `bad31de` (`w-osd-neighbor`).
-Commits: `f265abe` build identity, `acba80f` idle RCA, `85e5864` screensaver/OSD_CONTROL.
+Commits: `f265abe` build identity, `acba80f` idle RCA, `85e5864` screensaver/OSD_CONTROL,
+`2bdc6be` docs, `713a0ac` instantiated-mailbox-window gate, `0b74a76` idle RCA false-pass fix,
+`63604b2` screensaver card fixes + live green.
 Everything below is **measured** unless it says assumed.
 
-## Read this first: the device needs a physical power cycle
+## Read this first: the device was power-cycled and everything was re-measured
 
-The MiSTer at `192.168.1.183` is **wedged** and I could not recover it without a human.
+The MiSTer at `192.168.1.183` **wedged** mid-session and needed a physical power cycle. It has
+since had one, and every conclusion below was re-measured afterwards on the recovered device.
 
-* HDMI still carries valid 1280x720 timing, but the picture is uniform level 7 with `std=0`.
-* ARP for `192.168.1.183` has been `INCOMPLETE` for over 20 minutes; the network stack is gone.
-* It went down during a run that re-asserted the OSD selection **80 times at 0.3 s intervals**
-  via `set_status` (UIO/SPI), contending with Main's own status writes. An earlier, gentler run
-  (40 × 0.4 s) survived. **Cause is assumed, not proven.**
-* `tests/hw/test_osd_screensaver_selects.sh` now caps this at 32 writes, ≥400 ms apart, and
-  refuses to run outside those bounds.
+What wedged it: a run that re-asserted the OSD selection **80 times at 0.3 s intervals** via
+`set_status` (UIO/SPI), contending with Main's own status writes. An earlier, gentler run
+(40 x 0.4 s) survived. **Cause is assumed, not proven.**
+`tests/hw/test_osd_screensaver_selects.sh` now caps this at 32 writes, >=400 ms apart, and
+refuses to run outside those bounds.
 
-State it was left in: `OSD_CONTROL=1` in `/media/fat/misterplex/misterplex.conf`
-(original backed up to `misterplex.conf.bak-wosdo5`), daemon healthy, `/media/fat/misterplex/wosd_ruler.yuv`
-left on the SD card. All hardware cards return **UNSCORED (77)** while it is down — none of them
-can turn an unreachable device into a pass.
+State the device is in now: `OSD_CONTROL=1` in `/media/fat/misterplex/misterplex.conf`
+(backups `misterplex.conf.bak-wosdo5`, `misterplex.conf.bak-wosdo5-red`), `misterplexd` running,
+`/media/fat/misterplex/wosd_ruler.yuv` left on the SD card. Other workers were loading and
+unloading cores during my last measurements, so the core present at any moment varied.
+
+## The headline, re-measured after the power cycle
+
+**The screensaver works.** `tests/hw/test_osd_screensaver_selects.sh` returns **rc=0** with the
+bright centroid travelling **49.4px** across four captures and turning — a bouncing logo.
+Evidence: `tests/fixtures/hw_visual/screensaver_live_green/`.
+
+**The idle screen is still corrupt, for a reason no ARM change can fix.**
+`tests/hw/test_idle_screen_pixel_rca.sh` returns `PRESENTED_CORRUPT` with picture rows starting
+between capture x=84 and x=136 against a budget of 8, and `PLXF` underrun saturated at `0xFF10`.
+These are the **same numbers** as before the power cycle, on a fresh boot with a fresh daemon, so
+the per-scanline DDR read underrun is a property of the RBF and not of accumulated runtime state.
+
+## Two of my own gates were wrong, and the device caught both
+
+Both were found by running against real hardware, not by review. Both are committed with the
+captured logs that show the wrong answer.
+
+**The idle RCA card returned PASS on a MiSTer with no Plex core loaded.** After the power cycle the
+device came back on the MENU core with `misterplexd` running, and the card graded the menu screen
+`PRESENTED_CLEAN`, rc=0. Three things lined up: it required `PLXK`, which is the **ARM to FPGA**
+doorbell written by the daemon and therefore present with no core at all; DDR keeps its contents
+across a warm boot, so the previous core's frame bytes made the "is anything drawn" sample look
+like a picture; and the menu's left edges really are clean. The FPGA-published `PLXD`/`PLXF`
+magics were printed on the card's own output line, both `0x00000000`, and nothing checked them.
+Fixed by requiring the fabric-written magics **and** an advancing `PLXD` bank vsync counter — the
+counter separately, because a core held in reset publishes its magics once and then freezes.
+Evidence: `tests/fixtures/hw_visual/idle_rca_false_pass_menu/`.
+
+Fixing that exposed a second hole in the same file: the new liveness resample had no fixture hook,
+so `tests/unit/test_idle_screen_rca_logic.sh`, which advertises "does NOT contact a MiSTer",
+silently SSH'd to the real device for that one probe. Fixture mode is now all-or-nothing.
+
+**The screensaver card reported "the daemon did not react to the OSD word" about a daemon that was
+applying every word correctly**, and named `startOsdPoll()` as the place to look. Three defects:
+the hold loop was a backgrounded child of an `ssh` command and was torn down when the session
+closed, while the card checked `ssh`'s exit status and got 0; the log window was established by
+appending a marker to a file the daemon holds open at its own write offset, so the marker was
+stranded and the window was empty; and the log path was hardcoded. Then the evidence order was
+wrong as well — an empty log overrode a measured 30.8px of centroid travel. The OSD word read back
+out of `PLXS` and the pixels on the wire are measurements; the daemon log is lossy corroboration,
+because the daemon logs on *change*. Motion is decided first now.
+Evidence: `tests/fixtures/hw_visual/screensaver_live_green/`.
+
+Both classes are the same mistake in different clothes: **something that is alive for its own
+reasons was accepted as evidence that the thing under test is alive.** `PLXK` proves the daemon.
+`ssh` exit 0 proves `ssh`. A clean left edge proves whatever core is loaded.
 
 ## What I confirm from the predecessor
 

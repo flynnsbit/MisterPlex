@@ -48,6 +48,29 @@ green alone cannot be read as decode-off-ARM.
 
 ## W-OSD-O5 — idle screen root-caused, build identity made source-derived (2026-07-28)
 
+**UPDATE after the power cycle — re-measured, and two of my own gates were wrong.**
+
+* **The screensaver works.** `tests/hw/test_osd_screensaver_selects.sh` rc=0, bright centroid
+  travel **49.4px** across four captures, `OSD_WORD_OBSERVED` read back out of `PLXS`.
+  Evidence `tests/fixtures/hw_visual/screensaver_live_green/`.
+* **The idle corruption survives a power cycle unchanged** (rows start x=84..136, budget 8,
+  underrun `0xFF10`), so it is a property of the RBF, not accumulated runtime state. Still needs
+  `w-fit-o5`.
+* **`tests/hw/test_idle_screen_pixel_rca.sh` used to PASS with no Plex core loaded.** It required
+  `PLXK`, which the ARM daemon writes, and never checked the FPGA-published `PLXD`/`PLXF` magics
+  that were printed as `0x00000000` in its own output. It graded the MiSTer MENU screen. Now
+  requires the fabric magics plus an advancing bank vsync counter; both UNSCORED, never a verdict.
+  Evidence `tests/fixtures/hw_visual/idle_rca_false_pass_menu/`.
+* **`tests/hw/test_osd_screensaver_selects.sh` used to blame `startOsdPoll()` for a daemon that was
+  working.** Its hold loop was a backgrounded ssh child that was torn down on session close while
+  the card read ssh's exit status; its log marker was stranded because the daemon holds the log
+  open at its own offset; its log path was hardcoded; and an empty log overrode measured motion.
+  All four fixed, with source-level checks in `tests/unit/test_screensaver_osd_control.sh` so they
+  cannot be quietly reversed.
+* Both failures are one mistake: **something alive for its own reasons was read as evidence that
+  the thing under test is alive.** `PLXK` proves the daemon. `ssh` exit 0 proves ssh. A clean left
+  edge proves whatever core is loaded.
+
 Branch `w-osd-o5`. Everything below is **measured on the device** unless marked assumed.
 Resident RBF md5 `fb4bad849ad2db782a5004ce5a3471ce` — which matches **no build artifact on
 the build host**, so its provenance is untraceable; see the build-identity item.
