@@ -329,6 +329,26 @@ module stream_path #(
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
+
+	// ═══════════════════════════════════════════════════════════════════
+	// RESOURCE SKELETON — area measurement only, not functional
+	// ═══════════════════════════════════════════════════════════════════
+	wire [7:0] skel_obs;
+	h264_decode_skeleton #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H)
+	) decode_skeleton (
+		.clk(clk),
+		.reset(reset | flush),
+		.stim_byte(bytes_in[7:0]),
+		.stim_qp(sl_place_qp),
+		.stim_mode(last_nal_type[3:0]),
+		.stim_mv_x({8'd0, bytes_in[7:0]}),
+		.stim_mv_y({8'd0, bytes_in[15:8]}),
+		.stim_valid(vcl_pulse),
+		.skeleton_observe(skel_obs)
+	);
+
 	// Touch residual_csum + place pulse + a few coeff LSBs so place is not pruned.
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
@@ -336,6 +356,7 @@ module stream_path #(
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
-	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
+	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
+	             |skel_obs;
 
 endmodule
