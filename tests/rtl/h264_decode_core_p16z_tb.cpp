@@ -287,37 +287,21 @@ bool checkResidualFixture() {
     return true;
 }
 
-std::size_t readsPerMb() { return 256 * 81 + 128 * 4; }
+std::size_t readsPerMb() { return 441 + 81 + 81; }
 std::size_t expectedReadCount() { return readsPerMb() * kCases.size(); }
 
 uint32_t expectedReadAddr(const MbCase& mb, int localOrdinal) {
-    int idx = 0;
-    int tap = 0;
-    int cur = 0;
-    for (idx = 0; idx < 384; ++idx) {
-        const int taps = (idx < 256) ? 81 : 4;
-        if (localOrdinal < cur + taps) {
-            tap = localOrdinal - cur;
-            break;
-        }
-        cur += taps;
-    }
-    if (idx >= 384) return 0;
-    if (idx < 256) {
-        const int sx = idx & 15;
-        const int sy = idx >> 4;
-        const int col = tap % 9;
-        const int row = tap / 9;
-        const int x = clampInt(mb.mbX * 16 + sx + (mb.mvX >> 2) + col - 4, 0, FRAME_W - 1);
-        const int y = clampInt(mb.mbY * 16 + sy + (mb.mvY >> 2) + row - 4, 0, FRAME_H - 1);
+    if (localOrdinal < 441) {
+        const int col = localOrdinal % 21;
+        const int row = localOrdinal / 21;
+        const int x = clampInt(mb.mbX * 16 + (mb.mvX >> 2) + col - 2, 0, FRAME_W - 1);
+        const int y = clampInt(mb.mbY * 16 + (mb.mvY >> 2) + row - 2, 0, FRAME_H - 1);
         return i420Addr(REF_BASE, 0, x, y);
     }
-    const int plane = (idx < 320) ? 1 : 2;
-    const int rel = (idx < 320) ? idx - 256 : idx - 320;
-    const int sx = rel & 7;
-    const int sy = rel >> 3;
-    const int x = clampInt(mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1), 0, C_W - 1);
-    const int y = clampInt(mb.mbY * 8 + sy + (mb.mvY >> 3) + ((tap >> 1) & 1), 0, C_H - 1);
+    const int plane = (localOrdinal < 522) ? 1 : 2;
+    const int rel = (localOrdinal < 522) ? localOrdinal - 441 : localOrdinal - 522;
+    const int x = clampInt(mb.mbX * 8 + (mb.mvX >> 3) + (rel % 9), 0, C_W - 1);
+    const int y = clampInt(mb.mbY * 8 + (mb.mvY >> 3) + (rel / 9), 0, C_H - 1);
     return i420Addr(REF_BASE, plane, x, y);
 }
 
@@ -328,21 +312,9 @@ uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
 }
 
 bool expectedChromaRightClamp(const MbCase& mb, int localOrdinal) {
-    int idx = 0;
-    int tap = 0;
-    int cur = 0;
-    for (idx = 0; idx < 384; ++idx) {
-        const int taps = (idx < 256) ? 81 : 4;
-        if (localOrdinal < cur + taps) {
-            tap = localOrdinal - cur;
-            break;
-        }
-        cur += taps;
-    }
-    if (idx < 256 || idx >= 384) return false;
-    const int rel = (idx < 320) ? idx - 256 : idx - 320;
-    const int sx = rel & 7;
-    const int unclampedX = mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1);
+    if (localOrdinal < 441) return false;
+    const int rel = (localOrdinal < 522) ? localOrdinal - 441 : localOrdinal - 522;
+    const int unclampedX = mb.mbX * 8 + (mb.mvX >> 3) + (rel % 9);
     return unclampedX > C_W - 1;
 }
 

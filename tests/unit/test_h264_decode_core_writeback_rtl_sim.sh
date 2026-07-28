@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+echo "Scope: h264_decode_core staging native-I420 writeback path; no hierarchical RTL pokes; covers 2/1170 MBs and terminal frame_done; not MC arithmetic, parser correctness, or product reachability."
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
 VERILATOR_RC=$?

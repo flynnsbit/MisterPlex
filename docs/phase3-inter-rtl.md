@@ -118,6 +118,17 @@ OK h264_dpb_mc RTL red-check: early reference publication fault failed golden
 OK h264_dpb_mc RTL red-check: bad partition mask fault failed golden
 ```
 
+The binding unified decoder target is `stream_path` → `h264_decode_core`; `h264_decode_top` is only
+an intra-MB sub-engine target, not a stream-path replacement.  The P16 path inside
+`h264_decode_core` now consumes `h264_inter_mc_part` directly for the full 21×21 luma / 9×9 U / 9×9 V
+reference windows instead of private per-sample qpel/epel helpers.  The core P16 gate covers 3
+synthetic real-P MBs (`3/1170` MBs of a 624×480 frame denominator) with 603 DPB reads/MB and
+red-checks prediction drop, residual drop, MV perturbation/neighbour loss, RBSP request drift,
+scan-order swaps, U/V reference swaps, and U/V residual swaps.  The real-slice gate covers 2
+real-content P16 MBs (`2/1170`) and red-checks U/V reference-plane swaps.  Until W-DECODE wires
+`h264_decode_core` into `stream_path`, `check_rtl_module_instantiations.py` still reports the core
+as staging/bench-only; product reachability is the merge gate for this topology.
+
 `tests/unit/test_h264_p_slice_modes_rtl_sim.sh` separately exercises the product P MB type decoder:
 
 ```text

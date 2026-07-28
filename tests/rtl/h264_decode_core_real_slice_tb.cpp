@@ -21,7 +21,7 @@ constexpr int C_H = FRAME_H / 2;
 constexpr int C_BYTES = C_W * C_H;
 constexpr int FRAME_BYTES = Y_BYTES + 2 * C_BYTES;
 constexpr int kExpectedFrames = 8;
-constexpr int kReadsPerMb = 256 * 81 + 128 * 4;
+constexpr int kReadsPerMb = 441 + 81 + 81;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int kTimeoutCycles = 70000;
@@ -70,30 +70,16 @@ uint8_t refFromAddr(const Slice& slice, const Case& c, uint32_t addr) {
     return slice.sample(c.ref, 2, p % C_W, p / C_W);
 }
 
-int tapsForSample(int idx) { return idx < 256 ? 81 : 4; }
-
 uint32_t expectedReadAddr(const Case& c, int localOrdinal) {
-    int idx = 0;
-    int cur = 0;
-    for (; idx < 384; ++idx) {
-        const int taps = tapsForSample(idx);
-        if (localOrdinal < cur + taps) break;
-        cur += taps;
-    }
-    const int tap = localOrdinal - cur;
-    if (idx < 256) {
-        const int sx = idx & 15;
-        const int sy = idx >> 4;
-        const int x = clampInt(c.mbX * 16 + sx + (tap % 9) - 4, 0, FRAME_W - 1);
-        const int y = clampInt(c.mbY * 16 + sy + (tap / 9) - 4, 0, FRAME_H - 1);
+    if (localOrdinal < 441) {
+        const int x = clampInt(c.mbX * 16 + (localOrdinal % 21) - 2, 0, FRAME_W - 1);
+        const int y = clampInt(c.mbY * 16 + (localOrdinal / 21) - 2, 0, FRAME_H - 1);
         return i420Addr(REF_BASE, 0, x, y);
     }
-    const int plane = idx < 320 ? 1 : 2;
-    const int rel = idx < 320 ? idx - 256 : idx - 320;
-    const int sx = rel & 7;
-    const int sy = rel >> 3;
-    const int x = clampInt(c.mbX * 8 + sx + (tap & 1), 0, C_W - 1);
-    const int y = clampInt(c.mbY * 8 + sy + ((tap >> 1) & 1), 0, C_H - 1);
+    const int plane = localOrdinal < 522 ? 1 : 2;
+    const int rel = localOrdinal < 522 ? localOrdinal - 441 : localOrdinal - 522;
+    const int x = clampInt(c.mbX * 8 + (rel % 9), 0, C_W - 1);
+    const int y = clampInt(c.mbY * 8 + (rel / 9), 0, C_H - 1);
     return i420Addr(REF_BASE, plane, x, y);
 }
 
@@ -145,17 +131,9 @@ int uvDistinct(const Slice& slice, const Case& c) {
 }
 
 bool chromaRightClampRead(const Case& c, int localOrdinal) {
-    int idx = 0;
-    int cur = 0;
-    for (; idx < 384; ++idx) {
-        const int taps = tapsForSample(idx);
-        if (localOrdinal < cur + taps) break;
-        cur += taps;
-    }
-    if (idx < 256) return false;
-    const int tap = localOrdinal - cur;
-    const int rel = idx < 320 ? idx - 256 : idx - 320;
-    return c.mbX * 8 + (rel & 7) + (tap & 1) > C_W - 1;
+    if (localOrdinal < 441) return false;
+    const int rel = localOrdinal < 522 ? localOrdinal - 441 : localOrdinal - 522;
+    return c.mbX * 8 + (rel % 9) > C_W - 1;
 }
 
 Case chooseVaried(const Slice& slice) {
