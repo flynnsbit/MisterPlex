@@ -904,3 +904,32 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
   ```
   The guard is genuinely exercised and the over-broad cases are genuinely defended.
 - (**pre-registered prediction scored WRONG, reported plainly by the worker**) W-CAST predicted a **duration-independent** stall path would exist; it traced the source and concluded it does **not** — an `EAGAIN`-only detector cannot be distinguished from a slow/stuttering source absent `read()==0`, a read error/short read, or an explicit stop/seek. **A traced negative is a real result**; it is now the load-bearing justification for shipping a duration-keyed guard and nothing broader, and has been sent back to be defended by tests rather than by a trace in a report.
+
+### Hour-23 late — the scoped sweep pays for itself within the hour; a hole found in the roll-call guard
+
+- (done **W-GATE `15ae470`** — DDR layout sweep, now scoped to tracked files) **Merged after the parent wrongly rejected it twice.** Both halves of the property were verified by the parent, not accepted from the worker:
+  - **Insensitivity to untracked debris** — decisive because the integration tree **still contains the exact debris that produced the original `rc=1`** (`captures/wosd-idle-modes/remote_probe2.sh`). Green in the precise environment that previously failed.
+  - **Detection not blinded** — a literal injected into a *tracked* file still fires and localises:
+    ```
+    tests/hw/test_fbar_fast.sh += BASE=0x30000000; STRIDE=0x80000; FRAME=449280; ...
+    => rc=1  FAIL: ... found tests/hw/test_fbar_fast.sh:116
+    restored => rc=0, tree clean
+    ```
+  - Parent error recorded: the first mutation attempt was a **C++ comment** and did not fire — wrong violation shape chosen by the parent, not a hole in the gate.
+- (**THE GATE CAUGHT A REAL VIOLATION FROM ANOTHER WORKER WITHIN THE HOUR**) W-OSD's new human-visual-verification card was rejected by it:
+  ```
+  FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation;
+  found tests/hw/test_bank_release_visual.sh:120: BANK1_W0=$($SSH 'devmem 0x30080000')
+  ```
+  `0x30080000` is the 624×480 bank1 address hardcoded. **Correct today, wrong the moment geometry changes** — and W-OSD's own `e44c3c4` changed the transcode profile in the same chain. A verification card reading the wrong bank would give a human observer confident wrong answers, which is worse than no card. **Held back; three of four commits merged as `2cfdf81`.**
+- (**DEFECT — `test_unit_rollcall.py` protects only a hardcoded list, and reports a constant as if it were a measurement**) Found because the guard's output **did not move** when W-FEED added a test to `unit-unlocked`:
+  ```
+  before merge: UNIT_ROLLCALL_OK prereqs=30 commands=82
+  after  merge: UNIT_ROLLCALL_OK prereqs=30 commands=82
+  EXPECTED_PREREQS = 30   actual unit-unlocked prereqs = 33
+  test_bitstream_ring_lifecycle in EXPECTED_PREREQS: NO
+  ```
+  It reports `len(EXPECTED_PREREQS)` and checks one direction only (`missing = [p for p in EXPECTED if p not in actual]`). **Three tests in the gate are unprotected**, and the protection does not extend to new work — the work most likely to be churned. `prereqs=30` reads as "watching 30" when it means "knows about 30 of 33". **A constant that looks like a measurement is worse than no number** — it invited exactly the inference the parent made. Returned to W-TIME (its author) to report the actual count, decide deliberately what happens when `actual ⊃ expected`, and mutation-prove the *addition* direction that was never tested.
+- (done **merges this hour**, each independently re-gated; integration `2cfdf81`, `make unit rc=0`, assertions **91**, unique tests **44**): W-INTER `cca1957` MV-neighbour + `a942ece` P16 CAVLC residual scheduling · W-CAST `f15e0f8` bounded EOF guard + `66580ab` terminal policy defence · W-TIME `67287bb` RTL invariant hardening · W-MCFIX `968e564` mutation taxonomy · W-OSD `6eda7f7` RTL cross-check + loud geometry mismatch, `2cfdf81` PLXD degeneracy/provenance + 624×480 profile · W-GATE `15ae470` scoped sweep · W-FEED `2ad3688` rebased ring-lifecycle chain.
+- (**stale-base near-miss, recorded as the most dangerous diff of the session**) W-FEED was **nine commits behind** on a base diverging at `2726d35f`. Its `Makefile` side of `unit-unlocked` predated the roll-call guard and three merged tests, so a mechanical union would have **deleted the guard and the tests it protects in one commit, with `make unit` still green afterwards**. Its `ddr_bitstream_ring.hpp` side also reintroduced `0x504C5842u` as a literal after that constant had been centralised into `mailbox_abi`. Returned for a real rebase; the rebased chain merged cleanly and `test_bitstream_ring_lifecycle: ALL PASS`. **Parent process change: workers must now quote their merge-base against the integration tip when handing over SHAs**, so drift is visible immediately rather than at merge time.
+- (**parent-resolved conflict, provable superset**) `tests/hw/README.md` — W-FEED's text asserts everything HEAD asserted (`bank1`, `0x30040000`, `0x30080000`, `status[12]`/`[13]`) **plus** doorbell derivation and the mmap doorbell bank bit, with no contradiction. Taken as a superset. Semantic conflicts continue to go back to their authors (W-OSD's PLXD-vs-timed bank-selection strategy did, and was resolved correctly by its author).
