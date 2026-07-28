@@ -1162,3 +1162,49 @@ failures are plausible — but a 60/60 sample rules out a device that is off the
 network. This is the third status cycle reporting offline while it was
 reachable. **Availability should be reported as a rate with a denominator, not
 as a binary**; two workers can otherwise both be honest and contradict each other.
+
+## §28 — CLOSED: option A vs option B. No bounce probe was needed.
+
+W-E2E (original) handed over an open question: is the HDMI output (A) valid but
+black with the DDR write path dead, or (B) completely dead with clk_ddr/timing
+stuck — and asserted that "only a bounce-during-capture can settle it."
+
+**It is settled, and not by a bounce.** Measured 17:03, fabric-bound:
+
+```
+FABRIC_PROVENANCE: BOUND   corename=Plex rbf_md5=3b1e8435 fpga_state=operating
+                           load_after_write=True (delta 3812s)
+SIGNAL_STATE: CONTENT_PRESENT   mean_luma=36.38  spatial_std=22.25  unique=12/12
+PLEX_CHEVRON: PRESENT  14928 px  bbox [484,239,707,479]
+LEFT_EDGE_DYNAMICS: MOVING  std 5.8532 vs noise floor 0.0  (SNR 117.1x)
+                            pillar edge column 128, stable
+```
+
+**Option B is refuted.** Video timing is alive: the receiver holds a 1280x720@60
+lock and the fabric renders a structured picture at mean luma 36.38 against a
+black threshold of 8.0. A stuck clk_ddr/reset_ddr cannot produce that.
+
+**Option A is what the evidence supports, with one part upgraded.** The present
+path is not merely alive, it is actively refilling: the left-edge artifact varies
+frame to frame at 117x the capture's own noise floor, and per the parent's
+mechanism (`y_valid[fill_idx] <= 1'b1` asserted only at whole-line completion)
+that artifact is *produced by* line-buffer refill timing. Refill implies active
+**DDR reads**. So:
+
+| path | verdict | evidence |
+|---|---|---|
+| video timing / HDMI out | **ALIVE** | CONTENT_PRESENT, stable lock, 12/12 unique |
+| DDR read / scanout / refill | **ALIVE** | MOVING artifact, SNR 117x; present_core -> ddr_frame_store survive synthesis |
+| DDR write (fabric -> DDR) | **NOT ADDRESSED by capture** | w-fit-o5's poke-probe is the oracle |
+
+**Why the bounce probe could never have worked.** It looked for a NO_SIGNAL gap
+during a core load, on the reasoning that FPGA I/Os tri-state during
+reconfiguration. But the 258 frames that motivated it were flat **RGB(7,7,7)**,
+which is the MS2109's own no-lock filler — the capture was *already* unlocked, so
+there was no locked state to drop out of. Every frame of that probe would have
+read identically whether or not a bounce occurred. The probe was inconclusive by
+construction, not by bad luck with the timing window.
+
+That also means the "258 frames all BLACK_SIGNAL" figure should not be carried
+forward as evidence about the FPGA: it is 258 frames of an unlocked receiver,
+which is UNSCORED. Same measurement, correct verdict, opposite implication.

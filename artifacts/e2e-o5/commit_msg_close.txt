@@ -1,0 +1,24 @@
+e2e: close the option A vs option B question with a fabric-bound capture
+
+W-E2E handed over the question of whether the HDMI output is valid-but-black
+with a dead DDR write path (A) or completely dead with clk_ddr stuck (B), and
+asserted that only a bounce-during-capture could settle it.
+
+Settled without a bounce. Fresh live capture at 17:03, fabric-bound via
+scripts/fabric_provenance.py (BOUND, load_after_write=True, delta 3812s):
+CONTENT_PRESENT at mean luma 36.38 against a black threshold of 8.0, chevron
+present, 12/12 unique frames. A stuck clk_ddr cannot render that, so option B
+is refuted.
+
+The dynamics oracle upgrades one part of option A: the left-edge artifact is
+MOVING at 117x the capture's own noise floor, and that artifact is produced by
+line-buffer refill timing, so DDR reads are active. Video timing alive, DDR
+read/scanout alive, DDR write still unaddressed by capture and still owned by
+w-fit-o5's poke probe.
+
+Records why the bounce probe could never have worked: the 258 frames that
+motivated it were flat RGB(7,7,7), the MS2109 no-lock filler, so the capture
+was already unlocked and had no locked state to drop out of. Those frames are
+UNSCORED, not evidence of a black screen.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

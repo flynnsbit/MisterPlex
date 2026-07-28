@@ -1,0 +1,7 @@
+Scope: 12 scored frames from artifacts/e2e-o5/live_1703/frames (dropped 3 flat/warmup)
+noise floor (chevron interior temporal std): 0.0
+artifact band temporal std                 : 5.8532
+dark frac artifact/control                 : 0.2909 / 0.0018 (ratio 161.3x)
+raggedness single vs frame-averaged        : 21.37 -> 14.8 (collapse 0.308)
+pillar edge column stable across frames    : True (128)
+LEFT_EDGE_DYNAMICS: MOVING — artifact temporal std 5.8532 vs capture noise floor 0.0 (SNR 117.1x); per-row dark width varies 17.19 px between frames
