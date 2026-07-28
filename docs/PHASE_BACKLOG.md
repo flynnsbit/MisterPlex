@@ -491,6 +491,18 @@ Captured from the live DDR frame store and **visually inspected** (PNGs preserve
 3. **Post-stop returns to the logo — the latched-last-frame bug is gone.** After-stop banks are byte-identical to the initial idle logo.
 **Honest scope limit:** the clip used is a **24 fps sync test pattern** from the library, not feature-length media, and the path is **ARM decode + PMS transcode presenting via FPGA** — it does **not** advance FPGA decode.
 
+**REAL-MEDIA CONFIRMATION — 2026-07-28 00:39, same daemon/RBF.** The earlier confirmation used a 24 fps *sync test pattern*; this one uses genuine library content, ThunderCats S1E9 `/library/metadata/3`, 640×480, PMS `transcode=1`, ~91 s.
+
+- **Sustains full frame rate on real content:** `2249 frames / 90.87 s = 24.75 fps` (**40.40 ms/frame**), `vfps=24.7`, `pfps=24.6`, `av_drift_ms` steady at **−21**.
+- **`drops` are startup-only:** reach **6** by `wall_s=2.162` and stay **flat at 6** through `wall_s=90.87`. Not accumulating.
+- **Real content, not a pattern:** frame at ~45 s has **203 unique luma values** (`Y 6..214`, mean 122.2); adjacent samples differ by **98–99%** of luma pixels. Visually confirmed as full-colour animation.
+- **Transport controls work:** pause holds position (`time=5897` across two polls 3 s apart), resume advances, and absolute seek to `120000` lands at `125086` showing a completely different scene.
+- Idle logo returns after the long run.
+
+**Correction to an earlier figure in this file:** a `vfps=21.3` reading was quoted as a 480p shortfall. That came from a **7-second** run dominated by startup and was **not representative**; sustained rate is **24.75 fps**. `Direct-play` re-scored 60→68 on the strength of the present path being proven at 480p24. **Scope limit unchanged:** this is PMS transcode + ARM rawvideo presenting via FPGA — it validates the **present/DDR path**, *not* direct-play, and it does **not** advance FPGA decode.
+
+**Library limitation:** the PMS library contains only sync/blip test clips plus this one animated series — no live-action/film-grain title, so the hardest luma case is still untested.
+
 **Verification gap to keep visible:** `test_pms_baseline_profile`'s **live** PMS check is `SKIP-NOT-PASS` in `make unit` (needs `PLEX_BASE`/`PLEX_TOKEN`/`MISTERPLEX_BASELINE_KEY`); only the synthetic green+red proofs run. Since FPGA decode requires **Baseline/CAVLC/ref=1/no-B**, the real delivered profile is **unverified here**. Do not read `make unit` exit 0 as proof PMS is delivering a Baseline stream.
 
 **Lab note:** the `docker` "remote build farm" SSH alias resolves to **localhost** (`~/.ssh/config` → `HostName localhost`; `ssh docker hostname` = `node-worker1` = local host). The farm is this machine. Consequence: `test_resource_preflight.sh` sees the fit's own `quartus_fit` processes and refuses `make unit`. **Fits and unit tests must be serialized** — do not defeat the preflight; Verilator under memory pressure returns *wrong answers* that impersonate real decode bugs.
