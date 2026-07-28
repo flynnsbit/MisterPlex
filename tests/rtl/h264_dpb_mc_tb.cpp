@@ -24,13 +24,20 @@ constexpr int DPB_BYTES = 2 * FRAME_BYTES;
 struct Sim {
     Vh264_dpb_mc_tb top;
     std::vector<uint8_t> mem = std::vector<uint8_t>(DPB_BYTES, 0xee);
+    // Match decode_stub's product DPB store latency: h264_dpb registers
+    // mem_rd/mem_raddr on one edge; decode_stub samples them on the next edge
+    // into dpb_mem_rvalid/dpb_mem_raddr_q, and rdata is combinational from the
+    // registered address. Therefore mem_rvalid/mem_rdata reach h264_dpb two
+    // edges after mem_rd, aligned with h264_dpb's pending_*_d1 metadata.
     bool pendingRead = false;
+    bool pendingReadD1 = false;
     uint32_t pendingAddr = 0;
+    uint32_t pendingAddrD1 = 0;
     uint64_t cycle = 0;
 
     void tick() {
-        top.mem_rvalid = pendingRead;
-        top.mem_rdata = pendingRead && pendingAddr < mem.size() ? mem[pendingAddr] : 0;
+        top.mem_rvalid = pendingReadD1;
+        top.mem_rdata = pendingReadD1 && pendingAddrD1 < mem.size() ? mem[pendingAddrD1] : 0;
         top.clk = 0;
         top.eval();
         top.clk = 1;
@@ -39,6 +46,8 @@ struct Sim {
             if (top.mem_waddr >= mem.size()) throw std::runtime_error("write address out of DPB range");
             mem[top.mem_waddr] = static_cast<uint8_t>(top.mem_wdata);
         }
+        pendingReadD1 = pendingRead;
+        pendingAddrD1 = pendingAddr;
         pendingRead = top.mem_rd;
         pendingAddr = top.mem_raddr;
         top.clk = 0;
