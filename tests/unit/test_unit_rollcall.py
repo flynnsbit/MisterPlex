@@ -121,6 +121,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_reachability_redgreen.py",
     "$(ROOT)/tests/unit/test_qpel_equivalence_verilator.sh",
     "python3 $(ROOT)/scripts/check_decode_core_seam.py",
+    "python3 $(ROOT)/scripts/check_no_macro_topology.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",
     "$(ROOT)/tests/unit/test_rtl_invariants.sh",
