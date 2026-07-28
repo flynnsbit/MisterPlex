@@ -283,9 +283,18 @@ module h264_decode_core #(
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
     localparam [7:0] ST_P16_WIN_START = 8'd9;
-    localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
-    localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
-    localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
+    localparam [7:0] ST_P16_RES_IDCT  = 8'd10;
+    localparam [7:0] ST_P16_RES_EDGE  = 8'd11;
+    // ── Residual traversal steps, in H.264 residual() order ─────────────
+    //   0       Intra16x16DCLevel     (16 coeff, only when the MB is I_16x16)
+    //   1..16   luma 4x4 blkIdx 0..15 (15 coeff when I_16x16, else 16)
+    //   17,18   chroma DC Cb then Cr  (4 coeff, coeff_token table 4)
+    //   19..26  chroma AC Cb 0..3 then Cr 0..3 (15 coeff)
+    localparam [4:0] RES_STEP_LUMA_DC    = 5'd0;
+    localparam [4:0] RES_STEP_LUMA_AC0   = 5'd1;
+    localparam [4:0] RES_STEP_CHROMA_DC0 = 5'd17;
+    localparam [4:0] RES_STEP_CHROMA_AC0 = 5'd19;
+    localparam [4:0] RES_STEP_LAST       = 5'd26;
     localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
     localparam int CORE_MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT);
 
@@ -319,6 +328,22 @@ module h264_decode_core #(
     reg        res_tc_left_valid;
     reg [4:0]  res_tc_top [0:(MB_W*4)-1];
     reg        res_tc_top_valid [0:MB_W-1];
+    //   Chroma nC context: 4 4x4 blocks per component. Index encoding is
+    //   {component, block_y, block_x} for the current macroblock, {component,
+    //   block_y} for the left column and {column, component, block_x} for the
+    //   top line buffer.
+    reg [4:0]  res_tc_cur_c [0:7];
+    reg [4:0]  res_tc_left_c [0:3];
+    reg [4:0]  res_tc_top_c [0:(MB_W*4)-1];
+    //   DC coefficients that bypass the 4x4 scaler and are substituted into
+    //   raster position 0 of every block of the plane (8.5.10 / 8.5.11).
+    reg signed [28:0] res_luma_dc [0:15];
+    reg signed [28:0] res_cdc_u [0:3];
+    reg signed [28:0] res_cdc_v [0:3];
+    reg        res_i16x16_r;
+    reg        res_ac_from_cavlc;
+    reg [5:0]  mb_qp_y_r;
+    reg [5:0]  cur_qp_y_r;
     integer    res_tc_i;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -406,6 +431,17 @@ module h264_decode_core #(
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
     wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
 
+    // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
+    //    actually carries coefficients, and wraps modulo 52.
+    wire mb_has_residual = (cbp_luma != 4'd0) || (cbp_chroma != 2'd0);
+    wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
+                                     $signed({{2{mb_qp_delta[5]}}, mb_qp_delta});
+    wire signed [7:0] qp_delta_wrap = (qp_delta_sum < 8'sd0)  ? (qp_delta_sum + 8'sd52) :
+                                      (qp_delta_sum > 8'sd51) ? (qp_delta_sum - 8'sd52) :
+                                                                 qp_delta_sum;
+    wire [5:0] qp_launch = p16_zero_mv_valid ? slice_qp_y :
+                           mb_has_residual   ? qp_delta_wrap[5:0] : cur_qp_y_r;
+
     wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
     wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
     wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x32 + 32'd1 < MB_W) ?
@@ -477,9 +513,9 @@ module h264_decode_core #(
                 assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
 `elsif H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF
             if (cavlc_coeff_i == 0)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[1] : cavlc_coeff[0];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= RES_STEP_CHROMA_DC0) ? cavlc_coeff[1] : cavlc_coeff[0];
             else if (cavlc_coeff_i == 1)
-                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= P16_LUMA_RES_BLOCKS) ? cavlc_coeff[0] : cavlc_coeff[1];
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = (p16_res_block_idx >= RES_STEP_CHROMA_DC0) ? cavlc_coeff[0] : cavlc_coeff[1];
             else
                 assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
 `else
@@ -487,23 +523,72 @@ module h264_decode_core #(
 `endif
         end
     endgenerate
-    // Block geometry follows luma4x4_index(): index[7:4] is the row, so
-    // block[3:2] is the 4x4 row and block[1:0] the 4x4 column.
-    wire [1:0] res_blk_x = p16_res_block_idx[1:0];
-    wire [1:0] res_blk_y = p16_res_block_idx[3:2];
-    wire       res_is_luma = (p16_res_block_idx < P16_LUMA_RES_BLOCKS);
-    // 8x8 coded_block_pattern group under this core's raster 4x4 ordering.
-    wire [1:0] res_cbp_group = {res_blk_y[1], res_blk_x[1]};
-    wire       res_block_coded = res_is_luma ? p16_cbp_luma_r[res_cbp_group]
-                                             : (p16_cbp_chroma_r == 2'd2);
+    // ── Residual step decode (H.264 residual() traversal order) ────────
+    wire res_is_luma_dc   = (p16_res_block_idx == RES_STEP_LUMA_DC);
+    wire res_is_luma_ac   = (p16_res_block_idx >= RES_STEP_LUMA_AC0) &&
+                            (p16_res_block_idx < RES_STEP_CHROMA_DC0);
+    wire res_is_chroma_dc = (p16_res_block_idx >= RES_STEP_CHROMA_DC0) &&
+                            (p16_res_block_idx < RES_STEP_CHROMA_AC0);
+    wire res_is_chroma_ac = (p16_res_block_idx >= RES_STEP_CHROMA_AC0);
 
-    wire       res_left_internal = (res_blk_x != 2'd0);
-    wire       res_up_internal   = (res_blk_y != 2'd0);
-    wire [4:0] res_left_tc = res_left_internal ? res_tc_cur[{res_blk_y, res_blk_x - 2'd1}]
-                                               : res_tc_left[res_blk_y];
+    // Luma 4x4 block index (Table 6-10): the bitstream walks the four 8x8
+    // groups in raster order and each group's four 4x4 blocks in raster order,
+    // which is x4 = {blk[2], blk[0]}, y4 = {blk[3], blk[1]}.
+    wire [3:0] res_luma_blk    = p16_res_block_idx[3:0] - 4'd1;
+    wire [1:0] res_luma_x4     = {res_luma_blk[2], res_luma_blk[0]};
+    wire [1:0] res_luma_y4     = {res_luma_blk[3], res_luma_blk[1]};
+    // luma4x4_index() takes {row, column}.
+    wire [3:0] res_luma_raster = {res_luma_y4, res_luma_x4};
+    wire [1:0] res_cbp_group   = res_luma_blk[3:2];
+
+    // Chroma: two components of four 4x4 blocks each, raster within the 8x8.
+    wire [4:0] res_cac_i       = p16_res_block_idx - RES_STEP_CHROMA_AC0;
+    wire       res_chroma_is_v = res_is_chroma_dc ?
+                                 (p16_res_block_idx == (RES_STEP_CHROMA_DC0 + 5'd1)) :
+                                 res_cac_i[2];
+    wire [1:0] res_chroma_blk  = res_cac_i[1:0];
+
+    // ── coded_block_pattern gating (7.4.5) ─────────────────────────────
+    // A block whose CBP bit is 0 has no bits in the stream at all; decoding it
+    // anyway consumes the next block's bits. Intra_16x16 DC and chroma DC are
+    // still present even when the matching AC bits are not, and those DC
+    // values must still be transformed into residual samples.
+    wire res_luma_dc_coded   = res_i16x16_r;
+    wire res_luma_ac_coded   = p16_cbp_luma_r[res_cbp_group];
+    wire res_chroma_dc_coded = (p16_cbp_chroma_r != 2'd0);
+    wire res_chroma_ac_coded = (p16_cbp_chroma_r == 2'd2);
+    wire res_block_coded = res_is_luma_dc   ? res_luma_dc_coded   :
+                           res_is_luma_ac   ? res_luma_ac_coded   :
+                           res_is_chroma_dc ? res_chroma_dc_coded :
+                                              res_chroma_ac_coded;
+    // Uncoded block that still receives a DC term: transform with zero AC.
+    wire res_dc_present = res_is_luma_ac   ? res_i16x16_r :
+                          res_is_chroma_ac ? res_chroma_dc_coded : 1'b0;
+
+    // ── nC neighbour context ───────────────────────────────────────────
+    wire [1:0] res_nc_blk_x = res_is_luma_dc ? 2'd0 :
+                              res_is_luma_ac ? res_luma_x4 :
+                                               {1'b0, res_chroma_blk[0]};
+    wire [1:0] res_nc_blk_y = res_is_luma_dc ? 2'd0 :
+                              res_is_luma_ac ? res_luma_y4 :
+                                               {1'b0, res_chroma_blk[1]};
+    wire       res_left_internal = (res_nc_blk_x != 2'd0);
+    wire       res_up_internal   = (res_nc_blk_y != 2'd0);
+    wire [2:0] res_c_sel      = {res_chroma_is_v, res_chroma_blk[1], res_chroma_blk[0]};
+    wire [2:0] res_c_left_sel = {res_chroma_is_v, res_chroma_blk[1], 1'b0};
+    wire [2:0] res_c_up_sel   = {res_chroma_is_v, 1'b0, res_chroma_blk[0]};
+    wire [1:0] res_c_left_edge = {res_chroma_is_v, res_chroma_blk[1]};
+    wire [MB_IDX_W+1:0] res_c_top_idx =
+        {wb_mb_x[MB_IDX_W-1:0], res_chroma_is_v, res_chroma_blk[0]};
+
+    wire [4:0] res_left_tc = res_is_chroma_ac ?
+        (res_left_internal ? res_tc_cur_c[res_c_left_sel] : res_tc_left_c[res_c_left_edge]) :
+        (res_left_internal ? res_tc_cur[{res_nc_blk_y, res_nc_blk_x - 2'd1}] : res_tc_left[res_nc_blk_y]);
     wire       res_left_tc_valid = res_left_internal ? 1'b1 : res_tc_left_valid;
-    wire [4:0] res_up_tc = res_up_internal ? res_tc_cur[{res_blk_y - 2'd1, res_blk_x}]
-                                           : res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_blk_x}];
+    wire [4:0] res_up_tc = res_is_chroma_ac ?
+        (res_up_internal ? res_tc_cur_c[res_c_up_sel] : res_tc_top_c[res_c_top_idx]) :
+        (res_up_internal ? res_tc_cur[{res_nc_blk_y - 2'd1, res_nc_blk_x}] :
+                           res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_nc_blk_x}]);
     wire       res_up_tc_valid = res_up_internal ? 1'b1 : res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]];
     wire [15:0] res_mb_index = ({8'd0, wb_mb_y} * {8'd0, mb_width}) + {8'd0, wb_mb_x};
 
@@ -515,8 +600,8 @@ module h264_decode_core #(
         .mb_index(res_mb_index),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
-        .block_x(res_blk_x),
-        .block_y(res_blk_y),
+        .block_x(res_nc_blk_x),
+        .block_y(res_nc_blk_y),
         .left_tc_valid(res_left_tc_valid),
         .left_tc(res_left_tc),
         .up_tc_valid(res_up_tc_valid),
@@ -527,14 +612,18 @@ module h264_decode_core #(
         .coeff_token_table(res_coeff_token_table)
     );
 
+    // Chroma DC uses nC = -1 (table 4); everything else is neighbour-derived.
+    wire [2:0] res_token_table = res_is_chroma_dc ? 3'd4 : res_coeff_token_table;
+    wire       res_skip_dc = (res_is_luma_ac && res_i16x16_r) || res_is_chroma_ac;
+    wire [4:0] res_max_coeff = res_is_chroma_dc ? 5'd4 :
+                               res_skip_dc      ? 5'd15 : 5'd16;
+
     h264_cavlc_residual_block u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
-        // Chroma AC has no neighbour context stored yet, so it still predicts
-        // from table 0; luma is fully contexted.
-        .coeff_token_table(res_is_luma ? res_coeff_token_table : 3'd0),
-        .max_coeff(5'd16),
+        .coeff_token_table(res_token_table),
+        .max_coeff(res_max_coeff),
         .bit_offset_start(p16_res_bit_offset_r),
         .bit_len(10'd512),
         .rbsp(rbsp_byte),
@@ -549,12 +638,59 @@ module h264_decode_core #(
         .level_dbg(cavlc_level_dbg),
         .run_dbg(cavlc_run_dbg)
     );
+
+    // ── Inverse transform chain ────────────────────────────────────────
+    // Uncoded blocks present zero AC to the scaler so that a DC-only block
+    // still produces its flat residual.
+    wire signed [15:0] res_ac_coeff [0:15];
+    genvar res_ci;
+    generate
+        for (res_ci = 0; res_ci < 16; res_ci = res_ci + 1) begin : g_res_ac_coeff
+            assign res_ac_coeff[res_ci] = res_ac_from_cavlc ? cavlc_dequant_coeff[res_ci] : 16'sd0;
+        end
+    endgenerate
+
+    wire [5:0] res_qp_c;
+    h264_chroma_qp u_product_res_chroma_qp (
+        .qp_y(mb_qp_y_r),
+        .chroma_qp_index_offset(pps_chroma_qp_index_offset),
+        .qp_c(res_qp_c)
+    );
+    wire [5:0] res_qp = (res_is_chroma_dc || res_is_chroma_ac) ? res_qp_c : mb_qp_y_r;
+
+    wire signed [28:0] res_luma_dc_new [0:15];
+    h264_luma_dc_hadamard_inv u_product_res_luma_dc (
+        .coeff(cavlc_dequant_coeff),
+        .qp(mb_qp_y_r),
+        .dc(res_luma_dc_new)
+    );
+
+    wire signed [15:0] res_chroma_dc_coeff [0:3];
+    assign res_chroma_dc_coeff[0] = cavlc_dequant_coeff[0];
+    assign res_chroma_dc_coeff[1] = cavlc_dequant_coeff[1];
+    assign res_chroma_dc_coeff[2] = cavlc_dequant_coeff[2];
+    assign res_chroma_dc_coeff[3] = cavlc_dequant_coeff[3];
+    wire signed [28:0] res_chroma_dc_new [0:3];
+    h264_chroma_dc_hadamard_inv u_product_res_chroma_dc (
+        .coeff(res_chroma_dc_coeff),
+        .qp(res_qp_c),
+        .dc(res_chroma_dc_new)
+    );
+
+    wire signed [28:0] res_dc_value = res_is_chroma_ac ?
+        (res_chroma_is_v ? res_cdc_v[res_chroma_blk] : res_cdc_u[res_chroma_blk]) :
+        res_luma_dc[res_luma_raster];
+    wire res_dc_override = res_is_chroma_ac ? res_chroma_dc_coded : res_i16x16_r;
+
     wire signed [28:0] p16_res_dequant [0:15];
     wire signed [28:0] p16_res_idct [0:15];
-    h264_dequant4x4 u_product_p16_res_dequant (
-        .coeff(cavlc_dequant_coeff),
-        .qp(slice_qp_y),
-        .max_coeff(5'd16),
+    h264_dequant4x4_flex u_product_p16_res_dequant (
+        .coeff(res_ac_coeff),
+        .qp(res_qp),
+        .max_coeff(res_skip_dc ? 5'd15 : 5'd16),
+        .skip_dc(res_skip_dc),
+        .dc_override(res_dc_override),
+        .dc_value(res_dc_value),
         .dequant(p16_res_dequant)
     );
     h264_idct4x4 u_product_p16_res_idct (
@@ -562,12 +698,12 @@ module h264_decode_core #(
         .residual(p16_res_idct)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
-    wire p16_drop_this_luma_residual = (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 5'd1));
+    wire p16_drop_this_luma_residual = (p16_res_block_idx == (RES_STEP_CHROMA_DC0 - 5'd1));
 `else
     wire p16_drop_this_luma_residual = 1'b0;
 `endif
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL
-    wire p16_drop_this_chroma_residual = (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1));
+    wire p16_drop_this_chroma_residual = (p16_res_block_idx == RES_STEP_LAST);
 `else
     wire p16_drop_this_chroma_residual = 1'b0;
 `endif
@@ -928,6 +1064,42 @@ module h264_decode_core #(
     wire [31:0] product_wb_addr = wb_base + (dpb_ref_mem_waddr - dpb_ref_current_base);
 
     integer wb_i;
+
+    // Shared residual traversal helpers. Both are called from the residual
+    // states below; keeping them here avoids three copies of the same
+    // step/latch code drifting apart.
+    task automatic res_step_advance;
+        begin
+            if (p16_res_block_idx == RES_STEP_LAST) begin
+                wb_state <= ST_P16_RES_EDGE;
+            end else begin
+                p16_res_block_idx <= p16_res_block_idx + 5'd1;
+                wb_state <= ST_P16_RES_START;
+            end
+        end
+    endtask
+
+    task automatic res_latch_idct;
+        begin
+            for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
+                if (res_is_luma_ac) begin
+                    if (!p16_drop_this_luma_residual)
+                        lat_p16_residual_y[luma4x4_index(res_luma_raster, wb_i[3:0])] <=
+                            sat16(p16_res_idct[wb_i]);
+                end else if (res_is_chroma_ac) begin
+                    if (!p16_drop_this_chroma_residual) begin
+                        if (res_chroma_is_v ^ p16_swap_chroma_residual)
+                            lat_p16_residual_v[chroma4x4_index(res_chroma_blk, wb_i[3:0])] <=
+                                sat16(p16_res_idct[wb_i]);
+                        else
+                            lat_p16_residual_u[chroma4x4_index(res_chroma_blk, wb_i[3:0])] <=
+                                sat16(p16_res_idct[wb_i]);
+                    end
+                end
+            end
+        end
+    endtask
+
     always @(posedge clk) begin
         frame_done_r <= deblock_ref_ready_pulse;
         p16_fetch_start_r <= 1'b0;
@@ -954,12 +1126,26 @@ module h264_decode_core #(
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
             res_tc_left_valid <= 1'b0;
-            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+            res_i16x16_r <= 1'b0;
+            res_ac_from_cavlc <= 1'b0;
+            mb_qp_y_r <= slice_qp_y;
+            cur_qp_y_r <= slice_qp_y;
+            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1) begin
                 res_tc_cur[res_tc_i] <= 5'd0;
-            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1)
+                res_luma_dc[res_tc_i] <= 29'sd0;
+            end
+            for (res_tc_i = 0; res_tc_i < 8; res_tc_i = res_tc_i + 1)
+                res_tc_cur_c[res_tc_i] <= 5'd0;
+            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
                 res_tc_left[res_tc_i] <= 5'd0;
-            for (res_tc_i = 0; res_tc_i < MB_W * 4; res_tc_i = res_tc_i + 1)
+                res_tc_left_c[res_tc_i] <= 5'd0;
+                res_cdc_u[res_tc_i] <= 29'sd0;
+                res_cdc_v[res_tc_i] <= 29'sd0;
+            end
+            for (res_tc_i = 0; res_tc_i < MB_W * 4; res_tc_i = res_tc_i + 1) begin
                 res_tc_top[res_tc_i] <= 5'd0;
+                res_tc_top_c[res_tc_i] <= 5'd0;
+            end
             for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
                 res_tc_top_valid[res_tc_i] <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
@@ -1038,8 +1224,22 @@ module h264_decode_core #(
                     p16_res_block_idx <= 5'd0;
                     p16_cbp_luma_r <= cbp_luma;
                     p16_cbp_chroma_r <= cbp_chroma;
-                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                    // The walker only launches inter macroblocks today, so
+                    // there is no Intra_16x16 luma DC block in the chain.
+                    res_i16x16_r <= 1'b0;
+                    res_ac_from_cavlc <= 1'b0;
+                    mb_qp_y_r <= qp_launch;
+                    cur_qp_y_r <= qp_launch;
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1) begin
                         res_tc_cur[res_tc_i] <= 5'd0;
+                        res_luma_dc[res_tc_i] <= 29'sd0;
+                    end
+                    for (res_tc_i = 0; res_tc_i < 8; res_tc_i = res_tc_i + 1)
+                        res_tc_cur_c[res_tc_i] <= 5'd0;
+                    for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                        res_cdc_u[res_tc_i] <= 29'sd0;
+                        res_cdc_v[res_tc_i] <= 29'sd0;
+                    end
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -1068,72 +1268,88 @@ module h264_decode_core #(
             ST_P16_RES_START: begin
                 if (res_block_coded) begin
                     cavlc_start_r <= 1'b1;
+                    res_ac_from_cavlc <= 1'b1;
                     wb_state <= ST_P16_RES_WAIT;
+                end else if (res_dc_present) begin
+                    // No AC bits in the stream, but the plane DC still reaches
+                    // this block: transform it with a zero AC field.
+                    res_ac_from_cavlc <= 1'b0;
+                    wb_state <= ST_P16_RES_IDCT;
                 end else begin
-                    // No bits in the stream for this block: leave the residual
-                    // latch at its launch zero and do not advance bit_offset.
-                    if (res_is_luma)
-                        res_tc_cur[p16_res_block_idx[3:0]] <= 5'd0;
-                    if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
-                        res_tc_left_valid <= 1'b1;
+                    // Uncoded and DC-free: leave the residual latch at its
+                    // launch zero and do not advance bit_offset.
+                    if (res_is_luma_ac)
+                        res_tc_cur[res_luma_raster] <= 5'd0;
+                    if (res_is_chroma_ac)
+                        res_tc_cur_c[res_c_sel] <= 5'd0;
+                    if (res_is_luma_dc)
+                        for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                            res_luma_dc[res_tc_i] <= 29'sd0;
+                    if (res_is_chroma_dc)
                         for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
-                            res_tc_left[res_tc_i] <= res_tc_cur[{res_tc_i[1:0], 2'd3}];
-                            res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
-                                res_tc_cur[{2'd3, res_tc_i[1:0]}];
+                            if (res_chroma_is_v)
+                                res_cdc_v[res_tc_i] <= 29'sd0;
+                            else
+                                res_cdc_u[res_tc_i] <= 29'sd0;
                         end
-                        res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
-                        wb_state <= ST_P16_REF_SEED;
-                    end else begin
-                        p16_res_block_idx <= p16_res_block_idx + 5'd1;
-                    end
+                    res_step_advance();
                 end
+            end
+            ST_P16_RES_IDCT: begin
+                // DC-only block: nothing was parsed, so no total_coeff and no
+                // bit_offset movement, but the residual is still produced.
+`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
+                res_latch_idct();
+`endif
+                if (res_is_luma_ac)
+                    res_tc_cur[res_luma_raster] <= 5'd0;
+                if (res_is_chroma_ac)
+                    res_tc_cur_c[res_c_sel] <= 5'd0;
+                res_step_advance();
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
-`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
-                        for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
-                            if (p16_res_block_idx < P16_LUMA_RES_BLOCKS) begin
-                                if (!p16_drop_this_luma_residual)
-                                    lat_p16_residual_y[luma4x4_index(p16_res_block_idx[3:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
-                            end else if (p16_res_block_idx < (P16_LUMA_RES_BLOCKS + 5'd4)) begin
-                                if (!p16_drop_this_chroma_residual) begin
-                                    if (p16_swap_chroma_residual)
-                                        lat_p16_residual_v[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
-                                    else
-                                        lat_p16_residual_u[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
-                                end
-                            end else begin
-                                if (!p16_drop_this_chroma_residual) begin
-                                    if (p16_swap_chroma_residual)
-                                        lat_p16_residual_u[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
-                                    else
-                                        lat_p16_residual_v[chroma4x4_index(p16_res_block_idx[1:0], wb_i[3:0])] <= sat16(p16_res_idct[wb_i]);
-                                end
+                        if (res_is_luma_dc) begin
+                            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                                res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                        end else if (res_is_chroma_dc) begin
+                            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                                if (res_chroma_is_v)
+                                    res_cdc_v[res_tc_i] <= res_chroma_dc_new[res_tc_i];
+                                else
+                                    res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
                             end
-                        end
-                    end
+                        end else begin
+`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
+                            res_latch_idct();
 `endif
-                    if (res_is_luma)
-                        res_tc_cur[p16_res_block_idx[3:0]] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
-
-                    if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
-                        // Roll this macroblock's edge total_coeff into the left
-                        // register and the per-column top line buffer.
-                        res_tc_left_valid <= 1'b1;
-                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
-                            res_tc_left[res_tc_i] <= res_tc_cur[{res_tc_i[1:0], 2'd3}];
-                            res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
-                                res_tc_cur[{2'd3, res_tc_i[1:0]}];
                         end
-                        res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
-                        wb_state <= ST_P16_REF_SEED;
-                    end else begin
-                        p16_res_block_idx <= p16_res_block_idx + 5'd1;
-                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
-                        wb_state <= ST_P16_RES_START;
                     end
+                    // Only the 4x4 AC blocks contribute to the nC context;
+                    // the DC blocks of a macroblock do not (9.2.1).
+                    if (res_is_luma_ac)
+                        res_tc_cur[res_luma_raster] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    if (res_is_chroma_ac)
+                        res_tc_cur_c[res_c_sel] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                    res_step_advance();
                 end
+            end
+            ST_P16_RES_EDGE: begin
+                // Roll this macroblock's edge total_coeff into the left
+                // registers and the per-column top line buffers.
+                res_tc_left_valid <= 1'b1;
+                for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                    res_tc_left[res_tc_i] <= res_tc_cur[{res_tc_i[1:0], 2'd3}];
+                    res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
+                        res_tc_cur[{2'd3, res_tc_i[1:0]}];
+                    res_tc_left_c[res_tc_i[1:0]] <= res_tc_cur_c[{res_tc_i[1:0], 1'b1}];
+                    res_tc_top_c[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
+                        res_tc_cur_c[{res_tc_i[1], 1'b1, res_tc_i[0]}];
+                end
+                res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                wb_state <= ST_P16_REF_SEED;
             end
             ST_P16_REF_SEED: begin
                 // Publish the externally-owned reference bank into the local
