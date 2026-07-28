@@ -156,3 +156,112 @@ but the producers sit under `h264_decode_core`.
 
 **Zero frames have still been decoded and displayed by the FPGA.** Nothing here
 changes that.
+
+---
+
+# Stage C — CAVLC residual in the product core
+
+Branch `w-cast-o5`, commits `6d58971` (RTL) and `f0d698a` (oracle). Everything
+below is measured on that branch unless it says assumed.
+
+## What landed
+
+`h264_decode_core`'s own 24-block residual traversal now decodes CAVLC the way
+H.264 Baseline codes it. Three defects fixed:
+
+1. **`coeff_token_table` was hardcoded `3'd0`.** H.264 9.2.1 selects the
+   coeff_token VLC from nC, derived from the left and upper 4x4 neighbours'
+   `total_coeff`. `h264_cavlc_nc_predictor` already existed in
+   `h264_cavlc_residual.sv` but was parked in `bench_only_modules.txt` "until
+   product residual scheduling is integrated" — that was this job. It is now
+   instantiated in the product core (`u_product_res_nc`) and removed from the
+   bench-only list.
+2. **No nC context existed.** Added current-MB `total_coeff` (16 entries), a
+   left-MB column, and a per-column top line buffer, following the existing
+   `mv_top_*` convention. Slice/frame-edge availability is handled by the
+   predictor's own guards.
+3. **No cbp gating.** The traversal walked all 24 blocks regardless of
+   `cbp_luma`/`cbp_chroma`. On a real stream that desynchronises the whole
+   macroblock's bit chain the moment an 8x8 group is uncoded. Uncoded blocks now
+   launch no CAVLC decode and do not advance `bit_offset`.
+
+## Evidence — every green ships its red
+
+| result | check |
+|---|---|
+| green | `test_h264_decode_core_p16z_rtl_sim.sh` rc=0 — **60 coded + 12 cbp-uncoded CAVLC blocks over 3 P16 macroblocks**, all fault injections still red |
+| red | force `.coeff_token_table(3'd0)` → rc=1 |
+| red | drop the cross-macroblock left nC context → rc=1 |
+| red | force `res_block_coded = 1'b1` (ignore cbp) → rc=1, `mb=(3,0) sample 128 plane=Y got=249 want=227 residual=0` |
+| green | restore → rc=0, core file byte-identical to HEAD |
+| green | `check_rtl_module_instantiations.py --root h264_decode_core` → `REQUIRED_RTL_MODULE_REACHABLE h264_cavlc_nc_predictor`, reachable 48 → 49, bench_only 22 → 21 |
+| green | `check_decode_core_syntax_feed.py`, `check_define_parity.py`, `test_bench_rtl_filelists.py` |
+| pre-existing | `scripts/rtl_lint.py` rc=1 on the baseline commit too; `h264_decode_core` contributes no lines to its report |
+
+**Denominator: 3 macroblocks, not 1170.**
+
+## What I found is NOT true
+
+- **`test_h264_decode_core_real_slice_rtl_sim.sh` is not Stage C evidence.** It
+  drives `p16_residual_y/u/v` directly and bypasses CAVLC entirely
+  (`h264_decode_core_real_slice_tb.cpp:266-269`). It is still rc=0, which only
+  shows Stage C did not regress MC/recon. I had earlier framed it as real-content
+  validation of the residual path; that was wrong.
+- **The p16z fixture was not a valid oracle for conformant nC.** Its bit strings
+  were hand-authored against table 0 for every block. Re-encoding was mandatory,
+  not optional; each substitution was verified against the product RTL itself
+  through `h264_cavlc_residual_tb_top` (table 1, tc=2: t1=2 `011`, t1=1 `00111`,
+  t1=0 `000111`) and decodes to the same coefficients as before.
+
+## ★ Blocking limitation found, NOT fixed — the 128-byte slice ceiling
+
+`stream_path.sv:273-286` captures **only the first 128 bytes of a slice**
+(`sl_rbsp_len < 8'd128`, then it stops), `rbsp_window_base` is hardcoded `16'd0`
+(line 390), and the core's `rbsp_request_offset` / `rbsp_request_valid` outputs
+are consumed **only** by the `_keep_decode_core_inputs` sink (line 557).
+
+So the product decoder can never see residual bytes past byte 127 of a slice. A
+real 624x480 P slice is far larger than that, so at most the first handful of
+macroblocks can ever have residual — measured cause, not speculation, and it is
+a plausible explanation for the long-standing "only block0 ever has residual
+data" symptom.
+
+I did **not** fix it, deliberately. The core's interface is a 128-byte parallel
+`rbsp_byte [0:127]` array, so a sliding window means either a 4096:1 mux per
+window byte or a redesign to a narrow on-demand fetch backed by BRAM/DDR. That
+is an architecture decision owned by `w-decode-o5` (Stage A) and `w-swap-o5`
+(DDR path), and per the pivot's "steal, do not invent" mandate it should follow
+whatever ring-buffer/arbitration pattern jtframe already ships rather than being
+invented here. Half-landing it would have been worse than reporting it.
+
+## Merge instructions
+
+- Take `w-swap-o5`'s P16 block MC region **wholesale** and re-anchor Stage C on
+  top. Stage C's anchors (`u_product_res_nc` and the residual context wires) sit
+  above the MC region, so this is tractable. Resolving the other way silently
+  reinstates the per-sample MC lineage and loses their 1170/1170-macroblock proof.
+- Keep exactly **one** `MAX_BYTES` RBSP index fix. This branch uses `RBSP_IDX_W`
+  + the `CAVLC_FAULT_BYTE_INDEX_WRAP` fault define, already allowlisted in
+  `define_parity_allowlist.json`; `w-swap-o5` sized it via `$clog2`.
+- `bench_only_modules.txt` loses its `h264_cavlc_nc_predictor` line. If a merge
+  restores it, the instantiation gate will go red — that is the gate working.
+
+## Remaining Stage C work, honestly scoped
+
+- **Chroma is still non-conformant.** The traversal has no chroma DC blocks at
+  all, `max_coeff` is fixed at `5'd16` for every block, and chroma AC still uses
+  table 0. These must land together: consuming AC-only chroma without also
+  consuming the DC blocks would desynchronise the chain, so `max_coeff=15` alone
+  is not a coherent increment. The design that avoids renumbering — and therefore
+  avoids breaking `expected_red_manifest.json` ordinals and the chroma latch
+  mapping — is to add two chroma-DC micro-states ahead of the chroma AC blocks
+  with their own counter, leaving `p16_res_block_idx` 0..23 untouched, then apply
+  the 2x2 inverse Hadamard and inject each DC into the matching AC block's
+  coefficient 0.
+- cbp gating for chroma currently treats only `cbp_chroma == 2'd2` as AC-coded.
+  That is correct for AC, but becomes wrong the moment chroma DC exists
+  (`cbp_chroma == 2'd1` codes DC only).
+
+**Zero frames have still been decoded and displayed by the FPGA.** Stage C
+changes nothing about that; Stage A must land first, and "screen or it didn't
+happen" is the only acceptance criterion that counts.
