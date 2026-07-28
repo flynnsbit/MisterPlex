@@ -1264,6 +1264,120 @@ def check_ddr_frame_layout_contract() -> None:
     print("PASS DDR frame layout ARM/RTL contract")
 
 
+def check_instantiated_mailbox_window() -> None:
+    """Gate the window the fabric actually answers on, not the spec's defaults.
+
+    check_mailboxes() proves the RTL derives every mailbox from DOORBELL_PHYS +
+    offset, and check_ddr_frame_layout_contract() proves the host and RTL layout
+    headers agree constant-for-constant. Neither proves the doorbell is the one
+    the instantiated frame store uses, because both are satisfied by any
+    self-consistent pair of numbers.
+
+    That gap is not hypothetical. mailbox_abi_spec.hpp's default kPlxkAddr block
+    is 0x3007F000, which is the doorbell for a 0x40000 bank stride. present_core
+    instantiates ddr_frame_store with the YUV 0x80000 stride, so the live
+    doorbell is 0x300FF000. Probing the spec defaults on a running board returns
+    valid PLXK/PLXS/PLXF magics from a stale image of an older core: it looks
+    like a working mailbox and never changes. A reader that only proves internal
+    consistency cannot tell those two windows apart.
+
+    So this gate asserts the three things that actually pin the live window:
+      1. every doorbell in the layout header is PHYS_BASE + 2*stride - 0x1000,
+      2. present_core instantiates one consistent stride/doorbell family,
+      3. mailbox_abi_spec.hpp names that instantiated address, and says out loud
+         that its own default block is not it.
+    """
+    layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
+    present = strip_comments(read(PRESENT_CORE))
+    spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
+    spec_raw = read(MAILBOX_ABI_SPEC)
+
+    phys_base = 0x30000000
+    doorbell_from_end = 0x1000
+    families = {
+        "RGB565": ("DDR_FRAME_RGB565_BANK_STRIDE", "DDR_FRAME_RGB565_DOORBELL_PHYS"),
+        "YUV420P": ("DDR_FRAME_YUV420P_BANK_STRIDE", "DDR_FRAME_YUV420P_DOORBELL_PHYS"),
+    }
+    resolved: dict[str, tuple[int, int]] = {}
+    for family, (stride_name, doorbell_name) in families.items():
+        stride = sv_const(layout, stride_name)
+        doorbell = sv_const(layout, doorbell_name)
+        expected = phys_base + 2 * stride - doorbell_from_end
+        check(
+            doorbell == expected,
+            f"{family} doorbell is not where a two-bank {family} frame store puts it: "
+            f"{doorbell_name}=0x{doorbell:08X} but PHYS_BASE 0x{phys_base:08X} + "
+            f"2 * {stride_name} 0x{stride:X} - 0x{doorbell_from_end:X} = 0x{expected:08X}. "
+            "A doorbell that does not follow the stride still answers with valid magics "
+            "from whatever image was last left at that address, so probes read stale "
+            "frozen words instead of failing. Fix the stride and the doorbell together.",
+        )
+        resolved[family] = (stride, doorbell)
+
+    m = re.search(r"ddr_frame_store\s*#\s*\((.*?)\)\s*\w+\s*\(", present, re.S)
+    if not m:
+        fail(
+            "present_core.sv no longer instantiates ddr_frame_store with a parameter "
+            "block; this gate cannot see which mailbox window the fabric answers on."
+        )
+    inst = m.group(1)
+
+    def inst_arg(name: str) -> str:
+        am = re.search(rf"\.{re.escape(name)}\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)", inst)
+        if not am:
+            fail(
+                f"present_core.sv ddr_frame_store instantiation does not pass .{name}(). "
+                "The mailbox window must be explicit at the instantiation, not inherited "
+                "from a module default that no reader of present_core.sv can see."
+            )
+        return norm(am.group(1))
+
+    check(
+        inst_arg("PHYS_BASE").replace("_", "") == f"32'h{phys_base:X}",
+        f"present_core.sv ddr_frame_store .PHYS_BASE() is {inst_arg('PHYS_BASE')}, "
+        f"expected 32'h{phys_base:08X}. The doorbell arithmetic above is anchored on "
+        "this base; moving it silently moves every mailbox.",
+    )
+    stride_arg = inst_arg("HPS_BANK_STRIDE_BYTES")
+    doorbell_arg = inst_arg("DOORBELL_PHYS")
+    stride_name, doorbell_name = families["YUV420P"]
+    check(
+        stride_arg == stride_name and doorbell_arg == doorbell_name,
+        "present_core.sv must instantiate ddr_frame_store with one consistent layout "
+        f"family: got .HPS_BANK_STRIDE_BYTES({stride_arg}) .DOORBELL_PHYS({doorbell_arg}), "
+        f"expected ({stride_name}) and ({doorbell_name}). Mixing an RGB565 doorbell with a "
+        "YUV stride, or a literal with a named constant, produces a core whose mailboxes "
+        "sit at an address no host header names.",
+    )
+
+    _, live_doorbell = resolved["YUV420P"]
+    spec_live = cpp_const(spec_text, "kYuv420pDoorbellAddr")
+    check(
+        spec_live == live_doorbell,
+        f"mailbox_abi_spec.hpp kYuv420pDoorbellAddr=0x{spec_live:08X} but present_core "
+        f"instantiates the frame store at doorbell 0x{live_doorbell:08X}. The host would "
+        "probe an address the fabric never writes.",
+    )
+    spec_default = cpp_const(spec_text, "kPlxkAddr")
+    check(
+        spec_default != live_doorbell,
+        "This gate assumed mailbox_abi_spec.hpp's default kPlxk block was a different "
+        f"window from the instantiated one, but both are now 0x{spec_default:08X}. That is "
+        "not a failure of the core; it means the two windows have been unified and the "
+        "warning text this gate requires below is now misleading. Update both together.",
+    )
+    check(
+        f"0x{live_doorbell:08X}" in spec_raw or f"0x{live_doorbell:08x}" in spec_raw,
+        f"mailbox_abi_spec.hpp must state the instantiated doorbell 0x{live_doorbell:08X} "
+        f"in text. Its default block is 0x{spec_default:08X}, which is a live-looking stale "
+        "window on real hardware, so the file must not leave a reader to guess.",
+    )
+    print(
+        f"PASS instantiated mailbox window (doorbell 0x{live_doorbell:08X} follows the "
+        f"YUV420P stride; spec default 0x{spec_default:08X} is documented as not live)"
+    )
+
+
 def check_runtime_ddr_layout_literal_sweep() -> None:
     """Reject runtime reintroductions of fixed 320p/480p DDR frame addresses.
 
@@ -2407,6 +2521,7 @@ def main() -> int:
     check_ddr_bitstream_ring()
     check_status_telemetry()
     check_ddr_frame_layout_contract()
+    check_instantiated_mailbox_window()
     check_runtime_ddr_layout_literal_sweep()
     check_runtime_ddr_layout_literal_ignores_untracked_debris()
     check_ddr_frame_store_yuv_read_contract()

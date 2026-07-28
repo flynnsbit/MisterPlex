@@ -37,9 +37,11 @@ struct MailboxEntry {
 // !! READ THIS BEFORE PROBING A LIVE DEVICE !!
 // The addresses in this block are the *default-parameter* window: they follow
 // from PHYS_BASE=0x30000000 with HPS_BANK_STRIDE_BYTES=262144, which is
-// ddram_frame_rd's default (the RGB565 layout). Every offset is relative to a
-// doorbell placed at PHYS_BASE + 2*stride - 0x1000, so a different bank stride
-// moves the WHOLE window.
+// ddram_frame_rd's own module default. It is NOT the RGB565 layout: RGB565
+// ships a 786432-byte stride whose doorbell is 0x3017F000. 262144 belongs to no
+// current layout family at all. Every offset is relative to a doorbell placed
+// at PHYS_BASE + 2*stride - 0x1000, so a different bank stride moves the WHOLE
+// window.
 //
 // present_core.sv instantiates ddr_frame_store with the YUV420p stride
 // (524288), which puts the live window at 0x300FF000 — see the
@@ -114,8 +116,17 @@ constexpr uint32_t doorbellForStride(uint32_t phys_base, uint32_t bank_stride_by
 
 // The window present_core.sv actually instantiates for the shipping I420 path
 // (624x480 planar, bank stride 0x80000). These are the addresses a live probe
-// must use; the 0x3007Fxxx block above belongs to the RGB565 stride.
-constexpr uint32_t kYuv420pDoorbellAddr = doorbellForStride(0x30000000u, 0x80000u);
+// must use.
+//
+// The 0x3007Fxxx block above is NOT the RGB565 window either: RGB565 ships a
+// 0xC0000 stride, whose doorbell is 0x3017F000. 0x3007F000 is the doorbell for
+// a 0x40000 stride that no current layout family uses, i.e. it is a legacy
+// default that the fabric no longer writes. On real hardware it still answers
+// with valid PLXK/PLXS/PLXF magics, because an older core left them there and
+// nothing overwrites them, so a probe pointed at it reads plausible values that
+// never change. Deriving these from doorbellForStride() rather than copying a
+// literal is what keeps the two apart.
+constexpr uint32_t kYuv420pDoorbellAddr = 0x300FF000u;
 constexpr uint32_t kYuv420pPlxsAddr     = kYuv420pDoorbellAddr + kMboxOffsetStatus;
 constexpr uint32_t kYuv420pPlxiAddr     = kYuv420pDoorbellAddr + kMboxOffsetInput;
 constexpr uint32_t kYuv420pPlxmAddr     = kYuv420pDoorbellAddr + kMboxOffsetSdram;
@@ -123,9 +134,11 @@ constexpr uint32_t kYuv420pPlxfAddr     = kYuv420pDoorbellAddr + kMboxOffsetFram
 constexpr uint32_t kYuv420pDiagAddr     = kYuv420pDoorbellAddr + kMboxOffsetSdramDiag;
 constexpr uint32_t kYuv420pPlxdAddr     = kYuv420pDoorbellAddr + kMboxOffsetBank;
 
-static_assert(kYuv420pDoorbellAddr == 0x300FF000u,
-              "YUV420p doorbell must match ddr_frame_layout.hpp "
-              "kPlex480pYuv420pDoorbellPhys and present_core.sv");
+static_assert(kYuv420pDoorbellAddr == doorbellForStride(0x30000000u, 0x80000u),
+              "YUV420p doorbell must follow the 0x80000 bank stride; it is written as a "
+              "literal only so source-text gates can find it, not as an independent value");
+static_assert(kYuv420pDoorbellAddr != kPlxkAddr,
+              "the instantiated YUV window must stay distinct from the legacy default block");
 static_assert(doorbellForStride(0x30000000u, 0x40000u) == kPlxkAddr,
               "the 0x3007F block must be the 0x40000-stride window");
 static_assert(kPlxsAddr == kPlxkAddr + kMboxOffsetStatus, "PLXS offset drifted");

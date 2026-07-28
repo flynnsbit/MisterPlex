@@ -142,6 +142,41 @@ identity in the fabric, artifact md5 in the ledger.
    (10th selectable item) without overshooting into `Reset`. Verify by reading `PLXS` after each
    step rather than counting blind.
 4. **The device must be power-cycled** before any of this can be re-measured.
-5. `mailbox_abi_spec.hpp`'s "SINGLE SOURCE OF TRUTH" banner is now accurate only because I added the
-   YUV window; `tests/unit/test_rtl_invariants.py` still checks the `0x3007F` defaults only. Someone
-   should extend it to assert the instantiated window too.
+
+## Closed after the first draft of this handoff
+
+Item 5 below was on the open list; it is now done, because it is the gate that would have caught
+the trap that cost me the most time.
+
+`tests/unit/test_rtl_invariants.py` gained `check_instantiated_mailbox_window()`. The two
+pre-existing gates in that file are individually strong and jointly blind: `check_mailboxes()`
+proves the RTL derives every mailbox from `DOORBELL_PHYS + offset`, and
+`check_ddr_frame_layout_contract()` proves the host and RTL layout headers agree constant for
+constant. Both are satisfied by *any* self-consistent pair of numbers, so neither can tell you the
+doorbell is the one the instantiated frame store actually uses. The new check asserts the three
+things that pin the live window: every doorbell in the layout header equals
+`PHYS_BASE + 2*stride - 0x1000`; `present_core.sv` instantiates one consistent stride/doorbell
+family; and `mailbox_abi_spec.hpp` names the instantiated address in text while saying that its own
+`0x3007F` default block is not it.
+
+Three red-checks in `tests/unit/test_rtl_invariants.sh`, each injected so that every pre-existing
+gate stays satisfied — otherwise the red would be someone else's gate firing, not mine:
+
+| Fault | Injection | Message |
+|---|---|---|
+| Doorbell does not follow its stride | `0x300FF000` → `0x3007F000` in **both** layout headers at once | `not where a two-bank YUV420P frame store puts it` |
+| Mixed layout families | `present_core.sv` keeps the YUV stride, wired to `DDR_FRAME_RGB565_DOORBELL_PHYS` | `must instantiate ddr_frame_store with one consistent layout family` |
+| Host spec aimed at the stale window | `kYuv420pDoorbellAddr` → `0x3007F000` | `would probe an address the fabric never writes` |
+
+Each red-check greps for its own message, so a fault that trips an earlier gate does not count as a
+pass. `bash tests/unit/test_rtl_invariants.sh` rc=0 with all three firing.
+
+While writing it I found my own earlier comment in `mailbox_abi_spec.hpp` was wrong: I had called
+the `0x3007F` block "the RGB565 stride". It is not. RGB565 ships a `0xC0000` stride whose doorbell
+is `0x3017F000`. `0x40000` belongs to no current layout family at all — it is `ddram_frame_rd`'s
+bare module default. The corrected comment says so, because "it's the RGB565 window" would have
+sent the next reader to probe `0x3017F000` and find the same class of frozen garbage.
+
+5. ~~`mailbox_abi_spec.hpp`'s "SINGLE SOURCE OF TRUTH" banner is now accurate only because I added
+   the YUV window; `tests/unit/test_rtl_invariants.py` still checks the `0x3007F` defaults only.~~
+   Done, see above.

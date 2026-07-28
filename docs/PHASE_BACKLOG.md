@@ -81,6 +81,15 @@ cannot see a per-line prefix loss, and `scripts/hdmi_capture_classify.py` grades
 holds what an older core wrote at the other window, so probing the spec addresses returns
 permanently frozen, plausible-looking values. The spec now derives both windows from
 `doorbellForStride()` with `static_assert`s, and any gate must derive the window from the doorbell.
+`tests/unit/test_rtl_invariants.py::check_instantiated_mailbox_window` now enforces this: every
+doorbell must equal `PHYS_BASE + 2*stride - 0x1000`, `present_core.sv` must instantiate one
+consistent stride/doorbell family, and the spec must name the instantiated address in text. The two
+pre-existing mailbox gates could not catch this, because both are satisfied by any *self-consistent*
+pair of numbers; the red-checks in `tests/unit/test_rtl_invariants.sh` therefore inject each fault
+into **both** agreeing headers at once, and grep for their own message so an earlier gate firing
+cannot be mistaken for a pass. Correction to an earlier note: `0x3007F000` is **not** the RGB565
+window — RGB565 is `0xC0000` stride at `0x3017F000`; `0x40000` is `ddram_frame_rd`'s bare module
+default and belongs to no shipping layout family.
 
 **Build identity (`V` entry in the OSD sidebar) was going to lie.** `sys/build_id.tcl` derived the id
 from `git rev-parse` inside the Quartus project dir, but `scripts/build_rbf_remote.sh` rsyncs only

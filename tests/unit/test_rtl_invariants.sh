@@ -245,3 +245,89 @@ else
   fi
 fi
 echo "OK red-check: timing exclusion gate rejects empty STA (zero checked paths)"
+
+# ── instantiated mailbox window red-checks ──
+# The gap being closed: the layout .svh and ddr_frame_layout.hpp can agree with
+# each other perfectly and still name a doorbell that does not follow the bank
+# stride, or present_core can be wired to a different family than the host
+# probes. Both produce a core whose mailboxes answer from a stale DDR image
+# instead of failing, so each fault below is injected in a way that leaves every
+# pre-existing consistency gate satisfied.
+WINDOW_DIR="$FAULT_DIR/instantiated_window"
+mkdir -p "$WINDOW_DIR"
+
+# Fault 1: stride and doorbell disagree, but the two layout headers agree with
+# each other. 0x80000 stride puts the doorbell at 0x300FF000; claim 0x3007F000
+# (the 0x40000-stride window) in BOTH headers at once.
+sed 's/DDR_FRAME_YUV420P_DOORBELL_PHYS = 32.h300F_F000/DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'"'"'h3007_F000/' \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh" >"$WINDOW_DIR/layout_bad.svh"
+sed 's/kPlex480pYuv420pDoorbellPhys = 0x300FF000/kPlex480pYuv420pDoorbellPhys = 0x3007F000/' \
+  "$ROOT/host/libmisterplex/ddr_frame_layout.hpp" >"$WINDOW_DIR/layout_bad.hpp"
+if ! grep -q "32'h3007_F000" "$WINDOW_DIR/layout_bad.svh" \
+   || ! grep -q "kPlex480pYuv420pDoorbellPhys = 0x3007F000" "$WINDOW_DIR/layout_bad.hpp"; then
+  echo "FAIL: instantiated-window fault 1 did not inject; the source spelling changed" >&2
+  exit 1
+fi
+if DDR_FRAME_LAYOUT_SVH="$WINDOW_DIR/layout_bad.svh" \
+   DDR_FRAME_LAYOUT_HPP="$WINDOW_DIR/layout_bad.hpp" \
+   python3 "$ROOT/tests/unit/test_rtl_invariants.py" \
+     >"$WINDOW_DIR/f1.out" 2>"$WINDOW_DIR/f1.err"; then
+  echo "FAIL: instantiated-window gate accepted a doorbell that does not follow its bank stride" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "not where a two-bank" "$WINDOW_DIR/f1.out" "$WINDOW_DIR/f1.err"; then
+    echo "FAIL: instantiated-window stride/doorbell red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$WINDOW_DIR/f1.out" "$WINDOW_DIR/f1.err" >&2
+    exit 1
+  fi
+fi
+
+# Fault 2: present_core keeps the YUV stride but is wired to the RGB565
+# doorbell. Every constant involved is still a named, correct member of the
+# layout header, so no single-file gate can see it.
+sed 's/\.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)/.DOORBELL_PHYS(DDR_FRAME_RGB565_DOORBELL_PHYS)/' \
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" >"$WINDOW_DIR/present_mixed.sv"
+if ! grep -q "DOORBELL_PHYS(DDR_FRAME_RGB565_DOORBELL_PHYS)" "$WINDOW_DIR/present_mixed.sv"; then
+  echo "FAIL: instantiated-window fault 2 did not inject; the instantiation spelling changed" >&2
+  exit 1
+fi
+if PRESENT_CORE="$WINDOW_DIR/present_mixed.sv" \
+   python3 "$ROOT/tests/unit/test_rtl_invariants.py" \
+     >"$WINDOW_DIR/f2.out" 2>"$WINDOW_DIR/f2.err"; then
+  echo "FAIL: instantiated-window gate accepted a YUV stride wired to the RGB565 doorbell" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] || ! grep -q "one consistent layout" "$WINDOW_DIR/f2.out" "$WINDOW_DIR/f2.err"; then
+    echo "FAIL: instantiated-window mixed-family red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$WINDOW_DIR/f2.out" "$WINDOW_DIR/f2.err" >&2
+    exit 1
+  fi
+fi
+
+# Fault 3: the host spec points its live-probe constants at an address the
+# fabric never writes. This is the exact shape of the defect that cost a worker
+# hours: the probe returns valid magics, frozen, from an older core's leftovers.
+sed 's/kYuv420pDoorbellAddr = 0x300FF000u/kYuv420pDoorbellAddr = 0x3007F000u/' \
+  "$ROOT/host/libmisterplex/mailbox_abi_spec.hpp" >"$WINDOW_DIR/spec_stale.hpp"
+if ! grep -q "kYuv420pDoorbellAddr = 0x3007F000u" "$WINDOW_DIR/spec_stale.hpp"; then
+  echo "FAIL: instantiated-window fault 3 did not inject; the spec spelling changed" >&2
+  exit 1
+fi
+if MAILBOX_ABI_SPEC="$WINDOW_DIR/spec_stale.hpp" \
+   python3 "$ROOT/tests/unit/test_rtl_invariants.py" \
+     >"$WINDOW_DIR/f3.out" 2>"$WINDOW_DIR/f3.err"; then
+  echo "FAIL: instantiated-window gate accepted a host spec aimed at the stale window" >&2
+  exit 1
+else
+  rc=$?
+  if [[ "$rc" -ne 1 ]] \
+     || ! grep -qE "probe an address the fabric never writes|stay distinct|must stay distinct" \
+          "$WINDOW_DIR/f3.out" "$WINDOW_DIR/f3.err"; then
+    echo "FAIL: instantiated-window stale-spec red-check returned rc=$rc, want rejection rc=1" >&2
+    cat "$WINDOW_DIR/f3.out" "$WINDOW_DIR/f3.err" >&2
+    exit 1
+  fi
+fi
+echo "OK red-check: instantiated mailbox window gate rejects stride/doorbell drift, mixed layout families, and a host spec aimed at the stale window"
