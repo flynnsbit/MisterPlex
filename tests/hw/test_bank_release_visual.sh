@@ -21,10 +21,13 @@ SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$HO
 DDR_BASE=$((0x30000000))
 DDR_ALIGN=$((256 * 1024))
 RBF_VERIFIED=0
+RC_PASS=0
+RC_FAIL=1
+RC_UNSCORED=77
 
 unscored_exit() {
     echo "HUMAN_RESULT=UNSCORED reason=$1"
-    exit 0
+    exit "$RC_UNSCORED"
 }
 
 ssh_read() {
@@ -132,7 +135,7 @@ echo ""
 echo "━━━ STARTING PLAYBACK (automated) ━━━"
 if [ -z "$TOKEN" ]; then
     echo "  UNSCORED: missing PLEX_TOKEN/MISTERPLEX_TOKEN; not starting playback"
-    exit 0
+    unscored_exit "missing-token"
 fi
 if ! $SSH "curl -s 'http://127.0.0.1:3005/player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F9&offset=0&address=192.168.1.41&port=32400&protocol=http&token=$TOKEN&commandID=99'" >/dev/null 2>&1; then
     echo "  UNSCORED: playback start command failed"
@@ -294,44 +297,49 @@ score_human_answers() {
     done
     if [ "$missing" = "1" ]; then
         echo "HUMAN_RESULT=UNSCORED reason=missing-answer"
-        return 0
+        return "$RC_UNSCORED"
     fi
-    case "$q1" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q1"; return 0 ;; esac
-    case "$q2" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q2"; return 0 ;; esac
-    case "$q3" in A|B|C|D|E) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q3"; return 0 ;; esac
-    case "$q4" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q4"; return 0 ;; esac
-    case "$q5" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q5"; return 0 ;; esac
+    case "$q1" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q1"; return "$RC_UNSCORED" ;; esac
+    case "$q2" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q2"; return "$RC_UNSCORED" ;; esac
+    case "$q3" in A|B|C|D|E) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q3"; return "$RC_UNSCORED" ;; esac
+    case "$q4" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q4"; return "$RC_UNSCORED" ;; esac
+    case "$q5" in A|B|C|D) ;; *) echo "HUMAN_RESULT=UNSCORED reason=invalid-Q5"; return "$RC_UNSCORED" ;; esac
     if [ "$RBF_VERIFIED" != "1" ]; then
         echo "HUMAN_RESULT=UNSCORED reason=rbf-provenance-unverified"
-        return 0
+        return "$RC_UNSCORED"
     fi
 
     if [ "$q1" = "A" ] && [ "$q2" = "A" ] && [ "$q3" = "A" ] &&
        [ "$q4" = "A" ] && { [ "$q5" = "A" ] || [ "$q5" = "B" ]; }; then
         echo "HUMAN_RESULT=PASS scope=display-path-only"
-        return 0
+        return "$RC_PASS"
     fi
     if [ "$q1" = "B" ] && [ "$q3" = "E" ]; then
         echo "HUMAN_RESULT=FAIL reason=frozen-idle-painter"
-        return 0
+        return "$RC_FAIL"
     fi
     if [ "$q1" = "A" ] && { [ "$q2" = "B" ] || [ "$q2" = "C" ]; }; then
         echo "HUMAN_RESULT=FAIL reason=bank-race"
-        return 0
+        return "$RC_FAIL"
     fi
     if [ "$q3" = "B" ] || [ "$q3" = "C" ]; then
         echo "HUMAN_RESULT=FAIL reason=color-channel-or-yuv-error"
-        return 0
+        return "$RC_FAIL"
     fi
     if { [ "$q1" = "C" ] || [ "$q1" = "D" ]; } &&
        { [ "$q2" != "A" ] || [ "$q3" != "A" ] || [ "$q4" != "A" ]; }; then
         echo "HUMAN_RESULT=UNSCORED reason=not-product-picture"
-        return 0
+        return "$RC_UNSCORED"
     fi
     echo "HUMAN_RESULT=UNSCORED reason=inconsistent-or-unclassified"
+    return "$RC_UNSCORED"
 }
 
+set +e
 score_human_answers
+SCORE_RC=$?
+set -e
 
 # ─── STOP PLAYBACK after 60s (cleanup) ───────────────────────────────────────
 echo "(Playback will auto-stop at content end. To stop early: curl http://$HOST:3005/player/playback/stop)"
+exit "$SCORE_RC"
