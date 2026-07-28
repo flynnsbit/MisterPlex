@@ -7,6 +7,8 @@ TOP="$ROOT/tests/rtl/h264_cavlc_residual_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_cavlc_residual_tb.cpp"
 OSS_CAD_SUITE="${OSS_CAD_SUITE:-$HOME/.local/oss-cad-suite-20260726}"
 
+echo "Scope: RTL CAVLC residual block plus luma4x4 source; 16/16 luma residual blocks for real IDR MB0 (1/300 MBs in 320x240 fixture) and synthetic table coverage"
+
 set +e
 VERILATOR_VERSION="$(OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --version 2>&1)"
 VERILATOR_RC=$?
@@ -16,12 +18,8 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; h264_cavlc_residual real RTL simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite-20260726 or set VERILATOR=/path/to/verilator.
 SKIP
-  if [[ "${ALLOW_MISSING_VERILATOR:-0}" != "1" ]]; then
-    echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation." >&2
-    echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
-    exit 3
-  fi
-  exit 0
+  echo "RTL SIM SKIP-NOT-PASS: Verilator missing; returning rc=77, not PASS." >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -55,6 +53,20 @@ if [[ "$NEG_RC" -eq 0 ]]; then
 fi
 echo "RTL SIM RED proof: CAVLC_NEGATIVE_TEST failed as expected (rc=$NEG_RC)" >&2
 sed -n '1,5p' "$ROOT/build/h264_cavlc_residual_negative.log" >&2
+
+build_one h264_cavlc_residual_byte_index_wrap -DCAVLC_FAULT_BYTE_INDEX_WRAP
+WRAP_EXE="$ROOT/build/verilator/h264_cavlc_residual_byte_index_wrap/Vh264_cavlc_residual_tb_top"
+set +e
+"$WRAP_EXE" > "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" 2>&1
+WRAP_RC=$?
+set -e
+if [[ "$WRAP_RC" -eq 0 ]]; then
+  echo "RTL SIM ERROR: byte-index wrap perturbation unexpectedly passed" >&2
+  cat "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2
+  exit 1
+fi
+echo "RTL SIM RED proof: CAVLC_FAULT_BYTE_INDEX_WRAP failed as expected (rc=$WRAP_RC)" >&2
+grep -m 1 'actual_mb0_.*block11\|actual_mb0_luma4x4_source' "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2 || sed -n '1,8p' "$ROOT/build/h264_cavlc_residual_byte_index_wrap.log" >&2
 
 build_one h264_cavlc_residual_pos ''
 POS_EXE="$ROOT/build/verilator/h264_cavlc_residual_pos/Vh264_cavlc_residual_tb_top"

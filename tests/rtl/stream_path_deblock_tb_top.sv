@@ -144,7 +144,8 @@ module stream_path_deblock_tb (
 		.slice_beta_offset(slice_beta_offset),
 		.residual_tc(residual_tc), .residual_t1(residual_t1),
 		.residual_ok(residual_ok), .residual_dc(residual_dc), .residual_csum(residual_csum),
-		.residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
+		.residual_coeff(residual_coeff), .mb_syntax_accept(1'b1),
+		.residual_place_pulse(residual_place_pulse),
 		.recon_sig(recon_sig), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
 		.fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel), .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)

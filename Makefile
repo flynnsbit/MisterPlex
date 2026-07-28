@@ -123,6 +123,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/scripts/check_qip_coverage.py
 	python3 $(ROOT)/scripts/check_onchip_ram_budget.py
 	bash $(ROOT)/tests/unit/test_decode_core_seam_audit_reds.sh
+	bash $(ROOT)/tests/unit/test_rtl_instantiation_unmerged_paths.sh
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh
 	$(ROOT)/tests/unit/test_rtl_invariants.sh

@@ -1,11 +1,15 @@
 #include "Vh264_cavlc_residual_tb_top.h"
 #include "verilated.h"
 #include "libmisterplex/h264_cavlc.hpp"
+#include "libmisterplex/h264_nal.hpp"
+#include "libmisterplex/h264_slice_walk.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <sstream>
@@ -23,6 +27,8 @@ using misterplex::cavlc::tables::run_bits;
 using misterplex::cavlc::tables::run_len;
 using misterplex::cavlc::tables::total_zeros_bits;
 using misterplex::cavlc::tables::total_zeros_len;
+
+constexpr int kMaxBytes = 128;
 
 struct Encoded {
     std::vector<int> bits;
@@ -57,12 +63,12 @@ static int signed_to_level_code(int level) {
 static int suffix_next_first(int prefix, int suffix_length, int level) {
     if (prefix > 14 || (prefix == 14 && suffix_length == 0))
         return 2;
-    return 1 + (level + 3 > 6);
+    return 1 + (std::abs(level) > 3);
 }
 
 static int suffix_next(int suffix_length, int level) {
     static const unsigned lim[7] = {0, 3, 6, 12, 24, 48, 0xffffffffu};
-    if (suffix_length < 6 && lim[suffix_length] + static_cast<unsigned>(level) > 2u * lim[suffix_length])
+    if (suffix_length < 6 && static_cast<unsigned>(std::abs(level)) > lim[suffix_length])
         return suffix_length + 1;
     return suffix_length;
 }
@@ -245,11 +251,11 @@ static std::vector<uint8_t> pack_bits(const std::vector<int>& bits) {
 static void run_case(Vh264_cavlc_residual_tb_top& dut, const char* name, const std::array<int, 16>& coeff, int table, int max_coeff) {
     Encoded enc = encode_residual(coeff, table, max_coeff);
     auto bytes = pack_bits(enc.bits);
-    if (bytes.size() > 64) {
+    if (bytes.size() > kMaxBytes) {
         std::cerr << "case too large " << name << "\n";
         std::exit(2);
     }
-    for (int i = 0; i < 64; ++i)
+    for (int i = 0; i < kMaxBytes; ++i)
         dut.rbsp[i] = (i < static_cast<int>(bytes.size())) ? bytes[i] : 0;
     dut.coeff_token_table = table;
     dut.max_coeff = max_coeff;
@@ -288,59 +294,204 @@ static void run_case(Vh264_cavlc_residual_tb_top& dut, const char* name, const s
     }
 }
 
+static std::vector<uint8_t> read_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), {});
+}
 
-// Shift-invariance over the full 96-byte RBSP window.  slice_hdr_parser
-// instantiates h264_cavlc_residual_block with MAX_BYTES=96, so a residual can
-// legitimately start past byte 63.  Decoding the identical bit pattern at a
-// byte-aligned offset >= 64 must produce the identical result; a byte index
-// narrower than clog2(MAX_BYTES) silently wraps and reads the wrong bytes.
-static void run_case_at_byte(Vh264_cavlc_residual_tb_top& dut, const char* name,
-                             const std::array<int, 16>& coeff, int table, int max_coeff,
-                             int start_byte) {
-    Encoded enc = encode_residual(coeff, table, max_coeff);
-    auto bytes = pack_bits(enc.bits);
-    if (start_byte + static_cast<int>(bytes.size()) > 96) {
-        std::cerr << "case too large " << name << "\n";
-        std::exit(2);
+static bool first_idr_payload(const std::vector<uint8_t>& annexb, const uint8_t*& pay, size_t& plen) {
+    size_t i = 0;
+    while (i + 3 < annexb.size()) {
+        size_t sc = 0;
+        if (i + 3 < annexb.size() && annexb[i] == 0 && annexb[i + 1] == 0 && annexb[i + 2] == 0 && annexb[i + 3] == 1)
+            sc = 4;
+        else if (annexb[i] == 0 && annexb[i + 1] == 0 && annexb[i + 2] == 1)
+            sc = 3;
+        else {
+            ++i;
+            continue;
+        }
+        size_t j = i + sc;
+        while (j + 3 < annexb.size()) {
+            if (annexb[j] == 0 && annexb[j + 1] == 0 &&
+                (annexb[j + 2] == 1 || (j + 3 < annexb.size() && annexb[j + 2] == 0 && annexb[j + 3] == 1)))
+                break;
+            ++j;
+        }
+        if (j + 3 >= annexb.size())
+            j = annexb.size();
+        if ((annexb[i + sc] & 0x1f) == 5) {
+            pay = annexb.data() + i + sc + 1;
+            plen = j - (i + sc + 1);
+            return true;
+        }
+        i = j;
     }
-    // Fill the low window with a decoy so a wrapped index decodes something else.
-    for (int i = 0; i < 96; ++i)
-        dut.rbsp[i] = static_cast<uint8_t>(0xA5 ^ (i * 31));
-    for (int i = 0; i < static_cast<int>(bytes.size()); ++i)
-        dut.rbsp[start_byte + i] = bytes[i];
-    dut.coeff_token_table = table;
-    dut.max_coeff = max_coeff;
-    dut.bit_offset_start = start_byte * 8;
-    dut.bit_len = start_byte * 8 + static_cast<int>(enc.bits.size());
+    return false;
+}
+
+static int table_from_nc(int nc) {
+    return (nc < 2) ? 0 : (nc < 4) ? 1 : (nc < 8) ? 2 : 3;
+}
+
+static void run_actual_mb0_block11(Vh264_cavlc_residual_tb_top& dut) {
+    using namespace misterplex;
+    auto annexb = read_file("tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264");
+    auto chain = parseAnnexBChain(annexb.data(), annexb.size());
+    const uint8_t* pay = nullptr;
+    size_t plen = 0;
+    if (!first_idr_payload(annexb, pay, plen) || !chain.slice.valid) {
+        std::cerr << "missing actual MB0 block fixture\n";
+        ++failures;
+        return;
+    }
+    auto rbsp = detail::removeEpb(pay, plen);
+    detail::BitReader br(rbsp.data(), rbsp.size());
+    br.ue(); br.ue(); br.ue();
+    br.u(chain.log2_max_frame_num);
+    br.ue(); br.u(1); br.u(1);
+    br.se();
+    if (chain.pps.deblock_ctrl) {
+        uint32_t idc = br.ue();
+        if (idc != 1) {
+            br.se();
+            br.se();
+        }
+    }
+    br.ue();
+    for (int k = 0; k < 16; ++k)
+        if (br.u(1) == 0)
+            br.u(3);
+    br.ue();
+    int cbp = walk_detail::kMeIntra[br.ue()];
+    if (cbp)
+        br.se();
+    std::array<int, 16> tc_grid;
+    tc_grid.fill(-1);
+    auto tcat = [&](int lx, int ly) -> int* {
+        if (lx < 0 || ly < 0 || lx > 3 || ly > 3)
+            return nullptr;
+        int& v = tc_grid[ly * 4 + lx];
+        return (v < 0) ? nullptr : &v;
+    };
+    int start = 0, end = 0, nc = 0, target_nc = 0;
+    misterplex::cavlc::ResidualResult gold;
+    std::array<int, 16> block_end{};
+    std::array<int, 16> block_tc{};
+    std::array<int, 16> block_t1{};
+    std::array<std::array<int, 16>, 16> block_coeff{};
+    for (int i8 = 0; i8 < 4; ++i8) {
+        for (int i4 = 0; i4 < 4; ++i4) {
+            int lx = 0, ly = 0;
+            walk_detail::blkXY(i8, i4, lx, ly);
+            nc = walk_detail::ncFrom((lx > 0) ? tcat(lx - 1, ly) : nullptr,
+                                     (ly > 0) ? tcat(lx, ly - 1) : nullptr);
+            int idx = i8 * 4 + i4;
+            int bit0 = static_cast<int>(br.bit);
+            auto r = cavlc::residualBlock(br, nc, 16);
+            tc_grid[ly * 4 + lx] = r.total_coeff;
+            block_end[idx] = static_cast<int>(br.bit);
+            block_tc[idx] = r.total_coeff;
+            block_t1[idx] = r.trailing_ones;
+            for (int c = 0; c < 16; ++c)
+                block_coeff[idx][c] = r.coeff[c];
+            if (idx == 11) {
+                start = bit0;
+                end = static_cast<int>(br.bit);
+                target_nc = nc;
+                gold = r;
+            }
+        }
+    }
+    for (int i = 0; i < kMaxBytes; ++i)
+        dut.rbsp[i] = (i < static_cast<int>(rbsp.size())) ? rbsp[i] : 0;
+    dut.coeff_token_table = table_from_nc(target_nc);
+    dut.max_coeff = 16;
+    dut.bit_offset_start = start;
+    dut.bit_len = end;
     dut.start = 1;
     tick(dut);
     dut.start = 0;
     int guard = 1000;
     while (!dut.done && guard-- > 0)
         tick(dut);
-    if (guard <= 0) {
-        std::cerr << "timeout " << name << "\n";
-        ++failures;
-        return;
-    }
-    bool bad = false;
-    if (!dut.ok || dut.total_coeff != enc.total_coeff || dut.trailing_ones != enc.trailing_ones ||
-        dut.total_zeros != enc.total_zeros ||
-        dut.bit_offset_end != start_byte * 8 + static_cast<int>(enc.bits.size()))
-        bad = true;
+    bool bad = (guard <= 0) || !dut.ok || dut.total_coeff != gold.total_coeff ||
+               dut.trailing_ones != gold.trailing_ones || dut.bit_offset_end != end;
     for (int i = 0; i < 16; ++i)
-        if (sx16(dut.coeff[i]) != coeff[i])
+        if (sx16(dut.coeff[i]) != gold.coeff[i])
             bad = true;
     if (bad) {
-        std::cerr << "FAIL " << name << " start_byte=" << start_byte
-                  << " ok=" << int(dut.ok) << " tc=" << int(dut.total_coeff) << "/" << enc.total_coeff
-                  << " bits=" << int(dut.bit_offset_end) << "/"
-                  << (start_byte * 8 + static_cast<int>(enc.bits.size())) << " coeff=";
+        std::cerr << "FAIL actual_mb0_block11_nc7 table=" << table_from_nc(target_nc)
+                  << " ok=" << int(dut.ok) << " tc=" << int(dut.total_coeff) << "/" << gold.total_coeff
+                  << " t1=" << int(dut.trailing_ones) << "/" << gold.trailing_ones
+                  << " tz=" << int(dut.total_zeros)
+                  << " end=" << int(dut.bit_offset_end) << "/" << end << " coeff=";
         for (int i = 0; i < 16; ++i)
-            std::cerr << ' ' << sx16(dut.coeff[i]) << '(' << coeff[i] << ')';
+            std::cerr << ' ' << sx16(dut.coeff[i]) << '(' << gold.coeff[i] << ')';
+        std::cerr << " level=";
+        for (int i = 0; i < 16; ++i)
+            std::cerr << ' ' << sx16(dut.level_dbg[i]);
+        std::cerr << " run=";
+        for (int i = 0; i < 16; ++i)
+            std::cerr << ' ' << int(dut.run_dbg[i]);
         std::cerr << "\n";
         ++failures;
     }
+    if (!bad) {
+        std::cout << "CAVLC_REAL_MB0_BLOCK11 high_nC_high_TC PASS: block=11 nC=" << target_nc
+                  << " table=" << table_from_nc(target_nc)
+                  << " total_coeff=" << gold.total_coeff
+                  << " trailing_ones=" << gold.trailing_ones
+                  << " bit_start=" << start
+                  << " bit_end=" << end
+                  << " crosses_bit512=" << ((start < 512 && end > 512) ? 1 : 0)
+                  << "\n";
+    }
+
+    dut.src_bit_offset_start = 77;
+    dut.src_bit_len = block_end[15];
+    dut.src_cbp_luma = 0xf;
+    dut.src_qp = chain.slice.slice_qp;
+    dut.src_start = 1;
+    tick(dut);
+    dut.src_start = 0;
+    int seen = 0;
+    int src_guard = 10000;
+    while (!dut.src_done && src_guard-- > 0) {
+        tick(dut);
+        if (dut.src_luma4x4_valid) {
+            int idx = dut.src_luma4x4_idx;
+            bool src_bad = idx != seen || dut.src_luma4x4_qp != chain.slice.slice_qp ||
+                           dut.src_luma4x4_total_coeff != block_tc[idx] ||
+                           dut.src_luma4x4_trailing_ones != block_t1[idx] ||
+                           dut.src_luma4x4_bit_offset_end != block_end[idx];
+            for (int c = 0; c < 16; ++c)
+                if (sx16(dut.src_luma4x4_coeff_zigzag[c]) != block_coeff[idx][c])
+                    src_bad = true;
+            if (src_bad) {
+                std::cerr << "FAIL actual_mb0_luma4x4_source block=" << idx << " seen=" << seen
+                          << " tc=" << int(dut.src_luma4x4_total_coeff) << "/" << block_tc[idx]
+                          << " t1=" << int(dut.src_luma4x4_trailing_ones) << "/" << block_t1[idx]
+                          << " end=" << int(dut.src_luma4x4_bit_offset_end) << "/" << block_end[idx] << "\n";
+                ++failures;
+            }
+            ++seen;
+        }
+    }
+    if (src_guard <= 0 || !dut.src_ok || seen != 16 || dut.src_bit_offset_end != block_end[15]) {
+        std::cerr << "FAIL actual_mb0_luma4x4_source summary ok=" << int(dut.src_ok)
+                  << " seen=" << seen << " end=" << int(dut.src_bit_offset_end)
+                  << "/" << block_end[15] << "\n";
+        ++failures;
+    }
+    if (src_guard > 0 && dut.src_ok && seen == 16 && dut.src_bit_offset_end == block_end[15]) {
+        std::cout << "CAVLC_REAL_MB0_ALL16 PASS: blocks=16/16 final_bit_end=" << block_end[15]
+                  << " block11_bit_end=" << block_end[11]
+                  << " high_nC_block11_tc=" << block_tc[11]
+                  << "\n";
+    }
+    std::cout << "Scope: luma4x4 source 16/16 luma residual blocks for real IDR MB0 (1/300 MBs in 320x240 fixture); coeff order=zigzag; qp="
+              << int(chain.slice.slice_qp) << "\n";
 }
 
 struct Code { int len; int bits; std::string sym; };
@@ -421,6 +572,7 @@ int main(int argc, char** argv) {
     validate_tables();
     Vh264_cavlc_residual_tb_top dut;
     dut.clk = 0; dut.reset = 1; dut.start = 0;
+    dut.src_start = 0;
     tick(dut);
     dut.reset = 0;
 
@@ -483,22 +635,11 @@ int main(int argc, char** argv) {
         ++cases;
     }
     {
-        // RBSP window shift invariance: slice_hdr_parser uses MAX_BYTES=96.
-        std::array<int, 16> c{};
-        int vals[] = {3, -2, 1, -1, 1};
-        for (int i = 0; i < 5; ++i) c[i] = vals[i];
-        for (int sb : {0, 32, 64, 80}) {
-            run_case_at_byte(dut, "rbsp_window_shift", c, 0, 16, sb);
-            ++cases;
-        }
-        std::array<int, 16> c2{};
-        int vals2[] = {300, -301, 255, -256, 64, -33, 17, -8};
-        for (int i = 0; i < 8; ++i) c2[i] = vals2[i];
-        for (int sb : {0, 64}) {
-            run_case_at_byte(dut, "rbsp_window_shift_large", c2, 0, 16, sb);
-            ++cases;
-        }
+        std::array<int, 16> c = {-1, 11, -3, 0, 9, 1, -1, 3, -6, 0, 0, 2, -2, 3, -5, 0};
+        run_case(dut, "real_mb0_block11_nc7", c, 2, 16);
+        ++cases;
     }
+    run_actual_mb0_block11(dut);
 
     if (failures) {
         std::cerr << "H264 CAVLC residual RTL FAILED failures=" << failures << " cases=" << cases << "\n";

@@ -399,7 +399,7 @@ void clearInputs(Sim& s) {
     s.top.dpb_rd_valid = 0;
     s.top.dpb_rd_data = 0;
     s.top.rbsp_window_base = 0;
-    for (int i = 0; i < 64; ++i) s.top.rbsp_byte_in[i] = 0;
+    for (int i = 0; i < 128; ++i) s.top.rbsp_byte_in[i] = 0;
     for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = 0;
     for (int i = 0; i < 64; ++i) {
         s.top.p16_residual_u[i] = 0;
@@ -408,7 +408,7 @@ void clearInputs(Sim& s) {
 }
 
 void loadScheduledResidualRbsp(Sim& s, int mbOrdinal) {
-    for (int i = 0; i < 64; ++i) s.top.rbsp_byte_in[i] = 0;
+    for (int i = 0; i < 128; ++i) s.top.rbsp_byte_in[i] = 0;
     auto putBits = [&](int bitOffset, const char* bits) {
         for (int i = 0; bits[i] != '\0'; ++i) {
             if (bits[i] == '1') s.top.rbsp_byte_in[(bitOffset + i) >> 3] |= 1u << (7 - ((bitOffset + i) & 7));

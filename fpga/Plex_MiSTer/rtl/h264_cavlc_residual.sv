@@ -30,6 +30,179 @@ module h264_cavlc_nc_predictor (
                                (nC < 5'd8) ? 3'd2 : 3'd3;
 endmodule
 
+module h264_luma4x4_residual_source #(
+    parameter int MAX_BYTES = 128
+)(
+    input  wire               clk,
+    input  wire               reset,
+    input  wire               start,
+    input  wire [9:0]         bit_offset_start,
+    input  wire [9:0]         bit_len,
+    input  wire [3:0]         cbp_luma,
+    input  wire [5:0]         qp,
+    input  wire [7:0]         rbsp [0:MAX_BYTES-1],
+    output reg                busy,
+    output reg                done,
+    output reg                ok,
+    output reg [9:0]          bit_offset_end,
+    output reg                luma4x4_valid,
+    output reg [3:0]          luma4x4_idx,
+    output reg [5:0]          luma4x4_qp,
+    output reg [4:0]          luma4x4_total_coeff,
+    output reg [1:0]          luma4x4_trailing_ones,
+    output reg [9:0]          luma4x4_bit_offset_end,
+    output reg signed [15:0]  luma4x4_coeff_zigzag [0:15]
+);
+    localparam [2:0]
+        ST_IDLE = 3'd0, ST_BLOCK = 3'd1, ST_START_DEC = 3'd2,
+        ST_WAIT_DEC = 3'd3, ST_EMIT_ZERO = 3'd4, ST_EMIT_DEC = 3'd5,
+        ST_DONE = 3'd6;
+
+    reg [2:0] st;
+    reg [3:0] block_idx;
+    reg [9:0] cur_bit;
+    reg [4:0] tc_grid [0:15];
+    reg       tc_valid [0:15];
+    reg       dec_start;
+    reg [2:0] dec_table;
+    wire      dec_busy, dec_done, dec_ok;
+    wire [9:0] dec_bit_end;
+    wire [4:0] dec_tc;
+    wire [1:0] dec_t1;
+    wire [3:0] dec_tz;
+    wire signed [15:0] dec_coeff [0:15];
+    wire signed [15:0] dec_level_dbg [0:15];
+    wire [3:0] dec_run_dbg [0:15];
+
+    function automatic [1:0] blk_x(input [3:0] idx);
+        begin
+            case (idx)
+            4'd0, 4'd2, 4'd8, 4'd10: blk_x = 2'd0;
+            4'd1, 4'd3, 4'd9, 4'd11: blk_x = 2'd1;
+            4'd4, 4'd6, 4'd12, 4'd14: blk_x = 2'd2;
+            default: blk_x = 2'd3;
+            endcase
+        end
+    endfunction
+
+    function automatic [1:0] blk_y(input [3:0] idx);
+        begin
+            case (idx)
+            4'd0, 4'd1, 4'd4, 4'd5: blk_y = 2'd0;
+            4'd2, 4'd3, 4'd6, 4'd7: blk_y = 2'd1;
+            4'd8, 4'd9, 4'd12, 4'd13: blk_y = 2'd2;
+            default: blk_y = 2'd3;
+            endcase
+        end
+    endfunction
+
+    function automatic [3:0] xy_index(input [1:0] x, input [1:0] y);
+        begin
+            xy_index = (y[1] ? 4'd8 : 4'd0) + (x[1] ? 4'd4 : 4'd0) +
+                       (y[0] ? 4'd2 : 4'd0) + (x[0] ? 4'd1 : 4'd0);
+        end
+    endfunction
+
+    function automatic [2:0] table_for_nc(input [4:0] nc);
+        begin
+            table_for_nc = (nc < 5'd2) ? 3'd0 : (nc < 5'd4) ? 3'd1 :
+                           (nc < 5'd8) ? 3'd2 : 3'd3;
+        end
+    endfunction
+
+    function automatic [2:0] table_for_block(input [3:0] idx);
+        reg [1:0] x, y;
+        reg left_avail, up_avail;
+        reg [4:0] left_tc, up_tc, nc;
+        begin
+            x = blk_x(idx);
+            y = blk_y(idx);
+            left_avail = (x != 2'd0) && tc_valid[xy_index(x - 2'd1, y)];
+            up_avail = (y != 2'd0) && tc_valid[xy_index(x, y - 2'd1)];
+            left_tc = left_avail ? tc_grid[xy_index(x - 2'd1, y)] : 5'd0;
+            up_tc = up_avail ? tc_grid[xy_index(x, y - 2'd1)] : 5'd0;
+            nc = (left_avail && up_avail) ? ((left_tc + up_tc + 5'd1) >> 1) :
+                 left_avail ? left_tc : up_avail ? up_tc : 5'd0;
+            table_for_block = table_for_nc(nc);
+        end
+    endfunction
+
+    function automatic coded_block(input [3:0] idx, input [3:0] cbp);
+        begin
+            coded_block = cbp[idx[3:2]];
+        end
+    endfunction
+
+    h264_cavlc_residual_block #(.MAX_BYTES(MAX_BYTES)) u_luma_res (
+        .clk(clk), .reset(reset), .start(dec_start),
+        .coeff_token_table(dec_table), .max_coeff(5'd16),
+        .bit_offset_start(cur_bit), .bit_len(bit_len), .rbsp(rbsp),
+        .busy(dec_busy), .done(dec_done), .ok(dec_ok),
+        .bit_offset_end(dec_bit_end), .total_coeff(dec_tc),
+        .trailing_ones(dec_t1), .total_zeros(dec_tz),
+        .coeff(dec_coeff), .level_dbg(dec_level_dbg), .run_dbg(dec_run_dbg)
+    );
+
+    integer i;
+    always @(posedge clk) begin
+        if (reset) begin
+            st <= ST_IDLE; busy <= 1'b0; done <= 1'b0; ok <= 1'b0;
+            bit_offset_end <= 10'd0; luma4x4_valid <= 1'b0; luma4x4_idx <= 4'd0;
+            luma4x4_qp <= 6'd0; luma4x4_total_coeff <= 5'd0;
+            luma4x4_trailing_ones <= 2'd0; luma4x4_bit_offset_end <= 10'd0;
+            block_idx <= 4'd0; cur_bit <= 10'd0; dec_start <= 1'b0; dec_table <= 3'd0;
+            for (i = 0; i < 16; i = i + 1) begin
+                tc_grid[i] <= 5'd0; tc_valid[i] <= 1'b0; luma4x4_coeff_zigzag[i] <= 16'sd0;
+            end
+        end else begin
+            done <= 1'b0; luma4x4_valid <= 1'b0; dec_start <= 1'b0;
+            case (st)
+            ST_IDLE: begin
+                busy <= 1'b0;
+                if (start) begin
+                    busy <= 1'b1; ok <= 1'b1; block_idx <= 4'd0;
+                    cur_bit <= bit_offset_start; bit_offset_end <= bit_offset_start;
+                    for (i = 0; i < 16; i = i + 1) begin tc_grid[i] <= 5'd0; tc_valid[i] <= 1'b0; end
+                    st <= ST_BLOCK;
+                end
+            end
+            ST_BLOCK: begin
+                if (coded_block(block_idx, cbp_luma)) begin dec_table <= table_for_block(block_idx); st <= ST_START_DEC; end
+                else st <= ST_EMIT_ZERO;
+            end
+            ST_START_DEC: begin dec_start <= 1'b1; st <= ST_WAIT_DEC; end
+            ST_WAIT_DEC: if (dec_done) begin
+                ok <= ok & dec_ok; cur_bit <= dec_bit_end; bit_offset_end <= dec_bit_end;
+                st <= dec_ok ? ST_EMIT_DEC : ST_DONE;
+            end
+            ST_EMIT_ZERO: begin
+                luma4x4_valid <= 1'b1; luma4x4_idx <= block_idx; luma4x4_qp <= qp;
+                luma4x4_total_coeff <= 5'd0; luma4x4_trailing_ones <= 2'd0;
+                luma4x4_bit_offset_end <= cur_bit;
+                for (i = 0; i < 16; i = i + 1) luma4x4_coeff_zigzag[i] <= 16'sd0;
+                tc_grid[block_idx] <= 5'd0; tc_valid[block_idx] <= 1'b1;
+                if (block_idx == 4'd15) st <= ST_DONE; else begin block_idx <= block_idx + 4'd1; st <= ST_BLOCK; end
+            end
+            ST_EMIT_DEC: begin
+                luma4x4_valid <= 1'b1; luma4x4_idx <= block_idx; luma4x4_qp <= qp;
+                luma4x4_total_coeff <= dec_tc; luma4x4_trailing_ones <= dec_t1;
+                luma4x4_bit_offset_end <= dec_bit_end;
+                for (i = 0; i < 16; i = i + 1)
+`ifdef CAVLC_NEGATIVE_TEST
+                    luma4x4_coeff_zigzag[i] <= (block_idx == 4'd0 && i == 0) ? (dec_coeff[i] ^ 16'sd1) : dec_coeff[i];
+`else
+                    luma4x4_coeff_zigzag[i] <= dec_coeff[i];
+`endif
+                tc_grid[block_idx] <= dec_tc; tc_valid[block_idx] <= 1'b1;
+                if (block_idx == 4'd15) st <= ST_DONE; else begin block_idx <= block_idx + 4'd1; st <= ST_BLOCK; end
+            end
+            ST_DONE: begin busy <= 1'b0; done <= 1'b1; st <= ST_IDLE; end
+            default: st <= ST_IDLE;
+            endcase
+        end
+    end
+endmodule
+
 module h264_cavlc_residual_block #(
     parameter int MAX_BYTES = 64
 )(
@@ -52,6 +225,7 @@ module h264_cavlc_residual_block #(
     output reg signed [15:0]  level_dbg [0:15],
     output reg [3:0]          run_dbg [0:15]
 );
+    localparam int RBSP_IDX_W = (MAX_BYTES <= 2) ? 1 : $clog2(MAX_BYTES);
     localparam [4:0]
         ST_IDLE       = 5'd0,
         ST_TOKEN_BIT  = 5'd1,
@@ -86,12 +260,12 @@ module h264_cavlc_residual_block #(
     reg [4:0] place_i;
     reg signed [5:0] coeff_num;
 
-    // bit_pos[8:3] is only 6 bits and wraps at byte 64, but slice_hdr_parser
-    // instantiates this block with MAX_BYTES=96.  Derive the byte index width
-    // from MAX_BYTES so the whole RBSP window is addressable.
-    localparam int BYTE_IDX_W = (MAX_BYTES <= 1) ? 1 : $clog2(MAX_BYTES);
-    wire [9:0] cur_byte = bit_pos >> 3;
-    wire cur_bit = (bit_pos < bit_len) ? rbsp[cur_byte[BYTE_IDX_W-1:0]][3'd7 - bit_pos[2:0]] : 1'b0;
+`ifdef CAVLC_FAULT_BYTE_INDEX_WRAP
+    wire [RBSP_IDX_W-1:0] rbsp_byte_idx = bit_pos[8:3];
+`else
+    wire [RBSP_IDX_W-1:0] rbsp_byte_idx = bit_pos[RBSP_IDX_W+2:3];
+`endif
+    wire cur_bit = (bit_pos < bit_len) ? rbsp[rbsp_byte_idx][3'd7 - bit_pos[2:0]] : 1'b0;
     wire token_too_long = (coeff_token_table == 3'd3) ? (code_len >= 5'd6) :
                           (coeff_token_table == 3'd4) ? (code_len >= 5'd8) : (code_len >= 5'd16);
     wire tz_is_chroma = (max_coeff == 5'd4);
@@ -596,7 +770,7 @@ module h264_cavlc_residual_block #(
             if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
                 suffix_next_first = 3'd2;
             else
-                suffix_next_first = 3'd1 + ((lvl + 16'sd3) > 16'sd6);
+                suffix_next_first = 3'd1 + ((lvl < -16'sd3) || (lvl > 16'sd3));
         end
     endfunction
 
@@ -612,7 +786,7 @@ module h264_cavlc_residual_block #(
             default: lim = 16'd48;
             endcase
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
+            if (cur_suf < 3'd6 && (($signed({lvl[15], lvl}) < -$signed({1'b0, lim})) || ($signed({lvl[15], lvl}) > $signed({1'b0, lim}))))
                 suffix_next = cur_suf + 3'd1;
         end
     endfunction

@@ -45,7 +45,17 @@ def git_files(*roots: str) -> list[Path]:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         fail(f"could not enumerate tracked RTL files: {exc}")
-    return [ROOT / line for line in out.splitlines() if line.endswith((".sv", ".v"))]
+    # `git ls-files` emits an unmerged path once per stage (1/2/3), so a tree
+    # sitting on an unresolved merge would hand the same file to the parser
+    # several times and be reported as a duplicate module definition.
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for line in out.splitlines():
+        if not line.endswith((".sv", ".v")) or line in seen:
+            continue
+        seen.add(line)
+        ordered.append(ROOT / line)
+    return ordered
 
 
 def strip_comments(text: str) -> str:

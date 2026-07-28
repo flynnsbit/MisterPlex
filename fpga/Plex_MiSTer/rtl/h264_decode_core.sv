@@ -45,7 +45,8 @@ module h264_decode_core #(
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
     // The CAVLC residual block decoder needs random-access to RBSP bits.
     // This interface provides a window of RBSP bytes around the current position.
-    input  wire [7:0]  rbsp_byte [0:63],     // 64-byte window of RBSP data
+    input  wire [7:0]  rbsp_byte [0:127],    // 128-byte window of RBSP data
+    input  wire [9:0]  rbsp_bit_len,         // valid bits in rbsp_byte window
     input  wire [15:0] rbsp_window_base,     // byte offset of rbsp_byte[0] in stream
     output wire [15:0] rbsp_request_offset,  // request: advance window to this offset
     output wire        rbsp_request_valid,
@@ -55,6 +56,8 @@ module h264_decode_core #(
     input  wire        mb_type_valid,        // pulse: mb_type decoded for current MB
     input  wire [4:0]  mb_type,              // H.264 mb_type for I/P slices
     input  wire        mb_skip,              // P-slice skip
+    input  wire [15:0] intra4x4_pred_mode_flags,
+    input  wire [47:0] rem_intra4x4_pred_mode,
     input  wire [3:0]  intra4x4_modes [0:15], // I_NxN: 9 modes per 4×4 block
     input  wire [1:0]  intra16x16_mode,      // I_16x16: 0=V, 1=H, 2=DC, 3=Plane
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
@@ -62,16 +65,6 @@ module h264_decode_core #(
     input  wire [1:0]  cbp_chroma,           // coded_block_pattern chroma (0=none,1=DC,2=DC+AC)
     input  wire signed [5:0] mb_qp_delta,    // se(), per-MB QP delta
     input  wire [15:0] mb_residual_bit_offset, // RBSP bit offset for this MB's residual syntax
-
-    // ── Product intra luma residual block pulse interface (from CAVLC/parser) ──
-    // Coefficients are H.264 zigzag/scan order. h264_dequant4x4 performs the
-    // zigzag→raster placement internally before IDCT.
-    input  wire        luma4x4_valid,
-    input  wire [3:0]  luma4x4_idx,
-    input  wire [5:0]  luma4x4_qp,
-    input  wire [4:0]  luma4x4_total_coeff,
-    input  wire [1:0]  luma4x4_trailing_ones,
-    input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
 
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
@@ -123,6 +116,42 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Product syntax/CAVLC handoff for consumers inside/around the core ──
+    output wire        luma4x4_valid,
+    output wire [3:0]  luma4x4_idx,
+    output wire [5:0]  luma4x4_qp,
+    output wire [4:0]  luma4x4_total_coeff,
+    output wire [1:0]  luma4x4_trailing_ones,
+    output wire [9:0]  luma4x4_bit_offset_end,
+    output wire signed [15:0] luma4x4_coeff_zigzag [0:15],
+    output wire        luma4x4_source_busy,
+    output wire        luma4x4_source_done,
+    output wire        luma4x4_source_ok,
+    output wire [9:0]  luma4x4_source_bit_end,
+    output wire [3:0]  core_i4_modes [0:15],
+    input  wire        mb_syntax_accept,
+    output reg         mb_syntax_valid,
+    output reg [15:0]  mb_syntax_addr,
+    output reg [7:0]   mb_syntax_x,
+    output reg [7:0]   mb_syntax_y,
+    output reg [3:0]   mb_syntax_class,
+    output reg [4:0]   mb_syntax_type,
+    output reg         mb_syntax_p_skip,
+    output reg [2:0]   mb_syntax_part_mode,
+    output reg [2:0]   mb_syntax_part_count,
+    output reg         mb_syntax_uses_sub_mb,
+    output reg         mb_syntax_unsupported,
+    output reg [1:0]   mb_syntax_ref_idx_l0 [0:3],
+    output reg signed [15:0] mb_syntax_mvd_x_qpel [0:3],
+    output reg signed [15:0] mb_syntax_mvd_y_qpel [0:3],
+    output reg [1:0]   mb_syntax_sub_mb_type [0:3],
+    output reg [3:0]   mb_syntax_cbp_luma,
+    output reg [1:0]   mb_syntax_cbp_chroma,
+    output reg signed [5:0] mb_syntax_mb_qp_delta,
+    output reg [5:0]   mb_syntax_qpy,
+    output reg [5:0]   mb_syntax_qpc,
+    output reg [15:0]  mb_syntax_residual_bit_offset,
+
     // ── Status/debug ──
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
@@ -159,7 +188,7 @@ module h264_decode_core #(
     //
     // h264_cavlc_residual_block (w-level):
     //   IN:  start, coeff_token_table[2:0], max_coeff[4:0],
-    //        bit_offset_start[9:0], bit_len[9:0], rbsp[0:63]
+    //        bit_offset_start[9:0], bit_len[9:0], rbsp[0:127]
     //   OUT: busy, done, ok, bit_offset_end[9:0], total_coeff[4:0],
     //        trailing_ones[1:0], total_zeros[3:0],
     //        coefficients signed [15:0] [0:15]
@@ -276,6 +305,16 @@ module h264_decode_core #(
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
     localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
     localparam int CORE_MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT);
+    localparam [3:0]
+        MB_CLASS_UNSUPPORTED = 4'd0,
+        MB_CLASS_P_SKIP      = 4'd1,
+        MB_CLASS_P_L0_16X16  = 4'd2,
+        MB_CLASS_P_L0_16X8   = 4'd3,
+        MB_CLASS_P_L0_8X16   = 4'd4,
+        MB_CLASS_P_8X8       = 4'd5,
+        MB_CLASS_INTRA_IN_P  = 4'd6,
+        MB_CLASS_I_NXN       = 4'd7,
+        MB_CLASS_I16X16      = 4'd8;
 
     reg [7:0]  wb_state;
     reg [8:0]  wb_idx;
@@ -348,6 +387,78 @@ module h264_decode_core #(
         end
     endfunction
 
+    function automatic [5:0] clip_qp6(input signed [7:0] value);
+        begin
+            if (value < 8'sd0)
+                clip_qp6 = 6'd0;
+            else if (value > 8'sd51)
+                clip_qp6 = 6'd51;
+            else
+                clip_qp6 = value[5:0];
+        end
+    endfunction
+
+    function automatic [5:0] chroma_qp_from_y(input [5:0] qpy, input signed [4:0] offset);
+        reg signed [7:0] qpi;
+        reg [5:0] qpi_clip;
+        begin
+            qpi = $signed({2'd0, qpy}) + {{3{offset[4]}}, offset};
+            qpi_clip = clip_qp6(qpi);
+            case (qpi_clip)
+            6'd30: chroma_qp_from_y = 6'd29;
+            6'd31: chroma_qp_from_y = 6'd30;
+            6'd32: chroma_qp_from_y = 6'd31;
+            6'd33: chroma_qp_from_y = 6'd32;
+            6'd34: chroma_qp_from_y = 6'd32;
+            6'd35: chroma_qp_from_y = 6'd33;
+            6'd36: chroma_qp_from_y = 6'd34;
+            6'd37: chroma_qp_from_y = 6'd34;
+            6'd38: chroma_qp_from_y = 6'd35;
+            6'd39: chroma_qp_from_y = 6'd35;
+            6'd40: chroma_qp_from_y = 6'd36;
+            6'd41: chroma_qp_from_y = 6'd36;
+            6'd42: chroma_qp_from_y = 6'd37;
+            6'd43: chroma_qp_from_y = 6'd37;
+            6'd44: chroma_qp_from_y = 6'd37;
+            6'd45: chroma_qp_from_y = 6'd38;
+            6'd46: chroma_qp_from_y = 6'd38;
+            6'd47: chroma_qp_from_y = 6'd38;
+            6'd48: chroma_qp_from_y = 6'd39;
+            6'd49: chroma_qp_from_y = 6'd39;
+            6'd50: chroma_qp_from_y = 6'd39;
+            6'd51: chroma_qp_from_y = 6'd39;
+            default: chroma_qp_from_y = qpi_clip;
+            endcase
+        end
+    endfunction
+
+    function automatic [3:0] syntax_class_of(
+        input is_i_or_idr,
+        input skipped,
+        input [4:0] mb_type_i,
+        input [2:0] mode
+    );
+        begin
+            if (skipped)
+                syntax_class_of = MB_CLASS_P_SKIP;
+            else if (is_i_or_idr)
+                syntax_class_of = (mb_type_i == 5'd0) ? MB_CLASS_I_NXN :
+                                  (mb_type_i <= 5'd24) ? MB_CLASS_I16X16 : MB_CLASS_UNSUPPORTED;
+            else if (mb_type_i >= 5'd5 && mb_type_i <= 5'd30)
+                syntax_class_of = MB_CLASS_INTRA_IN_P;
+            else begin
+                case (mode)
+                3'd0: syntax_class_of = MB_CLASS_P_L0_16X16;
+                3'd1: syntax_class_of = MB_CLASS_P_L0_16X8;
+                3'd2: syntax_class_of = MB_CLASS_P_L0_8X16;
+                3'd3: syntax_class_of = MB_CLASS_P_8X8;
+                3'd4: syntax_class_of = MB_CLASS_P_8X8;
+                default: syntax_class_of = MB_CLASS_UNSUPPORTED;
+                endcase
+            end
+        end
+    endfunction
+
     function automatic [5:0] chroma4x4_index(input [1:0] block, input [3:0] sample);
         begin
             chroma4x4_index = {block[1], sample[3:2], block[0], sample[1:0]};
@@ -371,6 +482,8 @@ module h264_decode_core #(
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
+    wire syntax_i4_candidate = mb_type_valid && (slice_is_i || slice_is_idr) &&
+                               (mb_type == 5'd0) && (cbp_luma != 4'd0);
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
@@ -459,7 +572,44 @@ module h264_decode_core #(
 `endif
         end
     endgenerate
-    h264_cavlc_residual_block u_product_p16_residual0 (
+    wire [3:0] unavailable_i4_modes [0:3];
+    assign unavailable_i4_modes[0] = 4'd2;
+    assign unavailable_i4_modes[1] = 4'd2;
+    assign unavailable_i4_modes[2] = 4'd2;
+    assign unavailable_i4_modes[3] = 4'd2;
+    h264_intra4x4_mode_deriver u_product_core_i4_mode_deriver (
+        .prev_intra4x4_pred_mode_flag(intra4x4_pred_mode_flags),
+        .rem_intra4x4_pred_mode(rem_intra4x4_pred_mode),
+        .left_available(1'b0),
+        .top_available(1'b0),
+        .left_modes(unavailable_i4_modes),
+        .top_modes(unavailable_i4_modes),
+        .i4_modes(core_i4_modes)
+    );
+
+    h264_luma4x4_residual_source #(.MAX_BYTES(128)) u_product_core_luma4x4_residual_source (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(syntax_i4_candidate),
+        .bit_offset_start(mb_residual_bit_offset[9:0]),
+        .bit_len(rbsp_bit_len),
+        .cbp_luma(cbp_luma),
+        .qp(slice_qp_y),
+        .rbsp(rbsp_byte),
+        .busy(luma4x4_source_busy),
+        .done(luma4x4_source_done),
+        .ok(luma4x4_source_ok),
+        .bit_offset_end(luma4x4_source_bit_end),
+        .luma4x4_valid(luma4x4_valid),
+        .luma4x4_idx(luma4x4_idx),
+        .luma4x4_qp(luma4x4_qp),
+        .luma4x4_total_coeff(luma4x4_total_coeff),
+        .luma4x4_trailing_ones(luma4x4_trailing_ones),
+        .luma4x4_bit_offset_end(luma4x4_bit_offset_end),
+        .luma4x4_coeff_zigzag(luma4x4_coeff_zigzag)
+    );
+
+    h264_cavlc_residual_block #(.MAX_BYTES(128)) u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
@@ -894,6 +1044,29 @@ module h264_decode_core #(
             intra_mb_is_ref_r <= 1'b0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
+            mb_syntax_valid <= 1'b0;
+            mb_syntax_addr <= 16'd0;
+            mb_syntax_x <= 8'd0;
+            mb_syntax_y <= 8'd0;
+            mb_syntax_class <= MB_CLASS_UNSUPPORTED;
+            mb_syntax_type <= 5'd0;
+            mb_syntax_p_skip <= 1'b0;
+            mb_syntax_part_mode <= 3'd7;
+            mb_syntax_part_count <= 3'd0;
+            mb_syntax_uses_sub_mb <= 1'b0;
+            mb_syntax_unsupported <= 1'b0;
+            mb_syntax_cbp_luma <= 4'd0;
+            mb_syntax_cbp_chroma <= 2'd0;
+            mb_syntax_mb_qp_delta <= 6'sd0;
+            mb_syntax_qpy <= 6'd0;
+            mb_syntax_qpc <= 6'd0;
+            mb_syntax_residual_bit_offset <= 16'd0;
+            for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1) begin
+                mb_syntax_ref_idx_l0[wb_i] <= 2'd0;
+                mb_syntax_mvd_x_qpel[wb_i] <= 16'sd0;
+                mb_syntax_mvd_y_qpel[wb_i] <= 16'sd0;
+                mb_syntax_sub_mb_type[wb_i] <= 2'd0;
+            end
             for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                 lat_recon_y[wb_i] <= 8'd0;
             for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
@@ -919,6 +1092,40 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
+            if (mb_syntax_valid && mb_syntax_accept)
+                mb_syntax_valid <= 1'b0;
+            if (mb_type_valid && (!mb_syntax_valid || mb_syntax_accept)) begin
+                mb_syntax_valid <= 1'b1;
+                mb_syntax_addr <= syntax_mb_addr_r;
+                mb_syntax_x <= syntax_mb_x;
+                mb_syntax_y <= syntax_mb_y;
+                mb_syntax_class <= syntax_class_of(slice_is_i || slice_is_idr, mb_skip, mb_type, part_mode);
+                mb_syntax_type <= mb_type;
+                mb_syntax_p_skip <= mb_skip;
+                mb_syntax_part_mode <= part_mode;
+                mb_syntax_part_count <= mb_skip ? 3'd1 : part_mode == 3'd0 ? 3'd1 : 3'd2;
+                mb_syntax_uses_sub_mb <= (part_mode == 3'd3) || (part_mode == 3'd4);
+                mb_syntax_unsupported <= (ref_idx_l0 != 2'd0) ||
+                                         ((part_mode == 3'd3) || (part_mode == 3'd4)) ||
+                                         (syntax_class_of(slice_is_i || slice_is_idr, mb_skip, mb_type, part_mode) == MB_CLASS_UNSUPPORTED);
+                mb_syntax_cbp_luma <= mb_skip ? 4'd0 : cbp_luma;
+                mb_syntax_cbp_chroma <= mb_skip ? 2'd0 : cbp_chroma;
+                mb_syntax_mb_qp_delta <= mb_qp_delta;
+                mb_syntax_qpy <= slice_qp_y;
+                mb_syntax_qpc <= chroma_qp_from_y(slice_qp_y, pps_chroma_qp_index_offset);
+                mb_syntax_residual_bit_offset <= mb_residual_bit_offset;
+                for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1) begin
+                    mb_syntax_ref_idx_l0[wb_i] <= 2'd0;
+                    mb_syntax_mvd_x_qpel[wb_i] <= 16'sd0;
+                    mb_syntax_mvd_y_qpel[wb_i] <= 16'sd0;
+                    mb_syntax_sub_mb_type[wb_i] <= 2'd0;
+                end
+                if (!mb_skip && !(slice_is_i || slice_is_idr)) begin
+                    mb_syntax_ref_idx_l0[0] <= ref_idx_l0;
+                    mb_syntax_mvd_x_qpel[0] <= mvd_x_qpel;
+                    mb_syntax_mvd_y_qpel[0] <= mvd_y_qpel;
+                end
+            end
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
@@ -1101,8 +1308,9 @@ module h264_decode_core #(
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
-        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
-        mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
+        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_bit_len | |rbsp_window_base |
+        mb_type_valid | |mb_type | mb_skip | |intra4x4_pred_mode_flags |
+        |rem_intra4x4_pred_mode | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |
         |luma4x4_qp | |luma4x4_total_coeff | |luma4x4_trailing_ones |
@@ -1117,6 +1325,18 @@ module h264_decode_core #(
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         deblock_wb_valid | |deblock_wb_mb_addr | deblock_wb_is_ref |
         deblock_dpb_invalidate_refs | deblock_ref_ready_pulse |
-        |deblock_ref_ready_slot | deblock_commit_order_error;
+        |deblock_ref_ready_slot | deblock_commit_order_error |
+        luma4x4_source_busy | luma4x4_source_done | luma4x4_source_ok |
+        luma4x4_valid | |luma4x4_idx | |luma4x4_qp | |luma4x4_total_coeff |
+        |luma4x4_trailing_ones | |luma4x4_bit_offset_end |
+        |luma4x4_coeff_zigzag[0] | |luma4x4_source_bit_end | |core_i4_modes[0] |
+        mb_syntax_accept | mb_syntax_valid | |mb_syntax_addr | |mb_syntax_x |
+        |mb_syntax_y | |mb_syntax_class | |mb_syntax_type | mb_syntax_p_skip |
+        |mb_syntax_part_mode | |mb_syntax_part_count | mb_syntax_uses_sub_mb |
+        mb_syntax_unsupported | |mb_syntax_ref_idx_l0[0] |
+        |mb_syntax_mvd_x_qpel[0] | |mb_syntax_mvd_y_qpel[0] |
+        |mb_syntax_sub_mb_type[0] | |mb_syntax_cbp_luma | |mb_syntax_cbp_chroma |
+        |mb_syntax_mb_qp_delta | |mb_syntax_qpy | |mb_syntax_qpc |
+        |mb_syntax_residual_bit_offset;
 
 endmodule

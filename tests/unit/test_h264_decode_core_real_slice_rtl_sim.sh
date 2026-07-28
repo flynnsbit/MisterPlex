@@ -28,6 +28,7 @@ RTL_DIR="$ROOT/fpga/Plex_MiSTer/rtl"
 BUILD="$ROOT/build/verilator/h264_decode_core_real_slice"
 BUILD_SWAP_CHROMA="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma_read"
 RTL=(
+  "$RTL_DIR/h264_syntax_primitives.sv"
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
   "$RTL_DIR/h264_intra_pred.sv"

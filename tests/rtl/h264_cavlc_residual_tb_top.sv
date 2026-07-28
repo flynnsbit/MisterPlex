@@ -2,7 +2,7 @@
 `default_nettype none
 
 module h264_cavlc_residual_tb_top #(
-    parameter int MAX_BYTES = 96
+    parameter int MAX_BYTES = 128
 )(
     input  wire               clk,
     input  wire               reset,
@@ -37,7 +37,24 @@ module h264_cavlc_residual_tb_top #(
     output wire               nc_nA_available,
     output wire               nc_nB_available,
     output wire [4:0]         nc_nC,
-    output wire [2:0]         nc_coeff_token_table
+    output wire [2:0]         nc_coeff_token_table,
+
+    input  wire               src_start,
+    input  wire [9:0]         src_bit_offset_start,
+    input  wire [9:0]         src_bit_len,
+    input  wire [3:0]         src_cbp_luma,
+    input  wire [5:0]         src_qp,
+    output wire               src_busy,
+    output wire               src_done,
+    output wire               src_ok,
+    output wire [9:0]         src_bit_offset_end,
+    output wire               src_luma4x4_valid,
+    output wire [3:0]         src_luma4x4_idx,
+    output wire [5:0]         src_luma4x4_qp,
+    output wire [4:0]         src_luma4x4_total_coeff,
+    output wire [1:0]         src_luma4x4_trailing_ones,
+    output wire [9:0]         src_luma4x4_bit_offset_end,
+    output wire signed [15:0] src_luma4x4_coeff_zigzag [0:15]
 );
     wire signed [15:0] dut_coeff [0:15];
 
@@ -89,6 +106,19 @@ module h264_cavlc_residual_tb_top #(
         .nB_available(nc_nB_available),
         .nC(nc_nC),
         .coeff_token_table(nc_coeff_token_table)
+    );
+
+    h264_luma4x4_residual_source #(.MAX_BYTES(MAX_BYTES)) u_src (
+        .clk(clk), .reset(reset), .start(src_start),
+        .bit_offset_start(src_bit_offset_start), .bit_len(src_bit_len),
+        .cbp_luma(src_cbp_luma), .qp(src_qp), .rbsp(rbsp),
+        .busy(src_busy), .done(src_done), .ok(src_ok),
+        .bit_offset_end(src_bit_offset_end),
+        .luma4x4_valid(src_luma4x4_valid), .luma4x4_idx(src_luma4x4_idx),
+        .luma4x4_qp(src_luma4x4_qp), .luma4x4_total_coeff(src_luma4x4_total_coeff),
+        .luma4x4_trailing_ones(src_luma4x4_trailing_ones),
+        .luma4x4_bit_offset_end(src_luma4x4_bit_offset_end),
+        .luma4x4_coeff_zigzag(src_luma4x4_coeff_zigzag)
     );
 endmodule
 

@@ -67,6 +67,77 @@ module h264_rbsp_filter (
 	end
 endmodule
 
+module h264_intra4x4_mode_deriver (
+	input  wire [15:0] prev_intra4x4_pred_mode_flag,
+	input  wire [47:0] rem_intra4x4_pred_mode,
+	input  wire        left_available,
+	input  wire        top_available,
+	input  wire [3:0]  left_modes [0:3],
+	input  wire [3:0]  top_modes [0:3],
+	output reg  [3:0]  i4_modes [0:15]
+);
+	function automatic [1:0] blk_x(input [3:0] idx);
+		begin
+			case (idx)
+			4'd0, 4'd2, 4'd8, 4'd10: blk_x = 2'd0;
+			4'd1, 4'd3, 4'd9, 4'd11: blk_x = 2'd1;
+			4'd4, 4'd6, 4'd12, 4'd14: blk_x = 2'd2;
+			default: blk_x = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [1:0] blk_y(input [3:0] idx);
+		begin
+			case (idx)
+			4'd0, 4'd1, 4'd4, 4'd5: blk_y = 2'd0;
+			4'd2, 4'd3, 4'd6, 4'd7: blk_y = 2'd1;
+			4'd8, 4'd9, 4'd12, 4'd13: blk_y = 2'd2;
+			default: blk_y = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] xy_index(input [1:0] x, input [1:0] y);
+		begin
+			xy_index = (y[1] ? 4'd8 : 4'd0) + (x[1] ? 4'd4 : 4'd0) +
+			           (y[0] ? 4'd2 : 4'd0) + (x[0] ? 4'd1 : 4'd0);
+		end
+	endfunction
+
+	integer i;
+	reg [1:0] x;
+	reg [1:0] y;
+	reg left_ok;
+	reg top_ok;
+	reg [3:0] left_mode;
+	reg [3:0] top_mode;
+	reg [3:0] pred_mode;
+	reg [2:0] rem_mode;
+	always @* begin
+		for (i = 0; i < 16; i = i + 1)
+			i4_modes[i] = 4'd2;
+		for (i = 0; i < 16; i = i + 1) begin
+			x = blk_x(i[3:0]);
+			y = blk_y(i[3:0]);
+			left_ok = (x != 2'd0) || left_available;
+			top_ok = (y != 2'd0) || top_available;
+			left_mode = (x != 2'd0) ? i4_modes[xy_index(x - 2'd1, y)] : left_modes[y];
+			top_mode = (y != 2'd0) ? i4_modes[xy_index(x, y - 2'd1)] : top_modes[x];
+			if (!left_ok)
+				left_mode = 4'd2;
+			if (!top_ok)
+				top_mode = 4'd2;
+			pred_mode = (left_mode < top_mode) ? left_mode : top_mode;
+			rem_mode = rem_intra4x4_pred_mode[i * 3 +: 3];
+			if (prev_intra4x4_pred_mode_flag[i])
+				i4_modes[i] = pred_mode;
+			else
+				i4_modes[i] = (rem_mode < pred_mode[2:0]) ? {1'b0, rem_mode} : {1'b0, rem_mode} + 4'd1;
+		end
+	end
+endmodule
+
 module h264_baseline_syntax_parser #(
 	parameter int MAX_RBSP_BYTES = 8192
 ) (
@@ -130,7 +201,7 @@ module h264_baseline_syntax_parser #(
 	output reg [15:0]        residual_bit_offset
 );
 	localparam int MAX_BITS = MAX_RBSP_BYTES * 8;
-	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2;
+	localparam [1:0] MODE_PPS = 2'd0, MODE_SLICE = 2'd1, MODE_MB = 2'd2, MODE_MB_LAYER = 2'd3;
 	localparam [3:0]
 		PART_UNKNOWN = 4'd0,
 		PART_P_SKIP  = 4'd1,
@@ -181,6 +252,20 @@ module h264_baseline_syntax_parser #(
 			else
 				tmp = -$signed({1'b0, code[31:1]});
 			se8_from_ue = tmp[7:0];
+		end
+	endfunction
+
+	function automatic signed [7:0] qp_y_add_delta;
+		input signed [7:0] base_qp;
+		input signed [7:0] delta;
+		reg signed [8:0] sum;
+		begin
+			sum = base_qp + delta;
+			if (sum < 9'sd0)
+				sum = sum + 9'sd52;
+			else if (sum > 9'sd51)
+				sum = sum - 9'sd52;
+			qp_y_add_delta = sum[7:0];
 		end
 	endfunction
 
@@ -303,6 +388,11 @@ module h264_baseline_syntax_parser #(
 		ST_SL_DEBLOCK_IDC   = 8'd50,
 		ST_SL_ALPHA         = 8'd51,
 		ST_SL_BETA          = 8'd52,
+		ST_SL_REF_IDX_OVR   = 8'd53,
+		ST_SL_REF_IDX_L0    = 8'd54,
+		ST_SL_RPLM_FLAG     = 8'd55,
+		ST_SL_RPLM_IDC      = 8'd56,
+		ST_SL_RPLM_ARG      = 8'd57,
 		ST_MB_START         = 8'd70,
 		ST_MB_P_SKIP        = 8'd71,
 		ST_MB_TYPE          = 8'd72,
@@ -480,6 +570,8 @@ module h264_baseline_syntax_parser #(
 						start_ue(ST_SL_FIRST);
 					else if (mode == MODE_MB)
 						st <= ST_MB_START;
+					else if (mode == MODE_MB_LAYER)
+						start_ue(ST_MB_TYPE);
 					else
 						fail();
 				end
@@ -524,6 +616,8 @@ module h264_baseline_syntax_parser #(
 						start_ue(ST_SL_IDR);
 					else if (poc_type_in == 3'd0)
 						start_bits({3'd0, log2_max_pic_order_cnt_lsb}, ST_SL_POC);
+					else if (is_p_slice(slice_type))
+						start_bits(8'd1, ST_SL_REF_IDX_OVR);
 					else if (nal_ref_idc != 2'd0)
 						start_bits(8'd1, ST_SL_REF_MARK);
 					else
@@ -532,13 +626,51 @@ module h264_baseline_syntax_parser #(
 				ST_SL_IDR: begin idr_pic_id <= ue_value[15:0]; start_bits(8'd1, ST_SL_IDR_MARK0); end
 				ST_SL_POC: begin
 					pic_order_cnt_lsb <= fixed_acc[15:0];
-					if (nal_ref_idc != 2'd0)
+					if (is_p_slice(slice_type))
+						start_bits(8'd1, ST_SL_REF_IDX_OVR);
+					else if (nal_ref_idc != 2'd0)
 						start_bits(8'd1, ST_SL_REF_MARK);
 					else
 						start_ue(ST_SL_QP_DELTA);
 				end
 				ST_SL_IDR_MARK0: start_bits(8'd1, ST_SL_IDR_MARK1);
 				ST_SL_IDR_MARK1: start_ue(ST_SL_QP_DELTA);
+				ST_SL_REF_IDX_OVR: begin
+					if (fixed_acc[0])
+						start_ue(ST_SL_REF_IDX_L0);
+					else
+						start_bits(8'd1, ST_SL_RPLM_FLAG);
+				end
+				ST_SL_REF_IDX_L0: begin
+					if (ue_value != 32'd0) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						start_bits(8'd1, ST_SL_RPLM_FLAG);
+					end
+				end
+				ST_SL_RPLM_FLAG: begin
+					if (fixed_acc[0])
+						start_ue(ST_SL_RPLM_IDC);
+					else if (nal_ref_idc != 2'd0)
+						start_bits(8'd1, ST_SL_REF_MARK);
+					else
+						start_ue(ST_SL_QP_DELTA);
+				end
+				ST_SL_RPLM_IDC: begin
+					if (ue_value == 32'd3) begin
+						if (nal_ref_idc != 2'd0)
+							start_bits(8'd1, ST_SL_REF_MARK);
+						else
+							start_ue(ST_SL_QP_DELTA);
+					end else if (ue_value <= 32'd2) begin
+						start_ue(ST_SL_RPLM_ARG);
+					end else begin
+						unsupported <= 1'b1;
+						fail();
+					end
+				end
+				ST_SL_RPLM_ARG: start_ue(ST_SL_RPLM_IDC);
 				ST_SL_REF_MARK: begin
 					if (fixed_acc[0]) begin
 						unsupported <= 1'b1;
@@ -718,7 +850,7 @@ module h264_baseline_syntax_parser #(
 				end
 				ST_MB_QP_DELTA: begin
 					mb_qp_delta <= se8_from_ue(ue_value);
-					mb_qp <= qp_in + se8_from_ue(ue_value);
+					mb_qp <= qp_y_add_delta(qp_in, se8_from_ue(ue_value));
 					residual_bit_offset <= bit_pos;
 					st <= ST_FINISH;
 				end

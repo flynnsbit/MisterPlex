@@ -23,13 +23,9 @@ decode_stub
 
 [constant_inputs]
 # --- bitstream window: core has no access to the real RBSP stream (W-CAST) ---
-rbsp_byte: tied to 8'd0; stream_path never connects bitstream_fifo bytes to the core RBSP window.
 rbsp_window_base: tied to 16'd0; no RBSP window scheduler exists yet.
-mb_residual_bit_offset: tied to 16'd0; per-MB residual bit offset is not produced by slice_hdr_parser.
 
 # --- macroblock syntax not parsed by slice_hdr_parser yet (W-CAST) ---
-cbp_luma: tied to 4'hf; coded_block_pattern luma is not an output of slice_hdr_parser.
-cbp_chroma: tied to 2'd0; coded_block_pattern chroma is not an output of slice_hdr_parser.
 chroma_pred_mode: tied to 2'd0; intra chroma prediction mode is not parsed.
 
 # --- inter/MV path: no MV predictor feeds the core seam (W-SWAP) ---
@@ -62,10 +58,14 @@ dpb_ref_base: tied to 32'd0; no DPB reference-frame allocator feeds the core.
 
 # --- DPB memory: the core read port is answered with zeros ---
 dpb_rd_data: tied to 8'd0; the core has no memory behind its DPB read port.
+dpb_rd_valid: tied to 1'b0; the read-data companion strobe never asserts, so every reference pixel MC sees is 0x00 and no inter prediction can be correct.
+
+# --- macroblock syntax still not staged after the w-cast merge (W-CAST) ---
+intra16x16_mode: tied to 2'd0; Intra_16x16 prediction mode is not parsed out of the slice data.
+intra4x4_modes: driven by a constant-0 generate loop at stream_path.sv:356 (decode_core_i4_in); w-cast's real i4_modes[0:15] exist but are not routed to this port.
+mb_qp_delta: tied to 6'sd0; mb_qp_delta is not parsed, so per-MB QP cannot track the slice.
 
 [synthetic_reg_inputs]
-luma4x4_total_coeff: stream_path.sv:430 drives 5'd16 unconditionally - a fabricated "all 16 coefficients present" rather than the parsed CAVLC total_coeff. The port LOOKS wired, which is why the port-tie check never saw it. Owner W-CAST: replace with the real per-block total_coeff from the first-I_NxN staging interface.
-luma4x4_trailing_ones: stream_path.sv:431 drives 2'd0 unconditionally instead of the parsed CAVLC trailing_ones. Owner W-CAST: replace with the real per-block trailing_ones.
 
 [unobserved_outputs]
 # Every one of these is mentioned only in stream_path `_keep` anti-prune wire.

@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+echo "Scope: stream_path reconstructed-output RTL sim for 2 frames from 320x240 real Baseline fixture; asserts parser-to-decode_stub handoff, not HDMI output"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
 VERILATOR_RC=$?
@@ -39,6 +40,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \

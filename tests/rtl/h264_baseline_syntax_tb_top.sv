@@ -1,5 +1,6 @@
 module h264_baseline_syntax_tb_top #(
-	parameter bit FAULT_RARE_P8X8 = 1'b0
+	parameter bit FAULT_RARE_P8X8 = 1'b0,
+	parameter bit FAULT_I4_MODE = 1'b0
 ) (
 	input  wire              clk,
 	input  wire              reset,
@@ -52,9 +53,17 @@ module h264_baseline_syntax_tb_top #(
 	output wire [5:0]        coded_block_pattern,
 	output wire signed [7:0] mb_qp_delta,
 	output wire signed [7:0] mb_qp,
-	output wire [15:0]       residual_bit_offset
+	output wire [15:0]       residual_bit_offset,
+	output wire [3:0]        derived_i4_modes [0:15]
 );
 	wire [3:0] partition_mode_raw;
+	wire [3:0] derived_i4_modes_raw [0:15];
+	wire [3:0] unavailable_modes [0:3];
+
+	assign unavailable_modes[0] = 4'd2;
+	assign unavailable_modes[1] = 4'd2;
+	assign unavailable_modes[2] = 4'd2;
+	assign unavailable_modes[3] = 4'd2;
 
 	h264_baseline_syntax_parser parser (
 		.clk(clk), .reset(reset), .clear(clear),
@@ -77,4 +86,19 @@ module h264_baseline_syntax_tb_top #(
 	);
 
 	assign partition_mode = FAULT_RARE_P8X8 && (partition_mode_raw == 4'd5) ? 4'd2 : partition_mode_raw;
+
+	h264_intra4x4_mode_deriver i4_modes (
+		.prev_intra4x4_pred_mode_flag(intra4x4_pred_mode_flags),
+		.rem_intra4x4_pred_mode(intra4x4_rem_modes),
+		.left_available(1'b0), .top_available(1'b0),
+		.left_modes(unavailable_modes), .top_modes(unavailable_modes),
+		.i4_modes(derived_i4_modes_raw)
+	);
+
+	genvar gi;
+	generate
+		for (gi = 0; gi < 16; gi = gi + 1) begin : g_i4_fault
+			assign derived_i4_modes[gi] = (FAULT_I4_MODE && gi == 0) ? (derived_i4_modes_raw[gi] ^ 4'd1) : derived_i4_modes_raw[gi];
+		end
+	endgenerate
 endmodule

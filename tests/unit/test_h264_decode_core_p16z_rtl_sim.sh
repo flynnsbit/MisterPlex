@@ -38,6 +38,7 @@ BUILD_SWAP_CHROMA_COEFF="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma
 BUILD_SWAP_CHROMA_READ="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_read"
 BUILD_SWAP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_residual"
 RTL=(
+  "$RTL_DIR/h264_syntax_primitives.sv"
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
   "$RTL_DIR/h264_intra_pred.sv"

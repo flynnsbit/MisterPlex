@@ -179,7 +179,8 @@ def synthetic_reg_inputs(
         if not re.search(r"\breg\b[^;]*\b" + re.escape(expr) + r"\b", sp_text):
             continue
         rhs = re.findall(
-            r"\b" + re.escape(expr) + r"\s*(?:\[[^\]]*\])?\s*<=\s*([^;]+);", sp_text
+            r"\b" + re.escape(expr) + r"\s*(?:\[(?:[^\[\]]|\[[^\[\]]*\])*\])?\s*<=\s*([^;]+);",
+            sp_text,
         )
         rhs += re.findall(
             r"\bassign\s+" + re.escape(expr) + r"\s*=\s*([^;]+);", sp_text

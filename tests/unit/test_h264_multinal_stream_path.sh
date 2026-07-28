@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+echo "Scope: stream_path multi-NAL product RTL sim over one residual IDR+P fixture and one 12-frame P16 fixture; checks parsed residual/DPB/MC liveness, not HDMI output"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
 VERILATOR_RC=$?
@@ -26,6 +27,7 @@ WCAP_FIXTURE="tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 INTER_FIXTURE="tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264"
 BUILD="build/verilator/h264_multinal_stream_path"
 BUILD_FAULT="build/verilator/h264_multinal_stream_path_recon_zero"
+BUILD_SYNTAX_FAULT="build/verilator/h264_multinal_stream_path_syntax_fault"
 mkdir -p "$BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
@@ -42,6 +44,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/pps_parser.sv \
   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
+  fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv \
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
@@ -82,6 +86,8 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/pps_parser.sv \
   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
+  fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv \
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
   fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
@@ -103,6 +109,40 @@ if [[ "$RECON_ZERO_RC" -eq 0 ]]; then
 fi
 grep -q "parsed P DPB/MC recon signature missing" "$BUILD/recon_zero_fault.log"
 echo "test_h264_multinal_stream_path: OK red-check forced recon_sig=0 rejected parsed P DPB/MC liveness"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_SYNTAX_FAULT" \
+  --top-module h264_multinal_stream_path_tb -GFAULT_MB_SYNTAX_UNSUPPORTED=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  tests/rtl/h264_multinal_stream_path_tb_top.sv \
+  fpga/Plex_MiSTer/rtl/stream_path.sv \
+  fpga/Plex_MiSTer/rtl/stream_ingest.sv \
+  fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv \
+  fpga/Plex_MiSTer/rtl/bitstream_fifo.sv \
+  fpga/Plex_MiSTer/rtl/nalu_scanner.sv \
+  fpga/Plex_MiSTer/rtl/sps_parser.sv \
+  fpga/Plex_MiSTer/rtl/pps_parser.sv \
+  fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv \
+  fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv \
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
+  fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv \
+  fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
+  fpga/Plex_MiSTer/rtl/h264_deblock.sv \
+  fpga/Plex_MiSTer/rtl/h264_dpb.sv \
+  fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
+  fpga/Plex_MiSTer/rtl/decode_stub.sv \
+  tests/rtl/h264_multinal_stream_path_tb.cpp
+set +e
+"$BUILD_SYNTAX_FAULT/Vh264_multinal_stream_path_tb" "$INTER_FIXTURE" 15 11 0x10 > "$BUILD/mb_syntax_unsupported_fault.log" 2>&1
+SYNTAX_FAULT_RC=$?
+set -e
+if [[ "$SYNTAX_FAULT_RC" -eq 0 ]]; then
+  cat "$BUILD/mb_syntax_unsupported_fault.log"
+  echo "FAIL multi-NAL stream_path: forced MB syntax unsupported unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "decode_core MB syntax handoff flagged supported fixture unsupported" "$BUILD/mb_syntax_unsupported_fault.log"
+echo "test_h264_multinal_stream_path: OK red-check forced MB syntax unsupported rejected core handoff"
 
 set +e
 "$BUILD/Vh264_multinal_stream_path_tb" "$WCAP_FIXTURE" 5 1 0xff > "$BUILD/wcap_bad_csum.log" 2>&1

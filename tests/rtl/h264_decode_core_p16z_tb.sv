@@ -27,7 +27,7 @@ module h264_decode_core_p16z_tb #(
 	input  wire signed [15:0] p16_residual_y [0:255],
 	input  wire signed [15:0] p16_residual_u [0:63],
 	input  wire signed [15:0] p16_residual_v [0:63],
-	input  wire [7:0]  rbsp_byte_in [0:63],
+	input  wire [7:0]  rbsp_byte_in [0:127],
 	input  wire [15:0] rbsp_window_base,
 	input  wire [7:0]  dpb_rd_data,
 	input  wire        dpb_rd_valid,
@@ -59,7 +59,6 @@ module h264_decode_core_p16z_tb #(
 		end
 		for (zi = 0; zi < 16; zi = zi + 1) begin : gen_i4_zero
 			assign intra4x4_modes[zi] = 4'd0;
-			assign luma4x4_coeff_zigzag[zi] = 16'sd0;
 		end
 		for (zi = 0; zi < 256; zi = zi + 1) begin : gen_y_zero
 			assign recon_y[zi] = 8'd0;
@@ -84,12 +83,15 @@ module h264_decode_core_p16z_tb #(
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(rbsp_byte_in),
+		.rbsp_bit_len(10'd512),
 		.rbsp_window_base(rbsp_window_base),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(mb_type_valid),
 		.mb_type(mb_type),
 		.mb_skip(mb_skip),
+		.intra4x4_pred_mode_flags(16'd0),
+		.rem_intra4x4_pred_mode(48'd0),
 		.intra4x4_modes(intra4x4_modes),
 		.intra16x16_mode(2'd0),
 		.chroma_pred_mode(2'd0),
@@ -97,11 +99,11 @@ module h264_decode_core_p16z_tb #(
 		.cbp_chroma(2'd2),
 		.mb_qp_delta(6'sd0),
 		.mb_residual_bit_offset(mb_residual_bit_offset),
-		.luma4x4_valid(1'b0),
-		.luma4x4_idx(4'd0),
-		.luma4x4_qp(6'd26),
-		.luma4x4_total_coeff(5'd0),
-		.luma4x4_trailing_ones(2'd0),
+		.luma4x4_valid(),
+		.luma4x4_idx(),
+		.luma4x4_qp(),
+		.luma4x4_total_coeff(),
+		.luma4x4_trailing_ones(),
 		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
 		.mv_x_qpel(p16_mv_x_qpel),
 		.mv_y_qpel(p16_mv_y_qpel),
@@ -135,6 +137,7 @@ module h264_decode_core_p16z_tb #(
 		.dpb_rd_valid(dpb_rd_valid),
 		.frame_done(frame_done),
 		.frame_mb_count(frame_mb_count),
+		.mb_syntax_accept(1'b1),
 		.busy(busy),
 		.decode_state(decode_state),
 		.current_mb_addr(current_mb_addr),
