@@ -604,3 +604,138 @@ Unchanged: I have never observed the artifact's pixels. No claim here is about
 what is on the screen. With the fabric writing no DDR at all, the underrun-rate
 measurement in §11.9 is not merely blocked on a core reset — the counter itself
 is a dead instrument on this build.
+
+---
+
+## 13. Compliance with the REVISED reachability standard (supersedes §11.2/§11.3)
+
+The parent's revised ruling makes a subtree proof without a trunk proof vacuous.
+**§11.2 as originally written was exactly that**, so it is restated here. I also
+reproduced w-audit's mutations against my own path rather than assuming their
+result transfers.
+
+### 13.1 Both directions, as now required
+
+```
+TRUNK     --root emu          --require present_core      rc=0  reachable=44
+TRUNK     --root emu          --require ddr_frame_store   rc=0  reachable=44
+SUBTREE   --root present_core --require ddr_frame_store   rc=0  reachable=11
+```
+
+`rtl_modules=68 bench_only=24` throughout. The subtree red proof from §11.2
+stands unchanged (rename the instantiation -> rc=1, `parents=<none>`, restore ->
+rc=0).
+
+Trunk red proof, performed in a **disposable linked git worktree** so the shared
+RTL was never touched (`git diff --name-only` = 0 tracked files after teardown):
+
+```
+rename Plex.sv:699 present_core -> present_core_RENAMED
+  --root emu --require present_core   rc=1
+  UNINSTANTIATED_RTL_MODULE present_core file=.../present_core.sv parents=<none>
+```
+
+### 13.2 w-audit's mutations, reproduced against the PRESENT path
+
+I did not take these on faith. Measured, same disposable worktree:
+
+| # | Mutation on my path | Checker says | Truth |
+|---|---|---|---|
+| M1 | rename `present_core` instantiation in `Plex.sv:699` | rc=1 | not instantiated — **correct** |
+| M2 | wrap that instantiation in `generate if (0)` | **rc=0 REACHABLE** | not instantiated — **FALSE GREEN** |
+| M3 | delete `present_core.sv` from `files.qip` | **rc=0 REACHABLE** | not compiled — **FALSE GREEN** |
+
+**w-audit's finding replicates on the present path.** My §11.2 green was
+vulnerable to M2 and M3, and would have been reported as evidence.
+
+### 13.3 A fourth defect: `--require` is unreachable code under `--root emu`
+
+New, not in w-audit's list. `check_rtl_module_instantiations.py`:
+
+```python
+if args.root == PRODUCT_ROOT:          # emu only
+    ...
+    fail("RTL modules must be product-reachable from emu or ...")   # exits here
+unknown_required = ...                  # never evaluated
+unreachable_required = ...              # never evaluated
+```
+
+So with `--root emu`, whenever *any* module is unreachable-and-not-bench-listed,
+the blanket rule calls `fail()` and the `--require` clause never runs. Measured
+in M1: `REQUIRED_RTL_MODULE_UNREACHABLE` count = **0**, despite `present_core`
+being precisely the required-and-unreachable module. The failure surfaced only as
+a generic `RTL_MODULE_INSTANTIATION_FAIL`.
+
+**Severity, stated honestly: this is a diagnostic defect, not a false green.**
+`rc` is still 1. I checked the genuine-hole case (module disconnected *and*
+bench-listed, so the blanket rule passes) and the `--require` clause does fire
+there, so it remains a real safety net. But a reviewer grepping for
+`REQUIRED_RTL_MODULE_UNREACHABLE` to confirm a red will find nothing and may
+conclude the require passed. **For W-GATE-O5: evaluate `--require` before the
+blanket sweep, or accumulate rather than short-circuit.**
+
+### 13.4 Closing M2 and M3 for the present path: new gate
+
+`scripts/check_present_path_synthesis.py`, registered in `make unit` and rollcall
+(`expected_commands=91`). For `present_core` and `ddr_frame_store` it checks what
+the instantiation graph structurally cannot:
+
+```
+QIP_OK            present_core     rtl/present_core.sv
+GENERATE_DEPTH_OK present_core     depth=0  Plex.sv:699
+IFDEF_OK          present_core     guards=none
+QIP_OK            ddr_frame_store  rtl/ddr_frame_store.sv
+GENERATE_DEPTH_OK ddr_frame_store  depth=0  present_core.sv:239
+IFDEF_OK          ddr_frame_store  guards=['ifdef:DDR_FRAME_STORE'] (qsf satisfies)
+RESULT PASS checks=8 failures=0
+```
+
+`--self-test` ships **1 green + 4 reds**, one per mutation class: missing
+`files.qip` entry, disabled generate block, guarding macro not defined in
+`Plex.qsf`, instantiation removed. All four caught, in-memory, no file mutation.
+
+### 13.5 The ifdef ambiguity of §11.3 is resolved — without my withdrawn oracle
+
+§11.3 reported that the checker calls **both** branches of
+`` `ifdef DDR_FRAME_STORE `` reachable (`--require ddr_frame_store` rc=0 *and*
+`--require frame_store` rc=0), and §11.4 used a hardware oracle to break the tie.
+That oracle is withdrawn (§12.1). The tie is nevertheless broken, by a better and
+purely static instrument:
+
+```
+Plex.qsf:82   set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+```
+
+The macro is defined for the Quartus build, so the then-branch is compiled and
+`frame_store` is not. This is stronger than my DDR read because it cannot be
+residue, and it is now enforced by the `IFDEF_OK` check above rather than being a
+one-off observation.
+
+### 13.6 The real oracle — and why I am not claiming it
+
+Per the ruling, `make post-fit-hierarchy` is the only real oracle. Both my
+modules **are** in the critical list (`tests/fixtures/critical_fit_hierarchy.json`
+= `ddr_frame_store, present_core, stream_path, ddr_bitstream_reader`), so a
+post-fit run would directly confirm the present path.
+
+**I cannot run it for `fb4bad84`.** I scanned every `Plex.rbf` on this machine
+modified since 2026-07-27 and **none** has md5 `fb4bad849ad2db782a5004ce5a3471ce`,
+so I cannot bind any local fit report to the resident bitstream. Running
+`post-fit-hierarchy` against an unbound report and presenting it as evidence
+about `fb4bad84` would be precisely the "true number about the wrong thing" this
+project keeps producing. That evidence is W-FIT's to produce; their reported
+`ddr_frame_store = 4757 ALUT / 2298 reg / 96 M10K` is one of my two modules
+already confirmed, and `present_core` is still outstanding.
+
+### 13.7 Restated claim
+
+**`ddr_frame_store` is in the present path of the design as described in source,
+and the present path is connected to `emu`.** Supported by: trunk reachability
+(both modules), subtree reachability, `files.qip` membership, generate-depth 0 at
+both instantiation sites, `DDR_FRAME_STORE=1` in `Plex.qsf`, and W-FIT's post-fit
+resource figures for `ddr_frame_store`.
+
+**Necessary, not sufficient.** Outstanding: post-fit hierarchy evidence for
+`present_core` bound to `fb4bad84`. And none of this touches the actual defect —
+whether `ddr_frame_store`'s miss-to-black policy is what the user sees remains
+unobserved, because no one has captured the pixels.
