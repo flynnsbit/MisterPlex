@@ -53,9 +53,26 @@ module h264_decode_top (
     input  wire [7:0]  nb_topleft,         // Top-left corner sample
     input  wire [7:0]  nb_topright [0:3],  // 4 samples above-right of current 4x4
 
+    // ── Chroma 8x8 prediction context (from w-ctl line buffer) ──
+    input  wire [1:0]  chroma_pred_mode,   // 0=DC, 1=H, 2=V, 3=Plane
+    input  wire [7:0]  nb_chroma_u_above [0:7],
+    input  wire [7:0]  nb_chroma_v_above [0:7],
+    input  wire [7:0]  nb_chroma_u_left [0:7],
+    input  wire [7:0]  nb_chroma_v_left [0:7],
+    input  wire [7:0]  nb_chroma_u_topleft,
+    input  wire [7:0]  nb_chroma_v_topleft,
+    input  wire        mb_avail_chroma_above,
+    input  wire        mb_avail_chroma_left,
+
+    // ── Chroma residual, already inverse-transformed (8.5.11 + 8.5.12) ──
+    input  wire signed [15:0] chroma_residual_u [0:63],
+    input  wire signed [15:0] chroma_residual_v [0:63],
+
     // ── Outputs ──
     output reg         mb_recon_valid,     // Pulse: full MB reconstruction complete
     output reg  [7:0]  recon_y [0:255],    // Reconstructed luma (16×16, raster order)
+    output reg  [7:0]  recon_u [0:63],     // Reconstructed Cb (8×8, raster order)
+    output reg  [7:0]  recon_v [0:63],     // Reconstructed Cr (8×8, raster order)
     output reg  [4:0]  blocks_done        // Running count of blocks completed
 );
 
@@ -172,6 +189,51 @@ module h264_decode_top (
         .valid(i16_pred_valid),
         .pred(i16_pred_pixels)
     );
+
+    // ════════════════════════════════════════════════════════════════════
+    // CHROMA 8×8 PREDICTION + RESIDUAL
+    // ════════════════════════════════════════════════════════════════════
+    // Both chroma components share the 16×16 macroblock's prediction mode and
+    // are reconstructed as clip(pred + residual) when the luma blocks finish.
+    wire       chroma_u_pred_valid;
+    wire       chroma_v_pred_valid;
+    wire [7:0] chroma_u_pred [0:63];
+    wire [7:0] chroma_v_pred [0:63];
+
+    h264_chroma8x8_pred u_chroma_u_pred (
+        .clk(clk),
+        .start(mb_start),
+        .mode(chroma_pred_mode),
+        .above(nb_chroma_u_above),
+        .left(nb_chroma_u_left),
+        .top_left(nb_chroma_u_topleft),
+        .has_above(mb_avail_chroma_above),
+        .has_left(mb_avail_chroma_left),
+        .valid(chroma_u_pred_valid),
+        .pred(chroma_u_pred)
+    );
+
+    h264_chroma8x8_pred u_chroma_v_pred (
+        .clk(clk),
+        .start(mb_start),
+        .mode(chroma_pred_mode),
+        .above(nb_chroma_v_above),
+        .left(nb_chroma_v_left),
+        .top_left(nb_chroma_v_topleft),
+        .has_above(mb_avail_chroma_above),
+        .has_left(mb_avail_chroma_left),
+        .valid(chroma_v_pred_valid),
+        .pred(chroma_v_pred)
+    );
+
+    function automatic [7:0] clip_chroma;
+        input signed [17:0] v;
+        begin
+            if (v < 18'sd0) clip_chroma = 8'd0;
+            else if (v > 18'sd255) clip_chroma = 8'd255;
+            else clip_chroma = v[7:0];
+        end
+    endfunction
 
     // ════════════════════════════════════════════════════════════════════
     // INTRA 4×4 PREDICTION — uses per-block reconstructed neighbours
@@ -360,6 +422,10 @@ module h264_decode_top (
                 local_recon[si] <= 8'd0;
                 recon_y[si]     <= 8'd0;
             end
+            for (si = 0; si < 64; si = si + 1) begin
+                recon_u[si] <= 8'd128;
+                recon_v[si] <= 8'd128;
+            end
         end else begin
             mb_recon_valid <= 1'b0;
             if (i16_pred_valid)
@@ -414,6 +480,12 @@ module h264_decode_top (
                     // Copy local_recon to output
                     for (si = 0; si < 256; si = si + 1)
                         recon_y[si] <= local_recon[si];
+                    for (si = 0; si < 64; si = si + 1) begin
+                        recon_u[si] <= clip_chroma($signed({10'd0, chroma_u_pred[si]}) +
+                                                   $signed(chroma_residual_u[si]));
+                        recon_v[si] <= clip_chroma($signed({10'd0, chroma_v_pred[si]}) +
+                                                   $signed(chroma_residual_v[si]));
+                    end
                     mb_recon_valid <= 1'b1;
                     mb_started     <= 1'b0;
                     state          <= ST_IDLE;

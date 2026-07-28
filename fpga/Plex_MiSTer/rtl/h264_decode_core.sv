@@ -819,6 +819,8 @@ module h264_decode_core #(
     wire [7:0]  product_intra_recon_y [0:255];
     wire [7:0]  product_intra_recon_u [0:63];
     wire [7:0]  product_intra_recon_v [0:63];
+    wire signed [15:0] product_intra_chroma_residual_u [0:63];
+    wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
@@ -828,14 +830,14 @@ module h264_decode_core #(
     wire        product_intra_ctx_has_above_unused;
     wire        product_intra_ctx_has_left_unused;
     wire        product_intra_ctx_has_above_right_unused;
-    wire [7:0]  product_intra_ctx_chroma_u_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_top_left_unused;
-    wire [7:0]  product_intra_ctx_chroma_v_top_left_unused;
-    wire        product_intra_ctx_has_chroma_above_unused;
-    wire        product_intra_ctx_has_chroma_left_unused;
+    wire [7:0]  product_intra_chroma_u_above [0:7];
+    wire [7:0]  product_intra_chroma_v_above [0:7];
+    wire [7:0]  product_intra_chroma_u_left [0:7];
+    wire [7:0]  product_intra_chroma_v_left [0:7];
+    wire [7:0]  product_intra_chroma_u_topleft;
+    wire [7:0]  product_intra_chroma_v_topleft;
+    wire        product_intra_has_chroma_above;
+    wire        product_intra_has_chroma_left;
     wire        product_intra_mb_avail_left;
     wire        product_intra_mb_avail_top;
     wire        product_intra_mb_avail_topright;
@@ -850,9 +852,11 @@ module h264_decode_core #(
             assign product_intra_i16_dc[intra_gi] = 29'sd0;
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
-        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral
-            assign product_intra_recon_u[intra_gi] = 8'd128;
-            assign product_intra_recon_v[intra_gi] = 8'd128;
+        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
+            // The core's residual walker does not yet run for intra
+            // macroblocks, so intra chroma is prediction-only for now.
+            assign product_intra_chroma_residual_u[intra_gi] = 16'sd0;
+            assign product_intra_chroma_residual_v[intra_gi] = 16'sd0;
         end
     endgenerate
 
@@ -888,14 +892,14 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
-        .chroma_u_above(product_intra_ctx_chroma_u_above_unused),
-        .chroma_v_above(product_intra_ctx_chroma_v_above_unused),
-        .chroma_u_left(product_intra_ctx_chroma_u_left_unused),
-        .chroma_v_left(product_intra_ctx_chroma_v_left_unused),
-        .chroma_u_top_left(product_intra_ctx_chroma_u_top_left_unused),
-        .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
-        .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
-        .has_chroma_left(product_intra_ctx_has_chroma_left_unused)
+        .chroma_u_above(product_intra_chroma_u_above),
+        .chroma_v_above(product_intra_chroma_v_above),
+        .chroma_u_left(product_intra_chroma_u_left),
+        .chroma_v_left(product_intra_chroma_v_left),
+        .chroma_u_top_left(product_intra_chroma_u_topleft),
+        .chroma_v_top_left(product_intra_chroma_v_topleft),
+        .has_chroma_above(product_intra_has_chroma_above),
+        .has_chroma_left(product_intra_has_chroma_left)
     );
 
     h264_decode_top u_product_intra_mb (
@@ -912,6 +916,19 @@ module h264_decode_core #(
         .block_coeff(luma4x4_coeff_zigzag),
         .i16_dc_valid(product_intra_mb_start),
         .i16_dc(product_intra_i16_dc),
+        .chroma_pred_mode(chroma_pred_mode),
+        .nb_chroma_u_above(product_intra_chroma_u_above),
+        .nb_chroma_v_above(product_intra_chroma_v_above),
+        .nb_chroma_u_left(product_intra_chroma_u_left),
+        .nb_chroma_v_left(product_intra_chroma_v_left),
+        .nb_chroma_u_topleft(product_intra_chroma_u_topleft),
+        .nb_chroma_v_topleft(product_intra_chroma_v_topleft),
+        .mb_avail_chroma_above(product_intra_has_chroma_above),
+        .mb_avail_chroma_left(product_intra_has_chroma_left),
+        .chroma_residual_u(product_intra_chroma_residual_u),
+        .chroma_residual_v(product_intra_chroma_residual_v),
+        .recon_u(product_intra_recon_u),
+        .recon_v(product_intra_recon_v),
         .i4_modes(intra4x4_modes),
         .mb_avail_left(product_intra_mb_avail_left),
         .mb_avail_top(product_intra_mb_avail_top),
