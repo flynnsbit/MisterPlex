@@ -20,25 +20,27 @@ constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int MV_Y_QPEL = 0;
-constexpr int kMeasuredP16RealPCycles = 86078;
+constexpr int kMeasuredP16RealPCycles = 86806;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
-constexpr int kScheduledLumaBlocks = 4;
+constexpr int kScheduledLumaBlocks = 16;
 constexpr int kScheduledBlocks = kScheduledLumaBlocks;
-constexpr int kResidualBlockSamples[2][kScheduledBlocks][16] = {
-    {
-        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-        {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
-        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-    },
-    {
-        {264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256},
-        {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
-        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-    },
-};
+
+int residualBlockSample(int mbIdx, int block, int pos) {
+    static constexpr int kScan14[16] = {19, 11, -5, -13, 19, 11, -5, -13,
+                                        19, 11, -5, -13, 19, 11, -5, -13};
+    static constexpr int kScan11[16] = {7, 5, 1, -1, 7, 5, 1, -1,
+                                        7, 5, 1, -1, 7, 5, 1, -1};
+    static constexpr int kHighClamp[16] = {264, 262, 258, 256, 264, 262, 258, 256,
+                                           264, 262, 258, 256, 264, 262, 258, 256};
+    if (mbIdx == 1 && block == 0) return kHighClamp[pos];
+    return (block & 1) ? kScan11[pos] : kScan14[pos];
+}
+
+const char* residualBlockBits(int mbIdx, int block) {
+    if (mbIdx == 1 && block == 0) return "00010000000000000000001000001111110111"; // scan coeffs [80, 1]
+    return (block & 1) ? "00100111" : "0000011100001100111"; // scan coeffs [1,1] or [1,4]
+}
 
 struct Write {
     uint32_t addr = 0;
@@ -55,11 +57,12 @@ struct MbCase {
     int mvX = 0;
     int mvY = 0;
     int residualBitOffset = 0;
+    int rbspWindowBase = 0;
 };
 
 const std::vector<MbCase> kCases = {
-    {1, 0, 2, 0, 0, 0, 2, 0, 296},
-    {2, 0, 3, 0, 2, 0, 5, 0, 400},
+    {1, 0, 2, 0, 0, 0, 2, 0, 296, 0},
+    {2, 0, 3, 0, 2, 0, 5, 0, 400, 48},
 };
 
 uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
@@ -126,9 +129,10 @@ int residualSample(int mbIdx, int localIdx) {
     if (localIdx < 256) {
         const int sx = localIdx & 15;
         const int sy = localIdx >> 4;
-        if (sx < kScheduledLumaBlocks * 4 && sy < 4) {
-            const int block = sx >> 2;
-            return kResidualBlockSamples[mbIdx][block][sy * 4 + (sx & 3)];
+        const int block = (sy >> 2) * 4 + (sx >> 2);
+        if (block < kScheduledLumaBlocks) {
+            const int pos = (sy & 3) * 4 + (sx & 3);
+            return residualBlockSample(mbIdx, block, pos);
         }
     }
     return 0;
@@ -222,15 +226,16 @@ bool checkResidualFixture() {
             bool anyNonzero = false;
             bool differsFromFirst = false;
             for (int i = 0; i < 16; ++i) {
-                anyNonzero |= (kResidualBlockSamples[mb][block][i] != 0);
-                differsFromFirst |= (kResidualBlockSamples[mb][block][i] != kResidualBlockSamples[mb][block][0]);
+                const int v = residualBlockSample(mb, block, i);
+                anyNonzero |= (v != 0);
+                differsFromFirst |= (v != residualBlockSample(mb, block, 0));
             }
             if (!anyNonzero || !differsFromFirst) {
                 std::cerr << "FAIL h264_decode_core residual fixture: mb=" << mb
                           << " block=" << block << " is degenerate\n";
                 return false;
             }
-            for (int i = 0; i < 16; ++i) nonzero += (kResidualBlockSamples[mb][block][i] != 0);
+            for (int i = 0; i < 16; ++i) nonzero += (residualBlockSample(mb, block, i) != 0);
             ++positionDependent;
         }
     }
@@ -238,7 +243,7 @@ bool checkResidualFixture() {
     for (int y = 0; y < C_H; ++y)
         for (int x = 0; x < C_W; ++x)
             uvDiff += (refSample(1, x, y) != refSample(2, x, y));
-    if (kResidualBlockSamples[0][0][0] == kResidualBlockSamples[0][0][1]) {
+    if (residualBlockSample(0, 0, 0) == residualBlockSample(0, 0, 1)) {
         std::cerr << "FAIL h264_decode_core residual fixture: scan-order sentinel aliases coeff positions\n";
         return false;
     }
@@ -365,22 +370,15 @@ void loadScheduledResidualRbsp(Sim& s) {
             if (bits[i] == '1') s.top.rbsp_byte_in[(bitOffset + i) >> 3] |= 1u << (7 - ((bitOffset + i) & 7));
         }
     };
-    int bitOffset = kCases.at(0).residualBitOffset;
-    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
-    bitOffset += 19;
-    putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
-    bitOffset += 8;
-    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
-    bitOffset += 19;
-    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
-    bitOffset = kCases.at(1).residualBitOffset;
-    putBits(bitOffset, "00010000000000000000001000001111110111"); // scan coeffs [80, 1]
-    bitOffset += 38;
-    putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
-    bitOffset += 8;
-    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
-    bitOffset += 19;
-    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
+    for (std::size_t mbIdx = 0; mbIdx < kCases.size(); ++mbIdx) {
+        const MbCase& mb = kCases.at(mbIdx);
+        int bitOffset = mb.residualBitOffset - mb.rbspWindowBase * 8;
+        for (int block = 0; block < kScheduledBlocks; ++block) {
+            const char* bits = residualBlockBits(static_cast<int>(mbIdx), block);
+            putBits(bitOffset, bits);
+            bitOffset += static_cast<int>(std::string(bits).size());
+        }
+    }
 }
 
 void reset(Sim& s) {
@@ -414,6 +412,7 @@ void driveMb(Sim& s, int mbOrdinal) {
     s.top.p16_mvd_y_qpel = mb.mvdY;
     s.top.p16_ref_idx_l0 = 0;
     s.top.mb_residual_bit_offset = mb.residualBitOffset;
+    s.top.rbsp_window_base = mb.rbspWindowBase;
     s.top.mb_type = 0;
     s.top.mb_skip = 0;
     s.top.mb_type_valid = 1;
@@ -520,7 +519,7 @@ int checkScoreboard(const Sim& s) {
         return 1;
     }
     std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor+CAVLC-residual path "
-              << "384x2 exact clipped pred+4Y scheduled-residual samples landed at DPB addresses; reads="
+              << "384x2 exact clipped pred+16Y scheduled-residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
               << " clip_low=" << clipLow << " clip_high=" << clipHigh
               << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)

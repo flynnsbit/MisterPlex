@@ -31,6 +31,7 @@ BUILD_PERTURB_MV="$ROOT/build/verilator/h264_decode_core_p16z_perturb_mv"
 BUILD_BAD_RBSP="$ROOT/build/verilator/h264_decode_core_p16z_bad_rbsp"
 BUILD_DROP_MV_NB="$ROOT/build/verilator/h264_decode_core_p16z_drop_mv_neighbor"
 BUILD_DROP_SCHED_RES="$ROOT/build/verilator/h264_decode_core_p16z_drop_scheduled_residual"
+BUILD_DROP_LAST_LUMA_RES="$ROOT/build/verilator/h264_decode_core_p16z_drop_last_luma_residual"
 BUILD_SWAP_SCHED_COEFF="$ROOT/build/verilator/h264_decode_core_p16z_swap_scheduled_coeff"
 BUILD_SWAP_CHROMA_READ="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_read"
 RTL=(
@@ -47,7 +48,7 @@ for f in "$TOP" "$TB" "${RTL[@]}"; do
   fi
 done
 
-mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUILD_BAD_RBSP" "$BUILD_DROP_MV_NB" "$BUILD_DROP_SCHED_RES" "$BUILD_SWAP_SCHED_COEFF" "$BUILD_SWAP_CHROMA_READ"
+mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUILD_BAD_RBSP" "$BUILD_DROP_MV_NB" "$BUILD_DROP_SCHED_RES" "$BUILD_DROP_LAST_LUMA_RES" "$BUILD_SWAP_SCHED_COEFF" "$BUILD_SWAP_CHROMA_READ"
 echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core P16x16 real-P)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -157,6 +158,23 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p1
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_decode_core p16x16 real-P red-check: dropped scheduled residual fault failed exact samples"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DROP_LAST_LUMA_RES" \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL[@]}" "$TB"
+set +e
+DROP_LAST_LUMA_RES_OUT="$($BUILD_DROP_LAST_LUMA_RES/Vh264_decode_core_p16z_tb 2>&1)"
+DROP_LAST_LUMA_RES_RC=$?
+set -e
+printf '%s\n' "$DROP_LAST_LUMA_RES_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p16z_drop_last_luma_residual "$DROP_LAST_LUMA_RES_RC" <<<"$DROP_LAST_LUMA_RES_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$DROP_LAST_LUMA_RES_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core p16x16 real-P red-check: dropped last luma residual fault failed exact samples"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SWAP_SCHED_COEFF" \

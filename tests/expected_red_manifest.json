@@ -114,6 +114,14 @@
       ]
     },
     {
+      "id": "h264_decode_core_p16z_drop_last_luma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping the last scheduled luma CAVLC/IDCT block must fail a late-block sample, proving full-macroblock traversal is not zero-residual-vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 204 plane=Y got=51 want=58 pred=51 residual=7"
+      ]
+    },
+    {
       "id": "h264_decode_core_p16z_swap_scheduled_coeff",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
       "why": "Swapping scheduled CAVLC coefficient scan positions must fail independently from residual magnitude drops, proving the fixture catches scan-order bugs.",

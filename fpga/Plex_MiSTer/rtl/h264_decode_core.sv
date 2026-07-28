@@ -257,7 +257,7 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
-    localparam [2:0] P16_RES_BLOCKS = 3'd4;
+    localparam [4:0] P16_RES_BLOCKS = 5'd16;
     localparam [15:0] FRAME_W16 = 16'(FRAME_W);
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
@@ -276,7 +276,7 @@ module h264_decode_core #(
     reg [1:0]  p16_ref_idx_l0_r;
     reg [6:0]  p16_tap_idx;
     reg [9:0]  p16_res_bit_offset_r;
-    reg [2:0]  p16_res_block_idx;
+    reg [4:0]  p16_res_block_idx;
     reg        cavlc_start_r;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -592,7 +592,7 @@ module h264_decode_core #(
             p16_ref_idx_l0_r <= 2'd0;
             p16_tap_idx <= 7'd0;
             p16_res_bit_offset_r <= 10'd0;
-            p16_res_block_idx <= 3'd0;
+            p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
@@ -658,7 +658,7 @@ module h264_decode_core #(
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
-                    p16_res_block_idx <= 3'd0;
+                    p16_res_block_idx <= 5'd0;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -692,13 +692,16 @@ module h264_decode_core #(
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
                         for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
-                            lat_p16_residual_y[((wb_i / 4) * 16) + {27'd0, p16_res_block_idx, 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
+`ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
+                            if (p16_res_block_idx != (P16_RES_BLOCKS - 5'd1))
+`endif
+                            lat_p16_residual_y[{24'd0, p16_res_block_idx[3:2], 6'd0} + ((wb_i / 4) * 16) + {28'd0, p16_res_block_idx[1:0], 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
                     end
 `endif
-                    if (p16_res_block_idx == (P16_RES_BLOCKS - 3'd1)) begin
+                    if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
                         wb_state <= ST_P16_TAP_REQ;
                     end else begin
-                        p16_res_block_idx <= p16_res_block_idx + 3'd1;
+                        p16_res_block_idx <= p16_res_block_idx + 5'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         wb_state <= ST_P16_RES_START;
                     end
