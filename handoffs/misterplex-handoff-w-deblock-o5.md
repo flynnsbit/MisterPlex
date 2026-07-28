@@ -585,3 +585,114 @@ Both new gates run inside `make unit`. The two "known unrelated failures" quoted
 3. **Remove the three `bench_only_modules.txt` entries** (`h264_decode_core`, `h264_deblock_mb_filter`, `h264_deblock_qpc`) the moment `stream_path` drives the core, and flip `DEBLOCK_IN_LOOP` on at that instantiation. `stream_path.sv` already exports `disable_deblocking_filter_idc`, `slice_alpha_c0_offset` and `slice_beta_offset` — they connect straight across.
 4. **Fit cost.** Ask `w-fit-o5` for register/M10K numbers on `h264_deblock_mb_filter`; the 400+144+144-byte skirt buffer is the obvious risk, and if it does not fit it should become a line-buffered streaming filter rather than a whole-neighbourhood register file.
 5. **Real samples.** Every number in §4 becomes far stronger the moment any real reconstructed frame exists to filter.
+
+## §0d — Failure mode 3: my deblock filter is NOT in any fittable design
+
+**Correction of my own published claim, first.** I told the fleet that
+`scripts/check_prefit_hierarchy.py` satisfied RULING 3 condition 4. That claim
+was too strong and is **withdrawn**. `w-fit-o5` measured with Quartus Analysis &
+Synthesis (`a8aa8eb`) that `h264_decode_core` is `ELABORATED_BUT_OPTIMIZED_AWAY`
+on the same source my gate calls PRESENT. Verilator elaborates the instance
+faithfully; Quartus then deletes it for contributing zero resources. My gate
+detects failure modes 1 (not compiled) and 2 (not instantiated) **only**. Its
+docstring and its `PREFIT_HIER_OK` line now say so (`detects=modes_1_2_only
+mode3_optimized_away=UNCHECKED`). This is the same over-claim the parent made
+about the subtree gate, made by me, one rung down.
+
+**New instrument: `scripts/check_deadlogic_sink.py`.** Detects mode 3 in ~1
+minute with no Quartus. Verilator's `UNUSEDSIGNAL` gives the leaves of the
+unobservable set; the gate walks that set backwards to the nets bound to a
+module's output ports, then requires liveness to be **transitive to `emu`**.
+Conservative by construction: anything it cannot resolve counts as LIVE, so
+rc=1 is strong evidence and rc=0 is weak evidence.
+
+**Cross-validated against the only final oracle.** Post-fit hierarchy of
+`fb4bad84` reported the DPB modules present *only* under `decode_stub`. The gate
+independently derives the same parentage from source:
+`h264_dpb_i420_addr=LIVE [emu|stream_path|decode_stub|h264_dpb_one_ref|h264_dpb_mb_write_addr|h264_dpb_i420_addr]`.
+
+**MEASURED on `w-deblock-o5-converge`. Denominator: 62 modules declared in the
+36 `files.qip` sources. 42 LIVE / 20 DEAD_SINK.** The gate is not trivially red
+— the entire display/present/framework path is LIVE. But:
+
+```
+h264_decode_core         DEAD_SINK [stream_path:0/13_live_outputs]
+h264_deblock_mb_filter   DEAD_SINK [DEAD_PARENT[stream_path:0/13_live_outputs]->h264_deblock_mb_filter]
+h264_deblock_qpc         DEAD_SINK [...]->h264_deblock_qpc
+h264_deblock_bs          DEAD_SINK   h264_deblock_edge       DEAD_SINK
+h264_deblock_edge_pipe   DEAD_SINK   h264_deblock_thresholds DEAD_SINK
+h264_decode_top          DEAD_SINK   h264_intra_nb_ctx       DEAD_SINK
+```
+
+**Every H.264 module in the product lineage is DEAD_SINK, and every one traces
+to a single root cause: the core's 13 output nets are read only by `_keep` in
+`stream_path.sv:610`, and `_keep` is itself read by nothing.** The keep-alive
+keeps nothing — the same defect `w-fit-o5` found inside the core at
+`h264_decode_core.sv:997`, present again one level up.
+
+**Consequence I must state plainly: every "1170/1170" deblock number I have
+published is SIMULATION-ONLY.** `core_deblock_mbs=1170/1170`,
+`dpb_sample_writes=449280/449280`, `skipped_mbs_filtered=928/928`,
+`qp_mismatches=0/1170` — all still measured, all still red-proved, and none of
+them a product claim, because the filter is not in a design that could be
+fitted today. The full-frame scope work is real; its reachability is not.
+
+**Correction to an inherited claim.** `h264_deblock_writeback_ctrl` — my
+predecessor's flagship, the module whose core-rooted reachability became fleet
+policy — reads
+`LIVE [emu|stream_path|decode_stub|h264_deblock_writeback_ctrl]`. It survives
+into silicon **only through the retired painter**. Its instance under
+`h264_decode_core` is dead. When `decode_stub` is retired (RULING 2, a capacity
+precondition), it goes dead too unless the core's outputs are consumed first.
+The predecessor's ordering contract and QPc trap are unaffected — they are
+simulation properties and both still hold — but the reachability half of that
+inheritance is now measured false.
+
+**Red proofs** (`tests/unit/test_deadlogic_sink_redproof.sh`, 5 mutations, all
+flip): unknown argument -> rc=2; empty requirement list -> rc=2; unknown module
+-> rc=1 named; **twin probes** — two byte-identical modules injected into
+`stream_path`, one output routed to a port of `emu` and one not, giving
+`dl_probe_live=LIVE` rc=0 and `dl_probe_dead=DEAD_SINK` rc=1, so the only
+property being discriminated is observability; suppressed `UNUSEDSIGNAL` ->
+rc=1 with `no UNUSEDSIGNAL warnings at all` rather than a free LIVE for every
+module. Positive control asserts modules confirmed present in fitted silicon
+(`decode_stub`, `line_buf_ram`, `present_cadence`) read LIVE, so an over-eager
+analysis cannot pass this suite. All restores use `cmp -s` against a
+pre-mutation snapshot.
+
+**Two defects found in my own gate by mutation, not by reading.** (1) A
+module's own instantiation counted as a reader of its own output nets, so every
+module read LIVE for free — the exact "exits 0 without doing any work" class.
+Fixed by excising the instance span before building the reader map. (2) An
+output bound to an indexed expression (`.rd_data(line_q[li])`) was scored dead,
+producing a false `line_buf_ram=DEAD_SINK`. Fixed by treating unanalysable
+bindings as LIVE: conservatism must always point away from declaring something
+dead, or the gate sends people hunting defects that do not exist.
+
+**Also verified, and it is a negative result worth recording:** running
+Verilator *without* `-fno-inline` to see whether its own optimizer drops the
+dead core is **not** a usable oracle — inlining collapses 65 module headers to
+4, so absence proves nothing. Discarded before it could become a gate.
+
+**Adopted, not rebuilt:** `scripts/check_prefit_elaboration.sh` and
+`scripts/check_map_hierarchy.py` from `w-fit-o5` `a8aa8eb`. Confirmed by reading
+that they invoke `quartus_map` only — no `quartus_fit`, no `quartus_asm` — so
+they do not consume the fit token. **I have not run them; I do not hold the
+Quartus slot.** They are on this branch so `w-fit-o5` can run A&S here directly.
+
+**Registered in `make unit`:** `test_deadlogic_sink_redproof.sh` (hard gate,
+rc=0) and `test_product_deadlogic_status.sh`. The latter reports the true red
+state as a named CRITICAL skip — `deadlogic-sink-decode-lineage-unobservable` —
+rather than a hard failure, because breaking the build for every worker does not
+make the core any more alive and would simply be overridden. It flips to a hard
+green automatically once the outputs are consumed; verified by mutation.
+`make unit` rc=0, `GATE_SKIP_SUMMARY total=3 critical=2 high=1`.
+
+**For `w-decode-o5`:** the remedy is to consume the core's outputs — routing
+`_keep` to an observable port is *not* the fix and was used here only as a
+red/green proof (applied, measured, restored). The measured effect of making the
+core observable is that `h264_decode_core` and every deblock module below it
+turn LIVE in one step:
+`LIVE [emu|stream_path|h264_decode_core|h264_deblock_mb_filter]`. Note also that
+the core's inputs are tied to constants at `stream_path.sv:447-459`, so it will
+keep collapsing until both ends are real.
