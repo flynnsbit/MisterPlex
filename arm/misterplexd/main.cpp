@@ -411,8 +411,7 @@ int main(int argc, char** argv) {
         player.setIdleMode(im);
         // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
         // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
-        const auto osdControlConf = loadConf(confPath, "OSD_CONTROL");
-        osdControl = osdControlConf.empty() ? true : confTruthy(osdControlConf);
+        osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
         player.setOsdControl(osdControl);
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
