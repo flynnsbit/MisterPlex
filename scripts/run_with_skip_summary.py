@@ -226,6 +226,36 @@ def self_test() -> int:
         print(inv)
         print(f"missing derived geometry contract: {expected_geometry}")
         return 1
+    # Second, independent path to the same record: drive the real registry with a
+    # credentials-free environment. The original defect was that this was the
+    # *only* path, so the self-test silently checked nothing on any host that had
+    # credentials configured in the HOME-global misterplex.conf.
+    saved_env = {
+        key: os.environ.get(key)
+        for key in (
+            "PLEX_BASE",
+            "PLEX_TOKEN",
+            "MISTERPLEX_BASELINE_KEY",
+            "PLEX_KEY",
+            "MISTERPLEX_CONF",
+            "MISTER_CONF",
+        )
+    }
+    try:
+        for key in saved_env:
+            os.environ.pop(key, None)
+        os.environ["MISTERPLEX_CONF"] = str(ROOT / "assets" / "missing-self-test.conf")
+        registry_inv = summarize(registry_skips("make-unit"))
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    if expected_geometry not in registry_inv:
+        print(registry_inv)
+        print(f"missing derived geometry contract from registry: {expected_geometry}")
+        return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
     print("SELFTEST_GREEN_SUMMARY")

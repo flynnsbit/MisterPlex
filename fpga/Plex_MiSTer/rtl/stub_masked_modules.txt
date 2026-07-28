@@ -1,0 +1,30 @@
+# Modules reachable from the product root `emu` ONLY through a retired masking
+# lineage (decode_stub), and NOT through the product decoder h264_decode_core.
+#
+# Their presence in an emu-rooted reachable set is NOT evidence of product decode
+# capability. Parent ruling 2026-07-28.
+#
+# This file is a ratchet, enforced by scripts/check_decode_core_subtree.py:
+#   * a stub-masked module missing from this list fails the gate (new masking);
+#   * a listed module that is no longer stub-masked fails the gate (stale entry).
+#
+# Regenerate with: python3 scripts/check_decode_core_subtree.py --update-baseline
+
+decode_stub: reachable from emu only via decode_stub
+h264_chroma_epel_block_8x8: reachable from emu only via decode_stub
+h264_chroma_epel_sample: reachable from emu only via decode_stub
+h264_deblock_writeback_ctrl: reachable from emu only via decode_stub
+h264_dequant4x4: reachable from emu only via decode_stub
+h264_dpb_i420_addr: reachable from emu only via decode_stub
+h264_dpb_mb_write_addr: reachable from emu only via decode_stub
+h264_dpb_one_ref: reachable from emu only via decode_stub
+h264_idct4x4: reachable from emu only via decode_stub
+h264_inter_mc_16x16: reachable from emu only via decode_stub
+h264_inter_mc_part: reachable from emu only via decode_stub
+h264_luma_qpel_block_16x16: reachable from emu only via decode_stub
+h264_luma_qpel_sample: reachable from emu only via decode_stub
+h264_luma_ref_tap_addr: reachable from emu only via decode_stub
+h264_mv_pred_16x16: reachable from emu only via decode_stub
+h264_mv_pred_part: reachable from emu only via decode_stub
+h264_recon4x4: reachable from emu only via decode_stub
+h264_ref_clamp: reachable from emu only via decode_stub

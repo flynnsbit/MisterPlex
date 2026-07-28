@@ -339,3 +339,112 @@ They report different numbers for the same tree. Any quoted figure must name the
 branch that produced it. On integration the canonical version must win, or
 W-DEBLOCK's registered `make unit` line will either break on unknown arguments
 or silently revert to the unguarded semantics.
+
+## 8. Core-subtree standard (parent ruling 2026-07-28)
+
+### 8.1 Ruling re-derived independently at `w-decode-hour27` `ddb7c97`
+
+The parent's core-subtree lists were re-measured module-for-module with the
+W-GATE instrument. **All 15 confirmed**, 8 present and 7 absent, exactly as
+stated. Aggregate:
+
+| Quantity | Value |
+|---|---|
+| `emu`-reachable RTL modules | 47 |
+| `h264_decode_core` subtree | 15 |
+| `decode_stub` subtree | 18 |
+| stub-masked (emu-reachable only via the stub) | **9** |
+
+### 8.2 Two additions to the ruling
+
+**(a) The masked list is 8 real modules, not 7.** `h264_deblock_writeback_ctrl`
+is also stub-masked at `ddb7c97`:
+
+```
+h264_chroma_epel_block_8x8   h264_deblock_writeback_ctrl  h264_dpb_one_ref
+h264_inter_mc_16x16          h264_inter_mc_part           h264_luma_qpel_block_16x16
+h264_luma_ref_tap_addr       h264_ref_clamp
+```
+
+**(b) Core-subtree membership is still not sufficient, for a reason beyond
+elaboration blind spots.** At `ddb7c97` the core is instantiated in
+`stream_path` but every one of its outputs is dead:
+
+```
+h264_decode_core: outputs=13 {'dead_end': 13}
+decode_stub:      outputs=10 {'live': 10}
+```
+
+All 13 terminate on the zero-fanout `_keep` net. Moving the 8 masked modules
+under the core therefore does not by itself produce a frame: the core's
+`dpb_wr_en/dpb_wr_addr/dpb_wr_data` must reach the frame store, and today only
+`decode_stub` writes pixels. `DECODE_OUTPUT_SINK` in
+`scripts/check_decode_completeness.py` is the gate for that.
+
+### 8.3 Per-category truth at `ddb7c97` (denominator = manifest modules)
+
+```
+bitstream_entropy           core=0/4  stub_masked=0  absent=4
+residual_dequant_transform  core=4/5  stub_masked=0  absent=1
+intra_prediction            core=2/4  stub_masked=0  absent=2
+inter_prediction_mc_subpel  core=2/8  stub_masked=6  absent=0
+mv_prediction               core=2/2  stub_masked=0  absent=0
+dpb_reference_management    core=2/3  stub_masked=1  absent=0
+deblocking_writeback        core=0/5  stub_masked=1  absent=4
+```
+
+12 of 31 capability modules are under the product decoder. Note that
+`bitstream_entropy` is 0/4 with all four **absent, not masked** — a larger gap
+than MC, and one no amount of stub-unmasking will close.
+
+### 8.4 The gate: `scripts/check_decode_core_subtree.py`
+
+Non-optional, registered in `make unit`. Prints `Scope:` first, classifies every
+capability module as `CORE_REACHABLE` / `STUB_MASKED` / `ABSENT`, and ratchets
+the stub-masked set against `fpga/Plex_MiSTer/rtl/stub_masked_modules.txt`:
+
+* stub-masked but undeclared → hard fail (new masking);
+* declared but no longer stub-masked → hard fail (stale entry must be deleted).
+
+Both directions fail, so the number can only move deliberately and the manifest
+diff is the evidence of progress. `--update-baseline` regenerates it.
+
+**Red/green by structural mutation of tracked RTL** (mutate → rc=1 → restore →
+rc=0):
+
+| Mutation | Result |
+|---|---|
+| instantiate `h264_deblock_bs` under `decode_stub` | rc=1 `STUB_MASKED_UNDECLARED h264_deblock_bs` |
+| rename `h264_ref_clamp` instantiation in `h264_inter_pred.sv` | rc=1 `STUB_MASKED_STALE h264_ref_clamp` |
+| restore both | rc=0 `DECODE_CORE_SUBTREE_OK` |
+
+Repeatable version without RTL edits in `tests/unit/test_decode_core_subtree_gate.py`.
+
+### 8.5 Caveat on ruling point 2
+
+The ruling endorses `--root h264_decode_core --require <module>`. That form is
+sound **only where `h264_decode_core` is itself product-reachable**. On
+`w-deblock-seam` `2c2cb83` it is not — it has zero instantiating parents — and
+the unguarded checker on that branch returns rc=0 for it, and equally rc=0 when
+rooted at `h264_decode_skeleton`, which is dead code. The canonical checker now
+refuses a non-product `--root` (§7). On `w-decode-hour27` the two agree, because
+there the core really is a child of `stream_path`.
+
+## 9. `make unit` geometry contract: branch survey
+
+Corrected measurement. There are **two independent fixes** for the same defect,
+so a single marker grep mis-reports it:
+
+* `FIXED(w-gate)` — forces the record via `make_unit_pms_inventory_record`;
+* `FIXED(w-deblock)` — clears credential env and points `MISTERPLEX_CONF` at a
+  deliberately absent file, driving the real registry.
+
+Survey of 22 remote branches: **8 fixed, 14 broken**. `parent/integ-hour27` is
+fixed. Still broken and in active use: `w-decode-hour27`, `w-osd-o5`,
+`w-arm-bitstream-feed`, `w-arm-present-gap`, `w-cast-play-init`,
+`w-cast-play-state`, `w-e2e-playwright`, `w-deblock`, `w-swap-livelock`.
+
+`w-gate-hour28` now carries **both** paths, so it merges cleanly with
+`parent/integ-hour27` and asserts the contract twice. Red-proved by pointing the
+second path at the real credentialed conf: rc=1 with
+`missing derived geometry contract from registry: coded 624x480/display 618x480`.
