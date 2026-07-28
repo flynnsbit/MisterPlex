@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright capture-rig-preflight
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright capture-rig-preflight left-edge-clip-gate
 
 all: unit
 
@@ -602,3 +602,12 @@ cast-timeline-playwright:
 capture-rig-preflight:
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label capture-rig-preflight -- \
 	  bash $(ROOT)/tests/hw/test_capture_preflight.sh
+
+# Left-edge clip artifact gate.  After a core reset the idle logo grey background
+# (DDR luma=44 from col 0) must appear at display col 0.  Known defect in RBF
+# 00eebd5e: 24-pixel black strip on left edge (source cols 0-10 absent from HDMI).
+# Pass captured frames as args, or let it capture live from auto-detected HDMI device.
+left-edge-clip-gate:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label left-edge-clip-gate -- \
+	  bash $(ROOT)/tests/hw/test_left_edge_clip.sh
+
