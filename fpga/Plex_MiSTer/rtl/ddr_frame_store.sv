@@ -920,8 +920,13 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
+					// pending_ready_ddr must stay high when prep IS ready but a
+					// CURRENT-line fill is being scheduled (sched_for_pending=0).
+					// Original: sched_valid alone suppressed pending_ready_c,
+					// creating a 1-cycle pulse at 90 MHz that the 20 MHz CLK
+					// domain 2-FF sync could not reliably capture (4.5:1 ratio).
 					pending_ready_ddr <= swap_pending_d2 &&
-					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
+					                     ((sched_valid && sched_for_pending) ? sched_pending_ready : pending_ready_c);
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
