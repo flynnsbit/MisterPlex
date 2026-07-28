@@ -380,6 +380,8 @@ $(ROOT)/build/test_resolve: $(ROOT)/tests/unit/test_resolve.cpp \
 $(ROOT)/build/pms_baseline_probe: $(ROOT)/tools/pms_baseline_probe.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal.hpp \
 		$(ROOT)/host/libmisterplex/h264_sps.hpp
 	@mkdir -p $(ROOT)/build
@@ -389,6 +391,8 @@ $(ROOT)/build/pms_baseline_probe: $(ROOT)/tools/pms_baseline_probe.cpp \
 $(ROOT)/build/pms_nal_stats: $(ROOT)/tools/pms_nal_stats.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
 		$(ROOT)/host/libmisterplex/h264_bitstream_transport.hpp \
 		$(ROOT)/host/libmisterplex/h264_nal_dispatch.hpp
 	@mkdir -p $(ROOT)/build
@@ -399,7 +403,9 @@ $(ROOT)/build/test_pms_timeline: $(ROOT)/tests/unit/test_pms_timeline.cpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.cpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.hpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-		$(ROOT)/arm/misterplexd/plex_resolve.hpp
+		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
+		$(ROOT)/host/libmisterplex/osd_menu.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
 		$(ROOT)/tests/unit/test_pms_timeline.cpp \
@@ -453,6 +459,7 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_nal.hpp \
 	$(ROOT)/host/libmisterplex/h264_sps.hpp \
 	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+	$(ROOT)/host/libmisterplex/osd_menu.hpp \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \

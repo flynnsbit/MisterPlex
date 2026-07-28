@@ -159,10 +159,14 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 } // namespace
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
-    static const std::vector<PlexTranscodeProfile> profiles = {
-        {"240p", "320x240", kPlex240pWeakBitrateKbps, 40, "baseline", 30},
-        {"480p", "624x480", kPlex480pWeakBitrateKbps, 60, "baseline", 30},
-    };
+    static const std::vector<PlexTranscodeProfile> profiles = [] {
+        const auto p240 = contentResolutionFor240p();
+        const auto p480 = contentResolutionFor480p();
+        return std::vector<PlexTranscodeProfile>{
+            {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
+            {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
+        };
+    }();
     return profiles;
 }
 
@@ -326,9 +330,11 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("H.264 profile must be baseline for the current decoder");
     if (weak.h264Level > 30)
         return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= 640 || h >= 480) {
-        if (w > 640 || h > 480)
-            return fail("current built-in profiles stop at 640x480");
+    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
+        if (w > kDdrFrameStoreMaxWidth || h > kDdrFrameStoreMaxHeight)
+            return fail("current built-in profiles stop at " +
+                        std::to_string(kDdrFrameStoreMaxWidth) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight));
         if (weak.maxVideoBitrateKbps < 2000)
             return fail("480p profile bitrate is too low");
     } else if (weak.maxVideoBitrateKbps < 750) {
