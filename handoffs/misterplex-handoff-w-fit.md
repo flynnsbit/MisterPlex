@@ -3577,3 +3577,39 @@ stands)"*. **It does not stand — I retracted it in §48.** The poison test rea
 address `0x300FF128` the magic is `0x504C5844` and the status word advances.
 Every inference built on "absent PLXD" — including "the idle screen reaches the
 display via the absent-PLXD timed fallback" — rests on a withdrawn premise.
+
+### §51.1 — Adopting W-E2E-O5's ordering check; my own gate was unsound
+
+Their `fabric_provenance` probe has something `capture_provenance.sh` lacked, and
+the gap was real. My script asserted:
+
+> `LOADED_DESIGN: Plex, so rbf_on_disk_md5=... describes the running fabric`
+
+**That inference does not follow.** There is no bitstream readback and no
+fabric-published build ID, so the only evidence of what is *in* the fabric is
+ordering: the load reads whatever bytes were on disk **at load time**. If the RBF
+is rewritten after the load — which is exactly what a deploy-without-reload does,
+and what `DEPLOY_LOAD=none` does by design — the md5 describes bytes that are not
+in the silicon. My gate would have called that a PASS.
+
+Now measured and emitted:
+```
+rbf_mtime      2026-07-28 14:56:44
+core_load_time 2026-07-28 16:00:16   (/tmp/CORENAME mtime tracks core loads)
+LOAD_AFTER_WRITE: core loaded 3812s after the RBF was written
+```
+`3812s` matches W-E2E-O5's independently computed figure exactly.
+
+Red-proofs (stubbed transport in `build/prov-redproof/`, device untouched — a
+`touch` on the device RBF would have poisoned real attribution for everyone):
+
+| case | ordering | rc | |
+|---|---|---|---|
+| control | load 3812s after write | **0** | proves the stub can pass |
+| red 1 | RBF written 583s **after** load | **1** | **md5 matched and it still failed** |
+| red 2 | mtimes unavailable | **77** | unscored, never 0 |
+
+Red 1 is the one that matters: the md5 is correct and the verdict is still FAIL,
+because correct bytes in the wrong order are not evidence. The control exists so
+the reds cannot be stub artifacts — the same vacuous-control discipline that
+caught the SDC non-experiment.

@@ -47,6 +47,10 @@ OUT=$("${SSH[@]}" '
   echo "uptime_s=$(cut -d. -f1 /proc/uptime)"
   echo "corename=$(cat /tmp/CORENAME 2>/dev/null | tr -d "\0\r\n")"
   echo "rbf_on_disk_md5=$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | cut -d" " -f1)"
+  echo "rbf_mtime_epoch=$(date -r /media/fat/_Utility/Plex.rbf +%s 2>/dev/null)"
+  echo "core_load_epoch=$(date -r /tmp/CORENAME +%s 2>/dev/null)"
+  echo "rbf_mtime=$(date -r /media/fat/_Utility/Plex.rbf "+%F %T" 2>/dev/null)"
+  echo "core_load_time=$(date -r /tmp/CORENAME "+%F %T" 2>/dev/null)"
   echo "fpga_state=$(cat /sys/class/fpga_manager/fpga0/state 2>/dev/null)"
   echo "daemon_pid=$(pidof misterplexd 2>/dev/null)"
   echo "plxd_magic=$(devmem 0x300FF128 32 2>/dev/null)"
@@ -70,13 +74,34 @@ MAGIC="$(get plxd_magic)"
 # The on-disk md5 is only provenance for the LOADED design when the loaded core
 # is Plex. Say so explicitly rather than letting a reader assume it.
 if [[ "$CORE" == "Plex" ]]; then
-  echo "LOADED_DESIGN: Plex, so rbf_on_disk_md5=${MD5:0:8} describes the running fabric"
+  # There is no bitstream readback and no fabric-published build ID, so the
+  # identity of the RUNNING design can only be established by ordering: the
+  # load reads whatever bytes were on disk at load time. If the RBF was
+  # rewritten AFTER the core was loaded, its md5 describes bytes that are NOT
+  # in the fabric, and every attribution made from it is wrong.
+  # (Technique adopted from W-E2E-O5's fabric_provenance probe.)
+  RBF_T="$(get rbf_mtime_epoch)"; LOAD_T="$(get core_load_epoch)"
+  if [[ -z "$RBF_T" || -z "$LOAD_T" ]]; then
+    echo "ORDER_UNSCORED: missing mtimes (rbf='$RBF_T' load='$LOAD_T');"
+    echo "ORDER_UNSCORED: cannot prove the fabric was configured from these bytes."
+    ORDER_OK=unknown
+  elif (( LOAD_T >= RBF_T )); then
+    echo "LOAD_AFTER_WRITE: core loaded $((LOAD_T-RBF_T))s after the RBF was written"
+    echo "LOADED_DESIGN: Plex, so rbf_on_disk_md5=${MD5:0:8} describes the running fabric"
+    ORDER_OK=yes
+  else
+    echo "STALE_BINDING: RBF was rewritten $((RBF_T-LOAD_T))s AFTER the core was loaded."
+    echo "STALE_BINDING: rbf_on_disk_md5=${MD5:0:8} does NOT describe the running fabric."
+    echo "STALE_BINDING: the fabric still holds the PREVIOUS bitstream; reload before attributing."
+    ORDER_OK=no
+  fi
   if [[ "$MAGIC" == "0x504C5844" ]]; then
     echo "FABRIC_LIVE: PLXD magic present at 0x300FF128 — the Plex fabric is publishing"
   else
     echo "FABRIC_QUIET: PLXD magic=${MAGIC:-none} (expected 0x504C5844)"
   fi
 else
+  ORDER_OK=n/a
   echo "LOADED_DESIGN: ${CORE:-UNKNOWN} — NOT Plex."
   echo "PROVENANCE_WARNING: rbf_on_disk_md5 describes a file that is NOT loaded."
   echo "PROVENANCE_WARNING: a capture taken now is evidence about ${CORE:-UNKNOWN}, not about Plex."
@@ -92,11 +117,20 @@ if [[ -n "$EXPECT_CORE" ]]; then
   fi
 fi
 if [[ -n "$EXPECT_MD5" ]]; then
-  if [[ "$MD5" == "$EXPECT_MD5"* ]]; then
-    echo "EXPECT_MD5_OK: ${MD5:0:8}"
-  else
+  if [[ "$MD5" != "$EXPECT_MD5"* ]]; then
     echo "EXPECT_MD5_FAIL: wanted '${EXPECT_MD5:0:8}', on disk is '${MD5:0:8}'"
     verdict=1
+  elif [[ "$ORDER_OK" == "no" ]]; then
+    # The bytes match, but they were written after the load, so they are not the
+    # bytes in the fabric. Matching an md5 here would be a false attribution.
+    echo "EXPECT_MD5_FAIL: on-disk md5 matches '${MD5:0:8}' but STALE_BINDING applies —"
+    echo "EXPECT_MD5_FAIL: those bytes were written after the load and are NOT in the fabric."
+    verdict=1
+  elif [[ "$ORDER_OK" == "unknown" ]]; then
+    echo "EXPECT_MD5_UNSCORED: md5 matches '${MD5:0:8}' but load ordering is unprovable."
+    verdict=77
+  else
+    echo "EXPECT_MD5_OK: ${MD5:0:8} (and the fabric was configured from these bytes)"
   fi
 fi
 
