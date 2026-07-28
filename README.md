@@ -59,6 +59,7 @@ Edit `/media/fat/misterplex/misterplex.conf` and set your server:
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
 PRESENT=fb0
+OSD_CONTROL=1
 # PLEX_TOKEN=<optional-token>
 ```
 
