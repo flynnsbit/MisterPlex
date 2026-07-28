@@ -1404,3 +1404,69 @@ here would not change that.
 No deploy. STEP 2 authorizes `3b1e8435`, a *different* bitstream; re-bouncing
 `fb4bad84` would change nothing and spend the token for no information. Worker
 requests do not authorize deploys in any case, and the device is unreachable.
+
+---
+
+## 25. HDMI carried a valid stream DURING the network outage
+
+The question in §24.1(a) is answered, and it is the most informative datum of the
+last hour. I did not open `/dev/video0` -- it is W-E2E's. I read the artefact
+their live capture produced.
+
+### 25.1 The capture is current, and it succeeded
+
+```
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/build/post-deploy-3/status.log
+  LOCK_ACQUIRED 13:11:36.335
+  FFMPEG_DONE rc=0 13:13:06.528
+clip.mkv  100,772,734 bytes
+ffprobe   1280x720  avg_frame_rate 60/1  duration 90.003000  probe_rc=0
+```
+
+Timeline: device unreachable from **12:44**, re-confirmed dead at **13:09:15**
+(`ping rc=1`, `arp FAILED`, `ssh rc=255 No route to host`). The capture ran
+**13:11:36 -> 13:13:06**, entirely inside the outage, and returned **rc=0** with
+90.003 s of 1280x720@60 MJPEG.
+
+**HDMI does not traverse the network.** A valid video stream during a total
+layer-2 outage is only explicable if the DE10-Nano is powered and its FPGA is
+still driving video -- i.e. the outage is **network-only**, not a power loss and
+not a total FPGA hang.
+
+### 25.2 Stream character: static
+
+```
+Scope: 5402 video packets (frames) over 90.003 s = 60.02 fps
+min 18609  max 19915  mean 18609.2  median 18609  stdev 17.8
+distinct frame sizes = 2      coefficient of variation = 0.0010
+```
+
+5401 frames at exactly 18609 bytes plus a single 19915-byte outlier. The picture
+is not merely dark, it is **unchanging** -- consistent with W-E2E's `luma 7.0
+std 0.0, sha 2358782e identical across 30 frames`. Note luma 7.0 is a uniform very
+dark grey, **not** pure black (0).
+
+### 25.3 What this does NOT establish -- and the test that would
+
+The alternative explanation is that the MS2109 emits a **synthetic stream when its
+source is absent**. This data alone does not exclude it: a synthetic no-source
+pattern would also be perfectly static. So:
+
+* **Established:** a valid, static 1280x720@60 stream reached the capture device
+  during the outage.
+* **Not established:** that the stream originates from the DE10-Nano.
+
+The decisive test needs no hardware access and is W-E2E's to run: **does the hash
+`2358782e` / `luma 7.0` appear in captures taken while the device was verifiably
+reachable over ssh?** If yes, this exact frame state is the known "MiSTer alive,
+screen black" state, and observing it now shows the board is still in it --
+powered, network-dead. If that hash *also* appears in known no-source captures, it
+discriminates nothing. I have asked for that history rather than assuming either.
+
+### 25.4 Consequence if it holds
+
+If the board is powered and only its network is down, then the FPGA is running
+`fb4bad84` and painting a static dark screen -- which is exactly what my DDR
+measurements predict (§11: the fabric writes nothing, so nothing ever changes on
+screen). The two independent instruments would then agree. It also means the
+device may return without a power cycle, and STEP 2 becomes possible again.
