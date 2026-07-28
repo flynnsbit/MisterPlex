@@ -268,6 +268,25 @@ orphaned** — and it is on the branch declared the only viable merge base.
 Not mine to fix (parser/intra lineage). Flagged for `w-decode-o5` alongside stub
 retirement, and offered to `w-cast` since several are parser modules.
 
+### Three further defects the red proofs found in my own gate
+
+Recording these because the pattern matters more than the fixes: **every one was
+found by mutation, none by reading the code.**
+
+| defect | symptom | fix |
+|---|---|---|
+| reused Verilator output dir | stale `V<top>_*.h` from the previous green run made a mutated tree read green | purge `V<top>_*.h` before verilating, plus a non-vacuity floor and a permanent planted-stale-header red proof |
+| `exit 77` inside `make unit` | aborted the whole chain (`Makefile:135 Error 77` -> `Makefile:44 Error 2`); **no other unit gate returns 77** | emit `SKIP-NOT-PASS` and exit 0, so the skip inventory catalogues it |
+| generic skip record | `SkipRecord("skip-not-pass", ...)` deduplicates on `(name, severity, source)`, so my skip collapsed into an unrelated entry and vanished — `total=2` unchanged | classify as `CRITICAL prefit-hierarchy-core-orphaned`; now `total=3 critical=2` |
+
+The middle two together were the dangerous combination: an exit-0 gate whose
+skip is not catalogued is just a green that proves nothing. Measured end state:
+
+| branch | `make unit` | prefit gate | GATE_SKIP inventory |
+|---|---|---|---|
+| `w-deblock-o5-converge` | rc=0 | rc=0, 7 red proofs green | `total=2 critical=1 high=1` (pre-existing) |
+| `w-deblock-o5` (orphaned lineage) | rc=0 | **SKIP-NOT-PASS**, baseline red | `total=3 critical=2` — **named CRITICAL** |
+
 ## 0b. QPy accumulation bug in `h264_decode_core` — found via w-cast, fixed, red-proved
 
 Branch `w-deblock-o5-converge` **`a242b1f`**; ported to `w-deblock-o5` **`982f6ad`**.
