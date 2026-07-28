@@ -596,6 +596,92 @@ FIR constant-folds to zero and MC is optimized away a second time. **Consuming o
 but not sufficient for MC.** Whoever lands the parser seam must drive `dpb_rd_data` from real DPB
 reads and the MVs from parsed syntax, or MC will keep vanishing while every gate stays green.
 
+## 10e. MC survives *inside* the core - measured, and red-proved by mutation
+
+The core being deleted is w-decode-o5's to fix. The question that is mine is what happens *after*
+they fix it: when the core survives, does motion compensation survive with it, or does it collapse
+separately? Reachability cannot answer this and neither can the full-frame correctness proof - a
+predictor whose samples are computed and then dropped passes both and occupies no logic.
+
+Measured, `gate=path-to-port`, rc=0:
+
+```
+OUTPUTS_REACH_PORTS h264_inter_mc_part -> h264_decode_core: dpb_wr_data
+```
+
+Structurally: `p16_pred_y -> p16_pred_sample -> p16_pred_term -> p16_recon_sum ->
+dpb_ref_filtered_sample -> dpb_wr_data`. The predicted sample is added to the residual, clipped, and
+written to the reference store through a real output port. **MC is not separately dead logic.**
+
+Registered as `tests/unit/test_h264_mc_output_reaches_core_port.py`, in `make unit` (rc=0), with a
+control and two mutations, because a green with no red proves nothing:
+
+| proof | result |
+|---|---|
+| green on real source, and specifically via `dpb_wr_data` | rc=0 |
+| control: unmutated copy in the staging dir | rc=0 - the copy is not the variable |
+| red A: the six MC output connections rewired to nets nobody reads | rc=1 `NO_PATH_TO_PORT` |
+| red B: `assign dpb_wr_data = 8'd0` | rc=1 |
+| checker `--self-test` | rc=0, six cases |
+| unrecognised flag | rc=2, not a silent green |
+
+The control matters. Without it a red could be caused by staging the files rather than by the
+mutation, which is the vacuity class w-fit-o5 found in the SDC exoneration: four slots agreeing on an
+identical input demonstrate determinism, not neutrality. **A comparison must vary the thing it claims
+to test.**
+
+### Two false-alive bugs found by red-proving my own detector
+
+The first run reported MC reaching **two** ports, `dpb_wr_data` and `dpb_rd_addr`. The second was
+fabricated, and tracing the chain showed why:
+
+```
+dpb_rd_addr <- p16_win_rd_addr <- p16_rd_offset <- p16_chroma_plane_sz <- FRAME_W <- dpb_wr_data
+```
+
+`parameter int FRAME_W = 320,` is a parameter declaration, and the right-hand side was allowed to run
+to the next semicolon, swallowing the entire port list. Two guards followed:
+
+- parameter, localparam and port declarations create no dataflow edges - a parameter is an
+  elaboration-time constant and cannot carry runtime data;
+- a right-hand side is truncated at the first top-level comma, so the second declarator in
+  `wire a = x, b = y;` no longer appears to drive the first.
+
+Each guard has its own self-test case, and **each case was mutation-proved**: disabling the parameter
+guard gives `SELF_TEST_FAIL: a parameter declaration invented a path to dout`, disabling the comma
+guard gives `SELF_TEST_FAIL: a second declarator on the same line invented a path to dout`. The first
+version of the parameter case passed with the guard removed - it was **vacuous**, saved by the other
+guard - and was rewritten until it flipped. A self-test that cannot fail is not a self-test.
+
+This is the third and fourth false-alive I have removed from this tool. The pattern is consistent:
+every over-approximation in a deletion predictor shows up as a confident, specific, wrong "alive".
+
+### A second dead-end aggregator, inside the core
+
+Running the detector with the core as parent found one the deployed-design analysis had reported only
+as a Quartus warning:
+
+```
+DEAD_END_AGGREGATOR _keep_decode_core_inputs: ORs 51 signals and is never read
+```
+
+That is `Warning (10036)` at `h264_decode_core.sv:997` reproduced from source, by a tool that was
+never told the warning existed. There are therefore **two** keep-alives in the lineage that keep
+nothing: one in `stream_path` for the core's outputs, one in the core for its own inputs. Both must
+go, and neither is mine to remove.
+
+### Scope limits, declared up front
+
+- It is a **predictor**, not the oracle. Quartus A&S arbitrates. Green here is necessary, not sufficient.
+- It is built so it cannot report a false alive, so it can report a false alarm - for example where a
+  submodule genuinely forwards a signal through a path this tracer does not model. A false alarm costs
+  one 4-minute A&S run; a false alive costs a six-hour fit and a decoder-less bitstream.
+- `--gate path-to-port` narrows the verdict to the survival question. It is **not** an allowlist: the
+  dead-end aggregators are still printed, `UNGATED_DEAD_ENDS` says explicitly that they were not
+  gated, and the default `--gate all` still fails on them.
+- The wider detector still exits **1** on the real source and is still **not** registered in
+  `make unit`. Registering a failing gate is how a fleet acquires an allowlist.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.

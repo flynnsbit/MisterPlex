@@ -1,0 +1,8 @@
+OK green: h264_inter_mc_part outputs influence dpb_wr_data of h264_decode_core
+OK control: an unmutated copy is green, so the copy is not the variable
+OK red A: rewiring MC outputs to unread nets is caught
+OK red B: constant-driving dpb_wr_data is caught
+OK checker self-test rc=0
+OK strict args: an unrecognised flag is rc=2, not a silent green
+MC_SINK_OK h264_inter_mc_part -> h264_decode_core -> dpb_wr_data survives as observable logic; predictor only, Quartus A&S remains the oracle
+gate rc=0

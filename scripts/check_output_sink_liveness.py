@@ -35,8 +35,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
-PARENT = "stream_path"
-PRODUCT = "h264_decode_core"
+DEFAULT_PARENT = "stream_path"
+DEFAULT_PRODUCT = "h264_decode_core"
 # An OR-reduction of this many distinct signals is a keep-alive, not logic.
 AGGREGATE_MIN = 6
 
@@ -125,6 +125,27 @@ endmodule
 """
 
 
+PARAM_FIXTURE = """
+module pfixture (
+    input wire [7:0] src,
+    output wire [7:0] dout
+);
+  localparam int WIDTH = SRC_LIKE;
+  assign dout = WIDTH[7:0];
+endmodule
+"""
+
+COMMA_FIXTURE = """
+module cfixture (
+    input wire [7:0] src,
+    output wire [7:0] dout
+);
+  wire [7:0] a = src, b = other_net;
+  assign dout = a;
+endmodule
+"""
+
+
 def dead_ends(text):
     found = []
     for name, rhs in declarations(text).items():
@@ -137,6 +158,41 @@ def dead_ends(text):
         found.append((name, len(operands),
                       sorted(o for o in operands if o.startswith("core_"))))
     return found
+
+
+def parse_args(argv, product_default, parent_default):
+    """Strict argument parsing: an unrecognised flag is a hard error.
+
+    A checker that silently ignores unknown arguments hands out confident greens
+    to anyone who pastes a slightly wrong command line, which is exactly the
+    forbidden evidence. Refusing is cheaper than explaining.
+    """
+    parent, product, self_test_only = parent_default, product_default, False
+    gate, rtl_dir = "all", None
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--self-test":
+            self_test_only = True
+        elif arg in ("--parent", "--product", "--gate", "--rtl-dir"):
+            if idx + 1 >= len(argv):
+                raise ValueError("%s requires a value" % arg)
+            idx += 1
+            if arg == "--parent":
+                parent = argv[idx]
+            elif arg == "--product":
+                product = argv[idx]
+            elif arg == "--rtl-dir":
+                rtl_dir = pathlib.Path(argv[idx])
+            else:
+                if argv[idx] not in ("all", "path-to-port"):
+                    raise ValueError("--gate takes all or path-to-port, not %r"
+                                     % argv[idx])
+                gate = argv[idx]
+        else:
+            raise ValueError("unrecognised argument %r" % arg)
+        idx += 1
+    return parent, product, self_test_only, gate, rtl_dir
 
 
 def self_test():
@@ -172,6 +228,39 @@ def self_test():
         print("SELF_TEST_FAIL: missed a real path from a1 to out", file=sys.stderr)
         return 1
     print("OK self-test green: a real path to an output port is found")
+
+    # A parameter is an elaboration-time constant. Even where its expression
+    # textually mentions a name, it cannot carry runtime data, so SRC_LIKE must
+    # not reach dout through WIDTH. Dropping the parameter guard makes this fire.
+    param_text = strip_comments(PARAM_FIXTURE)
+    param_ports = module_ports(param_text, "pfixture")
+    if "dout" not in param_ports:
+        print("SELF_TEST_FAIL: output port not parsed from the parameter fixture",
+              file=sys.stderr)
+        return 1
+    bogus = reaches_port(param_text, {"SRC_LIKE"}, param_ports)
+    if bogus:
+        print("SELF_TEST_FAIL: a parameter declaration invented a path to %s"
+              % ", ".join(sorted(bogus)), file=sys.stderr)
+        return 1
+    print("OK self-test red: a parameter cannot carry data to a port")
+
+    # `wire [7:0] a = src, b = other_net;` declares two nets. Without truncating
+    # the right-hand side at the first top-level comma, other_net appears to drive
+    # a, and therefore dout. This is the guard that actually removed the false
+    # dpb_rd_addr path from the real core, so it is tested separately.
+    comma_text = strip_comments(COMMA_FIXTURE)
+    comma_ports = module_ports(comma_text, "cfixture")
+    if reaches_port(comma_text, {"src"}, comma_ports) != {"dout"}:
+        print("SELF_TEST_FAIL: lost the real src -> dout path in the comma fixture",
+              file=sys.stderr)
+        return 1
+    leaked = reaches_port(comma_text, {"other_net"}, comma_ports)
+    if leaked:
+        print("SELF_TEST_FAIL: a second declarator on the same line invented a "
+              "path to %s" % ", ".join(sorted(leaked)), file=sys.stderr)
+        return 1
+    print("OK self-test red: a second declarator on one line does not leak a path")
     return 0
 
 
@@ -185,6 +274,23 @@ def module_ports(text, module):
                           r"(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)", head))
 
 
+def truncate_at_comma(rhs):
+    """RHS up to the first comma outside brackets.
+
+    `wire a = x, b = y;` declares two nets; without this, y appears to drive a.
+    Concatenations and function calls keep their commas because those are nested.
+    """
+    depth = 0
+    for idx, ch in enumerate(rhs):
+        if ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return rhs[:idx]
+    return rhs
+
+
 def reaches_port(text, sources, ports):
     """Which of `sources` can influence any name in `ports`, transitively.
 
@@ -196,9 +302,19 @@ def reaches_port(text, sources, ports):
     difference between iterating dozens of times an hour and a few times a day.
     """
     edges = {}
-    for match in re.finditer(r"^\s*(?:assign\s+)?(?:wire|logic|reg)?[^;=\n]*?"
+    for match in re.finditer(r"^[ \t]*(?P<head>(?:assign\s+)?(?:wire|logic|reg|"
+                             r"parameter|localparam|input|output|inout)?[^;=\n]*?)"
                              r"\b([A-Za-z_]\w*)\s*=\s*([^;]*);", text, re.M):
-        dst, rhs = match.group(1), match.group(2)
+        head = match.group("head")
+        # A parameter is an elaboration-time constant, not a dataflow carrier, and
+        # a port declaration with a default is not an assignment either. Including
+        # them invents edges: `parameter int FRAME_W = 320,` in a parameter list
+        # let the RHS run to the next semicolon, swallowing the whole port list,
+        # and manufactured a path from the core's outputs to dpb_rd_addr that does
+        # not exist. That is a false "alive", the one error class this must not make.
+        if re.match(r"\s*(?:parameter|localparam|input|output|inout)\b", head):
+            continue
+        dst, rhs = match.group(2), truncate_at_comma(match.group(3))
         for src in set(re.findall(r"\b([A-Za-z_]\w*)\b", rhs)):
             edges.setdefault(src, set()).add(dst)
     # Deliberately NOT adding edges between the connections of one instance. That
@@ -216,12 +332,34 @@ def reaches_port(text, sources, ports):
     return seen & ports
 
 
+def owning_file(module, rtl_dir=None):
+    """The tracked RTL file that declares `module`, resolved, never hardcoded."""
+    pattern = re.compile(r"^\s*module\s+%s\b" % re.escape(module), re.M)
+    for path in sorted((rtl_dir or RTL).glob("*.sv")):
+        if pattern.search(strip_comments(path.read_text(errors="replace"))):
+            return path
+    return None
+
+
 def main():
-    if "--self-test" in sys.argv[1:]:
+    try:
+        parent, product, self_test_only, gate, rtl_dir = parse_args(
+            sys.argv[1:], DEFAULT_PRODUCT, DEFAULT_PARENT)
+    except ValueError as exc:
+        print("SINK_LIVENESS_ERROR: %s" % exc, file=sys.stderr)
+        return 2
+    if self_test_only:
         return self_test()
-    parent_path = RTL / (PARENT + ".sv")
-    if not parent_path.exists():
-        print("SINK_LIVENESS_ERROR: %s not found" % parent_path, file=sys.stderr)
+    PARENT, PRODUCT = parent, product
+    parent_path = owning_file(PARENT, rtl_dir)
+    if parent_path is None:
+        print("SINK_LIVENESS_ERROR: no tracked RTL file declares module %s" % PARENT,
+              file=sys.stderr)
+        return 2
+    product_path = owning_file(PRODUCT, rtl_dir)
+    if product_path is None:
+        print("SINK_LIVENESS_ERROR: no tracked RTL file declares module %s" % PRODUCT,
+              file=sys.stderr)
         return 2
     text = strip_comments(parent_path.read_text(errors="replace"))
 
@@ -245,7 +383,7 @@ def main():
               "lets synthesis constant-fold the instance away even once its outputs "
               "are consumed: %s" % (PRODUCT, len(tied), ", ".join(tied)))
 
-    core_text = strip_comments((RTL / (PRODUCT + ".sv")).read_text(errors="replace"))
+    core_text = strip_comments(product_path.read_text(errors="replace"))
     core_outputs = module_ports(core_text, PRODUCT)
     # Only nets driven BY the core can keep it alive. Tracing from its inputs too
     # counts paths that exist with or without the instance, which is how an
@@ -266,13 +404,25 @@ def main():
               "(scripts/check_prefit_elaboration.sh)."
               % (PRODUCT, PARENT, len(ports)), file=sys.stderr)
 
-    if failures or not landed:
-        print("SINK_LIVENESS_FAIL aggregators=%d path_to_port=%d product=%s parent=%s"
-              % (len(failures), len(landed), PRODUCT, PARENT), file=sys.stderr)
+    # --gate path-to-port narrows the verdict to the survival question alone. It
+    # is NOT an allowlist for the dead-end defect: that is still printed, loudly,
+    # and the wider gate still fails on it. It exists because "does this submodule
+    # reach a port of its own parent" is a different question from "does the
+    # parent leak its outputs to nothing", and a caller that owns only the first
+    # must not be forced to suppress the second to ask it.
+    if failures and gate == "path-to-port":
+        print("UNGATED_DEAD_ENDS %d aggregator(s) reported above are NOT gated by "
+              "--gate path-to-port; run without it to fail on them"
+              % len(failures), file=sys.stderr)
+    if not landed or (failures and gate == "all"):
+        print("SINK_LIVENESS_FAIL aggregators=%d path_to_port=%d product=%s "
+              "parent=%s gate=%s"
+              % (len(failures), len(landed), PRODUCT, PARENT, gate), file=sys.stderr)
         return 1
 
     print("SINK_LIVENESS_OK %s outputs reach %d parent port(s); "
-          "constant_tied_inputs=%d" % (PRODUCT, len(landed), len(tied)))
+          "constant_tied_inputs=%d gate=%s"
+          % (PRODUCT, len(landed), len(tied), gate))
     return 0
 
 

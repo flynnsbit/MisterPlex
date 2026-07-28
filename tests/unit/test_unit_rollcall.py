@@ -123,6 +123,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_reachability_redgreen.py",
     "python3 $(ROOT)/tests/unit/test_h264_decode_core_mc_elab_hierarchy.py",
     "python3 $(ROOT)/tests/unit/test_h264_decode_core_trunk_elab.py",
+    "python3 $(ROOT)/tests/unit/test_h264_mc_output_reaches_core_port.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",
     "$(ROOT)/tests/unit/test_rtl_invariants.sh",

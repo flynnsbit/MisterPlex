@@ -1,12 +1,31 @@
+=== default: stream_path instantiating h264_decode_core ===
 DEAD_END_AGGREGATOR _keep: ORs 47 signals and is never read, so synthesis deletes it and everything feeding it; product signals lost: core_busy, core_current_mb_addr, core_decode_state, core_dpb_rd_addr, core_dpb_rd_en, core_dpb_wr_addr, core_dpb_wr_data, core_dpb_wr_en, core_error, core_frame_done, core_frame_mb_count, core_luma4x4_valid, core_luma_feed_active, core_rbsp_request_offset, core_rbsp_request_valid
 NO_PATH_TO_PORT h264_decode_core outputs influence none of stream_path's 66 output ports, so synthesis has no reason to keep the instance: predict ELABORATED_BUT_OPTIMIZED_AWAY. Confirm with Quartus A&S (scripts/check_prefit_elaboration.sh).
-SINK_LIVENESS_FAIL aggregators=1 path_to_port=0 product=h264_decode_core parent=stream_path
+SINK_LIVENESS_FAIL aggregators=1 path_to_port=0 product=h264_decode_core parent=stream_path gate=all
 Scope: stream_path instantiating h264_decode_core - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
 CONSTANT_TIED_INPUTS h264_decode_core: 23 input ports are wired to literals, which lets synthesis constant-fold the instance away even once its outputs are consumed: cbp_chroma, cbp_luma, chroma_pred_mode, dpb_rd_data, dpb_ref_base, dpb_write_base, mb_residual_bit_offset, mv_x_qpel, mv_y_qpel, mvd_x_qpel, mvd_y_qpel, p16_mb_is_ref, p16_mb_x, p16_mb_y, p16_zero_mv_valid, part_idx, pps_chroma_qp_index_offset, rbsp_window_base, recon_mb_is_ref, recon_mb_valid, recon_mb_x, recon_mb_y, ref_idx_l0
 CORE_OUTPUT_NETS 13 traced from 13 declared output ports
-sink rc=1
+rc=1
+
+=== MC inside the core: h264_decode_core instantiating h264_inter_mc_part ===
+DEAD_END_AGGREGATOR _keep_decode_core_inputs: ORs 51 signals and is never read, so synthesis deletes it and everything feeding it
+UNGATED_DEAD_ENDS 1 aggregator(s) reported above are NOT gated by --gate path-to-port; run without it to fail on them
+Scope: h264_decode_core instantiating h264_inter_mc_part - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
+CONSTANT_TIED_INPUTS h264_inter_mc_part: 2 input ports are wired to literals, which lets synthesis constant-fold the instance away even once its outputs are consumed: part_h, part_w
+CORE_OUTPUT_NETS 6 traced from 6 declared output ports
+OUTPUTS_REACH_PORTS h264_inter_mc_part -> h264_decode_core: dpb_wr_data
+SINK_LIVENESS_OK h264_inter_mc_part outputs reach 1 parent port(s); constant_tied_inputs=2 gate=path-to-port
+rc=0
+
+=== self-test ===
 OK self-test red: dead-end aggregator detected (_keep, 7 operands)
 OK self-test green: an aggregator that is read is not reported
 OK self-test red: no path to a port is reported when none exists
 OK self-test green: a real path to an output port is found
-selftest rc=0
+OK self-test red: a parameter cannot carry data to a port
+OK self-test red: a second declarator on one line does not leak a path
+rc=0
+
+=== strict args ===
+SINK_LIVENESS_ERROR: unrecognised argument '--not-a-flag'
+rc=2
