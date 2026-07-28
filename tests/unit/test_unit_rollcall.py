@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = Path(os.environ.get("UNIT_ROLLCALL_MAKEFILE", ROOT / "Makefile"))
 
 EXPECTED_PREREQS = [
+    "unit-rollcall",
+    "preflight",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_avclock",
     "$(ROOT)/build/test_mraudio_status",
@@ -33,6 +35,7 @@ EXPECTED_PREREQS = [
     "$(ROOT)/build/test_companion_plant_seek",
     "$(ROOT)/build/pms_baseline_probe",
     "$(ROOT)/build/test_h264_bitstream_source",
+    "$(ROOT)/build/test_bitstream_ring_lifecycle",
     "$(ROOT)/build/test_frame_store_math",
     "$(ROOT)/build/test_frame_store_sdram_sim",
     "$(ROOT)/build/test_frame_store_ddr_prefetch_sim",
@@ -69,6 +72,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_pms_baseline_gate.sh",
     "$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh",
     "$(ROOT)/build/test_h264_bitstream_source",
+    "$(ROOT)/build/test_bitstream_ring_lifecycle",
     "$(ROOT)/build/test_frame_store_math",
     "$(ROOT)/build/test_frame_store_sdram_sim",
     "$(ROOT)/build/test_frame_store_ddr_prefetch_sim",
@@ -134,6 +138,14 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh",
 ]
 
+IGNORED_COMMANDS = {
+    # Suite setup/helper commands, not tests. Everything else in unit-unlocked's
+    # recipe must be registered above or the guard fails with UNREGISTERED_*.
+    "mkdir -p $(ROOT)/build",
+    "python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)",
+    "chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true",
+}
+
 
 def normalize_command(line: str) -> str:
     line = line.strip()
@@ -169,20 +181,35 @@ def parse_unit_unlocked(makefile: Path) -> tuple[list[str], list[str]]:
 
 def main() -> int:
     prereqs, commands = parse_unit_unlocked(MAKEFILE)
+    protected_commands = [c for c in commands if c not in IGNORED_COMMANDS]
     missing_prereqs = [p for p in EXPECTED_PREREQS if p not in prereqs]
-    missing_commands = [c for c in EXPECTED_COMMANDS if c not in commands]
+    unregistered_prereqs = [p for p in prereqs if p not in EXPECTED_PREREQS]
+    missing_commands = [c for c in EXPECTED_COMMANDS if c not in protected_commands]
+    unregistered_commands = [c for c in protected_commands if c not in EXPECTED_COMMANDS]
 
-    if missing_prereqs or missing_commands:
+    if missing_prereqs or unregistered_prereqs or missing_commands or unregistered_commands:
         print("UNIT_ROLLCALL_FAIL")
+        print(
+            "UNIT_ROLLCALL_COUNTS "
+            f"actual_prereqs={len(prereqs)} expected_prereqs={len(EXPECTED_PREREQS)} "
+            f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
+            f"expected_commands={len(EXPECTED_COMMANDS)} ignored_commands={len(IGNORED_COMMANDS)}"
+        )
         for item in missing_prereqs:
             print(f"MISSING_PREREQ {item}")
+        for item in unregistered_prereqs:
+            print(f"UNREGISTERED_PREREQ {item} -- register this unit-unlocked prerequisite")
         for item in missing_commands:
             print(f"MISSING_COMMAND {item}")
+        for item in unregistered_commands:
+            print(f"UNREGISTERED_COMMAND {item} -- register this unit-unlocked command")
         return 1
 
     print(
         "UNIT_ROLLCALL_OK "
-        f"prereqs={len(EXPECTED_PREREQS)} commands={len(EXPECTED_COMMANDS)} "
+        f"actual_prereqs={len(prereqs)} expected_prereqs={len(EXPECTED_PREREQS)} "
+        f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
+        f"expected_commands={len(EXPECTED_COMMANDS)} ignored_commands={len(IGNORED_COMMANDS)} "
         f"makefile={MAKEFILE}"
     )
     return 0
