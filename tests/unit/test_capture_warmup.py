@@ -37,6 +37,10 @@ spec.loader.exec_module(cp)
 H, W = 64, 64
 # Measured flat warmup frame value from the real rig.
 FLAT = np.full((H, W, 3), 7, dtype=np.uint8)
+# A GENUINELY black screen from the core, distinct from the filler above.
+# RGB(7,7,7) cannot serve as a black-screen fixture: it is exactly what the
+# capture device paints when it has no lock, so it is graded NO_SIGNAL.
+BLACK = np.full((H, W, 3), 2, dtype=np.uint8)
 
 
 def require(ok: bool, msg: str) -> None:
@@ -91,7 +95,7 @@ def main() -> int:
 
     # --- RED: a genuinely black source is still BLACK_SIGNAL ----------------
     # This is the safety property: the discard must never manufacture a pass.
-    frames, _log, _neg, discarded = run_grab([FLAT], n=8, warmup=12)
+    frames, _log, _neg, discarded = run_grab([BLACK], n=8, warmup=12)
     require(len(frames) == 8, f"black source must still yield 8 scored frames, got {len(frames)}")
     require(all(f.std() == 0 for f in frames), "black source produced non-flat scored frames")
     cls = cp.classify_signal(frames)
@@ -106,8 +110,15 @@ def main() -> int:
     frames, _log, _neg, discarded = run_grab(seq, n=3, warmup=0)
     require(discarded == 0, "warmup=0 must not discard anything")
     cls = cp.classify_signal(frames)
-    require(cls["state"] == "BLACK_SIGNAL",
-            "regression guard broken: old behaviour no longer reproduces the false negative")
+    # The historical bug is that warmup=0 grades the capture device's filler
+    # frames as a real screen state instead of content.  That still reproduces.
+    # The STATE NAME improved: it used to be BLACK_SIGNAL, which wrongly blamed
+    # the core for painting black; filler is now correctly NO_SIGNAL (no lock).
+    require(cls["state"] == "NO_SIGNAL",
+            f"regression guard broken: old behaviour no longer reproduces the "
+            f"false negative (got {cls['state']})")
+    require(cls["state"] != "CONTENT_PRESENT",
+            "warmup=0 must not manufacture a content pass from filler frames")
     print("PASS historical false negative reproduced at warmup-discard=0 (documents the bug)")
 
     # --- RED: only a LEADING flat run is discarded --------------------------

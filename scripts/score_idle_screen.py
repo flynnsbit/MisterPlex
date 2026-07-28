@@ -342,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
     (out_dir / "idle_screen_report.json").write_text(json.dumps(report, indent=2))
 
     state = signal["state"]
+    if signal.get("note"):
+        print(f"  note: {signal['note']}")
     if state == "NO_SIGNAL":
         print("REFUSE: no usable HDMI signal; screen state is UNSCORED (not a pass, not a skip)",
               file=sys.stderr)

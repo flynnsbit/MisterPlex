@@ -158,8 +158,24 @@ def main() -> int:
         check("NO_SIGNAL is explicitly not a pass",
               "not a pass" in (r.stdout + r.stderr).lower())
 
+        # 1b. NO-LOCK FILLER — the MS2109 paints exact RGB(7,7,7) where it has
+        # no locked video.  That value is below the black threshold, so before
+        # the filler test existed this scored "FAIL: the screen is BLACK ...
+        # attributable to the core" on a live capture that was simply mid
+        # re-lock after a core load.  It must REFUSE, and must NOT be black.
+        p = save(flat(7), d, "filler")
+        r = run(inputs(p) + ["--host", REACHABLE], d)
+        check("MS2109 no-lock filler REFUSES (rc=2) even with a reachable host",
+              r.returncode == 2, f"rc={r.returncode} {r.stdout[-300:]}")
+        check("filler is reported as NO_SIGNAL, not BLACK_SIGNAL",
+              "NO_SIGNAL" in r.stdout and "BLACK_SIGNAL" not in r.stdout, r.stdout)
+        check("filler refusal names the filler explicitly",
+              "no-lock filler" in r.stdout, r.stdout)
+
         # 2. BLACK + dead source — the misdiagnosis this tool exists to prevent.
-        p = save(flat(7), d, "blk")
+        # Value 3, NOT 7: 7 is the capture device's filler and is now handled
+        # above as a lock failure rather than as a black screen.
+        p = save(flat(3), d, "blk")
         r = run(inputs(p) + ["--host", UNREACHABLE], d)
         check("BLACK + unreachable host refuses (rc=2)", r.returncode == 2,
               f"rc={r.returncode}")

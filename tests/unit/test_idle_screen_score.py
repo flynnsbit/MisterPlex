@@ -69,7 +69,9 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
 def main() -> int:
     WORK.mkdir(parents=True, exist_ok=True)
 
-    black = save("black.png", np.full((H, W, 3), 7))
+    # Value 2, NOT 7: RGB(7,7,7) is the MS2109's no-lock filler and is now
+    # correctly graded NO_SIGNAL/REFUSE rather than "the core paints black".
+    black = save("black.png", np.full((H, W, 3), 2))
     plain = save("plain.png", bg_frame())
     chev = save("chevron.png", chevron_frame())
     flood = save("flood.png", np.full((H, W, 3), (244, 163, 2)))

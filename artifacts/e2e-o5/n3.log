@@ -1,0 +1,12 @@
+PASS internal classify_signal() covers all four states correctly + n=1 edge case
+PASS NoCaptureNodeError carries exit_code=77 (UNSCORED)
+PASS DeviceAbsentError carries exit_code=77 (UNSCORED)
+PASS synthetic content frames → CONTENT_PRESENT exit 0
+PASS synthetic black frames → BLACK_SIGNAL exit 1 FAIL
+PASS synthetic solid-colour frames → NO_SIGNAL exit 1 FAIL
+PASS synthetic frozen frames → STALE_CAPTURE exit 1 FAIL
+PASS non-existent device → exit 1 FAIL (never 0)
+PASS file-backed content frames → CONTENT_PRESENT exit 0
+PASS file-backed byte-identical frames → STALE_CAPTURE exit 1 FAIL
+
+test_capture_preflight: OK (9 tests)

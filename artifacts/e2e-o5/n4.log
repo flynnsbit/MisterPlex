@@ -1,0 +1,14 @@
+PASS 11 leading warmup frames discarded; real content scored CONTENT_PRESENT
+PASS genuinely black source still BLACK_SIGNAL (warmup discard cannot mask it)
+Traceback (most recent call last):
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 138, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 113, in main
+    require(cls["state"] == "BLACK_SIGNAL",
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "regression guard broken: old behaviour no longer reproduces the false negative")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 48, in require
+    raise AssertionError(msg)
+AssertionError: regression guard broken: old behaviour no longer reproduces the false negative

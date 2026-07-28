@@ -1,0 +1,7 @@
+FAIL: valid signal but the screen is BLACK — no picture is being presented
+PROVENANCE: corename='Plex' rbf_md5=3b1e8435 uptime=3242s
+Scope: 12 scored frames from v4l2:/dev/video0 (warmup dropped 12)
+SIGNAL_STATE: BLACK_SIGNAL  mean_luma=6.23 spatial_std=2.16 unique=12/12
+PLEX_CHEVRON: ABSENT — only 0 Plex-orange px (< 2000); no chevron
+LEFT_EDGE_ARTIFACT: PRESENT — dark 31.7% in cols [84, 200] vs 0.1% in control [300, 1200] (ratio 347.1x)
+  source host 192.168.1.183 IS reachable — black is attributable to the core/daemon, not to a dead source

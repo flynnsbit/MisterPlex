@@ -62,6 +62,18 @@ LUMA_BLACK_THRESHOLD: float = 8.0
 # Typical live content: std ≥ 15.  JPEG noise on a solid frame: std ≤ 2.
 SPATIAL_CONTENT_THRESHOLD: float = 3.0
 
+# The MS2109 emits an exact flat RGB(7,7,7) fill for any part of the frame it is
+# not receiving locked video for.  That value is *inside* LUMA_BLACK_THRESHOLD,
+# so an unlocked capture used to classify as BLACK_SIGNAL and, with a reachable
+# host, get blamed on the core as a product defect.
+#
+# MEASURED separation (fraction of pixels exactly equal to RGB(7,7,7)):
+#   locked, real content (fb4bad84 Plex, MENU core)  0.00% - 0.01%
+#   unlocked / mid-relock capture after a core load       87.54%
+# Three orders of magnitude apart; 0.50 sits in an empty gap.
+MS2109_FILLER_RGB: tuple = (7, 7, 7)
+FILLER_DOMINANCE_THRESHOLD: float = 0.50
+
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_SKIP = 77
@@ -373,6 +385,33 @@ def classify_signal(frames: list[np.ndarray]) -> dict:
     frame = frames[-1]
     luma = mean_luma_bt601(frame)
     std = spatial_std(frame)
+
+    # Check the capture device's NO-LOCK FILLER before anything else.  The
+    # MS2109 paints exact RGB(7,7,7) where it has no locked video, and that
+    # value sits below LUMA_BLACK_THRESHOLD, so without this test an unlocked
+    # capture is reported as BLACK_SIGNAL and blamed on the core.  Measured
+    # live on 3b1e8435 immediately after a core load: 87.54% filler, scored
+    # "FAIL: the screen is BLACK ... attributable to the core".  It was not the
+    # core; the receiver had not re-locked.
+    filler = float(np.all(frame == np.array(MS2109_FILLER_RGB, dtype=frame.dtype),
+                          axis=-1).mean())
+    if filler >= FILLER_DOMINANCE_THRESHOLD:
+        return {
+            "state": "NO_SIGNAL",
+            "unique_hashes": unique,
+            "total_frames": total,
+            "mean_luma": round(luma, 2),
+            "spatial_std": round(std, 2),
+            "filler_frac": round(filler, 4),
+            "note": (
+                f"{filler:.1%} of pixels are exactly RGB{MS2109_FILLER_RGB}, the MS2109's "
+                f"no-lock filler (threshold {FILLER_DOMINANCE_THRESHOLD:.0%}; locked "
+                "captures measure <0.1%). The receiver is not locked to the source, so "
+                "the screen contents are UNSCORED. This is NOT evidence of a black "
+                "screen and NOT evidence of a core defect — it commonly occurs for "
+                "several seconds after a core load while HDMI re-locks."
+            ),
+        }
 
     # Check luma FIRST — a black-screen RBF produces stable MJPEG output where
     # all N frames may share the same SHA-256 prefix.  STALE before luma would

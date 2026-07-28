@@ -1,4 +1,7 @@
 baseline rc=0 GREEN
+KILLED    filler-check-removed  (rc=1)
+KILLED    filler-threshold-unreachable  (rc=1)
+KILLED    filler-graded-as-BLACK-blaming-the-core  (rc=1)
 KILLED    always-pass  (rc=1)
 KILLED    no-signal-passes  (rc=1)
 KILLED    stale-passes  (rc=1)
@@ -14,5 +17,5 @@ KILLED    chevron-aspect-range-widened-to-anything  (rc=1)
 KILLED    chevron-fill-threshold-zeroed  (rc=1)
 KILLED    provenance-check-removed  (rc=1)
 
-Scope: 14 mutations; killed 14, survived 0
+Scope: 17 mutations; killed 17, survived 0
 MUTATION_OK — every mutation turned the test red
