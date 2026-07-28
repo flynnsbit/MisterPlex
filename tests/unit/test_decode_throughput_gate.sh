@@ -77,8 +77,8 @@ assert r["source"]["sha256"] == "9b79749478f331d6e523a548a88fbad38d1719beb6a2623
 assert r["geometry"]["mbs_per_frame"] == 1170, r
 assert r["target"]["stream_path_clock_hz"] == 20_000_000, r
 assert abs(r["measured"]["cycles_per_mb"] - 259.3912393162) < 1e-6, r
-assert abs(r["budget"]["cycles_per_mb"] - 683.7606837607) < 1e-6, r
-assert r["budget"]["margin_ratio"] > 2.6, r
+assert abs(r["budget"]["cycles_per_mb"] - 569.8005698) < 0.01, r
+assert r["budget"]["margin_ratio"] > 2.1, r
 
 # Verify effective_fps is present and correct
 assert "effective_fps" in r["measured"], f"effective_fps not in measured: {list(r['measured'].keys())}"
@@ -153,7 +153,7 @@ if [[ "$RED_RC" -eq 0 ]]; then
   exit 1
 fi
 grep -q "cycles_total 3641853 > ratchet 3000000" <<<"$RED_OUT"
-grep -q "budget margin 2.636 < required 3.000" <<<"$RED_OUT"
+grep -q "budget margin 2.197 < required 3.000" <<<"$RED_OUT"
 grep -q "effective_fps .* < ratchet 100.0" <<<"$RED_OUT"
 # Verify per-stage ratchet failures
 grep -q "stage parse_cavlc cycles_per_mb" <<<"$RED_OUT"

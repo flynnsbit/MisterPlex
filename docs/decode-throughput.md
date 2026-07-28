@@ -59,19 +59,72 @@ traced provenance — it was an assumption that was never verified against the R
 
 | Parameter | Value | Source |
 | --- | ---:| --- |
-| Target frame rate | 25 fps | PMS 480p stream target |
-| 480p coded geometry | 624×480 = 39×30 MBs = 1170 MB/frame | SPS/profile contract |
+| Target frame rate | **30 fps** (worst-case) | PMS can deliver up to 30 fps; `Plex.sv:231` hardcodes `content_fps=24` but content varies |
+| 480p coded geometry | **624×480 = 39×30 MBs = 1170 MB/frame** | SPS parser output from test streams; `decode_stub.sv:194` hardcodes `width=624, height=480` |
+| Display geometry | 640×480 (40×30 = 1200 MBs) | VGA scanout with 11px pillars; **NOT the coded frame** |
 | `stream_path` clock | 20.000 MHz | `pll_0002.v` `outclk_0`; `Plex.sv` connects `stream_path.clk(clk_sys)` |
 | SDRAM clock | selectable, default 100 MHz; `SDRAM_CLK_142` makes `clk_sdram` 142 MHz | `Plex.sv`/PLL |
 
-The decode pipeline is clocked by `clk_sys`, not `clk_sdram`. Therefore the
-480p realtime budget is:
+### Frame geometry clarification (responding to w-arch v6, 2026-07-27)
+
+**w-arch claims the stream delivers 640×480 at 30 fps. This conflates the DISPLAY
+frame with the CODED frame.**
+
+The decode budget is based on the **coded** macroblock count — that is, what the
+H.264 decoder actually processes:
+
+- **Coded frame:** 624×480 (39×30 = **1170 MBs**) — from PMS transcoder, confirmed in
+  every test bitstream filename, SPS parser output, `decode_stub.sv:194`, and
+  `scripts/capture_baseline_annexb_fixture.sh` (`plex_real_baseline_624x480`)
+- **Display (crop):** 618×480 — SPS frame_cropping_rect_right_offset removes 6px
+- **Presented (VGA):** 640×480 — 11px black pillars each side, purely scanout
+
+The decoder processes 1170 MBs (coded), not 1200 (display). w-arch's claim that
+"the STREAM path delivers 640×480" confuses the VGA output dimension with the
+H.264 bitstream dimension. **The encoder decides the coded frame size, not the
+display.**
+
+However, w-arch's **30 fps** claim deserves conservative adoption:
+- `Plex.sv:231` hardcodes `content_fps = 8'd24`
+- PMS can transcode at 23.976/24/25/29.97/30 fps depending on source content
+- The budget must handle worst-case content → **30 fps adopted**
+
+### Budget arithmetic (CORRECTED for 30 fps, 2026-07-27)
+
+The decode pipeline is clocked by `clk_sys`, not `clk_sdram`. With 30 fps
+worst-case:
 
 ```
-1170 MB/frame × 25 fps = 29,250 MB/s
-20,000,000 cycles/s ÷ 25 fps = 800,000 cycles/frame
-800,000 cycles/frame ÷ 1170 MB/frame = 683.761 cycles/MB
+1170 MB/frame × 30 fps = 35,100 MB/s
+20,000,000 cycles/s ÷ 30 fps = 666,667 cycles/frame
+666,667 cycles/frame ÷ 1170 MB/frame = 569.8 cycles/MB
 ```
+
+Previous budget (at 25 fps): 684 cycles/MB.
+**Revised budget (at 30 fps): 570 cycles/MB.** This tightens the margin from
+1.23× to 1.02× — essentially zero margin for error.
+
+| Frame rate | Budget cycles/MB | Margin at 558 total | Assessment |
+| ---:| ---:| ---:| --- |
+| 24 fps (`content_fps` RTL) | 712 | 1.28× | Comfortable at one frame rate |
+| 25 fps (previous) | 684 | 1.23× | Old budget |
+| **30 fps (worst-case)** | **570** | **1.02×** | **12 cycles of headroom — CRITICAL** |
+
+**20 MHz is MARGINAL for 30 fps content.** Not arithmetically impossible (w-arch's
+"exceeds by 2 cycles" used 1200 MBs / 640×480 which is wrong), but so tight that
+any estimate overrun breaks it. At 30 fps + 20 MHz: MC can only reach **262
+cycles/MB** before the budget breaks. The current MC estimate of 250 has **12
+cycles of headroom.** That is not a design margin, it is an error bar.
+
+**45 MHz makes this problem disappear:**
+```
+45,000,000 / (1170 × 30) = 1,282 cycles/MB    → margin 2.30× at 558 total
+```
+
+**The architectural conclusion:** 45 MHz is now STRONGLY RECOMMENDED (not strictly
+mandatory as w-arch claimed, because the coded frame is 624 not 640, giving 12
+more cycles). But a 12-cycle margin is engineering zero. Any practical design
+should target 45 MHz.
 
 ## Raw measured cycle counts
 
@@ -119,13 +172,13 @@ transitions in the Verilator testbench) reveals the breakdown of the **probe**:
 | ddr_write | **?** | **NOT INSTANTIATED** | ddr_frame_store writes diagnostic pixels only |
 | injection_overhead | 10 | measured, **TESTBENCH ARTIFACT** | ioctl 2 cycles/byte; product uses DDR DMA |
 
-**What "MARGINAL 2.64x" actually measured:** the ratio of the realtime budget
-(684 cycles/MB) to the aggregate cycle count (259 cycles/MB), where the
-aggregate is dominated by decode_stub painting 624×480 diagnostic pixels per
-frame — an operation that does not exist in the production decoder. The three
-most expensive production stages (MC, deblock, DDR write) contribute exactly
-**zero measured cycles** because they are not built yet. The margin is
-**illusory** and will collapse when those stages are implemented.
+**What "MARGINAL 2.20x" actually measured (was 2.64× at 25 fps):** the ratio of
+the realtime budget (570 cycles/MB at 30 fps) to the aggregate cycle count (259
+cycles/MB), where the aggregate is dominated by decode_stub painting 624×480
+diagnostic pixels per frame — an operation that does not exist in the production
+decoder. The three most expensive production stages (MC, deblock, DDR write)
+contribute exactly **zero measured cycles** because they are not built yet. The
+margin is **illusory** and will collapse when those stages are implemented.
 
 **Note on parse_cavlc timing:** the 3.2 cycles/MB figure includes P-frame
 decode_stub WAIT_MAX timeout (4096 cycles each) because `residual_place_pulse`
@@ -145,23 +198,23 @@ The current DPB fetch/write shape on w-rel's branch issues:
 - Filtered/current writeback: 256 luma + 64 U + 64 V = **384 writes/MB**.
 - Total DPB traffic: **987 B/MB**.
 
-At 29,250 MB/s:
+At 35,100 MB/s (30 fps):
 
 ```
-987 B/MB × 29,250 MB/s = 28,869,750 B/s = 28.87 MB/s
+987 B/MB × 35,100 MB/s = 34,643,700 B/s = 34.64 MB/s
 ```
 
 The display frame store also consumes one 624×480 I420 frame per presented
 frame:
 
 ```
-624×480×1.5×25 = 11,232,000 B/s = 11.23 MB/s
+624×480×1.5×30 = 13,478,400 B/s = 13.48 MB/s
 ```
 
-The 624×480 12-frame fixture is 70,348 bytes, or 146,558 B/s at 25 fps. Even
-doubling that for compressed bitstream write/read is less than 0.30 MB/s.
+The 624×480 12-frame fixture is 70,348 bytes, or 175,870 B/s at 30 fps. Even
+doubling that for compressed bitstream write/read is less than 0.35 MB/s.
 
-Known modelled traffic is therefore about **40.4 MB/s** before refresh/arbitration
+Known modelled traffic is therefore about **48.5 MB/s** before refresh/arbitration
 losses. Raw bandwidth should be enough, but this is not a pass: the bitstream
 reader, DPB, and frame store contend for the same `DDRAM_*` path, and the live
 PLXF-missing fault means arbitration/liveness remains a first-class risk.
@@ -172,15 +225,16 @@ PLXF-missing fault means arbitration/liveness remains a first-class risk.
 Every line is labelled MEASURED, ESTIMATED, EXTRAPOLATED, or ALLOWANCE. None of
 the stages below (except parse) are instantiated in the synthesised design (#19).
 
-**⚠ CLOCK CONSTRAINT STATUS:** The 684 cycles/MB budget assumes `clk_sys` =
-20 MHz. The fabric frequency limit is **UNMEASURED** (the only Fmax figure was
+**⚠ CLOCK CONSTRAINT STATUS:** The 570 cycles/MB budget assumes `clk_sys` =
+20 MHz at 30 fps worst-case. The fabric frequency limit is **UNMEASURED** (the only Fmax figure was
 from `decode_stub` dead code). 20 MHz is the Template_MiSTer default that was
 never chosen. Decode can be clock-separated from video via a 4th PLL output, but
 reaching 45 MHz (the only safe CDC candidate) requires ~17.6 ns of critical-path
 reduction from the production pipeline — which does not exist yet to measure.
 **The ratchet retains 20 MHz until a production-pipeline fit reports otherwise.**
 
-Total budget: **684 cycles/MB** at 20 MHz / 25 fps / 1170 MB per frame.
+Total budget: **570 cycles/MB** at 20 MHz / 30 fps / 1170 MB per frame (worst-case).
+Previous: 684 cycles/MB at 25 fps. The 30 fps worst-case tightens the design constraint.
 
 | Stage | Allocated | Label | Constraint | Reasoning |
 | --- | ---:| --- | --- | --- |
@@ -192,19 +246,26 @@ Total budget: **684 cycles/MB** at 20 MHz / 25 fps / 1170 MB per frame.
 | ddr_write | 50 | **ESTIMATED** | MANDATORY at 20 MHz, optional at ≥40 MHz | 48 coalesced 64-bit beats + arbitration. |
 | control_overhead | 30 | **ALLOWANCE** | RECOMMENDED | Pipeline stalls, MB bookkeeping. Placeholder. |
 | **TOTAL** | **558** | | | |
-| **Remaining margin** | **126** | | | **1.23× at 20 MHz; 2.45× at 40 MHz** |
+| **Remaining margin** | **12** | | | **1.02× at 20 MHz / 30 fps; 2.30× at 45 MHz** |
+
+**⚠ CRITICAL:** At 30 fps, the margin at 20 MHz has collapsed from 126 cycles
+to **12 cycles**. This is engineering zero. MC is allocated 250 but can only
+reach **262** before the budget breaks. Any overrun in any stage kills realtime.
+**45 MHz is the only safe operating point for production.**
 
 ### Adjacent-MB reference overlap
 
-At 20 MHz (684 budget): overlap exploitation is **recommended** — it moves
-margin from 1.23× to ~1.55×, providing insurance against MC overrun. The MC
-breaking point is now **376 cycles/MB** (non-MC stages sum to 308), which gives
-MC a 50% overrun allowance even without overlap.
+At 20 MHz / 30 fps (570 budget): overlap exploitation is **MANDATORY** — without
+it, the MC breaking point is only 262 cycles/MB (non-MC stages sum to 308).
+That is 12 cycles above the estimate. Any overrun fails.
 
-At ≥40 MHz (1,368+ budget): overlap is **nice-to-have** — the budget has 2.45×
+With overlap (~100 cycles saved from MC): MC allocation drops to ~150, total
+to ~458, margin to 1.24× (112 cycles). Still tight but survivable.
+
+At 45 MHz (1,282 budget): overlap is **nice-to-have** — the budget has 2.30×
 margin and a straightforward MC design fits trivially.
 
-**Do not build overlap exploitation until the clock is settled.**
+**Adjacent-MB overlap exploitation is now a REQUIREMENT at 20 MHz, not a recommendation.**
 
 ### What this excludes
 
@@ -216,11 +277,11 @@ margin and a straightforward MC design fits trivially.
 - w-cabac's `signed [21:0]` widening (longer carry chains may affect timing at higher clocks)
 - CABAC (not relevant — Baseline profile uses CAVLC only)
 
-## Sensitivity analysis (updated for deblock=100)
+## Sensitivity analysis (updated for 30 fps worst-case)
 
-The 1.23× margin rests on estimates for two unbuilt stages (MC 250 + DDR write
+The 1.02× margin rests on estimates for two unbuilt stages (MC 250 + DDR write
 50 = 300 cycles) and one extrapolated (deblock 100). This section states the
-breaking points **at 20 MHz**. At ≥40 MHz, none of these scenarios are
+breaking points **at 20 MHz / 30 fps**. At 45 MHz, none of these scenarios are
 binding.
 
 ### MC breaking point
@@ -228,11 +289,15 @@ binding.
 Non-MC stages sum to 308 cycles/MB. The budget breaks when MC exceeds:
 
 ```
-684 − 308 = 376 cycles/MB    ← MC breaking point at 20 MHz
+570 − 308 = 262 cycles/MB    ← MC breaking point at 20 MHz / 30 fps
 ```
 
-The current MC estimate is 250. That is **126 cycles of headroom** — a 50%
-overrun allowance.
+The current MC estimate is 250. That is **12 cycles of headroom** — effectively
+an error bar, not a design margin. **Any MC overrun at 20 MHz / 30 fps breaks
+realtime.**
+
+For comparison, at 25 fps the breaking point was 376 cycles/MB (126 headroom).
+The 30 fps correction removed 80% of the MC headroom.
 
 ### 50% overrun on all unbuilt stages
 
@@ -244,21 +309,23 @@ overrun allowance.
 | Subtotal | 400 | 600 |
 | + other stages | 158 | 158 |
 | **Total** | **558** | **758** |
-| vs 684 budget | 1.23× OK | **1.11× OVER — FAILS at 20 MHz** |
-| vs 1368 budget (40 MHz) | 2.45× OK | **1.81× OK** |
+| vs 570 budget (20 MHz/30fps) | **1.02× BARELY** | **0.75× FAILS HARD** |
+| vs 1282 budget (45 MHz) | 2.30× OK | 1.69× OK |
 
 ### Scenario table
 
-| Scenario | MC | Deblock | Total | Margin (20 MHz) | Margin (40 MHz) |
+| Scenario | MC | Deblock | Total | Margin (20 MHz/30fps) | Margin (45 MHz) |
 | --- | ---:| ---:| ---:| ---:| ---:|
-| Base estimate | 250 | 100 | 558 | 1.23× | 2.45× |
-| MC with overlap | 150 | 100 | 458 | 1.49× | 2.99× |
-| MC overruns 50% | 375 | 100 | 683 | 1.00× BREAK | 2.00× OK |
-| All unbuilt +50% | 375 | 150 | 758 | 0.90× **FAILS** | 1.81× OK |
-| MC at 400 | 400 | 100 | 708 | 0.97× **FAILS** | 1.93× OK |
+| Base estimate | 250 | 100 | 558 | 1.02× CRITICAL | 2.30× OK |
+| MC with overlap | 150 | 100 | 458 | 1.24× tight | 2.80× OK |
+| MC overruns 5% | 263 | 100 | 571 | **1.00× BREAKS** | 2.25× OK |
+| All unbuilt +50% | 375 | 150 | 758 | 0.75× **FAILS** | 1.69× OK |
+| MC at 300 | 300 | 100 | 608 | 0.94× **FAILS** | 2.11× OK |
 
-**Key observation:** every scenario that fails at 20 MHz passes at 40 MHz.
-The clock is the constraint, not the architecture.
+**Key observation:** at 30 fps, the 20 MHz budget breaks with a mere **5% MC
+overrun** (13 extra cycles). Every scenario except base and overlap FAILS at 20
+MHz. The clock is not just a preference — **45 MHz is arithmetically required
+for any realistic design margin.**
 
 ## End-to-end effective fps
 
@@ -407,20 +474,30 @@ investigation; one pipeline register fixes it.
 
 | Decode clock | Budget cycles/MB | Margin at 558 total | Status |
 | ---:| ---:| ---:| --- |
-| **20 MHz (current)** | **684** | **1.23× (126 cycles)** | **Working number** |
-| 45 MHz (if fabric allows) | 1,538 | 2.76× (980 cycles) | Conditional on unknown Fmax |
+| **20 MHz (current)** | **570** | **1.02× (12 cycles)** | **CRITICAL — engineering zero** |
+| 45 MHz (if fabric allows) | 1,282 | 2.30× (724 cycles) | Conditional on unknown Fmax |
 
-**684 cycles/MB is the working budget.** The fabric Fmax is unmeasured.
-Do not budget against any higher clock until a production-module fit reports it.
+**570 cycles/MB is the working budget.** The fabric Fmax is unmeasured.
+**45 MHz is STRONGLY RECOMMENDED** — 20 MHz gives 12 cycles of margin which
+is not a viable design point. The difference between these two numbers is the
+difference between "impossible" and "comfortable."
 
 ## Verdict
 
 **THIS IS A DESIGN TARGET. There is no decode pipeline to measure (#19).**
 
-Budget total: **558 cycles/MB**, margin **126 cycles (1.23×)** at 20 MHz.
-MC breaking point: **376 cycles/MB**. These numbers are design constraints
-for a pipeline that w-rel is building — they are not measured throughput
-of an existing decoder.
+Budget total: **558 cycles/MB**, margin **12 cycles (1.02×)** at 20 MHz / 30 fps.
+MC breaking point: **262 cycles/MB** (vs 250 allocated — 12 cycles headroom).
+**At 45 MHz: margin 2.30×, MC breaking point 974 cycles.** These numbers are design
+constraints for a pipeline that w-rel is building — they are not measured
+throughput of an existing decoder.
+
+**20 MHz is not a viable design point for 30 fps content.** A 5% MC overrun (13
+cycles) breaks realtime. This is not survivable as a design margin.
+
+**45 MHz converts every MANDATORY constraint to OPTIONAL.** At 1,282 cycles/MB,
+all unbuilt stages could overrun by 50% and still pass with 1.69× margin.
+This is the architectural conclusion.
 
 The budget has three provenance tiers:
 - **EXTRAPOLATED from measurement:** deblock (100, from w-deblock sim at `feat/deblock`)
@@ -431,9 +508,9 @@ The budget has three provenance tiers:
 Parse (3.2 cycles/MB measured) is the only stage in the probe, and it accounts
 for 0.6% of the budget. The remaining 99.4% is design target.
 
-**Consequence for MC:** adjacent-MB overlap exploitation is **recommended**
-at 20 MHz. Without it, MC must stay under 376 cycles/MB. With it (~180
-cycles/MB estimated), margin improves to 1.49×.
+**Consequence for MC:** adjacent-MB overlap exploitation is **MANDATORY**
+at 20 MHz / 30 fps. Without it, MC must stay under 262 cycles/MB. With it
+(~150 cycles/MB estimated), margin improves to 1.24× — still tight but viable.
 
 **Do not report this budget as "measured throughput."** It is a feasibility
 analysis based on module-level measurements and engineering estimates. The
@@ -457,8 +534,8 @@ because that pipeline does not exist to measure.
 - The 39.86 ns path disappears (it was internal to the probe)
 - A new critical path emerges from the real pipeline
 - That path's delay determines whether 45 MHz is achievable
-- Until then: design to 20 MHz / 684 cycles/MB
-- Design to 684 cycles/MB (20 MHz). "Unknown limit" is not "high limit"
+- Until then: design to 20 MHz / 570 cycles/MB (30 fps worst-case)
+- Design to 570 cycles/MB (20 MHz). "Unknown limit" is not "high limit"
 
 **The `clk_ddr` violation IS real and in the product path:**
 `disp_buf_d2 → DDRAM_ADDR` at -0.213 ns, 7 logic levels. One pipeline
@@ -468,8 +545,8 @@ register fixes it. w-a3 owns this investigation.
 within two hours. At `71e509b` it said "target 60 MHz." At `747d960` it said
 "fabric tops out at 25 MHz." Both were wrong — the first from an estimate that
 excluded routing, the second from a fitter number that measured a diagnostic
-shim. The budget (684 cycles/MB, 20 MHz) has been correct throughout because
-it was never loosened on the strength of either claim.
+shim. The budget (570 cycles/MB at 30 fps, previously 684 at 25 fps, 20 MHz) has
+been at this clock throughout because it was never loosened on the strength of either claim.
 
 ## Ratchet audit: commit 3fda008 (2026-07-27)
 
