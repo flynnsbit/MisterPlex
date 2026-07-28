@@ -245,6 +245,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 2
     source = Path(args.input or expected["source"]["path"])
     actual = build_manifest(source, expected["decoder"]["loop_filter"])
+    if args.input:
+        # The same asset may be cached outside build/ so it survives make clean.
+        # Treat the caller-provided path as an equivalent materialization when
+        # bytes and decoded frame hashes match the tracked manifest.
+        actual["source"]["path"] = expected["source"].get("path")
+        actual["decoder"]["command"] = expected["decoder"].get("command")
     failures: list[str] = []
     if comparable_manifest(actual) != comparable_manifest(expected):
         if actual["source"]["sha256"] != expected["source"]["sha256"]:

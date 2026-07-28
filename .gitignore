@@ -1,4 +1,6 @@
 build/
+local_artifacts/*
+!local_artifacts/README.md
 *.o
 *.rbf
 output_files/

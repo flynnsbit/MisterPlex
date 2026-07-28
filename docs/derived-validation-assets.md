@@ -2,7 +2,10 @@ Derived re-encoded validation asset, not original library content, and not evide
 
 # Derived 624×480 Baseline/CAVLC validation asset
 
-This record describes the disposable clip generated under `build/arm-profile-sample/` for decode/present profiling. The media file itself is intentionally not tracked, but this provenance record is tracked so later reports cannot confuse this asset with original-Part direct-play H.264 from the user's library.
+This record describes the derived clip used for decode/present profiling. The
+media file itself is intentionally not tracked, but this provenance record is
+tracked so later reports cannot confuse this asset with original-Part direct-play
+H.264 from the user's library.
 
 ## Scope
 
@@ -55,11 +58,33 @@ The encode flags are deliberately stricter than generic Baseline: CAVLC only, on
 
 ## Output
 
-- MP4 path: `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.mp4`.
-- Annex-B path: `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264`.
+- Durable local cache path (preferred, survives `make clean`):
+  `local_artifacts/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f.{mp4,264}`.
+- Disposable scratch path (may be removed by `make clean`):
+  `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.{mp4,264}`.
 - Output MP4 md5 from this run: `3fad246c17830b60f45759556765f83b`.
 - Output Annex-B md5 from this run: `779f0d3aa0014e465db885647a18c765`.
+- Output Annex-B SHA-256 from this run:
+  `41f2769189bdceb3c30315bf557e44e01d016d48c3eca8507ceb6eed51919e04`.
 - FFprobe fields independently checked on the MP4: `codec_name=h264`, `profile=Constrained Baseline`, `width=624`, `height=480`, `has_b_frames=0`, `level=30`, `nb_frames=1800`.
+
+`make clean` removes `build/`, so the profiling asset must not be anchored there
+alone. Keep the local copy under `local_artifacts/derived_validation/` and
+materialize into `build/arm-profile-sample/` only as scratch:
+
+```bash
+mkdir -p build/arm-profile-sample
+cp -f local_artifacts/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f.* \
+  build/arm-profile-sample/
+md5sum build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.{mp4,264}
+sha256sum build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264
+```
+
+If both `local_artifacts/` and `build/` are missing, the full 1800-frame ARM
+profile cannot be reproduced from the repository alone. Restore the local cache
+from a preserved copy or regenerate from PMS with `PLEX_BASE`/`PLEX_TOKEN` using
+the commands above. The tracked 8-frame slice remains usable for unit coverage,
+but it is not a substitute for re-running the 1800-frame performance profile.
 
 ## `pms_baseline_probe` output
 

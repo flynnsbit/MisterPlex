@@ -4,7 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-ASSET="build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264"
+ASSET=""
+for candidate in \
+  "local_artifacts/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f.264" \
+  "build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264"; do
+  if [[ -f "$candidate" ]]; then
+    ASSET="$candidate"
+    break
+  fi
+done
 MANIFEST="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json"
 SLICE="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv"
 SLICE_MANIFEST="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled_v1.json"
@@ -13,10 +21,10 @@ mkdir -p "$OUT"
 
 python3 tools/derived_h264_slice_fixture.py verify --slice "$SLICE" --manifest "$SLICE_MANIFEST"
 
-if [[ -f "$ASSET" ]]; then
+if [[ -n "$ASSET" ]]; then
   python3 tools/derived_h264_plane_hashes.py verify --manifest "$MANIFEST" --input "$ASSET"
 else
-  echo "INFO derived_validation_hashes: optional full 1800-frame check skipped; missing $ASSET"
+  echo "INFO derived_validation_hashes: optional full 1800-frame check skipped; missing local_artifacts/derived_validation/... and build/arm-profile-sample/..."
 fi
 
 python3 - <<'PY'

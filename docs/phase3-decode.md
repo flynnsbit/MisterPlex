@@ -440,6 +440,15 @@ Phase 3.3q (derived real-statistic H.264 ARM boundary profile — W-FEED 2026-07
     measured no-sync `/dev/mem` at **7.199 ms/f wall**, **4.707 ms/f CPU** (`sync=1`:
     7.378/4.755; `flush=1`: 13.246/9.147), so the product-present bucket is the conservative
     end-to-end number to budget.
+    **Gap analysis:** retained `PRESENT_PROFILE=1` steady buckets (`presented=300`, `drops=0`,
+    five windows) decompose product DDR as `ddr_copy_us_p=5906.4`, `ddr_prep_wait_us_p=1802.2`,
+    `ddr_post_wait_us_p=2669.8`, `ddr_doorbell_us_p=3.4`, `ddr_unaccounted_us_p=26.4`,
+    total `ddr_total_us_p=10410.6` (σ≈320.7). Compared with the raw no-sync microbench
+    `7199 us/f`, product copy is actually faster by ~1.29 ms; the gap is the **~4.47 ms/f
+    prep+post wait**, not unexplained memcpy. Therefore the raw microbench is skipping real
+    present-path interlocks/yields. Treat the apparent ~3.2 ms/f recoverable margin as
+    **unproven** until those waits are shortened in an ARM-only experiment and the frame-store
+    still proves safe.
   - bucket sum with product present: **40.1902 ms/f**. That leaves **+1.476 ms/f** against
     24 fps (41.667 ms) and misses 25 fps (40.000 ms) by **0.190 ms/f**. This is a measured
     component sum, not a hardware A/V playback PASS.
