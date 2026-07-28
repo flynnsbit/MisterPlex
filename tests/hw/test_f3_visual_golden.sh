@@ -12,7 +12,7 @@ PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${VISUAL_OUT:-$ROOT/build/hw_visual}"
-DEV="${HDMI_DEV:-/dev/video4}"
+DEV="${HDMI_DEV:-/dev/video0}"
 CAP_FMT="${VISUAL_CAPTURE_FORMAT:-mjpeg}"
 CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
@@ -35,6 +35,16 @@ EXPECT="${VISUAL_EXPECT:-pass}"   # pass | fail (fail means same-provenance capt
 BITSTREAM="${VISUAL_BITSTREAM:-$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264}"
 GOLDEN="${VISUAL_GOLDEN:-}"
 TOOL="$ROOT/scripts/hw_visual_compare.py"
+SCOPE_LINE="$(python3 "$TOOL" scope --compare-box "$COMPARE_BOX")"
+echo "$SCOPE_LINE"
+if [[ ! "$SCOPE_LINE" =~ ^Scope:\ ([0-9]+) ]]; then
+  echo "FAIL: visual gate did not report a parseable Scope first" >&2
+  exit 2
+fi
+if [[ "${BASH_REMATCH[1]}" == "0" ]]; then
+  echo "FAIL: Scope: 0 cannot PASS" >&2
+  exit 2
+fi
 
 if [[ -z "$GOLDEN" ]]; then
   echo "FAIL: VISUAL_GOLDEN must be declared; no hardware golden is safe as a silent default." >&2

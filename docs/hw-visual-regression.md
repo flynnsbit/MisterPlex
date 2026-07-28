@@ -14,14 +14,18 @@ output, and compares it to a checked-in golden image with quantified pixel metri
 | Use already-loaded Plex core | `VISUAL_EXPECTED_RBF_MD5=<loaded-md5> VISUAL_GOLDEN=/path/to/matching_source_golden.png tests/hw/test_f3_visual_golden.sh` |
 | Comparator unit/red-path test | `python3 tests/unit/test_hw_visual_compare.py` |
 | Print geometry used by comparator | `python3 scripts/hw_visual_compare.py geometry` |
+| Print graded pixel scope | `python3 scripts/hw_visual_compare.py scope --compare-box 11,0,160,120` |
 
 The hardware script writes artifacts under `build/hw_visual/`: `noise.json`, `compare.json`, `diff.png`,
 `status.txt`, captures, and optional `diff_bad_expected_fail.png`.
 
-The capture defaults are intentionally conservative for the current lab dongle:
-`VISUAL_CAPTURE_FORMAT=mjpeg`, `VISUAL_CAPTURE_SIZE=1280x720`, `VISUAL_VIDEO_MODE=0`. Use
-`VISUAL_CAPTURE_FORMAT=yuyv422` only when the rig proves clean in that mode; corrupted buffers are a harness
-failure (`rc=4`), never a core result.
+The capture defaults are for node-worker1's current MS2109 HDMI adapter:
+`HDMI_DEV=/dev/video0`, `VISUAL_CAPTURE_FORMAT=mjpeg`,
+`VISUAL_CAPTURE_SIZE=1280x720`, `VISUAL_CAPTURE_FPS=60`, `VISUAL_VIDEO_MODE=0`.
+`/dev/video1` is a zero-format decoy and older `/dev/video4` recipes are stale.
+Do not use raw YUYV on this rig; archived YUYV captures are corrupt-buffer red
+specimens. Corrupted buffers are a harness failure (`rc=4`), never a core
+result.
 
 The capture/compare path pins colour provenance instead of relying on FFmpeg's
 resolution-based defaults: `VISUAL_COLOR_MATRIX=bt601` and `VISUAL_COLOR_RANGE=full`
@@ -75,7 +79,8 @@ coded **624×480**, display **618×480** after right crop of 6 px, presented **6
 each side. Pillarbox columns are not compared against picture content.
 
 For the current default 320×240 F3 vector, the hardware script narrows the compare to
-`VISUAL_COMPARE_BOX=11,0,160,120`: the stable top-left decoded region containing MB0. The rest of the 480p frame
+`VISUAL_COMPARE_BOX=11,0,160,120`: the stable top-left decoded region containing MB0. The script prints
+`Scope: 19200 ...` as its first line and refuses `Scope: 0`; a zero-pixel comparison can never pass. The rest of the 480p frame
 can contain reload-dependent/uninitialized pixels on rollback `57674f2e`; comparing the whole active 618×480 area
 was the false-red failure mode.
 
