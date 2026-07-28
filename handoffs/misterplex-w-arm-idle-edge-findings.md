@@ -424,6 +424,15 @@ mailbox addresses) and emits them as argv; `ddr_frame_dump_device.py` now has
 `required=True`, so a caller that forgets them gets an error rather than a
 plausible-looking dump of the wrong memory.
 
+**And it caught me a second time, immediately.** My first fix put the mutation
+strings for the `--self-test` red cases in the source as literal C++ text --
+which restates `449280` and `0x00080000`. The sweep was green while the file was
+untracked and went rc=1 the moment I committed it. The self-test now derives its
+mutations from whatever the header currently says (regex-capture the value,
+transform it) so no layout literal appears in my sources at all. Verified with an
+independent scan of the banned-literal regex over all four of my files:
+`banned_literals=0` in each.
+
 Verified the derived values equal the ones I had hardcoded:
 
 ```

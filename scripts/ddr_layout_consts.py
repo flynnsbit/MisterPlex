@@ -121,26 +121,42 @@ def _self_test() -> int:
             failures += 1
     print(f"parsed_values={len(lay) + len(mbx)}/8")
 
-    cases = [
-        (
-            "frame bytes inconsistent with coded geometry",
-            "constexpr int kPlex480pYuv420pBytes = 449280;",
-            "constexpr int kPlex480pYuv420pBytes = 449281;",
-        ),
-        (
-            "bank stride smaller than one frame",
-            "constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;",
-            "constexpr uint32_t kPlex480pYuv420pBankStride = 0x00001000u;",
-        ),
-        (
-            "missing constant",
-            "constexpr uint32_t kDdrFramePhysBase",
-            "constexpr uint32_t kDdrFramePhysBaseRENAMED",
-        ),
-    ]
+    # Mutations are derived from whatever the header currently says. Restating
+    # the literals here would itself fork the layout contract -- and would be
+    # caught by the runtime DDR layout literal sweep, which scans tracked files.
     original = LAYOUT_HPP.read_text()
-    for name, needle, replacement in cases:
+
+    def _bump(name: str, transform) -> tuple[str, str] | None:
+        m = re.search(
+            r"(\bconstexpr\s+[A-Za-z_][A-Za-z0-9_:<>\s\*]*?\b"
+            + re.escape(name)
+            + r"\s*=\s*)(0[xX][0-9a-fA-F_]+|\d[\d_]*)([uUlL]*\s*;)",
+            original,
+        )
+        if not m:
+            return None
+        current = int(m.group(2).replace("_", ""), 0)
+        return m.group(0), f"{m.group(1)}{transform(current)}{m.group(3)}"
+
+    frame_bytes = layout()["frame_bytes"]
+    cases = [
+        ("frame bytes inconsistent with coded geometry",
+         _bump("kPlex480pYuv420pBytes", lambda v: str(v + 1))),
+        ("bank stride smaller than one frame",
+         _bump("kPlex480pYuv420pBankStride", lambda v: hex(frame_bytes // 2))),
+        ("missing constant",
+         ("constexpr uint32_t kDdrFramePhysBase",
+          "constexpr uint32_t kDdrFramePhysBaseRENAMED")),
+    ]
+    for name, mutation in cases:
+        if mutation is None:
+            print(f"FAIL red-case {name!r}: could not locate the constant to mutate; "
+                  "the self-test has drifted from the header")
+            failures += 1
+            continue
+        needle, replacement = mutation
         if needle not in original:
+
             print(f"FAIL red-case {name!r}: anchor text not found; "
                   "the self-test has drifted from the header")
             failures += 1
