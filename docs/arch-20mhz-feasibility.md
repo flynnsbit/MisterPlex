@@ -54,8 +54,10 @@ Additionally, both "mandatory" constraints I stated were already satisfied:
 
 **The binding open question is now w-dpb's delivery rate** — w-mc stalls 1:1
 on `ref_valid`. If w-dpb delivers 56 words in ≤128 cycles, the 220 holds.
-The stall budget is 502 cycles — extremely generous but the actual rate is
-UNKNOWN until w-dpb states it.
+**w-dpb measured: byte-serial at 7.9 cycles/word (441 cy for 56 words).**
+This consumes 321 of the 502-cycle margin (64%). The coalescing front-end
+(`h264_dpb_coalesce64`, 73 cy target with pipelined command issue) is
+REQUIRED, not optional — it is not insured by margin, it IS the path to A1.
 
 ### v6.2: Serial throughput verified — manifest is correctly sized
 
@@ -984,11 +986,18 @@ Net effect: A2 (963) is worse than the original 748 estimate but still fits.
 
 | Condition | Instance count change | When this applies |
 |-----------|----------------------|-------------------|
-| w-dpb delivery rate > 502 extra stalls/MB | Impossible in practice (would need ~10 cy/word) | Not credible |
-| Frame rate increases to 60 fps | Budget halves to 625 cy/MB → still fits (748 < 625? NO → need pipelining) | Future spec change |
+| w-dpb coalescing fails AND overlap breaks | Need 2× DPB width or accept cliff | Unlikely — both paths authorised |
+| DDR page-miss latency exceeds +200 cy (unmeasured) | May need prefetch buffer or 2nd port | **UNKNOWN — hardware only** |
+| Frame rate increases to 60 fps | Budget halves to 625 cy/MB → need pipelining | Future spec change |
 | Resolution increases to 720p | 3600 MB × 30 fps → budget = 417 cy/MB → need ~2× parallelism | Future stretch goal |
 
-**At 640×480 @ 30 fps: no parallel instances needed. Period.**
+**At 640×480 @ 30 fps with committed coalescing: no parallel instances needed.**
+
+**Retracted (v6.4):** Previous row stated "502 extra stalls/MB = impossible,
+would need ~10 cy/word, not credible." **w-dpb measured 7.9 cy/word — within
+12% of the "implausible" bound.** The reasoning pattern of dismissing a number
+by plausibility without derivation is withdrawn. All margins are now stated
+as numbers, not as reassurances.
 
 ### Module manifest (1 instance each unless noted)
 
@@ -1175,11 +1184,10 @@ on it. Leave `clk_sys` at 20 MHz for video timing. The CDC cost is 1 async
 FIFO (bitstream_fifo) + ~4 two-FF synchronizers — roughly 2–3 days of work.
 
 At 45 MHz / 1,250 cycles per MB:
-- MC gets ~692 surplus beyond the 558-cycle allocation
-- Byte-serial DPB (988 cycles) fits without coalescing
-- Adjacent-MB cache is optional, not mandatory
-- Deblock has generous room for a simpler implementation
-- Even worst-case scenarios (all I-frames, dense CAVLC) fit easily
+- MC measured at 220 cy (w-mc), not the 384 assumed here
+- Byte-serial DPB measured at 441 cy (w-dpb) — fits with overlap (963 total, margin 287)
+- 64-bit coalescing front-end is REQUIRED for design-target budget (681 cy)
+- DDR page-miss latency (+91 cy worst case) is unmeasured and cannot be simulated
 
 ### What this changes for other workers (UPDATED v6)
 
@@ -1188,7 +1196,7 @@ At 45 MHz / 1,250 cycles per MB:
 | **w-rel** | Integration datapath is the project's critical path. Clock constraints are settled. |
 | **w-mc** | 250-cycle target is still good engineering but no longer a hard ceiling. Shift-add FIR preferred (saves DSPs). |
 | **w-c1** | Budget at 45 MHz is 1,250 cyc/MB. Allocation of 558 fits with 2.24× margin. |
-| **w-dpb** | Byte-serial DPB (988 cycles) fits at 45 MHz. 64-bit coalescing is optimization, not requirement. |
+| **w-dpb** | Byte-serial measured at 441 cy (7.9 cy/word). 64-bit coalescing (73 cy target) is a REQUIREMENT — pipelined command issue needed. |
 | **w-deblock** | 150 cycles easily available within 1,250 budget. |
 | **w-cap** | PLL: add C3 output at 45 MHz (VCO=360, C=8). SDC: constrain clk_decode at 45 MHz with 1:2 relationship to clk_ddr. |
 | **w-a3** | One new async FIFO (bitstream). Same pattern as arbiter response FIFO. |
@@ -1686,6 +1694,8 @@ one pipeline register stage reduces the 7-level path to meet the
 | **w-mc: ref_data [63:0] native, row-overlap built in** | Architecture from v2; `rows_loaded >= out_row + 6` triggers compute | **MEASURED (v6.3) — both "mandatory" constraints already met** |
 | **Manifest at 1 instance is correctly sized for probe** | Serial throughput verified; no parallel instances needed at current spec | **VERIFIED (v6.2, confirmed v6.4)** |
 | **Manifest updated to 21 modules (added dpb_coalesce64)** | Without coalescing front-end, skeleton fits at 0 ALMs for a required module | **ADDED (v6.4)** |
+| **~~"502 stalls implausible (~10 cy/word)"~~** | Unquantified plausibility bound used as load-bearing argument | **RETRACTED (v6.4) — w-dpb measured 7.9 cy/word, within 12%** |
+| **Plausibility without derivation is a defect class** | 10th instance of session pattern: dismissing an open question by intuition rather than measurement | **ESTABLISHED (v6.4) — all margins now stated as numbers** |
 | **ao486 uses 90 MHz for clk_sys on same device** | ao486 `pll_0002.v`: `outclk0_requested = "90.0 MHz"`, VCO = 900 MHz | **Traced ✓ (v3)** |
 | **video_mixer explicitly supports CLK_VIDEO > pixel rate** | `sys/video_mixer.sv:26`: comment "should be multiple by (ce_pix*4)" | **Traced ✓ (v3)** |
 | **hps_io has no clock frequency requirement** | `sys/hps_io.sv:37`: takes `clk_sys` generically, PS2DIV is a parameter | **Traced ✓ (v3)** |
