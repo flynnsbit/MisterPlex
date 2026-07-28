@@ -19,12 +19,7 @@ bool has(const std::string& s, const std::string& needle) {
     return s.find(needle) != std::string::npos;
 }
 
-} // namespace
-
-int main() {
-    misterplex::Companion comp;
-    comp.setMachineId("misterplex-dev");
-
+misterplex::PlayRequest episodeRequest() {
     misterplex::PlayRequest req;
     req.key = "/library/metadata/3";
     req.ratingKey = "3";
@@ -35,6 +30,16 @@ int main() {
     req.serverMachineId = "plex-server";
     req.offsetMs = 0;
     req.offsetPresent = true;
+    return req;
+}
+
+} // namespace
+
+int main() {
+    misterplex::Companion comp;
+    comp.setMachineId("misterplex-dev");
+
+    misterplex::PlayRequest req = episodeRequest();
 
     comp.stagePlay(req);
     require(comp.bindMedia(req, 1286942), "bindMedia rejected staged play");
@@ -57,6 +62,35 @@ int main() {
     require(has(eof, "duration=\"0\""), "EOF retained stale duration: " + eof);
     require(!has(eof, "key=\"/library/metadata/3\""), "EOF retained stale media key: " + eof);
     require(!has(eof, "fullScreenVideo"), "EOF retained fullScreenVideo: " + eof);
+
+    misterplex::Companion disconnect;
+    disconnect.setMachineId("misterplex-dev");
+    req = episodeRequest();
+    disconnect.stagePlay(req);
+    require(disconnect.bindMedia(req, 1286942), "bindMedia rejected disconnect play");
+    disconnect.setState("playing", 42000, 1286942);
+    // Same terminal mechanism, but not at EOF: if the source disconnects after
+    // real playback, MediaPlayer reports a terminal stopped position. That must
+    // also clear the local bind; only stopped@0 is reserved for empty/failed
+    // demux preserving scrubber plants.
+    disconnect.setState("stopped", 42000, 1286942);
+    const std::string disc = disconnect.timelineXml("disconnect");
+    require(has(disc, "location=\"navigation\""),
+            "source disconnect did not return to navigation: " + disc);
+    require(!has(disc, "key=\"/library/metadata/3\""),
+            "source disconnect retained stale media key: " + disc);
+
+    misterplex::Companion emptyFail;
+    emptyFail.setMachineId("misterplex-dev");
+    req = episodeRequest();
+    emptyFail.stagePlay(req);
+    require(emptyFail.bindMedia(req, 1286942), "bindMedia rejected empty-fail play");
+    emptyFail.setState("stopped", 0, 1286942);
+    const std::string empty = emptyFail.timelineXml("empty-fail");
+    require(has(empty, "location=\"fullScreenVideo\""),
+            "empty stopped@0 should preserve scrubber bind: " + empty);
+    require(has(empty, "key=\"/library/metadata/3\""),
+            "empty stopped@0 lost scrubber key: " + empty);
 
     std::cout << "test_companion_eof: OK\n";
     return 0;

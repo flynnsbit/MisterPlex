@@ -355,14 +355,13 @@ void Companion::setState(const std::string& state, int64_t timeMs, int64_t durat
         (state == "playing" || state == "paused" || state == "buffering" || state == "ended")) {
         return;
     }
-    // Natural EOF with no auto-next comes back through setState("stopped", duration,
+    // Natural media-thread termination with content (EOF, source disconnect after
+    // frames, seek-to-end) comes back through setState("stopped", terminalTime,
     // duration) after the PMS side has already been flushed. Converge it onto the
     // explicit-stop local state too; otherwise wantPlay_/pendingKey_ keep polls in
     // fullScreenVideo/buffering forever even though playback ended.
     if (state == "stopped" && wantPlay_) {
-        const int64_t knownDur = durationMs > 0 ? durationMs : durationMs_;
-        const int64_t eofSlackMs = 2000;
-        if (knownDur > 0 && timeMs >= knownDur - eofSlackMs) {
+        if (timeMs > 0) {
             clearMediaLocked();
             return;
         }
