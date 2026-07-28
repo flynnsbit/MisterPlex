@@ -10,6 +10,127 @@ plays Plex content natively.
 ---
 
 ## Update #1 — 2026-07-28 11:12 CDT (Hour 28)
+## Update #2 — 2026-07-28 11:40 CDT (Hour 28.5)
+
+### Headline: the new RBF is on the hardware
+
+I verified this directly over SSH rather than trusting a worker's report:
+
+```
+/media/fat/_Utility/Plex.rbf   md5 = fb4bad849ad2db782a5004ce5a3471ce
+                                     ^^^^^^^^ = fb4bad84, the authorized build
+was:                           md5 = 00eebd5e   (as of update #1, 28 min ago)
+```
+
+**This is the first timing-clean build to reach real hardware.** It contains the
+frame-store livelock fix and nothing else — it is a *display-path* build, not a
+decode-quality build. Whether it actually produces a stable picture is being
+measured now and will lead update #3.
+
+To be explicit, because it matters: **deploy-OK is not success.** Success is
+`disp_bank` toggling repeatedly, `swap_pending` returning to zero, and a
+non-zero `free_bank_mask`. I will not call this working until I have that.
+
+### The important thing that happened this half hour
+
+**I promoted a testing rule to fleet policy, and the auditor broke it inside the
+hour. It was right to.**
+
+In update #1 I described a new reachability gate as the defence against this
+project's signature failure — subsystems that pass every test but were never
+connected to the product. I declared it binding across all 14 workers. The
+adversarial auditor (deliberately kept on a *different* model, `gpt-5.5`) was
+told to attack it. Measured result:
+
+```
+--root h264_decode_core --require h264_deblock_writeback_ctrl   rc=0   GREEN
+--root emu              --require h264_decode_core              rc=1   parents=<none>
+```
+
+Read together: the deblocking filter is provably inside the decoder core, **and
+the decoder core is provably not connected to the chip at all.** The gate
+reported green while the thing it was gating was dead.
+
+That is the same failure mode, for the **fourth** time — this time hiding inside
+the very instrument meant to detect it. The red-proof I promoted it on was real;
+my conclusion from it was too strong. **That was my error, not the worker's.**
+
+Three more defects in the same tool, all measured:
+
+| Mutation | Tool says | Reality |
+|---|---|---|
+| module inside a disabled `if (0)` block | **pass** | not instantiated |
+| escaped instance name | **fail** | *is* instantiated |
+| file in git but **not in the Quartus file list** | **pass** | **not in the chip at all** |
+
+The last one is the serious one. A module can pass every check we have while not
+being compiled into the bitstream. Nothing in our test suite would have noticed.
+
+**New standard:** a subtree proof is worthless without the trunk proof — you must
+show both that the module is inside the core *and* that the core reaches the top
+of the chip. Plus a cross-check against the Quartus file list, and post-fit
+hierarchy (what actually survived synthesis) as the only real oracle.
+
+I have told the fleet, in writing: **when I promote a rule on thin evidence,
+attack it.** A rule that dies in an hour is cheap. One that dies after another
+six-hour fit is not.
+
+### Why this is good news, not bad
+
+Two branches each did correct work and the combination was broken — the
+deblocking work landed in a core that a *different* branch had connected. Both
+workers were right; the integration was wrong. That is a normal, fixable class
+of problem, and we now have an instrument that finds it.
+
+The alternative was shipping another build where everything passed and the
+screen stayed black. We have done that three times. This is the first time we
+caught it before the fit rather than after.
+
+### Progress
+
+```
+ARM / Plex client        ████████████████░░░░  85%
+Integrity / release      ██████████████░░░░░░  70%   +0  (gates got weaker, then honest)
+Display path (frame st.) ███████████░░░░░░░░░  55%   +5  fix now RESIDENT on hardware
+Shippable builds         ████████████░░░░░░░░  60%  +10  RBF delivered to device
+Picture: intra (stills)  █████████░░░░░░░░░░░  45%
+Bitstream parse / CAVLC  ████████░░░░░░░░░░░░  40%
+Deblocking filter        ██████░░░░░░░░░░░░░░  30%   +0  sound work, disconnected core
+Picture: inter / motion  ██░░░░░░░░░░░░░░░░░░  10%
+                                              ─────
+OVERALL                  ███████░░░░░░░░░░░░░  37%   +2
+```
+
+Still true, and the only number that counts: **zero frames have ever been
+decoded and displayed by the FPGA.**
+
+### Fleet
+
+Migration to `claude-opus-5` essentially complete — `w-swap-o5`, `w-decode-o5`,
+`w-osd-o5`, `w-deblock-o5` spawned this half hour with full written handoffs;
+predecessors formally stood down with credit. `w-audit` stays on `gpt-5.5` by
+design, and today is the argument for that: a same-model reviewer tends to share
+the original's blind spots, and this one found four faults in an hour.
+
+```
+live on opus-5   w-arm-o5  w-gate-o5  w-fit-o5  w-swap-o5  w-decode-o5
+                 w-osd-o5  w-deblock-o5
+auditor gpt-5.5  w-audit
+still migrating  w-cast  w-e2e
+```
+
+### Your three defects
+
+| Defect | Owner | State |
+|---|---|---|
+| Cast available but play never starts, web player stuck 0:00 | `w-cast` | 2 real product bugs found; parser covers 1170/1170 MBs of a real P-frame |
+| Screensaver / Plex logo black | `w-osd-o5` | respawned; told to distinguish *nothing drawn* vs *wrong address* vs *overwritten* — same symptom, three different fixes |
+| Left-edge jagged black lines, moving | `w-arm-o5` | ARM fix ready, deploying **separately** from the RBF so the cause is attributable |
+
+### Next update
+
+~30 minutes, leading with whether `fb4bad84` produces a toggling display bank on
+real hardware.
 
 ### Headline
 
