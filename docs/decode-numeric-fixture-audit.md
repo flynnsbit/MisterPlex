@@ -2,7 +2,7 @@
 
 Pre-registered prediction before the audit: **SOUND=6, VACUOUS=2, OVER-TIGHT=1** among sampled high-risk decode numeric fixtures.
 
-Observed result after mutation testing: **SOUND=7, VACUOUS=2 (both closed here), OVER-TIGHT=0**. The over-tight prediction did not reproduce in numeric fixtures; the source-shape over-tightness remains in source-text invariants, not in these sampled numeric comparisons.
+Observed result after the first pass: **SOUND=7, VACUOUS=2 (both closed here), OVER-TIGHT=0**. The over-tight prediction did not reproduce in numeric fixtures; the source-shape over-tightness remains in source-text invariants, not in these sampled numeric comparisons.
 
 ## Findings
 
@@ -17,7 +17,40 @@ Observed result after mutation testing: **SOUND=7, VACUOUS=2 (both closed here),
 | IDCT/dequant | Coefficient position / scan placement | Swap dequant outputs for positions 1 and 4 | `FAIL real RTL sim: block=1 dequant[1] got -224 want 0` | Sound |
 | IDCT/recon | Reconstructed-pixel clipping | `clip8` returns `v[7:0]` without saturation | Before clip probe: green. After clip probe: `FAIL real RTL sim: recon clip boundary upper got 247 want 255` | Was vacuous; closed |
 
+## Extended sweep
+
+| Area | Property | Mutation | Evidence | Verdict |
+| --- | --- | --- | --- | --- |
+| IDCT/dequant | Scan-order placement across dequant matrix classes | `zigzag` swaps scan 1 and scan 4 (`pos 1` class 1 ↔ `pos 5` class 2) | `FAIL real RTL sim: scan placement dequant[1] got 2016 want 1568` | Sound |
+| IDCT reference fixture | AC coefficient sign/magnitude | `MPLEX_P3_IDCT_REF_PERTURB=dequant_ac` | `FAIL dequant[1]: got=-896 want=896` | Sound |
+| IDCT reference fixture | Frame MAE rows are per-MB, not a summary-only checksum | `MPLEX_P3_IDCT_REF_PERTURB=frame_mae` | `FAIL frame_mae mb=17: got sum=1 pixels=256 mae=0.003906 max=1; want sum=0 pixels=256 mae=0.000000 max=0` | Sound |
+| I16 plane predictor | Plane gradients, shift constants, clipping, H/V orientation | Existing I16 red probes mutate `b/c` shifts, clipping, and H/V | `ALL 4 mutation probes detected — RED proofs complete.` | Sound |
+| Intra MB0 fixture | MB0 luma pred/recon and mode guard | Negative RTL perturb plus mode-guard checks | `EXPECTED_RED p3_intra_mb0_negative...`; `P3 intra MB0 Verilator exact check PASS: 16 luma 4x4 blocks matched pred/recon exactly. CAVEAT: MB0 only exercises I4x4 DC/H/V...` | Sound for MB0; scoped, not full-intra proof |
+| Intra frame fixture | Whole I-frame luma exactness | Frame-wide negative RTL perturb | `EXPECTED_RED p3_intra_frame_negative...`; `P3 intra frame-wide Verilator exact check PASS: mb_exact=300/300 frame=320x240 luma_pixels=76800...` | Sound |
+| Inter prediction vectors | Motion-vector metadata | `MPLEX_P3_INTER_PERTURB=mv` | `FAIL fixture mismatch tests/fixtures/p3_inter_pred/pframe1_mb_v1.json... first_diff line=6` | Sound |
+| Inter prediction vectors | Per-frame/per-MB MAE rows | `MPLEX_P3_INTER_PERTURB=mae` | `FAIL fixture mismatch tests/fixtures/p3_inter_pred/frame_mae_v1.csv... first_diff line=1251` | Sound |
+| Inter prediction vectors | Baseline/CAVLC/no-B profile envelope | `MPLEX_P3_INTER_PERTURB=profile` | `FAIL baseline guard: synthetic unsupported stream profile=77 level=30 cabac=1` | Sound |
+| P16 real-P scoreboard | Prediction, residual, MV, RBSP request, MV-neighbour, scheduled residual, scan order, U/V read | Existing red builds for each fault | Examples: `got=73 want=92 pred=73 residual=19`; `read_ordinal 20736 got_addr=0x4a08 want_addr=0x4808`; `swapped scheduled coefficient fault failed scan-order scoreboard` | Sound |
+| Frame-plane goldens | Plane bytes, colorspace provenance, loop-filter provenance | Corrupt first U byte and provenance mutations | `FRAME_PLANE_COMPARE raw frame=0 plane=U exact=19199 pixels=19200 mae=0.003906 max_abs=75`; `test_h264_frame_plane_goldens: OK ... corrupt-plane/provenance RED checked` | Sound |
+| Multi-NAL stream path | Explicit expectations, P recon liveness, residual checksum | Refuse implicit defaults, force `recon_sig=0`, wrong expected checksum | `OK refuses implicit unproven defaults rc=2`; `OK red-check forced recon_sig=0 rejected parsed P DPB/MC liveness`; `OK deliberate RED wrong expected checksum rc=1` | Sound |
+
 ## Notes
 
 - The 624×480 derived real clip should improve image-statistics realism, but it is not a substitute for the two closed boundary probes: real content may still avoid exact saturated recon pixels or bottom/right clamp edge sentinels.
 - The zigzag helper swap `scan 1 ↔ 2` did not fail because those two positions share the same H.264 dequant matrix class; that mutation is behavior-equivalent for magnitude and is not evidence of vacuity.
+- The sharper scan-order mutation crosses dequant classes (`scan 1 ↔ 4`) and the RTL testbench now has a direct placement probe, so scan-order failures do not have to wait for a downstream IDCT/recon mismatch.
+
+## Real-content cross-check
+
+The derived 624×480 Constrained Baseline asset is recorded in `docs/derived-validation-assets.md`, not checked into the fixture set. `docs/phase3-decode.md` reports it as 1800 frames, 12,713,118 Annex-B bytes, and ~20.5% more bytes/MB plus ~29.6% more bytes/P-frame than the synthetic 624×480 P16 fixture. That makes it a better source of image-statistic and sustained-throughput stress, but **no unit golden/reference consumes it yet**.
+
+Priority properties that the derived asset should exercise better than the synthetic fixtures once a derived golden is wired:
+
+1. **Sustained residual/CAVLC and scan-order diversity:** current exact fixtures use MB0 and two scheduled P16 MBs; the derived stream has 1764 P frames of real-image-statistic residuals.
+2. **Long-run frame-plane Y/U/V statistics:** current frame-plane goldens prove exact byte/provenance comparisons on synthetic clips; the derived asset should become the high-entropy I420 golden source.
+3. **Throughput/ring lifecycle under realistic packet sizes:** current correctness fixtures are short; the derived asset is the measured 1800-frame sustained workload.
+
+Properties still **not** safely replaced by real content:
+
+- **DPB upper clamp edge:** real content may not motion-compensate into the bottom/right boundary on demand; the explicit edge-sentinel probe remains required.
+- **Recon saturation clipping:** real content may not hit exact 0/255 reconstruction boundaries; the synthetic clip probes remain required.

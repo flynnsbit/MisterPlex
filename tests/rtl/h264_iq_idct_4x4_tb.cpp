@@ -202,6 +202,30 @@ int main(int argc, char** argv) {
         }
 
         Vh264_iq_idct_4x4 dut;
+        auto runScanPlacementProbe = [&]() {
+            dut.max_coeff = 5;
+            dut.qp = static_cast<uint8_t>(qp);
+            for (int i = 0; i < 16; ++i) {
+                dut.coeff[i] = 0;
+                dut.pred[i] = 128;
+            }
+            dut.coeff[1] = 7;  // scan 1 -> row-major position 1, dequant matrix class 1
+            dut.coeff[4] = 3;  // scan 4 -> row-major position 5, dequant matrix class 2
+            dut.eval();
+            std::array<int, 16> want{};
+            want[1] = dequantValue(7, qp, 1);
+            want[5] = dequantValue(3, qp, 5);
+            for (int i = 0; i < 16; ++i) {
+                const int got = signExtend(static_cast<int>(dut.dequant[i]), 18);
+                if (got != want[static_cast<std::size_t>(i)]) {
+                    std::ostringstream oss;
+                    oss << "scan placement dequant[" << i << "] got " << got
+                        << " want " << want[static_cast<std::size_t>(i)];
+                    throw std::runtime_error(oss.str());
+                }
+            }
+        };
+        runScanPlacementProbe();
         int compared = 0;
         for (const auto& block : blocks) {
             const auto coeff = deriveCoeffScan(block.dequant, qp);
