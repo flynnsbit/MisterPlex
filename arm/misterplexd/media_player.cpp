@@ -70,6 +70,22 @@ inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs)
            (hash == std::string::npos ? std::string() : url.substr(hash));
 }
 
+inline std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
 // Annex-B start-code length at `i`, or 0 if none.
 inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
     if (i + 3 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1)
@@ -599,6 +615,11 @@ void MediaPlayer::paintIdle() {
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
     // instead of ringing the doorbell with an RGB payload.
+    if (!fpga_.ok() && presentMode_ != "none" && fpga_.open()) {
+        useDdrF1_ = true;
+        ddrBank_ = 0;
+        log("media: idle FPGA frame path OK (painting core frame store)");
+    }
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
@@ -2255,7 +2276,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
                     joined += "[...]";
                 else
-                    joined += a;
+                    joined += redactSensitive(a);
             }
             log(joined);
         }

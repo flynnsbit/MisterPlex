@@ -234,7 +234,9 @@ module ddr_frame_store #(
 			end
 
 			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+`ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
 				disp_bank <= pending_bank;
+`endif
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
 				swap_pending <= 1'b0;

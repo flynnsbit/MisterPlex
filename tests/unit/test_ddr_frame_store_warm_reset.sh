@@ -26,10 +26,11 @@ BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset"
 FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_fault"
 SCHED_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_sched_fault"
 FORMAT_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_format_fault"
+BANK_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_bank_fault"
 UV_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_uv_fault"
 CHROMA_VERTICAL_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_chroma_vertical_fault"
 CHROMA_STRIDE_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_chroma_stride_fault"
-mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$UV_FAULT_BUILD" "$CHROMA_VERTICAL_FAULT_BUILD" "$CHROMA_STRIDE_FAULT_BUILD"
+mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$BANK_FAULT_BUILD" "$UV_FAULT_BUILD" "$CHROMA_VERTICAL_FAULT_BUILD" "$CHROMA_STRIDE_FAULT_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -89,6 +90,30 @@ if ! grep -q 'accepted non-YUV doorbell' <<<"$FORMAT_FAULT_OUT"; then
   exit 1
 fi
 echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BANK_FAULT_BUILD" \
+  --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
+  -CFLAGS "-std=c++17 -O2" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb_top.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/line_buf_ram.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv" \
+  "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
+set +e
+BANK_FAULT_OUT="$("$BANK_FAULT_BUILD/Vddr_frame_store_warm_reset_tb" --bank-swap-only 2>&1)"
+BANK_FAULT_RC=$?
+set -e
+printf '%s\n' "$BANK_FAULT_OUT"
+if [[ "$BANK_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL ddr_frame_store warm-reset red-check: held display-bank fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'alternating bank flip' <<<"$BANK_FAULT_OUT"; then
+  echo "FAIL ddr_frame_store warm-reset red-check: expected alternating bank flip diagnostic" >&2
+  exit 1
+fi
+echo "OK ddr_frame_store warm-reset red-check: held display-bank fault failed"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$UV_FAULT_BUILD" \

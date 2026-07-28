@@ -62,6 +62,22 @@ bool confTruthy(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
 
+std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
                                                 bool bitrateExplicit) {
@@ -411,7 +427,8 @@ int main(int argc, char** argv) {
         player.setIdleMode(im);
         // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
         // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
-        osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
+        const auto osdControlConf = loadConf(confPath, "OSD_CONTROL");
+        osdControl = osdControlConf.empty() ? true : confTruthy(osdControlConf);
         player.setOsdControl(osdControl);
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
@@ -723,9 +740,14 @@ int main(int argc, char** argv) {
         timelineSession.ratingKey = bound.ratingKey;
         timelineSession.playQueueItemId = bound.playQueueItemId;
         timelineSession.containerKey = bound.containerKey;
+        timelineSession.clientIdentifier = machineId;
+        timelineSession.product = "MiSTerPlex";
+        timelineSession.version = "0.2.0";
+        timelineSession.deviceName = name;
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 
-        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
+        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n",
+                     redactSensitive(resolved.playable).c_str(),
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
