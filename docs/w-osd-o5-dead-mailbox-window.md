@@ -287,3 +287,57 @@ PROBE_WINDOW_OK                                                    rc=0
 Suite now 24 assertions. Red-proven by injecting a validator that accepts any
 address: **rc=1, 7 assertions flip**. `make unit` rc=0,
 `MAILBOX_WINDOW_RESULT=PASS`, literal-sweep offenders 0.
+
+---
+
+## Addendum 4 — my own mode-3 evidence was unbound, and read the wrong build
+
+The parent's ruling *"an unbound report must be UNBOUND, never a pass"* landed
+on `check_build_id_delivery.py --fit-rpt`, which is mine.
+
+**What was wrong, measured:**
+
+1. **No binding at all.** It accepted any report path. I had cited
+   `remote_out/deploy2/Plex.fit.rpt` — RBF md5 **`8eb01b79`**, which is **not**
+   the resident `fb4bad84`. My claim *"the build ID is not a mode-3 casualty"*
+   was drawn from a build nobody is running. **55 fit reports exist in this
+   worktree**; the parent counted 40 and either way the wrong-report hazard is
+   real.
+2. **It conflated absent with unseen.** Given a report it could not parse as a
+   product hierarchy, it printed *"the OSD render path was optimized away"*.
+   Demonstrated by injection against a two-line fake report:
+   ```
+   FAIL hps_io is absent ... the OSD render path was optimized away
+   FAIL osd    is absent ... the OSD render path was optimized away
+   ```
+   Neither statement was about the design. Both were about my parser. This is
+   exactly `w-arm-o5`'s formulation — *a self-imposed scope limit silently
+   became a claim about the world*.
+
+**Fixed, matching `check_fitted_line_buffer.py`'s convention rather than
+inventing a second one:** `--expect-rbf-md5` binds to a sibling `Plex.rbf`;
+unbound returns **77** and prints **no verdict line**, so nothing can grep
+`BUILD_ID_DELIVERY OK` out of a run that proved nothing. An `emu` anchor
+distinguishes the two failures: no anchor → **UNSEEN, rc=2**, never
+"optimized away".
+
+**Re-measured, properly bound to the bitstream the user is looking at:**
+
+```
+BOUND report -> Plex.rbf md5=fb4bad84
+Scope: 133 distinct modules in Plex.fit.rpt, anchor emu present
+OK survived synthesis: hps_io
+OK survived synthesis: osd
+BUILD_ID_DELIVERY OK                                              rc=0
+```
+
+**The conclusion survives** — the OSD render path is not a mode-3 casualty in
+the resident silicon — but it is only now that it rests on the right report.
+This also independently corroborates the parent's finding that the display path
+survives fitting: same report, different modules.
+
+Reds added (suite 38 → 48 OK lines): unbound → 77 with **no verdict line**;
+wrong md5 → `BINDING_FAIL`; `--expect` with no sibling RBF → fail; unreadable
+hierarchy → `UNSEEN` rc=2 and **must not** say "optimized away"; plus a
+resident-bound bonus green. Red-proven by injecting "unbound reports are
+accepted": rc=1, 2 assertions flip. `make unit` rc=0.
