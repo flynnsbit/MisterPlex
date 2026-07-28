@@ -8,6 +8,7 @@ reachable or named with a reason in rtl/bench_only_modules.txt.
 """
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -161,12 +162,22 @@ def reachable_from(root: str, graph: dict[str, set[str]]) -> set[str]:
     return seen
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--root", default=PRODUCT_ROOT,
+                    help=f"root module for reachability analysis (default: {PRODUCT_ROOT})")
+    ap.add_argument("--require", action="append", default=[], metavar="MODULE",
+                    help="require MODULE to be reachable from --root; repeatable")
+    args = ap.parse_args(argv)
+    root = args.root
+
     print(
         "Scope: all tracked fpga/Plex_MiSTer/rtl modules must be reachable from "
         f"product root {PRODUCT_ROOT}, unless explicitly bench-only; "
         "h264_decode_core is the product decoder and CAVLC/intra4x4 producers "
-        "must sit under that core, not a standalone parser branch.",
+        "must sit under that core, not a standalone parser branch."
+        + (f" Additionally requiring {', '.join(sorted(args.require))} reachable from {root}."
+           if args.require else ""),
         flush=True,
     )
     rtl_paths = git_files("fpga/Plex_MiSTer/rtl")
@@ -174,7 +185,10 @@ def main() -> int:
     modules = parse_modules(paths)
     bench_only = parse_bench_only()
     graph = instantiation_graph(modules)
-    reachable = reachable_from(PRODUCT_ROOT, graph)
+    if root not in modules:
+        fail(f"root module does not exist: {root}")
+    reachable = reachable_from(root, graph)
+    product_reachable = reachable if root == PRODUCT_ROOT else reachable_from(PRODUCT_ROOT, graph)
 
     rtl_modules = {
         name: mod
@@ -185,14 +199,14 @@ def main() -> int:
     if unknown_bench:
         fail("bench-only list names modules that do not exist: " + ", ".join(unknown_bench))
 
-    reachable_bench = sorted(name for name in bench_only if name in reachable)
+    reachable_bench = sorted(name for name in bench_only if name in product_reachable)
     if reachable_bench:
         fail(
             "bench-only modules are now reachable from product root; remove the declaration: "
             + ", ".join(reachable_bench)
         )
 
-    missing_required = sorted(name for name in REQUIRED_PRODUCT_REACHABLE if name not in reachable)
+    missing_required = sorted(name for name in REQUIRED_PRODUCT_REACHABLE if name not in product_reachable)
     if missing_required:
         fail(
             "required product modules are not reachable from "
@@ -206,7 +220,7 @@ def main() -> int:
             + ", ".join(f"{src}->{dst}" for src, dst in missing_edges)
         )
 
-    missing = sorted(name for name in rtl_modules if name not in reachable and name not in bench_only)
+    missing = sorted(name for name in rtl_modules if name not in product_reachable and name not in bench_only)
     if missing:
         for name in missing:
             mod = rtl_modules[name]
@@ -221,10 +235,21 @@ def main() -> int:
             f"{BENCH_ONLY.relative_to(ROOT)}"
         )
 
+    unknown_required = sorted(set(args.require) - set(rtl_modules))
+    if unknown_required:
+        fail("required RTL modules do not exist: " + ", ".join(unknown_required))
+
+    unreachable_required = sorted(name for name in args.require if name not in reachable)
+    if unreachable_required:
+        fail(f"required RTL modules are not reachable from {root}: " + ", ".join(unreachable_required))
+
+    for name in sorted(args.require):
+        print(f"REQUIRED_RTL_MODULE_REACHABLE {name} root={root}")
+
     print(
         "RTL_MODULE_INSTANTIATION_OK "
-        f"rtl_modules={len(rtl_modules)} reachable={sum(1 for n in rtl_modules if n in reachable)} "
-        f"bench_only={len(bench_only)} root={PRODUCT_ROOT}"
+        f"rtl_modules={len(rtl_modules)} reachable={sum(1 for n in rtl_modules if n in product_reachable)} "
+        f"bench_only={len(bench_only)} root={root}"
     )
     return 0
 
