@@ -32,6 +32,18 @@ inline uint8_t annexBNalType(const uint8_t* annexb, size_t len) {
 struct DispatchConfig {
     int max_full_retries = 50;
     int full_retry_sleep_ms = 2;
+    // Re-send SPS/PPS ahead of every IDR so that EVERY IDR in the ring is a
+    // valid decoder entry point. Without this the parameter sets are pushed
+    // once per session and a consumer that starts late, restarts, or loses the
+    // head of the ring to a wrap can never decode anything again. 7 IDRs per
+    // title at ~30 bytes each -- the cost is nil, the failure it removes is total.
+    bool replay_parameters_each_idr = true;
+    // A full ring means the FPGA consumer is absent or stalled, which is the
+    // NORMAL condition during decoder bring-up. Dropping to the next IDR and
+    // resuming is recoverable; killing the feed for the rest of the session is
+    // not, and leaves the decoder looking at a stale ring through no fault of
+    // its own.
+    bool resync_on_full = true;
     std::function<void(int)> sleep_ms = [](int ms) {
         std::this_thread::sleep_for(std::chrono::milliseconds(ms));
     };
@@ -47,6 +59,8 @@ struct DispatchStats {
     uint64_t full_retries = 0;
     uint64_t full_escalations = 0;
     uint64_t desync_or_fatal = 0;
+    uint64_t resyncs = 0;            // times the ring stayed full and we dropped to the next IDR
+    uint64_t nal_dropped_resync = 0; // NALs discarded while waiting for that IDR
 };
 
 class AnnexBFramer {
@@ -208,10 +222,30 @@ public:
             return PushResult::Ok;
         }
 
+        // Resyncing: the ring stayed full, so the consumer has certainly lost
+        // stream continuity. Only an IDR can restore it; everything else is
+        // undecodable without the frames we already dropped.
+        if (resyncing_) {
+            if (type != 5) {
+                ++stats_.nal_dropped_resync;
+                return PushResult::Ok;
+            }
+            resyncing_ = false;
+            sps_delivered_ = false;
+            pps_delivered_ = false;
+        }
+
+        // An IDR is a random-access point only if the parameter sets precede
+        // it. Re-arm so they are re-sent, making every IDR self-contained.
+        if (type == 5 && cfg_.replay_parameters_each_idr) {
+            sps_delivered_ = false;
+            pps_delivered_ = false;
+        }
+
         if (type == 1 || type == 5) {
             const auto pr = replayParametersIfNeeded();
             if (pr != PushResult::Ok)
-                return pr;
+                return absorbFull(pr);
         }
 
         const auto r = pushWithBackpressure(annexb, len, type, false);
@@ -221,7 +255,7 @@ public:
             else if (type == 8)
                 pps_delivered_ = true;
         }
-        return r;
+        return absorbFull(r);
     }
 
     const DispatchStats& stats() const { return stats_; }
@@ -229,6 +263,22 @@ public:
     uint32_t nextSeq() const { return seq_; }
 
 private:
+    // A full ring is backpressure, not corruption. Convert it into a resync
+    // request so the producer keeps running and rejoins at the next IDR.
+    // Returned as Ok because the caller's contract is "anything but Ok is
+    // fatal" -- and a stalled consumer must not be fatal to the producer.
+    PushResult absorbFull(PushResult r) {
+        if (r != PushResult::Full || !cfg_.resync_on_full)
+            return r;
+        if (!resyncing_) {
+            resyncing_ = true;
+            ++stats_.resyncs;
+        }
+        sps_delivered_ = false;
+        pps_delivered_ = false;
+        return PushResult::Ok;
+    }
+
     PushResult replayParametersIfNeeded() {
         if (!sps_delivered_) {
             if (sps_.empty())
@@ -284,6 +334,7 @@ private:
     bool paused_ = false;
     bool sps_delivered_ = false;
     bool pps_delivered_ = false;
+    bool resyncing_ = false;
     std::vector<uint8_t> sps_;
     std::vector<uint8_t> pps_;
     DispatchStats stats_;

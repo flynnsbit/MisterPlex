@@ -1312,10 +1312,19 @@ void MediaPlayer::streamPump(int sfd) {
         if (!f3Active || f3Fatal || !wantF3)
             return;
         const uint64_t beforeNals = f3Dispatch.stats().nal_pushed;
+        const uint64_t beforeResyncs = f3Dispatch.stats().resyncs;
         const auto r = f3Dispatch.handleNal(nalSc, nalLen);
         const auto& after = f3Dispatch.stats();
         f3Total = static_cast<size_t>(after.bytes_pushed);
         f3Pushes = static_cast<size_t>(after.nal_pushed);
+        if (after.resyncs != beforeResyncs) {
+            // Recoverable: the consumer is absent or behind, so we drop to the
+            // next IDR instead of killing the feed for the rest of the session.
+            log("media: F3 NAL ring full; dropping to next IDR resyncs=" +
+                std::to_string(after.resyncs) +
+                " dropped=" + std::to_string(after.nal_dropped_resync) + " " +
+                readDdrBitstreamStatusString());
+        }
         if (r == h264stream::PushResult::Ok) {
             if (after.nal_pushed != beforeNals && (after.nal_pushed % 64) == 0)
                 log("media: F3 NAL stream nals=" + std::to_string(after.nal_pushed) +
@@ -1678,7 +1687,8 @@ void MediaPlayer::streamPump(int sfd) {
         wantF3 && f3Status.bytes_accepted > 4 && haveDdrBeforeEnd &&
         ddrBeforeEnd.consumer_count <= 4;
     if (wantF3 && (f3Status.nal_accepted == 0 || f3Status.bytes_accepted <= 4 ||
-                   effectivelyEmptyDelivery || f3Fatal || f3Stats.full_escalations != 0 ||
+                   effectivelyEmptyDelivery || f3Fatal ||
+                   (f3Stats.full_escalations != 0 && f3Stats.resyncs == 0) ||
                    f3Stats.desync_or_fatal != 0)) {
         log("ERROR media: DDR bitstream zero/effectively-empty delivery "
             "accepted_nals=" + std::to_string(f3Status.nal_accepted) +
@@ -1686,6 +1696,8 @@ void MediaPlayer::streamPump(int sfd) {
             " dispatcher_seen=" + std::to_string(f3Stats.nal_seen) +
             " full_retries=" + std::to_string(f3Stats.full_retries) +
             " full_escalations=" + std::to_string(f3Stats.full_escalations) +
+            " resyncs=" + std::to_string(f3Stats.resyncs) +
+            " dropped_resync=" + std::to_string(f3Stats.nal_dropped_resync) +
             " desync_or_fatal=" + std::to_string(f3Stats.desync_or_fatal) +
             " effectively_empty=" + (effectivelyEmptyDelivery ? "1" : "0") +
             " " + ddrStatusBeforeEnd);
@@ -1694,6 +1706,8 @@ void MediaPlayer::streamPump(int sfd) {
         " f3_nals=" + std::to_string(f3Status.nal_accepted) +
         " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
         " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
+        " f3_resyncs=" + std::to_string(f3Stats.resyncs) +
+        " f3_dropped_resync=" + std::to_string(f3Stats.nal_dropped_resync) +
         " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
         " f3_desync=" + std::to_string(f3Status.desync_count) +
         " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +

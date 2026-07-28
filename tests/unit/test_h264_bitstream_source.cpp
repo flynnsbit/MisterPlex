@@ -145,7 +145,12 @@ int main() {
     CHECK(seekDispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
     CHECK(seekDispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
     CHECK(seekDispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
-    CHECK(seekRing.status().nal_accepted == 3);
+    // 3 input NALs, plus SPS+PPS replayed ahead of the IDR so that a consumer
+    // joining at this IDR -- which is the only thing it can join at after a
+    // seek -- finds its parameter sets. See test_bitstream_feed_entry_points.
+    CHECK(seekRing.status().nal_accepted == 5);
+    CHECK(seekDispatch.stats().sps_replayed == 1);
+    CHECK(seekDispatch.stats().pps_replayed == 1);
     CHECK(seekDispatch.end() == ControlResult::Ok);
 
     const auto fixture = readFile("tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264");
@@ -157,6 +162,23 @@ int main() {
     size_t fixtureNals = 0;
     size_t fixtureVcl = 0;
     size_t fixtureIdr = 0;
+    // Bytes the dispatcher re-injects: SPS+PPS ahead of every IDR, using the
+    // most recently seen parameter sets. Predicted exactly, not bounded.
+    size_t lastSpsLen = 0;
+    size_t lastPpsLen = 0;
+    size_t replayNals = 0;
+    size_t replayBytes = 0;
+    auto accountReplay = [&](const uint8_t* p, size_t n) {
+        const uint8_t type = annexBNalType(p, n);
+        if (type == 7)
+            lastSpsLen = n;
+        else if (type == 8)
+            lastPpsLen = n;
+        else if (type == 5) {
+            replayNals += 2;
+            replayBytes += lastSpsLen + lastPpsLen;
+        }
+    };
     for (size_t off = 0; off < fixture.size();) {
         const size_t chunk = std::min<size_t>((off % 17) + 1, fixture.size() - off);
         CHECK(framer.push(fixture.data() + off, chunk, [&](const uint8_t* p, size_t n) {
@@ -166,6 +188,7 @@ int main() {
                 ++fixtureVcl;
             if (type == 5)
                 ++fixtureIdr;
+            accountReplay(p, n);
             CHECK(fixtureDispatch.handleNal(p, n) == PushResult::Ok);
         }));
         off += chunk;
@@ -179,13 +202,16 @@ int main() {
             ++fixtureVcl;
         if (type == 5)
             ++fixtureIdr;
+        accountReplay(p, n);
         CHECK(fixtureDispatch.handleNal(p, n) == PushResult::Ok);
     }));
     CHECK(fixtureNals == 5);
     CHECK(fixtureVcl == 2);
     CHECK(fixtureIdr == 1);
-    CHECK(fixtureRing.status().bytes_accepted == fixture.size());
-    CHECK(fixtureRing.status().nal_accepted == fixtureNals);
+    CHECK(replayNals == 2 * fixtureIdr);
+    CHECK(replayBytes > 0);
+    CHECK(fixtureRing.status().bytes_accepted == fixture.size() + replayBytes);
+    CHECK(fixtureRing.status().nal_accepted == fixtureNals + replayNals);
     CHECK(fixtureDispatch.end() == ControlResult::Ok);
 
     if (fails) {

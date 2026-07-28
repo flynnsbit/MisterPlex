@@ -92,11 +92,15 @@ static void testBasicSessionLifecycle() {
 
     auto st = ring.status();
     CHECK(st.active);
-    CHECK(st.nal_accepted == 3);
+    // 3 inputs + SPS/PPS replayed ahead of the IDR to make it a self-contained
+    // decoder entry point (see test_bitstream_feed_entry_points).
+    CHECK(st.nal_accepted == 5);
+    CHECK(dispatch.stats().sps_replayed == 1);
     CHECK(st.bytes_accepted > 0);
     // Degeneracy: ring must actually contain data (not zero-length passthrough)
     CHECK(ring.snapshot().size() > 0);
-    CHECK(ring.snapshot().size() >= sps.size() + pps.size() + idr.size());
+    CHECK(ring.snapshot().size() ==
+          2 * sps.size() + 2 * pps.size() + idr.size());
 
     CHECK(dispatch.end() == ControlResult::Ok);
     st = ring.status();
@@ -152,7 +156,7 @@ static void testSeekFlushReset() {
     CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
 
     auto st1 = ring.status();
-    CHECK(st1.nal_accepted == 3);
+    CHECK(st1.nal_accepted == 5); // + replayed SPS/PPS ahead of the IDR
 
     // Seek: flush old session, begin new one
     CHECK(dispatch.flushForSeek(2) == ControlResult::Ok);
@@ -170,10 +174,12 @@ static void testSeekFlushReset() {
     auto r = dispatch.handleNal(idr2.data(), idr2.size());
     CHECK(r == PushResult::Ok);
 
-    // SPS/PPS were pushed explicitly, not replayed
+    // SPS/PPS were pushed explicitly AND re-injected ahead of the post-seek
+    // IDR. The duplicate is deliberate: a seek is precisely when a consumer
+    // rejoins, so the IDR it lands on must carry its own parameter sets.
     auto stats = dispatch.stats();
-    CHECK(stats.sps_replayed == 0);
-    CHECK(stats.pps_replayed == 0);
+    CHECK(stats.sps_replayed == 1);
+    CHECK(stats.pps_replayed == 1);
 
     CHECK(dispatch.end() == ControlResult::Ok);
     std::fprintf(stderr, "  OK: seek/flush→re-begin, sps_replayed=%llu pps_replayed=%llu\n",
@@ -225,7 +231,11 @@ static void testRingFullBackpressure() {
     std::fprintf(stderr, "--- testRingFullBackpressure ---\n");
     // Tiny ring: only 512 bytes. Push until Full.
     CopyRingBitstreamProducer ring(512);
-    NalDispatcher dispatch(ring, DispatchConfig{0, 0}); // no retries
+    DispatchConfig rawCfg;
+    rawCfg.max_full_retries = 0;
+    rawCfg.full_retry_sleep_ms = 0;
+    rawCfg.resync_on_full = false; // surface the raw transport verdict
+    NalDispatcher dispatch(ring, rawCfg);
 
     CHECK(dispatch.begin(1) == ControlResult::Ok);
     auto sps = makeNal(7, 10);
@@ -246,6 +256,28 @@ static void testRingFullBackpressure() {
     CHECK(sawFull);
     auto stats = dispatch.stats();
     CHECK(stats.full_escalations >= 1);
+
+    // Same pressure with the product default: a full ring must NOT be fatal.
+    // During decoder bring-up the consumer is absent by definition, so the
+    // ring fills within ~100 ms; if that killed the feed, every RTL stage
+    // after it would be looking at a stale ring.
+    CopyRingBitstreamProducer ring2(512);
+    DispatchConfig softCfg;
+    softCfg.max_full_retries = 0;
+    softCfg.full_retry_sleep_ms = 0;
+    NalDispatcher soft(ring2, softCfg);
+    CHECK(soft.begin(1) == ControlResult::Ok);
+    CHECK(soft.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(soft.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+    bool sawFullSoft = false;
+    for (int i = 0; i < 100; ++i) {
+        auto big = makeNal(5, 200);
+        if (soft.handleNal(big.data(), big.size()) != PushResult::Ok)
+            sawFullSoft = true;
+    }
+    CHECK(!sawFullSoft);
+    CHECK(soft.stats().full_escalations >= 1); // the ring really did fill
+    CHECK(soft.stats().resyncs >= 1);
     // Degeneracy: must have pushed at least some data before hitting Full.
     // If it returns Full on the first push, the ring never accepted anything.
     CHECK(stats.bytes_pushed > 0);
@@ -304,7 +336,10 @@ static void testMidStreamTeardown() {
 
     // Push only half the NALs (simulates mid-stream teardown)
     size_t half = nals.size() / 2;
+    size_t idrs = 0;
     for (size_t i = 0; i < half; ++i) {
+        if (annexBNalType(nals[i].data(), nals[i].size()) == 5)
+            ++idrs;
         auto r = dispatch.handleNal(nals[i].data(), nals[i].size());
         CHECK(r == PushResult::Ok);
     }
@@ -313,7 +348,8 @@ static void testMidStreamTeardown() {
     CHECK(dispatch.end() == ControlResult::Ok);
     auto st = ring.status();
     CHECK(!st.active);
-    CHECK(st.nal_accepted == half);
+    CHECK(idrs > 0); // otherwise the replay term below is vacuous
+    CHECK(st.nal_accepted == half + 2 * idrs);
     std::fprintf(stderr, "  OK: mid-stream end after %zu/%zu nals, ring clean\n", half, nals.size());
 }
 
@@ -381,8 +417,12 @@ static void testDataIntegrity() {
     CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
     CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
 
-    // Concatenate what we pushed — the ring should hold this exact byte sequence
+    // The ring should hold this exact byte sequence: the three NALs pushed,
+    // with SPS/PPS re-injected immediately ahead of the IDR so a consumer that
+    // finds only the IDR still has everything it needs to decode it.
     std::vector<uint8_t> expected;
+    expected.insert(expected.end(), sps.begin(), sps.end());
+    expected.insert(expected.end(), pps.begin(), pps.end());
     expected.insert(expected.end(), sps.begin(), sps.end());
     expected.insert(expected.end(), pps.begin(), pps.end());
     expected.insert(expected.end(), idr.begin(), idr.end());
