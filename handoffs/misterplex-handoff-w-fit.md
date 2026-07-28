@@ -1770,3 +1770,85 @@ was demonstrably alive (I had ssh at 12:07:56). That is a positive result the
 fleet had not registered, and it is consistent with §27.3: I had just zeroed the
 stale mailbox magics and the ARM painted (`media: idle screen painted (mode=0)`).
 It is the **ARM** painting, not the fabric -- the fabric was silent throughout.
+
+---
+
+## 30. ★ The user-reported left-edge artifact is VISIBLE and MEASURED
+
+I opened the artifact referenced by W-E2E's commit `72f9e4f`
+(`.worktrees/w-e2e/artifacts/e2e-o5/screen_now.png`, 12:09, `fb4bad84` resident,
+device reachable). Reading a PNG is not opening `/dev/video0`.
+
+It contains **both** the good news and the user's complaint, in the same frame.
+
+### 30.1 Measurements
+
+```
+Scope: 1 frame, 1280x720 = 921,600 px
+background (modal) RGB(34,40,42)   756,544 px = 82.1 %
+brand orange px    14,479
+orange bbox        x484..703  y240..479   centroid (595,359)
+```
+
+The bbox and centroid reproduce W-E2E's independently-reported
+`484,239..707,479 centroid (595,359)`. Two implementations agree.
+
+**Near-black (luma < 12) by column band:**
+
+| band | black |
+|---|---|
+| x[0:20] | 100.0 % (pillarbox) |
+| **x[20:150]** | **70.0 %  <- THE ARTIFACT** |
+| x[150:300] | 0.6 % |
+| x[300:480] | 0.3 % |
+| x[480:760] | 0.2 % |
+| x[760:1100] | 0.1 % |
+| x[1100:1280] | 12.9 % (pillarbox) |
+
+The left band is **70.0 % black against 0.6 % in the immediately adjacent
+interior -- a 117x asymmetry** -- and it is not mirrored on the right.
+
+**Per-row structure inside x[20:150]:** mean 0.700, **std 0.180**, 709/720 rows
+over 30 % black, 0 rows clear. The band is continuously present but its horizontal
+extent **varies row to row**. That per-row variation *is* the "jagged" character:
+ragged-length black streaks, not a clean rectangle.
+
+### 30.2 This matches the user's report point for point
+
+The user reported: *idle Plex logo screen, **grey background**, **jagged black
+lines on the LEFT edge, moving**, after a core reset with the logo enabled.*
+
+| user's words | measured |
+|---|---|
+| idle Plex logo screen | 14,479 brand-orange px, chevron, centroid (595,359) |
+| grey background | RGB(34,40,42) over 82.1 % of the frame |
+| black lines, LEFT edge | x[20:150] 70.0 % black vs 0.6 % adjacent |
+| jagged | per-row extent varies, std 0.180 across 720 rows |
+| moving | **NOT CONFIRMED** -- single frame; needs a multi-frame diff |
+
+**This is the first time the reported defect has been captured and quantified
+rather than described.** Everything except "moving" is confirmed.
+
+### 30.3 It corroborates W-ARM's mechanism
+
+W-ARM's hypothesis was that the ARM fallback writes the host-planned ping-pong
+bank and so can overwrite the bank currently being scanned out. §27.3 established
+that on `fb4bad84` the **ARM painter is the only live writer** and `disp_bank` is
+frozen. Tearing from a writer racing the scanout appears where each frame's write
+begins -- the **left edge** -- which is exactly where this band is.
+
+So the same defect plausibly produces both symptoms: intermittent whole-screen
+content (~5 % duty, ~42 s) *and* left-edge corruption in the frames that do
+appear.
+
+### 30.4 Limits
+
+* **One frame.** "Moving" is unverified and needs a multi-frame diff of the left
+  band across the sequence.
+* Capture is **MJPEG**, so some artefacts are codec-induced -- but 70 % vs 0.6 %
+  is far outside JPEG ringing, and ringing would not be one-sided.
+* `fb4bad84` only. Not yet shown on any other build.
+* Geometry: the active area is roughly x in [20,1100] for 618 display columns, so
+  x[20:150] is about the first **74 of 618 columns (~12 %)** -- a wide band, not
+  the 11-pixel `PRESENT_X` margin. **Do not conflate this with the settled
+  `PRESENT_X=11` geometry.**
