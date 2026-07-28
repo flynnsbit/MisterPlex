@@ -40,11 +40,24 @@ int residualBlockSample(int mbIdx, int block, int pos) {
     return kScan14[pos];
 }
 
-const char* residualBlockBits(int mbIdx, int block) {
-    if (mbIdx == 1 && (block == 0 || block == 16)) return "00010000000000000000001000001111110111"; // scan coeffs [80, 1]
-    if (block < kScheduledLumaBlocks)
-        return (block & 1) ? "00100111" : "0000011100001100111"; // scan coeffs [1,1] or [1,4]
-    return (block < kScheduledLumaBlocks + 4) ? "00100111" : "0000011100001100111";
+// The decoder picks the coeff_token VLC table from nC (H.264 9.2.1), so the
+// fixture has to encode each block with the table the decoder will use. Every
+// coded luma block here carries total_coeff=2, so nC is 2 wherever a neighbour
+// is available (table 1). It is 0 only for the first block of the slice, whose
+// left macroblock precedes first_mb_in_slice and whose upper macroblock does not
+// exist (table 0). Chroma AC has no neighbour context yet and stays on table 0.
+// Suffixes are identical between tables; only the coeff_token prefix changes.
+std::string residualBlockBits(int mbIdx, int block) {
+    const bool luma = block < kScheduledLumaBlocks;
+    const bool firstBlockOfSlice = (mbIdx == 0 && block == 0);
+    const bool table1 = luma && !firstBlockOfSlice;
+    if (mbIdx == 1 && (block == 0 || block == 16))  // total_coeff=2 trailing_ones=1, scan coeffs [80, 1]
+        return std::string(table1 ? "00111" : "000100") + "00000000000000001000001111110111";
+    const bool patternA = luma ? (block & 1) : (block < kScheduledLumaBlocks + 4);
+    if (patternA)  // total_coeff=2 trailing_ones=2, scan coeffs [1, 1]
+        return std::string(table1 ? "011" : "001") + "00111";
+    // total_coeff=2 trailing_ones=0, scan coeffs [1, 4]
+    return std::string(table1 ? "000111" : "00000111") + "00001100111";
 }
 
 struct Write {
@@ -422,9 +435,9 @@ void loadScheduledResidualRbsp(Sim& s, int mbOrdinal) {
     const MbCase& mb = kCases.at(mbOrdinal);
     int bitOffset = mb.residualBitOffset - mb.rbspWindowBase * 8;
     for (int block = 0; block < kScheduledBlocks; ++block) {
-        const char* bits = residualBlockBits(mbOrdinal, block);
-        putBits(bitOffset, bits);
-        bitOffset += static_cast<int>(std::string(bits).size());
+        const std::string bits = residualBlockBits(mbOrdinal, block);
+        putBits(bitOffset, bits.c_str());
+        bitOffset += static_cast<int>(bits.size());
     }
 }
 
