@@ -615,6 +615,11 @@ void MediaPlayer::paintIdle() {
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
     // instead of ringing the doorbell with an RGB payload.
+    if (!fpga_.ok() && presentMode_ != "none" && fpga_.open()) {
+        useDdrF1_ = true;
+        ddrBank_ = 0;
+        log("media: idle FPGA frame path OK (painting core frame store)");
+    }
     if (fpga_.ok()) {
         bool ok = false;
         if (useDdrF1_) {
