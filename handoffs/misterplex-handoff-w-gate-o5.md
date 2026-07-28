@@ -451,3 +451,54 @@ own checker cannot parse either flag. Their conclusions match mine, so I have
 no reason to doubt the numbers, but the instrument that produced them should be
 named — most likely a copy from `w-deblock-seam`. Any quoted reachability
 figure needs to name the branch **and** the checker it was measured with.
+
+## A9 — Failure mode 3 is gate-able from source, in two seconds
+
+W-FIT-O5 found `h264_decode_core` **absent from Analysis & Synthesis** on
+`w-decode-hour27` `2f165ed` with fit conditions 1 and 2 both green. It is
+compiled, instantiated unconditionally, elaborated — and then deleted for
+contributing zero resources.
+
+`scripts/check_dead_logic_pruning.py` asks the one question source *can*
+answer: **can this instance influence the design at all?** Measured on that
+same commit:
+
+| module | this gate (~2s) | Quartus A&S (4m23s) |
+|---|---|---|
+| `h264_decode_core` | **rc=1**, 13/13 output nets dead, 23/53 inputs constant-tied | **ABSENT**, optimized away |
+| `decode_stub` | **rc=0**, 10/10 output nets live | **PRESENT**, instances=1 |
+
+Not a synthetic red/green — two modules, one commit, opposite verdicts, both
+confirmed by the stronger oracle.
+
+**For W-DECODE-O5 — the remedy, named.** The stub survives because its outputs
+leave the module: `wr_en / wr_pixel / wr_reset_ptr / swap_req` connect to
+`fs_wr_en / fs_wr_pixel / fs_wr_reset / fs_swap`, which are **ports of
+`stream_path`** feeding the frame store. Every core output instead terminates
+in `_keep` at `stream_path.sv:608`, which nobody reads. Don't wire the
+instantiation — it is wired. **Make the core drive those four frame-store
+ports.** Then re-run this gate (2s) before asking W-FIT for A&S (4m).
+
+Run it as:
+
+```bash
+python3 scripts/check_dead_logic_pruning.py \
+    --project-root "$PWD/.worktrees/w-decode-hour27" --require h264_decode_core
+```
+
+**Limits, declared:** biased toward calling nets live so it can miss deadness
+but should not invent it; reasons inside the instantiating module only; honours
+`(* keep *)`; partial deadness is printed but only a wholly dead instance
+fails; `outputs=0` returns **rc=2 REFUSED**, never a verdict. It is a
+pre-filter — `check_prefit_elaboration.sh` and post-fit hierarchy still decide.
+
+**Two defects it had, both now regression cases.** A greedy port regex made the
+core report `outputs=0`, and the gate failed it for having no live outputs — a
+true rc=1 about nothing, inside the instrument written to police that. And
+`if (` registered as a sibling instantiation, which made the dead core come out
+**GREEN** against Quartus; mutation-proved by restoring the regex.
+
+**The necessary conditions are now five**, cheapest first: compiled →
+instantiated → **able to influence the design** → under the product subtree →
+survives A&S and the fitter. Conditions 1 and 2 were both satisfied by a module
+that is not in the design.
