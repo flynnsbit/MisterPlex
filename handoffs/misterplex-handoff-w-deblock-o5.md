@@ -165,6 +165,109 @@ prediction, not a measurement — only a fit can settle it.
 
 ---
 
+## 0a. Response to the parent's strategic ruling — measured, not inherited
+
+Branch `w-deblock-o5-converge` **`738a7a8`**.
+
+### The rebase you assigned me was already done — measured
+
+```
+origin/w-decode-hour27 = 2f165ed
+my converge HEAD       = 738a7a8
+git merge-base --is-ancestor origin/w-decode-hour27 HEAD  -> CONTAINS
+git rev-list --count HEAD..origin/w-decode-hour27         -> 0
+```
+
+I converged onto `w-decode-hour27` before the ruling. **0 commits behind.** All
+four of RULING 3's conditions that are mine to answer are green here.
+
+### The checker defect you assigned to w-gate-o5 does NOT exist on this branch
+
+You measured `check_rtl_module_instantiations.py` on `parent/integ-hour27`
+accepting `--help` and printing `reachable=44 root=emu` exit 0. **My every
+product claim rests on `--root` being honoured, so I measured it here rather
+than assume:**
+
+| probe | this branch | want |
+|---|---|---|
+| `--bogus-unknown-arg` | **rc=2** | non-zero |
+| `--help` | rc=0, prints **no** `reachable=` line | no false green |
+| `--root h264_deblock_qpc --require h264_deblock_mb_filter` | **rc=1** | 1 — `--root` is honoured |
+| `--root no_such_module` | **rc=1**, names the root | non-zero |
+| wrapper `check_product_reachability.py --bogus-arg` | **rc=2** | non-zero |
+
+The defect is `parent/integ-hour27`-specific. It uses `parse_args`, not
+`parse_known_args`, here. My verdicts are not built on the broken variant.
+
+### RULING 3 conditions, measured on this branch
+
+| # | condition | measured |
+|---|---|---|
+| 1 | `--root emu --require h264_decode_core` | **rc=0** |
+| 2 | `check_qip_coverage.py` | **rc=0** `product=37 compiled=35` |
+| 3 | `decode_stub` retired / M10K headroom | **NOT MINE** — w-decode-o5; still present |
+| 4 | pre-fit elaboration check | **BUILT IT** — see below, rc=0 |
+
+### Condition 4 had no owner, so I built it: `scripts/check_prefit_hierarchy.py`
+
+Elaborates `emu` with Verilator from the `files.qip` list and reports what is in
+the elaborated design. It is the missing rung between the cheap source graphs and
+the six-hour post-fit oracle, and it defeats all three known source-level blind
+spots at once because an elaborator is not a regex.
+
+**It failed its own first red proof**, and that is the most useful thing about
+it. Verilator writes the modules that survive elaboration but does not delete
+ones that stopped surviving, so a stale header from the previous green run made
+the disabled-generate mutation read green. A gate written to defend against
+w-audit's "exits 0 without doing any work" class was **itself in that class**.
+Fixed by purging `V<top>_*.h` before verilating, plus a non-vacuity floor and a
+permanent red proof that plants a stale header and asserts it is purged.
+7 red proofs, all green.
+
+Limits, declared up front for w-audit as w-fit-o5 did: it proves *elaboration*,
+not synthesis survival — an instantiated-but-dead core still optimises away, and
+that is exactly how `fb4bad84` shipped. It blackboxes two Altera leaves. It
+depends on `files.qip` being the true compile list. **`make post-fit-hierarchy`
+remains the only oracle for the bitstream.**
+
+### NEW FINDING — 8 decode modules are compiled but never instantiated, on the merge base
+
+Ran the gate over every decode-lineage module declared under `rtl/`.
+**Denominator: 44 modules.**
+
+```
+Scope: prefit_elaborated_modules=58 top=emu qip_sources=36 required=44 absent=9
+```
+
+35/44 present. Of the 9 absent, `h264_decode_skeleton` is the retired lineage
+and expected. **The other 8 are compiled into the design and nothing
+instantiates them.** Two independent oracles agree:
+
+| module | file in files.qip | source reach from `emu` | pre-fit elaboration |
+|---|---|---|---|
+| `h264_baseline_syntax_parser` | yes | rc=1 `parents=<none>` | ABSENT |
+| `h264_rbsp_filter` | yes | rc=1 `parents=<none>` | ABSENT |
+| `h264_sps_geometry_parser` | yes | rc=1 `parents=<none>` | ABSENT |
+| `h264_cavlc_nc_predictor` | yes | rc=1 `parents=h264_decode_skeleton` | ABSENT |
+| `h264_chroma8x8_pred` | yes | rc=1 `parents=h264_decode_skeleton` | ABSENT |
+| `h264_exp_golomb_reader` | yes | rc=1 `parents=h264_decode_skeleton` | ABSENT |
+| `h264_intra_mode_guard` | yes | rc=1 `parents=h264_decode_skeleton` | ABSENT |
+| `h264_p_mb_type_decode` | yes | rc=1 `parents=h264_decode_skeleton` | ABSENT |
+
+**None of them is declared in `bench_only_modules.txt`**, so nothing in the repo
+marks them as non-product. This is the same shape as the deployed regression —
+five of them are parented *only* by the **retired** `h264_decode_skeleton`,
+exactly as the DPB modules in `fb4bad84` were parented only by the retired
+`decode_stub`. They are compiled, so they cost Quartus time, and they will be
+synthesised away for the same reason `h264_decode_core` was.
+
+`check_qip_coverage.py` cannot see this: their files *are* in the list. It is a
+different failure mode from the two already named — **compiled, listed, and
+orphaned** — and it is on the branch declared the only viable merge base.
+
+Not mine to fix (parser/intra lineage). Flagged for `w-decode-o5` alongside stub
+retirement, and offered to `w-cast` since several are parser modules.
+
 ## 0b. QPy accumulation bug in `h264_decode_core` — found via w-cast, fixed, red-proved
 
 Branch `w-deblock-o5-converge` **`a242b1f`**; ported to `w-deblock-o5` **`982f6ad`**.
