@@ -7,6 +7,7 @@
     "DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_SWAP_UV_READ": "Injected DDR frame-store expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
+    "H264_DECODE_CORE_FAULT_BAD_RBSP_REQ": "Injected decode-core P16x16 syntax-walker RBSP request expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_PRED": "Injected decode-core P16x16 real-P prediction-drop expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_RESIDUAL": "Injected decode-core P16x16 real-P residual-drop expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_WB": "Injected decode-core DPB writeback expected-red fault.",

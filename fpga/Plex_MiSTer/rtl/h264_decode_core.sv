@@ -60,6 +60,7 @@ module h264_decode_core #(
     input  wire [3:0]  cbp_luma,             // coded_block_pattern luma (4 8×8 groups)
     input  wire [1:0]  cbp_chroma,           // coded_block_pattern chroma (0=none,1=DC,2=DC+AC)
     input  wire signed [5:0] mb_qp_delta,    // se(), per-MB QP delta
+    input  wire [15:0] mb_residual_bit_offset, // RBSP bit offset for this MB's residual syntax
 
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
@@ -265,6 +266,9 @@ module h264_decode_core #(
     reg signed [15:0] p16_mv_x_qpel_r;
     reg signed [15:0] p16_mv_y_qpel_r;
     reg [6:0]  p16_tap_idx;
+    reg [15:0] syntax_mb_addr_r;
+    reg [15:0] rbsp_request_offset_r;
+    reg        rbsp_request_valid_r;
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        dpb_rd_en_r;
@@ -326,6 +330,21 @@ module h264_decode_core #(
         .sample_idx(wb_sample_idx),
         .addr(wb_addr)
     );
+
+    wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
+    wire [31:0] syntax_mb_x32 = syntax_mb_addr32 % MB_W;
+    wire [31:0] syntax_mb_y32 = syntax_mb_addr32 / MB_W;
+    wire [7:0] syntax_mb_x = syntax_mb_x32[7:0];
+    wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
+    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+                                (mb_skip || (mb_type == 5'd0)) &&
+                                (mb_skip || (part_mode == 3'd0));
+    wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
+    wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
+    wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
+    wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
+    wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
+    wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
     wire [6:0] p16_luma_tap_col7 = p16_tap_idx % 7'd9;
     wire [6:0] p16_luma_tap_row7 = p16_tap_idx / 7'd9;
     wire signed [15:0] p16_luma_tap_col = $signed({9'd0, p16_luma_tap_col7}) - 16'sd4;
@@ -412,6 +431,7 @@ module h264_decode_core #(
         frame_done_r <= 1'b0;
         dpb_rd_en_r <= 1'b0;
         p16_wr_en_r <= 1'b0;
+        rbsp_request_valid_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -423,6 +443,9 @@ module h264_decode_core #(
             p16_mv_x_qpel_r <= 16'sd0;
             p16_mv_y_qpel_r <= 16'sd0;
             p16_tap_idx <= 7'd0;
+            syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
+            rbsp_request_offset_r <= 16'd0;
+            rbsp_request_valid_r <= 1'b0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             dpb_rd_en_r <= 1'b0;
@@ -447,12 +470,23 @@ module h264_decode_core #(
             for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1)
                 p16_chroma_ref[wb_i] <= 8'd0;
         end else begin
+            if (syntax_p16_candidate) begin
+                rbsp_request_valid_r <= 1'b1;
+`ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
+                rbsp_request_offset_r <= syntax_request_byte_offset + 16'd1;
+`else
+                rbsp_request_offset_r <= syntax_request_byte_offset;
+`endif
+            end
+            if (mb_type_valid)
+                syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+
             case (wb_state)
             ST_IDLE: begin
-                if (p16_zero_mv_valid) begin
-                    wb_mb_x <= p16_mb_x;
-                    wb_mb_y <= p16_mb_y;
-                    wb_mb_is_ref <= p16_mb_is_ref;
+                if (p16_launch) begin
+                    wb_mb_x <= p16_launch_mb_x;
+                    wb_mb_y <= p16_launch_mb_y;
+                    wb_mb_is_ref <= p16_launch_is_ref;
                     wb_base <= dpb_write_base;
                     p16_ref_base_r <= dpb_ref_base;
 `ifdef H264_DECODE_CORE_FAULT_PERTURB_MV
@@ -543,13 +577,13 @@ module h264_decode_core #(
     assign dpb_wr_data = p16_wr_en_r ? p16_wr_data_r : wb_data;
     assign dpb_rd_en = dpb_rd_en_r;
     assign dpb_rd_addr = dpb_rd_addr_r;
-    assign rbsp_request_offset = 16'd0;
-    assign rbsp_request_valid = 1'b0;
+    assign rbsp_request_offset = rbsp_request_offset_r;
+    assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
     assign busy = (wb_state != ST_IDLE);
     assign decode_state = wb_state;
-    assign current_mb_addr = wb_mb_addr16;
+    assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
                    (mb_height != 8'd0 && mb_height32 != MB_H);
 
@@ -558,6 +592,7 @@ module h264_decode_core #(
         |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
-        |mb_qp_delta | |mv_x_qpel | |mv_y_qpel | |part_mode | |part_idx;
+        |mb_qp_delta | |mb_residual_bit_offset | |mv_x_qpel | |mv_y_qpel |
+        |part_mode | |part_idx;
 
 endmodule

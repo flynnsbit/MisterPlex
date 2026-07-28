@@ -23,6 +23,8 @@ constexpr int TEST_MB_X = 1;
 constexpr int TEST_MB_Y = 0;
 constexpr int MV_X_QPEL = 2;
 constexpr int MV_Y_QPEL = 0;
+constexpr int RESIDUAL_BIT_OFFSET = 296;
+constexpr int RESIDUAL_BYTE_OFFSET = RESIDUAL_BIT_OFFSET >> 3;
 constexpr int kMeasuredP16RealPCycles = 42884;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
@@ -222,6 +224,7 @@ public:
     uint64_t cycles = 0;
     std::vector<uint32_t> reads;
     std::vector<Write> writes;
+    std::vector<uint16_t> rbspRequests;
     bool frameDoneSeen = false;
     bool pendingValid = false;
     uint8_t pendingData = 0;
@@ -234,6 +237,7 @@ public:
         top.clk = 1;
         top.eval();
         if (top.dpb_wr_en) writes.push_back({top.dpb_wr_addr, static_cast<uint8_t>(top.dpb_wr_data)});
+        if (top.rbsp_request_valid) rbspRequests.push_back(top.rbsp_request_offset);
         if (top.frame_done) frameDoneSeen = true;
         const bool sawRead = top.dpb_rd_en;
         const uint32_t readAddr = top.dpb_rd_addr;
@@ -253,6 +257,11 @@ public:
 
 void clearInputs(Sim& s) {
     s.top.slice_start = 0;
+    s.top.first_mb_in_slice = 0;
+    s.top.mb_type_valid = 0;
+    s.top.mb_type = 0;
+    s.top.mb_skip = 0;
+    s.top.mb_residual_bit_offset = RESIDUAL_BIT_OFFSET;
     s.top.p16_zero_mv_valid = 0;
     s.top.p16_mb_x = 0;
     s.top.p16_mb_y = 0;
@@ -280,6 +289,12 @@ void reset(Sim& s) {
 }
 
 void driveP16(Sim& s) {
+    s.top.first_mb_in_slice = TEST_MB_Y * MB_W + TEST_MB_X;
+    s.top.slice_start = 1;
+    s.tick();
+    s.top.slice_start = 0;
+    s.tick();
+
     for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = residualSample(i);
     for (int i = 0; i < 64; ++i) {
         s.top.p16_residual_u[i] = residualSample(256 + i);
@@ -292,9 +307,12 @@ void driveP16(Sim& s) {
     s.top.dpb_write_base = WRITE_BASE;
     s.top.p16_mv_x_qpel = MV_X_QPEL;
     s.top.p16_mv_y_qpel = MV_Y_QPEL;
-    s.top.p16_zero_mv_valid = 1;
+    s.top.mb_residual_bit_offset = RESIDUAL_BIT_OFFSET;
+    s.top.mb_type = 0;
+    s.top.mb_skip = 0;
+    s.top.mb_type_valid = 1;
     s.tick();
-    s.top.p16_zero_mv_valid = 0;
+    s.top.mb_type_valid = 0;
 }
 
 bool waitForIdle(Sim& s) {
@@ -315,6 +333,17 @@ int checkScoreboard(const Sim& s) {
     if (s.writes.size() != 384) {
         std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) write count "
                   << s.writes.size() << " want=384\n";
+        return 1;
+    }
+    if (s.rbspRequests.size() != 1) {
+        std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp request count "
+                  << s.rbspRequests.size() << " want=1\n";
+        return 1;
+    }
+    if (s.rbspRequests.at(0) != RESIDUAL_BYTE_OFFSET) {
+        std::cerr << "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got="
+                  << s.rbspRequests.at(0) << " want=" << RESIDUAL_BYTE_OFFSET
+                  << " residual_bit_offset=" << RESIDUAL_BIT_OFFSET << "\n";
         return 1;
     }
     for (std::size_t i = 0; i < s.reads.size(); ++i) {
@@ -368,6 +397,7 @@ int checkScoreboard(const Sim& s) {
     std::cout << "OK h264_decode_core p16x16 real-P scoreboard: mb=(1,0) mv_qpel=(2,0) "
               << "384 exact clipped pred+residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
+              << " rbsp_request_offset=" << s.rbspRequests.at(0)
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
               << "; nonterminal frame_done stayed low\n";
     return 0;

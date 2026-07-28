@@ -28,6 +28,7 @@ BUILD="$ROOT/build/verilator/h264_decode_core_p16z"
 BUILD_DROP_PRED="$ROOT/build/verilator/h264_decode_core_p16z_drop_pred"
 BUILD_DROP_RES="$ROOT/build/verilator/h264_decode_core_p16z_drop_residual"
 BUILD_PERTURB_MV="$ROOT/build/verilator/h264_decode_core_p16z_perturb_mv"
+BUILD_BAD_RBSP="$ROOT/build/verilator/h264_decode_core_p16z_bad_rbsp"
 RTL=(
   "$RTL_DIR/h264_inter_pred.sv"
   "$RTL_DIR/h264_decode_core.sv"
@@ -40,7 +41,7 @@ for f in "$TOP" "$TB" "${RTL[@]}"; do
   fi
 done
 
-mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV"
+mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUILD_BAD_RBSP"
 echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core P16x16 real-P)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -99,3 +100,20 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p1
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_decode_core p16x16 real-P red-check: perturbed MV fault failed exact samples"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_BAD_RBSP" \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_BAD_RBSP_REQ \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL[@]}" "$TB"
+set +e
+BAD_RBSP_OUT="$($BUILD_BAD_RBSP/Vh264_decode_core_p16z_tb 2>&1)"
+BAD_RBSP_RC=$?
+set -e
+printf '%s\n' "$BAD_RBSP_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p16z_bad_rbsp_req "$BAD_RBSP_RC" <<<"$BAD_RBSP_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$BAD_RBSP_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core p16x16 real-P red-check: bad RBSP request fault failed syntax scoreboard"

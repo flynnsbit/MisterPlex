@@ -8,6 +8,11 @@ module h264_decode_core_p16z_tb #(
 	input  wire        clk,
 	input  wire        reset,
 	input  wire        slice_start,
+	input  wire [15:0] first_mb_in_slice,
+	input  wire        mb_type_valid,
+	input  wire [4:0]  mb_type,
+	input  wire        mb_skip,
+	input  wire [15:0] mb_residual_bit_offset,
 	input  wire        p16_zero_mv_valid,
 	input  wire [7:0]  p16_mb_x,
 	input  wire [7:0]  p16_mb_y,
@@ -29,6 +34,8 @@ module h264_decode_core_p16z_tb #(
 	output wire [7:0]  dpb_wr_data,
 	output wire        frame_done,
 	output wire [15:0] frame_mb_count,
+	output wire [15:0] rbsp_request_offset,
+	output wire        rbsp_request_valid,
 	output wire        busy,
 	output wire [7:0]  decode_state,
 	output wire [15:0] current_mb_addr,
@@ -54,8 +61,6 @@ module h264_decode_core_p16z_tb #(
 		end
 	endgenerate
 
-	wire [15:0] rbsp_request_offset;
-	wire rbsp_request_valid;
 	localparam [7:0] MB_WIDTH_PARAM = 8'((FRAME_W + 15) / 16);
 	localparam [7:0] MB_HEIGHT_PARAM = 8'((FRAME_H + 15) / 16);
 
@@ -69,7 +74,7 @@ module h264_decode_core_p16z_tb #(
 		.slice_is_idr(1'b0),
 		.slice_is_i(1'b0),
 		.slice_qp_y(6'd26),
-		.first_mb_in_slice(16'd0),
+		.first_mb_in_slice(first_mb_in_slice),
 		.mb_width(MB_WIDTH_PARAM),
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
@@ -77,15 +82,16 @@ module h264_decode_core_p16z_tb #(
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
-		.mb_type_valid(p16_zero_mv_valid),
-		.mb_type(5'd0),
-		.mb_skip(1'b0),
+		.mb_type_valid(mb_type_valid),
+		.mb_type(mb_type),
+		.mb_skip(mb_skip),
 		.intra4x4_modes(intra4x4_modes),
 		.intra16x16_mode(2'd0),
 		.chroma_pred_mode(2'd0),
 		.cbp_luma(4'hf),
 		.cbp_chroma(2'd2),
 		.mb_qp_delta(6'sd0),
+		.mb_residual_bit_offset(mb_residual_bit_offset),
 		.mv_x_qpel(p16_mv_x_qpel),
 		.mv_y_qpel(p16_mv_y_qpel),
 		.part_mode(3'd0),
@@ -121,7 +127,7 @@ module h264_decode_core_p16z_tb #(
 		.error(error)
 	);
 
-	(* keep = 1 *) wire _keep_unused = |rbsp_request_offset | rbsp_request_valid;
+	(* keep = 1 *) wire _keep_unused = rbsp_request_valid;
 endmodule
 
 `default_nettype wire

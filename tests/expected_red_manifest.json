@@ -88,6 +88,14 @@
       "required_substrings": [
         "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) read_ordinal 0 got_addr=0x400d want_addr=0x400c"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_bad_rbsp_req",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Perturbing the P16x16 syntax-walker RBSP request must fail the independent syntax scoreboard before sample scoring.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 syntax scoreboard: mb=(1,0) rbsp_request_offset got=38 want=37 residual_bit_offset=296"
+      ]
     }
   ]
 }
