@@ -68,6 +68,7 @@ PARAMS_SVH = FPGA / "rtl/ddr_frame_layout_params.svh"
 TARGET_MODULE = "ddr_frame_store"
 BITS_COL = "Block Memory Bits"
 NODE_COL = "Compilation Hierarchy Node"
+FULL_COL = "Full Hierarchy Name"
 
 
 class Refusal(Exception):
@@ -140,38 +141,58 @@ def ram_shape(store_text: str) -> tuple[int, int]:
 
 
 def parse_entity_bits(report: Path, module: str):
-    """Return (rows_scanned, {full_hierarchy_name: block_memory_bits}) for `module`."""
+    """Return (rows_scanned, {full_hierarchy_path: block_memory_bits}) for `module`.
+
+    Two defects w-audit found in the fleet's hierarchy tooling apply here and are
+    handled explicitly:
+
+    * UNBOUNDED TABLE. A Quartus fit report contains ~15 tables after the entity
+      table, and an entity-shaped row in a later one (e.g. "Fitter RAM Summary")
+      is otherwise absorbed. Measured on fb4bad84: splicing one poisoned row
+      moved the scope from 827 to 828 rows and the poisoned value won. The table
+      is therefore terminated at the first row whose leading cell is not a
+      `|node|` cell -- verified to be exactly the table end on the real reports.
+    * ANCESTOR HIDING. Reporting a bare node name, or only a direct parent, lets
+      an ancestor such as decode_stub disappear from the evidence. This keys on
+      the report's own "Full Hierarchy Name" column, so the entire chain is
+      always carried, and refuses the row if that column is absent.
+    """
     rows = 0
     found = {}
-    header = None
-    node_i = bits_i = None
+    node_i = bits_i = full_i = None
+    started = False
     for raw in report.read_text(errors="ignore").splitlines():
         if not raw.startswith(";"):
             continue
         cells = [c.strip() for c in raw.split(";")]
-        if header is None:
+        if node_i is None:
             if NODE_COL in cells and BITS_COL in cells:
-                header = cells
                 node_i, bits_i = cells.index(NODE_COL), cells.index(BITS_COL)
+                full_i = cells.index(FULL_COL) if FULL_COL in cells else None
             continue
-        if node_i is None or len(cells) <= max(node_i, bits_i):
+        short = len(cells) <= max(i for i in (node_i, bits_i) if i is not None)
+        node = None if short else cells[node_i]
+        m = None if short else re.match(r"^\|([A-Za-z_][\w$]*)(?::(.*))?\|?$", node)
+        if m is None:
+            # End of the entity table. A fit report holds ~15 further tables and
+            # an entity-shaped row in any of them must not be scanned. Rows that
+            # are merely too short also terminate it: they are prose or headers
+            # belonging to the next table, never table content -- verified on
+            # the real reports, where every in-table row leads with |node|.
+            if started:
+                break
             continue
-        node = cells[node_i]
-        m = re.match(r"^\|([A-Za-z_][\w$]*)(?::(.*))?\|?$", node)
-        if not m:
-            continue
+        started = True
         rows += 1
         if m.group(1) != module:
             continue
         bits = cells[bits_i]
         if not re.fullmatch(r"\d+", bits):
             continue
-        # Prefer the full hierarchy path when the report carries one.
-        path = next(
-            (c for c in cells if c.startswith("|sys_top") or c.startswith("|" + module)),
-            node,
-        )
-        found[path] = int(bits)
+        if full_i is None or len(cells) <= full_i or not cells[full_i].startswith("|"):
+            found[f"<NO FULL HIERARCHY COLUMN> {node}"] = int(bits)
+            continue
+        found[cells[full_i]] = int(bits)
     return rows, found
 
 
@@ -188,6 +209,22 @@ def main(argv=None) -> int:
         "(full or leading prefix). Without it the result is UNBOUND.",
     )
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument(
+        "--forbid-ancestor",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="fail if MODULE appears ANYWHERE in the module's full hierarchy "
+        "chain. w-audit showed that direct-parent checks miss nested masking, "
+        "so this walks the whole chain.",
+    )
+    ap.add_argument(
+        "--require-ancestor",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="fail unless MODULE appears in the full hierarchy chain (trunk proof).",
+    )
     ap.add_argument(
         "--compare",
         metavar="OTHER_REPORT",
@@ -255,6 +292,22 @@ def main(argv=None) -> int:
         return 1
 
     for path, bits in sorted(found.items()):
+        chain = [seg.split(":")[0] for seg in path.strip("|").split("|")]
+        if path.startswith("<NO FULL HIERARCHY COLUMN>"):
+            print(f"REFUSED: the report has no '{FULL_COL}' column, so an ancestor "
+                  "could be hidden. Evidence cited from a bare node name is not "
+                  "acceptable after w-audit's nested-masking finding.")
+            return 2
+        for bad in args.forbid_ancestor:
+            if bad in chain[:-1]:
+                print(f"MASKED {TARGET_MODULE} -- forbidden ancestor '{bad}' in "
+                      f"chain {' -> '.join(chain)}")
+                rc = 1
+        for need in args.require_ancestor:
+            if need not in chain[:-1]:
+                print(f"MISPARENTED {TARGET_MODULE} -- required ancestor '{need}' "
+                      f"absent from chain {' -> '.join(chain)}")
+                rc = 1
         if bits == predicted:
             print(f"MATCH  {bits} bits  {path}")
         else:
@@ -477,6 +530,58 @@ def self_test() -> int:
     rc, out = run([str(empty)])
     cases.append(("red: Scope 0 rows must REFUSE (2)", rc == 2, rc, 2))
 
+    # w-audit's unbounded-table defect, reproduced against this gate and fixed.
+    # Measured on the real fb4bad84 report before the fix: an entity-shaped row
+    # spliced into a later table moved Scope from 827 to 828 rows and its value
+    # was scored. After the fix the trailing table must be invisible.
+    trailing = scratch / "trailing/Plex.fit.rpt"
+    trailing.parent.mkdir(parents=True, exist_ok=True)
+    trailing.write_text(
+        SYNTH_REPORT.format(bits=predicted, total=predicted + 65536)
+        + "; Fitter RAM Summary ;\n"
+        + "; prose row ;\n"
+        + "; |ddr_frame_store:fstore| ; 999999 ; 1 ; |bogus ;\n"
+    )
+    rc, out = run([str(trailing)])
+    cases.append((
+        "red: entity-shaped row in a LATER table must be excluded",
+        rc == 0 and "999999" not in out and "Scope: 4 entity rows" in out,
+        rc, 0))
+
+    # w-audit's nested-masking defect: a direct-parent check misses an ancestor
+    # further up. This walks the whole chain.
+    masked = scratch / "masked/Plex.fit.rpt"
+    masked.parent.mkdir(parents=True, exist_ok=True)
+    masked.write_text(
+        SYNTH_REPORT.format(bits=predicted, total=predicted).replace(
+            "|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore",
+            "|sys_top|emu:emu|decode_stub:stub|wrapper:w|ddr_frame_store:fstore",
+        )
+    )
+    rc, out = run([str(masked), "--forbid-ancestor", "decode_stub"])
+    cases.append(("red: NESTED forbidden ancestor must FAIL",
+                  rc == 1 and "MASKED" in out, rc, 1))
+
+    rc, out = run([str(good), "--require-ancestor", "h264_decode_core"])
+    cases.append(("red: absent required ancestor must FAIL",
+                  rc == 1 and "MISPARENTED" in out, rc, 1))
+
+    rc, out = run([str(good), "--require-ancestor", "emu", "--require-ancestor",
+                   "present_core", "--forbid-ancestor", "decode_stub"])
+    cases.append(("green: real chain satisfies trunk and forbids stub", rc == 0, rc, 0))
+
+    # A report with no Full Hierarchy column cannot prove an ancestor is absent.
+    nofull = scratch / "nofull/Plex.fit.rpt"
+    nofull.parent.mkdir(parents=True, exist_ok=True)
+    nofull.write_text(
+        SYNTH_REPORT.format(bits=predicted, total=predicted).replace(
+            " ; Full Hierarchy Name ;", " ;"
+        )
+    )
+    rc, out = run([str(nofull)])
+    cases.append(("red: missing Full Hierarchy column must REFUSE (2)",
+                  rc == 2, rc, 2))
+
     # RED 4: binding to an RBF that is not there must FAIL, not silently pass.
     rc, out = run([str(good), "--expect-rbf-md5", "deadbeef"])
     cases.append(("red: unsatisfiable RBF binding must FAIL", rc == 1 and "UNBOUND" in out, rc, 1))
@@ -512,7 +617,7 @@ def self_test() -> int:
     rc, out = run([str(scratch / "absent/Plex.fit.rpt")])
     cases.append(("skip: missing report must be 77", rc == 77, rc, 77))
 
-    print(f"Scope: {len(cases)} self-test cases (2 green, 6 reds, 1 skip)")
+    print(f"Scope: {len(cases)} self-test cases (3 green, 10 reds, 1 skip)")
     bad = 0
     for name, ok, got, want in cases:
         print(f"  {'PASS' if ok else 'FAIL'} {name} (rc={got}, want {want})")

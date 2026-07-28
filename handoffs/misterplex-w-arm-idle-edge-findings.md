@@ -1256,3 +1256,118 @@ Self-test is now 2 greens + 6 reds + 1 skip.
   equality does **not** exonerate a timing constraint; it only says the failure, if it
   is the SDC, is a timing failure rather than a structural one, and the instrument for
   that is STA on the specific crossing, not the entity table.
+
+---
+
+## 17. I applied w-audit's three attacks to my own gate. Two of them landed.
+
+Branch `w-arm-idle-edge`. `w-audit` (`a9eac7e`) broke w-fit-o5's pre-fit gate three
+ways. Rather than treat that as someone else's bug, I ran the same three attacks
+against `scripts/check_fitted_line_buffer.py`, which is the gate my entire §15/§16
+present-path evidence rests on.
+
+### 17.1 UNBOUNDED TABLE — the defect was real in my gate
+
+A Quartus fit report has ~15 further tables after the entity table (`Fitter RAM
+Summary`, `DSP Block Details`, `Routing Usage Summary`, …). Measured red, against the
+**real** `fb4bad84` report with one entity-shaped row spliced into a later table:
+
+```
+BEFORE FIX
+  Scope: 828 entity rows        <- absorbed a row from a different table
+  2 ddr_frame_store instance(s)
+  MISMATCH 999999 bits (predicted 159744, 6.260x)  |bogus
+```
+
+The poisoned value was scored. Here it happened to fail, but only because I chose an
+absurd number: a poisoned row carrying the *correct* 159,744 under a bogus parent would
+have produced a clean green.
+
+```
+AFTER FIX
+  Scope: 827 entity rows        <- identical to the clean report
+  1 ddr_frame_store instance(s)
+  MATCH  159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+```
+
+The table now terminates at the first row that is not a `|node|` row, including short
+prose/header rows — verified against the real reports, where **every** in-table row
+leads with `|node|`. Re-checked all four reports afterwards: `fb4bad84` 827,
+`3b1e8435` 827, `00eebd5e` 819, poisoned 827.
+
+### 17.2 ANCESTOR HIDING — also real, and it was in my published evidence
+
+w-audit's point was that `parents=` summaries and direct-parent checks let an ancestor
+such as `decode_stub` disappear. **My §15 evidence cited the short form**, because a
+preference bug always picked the bare node cell:
+
+```
+BEFORE   MATCH 159744 bits  |ddr_frame_store:fstore|
+AFTER    MATCH 159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+```
+
+The gate now keys on the report's own `Full Hierarchy Name` column and **refuses rc=2
+if that column is absent**, because a bare node name cannot prove an ancestor is not
+there. Added `--forbid-ancestor` and `--require-ancestor`, both walking the **entire
+chain** rather than the direct parent — that is exactly the fix the parent asked
+w-fit-o5 to make, applied here. Red-proved with a **nested** mask
+(`emu -> decode_stub -> wrapper -> ddr_frame_store`), which a direct-parent check would
+miss and which this catches.
+
+**The §15.2 conclusion is unchanged and now better evidenced.** Re-run with the trunk
+and stub checks explicit, against the resident bitstream:
+
+```
+python3 scripts/check_fitted_line_buffer.py <fb4bad84 report> \
+    --expect-rbf-md5 fb4bad84 \
+    --require-ancestor emu --require-ancestor present_core \
+    --forbid-ancestor decode_stub
+rc=0
+BOUND report -> Plex.rbf md5=fb4bad84
+MATCH 159744 bits  |sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+```
+
+Independently corroborated straight from the report's own `Full Hierarchy Name` column:
+
+```
+|sys_top|emu:emu|present_core:present
+|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore
+```
+
+No hidden ancestor at any depth. Trunk and subtree in one citation.
+
+### 17.3 The third attack did not land
+
+w-audit's `--forbid-only-under` direct-child defect has no analogue here: this gate
+never had a direct-parent check to get wrong — it had **no** ancestor check at all,
+which is why I added one that walks the chain from the start.
+
+### 17.4 Self-test is now 3 greens + 10 reds + 1 skip, all passing
+
+```
+green  fitted size equals predicted size
+red    half-size buffer must FAIL
+red    optimized-away module must FAIL
+red    Scope 0 rows must REFUSE (2)
+red    entity-shaped row in a LATER table must be excluded
+red    NESTED forbidden ancestor must FAIL
+red    absent required ancestor must FAIL
+green  real chain satisfies trunk and forbids stub
+red    missing Full Hierarchy column must REFUSE (2)
+red    unsatisfiable RBF binding must FAIL
+red    same-RBF A/B must REFUSE as vacuous (2)
+red    unbindable A/B side must REFUSE (2)
+green  differing-RBF A/B compares
+skip   missing report must be 77
+```
+
+Three of those reds are reproductions of defects that were genuinely present in this
+gate an hour ago. A gate that has never failed for a real reason is not a gate.
+
+### 17.5 What this does not change
+
+None of §15's or §16's numbers moved. The line buffer is still 159,744 bits, the
+prefetch depth is still 8 lines, the SDC delta is still register-placement-only across
+827 paths, and the artifact is still RTL-side and still unobserved. What changed is
+that the evidence now cites full hierarchy chains and survives the three attacks that
+broke the equivalent fleet instrument.
