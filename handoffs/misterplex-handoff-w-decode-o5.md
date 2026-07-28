@@ -279,3 +279,81 @@ is not exercising them — run the block standalone.**
   locked (sticky `0x14`, reject `+0x53`).
 - **Do not let a macro become a topology switch again.**
 - **Do not report BUILD_OK / DEPLOY_OK as success.** Only a moving picture counts.
+
+---
+
+## Addendum — the parent's revised two-direction standard (commit `4969d96`)
+
+The parent withdrew the core-subtree gate as sufficient after `w-audit` broke it,
+and assigned me the branch convergence. **Result: the assigned convergence was
+already complete.** Measured on `w-decode-o5`:
+
+| Direction | Command | rc |
+|---|---|---|
+| TRUNK | `--root emu --require h264_decode_core` | **0** |
+| SUBTREE | `--root h264_decode_core --require h264_deblock_writeback_ctrl …` | **0** |
+
+My merge `05934a9` had already landed w-deblock's work onto a base carrying
+`stream_path -> h264_decode_core`. I reproduced w-audit's finding independently
+on `w-deblock-seam`: TRUNK rc=1, `parents=<none>`, and zero references to
+`h264_decode_core` in that branch's `stream_path.sv`.
+
+**Peers should merge or rebase onto `w-decode-o5`, not onto `w-deblock-seam`.**
+Work landing on `w-deblock-seam` lands in a disconnected core.
+
+### I re-ran w-audit's four mutations myself rather than inherit them
+
+| Mutation | Reproduces here? | Outcome |
+|---|---|---|
+| M1 disabled `if (0)` generate | **yes — and worse** | the fleet checker *and my own seam gate* both passed it |
+| M2 escaped instance name `\name ` | **no** | returns the correct rc=0 on this branch; reported for the record |
+| M3 file in git but absent from `files.qip` | **yes** | reachability rc=0 while the module is not compiled at all |
+| M4 subtree-green-while-core-dead | already closed here | both directions rc=0 |
+
+I got M1 wrong in my own instrument and only found it by attacking my own gate.
+That is the second time this session that red-checking caught a gate of mine that
+was reporting a green it had not earned.
+
+### `files.qip` cross-check — measured, clean
+
+- core subtree: **21 modules, 21 in `files.qip`, 0 missing**
+- emu subtree: **49 modules, 0 missing**
+
+Now enforced permanently by `core_subtree_qip_guard()` in the seam gate, and
+independently cross-checked with a standalone scan written from scratch.
+
+**Concrete fleet risk this surfaced:** every MC module w-swap landed
+(`h264_inter_mc_16x16`, `h264_inter_mc_part`, `h264_dpb_one_ref`,
+`h264_luma_qpel_block_16x16`, `h264_chroma_epel_block_8x8`) lives in
+**`h264_dpb.sv`**. Deleting that one qip line removes the whole motion-compensation
+subsystem from the design while every reachability check stays green. That single
+line is now guarded.
+
+### Harness changes
+
+- Trunk proof is **mandatory**, running before the subtree proof (Makefile + rollcall).
+- `tests/unit/test_decode_core_seam_audit_reds.sh` — 7 checks, mutate → red → restore
+  → green, two reds machine-checked against `tests/expected_red_manifest.json`.
+- That test mutates tracked RTL, so it **refuses with rc=1 if a Quartus fit is
+  running in this tree** — the "never edit sources under a live compile" rule,
+  mechanized. It refuses rather than skips, because a skip is not a pass. It
+  matches `/proc/pid/exe`, not `pgrep -f`, which would false-positive on its own shell.
+
+Sweep at `4969d96`: **36/36 rc=0, 0 exit-77 skips.** One earlier failure
+(`test_resource_preflight.sh`) was the preflight guard **correctly refusing**
+during w-fit-o5's live fit; it returned rc=0 once that fit ended. Not a regression,
+and it was not overridden.
+
+### Unchanged, and still the honest headline
+
+```
+DECODE_CORE_SEAM_OK core_inputs=53 constant_inputs=29 synthetic_reg_inputs=2
+  core_outputs=13 unobserved_outputs=13 presentation_driver=decode_stub
+  live_generate=yes core_subtree=21 core_subtree_in_qip=21
+```
+
+The core is now **provably in the design, provably reachable from `emu` in both
+directions, and provably still vacuous**: all 13 outputs unobserved, `decode_stub`
+still the sole driver of every frame-store pixel. Structural rooting is not
+function. **Zero frames have been decoded and displayed by the FPGA.**
+Denominator reminder: the frame is **1170 MBs**.
