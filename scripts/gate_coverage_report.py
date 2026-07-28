@@ -114,14 +114,17 @@ def build_report() -> list[GateReport]:
                 "Source files do not contain known Quartus Analysis/Synthesis "
                 "rejection patterns: localparam in module parameter list, part-select "
                 "on function-call result, unpacked array element in function-body "
-                "concatenation (h264_dpb ref_win only)."
+                "concatenation (h264_dpb ref_win only). The Makefile target also "
+                "runs verilator-elab after this static scanner."
             ),
             does_not_prove=(
                 "Does NOT prove Quartus will elaborate, infer, fit, or close timing. "
                 "Only catches 3 specific syntax patterns that historically caused "
                 "Analysis/Synthesis failures. Does NOT prove absence of all Quartus "
                 "syntax issues — new rejection patterns must be added manually after "
-                "each new failure. The parse-pass guarantee is NARROW."
+                "each new failure. The scanner prints STATIC_PASS because its own "
+                "proof is NARROW; the paired Verilator elaboration gate catches "
+                "undeclared owned-RTL identifiers but still is not Quartus A&S."
             ),
             red_proof_method=(
                 "Inject localparam-in-params, function-call-select, unpacked-array-concat "
@@ -136,6 +139,36 @@ def build_report() -> list[GateReport]:
             ),
             owner="w-c2",
             exit_codes={"refuse_no_toolchain": 4},
+        ),
+        GateReport(
+            id="verilator-elab",
+            script="scripts/check_verilator_elab.py",
+            makefile_target="verilator-elab (also in quartus-sv-subset and pre-synth-gates)",
+            proves=(
+                "The product Quartus RTL file list with product QSF macros can be "
+                "elaborated by Verilator without errors physically reported against "
+                "MiSTerPlex-owned RTL. This catches undeclared identifiers and other "
+                "fast synthesis-fatal owned-RTL mistakes before a Quartus slot is used."
+            ),
+            does_not_prove=(
+                "Does NOT prove Quartus accepts every construct, infers memories the "
+                "same way, fits, or closes timing. Vendor/generated context errors are "
+                "ignored when they are not physically reported against owned RTL. "
+                "Warning regressions remain rtl-lint's job."
+            ),
+            red_proof_method=(
+                "Plant decode_stub.sv undeclared dpb_mem_rd_q use "
+                "→ VERILATOR_ELAB_REJECTED rc=1; restore clean tree → "
+                "VERILATOR_ELAB_PASS rc=0."
+            ),
+            red_proof_passed=has_verilator,
+            runnable_here=has_verilator,
+            runnable_note=(
+                f"Verilator: {'available via scripts/run_verilator.sh' if has_verilator else 'MISSING'}. "
+                "Runs locally and is wired into scripts/build_rbf_remote.sh before the remote slot."
+            ),
+            owner="w-gate",
+            exit_codes={"green": 0, "red_missing_decl": 1, "refuse_no_verilator": 3},
         ),
         GateReport(
             id="post-fit-hierarchy",
@@ -326,8 +359,9 @@ def build_report() -> list[GateReport]:
                 "accept different SystemVerilog subsets. Does NOT prove functional "
                 "correctness. Width warnings are baselined (allowed up to the count "
                 "in rtl_lint_baseline.json) — a new width warning in a file already "
-                "above its baseline is invisible. Does NOT prove timing, fitting, or "
-                "elaboration."
+                "above its baseline is invisible. Does NOT prove timing or fitting. "
+                "Plex.sv context errors were historically ignored to allow adoption; "
+                "the separate verilator-elab gate now owns synthesis-fatal errors."
             ),
             red_proof_method=(
                 "Verilator absent (OSS_CAD_SUITE=/nonexistent) → wrapper rc=127, "

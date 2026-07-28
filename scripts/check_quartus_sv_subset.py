@@ -198,8 +198,10 @@ def main(argv: list[str]) -> int:
             print(f"  {err}", file=sys.stderr)
         return REJECT_RC
     print(
-        f"PASS Quartus SV subset guard: {len(args.files)} file(s); "
-        f"toolchain={toolchain}; blind_spot=static_subset_only_no_elaboration_or_inference"
+        f"STATIC_PASS Quartus SV subset pattern scan: {len(args.files)} file(s); "
+        f"toolchain={toolchain}; limitation=static_curated_patterns_only; "
+        "paired_gate=verilator-elab_for_elaboration_errors; "
+        "not_a_Quartus_analysis_or_synthesis_PASS"
     )
     return 0
 

@@ -99,6 +99,11 @@ printf 'Remote project: %s\n' "$REMOTE_PROJECT"
 printf 'Remote processors: %s\n' "${PROCESSORS:-preserve-qsf}"
 printf 'Reference RBF: %s\n' "${REFERENCE_RBF:-UNVERIFIED-OVERRIDE}"
 
+printf 'Running fast pre-synthesis gates before taking remote Quartus slot...\n'
+"$ROOT/scripts/check_define_parity.py"
+"$ROOT/scripts/check_quartus_sv_subset.py" $("$ROOT/scripts/rtl_lint.py" --list-files)
+"$ROOT/scripts/check_verilator_elab.py"
+
 ssh "$HOST" bash -s -- "$REMOTE_SLOT" "$REMOTE_PROJECT" "$REMOTE_DEV" <<'REMOTE_PREP'
 set -euo pipefail
 remote_slot="$1"

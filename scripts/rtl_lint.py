@@ -120,6 +120,9 @@ def is_excluded(path: Path) -> bool:
 
 
 def write_intel_stubs() -> Path:
+    gen_dir = ROOT / "build" / "rtl_lint_generated"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    (gen_dir / "build_id.v").write_text('`define BUILD_DATE "lint"\n')
     stub = ROOT / "build" / "rtl_lint_intel_stubs.sv"
     stub.parent.mkdir(exist_ok=True)
     stub.write_text(r'''
@@ -163,6 +166,7 @@ def run_verilator(files: list[Path], macros: list[str]) -> tuple[int, str]:
         "--lint-only", "-Wall", "-Wno-fatal",
         "-Wno-DECLFILENAME", "-Wno-PINCONNECTEMPTY", "-Wno-PINMISSING",
         "-Wno-MULTITOP", "-Wno-EOFNEWLINE", "-Wno-GENUNNAMED",
+        f"-I{ROOT / 'build' / 'rtl_lint_generated'}",
         f"-I{PROJECT}", f"-I{PROJECT / 'sys'}", f"-I{PROJECT / 'rtl'}",
         str(stub),
     ] + verilator_define_args() + [str(p) for p in ordered_files]

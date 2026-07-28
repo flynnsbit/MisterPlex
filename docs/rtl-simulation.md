@@ -61,6 +61,8 @@ Run the curated Quartus subset guard before requesting a full fit:
 ```bash
 make define-parity
 make quartus-sv-subset
+# or the exact fast pre-fit bundle used by the remote RBF build wrapper:
+make pre-synth-gates
 ```
 
 `define-parity` prints the raw Quartus/Verilator macro table and refuses if the
@@ -68,7 +70,9 @@ product Quartus macro set diverges from the Verilator/lint macro set. Test-only
 fault macros are accepted only when declared in
 `tests/fixtures/define_parity_allowlist.json`.
 
-`quartus-sv-subset` first proves a real Quartus toolchain is reachable, then scans the product Quartus file list for observed Quartus 17.0.2 SystemVerilog subset hazards that Verilator accepted: function-result part-selects, the observed `ref_win[...]` function-body concatenation pattern, and `localparam` declarations in module parameter lists. If Quartus is absent it refuses with `QUARTUS_SV_SUBSET_REFUSED(exit=4)`. This is still a static curated guard, not Analysis & Elaboration; unsupported inference, generate/parameter scoping, latch inference, and other elaboration-only Quartus failures can still reach a fit unless caught by a real Quartus analysis pass.
+`quartus-sv-subset` first proves a real Quartus toolchain is reachable, then scans the product Quartus file list for observed Quartus 17.0.2 SystemVerilog subset hazards that Verilator accepted: function-result part-selects, the observed `ref_win[...]` function-body concatenation pattern, and `localparam` declarations in module parameter lists. If Quartus is absent it refuses with `QUARTUS_SV_SUBSET_REFUSED(exit=4)`. The scanner now prints `STATIC_PASS` rather than a bare `PASS`, because it is only a curated pattern scan and not Quartus Analysis/Synthesis.
+
+The Makefile target then runs `verilator-elab`, a fast product-file-list Verilator elaboration pass that fails on owned-RTL errors such as undeclared identifiers before a remote Quartus slot is consumed. `scripts/build_rbf_remote.sh` runs `define-parity`, `check_quartus_sv_subset.py`, and `check_verilator_elab.py` before taking the remote slot, so this pre-synthesis class is enforced on RBF requests as well as through `make quartus-sv-subset`.
 
 After a remote fit, run the hierarchy resource guard against copied Quartus reports:
 
