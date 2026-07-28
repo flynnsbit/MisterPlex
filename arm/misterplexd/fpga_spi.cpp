@@ -1477,6 +1477,28 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             // proven stuck live mailbox, choose the bank not currently scanned
             // out; for absent/stale mailboxes, use the host-planned bank. Keep
             // the same-bank reuse floor as the structural fallback interlock.
+            //
+            // Reachability: the absent branch (readBankRelease failed, no
+            // magic) and the stale branch (magic present, frames_done never
+            // advances) both set timedFallback WITHOUT calling
+            // chooseDdrPresentBankFromRelease, so displayAvoidingFallbackBank()
+            // never runs on a permanently silent fabric. Those are exactly the
+            // paths a silent fabric takes. Apply the host-derived interlock
+            // here, where all three silence routes converge, and only when the
+            // mailbox has never been proven live — if frames_done has advanced
+            // then disp_bank is a real reading and outranks our inference.
+            if (!plxdLivenessProven_) {
+                const int silentBank =
+                    misterplex::silentFabricFallbackBank(bank, lastDdrDoorbellBank_);
+                if (silentBank != bank) {
+                    fprintf(stderr,
+                            "[SILENT-FABRIC] sendDdrFrame: planned bank %d is the bank last "
+                            "doorbelled (scanned per ddr_frame_store.sv:238); writing bank %d "
+                            "instead\n",
+                            bank, silentBank);
+                    bank = silentBank;
+                }
+            }
             const double nowMs = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();
@@ -1598,6 +1620,10 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     lastDdrBankDoorbellMs_[bank] = std::chrono::duration<double, std::milli>(
                                        std::chrono::steady_clock::now().time_since_epoch())
                                        .count();
+    // The fabric adopts pending_bank on swap (ddr_frame_store.sv:238), so after
+    // a successful doorbell this is the bank being scanned out. Recorded here
+    // rather than inferred from PLXD so it survives a silent mailbox.
+    lastDdrDoorbellBank_ = bank;
 
     // Steady-state: no fixed host sleep. PLXD (when valid), or the same-bank
     // reuse floor (fallback), is the safety interlock.

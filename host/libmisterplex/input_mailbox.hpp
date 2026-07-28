@@ -114,6 +114,31 @@ inline int displayAvoidingFallbackBank(const BankReleaseStatus& status) {
     return (static_cast<int>(status.disp_bank) ^ 1) & 1;
 }
 
+// Which bank the fabric is scanning, derived from host state alone.
+//
+// RTL contract (fpga/Plex_MiSTer/rtl/ddr_frame_store.sv): line 208 resets
+// disp_bank to 1'b0, and line 238 is the only assignment that changes it —
+// disp_bank <= pending_bank on swap, where pending_bank is what the host
+// commanded in the doorbell. So the scanned bank is the last bank the host
+// successfully doorbelled, or bank 0 before any doorbell has been issued.
+//
+// This deliberately does NOT read BankReleaseStatus::disp_bank. On a
+// permanently silent fabric that field is boot residue or zero, so a policy
+// derived from it is a true statement about a dead instrument. Host doorbell
+// history stays correct whether the mailbox is live, stale, or never written.
+inline int scannedBankFromHostDoorbell(int lastDoorbelledBank) {
+    return (lastDoorbelledBank < 0) ? 0 : (lastDoorbelledBank & 1);
+}
+
+// Structural interlock for the timed fallback: never write the bank that is
+// currently being scanned out. Unlike the same-bank reuse floor this is not a
+// timing guess — no elapsed time makes it safe to overwrite the live bank.
+inline int silentFabricFallbackBank(int plannedBank, int lastDoorbelledBank) {
+    const int scanned = scannedBankFromHostDoorbell(lastDoorbelledBank);
+    const int planned = plannedBank & 1;
+    return (planned == scanned) ? (scanned ^ 1) : planned;
+}
+
 inline BankReleaseDecision chooseDdrPresentBankFromRelease(BankReleasePolicyState& state,
                                                            int plannedBank,
                                                            const BankReleaseStatus& initial,

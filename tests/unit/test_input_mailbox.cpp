@@ -92,7 +92,7 @@ static bool pollWord(misterplex::InputMailboxEdgeDetector& edge, FakeTransport& 
 int main() {
     using namespace misterplex;
 
-    std::printf("Scope: 1 (PLXD stuck-release fallback bank policy)\n");
+    std::printf("Scope: 2 (PLXD stuck-release fallback bank policy; silent-fabric bank policy)\n");
     std::fflush(stdout);
 
     CHECK(kDdrStatusMailboxPhys == 0x3007F100u);
@@ -461,6 +461,49 @@ int main() {
             CHECK(d.bank == 1);
             CHECK(!d.release_stuck);
             CHECK(!policy.release_stuck);
+        }
+
+        // Silent-fabric bank policy. Derived from ddr_frame_store.sv:208
+        // (disp_bank resets to 0) and :238 (disp_bank <= pending_bank on swap),
+        // using host doorbell history rather than the PLXD mailbox, which on a
+        // permanently silent fabric is boot residue or zero.
+        {
+            // Before any doorbell the fabric is scanning its reset bank, 0.
+            CHECK(scannedBankFromHostDoorbell(-1) == 0);
+            CHECK(scannedBankFromHostDoorbell(0) == 0);
+            CHECK(scannedBankFromHostDoorbell(1) == 1);
+
+            // Structural interlock: never write the bank last doorbelled.
+            CHECK(silentFabricFallbackBank(0, -1) == 1);  // first frame must avoid reset bank 0
+            CHECK(silentFabricFallbackBank(1, -1) == 1);  // plan already safe, left alone
+            CHECK(silentFabricFallbackBank(0, 1) == 0);   // plan already safe, left alone
+            CHECK(silentFabricFallbackBank(1, 1) == 0);   // plan collides, flipped
+            CHECK(silentFabricFallbackBank(0, 0) == 1);   // plan collides, flipped
+
+            // RED PROOF: the pre-fix behaviour on a silent fabric was to take
+            // plannedBank verbatim. These are the cases where that overwrites
+            // the bank being scanned out; they must differ from the plan, or
+            // the interlock is not doing anything.
+            const int planned_collides[2] = {0, 1};
+            for (int i = 0; i < 2; ++i) {
+                const int lastDoorbelled = planned_collides[i];
+                const int chosen = silentFabricFallbackBank(planned_collides[i], lastDoorbelled);
+                CHECK(chosen != planned_collides[i]);
+                CHECK(chosen != scannedBankFromHostDoorbell(lastDoorbelled));
+            }
+
+            // Repeated publishes alternate rather than reusing a bank, even if
+            // the caller's plan is degenerate (always bank 0).
+            int lastDoorbelled = -1;
+            int seen[2] = {0, 0};
+            for (int i = 0; i < 6; ++i) {
+                const int chosen = silentFabricFallbackBank(0, lastDoorbelled);
+                CHECK(chosen != scannedBankFromHostDoorbell(lastDoorbelled));
+                seen[chosen]++;
+                lastDoorbelled = chosen;
+            }
+            CHECK(seen[0] == 3);
+            CHECK(seen[1] == 3);
         }
     }
 

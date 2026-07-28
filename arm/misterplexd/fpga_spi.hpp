@@ -318,6 +318,9 @@ private:
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    // Last bank handed to the fabric in a doorbell; -1 before any doorbell.
+    // Host-side proxy for ddr_frame_store.sv disp_bank, valid on a silent fabric.
+    int lastDdrDoorbellBank_ = -1;
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
