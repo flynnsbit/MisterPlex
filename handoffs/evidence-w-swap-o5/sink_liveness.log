@@ -4,3 +4,9 @@ SINK_LIVENESS_FAIL aggregators=1 path_to_port=0 product=h264_decode_core parent=
 Scope: stream_path instantiating h264_decode_core - detecting outputs that reach no sink, the failure mode Quartus reports as elaborated-then-optimized-away
 CONSTANT_TIED_INPUTS h264_decode_core: 23 input ports are wired to literals, which lets synthesis constant-fold the instance away even once its outputs are consumed: cbp_chroma, cbp_luma, chroma_pred_mode, dpb_rd_data, dpb_ref_base, dpb_write_base, mb_residual_bit_offset, mv_x_qpel, mv_y_qpel, mvd_x_qpel, mvd_y_qpel, p16_mb_is_ref, p16_mb_x, p16_mb_y, p16_zero_mv_valid, part_idx, pps_chroma_qp_index_offset, rbsp_window_base, recon_mb_is_ref, recon_mb_valid, recon_mb_x, recon_mb_y, ref_idx_l0
 CORE_OUTPUT_NETS 13 traced from 13 declared output ports
+sink rc=1
+OK self-test red: dead-end aggregator detected (_keep, 7 operands)
+OK self-test green: an aggregator that is read is not reported
+OK self-test red: no path to a port is reported when none exists
+OK self-test green: a real path to an output port is found
+selftest rc=0
