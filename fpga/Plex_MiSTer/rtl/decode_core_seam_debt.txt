@@ -63,6 +63,10 @@ dpb_ref_base: tied to 32'd0; no DPB reference-frame allocator feeds the core.
 # --- DPB memory: the core read port is answered with zeros ---
 dpb_rd_data: tied to 8'd0; the core has no memory behind its DPB read port.
 
+[synthetic_reg_inputs]
+luma4x4_total_coeff: stream_path.sv:430 drives 5'd16 unconditionally - a fabricated "all 16 coefficients present" rather than the parsed CAVLC total_coeff. The port LOOKS wired, which is why the port-tie check never saw it. Owner W-CAST: replace with the real per-block total_coeff from the first-I_NxN staging interface.
+luma4x4_trailing_ones: stream_path.sv:431 drives 2'd0 unconditionally instead of the parsed CAVLC trailing_ones. Owner W-CAST: replace with the real per-block trailing_ones.
+
 [unobserved_outputs]
 # Every one of these is mentioned only in stream_path `_keep` anti-prune wire.
 # They have no product consumer, so the core behaviour cannot affect the

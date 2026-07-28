@@ -142,6 +142,55 @@ def constant_fed_arrays(sp_text: str, conns: dict[str, str], dirs: dict[str, str
     return out
 
 
+def multibit_ports(core_text: str) -> set[str]:
+    """Ports declared with a packed range, i.e. data rather than 1-bit control."""
+    out: set[str] = set()
+    for m in re.finditer(
+        r"\b(?:input|output|inout)\b[^;,)]*?\[[^\]]*\][^;,)]*", core_text
+    ):
+        decl = m.group(0)
+        ids = re.findall(r"[A-Za-z_]\w*", decl)
+        if ids:
+            out.add(ids[-1])
+    return out
+
+
+def synthetic_reg_inputs(
+    sp_text: str, conns: dict[str, str], dirs: dict[str, str], wide: set[str]
+) -> set[str]:
+    """Core inputs fed by a local reg whose only non-reset source is a literal.
+
+    A port tie like `.cbp_luma(4'hf)` is obvious.  The dangerous case is the
+    port that LOOKS wired - `.luma4x4_total_coeff(core_luma4x4_total_coeff)` -
+    where the driving register is only ever assigned a constant.  That is a
+    synthetic value wearing the costume of real data, and it is invisible to a
+    port-tie check.  Reset-block assignments are ignored; a register that is
+    only ever reset is already covered by the constant-input check.
+    """
+    out: set[str] = set()
+    for port, expr in conns.items():
+        if dirs.get(port) != "input" or is_constant(expr):
+            continue
+        if port not in wide:
+            continue
+        if not re.fullmatch(r"[A-Za-z_]\w*", expr):
+            continue
+        # Only consider signals declared as regs in stream_path.
+        if not re.search(r"\breg\b[^;]*\b" + re.escape(expr) + r"\b", sp_text):
+            continue
+        rhs = re.findall(
+            r"\b" + re.escape(expr) + r"\s*(?:\[[^\]]*\])?\s*<=\s*([^;]+);", sp_text
+        )
+        rhs += re.findall(
+            r"\bassign\s+" + re.escape(expr) + r"\s*=\s*([^;]+);", sp_text
+        )
+        if not rhs:
+            continue
+        if all(is_constant(r) for r in rhs):
+            out.add(port)
+    return out
+
+
 def unobserved_outputs(
     sp_text: str, inst_body: str, conns: dict[str, str], dirs: dict[str, str]
 ) -> set[str]:
@@ -225,6 +274,7 @@ def parse_manifest() -> tuple[dict[str, dict[str, str]], str]:
         fail(f"missing seam manifest {MANIFEST.relative_to(ROOT)}")
     sections: dict[str, dict[str, str]] = {
         "constant_inputs": {},
+        "synthetic_reg_inputs": {},
         "unobserved_outputs": {},
     }
     driver = ""
@@ -291,12 +341,14 @@ def main() -> int:
         p for p, e in conns.items() if dirs.get(p) == "input" and is_constant(e)
     }
     const_inputs |= constant_fed_arrays(sp_text, conns, dirs)
+    synthetic = synthetic_reg_inputs(sp_text, conns, dirs, multibit_ports(core_text))
     unobserved = unobserved_outputs(sp_text, inst_body, conns, dirs)
     driver = presentation_driver(sp_text)
 
     sections, declared_driver = parse_manifest()
 
     bad = diff_report("CONSTANT_CORE_INPUT", const_inputs, set(sections["constant_inputs"]))
+    bad |= diff_report("SYNTHETIC_CORE_INPUT", synthetic, set(sections["synthetic_reg_inputs"]))
     bad |= diff_report("UNOBSERVED_CORE_OUTPUT", unobserved, set(sections["unobserved_outputs"]))
 
     if driver != declared_driver:
@@ -317,6 +369,7 @@ def main() -> int:
     print(
         "DECODE_CORE_SEAM_OK "
         f"core_inputs={total_inputs} constant_inputs={len(const_inputs)} "
+        f"synthetic_reg_inputs={len(synthetic)} "
         f"core_outputs={total_outputs} unobserved_outputs={len(unobserved)} "
         f"presentation_driver={driver}"
     )
