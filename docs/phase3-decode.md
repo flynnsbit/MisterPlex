@@ -419,10 +419,19 @@ Phase 3.1b (DDR bulk path — implemented this fire):
     CS sessions; not a streaming DMA.
 
   **DDR path:**
-    HPS `mmap(/dev/mem)` → bank @ **0x30000000** / **0x30040000** (256 KiB stride)
-    → pulse **status[12]** start (status[13]=bank) → `ddram_frame_rd` Avalon
+    HPS `mmap(/dev/mem)` → bank layout is geometry-derived:
+    `bank_stride = alignUp(frame_bytes, 0x40000)`, bank0 = `base`, bank1 =
+    `base + bank_stride`, and doorbell = `base + bank_stride*2 - 0x1000`.
+    With base `0x30000000`: 320×240 I420 (`frame_bytes=115200`) uses stride
+    **0x40000**, bank1 **0x30040000**, doorbell **0x3007F000**; 624×480 I420
+    (`frame_bytes=449280`) uses stride **0x80000**, bank1 **0x30080000**,
+    doorbell **0x300FF000**. The addresses move with geometry; do not treat
+    either worked example as a constant for all frame sizes.
+    → pulse **status[12]** start (status[13]=bank, legacy SPI kick) or write the
+    mmap doorbell high word (`[31]=bank`) → `ddram_frame_rd`/`ddr_frame_store` Avalon
     burst-reads f2sdram → dual-bank BRAM `frame_store` → present (same as F1).
-    - RTL: `rtl/ddram_frame_rd.sv`; Plex.sv no longer ties DDRAM_* to 0
+    - RTL: `rtl/ddr_frame_store.sv` (`rtl/ddram_frame_rd.sv` is the legacy
+      SPI-kick reader); Plex.sv no longer ties DDRAM_* to 0
     - ARM: `FpgaSpi::sendYuv420pFrameDdr` (I420 planar DDR payload + doorbell)
     - Tool: `push_frame --ddr [--bank 0|1] --yuv420p WxH file.yuv420p`
     - Verify: `ddr_busy` **or** (status[12] echo in status_in + `has_frame`); busy-only
