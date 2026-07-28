@@ -195,6 +195,15 @@
         "FAIL h264_intra_nb_ctx: mb00_has_above",
         "h264_intra_nb_ctx RTL check FAILED"
       ]
+    },
+    {
+      "id": "qpel_block_vs_sample_equivalence",
+      "owner": "tests/unit/test_qpel_equivalence_verilator.sh",
+      "why": "Perturbing h264_luma_qpel_sample by one LSB must fail the block-vs-sample comparison. Without this red proof the equivalence gate could pass by not actually comparing the two implementations.",
+      "required_substrings": [
+        "FAIL qpel mismatch",
+        "QPEL EQUIVALENCE FAILED"
+      ]
     }
   ]
 }
