@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
     bool ddrMemFlush = false;
     bool presentProfile = false;
     bool streamEnabled = false;
+    bool bitstreamFeedEnabled = true;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
@@ -258,6 +259,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "BITSTREAM_FEED");
+        if (!v.empty())
+            bitstreamFeedEnabled = confTruthy(v);
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -367,6 +371,7 @@ int main(int argc, char** argv) {
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
     player.setStreamEnabled(streamEnabled);
+    player.setBitstreamFeedEnabled(bitstreamFeedEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
     std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
@@ -443,6 +448,8 @@ int main(int argc, char** argv) {
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
+    std::fprintf(stderr, "misterplexd: BITSTREAM_FEED=%s\n",
+                 bitstreamFeedEnabled ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")

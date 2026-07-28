@@ -112,6 +112,15 @@ inline bool looksElementaryH264(const std::string& url) {
             lower.compare(lower.size() - 4, 4, ".avc") == 0);
 }
 
+inline bool canCopyH264ElementaryForFpga(const std::string& url) {
+    if (looksElementaryH264(url))
+        return true;
+    if (!isUniversalTranscodeUrl(url))
+        return false;
+    return url.find("videoCodec=h264") != std::string::npos ||
+           url.find("videoCodec=avc") != std::string::npos;
+}
+
 inline bool confTruthyMode(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
@@ -780,9 +789,9 @@ bool MediaPlayer::initPresent() {
             // Write PLXD (dormant) to the bitstream ring CTRL so that a DDR probe
             // can distinguish "producer disabled by config" from uninitialised DDR
             // residue. The FPGA reader ignores PLXD; this is diagnostic only.
-            if (!streamEnabled_) {
+            if (!streamEnabled_ && !bitstreamFeedEnabled_) {
                 if (fpga_.publishBitstreamDormant())
-                    log("media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)");
+                    log("media: DDR bitstream CTRL=PLXD (STREAM=0/BITSTREAM_FEED=0, producer dormant)");
                 else
                     log("media: DDR bitstream dormant publish failed: " + fpga_.lastError());
             }
@@ -1039,7 +1048,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     return true;
 }
 
-pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd) {
+pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                               int bitstreamWriteFd) {
     pid_t pid = fork();
     if (pid < 0)
         return -1;
@@ -1058,7 +1068,17 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
                     ::close(aWriteFd);
             }
         }
-        if (vWriteFd >= 0 && vWriteFd != STDOUT_FILENO && vWriteFd != 3)
+        // Compressed Annex-B → fd 4 (pipe:4) when STREAM=0 tees rawvideo +
+        // elementary stream from the same FFmpeg demux.
+        if (bitstreamWriteFd >= 0) {
+            if (bitstreamWriteFd != 4) {
+                dup2(bitstreamWriteFd, 4);
+                if (bitstreamWriteFd != STDOUT_FILENO && bitstreamWriteFd != 3 &&
+                    bitstreamWriteFd != 4)
+                    ::close(bitstreamWriteFd);
+            }
+        }
+        if (vWriteFd >= 0 && vWriteFd != STDOUT_FILENO && vWriteFd != 3 && vWriteFd != 4)
             ::close(vWriteFd);
 
         // Lab: capture FFmpeg errors on USB (tmpfs /tmp is tiny). Product: /dev/null.
@@ -1068,12 +1088,17 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
             errfd = ::open("/dev/null", O_WRONLY);
         if (errfd >= 0) {
             dup2(errfd, STDERR_FILENO);
-            if (errfd != STDERR_FILENO && errfd != 3 && errfd != STDOUT_FILENO)
+            if (errfd != STDERR_FILENO && errfd != 3 &&
+                !(bitstreamWriteFd >= 0 && errfd == 4) && errfd != STDOUT_FILENO)
                 ::close(errfd);
         }
-        // Close inherited fds but KEEP 0,1,2,3 (stdin/out/err + audio pipe:3).
-        for (int fd = 4; fd < 256; ++fd)
+        // Close inherited fds but KEEP 0,1,2,3 and, when enabled, compressed
+        // bitstream pipe fd 4.
+        for (int fd = 4; fd < 256; ++fd) {
+            if (bitstreamWriteFd >= 0 && fd == 4)
+                continue;
             ::close(fd);
+        }
 
         std::vector<char*> argv;
         argv.reserve(args.size() + 1);
@@ -1706,6 +1731,110 @@ void MediaPlayer::streamPump(int sfd) {
         " present=" + std::to_string(reconFrames_.load()));
 }
 
+void MediaPlayer::bitstreamFeedPump(int sfd) {
+    streamActive_.store(true);
+    FpgaBitstreamProducer producer(fpga_);
+    h264stream::DispatchConfig cfg;
+    cfg.max_full_retries = 50;
+    cfg.full_retry_sleep_ms = 2;
+    h264stream::NalDispatcher dispatch(producer, cfg);
+    h264stream::AnnexBFramer framer;
+    static std::atomic<uint64_t> nextFeedSession{0xB175000000000001ull};
+    const uint64_t session = nextFeedSession.fetch_add(1);
+    bool active = false;
+    bool fatal = false;
+    uint64_t inputBytes = 0;
+    uint64_t inputChunks = 0;
+    uint64_t vclNals = 0;
+    uint64_t totalNals = 0;
+    const auto wall0 = std::chrono::steady_clock::now();
+    const int64_t cpu0 = threadCpuMicros();
+
+    const auto begin = dispatch.begin(session);
+    if (begin == h264stream::ControlResult::Ok) {
+        active = true;
+        log("media: BITSTREAM_FEED begin session=" + std::to_string(session));
+    } else {
+        fatal = true;
+        log("ERROR media: BITSTREAM_FEED begin failed " +
+            std::string(h264stream::toString(begin)) + " — draining compressed pipe only");
+    }
+
+    auto handleNal = [&](const uint8_t* nal, size_t len) {
+        ++totalNals;
+        const uint8_t type = h264stream::annexBNalType(nal, len);
+        if (type == 1 || type == 5)
+            ++vclNals;
+        if (!active || fatal)
+            return;
+        const auto r = dispatch.handleNal(nal, len);
+        if (r == h264stream::PushResult::Ok)
+            return;
+        fatal = true;
+        log("ERROR media: BITSTREAM_FEED " + std::string(h264stream::toString(r)) +
+            " after nals=" + std::to_string(totalNals) +
+            " bytes=" + std::to_string(inputBytes) +
+            " — disabling feed and draining pipe so raw present does not block");
+        (void)dispatch.end();
+        active = false;
+    };
+
+    char buf[8192];
+    while (!stop_.load()) {
+        const ssize_t n = ::read(sfd, buf, sizeof(buf));
+        if (n > 0) {
+            inputBytes += static_cast<uint64_t>(n);
+            ++inputChunks;
+            (void)framer.push(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(n),
+                              handleNal);
+            continue;
+        }
+        if (n == 0)
+            break;
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            usleep(1000);
+            continue;
+        }
+        log("ERROR media: BITSTREAM_FEED read failed errno=" + std::to_string(errno));
+        break;
+    }
+    if (!stop_.load())
+        (void)framer.finish(handleNal);
+
+    h264stream::Telemetry beforeEnd = producer.status();
+    h264stream::ControlResult endResult = h264stream::ControlResult::NoSession;
+    if (active)
+        endResult = dispatch.end();
+    ::close(sfd);
+    streamActive_.store(false);
+
+    const auto wall1 = std::chrono::steady_clock::now();
+    const int64_t cpu1 = threadCpuMicros();
+    const int64_t wallUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(wall1 - wall0).count();
+    const int64_t cpuUs = std::max<int64_t>(0, cpu1 - cpu0);
+    const auto stats = dispatch.stats();
+    const uint64_t pushedNals = beforeEnd.nal_accepted;
+    const uint64_t pushedBytes = beforeEnd.bytes_accepted;
+    const uint64_t denomVcl = vclNals ? vclNals : 1;
+    log("media: BITSTREAM_FEED end input_bytes=" + std::to_string(inputBytes) +
+        " input_chunks=" + std::to_string(inputChunks) +
+        " nals_seen=" + std::to_string(totalNals) +
+        " vcl=" + std::to_string(vclNals) +
+        " pushed_nals=" + std::to_string(pushedNals) +
+        " pushed_bytes=" + std::to_string(pushedBytes) +
+        " bytes_per_vcl=" + std::to_string(pushedBytes / denomVcl) +
+        " feed_wall_us_per_vcl=" + std::to_string(wallUs / static_cast<int64_t>(denomVcl)) +
+        " feed_cpu_us_per_vcl=" + std::to_string(cpuUs / static_cast<int64_t>(denomVcl)) +
+        " full_retries=" + std::to_string(stats.full_retries) +
+        " full_escalations=" + std::to_string(stats.full_escalations) +
+        " desync_or_fatal=" + std::to_string(stats.desync_or_fatal) +
+        " end=" + std::string(h264stream::toString(endResult)) +
+        " fatal=" + (fatal ? "1" : "0"));
+}
+
 int64_t MediaPlayer::readMrAudioQueuedBytes() {
     const int fd = ::open(audioDev_.c_str(), O_RDONLY);
     if (fd < 0)
@@ -2047,6 +2176,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     } else if (streamEnabled_ && !testPattern && !fpga_.ok()) {
         log("media: STREAM=1 but FPGA SPI unavailable — host recon F1/F3 disabled");
     }
+    const bool wantProductBitstreamFeed =
+        bitstreamFeedEnabled_ && !streamEnabled_ && fpga_.ok() && !testPattern &&
+        canCopyH264ElementaryForFpga(url);
+    if (bitstreamFeedEnabled_ && !streamEnabled_ && !testPattern && fpga_.ok() &&
+        !wantProductBitstreamFeed) {
+        log("media: BITSTREAM_FEED skip: source is not known H.264 Annex-B/copy-safe");
+    }
 
     int rfd = -1;
     int64_t frameIndex = 0;
@@ -2190,6 +2326,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         usedRawVideo = true;
         presentCount_ = 0;
         audioBytes_.store(0);
+        bool productBitstreamFeed = wantProductBitstreamFeed;
+        int bpipe[2] = {-1, -1};
+        if (productBitstreamFeed && pipe(bpipe) != 0) {
+            log("media: BITSTREAM_FEED pipe failed — raw present continues");
+            productBitstreamFeed = false;
+            bpipe[0] = bpipe[1] = -1;
+        }
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
@@ -2272,6 +2415,22 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             args.push_back("-i");
             args.push_back(url);
 
+            if (productBitstreamFeed) {
+                args.push_back("-map");
+                args.push_back("0:v:0");
+                args.push_back("-an");
+                args.push_back("-c:v");
+                args.push_back("copy");
+                if (!looksElementaryH264(url)) {
+                    args.push_back("-bsf:v");
+                    args.push_back("h264_mp4toannexb");
+                }
+                args.push_back("-f");
+                args.push_back("h264");
+                args.push_back("pipe:4");
+                log("media: BITSTREAM_FEED tee compressed H.264 Annex-B to DDR ring (pipe:4)");
+            }
+
             args.push_back("-map");
             args.push_back("0:v:0");
             args.push_back("-an");
@@ -2315,6 +2474,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         int apipe[2] = {-1, -1};
         if (pipe(vpipe) != 0) {
             log("media: video pipe failed");
+            if (bpipe[0] >= 0)
+                ::close(bpipe[0]);
+            if (bpipe[1] >= 0)
+                ::close(bpipe[1]);
             playing_.store(false);
             killChildren();
             if (streamThr_.joinable())
@@ -2338,14 +2501,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log(joined);
         }
 
-        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
+        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1,
+                                bpipe[1] >= 0 ? bpipe[1] : -1);
         ::close(vpipe[1]);
         if (apipe[1] >= 0)
             ::close(apipe[1]);
+        if (bpipe[1] >= 0)
+            ::close(bpipe[1]);
         if (pid < 0) {
             ::close(vpipe[0]);
             if (apipe[0] >= 0)
                 ::close(apipe[0]);
+            if (bpipe[0] >= 0)
+                ::close(bpipe[0]);
             log("media: fork failed");
             playing_.store(false);
             killChildren();
@@ -2361,6 +2529,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         if (apipe[0] >= 0) {
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+        }
+        if (bpipe[0] >= 0) {
+            streamThr_ = std::thread([this, sfd = bpipe[0]] { bitstreamFeedPump(sfd); });
         }
 
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);

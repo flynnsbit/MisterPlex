@@ -60,6 +60,9 @@ public:
     void setPresentProfile(bool on) { presentProfile_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
+    // STREAM=0 product path: tee compressed H.264 Annex-B into the DDR bitstream
+    // ring while rawvideo still feeds the proven present path.
+    void setBitstreamFeedEnabled(bool on) { bitstreamFeedEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
     // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
@@ -186,6 +189,7 @@ private:
     void threadMain(std::string url, int64_t startMs, std::string headers, int64_t durationMs);
     void audioPump(int afd);
     void streamPump(int sfd);
+    void bitstreamFeedPump(int sfd);
     void killChildren();
     void signalChildren(int sig);
     void dispatchPlaybackInput(PlaybackCommand command);
@@ -193,7 +197,8 @@ private:
     bool wantSkipRgbVideo() const;
     bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
                          std::string* err = nullptr);
-    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
+    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                      int bitstreamWriteFd = -1);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
@@ -207,6 +212,7 @@ private:
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
+    bool bitstreamFeedEnabled_ = true; // STREAM=0 rawvideo + DDR Annex-B feed
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;

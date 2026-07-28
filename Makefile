@@ -67,6 +67,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh
 	$(ROOT)/build/test_h264_bitstream_source
 	$(ROOT)/build/test_bitstream_ring_lifecycle
+	python3 $(ROOT)/tests/unit/test_bitstream_feed_static.py
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_frame_store_sdram_sim
 	$(ROOT)/build/test_frame_store_ddr_prefetch_sim
