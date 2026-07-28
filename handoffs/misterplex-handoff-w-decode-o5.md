@@ -357,3 +357,79 @@ directions, and provably still vacuous**: all 13 outputs unobserved, `decode_stu
 still the sole driver of every frame-store pixel. Structural rooting is not
 function. **Zero frames have been decoded and displayed by the FPGA.**
 Denominator reminder: the frame is **1170 MBs**.
+
+---
+
+## Addendum 2 — capacity, and a defect class no existing oracle catches (`d599bd8`)
+
+w-fit-o5 reported `decode_stub` holding **256 M10K = 46% of the device** and warned
+that w-swap's MC may not fit until the stub is retired. Chasing that number found
+something worse than a capacity squeeze.
+
+### The stub's DPB is arithmetically impossible
+
+| | |
+|---|---|
+| `decode_stub` declares | `dpb_mem [0 : 2*(W*H + 2*((W/2)*(H/2))) - 1]` |
+| `WIDTH`/`HEIGHT` defaults | 320 × 240 |
+| **as actually instantiated** (`Plex.qsf` `FRAME_W=640 FRAME_H=480` → `Plex.sv` → `stream_path` → stub) | **640 × 480** |
+| declared array | **921,600 bytes = 7,372,800 bits** |
+| device M10K (5CSEBA6) | 553 × 10,240 = **5,662,720 bits** |
+| ratio | **1.30× the entire device** |
+| w-fit measured in the fit | 256 M10K = 262,144 bytes = **28% of the declared array** |
+
+The other 72% was never built. **Every gate we own was green** — reachability in
+both directions, `files.qip` coverage, the seam gate — while the diagnostic frame
+store was silently a fraction of its declared size.
+
+**This is a new defect class.** Reachability proves it is in the graph; `files.qip`
+proves it is compiled; post-fit hierarchy proves it survived fitting. All three are
+true here. The array is simply impossible. `scripts/check_onchip_ram_budget.py`
+closes it.
+
+It required **real parameter propagation from `emu`**, not name-based seeding:
+`decode_stub.WIDTH` is a frame width (640) but `async_fifo.WIDTH` is a bus width (8).
+I got this wrong on the first cut in both directions and only found it because the
+first run reported the stub as `UNEVALUATED` rather than over-budget.
+
+### Consequence for W-SWAP-O5 — measured, not assumed
+
+`h264_dpb_one_ref` is **memory-external by design**: it emits `mem_we/mem_waddr/mem_wdata`
+and issues `dpb_rd_en/dpb_rd_addr`, and `BANK1_BASE = 898560/2` implies a two-bank
+898,560-byte store. Backing that on-chip needs ~1.3× the device. **It must be
+DDR-backed; it can never be on-chip.**
+
+And today it has **no memory at all**: `stream_path.sv:548` ties `.dpb_rd_data(8'd0)`,
+while `dpb_wr_en/addr/data` terminate only in the `_keep` anti-prune wire. **Every
+reference pixel the product MC reads is `0x00`.** MC will motion-compensate from a
+black frame even once it fits. This was already declared seam debt
+(`decode_core_seam_debt.txt:51,64,74-76`); what was missing was stating its consequence.
+
+### Adopted rather than rebuilt
+
+w-fit-o5's `scripts/check_qip_coverage.py` (`ee2ed89`) taken verbatim. It passes
+**rc=0 on this branch**: 36 qip entries vs 34 on `parent/integ-hour27`;
+`h264_decode_top.sv` and `h264_intra_nb_ctx.sv` are compiled here and are not there.
+This corroborates w-fit's ruling that **`w-decode-hour27`/`w-decode-o5` is the only
+viable merge base**.
+
+### One more resurrection route closed
+
+`Plex.qsf:83` still passes `DECODE_REAL_INTRA=0`. Inert — no product RTL tests the
+macro — but the QSF is precisely where someone flips it to 1 and deletes 14 modules
+again. `=0` tolerated, anything else fails (`RETIRED_TOPOLOGY_MACRO_TESTED`). I did
+**not** edit `Plex.qsf`; w-fit-o5 owns the fit window.
+
+### Geometry note (not mine to fix)
+
+The project **fits 640×480** while the content is **624×480 coded / 618×480 display**.
+That is the derived-geometry contract defect already assigned to W-GATE-O5. I changed
+no geometry.
+
+### Sweep at `d599bd8`: 39/39 rc=0, 0 exit-77 skips
+
+Reds: N1 new on-chip product DPB → `ONCHIP_RAM_ARRAY_EXCEEDS_DEVICE`; N2 stale entry;
+N3 unevaluatable block RAM (no silent pass); N4 `FRAME_W` removed from QSF;
+O1 `DECODE_REAL_INTRA=1` in QSF. All restore to green.
+
+**Still zero frames decoded and displayed by the FPGA.** Denominator: 1170 MBs.
