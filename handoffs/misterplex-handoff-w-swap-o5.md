@@ -1,0 +1,232 @@
+# Handoff — W-SWAP-O5 (motion compensation into the product decode path)
+
+Branch: `w-swap-o5-mc` (worktree `.worktrees/w-swap-o5`), forked from `w-decode-hour27` `ddb7c97`.
+Commits: `406e583` (merge) -> `4f4312b` (MC integration) -> `650ab98` (full-frame proof) -> `054d146` (inherited fixes).
+Pushed twice to `origin/w-swap-o5-mc`.
+
+All statements below are **measured** unless explicitly marked assumed. Raw logs are committed under
+`build/w-swap-o5-logs/`.
+
+---
+
+## 1. Corrections to the task brief and to the predecessor handoff
+
+Discovered by measuring, not by inheriting.
+
+| Claim I was given | What I measured |
+|---|---|
+| "Run `check_rtl_module_instantiations.py --root h264_decode_core --require ...` on baseline `ddb7c97`" | On `ddb7c97` that script **has no argparse at all** (200 lines, zero `add_argument`). `--root`/`--require` are **silently ignored**; it prints `root=emu` and exits 0. A **vacuously green gate**. The real instrument exists only on `w-deblock-seam` / `w-gate-hour28`. |
+| "Rebase `910c456` onto `ddb7c97`" | `ddb7c97`, `7225e00` (w-deblock-seam) and `w-swap-mc` are **siblings** off merge-base `205f6d4`; neither is an ancestor of the other. A rebase was not possible - this was a 3-way integration. `git cherry-pick -n 910c456` produced **5 semantic conflicts** in `h264_decode_core.sv` (HEAD had renamed `recon_mb_valid`->`product_recon_mb_valid`, added `ST_P16_TAP_REQ`/`p16_tap_idx`, moved `frame_done` onto `deblock_ref_ready_pulse`, added `intra_*_r`). I reset and re-implemented instead. |
+| "Land 7 modules under `h264_decode_core`" | Done, plus `h264_deblock_writeback_ctrl` retained = 8 required modules. |
+
+`--require` takes **one** value per flag; repeat the flag.
+
+---
+
+## 2. Measured RED baseline (before my RTL work, on `406e583`), rc=1
+
+```
+REQUIRED_RTL_MODULE_UNREACHABLE h264_chroma_epel_block_8x8 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_16x16
+REQUIRED_RTL_MODULE_UNREACHABLE h264_dpb_one_ref file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=decode_stub,h264_decode_skeleton
+REQUIRED_RTL_MODULE_UNREACHABLE h264_inter_mc_16x16 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_part
+REQUIRED_RTL_MODULE_UNREACHABLE h264_inter_mc_part file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=decode_stub
+REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_qpel_block_16x16 file=fpga/Plex_MiSTer/rtl/h264_dpb.sv parents=h264_inter_mc_16x16
+REQUIRED_RTL_MODULE_UNREACHABLE h264_luma_ref_tap_addr file=fpga/Plex_MiSTer/rtl/h264_inter_pred.sv parents=decode_stub,h264_decode_skeleton
+REQUIRED_RTL_MODULE_UNREACHABLE h264_ref_clamp file=fpga/Plex_MiSTer/rtl/h264_inter_pred.sv parents=h264_luma_ref_tap_addr
+RTL_MODULE_INSTANTIATION_FAIL: required RTL modules are not reachable from h264_decode_core
+```
+(`build/w-swap-o5-logs/core_require_pre.log`)
+
+## 3. Measured GREEN (HEAD), rc=0
+
+```
+REQUIRED_RTL_MODULE_REACHABLE h264_inter_mc_part root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_inter_mc_16x16 root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_dpb_one_ref root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_luma_qpel_block_16x16 root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_chroma_epel_block_8x8 root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_luma_ref_tap_addr root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_ref_clamp root=h264_decode_core
+REQUIRED_RTL_MODULE_REACHABLE h264_deblock_writeback_ctrl root=h264_decode_core
+RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=21 bench_only=18 root=h264_decode_core
+```
+
+## 4. Red/green proof (a green with no red-proof is not evidence)
+
+`tests/unit/test_h264_decode_core_mc_reachability_redgreen.py` mutates each product instantiation
+site (10 sites, 8 modules), requires rc=1 with `REQUIRED_RTL_MODULE_UNREACHABLE`, restores, and
+requires rc=0. rc=0, `build/w-swap-o5-logs/redgreen_final.log`:
+
+```
+Scope: red/green reachability proof for 8 required RTL modules rooted at h264_decode_core (10 product instantiation sites mutated)
+OK ... h264_deblock_writeback_ctrl unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK ... h264_inter_mc_part          unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK ... h264_inter_mc_16x16         unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK ... h264_dpb_one_ref            unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK ... h264_luma_qpel_block_16x16  unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK ... h264_chroma_epel_block_8x8  unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK ... h264_luma_ref_tap_addr      unreachable when its 2 product instantiation site(s) are cut (rc=1)
+OK ... h264_ref_clamp              unreachable when its 1 product instantiation site(s) are cut (rc=1)
+OK h264_decode_core MC reachability red/green: 8/8 required modules proved reachable via a mutated-red edge
+```
+
+Registered in `Makefile` and `tests/unit/test_unit_rollcall.py`, so the requirement is permanent.
+
+## 5. Full-frame MC correctness (deliverable #4), rc=0
+
+`tests/unit/test_h264_decode_core_full_frame_mc_rtl_sim.sh` (`build/w-swap-o5-logs/ff_4.log`):
+
+```
+Scope: product h264_decode_core P16x16 motion compensation over 1170/1170 macroblocks of a real
+624x480 frame (39x30 MBs), 449280/449280 predicted samples checked against an independent
+qpel/epel model
+OK h264_decode_core full-frame MC: 1170/1170 P16x16 macroblocks predicted exactly;
+samples Y=299520 U=74880 V=74880 total=449280; reads=705510 (all addresses exact);
+luma_qpel_phases=16/16 chroma_epel_phases=64/64 sub_pel_luma_samples=280064
+edge_clamped_mbs=96 differ_from_colocated=230469/299520 pred_range=0..197 cycles=1162986
+OK ... red-check: perturbed motion vector failed the 1170-macroblock scoreboard
+OK ... red-check: dropped prediction failed the 1170-macroblock scoreboard
+```
+
+**Denominator, stated explicitly: 1170/1170 macroblocks, 449280/449280 predicted samples.**
+The golden model is evaluated directly on the reference picture, not on the RTL's fetched window.
+
+### What this does NOT prove (do not overstate)
+- MVs and the reference picture are **supplied by the testbench**, not parsed from a bitstream.
+- Residual is zero in this gate; residual add is covered separately by the p16z gate.
+- **Zero frames have still been decoded and displayed by the FPGA.** No Quartus fit was run.
+- Resource/timing cost of a combinational full-window `h264_inter_mc_part` inside the core is
+  **unmeasured** (Quartus is the sole exclusive slot, owned by `w-fit-o5`).
+
+---
+
+## 6. What changed in RTL
+
+`h264_decode_core.sv`
+- P16 path converted from per-sample qpel/epel taps to block MC.
+  FSM `ST_P16_TAP_REQ`/`ST_P16_TAP_WAIT` -> `ST_P16_REF_SEED`/`ST_P16_WIN_START`/`ST_P16_WIN_FETCH`.
+- `h264_dpb_one_ref u_product_dpb_ref` is the core's POST-deblock reference store **and** write
+  address generator; `h264_inter_mc_part u_product_p16_mc` (`part_w=part_h=16`) is the predictor.
+- Reference buffers: `p16_luma_ref[0:440]`, `p16_chroma_u_ref[0:80]`, `p16_chroma_v_ref[0:80]`.
+- Fetch is **603 reads/MB** (441 luma + 81 U + 81 V), down from 21248 per-sample tap reads.
+- Removed `h264_luma_qpel_sample`/`h264_chroma_epel_sample`/`h264_dpb_i420_addr`/
+  `h264_dpb_mb_write_addr` from the core (superseded; still reachable via `decode_stub`).
+
+**Binding contracts honoured**
+- PRE/POST deblock separation: `u_product_dpb_ref.filtered_sample_valid` =
+  `deblock_filtered_sample_valid`, i.e. the same committed POST-deblock stream that feeds the
+  deblock writeback controller. Intra/neighbour taps stay PRE-deblock.
+- Ordering contract (w-deblock `7225e00`): promotion is `deblock_ref_ready_pulse`; core
+  `frame_done` still comes from the deblock controller pulse, not raw terminal commit. No signal
+  renamed.
+- Bank ownership stays outside: `h264_dpb_one_ref` addresses are rebased
+  (`p16_ref_base_r + (mem_raddr - reference_base)`, `wb_base + (mem_waddr - current_base)`).
+  i420 addressing is plane-linear so the rebase is exact. `stream_path.sv` untouched.
+
+`h264_dpb.sv`
+- `h264_dpb_one_ref` window tap math replaced by two `h264_luma_ref_tap_addr` instances
+  (`#(.TAP_COLS(21),.TAP_ORIGIN(2))` luma, `#(.TAP_COLS(9),.TAP_ORIGIN(0))` chroma). Verified
+  bit-identical: `test_p3_dpb_mc_rtl_sim.sh` rc=0.
+- **Real bug fixed:** `PH_DRAIN` retired only **one** of the **two** in-flight reads, so
+  `fetch_done` fired one cycle early and the **final chroma-V window sample (index 80)** was lost.
+  Symptom was exactly one wrong sample per MB (sample 383). Added `PH_DRAIN2`. The 2-3 MB gates
+  could not see this; the 1170-MB gate found it on its first run.
+
+`h264_inter_pred.sv`
+- `h264_luma_ref_tap_addr` parameterised with `TAP_COLS`/`TAP_ORIGIN`; `tap_idx` widened to `[8:0]`.
+  Defaults (9/4) reproduce the original centred 9x9 grid bit-exactly for the three existing sites
+  (`decode_stub`, `h264_decode_skeleton`, `h264_inter_pred_tb_top`).
+
+### Read-latency contract (important, easy to get wrong)
+The external DPB returns data **one** edge after the address is registered. `h264_dpb_one_ref`
+aligns returned data with `pending_*_d1`, i.e. **two** edges after issue (the same 2-edge contract
+documented in `tests/rtl/h264_dpb_mc_tb.cpp` and in `PHASE_BACKLOG` ~line 550). The core adds a
+one-cycle skid (`dpb_rd_valid_q`/`dpb_rd_data_q`) to adapt. **Do not "simplify" this away** -
+deleting the `_d1` stage turns tests green while breaking hardware, which this project has already
+been burned by once.
+
+---
+
+## 7. Four defects inherited from the merge (all red on `406e583` before my work)
+
+Confirmed pre-existing by running them in a throwaway worktree at `406e583`.
+
+1. `h264_cavlc_residual.sv` indexed its rbsp window with a fixed `bit_pos[8:3]`. Correct only for
+   `MAX_BYTES=64`; `slice_hdr_parser` instantiates it with `MAX_BYTES=96`, so **every byte >= 64
+   silently wrapped to byte 0**. Byte index now sized from `MAX_BYTES` via `$clog2` (bit-identical
+   for 64-byte instances). This also cleared the `scripts/rtl_lint.py` WIDTHEXPAND regression.
+2. `tests/rtl/stream_path_full_frame_tb_top.sv` still reached into `dut.gen_decode_stub.stub`
+   after `stream_path` renamed the block to `gen_diagnostic_present` - the full-frame compare gate
+   could not elaborate (46 Verilator errors).
+3. `tests/unit/test_p3_stream_path_recon_rtl_sim.sh` lost its line-continuation backslash after
+   `h264_intra_pred.sv`, truncating the Verilator file list before `stream_path.sv`.
+4. `tests/fixtures/define_parity_allowlist.json` was missing the three `H264_INTRA_NB_CTX_FAULT_*`
+   macros, so `check_define_parity.py` was rc=1 on `ddb7c97` too.
+
+Side effect worth noting: after the `PH_DRAIN2` fix, `test_stream_path_full_frame_compare.sh`
+native inter score moved from `inter=0/3300` to `inter=1610/3300`. That path is the **diagnostic**
+`decode_stub` painter, not the product core, so I make no product claim from it - but the number in
+`PHASE_BACKLOG` row "P-slice / motion compensation full-frame output" is now stale.
+
+---
+
+## 8. Gate results (raw rc, none read through a pipe)
+
+| Gate | rc |
+|---|---|
+| `check_rtl_module_instantiations.py --root h264_decode_core --require x8` | 0 |
+| `test_h264_decode_core_mc_reachability_redgreen.py` | 0 |
+| `test_h264_decode_core_full_frame_mc_rtl_sim.sh` | 0 |
+| `test_h264_decode_core_p16z_rtl_sim.sh` | 0 |
+| `test_h264_decode_core_real_slice_rtl_sim.sh` | 0 |
+| `test_h264_decode_core_writeback_rtl_sim.sh` | 0 |
+| `test_p3_dpb_mc_rtl_sim.sh` | 0 |
+| `test_p3_inter_rtl_sim.sh` | 0 |
+| `test_p3_inter_stream_path_rtl_sim.sh` | 0 |
+| `test_h264_p_slice_modes_rtl_sim.sh` | 0 |
+| `test_p3_stream_path_recon_rtl_sim.sh` | 0 |
+| `test_stream_path_full_frame_compare.sh` | 0 |
+| `test_rtl_invariants.sh` | 0 |
+| `scripts/rtl_lint.py` | 0 |
+| `scripts/check_define_parity.py` | 0 |
+| `scripts/check_pipe_exit_safety.py` | 0 |
+| `tests/unit/test_unit_rollcall.py` | 0 |
+| `make quartus-sv-subset` | 0 |
+| **`make unit`** | **0** (`build/w-swap-o5-logs/make_unit13.log`) |
+
+`make unit` needed 13 attempts. Attempts 1-12 were blocked by, in order: the four inherited defects
+above, and the **known unrelated flake** `tests/unit/test_companion_eof`
+(`FAIL: path callback key mismatch: /library/metadata/3`, measured 2/3 pass in isolation). No guard
+was overridden and nothing was skipped to reach green.
+
+Expected-red manifest ordinals were **re-measured**, not guessed, for the 603-read ordering:
+`p16z_perturb_mv` ordinal 0, `p16z_drop_mv_neighbor` ordinal 603, `p16z_swap_chroma_read`
+ordinal 441, `real_slice_swap_chroma_read` ordinal 441.
+
+---
+
+## 9. Open work for a successor
+
+1. **Nothing drives MC from parsed syntax yet.** `p16_zero_mv_valid` is still a testbench-driven
+   port. `stream_path` must route parsed `mb_type`/`mvd`/`ref_idx` into the core's P16 path and the
+   MV predictor before a real P-slice can decode.
+2. **Only P16x16.** `h264_inter_mc_part` supports 16x8/8x16/8x8 and sub-shapes, and
+   `h264_dpb_one_ref` latches `part_w`/`part_h`, but the core hardwires `part_w=part_h=16` and
+   always fetches the full 21x21 window. `h264_mv_pred_part` is present under the core but unused
+   for partitioned MBs.
+3. **P_Skip is not wired.** 928/1170 MBs of a real P-frame are skipped; that path must be free.
+4. **Resource/timing unmeasured.** A combinational 16x16 qpel block plus 441+81+81 window
+   registers inside the core is a large flat structure. `make post-fit-hierarchy` /
+   `make post-fit-timing` evidence is required before any RBF claim. **Do not start a Quartus fit** -
+   it is the sole exclusive slot.
+5. `PHASE_BACKLOG` row "P-slice / motion compensation full-frame output" is stale (see section 7).
+
+## 10. Rules that cost me time - obey them
+
+- Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
+- Confirm the checker actually parses your flags before trusting a green (it silently ignored them
+  on the baseline).
+- `--require` = one module per flag.
+- A 2-3 macroblock gate will not find window-boundary bugs. The 1170-MB gate found one immediately.
+- Redirect to a file and read `rc` directly; never through a pipe.
+- Push twice.
