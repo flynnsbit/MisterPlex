@@ -1184,3 +1184,116 @@ before it is photographed.
 * **No power-cycle request.** The human is permanently out of the test loop by
   explicit instruction, so I did not ask anyone to check the board.
 * **No rollback.** `Plex.rbf.bak` remains untouched.
+
+---
+
+## 23. What actually blocks `decode_stub` retirement, and what it frees
+
+Blocked on the device, I measured Ruling 3 **condition 3** ("`decode_stub` retired
+or shrunk enough that M10K has headroom"), which until now was asserted rather
+than measured -- the parent's wording was "**very likely** cannot fit". Quartus
+is mine, and both answers came out of reports I already held, so this cost no
+new Quartus time.
+
+Source: `w-decode-hour27` `2f165ed`.
+Reports: `.copilot-logs/prefit-decode-2f165ed/Plex.map.rpt` (A&S),
+`fpga/Plex_MiSTer/remote_out/wfit-hour27-bdiag-b/Plex.fit.rpt` (post-fit).
+
+### 23.1 The blocker: the stub is the *only* pixel writer
+
+`stream_path` exports the frame-store write port at `stream_path.sv:95-98`:
+
+```
+95:	output logic        fs_wr_en,
+96:	output logic [15:0] fs_wr_pixel,
+97:	output logic        fs_wr_reset,
+98:	output logic        fs_swap
+```
+
+Scope: 4 signals, all four grepped across the whole file. The **only** assignment
+to any of them is the stub's port map at `stream_path.sv:595-598`:
+
+```
+595:			.wr_en(fs_wr_en),
+596:			.wr_pixel(fs_wr_pixel),
+597:			.wr_reset_ptr(fs_wr_reset),
+598:			.swap_req(fs_swap),
+```
+
+**`decode_stub` is the sole driver of the entire frame-store write port.** Delete
+it and nothing writes pixels at all -- guaranteed black screen, independent of
+every other defect. That is the answer to the parent's question to `w-decode-o5`,
+measured rather than guessed.
+
+### 23.2 Conditions 3 and 4 are ONE change, not two
+
+This closes the loop with the third failure mode in §20. The core is elaborated
+and then optimized away because its outputs are unconsumed -- and its outputs are
+unconsumed **precisely because the stub already owns `fs_wr_*`**. So:
+
+| attempted in isolation | outcome |
+|---|---|
+| retire `decode_stub` only | no driver on `fs_wr_*` -> nothing paints |
+| consume core outputs only | two drivers on `fs_wr_*` -> multiple-driver error |
+| **hand `fs_wr_*` from stub to core** | **the only ordering that can work** |
+
+Ruling 3 condition 3 (retire the stub) and condition 4 (get the core to survive
+elaboration) are **the same edit**, and neither can be landed alone. Sequencing
+them as separate tasks will fail twice before it succeeds.
+
+### 23.3 The generate block is NOT a switch
+
+```
+	generate
+		begin : gen_diagnostic_present
+		decode_stub #(
+```
+
+`generate begin : gen_diagnostic_present` has **no `if`**. It is an unconditional
+naming wrapper. The hierarchy path `decode_stub:gen_diagnostic_present.stub` reads
+like a conditional instantiation and is not one -- there is no parameter to flip
+and no `DECODE_REAL_INTRA` swap (the comment at `stream_path.sv:556-559` says so
+explicitly). Retirement is source surgery. Flagging this because it is exactly the
+"disabled generate" shape `w-audit` showed the regex checker gets wrong, here in
+the inverse direction: it *looks* conditional to a human reader.
+
+### 23.4 What retirement frees -- measured, and it is good news
+
+Post-fit `fb4bad84`, whole device:
+
+```
+M10K blocks               453 / 553  (82 %)
+Total block memory bits   2,970,061 / 5,662,720  (52 %)
+```
+
+Single `decode_stub` DPB instance, from the A&S RAM table:
+
+```
+emu:emu|stream_path:spath|decode_stub:gen_diagnostic_present.stub|altsyncram:dpb_mem_rtl_0
+  Simple Dual Port  262144 x 8  = 2,097,152 bits  = 256 M10K
+```
+
+| quantity | now | after retirement | delta |
+|---|---|---|---|
+| M10K used | 453 / 553 (82 %) | **197 / 553 (36 %)** | **-256** |
+| M10K free | 100 | **356** | **3.56x more headroom** |
+
+2,097,152 of 2,970,061 used block bits = **70.6 % of the design's memory is one
+diagnostic painter**, and 37 % of the whole device.
+
+**The parent's capacity ruling is confirmed quantitatively**, and the outlook is
+better than "very likely cannot fit": retirement takes M10K pressure from 82 % to
+36 % and more than triples the free pool.
+
+### 23.5 Limits of this measurement -- declared up front
+
+* This says how much is **freed**. It does **not** say the seven MC/DPB/ref
+  modules **fit**, because their cost cannot be measured until they are connected
+  and consumed -- while unconsumed they collapse to zero, which is the §20 trap.
+  **Do not read 356 free M10K as "the seven modules fit."**
+* 82 % / 453 is from the fitted `fb4bad84`; the 256-M10K stub figure is from A&S
+  on `2f165ed`. Different builds. They are comparable because A&S predicted the
+  fit closely before (block bits 2,969,677 vs 2,970,061, delta 384), but it is a
+  cross-build comparison and I am not hiding that.
+* M10K is the binding constraint today. Freeing it may expose ALUT or DSP as the
+  next limit; DSP was already **74/74** on `2f165ed`.
