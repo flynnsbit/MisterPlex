@@ -2084,7 +2084,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t seekTo = seekReqMs_.exchange(-1);
             if (seekTo >= 0) {
                 log("media: seek requested " + std::to_string(seekTo));
-                break;
+                if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/true,
+                                                       /*readZero=*/false,
+                                                       /*readError=*/false,
+                                                       /*shortRead=*/false,
+                                                       /*knownDurationStall=*/false))
+                    break;
             }
             if (paused_.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -2701,9 +2706,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                 now - lastVideoByte)
                                 .count();
-                        if (misterplex::knownDurationEofStall(
-                                startMs, durationMs, elapsedMs, static_cast<int64_t>(got),
-                                noVideoMs)) {
+                        const bool knownDurationStall = misterplex::knownDurationEofStall(
+                            startMs, durationMs, elapsedMs, static_cast<int64_t>(got), noVideoMs);
+                        if (misterplex::rawVideoTerminalSignal(
+                                /*explicitStopOrSeek=*/false, /*readZero=*/false,
+                                /*readError=*/false, /*shortRead=*/false,
+                                knownDurationStall)) {
                             videoEof = true;
                             if (!eofStallLogged) {
                                 eofStallLogged = true;
@@ -2724,13 +2732,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         }
                         continue;
                     }
-                    log("media: read err errno=" + std::to_string(errno));
-                    break;
+                    if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                           /*readZero=*/false,
+                                                           /*readError=*/true,
+                                                           /*shortRead=*/false,
+                                                           /*knownDurationStall=*/false)) {
+                        log("media: read err errno=" + std::to_string(errno));
+                        break;
+                    }
                 }
                 if (n == 0) {
                     ++frameReadZero;
-                    videoEof = true;
-                    break;
+                    if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                           /*readZero=*/true,
+                                                           /*readError=*/false,
+                                                           /*shortRead=*/false,
+                                                           /*knownDurationStall=*/false)) {
+                        videoEof = true;
+                        break;
+                    }
                 }
                 got += static_cast<size_t>(n);
                 lastVideoByte = std::chrono::steady_clock::now();
@@ -2747,13 +2767,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
-                shortRead = true;
-                shortReadGot = got;
-                shortReadWant = frameBytes;
-                log("media: short read got=" + std::to_string(got) + "/" +
-                    std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
-                    (videoEof ? " eof=1" : ""));
-                break;
+                if (misterplex::rawVideoTerminalSignal(/*explicitStopOrSeek=*/false,
+                                                       /*readZero=*/false,
+                                                       /*readError=*/false,
+                                                       /*shortRead=*/true,
+                                                       /*knownDurationStall=*/false)) {
+                    shortRead = true;
+                    shortReadGot = got;
+                    shortReadWant = frameBytes;
+                    log("media: short read got=" + std::to_string(got) + "/" +
+                        std::to_string(frameBytes) + " totalBytes=" + std::to_string(totalBytes) +
+                        (videoEof ? " eof=1" : ""));
+                    break;
+                }
             }
             got = 0;
 

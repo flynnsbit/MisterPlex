@@ -122,8 +122,18 @@ int main() {
     CHECK(!knownDurationEofStall(0, -1, 600000, 0, 600000));
     CHECK(!knownDurationEofStall(0, 60000, 59000, 0, 5000));
     CHECK(!knownDurationEofStall(0, 60000, 61000, 0, 999));
-    CHECK(knownDurationEofStall(0, 30021, 31500, 0, 1200));
-    CHECK(knownDurationEofStall(1260000, 1286942, 28050, 0, 1200));
+    CHECK(!knownDurationEofStall(0, 60000, 61200, 0, 1200));
+    CHECK(!knownDurationEofStall(0, 60000, 64000, 0, 4000));
+    CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000));
+    CHECK(knownDurationEofStall(1260000, 1286942, 33050, 0, 6000));
+
+    // --- rawvideo terminal-signal inventory ---
+    CHECK(rawVideoTerminalSignal(true, false, false, false, false));  // explicit stop/seek
+    CHECK(rawVideoTerminalSignal(false, true, false, false, false));  // read()==0
+    CHECK(rawVideoTerminalSignal(false, false, true, false, false));  // read error
+    CHECK(rawVideoTerminalSignal(false, false, false, true, false));  // short frame read
+    CHECK(rawVideoTerminalSignal(false, false, false, false, true));  // known-duration stall
+    CHECK(!rawVideoTerminalSignal(false, false, false, false, false)); // EAGAIN-only
 
     if (fails) {
         std::fprintf(stderr, "test_avclock: %d failures\n", fails);
