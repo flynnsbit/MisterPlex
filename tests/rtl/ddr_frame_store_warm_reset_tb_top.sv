@@ -30,6 +30,13 @@ module ddr_frame_store_warm_reset_tb #(
 	output wire        debug_disp_bank,
 	output wire        debug_pending_bank,
 	output wire        debug_pending_ready,
+	output wire [$clog2(LINE_COUNT*2)-1:0] debug_prep_base_idx,
+	output wire [$clog2(LINE_COUNT*2)-1:0] debug_target_y_idx_prep,
+	output wire [5:0]  debug_target_y_prep,
+	output wire [$clog2(LINE_COUNT*2)-1:0] debug_target_c_idx_prep,
+	output wire [4:0]  debug_target_c_prep,
+	output wire        debug_need_y_prep,
+	output wire        debug_need_c_prep,
 	output wire [7:0]  debug_state,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
@@ -106,6 +113,13 @@ module ddr_frame_store_warm_reset_tb #(
 	assign debug_disp_bank = dut.disp_bank;
 	assign debug_pending_bank = dut.pending_bank;
 	assign debug_pending_ready = dut.pending_ready_s2;
+	assign debug_prep_base_idx = dut.prep_base_idx;
+	assign debug_target_y_idx_prep = dut.target_y_idx_prep_c;
+	assign debug_target_y_prep = dut.target_y_prep_c;
+	assign debug_target_c_idx_prep = dut.target_c_idx_prep_c;
+	assign debug_target_c_prep = dut.target_c_prep_c;
+	assign debug_need_y_prep = dut.need_y_prep_c;
+	assign debug_need_c_prep = dut.need_c_prep_c;
 endmodule
 
 `default_nettype wire
