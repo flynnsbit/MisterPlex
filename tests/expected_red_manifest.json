@@ -204,6 +204,24 @@
         "FAIL qpel mismatch",
         "QPEL EQUIVALENCE FAILED"
       ]
+    },
+    {
+      "id": "decode_core_dead_generate",
+      "owner": "tests/unit/test_decode_core_seam_audit_reds.sh",
+      "why": "w-audit mutation M1: an instantiation inside a disabled `if (0)` generate is not in the design, yet source-level reachability still counts it. The seam gate must reject a core in a dead generate.",
+      "required_substrings": [
+        "DECODE_CORE_SEAM_FAIL",
+        "disabled generate"
+      ]
+    },
+    {
+      "id": "decode_core_module_not_in_qip",
+      "owner": "tests/unit/test_decode_core_seam_audit_reds.sh",
+      "why": "w-audit mutation M3: a module tracked in git but absent from files.qip is not compiled into the design and cannot be in the bitstream, while reachability still passes rc=0. h264_dpb.sv carries the whole MC subsystem.",
+      "required_substrings": [
+        "CORE_MODULE_NOT_IN_QIP",
+        "absent from files.qip"
+      ]
     }
   ]
 }

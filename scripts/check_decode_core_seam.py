@@ -323,6 +323,113 @@ def diff_report(label: str, measured: set[str], declared: set[str]) -> bool:
     return bad
 
 
+FALSE_LITERAL = re.compile(r"^\(*\s*(?:1'[bdh]0|'0|0+)\s*\)*$")
+
+
+def enclosing_generate_conditions(sp_text: str) -> list[tuple[str, str]]:
+    """Conditions of every `if (...) begin` block that encloses the core instance.
+
+    w-audit mutation M1: an instantiation inside a disabled `if (0)` generate is
+    not in the design at all, yet a source-level reachability graph still counts
+    it.  The seam gate is the right place to catch this: a core inside a dead
+    generate is the most vacuous seam possible.
+    """
+    inst = re.search(
+        rf"\b{CORE_MODULE}\b\s*(?:#\s*\((?:[^()]|\([^()]*\))*\)\s*)?"
+        rf"(?:\\)?{CORE_INSTANCE}\b",
+        sp_text,
+    )
+    if inst is None:
+        return [("<core-instance-not-found>", "<none>")]
+    at = inst.start()
+
+    found: list[tuple[str, str]] = []
+    for m in re.finditer(r"\bif\s*\(", sp_text):
+        if m.start() > at:
+            break
+        depth, i = 1, m.end()
+        while i < len(sp_text) and depth:
+            depth += (sp_text[i] == "(") - (sp_text[i] == ")")
+            i += 1
+        cond = sp_text[m.end() : i - 1].strip()
+        tail = sp_text[i : i + 400]
+        bm = re.match(r"\s*begin\b", tail)
+        if not bm:
+            continue
+        j = i + bm.end()
+        depth = 1
+        for tok in re.finditer(r"\b(begin|end)\b", sp_text[j:]):
+            depth += 1 if tok.group(1) == "begin" else -1
+            if depth == 0:
+                if j + tok.start() > at:
+                    found.append((cond, sp_text[m.end() : i - 1].strip()))
+                break
+    return found
+
+
+def dead_generate_guard(sp_text: str) -> list[str]:
+    dead = []
+    for cond, _raw in enclosing_generate_conditions(sp_text):
+        if cond == "<core-instance-not-found>":
+            dead.append("core instance not found in stream_path")
+        elif FALSE_LITERAL.match(cond.replace(" ", "")):
+            dead.append(f"core instantiated inside disabled generate `if ({cond})`")
+    return dead
+
+
+QIP = RTL_DIR.parent / "files.qip"
+
+
+def qip_filenames() -> set[str]:
+    if not QIP.exists():
+        return set()
+    return {
+        Path(f).name
+        for f in re.findall(r"[\w./-]+\.s?v", QIP.read_text(encoding="utf-8"))
+    }
+
+
+def core_subtree_qip_guard() -> tuple[list[str], int]:
+    """Every module under the core must be in the Quartus file list.
+
+    w-audit mutation M3: a module can be tracked in git, pass every source-level
+    reachability check, and still be absent from files.qip -- i.e. not compiled
+    into the design at all.  Reachability says yes; the bitstream says no.
+    """
+    mod_file: dict[str, str] = {}
+    bodies: dict[str, str] = {}
+    for path in sorted(RTL_DIR.rglob("*.sv")) + sorted(RTL_DIR.rglob("*.v")):
+        body = strip_comments(path.read_text(encoding="utf-8", errors="ignore"))
+        for m in re.finditer(
+            r"^\s*module\s+([A-Za-z_]\w*)(.*?)^endmodule", body, re.M | re.S
+        ):
+            mod_file.setdefault(m.group(1), path.name)
+            bodies.setdefault(m.group(1), m.group(2))
+
+    known = set(mod_file)
+    inst = re.compile(
+        r"^[ \t]*([A-Za-z_]\w*)[ \t\r\n]*"
+        r"(?:#[ \t\r\n]*\((?:[^()]|\([^()]*\))*\)[ \t\r\n]*)?"
+        r"\\?([A-Za-z_]\w*)[ \t\r\n]*\(",
+        re.M,
+    )
+    seen = {CORE_MODULE}
+    stack = [CORE_MODULE]
+    while stack:
+        for child, iname in inst.findall(bodies.get(stack.pop(), "")):
+            if child in known and child != iname and child not in seen:
+                seen.add(child)
+                stack.append(child)
+
+    in_qip = qip_filenames()
+    missing = sorted(
+        f"{m} ({mod_file[m]}) is under {CORE_MODULE} but absent from files.qip"
+        for m in seen
+        if mod_file[m] not in in_qip
+    )
+    return missing, len(seen)
+
+
 def main() -> int:
     for path in (STREAM_PATH, CORE_RTL, MANIFEST):
         if not path.exists():
@@ -344,6 +451,18 @@ def main() -> int:
     synthetic = synthetic_reg_inputs(sp_text, conns, dirs, multibit_ports(core_text))
     unobserved = unobserved_outputs(sp_text, inst_body, conns, dirs)
     driver = presentation_driver(sp_text)
+
+    for problem in dead_generate_guard(sp_text):
+        fail(problem)
+
+    qip_missing, subtree_n = core_subtree_qip_guard()
+    for problem in qip_missing:
+        print(f"CORE_MODULE_NOT_IN_QIP {problem}", file=sys.stderr)
+    if qip_missing:
+        fail(
+            f"{len(qip_missing)} module(s) under {CORE_MODULE} are not in the "
+            "Quartus file list; they cannot be in the bitstream"
+        )
 
     sections, declared_driver = parse_manifest()
 
@@ -371,7 +490,8 @@ def main() -> int:
         f"core_inputs={total_inputs} constant_inputs={len(const_inputs)} "
         f"synthetic_reg_inputs={len(synthetic)} "
         f"core_outputs={total_outputs} unobserved_outputs={len(unobserved)} "
-        f"presentation_driver={driver}"
+        f"presentation_driver={driver} live_generate=yes "
+        f"core_subtree={subtree_n} core_subtree_in_qip={subtree_n}"
     )
     if driver != CORE_MODULE:
         print(
