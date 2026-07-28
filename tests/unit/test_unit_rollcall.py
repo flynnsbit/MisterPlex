@@ -104,6 +104,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_companion_http.sh",
