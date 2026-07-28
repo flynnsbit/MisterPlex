@@ -959,3 +959,107 @@ Falsifiable prediction left on record for whoever captures:
   `w-decode-hour27` (§18.3), and `7225e00` must be merged first — the checker on
   this branch has **no `--root` flag and does not reject unknown args**, so it
   silently ignored `--help` and printed a PASS with exit 0.
+
+---
+
+## 20. Pre-fit elaboration gate — and a CORRECTION that blocks the next fit
+
+Parent ruling 3 made a **pre-fit elaboration check** a precondition for the next
+fit. It did not exist and was assigned to nobody. Built it (this commit):
+
+* `scripts/check_prefit_elaboration.sh` — runs Quartus **Analysis & Synthesis
+  only** on the remote farm (no place-and-route, no RBF). **4m23s**, versus ~6h
+  for a fit. Not a fit; does not consume the fit authorization.
+* `scripts/check_map_hierarchy.py` — parses the entity table of either
+  `Plex.map.rpt` (pre-fit) or `Plex.fit.rpt` (post-fit).
+
+### 20.1 THE HEADLINE — ruling 3 conditions 1 and 2 are GREEN and the decoder is STILL NOT IN THE DESIGN
+
+Measured on `w-decode-hour27` **`2f165ed`**:
+
+```
+cond 1  --root emu --require h264_decode_core          rc=0   GREEN
+cond 2  check_qip_coverage.py                          rc=0   GREEN
+cond 4  quartus A&S  (QUARTUS_MAP_RC=0, 825 entity rows)
+        h264_decode_core     ABSENT   ELABORATED_BUT_OPTIMIZED_AWAY
+        h264_decode_top      ABSENT   ELABORATED_BUT_OPTIMIZED_AWAY
+        h264_intra_nb_ctx    ABSENT   ELABORATED_BUT_OPTIMIZED_AWAY
+        decode_stub          PRESENT  instances=1 subtree_rows=61 parents=stream_path
+                                                       rc=1   RED
+```
+
+**Authorizing a fit on conditions 1+2 would have produced a fifth
+decoder-less bitstream.** Condition 4 is the only one that catches it.
+
+### 20.2 A THIRD, distinct failure mode — not "unwired", not "uncompiled"
+
+The instantiation at `rtl/stream_path.sv:484` is **unconditional** — not inside a
+generate, not inside an ifdef. Source reachability is *correct*. Quartus
+elaborated it:
+
+```
+Info (12128): Elaborating entity "h264_decode_core" for hierarchy
+              "emu:emu|stream_path:spath|h264_decode_core:product_decode_core"
+```
+
+...and then removed it, because it contributes **zero resources**. Corroborating
+warnings from the same run:
+
+```
+Warning (10036): object "_keep_decode_core_inputs" assigned a value but never read   (h264_decode_core.sv:997)
+Warning (10036): object "product_intra_ctx_above_unused" assigned a value but never read (:629)
+```
+
+The keep-alive signal intended to hold the core in the design **is itself never
+read**, so it keeps nothing.
+
+So the three known failure modes are now:
+1. **not compiled** — file missing from `files.qip` (§18)
+2. **not instantiated** — orphaned, `parents=<none>`
+3. **instantiated, compiled, elaborated — and optimized away as dead logic**  <- NEW
+
+**No source-level graph can ever detect mode 3.** Only synthesis can.
+
+**The remedy is NOT "wire up the instantiation" — it is already wired. The
+remedy is to CONSUME THE CORE'S OUTPUTS.** Without this measurement W-DECODE-O5
+would have chased the wrong defect.
+
+### 20.3 Capacity — A&S is a reliable predictor, so condition 3 is answerable pre-fit
+
+| metric | pre-fit A&S `2f165ed` | post-fit `fb4bad84` | delta |
+|---|---|---|---|
+| total block memory bits | 2,969,677 | 2,970,061 | 384 |
+| total DSP | 74 | 74 | 0 |
+
+`decode_stub` in A&S: `6199 (775)` comb, `734 (611)` reg, **2,097,152 block
+memory bits (70.6% of the whole design)**, **33 DSP**.
+
+Note `w-decode-hour27` currently has essentially the **same** resource profile as
+the decoder-less deployed build — precisely because the core costs nothing while
+it is optimized away. **Resources will jump the moment its outputs are consumed**,
+so the M10K headroom question becomes real only after §20.2 is fixed. Retiring
+`decode_stub` frees ~70% of block memory.
+
+### 20.4 Instrument validation and known limits
+
+Validated against the `fb4bad84` fit report, where ground truth was already
+independently established: reproduces `decode_stub` PRESENT/`parents=stream_path`,
+`h264_decode_core` ABSENT, and `h264_dpb_one_ref` PRESENT **only under
+`decode_stub`** (`--forbid-only-under decode_stub` -> rc=1; `ddr_frame_store`
+-> rc=0). Refuses `Scope: 0` with rc=2; skips with rc=77.
+
+**Correction to my own earlier evidence:** I previously reported the fit entity
+table as **1204 rows**, and the parent published that figure. The correct
+denominator is **827**. My earlier helper matched any line with `>10` semicolons
+and never bounded the table, sweeping in rows from other wide report tables. The
+bounded table is lines 6283-7118 = 827 rows, and the new parser rejects **zero**
+of them. **All conclusions are unchanged** — both parsers agree on every
+presence/absence call — but the denominator was wrong and I am correcting it.
+
+Limits, declared up front: A&S is pre-place-and-route, so a module present here
+could still be removed later (post-fit remains the final oracle); entity-table
+membership means "contributed resources", so a legitimately zero-resource module
+would read as ABSENT; the `--elab-log` classifier depends on Quartus message
+text. It reports the full elaborated hierarchy path precisely so that
+"elaborated" is never mistaken for "product-elaborated" — `h264_inter_mc_16x16`
+elaborates only under `decode_stub:gen_diagnostic_present.stub`.
