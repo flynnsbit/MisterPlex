@@ -502,3 +502,62 @@ true rc=1 about nothing, inside the instrument written to police that. And
 instantiated → **able to influence the design** → under the product subtree →
 survives A&S and the fitter. Conditions 1 and 2 were both satisfied by a module
 that is not in the design.
+
+## A10 — The order is mechanical now, and one correction to the ruling
+
+**Assigned work, done.** Both cheap gates print on success:
+
+```
+NOT_A_SURVIVAL_CLAIM: ... blind to failure mode 3 ... which is what happened to
+h264_decode_core on w-decode-hour27 2f165ed with this gate green.
+Next: check_dead_logic_pruning.py (~2s), then check_prefit_elaboration.sh (~4m).
+```
+
+The exact text is asserted in `tests/unit/test_fit_request_readiness.py`, so it
+cannot be dropped in a refactor.
+
+`scripts/check_fit_request_readiness.py` makes the order mechanical:
+
+```bash
+python3 scripts/check_fit_request_readiness.py \
+    --module h264_decode_core \
+    --elaboration-evidence <A&S log from W-FIT> \
+    --evidence-commit <the commit it was measured on>
+```
+
+- **No step-3 evidence → 77 UNSCORED, never 0.** A missing measurement is not a
+  passing one.
+- **Evidence is bound to its tree.** Binding is the git tree hash of
+  `fpga/Plex_MiSTer`; an unrelated commit does not invalidate it, an RTL edit
+  does, and uncommitted changes under that path do too — the A&S run cannot
+  have seen them.
+- Runs steps 1/2/2b itself, reading every exit code directly; never pipes one.
+- Refuses operator error (rc=2) *before* any step runs. It does not run Quartus.
+
+**One correction, offered with measurement.** The ruling says mode 3 is
+detectable by real synthesis **only** and that no source-level tool can ever
+see it. Source cannot prove *survival* — agreed, and A&S stays mandatory. But
+it can see the reason the synthesiser is entitled to delete this instance:
+nothing reads what it drives. On `2f165ed`, in ~2s:
+
+| module | pruning pre-filter | Quartus A&S |
+|---|---|---|
+| `h264_decode_core` | rc=1, 13/13 output nets dead | ABSENT, optimized away |
+| `decode_stub` | rc=0, 10/10 output nets live | PRESENT, instances=1 |
+
+This does not demote step 3; it is inserted as **step 2b, before it, never
+instead of it**. What it buys is the iteration loop — W-DECODE tests a fix in
+seconds and spends the four minutes only on candidates that already pass.
+
+**And the remedy the ruling asks for is already named** (A9): the stub survives
+because `wr_en/wr_pixel/wr_reset_ptr/swap_req` reach `fs_wr_en/fs_wr_pixel/
+fs_wr_reset/fs_swap`, **ports of `stream_path`** feeding the frame store. Every
+core output terminates in `_keep` at `stream_path.sv:608`, read by nobody. The
+core must drive those four ports.
+
+**A discipline note from mutation-proving this gate.** With the staleness check
+disabled, the stale-evidence red arm **still returned rc=1** — step 2 fails on
+this branch for an unrelated reason. Only the assertion on the diagnostic text
+caught the mutation. A red arm that passes for the wrong reason is a false red;
+it goes on "passing" after the property it tests has been deleted. Assert on
+the specific diagnostic, never the exit code alone.
