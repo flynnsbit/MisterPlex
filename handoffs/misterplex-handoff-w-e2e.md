@@ -738,3 +738,53 @@ about a bitstream if the loaded-core identity is checked **at capture time**.
 `CORENAME`/loaded RBF; a capture can therefore be perfectly valid and still be
 about the wrong core. Any capture gate used for grading a deploy must assert
 `CORENAME` and the resident RBF md5 alongside the pixels.
+
+---
+
+## 15. UPDATE — Option A confirmed via bounce-long clip (2026-07-28 13:43–13:47)
+
+**Branch `w-e2e-playwright`, commit `b290bb7`. Evidence in `artifacts/e2e/post-deploy-evidence/`.**
+
+### 15.1 The discriminator fired
+
+180s clip (13:43:50–13:46:50), extracted at 10fps (1800 frames) and confirmed at 60fps native (120 frames around transition):
+
+```
+BLACK_SIGNAL:     202/1800 (11.2%)  t=0.0–20.1s
+CONTENT_PRESENT: 1598/1800 (88.8%)  t=20.2s–180s
+NO_SIGNAL:          0/1800  (0.0%)
+```
+
+**Transition at t=20.183s: BLACK → CONTENT, instantaneous (no NO_SIGNAL gap at 60fps).**
+
+This is the definitive answer to W-FIT's A vs B question:
+- **Option A CONFIRMED: video timing alive**
+- No FPGA reconfiguration occurred (would show NO_SIGNAL)
+- Content change was DDR state change, not core reload
+
+### 15.2 What the content is
+
+The content after t=20.2s is a **color test pattern**, NOT:
+- The Plex idle screen (orange_px=0–6, threshold 2000)
+- Decoded video (prove_decoded_frame: NOT_DECODED ncc=-0.091)
+
+Color breakdown:
+- t=20.2s: greyscale only (R=G=B), 256 unique grey levels
+- t=50s: pure green (0,255,0), white (255,255,255), magenta (255,0,255)
+- t=180s: magenta, green, white, near-pure blue
+
+These are primary/secondary RGB colors at full saturation — consistent with the FPGA's built-in test pattern generator activating in the absence of valid DDR content.
+
+### 15.3 What this means for W-FIT's diagnosis
+
+- `fb4bad84` FPGA: DDR mailbox (PLXD/PLXS) completely silent (confirmed by W-FIT's devmem poison test)
+- But HDMI timing is alive: the video output clock and sync are running
+- ARM timed-bank-fallback apparently failed to paint the idle screen (no chevron visible)
+- The test pattern appearing at t=20.2s is what the FPGA shows when its DDR scanout falls back to built-in generator
+
+**RCA implication:** The `||!slot_keep` fix in the prep allocator may have inadvertently broken the heartbeat/vsync writer in `ddr_frame_store.sv:879-889` (the block gated only by `reset_ddr`). If `clk_ddr` is alive but the `reset_ddr` de-assertion was broken, the heartbeat block won't run, which matches both the dead mailbox writes AND the eventual recovery of the test pattern.
+
+### 15.4 Correction: host_alive=False was routing, not crash
+
+During the 180s clip, `host_alive=True` at analysis time (post-capture ping check). The earlier `host_alive=False` readings were the standing routing issue from this machine, not MiSTer offline. W-FIT had full SSH access throughout.
+
