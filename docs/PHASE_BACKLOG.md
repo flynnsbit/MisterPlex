@@ -462,6 +462,22 @@ Evidence sources (2026-07-24; **J-backlog66** evidence-only stamp; **exclusive F
 git **docs HEAD `3c43a66`**; **FPGA committed `7bee0a6`**; R-csum6 claim freeze **MATCH** **`c7a847f7`/`ca62d02b`/`904e9b2e`** DIAG=ABSENT Rank1+2+3 LOCK_OK; NEW_RBF **`94bbfe43`** full `94bbfe433feb562fabe0798e16b378c5`; Fix-2 colorbars **`f1d9666a`**. Host/lab RBF **`94bbfe43`**. Lab **LOADED `94bbfe43`** after ONE menu; exclusive **FREE**. **H-gate-rcsum6 IN_PROGRESS / PENDING** — **do not invent hard residual PASS**. **WIDE still FAIL open Fix-2** historical **`ec21e133`** span=**0.605**. **A-csum-host28 HOST_GOLDEN_OK** + **C-unit28/C-unit27 PASS** host ≠ lab residual PASS; **3l2 BLOCKED**. Soft-skip ≠ PASS. **BUILD_OK + DEPLOY ≠ residual PASS ≠ WIDE PASS.** **Do not invent hard-csum PASS / WIDE PASS / Fix-3 PASS / 3l2 UNBLOCK.** **J-backlog66**. Lab `192.168.1.183`.
 
 
+### CURRENT LAB STATE — 2026-07-27 (supersedes the `94bbfe43` stamps above)
+
+Everything above this line is the **2026-07-24 R-csum6 campaign record** and is retained as history. It is **no longer the live lab state**. Current truth:
+
+- Lab **LOADED `8eb01b79`** full `8eb01b7965e25154eb4093bea16f1fc7` at `/media/fat/_Utility/Plex.rbf`, `CORENAME=Plex`, md5 verified local↔device. Supersedes **`94bbfe43`**. Banned-set hit: **NO**.
+- Companion `misterplexd` **`25f9f83d44a7c5b0c8f70ab64bc1396a`** deployed and running (1 pid, HTTP :3005, GDM UDP 32412). `deploy_plex_core.sh` **stops plexd and does not restart it** — restart manually after any RBF deploy.
+- Build fixes in **`6b5878e`** on `feat/disp-fix`. **HEAD was previously unsynthesizable**: `decode_stub.sv` used `dpb_mem_rd_q` without declaring it (Quartus `Error (10161)`, A&S dead in 8 s). `make rtl-lint` was **already RED on HEAD** — the merge landed without it. Fixed to the one-cycle contract `dpb_mem_rvalid <= dpb_mem_rd;` proven by the authoritative C++ model in `tests/rtl/h264_dpb_mc_tb.cpp`.
+- New guard **`scripts/check_verilator_elab.py`** (merged `572e483`) now runs in `make quartus-sv-subset`, `make pre-synth-gates`, and `build_rbf_remote.sh` **before** the Quartus slot is taken. Parent-reproduced red/green: planted fault → exit 1 `VERILATOR_ELAB_REJECTED` at `decode_stub.sv:542`; clean tree → exit 0 `VERILATOR_ELAB_PASS`; ~2 s.
+
+**Corrections to gate rows below — do not read them as green:**
+- `make unit` is **RED**, not GREEN. It fails at `test_p3_dpb_mc_rtl_sim.sh`: `luma window clamp mismatch idx=4 got=20 want=17`. Proven **pre-existing on pristine HEAD** via `git stash` (that tb instantiates `h264_dpb_one_ref`, not `decode_stub`) — so it is not a regression from `6b5878e`, but it is **not a pass**. Owner: W-MCFIX. Suspect the tb expectation `std::clamp(-2 + (idx % 21) - 2, 0, W-1)` subtracts 2 **twice**.
+- **`make post-fit-timing` FAILS** on the shipped build: **−2.483 ns** setup, TNS **−462** on `emu|pll|…general[0].gpll…divclk`. Pre-existing and **worsening** (slot11 was −2.137 / −408). Timing is **not closed**. Owner: W-TIME.
+- Passing gates on the shipped build: `rtl-lint`, `quartus-sv-subset`, `define-parity`, `post-fit-hierarchy`, Quartus full compile **0 errors / 83 warnings**, fit wall **638 s**.
+
+**Lab note:** the `docker` "remote build farm" SSH alias resolves to **localhost** (`~/.ssh/config` → `HostName localhost`; `ssh docker hostname` = `node-worker1` = local host). The farm is this machine. Consequence: `test_resource_preflight.sh` sees the fit's own `quartus_fit` processes and refuses `make unit`. **Fits and unit tests must be serialized** — do not defeat the preflight; Verilator under memory pressure returns *wrong answers* that impersonate real decode bugs.
+
 ## Gate: all green before “complete”
 - [x] **Product present / tear-free HDMI+VGA** — **DONE** git **`588e528`** RBF **`1441d409`**; vsync page-flip + DMA hold-off; holdoff2 half/mid/multi **0.00/s**; user eyes-on OK 2026-07-25. Docs: `MILESTONE_VSYNC_PRESENT.md`. **≠ residual hard PASS ≠ WIDE PASS.**
 - [x] **Product A/V cast (Plex Web → MiSTerPlex)** — **DONE** `PRESENT=fpga` `STREAM=0` wall-48k; blip24 median **~−13 ms**; pfps≈vfps. Evidence `captures/e2e/REPORT*.md` + blip24.
