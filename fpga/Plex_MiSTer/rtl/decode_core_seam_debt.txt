@@ -31,7 +31,6 @@ mb_residual_bit_offset: tied to 16'd0; per-MB residual bit offset is not produce
 cbp_luma: tied to 4'hf; coded_block_pattern luma is not an output of slice_hdr_parser.
 cbp_chroma: tied to 2'd0; coded_block_pattern chroma is not an output of slice_hdr_parser.
 chroma_pred_mode: tied to 2'd0; intra chroma prediction mode is not parsed.
-pps_chroma_qp_index_offset: tied to 5'sd0; pps_parser does not parse chroma_qp_index_offset.
 
 # --- inter/MV path: no MV predictor feeds the core seam (W-SWAP) ---
 mv_x_qpel: tied to 16'sd0; no product MV source feeds the core.

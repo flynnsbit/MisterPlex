@@ -204,6 +204,7 @@ module stream_path #(
 	wire pps_busy, pps_cabac, pps_deblock;
 	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
 	wire signed [7:0] pps_qp;
+	wire signed [4:0] pps_chroma_qp_off;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
@@ -211,7 +212,8 @@ module stream_path #(
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
 		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
 		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
+		.pic_init_qp(pps_qp), .chroma_qp_index_offset(pps_chroma_qp_off),
+		.deblock_ctrl(pps_deblock), .busy(pps_busy)
 	);
 
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
@@ -494,7 +496,7 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
-		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_chroma_qp_index_offset(pps_chroma_qp_off),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(core_rbsp_request_offset),
