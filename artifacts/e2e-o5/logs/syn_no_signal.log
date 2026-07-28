@@ -1,0 +1,4 @@
+SIGNAL_STATE: NO_SIGNAL
+  mean_luma=128.0  spatial_std=0.01  unique_frames=8/8
+  note: solid-colour frame (spatial std 0.01 < threshold 3.0); HDMI input may be disconnected or the source has no active output
+  negotiated_format: codec=synthetic size=320x240 fps=N/A

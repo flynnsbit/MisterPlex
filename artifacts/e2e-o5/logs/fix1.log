@@ -1,0 +1,6 @@
+FAIL: ffmpeg capture failed for /dev/video0 (mjpeg 1280x720@60fps) rc=240: [in#0 @ 0x55fa22114680] Error opening input: Device or resource busy
+Error opening input file /dev/video0.
+Error opening input files: Device or resource busy
+  NODE /dev/video1: REJECTED  no capture formats (metadata/audio node per v4l2-ctl --list-formats-ext)
+  NODE /dev/video0: SELECTED  formats=['MJPG', 'YUYV']
+Scope: 1 device (/dev/video0), formats=['MJPG', 'YUYV']

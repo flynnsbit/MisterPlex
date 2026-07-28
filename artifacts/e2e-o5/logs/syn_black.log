@@ -1,0 +1,4 @@
+SIGNAL_STATE: BLACK_SIGNAL
+  mean_luma=0.0  spatial_std=0.01  unique_frames=8/8
+  note: signal is black (mean luma 0.00 < threshold 8.0); HDMI source is outputting a black screen. Known cause: resident RBF 00eebd5e (frame-store livelock, no picture delivered).
+  negotiated_format: codec=synthetic size=320x240 fps=N/A

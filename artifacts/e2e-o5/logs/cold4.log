@@ -1,0 +1,8 @@
+  NODE /dev/video1: REJECTED  no capture formats (metadata/audio node per v4l2-ctl --list-formats-ext)
+  NODE /dev/video0: SELECTED  formats=['MJPG', 'YUYV']
+Scope: 1 device (/dev/video0), formats=['MJPG', 'YUYV']
+NEGOTIATED: requested=mjpeg 1280x720@60fps  actual=mjpeg 1280x720@60fps
+SIGNAL_STATE: BLACK_SIGNAL
+  mean_luma=7.0  spatial_std=0.0  unique_frames=1/3
+  note: signal is black (mean luma 7.00 < threshold 8.0); HDMI source is outputting a black screen. Known cause: resident RBF 00eebd5e (frame-store livelock, no picture delivered).
+  negotiated_format: codec=mjpeg size=1280x720 fps=60

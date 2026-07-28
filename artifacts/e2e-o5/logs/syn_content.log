@@ -1,0 +1,4 @@
+SIGNAL_STATE: CONTENT_PRESENT
+  mean_luma=126.7  spatial_std=60.1  unique_frames=8/8
+  note: live signal with picture content (mean luma 126.70 ≥ 8.0, spatial std 60.10 ≥ 3.0)
+  negotiated_format: codec=synthetic size=320x240 fps=N/A

@@ -263,20 +263,44 @@ def grab_frame(dev: str, fmt: str, size: str, fps: str, out: Path) -> tuple[np.n
 
 
 def grab_n_frames(dev: str, fmt: str, size: str, fps: str,
-                  n: int, out_dir: Path) -> tuple[list[np.ndarray], str, dict]:
-    """Grab N frames.  Returns (frames, last_log, negotiated_format)."""
+                  n: int, out_dir: Path,
+                  warmup_discard: int = 0) -> tuple[list[np.ndarray], str, dict, int]:
+    """Grab N frames, discarding a leading run of capture-warmup frames.
+
+    The MS2109 emits a run of flat, uniform frames (measured RGB(7,7,7),
+    spatial std 0.0) immediately after each device open before the HDMI
+    receiver locks.  ``grab_frame`` opens ffmpeg once per frame, so *every*
+    frame independently risks landing inside that warmup window.  Measured on
+    the lab rig: 2 of 6 identical runs at the previous default of 3 frames
+    classified a screen with real picture content as BLACK_SIGNAL.
+
+    Only a *leading* run of flat frames is discarded, and at most
+    ``warmup_discard`` of them.  A genuinely black or disconnected source
+    produces flat frames forever, so it still fills the kept list with flat
+    frames and is still classified BLACK_SIGNAL / NO_SIGNAL.  This can
+    therefore never mask a real black screen.
+
+    Returns (frames, last_log, negotiated_format, discarded_count).
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     frames: list[np.ndarray] = []
     last_log = ""
     negotiated: dict = {}
-    for i in range(n):
-        out = out_dir / f"preflight_{i}.png"
+    discarded = 0
+    attempts = 0
+    max_attempts = n + max(0, warmup_discard)
+    while len(frames) < n and attempts < max_attempts:
+        out = out_dir / f"preflight_{attempts}.png"
         frame, log, neg = grab_frame(dev, fmt, size, fps, out)
-        frames.append(frame)
+        attempts += 1
         last_log = log
         if not negotiated:
             negotiated = neg
-    return frames, last_log, negotiated
+        if not frames and discarded < warmup_discard and spatial_std(frame) < SPATIAL_CONTENT_THRESHOLD:
+            discarded += 1
+            continue
+        frames.append(frame)
+    return frames, last_log, negotiated, discarded
 
 
 # --------------------------------------------------------------------------- #
@@ -335,7 +359,11 @@ def classify_signal(frames: list[np.ndarray]) -> dict:
             "note": (
                 f"signal is black (mean luma {luma:.2f} < threshold {LUMA_BLACK_THRESHOLD}); "
                 "HDMI source is outputting a black screen. "
-                "Known cause: resident RBF 00eebd5e (frame-store livelock, no picture delivered)."
+                "Before blaming the core, confirm this is not capture warmup: the MS2109 "
+                "emits flat RGB(7,7,7) frames after each device open until the receiver "
+                "locks. Re-run with a larger --warmup-discard and check "
+                "warmup_frames_discarded in the report. A real black screen stays black "
+                "for every scored frame regardless of warmup."
             ),
         }
 
@@ -550,9 +578,10 @@ def run_preflight(args: argparse.Namespace) -> int:
 
     # Step 4: Grab N frames and report negotiated format
     try:
-        frames, log, negotiated = grab_n_frames(
+        frames, log, negotiated, warmup_dropped = grab_n_frames(
             node["dev"], args.input_format, args.video_size,
             args.framerate, args.frames, out_dir / "frames",
+            warmup_discard=args.warmup_discard,
         )
     except PreflightError as e:
         result["error"] = str(e)
@@ -560,6 +589,11 @@ def run_preflight(args: argparse.Namespace) -> int:
         _write_report(out_dir, result)
         return EXIT_FAIL
 
+    result["warmup_frames_discarded"] = warmup_dropped
+    result["scored_frames"] = len(frames)
+    print(f"Scope: {len(frames)} scored frames "
+          f"({warmup_dropped} leading warmup frames discarded, "
+          f"limit {args.warmup_discard})")
     result["negotiated_format"] = negotiated
     requested = f"{args.input_format} {args.video_size}@{args.framerate}fps"
     actual = f"{negotiated.get('codec','?')} {negotiated.get('size','?')}@{negotiated.get('fps','?')}fps"
@@ -654,8 +688,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="resolution to request (default: 1280x720)")
     ap.add_argument("--framerate", default="60",
                     help="frame rate to request (default: 60)")
-    ap.add_argument("--frames", type=int, default=3,
-                    help="number of frames to grab for liveness check (default: 3)")
+    ap.add_argument("--frames", type=int, default=8,
+                    help="number of frames to SCORE for liveness check (default: 8)")
+    ap.add_argument("--warmup-discard", type=int, default=12,
+                    help="max leading flat capture-warmup frames to discard before scoring "
+                         "(default: 12; the MS2109 emits up to ~11 flat frames per open). "
+                         "Cannot mask a genuinely black screen: only a LEADING flat run is "
+                         "dropped, and a truly black source stays flat forever.")
     ap.add_argument("--out-dir", default="build/capture_preflight",
                     help="directory for captured frames and JSON report")
     return ap

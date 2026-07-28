@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 134, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 83, in main
+    require(discarded == 11, f"expected 11 warmup frames discarded, got {discarded}")
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/tests/unit/test_capture_warmup.py", line 44, in require
+    raise AssertionError(msg)
+AssertionError: expected 11 warmup frames discarded, got 0

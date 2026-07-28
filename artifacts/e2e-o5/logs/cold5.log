@@ -1,0 +1,8 @@
+  NODE /dev/video1: REJECTED  no capture formats (metadata/audio node per v4l2-ctl --list-formats-ext)
+  NODE /dev/video0: SELECTED  formats=['MJPG', 'YUYV']
+Scope: 1 device (/dev/video0), formats=['MJPG', 'YUYV']
+NEGOTIATED: requested=mjpeg 1280x720@60fps  actual=mjpeg 1280x720@60fps
+SIGNAL_STATE: CONTENT_PRESENT
+  mean_luma=36.49  spatial_std=22.17  unique_frames=2/3
+  note: live signal with picture content (mean luma 36.49 ≥ 8.0, spatial std 22.17 ≥ 3.0)
+  negotiated_format: codec=mjpeg size=1280x720 fps=60

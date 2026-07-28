@@ -1,0 +1,4 @@
+SIGNAL_STATE: STALE_CAPTURE
+  mean_luma=126.7  spatial_std=60.1  unique_frames=1/8
+  note: all 8 captured frames are byte-identical (same SHA-256 prefix) but luma (126.70) and spatial std (60.10) indicate real content; stream is frozen, buffered, or the device is returning a cached frame
+  negotiated_format: codec=synthetic size=320x240 fps=N/A
