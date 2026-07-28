@@ -570,3 +570,81 @@ those ports reversed direction and are now core **outputs**); added `dpb_rd_vali
 - The product DPB must be **DDR-backed**. `decode_stub.dpb_mem` is 7,372,800 bits =
   **1.30× the whole device**; on-chip is arithmetically impossible.
 - All 12→13 core outputs still terminate in the `_keep` anti-prune wire.
+
+---
+
+## Addendum 4 — decode_stub memory surgery (Ruling 2 satisfied)
+
+**Branch `w-decode-o5`, commit `6949e7e`** (pushed twice; `HEAD == origin/w-decode-o5`).
+
+### What changed
+`decode_stub`'s private DPB/MC experiment is gone: the `dpb_mem` array and its
+private instances of `h264_deblock_writeback_ctrl`, `h264_dpb_one_ref` and
+`h264_inter_mc_part`. The painter is untouched and remains the sole driver of
+`fs_wr_en/fs_wr_pixel/fs_wr_reset/fs_swap`.
+
+| metric | before | after |
+|---|---|---|
+| on-chip block RAM | 7,458,816 bits | **86,016 bits** (1.5% of device) |
+| `known_over_budget` | 1 | **0** |
+| gate sweep | 53/53 *(truncated — see below)* | **100/100 rc=0, 0 skips** |
+
+### The measurement that justifies it
+`dpb_mem` was declared 921,600 bytes = 7,372,800 bits = **1.30x the entire
+device** (553 M10K x 10,240 = 5,662,720). It could never be built as declared.
+Quartus gave decode_stub 256 M10K = 327,680 bytes, but `DPB_BANK1_BASE` is
+460,800 > 327,680 — **the reference bank never existed in silicon.** Any
+hardware conclusion previously drawn from it was simulation-only. Recorded with
+full arithmetic in `fpga/Plex_MiSTer/rtl/retired_measurements.txt`.
+
+### Two liveness bugs I introduced and fixed — the transferable lesson
+**A tie-off must preserve liveness, not just values.** Tying a handshake flat to
+0 deadlocks the painter, which stops driving `fs_wr_*` — a black screen, not a
+freed device.
+1. `PH_DPB_FILL` exits only on `deblock_ref_ready_pulse` from the **terminal**
+   `dpb_fill_sample_idx == 386` step. I keyed it off `dpb_frame_boundary`
+   (idx == 385); the `else if` chain consumes 385 first, so the pulse was dead
+   before the exit branch was reachable. Symptom: *"did not return idle after
+   VCL frame 1"*, 5 gates red.
+2. `dpb_fetch_done` is a **level** in `h264_dpb.sv` (cleared on accept :293, set
+   on completion :318/326), not a pulse, and `dpb_fetch_start` is never cleared
+   outside reset. Emulation is keyed on `p_fetch_launch_pending`.
+
+I also briefly concluded `dpb_ref_ready=1` broke the painter. **That was wrong**
+— I tested it before fixing bug 1, and blamed the wrong signal. Holding it HIGH
+is correct and keeps the stub's inter diagnostic alive on neutral grey (128)
+predictions at zero block-RAM cost. Holding it low makes `PH_FETCH` unreachable
+and would have silently deleted that coverage.
+
+### Pre-existing defect found and repaired
+`tests/unit/test_h264_multinal_stream_path.sh` has three Verilator filelists.
+The third (forced-MB-syntax-unsupported fault injection) omitted
+`h264_intra_nb_ctx.sv`, `h264_intra_pred.sv` and `h264_decode_top.sv`, so it
+died with `MODMISSING` at elaboration — **that red-check had never once run.**
+Confirmed failing identically at `bd14632`, so not from this change. Repaired;
+it now executes and passes.
+
+### Correction to my own earlier record
+My previously reported **"sweep 53/53 rc=0"** was measured on a **truncated gate
+list**: I extracted the Makefile recipe lines without expanding `$(ROOT)`, so 47
+gates failed with rc=127 (command not found) and were never counted. The real
+denominator is **100**. The 53/53 figure is **withdrawn**.
+
+### Status against parent Ruling 3 (conditions for the next fit)
+| condition | status |
+|---|---|
+| 1. `--root emu --require h264_decode_core` rc=0 | **MET** (trunk REACHABLE) |
+| 2. `check_qip_coverage.py` rc=0 | **MET** (product=37 compiled=35) |
+| 3. `decode_stub` shrunk enough for M10K headroom | **MET** (46% of device freed) |
+| 4. intended decode modules in a pre-fit elaboration check | **NOT MET — not mine to assert** |
+
+Ruling 3 assignments 2 and 3 (add the two files to `files.qip`; converge
+`w-deblock-seam`) were **already complete on this branch** before the ruling was
+issued: `2f165ed` is an ancestor of HEAD, `7225e00` is merged, and `files.qip`
+already carried both files.
+
+### What still blocks full `decode_stub` retirement — unchanged
+**Blocker A: `h264_decode_core` has no pixel-presentation output port at all.**
+The stub is the only thing that can drive the frame store. Retiring it outright
+requires adding presentation outputs to the core. That is the next mission, and
+it is a design change, not a deletion.
