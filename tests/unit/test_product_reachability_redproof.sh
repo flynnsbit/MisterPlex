@@ -91,9 +91,30 @@ restore() {
 expect_green "unmutated tree" "${BASE_ARGS[@]}"
 
 # ── mutation 1: subtree broken ──────────────────────────────────────────────
-expect_red "module not inside h264_decode_core subtree" \
-  'REQUIRED_RTL_MODULE_UNREACHABLE h264_inter_mc_part' \
-  --label reach_redproof --require h264_inter_mc_part
+# Deliberately self-contained: an earlier version of this case required a peer
+# module (h264_inter_mc_part) to be absent from the core, and went stale the
+# moment w-decode-o5 legitimately landed MC under the core.  Mutating our own
+# instantiation instead is branch-independent -- it stays a valid red however
+# the integration around it moves.
+CORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
+cat "$CORE" > "$WORK/h264_decode_core.sv.orig"
+trap 'restore "$WORK/h264_decode_core.sv.orig" "$CORE"' EXIT
+python3 - "$CORE" <<'MUT'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+head = "h264_deblock_mb_filter u_core_deblock_mb ("
+i = text.index(head)
+open(path, "w").write(
+    text[:i] + "h264_deblock_mb_filter_RENAMED_BY_REDPROOF u_core_deblock_mb ("
+    + text[i + len(head):])
+MUT
+expect_red "h264_deblock_mb_filter no longer instantiated under h264_decode_core" \
+  'REQUIRED_RTL_MODULE_UNREACHABLE h264_deblock_mb_filter' \
+  --label reach_redproof --require h264_deblock_mb_filter
+restore "$WORK/h264_decode_core.sv.orig" "$CORE"
+trap - EXIT
+expect_green "h264_decode_core.sv restored" "${BASE_ARGS[@]}"
 
 # ── mutation 2: required module does not exist ──────────────────────────────
 expect_red "required module has no RTL definition" \
@@ -120,25 +141,31 @@ expect_green "files.qip restored" "${BASE_ARGS[@]}"
 # "not instantiated".  The helper must notice stream_path.sv does instantiate
 # the product root while emu cannot reach it, and call that broken wiring.
 cat "$STREAM" > "$WORK/stream_path.sv.orig"
-python3 - "$STREAM" <<'PY'
+python3 - "$STREAM" <<'MUT'
 import re, sys
 path = sys.argv[1]
 text = open(path).read()
+# Disable any real instantiation first, so the only remaining reference to the
+# product root is the escaped one.  The regex checker cannot see escaped
+# instance names, so it reports the core as unreachable while the source plainly
+# instantiates it -- exactly the disagreement this helper must call out.
+text = re.sub(r"^(\s*)h264_decode_core(\s*#?)", r"\1h264_decode_core_DISABLED_BY_REDPROOF\2",
+              text, flags=re.MULTILINE)
 marker = "\nh264_decode_core \\w_deblock.escaped_probe ();\n"
 m = re.search(r"^endmodule\s*$", text, re.MULTILINE)
 if not m:
     sys.exit("no endmodule in stream_path.sv")
 open(path, "w").write(text[:m.start()] + marker + text[m.start():])
-PY
+MUT
 expect_red "escaped instance of h264_decode_core in stream_path.sv" \
   'the product trunk is broken' "${BASE_ARGS[@]}"
 restore "$WORK/stream_path.sv.orig" "$STREAM"
 expect_green "stream_path.sv restored" "${BASE_ARGS[@]}"
 
 trap - EXIT
-if ! git -C "$ROOT" diff --quiet -- "$QIP" "$STREAM"; then
+if ! git -C "$ROOT" diff --quiet -- "$QIP" "$STREAM" "$CORE"; then
   echo "FAIL reach-redproof: mutated files were not restored cleanly" >&2
-  git -C "$ROOT" --no-pager diff --stat -- "$QIP" "$STREAM" >&2
+  git -C "$ROOT" --no-pager diff --stat -- "$QIP" "$STREAM" "$CORE" >&2
   exit 1
 fi
 

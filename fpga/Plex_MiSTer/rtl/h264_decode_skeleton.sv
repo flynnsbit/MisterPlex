@@ -650,7 +650,7 @@ module h264_decode_skeleton #(
     h264_luma_ref_tap_addr u_tap_addr (
         .base_x($signed(stim_mv_x)),
         .base_y($signed(stim_mv_y)),
-        .tap_idx(stim_byte[6:0]),
+        .tap_idx({2'd0, stim_byte[6:0]}),
         .width(FRAME_W[15:0]),
         .height(FRAME_H[15:0]),
         .tap_x(tap_x),

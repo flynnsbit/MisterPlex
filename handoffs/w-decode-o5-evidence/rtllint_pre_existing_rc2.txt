@@ -1,0 +1,4 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-o5/scripts/rtl_lint.py
+RTL LINT REGRESSION above checked-in baseline:
+  fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv: WIDTHEXPAND 1 > baseline 0
+    new fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv: WIDTHEXPAND:89: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-decode-o5/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv:89:46: Bit extraction of array[95:0] requires 7 bit index, not 6 bits.

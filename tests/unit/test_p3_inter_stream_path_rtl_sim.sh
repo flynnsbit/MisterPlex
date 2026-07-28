@@ -40,11 +40,16 @@ PRODUCT_RTL=(
   nalu_scanner.sv
   sps_parser.sv
   pps_parser.sv
+  h264_cavlc_residual.sv
   slice_hdr_parser.sv
   h264_iq_idct_4x4.sv
   h264_inter_pred.sv
+  h264_intra_pred.sv
+  h264_intra_nb_ctx.sv
   h264_deblock.sv
   h264_dpb.sv
+  h264_decode_top.sv
+  h264_decode_core.sv
   decode_stub.sv
 )
 

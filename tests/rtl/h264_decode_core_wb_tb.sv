@@ -29,6 +29,7 @@ module h264_decode_core_wb_tb #(
 );
 	wire [7:0] rbsp_byte [0:63];
 	wire [3:0] intra4x4_modes [0:15];
+	wire signed [15:0] luma4x4_coeff_zigzag [0:15];
 	wire signed [15:0] p16_residual_y [0:255];
 	wire signed [15:0] p16_residual_u [0:63];
 	wire signed [15:0] p16_residual_v [0:63];
@@ -41,6 +42,7 @@ module h264_decode_core_wb_tb #(
 		end
 		for (zi = 0; zi < 16; zi = zi + 1) begin : gen_i4_zero
 			assign intra4x4_modes[zi] = 4'd0;
+			assign luma4x4_coeff_zigzag[zi] = 16'sd0;
 		end
 		for (zi = 0; zi < 256; zi = zi + 1) begin : gen_p16_y_zero
 			assign p16_residual_y[zi] = 16'sd0;
@@ -72,7 +74,7 @@ module h264_decode_core_wb_tb #(
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
-		.mb_type_valid(recon_mb_valid),
+		.mb_type_valid(1'b0),
 		.mb_type(5'd0),
 		.mb_skip(1'b0),
 		.intra4x4_modes(intra4x4_modes),
@@ -82,6 +84,12 @@ module h264_decode_core_wb_tb #(
 		.cbp_chroma(2'd2),
 		.mb_qp_delta(6'sd0),
 		.mb_residual_bit_offset(16'd0),
+		.luma4x4_valid(1'b0),
+		.luma4x4_idx(4'd0),
+		.luma4x4_qp(6'd26),
+		.luma4x4_total_coeff(5'd0),
+		.luma4x4_trailing_ones(2'd0),
+		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(3'd0),

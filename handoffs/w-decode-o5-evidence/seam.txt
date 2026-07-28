@@ -1,0 +1,2 @@
+DECODE_CORE_SEAM_OK core_inputs=53 constant_inputs=29 core_outputs=13 unobserved_outputs=13 presentation_driver=decode_stub
+DECODE_CORE_SEAM_NOTE product pixels are NOT produced by h264_decode_core; frame-store writes come from decode_stub

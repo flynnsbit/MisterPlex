@@ -100,7 +100,7 @@ module h264_inter_pred_tb #(
 	);
 
 	h264_luma_ref_tap_addr u_fetch (
-		.base_x(fetch_base_x), .base_y(fetch_base_y), .tap_idx(fetch_tap_idx),
+		.base_x(fetch_base_x), .base_y(fetch_base_y), .tap_idx({2'd0, fetch_tap_idx}),
 		.width(fetch_w), .height(fetch_h), .tap_x(fetch_x), .tap_y(fetch_y)
 	);
 

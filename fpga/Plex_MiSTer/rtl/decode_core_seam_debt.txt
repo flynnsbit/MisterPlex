@@ -1,0 +1,86 @@
+# Decode-core seam debt - measured, not asserted.
+#
+# `stream_path` instantiates `h264_decode_core` as `product_decode_core`, but
+# instantiation is not connection.  As measured on 2026-07-28 (branch
+# w-decode-o5), 30 of the core's inputs are tied to constants and ALL 12 of its
+# outputs terminate in the synthesis `_keep` anti-prune wire.  The core is
+# therefore product-*present* and product-*vacuous*: it cannot decode, and
+# nothing it produces can be observed.  Every pixel written to the frame store
+# still comes from `decode_stub`.
+#
+# `scripts/check_decode_core_seam.py` measures this from the RTL and requires an
+# EXACT match with this file.  New vacuity fails the gate; removing vacuity also
+# fails the gate until the corresponding line is deleted here, so progress is
+# always recorded and never silently absorbed.
+#
+# DO NOT add entries to make a gate pass.  Delete entries by wiring real signals.
+
+[presentation_driver]
+# The module that actually drives stream_path fs_wr_en/fs_wr_pixel/fs_wr_reset/
+# fs_swap.  This must become h264_decode_core before any "the FPGA decoded a
+# frame" claim is admissible.
+decode_stub
+
+[constant_inputs]
+# --- bitstream window: core has no access to the real RBSP stream (W-CAST) ---
+rbsp_byte: tied to 8'd0; stream_path never connects bitstream_fifo bytes to the core RBSP window.
+rbsp_window_base: tied to 16'd0; no RBSP window scheduler exists yet.
+mb_residual_bit_offset: tied to 16'd0; per-MB residual bit offset is not produced by slice_hdr_parser.
+
+# --- macroblock syntax not parsed by slice_hdr_parser yet (W-CAST) ---
+cbp_luma: tied to 4'hf; coded_block_pattern luma is not an output of slice_hdr_parser.
+cbp_chroma: tied to 2'd0; coded_block_pattern chroma is not an output of slice_hdr_parser.
+chroma_pred_mode: tied to 2'd0; intra chroma prediction mode is not parsed.
+
+# --- inter/MV path: no MV predictor feeds the core seam (W-SWAP) ---
+mv_x_qpel: tied to 16'sd0; no product MV source feeds the core.
+mv_y_qpel: tied to 16'sd0; no product MV source feeds the core.
+mvd_x_qpel: tied to 16'sd0; MVD is not parsed out of the slice data.
+mvd_y_qpel: tied to 16'sd0; MVD is not parsed out of the slice data.
+part_idx: tied to 2'd0; only first_mb_part_mode is forwarded, sub-partition index is not.
+ref_idx_l0: tied to 2'd0; single-reference assumption, ref_idx is not parsed.
+
+# --- reconstruction handoff: core recon input port is dead (W-DECODE) ---
+recon_mb_valid: tied to 1'b0; the recon handoff strobe is never asserted, so DPB writeback never runs.
+recon_mb_x: tied to 8'd0; no MB raster walker drives the recon handoff.
+recon_mb_y: tied to 8'd0; no MB raster walker drives the recon handoff.
+recon_mb_is_ref: tied to 1'b0; reference marking is not driven.
+recon_y: driven by a constant-0 generate loop in stream_path, not by the intra/inter recon pipeline.
+recon_u: driven by a constant-128 generate loop in stream_path.
+recon_v: driven by a constant-128 generate loop in stream_path.
+dpb_write_base: tied to 32'd0; no DPB frame-buffer allocator feeds the core.
+
+# --- P16x16 zero-MV path: present in the core, unreachable from stream_path ---
+p16_zero_mv_valid: tied to 1'b0; the P16 path inside the core can never fire in product.
+p16_mb_x: tied to 8'd0; no P16 walker drives the core seam.
+p16_mb_y: tied to 8'd0; no P16 walker drives the core seam.
+p16_mb_is_ref: tied to 1'b0; reference marking is not driven.
+p16_residual_y: driven by a constant-0 generate loop in stream_path.
+p16_residual_u: driven by a constant-0 generate loop in stream_path.
+p16_residual_v: driven by a constant-0 generate loop in stream_path.
+dpb_ref_base: tied to 32'd0; no DPB reference-frame allocator feeds the core.
+
+# --- DPB memory: the core read port is answered with zeros ---
+dpb_rd_data: tied to 8'd0; the core has no memory behind its DPB read port.
+
+[synthetic_reg_inputs]
+luma4x4_total_coeff: stream_path.sv:430 drives 5'd16 unconditionally - a fabricated "all 16 coefficients present" rather than the parsed CAVLC total_coeff. The port LOOKS wired, which is why the port-tie check never saw it. Owner W-CAST: replace with the real per-block total_coeff from the first-I_NxN staging interface.
+luma4x4_trailing_ones: stream_path.sv:431 drives 2'd0 unconditionally instead of the parsed CAVLC trailing_ones. Owner W-CAST: replace with the real per-block trailing_ones.
+
+[unobserved_outputs]
+# Every one of these is mentioned only in stream_path `_keep` anti-prune wire.
+# They have no product consumer, so the core behaviour cannot affect the
+# picture, the DPB, or any downstream logic.
+dpb_wr_en: consumed only by the _keep anti-prune wire; no DPB memory is attached.
+dpb_wr_addr: consumed only by the _keep anti-prune wire.
+dpb_wr_data: consumed only by the _keep anti-prune wire.
+dpb_rd_en: consumed only by the _keep anti-prune wire.
+dpb_rd_addr: consumed only by the _keep anti-prune wire.
+rbsp_request_offset: consumed only by the _keep anti-prune wire; no RBSP window server exists.
+rbsp_request_valid: consumed only by the _keep anti-prune wire.
+frame_done: consumed only by the _keep anti-prune wire; presentation still keys off decode_stub.
+frame_mb_count: consumed only by the _keep anti-prune wire; the 1170-MB/frame denominator is never checked in product.
+busy: consumed only by the _keep anti-prune wire.
+decode_state: consumed only by the _keep anti-prune wire.
+current_mb_addr: consumed only by the _keep anti-prune wire.
+error: consumed only by the _keep anti-prune wire; core decode errors are invisible in product.

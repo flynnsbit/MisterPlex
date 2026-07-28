@@ -288,6 +288,61 @@ static void run_case(Vh264_cavlc_residual_tb_top& dut, const char* name, const s
     }
 }
 
+
+// Shift-invariance over the full 96-byte RBSP window.  slice_hdr_parser
+// instantiates h264_cavlc_residual_block with MAX_BYTES=96, so a residual can
+// legitimately start past byte 63.  Decoding the identical bit pattern at a
+// byte-aligned offset >= 64 must produce the identical result; a byte index
+// narrower than clog2(MAX_BYTES) silently wraps and reads the wrong bytes.
+static void run_case_at_byte(Vh264_cavlc_residual_tb_top& dut, const char* name,
+                             const std::array<int, 16>& coeff, int table, int max_coeff,
+                             int start_byte) {
+    Encoded enc = encode_residual(coeff, table, max_coeff);
+    auto bytes = pack_bits(enc.bits);
+    if (start_byte + static_cast<int>(bytes.size()) > 96) {
+        std::cerr << "case too large " << name << "\n";
+        std::exit(2);
+    }
+    // Fill the low window with a decoy so a wrapped index decodes something else.
+    for (int i = 0; i < 96; ++i)
+        dut.rbsp[i] = static_cast<uint8_t>(0xA5 ^ (i * 31));
+    for (int i = 0; i < static_cast<int>(bytes.size()); ++i)
+        dut.rbsp[start_byte + i] = bytes[i];
+    dut.coeff_token_table = table;
+    dut.max_coeff = max_coeff;
+    dut.bit_offset_start = start_byte * 8;
+    dut.bit_len = start_byte * 8 + static_cast<int>(enc.bits.size());
+    dut.start = 1;
+    tick(dut);
+    dut.start = 0;
+    int guard = 1000;
+    while (!dut.done && guard-- > 0)
+        tick(dut);
+    if (guard <= 0) {
+        std::cerr << "timeout " << name << "\n";
+        ++failures;
+        return;
+    }
+    bool bad = false;
+    if (!dut.ok || dut.total_coeff != enc.total_coeff || dut.trailing_ones != enc.trailing_ones ||
+        dut.total_zeros != enc.total_zeros ||
+        dut.bit_offset_end != start_byte * 8 + static_cast<int>(enc.bits.size()))
+        bad = true;
+    for (int i = 0; i < 16; ++i)
+        if (sx16(dut.coeff[i]) != coeff[i])
+            bad = true;
+    if (bad) {
+        std::cerr << "FAIL " << name << " start_byte=" << start_byte
+                  << " ok=" << int(dut.ok) << " tc=" << int(dut.total_coeff) << "/" << enc.total_coeff
+                  << " bits=" << int(dut.bit_offset_end) << "/"
+                  << (start_byte * 8 + static_cast<int>(enc.bits.size())) << " coeff=";
+        for (int i = 0; i < 16; ++i)
+            std::cerr << ' ' << sx16(dut.coeff[i]) << '(' << coeff[i] << ')';
+        std::cerr << "\n";
+        ++failures;
+    }
+}
+
 struct Code { int len; int bits; std::string sym; };
 
 static void validate_prefix_free(const std::string& name, const std::vector<Code>& codes) {
@@ -426,6 +481,23 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 12; ++i) c[i] = vals[i];
         run_case(dut, "large_suffix_gt9bit", c, 0, 16);
         ++cases;
+    }
+    {
+        // RBSP window shift invariance: slice_hdr_parser uses MAX_BYTES=96.
+        std::array<int, 16> c{};
+        int vals[] = {3, -2, 1, -1, 1};
+        for (int i = 0; i < 5; ++i) c[i] = vals[i];
+        for (int sb : {0, 32, 64, 80}) {
+            run_case_at_byte(dut, "rbsp_window_shift", c, 0, 16, sb);
+            ++cases;
+        }
+        std::array<int, 16> c2{};
+        int vals2[] = {300, -301, 255, -256, 64, -33, 17, -8};
+        for (int i = 0; i < 8; ++i) c2[i] = vals2[i];
+        for (int sb : {0, 64}) {
+            run_case_at_byte(dut, "rbsp_window_shift_large", c2, 0, 16, sb);
+            ++cases;
+        }
     }
 
     if (failures) {

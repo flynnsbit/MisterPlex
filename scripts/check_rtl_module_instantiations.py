@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RTL_DIR = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 PRODUCT_TOP = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
 BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
+DIAGNOSTIC_ONLY = RTL_DIR / "diagnostic_only_modules.txt"
 PRODUCT_ROOT = "emu"
 
 
@@ -118,6 +119,46 @@ def parse_bench_only() -> dict[str, str]:
     return entries
 
 
+def parse_diagnostic_only() -> tuple[dict[str, str], dict[str, str]]:
+    """Parse the diagnostic-root / diagnostic-debt declaration file.
+
+    Returns (roots, debt) as {module: reason}.  Diagnostic roots are pruned
+    before product reachability is computed so that a diagnostic subtree can
+    never satisfy a product reachability requirement.
+    """
+    if not DIAGNOSTIC_ONLY.exists():
+        fail(f"missing explicit diagnostic-only list {DIAGNOSTIC_ONLY.relative_to(ROOT)}")
+    sections: dict[str, dict[str, str]] = {"roots": {}, "debt": {}}
+    current: str | None = None
+    for lineno, raw in enumerate(DIAGNOSTIC_ONLY.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1].strip()
+            if current not in sections:
+                fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: unknown section {current!r}")
+            continue
+        if current is None:
+            fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: entry before any [section]")
+        if ":" not in line:
+            fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: expected 'module: reason'")
+        name, reason = [part.strip() for part in line.split(":", 1)]
+        if not re.fullmatch(r"[A-Za-z_]\w*", name):
+            fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: invalid module name {name!r}")
+        if len(reason) < 12:
+            fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: diagnostic reason is too vague")
+        if name in sections[current]:
+            fail(f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}:{lineno}: duplicate entry {name}")
+        sections[current][name] = reason
+    if not sections["roots"]:
+        fail(
+            f"{DIAGNOSTIC_ONLY.relative_to(ROOT)}: [roots] is empty; delete the file only "
+            "when no diagnostic subtree remains in the product hierarchy"
+        )
+    return sections["roots"], sections["debt"]
+
+
 def instantiation_graph(modules: dict[str, ModuleDef]) -> dict[str, set[str]]:
     graph: dict[str, set[str]] = {name: set() for name in modules}
     known = sorted(modules, key=len, reverse=True)
@@ -169,10 +210,31 @@ def main(argv: list[str] | None = None) -> int:
     paths = rtl_paths + [PRODUCT_TOP]
     modules = parse_modules(paths)
     bench_only = parse_bench_only()
+    diag_roots, diag_debt = parse_diagnostic_only()
     graph = instantiation_graph(modules)
     if args.root not in modules:
         fail(f"root module does not exist: {args.root}")
     reachable = reachable_from(args.root, graph)
+
+    unknown_diag = sorted((set(diag_roots) | set(diag_debt)) - set(modules))
+    if unknown_diag:
+        fail(
+            f"{DIAGNOSTIC_ONLY.relative_to(ROOT)} names modules that do not exist: "
+            + ", ".join(unknown_diag)
+        )
+    overlap = sorted(set(diag_debt) & set(bench_only))
+    if overlap:
+        fail(
+            "modules cannot be both bench-only and diagnostic debt: " + ", ".join(overlap)
+        )
+
+    # Product reachability deliberately prunes diagnostic subtrees.  A module
+    # that is only reachable through decode_stub is NOT product reachable, and
+    # --require is answered from this pruned view so a diagnostic painter can
+    # never manufacture a product green.
+    product_graph = {name: (set() if name in diag_roots else dsts) for name, dsts in graph.items()}
+    product_reachable = reachable_from(args.root, product_graph) - set(diag_roots)
+    measured_debt = sorted(reachable - product_reachable - set(diag_roots))
 
     rtl_modules = {
         name: mod
@@ -184,6 +246,31 @@ def main(argv: list[str] | None = None) -> int:
         fail("bench-only list names modules that do not exist: " + ", ".join(unknown_bench))
 
     if args.root == PRODUCT_ROOT:
+        missing_roots = sorted(name for name in diag_roots if name not in reachable)
+        if missing_roots:
+            fail(
+                "diagnostic roots are no longer instantiated in the product hierarchy; "
+                f"delete them from {DIAGNOSTIC_ONLY.relative_to(ROOT)}: " + ", ".join(missing_roots)
+            )
+        declared_debt = sorted(diag_debt)
+        if measured_debt != declared_debt:
+            for name in sorted(set(measured_debt) - set(declared_debt)):
+                print(
+                    f"UNDECLARED_DIAGNOSTIC_ONLY_MODULE {name} "
+                    f"file={modules[name].path.relative_to(ROOT)}",
+                    file=sys.stderr,
+                )
+            for name in sorted(set(declared_debt) - set(measured_debt)):
+                print(
+                    f"STALE_DIAGNOSTIC_DEBT_ENTRY {name} is now product-reachable; "
+                    f"remove it from {DIAGNOSTIC_ONLY.relative_to(ROOT)}",
+                    file=sys.stderr,
+                )
+            fail(
+                "diagnostic-only module set does not match "
+                f"{DIAGNOSTIC_ONLY.relative_to(ROOT)} [debt]"
+            )
+
         reachable_bench = sorted(name for name in bench_only if name in reachable)
         if reachable_bench:
             fail(
@@ -210,17 +297,22 @@ def main(argv: list[str] | None = None) -> int:
     if unknown_required:
         fail("required RTL modules do not exist: " + ", ".join(unknown_required))
 
-    unreachable_required = sorted(name for name in args.require if name not in reachable)
+    unreachable_required = sorted(name for name in args.require if name not in product_reachable)
     if unreachable_required:
         for name in unreachable_required:
             mod = rtl_modules[name]
             parents = sorted(src for src, dsts in graph.items() if name in dsts)
             parent_note = f" parents={','.join(parents)}" if parents else " parents=<none>"
+            diag_note = " reachable_only_via_diagnostic_root=1" if name in reachable else ""
             print(
-                f"REQUIRED_RTL_MODULE_UNREACHABLE {name} file={mod.path.relative_to(ROOT)}{parent_note}",
+                f"REQUIRED_RTL_MODULE_UNREACHABLE {name} file={mod.path.relative_to(ROOT)}"
+                f"{parent_note}{diag_note}",
                 file=sys.stderr,
             )
-        fail("required RTL modules are not reachable from " + args.root)
+        fail(
+            f"required RTL modules are not product-reachable from {args.root} "
+            f"(diagnostic subtrees pruned: {','.join(sorted(diag_roots))})"
+        )
 
     for name in args.require:
         print(f"REQUIRED_RTL_MODULE_REACHABLE {name} root={args.root}")
@@ -228,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "RTL_MODULE_INSTANTIATION_OK "
         f"rtl_modules={len(rtl_modules)} reachable={sum(1 for n in rtl_modules if n in reachable)} "
+        f"product_reachable={sum(1 for n in rtl_modules if n in product_reachable)} "
+        f"diagnostic_roots={len(diag_roots)} diagnostic_debt={len(measured_debt)} "
         f"bench_only={len(bench_only)} root={args.root}"
     )
     return 0

@@ -230,7 +230,7 @@ module decode_stub #(
 	);
 
 	h264_luma_ref_tap_addr u_inter_fetch_diag (
-		.base_x(16'sd100), .base_y(16'sd50), .tap_idx(7'd80),
+		.base_x(16'sd100), .base_y(16'sd50), .tap_idx(9'd80),
 		.width(16'd624), .height(16'd480), .tap_x(inter_fetch_x), .tap_y(inter_fetch_y)
 	);
 

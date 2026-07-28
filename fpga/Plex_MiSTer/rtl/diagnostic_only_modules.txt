@@ -1,0 +1,36 @@
+# Diagnostic-only subtrees.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# `decode_stub` is a retired diagnostic frame-store painter that still ships in
+# the product hierarchy.  Because it instantiates real motion-compensation and
+# DPB hardware, a plain `emu`-rooted reachability walk reported those modules as
+# "product reachable" when the only path to them ran through the diagnostic
+# painter.  That manufactured false greens across the fleet.
+#
+# `scripts/check_rtl_module_instantiations.py` prunes every subtree listed under
+# [roots] before it computes PRODUCT reachability.  `--require` is answered from
+# the pruned graph only, so nothing underneath a diagnostic root can ever
+# satisfy a product reachability proof, no matter which root is used.
+#
+# [roots]  diagnostic subtree roots.  Pruned from product reachability.
+# [debt]   modules whose ONLY parent chain runs through a diagnostic root.
+#          The gate requires this list to match the measured set EXACTLY, so a
+#          new stub-only module fails the gate, and a module that has since been
+#          rooted under h264_decode_core must be deleted from this list.
+#
+# Retiring decode_stub is blocked on two things, both recorded in
+# docs/decode-stub-retirement.md:
+#   1. stream_path drives fs_wr_en/fs_wr_pixel/fs_wr_reset/fs_swap ONLY from
+#      decode_stub; h264_decode_core's writeback outputs currently terminate in
+#      the synthesis `_keep` wire.  Deleting the stub today blanks the display.
+#   2. tests/rtl/stream_path_full_frame_tb_top.sv probes ~20 internal signals
+#      via dut.gen_diagnostic_present.stub.*; those probes must move to the core
+#      before the stub can be removed.
+
+[roots]
+decode_stub: retired diagnostic frame-store painter; still the sole driver of stream_path fs_wr_*/fs_swap until h264_decode_core owns presentation.
+
+[debt]
+h264_luma_qpel_sample: sample-level quarter-pel luma interpolator; was h264_decode_core's u_product_p16_luma_pred until w-swap-o5-mc 4f4312b replaced it with h264_luma_qpel_block_16x16, which reimplements the 6-tap FIR locally instead of instantiating this module. TWO independent qpel implementations now exist; only decode_stub still reaches this one. Owner W-SWAP: delete it. The two implementations are MEASURED EQUIVALENT by tests/unit/test_qpel_equivalence_verilator.sh (20480 compares, 5 patterns x 16 frac positions x 256 block positions), so removing it is safe; that gate must be retired with it.
+h264_chroma_epel_sample: sample-level eighth-pel chroma interpolator; was h264_decode_core's u_product_p16_chroma_pred until 4f4312b, now superseded by h264_chroma_epel_block_8x8 and reachable only through decode_stub. Owner W-SWAP.

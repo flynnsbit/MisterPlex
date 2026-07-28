@@ -261,19 +261,28 @@ module h264_ref_clamp (
 	end
 endmodule
 
-module h264_luma_ref_tap_addr (
+// Raster tap/window address generator with edge clamping.
+// TAP_COLS is the raster width of the tap grid; TAP_ORIGIN is the number of
+// columns/rows that precede the base sample. Defaults reproduce the original
+// 9x9 per-sample qpel tap grid centred at (base_x-4, base_y-4). A 21x21 block
+// MC reference window uses TAP_COLS=21, TAP_ORIGIN=2; a 9x9 chroma window uses
+// TAP_COLS=9, TAP_ORIGIN=0.
+module h264_luma_ref_tap_addr #(
+	parameter int TAP_COLS   = 9,
+	parameter int TAP_ORIGIN = 4
+)(
 	input  wire signed [15:0] base_x,
 	input  wire signed [15:0] base_y,
-	input  wire        [6:0]  tap_idx,
+	input  wire        [8:0]  tap_idx,
 	input  wire        [15:0] width,
 	input  wire        [15:0] height,
 	output wire        [15:0] tap_x,
 	output wire        [15:0] tap_y
 );
-	wire [6:0] tap_mod_col = tap_idx % 7'd9;
-	wire [6:0] tap_div_row = tap_idx / 7'd9;
-	wire signed [15:0] tap_col = $signed({9'd0, tap_mod_col}) - 16'sd4;
-	wire signed [15:0] tap_row = $signed({9'd0, tap_div_row}) - 16'sd4;
+	wire [8:0] tap_mod_col = tap_idx % 9'(TAP_COLS);
+	wire [8:0] tap_div_row = tap_idx / 9'(TAP_COLS);
+	wire signed [15:0] tap_col = $signed({7'd0, tap_mod_col}) - 16'(TAP_ORIGIN);
+	wire signed [15:0] tap_row = $signed({7'd0, tap_div_row}) - 16'(TAP_ORIGIN);
 	h264_ref_clamp u_clamp (
 		.x(base_x + tap_col),
 		.y(base_y + tap_row),

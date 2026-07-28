@@ -2,7 +2,7 @@
 `default_nettype none
 
 module h264_cavlc_residual_tb_top #(
-    parameter int MAX_BYTES = 64
+    parameter int MAX_BYTES = 96
 )(
     input  wire               clk,
     input  wire               reset,

@@ -47,6 +47,7 @@ module h264_decode_core_p16z_tb #(
 	output wire        error
 );
 	wire [3:0] intra4x4_modes [0:15];
+	wire signed [15:0] luma4x4_coeff_zigzag [0:15];
 	wire [7:0] recon_y [0:255];
 	wire [7:0] recon_u [0:63];
 	wire [7:0] recon_v [0:63];
@@ -58,6 +59,7 @@ module h264_decode_core_p16z_tb #(
 		end
 		for (zi = 0; zi < 16; zi = zi + 1) begin : gen_i4_zero
 			assign intra4x4_modes[zi] = 4'd0;
+			assign luma4x4_coeff_zigzag[zi] = 16'sd0;
 		end
 		for (zi = 0; zi < 256; zi = zi + 1) begin : gen_y_zero
 			assign recon_y[zi] = 8'd0;
@@ -95,6 +97,12 @@ module h264_decode_core_p16z_tb #(
 		.cbp_chroma(2'd2),
 		.mb_qp_delta(6'sd0),
 		.mb_residual_bit_offset(mb_residual_bit_offset),
+		.luma4x4_valid(1'b0),
+		.luma4x4_idx(4'd0),
+		.luma4x4_qp(6'd26),
+		.luma4x4_total_coeff(5'd0),
+		.luma4x4_trailing_ones(2'd0),
+		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
 		.mv_x_qpel(p16_mv_x_qpel),
 		.mv_y_qpel(p16_mv_y_qpel),
 		.part_mode(3'd0),

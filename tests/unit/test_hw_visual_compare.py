@@ -169,6 +169,11 @@ def main() -> int:
     require(geom["pillarbox_left"] == 11, f"pillarbox wrong: {geom}")
     box = hw_visual_compare.parse_compare_box("11,0,160,120", hw_visual_compare.load_geometry())
     require(box == (11, 0, 171, 120), f"compare-box parsing wrong: {box}")
+    scope = run("scope", "--compare-box", "11,0,160,120")
+    require(scope.returncode == 0 and scope.stdout.startswith("Scope: 19200 "),
+            f"scope command must print non-zero scope first\nstdout={scope.stdout}\nstderr={scope.stderr}")
+    require(hw_visual_compare.DEFAULT_DEV == "/dev/video0",
+            f"capture default must target the real MS2109 node, not the decoy/absent node: {hw_visual_compare.DEFAULT_DEV}")
     print("PASS shared host/RTL geometry parsed")
 
     generated_reference_refusal = run(

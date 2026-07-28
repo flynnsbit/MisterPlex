@@ -1,249 +1,355 @@
-// H.264 intra prediction neighbour context store.
-// Stores reconstructed (pre-deblock) samples for cross-MB and within-MB
-// neighbour derivation. Feeds h264_intra4x4_pred and h264_intra16x16_pred.
+// H.264 reconstructed-neighbour context for intra prediction.
 //
-// Storage:
-//   - Above row line buffer: MB_WIDTH_MAX * 16 luma samples in M10K
-//     (bottom row of each MB in the row above)
-//   - Left column: 16 registers (right column of left MB / within-MB)
-//   - Within-MB buffer: 16x16 registers (accumulates as blocks finish)
-//   - Top-left corner: 1 register per MB boundary
-//
-// The line buffer holds PRE-DEBLOCK reconstructed samples.
-// Post-deblock samples for DPB are stored separately by the deblock path.
-//
-// Resource estimate: 1 M10K (640 bytes above row) + ~260 registers.
+// This module stores PRE-DEBLOCK reconstructed samples. Intra prediction reads
+// this tap. The DPB/reference path must consume the separate POST-DEBLOCK tap.
+// For the measured PMS stream the coded frame is 624x480 = 39x30 complete MBs;
+// the default storage depth is therefore exactly full-width, with no partial-MB
+// edge assumptions.
 
 module h264_intra_nb_ctx #(
-    parameter int MB_WIDTH_MAX = 40   // max MBs per row (640/16)
+    parameter int MB_WIDTH_MAX = 39,
+    parameter int MB_WIDTH_DEFAULT = 39
 )(
     input  wire        clk,
     input  wire        reset,
 
-    // MB-level control
     input  wire [7:0]  mb_x,
     input  wire [7:0]  mb_y,
     input  wire [7:0]  mb_width,
-    input  wire        mb_start,      // pulse at start of each MB
+    input  wire [15:0] first_mb_in_slice,
+    input  wire        mb_start,
 
-    // Block-level control
-    input  wire [3:0]  block_idx,     // 0..15 raster within 16x16 MB
-    input  wire        block_valid,   // pulse: block reconstructed
+    input  wire [3:0]  block_idx,
+    input  wire        block_valid,
 
-    // Reconstructed pixels from recon4x4 (feedback path)
-    input  wire [7:0]  recon_pixels [0:15],  // 4x4 block in raster order
+    // PRE-deblock reconstructed luma feedback. block_valid stores the current
+    // 4x4 block so later blocks in the same MB can consume it immediately.
+    input  wire [7:0]  recon_pixels [0:15],
 
-    // I4x4 outputs (per-block, depends on block_idx)
-    output wire [7:0]  above [0:7],   // 4 above + 4 above-right
-    output wire [7:0]  left [0:3],
-    output wire [7:0]  top_left,
-    output wire        has_above,
-    output wire        has_left
+    // Optional whole-MB PRE-deblock commit. The luma array is used when an
+    // external decode scheduler commits a full MB at once; chroma arrays are the
+    // only chroma source because chroma prediction works at 8x8 granularity.
+    input  wire        mb_commit,
+    input  wire [7:0]  recon_y_mb [0:255],
+    input  wire [7:0]  recon_u_mb [0:63],
+    input  wire [7:0]  recon_v_mb [0:63],
+
+    output reg  [7:0]  above [0:7],
+    output reg  [7:0]  left [0:3],
+    output reg  [7:0]  top_left,
+    output reg         has_above,
+    output reg         has_left,
+    output reg         has_above_right,
+
+    // MB-level luma neighbour adapter for h264_decode_top. Same PRE-deblock
+    // storage/tap as the block-level ports above.
+    output reg         mb_avail_left,
+    output reg         mb_avail_top,
+    output reg         mb_avail_topright,
+    output reg         mb_avail_topleft,
+    output reg  [7:0]  nb_top [0:15],
+    output reg  [7:0]  nb_left [0:15],
+    output reg  [7:0]  nb_topleft,
+    output reg  [7:0]  nb_topright [0:3],
+
+    output reg  [7:0]  chroma_u_above [0:7],
+    output reg  [7:0]  chroma_v_above [0:7],
+    output reg  [7:0]  chroma_u_left [0:7],
+    output reg  [7:0]  chroma_v_left [0:7],
+    output reg  [7:0]  chroma_u_top_left,
+    output reg  [7:0]  chroma_v_top_left,
+    output reg         has_chroma_above,
+    output reg         has_chroma_left
 );
 
-    // =========================================================================
-    // Block position decode
-    // =========================================================================
-    wire [3:0] blk_x = {block_idx[1], block_idx[0], 2'b00};  // pixel x: (idx%4)*4
-    wire [3:0] blk_y = {block_idx[3], block_idx[2], 2'b00};  // pixel y: (idx/4)*4
+    localparam int LUMA_ABOVE_DEPTH = MB_WIDTH_MAX * 16;
+    localparam int CHROMA_ABOVE_DEPTH = MB_WIDTH_MAX * 8;
 
-    // =========================================================================
-    // Availability flags (geometric, Baseline single-slice IDR)
-    // =========================================================================
-    assign has_above = (mb_y != 8'd0) || (blk_y != 4'd0);
-    assign has_left  = (mb_x != 8'd0) || (blk_x != 4'd0);
+    // Raster 4x4 block coordinates within the current luma MB.
+    wire [3:0] blk_x = {block_idx[1:0], 2'b00};
+    wire [3:0] blk_y = {block_idx[3:2], 2'b00};
+    wire [7:0] active_mb_width = (mb_width == 8'd0) ? MB_WIDTH_DEFAULT[7:0] : mb_width;
+    wire [15:0] active_mb_width16 = {8'd0, active_mb_width};
+    wire [15:0] cur_mb_index = ({8'd0, mb_y} * active_mb_width16) + {8'd0, mb_x};
+    wire [15:0] top_mb_index = cur_mb_index - active_mb_width16;
+    wire [15:0] top_left_mb_index = top_mb_index - 16'd1;
+    wire [15:0] top_right_mb_index = top_mb_index + 16'd1;
 
-    // Above-right availability for I4x4 (spec 6.4.11.1)
-    // Available if: above exists AND there is a valid block to the upper-right
-    // Block-level: blocks at blk_x=12 within the MB have no above-right from
-    // within the MB when blk_y > 0 (the block to their right is in the next row).
-    // Additionally, blocks 3,7,11,13,15 (in zigzag) have above-right unavailable
-    // per the spec — but in simple raster, at blk_x=12 the above-right is the
-    // next MB's above buffer which requires mb_avail_topright.
-    wire has_above_right_mb = (mb_y != 8'd0) && (mb_x < (mb_width - 8'd1));
-    wire has_above_right_within = (blk_y != 4'd0) && (blk_x < 4'd12);
-    wire has_above_right_top_edge = (blk_y == 4'd0) && (
-        (blk_x < 4'd12) || has_above_right_mb
-    );
-    wire has_above_right = (blk_y == 4'd0) ? has_above_right_top_edge :
-                           has_above_right_within;
+    // H.264 neighbour availability is semantic, not just storage-valid: samples
+    // that exist in the line buffer but fall before first_mb_in_slice are not
+    // available to this slice.
+    wire ext_left_available = (mb_x != 8'd0) &&
+                              ((cur_mb_index - 16'd1) >= first_mb_in_slice);
+    wire ext_top_available = (mb_y != 8'd0) &&
+                             (top_mb_index >= first_mb_in_slice);
+    wire ext_topleft_available = (mb_x != 8'd0) && (mb_y != 8'd0) &&
+                                 (top_left_mb_index >= first_mb_in_slice);
+    wire ext_topright_available = (mb_y != 8'd0) &&
+                                  ((mb_x + 8'd1) < active_mb_width) &&
+                                  (top_right_mb_index >= first_mb_in_slice);
 
-    // =========================================================================
-    // Within-MB reconstruction buffer (16x16 bytes, registers/MLAB)
-    // =========================================================================
-    // Stores all reconstructed pixels of the current MB as blocks complete.
-    // Used for within-MB neighbour derivation.
-    reg [7:0] mb_buf [0:15][0:15];  // [row][col], pixel coordinates
-
-    // Store reconstructed block into mb_buf on block_valid
-    integer si, sj;
-    always @(posedge clk) begin
-        if (reset || mb_start) begin
-            // Clear on MB start (or use don't-care — blocks write before read)
-            for (si = 0; si < 16; si = si + 1)
-                for (sj = 0; sj < 16; sj = sj + 1)
-                    mb_buf[si][sj] <= 8'd128;
-        end else if (block_valid) begin
-            // recon_pixels[0:15] is 4x4 in raster: [y*4+x]
-            for (si = 0; si < 4; si = si + 1)
-                for (sj = 0; sj < 4; sj = sj + 1)
-                    mb_buf[blk_y + si[3:0]][blk_x + sj[3:0]] <= recon_pixels[si*4 + sj];
+    function automatic int luma_addr(input [7:0] x, input [3:0] col);
+        begin
+            luma_addr = (int'(x) * 16) + int'(col);
         end
-    end
+    endfunction
 
-    // =========================================================================
-    // Above row line buffer (M10K) — bottom row of each MB from the row above
-    // =========================================================================
-    // Stores 16 samples per MB column: the bottom row (row 15) of reconstructed
-    // luma for each MB in the previous row.
-    // Address: mb_x * 16 + pixel_x_within_mb (0..15)
-    // Total: MB_WIDTH_MAX * 16 = 640 bytes max
-    localparam int ABOVE_BUF_DEPTH = MB_WIDTH_MAX * 16;
-    localparam int ABOVE_AW = $clog2(ABOVE_BUF_DEPTH);
+    function automatic int chroma_addr(input [7:0] x, input [2:0] col);
+        begin
+            chroma_addr = (int'(x) * 8) + int'(col);
+        end
+    endfunction
 
-    (* ramstyle = "M10K" *) reg [7:0] above_row_buf [0:ABOVE_BUF_DEPTH-1];
+    function automatic [7:0] maybe_fault_luma(input [7:0] value);
+        begin
+`ifdef H264_INTRA_NB_CTX_FAULT_STUB_NEIGHBORS
+            maybe_fault_luma = 8'd128;
+`else
+            maybe_fault_luma = value;
+`endif
+        end
+    endfunction
 
-    // Read port: combinational read for current block's above context
-    // Write port: store bottom row when MB row completes
-    reg [ABOVE_AW-1:0] above_wr_addr;
-    reg [7:0]          above_wr_data;
-    reg                above_wr_en;
+    function automatic [7:0] maybe_fault_u(input [7:0] u_value, input [7:0] v_value);
+        begin
+`ifdef H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV
+            maybe_fault_u = v_value;
+`else
+            maybe_fault_u = u_value;
+`endif
+        end
+    endfunction
 
-    always @(posedge clk) begin
-        if (above_wr_en)
-            above_row_buf[above_wr_addr] <= above_wr_data;
-    end
+    function automatic [7:0] maybe_fault_v(input [7:0] u_value, input [7:0] v_value);
+        begin
+`ifdef H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV
+            maybe_fault_v = u_value;
+`else
+            maybe_fault_v = v_value;
+`endif
+        end
+    endfunction
 
-    // Write the bottom row (row 15) of current MB into above_row_buf
-    // at position mb_x*16 + col. Triggered at end of MB (when all blocks done).
-    // We write sample-by-sample from mb_buf[15][0..15] using a small FSM.
-    reg [4:0] above_wr_cnt;
-    reg       above_wr_active;
+    // Current-MB PRE-deblock reconstruction. Luma fills block-by-block; chroma is
+    // committed as whole 8x8 planes.
+    reg [7:0] mb_y_buf [0:15][0:15];
+    reg [7:0] mb_u_buf [0:7][0:7];
+    reg [7:0] mb_v_buf [0:7][0:7];
 
+    (* ramstyle = "M10K" *) reg [7:0] above_y_row [0:LUMA_ABOVE_DEPTH-1];
+    (* ramstyle = "M10K" *) reg [7:0] above_u_row [0:CHROMA_ABOVE_DEPTH-1];
+    (* ramstyle = "M10K" *) reg [7:0] above_v_row [0:CHROMA_ABOVE_DEPTH-1];
+
+    reg [7:0] left_y_col [0:15];
+    reg [7:0] left_u_col [0:7];
+    reg [7:0] left_v_col [0:7];
+    reg [7:0] tl_y_corner;
+    reg [7:0] tl_u_corner;
+    reg [7:0] tl_v_corner;
+    reg [7:0] row_tl_y_corner;
+    reg [7:0] row_tl_u_corner;
+    reg [7:0] row_tl_v_corner;
+    reg       commit_pending;
+
+    integer r, c, i;
     always @(posedge clk) begin
         if (reset) begin
-            above_wr_active <= 1'b0;
-            above_wr_cnt <= 5'd0;
-            above_wr_en <= 1'b0;
-        end else begin
-            above_wr_en <= 1'b0;
-            if (block_valid && block_idx == 4'd15) begin
-                // Last block of MB done — start writing bottom row to line buf
-                above_wr_active <= 1'b1;
-                above_wr_cnt <= 5'd0;
+            commit_pending <= 1'b0;
+            tl_y_corner <= 8'd128;
+            tl_u_corner <= 8'd128;
+            tl_v_corner <= 8'd128;
+            row_tl_y_corner <= 8'd128;
+            row_tl_u_corner <= 8'd128;
+            row_tl_v_corner <= 8'd128;
+            for (r = 0; r < 16; r = r + 1) begin
+                left_y_col[r] <= 8'd128;
+                for (c = 0; c < 16; c = c + 1)
+                    mb_y_buf[r][c] <= 8'd128;
             end
-            if (above_wr_active) begin
-                above_wr_en <= 1'b1;
-                above_wr_addr <= mb_x * 16 + {{(ABOVE_AW-5){1'b0}}, above_wr_cnt};
-                above_wr_data <= mb_buf[15][above_wr_cnt[3:0]];
-                if (above_wr_cnt == 5'd15) begin
-                    above_wr_active <= 1'b0;
+            for (r = 0; r < 8; r = r + 1) begin
+                left_u_col[r] <= 8'd128;
+                left_v_col[r] <= 8'd128;
+                for (c = 0; c < 8; c = c + 1) begin
+                    mb_u_buf[r][c] <= 8'd128;
+                    mb_v_buf[r][c] <= 8'd128;
                 end
-                above_wr_cnt <= above_wr_cnt + 5'd1;
+            end
+        end else begin
+            // Commit the previous complete MB into the line buffers/left columns.
+            // These are PRE-deblock samples. The deblock/DPB path must not feed
+            // back here, or intra prediction will read the wrong tap.
+            if (commit_pending) begin
+                row_tl_y_corner <= (mb_y != 8'd0) ?
+                                   above_y_row[luma_addr(mb_x, 4'd15)] : 8'd128;
+                row_tl_u_corner <= (mb_y != 8'd0) ?
+                                   above_u_row[chroma_addr(mb_x, 3'd7)] : 8'd128;
+                row_tl_v_corner <= (mb_y != 8'd0) ?
+                                   above_v_row[chroma_addr(mb_x, 3'd7)] : 8'd128;
+                for (i = 0; i < 16; i = i + 1) begin
+                    above_y_row[luma_addr(mb_x, i[3:0])] <= maybe_fault_luma(mb_y_buf[15][i]);
+                    left_y_col[i] <= maybe_fault_luma(mb_y_buf[i][15]);
+                end
+                for (i = 0; i < 8; i = i + 1) begin
+                    above_u_row[chroma_addr(mb_x, i[2:0])] <= maybe_fault_u(mb_u_buf[7][i], mb_v_buf[7][i]);
+                    above_v_row[chroma_addr(mb_x, i[2:0])] <= maybe_fault_v(mb_u_buf[7][i], mb_v_buf[7][i]);
+                    left_u_col[i] <= maybe_fault_u(mb_u_buf[i][7], mb_v_buf[i][7]);
+                    left_v_col[i] <= maybe_fault_v(mb_u_buf[i][7], mb_v_buf[i][7]);
+                end
+                commit_pending <= 1'b0;
+            end
+
+            if (mb_start) begin
+                tl_y_corner <= (mb_x > 8'd0 && mb_y > 8'd0) ? row_tl_y_corner : 8'd128;
+                tl_u_corner <= (mb_x > 8'd0 && mb_y > 8'd0) ? row_tl_u_corner : 8'd128;
+                tl_v_corner <= (mb_x > 8'd0 && mb_y > 8'd0) ? row_tl_v_corner : 8'd128;
+                for (r = 0; r < 16; r = r + 1)
+                    for (c = 0; c < 16; c = c + 1)
+                        mb_y_buf[r][c] <= 8'd128;
+                for (r = 0; r < 8; r = r + 1)
+                    for (c = 0; c < 8; c = c + 1) begin
+                        mb_u_buf[r][c] <= 8'd128;
+                        mb_v_buf[r][c] <= 8'd128;
+                    end
+            end
+
+            if (block_valid) begin
+                for (r = 0; r < 4; r = r + 1)
+                    for (c = 0; c < 4; c = c + 1)
+                        mb_y_buf[blk_y + r[3:0]][blk_x + c[3:0]] <= recon_pixels[r * 4 + c];
+            end
+
+            if (mb_commit) begin
+                for (r = 0; r < 16; r = r + 1)
+                    for (c = 0; c < 16; c = c + 1)
+                        mb_y_buf[r][c] <= recon_y_mb[r * 16 + c];
+                for (r = 0; r < 8; r = r + 1)
+                    for (c = 0; c < 8; c = c + 1) begin
+                        mb_u_buf[r][c] <= recon_u_mb[r * 8 + c];
+                        mb_v_buf[r][c] <= recon_v_mb[r * 8 + c];
+                    end
+                commit_pending <= 1'b1;
             end
         end
     end
 
-    // =========================================================================
-    // Left column register — right column (col 15) of the left MB
-    // =========================================================================
-    reg [7:0] left_col [0:15];  // 16 rows of the right column of left MB
-
-    // Store right column at end of each MB
-    integer li;
-    always @(posedge clk) begin
-        if (reset) begin
-            for (li = 0; li < 16; li = li + 1)
-                left_col[li] <= 8'd128;
-        end else if (block_valid && block_idx == 4'd15) begin
-            // Store right column (col 15) of current MB for next MB's left
-            for (li = 0; li < 16; li = li + 1)
-                left_col[li] <= mb_buf[li][15];
+    integer oi;
+    always @* begin
+`ifdef H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE
+        has_above = 1'b1;
+        has_left = 1'b1;
+        has_chroma_above = 1'b1;
+        has_chroma_left = 1'b1;
+`else
+        has_above = ext_top_available || (blk_y != 4'd0);
+        has_left = ext_left_available || (blk_x != 4'd0);
+        has_chroma_above = ext_top_available;
+        has_chroma_left = ext_left_available;
+`endif
+        has_above_right = 1'b0;
+        mb_avail_topright = 1'b0;
+        top_left = 8'd128;
+        nb_topleft = 8'd128;
+        chroma_u_top_left = 8'd128;
+        chroma_v_top_left = 8'd128;
+        for (oi = 0; oi < 8; oi = oi + 1) begin
+            above[oi] = 8'd128;
+            chroma_u_above[oi] = 8'd128;
+            chroma_v_above[oi] = 8'd128;
+            chroma_u_left[oi] = 8'd128;
+            chroma_v_left[oi] = 8'd128;
+            if (oi < 4) begin
+                left[oi] = 8'd128;
+                nb_topright[oi] = 8'd128;
+            end
         end
+
+`ifdef H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE
+        mb_avail_top = 1'b1;
+        mb_avail_left = 1'b1;
+        mb_avail_topleft = 1'b1;
+`else
+        mb_avail_top = ext_top_available;
+        mb_avail_left = ext_left_available;
+        mb_avail_topleft = ext_topleft_available;
+`endif
+        mb_avail_topright = ext_topright_available;
+        for (oi = 0; oi < 16; oi = oi + 1) begin
+            nb_top[oi] = mb_avail_top ?
+                         maybe_fault_luma(above_y_row[luma_addr(mb_x, oi[3:0])]) : 8'd128;
+            nb_left[oi] = mb_avail_left ?
+                          maybe_fault_luma(left_y_col[oi]) : 8'd128;
+        end
+        nb_topleft = (mb_avail_top && mb_avail_left) ? maybe_fault_luma(tl_y_corner) : 8'd128;
+        if (mb_avail_topright) begin
+            for (oi = 0; oi < 4; oi = oi + 1)
+                nb_topright[oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
+        end
+
+        if (has_above) begin
+            if (blk_y != 4'd0) begin
+                for (oi = 0; oi < 4; oi = oi + 1)
+                    above[oi] = maybe_fault_luma(mb_y_buf[blk_y - 4'd1][blk_x + oi[3:0]]);
+                if (blk_x < 4'd12) begin
+                    has_above_right = 1'b1;
+                    for (oi = 0; oi < 4; oi = oi + 1)
+                        above[4 + oi] = maybe_fault_luma(mb_y_buf[blk_y - 4'd1][blk_x + 4'd4 + oi[3:0]]);
+                end else begin
+                    for (oi = 0; oi < 4; oi = oi + 1)
+                        above[4 + oi] = above[3];
+                end
+            end else begin
+                for (oi = 0; oi < 4; oi = oi + 1)
+                    above[oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x + oi[3:0])]);
+                if (blk_x < 4'd12) begin
+                    has_above_right = 1'b1;
+                    for (oi = 0; oi < 4; oi = oi + 1)
+                        above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x + 4'd4 + oi[3:0])]);
+                end else if (ext_topright_available) begin
+                    has_above_right = 1'b1;
+                    for (oi = 0; oi < 4; oi = oi + 1)
+                        above[4 + oi] = maybe_fault_luma(above_y_row[luma_addr(mb_x + 8'd1, oi[3:0])]);
+                end else begin
+                    for (oi = 0; oi < 4; oi = oi + 1)
+                        above[4 + oi] = above[3];
+                end
+            end
+        end
+
+        if (has_left) begin
+            if (blk_x != 4'd0) begin
+                for (oi = 0; oi < 4; oi = oi + 1)
+                    left[oi] = maybe_fault_luma(mb_y_buf[blk_y + oi[3:0]][blk_x - 4'd1]);
+            end else begin
+                for (oi = 0; oi < 4; oi = oi + 1)
+                    left[oi] = maybe_fault_luma(left_y_col[blk_y + oi[3:0]]);
+            end
+        end
+
+        if (has_above || has_left) begin
+            if (blk_x != 4'd0 && blk_y != 4'd0)
+                top_left = maybe_fault_luma(mb_y_buf[blk_y - 4'd1][blk_x - 4'd1]);
+            else if (blk_x == 4'd0 && blk_y != 4'd0)
+                top_left = has_left ? maybe_fault_luma(left_y_col[blk_y - 4'd1]) : 8'd128;
+            else if (blk_x != 4'd0 && blk_y == 4'd0)
+                top_left = has_above ? maybe_fault_luma(above_y_row[luma_addr(mb_x, blk_x - 4'd1)]) : 8'd128;
+            else
+                top_left = ext_topleft_available ? maybe_fault_luma(tl_y_corner) : 8'd128;
+        end
+
+        if (has_chroma_above) begin
+            for (oi = 0; oi < 8; oi = oi + 1) begin
+                chroma_u_above[oi] = above_u_row[chroma_addr(mb_x, oi[2:0])];
+                chroma_v_above[oi] = above_v_row[chroma_addr(mb_x, oi[2:0])];
+            end
+        end
+        if (has_chroma_left) begin
+            for (oi = 0; oi < 8; oi = oi + 1) begin
+                chroma_u_left[oi] = left_u_col[oi];
+                chroma_v_left[oi] = left_v_col[oi];
+            end
+        end
+        chroma_u_top_left = ext_topleft_available ? tl_u_corner : 8'd128;
+        chroma_v_top_left = ext_topleft_available ? tl_v_corner : 8'd128;
     end
-
-    // =========================================================================
-    // Top-left corner register
-    // =========================================================================
-    reg [7:0] tl_corner;  // bottom-right pixel of above-left MB
-
-    always @(posedge clk) begin
-        if (reset)
-            tl_corner <= 8'd128;
-        else if (mb_start)
-            // Latch: the current left_col[15] is the bottom-right of the MB
-            // that was to our left in the previous row... but actually we need
-            // the above-row buffer's last pixel of the left MB.
-            // top_left for MB = above_row_buf[(mb_x-1)*16 + 15]
-            // We read it on mb_start. For now, use left_col[0] which is top-left
-            // of the row from the left MB... Actually this needs to be the
-            // bottom-right of the above-left MB.
-            // Simplified: store from above_row_buf at mb_start
-            tl_corner <= (mb_x > 0 && mb_y > 0) ?
-                         above_row_buf[(mb_x - 8'd1) * 16 + 15] : 8'd128;
-    end
-
-    // =========================================================================
-    // Output mux: select between within-MB buffer and cross-MB storage
-    // =========================================================================
-
-    // --- ABOVE[0:3] ---
-    // If blk_y > 0: from mb_buf[blk_y-1][blk_x+0..3] (within MB)
-    // If blk_y == 0: from above_row_buf[mb_x*16 + blk_x + 0..3]
-    wire [7:0] above_from_mb [0:3];
-    wire [7:0] above_from_buf [0:3];
-    genvar gi;
-    generate
-        for (gi = 0; gi < 4; gi = gi + 1) begin : gen_above
-            assign above_from_mb[gi] = mb_buf[blk_y - 4'd1][blk_x + gi[3:0]];
-            assign above_from_buf[gi] = above_row_buf[mb_x * 16 + {4'd0, blk_x} + gi];
-            assign above[gi] = has_above ?
-                               ((blk_y != 4'd0) ? above_from_mb[gi] : above_from_buf[gi])
-                               : 8'd128;
-        end
-    endgenerate
-
-    // --- ABOVE[4:7] (above-right) ---
-    // If has_above_right: from the 4 pixels to the right of above[0:3]
-    // If not: replicate above[3] (spec clause 8.3.1.2.1)
-    wire [7:0] above_right_from_mb [0:3];
-    wire [7:0] above_right_from_buf [0:3];
-    generate
-        for (gi = 0; gi < 4; gi = gi + 1) begin : gen_above_right
-            assign above_right_from_mb[gi] = mb_buf[blk_y - 4'd1][blk_x + 4'd4 + gi[3:0]];
-            assign above_right_from_buf[gi] = above_row_buf[mb_x * 16 + {4'd0, blk_x} + 4 + gi];
-            assign above[4 + gi] = has_above_right ?
-                                   ((blk_y != 4'd0) ? above_right_from_mb[gi] : above_right_from_buf[gi])
-                                   : above[3];  // substitute from above[3]
-        end
-    endgenerate
-
-    // --- LEFT[0:3] ---
-    // If blk_x > 0: from mb_buf[blk_y+0..3][blk_x-1] (within MB)
-    // If blk_x == 0: from left_col[blk_y+0..3]
-    wire [7:0] left_from_mb [0:3];
-    wire [7:0] left_from_col [0:3];
-    generate
-        for (gi = 0; gi < 4; gi = gi + 1) begin : gen_left
-            assign left_from_mb[gi] = mb_buf[blk_y + gi[3:0]][blk_x - 4'd1];
-            assign left_from_col[gi] = left_col[blk_y + gi[3:0]];
-            assign left[gi] = has_left ?
-                              ((blk_x != 4'd0) ? left_from_mb[gi] : left_from_col[gi])
-                              : 8'd128;
-        end
-    endgenerate
-
-    // --- TOP_LEFT ---
-    // Corner pixel at (blk_x-1, blk_y-1)
-    // Cases:
-    //   blk_x>0, blk_y>0: mb_buf[blk_y-1][blk_x-1]
-    //   blk_x==0, blk_y>0: left_col[blk_y-1]
-    //   blk_x>0, blk_y==0: above_row_buf[mb_x*16 + blk_x - 1]
-    //   blk_x==0, blk_y==0: tl_corner (above-left MB's bottom-right)
-    assign top_left = (!has_above && !has_left) ? 8'd128 :
-                      (blk_x != 4'd0 && blk_y != 4'd0) ? mb_buf[blk_y - 4'd1][blk_x - 4'd1] :
-                      (blk_x == 4'd0 && blk_y != 4'd0) ? left_col[blk_y - 4'd1] :
-                      (blk_x != 4'd0 && blk_y == 4'd0) ? above_row_buf[mb_x * 16 + {4'd0, blk_x} - 1] :
-                      tl_corner;
 
 endmodule

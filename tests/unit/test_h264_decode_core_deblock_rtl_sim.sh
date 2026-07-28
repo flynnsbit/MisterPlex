@@ -79,14 +79,33 @@ python3 "$ROOT/scripts/check_product_reachability.py" \
   --require h264_deblock_writeback_ctrl
 
 echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core in-loop deblock)" >&2
+# Compile the Quartus file list itself, not a hand-maintained subset.  Two
+# reasons: peers keep adding submodules under h264_decode_core, and w-audit
+# showed an RTL file can be tracked in git yet absent from files.qip, in which
+# case it is not in the design at all.  Simulating exactly what Quartus
+# compiles makes that cross-check executable rather than declarative.
+mapfile -t QIP_RTL < <(
+  sed -n 's/.*\(SYSTEMVERILOG_FILE\|VERILOG_FILE\)[[:space:]]\+\(rtl\/[^[:space:]"]*\).*/\2/p' "$QIP" \
+    | sort -u | sed "s|^|$ROOT/fpga/Plex_MiSTer/|"
+)
+if [[ "${#QIP_RTL[@]}" -lt 10 ]]; then
+  echo "RTL SIM ERROR: files.qip yielded only ${#QIP_RTL[@]} rtl sources; refusing to run a hollow build" >&2
+  exit 2
+fi
+for f in "${QIP_RTL[@]}"; do
+  [[ -f "$f" ]] || { echo "RTL SIM ERROR: files.qip lists missing source $f" >&2; exit 2; }
+done
+echo "RTL SIM: compiling ${#QIP_RTL[@]} rtl sources from files.qip" >&2
+
 build_variant() {
   local dir="$1"; shift
   mkdir -p "$dir"
   "$RUN_VERILATOR" --cc --exe --build \
     --Mdir "$dir" \
     --top-module h264_decode_core_deblock_tb -Wno-fatal "$@" \
+    -y "$ROOT/fpga/Plex_MiSTer/rtl" +libext+.sv+.v \
     -CFLAGS "-std=c++17 -O2 -I$ROOT/tests/rtl" \
-    "$TOP" "$CAVLC_RTL" "$IQ_IDCT_RTL" "$INTER_RTL" "$DPB_RTL" "$DEBLOCK_RTL" "$RTL" "$TB"
+    "$TOP" "${QIP_RTL[@]}" "$TB"
 }
 
 build_variant "$BUILD"

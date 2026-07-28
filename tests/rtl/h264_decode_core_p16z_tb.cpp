@@ -2,6 +2,7 @@
 #include "verilated.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -161,56 +162,74 @@ uint8_t clipU8(int value) {
     return static_cast<uint8_t>(value);
 }
 
-int hraw(const uint8_t ref[9][9], int row, int col) {
-    return ref[row][col - 2] - 5 * ref[row][col - 1] + 20 * ref[row][col] +
-           20 * ref[row][col + 1] - 5 * ref[row][col + 2] + ref[row][col + 3];
-}
-
 int clip1(int v) { return clampInt(v, 0, 255); }
 int avg2(int a, int b) { return (a + b + 1) >> 1; }
-int halfH(const uint8_t ref[9][9], int rowoff, int coloff) { return clip1((hraw(ref, 4 + rowoff, 4 + coloff) + 16) >> 5); }
-int halfV(const uint8_t ref[9][9], int rowoff, int coloff) {
-    const int col = 4 + coloff;
-    return clip1((ref[2 + rowoff][col] - 5 * ref[3 + rowoff][col] + 20 * ref[4 + rowoff][col] +
-                  20 * ref[5 + rowoff][col] - 5 * ref[6 + rowoff][col] + ref[7 + rowoff][col] + 16) >> 5);
+
+// Block motion compensation reference model: one 21x21 luma window and two
+// 9x9 chroma windows are fetched per macroblock, then the whole 16x16 / 8x8
+// prediction block is produced from those windows (h264_inter_mc_part).
+using LumaWin = std::array<uint8_t, 441>;
+using ChromaWin = std::array<uint8_t, 81>;
+
+LumaWin lumaRefWindow(const MbCase& mb) {
+    LumaWin win{};
+    const int originX = mb.mbX * 16 + (mb.mvX >> 2);
+    const int originY = mb.mbY * 16 + (mb.mvY >> 2);
+    for (int i = 0; i < 441; ++i)
+        win[i] = refSample(0, originX + (i % 21) - 2, originY + (i / 21) - 2);
+    return win;
 }
-int halfC(const uint8_t ref[9][9], int rowoff, int coloff) {
-    const int row = 4 + rowoff;
-    const int col = 4 + coloff;
-    const int sum = hraw(ref, row - 2, col) - 5 * hraw(ref, row - 1, col) +
-                    20 * hraw(ref, row, col) + 20 * hraw(ref, row + 1, col) -
-                    5 * hraw(ref, row + 2, col) + hraw(ref, row + 3, col);
+
+ChromaWin chromaRefWindow(const MbCase& mb, int plane) {
+    ChromaWin win{};
+    const int originX = mb.mbX * 8 + (mb.mvX >> 3);
+    const int originY = mb.mbY * 8 + (mb.mvY >> 3);
+    for (int i = 0; i < 81; ++i)
+        win[i] = refSample(plane, originX + (i % 9), originY + (i / 9));
+    return win;
+}
+
+int winPix(const LumaWin& w, int row, int col) { return w[row * 21 + col]; }
+
+int hrawWin(const LumaWin& w, int row, int col) {
+    return winPix(w, row, col - 2) - 5 * winPix(w, row, col - 1) + 20 * winPix(w, row, col) +
+           20 * winPix(w, row, col + 1) - 5 * winPix(w, row, col + 2) + winPix(w, row, col + 3);
+}
+int halfHWin(const LumaWin& w, int row, int col) { return clip1((hrawWin(w, row, col) + 16) >> 5); }
+int halfVWin(const LumaWin& w, int row, int col) {
+    return clip1((winPix(w, row - 2, col) - 5 * winPix(w, row - 1, col) + 20 * winPix(w, row, col) +
+                  20 * winPix(w, row + 1, col) - 5 * winPix(w, row + 2, col) + winPix(w, row + 3, col) + 16) >> 5);
+}
+int halfCWin(const LumaWin& w, int row, int col) {
+    const int sum = hrawWin(w, row - 2, col) - 5 * hrawWin(w, row - 1, col) +
+                    20 * hrawWin(w, row, col) + 20 * hrawWin(w, row + 1, col) -
+                    5 * hrawWin(w, row + 2, col) + hrawWin(w, row + 3, col);
     return clip1((sum + 512) >> 10);
 }
 
 uint8_t lumaPred(const MbCase& mb, int sampleIdx) {
-    const int sx = sampleIdx & 15;
-    const int sy = sampleIdx >> 4;
-    const int baseX = mb.mbX * 16 + sx + (mb.mvX >> 2);
-    const int baseY = mb.mbY * 16 + sy + (mb.mvY >> 2);
-    uint8_t ref[9][9]{};
-    for (int r = 0; r < 9; ++r) {
-        for (int c = 0; c < 9; ++c) ref[r][c] = refSample(0, baseX + c - 4, baseY + r - 4);
-    }
+    const LumaWin w = lumaRefWindow(mb);
+    const int col = (sampleIdx & 15) + 2;
+    const int row = (sampleIdx >> 4) + 2;
     const int fx = mb.mvX & 3;
     const int fy = mb.mvY & 3;
     switch ((fy << 2) | fx) {
-    case 0x0: return ref[4][4];
-    case 0x1: return avg2(ref[4][4], halfH(ref, 0, 0));
-    case 0x2: return halfH(ref, 0, 0);
-    case 0x3: return avg2(halfH(ref, 0, 0), ref[4][5]);
-    case 0x4: return avg2(ref[4][4], halfV(ref, 0, 0));
-    case 0x5: return avg2(halfH(ref, 0, 0), halfV(ref, 0, 0));
-    case 0x6: return avg2(halfH(ref, 0, 0), halfC(ref, 0, 0));
-    case 0x7: return avg2(halfH(ref, 0, 0), halfV(ref, 0, 1));
-    case 0x8: return halfV(ref, 0, 0);
-    case 0x9: return avg2(halfV(ref, 0, 0), halfC(ref, 0, 0));
-    case 0xa: return halfC(ref, 0, 0);
-    case 0xb: return avg2(halfC(ref, 0, 0), halfV(ref, 0, 1));
-    case 0xc: return avg2(halfV(ref, 0, 0), ref[5][4]);
-    case 0xd: return avg2(halfH(ref, 1, 0), halfV(ref, 0, 0));
-    case 0xe: return avg2(halfC(ref, 0, 0), halfH(ref, 1, 0));
-    default: return avg2(halfH(ref, 1, 0), halfV(ref, 0, 1));
+    case 0x0: return static_cast<uint8_t>(winPix(w, row, col));
+    case 0x1: return static_cast<uint8_t>(avg2(winPix(w, row, col), halfHWin(w, row, col)));
+    case 0x2: return static_cast<uint8_t>(halfHWin(w, row, col));
+    case 0x3: return static_cast<uint8_t>(avg2(halfHWin(w, row, col), winPix(w, row, col + 1)));
+    case 0x4: return static_cast<uint8_t>(avg2(winPix(w, row, col), halfVWin(w, row, col)));
+    case 0x5: return static_cast<uint8_t>(avg2(halfHWin(w, row, col), halfVWin(w, row, col)));
+    case 0x6: return static_cast<uint8_t>(avg2(halfHWin(w, row, col), halfCWin(w, row, col)));
+    case 0x7: return static_cast<uint8_t>(avg2(halfHWin(w, row, col), halfVWin(w, row, col + 1)));
+    case 0x8: return static_cast<uint8_t>(halfVWin(w, row, col));
+    case 0x9: return static_cast<uint8_t>(avg2(halfVWin(w, row, col), halfCWin(w, row, col)));
+    case 0xa: return static_cast<uint8_t>(halfCWin(w, row, col));
+    case 0xb: return static_cast<uint8_t>(avg2(halfCWin(w, row, col), halfVWin(w, row, col + 1)));
+    case 0xc: return static_cast<uint8_t>(avg2(halfVWin(w, row, col), winPix(w, row + 1, col)));
+    case 0xd: return static_cast<uint8_t>(avg2(halfHWin(w, row + 1, col), halfVWin(w, row, col)));
+    case 0xe: return static_cast<uint8_t>(avg2(halfCWin(w, row, col), halfHWin(w, row + 1, col)));
+    default: return static_cast<uint8_t>(avg2(halfHWin(w, row + 1, col), halfVWin(w, row, col + 1)));
     }
 }
 
@@ -219,14 +238,13 @@ uint8_t chromaPred(const MbCase& mb, int sampleIdx) {
     const int rel = (sampleIdx < 320) ? sampleIdx - 256 : sampleIdx - 320;
     const int sx = rel & 7;
     const int sy = rel >> 3;
-    const int baseX = mb.mbX * 8 + sx + (mb.mvX >> 3);
-    const int baseY = mb.mbY * 8 + sy + (mb.mvY >> 3);
+    const ChromaWin w = chromaRefWindow(mb, plane);
     const int fx = mb.mvX & 7;
     const int fy = mb.mvY & 7;
-    const int p00 = refSample(plane, baseX, baseY);
-    const int p10 = refSample(plane, baseX + 1, baseY);
-    const int p01 = refSample(plane, baseX, baseY + 1);
-    const int p11 = refSample(plane, baseX + 1, baseY + 1);
+    const int p00 = w[sy * 9 + sx];
+    const int p10 = w[sy * 9 + sx + 1];
+    const int p01 = w[(sy + 1) * 9 + sx];
+    const int p11 = w[(sy + 1) * 9 + sx + 1];
     const int sum = (8 - fx) * (8 - fy) * p00 + fx * (8 - fy) * p10 +
                     (8 - fx) * fy * p01 + fx * fy * p11 + 32;
     return static_cast<uint8_t>(sum >> 6);
@@ -287,37 +305,24 @@ bool checkResidualFixture() {
     return true;
 }
 
-std::size_t readsPerMb() { return 256 * 81 + 128 * 4; }
+constexpr int kLumaWinSamples = 441;
+constexpr int kChromaWinSamples = 81;
+
+std::size_t readsPerMb() { return kLumaWinSamples + 2 * kChromaWinSamples; }
 std::size_t expectedReadCount() { return readsPerMb() * kCases.size(); }
 
 uint32_t expectedReadAddr(const MbCase& mb, int localOrdinal) {
-    int idx = 0;
-    int tap = 0;
-    int cur = 0;
-    for (idx = 0; idx < 384; ++idx) {
-        const int taps = (idx < 256) ? 81 : 4;
-        if (localOrdinal < cur + taps) {
-            tap = localOrdinal - cur;
-            break;
-        }
-        cur += taps;
-    }
-    if (idx >= 384) return 0;
-    if (idx < 256) {
-        const int sx = idx & 15;
-        const int sy = idx >> 4;
-        const int col = tap % 9;
-        const int row = tap / 9;
-        const int x = clampInt(mb.mbX * 16 + sx + (mb.mvX >> 2) + col - 4, 0, FRAME_W - 1);
-        const int y = clampInt(mb.mbY * 16 + sy + (mb.mvY >> 2) + row - 4, 0, FRAME_H - 1);
+    if (localOrdinal < kLumaWinSamples) {
+        const int x = clampInt(mb.mbX * 16 + (mb.mvX >> 2) + (localOrdinal % 21) - 2, 0, FRAME_W - 1);
+        const int y = clampInt(mb.mbY * 16 + (mb.mvY >> 2) + (localOrdinal / 21) - 2, 0, FRAME_H - 1);
         return i420Addr(REF_BASE, 0, x, y);
     }
-    const int plane = (idx < 320) ? 1 : 2;
-    const int rel = (idx < 320) ? idx - 256 : idx - 320;
-    const int sx = rel & 7;
-    const int sy = rel >> 3;
-    const int x = clampInt(mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1), 0, C_W - 1);
-    const int y = clampInt(mb.mbY * 8 + sy + (mb.mvY >> 3) + ((tap >> 1) & 1), 0, C_H - 1);
+    const int rel = (localOrdinal < kLumaWinSamples + kChromaWinSamples)
+                        ? localOrdinal - kLumaWinSamples
+                        : localOrdinal - kLumaWinSamples - kChromaWinSamples;
+    const int plane = (localOrdinal < kLumaWinSamples + kChromaWinSamples) ? 1 : 2;
+    const int x = clampInt(mb.mbX * 8 + (mb.mvX >> 3) + (rel % 9), 0, C_W - 1);
+    const int y = clampInt(mb.mbY * 8 + (mb.mvY >> 3) + (rel / 9), 0, C_H - 1);
     return i420Addr(REF_BASE, plane, x, y);
 }
 
@@ -328,21 +333,11 @@ uint32_t expectedReadAddrForOrdinal(std::size_t ord) {
 }
 
 bool expectedChromaRightClamp(const MbCase& mb, int localOrdinal) {
-    int idx = 0;
-    int tap = 0;
-    int cur = 0;
-    for (idx = 0; idx < 384; ++idx) {
-        const int taps = (idx < 256) ? 81 : 4;
-        if (localOrdinal < cur + taps) {
-            tap = localOrdinal - cur;
-            break;
-        }
-        cur += taps;
-    }
-    if (idx < 256 || idx >= 384) return false;
-    const int rel = (idx < 320) ? idx - 256 : idx - 320;
-    const int sx = rel & 7;
-    const int unclampedX = mb.mbX * 8 + sx + (mb.mvX >> 3) + (tap & 1);
+    if (localOrdinal < kLumaWinSamples) return false;
+    const int rel = (localOrdinal < kLumaWinSamples + kChromaWinSamples)
+                        ? localOrdinal - kLumaWinSamples
+                        : localOrdinal - kLumaWinSamples - kChromaWinSamples;
+    const int unclampedX = mb.mbX * 8 + (mb.mvX >> 3) + (rel % 9);
     return unclampedX > C_W - 1;
 }
 
