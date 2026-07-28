@@ -3636,3 +3636,90 @@ The lesson is not "I made a mistake". It is that **the guard and the assertion
 lived in different branches**, so the assertion was reachable without the guard.
 Any gate with a precondition should be checked for a path that reaches the verdict
 without reaching the precondition. That is mechanical and worth doing fleet-wide.
+
+---
+
+## §52 — Both halves of the parent's gating instruction are vacuous, measured
+
+### 52.1 The gate address cannot fail open
+
+The parent gated my token on one number: `0x3007F100/104/128/12C` read on this
+boot. **That is the dead address from §48.** It is unwritten DDR; it reads zero
+on every boot and every bitstream, so the gate is structurally incapable of the
+"live" outcome that would stop the experiment. It can only ever say "dead →
+proceed".
+
+One boot, one bitstream, one instant:
+```
+0x3007F100 = 0x00000000     0x300FF100 = 0x504C5853  "PLXS"
+0x3007F104 = 0x00000000     0x300FF104 = 0x42BE6000
+0x3007F128 = 0x00000000     0x300FF128 = 0x504C5844  "PLXD"
+0x3007F12C = 0x00000000     0x300FF12C = 0x0BA10002 -> 0x0C5B0002 (+62/s)
+```
+Five consecutive samples: left column all zero, right column advancing +124 per
+2 s. This is the same vacuous-control family the parent asked to be made a
+standing check, re-committed in the instruction that gates the token.
+
+### 52.2 The A/B discriminator is vacuous too — and this is the bigger error
+
+The framing was: `3b1e8435` **advances** ⇒ the SDC change caused the regression.
+
+`frames_done[63:48]` is `bank_vsync_count`, a **free-running vsync counter**
+(§48; `vsync_toggle` flips in *both* arms at `ddr_frame_store.sv:244/:246`). I
+measured it advancing at **62/s while the screen was flat black RGB(7,7,7) and
+the ARM painter was not running at all** — doorbell `0x300FF000 = 0`, nothing
+submitted, nothing displayed.
+
+**It advances whenever the core is configured and the pixel clock runs.** It is
+not evidence of frame delivery, so "advances" is guaranteed on *both* arms. The
+A/B could not have distinguished SDC from RTL under any outcome.
+
+### 52.3 The deploy was already spent; `3b1e8435` has been resident since 14:56
+
+No cold boot has occurred: `uptime 11444s` → boot **14:15**, the same boot on
+which `fb4bad84` ran 14:20–14:56. The "clean cold-boot observation" being
+preserved did not exist.
+
+I ran the sanctioned reload only to restore the ARM painter I had stalled. It
+reported `Remote already has md5=3b1e8435 — skip scp`: **no new bitstream.**
+
+### 52.4 Screen state is confounded by the painter, not just the bitstream
+
+I loaded Plex with a bare `load_core`. Result: **flat black screen with fully
+live, advancing telemetry.** `deploy_plex_core.sh:21` documents exactly this —
+*"without a restart the frame store has no writer and the screen is [black]"*.
+After the sanctioned reload restarted `misterplexd`, the logo returned.
+
+So "grey + left-edge noise on `fb4bad84`" vs "silent telemetry" cannot be
+attributed to the bitstream without controlling for whether the painter was
+restarted. **Screen state and mailbox state are independent observables, and I
+have now observed live-telemetry + black-screen simultaneously** — the inverse of
+the parent's table entry. Neither implies the other, in either direction.
+
+### 52.5 What `3b1e8435` actually shows (provenance-bound, rc=0)
+
+```
+corename=Plex  rbf_md5=3b1e8435  LOAD_AFTER_WRITE  FABRIC_LIVE  rc=0
+screen : 223/225 frames CONTENT over 45 s (only the 2 settling frames black)
+chevron: 13,710 px  bbox x486..703 y240..479  centroid (595,359)
+left   : 0.8725 dark vs 0.001627 control = 536x
+```
+The bbox reproduces my 15:50 measurement exactly. The left-edge artifact is
+severe and present.
+
+### 52.6 Livelock signature ABSENT; `disp_bank` still unscored
+
+60-sample burst, decoded against the RTL packing at `ddr_frame_store.sv:945-956`
+(`[35]` swap_pending, `[34]` disp_bank, `[33:32]` free_bank_mask):
+```
+swap_pending   0 and 1, 24 transitions   -> does NOT latch
+free_bank_mask 0 and 2                   -> non-zero
+disp_bank      0 only, 0 transitions
+frames_done    +66 across the burst
+```
+The `free=0 swap=1` latched livelock is **absent**. But note §48: free_bank_mask
+is *derived* from swap_pending in one expression, so criteria 2 and 3 are **one
+observable reported twice**, not two independent passes.
+
+`disp_bank` never toggles — and that remains **UNSCORED, not FAILED**: the idle
+logo is static, so there is no second frame to swap to. It needs active playback.

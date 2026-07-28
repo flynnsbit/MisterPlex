@@ -26,10 +26,19 @@ Spatial structure, which noise does not have:
   flat 8x8 block fraction — real UI/video has large uniform regions; snow
       has none at all.
 
+A DEGENERATE frame (uniform, e.g. no-signal RGB(7,7,7) or an all-black screen)
+trivially MAXIMISES both metrics: autocorrelation is 1.000 at every lag and
+100% of blocks are flat. Measured on a real no-signal capture:
+    luma 7.00  std 0.00  lag1 1.000  lag4 1.000  lag16 1.000  flat 100.0%
+So the snow test alone reports such a frame as LOCKED, which a reader will take
+to mean "a picture is present". It is not. Degeneracy is therefore tested FIRST,
+before either structure test, and gets its own verdict and exit code.
+
 Exit codes
   0   LOCKED     structured content, HDMI locked
   1   SNOW       unlocked / sync loss - NOT content, do not score as content
   2   usage/read error
+  3   FLAT       uniform frame - no picture; not evidence of a locked signal
   77  UNSCORED   no frames supplied
 """
 
@@ -39,6 +48,8 @@ import sys
 
 LAG16_MIN = 0.35   # below this, structure is gone by 16 px
 FLAT_MIN = 2.0     # percent of 8x8 blocks that are near-uniform
+STD_MIN = 1.0      # below this the frame is uniform: no picture, and both
+                   # structure metrics saturate at their "good" end
 
 
 def analyse(path):
@@ -78,6 +89,7 @@ def main():
     ap.add_argument("frames", nargs="*", help="PNG/JPG frames to classify")
     ap.add_argument("--lag16-min", type=float, default=LAG16_MIN)
     ap.add_argument("--flat-min", type=float, default=FLAT_MIN)
+    ap.add_argument("--std-min", type=float, default=STD_MIN)
     args = ap.parse_args()
 
     frames = [f for f in args.frames if os.path.exists(f)]
@@ -101,20 +113,36 @@ def main():
     print(f"{'frame':38s} {'luma':>7} {'std':>7} {'lag1':>7} {'lag4':>7} "
           f"{'lag16':>7} {'flat%':>7}  verdict")
     snow = 0
+    degenerate = 0
     for f in frames:
         try:
             m = analyse(f)
         except Exception as e:  # noqa: BLE001
             print(f"ERROR {f}: {e}", file=sys.stderr)
             return 2
-        is_snow = m["lag16"] < args.lag16_min and m["flat_pct"] < args.flat_min
-        if is_snow:
+        # Degeneracy first: a uniform frame saturates lag16 and flat_pct at the
+        # values that otherwise mean "structured", so it must never reach the
+        # snow/locked comparison.
+        is_flat = m["std"] < args.std_min
+        is_snow = (not is_flat) and (m["lag16"] < args.lag16_min
+                                     and m["flat_pct"] < args.flat_min)
+        if is_flat:
+            degenerate += 1
+        elif is_snow:
             snow += 1
+        verdict = "FLAT" if is_flat else ("SNOW" if is_snow else "LOCKED")
         print(f"{os.path.basename(f):38s} {m['luma']:7.2f} {m['std']:7.2f} "
               f"{m['lag1']:7.3f} {m['lag4']:7.3f} {m['lag16']:7.3f} "
-              f"{m['flat_pct']:6.1f}%  {'SNOW' if is_snow else 'LOCKED'}")
+              f"{m['flat_pct']:6.1f}%  {verdict}")
 
-    print(f"---\nsnow_frames={snow}/{len(frames)}")
+    print(f"---\nsnow_frames={snow}/{len(frames)} "
+          f"flat_frames={degenerate}/{len(frames)}")
+    if degenerate:
+        print("FLAT: at least one frame is uniform (spatial std below "
+              f"{args.std_min}). There is no picture. Both structure metrics "
+              "saturate on such a frame, so this is NOT evidence of a locked "
+              "signal - it is the absence of content.")
+        return 3
     if snow:
         print("SNOW: at least one frame is unlocked HDMI noise. High spatial std "
               "on such a frame is NOISE, not content; do not score it as "
