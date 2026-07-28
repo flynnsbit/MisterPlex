@@ -104,6 +104,14 @@
       "required_substrings": [
         "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(2,0) read_ordinal 21248 got_addr=0x401c want_addr=0x401d"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_drop_scheduled_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping the scheduled CAVLC/IDCT residual must fail the exact P16x16 syntax-path sample scoreboard, proving the fixture is not zero-residual-vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
     }
   ]
 }

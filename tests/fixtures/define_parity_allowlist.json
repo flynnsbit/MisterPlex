@@ -10,6 +10,7 @@
     "H264_DECODE_CORE_FAULT_BAD_RBSP_REQ": "Injected decode-core P16x16 syntax-walker RBSP request expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_PRED": "Injected decode-core P16x16 real-P prediction-drop expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_RESIDUAL": "Injected decode-core P16x16 real-P residual-drop expected-red fault.",
+    "H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL": "Injected decode-core P16x16 scheduled CAVLC/IDCT residual expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_WB": "Injected decode-core DPB writeback expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR": "Injected decode-core P16x16 MV-neighbor expected-red fault.",
     "H264_DECODE_CORE_FAULT_PERTURB_MV": "Injected decode-core P16x16 real-P motion-vector expected-red fault.",

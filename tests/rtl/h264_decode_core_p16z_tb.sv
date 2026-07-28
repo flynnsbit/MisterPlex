@@ -27,6 +27,8 @@ module h264_decode_core_p16z_tb #(
 	input  wire signed [15:0] p16_residual_y [0:255],
 	input  wire signed [15:0] p16_residual_u [0:63],
 	input  wire signed [15:0] p16_residual_v [0:63],
+	input  wire [7:0]  rbsp_byte_in [0:63],
+	input  wire [15:0] rbsp_window_base,
 	input  wire [7:0]  dpb_rd_data,
 	input  wire        dpb_rd_valid,
 
@@ -44,7 +46,6 @@ module h264_decode_core_p16z_tb #(
 	output wire [15:0] current_mb_addr,
 	output wire        error
 );
-	wire [7:0] rbsp_byte [0:63];
 	wire [3:0] intra4x4_modes [0:15];
 	wire [7:0] recon_y [0:255];
 	wire [7:0] recon_u [0:63];
@@ -52,7 +53,6 @@ module h264_decode_core_p16z_tb #(
 	genvar zi;
 	generate
 		for (zi = 0; zi < 64; zi = zi + 1) begin : gen_zero64
-			assign rbsp_byte[zi] = 8'd0;
 			assign recon_u[zi] = 8'd0;
 			assign recon_v[zi] = 8'd0;
 		end
@@ -81,8 +81,8 @@ module h264_decode_core_p16z_tb #(
 		.mb_width(MB_WIDTH_PARAM),
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
-		.rbsp_byte(rbsp_byte),
-		.rbsp_window_base(16'd0),
+		.rbsp_byte(rbsp_byte_in),
+		.rbsp_window_base(rbsp_window_base),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(mb_type_valid),

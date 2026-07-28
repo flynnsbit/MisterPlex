@@ -4,9 +4,10 @@
 // a complete decode pipeline for Baseline Profile CAVLC streams.
 //
 // STATUS: PARTIAL PRODUCT DATAPATH.
-//         Product DPB writeback is implemented for already-reconstructed I420
-//         macroblocks.  Syntax walking, P residual/MV parsing, MC, deblock,
-//         and full decode scheduling remain open.
+//         Product DPB writeback, P16 syntax handoff, MV prediction state, and
+//         the first scheduled P16 luma CAVLC/IDCT residual block are wired.
+//         Full residual traversal, P partition modes, deblock, and full decode
+//         scheduling remain open.
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
@@ -254,6 +255,8 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_TAP_REQ  = 8'd2;
     localparam [7:0] ST_P16_TAP_WAIT = 8'd3;
     localparam [7:0] ST_P16_WRITE    = 8'd4;
+    localparam [7:0] ST_P16_RES_START = 8'd5;
+    localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
     localparam [15:0] FRAME_W16 = 16'(FRAME_W);
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
@@ -271,6 +274,9 @@ module h264_decode_core #(
     reg signed [15:0] p16_mv_y_qpel_r;
     reg [1:0]  p16_ref_idx_l0_r;
     reg [6:0]  p16_tap_idx;
+    reg [15:0] p16_residual_bit_offset_r;
+    reg [15:0] p16_rbsp_window_base_r;
+    reg        cavlc_start_r;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
@@ -306,6 +312,17 @@ module h264_decode_core #(
                 clip_u8 = 8'd255;
             else
                 clip_u8 = value[7:0];
+        end
+    endfunction
+
+    function automatic signed [15:0] sat16(input signed [28:0] value);
+        begin
+            if (value > 29'sd32767)
+                sat16 = 16'sd32767;
+            else if (value < -29'sd32768)
+                sat16 = -16'sd32768;
+            else
+                sat16 = value[15:0];
         end
     endfunction
 
@@ -406,6 +423,52 @@ module h264_decode_core #(
         .mv_y(syntax_mv_y),
         .skip_zero(syntax_mv_skip_zero)
     );
+
+    wire [15:0] p16_residual_window_bit_base = {p16_rbsp_window_base_r[12:0], 3'd0};
+    wire [15:0] p16_residual_rel_bit_offset = p16_residual_bit_offset_r - p16_residual_window_bit_base;
+    wire [9:0]  p16_residual_bit_offset10 = p16_residual_rel_bit_offset[9:0];
+    wire        cavlc_busy;
+    wire        cavlc_done;
+    wire        cavlc_ok;
+    wire [9:0]  cavlc_bit_offset_end;
+    wire [4:0]  cavlc_total_coeff;
+    wire [1:0]  cavlc_trailing_ones;
+    wire [3:0]  cavlc_total_zeros;
+    wire signed [15:0] cavlc_coeff [0:15];
+    wire signed [15:0] cavlc_level_dbg [0:15];
+    wire [3:0]  cavlc_run_dbg [0:15];
+    h264_cavlc_residual_block u_product_p16_residual0 (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(cavlc_start_r),
+        .coeff_token_table(3'd0),
+        .max_coeff(5'd16),
+        .bit_offset_start(p16_residual_bit_offset10),
+        .bit_len(10'd512),
+        .rbsp(rbsp_byte),
+        .busy(cavlc_busy),
+        .done(cavlc_done),
+        .ok(cavlc_ok),
+        .bit_offset_end(cavlc_bit_offset_end),
+        .total_coeff(cavlc_total_coeff),
+        .trailing_ones(cavlc_trailing_ones),
+        .total_zeros(cavlc_total_zeros),
+        .coeff(cavlc_coeff),
+        .level_dbg(cavlc_level_dbg),
+        .run_dbg(cavlc_run_dbg)
+    );
+    wire signed [28:0] p16_res_dequant [0:15];
+    wire signed [28:0] p16_res_idct [0:15];
+    h264_dequant4x4 u_product_p16_res_dequant (
+        .coeff(cavlc_coeff),
+        .qp(slice_qp_y),
+        .max_coeff(5'd16),
+        .dequant(p16_res_dequant)
+    );
+    h264_idct4x4 u_product_p16_res_idct (
+        .dequant(p16_res_dequant),
+        .residual(p16_res_idct)
+    );
     wire [6:0] p16_luma_tap_col7 = p16_tap_idx % 7'd9;
     wire [6:0] p16_luma_tap_row7 = p16_tap_idx / 7'd9;
     wire signed [15:0] p16_luma_tap_col = $signed({9'd0, p16_luma_tap_col7}) - 16'sd4;
@@ -493,6 +556,7 @@ module h264_decode_core #(
         dpb_rd_en_r <= 1'b0;
         p16_wr_en_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
+        cavlc_start_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -505,6 +569,9 @@ module h264_decode_core #(
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
             p16_tap_idx <= 7'd0;
+            p16_residual_bit_offset_r <= 16'd0;
+            p16_rbsp_window_base_r <= 16'd0;
+            cavlc_start_r <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
@@ -568,15 +635,17 @@ module h264_decode_core #(
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
+                    p16_residual_bit_offset_r <= mb_residual_bit_offset;
+                    p16_rbsp_window_base_r <= rbsp_window_base;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_p16_residual_y[wb_i] <= p16_residual_y[wb_i];
+                        lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= p16_residual_u[wb_i];
-                        lat_p16_residual_v[wb_i] <= p16_residual_v[wb_i];
+                        lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
+                        lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
-                    wb_state <= ST_P16_TAP_REQ;
+                    wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
                 end else if (recon_mb_valid) begin
                     wb_mb_x <= recon_mb_x;
                     wb_mb_y <= recon_mb_y;
@@ -590,6 +659,21 @@ module h264_decode_core #(
                         lat_recon_v[wb_i] <= recon_v[wb_i];
                     end
                     wb_state <= ST_WRITE;
+                end
+            end
+            ST_P16_RES_START: begin
+                cavlc_start_r <= 1'b1;
+                wb_state <= ST_P16_RES_WAIT;
+            end
+            ST_P16_RES_WAIT: begin
+                if (cavlc_done) begin
+`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
+                    if (cavlc_ok) begin
+                        for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
+                            lat_p16_residual_y[((wb_i / 4) * 16) + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
+                    end
+`endif
+                    wb_state <= ST_P16_TAP_REQ;
                 end
             end
             ST_P16_TAP_REQ: begin
@@ -675,6 +759,8 @@ module h264_decode_core #(
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | |mv_x_qpel | |mv_y_qpel |
-        |part_mode | |part_idx;
+        |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
+        |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
+        |cavlc_level_dbg[0] | |cavlc_run_dbg[0];
 
 endmodule

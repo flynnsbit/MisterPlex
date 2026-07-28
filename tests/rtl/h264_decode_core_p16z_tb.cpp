@@ -20,8 +20,13 @@ constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int MV_Y_QPEL = 0;
-constexpr int kMeasuredP16RealPCycles = 85767;
+constexpr int kMeasuredP16RealPCycles = 85860;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
+
+constexpr int kResidualBlockSamples[2][16] = {
+    {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
+    {260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260},
+};
 
 struct Write {
     uint32_t addr = 0;
@@ -105,13 +110,13 @@ uint8_t refSampleFromAddr(uint32_t addr) {
     return 0;
 }
 
-int residualSample(int globalIdx) {
-    if (globalIdx == 0) return 19;
-    int r = ((globalIdx * 7) % 43) - 21;
-    if (r == 0) r = 11;
-    if (globalIdx == 5) r = 35;
-    if (globalIdx == 6) r = -35;
-    return r;
+int residualSample(int mbIdx, int localIdx) {
+    if (localIdx < 256) {
+        const int sx = localIdx & 15;
+        const int sy = localIdx >> 4;
+        if (sx < 4 && sy < 4) return kResidualBlockSamples[mbIdx][sy * 4 + sx];
+    }
+    return 0;
 }
 
 uint8_t clipU8(int value) {
@@ -192,7 +197,7 @@ uint8_t chromaPred(const MbCase& mb, int sampleIdx) {
 }
 
 uint8_t predSample(const MbCase& mb, int idx) { return (idx < 256) ? lumaPred(mb, idx) : chromaPred(mb, idx); }
-uint8_t expectedRecon(const MbCase& mb, int globalIdx, int localIdx) { return clipU8(predSample(mb, localIdx) + residualSample(globalIdx)); }
+uint8_t expectedRecon(int mbIdx, const MbCase& mb, int localIdx) { return clipU8(predSample(mb, localIdx) + residualSample(mbIdx, localIdx)); }
 
 std::size_t readsPerMb() { return 256 * 81 + 128 * 4; }
 std::size_t expectedReadCount() { return readsPerMb() * kCases.size(); }
@@ -291,6 +296,8 @@ void clearInputs(Sim& s) {
     s.top.p16_ref_idx_l0 = 0;
     s.top.dpb_rd_valid = 0;
     s.top.dpb_rd_data = 0;
+    s.top.rbsp_window_base = 0;
+    for (int i = 0; i < 64; ++i) s.top.rbsp_byte_in[i] = 0;
     for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = 0;
     for (int i = 0; i < 64; ++i) {
         s.top.p16_residual_u[i] = 0;
@@ -298,8 +305,16 @@ void clearInputs(Sim& s) {
     }
 }
 
+void loadScheduledResidualRbsp(Sim& s) {
+    const uint8_t mb0[] = {0x07, 0x0c, 0xe0};
+    const uint8_t mb1[] = {0x14, 0x00, 0x04, 0x1f, 0xa0};
+    for (std::size_t i = 0; i < sizeof(mb0); ++i) s.top.rbsp_byte_in[37 + i] = mb0[i];
+    for (std::size_t i = 0; i < sizeof(mb1); ++i) s.top.rbsp_byte_in[43 + i] = mb1[i];
+}
+
 void reset(Sim& s) {
     clearInputs(s);
+    loadScheduledResidualRbsp(s);
     s.top.reset = 1;
     s.tick();
     s.tick();
@@ -315,18 +330,8 @@ void driveSliceStart(Sim& s) {
     s.tick();
 }
 
-void loadResiduals(Sim& s, int mbOrdinal) {
-    const int base = mbOrdinal * 384;
-    for (int i = 0; i < 256; ++i) s.top.p16_residual_y[i] = residualSample(base + i);
-    for (int i = 0; i < 64; ++i) {
-        s.top.p16_residual_u[i] = residualSample(base + 256 + i);
-        s.top.p16_residual_v[i] = residualSample(base + 320 + i);
-    }
-}
-
 void driveMb(Sim& s, int mbOrdinal) {
     const MbCase& mb = kCases.at(mbOrdinal);
-    loadResiduals(s, mbOrdinal);
     s.top.p16_mb_x = mb.mbX;
     s.top.p16_mb_y = mb.mbY;
     s.top.p16_mb_is_ref = 1;
@@ -407,8 +412,8 @@ int checkScoreboard(const Sim& s) {
                 return 1;
             }
             const int pred = predSample(mb, local);
-            const int residual = residualSample(global);
-            const uint8_t want = expectedRecon(mb, global, local);
+            const int residual = residualSample(static_cast<int>(mbIdx), local);
+            const uint8_t want = expectedRecon(static_cast<int>(mbIdx), mb, local);
             if (pred + residual < 0 || pred + residual > 255) ++clipped;
             if (w.data != want) {
                 std::cerr << "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(" << mb.mbX << "," << mb.mbY
@@ -435,8 +440,8 @@ int checkScoreboard(const Sim& s) {
                   << clipped << " want>=2\n";
         return 1;
     }
-    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor path "
-              << "384x2 exact clipped pred+residual samples landed at DPB addresses; reads="
+    std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor+CAVLC-residual path "
+              << "384x2 exact clipped pred+scheduled-residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
               << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
