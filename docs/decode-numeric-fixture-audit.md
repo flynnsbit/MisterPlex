@@ -42,15 +42,37 @@ Observed result after the first pass: **SOUND=7, VACUOUS=2 (both closed here), O
 
 ## Real-content cross-check
 
-The derived 624×480 Constrained Baseline asset is recorded in `docs/derived-validation-assets.md`, not checked into the fixture set. `docs/phase3-decode.md` reports it as 1800 frames, 12,713,118 Annex-B bytes, and ~20.5% more bytes/MB plus ~29.6% more bytes/P-frame than the synthetic 624×480 P16 fixture. That makes it a better source of image-statistic and sustained-throughput stress, but **no unit golden/reference consumes it yet**.
+The derived 624×480 Constrained Baseline asset is recorded in `docs/derived-validation-assets.md`. As of `01a8aa6`, per-frame Y/U/V hashes are tracked in `tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`, generated with `-skip_loop_filter all` to match the pre-deblock fabric stage. The full media remains untracked under `build/`, so `tests/unit/test_derived_validation_hashes.sh` currently reports `SKIP-NOT-PASS rc=77` unless the asset is regenerated.
 
-Priority properties that the derived asset should exercise better than the synthetic fixtures once a derived golden is wired:
+`docs/phase3-decode.md` reports the derived stream as 1800 frames, 12,713,118 Annex-B bytes, and ~20.5% more bytes/MB plus ~29.6% more bytes/P-frame than the synthetic 624×480 P16 fixture. The hash manifest adds scoreability markers: **1790 unique Y-plane hashes**, and **U/V differ on 1774/1800 frames**. The 26 U/V-alias frames are exactly frames `0..25`; they cannot detect a U/V swap and must not be selected as chroma-discrimination slices.
 
-1. **Sustained residual/CAVLC and scan-order diversity:** current exact fixtures use MB0 and two scheduled P16 MBs; the derived stream has 1764 P frames of real-image-statistic residuals.
-2. **Long-run frame-plane Y/U/V statistics:** current frame-plane goldens prove exact byte/provenance comparisons on synthetic clips; the derived asset should become the high-entropy I420 golden source.
-3. **Throughput/ring lifecycle under realistic packet sizes:** current correctness fixtures are short; the derived asset is the measured 1800-frame sustained workload.
+### Properties in the real-content gap
 
-Properties still **not** safely replaced by real content:
+These audited properties are exercised by the derived real-content reference in ways the synthetic fixtures do not cover, or cover only narrowly:
+
+| Property | Synthetic coverage today | Derived-real coverage signal | Priority |
+| --- | --- | --- | --- |
+| Sustained residual/CAVLC diversity and scan-order placement | MB0 luma plus two scheduled P16 MBs/four scheduled luma residual blocks; good for local proof, narrow for coefficient diversity. | 1764 P frames and higher bytes/P-frame imply many more nonzero residual patterns and scan positions once raw slices are committed. | Highest: use for scan-order/dequant/IDCT/residual slice selection. |
+| Long-run Y/U/V plane discrimination | Synthetic DPB patterns and frame-plane goldens are now sound, but short and deliberately shaped. | 1790 unique Y hashes and U/V distinct on 1774 frames give real-image-statistic plane discrimination at 624×480. | High: choose only U/V-distinct frames for chroma slices. |
+| Real 624×480 frame-plane final-byte oracle at the fabric loop-filter stage | Synthetic 624×480 frame-plane goldens prove mechanics and provenance, not real-image value ranges. | Per-plane hashes score native I420 with disabled loop filter over 1800 frames. | High once raw slice/candidate comparator is always-on. |
+| Sustained throughput/ring lifecycle under realistic packet sizes | Short synthetic clips; good unit vectors, weak sustained workload proxies. | 1800-frame derived stream is the measured ARM-boundary workload. | Medium for numeric correctness, high for performance/lifecycle gates. |
+| Motion/reference variability over time | Synthetic P16 motion vectors are mutation-tested but compact. | Real-content temporal changes across 1790 unique frames can catch stale-frame/reference lifecycle defects if slices are spread through the clip. | Medium; requires committed slices or candidate raw output. |
+
+Properties **not closed by real content alone**:
 
 - **DPB upper clamp edge:** real content may not motion-compensate into the bottom/right boundary on demand; the explicit edge-sentinel probe remains required.
 - **Recon saturation clipping:** real content may not hit exact 0/255 reconstruction boundaries; the synthetic clip probes remain required.
+- **Unsupported stream/profile contracts:** the derived asset is intentionally Baseline/CAVLC/ref=1/no-B and cannot test High/CABAC/B refusal.
+- **Chroma on frames 0..25:** U and V hashes alias, so those frames are vacuous for U/V swap detection.
+
+### Slice-selection guidance for W-FEED
+
+A slice picked for coverage should beat a slice picked for position. From the hash-only manifest, the hard constraints are:
+
+1. **Reject frames 0..25 for chroma discrimination** (`U == V`).
+2. **Require U/V-distinct frames** for any chroma or U/V-swap coverage.
+3. **Spread slices across the 1800-frame run** to catch stale/reference lifecycle drift, not just one local motion region.
+4. **Prefer frames with raw-slice evidence of nonzero residual across multiple macroblocks and multiple 4×4 blocks.**
+5. **Prefer frames with high Y/U/V variation or edge/extreme samples**, but keep explicit synthetic sentinels for exact clamp/saturation boundaries.
+
+Hash-only seed candidates that satisfy U/V distinctness and temporal spread are: `26, 300, 600, 900, 1200, 1500, 1799`. Final committed slices should be refined from raw frame data/residual parsing, not hashes alone: choose the subset with the most nonzero residual blocks, distinct U/V planes, and any edge-near samples. If a chosen slice includes frame `0..25`, document it as luma/startup-only; it is vacuous for chroma-plane discrimination.
