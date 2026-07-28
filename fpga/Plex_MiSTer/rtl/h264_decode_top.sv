@@ -124,26 +124,20 @@ module h264_decode_top (
     reg                pipe_valid;
     reg                pipe_is_i16;
 
-    wire signed [28:0] dq_out [0:15];
-    h264_dequant4x4 u_dequant (
+    wire signed [28:0] dq_final [0:15];
+    reg signed [28:0] latched_i16_dc [0:15];
+    // I_16x16 luma blocks carry 15 AC coefficients at scan positions 1..15 and
+    // take position 0 from the luma DC Hadamard, so the scaler must inverse
+    // zig-zag with the DC skipped instead of treating coeff[0] as scan 0.
+    h264_dequant4x4_flex u_dequant (
         .coeff(pipe_coeff),
         .qp(pipe_qp),
-        .max_coeff(5'd16),
-        .dequant(dq_out)
+        .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
+        .skip_dc(pipe_is_i16),
+        .dc_override(pipe_is_i16),
+        .dc_value(latched_i16_dc[pipe_block_idx]),
+        .dequant(dq_final)
     );
-
-    // For I_16x16 blocks: DC comes from Hadamard, replace dq_out[0]
-    reg signed [28:0] dq_final [0:15];
-    reg signed [28:0] latched_i16_dc [0:15];
-    integer dqi;
-    always @* begin
-        for (dqi = 0; dqi < 16; dqi = dqi + 1) begin
-            if (dqi == 0 && pipe_is_i16)
-                dq_final[dqi] = latched_i16_dc[pipe_block_idx];
-            else
-                dq_final[dqi] = dq_out[dqi];
-        end
-    end
 
     wire signed [28:0] idct_out [0:15];
     h264_idct4x4 u_idct (

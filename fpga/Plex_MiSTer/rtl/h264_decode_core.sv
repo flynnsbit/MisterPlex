@@ -433,7 +433,7 @@ module h264_decode_core #(
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
     //    actually carries coefficients, and wraps modulo 52.
-    wire mb_has_residual = (cbp_luma != 4'd0) || (cbp_chroma != 2'd0);
+    wire mb_has_residual = !mb_skip && ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0));
     wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
                                      $signed({{2{mb_qp_delta[5]}}, mb_qp_delta});
     wire signed [7:0] qp_delta_wrap = (qp_delta_sum < 8'sd0)  ? (qp_delta_sum + 8'sd52) :
@@ -1222,8 +1222,8 @@ module h264_decode_core #(
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
-                    p16_cbp_luma_r <= cbp_luma;
-                    p16_cbp_chroma_r <= cbp_chroma;
+                    p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;
+                    p16_cbp_chroma_r <= mb_skip ? 2'd0 : cbp_chroma;
                     // The walker only launches inter macroblocks today, so
                     // there is no Intra_16x16 luma DC block in the chain.
                     res_i16x16_r <= 1'b0;
