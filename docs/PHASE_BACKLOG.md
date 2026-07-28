@@ -1046,3 +1046,18 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
 - (**ORCHESTRATION ERROR RESOLVED AT MINIMUM COST — W-TIME `a60ed71`**) After the parent's non-exclusive task split caused a five-file semantic conflict, W-TIME rebased and contributed **only the additive part** — deriving resolve profiles from OSD geometry, the `plex_resolve` path W-OSD's chain never touched — rather than relitigating the overlap. **Insisting on either version of the shared files would have cost a cycle and discarded real work in whichever direction the parent ruled.**
 - (**PEER COORDINATION WORKING WITHOUT THE PARENT**) W-MCFIX → W-FEED and W-INTER → W-FEED both obtained fixture paths, formats, frame indices and blind-spot lists directly. W-FEED's handoff explicitly enumerated its instrument's limits: *"only 8 frames; no timing/drop/repeat; no RGB/pillar/deblock; catches mutations only if expressed by selected samples."*
 - (**ENVIRONMENTAL BLOCKER CONFIRMED BY MEASUREMENT, not assumption**) `PLEX_TOKEN` absent from `/media/fat/misterplex/misterplex.conf` — **zero matches**. Playback-dependent verification cannot proceed until the user supplies a token. **Combined with absent HDMI capture hardware, picture verification now requires two distinct things from the user.**
+
+### Programme verdict — the ARM path is a demo, not a product (W-FEED, asked four times)
+
+**Position, in W-FEED's words: "24 fps is demo-acceptable only; FPGA decode is now a product requirement."**
+
+This is the answer the parent had been asking for since Hour-23 and is recorded verbatim because **it is the first statement in this programme that converts a measurement into a product decision.** The measurements were never in doubt; what was missing was the judgement of the agent that took them, and the parent explicitly refused to substitute its own.
+
+- **25 fps is not impossible — it is unreliable.** The 0.190 ms/f miss is *"probably within run noise"*, so 25 fps cannot be called a hard failure. **But "coin-flip 25" is not product headroom**, and that distinction is the whole finding. A less careful answer would have reported either "25 fps fails" (false) or "25 fps works" (reckless).
+- **The 24 fps margin of 1.476 ms/f is too thin to survive reality** — daemon work, PMS/network variance, a hotter ARM, scene complexity, and A/V scheduling all draw on it. **A margin measured on an idle device is not headroom in a product.**
+- **The measured clip may be optimistic, not pessimistic.** It is one derived HEVC source at **~1412 kbps**; real PMS output at the 2000/2500 kbps tiers would be harder. **The parent had assumed the derived clip was an unusually hard case; W-FEED's read is the opposite, and W-FEED holds the data.**
+- **ARM-only stopgap, if wanted:** attack present/DDR first — **10.41 ms/f measured against a raw `/dev/mem` microbench of 7.199 ms/f, so ~3 ms/f is recoverable without any FPGA work.** That would clear 25 fps with genuine margin. It does not change the verdict.
+- **Why FPGA decode is the product path:** it is the only route that reclaims the dominant **~21.56 ms/f** decode bucket. Every ARM-side optimisation is competing for the remaining ~18 ms.
+- **Named confidence gaps, unprompted:** repeat runs, a 2000/2500 kbps A/B, a thermal/load run, and end-to-end A/V. **The parent had offered "I cannot tell without measuring X" as an acceptable answer; W-FEED gave a position *and* named its X's, which is strictly better.**
+
+**Programme consequence:** Phase 3 FPGA decode is now justified by measurement rather than by assumption. Until it lands, **the honest description of this device to a user is a 24 fps cast target with thin margin, and the parent will describe it that way.**
