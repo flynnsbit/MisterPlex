@@ -48,7 +48,7 @@ constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
-constexpr int kPlex480pWeakBitrateKbps = 2500;
+constexpr int kPlex480pWeakBitrateKbps = 2000;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -99,9 +99,9 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
 }
 
 inline ContentResolution contentResolutionFor480p() {
-    // 624x480 is still the 480p ladder: PMS has a 2000 kbps guard for 480p
-    // and the existing product profile uses 2500 kbps to leave headroom for
-    // the synthetic/high-motion library items while staying dual-A9 safe.
+    // 624x480 is still the 480p ladder. Use the 2000 kbps PMS/validator floor
+    // until W-FEED (or equivalent ARM-boundary profiling) proves a higher
+    // bitrate safe; this path has only millisecond-scale decode margin.
     return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480",
             kPlex480pWeakBitrateKbps};
 }

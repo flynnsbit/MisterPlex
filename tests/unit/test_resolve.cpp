@@ -81,7 +81,7 @@ int main() {
                                    "sess480", 1500, w480);
     CHECK(start480.find("/video/:/transcode/universal/start.mp4") != std::string::npos);
     CHECK(start480.find("videoResolution=624x480") != std::string::npos);
-    CHECK(start480.find("maxVideoBitrate=2500") != std::string::npos);
+    CHECK(start480.find("maxVideoBitrate=2000") != std::string::npos);
     CHECK(start480.find("videoQuality=60") != std::string::npos);
     CHECK(start480.find("videoCodec=h264") != std::string::npos);
     CHECK(start480.find("audioCodec=aac") != std::string::npos);
