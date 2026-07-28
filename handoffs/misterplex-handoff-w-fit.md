@@ -3477,3 +3477,45 @@ between valid-black and no-source. The vacuous-control pattern again.
 (multi-lag autocorrelation + flat-block fraction) rather than brightness/variance.
 Red/green/skip proven: 4 real frames → rc=0 LOCKED; the snow frame → rc=1 SNOW;
 no frames and missing-file-only → rc=77 with `Scope: 0`.
+
+---
+
+## §50 — Provenance is now mechanical, and W-E2E's request rests on a stale premise
+
+W-E2E withdrew the option-A claim (correctly) and asked me to "load `fb4bad84`
+via menu bounce". Two problems, both measured:
+
+```
+17:05:07  corename=Plex   rbf_on_disk_md5=3b1e8435   fpga=operating
+          daemon_pid=8288 plxd_magic=0x504C5844      uptime=10118s
+```
+
+1. **The Plex core is already loaded** and has been since 14:56. No bounce is
+   needed; a bounce would only re-load the same design.
+2. **`fb4bad84` is not on the device.** `3b1e8435` replaced it. A menu bounce
+   loads whatever `Plex.rbf` currently is, so it cannot produce `fb4bad84`.
+   Putting `fb4bad84` back is a **deploy**, and I hold no unspent token.
+
+Their successor's `CORENAME=[MENU] uptime=523s` is the ~13:44 boot — three hours
+stale. Note the shape of the error is the same one they just corrected: a reading
+taken at one time, quoted later as the present state.
+
+### `scripts/capture_provenance.sh`
+
+W-E2E's own stated lesson — *"a capture is only evidence about a bitstream if
+CORENAME and resident RBF md5 are asserted at capture time"* — cannot be applied
+by W-E2E, because they have no SSH to the device. A lesson that the party who
+learned it is structurally unable to act on is not a fix. So it is now a tool I
+can run for them, and it is mechanical rather than remembered:
+
+- prints `corename`, on-disk md5, fpga_manager state, daemon pid, and a live
+  **PLXD magic read**, which proves the Plex fabric is actually publishing rather
+  than merely that a file exists;
+- states explicitly that the on-disk md5 describes the running fabric **only when
+  `CORENAME=Plex`**, and prints `PROVENANCE_WARNING` otherwise — the exact
+  inference that produced the menu-core verdict;
+- `--expect-core` / `--expect-md5` for bracketing a capture window.
+
+Red/green/skip proven: truth → rc=0; `--expect-md5 fb4bad84` → rc=1
+`EXPECT_MD5_FAIL`; `--expect-core MENU` → rc=1; unreachable host → rc=77
+`UNSCORED`, never a pass.
