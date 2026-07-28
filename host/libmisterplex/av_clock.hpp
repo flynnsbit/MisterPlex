@@ -81,17 +81,22 @@ inline int64_t eofStallAudioSilenceMs(bool wantAudio, bool audioSeen, int64_t no
 }
 
 // A bounded EOF escape for PMS/FFmpeg streams that reach known duration, stop
-// producing rawvideo, but leave the pipe open. Only fire with no partial frame:
-// a partial frame is treated as a real short-read so diagnostics can report it.
+// producing rawvideo, but leave the pipe open. A partial frame is tolerated only
+// after its bytes have also gone stale for the same video-silence grace; otherwise
+// slow sources could be truncated mid-frame. Audio progress blocks short stalls
+// from being misread as EOF, but not forever: a known-duration video stream with
+// no complete decoded frame for 3× grace is treated as terminal even if audio or
+// silence keeps trickling.
 inline bool knownDurationEofStall(int64_t startMs, int64_t durationMs, int64_t elapsedMs,
                                   int64_t partialFrameBytes, int64_t noVideoMs, int64_t noAudioMs,
                                   int64_t graceMs = 5000) {
-    if (durationMs <= 0 || elapsedMs < 0 || partialFrameBytes != 0)
+    if (durationMs <= 0 || elapsedMs < 0 || partialFrameBytes < 0)
         return false;
     if (graceMs < 0)
         graceMs = 0;
-    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs &&
-           noAudioMs >= graceMs;
+    const int64_t audioOverrideMs = graceMs * 3;
+    const bool audioQuiet = noAudioMs >= graceMs || noVideoMs >= audioOverrideMs;
+    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs && audioQuiet;
 }
 
 } // namespace misterplex

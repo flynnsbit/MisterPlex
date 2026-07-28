@@ -125,7 +125,11 @@ int main() {
     CHECK(!knownDurationEofStall(0, 60000, 61200, 0, 1200, 1200));
     CHECK(!knownDurationEofStall(0, 60000, 64000, 0, 4000, 4000));
     CHECK(!knownDurationEofStall(0, 60000, 66000, 0, 6000, 200));
+    CHECK(!knownDurationEofStall(0, 60000, 74999, 0, 14999, 200));
+    CHECK(knownDurationEofStall(0, 60000, 75000, 0, 15000, 200));
+    CHECK(!knownDurationEofStall(0, 30021, 36000, 128, 4000, 6000));
     CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000, 6000));
+    CHECK(knownDurationEofStall(0, 30021, 36000, 128, 6000, 6000));
     CHECK(knownDurationEofStall(1260000, 1286942, 33050, 0, 6000, 6000));
 
     // Audio-less / audio-never-started content must not disable the EOF-stall guard.
