@@ -7,17 +7,12 @@ lfsr: legacy/template pattern helper; no product consumer in Plex.sv hierarchy.
 mycore: upstream template/demo core, superseded by Plex.sv/emu product top.
 
 h264_cavlc_nc_predictor: decode-context helper covered by standalone benches only until product residual scheduling is integrated.
-h264_cavlc_residual_block: product-candidate residual parser currently reachable only from non-product decode-core staging/benches.
 h264_deblock_bs: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
 h264_deblock_thresholds: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge_pipe: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
-h264_decode_core: partial product-datapath staging module; not driven by stream_path in this branch.
 h264_decode_skeleton: resource-estimation skeleton, explicitly not a decoder.
-h264_decode_top: standalone real-intra RTL bench target; not wired into stream_path in this branch.
 h264_intra_nb_ctx: standalone neighbour-context helper for intra-prediction benches.
-h264_intra4x4_pred: product-candidate intra predictor currently reachable only from non-product decode_top/skeleton benches.
-h264_intra16x16_pred: product-candidate intra predictor currently reachable only from non-product decode_top/skeleton benches.
 h264_chroma8x8_pred: product-candidate intra predictor currently reachable only from non-product skeleton/benches.
 h264_intra_mode_guard: standalone unsupported-mode guard covered by RTL/unit benches only.
 h264_p_mb_type_decode: standalone P-slice mode decoder covered by RTL/unit benches only.

@@ -302,377 +302,321 @@ module stream_path #(
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
+	function automatic [1:0] core_i4_bx;
+		input [3:0] idx;
+		begin
+			case (idx)
+			4'd0, 4'd2, 4'd8, 4'd10: core_i4_bx = 2'd0;
+			4'd1, 4'd3, 4'd9, 4'd11: core_i4_bx = 2'd1;
+			4'd4, 4'd6, 4'd12, 4'd14: core_i4_bx = 2'd2;
+			default: core_i4_bx = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [1:0] core_i4_by;
+		input [3:0] idx;
+		begin
+			case (idx)
+			4'd0, 4'd1, 4'd4, 4'd5: core_i4_by = 2'd0;
+			4'd2, 4'd3, 4'd6, 4'd7: core_i4_by = 2'd1;
+			4'd8, 4'd9, 4'd12, 4'd13: core_i4_by = 2'd2;
+			default: core_i4_by = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] core_i4_idx_at;
+		input [1:0] bx;
+		input [1:0] by;
+		begin
+			case ({by, bx})
+			4'b0000: core_i4_idx_at = 4'd0;
+			4'b0001: core_i4_idx_at = 4'd1;
+			4'b0100: core_i4_idx_at = 4'd2;
+			4'b0101: core_i4_idx_at = 4'd3;
+			4'b0010: core_i4_idx_at = 4'd4;
+			4'b0011: core_i4_idx_at = 4'd5;
+			4'b0110: core_i4_idx_at = 4'd6;
+			4'b0111: core_i4_idx_at = 4'd7;
+			4'b1000: core_i4_idx_at = 4'd8;
+			4'b1001: core_i4_idx_at = 4'd9;
+			4'b1100: core_i4_idx_at = 4'd10;
+			4'b1101: core_i4_idx_at = 4'd11;
+			4'b1010: core_i4_idx_at = 4'd12;
+			4'b1011: core_i4_idx_at = 4'd13;
+			4'b1110: core_i4_idx_at = 4'd14;
+			default: core_i4_idx_at = 4'd15;
+			endcase
+		end
+	endfunction
+
+	wire [3:0] core_i4_modes [0:15];
+	reg [3:0] core_i4_modes_calc [0:15];
+	integer core_mi;
+	always @* begin
+		for (core_mi = 0; core_mi < 16; core_mi = core_mi + 1) begin : derive_core_i4_modes
+			reg [1:0] bx;
+			reg [1:0] by;
+			reg [3:0] left_idx;
+			reg [3:0] top_idx;
+			reg [3:0] pred_mode;
+			reg [2:0] rem_mode;
+			bx = core_i4_bx(core_mi[3:0]);
+			by = core_i4_by(core_mi[3:0]);
+			left_idx = (bx == 2'd0) ? 4'd0 : core_i4_idx_at(bx - 2'd1, by);
+			top_idx = (by == 2'd0) ? 4'd0 : core_i4_idx_at(bx, by - 2'd1);
+			if (bx != 2'd0 && by != 2'd0)
+				pred_mode = (core_i4_modes_calc[left_idx] < core_i4_modes_calc[top_idx]) ?
+					core_i4_modes_calc[left_idx] : core_i4_modes_calc[top_idx];
+			else
+				pred_mode = 4'd2;
+			rem_mode = sl_i4_rem_modes[core_mi * 3 +: 3];
+			if (!sl_i4_modes_present)
+				core_i4_modes_calc[core_mi] = 4'd2;
+			else if (sl_i4_pred_mode_flags[core_mi])
+				core_i4_modes_calc[core_mi] = pred_mode;
+			else
+				core_i4_modes_calc[core_mi] = (rem_mode < pred_mode[2:0]) ?
+					{1'b0, rem_mode} : ({1'b0, rem_mode} + 4'd1);
+		end
+	end
+
+	genvar core_gi;
 	generate
-		if (`DECODE_REAL_INTRA) begin : gen_real_intra_decode
-			localparam int REAL_PIXELS = FRAME_W * FRAME_H;
-			localparam int REAL_ADDR_W = $clog2(REAL_PIXELS);
-			localparam [3:0] R_IDLE = 4'd0,
-			                 R_WAIT = 4'd1,
-			                 R_PRED_WAIT = 4'd2,
-			                 R_BLOCK = 4'd3,
-			                 R_BLOCK_GAP = 4'd4,
-			                 R_WAIT_MB = 4'd5,
-			                 R_PAINT = 4'd6;
-			localparam int REAL_WAIT_MAX = 4095;
+		for (core_gi = 0; core_gi < 16; core_gi = core_gi + 1) begin : gen_core_i4_modes
+			assign core_i4_modes[core_gi] = core_i4_modes_calc[core_gi];
+		end
+	endgenerate
 
-			reg [3:0] real_state;
-			reg [11:0] real_wait_cnt;
-			reg [1:0] real_pred_wait;
-			reg [3:0] real_feed_idx;
-			reg [REAL_ADDR_W:0] real_pix_i;
-			reg [9:0] real_x, real_ypos;
-			reg [7:0] real_lat_type;
-			reg [5:0] real_lat_qp;
-			reg [7:0] real_lat_mb_type;
-			reg real_lat_res_ok;
-			reg signed [15:0] real_lat_coeff [0:15];
-			reg signed [15:0] real_lat_block_coeff [0:15][0:15];
-			reg real_mb_start;
-			reg real_block_valid;
-			reg [3:0] real_block_index;
-			reg signed [15:0] real_block_coeff [0:15];
-			reg [15:0] real_frames;
-			reg real_busy;
-			reg [7:0] real_recon_sig_comb;
-
-			wire [1:0] real_i16_pred_mode =
-				(real_lat_mb_type >= 8'd1 && real_lat_mb_type <= 8'd24) ?
-				((real_lat_mb_type - 8'd1) & 8'd3) : 2'd2;
-			wire signed [28:0] real_i16_dc [0:15];
-			wire [3:0] real_i4_modes [0:15];
-			reg [3:0] real_i4_modes_calc [0:15];
-			wire [7:0] real_nb_top [0:15];
-			wire [7:0] real_nb_left [0:15];
-			wire [7:0] real_nb_topright [0:3];
-			wire real_mb_recon_valid;
-			wire [7:0] real_recon_y [0:255];
-			wire [4:0] real_blocks_done;
-
-			genvar real_gi;
-			for (real_gi = 0; real_gi < 16; real_gi = real_gi + 1) begin : gen_real_defaults16
-				assign real_i16_dc[real_gi] = 29'sd0;
-				assign real_i4_modes[real_gi] = real_i4_modes_calc[real_gi];
-				assign real_nb_top[real_gi] = 8'd128;
-				assign real_nb_left[real_gi] = 8'd128;
+	reg core_luma4x4_valid;
+	reg [3:0] core_luma4x4_idx;
+	reg [5:0] core_luma4x4_qp;
+	reg [4:0] core_luma4x4_total_coeff;
+	reg [1:0] core_luma4x4_trailing_ones;
+	reg signed [15:0] core_luma4x4_coeff_zigzag [0:15];
+	reg signed [15:0] core_luma4x4_latched [0:15][0:15];
+	reg core_luma_feed_active;
+	reg [3:0] core_luma_feed_idx;
+	integer core_li;
+	integer core_lj;
+	always @(posedge clk) begin
+		core_luma4x4_valid <= 1'b0;
+		if (reset | flush) begin
+			core_luma_feed_active <= 1'b0;
+			core_luma_feed_idx <= 4'd0;
+			core_luma4x4_idx <= 4'd0;
+			core_luma4x4_qp <= 6'd0;
+			core_luma4x4_total_coeff <= 5'd0;
+			core_luma4x4_trailing_ones <= 2'd0;
+			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
+				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
+				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
+					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
 			end
-			for (real_gi = 0; real_gi < 4; real_gi = real_gi + 1) begin : gen_real_defaults4
-				assign real_nb_topright[real_gi] = 8'd128;
+		end else begin
+			if (!core_luma_feed_active && sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present) begin
+				core_luma_feed_active <= 1'b1;
+				core_luma_feed_idx <= 4'd0;
+				core_luma4x4_qp <= sl_place_qp;
+				for (core_li = 0; core_li < 16; core_li = core_li + 1)
+					for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
+						core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
+			end else if (core_luma_feed_active) begin
+				core_luma4x4_valid <= 1'b1;
+				core_luma4x4_idx <= core_luma_feed_idx;
+				core_luma4x4_total_coeff <= 5'd16;
+				core_luma4x4_trailing_ones <= 2'd0;
+				for (core_li = 0; core_li < 16; core_li = core_li + 1)
+					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
+				if (core_luma_feed_idx == 4'd15)
+					core_luma_feed_active <= 1'b0;
+				else
+					core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
 			end
+		end
+	end
 
-			h264_decode_top u_real_intra_decode (
-				.clk(clk),
-				.reset(reset | flush),
-				.mb_start(real_mb_start),
-				.mb_type(real_lat_mb_type),
-				.mb_qp_y(real_lat_qp),
-				.mb_x(8'd0),
-				.mb_y(8'd0),
-				.i16_pred_mode(real_i16_pred_mode),
-				.block_valid(real_block_valid),
-				.block_index(real_block_index),
-				.block_coeff(real_block_coeff),
-				.i16_dc_valid(real_mb_start),
-				.i16_dc(real_i16_dc),
-				.i4_modes(real_i4_modes),
-				.mb_avail_left(1'b0),
-				.mb_avail_top(1'b0),
-				.mb_avail_topright(1'b0),
-				.mb_avail_topleft(1'b0),
-				.nb_top(real_nb_top),
-				.nb_left(real_nb_left),
-				.nb_topleft(8'd128),
-				.nb_topright(real_nb_topright),
-				.mb_recon_valid(real_mb_recon_valid),
-				.recon_y(real_recon_y),
-				.blocks_done(real_blocks_done)
-			);
+	wire [7:0] core_rbsp_byte [0:63];
+	wire [7:0] core_nb_top [0:15];
+	wire [7:0] core_nb_left [0:15];
+	wire [7:0] core_nb_topright [0:3];
+	wire [7:0] core_recon_y [0:255];
+	wire [7:0] core_recon_u [0:63];
+	wire [7:0] core_recon_v [0:63];
+	wire signed [15:0] core_p16_residual_y [0:255];
+	wire signed [15:0] core_p16_residual_u [0:63];
+	wire signed [15:0] core_p16_residual_v [0:63];
+	generate
+		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
+			assign core_rbsp_byte[core_gi] = 8'd0;
+			assign core_recon_u[core_gi] = 8'd128;
+			assign core_recon_v[core_gi] = 8'd128;
+			assign core_p16_residual_u[core_gi] = 16'sd0;
+			assign core_p16_residual_v[core_gi] = 16'sd0;
+		end
+		for (core_gi = 0; core_gi < 16; core_gi = core_gi + 1) begin : gen_core_nb_defaults
+			assign core_nb_top[core_gi] = 8'd128;
+			assign core_nb_left[core_gi] = 8'd128;
+		end
+		for (core_gi = 0; core_gi < 4; core_gi = core_gi + 1) begin : gen_core_nb_tr_defaults
+			assign core_nb_topright[core_gi] = 8'd128;
+		end
+		for (core_gi = 0; core_gi < 256; core_gi = core_gi + 1) begin : gen_core_zero256
+			assign core_recon_y[core_gi] = 8'd0;
+			assign core_p16_residual_y[core_gi] = 16'sd0;
+		end
+	endgenerate
 
-			integer real_i;
-			always @* begin
-				real_recon_sig_comb = 8'd0;
-				for (real_i = 0; real_i < 256; real_i = real_i + 1)
-					real_recon_sig_comb = real_recon_sig_comb ^ real_recon_y[real_i];
-			end
+	wire core_dpb_wr_en;
+	wire [31:0] core_dpb_wr_addr;
+	wire [7:0] core_dpb_wr_data;
+	wire core_dpb_rd_en;
+	wire [31:0] core_dpb_rd_addr;
+	reg core_dpb_rd_valid;
+	always @(posedge clk) begin
+		if (reset | flush)
+			core_dpb_rd_valid <= 1'b0;
+		else
+			core_dpb_rd_valid <= core_dpb_rd_en;
+	end
+	wire core_frame_done;
+	wire [15:0] core_frame_mb_count;
+	wire [15:0] core_rbsp_request_offset;
+	wire core_rbsp_request_valid;
+	wire core_busy;
+	wire [7:0] core_decode_state;
+	wire [15:0] core_current_mb_addr;
+	wire core_error;
+	wire [1:0] core_i16_pred_mode =
+		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
 
-			function automatic [1:0] real_i4_bx;
-				input [3:0] idx;
-				begin
-					case (idx)
-					4'd0, 4'd2, 4'd8, 4'd10: real_i4_bx = 2'd0;
-					4'd1, 4'd3, 4'd9, 4'd11: real_i4_bx = 2'd1;
-					4'd4, 4'd6, 4'd12, 4'd14: real_i4_bx = 2'd2;
-					default: real_i4_bx = 2'd3;
-					endcase
-				end
-			endfunction
+	h264_decode_core #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H)
+	) product_decode_core (
+		.clk(clk),
+		.reset(reset | flush),
+		.slice_start(slice_valid),
+		.slice_is_idr(sl_is_idr),
+		.slice_is_i(sl_is_i),
+		.slice_qp_y(sl_qp),
+		.first_mb_in_slice(sl_first),
+		.mb_width(sps_mb_w),
+		.mb_height(sps_mb_h),
+		.pps_chroma_qp_index_offset(5'sd0),
+		.rbsp_byte(core_rbsp_byte),
+		.rbsp_window_base(16'd0),
+		.rbsp_request_offset(core_rbsp_request_offset),
+		.rbsp_request_valid(core_rbsp_request_valid),
+		.mb_type_valid(slice_valid && sl_has_mbt),
+		.mb_type(sl_mbt[4:0]),
+		.mb_skip(first_mb_p_skip),
+		.intra4x4_modes(core_i4_modes),
+		.intra16x16_mode(core_i16_pred_mode),
+		.chroma_pred_mode(2'd0),
+		.cbp_luma(4'hf),
+		.cbp_chroma(2'd0),
+		.mb_qp_delta(sl_qpd[5:0]),
+		.mb_residual_bit_offset(16'd0),
+		.luma4x4_valid(core_luma4x4_valid),
+		.luma4x4_idx(core_luma4x4_idx),
+		.luma4x4_qp(core_luma4x4_qp),
+		.luma4x4_total_coeff(core_luma4x4_total_coeff),
+		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
+		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.mb_avail_left(1'b0),
+		.mb_avail_top(1'b0),
+		.mb_avail_topright(1'b0),
+		.mb_avail_topleft(1'b0),
+		.nb_top(core_nb_top),
+		.nb_left(core_nb_left),
+		.nb_topleft(8'd128),
+		.nb_topright(core_nb_topright),
+		.mv_x_qpel(16'sd0),
+		.mv_y_qpel(16'sd0),
+		.part_mode(first_mb_part_mode),
+		.part_idx(2'd0),
+		.mvd_x_qpel(16'sd0),
+		.mvd_y_qpel(16'sd0),
+		.ref_idx_l0(2'd0),
+		.recon_mb_valid(1'b0),
+		.recon_mb_x(8'd0),
+		.recon_mb_y(8'd0),
+		.recon_mb_is_ref(1'b0),
+		.dpb_write_base(32'd0),
+		.recon_y(core_recon_y),
+		.recon_u(core_recon_u),
+		.recon_v(core_recon_v),
+		.p16_zero_mv_valid(1'b0),
+		.p16_mb_x(8'd0),
+		.p16_mb_y(8'd0),
+		.p16_mb_is_ref(1'b0),
+		.dpb_ref_base(32'd0),
+		.p16_residual_y(core_p16_residual_y),
+		.p16_residual_u(core_p16_residual_u),
+		.p16_residual_v(core_p16_residual_v),
+		.dpb_wr_en(core_dpb_wr_en),
+		.dpb_wr_addr(core_dpb_wr_addr),
+		.dpb_wr_data(core_dpb_wr_data),
+		.dpb_rd_en(core_dpb_rd_en),
+		.dpb_rd_addr(core_dpb_rd_addr),
+		.dpb_rd_data(8'd0),
+		.dpb_rd_valid(core_dpb_rd_valid),
+		.frame_done(core_frame_done),
+		.frame_mb_count(core_frame_mb_count),
+		.busy(core_busy),
+		.decode_state(core_decode_state),
+		.current_mb_addr(core_current_mb_addr),
+		.error(core_error)
+	);
 
-			function automatic [1:0] real_i4_by;
-				input [3:0] idx;
-				begin
-					case (idx)
-					4'd0, 4'd1, 4'd4, 4'd5: real_i4_by = 2'd0;
-					4'd2, 4'd3, 4'd6, 4'd7: real_i4_by = 2'd1;
-					4'd8, 4'd9, 4'd12, 4'd13: real_i4_by = 2'd2;
-					default: real_i4_by = 2'd3;
-					endcase
-				end
-			endfunction
-
-			function automatic [3:0] real_i4_idx_at;
-				input [1:0] bx;
-				input [1:0] by;
-				begin
-					case ({by, bx})
-					4'b0000: real_i4_idx_at = 4'd0;
-					4'b0001: real_i4_idx_at = 4'd1;
-					4'b0100: real_i4_idx_at = 4'd2;
-					4'b0101: real_i4_idx_at = 4'd3;
-					4'b0010: real_i4_idx_at = 4'd4;
-					4'b0011: real_i4_idx_at = 4'd5;
-					4'b0110: real_i4_idx_at = 4'd6;
-					4'b0111: real_i4_idx_at = 4'd7;
-					4'b1000: real_i4_idx_at = 4'd8;
-					4'b1001: real_i4_idx_at = 4'd9;
-					4'b1100: real_i4_idx_at = 4'd10;
-					4'b1101: real_i4_idx_at = 4'd11;
-					4'b1010: real_i4_idx_at = 4'd12;
-					4'b1011: real_i4_idx_at = 4'd13;
-					4'b1110: real_i4_idx_at = 4'd14;
-					default: real_i4_idx_at = 4'd15;
-					endcase
-				end
-			endfunction
-
-			integer real_mi;
-			always @* begin
-				for (real_mi = 0; real_mi < 16; real_mi = real_mi + 1) begin : derive_i4_modes
-					reg [1:0] bx;
-					reg [1:0] by;
-					reg [3:0] left_idx;
-					reg [3:0] top_idx;
-					reg [3:0] pred_mode;
-					reg [2:0] rem_mode;
-					bx = real_i4_bx(real_mi[3:0]);
-					by = real_i4_by(real_mi[3:0]);
-					left_idx = (bx == 2'd0) ? 4'd0 : real_i4_idx_at(bx - 2'd1, by);
-					top_idx = (by == 2'd0) ? 4'd0 : real_i4_idx_at(bx, by - 2'd1);
-					if (bx != 2'd0 && by != 2'd0)
-						pred_mode = (real_i4_modes_calc[left_idx] < real_i4_modes_calc[top_idx]) ?
-							real_i4_modes_calc[left_idx] : real_i4_modes_calc[top_idx];
-					else
-						pred_mode = 4'd2;
-					rem_mode = sl_i4_rem_modes[real_mi * 3 +: 3];
-					if (!sl_i4_modes_present)
-						real_i4_modes_calc[real_mi] = 4'd2;
-					else if (sl_i4_pred_mode_flags[real_mi])
-						real_i4_modes_calc[real_mi] = pred_mode;
-					else
-						real_i4_modes_calc[real_mi] = (rem_mode < pred_mode[2:0]) ?
-							{1'b0, rem_mode} : ({1'b0, rem_mode} + 4'd1);
-				end
-			end
-
-			wire real_in_mb0 = (real_x < 10'd16) && (real_ypos < 10'd16);
-			wire [7:0] real_mb0_idx = {real_ypos[3:0], real_x[3:0]};
-			wire [7:0] real_luma_raw = real_recon_y[real_mb0_idx];
-`ifdef STREAM_PATH_REAL_INTRA_FAULT_STUB_PIXEL
-			wire [7:0] real_luma = 8'd128;
-`else
-			wire [7:0] real_luma = real_luma_raw;
-`endif
-			wire real_border = (real_x < 10'd4) || (real_x >= (FRAME_W[9:0] - 10'd4)) ||
-			                   (real_ypos < 10'd4) || (real_ypos >= (FRAME_H[9:0] - 10'd4));
-			wire [7:0] real_bg_r = real_border ? 8'h10 : 8'h08;
-			wire [7:0] real_bg_g = real_border ? 8'hd0 : 8'h20;
-			wire [7:0] real_bg_b = (real_lat_type[4:0] == 5'd5) ? 8'h20 : 8'he0;
-			wire [7:0] real_rr = real_in_mb0 ? real_luma : real_bg_r;
-			wire [7:0] real_gg = real_in_mb0 ? real_luma : real_bg_g;
-			wire [7:0] real_bb = real_in_mb0 ? real_luma : real_bg_b;
-
-			assign fs_wr_pixel = {real_rr[7:3], real_gg[7:2], real_bb[7:3]};
-			assign stub_busy = real_busy;
-			assign stub_frames = real_frames;
-
-			integer real_si;
-			integer real_bi;
-			always @(posedge clk) begin
-				real_mb_start <= 1'b0;
-				real_block_valid <= 1'b0;
-				fs_wr_en <= 1'b0;
-				fs_wr_reset <= 1'b0;
-				fs_swap <= 1'b0;
-				recon_dbg_valid <= 1'b0;
-				recon_valid <= 1'b0;
-
-				if (reset | flush) begin
-					real_state <= R_IDLE;
-					real_wait_cnt <= 12'd0;
-					real_pred_wait <= 2'd0;
-					real_feed_idx <= 4'd0;
-					real_pix_i <= '0;
-					real_x <= 10'd0;
-					real_ypos <= 10'd0;
-					real_lat_type <= 8'd0;
-					real_lat_qp <= 6'd0;
-					real_lat_mb_type <= 8'd0;
-					real_lat_res_ok <= 1'b0;
-					real_frames <= 16'd0;
-					real_busy <= 1'b0;
-					recon_sig <= 8'd0;
-					recon_dbg <= 8'd0;
-					for (real_si = 0; real_si < 16; real_si = real_si + 1) begin
-						real_lat_coeff[real_si] <= 16'sd0;
-						real_block_coeff[real_si] <= 16'sd0;
-					end
-					for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
-						for (real_si = 0; real_si < 16; real_si = real_si + 1)
-							real_lat_block_coeff[real_bi][real_si] <= 16'sd0;
-				end else begin
-					case (real_state)
-					R_IDLE: begin
-						if (sl_luma4x4_blocks_valid) begin
-							real_busy <= 1'b1;
-							real_lat_type <= last_nal_type;
-							real_lat_res_ok <= sl_luma4x4_blocks_present;
-							real_lat_qp <= sl_place_qp;
-							real_lat_mb_type <= (sl_has_mbt && first_mb_intra) ? sl_mbt : 8'd0;
-							for (real_si = 0; real_si < 16; real_si = real_si + 1)
-								real_lat_coeff[real_si] <= sl_place_coeff[real_si];
-							for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
-								for (real_si = 0; real_si < 16; real_si = real_si + 1)
-									real_lat_block_coeff[real_bi][real_si] <= sl_luma4x4_coeff[real_bi][real_si];
-							real_mb_start <= 1'b1;
-							real_pred_wait <= 2'd0;
-							real_feed_idx <= 4'd0;
-							real_state <= R_PRED_WAIT;
-						end else if (vcl_pulse) begin
-							real_state <= R_WAIT;
-							real_busy <= 1'b1;
-							real_wait_cnt <= REAL_WAIT_MAX[11:0];
-							real_lat_type <= last_nal_type;
-						end
-					end
-					R_WAIT: begin
-						if (real_wait_cnt != 12'd0)
-							real_wait_cnt <= real_wait_cnt - 12'd1;
-						if (sl_luma4x4_blocks_valid) begin
-							real_lat_res_ok <= sl_luma4x4_blocks_present;
-							real_lat_qp <= sl_place_qp;
-							real_lat_mb_type <= (sl_has_mbt && first_mb_intra) ? sl_mbt : 8'd0;
-							for (real_si = 0; real_si < 16; real_si = real_si + 1)
-								real_lat_coeff[real_si] <= sl_place_coeff[real_si];
-							for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
-								for (real_si = 0; real_si < 16; real_si = real_si + 1)
-									real_lat_block_coeff[real_bi][real_si] <= sl_luma4x4_coeff[real_bi][real_si];
-							real_mb_start <= 1'b1;
-							real_pred_wait <= 2'd0;
-							real_feed_idx <= 4'd0;
-							real_state <= R_PRED_WAIT;
-						end
-					end
-					R_PRED_WAIT: begin
-						if (real_pred_wait == 2'd2) begin
-							real_state <= R_BLOCK;
-						end else begin
-							real_pred_wait <= real_pred_wait + 2'd1;
-						end
-					end
-					R_BLOCK: begin
-						real_block_valid <= 1'b1;
-						real_block_index <= real_feed_idx;
-						for (real_si = 0; real_si < 16; real_si = real_si + 1)
-							real_block_coeff[real_si] <= !real_lat_res_ok ? 16'sd0 :
-								(real_feed_idx == 4'd0) ? real_lat_coeff[real_si] :
-								real_lat_block_coeff[real_feed_idx][real_si];
-						real_state <= R_BLOCK_GAP;
-					end
-					R_BLOCK_GAP: begin
-						if (real_feed_idx == 4'd15) begin
-							real_state <= R_WAIT_MB;
-						end else begin
-							real_feed_idx <= real_feed_idx + 4'd1;
-							real_state <= R_BLOCK;
-						end
-					end
-					R_WAIT_MB: begin
-						if (real_mb_recon_valid) begin
-							real_pix_i <= '0;
-							real_x <= 10'd0;
-							real_ypos <= 10'd0;
-							fs_wr_reset <= 1'b1;
-							real_state <= R_PAINT;
-						end
-					end
-					default: begin
-						fs_wr_en <= 1'b1;
-						if (real_pix_i == '0) begin
-							recon_sig <= real_recon_sig_comb;
-							recon_dbg <= {real_lat_res_ok, real_blocks_done[4:0], 2'b01};
-							recon_dbg_valid <= 1'b1;
-							recon_valid <= real_lat_res_ok;
-						end
-						if (real_pix_i == REAL_PIXELS[REAL_ADDR_W:0] - 1'd1) begin
-							real_state <= R_IDLE;
-							real_busy <= 1'b0;
-							fs_swap <= 1'b1;
-							real_frames <= real_frames + 16'd1;
-							real_pix_i <= '0;
-							real_x <= 10'd0;
-							real_ypos <= 10'd0;
-						end else begin
-							real_pix_i <= real_pix_i + 1'd1;
-							if (real_x == (FRAME_W[9:0] - 10'd1)) begin
-								real_x <= 10'd0;
-								real_ypos <= real_ypos + 10'd1;
-							end else begin
-								real_x <= real_x + 10'd1;
-							end
-						end
-					end
-					endcase
-				end
-			end
-		end else begin : gen_decode_stub
-			decode_stub #(
-				.WIDTH(FRAME_W),
-				.HEIGHT(FRAME_H)
-			) stub (
-				.clk(clk), .reset(reset | flush),
-				.vcl_pulse(vcl_pulse),
-				.last_nal_type(last_nal_type),
-				.nalu_count(nalu_count),
-				.idr_count(idr_c),
-				.has_idr(has_idr_w),
-				.sps_valid(sps_valid),
-				.mb_w(sps_mb_w),
-				.mb_h(sps_mb_h),
-				.slice_type(sl_type),
-				.slice_is_i(sl_is_i),
-				.slice_valid(slice_valid),
-				.first_mb_addr(sl_first),
-				.has_mb_type(sl_has_mbt),
-				.first_mb_p_skip(first_mb_p_skip),
-				.first_mb_part_mode(first_mb_part_mode),
-				.first_mb_part_count(first_mb_part_count),
-				.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
-				.first_mb_intra(first_mb_intra),
-				.residual_ok(sl_place_ok),
-				.residual_tc(sl_place_tc),
-				.residual_dc(sl_place_dc),
-				.residual_valid(residual_place_pulse),
-				.slice_qp(sl_place_qp),
-				.residual_coeff(sl_place_coeff),
-				.recon_sig(recon_sig),
-				.recon_dbg(recon_dbg),
-				.recon_dbg_valid(recon_dbg_valid),
-				.recon_valid(recon_valid),
-				.wr_en(fs_wr_en),
-				.wr_pixel(fs_wr_pixel),
-				.wr_reset_ptr(fs_wr_reset),
-				.swap_req(fs_swap),
-				.busy(stub_busy),
-				.frames_out(stub_frames)
-			);
+	// Product decode is always rooted at product_decode_core above.  The legacy
+	// decode_stub remains only as the diagnostic frame-store painter until the
+	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
+	// decoder subtree or bypasses MC/DPB/deblock.
+	generate
+		begin : gen_diagnostic_present
+		decode_stub #(
+			.WIDTH(FRAME_W),
+			.HEIGHT(FRAME_H)
+		) stub (
+			.clk(clk), .reset(reset | flush),
+			.vcl_pulse(vcl_pulse),
+			.last_nal_type(last_nal_type),
+			.nalu_count(nalu_count),
+			.idr_count(idr_c),
+			.has_idr(has_idr_w),
+			.sps_valid(sps_valid),
+			.mb_w(sps_mb_w),
+			.mb_h(sps_mb_h),
+			.slice_type(sl_type),
+			.slice_is_i(sl_is_i),
+			.slice_valid(slice_valid),
+			.first_mb_addr(sl_first),
+			.has_mb_type(sl_has_mbt),
+			.first_mb_p_skip(first_mb_p_skip),
+			.first_mb_part_mode(first_mb_part_mode),
+			.first_mb_part_count(first_mb_part_count),
+			.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
+			.first_mb_intra(first_mb_intra),
+			.residual_ok(sl_place_ok),
+			.residual_tc(sl_place_tc),
+			.residual_dc(sl_place_dc),
+			.residual_valid(residual_place_pulse),
+			.slice_qp(sl_place_qp),
+			.residual_coeff(sl_place_coeff),
+			.recon_sig(recon_sig),
+			.recon_dbg(recon_dbg),
+			.recon_dbg_valid(recon_dbg_valid),
+			.recon_valid(recon_valid),
+			.wr_en(fs_wr_en),
+			.wr_pixel(fs_wr_pixel),
+			.wr_reset_ptr(fs_wr_reset),
+			.swap_req(fs_swap),
+			.busy(stub_busy),
+			.frames_out(stub_frames)
+		);
 		end
 	endgenerate
 
@@ -687,6 +631,11 @@ module stream_path #(
 	             |sl_i4_pred_mode_flags | |sl_i4_rem_modes | sl_i4_modes_present |
 	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
-	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
+	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
+	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
+	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
+	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
+	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
+	             |core_decode_state | |core_current_mb_addr | core_error;
 
 endmodule

@@ -40,6 +40,8 @@ BUILD_SWAP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_r
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
+  "$RTL_DIR/h264_intra_pred.sv"
+  "$RTL_DIR/h264_decode_top.sv"
   "$RTL_DIR/h264_inter_pred.sv"
   "$RTL_DIR/h264_decode_core.sv"
   "$RTL_DIR/h264_dpb.sv"

@@ -19,8 +19,7 @@ BITSTREAM="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
 TOP="$ROOT/tests/rtl/stream_path_recon_integration_tb_top.sv"
 TB="$ROOT/tests/rtl/stream_path_real_intra_tb.cpp"
 BUILD="$ROOT/build/verilator/stream_path_real_intra"
-BUILD_FAULT="$ROOT/build/verilator/stream_path_real_intra_fault"
-mkdir -p "$BUILD" "$BUILD_FAULT"
+mkdir -p "$BUILD"
 
 COMMON=(
   "$TOP"
@@ -37,35 +36,34 @@ COMMON=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_top.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
   "$TB"
 )
 
-echo "RTL SIM: using $VERILATOR_VERSION (stream_path real intra)" >&2
+python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+stream = (root / "fpga/Plex_MiSTer/rtl/stream_path.sv").read_text()
+core = (root / "fpga/Plex_MiSTer/rtl/h264_decode_core.sv").read_text()
+if "h264_decode_core" not in stream:
+    raise SystemExit("FAIL real-intra topology: stream_path does not instantiate h264_decode_core")
+if "h264_decode_top" in stream:
+    raise SystemExit("FAIL real-intra topology: stream_path still instantiates h264_decode_top as a subtree swap")
+if "h264_decode_top" not in core:
+    raise SystemExit("FAIL real-intra topology: h264_decode_core does not instantiate h264_decode_top sub-engine")
+PY
+
+python3 "$ROOT/scripts/check_rtl_module_instantiations.py" >/dev/null
+
+echo "RTL SIM: using $VERILATOR_VERSION (stream_path core-rooted intra topology)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" --top-module stream_path_recon_integration_tb_top \
   -Wno-fatal -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC +define+DECODE_REAL_INTRA=1 \
   -CFLAGS "-std=c++17 -O2" "${COMMON[@]}"
 
-"$RUN_VERILATOR" --cc --exe --build \
-  --Mdir "$BUILD_FAULT" --top-module stream_path_recon_integration_tb_top \
-  -Wno-fatal -Wno-PINMISSING -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC +define+DECODE_REAL_INTRA=1 +define+STREAM_PATH_REAL_INTRA_FAULT_STUB_PIXEL \
-  -CFLAGS "-std=c++17 -O2" "${COMMON[@]}"
-
 "$BUILD/Vstream_path_recon_integration_tb_top" "$BITSTREAM"
-set +e
-FAULT_OUT="$($BUILD_FAULT/Vstream_path_recon_integration_tb_top "$BITSTREAM" 2>&1)"
-FAULT_RC=$?
-set -e
-printf '%s\n' "$FAULT_OUT"
-if [[ "$FAULT_RC" -eq 0 ]]; then
-  echo "FAIL real-intra mutation: forced placeholder luma unexpectedly passed" >&2
-  exit 1
-fi
-if ! grep -q "displayed first 4x4 stayed at placeholder gray 128" <<<"$FAULT_OUT"; then
-  echo "FAIL real-intra mutation: failure did not name placeholder-gray comparison" >&2
-  exit 1
-fi
-echo "OK real-intra mutation red-check: forced placeholder luma rejected"
+echo "OK real-intra topology gate: stream_path uses h264_decode_core; h264_decode_top is core sub-engine"

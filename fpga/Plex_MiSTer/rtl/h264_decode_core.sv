@@ -63,6 +63,26 @@ module h264_decode_core #(
     input  wire signed [5:0] mb_qp_delta,    // se(), per-MB QP delta
     input  wire [15:0] mb_residual_bit_offset, // RBSP bit offset for this MB's residual syntax
 
+    // ── Product intra luma residual block pulse interface (from CAVLC/parser) ──
+    // Coefficients are H.264 zigzag/scan order. h264_dequant4x4 performs the
+    // zigzag→raster placement internally before IDCT.
+    input  wire        luma4x4_valid,
+    input  wire [3:0]  luma4x4_idx,
+    input  wire [5:0]  luma4x4_qp,
+    input  wire [4:0]  luma4x4_total_coeff,
+    input  wire [1:0]  luma4x4_trailing_ones,
+    input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
+
+    // ── PRE-deblock intra neighbour context (from reconstructed-neighbour store) ──
+    input  wire        mb_avail_left,
+    input  wire        mb_avail_top,
+    input  wire        mb_avail_topright,
+    input  wire        mb_avail_topleft,
+    input  wire [7:0]  nb_top [0:15],
+    input  wire [7:0]  nb_left [0:15],
+    input  wire [7:0]  nb_topleft,
+    input  wire [7:0]  nb_topright [0:3],
+
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
@@ -306,6 +326,10 @@ module h264_decode_core #(
     reg signed [15:0] lat_p16_residual_v [0:63];
     reg [7:0]  p16_luma_ref [0:80];
     reg [7:0]  p16_chroma_ref [0:3];
+    reg        intra_active_r;
+    reg [7:0]  intra_mb_x_r;
+    reg [7:0]  intra_mb_y_r;
+    reg        intra_mb_is_ref_r;
 
     function automatic [7:0] clip_u8(input signed [17:0] value);
         begin
@@ -602,6 +626,58 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
+    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip;
+    wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
+    wire [1:0]  product_intra_i16_mode = intra16x16_mode;
+    wire signed [28:0] product_intra_i16_dc [0:15];
+    wire [7:0]  product_intra_recon_y [0:255];
+    wire [7:0]  product_intra_recon_u [0:63];
+    wire [7:0]  product_intra_recon_v [0:63];
+    wire        product_intra_recon_valid;
+    wire [4:0]  product_intra_blocks_done;
+    genvar intra_gi;
+    generate
+        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
+            assign product_intra_i16_dc[intra_gi] = 29'sd0;
+        end
+        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral
+            assign product_intra_recon_u[intra_gi] = 8'd128;
+            assign product_intra_recon_v[intra_gi] = 8'd128;
+        end
+    endgenerate
+
+    h264_decode_top u_product_intra_mb (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .mb_start(product_intra_mb_start),
+        .mb_type(product_intra_mb_type),
+        .mb_qp_y(luma4x4_qp),
+        .mb_x(intra_mb_x_r),
+        .mb_y(intra_mb_y_r),
+        .i16_pred_mode(product_intra_i16_mode),
+        .block_valid(luma4x4_valid),
+        .block_index(luma4x4_idx),
+        .block_coeff(luma4x4_coeff_zigzag),
+        .i16_dc_valid(product_intra_mb_start),
+        .i16_dc(product_intra_i16_dc),
+        .i4_modes(intra4x4_modes),
+        .mb_avail_left(mb_avail_left),
+        .mb_avail_top(mb_avail_top),
+        .mb_avail_topright(mb_avail_topright),
+        .mb_avail_topleft(mb_avail_topleft),
+        .nb_top(nb_top),
+        .nb_left(nb_left),
+        .nb_topleft(nb_topleft),
+        .nb_topright(nb_topright),
+        .mb_recon_valid(product_intra_recon_valid),
+        .recon_y(product_intra_recon_y),
+        .blocks_done(product_intra_blocks_done)
+    );
+
+    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
+    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
+    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
+    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
 `ifdef H264_DECODE_CORE_FAULT_DROP_WB
     wire product_wb_en = 1'b0;
 `else
@@ -637,6 +713,10 @@ module h264_decode_core #(
             mv_left_y <= 16'sd0;
             mv_left_ref <= 2'd0;
             mv_left_valid <= 1'b0;
+            intra_active_r <= 1'b0;
+            intra_mb_x_r <= 8'd0;
+            intra_mb_y_r <= 8'd0;
+            intra_mb_is_ref_r <= 1'b0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             dpb_rd_en_r <= 1'b0;
@@ -677,6 +757,14 @@ module h264_decode_core #(
             end
             if (mb_type_valid)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+            if (product_intra_mb_start) begin
+                intra_active_r <= 1'b1;
+                intra_mb_x_r <= syntax_mb_x;
+                intra_mb_y_r <= syntax_mb_y;
+                intra_mb_is_ref_r <= 1'b1;
+            end
+            if (product_intra_recon_valid)
+                intra_active_r <= 1'b0;
 
             case (wb_state)
             ST_IDLE: begin
@@ -704,17 +792,17 @@ module h264_decode_core #(
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
                     wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
-                end else if (recon_mb_valid) begin
-                    wb_mb_x <= recon_mb_x;
-                    wb_mb_y <= recon_mb_y;
-                    wb_mb_is_ref <= recon_mb_is_ref;
+                end else if (product_recon_mb_valid) begin
+                    wb_mb_x <= product_recon_mb_x;
+                    wb_mb_y <= product_recon_mb_y;
+                    wb_mb_is_ref <= product_recon_mb_is_ref;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_recon_y[wb_i] <= recon_y[wb_i];
+                        lat_recon_y[wb_i] <= product_intra_recon_valid ? product_intra_recon_y[wb_i] : recon_y[wb_i];
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_recon_u[wb_i] <= recon_u[wb_i];
-                        lat_recon_v[wb_i] <= recon_v[wb_i];
+                        lat_recon_u[wb_i] <= product_intra_recon_valid ? product_intra_recon_u[wb_i] : recon_u[wb_i];
+                        lat_recon_v[wb_i] <= product_intra_recon_valid ? product_intra_recon_v[wb_i] : recon_v[wb_i];
                     end
                     wb_state <= ST_WRITE;
                 end
@@ -829,7 +917,7 @@ module h264_decode_core #(
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
-    assign busy = (wb_state != ST_IDLE);
+    assign busy = (wb_state != ST_IDLE) || intra_active_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
@@ -840,7 +928,12 @@ module h264_decode_core #(
         |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
-        |mb_qp_delta | |mb_residual_bit_offset | |mv_x_qpel | |mv_y_qpel |
+        |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |
+        |luma4x4_qp | |luma4x4_total_coeff | |luma4x4_trailing_ones |
+        |luma4x4_coeff_zigzag[0] | mb_avail_left | mb_avail_top |
+        mb_avail_topright | mb_avail_topleft | |nb_top[0] | |nb_left[0] |
+        |nb_topleft | |nb_topright[0] | product_intra_recon_valid |
+        |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0];
