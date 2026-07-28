@@ -236,7 +236,7 @@ private:
     std::mutex idleMu_;
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;
-    void applyOsd(uint16_t word);
+    void applyOsd(uint16_t word, bool applyIdle);
     // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();

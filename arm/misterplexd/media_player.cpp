@@ -507,9 +507,12 @@ void MediaPlayer::startOsdPoll() {
             }
             if (got) {
                 const uint16_t prev = lastOsd_.load();
-                if (!osdSeen_.exchange(true) || osdChanged(prev, word)) {
+                const bool seenBefore = osdSeen_.exchange(true);
+                if (!seenBefore || osdChanged(prev, word)) {
                     lastOsd_.store(word);
-                    applyOsd(word);
+                    // The first word is Main's saved snapshot. Treat idle bits as a
+                    // baseline so stale 0x4000 cannot override IDLE_SCREEN=logo.
+                    applyOsd(word, shouldApplyOsdIdle(seenBefore, prev, word));
                 }
             }
             // The mailbox is free to poll. The SPI fallback is not: it has to
@@ -579,7 +582,7 @@ void MediaPlayer::dispatchPlaybackInput(PlaybackCommand command) {
                                   ignoreInputUntilMs_.load(), *this);
 }
 
-void MediaPlayer::applyOsd(uint16_t word) {
+void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
     ignoreInputUntilMs_.store(steadyMs() + 300);
     const OsdSettings s = decodeOsdWord(word);
     setAvOffsetMs(s.avOffsetMs);
@@ -587,17 +590,19 @@ void MediaPlayer::applyOsd(uint16_t word) {
     // opens MrAudio, and re-timing it mid-stream would step the audio clock.
     setAudioClockTrimEnabled(s.audioClockTrimEnabled);
     setResyncDropMs(s.resyncEnabled ? kDefaultResyncDropMs : 0);
-    const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
-    const bool idleChanged = im != idleMode();
-    setIdleMode(im);
-    if (idleChanged)
-        idleLogged_.store(false);
-    if (idleChanged && !playing_.load())
-        paintIdle();
+    if (applyIdle) {
+        const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
+        const bool idleChanged = im != idleMode();
+        setIdleMode(im);
+        if (idleChanged)
+            idleLogged_.store(false);
+        if (idleChanged && !playing_.load())
+            paintIdle();
+    }
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
         " clock_ppm=" + std::to_string(audioClockPpm_) +
         " resync=" + (s.resyncEnabled ? "on" : "off") +
-        " idle=" + std::to_string(s.idleMode));
+        " idle=" + std::to_string(s.idleMode) + (applyIdle ? "" : " (idle unchanged)"));
 }
 
 void MediaPlayer::paintIdle() {

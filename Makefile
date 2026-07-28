@@ -47,6 +47,7 @@ unit-unlocked: preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
+	bash $(ROOT)/tests/unit/test_osd_menu_red.sh
 	$(ROOT)/build/test_playback_overlay
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
