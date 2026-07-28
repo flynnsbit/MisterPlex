@@ -133,6 +133,16 @@ if grep -q 'rtl/h264_deblock.sv' "$QIP"; then
 fi
 expect_red "h264_deblock.sv tracked in git but absent from files.qip" \
   'is not listed in files.qip' "${BASE_ARGS[@]}"
+# The per-module check above only sees files defining a --require'd module.
+# w-fit-o5's whole-tree gate is what catches a product file nobody happened to
+# name, so assert it independently noticed this same file go missing.
+if ! grep -q 'qip_coverage|.*h264_deblock\.sv' "$WORK/red.log"; then
+  echo "FAIL reach-redproof: whole-tree check_qip_coverage did not report h264_deblock.sv" >&2
+  echo "  (a product claim must not survive an incomplete Quartus file list)" >&2
+  cat "$WORK/red.log" >&2
+  exit 1
+fi
+echo "OK reach-redproof red: check_qip_coverage independently saw h264_deblock.sv leave files.qip"
 restore "$WORK/files.qip.orig" "$QIP"
 expect_green "files.qip restored" "${BASE_ARGS[@]}"
 
@@ -169,6 +179,6 @@ if ! git -C "$ROOT" diff --quiet -- "$QIP" "$STREAM" "$CORE"; then
   exit 1
 fi
 
-echo "OK check_product_reachability red-proofs: 4 mutations detected, tree restored clean"
+echo "OK check_product_reachability red-proofs: 5 mutations detected, tree restored clean"
 echo "NOTE: source-level reachability is a pre-filter in both directions."
 echo "NOTE: make post-fit-hierarchy remains the only oracle for what is in the bitstream."

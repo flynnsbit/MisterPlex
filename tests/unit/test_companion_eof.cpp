@@ -209,15 +209,31 @@ int main() {
     {
         std::lock_guard<std::mutex> lock(captureMu);
         require(captured.size() == 2, "did not capture both playMedia callbacks");
-        require(captured[0].key == "/library/metadata/4",
-                "path callback key mismatch: " + captured[0].key);
-        require(captured[0].ratingKey == "4", "path callback ratingKey mismatch");
-        require(captured[0].playQueueItemId == "4", "path callback queue item fallback missing");
-        require(captured[1].key == "/library/metadata/3",
-                "uri callback key mismatch: " + captured[1].key);
-        require(captured[1].ratingKey == "3", "uri callback ratingKey mismatch");
-        require(captured[1].serverMachineId == "server-uri",
-                "uri callback server machine id mismatch: " + captured[1].serverMachineId);
+        // The two playMedia requests are served on separate HTTP worker threads,
+        // so the order in which their callbacks append is not defined. Indexing
+        // by arrival made this test fail about one run in three with
+        // "path callback key mismatch: /library/metadata/3" -- the inverted
+        // order, not a product defect: pathResp and uriResp are already asserted
+        // synchronously above. Match on the key instead; every field assertion
+        // below is unchanged, and requiring exactly one of each is strictly
+        // stronger than the old positional check.
+        const auto* pathCb = static_cast<const decltype(captured)::value_type*>(nullptr);
+        const auto* uriCb = pathCb;
+        for (const auto& c : captured) {
+            if (c.key == "/library/metadata/4")
+                pathCb = &c;
+            else if (c.key == "/library/metadata/3")
+                uriCb = &c;
+        }
+        require(pathCb != nullptr,
+                "path callback key mismatch: no callback bound /library/metadata/4");
+        require(uriCb != nullptr,
+                "uri callback key mismatch: no callback bound /library/metadata/3");
+        require(pathCb->ratingKey == "4", "path callback ratingKey mismatch");
+        require(pathCb->playQueueItemId == "4", "path callback queue item fallback missing");
+        require(uriCb->ratingKey == "3", "uri callback ratingKey mismatch");
+        require(uriCb->serverMachineId == "server-uri",
+                "uri callback server machine id mismatch: " + uriCb->serverMachineId);
     }
     {
         std::lock_guard<std::mutex> lock(logMu);

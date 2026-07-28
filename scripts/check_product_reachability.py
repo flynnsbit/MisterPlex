@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RTL_DIR = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 QIP = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
 CHECKER = ROOT / "scripts" / "check_rtl_module_instantiations.py"
+QIP_COVERAGE = ROOT / "scripts" / "check_qip_coverage.py"
 
 MODULE_DECL = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)", re.MULTILINE)
 
@@ -143,6 +144,30 @@ def main() -> int:
             failures.append(f"{rel} defines {name} but is not listed in files.qip")
 
     # ── verdict ───────────────────────────────────────────────────────────
+    # w-fit-o5 measured two tracked RTL files that Quartus was never given, on
+    # the branch the deployed RBF came from.  Their whole-tree gate is strictly
+    # stronger than the per-module check above, so delegate to it rather than
+    # duplicating it -- but only let it decide the *product* verdict, exactly as
+    # the trunk result does.  A skip is not a pass: rc=77 is treated as unproven.
+    cov_rc = None
+    if QIP_COVERAGE.is_file():
+        cov = subprocess.run([sys.executable, str(QIP_COVERAGE)],
+                             capture_output=True, text=True)
+        cov_rc = cov.returncode
+        print(f"PRODUCT_REACH qip_coverage rc={cov_rc}"
+              f"{' (77 = skip, not a pass)' if cov_rc == 77 else ''}")
+        if cov_rc != 0:
+            for line in (cov.stdout + cov.stderr).strip().splitlines():
+                print(f"PRODUCT_REACH qip_coverage| {line}")
+        if trunk_rc == 0 and cov_rc != 0:
+            failures.append(
+                f"{args.synthesis_root} reaches {args.product_root}, so this branch "
+                f"claims to be integrated, but check_qip_coverage.py returned "
+                f"rc={cov_rc}: product RTL is tracked in git and never compiled")
+    else:
+        print("PRODUCT_REACH qip_coverage rc=absent "
+              "(scripts/check_qip_coverage.py not on this branch)")
+
     if failures:
         for f in failures:
             print(f"PRODUCT_REACH_FAIL: {f}", file=sys.stderr)
@@ -152,7 +177,7 @@ def main() -> int:
         print(f"PRODUCT_REACH_OK label={args.label} scope=PRODUCT_REACHABLE "
               f"trunk={args.synthesis_root}->{args.product_root} "
               f"subtree={args.product_root}->{','.join(args.require)} "
-              f"files_qip=checked "
+              f"files_qip=checked qip_coverage_rc={cov_rc} "
               f"(source-level only; make post-fit-hierarchy is the real oracle)")
     else:
         print(f"PRODUCT_REACH_OK label={args.label} scope=CORE_SUBTREE_ONLY "
