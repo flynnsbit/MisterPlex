@@ -438,9 +438,6 @@ module stream_path #(
 	end
 
 	wire [7:0] core_rbsp_byte [0:63];
-	wire [7:0] core_nb_top [0:15];
-	wire [7:0] core_nb_left [0:15];
-	wire [7:0] core_nb_topright [0:3];
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -454,13 +451,6 @@ module stream_path #(
 			assign core_recon_v[core_gi] = 8'd128;
 			assign core_p16_residual_u[core_gi] = 16'sd0;
 			assign core_p16_residual_v[core_gi] = 16'sd0;
-		end
-		for (core_gi = 0; core_gi < 16; core_gi = core_gi + 1) begin : gen_core_nb_defaults
-			assign core_nb_top[core_gi] = 8'd128;
-			assign core_nb_left[core_gi] = 8'd128;
-		end
-		for (core_gi = 0; core_gi < 4; core_gi = core_gi + 1) begin : gen_core_nb_tr_defaults
-			assign core_nb_topright[core_gi] = 8'd128;
 		end
 		for (core_gi = 0; core_gi < 256; core_gi = core_gi + 1) begin : gen_core_zero256
 			assign core_recon_y[core_gi] = 8'd0;
@@ -525,14 +515,6 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
-		.mb_avail_left(1'b0),
-		.mb_avail_top(1'b0),
-		.mb_avail_topright(1'b0),
-		.mb_avail_topleft(1'b0),
-		.nb_top(core_nb_top),
-		.nb_left(core_nb_left),
-		.nb_topleft(8'd128),
-		.nb_topright(core_nb_topright),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(first_mb_part_mode),

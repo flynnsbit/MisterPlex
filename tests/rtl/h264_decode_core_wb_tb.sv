@@ -30,9 +30,6 @@ module h264_decode_core_wb_tb #(
 	wire [7:0] rbsp_byte [0:63];
 	wire [3:0] intra4x4_modes [0:15];
 	wire signed [15:0] luma4x4_coeff_zigzag [0:15];
-	wire [7:0] nb_top [0:15];
-	wire [7:0] nb_left [0:15];
-	wire [7:0] nb_topright [0:3];
 	wire signed [15:0] p16_residual_y [0:255];
 	wire signed [15:0] p16_residual_u [0:63];
 	wire signed [15:0] p16_residual_v [0:63];
@@ -46,11 +43,6 @@ module h264_decode_core_wb_tb #(
 		for (zi = 0; zi < 16; zi = zi + 1) begin : gen_i4_zero
 			assign intra4x4_modes[zi] = 4'd0;
 			assign luma4x4_coeff_zigzag[zi] = 16'sd0;
-			assign nb_top[zi] = 8'd128;
-			assign nb_left[zi] = 8'd128;
-		end
-		for (zi = 0; zi < 4; zi = zi + 1) begin : gen_nb_tr_zero
-			assign nb_topright[zi] = 8'd128;
 		end
 		for (zi = 0; zi < 256; zi = zi + 1) begin : gen_p16_y_zero
 			assign p16_residual_y[zi] = 16'sd0;
@@ -98,14 +90,6 @@ module h264_decode_core_wb_tb #(
 		.luma4x4_total_coeff(5'd0),
 		.luma4x4_trailing_ones(2'd0),
 		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
-		.mb_avail_left(1'b0),
-		.mb_avail_top(1'b0),
-		.mb_avail_topright(1'b0),
-		.mb_avail_topleft(1'b0),
-		.nb_top(nb_top),
-		.nb_left(nb_left),
-		.nb_topleft(8'd128),
-		.nb_topright(nb_topright),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(3'd0),

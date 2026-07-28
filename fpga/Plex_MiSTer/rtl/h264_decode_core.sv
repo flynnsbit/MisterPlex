@@ -73,16 +73,6 @@ module h264_decode_core #(
     input  wire [1:0]  luma4x4_trailing_ones,
     input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
 
-    // ── PRE-deblock intra neighbour context (from reconstructed-neighbour store) ──
-    input  wire        mb_avail_left,
-    input  wire        mb_avail_top,
-    input  wire        mb_avail_topright,
-    input  wire        mb_avail_topleft,
-    input  wire [7:0]  nb_top [0:15],
-    input  wire [7:0]  nb_left [0:15],
-    input  wire [7:0]  nb_topleft,
-    input  wire [7:0]  nb_topright [0:3],
-
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
@@ -635,16 +625,82 @@ module h264_decode_core #(
     wire [7:0]  product_intra_recon_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
+    wire [7:0]  product_intra_ctx_recon_pixels [0:15];
+    wire [7:0]  product_intra_ctx_above_unused [0:7];
+    wire [7:0]  product_intra_ctx_left_unused [0:3];
+    wire [7:0]  product_intra_ctx_top_left_unused;
+    wire        product_intra_ctx_has_above_unused;
+    wire        product_intra_ctx_has_left_unused;
+    wire        product_intra_ctx_has_above_right_unused;
+    wire [7:0]  product_intra_ctx_chroma_u_above_unused [0:7];
+    wire [7:0]  product_intra_ctx_chroma_v_above_unused [0:7];
+    wire [7:0]  product_intra_ctx_chroma_u_left_unused [0:7];
+    wire [7:0]  product_intra_ctx_chroma_v_left_unused [0:7];
+    wire [7:0]  product_intra_ctx_chroma_u_top_left_unused;
+    wire [7:0]  product_intra_ctx_chroma_v_top_left_unused;
+    wire        product_intra_ctx_has_chroma_above_unused;
+    wire        product_intra_ctx_has_chroma_left_unused;
+    wire        product_intra_mb_avail_left;
+    wire        product_intra_mb_avail_top;
+    wire        product_intra_mb_avail_topright;
+    wire        product_intra_mb_avail_topleft;
+    wire [7:0]  product_intra_nb_top [0:15];
+    wire [7:0]  product_intra_nb_left [0:15];
+    wire [7:0]  product_intra_nb_topleft;
+    wire [7:0]  product_intra_nb_topright [0:3];
     genvar intra_gi;
     generate
         for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
             assign product_intra_i16_dc[intra_gi] = 29'sd0;
+            assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
         for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral
             assign product_intra_recon_u[intra_gi] = 8'd128;
             assign product_intra_recon_v[intra_gi] = 8'd128;
         end
     endgenerate
+
+    h264_intra_nb_ctx #(
+        .MB_WIDTH_MAX(MB_W),
+        .MB_WIDTH_DEFAULT(MB_W)
+    ) u_product_intra_nb_ctx (
+        .clk(clk),
+        .reset(reset),
+        .mb_x(intra_mb_x_r),
+        .mb_y(intra_mb_y_r),
+        .mb_width(mb_width),
+        .first_mb_in_slice(first_mb_in_slice),
+        .mb_start(product_intra_mb_start),
+        .block_idx(luma4x4_idx),
+        .block_valid(1'b0),
+        .recon_pixels(product_intra_ctx_recon_pixels),
+        .mb_commit(product_intra_recon_valid),
+        .recon_y_mb(product_intra_recon_y),
+        .recon_u_mb(product_intra_recon_u),
+        .recon_v_mb(product_intra_recon_v),
+        .above(product_intra_ctx_above_unused),
+        .left(product_intra_ctx_left_unused),
+        .top_left(product_intra_ctx_top_left_unused),
+        .has_above(product_intra_ctx_has_above_unused),
+        .has_left(product_intra_ctx_has_left_unused),
+        .has_above_right(product_intra_ctx_has_above_right_unused),
+        .mb_avail_left(product_intra_mb_avail_left),
+        .mb_avail_top(product_intra_mb_avail_top),
+        .mb_avail_topright(product_intra_mb_avail_topright),
+        .mb_avail_topleft(product_intra_mb_avail_topleft),
+        .nb_top(product_intra_nb_top),
+        .nb_left(product_intra_nb_left),
+        .nb_topleft(product_intra_nb_topleft),
+        .nb_topright(product_intra_nb_topright),
+        .chroma_u_above(product_intra_ctx_chroma_u_above_unused),
+        .chroma_v_above(product_intra_ctx_chroma_v_above_unused),
+        .chroma_u_left(product_intra_ctx_chroma_u_left_unused),
+        .chroma_v_left(product_intra_ctx_chroma_v_left_unused),
+        .chroma_u_top_left(product_intra_ctx_chroma_u_top_left_unused),
+        .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
+        .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
+        .has_chroma_left(product_intra_ctx_has_chroma_left_unused)
+    );
 
     h264_decode_top u_product_intra_mb (
         .clk(clk),
@@ -661,14 +717,14 @@ module h264_decode_core #(
         .i16_dc_valid(product_intra_mb_start),
         .i16_dc(product_intra_i16_dc),
         .i4_modes(intra4x4_modes),
-        .mb_avail_left(mb_avail_left),
-        .mb_avail_top(mb_avail_top),
-        .mb_avail_topright(mb_avail_topright),
-        .mb_avail_topleft(mb_avail_topleft),
-        .nb_top(nb_top),
-        .nb_left(nb_left),
-        .nb_topleft(nb_topleft),
-        .nb_topright(nb_topright),
+        .mb_avail_left(product_intra_mb_avail_left),
+        .mb_avail_top(product_intra_mb_avail_top),
+        .mb_avail_topright(product_intra_mb_avail_topright),
+        .mb_avail_topleft(product_intra_mb_avail_topleft),
+        .nb_top(product_intra_nb_top),
+        .nb_left(product_intra_nb_left),
+        .nb_topleft(product_intra_nb_topleft),
+        .nb_topright(product_intra_nb_topright),
         .mb_recon_valid(product_intra_recon_valid),
         .recon_y(product_intra_recon_y),
         .blocks_done(product_intra_blocks_done)
@@ -930,9 +986,11 @@ module h264_decode_core #(
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |
         |luma4x4_qp | |luma4x4_total_coeff | |luma4x4_trailing_ones |
-        |luma4x4_coeff_zigzag[0] | mb_avail_left | mb_avail_top |
-        mb_avail_topright | mb_avail_topleft | |nb_top[0] | |nb_left[0] |
-        |nb_topleft | |nb_topright[0] | product_intra_recon_valid |
+        |luma4x4_coeff_zigzag[0] | product_intra_mb_avail_left |
+        product_intra_mb_avail_top | product_intra_mb_avail_topright |
+        product_intra_mb_avail_topleft | |product_intra_nb_top[0] |
+        |product_intra_nb_left[0] | |product_intra_nb_topleft |
+        |product_intra_nb_topright[0] | product_intra_recon_valid |
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
