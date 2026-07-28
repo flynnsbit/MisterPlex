@@ -12,6 +12,8 @@
 namespace {
 constexpr int kFrameW = 320;
 constexpr int kFrameH = 240;
+constexpr int kMeasuredMaxFrameCyclesP16_320x240 = 260231;
+constexpr int kFrameTimeoutCycles = (kMeasuredMaxFrameCyclesP16_320x240 * 23 + 9) / 10;
 
 std::vector<uint8_t> readBytes(const char* path) {
     std::ifstream in(path, std::ios::binary);
@@ -175,6 +177,8 @@ int main(int argc, char** argv) {
         sim.reset();
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
+        std::vector<uint64_t> frameCycles;
+        uint64_t maxFrameCycles = 0;
         for (const auto& n : nals) {
             for (std::size_t i = n.start; i < n.end; ++i) sim.feedByte(bytes[i]);
             fed += static_cast<uint32_t>(n.end - n.start);
@@ -185,9 +189,13 @@ int main(int argc, char** argv) {
             }
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                if (!sim.waitForFrames(expectedFrames, std::max(600000, kFrameW * kFrameH * 8))) {
+                const uint64_t frameStart = sim.cycles;
+                if (!sim.waitForFrames(expectedFrames, kFrameTimeoutCycles)) {
                     return fail("decode_stub did not return idle after VCL frame " + std::to_string(expectedFrames)) ? 0 : 1;
                 }
+                const uint64_t frameDelta = sim.cycles - frameStart;
+                frameCycles.push_back(frameDelta);
+                if (frameDelta > maxFrameCycles) maxFrameCycles = frameDelta;
             } else {
                 for (int i = 0; i < 256; ++i) sim.tick();
             }
@@ -231,7 +239,14 @@ int main(int argc, char** argv) {
                   << " inter_band_samples=" << sim.interBandSamples[0] << "/" << sim.interBandSamples[1]
                   << "/" << sim.interBandSamples[2] << "/" << sim.interBandSamples[3]
                   << (pNals == 0 ? " idr-multinal" : " p-slice-multinal")
-                  << " cycles=" << sim.cycles << "\n";
+                  << " cycles=" << sim.cycles
+                  << " frame_cycles=";
+        for (std::size_t i = 0; i < frameCycles.size(); ++i) {
+            if (i != 0) std::cout << "/";
+            std::cout << frameCycles[i];
+        }
+        std::cout << " max_frame_cycles=" << maxFrameCycles
+                  << " frame_timeout_cycles=" << kFrameTimeoutCycles << "\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL stream_path inter RTL: " << e.what() << "\n";
