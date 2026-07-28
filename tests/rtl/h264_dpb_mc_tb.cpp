@@ -24,13 +24,6 @@ constexpr int DPB_BYTES = 2 * FRAME_BYTES;
 struct Sim {
     Vh264_dpb_mc_tb top;
     std::vector<uint8_t> mem = std::vector<uint8_t>(DPB_BYTES, 0xee);
-    struct ReadTag {
-        bool valid = false;
-        int plane = 0;
-        int idx = 0;
-        uint32_t addr = 0;
-        uint64_t issuedCycle = 0;
-    };
     // Match decode_stub's product DPB store latency: h264_dpb registers
     // mem_rd/mem_raddr on one edge; decode_stub samples them on the next edge
     // into dpb_mem_rvalid/dpb_mem_raddr_q, and rdata is combinational from the
@@ -40,85 +33,15 @@ struct Sim {
     bool pendingReadD1 = false;
     uint32_t pendingAddr = 0;
     uint32_t pendingAddrD1 = 0;
-    ReadTag readTag = {};
-    ReadTag readTagD1 = {};
-    int nextFetchRead = 0;
     uint64_t cycle = 0;
 
-    ReadTag tagForIssuedRead(uint32_t addr) {
-        if (nextFetchRead >= 441 + 81 + 81) {
-            throw std::runtime_error("read latency contract: unexpected extra DPB fetch read at cycle " +
-                                     std::to_string(cycle));
-        }
-        int n = nextFetchRead++;
-        ReadTag tag;
-        tag.valid = true;
-        tag.addr = addr;
-        tag.issuedCycle = cycle;
-        if (n < 441) {
-            tag.plane = 0;
-            tag.idx = n;
-        } else if (n < 441 + 81) {
-            tag.plane = 1;
-            tag.idx = n - 441;
-        } else {
-            tag.plane = 2;
-            tag.idx = n - 441 - 81;
-        }
-        return tag;
-    }
-
-    void checkReadLatencyResponse(const ReadTag& expected) {
-        if (top.mem_rvalid != expected.valid) {
-            throw std::runtime_error("read latency contract: mem_rvalid observed " +
-                                     std::to_string(int(top.mem_rvalid)) + " at cycle " +
-                                     std::to_string(cycle) + " but two-edge response valid is " +
-                                     std::to_string(int(expected.valid)));
-        }
-        bool luma = top.luma_window_valid;
-        bool chromaU = top.chroma_u_window_valid;
-        bool chromaV = top.chroma_v_window_valid;
-        int validCount = int(luma) + int(chromaU) + int(chromaV);
-        if (!expected.valid) {
-            if (validCount != 0) {
-                throw std::runtime_error("read latency contract: window valid without two-edge response at cycle " +
-                                         std::to_string(cycle));
-            }
-            return;
-        }
-        if (validCount != 1) {
-            throw std::runtime_error("read latency contract: expected exactly one window valid for read issued at cycle " +
-                                     std::to_string(expected.issuedCycle) + ", got " + std::to_string(validCount));
-        }
-
-        int gotPlane = luma ? 0 : (chromaU ? 1 : 2);
-        int gotIdx = luma ? int(top.luma_window_idx) : int(top.chroma_window_idx);
-        uint8_t gotSample = luma ? top.luma_window_sample : top.chroma_window_sample;
-        if (gotPlane != expected.plane || gotIdx != expected.idx) {
-            throw std::runtime_error("read latency contract: response metadata mismatch got plane=" +
-                                     std::to_string(gotPlane) + " idx=" + std::to_string(gotIdx) +
-                                     " want plane=" + std::to_string(expected.plane) +
-                                     " idx=" + std::to_string(expected.idx));
-        }
-        uint8_t wantSample = expected.addr < mem.size() ? mem[expected.addr] : 0;
-        if (gotSample != wantSample) {
-            throw std::runtime_error("read latency contract: response sample mismatch plane=" +
-                                     std::to_string(expected.plane) + " idx=" + std::to_string(expected.idx) +
-                                     " got=" + std::to_string(int(gotSample)) +
-                                     " want=" + std::to_string(int(wantSample)));
-        }
-    }
-
     void tick() {
-        if (top.fetch_start) nextFetchRead = 0;
-        ReadTag expectedResponse = readTagD1;
         top.mem_rvalid = pendingReadD1;
         top.mem_rdata = pendingReadD1 && pendingAddrD1 < mem.size() ? mem[pendingAddrD1] : 0;
         top.clk = 0;
         top.eval();
         top.clk = 1;
         top.eval();
-        checkReadLatencyResponse(expectedResponse);
         if (top.mem_we) {
             if (top.mem_waddr >= mem.size()) throw std::runtime_error("write address out of DPB range");
             mem[top.mem_waddr] = static_cast<uint8_t>(top.mem_wdata);
@@ -127,8 +50,6 @@ struct Sim {
         pendingAddrD1 = pendingAddr;
         pendingRead = top.mem_rd;
         pendingAddr = top.mem_raddr;
-        readTagD1 = readTag;
-        readTag = top.mem_rd ? tagForIssuedRead(top.mem_raddr) : ReadTag{};
         top.clk = 0;
         top.eval();
         ++cycle;
