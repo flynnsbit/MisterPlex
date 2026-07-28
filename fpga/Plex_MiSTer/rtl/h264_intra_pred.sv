@@ -2,7 +2,7 @@
 // Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
 // Plex vector. All intra modes supported: I4x4 (9 modes), I16x16 (4 modes incl.
 // Plane per clause 8.3.3.4), Chroma 8x8 (4 modes incl. Plane per clause 8.3.4.4).
-// I_PCM (mb_type 25) remains UNSUPPORTED — mode guard fires unsupported_code for it.
+// I_PCM (mb_type 25): raw sample passthrough per clause 7.3.5 / 7.4.5.
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -390,6 +390,66 @@ module h264_chroma8x8_pred (
 	end
 endmodule
 
+// I_PCM macroblock passthrough (H.264 clause 7.3.5 / 7.4.5).
+// For mb_type == 25: bitstream contains 384 raw samples (256 Y + 64 Cb + 64 Cr)
+// after byte-alignment. These bypass prediction and transform entirely — raw
+// samples ARE the reconstruction. The parser handles byte-alignment and feeds
+// samples sequentially through the write interface.
+//
+// Integration contract for the datapath:
+//   1. Assert `start` for one cycle when mb_type == 25 is detected
+//   2. Write 384 samples via `wr_valid`/`wr_data` (256 luma, then 64 Cb, 64 Cr)
+//   3. When `done` asserts, all samples are available at luma_out/cb_out/cr_out
+//   4. Set total_coeff = 16 for all 24 blocks (16 luma + 4 Cb + 4 Cr) in
+//      the nC context store — required for subsequent MB CAVLC parsing
+//   5. No prediction, residual, dequant, or IDCT is applied
+//
+// Latency: 384 cycles from first write to done (one sample per cycle).
+// Combinational depth: ~2 LUT levels (counter compare + mux).
+module h264_ipcm_passthrough (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        start,       // pulse: begin accepting PCM samples
+	input  wire        wr_valid,    // sample write strobe
+	input  wire [7:0]  wr_data,     // raw sample from bitstream
+	output reg         done,        // all 384 samples received
+	output reg         busy,        // currently receiving samples
+	output reg  [7:0]  luma_out [0:255],  // 16x16 Y in raster order
+	output reg  [7:0]  cb_out [0:63],     // 8x8 Cb in raster order
+	output reg  [7:0]  cr_out [0:63]      // 8x8 Cr in raster order
+);
+	// 384 = 256 + 64 + 64 (4:2:0 only)
+	localparam [8:0] LUMA_END  = 9'd256;
+	localparam [8:0] CB_END    = 9'd320;  // 256 + 64
+	localparam [8:0] TOTAL     = 9'd384;  // 256 + 64 + 64
+
+	reg [8:0] count;  // sample counter [0..383]
+
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			busy  <= 1'b0;
+			count <= 9'd0;
+		end else if (start) begin
+			busy  <= 1'b1;
+			count <= 9'd0;
+		end else if (busy && wr_valid) begin
+			if (count < LUMA_END)
+				luma_out[count[7:0]] <= wr_data;
+			else if (count < CB_END)
+				cb_out[count[5:0]] <= wr_data;
+			else
+				cr_out[count[5:0]] <= wr_data;
+
+			if (count == TOTAL - 9'd1) begin
+				done <= 1'b1;
+				busy <= 1'b0;
+			end
+			count <= count + 9'd1;
+		end
+	end
+endmodule
+
 module h264_intra_mode_guard (
 	input  wire        clk,
 	input  wire        reset,
@@ -405,7 +465,6 @@ module h264_intra_mode_guard (
 	output reg  [4:0]  unsupported_block
 );
 	localparam [3:0] UNSUP_I16_PLANE = 4'd1;
-	localparam [3:0] UNSUP_IPCM      = 4'd2;
 	localparam [3:0] UNSUP_MB_TYPE   = 4'd3;
 
 	wire is_i16 = (mb_type >= 8'd1) && (mb_type <= 8'd24);
@@ -420,10 +479,10 @@ module h264_intra_mode_guard (
 			unsupported_code  <= 4'd0;
 			unsupported_mb    <= 16'd0;
 			unsupported_block <= 5'd0;
-		end else if (mb_valid && (is_ipcm || bad_type)) begin
+		end else if (mb_valid && bad_type) begin
 			unsupported_valid <= 1'b1;
 			unsupported_seen  <= 1'b1;
-			unsupported_code  <= is_ipcm ? UNSUP_IPCM : UNSUP_MB_TYPE;
+			unsupported_code  <= UNSUP_MB_TYPE;
 			unsupported_mb    <= mb_index;
 			unsupported_block <= block_index;
 		end
