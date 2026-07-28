@@ -623,3 +623,122 @@ contains the string literals of whatever source last built it, so deleting a
 `Scope:` line from the `.cpp` would have kept reporting green until the next
 rebuild. The `build/` -> `tests/unit/<stem>.cpp` mapping is now tried first and
 the binary is never read. `case_binary_maps_to_its_source` locks that in.
+
+## 12. The degraded checker: an exit-0 that survives the ruling
+
+W-FIT-O5 reported that on `parent/integ-hour27` the 200-line variant of
+`check_rtl_module_instantiations.py` has no argument parser. Reproduced at
+`1ad5706`:
+
+```
+$ python3 scripts/check_rtl_module_instantiations.py \
+      --root h264_decode_core --require h264_decode_top ; echo $?
+RTL_MODULE_INSTANTIATION_OK rtl_modules=68 reachable=44 bench_only=24 root=emu
+0
+$ python3 scripts/check_rtl_module_instantiations.py --zzz-nonexistent ; echo $?
+0
+$ python3 scripts/check_rtl_module_instantiations.py --help ; echo $?
+0
+```
+
+It ignores every flag, answers the plain masked `emu` question, **prints
+`root=emu` while you asked for `h264_decode_core`**, and exits 0. The parent's
+mandated command line therefore *silently degrades to the exact evidence the
+ruling forbids* on any branch carrying that variant.
+
+Nothing shipped on one branch can repair another branch's file, so
+`scripts/check_reachability_gate_capability.py` is built to work **against** a
+degraded copy. The load-bearing probe is negative and needs no cooperation: a
+checker that **exits 0 on an invalid flag cannot be parsing flags**, therefore
+cannot be honouring `--root`, whatever it printed. Four probes: unknown-flag
+rejection, `--help` advertising `--root`/`--require`/`--allow-non-product-root`,
+a bogus `--root` being fatal, and the default run emitting `TRUNK_PROOF` +
+`UNDECIDABLE_GENERATE_MODULES` so logs are self-identifying after the fact.
+
+Measured red/green against the real files:
+
+```
+canonical (w-gate-hour28)      4/4 probes OK   rc=0
+degraded  (parent/integ-hour27) 0/4 probes OK   rc=1
+```
+
+**Two defects found in my own probe while building it**, both the same vacuity
+class it exists to hunt:
+
+1. The first draft scored the degraded copy's `rejects_unknown_flag` probe as
+   **OK**, because that copy exited 1 for an unrelated missing-manifest reason.
+   `rc != 0` for an unexamined reason is not evidence. The probe now demands the
+   specific signature of a real parser: argparse's rc=2 plus an
+   `unrecognized`/`unknown` diagnostic.
+2. The first draft ran the foreign checker with **this** worktree as cwd, which
+   produced `missing explicit NONDEFAULT_CONFIG_REACHABLE list` -- a phantom
+   failure from branch-state manifests. It now runs each checker in its own tree.
+
+## 13. The fit evidence ladder: "ABSENT" is four different facts
+
+The ruling names post-fit hierarchy the strongest oracle. It is, but *absent from
+the fit report* conflates four conditions with four different owners and fixes.
+Measured on the deployed bitstream `fb4bad849ad2db782a5004ce5a3471ce`
+(fit `wfit-hour27-bdiag-b`, source `5b68cc2`), reading reports only -- no Quartus
+run, no deploy:
+
+```
+FIT_LADDER_SUMMARY not_compiled=3 compiled_only=1 elaborated_only=10 fitted=4
+
+NOT_COMPILED     h264_decode_skeleton, h264_decode_top, h264_intra_nb_ctx
+COMPILED_ONLY    h264_decode_core        <- compiled; nothing instantiates it
+ELABORATED_ONLY  h264_inter_mc_part, h264_inter_mc_16x16,
+                 h264_luma_qpel_block_16x16, h264_chroma_epel_block_8x8,
+                 h264_luma_qpel_sample, h264_chroma_epel_sample,
+                 h264_luma_ref_tap_addr, h264_ref_clamp,
+                 h264_mv_pred_16x16, h264_mv_pred_part
+FITTED           decode_stub, h264_dpb_one_ref, h264_dpb_i420_addr,
+                 h264_dpb_mb_write_addr
+```
+
+Every `ELABORATED_ONLY` module carries its Quartus hierarchy, e.g.
+
+```
+emu:emu|stream_path:spath|decode_stub:stub|h264_luma_ref_tap_addr:u_inter_fetch_diag|h264_ref_clamp:u_clamp
+```
+
+### Why the rungs matter more than the verdict
+
+* `NOT_COMPILED` is a `files.qip` bug.
+* `COMPILED_ONLY` is an instantiation bug -- and it is the *only* rung the
+  source-level reachability graph can detect.
+* `ELABORATED_ONLY` is a **sink** bug. The module *was* instantiated into a real
+  hierarchy and the fitter deleted it as dead logic. Instantiating it somewhere
+  else will reproduce the deletion.
+* `FITTED` is the only rung that means "in the bitstream".
+
+**Ten MC/MV/interpolation modules were instantiated under `decode_stub` and then
+pruned.** That is the `_keep`-wire dead-end finding, confirmed in silicon rather
+than inferred. It means relocating those modules under `h264_decode_core` is
+necessary and *not* sufficient: without a real consumer for `dpb_wr_*` the fitter
+will delete them again, exactly as it just did.
+
+### Cross-check status
+
+This instrument is deliberately **grep-level, not a table parse**. `w-audit` has
+broken two entity-table parsers in this repo (unbounded trailing tables;
+direct-children-only), and a table parse can only lose rows relative to a raw
+scan, so this is independent of that defect class by construction. Run *with*
+`make post-fit-hierarchy`, not instead of it; where they disagree, that is the
+finding.
+
+Run against W-FIT-O5's 15 named modules it **agrees with all 15**, by a method
+that shares no code with theirs. I set out to break their claim and corroborated
+it instead. The source-level graph at the fitted commit `5b68cc2` also agrees on
+every `COMPILED_ONLY`/`NOT_COMPILED` verdict, and *disagrees* on the ten
+`ELABORATED_ONLY` ones -- correctly, because source reachability cannot see
+synthesis pruning. That disagreement is the ladder's whole reason to exist.
+
+Red/green, all mutation-proved:
+
+| mutation | result |
+|---|---|
+| unanchored `Elaborating entity .*<mod>.*` scan | rc=1 -- `mod_ghost` promoted a rung by `mod_ghost_helper`'s line |
+| missing reports treated as pass instead of 77 | rc=1 |
+| `--require-fitted h264_decode_core` on the real fit | rc=1 `REQUIRED_MODULE_NOT_FITTED ... rung=COMPILED_ONLY` |
+| `--require-fitted decode_stub` on the real fit | rc=0 |
