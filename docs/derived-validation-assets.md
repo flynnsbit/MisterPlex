@@ -74,3 +74,11 @@ The later live-PMS gate expects the server-profile crop contract
 `display=618x480`; this derived asset is intentionally full-frame
 `display=624x480`. If a regenerated run of `pms_baseline_probe` fails only the
 display-crop check, that is not a profile/entropy/ref/B-slice failure.
+
+## Correctness reference
+
+Per-frame native-I420 plane hashes for this asset are tracked at
+`tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`.
+They are generated with FFmpeg `-skip_loop_filter all` to match the current
+pre-deblock RTL/output contract. See `tests/fixtures/derived_validation/README.md`
+for regeneration, candidate comparison, and blind spots.
