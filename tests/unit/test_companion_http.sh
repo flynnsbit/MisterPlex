@@ -65,6 +65,41 @@ BODY=$(curl -fsS "http://127.0.0.1:${PORT}/resources")
 echo "$BODY" | grep -q MiSTerPlexTest
 echo "$BODY" | grep -q machineIdentifier
 
+# --- CORS preflight must allow every header Plex Web actually sends ----------
+# Plex Web 4.160.0's shared /player/ command helper attaches
+# X-Plex-Target-Client-Identifier to playMedia and every timeline poll. A browser
+# refuses to send a cross-origin request whose custom headers are not all named
+# in the preflight response, so one missing entry silently breaks cast: the
+# player still shows up (that list comes from PMS, server-side) but playMedia
+# never leaves the browser and the web player stays at 0:00. curl does not
+# enforce CORS, so assert the allow-list here explicitly.
+# Browser-enforced companion: tests/hw/test_cast_cors_browser.sh
+PLEX_WEB_REQ_HEADERS="x-plex-client-identifier,x-plex-token,x-plex-target-client-identifier,x-plex-session-identifier,x-plex-product,x-plex-version,x-plex-device-name,x-plex-platform"
+PREFLIGHT=$(curl -fsS -i -X OPTIONS "http://127.0.0.1:${PORT}/player/playback/playMedia" \
+  -H "Origin: http://pms.lan:32400" \
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: ${PLEX_WEB_REQ_HEADERS}") \
+  || fail "OPTIONS preflight failed"
+echo "$PREFLIGHT" | head -1 | grep -q "200" || fail "preflight not 200: $(echo "$PREFLIGHT" | head -1)"
+ALLOWED=$(printf '%s' "$PREFLIGHT" | tr -d '\r' | grep -i '^Access-Control-Allow-Headers:' \
+  | cut -d: -f2- | tr 'A-Z' 'a-z')
+[ -n "$ALLOWED" ] || fail "preflight has no Access-Control-Allow-Headers: $PREFLIGHT"
+if ! printf '%s' "$ALLOWED" | grep -q '\*'; then
+  IFS=',' read -ra WANT <<< "$PLEX_WEB_REQ_HEADERS"
+  for h in "${WANT[@]}"; do
+    printf '%s' "$ALLOWED" | grep -qw -- "$h" \
+      || fail "preflight omits request header '$h' — browser will block cast: $ALLOWED"
+  done
+fi
+printf '%s' "$PREFLIGHT" | tr -d '\r' | grep -qi '^Access-Control-Allow-Origin: \*' \
+  || fail "preflight missing Access-Control-Allow-Origin"
+# Non-preflight responses must still advertise the header statically, for clients
+# that skip the OPTIONS round-trip.
+STATIC_ALLOW=$(curl -fsS -i "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=cors-static" \
+  | tr -d '\r' | grep -i '^Access-Control-Allow-Headers:' | tr 'A-Z' 'a-z')
+printf '%s' "$STATIC_ALLOW" | grep -q 'x-plex-target-client-identifier' \
+  || fail "default allow-list omits x-plex-target-client-identifier: $STATIC_ALLOW"
+
 # --- cold-start empty session: seek/step/skip ACK without re-arming media ---
 COLD_SEEK=$(curl -fsS "http://127.0.0.1:${PORT}/player/playback/seekTo?offset=9000&commandID=cold1")
 echo "$COLD_SEEK" | grep -q Timeline || fail "cold seek no Timeline"

@@ -59,8 +59,18 @@ std::string pctDecode(const std::string& in) {
 }
 
 std::string headerValue(const std::string& req, const char* name) {
-    std::string key = std::string(name) + ":";
-    auto pos = req.find(key);
+    // HTTP header names are case-insensitive; browsers do not guarantee the
+    // casing we happen to write here.
+    const std::string key = std::string(name) + ":";
+    std::string lowerReq = req;
+    std::string lowerKey = key;
+    auto toLower = [](std::string& s) {
+        for (char& ch : s)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    };
+    toLower(lowerReq);
+    toLower(lowerKey);
+    auto pos = lowerReq.find(lowerKey);
     if (pos == std::string::npos)
         return {};
     pos += key.size();
@@ -99,24 +109,46 @@ std::string timelineBrief(const std::string& xml) {
     return xml.substr(p, e == std::string::npos ? 240 : std::min<size_t>(e + 2 - p, 240));
 }
 
+// Plex Web sends X-Plex-Target-Client-Identifier on *every* /player/ command
+// (it is how the controller addresses a specific client). A browser refuses to
+// send any cross-origin request whose custom headers are not named in the
+// preflight's Access-Control-Allow-Headers, so omitting one entry silently kills
+// cast: the player still lists (that list comes from PMS, server-side, no CORS)
+// but playMedia and timeline polls never leave the browser. Enumerating Plex's
+// header set by hand is how that regression happened, so echo whatever the
+// preflight asks for and keep the static list only as the no-preflight default.
+const char kDefaultAllowHeaders[] =
+    "X-Plex-Token, X-Plex-Client-Identifier, X-Plex-Target-Client-Identifier, "
+    "X-Plex-Session-Identifier, X-Plex-Product, X-Plex-Version, X-Plex-Device, "
+    "X-Plex-Device-Name, X-Plex-Platform, X-Plex-Platform-Version, X-Plex-Model, "
+    "X-Plex-Provider-Version, X-Plex-Text-Format, X-Plex-Language, X-Plex-Features, "
+    "X-Plex-Drm, Content-Type, Accept";
+
 void sendHttp(int fd, const std::string& clientIdentifier, int code, const char* ctype,
-              const std::string& body) {
-    char hdr[640];
+              const std::string& body, const std::string& allowHeaders = std::string()) {
     const char* status = (code == 200) ? "OK" : "Not Found";
-    std::snprintf(hdr, sizeof(hdr),
-                  "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                  "Connection: close\r\nX-Plex-Client-Identifier: %s\r\n"
-                  "Access-Control-Allow-Origin: *\r\n"
-                  "Access-Control-Allow-Headers: X-Plex-Token, X-Plex-Client-Identifier, "
-                  "X-Plex-Product, X-Plex-Version, X-Plex-Device, X-Plex-Device-Name, "
-                  "X-Plex-Platform, Content-Type, Accept\r\n"
-                  "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
-                  "Access-Control-Expose-Headers: X-Plex-Client-Identifier\r\n\r\n",
-                  code, status, ctype, body.size(), clientIdentifier.c_str());
+    std::string hdr;
+    hdr.reserve(768 + allowHeaders.size());
+    hdr += "HTTP/1.1 ";
+    hdr += std::to_string(code);
+    hdr += " ";
+    hdr += status;
+    hdr += "\r\nContent-Type: ";
+    hdr += ctype;
+    hdr += "\r\nContent-Length: ";
+    hdr += std::to_string(body.size());
+    hdr += "\r\nConnection: close\r\nX-Plex-Client-Identifier: ";
+    hdr += clientIdentifier;
+    hdr += "\r\nAccess-Control-Allow-Origin: *\r\n"
+           "Access-Control-Allow-Headers: ";
+    hdr += allowHeaders.empty() ? std::string(kDefaultAllowHeaders) : allowHeaders;
+    hdr += "\r\nAccess-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
+           "Access-Control-Expose-Headers: X-Plex-Client-Identifier\r\n"
+           "Access-Control-Max-Age: 600\r\n\r\n";
     // MSG_NOSIGNAL: a client that hangs up before we flush (Plex's long-poll
     // timeline, or any timed-out request) would otherwise raise SIGPIPE, whose
     // default action kills the daemon silently — no log line, no dmesg entry.
-    (void)::send(fd, hdr, std::strlen(hdr), MSG_NOSIGNAL);
+    (void)::send(fd, hdr.data(), hdr.size(), MSG_NOSIGNAL);
     if (!body.empty())
         (void)::send(fd, body.data(), body.size(), MSG_NOSIGNAL);
 }
@@ -733,7 +765,10 @@ void Companion::httpLoop() {
         }
 
         if (req.find("OPTIONS") == 0) {
-            sendHttp(c, machineId_, 200, "text/plain", "");
+            // Echo the exact header set the browser asked for; a preflight that
+            // omits even one requested header blocks the real request entirely.
+            sendHttp(c, machineId_, 200, "text/plain", "",
+                     headerValue(req, "Access-Control-Request-Headers"));
             close(c);
             continue;
         }
