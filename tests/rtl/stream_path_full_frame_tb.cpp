@@ -1008,6 +1008,38 @@ int main(int argc, char** argv) {
         printMb0Trace(sim.mb0Trace);
         writeTraceJson(args.traceJsonOut, sim.mb0Trace);
 
+        // Degeneracy assertion (parent directive #18): MB0 IDCT must produce
+        // non-zero residuals. If all 16 IDCT outputs are 0, the transform
+        // never ran (all-zero coefficients) and recon == pred trivially.
+        if (sim.mb0Trace.valid) {
+            bool allIdctZero = true;
+            for (int i = 0; i < 16; ++i) {
+                if (sim.mb0Trace.idct[static_cast<std::size_t>(i)] != 0) {
+                    allIdctZero = false;
+                    break;
+                }
+            }
+            if (allIdctZero) {
+                std::cerr << "FAIL degeneracy: MB0 IDCT residual is all-zero — "
+                             "transform was never exercised. Comparison is vacuous.\n";
+                return 1;
+            }
+            // Also: recon must differ from prediction (128). If recon==pred for
+            // all 16 pixels, the residual add had no effect.
+            bool allRecon128 = true;
+            for (int i = 0; i < 16; ++i) {
+                if (sim.mb0Trace.recon[static_cast<std::size_t>(i)] != 128) {
+                    allRecon128 = false;
+                    break;
+                }
+            }
+            if (allRecon128) {
+                std::cerr << "FAIL degeneracy: MB0 recon is all-128 — "
+                             "reconstruction did not change prediction.\n";
+                return 1;
+            }
+        }
+
         const CompareResult cr = compareFrames(sim.frames, golden, args.width, args.height);
         if (!args.candidateI420Out.empty()) {
             std::ofstream cand(args.candidateI420Out, std::ios::binary);
@@ -1024,6 +1056,36 @@ int main(int argc, char** argv) {
             if (!cand) throw std::runtime_error("short write native candidate I420: " + args.nativeCandidateI420Out);
         }
         writeInterMetadataJson(args.interMetadataOut, sim.interCaptures, args.width, args.height);
+
+        // Degeneracy assertion (parent directive #18): DPB fetch must return
+        // non-trivial data. If all 256 Y pixels in a prediction are identical,
+        // the DPB fetch returned a constant fill (uninitialised/zero/stuck) and
+        // any comparison against it is meaningless — it would pass trivially.
+        int degenerateCaptures = 0;
+        for (const auto& cap : sim.interCaptures) {
+            bool allSame = true;
+            const uint8_t first = cap.predY[0];
+            for (int i = 1; i < 256; ++i) {
+                if (cap.predY[static_cast<std::size_t>(i)] != first) {
+                    allSame = false;
+                    break;
+                }
+            }
+            if (allSame) ++degenerateCaptures;
+        }
+        if (!sim.interCaptures.empty() && degenerateCaptures == static_cast<int>(sim.interCaptures.size())) {
+            std::cerr << "FAIL degeneracy: ALL " << sim.interCaptures.size()
+                      << " inter MB captures have constant Y prediction (value="
+                      << static_cast<int>(sim.interCaptures[0].predY[0])
+                      << "). DPB fetch returned no real data.\n";
+            return 1;
+        }
+        if (degenerateCaptures > 0) {
+            std::cout << "DEGENERACY_WARNING inter_captures_constant_y="
+                      << degenerateCaptures << "/" << sim.interCaptures.size()
+                      << " (partial DPB corruption)\n";
+        }
+
         writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
                         annexb.size(), sim.cycles, sim);
         const int mbsPerFrame = (args.width / 16) * (args.height / 16);
