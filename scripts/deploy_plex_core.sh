@@ -21,6 +21,11 @@
 #                 recovery is a soft reboot. MiSTer.ini is left untouched; after the
 #                 reboot the core is loaded normally and re-verified.
 #   DEPLOY_REBOOT_WAIT_S seconds to wait for the device to come back (default 150)
+#   DEPLOY_DECODE_PROMOTION 1 to mark this deploy as an FPGA-decode promotion.
+#                 Requires a recent PMS Baseline live-pass stamp from
+#                 scripts/run_pms_baseline_live_gate.sh, or an explicit
+#                 PMS_BASELINE_LIVE_SKIP_REASON documenting why the live gate
+#                 was consciously skipped.
 set -euo pipefail
 
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -30,7 +35,30 @@ DEPLOY_LOAD="${DEPLOY_LOAD:-none}"
 DEPLOY_WAIT_S="${DEPLOY_WAIT_S:-5}"
 DEPLOY_RECOVER="${DEPLOY_RECOVER:-reboot}"
 DEPLOY_REBOOT_WAIT_S="${DEPLOY_REBOOT_WAIT_S:-150}"
+DEPLOY_DECODE_PROMOTION="${DEPLOY_DECODE_PROMOTION:-0}"
+PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [[ "$DEPLOY_DECODE_PROMOTION" == "1" ]]; then
+  PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-$ROOT/build/pms-baseline-live-gate/PASS.stamp}"
+  if [[ -s "$PMS_BASELINE_LIVE_STAMP" ]]; then
+    echo "Decode promotion PMS Baseline gate: PASS stamp=$PMS_BASELINE_LIVE_STAMP"
+    sed -n '1,4p' "$PMS_BASELINE_LIVE_STAMP"
+  elif [[ -n "${PMS_BASELINE_LIVE_SKIP_REASON:-}" ]]; then
+    echo "Decode promotion PMS Baseline gate: SKIPPED consciously: $PMS_BASELINE_LIVE_SKIP_REASON" >&2
+  else
+    cat >&2 <<EOF
+REFUSED: DEPLOY_DECODE_PROMOTION=1 requires live PMS Baseline evidence.
+
+Run:
+  PLEX_BASE=http://plex:32400 MISTERPLEX_BASELINE_KEY=/library/metadata/N make pms-baseline-live
+
+or set PMS_BASELINE_LIVE_SKIP_REASON with the explicit reason this decode
+promotion is proceeding without live PMS Baseline/CAVLC/ref=1/no-B evidence.
+EOF
+    exit 4
+  fi
+fi
 
 RBF="${1:-}"
 if [[ -z "$RBF" ]]; then

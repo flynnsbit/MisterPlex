@@ -97,14 +97,17 @@ Do not trust request parameters or the XML file when debugging decoder failures;
 measure the stream PMS actually delivers. The dedicated live-PMS guard is:
 
 ```bash
+set +x
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400 \
-PLEX_TOKEN=... \
 MISTERPLEX_BASELINE_KEY=/library/metadata/N \
-make pms-baseline-check
+make pms-baseline-live
 ```
 
-This target is intentionally **not** part of `make unit` because it requires a
-running PMS, a token, `ffmpeg`, and a known media item. If those inputs are
+`make pms-baseline-live` is the secret-safe operator path: it prompts for the
+PMS token with `read -rs`, refuses token-like argv, refuses a pre-exported
+`PLEX_TOKEN`, and does not print the token. This target is intentionally **not**
+part of `make unit` because it requires a running PMS, a token, `ffmpeg`, and a
+known media item. If non-secret inputs or the interactive token prompt are
 missing, it prints `SKIP-NOT-PASS` and exits non-zero; do not report that as a
 pass.
 

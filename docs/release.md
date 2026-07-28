@@ -56,6 +56,42 @@ MISTER_HOST=<mister-ip> ./scripts/deploy_misterplexd.sh
 ./scripts/deploy_plex_core.sh   # copy RBF; DEPLOY_LOAD=none|menu|core (default none)
 ```
 
+### Mandatory live PMS Baseline gate for FPGA-decode promotion
+
+Any RBF promoted for FPGA-decode work must have a current live PMS delivered
+stream check, or an explicit recorded skip reason. `make unit` only proves the
+offline parser/red paths; it cannot prove the live Plex server is still
+delivering the FPGA contract:
+
+```text
+profile_idc=66, entropy_cabac=0, max_num_ref_frames=1, b_slices=0
+coded=624x480, display=618x480
+```
+
+Use the secret-safe wrapper; it prompts for the PMS token with `read -rs`, never
+accepts a token on argv, refuses an already-exported `PLEX_TOKEN`, and removes
+its temporary curl secret config on exit:
+
+```bash
+set +x
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400 \
+MISTERPLEX_BASELINE_KEY=/library/metadata/N \
+make pms-baseline-live
+```
+
+A pass writes `build/pms-baseline-live-gate/PASS.stamp` with non-secret
+provenance. For decode promotion through the normal deploy script, mark the
+purpose explicitly:
+
+```bash
+DEPLOY_DECODE_PROMOTION=1 DEPLOY_LOAD=none ./scripts/deploy_plex_core.sh path/to/Plex.rbf
+```
+
+`DEPLOY_DECODE_PROMOTION=1` refuses without the pass stamp unless the operator
+sets `PMS_BASELINE_LIVE_SKIP_REASON='...'` to consciously record why the live
+PMS Baseline gate was skipped. Credential-less environments should skip cleanly;
+do not make `make unit` depend on live PMS credentials.
+
 Startup hook (idempotent via deploy script):
 
 ```bash

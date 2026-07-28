@@ -132,6 +132,7 @@ stream("bad_profile_high.264", profile=100)
 stream("bad_cabac.264", cabac=1)
 stream("bad_max_ref.264", max_refs=4)
 stream("bad_b_slice.264", b_slice=True)
+stream("bad_all.264", profile=100, cabac=1, max_refs=4, b_slice=True)
 PY
 
 run_green() {
@@ -166,6 +167,7 @@ run_red bad_profile_high.264 "profile_idc=100, expected 66"
 run_red bad_cabac.264 "entropy_cabac=1, expected 0"
 run_red bad_max_ref.264 "max_num_ref_frames=4, expected 1"
 run_red bad_b_slice.264 "b_slices=1, expected 0"
+run_red bad_all.264 "profile_idc=100, expected 66"
 
 set +e
 missing_out="$(env -u PLEX_BASE -u PLEX_TOKEN -u MISTERPLEX_BASELINE_KEY -u PLEX_KEY \

@@ -46,6 +46,16 @@ captures, compare the stable decoded ROI (default `VISUAL_COMPARE_BOX=11,0,160,1
 `golden | captured | amplified-diff` PNG plus JSON metrics. The comparator can still use the shared host/RTL DDR
 layout active region for future 624×480 gates.
 
+**Promotion gate:** before any RBF is promoted for FPGA-decode evidence, run the
+secret-safe live PMS Baseline gate:
+`PLEX_BASE=... MISTERPLEX_BASELINE_KEY=/library/metadata/N make pms-baseline-live`.
+The token is entered only at the hidden prompt. The gate must prove the live PMS
+still delivers Baseline/CAVLC/ref=1/no-B (`profile_idc=66`, `entropy_cabac=0`,
+`max_num_ref_frames=1`, `b_slices=0`, coded `624x480`, display `618x480`) or the
+worker must record an explicit skip reason. Decode-promotion deploys should set
+`DEPLOY_DECODE_PROMOTION=1`, which requires the live pass stamp or
+`PMS_BASELINE_LIVE_SKIP_REASON`.
+
 **Dry-run evidence:** `make unit` exit 0. Synthetic/checked-in noise floor is zero
 (`max_pair_mae_rgb=[0,0,0]`, `max_abs_noise=0`, thresholds `[1,1,1]` / `2`), and the comparator's red-path unit
 corrupts one active pixel and fails with exact worst coordinate + diff artifact.
