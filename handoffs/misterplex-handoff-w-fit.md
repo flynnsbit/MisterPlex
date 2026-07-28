@@ -2717,3 +2717,108 @@ rc=1
 **827 rows** -- identical to the corrected figure, so the bounding change does not
 alter real-world parsing, and the load-bearing optimize-away conclusion is
 untouched. The fix closes the holes without moving the ground truth.
+
+---
+
+## 42. I DESTROYED THE `00eebd5e` ESCAPE HATCH. Self-caught, unrecoverable locally, rebuildable from a known revision.
+
+Raw, at 15:07:44 on the device:
+
+```
+/media/fat/_Utility/Plex.rbf      3b1e84355f5fe4e7e137b70a841244fa   (resident)
+/media/fat/_Utility/Plex.rbf.bak  fb4bad849ad2db782a5004ce5a3471ce   <-- NOT 00eebd5e
+```
+
+I told the fleet, in my own §40 close-out, that `.bak` was `00eebd5e` and the
+"escape hatch untouched". **That was true after deploy 1 and false after deploy 2.**
+My own second deploy overwrote it. I did not notice at the time; I found it on a
+routine state re-verification.
+
+### It is gone everywhere, not just from `.bak`
+
+Full md5 census of every `.rbf` over 1 MB across both project trees (44 files):
+
+```
+33 x 41adb98c   (release_artifacts/v0.3.0, replicated per worktree)
+ 7 x fb4bad84
+ 3 x 3b1e8435
+ 1 x 8eb01b79
+ 0 x 00eebd5e     <-- zero occurrences
+```
+
+Device `_Utility` archive also checked: `e9b71d95`, `fe7673bc`, and stock cores
+only. **`00eebd5e` exists in exactly zero places.**
+
+### Why this is a real loss and not bookkeeping
+
+`00eebd5e` is the **only** bitstream ever measured advancing the PLXD mailbox
+(~68/s). Both new builds are silent. It was therefore the sole *positive control*
+for "the fabric writes to DDR at all" — the reference arm of every A/B that could
+localise the DDR-silence regression. Losing it does not change any conclusion
+already drawn, but it removes the baseline the next experiment wanted.
+
+### Root cause: the deploy script keeps ONE generation
+
+`deploy_plex_core.sh:150` was `mv -f "$FINAL" "${FINAL}.bak"` and nothing else.
+Single-generation. **Two deploys destroy the original**, by construction. RED
+reproduction, three generations through the old code path:
+
+```
+files after 2 deploys:  Plex.rbf  Plex.rbf.bak
+GEN1 recoverable: NO   <-- exactly what happened to 00eebd5e
+```
+
+### Fix: content-addressed archive alongside `.bak`
+
+The device already carried a hand-made `Plex.e9b71d95.bak.rbf`, so somebody had
+solved this once manually. Now automatic: before the rotate, the outgoing core is
+copied to `Plex.<md5[0:8]>.bak.rbf` if that file is not already present.
+Content-addressed, so it is idempotent and can never clobber a distinct generation.
+
+```
+GREEN, same 3 generations through the new path:
+  ARCHIVED g/Plex.c1174207.bak.rbf
+  ARCHIVED g/Plex.07b4672c.bak.rbf
+  files: Plex.07b4672c.bak.rbf Plex.c1174207.bak.rbf Plex.rbf Plex.rbf.bak
+  GEN1 recoverable: YES
+
+IDEMPOTENCY, block run twice on an unchanged Plex.rbf:
+  run 1: ARCHIVED    g/Plex.fde40cfe.bak.rbf
+  run 2: ARCHIVE_SKIP g/Plex.fde40cfe.bak.rbf already present
+```
+
+Failure to archive is a loud `ARCHIVE_WARN` on stderr and never blocks the deploy —
+a backup problem must not strand the device on a half-swapped core.
+
+Note the first idempotency attempt I ran was itself mis-framed: I re-archived a
+`Plex.rbf` whose content had changed and read the resulting `ARCHIVED` line as a
+failure. It was correct behaviour and my test was wrong. Re-run properly above.
+
+### Recovery path, verified to exist
+
+`docs/PHASE_BACKLOG.md:1019` records the provenance: `00eebd5e` is the **`wtime4`**
+fit, base `e18495b`, **fitted HEAD `e1dffa3`** ("fix(rtl): stage DDR response
+boundary", 2026-07-28). Both objects are present in this repo, and `e1dffa3`
+carries a complete fittable project — 96 `.sv`, plus `Plex.qsf`, `Plex.sdc`
+(`e2a96568`), `files.qip`. Fitter determinism is established (four slots on
+identical inputs all produced `fb4bad84`), so a fit of `e1dffa3` should reproduce
+`00eebd5e` bit-for-bit.
+
+**Cost: one ~6 h exclusive fit.** It is recoverable, at a price, and only the
+parent can spend that. I am not requesting it — if a fit is authorized, the
+RTL-bisect build that separates `abc3b67` / `7a3d960` / `ea31f68` / `3716f1f` is
+almost certainly worth more than reproducing a baseline whose behaviour is already
+recorded.
+
+### Generalisation
+
+This is the **irreversible-side-effect** class, and it is not the vacuous-control
+class: nothing here was a bad comparison. It is a destructive operation whose blast
+radius exceeded its stated scope, run twice, where once was safe. The check to
+standardise: *before a tool overwrites a rollback artifact, is the artifact it is
+about to destroy reproducible?* `.bak` names by ROLE; roles get overwritten.
+Content-addressed names cannot collide, which is why the fix is `md5`-named rather
+than `.bak.1`, `.bak.2`.
+
+Both authorized deploys are spent. I am not deploying again without new
+authorization, so the fix protects the next worker, not me.

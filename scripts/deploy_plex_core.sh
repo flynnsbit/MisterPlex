@@ -145,8 +145,21 @@ else
   "${SSH[@]}" "bash -s" <<REMOTE
 set -e
 sync
-# Prefer rename over in-place overwrite of a core that may still be mapped
+# Prefer rename over in-place overwrite of a core that may still be mapped.
+# ".bak" is single-generation and is clobbered by the NEXT deploy, so archive the
+# outgoing core content-addressed as well. Two deploys used to destroy the original.
 if [ -f "$FINAL" ]; then
+  OUT_MD5=\$(md5sum "$FINAL" 2>/dev/null | awk '{print \$1}')
+  if [ -n "\$OUT_MD5" ]; then
+    ARCHIVE="/media/fat/_Utility/Plex.\${OUT_MD5:0:8}.bak.rbf"
+    if [ ! -f "\$ARCHIVE" ]; then
+      cp -f "$FINAL" "\$ARCHIVE" 2>/dev/null && echo "ARCHIVED \$ARCHIVE" || echo "ARCHIVE_WARN could not archive \$OUT_MD5" >&2
+    else
+      echo "ARCHIVE_SKIP \$ARCHIVE already present"
+    fi
+  else
+    echo "ARCHIVE_WARN could not md5 outgoing $FINAL" >&2
+  fi
   mv -f "$FINAL" "${FINAL}.bak" 2>/dev/null || true
 fi
 mv -f "$STAGED" "$FINAL"
