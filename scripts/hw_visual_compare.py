@@ -22,7 +22,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 HOST_LAYOUT = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
 RTL_LAYOUT = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_layout_params.svh"
-DEFAULT_DEV = "/dev/video4"
+DEFAULT_DEV = "/dev/video0"
 DEFAULT_FORMAT = "mjpeg"
 DEFAULT_SIZE = "1280x720"
 DEFAULT_FPS = "60"
@@ -760,6 +760,18 @@ def parse_compare_box(spec: str | None, g: Geometry) -> tuple[int, int, int, int
     return x0, y0, x1, y1
 
 
+def scope_report(g: Geometry, box: tuple[int, int, int, int]) -> dict:
+    x0, y0, x1, y1 = box
+    pixels = (x1 - x0) * (y1 - y0)
+    if pixels <= 0:
+        raise HarnessError(f"Scope: 0 cannot PASS; compare box {box} is empty")
+    return {
+        "scope_pixels": pixels,
+        "compare_box": [x0, y0, x1, y1],
+        "geometry": asdict(g),
+    }
+
+
 def active_view(frame: np.ndarray, g: Geometry,
                 box: tuple[int, int, int, int] | None = None) -> np.ndarray:
     x0, y0, x1, y1 = box if box else g.active_box
@@ -1141,6 +1153,14 @@ def cmd_geometry(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scope(args: argparse.Namespace) -> int:
+    g = load_geometry()
+    report = scope_report(g, parse_compare_box(args.compare_box, g))
+    x0, y0, x1, y1 = report["compare_box"]
+    print(f"Scope: {report['scope_pixels']} compare_box={x0},{y0},{x1 - x0},{y1 - y0}")
+    return 0
+
+
 def cmd_capture(args: argparse.Namespace) -> int:
     capture_v4l2(Path(args.out), args.device, args.input_format, args.video_size,
                  args.framerate, args.warmup, args.attempts,
@@ -1157,6 +1177,7 @@ def cmd_noise(args: argparse.Namespace) -> int:
     box = parse_compare_box(args.compare_box, g)
     frames = [load_rgb(Path(p), g) for p in args.frames]
     report = measured_noise(frames, g, box)
+    report.update(scope_report(g, box))
     report["geometry"] = asdict(g)
     report["compare_box"] = list(box)
     if args.out:
@@ -1184,6 +1205,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "capture_log": str(args.capture_log) if args.capture_log else None,
             "geometry": asdict(g),
             "compare_box": list(box),
+            "scope_pixels": scope_report(g, box)["scope_pixels"],
             "rbf_identity": rbf_identity,
             "golden_provenance": golden_provenance,
             "color_provenance": color_provenance,
@@ -1227,6 +1249,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "capture_log": str(args.capture_log) if args.capture_log else None,
         "geometry": asdict(g),
         "compare_box": list(box),
+        "scope_pixels": scope_report(g, box)["scope_pixels"],
         "rbf_identity": rbf_identity,
         "golden_provenance": golden_provenance,
         "color_provenance": color_provenance,
@@ -1262,11 +1285,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("geometry", help="print shared host/RTL geometry")
     p.set_defaults(func=cmd_geometry)
 
+    p = sub.add_parser("scope", help="print the active comparison scope")
+    p.add_argument("--compare-box", help="presented-frame ROI x,y,w,h; defaults to shared active region")
+    p.set_defaults(func=cmd_scope)
+
     p = sub.add_parser("capture", help="capture one frame from v4l2")
     p.add_argument("--out", required=True)
     p.add_argument("--device", default=DEFAULT_DEV)
     p.add_argument("--input-format", default=DEFAULT_FORMAT,
-                   help="v4l2 input format (default: mjpeg; use yuyv422 for luma-critical edges)")
+                   help="v4l2 input format (default: mjpeg)")
     p.add_argument("--video-size", default=DEFAULT_SIZE)
     p.add_argument("--framerate", default=DEFAULT_FPS)
     p.add_argument("--warmup", type=int, default=DEFAULT_WARMUP)
