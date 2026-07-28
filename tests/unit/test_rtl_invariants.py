@@ -298,6 +298,49 @@ def check(cond: bool, msg: str) -> None:
         fail(msg)
 
 
+def conf_str_payload(src: str) -> str:
+    m = re.search(r"\blocalparam\s+CONF_STR\s*=\s*\{(.*?)\n\s*\}\s*;", src, re.S)
+    check(
+        m is not None,
+        "Plex.sv missing active CONF_STR localparam. Phase A menu/input labels must be "
+        "proved from the hps_io CONF_STR payload, not unrelated string literals.",
+    )
+    payload = " ".join(re.findall(r'"([^"]*)"', m.group(1)))
+    hps_instances = re.findall(r"hps_io\s*#\s*\(([^;]*?)\)\s+\w+\s*\(", src, re.S)
+    check(
+        len(hps_instances) == 1
+        and re.search(r"\.CONF_STR\s*\(\s*CONF_STR\s*\)", hps_instances[0]),
+        "Plex.sv hps_io must consume the audited CONF_STR localparam. Do not satisfy "
+        "the Phase A menu guard with an unrelated or unbound string literal.",
+    )
+    return payload
+
+
+def phase_a_menu_violations(src: str) -> list[str]:
+    strings = conf_str_payload(src)
+    violations: list[str] = []
+    for entry in ("F1,raw", "F2,raw", "F3,264"):
+        if entry not in strings:
+            violations.append(
+                f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
+                "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries."
+            )
+    if "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" not in strings:
+        violations.append(
+            "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] "
+            "with option order Logo/Black/Screensaver/LastFrame; update "
+            "libmisterplex/osd_menu.hpp and its red-check if the CONF_STR layout "
+            "intentionally changes."
+        )
+    for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
+        if not (label in strings and "J1," in strings):
+            violations.append(
+                f"Plex.sv J1 controller mapper missing `{label}`. Phase A playback controls "
+                "must remain exposed to MiSTer's mapper; restore the J1 Play/Pause/Stop/Skip labels."
+            )
+    return violations
+
+
 def parse_num(expr: str) -> int:
     expr = expr.strip().rstrip(";").replace("_", "")
     m = re.search(r"(\d+)?'([hHdD])([0-9a-fA-F]+)", expr)
@@ -467,46 +510,6 @@ def check_present_core() -> None:
 
 def check_phase_a_surface() -> None:
     text = sv_module_text(strip_comments(read(PLEX_SV)), "emu")
-
-    def conf_str_payload(src: str) -> str:
-        m = re.search(r"\blocalparam\s+CONF_STR\s*=\s*\{(.*?)\n\s*\}\s*;", src, re.S)
-        check(
-            m is not None,
-            "Plex.sv missing active CONF_STR localparam. Phase A menu/input labels must be "
-            "proved from the hps_io CONF_STR payload, not unrelated string literals.",
-        )
-        payload = " ".join(re.findall(r'"([^"]*)"', m.group(1)))
-        hps_instances = re.findall(r"hps_io\s*#\s*\(([^;]*?)\)\s+\w+\s*\(", src, re.S)
-        check(
-            len(hps_instances) == 1 and re.search(r"\.CONF_STR\s*\(\s*CONF_STR\s*\)", hps_instances[0]),
-            "Plex.sv hps_io must consume the audited CONF_STR localparam. Do not satisfy "
-            "the Phase A menu guard with an unrelated or unbound string literal.",
-        )
-        return payload
-
-    def phase_a_menu_violations(src: str) -> list[str]:
-        strings = conf_str_payload(src)
-        violations: list[str] = []
-        for entry in ("F1,raw", "F2,raw", "F3,264"):
-            if entry not in strings:
-                violations.append(
-                    f"Plex.sv CONF_STR missing `{entry}`. That drops a Phase A shipping file slot; "
-                    "restore F1 raw frame, F2 raw audio, and F3 H.264 annex-B menu entries."
-                )
-        if "O[15:14],Idle screen,Plex logo,Black,Screensaver,Last frame;" not in strings:
-            violations.append(
-                "Plex.sv CONF_STR idle-screen field drifted. The daemon decodes status[15:14] "
-                "with option order Logo/Black/Screensaver/LastFrame; update "
-                "libmisterplex/osd_menu.hpp and its red-check if the CONF_STR layout "
-                "intentionally changes."
-            )
-        for label in ("Play/Pause", "Stop", "Skip Fwd", "Skip Back"):
-            if not (label in strings and "J1," in strings):
-                violations.append(
-                    f"Plex.sv J1 controller mapper missing `{label}`. Phase A playback controls "
-                    "must remain exposed to MiSTer's mapper; restore the J1 Play/Pause/Stop/Skip labels."
-                )
-        return violations
 
     missing_menu = phase_a_menu_violations(text)
     if missing_menu:
