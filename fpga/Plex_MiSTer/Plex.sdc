@@ -74,7 +74,14 @@ set_max_delay -to [get_keepers {*m1_rsp_fifo|rd_gray_w1[*]}] 50.0
 # Combinational nodes (mem~588, mem~844) are read-mux logic, not keepers.
 set_max_delay -from [get_keepers {*ddr_arb*m1_rsp_fifo|mem*}] 50.0
 
-# No ddr_frame_store diagnostic false-path is applied here. The current RTL
-# transfers underruns into clk_ddr via frame_miss_toggle/frame_underrun_ddr
-# before frame_status_ddr/frame_mbox_last, so a direct underrun_count cut would
-# be obsolete at best and misleading at worst.
+# CONSTRAINT 6: ddr_frame_store diagnostic mailbox path — set_max_delay,
+# NOT set_false_path
+#
+# The old SDC cut underrun_count -> frame_mbox_last with set_false_path.  That
+# deleted timing on the frame-store block this fit is meant to validate.  Keep
+# any such diagnostic route visible to STA with a finite bound instead.  Current
+# RTL transfers underruns into clk_ddr via frame_miss_toggle/frame_underrun_ddr
+# before frame_status_ddr/frame_mbox_last, so this bound is intentionally
+# harmless for the present netlist but prevents a future direct diagnostic path
+# from becoming unconstrained.
+set_max_delay -from [get_keepers {*ddr_frame_store*underrun_count[*]}] -to [get_keepers {*ddr_frame_store*frame_mbox_last[*]}] 50.0
