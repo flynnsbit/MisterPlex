@@ -259,23 +259,21 @@ module h264_decode_core #(
     // Addressing is shared with h264_dpb_one_ref via h264_dpb_mb_write_addr,
     // so writeback and later MC fetch agree on native-I420 layout.
     // The P16 path uses the same external DPB read contract as the rest of the
-    // product: issue dpb_rd_en/dpb_rd_addr, then consume a later dpb_rd_valid.
+    // product: h264_dpb_one_ref issues dpb_rd_en/dpb_rd_addr, then consumes a
+    // later dpb_rd_valid to fill the block MC reference windows.
     localparam [7:0] ST_IDLE         = 8'd0;
     localparam [7:0] ST_WRITE        = 8'd1;
-    localparam [7:0] ST_P16_TAP_REQ  = 8'd2;
-    localparam [7:0] ST_P16_TAP_WAIT = 8'd3;
+    localparam [7:0] ST_P16_REF_SEED = 8'd2;
+    localparam [7:0] ST_P16_WIN_FETCH = 8'd3;
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
+    localparam [7:0] ST_P16_WIN_START = 8'd9;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
-    localparam [15:0] FRAME_W16 = 16'(FRAME_W);
-    localparam [15:0] FRAME_H16 = 16'(FRAME_H);
-    localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
-    localparam [15:0] CHROMA_H16 = 16'(FRAME_H / 2);
     localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
     localparam int CORE_MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT);
 
@@ -289,7 +287,8 @@ module h264_decode_core #(
     reg signed [15:0] p16_mv_x_qpel_r;
     reg signed [15:0] p16_mv_y_qpel_r;
     reg [1:0]  p16_ref_idx_l0_r;
-    reg [6:0]  p16_tap_idx;
+    reg        p16_fetch_start_r;
+    reg        p16_ref_seed_r;
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
     reg        cavlc_start_r;
@@ -307,19 +306,15 @@ module h264_decode_core #(
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        wb_commit_p16;
-    reg        dpb_rd_en_r;
-    reg [31:0] dpb_rd_addr_r;
-    reg        p16_wr_en_r;
-    reg [31:0] p16_wr_addr_r;
-    reg [7:0]  p16_wr_data_r;
     reg [7:0]  lat_recon_y [0:255];
     reg [7:0]  lat_recon_u [0:63];
     reg [7:0]  lat_recon_v [0:63];
     reg signed [15:0] lat_p16_residual_y [0:255];
     reg signed [15:0] lat_p16_residual_u [0:63];
     reg signed [15:0] lat_p16_residual_v [0:63];
-    reg [7:0]  p16_luma_ref [0:80];
-    reg [7:0]  p16_chroma_ref [0:3];
+    reg [7:0]  p16_luma_ref [0:440];
+    reg [7:0]  p16_chroma_u_ref [0:80];
+    reg [7:0]  p16_chroma_v_ref [0:80];
     reg        intra_active_r;
     reg [7:0]  intra_mb_x_r;
     reg [7:0]  intra_mb_y_r;
@@ -347,24 +342,6 @@ module h264_decode_core #(
         end
     endfunction
 
-    function automatic [15:0] clamp_coord(
-        input signed [15:0] value,
-        input [15:0] limit
-    );
-        reg signed [16:0] value17;
-        reg signed [16:0] limit17;
-        begin
-            value17 = {value[15], value};
-            limit17 = {1'b0, limit};
-            if (value17 < 17'sd0)
-                clamp_coord = 16'd0;
-            else if (value17 >= limit17)
-                clamp_coord = limit - 16'd1;
-            else
-                clamp_coord = value[15:0];
-        end
-    endfunction
-
     function automatic [7:0] luma4x4_index(input [3:0] block, input [3:0] sample);
         begin
             luma4x4_index = {block[3:2], sample[3:2], block[1:0], sample[1:0]};
@@ -384,16 +361,6 @@ module h264_decode_core #(
     wire [7:0] wb_sample_idx = (wb_plane == 2'd0) ? wb_idx[7:0] :
                                (wb_plane == 2'd1) ? wb_u_idx9[7:0] :
                                                      wb_v_idx9[7:0];
-    wire [31:0] wb_addr;
-    h264_dpb_mb_write_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_wb_addr (
-        .bank_base(wb_base),
-        .mb_x(wb_mb_x),
-        .mb_y(wb_mb_y),
-        .plane(wb_plane),
-        .sample_idx(wb_sample_idx),
-        .addr(wb_addr)
-    );
-
     wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
     wire [31:0] syntax_mb_x32 = syntax_mb_addr32 % MB_W;
     wire [31:0] syntax_mb_y32 = syntax_mb_addr32 / MB_W;
@@ -539,41 +506,44 @@ module h264_decode_core #(
 `else
     wire p16_swap_chroma_residual = 1'b0;
 `endif
-    wire [6:0] p16_luma_tap_col7 = p16_tap_idx % 7'd9;
-    wire [6:0] p16_luma_tap_row7 = p16_tap_idx / 7'd9;
-    wire signed [15:0] p16_luma_tap_col = $signed({9'd0, p16_luma_tap_col7}) - 16'sd4;
-    wire signed [15:0] p16_luma_tap_row = $signed({9'd0, p16_luma_tap_row7}) - 16'sd4;
-    wire [1:0] p16_chroma_tap_x = {1'b0, p16_tap_idx[0]};
-    wire [1:0] p16_chroma_tap_y = {1'b0, p16_tap_idx[1]};
-
-    wire [15:0] p16_luma_out_x = {4'd0, wb_mb_x, 4'd0} + {12'd0, wb_sample_idx[3:0]};
-    wire [15:0] p16_luma_out_y = {4'd0, wb_mb_y, 4'd0} + {12'd0, wb_sample_idx[7:4]};
-    wire [15:0] p16_chroma_out_x = {5'd0, wb_mb_x, 3'd0} + {13'd0, wb_sample_idx[2:0]};
-    wire [15:0] p16_chroma_out_y = {5'd0, wb_mb_y, 3'd0} + {13'd0, wb_sample_idx[5:3]};
-    wire signed [15:0] p16_luma_base_x = $signed({1'b0, p16_luma_out_x[14:0]}) + (p16_mv_x_qpel_r >>> 2);
-    wire signed [15:0] p16_luma_base_y = $signed({1'b0, p16_luma_out_y[14:0]}) + (p16_mv_y_qpel_r >>> 2);
-    wire signed [15:0] p16_chroma_base_x = $signed({1'b0, p16_chroma_out_x[14:0]}) + (p16_mv_x_qpel_r >>> 3);
-    wire signed [15:0] p16_chroma_base_y = $signed({1'b0, p16_chroma_out_y[14:0]}) + (p16_mv_y_qpel_r >>> 3);
-    wire [15:0] p16_ref_x = (wb_plane == 2'd0) ?
-        clamp_coord(p16_luma_base_x + p16_luma_tap_col, FRAME_W16) :
-        clamp_coord(p16_chroma_base_x + $signed({14'd0, p16_chroma_tap_x}), CHROMA_W16);
-    wire [15:0] p16_ref_y = (wb_plane == 2'd0) ?
-        clamp_coord(p16_luma_base_y + p16_luma_tap_row, FRAME_H16) :
-        clamp_coord(p16_chroma_base_y + $signed({14'd0, p16_chroma_tap_y}), CHROMA_H16);
-`ifdef H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ
-    wire [1:0] p16_rd_plane = (wb_plane == 2'd1) ? 2'd2 :
-                              (wb_plane == 2'd2) ? 2'd1 : wb_plane;
-`else
-    wire [1:0] p16_rd_plane = wb_plane;
-`endif
-    wire [31:0] p16_rd_addr;
-    h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_p16_rd_addr (
-        .base(p16_ref_base_r),
-        .plane(p16_rd_plane),
-        .x(p16_ref_x),
-        .y(p16_ref_y),
-        .addr(p16_rd_addr)
-    );
+    // ════════════════════════════════════════════════════════════════════
+    // PRODUCT P16×16 MOTION COMPENSATION
+    // ════════════════════════════════════════════════════════════════════
+    // h264_dpb_one_ref owns the POST-deblock reference store: it consumes the
+    // filtered sample stream, generates the native-I420 write addresses, and
+    // fetches one 21×21 luma + two 9×9 chroma reference windows per inter MB.
+    // h264_inter_mc_part then computes the full 16×16 luma / 8×8 chroma
+    // prediction block from those windows.
+    //
+    // Bank management stays with the outer level (dpb_write_base/dpb_ref_base
+    // inputs), so the embedded reference store's own bank pointers are used
+    // only as rebase anchors on the external memory ports.
+    wire        dpb_ref_ready;
+    wire [31:0] dpb_ref_current_base;
+    wire [31:0] dpb_ref_reference_base;
+    wire        dpb_ref_mem_we;
+    wire [31:0] dpb_ref_mem_waddr;
+    wire [7:0]  dpb_ref_mem_wdata;
+    wire        dpb_ref_mem_rd;
+    wire [31:0] dpb_ref_mem_raddr;
+    wire        dpb_ref_fetch_busy;
+    wire        dpb_ref_fetch_done;
+    wire        dpb_ref_fetch_error_no_ref;
+    wire [1:0]  dpb_ref_luma_frac_x;
+    wire [1:0]  dpb_ref_luma_frac_y;
+    wire [2:0]  dpb_ref_chroma_frac_x;
+    wire [2:0]  dpb_ref_chroma_frac_y;
+    wire signed [15:0] dpb_ref_luma_origin_x;
+    wire signed [15:0] dpb_ref_luma_origin_y;
+    wire signed [15:0] dpb_ref_chroma_origin_x;
+    wire signed [15:0] dpb_ref_chroma_origin_y;
+    wire        dpb_ref_luma_window_valid;
+    wire [8:0]  dpb_ref_luma_window_idx;
+    wire [7:0]  dpb_ref_luma_window_sample;
+    wire        dpb_ref_chroma_u_window_valid;
+    wire        dpb_ref_chroma_v_window_valid;
+    wire [6:0]  dpb_ref_chroma_window_idx;
+    wire [7:0]  dpb_ref_chroma_window_sample;
 
     wire [7:0] wb_data = (wb_plane == 2'd0) ? lat_recon_y[wb_sample_idx] :
                          (wb_plane == 2'd1) ? lat_recon_u[wb_sample_idx[5:0]] :
@@ -582,24 +552,37 @@ module h264_decode_core #(
         (wb_plane == 2'd0) ? lat_p16_residual_y[wb_sample_idx] :
         (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
                              lat_p16_residual_v[wb_sample_idx[5:0]];
-    wire [7:0] p16_luma_pred_sample;
-    h264_luma_qpel_sample u_product_p16_luma_pred (
-        .ref_pix(p16_luma_ref),
-        .frac_x(p16_mv_x_qpel_r[1:0]),
-        .frac_y(p16_mv_y_qpel_r[1:0]),
-        .sample(p16_luma_pred_sample)
+
+    wire [7:0] p16_pred_y [0:255];
+    wire       p16_pred_y_valid [0:255];
+    wire [7:0] p16_pred_u [0:63];
+    wire       p16_pred_u_valid [0:63];
+    wire [7:0] p16_pred_v [0:63];
+    wire       p16_pred_v_valid [0:63];
+    h264_inter_mc_part u_product_p16_mc (
+        .luma_ref_win(p16_luma_ref),
+        .chroma_u_ref_win(p16_chroma_u_ref),
+        .chroma_v_ref_win(p16_chroma_v_ref),
+        .luma_frac_x(p16_mv_x_qpel_r[1:0]),
+        .luma_frac_y(p16_mv_y_qpel_r[1:0]),
+        .chroma_frac_x(p16_mv_x_qpel_r[2:0]),
+        .chroma_frac_y(p16_mv_y_qpel_r[2:0]),
+        .part_w(5'd16),
+        .part_h(5'd16),
+        .pred_y(p16_pred_y),
+        .pred_y_valid(p16_pred_y_valid),
+        .pred_u(p16_pred_u),
+        .pred_u_valid(p16_pred_u_valid),
+        .pred_v(p16_pred_v),
+        .pred_v_valid(p16_pred_v_valid)
     );
-    wire [7:0] p16_chroma_pred_sample;
-    h264_chroma_epel_sample u_product_p16_chroma_pred (
-        .p00(p16_chroma_ref[0]),
-        .p10(p16_chroma_ref[1]),
-        .p01(p16_chroma_ref[2]),
-        .p11(p16_chroma_ref[3]),
-        .frac_x(p16_mv_x_qpel_r[2:0]),
-        .frac_y(p16_mv_y_qpel_r[2:0]),
-        .sample(p16_chroma_pred_sample)
-    );
-    wire [7:0] p16_pred_sample = (wb_plane == 2'd0) ? p16_luma_pred_sample : p16_chroma_pred_sample;
+    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_valid[wb_sample_idx] :
+                            (wb_plane == 2'd1) ? p16_pred_u_valid[wb_sample_idx[5:0]] :
+                                                 p16_pred_v_valid[wb_sample_idx[5:0]];
+    wire [7:0] p16_pred_sample = !p16_pred_in_part ? 8'd0 :
+                                 (wb_plane == 2'd0) ? p16_pred_y[wb_sample_idx] :
+                                 (wb_plane == 2'd1) ? p16_pred_u[wb_sample_idx[5:0]] :
+                                                      p16_pred_v[wb_sample_idx[5:0]];
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
 `else
@@ -780,11 +763,105 @@ module h264_decode_core #(
         .commit_order_error(deblock_commit_order_error)
     );
 
+    // The external DPB read contract returns data one edge after the address
+    // is registered; h264_dpb_one_ref aligns returned data with its own
+    // pending_*_d1 metadata two edges after issue. One skid stage adapts the
+    // former to the latter without reordering reads.
+    reg        dpb_rd_valid_q;
+    reg [7:0]  dpb_rd_data_q;
+    always @(posedge clk) begin
+        if (reset) begin
+            dpb_rd_valid_q <= 1'b0;
+            dpb_rd_data_q  <= 8'd0;
+        end else begin
+            dpb_rd_valid_q <= dpb_rd_valid;
+            dpb_rd_data_q  <= dpb_rd_data;
+        end
+    end
+
+    // POST-deblock reference store + inter reference window fetch.
+    // filtered_sample_* is the same committed POST-deblock sample stream that
+    // feeds the deblock writeback controller, so MC never taps PRE-deblock
+    // reconstruction. ref_ready is promoted from deblock_ref_ready_pulse (the
+    // post-frame-boundary promotion), or seeded once when the outer level hands
+    // this core an externally-owned reference bank via dpb_ref_base.
+    wire [7:0] dpb_ref_filtered_sample = p16_sample_wb_en ? clip_u8(p16_recon_sum) : wb_data;
+    h264_dpb_one_ref #(
+        .FRAME_W(FRAME_W),
+        .FRAME_H(FRAME_H)
+    ) u_product_dpb_ref (
+        .clk(clk),
+        .reset(reset),
+        .idr_start(slice_start && slice_is_idr),
+        .frame_done(deblock_ref_ready_pulse | p16_ref_seed_r),
+        .ref_ready(dpb_ref_ready),
+        .current_base(dpb_ref_current_base),
+        .reference_base(dpb_ref_reference_base),
+        .filtered_sample_valid(deblock_filtered_sample_valid),
+        .filtered_mb_x(wb_mb_x),
+        .filtered_mb_y(wb_mb_y),
+        .filtered_plane(wb_plane),
+        .filtered_sample_idx(wb_sample_idx),
+        .filtered_sample(dpb_ref_filtered_sample),
+        .mem_we(dpb_ref_mem_we),
+        .mem_waddr(dpb_ref_mem_waddr),
+        .mem_wdata(dpb_ref_mem_wdata),
+        .fetch_start(p16_fetch_start_r),
+        .fetch_mb_x(wb_mb_x),
+        .fetch_mb_y(wb_mb_y),
+        .fetch_part_mode(3'd0),
+        .fetch_part_idx(2'd0),
+        .fetch_part_w(5'd16),
+        .fetch_part_h(5'd16),
+        .fetch_mv_x_qpel(p16_mv_x_qpel_r),
+        .fetch_mv_y_qpel(p16_mv_y_qpel_r),
+        .fetch_busy(dpb_ref_fetch_busy),
+        .fetch_done(dpb_ref_fetch_done),
+        .fetch_error_no_ref(dpb_ref_fetch_error_no_ref),
+        .luma_frac_x(dpb_ref_luma_frac_x),
+        .luma_frac_y(dpb_ref_luma_frac_y),
+        .chroma_frac_x(dpb_ref_chroma_frac_x),
+        .chroma_frac_y(dpb_ref_chroma_frac_y),
+        .luma_origin_x(dpb_ref_luma_origin_x),
+        .luma_origin_y(dpb_ref_luma_origin_y),
+        .chroma_origin_x(dpb_ref_chroma_origin_x),
+        .chroma_origin_y(dpb_ref_chroma_origin_y),
+        .mem_rd(dpb_ref_mem_rd),
+        .mem_raddr(dpb_ref_mem_raddr),
+        .mem_rdata(dpb_rd_data_q),
+        .mem_rvalid(dpb_rd_valid_q),
+        .luma_window_valid(dpb_ref_luma_window_valid),
+        .luma_window_idx(dpb_ref_luma_window_idx),
+        .luma_window_sample(dpb_ref_luma_window_sample),
+        .chroma_u_window_valid(dpb_ref_chroma_u_window_valid),
+        .chroma_v_window_valid(dpb_ref_chroma_v_window_valid),
+        .chroma_window_idx(dpb_ref_chroma_window_idx),
+        .chroma_window_sample(dpb_ref_chroma_window_sample)
+    );
+
+    // Rebase the reference store's internal bank pointers onto the bank bases
+    // the outer level owns. Both are plane-linear i420 offsets, so subtracting
+    // the internal anchor and adding the external base is exact.
+`ifdef H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ
+    wire [31:0] p16_win_plane_off = dpb_ref_mem_raddr - dpb_ref_reference_base;
+    wire [31:0] p16_luma_plane_sz = 32'(FRAME_W) * 32'(FRAME_H);
+    wire [31:0] p16_chroma_plane_sz = 32'(FRAME_W / 2) * 32'(FRAME_H / 2);
+    wire [31:0] p16_rd_offset =
+        (p16_win_plane_off < p16_luma_plane_sz) ? p16_win_plane_off :
+        (p16_win_plane_off < (p16_luma_plane_sz + p16_chroma_plane_sz)) ?
+            (p16_win_plane_off + p16_chroma_plane_sz) :
+            (p16_win_plane_off - p16_chroma_plane_sz);
+`else
+    wire [31:0] p16_rd_offset = dpb_ref_mem_raddr - dpb_ref_reference_base;
+`endif
+    wire [31:0] p16_win_rd_addr = p16_ref_base_r + p16_rd_offset;
+    wire [31:0] product_wb_addr = wb_base + (dpb_ref_mem_waddr - dpb_ref_current_base);
+
     integer wb_i;
     always @(posedge clk) begin
         frame_done_r <= deblock_ref_ready_pulse;
-        dpb_rd_en_r <= 1'b0;
-        p16_wr_en_r <= 1'b0;
+        p16_fetch_start_r <= 1'b0;
+        p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
         if (reset || slice_start) begin
@@ -798,7 +875,8 @@ module h264_decode_core #(
             p16_mv_x_qpel_r <= 16'sd0;
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
-            p16_tap_idx <= 7'd0;
+            p16_fetch_start_r <= 1'b0;
+            p16_ref_seed_r <= 1'b0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
@@ -816,11 +894,6 @@ module h264_decode_core #(
             intra_mb_is_ref_r <= 1'b0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
-            dpb_rd_en_r <= 1'b0;
-            dpb_rd_addr_r <= 32'd0;
-            p16_wr_en_r <= 1'b0;
-            p16_wr_addr_r <= 32'd0;
-            p16_wr_data_r <= 8'd0;
             for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                 lat_recon_y[wb_i] <= 8'd0;
             for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
@@ -833,10 +906,12 @@ module h264_decode_core #(
                 lat_p16_residual_u[wb_i] <= 16'sd0;
                 lat_p16_residual_v[wb_i] <= 16'sd0;
             end
-            for (wb_i = 0; wb_i < 81; wb_i = wb_i + 1)
+            for (wb_i = 0; wb_i < 441; wb_i = wb_i + 1)
                 p16_luma_ref[wb_i] <= 8'd0;
-            for (wb_i = 0; wb_i < 4; wb_i = wb_i + 1)
-                p16_chroma_ref[wb_i] <= 8'd0;
+            for (wb_i = 0; wb_i < 81; wb_i = wb_i + 1) begin
+                p16_chroma_u_ref[wb_i] <= 8'd0;
+                p16_chroma_v_ref[wb_i] <= 8'd0;
+            end
             for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
                 mv_top_x[wb_i] <= 16'sd0;
                 mv_top_y[wb_i] <= 16'sd0;
@@ -881,7 +956,6 @@ module h264_decode_core #(
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
                     wb_idx <= 9'd0;
-                    p16_tap_idx <= 7'd0;
                     wb_commit_p16 <= 1'b0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                         lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
@@ -889,7 +963,7 @@ module h264_decode_core #(
                         lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
-                    wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
+                    wb_state <= p16_zero_mv_valid ? ST_P16_REF_SEED : ST_P16_RES_START;
                 end else if (product_recon_mb_valid) begin
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
@@ -937,7 +1011,7 @@ module h264_decode_core #(
                     end
 `endif
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
-                        wb_state <= ST_P16_TAP_REQ;
+                        wb_state <= ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
@@ -945,38 +1019,35 @@ module h264_decode_core #(
                     end
                 end
             end
-            ST_P16_TAP_REQ: begin
-                dpb_rd_en_r <= 1'b1;
-                dpb_rd_addr_r <= p16_rd_addr;
-                wb_state <= ST_P16_TAP_WAIT;
-            end
-            ST_P16_TAP_WAIT: begin
-                if (dpb_rd_valid) begin
-                    if (wb_plane == 2'd0)
-                        p16_luma_ref[p16_tap_idx] <= dpb_rd_data;
-                    else
-                        p16_chroma_ref[p16_tap_idx[1:0]] <= dpb_rd_data;
-
-                    if ((wb_plane == 2'd0 && p16_tap_idx == 7'd80) ||
-                        (wb_plane != 2'd0 && p16_tap_idx == 7'd3)) begin
-                        p16_tap_idx <= 7'd0;
-                        wb_state <= ST_P16_WRITE;
-                    end else begin
-                        p16_tap_idx <= p16_tap_idx + 7'd1;
-                        wb_state <= ST_P16_TAP_REQ;
-                    end
+            ST_P16_REF_SEED: begin
+                // Publish the externally-owned reference bank into the local
+                // reference store once, then start the block reference fetch.
+                if (dpb_ref_ready) begin
+                    p16_fetch_start_r <= 1'b1;
+                    wb_state <= ST_P16_WIN_START;
+                end else begin
+                    p16_ref_seed_r <= 1'b1;
                 end
             end
+            ST_P16_WIN_START: begin
+                wb_state <= ST_P16_WIN_FETCH;
+            end
+            ST_P16_WIN_FETCH: begin
+                if (dpb_ref_luma_window_valid)
+                    p16_luma_ref[dpb_ref_luma_window_idx] <= dpb_ref_luma_window_sample;
+                if (dpb_ref_chroma_u_window_valid)
+                    p16_chroma_u_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
+                if (dpb_ref_chroma_v_window_valid)
+                    p16_chroma_v_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
+                if (dpb_ref_fetch_done)
+                    wb_state <= ST_P16_WRITE;
+            end
             ST_P16_WRITE: begin
-                p16_wr_en_r <= 1'b1;
-                p16_wr_addr_r <= wb_addr;
-                p16_wr_data_r <= clip_u8(p16_recon_sum);
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
                     wb_state <= ST_COMMIT;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
-                    wb_state <= ST_P16_TAP_REQ;
                 end
             end
             ST_WRITE: begin
@@ -1013,11 +1084,11 @@ module h264_decode_core #(
         end
     end
 
-    assign dpb_wr_en = product_wb_en | p16_wr_en_r;
-    assign dpb_wr_addr = p16_wr_en_r ? p16_wr_addr_r : wb_addr;
-    assign dpb_wr_data = p16_wr_en_r ? p16_wr_data_r : wb_data;
-    assign dpb_rd_en = dpb_rd_en_r;
-    assign dpb_rd_addr = dpb_rd_addr_r;
+    assign dpb_wr_en = product_wb_en | p16_sample_wb_en;
+    assign dpb_wr_addr = product_wb_addr;
+    assign dpb_wr_data = dpb_ref_filtered_sample;
+    assign dpb_rd_en = dpb_ref_mem_rd;
+    assign dpb_rd_addr = p16_win_rd_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
