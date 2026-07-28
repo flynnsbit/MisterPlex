@@ -90,10 +90,10 @@ def pms_geometry_contract_summary() -> str:
     return f"coded {coded_w}x{coded_h}/display {display_w}x{display_h}"
 
 
-def registry_skips(label: str) -> list[SkipRecord]:
+def registry_skips(label: str, missing: str | None = None) -> list[SkipRecord]:
     skips: list[SkipRecord] = []
     if label == "make-unit":
-        missing = live_pms_missing_reason()
+        missing = live_pms_missing_reason() if missing is None else missing
         if missing:
             skips.append(
                 SkipRecord(
@@ -218,11 +218,17 @@ def self_test() -> int:
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
-    inv = summarize(registry_skips("make-unit"))
+    # Force the skip condition. Reading the ambient host here made this assertion
+    # pass only when PMS credentials were absent and fail when they were present,
+    # so a correctly configured host turned make unit red.
+    inv = summarize(registry_skips("make-unit", missing="PLEX_TOKEN"))
     expected_geometry = pms_geometry_contract_summary()
     if expected_geometry not in inv:
         print(inv)
         print(f"missing derived geometry contract: {expected_geometry}")
+        return 1
+    if summarize(registry_skips("make-unit", missing="")) == inv:
+        print("registry inventory ignored the forced skip condition")
         return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
