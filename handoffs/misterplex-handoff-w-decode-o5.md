@@ -279,3 +279,157 @@ is not exercising them — run the block standalone.**
   locked (sticky `0x14`, reject `+0x53`).
 - **Do not let a macro become a topology switch again.**
 - **Do not report BUILD_OK / DEPLOY_OK as success.** Only a moving picture counts.
+
+---
+
+## Addendum — the parent's revised two-direction standard (commit `4969d96`)
+
+The parent withdrew the core-subtree gate as sufficient after `w-audit` broke it,
+and assigned me the branch convergence. **Result: the assigned convergence was
+already complete.** Measured on `w-decode-o5`:
+
+| Direction | Command | rc |
+|---|---|---|
+| TRUNK | `--root emu --require h264_decode_core` | **0** |
+| SUBTREE | `--root h264_decode_core --require h264_deblock_writeback_ctrl …` | **0** |
+
+My merge `05934a9` had already landed w-deblock's work onto a base carrying
+`stream_path -> h264_decode_core`. I reproduced w-audit's finding independently
+on `w-deblock-seam`: TRUNK rc=1, `parents=<none>`, and zero references to
+`h264_decode_core` in that branch's `stream_path.sv`.
+
+**Peers should merge or rebase onto `w-decode-o5`, not onto `w-deblock-seam`.**
+Work landing on `w-deblock-seam` lands in a disconnected core.
+
+### I re-ran w-audit's four mutations myself rather than inherit them
+
+| Mutation | Reproduces here? | Outcome |
+|---|---|---|
+| M1 disabled `if (0)` generate | **yes — and worse** | the fleet checker *and my own seam gate* both passed it |
+| M2 escaped instance name `\name ` | **no** | returns the correct rc=0 on this branch; reported for the record |
+| M3 file in git but absent from `files.qip` | **yes** | reachability rc=0 while the module is not compiled at all |
+| M4 subtree-green-while-core-dead | already closed here | both directions rc=0 |
+
+I got M1 wrong in my own instrument and only found it by attacking my own gate.
+That is the second time this session that red-checking caught a gate of mine that
+was reporting a green it had not earned.
+
+### `files.qip` cross-check — measured, clean
+
+- core subtree: **21 modules, 21 in `files.qip`, 0 missing**
+- emu subtree: **49 modules, 0 missing**
+
+Now enforced permanently by `core_subtree_qip_guard()` in the seam gate, and
+independently cross-checked with a standalone scan written from scratch.
+
+**Concrete fleet risk this surfaced:** every MC module w-swap landed
+(`h264_inter_mc_16x16`, `h264_inter_mc_part`, `h264_dpb_one_ref`,
+`h264_luma_qpel_block_16x16`, `h264_chroma_epel_block_8x8`) lives in
+**`h264_dpb.sv`**. Deleting that one qip line removes the whole motion-compensation
+subsystem from the design while every reachability check stays green. That single
+line is now guarded.
+
+### Harness changes
+
+- Trunk proof is **mandatory**, running before the subtree proof (Makefile + rollcall).
+- `tests/unit/test_decode_core_seam_audit_reds.sh` — 7 checks, mutate → red → restore
+  → green, two reds machine-checked against `tests/expected_red_manifest.json`.
+- That test mutates tracked RTL, so it **refuses with rc=1 if a Quartus fit is
+  running in this tree** — the "never edit sources under a live compile" rule,
+  mechanized. It refuses rather than skips, because a skip is not a pass. It
+  matches `/proc/pid/exe`, not `pgrep -f`, which would false-positive on its own shell.
+
+Sweep at `4969d96`: **36/36 rc=0, 0 exit-77 skips.** One earlier failure
+(`test_resource_preflight.sh`) was the preflight guard **correctly refusing**
+during w-fit-o5's live fit; it returned rc=0 once that fit ended. Not a regression,
+and it was not overridden.
+
+### Unchanged, and still the honest headline
+
+```
+DECODE_CORE_SEAM_OK core_inputs=53 constant_inputs=29 synthetic_reg_inputs=2
+  core_outputs=13 unobserved_outputs=13 presentation_driver=decode_stub
+  live_generate=yes core_subtree=21 core_subtree_in_qip=21
+```
+
+The core is now **provably in the design, provably reachable from `emu` in both
+directions, and provably still vacuous**: all 13 outputs unobserved, `decode_stub`
+still the sole driver of every frame-store pixel. Structural rooting is not
+function. **Zero frames have been decoded and displayed by the FPGA.**
+Denominator reminder: the frame is **1170 MBs**.
+
+---
+
+## Addendum 2 — capacity, and a defect class no existing oracle catches (`d599bd8`)
+
+w-fit-o5 reported `decode_stub` holding **256 M10K = 46% of the device** and warned
+that w-swap's MC may not fit until the stub is retired. Chasing that number found
+something worse than a capacity squeeze.
+
+### The stub's DPB is arithmetically impossible
+
+| | |
+|---|---|
+| `decode_stub` declares | `dpb_mem [0 : 2*(W*H + 2*((W/2)*(H/2))) - 1]` |
+| `WIDTH`/`HEIGHT` defaults | 320 × 240 |
+| **as actually instantiated** (`Plex.qsf` `FRAME_W=640 FRAME_H=480` → `Plex.sv` → `stream_path` → stub) | **640 × 480** |
+| declared array | **921,600 bytes = 7,372,800 bits** |
+| device M10K (5CSEBA6) | 553 × 10,240 = **5,662,720 bits** |
+| ratio | **1.30× the entire device** |
+| w-fit measured in the fit | 256 M10K = 262,144 bytes = **28% of the declared array** |
+
+The other 72% was never built. **Every gate we own was green** — reachability in
+both directions, `files.qip` coverage, the seam gate — while the diagnostic frame
+store was silently a fraction of its declared size.
+
+**This is a new defect class.** Reachability proves it is in the graph; `files.qip`
+proves it is compiled; post-fit hierarchy proves it survived fitting. All three are
+true here. The array is simply impossible. `scripts/check_onchip_ram_budget.py`
+closes it.
+
+It required **real parameter propagation from `emu`**, not name-based seeding:
+`decode_stub.WIDTH` is a frame width (640) but `async_fifo.WIDTH` is a bus width (8).
+I got this wrong on the first cut in both directions and only found it because the
+first run reported the stub as `UNEVALUATED` rather than over-budget.
+
+### Consequence for W-SWAP-O5 — measured, not assumed
+
+`h264_dpb_one_ref` is **memory-external by design**: it emits `mem_we/mem_waddr/mem_wdata`
+and issues `dpb_rd_en/dpb_rd_addr`, and `BANK1_BASE = 898560/2` implies a two-bank
+898,560-byte store. Backing that on-chip needs ~1.3× the device. **It must be
+DDR-backed; it can never be on-chip.**
+
+And today it has **no memory at all**: `stream_path.sv:548` ties `.dpb_rd_data(8'd0)`,
+while `dpb_wr_en/addr/data` terminate only in the `_keep` anti-prune wire. **Every
+reference pixel the product MC reads is `0x00`.** MC will motion-compensate from a
+black frame even once it fits. This was already declared seam debt
+(`decode_core_seam_debt.txt:51,64,74-76`); what was missing was stating its consequence.
+
+### Adopted rather than rebuilt
+
+w-fit-o5's `scripts/check_qip_coverage.py` (`ee2ed89`) taken verbatim. It passes
+**rc=0 on this branch**: 36 qip entries vs 34 on `parent/integ-hour27`;
+`h264_decode_top.sv` and `h264_intra_nb_ctx.sv` are compiled here and are not there.
+This corroborates w-fit's ruling that **`w-decode-hour27`/`w-decode-o5` is the only
+viable merge base**.
+
+### One more resurrection route closed
+
+`Plex.qsf:83` still passes `DECODE_REAL_INTRA=0`. Inert — no product RTL tests the
+macro — but the QSF is precisely where someone flips it to 1 and deletes 14 modules
+again. `=0` tolerated, anything else fails (`RETIRED_TOPOLOGY_MACRO_TESTED`). I did
+**not** edit `Plex.qsf`; w-fit-o5 owns the fit window.
+
+### Geometry note (not mine to fix)
+
+The project **fits 640×480** while the content is **624×480 coded / 618×480 display**.
+That is the derived-geometry contract defect already assigned to W-GATE-O5. I changed
+no geometry.
+
+### Sweep at `d599bd8`: 39/39 rc=0, 0 exit-77 skips
+
+Reds: N1 new on-chip product DPB → `ONCHIP_RAM_ARRAY_EXCEEDS_DEVICE`; N2 stale entry;
+N3 unevaluatable block RAM (no silent pass); N4 `FRAME_W` removed from QSF;
+O1 `DECODE_REAL_INTRA=1` in QSF. All restore to green.
+
+**Still zero frames decoded and displayed by the FPGA.** Denominator: 1170 MBs.

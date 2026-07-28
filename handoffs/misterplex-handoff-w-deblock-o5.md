@@ -97,6 +97,72 @@ mode, but the fragility was real and is now removed.
    `git ls-files` emits one row per conflict stage. It fails closed, so it is safe, but the
    diagnostic is misleading. **For `w-gate-o5`.**
 
+### Third oracle: files.qip coverage (w-fit-o5's gate, adopted not rebuilt)
+
+w-fit-o5 measured two product RTL files tracked in git and **never handed to Quartus** on the
+branch the deployed RBF `fb4bad84` came from. I re-measured their gate myself rather than
+taking the number on trust:
+
+| branch | `check_qip_coverage.py` |
+|---|---|
+| `w-deblock-o5` (mine, descends from `w-deblock-seam`) | **rc=1** — `NOT_COMPILED h264_decode_top.sv`, `h264_intra_nb_ctx.sv` |
+| `w-deblock-o5-converge` | **rc=0** — `product=37 compiled=35`, 2 allow-listed |
+
+So my own branch carries the defect too, confirmed independently. `check_product_reachability.py`
+now **delegates** to `scripts/check_qip_coverage.py` instead of duplicating it, and folds the
+result into the *product* verdict exactly as the trunk result is folded: a branch whose trunk is
+green while its Quartus file list is incomplete is a hard failure, because it claims to be
+integrated and is not. rc=77 is reported as a skip, never as a pass. The verdict line now carries
+`qip_coverage_rc=`.
+
+Red-proved: removing `rtl/h264_deblock.sv` from `files.qip` must be seen **twice** — once by the
+per-module check and once, independently, by the whole-tree gate. The per-module check only sees
+files defining a `--require`d module, so the whole-tree gate is what catches a product file nobody
+happened to name.
+
+### `test_companion_eof` is FLAKY, not a known-broken test — measured and fixed
+
+The brief lists `tests/unit/test_companion_eof` key `/library/metadata/3` as a known unrelated
+failure. It is not a stable failure. Measured:
+
+| branch | before fix | after fix |
+|---|---|---|
+| `w-deblock-o5` | **15/40 failures (~38%)** | **0/60** |
+| `w-deblock-o5-converge` | **13/40 failures (~33%)** | 0 |
+
+Cause: the test fires two `playMedia` HTTP requests and then indexes the captured callbacks
+positionally (`captured[0]`, `captured[1]`). They are served on separate HTTP worker threads, so
+the append order is undefined; when it inverts, `captured[0].key` is `/library/metadata/3` —
+exactly the reported message. **Not a product defect:** `pathResp` and `uriResp` are already
+asserted synchronously before this block.
+
+Fixed by matching callbacks on key instead of arrival index, keeping every field assertion and
+additionally requiring exactly one of each — strictly stronger than the positional check.
+Red-proved: changing the expected key gives
+`FAIL: path callback key mismatch: no callback bound /library/metadata/4` (rc=1), restore rc=0.
+
+This matters beyond the test: roughly **one `make unit` run in three was going red fleet-wide for
+a reason unrelated to any worker's change**, which corrupts exactly the evidence standard the
+parent is trying to tighten. Workers may have attributed it to their own work.
+
+### Merge base
+
+`w-deblock-o5-converge` contains `w-decode-hour27` `2f165ed` (via `w-decode-o5`), which w-fit-o5
+identified as the only branch green on both new criteria. Verified with
+`git merge-base --is-ancestor`. **Do not base deblock work on `w-deblock-seam` or
+`parent/integ-hour27`** — both have an orphaned core *and* an incomplete file list, so a module
+would be invisible twice over.
+
+### Capacity — honest limitation
+
+`check_onchip_ram_budget.py` on the converged tree: `block_ram_bits=7,458,816` of which
+**7,372,800 is `decode_stub`'s painter DPB alone**. Everything else, my top line buffer included,
+is ~86 kbit. So my filter is not a block-RAM problem. It **is** an unmeasured flip-flop problem:
+the 20x20 luma + 2x12x12 chroma skirt neighbourhood is registers, estimated ~5.5k FF, and no gate
+in the repo measures FFs. With w-fit-o5 reporting M10K at 82% and `decode_stub` holding 46% of the
+device, **`DEBLOCK_IN_LOOP` should not be flipped to 1 until `decode_stub` is retired.** That is a
+prediction, not a measurement — only a fit can settle it.
+
 ---
 
 ## 1. What I confirm from my predecessor

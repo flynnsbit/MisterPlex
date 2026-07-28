@@ -40,6 +40,40 @@ QIP = ROOT / "fpga/Plex_MiSTer/files.qip"
 
 RETIRED_TOPOLOGY_MACROS = ("DECODE_REAL_INTRA",)
 
+QSF = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+
+# A retired topology macro must never be re-armed.  DECODE_REAL_INTRA=1 once
+# gained 3 modules and deleted 14 real ones (all of inter/MC/DPB/deblock) while
+# every unit test stayed green.  The QSF still passes it as =0, which is inert
+# because no product RTL tests the macro any more, but the QSF is exactly where
+# someone would flip it back to 1.  Setting it to 0 is tolerated; setting it to
+# anything else is not.
+TOLERATED_QSF_MACRO_VALUES = {"DECODE_REAL_INTRA": "0"}
+
+
+def qsf_retired_macros() -> list[str]:
+    if not QSF.exists():
+        return []
+    problems = []
+    for lineno, line in enumerate(QSF.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        m = re.search(r'VERILOG_MACRO\s+"(\w+)=([^"]*)"', line)
+        if not m:
+            continue
+        macro, value = m.group(1), m.group(2).strip()
+        if macro not in RETIRED_TOPOLOGY_MACROS:
+            continue
+        if TOLERATED_QSF_MACRO_VALUES.get(macro) == value:
+            continue
+        problems.append(
+            f"Plex.qsf:{lineno}: retired topology macro {macro}={value} is armed "
+            f"in the Quartus project; only {macro}="
+            f"{TOLERATED_QSF_MACRO_VALUES.get(macro, '<nothing>')} is tolerated"
+        )
+    return problems
+
+
 # Macro-gated instantiations that are legitimate CONFIGURATION choices rather
 # than decoder-topology switches. Exact-match enforced in both directions: a new
 # macro-gated instantiation fails as UNDECLARED, and one that has since been
@@ -170,6 +204,7 @@ def main() -> int:
         )
     for v in violations:
         print(f"UNDECLARED_MACRO_GATED_INSTANTIATION {v}", file=sys.stderr)
+    retired_uses.extend(qsf_retired_macros())
     for r in retired_uses:
         print(
             f"RETIRED_TOPOLOGY_MACRO_TESTED {r} - this macro is retired by ruling; "
