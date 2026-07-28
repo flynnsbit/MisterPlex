@@ -126,6 +126,12 @@ if [[ -n "$EXPECT_MD5" ]]; then
     echo "EXPECT_MD5_FAIL: on-disk md5 matches '${MD5:0:8}' but STALE_BINDING applies —"
     echo "EXPECT_MD5_FAIL: those bytes were written after the load and are NOT in the fabric."
     verdict=1
+  elif [[ "$ORDER_OK" == "n/a" ]]; then
+    # Core is not Plex. The file matches, but it is not the loaded design, so an
+    # md5 "OK" here would be a false attribution — the exact fb4bad84 error.
+    echo "EXPECT_MD5_FAIL: file matches '${MD5:0:8}' but the loaded core is '${CORE:-UNKNOWN}',"
+    echo "EXPECT_MD5_FAIL: not Plex — this md5 is not provenance for the running fabric."
+    verdict=1
   elif [[ "$ORDER_OK" == "unknown" ]]; then
     echo "EXPECT_MD5_UNSCORED: md5 matches '${MD5:0:8}' but load ordering is unprovable."
     verdict=77

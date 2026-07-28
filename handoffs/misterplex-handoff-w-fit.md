@@ -3613,3 +3613,26 @@ Red 1 is the one that matters: the md5 is correct and the verdict is still FAIL,
 because correct bytes in the wrong order are not evidence. The control exists so
 the reds cannot be stub artifacts — the same vacuous-control discipline that
 caught the SDC non-experiment.
+
+### §51.2 — My own gate reproduced the bug, and the device caught it
+
+Immediately after shipping §51.1 I ran the gate again and the device had moved to
+`corename=MENU` (someone bounced to the menu). Output:
+```
+corename=MENU
+EXPECT_MD5_OK: 3b1e8435 (and the fabric was configured from these bytes)
+```
+**That is the fb4bad84 error, in my own tool, ten minutes after I wrote the
+section criticising it.** The ordering check only ran inside the `CORE == Plex`
+branch; when the core was something else, `--expect-md5` fell through to the
+success arm and asserted fabric binding for a design that was not loaded. Run
+with `--expect-md5` alone it returns **rc=0** — a confident false attribution.
+
+Fixed: a non-Plex core is now `EXPECT_MD5_FAIL` with the reason stated. Proven on
+hardware in the very state that exposed it (`rc=1`), and the Plex path re-proven
+green (`rc=0`) so the fix is not a blanket fail.
+
+The lesson is not "I made a mistake". It is that **the guard and the assertion
+lived in different branches**, so the assertion was reachable without the guard.
+Any gate with a precondition should be checked for a path that reaches the verdict
+without reaching the precondition. That is mechanical and worth doing fleet-wide.
