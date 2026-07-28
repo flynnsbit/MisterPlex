@@ -36,6 +36,7 @@ module h264_mb_recon_route (
 	input  wire [5:0]  mb_type,         // raw mb_type for the current slice type
 
 	output reg  [2:0]  route,
+	output reg  [5:0]  norm_mb_type,    // intra mb_type normalised to I-slice numbering
 	output reg  [1:0]  i16_pred_mode,
 	output reg  [1:0]  cbp_chroma,
 	output reg         cbp_luma_ac,
@@ -82,6 +83,10 @@ module h264_mb_recon_route (
 
 	always @* begin
 		route = ROUTE_OTHER;
+		// An intra macroblock inside a P slice carries mb_type 5..30. Strip the
+		// offset so the intra reconstruction path only ever sees I-slice
+		// numbering and does not need to know the slice type.
+		norm_mb_type = intra_range ? intra_type : mb_type;
 		i16_pred_mode = 2'd0;
 		cbp_chroma = 2'd0;
 		cbp_luma_ac = 1'b0;

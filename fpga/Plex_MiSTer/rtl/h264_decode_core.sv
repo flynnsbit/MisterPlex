@@ -527,6 +527,7 @@ module h264_decode_core #(
     localparam [2:0] ROUTE_P16     = 3'd4;
 
     wire [2:0] mb_route;
+    wire [5:0] mb_route_norm_mb_type;
     wire [1:0] mb_route_i16_mode;
     wire [1:0] mb_route_cbp_chroma;
     wire       mb_route_cbp_luma_ac;
@@ -538,6 +539,7 @@ module h264_decode_core #(
         .mb_is_skip(mb_skip),
         .mb_type({1'b0, mb_type}),
         .route(mb_route),
+        .norm_mb_type(mb_route_norm_mb_type),
         .i16_pred_mode(mb_route_i16_mode),
         .cbp_chroma(mb_route_cbp_chroma),
         .cbp_luma_ac(mb_route_cbp_luma_ac),
@@ -550,6 +552,14 @@ module h264_decode_core #(
     // all, so routing it through the residual-driven h264_decode_top would
     // stall waiting for block pulses that never arrive.
     wire route_is_i16 = (mb_route == ROUTE_INTRA16);
+
+    // Intra_4x4 (I_NxN) keeps its residual-driven walk through
+    // h264_decode_top, which owns the 9 prediction modes, the per-block
+    // neighbour availability rules and the "above-right unavailable ->
+    // replicate above[3]" substitution of clause 8.3.1.2. Routing on mb_route
+    // rather than on slice_is_i means the intra macroblocks scattered through
+    // P slices now reconstruct too instead of being dropped.
+    wire route_is_i4 = (mb_route == ROUTE_INTRA4);
 
     // ── P_Skip: MV derivation and MC copy ──────────────────────────────────
     wire        pskip_nb_a_present, pskip_nb_a_inter;
@@ -876,9 +886,8 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip &&
-                                         !route_is_i16;
-    wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
+    wire        product_intra_mb_start = mb_type_valid && route_is_i4 && !pskip_pending;
+    wire [7:0]  product_intra_mb_type = {2'd0, mb_route_norm_mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
     wire [7:0]  product_intra_recon_y [0:255];
