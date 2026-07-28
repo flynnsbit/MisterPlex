@@ -65,6 +65,13 @@ CHEVRON_MIN_PX = 2000
 CHEVRON_MAX_FRAC = 0.25
 # Vertical centroid must sit within this fraction of frame height from centre.
 CHEVRON_CENTRE_TOL = 0.20
+# Shape gates.  Colour + pixel count + centroid alone are NOT sufficient: the
+# MiSTer main menu is a full-height column of orange text that satisfies all
+# three and was scored PLEX_CHEVRON: PRESENT on 2026-xx by this gate.
+# Measured separation (real chevron vs MENU false positive):
+#   aspect w/h  0.929 vs 0.165      fill count/bbox_area  0.277 vs 0.105
+CHEVRON_ASPECT_RANGE = (0.40, 2.50)
+CHEVRON_MIN_FILL = 0.18
 
 # Left-edge artifact bands, in columns of the 1280-wide capture.
 ARTIFACT_BAND = (84, 200)
@@ -106,6 +113,22 @@ def score_chevron(rgb: np.ndarray) -> dict:
     if off > CHEVRON_CENTRE_TOL:
         out["reason"] = (f"orange blob centroid is {off:.1%} of frame height off centre "
                          f"(> {CHEVRON_CENTRE_TOL:.0%}); not a centred logo")
+        return out
+    bw = int(xs.max() - xs.min()) + 1
+    bh = int(ys.max() - ys.min()) + 1
+    aspect = bw / bh
+    fill = count / (bw * bh)
+    out["bbox_wh"] = [bw, bh]
+    out["aspect"] = round(aspect, 3)
+    out["fill"] = round(fill, 3)
+    lo, hi = CHEVRON_ASPECT_RANGE
+    if not (lo <= aspect <= hi):
+        out["reason"] = (f"orange bbox {bw}x{bh} has aspect {aspect:.2f} outside "
+                         f"[{lo}, {hi}]; a streak or column of text, not a logo")
+        return out
+    if fill < CHEVRON_MIN_FILL:
+        out["reason"] = (f"orange fills only {fill:.1%} of its {bw}x{bh} bbox "
+                         f"(< {CHEVRON_MIN_FILL:.0%}); scattered text, not a solid logo")
         return out
     out["present"] = True
     out["reason"] = (f"{count} px of Plex-orange {out['mean_rgb']} centred at "
