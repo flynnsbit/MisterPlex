@@ -1608,3 +1608,95 @@ and it cannot see optimize-away.
 
 `Scope: 24` self-test cases, including 4 measured against the real resident
 report and 13 reds.
+
+---
+
+## 20. w-audit broke my binding gate. They were right, and I had already
+## shipped the same defect a second time.
+
+The parent ruled that RBF-md5 binding is mandatory and held
+`check_fitted_line_buffer.py` up as the model of it. `w-audit` (`7b0aa64`) then
+ran that gate with no `--expect-rbf-md5`:
+
+```
+UNBOUND: no --expect-rbf-md5 given; this report may describe a build ...
+LINE_BUFFER_OK predicted=159744 instances=1 rows=827
+rc=0
+```
+
+**It announced it could not be cited and returned success.** The word `UNBOUND`
+went into a log nobody greps; the exit code — the only thing Makefiles, CI and
+wrappers read — said green. The exemplar of the binding ruling did not
+implement the binding ruling.
+
+### 20.1 I shipped it again, an hour later
+
+`check_ddr_refill_rate.py` (§19, committed `376ade5`) had the **identical**
+shape: `WARNING report is UNBOUND ...` followed by `REFILL_RATE_OK`, rc=0. I
+wrote it *after* the binding ruling was published and after I had described
+UNBOUND-vs-BOUND as a virtue of my own gate. Knowing the rule and restating it
+did not stop me reproducing the bug — which is the parent's point about
+mechanical checks over remembering.
+
+### 20.2 Fix: three states, no overlap
+
+| condition | before | after |
+|---|---|---|
+| no `--expect-rbf-md5` | **0** + `LINE_BUFFER_OK` | **77**, no verdict line |
+| binds to expected RBF | 0 | 0 |
+| given but does not bind | 1 | 1 |
+
+Both gates now suppress the verdict line entirely on an unbound run. Printing
+`UNBOUND` is not a substitute for refusing to answer — if the string
+`LINE_BUFFER_OK` never appears, no downstream grep can find it.
+
+### 20.3 The auditor's own attack, before and after
+
+Run with the pre-fix file placed **in `scripts/`** so only the code differs:
+
+```
+--- BEFORE (e828f71) ---
+LINE_GATE unbound        rc=0  flags=UNBOUND,LINE_BUFFER_OK
+LINE_GATE bound_expected rc=0  flags=BOUND,LINE_BUFFER_OK
+LINE_GATE bound_wrong    rc=1  flags=BINDING_FAIL,LINE_BUFFER_FAIL
+
+--- AFTER ---
+LINE_GATE unbound        rc=77 flags=UNBOUND
+LINE_GATE bound_expected rc=0  flags=BOUND,LINE_BUFFER_OK
+LINE_GATE bound_wrong    rc=1  flags=BINDING_FAIL,LINE_BUFFER_FAIL
+```
+
+**My first attempt at this before/after was itself vacuous** and I discarded it.
+I copied the old gate to the repo root, where `ROOT = parents[1]` resolves one
+directory too high, and every case returned rc=2. That would have read as "the
+old gate was broken in three ways" when all I had actually varied was the
+file's location, not the fix. Exactly the control defect `w-fit-o5` caught in
+the parent's SDC exoneration, committed by me, twenty minutes after I wrote a
+gate to detect that class.
+
+### 20.4 The fixtures were not exempted
+
+Tightening the rule turned all nine synthetic self-test fixtures 77, because
+none had a sibling `Plex.rbf`. The tempting fix is a self-test bypass flag.
+That is how the hole comes back. Instead each fixture now gets a real sibling
+RBF and a real md5 (`bound()` helper), so the self-test exercises the same
+contract as production.
+
+Regression cases added so this cannot return:
+
+- `check_fitted_line_buffer.py`: *unbound must be 77, not 0* and *unbound must
+  not print `LINE_BUFFER_OK`*. Scope 16 (3 green, 12 reds, 1 skip).
+- `check_ddr_refill_rate.py`: the full 77/0/1 matrix driven as a **subprocess**,
+  so it measures real exit codes rather than an in-process return value.
+  Scope 29.
+
+The stale hand-written `(3 green, 10 reds, 1 skip)` label in the Scope line is
+now computed from the case names — a hardcoded count in a Scope line is itself
+a small instance of the same disease.
+
+### 20.5 What this does not fix
+
+Only the two gates I own. The class sweep across `scripts/` is W-GATE-O5's.
+Nothing here changes any measurement: line buffer 159,744 bits, prefetch depth
+8 lines, refill headroom 18.40x all stand, and all were produced by **bound**
+runs, so none of them were resting on the defect.

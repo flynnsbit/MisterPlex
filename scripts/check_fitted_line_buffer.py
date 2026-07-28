@@ -279,8 +279,16 @@ def main(argv=None) -> int:
             else:
                 print(f"BOUND report -> Plex.rbf md5={got[:8]}")
     else:
+        # Cannot evaluate. Printing "UNBOUND" into a log while returning 0 is
+        # exactly the print/exit divergence the parent banned: the text says
+        # "do not cite me" and the exit code says "green", and every wrapper,
+        # Makefile and CI step reads the exit code. Return 77 -- "could not
+        # evaluate" -- and do NOT print a verdict line, so no caller can grep
+        # LINE_BUFFER_OK out of an unbound run.
         print("UNBOUND: no --expect-rbf-md5 given; this report may describe a "
               "build that is not deployed anywhere")
+        print("SKIP-NOT-PASS cannot evaluate without an RBF binding", file=sys.stderr)
+        return 77
 
     if rows == 0:
         print("REFUSED: Scope: 0 entity rows parsed -- a PASS cannot be claimed")
@@ -500,16 +508,31 @@ def self_test() -> int:
             rc = main(argv)
         return rc, buf.getvalue()
 
+    def bound(report, *extra):
+        """Argv for a fixture, satisfying the SAME binding contract as production.
+
+        The self-test fixtures are not exempt from the RBF-binding rule. When
+        the rule tightened to 77-on-unbound, every fixture correctly went 77 --
+        so each one gets a real sibling Plex.rbf and a real md5 rather than an
+        escape hatch, because an escape hatch is how the hole comes back.
+        """
+        report = Path(report)
+        rbf = report.parent / "Plex.rbf"
+        if not rbf.exists():
+            rbf.write_bytes(b"selftest-rbf:" + str(report.parent.name).encode())
+        digest = hashlib.md5(rbf.read_bytes()).hexdigest()[:8]
+        return [str(report), "--expect-rbf-md5", digest, *extra]
+
     predicted, _ = predict_bits()
     good = _write_report(scratch / "good/Plex.fit.rpt", predicted)
 
-    rc, out = run([str(good)])
+    rc, out = run(bound(good))
     cases.append(("green: fitted size equals predicted size", rc == 0, rc, 0))
 
     # RED 1: silicon carries half the buffer -- the FRAME_LINES macro that built
     # the report was not the one in Plex.qsf.
     half = _write_report(scratch / "half/Plex.fit.rpt", predicted // 2)
-    rc, out = run([str(half)])
+    rc, out = run(bound(half))
     cases.append(("red: half-size buffer must FAIL", rc == 1 and "MISMATCH" in out, rc, 1))
 
     # RED 2: module optimized away entirely (mode 3).
@@ -520,14 +543,14 @@ def self_test() -> int:
             "|ddr_frame_store:fstore|", "|colorbars:bars|"
         )
     )
-    rc, out = run([str(gone)])
+    rc, out = run(bound(gone))
     cases.append(("red: optimized-away module must FAIL", rc == 1 and "ABSENT" in out, rc, 1))
 
     # RED 3: report with no entity rows must refuse, not pass.
     empty = scratch / "empty/Plex.fit.rpt"
     empty.parent.mkdir(parents=True, exist_ok=True)
     empty.write_text("; Fitter Resource Utilization by Entity\n; nothing here ;\n")
-    rc, out = run([str(empty)])
+    rc, out = run(bound(empty))
     cases.append(("red: Scope 0 rows must REFUSE (2)", rc == 2, rc, 2))
 
     # w-audit's unbounded-table defect, reproduced against this gate and fixed.
@@ -542,7 +565,7 @@ def self_test() -> int:
         + "; prose row ;\n"
         + "; |ddr_frame_store:fstore| ; 999999 ; 1 ; |bogus ;\n"
     )
-    rc, out = run([str(trailing)])
+    rc, out = run(bound(trailing))
     cases.append((
         "red: entity-shaped row in a LATER table must be excluded",
         rc == 0 and "999999" not in out and "Scope: 4 entity rows" in out,
@@ -558,16 +581,16 @@ def self_test() -> int:
             "|sys_top|emu:emu|decode_stub:stub|wrapper:w|ddr_frame_store:fstore",
         )
     )
-    rc, out = run([str(masked), "--forbid-ancestor", "decode_stub"])
+    rc, out = run(bound(masked, "--forbid-ancestor", "decode_stub"))
     cases.append(("red: NESTED forbidden ancestor must FAIL",
                   rc == 1 and "MASKED" in out, rc, 1))
 
-    rc, out = run([str(good), "--require-ancestor", "h264_decode_core"])
+    rc, out = run(bound(good, "--require-ancestor", "h264_decode_core"))
     cases.append(("red: absent required ancestor must FAIL",
                   rc == 1 and "MISPARENTED" in out, rc, 1))
 
-    rc, out = run([str(good), "--require-ancestor", "emu", "--require-ancestor",
-                   "present_core", "--forbid-ancestor", "decode_stub"])
+    rc, out = run(bound(good, "--require-ancestor", "emu", "--require-ancestor",
+                   "present_core", "--forbid-ancestor", "decode_stub"))
     cases.append(("green: real chain satisfies trunk and forbids stub", rc == 0, rc, 0))
 
     # A report with no Full Hierarchy column cannot prove an ancestor is absent.
@@ -578,13 +601,26 @@ def self_test() -> int:
             " ; Full Hierarchy Name ;", " ;"
         )
     )
-    rc, out = run([str(nofull)])
+    rc, out = run(bound(nofull))
     cases.append(("red: missing Full Hierarchy column must REFUSE (2)",
                   rc == 2, rc, 2))
 
     # RED 4: binding to an RBF that is not there must FAIL, not silently pass.
     rc, out = run([str(good), "--expect-rbf-md5", "deadbeef"])
-    cases.append(("red: unsatisfiable RBF binding must FAIL", rc == 1 and "UNBOUND" in out, rc, 1))
+    cases.append(("red: unsatisfiable RBF binding must FAIL",
+                  rc == 1 and ("BINDING_FAIL" in out or "UNBOUND" in out)
+                  and "LINE_BUFFER_OK" not in out, rc, 1))
+
+    # RED 4b: THE w-audit DEFECT. With no --expect-rbf-md5 this gate printed
+    # "UNBOUND" and then exited 0 with LINE_BUFFER_OK. Text said "do not cite
+    # me", exit code said green, and the exit code is what every wrapper reads.
+    # Cannot-evaluate must be 77, and no verdict line may be emitted at all --
+    # printing UNBOUND is not a substitute for refusing to answer.
+    rc, out = run([str(good)])
+    cases.append(("red: unbound report must be 77, not 0",
+                  rc == 77, rc, 77))
+    cases.append(("red: unbound report must not print LINE_BUFFER_OK",
+                  "LINE_BUFFER_OK" not in out, 0 if "LINE_BUFFER_OK" not in out else 1, 0))
 
     # --compare vacuity guard. w-fit-o5's exoneration of the SDC change was
     # vacuous because all four compared slots carried an IDENTICAL constraint
@@ -617,7 +653,11 @@ def self_test() -> int:
     rc, out = run([str(scratch / "absent/Plex.fit.rpt")])
     cases.append(("skip: missing report must be 77", rc == 77, rc, 77))
 
-    print(f"Scope: {len(cases)} self-test cases (3 green, 10 reds, 1 skip)")
+    greens = sum(1 for n, *_ in cases if n.startswith("green"))
+    reds = sum(1 for n, *_ in cases if n.startswith("red"))
+    skips = sum(1 for n, *_ in cases if n.startswith("skip"))
+    print(f"Scope: {len(cases)} self-test cases "
+          f"({greens} green, {reds} reds, {skips} skip)")
     bad = 0
     for name, ok, got, want in cases:
         print(f"  {'PASS' if ok else 'FAIL'} {name} (rc={got}, want {want})")

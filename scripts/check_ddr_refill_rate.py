@@ -219,10 +219,10 @@ def bind_report(sta: Path, expect_md5: str | None) -> str:
     if expect_md5 is None:
         return "UNBOUND"
     if not rbf.is_file():
-        raise Refuse(f"--expect-rbf-md5 given but no sibling Plex.rbf beside {sta}")
+        return f"BINDING_FAIL no sibling Plex.rbf beside {sta}"
     got = md5_of(rbf)
     if not got.startswith(expect_md5.lower()):
-        raise Refuse(f"report binds to Plex.rbf md5={got}, expected {expect_md5}")
+        return f"BINDING_FAIL report binds to Plex.rbf md5={got[:8]}, expected {expect_md5}"
     return f"BOUND md5={got}"
 
 
@@ -258,6 +258,27 @@ def evaluate(
     clk_sys_mhz = sta_clock_mhz(sta_text, CORE_PLL + "general[0].gpll~PLL_OUTPUT_COUNTER")
     binding = bind_report(sta_path, expect_md5)
 
+    if binding == "UNBOUND":
+        # Same defect w-audit found in check_fitted_line_buffer.py, which I
+        # shipped again here an hour later: announce UNBOUND, then exit 0.
+        # Cannot evaluate -> 77, and no verdict line is printed.
+        print(
+            f"Scope: 0 refill-rate budget (report {sta_path} is UNBOUND)"
+        )
+        print(
+            "UNBOUND: no --expect-rbf-md5 given; clock frequencies would be read "
+            "from a report that may describe a build nobody is running"
+        )
+        print("SKIP-NOT-PASS cannot evaluate without an RBF binding", file=sys.stderr)
+        return 77
+
+    if binding.startswith("BINDING_FAIL"):
+        # Evaluated the binding and it failed -> hard fail, not "cannot evaluate".
+        print(f"Scope: 0 refill-rate budget (binding rejected)")
+        print(binding)
+        print("REFILL_RATE_FAIL report does not bind to the expected bitstream")
+        return 1
+
     div = ce_pix_divider(bars_text, scandouble)
     ce_pix_mhz = clk_sys_mhz / div
     line_time_us = clocks_per_line / ce_pix_mhz
@@ -286,9 +307,6 @@ def evaluate(
         f"= {ddr_cycles} clk_ddr = {refill_us:.3f} us"
     )
     print(f"  headroom    {headroom:.2f}x   required {require_headroom:.2f}x")
-
-    if binding == "UNBOUND":
-        print("WARNING report is UNBOUND; this cannot be cited as evidence about any bitstream")
 
     if headroom < require_headroom:
         print(
@@ -415,12 +433,39 @@ def self_test() -> int:
         ),
     )
     # RED: --expect-rbf-md5 pointing at a report with no sibling RBF must refuse.
+    # A report with no sibling Plex.rbf but a binding demanded is a FAILED
+    # binding (rc=1), not "could not evaluate": the caller named a bitstream
+    # and this report is not it.
     check(
         "red_bind_no_rbf",
-        refuses(lambda: bind_report(ROOT / "scripts/check_ddr_refill_rate.py", "deadbeef")),
+        bind_report(ROOT / "scripts/check_ddr_refill_rate.py", "deadbeef").startswith("BINDING_FAIL"),
     )
     # RED: an unbound report must never read as bound.
     check("red_unbound_is_not_bound", bind_report(STORE_SV, None) == "UNBOUND")
+
+    # RED: THE w-audit DEFECT, which I shipped again in this gate an hour after
+    # it was found in check_fitted_line_buffer.py. An unbound report must be 77
+    # with no verdict line, and a report that fails to bind must be 1 -- three
+    # states, no overlap between "could not check" and "checked and fine".
+    import subprocess
+
+    def gate_rc(extra: list[str]) -> tuple[int, str]:
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), *extra],
+            capture_output=True, text=True,
+        )
+        return proc.returncode, proc.stdout + proc.stderr
+
+    if resident_sta.is_file():
+        base = ["--sta-report", str(resident_sta)]
+        rc_unbound, out_unbound = gate_rc(base)
+        check("red_unbound_is_77", rc_unbound == 77)
+        check("red_unbound_prints_no_verdict", "REFILL_RATE_OK" not in out_unbound)
+        rc_bound, _ = gate_rc(base + ["--expect-rbf-md5", "fb4bad84"])
+        check("green_bound_is_0", rc_bound == 0)
+        rc_wrong, out_wrong = gate_rc(base + ["--expect-rbf-md5", "00000000"])
+        check("red_wrong_binding_is_1", rc_wrong == 1)
+        check("red_wrong_binding_prints_no_ok", "REFILL_RATE_OK" not in out_wrong)
 
     print(f"Scope: {len(cases)} self-test cases")
     bad = [n for n, ok in cases if not ok]
