@@ -118,6 +118,8 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_skip_exit_codes.py",
     "$(ROOT)/scripts/check_define_parity.py",
     "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py",
+    "python3 $(ROOT)/scripts/check_qip_coverage.py",
+    "python3 $(ROOT)/tests/unit/test_qip_coverage_gate.py",
     "python3 $(ROOT)/tests/unit/test_decode_completeness_gate.py",
     "python3 $(ROOT)/tests/unit/test_rtl_sink_and_qip_gate.py",
     "python3 $(ROOT)/scripts/check_decode_core_subtree.py",

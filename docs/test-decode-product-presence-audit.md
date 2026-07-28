@@ -742,3 +742,170 @@ Red/green, all mutation-proved:
 | missing reports treated as pass instead of 77 | rc=1 |
 | `--require-fitted h264_decode_core` on the real fit | rc=1 `REQUIRED_MODULE_NOT_FITTED ... rung=COMPILED_ONLY` |
 | `--require-fitted decode_stub` on the real fit | rc=0 |
+
+## 14. The Quartus file-list oracle: adopted from W-FIT-O5, then hardened
+
+W-FIT-O5 built `scripts/check_qip_coverage.py` at `ee2ed89` on
+`parent/integ-hour27` and told me "take it, don't rebuild it". I took it. Before
+registering it I attacked it, because a gate the fleet is about to lean on is
+exactly the thing that should be attacked first — the parent's core-subtree
+ruling lasted under an hour against a determined reviewer.
+
+### 14.1 What the original gate got right
+
+It found a defect nothing else in the repo could see. `h264_decode_top.sv` and
+`h264_intra_nb_ctx.sv` are tracked in git and were never handed to Quartus on
+the branch the deployed RBF `fb4bad84` was fitted from. No reachability graph
+can catch that: the graph reads the source tree, and the source tree contains
+the file. The file-list oracle is a genuinely new necessary condition and it
+belongs in `make unit`. That judgement of W-FIT's is upheld.
+
+### 14.2 Five measured false-green vectors in the original
+
+Measured on `w-gate-hour28` against the real `fpga/Plex_MiSTer/files.qip` by
+driving the original `qip_basenames()` / `tracked_rtl()` directly:
+
+| # | mutation | original gate | truth |
+|---|---|---|---|
+| A1 | `# set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_intra_nb_ctx.sv` | counted as compiled | commented out; not compiled |
+| A2 | `set_global_assignment ... ../../attic/h264_intra_nb_ctx.sv` | counted as compiled | a different file with the same leaf name |
+| A3 | entry naming `rtl/w_gate_never_existed.sv` | counted as compiled | no such file on disk |
+| A4 | `lfsr.v`, `mycore.v`, `pll.v`, `pll/pll_0002.v` | outside the denominator entirely | 4 tracked product HDL files, never audited |
+| A5 | append a line to the in-script `ALLOWED_ABSENT` dict | red turns green | the defect is still there |
+
+A1 is the worst of the five for the same reason W-AUDIT's `if (0)` finding was:
+it is a **one-character edit** that converts a hard fail into a pass, and it
+leaves the assignment line visible in `git diff` looking like it is still there.
+
+A5 has a second half the table does not show: an excuse never expired. An entry
+for a file that later got compiled, or that was deleted, stayed in the dict
+forever, silently shrinking the gate's denominator.
+
+A4 is a `Scope:` defect, which is the house rule this project keeps breaking.
+The gate reported `product RTL: 37` when the tracked product HDL under `rtl/`
+is **41**. A true number about the wrong denominator.
+
+### 14.3 W-FIT's own declared blind spot, closed
+
+W-FIT declared up front that the gate "does not parse Quartus `.qsf`/other qip
+includes, so a file listed somewhere else would read as a false NOT_COMPILED".
+That is a false *red*, which is as corrosive as a false green: it trains people
+to add allowlist entries.
+
+`Plex.qsf:92` is `source files.qip`, and lines 90-91 are `source sys/sys.tcl` /
+`source sys/sys_analog.tcl`. The hardened gate starts at `Plex.qsf`, follows Tcl
+`source` directives and `QIP_FILE` assignments to a bounded depth, and prints
+the entry points it actually visited:
+
+```
+Scope: 36 source assignments across 4 Quartus list file(s); 43 tracked HDL files under rtl/
+  entry points: fpga/Plex_MiSTer/Plex.qsf, fpga/Plex_MiSTer/sys/sys.tcl,
+                fpga/Plex_MiSTer/sys/sys_analog.tcl, fpga/Plex_MiSTer/files.qip
+```
+
+### 14.4 The allowlist is now a ratchet, not an escape hatch
+
+`ALLOWED_ABSENT` moved out of the script into the tracked manifest
+`fpga/Plex_MiSTer/rtl/qip_allowed_absent.txt`, following the same pattern as
+`bench_only_modules.txt` and `stub_masked_modules.txt`. Three hard fails guard it:
+
+* `ALLOWED_ABSENT_NO_REASON` — an entry with no `# reason`
+* `STALE_ALLOWED_ABSENT` — the file is now compiled; the excuse outlived the defect
+* `STALE_ALLOWED_ABSENT` — no such tracked `rtl/` file; unrecorded drift
+
+So the allowlist can still absorb a genuine exclusion, but it cannot absorb one
+quietly, and it cannot keep absorbing one after the reason has evaporated.
+
+### 14.5 Red/green
+
+`tests/unit/test_qip_coverage_gate.py` pins all five vectors plus the include
+blind spot as 14 permanent cases, each of which mutates a synthetic Quartus
+project, asserts the gate fails **with the specific diagnostic**, restores, and
+asserts it passes. `QIP_COVERAGE_REGRESSION_OK cases=14`.
+
+One case failed while I was writing it, for the right reason and in the most
+instructive way available. My first A1 red arm commented out the *only*
+assignment in the list, so the gate returned `rc=2 REFUSED (Scope: 0)` rather
+than `rc=1 NOT_COMPILED`. Had I asserted `rc != 0` the case would have passed
+while proving nothing about comment handling — a red for the wrong reason, which
+is the same vacuity class this whole document is about. The case now keeps a
+second live assignment and asserts `"REFUSED" not in out`.
+
+On live branch data:
+
+```
+RED   remove rtl/h264_decode_core.sv from files.qip
+      rc=1  NOT_COMPILED h264_decode_core.sv
+            REQUIRED_FILE_NOT_COMPILED h264_decode_core.sv (tracked-in-git)
+            QIP_COVERAGE_FAIL unexplained_absent=1
+GREEN restore
+      rc=0  REQUIRED_FILE_COMPILED h264_decode_core.sv / h264_decode_top.sv / h264_intra_nb_ctx.sv
+            QIP_COVERAGE_OK product=41 compiled=35 allowed_absent=6
+```
+
+### 14.6 A real defect the hardened gate found on this branch
+
+`w-gate-hour28` was itself failing: `h264_intra_nb_ctx.sv` was tracked and not
+in `files.qip`. Fixed by adding the assignment, not by allowlisting it.
+
+Note precisely what that fix does and does not buy. `check_rtl_module_instantiations.py
+--root emu --require h264_intra_nb_ctx` still exits **1** on this branch with
+`instantiating_parents=<none>`: the file is now compiled, and nothing
+instantiates it. **Compiled is a necessary condition, not a sufficient one**,
+and the two gates must both be cited. Wiring it under `h264_decode_core` is
+W-DECODE's topology work, not a file-list fix.
+
+(While measuring that I reproduced W-FIT's own confessed mistake in real time:
+`... | tail -5; echo rc=$?` printed `rc=0` under a printed `RTL_MODULE_INSTANTIATION_FAIL`.
+Unpiped, `rc=1`. Never read an exit code through a pipe — it has now cost two
+workers on this project in one shift.)
+
+### 14.7 Three independent oracles agree
+
+Same question, three methods sharing no code — W-FIT's filename gate, my
+path-resolving gate, and my grep-level fit-report ladder against the deployed
+bitstream `fb4bad84`:
+
+| module | W-FIT qip gate `ee2ed89` | hardened qip gate | fit ladder on `fb4bad84` |
+|---|---|---|---|
+| `h264_decode_top` | NOT_COMPILED | NOT_COMPILED | `NOT_COMPILED` |
+| `h264_intra_nb_ctx` | NOT_COMPILED | NOT_COMPILED | `NOT_COMPILED` |
+| `h264_decode_core` | compiled | compiled | `COMPILED_ONLY` (never elaborated) |
+| `decode_stub` | compiled | compiled | `FITTED` (2627 fit mentions) |
+
+The hardened gate found **no additional** file-list defects on
+`parent/integ-hour27` `72a6c1f` beyond W-FIT's two. The five vectors were latent
+attack surface, not defects being exploited today.
+
+### 14.8 Merge-base corroboration
+
+W-FIT's ruling that `w-decode-hour27` is the only viable merge base survives the
+stricter oracle. Measured at `2f165ed` with the hardened gate and my allowlist
+manifest carried across (stated, because the manifest is branch state):
+
+```
+w-decode-hour27  2f165ed   rc=0  QIP_COVERAGE_OK product=41 compiled=35 allowed_absent=6
+                                 REQUIRED_FILE_COMPILED h264_decode_core.sv
+                                 REQUIRED_FILE_COMPILED h264_decode_top.sv
+                                 REQUIRED_FILE_COMPILED h264_intra_nb_ctx.sv
+parent/integ-hour27  72a6c1f rc=1 QIP_COVERAGE_FAIL unexplained_absent=2
+                                 (h264_decode_top.sv, h264_intra_nb_ctx.sv)
+```
+
+### 14.9 What this gate still cannot see
+
+Stated so nobody over-reads a green, in the spirit of W-FIT declaring their own
+limits before being asked:
+
+* It proves a **file** is handed to Quartus. It says nothing about whether the
+  **module** inside it is instantiated — `h264_decode_core` on the deployed
+  branch was compiled and still `COMPILED_ONLY`.
+* It does not evaluate Tcl. A `source` inside an `if`, a computed path, or a
+  variable-substituted filename is invisible.
+* It does not read `.qsf` revisions or `QUARTUS_*` search paths.
+* It cannot see files added by a build script outside the project files.
+* Denominator is tracked `rtl/`. RTL living elsewhere in the tree is not audited.
+
+As with every other instrument here: `make post-fit-hierarchy` and the fit
+evidence ladder remain the strongest oracles, and this is a cheap pre-filter
+that catches one specific, real, previously-invisible failure.
