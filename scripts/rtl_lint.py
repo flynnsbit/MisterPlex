@@ -122,7 +122,7 @@ def is_excluded(path: Path) -> bool:
 def write_intel_stubs() -> Path:
     gen_dir = ROOT / "build" / "rtl_lint_generated"
     gen_dir.mkdir(parents=True, exist_ok=True)
-    (gen_dir / "build_id.v").write_text('`define BUILD_DATE "lint"\n')
+    (gen_dir / "build_id.v").write_text('`define BUILD_DATE "lint"\n`define BUILD_ID "lint-id"\n')
     stub = ROOT / "build" / "rtl_lint_intel_stubs.sv"
     stub.parent.mkdir(exist_ok=True)
     stub.write_text(r'''

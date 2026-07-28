@@ -53,6 +53,8 @@ Raw findings:
 - Device conf restored after the probe: `PRESENT=fpga STREAM=0 DECODE=624x480 OSD_CONTROL=0`.
 - `PRESENT=fb0` readback from `/dev/fb0` after daemon restart matched the idle-logo renderer:
   background pixel `26_23_1f_ff` at `(240,180)` and foreground pixel `0d_a0_e5_ff` at `(360,260)`.
+  This was only a byte-value spot check; it did not cover line stride, shear, whole-frame geometry,
+  or HDMI presentation, so it does not rule out W-ARM's idle/logo pitch artifact.
 - Restored `PRESENT=fpga` immediately reported PLXD `free_bank_mask=0 swap_pending=1`
   (`hi=0x94FB0008`, `frames_done=38139`) and daemon logs contained
   `[STALL] sendDdrFrame: PLXD bank-release timeout ... swap_pending=1`.
@@ -74,6 +76,31 @@ Conclusion from the measured split: the logo asset/idle renderer/fb0 presentatio
 black-screen root cause. The current `PRESENT=fpga` symptom is not separate from the W-SWAP-owned
 bank-release livelock until a post-fix RBF proves otherwise. User-visible picture must be re-scored
 by USB-HDMI capture after W-SWAP lands; human eyes are no longer part of the gate.
+
+## ACTIVE — W-OSD RBF/build identity (**SOURCE SIDEBAR + RUNTIME RBF MD5 LABEL** 2026-07-28)
+
+Raw findings / scope first:
+
+- A true self-md5 inside the fabric is not honest: the final RBF md5 includes the bits used to
+  display the md5, so embedding that exact value changes the operand being claimed. The non-circular
+  sidebar identity is therefore a generated source/build id (`BUILD_ID=<date>-<git8>[D]`) in
+  `CONF_STR`'s `V` entry. It identifies the loaded bitstream image even if someone copied it to a
+  stale root-menu filename, but it is not the RBF file md5.
+- The actual deployed-file md5 is displayed by `misterplexd` in the idle/logo renderer as
+  `RBF xxxxxxxx`, computed at daemon start from `RBF_ID_PATH` (default
+  `/media/fat/_Utility/Plex.rbf`) via `md5sum`. This is derived from the file operand, not a
+  hand-maintained string. It is visible in fb0/DDR idle frames, but `IDLE_SCREEN=black` deliberately
+  stays black and the current FPGA-bank livelock can still prevent DDR-presented idle pixels from
+  reaching HDMI until W-SWAP lands.
+- Gate: `build/test_osd_menu` prints `Scope:` first and checks that two identifiers render different
+  label pixels, and that two different local RBF fixture bytes produce md5 labels
+  `RBF 0CC175B9` / `RBF 92EB5FFE`. `tests/unit/test_osd_menu_red.sh` compiles
+  `MISTERPLEX_FAULT_RBF_ID_LABEL_CONSTANT` and confirms the two-build display-difference check goes
+  red.
+- Hardware card registered: `tests/hw/test_rbf_identity_label.sh` compares the device
+  `/media/fat/_Utility/Plex.rbf` md5 operand with the daemon-advertised `BUILD_ID_LABEL=RBF ...`.
+  It intentionally says it does **not** cover HDMI OCR/sidebar pixels; W-E2E owns `/dev/video0` for
+  that next scorable visual proof after deployment.
 
 ## PRODUCT MILESTONE — VSync present / product A/V cast (**DONE** 2026-07-25)
 

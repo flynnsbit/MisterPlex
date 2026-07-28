@@ -57,9 +57,16 @@ def discover_quartus_macros(qsf: Path = PROJECT / "Plex.qsf") -> dict[str, Macro
             macros[macro.name] = macro
 
     build_id = PROJECT / "sys" / "build_id.tcl"
-    if build_id.exists() and "`define BUILD_DATE" in build_id.read_text(errors="ignore"):
+    build_id_text = build_id.read_text(errors="ignore") if build_id.exists() else ""
+    if "`define BUILD_DATE" in build_id_text:
         macros["BUILD_DATE"] = Macro(
             "BUILD_DATE",
+            "<generated>",
+            f"{build_id.relative_to(ROOT)}:8",
+        )
+    if "`define BUILD_ID" in build_id_text:
+        macros["BUILD_ID"] = Macro(
+            "BUILD_ID",
             "<generated>",
             f"{build_id.relative_to(ROOT)}:8",
         )
@@ -68,7 +75,11 @@ def discover_quartus_macros(qsf: Path = PROJECT / "Plex.qsf") -> dict[str, Macro
 
 def verilator_lint_macros(qsf: Path = PROJECT / "Plex.qsf") -> dict[str, Macro]:
     return {
-        name: Macro(name, "lint" if name == "BUILD_DATE" else macro.value, "scripts/rtl_lint.py:qsf-macro-injection")
+        name: Macro(
+            name,
+            "lint-id" if name == "BUILD_ID" else "lint" if name == "BUILD_DATE" else macro.value,
+            "scripts/rtl_lint.py:qsf-macro-injection",
+        )
         for name, macro in discover_quartus_macros(qsf).items()
     }
 
@@ -79,6 +90,8 @@ def verilator_define_args(qsf: Path = PROJECT / "Plex.qsf") -> list[str]:
         value = macro.value
         if name == "BUILD_DATE":
             value = '\\"lint\\"'
+        elif name == "BUILD_ID":
+            value = '\\"lint-id\\"'
         args.append(f"-D{name}={value}")
     return args
 

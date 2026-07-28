@@ -348,7 +348,8 @@ $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
-		$(ROOT)/host/libmisterplex/idle_screen.hpp
+		$(ROOT)/host/libmisterplex/idle_screen.hpp \
+		$(ROOT)/host/libmisterplex/rbf_identity.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 

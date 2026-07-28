@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace misterplex {
 
@@ -99,6 +100,74 @@ inline void idlePixelRgb(int x, int y, const IdleRenderState& s,
     b = on ? kIdleFgB : (s.blank ? 0 : kIdleBgB);
 }
 
+inline const uint8_t* idleGlyph(char ch) {
+    static constexpr uint8_t space[7] = {0, 0, 0, 0, 0, 0, 0};
+    static constexpr uint8_t d0[7] = {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e};
+    static constexpr uint8_t d1[7] = {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e};
+    static constexpr uint8_t d2[7] = {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f};
+    static constexpr uint8_t d3[7] = {0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e};
+    static constexpr uint8_t d4[7] = {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02};
+    static constexpr uint8_t d5[7] = {0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e};
+    static constexpr uint8_t d6[7] = {0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e};
+    static constexpr uint8_t d7[7] = {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
+    static constexpr uint8_t d8[7] = {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e};
+    static constexpr uint8_t d9[7] = {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c};
+    static constexpr uint8_t a[7] = {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
+    static constexpr uint8_t b[7] = {0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e};
+    static constexpr uint8_t c[7] = {0x0f, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0f};
+    static constexpr uint8_t d[7] = {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e};
+    static constexpr uint8_t e[7] = {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f};
+    static constexpr uint8_t f[7] = {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10};
+    static constexpr uint8_t r[7] = {0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11};
+    switch (ch) {
+    case '0': return d0;
+    case '1': return d1;
+    case '2': return d2;
+    case '3': return d3;
+    case '4': return d4;
+    case '5': return d5;
+    case '6': return d6;
+    case '7': return d7;
+    case '8': return d8;
+    case '9': return d9;
+    case 'A': return a;
+    case 'B': return b;
+    case 'C': return c;
+    case 'D': return d;
+    case 'E': return e;
+    case 'F': return f;
+    case 'R': return r;
+    default: return space;
+    }
+}
+
+inline bool idleTextHit(int x, int y, int w, int h, const char* label) {
+#ifdef MISTERPLEX_FAULT_RBF_ID_LABEL_CONSTANT
+    if (label && *label)
+        label = "RBF 00000000";
+#endif
+    if (!label || !*label || w <= 0 || h <= 0)
+        return false;
+    const int scale = 1;
+    const int textW = static_cast<int>(std::strlen(label)) * 6 * scale - scale;
+    const int x0 = 8;
+    const int y0 = h - 14;
+    if (x < x0 || y < y0 || x >= x0 + textW || y >= y0 + 7 * scale)
+        return false;
+    const int lx = x - x0;
+    const int ly = y - y0;
+    const int charIdx = lx / (6 * scale);
+    const int colInChar = (lx % (6 * scale)) / scale;
+    if (charIdx < 0 || colInChar >= 5)
+        return false;
+    const char ch = label[charIdx];
+    if (ch == '\0')
+        return false;
+    const uint8_t* g = idleGlyph(ch);
+    const int row = ly / scale;
+    return (g[row] & (1u << (4 - colInChar))) != 0;
+}
+
 inline uint8_t idleClamp8(int v) {
     return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
@@ -118,7 +187,8 @@ inline uint8_t idleRgbToV(int r, int g, int b) {
 // Fill a packed RGB24 buffer with the idle image.
 // `phase` advances one step per repaint; ignored unless mode is Screensaver.
 // LastFrame is a no-op by design (caller must not repaint).
-inline void renderIdleRgb24(uint8_t* rgb, int w, int h, IdleMode mode, int phase) {
+inline void renderIdleRgb24(uint8_t* rgb, int w, int h, IdleMode mode, int phase,
+                            const char* buildLabel = nullptr) {
     if (!rgb || w <= 0 || h <= 0 || mode == IdleMode::LastFrame)
         return;
 
@@ -128,6 +198,11 @@ inline void renderIdleRgb24(uint8_t* rgb, int w, int h, IdleMode mode, int phase
         for (int x = 0; x < w; ++x) {
             uint8_t r = 0, g = 0, b = 0;
             idlePixelRgb(x, y, state, r, g, b);
+            if (mode != IdleMode::Black && idleTextHit(x, y, w, h, buildLabel)) {
+                r = 0xD8;
+                g = 0xD8;
+                b = 0xD8;
+            }
             *p++ = r;
             *p++ = g;
             *p++ = b;
@@ -137,7 +212,8 @@ inline void renderIdleRgb24(uint8_t* rgb, int w, int h, IdleMode mode, int phase
 
 // Fill a planar I420/YUV420p buffer with the same idle image. This is the DDR
 // frame-store format used by the C3 core; LastFrame remains a no-op.
-inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int phase) {
+inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int phase,
+                              const char* buildLabel = nullptr) {
     if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1) || mode == IdleMode::LastFrame)
         return false;
 
@@ -150,6 +226,11 @@ inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int pha
         for (int x = 0; x < w; ++x) {
             uint8_t r = 0, g = 0, b = 0;
             idlePixelRgb(x, y, state, r, g, b);
+            if (mode != IdleMode::Black && idleTextHit(x, y, w, h, buildLabel)) {
+                r = 0xD8;
+                g = 0xD8;
+                b = 0xD8;
+            }
             yPlane[static_cast<size_t>(y) * static_cast<size_t>(w) + x] = idleRgbToY(r, g, b);
         }
     }
@@ -161,6 +242,12 @@ inline bool renderIdleYuv420p(uint8_t* yuv, int w, int h, IdleMode mode, int pha
                 for (int dx = 0; dx < 2; ++dx) {
                     uint8_t r = 0, g = 0, b = 0;
                     idlePixelRgb(cx * 2 + dx, cy * 2 + dy, state, r, g, b);
+                    if (mode != IdleMode::Black &&
+                        idleTextHit(cx * 2 + dx, cy * 2 + dy, w, h, buildLabel)) {
+                        r = 0xD8;
+                        g = 0xD8;
+                        b = 0xD8;
+                    }
                     rSum += r;
                     gSum += g;
                     bSum += b;

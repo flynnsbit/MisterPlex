@@ -5,9 +5,11 @@
 // "-40ms" applies +120ms — so the layout is pinned here rather than trusted.
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/rbf_identity.hpp"
 
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,7 @@ static int fails = 0;
     } while (0)
 
 int main() {
+    std::printf("Scope: OSD word decode plus idle renderer, including RBF build-id label pixels\n");
     using namespace misterplex;
 
     // --- video delay: 4-bit signed wrap, 20 ms per step, biased to the default ---
@@ -150,6 +153,33 @@ int main() {
     CHECK(other == 0);
     CHECK(fg > 0);
     CHECK(bg > fg);
+
+    std::vector<uint8_t> idA(buf.size());
+    std::vector<uint8_t> idB(buf.size());
+    renderIdleRgb24(idA.data(), w, h, IdleMode::Logo, 0, "RBF 00000000");
+    renderIdleRgb24(idB.data(), w, h, IdleMode::Logo, 0, "RBF FFFFFFFF");
+    size_t textPixels = 0;
+    size_t idDiff = 0;
+    for (size_t i = 0; i + 2 < idA.size(); i += 3) {
+        const bool isLabel =
+            idA[i] == 0xD8 && idA[i + 1] == 0xD8 && idA[i + 2] == 0xD8;
+        if (isLabel)
+            ++textPixels;
+        if (idA[i] != idB[i] || idA[i + 1] != idB[i + 1] || idA[i + 2] != idB[i + 2])
+            ++idDiff;
+    }
+    CHECK(textPixels > 0);
+    CHECK(idDiff > 0);
+
+    {
+        const std::string pathA = "build/rbf-id-a.bin";
+        const std::string pathB = "build/rbf-id-b.bin";
+        std::ofstream(pathA, std::ios::binary) << "a";
+        std::ofstream(pathB, std::ios::binary) << "b";
+        CHECK(rbfIdentityLabelFromFile(pathA) == "RBF 0CC175B9");
+        CHECK(rbfIdentityLabelFromFile(pathB) == "RBF 92EB5FFE");
+        CHECK(rbfIdentityLabelFromFile(pathA) != rbfIdentityLabelFromFile(pathB));
+    }
 
     // The screensaver must never render into the overscan margin, at any phase.
     for (int p = 0; p < kIdlePhasePeriod; p += 7) {

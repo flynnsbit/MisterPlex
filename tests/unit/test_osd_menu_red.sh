@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD="$ROOT/build/osd-menu-red"
 mkdir -p "$BUILD"
+echo "Scope: OSD/idle renderer red-checks, including RBF identity display mutability"
 
 CXX_BIN="${CXX:-g++}"
 if [[ -n "${CXXFLAGS:-}" ]]; then
@@ -52,3 +53,27 @@ grep -q "weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight)"
   exit 1
 }
 echo "RED OK: OSD and fallback 480p coded geometry share one bitrate"
+
+rm -f "$BUILD/test_osd_menu_rbf_id_constant_fault"
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -DMISTERPLEX_FAULT_RBF_ID_LABEL_CONSTANT \
+  -o "$BUILD/test_osd_menu_rbf_id_constant_fault" "$ROOT/tests/unit/test_osd_menu.cpp"
+test -x "$BUILD/test_osd_menu_rbf_id_constant_fault" || {
+  echo "FAIL: RBF identity constant-label mutant did not compile" >&2
+  exit 1
+}
+echo "MUTANT_COMPILED: RBF identity label constant"
+
+set +e
+OUT="$("$BUILD/test_osd_menu_rbf_id_constant_fault" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+if [[ "$RC" -eq 0 ]]; then
+  echo "FAIL: RBF identity constant-label fault unexpectedly passed" >&2
+  exit 1
+fi
+grep -q "idDiff > 0" <<<"$OUT" || {
+  echo "FAIL: RBF identity red-check did not hit two-build display-difference guard" >&2
+  exit 1
+}
+echo "RED OK: two different RBF identifiers render different visible labels"

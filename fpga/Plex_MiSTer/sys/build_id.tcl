@@ -5,7 +5,17 @@
 proc generateBuildID_Verilog {} {
 
 	# Get the timestamp (see: http://www.altera.com/support/examples/tcl/tcl-date-time-stamp.html)
-	set buildDate "`define BUILD_DATE \"[clock format [ clock seconds ] -format %y%m%d]\""
+	set dateString [clock format [ clock seconds ] -format %y%m%d]
+	set gitString "nogit"
+	if {![catch {exec git rev-parse --short=8 HEAD} gitOut]} {
+		set gitString [string trim $gitOut]
+		if {![catch {exec git diff --quiet --ignore-submodules HEAD --}]} {
+			# clean tree
+		} else {
+			append gitString "D"
+		}
+	}
+	set buildData "`define BUILD_DATE \"$dateString\"\n`define BUILD_ID \"$dateString-$gitString\""
 
 	# Create a Verilog file for output
 	set outputFileName "build_id.v"
@@ -17,12 +27,12 @@ proc generateBuildID_Verilog {} {
 		close $outputFile	
 	}
 
-	if {$buildDate ne $fileData} {
+	if {$buildData ne $fileData} {
 		set outputFile [open $outputFileName "w"]
-		puts -nonewline $outputFile $buildDate
+		puts -nonewline $outputFile $buildData
 		close $outputFile
 		# Send confirmation message to the Messages window
-		post_message "Generated: [pwd]/$outputFileName: $buildDate"
+		post_message "Generated: [pwd]/$outputFileName: $buildData"
 	}
 }
 

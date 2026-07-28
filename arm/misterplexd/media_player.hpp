@@ -16,6 +16,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <sys/types.h>
@@ -124,6 +125,7 @@ public:
     // of the previous video on screen forever.
     void setIdleMode(IdleMode m) { idleMode_.store(static_cast<int>(m)); }
     IdleMode idleMode() const { return static_cast<IdleMode>(idleMode_.load()); }
+    void setBuildIdentityLabel(std::string label) { buildIdentityLabel_ = std::move(label); }
     void startIdle();
     void stopIdle();
 
@@ -232,6 +234,7 @@ private:
     // a fresh painter after we have already joined the old one.
     std::atomic<bool> shuttingDown_{false};
     std::atomic<int> idlePhase_{0};
+    std::string buildIdentityLabel_;
     std::thread idleThr_;
     std::atomic<bool> idleWarned_{false};
     std::atomic<bool> idleLogged_{false};

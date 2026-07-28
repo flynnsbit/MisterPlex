@@ -80,7 +80,7 @@ localparam CONF_STR = {
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
 	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
-	"V,v",`BUILD_DATE
+	"V,v",`BUILD_ID
 };
 
 wire forced_scandoubler;

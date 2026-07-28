@@ -629,7 +629,8 @@ void MediaPlayer::paintIdle() {
     const int w = 320;
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
-    renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+    const char* label = buildIdentityLabel_.empty() ? nullptr : buildIdentityLabel_.c_str();
+    renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load(), label);
 
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
@@ -652,7 +653,7 @@ void MediaPlayer::paintIdle() {
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
             if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
-                                  idlePhase_.load())) {
+                                  idlePhase_.load(), label)) {
                 DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
                 ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
             }
@@ -666,8 +667,13 @@ void MediaPlayer::paintIdle() {
             // is briefly out of user mode right after a heal/reload and the first
             // paint legitimately fails.
             idleWarned_.store(false);
-            if (!idleLogged_.exchange(true))
-                log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) + ")");
+            if (!idleLogged_.exchange(true)) {
+                std::string msg =
+                    "media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) + ")";
+                if (label)
+                    msg += " build_id=" + buildIdentityLabel_;
+                log(msg);
+            }
         }
     }
 }

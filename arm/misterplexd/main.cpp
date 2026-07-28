@@ -4,6 +4,7 @@
 
 #include "companion.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/rbf_identity.hpp"
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
@@ -424,6 +425,18 @@ int main(int argc, char** argv) {
         else if (idle == "last" || idle == "off")
             im = misterplex::IdleMode::LastFrame;
         player.setIdleMode(im);
+        std::string rbfIdPath = loadConf(confPath, "RBF_ID_PATH");
+        if (rbfIdPath.empty())
+            rbfIdPath = "/media/fat/_Utility/Plex.rbf";
+        const std::string label = misterplex::rbfIdentityLabelFromFile(rbfIdPath);
+        if (!label.empty()) {
+            player.setBuildIdentityLabel(label);
+            std::fprintf(stderr, "misterplexd: BUILD_ID_LABEL=RBF %s source=%s\n",
+                         label.c_str() + 4, rbfIdPath.c_str());
+        } else {
+            std::fprintf(stderr, "misterplexd: BUILD_ID_LABEL unavailable source=%s\n",
+                         rbfIdPath.c_str());
+        }
         // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
         // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
         osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));

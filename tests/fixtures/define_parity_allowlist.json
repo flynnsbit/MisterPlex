@@ -32,9 +32,11 @@
     "LAST_FRAME_LATCH_FAULT_BANK_BASE": "Injected LastFrame expected-red fault: latch computes bank base from the wrong geometry stride.",
     "H264_INTRA_NB_CTX_FAULT_STUB_NEIGHBORS": "Injected intra-neighbour-context expected-red fault: replace reconstructed neighbours with 128.",
     "H264_INTRA_NB_CTX_FAULT_SWAP_CHROMA_UV": "Injected intra-neighbour-context expected-red fault: swap chroma U/V neighbour storage.",
-    "H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE": "Injected intra-neighbour-context expected-red fault: report picture-edge neighbours available."
+    "H264_INTRA_NB_CTX_FAULT_EDGE_AVAILABLE": "Injected intra-neighbour-context expected-red fault: report picture-edge neighbours available.",
+    "MISTERPLEX_FAULT_RBF_ID_LABEL_CONSTANT": "Injected RBF identity expected-red fault: render every build-id label as the same text."
   },
   "volatile_value_macros": {
-    "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."
+    "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value.",
+    "BUILD_ID": "Quartus generates the sidebar build id in sys/build_id.tcl; Verilator lint uses a stable placeholder value."
   }
 }

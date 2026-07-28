@@ -26,6 +26,10 @@ DECODE=320x240
 # WEAK_BITRATE=1000
 # PRESENT=fb0|fpga|both
 PRESENT=fb0
+# Build identity label: the idle/logo renderer displays "RBF xxxxxxxx" from the
+# md5 of this file. Keep this pointed at the deploy target unless intentionally
+# validating a different launched RBF.
+# RBF_ID_PATH=/media/fat/_Utility/Plex.rbf
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
