@@ -12,6 +12,8 @@ h264_deblock_bs: product-candidate deblock helper currently reachable only from 
 h264_deblock_thresholds: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge_pipe: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
+h264_deblock_mb_filter: product macroblock deblocking scheduler; reachable from h264_decode_core, which stream_path does not drive in this branch. Gated by tests/unit/test_h264_deblock_mb_full_frame.sh and test_h264_decode_core_deblock_rtl_sim.sh with --root h264_decode_core.
+h264_deblock_qpc: product QPy->QPc (Table 8-15) mapping consumed by h264_deblock_mb_filter under h264_decode_core; same pending stream_path integration.
 h264_decode_core: partial product-datapath staging module; not driven by stream_path in this branch.
 h264_decode_skeleton: resource-estimation skeleton, explicitly not a decoder.
 h264_decode_top: standalone real-intra RTL bench target; not wired into stream_path in this branch.
