@@ -39,7 +39,8 @@ def require(cond: bool, msg: str) -> None:
 def main() -> int:
     print(
         "Scope: hdmi_capture_classify unit; synthetic PNG frames exercise VALID_CONTENT, "
-        "VALID_BLACK, and NO_SIGNAL classifications plus a content-vs-black red check. "
+        "VALID_BLACK, and NO_SIGNAL classifications plus a content-vs-black red check, "
+        "and a drawn-overlay guard with a red proof that it is load-bearing. "
         "It does not open /dev/video0 or prove real HDMI signal integrity."
     )
     WORK.mkdir(parents=True, exist_ok=True)
@@ -76,6 +77,34 @@ def main() -> int:
     require(r.returncode == 1 and "HDMI_CAPTURE_EXPECT_FAIL got=VALID_BLACK want=VALID_CONTENT" in r.stdout,
             f"red check did not reject black-as-content rc={r.returncode}\n{r.stdout}")
     print("PASS red-check black frame rejected as content")
+
+    # Drawn-overlay guard. Reproduces the real defect: a black capture annotated
+    # with a marker line was scored VALID_CONTENT, and the marker column was then
+    # reported as the first bright column of the picture.
+    annotated = np.zeros((720, 1280, 3), dtype=np.uint8)
+    annotated[2:718, 24:26] = (255, 0, 0)
+    annotated[7:40, 6:400] = 226
+    annotated_p = WORK / "annotated.png"
+    save(annotated_p, annotated)
+
+    r = run("--input", str(annotated_p))
+    require(r.returncode == 2, f"annotated frame was scored rc={r.returncode}\n{r.stdout}")
+    require("class=UNSCORED_ANNOTATED" in r.stdout, f"missing UNSCORED_ANNOTATED\n{r.stdout}")
+    require("drawn-overlay-column:24" in r.stdout, f"overlay column not identified\n{r.stdout}")
+    print("PASS annotated black frame refused as UNSCORED_ANNOTATED at column 24")
+
+    r = run("--input", str(annotated_p), "--allow-annotated", "--expect", "content")
+    require(r.returncode == 0 and "class=VALID_CONTENT" in r.stdout,
+            f"red proof failed: guard is not load-bearing rc={r.returncode}\n{r.stdout}")
+    print("PASS red-proof guard is load-bearing: --allow-annotated scores a black frame as content")
+
+    r = run("--input", str(black_p), "--expect", "black")
+    require(r.returncode == 0 and "class=VALID_BLACK" in r.stdout,
+            f"guard false-fired on unannotated black rc={r.returncode}\n{r.stdout}")
+    r = run("--input", str(content_p), "--expect", "content")
+    require(r.returncode == 0 and "class=VALID_CONTENT" in r.stdout,
+            f"guard false-fired on unannotated content rc={r.returncode}\n{r.stdout}")
+    print("PASS overlay guard does not fire on unannotated black or content frames")
     return 0
 
 

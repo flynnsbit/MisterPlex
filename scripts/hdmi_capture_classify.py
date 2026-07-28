@@ -21,14 +21,25 @@ DEFAULT_FPS = "60"
 DEFAULT_OUT = ROOT / "build" / "hdmi_capture" / "frame.png"
 DEFAULT_LOCK = ROOT / "build" / "hdmi_capture.lock"
 RC_FAIL = 1
+RC_UNSEEN = 2
 RC_UNSCORED = 77
+
+# A drawn marker is an exactly-saturated primary; MJPEG capture of a real panel
+# does not produce long straight runs of these.
+OVERLAY_SAT_HI = 250
+OVERLAY_SAT_LO = 12
+OVERLAY_RUN_FRACTION = 0.30
 
 SCOPE = (
     "Scope: HDMI capture classifier for MiSTer idle/visual gates; captures MJPEG "
     "1280x720@60 from the local USB-HDMI adapter or reads a PNG, then classifies "
     "NO_SIGNAL, VALID_BLACK, or VALID_CONTENT from frame presence, geometry, "
-    "luma mean/stddev, and dark/nonblack fractions. It does not prove exact Plex "
-    "logo shape, decoder correctness, or RBF identity."
+    "luma mean/stddev, and dark/nonblack fractions. It refuses to score a frame "
+    "carrying a drawn annotation overlay, because a marker line supplies exactly "
+    "the structure the black/content test reads. It does not prove exact Plex "
+    "logo shape, decoder correctness, or RBF identity, and its overlay guard "
+    "keys on exactly-saturated primaries in long straight runs, so it does not "
+    "claim to detect every derived image."
 )
 
 
@@ -83,6 +94,45 @@ def load_frame(path: Path) -> np.ndarray | None:
         return np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
     except Exception:
         return None
+
+
+def longest_run(mask_1d: np.ndarray) -> int:
+    if not mask_1d.any():
+        return 0
+    idx = np.flatnonzero(np.diff(np.concatenate(([0], mask_1d.view(np.int8), [0]))))
+    return int((idx[1::2] - idx[::2]).max())
+
+
+def detect_drawn_overlay(frame: np.ndarray) -> dict[str, object] | None:
+    """Return evidence when the frame carries a drawn annotation marker."""
+    h, w, _ = frame.shape
+    px = frame.astype(np.int16)
+    hi = px.max(axis=2)
+    lo = np.sort(px, axis=2)[:, :, 1]  # second-highest channel
+    sat = (hi >= OVERLAY_SAT_HI) & (lo <= OVERLAY_SAT_LO)
+    if not sat.any():
+        return None
+
+    col_need = max(4, int(OVERLAY_RUN_FRACTION * h))
+    row_need = max(4, int(OVERLAY_RUN_FRACTION * w))
+    col_counts = sat.sum(axis=0)
+    row_counts = sat.sum(axis=1)
+
+    for axis, need, counts in (("column", col_need, col_counts), ("row", row_need, row_counts)):
+        for i in np.flatnonzero(counts >= need):
+            line = sat[:, i] if axis == "column" else sat[i, :]
+            run = longest_run(line)
+            if run >= need:
+                return {
+                    "class": "UNSCORED_ANNOTATED",
+                    "reason": f"drawn-overlay-{axis}:{int(i)}",
+                    "width": w,
+                    "height": h,
+                    "overlay_run": run,
+                    "overlay_run_needed": need,
+                    "overlay_pixels": int(sat.sum()),
+                }
+    return None
 
 
 def classify(frame: np.ndarray | None, expected_size: tuple[int, int]) -> dict[str, object]:
@@ -149,6 +199,11 @@ def main() -> int:
     ap.add_argument("--input", help="PNG/JPEG frame for --source=file")
     ap.add_argument("--lock", default=str(DEFAULT_LOCK))
     ap.add_argument("--expect", choices=("any", "content", "black", "no-signal"), default="any")
+    ap.add_argument(
+        "--allow-annotated",
+        action="store_true",
+        help="score even if a drawn overlay is detected (unsafe: markers read as content)",
+    )
     args = ap.parse_args()
 
     print(SCOPE, flush=True)
@@ -172,6 +227,11 @@ def main() -> int:
             frame = load_frame(path) if rc == 0 else None
             if rc != 0 and frame is None:
                 log = log or f"ffmpeg rc={rc}"
+        if frame is not None and not args.allow_annotated:
+            overlay = detect_drawn_overlay(frame)
+            if overlay is not None:
+                print_result(overlay, log=log)
+                return RC_UNSEEN
         result = classify(frame, expected_size)
     except Unscored as exc:
         print(f"HDMI_CAPTURE_UNSCORED reason={exc}")
