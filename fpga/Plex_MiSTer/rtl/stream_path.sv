@@ -577,6 +577,7 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
+		.dpb_rd_stall(1'b0),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),

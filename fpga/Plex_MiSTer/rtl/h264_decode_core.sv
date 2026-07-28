@@ -118,6 +118,9 @@ module h264_decode_core #(
     output wire [31:0] dpb_rd_addr,
     input  wire [7:0]  dpb_rd_data,
     input  wire        dpb_rd_valid,
+    // Backpressure from a variable-latency DPB (the DDR-resident store).
+    // Tie low for a fixed-latency on-chip SRAM.
+    input  wire        dpb_rd_stall,
 
     // ── Product present writeback (decoded samples to the display store) ──
     // Same committed sample stream as dpb_wr_*, but expressed as plane +
@@ -1036,6 +1039,7 @@ module h264_decode_core #(
         .mem_raddr(dpb_ref_mem_raddr),
         .mem_rdata(dpb_rd_data_q),
         .mem_rvalid(dpb_rd_valid_q),
+        .mem_stall(dpb_rd_stall),
         .luma_window_valid(dpb_ref_luma_window_valid),
         .luma_window_idx(dpb_ref_luma_window_idx),
         .luma_window_sample(dpb_ref_luma_window_sample),

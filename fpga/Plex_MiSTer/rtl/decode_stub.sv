@@ -513,7 +513,7 @@ module decode_stub #(
 		.luma_origin_x(dpb_luma_origin_x), .luma_origin_y(dpb_luma_origin_y),
 		.chroma_origin_x(dpb_chroma_origin_x), .chroma_origin_y(dpb_chroma_origin_y),
 		.mem_rd(dpb_mem_rd), .mem_raddr(dpb_mem_raddr),
-		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid),
+		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid), .mem_stall(1'b0),
 		.luma_window_valid(dpb_luma_window_valid),
 		.luma_window_idx(dpb_luma_window_idx),
 		.luma_window_sample(dpb_luma_window_sample),

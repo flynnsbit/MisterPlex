@@ -63,7 +63,10 @@ module h264_dpb_ddr #(
 	// Frame bank stride.  Must match the address generator feeding
 	// rec_wr_addr / ref_rd_addr.  449280 = one I420 624x480 picture.
 	parameter int    BANK_STRIDE = 449280,
-	parameter int    WR_FIFO_DEPTH = 64
+	parameter int    WR_FIFO_DEPTH = 64,
+	// See h264_dpb_ddr_rd: 1 = registered response (decode_stub contract),
+	// 0 = combinational response for integrations carrying their own skid.
+	parameter bit    REG_RESPONSE  = 1'b1
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -145,7 +148,8 @@ module h264_dpb_ddr #(
 	reg         r_grant;
 
 	h264_dpb_ddr_rd #(
-		.DDR_BASE(DDR_BASE)
+		.DDR_BASE(DDR_BASE),
+		.REG_RESPONSE(REG_RESPONSE)
 	) u_rd (
 		.clk(clk),
 		.reset(reset),

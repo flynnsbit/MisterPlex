@@ -99,6 +99,10 @@ module h264_dpb_one_ref #(
 	output reg  [31:0]        mem_raddr,
 	input  wire [7:0]         mem_rdata,
 	input  wire               mem_rvalid,
+	// Variable-latency memories (the DDR-resident DPB) deassert mem_stall only
+	// on the cycle they accept the address currently on mem_raddr.  A fixed
+	// 1-cycle SRAM ties this low and the module behaves exactly as before.
+	input  wire               mem_stall,
 	output reg                luma_window_valid,
 	output reg  [8:0]         luma_window_idx,
 	output reg  [7:0]         luma_window_sample,
@@ -220,15 +224,27 @@ module h264_dpb_one_ref #(
 		endcase
 	end
 
+	// A request that is presented but not accepted must be held, and no state
+	// may advance underneath it, or the window sample it belongs to is lost.
+	wire mem_hold = mem_rd && mem_stall;
+
 	always @(posedge clk) begin
 		mem_rd                <= 1'b0;
 		luma_window_valid     <= 1'b0;
 		chroma_u_window_valid <= 1'b0;
 		chroma_v_window_valid <= 1'b0;
-		// Pipeline pending metadata to align with SRAM read latency
-		pending_idx_d1        <= pending_idx;
-		pending_plane_d1      <= pending_plane;
-		pending_valid_d1      <= pending_valid;
+		// Re-present an address the memory refused this cycle.
+		if (mem_hold) mem_rd <= 1'b1;
+		// Pipeline pending metadata to align with the memory's read latency.
+		// While a request is held there is no response in flight, so the
+		// alignment stage must stay empty rather than shift a duplicate.
+		if (mem_hold) begin
+			pending_valid_d1 <= 1'b0;
+		end else begin
+			pending_idx_d1   <= pending_idx;
+			pending_plane_d1 <= pending_plane;
+			pending_valid_d1 <= pending_valid;
+		end
 
 		if (reset) begin
 			current_base        <= BANK0_BASE[31:0];
@@ -290,6 +306,7 @@ module h264_dpb_one_ref #(
 				endcase
 			end
 
+			if (!mem_hold) begin
 			if (phase == PH_IDLE) begin
 				pending_valid <= 1'b0;
 				fetch_busy    <= 1'b0;
@@ -364,6 +381,7 @@ module h264_dpb_one_ref #(
 						issue_idx <= issue_idx + 9'd1;
 					end
 				end
+			end
 			end
 			if (lat_part_w_lo != 2'd0 || lat_part_h_lo != 2'd0) begin
 				// Keep part_w/part_h observed for lint and future narrower fetch windows.
