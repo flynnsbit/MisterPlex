@@ -284,3 +284,58 @@ python3 scripts/capture_preflight.py --frames 10 --out-dir build/arm-after
 3. Fix lock file if not yet fixed
 
 **For NO_SIGNAL red-proof:** Physically disconnect HDMI from capture stick, run `make capture-rig-preflight`, expect exit 1 with NO_SIGNAL. Reconnect, confirm VALID returns.
+
+---
+
+## 11. UPDATE — W-FIT deploy coordination (2026-07-28, added by successor)
+
+### devmem crash — CRITICAL LESSON
+
+**Never call `/usr/sbin/devmem 0xFF200000` on the MiSTer.** This reads the LWH2F (Lightweight HPS-to-FPGA) bridge. If the FPGA peripheral at that address is not ready, the AXI bus stalls and hangs the ARM HPS. The network interface goes down, SSH sessions become unresponsive. The MiSTer requires manual power cycle.
+
+This happened during the deploy coordination for W-FIT. The MiSTer was offline for >20 minutes and counting. All subsequent BLACK_SIGNAL captures during that period are **REFUSE_SOURCE_OFFLINE** (the MS2109 outputs flat RGB(7,7,7) = luma 7.0 = sha 2358782e even when the source is powered off — indistinguishable from black-screen RBF output without host probe).
+
+### New tool: `capture_deploy_window.py`
+
+**File:** `scripts/capture_deploy_window.py` (commit `9e40277`, improved in `2a10b5b`)  
+**Purpose:** Continuous multi-frame capture across a deploy/bounce transition. Shows per-frame luma/std/state as they arrive.  
+**Correct invocation:**
+```bash
+python3 scripts/capture_deploy_window.py \
+  --host 192.168.1.183 \      # mandatory: disambiguates black-RBF vs dead-source
+  --duration 120 \
+  --interval 3 \
+  --out-dir build/deploy-capture
+```
+WITHOUT `--host`: any BLACK_SIGNAL result is ambiguous — cannot attribute to core or dead source. **Always pass `--host 192.168.1.183`.**
+
+### New tool: `score_idle_screen.py`
+
+**File:** `scripts/score_idle_screen.py` (commit `72f9e4f`)  
+**Purpose:** Grades idle/screensaver screen. Detects Plex-orange chevron. Disambiguates black-core vs powered-off source.  
+**Correct invocation:**
+```bash
+python3 scripts/score_idle_screen.py \
+  --host 192.168.1.183 \
+  --expect-chevron \
+  --out-dir build/idle-score
+```
+Exit 0 = CONTENT_PRESENT + chevron found. Exit 1 = no content / no chevron (core defect). Exit 2 = REFUSE (no signal or source offline — UNSCORED).
+
+### Pre-deploy baseline data (valid, MiSTer was online)
+
+**RBF `fb4bad84` already resident** before W-FIT's planned deploy:
+```
+Scope: 40 frames / 120s, interval=3s (warmup-discard not in place — some BLACK may be warmup)
+MiSTer 192.168.1.183: REACHABLE, misterplexd pid 7518 RUNNING
+CONTENT_PRESENT: 2/40  at t=27.1s (sha=871cb502 luma=36.50 std=22.17)
+                        and t=69.1s (sha=04e8975a luma=36.50 std=22.16)
+BLACK_SIGNAL:    37/40  sha=2358782e luma=7.00 std=0.00
+CAPTURE_ERROR:   1/40   (t=66s transient)
+black_attribution: source_host_reachable_core_paints_black
+```
+The 2/40 CONTENT frames at ≈42s separation match W-ARM's documented timed-bank-fallback period. **Livelock IS present in `fb4bad84` as currently loaded.** Either the `||!slot_keep` fix is not in this build, or misterplexd requires a restart after core reload for the fix to take effect.
+
+### Lock path fix (commit `2a10b5b`)
+
+`capture_deploy_window.py` now uses `git rev-parse --git-common-dir`/video0.lock — the same path as `hw_gate_common.sh`. This is shared across all worktrees on this machine. Previous version used a per-worktree path and serialised nothing.
