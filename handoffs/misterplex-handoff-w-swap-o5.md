@@ -455,6 +455,51 @@ I have not run Quartus and will not.
 `make post-fit-hierarchy` remains the only real oracle and I have not run Quartus (sole exclusive
 slot). And no frame has been decoded or displayed by the FPGA.
 
+## 10c. Capacity: my modules are NOT the M10K tenant. The risk is ALM and timing.
+
+The parent's ruling 2 frees 46% of the device by retiring `decode_stub` and names my seven modules
+as "the intended tenant". **Measured, I do not need it, and I should not be allocated it.**
+
+Storage actually declared by the MC path:
+
+| array | site | bits |
+|---|---|---|
+| `p16_luma_ref [0:440]` x 8b | `h264_decode_core.sv:315` | 3,528 |
+| `p16_chroma_u_ref [0:80]` x 8b | `h264_decode_core.sv:316` | 648 |
+| `p16_chroma_v_ref [0:80]` x 8b | `h264_decode_core.sv:317` | 648 |
+| **total** | | **4,824 bits** |
+
+`h264_dpb.sv` declares no storage at all beyond three `wire` arrays (`full_y[0:255]`, `full_u[0:63]`,
+`full_v[0:63]`, `:561-563`) which are combinational nets, not memory. The reference frame lives in
+external DDR; `h264_dpb_one_ref` is an address generator plus a read port, not a frame store.
+
+Further, the whole 441-entry luma window is read **combinationally and in full** (it is passed as a
+port, `h264_decode_core.sv:563-565`). A 441-wide simultaneous read cannot be an M10K; it must
+synthesise to registers. So **my MC path costs roughly 4.8 Kbit of flip-flops and zero M10K.**
+
+**The real risk is somewhere nobody has been looking.** Measured: `h264_luma_qpel_block_16x16`,
+`h264_chroma_epel_block_8x8`, `h264_inter_mc_16x16` and `h264_inter_mc_part` contain **zero clocked
+processes** - grep for `always_ff|always @(posedge` across all four returns 0. They are one
+combinational cloud producing **256 luma + 128 chroma samples per macroblock in a single delta**.
+Each luma qpel sample is a 6-tap FIR, and the diagonal half-pel phases need a vertical 6-tap on top
+of a horizontal one. That is on the order of ten thousand adders of combinational logic with no
+pipeline stage anywhere in it.
+
+**Consequences a successor must not discover the hard way:**
+
+- Freeing M10K does **not** make room for this block. The constraint I will hit is **ALM count and
+  combinational depth / Fmax**, and neither has ever been measured because no fit has included these
+  modules (post-fit hierarchy for `fb4bad84` confirms all seven were ABSENT).
+- The full-frame gate proves **functional** correctness (1170/1170 MBs exact) at zero cycles of
+  latency per sample. It says nothing about timing closure. A green there is not evidence the block
+  can be clocked.
+- The likely fix is to **time-multiplex**: compute N samples per cycle instead of 384, trading
+  latency for area. At 1170 MBs x 384 samples = 449,280 samples/frame, even 4 samples/cycle is
+  ~112k cycles/frame, comfortably inside a frame period. **This is the first thing to change if the
+  fit reports an ALM or Fmax failure - do not start by shrinking buffers, they are not the problem.**
+
+I have not run Quartus and will not; these are analytic figures from the RTL, stated as such.
+
 ## 11. Rules that cost me time - obey them
 
 - Use `--root h264_decode_core`. **Never** plain `emu` reachability: `decode_stub` masks everything.
