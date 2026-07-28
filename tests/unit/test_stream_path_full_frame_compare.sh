@@ -286,8 +286,8 @@ expected = {
     "colorspace": "I420_NATIVE",
     "h264_loop_filter": "disabled",
     "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
-    "reference_picture_state": "diagnostic_filtered_reference_via_deblock_writeback_ctrl",
-    "reference_picture_source": "generated_i420_pattern_not_decoded_prior_frame",
+    "reference_picture_state": "testbench_prefilled_previous_golden_no_deblock_reference",
+    "reference_picture_source": "golden_i420_previous_frame_injected_into_dpb_bank0",
 }
 for key, want in expected.items():
     got = candidate.get(key)

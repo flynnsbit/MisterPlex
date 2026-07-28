@@ -3,9 +3,10 @@
 // and connects the individually-verified arithmetic/prediction modules into
 // a complete decode pipeline for Baseline Profile CAVLC streams.
 //
-// STATUS: INTERFACE SKELETON ONLY — logic not yet implemented.
-//         Defines the module boundaries and port contracts that w-mc,
-//         w-deblock, w-level, w-plane, and w-qp target.
+// STATUS: PARTIAL PRODUCT DATAPATH.
+//         Product DPB writeback is implemented for already-reconstructed I420
+//         macroblocks.  Syntax walking, P residual/MV parsing, MC, deblock,
+//         and full decode scheduling remain open.
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
@@ -65,6 +66,18 @@ module h264_decode_core #(
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
     input  wire [2:0]  part_mode,            // partition mode
     input  wire [1:0]  part_idx,             // sub-partition index
+
+    // ── Reconstructed macroblock input (from the decode/recon pipeline) ──
+    // This is the product handoff into DPB writeback.  It is intentionally
+    // sample-based: no synthetic fill is generated inside this module.
+    input  wire        recon_mb_valid,        // pulse: recon_y/u/v contain one complete MB
+    input  wire [7:0]  recon_mb_x,
+    input  wire [7:0]  recon_mb_y,
+    input  wire        recon_mb_is_ref,
+    input  wire [31:0] dpb_write_base,
+    input  wire [7:0]  recon_y [0:255],
+    input  wire [7:0]  recon_u [0:63],
+    input  wire [7:0]  recon_v [0:63],
 
     // ── DPB memory interface (to external SRAM/DDR) ──
     // Write: decoded frame samples to reference store
@@ -206,19 +219,143 @@ module h264_decode_core #(
     //
     // ════════════════════════════════════════════════════════════════════
 
-    // Stub outputs until implementation
-    assign dpb_wr_en = 1'b0;
-    assign dpb_wr_addr = 32'd0;
-    assign dpb_wr_data = 8'd0;
+    // ════════════════════════════════════════════════════════════════════
+    // PRODUCT DPB WRITEBACK
+    // ════════════════════════════════════════════════════════════════════
+    // Latch one reconstructed native-I420 macroblock, then stream 384 samples:
+    //   Y:  16×16 samples (idx 0..255)
+    //   U:   8×8 samples (idx 256..319)
+    //   V:   8×8 samples (idx 320..383)
+    //
+    // Addressing is shared with h264_dpb_one_ref via h264_dpb_mb_write_addr,
+    // so writeback and later MC fetch agree on native-I420 layout.
+    // No DPB read-latency logic is touched here; dpb_rd_* remains a future
+    // consumer-side path and the existing h264_dpb pending_valid_d1 contract
+    // is unchanged.
+    localparam [7:0] ST_IDLE  = 8'd0;
+    localparam [7:0] ST_WRITE = 8'd1;
+
+    reg [7:0]  wb_state;
+    reg [8:0]  wb_idx;
+    reg [7:0]  wb_mb_x;
+    reg [7:0]  wb_mb_y;
+    reg        wb_mb_is_ref;
+    reg [31:0] wb_base;
+    reg [15:0] mb_count_r;
+    reg        frame_done_r;
+    reg [7:0]  lat_recon_y [0:255];
+    reg [7:0]  lat_recon_u [0:63];
+    reg [7:0]  lat_recon_v [0:63];
+
+    wire [1:0] wb_plane = (wb_idx < 9'd256) ? 2'd0 :
+                          (wb_idx < 9'd320) ? 2'd1 : 2'd2;
+    wire [8:0] wb_u_idx9 = wb_idx - 9'd256;
+    wire [8:0] wb_v_idx9 = wb_idx - 9'd320;
+    wire [7:0] wb_sample_idx = (wb_plane == 2'd0) ? wb_idx[7:0] :
+                               (wb_plane == 2'd1) ? wb_u_idx9[7:0] :
+                                                     wb_v_idx9[7:0];
+    wire [31:0] wb_addr;
+    h264_dpb_mb_write_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_wb_addr (
+        .bank_base(wb_base),
+        .mb_x(wb_mb_x),
+        .mb_y(wb_mb_y),
+        .plane(wb_plane),
+        .sample_idx(wb_sample_idx),
+        .addr(wb_addr)
+    );
+
+    wire [7:0] wb_data = (wb_plane == 2'd0) ? lat_recon_y[wb_sample_idx] :
+                         (wb_plane == 2'd1) ? lat_recon_u[wb_sample_idx[5:0]] :
+                                               lat_recon_v[wb_sample_idx[5:0]];
+    wire [31:0] wb_mb_x32 = {24'd0, wb_mb_x};
+    wire [31:0] wb_mb_y32 = {24'd0, wb_mb_y};
+    wire [31:0] mb_width32 = {24'd0, mb_width};
+    wire [31:0] mb_height32 = {24'd0, mb_height};
+    wire [31:0] wb_mb_addr32 = wb_mb_y32 * MB_W + wb_mb_x32;
+    wire [15:0] wb_mb_addr16 = wb_mb_addr32[15:0];
+    wire        wb_last_sample = (wb_idx == 9'd383);
+    wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
+                             (wb_mb_y32 == (MB_H - 1));
+`ifdef H264_DECODE_CORE_FAULT_DROP_WB
+    wire product_wb_en = 1'b0;
+`else
+    wire product_wb_en = (wb_state == ST_WRITE);
+`endif
+
+    integer wb_i;
+    always @(posedge clk) begin
+        frame_done_r <= 1'b0;
+        if (reset || slice_start) begin
+            wb_state <= ST_IDLE;
+            wb_idx <= 9'd0;
+            wb_mb_x <= 8'd0;
+            wb_mb_y <= 8'd0;
+            wb_mb_is_ref <= 1'b0;
+            wb_base <= 32'd0;
+            mb_count_r <= 16'd0;
+            frame_done_r <= 1'b0;
+            for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                lat_recon_y[wb_i] <= 8'd0;
+            for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
+                lat_recon_u[wb_i] <= 8'd0;
+                lat_recon_v[wb_i] <= 8'd0;
+            end
+        end else begin
+            case (wb_state)
+            ST_IDLE: begin
+                if (recon_mb_valid) begin
+                    wb_mb_x <= recon_mb_x;
+                    wb_mb_y <= recon_mb_y;
+                    wb_mb_is_ref <= recon_mb_is_ref;
+                    wb_base <= dpb_write_base;
+                    wb_idx <= 9'd0;
+                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                        lat_recon_y[wb_i] <= recon_y[wb_i];
+                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
+                        lat_recon_u[wb_i] <= recon_u[wb_i];
+                        lat_recon_v[wb_i] <= recon_v[wb_i];
+                    end
+                    wb_state <= ST_WRITE;
+                end
+            end
+            ST_WRITE: begin
+                if (wb_last_sample) begin
+                    wb_state <= ST_IDLE;
+                    if (wb_mb_is_ref)
+                        mb_count_r <= mb_count_r + 16'd1;
+                    frame_done_r <= wb_mb_is_ref && wb_last_mb;
+                end else begin
+                    wb_idx <= wb_idx + 9'd1;
+                end
+            end
+            default: begin
+                wb_state <= ST_IDLE;
+            end
+            endcase
+        end
+    end
+
+    assign dpb_wr_en = product_wb_en;
+    assign dpb_wr_addr = wb_addr;
+    assign dpb_wr_data = wb_data;
     assign dpb_rd_en = 1'b0;
     assign dpb_rd_addr = 32'd0;
     assign rbsp_request_offset = 16'd0;
     assign rbsp_request_valid = 1'b0;
-    assign frame_done = 1'b0;
-    assign frame_mb_count = 16'd0;
-    assign busy = 1'b0;
-    assign decode_state = 8'd0;
-    assign current_mb_addr = 16'd0;
-    assign error = 1'b0;
+    assign frame_done = frame_done_r;
+    assign frame_mb_count = mb_count_r;
+    assign busy = (wb_state != ST_IDLE);
+    assign decode_state = wb_state;
+    assign current_mb_addr = wb_mb_addr16;
+    assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
+                   (mb_height != 8'd0 && mb_height32 != MB_H);
+
+    (* keep = 1 *) wire _keep_decode_core_inputs =
+        slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
+        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
+        mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
+        |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
+        |mb_qp_delta | |mv_x_qpel | |mv_y_qpel | |part_mode | |part_idx |
+        |dpb_rd_data | dpb_rd_valid;
 
 endmodule

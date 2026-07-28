@@ -402,29 +402,30 @@ public:
         resetCycles = cycles;
     }
 
-    // Pre-fill the DPB reference bank with real IDR frame data.
-    // The h264_dpb_one_ref starts with current_base=BANK0, reference_base=BANK1.
-    // After IDR fill + frame_done, banks swap: current=BANK1, reference=BANK0.
-    // So for the FIRST P-slice, the reference is in BANK0.
-    // We pre-fill BANK0 (addr 0..frameBytes-1) with the IDR frame.
-    void prefillDpbReference(const std::vector<uint8_t>& goldenPlanes) {
+    // Pre-fill BANK0 with a proven no-deblock decoded reference frame.
+    // The current product stub still cannot reconstruct a full reference
+    // picture, so native inter scoring uses this explicit testbench reference
+    // state to isolate parser → DPB → MC prediction plumbing.
+    uint64_t prefillDpbReference(const std::vector<uint8_t>& goldenPlanes, std::size_t frameIndex) {
         const std::size_t frameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
-        if (goldenPlanes.size() < frameBytes) {
+        const std::size_t base = frameIndex * frameBytes;
+        if (goldenPlanes.size() < base + frameBytes) {
             std::cerr << "WARNING: golden planes too small for DPB prefill ("
-                      << goldenPlanes.size() << " < " << frameBytes << ")\n";
-            return;
+                      << goldenPlanes.size() << " < " << (base + frameBytes) << ")\n";
+            return 0;
         }
-        // Write frame 0 (IDR) into BANK0 of DPB SRAM
+        const uint64_t startCycles = cycles;
         for (std::size_t i = 0; i < frameBytes; ++i) {
             top.dpb_prefill_en = 1;
             top.dpb_prefill_addr = static_cast<uint32_t>(i);
-            top.dpb_prefill_data = goldenPlanes[i];
+            top.dpb_prefill_data = goldenPlanes[base + i];
             tick();
         }
         top.dpb_prefill_en = 0;
         dpbPrefilled = true;
         std::cout << "DPB_PREFILL wrote " << frameBytes
-                  << " bytes of IDR reference into BANK0\n";
+                  << " bytes of reference frame " << frameIndex << " into BANK0\n";
+        return cycles - startCycles;
     }
 
     bool dpbPrefilled = false;
@@ -580,9 +581,9 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "    \"colorspace\": \"I420_NATIVE\",\n";
     out << "    \"h264_loop_filter\": \"disabled\",\n";
     out << "    \"reconstruction_stage\": \"mc_prediction_only_pre_deblock_no_residual_add\",\n";
-    out << "    \"reference_picture_state\": \"diagnostic_filtered_reference_via_deblock_writeback_ctrl\",\n";
-    out << "    \"reference_picture_source\": \"generated_i420_pattern_not_decoded_prior_frame\",\n";
-    out << "    \"conformance_scope\": \"MC arithmetic and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
+    out << "    \"reference_picture_state\": \"testbench_prefilled_previous_golden_no_deblock_reference\",\n";
+    out << "    \"reference_picture_source\": \"golden_i420_previous_frame_injected_into_dpb_bank0\",\n";
+    out << "    \"conformance_scope\": \"MC arithmetic, all-MB traversal, and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
     out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";
@@ -971,15 +972,21 @@ int main(int argc, char** argv) {
         sim.initNativeCandidate(refFrames);
         sim.reset();
 
-        // Pre-fill DPB reference bank with real IDR frame data.
-        // This gives MC an honest reference for P-slice prediction.
-        sim.prefillDpbReference(golden);
+        // Initial setup prefill; IDR writeback may overwrite it, so P slices
+        // refresh BANK0 from the previous decoded golden frame immediately
+        // before each P NAL below.
+        sim.prefillDpbReference(golden, 0);
         // Prefill ticks are setup cost, not decode; reset cycle counter.
         sim.cycles = 0;
 
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
         for (const auto& n : nals) {
+            if (n.type == 1 && expectedFrames > 0) {
+                const uint64_t prefillCycles =
+                    sim.prefillDpbReference(golden, static_cast<std::size_t>(expectedFrames - 1));
+                sim.cycles -= prefillCycles;
+            }
             const uint64_t injectStart = sim.cycles;
             for (std::size_t i = n.start; i < n.end; ++i) sim.feedByte(annexb[i]);
             sim.injectionCycles += (sim.cycles - injectStart);
@@ -990,7 +997,7 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                const int frameWaitCycles = std::max(200000, args.width * args.height * 3);
+                const int frameWaitCycles = std::max(600000, args.width * args.height * 8);
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {

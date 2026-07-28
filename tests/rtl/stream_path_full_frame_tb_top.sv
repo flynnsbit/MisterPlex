@@ -198,7 +198,7 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
-	assign native_inter_valid = dut.stub.dpb_fetch_done && dut.stub.dpb_inter_ok;
+	assign native_inter_valid = dut.stub.inter_capture_valid;
 	assign native_inter_frame_idx = dut.stub.frames_out;
 	assign native_inter_mb_x = dut.stub.lat_p_mb_x;
 	assign native_inter_mb_y = dut.stub.lat_p_mb_y;

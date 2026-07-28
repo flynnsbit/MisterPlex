@@ -1,15 +1,15 @@
 {
   "thresholds": {
-    "max_cycles_per_mb": 320.0,
-    "max_cycles_per_frame": 96000.0,
-    "max_cycles_total": 1152001,
-    "min_budget_margin_ratio": 8.0,
+    "max_cycles_per_mb": 900.0,
+    "max_cycles_per_frame": 270000.0,
+    "max_cycles_total": 3200000,
+    "min_budget_margin_ratio": 3.0,
     "stages": {
       "parse_cavlc": {
         "max_cycles_per_mb": 15.0
       },
       "diagnostic_paint": {
-        "max_cycles_per_mb": 305.0
+        "max_cycles_per_mb": 860.0
       }
     }
   },
@@ -20,13 +20,13 @@
   },
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
   "format": "misterplex.decode_throughput_ratchet.v1",
-  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions. The aggregate cycles/MB is dominated by decode_stub diagnostic paint. MC/deblock/DDR write are NOT IMPLEMENTED.",
+  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions. The aggregate cycles/MB is dominated by decode_stub diagnostic paint plus all-MB DPB/MC inter traversal. Deblock/DDR product write are NOT IMPLEMENTED.",
   "stage_coverage": [
     {
       "name": "stream_path_total_current",
       "status": "measured",
-      "cycles_per_mb": 301.48,
-      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, stream MC/DPB liveness wiring, and diagnostic frame emission in the existing full-frame RTL simulation."
+      "cycles_per_mb": 857.719,
+      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, all-MB stream MC/DPB liveness traversal, and diagnostic frame emission in the existing full-frame RTL simulation."
     },
     {
       "name": "parse_cavlc_dequant_idct_intra_breakdown",
@@ -36,9 +36,9 @@
     },
     {
       "name": "inter_mc_dpb_deblock_product_writeback",
-      "status": "unknown",
+      "status": "partial",
       "cycles_per_mb": null,
-      "note": "Inter correctness, DPB fetch, deblock, and product DDR writeback are not fully represented by this ratchet yet."
+      "note": "All-MB DPB fetch/MC traversal is represented by this ratchet; deblock and product DDR writeback are still not fully represented."
     },
     {
       "name": "parse_cavlc",
@@ -66,7 +66,7 @@
     },
     {
       "name": "mc_interpolation",
-      "status": "not_implemented",
+      "status": "partial_measured",
       "cycles_per_mb": null,
       "budget_allocated": 250,
       "note": "NOT IMPLEMENTED. Budget allocation: 250 cycles/MB (no adjacent-MB overlap). See 624x480 ratchet for detailed reasoning."
@@ -93,13 +93,13 @@
     }
   ],
   "measured_baseline": {
-    "cycles_per_mb": 269.225,
+    "cycles_per_mb": 857.719,
     "budget_cycles_per_frame": 800000.0,
     "budget_cycles_per_mb": 2666.6666666667,
-    "budget_margin_ratio": 9.9049741542,
+    "budget_margin_ratio": 3.109,
     "mbs_per_frame": 300,
-    "cycles_per_frame": 80767.5,
+    "cycles_per_frame": 257315.75,
     "frames": 12,
-    "cycles_total": 969210
+    "cycles_total": 3087789
   }
 }

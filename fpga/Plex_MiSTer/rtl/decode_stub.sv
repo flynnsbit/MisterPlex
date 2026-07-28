@@ -90,6 +90,10 @@ module decode_stub #(
 	reg            lat_p_uses_sub_mb;
 	reg            lat_p_intra;
 	reg            lat_inter_recon_ok;
+	reg [15:0]     lat_p_mb_addr;
+	reg            inter_capture_valid;
+	reg            p_fetch_advance;
+	reg            p_fetch_launch_pending;
 	reg            p_candidate_seen;
 	reg            pending_p_fetch;
 	reg            pending_p_skip;
@@ -413,6 +417,12 @@ module decode_stub #(
 	wire [15:0]       p_req_mb_y16 = (p_mb_width == 16'd0) ? 16'd0 : (first_mb_addr / p_mb_width);
 	wire [7:0]        p_req_mb_x = p_req_mb_x16[7:0];
 	wire [7:0]        p_req_mb_y = p_req_mb_y16[7:0];
+	wire [15:0]       lat_p_mb_width = (lat_mb_w == 0) ? 16'd20 : {8'd0, lat_mb_w};
+	wire [15:0]       lat_p_next_mb_addr = lat_p_mb_addr + 16'd1;
+	wire [15:0]       lat_p_next_mb_x16 = (lat_p_mb_width == 16'd0) ? 16'd0 : (lat_p_next_mb_addr % lat_p_mb_width);
+	wire [15:0]       lat_p_next_mb_y16 = (lat_p_mb_width == 16'd0) ? 16'd0 : (lat_p_next_mb_addr / lat_p_mb_width);
+	wire [7:0]        lat_p_next_mb_x = lat_p_next_mb_x16[7:0];
+	wire [7:0]        lat_p_next_mb_y = lat_p_next_mb_y16[7:0];
 	wire              p_fetch_candidate = slice_valid && !slice_is_i && has_mb_type && !first_mb_intra &&
 	                                      ((first_mb_part_mode == 3'd0) || (first_mb_part_mode == 3'd1) ||
 	                                       (first_mb_part_mode == 3'd2) || (first_mb_part_mode == 3'd3) ||
@@ -536,6 +546,7 @@ module decode_stub #(
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
 		dpb_frame_done_pulse <= 1'b0;
+		inter_capture_valid <= 1'b0;
 		// Read data is combinational off the registered address, so rvalid must
 		// lag mem_rd by exactly one cycle to stay aligned with h264_dpb's
 		// pending_valid_d1 capture window.
@@ -584,6 +595,10 @@ module decode_stub #(
 			lat_p_uses_sub_mb <= 0;
 			lat_p_intra   <= 0;
 			lat_inter_recon_ok <= 0;
+			lat_p_mb_addr <= 0;
+			inter_capture_valid <= 0;
+			p_fetch_advance <= 0;
+			p_fetch_launch_pending <= 0;
 			p_candidate_seen <= 0;
 			pending_p_fetch <= 0;
 			pending_p_skip <= 0;
@@ -646,6 +661,8 @@ module decode_stub #(
 				lat_p_skip <= pending_p_skip;
 				lat_p_mb_x <= pending_p_mb_x;
 				lat_p_mb_y <= pending_p_mb_y;
+				lat_p_mb_addr <= {8'd0, pending_p_mb_y} * ((mb_w == 0) ? 16'd20 : {8'd0, mb_w}) +
+				                 {8'd0, pending_p_mb_x};
 				lat_p_part_mode <= pending_p_part_mode;
 				lat_p_part_count <= pending_p_part_count;
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
@@ -657,6 +674,7 @@ module decode_stub #(
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= 16'sd0;
 				dpb_fetch_start <= 1'b1;
+				p_fetch_launch_pending <= 1'b1;
 			end
 			end else if (phase == PH_WAIT) begin
 			if (wait_cnt != 12'd0)
@@ -681,6 +699,7 @@ module decode_stub #(
 				lat_p_skip   <= first_mb_p_skip;
 				lat_p_mb_x   <= p_req_mb_x;
 				lat_p_mb_y   <= p_req_mb_y;
+				lat_p_mb_addr <= first_mb_addr;
 				lat_p_part_mode <= first_mb_part_mode;
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
@@ -696,17 +715,32 @@ module decode_stub #(
 				if (p_fetch_candidate && dpb_ref_ready) begin
 					phase <= PH_FETCH;
 					dpb_fetch_start <= 1'b1;
+					p_fetch_launch_pending <= 1'b1;
 					pending_p_fetch <= 1'b0;
 				end
 			end
+			end else if (p_fetch_advance) begin
+				lat_p_mb_addr <= lat_p_next_mb_addr;
+				lat_p_mb_x <= lat_p_next_mb_x;
+				lat_p_mb_y <= lat_p_next_mb_y;
+				dpb_fetch_start <= 1'b1;
+				p_fetch_launch_pending <= 1'b1;
+				p_fetch_advance <= 1'b0;
 			end else if (phase == PH_FETCH) begin
-			if (dpb_fetch_done) begin
-				phase <= PH_PAINT;
-				pix_i <= 0;
-				x <= 0;
-				y <= 0;
-				wr_reset_ptr <= 1'b1;
-				lat_inter_recon_ok <= dpb_inter_ok;
+			if (p_fetch_launch_pending && !dpb_fetch_done) begin
+				p_fetch_launch_pending <= 1'b0;
+			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
+				inter_capture_valid <= dpb_inter_ok;
+				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
+				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
+					p_fetch_advance <= 1'b1;
+				end else begin
+					phase <= PH_PAINT;
+					pix_i <= 0;
+					x <= 0;
+					y <= 0;
+					wr_reset_ptr <= 1'b1;
+				end
 			end
 			end else if (phase == PH_DPB_FILL) begin
 			if (dpb_fill_sample_idx < 9'd384) begin
