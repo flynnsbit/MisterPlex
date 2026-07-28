@@ -45,7 +45,10 @@ SCOPE = (
     "'source' directives, QIP_FILE includes and the $::quartus(qip_path) idiom. "
     "It reads the project's build description only. It does NOT prove a fit ran, "
     "does NOT prove a module survived synthesis (use post-fit hierarchy for that), "
-    "and does NOT prove a module is reachable from the top level."
+    "and does NOT prove a module is reachable from the top level. Being in the "
+    "file list does not mean surviving synthesis: a module can be compiled, "
+    "instantiated, elaborated and then optimized away for contributing zero "
+    "resources, which only real synthesis can detect."
 )
 
 # Assignment names that introduce a source file into the compile.
