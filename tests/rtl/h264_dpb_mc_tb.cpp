@@ -567,6 +567,82 @@ int main(int argc, char** argv) {
         checkPartMc(s, luma, u, v, 4, 8, 3, 1);
         checkPartMc(s, luma, u, v, 4, 4, 3, 1);
 
+        auto edgeSentinel = [](int plane, int x, int y) {
+            return static_cast<uint8_t>(1 + plane * 80 + (x & 7) * 9 + (y & 7));
+        };
+        for (int y = H - 4; y < H; ++y) {
+            for (int x = W - 4; x < W; ++x) {
+                s.mem[i420Addr(0, 0, x, y)] = edgeSentinel(0, x, y);
+            }
+        }
+        for (int y = CH - 4; y < CH; ++y) {
+            for (int x = CW - 4; x < CW; ++x) {
+                s.mem[i420Addr(0, 1, x, y)] = edgeSentinel(1, x, y);
+                s.mem[i420Addr(0, 2, x, y)] = edgeSentinel(2, x, y);
+            }
+        }
+        s.top.fetch_mb_x = static_cast<uint16_t>(W / 16 - 1);
+        s.top.fetch_mb_y = static_cast<uint16_t>(H / 16 - 1);
+        s.top.fetch_part_mode = 0;
+        s.top.fetch_part_idx = 0;
+        s.top.fetch_part_w = 16;
+        s.top.fetch_part_h = 16;
+        s.top.fetch_mv_x_qpel = static_cast<int16_t>(20);
+        s.top.fetch_mv_y_qpel = static_cast<int16_t>(20);
+        s.top.fetch_start = 1;
+        s.tick();
+        s.top.fetch_start = 0;
+
+        int upperLc = 0, upperUc = 0, upperVc = 0;
+        std::array<bool, 441> upperLSeen{};
+        std::array<bool, 81> upperUSeen{};
+        std::array<bool, 81> upperVSeen{};
+        bool upperDone = false;
+        const int upperLumaOriginX = (W / 16 - 1) * 16 + (20 >> 2);
+        const int upperLumaOriginY = (H / 16 - 1) * 16 + (20 >> 2);
+        const int upperChromaOriginX = (W / 16 - 1) * 8 + (20 >> 3);
+        const int upperChromaOriginY = (H / 16 - 1) * 8 + (20 >> 3);
+        for (int guard = 0; guard < 800 && (upperLc < 441 || upperUc < 81 || upperVc < 81 || !upperDone); ++guard) {
+            s.tick();
+            if (s.top.luma_window_valid) {
+                int idx = s.top.luma_window_idx;
+                int sx = std::clamp(upperLumaOriginX + (idx % 21) - 2, 0, W - 1);
+                int sy = std::clamp(upperLumaOriginY + (idx / 21) - 2, 0, H - 1);
+                uint8_t want = s.mem[i420Addr(0, 0, sx, sy)];
+                if (s.top.luma_window_sample != want) {
+                    std::cerr << "FAIL h264_dpb_mc RTL: upper luma window clamp mismatch idx=" << idx
+                              << " got=" << int(s.top.luma_window_sample) << " want=" << int(want)
+                              << " src=(" << sx << "," << sy << ")\n";
+                    return 1;
+                }
+                if (!upperLSeen[idx]) { upperLSeen[idx] = true; ++upperLc; }
+            }
+            if (s.top.chroma_u_window_valid || s.top.chroma_v_window_valid) {
+                int idx = s.top.chroma_window_idx;
+                int sx = std::clamp(upperChromaOriginX + (idx % 9), 0, CW - 1);
+                int sy = std::clamp(upperChromaOriginY + (idx / 9), 0, CH - 1);
+                int plane = s.top.chroma_u_window_valid ? 1 : 2;
+                uint8_t want = s.mem[i420Addr(0, plane, sx, sy)];
+                if (s.top.chroma_window_sample != want) {
+                    std::cerr << "FAIL h264_dpb_mc RTL: upper chroma window clamp mismatch plane=" << plane
+                              << " idx=" << idx << " got=" << int(s.top.chroma_window_sample)
+                              << " want=" << int(want) << "\n";
+                    return 1;
+                }
+                if (plane == 1) {
+                    if (!upperUSeen[idx]) { upperUSeen[idx] = true; ++upperUc; }
+                } else {
+                    if (!upperVSeen[idx]) { upperVSeen[idx] = true; ++upperVc; }
+                }
+            }
+            upperDone = upperDone || s.top.fetch_done;
+        }
+        if (upperLc != 441 || upperUc != 81 || upperVc != 81 || !upperDone) {
+            std::cerr << "FAIL h264_dpb_mc RTL: incomplete upper-bound DPB fetch luma=" << upperLc
+                      << " u=" << upperUc << " v=" << upperVc << " done=" << upperDone << "\n";
+            return 1;
+        }
+
         s.top.idr_start = 1;
         s.tick();
         s.top.idr_start = 0;

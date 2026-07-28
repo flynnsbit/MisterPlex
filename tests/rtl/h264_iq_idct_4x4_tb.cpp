@@ -225,6 +225,25 @@ int main(int argc, char** argv) {
                 compared += 3;
             }
         }
+        auto runClipProbe = [&](const char* name, int16_t coeff0, uint8_t pred, uint8_t want) {
+            dut.max_coeff = 1;
+            dut.qp = static_cast<uint8_t>(qp);
+            for (int i = 0; i < 16; ++i) {
+                dut.coeff[i] = 0;
+                dut.pred[i] = pred;
+            }
+            dut.coeff[0] = coeff0;
+            dut.eval();
+            const int got = static_cast<uint8_t>(dut.recon[0]);
+            if (got != want) {
+                std::ostringstream oss;
+                oss << "recon clip boundary " << name
+                    << " got " << got << " want " << static_cast<int>(want);
+                throw std::runtime_error(oss.str());
+            }
+        };
+        runClipProbe("upper", 4095, 250, 255);
+        runClipProbe("lower", -4096, 5, 0);
         std::cout << "OK real RTL sim: h264_iq_idct_4x4 elaborated with Verilator; blocks="
                   << blocks.size() << " compared_values=" << compared << " qp=" << qp
                   << " fixture=" << argv[1] << '\n';
