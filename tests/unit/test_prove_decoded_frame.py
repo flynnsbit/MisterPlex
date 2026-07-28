@@ -96,6 +96,25 @@ def main() -> int:
         check("checked-in hw golden does NOT agree with its own reference decode",
               neg["verdict"] == pdf.NOT_DECODED, f"verdict={neg['verdict']}")
 
+    # The live --device path is not covered by --self-test (it needs hardware),
+    # so its call into capture_preflight is verified structurally instead.  An
+    # earlier revision shipped these arguments transposed and the self-test
+    # could not see it.
+    import inspect
+    sig = inspect.signature(pdf.cp.grab_n_frames)
+    names = list(sig.parameters)
+    check("grab_n_frames arg order is (dev,fmt,size,fps,n,out_dir,...)",
+          names[:6] == ["dev", "fmt", "size", "fps", "n", "out_dir"], f"got {names[:6]}")
+    try:
+        sig.bind("/dev/video0", "mjpeg", "1280x720", "60", 8, Path("/x"))
+        bound_ok, bind_err = True, ""
+    except TypeError as e:
+        bound_ok, bind_err = False, str(e)
+    check("live-capture call signature binds", bound_ok, bind_err)
+    check("live path passes frame count before out_dir",
+          "fps, args.frames, Path(td)" in GATE.read_text(),
+          "grab_n_frames call in --device path has transposed args")
+
     print(f"\n{checks - len(failures)}/{checks} checks passed")
     if failures:
         print("FAILURES: " + ", ".join(failures))

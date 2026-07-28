@@ -1,0 +1,5 @@
+REFUSE: frames are flat black BUT source host 192.168.1.183 is unreachable — a powered-off MiSTer produces the identical flat RGB(7,7,7) frames on this capture device. Screen state is UNSCORED; this is NOT evidence of a core defect.
+Scope: 8 scored frames from v4l2:/dev/video0 (warmup dropped 12)
+SIGNAL_STATE: BLACK_SIGNAL  mean_luma=7.0 spatial_std=0.0 unique=1/8
+PLEX_CHEVRON: ABSENT — only 0 Plex-orange px (< 2000); no chevron
+LEFT_EDGE_ARTIFACT: clean — dark 0.0% in cols [84, 200] vs 0.0% in control [300, 1200] (ratio infx)

@@ -1,0 +1,8 @@
+captured 6 frames (warmup_discard=0 -> NOTHING dropped)
+stored no-lock warmup frame: unique colours 1 value [7, 7, 7]
+  frame0: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True
+  frame1: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True
+  frame2: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True
+  frame3: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True
+  frame4: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True
+  frame5: unique=1 value=[7, 7, 7] identical_to_nolock_warmup=True

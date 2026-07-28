@@ -1,0 +1,14 @@
+{
+  "denominator_frames": 6,
+  "mean_luma": 7.0,
+  "ncc_threshold": 0.75,
+  "reason": "signal state BLACK_SIGNAL: a flat or absent picture carries no evidence about decoding. Refusing rather than passing or failing.",
+  "reference": "tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264",
+  "reference_std": 65.577,
+  "signal_note": "signal is black (mean luma 7.00 < threshold 8.0); HDMI source is outputting a black screen. Before blaming the core, confirm this is not capture warmup: the MS2109 emits flat RGB(7,7,7) frames after each device open until the receiver locks. Re-run with a larger --warmup-discard and check warmup_frames_discarded in the report. A real black screen stays black for every scored frame regardless of warmup.",
+  "signal_state": "BLACK_SIGNAL",
+  "spatial_std": 0.0,
+  "verdict": "REFUSE"
+}
+
+REFUSE: signal state BLACK_SIGNAL: a flat or absent picture carries no evidence about decoding. Refusing rather than passing or failing.

@@ -629,3 +629,57 @@ Scope: 8 scored frames, warmup dropped 12
 That is the host-liveness fix from §12 working live. **No capture request can be
 served until the MiSTer returns**; this likely needs a physical power-cycle, which
 conflicts with the no-human-in-the-loop directive and should be escalated.
+
+## 15. STEP 1 (parent-authorized capture of the `fb4bad84` failure state) — NO HDMI SIGNAL
+
+**Attempted 2026-07-28 13:33–13:40. Result: cannot capture; there is no signal to capture.**
+
+Parent expected a possible Plex logo on screen after `w-fit-o5` zeroed the stale
+magics and the ARM reported `media: idle screen painted (mode=0)`. **Measured
+now, there is no HDMI signal at all.**
+
+Three independent probes, all agreeing:
+
+| probe | result |
+|---|---|
+| `ping -c2 192.168.1.183` | 100% packet loss, rc=1 |
+| `ip neigh show 192.168.1.183` | **INCOMPLETE** (no ARP resolution on `wlp89s0`) |
+| `ssh root@192.168.1.183` | `No route to host` |
+
+And the decisive pixel evidence that this is **no-signal, not a black core** — the
+ambiguity flagged in §12 as unresolvable by luma alone is resolved here by
+byte-identity rather than by threshold:
+
+```
+stored no-HDMI-lock warmup filler frame : 1 unique colour, RGB(7,7,7)
+6/6 frames captured now (warmup_discard=0, nothing dropped):
+  every frame 1 unique colour RGB(7,7,7), identical_to_nolock_warmup = True
+```
+
+All six frames are **byte-identical** to the known pre-HDMI-lock filler the MS2109
+emits when the receiver has not locked. That filler is what the device produces
+with **no source attached**. Combined with ARP INCOMPLETE, the conclusion is that
+the MiSTer is powered off or physically disconnected from both network and HDMI.
+
+`v4l2-ctl --get-dv-timings` is not available on this device
+(`Inappropriate ioctl`) — the MS2109 is a UVC device and exposes no HDMI link
+status, so byte-identity against the known filler is the strongest available
+link-state oracle. Worth reusing.
+
+**Consequence for the authorized sequence:** STEP 1 cannot produce a capture, and
+STEP 2 (the `3b1e8435` A/B deploy) cannot be deployed or scored either, because
+the host is unreachable by SSH. **Escalated to parent — this needs a physical
+power-cycle, which the no-human-in-the-loop directive cannot cover.**
+
+### 15.1 Bug found and fixed in my own new gate
+
+Exercising the live path exposed that `scripts/prove_decoded_frame.py` called
+`cp.grab_n_frames(dev, fmt, size, fps, Path(td), frames)` with `n` and `out_dir`
+**transposed** (`AttributeError: 'int' object has no attribute 'mkdir'`). The
+hermetic `--self-test` could not see it because it never opens a device.
+
+Fixed, and guarded three ways in `tests/unit/test_prove_decoded_frame.py`
+(now 18/18): the real `grab_n_frames` parameter order is asserted, the call is
+`inspect.signature(...).bind(...)`-checked, and the source call form is asserted.
+Red-proven: re-transposing the arguments turns the gate red on exactly that check.
+Live path now verified against hardware — returns `rc=2 REFUSE` cleanly.

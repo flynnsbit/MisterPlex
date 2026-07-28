@@ -324,7 +324,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         else:
             fmt, size, fps = "mjpeg", "1280x720", "60"
             frames, _, _, _ = cp.grab_n_frames(
-                args.device, fmt, size, fps, Path(td), args.frames)
+                args.device, fmt, size, fps, args.frames, Path(td))
         if not frames:
             print("REFUSE: no frames captured")
             return 2

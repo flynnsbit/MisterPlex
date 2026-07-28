@@ -1,0 +1,21 @@
+PASS gate script exists
+PASS self-test exits 0
+PASS self-test reports SELF_TEST_OK
+PASS self-test has a true-decode green
+PASS self-test rejects the chevron idle golden
+PASS self-test rejects a real decoder-less capture
+PASS self-test refuses flat black
+PASS self-test refuses a degenerate reference
+PASS self-test rejects structural scrambles
+PASS reference fixture present
+PASS chevron golden fixture present
+PASS true decode scores above threshold with margin
+PASS chevron painter scores below threshold with margin
+PASS positive and negative are widely separated
+PASS checked-in hw golden does NOT agree with its own reference decode
+PASS grab_n_frames arg order is (dev,fmt,size,fps,n,out_dir,...)
+PASS live-capture call signature binds
+FAIL live path passes frame count before out_dir grab_n_frames call in --device path has transposed args
+
+17/18 checks passed
+FAILURES: live path passes frame count before out_dir
