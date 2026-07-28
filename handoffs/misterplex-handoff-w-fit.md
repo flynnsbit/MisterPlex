@@ -1526,3 +1526,107 @@ difference between `3b1e8435` and `fb4bad84` is `Plex.sdc` (RTL byte-identical,
 `diff -r` rc=0). So PLXD advancing => the SDC change caused the regression; PLXD
 still silent => SDC is properly exonerated and the cause is elsewhere. Parent's
 instruction stands: **if `3b1e8435` is also silent, stop and report.**
+
+---
+
+## 27. Outage cause disclosed; content DID appear; the livelock reading is wrong
+
+W-E2E filed a full report that (a) discloses they caused the outage, (b) contains
+the single most important observation of the day, and (c) draws the wrong
+conclusion from it. All three matter.
+
+### 27.1 Outage cause -- disclosed, and it closes §25
+
+W-E2E ran `/usr/sbin/devmem 0xFF200000` against the lightweight HPS-to-FPGA
+bridge. It hung with no output, and the device dropped off the network shortly
+after. A stalled AXI transaction to an unready FPGA peripheral locks the HPS.
+
+**This resolves the open question in §25.3 by an independent route.** I could not
+discriminate "board powered, network dead" from "board off" using HDMI alone,
+because the MS2109 might emit synthetic black. The disclosure settles it: **the
+FPGA is running (HDMI stream active) and only the HPS is locked.** That is exactly
+the state §25.1 inferred from the capture timestamps. Two independent lines of
+evidence now agree, and the answer is the more recoverable one.
+
+Volunteering this cost W-E2E something and saved the fleet from debugging a
+phantom. It is the right behaviour.
+
+*Minor correction:* their report reads `Destination Host Unreachable from
+192.168.1.24` as coming from the gateway. `192.168.1.24` is **my host**; the
+gateway is `192.168.1.1`.
+
+### 27.2 The important datum: content HAS appeared on screen
+
+Their earlier 30-frame window was 0/30 content. A longer 40-frame window was not:
+
+```
+Scope: 40 frames over 120 s (interval 3 s), fb4bad84 resident, misterplexd running
+CONTENT_PRESENT   2/40   t=27.1 s sha 871cb502 luma 36.50 std 22.17
+                         t=69.1 s sha 04e8975a luma 36.50 std 22.16
+BLACK_SIGNAL     37/40   sha 2358782e luma 7.00 std 0.00
+NO_SIGNAL         0/40
+CAPTURE_ERROR     1/40
+```
+
+Two content frames, **different hashes from each other** so not a stale buffer,
+~42 s apart, ~5 % duty cycle. Something put a picture up. That is more than this
+build had shown before.
+
+### 27.3 Their diagnosis is wrong: the fabric is silent, not livelocked
+
+W-E2E concluded "the FPGA frame-store logic is still livelocked" and offered
+(a) the fix is not in `fb4bad84`, (b) it needs a daemon restart, (c) another
+livelock path.
+
+**(a) is refuted by measurement.** From the exact source tree that produced
+`fb4bad84` (`~/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer/rtl/ddr_frame_store.sv`):
+
+```
+642:  if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
+656:  if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
+```
+
+Those are the **prep** allocator terms -- precisely W-SWAP's fix -- and
+`ddr_frame_store` is in the bitstream with real resources (4757 ALUT / 2298 reg /
+96 M10K). The fix is present in silicon.
+
+**The framing is wrong.** A livelock is a fabric that is running and making no
+progress. This fabric is **not running at all**: all four PLXD mailbox words poked
+to `0xA5A5A5A5` were still `0xA5A5A5A5` after 6 s, with a daemon-running control
+(§11). `0x3007F100/104/128/12C` are dead instruments. A silent fabric cannot
+livelock and cannot exercise W-SWAP's fix.
+
+**The consistent explanation, which their own data supports:** the only live
+writer is the **ARM fallback painter**. W-E2E themselves note the ~42 s period
+matches W-ARM's timed bank fallback. With the fabric dead, `disp_bank` never
+changes, so the display scans one fixed bank forever; the ARM's fallback cycles
+banks on a timer; content appears only in the windows where the ARM happens to
+paint the bank being scanned. **5 % duty cycle with a ~42 s period is the
+signature of an ARM timer beating against a frozen display bank** -- not of a
+frame-store livelock.
+
+**W-SWAP's `|| !slot_keep` fix therefore remains neither validated nor refuted**,
+and this capture does not change that. Nobody should record 27.2 as evidence
+about the fix in either direction.
+
+### 27.4 Their audit answered my §25.3 question honestly
+
+Asked whether `2358782e` discriminates black-from-no-signal, they said plainly
+that `VIDIOC_QUERY_DV_TIMINGS` returns `EINVAL` on the MS2109, so they **cannot**
+distinguish active-black from no-signal at equal luma, and that the classification
+"remains an assumption that could be wrong." That is the correct answer and the
+correct way to give it. The question is now moot for this outage (§27.1), but the
+limitation stands for every future visual gate.
+
+### 27.5 Next action is STEP 2, not a new build
+
+Their step 6 proposes a new RBF if content stays intermittent. That is not the
+authorized path and would spend ~6 h. The authorized next action is unchanged:
+**one deploy of `3b1e8435`** (§26.2), which A/Bs the SDC against `fb4bad84` with
+byte-identical RTL.
+
+**Blocked physically.** Recovering a locked HPS needs a power cycle, and the
+network path runs through the HPS, so it cannot be done remotely. The human is out
+of the test loop by explicit standing instruction, so I am not requesting one --
+I am recording that the fleet is hardware-blocked until the device is power-cycled
+by whatever means the user chooses.
