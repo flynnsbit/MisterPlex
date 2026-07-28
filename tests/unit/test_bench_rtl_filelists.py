@@ -54,13 +54,51 @@ def refs_of(fname, owner):
     return found
 
 
+def drop_qip_membership_checks(text):
+    """Remove QIP membership assertions before detecting simulator inputs.
+
+    Some RTL benches separately assert that product files are present in
+    files.qip. Those checks are valuable, but they are not Verilator compile
+    lists. A filename that appears only in a grep against $QIP must not count
+    as a file handed to the simulator.
+    """
+    lines = text.splitlines()
+    kept = []
+    i = 0
+    for_header = re.compile(r"^\s*for\s+\w+\s+in\s+.*\b[\w.]+\.s?v\b.*;\s*do\s*$")
+    qip_grep = re.compile(r"\bgrep\b[^\n]*(?:\$QIP|\$\{QIP\}|[\"']\$QIP[\"'])")
+
+    while i < len(lines):
+        line = lines[i]
+        if for_header.search(line):
+            j = i + 1
+            while j < len(lines) and not re.match(r"^\s*done\s*$", lines[j]):
+                j += 1
+            if j < len(lines):
+                block = "\n".join(lines[i:j + 1])
+                if qip_grep.search(block):
+                    i = j + 1
+                    continue
+        if qip_grep.search(line):
+            i += 1
+            continue
+        kept.append(line)
+        i += 1
+    return "\n".join(kept)
+
+
 def listed_files(text, known):
     """Files actually handed to the simulator.
 
     A bench names RTL through shell variables, so a filename appearing only in
     its own assignment is NOT evidence it is compiled -- the variable may never
     be referenced. Resolve assignments, drop them, then look at what remains.
+
+    Likewise, filenames that appear only in QIP membership checks are not
+    simulator inputs. Drop grep-against-$QIP checks before scanning so the guard
+    catches stale Verilator file lists without penalizing product-QIP asserts.
     """
+    text = drop_qip_membership_checks(text)
     var_file, body_lines = {}, []
     assign = re.compile(r"^\s*(\w+)=[\"\']?\S*?([\w.]+\.s?v)[\"\']?\s*$")
     for line in text.splitlines():
