@@ -435,6 +435,14 @@ def main(argv=None):
             f"compiled={len(product) - len(missing)} "
             f"allowed_absent={len(missing)}"
         )
+        print(
+            "NOT_A_SURVIVAL_CLAIM: compiled is not present-in-the-design. This gate is "
+            "blind to failure mode 3 -- a compiled, instantiated, elaborated module can "
+            "still be deleted by synthesis for contributing zero resources, which is "
+            "what happened to h264_decode_core on w-decode-hour27 2f165ed with this "
+            "gate green. Next: scripts/check_dead_logic_pruning.py (~2s), then "
+            "scripts/check_prefit_elaboration.sh (Quartus A&S, ~4m)."
+        )
     return rc
 
 

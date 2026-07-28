@@ -866,6 +866,15 @@ def main(argv: list[str] | None = None) -> int:
             "RTL_MODULE_STRUCTURE_OK rtl_modules=%d reachable=%d root=%s"
             % (len(rtl_modules), len(default_reachable), args.root)
         )
+        print(
+            "NOT_A_SURVIVAL_CLAIM: instantiated is not present-in-the-design. This "
+            "gate is blind to failure mode 3 -- a module can be compiled, "
+            "instantiated, elaborated and then deleted by synthesis for "
+            "contributing zero resources. That is exactly what happened to "
+            "h264_decode_core on w-decode-hour27 2f165ed while this gate was green. "
+            "Next: scripts/check_dead_logic_pruning.py (~2s), then "
+            "scripts/check_prefit_elaboration.sh (Quartus A&S, ~4m)."
+        )
         return 0
 
     unknown_bench = sorted(set(bench_only) - set(rtl_modules))
@@ -1001,6 +1010,15 @@ def main(argv: list[str] | None = None) -> int:
         for macro, _, value in variants
     ) if variants else "<none>"
 
+    print(
+        "NOT_A_SURVIVAL_CLAIM: instantiated is not present-in-the-design. This "
+        "gate is blind to failure mode 3 -- a module can be compiled, "
+        "instantiated, elaborated and then deleted by synthesis for "
+        "contributing zero resources. That is exactly what happened to "
+        "h264_decode_core on w-decode-hour27 2f165ed while this gate was green. "
+        "Next: scripts/check_dead_logic_pruning.py (~2s), then "
+        "scripts/check_prefit_elaboration.sh (Quartus A&S, ~4m)."
+    )
     print(
         "RTL_MODULE_INSTANTIATION_OK "
         f"rtl_modules={len(rtl_modules)} "

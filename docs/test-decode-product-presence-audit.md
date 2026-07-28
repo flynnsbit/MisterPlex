@@ -1284,3 +1284,104 @@ and both are now regression cases:
 
 Conditions 1 and 2 were both satisfied by a module that is not in the design.
 No single one of these is sufficient, and they are cheapest in this order.
+
+---
+
+## 17. The fit-request order, made mechanical
+
+The ruling: steps 1 and 2 are necessary and **jointly insufficient**, and no fit
+is requested until step 3 shows the module PRESENT.
+
+```
+1. check_qip_coverage.py              seconds   compiled?
+2. --root emu --require <module>      seconds   instantiated?
+2b. check_dead_logic_pruning.py       ~2s       can it influence the design?
+3. check_prefit_elaboration.sh        4m23s     does it survive synthesis?
+4. full fit                           ~6h       parent authorization only
+```
+
+### 17.1 The two cheap gates now say they are blind
+
+Both print, on **success**, a line naming what they cannot see:
+
+```
+NOT_A_SURVIVAL_CLAIM: compiled is not present-in-the-design. This gate is blind
+to failure mode 3 ... which is what happened to h264_decode_core on
+w-decode-hour27 2f165ed with this gate green.
+```
+
+A gate that is silent about its own blind spot is how a green checkmark comes
+to mean more than it should. `test_fit_request_readiness.py` asserts the exact
+text on both, so the warning cannot be dropped in a refactor.
+
+### 17.2 `check_fit_request_readiness.py`
+
+Runs steps 1, 2 and 2b itself rather than trusting a report of them, reading
+each exit code directly — this file never pipes one — then consumes W-FIT's A&S
+artefact for step 3. It does not run Quartus; the slot and the deploy token are
+W-FIT-O5's.
+
+Two properties it exists to hold down:
+
+**Absent evidence is 77 UNSCORED, never 0.** Every product-absence incident on
+this project began with an unasked question treated as answered.
+
+```
+FIT_READINESS_UNSCORED: no Analysis & Synthesis evidence was supplied, so the
+only question that has ever caught failure mode 3 is unanswered. A missing
+measurement is not a passing one.
+```
+
+**Evidence is bound to the tree it was measured on.** A&S evidence from commit
+X must not license a fit of commit Y. The binding is the git tree hash of
+`fpga/Plex_MiSTer`, so an unrelated commit does not invalidate it and an RTL
+edit does; uncommitted changes under that path invalidate it too, because the
+A&S run cannot have seen them.
+
+```
+EVIDENCE_BINDING measured_tree=c7ce41f0200a current_tree=e5c85b09fe44 uncommitted_rtl_changes=0
+FIT_READINESS_NOT_READY: step 3 evidence was measured on a different
+fpga/Plex_MiSTer tree (c7ce41f0200a vs e5c85b09fe44)
+```
+
+Operator error is refused (**rc=2**) *before* any step runs, so a malformed
+request never produces a verdict about the tree, and a run prints exactly one
+`Scope:` line. My first version printed a second `Scope: 0` mid-run after
+already emitting step verdicts — breaking my own discipline rule inside the
+gate that enforces the order.
+
+Module matching is anchored: `PRESENT h264_decode_core` does not answer for
+`h264_decode_core_v2`.
+
+### 17.3 An rc-only assertion would have been vacuous here
+
+Mutation-proving the binding logic exposed something worth recording. With the
+staleness check disabled, the stale-evidence case **still returned rc=1** —
+because on this branch step 2 fails for an unrelated reason. Only the assertion
+on the diagnostic text (`different fpga/Plex_MiSTer tree`) caught the mutation.
+
+A red arm that passes for the wrong reason is a false red, and it is just as
+useless as a false green: it would have gone on "passing" after the property it
+tests was deleted. Assert on the specific diagnostic, not the exit code alone.
+
+### 17.4 Where I disagree with the ruling, with measurement
+
+The ruling states that mode 3 is detectable by *real synthesis only*, and that
+no source-level tool can ever see it. The first half is right about proof;
+the second is stronger than the measurement supports.
+
+Source cannot prove **survival**. It can, however, see the specific *reason the
+synthesiser is entitled to delete* this instance: nothing reads what it drives.
+Measured on `2f165ed`, `check_dead_logic_pruning.py` reproduces the A&S verdict
+on both modules in about two seconds:
+
+| module | pruning pre-filter | Quartus A&S |
+|---|---|---|
+| `h264_decode_core` | rc=1, 13/13 output nets dead | ABSENT, optimized away |
+| `decode_stub` | rc=0, 10/10 output nets live | PRESENT, instances=1 |
+
+This does not demote A&S, which stays the oracle and stays mandatory: the
+pre-filter is biased toward calling nets live, so it can miss deadness. What it
+changes is the **iteration loop** — W-DECODE can test a fix in seconds and only
+spend the four minutes on candidates that already pass. It is inserted as step
+2b, before step 3, never instead of it.

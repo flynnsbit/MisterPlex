@@ -128,6 +128,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_fit_evidence_ladder.py
 	python3 $(ROOT)/tests/unit/test_reachability_gate_capability.py
 	python3 $(ROOT)/tests/unit/test_dead_logic_pruning_gate.py
+	python3 $(ROOT)/tests/unit/test_fit_request_readiness.py
 	python3 $(ROOT)/scripts/check_scope_discipline.py
 	python3 $(ROOT)/tests/unit/test_scope_discipline_gate.py
 	python3 $(ROOT)/tests/unit/test_skip_exit_code_gate.py
