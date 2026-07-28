@@ -473,8 +473,15 @@ Phase 3.3r (derived real-statistic H.264 correctness reference — W-FEED 2026-0
   Coverage sanity from the manifest: 1790 unique Y-plane hashes; U/V hashes differ on 1774/1800
   frames, so U/V swaps are scoreable on most of the clip but weak on the first grey/low-chroma
   frames. The convenience check `tests/unit/test_derived_validation_hashes.sh` verifies the
-  manifest when the untracked asset exists and red-checks a mutated Y-plane hash on a frame whose
-  U/V planes differ. Candidate decoder outputs can be scored by running
+  full manifest when the untracked asset exists.
+
+  **Always-on slice:** `derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv`
+  commits eight native-I420 frames selected from source frames
+  `149,392,474,710,937,1183,1349,1675`. It is small enough for the repo (3.43 MiB) and
+  makes the gate run on clean checkouts. Its manifest records `uv_distinct_frames=8/8`,
+  `unique_y_hashes=8/8`, `y_min=0`, and `y_max=243`; the unit test red-checks both a
+  corrupted Y-plane hash and a U/V-swapped raw slice, so the selected frames actually express
+  the mutations being claimed. Candidate decoder outputs can be scored by running
   `tools/derived_h264_plane_hashes.py verify --candidate-planes ... --candidate-colorspace I420_NATIVE`.
 
   This closes the P3 measurement gap only for native-I420 exactness at the declared loop-filter

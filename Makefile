@@ -84,6 +84,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_p3_host_recon_vectors
 	$(ROOT)/tests/unit/test_h264_golden_extractor.sh
 	$(ROOT)/tests/unit/test_h264_frame_plane_goldens.sh
+	$(ROOT)/tests/unit/test_derived_validation_hashes.sh
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
 	$(ROOT)/build/test_p3_idct_reference_model

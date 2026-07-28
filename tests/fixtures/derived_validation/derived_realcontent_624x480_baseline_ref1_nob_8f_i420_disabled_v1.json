@@ -1,0 +1,303 @@
+{
+  "format": "misterplex.derived_h264_i420_slice.v1",
+  "scope": {
+    "asset_class": "bounded_raw_slice_from_derived_reencoded_validation_asset",
+    "always_on_unit_fixture": true,
+    "not_original_library_content": true,
+    "not_original_part_direct_play_evidence": true,
+    "source_summary": "HEVC /library/metadata/3 re-encoded to H.264 Constrained Baseline 624x480; bounded native-I420 slice decoded with loop filter disabled"
+  },
+  "source": {
+    "path": "build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264",
+    "sha256": "41f2769189bdceb3c30315bf557e44e01d016d48c3eca8507ceb6eed51919e04"
+  },
+  "slice": {
+    "path": "tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv",
+    "bytes": 3594240,
+    "sha256": "ecfe1c7995a880b217fefd4890ae64a0bb0cf8df02ec70c429a32055e18e8315"
+  },
+  "decoder": {
+    "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "loop_filter": "disabled",
+    "command": "ffmpeg -hide_banner -loglevel error -nostdin -skip_loop_filter all -i build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264 -map 0:v:0 -pix_fmt yuv420p -f rawvideo pipe:1",
+    "pixel_format": "yuv420p"
+  },
+  "geometry": {
+    "width": 624,
+    "height": 480,
+    "frame_bytes": 449280,
+    "colorspace": "I420_NATIVE"
+  },
+  "selection": {
+    "source_frames": [
+      149,
+      392,
+      474,
+      710,
+      937,
+      1183,
+      1349,
+      1675
+    ],
+    "reason": "Chosen across the 1800-frame clip for distinct U/V chroma, high luma/chroma variation, non-grey real content, and clamp-edge coverage (Y min near 0 and max near 243)."
+  },
+  "coverage": {
+    "frames": 8,
+    "unique_y_hashes": 8,
+    "uv_distinct_frames": 8,
+    "y_min": 0,
+    "y_max": 243,
+    "u_min": 74,
+    "u_max": 194,
+    "v_min": 77,
+    "v_max": 203
+  },
+  "frames": [
+    {
+      "slice_index": 0,
+      "source_index": 149,
+      "frame_sha256": "250f76cfdd1b8daa2be8adf5ea39fb35486d42ba581d27baa8e9ad75c72767c0",
+      "planes": {
+        "Y": "dc81b03f9546d909de5ec17af2c118e83e4796f0f64b655092cee7fe06598074",
+        "U": "fbce8ae1ab8323369fe412f1dd9e400921c7811fb926a7c0d39af01375edb98a",
+        "V": "ae2b648511169d2a8bb980530ba11e5ca10847689819d56b9d91439a4977692a"
+      },
+      "stats": {
+        "Y": {
+          "min": 9,
+          "max": 200,
+          "mean": 99.7955,
+          "pstdev": 58.3972
+        },
+        "U": {
+          "min": 100,
+          "max": 186,
+          "mean": 149.2247,
+          "pstdev": 17.4017
+        },
+        "V": {
+          "min": 88,
+          "max": 203,
+          "mean": 109.3936,
+          "pstdev": 14.9659
+        }
+      }
+    },
+    {
+      "slice_index": 1,
+      "source_index": 392,
+      "frame_sha256": "449de668450697e228a0915c4974e0bff7a5c118ec5800c6e48f0ad7c312df5b",
+      "planes": {
+        "Y": "d8a6122ef87169a1418061790199ead5ff5ae9b5c4aeb24b0e83d62ff27f6000",
+        "U": "aac995f5358c37e5914989fdf872db25fd1e5d9d4c2c387fac614cb98ccc2b08",
+        "V": "5a11a13866759e3423636365c62f803cdd94c47436096ae5c1b8d676f4be2a8f"
+      },
+      "stats": {
+        "Y": {
+          "min": 8,
+          "max": 243,
+          "mean": 84.2292,
+          "pstdev": 53.2991
+        },
+        "U": {
+          "min": 123,
+          "max": 179,
+          "mean": 153.6356,
+          "pstdev": 15.6251
+        },
+        "V": {
+          "min": 82,
+          "max": 135,
+          "mean": 108.4497,
+          "pstdev": 14.8603
+        }
+      }
+    },
+    {
+      "slice_index": 2,
+      "source_index": 474,
+      "frame_sha256": "9141dfd70f4bc4be81d38aaeb8658ece7fa13532bd9408356459e71bdaaedbef",
+      "planes": {
+        "Y": "222d363681ce771ba82e4795f0c6b9eec7bc8ae88973ae328df08d815c242483",
+        "U": "b223be9c4c0ceebfb256c3bf22e8843353370c834a971856b9f0104bc243cf34",
+        "V": "7821765996c7a05ffd1194202ca75c4b6ca91fe813cae429434d49de0a81b86a"
+      },
+      "stats": {
+        "Y": {
+          "min": 3,
+          "max": 211,
+          "mean": 85.6946,
+          "pstdev": 50.0799
+        },
+        "U": {
+          "min": 88,
+          "max": 194,
+          "mean": 142.0104,
+          "pstdev": 31.736
+        },
+        "V": {
+          "min": 90,
+          "max": 175,
+          "mean": 127.8127,
+          "pstdev": 21.2456
+        }
+      }
+    },
+    {
+      "slice_index": 3,
+      "source_index": 710,
+      "frame_sha256": "f7c19ed8c349e9f4fd1f5992172aea6290467c6b18340ca9b84dadb3a609c61d",
+      "planes": {
+        "Y": "a9e381371b2ed77442b0b74e27542b816386e34a9663742bc1fc662d819c9174",
+        "U": "85b5de65b5c3f94b1a3119bce6a9fdb212bce3bffb4cd7d5a69a43a846c5e701",
+        "V": "62c2892529a63c7e932512999cb041096f83b434b6ec1d7200654610dcae3f14"
+      },
+      "stats": {
+        "Y": {
+          "min": 0,
+          "max": 215,
+          "mean": 75.2329,
+          "pstdev": 72.9872
+        },
+        "U": {
+          "min": 96,
+          "max": 153,
+          "mean": 130.0874,
+          "pstdev": 8.5208
+        },
+        "V": {
+          "min": 98,
+          "max": 145,
+          "mean": 124.6467,
+          "pstdev": 9.4987
+        }
+      }
+    },
+    {
+      "slice_index": 4,
+      "source_index": 937,
+      "frame_sha256": "dea505bcbe8fa93deddeb608578af2a05ee342809c29f683c250571d90d014ac",
+      "planes": {
+        "Y": "af3f04c16d2772234f00634418c656356b2cc61cc2c11c54c07f0905d282618f",
+        "U": "06d005663f9596c428c4ebbce29e169bd6d352336e3c92a70a2e9846c1083922",
+        "V": "3ce777c579070f2e41cf37d540e95954d23c50fe3b89ec6ee1d0695e6bba1343"
+      },
+      "stats": {
+        "Y": {
+          "min": 7,
+          "max": 206,
+          "mean": 106.0412,
+          "pstdev": 37.8713
+        },
+        "U": {
+          "min": 74,
+          "max": 185,
+          "mean": 138.583,
+          "pstdev": 33.1205
+        },
+        "V": {
+          "min": 89,
+          "max": 167,
+          "mean": 126.8267,
+          "pstdev": 23.0795
+        }
+      }
+    },
+    {
+      "slice_index": 5,
+      "source_index": 1183,
+      "frame_sha256": "bed365e44c2039430e0de415a2393f537774340d17275f4960d7751bea672dbf",
+      "planes": {
+        "Y": "50b2f795600adac8e9ae7ec8c111ec9db0ca6f2ff21ed48d9a5a2cda97c7c59a",
+        "U": "9d0bec4ea2486df3f1841083f96feb5f5765d20931b158919f680cdc49305c78",
+        "V": "69d101fb3108bedc198125de459851bf6332d48a0d9d8a97c958b2110053a3d6"
+      },
+      "stats": {
+        "Y": {
+          "min": 0,
+          "max": 211,
+          "mean": 37.2539,
+          "pstdev": 48.9579
+        },
+        "U": {
+          "min": 118,
+          "max": 156,
+          "mean": 126.6607,
+          "pstdev": 3.4274
+        },
+        "V": {
+          "min": 113,
+          "max": 133,
+          "mean": 126.8847,
+          "pstdev": 3.0557
+        }
+      }
+    },
+    {
+      "slice_index": 6,
+      "source_index": 1349,
+      "frame_sha256": "2dcfcc7f35d959f39198840ece9441d25fe4081f403dda4b29e596c6b13a2c4e",
+      "planes": {
+        "Y": "aa32fbd36d1b707096c830e868437d36dda758a7c69561d0603847686a79dd94",
+        "U": "4e398b42b5802e25ce1a82226ae7995095203b597ac4ad51fc69847c6c753051",
+        "V": "a7f576b9ef44514f2120071977e3e744c90e41995a2b3db6c4945540fba5c302"
+      },
+      "stats": {
+        "Y": {
+          "min": 0,
+          "max": 197,
+          "mean": 46.8753,
+          "pstdev": 33.3532
+        },
+        "U": {
+          "min": 121,
+          "max": 179,
+          "mean": 139.0353,
+          "pstdev": 12.9644
+        },
+        "V": {
+          "min": 77,
+          "max": 136,
+          "mean": 117.3257,
+          "pstdev": 12.7099
+        }
+      }
+    },
+    {
+      "slice_index": 7,
+      "source_index": 1675,
+      "frame_sha256": "203ded35879d2e5d6470b0f871153c0ee11803e232c3107ddf4bff8761cf1c35",
+      "planes": {
+        "Y": "74b93f45019b9214d6d03a7a28b2ad6a7816927d128da7b9b264005470251096",
+        "U": "81bd9d46f4f1896c15bc300edef8d1e9de732eeb3c4f420ba501b15f102f05e7",
+        "V": "a4e95b82441ceae4a72cee40a24f5ba23970481b012414d6313dd6c594a752c4"
+      },
+      "stats": {
+        "Y": {
+          "min": 5,
+          "max": 223,
+          "mean": 90.7658,
+          "pstdev": 62.2762
+        },
+        "U": {
+          "min": 112,
+          "max": 175,
+          "mean": 142.4139,
+          "pstdev": 9.4045
+        },
+        "V": {
+          "min": 95,
+          "max": 169,
+          "mean": 116.0962,
+          "pstdev": 10.9417
+        }
+      }
+    }
+  ],
+  "blind_spots": [
+    "The slice is only eight frames; it is an always-on smoke/reference gate, not a replacement for the full 1800-frame manifest when the media is available.",
+    "It detects exact native-I420 byte differences at the disabled-loop-filter stage; it does not score presentation RGB/RGB565, enabled deblock, frame pacing, drops, or repeats.",
+    "It catches U/V swaps for this selected slice because every selected frame has distinct U/V hashes; it still cannot prove unsupported-stream parser coverage.",
+    "Mutations that the selected frames do not express, or that alias through equal/zero coefficients or equivalent dequant classes, can remain invisible."
+  ]
+}

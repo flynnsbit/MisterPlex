@@ -82,3 +82,11 @@ Per-frame native-I420 plane hashes for this asset are tracked at
 They are generated with FFmpeg `-skip_loop_filter all` to match the current
 pre-deblock RTL/output contract. See `tests/fixtures/derived_validation/README.md`
 for regeneration, candidate comparison, and blind spots.
+
+A clean-checkout, always-on subset is also tracked:
+`tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv`
+plus its `_v1.json` manifest. It contains source frames
+`149,392,474,710,937,1183,1349,1675`, chosen for distinct U/V planes,
+variation, and clamp-edge coverage. `make unit` runs this bounded slice without
+needing the disposable media under `build/`; the full 1800-frame check remains
+optional when the asset is present.

@@ -6,12 +6,38 @@ The asset is **derived re-encoded validation content**, not original library con
 
 ## Fixture
 
-- Manifest: `derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`
+- Full optional manifest: `derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json`
 - Source media path when regenerated: `build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264`
 - Source media SHA-256: `41f2769189bdceb3c30315bf557e44e01d016d48c3eca8507ceb6eed51919e04`
 - Geometry: 624×480 I420, 449,280 bytes/frame, 1800 frames
 - Decoder contract: FFmpeg native H.264 with `-skip_loop_filter all`, output `yuv420p`
 - Coverage markers: 1790 unique Y-plane hashes; U/V planes differ on 1774/1800 frames, so U/V swaps are scoreable on most of this clip but not on the initial grey/low-chroma frames.
+
+## Always-on bounded slice
+
+`derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv` is a
+tracked 8-frame native-I420 slice (3.43 MiB) decoded at the same disabled-loop
+filter stage. It is the always-on unit fixture for clean checkouts where the
+full derived media under `build/` is absent.
+
+Selected source frames: `149,392,474,710,937,1183,1349,1675`. They were chosen
+across the clip for distinguishable U/V planes, high luma/chroma variation, and
+clamp-edge coverage. The slice manifest records:
+
+- `uv_distinct_frames=8/8`, so a U/V swap is scoreable on every selected frame
+- `unique_y_hashes=8/8`
+- `y_min=0`, `y_max=243`
+
+Regenerate the slice from the full asset:
+
+```bash
+python3 tools/derived_h264_slice_fixture.py generate \
+  --input build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264 \
+  --slice-out tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv \
+  --manifest-out tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled_v1.json \
+  --frames 149,392,474,710,937,1183,1349,1675 \
+  --h264-loop-filter disabled
+```
 
 ## Regenerate / verify
 
@@ -35,13 +61,16 @@ python3 tools/derived_h264_plane_hashes.py verify \
   --candidate-colorspace I420_NATIVE
 ```
 
-A convenience check is available when the untracked asset exists:
+The unit check always verifies the bounded slice and mutation-proves it with a
+corrupted Y-plane hash and a U/V-swapped raw slice. When the untracked full
+asset exists, it also verifies the full 1800-frame manifest; otherwise the full
+check is reported as optional info, not as a pass.
 
 ```bash
 tests/unit/test_derived_validation_hashes.sh
 ```
 
-If the asset has been cleaned from `build/`, regenerate it first using `docs/derived-validation-assets.md`.
+If the full asset has been cleaned from `build/`, regenerate it using `docs/derived-validation-assets.md`.
 
 ## What this can detect
 
