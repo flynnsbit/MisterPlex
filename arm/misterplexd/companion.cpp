@@ -464,7 +464,12 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
             wantPlay_ = true;
             return;
         }
-        if (delta > kScrubCatchupMs) {
+        // Near plant: release only after demux advances past plant, or on ended.
+        if (state == "ended" ||
+            ((state == "playing" || state == "paused") &&
+             timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            scrubTargetMs_ = -1;
+        } else if (delta > kScrubCatchupMs) {
             if (durationMs > 0)
                 durationMs_ = durationMs;
             // Reflect live transport but keep the planted scrubber time.
@@ -472,12 +477,6 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
                 state_ = state;
             wantPlay_ = true;
             return;
-        }
-        // Near plant: release only after demux advances past plant, or on ended.
-        if (state == "ended" ||
-            ((state == "playing" || state == "paused") &&
-             timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
-            scrubTargetMs_ = -1;
         }
         // else playing@plant pulse: fall through apply time, keep hold
     }

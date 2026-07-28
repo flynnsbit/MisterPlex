@@ -62,6 +62,42 @@ int main() {
     require(has(after, "key=\"/library/metadata/3\""),
             "planted seek key was cleared: " + after);
 
+    misterplex::Companion freshPlay;
+    freshPlay.setMachineId("misterplex-dev");
+    req.offsetMs = 0;
+    req.offsetPresent = true;
+    freshPlay.stagePlay(req);
+    require(freshPlay.bindMedia(req, 1286942), "bindMedia rejected fresh play");
+    // First real progress can arrive more than kScrubCatchupMs after playMedia
+    // because the rawvideo path waits for FFmpeg, audio origin, and the first
+    // decoded frame. That is still progress beyond the planted play offset, not
+    // stale pre-seek progress. The client-facing poll must advance.
+    freshPlay.setState("playing", 2500, 1286942);
+    const std::string freshPlaying = freshPlay.timelineXml("fresh-playing");
+    require(has(freshPlaying, "state=\"playing\""),
+            "fresh play did not report playing: " + freshPlaying);
+    require(has(freshPlaying, "time=\"2500\""),
+            "fresh play progress stayed pinned at zero: " + freshPlaying);
+    freshPlay.setState("paused", 2500, 1286942);
+    const std::string freshPaused = freshPlay.timelineXml("fresh-paused");
+    require(has(freshPaused, "state=\"paused\""),
+            "fresh play pause did not report paused: " + freshPaused);
+    require(has(freshPaused, "time=\"2500\""),
+            "fresh play pause stayed pinned at zero: " + freshPaused);
+
+    misterplex::Companion staleSeek;
+    staleSeek.setMachineId("misterplex-dev");
+    req.offsetMs = 42000;
+    req.offsetPresent = true;
+    staleSeek.stagePlay(req);
+    require(staleSeek.bindMedia(req, 1286942), "bindMedia rejected stale seek");
+    staleSeek.setState("playing", 2500, 1286942);
+    const std::string stale = staleSeek.timelineXml("stale-seek");
+    require(has(stale, "time=\"42000\""),
+            "stale pre-seek progress was allowed to rewind planted seek: " + stale);
+    require(has(stale, "state=\"playing\""),
+            "stale pre-seek progress should reflect transport only: " + stale);
+
     std::cout << "test_companion_plant_seek: OK\n";
     return 0;
 }
