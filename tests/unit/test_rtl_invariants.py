@@ -149,6 +149,16 @@ def active_audit_text(path: Path) -> str:
     return text
 
 
+def sv_module_text(text: str, module_name: str) -> str:
+    m = re.search(rf"\bmodule\s+{re.escape(module_name)}\b.*?\bendmodule\b", text, re.S)
+    check(
+        m is not None,
+        f"could not find active SystemVerilog module {module_name}; source-text invariants "
+        "must be scoped to the module that carries the property, not the whole file.",
+    )
+    return m.group(0)
+
+
 def strip_comments(text: str) -> str:
     out: list[str] = []
     i = 0
@@ -411,7 +421,7 @@ def check_source_text_matcher_hardening() -> None:
 
 
 def check_present_core() -> None:
-    text = strip_comments(read(PRESENT_CORE))
+    text = sv_module_text(strip_comments(read(PRESENT_CORE)), "present_core")
     de_lag = sv_const(text, "DE_LAG")
     check(
         de_lag == 3,
@@ -456,7 +466,7 @@ def check_present_core() -> None:
 
 
 def check_phase_a_surface() -> None:
-    text = strip_comments(read(PLEX_SV))
+    text = sv_module_text(strip_comments(read(PLEX_SV)), "emu")
 
     def conf_str_payload(src: str) -> str:
         m = re.search(r"\blocalparam\s+CONF_STR\s*=\s*\{(.*?)\n\s*\}\s*;", src, re.S)
@@ -557,7 +567,7 @@ def check_phase_a_surface() -> None:
 
 
 def check_plex_reset_domains() -> None:
-    text = strip_comments(read(PLEX_SV))
+    text = sv_module_text(strip_comments(read(PLEX_SV)), "emu")
 
     def missing_reset_requirements(src: str) -> list[str]:
         missing: list[str] = []
@@ -630,7 +640,7 @@ def check_quartus_syntax_tripwires() -> None:
 
 
 def check_async_fifo_write_full_no_comb_loop() -> None:
-    text = strip_comments(read(ASYNC_FIFO))
+    text = sv_module_text(strip_comments(read(ASYNC_FIFO)), "async_fifo")
     nt = norm(text)
     check(
         "wr_full_now=(wr_gray==wr_gray_full)" in nt,
@@ -657,8 +667,8 @@ def check_async_fifo_write_full_no_comb_loop() -> None:
 
 
 def check_frame_store_cdc_contract() -> None:
-    fs = strip_comments(read(DDR_FRAME_STORE))
-    afifo = strip_comments(read(ASYNC_FIFO))
+    fs = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
+    afifo = sv_module_text(strip_comments(read(ASYNC_FIFO)), "async_fifo")
     sdc = strip_comments(read(PLEX_SDC) + "\n" + read(SYS_TOP_SDC))
     nft = norm(fs)
     nt_afifo = norm(afifo)
@@ -720,8 +730,8 @@ def check_mailboxes() -> None:
     # (input_mailbox.hpp, sdram_mailbox.hpp, ddr_bitstream_ring.hpp, fpga_spi.hpp)
     # consume from the spec and haven't drifted.
     spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
-    rtl = strip_comments(read(DDRAM_FRAME_RD))
-    ddr_fs = strip_comments(read(DDR_FRAME_STORE))
+    rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
+    ddr_fs = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
     fpga_spi = strip_comments(read(FPGA_SPI_HPP))
     input_h = strip_comments(read(INPUT_MAILBOX_HPP))
     host = spec_text + "\n" + fpga_spi + "\n" + input_h
@@ -910,8 +920,8 @@ def check_mailbox_map_collisions() -> None:
         all_magics[magic] = rname
 
     # ── Cross-check RTL constants against registry ──
-    frame_store_rtl = strip_comments(read(DDR_FRAME_STORE))
-    ddram_frame_rd_rtl = strip_comments(read(DDRAM_FRAME_RD))
+    frame_store_rtl = sv_module_text(strip_comments(read(DDR_FRAME_STORE)), "ddr_frame_store")
+    ddram_frame_rd_rtl = sv_module_text(strip_comments(read(DDRAM_FRAME_RD)), "ddram_frame_rd")
     mailbox_base = int(next(mb["address"] for mb in mailboxes if mb["name"] == "PLXS"), 16) - 0x100
 
     for mb in mailboxes:
@@ -978,7 +988,7 @@ def check_mailbox_map_collisions() -> None:
 
 
 def check_ddr_bitstream_ring() -> None:
-    rtl = strip_comments(read(DDR_BITSTREAM_READER))
+    rtl = sv_module_text(strip_comments(read(DDR_BITSTREAM_READER)), "ddr_bitstream_reader")
     spec_text = strip_comments(read(MAILBOX_ABI_SPEC))
     host = spec_text + "\n" + strip_comments(read(DDR_BITSTREAM_RING_HPP))
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
@@ -1049,7 +1059,7 @@ def check_ddr_bitstream_ring() -> None:
 
 
 def check_status_telemetry() -> None:
-    plex = strip_comments(read(PLEX_SV))
+    plex = sv_module_text(strip_comments(read(PLEX_SV)), "emu")
     fpga_spi = strip_comments(read(FPGA_SPI_CPP))
     status_h = strip_comments(read(STATUS_TELEMETRY_HPP))
     push_frame = strip_comments(read(PUSH_FRAME_CPP))
@@ -1269,7 +1279,8 @@ def check_runtime_ddr_layout_literal_ignores_untracked_debris() -> None:
 
 
 def check_ddr_frame_store_yuv_read_contract() -> None:
-    rtl = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    frame_store_source = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    rtl = sv_module_text(frame_store_source, "ddr_frame_store")
     layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
     nt = norm(rtl)
 
@@ -1380,6 +1391,14 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     )
     if not missing_requirements(bad_geometry):
         fail("deliberately broken chroma half-resolution geometry did not make the gate red")
+    unused_module_decoy = frame_store_source.replace(
+        "localparam int C_LINE_QWORDS = CODED_W / 16;",
+        "localparam int C_LINE_QWORDS = FRAME_W / 16;",
+        1,
+    ) + "\nmodule wgate_unused_ddr_frame_store_decoy;\n  localparam int C_LINE_QWORDS = CODED_W / 16;\nendmodule\n"
+    unused_module_decoy_nt = norm(sv_module_text(unused_module_decoy, "ddr_frame_store"))
+    if not missing_requirements(unused_module_decoy_nt):
+        fail("unused module decoy satisfied the DDR frame-store source-text gate")
 
     y_stride = coded_w
     c_stride = coded_w // 2
@@ -1412,8 +1431,11 @@ def check_present_geometry_stride_contract() -> None:
     layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
     media = strip_comments(read(MEDIA_PLAYER_CPP))
     fb_present = strip_comments(read(FB_PRESENT_CPP))
-    frame_store = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
-    present_core = strip_comments(read(PRESENT_CORE))
+    frame_store = sv_module_text(
+        select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE))),
+        "ddr_frame_store",
+    )
+    present_core = sv_module_text(strip_comments(read(PRESENT_CORE)), "present_core")
     qsf = read(PLEX_QSF)
 
     host_nt = norm(host)
@@ -1591,7 +1613,10 @@ def check_ddr_bank_handoff_contract() -> None:
     fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
     fpga_h = strip_comments(read(FPGA_SPI_HPP))
     media = strip_comments(read(MEDIA_PLAYER_CPP))
-    frame_store = select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE)))
+    frame_store = sv_module_text(
+        select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE))),
+        "ddr_frame_store",
+    )
     fpga_nt = norm(fpga_cpp)
     fpga_h_nt = norm(fpga_h)
     media_nt = norm(media)
