@@ -1630,3 +1630,17 @@ network path runs through the HPS, so it cannot be done remotely. The human is o
 of the test loop by explicit standing instruction, so I am not requesting one --
 I am recording that the fleet is hardware-blocked until the device is power-cycled
 by whatever means the user chooses.
+
+### 27.6 Final hardware state this session
+
+```
+12:44 -> 13:35   80/80 pings lost   arp FAILED   ssh rc=255
+cause            HPS AXI stall from devmem 0xFF200000 on the LWH2F bridge (disclosed by W-E2E)
+FPGA             still running -- HDMI stream active throughout
+HPS              locked; network runs through it, so no remote recovery
+recovery         power cycle required
+```
+
+The fit/deploy token is **unspent**. `3b1e8435` is verified and staged (§26.2);
+`Plex.rbf.bak` is untouched. Nothing further can be measured on hardware until the
+device is power-cycled.
