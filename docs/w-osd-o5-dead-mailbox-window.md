@@ -163,3 +163,38 @@ The instantiated window on the merge base is **identical** to the deployed
 branch (`YUV420P`, stride `0x80000`, doorbell `0x300FF000`), so a fit from
 `w-decode-hour27` publishes on the same addresses — the probe target does not
 change.
+
+---
+
+## Addendum 2 — an existing gate caught this tool hardcoding the very literals it exists to derive
+
+`make unit` went **rc=0 → rc=2** the moment `scripts/mailbox_window.py` was
+committed:
+
+```
+FAIL: runtime DDR frame layout literals must route through ddr_frame_layout derivation;
+  found scripts/mailbox_window.py:13: stride 0x40000 -> 0x3007F000 ...
+        scripts/mailbox_window.py:15: stride 0x80000 -> 0x300FF000
+```
+
+`check_runtime_ddr_layout_literal_sweep` (`tests/unit/test_rtl_invariants.py`)
+was right. The script *computes* every address it prints, but its **docstring**
+spelled the doorbells as literals — a tool whose entire purpose is "derive, do
+not hardcode" hardcoded them in its own documentation. Fixed by describing the
+strides and deferring the values to `ddr_frame_layout_params.svh` /
+`mailbox_abi_spec.hpp`, which the gate designates as the single source of truth.
+Offenders now 0; `make unit` rc=0 with `MAILBOX_WINDOW_RESULT=PASS`.
+
+### The transferable trap
+
+**A `make unit` green taken before `git add` is not predictive.** That sweep
+walks `tracked_product_relevant_files()` — tracked files only, deliberately, so
+untracked scratch does not trip it (there is an explicit test for that
+behaviour). I ran `make unit` with this script present and untracked, got rc=0,
+and the file was invisible to the gate. The identical tree went rc=2 once
+committed.
+
+So for any gate that scans tracked files, the green that counts is the one
+**after** staging. Worth folding into the standard alongside "a skip is not a
+pass": *a green over an empty or truncated scope is not a pass either* — the
+same `Scope: 0` vacuity family already flagged fleet-wide.
