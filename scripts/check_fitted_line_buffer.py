@@ -188,12 +188,22 @@ def main(argv=None) -> int:
         "(full or leading prefix). Without it the result is UNBOUND.",
     )
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument(
+        "--compare",
+        metavar="OTHER_REPORT",
+        help="A/B a second entity report against `report`. REFUSES if the two "
+        "reports bind to the same RBF md5, because a comparison that does not "
+        "vary its independent variable proves fitter determinism and nothing "
+        "else.",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
     if not args.report:
         ap.error("a Quartus entity report is required (or --self-test)")
+    if args.compare:
+        return compare_reports(Path(args.report), Path(args.compare))
 
     try:
         predicted, detail = predict_bits()
@@ -258,6 +268,124 @@ def main(argv=None) -> int:
     print("LINE_BUFFER_OK" if rc == 0 else "LINE_BUFFER_FAIL",
           f"predicted={predicted} instances={len(found)} rows={rows}")
     return rc
+
+
+RESOURCE_COLS = [
+    "Combinational ALUTs",
+    "Dedicated Logic Registers",
+    "Block Memory Bits",
+    "M10Ks",
+    "DSP Blocks",
+]
+
+
+def _rbf_md5(report: Path):
+    rbf = report.parent / "Plex.rbf"
+    if not rbf.exists():
+        return None
+    return hashlib.md5(rbf.read_bytes()).hexdigest()
+
+
+def _parse_resources(report: Path):
+    """Return {hierarchy path -> {column -> value}} keyed on the full parent chain."""
+    header = None
+    idx = {}
+    node_i = None
+    stack = {}
+    out = {}
+    for raw in report.read_text(errors="ignore").splitlines():
+        if not raw.startswith(";"):
+            continue
+        cells = [c.strip() for c in raw.split(";")]
+        if header is None:
+            if NODE_COL in cells:
+                header = cells
+                node_i = cells.index(NODE_COL)
+                idx = {c: cells.index(c) for c in RESOURCE_COLS if c in cells}
+            continue
+        if node_i is None or not idx or len(cells) <= max(idx.values()):
+            continue
+        m = re.match(r"^(\s*)\|([A-Za-z_][\w$]*)(?::([^|]*))?\|?$", raw.split(";")[1].rstrip())
+        if not m:
+            continue
+        indent = len(m.group(1))
+        for k in [k for k in stack if k >= indent]:
+            del stack[k]
+        stack[indent] = f"{m.group(2)}:{m.group(3) or ''}"
+        key = "|".join(stack[k] for k in sorted(stack))
+        vals = {}
+        for col, i in idx.items():
+            raw_val = cells[i].split("(")[0].strip()
+            try:
+                vals[col] = float(raw_val)
+            except ValueError:
+                vals[col] = None
+        out[key] = vals
+    return out
+
+
+def compare_reports(a: Path, b: Path) -> int:
+    """A/B two entity reports, refusing comparisons that do not vary anything.
+
+    w-fit-o5 showed that four fit slots agreeing on an identical constraint file
+    was read as "the constraint change is netlist-neutral". It was not evidence:
+    the comparison never varied the independent variable, so it demonstrated
+    fitter determinism. This mode refuses that shape of control outright.
+    """
+    for p in (a, b):
+        if not p.exists():
+            print("Scope: 0 -- report missing")
+            print(f"SKIP: {p} not found")
+            return 77
+
+    md5a, md5b = _rbf_md5(a), _rbf_md5(b)
+    print(f"Scope: A={a} rbf={(md5a or '<none>')[:8]}")
+    print(f"       B={b} rbf={(md5b or '<none>')[:8]}")
+
+    if md5a is None or md5b is None:
+        print("REFUSED: a sibling Plex.rbf is missing, so neither side can be "
+              "bound to a bitstream and the comparison is unattributable")
+        return 2
+    if md5a == md5b:
+        print("REFUSED: VACUOUS CONTROL -- both reports bind to the SAME RBF "
+              f"md5={md5a[:8]}. This measures fitter determinism, not the change "
+              "you think you are testing.")
+        return 2
+
+    ra, rb = _parse_resources(a), _parse_resources(b)
+    common = sorted(set(ra) & set(rb))
+    print(f"       {len(ra)} vs {len(rb)} entity paths, {len(common)} common, "
+          f"{len(set(ra) ^ set(rb))} present on one side only")
+    if not common:
+        print("REFUSED: Scope: 0 common entity paths -- nothing to compare")
+        return 2
+
+    print(f"column deltas over {len(common)} common paths (B - A):")
+    changed_any = False
+    for col in RESOURCE_COLS:
+        moved = [
+            (p, ra[p][col], rb[p][col])
+            for p in common
+            if ra[p].get(col) is not None
+            and rb[p].get(col) is not None
+            and ra[p][col] != rb[p][col]
+        ]
+        net = sum(y - x for _, x, y in moved)
+        verdict = "IDENTICAL in every path" if not moved else (
+            f"{len(moved)}/{len(common)} paths differ, net {net:+g}"
+        )
+        print(f"  {col:28s} {verdict}")
+        if moved:
+            changed_any = True
+            for p, x, y in sorted(moved, key=lambda t: -abs(t[2] - t[1]))[:5]:
+                print(f"      {y - x:+g}  {p[:100]}")
+
+    if not changed_any:
+        print("NOTE the two bitstreams differ but no entity-level resource does. "
+              "The change is placement/routing/timing only -- read the STA "
+              "report, not this one.")
+    print("COMPARE_OK", f"paths={len(common)} a={md5a[:8]} b={md5b[:8]}")
+    return 0
 
 
 def predict_bits() -> tuple[int, dict]:
@@ -353,11 +481,38 @@ def self_test() -> int:
     rc, out = run([str(good), "--expect-rbf-md5", "deadbeef"])
     cases.append(("red: unsatisfiable RBF binding must FAIL", rc == 1 and "UNBOUND" in out, rc, 1))
 
+    # --compare vacuity guard. w-fit-o5's exoneration of the SDC change was
+    # vacuous because all four compared slots carried an IDENTICAL constraint
+    # file: the control never varied the independent variable. Refuse that.
+    same_a = scratch / "cmp_same_a"
+    same_b = scratch / "cmp_same_b"
+    for d in (same_a, same_b):
+        _write_report(d / "Plex.fit.rpt", predicted)
+        (d / "Plex.rbf").write_bytes(b"identical-bitstream")
+    rc, out = run([str(same_a / "Plex.fit.rpt"), "--compare", str(same_b / "Plex.fit.rpt")])
+    cases.append(("red: same-RBF A/B must REFUSE as vacuous (2)",
+                  rc == 2 and "VACUOUS CONTROL" in out, rc, 2))
+
+    # ... and an unbindable side must refuse too, not quietly compare.
+    nobind = scratch / "cmp_nobind"
+    _write_report(nobind / "Plex.fit.rpt", predicted)
+    rc, out = run([str(same_a / "Plex.fit.rpt"), "--compare", str(nobind / "Plex.fit.rpt")])
+    cases.append(("red: unbindable A/B side must REFUSE (2)",
+                  rc == 2 and "unattributable" in out, rc, 2))
+
+    # green: two genuinely different bitstreams compare, and a resource that
+    # really moved is reported.
+    diff_b = scratch / "cmp_diff_b"
+    _write_report(diff_b / "Plex.fit.rpt", predicted)
+    (diff_b / "Plex.rbf").write_bytes(b"a-different-bitstream")
+    rc, out = run([str(same_a / "Plex.fit.rpt"), "--compare", str(diff_b / "Plex.fit.rpt")])
+    cases.append(("green: differing-RBF A/B compares", rc == 0 and "COMPARE_OK" in out, rc, 0))
+
     # Missing report is a skip, never a pass.
     rc, out = run([str(scratch / "absent/Plex.fit.rpt")])
     cases.append(("skip: missing report must be 77", rc == 77, rc, 77))
 
-    print(f"Scope: {len(cases)} self-test cases (1 green, 4 reds, 1 skip)")
+    print(f"Scope: {len(cases)} self-test cases (2 green, 6 reds, 1 skip)")
     bad = 0
     for name, ok, got, want in cases:
         print(f"  {'PASS' if ok else 'FAIL'} {name} (rc={got}, want {want})")

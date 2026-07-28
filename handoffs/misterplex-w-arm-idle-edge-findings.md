@@ -1117,3 +1117,142 @@ it is now demonstrated against a genuinely absent device rather than a simulated
   delta is very likely well under +96. **That is an estimate, not a measurement** — the
   only way to know is to run `check_prefit_elaboration.sh` on the change, which costs
   4m23s and no fit token. [W-FIT-O5 / RTL owner]
+
+---
+
+## 16. The SDC A/B, measured — and a vacuity guard built from w-fit-o5's lesson
+
+Branch `w-arm-idle-edge`. w-fit-o5 (`5882781`) refuted "the SDC change is netlist
+neutral": `wfit-hour27-a` (`3b1e8435`) and `wfit-hour27-bdiag-b` (`fb4bad84`) differ in
+`Plex.sdc` and **nothing else**, yet produce different bitstreams. The original
+exoneration compared four slots that all carried the *same* new SDC, so it demonstrated
+fitter determinism, not neutrality — a control that never varied its independent
+variable.
+
+Both fit reports and both STA reports are on this host beside their RBFs, so the
+following is measured, not inferred. I own the present path, so I measured what the
+constraint change did to it.
+
+### 16.1 What the SDC change did to the netlist — denominator 827 entity paths
+
+```
+Scope: A=3b1e8435 (old SDC, set_false_path)  B=fb4bad84 (new SDC, set_max_delay 50.0)
+       827 vs 827 entity paths, 827 common, 0 present on one side only
+
+Combinational ALUTs        IDENTICAL in every path
+Block Memory Bits          IDENTICAL in every path
+M10Ks                      IDENTICAL in every path
+DSP Blocks                 IDENTICAL in every path
+Dedicated Logic Registers  39/827 paths differ, net +21
+    +16  ascal:ascal
+    +12  sys_top (top level)
+     -8  emu|hps_io
+     +7  osd:hdmi_osd
+     -6  audio_out
+     +5  emu|present_core            (2509 -> 2514)
+     +5  emu|present_core|ddr_frame_store  (2293 -> 2298)
+     -2  emu|stream_path|decode_stub
+```
+
+So the constraint change moved **register placement only**, design-wide, in both
+directions, with **no combinational, memory or DSP change anywhere**. `ddr_frame_store`
+moved +5 registers = **+0.22%**, which is smaller than `ascal`'s +16 and
+indistinguishable from the global jitter.
+
+### 16.2 My own near-miss, caught before publishing
+
+My first pass printed *"130 differing paths touching present/ddr/stream"* and I was one
+step from concluding **"the SDC delta is concentrated in `ddr_frame_store`'s clock-domain
+crossing"**. That would have been a compelling, wrong story pointing straight at the
+dead-DDR regression.
+
+It is wrong because of the denominator. `ddr_frame_store` contains **467 of the design's
+`mplex_hold_lcell` instances**. Any global placement jitter therefore lands mostly
+inside it by sheer instance count:
+
+```
+mplex_hold_lcell instances                467
+  with an ALM packing delta                91   (48 up, 43 down)
+  of those, inside ddr_frame_store         90
+```
+
+48 up and 43 down is a **redistribution with no net direction**, and the values flip
+between 0.5 and 0.7 ALM — packing, not function. A count without its denominator turned
+noise into a headline. Same failure class as everything else here; caught this time
+because I asked for the denominator before writing the sentence.
+
+### 16.3 Both builds close timing — which does NOT exonerate the constraint
+
+From the two `Plex.sta.rpt` files:
+
+```
+                       3b1e8435 (old SDC)   fb4bad84 (new SDC)
+Setup WNS                  +0.185               +0.289
+Hold WNS                   +0.248               +0.245
+Recovery WNS               +0.676               +0.375
+Removal WNS                +0.902               +1.090
+End Point TNS, all         0.000                0.000
+Unconstrained Clocks       0                    0
+```
+
+Every slack is positive in both, TNS is zero in both. **"Timing closed" is green on the
+build whose fabric writes nothing to DDR.** Read as "timing is fine", that is a true
+number about the wrong thing: `set_false_path` means a path is *not analysed at all*, so
+a green under the old SDC never covered the crossing, and a green under the new one is
+a different question answered.
+
+One measured asymmetry I can report but not explain, and am not attributing:
+
+```
+Restricted Fmax, every clock, is LOWER in the new-SDC build
+  emu|pll general[0]   24.45 -> 23.73 MHz
+  emu|pll general[2]   93.63 -> 92.40 MHz
+  FPGA_CLK1_50         82.80 -> 81.87 MHz
+```
+
+Fmax fell on every clock while reported setup slack improved. Both can be true — they
+are different metrics — and the drop is consistent with previously false-pathed logic
+now being analysed. **Hypothesis, not a finding.** [W-FIT-O5 owns timing/SDC]
+
+### 16.4 The present path is a valid A/B partner
+
+`3b1e8435` scores exactly as `fb4bad84` does on my gate: 827 entity rows, `present_core`
+under `emu`, `ddr_frame_store` under `present_core`, line buffer `MATCH 159744 bits`,
+`BOUND report -> Plex.rbf md5=3b1e8435`. So whichever way the deploy goes, the present
+path is identical in both and cannot be a confounder for the PLXD question.
+
+### 16.5 Vacuity guard shipped, red-proved on the real artifacts
+
+w-fit-o5 asked for a permanent check of the generalisable form *"does this comparison
+actually differ in the thing it claims to test?"*. Since the vacuous control was over
+fit reports, I put the guard in my own report gate:
+
+```
+check_fitted_line_buffer.py A.fit.rpt --compare B.fit.rpt
+```
+
+* refuses **rc=2 VACUOUS CONTROL** when both reports bind to the same RBF md5
+* refuses **rc=2** when either side has no sibling `Plex.rbf` to bind to
+* otherwise prints per-column deltas with the common-path denominator
+
+The red is **not synthetic** — it is w-fit-o5's original comparison, re-run:
+
+```
+A=wfit-hour27-sdc-a  rbf=fb4bad84
+B=wfit-hour27-bdiag-b rbf=fb4bad84
+REFUSED: VACUOUS CONTROL -- both reports bind to the SAME RBF md5=fb4bad84.
+rc=2
+```
+
+and the green is the genuine pair (`3b1e8435` vs `fb4bad84`, `COMPARE_OK paths=827`).
+Self-test is now 2 greens + 6 reds + 1 skip.
+
+### 16.6 What I did not measure
+
+* Which SDC line changed, and whether the crossing it constrains is the one carrying
+  PLXD. I read the STA summaries, not the constraint file diff. [W-FIT-O5]
+* Anything about `3b1e8435`'s runtime behaviour — it has never been deployed.
+* Whether register placement can, by itself, kill the fabric's DDR writes. Resource
+  equality does **not** exonerate a timing constraint; it only says the failure, if it
+  is the SDC, is a timing failure rather than a structural one, and the instrument for
+  that is STA on the specific crossing, not the entity table.
