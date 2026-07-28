@@ -34,3 +34,4 @@ remote_out/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+unit.log
