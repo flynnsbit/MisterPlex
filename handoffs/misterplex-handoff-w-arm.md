@@ -1,5 +1,18 @@
 # MiSTerPlex handoff — W-ARM
 
+> **UPDATE — successor W-ARM, commit `beb3f6d`.** The idle-logo left-edge
+> artifact has been determined **RTL-side, not ARM-side**, by measurement:
+> both live DDR banks match the product-rendered idle payload **byte-for-byte,
+> 449280/449280 bytes each**. Section 8 below ("current measured evidence points
+> first at ARM overwriting displayed bank under stuck PLXD fallback") is
+> **superseded** — in `IDLE_SCREEN=logo` both banks hold identical static
+> content, so an overwrite rewrites each byte with the value already there and
+> cannot be visible. `3798793` remains a correct defensive fix for *playback*,
+> where banks genuinely differ; it is neither the cause nor the cure of the idle
+> artifact. Full analysis, raw numbers, the remaining unknowns, and the handover
+> list are in **`handoffs/misterplex-w-arm-idle-edge-findings.md`**. Read that
+> first; the rest of this file is still accurate history.
+
 ## 1. Identity
 - Worker ID: W-ARM
 - Current branch: `w-arm-idle-edge`
