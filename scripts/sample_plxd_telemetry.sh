@@ -40,6 +40,33 @@ CORENAME=$("${SSH[@]}" 'cat /tmp/CORENAME 2>/dev/null' 2>/dev/null | tr -d "\0\r
 echo "resident_rbf_md5=${RESIDENT_MD5:-UNKNOWN}"
 echo "corename=${CORENAME:-UNKNOWN}"
 
+# Instrument liveness FIRST. DDR contents survive FPGA reconfiguration, so a frozen
+# mailbox word is indistinguishable from stale residue left by a previous bitstream.
+# Poke a sentinel and require the fabric to overwrite it. Without this, a dead DDR
+# write path reads as free_bank_mask=0 swap_pending=1 and is scored as a genuine
+# livelock FAIL, which is a false red on a measurement that was never taken.
+if [[ "${PLXD_SKIP_LIVENESS:-0}" != "1" ]]; then
+  LIVE=$("${SSH[@]}" "
+    orig=\$(devmem $PLXD_ADDR 32)
+    devmem $PLXD_ADDR 32 0xDEADBEEF
+    restored=0
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.2
+      v=\$(devmem $PLXD_ADDR 32)
+      if [ \"\$v\" != \"0xDEADBEEF\" ]; then restored=1; break; fi
+    done
+    if [ \"\$restored\" = \"0\" ]; then devmem $PLXD_ADDR 32 \$orig; fi
+    echo \"restored=\$restored\"
+  " 2>/dev/null)
+  echo "instrument_liveness: $LIVE"
+  if [[ "$LIVE" != *"restored=1"* ]]; then
+    echo "UNSCORED: fabric did not rewrite $PLXD_ADDR within 2s after a sentinel poke." >&2
+    echo "UNSCORED: the PLXD mailbox is not being published by this bitstream, so the" >&2
+    echo "UNSCORED: livelock observables are UNMEASURABLE. This is not a livelock FAIL." >&2
+    exit 77
+  fi
+fi
+
 RAW=$("${SSH[@]}" "for i in \$(seq 1 $SAMPLES); do devmem $PLXD_ADDR 32; sleep $INTERVAL; done" 2>/dev/null)
 ssh_rc=$?
 if [[ $ssh_rc -ne 0 ]]; then
