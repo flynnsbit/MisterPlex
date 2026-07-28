@@ -2570,3 +2570,77 @@ the fallback is loud rather than quiet.
 Both banks painted, daemon alive with full argv, core loaded. No RBF was copied
 in any of these runs (`Remote already has md5=... — skip scp`), so the deploy
 token remains unspent.
+
+## 40. DEPLOY 2 EXECUTED -- `3b1e8435` is ALSO SILENT. The SDC is exonerated.
+
+Parent re-authorized ONE deploy of `3b1e8435` under a corrected framing after
+retracting their own "netlist-neutral" exoneration. Executed on the returned
+device.
+
+### 40.1 Pre-deploy baseline, 14:54:47
+
+```
+Plex.rbf      fb4bad849ad2db782a5004ce5a3471ce
+Plex.rbf.bak  00eebd5e685e6cc821b13bfdcff41d0b   (escape hatch, untouched)
+CORENAME=Plex   fpga_manager=operating   misterplexd pid 3318
+both banks painted sum=33177600
+poke probe: instrument_liveness restored=0   rc=77 UNSCORED
+```
+
+### 40.2 The deploy
+
+```
+PRE_LOAD_LOCAL = 14:56:13.652
+  Deploy .../wfit-hour27-a/Plex.rbf (md5=3b1e84355f5fe4e7e137b70a841244fa) load=menu
+  SCP -> /media/fat/_Utility/Plex.new.1263883.rbf
+  3b1e84355f5fe4e7e137b70a841244fa  /media/fat/_Utility/Plex.rbf
+  Soft reload: Menu -> wait -> Plex
+  CORENAME=Plex / MENU / MENU / Plex
+  DAEMON_OK: misterplexd restarted pid=3823
+  DEPLOY_RC=0
+POST_LOAD_LOCAL = 14:56:49.611
+```
+
+**First deploy in this project's history with the ARM painter alive on the other
+side** -- SS39's fix firing in the real deploy path, not just in a test.
+
+### 40.3 The discriminator -- measured twice, 20 s apart
+
+```
+14:57:19   resident_rbf_md5=3b1e8435...  corename=Plex
+           instrument_liveness: restored=0   rc=77 UNSCORED
+14:58:18   (repeat after settle)
+           instrument_liveness: restored=0   rc=77 UNSCORED
+```
+
+ARM side at 14:58:28: both banks painted `sum=33177600`, `door_hi=0x2000000b`
+advancing, daemon serving a live Plex session (`state="playing"`).
+
+### 40.4 Verdict under the parent's corrected framing
+
+| build | RTL | SDC | PLXD |
+|---|---|---|---|
+| `00eebd5e` | older | old | advancing ~68/s |
+| `3b1e8435` | new | **old** `set_false_path` | **SILENT** |
+| `fb4bad84` | new | **new** `set_max_delay` | **SILENT** |
+
+**PLXD still silent with the OLD SDC -> the SDC change is EXONERATED.** The
+parent's `set_false_path -> set_max_delay` edit did **not** cause the regression.
+The cause lies in the **RTL delta** between `00eebd5e` and the new RTL, which
+carries all four suspects `abc3b67`, `7a3d960`, `ea31f68`, `3716f1f` -- and this
+deploy **cannot separate them**, because both new builds share byte-identical RTL.
+
+This is a genuine exoneration, unlike the retracted one: the independent variable
+(`Plex.sdc`, 38 lines, `9a312bcb` vs `13e7312e`) actually varied while everything
+else was held byte-identical (`diff -r` rc=0 over 48 files).
+
+Per the parent's standing instruction -- *"if `3b1e8435` is also silent, stop and
+report"* -- I am stopping. **Token spent: 1 of 1 authorized. No further deploys.**
+
+### 40.5 What this does NOT show
+
+- Which of the four RTL commits is responsible. Needs a build whose RTL differs.
+- Whether the display is black. No capture graded; W-E2E owns that.
+- W-SWAP's `|| !slot_keep` fix: still neither validated nor refuted. The parent's
+  nuance ("if the SDC turns out to be the cause, your fix may have been working
+  all along") is now **closed off** -- the SDC was not the cause.
