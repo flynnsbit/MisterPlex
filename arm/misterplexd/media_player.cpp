@@ -2732,12 +2732,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             lastAudioByte = now;
                         }
                         const bool audioSeen = lastAudioBytesForEof > 0;
-                        const int64_t noAudioMs =
-                            (!wantAudio || !audioSeen)
-                                ? noVideoMs
-                                : std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      now - lastAudioByte)
-                                      .count();
+                        const int64_t noAudioSinceProgressMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - lastAudioByte)
+                                .count();
+                        const int64_t noAudioMs = misterplex::eofStallAudioSilenceMs(
+                            wantAudio, audioSeen, noVideoMs, noAudioSinceProgressMs);
                         const bool knownDurationStall = misterplex::knownDurationEofStall(
                             startMs, durationMs, elapsedMs, static_cast<int64_t>(got), noVideoMs,
                             noAudioMs);

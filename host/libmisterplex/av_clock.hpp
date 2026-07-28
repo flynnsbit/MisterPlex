@@ -72,6 +72,14 @@ inline bool rawVideoTerminalSignal(bool explicitStopOrSeek, bool readZero, bool 
     return explicitStopOrSeek || readZero || readError || shortRead || knownDurationStall;
 }
 
+// For the known-duration EOF stall detector, audio silence is required only when
+// the session actually produced audio. Video-only/no-audio-yet sessions use the
+// video-silence timer so the detector is not vacuously disabled.
+inline int64_t eofStallAudioSilenceMs(bool wantAudio, bool audioSeen, int64_t noVideoMs,
+                                      int64_t noAudioMs) {
+    return (!wantAudio || !audioSeen) ? noVideoMs : noAudioMs;
+}
+
 // A bounded EOF escape for PMS/FFmpeg streams that reach known duration, stop
 // producing rawvideo, but leave the pipe open. Only fire with no partial frame:
 // a partial frame is treated as a real short-read so diagnostics can report it.

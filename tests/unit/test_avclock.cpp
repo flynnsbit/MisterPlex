@@ -128,6 +128,18 @@ int main() {
     CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000, 6000));
     CHECK(knownDurationEofStall(1260000, 1286942, 33050, 0, 6000, 6000));
 
+    // Audio-less / audio-never-started content must not disable the EOF-stall guard.
+    // Once audio has produced bytes, however, continuing audio progress blocks EOF.
+    CHECK(eofStallAudioSilenceMs(false, false, 6000, 0) == 6000);
+    CHECK(eofStallAudioSilenceMs(true, false, 6000, 0) == 6000);
+    CHECK(eofStallAudioSilenceMs(true, true, 6000, 200) == 200);
+    CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000,
+                                eofStallAudioSilenceMs(false, false, 6000, 0)));
+    CHECK(knownDurationEofStall(0, 30021, 36000, 0, 6000,
+                                eofStallAudioSilenceMs(true, false, 6000, 0)));
+    CHECK(!knownDurationEofStall(0, 60000, 66000, 0, 6000,
+                                 eofStallAudioSilenceMs(true, true, 6000, 200)));
+
     // --- rawvideo terminal-signal inventory ---
     CHECK(rawVideoTerminalSignal(true, false, false, false, false));  // explicit stop/seek
     CHECK(rawVideoTerminalSignal(false, true, false, false, false));  // read()==0
