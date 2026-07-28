@@ -124,6 +124,8 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_rtl_require_root_guard.py",
     "python3 $(ROOT)/tests/unit/test_decode_core_subtree_gate.py",
     "python3 $(ROOT)/tests/unit/test_w_audit_reachability_regressions.py",
+    "python3 $(ROOT)/scripts/check_scope_discipline.py",
+    "python3 $(ROOT)/tests/unit/test_scope_discipline_gate.py",
     "python3 $(ROOT)/tests/unit/test_skip_exit_code_gate.py",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",

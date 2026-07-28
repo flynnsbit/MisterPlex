@@ -573,3 +573,53 @@ what survived synthesis. Additionally, on `w-gate-hour28` and `ddb7c97` all 13
 `h264_decode_core` output ports terminate on a fanout-free `_keep` wire with no
 `(* keep *)` attribute, so core-subtree membership does not imply the core
 contributes to a pixel.
+
+## 11. Scope discipline: the measured state of the house rule
+
+The house rule is that every gate prints `Scope:` first and that `Scope: 0`
+cannot claim a PASS. It was never enforced. Measured on `w-gate-hour28`:
+
+| quantity | value |
+|---|---|
+| registered `make unit` commands | **100** |
+| commands whose source can emit a `Scope:` line | **11** |
+| commands that cannot | **89** |
+| `Scope:` lines actually printed by a full `make unit` run | 19 |
+
+89 of 100 registered commands can exit 0 without ever stating what they
+compared. That is the population `w-audit`'s "24 paths that exit 0 without doing
+any work" was drawn from.
+
+Flipping the rule to a hard fail today would red the whole fleet's `make unit`,
+and a broken `make unit` blinds every worker -- worse than the disease. So
+`scripts/check_scope_discipline.py` is a **two-directional ratchet** over
+`tests/unit/scope_discipline_exempt.txt`, the same pattern as
+`stub_masked_modules.txt`:
+
+* an unscoped command missing from the manifest -> `SCOPE_DISCIPLINE_UNDECLARED`,
+  rc=1. The debt cannot grow.
+* a listed command that has since gained a `Scope:` line ->
+  `SCOPE_DISCIPLINE_STALE`, rc=1. Progress must be recorded, so the manifest
+  diff is the evidence and the number can only move deliberately.
+
+### The three questions
+
+* **What it literally compares.** The set of registered `make unit` commands
+  whose *source* contains a `Scope:` emission, against the declared manifest.
+* **What it does not cover.** Whether the denominator printed at runtime is
+  non-zero, and whether it counts the right thing. Static presence of the line
+  is a floor, not a proof -- a gate can print `Scope: 1170` and compare nothing.
+  Runtime `Scope: 0` stays the individual gate's own responsibility.
+* **Can you make it fail.** Yes, in four ways, all in
+  `tests/unit/test_scope_discipline_gate.py`: empty command set (`Scope: 0`
+  refused), undeclared unscoped command, stale exemption, and unattributable
+  command source.
+
+### One defect found while building it
+
+The first implementation resolved `$(ROOT)/build/test_osd_menu` to the compiled
+binary, because `build/test_osd_menu` *is* a file. A compiled object still
+contains the string literals of whatever source last built it, so deleting a
+`Scope:` line from the `.cpp` would have kept reporting green until the next
+rebuild. The `build/` -> `tests/unit/<stem>.cpp` mapping is now tried first and
+the binary is never read. `case_binary_maps_to_its_source` locks that in.

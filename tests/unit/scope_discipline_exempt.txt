@@ -1,0 +1,96 @@
+# `make unit` commands that do not yet print a `Scope:` denominator.
+# Two-directional ratchet, enforced by scripts/check_scope_discipline.py:
+#   * an unscoped command missing from this list is a hard fail (debt cannot grow);
+#   * a listed command that has gained a `Scope:` line is also a hard fail
+#     (progress must be recorded here, so the diff is the evidence).
+# Shrinking this file is the goal. Regenerate with:
+#   python3 scripts/check_scope_discipline.py --update-baseline
+$(ROOT)/build/test_annexb_count
+$(ROOT)/build/test_avclock
+$(ROOT)/build/test_bitstream_ring_lifecycle
+$(ROOT)/build/test_cadence
+$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
+$(ROOT)/build/test_companion_eof
+$(ROOT)/build/test_companion_plant_seek
+$(ROOT)/build/test_frame_store_ddr_prefetch_sim
+$(ROOT)/build/test_frame_store_math
+$(ROOT)/build/test_frame_store_sdram_sim
+$(ROOT)/build/test_h264_bitstream_source
+$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
+$(ROOT)/build/test_input_mailbox
+$(ROOT)/build/test_last_frame_latch
+$(ROOT)/build/test_main_guard
+$(ROOT)/build/test_mraudio_status
+$(ROOT)/build/test_osd_menu
+$(ROOT)/build/test_p3_host_recon_vectors
+$(ROOT)/build/test_p3_idct_reference_model
+$(ROOT)/build/test_p3_inter_pred_vectors
+$(ROOT)/build/test_pixel_format
+$(ROOT)/build/test_playback_overlay
+$(ROOT)/build/test_pms_timeline
+$(ROOT)/build/test_resolve
+$(ROOT)/build/test_sdram_mailbox
+$(ROOT)/build/test_sdram_memtest_sim
+$(ROOT)/build/test_slice_hdr $(UNIT_ANNEXB)
+$(ROOT)/build/test_sps_parse $(UNIT_ANNEXB)
+$(ROOT)/build/test_status_telemetry
+$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)
+$(ROOT)/scripts/check_define_parity.py
+$(ROOT)/scripts/rtl_lint.py
+$(ROOT)/tests/unit/test_capture_rig.sh
+$(ROOT)/tests/unit/test_companion_http.sh
+$(ROOT)/tests/unit/test_confstr_guard.sh
+$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
+$(ROOT)/tests/unit/test_decode_throughput_gate.sh
+$(ROOT)/tests/unit/test_derived_validation_hashes.sh
+$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
+$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_frame_plane_goldens.sh
+$(ROOT)/tests/unit/test_h264_golden_extractor.sh
+$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
+$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
+$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
+$(ROOT)/tests/unit/test_i420_candidate_score.sh
+$(ROOT)/tests/unit/test_level_width_verilator.sh
+$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
+$(ROOT)/tests/unit/test_no_private_data.sh
+$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
+$(ROOT)/tests/unit/test_p3_dpb_mc_rtl_sim.sh
+$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+$(ROOT)/tests/unit/test_p3_inter_rtl_sim.sh
+$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
+$(ROOT)/tests/unit/test_play_file_delivery.sh
+$(ROOT)/tests/unit/test_plex_browse.sh
+$(ROOT)/tests/unit/test_pms_baseline_gate.sh
+$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh
+$(ROOT)/tests/unit/test_release_rbf_hash.sh
+$(ROOT)/tests/unit/test_resource_preflight.sh
+$(ROOT)/tests/unit/test_rtl_invariants.sh
+$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
+$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
+$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
+$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
+$(ROOT)/tests/unit/test_stream_path_real_intra_rtl_sim.sh
+$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
+bash $(ROOT)/tests/unit/test_ddr_frame_store_swap_livelock.sh
+bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
+bash $(ROOT)/tests/unit/test_osd_menu_red.sh
+bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
+python3 $(ROOT)/scripts/check_pipe_exit_safety.py
+python3 $(ROOT)/scripts/run_with_skip_summary.py --self-test
+python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
+python3 $(ROOT)/tests/unit/test_bench_rtl_filelists.py
+python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py
+python3 $(ROOT)/tests/unit/test_h264_intra_nb_ctx_verilator.py
+python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
+python3 $(ROOT)/tests/unit/test_no_conflict_markers.py
+python3 $(ROOT)/tests/unit/test_p3_high_cabac_scope.py
+python3 $(ROOT)/tests/unit/test_p3_idct_rtl_model.py
+python3 $(ROOT)/tests/unit/test_p3_intra_frame_verilator.py
+python3 $(ROOT)/tests/unit/test_p3_intra_mb0_verilator.py
