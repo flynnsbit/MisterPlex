@@ -1,0 +1,14 @@
+baseline rc=0 GREEN
+KILLED    always-pass  (rc=1)
+KILLED    no-signal-passes  (rc=1)
+KILLED    stale-passes  (rc=1)
+KILLED    black-blamed-on-core-regardless-of-host  (rc=1)
+KILLED    black-always-refuses  (rc=1)
+KILLED    chevron-always-present  (rc=1)
+KILLED    chevron-never-present  (rc=1)
+KILLED    left-edge-never-detected  (rc=1)
+KILLED    left-edge-always-detected  (rc=1)
+KILLED    provenance-check-removed  (rc=1)
+
+Scope: 10 mutations; killed 10, survived 0
+MUTATION_OK — every mutation turned the test red

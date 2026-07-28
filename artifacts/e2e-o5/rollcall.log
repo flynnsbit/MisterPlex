@@ -1,1 +1,1 @@
-UNIT_ROLLCALL_OK actual_prereqs=33 expected_prereqs=33 actual_commands=93 protected_commands=90 expected_commands=90 actual_ignored_commands=3 expected_ignored_commands=3 makefile=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/Makefile
+UNIT_ROLLCALL_OK actual_prereqs=33 expected_prereqs=33 actual_commands=94 protected_commands=91 expected_commands=91 actual_ignored_commands=3 expected_ignored_commands=3 makefile=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-e2e/Makefile
