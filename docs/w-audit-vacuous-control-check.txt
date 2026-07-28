@@ -1,0 +1,66 @@
+W-AUDIT PERMANENT VACUOUS-CONTROL CHECK
+=======================================
+
+Parent request
+--------------
+Add a mechanical standing check for the question: "does this comparison actually
+differ in the thing it claims to test?"  This is the control-vacuity class that
+caused the false SDC exoneration.
+
+Artifact added
+--------------
+  scripts/check_vacuous_control.py
+
+The checker compares two or more run/source directories.  Callers must declare:
+
+  --same <path>       inputs expected to be identical across all runs
+  --different <path>  independent variables/artifacts expected to vary
+
+It hashes files and directory content manifests.  It exits nonzero when a
+supposed variable is identical (DIFF_FALSE_VACUOUS) or when a supposed control
+input differs (SAME_FALSE_CONFOUNDED).  This is deliberately premise-level: it
+will not decide whether a result is good, only whether the experiment actually
+varied what the writeup says it varied.
+
+Validation on the SDC incident
+------------------------------
+1. Correctly framed A/B: PASS
+
+  ./scripts/check_vacuous_control.py \
+    --same rtl --same sys --same Plex.sv --same Plex.qsf \
+    --same files.qip --same build_id.v \
+    --different Plex.sdc --different output_files/Plex.rbf \
+    /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer \
+    /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer
+
+  Raw evidence:
+    docs/w-audit-vacuous-control-good-ab.raw.txt
+
+  Result:
+    rtl/sys/Plex.sv/Plex.qsf/files.qip/build_id.v SAME_OK
+    Plex.sdc DIFF_OK
+    output_files/Plex.rbf DIFF_OK
+    SUMMARY PASS, rc=0
+
+2. Original vacuous-control shape: FAIL
+
+  ./scripts/check_vacuous_control.py \
+    --same rtl --same sys --same Plex.sv --same Plex.qsf \
+    --same files.qip --same build_id.v \
+    --different Plex.sdc \
+    /home/flynnsbit/mplex-builds/wfit-hour27-sdc-a/Plex_MiSTer \
+    /home/flynnsbit/mplex-builds/wfit-hour27-sdc-b/Plex_MiSTer
+
+  Raw evidence:
+    docs/w-audit-vacuous-control-failed-control.raw.txt
+
+  Result:
+    Plex.sdc DIFF_FALSE_VACUOUS distinct=1
+    SUMMARY FAIL, rc=1
+
+What this prevents
+------------------
+A report can no longer say "A/B exonerated X" unless the actual A/B roots show
+X changed.  Repeated identical-input fits remain useful determinism evidence,
+but the checker makes that scope explicit and prevents promoting determinism to
+neutrality of a variable that never varied.

@@ -1,0 +1,37 @@
+VACUOUS_CONTROL_CHECK
+ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer
+ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer
+EXCLUDES .git/**,db/**,incremental_db/**,output_files/**,simulation/**,build/**,*.bak
+CHECK SAME rtl
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=25636806e3ec95b3f85a2ab5b924943a files=48
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=25636806e3ec95b3f85a2ab5b924943a files=48
+  RESULT SAME_OK distinct=1
+CHECK SAME sys
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=6f7f79b7084f1b22f0d804d1fd10a0f1 files=57
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=6f7f79b7084f1b22f0d804d1fd10a0f1 files=57
+  RESULT SAME_OK distinct=1
+CHECK SAME Plex.sv
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=f7ae554020f6b3b0c9eb36d619936c77 files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=f7ae554020f6b3b0c9eb36d619936c77 files=1
+  RESULT SAME_OK distinct=1
+CHECK SAME Plex.qsf
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=b3de67401bb49f8ab10ea8dadbd56ac2 files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=b3de67401bb49f8ab10ea8dadbd56ac2 files=1
+  RESULT SAME_OK distinct=1
+CHECK SAME files.qip
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=f56579936b6083b1673641073d5f55e3 files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=f56579936b6083b1673641073d5f55e3 files=1
+  RESULT SAME_OK distinct=1
+CHECK SAME build_id.v
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=f767ec440b470a940de35a0970eed5e8 files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=f767ec440b470a940de35a0970eed5e8 files=1
+  RESULT SAME_OK distinct=1
+CHECK DIFFERENT Plex.sdc
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=9a312bcbf59f67e17f4989f5c3c5e077 files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=13e7312ecfb1e1d2512d9d2a297d3db0 files=1
+  RESULT DIFF_OK distinct=2
+CHECK DIFFERENT output_files/Plex.rbf
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-a/Plex_MiSTer digest=3b1e84355f5fe4e7e137b70a841244fa files=1
+  ROOT /home/flynnsbit/mplex-builds/wfit-hour27-bdiag-b/Plex_MiSTer digest=fb4bad849ad2db782a5004ce5a3471ce files=1
+  RESULT DIFF_OK distinct=2
+SUMMARY PASS
