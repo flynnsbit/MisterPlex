@@ -1102,3 +1102,63 @@ gap during a core bounce cannot work when the capture is *already* unlocked —
 there is no locked state to drop out of. The question it was meant to answer is
 answered directly instead: this device has since produced CONTENT_PRESENT frames
 (mean luma 36.37), so the HDMI output path is alive, not dead.
+
+## §26 — RBF-md5 binding is necessary but NOT sufficient (extends the parent's fleet rule)
+
+The parent has made md5 binding mandatory for every gate that reads a fit
+report, on `w-arm-o5`'s evidence that 40 fit reports exist here and 35 describe
+builds nobody runs. That rule is right. **It does not go far enough.**
+
+`md5(/media/fat/_Utility/Plex.rbf)` identifies the **file on the SD card**, not
+the **fabric**. `scripts/deploy_plex_core.sh:34` defaults to `DEPLOY_LOAD=none`,
+which copies the RBF and deliberately does not call `load_core`. After a default
+deploy the file carries the new md5 while the previous bitstream is still
+configured and painting every pixel. So a gate can be perfectly **BOUND** — the
+report matches the file md5, exactly as the rule demands — **and still describe a
+build nobody is running.** That is the same failure the binding rule exists to
+prevent, moved down one level.
+
+It cannot be closed by readback: no bitstream readback exists on this part, and
+there is no fabric-published build ID (mailbox words are DDR, which survives
+reconfiguration). So it is closed by **ordering** — `/tmp/CORENAME` is rewritten
+when a core loads, so an RBF mtime at or before the CORENAME mtime proves the
+load read those bytes.
+
+`scripts/fabric_provenance.py` implements this for any gate, including shell
+gates, with one call. Verdicts, only the first of which is a pass:
+
+    BOUND  UNBOUND  UNREACHABLE  MD5_MISMATCH  STALE_FABRIC  ORDER_UNKNOWN
+
+`UNREACHABLE` and `ORDER_UNKNOWN` exist so a missing measurement can never be
+laundered into a pass — the parent's "report it as unseen, never as absent".
+There is deliberately no exit 1: this tool never reports a product defect, only
+whether a claim has a subject.
+
+Measured live: `BOUND`, core loaded **3812 s** after the RBF was written.
+Control on the same healthy device with the md5 omitted: `UNBOUND`, rc=2 —
+proving UNBOUND is about the claim lacking a subject, not about device health.
+
+**Mutation testing caught a vacuity in this module too**, the second time in one
+session. `ordering-comparison-inverted` SURVIVED because the self-test fixtures
+pre-set `load_after_write`, so the comparison that computes it was never
+executed by any test. Fixed by extracting `compute_load_after_write()` and
+testing it directly. Now 14/14 self-test, 8/8 mutations killed.
+
+**Generalisable lesson: a hand-built fixture can silently bypass the very
+computation the test claims to cover.** If you construct the derived field
+yourself, you are testing your fixture, not the code.
+
+## §27 — Device availability, measured rather than asserted
+
+Reported offline by the parent at 16:48 ("ping 100% loss, ssh rc=255,
+independently confirmed"). Measured from this host at the same time:
+
+    16:48:51  ping 3/3, 0% loss, rtt 5.4-31.3 ms
+    16:48:51  ssh rc=0, uptime 9145 s (continuous; no reboot since 16:10)
+    16:49:31 - 16:53:29  60/60 UP, zero flaps, 4 s interval
+
+Denominator 60. The device is on WiFi with high RTT variance, so single-probe
+failures are plausible — but a 60/60 sample rules out a device that is off the
+network. This is the third status cycle reporting offline while it was
+reachable. **Availability should be reported as a rate with a denominator, not
+as a binary**; two workers can otherwise both be honest and contradict each other.

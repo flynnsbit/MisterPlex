@@ -1,0 +1,35 @@
+gates: add fabric_provenance, extending md5 binding to the loaded bitstream
+
+The parent has made RBF-md5 binding mandatory for every gate that reads a fit
+report, because 40 fit reports exist on this host and 35 describe builds nobody
+runs. That rule is right and it is not sufficient.
+
+The md5 identifies the file on the SD card, not the fabric. deploy_plex_core.sh
+defaults to DEPLOY_LOAD=none, which copies the RBF and deliberately does not
+load it, so after a default deploy the file carries the new md5 while the
+previous bitstream is still configured and painting every pixel. A gate can be
+perfectly BOUND and still describe a build nobody is running: the same failure
+the binding rule prevents, moved down one level.
+
+No bitstream readback and no fabric-published build ID exist, so identity is
+established by ordering against the CORENAME mtime instead.
+
+scripts/fabric_provenance.py gives any gate, including shell gates, a one-call
+verdict: BOUND, UNBOUND, UNREACHABLE, MD5_MISMATCH, STALE_FABRIC or
+ORDER_UNKNOWN. Only BOUND exits 0. UNREACHABLE and ORDER_UNKNOWN exist so a
+missing measurement cannot be laundered into a pass. There is no exit 1: this
+tool never reports a product defect, only whether a claim has a subject.
+
+Verified live: BOUND with the core loaded 3812s after the RBF was written, and
+UNBOUND rc=2 on the same healthy device when the md5 is omitted.
+
+Mutation testing again found a vacuity in the new code: the inverted-ordering
+mutation survived because the self-test fixtures pre-set load_after_write, so
+the comparison computing it was never executed. Extracted
+compute_load_after_write() and tested it directly. 14/14 self-test, 8/8
+mutations killed.
+
+Also records a 60/60 device availability sample taken while the device was
+reported offline.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>

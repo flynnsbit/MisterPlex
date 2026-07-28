@@ -1,0 +1,57 @@
+{
+  "test": [
+    "python3",
+    "scripts/fabric_provenance.py",
+    "--self-test"
+  ],
+  "mutations": [
+    {
+      "name": "stale-fabric-treated-as-bound",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if not ident[\"load_after_write\"]:",
+      "new": "    if False:"
+    },
+    {
+      "name": "order-unknown-assumed-good",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if ident[\"load_after_write\"] is None:",
+      "new": "    if False:"
+    },
+    {
+      "name": "unbound-accepted",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if not expect_md5:",
+      "new": "    if False:"
+    },
+    {
+      "name": "unreachable-accepted",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if not ident[\"ok\"]:",
+      "new": "    if False:"
+    },
+    {
+      "name": "md5-check-removed",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if not ident[\"rbf_md5\"].startswith(expect_md5):",
+      "new": "    if False:"
+    },
+    {
+      "name": "ordering-comparison-inverted",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    return load_mtime >= rbf_mtime",
+      "new": "    return load_mtime <= rbf_mtime"
+    },
+    {
+      "name": "non-bound-verdict-exits-zero",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if verdict != \"BOUND\":",
+      "new": "    if False:"
+    },
+    {
+      "name": "ordering-sentinel-guard-removed",
+      "target": "scripts/fabric_provenance.py",
+      "old": "    if rbf_mtime < 0 or load_mtime < 0:",
+      "new": "    if False:"
+    }
+  ]
+}

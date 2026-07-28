@@ -1,0 +1,5 @@
+Scope: 7 mutations across 1 file(s); test = python3 scripts/fabric_provenance.py --self-test
+SURVIVED  ordering-comparison-inverted  — test still green, behaviour UNCONSTRAINED
+
+Scope: 7 mutations; killed 6, survived 1
+SURVIVORS (vacuous coverage): ordering-comparison-inverted

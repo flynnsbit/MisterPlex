@@ -1,0 +1,5 @@
+PASS 11 leading warmup frames discarded; real content scored CONTENT_PRESENT
+PASS genuinely black source still BLACK_SIGNAL (warmup discard cannot mask it)
+PASS historical false negative reproduced at warmup-discard=0 (documents the bug)
+PASS mid-stream flat frames retained (only a leading run is discarded)
+PASS grab count bounded at frames + warmup_discard

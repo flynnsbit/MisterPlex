@@ -1,0 +1,8 @@
+PASS centred Plex-orange chevron detected -> rc=0
+PASS non-black content without a chevron rejected -> rc=1 (detector is not vacuous)
+PASS same frame passes without --expect-chevron (failure was chevron-specific)
+PASS full-screen orange flood rejected as a chevron
+PASS black frame -> rc=1 FAIL
+PASS black + unreachable source host -> rc=2 REFUSE (not blamed on the core)
+PASS missing input -> rc=2 REFUSE (never a silent 0)
+PASS left-edge artifact metric red/green (clean ratio inf vs planted inf)

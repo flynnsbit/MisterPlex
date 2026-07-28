@@ -1,0 +1,12 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+rbf_md5=3b1e8435
+rbf_mtime_epoch=1785268604
+rbf_mtime=2026-07-28 14:56:44
+corename=Plex
+corename_mtime_epoch=1785272416
+corename_mtime=2026-07-28 16:00:16
+fpga_state=operating
+now_epoch=1785275334
+uptime_s=9145

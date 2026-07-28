@@ -1,0 +1,4 @@
+Scope: 8 mutations across 1 file(s); test = python3 scripts/fabric_provenance.py --self-test
+
+Scope: 8 mutations; killed 8, survived 0
+MUTATION_OK — every mutation turned the test red
