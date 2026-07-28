@@ -1,4 +1,5 @@
 #include "Vh264_dpb_mc_tb.h"
+#include "tests/rtl/h264_real_p_scope.hpp"
 #include "verilated.h"
 
 #include <algorithm>
@@ -189,6 +190,7 @@ void writeSample(Sim& s, int mbx, int mby, int plane, int idx) {
     s.top.filtered_mb_y = mby;
     s.top.filtered_plane = plane;
     s.top.filtered_sample_idx = idx;
+    s.top.filtered_sample_pre_tap = planePattern(plane, x, y) ^ 0x55;
     s.top.filtered_sample = planePattern(plane, x, y);
     s.tick();
     uint32_t want = mbSampleAddr(mbx, mby, plane, idx);
@@ -199,6 +201,26 @@ void writeSample(Sim& s, int mbx, int mby, int plane, int idx) {
                   << " data=" << int(s.top.mem_wdata) << " want addr=" << want
                   << " data=" << int(planePattern(plane, x, y)) << "\n";
         throw std::runtime_error("filtered I420 writeback mismatch");
+    }
+}
+
+void writeTapSample(Sim& s, int mbx, int mby, int plane, int idx, uint8_t pre, uint8_t post) {
+    s.top.filtered_sample_valid = 1;
+    s.top.filtered_mb_x = mbx;
+    s.top.filtered_mb_y = mby;
+    s.top.filtered_plane = plane;
+    s.top.filtered_sample_idx = idx;
+    s.top.filtered_sample_pre_tap = pre;
+    s.top.filtered_sample = post;
+    s.tick();
+    uint32_t wantAddr = mbSampleAddr(mbx, mby, plane, idx);
+    if (!s.top.mem_we || s.top.mem_waddr != wantAddr || s.top.mem_wdata != post) {
+        std::cerr << "FAIL h264_dpb_mc RTL: pre/post tap direction DPB post-deblock write mismatch"
+                  << " idx=" << idx << " got_we=" << int(s.top.mem_we)
+                  << " got_addr=" << s.top.mem_waddr << " want_addr=" << wantAddr
+                  << " got_data=" << int(s.top.mem_wdata) << " want_post=" << int(post)
+                  << " forbidden_pre=" << int(pre) << "\n";
+        throw std::runtime_error("pre/post tap direction DPB post-deblock write mismatch");
     }
 }
 
@@ -265,6 +287,18 @@ void reset(Sim& s) {
     s.top.frame_slot_i = 0;
     s.top.frame_boundary = 0;
     s.top.fetch_start = 0;
+    s.top.filtered_sample_pre_tap = 0;
+    s.top.filtered_sample = 0;
+    s.top.tap_mb_x = 0;
+    s.top.tap_mb_y = 0;
+    s.top.tap_mb_width = 39;
+    s.top.tap_mb_start = 0;
+    s.top.tap_block_idx = 0;
+    s.top.tap_block_valid = 0;
+    for (int i = 0; i < 16; ++i) {
+        s.top.tap_pre_recon[i] = 0;
+        s.top.tap_post_deblock[i] = 0;
+    }
     s.tick();
     s.tick();
     s.top.reset = 0;
@@ -324,10 +358,12 @@ int runDeblockDpbSeam(const std::string& nalFixture) {
     for (int i = 0; i < 64; ++i) writeSample(s, 38, 29, 1, i);
     for (int i = 0; i < 64; ++i) writeSample(s, 38, 29, 2, i);
     commitFilteredMb(s, 1169, true);
-    if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != 1169 || s.top.ref_ready) {
+    if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != 1169 ||
+        s.top.deblock_ref_ready_pulse || s.top.ref_ready) {
         std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam terminal commit/ref_ready order"
                   << " wb=" << int(s.top.deblock_wb_valid)
                   << " addr=" << int(s.top.deblock_wb_mb_addr)
+                  << " pulse=" << int(s.top.deblock_ref_ready_pulse)
                   << " ref_ready=" << int(s.top.ref_ready) << "\n";
         return 1;
     }
@@ -341,6 +377,12 @@ int runDeblockDpbSeam(const std::string& nalFixture) {
         return 1;
     }
     s.tick();
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam explicit post-boundary delay"
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
     if (!s.top.ref_ready || s.top.reference_base != 0 || s.top.current_base != FRAME_BYTES) {
         std::cerr << "FAIL h264_dpb_mc RTL: deblock-DPB seam frame_done before terminal filtered MB commit"
                   << " ref_ready=" << int(s.top.ref_ready)
@@ -349,9 +391,213 @@ int runDeblockDpbSeam(const std::string& nalFixture) {
         return 1;
     }
 
+    std::cout << "Scope: seam_filtered_samples=" << (2 * (256 + 64 + 64))
+              << " seam_committed_mbs=2/1170"
+              << " frame_fraction=0.001709"
+              << " nals=" << nals << "\n";
     std::cout << "OK h264_dpb_mc deblock-DPB seam: filtered samples precede wb_valid; "
               << "terminal wb_valid precedes frame_done/ref_ready"
               << " nals=" << nals << " fixture=" << nalFixture << "\n";
+    return 0;
+}
+
+int runFullFrameDeblockDpbSeam(const std::string& nalFixture, bool faultSkipBypass) {
+    const auto scope = h264_real_p_scope::parseFirstPFrameScope(nalFixture);
+    if (scope.coded_w != W || scope.coded_h != H || scope.mb_w != 39 || scope.mb_h != 30 ||
+        scope.total_mbs != 1170 || scope.skipped_mbs != 928 || scope.inter_mbs != 197 ||
+        scope.intra_mbs != 45 || scope.p16x16 != 197) {
+        std::cerr << "FAIL h264_dpb_mc RTL: real P frame scope changed"
+                  << " coded=" << scope.coded_w << "x" << scope.coded_h
+                  << " mbs=" << scope.total_mbs
+                  << " skipped=" << scope.skipped_mbs
+                  << " inter=" << scope.inter_mbs
+                  << " intra=" << scope.intra_mbs
+                  << " P16x16=" << scope.p16x16 << "\n";
+        return 1;
+    }
+
+    Sim s;
+    reset(s);
+    int filteredMbs = 0;
+    int filteredSamples = 0;
+    int skippedFilteredMbs = 0;
+    int skippedFilteredSamples = 0;
+    int cropPaddingSamples = 0;
+    int wbCommits = 0;
+    const int chromaDisplayW = (scope.display_w + 1) / 2;
+
+    for (int mbAddr = 0; mbAddr < scope.total_mbs; ++mbAddr) {
+        const int mbx = mbAddr % scope.mb_w;
+        const int mby = mbAddr / scope.mb_w;
+        const auto& mb = scope.mbs.at(static_cast<size_t>(mbAddr));
+        const bool skipped = h264_real_p_scope::isSkip(mb);
+        if (faultSkipBypass && skipped) {
+            commitFilteredMb(s, mbAddr, mbAddr == scope.total_mbs - 1);
+            std::cerr << "FAIL h264_dpb_mc RTL: skipped MB bypassed filtered writeback"
+                      << " mb=" << mbAddr
+                      << " wb=" << int(s.top.deblock_wb_valid)
+                      << " order_error=" << int(s.top.deblock_commit_order_error) << "\n";
+            return s.top.deblock_commit_order_error ? 1 : 0;
+        }
+
+        for (int i = 0; i < 256; ++i) {
+            writeSample(s, mbx, mby, 0, i);
+            const int absX = mbx * 16 + (i & 15);
+            if (absX >= scope.display_w) ++cropPaddingSamples;
+        }
+        for (int i = 0; i < 64; ++i) {
+            writeSample(s, mbx, mby, 1, i);
+            const int absX = mbx * 8 + (i & 7);
+            if (absX >= chromaDisplayW) ++cropPaddingSamples;
+        }
+        for (int i = 0; i < 64; ++i) {
+            writeSample(s, mbx, mby, 2, i);
+            const int absX = mbx * 8 + (i & 7);
+            if (absX >= chromaDisplayW) ++cropPaddingSamples;
+        }
+        filteredSamples += 384;
+        ++filteredMbs;
+        if (skipped) {
+            ++skippedFilteredMbs;
+            skippedFilteredSamples += 384;
+        }
+
+        commitFilteredMb(s, mbAddr, mbAddr == scope.total_mbs - 1);
+        if (!s.top.deblock_wb_valid || s.top.deblock_wb_mb_addr != mbAddr || s.top.deblock_commit_order_error ||
+            s.top.ref_ready || s.top.deblock_ref_ready_pulse) {
+            std::cerr << "FAIL h264_dpb_mc RTL: full-frame deblock-DPB MB commit/order mismatch"
+                      << " mb=" << mbAddr
+                      << " wb=" << int(s.top.deblock_wb_valid)
+                      << " wb_addr=" << int(s.top.deblock_wb_mb_addr)
+                      << " order_error=" << int(s.top.deblock_commit_order_error)
+                      << " pulse=" << int(s.top.deblock_ref_ready_pulse)
+                      << " ref_ready=" << int(s.top.ref_ready) << "\n";
+            return 1;
+        }
+        ++wbCommits;
+        s.tick();
+    }
+
+    s.top.frame_boundary = 1;
+    s.tick();
+    s.top.frame_boundary = 0;
+    if (!s.top.deblock_ref_ready_pulse || s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame terminal frame_boundary/ref_ready phase"
+                  << " pulse=" << int(s.top.deblock_ref_ready_pulse)
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame explicit post-boundary delay"
+                  << " ref_ready=" << int(s.top.ref_ready) << "\n";
+        return 1;
+    }
+    s.tick();
+    if (!s.top.ref_ready || s.top.reference_base != 0 || s.top.current_base != FRAME_BYTES) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame DPB promotion mismatch"
+                  << " ref_ready=" << int(s.top.ref_ready)
+                  << " ref_base=" << s.top.reference_base
+                  << " cur_base=" << s.top.current_base << "\n";
+        return 1;
+    }
+
+    if (filteredMbs != 1170 || skippedFilteredMbs != 928 || filteredSamples != 449280 ||
+        wbCommits != 1170 || cropPaddingSamples != 4320) {
+        std::cerr << "FAIL h264_dpb_mc RTL: full-frame scope accounting mismatch"
+                  << " filtered_mbs=" << filteredMbs
+                  << " skipped_filtered_mbs=" << skippedFilteredMbs
+                  << " filtered_samples=" << filteredSamples
+                  << " wb_commits=" << wbCommits
+                  << " crop_padding_samples=" << cropPaddingSamples << "\n";
+        return 1;
+    }
+
+    std::cout << "Scope: full_frame_seam_filtered_mbs=" << filteredMbs << "/1170"
+              << " filtered_samples=" << filteredSamples
+              << " skipped_filtered_mbs=" << skippedFilteredMbs << "/" << scope.skipped_mbs
+              << " skipped_filtered_samples=" << skippedFilteredSamples
+              << " inter_mbs=" << scope.inter_mbs
+              << " intra_mbs=" << scope.intra_mbs
+              << " syntax_groups=" << scope.syntax_groups
+              << " qp_range=" << scope.qp_min << ".." << scope.qp_max
+              << " coded=" << scope.coded_w << "x" << scope.coded_h
+              << " display=" << scope.display_w << "x" << scope.display_h
+              << " crop_padding_samples_written=" << cropPaddingSamples
+              << "\n";
+    std::cout << "OK h264_dpb_mc full-frame deblock-DPB seam: every real P-frame MB, including skipped MBs, "
+              << "writes 384 POST-deblock samples before DPB ref promotion\n";
+    return 0;
+}
+
+int runTapDirectionSeam() {
+    Sim s;
+    reset(s);
+
+    std::array<uint8_t, 16> pre{};
+    std::array<uint8_t, 16> post{};
+    for (int i = 0; i < 16; ++i) {
+        pre[i] = static_cast<uint8_t>(0x20 + i);
+        post[i] = static_cast<uint8_t>(0xa0 + i);
+        s.top.tap_pre_recon[i] = pre[i];
+        s.top.tap_post_deblock[i] = post[i];
+    }
+
+    s.top.tap_mb_x = 0;
+    s.top.tap_mb_y = 0;
+    s.top.tap_mb_width = 39;
+    s.top.tap_mb_start = 1;
+    s.tick();
+    s.top.tap_mb_start = 0;
+    s.top.tap_block_idx = 0;
+    s.top.tap_block_valid = 1;
+    s.tick();
+    s.top.tap_block_valid = 0;
+    s.top.tap_block_idx = 1;
+    s.top.eval();
+
+    int preNeighbourSamples = 0;
+    if (!s.top.tap_has_left) {
+        std::cerr << "FAIL h264_dpb_mc RTL: pre/post tap direction neighbour left unavailable\n";
+        return 1;
+    }
+    for (int y = 0; y < 4; ++y) {
+        uint8_t wantPre = pre[y * 4 + 3];
+        uint8_t forbiddenPost = post[y * 4 + 3];
+        if (s.top.tap_left[y] != wantPre || s.top.tap_left[y] == forbiddenPost) {
+            std::cerr << "FAIL h264_dpb_mc RTL: pre/post tap direction intra neighbour used wrong tap"
+                      << " row=" << y << " got=" << int(s.top.tap_left[y])
+                      << " want_pre=" << int(wantPre)
+                      << " forbidden_post=" << int(forbiddenPost) << "\n";
+            return 1;
+        }
+        ++preNeighbourSamples;
+    }
+
+    int postDpbSamples = 0;
+    for (int i = 0; i < 4; ++i) {
+        uint8_t preSample = static_cast<uint8_t>(0x40 + i);
+        uint8_t postSample = static_cast<uint8_t>(0xc0 + i);
+        writeTapSample(s, 0, 0, 0, i, preSample, postSample);
+        uint32_t addr = mbSampleAddr(0, 0, 0, i);
+        if (s.mem[addr] != postSample || s.mem[addr] == preSample) {
+            std::cerr << "FAIL h264_dpb_mc RTL: pre/post tap direction DPB memory used wrong tap"
+                      << " idx=" << i << " mem=" << int(s.mem[addr])
+                      << " want_post=" << int(postSample)
+                      << " forbidden_pre=" << int(preSample) << "\n";
+            return 1;
+        }
+        ++postDpbSamples;
+    }
+    s.top.filtered_sample_valid = 0;
+    s.tick();
+
+    std::cout << "Scope: tap_pre_neighbour_samples=" << preNeighbourSamples
+              << " tap_post_dpb_samples=" << postDpbSamples
+              << " frame_fraction=1/1170"
+              << " coded=624x480\n";
+    std::cout << "OK h264_dpb_mc pre/post tap direction: intra neighbours consume PRE-deblock; "
+              << "DPB writes POST-deblock\n";
     return 0;
 }
 
@@ -410,14 +656,27 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
         bool seamOnly = false;
+        bool fullFrameSeamOnly = false;
+        bool tapDirectionOnly = false;
+        bool faultSkipBypass = false;
         std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--deblock-dpb-seam")
                 seamOnly = true;
+            else if (arg == "--deblock-dpb-full-frame")
+                fullFrameSeamOnly = true;
+            else if (arg == "--tap-direction-seam")
+                tapDirectionOnly = true;
+            else if (arg == "--fault-skip-bypass")
+                faultSkipBypass = true;
             else
                 nalFixture = arg;
         }
+        if (tapDirectionOnly)
+            return runTapDirectionSeam();
+        if (fullFrameSeamOnly)
+            return runFullFrameDeblockDpbSeam(nalFixture, faultSkipBypass);
         if (seamOnly)
             return runDeblockDpbSeam(nalFixture);
         int nals = countAnnexBNals(nalFixture);
@@ -659,6 +918,13 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        std::cout << "Scope: product_i420_writes=" << (4 * (256 + 64 + 64))
+                  << " luma_window=" << lc << "/441"
+                  << " chroma_windows=" << uc << "/" << vc << "/81"
+                  << " mc_pixels=256/64/64"
+                  << " frame_fraction=4/1170"
+                  << " coded=624x480"
+                  << " nals=" << nals << "\n";
         std::cout << "OK real RTL sim: h264_dpb_mc product RTL"
                   << " nals=" << nals
                   << " i420_writes=" << (4 * (256 + 64 + 64))

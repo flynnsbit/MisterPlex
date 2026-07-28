@@ -1,4 +1,5 @@
 #include "Vh264_deblock_tb.h"
+#include "tests/rtl/h264_real_p_scope.hpp"
 #include "verilated.h"
 
 #include <array>
@@ -116,6 +117,17 @@ int tc0Table(int idx, int bs) {
         {9,12,18},{10,13,20},{11,15,23},{13,17,25}};
     if (bs < 1 || bs > 3) return 0;
     return t[clip(idx, 0, 51)][bs - 1];
+}
+
+int chromaQp(int qpy, int offset) {
+    static constexpr int qpc[52] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 29, 30, 31, 32, 32,
+        33, 34, 34, 35, 35, 36, 36, 37, 37, 37, 38,
+        38, 38, 39, 39, 39, 39
+    };
+    return qpc[clip(qpy + offset, 0, 51)];
 }
 
 EdgeOut refEdge(const EdgeIO& in, bool chroma, int bs, int qp, int alphaOff, int betaOff) {
@@ -327,6 +339,119 @@ void testBs(Vh264_deblock_tb& dut) {
     dut.disable_all = 0; dut.p_ref = 2;
     dut.eval();
     if (!dut.unsupported_ref) { std::cerr << "FAIL bS unsupported ref loud flag\n"; std::exit(1); }
+}
+
+int evalBs(Vh264_deblock_tb& dut, bool mbBoundary, bool pIntra, bool qIntra, bool pNonzero, bool qNonzero,
+           int pRef, int qRef, int pMvx, int pMvy, int qMvx, int qMvy) {
+    dut.disable_all = 0;
+    dut.slice_boundary_blocked = 0;
+    dut.mb_boundary = mbBoundary;
+    dut.p_intra = pIntra;
+    dut.q_intra = qIntra;
+    dut.p_nonzero = pNonzero;
+    dut.q_nonzero = qNonzero;
+    dut.p_ref = pRef;
+    dut.q_ref = qRef;
+    dut.p_mvx = pMvx;
+    dut.p_mvy = pMvy;
+    dut.q_mvx = qMvx;
+    dut.q_mvy = qMvy;
+    dut.eval();
+    return dut.bs_derived;
+}
+
+int testRealPFrameBsScope(Vh264_deblock_tb& dut, const std::string& fixturePath, bool faultSkipBypass) {
+    const auto scope = h264_real_p_scope::parseFirstPFrameScope(fixturePath);
+    if (scope.coded_w != 624 || scope.coded_h != 480 || scope.display_w != 618 ||
+        scope.display_h != 480 || scope.total_mbs != 1170 || scope.skipped_mbs != 928 ||
+        scope.inter_mbs != 197 || scope.intra_mbs != 45 || scope.p16x16 != 197) {
+        std::cerr << "FAIL h264_deblock bS real-P scope changed"
+                  << " coded=" << scope.coded_w << "x" << scope.coded_h
+                  << " display=" << scope.display_w << "x" << scope.display_h
+                  << " mbs=" << scope.total_mbs
+                  << " skipped=" << scope.skipped_mbs
+                  << " inter=" << scope.inter_mbs
+                  << " intra=" << scope.intra_mbs
+                  << " P16x16=" << scope.p16x16 << "\n";
+        std::exit(1);
+    }
+
+    int edgeDecisions = 0;
+    int skippedEdgeDecisions = 0;
+    int interEdgeDecisions = 0;
+    int intraEdgeDecisions = 0;
+    int bs4 = 0, bs3 = 0, bs2 = 0, bs1 = 0, bs0 = 0;
+    int skippedBypassed = 0;
+    auto visit = [&](int pAddr, int qAddr) {
+        const auto& p = scope.mbs.at(static_cast<size_t>(pAddr));
+        const auto& q = scope.mbs.at(static_cast<size_t>(qAddr));
+        const bool touchesSkip = h264_real_p_scope::isSkip(p) || h264_real_p_scope::isSkip(q);
+        if (faultSkipBypass && touchesSkip) {
+            ++skippedBypassed;
+            return;
+        }
+        const int got = evalBs(dut, true,
+                               h264_real_p_scope::isIntra(p), h264_real_p_scope::isIntra(q),
+                               p.nonzero, q.nonzero, p.ref, q.ref,
+                               p.mvx, p.mvy, q.mvx, q.mvy);
+        ++edgeDecisions;
+        if (touchesSkip) ++skippedEdgeDecisions;
+        if (h264_real_p_scope::isInter(p) || h264_real_p_scope::isInter(q)) ++interEdgeDecisions;
+        if (h264_real_p_scope::isIntra(p) || h264_real_p_scope::isIntra(q)) ++intraEdgeDecisions;
+        switch (got) {
+        case 4: ++bs4; break;
+        case 3: ++bs3; break;
+        case 2: ++bs2; break;
+        case 1: ++bs1; break;
+        case 0: ++bs0; break;
+        default:
+            std::cerr << "FAIL h264_deblock bS real-P invalid bS=" << got << "\n";
+            std::exit(1);
+        }
+    };
+
+    for (int mby = 0; mby < scope.mb_h; ++mby)
+        for (int mbx = 1; mbx < scope.mb_w; ++mbx)
+            visit(mby * scope.mb_w + mbx - 1, mby * scope.mb_w + mbx);
+    for (int mby = 1; mby < scope.mb_h; ++mby)
+        for (int mbx = 0; mbx < scope.mb_w; ++mbx)
+            visit((mby - 1) * scope.mb_w + mbx, mby * scope.mb_w + mbx);
+
+    if (faultSkipBypass) {
+        std::cerr << "FAIL expected skipped MB bS red-check: skipped edges bypassed="
+                  << skippedBypassed << "\n";
+        return 1;
+    }
+    if (edgeDecisions != 2271 || skippedEdgeDecisions <= 0 || skippedEdgeDecisions + interEdgeDecisions <= 0 ||
+        intraEdgeDecisions <= 0 || bs4 <= 0 || bs0 <= 0) {
+        std::cerr << "FAIL h264_deblock bS real-P scope is vacuous"
+                  << " edge_decisions=" << edgeDecisions
+                  << " skipped_edges=" << skippedEdgeDecisions
+                  << " inter_edges=" << interEdgeDecisions
+                  << " intra_edges=" << intraEdgeDecisions
+                  << " bs4=" << bs4 << " bs3=" << bs3
+                  << " bs2=" << bs2 << " bs1=" << bs1 << " bs0=" << bs0 << "\n";
+        std::exit(1);
+    }
+
+    const int lumaCropSamples = (scope.coded_w - scope.display_w) * scope.coded_h;
+    const int chromaCropSamples = ((scope.coded_w - scope.display_w) / 2) * (scope.coded_h / 2) * 2;
+    std::cout << "Scope: real_p_bs_mb_boundary_edges=" << edgeDecisions << "/2271"
+              << " real_p_mbs=" << scope.total_mbs << "/1170"
+              << " skipped_mbs=" << scope.skipped_mbs
+              << " skipped_edges_scored=" << skippedEdgeDecisions
+              << " inter_mbs=" << scope.inter_mbs
+              << " inter_edges_scored=" << interEdgeDecisions
+              << " intra_mbs=" << scope.intra_mbs
+              << " intra_edges_scored=" << intraEdgeDecisions
+              << " bs_counts=" << bs4 << "/" << bs3 << "/" << bs2 << "/" << bs1 << "/" << bs0
+              << " left_top_unfiltered_edges=69"
+              << " coded=" << scope.coded_w << "x" << scope.coded_h
+              << " display=" << scope.display_w << "x" << scope.display_h
+              << " crop_padding_samples_in_coded_frame=" << (lumaCropSamples + chromaCropSamples)
+              << " qp_range=" << scope.qp_min << ".." << scope.qp_max
+              << "\n";
+    return edgeDecisions;
 }
 
 void testThresholds(Vh264_deblock_tb& dut) {
@@ -664,14 +789,20 @@ void testWritebackContract(Vh264_deblock_tb& dut) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     bool faultHorizontalFirst = false;
+    bool faultChromaQpy = false;
+    bool faultSkipBypass = false;
     std::string mbGoldenPath;
     std::string nalSequencePath;
+    std::string realPFramePath = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--fault-horizontal-first") faultHorizontalFirst = true;
+        else if (arg == "--fault-chroma-qpy") faultChromaQpy = true;
+        else if (arg == "--fault-skip-bypass") faultSkipBypass = true;
         else if (arg == "--mb-golden" && i + 1 < argc) mbGoldenPath = argv[++i];
         else if (arg == "--nal-sequence" && i + 1 < argc) nalSequencePath = argv[++i];
-        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--fault-horizontal-first]\n"; return 2; }
+        else if (arg == "--real-p-frame" && i + 1 < argc) realPFramePath = argv[++i];
+        else { std::cerr << "usage: " << argv[0] << " [--mb-golden path] [--nal-sequence path] [--real-p-frame path] [--fault-horizontal-first] [--fault-chroma-qpy] [--fault-skip-bypass]\n"; return 2; }
     }
     Vh264_deblock_tb dut;
     dut.clk = 0;
@@ -694,6 +825,8 @@ int main(int argc, char** argv) {
     int scopeChromaBs4 = 0;
     int fixtureQpMin = 52;
     int fixtureQpMax = -1;
+    const int realPBoundaryEdges = testRealPFrameBsScope(dut, realPFramePath, faultSkipBypass);
+    if (faultSkipBypass) return 1;
 
     const EdgeIO lumaNormal{{116,118,120,122},{118,120,122,124},{120,122,124,126},{126,127,128,129},
                             {132,133,134,135},{138,139,140,141},{140,141,142,143},{142,143,144,145}};
@@ -710,6 +843,34 @@ int main(int argc, char** argv) {
     scopeFilteredSamples += requireEdge(dut, "chroma bS2", chromaNormal, true, 2, 32, 0, 0);
     scopeChromaBs4 = requireEdge(dut, "chroma bS4", chromaNormal, true, 4, 40, 0, 0);
     scopeFilteredSamples += scopeChromaBs4;
+    const int highQpy = 40;
+    const int highQpc = chromaQp(highQpy, 0);
+    const EdgeIO chromaQpcTrap{{77,77,77,77},{78,78,78,78},{69,69,69,69},{80,80,80,80},
+                               {81,81,81,81},{92,92,92,92},{83,83,83,83},{84,84,84,84}};
+    const EdgeOut highWant = refEdge(chromaQpcTrap, true, 1, highQpc, 0, 0);
+    const EdgeOut highGot = dutEdge(dut, chromaQpcTrap, true, 1, faultChromaQpy ? highQpy : highQpc, 0, 0);
+    const EdgeOut highWrongQpy = refEdge(chromaQpcTrap, true, 1, highQpy, 0, 0);
+    if (same(highWant, highWrongQpy)) {
+        std::cerr << "FAIL h264_deblock RTL sim: chroma QPc trap vector does not distinguish QPy="
+                  << highQpy << " QPc=" << highQpc << "\n";
+        return 1;
+    }
+    if (faultChromaQpy) {
+        if (same(highWant, highGot)) {
+            std::cerr << "FAIL h264_deblock RTL sim: chroma QPc fault did not perturb high-QP vector\n";
+            return 1;
+        }
+        std::cerr << "FAIL expected chroma QPc red-check: QPy=" << highQpy
+                  << " substituted_for_QPc=" << highQpc << "\n";
+        return 1;
+    }
+    if (!same(highWant, highGot)) {
+        std::cerr << "FAIL h264_deblock RTL sim: chroma QPc high-QP mismatch QPy="
+                  << highQpy << " QPc=" << highQpc << " got " << edgeString(highGot)
+                  << " want " << edgeString(highWant) << "\n";
+        return 1;
+    }
+    scopeFilteredSamples += countModified(chromaQpcTrap, highGot);
 
     if (!mbGoldenPath.empty()) {
         const std::string json = readText(mbGoldenPath);
@@ -738,7 +899,8 @@ int main(int argc, char** argv) {
               << " chroma_bS4=" << scopeChromaBs4
               << " real_fixture_qp_range="
               << (fixtureQpMin == 52 ? -1 : fixtureQpMin) << ".." << fixtureQpMax
-              << " synthetic_qp_range=4..51\n";
+              << " synthetic_qp_range=4..51"
+              << " chroma_qpc_trap_qpy_qpc=" << highQpy << "/" << highQpc << "\n";
 
     std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
     return 0;

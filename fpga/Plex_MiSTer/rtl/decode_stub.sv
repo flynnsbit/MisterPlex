@@ -340,6 +340,7 @@ module decode_stub #(
 	wire              deblock_ref_ready_pulse;
 	wire [1:0]        deblock_ref_ready_slot;
 	wire              deblock_commit_order_error;
+	reg               dpb_frame_done_after_deblock;
 	wire [31:0]       dpb_current_base;
 	wire [31:0]       dpb_reference_base;
 	wire              dpb_mem_we;
@@ -479,13 +480,20 @@ module decode_stub #(
 		.commit_order_error(deblock_commit_order_error)
 	);
 
+	always @(posedge clk) begin
+		if (reset)
+			dpb_frame_done_after_deblock <= 1'b0;
+		else
+			dpb_frame_done_after_deblock <= deblock_ref_ready_pulse;
+	end
+
 	h264_dpb_one_ref #(
 		.FRAME_W(WIDTH), .FRAME_H(HEIGHT),
 		.BANK0_BASE(0), .BANK1_BASE(DPB_FRAME_BYTES)
 	) u_stream_dpb (
 		.clk(clk), .reset(reset),
 		.idr_start(dpb_idr_start),
-		.frame_done(ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse),
+		.frame_done(ENABLE_DPB_REF_SEAM ? dpb_frame_done_after_deblock : dpb_frame_done_pulse),
 		.ref_ready(dpb_ref_ready),
 		.current_base(dpb_current_base),
 		.reference_base(dpb_reference_base),

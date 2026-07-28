@@ -27,6 +27,7 @@ RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
+REAL_P_SCOPE="$ROOT/tests/rtl/h264_real_p_scope.hpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
 MB_COMMIT_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_mb_commit_fault"
 WRITEBACK_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_writeback_fault"
@@ -34,8 +35,9 @@ GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
 ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
 MB0_REF="$ROOT/tests/fixtures/p3_host_recon/mb0_luma_v1.json"
+REAL_P_FRAME="$ROOT/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264"
 
-for f in "$RTL" "$QIP" "$TOP" "$TB"; do
+for f in "$RTL" "$QIP" "$TOP" "$TB" "$REAL_P_SCOPE" "$REAL_P_FRAME"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -53,12 +55,42 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module h264_deblock_tb -Wno-fatal \
-  -CFLAGS "-std=c++17 -O2" \
+  -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
   "$TOP" "$RTL" "$TB"
-"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
+"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME"
 
 set +e
-FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-horizontal-first 2>&1)"
+SKIP_FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME" --fault-skip-bypass 2>&1)"
+SKIP_FAULT_RC=$?
+set -e
+printf '%s\n' "$SKIP_FAULT_OUT"
+if [[ "$SKIP_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: skipped MB bS bypass unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'skipped MB bS red-check' <<<"$SKIP_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: expected skipped MB bS diagnostic" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: skipped MB bS bypass failed real-P scope"
+
+set +e
+QPC_FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME" --fault-chroma-qpy 2>&1)"
+QPC_FAULT_RC=$?
+set -e
+printf '%s\n' "$QPC_FAULT_OUT"
+if [[ "$QPC_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: chroma QPy substitution unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -q 'chroma QPc red-check' <<<"$QPC_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: expected chroma QPc diagnostic" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: chroma QPy/QPc substitution failed high-QP trap"
+
+set +e
+FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME" --fault-horizontal-first 2>&1)"
 FAULT_RC=$?
 set -e
 printf '%s\n' "$FAULT_OUT"
@@ -76,10 +108,10 @@ mkdir -p "$MB_COMMIT_FAULT_BUILD"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$MB_COMMIT_FAULT_BUILD" \
   --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_MB_COMMIT_EARLY \
-  -CFLAGS "-std=c++17 -O2" \
+  -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
   "$TOP" "$RTL" "$TB"
 set +e
-MB_COMMIT_FAULT_OUT="$("$MB_COMMIT_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+MB_COMMIT_FAULT_OUT="$("$MB_COMMIT_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME" 2>&1)"
 MB_COMMIT_FAULT_RC=$?
 set -e
 printf '%s\n' "$MB_COMMIT_FAULT_OUT"
@@ -97,10 +129,10 @@ mkdir -p "$WRITEBACK_FAULT_BUILD"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$WRITEBACK_FAULT_BUILD" \
   --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_REF_READY_EARLY \
-  -CFLAGS "-std=c++17 -O2" \
+  -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
   "$TOP" "$RTL" "$TB"
 set +e
-WRITEBACK_FAULT_OUT="$("$WRITEBACK_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+WRITEBACK_FAULT_OUT="$("$WRITEBACK_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --real-p-frame "$REAL_P_FRAME" 2>&1)"
 WRITEBACK_FAULT_RC=$?
 set -e
 printf '%s\n' "$WRITEBACK_FAULT_OUT"

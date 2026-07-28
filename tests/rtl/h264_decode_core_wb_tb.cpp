@@ -169,6 +169,8 @@ int main(int argc, char** argv) {
                   << int(s.top.frame_mb_count) << " want=2\n";
         return 1;
     }
+    std::cout << "Scope: decode_core_writeback_mbs=2/" << (MB_W * MB_H)
+              << " samples=768 frame_done_seen=1\n";
     std::cout << "OK h264_decode_core writeback scoreboard: 2 MBs, 768 native-I420 samples "
               << "landed at DPB addresses; terminal frame_done observed\n";
     return 0;

@@ -117,6 +117,7 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/scripts/check_pipe_exit_safety.py",
     "$(ROOT)/scripts/check_define_parity.py",
     "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py",
+    "python3 $(ROOT)/scripts/check_rtl_module_instantiations.py --root h264_decode_core --require h264_deblock_writeback_ctrl",
     "python3 $(ROOT)/tests/unit/test_hw_visual_compare.py",
     "$(ROOT)/tests/unit/test_decode_throughput_gate.sh",
     "$(ROOT)/tests/unit/test_rtl_invariants.sh",
