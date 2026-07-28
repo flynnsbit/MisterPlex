@@ -15,7 +15,11 @@
 //   [1]      A/V resync       0=On 1=Off
 //   [2]      TV Mode          (core)
 //   [3]      Audio clock trim 0=On (685 ppm) 1=Off
-//   [4]      Content res      0=320x240 (proven default), 1=640x480 (480p path)
+//   [4]      Content res      0=320x240 (proven default), 1=480p path.
+//                             Main's CONF_STR still labels this 640x480 because
+//                             that is the presented scanout size; the payload
+//                             advertised to PMS and decoded by the daemon is
+//                             the DDR contract's coded 624x480 frame.
 //   [5]      reserved         do not reuse without a config-version bump
 //   [9:6]    A/V offset       4-bit SIGNED, 20 ms per step -> -160..+140 ms.
 //                             Signed (not biased) so the power-on value 0 means
@@ -33,6 +37,8 @@
 // adding J1 names does not change this v7 bit layout.
 
 #include <cstdint>
+
+#include "libmisterplex/ddr_frame_layout.hpp"
 
 namespace misterplex {
 
@@ -91,13 +97,13 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
 
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     if ((word >> 4) & 1u)
-        return {640, 480, "640x480", 2000};
+        return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480", 2500};
     return {320, 240, "320x240", 1000};
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
     if (w >= 640 || h >= 480)
-        return {640, 480, "640x480", 2000};
+        return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480", 2500};
     return {320, 240, "320x240", 1000};
 }
 
