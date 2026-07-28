@@ -82,6 +82,45 @@ fi
 grep -q 'plane_hash .* plane=U' "$OUT/uv_swap_verify.log"
 grep -q 'plane_hash .* plane=V' "$OUT/uv_swap_verify.log"
 
+python3 - <<'PY'
+from pathlib import Path
+width, height = 624, 480
+frame_size = width * height * 3 // 2
+y_size = width * height
+uv_size = (width // 2) * (height // 2)
+src = Path("tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv")
+data = bytearray(src.read_bytes())
+u = y_size
+v = y_size + uv_size
+data[u] ^= 0x5a
+Path("build/derived_validation/derived_slice_bad_u.yuv").write_bytes(data)
+data = bytearray(src.read_bytes())
+data[v] ^= 0xa5
+Path("build/derived_validation/derived_slice_bad_v.yuv").write_bytes(data)
+PY
+
+set +e
+python3 tools/derived_h264_slice_fixture.py verify --slice "$OUT/derived_slice_bad_u.yuv" --manifest "$SLICE_MANIFEST" > "$OUT/bad_u_verify.log" 2>&1
+bad_u_rc=$?
+set -e
+if [[ "$bad_u_rc" -eq 0 ]]; then
+  cat "$OUT/bad_u_verify.log"
+  echo "FAIL derived hash red-check: corrupted U byte unexpectedly verified" >&2
+  exit 1
+fi
+grep -q 'plane_hash .* plane=U' "$OUT/bad_u_verify.log"
+
+set +e
+python3 tools/derived_h264_slice_fixture.py verify --slice "$OUT/derived_slice_bad_v.yuv" --manifest "$SLICE_MANIFEST" > "$OUT/bad_v_verify.log" 2>&1
+bad_v_rc=$?
+set -e
+if [[ "$bad_v_rc" -eq 0 ]]; then
+  cat "$OUT/bad_v_verify.log"
+  echo "FAIL derived hash red-check: corrupted V byte unexpectedly verified" >&2
+  exit 1
+fi
+grep -q 'plane_hash .* plane=V' "$OUT/bad_v_verify.log"
+
 test -x tools/derived_h264_slice_fixture.py
 test -x tools/derived_h264_plane_hashes.py
-echo "test_derived_validation_hashes: OK always-on 8-frame slice verifies; corrupted Y hash and U/V swap go red"
+echo "test_derived_validation_hashes: OK always-on 8-frame slice verifies; corrupted Y hash, U/V swap, and single-byte U/V corruptions go red"
