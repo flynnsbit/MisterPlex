@@ -449,6 +449,8 @@ module h264_decode_skeleton #(
 
     // Deblock writeback controller
     localparam int MB_AW = (MB_COUNT <= 1) ? 1 : $clog2(MB_COUNT);
+    wire [MB_AW-1:0]    stim_mb_addr;
+    assign stim_mb_addr = stim_byte;  // zero-extended by width mismatch rule
     wire                wb_valid;
     wire [MB_AW-1:0]    wb_mb_addr;
     wire                wb_is_ref;
@@ -466,7 +468,7 @@ module h264_decode_skeleton #(
         .idr_frame_start(stim_valid && stim_mode == 4'd5),
         .filtered_sample_valid(stim_valid),
         .filtered_mb_valid(stim_valid && stim_byte[0]),
-        .filtered_mb_addr(stim_byte[MB_AW-1:0]),
+        .filtered_mb_addr(stim_mb_addr),
         .filtered_mb_is_ref(1'b1),
         .filtered_frame_done(stim_valid && stim_byte[7]),
         .frame_slot_i(2'd0),
