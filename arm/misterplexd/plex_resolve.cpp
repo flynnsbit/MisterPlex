@@ -148,7 +148,7 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = {
         {"240p", "320x240", 1000, 40, "baseline", 30},
-        {"480p", "640x480", 2500, 60, "baseline", 30},
+        {"480p", "624x480", 2500, 60, "baseline", 30},
     };
     return profiles;
 }
