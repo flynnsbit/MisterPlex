@@ -136,7 +136,11 @@ struct Sim {
     }
 };
 
-void runFrame(Sim& s, const h264_deblock_ref::Frame& pre, int disable_idc, int qp) {
+// Per-MB QPy targets for the accumulation pass.  Empty means "hold slice QP",
+// which is what every other pass wants.
+void runFrame(Sim& s, const h264_deblock_ref::Frame& pre, int disable_idc, int qp,
+              const std::vector<int>* qp_delta = nullptr,
+              std::vector<int>* qp_observed = nullptr) {
     s.top.reset = 1;
     s.top.slice_start = 0;
     s.top.recon_mb_valid = 0;
@@ -167,6 +171,11 @@ void runFrame(Sim& s, const h264_deblock_ref::Frame& pre, int disable_idc, int q
             s.top.recon_v[i] = pre.v[static_cast<size_t>((mby * 8 + i / 8) * (FRAME_W / 2) + mbx * 8 + (i % 8))];
         }
         const MbSyntax syn = syntaxFor(k);
+        if (qp_delta) {
+            s.top.mb_qp_delta = static_cast<int8_t>((*qp_delta)[static_cast<size_t>(k)]);
+        } else {
+            s.top.mb_qp_delta = 0;
+        }
         s.top.cbp_luma = static_cast<uint8_t>(syn.cbp_luma);
         s.top.mb_type = static_cast<uint8_t>(syn.mb_type);
         s.top.mb_skip = static_cast<uint8_t>(syn.skip ? 1 : 0);
@@ -193,6 +202,8 @@ void runFrame(Sim& s, const h264_deblock_ref::Frame& pre, int disable_idc, int q
         s.obs.luma_modified += s.top.obs_luma_modified;
         s.obs.chroma_modified += s.top.obs_chroma_modified;
         s.obs.last_chroma_qp = s.top.obs_last_chroma_qp;
+        if (qp_observed)
+            qp_observed->push_back(static_cast<int>(s.top.obs_qp_run));
     }
     int dummy2 = 0;
     for (int i = 0; i < 8; ++i) s.tick(-1, dummy2);
@@ -226,6 +237,64 @@ int main(int argc, char** argv) {
     Sim off;
     runFrame(off, pre, 1, qp);
 
+    // ── pass 3: QPy accumulation over the full frame ──
+    // w-cast measured QPy_range=3..33 over QPy_samples=1170 on the real
+    // 624x480 P frame and found a parser-side accumulator producing an
+    // impossible range.  The core had the same bug class: mb_qp_delta was tied
+    // to zero in this bench, so clause 7.4.5 accumulation was dead code here.
+    //
+    // Two properties, deliberately separated, because they are not the same
+    // claim and the first one alone is vacuous:
+    //   [0, QP_WALK_MBS)      a +7 / -24 walk that visits exactly 3..33 --
+    //                         corroborates w-cast's independently measured range.
+    //   [QP_WALK_MBS, 1170)   alternating -26 / +25 (both at the legal limit)
+    //                         so QPy_prev + mb_qp_delta leaves 0..51 and the
+    //                         normative "+52 then %52" wrap actually fires.
+    // The wrap segment is the one that has teeth: the 6-bit form this replaced
+    // is *correct* whenever the sum stays in range, so a non-wrapping track
+    // cannot tell the two implementations apart.  The first version of this
+    // pass did not wrap and the red proof caught it passing.
+    const int QP_WALK_MBS = 1000;
+    const int SLICE_QP = 3;
+    std::vector<int> qp_delta(MB_COUNT, 0);
+    std::vector<int> qp_expect(MB_COUNT, 0);
+    int neg_deltas = 0, wrap_events = 0;
+    {
+        int prev = SLICE_QP;
+        for (int k = 0; k < MB_COUNT; ++k) {
+            int d;
+            if (k == 0) {
+                d = 0;
+            } else if (k < QP_WALK_MBS) {
+                d = (prev + 7 <= 33) ? 7 : -24;
+            } else {
+                d = (k & 1) ? -26 : 25;
+            }
+            const int raw = prev + d;
+            if (raw < 0 || raw > 51) ++wrap_events;
+            if (d < 0) ++neg_deltas;
+            const int got = ((raw % 52) + 52) % 52;
+            qp_delta[static_cast<size_t>(k)] = d;
+            qp_expect[static_cast<size_t>(k)] = got;
+            prev = got;
+        }
+    }
+
+    std::vector<int> qp_observed;
+    Sim acc;
+    runFrame(acc, pre, 0, SLICE_QP, &qp_delta, &qp_observed);
+
+    int qp_min = 63, qp_max = -1, qp_wrong = 0, qp_out_of_range = 0;
+    for (int k = 0; k < MB_COUNT; ++k) {
+        const int got = qp_observed[static_cast<size_t>(k)];
+        if (k < QP_WALK_MBS) {
+            if (got < qp_min) qp_min = got;
+            if (got > qp_max) qp_max = got;
+        }
+        if (got < 0 || got > 51) ++qp_out_of_range;
+        if (got != qp_expect[static_cast<size_t>(k)]) ++qp_wrong;
+    }
+
     long long luma_diff = 0, chroma_diff = 0, bypass_diff = 0;
     std::array<uint8_t, SAMPLES_PER_MB> want{};
     for (int k = 0; k < MB_COUNT; ++k) {
@@ -252,6 +321,49 @@ int main(int argc, char** argv) {
                 qp, h264_deblock_ref::qpcMap(qp, 0), on.obs.commits, on.obs.sample_valids,
                 on.obs.wb_valids, on.obs.boundaries, on.obs.ref_ready_pulses,
                 on.obs.frame_dones, FRAME_W, FRAME_H);
+
+    std::printf("Scope: core_qp_accum_mbs=%d/%d qp_walk_range=%d..%d/%d "
+                "qp_negative_deltas=%d qp_wrap_events=%d qp_mismatches=%d/%d "
+                "qp_out_of_range=%d/%d\n",
+                static_cast<int>(qp_observed.size()), MB_COUNT, qp_min, qp_max,
+                QP_WALK_MBS, neg_deltas, wrap_events, qp_wrong, MB_COUNT,
+                qp_out_of_range, MB_COUNT);
+
+    if (static_cast<int>(qp_observed.size()) != MB_COUNT) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: observed %d macroblocks, want %d\n",
+                     static_cast<int>(qp_observed.size()), MB_COUNT);
+        return 1;
+    }
+    if (neg_deltas <= 0) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: the track drove no negative mb_qp_delta\n");
+        return 1;
+    }
+    // Non-vacuity: without an out-of-range sum the 6-bit form is indistinguishable
+    // from the normative one, so a track that never wraps proves nothing.
+    if (wrap_events <= 0) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: no macroblock drove QPy_prev+mb_qp_delta "
+                             "outside 0..51, so the normative wrap never fired and this pass "
+                             "cannot distinguish a 6-bit accumulator from a correct one\n");
+        return 1;
+    }
+    if (qp_out_of_range != 0) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: %d/%d macroblocks left the legal 0..51 "
+                             "range; clause 7.4.5 accumulation is wrapping wrongly\n",
+                     qp_out_of_range, MB_COUNT);
+        return 1;
+    }
+    if (qp_wrong != 0) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: %d/%d macroblocks disagree with "
+                             "((QPy_prev + mb_qp_delta + 52) %% 52)\n", qp_wrong, MB_COUNT);
+        return 1;
+    }
+    // Independent cross-check: w-cast measured this exact range on the real frame.
+    if (qp_min != 3 || qp_max != 33) {
+        std::fprintf(stderr, "FAIL h264_decode_core QPy: walk-segment range %d..%d, want 3..33 "
+                             "(w-cast measured QPy_range=3..33 over 1170 samples)\n",
+                     qp_min, qp_max);
+        return 1;
+    }
 
     if (bypass_diff != 0) {
         std::fprintf(stderr, "FAIL h264_decode_core deblock: disable_deblocking_filter_idc=1 "

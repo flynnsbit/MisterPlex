@@ -153,6 +153,13 @@ rtl_red H264_DECODE_CORE_FAULT_COMMIT_BEFORE_SAMPLES \
   "macroblock committed before its filtered sample run finished" \
   "FAIL h264_decode_core deblock"
 
+# QPy accumulation.  Restoring the 6-bit wrapping form must be caught: every
+# negative mb_qp_delta lands on the wrong QPy, which moves the observed range
+# off w-cast's independently measured 3..33.
+rtl_red H264_DECODE_CORE_FAULT_QP_WRAP_LINEAR \
+  "6-bit QPy accumulation wrapping a negative mb_qp_delta mod 64" \
+  "FAIL h264_decode_core QPy"
+
 # ── w-audit blind-spot regression: disabled generate ────────────────────────
 # w-audit measured that check_rtl_module_instantiations.py reports an
 # instantiation inside a disabled `if (0)` generate as REACHABLE.  A module can
@@ -204,8 +211,11 @@ fi
 set -e
 restore_core
 trap - EXIT
-if ! git -C "$ROOT" diff --quiet -- "$RTL"; then
+# Compare against the pre-mutation snapshot, not against git HEAD: HEAD would
+# also flag legitimate uncommitted work in the tree as "not restored".
+if ! cmp -s "$DG_BACKUP" "$RTL"; then
   echo "FAIL h264_decode_core deblock red-check: disabled-generate mutation was not restored" >&2
+  diff -u "$DG_BACKUP" "$RTL" >&2 || true
   exit 1
 fi
 printf '%s\n' "$DG_OUT"
