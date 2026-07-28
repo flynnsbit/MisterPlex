@@ -2909,15 +2909,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 useDdrF1_ = true;
             if (fpga_.ok() && useDdrF1_) {
                 latched = lastFrameLatch.publishToBothBanks(
-                    [this](const uint8_t* data, size_t len, const DdrFrameGeometry& geometry,
-                           int bank) {
-                        return fpga_.sendYuv420pFrameDdr(data, len, geometry, bank);
+                    [this](const LastFrameLatch::Publication& pub) {
+                        return fpga_.sendYuv420pFrameDdr(
+                            pub.frame.data(), pub.frame.size(), pub.frame.geometry(), pub.bank);
                     },
                     ddrBank_);
             }
         }
         if (latched) {
-            const DdrFrameGeometry& g = lastFrameLatch.geometry();
+            const DdrFrameGeometry& g = lastFrameLatch.frame().geometry();
             log("media: LastFrame idle latched complete DDR frame geometry=" +
                 std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height));
         } else {

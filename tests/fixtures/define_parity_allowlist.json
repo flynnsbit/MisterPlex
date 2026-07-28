@@ -16,7 +16,8 @@
     "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
     "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
-    "LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY": "Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry."
+    "LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY": "Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry.",
+    "LAST_FRAME_LATCH_FAULT_BANK_BASE": "Injected LastFrame expected-red fault: latch computes bank base from the wrong geometry stride."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."
