@@ -9,6 +9,153 @@ plays Plex content natively.
 
 ---
 
+## Update #4 — 2026-07-28 12:45 CDT (Hour 29.5)
+
+### First, a correction to Update #3
+
+I published "1204 entity rows" as the denominator for the post-fit measurement.
+**The real number is 827.** The helper that produced 1204 matched any line with
+more than ten semicolons and never bounded the table, so it over-counted.
+
+Every conclusion about what is and is not in the chip is **unchanged** — two
+independent parsers agree on the presence/absence results. But I put a wrong
+number in front of you and it should not stand. The worker caught its own error
+and reported it unprompted.
+
+### ⚠️ Your MiSTer is currently unreachable
+
+```
+ping 192.168.1.183   3 packets transmitted, 0 received, 100% loss
+arp                  FAILED
+ssh                  No route to host   (3 attempts over ~90s)
+```
+
+It was responding normally at 11:37. The worker holding the deploy token reports
+it left **no remote locks and no pending operation**, so this does not look like
+a hung command. Most likely the box is powered off, rebooted into a state without
+network, or dropped off the WiFi. **If you power-cycled it or unplugged it,
+nothing is wrong** — otherwise it may have wedged and will need a physical
+reset when you are back.
+
+Automated hardware verification is blocked until it returns. Simulation and
+build-side work continues unaffected.
+
+### The headline: a THIRD way for code to be missing from the chip
+
+We already knew about two. There is a third, and it is the one that actually
+explains today.
+
+I had set four conditions before authorizing another six-hour build. The worker
+noticed condition 4 — "confirm the modules are present *before* committing to the
+build" — had been assigned to nobody, so it **built the tool itself**: a Quartus
+analysis-and-synthesis pass with no place-and-route.
+
+```
+4 minutes 23 seconds   vs   ~6 hours for a full build
+```
+
+Run against the branch we had identified as the good one:
+
+```
+condition 1  decoder connected to top of chip   rc=0  GREEN
+condition 2  nothing tracked-but-uncompiled     rc=0  GREEN
+condition 4  actual synthesis result:
+             h264_decode_core   ABSENT — ELABORATED BUT OPTIMIZED AWAY
+             h264_decode_top    ABSENT — ELABORATED BUT OPTIMIZED AWAY
+             h264_intra_nb_ctx  ABSENT — ELABORATED BUT OPTIMIZED AWAY
+             decode_stub        PRESENT
+```
+
+**Both conditions passed and the decoder is still not in the design.** Had I
+authorized on 1 and 2 alone — which is exactly what I said I would do — we would
+have spent six hours producing a **fifth** decoder-less bitstream.
+
+### What is actually happening
+
+The decoder *is* wired in. `stream_path.sv:484` instantiates it unconditionally,
+and Quartus does elaborate it. Then the compiler **deletes it**, because it
+contributes zero resources — nothing downstream ever reads its outputs, so by
+the compiler's logic the entire decoder is dead code.
+
+There is a guard variable meant to prevent exactly this. It is itself assigned
+and never read. **The keep-alive keeps nothing.**
+
+So the three failure modes, stacked:
+
+| # | Mode | Detectable by |
+|---|---|---|
+| 1 | file never given to the compiler | file-list check |
+| 2 | module compiled but never instantiated | source graph |
+| 3 | **instantiated, elaborated, then deleted as useless** | **only real synthesis** |
+
+**No source-code analysis can ever detect mode 3.** Every tool we built today —
+and every tool we had before today — is blind to it by construction. This is
+why a year of green checkmarks coexisted with a black screen.
+
+It also redirects the fix. The instinct is to go wire the instantiation up
+properly; the instantiation is already correct. **The decoder's outputs have to
+be consumed by something that reaches a pin.** Without this measurement the team
+would have spent the next stretch fixing something that was never broken.
+
+### Where this leaves the plan
+
+`decode_stub` — the test-pattern painter — accounts for **70.6% of the entire
+design**. Notably, the "good" branch currently shows roughly the same resource
+profile as the decoder-less build, *because the decoder is free while it is being
+optimized away*. The memory squeeze only appears once the decoder is real. So
+retiring the stub and making the decoder survive synthesis are the same task, not
+two.
+
+The pre-fit check now runs in under five minutes, which changes how we work: we
+can iterate on "does the decoder survive synthesis" dozens of times a day instead
+of once.
+
+### Progress
+
+```
+ARM / Plex client        ████████████████░░░░  85%
+Integrity / release      ████████████████░░░░  80%   +5  pre-fit oracle: 6h -> 4min
+Display path (frame st.) ██████████░░░░░░░░░░  50%   -5  new build is a REGRESSION
+Shippable builds         ████████████░░░░░░░░  60%
+Picture: intra (stills)  ███████░░░░░░░░░░░░░  35%
+Bitstream parse / CAVLC  ████████░░░░░░░░░░░░  40%
+Deblocking filter        ██████░░░░░░░░░░░░░░  30%
+Picture: inter / motion  ██░░░░░░░░░░░░░░░░░░  10%
+                                              ─────
+OVERALL                  ███████░░░░░░░░░░░░░  36%
+```
+
+Display path is **cut to 50%**: measurement showed the build we deployed is a
+regression, not an improvement. The old build's fabric wrote telemetry ~68 times
+a second; the new one writes nothing to memory at all. Proven by writing a known
+pattern into all four mailbox addresses and finding it untouched six seconds
+later, with controls ruling out the daemon and the bridges.
+
+One genuinely useful exoneration: the timing-constraint change I authorized this
+morning is **netlist-neutral** — four different build variants produced a
+byte-identical bitstream. My hypothesis was wrong, and it is now ruled out by
+measurement rather than argument.
+
+### A lead on your black screensaver
+
+Worth flagging because it is user-visible. The ARM reads a status mailbox from
+the FPGA. When the FPGA dies, that mailbox holds stale garbage — and the ARM
+correctly refuses to guess, logging *"skipping frame rather than guessing a
+bank"*, so it draws nothing. But the FPGA is dead, so the garbage never clears.
+**It deadlocks permanently.**
+
+Manually clearing those bytes immediately produced `idle screen painted`. That is
+a plausible mechanism for *"the Plex logo doesn't work, just a black screen."*
+The caution is correct; the missing piece is a timeout, so a transient fault
+stops becoming permanent.
+
+### Next update
+
+~30 minutes. Leading with whether the MiSTer is back on the network, and with
+the first synthesis run where the decoder survives.
+
+---
+
 ## Update #3 — 2026-07-28 12:05 CDT (Hour 29)
 
 ### Headline: we finally know why the screen has never shown decoded video
