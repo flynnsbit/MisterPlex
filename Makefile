@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench gen-idle-frame profile-tools present-harness clean help plexd package h264-golden-tools
 
 all: unit
 
@@ -74,6 +74,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_sdram_mailbox
 	$(ROOT)/build/test_annexb_count
 	python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py
+	python3 $(ROOT)/scripts/check_idle_ddr_frame.py --self-test
 	@mkdir -p $(ROOT)/build
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
 	$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)
@@ -497,6 +498,16 @@ $(ROOT)/build/ddr_write_bench: $(ROOT)/tools/ddr_write_bench.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/ddr_write_bench.cpp
 
 ddr-bench: $(ROOT)/build/ddr_write_bench
+
+# Reference idle-screen I420 payload, rendered by the *product* renderer, for
+# byte-exact comparison against a live DDR frame-store bank readback.
+$(ROOT)/build/gen_idle_frame: $(ROOT)/tools/gen_idle_frame.cpp \
+		$(ROOT)/host/libmisterplex/idle_screen.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/gen_idle_frame.cpp
+
+gen-idle-frame: $(ROOT)/build/gen_idle_frame
 
 $(ROOT)/build/present_loop_harness: $(ROOT)/tools/present_loop_harness.cpp
 	@mkdir -p $(ROOT)/build
