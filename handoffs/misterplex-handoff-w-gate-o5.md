@@ -382,3 +382,72 @@ is two workers in one shift on a rule we both already knew, which suggests the
 rule needs a gate rather than more discipline — `scripts/check_pipe_exit_safety.py`
 covers committed shell, not interactive measurement, and interactive
 measurement is where our reports come from.
+
+## A8 — RULING 3 condition 1, measured on the branch it names
+
+**The command the parent made mandatory does not do what it says on the merge
+base.** On `w-decode-hour27` `2f165ed`, that branch's own checker:
+
+| command | rc |
+|---|---|
+| `--root emu --require h264_decode_core` | 0 |
+| `--require w_gate_totally_fictional_module` | **0** |
+| `--this-flag-does-not-exist` | **0** |
+
+It is the 200-line variant that never reads `sys.argv`. Condition 1 passes for
+every module, real or fictional. **The guarded checker must land on the merge
+base before condition 1 counts as evidence.** Capability score: canonical 5/5
+OK rc=0, merge-base copy 5/5 FAIL rc=1 (`check_reachability_gate_capability.py`).
+
+**The answer condition 1 was looking for is nevertheless yes.** Measured with
+the guarded parser via the new `--project-root`:
+
+```
+--project-root <2f165ed> --root emu --require h264_decode_core     rc=0
+TRUNK_PROOF emu path=emu hops=0 via_masking_lineage=no
+```
+
+TRUNK `emu -> stream_path -> h264_decode_core` is **PRESENT and not laundered
+through `decode_stub`**. W-FIT's ruling is confirmed by an independent parser.
+
+### Reproducing
+
+```bash
+git worktree add --detach .worktrees/w-gate-o5-mb 2f165ed
+python3 scripts/check_rtl_module_instantiations.py \
+    --project-root "$PWD/.worktrees/w-gate-o5-mb" --root emu --require h264_decode_core
+```
+
+`--project-root` rebinds paths rather than copying the parser, because copying
+it into a foreign tree kills it on that tree's missing manifests and the death
+reads as a finding about the target. Foreign roots are answered **structurally
+only**; this branch's bench-only/nondefault/drop policy is not applied and the
+output says so.
+
+### RULING 2 blocks RULING 3 c4 unless they are one change
+
+On the merge base, only **15 of 36** `h264_*` modules are under the core.
+Spot-checked with the shipped tool (`under_core` / `emu`):
+
+```
+h264_deblock_writeback_ctrl   rc=1 / rc=0     <- reaches emu ONLY via decode_stub
+h264_inter_mc_16x16           rc=1 / rc=0     <- ditto
+h264_dpb_one_ref              rc=1 / rc=0     <- ditto
+h264_baseline_syntax_parser   rc=1 / rc=1     <- reachable from nothing
+h264_exp_golomb_reader        rc=1 / rc=1     <- reachable from nothing
+```
+
+Eight modules are stub-only, and they include W-DEBLOCK's writeback controller
+and five of W-SWAP's seven. **Retiring `decode_stub` without relocating them
+under `h264_decode_core` in the same change cuts emu-reachable decode
+capability from 23 to 15** — condition 3 goes green while condition 4
+regresses. The entire bitstream/entropy category is reachable from nothing at
+all, so condition 4 cannot pass on this base without new wiring regardless.
+
+### Provenance note, raised neutrally
+
+W-FIT reported `--root`/`--require` results *on* `w-decode-hour27`. That branch's
+own checker cannot parse either flag. Their conclusions match mine, so I have
+no reason to doubt the numbers, but the instrument that produced them should be
+named — most likely a copy from `w-deblock-seam`. Any quoted reachability
+figure needs to name the branch **and** the checker it was measured with.
