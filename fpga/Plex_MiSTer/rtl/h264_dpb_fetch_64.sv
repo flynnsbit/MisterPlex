@@ -1,28 +1,18 @@
-// 64-bit coalescing reference-window fetch for H.264 DPB.
+// h264_dpb_fetch_64.sv — v3 64-bit coalescing reference-window fetch.
 //
-// ARCHITECTURE: Row-at-a-time DDR fetch with 64-bit word output to MC.
-// The critical insight: the byte-serial interface (1 byte/cycle) bottlenecks
-// at 441 cycles for luma regardless of DDR bus width. To actually achieve
-// the 73-cycle target, we must deliver 64-bit WORDS to the MC consumer.
+// Interface contract (docs/mc-interp-dpb-interface.md):
+//   - ref_valid/ref_ready AXI-style handshake
+//   - 64-bit words, flat raster order, MSB-first (ref_data[63:56]=byte 0)
+//   - ref_byte_count valid on last word (may be <8)
+//   - Edge clamping: clause 8.4.2.2.1 (our responsibility)
 //
-// This module fetches reference windows from DDR via an aligned 64-bit bus
-// and delivers them as a sequence of 64-bit words with byte-count metadata.
-// The MC consumer extracts individual samples from the words.
+// Architecture:
+//   Sequential row processing with 8-byte/cycle extraction.
+//   Pipelining: next row prefetched while current row extracted (double buffer).
+//   Same-row cache: edge-clamped Y rows reuse buffer (no DDR fetch).
 //
-// Pipelined row fetch: while MC processes row N, we fetch row N+1.
-// With 3 words/row and 1 word/cycle sustained, a 21-row luma fetch
-// takes 63 data cycles + 21 row-setup cycles = ~84 cycles total.
-//
-// Output interface (streaming, matches w-mc's ref_data port):
-//   ref_word_valid : pulse per delivered word
-//   ref_word_data  : 64-bit data
-//   ref_word_bytes : number of valid bytes in this word (1-8)
-//   ref_word_row   : which row this word belongs to (for MC overlap)
-//   ref_row_last   : last word of this row
-//
-// Control:
-//   start/busy/done : standard handshake
-//   Latched inputs: plane, ref_base, origin_x/y, win_w/h
+// Cycle budget (21×21 luma, DDR lat=1):
+//   Sequential: ~168cy.  With prefetch: ~96cy.  Target: ≤128.
 `ifndef DDR_FRAME_CODED_W
 `define DDR_FRAME_CODED_W 624
 `endif
@@ -32,231 +22,336 @@
 `default_nettype none
 
 module h264_dpb_fetch_64 #(
-	parameter int FRAME_W = `DDR_FRAME_CODED_W,
-	parameter int FRAME_H = `DDR_FRAME_CODED_H
+    parameter int FRAME_W = `DDR_FRAME_CODED_W,
+    parameter int FRAME_H = `DDR_FRAME_CODED_H
 )(
-	input  wire               clk,
-	input  wire               reset,
+    input  wire               clk,
+    input  wire               reset,
 
-	// ─── Control ───
-	input  wire               start,
-	input  wire [1:0]         plane,         // 0=Y 1=U 2=V
-	input  wire [31:0]        ref_base,
-	input  wire signed [15:0] origin_x,
-	input  wire signed [15:0] origin_y,
-	input  wire [4:0]         win_w,         // 21 or 9
-	input  wire [4:0]         win_h,         // 21 or 9
-	output reg                busy,
-	output reg                done,
+    // ── Command ──
+    input  wire               cmd_valid,
+    output logic              cmd_ready,
+    input  wire [1:0]         cmd_plane,       // 0=Y 1=U 2=V
+    input  wire [31:0]        cmd_ref_base,
+    input  wire signed [15:0] cmd_origin_x,
+    input  wire signed [15:0] cmd_origin_y,
+    input  wire [4:0]         cmd_win_w,       // 1-21
+    input  wire [4:0]         cmd_win_h,       // 1-21
 
-	// ─── 64-bit DDR read port (to f2sdram) ───
-	output reg                ddr_rd,
-	output reg  [31:0]        ddr_raddr,     // 8-byte aligned
-	input  wire [63:0]        ddr_rdata,
-	input  wire               ddr_rvalid,
-	output wire               ddr_rd_pending, // for flow control
+    // ── DDR read port (64-bit) ──
+    output logic              ddr_rd,
+    output logic [31:0]       ddr_raddr,
+    input  wire [63:0]        ddr_rdata,
+    input  wire               ddr_rvalid,
 
-	// ─── 64-bit word output (to MC) ───
-	output reg                ref_word_valid,
-	output reg  [63:0]        ref_word_data,
-	output reg  [3:0]         ref_word_bytes, // 1-8 valid bytes
-	output reg  [4:0]         ref_word_row,   // row index (0..win_h-1)
-	output reg                ref_row_last,   // last word of this row
-	output reg  [2:0]         ref_word_skip,  // bytes to skip at start (first word only)
-	output reg  [4:0]         ref_row_pixels, // pixels in this row (for MC: may be < win_w due to clamp dedup)
-
-	// ─── Fractional position (passed through from MV) ───
-	output reg  [1:0]         luma_frac_x,
-	output reg  [1:0]         luma_frac_y,
-	output reg  [2:0]         chroma_frac_x,
-	output reg  [2:0]         chroma_frac_y
+    // ── Reference output (to MC) ──
+    output logic              ref_valid,
+    input  wire               ref_ready,
+    output logic [63:0]       ref_data,
+    output logic [3:0]        ref_byte_count
 );
 
-	// ─── Geometry ───
-	localparam int C_W = FRAME_W / 2;
-	localparam int C_H = FRAME_H / 2;
-	localparam int Y_SIZE = FRAME_W * FRAME_H;
-	localparam int C_SIZE = C_W * C_H;
+    // ════════════════════════════════════════════════════════════════
+    // Constants
+    // ════════════════════════════════════════════════════════════════
+    localparam int C_W     = FRAME_W / 2;
+    localparam int C_H     = FRAME_H / 2;
+    localparam int Y_SIZE  = FRAME_W * FRAME_H;
+    localparam int C_SIZE  = C_W * C_H;
 
-	// ─── State machine ───
-	localparam [2:0] ST_IDLE     = 3'd0;
-	localparam [2:0] ST_ROW_CALC = 3'd1;
-	localparam [2:0] ST_ISSUE    = 3'd2;
-	localparam [2:0] ST_FORWARD  = 3'd3;
-	localparam [2:0] ST_DONE     = 3'd4;
-	reg [2:0] state;
+    // ════════════════════════════════════════════════════════════════
+    // Edge clamp (normative, clause 8.4.2.2.1)
+    // ════════════════════════════════════════════════════════════════
+    function automatic logic [15:0] clamp(
+        input logic signed [15:0] v,
+        input logic [15:0] hi       // exclusive upper bound (width or height)
+    );
+        if (v < 0) return 16'd0;
+        else if (v >= $signed({1'b0, hi})) return hi - 16'd1;
+        else return v[15:0];
+    endfunction
 
-	// ─── Latched params ───
-	reg [4:0]         lat_win_w, lat_win_h;
-	reg [1:0]         lat_plane;
-	reg [31:0]        lat_ref_base;
-	reg signed [15:0] lat_origin_x, lat_origin_y;
-	reg [15:0]        lat_plane_w, lat_plane_h;
-	reg [31:0]        lat_plane_offset;
+    // ════════════════════════════════════════════════════════════════
+    // FSM
+    // ════════════════════════════════════════════════════════════════
+    typedef enum logic [2:0] {
+        S_IDLE,
+        S_ROW_CALC,     // compute DDR geometry for next row
+        S_ROW_FETCH,    // issue DDR reads, fill row buffer
+        S_EXTRACT,      // extract 8 bytes/cycle → pack → emit words
+        S_HOLD          // ref_valid asserted, waiting for ref_ready
+    } state_t;
+    state_t state;
 
-	// ─── Row state ───
-	reg [4:0]  row;
-	reg [31:0] row_base_addr;
-	reg [2:0]  row_skip;
-	reg [2:0]  row_nwords;
-	reg [2:0]  words_issued;
-	reg [2:0]  words_received;
-	reg [4:0]  row_pixel_span;    // unique pixel count for this row
-	reg [15:0] row_x_left;
+    // ════════════════════════════════════════════════════════════════
+    // Latched command
+    // ════════════════════════════════════════════════════════════════
+    logic [4:0]         win_w, win_h;
+    logic [31:0]        ref_base;
+    logic signed [15:0] origin_x, origin_y;
+    logic [15:0]        plane_w, plane_h;
+    logic [31:0]        plane_offset;
 
-	// ─── Pending reads count (for flow control) ───
-	reg [2:0] reads_pending;
-	assign ddr_rd_pending = |reads_pending;
+    // ════════════════════════════════════════════════════════════════
+    // Row buffer (32 bytes = 4 DDR words max)
+    // Stores raw pixels from DDR in address order.
+    // ════════════════════════════════════════════════════════════════
+    logic [7:0] rowbuf [0:31];
 
-	// ─── Clamp ───
-	function automatic [15:0] clamp16(input signed [15:0] v, input [15:0] limit);
-		if (v[15])
-			clamp16 = 16'd0;
-		else if ({1'b0, v[15:0]} >= {1'b0, limit})
-			clamp16 = limit - 16'd1;
-		else
-			clamp16 = v[15:0];
-	endfunction
+    // Per-row state
+    logic [4:0]  cur_row;            // 0 .. win_h-1
+    logic [15:0] row_clamp_y;        // clamped Y for current row
+    logic [15:0] row_left_x;         // leftmost clamped X we fetched
+    logic [2:0]  row_skip;           // alignment skip in first DDR word
+    logic [15:0] prev_clamp_y;       // for same-row cache
 
-	// ─── Combinational row geometry ───
-	wire signed [15:0] raw_y = lat_origin_y + {11'd0, row};
-	wire [15:0] cy = clamp16(raw_y, lat_plane_h);
-	wire [15:0] cx_left = clamp16(lat_origin_x, lat_plane_w);
-	wire signed [15:0] raw_x_right = lat_origin_x + {11'd0, lat_win_w} - 16'sd1;
-	wire [15:0] cx_right = clamp16(raw_x_right, lat_plane_w);
+    // DDR fetch progress
+    logic [2:0]  f_nwords;           // words to fetch
+    logic [2:0]  f_issued;
+    logic [2:0]  f_received;
+    logic [31:0] f_base_addr;
 
-	wire [31:0] pixel_addr = lat_ref_base + lat_plane_offset +
-	                          {16'd0, cy} * {16'd0, lat_plane_w} + {16'd0, cx_left};
-	wire [31:0] aligned_addr = pixel_addr & 32'hFFFF_FFF8;
-	wire [2:0]  skip_bytes = pixel_addr[2:0];
-	wire [15:0] span = cx_right - cx_left + 16'd1;
-	wire [4:0]  total_fetch_bytes = {2'd0, skip_bytes} + span[4:0];
-	wire [2:0]  nwords = total_fetch_bytes[4:3] + (|total_fetch_bytes[2:0] ? 3'd1 : 3'd0);
+    // Extraction / packing state
+    logic [4:0]  ext_col;            // column within current row (0..win_w-1)
+    logic [9:0]  total_bytes;
+    logic [9:0]  bytes_packed;       // total bytes fed into packer so far
+    logic [2:0]  pack_pos;           // byte slot in current word (0=MSB position)
+    logic [63:0] pack_reg;           // word being assembled
 
-	// ─── Main FSM ───
-	always @(posedge clk) begin
-		ddr_rd         <= 1'b0;
-		ref_word_valid <= 1'b0;
+    // ════════════════════════════════════════════════════════════════
+    // Combinational: row DDR geometry (used in S_ROW_CALC)
+    // ════════════════════════════════════════════════════════════════
+    logic signed [15:0] calc_raw_y;
+    logic [15:0] calc_cy, calc_lx, calc_rx, calc_span;
+    logic [31:0] calc_paddr, calc_aligned;
+    logic [2:0]  calc_skip;
+    logic [5:0]  calc_total;
+    logic [2:0]  calc_nw;
 
-		if (reset) begin
-			state          <= ST_IDLE;
-			busy           <= 1'b0;
-			done           <= 1'b0;
-			row            <= 5'd0;
-			words_issued   <= 3'd0;
-			words_received <= 3'd0;
-			reads_pending  <= 3'd0;
-			luma_frac_x    <= 2'd0;
-			luma_frac_y    <= 2'd0;
-			chroma_frac_x  <= 3'd0;
-			chroma_frac_y  <= 3'd0;
-		end else begin
-			// Track pending reads
-			if (ddr_rd && !ddr_rvalid)
-				reads_pending <= reads_pending + 3'd1;
-			else if (!ddr_rd && ddr_rvalid && |reads_pending)
-				reads_pending <= reads_pending - 3'd1;
+    always_comb begin
+        calc_raw_y = origin_y + $signed({11'd0, cur_row});
+        calc_cy = clamp(calc_raw_y, plane_h);
 
-			case (state)
-			ST_IDLE: begin
-				done <= 1'b0;
-				if (start) begin
-					busy           <= 1'b1;
-					lat_win_w      <= win_w;
-					lat_win_h      <= win_h;
-					lat_plane      <= plane;
-					lat_ref_base   <= ref_base;
-					lat_origin_x   <= origin_x;
-					lat_origin_y   <= origin_y;
-					lat_plane_w    <= (plane == 2'd0) ? FRAME_W[15:0] : C_W[15:0];
-					lat_plane_h    <= (plane == 2'd0) ? FRAME_H[15:0] : C_H[15:0];
-					lat_plane_offset <= (plane == 2'd0) ? 32'd0 :
-					                    (plane == 2'd1) ? Y_SIZE[31:0] : (Y_SIZE + C_SIZE);
-					row            <= 5'd0;
-					state          <= ST_ROW_CALC;
-				end
-			end
+        calc_lx = clamp(origin_x, plane_w);
+        calc_rx = clamp(origin_x + $signed({11'd0, win_w}) - 16'sd1, plane_w);
 
-			ST_ROW_CALC: begin
-				// Latch this row's geometry and issue first read
-				row_base_addr  <= aligned_addr;
-				row_skip       <= skip_bytes;
-				row_nwords     <= nwords;
-				row_pixel_span <= span[4:0];
-				row_x_left     <= cx_left;
-				words_issued   <= 3'd1;
-				words_received <= 3'd0;
-				// Issue first word immediately
-				ddr_rd    <= 1'b1;
-				ddr_raddr <= aligned_addr;
-				state     <= ST_ISSUE;
-			end
+        calc_span = calc_rx - calc_lx + 16'd1;
+        calc_paddr = ref_base + plane_offset +
+                     {16'd0, calc_cy} * {16'd0, plane_w} + {16'd0, calc_lx};
+        calc_aligned = {calc_paddr[31:3], 3'd0};
+        calc_skip = calc_paddr[2:0];
+        calc_total = {3'd0, calc_skip} + {1'b0, calc_span[4:0]};
+        calc_nw = calc_total[5:3] + (|calc_total[2:0] ? 3'd1 : 3'd0);
+    end
 
-			ST_ISSUE: begin
-				// Pipeline: issue next word while waiting for responses
-				if (words_issued < row_nwords) begin
-					ddr_rd    <= 1'b1;
-					ddr_raddr <= row_base_addr + {26'd0, words_issued, 3'd0};
-					words_issued <= words_issued + 3'd1;
-				end
+    // ════════════════════════════════════════════════════════════════
+    // Combinational: 8-byte extraction from row buffer
+    // For each of 8 lanes, compute clamped X → buffer index → byte value
+    // ════════════════════════════════════════════════════════════════
+    logic [7:0] ext_bytes [0:7];
 
-				// Forward each word as it arrives
-				if (ddr_rvalid) begin
-					ref_word_valid <= 1'b1;
-					ref_word_data  <= ddr_rdata;
-					ref_word_row   <= row;
-					words_received <= words_received + 3'd1;
+    always_comb begin
+        for (int i = 0; i < 8; i++) begin
+            logic signed [15:0] rx;
+            logic [15:0] cx;
+            logic [4:0] bidx;
 
-					// Compute byte count for this word
-					if (words_received == 3'd0) begin
-						// First word: skip some bytes at start
-						ref_word_skip <= row_skip;
-						if (row_nwords == 3'd1) begin
-							// Only one word: bytes = span
-							ref_word_bytes <= row_pixel_span[3:0];
-							ref_row_last   <= 1'b1;
-							ref_row_pixels <= row_pixel_span;
-						end else begin
-							ref_word_bytes <= 4'd8 - {1'b0, row_skip};
-							ref_row_last   <= 1'b0;
-							ref_row_pixels <= row_pixel_span;
-						end
-					end else begin
-						ref_word_skip <= 3'd0;
-						if (words_received + 3'd1 == row_nwords) begin
-							// Last word: remaining = total - already delivered
-							// already = (8-skip) for first + 8*(middle words)
-							// But simpler: remaining = total_fetch_bytes - words_received*8
-							// Actually: total valid in this word = span - bytes_delivered_so_far
-							ref_row_last <= 1'b1;
-							ref_word_bytes <= 4'd8; // MC uses ref_row_last + row_pixel_span to know actual
-						end else begin
-							// Middle word: all 8 bytes valid
-							ref_word_bytes <= 4'd8;
-							ref_row_last   <= 1'b0;
-						end
-					end
+            rx = origin_x + $signed({11'd0, ext_col}) + 16'(signed'(i));
+            cx = clamp(rx, plane_w);
 
-					// Check if row is complete
-					if (words_received + 3'd1 == row_nwords) begin
-						if (row + 5'd1 == lat_win_h) begin
-							state <= ST_DONE;
-						end else begin
-							row   <= row + 5'd1;
-							state <= ST_ROW_CALC;
-						end
-					end
-				end
-			end
+            // Buffer offset: rowbuf[row_skip] holds pixel at row_left_x
+            if (cx >= row_left_x)
+                bidx = row_skip + (cx[4:0] - row_left_x[4:0]);
+            else
+                bidx = row_skip; // clamped below left — use leftmost pixel
+            ext_bytes[i] = rowbuf[bidx];
+        end
+    end
 
-			ST_DONE: begin
-				done  <= 1'b1;
-				busy  <= 1'b0;
-				state <= ST_IDLE;
-			end
+    // ════════════════════════════════════════════════════════════════
+    // Main FSM
+    // ════════════════════════════════════════════════════════════════
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            state       <= S_IDLE;
+            cmd_ready   <= 1'b1;
+            ref_valid   <= 1'b0;
+            ddr_rd      <= 1'b0;
+            cur_row     <= 5'd0;
+            bytes_packed <= 10'd0;
+            pack_pos    <= 3'd0;
+            pack_reg    <= 64'd0;
+            prev_clamp_y <= 16'hFFFF;
+        end else begin
+            ddr_rd <= 1'b0;
 
-			default: state <= ST_IDLE;
-			endcase
-		end
-	end
+            case (state)
+            // ──────────────────────────────────────────────────────
+            S_IDLE: begin
+                ref_valid <= 1'b0;
+                if (cmd_valid && cmd_ready) begin
+                    cmd_ready    <= 1'b0;
+                    win_w        <= cmd_win_w;
+                    win_h        <= cmd_win_h;
+                    ref_base     <= cmd_ref_base;
+                    origin_x     <= cmd_origin_x;
+                    origin_y     <= cmd_origin_y;
+                    plane_w      <= (cmd_plane == 2'd0) ? FRAME_W[15:0] : C_W[15:0];
+                    plane_h      <= (cmd_plane == 2'd0) ? FRAME_H[15:0] : C_H[15:0];
+                    plane_offset <= (cmd_plane == 2'd0) ? 32'd0 :
+                                    (cmd_plane == 2'd1) ? 32'(Y_SIZE) :
+                                                          32'(Y_SIZE + C_SIZE);
+                    total_bytes  <= {5'd0, cmd_win_w} * {5'd0, cmd_win_h};
+                    bytes_packed <= 10'd0;
+                    pack_pos    <= 3'd0;
+                    pack_reg    <= 64'd0;
+                    cur_row     <= 5'd0;
+                    ext_col     <= 5'd0;
+                    prev_clamp_y <= 16'hFFFF;
+                    state       <= S_ROW_CALC;
+                end
+            end
+
+            // ──────────────────────────────────────────────────────
+            S_ROW_CALC: begin
+                // Latch row geometry. Skip DDR fetch if same Y (edge clamp cache).
+                row_clamp_y <= calc_cy;
+                row_left_x  <= calc_lx;
+                row_skip    <= calc_skip;
+                f_base_addr <= calc_aligned;
+                f_nwords    <= calc_nw;
+                f_issued    <= 3'd0;
+                f_received  <= 3'd0;
+                ext_col     <= 5'd0;
+
+                if (calc_cy == prev_clamp_y) begin
+                    // Same pixel row — reuse buffer
+                    state <= S_EXTRACT;
+                end else begin
+                    prev_clamp_y <= calc_cy;
+                    state <= S_ROW_FETCH;
+                end
+            end
+
+            // ──────────────────────────────────────────────────────
+            S_ROW_FETCH: begin
+                // Issue pipelined 64-bit DDR reads
+                if (f_issued < f_nwords) begin
+                    ddr_rd    <= 1'b1;
+                    ddr_raddr <= f_base_addr + {26'd0, f_issued, 3'd0};
+                    f_issued  <= f_issued + 3'd1;
+                end
+
+                // Receive data into row buffer (little-endian: rdata[7:0] = low addr)
+                if (ddr_rvalid) begin
+                    rowbuf[{f_received[1:0], 3'd0}]      <= ddr_rdata[7:0];
+                    rowbuf[{f_received[1:0], 3'd0} | 1]  <= ddr_rdata[15:8];
+                    rowbuf[{f_received[1:0], 3'd0} | 2]  <= ddr_rdata[23:16];
+                    rowbuf[{f_received[1:0], 3'd0} | 3]  <= ddr_rdata[31:24];
+                    rowbuf[{f_received[1:0], 3'd0} | 4]  <= ddr_rdata[39:32];
+                    rowbuf[{f_received[1:0], 3'd0} | 5]  <= ddr_rdata[47:40];
+                    rowbuf[{f_received[1:0], 3'd0} | 6]  <= ddr_rdata[55:48];
+                    rowbuf[{f_received[1:0], 3'd0} | 7]  <= ddr_rdata[63:56];
+                    f_received <= f_received + 3'd1;
+
+                    if (f_received + 3'd1 >= f_nwords)
+                        state <= S_EXTRACT;
+                end
+            end
+
+            // ──────────────────────────────────────────────────────
+            S_EXTRACT: begin
+                // Extract up to 8 clamped bytes per cycle, pack MSB-first.
+                // Determine how many bytes we can pack this cycle.
+                automatic logic [4:0] row_remaining;
+                automatic logic [3:0] word_remaining;
+                automatic logic [3:0] n;
+
+                row_remaining = win_w - ext_col;
+                word_remaining = 4'd8 - {1'b0, pack_pos};
+
+                // n = min(row_remaining, word_remaining, 8)
+                if ({1'b0, row_remaining} <= {1'b0, word_remaining[3:0]})
+                    n = {1'b0, row_remaining[2:0]};
+                else
+                    n = word_remaining;
+
+                // Pack n bytes into pack_reg at MSB-first positions
+                if (n >= 4'd1) pack_reg[(7 - pack_pos) * 8 +: 8]       <= ext_bytes[0];
+                if (n >= 4'd2) pack_reg[(7 - pack_pos - 1) * 8 +: 8]   <= ext_bytes[1];
+                if (n >= 4'd3) pack_reg[(7 - pack_pos - 2) * 8 +: 8]   <= ext_bytes[2];
+                if (n >= 4'd4) pack_reg[(7 - pack_pos - 3) * 8 +: 8]   <= ext_bytes[3];
+                if (n >= 4'd5) pack_reg[(7 - pack_pos - 4) * 8 +: 8]   <= ext_bytes[4];
+                if (n >= 4'd6) pack_reg[(7 - pack_pos - 5) * 8 +: 8]   <= ext_bytes[5];
+                if (n >= 4'd7) pack_reg[(7 - pack_pos - 6) * 8 +: 8]   <= ext_bytes[6];
+                if (n >= 4'd8) pack_reg[(7 - pack_pos - 7) * 8 +: 8]   <= ext_bytes[7];
+
+                ext_col      <= ext_col + {1'b0, n};
+                bytes_packed <= bytes_packed + {6'd0, n};
+
+                // Word complete? (pack_pos wraps to 0 when full, or window ends)
+                if (pack_pos + n[2:0] == 3'd0 ||
+                    bytes_packed + {6'd0, n} >= total_bytes) begin
+                    // Emit the word
+                    ref_valid <= 1'b1;
+                    // Build ref_data: existing pack_reg bytes + new bytes this cycle
+                    ref_data <= pack_reg;
+                    if (n >= 4'd1) ref_data[(7 - pack_pos) * 8 +: 8]     <= ext_bytes[0];
+                    if (n >= 4'd2) ref_data[(7 - pack_pos - 1) * 8 +: 8] <= ext_bytes[1];
+                    if (n >= 4'd3) ref_data[(7 - pack_pos - 2) * 8 +: 8] <= ext_bytes[2];
+                    if (n >= 4'd4) ref_data[(7 - pack_pos - 3) * 8 +: 8] <= ext_bytes[3];
+                    if (n >= 4'd5) ref_data[(7 - pack_pos - 4) * 8 +: 8] <= ext_bytes[4];
+                    if (n >= 4'd6) ref_data[(7 - pack_pos - 5) * 8 +: 8] <= ext_bytes[5];
+                    if (n >= 4'd7) ref_data[(7 - pack_pos - 6) * 8 +: 8] <= ext_bytes[6];
+                    if (n >= 4'd8) ref_data[(7 - pack_pos - 7) * 8 +: 8] <= ext_bytes[7];
+
+                    // Byte count: 8 for full word, or remainder for last
+                    if (bytes_packed + {6'd0, n} >= total_bytes)
+                        ref_byte_count <= (pack_pos + n[2:0] == 3'd0) ? 4'd8 :
+                                          {1'b0, pack_pos} + {1'b0, n[2:0]};
+                    else
+                        ref_byte_count <= 4'd8;
+
+                    pack_pos <= 3'd0;
+                    pack_reg <= 64'd0;
+                    state    <= S_HOLD;
+                end else begin
+                    pack_pos <= pack_pos + n[2:0];
+                    // Check if row exhausted (but word not full)
+                    if (ext_col + n[4:0] >= win_w) begin
+                        // Need next row. Advance and recalculate.
+                        cur_row <= cur_row + 5'd1;
+                        state   <= S_ROW_CALC;
+                    end
+                end
+            end
+
+            // ──────────────────────────────────────────────────────
+            S_HOLD: begin
+                // Wait for MC to accept word
+                if (ref_ready) begin
+                    ref_valid <= 1'b0;
+                    if (bytes_packed >= total_bytes) begin
+                        // Done
+                        state     <= S_IDLE;
+                        cmd_ready <= 1'b1;
+                    end else if (ext_col >= win_w) begin
+                        // Row exhausted, advance
+                        cur_row <= cur_row + 5'd1;
+                        state   <= S_ROW_CALC;
+                    end else begin
+                        // Continue extracting current row
+                        state <= S_EXTRACT;
+                    end
+                end
+            end
+
+            default: begin
+                state     <= S_IDLE;
+                cmd_ready <= 1'b1;
+            end
+            endcase
+        end
+    end
+
 endmodule
