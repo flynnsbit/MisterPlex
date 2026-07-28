@@ -87,6 +87,17 @@ GEN_EDGE_MARKERS_PY = Path(
     os.environ.get("GEN_EDGE_MARKERS_PY", ROOT / "scripts/gen_edge_markers.py")
 )
 
+ACTIVE_SV_MACROS = {
+    # Product/Quartus define set relevant to these source invariants.
+    "DDR_FRAME_STORE",
+    "FRAME_W",
+    "FRAME_H",
+}
+ACTIVE_C_MACROS = {
+    # ARM daemon product-side view.
+    "__arm__",
+}
+
 
 def read(path: Path) -> str:
     try:
@@ -129,6 +140,84 @@ def strip_comments(text: str) -> str:
         else:
             out.append(c)
             i += 1
+    return strip_inactive_preprocessor_blocks("".join(out))
+
+
+def eval_preprocessor_condition(expr: str, active_macros: set[str]) -> bool:
+    expr = expr.strip()
+    if expr in {"0", ""}:
+        return False
+    if expr == "1":
+        return True
+    m = re.fullmatch(r"defined\s*\(?\s*(\w+)\s*\)?", expr)
+    if m:
+        return m.group(1) in active_macros
+    if re.fullmatch(r"\w+", expr):
+        return expr in active_macros
+    # Keep this intentionally conservative: unknown compound expressions are not
+    # evidence for product code. If an invariant needs one, add it explicitly.
+    return False
+
+
+def strip_inactive_preprocessor_blocks(text: str) -> str:
+    """Select the product/default branch of simple SV/C preprocessor conditionals.
+
+    Source-text invariants must not be satisfiable by a decoy literal in
+    `ifdef NEVER, #if 0, or fault-injection branches. This small line-oriented
+    preprocessor is deliberately conservative and covers the condition forms
+    used by the files this test audits.
+    """
+    out: list[str] = []
+    stack: list[dict[str, bool]] = []
+
+    def active() -> bool:
+        return all(frame["current"] for frame in stack)
+
+    def begin(cond: bool) -> None:
+        parent = active()
+        stack.append({"parent": parent, "current": parent and cond, "seen": cond})
+
+    def alternate(cond: bool) -> None:
+        if not stack:
+            return
+        frame = stack[-1]
+        take = frame["parent"] and not frame["seen"] and cond
+        frame["current"] = take
+        frame["seen"] = frame["seen"] or cond
+
+    for line in text.splitlines(keepends=True):
+        sv = re.match(r"\s*`(ifdef|ifndef|elsif|else|endif)\b\s*(\w+)?", line)
+        c = re.match(r"\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b\s*(.*)", line)
+        if sv:
+            op, name = sv.group(1), sv.group(2) or ""
+            if op == "ifdef":
+                begin(name in ACTIVE_SV_MACROS)
+            elif op == "ifndef":
+                begin(name not in ACTIVE_SV_MACROS)
+            elif op == "elsif":
+                alternate(name in ACTIVE_SV_MACROS)
+            elif op == "else":
+                alternate(True)
+            elif op == "endif" and stack:
+                stack.pop()
+            continue
+        if c:
+            op, expr = c.group(1), c.group(2)
+            if op == "ifdef":
+                begin(expr.strip() in ACTIVE_C_MACROS)
+            elif op == "ifndef":
+                begin(expr.strip() not in ACTIVE_C_MACROS)
+            elif op == "if":
+                begin(eval_preprocessor_condition(expr, ACTIVE_C_MACROS))
+            elif op == "elif":
+                alternate(eval_preprocessor_condition(expr, ACTIVE_C_MACROS))
+            elif op == "else":
+                alternate(True)
+            elif op == "endif" and stack:
+                stack.pop()
+            continue
+        if active():
+            out.append(line)
     return "".join(out)
 
 
@@ -171,23 +260,34 @@ def parse_num(expr: str) -> int:
 
 
 def sv_const(text: str, name: str) -> int:
-    m = re.search(
+    matches = list(re.finditer(
         rf"(?:localparam|parameter)(?:\s+\w+)?(?:\s*\[[^\]]+\])?\s+{re.escape(name)}\s*=\s*([^,\n;)]+)",
         text,
-    )
-    if not m:
+    ))
+    if not matches:
         fail(
             f"{name} is missing from RTL. This is part of the host/FPGA contract; "
             "restore the fixed mailbox/scanout parameter or update the matching host side and tests."
         )
-    return parse_num(m.group(1))
+    if len(matches) > 1:
+        fail(
+            f"{name} has {len(matches)} active RTL definitions. Source-text invariants must not be "
+            "satisfiable by a duplicate decoy definition; keep one product definition."
+        )
+    return parse_num(matches[0].group(1))
 
 
 def cpp_const_map(text: str) -> dict[str, str]:
-    return {
-        m.group(1): m.group(2).strip()
-        for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*=\s*([^;]+);", text)
-    }
+    out: dict[str, str] = {}
+    for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*=\s*([^;]+);", text):
+        name = m.group(1)
+        if name in out:
+            fail(
+                f"{name} has multiple active host constexpr definitions. Source-text invariants "
+                "must not be satisfiable by a duplicate decoy definition."
+            )
+        out[name] = m.group(2).strip()
+    return out
 
 
 def cpp_const(text: str, name: str) -> int:
@@ -222,6 +322,30 @@ def cpp_const(text: str, name: str) -> int:
         return parse_num(expr)
 
     return resolve(consts[name])
+
+
+def check_source_text_matcher_hardening() -> None:
+    sv = strip_comments(
+        "`ifdef NEVER_DEFINED_DECOY\n"
+        "localparam DE_LAG = 3'd3;\n"
+        "`endif\n"
+        "localparam DE_LAG = 3'd4;\n"
+    )
+    check(
+        sv_const(sv, "DE_LAG") == 4,
+        "inactive SV preprocessor branches can still satisfy source-text invariants",
+    )
+    cpp = strip_comments(
+        "#if 0\n"
+        "constexpr uint32_t kDecoyValue = 1;\n"
+        "#endif\n"
+        "constexpr uint32_t kDecoyValue = 2;\n"
+    )
+    check(
+        cpp_const(cpp, "kDecoyValue") == 2,
+        "inactive C/C++ preprocessor branches can still satisfy source-text invariants",
+    )
+    print("PASS source-text matcher ignores inactive preprocessor decoys")
 
 
 def check_present_core() -> None:
@@ -290,23 +414,50 @@ def check_phase_a_surface() -> None:
             f"Plex.sv J1 controller mapper missing `{label}`. Phase A playback controls must "
             "remain exposed to MiSTer's mapper; restore the J1 Play/Pause/Stop/Skip labels.",
         )
+    hps_instances = re.findall(r"hps_io\s*#\s*\([^;]*?\)\s+\w+\s*\((.*?)\n\s*\);", text, re.S)
+    check(
+        len(hps_instances) == 1,
+        f"Plex.sv should contain exactly one active hps_io instance; found {len(hps_instances)}. "
+        "Do not satisfy the input-surface guard with a decoy instance.",
+    )
+    hps_ports = hps_instances[0]
     for token, why in (
-        (r"\bps2_key\b", "keyboard playback controls"),
-        (r"\bjoystick_0\b", "controller playback controls"),
         (r"\.ps2_key\s*\(\s*ps2_key\s*\)", "hps_io PS/2 wiring"),
         (r"\.joystick_0\s*\(\s*joystick_0\s*\)", "hps_io joystick wiring"),
-        (r"joy_rise\s*\[\s*4\s*\]", "J1 Play/Pause decode"),
-        (r"joy_rise\s*\[\s*5\s*\]", "J1 Stop decode"),
-        (r"joy_rise\s*\[\s*6\s*\]", "J1 Skip Fwd decode"),
-        (r"joy_rise\s*\[\s*7\s*\]", "J1 Skip Back decode"),
-        (r"ps2_code\s*==\s*8'h29", "Space Play/Pause decode"),
-        (r"ps2_code\s*==\s*8'h76", "Esc Stop decode"),
-        (r"ps2_code\s*==\s*8'h74", "Right-arrow Skip Fwd decode"),
-        (r"ps2_code\s*==\s*8'h6B", "Left-arrow Skip Back decode"),
     ):
+        check(
+            re.search(token, hps_ports) is not None,
+            f"Plex.sv missing {why}. Phase A requires joystick_0 and ps2_key command decode; "
+            "restore the hps_io wiring and playback command decoder.",
+        )
+    exact_decodes = [
+        (
+            r"wire\s+key_play_pause\s*=\s*ps2_press\s*&\s*~ps2_ext\s*&\s*\(\s*ps2_code\s*==\s*8'h29\s*\)\s*;",
+            "Space Play/Pause decode",
+        ),
+        (
+            r"wire\s+key_stop\s*=\s*ps2_press\s*&\s*~ps2_ext\s*&\s*\(\s*ps2_code\s*==\s*8'h76\s*\)\s*;",
+            "Esc Stop decode",
+        ),
+        (
+            r"wire\s+key_skip_fwd\s*=\s*ps2_press\s*&\s*ps2_ext\s*&\s*\(\s*ps2_code\s*==\s*8'h74\s*\)\s*;",
+            "Right-arrow Skip Fwd decode",
+        ),
+        (
+            r"wire\s+key_skip_back\s*=\s*ps2_press\s*&\s*ps2_ext\s*&\s*\(\s*ps2_code\s*==\s*8'h6B\s*\)\s*;",
+            "Left-arrow Skip Back decode",
+        ),
+    ]
+    for token, why in exact_decodes:
         check(
             re.search(token, text) is not None,
             f"Plex.sv missing {why}. Phase A requires joystick_0 and ps2_key command decode; "
+            "restore the hps_io wiring and playback command decoder.",
+        )
+    for bit, why in ((4, "J1 Play/Pause"), (5, "J1 Stop"), (6, "J1 Skip Fwd"), (7, "J1 Skip Back")):
+        check(
+            re.search(rf"\bjoy_rise\s*\[\s*{bit}\s*\]", text) is not None,
+            f"Plex.sv missing {why} decode. Phase A requires joystick_0 and ps2_key command decode; "
             "restore the hps_io wiring and playback command decoder.",
         )
     print("PASS Plex.sv Phase A feature surface")
@@ -317,13 +468,12 @@ def check_plex_reset_domains() -> None:
 
     def missing_reset_requirements(src: str) -> list[str]:
         missing: list[str] = []
-        if not re.search(
-            r"`ifdef\s+DDR_FRAME_STORE\s+wire\s+present_reset\s*=\s*reset\s*;"
-            r"\s*`else\s*wire\s+present_reset\s*=\s*reset\s*\|\s*sdram_startup_busy\s*;"
-            r"\s*`endif",
-            src,
-            re.S,
-        ):
+        if re.search(r"wire\s+present_reset\s*=\s*reset\s*\|\s*sdram_startup_busy\s*;", src):
+            missing.append(
+                "Plex.sv must keep DDR_FRAME_STORE present_core reset independent of "
+                "sdram_startup_busy. Product DDR presentation may not wait for SDRAM startup"
+            )
+        if not re.search(r"wire\s+present_reset\s*=\s*reset\s*;", src):
             missing.append(
                 "Plex.sv must keep DDR_FRAME_STORE present_core reset independent of "
                 "sdram_startup_busy, while non-DDR builds still wait for SDRAM startup"
@@ -342,11 +492,10 @@ def check_plex_reset_domains() -> None:
         fail(f"Plex.sv reset-domain contract: {missing[0]}")
 
     faulted = re.sub(
-        r"(`ifdef\s+DDR_FRAME_STORE\s+wire\s+present_reset\s*=\s*)reset(\s*;)",
+        r"(wire\s+present_reset\s*=\s*)reset(\s*;)",
         r"\1reset | sdram_startup_busy\2",
         text,
         count=1,
-        flags=re.S,
     )
     if not missing_reset_requirements(faulted):
         fail("deliberately tying DDR present reset to sdram_startup_busy did not make the reset gate red")
@@ -1912,6 +2061,7 @@ def check_h264_quartus_subset() -> None:
 
 
 def main() -> int:
+    check_source_text_matcher_hardening()
     check_present_core()
     check_phase_a_surface()
     check_plex_reset_domains()
