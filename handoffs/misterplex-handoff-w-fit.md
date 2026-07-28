@@ -2981,3 +2981,112 @@ live device                                rc=1  NO_SINK
 cable at the DE10-Nano and confirm the dongle is powered, then re-run the script.
 `SINK_PRESENT` would mean the capture chain is finally trustworthy, and every
 display verdict this project has recorded should be re-derived from that point.
+
+---
+
+## 45. Three corrections to the parent, and RBF-md5 binding made mandatory (with the refinement that makes it work)
+
+### 45.1 The device is NOT offline
+
+Parent: *"Still offline -- ping 100% loss, ssh rc=255, independently confirmed."*
+
+```
+15:31:43  ping -c3 192.168.1.183  ->  3 packets transmitted, 3 received, 0% loss
+15:31:46  ssh                     ->  SSH_OK, rc=0
+          Plex.rbf = 3b1e8435, CORENAME=MENU, uptime 4517.74s (boot 14:16:28)
+```
+
+I have been talking to it continuously for the last half hour, including the i2c
+reads in §44. Whatever is failing is between the parent's network position and the
+board, not the board. This matters operationally: **W-E2E is being told to stand
+down on a device that is up**, and gates that exit 77 "against a genuinely absent
+device" were in fact exiting 77 against a device that answers me.
+
+### 45.2 `3b1e8435` is already deployed. There is nothing to deploy when it returns.
+
+Parent: *"the moment it returns ... W-FIT-O5 deploys `3b1e8435`."*
+
+It went in at **14:56** and was graded in §40. Both authorized deploys are spent
+(2 of 2). `3b1e8435` is silent exactly as `fb4bad84` is, which is what exonerated
+the SDC. Re-issuing it would be a no-op against a byte-identical resident.
+
+### 45.3 The binding gate was bound to the wrong bitstream
+
+The parent endorsed RBF-md5 binding on the strength of `w-arm-o5`'s report:
+
+```
+BOUND report -> Plex.rbf md5=fb4bad84
+```
+
+**`fb4bad84` has not been resident since 14:56.** The parent then described the
+`present_core` / `ddr_frame_store` presence result as being *"on the fit report
+bound to the resident bitstream"* — it was bound to the **previous** resident.
+
+The gate did not catch this because **binding to *an* RBF is not binding to *the
+resident* RBF**. That is the same rule one level up, and it is where the actual
+error lives. The parent's figure was also low:
+
+```
+59 Plex.fit.rpt on this host   (parent said 40)
+ 3 bind to the RESIDENT 3b1e8435
+ 7 bind to the PREVIOUS resident fb4bad84
+38 cannot be bound at all -- no sibling Plex.rbf exists
+```
+
+38 of 59 reports are **unbindable by construction**. Any rule that only says
+"require a md5" leaves those looking respectable.
+
+**The conclusion survives, but only because I re-ran it bound properly:**
+
+```
+BOUND report -> .../wfit-hour27-a/Plex.rbf md5=3b1e8435   (resident, @device)
+PRESENT present_core     instances=1 subtree_rows=487 parents=emu
+PRESENT ddr_frame_store  instances=1 subtree_rows=482 parents=present_core
+ABSENT  frame_store
+ABSENT  h264_decode_core
+PRESENT decode_stub      instances=1 subtree_rows=61  parents=stream_path
+Scope: 827 entity rows
+```
+
+So the display path does survive fitting in the silicon the user is looking at,
+and the mode-3 optimize-away is now confirmed **on the resident core** rather than
+only on `2f165ed`. Right answer, previously reached from the wrong document.
+
+### 45.4 Implementation: `--expect-rbf-md5`, and `@device`
+
+`scripts/check_map_hierarchy.py` now refuses to pass an unbound post-fit report.
+
+- **`--expect-rbf-md5 @device`** reads the md5 from the MiSTer over ssh and binds
+  the report to **the core actually running**. This is the refinement §45.3 calls
+  for: a literal md5 only proves you matched a constant you chose yourself.
+- Unreachable device under `@device` returns **77 UNSCORED**, never a pass. An
+  unverifiable binding must not silently succeed.
+- **Pre-fit `.map.rpt` reports are exempt (`BIND_NA`)** — A&S runs before
+  place-and-route, so no bitstream exists to bind to. This is structural, not a
+  waiver, and it cannot apply post-fit. Without this carve-out a mandatory rule
+  would have broken `check_prefit_elaboration.sh`, the mode-3 gate, which is the
+  most load-bearing gate we have. **Verified on a real map report: rc=0, not 77.**
+  It is the only caller, so no other gate breaks.
+
+Red/green, six cases:
+
+```
+post-fit, no flag                        rc=77  UNBOUND
+resident report vs wrong md5 fb4bad84    rc=1   BIND_MISMATCH
+resident report vs literal 3b1e8435      rc=0   BOUND
+resident report vs @device               rc=0   BOUND (resident read live: 3b1e8435)
+OLD fb4bad84 report vs @device           rc=1   BIND_MISMATCH  <-- rejects w-arm-o5's report
+--rbf points at a missing file           rc=77  UNBOUND_NO_RBF
+pre-fit .map.rpt, real report            rc=0   BIND_NA
+```
+
+The fifth case is the one that matters: the tool now mechanically rejects the exact
+report that produced the endorsed-but-misbound result.
+
+### 45.5 On the capacity ruling
+
+I have nothing measured to add to the `decode_stub` DPB decomposition and will not
+comment on it beyond one thing I can support: I confirmed above that
+`h264_decode_core` is ABSENT and `decode_stub` PRESENT **on the resident core**, so
+the parent's "we have never seen the true resource cost of a real decoder" holds
+for the bitstream currently in fabric, not merely for `2f165ed`.

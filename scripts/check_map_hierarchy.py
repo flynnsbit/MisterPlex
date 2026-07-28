@@ -19,12 +19,15 @@ Exit codes:
   0  every --require module is present (and, with --under, under that parent)
   1  at least one required module is absent or misparented
   2  refusal: Scope: 0 -- no entity rows parsed, cannot claim a PASS
- 77  skip: report file absent
+ 77  skip/UNSCORED: report file absent, or a post-fit report that is not
+     bound to a bitstream (see --expect-rbf-md5). UNBOUND is never a PASS.
 """
 
 import argparse
+import hashlib
 import os
 import re
+import subprocess
 import sys
 
 # Inside the "Resource Utilization by Entity" table, rows look like:
@@ -86,6 +89,78 @@ def parse_entities(path):
     return rows
 
 
+def device_resident_md5():
+    """md5 of the core actually resident on the MiSTer, or (None, reason)."""
+    host = os.environ.get("MISTER_HOST", "192.168.1.183")
+    user = os.environ.get("MISTER_USER", "root")
+    pw = os.environ.get("MISTER_PASS", "1")
+    cmd = [
+        "sshpass", "-p", pw, "ssh", "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10", f"{user}@{host}",
+        "md5sum /media/fat/_Utility/Plex.rbf",
+    ]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+    except Exception as exc:  # noqa: BLE001 - any failure is UNSCORED, never a pass
+        return None, f"ssh failed: {exc}"
+    if out.returncode != 0:
+        return None, f"ssh rc={out.returncode} (device unreachable?)"
+    field = out.stdout.split()
+    if not field or len(field[0]) != 32:
+        return None, "no md5 in device output"
+    return field[0], None
+
+
+def check_binding(args, kind):
+    """Bind a post-fit report to a bitstream.
+
+    Returns None to proceed, or an exit code to return immediately.
+
+    Why: 59 fit reports exist on this host and only 3 describe the resident
+    core. Reading the wrong one is silent and undetectable. A post-fit report
+    that is not bound to a bitstream is UNBOUND and can never be a PASS.
+    """
+    if kind.startswith("map"):
+        # A&S runs before place-and-route, so no RBF exists to bind to. This is
+        # a structural exemption, not a waiver: it can never apply post-fit.
+        print("BIND_NA pre-fit A&S report -- no bitstream exists by construction")
+        return None
+
+    if not args.expect_rbf_md5:
+        print("UNBOUND: post-fit report with no --expect-rbf-md5")
+        print("UNBOUND: this report may describe a build nobody is running")
+        print("UNBOUND: pass a md5, or '@device' to bind to the resident core")
+        return 77
+
+    rbf = args.rbf or os.path.join(os.path.dirname(args.report) or ".", "Plex.rbf")
+    if not os.path.exists(rbf):
+        print(f"UNBOUND_NO_RBF: cannot verify binding, no bitstream at {rbf}")
+        return 77
+
+    h = hashlib.md5()
+    with open(rbf, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    actual = h.hexdigest()
+
+    want = args.expect_rbf_md5
+    if want == "@device":
+        want, reason = device_resident_md5()
+        if want is None:
+            print(f"UNSCORED: could not read the resident md5 -- {reason}")
+            print("UNSCORED: refusing to pass an unverified binding")
+            return 77
+        print(f"resident core on device: {want[:8]}")
+
+    if not actual.startswith(want.lower()[: len(want)]):
+        print(f"BIND_MISMATCH: {rbf} is {actual[:8]}, expected {want[:8]}")
+        print("BIND_MISMATCH: this report does NOT describe the intended build")
+        return 1
+
+    print(f"BOUND report -> {rbf} md5={actual[:8]}")
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("report", help="Plex.map.rpt or Plex.fit.rpt")
@@ -106,6 +181,18 @@ def main():
         metavar="LOG",
         help="synthesis log; lets an absent module be classified as "
         "ELABORATED_BUT_OPTIMIZED_AWAY rather than NEVER_ELABORATED",
+    )
+    ap.add_argument(
+        "--expect-rbf-md5",
+        metavar="MD5|@device",
+        help="bind this post-fit report to a bitstream. Pass a full/short md5, "
+        "or '@device' to bind to the core actually resident on the MiSTer. "
+        "Without this, a post-fit report is UNBOUND and cannot pass.",
+    )
+    ap.add_argument(
+        "--rbf",
+        metavar="PATH",
+        help="RBF to bind against (default: Plex.rbf beside the report)",
     )
     args = ap.parse_args()
 
@@ -132,6 +219,11 @@ def main():
     rows = parse_entities(args.report)
     kind = "map/A&S (pre-fit)" if args.report.endswith(".map.rpt") else "fit (post-fit)"
     print(f"Scope: {len(rows)} entity rows parsed from {args.report} [{kind}]")
+
+    bind_rc = check_binding(args, kind)
+    if bind_rc is not None:
+        return bind_rc
+
     print(f"required modules: {len(args.require)}")
     if not rows:
         print("REFUSED: Scope: 0 entity rows -- a PASS cannot be claimed")
