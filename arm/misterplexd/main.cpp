@@ -61,6 +61,22 @@ bool confTruthy(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
 
+std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
 } // namespace
 
 namespace {
@@ -573,9 +589,14 @@ int main(int argc, char** argv) {
         timelineSession.ratingKey = bound.ratingKey;
         timelineSession.playQueueItemId = bound.playQueueItemId;
         timelineSession.containerKey = bound.containerKey;
+        timelineSession.clientIdentifier = machineId;
+        timelineSession.product = "MiSTerPlex";
+        timelineSession.version = "0.2.0";
+        timelineSession.deviceName = name;
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 
-        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n", resolved.playable.c_str(),
+        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n",
+                     redactSensitive(resolved.playable).c_str(),
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };

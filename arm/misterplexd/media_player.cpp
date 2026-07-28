@@ -38,6 +38,22 @@ inline bool urlHasUniversalOffset(const std::string& url) {
     return qs.find("offset=") != std::string::npos;
 }
 
+inline std::string redactSensitive(std::string s) {
+    for (const char* key : {"X-Plex-Token", "token"}) {
+        size_t pos = 0;
+        const std::string pfx = std::string(key) + "=";
+        while ((pos = s.find(pfx, pos)) != std::string::npos) {
+            pos += pfx.size();
+            auto end = s.find_first_of("& \r\n", pos);
+            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
+                      "<redacted>");
+            if (end == std::string::npos)
+                break;
+        }
+    }
+    return s;
+}
+
 // Annex-B start-code length at `i`, or 0 if none.
 inline size_t annexBStartLen(const uint8_t* p, size_t n, size_t i) {
     if (i + 3 < n && p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 0 && p[i + 3] == 1)
@@ -1666,7 +1682,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
                     joined += "[...]";
                 else
-                    joined += a;
+                    joined += redactSensitive(a);
             }
             log(joined);
         }

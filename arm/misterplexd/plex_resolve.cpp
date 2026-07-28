@@ -26,21 +26,23 @@ std::string shellQuote(const std::string& s) {
 }
 
 std::string httpGet(const std::string& url, int timeoutSec = 15,
-                    const std::string& extraHeaders = {}) {
+                    const std::string& extraHeaders = {}, bool defaultIdentity = true) {
     // Prefer curl (present on MiSTer); -k for plex.direct certs.
     std::ostringstream cmd;
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
-        << " -H 'Accept: application/xml'"
-        << " -H 'X-Plex-Client-Identifier: misterplex'"
-        << " -H 'X-Plex-Product: Plex Web'"
-        << " -H 'X-Plex-Version: 4.125.0'"
-        << " -H 'X-Plex-Platform: Chrome'"
-        << " -H 'X-Plex-Platform-Version: 120.0'"
-        << " -H 'X-Plex-Device: Linux'"
-        << " -H 'X-Plex-Device-Name: Chrome'"
-        << " -H 'X-Plex-Client-Profile-Name: Chrome'"
-        << " -H 'X-Plex-Model: bundled'"
-        << " -H 'X-Plex-Provides: player'";
+        << " -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: Chrome'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
     if (!extraHeaders.empty())
         cmd << extraHeaders;
     cmd << " " << shellQuote(url) << " 2>/dev/null";
@@ -63,6 +65,15 @@ std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>
         args << " -H " << shellQuote(h.first + ": " + h.second);
     }
     return args.str();
+}
+
+bool hasHeader(const std::vector<std::pair<std::string, std::string>>& headers,
+               const char* name) {
+    for (const auto& h : headers) {
+        if (h.first == name)
+            return true;
+    }
+    return false;
 }
 
 std::string makeSessionId() {
@@ -313,7 +324,8 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
-    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers));
+    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
+    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
     return !body.empty();
 }
 
