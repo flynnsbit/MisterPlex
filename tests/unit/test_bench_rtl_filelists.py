@@ -113,7 +113,31 @@ def listed_files(text, known):
     for var, f in var_file.items():
         if re.search(r"\$\{?%s\b" % re.escape(var), body):
             used.add(f)
+
+    # A bench that hands Verilator the Quartus file list itself cannot go stale
+    # the way this guard exists to catch: when a peer adds a submodule under
+    # h264_decode_core, the file arrives in the compile list automatically. Only
+    # honour this when the bench actually expands "${QIP_RTL[@]}" into the
+    # simulator invocation, and resolve it against files.qip rather than
+    # assuming -- so a module whose file is missing from files.qip still fails,
+    # which is the stronger check.
+    if re.search(r"\$\{QIP_RTL\[@\]\}", body):
+        used |= qip_rtl_files() & known
     return used
+
+
+def qip_rtl_files():
+    """Basenames of rtl sources listed in files.qip."""
+    qip = os.path.join(ROOT, "fpga", "Plex_MiSTer", "files.qip")
+    if not os.path.isfile(qip):
+        return set()
+    out = set()
+    pat = re.compile(r"(?:SYSTEMVERILOG_FILE|VERILOG_FILE)\s+(rtl/[^\s\"]+)")
+    for line in open(qip, errors="replace"):
+        m = pat.search(line)
+        if m:
+            out.add(os.path.basename(m.group(1)))
+    return out
 
 
 def main():

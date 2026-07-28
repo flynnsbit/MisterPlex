@@ -8,6 +8,97 @@ No Quartus fit was run (sole exclusive slot, `w-fit-o5`). No BUILD_OK / DEPLOY_O
 
 ---
 
+## 0. Correction issued after w-audit broke the core-subtree gate
+
+`w-audit` proved that `--root h264_decode_core --require <module>` can return rc=0 while
+`--root emu --require h264_decode_core` returns rc=1 `parents=<none>` — the subtree gate goes
+green while the core is dead. **A subtree proof without a trunk proof is vacuous.**
+
+Measured on **this branch** (`w-deblock-o5`, which descends from `w-deblock-seam` and therefore
+predates `stream_path -> h264_decode_core`):
+
+```
+--root h264_decode_core --require h264_deblock_mb_filter   rc=0
+--root emu             --require h264_decode_core          rc=1   parents=<none>
+```
+
+So everything verified on `w-deblock-o5` alone is **CORE_SUBTREE_ONLY, NOT a product claim**.
+Both deblock gates now print exactly that verdict themselves, so the mistake cannot be repeated
+by reading their output.
+
+`scripts/check_product_reachability.py` runs both directions plus a `files.qip` cross-check and
+emits one verdict line: `scope=PRODUCT_REACHABLE` or
+`scope=CORE_SUBTREE_ONLY NOT_PRODUCT_REACHABLE`. It hard-fails when `stream_path.sv`
+instantiates the product root but `emu` cannot reach it — that is broken wiring, not pending
+integration.
+
+### Converged measurement (this is the result that matters)
+
+Branch `w-deblock-o5-converge` = `w-deblock-o5` merged with `origin/w-decode-o5` (which has
+`stream_path -> h264_decode_core`). Four trivial conflicts, all resolved:
+
+| Conflict | Resolution |
+|---|---|
+| FSM state 9 claimed by both | `ST_P16_WIN_START=9`; deblock states renumbered to 10/11/12 |
+| `bench_only_modules.txt` | union; then **four stale declarations removed** (see below) |
+| `Makefile` / `test_unit_rollcall.py` reachability lines | union of both `--require` sets |
+
+Removing the stale `bench_only` declarations for `h264_deblock_bs`, `h264_deblock_thresholds`,
+`h264_deblock_edge`, `h264_deblock_edge_pipe` was **required**, not cosmetic: once the core is
+emu-reachable and the filter is under the core, those four became genuinely product-reachable and
+the checker correctly refused to accept a stale bench-only declaration.
+
+Measured on the converged tree:
+
+```
+PRODUCT_REACH subtree root=h264_decode_core                 rc=0
+PRODUCT_REACH trunk   root=emu require=h264_decode_core     rc=0
+PRODUCT_REACH_OK scope=PRODUCT_REACHABLE  files_qip=checked
+make unit                                                    rc=0
+```
+
+**This is the first time deblock filtering is provably in the `emu` lineage in both directions.**
+It is still source-level. `make post-fit-hierarchy` remains the only oracle, and no fit has run.
+
+### The blind spot the source checker cannot see, and what does see it
+
+w-audit's disabled-generate mutation, applied to the real `u_core_deblock_mb` instantiation and
+measured on the same tree:
+
+| Instrument | Verdict |
+|---|---|
+| `check_product_reachability.py` (source graph) | **rc=0 — false green** |
+| `test_h264_decode_core_deblock_rtl_sim.sh` (elaborate + simulate) | **rc=1** — `macroblock 0 produced 0 DPB writes, want 384` |
+
+Elaboration plus simulation catches what no source-level graph can. That mutation is now a
+permanent regression case inside the core gate, and the source-checker rc is *recorded, not
+asserted*, so w-gate-o5 fixing the checker registers as an improvement rather than a failure.
+
+`tests/unit/test_product_reachability_redproof.sh` red-proves the helper against four more
+mutations — subtree broken, module undefined, RTL file tracked in git but absent from
+`files.qip`, escaped instance name — and asserts the tree is restored clean afterwards.
+Both red mutations are deliberately **self-contained** (they mutate our own instantiation rather
+than depending on a peer module being absent); an earlier version depended on
+`h264_inter_mc_part` not being under the core and went stale the moment `w-decode-o5`
+legitimately landed MC there. The gate caught its own staleness, which is the correct failure
+mode, but the fragility was real and is now removed.
+
+### Two integration defects found and fixed while converging
+
+1. `tests/unit/test_bench_rtl_filelists.py` flagged my core bench as stale because the converged
+   core pulls in `h264_decode_top`, `h264_intra_nb_ctx` and `h264_intra_pred`. Rather than chase
+   the file list forever, the core bench now hands Verilator **the `files.qip` list itself**, so
+   a peer adding a submodule under the core can never make it stale — and a module whose file is
+   missing from `files.qip` now fails the *simulation*, not just a declarative check. The guard
+   was taught to recognise this narrowly (only when `"${QIP_RTL[@]}"` is actually expanded) and
+   the change is red-proved by removing `rtl/h264_decode_top.sv` from `files.qip`.
+2. `scripts/check_rtl_module_instantiations.py` aborts with a spurious
+   `duplicate module <X>: <same file> and <same file>` during an **unresolved merge**, because
+   `git ls-files` emits one row per conflict stage. It fails closed, so it is safe, but the
+   diagnostic is misleading. **For `w-gate-o5`.**
+
+---
+
 ## 1. What I confirm from my predecessor
 
 Measured by reading the RTL and the benches, not inherited:
