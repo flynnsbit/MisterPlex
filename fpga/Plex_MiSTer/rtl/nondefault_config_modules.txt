@@ -1,0 +1,8 @@
+# Modules that become product-reachable only when checked-in product macros are
+# changed away from the QSF defaults.  These are not in today's shipping product
+# by default, and they are not bench-only declarations either.
+
+
+ddram_frame_rd: DDR_FRAME_STORE undefined legacy DDRAM reader path; excluded from the checked-in DDR_FRAME_STORE product build.
+frame_store: DDR_FRAME_STORE undefined legacy SPI/BRAM frame-store path; excluded from the checked-in DDR_FRAME_STORE product build.
+sdram_memtest: DDR_FRAME_STORE undefined SDRAM memtest bring-up path; excluded from the checked-in DDR_FRAME_STORE product build.

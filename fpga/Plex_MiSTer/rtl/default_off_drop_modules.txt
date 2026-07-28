@@ -1,0 +1,9 @@
+# Modules that are reachable in the checked-in product graph but disappear when
+# a checked-in default-off define is flipped on.  Each line is:
+#   module: category: reason
+#
+# Categories:
+#   stub-only           fallback scaffolding that should disappear with the stub
+#   real-decode-bypass  real decoder/deblock/DPB/memory machinery lost by the flip
+
+

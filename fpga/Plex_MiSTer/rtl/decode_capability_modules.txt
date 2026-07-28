@@ -1,0 +1,13 @@
+# Required H.264 Baseline decode capability categories.
+# Format:
+#   category: module,module,...: reason
+# Every listed module is required for the category to count as present. A rename
+# or refactor must update this manifest rather than silently emptying a category.
+
+bitstream_entropy: h264_rbsp_filter,h264_baseline_syntax_parser,h264_exp_golomb_reader,h264_p_mb_type_decode: RBSP cleanup, baseline syntax, Exp-Golomb, and P/I macroblock type decode.
+residual_dequant_transform: h264_cavlc_nc_predictor,h264_cavlc_residual_block,h264_dequant4x4,h264_idct4x4,h264_recon4x4: CAVLC residual context/coefficients through dequant, IDCT, and reconstruction.
+intra_prediction: h264_intra4x4_pred,h264_intra16x16_pred,h264_chroma8x8_pred,h264_intra_mode_guard: Luma/chroma intra prediction and unsupported-mode guard.
+inter_prediction_mc_subpel: h264_inter_mc_part,h264_inter_mc_16x16,h264_luma_qpel_sample,h264_luma_qpel_block_16x16,h264_chroma_epel_sample,h264_chroma_epel_block_8x8,h264_luma_ref_tap_addr,h264_ref_clamp: P-slice inter prediction, reference tap addressing, clipping, and luma/chroma sub-pel interpolation.
+mv_prediction: h264_mv_pred_16x16,h264_mv_pred_part: 16x16 and partition motion-vector prediction.
+dpb_reference_management: h264_dpb_one_ref,h264_dpb_i420_addr,h264_dpb_mb_write_addr: Reference-frame base selection, reference fetch, and native-I420 write addressing.
+deblocking_writeback: h264_deblock_bs,h264_deblock_thresholds,h264_deblock_edge,h264_deblock_edge_pipe,h264_deblock_writeback_ctrl: Boundary-strength, threshold, edge filtering, and filtered-sample writeback control.
