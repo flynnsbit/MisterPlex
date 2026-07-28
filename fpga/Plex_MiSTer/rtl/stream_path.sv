@@ -223,6 +223,12 @@ module stream_path #(
 	wire signed [4:0] sl_alpha_div2, sl_beta_div2, sl_alpha_off, sl_beta_off;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
+	wire [15:0] sl_i4_pred_mode_flags;
+	wire [47:0] sl_i4_rem_modes;
+	wire sl_i4_modes_present;
+	wire sl_luma4x4_blocks_valid;
+	wire sl_luma4x4_blocks_present;
+	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
 	wire sl_place_ok;
 	wire [4:0] sl_place_tc;
 	wire [1:0] sl_place_t1;
@@ -261,6 +267,12 @@ module stream_path #(
 		.first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
 		.first_mb_intra(first_mb_intra),
+		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
+		.first_i4_rem_modes(sl_i4_rem_modes),
+		.first_i4_modes_present(sl_i4_modes_present),
+		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
+		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
+		.first_luma4x4_coeff(sl_luma4x4_coeff),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
 		.residual_csum(residual_csum),
@@ -314,6 +326,7 @@ module stream_path #(
 			reg [7:0] real_lat_mb_type;
 			reg real_lat_res_ok;
 			reg signed [15:0] real_lat_coeff [0:15];
+			reg signed [15:0] real_lat_block_coeff [0:15][0:15];
 			reg real_mb_start;
 			reg real_block_valid;
 			reg [3:0] real_block_index;
@@ -327,6 +340,7 @@ module stream_path #(
 				((real_lat_mb_type - 8'd1) & 8'd3) : 2'd2;
 			wire signed [28:0] real_i16_dc [0:15];
 			wire [3:0] real_i4_modes [0:15];
+			reg [3:0] real_i4_modes_calc [0:15];
 			wire [7:0] real_nb_top [0:15];
 			wire [7:0] real_nb_left [0:15];
 			wire [7:0] real_nb_topright [0:3];
@@ -337,7 +351,7 @@ module stream_path #(
 			genvar real_gi;
 			for (real_gi = 0; real_gi < 16; real_gi = real_gi + 1) begin : gen_real_defaults16
 				assign real_i16_dc[real_gi] = 29'sd0;
-				assign real_i4_modes[real_gi] = 4'd2;
+				assign real_i4_modes[real_gi] = real_i4_modes_calc[real_gi];
 				assign real_nb_top[real_gi] = 8'd128;
 				assign real_nb_left[real_gi] = 8'd128;
 			end
@@ -380,6 +394,84 @@ module stream_path #(
 					real_recon_sig_comb = real_recon_sig_comb ^ real_recon_y[real_i];
 			end
 
+			function automatic [1:0] real_i4_bx;
+				input [3:0] idx;
+				begin
+					case (idx)
+					4'd0, 4'd2, 4'd8, 4'd10: real_i4_bx = 2'd0;
+					4'd1, 4'd3, 4'd9, 4'd11: real_i4_bx = 2'd1;
+					4'd4, 4'd6, 4'd12, 4'd14: real_i4_bx = 2'd2;
+					default: real_i4_bx = 2'd3;
+					endcase
+				end
+			endfunction
+
+			function automatic [1:0] real_i4_by;
+				input [3:0] idx;
+				begin
+					case (idx)
+					4'd0, 4'd1, 4'd4, 4'd5: real_i4_by = 2'd0;
+					4'd2, 4'd3, 4'd6, 4'd7: real_i4_by = 2'd1;
+					4'd8, 4'd9, 4'd12, 4'd13: real_i4_by = 2'd2;
+					default: real_i4_by = 2'd3;
+					endcase
+				end
+			endfunction
+
+			function automatic [3:0] real_i4_idx_at;
+				input [1:0] bx;
+				input [1:0] by;
+				begin
+					case ({by, bx})
+					4'b0000: real_i4_idx_at = 4'd0;
+					4'b0001: real_i4_idx_at = 4'd1;
+					4'b0100: real_i4_idx_at = 4'd2;
+					4'b0101: real_i4_idx_at = 4'd3;
+					4'b0010: real_i4_idx_at = 4'd4;
+					4'b0011: real_i4_idx_at = 4'd5;
+					4'b0110: real_i4_idx_at = 4'd6;
+					4'b0111: real_i4_idx_at = 4'd7;
+					4'b1000: real_i4_idx_at = 4'd8;
+					4'b1001: real_i4_idx_at = 4'd9;
+					4'b1100: real_i4_idx_at = 4'd10;
+					4'b1101: real_i4_idx_at = 4'd11;
+					4'b1010: real_i4_idx_at = 4'd12;
+					4'b1011: real_i4_idx_at = 4'd13;
+					4'b1110: real_i4_idx_at = 4'd14;
+					default: real_i4_idx_at = 4'd15;
+					endcase
+				end
+			endfunction
+
+			integer real_mi;
+			always @* begin
+				for (real_mi = 0; real_mi < 16; real_mi = real_mi + 1) begin : derive_i4_modes
+					reg [1:0] bx;
+					reg [1:0] by;
+					reg [3:0] left_idx;
+					reg [3:0] top_idx;
+					reg [3:0] pred_mode;
+					reg [2:0] rem_mode;
+					bx = real_i4_bx(real_mi[3:0]);
+					by = real_i4_by(real_mi[3:0]);
+					left_idx = (bx == 2'd0) ? 4'd0 : real_i4_idx_at(bx - 2'd1, by);
+					top_idx = (by == 2'd0) ? 4'd0 : real_i4_idx_at(bx, by - 2'd1);
+					if (bx != 2'd0 && by != 2'd0)
+						pred_mode = (real_i4_modes_calc[left_idx] < real_i4_modes_calc[top_idx]) ?
+							real_i4_modes_calc[left_idx] : real_i4_modes_calc[top_idx];
+					else
+						pred_mode = 4'd2;
+					rem_mode = sl_i4_rem_modes[real_mi * 3 +: 3];
+					if (!sl_i4_modes_present)
+						real_i4_modes_calc[real_mi] = 4'd2;
+					else if (sl_i4_pred_mode_flags[real_mi])
+						real_i4_modes_calc[real_mi] = pred_mode;
+					else
+						real_i4_modes_calc[real_mi] = (rem_mode < pred_mode[2:0]) ?
+							{1'b0, rem_mode} : ({1'b0, rem_mode} + 4'd1);
+				end
+			end
+
 			wire real_in_mb0 = (real_x < 10'd16) && (real_ypos < 10'd16);
 			wire [7:0] real_mb0_idx = {real_ypos[3:0], real_x[3:0]};
 			wire [7:0] real_luma_raw = real_recon_y[real_mb0_idx];
@@ -402,6 +494,7 @@ module stream_path #(
 			assign stub_frames = real_frames;
 
 			integer real_si;
+			integer real_bi;
 			always @(posedge clk) begin
 				real_mb_start <= 1'b0;
 				real_block_valid <= 1'b0;
@@ -431,17 +524,23 @@ module stream_path #(
 						real_lat_coeff[real_si] <= 16'sd0;
 						real_block_coeff[real_si] <= 16'sd0;
 					end
+					for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
+						for (real_si = 0; real_si < 16; real_si = real_si + 1)
+							real_lat_block_coeff[real_bi][real_si] <= 16'sd0;
 				end else begin
 					case (real_state)
 					R_IDLE: begin
-						if (residual_place_pulse) begin
+						if (sl_luma4x4_blocks_valid) begin
 							real_busy <= 1'b1;
 							real_lat_type <= last_nal_type;
-							real_lat_res_ok <= sl_place_ok;
+							real_lat_res_ok <= sl_luma4x4_blocks_present;
 							real_lat_qp <= sl_place_qp;
 							real_lat_mb_type <= (sl_has_mbt && first_mb_intra) ? sl_mbt : 8'd0;
 							for (real_si = 0; real_si < 16; real_si = real_si + 1)
 								real_lat_coeff[real_si] <= sl_place_coeff[real_si];
+							for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
+								for (real_si = 0; real_si < 16; real_si = real_si + 1)
+									real_lat_block_coeff[real_bi][real_si] <= sl_luma4x4_coeff[real_bi][real_si];
 							real_mb_start <= 1'b1;
 							real_pred_wait <= 2'd0;
 							real_feed_idx <= 4'd0;
@@ -456,12 +555,15 @@ module stream_path #(
 					R_WAIT: begin
 						if (real_wait_cnt != 12'd0)
 							real_wait_cnt <= real_wait_cnt - 12'd1;
-						if (residual_place_pulse || real_wait_cnt == 12'd0) begin
-							real_lat_res_ok <= sl_place_ok;
+						if (sl_luma4x4_blocks_valid) begin
+							real_lat_res_ok <= sl_luma4x4_blocks_present;
 							real_lat_qp <= sl_place_qp;
 							real_lat_mb_type <= (sl_has_mbt && first_mb_intra) ? sl_mbt : 8'd0;
 							for (real_si = 0; real_si < 16; real_si = real_si + 1)
 								real_lat_coeff[real_si] <= sl_place_coeff[real_si];
+							for (real_bi = 0; real_bi < 16; real_bi = real_bi + 1)
+								for (real_si = 0; real_si < 16; real_si = real_si + 1)
+									real_lat_block_coeff[real_bi][real_si] <= sl_luma4x4_coeff[real_bi][real_si];
 							real_mb_start <= 1'b1;
 							real_pred_wait <= 2'd0;
 							real_feed_idx <= 4'd0;
@@ -479,8 +581,9 @@ module stream_path #(
 						real_block_valid <= 1'b1;
 						real_block_index <= real_feed_idx;
 						for (real_si = 0; real_si < 16; real_si = real_si + 1)
-							real_block_coeff[real_si] <= (real_feed_idx == 4'd0 && real_lat_res_ok) ?
-								real_lat_coeff[real_si] : 16'sd0;
+							real_block_coeff[real_si] <= !real_lat_res_ok ? 16'sd0 :
+								(real_feed_idx == 4'd0) ? real_lat_coeff[real_si] :
+								real_lat_block_coeff[real_feed_idx][real_si];
 						real_state <= R_BLOCK_GAP;
 					end
 					R_BLOCK_GAP: begin
@@ -581,6 +684,8 @@ module stream_path #(
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
+	             |sl_i4_pred_mode_flags | |sl_i4_rem_modes | sl_i4_modes_present |
+	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
 

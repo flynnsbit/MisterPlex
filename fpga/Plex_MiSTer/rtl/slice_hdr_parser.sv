@@ -44,6 +44,12 @@ module slice_hdr_parser (
 	output reg  [2:0]  first_mb_part_count,
 	output reg         first_mb_uses_sub_mb,
 	output reg         first_mb_intra,
+	output reg  [15:0] first_i4_pred_mode_flags,
+	output reg  [47:0] first_i4_rem_modes,
+	output reg         first_i4_modes_present,
+	output reg         first_luma4x4_blocks_valid,
+	output reg         first_luma4x4_blocks_present,
+	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
@@ -68,11 +74,11 @@ module slice_hdr_parser (
 	output reg         busy
 );
 
-	localparam int MAXB = 48;
+	localparam int MAXB = 96;
 	reg [7:0] mem [0:MAXB-1];
-	reg [5:0] len;
+	reg [6:0] len;
 
-	reg [5:0] bbyte;
+	reg [6:0] bbyte;
 	reg [2:0] bpos;
 	wire [7:0] cur = mem[bbyte];
 	wire bitv = cur[bpos];
@@ -95,7 +101,33 @@ module slice_hdr_parser (
 	reg [4:0]  i4_i;       // 0..15 I_NxN pred-mode index
 	reg [1:0]  i4_sub;     // 0=flag, 1..3=rem bits
 	reg        i4_need_rem;
+	reg [2:0]  i4_rem_acc;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
+	reg [3:0]  full_luma_cbp;
+	reg        full_start_req;
+	reg [9:0]  full_start_bit;
+
+	localparam [2:0]
+		FULL_IDLE  = 3'd0,
+		FULL_START = 3'd1,
+		FULL_WAIT  = 3'd2,
+		FULL_DONE  = 3'd3,
+		FULL_FAIL  = 3'd4;
+	reg [2:0] full_st;
+	reg full_res_start;
+	reg [3:0] full_block_idx;
+	reg [9:0] full_bit_off;
+	reg [4:0] full_tc [0:15];
+	wire full_res_busy;
+	wire full_res_done;
+	wire full_res_ok;
+	wire [9:0] full_res_bit_end;
+	wire [4:0] full_res_tc;
+	wire [1:0] full_res_t1;
+	wire [3:0] full_res_tz;
+	wire signed [15:0] full_res_coeff [0:15];
+	wire signed [15:0] full_res_level_dbg [0:15];
+	wire [3:0] full_res_run_dbg [0:15];
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
 	// Width: signed [15:0] — NOT [11:0].  The H.264 spec bounds ordinary 4×4
@@ -202,6 +234,144 @@ module slice_hdr_parser (
 		end
 	endfunction
 
+	function automatic [5:0] cbp_intra_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_intra_map = 6'd47; 6'd1: cbp_intra_map = 6'd31; 6'd2: cbp_intra_map = 6'd15; 6'd3: cbp_intra_map = 6'd0;
+			6'd4: cbp_intra_map = 6'd23; 6'd5: cbp_intra_map = 6'd27; 6'd6: cbp_intra_map = 6'd29; 6'd7: cbp_intra_map = 6'd30;
+			6'd8: cbp_intra_map = 6'd7; 6'd9: cbp_intra_map = 6'd11; 6'd10: cbp_intra_map = 6'd13; 6'd11: cbp_intra_map = 6'd14;
+			6'd12: cbp_intra_map = 6'd39; 6'd13: cbp_intra_map = 6'd43; 6'd14: cbp_intra_map = 6'd45; 6'd15: cbp_intra_map = 6'd46;
+			6'd16: cbp_intra_map = 6'd16; 6'd17: cbp_intra_map = 6'd3; 6'd18: cbp_intra_map = 6'd5; 6'd19: cbp_intra_map = 6'd10;
+			6'd20: cbp_intra_map = 6'd12; 6'd21: cbp_intra_map = 6'd19; 6'd22: cbp_intra_map = 6'd21; 6'd23: cbp_intra_map = 6'd26;
+			6'd24: cbp_intra_map = 6'd28; 6'd25: cbp_intra_map = 6'd35; 6'd26: cbp_intra_map = 6'd37; 6'd27: cbp_intra_map = 6'd42;
+			6'd28: cbp_intra_map = 6'd44; 6'd29: cbp_intra_map = 6'd1; 6'd30: cbp_intra_map = 6'd2; 6'd31: cbp_intra_map = 6'd4;
+			6'd32: cbp_intra_map = 6'd8; 6'd33: cbp_intra_map = 6'd17; 6'd34: cbp_intra_map = 6'd18; 6'd35: cbp_intra_map = 6'd20;
+			6'd36: cbp_intra_map = 6'd24; 6'd37: cbp_intra_map = 6'd6; 6'd38: cbp_intra_map = 6'd9; 6'd39: cbp_intra_map = 6'd22;
+			6'd40: cbp_intra_map = 6'd25; 6'd41: cbp_intra_map = 6'd32; 6'd42: cbp_intra_map = 6'd33; 6'd43: cbp_intra_map = 6'd34;
+			6'd44: cbp_intra_map = 6'd36; 6'd45: cbp_intra_map = 6'd40; 6'd46: cbp_intra_map = 6'd38; 6'd47: cbp_intra_map = 6'd41;
+			default: cbp_intra_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] cbp_intra_luma_map;
+		input [5:0] code;
+		reg [5:0] mapped;
+		begin
+			mapped = cbp_intra_map(code);
+			cbp_intra_luma_map = mapped[3:0];
+		end
+	endfunction
+
+	function automatic [9:0] cur_bit_offset;
+		begin
+			cur_bit_offset = ({3'd0, bbyte} << 3) + {7'd0, (3'd7 - bpos)};
+		end
+	endfunction
+
+	function automatic [1:0] full_i4_bx;
+		input [3:0] idx;
+		begin
+			case (idx)
+			4'd0, 4'd2, 4'd8, 4'd10: full_i4_bx = 2'd0;
+			4'd1, 4'd3, 4'd9, 4'd11: full_i4_bx = 2'd1;
+			4'd4, 4'd6, 4'd12, 4'd14: full_i4_bx = 2'd2;
+			default: full_i4_bx = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [1:0] full_i4_by;
+		input [3:0] idx;
+		begin
+			case (idx)
+			4'd0, 4'd1, 4'd4, 4'd5: full_i4_by = 2'd0;
+			4'd2, 4'd3, 4'd6, 4'd7: full_i4_by = 2'd1;
+			4'd8, 4'd9, 4'd12, 4'd13: full_i4_by = 2'd2;
+			default: full_i4_by = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] full_i4_idx_at;
+		input [1:0] bx;
+		input [1:0] by;
+		begin
+			case ({by, bx})
+			4'b0000: full_i4_idx_at = 4'd0;
+			4'b0001: full_i4_idx_at = 4'd1;
+			4'b0100: full_i4_idx_at = 4'd2;
+			4'b0101: full_i4_idx_at = 4'd3;
+			4'b0010: full_i4_idx_at = 4'd4;
+			4'b0011: full_i4_idx_at = 4'd5;
+			4'b0110: full_i4_idx_at = 4'd6;
+			4'b0111: full_i4_idx_at = 4'd7;
+			4'b1000: full_i4_idx_at = 4'd8;
+			4'b1001: full_i4_idx_at = 4'd9;
+			4'b1100: full_i4_idx_at = 4'd10;
+			4'b1101: full_i4_idx_at = 4'd11;
+			4'b1010: full_i4_idx_at = 4'd12;
+			4'b1011: full_i4_idx_at = 4'd13;
+			4'b1110: full_i4_idx_at = 4'd14;
+			default: full_i4_idx_at = 4'd15;
+			endcase
+		end
+	endfunction
+
+	function automatic [2:0] full_coeff_token_table;
+		input [3:0] idx;
+		reg [1:0] bx;
+		reg [1:0] by;
+		reg left_avail;
+		reg top_avail;
+		reg [4:0] left_tc;
+		reg [4:0] top_tc;
+		reg [4:0] nc;
+		begin
+			bx = full_i4_bx(idx);
+			by = full_i4_by(idx);
+			left_avail = (bx != 2'd0);
+			top_avail = (by != 2'd0);
+			left_tc = left_avail ? full_tc[full_i4_idx_at(bx - 2'd1, by)] : 5'd0;
+			top_tc = top_avail ? full_tc[full_i4_idx_at(bx, by - 2'd1)] : 5'd0;
+			nc = (left_avail && top_avail) ? ((left_tc + top_tc + 5'd1) >> 1) :
+			     left_avail ? left_tc :
+			     top_avail ? top_tc : 5'd0;
+			full_coeff_token_table = (nc < 5'd2) ? 3'd0 :
+			                         (nc < 5'd4) ? 3'd1 :
+			                         (nc < 5'd8) ? 3'd2 : 3'd3;
+		end
+	endfunction
+
+	function automatic full_block_coded;
+		input [3:0] idx;
+		begin
+			full_block_coded = full_luma_cbp[idx[3:2]];
+		end
+	endfunction
+
+	h264_cavlc_residual_block #(.MAX_BYTES(MAXB)) full_luma_residual (
+		.clk(clk),
+		.reset(reset || cap_clear),
+		.start(full_res_start),
+		.coeff_token_table(full_coeff_token_table(full_block_idx)),
+		.max_coeff(5'd16),
+		.bit_offset_start(full_bit_off),
+		.bit_len({3'd0, len} << 3),
+		.rbsp(mem),
+		.busy(full_res_busy),
+		.done(full_res_done),
+		.ok(full_res_ok),
+		.bit_offset_end(full_res_bit_end),
+		.total_coeff(full_res_tc),
+		.trailing_ones(full_res_t1),
+		.total_zeros(full_res_tz),
+		.coeff(full_res_coeff),
+		.level_dbg(full_res_level_dbg),
+		.run_dbg(full_res_run_dbg)
+	);
+
 	localparam [5:0]
 		ST_IDLE    = 6'd0,
 		ST_GETBITS = 6'd1,
@@ -285,9 +455,89 @@ module slice_hdr_parser (
 	always @(posedge clk) begin
 		if (reset || cap_clear)
 			len <= 0;
-		else if (cap_en && len < MAXB[5:0]) begin
+		else if (cap_en && len < MAXB[6:0]) begin
 			mem[len] <= cap_data;
 			len <= len + 1'd1;
+		end
+	end
+
+	always @(posedge clk) begin
+		integer bi;
+		integer ci;
+		full_res_start <= 1'b0;
+		first_luma4x4_blocks_valid <= 1'b0;
+		if (reset || cap_clear) begin
+			full_st <= FULL_IDLE;
+			full_block_idx <= 4'd0;
+			full_bit_off <= 10'd0;
+			first_luma4x4_blocks_present <= 1'b0;
+			for (bi = 0; bi < 16; bi = bi + 1) begin
+				full_tc[bi] <= 5'd0;
+				for (ci = 0; ci < 16; ci = ci + 1)
+					first_luma4x4_coeff[bi][ci] <= 16'sd0;
+			end
+		end else begin
+			case (full_st)
+			FULL_IDLE: begin
+				if (full_start_req) begin
+					full_block_idx <= 4'd0;
+					full_bit_off <= full_start_bit;
+					first_luma4x4_blocks_present <= 1'b0;
+					for (bi = 0; bi < 16; bi = bi + 1) begin
+						full_tc[bi] <= 5'd0;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							first_luma4x4_coeff[bi][ci] <= 16'sd0;
+					end
+					full_st <= FULL_START;
+				end
+			end
+			FULL_START: begin
+				if (!full_block_coded(full_block_idx)) begin
+					full_tc[full_block_idx] <= 5'd0;
+					for (ci = 0; ci < 16; ci = ci + 1)
+						first_luma4x4_coeff[full_block_idx][ci] <= 16'sd0;
+					if (full_block_idx == 4'd15) begin
+						first_luma4x4_blocks_present <= 1'b1;
+						first_luma4x4_blocks_valid <= 1'b1;
+						full_st <= FULL_DONE;
+					end else begin
+						full_block_idx <= full_block_idx + 4'd1;
+					end
+				end else begin
+					full_res_start <= 1'b1;
+					full_st <= FULL_WAIT;
+				end
+			end
+			FULL_WAIT: begin
+				if (full_res_done) begin
+					if (!full_res_ok) begin
+						first_luma4x4_blocks_present <= 1'b0;
+						full_st <= FULL_FAIL;
+					end else begin
+						full_tc[full_block_idx] <= full_res_tc;
+						full_bit_off <= full_res_bit_end;
+						for (ci = 0; ci < 16; ci = ci + 1)
+							first_luma4x4_coeff[full_block_idx][ci] <= full_res_coeff[ci];
+						if (full_block_idx == 4'd15) begin
+							first_luma4x4_blocks_present <= 1'b1;
+							first_luma4x4_blocks_valid <= 1'b1;
+							full_st <= FULL_DONE;
+						end else begin
+							full_block_idx <= full_block_idx + 4'd1;
+							full_st <= FULL_START;
+						end
+					end
+				end
+			end
+			FULL_DONE: begin
+				if (full_start_req)
+					full_st <= FULL_IDLE;
+			end
+			default: begin
+				if (full_start_req)
+					full_st <= FULL_IDLE;
+			end
+			endcase
 		end
 	end
 
@@ -317,6 +567,12 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			first_i4_pred_mode_flags <= 16'd0;
+			first_i4_rem_modes <= 48'd0;
+			first_i4_modes_present <= 1'b0;
+			full_luma_cbp <= 4'd0;
+			full_start_req <= 1'b0;
+			full_start_bit <= 10'd0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_ok <= 0;
@@ -382,6 +638,9 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			full_luma_cbp <= 4'd0;
+			full_start_req <= 1'b0;
+			full_start_bit <= 10'd0;
 			residual_ok <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
@@ -400,10 +659,11 @@ module slice_hdr_parser (
 		end else begin
 			// Default: place pulse is 1-cycle only (Rank3)
 			residual_place_pulse <= 1'b0;
+			full_start_req <= 1'b0;
 			case (st)
 			ST_IDLE: begin
 				busy <= 0;
-				if (cap_end && len >= 6'd2 && sps_ready && pps_ready && poc_type != 3'd1) begin
+				if (cap_end && len >= 7'd2 && sps_ready && pps_ready && poc_type != 3'd1) begin
 					busy <= 1'b1;
 					has_mb_type <= 0;
 					first_mb_p_skip <= 0;
@@ -604,7 +864,11 @@ module slice_hdr_parser (
 					if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
 						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 					end else if (ue_val == 16'd0) begin
-						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0;
+						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0; i4_rem_acc <= 3'd0;
+						first_i4_pred_mode_flags <= 16'd0;
+						first_i4_rem_modes <= 48'd0;
+						first_i4_modes_present <= 1'b0;
+						full_luma_cbp <= 4'd0;
 						st <= ST_I4MODE;
 					end else
 						st <= ST_DONE;
@@ -628,21 +892,28 @@ module slice_hdr_parser (
 					if (i4_sub == 2'd0) begin
 						// prev_intra4x4_pred_mode_flag
 						if (bitv) begin
+							first_i4_pred_mode_flags[i4_i[3:0]] <= 1'b1;
 							// flag=1: mode=pred, next block
 							if (i4_i >= 5'd15) begin
+								first_i4_modes_present <= 1'b1;
 								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 							end else begin
 								i4_i <= i4_i + 1'd1;
 							end
 						end else begin
 							// flag=0: need 3 rem bits
+							first_i4_pred_mode_flags[i4_i[3:0]] <= 1'b0;
+							i4_rem_acc <= 3'd0;
 							i4_sub <= 2'd1;
 						end
 					end else begin
 						// consuming rem bits 1..3
+						i4_rem_acc <= {i4_rem_acc[1:0], bitv};
 						if (i4_sub >= 2'd3) begin
+							first_i4_rem_modes[i4_i * 3 +: 3] <= {i4_rem_acc[1:0], bitv};
 							i4_sub <= 0;
 							if (i4_i >= 5'd15) begin
+								first_i4_modes_present <= 1'b1;
 								zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 							end else
 								i4_i <= i4_i + 1'd1;
@@ -663,6 +934,7 @@ module slice_hdr_parser (
 			ST_CBP: begin
 				// ue(coded_block_pattern me) — me==3 → cbp=0 (no qpδ)
 				cbp_me <= ue_val[5:0];
+				full_luma_cbp <= cbp_intra_luma_map(ue_val[5:0]);
 				if (ue_val == 16'd3) begin
 					// cbp=0: no residual (shouldn't happen on real first MB)
 					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
@@ -672,6 +944,10 @@ module slice_hdr_parser (
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
+				if (first_mb_type == 8'd0) begin
+					full_start_req <= 1'b1;
+					full_start_bit <= cur_bit_offset();
+				end
 				tcode <= 0;
 				tbits <= 0;
 				st <= ST_TOK_BIT;
