@@ -1,45 +1,68 @@
 #!/usr/bin/env python3
 """Verify the RBF identity label rendered in the HDMI idle screen.
 
-misterplexd computes `md5sum /media/fat/_Utility/Plex.rbf` and renders the
-first 8 hex digits as "RBF xxxxxxxx" in the fb0 idle overlay.  This script:
-  1. Accepts a pre-captured PNG/JPEG frame (or captures one live).
-  2. Crops the label region (caller-specified or full-frame search).
-  3. Pre-processes: upscale + contrast-stretch for robust OCR.
-  4. Runs tesseract (--psm 7, hex whitelist) to extract text.
-  5. Normalises OCR output (common misreads: O↔0, I↔1, l↔1, B↔8).
-  6. Asserts extracted md5 prefix matches --expected-md5 (or the live file
-     hash fetched via SSH from the MiSTer).
+misterplexd renders "RBF XXXXXXXX" (first 8 uppercase hex digits of the RBF
+md5) using a custom 5×7 pixel bitmap font defined in
+host/libmisterplex/idle_screen.hpp.  The label is placed at:
+
+    x0 = 8,  y0 = frame_height - 14   (in DDR/fb0 source space)
+
+This script uses a PIXEL-TEMPLATE matcher — NOT OCR — because the custom font
+is only 7 pixels tall (10 px in the HDMI capture after DDR→display scaling),
+far below tesseract's reliable operating range.
+
+Matching strategy
+-----------------
+1.  Build the expected 5×7 binary pixel mask for "RBF XXXXXXXX" using the
+    exact same glyph table as idle_screen.hpp.
+2.  Project the mask into the 1280×720 HDMI capture coordinate system,
+    accounting for:
+      - DDR→display scale (1280/ddr_w, 720/ddr_h, default 624×480)
+      - Left-edge display clip at HDMI col 24 (PRESENT_X=11 artifact)
+3.  For each expected-bright source pixel, check the corresponding display
+    pixels have luma > BRIGHT_THRESH (default 100).
+    For each expected-dark source pixel that is fully past the clip, check
+    luma < DARK_THRESH (default 80).
+4.  PASS if bright_hit_rate ≥ BRIGHT_MATCH_FRAC (default 0.55) AND
+         dark_correct_rate ≥ DARK_MATCH_FRAC (default 0.75).
+    The 'R' glyph is mostly clipped (display cols 16–23 < clip at 24), so
+    only 'BF XXXXXXXX' is reliably verifiable — hence the 0.55 bright threshold
+    rather than 1.0.
 
 Usage:
   python3 scripts/grade_rbf_label.py [frame.png ...]
-      [--region x,y,w,h]     crop in 1280x720 HDMI pixel coords
-      [--expected-md5 HEX8]   first-8-hex of RBF md5 (skips SSH fetch)
-      [--mister-host H]       MiSTer SSH host [default: MISTER_HOST env / 192.168.1.183]
-      [--mister-pass P]       MiSTer SSH password [default: MISTER_PASS env / 1]
-      [--capture]             capture a fresh frame before grading
-      [--scale N]             upscale factor before OCR [default: 4]
-      [--out-dir DIR]         save debug crops here
-      [--expect PASS|FAIL]    invert assertion for red-check testing
+      [--expected-md5 HEX8]    first 8 uppercase hex chars of RBF md5
+      [--mister-host H]        SSH host [MISTER_HOST env / 192.168.1.183]
+      [--mister-pass P]        SSH password [MISTER_PASS env / 1]
+      [--capture]              capture a fresh frame from /dev/video0
+      [--ddr-size WxH]         DDR frame dimensions [default: 624x480]
+      [--hdmi-size WxH]        HDMI capture size [default: 1280x720]
+      [--edge-clip N]          left-edge clip in HDMI cols [default: 24]
+      [--bright-thresh N]      luma threshold for foreground [default: 100]
+      [--dark-thresh N]        luma threshold for background [default: 80]
+      [--bright-frac F]        required bright-pixel match fraction [default: 0.55]
+      [--dark-frac F]          required dark-pixel match fraction [default: 0.75]
+      [--out-dir DIR]          save debug images here
+      [--expect PASS|FAIL]     invert assertion for red-check testing
 
 Exit codes:
-  0   PASS  label present and md5 prefix matches
-  1   FAIL  label absent, unreadable, or md5 mismatch
-  77  SKIP  no capture device / SSH unavailable / --expected-md5 not given and
-            MiSTer unreachable
+  0   PASS  label present and pixel pattern matches expected md5
+  1   FAIL  label absent or pixel pattern mismatches
+  77  SKIP  no capture device / SSH unreachable / no expected md5
 
 Three-question audit:
   (1) What does it literally compare?
-      The first 8 hex digits read via tesseract OCR from a captured HDMI frame,
-      normalised for common OCR misreads, against the md5sum of the RBF file.
+      Bright/dark luma values at the 146×10 display-pixel region where the
+      known bitmap glyphs for "RBF XXXXXXXX" should appear, projected from
+      DDR source space via the 2.051× / 1.5× scale factors.
   (2) What does it NOT cover?
-      Font colour, label position accuracy, frame timing, whether the label
-      persists across frames (check --frames > 1 in a wrapper).  OCR will miss
-      the label if the rendering font is too small (<14px per glyph in capture
-      coords) or if the background contrast is too low.
+      Whether the label is the correct size or colour beyond luma; whether
+      it is positioned correctly vertically within the idle frame; frame
+      timing (label may not appear on every frame if FPGA is actively
+      updating).  'R' glyph is clipped and excluded from scoring.
   (3) Can you make it fail?
-      Pass --expected-md5 00000000 against any real RBF → exit 1.
-      Pass a blank-frame PNG → exit 1 (no label found).
+      Pass --expected-md5 00000000 against any real RBF → bright pattern
+      mismatch → exit 1.  Pass a blank/black frame → no bright pixels → exit 1.
 """
 
 import argparse
@@ -48,109 +71,156 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image
 import numpy as np
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ── OCR normalization table (applied to the hex group only, NOT the prefix) ──
-# Tesseract commonly confuses these pairs in small monospace hex fonts.
-# NOTE: 'B'→'8' is intentionally absent — 'B' is a valid hex digit (11) and
-# would corrupt the "RBF" prefix if applied to the full string.  The prefix is
-# matched flexibly below (R[B8]F) to handle any B/8 confusion there.
-_HEX_NORMALIZE = str.maketrans({
-    'O': '0', 'Q': '0',             # 0-lookalikes (D excluded: valid hex)
-    'I': '1', 'l': '1',             # 1-lookalikes
-    'Z': '2',                        # 2-lookalike
-    'S': '5',                        # 5-lookalike
-    'G': '6',                        # 6-lookalike
-    'T': '7',                        # 7-lookalike
-})
+# ── Bitmap glyph table — exact copy of idleGlyph() in idle_screen.hpp ────────
+# Each entry is 7 row bitmasks, MSB-first, 5 bits wide (bit4=leftmost).
+_GLYPHS: dict[str, list[int]] = {
+    '0': [0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e],
+    '1': [0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e],
+    '2': [0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f],
+    '3': [0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e],
+    '4': [0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02],
+    '5': [0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e],
+    '6': [0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e],
+    '7': [0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
+    '8': [0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e],
+    '9': [0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c],
+    'A': [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+    'B': [0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e],
+    'C': [0x0f, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0f],
+    'D': [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
+    'E': [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
+    'F': [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10],
+    'R': [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
+    ' ': [0x00] * 7,
+}
 
-# Prefix match: R[B8]F handles the B/8 OCR confusion in the 3-char prefix.
-# Hex group: 7-9 chars to absorb one insertion/deletion before validation.
-_LABEL_RE = re.compile(r'R[B8]F\s+([0-9a-fA-FBbDdOoQqIilZzSsGgTt]{7,9})',
-                       re.IGNORECASE)
 
+def _make_label_mask(text: str) -> np.ndarray:
+    """Return a (7 × textW) bool array: True=foreground pixel.
 
-def _ocr_frame(img_path: Path, region=None, scale: int = 4, out_dir: Path = None) -> str:
-    """Return the OCR'd text from img_path, optionally cropping to region.
-
-    region: (x, y, w, h) in capture-frame pixels (1280x720 coords).
-    Returns the raw tesseract output string.
+    text must use uppercase hex + 'R', 'B', 'F', ' ' only.
+    textW = len(text)*6 - 1  (5px glyph + 1px gap, no trailing gap).
     """
-    img = Image.open(img_path).convert('L')
-
-    if region:
-        x, y, w, h = region
-        img = img.crop((x, y, x + w, y + h))
-    # else: search full frame
-
-    # Scale up for OCR accuracy
-    new_w = img.width * scale
-    new_h = img.height * scale
-    img = img.resize((new_w, new_h), Image.NEAREST)
-
-    # Contrast stretch: map 5th–95th percentile to 0–255
-    arr = np.array(img, dtype=float)
-    p5 = float(np.percentile(arr, 5))
-    p95 = float(np.percentile(arr, 95))
-    if p95 > p5:
-        arr = (arr - p5) / (p95 - p5) * 255.0
-        arr = np.clip(arr, 0, 255).astype(np.uint8)
-        img = Image.fromarray(arr)
-
-    if out_dir:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        crop_path = out_dir / f"ocr_crop_{img_path.stem}.png"
-        img.save(crop_path)
-
-    # Write to a named path in build/ (never /tmp)
-    ocr_tmp = ROOT / "build" / f"_ocr_{img_path.stem}.png"
-    ocr_tmp.parent.mkdir(parents=True, exist_ok=True)
-    img.save(ocr_tmp)
-
-    result = subprocess.run(
-        [
-            "tesseract", str(ocr_tmp), "stdout",
-            "--psm", "7",          # single text line
-            "-l", "eng",
-            "-c", "tessedit_char_whitelist=ABCDEFabcdef0123456789 RBF",
-        ],
-        capture_output=True, text=True,
-    )
-    # clean up
-    ocr_tmp.unlink(missing_ok=True)
-    return result.stdout.strip()
+    text = text.upper()
+    n = len(text)
+    text_w = n * 6 - 1
+    mask = np.zeros((7, text_w), dtype=bool)
+    for ci, ch in enumerate(text):
+        glyph = _GLYPHS.get(ch, _GLYPHS[' '])
+        x0 = ci * 6
+        for row in range(7):
+            for col in range(5):
+                if glyph[row] & (1 << (4 - col)):
+                    mask[row, x0 + col] = True
+    return mask
 
 
-def _extract_md5_prefix(raw_ocr: str) -> str | None:
-    """Extract the 8-char hex md5 prefix from OCR output.
+def _score_frame(
+    luma: np.ndarray,
+    label: str,
+    ddr_w: int,
+    ddr_h: int,
+    hdmi_w: int,
+    hdmi_h: int,
+    edge_clip: int,
+    bright_thresh: int,
+    dark_thresh: int,
+) -> dict:
+    """Project the label mask into HDMI space and measure bright/dark match.
 
-    Matches "R[B8]F <8-hex-chars>" with normalization of common OCR misreads
-    applied only to the hex group (not the fixed "RBF" prefix).
+    Returns a dict with keys: bright_total, bright_hit, dark_total, dark_hit,
+    bright_rate, dark_rate, label_region (x0,y0,x1,y1 in HDMI coords).
     """
-    m = _LABEL_RE.search(raw_ocr)
-    if not m:
-        return None
-    hex_raw = m.group(1)
-    # Normalise common misreads in the hex group only
-    normalised = hex_raw.translate(_HEX_NORMALIZE).lower()
-    # Must be exactly 8 valid hex chars after normalisation
-    if len(normalised) == 8 and re.fullmatch(r'[0-9a-f]{8}', normalised):
-        return normalised
-    return None
+    mask = _make_label_mask(label)          # (7, textW)
+    mask_h, mask_w = mask.shape
+
+    sx = hdmi_w / ddr_w                     # e.g. 2.0513
+    sy = hdmi_h / ddr_h                     # e.g. 1.5000
+    src_x0 = 8                              # idle_screen.hpp: x0 = 8
+    src_y0 = ddr_h - 14                     # idle_screen.hpp: y0 = h - 14
+
+    # HDMI display coordinates of the label's bounding box
+    disp_x0 = int(src_x0 * sx)
+    disp_y0 = int(src_y0 * sy)
+    disp_x1 = int((src_x0 + mask_w) * sx) + 1
+    disp_y1 = int((src_y0 + mask_h) * sy) + 1
+
+    bright_total = bright_hit = 0
+    dark_total = dark_correct = 0
+
+    for src_row in range(mask_h):
+        for src_col in range(mask_w):
+            expected_bright = mask[src_row, src_col]
+
+            # Display pixel range for this source pixel
+            px0 = int((src_x0 + src_col) * sx)
+            px1 = max(px0 + 1, int((src_x0 + src_col + 1) * sx))
+            py0 = int((src_y0 + src_row) * sy)
+            py1 = max(py0 + 1, int((src_y0 + src_row + 1) * sy))
+
+            # Clamp to frame bounds
+            px0 = max(px0, 0); px1 = min(px1, hdmi_w)
+            py0 = max(py0, 0); py1 = min(py1, hdmi_h)
+            if px0 >= px1 or py0 >= py1:
+                continue
+
+            # Skip pixels entirely within the left-edge clip zone
+            if px1 <= edge_clip:
+                continue
+
+            # For pixels straddling the clip boundary, restrict to visible portion
+            px0 = max(px0, edge_clip)
+
+            region = luma[py0:py1, px0:px1]
+            if region.size == 0:
+                continue
+
+            max_luma = int(region.max())
+            min_luma = int(region.min())
+
+            if expected_bright:
+                bright_total += 1
+                if max_luma >= bright_thresh:
+                    bright_hit += 1
+            else:
+                dark_total += 1
+                if min_luma < dark_thresh:
+                    dark_correct += 1
+
+    bright_rate = bright_hit / bright_total if bright_total > 0 else 0.0
+    dark_rate = dark_correct / dark_total if dark_total > 0 else 0.0
+    total = bright_total + dark_total
+    # Combined mismatch: fraction of pixels where expectation is wrong (both types).
+    # This is the primary discriminator: wrong-md5 glyphs light up dark pixels and
+    # leave expected-bright pixels dark → mismatch_rate climbs sharply.
+    mismatch_rate = ((bright_total - bright_hit) + (dark_total - dark_correct)) / total if total > 0 else 1.0
+
+    return {
+        'bright_total': bright_total,
+        'bright_hit': bright_hit,
+        'bright_rate': bright_rate,
+        'dark_total': dark_total,
+        'dark_hit': dark_correct,
+        'dark_rate': dark_rate,
+        'mismatch_rate': mismatch_rate,
+        'label_region': (disp_x0, disp_y0, disp_x1, disp_y1),
+    }
 
 
 def _fetch_expected_md5(host: str, password: str) -> str | None:
-    """SSH to MiSTer and return the first 8 hex chars of the RBF md5."""
+    """SSH to MiSTer, return first 8 lowercase hex chars of /media/fat/_Utility/Plex.rbf md5."""
     cmd = ["sshpass", "-p", password,
            "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=8",
            f"root@{host}",
            "md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | cut -c1-8"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        out = r.stdout.strip()
+        out = r.stdout.strip().lower()
         if re.fullmatch(r'[0-9a-f]{8}', out):
             return out
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -159,46 +229,64 @@ def _fetch_expected_md5(host: str, password: str) -> str | None:
 
 
 def _capture_frame(out_dir: Path) -> Path | None:
-    """Capture a single frame via capture_preflight.py; return the frame path."""
-    capture_dir = out_dir / "live_capture"
+    """Capture via capture_preflight.py; return the first frame path."""
     preflight = ROOT / "scripts" / "capture_preflight.py"
     if not preflight.exists():
         return None
-
     log_path = ROOT / "build" / "_grade_rbf_capture.log"
-    r = subprocess.run(
-        [sys.executable, str(preflight), "--frames", "1", "--out-dir", str(capture_dir)],
-        capture_output=False,
-        stdout=open(log_path, "w"),
-        stderr=subprocess.STDOUT,
-    )
-    if r.returncode not in (0, 1):  # 77 = no device
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as lf:
+        r = subprocess.run(
+            [sys.executable, str(preflight), "--frames", "1", "--out-dir", str(out_dir)],
+            stdout=lf, stderr=subprocess.STDOUT,
+        )
+    if r.returncode == 77:
         return None
-    frames = sorted(capture_dir.glob("frames/*.png"))
+    frames = sorted((out_dir / "frames").glob("*.png"))
     return frames[0] if frames else None
+
+
+def _save_debug(frame_path: Path, score: dict, label: str, out_dir: Path) -> None:
+    """Save an annotated debug image showing the expected label region."""
+    from PIL import ImageDraw
+    img = Image.open(frame_path).convert('RGB')
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = score['label_region']
+    colour = (0, 255, 0) if score['bright_rate'] >= 0.55 else (255, 0, 0)
+    d.rectangle([x0, y0, x1, y1], outline=colour, width=2)
+    d.text((x0, max(0, y0 - 12)), f"RBF:{label} b={score['bright_rate']:.2f}", fill=colour)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"rbf_label_debug_{frame_path.stem}.png"
+    img.save(out_path)
+    print(f"  debug image: {out_path}")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("frames", nargs="*", metavar="frame.png",
-                    help="Pre-captured frame(s) to analyse")
-    ap.add_argument("--region", metavar="x,y,w,h",
-                    help="Crop region in 1280x720 coords (omit to search full frame)")
+    ap.add_argument("frames", nargs="*", metavar="frame.png")
     ap.add_argument("--expected-md5", metavar="HEX8",
-                    help="First 8 hex digits of RBF md5 to compare against")
-    ap.add_argument("--mister-host", default=None,
-                    help="MiSTer SSH host [MISTER_HOST env / 192.168.1.183]")
-    ap.add_argument("--mister-pass", default=None,
-                    help="MiSTer SSH password [MISTER_PASS env / 1]")
+                    help="First 8 hex digits of RBF md5 (auto-fetched via SSH if omitted)")
+    ap.add_argument("--mister-host", default=None)
+    ap.add_argument("--mister-pass", default=None)
     ap.add_argument("--capture", action="store_true",
-                    help="Capture a fresh frame from /dev/video0 first")
-    ap.add_argument("--scale", type=int, default=4,
-                    help="Upscale factor before OCR [default: 4]")
-    ap.add_argument("--out-dir", default=None,
-                    help="Save debug crops here")
-    ap.add_argument("--expect", choices=["PASS", "FAIL"], default="PASS",
-                    help="Invert assertion for red-check mode")
+                    help="Capture a fresh frame before grading")
+    ap.add_argument("--ddr-size", default="624x480",
+                    help="DDR frame dimensions WxH [default: 624x480]")
+    ap.add_argument("--hdmi-size", default="1280x720",
+                    help="HDMI capture size WxH [default: 1280x720]")
+    ap.add_argument("--edge-clip", type=int, default=24,
+                    help="Left-edge clip in HDMI columns [default: 24]")
+    ap.add_argument("--bright-thresh", type=int, default=100,
+                    help="Luma threshold for foreground pixels [default: 100]")
+    ap.add_argument("--dark-thresh", type=int, default=80,
+                    help="Luma threshold for background pixels [default: 80]")
+    ap.add_argument("--bright-frac", type=float, default=0.70,
+                    help="Min fraction of expected-bright pixels that must be bright [default: 0.70]")
+    ap.add_argument("--max-mismatch", type=float, default=0.12,
+                    help="Max allowed combined mismatch rate (wrong label ≈0.15) [default: 0.12]")
+    ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--expect", choices=["PASS", "FAIL"], default="PASS")
     args = ap.parse_args()
 
     import os
@@ -206,21 +294,15 @@ def main():
     mister_pass = args.mister_pass or os.environ.get("MISTER_PASS", "1")
     out_dir = Path(args.out_dir) if args.out_dir else ROOT / "build" / "rbf-label-check"
 
-    region = None
-    if args.region:
-        parts = [int(v) for v in args.region.split(",")]
-        if len(parts) != 4:
-            print("ERROR: --region must be x,y,w,h", file=sys.stderr)
-            sys.exit(1)
-        region = tuple(parts)
+    ddr_w, ddr_h = (int(x) for x in args.ddr_size.split("x"))
+    hdmi_w, hdmi_h = (int(x) for x in args.hdmi_size.split("x"))
 
     # ── Resolve expected md5 ─────────────────────────────────────────────────
     expected_md5 = None
     if args.expected_md5:
         expected_md5 = args.expected_md5.lower()
         if not re.fullmatch(r'[0-9a-f]{8}', expected_md5):
-            print(f"ERROR: --expected-md5 must be 8 hex digits, got {expected_md5!r}",
-                  file=sys.stderr)
+            print(f"ERROR: --expected-md5 must be 8 hex digits, got {expected_md5!r}", file=sys.stderr)
             sys.exit(1)
     else:
         print(f"Fetching RBF md5 from {mister_host} ...")
@@ -229,56 +311,73 @@ def main():
             print("SKIP: MiSTer unreachable and --expected-md5 not given → exit 77")
             sys.exit(77)
 
-    print(f"Expected md5 prefix: {expected_md5}")
+    # idle_screen.hpp uses uppercase hex in the label
+    label = f"RBF {expected_md5.upper()}"
+    print(f"Expected label: {label!r}  (md5 prefix: {expected_md5})")
 
     # ── Gather frames ────────────────────────────────────────────────────────
     frame_paths = [Path(f) for f in args.frames]
     if args.capture or not frame_paths:
-        captured = _capture_frame(out_dir)
+        captured = _capture_frame(out_dir / "live_capture")
         if captured is None:
             print("SKIP: live capture failed and no frame arguments → exit 77")
             sys.exit(77)
         frame_paths = [captured]
-        print(f"Captured: {captured}")
+        print(f"Captured frame: {captured}")
 
     print(f"Scope: {len(frame_paths)} frame(s)")
     if not frame_paths:
-        print("SKIP: Scope: 0 — no frames to examine → exit 77")
+        print("SKIP: Scope: 0 → exit 77")
         sys.exit(77)
 
     # ── Grade each frame ─────────────────────────────────────────────────────
-    results = []
+    passed = 0
     for fp in frame_paths:
         if not fp.exists():
-            print(f"  SKIP {fp.name}: file not found")
+            print(f"  SKIP {fp.name}: not found")
             continue
-        raw_ocr = _ocr_frame(fp, region=region, scale=args.scale, out_dir=out_dir)
-        extracted = _extract_md5_prefix(raw_ocr)
-        match = (extracted == expected_md5) if extracted else False
-        status = "PASS" if match else "FAIL"
-        print(f"  {fp.name}: ocr={raw_ocr!r} extracted={extracted!r} "
-              f"expected={expected_md5!r} → {status}")
-        results.append(match)
 
-    if not results:
-        print("SKIP: no frames were analysable → exit 77")
-        sys.exit(77)
+        luma = np.array(Image.open(fp).convert('L'), dtype=np.float32)
+        score = _score_frame(
+            luma, label, ddr_w, ddr_h, hdmi_w, hdmi_h,
+            args.edge_clip, args.bright_thresh, args.dark_thresh,
+        )
 
-    passed = sum(results)
-    total = len(results)
-    print(f"\nRBF_LABEL_RESULT: {passed}/{total} frames matched expected md5 prefix")
+        # Two independent pass criteria (both must hold):
+        #  1. bright_rate ≥ bright_frac: the expected label pixels ARE lit up
+        #  2. mismatch_rate ≤ max_mismatch: wrong-md5 labels produce ≈15% mismatch,
+        #     so 12% separates correct from incorrect at typical MJPEG noise levels
+        ok_bright = score['bright_rate'] >= args.bright_frac
+        ok_mismatch = score['mismatch_rate'] <= args.max_mismatch
+        frame_pass = ok_bright and ok_mismatch
+        status = "PASS" if frame_pass else "FAIL"
+        why = [] if frame_pass else (
+            ([] if ok_bright else [f"bright_rate {score['bright_rate']:.2f} < {args.bright_frac}"]) +
+            ([] if ok_mismatch else [f"mismatch {score['mismatch_rate']:.2f} > {args.max_mismatch}"])
+        )
 
-    overall_pass = passed > 0  # at least one frame has the correct label
+        print(f"  {fp.name}: bright={score['bright_hit']}/{score['bright_total']}"
+              f" ({score['bright_rate']:.2f}) mismatch={score['mismatch_rate']:.2f}"
+              f" region={score['label_region']} → {status}"
+              + (f"  [{'; '.join(why)}]" if why else ""))
+
+        if args.out_dir:
+            _save_debug(fp, score, expected_md5.upper(), out_dir)
+
+        if frame_pass:
+            passed += 1
+
+    total = len(frame_paths)
+    overall_pass = passed > 0
     verdict = "PASS" if overall_pass else "FAIL"
-    print(f"VERDICT: {verdict}")
+    print(f"\nRBF_LABEL_RESULT: {passed}/{total} frames matched  VERDICT: {verdict}")
 
     if args.expect == "FAIL":
-        # Red-check mode: we expect a failure, so invert
         if overall_pass:
-            print("ERROR: expected FAIL but got PASS → exit 1 (red-check broken)")
+            print("ERROR: expected FAIL but got PASS → red-check broken → exit 1")
             sys.exit(1)
         else:
-            print("Red-check confirmed: gate correctly detected bad label → exit 0")
+            print("Red-check confirmed: gate correctly detected missing/wrong label → exit 0")
             sys.exit(0)
 
     sys.exit(0 if overall_pass else 1)
