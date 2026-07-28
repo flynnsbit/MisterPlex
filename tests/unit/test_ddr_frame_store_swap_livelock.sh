@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
+RC_UNSCORED="${RC_UNSCORED:-77}"
 set +e
 VERILATOR_VERSION="$($RUN_VERILATOR --version 2>&1)"
 VERILATOR_RC=$?
@@ -9,7 +10,7 @@ set -e
 if [[ "$VERILATOR_RC" -eq 127 ]]; then
   if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
     echo "SKIP RTL SIM: Verilator not found and ALLOW_MISSING_VERILATOR=1; swap-livelock simulation was NOT run." >&2
-    exit 0
+    exit "$RC_UNSCORED"
   fi
   echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running swap-livelock simulation." >&2
   exit 3

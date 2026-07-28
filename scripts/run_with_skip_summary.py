@@ -90,24 +90,26 @@ def pms_geometry_contract_summary() -> str:
     return f"coded {coded_w}x{coded_h}/display {display_w}x{display_h}"
 
 
+def make_unit_pms_inventory_record(reason: str) -> SkipRecord:
+    return SkipRecord(
+        name="live-pms-baseline-profile",
+        severity="CRITICAL",
+        reason=reason,
+        would_catch=(
+            "PMS drift away from the FPGA decoder contract: "
+            "Baseline profile_idc=66, CAVLC, ref=1, no B-slices, "
+            + pms_geometry_contract_summary()
+        ),
+        source="make-unit coverage inventory",
+    )
+
+
 def registry_skips(label: str) -> list[SkipRecord]:
     skips: list[SkipRecord] = []
     if label == "make-unit":
         missing = live_pms_missing_reason()
         if missing:
-            skips.append(
-                SkipRecord(
-                    name="live-pms-baseline-profile",
-                    severity="CRITICAL",
-                    reason=f"missing {missing}",
-                    would_catch=(
-                        "PMS drift away from the FPGA decoder contract: "
-                        "Baseline profile_idc=66, CAVLC, ref=1, no B-slices, "
-                        + pms_geometry_contract_summary()
-                    ),
-                    source="make-unit coverage inventory",
-                )
-            )
+            skips.append(make_unit_pms_inventory_record(f"missing {missing}"))
     return skips
 
 
@@ -218,7 +220,7 @@ def self_test() -> int:
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
-    inv = summarize(registry_skips("make-unit"))
+    inv = summarize([make_unit_pms_inventory_record("self-test forced inventory record")])
     expected_geometry = pms_geometry_contract_summary()
     if expected_geometry not in inv:
         print(inv)
