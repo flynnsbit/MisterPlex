@@ -46,6 +46,64 @@ Conclusion: reconstructed-neighbour storage now exists and is non-vacuously gate
 claim that the product decoder works. Live PMS is still mostly P-slices (`343 P / 7 IDR`), so intra
 green alone cannot be read as decode-off-ARM.
 
+## W-OSD-O5 — idle screen root-caused, build identity made source-derived (2026-07-28)
+
+Branch `w-osd-o5`. Everything below is **measured on the device** unless marked assumed.
+Resident RBF md5 `fb4bad849ad2db782a5004ce5a3471ce` — which matches **no build artifact on
+the build host**, so its provenance is untraceable; see the build-identity item.
+
+**The idle screen is not black, and all three candidate causes are refuted.**
+`tests/hw/test_idle_screen_pixel_rca.sh` returns **`PRESENTED_CORRUPT`**:
+
+- Both DDR banks hold a real I420 idle frame (`Y=0x2d`, `U=0x82`, `V=0x7e`) → **not** "nothing drawn".
+- `PLXD` shows `disp_bank=0 swap_pending=0 free=0b10`, and a pushed ruler frame reached the screen
+  within 1 s → **not** "drawn but never presented".
+- The damage is byte-identical with the daemon killed and the `PLXK` doorbell sequence frozen →
+  **not** "ARM overwrites the scanned-out bank". This **refutes the mechanism assigned to `w-arm-o5`**
+  for the idle case; hand them the measurement before they chase stride values.
+- What is actually wrong: every scanline loses a **ragged, per-frame-random leading run** of source
+  pixels. Picture rows start between capture x=84 and x=136 (budget 8), 17% of the left band changes
+  between consecutive frames, and `PLXF` underrun is **saturated at 0xFFFF** with
+  `debug_state` cycling. That is a **per-line DDR read underrun inside the presentation path**.
+  Fixing it needs an RBF change → `w-fit-o5`'s exclusive slot. **Not fixable from the ARM.**
+- A ruler test frame renders with correct horizontal and vertical alignment, so **stride is correct**;
+  the untested 640/624/618/`PRESENT_X=11` stride candidates are not the explanation for this defect.
+- Evidence: `tests/fixtures/hw_visual/idle_rca_fb4bad84/`.
+
+**Why the byte-value green and the broken screen coexisted.** The predecessor's `fb0` check read
+`26_23_1f_ff` / `0d_a0_e5_ff` byte values. Those are still correct here. A byte-value spot check
+cannot see a per-line prefix loss, and `scripts/hdmi_capture_classify.py` grades the damaged frame
+`VALID_CONTENT`. "The capture worked" has never been evidence about the screen.
+
+**A stale mailbox window that answers with valid magics.** `mailbox_abi_spec.hpp` declares
+`0x3007F0xx/1xx`, which is the `0x40000`-stride window. `present_core.sv` instantiates
+`ddr_frame_store` with the `0x80000` YUV stride, so the live window is **`0x300FF000`**. DDR still
+holds what an older core wrote at the other window, so probing the spec addresses returns
+permanently frozen, plausible-looking values. The spec now derives both windows from
+`doorbellForStride()` with `static_assert`s, and any gate must derive the window from the doorbell.
+
+**Build identity (`V` entry in the OSD sidebar) was going to lie.** `sys/build_id.tcl` derived the id
+from `git rev-parse` inside the Quartus project dir, but `scripts/build_rbf_remote.sh` rsyncs only
+`fpga/Plex_MiSTer/` into a Docker build slot with **no `.git`** — confirmed against
+`remote_out/slot11/compile.log:32`, which emitted `BUILD_DATE` only. Every remote build on a given
+day would have carried the same `nogit` identity. Now `scripts/gen_build_stamp.py` runs on the build
+host before the rsync and writes `BUILD_ID = DATE-GIT-SRC`, where `SRC` is a sha256 over exactly the
+fit inputs, so it cannot be forgotten the way a hand-edited constant can; the fit **refuses to run**
+(exit 4) on a `nogit` id. `scripts/rbf_provenance.py` records md5 → BUILD_ID into
+`fpga/Plex_MiSTer/rbf_provenance.jsonl` after each fit and resolves a device's RBF back to its
+source, hard-failing on an unknown md5 — which correctly reds `fb4bad84` today.
+**`w-fit-o5` / parent: the next fit must go through the updated `build_rbf_remote.sh`.**
+Gate: `tests/unit/test_build_identity.sh`.
+
+**LAB INCIDENT — device wedged, needs a physical power cycle.** Holding the OSD selection requires
+re-asserting it against Main's shadow. A run at **80 `set_status` writes every 0.3 s** wedged the
+MiSTer: HDMI still carries valid 1280x720 timing but a flat level-7 picture (`std=0`), and ARP for
+`192.168.1.183` has been `INCOMPLETE` since. Cause is assumed (UIO/SPI contention with Main), not
+proven. `tests/hw/test_osd_screensaver_selects.sh` now caps this at 32 writes and ≥400 ms apart and
+refuses to run outside those bounds. **Device conf was left at `OSD_CONTROL=1`** (backup
+`/media/fat/misterplex/misterplex.conf.bak-wosdo5`); the daemon was running healthy at the time of
+the wedge.
+
 ## ACTIVE — W-OSD idle Plex-logo split (**HDMI SCORED, currently FAILS BLACK** 2026-07-28)
 
 Raw findings:
@@ -634,7 +692,7 @@ Everything above this line is the **2026-07-24 R-csum6 campaign record** and is 
 
 **Product bugs fixed and verified on hardware this session:**
 - **Cast playback works.** Was: advertised as a cast target but never played, controller stuck at 0:00. Cause: PMS timeline/status sent a hard-coded Plex Web/Chrome identity, so PMS associated playback with the wrong player. Device evidence: `frames=134 vfps=21.9 audio=on clock=av-lock drops=0`, `fpga frame_tx ok via DDR presents=96`, timeline `0→2378→5528`. Pixel-verified as **real changing video**: bank0 frames differ by 2610/449280 bytes, Y unique 253/254, range 0–255. Scope: this is **ARM decode + PMS transcode at 320×240 presenting via FPGA** — it does **not** advance FPGA decode.
-- **Black idle screen explained and fixed.** Cause: `OSD_CONTROL` let the saved OSD word `0x4000` (bits `[15:14]=01`) override `IDLE_SCREEN=logo` and select `IdleMode::Black`. Renderer histograms: `Black → Y 0x10 ×299520, U/V 0x80` (exactly matching the device capture); `Logo → Y 0x2d ×294400, 0x9d ×5120`. **The user's reported "dark grey 0x2D2D2D2D" was the logo's dark field** (`Y=0x2d`), not a bug. With `OSD_CONTROL=0` the active DDR bank shows the visible logo. Device conf set to `OSD_CONTROL=0` (backup `misterplex.conf.bak-orch`). **Still open:** the daemon should not let a default OSD word silently override `IDLE_SCREEN` — `OSD_CONTROL=1` still forces black.
+- **Black idle screen explained and fixed.** Cause: `OSD_CONTROL` let the saved OSD word `0x4000` (bits `[15:14]=01`) override `IDLE_SCREEN=logo` and select `IdleMode::Black`. Renderer histograms: `Black → Y 0x10 ×299520, U/V 0x80` (exactly matching the device capture); `Logo → Y 0x2d ×294400, 0x9d ×5120`. **The user's reported "dark grey 0x2D2D2D2D" was the logo's dark field** (`Y=0x2d`), not a bug. With `OSD_CONTROL=0` the active DDR bank shows the visible logo. Device conf set to `OSD_CONTROL=0` (backup `misterplex.conf.bak-orch`). **CLOSED 2026-07-28 (W-OSD-O5), and the workaround itself was the next defect.** `shouldApplyOsdIdle()` (`host/libmisterplex/osd_menu.hpp`) now treats the first OSD word seen as a baseline, so a saved word can no longer override `IDLE_SCREEN`. Measured on the device with `OSD_CONTROL=1`: the daemon read a persisted `0x6000` (idle bits `01` = Black), logged `idle=1 (idle unchanged)` and painted the **logo**. `OSD_CONTROL=1` no longer forces black. But `OSD_CONTROL=0` does not skip one setting — `MediaPlayer::startOsdPoll()` returns before starting its thread, so the OSD word is never read and *every* live menu item (Idle screen, Video delay, A/V resync, Audio clock trim, Content resolution) silently does nothing. That is the user's "the screensaver still dont work": with `OSD_CONTROL=0` and Screensaver selected the picture is static (bright-centroid travel **0.0 px**); with `OSD_CONTROL=1` it animates (**518.2 px**). Evidence: `tests/fixtures/hw_visual/screensaver_osd_control/`; gates `tests/hw/test_osd_screensaver_selects.sh` and `tests/unit/test_screensaver_osd_control.sh`. `misterplexd` now warns at startup when `OSD_CONTROL=0`; the shipped default (`scripts/package_release.sh`) is already `1`.
 
 **FINAL EYES-ON CONFIRMATION — 2026-07-28 00:26, daemon `215b01fb13d349d6f67f4665bc0a0041`, RBF `8eb01b79` unchanged, `OSD_CONTROL=0`.**
 Captured from the live DDR frame store and **visually inspected** (PNGs preserved outside the repo; `captures/` is gitignored):
