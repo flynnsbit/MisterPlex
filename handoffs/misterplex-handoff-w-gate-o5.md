@@ -227,3 +227,158 @@ least to check.**
 4. The `.qip` cross-check proves a file is in the **file list**, not that the
    entity survived synthesis. `make post-fit-hierarchy` remains the only oracle,
    and w-audit has already broken two of its parsers.
+
+---
+
+# W-GATE-O5 addendum — the Quartus file-list oracle
+
+Branch `w-gate-hour28`, commits **`c7ce41f`** and **`6208394`**, both pushed
+twice. `make unit` **rc=0** on 105 registered commands.
+
+## A1. Raw numbers first
+
+```
+w-gate-hour28  6208394
+  check_qip_coverage.py                rc=0  Scope: 84 source assignments across
+                                             17 Quartus list file(s); 43 tracked
+                                             HDL files under rtl/
+                                             QIP_COVERAGE_OK product=41
+                                             compiled=37 allowed_absent=4
+  test_qip_coverage_gate.py            rc=0  QIP_COVERAGE_REGRESSION_OK cases=19
+  make unit                            rc=0
+  check_rtl_module_instantiations.py --root emu --require h264_intra_nb_ctx
+                                       rc=1  instantiating_parents=<none>
+
+w-decode-hour27      2f165ed           rc=0  h264_decode_core.sv, h264_decode_top.sv,
+                                             h264_intra_nb_ctx.sv all COMPILED
+parent/integ-hour27  5779e9f           rc=1  QIP_COVERAGE_FAIL unexplained_absent=2
+                                             (h264_decode_top.sv, h264_intra_nb_ctx.sv)
+```
+
+Denominator for every reachability/coverage figure above: **41 product HDL
+files** tracked under `fpga/Plex_MiSTer/rtl/` (43 tracked, 2 testbenches).
+
+## A2. W-FIT-O5's instruction was followed: adopted, not rebuilt
+
+W-FIT said "the files.qip cross-check the parent assigned you already exists at
+`ee2ed89` — take it, don't rebuild it." Taken. Their judgement is upheld: it
+finds a class of defect no reachability graph can see, and it belongs in
+`make unit`, where it now is.
+
+I attacked it before registering it, because the core-subtree gate the parent
+promoted lasted under an hour against a determined reviewer. **Five measured
+false-green vectors**, each now a permanent regression case:
+
+| # | mutation | original | truth |
+|---|---|---|---|
+| A1 | comment out one `set_global_assignment` line | counted as compiled | not compiled |
+| A2 | `../../attic/<same-leaf>.sv` | counted as compiled | a different file |
+| A3 | entry naming a file not on disk | counted as compiled, and satisfied `--require` | nothing there |
+| A4 | `lfsr.v`/`mycore.v`/`pll.v`/`pll/pll_0002.v` | outside the denominator | `product RTL: 37` when the truth is 41 |
+| A5 | append a line to the in-script `ALLOWED_ABSENT` | red turns green | defect still present |
+
+A1 is the same shape as w-audit's `if (0)` finding: a **one-character edit**
+that converts a hard fail into a pass and still looks present in `git diff`.
+
+The allowlist moved out of the script into the tracked ratchet
+`fpga/Plex_MiSTer/rtl/qip_allowed_absent.txt`. Entries need a reason, and go
+`STALE_ALLOWED_ABSENT` (hard fail) once the file is compiled or untracked.
+
+## A3. I then got it wrong myself, and the ratchet caught me
+
+This is the part worth your attention.
+
+My hardened gate shipped **four false `NOT_COMPILED` verdicts**, and I had
+written fluent allowlist entries excusing them:
+
+```
+pll.v  # Quartus-generated PLL wrapper; compiled via the generated pll.qip when used
+```
+
+**False.** `rtl/pll.v` is compiled. The deployed design's A&S source list says
+`Found entity 1: pll File: /build/rtl/pll.v`, and `Plex.sv` instantiates it. A
+true number about the wrong thing, inside the instrument built to catch that.
+
+Three parser defects behind it: bare relative paths resolve against the
+**project** directory not the declaring file (so `sys/sys.tcl`'s
+`QIP_FILE sys/sys.qip` became `sys/sys/sys.qip` and truncated the walk);
+`rtl/pll.qip` writes `-library "pll"` *before* `-name`; and `sys/sys.qip`
+writes paths as Tcl.
+
+I did not have to remember to revisit the allowlist. Fixing the parser made the
+gate print `STALE_ALLOWED_ABSENT pll.v` and refuse to pass until I withdrew the
+entries. **That is the case for building allowlists as two-directional ratchets
+rather than exemption lists**, and I would like it applied to the other
+hand-maintained lists in the fleet.
+
+Scope before → after: list files 4 → **17**, assignments 36 → **84**, compiled
+35 → **37**, allowlist 6 → **4**. Each of the 4 survivors is now corroborated
+against the deployed fit's A&S source list rather than against my prose.
+
+Where the parser cannot decide — the version-dependent
+`pll_q<version>.qip` include has two candidates in this tree — it counts the
+union (safe for a `NOT_COMPILED` verdict) and prints `AMBIGUOUS_TCL_INCLUDE`
+with every candidate. Unresolvable paths are `UNEVALUATED_TCL_PATH`: declared,
+never counted as coverage. Same rule as the undecidable generate blocks:
+**the parser must not invent presence or absence.**
+
+## A4. Three oracles sharing no code agree on the deployed bitstream
+
+On `fb4bad84`: W-FIT's filename gate, my path-resolving gate, and my grep-level
+fit evidence ladder.
+
+| module | W-FIT qip gate | my qip gate | fit ladder on `fb4bad84` |
+|---|---|---|---|
+| `h264_decode_top` | NOT_COMPILED | NOT_COMPILED | `NOT_COMPILED` |
+| `h264_intra_nb_ctx` | NOT_COMPILED | NOT_COMPILED | `NOT_COMPILED` |
+| `h264_decode_core` | compiled | compiled | `COMPILED_ONLY` — never elaborated |
+| `decode_stub` | compiled | compiled | `FITTED`, 2627 fit mentions |
+
+**W-FIT's merge-base ruling survives the stricter oracle.** `w-decode-hour27`
+`2f165ed` is green on file-list coverage; `parent/integ-hour27` is not.
+
+## A5. What I am explicitly NOT claiming
+
+* Compiled is **necessary, not sufficient**. `h264_intra_nb_ctx.sv` is now in
+  this branch's `files.qip` and `--root emu --require h264_intra_nb_ctx` still
+  exits **1** with `instantiating_parents=<none>`. I fixed the file list; the
+  wiring is W-DECODE's topology work. Cite both gates or neither.
+* `h264_decode_core` being compiled says nothing about it being instantiated —
+  on the deployed design it was compiled and synthesised away.
+* This gate cannot evaluate Tcl control flow, `.qsf` revisions, search paths, or
+  files added by a build script outside the project.
+* I have run no Quartus and no deploy. Every silicon-side number here is read
+  from W-FIT's fit reports, which remain the strongest oracle.
+
+## A6. Handed to whoever owns the hardware gates
+
+W-FIT's DDR-residue class has **two live instances** on this branch:
+
+* `tests/hw/test_bank_release_visual.sh:127` — discriminates only a **zeroed**
+  mailbox. A stale non-zero `0x504C5853` left in DDR by a previous bitstream
+  passes the check.
+* `tests/hw/test_idle_screen_telemetry.sh:159` — scores a non-advancing
+  doorbell as **FAIL**. After a core load, non-advancing can mean dead fabric,
+  which is unscoreable: **77**, not FAIL. This is W-FIT's exact defect.
+
+Both need a sentinel poke, which needs the device, which is not my lane. I did
+**not** build a static gate for this: the population is two, the discriminator
+is semantic, and a regex-level gate here would manufacture the kind of
+confident green we are trying to eliminate.
+
+Recorded against myself: my first survey instrument for this was
+`grep -c 'exit 77'`, which returned 0 for both scripts because they use an
+`unscored_exit` helper. It would have libelled two well-built scripts. Counting
+the literal instead of the abstraction is the same error class as everything
+else in this report.
+
+## A7. Also recorded: I reproduced W-FIT's pipe mistake in real time
+
+While measuring `h264_intra_nb_ctx` I ran
+`... check_rtl_module_instantiations.py ... | tail -5; echo rc=$?` and read
+**`rc=0`** printed directly underneath `RTL_MODULE_INSTANTIATION_FAIL`.
+Unpiped: **`rc=1`**. W-FIT volunteered the identical mistake this shift. That
+is two workers in one shift on a rule we both already knew, which suggests the
+rule needs a gate rather than more discipline — `scripts/check_pipe_exit_safety.py`
+covers committed shell, not interactive measurement, and interactive
+measurement is where our reports come from.
