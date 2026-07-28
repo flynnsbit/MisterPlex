@@ -50,7 +50,13 @@
     "ac48fbe9a34646e2": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:73 \u2014 scaler-false-path: scaler configuration outputs",
     "de1e19a50000bdd5": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:74 \u2014 scaler-false-path: scaler configuration outputs",
     "88177291f638ba21": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:76 \u2014 REVIEW: false_path on non-obvious target",
-    "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target"
+    "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target",
+    "ccaf146be4cb32bd": "false_path @ fpga/Plex_MiSTer/Plex.sdc:26 \u2014 ddr_bus_arbiter m1_want 2-FF synchronizer first stage; metastability resolved by m1_want_s2 before logic use (18fc6fd).",
+    "a10255db22bf4d62": "false_path @ fpga/Plex_MiSTer/Plex.sdc:34 \u2014 ddr_bus_arbiter reset 2-FF synchronizer first stage; metastability resolved by reset_s2 before use (18fc6fd).",
+    "cf2e456a8f4317af": "false_path @ fpga/Plex_MiSTer/Plex.sdc:42 \u2014 async_fifo write-pointer Gray-code sync into read domain first stage; wr_gray_r2 is used by empty logic (18fc6fd).",
+    "779937ac0d9780ec": "false_path @ fpga/Plex_MiSTer/Plex.sdc:49 \u2014 async_fifo read-pointer Gray-code sync into write domain first stage; rd_gray_w2 is used by full logic (18fc6fd).",
+    "653aec67145ecda1": "max_delay @ fpga/Plex_MiSTer/Plex.sdc:73 \u2014 async_fifo RAM data path bounded to 50 ns; not false-pathed and no -datapath_only because Quartus 17.0.2 lacks it (18fc6fd).",
+    "8a8d6750be32c207": "false_path @ fpga/Plex_MiSTer/Plex.sdc:85 \u2014 diagnostic-only ddr_frame_store underrun_count mailbox crossing; self-correcting heartbeat, no protocol consequence (18fc6fd)."
   },
   "expected_sta_clocks": [
     "general[0].gpll",
