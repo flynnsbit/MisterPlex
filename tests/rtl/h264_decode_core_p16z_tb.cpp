@@ -20,12 +20,19 @@ constexpr int C_BYTES = C_W * C_H;
 constexpr uint32_t REF_BASE = 0x4000;
 constexpr uint32_t WRITE_BASE = 0x1000;
 constexpr int MV_Y_QPEL = 0;
-constexpr int kMeasuredP16RealPCycles = 85860;
+constexpr int kMeasuredP16RealPCycles = 85910;
 constexpr int kP16RealPTimeoutCycles = (kMeasuredP16RealPCycles * 17 + 9) / 10;
 
-constexpr int kResidualBlockSamples[2][16] = {
-    {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
-    {260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260, 260},
+constexpr int kScheduledLumaBlocks = 2;
+constexpr int kResidualBlockSamples[2][kScheduledLumaBlocks][16] = {
+    {
+        {19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13, 19, 11, -5, -13},
+        {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
+    },
+    {
+        {264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256, 264, 262, 258, 256},
+        {7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1, 7, 5, 1, -1},
+    },
 };
 
 struct Write {
@@ -114,7 +121,10 @@ int residualSample(int mbIdx, int localIdx) {
     if (localIdx < 256) {
         const int sx = localIdx & 15;
         const int sy = localIdx >> 4;
-        if (sx < 4 && sy < 4) return kResidualBlockSamples[mbIdx][sy * 4 + sx];
+        if (sx < kScheduledLumaBlocks * 4 && sy < 4) {
+            const int block = sx >> 2;
+            return kResidualBlockSamples[mbIdx][block][sy * 4 + (sx & 3)];
+        }
     }
     return 0;
 }
@@ -198,6 +208,36 @@ uint8_t chromaPred(const MbCase& mb, int sampleIdx) {
 
 uint8_t predSample(const MbCase& mb, int idx) { return (idx < 256) ? lumaPred(mb, idx) : chromaPred(mb, idx); }
 uint8_t expectedRecon(int mbIdx, const MbCase& mb, int localIdx) { return clipU8(predSample(mb, localIdx) + residualSample(mbIdx, localIdx)); }
+
+bool checkResidualFixture() {
+    int nonzero = 0;
+    int positionDependent = 0;
+    for (int mb = 0; mb < static_cast<int>(kCases.size()); ++mb) {
+        for (int block = 0; block < kScheduledLumaBlocks; ++block) {
+            bool anyNonzero = false;
+            bool differsFromFirst = false;
+            for (int i = 0; i < 16; ++i) {
+                anyNonzero |= (kResidualBlockSamples[mb][block][i] != 0);
+                differsFromFirst |= (kResidualBlockSamples[mb][block][i] != kResidualBlockSamples[mb][block][0]);
+            }
+            if (!anyNonzero || !differsFromFirst) {
+                std::cerr << "FAIL h264_decode_core residual fixture: mb=" << mb
+                          << " block=" << block << " is degenerate\n";
+                return false;
+            }
+            for (int i = 0; i < 16; ++i) nonzero += (kResidualBlockSamples[mb][block][i] != 0);
+            ++positionDependent;
+        }
+    }
+    if (kResidualBlockSamples[0][0][0] == kResidualBlockSamples[0][0][1]) {
+        std::cerr << "FAIL h264_decode_core residual fixture: scan-order sentinel aliases coeff positions\n";
+        return false;
+    }
+    std::cout << "INFO h264_decode_core residual fixture: " << positionDependent
+              << " scheduled luma CAVLC blocks are nonzero and position-dependent; nonzero_samples="
+              << nonzero << " scan_order_sentinel=19/11\n";
+    return true;
+}
 
 std::size_t readsPerMb() { return 256 * 81 + 128 * 4; }
 std::size_t expectedReadCount() { return readsPerMb() * kCases.size(); }
@@ -306,10 +346,19 @@ void clearInputs(Sim& s) {
 }
 
 void loadScheduledResidualRbsp(Sim& s) {
-    const uint8_t mb0[] = {0x07, 0x0c, 0xe0};
-    const uint8_t mb1[] = {0x14, 0x00, 0x04, 0x1f, 0xa0};
-    for (std::size_t i = 0; i < sizeof(mb0); ++i) s.top.rbsp_byte_in[37 + i] = mb0[i];
-    for (std::size_t i = 0; i < sizeof(mb1); ++i) s.top.rbsp_byte_in[43 + i] = mb1[i];
+    auto putBits = [&](int bitOffset, const char* bits) {
+        for (int i = 0; bits[i] != '\0'; ++i) {
+            if (bits[i] == '1') s.top.rbsp_byte_in[(bitOffset + i) >> 3] |= 1u << (7 - ((bitOffset + i) & 7));
+        }
+    };
+    int bitOffset = kCases.at(0).residualBitOffset;
+    putBits(bitOffset, "0000011100001100111"); // scan coeffs [1, 4]
+    bitOffset += 19;
+    putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
+    bitOffset = kCases.at(1).residualBitOffset;
+    putBits(bitOffset, "00010000000000000000001000001111110111"); // scan coeffs [80, 1]
+    bitOffset += 38;
+    putBits(bitOffset, "00100111"); // scan coeffs [1, 1]
 }
 
 void reset(Sim& s) {
@@ -441,7 +490,7 @@ int checkScoreboard(const Sim& s) {
         return 1;
     }
     std::cout << "OK h264_decode_core p16x16 real-P scoreboard: 2 MBs syntax+MV-neighbor+CAVLC-residual path "
-              << "384x2 exact clipped pred+scheduled-residual samples landed at DPB addresses; reads="
+              << "384x2 exact clipped pred+2-block scheduled-residual samples landed at DPB addresses; reads="
               << s.reads.size() << " clipped_samples=" << clipped
               << " rbsp_request_offsets=" << s.rbspRequests.at(0) << "/" << s.rbspRequests.at(1)
               << " cycles=" << s.cycles << " timeout_cycles=" << kP16RealPTimeoutCycles
@@ -455,6 +504,7 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
 
     Sim s;
+    if (!checkResidualFixture()) return 1;
     reset(s);
     driveSliceStart(s);
     for (std::size_t i = 0; i < kCases.size(); ++i) {

@@ -112,6 +112,14 @@
       "required_substrings": [
         "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
       ]
+    },
+    {
+      "id": "h264_decode_core_p16z_swap_scheduled_coeff",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Swapping scheduled CAVLC coefficient scan positions must fail independently from residual magnitude drops, proving the fixture catches scan-order bugs.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=90 want=92 pred=73 residual=19"
+      ]
     }
   ]
 }

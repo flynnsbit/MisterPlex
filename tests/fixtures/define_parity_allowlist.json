@@ -14,6 +14,7 @@
     "H264_DECODE_CORE_FAULT_DROP_WB": "Injected decode-core DPB writeback expected-red fault.",
     "H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR": "Injected decode-core P16x16 MV-neighbor expected-red fault.",
     "H264_DECODE_CORE_FAULT_PERTURB_MV": "Injected decode-core P16x16 real-P motion-vector expected-red fault.",
+    "H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF": "Injected decode-core P16x16 scheduled CAVLC scan-order expected-red fault.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",

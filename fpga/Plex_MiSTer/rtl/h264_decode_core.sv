@@ -5,9 +5,9 @@
 //
 // STATUS: PARTIAL PRODUCT DATAPATH.
 //         Product DPB writeback, P16 syntax handoff, MV prediction state, and
-//         the first scheduled P16 luma CAVLC/IDCT residual block are wired.
-//         Full residual traversal, P partition modes, deblock, and full decode
-//         scheduling remain open.
+//         an initial scheduled P16 luma CAVLC/IDCT residual traversal are
+//         wired. Full residual traversal, P partition modes, deblock, and full
+//         decode scheduling remain open.
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
@@ -257,6 +257,7 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WRITE    = 8'd4;
     localparam [7:0] ST_P16_RES_START = 8'd5;
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
+    localparam [1:0] P16_LUMA_RES_BLOCKS = 2'd2;
     localparam [15:0] FRAME_W16 = 16'(FRAME_W);
     localparam [15:0] FRAME_H16 = 16'(FRAME_H);
     localparam [15:0] CHROMA_W16 = 16'(FRAME_W / 2);
@@ -274,8 +275,8 @@ module h264_decode_core #(
     reg signed [15:0] p16_mv_y_qpel_r;
     reg [1:0]  p16_ref_idx_l0_r;
     reg [6:0]  p16_tap_idx;
-    reg [15:0] p16_residual_bit_offset_r;
-    reg [15:0] p16_rbsp_window_base_r;
+    reg [9:0]  p16_res_bit_offset_r;
+    reg [1:0]  p16_res_block_idx;
     reg        cavlc_start_r;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -424,9 +425,8 @@ module h264_decode_core #(
         .skip_zero(syntax_mv_skip_zero)
     );
 
-    wire [15:0] p16_residual_window_bit_base = {p16_rbsp_window_base_r[12:0], 3'd0};
-    wire [15:0] p16_residual_rel_bit_offset = p16_residual_bit_offset_r - p16_residual_window_bit_base;
-    wire [9:0]  p16_residual_bit_offset10 = p16_residual_rel_bit_offset[9:0];
+    wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
+    wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
     wire        cavlc_busy;
     wire        cavlc_done;
     wire        cavlc_ok;
@@ -437,13 +437,29 @@ module h264_decode_core #(
     wire signed [15:0] cavlc_coeff [0:15];
     wire signed [15:0] cavlc_level_dbg [0:15];
     wire [3:0]  cavlc_run_dbg [0:15];
+    wire signed [15:0] cavlc_dequant_coeff [0:15];
+    genvar cavlc_coeff_i;
+    generate
+        for (cavlc_coeff_i = 0; cavlc_coeff_i < 16; cavlc_coeff_i = cavlc_coeff_i + 1) begin : g_cavlc_dequant_coeff
+`ifdef H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF
+            if (cavlc_coeff_i == 0)
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[1];
+            else if (cavlc_coeff_i == 1)
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[0];
+            else
+                assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+`else
+            assign cavlc_dequant_coeff[cavlc_coeff_i] = cavlc_coeff[cavlc_coeff_i];
+`endif
+        end
+    endgenerate
     h264_cavlc_residual_block u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
         .coeff_token_table(3'd0),
         .max_coeff(5'd16),
-        .bit_offset_start(p16_residual_bit_offset10),
+        .bit_offset_start(p16_res_bit_offset_r),
         .bit_len(10'd512),
         .rbsp(rbsp_byte),
         .busy(cavlc_busy),
@@ -460,7 +476,7 @@ module h264_decode_core #(
     wire signed [28:0] p16_res_dequant [0:15];
     wire signed [28:0] p16_res_idct [0:15];
     h264_dequant4x4 u_product_p16_res_dequant (
-        .coeff(cavlc_coeff),
+        .coeff(cavlc_dequant_coeff),
         .qp(slice_qp_y),
         .max_coeff(5'd16),
         .dequant(p16_res_dequant)
@@ -569,8 +585,8 @@ module h264_decode_core #(
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
             p16_tap_idx <= 7'd0;
-            p16_residual_bit_offset_r <= 16'd0;
-            p16_rbsp_window_base_r <= 16'd0;
+            p16_res_bit_offset_r <= 10'd0;
+            p16_res_block_idx <= 2'd0;
             cavlc_start_r <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
@@ -635,8 +651,8 @@ module h264_decode_core #(
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
-                    p16_residual_bit_offset_r <= mb_residual_bit_offset;
-                    p16_rbsp_window_base_r <= rbsp_window_base;
+                    p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
+                    p16_res_block_idx <= 2'd0;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -670,10 +686,16 @@ module h264_decode_core #(
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
                     if (cavlc_ok) begin
                         for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1)
-                            lat_p16_residual_y[((wb_i / 4) * 16) + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
+                            lat_p16_residual_y[((wb_i / 4) * 16) + {28'd0, p16_res_block_idx, 2'd0} + (wb_i % 4)] <= sat16(p16_res_idct[wb_i]);
                     end
 `endif
-                    wb_state <= ST_P16_TAP_REQ;
+                    if (p16_res_block_idx == (P16_LUMA_RES_BLOCKS - 2'd1)) begin
+                        wb_state <= ST_P16_TAP_REQ;
+                    end else begin
+                        p16_res_block_idx <= p16_res_block_idx + 2'd1;
+                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                        wb_state <= ST_P16_RES_START;
+                    end
                 end
             end
             ST_P16_TAP_REQ: begin
