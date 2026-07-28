@@ -581,6 +581,13 @@ assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
 `endif
 
+// FPGA decoder pixel stream: h264_decode_core -> ddr_frame_store -> display.
+wire        dec_px_wr_en;
+wire  [1:0] dec_px_plane;
+wire [15:0] dec_px_x;
+wire [15:0] dec_px_y;
+wire  [7:0] dec_px_data;
+
 stream_path #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H)
@@ -650,7 +657,12 @@ stream_path #(
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
-	.fs_swap(stub_swap)
+	.fs_swap(stub_swap),
+	.dec_px_wr_en(dec_px_wr_en),
+	.dec_px_plane(dec_px_plane),
+	.dec_px_x(dec_px_x),
+	.dec_px_y(dec_px_y),
+	.dec_px_data(dec_px_data)
 );
 
 // Phase 3.3j / 3.1b hybrid present:
@@ -721,6 +733,11 @@ present_core #(
 	.fs_wr_reset(fs_wr_reset),
 	.fs_swap(fs_swap),
 	.fs_wr_ready(fs_wr_ready),
+	.dec_px_wr_en(dec_px_wr_en),
+	.dec_px_plane(dec_px_plane),
+	.dec_px_x(dec_px_x),
+	.dec_px_y(dec_px_y),
+	.dec_px_data(dec_px_data),
 	.sdram_dout(sdram_dout),
 	.sdram_ready(sdram_ready),
 	.sdram_sel(frame_sdram_sel),

@@ -64,6 +64,18 @@ module ddr_frame_store #(
 
 	input  wire        vsync_pulse,
 	output reg         has_frame,
+
+	// ── Decoder present writeback (FPGA-side pixel source) ──
+	// h264_decode_core commits reconstructed samples one byte per clk in
+	// raster order within each macroblock row.  Bytes are gathered into
+	// 64-bit qwords and written straight into the HPS DDR framebuffer of the
+	// bank currently being displayed, so the next line refill picks them up.
+	input  wire        dec_px_wr_en,
+	input  wire  [1:0] dec_px_plane,   // 0=Y, 1=U, 2=V
+	input  wire [15:0] dec_px_x,
+	input  wire [15:0] dec_px_y,
+	input  wire  [7:0] dec_px_data,
+
 	output reg         swap_pending,
 	output reg  [15:0] underrun_count,
 	output reg  [15:0] frames_done,
@@ -131,6 +143,55 @@ module ddr_frame_store #(
 	assign DDRAM_CLK = clk_ddr;
 	assign DDRAM_BE = 8'hFF;
 
+	// ── Decoder present writeback: byte gather (clk domain) ──────────────
+	localparam int PX_Y_BYTES   = CODED_W * CODED_H;
+	localparam int PX_C_BYTES   = (CODED_W * CODED_H) / 4;
+	localparam int PX_C_STRIDE  = CODED_W / 2;
+	localparam int PX_FRAME_BYTES = PX_Y_BYTES + 2 * PX_C_BYTES;
+	localparam int PX_BYTE_W    = $clog2(PX_FRAME_BYTES);
+	localparam int PX_QW_W      = PX_BYTE_W - 3;
+
+	wire [PX_BYTE_W-1:0] px_plane_base =
+		(dec_px_plane == 2'd0) ? PX_BYTE_W'(0) :
+		(dec_px_plane == 2'd1) ? PX_BYTE_W'(PX_Y_BYTES) :
+		                         PX_BYTE_W'(PX_Y_BYTES + PX_C_BYTES);
+	wire [PX_BYTE_W-1:0] px_row_stride =
+		(dec_px_plane == 2'd0) ? PX_BYTE_W'(CODED_W) : PX_BYTE_W'(PX_C_STRIDE);
+	wire [PX_BYTE_W-1:0] px_byte_off =
+		px_plane_base + (PX_BYTE_W'(dec_px_y) * px_row_stride) + PX_BYTE_W'(dec_px_x);
+	wire [PX_QW_W-1:0] px_qword = px_byte_off[PX_BYTE_W-1:3];
+	wire [2:0] px_lane = px_byte_off[2:0];
+	wire px_in_frame = (dec_px_x < 16'(CODED_W)) && (dec_px_y < 16'(CODED_H));
+
+	reg [63:0] px_acc;
+	wire [63:0] px_acc_next = (px_lane == 3'd0)
+		? {56'd0, dec_px_data}
+		: (px_acc | ({56'd0, dec_px_data} << {px_lane, 3'b000}));
+	wire px_push = dec_px_wr_en && px_in_frame && (px_lane == 3'd7);
+
+	always @(posedge clk) begin
+		if (reset)
+			px_acc <= 64'd0;
+		else if (dec_px_wr_en && px_in_frame)
+			px_acc <= px_acc_next;
+	end
+
+	reg dec_px_seen;
+	always @(posedge clk) begin
+		if (reset)
+			dec_px_seen <= 1'b0;
+		else if (px_push)
+			dec_px_seen <= 1'b1;
+	end
+
+	wire px_fifo_full;
+	wire px_fifo_empty;
+	wire [PX_QW_W+63:0] px_fifo_rdata;
+	reg  px_fifo_pop;
+	wire [PX_QW_W-1:0] px_fifo_qword = px_fifo_rdata[PX_QW_W+63:64];
+	wire [63:0]        px_fifo_data  = px_fifo_rdata[63:0];
+	wire _px_fifo_full_unused = px_fifo_full;
+
 	reg [LINE_SLOTS-1:0] y_wr, u_wr, v_wr;
 	reg [Y_QW_AW-1:0] y_wr_addr;
 	reg [C_QW_AW-1:0] c_wr_addr;
@@ -193,6 +254,14 @@ module ddr_frame_store #(
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
 
+	async_fifo #(.WIDTH(PX_QW_W + 64), .AW(5)) px_fifo (
+		.wr_clk(clk), .wr_reset(reset),
+		.wr_en(px_push), .wr_data({px_qword, px_acc_next}),
+		.wr_full(px_fifo_full), .wr_almost_full(),
+		.rd_clk(clk_ddr), .rd_reset(reset_ddr),
+		.rd_en(px_fifo_pop), .rd_data(px_fifo_rdata), .rd_empty(px_fifo_empty)
+	);
+
 	always @(posedge clk_ddr) begin
 		if (reset) begin
 			reset_ddr_s1 <= 1'b1;
@@ -244,6 +313,11 @@ module ddr_frame_store #(
 				vsync_toggle <= ~vsync_toggle;
 			end else if (vsync_pulse) begin
 				vsync_toggle <= ~vsync_toggle;
+				// The decoder owns the picture as soon as it has committed a
+				// sample: without this the store stays blanked until the ARM
+				// rings a doorbell, and FPGA-decoded pixels would never show.
+				if (dec_px_seen)
+					has_frame <= 1'b1;
 			end
 		end
 	end
@@ -798,6 +872,7 @@ module ddr_frame_store #(
 			vsync_t_d2 <= 1'b0;
 			vsync_t_seen <= 1'b0;
 			cmd_pop <= 1'b0;
+			px_fifo_pop <= 1'b0;
 			sched_valid <= 1'b0;
 			sched_is_y <= 1'b0;
 			sched_for_pending <= 1'b0;
@@ -822,6 +897,7 @@ module ddr_frame_store #(
 			u_wr <= '0;
 			v_wr <= '0;
 			cmd_pop <= 1'b0;
+			px_fifo_pop <= 1'b0;
 
 			disp_bank_d1 <= disp_bank;
 			disp_bank_d2 <= disp_bank_d1;
@@ -1021,6 +1097,17 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
+					end else if (!px_fifo_empty && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						// Decoder writeback: land the gathered qword in the
+						// bank that is on screen right now, so the next line
+						// refill of that row picks it straight back up.
+						DDRAM_ADDR <= (disp_bank_d2 ? BASE_W1 : BASE_W0) +
+						              {{(29-PX_QW_W){1'b0}}, px_fifo_qword};
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= px_fifo_data;
+						DDRAM_WE <= 1'b1;
+						px_fifo_pop <= 1'b1;
+						state_ddr <= S_WRITE_WAIT;
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;

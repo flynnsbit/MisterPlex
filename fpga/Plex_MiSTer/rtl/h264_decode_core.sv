@@ -119,6 +119,18 @@ module h264_decode_core #(
     input  wire [7:0]  dpb_rd_data,
     input  wire        dpb_rd_valid,
 
+    // ── Product present writeback (decoded samples to the display store) ──
+    // Same committed sample stream as dpb_wr_*, but expressed as plane +
+    // frame-relative (x,y) so the consumer owns the surface stride.  The DDR
+    // frame store uses the CODED geometry (624x480), which is not the same as
+    // this core's FRAME_W/FRAME_H present geometry, so a byte address computed
+    // here would land on the wrong stride.
+    output wire        px_wr_en,
+    output wire [1:0]  px_wr_plane,          // 0=Y, 1=U, 2=V
+    output wire [15:0] px_wr_x,
+    output wire [15:0] px_wr_y,
+    output wire [7:0]  px_wr_data,
+
     // ── Frame output (decoded frame to present path) ──
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
@@ -1191,6 +1203,17 @@ module h264_decode_core #(
     assign dpb_wr_en = product_wb_en | p16_sample_wb_en;
     assign dpb_wr_addr = product_wb_addr;
     assign dpb_wr_data = dpb_ref_filtered_sample;
+
+    // Present writeback: same sample stream, plane + frame-relative (x,y).
+    wire [15:0] px_luma_x   = {4'd0, wb_mb_x, 4'd0} + {12'd0, wb_sample_idx[3:0]};
+    wire [15:0] px_luma_y   = {4'd0, wb_mb_y, 4'd0} + {12'd0, wb_sample_idx[7:4]};
+    wire [15:0] px_chroma_x = {5'd0, wb_mb_x, 3'd0} + {13'd0, wb_sample_idx[2:0]};
+    wire [15:0] px_chroma_y = {5'd0, wb_mb_y, 3'd0} + {13'd0, wb_sample_idx[5:3]};
+    assign px_wr_en    = product_wb_en | p16_sample_wb_en;
+    assign px_wr_plane = wb_plane;
+    assign px_wr_x     = (wb_plane == 2'd0) ? px_luma_x : px_chroma_x;
+    assign px_wr_y     = (wb_plane == 2'd0) ? px_luma_y : px_chroma_y;
+    assign px_wr_data  = dpb_ref_filtered_sample;
     assign dpb_rd_en = dpb_ref_mem_rd;
     assign dpb_rd_addr = p16_win_rd_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;

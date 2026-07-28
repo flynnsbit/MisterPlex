@@ -45,6 +45,13 @@ module present_core #(
 	input  wire        fs_swap,
 	output wire        fs_wr_ready,
 
+	// FPGA decoder present writeback (h264_decode_core committed samples)
+	input  wire        dec_px_wr_en,
+	input  wire  [1:0] dec_px_plane,
+	input  wire [15:0] dec_px_x,
+	input  wire [15:0] dec_px_y,
+	input  wire  [7:0] dec_px_data,
+
 	// SDRAM-backed frame_store port
 	input  wire [15:0] sdram_dout,
 	input  wire        sdram_ready,
@@ -280,6 +287,11 @@ module present_core #(
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
+		.dec_px_wr_en(dec_px_wr_en),
+		.dec_px_plane(dec_px_plane),
+		.dec_px_x(dec_px_x),
+		.dec_px_y(dec_px_y),
+		.dec_px_data(dec_px_data),
 		.vsync_pulse(fstart),
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
@@ -289,6 +301,7 @@ module present_core #(
 		.debug_state(frame_sdram_state)
 	);
 `else
+	wire _dec_px_unused = dec_px_wr_en | |dec_px_plane | |dec_px_x | |dec_px_y | |dec_px_data;
 	frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),

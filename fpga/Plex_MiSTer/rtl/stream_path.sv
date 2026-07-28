@@ -95,7 +95,17 @@ module stream_path #(
 	output logic        fs_wr_en,
 	output logic [15:0] fs_wr_pixel,
 	output logic        fs_wr_reset,
-	output logic        fs_swap
+	output logic        fs_swap,
+
+	// Product pixel path: h264_decode_core committed reconstruction samples,
+	// plane + frame-relative (x,y), one byte per clk.  This is the ONLY path
+	// that puts decoded pixels on screen under DDR_FRAME_STORE; decode_stub's
+	// fs_* paint is ignored by present_core in that configuration.
+	output wire         dec_px_wr_en,
+	output wire  [1:0]  dec_px_plane,
+	output wire [15:0]  dec_px_x,
+	output wire [15:0]  dec_px_y,
+	output wire  [7:0]  dec_px_data
 );
 
 	wire        si_wr_en;
@@ -567,6 +577,11 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
+		.px_wr_en(dec_px_wr_en),
+		.px_wr_plane(dec_px_plane),
+		.px_wr_x(dec_px_x),
+		.px_wr_y(dec_px_y),
+		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
 		.busy(core_busy),
@@ -614,15 +629,36 @@ module stream_path #(
 			.recon_dbg(recon_dbg),
 			.recon_dbg_valid(recon_dbg_valid),
 			.recon_valid(recon_valid),
-			.wr_en(fs_wr_en),
-			.wr_pixel(fs_wr_pixel),
-			.wr_reset_ptr(fs_wr_reset),
-			.swap_req(fs_swap),
+			.wr_en(stub_fs_wr_en),
+			.wr_pixel(stub_fs_wr_pixel),
+			.wr_reset_ptr(stub_fs_wr_reset),
+			.swap_req(stub_fs_swap),
 			.busy(stub_busy),
 			.frames_out(stub_frames)
 		);
 		end
 	endgenerate
+
+	// decode_stub is retired as the product pixel source.  Once the decode core
+	// has committed a real sample the stub's diagnostic paint is muted so it can
+	// never race the core for the non-DDR frame_store either.
+	wire        stub_fs_wr_en;
+	wire [15:0] stub_fs_wr_pixel;
+	wire        stub_fs_wr_reset;
+	wire        stub_fs_swap;
+	reg         core_px_owns;
+	always @(posedge clk) begin
+		if (reset)
+			core_px_owns <= 1'b0;
+		else if (dec_px_wr_en)
+			core_px_owns <= 1'b1;
+	end
+	always @* begin
+		fs_wr_en    = stub_fs_wr_en    & ~core_px_owns;
+		fs_wr_pixel = stub_fs_wr_pixel;
+		fs_wr_reset = stub_fs_wr_reset & ~core_px_owns;
+		fs_swap     = stub_fs_swap     & ~core_px_owns;
+	end
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
