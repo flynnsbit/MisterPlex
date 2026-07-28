@@ -416,6 +416,71 @@ def instantiation_graph(modules: dict[str, ModuleDef]) -> dict[str, set[str]]:
     return graph
 
 
+def unresolved_generate_sites(
+    modules: dict[str, ModuleDef],
+) -> dict[str, list[tuple[str, str]]]:
+    """Modules whose *every* instantiation sits inside an unresolvable generate-if.
+
+    w-audit's third reachability finding (branch `w-audit`, scripts/
+    w_audit_gate_hygiene.py) is that a parameter-controlled generate such as
+
+        gen_parent #(.USE_DISABLED(1'b0)) u (...)
+        ... generate if (USE_DISABLED) begin : g_bad  disabled_child u_bad(); end
+
+    resolves to *nothing* in Quartus but is reported reachable here, because the
+    parser folds literals and macros only -- parameter propagation is real
+    elaboration. Rather than guess, make the blind spot loud: a module that the
+    graph can reach *only* through a condition we cannot evaluate has undecidable
+    reachability, and an undecidable module may not back a product claim.
+
+    Returns ``{module: [(owner, condition), ...]}``.
+    """
+    cond_re = re.compile(
+        r"\bif\s*\(([^()`]*(?:\([^()]*\)[^()`]*)*)\)\s*begin\b(?:\s*:\s*[A-Za-z_]\w*)?",
+        re.S,
+    )
+    known = sorted(modules, key=len, reverse=True)
+    total: dict[str, int] = {name: 0 for name in modules}
+    gated: dict[str, list[tuple[str, str]]] = {}
+    for owner, mod in modules.items():
+        body = getattr(mod, "body", None)
+        if not body:
+            continue
+        spans: list[tuple[int, int, str]] = []
+        for match in cond_re.finditer(body):
+            condition = match.group(1).strip()
+            if _constant_truth(condition) is not None:
+                continue
+            if not re.search(r"[A-Za-z_]", condition):
+                continue
+            try:
+                end_start, _ = matching_end(body, match.end())
+            except SystemExit:
+                continue
+            spans.append((match.end(), end_start, condition))
+        for candidate in known:
+            if candidate == owner:
+                continue
+            pattern = (
+                r"\b"
+                + re.escape(candidate)
+                + r"\s*(?:#\s*\(.*?\)\s*)?"
+                + INSTANCE_NAME
+                + r"(?:\s*\[[^\]]+\])?\s*\("
+            )
+            for hit in re.finditer(pattern, body, re.S):
+                total[candidate] += 1
+                for start, end, condition in spans:
+                    if start <= hit.start() < end:
+                        gated.setdefault(candidate, []).append((owner, condition))
+                        break
+    return {
+        name: sites
+        for name, sites in gated.items()
+        if len(sites) == total.get(name, 0)
+    }
+
+
 def reachable_from(root: str, graph: dict[str, set[str]]) -> set[str]:
     if root not in graph:
         fail(f"product root module {root!r} not parsed from {PRODUCT_TOP.relative_to(ROOT)}")
@@ -621,6 +686,27 @@ def check_required_modules(
     if unreachable:
         fail(f"required RTL modules are not reachable from {root}: " + ", ".join(sorted(unreachable)))
 
+    # A module whose every instantiation hides behind a condition this parser
+    # cannot evaluate has undecidable reachability. Undecidable is not evidence.
+    undecidable = unresolved_generate_sites(modules)
+    for name in required:
+        sites = undecidable.get(name)
+        if not sites:
+            continue
+        detail = ";".join(f"{owner}:if({cond})" for owner, cond in sites)
+        print(
+            f"REQUIRED_RTL_MODULE_UNDECIDABLE {name} gated_sites={len(sites)} {detail}",
+            file=sys.stderr,
+        )
+    gated = [name for name in required if undecidable.get(name)]
+    if gated:
+        fail(
+            "required RTL modules are instantiated only inside generate conditions this parser "
+            "cannot evaluate (parameter propagation is real elaboration), so their presence is "
+            "undecidable here and must be proved by make post-fit-hierarchy: "
+            + ", ".join(sorted(gated))
+        )
+
     # A required module that Quartus never compiles is absent from the bitstream
     # however green the graph is. This runs at every root, not only the product root.
     compiled = tracked_qip_sources()
@@ -703,6 +789,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not rtl_modules:
         fail("Scope: 0 RTL modules parsed; the gate cannot claim a PASS over an empty set")
+
+    undecidable_sites = unresolved_generate_sites(default_modules)
+    print(
+        "UNDECIDABLE_GENERATE_MODULES count=%d %s"
+        % (
+            len(undecidable_sites),
+            ",".join(sorted(undecidable_sites)) if undecidable_sites else "<none>",
+        )
+    )
 
     check_required_modules(
         args.require,

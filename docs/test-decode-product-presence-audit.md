@@ -490,7 +490,7 @@ Two further hardenings arising from the same review:
 | `--root mycore --require cos --allow-non-product-root` | rc=1 | rc=1 `REQUIRED_RTL_MODULE_NOT_COMPILED cos` |
 | `--root h264_inter_mc_16x16 --require h264_ref_clamp` | rc=1 | rc=1 `TRUNK_PROOF ... via_masking_lineage=decode_stub` |
 
-`tests/unit/test_w_audit_reachability_regressions.py` reproduces all six
+`tests/unit/test_w_audit_reachability_regressions.py` reproduces all seven
 classes on **synthetic** SystemVerilog, so the regressions hold without editing
 tracked RTL and survive the topology rewire. Both parser fixes were
 mutation-proved by disabling them and observing rc=1.
@@ -518,6 +518,50 @@ The `.qip` case was also converted to drive the shipped helper
 `rtl.qip_sources_from_text()` rather than a local re-implementation of it: a
 test that re-implements the logic it is guarding keeps passing after the product
 regresses, which is this project's signature failure in miniature.
+
+### w-audit's third finding, closed by declaring it undecidable
+
+`scripts/w_audit_gate_hygiene.py` on branch `w-audit` reports three
+"synthetic reachability findings". Two of them -- `FALSE_REACHABLE_QIP_OMISSION`
+and `FALSE_UNREACHABLE_ESCAPED_INSTANCE` -- are already closed here. **Measured
+caveat: that scanner uses its own `candidate_edges()` re-implementation, not
+this parser**, so its findings describe w-audit's model, not a measurement of
+the shipped gate. Running its three synthetic sources through *this* parser:
+
+| synthetic | this parser's `emu` children | verdict |
+|---|---|---|
+| qip omission | `qip_missing_child` | reachable, but `REACHABLE_MODULE_NOT_COMPILED` fires -- closed |
+| escaped instance | `escaped_child` | reachable -- closed |
+| parameter generate | `gen_parent` -> `{disabled_child, live_child}` | **genuinely false-reachable** |
+
+The third is real and stays real: resolving `if (USE_DISABLED)` against
+`#(.USE_DISABLED(1'b0))` is parameter propagation, i.e. elaboration. Guessing it
+would let the parser invent absence, which is the one error it must never make.
+So instead the condition is declared **undecidable**:
+
+* `unresolved_generate_sites()` finds every module whose *entire* set of
+  instantiation sites sits inside a generate condition that is neither a literal
+  nor a macro;
+* the default run always prints `UNDECIDABLE_GENERATE_MODULES count=N ...`, so
+  the blind spot is never silent;
+* a `--require` naming such a module is a **hard fail**
+  (`REQUIRED_RTL_MODULE_UNDECIDABLE`), directing the claim to
+  `make post-fit-hierarchy`.
+
+Measured denominator on `w-gate-hour28`: `UNDECIDABLE_GENERATE_MODULES count=0`.
+There are three generate-`if` sites in `fpga/Plex_MiSTer/rtl` today
+(`ddr_frame_store.sv:144`, `:149`, `stream_path.sv:294`); the first two contain
+only `assign` statements and the third is macro-controlled and therefore already
+resolved. `default_reachable=41` is unchanged, so the instrument is loud without
+perturbing any real measurement -- it exists to catch the *next* parameterised
+subtree swap, which is exactly the shape of the retired `DECODE_REAL_INTRA` one.
+
+Red/green: downgrading the hard fail to advisory (`gated = []`) makes
+`case_parametric_generate_undecidable` fail. Note the trap that caught me first
+time -- asserting only `rc == 1` passed under the mutation, because the synthetic
+file is in no `.qip` and *that* check failed it instead. The case now asserts the
+undecidability verdict text specifically. `rc == 1` for an unexamined reason is
+the same vacuity class this document exists to hunt.
 
 ### What this still does not prove
 

@@ -192,6 +192,57 @@ def case_trunk_nested_under_masking_lineage() -> None:
     assert "masking lineage" in err.getvalue(), err.getvalue()
 
 
+def case_parametric_generate_undecidable() -> None:
+    """w-audit finding 3: a parameter-gated generate is real elaboration, not regex.
+
+    The parser deliberately does NOT guess parameter values -- guessing would let
+    it invent absence. Instead the module is declared *undecidable*: reported in
+    the inventory and hard-failed if it is asked to back a --require claim, so it
+    must be proved by make post-fit-hierarchy instead of by this graph.
+    """
+    text = """
+module disabled_child(input logic a, output logic b); assign b = ~a; endmodule
+module live_child(input logic a, output logic b); assign b = a; endmodule
+module gen_parent #(parameter bit USE_DISABLED = 1'b0)(input logic a, output logic b);
+  generate
+    if (USE_DISABLED) begin : g_bad
+      disabled_child u_bad(.a(a), .b(b));
+    end else begin : g_good
+      live_child u_good(.a(a), .b(b));
+    end
+  endgenerate
+endmodule
+module emu(input logic a, output logic b); gen_parent #(.USE_DISABLED(1'b0)) u(.a(a), .b(b)); endmodule
+"""
+    modules, graph = graph_of(text)
+    assert "disabled_child" in graph["gen_parent"], (
+        "the graph must stay biased to reachable; the parser may not invent absence"
+    )
+    undecidable = rtl.unresolved_generate_sites(modules)
+    assert "disabled_child" in undecidable, (
+        "a module reachable only through an unevaluable generate condition must be "
+        f"declared undecidable, not silently green: {sorted(undecidable)}"
+    )
+    assert "live_child" not in undecidable, (
+        "the else-branch is not gated by an unevaluable condition; flagging it would "
+        f"make the inventory noise: {sorted(undecidable)}"
+    )
+    out, err = io.StringIO(), io.StringIO()
+    rc = 0
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rtl.check_required_modules(
+                ["disabled_child"], "emu", graph, modules, set(graph), False
+            )
+    except SystemExit as exc:
+        rc = int(exc.code or 0)
+    assert rc == 1, "an undecidable module must not back a product --require claim"
+    assert "REQUIRED_RTL_MODULE_UNDECIDABLE disabled_child" in err.getvalue(), err.getvalue()
+    # rc==1 alone is vacuous here: the synthetic file is in no .qip, so that check
+    # would fail it anyway. Assert the *undecidability* verdict specifically.
+    assert "must be proved by make post-fit-hierarchy" in err.getvalue(), err.getvalue()
+
+
 def case_qip_comment_and_path() -> None:
     """A commented assignment compiles nothing; a same-basename path is not a match.
 
@@ -227,6 +278,7 @@ def main() -> int:
         case_dead_root,
         case_trunk_through_masking_lineage,
         case_trunk_nested_under_masking_lineage,
+        case_parametric_generate_undecidable,
         case_qip_comment_and_path,
     ]
     print(f"Scope: w_audit_regression_cases={len(cases)} attacked_gate=check_rtl_module_instantiations.py", flush=True)
