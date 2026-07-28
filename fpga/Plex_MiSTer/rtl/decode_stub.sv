@@ -536,8 +536,10 @@ module decode_stub #(
 		swap_req      <= 1'b0;
 		dpb_fetch_start <= 1'b0;
 		dpb_frame_done_pulse <= 1'b0;
-		dpb_mem_rvalid <= dpb_mem_rd_q;
-		dpb_mem_rd_q <= dpb_mem_rd;
+		// Read data is combinational off the registered address, so rvalid must
+		// lag mem_rd by exactly one cycle to stay aligned with h264_dpb's
+		// pending_valid_d1 capture window.
+		dpb_mem_rvalid <= dpb_mem_rd;
 		dpb_mem_raddr_q <= dpb_mem_raddr;
 		if (dpb_luma_window_valid)
 			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
