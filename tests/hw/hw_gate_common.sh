@@ -35,3 +35,53 @@ hw_require_expected_rbf_md5() {
   fi
   echo "RBF_MD5_OK $name actual=$actual expected=$expected"
 }
+
+# ---------------------------------------------------------------------------
+# HDMI capture lock — serialises /dev/video0 access across all HW gates.
+#
+# V4L2 is NOT safely shareable: concurrent opens produce corrupt frames.
+# Every gate that opens /dev/video0 MUST call capture_lock_acquire before
+# capture and the lock is released automatically on script exit.
+#
+# Protocol:
+#   source "$ROOT/tests/hw/hw_gate_common.sh"
+#   capture_lock_acquire          # blocks up to $CAPTURE_LOCK_TIMEOUT_S (default 60)
+#   ... run capture ...
+#   # capture_lock_release is called automatically via EXIT trap, or call explicitly
+#
+# CAPTURE_LOCK_FILE   path to the lock file  [default: $ROOT/build/video0.lock]
+# CAPTURE_LOCK_TIMEOUT_S  max seconds to wait [default: 60]
+# ---------------------------------------------------------------------------
+
+_CAPTURE_LOCK_FD=9   # file descriptor reserved for the lock
+_CAPTURE_LOCK_HELD=0
+
+capture_lock_acquire() {
+  local timeout="${CAPTURE_LOCK_TIMEOUT_S:-60}"
+  # Determine repo root from this file's location (tests/hw/hw_gate_common.sh)
+  local _gate_root
+  _gate_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  local lock_file="${CAPTURE_LOCK_FILE:-$_gate_root/build/video0.lock}"
+  mkdir -p "$(dirname "$lock_file")"
+  # Open/create the lock file on fd _CAPTURE_LOCK_FD
+  eval "exec ${_CAPTURE_LOCK_FD}>\"$lock_file\""
+  if ! flock -w "$timeout" "$_CAPTURE_LOCK_FD"; then
+    echo "SKIP: could not acquire HDMI capture lock within ${timeout}s" \
+         "(another gate is holding /dev/video0 — set CAPTURE_LOCK_TIMEOUT_S to wait longer)" >&2
+    exit "${HW_RC_UNSCORED:-77}"
+  fi
+  _CAPTURE_LOCK_HELD=1
+  echo "CAPTURE_LOCK acquired: $lock_file (fd=${_CAPTURE_LOCK_FD})"
+}
+
+capture_lock_release() {
+  if [[ "$_CAPTURE_LOCK_HELD" == "1" ]]; then
+    flock -u "$_CAPTURE_LOCK_FD" 2>/dev/null || true
+    eval "exec ${_CAPTURE_LOCK_FD}>&-" 2>/dev/null || true
+    _CAPTURE_LOCK_HELD=0
+  fi
+}
+
+# Auto-release on script exit so callers don't need explicit release.
+# Multiple sourced files adding EXIT traps is safe — bash chains them.
+trap 'capture_lock_release' EXIT

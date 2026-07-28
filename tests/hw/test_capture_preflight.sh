@@ -21,6 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 TOOL="$ROOT/scripts/capture_preflight.py"
 
 DEV="${HDMI_DEV:-}"
@@ -35,6 +36,12 @@ SYNTHETIC_CASE="${CAPTURE_SYNTHETIC_CASE:-content}"
 
 echo "test_capture_preflight: BEGIN"
 echo "Scope: 1 HDMI capture rig probe (device=${DEV:-auto}, format=$CAP_FMT $CAP_SIZE@${CAP_FPS}fps, frames=$CAP_FRAMES)"
+
+# Acquire exclusive capture lock before opening /dev/video0.
+# Synthetic/file sources do not need the device lock.
+if [[ "$SOURCE" == "v4l2" ]]; then
+  capture_lock_acquire
+fi
 
 ARGS=(
   --source "$SOURCE"

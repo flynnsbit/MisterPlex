@@ -18,6 +18,7 @@ else
     exit 77
   fi
 fi
+capture_lock_acquire
 RBF_LOCAL="${RBF_LOCAL:-$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf}"
 # MENU_FAST=1 (default): short dwell — user-visible mode flips stay <0.5s
 # MENU_FAST=0: slower multi-frame capture for flaky grabbers

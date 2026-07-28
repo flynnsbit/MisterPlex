@@ -30,11 +30,12 @@ EXPECT="${LEFT_EDGE_EXPECT:-PASS}"
 args=("--threshold" "$THRESHOLD" "--logo-row" "$LOGO_ROW" "--expect" "$EXPECT")
 
 if [[ $# -gt 0 ]]; then
-  # Explicit frame files passed — analyse them directly
+  # Explicit frame files passed — analyse them directly (no device needed)
   python3 "$ROOT/scripts/grade_left_edge.py" "$@" "${args[@]}"
   rc=$?
 else
-  # Live capture: device auto-detected or from HDMI_DEV
+  # Live capture: acquire lock before touching /dev/video0
+  capture_lock_acquire
   python3 "$ROOT/scripts/grade_left_edge.py" "${args[@]}"
   rc=$?
 fi

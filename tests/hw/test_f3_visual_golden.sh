@@ -11,6 +11,7 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+source "$ROOT/tests/hw/hw_gate_common.sh"
 OUT="${VISUAL_OUT:-$ROOT/build/hw_visual}"
 
 # HDMI capture device: auto-detect the best MJPG-capable node (rejects metadata
@@ -27,6 +28,9 @@ else
   fi
   echo "HDMI_DEV auto-detected: $DEV (override with HDMI_DEV=...)"
 fi
+
+# Acquire exclusive capture lock now that we know a device exists.
+capture_lock_acquire
 CAP_FMT="${VISUAL_CAPTURE_FORMAT:-mjpeg}"
 CAP_SIZE="${VISUAL_CAPTURE_SIZE:-1280x720}"
 CAP_FPS="${VISUAL_CAPTURE_FPS:-60}"
