@@ -1,0 +1,9 @@
+{
+  "name": "misterplex-e2e",
+  "version": "1.0.0",
+  "description": "MiSTerPlex Playwright end-to-end harness",
+  "private": true,
+  "dependencies": {
+    "playwright": "1.62.0"
+  }
+}

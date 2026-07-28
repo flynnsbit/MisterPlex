@@ -29,6 +29,9 @@ captures/
 releases/
 remote_out/
 
+# Playwright / Node deps (tests/hw/e2e/)
+node_modules/
+
 # Versioned release payloads are intentionally tracked so release packages are
 # reproducible from a fresh clone and cannot pick up stale local bitstreams.
 !release_artifacts/

@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools cast-timeline-gate cast-timeline-playwright
 
 all: unit
 
@@ -32,6 +32,8 @@ help:
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
+	@echo "  make cast-timeline-gate      - live cast/timeline HTTP gate (requires MiSTer + PMS)"
+	@echo "  make cast-timeline-playwright - live cast/timeline Playwright browser fidelity check"
 
 test: unit
 
@@ -574,3 +576,18 @@ package:
 
 clean:
 	rm -rf $(ROOT)/build
+
+# ── cast/timeline end-to-end gates ───────────────────────────────────────────
+# Primary gate: direct HTTP control protocol (no browser, robust, fast).
+# Requires live MiSTer at MISTER_HOST and PMS reachable from this host.
+# Exits 77 (UNSCORED/SKIP) if device or credentials are unavailable.
+cast-timeline-gate:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label cast-timeline-gate -- \
+	  bash $(ROOT)/tests/hw/test_cast_timeline_poll.sh
+
+# Browser fidelity check: Playwright drives Plex Web UI, asserts on same
+# /player/timeline/poll endpoint.  Exits 77 if Playwright not installed or
+# UI selectors fail (Plex Web is a heavy React app with unstable selectors).
+cast-timeline-playwright:
+	python3 $(ROOT)/scripts/run_with_skip_summary.py --label cast-timeline-playwright -- \
+	  node $(ROOT)/tests/hw/e2e/test_cast_timeline_playwright.js
