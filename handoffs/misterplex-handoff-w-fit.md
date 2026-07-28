@@ -1852,3 +1852,50 @@ appear.
   x[20:150] is about the first **74 of 618 columns (~12 %)** -- a wide band, not
   the 11-pixel `PRESENT_X` margin. **Do not conflate this with the settled
   `PRESENT_X=11` geometry.**
+
+### 30.5 Prior art: the artifact is a SCANOUT defect, and the DDR source is CLEAN
+
+`build/left-edge-artifact/` (timestamps **11:01**, i.e. **before** my 11:20 deploy,
+so this is the **old build `00eebd5e`**) contains an analysis nobody reported.
+Its own annotations:
+
+```
+artifact_annotated.png:
+  RBF 00eebd5e  LEFT-EDGE ARTIFACT
+  Red line = first bright col (24px)   Expected: col 0
+  Cols 0-23: BLACK | Col 24: luma=45  (DDR expected: 44)
+
+ddr_source_annotated.png:
+  DDR source (624x480)  luma=44 from col 0   NO left-edge clip
+```
+
+**The DDR buffer is clean from column 0, and the display drops exactly 24
+columns.** Column 24 then matches DDR's expected luma (45 vs 44).
+
+**This redirects the investigation.** The ARM writes correct pixels; the
+corruption is introduced **downstream of DDR, in the fabric readback/scanout
+path**. That is a fabric defect in the display path -- my domain and
+`ddr_frame_store`'s -- not an ARM painting defect.
+
+**Caveat I must state:** this does not *fully* exonerate W-ARM's
+overwrite-the-scanned-bank mechanism. A dump taken after the write completes
+would look clean even if the scanout had sampled a torn intermediate state. But a
+clean source plus a **deterministic 24-column** clip is far better explained by a
+readback/scanout pipeline offset than by a race, because a race would not land on
+a constant column boundary.
+
+**Lead:** 24 columns of left-edge loss smells like **line-buffer fill latency** --
+scanout beginning before `line_buf_ram` has been filled for the first N pixels of
+each row, so every row loses a fixed prefix. At 16-bit pixels (`fs_wr_pixel` is
+`[15:0]`) 24 px = 48 bytes, close to a DDR burst boundary. `ddr_frame_store`'s
+line buffers and read pipeline are where to look.
+
+**Discrepancy to resolve, stated openly:** the old build clips a clean
+**24 columns**; my `fb4bad84` frame (§30.1) shows a **ragged** band that is
+**70 % black, not 100 %**, spanning roughly the first 64 display columns. Same
+edge, same class, **different signature**. Either the two builds differ, or the
+old analysis measured a different capture geometry. **Do not assume they are the
+same defect until someone re-measures both with one instrument.**
+
+**Also settled:** the artifact **predates my deploy**. It is present on
+`00eebd5e` at 11:01. `fb4bad84` did not introduce it.
