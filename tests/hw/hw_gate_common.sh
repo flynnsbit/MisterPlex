@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Shared helpers for hardware gates. Source this from bash tests only.
+set -o pipefail
 
 HW_RC_UNSCORED="${HW_RC_UNSCORED:-77}"
 
