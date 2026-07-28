@@ -48,6 +48,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
   fpga/Plex_MiSTer/rtl/h264_dpb.sv \
+  fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
   tests/rtl/h264_multinal_stream_path_tb.cpp
 
@@ -85,6 +86,7 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/h264_inter_pred.sv \
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
   fpga/Plex_MiSTer/rtl/h264_dpb.sv \
+  fpga/Plex_MiSTer/rtl/h264_decode_core.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
   tests/rtl/h264_multinal_stream_path_tb.cpp
 set +e

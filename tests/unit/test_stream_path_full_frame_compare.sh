@@ -66,6 +66,7 @@ PRODUCT_RTL=(
   h264_inter_pred.sv
   h264_deblock.sv
   h264_dpb.sv
+  h264_decode_core.sv
   decode_stub.sv
 )
 

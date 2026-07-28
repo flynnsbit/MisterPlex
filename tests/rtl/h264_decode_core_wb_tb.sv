@@ -27,15 +27,17 @@ module h264_decode_core_wb_tb #(
 	output wire [15:0] current_mb_addr,
 	output wire        error
 );
-	wire [7:0] rbsp_byte [0:63];
+	wire [7:0] rbsp_byte [0:127];
 	wire [3:0] intra4x4_modes [0:15];
 	wire signed [15:0] p16_residual_y [0:255];
 	wire signed [15:0] p16_residual_u [0:63];
 	wire signed [15:0] p16_residual_v [0:63];
 	genvar zi;
 	generate
-		for (zi = 0; zi < 64; zi = zi + 1) begin : gen_rbsp_zero
+		for (zi = 0; zi < 128; zi = zi + 1) begin : gen_rbsp_zero
 			assign rbsp_byte[zi] = 8'd0;
+		end
+		for (zi = 0; zi < 64; zi = zi + 1) begin : gen_p16_chroma_zero
 			assign p16_residual_u[zi] = 16'sd0;
 			assign p16_residual_v[zi] = 16'sd0;
 		end
@@ -69,12 +71,15 @@ module h264_decode_core_wb_tb #(
 		.mb_height(MB_HEIGHT_PARAM),
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(rbsp_byte),
+		.rbsp_bit_len(10'd0),
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(recon_mb_valid),
 		.mb_type(5'd0),
 		.mb_skip(1'b0),
+		.intra4x4_pred_mode_flags(16'd0),
+		.rem_intra4x4_pred_mode(48'd0),
 		.intra4x4_modes(intra4x4_modes),
 		.intra16x16_mode(2'd0),
 		.chroma_pred_mode(2'd0),

@@ -1,4 +1,4 @@
-// Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
+// Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr + h264_decode_core.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
 
 module stream_path #(
@@ -312,21 +312,6 @@ module stream_path #(
 		.busy(sl_busy)
 	);
 
-	wire [3:0] unavailable_i4_modes [0:3];
-	assign unavailable_i4_modes[0] = 4'd2;
-	assign unavailable_i4_modes[1] = 4'd2;
-	assign unavailable_i4_modes[2] = 4'd2;
-	assign unavailable_i4_modes[3] = 4'd2;
-	h264_intra4x4_mode_deriver product_i4_mode_deriver (
-		.prev_intra4x4_pred_mode_flag(sl_first_mb_i4_flags),
-		.rem_intra4x4_pred_mode(sl_first_mb_i4_rem_modes),
-		.left_available(1'b0),
-		.top_available(1'b0),
-		.left_modes(unavailable_i4_modes),
-		.top_modes(unavailable_i4_modes),
-		.i4_modes(i4_modes)
-	);
-
 	reg slice_valid_d;
 	always @(posedge clk) begin
 		if (reset | flush)
@@ -335,28 +320,114 @@ module stream_path #(
 			slice_valid_d <= slice_valid;
 	end
 	wire [9:0] sl_rbsp_bit_len = (sl_rbsp_len >= 8'd128) ? 10'd1023 : {sl_rbsp_len[6:0], 3'd0};
-	wire product_luma_src_start = slice_valid & ~slice_valid_d & sl_is_i & (sl_mbt == 8'd0) &
-	                              (sl_first_mb_cbp_luma != 4'd0);
-	h264_luma4x4_residual_source #(.MAX_BYTES(128)) product_luma4x4_residual_source (
+	wire [3:0] decode_core_i4_in [0:15];
+	wire [7:0] decode_core_recon_y [0:255];
+	wire [7:0] decode_core_recon_u [0:63];
+	wire [7:0] decode_core_recon_v [0:63];
+	wire signed [15:0] decode_core_p16_residual_y [0:255];
+	wire signed [15:0] decode_core_p16_residual_u [0:63];
+	wire signed [15:0] decode_core_p16_residual_v [0:63];
+	genvar decode_core_zero_i;
+	generate
+		for (decode_core_zero_i = 0; decode_core_zero_i < 16; decode_core_zero_i = decode_core_zero_i + 1) begin : gen_decode_core_i4_zero
+			assign decode_core_i4_in[decode_core_zero_i] = 4'd0;
+		end
+		for (decode_core_zero_i = 0; decode_core_zero_i < 64; decode_core_zero_i = decode_core_zero_i + 1) begin : gen_decode_core_chroma_zero
+			assign decode_core_recon_u[decode_core_zero_i] = 8'd0;
+			assign decode_core_recon_v[decode_core_zero_i] = 8'd0;
+			assign decode_core_p16_residual_u[decode_core_zero_i] = 16'sd0;
+			assign decode_core_p16_residual_v[decode_core_zero_i] = 16'sd0;
+		end
+		for (decode_core_zero_i = 0; decode_core_zero_i < 256; decode_core_zero_i = decode_core_zero_i + 1) begin : gen_decode_core_luma_zero
+			assign decode_core_recon_y[decode_core_zero_i] = 8'd0;
+			assign decode_core_p16_residual_y[decode_core_zero_i] = 16'sd0;
+		end
+	endgenerate
+	wire decode_core_dpb_wr_en, decode_core_dpb_rd_en, decode_core_frame_done;
+	wire [31:0] decode_core_dpb_wr_addr, decode_core_dpb_rd_addr;
+	wire [7:0] decode_core_dpb_wr_data, decode_core_state;
+	wire [15:0] decode_core_frame_mb_count, decode_core_current_mb_addr;
+	wire [15:0] decode_core_rbsp_request_offset;
+	wire decode_core_rbsp_request_valid, decode_core_busy, decode_core_error;
+	h264_decode_core #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H)
+	) product_decode_core (
 		.clk(clk),
 		.reset(reset | flush),
-		.start(product_luma_src_start),
-		.bit_offset_start(sl_first_mb_residual_bit_offset),
-		.bit_len(sl_rbsp_bit_len),
+		.slice_start(vcl_pulse),
+		.slice_is_idr(sl_is_idr),
+		.slice_is_i(sl_is_i),
+		.slice_qp_y(sl_qp),
+		.first_mb_in_slice(sl_first),
+		.mb_width(sps_mb_w),
+		.mb_height(sps_mb_h),
+		.pps_chroma_qp_index_offset(5'sd0),
+		.rbsp_byte(sl_rbsp),
+		.rbsp_bit_len(sl_rbsp_bit_len),
+		.rbsp_window_base(16'd0),
+		.rbsp_request_offset(decode_core_rbsp_request_offset),
+		.rbsp_request_valid(decode_core_rbsp_request_valid),
+		.mb_type_valid(slice_valid & ~slice_valid_d),
+		.mb_type(sl_mbt[4:0]),
+		.mb_skip(first_mb_p_skip),
+		.intra4x4_pred_mode_flags(sl_first_mb_i4_flags),
+		.rem_intra4x4_pred_mode(sl_first_mb_i4_rem_modes),
+		.intra4x4_modes(decode_core_i4_in),
+		.intra16x16_mode(2'd0),
+		.chroma_pred_mode(2'd0),
 		.cbp_luma(sl_first_mb_cbp_luma),
-		.qp(sl_qp),
-		.rbsp(sl_rbsp),
-		.busy(luma4x4_source_busy),
-		.done(luma4x4_source_done),
-		.ok(luma4x4_source_ok),
-		.bit_offset_end(luma4x4_source_bit_end),
+		.cbp_chroma(sl_first_mb_cbp_chroma),
+		.mb_qp_delta(6'sd0),
+		.mb_residual_bit_offset({6'd0, sl_first_mb_residual_bit_offset}),
+		.mv_x_qpel(16'sd0),
+		.mv_y_qpel(16'sd0),
+		.part_mode(first_mb_part_mode),
+		.part_idx(2'd0),
+		.mvd_x_qpel(16'sd0),
+		.mvd_y_qpel(16'sd0),
+		.ref_idx_l0(2'd0),
+		.recon_mb_valid(1'b0),
+		.recon_mb_x(8'd0),
+		.recon_mb_y(8'd0),
+		.recon_mb_is_ref(1'b0),
+		.dpb_write_base(32'd0),
+		.recon_y(decode_core_recon_y),
+		.recon_u(decode_core_recon_u),
+		.recon_v(decode_core_recon_v),
+		.p16_zero_mv_valid(1'b0),
+		.p16_mb_x(8'd0),
+		.p16_mb_y(8'd0),
+		.p16_mb_is_ref(1'b0),
+		.dpb_ref_base(32'd0),
+		.p16_residual_y(decode_core_p16_residual_y),
+		.p16_residual_u(decode_core_p16_residual_u),
+		.p16_residual_v(decode_core_p16_residual_v),
+		.dpb_wr_en(decode_core_dpb_wr_en),
+		.dpb_wr_addr(decode_core_dpb_wr_addr),
+		.dpb_wr_data(decode_core_dpb_wr_data),
+		.dpb_rd_en(decode_core_dpb_rd_en),
+		.dpb_rd_addr(decode_core_dpb_rd_addr),
+		.dpb_rd_data(8'd0),
+		.dpb_rd_valid(1'b0),
+		.frame_done(decode_core_frame_done),
+		.frame_mb_count(decode_core_frame_mb_count),
 		.luma4x4_valid(luma4x4_valid),
 		.luma4x4_idx(luma4x4_idx),
 		.luma4x4_qp(luma4x4_qp),
 		.luma4x4_total_coeff(luma4x4_total_coeff),
 		.luma4x4_trailing_ones(luma4x4_trailing_ones),
 		.luma4x4_bit_offset_end(luma4x4_bit_offset_end),
-		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag)
+		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
+		.luma4x4_source_busy(luma4x4_source_busy),
+		.luma4x4_source_done(luma4x4_source_done),
+		.luma4x4_source_ok(luma4x4_source_ok),
+		.luma4x4_source_bit_end(luma4x4_source_bit_end),
+		.core_i4_modes(i4_modes),
+		.busy(decode_core_busy),
+		.decode_state(decode_core_state),
+		.current_mb_addr(decode_core_current_mb_addr),
+		.error(decode_core_error)
 	);
 	assign i4_pred_mode_flags = sl_first_mb_i4_flags;
 	assign i4_rem_modes = sl_first_mb_i4_rem_modes;
@@ -435,6 +506,12 @@ module stream_path #(
 	             |luma4x4_total_coeff | |luma4x4_trailing_ones |
 	             |luma4x4_bit_offset_end | |luma4x4_coeff_zigzag[0] |
 	             |luma4x4_source_bit_end | |i4_modes[0] |
+	             decode_core_dpb_wr_en | decode_core_dpb_rd_en | decode_core_frame_done |
+	             |decode_core_dpb_wr_addr | |decode_core_dpb_rd_addr |
+	             |decode_core_dpb_wr_data | |decode_core_state |
+	             |decode_core_frame_mb_count | |decode_core_current_mb_addr |
+	             |decode_core_rbsp_request_offset | decode_core_rbsp_request_valid |
+	             decode_core_busy | decode_core_error |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
 

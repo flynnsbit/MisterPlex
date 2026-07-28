@@ -20,9 +20,16 @@ PRODUCT_TOP = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
 BENCH_ONLY = RTL_DIR / "bench_only_modules.txt"
 PRODUCT_ROOT = "emu"
 REQUIRED_PRODUCT_REACHABLE = {
+    "h264_decode_core",
     "h264_cavlc_residual_block",
     "h264_luma4x4_residual_source",
     "h264_intra4x4_mode_deriver",
+}
+REQUIRED_PRODUCT_EDGES = {
+    ("stream_path", "h264_decode_core"),
+    ("h264_decode_core", "h264_cavlc_residual_block"),
+    ("h264_decode_core", "h264_luma4x4_residual_source"),
+    ("h264_decode_core", "h264_intra4x4_mode_deriver"),
 }
 
 
@@ -158,7 +165,8 @@ def main() -> int:
     print(
         "Scope: all tracked fpga/Plex_MiSTer/rtl modules must be reachable from "
         f"product root {PRODUCT_ROOT}, unless explicitly bench-only; "
-        "CAVLC residual and intra4x4 mode producers are mandatory product modules.",
+        "h264_decode_core is the product decoder and CAVLC/intra4x4 producers "
+        "must sit under that core, not a standalone parser branch.",
         flush=True,
     )
     rtl_paths = git_files("fpga/Plex_MiSTer/rtl")
@@ -189,6 +197,13 @@ def main() -> int:
         fail(
             "required product modules are not reachable from "
             f"{PRODUCT_ROOT}: " + ", ".join(missing_required)
+        )
+
+    missing_edges = sorted((src, dst) for src, dst in REQUIRED_PRODUCT_EDGES if dst not in graph.get(src, set()))
+    if missing_edges:
+        fail(
+            "required product topology edge(s) missing: "
+            + ", ".join(f"{src}->{dst}" for src, dst in missing_edges)
         )
 
     missing = sorted(name for name in rtl_modules if name not in reachable and name not in bench_only)

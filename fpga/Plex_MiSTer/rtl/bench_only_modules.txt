@@ -11,7 +11,6 @@ h264_deblock_bs: product-candidate deblock helper currently reachable only from 
 h264_deblock_thresholds: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge_pipe: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
-h264_decode_core: partial product-datapath staging module; not driven by stream_path in this branch.
 h264_decode_skeleton: resource-estimation skeleton, explicitly not a decoder.
 h264_decode_top: standalone real-intra RTL bench target; not wired into stream_path in this branch.
 h264_intra_nb_ctx: standalone neighbour-context helper for intra-prediction benches.

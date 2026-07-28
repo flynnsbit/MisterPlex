@@ -45,7 +45,8 @@ module h264_decode_core #(
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
     // The CAVLC residual block decoder needs random-access to RBSP bits.
     // This interface provides a window of RBSP bytes around the current position.
-    input  wire [7:0]  rbsp_byte [0:63],     // 64-byte window of RBSP data
+    input  wire [7:0]  rbsp_byte [0:127],    // 128-byte window of RBSP data
+    input  wire [9:0]  rbsp_bit_len,         // valid bits in rbsp_byte window
     input  wire [15:0] rbsp_window_base,     // byte offset of rbsp_byte[0] in stream
     output wire [15:0] rbsp_request_offset,  // request: advance window to this offset
     output wire        rbsp_request_valid,
@@ -55,6 +56,8 @@ module h264_decode_core #(
     input  wire        mb_type_valid,        // pulse: mb_type decoded for current MB
     input  wire [4:0]  mb_type,              // H.264 mb_type for I/P slices
     input  wire        mb_skip,              // P-slice skip
+    input  wire [15:0] intra4x4_pred_mode_flags,
+    input  wire [47:0] rem_intra4x4_pred_mode,
     input  wire [3:0]  intra4x4_modes [0:15], // I_NxN: 9 modes per 4×4 block
     input  wire [1:0]  intra16x16_mode,      // I_16x16: 0=V, 1=H, 2=DC, 3=Plane
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
@@ -113,6 +116,20 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Product syntax/CAVLC handoff for consumers inside/around the core ──
+    output wire        luma4x4_valid,
+    output wire [3:0]  luma4x4_idx,
+    output wire [5:0]  luma4x4_qp,
+    output wire [4:0]  luma4x4_total_coeff,
+    output wire [1:0]  luma4x4_trailing_ones,
+    output wire [9:0]  luma4x4_bit_offset_end,
+    output wire signed [15:0] luma4x4_coeff_zigzag [0:15],
+    output wire        luma4x4_source_busy,
+    output wire        luma4x4_source_done,
+    output wire        luma4x4_source_ok,
+    output wire [9:0]  luma4x4_source_bit_end,
+    output wire [3:0]  core_i4_modes [0:15],
+
     // ── Status/debug ──
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
@@ -149,7 +166,7 @@ module h264_decode_core #(
     //
     // h264_cavlc_residual_block (w-level):
     //   IN:  start, coeff_token_table[2:0], max_coeff[4:0],
-    //        bit_offset_start[9:0], bit_len[9:0], rbsp[0:63]
+    //        bit_offset_start[9:0], bit_len[9:0], rbsp[0:127]
     //   OUT: busy, done, ok, bit_offset_end[9:0], total_coeff[4:0],
     //        trailing_ones[1:0], total_zeros[3:0],
     //        coefficients signed [15:0] [0:15]
@@ -386,6 +403,8 @@ module h264_decode_core #(
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
+    wire syntax_i4_candidate = mb_type_valid && (slice_is_i || slice_is_idr) &&
+                               (mb_type == 5'd0) && (cbp_luma != 4'd0);
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
@@ -474,7 +493,44 @@ module h264_decode_core #(
 `endif
         end
     endgenerate
-    h264_cavlc_residual_block u_product_p16_residual0 (
+    wire [3:0] unavailable_i4_modes [0:3];
+    assign unavailable_i4_modes[0] = 4'd2;
+    assign unavailable_i4_modes[1] = 4'd2;
+    assign unavailable_i4_modes[2] = 4'd2;
+    assign unavailable_i4_modes[3] = 4'd2;
+    h264_intra4x4_mode_deriver u_product_core_i4_mode_deriver (
+        .prev_intra4x4_pred_mode_flag(intra4x4_pred_mode_flags),
+        .rem_intra4x4_pred_mode(rem_intra4x4_pred_mode),
+        .left_available(1'b0),
+        .top_available(1'b0),
+        .left_modes(unavailable_i4_modes),
+        .top_modes(unavailable_i4_modes),
+        .i4_modes(core_i4_modes)
+    );
+
+    h264_luma4x4_residual_source #(.MAX_BYTES(128)) u_product_core_luma4x4_residual_source (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(syntax_i4_candidate),
+        .bit_offset_start(mb_residual_bit_offset[9:0]),
+        .bit_len(rbsp_bit_len),
+        .cbp_luma(cbp_luma),
+        .qp(slice_qp_y),
+        .rbsp(rbsp_byte),
+        .busy(luma4x4_source_busy),
+        .done(luma4x4_source_done),
+        .ok(luma4x4_source_ok),
+        .bit_offset_end(luma4x4_source_bit_end),
+        .luma4x4_valid(luma4x4_valid),
+        .luma4x4_idx(luma4x4_idx),
+        .luma4x4_qp(luma4x4_qp),
+        .luma4x4_total_coeff(luma4x4_total_coeff),
+        .luma4x4_trailing_ones(luma4x4_trailing_ones),
+        .luma4x4_bit_offset_end(luma4x4_bit_offset_end),
+        .luma4x4_coeff_zigzag(luma4x4_coeff_zigzag)
+    );
+
+    h264_cavlc_residual_block #(.MAX_BYTES(128)) u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
@@ -837,12 +893,17 @@ module h264_decode_core #(
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
-        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
-        mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
+        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_bit_len | |rbsp_window_base |
+        mb_type_valid | |mb_type | mb_skip | |intra4x4_pred_mode_flags |
+        |rem_intra4x4_pred_mode | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
-        |cavlc_level_dbg[0] | |cavlc_run_dbg[0];
+        |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
+        luma4x4_source_busy | luma4x4_source_done | luma4x4_source_ok |
+        luma4x4_valid | |luma4x4_idx | |luma4x4_qp | |luma4x4_total_coeff |
+        |luma4x4_trailing_ones | |luma4x4_bit_offset_end |
+        |luma4x4_coeff_zigzag[0] | |luma4x4_source_bit_end | |core_i4_modes[0];
 
 endmodule
