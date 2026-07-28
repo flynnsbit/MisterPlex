@@ -45,6 +45,7 @@ RTL_DIR = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 QIP = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
 CHECKER = ROOT / "scripts" / "check_rtl_module_instantiations.py"
 QIP_COVERAGE = ROOT / "scripts" / "check_qip_coverage.py"
+PREFIT_HIER = ROOT / "scripts" / "check_prefit_hierarchy.py"
 
 MODULE_DECL = re.compile(r"^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)", re.MULTILINE)
 
@@ -99,6 +100,9 @@ def main() -> int:
     ap.add_argument("--require", action="append", default=[],
                     help="module that must be inside the product root subtree")
     ap.add_argument("--label", default="product")
+    ap.add_argument("--prefit", action="store_true",
+                    help="Also run the pre-fit elaboration oracle "
+                         "(slower; elaborates the whole product top).")
     args = ap.parse_args()
 
     if not args.require:
@@ -168,6 +172,35 @@ def main() -> int:
         print("PRODUCT_REACH qip_coverage rc=absent "
               "(scripts/check_qip_coverage.py not on this branch)")
 
+    # Fourth oracle, opt-in because it elaborates the entire product top.
+    # Source graphs and file lists are both blind to a module that elaborates
+    # away; this one is not.  RULING 3 condition 4 asks for exactly this before
+    # any further fit is authorised.
+    prefit_rc = None
+    if args.prefit:
+        if not PREFIT_HIER.is_file():
+            print("PRODUCT_REACH prefit_hierarchy rc=absent "
+                  "(scripts/check_prefit_hierarchy.py not on this branch)")
+        else:
+            pf_cmd = [sys.executable, str(PREFIT_HIER),
+                      "--label", f"{args.label}-prefit",
+                      "--top", args.synthesis_root,
+                      "--require", args.product_root]
+            for m in args.require:
+                pf_cmd += ["--require", m]
+            pf = subprocess.run(pf_cmd, capture_output=True, text=True)
+            prefit_rc = pf.returncode
+            print(f"PRODUCT_REACH prefit_hierarchy rc={prefit_rc}"
+                  f"{' (77 = skip, not a pass)' if prefit_rc == 77 else ''}")
+            for line in (pf.stdout + pf.stderr).strip().splitlines():
+                print(f"PRODUCT_REACH prefit| {line}")
+            if prefit_rc != 0:
+                failures.append(
+                    f"pre-fit elaboration of {args.synthesis_root} returned "
+                    f"rc={prefit_rc}: at least one required module is not in the "
+                    f"elaborated design. Source-level reachability can be green "
+                    f"while this is red -- believe this one")
+
     if failures:
         for f in failures:
             print(f"PRODUCT_REACH_FAIL: {f}", file=sys.stderr)
@@ -178,7 +211,8 @@ def main() -> int:
               f"trunk={args.synthesis_root}->{args.product_root} "
               f"subtree={args.product_root}->{','.join(args.require)} "
               f"files_qip=checked qip_coverage_rc={cov_rc} "
-              f"(source-level only; make post-fit-hierarchy is the real oracle)")
+              f"prefit_hierarchy_rc={prefit_rc} "
+              f"(make post-fit-hierarchy is still the only oracle for the bitstream)")
     else:
         print(f"PRODUCT_REACH_OK label={args.label} scope=CORE_SUBTREE_ONLY "
               f"NOT_PRODUCT_REACHABLE trunk={args.synthesis_root}->{args.product_root} "
