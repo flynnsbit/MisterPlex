@@ -115,10 +115,18 @@ cause 8–25% pixel errors that compound across all P-frames in a GOP.
 **Both fit comfortably within 64-bit DDR bandwidth at 100 MHz (800 MB/s).**
 The geometry must come from `sps_parser.mb_width` — do NOT hardcode 39 or 40.
 
-### Cycle budget consumed at 20 MHz
+### Cycle budget
 - **220 cycles/MB** measured (146 luma + 37 Cb + 37 Cr)
 - **132 cycles/MB** for P_Skip (42% less)
 - DDR stall penalty: **1:1** (every cycle `ref_valid=0` while `ref_ready=1` is wasted)
+- At 45 MHz (w-arch v6 REQUIRED): 1,250 cycles/MB available → 5× headroom
+- At 20 MHz (FAILS per w-arch v6): 556 cycles/MB → still fits compute, but total pipeline does not
+
+## DSP Usage
+
+**ZERO.** All luma FIR taps use shift-add: `x*5=(x<<<2)+x`, `x*20=(x<<<4)+(x<<<2)`.
+Chroma bilinear uses `(* multstyle = "logic" *)`. Device has only 39 DSP blocks free;
+MC consumes none, leaving full budget for CABAC/dequant.
 
 ## Output Contract (to residual add)
 
