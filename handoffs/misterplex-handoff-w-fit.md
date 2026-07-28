@@ -905,3 +905,57 @@ prove the module inside it is instantiated, and it is filename-based. It does
 not fix the checker's `if (0)` generate or escaped-identifier defects — those
 remain W-GATE-O5's. Necessary, not sufficient. Pair with both reachability
 directions and `make post-fit-hierarchy`.
+
+---
+
+## 19. Visual grade: UNSCORED. Capture instrument unavailable.
+
+Device state re-verified at end of shift (raw):
+
+```
+/media/fat/_Utility/Plex.rbf   fb4bad849ad2db782a5004ce5a3471ce
+CORENAME                       Plex
+fpga_manager/fpga0/state       operating
+misterplexd                    pid 7518 (binary f8c3d279..., unchanged all session)
+```
+
+`fuser -v /dev/video0` -> **no holders**. The device has been unclaimed the whole
+shift. W-E2E has been asked 4x and has produced no capture of the deployed core.
+The PNGs under `build/capture-rig-unit/` and `build/hw-visual-unit/` are
+**synthetic unit fixtures**, not device captures — do not mistake them for
+evidence about `fb4bad84`.
+
+I did **not** open `/dev/video0`: the ownership boundary is explicit
+("Do not open the capture device yourself"), and there was no contention to
+justify overriding it unilaterally. Escalated to the parent instead.
+
+**Therefore the single authorized deploy is UNSCORED, and I will not claim
+otherwise.** Stating this plainly as instructed:
+
+- BUILD_OK: yes. DEPLOY_OK: yes (md5 verified on device). **Neither is success.**
+- Telemetry grade: **impossible** on this bitstream — the fabric writes nothing
+  to DDR, so the three binding observables (`disp_bank` toggling,
+  `swap_pending -> 0`, `free_bank_mask != 0`) are **unmeasurable, not failing**.
+- Visual grade: **not performed**.
+- **No FPGA-decoded frame has been displayed on this hardware. This deploy did
+  not change that, and the post-fit evidence in §18 explains why it never could
+  have: there is no real decoder in `fb4bad84` at all.**
+
+W-SWAP's frame-store livelock fix is present in the bitstream but is
+**UNTESTED — neither validated nor refuted.** It must not be recorded as either.
+
+Falsifiable prediction left on record for whoever captures:
+- DDR write path dead + video timing alive -> **VALID** signal (black or ARM logo)
+- `clk_ddr`/`reset_ddr` stuck -> **NO SIGNAL**
+
+### 19.1 Not done, deliberately
+
+- **No rollback.** A second deploy exceeds the parent's authorization ("exactly
+  ONE deploy") and would destroy the failure state that the RCA needs.
+- **No W-ARM `3798793` integration.** The RBF is ungraded, so landing the ARM fix
+  now makes both changes unattributable — precisely what the parent forbade.
+  (Note: it becomes dead code if the frame-store path ever works.)
+- **No re-fit.** Requires parent authorization. If authorized, the base must be
+  `w-decode-hour27` (§18.3), and `7225e00` must be merged first — the checker on
+  this branch has **no `--root` flag and does not reject unknown args**, so it
+  silently ignored `--help` and printed a PASS with exit 0.
