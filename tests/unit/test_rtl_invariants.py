@@ -1753,11 +1753,30 @@ def check_yuv_ddr_writer_contract() -> None:
         "measurement failure; F1 product presentation must fail loudly and keep reporting DDR "
         "failure instead.",
     )
-    check(
-        "memset(yuv.data(),kYuv420BlackY,yBytes)" not in compact_media,
-        "MediaPlayer::paintIdle still constructs an all-black DDR idle payload. That is only "
-        "valid for IDLE_SCREEN=black; logo/screensaver modes must preserve the idle renderer.",
+    idle_publish = (
+        "DdrPublishFrameframe{yuv.data(),yuv.size(),g,DdrFrameFormat::Yuv420p};"
+        "ok=publishDdrFrame(frame,\"idleDDR\",&ddrErr)"
     )
+    idle_black_payload_patterns = [
+        "memset(yuv.data(),kYuv420BlackY,yBytes)",
+        "memset(yuv.data(),0,yuv.size())",
+        "std::fill(yuv.begin(),yuv.end(),0)",
+        "std::fill(yuv.begin(),yuv.end(),kYuv420BlackY)",
+        "std::fill_n(yuv.data(),yuv.size(),0)",
+    ]
+    for pat in idle_black_payload_patterns:
+        check(
+            pat not in compact_media,
+            "MediaPlayer::paintIdle still constructs or overwrites an all-black DDR idle "
+            "payload. That is only valid for IDLE_SCREEN=black; logo/screensaver modes must "
+            "preserve the idle renderer.",
+        )
+    black_fill_idle = compact_media.replace(
+        idle_publish,
+        "std::fill(yuv.begin(),yuv.end(),0);" + idle_publish,
+    )
+    if not any(pat in black_fill_idle for pat in idle_black_payload_patterns):
+        fail("deliberately black-filled idle DDR payload did not make the idle-renderer gate red")
     tooling = "\n".join(
         [
             strip_comments(read(VALIDATE_PLAYBACK_HW_SH)),
