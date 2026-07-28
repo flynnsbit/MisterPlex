@@ -1371,3 +1371,141 @@ prefetch depth is still 8 lines, the SDC delta is still register-placement-only 
 827 paths, and the artifact is still RTL-side and still unobserved. What changed is
 that the evidence now cites full hierarchy chains and survives the three attacks that
 broke the equivalent fleet instrument.
+
+---
+
+## 18. The HDMI capture of `fb4bad84`, checked against my own code
+
+W-FIT-O5 (`fc9d23d`, §27) relayed W-E2E's capture of the resident bitstream and
+attributed the result to my timed bank fallback:
+
+```
+Scope: 40 frames over 120 s (interval 3 s), fb4bad84 resident, misterplexd pid 7518
+CONTENT_PRESENT   2/40   t=27.1 s sha 871cb502 luma 36.50 std 22.17
+                         t=69.1 s sha 04e8975a luma 36.50 std 22.16
+BLACK_SIGNAL     37/40   sha 2358782e luma  7.00 std  0.00
+NO_SIGNAL         0/40
+CAPTURE_ERROR     1/40
+```
+
+Three claims were made about my code. I checked all three. **One is confirmed
+and worse than stated; two are refuted by the capture's own numbers.**
+
+### 18.1 CONFIRMED, and worse: `3798793` cannot execute on this build
+
+`sendDdrFrame` reaches `timedFallback` by three routes:
+
+| route | condition | bank chosen |
+|---|---|---|
+| 1 | `readBankRelease()` fails — no `PLXS` magic (`fpga_spi.cpp:1474`) | `plannedBank` |
+| 2 | magic present, `frames_done` never advances for 10 reads (`:1402`) | `plannedBank` |
+| 3 | magic present, `frames_done` advances, `free_bank_mask` stays 0 (`:1426`) | `chooseDdrPresentBankFromRelease` |
+
+`displayAvoidingFallbackBank()` — the entire content of `3798793` — is called
+**only from `chooseDdrPresentBankFromRelease`**, i.e. only on route 3. Route 3
+requires `frames_done` to advance, which requires a **live** fabric. Routes 1
+and 2 set `timedFallback` and jump straight past the call.
+
+**A permanently silent fabric takes route 1 or 2. `3798793` is unreachable
+exactly where it was needed.** Integrating it would not have moved 2/40.
+
+Second defect: even on route 3 it derives the bank to avoid from
+`BankReleaseStatus::disp_bank` — a field read from the mailbox that the same
+code path has just declared untrustworthy.
+
+**Fixed in `423eaae`.** The interlock now sits where all three routes converge,
+and the scanned bank is derived from host state:
+
+- `ddr_frame_store.sv:208` — `disp_bank <= 1'b0` at reset
+- `ddr_frame_store.sv:238` — `disp_bank <= pending_bank`, its **only** other assignment
+
+So the scanned bank is the last bank the host doorbelled, or 0 before any
+doorbell — knowable with the mailbox permanently dead. Gated on
+`!plxdLivenessProven_`, so a live mailbox still outranks the inference. This is
+structural, not timing: `kDdrBankReuseMinUs` (40 ms) is a floor, and no elapsed
+time makes overwriting the scanned bank safe. Red-proved: reverting to
+`plannedBank` fails 15 assertions.
+
+### 18.2 REFUTED: "~42 s is the signature of your timed bank fallback"
+
+**There is no 42 s anything in the ARM, and no timer that cycles banks.** The
+complete set of cadences:
+
+| constant | value | site |
+|---|---|---|
+| static idle repaint | **30 000 ms** | `media_player.cpp:701` |
+| screensaver step | 100 ms | `media_player.cpp:701` |
+| `kDdrBankReuseMinUs` | 40 ms (a floor, not a period) | `fpga_spi.cpp:38` |
+
+The bank is chosen **per publish**, not on a timer. 42 s is not 30 s, not a
+multiple of it, and not a beat of anything in the list.
+
+**And two events cannot establish a period.** n=2 yields exactly one interval;
+a period needs at least three events. With a content window narrower than the
+3 s sample interval, 42 s is equally consistent with 21 s, 14 s, or aperiodic.
+
+### 18.3 REFUTED: the ping-pong-vs-frozen-bank model predicts ~100 % content
+
+The model is: display scans one fixed bank forever, ARM alternates banks, so
+content shows only when they coincide. **DDR is persistent** — proven in §12,
+poison-and-heal, and by the fact that DDR survives FPGA reconfiguration.
+
+So once any paint lands on the scanned bank, that bank holds a complete frame
+**and keeps holding it**. Painting the *other* bank does not erase it. The
+model therefore predicts content becomes permanent after at most one
+alternation (≤ 60 s) — never reverting.
+
+Observed: content at t=69.1 s, then **BLACK from t=72 s through t=120 s**.
+Content going black again refutes it directly.
+
+The obvious rescue — "the ARM overwrote the scanned bank mid-scan" — is refuted
+by the pixels: a partial overwrite produces a torn frame, which has **nonzero
+variance**. Every black frame is `luma 7.00 std 0.00`, a uniform raster,
+identical hash `2358782e` 37 times.
+
+### 18.4 What the numbers do fit: §15's starvation mechanism at full severity
+
+`std 0.00` uniform black is what `ddr_frame_store.sv` emits when it forces
+black, not what a corrupted buffer looks like:
+
+- `:332` `rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now)`
+- `:422` `miss_d` → `rd_r/rd_g/rd_b <= 0`
+
+This is the **same mechanism** as the user's artifact, at a different severity:
+
+| refill outcome | pixels |
+|---|---|
+| completes mid-scanline | black from `PRESENT_X` to the completion point → **jagged moving left-edge bars** |
+| never completes | **every** visible pixel black, `std 0.00` |
+
+Same code path, same knob: `Plex.qsf:85 FRAME_LINES_8=1`, 8 of 16 slots
+searchable at any instant (`:312`). It requires no new mechanism and no
+livelock to explain 37/40.
+
+Corroboration in the capture: both content frames report `luma 36.50` to the
+same two decimals with `std 22.17 / 22.16` but **distinct hashes** — the same
+picture twice with MJPG noise, i.e. the static idle logo presented correctly,
+not a moving or partially-drawn image.
+
+### 18.5 Status of the claims
+
+| claim | verdict |
+|---|---|
+| `3798793` is unreachable on a silent fabric | **measured, confirmed** (source trace) |
+| host-doorbell interlock is correct under silence | **measured** (RTL `:208`/`:238`), red-proved |
+| 42 s ↔ ARM fallback timer | **refuted** — no such cadence exists |
+| ping-pong vs frozen bank explains 5 % duty | **refuted** — predicts ~100 %, and `std 0.00` excludes tearing |
+| §15 starvation explains 37/40 black | **consistent, NOT proven** — needs `FRAME_LINES_16` A/B |
+
+**Not claimed.** I have still never observed the artifact's pixels. 18.4 is a
+mechanism that fits the numbers, not a demonstration. The discriminating
+experiment is unchanged and cheap: `check_prefit_elaboration.sh` on
+`FRAME_LINES_16` (4m23s, no fit token) to price it, then one fit.
+
+### 18.6 Consequence for the `3b1e8435` A/B read-out
+
+Per §16, the present path is **identical in both bitstreams** across all 827
+entity paths (ALUTs, block bits, M10Ks, DSP), so it cannot confound the result.
+But note 18.4: if the display path blacks out from refill starvation, then
+"black screen" is **not** evidence against the SDC either. The A/B's only sound
+read-out is the PLXD/PLXS mailbox advancing, not what the screen shows.
