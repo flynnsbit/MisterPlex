@@ -255,6 +255,20 @@ module h264_baseline_syntax_parser #(
 		end
 	endfunction
 
+	function automatic signed [7:0] qp_y_add_delta;
+		input signed [7:0] base_qp;
+		input signed [7:0] delta;
+		reg signed [8:0] sum;
+		begin
+			sum = base_qp + delta;
+			if (sum < 9'sd0)
+				sum = sum + 9'sd52;
+			else if (sum > 9'sd51)
+				sum = sum - 9'sd52;
+			qp_y_add_delta = sum[7:0];
+		end
+	endfunction
+
 	function automatic [5:0] cbp_intra_map;
 		input [5:0] code;
 		begin
@@ -836,7 +850,7 @@ module h264_baseline_syntax_parser #(
 				end
 				ST_MB_QP_DELTA: begin
 					mb_qp_delta <= se8_from_ue(ue_value);
-					mb_qp <= qp_in + se8_from_ue(ue_value);
+					mb_qp <= qp_y_add_delta(qp_in, se8_from_ue(ue_value));
 					residual_bit_offset <= bit_pos;
 					st <= ST_FINISH;
 				end

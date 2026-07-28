@@ -34,6 +34,15 @@ void expect(bool cond, const std::string& msg) {
     }
 }
 
+int qpYAddDelta(int base, int delta) {
+    int sum = base + delta;
+    if (sum < 0)
+        sum += 52;
+    else if (sum > 51)
+        sum -= 52;
+    return sum;
+}
+
 void tick(Vh264_baseline_syntax_tb_top& dut) {
     dut.clk = 0;
     dut.eval();
@@ -348,7 +357,7 @@ std::vector<MbExpect> collectIHeaders(const std::vector<uint8_t>& rbsp, int mbW,
                 e.cbp = walk_detail::kMeIntra[code];
                 if (e.cbp != 0) {
                     e.qpDelta = br.se();
-                    qp += e.qpDelta;
+                    qp = qpYAddDelta(qp, e.qpDelta);
                 }
                 e.qp = qp;
                 e.residual = static_cast<int>(br.bit);
@@ -381,7 +390,7 @@ std::vector<MbExpect> collectIHeaders(const std::vector<uint8_t>& rbsp, int mbW,
                 e.cbp = cbpL | (cbpC << 4);
                 e.chroma = static_cast<int>(br.ue());
                 e.qpDelta = br.se();
-                qp += e.qpDelta;
+                qp = qpYAddDelta(qp, e.qpDelta);
                 e.qp = qp;
                 e.residual = static_cast<int>(br.bit);
                 auto rdc = cavlc::residualBlock(br, walk_detail::ncFrom(tcatL(mbx - 1, mby, 3, 0),
@@ -424,7 +433,25 @@ struct PWalk {
     int p16x8 = 0;
     int p8x16 = 0;
     int p8x8 = 0;
+    int qpSamples = 0;
+    int qpMin = 99;
+    int qpMax = -99;
+    int luma4x4Blocks = 0;
+    int luma4x4Nonzero = 0;
+    int chromaDcBlocks = 0;
+    int chromaDcNonzero = 0;
+    int chromaAc4x4Blocks = 0;
+    int chromaAc4x4Nonzero = 0;
+    int mvdPairs = 0;
 };
+
+void noteQp(PWalk& out, int qp, int count = 1) {
+    if (count <= 0)
+        return;
+    out.qpSamples += count;
+    out.qpMin = std::min(out.qpMin, qp);
+    out.qpMax = std::max(out.qpMax, qp);
+}
 
 void setMbCoeffZero(std::vector<int>& tcLuma, std::vector<int> (&tcChr)[2], int mbW, int mbx, int mby) {
     for (int ly = 0; ly < 4; ++ly)
@@ -465,8 +492,15 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
     };
     auto parseChr = [&](int mbx, int mby, int cbpC) {
         if (cbpC) {
-            expect(cavlc::residualBlock(br, -1, 4).ok, "host P chroma DC Cb parse failed");
-            expect(cavlc::residualBlock(br, -1, 4).ok, "host P chroma DC Cr parse failed");
+            auto cbDc = cavlc::residualBlock(br, -1, 4);
+            auto crDc = cavlc::residualBlock(br, -1, 4);
+            expect(cbDc.ok, "host P chroma DC Cb parse failed");
+            expect(crDc.ok, "host P chroma DC Cr parse failed");
+            out.chromaDcBlocks += 2;
+            out.chromaDcNonzero += (cbDc.total_coeff > 0) ? 1 : 0;
+            out.chromaDcNonzero += (crDc.total_coeff > 0) ? 1 : 0;
+        } else {
+            out.chromaDcBlocks += 2;
         }
         if (cbpC == 2) {
             for (int p = 0; p < 2; ++p) {
@@ -478,6 +512,8 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
                     auto r = cavlc::residualBlock(br, walk_detail::ncFrom(nA, nB), 15);
                     expect(r.ok, "host P chroma AC parse failed");
                     tcsetC(p, mbx, mby, lx, ly, r.total_coeff);
+                    ++out.chromaAc4x4Blocks;
+                    out.chromaAc4x4Nonzero += (r.total_coeff > 0) ? 1 : 0;
                 }
             }
         } else {
@@ -486,6 +522,7 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
                     int lx, ly;
                     walk_detail::chrXY(b, lx, ly);
                     tcsetC(p, mbx, mby, lx, ly, 0);
+                    ++out.chromaAc4x4Blocks;
                 }
         }
     };
@@ -500,12 +537,15 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
                     auto r = cavlc::residualBlock(br, walk_detail::ncFrom(nA, nB), maxCoeff);
                     expect(r.ok, "host P luma residual parse failed");
                     tcsetL(mbx, mby, lx, ly, r.total_coeff);
+                    ++out.luma4x4Blocks;
+                    out.luma4x4Nonzero += (r.total_coeff > 0) ? 1 : 0;
                 }
             } else {
                 for (int i4 = 0; i4 < 4; ++i4) {
                     int lx, ly;
                     walk_detail::blkXY(i8, i4, lx, ly);
                     tcsetL(mbx, mby, lx, ly, 0);
+                    ++out.luma4x4Blocks;
                 }
             }
         }
@@ -528,7 +568,7 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
             e.cbp = walk_detail::kMeIntra[code];
             if (e.cbp != 0) {
                 e.qpDelta = br.se();
-                qp += e.qpDelta;
+                qp = qpYAddDelta(qp, e.qpDelta);
             }
             e.qp = qp;
             e.residual = static_cast<int>(br.bit);
@@ -541,7 +581,7 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
             e.cbp = cbpL | (cbpC << 4);
             e.chroma = static_cast<int>(br.ue());
             e.qpDelta = br.se();
-            qp += e.qpDelta;
+            qp = qpYAddDelta(qp, e.qpDelta);
             e.qp = qp;
             e.residual = static_cast<int>(br.bit);
             auto rdc = cavlc::residualBlock(br, walk_detail::ncFrom(tcatL(mbx - 1, mby, 3, 0),
@@ -569,6 +609,10 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
                 setMbCoeffZero(tcLuma, tcChr, mbW, (mbAddr + static_cast<int>(k)) % mbW, (mbAddr + static_cast<int>(k)) / mbW);
             out.coveredMbs += static_cast<int>(skipRun);
             out.skippedMbs += static_cast<int>(skipRun);
+            noteQp(out, qp, static_cast<int>(skipRun));
+            out.luma4x4Blocks += 16 * static_cast<int>(skipRun);
+            out.chromaDcBlocks += 2 * static_cast<int>(skipRun);
+            out.chromaAc4x4Blocks += 8 * static_cast<int>(skipRun);
             mbAddr += static_cast<int>(skipRun);
             out.syntax.push_back(skip);
             if (mbAddr >= totalMbs)
@@ -608,11 +652,12 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
                 br.se();
                 br.se();
             }
+            out.mvdPairs += mvdPairs;
             uint32_t cbpCode = br.ue();
             e.cbp = cbpInterMap(cbpCode);
             if (e.cbp != 0) {
                 e.qpDelta = br.se();
-                qp += e.qpDelta;
+                qp = qpYAddDelta(qp, e.qpDelta);
             }
             e.qp = qp;
             e.residual = static_cast<int>(br.bit);
@@ -624,6 +669,7 @@ PWalk collectPHeaders(const std::vector<uint8_t>& rbsp, int mbW, int mbH, int st
             ++out.intraMbs;
         }
         ++out.coveredMbs;
+        noteQp(out, e.qp);
         ++mbAddr;
         out.syntax.push_back(e);
     }
@@ -767,6 +813,14 @@ void checkReal624PFrame(Vh264_baseline_syntax_tb_top& dut) {
     const int mbH = (chain.sps.height + 15) / 16;
     auto walk = collectPHeaders(pRbsp, mbW, mbH, static_cast<int>(sd.mbOffset), sh.slice_qp);
     expect(mbW == 39 && mbH == 30 && walk.coveredMbs == 1170, "624 P walk did not cover 1170 macroblocks");
+    expect(walk.qpSamples == 1170 && walk.qpMin >= 0 && walk.qpMax <= 51,
+           "624 P QPy range/count invalid for deblock handoff");
+    expect(walk.luma4x4Blocks == 18720 && walk.chromaDcBlocks == 2340 && walk.chromaAc4x4Blocks == 9360,
+           "624 P residual block denominators invalid for deblock handoff");
+    const int mbLeftEdges = mbH * (mbW - 1);
+    const int mbTopEdges = (mbH - 1) * mbW;
+    const int lumaInternalEdges = walk.coveredMbs * 24;
+    const int lumaExternalEdges = 4 * (mbLeftEdges + mbTopEdges);
     int qp = sh.slice_qp;
     for (size_t i = 0; i < walk.syntax.size(); ++i) {
         const auto& e = walk.syntax[i];
@@ -795,6 +849,21 @@ void checkReal624PFrame(Vh264_baseline_syntax_tb_top& dut) {
               << " P16x16=" << walk.p16x16 << " P16x8=" << walk.p16x8
               << " P8x16=" << walk.p8x16 << " P8x8=" << walk.p8x8
               << " EPB_payloads=" << epbPayloads << "\n";
+    std::cout << "P-slice Deblock handoff detail: QPy_range=" << walk.qpMin << ".." << walk.qpMax
+              << " QPy_samples=" << walk.qpSamples
+              << " filter_idc=" << static_cast<int>(dut.disable_deblocking_idc)
+              << " alpha_div2=" << static_cast<int>(static_cast<int8_t>(dut.slice_alpha_c0_offset_div2))
+              << " beta_div2=" << static_cast<int>(static_cast<int8_t>(dut.slice_beta_offset_div2))
+              << " luma4x4_nonzero=" << walk.luma4x4Nonzero << "/" << walk.luma4x4Blocks
+              << " chroma_dc_nonzero=" << walk.chromaDcNonzero << "/" << walk.chromaDcBlocks
+              << " chroma_ac4x4_nonzero=" << walk.chromaAc4x4Nonzero << "/" << walk.chromaAc4x4Blocks
+              << " mb_neighbor_left_edges=" << mbLeftEdges
+              << " mb_neighbor_top_edges=" << mbTopEdges
+              << " luma4x4_neighbor_edges=" << (lumaInternalEdges + lumaExternalEdges)
+              << " luma4x4_internal_edges=" << lumaInternalEdges
+              << " luma4x4_external_edges=" << lumaExternalEdges
+              << " mvd_pairs=" << walk.mvdPairs
+              << " ref_l0_identity=all_ref0_max_num_ref_frames_1\n";
 }
 
 void checkSyntheticP(Vh264_baseline_syntax_tb_top& dut) {
