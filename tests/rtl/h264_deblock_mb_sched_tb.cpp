@@ -256,6 +256,17 @@ void tick(Vh264_deblock_mb_sched_tb& dut) {
     dut.clk = 1; dut.eval();
 }
 
+// Set chroma ports to safe defaults (no write, qp matches luma)
+void initChromaDefaults(Vh264_deblock_mb_sched_tb& dut, int qpVal = 25) {
+    dut.chroma_wr = 0;
+    dut.chroma_sel = 0;
+    dut.chroma_waddr = 0;
+    dut.chroma_wdata = 0;
+    dut.chroma_raddr = 0;
+    dut.chroma_rsel = 0;
+    dut.chroma_qp = qpVal;
+}
+
 void loadMb(Vh264_deblock_mb_sched_tb& dut, const MB& mb) {
     dut.sample_wr = 1;
     for (int i = 0; i < 256; ++i) {
@@ -276,7 +287,174 @@ MB readMb(Vh264_deblock_mb_sched_tb& dut) {
     return out;
 }
 
-void runAndWait(Vh264_deblock_mb_sched_tb& dut, int maxCycles = 500) {
+// ── Chroma helpers (8x8 plane = 64 bytes) ──
+using ChromaPlane = std::array<uint8_t, 64>;
+
+// Generate chroma blocking-artifact pattern: flat within 4x4 sub-blocks, small step at edge
+ChromaPlane makeChromaArtifact(int seed = 0) {
+    ChromaPlane c{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            int bx = x / 4, by = y / 4;
+            c[y*8+x] = clip8(128 + (bx - by)*6 + (bx + by)*2 + seed);
+        }
+    return c;
+}
+
+void loadChroma(Vh264_deblock_mb_sched_tb& dut, const ChromaPlane& cb, const ChromaPlane& cr) {
+    dut.chroma_wr = 1;
+    // Load Cb
+    dut.chroma_sel = 0;
+    for (int i = 0; i < 64; ++i) {
+        dut.chroma_waddr = i;
+        dut.chroma_wdata = cb[i];
+        tick(dut);
+    }
+    // Load Cr
+    dut.chroma_sel = 1;
+    for (int i = 0; i < 64; ++i) {
+        dut.chroma_waddr = i;
+        dut.chroma_wdata = cr[i];
+        tick(dut);
+    }
+    dut.chroma_wr = 0;
+}
+
+ChromaPlane readChroma(Vh264_deblock_mb_sched_tb& dut, int sel) {
+    ChromaPlane out{};
+    dut.chroma_rsel = sel;
+    for (int i = 0; i < 64; ++i) {
+        dut.chroma_raddr = i;
+        dut.eval();
+        out[i] = dut.chroma_rdata;
+    }
+    return out;
+}
+
+// Reference chroma deblock for one 8x8 plane.
+// For 4:2:0: V edges at x=0(boundary),4(internal); H edges at y=0(boundary),4(internal)
+// bS for chroma = max of 2 corresponding luma segments' bS values.
+// chrQp = QPc from table 8-15.
+void refDeblockChroma(ChromaPlane& c, int chrQp, int aOff, int bOff,
+                      const std::array<BlockMeta, 16>& meta,
+                      bool leftAvail, bool topAvail,
+                      bool leftIntra, bool topIntra) {
+    auto at = [&](int x, int y) -> uint8_t& { return c[y*8+x]; };
+
+    // Vertical edges
+    for (int eidx = 0; eidx < 2; ++eidx) {
+        int ex = eidx * 4;  // 0 or 4
+        bool isBoundary = (eidx == 0);
+        if (isBoundary && !leftAvail) continue;
+
+        for (int sidx = 0; sidx < 2; ++sidx) {
+            int sy = sidx * 4;
+            // Map chroma edge to luma: chr V edge eidx → luma V edge eidx*2
+            // chr seg sidx → luma segs sidx*2 and sidx*2+1
+            int lumaEidx = eidx * 2;  // 0 or 2
+            int lumaSeg0 = sidx * 2;
+            int lumaSeg1 = sidx * 2 + 1;
+
+            // Compute bS for two corresponding luma segments, take max
+            auto lumaBs = [&](int le, int ls) -> int {
+                if (isBoundary) {
+                    // P is neighbor
+                    int qBlk = blk_from_xy(le, ls);
+                    return refBs(leftIntra, meta[qBlk].intra,
+                                true, meta[qBlk].nonzero,
+                                0, meta[qBlk].ref,
+                                0, 0, meta[qBlk].mvx, meta[qBlk].mvy, true);
+                } else {
+                    int pBlk = blk_from_xy(le - 1, ls);
+                    int qBlk = blk_from_xy(le, ls);
+                    return refBs(meta[pBlk].intra, meta[qBlk].intra,
+                                meta[pBlk].nonzero, meta[qBlk].nonzero,
+                                meta[pBlk].ref, meta[qBlk].ref,
+                                meta[pBlk].mvx, meta[pBlk].mvy,
+                                meta[qBlk].mvx, meta[qBlk].mvy, false);
+                }
+            };
+            int bs0 = lumaBs(lumaEidx, lumaSeg0);
+            int bs1 = lumaBs(lumaEidx, lumaSeg1);
+            int bs = std::max(bs0, bs1);
+
+            Edge4 e{};
+            for (int r = 0; r < 4; ++r) {
+                int y = sy + r;
+                e.p3[r] = (ex >= 4) ? at(ex-4, y) : 0;
+                e.p2[r] = (ex >= 3) ? at(ex-3, y) : 0;
+                e.p1[r] = (ex >= 2) ? at(ex-2, y) : 0;
+                e.p0[r] = (ex >= 1) ? at(ex-1, y) : 0;
+                e.q0[r] = at(ex, y);
+                e.q1[r] = (ex <= 6) ? at(ex+1, y) : 0;
+                e.q2[r] = (ex <= 5) ? at(ex+2, y) : 0;
+                e.q3[r] = (ex <= 4) ? at(ex+3, y) : 0;
+            }
+            auto o = refEdge(e, true, bs, chrQp, aOff, bOff);
+            for (int r = 0; r < 4; ++r) {
+                int y = sy + r;
+                if (!isBoundary && ex >= 1) at(ex-1, y) = o.p0[r];
+                at(ex, y) = o.q0[r];
+            }
+        }
+    }
+
+    // Horizontal edges
+    for (int eidx = 0; eidx < 2; ++eidx) {
+        int ey = eidx * 4;  // 0 or 4
+        bool isBoundary = (eidx == 0);
+        if (isBoundary && !topAvail) continue;
+
+        for (int sidx = 0; sidx < 2; ++sidx) {
+            int sx = sidx * 4;
+            int lumaEidx = eidx * 2;
+            int lumaSeg0 = sidx * 2;
+            int lumaSeg1 = sidx * 2 + 1;
+
+            auto lumaBs = [&](int le, int ls) -> int {
+                if (isBoundary) {
+                    int qBlk = blk_from_xy(ls, le);
+                    return refBs(topIntra, meta[qBlk].intra,
+                                true, meta[qBlk].nonzero,
+                                0, meta[qBlk].ref,
+                                0, 0, meta[qBlk].mvx, meta[qBlk].mvy, true);
+                } else {
+                    int pBlk = blk_from_xy(ls, le - 1);
+                    int qBlk = blk_from_xy(ls, le);
+                    return refBs(meta[pBlk].intra, meta[qBlk].intra,
+                                meta[pBlk].nonzero, meta[qBlk].nonzero,
+                                meta[pBlk].ref, meta[qBlk].ref,
+                                meta[pBlk].mvx, meta[pBlk].mvy,
+                                meta[qBlk].mvx, meta[qBlk].mvy, false);
+                }
+            };
+            int bs0 = lumaBs(lumaEidx, lumaSeg0);
+            int bs1 = lumaBs(lumaEidx, lumaSeg1);
+            int bs = std::max(bs0, bs1);
+
+            Edge4 e{};
+            for (int c2 = 0; c2 < 4; ++c2) {
+                int x = sx + c2;
+                e.p3[c2] = (ey >= 4) ? at(x, ey-4) : 0;
+                e.p2[c2] = (ey >= 3) ? at(x, ey-3) : 0;
+                e.p1[c2] = (ey >= 2) ? at(x, ey-2) : 0;
+                e.p0[c2] = (ey >= 1) ? at(x, ey-1) : 0;
+                e.q0[c2] = at(x, ey);
+                e.q1[c2] = (ey <= 6) ? at(x, ey+1) : 0;
+                e.q2[c2] = (ey <= 5) ? at(x, ey+2) : 0;
+                e.q3[c2] = (ey <= 4) ? at(x, ey+3) : 0;
+            }
+            auto o = refEdge(e, true, bs, chrQp, aOff, bOff);
+            for (int c2 = 0; c2 < 4; ++c2) {
+                int x = sx + c2;
+                if (!isBoundary && ey >= 1) at(x, ey-1) = o.p0[c2];
+                at(x, ey) = o.q0[c2];
+            }
+        }
+    }
+}
+
+void runAndWait(Vh264_deblock_mb_sched_tb& dut, int maxCycles = 800) {
     dut.start = 1;
     tick(dut);
     dut.start = 0;
@@ -290,7 +468,6 @@ void runAndWait(Vh264_deblock_mb_sched_tb& dut, int maxCycles = 500) {
 
 void testIntraInternalEdges(Vh264_deblock_mb_sched_tb& dut) {
     // Test: intra MB with all blocks intra, internal edges only (no neighbors)
-    // This should match the reference deblock with bS=3 on internal edges.
     dut.reset = 1;
     dut.start = 0;
     dut.sample_wr = 0;
@@ -1077,12 +1254,157 @@ void testBsHistogram(Vh264_deblock_mb_sched_tb& dut) {
     std::cout << "OK bS histogram: all values 0-4 exercised in single-MB config\n";
 }
 
+// ── Chroma deblocking test ──
+// Verifies the scheduler processes chroma planes (Cb, Cr) correctly.
+// Uses QPc > 30 (where QPc diverges from QPy) per parent directive.
+void testChromaDeblock(Vh264_deblock_mb_sched_tb& dut) {
+    dut.reset = 1; tick(dut); dut.reset = 0;
+    dut.disable_idc = 0;
+    int lumaQp = 38;
+    int chromaQp = 35;  // QPc from table 8-15 at QPi=38 → QPc=35
+    dut.qp = lumaQp;
+    dut.chroma_qp = chromaQp;
+    dut.alpha_offset = 0; dut.beta_offset = 0;
+    dut.left_avail = 0; dut.top_avail = 0;
+    dut.left_same_slice = 0; dut.top_same_slice = 0;
+    // All intra → bS=3 at internal edges, guarantees filtering
+    dut.mb_intra = 0xFFFF;
+    dut.mb_nonzero = 0xFFFF;
+    for (int i = 0; i < 16; ++i) {
+        dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+    }
+    for (int i = 0; i < 4; ++i) {
+        dut.left_intra = 0; dut.left_nonzero = 0;
+        dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+        dut.top_intra = 0; dut.top_nonzero = 0;
+        dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+    }
+
+    // Load luma (also needed — scheduler processes luma first)
+    MB mb = makeBlockArtifactMB(38);
+    loadMb(dut, mb);
+
+    // Load chroma with artifact pattern
+    ChromaPlane cb = makeChromaArtifact(10);
+    ChromaPlane cr = makeChromaArtifact(20);
+    loadChroma(dut, cb, cr);
+
+    // Compute reference for chroma (luma also needed for bS derivation)
+    std::array<BlockMeta, 16> meta{};
+    for (int i = 0; i < 16; ++i)
+        meta[i] = {true, true, 0, 0, 0};
+
+    ChromaPlane refCb = cb;
+    ChromaPlane refCr = cr;
+    refDeblockChroma(refCb, chromaQp, 0, 0, meta, false, false, false, false);
+    refDeblockChroma(refCr, chromaQp, 0, 0, meta, false, false, false, false);
+
+    // DEGENERACY CHECK: chroma reference MUST differ from input
+    int cbChanged = 0, crChanged = 0;
+    for (int i = 0; i < 64; ++i) {
+        if (refCb[i] != cb[i]) ++cbChanged;
+        if (refCr[i] != cr[i]) ++crChanged;
+    }
+    if (cbChanged == 0 && crChanged == 0) {
+        std::cerr << "FAIL chroma deblock: DEGENERATE — reference produced 0 changes "
+                     "on both Cb and Cr. Chroma test data does not trigger filtering.\n";
+        std::exit(1);
+    }
+
+    // Run DUT
+    runAndWait(dut);
+
+    // Read chroma results
+    ChromaPlane gotCb = readChroma(dut, 0);
+    ChromaPlane gotCr = readChroma(dut, 1);
+
+    // Compare Cb
+    int cbMM = 0;
+    for (int i = 0; i < 64; ++i) {
+        if (gotCb[i] != refCb[i]) {
+            if (cbMM < 3)
+                std::cerr << "  Cb mismatch at (" << (i%8) << "," << (i/8)
+                          << "): got=" << int(gotCb[i]) << " want=" << int(refCb[i]) << "\n";
+            ++cbMM;
+        }
+    }
+    // Compare Cr
+    int crMM = 0;
+    for (int i = 0; i < 64; ++i) {
+        if (gotCr[i] != refCr[i]) {
+            if (crMM < 3)
+                std::cerr << "  Cr mismatch at (" << (i%8) << "," << (i/8)
+                          << "): got=" << int(gotCr[i]) << " want=" << int(refCr[i]) << "\n";
+            ++crMM;
+        }
+    }
+
+    if (cbMM > 0 || crMM > 0) {
+        std::cerr << "FAIL chroma deblock: Cb " << cbMM << "/64, Cr " << crMM
+                  << "/64 mismatches (QPc=" << chromaQp << ")\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK chroma deblock: Cb changed " << cbChanged << "/64, Cr changed "
+              << crChanged << "/64 samples (QPc=" << chromaQp << " ≠ QPy=" << lumaQp
+              << ") cycles=" << int(dut.cycle_count) << "\n";
+}
+
+// ── Chroma QPc > 30 degeneracy assertion ──
+// Parent directive: "Assert your corpus crosses QP 30 on chroma, or that branch
+// is untested." Verify chroma produces different results at QPc=25 vs QPc=35.
+void testChromaQPcDivergence(Vh264_deblock_mb_sched_tb& dut) {
+    // Run chroma deblock at QPc=25 (below 30 — same as QPy) and QPc=35 (above 30)
+    // Verify results differ, proving QPc is actually used and the QPc>30 branch is tested.
+
+    auto runChromaAtQPc = [&](int qpc) -> ChromaPlane {
+        dut.reset = 1; tick(dut); dut.reset = 0;
+        dut.disable_idc = 0; dut.qp = 40;
+        dut.chroma_qp = qpc;
+        dut.alpha_offset = 0; dut.beta_offset = 0;
+        dut.left_avail = 0; dut.top_avail = 0;
+        dut.left_same_slice = 0; dut.top_same_slice = 0;
+        dut.mb_intra = 0xFFFF; dut.mb_nonzero = 0xFFFF;
+        for (int i = 0; i < 16; ++i) {
+            dut.mb_mvx[i] = 0; dut.mb_mvy[i] = 0; dut.mb_ref[i] = 0;
+        }
+        for (int i = 0; i < 4; ++i) {
+            dut.left_mvx[i] = 0; dut.left_mvy[i] = 0; dut.left_ref[i] = 0;
+            dut.top_mvx[i] = 0; dut.top_mvy[i] = 0; dut.top_ref[i] = 0;
+        }
+        MB mb = makeBlockArtifactMB(40);
+        loadMb(dut, mb);
+        ChromaPlane c = makeChromaArtifact(50);
+        ChromaPlane dummy{};
+        loadChroma(dut, c, dummy);
+        runAndWait(dut);
+        return readChroma(dut, 0);  // Read Cb
+    };
+
+    ChromaPlane res25 = runChromaAtQPc(25);
+    ChromaPlane res35 = runChromaAtQPc(35);
+
+    int diffs = 0;
+    for (int i = 0; i < 64; ++i) if (res25[i] != res35[i]) ++diffs;
+
+    if (diffs == 0) {
+        std::cerr << "FAIL chroma QPc divergence: QPc=25 and QPc=35 produce identical "
+                     "results. The chroma_qp input is not being used, or test data is "
+                     "degenerate.\n";
+        std::exit(1);
+    }
+
+    std::cout << "OK chroma QPc divergence: QPc=25 vs QPc=35 differ in " << diffs
+              << "/64 Cb samples — QPc branch is exercised\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     Vh264_deblock_mb_sched_tb dut;
     dut.clk = 0;
+    initChromaDefaults(dut, 25);
 
     testDisableIdc1(dut);
     testIntraInternalEdges(dut);
@@ -1097,17 +1419,22 @@ int main(int argc, char** argv) {
     testBs4BoundaryEdge(dut);
     testBsHistogram(dut);
 
+    // Chroma deblocking
+    testChromaDeblock(dut);
+    testChromaQPcDivergence(dut);
+
     // Red proofs: prove the gate CAN fail
     redProofWrongBs(dut);
     redProofPassthroughDetection(dut);
     redProofWrongQP(dut);
 
     std::cout << "\n=== COVERAGE STATEMENT ===\n"
-              << "OK h264_deblock_mb_scheduler: 13 tests passed (8 green + 2 bS coverage + 3 red proofs)\n"
+              << "OK h264_deblock_mb_scheduler: 15 tests passed (8 green + 2 bS coverage + 2 chroma + 3 red proofs)\n"
               << "COVERS: luma edges (x=0,4,8,12; y=0,4,8,12), bS 0-4, QP 5-51,\n"
+              << "        chroma Cb+Cr (8x8, V+H edges, QPc≠QPy, QPc>30 divergence),\n"
               << "        disable_idc=0/1, alpha/beta offsets, V-then-H ordering,\n"
               << "        MB boundary edges with intra neighbor (strong filter)\n"
-              << "DOES NOT COVER: chroma filtering, disable_idc=2 (slice boundary),\n"
+              << "DOES NOT COVER: disable_idc=2 (slice boundary),\n"
               << "                neighbor p-side SAMPLE accuracy (zeros used),\n"
               << "                multi-MB pipeline, real-frame content\n"
               << "NOT IN ANY DATAPATH: module is standalone, not instantiated in product\n";

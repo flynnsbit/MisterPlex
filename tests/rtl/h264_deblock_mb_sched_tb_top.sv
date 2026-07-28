@@ -52,6 +52,20 @@ module h264_deblock_mb_sched_tb (
     input  wire [7:0]        sample_raddr,
     output wire [7:0]        sample_rdata,
 
+    // -- Chroma sample load --
+    input  wire              chroma_wr,
+    input  wire [5:0]        chroma_waddr,
+    input  wire [7:0]        chroma_wdata,
+    input  wire              chroma_sel,
+
+    // -- Chroma sample read --
+    input  wire [5:0]        chroma_raddr,
+    input  wire              chroma_rsel,
+    output wire [7:0]        chroma_rdata,
+
+    // -- Chroma QP --
+    input  wire [5:0]        chroma_qp,
+
     // -- Cycle count --
     output wire [7:0]        cycle_count
 );
@@ -90,6 +104,14 @@ module h264_deblock_mb_sched_tb (
         .sample_wdata(sample_wdata),
         .sample_raddr(sample_raddr),
         .sample_rdata(sample_rdata),
+        .chroma_wr(chroma_wr),
+        .chroma_waddr(chroma_waddr),
+        .chroma_wdata(chroma_wdata),
+        .chroma_sel(chroma_sel),
+        .chroma_raddr(chroma_raddr),
+        .chroma_rsel(chroma_rsel),
+        .chroma_rdata(chroma_rdata),
+        .chroma_qp(chroma_qp),
         .cycle_count(cycle_count)
     );
 
