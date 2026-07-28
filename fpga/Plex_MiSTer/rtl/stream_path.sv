@@ -126,6 +126,61 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	// ------------------------------------------------------------------
+	// Local two-master mux for the single clk-domain DDR port.
+	//
+	// Master A is the compressed-bitstream ring reader, master B is the
+	// DDR-resident decoded picture buffer.  The outer ddr_bus_arbiter already
+	// owns the clock crossing for this port, so both masters stay on clk and
+	// no additional CDC is needed here.
+	//
+	// Ownership is taken at a transaction boundary and released when the owner
+	// drops its request, which is the jtframe_sdram_mux shape: exactly one
+	// selected slot, data broadcast, slot released on retire.
+	wire        bsr_bus_want;
+	wire  [7:0] bsr_burstcnt;
+	wire [28:0] bsr_addr;
+	wire        bsr_rd;
+	wire [63:0] bsr_din;
+	wire  [7:0] bsr_be;
+	wire        bsr_we;
+
+	wire        dpb_ddr_req;
+	wire  [7:0] dpb_ddr_burstcnt;
+	wire [28:0] dpb_ddr_addr;
+	wire        dpb_ddr_rd;
+	wire [63:0] dpb_ddr_din;
+	wire  [7:0] dpb_ddr_be;
+	wire        dpb_ddr_we;
+
+	// The bitstream reader keeps its own multi-beat bursts in flight across
+	// several cycles, so it holds the port for as long as it wants it.
+	reg  bus_owner_dpb;
+	always @(posedge clk) begin
+		if (reset) begin
+			bus_owner_dpb <= 1'b0;
+		end else if (!bus_owner_dpb) begin
+			if (!bsr_bus_want && dpb_ddr_req) bus_owner_dpb <= 1'b1;
+		end else begin
+			if (!dpb_ddr_req) bus_owner_dpb <= 1'b0;
+		end
+	end
+
+	assign ddr_bus_want  = bsr_bus_want | dpb_ddr_req;
+	assign ddr_burstcnt  = bus_owner_dpb ? dpb_ddr_burstcnt : bsr_burstcnt;
+	assign ddr_addr      = bus_owner_dpb ? dpb_ddr_addr     : bsr_addr;
+	assign ddr_rd        = bus_owner_dpb ? dpb_ddr_rd       : bsr_rd;
+	assign ddr_din       = bus_owner_dpb ? dpb_ddr_din      : bsr_din;
+	assign ddr_be        = bus_owner_dpb ? dpb_ddr_be       : bsr_be;
+	assign ddr_we        = bus_owner_dpb ? dpb_ddr_we       : bsr_we;
+
+	// A master that does not own the port sees it as permanently busy, which
+	// is exactly the back-off every sys/ddram.sv client already implements.
+	wire bsr_ddr_busy     = ddr_busy | bus_owner_dpb;
+	wire bsr_dout_ready   = ddr_dout_ready & ~bus_owner_dpb;
+	wire dpb_ddr_busy     = ddr_busy | ~bus_owner_dpb;
+	wire dpb_dout_ready   = ddr_dout_ready & bus_owner_dpb;
+
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -134,16 +189,16 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
-		.bus_want(ddr_bus_want),
-		.DDRAM_BUSY(ddr_busy),
-		.DDRAM_BURSTCNT(ddr_burstcnt),
-		.DDRAM_ADDR(ddr_addr),
+		.bus_want(bsr_bus_want),
+		.DDRAM_BUSY(bsr_ddr_busy),
+		.DDRAM_BURSTCNT(bsr_burstcnt),
+		.DDRAM_ADDR(bsr_addr),
 		.DDRAM_DOUT(ddr_dout),
-		.DDRAM_DOUT_READY(ddr_dout_ready),
-		.DDRAM_RD(ddr_rd),
-		.DDRAM_DIN(ddr_din),
-		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we),
+		.DDRAM_DOUT_READY(bsr_dout_ready),
+		.DDRAM_RD(bsr_rd),
+		.DDRAM_DIN(bsr_din),
+		.DDRAM_BE(bsr_be),
+		.DDRAM_WE(bsr_we),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
@@ -495,15 +550,59 @@ module stream_path #(
 	wire [7:0] core_dpb_wr_data;
 	wire core_dpb_rd_en;
 	wire [31:0] core_dpb_rd_addr;
-	reg core_dpb_rd_valid;
-	always @(posedge clk) begin
-		if (reset | flush)
-			core_dpb_rd_valid <= 1'b0;
-		else
-			core_dpb_rd_valid <= core_dpb_rd_en;
-	end
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
+	wire        core_dpb_rd_valid;
+	wire  [7:0] core_dpb_rd_data;
+	wire        core_dpb_rd_stall;
+	wire        core_dpb_wr_full;
+	wire        dpb_ref_ready;
+	wire        dpb_swap_busy;
+	wire        dpb_frame_done_ack;
+	wire [31:0] dpb_current_base;
+	wire [31:0] dpb_reference_base;
+
+	// The DDR-resident decoded picture buffer.  Post-deblock reconstruction
+	// goes in on dpb_wr_*, motion compensation pulls reference samples back out
+	// on dpb_rd_*.  REG_RESPONSE is 0 because h264_decode_core already carries
+	// a skid stage on its DPB response path, so the cache answers
+	// combinationally on the accepted cycle and the core's skid supplies the
+	// single cycle of alignment h264_dpb_one_ref expects.
+	h264_dpb_ddr #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.BANK_STRIDE(FRAME_W * FRAME_H + 2 * ((FRAME_W / 2) * (FRAME_H / 2))),
+		.REG_RESPONSE(1'b0)
+	) u_dpb_ddr (
+		.clk(clk),
+		.reset(reset | flush),
+		.idr_start(1'b0),
+		.frame_done_req(core_frame_done),
+		.frame_done_ack(dpb_frame_done_ack),
+		.swap_busy(dpb_swap_busy),
+		.ref_ready(dpb_ref_ready),
+		.current_base(dpb_current_base),
+		.reference_base(dpb_reference_base),
+		.rec_wr_en(core_dpb_wr_en),
+		.rec_wr_addr(core_dpb_wr_addr),
+		.rec_wr_data(core_dpb_wr_data),
+		.rec_wr_full(core_dpb_wr_full),
+		.ref_rd_en(core_dpb_rd_en),
+		.ref_rd_addr(core_dpb_rd_addr),
+		.ref_rd_stall(core_dpb_rd_stall),
+		.ref_rd_data(core_dpb_rd_data),
+		.ref_rd_valid(core_dpb_rd_valid),
+		.ddr_busy(dpb_ddr_busy),
+		.ddr_burstcnt(dpb_ddr_burstcnt),
+		.ddr_addr(dpb_ddr_addr),
+		.ddr_dout(ddr_dout),
+		.ddr_dout_ready(dpb_dout_ready),
+		.ddr_rd(dpb_ddr_rd),
+		.ddr_din(dpb_ddr_din),
+		.ddr_be(dpb_ddr_be),
+		.ddr_we(dpb_ddr_we),
+		.ddr_req(dpb_ddr_req)
+	);
 	wire [15:0] core_rbsp_request_offset;
 	wire core_rbsp_request_valid;
 	wire core_busy;
@@ -575,9 +674,9 @@ module stream_path #(
 		.dpb_wr_data(core_dpb_wr_data),
 		.dpb_rd_en(core_dpb_rd_en),
 		.dpb_rd_addr(core_dpb_rd_addr),
-		.dpb_rd_data(8'd0),
+		.dpb_rd_data(core_dpb_rd_data),
 		.dpb_rd_valid(core_dpb_rd_valid),
-		.dpb_rd_stall(1'b0),
+		.dpb_rd_stall(core_dpb_rd_stall),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
@@ -676,6 +775,9 @@ module stream_path #(
 	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
+	             core_dpb_wr_full | core_dpb_rd_stall | dpb_ref_ready |
+	             dpb_swap_busy | dpb_frame_done_ack | |dpb_current_base |
+	             |dpb_reference_base |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 

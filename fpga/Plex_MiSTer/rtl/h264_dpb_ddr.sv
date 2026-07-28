@@ -102,7 +102,11 @@ module h264_dpb_ddr #(
 	output reg         ddr_rd,
 	output reg  [63:0] ddr_din,
 	output reg   [7:0] ddr_be,
-	output reg         ddr_we
+	output reg         ddr_we,
+	// Raised while this store wants the shared DDR port.  A host that
+	// multiplexes several masters onto one controller uses this as the
+	// slot request line.
+	output wire        ddr_req
 );
 	localparam [31:0] BANK0_BASE = 32'd0;
 	localparam [31:0] BANK1_BASE = BANK_STRIDE[31:0];
@@ -207,6 +211,8 @@ module h264_dpb_ddr #(
 		r_grant = (own == OWN_RD);
 		w_grant = (own == OWN_WR);
 	end
+
+	assign ddr_req = (own != OWN_NONE) || r_req || w_req;
 
 	always @* begin
 		if (own == OWN_RD) begin
