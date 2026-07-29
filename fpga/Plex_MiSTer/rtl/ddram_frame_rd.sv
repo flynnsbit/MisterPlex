@@ -160,7 +160,9 @@ module ddram_frame_rd #(
 	assign DDRAM_CLK = clk;
 	assign DDRAM_BE  = 8'hFF;
 
-	reg [63:0] fifo_mem [0:FIFO_N-1];
+	// Consumer: beat_q <= fifo_mem[rix] on clk (sync registered read). M10K OK.
+	// cmd_fifo stays regs (depth 4, combo cmd_fifo_head).
+	(* ramstyle = "M10K, no_rw_check" *) reg [63:0] fifo_mem [0:FIFO_N-1];
 	reg [FIFO_AW:0] fifo_wr, fifo_rd;
 	wire [FIFO_AW:0] fifo_level = fifo_wr - fifo_rd;
 	wire fifo_empty = (fifo_wr == fifo_rd);
