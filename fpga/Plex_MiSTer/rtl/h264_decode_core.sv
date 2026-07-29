@@ -614,6 +614,9 @@ module h264_decode_core #(
     wire syntax_has_top_left = (syntax_mb_x != 8'd0) &&
                                 mv_top_valid[syntax_top_left_idx] &&
                                 (mv_top_ref[syntax_top_left_idx] == eff_ref_idx_l0);
+    // mbAddr A/B presence for P_Skip 8.4.1.1 (picture/slice geometry only).
+    wire mv_present_a = (syntax_mb_x != 8'd0);
+    wire mv_present_b = (syntax_mb_y != 8'd0);
     h264_mv_pred_part u_product_p16_mv_pred (
         // Honour feed part_mode (not forced 16x16); top-left D from mv_top.
         .part_mode(part_mode),
@@ -622,6 +625,8 @@ module h264_decode_core #(
         .avail_b(mv_avail_b),
         .avail_c(mv_avail_c),
         .avail_d(syntax_has_top_left),
+        .present_a(mv_present_a),
+        .present_b(mv_present_b),
         .mv_a_x(mv_left_x),
         .mv_a_y(mv_left_y),
         .mv_b_x(mv_top_x[syntax_mb_idx]),

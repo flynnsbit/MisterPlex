@@ -199,6 +199,7 @@ module decode_stub #(
 
 	h264_mv_pred_16x16 u_inter_mv_diag (
 		.avail_a(1'b1), .avail_b(1'b1), .avail_c(1'b1), .avail_d(1'b0),
+		.present_a(1'b1), .present_b(1'b1),
 		.mv_a_x(16'sd4), .mv_a_y(-16'sd2),
 		.mv_b_x(-16'sd8), .mv_b_y(16'sd6),
 		.mv_c_x(16'sd12), .mv_c_y(16'sd10),
@@ -211,6 +212,7 @@ module decode_stub #(
 	h264_mv_pred_part u_inter_part_diag (
 		.part_mode(3'd1), .part_idx(2'd0),
 		.avail_a(1'b1), .avail_b(1'b1), .avail_c(1'b1), .avail_d(1'b0),
+		.present_a(1'b1), .present_b(1'b1),
 		.mv_a_x(16'sd100), .mv_a_y(16'sd0),
 		.mv_b_x(16'sd1), .mv_b_y(16'sd2),
 		.mv_c_x(16'sd50), .mv_c_y(16'sd0),
