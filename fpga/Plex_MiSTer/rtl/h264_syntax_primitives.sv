@@ -103,6 +103,7 @@ module h264_baseline_syntax_parser #(
 	output reg               entropy_cabac,
 	output reg [7:0]         num_ref_idx_l0_default_minus1,
 	output reg signed [7:0]  pic_init_qp,
+	output reg signed [4:0]  chroma_qp_index_offset,
 	output reg               deblock_ctrl,
 
 	output reg [15:0]        first_mb_in_slice,
@@ -220,7 +221,7 @@ module h264_baseline_syntax_parser #(
 			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
 			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
 			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
-			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd41; 6'd47: cbp_inter_map = 6'd38;
 			default: cbp_inter_map = 6'd0;
 			endcase
 		end
@@ -369,6 +370,7 @@ module h264_baseline_syntax_parser #(
 			entropy_cabac <= 1'b0;
 			num_ref_idx_l0_default_minus1 <= 8'd0;
 			pic_init_qp <= 8'sd26;
+			chroma_qp_index_offset <= 5'sd0;
 			deblock_ctrl <= 1'b0;
 			first_mb_in_slice <= 16'd0;
 			slice_type <= 8'd0;
@@ -503,7 +505,11 @@ module h264_baseline_syntax_parser #(
 				ST_PPS_WEIGHTED_BI: start_ue(ST_PPS_QP);
 				ST_PPS_QP: begin pic_init_qp <= 8'sd26 + se8_from_ue(ue_value); start_ue(ST_PPS_QS); end
 				ST_PPS_QS: start_ue(ST_PPS_CHROMA);
-				ST_PPS_CHROMA: start_bits(8'd1, ST_PPS_DEBLOCK);
+				// ue_value holds chroma_qp_index_offset se(v); then deblock flag u(1).
+				ST_PPS_CHROMA: begin
+					chroma_qp_index_offset <= se8_from_ue(ue_value)[4:0];
+					start_bits(8'd1, ST_PPS_DEBLOCK);
+				end
 				ST_PPS_DEBLOCK: begin deblock_ctrl <= fixed_acc[0]; start_bits(8'd1, ST_PPS_CONSTRAINED); end
 				ST_PPS_CONSTRAINED: start_bits(8'd1, ST_PPS_REDUNDANT);
 				ST_PPS_REDUNDANT: begin

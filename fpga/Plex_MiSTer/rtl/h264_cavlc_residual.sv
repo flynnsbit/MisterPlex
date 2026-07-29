@@ -597,13 +597,9 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    // 9.2.2.1, applied after the first non trailing-one level: suffixLength is
-    // forced to 1 when it was still 0, then incremented when Abs(level)
-    // exceeds 3 << (suffixLength - 1). Entering suffixLength is 0 or 1 here,
-    // so both paths collapse to the same threshold of 3. The comparison must
-    // be on the magnitude: a signed test lets every negative level below -3
-    // keep suffixLength at 1, which then reads the wrong number of suffix bits
-    // for the next coefficient and desynchronises the rest of the slice.
+    // 9.2.2.1 first non-T1: force suffixLength>=1, then +1 if |level|>3.
+    // Must use magnitude — signed tests miss level<=-4 and desync the slice.
+    // Equivalent to unsigned (level+3)>6u ⇔ |level|>=4 (717330a).
     function automatic [2:0] suffix_next_first(input signed [15:0] lvl);
         begin
             suffix_next_first = (level_mag(lvl) > 16'd3) ? 3'd2 : 3'd1;

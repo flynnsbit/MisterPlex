@@ -566,6 +566,22 @@ module h264_chroma_epel_block_8x8 (
 		end
 	endfunction
 
+	// d * f for f in 0..7, spelled out as shifts and adds.
+	function automatic integer frac_mul(input integer d, input integer f);
+		begin
+			case (f[2:0])
+			3'd0:    frac_mul = 0;
+			3'd1:    frac_mul = d;
+			3'd2:    frac_mul = d <<< 1;
+			3'd3:    frac_mul = (d <<< 1) + d;
+			3'd4:    frac_mul = d <<< 2;
+			3'd5:    frac_mul = (d <<< 2) + d;
+			3'd6:    frac_mul = (d <<< 2) + (d <<< 1);
+			default: frac_mul = (d <<< 3) - d;
+			endcase
+		end
+	endfunction
+
 	function automatic [7:0] interp(input integer x, input integer y);
 		integer p00;
 		integer p10;
@@ -573,6 +589,8 @@ module h264_chroma_epel_block_8x8 (
 		integer p11;
 		integer fx;
 		integer fy;
+		integer h0;
+		integer h1;
 		integer sum;
 		begin
 			fx = {29'd0, frac_x};
@@ -581,10 +599,15 @@ module h264_chroma_epel_block_8x8 (
 			p10 = chroma_pix(y * 9 + x + 1);
 			p01 = chroma_pix((y + 1) * 9 + x);
 			p11 = chroma_pix((y + 1) * 9 + x + 1);
-			sum = (8 - fx) * (8 - fy) * p00 +
-			      fx * (8 - fy) * p10 +
-			      (8 - fx) * fy * p01 +
-			      fx * fy * p11 + 32;
+			// 8.4.2.2.2 written separably so it needs no multiplier:
+			//   (8-yF)*[(8-xF)A + xF*B] + yF*[(8-xF)C + xF*D]
+			// and (8-f)*a + f*b == (a<<3) + f*(b-a).  The four triple
+			// products cost DSP blocks on every one of the sixty four output
+			// pixels; frac is three bits, so frac_mul is a mux over shifted
+			// copies and the result is exact, not an approximation.
+			h0 = (p00 <<< 3) + frac_mul(p10 - p00, fx);
+			h1 = (p01 <<< 3) + frac_mul(p11 - p01, fx);
+			sum = (h0 <<< 3) + frac_mul(h1 - h0, fy) + 32;
 			interp = sum[13:6];
 		end
 	endfunction

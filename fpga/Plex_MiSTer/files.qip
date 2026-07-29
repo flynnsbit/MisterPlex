@@ -5,7 +5,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/mb_sample_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv
@@ -14,6 +13,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram_memtest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bitstream_reader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bitstream_prefetch.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bitstream_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/nalu_scanner.sv
@@ -23,6 +23,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_param_sets.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/slice_hdr_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_cavlc_residual.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_4x4.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_seq.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_rbsp_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i_mb_feed.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_transform_dc.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_intra_pred.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_intra_nb_ctx.sv
@@ -43,6 +46,11 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_block.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_perf_counters.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_stream_recovery.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_pred.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_part.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_pskip_mv.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_luma_qpel.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_chroma_epel.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_block.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_decode_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
