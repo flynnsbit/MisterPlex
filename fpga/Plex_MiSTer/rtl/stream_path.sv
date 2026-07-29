@@ -669,6 +669,61 @@ module stream_path #(
 	wire [31:0] core_dpb_rd_addr;
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
+	wire core_px_wr_en;
+
+	// ── Desync recovery ─────────────────────────────────────────────────────
+	// 7 IDRs against 343 P frames means a desync costs tens of frames of wrong
+	// picture, so detection has to stop the slice rather than let it keep
+	// writing garbage into the reference the rest of the GOP predicts from.
+	wire core_err_cavlc_miss;
+	wire core_err_bad_mb_type;
+	wire core_err_mb_overrun;
+	wire rec_decode_enable;
+	wire rec_dpb_flush;
+	wire rec_poc_reset;
+	wire rec_mb_state_clear;
+	wire rec_freeze_output;
+	wire rec_resync_active;
+	wire [15:0] rec_desync_count;
+	wire [2:0]  rec_desync_reason;
+
+	// The picture is complete when every macroblock of it has been decoded.
+	// Comparing the count the core actually retired against the picture size
+	// at the end of the slice catches a desync that stayed inside every VLC
+	// table but still lost the bit position: the macroblock count and the
+	// bitstream disagree about where the slice ended.
+	localparam int PIC_SIZE_IN_MBS = (FRAME_W / 16) * (FRAME_H / 16);
+	wire rec_slice_end = sl_cap_end;
+	wire rec_err_slice_short = rec_slice_end &&
+	                           (core_frame_mb_count < PIC_SIZE_IN_MBS[15:0]);
+	wire rec_err_slice_long  = rec_slice_end &&
+	                           (core_frame_mb_count > PIC_SIZE_IN_MBS[15:0]);
+
+	h264_stream_recovery u_recovery (
+		.clk(clk),
+		.reset(reset | flush),
+		.slice_start(sl_cap_clear),
+		.slice_is_idr(sl_is_idr),
+		.slice_end(rec_slice_end),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.err_slice_short(rec_err_slice_short),
+		.err_slice_long(rec_err_slice_long),
+		.decode_enable(rec_decode_enable),
+		.dpb_flush(rec_dpb_flush),
+		.poc_reset(rec_poc_reset),
+		.mb_state_clear(rec_mb_state_clear),
+		.freeze_output(rec_freeze_output),
+		.resync_active(rec_resync_active),
+		.desync_count(rec_desync_count),
+		.last_desync_reason(rec_desync_reason)
+	);
+
+	// Hold the last complete good frame on screen for the whole resync.  A
+	// partially decoded frame looks worse than a stale one, and a black screen
+	// looks worse than both.
+	assign dec_px_wr_en = core_px_wr_en && !rec_freeze_output;
 	wire core_dpb_ref_swap;
 	wire        core_dpb_rd_valid;
 	wire  [7:0] core_dpb_rd_data;
@@ -694,7 +749,7 @@ module stream_path #(
 	) u_dpb_ddr (
 		.clk(clk),
 		.reset(reset | flush),
-		.idr_start(1'b0),
+		.idr_start(rec_dpb_flush),
 		.frame_done_req(core_dpb_ref_swap),
 		.frame_done_ack(dpb_frame_done_ack),
 		.swap_busy(dpb_swap_busy),
@@ -801,13 +856,17 @@ module stream_path #(
 		.dpb_rd_valid(core_dpb_rd_valid),
 		.dpb_rd_stall(core_dpb_rd_stall),
 		.dpb_ref_swap(core_dpb_ref_swap),
-		.px_wr_en(dec_px_wr_en),
+		.px_wr_en(core_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
 		.px_wr_y(dec_px_y),
 		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.decode_enable(rec_decode_enable),
 		.perf_mbox_word(decode_perf_word),
 		.busy(core_busy),
 		.decode_state(core_decode_state),

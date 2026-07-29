@@ -153,6 +153,19 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Bitstream desynchronisation evidence (to h264_stream_recovery) ──
+    // CAVLC is a variable-length code, so a wrong table entry consumes the
+    // wrong number of bits and everything after it is meaningless.  These are
+    // the cheap symptoms of that having happened.
+    output wire        err_cavlc_miss,       // a VLC lookup matched no code
+    output wire        err_bad_mb_type,      // mb_type illegal for the slice type
+    output wire        err_mb_overrun,       // mb address ran past PicSizeInMbs
+
+    // Low while the recovery logic is waiting for an IDR: no new macroblock
+    // may launch, because the reference every P picture predicts from is
+    // already corrupt.
+    input  wire        decode_enable,
+
     // ── Throughput telemetry ──
     // Per-stage cycle accounting for the macroblock pipeline, published as one
     // rotating 64-bit mailbox word.  See h264_perf_counters.sv for the layout.
@@ -459,7 +472,7 @@ module h264_decode_core #(
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
-    wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
+    wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE) && decode_enable;
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
@@ -860,7 +873,7 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip;
+    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip && decode_enable;
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
@@ -1668,6 +1681,23 @@ module h264_decode_core #(
     assign busy = (wb_state != ST_IDLE) || intra_active_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
+    // ── Desync detectors ────────────────────────────────────────────────
+    // Baseline mb_type ranges, 7.4.5 Tables 7-11 and 7-13: an I slice has
+    // 0..25 (I_NxN, the 24 I_16x16 flavours, I_PCM); a P slice has 0..4 for
+    // the inter types and 5..30 for the intra types offset by 5.  Anything
+    // above those is not a code point, so the bit position that produced it
+    // was already wrong.
+    assign err_bad_mb_type = mb_type_valid && !mb_skip &&
+                             (slice_is_i ? (mb_type > 5'd25) : (mb_type > 5'd30));
+
+    // The macroblock address is derived by counting, so it running past the
+    // picture means macroblocks were invented that the slice never coded.
+    assign err_mb_overrun = mb_type_valid && (syntax_mb_addr32 >= (MB_W * MB_H));
+
+    // The residual decoder reports every lookup that fell off the end of its
+    // table without matching a code.
+    assign err_cavlc_miss = cavlc_done && !cavlc_ok;
+
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
                    (mb_height != 8'd0 && mb_height32 != MB_H);
 
