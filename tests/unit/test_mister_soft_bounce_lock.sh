@@ -153,14 +153,12 @@ grep -q 'deploy_plex_core.sh' "$BOUNCE" || {
   echo "FAIL: bounce script does not call deploy_plex_core.sh" >&2
   exit 1
 }
-# Must not contain a raw thrashy load_core loop of its own (reuse deploy only)
-if grep -n "load_core" "$BOUNCE" | grep -vq '^[^:]*:#'; then
-  # allow comments only
-  if grep -E '^[^#]*load_core' "$BOUNCE" >/dev/null; then
-    echo "FAIL: bounce script invents its own load_core (must reuse deploy)" >&2
-    grep -n 'load_core' "$BOUNCE" >&2 || true
-    exit 1
-  fi
+# Must not drive /dev/MiSTer_cmd or issue load_core itself — only call deploy.
+if grep -nE '/dev/MiSTer_cmd|printf.*load_core|echo.*load_core' "$BOUNCE" \
+  | grep -vE '[[:space:]]*#' >/dev/null; then
+  echo "FAIL: bounce script drives MiSTer_cmd/load_core directly (must reuse deploy)" >&2
+  grep -nE '/dev/MiSTer_cmd|load_core' "$BOUNCE" >&2 || true
+  exit 1
 fi
 grep -q 'DEPLOY_SKIP_COPY' "$ROOT/scripts/deploy_plex_core.sh" || {
   echo "FAIL: deploy_plex_core.sh missing DEPLOY_SKIP_COPY support" >&2
@@ -168,4 +166,78 @@ grep -q 'DEPLOY_SKIP_COPY' "$ROOT/scripts/deploy_plex_core.sh" || {
 }
 echo "PASS bounce reuses deploy menu path with SKIP_COPY (no RBF flash)"
 
-echo "OK mister_soft_bounce lock exclusion + trap release"
+# --- 7) Post-bounce CORENAME must be Plex; non-Plex is a loud hard fail ---
+grep -q 'verify_corename_plex' "$BOUNCE" || {
+  echo "FAIL: bounce script missing verify_corename_plex" >&2
+  exit 1
+}
+grep -q 'CORENAME_NOT_PLEX' "$BOUNCE" || {
+  echo "FAIL: bounce script missing CORENAME_NOT_PLEX loud error" >&2
+  exit 1
+}
+# Default SKIP_BOUNCE path synthesizes Plex → claim succeeds (already covered).
+# Inject CD-CDPlayer (lab physical-CD seizure class) → must fail non-zero.
+set +e
+MISTER_CLAIM_FAKE_CORENAME='CD-CDPlayer' \
+  "$BOUNCE" claim --agent unit-corename-seized --reason "corename-mutation" --hold-s 0 \
+  >"$WORK/corename_seized.out" 2>"$WORK/corename_seized.err"
+SEIZED_RC=$?
+set -e
+echo "corename_seized true rc=$SEIZED_RC"
+if [[ "$SEIZED_RC" -eq 0 ]]; then
+  echo "FAIL: claim succeeded with CORENAME=CD-CDPlayer (seizure not detected)" >&2
+  cat "$WORK/corename_seized.out" "$WORK/corename_seized.err" >&2
+  exit 1
+fi
+if [[ "$SEIZED_RC" -ne 5 ]]; then
+  echo "FAIL: seized corename rc=$SEIZED_RC want rc=5" >&2
+  cat "$WORK/corename_seized.out" "$WORK/corename_seized.err" >&2
+  exit 1
+fi
+grep -q 'CORENAME_NOT_PLEX' "$WORK/corename_seized.err" || {
+  echo "FAIL: seized corename did not print CORENAME_NOT_PLEX" >&2
+  cat "$WORK/corename_seized.err" >&2
+  exit 1
+}
+grep -q 'CD-CDPlayer' "$WORK/corename_seized.err" || {
+  echo "FAIL: seized corename error did not quote CD-CDPlayer" >&2
+  cat "$WORK/corename_seized.err" >&2
+  exit 1
+}
+# Lock must not be left held after failed claim (trap release)
+if [[ -d "$LOCK" ]]; then
+  echo "FAIL: lock still held after corename seizure fail" >&2
+  ls -la "$LOCK" >&2 || true
+  exit 1
+fi
+grep -q 'event=corename_fail' "$LOG" || {
+  echo "FAIL: audit log missing corename_fail after seizure" >&2
+  cat "$LOG" >&2
+  exit 1
+}
+echo "PASS CORENAME seizure (CD-CDPlayer) hard-fails rc=5 and audits"
+
+# Green path still records corename=Plex in audit after a clean claim
+: >"$LOG"
+set +e
+"$BOUNCE" claim --agent unit-corename-ok --reason "corename-ok" --hold-s 0
+OK_RC=$?
+set -e
+echo "corename_ok true rc=$OK_RC"
+if [[ "$OK_RC" -ne 0 ]]; then
+  echo "FAIL: default CORENAME=Plex claim failed rc=$OK_RC" >&2
+  exit 1
+fi
+grep -q 'event=corename:' "$LOG" || {
+  echo "FAIL: audit missing corename event on green path" >&2
+  cat "$LOG" >&2
+  exit 1
+}
+grep -q 'corename=Plex' "$LOG" || {
+  echo "FAIL: audit missing corename=Plex on green path" >&2
+  cat "$LOG" >&2
+  exit 1
+}
+echo "PASS CORENAME_OK audited as corename=Plex"
+
+echo "OK mister_soft_bounce lock exclusion + trap release + corename gate"

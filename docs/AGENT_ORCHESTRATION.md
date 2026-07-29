@@ -47,10 +47,12 @@ MISTER_CLAIM_FORCE=1 ./scripts/mister_soft_bounce.sh release
 |------|--------|
 | Mutual exclusion | Atomic `mkdir` lock at `build/mister-claim.lock` (override path: `MISTER_CLAIM_LOCK`). Owner pid + agent id + timestamp recorded. Stale lock: dead pid and age ≥ `MISTER_CLAIM_STALE_S` (default 7200), or `MISTER_CLAIM_FORCE=1`. |
 | Visible signal | Reuses **only** `DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh` (Menu → wait → Plex). Never flashes a different RBF. Never thrash `load_core`. Never `kill -9` from the claim path. |
-| Audit | Append who/when/why to local `build/mister-claim-audit.log` and on-device `/media/fat/misterplex/claim-audit.log`. |
+| Post-bounce CORENAME | **Required.** After every bounce, read `/tmp/CORENAME` (SSH banner-filtered). Must be `Plex` (case-insensitive). On mismatch print `CORENAME_NOT_PLEX` with the observed name and exit **rc=5**. A successful menu bounce is **not** proof the FPGA stayed on Plex. |
+| Third-party seizure | This lab host runs `MiSTer_Physical-CD` / `superdrive_*` automation that can auto-load `CDPlayer.rbf` (`CORENAME=CD-CDPlayer`) at any time. Treat non-Plex CORENAME as a hard stop — do not thrash `load_core` to “fix” it. |
+| Audit | Append who/when/why **and corename** to local `build/mister-claim-audit.log` and on-device `/media/fat/misterplex/claim-audit.log`. Timeline questions (“who took it?”) must be answerable from this log, not inference. |
 | Release | EXIT/INT/TERM trap always releases the lock and soft-bounces back to Plex so the device returns usable. |
 | Conf | Do **not** edit `/media/fat/misterplex/misterplex.conf` from this path. If a separate task must edit conf, take a timestamped backup first. |
-| Local test | Lock logic is unit-tested with `MISTER_CLAIM_SKIP_BOUNCE=1` (no device). Do not bounce the live device without telling the user. |
+| Local test | Lock + CORENAME seizure logic unit-tested with `MISTER_CLAIM_SKIP_BOUNCE=1` / `MISTER_CLAIM_FAKE_CORENAME` (no device). Do not bounce the live device without telling the user. Device freeze: no agent touches the host until parent lifts it in writing. |
 
 ### READY_TO_DEPLOY gate (R-csum4 era — H-proto-rcsum4f)
 

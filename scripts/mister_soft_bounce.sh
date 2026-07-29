@@ -26,6 +26,9 @@
 #   MISTER_CLAIM_REASON      reason string
 #   MISTER_CLAIM_SKIP_BOUNCE=1
 #                            local-only: exercise lock/audit without touching device
+#   MISTER_CLAIM_FAKE_CORENAME
+#                            unit-test inject for post-bounce CORENAME check
+#                            (SKIP_BOUNCE path only; never used on a live device)
 #   MISTER_CLAIM_HOLD_S      hold seconds when no command given (default: infinity)
 #   DEPLOY_WAIT_S            settle window forwarded to deploy bounce (default 5)
 #
@@ -33,6 +36,12 @@
 #   DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh
 # which is the Menu → wait → Plex path in deploy_plex_core.sh. Never flashes a
 # different RBF (SKIP_COPY). Never thrash load_core; never kill -9 from here.
+#
+# Post-bounce required check:
+#   Read /tmp/CORENAME (banner-filtered). Must match Plex (case-insensitive).
+#   If not Plex — LOUD fail (rc=5). Third-party automation on this lab host
+#   (MiSTer_Physical-CD / superdrive_*) can seize the core at any time; a
+#   successful menu bounce is not proof the FPGA stayed on Plex.
 #
 # Does NOT edit /media/fat/misterplex/misterplex.conf.
 set -euo pipefail
@@ -103,17 +112,21 @@ ssh_clean() {
 
 audit_local() {
   local event="$1"
+  local extra="${2:-}"
   mkdir -p "$(dirname "$LOCAL_LOG")"
-  printf '%s event=%s agent=%s pid=%s host=%s reason=%s lock=%s\n' \
-    "$(ts_iso)" "$event" "$AGENT_ID" "$$" "$HOST" "$REASON" "$LOCK_DIR" >>"$LOCAL_LOG"
+  printf '%s event=%s agent=%s pid=%s host=%s reason=%s lock=%s%s\n' \
+    "$(ts_iso)" "$event" "$AGENT_ID" "$$" "$HOST" "$REASON" "$LOCK_DIR" \
+    "${extra:+ $extra}" >>"$LOCAL_LOG"
 }
 
 audit_remote() {
   local event="$1"
+  local extra="${2:-}"
   [[ "$SKIP_BOUNCE" == "1" ]] && return 0
   local line
-  line="$(printf '%s event=%s agent=%s pid=%s host=%s reason=%s' \
-    "$(ts_iso)" "$event" "$AGENT_ID" "$$" "$HOST" "$REASON")"
+  line="$(printf '%s event=%s agent=%s pid=%s host=%s reason=%s%s' \
+    "$(ts_iso)" "$event" "$AGENT_ID" "$$" "$HOST" "$REASON" \
+    "${extra:+ $extra}")"
   # Append-only; never rewrite conf. Create parent dir if missing.
   ssh_raw "mkdir -p /media/fat/misterplex && printf '%s\n' $(printf '%q' "$line") >>$(printf '%q' "$REMOTE_LOG")" \
     >/dev/null 2>&1 || {
@@ -124,8 +137,9 @@ audit_remote() {
 
 audit() {
   local event="$1"
-  audit_local "$event"
-  audit_remote "$event"
+  local extra="${2:-}"
+  audit_local "$event" "$extra"
+  audit_remote "$event" "$extra"
 }
 
 lock_owner_alive() {
@@ -229,12 +243,56 @@ release_lock() {
   return 0
 }
 
+# Read live CORENAME. Banner-filtered. Test inject: MISTER_CLAIM_FAKE_CORENAME
+# (only honored with SKIP_BOUNCE=1 so a live run cannot be silently stubbed).
+read_corename() {
+  if [[ "$SKIP_BOUNCE" == "1" ]]; then
+    printf '%s\n' "${MISTER_CLAIM_FAKE_CORENAME:-Plex}"
+    return 0
+  fi
+  if [[ -n "${MISTER_CLAIM_FAKE_CORENAME:-}" ]]; then
+    echo "mister_soft_bounce: REFUSED MISTER_CLAIM_FAKE_CORENAME on live bounce (SKIP_BOUNCE=0)" >&2
+    return 4
+  fi
+  # /tmp/CORENAME on device; strip CR and banners (bug 19dde00 class).
+  local raw
+  raw="$(ssh_clean 'cat /tmp/CORENAME 2>/dev/null' | tr -d '\r' | tail -n 1)"
+  printf '%s\n' "$raw"
+}
+
+# Required after every bounce: CORENAME must be Plex. Physical-CD automation on
+# this lab host can seize the FPGA (CORENAME=CD-CDPlayer etc.) at any time.
+verify_corename_plex() {
+  local phase="$1"
+  local name
+  name="$(read_corename)" || return $?
+  # Trim whitespace only; preserve full token for the loud error.
+  name="$(printf '%s' "$name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  audit "corename:$phase" "corename=${name:-empty}"
+  if printf '%s' "$name" | grep -qiE '^plex$'; then
+    echo "mister_soft_bounce: CORENAME_OK phase=$phase CORENAME=$name"
+    printf '%s\n' "$name" >"$LOCK_DIR/corename" 2>/dev/null || true
+    return 0
+  fi
+  cat >&2 <<EOF
+mister_soft_bounce: CORENAME_NOT_PLEX phase=$phase CORENAME='${name:-empty}'
+  Claim bounce did not leave the FPGA on Plex. A third-party loader (lab has
+  MiSTer_Physical-CD / superdrive_* watchers) may have seized the core.
+  Do NOT proceed as if Plex were live. Do NOT thrash load_core to "fix" it.
+  Report this loudly and stop.
+EOF
+  audit "corename_fail:$phase" "corename=${name:-empty}"
+  return 5
+}
+
 # Visible Menu → Plex via existing deploy path. Never copies an RBF.
 soft_bounce() {
   local phase="$1"
   if [[ "$SKIP_BOUNCE" == "1" ]]; then
     echo "mister_soft_bounce: SKIP_BOUNCE=1 phase=$phase (no device touch)"
     audit_local "bounce_skip:$phase"
+    # Still enforce CORENAME check (injectable) so seizure is unit-testable offline.
+    verify_corename_plex "$phase" || return $?
     return 0
   fi
   echo "mister_soft_bounce: visible soft bounce phase=$phase (DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1)"
@@ -260,6 +318,7 @@ soft_bounce() {
     return "$rc"
   fi
   audit "bounce_ok:$phase"
+  verify_corename_plex "$phase" || return $?
   return 0
 }
 
