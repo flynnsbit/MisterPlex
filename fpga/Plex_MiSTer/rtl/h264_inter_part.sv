@@ -29,6 +29,7 @@
 // covers them has been written back, which is what makes "the neighbour has not
 // been decoded yet" fall out correctly for later partitions.
 // ---------------------------------------------------------------------------
+
 module h264_mv_nb_ctx4x4 #(
 	parameter int MB_WIDTH_MAX = 39,
 	parameter int MB_WIDTH_DEFAULT = 39
@@ -304,13 +305,6 @@ module h264_mv_nb_ctx4x4 #(
 	end
 endmodule
 
-// ---------------------------------------------------------------------------
-// Partition geometry, Table 7-13 (mb_type) and Table 7-18 (sub_mb_type).
-//
-// slot is the same stable index the macroblock layer parser stores mvd at:
-// the 8x8 block times four plus the sub-partition for P_8x8, and the plain
-// partition index otherwise.
-// ---------------------------------------------------------------------------
 module h264_part_geometry (
 	input  wire [2:0]  part_mode,     // 0=16x16, 1=16x8, 2=8x16, 3=8x8
 	input  wire [3:0]  slot,
@@ -385,9 +379,6 @@ module h264_part_geometry (
 	end
 endmodule
 
-// ---------------------------------------------------------------------------
-// Coverage mask: which of the 16 4x4 blocks a partition occupies.
-// ---------------------------------------------------------------------------
 module h264_part_mask (
 	input  wire [4:0]  part_x,
 	input  wire [4:0]  part_y,
@@ -406,27 +397,6 @@ module h264_part_mask (
 	endgenerate
 endmodule
 
-// ---------------------------------------------------------------------------
-// Partition motion vector prediction, clause 8.4.1.3.
-//
-// The general rule of 8.4.1.3.1 (directional when exactly one neighbour uses
-// refIdxL0, component median otherwise) already lives in h264_pskip_mv_pred.
-// What 8.4.1.3 adds on top of it are the shape-specific overrides, and they
-// only apply to two-partition macroblocks:
-//
-//   16x8 partition 0: if refIdxL0B == refIdxL0 use mvL0B
-//   16x8 partition 1: if refIdxL0A == refIdxL0 use mvL0A
-//   8x16 partition 0: if refIdxL0A == refIdxL0 use mvL0A
-//   8x16 partition 1: if refIdxL0C == refIdxL0 use mvL0C
-//
-// Missing these produces motion that looks almost right and drifts, because
-// the median and the directional answer usually agree and only diverge where
-// the two partitions genuinely move differently - which is the whole reason
-// the encoder split the macroblock in the first place.
-//
-// mbAddrC substitution by mbAddrD is applied before the 8x16 partition 1 test,
-// so the override uses the same C the general rule would have used.
-// ---------------------------------------------------------------------------
 module h264_mv_pred_partition (
 	input  wire [2:0]  part_mode,    // 0=16x16, 1=16x8, 2=8x16, 3=8x8
 	input  wire [3:0]  slot,
@@ -506,193 +476,6 @@ module h264_mv_pred_partition (
 	assign mvp_y = use_b ? nb_b_mv_y :
 	               use_a ? nb_a_mv_y :
 	               use_c ? c_sub_mv_y : general_y;
-endmodule
-
-// ---------------------------------------------------------------------------
-// Per-partition motion compensated copy from the reference picture.
-//
-// Streams the luma rectangle and the two co-sited chroma rectangles of one
-// partition, emitting samples indexed within the FULL macroblock plane so the
-// caller can assemble a macroblock from one, two or four of these passes.
-//
-// The reference picture read port is left as a port on purpose: the DDR
-// reference buffer is owned elsewhere. Responses must return in request order.
-//
-// LIMITATION: integer motion vectors only. The quarter-sample luma and
-// eighth-sample chroma phases are dropped (>>>2 and >>>3 respectively) rather
-// than interpolated. Fractional interpolation belongs here, at this site.
-// ---------------------------------------------------------------------------
-module h264_inter_mc_part_stream (
-	input  wire        clk,
-	input  wire        reset,
-
-	input  wire        start,
-	input  wire [7:0]  mb_x,
-	input  wire [7:0]  mb_y,
-	input  wire [4:0]  part_x,        // luma offset within the macroblock
-	input  wire [4:0]  part_y,
-	input  wire [4:0]  part_w,
-	input  wire [4:0]  part_h,
-	input  wire signed [15:0] mv_x_qpel,
-	input  wire signed [15:0] mv_y_qpel,
-	input  wire [15:0] frame_w,
-	input  wire [15:0] frame_h,
-
-	output wire        ref_req_valid,
-	output wire [1:0]  ref_req_plane,
-	output wire [15:0] ref_req_x,
-	output wire [15:0] ref_req_y,
-	input  wire        ref_req_ready,
-	input  wire        ref_rsp_valid,
-	input  wire [7:0]  ref_rsp_sample,
-
-	output reg         pred_valid,
-	output reg  [1:0]  pred_plane,
-	output reg  [7:0]  pred_idx,      // index within the full 16x16 / 8x8 plane
-	output reg  [7:0]  pred_sample,
-
-	output wire        busy,
-	output reg         done
-);
-	localparam [3:0] MAX_OUTSTANDING = 4'd8;
-
-	reg        active;
-	reg [4:0]  part_x_r, part_y_r, part_w_r, part_h_r;
-	reg [7:0]  mb_x_r, mb_y_r;
-	reg signed [15:0] mv_x_r, mv_y_r;
-
-	// Chroma rectangle is half the luma rectangle in both directions.
-	wire [4:0] cw = {1'b0, part_w_r[4:1]};
-	wire [4:0] ch = {1'b0, part_h_r[4:1]};
-
-	// Issue and response walkers share the same traversal order.
-	reg [1:0] iss_plane, rsp_plane;
-	reg [4:0] iss_row, iss_col, rsp_row, rsp_col;
-	reg       iss_last, iss_done;
-
-	reg [9:0] issue_count, rsp_count;
-	wire [9:0] outstanding = issue_count - rsp_count;
-
-	assign busy = active;
-
-	wire [4:0] iss_w = (iss_plane == 2'd0) ? part_w_r : cw;
-	wire [4:0] iss_h = (iss_plane == 2'd0) ? part_h_r : ch;
-	wire [4:0] rsp_w = (rsp_plane == 2'd0) ? part_w_r : cw;
-
-	wire signed [15:0] mv_int_luma_x = mv_x_r >>> 2;
-	wire signed [15:0] mv_int_luma_y = mv_y_r >>> 2;
-	wire signed [15:0] mv_int_chroma_x = mv_x_r >>> 3;
-	wire signed [15:0] mv_int_chroma_y = mv_y_r >>> 3;
-
-	wire signed [15:0] luma_org_x = $signed({4'd0, mb_x_r, 4'd0}) +
-	                                $signed({11'd0, part_x_r});
-	wire signed [15:0] luma_org_y = $signed({4'd0, mb_y_r, 4'd0}) +
-	                                $signed({11'd0, part_y_r});
-	wire signed [15:0] chroma_org_x = $signed({5'd0, mb_x_r, 3'd0}) +
-	                                  $signed({12'd0, part_x_r[4:1]});
-	wire signed [15:0] chroma_org_y = $signed({5'd0, mb_y_r, 3'd0}) +
-	                                  $signed({12'd0, part_y_r[4:1]});
-
-	wire is_luma_req = (iss_plane == 2'd0);
-	wire signed [15:0] req_raw_x = is_luma_req
-		? (luma_org_x + $signed({11'd0, iss_col}) + mv_int_luma_x)
-		: (chroma_org_x + $signed({11'd0, iss_col}) + mv_int_chroma_x);
-	wire signed [15:0] req_raw_y = is_luma_req
-		? (luma_org_y + $signed({11'd0, iss_row}) + mv_int_luma_y)
-		: (chroma_org_y + $signed({11'd0, iss_row}) + mv_int_chroma_y);
-	wire [15:0] req_limit_w = is_luma_req ? frame_w : {1'b0, frame_w[15:1]};
-	wire [15:0] req_limit_h = is_luma_req ? frame_h : {1'b0, frame_h[15:1]};
-
-	h264_ref_clamp u_clamp (
-		.x(req_raw_x),
-		.y(req_raw_y),
-		.width(req_limit_w),
-		.height(req_limit_h),
-		.clamped_x(ref_req_x),
-		.clamped_y(ref_req_y)
-	);
-
-	assign ref_req_plane = iss_plane;
-	assign ref_req_valid = active && !iss_done &&
-	                       (outstanding < {6'd0, MAX_OUTSTANDING});
-
-	// Sample index inside the full macroblock plane, so several partitions
-	// write into disjoint parts of the same 256/64 entry buffers.
-	wire [7:0] rsp_full_idx = (rsp_plane == 2'd0)
-		? (({3'd0, part_y_r} + {3'd0, rsp_row}) << 4) +
-		  ({3'd0, part_x_r} + {3'd0, rsp_col})
-		: (({4'd0, part_y_r[4:1]} + {3'd0, rsp_row}) << 3) +
-		  ({4'd0, part_x_r[4:1]} + {3'd0, rsp_col});
-
-	always @(posedge clk) begin
-		done <= 1'b0;
-		pred_valid <= 1'b0;
-		if (reset) begin
-			active <= 1'b0;
-			iss_done <= 1'b1;
-			issue_count <= 10'd0;
-			rsp_count <= 10'd0;
-		end else if (start) begin
-			active <= 1'b1;
-			iss_done <= 1'b0;
-			mb_x_r <= mb_x;
-			mb_y_r <= mb_y;
-			part_x_r <= part_x;
-			part_y_r <= part_y;
-			part_w_r <= part_w;
-			part_h_r <= part_h;
-			mv_x_r <= mv_x_qpel;
-			mv_y_r <= mv_y_qpel;
-			iss_plane <= 2'd0;
-			iss_row <= 5'd0;
-			iss_col <= 5'd0;
-			rsp_plane <= 2'd0;
-			rsp_row <= 5'd0;
-			rsp_col <= 5'd0;
-			issue_count <= 10'd0;
-			rsp_count <= 10'd0;
-		end else if (active) begin
-			if (ref_req_valid && ref_req_ready) begin
-				issue_count <= issue_count + 10'd1;
-				if ((iss_col + 5'd1) < iss_w)
-					iss_col <= iss_col + 5'd1;
-				else begin
-					iss_col <= 5'd0;
-					if ((iss_row + 5'd1) < iss_h)
-						iss_row <= iss_row + 5'd1;
-					else begin
-						iss_row <= 5'd0;
-						if (iss_plane == 2'd2) iss_done <= 1'b1;
-						else iss_plane <= iss_plane + 2'd1;
-					end
-				end
-			end
-
-			if (ref_rsp_valid) begin
-				pred_valid <= 1'b1;
-				pred_plane <= rsp_plane;
-				pred_idx <= rsp_full_idx;
-				pred_sample <= ref_rsp_sample;
-				rsp_count <= rsp_count + 10'd1;
-				if ((rsp_col + 5'd1) < rsp_w)
-					rsp_col <= rsp_col + 5'd1;
-				else begin
-					rsp_col <= 5'd0;
-					if ((rsp_row + 5'd1) <
-					    ((rsp_plane == 2'd0) ? part_h_r : ch))
-						rsp_row <= rsp_row + 5'd1;
-					else begin
-						rsp_row <= 5'd0;
-						if (rsp_plane == 2'd2) begin
-							active <= 1'b0;
-							done <= 1'b1;
-						end else
-							rsp_plane <= rsp_plane + 2'd1;
-					end
-				end
-			end
-		end
-	end
 endmodule
 
 `default_nettype wire
