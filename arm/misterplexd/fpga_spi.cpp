@@ -1829,6 +1829,12 @@ bool FpgaSpi::flushBitstreamDdr() {
 }
 
 bool FpgaSpi::beginBitstreamSession(uint64_t session_id, int timeout_ms) {
+    // Startup hygiene: zero the ring and toggle the CTRL epoch bit BEFORE the
+    // Begin record so the FPGA snaps its read pointer to the new write count
+    // and cannot parse stale bytes left by a previous run.
+    if (!flushBitstreamDdr())
+        return false;
+
     BitstreamStatus st;
     if (readBitstreamStatus(st) && st.active) {
         setErr("beginBitstreamSession: session already active; end first");
