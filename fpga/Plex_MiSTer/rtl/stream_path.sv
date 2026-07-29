@@ -282,6 +282,11 @@ module stream_path #(
 	wire [5:0] sl_place_qp;
 	wire signed [15:0] sl_place_coeff [0:15];
 
+	wire [7:0] sl_pps_sel_id;
+	wire [15:0] sl_poc_lsb;
+	wire [7:0] sl_num_ref_l0;
+	wire signed [4:0] sl_chroma_qp_off;
+	wire sl_cip, sl_unsup;
 	// residual_csum / residual_coeff connect straight to module outputs (no
 	// unpacked-array continuous assign — Quartus-friendly).
 	slice_hdr_parser slp (
@@ -292,14 +297,28 @@ module stream_path #(
 		.nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
 		.log2_max_frame_num(log2_fn),
 		.poc_type(poc_t),
+		.log2_max_poc_lsb(5'd4),
 		.sps_ready(sps_valid),
 		.pps_ready(pps_valid),
-		.deblock_ctrl(pps_deblock),
-		.pic_init_qp(pps_qp),
+		.pps_found(pps_valid && sps_valid),
+		.pps_deblock_ctrl(pps_deblock),
+		.pps_pic_init_qp(pps_qp),
+		.pps_num_ref_l0(pps_nref),
+		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_constrained_intra_pred(1'b0),
+		.pps_bottom_field_pic_order_present(1'b0),
+		.pps_redundant_pic_cnt_present(1'b0),
+		.pps_weighted_pred(1'b0),
+		.pps_sel_id(sl_pps_sel_id),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
+		.pic_order_cnt_lsb(sl_poc_lsb),
 		.is_i_slice(sl_is_i),
+		.num_ref_idx_l0_active(sl_num_ref_l0),
+		.chroma_qp_index_offset(sl_chroma_qp_off),
+		.constrained_intra_pred_flag(sl_cip),
+		.unsupported(sl_unsup),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset_div2(sl_alpha_div2),
