@@ -73,7 +73,7 @@ int main() {
     }
     CHECK(contentResolutionFromSize(320, 240).width == 320);
     const auto fallback480 =
-        contentResolutionFromSize(kPlex480pCodedWidth, kPlex480pCodedHeight);
+        contentResolutionFromCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight);
     CHECK(fallback480.width == osd480.width);
     CHECK(fallback480.height == osd480.height);
     CHECK(std::string(fallback480.label) == osd480.label);

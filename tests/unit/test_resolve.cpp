@@ -27,7 +27,7 @@ static void checkProfileMatchesContentResolution(const char* path,
                      "FAIL transcode profile path divergence: %s weak=%s bitrate=%d "
                      "content=%dx%d/%s bitrate=%d\n",
                      path, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
-                     content.width, content.height, content.label, content.weakBitrateKbps);
+                     content.width.get(), content.height.get(), content.label, content.weakBitrateKbps);
         ++fails;
     }
 }
@@ -113,9 +113,9 @@ int main() {
     CHECK(extra480.find("name=video.profile&list=baseline") != std::string::npos);
     CHECK(extra480.find("name=video.level&value=30") != std::string::npos);
     CHECK(extra480.find("scope=videoTranscodeTarget&scopeName=h264") != std::string::npos);
-    CHECK(extra480.find("name=video.width&value=" + std::to_string(osd480.width)) !=
+    CHECK(extra480.find("name=video.width&value=" + std::to_string(osd480.width.get())) !=
           std::string::npos);
-    CHECK(extra480.find("name=video.height&value=" + std::to_string(osd480.height)) !=
+    CHECK(extra480.find("name=video.height&value=" + std::to_string(osd480.height.get())) !=
           std::string::npos);
     const auto caps480 = plexClientCapabilities(w480);
     CHECK(caps480.find(std::string("videoDecoders=h264{profile:baseline&resolution:") +

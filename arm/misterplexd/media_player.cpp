@@ -175,8 +175,8 @@ inline size_t rawVideoPackedBytesPerPixel(RawVideoFormat f) {
 inline void clearYuv420pCropPadding(uint8_t* yuv, const DdrFrameGeometry& g) {
     if (!yuv || (g.crop_left == 0 && g.crop_right == 0 && g.crop_top == 0 && g.crop_bottom == 0))
         return;
-    const int w = g.coded_width;
-    const int h = g.coded_height;
+    const int w = g.coded_width.get();
+    const int h = g.coded_height.get();
     if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
         return;
 
@@ -651,7 +651,7 @@ void MediaPlayer::paintIdle() {
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (renderIdleYuv420p(yuv.data(), g.coded_width, g.coded_height, m,
+            if (renderIdleYuv420p(yuv.data(), g.coded_width.get(), g.coded_height.get(), m,
                                   idlePhase_.load())) {
                 DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
                 ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
@@ -1363,7 +1363,8 @@ void MediaPlayer::streamPump(int sfd) {
                 // STREAM-mode frames even though the RTL FRAME_W=640 accepts them.
                 if (ddrFrameStoreAcceptsResolution(rec.width, rec.height)) {
                     const DdrFrameGeometry g = makeDdrFrameGeometry(
-                        rec.width, rec.height, rec.width, rec.height,
+                        CodedWidth{rec.width}, CodedHeight{rec.height},
+                        DisplayWidth{rec.width}, DisplayHeight{rec.height},
                         kPlex480pPresentedWidth, kPlex480pPresentedHeight,
                         DdrFramePlacement::Pillarbox);
                     ensureYuv420p();
@@ -1384,8 +1385,8 @@ void MediaPlayer::streamPump(int sfd) {
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
                     log("ERROR media: recon F1 REFUSED: frame-store requires MB-aligned "
-                        "resolution <= " + std::to_string(kDdrFrameStoreMaxWidth) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight) +
+                        "resolution <= " + std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight.get()) +
                         ", got " + std::to_string(rec.width) + "x" + std::to_string(rec.height) +
                         " — ALL subsequent recon frames will be SKIPPED. "
                         "This produces no video on the FPGA output.");
@@ -1953,10 +1954,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const DdrFrameGeometry ddrGeometry =
         fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
                         : makeDdrFrameGeometry(outW_, outH_);
-    const int rawW = ddrGeometry.coded_width;
-    const int rawH = ddrGeometry.coded_height;
-    const int rawDisplayW = ddrGeometry.display_width;
-    const int rawDisplayH = ddrGeometry.display_height;
+    const int rawW = ddrGeometry.coded_width.get();
+    const int rawH = ddrGeometry.coded_height.get();
+    const int rawDisplayW = ddrGeometry.display_width.get();
+    const int rawDisplayH = ddrGeometry.display_height.get();
     LastFrameLatch lastFrameLatch;
 
     char scale[64];
@@ -3034,7 +3035,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (latched) {
             const DdrFrameGeometry& g = lastFrameLatch.frame().geometry();
             log("media: LastFrame idle latched complete DDR frame geometry=" +
-                std::to_string(g.coded_width) + "x" + std::to_string(g.coded_height));
+                std::to_string(g.coded_width.get()) + "x" + std::to_string(g.coded_height.get()));
         } else {
             log("media: LastFrame idle requested but no complete DDR frame was available to latch");
         }

@@ -68,6 +68,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_h264_bitstream_source
 	$(ROOT)/build/test_bitstream_ring_lifecycle
 	$(ROOT)/build/test_frame_store_math
+	bash $(ROOT)/tests/unit/test_geometry_type_safety.sh
 	$(ROOT)/build/test_frame_store_sdram_sim
 	$(ROOT)/build/test_frame_store_ddr_prefetch_sim
 	$(ROOT)/build/test_sdram_memtest_sim
@@ -293,6 +294,7 @@ $(ROOT)/build/test_slice_hdr: $(ROOT)/tests/unit/test_slice_hdr.cpp \
 
 $(ROOT)/build/test_frame_store_math: $(ROOT)/tests/unit/test_frame_store_math.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/geometry_units.hpp \
 		$(ROOT)/host/libmisterplex/ddr_present_bank.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
@@ -344,13 +346,15 @@ $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 $(ROOT)/build/test_osd_menu: $(ROOT)/tests/unit/test_osd_menu.cpp \
 		$(ROOT)/host/libmisterplex/osd_menu.hpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/geometry_units.hpp \
 		$(ROOT)/host/libmisterplex/idle_screen.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_osd_menu.cpp
 
 $(ROOT)/build/test_last_frame_latch: $(ROOT)/tests/unit/test_last_frame_latch.cpp \
 		$(ROOT)/host/libmisterplex/last_frame_latch.hpp \
-		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/geometry_units.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_last_frame_latch.cpp
 

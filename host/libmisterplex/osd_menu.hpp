@@ -70,11 +70,23 @@ constexpr int kOsdAvOffsetDefaultMs = 0;
 constexpr uint16_t kOsdIdleMask = 0xC000;
 
 struct ContentResolution {
-    int width = 320;
-    int height = 240;
+    // width/height are *coded* payload size advertised to PMS / decoder, never
+    // the presented scanout size (640). Strong types make that substitution fail.
+    CodedWidth width{320};
+    CodedHeight height{240};
     const char* label = "320x240";
     int weakBitrateKbps = 1000;
 };
+
+// Label for the 480p coded ladder tier. Digits are static_assert-locked to the
+// coded constants so a presented-width (640) typo cannot silently ship.
+inline const char* plex480pCodedResolutionLabel() {
+    static_assert(kPlex480pCodedWidth.get() == 624,
+                  "update plex480pCodedResolutionLabel when coded width changes");
+    static_assert(kPlex480pCodedHeight.get() == 480,
+                  "update plex480pCodedResolutionLabel when coded height changes");
+    return "624x480";
+}
 
 struct OsdSettings {
     int avOffsetMs = 0;
@@ -102,12 +114,12 @@ inline ContentResolution contentResolutionFor480p() {
     // 624x480 is still the 480p ladder. Use the 2000 kbps PMS/validator floor
     // until W-FEED (or equivalent ARM-boundary profiling) proves a higher
     // bitrate safe; this path has only millisecond-scale decode margin.
-    return {kPlex480pCodedWidth, kPlex480pCodedHeight, "624x480",
+    return {kPlex480pCodedWidth, kPlex480pCodedHeight, plex480pCodedResolutionLabel(),
             kPlex480pWeakBitrateKbps};
 }
 
 inline ContentResolution contentResolutionFor240p() {
-    return {320, 240, "320x240", kPlex240pWeakBitrateKbps};
+    return {CodedWidth{320}, CodedHeight{240}, "320x240", kPlex240pWeakBitrateKbps};
 }
 
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
@@ -116,23 +128,35 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     return contentResolutionFor240p();
 }
 
-inline ContentResolution contentResolutionFromSize(int w, int h) {
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight)
+// Tier selection from a *coded* size. Presented scanout width must not be
+// passed here without an explicit CodedWidth{presented.get()} claim at the
+// call site — that claim is the bug we want reviewers to see.
+inline ContentResolution contentResolutionFromCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get())
         return contentResolutionFor480p();
     return contentResolutionFor240p();
 }
 
-inline int weakBitrateKbpsForCodedSize(int w, int h) {
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
+inline ContentResolution contentResolutionFromSize(int w, int h) {
+    return contentResolutionFromCodedSize(CodedWidth{w}, CodedHeight{h});
+}
+
+inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
 #ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
         return kPlex360pWeakBitrateKbps;
 #else
         return contentResolutionFor480p().weakBitrateKbps;
 #endif
     }
-    if (w >= 480 || h >= 360)
+    if (w.get() >= 480 || h.get() >= 360)
         return kPlex360pWeakBitrateKbps;
     return contentResolutionFor240p().weakBitrateKbps;
+}
+
+// Decoder/conf boundary: bare ints are claimed coded at the call edge.
+inline int weakBitrateKbpsForCodedSize(int w, int h) {
+    return weakBitrateKbpsForCodedSize(CodedWidth{w}, CodedHeight{h});
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {

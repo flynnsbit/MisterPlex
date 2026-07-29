@@ -34,20 +34,22 @@ static void checkLayout(const misterplex::DdrFrameGeometry& g, size_t bytes, int
     const uint32_t derivedDoorbell = physBase + derivedStride * 2u - 0x1000u;
     CHECK(misterplex::ddrFrameLayoutValid(l));
     CHECK(l.frame_bytes == bytes);
-    CHECK(l.width == g.coded_width);
-    CHECK(l.height == g.coded_height);
+    CHECK(l.width == g.coded_width.get());
+    CHECK(l.height == g.coded_height.get());
     CHECK(l.coded_width == g.coded_width);
     CHECK(l.display_width == g.display_width);
     CHECK(l.presented_width == g.presented_width);
     CHECK(l.crop_right == g.crop_right);
     CHECK(l.present_x == g.present_x);
-    CHECK(l.line_bytes == g.coded_width);
+    CHECK(l.line_bytes == g.coded_width.get());
     CHECK(l.line_qwords == lineQwords);
     CHECK(l.chroma_line_qwords == chromaLineQwords);
     CHECK(l.y_offset == 0);
-    CHECK(l.u_offset == static_cast<uint32_t>(g.coded_width * g.coded_height));
-    CHECK(l.v_offset == static_cast<uint32_t>(g.coded_width * g.coded_height +
-                                              (g.coded_width / 2) * (g.coded_height / 2)));
+    CHECK(l.u_offset == static_cast<uint32_t>(
+                            misterplex::codedPixelCount(g.coded_width, g.coded_height)));
+    CHECK(l.v_offset == static_cast<uint32_t>(
+                            misterplex::codedPixelCount(g.coded_width, g.coded_height) +
+                            (g.coded_width.get() / 2) * (g.coded_height.get() / 2)));
     CHECK(l.bank_stride == derivedStride);
     CHECK(l.phys_base + l.bank_stride >= l.phys_base + l.frame_bytes);
     CHECK(l.phys_base + l.bank_stride + l.frame_bytes <= l.doorbell_phys);

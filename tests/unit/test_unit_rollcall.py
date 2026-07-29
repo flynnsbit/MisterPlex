@@ -74,6 +74,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_h264_bitstream_source",
     "$(ROOT)/build/test_bitstream_ring_lifecycle",
     "$(ROOT)/build/test_frame_store_math",
+    "bash $(ROOT)/tests/unit/test_geometry_type_safety.sh",
     "$(ROOT)/build/test_frame_store_sdram_sim",
     "$(ROOT)/build/test_frame_store_ddr_prefetch_sim",
     "$(ROOT)/build/test_sdram_memtest_sim",

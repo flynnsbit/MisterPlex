@@ -569,7 +569,7 @@ int main(int argc, char** argv) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
-        player.setDecodeSize(contentRes.width, contentRes.height);
+        player.setDecodeSize(contentRes.width.get(), contentRes.height.get());
         const auto weakForPlay =
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
         std::fprintf(stderr,

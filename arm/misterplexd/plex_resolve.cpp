@@ -330,11 +330,11 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("H.264 profile must be baseline for the current decoder");
     if (weak.h264Level > 30)
         return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= kPlex480pCodedWidth || h >= kPlex480pCodedHeight) {
-        if (w > kDdrFrameStoreMaxWidth || h > kDdrFrameStoreMaxHeight)
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
+        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get())
             return fail("current built-in profiles stop at " +
-                        std::to_string(kDdrFrameStoreMaxWidth) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight));
+                        std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                        std::to_string(kDdrFrameStoreMaxHeight.get()));
         if (weak.maxVideoBitrateKbps < 2000)
             return fail("480p profile bitrate is too low");
     } else if (weak.maxVideoBitrateKbps < 750) {

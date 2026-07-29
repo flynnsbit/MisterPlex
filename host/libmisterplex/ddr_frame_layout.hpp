@@ -1,16 +1,22 @@
 #pragma once
 
+#include "libmisterplex/geometry_units.hpp"
+
 #include <cstddef>
 #include <cstdint>
 
 namespace misterplex {
 
-constexpr int kPlex480pCodedWidth = 624;
-constexpr int kPlex480pCodedHeight = 480;
-constexpr int kPlex480pDisplayWidth = 618;
-constexpr int kPlex480pDisplayHeight = 480;
-constexpr int kPlex480pPresentedWidth = 640;
-constexpr int kPlex480pPresentedHeight = 480;
+// 480p geometry contract (coded / display-cropped / presented are NOT interchangeable):
+//   coded 624x480  — H.264 payload and DDR bank layout
+//   display 618x480 — after right crop of 6
+//   presented 640x480 — VGA scanout after 11+11 pillarbox
+constexpr CodedWidth kPlex480pCodedWidth{624};
+constexpr CodedHeight kPlex480pCodedHeight{480};
+constexpr DisplayWidth kPlex480pDisplayWidth{618};
+constexpr DisplayHeight kPlex480pDisplayHeight{480};
+constexpr PresentedWidth kPlex480pPresentedWidth{640};
+constexpr PresentedHeight kPlex480pPresentedHeight{480};
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;
@@ -27,8 +33,9 @@ constexpr int kPlex480pYuv420pBytes = 449280;
 constexpr int kPlex480pYPlaneOffset = 0;
 constexpr int kPlex480pUPlaneOffset = 299520;
 constexpr int kPlex480pVPlaneOffset = 374400;
-constexpr int kPlex480pYStrideBytes = 624;
-constexpr int kPlex480pChromaStrideBytes = 312;
+// Stride bytes follow coded width, never presented scanout width.
+constexpr int kPlex480pYStrideBytes = kPlex480pCodedWidth.get();
+constexpr int kPlex480pChromaStrideBytes = kPlex480pCodedWidth.get() / 2;
 constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
@@ -62,6 +69,11 @@ enum class DdrFramePlacement {
 // - Doorbell high word is [31]=bank, [30:29]=format, [28:0]=sequence.
 //   C3 RTL consumes format 1=YUV420p only; the ARM must never ring this doorbell
 //   with an RGB565 payload.
+//
+// Doorbell address family (geometry-derived):
+//   doorbell_phys = phys_base + bank_stride * 2 - 0x1000
+// Fixed mailbox control page (NOT geometry-derived; live silicon ABI):
+//   PLXS 0x3007F100, PLXF 0x3007F118, PLXD 0x3007F128 — do not "unify" with doorbell.
 enum class DdrFrameFormat {
     Yuv420p,
 };
@@ -71,12 +83,12 @@ inline uint32_t ddrFrameFormatCode(DdrFrameFormat) {
 }
 
 struct DdrFrameGeometry {
-    int coded_width = 0;
-    int coded_height = 0;
-    int display_width = 0;
-    int display_height = 0;
-    int presented_width = 0;
-    int presented_height = 0;
+    CodedWidth coded_width{};
+    CodedHeight coded_height{};
+    DisplayWidth display_width{};
+    DisplayHeight display_height{};
+    PresentedWidth presented_width{};
+    PresentedHeight presented_height{};
     int crop_left = 0;
     int crop_right = 0;
     int crop_top = 0;
@@ -92,6 +104,7 @@ struct DdrFrameLayout {
     uint32_t doorbell_phys = 0;
     uint32_t map_bytes = 0;
     size_t frame_bytes = 0;
+    // width/height are the coded bank payload size as bare ints for buffer math.
     int width = 0;
     int height = 0;
     int line_bytes = 0;
@@ -102,12 +115,12 @@ struct DdrFrameLayout {
     uint32_t u_offset = 0;
     uint32_t v_offset = 0;
     uint32_t doorbell_format = 0;
-    int coded_width = 0;
-    int coded_height = 0;
-    int display_width = 0;
-    int display_height = 0;
-    int presented_width = 0;
-    int presented_height = 0;
+    CodedWidth coded_width{};
+    CodedHeight coded_height{};
+    DisplayWidth display_width{};
+    DisplayHeight display_height{};
+    PresentedWidth presented_width{};
+    PresentedHeight presented_height{};
     int crop_left = 0;
     int crop_right = 0;
     int crop_top = 0;
@@ -128,28 +141,43 @@ inline size_t yuv420pFrameBytes(int width, int height) {
     return static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
 }
 
-inline DdrFrameGeometry makeDdrFrameGeometry(int codedWidth, int codedHeight,
-                                             int displayWidth = 0, int displayHeight = 0,
-                                             int presentedWidth = 0, int presentedHeight = 0,
+inline size_t yuv420pFrameBytes(CodedWidth width, CodedHeight height) {
+    return yuv420pFrameBytes(width.get(), height.get());
+}
+
+// Typed geometry builder — coded / display / presented args cannot be swapped.
+inline DdrFrameGeometry makeDdrFrameGeometry(CodedWidth codedWidth, CodedHeight codedHeight,
+                                             DisplayWidth displayWidth = DisplayWidth{0},
+                                             DisplayHeight displayHeight = DisplayHeight{0},
+                                             PresentedWidth presentedWidth = PresentedWidth{0},
+                                             PresentedHeight presentedHeight = PresentedHeight{0},
                                              DdrFramePlacement placement =
                                                  DdrFramePlacement::None) {
     DdrFrameGeometry g{};
     g.coded_width = codedWidth;
     g.coded_height = codedHeight;
-    g.display_width = displayWidth > 0 ? displayWidth : codedWidth;
-    g.display_height = displayHeight > 0 ? displayHeight : codedHeight;
-    g.presented_width = presentedWidth > 0 ? presentedWidth : g.display_width;
-    g.presented_height = presentedHeight > 0 ? presentedHeight : g.display_height;
+    g.display_width = displayWidth.get() > 0 ? displayWidth : DisplayWidth{codedWidth.get()};
+    g.display_height = displayHeight.get() > 0 ? displayHeight : DisplayHeight{codedHeight.get()};
+    g.presented_width =
+        presentedWidth.get() > 0 ? presentedWidth : PresentedWidth{g.display_width.get()};
+    g.presented_height =
+        presentedHeight.get() > 0 ? presentedHeight : PresentedHeight{g.display_height.get()};
     g.crop_left = 0;
     g.crop_top = 0;
-    g.crop_right = codedWidth - g.display_width;
-    g.crop_bottom = codedHeight - g.display_height;
+    g.crop_right = codedWidth.get() - g.display_width.get();
+    g.crop_bottom = codedHeight.get() - g.display_height.get();
     g.placement = placement;
     if (placement == DdrFramePlacement::Pillarbox) {
-        g.present_x = (g.presented_width - g.display_width) / 2;
-        g.present_y = (g.presented_height - g.display_height) / 2;
+        g.present_x = (g.presented_width.get() - g.display_width.get()) / 2;
+        g.present_y = (g.presented_height.get() - g.display_height.get()) / 2;
     }
     return g;
+}
+
+// Convenience: a bare WxH is claimed as coded=display=presented (no crop/pillar).
+// Prefer the typed overload at any site that already knows which family applies.
+inline DdrFrameGeometry makeDdrFrameGeometry(int codedWidth, int codedHeight) {
+    return makeDdrFrameGeometry(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
 inline DdrFrameGeometry plex480pDdrFrameGeometry() {
@@ -166,10 +194,17 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
     return g;
 }
 
-inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
+// Map a *presented* scanout size to DDR geometry. 640x480 presented is the
+// plex480p pillarbox contract (coded 624); other sizes fall back to identity.
+inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(PresentedWidth width,
+                                                         PresentedHeight height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
         return plex480pDdrFrameGeometry();
-    return makeDdrFrameGeometry(width, height);
+    return makeDdrFrameGeometry(CodedWidth{width.get()}, CodedHeight{height.get()});
+}
+
+inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
+    return ddrFrameGeometryForPresentedSize(PresentedWidth{width}, PresentedHeight{height});
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
@@ -177,30 +212,32 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
                                          DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     DdrFrameLayout out{};
-    if (geom.coded_width <= 0 || geom.coded_height <= 0 || geom.display_width <= 0 ||
-        geom.display_height <= 0 || geom.presented_width <= 0 || geom.presented_height <= 0)
+    if (geom.coded_width.get() <= 0 || geom.coded_height.get() <= 0 ||
+        geom.display_width.get() <= 0 || geom.display_height.get() <= 0 ||
+        geom.presented_width.get() <= 0 || geom.presented_height.get() <= 0)
         return out;
-    if (geom.display_width + geom.crop_left + geom.crop_right != geom.coded_width)
+    if (geom.display_width.get() + geom.crop_left + geom.crop_right != geom.coded_width.get())
         return out;
-    if (geom.display_height + geom.crop_top + geom.crop_bottom != geom.coded_height)
+    if (geom.display_height.get() + geom.crop_top + geom.crop_bottom != geom.coded_height.get())
         return out;
-    if (geom.presented_width < geom.display_width || geom.presented_height < geom.display_height)
+    if (geom.presented_width.get() < geom.display_width.get() ||
+        geom.presented_height.get() < geom.display_height.get())
         return out;
 
-    if ((geom.coded_width & 1) || (geom.coded_height & 1))
+    if ((geom.coded_width.get() & 1) || (geom.coded_height.get() & 1))
         return out;
-    const uint64_t lineBytes = static_cast<uint64_t>(geom.coded_width);
-    const uint64_t frameBytes = static_cast<uint64_t>(geom.coded_width) *
-                                static_cast<uint64_t>(geom.coded_height) * 3u / 2u;
-    const uint64_t chromaLineBytes = static_cast<uint64_t>(geom.coded_width / 2);
+    const uint64_t lineBytes = static_cast<uint64_t>(geom.coded_width.get());
+    const uint64_t frameBytes = static_cast<uint64_t>(geom.coded_width.get()) *
+                                static_cast<uint64_t>(geom.coded_height.get()) * 3u / 2u;
+    const uint64_t chromaLineBytes = static_cast<uint64_t>(geom.coded_width.get() / 2);
     if (lineBytes > 0xFFFFFFFFull || frameBytes > 0xFFFFFFFFull)
         return out;
 
     out.phys_base = physBase;
     out.format = format;
     out.doorbell_format = ddrFrameFormatCode(format);
-    out.width = geom.coded_width;
-    out.height = geom.coded_height;
+    out.width = geom.coded_width.get();
+    out.height = geom.coded_height.get();
     out.coded_width = geom.coded_width;
     out.coded_height = geom.coded_height;
     out.display_width = geom.display_width;
@@ -219,39 +256,50 @@ inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
     out.chroma_line_bytes = static_cast<int>(chromaLineBytes);
     out.chroma_line_qwords = static_cast<int>(chromaLineBytes / 8u);
     out.frame_bytes = static_cast<size_t>(frameBytes);
-    const uint32_t yBytes = static_cast<uint32_t>(geom.coded_width * geom.coded_height);
+    const uint32_t yBytes =
+        static_cast<uint32_t>(codedPixelCount(geom.coded_width, geom.coded_height));
     const uint32_t cBytes = yBytes / 4u;
     out.y_offset = 0;
     out.u_offset = yBytes;
     out.v_offset = yBytes + cBytes;
     out.bank_stride = alignUpU32(static_cast<uint32_t>(frameBytes), strideAlign);
+    // Geometry-derived doorbell: final 4 KiB page of the two-bank map window.
     out.doorbell_phys = physBase + out.bank_stride * 2u - 0x1000u;
     out.map_bytes = out.bank_stride * 2u;
     return out;
 }
 
-inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
+// Bare WxH → coded identity geometry layout.
+inline DdrFrameLayout makeDdrFrameLayout(CodedWidth width, CodedHeight height,
                                          uint32_t physBase = kDdrFramePhysBase,
                                          uint32_t strideAlign = kDdrFrameStrideAlign,
                                          DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
     return makeDdrFrameLayout(makeDdrFrameGeometry(width, height), physBase, strideAlign, format);
 }
 
+inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
+                                         uint32_t physBase = kDdrFramePhysBase,
+                                         uint32_t strideAlign = kDdrFrameStrideAlign,
+                                         DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    return makeDdrFrameLayout(CodedWidth{width}, CodedHeight{height}, physBase, strideAlign,
+                              format);
+}
+
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)
         return false;
-    if (l.coded_width != l.width || l.coded_height != l.height)
+    if (l.coded_width.get() != l.width || l.coded_height.get() != l.height)
         return false;
-    if (l.display_width <= 0 || l.display_height <= 0 || l.presented_width <= 0 ||
-        l.presented_height <= 0)
+    if (l.display_width.get() <= 0 || l.display_height.get() <= 0 ||
+        l.presented_width.get() <= 0 || l.presented_height.get() <= 0)
         return false;
-    if (l.crop_left + l.display_width + l.crop_right != l.coded_width)
+    if (l.crop_left + l.display_width.get() + l.crop_right != l.coded_width.get())
         return false;
-    if (l.crop_top + l.display_height + l.crop_bottom != l.coded_height)
+    if (l.crop_top + l.display_height.get() + l.crop_bottom != l.coded_height.get())
         return false;
     if (l.present_x < 0 || l.present_y < 0 ||
-        l.present_x + l.display_width > l.presented_width ||
-        l.present_y + l.display_height > l.presented_height)
+        l.present_x + l.display_width.get() > l.presented_width.get() ||
+        l.present_y + l.display_height.get() > l.presented_height.get())
         return false;
     if (l.bank_stride < l.frame_bytes)
         return false;
@@ -282,8 +330,11 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
 }
 
 // Maximum coded width the RTL frame store can present (ddr_frame_store.sv FRAME_W).
-constexpr int kDdrFrameStoreMaxWidth = 640;
-constexpr int kDdrFrameStoreMaxHeight = 480;
+// Typed as CodedWidth because acceptance checks coded stream size against it.
+// Numerically equal to presented 480p width; the type prevents using the
+// presented constant by accident in coded-only math without an explicit claim.
+constexpr CodedWidth kDdrFrameStoreMaxWidth{640};
+constexpr CodedHeight kDdrFrameStoreMaxHeight{480};
 
 // Check whether a decoded frame resolution is acceptable for the DDR frame store.
 // Requirements:
@@ -292,18 +343,24 @@ constexpr int kDdrFrameStoreMaxHeight = 480;
 //   3. YUV420p payload fits within bank stride (currently 512 KiB)
 // This replaces the old hardcoded equality check against 624x480 and accepts
 // any valid resolution the frame store can handle, including 640x480 streams.
-inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
-    if (codedWidth <= 0 || codedHeight <= 0)
+inline bool ddrFrameStoreAcceptsResolution(CodedWidth codedWidth, CodedHeight codedHeight) {
+    if (codedWidth.get() <= 0 || codedHeight.get() <= 0)
         return false;
-    if ((codedWidth & 15) != 0 || (codedHeight & 15) != 0)
+    if ((codedWidth.get() & 15) != 0 || (codedHeight.get() & 15) != 0)
         return false; // not MB-aligned
-    if (codedWidth > kDdrFrameStoreMaxWidth || codedHeight > kDdrFrameStoreMaxHeight)
+    if (codedWidth.get() > kDdrFrameStoreMaxWidth.get() ||
+        codedHeight.get() > kDdrFrameStoreMaxHeight.get())
         return false;
     const size_t frameBytes = yuv420pFrameBytes(codedWidth, codedHeight);
     if (frameBytes == 0)
         return false;
     const uint32_t bankStride = alignUpU32(static_cast<uint32_t>(frameBytes), kDdrFrameStrideAlign);
     return bankStride <= kPlex480pYuv420pBankStride;
+}
+
+// Decoder-boundary overload: the caller claims these bare ints are coded size.
+inline bool ddrFrameStoreAcceptsResolution(int codedWidth, int codedHeight) {
+    return ddrFrameStoreAcceptsResolution(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
 } // namespace misterplex
