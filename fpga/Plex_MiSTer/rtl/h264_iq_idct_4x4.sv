@@ -78,6 +78,29 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+	// Explicit mux, not `v <<< qdiv`.  Quartus's automatic DSP replacement
+	// turns a variable-distance barrel shifter into a multiply by 1<<qdiv and
+	// packs it into a DSP block -- that, not the normAdjust product, is where
+	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
+	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
+	// a mux tree that the DSP inference engine has no pattern for.
+	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
+		begin
+			case (q)
+			4'd0:    shl_qdiv = v;
+			4'd1:    shl_qdiv = {v[38:0], 1'b0};
+			4'd2:    shl_qdiv = {v[37:0], 2'b0};
+			4'd3:    shl_qdiv = {v[36:0], 3'b0};
+			4'd4:    shl_qdiv = {v[35:0], 4'b0};
+			4'd5:    shl_qdiv = {v[34:0], 5'b0};
+			4'd6:    shl_qdiv = {v[33:0], 6'b0};
+			4'd7:    shl_qdiv = {v[32:0], 7'b0};
+			default: shl_qdiv = {v[31:0], 8'b0};
+			endcase
+		end
+	endfunction
+
+
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -106,7 +129,7 @@ module h264_dequant4x4 (
 			// three powers of two -- so this needs no multiplier at all.  The
 			// old `c * qmul` form cost two DSP blocks per coefficient, thirty
 			// two for the block, on a device that only has 112.
-			v = mul_norm(32'($signed(c)), norm_adjust(qmod, mi)) <<< qdiv;
+			v = 32'(shl_qdiv(40'(mul_norm(32'($signed(c)), norm_adjust(qmod, mi))), qdiv));
 			dequant_one = v[28:0];
 		end
 	endfunction
