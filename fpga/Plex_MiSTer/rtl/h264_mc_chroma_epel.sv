@@ -86,10 +86,13 @@ module h264_mc_chroma_epel (
 	(* ramstyle = "M10K, no_rw_check" *) reg [11:0] vtmp [0:127];
 	reg [11:0] utq, vtq;
 
-	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] upred [0:63];
-	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] vpred [0:63];
-	assign pred_u_rd_data = upred[pred_rd_idx];
-	assign pred_v_rd_data = vpred[pred_rd_idx];
+	// Consumer: decode_core p16_pred_q (same HOLD/WRITE capture as luma).
+	// Sync M10K +1; addr driven early in ST_P16_WRITE_*. Was MLAB combo-read.
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] upred [0:63];
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] vpred [0:63];
+	reg [7:0] pred_u_rd_data_r, pred_v_rd_data_r;
+	assign pred_u_rd_data = pred_u_rd_data_r;
+	assign pred_v_rd_data = pred_v_rd_data_r;
 
 	// ------------------------------------------------------------------
 	// Weighted sum datapath, shared by both passes and both planes.
@@ -191,10 +194,12 @@ module h264_mc_chroma_epel (
 	always @(posedge clk) begin
 		if (v_we)      upred[v_wa]  <= v_wdu;
 		else if (c1_v) upred[c1_idx] <= uwq;
+		pred_u_rd_data_r <= upred[pred_rd_idx];
 	end
 	always @(posedge clk) begin
 		if (v_we)      vpred[v_wa]  <= v_wdv;
 		else if (c1_v) vpred[c1_idx] <= vwq;
+		pred_v_rd_data_r <= vpred[pred_rd_idx];
 	end
 
 	// ------------------------------------------------------------------

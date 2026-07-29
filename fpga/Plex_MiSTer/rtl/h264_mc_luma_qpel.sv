@@ -61,8 +61,8 @@ module h264_mc_luma_qpel (
 	output reg         busy,
 	output reg         done,
 
-	// Prediction read port: 16x16 samples, index = y*16 + x, asynchronous so
-	// the consumer's writeback walk needs no extra pipeline stage.
+	// Prediction read port: 16x16, index=y*16+x. SYNC (+1 M10K).
+	// Consumer decode_core drives idx early; captures on HOLD/WRITE into pred_q.
 	input  wire [7:0]  pred_rd_idx,
 	output wire [7:0]  pred_rd_data,
 
@@ -86,8 +86,11 @@ module h264_mc_luma_qpel (
 	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] sjram [0:255]; // j, centre sample
 	reg [7:0] shq, smq, sjq;
 
-	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] predram [0:255];
-	assign pred_rd_data = predram[pred_rd_idx];
+	// Consumer: decode_core p16_pred_q pipeline (HOLD/WRITE capture). Sync
+	// read +1 is absorbed there (addr driven one cycle early). Was MLAB.
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] predram [0:255];
+	reg [7:0] pred_rd_data_r;
+	assign pred_rd_data = pred_rd_data_r;
 
 	// ------------------------------------------------------------------
 	// The single shared 6-tap datapath.
@@ -287,6 +290,7 @@ module h264_mc_luma_qpel (
 
 	always @(posedge clk) begin
 		if (c1_v) predram[c1_idx] <= cq;
+		pred_rd_data_r <= predram[pred_rd_idx];
 	end
 
 	// ------------------------------------------------------------------

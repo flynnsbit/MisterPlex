@@ -965,10 +965,14 @@ module h264_decode_core #(
     // mv>>>2 integer origin and chroma takes mv[2:0] against mv>>>3. Both
     // slices are the correct modulo for negative vectors because the shifts
     // are arithmetic.
-    // During ST_P16_WRITE (non-last) fetch the *next* sample so pred_q and
-    // residual M10K data line up for a single-cycle emit stream.
+    // pred_* RAMs are sync M10K (+1). Drive address one cycle early so
+    // p16_pred_sample_async matches the sample captured into pred_q next beat.
+    //   PRIME: idx0  HOLD: idx1 (+ capture s0)  WRITE: idx=wb_idx+2 (+ capture s_{i+1})
     wire [8:0] p16_mc_rd_flat =
-        ((wb_state == ST_P16_WRITE) && !wb_last_sample) ? wb_idx_n : wb_idx;
+        (wb_state == ST_P16_WRITE_PRIME) ? 9'd0 :
+        (wb_state == ST_P16_WRITE_HOLD)  ? 9'd1 :
+        ((wb_state == ST_P16_WRITE) && !wb_last_sample) ? wb_idx_nn :
+        wb_idx;
     wire [1:0] p16_mc_rd_plane =
         (p16_mc_rd_flat < 9'd256) ? 2'd0 :
         (p16_mc_rd_flat < 9'd320) ? 2'd1 : 2'd2;
@@ -1005,15 +1009,16 @@ module h264_decode_core #(
         .pred_c_rd_in_part(p16_pred_c_in_part),
         .pred_y_head(p16_pred_y_head)
     );
-    // The engines' prediction read ports are asynchronous, so the writeback
-    // walk indexes them directly and needs no extra pipeline stage.
-    wire p16_pred_in_part = (p16_mc_rd_plane == 2'd0) ? p16_pred_y_in_part
-                                                      : p16_pred_c_in_part;
-    wire [7:0] p16_pred_sample_async = !p16_pred_in_part ? 8'd0 :
-                                 (p16_mc_rd_plane == 2'd0) ? p16_pred_y_rd_data :
-                                 (p16_mc_rd_plane == 2'd1) ? p16_pred_u_rd_data :
-                                                             p16_pred_v_rd_data;
-    // Align MC (async) with residual M10K (1-cycle read): use registered pred.
+    // pred RAMs are sync M10K (+1). Delay plane/in_part with the data beat.
+    wire p16_pred_in_part_early = (p16_mc_rd_plane == 2'd0) ? p16_pred_y_in_part
+                                                            : p16_pred_c_in_part;
+    reg        p16_pred_in_part_d1;
+    reg [1:0]  p16_mc_rd_plane_d1;
+    wire p16_pred_in_part = p16_pred_in_part_d1;
+    wire [7:0] p16_pred_sample_async = !p16_pred_in_part_d1 ? 8'd0 :
+                                 (p16_mc_rd_plane_d1 == 2'd0) ? p16_pred_y_rd_data :
+                                 (p16_mc_rd_plane_d1 == 2'd1) ? p16_pred_u_rd_data :
+                                                                p16_pred_v_rd_data;
     wire [7:0] p16_pred_sample = p16_pred_q;
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
@@ -1784,6 +1789,8 @@ module h264_decode_core #(
             res_store_i <= 4'd0;
             p16_pred_q <= 8'd0;
             p16_pred_in_part_q <= 1'b0;
+            p16_pred_in_part_d1 <= 1'b0;
+            p16_mc_rd_plane_d1 <= 2'd0;
             for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
                 mv_top_x[wb_i] <= 16'sd0;
                 mv_top_y[wb_i] <= 16'sd0;
@@ -1797,6 +1804,8 @@ module h264_decode_core #(
             dbf_smp_valid_d <= deblock_filtered_sample_valid;
             dbf_smp_idx_d <= wb_idx;
             dbf_smp_data_d <= dpb_ref_filtered_sample;
+            p16_pred_in_part_d1 <= p16_pred_in_part_early;
+            p16_mc_rd_plane_d1 <= p16_mc_rd_plane;
 
             if (syntax_p16_pulse) begin
                 rbsp_request_valid_r <= 1'b1;
@@ -1914,10 +1923,12 @@ module h264_decode_core #(
                             res_tc_top_c[{p16_launch_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <= 5'd0;
                         end
                     end
-                    // External TB residual plane: stream into M10K. Product path
-                    // relies on residual_all_zero or per-block store/zero.
+                    // Skip/cbp0: residual_term forced 0 — skip residual walk.
+                    // TB zero-MV still latches external residual plane.
                     if (p16_zero_mv_valid)
                         wb_state <= ST_P16_LATCH_RES;
+                    else if (p16_launch_skip)
+                        wb_state <= ST_P16_REF_SEED;
                     else
                         wb_state <= ST_P16_RES_START;
                 end else if (product_recon_mb_valid && (deblock_off || !dbf_busy) &&
@@ -2208,16 +2219,16 @@ module h264_decode_core #(
                 lat_res_rplane <= 2'd0;
                 lat_res_raddr <= 8'd0;
                 wb_idx <= 9'd0;
-                // MC async for sample0 (p16_mc_rd sees wb_idx=0 this cycle).
-                p16_pred_q <= p16_pred_sample_async;
-                p16_pred_in_part_q <= p16_pred_in_part;
+                // Arm MC pred M10K read addr0 (data lands next cycle on HOLD).
                 wb_state <= ST_P16_WRITE_HOLD;
             end
             ST_P16_WRITE_HOLD: begin
-                // res_q ← residual0 (raddr was 0 during this cycle).
-                // Prefetch residual1; keep pred_q as sample0 from PRIME.
+                // res_q ← residual0; pred M10K → sample0 into pred_q.
+                // Prefetch residual1; MC addr already 1 (see p16_mc_rd_flat).
                 lat_res_rplane <= 2'd0;
                 lat_res_raddr <= 8'd1;
+                p16_pred_q <= p16_pred_sample_async;
+                p16_pred_in_part_q <= p16_pred_in_part;
                 wb_state <= ST_P16_WRITE;
             end
             ST_P16_WRITE: begin
@@ -2226,14 +2237,10 @@ module h264_decode_core #(
                     wb_commit_p16 <= 1'b1;
                     wb_state <= ST_DEBLOCK;
                 end else begin
-                    // Advance emit index; raddr was already next during this
-                    // cycle (set last beat / HOLD). Point raddr at idx+2.
                     wb_idx <= wb_idx_n;
-                    // Prefetch address for sample after next (wb_idx+2).
                     lat_res_rplane <= wb_plane_nn;
                     lat_res_raddr <= wb_sample_idx_nn;
-                    // Capture pred for the new wb_idx (wb_idx_n): MC ports
-                    // already see wb_idx_n while in ST_P16_WRITE && !last.
+                    // Capture pred[wb_idx_n] (addr was idx_n during prior beat).
                     p16_pred_q <= p16_pred_sample_async;
                     p16_pred_in_part_q <= p16_pred_in_part;
                 end

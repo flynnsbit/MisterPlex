@@ -1362,9 +1362,11 @@ module h264_i_mb_feed #(
 			end
 
 			ST_WAIT_CORE: begin
-				// I path: hold busy while core finishes (uses luma ports).
+				// I path: hold while core finishes. Never FFFF-escape while
+				// core_busy — that dropped P MBs during DPB BRAM load (REF_SEED
+				// can exceed 64k cycles @624x480) and only the last pend survived.
 				guard <= guard + 16'd1;
-				if ((!core_busy && (guard > 16'd3)) || (guard == 16'hFFFF)) begin
+				if (!core_busy && (guard > 16'd3)) begin
 					guard <= 16'd0;
 					mb_addr <= mb_addr + 16'd1;
 					st <= ST_P_AFTER_MB;
@@ -1372,9 +1374,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_YIELD_CORE: begin
-				// Inter / skip: busy=0 so core owns RBSP for residual+MC.
+				// Inter / skip: feed busy=0 so core owns RBSP; wait core_busy.
 				guard <= guard + 16'd1;
-				if ((!core_busy && (guard > 16'd3)) || (guard == 16'hFFFF)) begin
+				if (!core_busy && (guard > 16'd3)) begin
 					guard <= 16'd0;
 					mb_addr <= mb_addr + 16'd1;
 					st <= ST_P_AFTER_MB;
