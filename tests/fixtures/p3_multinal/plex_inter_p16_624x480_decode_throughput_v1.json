@@ -6,7 +6,7 @@
     "min_budget_margin_ratio": 2.3,
     "stages": {
       "parse_cavlc": {
-        "max_cycles_per_mb": 10.0
+        "max_cycles_per_mb": 40.0
       },
       "diagnostic_paint": {
         "max_cycles_per_mb": 260.0

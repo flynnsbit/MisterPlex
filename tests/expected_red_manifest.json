@@ -217,6 +217,30 @@
       "required_substrings": [
         "FAIL decode_stub fetch_mv: product_fetch_mv got=(0,0) want=(16,0)"
       ]
+    },
+    {
+      "id": "h264_p_mb_traverse_bad_skip",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "FAULT_BAD_SKIP_RUN must under-count skip MBs versus green all-skip walk.",
+      "required_substrings": [
+        "EXPECTED_RED"
+      ]
+    },
+    {
+      "id": "h264_p_mb_traverse_drop_last_row",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "FAULT_DROP_LAST_ROW_MB must drop end-of-row MBs versus green full walk.",
+      "required_substrings": [
+        "EXPECTED_RED"
+      ]
+    },
+    {
+      "id": "h264_p_mb_traverse_zero_mvd",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "FAULT_FORCE_ZERO_MVD must drop coded mvd=(1,0) export (proves mvd path is live).",
+      "required_substrings": [
+        "EXPECTED_RED: FAULT_FORCE_ZERO_MVD dropped mvd=(1,0)"
+      ]
     }
   ]
 }
