@@ -35,6 +35,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_wr.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_rd.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_bram_ref.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ddr_bridge.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_luma_qpel.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_mc_chroma_epel.sv
