@@ -581,6 +581,13 @@ assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
 `endif
 
+	wire        hybrid_fpga_owned_w;
+	wire        hybrid_host_required_w;
+	wire        product_recon_ok_w;
+	wire [2:0]  hybrid_own_code_w;
+	wire [3:0]  hybrid_own_reason_w;
+	wire        entropy_cabac_w;
+
 stream_path #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H)
@@ -647,6 +654,12 @@ stream_path #(
 	.recon_dbg(recon_dbg),
 	.recon_dbg_valid(recon_dbg_valid),
 	.recon_valid(recon_valid),
+		.hybrid_fpga_owned(hybrid_fpga_owned_w),
+	.hybrid_host_required(hybrid_host_required_w),
+	.product_recon_ok(product_recon_ok_w),
+	.hybrid_own_code(hybrid_own_code_w),
+	.hybrid_own_reason(hybrid_own_reason_w),
+	.entropy_cabac(entropy_cabac_w),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),

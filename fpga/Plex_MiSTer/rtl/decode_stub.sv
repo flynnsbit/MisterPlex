@@ -3,6 +3,9 @@
 // diagnostic into frame_store (or residual MB0 gray when residual_ok).
 // 3.3j: paint after residual_ok/slice_valid so MB0 gray matches probe;
 //       hybrid product present is host F1 (see Plex.sv host_owns_fs).
+// P3-3l5: publish hybrid ownership + product_recon_ok. STREAM may skip host F1
+// only when product_recon_ok (full I-slice, no host_required). Unsupported /
+// inter / CABAC MBs sticky-assert hybrid_host_required — never silent product-ok.
 
 module decode_stub #(
 	parameter int WIDTH  = 320,
@@ -31,6 +34,9 @@ module decode_stub #(
 	input  wire [2:0]  first_mb_part_count,
 	input  wire        first_mb_uses_sub_mb,
 	input  wire        first_mb_intra,
+	// P3-3l5: PPS entropy + first I mb_type for hybrid ownership
+	input  wire        entropy_cabac,
+	input  wire [7:0]  first_mb_type_i, // I-slice mb_type when has_mb_type
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -43,6 +49,13 @@ module decode_stub #(
 	output reg  [7:0]  recon_dbg,
 	output reg         recon_dbg_valid,
 	output reg         recon_valid,
+
+	// P3-3l5 hybrid product handoff (see h264_hybrid_mb_own.sv)
+	output reg         hybrid_fpga_owned,     // last classified MB owned by FPGA
+	output reg         hybrid_host_required,  // sticky: any host-required MB/CABAC/fail
+	output reg         product_recon_ok,      // sticky: full I path may own present
+	output reg  [2:0]  hybrid_own_code,
+	output reg  [3:0]  hybrid_own_reason,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -103,7 +116,44 @@ module decode_stub #(
 	reg [2:0]      pending_p_part_count;
 	reg            pending_p_uses_sub_mb;
 	reg            pending_p_intra;
+	// P3-3l5 hybrid latches
+	reg            lat_cabac;
+	reg            lat_hybrid_host;
+	reg            lat_hybrid_fpga;
+	reg [2:0]      lat_hybrid_code;
+	reg [3:0]      lat_hybrid_reason;
 	integer        coeff_i;
+
+	// Live ownership of the currently observed MB (first-MB handoff today;
+	// all-MB traversal lanes OR into lat_hybrid_host without contract change).
+	wire        hy_fpga;
+	wire        hy_host;
+	wire        hy_product_mb;
+	wire [2:0]  hy_code;
+	wire [3:0]  hy_reason;
+	wire        hy_is_p = slice_valid && !slice_is_i;
+	wire        hy_p_inter = hy_is_p && has_mb_type && !first_mb_intra &&
+	                         (first_mb_p_skip || (first_mb_part_mode <= 3'd4));
+	h264_hybrid_mb_own u_hybrid_mb (
+		.slice_is_i(slice_is_i || (last_nal_type[4:0] == 5'd5)),
+		.entropy_cabac(entropy_cabac),
+		.fail_mb(1'b0),
+		.mb_valid(slice_valid && has_mb_type),
+		.mb_type(first_mb_type_i),
+		.is_p_slice_mb(hy_is_p),
+		.p_skipped(first_mb_p_skip),
+		.p_is_intra(first_mb_intra),
+		.p_is_inter(hy_p_inter),
+		.p_uses_sub_mb(first_mb_uses_sub_mb),
+		.p_part_mode(first_mb_part_mode),
+		.p_unsupported(hy_is_p && has_mb_type && !first_mb_intra && !hy_p_inter && !first_mb_p_skip),
+		.fpga_owned(hy_fpga),
+		.host_required(hy_host),
+		.product_mb_ok(hy_product_mb),
+		.own_code(hy_code),
+		.own_reason(hy_reason)
+	);
+	wire _hy_keep = hy_product_mb;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -706,6 +756,16 @@ module decode_stub #(
 			pending_p_part_count <= 0;
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
+			lat_cabac <= 0;
+			lat_hybrid_host <= 0;
+			lat_hybrid_fpga <= 0;
+			lat_hybrid_code <= 0;
+			lat_hybrid_reason <= 0;
+			hybrid_fpga_owned <= 0;
+			hybrid_host_required <= 0;
+			product_recon_ok <= 0;
+			hybrid_own_code <= 0;
+			hybrid_own_reason <= 0;
 			dpb_fetch_start <= 0;
 			dpb_frame_done_pulse <= 0;
 			dpb_fill_mb_addr <= '0;
@@ -726,6 +786,16 @@ module decode_stub #(
 					inter_res_y[{coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
 						idct_residual[coeff_i][15:0];
 				end
+			end
+			// Sticky OR host_required while slice is live (never silent FPGA claim).
+			if (entropy_cabac)
+				lat_cabac <= 1'b1;
+			if (slice_valid && has_mb_type) begin
+				lat_hybrid_fpga <= hy_fpga;
+				lat_hybrid_code <= hy_code;
+				lat_hybrid_reason <= hy_reason;
+				if (hy_host || entropy_cabac)
+					lat_hybrid_host <= 1'b1;
 			end
 			if (p_fetch_edge) begin
 				pending_p_fetch <= 1'b1;
@@ -752,6 +822,16 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
+				// Clear hybrid stickies for new VCL; CABAC sticky clears only on new VCL
+				// so a CABAC PPS mid-stream still fails closed until next VCL samples it.
+				lat_cabac <= entropy_cabac;
+				lat_hybrid_host <= 1'b0;
+				lat_hybrid_fpga <= 1'b0;
+				lat_hybrid_code <= 3'd0;
+				lat_hybrid_reason <= 4'd0;
+				product_recon_ok <= 1'b0;
+				hybrid_host_required <= 1'b0;
+				hybrid_fpga_owned <= 1'b0;
 			end else if (pending_p_fetch && dpb_ref_ready) begin
 				phase <= PH_FETCH;
 				busy <= 1'b1;
@@ -779,6 +859,12 @@ module decode_stub #(
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
 				lat_p_intra <= pending_p_intra;
 				lat_inter_recon_ok <= 1'b0;
+				// P-fetch path is host-required under default CAP_INTER_*=0.
+				lat_hybrid_host <= 1'b1;
+				lat_hybrid_fpga <= 1'b0;
+				lat_hybrid_code <= 3'd1; // OWN_HOST_INTER
+				lat_hybrid_reason <= 4'd5; // RSN_INTER
+				product_recon_ok <= 1'b0;
 				pending_p_fetch <= 1'b0;
 				recon_valid <= 1'b0;
 				recon_dbg_valid <= 1'b0;
@@ -815,6 +901,21 @@ module decode_stub #(
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				lat_p_intra  <= first_mb_intra;
+				// Capture hybrid ownership at residual place time.
+				lat_cabac <= lat_cabac | entropy_cabac;
+				if (has_mb_type) begin
+					lat_hybrid_fpga <= hy_fpga;
+					lat_hybrid_code <= hy_code;
+					lat_hybrid_reason <= hy_reason;
+					if (hy_host || entropy_cabac)
+						lat_hybrid_host <= 1'b1;
+				end else if (!slice_is_i && !(lat_type[4:0] == 5'd5)) begin
+					// P/B without mb_type yet: fail closed to host
+					lat_hybrid_host <= 1'b1;
+					lat_hybrid_fpga <= 1'b0;
+					lat_hybrid_code <= 3'd6;
+					lat_hybrid_reason <= 4'd8;
+				end
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
 					dpb_fill_mb_addr <= '0;
 					dpb_fill_sample_idx <= 9'd0;
@@ -851,6 +952,8 @@ module decode_stub #(
 					inter_res_u[coeff_i] <= 16'sd0;
 					inter_res_v[coeff_i] <= 16'sd0;
 				end
+				// Advancing across P MBs: still host-required under default caps.
+				lat_hybrid_host <= 1'b1;
 				dpb_fetch_start <= 1'b1;
 				p_fetch_launch_pending <= 1'b1;
 				p_fetch_advance <= 1'b0;
@@ -861,6 +964,8 @@ module decode_stub #(
 				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
+				// Inter diagnostic may set recon_sig, but product hybrid stays host.
+				lat_hybrid_host <= 1'b1;
 				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
 					p_fetch_advance <= 1'b1;
 				end else begin
@@ -898,7 +1003,18 @@ module decode_stub #(
 				recon_sig   <= lat_inter_recon_ok ? 8'h3b : (lat_res_ok ? recon_sig_comb : 8'd0);
 				recon_dbg   <= recon_dbg_comb | {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
 				recon_dbg_valid <= 1'b1;
+				// Diagnostic recon_valid unchanged; product_recon_ok is separate.
 				recon_valid <= lat_res_ok | lat_inter_recon_ok;
+				hybrid_fpga_owned <= lat_hybrid_fpga && !lat_hybrid_host && !lat_cabac;
+				hybrid_host_required <= lat_hybrid_host | lat_cabac | lat_p_inter;
+				hybrid_own_code <= lat_hybrid_code;
+				hybrid_own_reason <= lat_hybrid_reason;
+				// Doc §3.3l-5: STREAM may skip host F1 only when FPGA recon_ok on a
+				// pure FPGA-owned I-slice. Inter/CABAC/fail → never product_recon_ok.
+				// residual_ok here is first-MB probe, not full-frame mae; software must
+				// still require competitive mae before acting on this sticky.
+				product_recon_ok <= is_i_frame && lat_res_ok && lat_hybrid_fpga &&
+				                    !lat_hybrid_host && !lat_cabac && !lat_p_inter;
 			end
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin

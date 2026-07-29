@@ -109,6 +109,13 @@ module stream_path_full_frame_tb #(
 	wire first_mb_uses_sub_mb_w;
 	wire first_mb_intra_w;
 
+	wire        hybrid_fpga_owned_w;
+	wire        hybrid_host_required_w;
+	wire        product_recon_ok_w;
+	wire [2:0]  hybrid_own_code_w;
+	wire [3:0]  hybrid_own_reason_w;
+	wire        entropy_cabac_w;
+
 	stream_path #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H)
@@ -186,7 +193,13 @@ module stream_path_full_frame_tb #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
-		.fs_wr_en(fs_wr_en),
+			.hybrid_fpga_owned(hybrid_fpga_owned_w),
+	.hybrid_host_required(hybrid_host_required_w),
+	.product_recon_ok(product_recon_ok_w),
+	.hybrid_own_code(hybrid_own_code_w),
+	.hybrid_own_reason(hybrid_own_reason_w),
+	.entropy_cabac(entropy_cabac_w),
+	.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
 		.fs_swap(fs_swap)

@@ -72,6 +72,13 @@ module h264_multinal_stream_path_tb #(
     wire [31:0] stream_ddr_bytes_out, stream_ddr_host_write, stream_ddr_fpga_read;
     wire [15:0] stream_ddr_underruns, stream_ddr_overruns;
 
+	wire        hybrid_fpga_owned_w;
+	wire        hybrid_host_required_w;
+	wire        product_recon_ok_w;
+	wire [2:0]  hybrid_own_code_w;
+	wire [3:0]  hybrid_own_reason_w;
+	wire        entropy_cabac_w;
+
     stream_path #(.FRAME_W(16), .FRAME_H(16)) dut (
         .clk(clk), .reset(reset),
         .ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
@@ -103,7 +110,14 @@ module h264_multinal_stream_path_tb #(
         .residual_ok(residual_ok), .residual_dc(residual_dc), .residual_csum(residual_csum),
         .residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
         .recon_sig(recon_sig_dut), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
-        .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
+        .recon_valid(recon_valid),
+	.hybrid_fpga_owned(hybrid_fpga_owned_w),
+	.hybrid_host_required(hybrid_host_required_w),
+	.product_recon_ok(product_recon_ok_w),
+	.hybrid_own_code(hybrid_own_code_w),
+	.hybrid_own_reason(hybrid_own_reason_w),
+	.entropy_cabac(entropy_cabac_w),
+	.fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
         .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
     );
 
