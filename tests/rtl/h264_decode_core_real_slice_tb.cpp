@@ -133,6 +133,24 @@ int residualNonzero(const Slice& slice, const Case& c) {
     return n;
 }
 
+// Chroma-only residual count — luma sentinels do not cover U/V residual planes.
+int chromaResidualNonzero(const Slice& slice, const Case& c) {
+    int n = 0;
+    for (int i = 256; i < 384; ++i) n += targetSample(slice, c, i) != refCenterSample(slice, c, i);
+    return n;
+}
+
+// Distinct U vs V residual at the same sample — required so a residual plane swap can go red.
+int chromaResidualUvDistinct(const Slice& slice, const Case& c) {
+    int n = 0;
+    for (int i = 0; i < 64; ++i) {
+        const int uRes = int(targetSample(slice, c, 256 + i)) - int(refCenterSample(slice, c, 256 + i));
+        const int vRes = int(targetSample(slice, c, 320 + i)) - int(refCenterSample(slice, c, 320 + i));
+        n += (uRes != vRes);
+    }
+    return n;
+}
+
 int uvDistinct(const Slice& slice, const Case& c) {
     int n = 0;
     for (int i = 0; i < 64; ++i) {
@@ -158,36 +176,91 @@ bool chromaRightClampRead(const Case& c, int localOrdinal) {
     return c.mbX * 8 + (rel & 7) + (tap & 1) > C_W - 1;
 }
 
-Case chooseVaried(const Slice& slice) {
+bool chromaBottomClampRead(const Case& c, int localOrdinal) {
+    int idx = 0;
+    int cur = 0;
+    for (; idx < 384; ++idx) {
+        const int taps = tapsForSample(idx);
+        if (localOrdinal < cur + taps) break;
+        cur += taps;
+    }
+    if (idx < 256) return false;
+    const int tap = localOrdinal - cur;
+    const int rel = idx < 320 ? idx - 256 : idx - 320;
+    return c.mbY * 8 + (rel >> 3) + ((tap >> 1) & 1) > C_H - 1;
+}
+
+bool caseEquals(const Case& a, const Case& b) {
+    return a.ref == b.ref && a.target == b.target && a.mbX == b.mbX && a.mbY == b.mbY;
+}
+
+bool caseConflicts(const Case& c, const std::vector<Case>& avoid) {
+    for (const Case& a : avoid) {
+        if (caseEquals(c, a)) return true;
+    }
+    return false;
+}
+
+Case chooseVaried(const Slice& slice, const std::vector<Case>& avoid) {
     Case best{};
     int bestScore = -1;
     for (int ref = 0; ref + 1 < slice.frames(); ++ref) {
         for (int y = 0; y < MB_H; ++y) for (int x = 0; x < MB_W; ++x) {
             Case c{ref, ref + 1, x, y, "varied-real-content"};
+            if (caseConflicts(c, avoid)) continue;
+            // Reject chroma-vacuous MBs: need U/V plane and residual discrimination.
+            if (uvDistinct(slice, c) < 32) continue;
+            if (chromaResidualNonzero(slice, c) < 8) continue;
+            if (chromaResidualUvDistinct(slice, c) < 8) continue;
             int yMin = 255, yMax = 0;
             for (int i = 0; i < 256; ++i) {
                 const int v = targetSample(slice, c, i);
                 yMin = std::min(yMin, v);
                 yMax = std::max(yMax, v);
             }
-            const int score = residualNonzero(slice, c) + 4 * uvDistinct(slice, c) + (yMin <= 10 ? 200 : 0) + (yMax >= 235 ? 200 : 0);
+            const int score = residualNonzero(slice, c) + 8 * chromaResidualNonzero(slice, c) +
+                              16 * chromaResidualUvDistinct(slice, c) + 4 * uvDistinct(slice, c) +
+                              (yMin <= 10 ? 200 : 0) + (yMax >= 235 ? 200 : 0);
             if (score > bestScore) { bestScore = score; best = c; }
         }
     }
+    if (bestScore < 0) throw std::runtime_error("no varied real-content MB with chroma residual discrimination");
     return best;
 }
 
-Case chooseRightEdge(const Slice& slice, const Case& avoid) {
+Case chooseRightEdge(const Slice& slice, const std::vector<Case>& avoid) {
     Case best{};
     int bestScore = -1;
     for (int ref = 0; ref + 1 < slice.frames(); ++ref) {
         for (int y = 0; y < MB_H; ++y) {
             Case c{ref, ref + 1, MB_W - 1, y, "right-edge-chroma-clamp"};
-            if (c.ref == avoid.ref && c.mbX == avoid.mbX && c.mbY == avoid.mbY) continue;
-            const int score = residualNonzero(slice, c) + 8 * uvDistinct(slice, c);
+            if (caseConflicts(c, avoid)) continue;
+            if (uvDistinct(slice, c) < 16) continue;
+            if (chromaResidualUvDistinct(slice, c) < 4) continue;
+            const int score = residualNonzero(slice, c) + 8 * uvDistinct(slice, c) +
+                              16 * chromaResidualUvDistinct(slice, c);
             if (score > bestScore) { bestScore = score; best = c; }
         }
     }
+    if (bestScore < 0) throw std::runtime_error("no right-edge chroma clamp MB with U/V discrimination");
+    return best;
+}
+
+Case chooseBottomEdge(const Slice& slice, const std::vector<Case>& avoid) {
+    Case best{};
+    int bestScore = -1;
+    for (int ref = 0; ref + 1 < slice.frames(); ++ref) {
+        for (int x = 0; x < MB_W; ++x) {
+            Case c{ref, ref + 1, x, MB_H - 1, "bottom-edge-chroma-clamp"};
+            if (caseConflicts(c, avoid)) continue;
+            if (uvDistinct(slice, c) < 16) continue;
+            if (chromaResidualUvDistinct(slice, c) < 4) continue;
+            const int score = residualNonzero(slice, c) + 8 * uvDistinct(slice, c) +
+                              16 * chromaResidualUvDistinct(slice, c);
+            if (score > bestScore) { bestScore = score; best = c; }
+        }
+    }
+    if (bestScore < 0) throw std::runtime_error("no bottom-edge chroma clamp MB with U/V discrimination");
     return best;
 }
 
@@ -300,11 +373,13 @@ int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& c
                   << " want=" << cases.size() * 384 << "\n";
         return 1;
     }
-    int chromaClampReads = 0;
+    int chromaRightClampReads = 0;
+    int chromaBottomClampReads = 0;
     for (std::size_t i = 0; i < s.reads.size(); ++i) {
         const std::size_t caseIdx = i / kReadsPerMb;
         const int local = static_cast<int>(i % kReadsPerMb);
-        chromaClampReads += chromaRightClampRead(cases.at(caseIdx), local);
+        chromaRightClampReads += chromaRightClampRead(cases.at(caseIdx), local);
+        chromaBottomClampReads += chromaBottomClampRead(cases.at(caseIdx), local);
         const uint32_t want = expectedReadAddr(cases.at(caseIdx), local);
         if (s.reads.at(i) != want) {
             const Case& c = cases.at(caseIdx);
@@ -316,10 +391,14 @@ int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& c
         }
     }
     int residualNonzeroTotal = 0;
+    int chromaResidualNonzeroTotal = 0;
+    int chromaResidualUvDistinctTotal = 0;
     int uvDistinctTotal = 0;
     for (std::size_t ci = 0; ci < cases.size(); ++ci) {
         const Case& c = cases.at(ci);
         residualNonzeroTotal += residualNonzero(slice, c);
+        chromaResidualNonzeroTotal += chromaResidualNonzero(slice, c);
+        chromaResidualUvDistinctTotal += chromaResidualUvDistinct(slice, c);
         uvDistinctTotal += uvDistinct(slice, c);
         for (int i = 0; i < 384; ++i) {
             const Write& w = s.writes.at(ci * 384 + i);
@@ -332,23 +411,43 @@ int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& c
                           << ") sample " << i << " plane=" << plane
                           << " got_addr=0x" << std::hex << w.addr << " want_addr=0x" << wantAddr << std::dec
                           << " got=" << int(w.data) << " want=" << int(wantData)
+                          << " pred=" << int(refCenterSample(slice, c, i))
                           << " residual=" << int(wantData) - int(refCenterSample(slice, c, i)) << "\n";
                 return 1;
             }
         }
     }
-    if (uvDistinctTotal < static_cast<int>(cases.size()) * 64) {
+    if (uvDistinctTotal < static_cast<int>(cases.size()) * 32) {
         std::cerr << "FAIL h264_decode_core real-slice scoreboard: uv_distinct_samples=" << uvDistinctTotal << " too weak\n";
         return 1;
     }
-    if (chromaClampReads < 1) {
-        std::cerr << "FAIL h264_decode_core real-slice scoreboard: chroma_right_clamp_reads=" << chromaClampReads << " want>=1\n";
+    if (chromaResidualNonzeroTotal < static_cast<int>(cases.size()) * 8) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: chroma_residual_nonzero="
+                  << chromaResidualNonzeroTotal << " too weak (luma cannot cover chroma)\n";
+        return 1;
+    }
+    if (chromaResidualUvDistinctTotal < static_cast<int>(cases.size()) * 4) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: chroma_residual_uv_distinct="
+                  << chromaResidualUvDistinctTotal << " too weak for residual U/V swap detection\n";
+        return 1;
+    }
+    if (chromaRightClampReads < 1) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: chroma_right_clamp_reads="
+                  << chromaRightClampReads << " want>=1\n";
+        return 1;
+    }
+    if (chromaBottomClampReads < 1) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: chroma_bottom_clamp_reads="
+                  << chromaBottomClampReads << " want>=1\n";
         return 1;
     }
     std::cout << "test_h264_decode_core_real_slice: OK real-content disabled-loop-filter I420 slice reconstructed "
               << cases.size() << " P16 MBs exact; residual_nonzero=" << residualNonzeroTotal
+              << " chroma_residual_nonzero=" << chromaResidualNonzeroTotal
+              << " chroma_residual_uv_distinct=" << chromaResidualUvDistinctTotal
               << " uv_distinct_samples=" << uvDistinctTotal
-              << " chroma_right_clamp_reads=" << chromaClampReads;
+              << " chroma_right_clamp_reads=" << chromaRightClampReads
+              << " chroma_bottom_clamp_reads=" << chromaBottomClampReads;
     for (const Case& c : cases) {
         std::cout << " " << c.label << "=" << c.ref << "->" << c.target << "@(" << c.mbX << "," << c.mbY << ")";
     }
@@ -369,8 +468,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::vector<Case> cases;
-    cases.push_back(chooseVaried(slice));
-    cases.push_back(chooseRightEdge(slice, cases.front()));
+    try {
+        cases.push_back(chooseVaried(slice, cases));
+        cases.push_back(chooseRightEdge(slice, cases));
+        cases.push_back(chooseBottomEdge(slice, cases));
+    } catch (const std::exception& ex) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: case selection: " << ex.what() << "\n";
+        return 1;
+    }
 
     Sim s;
     reset(s, slice, cases);

@@ -700,8 +700,22 @@ module h264_decode_core #(
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                         lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
-                        lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
+                        // Zero-MV residual feed is the real-slice recon oracle path.
+                        // Apply the same U/V residual-plane swap fault used on the
+                        // scheduled CAVLC residual path so chroma plane aliasing is
+                        // mutation-visible without inventing a separate define.
+                        if (p16_zero_mv_valid) begin
+                            if (p16_swap_chroma_residual) begin
+                                lat_p16_residual_u[wb_i] <= p16_residual_v[wb_i];
+                                lat_p16_residual_v[wb_i] <= p16_residual_u[wb_i];
+                            end else begin
+                                lat_p16_residual_u[wb_i] <= p16_residual_u[wb_i];
+                                lat_p16_residual_v[wb_i] <= p16_residual_v[wb_i];
+                            end
+                        end else begin
+                            lat_p16_residual_u[wb_i] <= 16'sd0;
+                            lat_p16_residual_v[wb_i] <= 16'sd0;
+                        end
                     end
                     wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
                 end else if (recon_mb_valid) begin

@@ -27,6 +27,7 @@ SLICE="$ROOT/tests/fixtures/derived_validation/derived_realcontent_624x480_basel
 RTL_DIR="$ROOT/fpga/Plex_MiSTer/rtl"
 BUILD="$ROOT/build/verilator/h264_decode_core_real_slice"
 BUILD_SWAP_CHROMA="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma_read"
+BUILD_SWAP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma_residual"
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
@@ -46,6 +47,7 @@ build_and_run() {
   local define_arg="$2"
   local bin="$build_dir/Vh264_decode_core_p16z_tb"
   mkdir -p "$build_dir"
+  # Always drop prior binary so a failed mutant compile cannot leave a stale green.
   rm -f "$bin"
   echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core real-content slice${define_arg:+ $define_arg})" >&2
   "$RUN_VERILATOR" --cc --exe --build \
@@ -54,6 +56,8 @@ build_and_run() {
     -CFLAGS "-std=c++17 -O2" \
     "$TOP" "${RTL[@]}" "$TB"
   test -x "$bin"
+  # Record freshness evidence for mutant builds.
+  ls -la --full-time "$bin" >&2
   MPLEX_REAL_SLICE="$SLICE" "$bin"
 }
 
@@ -70,3 +74,15 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_re
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_decode_core real-slice red-check: swapped U/V chroma read failed real-content scoreboard"
+
+set +e
+SWAP_RES_OUT="$(build_and_run "$BUILD_SWAP_CHROMA_RES" "+define+H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL" 2>&1)"
+SWAP_RES_RC=$?
+set -e
+printf '%s\n' "$SWAP_RES_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_real_slice_swap_chroma_residual "$SWAP_RES_RC" <<<"$SWAP_RES_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$SWAP_RES_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core real-slice red-check: swapped U/V chroma residual failed real-content scoreboard"

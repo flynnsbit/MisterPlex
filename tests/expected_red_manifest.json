@@ -168,6 +168,14 @@
       "required_substrings": [
         "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) read_ordinal 20736 got_addr=0x5f6a8 want_addr=0x4d228"
       ]
+    },
+    {
+      "id": "h264_decode_core_real_slice_swap_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
+      "why": "Swapping U/V chroma residual planes on the zero-MV real-slice recon path must fail a chroma sample against the always-on derived I420 slice, proving residual-plane aliasing is detected outside authored synthetic fixtures.",
+      "required_substrings": [
+        "FAIL h264_decode_core real-slice scoreboard: varied-real-content slice=0->1 mb=(5,0) sample 256 plane=U got_addr=0x4a228 want_addr=0x4a228 got=151 want=132 pred=142 residual=-10"
+      ]
     }
   ]
 }
