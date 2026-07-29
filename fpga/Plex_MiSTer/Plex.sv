@@ -496,6 +496,8 @@ ddram_frame_rd #(
 	// Publish the live OSD word to HPS DDR so misterplexd never has to read it
 	// back over the SPI bus that Main_MiSTer owns.
 	.status_osd(status[15:0]),
+	// Per-stage macroblock cycle accounting out of the H.264 pipeline.
+	.decode_perf_word(decode_perf_word),
 	.input_cmd_valid(playback_cmd_valid),
 	.input_cmd(playback_cmd),
 	.sdram_test_state(sdram_test_state),
@@ -581,6 +583,9 @@ assign stream_ddr_dout = 64'd0;
 assign stream_ddr_dout_ready = 1'b0;
 `endif
 
+// Decode throughput telemetry, published to the ARM through the DDR mailbox.
+wire [63:0] decode_perf_word;
+
 // FPGA decoder pixel stream: h264_decode_core -> ddr_frame_store -> display.
 wire        dec_px_wr_en;
 wire  [1:0] dec_px_plane;
@@ -618,6 +623,7 @@ stream_path #(
 	.fifo_level(stream_fifo_level),
 	.stream_ddr_active(stream_ddr_active),
 	.stream_ddr_bytes_out(stream_ddr_bytes_out),
+	.decode_perf_word(decode_perf_word),
 	.stream_ddr_underruns(stream_ddr_underruns),
 	.stream_ddr_overruns(stream_ddr_overruns),
 	.stream_ddr_host_write(stream_ddr_host_write),

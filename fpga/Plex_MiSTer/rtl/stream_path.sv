@@ -38,6 +38,9 @@ module stream_path #(
 	output wire [15:0] fifo_level,
 	output wire        stream_ddr_active,
 	output wire [31:0] stream_ddr_bytes_out,
+	// Rotating per-stage cycle telemetry from the decode pipeline; published
+	// to the ARM through the DDR mailbox.  Layout in h264_perf_counters.sv.
+	output wire [63:0] decode_perf_word,
 	output wire [15:0] stream_ddr_underruns,
 	output wire [15:0] stream_ddr_overruns,
 	output wire [31:0] stream_ddr_host_write,
@@ -805,6 +808,7 @@ module stream_path #(
 		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.perf_mbox_word(decode_perf_word),
 		.busy(core_busy),
 		.decode_state(core_decode_state),
 		.current_mb_addr(core_current_mb_addr),

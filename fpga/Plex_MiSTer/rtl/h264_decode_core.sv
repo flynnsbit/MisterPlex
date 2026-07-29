@@ -153,6 +153,11 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Throughput telemetry ──
+    // Per-stage cycle accounting for the macroblock pipeline, published as one
+    // rotating 64-bit mailbox word.  See h264_perf_counters.sv for the layout.
+    output wire [63:0] perf_mbox_word,
+
     // ── Status/debug ──
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
@@ -1598,6 +1603,51 @@ module h264_decode_core #(
             endcase
         end
     end
+
+    // ════════════════════════════════════════════════════════════════════
+    // THROUGHPUT TELEMETRY
+    // ════════════════════════════════════════════════════════════════════
+    // At 20 MHz with 1170 macroblocks at ~24 fps the whole pipeline gets 712
+    // cycles per macroblock.  Charge every cycle of a macroblock to exactly
+    // one stage so the per-stage totals sum to the macroblock total and no
+    // stage can quietly eat the budget.
+    localparam [2:0] PERF_ST_PARSE   = 3'd0;  // mb_type, residual walk, IDCT
+    localparam [2:0] PERF_ST_FETCH   = 3'd1;  // reference window fetch
+    localparam [2:0] PERF_ST_MC      = 3'd2;  // interpolation
+    localparam [2:0] PERF_ST_WRITE   = 3'd3;  // reconstruction writeback
+    localparam [2:0] PERF_ST_DEBLOCK = 3'd4;  // in-loop filter
+    localparam [2:0] PERF_ST_OTHER   = 3'd5;  // commit, frame boundary
+
+    reg [2:0] perf_stage;
+    always @* begin
+        case (wb_state)
+        ST_P16_RES_START, ST_P16_RES_WAIT,
+        ST_P16_RES_IDCT, ST_P16_RES_EDGE: perf_stage = PERF_ST_PARSE;
+        ST_P16_REF_SEED, ST_P16_WIN_START,
+        ST_P16_WIN_FETCH:                 perf_stage = PERF_ST_FETCH;
+        ST_P16_MC:                        perf_stage = PERF_ST_MC;
+        ST_P16_WRITE, ST_WRITE:           perf_stage = PERF_ST_WRITE;
+        ST_DEBLOCK:                       perf_stage = PERF_ST_DEBLOCK;
+        default:                          perf_stage = PERF_ST_OTHER;
+        endcase
+    end
+
+    // Idle time between macroblocks is not a pipeline cost and must not be
+    // charged to whichever stage happened to run last.
+    wire perf_active = (wb_state != ST_IDLE);
+    wire perf_mb_done = (wb_state == ST_COMMIT);
+
+    h264_perf_counters #(
+        .NSTAGES(6)
+    ) u_product_perf (
+        .clk(clk),
+        .reset(reset),
+        .active(perf_active),
+        .stage_id(perf_stage),
+        .mb_done(perf_mb_done),
+        .frame_done(frame_done_r),
+        .mbox_word(perf_mbox_word)
+    );
 
     assign dpb_wr_en = dpb_ref_mem_we;
     assign dpb_wr_addr = product_wb_addr;

@@ -28,6 +28,12 @@
 //                            5 address, 6 pass, 7 fail)
 //     [47:44] detected size code (2=16MB, 3=32MB, 4=64MB, 5=128MB; 0 unknown)
 //     [63:48] saturated error count
+//   Decode throughput mailbox: 0x3007F128 (one 64-bit word, core -> HPS, no SPI)
+//     Per-stage macroblock cycle accounting from the H.264 pipeline, rotating
+//     through a small set of views.  See rtl/h264_perf_counters.sv for the
+//     field layout and what each view means.  Exists because the decoder has
+//     712 cycles per macroblock at 20 MHz and static loop counting cannot see
+//     memory stalls, arbitration loss or the real macroblock-type mix.
 //   SDRAM diagnostic mailbox: 0x3007F120 (one 64-bit word, core -> HPS, no SPI)
 //     [4:0]   layout version = 1
 //     [20:5]  expected value at first failing address
@@ -73,6 +79,7 @@ module ddram_frame_rd #(
 	parameter [31:0] MEMTEST_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
 	parameter [31:0] UNDERRUN_MAILBOX_PHYS = DOORBELL_PHYS + 32'h118,
 	parameter [31:0] MEMTEST_DIAG_MAILBOX_PHYS = DOORBELL_PHYS + 32'h120,
+	parameter [31:0] DECODE_PERF_MAILBOX_PHYS = DOORBELL_PHYS + 32'h128,
 	parameter int BURST      = 16
 )(
 	input  wire        clk,
@@ -85,6 +92,10 @@ module ddram_frame_rd #(
 
 	// Live OSD menu word to publish to the HPS (see mailbox layout above).
 	input  wire [15:0] status_osd,
+
+	// Decode throughput telemetry word from h264_perf_counters, published
+	// verbatim; this module only owns the transport, not the layout.
+	input  wire [63:0] decode_perf_word,
 	input  wire        input_cmd_valid,
 	input  wire  [7:0] input_cmd,
 	// SDRAM bring-up telemetry to publish to the HPS (see mailbox layout above).
@@ -133,6 +144,7 @@ module ddram_frame_rd #(
 	localparam [28:0] MEMTEST_MAILBOX_W = MEMTEST_MAILBOX_PHYS[31:3];
 	localparam [28:0] UNDERRUN_MAILBOX_W = UNDERRUN_MAILBOX_PHYS[31:3];
 	localparam [28:0] MEMTEST_DIAG_MAILBOX_W = MEMTEST_DIAG_MAILBOX_PHYS[31:3];
+	localparam [28:0] DECODE_PERF_MAILBOX_W  = DECODE_PERF_MAILBOX_PHYS[31:3];
 	localparam [31:0] MAGIC = 32'h504C_584B;
 	localparam [31:0] MAGIC_S = 32'h504C_5853;
 	localparam [31:0] MAGIC_I = 32'h504C_5849;
@@ -202,6 +214,12 @@ module ddram_frame_rd #(
 	wire [CMD_FIFO_AW-1:0] cmd_fifo_wix = cmd_fifo_wr[CMD_FIFO_AW-1:0];
 	wire [CMD_FIFO_AW-1:0] cmd_fifo_rix = cmd_fifo_rd[CMD_FIFO_AW-1:0];
 	wire [7:0] cmd_fifo_head = cmd_fifo[cmd_fifo_rix];
+	// Decode throughput telemetry, already formatted by h264_perf_counters.
+	reg [63:0] perf_last;
+	reg        perf_valid;
+	reg        perf_req;
+	reg [17:0] perf_hb;
+
 	wire [63:0] sdram_diag_word = {sdram_read_sample, sdram_first_fail_valid,
 	                               sdram_first_fail_addr, sdram_first_fail_expect,
 	                               MEMTEST_DIAG_VERSION};
@@ -304,6 +322,10 @@ module ddram_frame_rd #(
 			frame_mbox_req   <= 1'b1;
 			frame_mbox_valid <= 1'b0;
 			frame_mbox_hb    <= 18'd0;
+			perf_last      <= 64'd0;
+			perf_valid     <= 1'b0;
+			perf_req       <= 1'b1;
+			perf_hb        <= 18'd0;
 			cmd_fifo_wr    <= 0;
 			cmd_fifo_rd    <= 0;
 			imbox_seq      <= 16'd0;
@@ -329,6 +351,12 @@ module ddram_frame_rd #(
 				sdram_mbox_req <= 1'b1;
 				sdram_diag_req <= 1'b1;
 			end
+			// The perf word rotates its view on its own slow divider, so
+			// publishing on change tracks the rotation without a request
+			// channel; the heartbeat covers a host that attaches later.
+			perf_hb <= perf_hb + 18'd1;
+			if (!perf_valid || (decode_perf_word != perf_last) || (perf_hb == 18'd0))
+				perf_req <= 1'b1;
 			frame_mbox_hb <= frame_mbox_hb + 18'd1;
 			if (!frame_mbox_valid
 			    || ({frame_underrun_count, frame_sdram_state} != frame_mbox_last)
@@ -431,6 +459,16 @@ module ddram_frame_rd #(
 					sdram_diag_last  <= sdram_diag_word;
 					sdram_diag_valid <= 1'b1;
 					sdram_diag_req   <= 1'b0;
+				end
+				else if (perf_req && !poll_pending && poll_div[7:0] == 8'd216
+				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+					DDRAM_ADDR     <= DECODE_PERF_MAILBOX_W;
+					DDRAM_BURSTCNT <= 8'd1;
+					DDRAM_DIN      <= decode_perf_word;
+					DDRAM_WE       <= 1'b1;
+					perf_last      <= decode_perf_word;
+					perf_valid     <= 1'b1;
+					perf_req       <= 1'b0;
 				end
 				else if (frame_mbox_req && !poll_pending && poll_div[7:0] == 8'd224
 				         && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
