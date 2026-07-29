@@ -33,7 +33,7 @@ constexpr int FRAME_BYTES = Y_BYTES + 2 * C_BYTES;
 constexpr int kSamplesPerMb = 384;
 constexpr uint32_t REF_BASE = 0;
 constexpr uint32_t WRITE_BASE = 0x100000;
-constexpr int kTimeoutCycles = 80000;
+constexpr int kTimeoutCycles = 400000;
 
 int clampi(int v, int lo, int hi) { return std::max(lo, std::min(v, hi)); }
 int clip1(int v) { return clampi(v, 0, 255); }
@@ -133,29 +133,19 @@ int predY(const Pic& p, int f, int mbX, int mbY, int mvx, int mvy, int lx, int l
 	return lumaQpel(p, f, xq >> 2, yq >> 2, xq & 3, yq & 3);
 }
 int predC(const Pic& p, int f, int plane, int mbX, int mbY, int mvx, int mvy, int cx, int cy) {
-	// chroma MV = luma/2 with 1/8 pel
-	const int xq = mbX * 8 * 8 + (mvx / 2) + cx * 8;  // wrong - use proper
-	(void)xq;
-	const int xFull = mbX * 8 + cx;
-	const int yFull = mbY * 8 + cy;
-	// chroma mv in 1/8 pel: floor(mv/2) for integer part of half-pel scale
-	const int cmx = mvx;  // keep qpel, convert: chroma frac is mv/2 in 1/8 units
-	const int cmy = mvy;
-	// H.264: chroma_mv = (mvx/2, mvy/2) with special round; Baseline uses
-	// mvx/2 toward -inf for the integer and frac in 1/8.
-	const int x8 = xFull * 8 + (cmx >= 0 ? cmx / 2 : -((-cmx) / 2));
-	const int y8 = yFull * 8 + (cmy >= 0 ? cmy / 2 : -((-cmy) / 2));
-	// Actually standard: chroma MV is derived as
-	// mv_c = (mvx/2, mvy/2) with each component using integer division toward zero? Spec 8.4.1.4
-	// Use: mv_ch = (mvx, mvy) / 2 with arithmetic right for signed.
-	const int mvx_c = mvx >> 1;  // not quite - better:
-	(void)mvx_c;
-	const int xInt = xFull + (cmx >= 0 ? (cmx >> 3) : -(((-cmx) + 7) >> 3));  // messy
-	(void)xInt;
-	// Cleaner: absolute chroma sample coords in 1/8 units from MB origin.
-	const int absx = (mbX * 8 + cx) * 8 + (mvx / 2);
-	const int absy = (mbY * 8 + cy) * 8 + (mvy / 2);
-	return chromaEpel(p, f, plane, absx >> 3, absy >> 3, absx & 7, absy & 7);
+	// 4:2:0: chroma MV in 1/8-pel units == luma MV in 1/4-pel units (same
+	// numeric value). Product RTL uses chroma_frac = mv_qpel[2:0].
+	// Floor-divide for negative coords so frac stays in 0..7.
+	const int absx = (mbX * 8 + cx) * 8 + mvx;
+	const int absy = (mbY * 8 + cy) * 8 + mvy;
+	auto floor_div8 = [](int v) {
+		return (v >= 0) ? (v >> 3) : -(((-v) + 7) >> 3);
+	};
+	auto mod8 = [](int v) {
+		const int m = v % 8;
+		return (m < 0) ? m + 8 : m;
+	};
+	return chromaEpel(p, f, plane, floor_div8(absx), floor_div8(absy), mod8(absx), mod8(absy));
 }
 
 uint32_t yAddr(uint32_t base, int x, int y) { return base + uint32_t(y * FRAME_W + x); }
@@ -168,6 +158,8 @@ struct Write {
 };
 
 // Simple DDR model for BRAM path (writes + variable-latency reads).
+// Contention: random BUSY pulses while MC is live — same class of pressure
+// that starved fstore writeback under continuous display refill.
 struct DdrModel {
 	static const int WORDS = 1 << 18;
 	std::vector<uint64_t> mem;
@@ -176,8 +168,22 @@ struct DdrModel {
 		int lat;
 	};
 	std::vector<Beat> q;
+	unsigned lfsr = 0xACE1u;
+	int busy_hold = 0;
+	int busy_pulses = 0;
+	bool contention = false;  // enable during MC only (inject needs quiet drain)
 	DdrModel() : mem(WORDS, 0) {}
+	unsigned rnd() {
+		lfsr ^= lfsr << 7;
+		lfsr ^= lfsr >> 9;
+		lfsr ^= lfsr << 8;
+		return lfsr;
+	}
 	void step(Vh264_pframe_ref_inject_tb* t) {
+		// Use the BUSY value the DUT already saw (t->ddr_busy from last step)
+		// when accepting RD/WE. Raising BUSY in the same cycle as a one-cycle
+		// RD strobe drops the request — same shape as the m1 CDC strobe bug.
+		const int busy_now = t->ddr_busy ? 1 : 0;
 		t->ddr_dout_ready = 0;
 		t->ddr_dout = 0;
 		if (!q.empty()) {
@@ -188,8 +194,7 @@ struct DdrModel {
 				q.erase(q.begin());
 			}
 		}
-		t->ddr_busy = (q.size() >= 12) ? 1 : 0;
-		if (t->ddr_we && !t->ddr_busy) {
+		if (t->ddr_we && !busy_now) {
 			const uint32_t a = t->ddr_addr % WORDS;
 			uint64_t old = mem[a];
 			const uint64_t din = t->ddr_din;
@@ -202,14 +207,20 @@ struct DdrModel {
 			}
 			mem[a] = old;
 		}
-		if (t->ddr_rd && !t->ddr_busy) {
+		if (t->ddr_rd && !busy_now) {
 			const uint32_t a = t->ddr_addr % WORDS;
 			const int burst = t->ddr_burstcnt ? t->ddr_burstcnt : 1;
-			static int lat_pat = 0;
-			lat_pat = (lat_pat % 4) + 1;
+			const int lat_pat = 1 + int(rnd() & 3u);
 			for (int i = 0; i < burst; i++) {
 				q.push_back({mem[(a + i) % WORDS], lat_pat + i});
 			}
+		}
+		// Schedule next-cycle BUSY after accepting this cycle's command.
+		if (contention && (rnd() & 15u) == 0u) {
+			++busy_pulses;
+			t->ddr_busy = 1;
+		} else {
+			t->ddr_busy = (q.size() >= 12) ? 1 : 0;
 		}
 	}
 };
@@ -439,6 +450,8 @@ int main(int argc, char** argv) {
 
 	Sim s;
 	resetDut(s);
+	// Quiet DDR during DPB inject; enable random BUSY for MC scoreboard.
+	s.ddr.contention = false;
 
 #ifdef USE_BRAM_DPB
 	if (!injectRefBram(s, pic, 0)) return 1;
@@ -448,6 +461,10 @@ int main(int argc, char** argv) {
 #else
 	injectRefTbMem(s, pic, 0);
 #endif
+
+	// Contended DDR during MC. BRAM_LUMA_ONLY still fills chroma windows from
+	// DDR — random BUSY must stay light enough not to exceed kTimeoutCycles.
+	s.ddr.contention = true;
 
 	// ----- P_Skip path: zero-MV, zero residual, score vs ffmpeg frame 1 -----
 	s.writes.clear();
@@ -562,22 +579,100 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "P16x16_RESULT mbs=" << p16Done << "/" << p16Count
 	          << " samples_exact=" << p16Exact << " samples_bad=" << p16Bad
-	          << " (MV=0 + residual=f1-f0; T05 mvd still hardwired 0 in product feed)\n";
+	          << " (MV=0 + residual=f1-f0 via p16_zero_mv force)\n";
 	std::cout << (p16Bad == 0 ? "P16x16_PASS\n" : "P16x16_FAIL\n");
+
+	// ----- Non-zero MV + edge clamp (forced mv via p16_zero_mv path) -----
+	// Product stream_path may still tie mvd=0; this TB drives reconstructed MV
+	// on mv_x/y_qpel under p16_zero_mv_valid so MC/qpel/edge seams are tested
+	// independently of T05 feed wiring.
+	struct MvCase {
+		int mx, my, mvx, mvy;
+		const char* tag;
+	};
+	const MvCase kMvCases[] = {
+	    {5, 5, 4, 0, "qpel_h"},          // half-pel horizontal
+	    {6, 5, 0, 4, "qpel_v"},          // half-pel vertical
+	    {7, 5, 2, 2, "qpel_diag"},       // quarter diagonal
+	    {8, 6, 1, 3, "qpel_odd"},        // odd qpel
+	    {0, 0, -8, -8, "edge_tl"},       // 21x21 window off top-left
+	    {MB_W - 1, MB_H - 1, 12, 12, "edge_br"},  // off bottom-right
+	    {0, 7, -6, 2, "edge_left"},
+	    {MB_W - 1, 7, 10, -4, "edge_right"},
+	};
+	long long nzExact = 0, nzBad = 0;
+	int nzDone = 0;
+	for (const MvCase& c : kMvCases) {
+		int16_t resY[256], resU[64], resV[64];
+		for (int ly = 0; ly < 16; ++ly)
+			for (int lx = 0; lx < 16; ++lx) {
+				const int pred = predY(pic, 0, c.mx, c.my, c.mvx, c.mvy, lx, ly);
+				const int gold = pic.y(1, c.mx * 16 + lx, c.my * 16 + ly);
+				resY[ly * 16 + lx] = static_cast<int16_t>(gold - pred);
+			}
+		for (int cy = 0; cy < 8; ++cy)
+			for (int cx = 0; cx < 8; ++cx) {
+				const int pu = predC(pic, 0, 1, c.mx, c.my, c.mvx, c.mvy, cx, cy);
+				const int pv = predC(pic, 0, 2, c.mx, c.my, c.mvx, c.mvy, cx, cy);
+				resU[cy * 8 + cx] =
+				    static_cast<int16_t>(pic.u(1, c.mx * 8 + cx, c.my * 8 + cy) - pu);
+				resV[cy * 8 + cx] =
+				    static_cast<int16_t>(pic.v(1, c.mx * 8 + cx, c.my * 8 + cy) - pv);
+			}
+		const size_t want = s.writes.size() + kSamplesPerMb;
+		if (!driveP16(s, c.mx, c.my, c.mvx, c.mvy, resY, resU, resV, want)) {
+			std::cerr << "FAIL NZMV timeout " << c.tag << " mb=" << c.mx << "," << c.my << "\n";
+			return 1;
+		}
+		const size_t base = s.writes.size() - kSamplesPerMb;
+		for (int i = 0; i < kSamplesPerMb; ++i) {
+			const Write& w = s.writes[base + i];
+			int wantData = 0;
+			uint32_t wantAddr = 0;
+			if (i < 256) {
+				const int lx = i & 15, ly = i >> 4;
+				wantAddr = yAddr(WRITE_BASE, c.mx * 16 + lx, c.my * 16 + ly);
+				wantData = pic.y(1, c.mx * 16 + lx, c.my * 16 + ly);
+			} else if (i < 320) {
+				const int j = i - 256, cx = j & 7, cy = j >> 3;
+				wantAddr = uAddr(WRITE_BASE, c.mx * 8 + cx, c.my * 8 + cy);
+				wantData = pic.u(1, c.mx * 8 + cx, c.my * 8 + cy);
+			} else {
+				const int j = i - 320, cx = j & 7, cy = j >> 3;
+				wantAddr = vAddr(WRITE_BASE, c.mx * 8 + cx, c.my * 8 + cy);
+				wantData = pic.v(1, c.mx * 8 + cx, c.my * 8 + cy);
+			}
+			if (w.addr != wantAddr || int(w.data) != wantData) {
+				if (nzBad < 8) {
+					std::cerr << "FAIL NZMV " << c.tag << " mb=" << c.mx << "," << c.my
+					          << " i=" << i << " got=" << int(w.data) << " want=" << wantData
+					          << "\n";
+				}
+				++nzBad;
+			} else {
+				++nzExact;
+			}
+		}
+		++nzDone;
+	}
+	std::cout << "P16x16_NZMV_EDGE mbs=" << nzDone << " samples_exact=" << nzExact
+	          << " samples_bad=" << nzBad << (nzBad == 0 ? " PASS\n" : " FAIL\n");
 
 #ifdef USE_BRAM_DPB
 	std::cout << "BRAM_REF_UNDER_MC cycles=" << s.cycles
-	          << " (real MC fetches served via h264_dpb_ddr BRAM_REF)\n";
+	          << " ddr_busy_pulses=" << s.ddr.busy_pulses
+	          << " (real MC + contended DDR via h264_dpb_ddr BRAM_REF)\n";
 #else
 	std::cout << "BRAM_REF_UNDER_MC skipped (tb_mem path); rebuild with -DUSE_BRAM_DPB\n";
 #endif
 
-	if (skipBad != 0 || p16Bad != 0) return 1;
+	if (skipBad != 0 || p16Bad != 0 || nzBad != 0) return 1;
 	if (skipDone < 1 || p16Done < 1) {
 		std::cerr << "FAIL vacuous: need both skip and p16 MBs\n";
 		return 1;
 	}
 	std::cout << "PASS pframe ref-inject: skip_mbs=" << skipDone << " p16_mbs=" << p16Done
-	          << " exact_samples=" << (skipExact + p16Exact) << " cycles=" << s.cycles << "\n";
+	          << " nzmv_mbs=" << nzDone << " exact_samples=" << (skipExact + p16Exact + nzExact)
+	          << " cycles=" << s.cycles << "\n";
 	return 0;
 }
