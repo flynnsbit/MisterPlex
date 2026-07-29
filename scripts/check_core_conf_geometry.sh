@@ -214,7 +214,8 @@ FAIL $NAME: geometry mismatch
   resident core md5 : $CORE_MD5
   expected geometry : $EXPECTED  (from core→geometry map)
   adopted decode    : $ADOPTED   (from daemon running line)
-  bank1 note        : 320x240→0x30040000; 624/640x480→0x30080000
+  bank1 note        : bank base is geometry-derived (see host/libmisterplex/ddr_frame_layout.hpp);
+                      wrong decode size writes a different bank than the resident core reads
   fix               : set DECODE=$EXPECTED in misterplex.conf (and matching PRESENT/STREAM),
                       restart misterplexd, re-check the adopted running line — do NOT
                       trust conf alone; idle screens can look perfect with a bad DECODE.
