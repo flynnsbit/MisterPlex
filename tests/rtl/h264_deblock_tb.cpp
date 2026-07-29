@@ -530,6 +530,85 @@ void runDrift(Vh264_deblock_tb& dut, bool faultHorizontalFirst) {
     std::cout << "OK deblock multi-frame drift fnv=0x" << std::hex << fnv1a(got) << std::dec << "\n";
 }
 
+// Isolated single-MB / single-edge experiment (no temporal cascade).
+// Builds one 16x16 MB with a single vertical discontinuity at x=8, filters only
+// that edge (4 segments), and scores DUT vs independent clause-8.7 C ref.
+// Pre-register: bit-exact survival (samples_matched == total, mb_exact == 1).
+void runIsolatedEdgeMb(Vh264_deblock_tb& dut) {
+    constexpr int W = 16, H = 16;
+    constexpr int EDGE_X = 8;
+    constexpr int BS = 4;  // strong path (MB boundary) — exercises 8.7.2.3
+    constexpr int QP = 32; // alpha=32 beta=9; step below engages and rewrites taps
+    Frame pre(W * H), ref(W * H), got(W * H);
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            // Smooth flats on each side of a ~20-level step at EDGE_X so
+            // |p0-q0|<alpha, |p1-p0|<beta, ap/aq true → strong filter rewrites.
+            int v;
+            if (x <= EDGE_X - 4) v = 100;
+            else if (x == EDGE_X - 3) v = 101;
+            else if (x == EDGE_X - 2) v = 102;
+            else if (x == EDGE_X - 1) v = 104;
+            else if (x == EDGE_X) v = 124;
+            else if (x == EDGE_X + 1) v = 126;
+            else if (x == EDGE_X + 2) v = 127;
+            else v = 128;
+            v = clip8(v + (y & 1));  // tiny along-edge variation
+            pre[y * W + x] = ref[y * W + x] = got[y * W + x] = static_cast<uint8_t>(v);
+        }
+    }
+
+    int samples_total = 0;
+    int samples_matched = 0;
+    int taps_modified_ref = 0;
+    for (int y = 0; y < H; y += 4) {
+        const EdgeIO in = gatherVertical(pre, W, EDGE_X, y);
+        const EdgeOut want = refEdge(in, false, BS, QP, 0, 0);
+        const EdgeOut dut_o = dutEdge(dut, in, false, BS, QP, 0, 0);
+        scatterVertical(ref, W, EDGE_X, y, want);
+        scatterVertical(got, W, EDGE_X, y, dut_o);
+        if (!same(want, dut_o)) {
+            std::cerr << "FAIL isolated_edge segment_y=" << y
+                      << " got " << edgeString(dut_o)
+                      << " want " << edgeString(want) << "\n";
+            std::exit(1);
+        }
+        // Score p2..q2 taps (the samples the edge filter may rewrite).
+        const int xs[6] = {EDGE_X - 3, EDGE_X - 2, EDGE_X - 1, EDGE_X, EDGE_X + 1, EDGE_X + 2};
+        for (int r = 0; r < 4; ++r) {
+            for (int k = 0; k < 6; ++k) {
+                const int idx = (y + r) * W + xs[k];
+                ++samples_total;
+                if (got[idx] == ref[idx]) ++samples_matched;
+                if (ref[idx] != pre[idx]) ++taps_modified_ref;
+            }
+        }
+    }
+
+    // Full-MB exact: every sample of the 16x16 after the single-edge filter.
+    int mb_exact = (ref == got) ? 1 : 0;
+    int mb_sample_match = 0;
+    for (int i = 0; i < W * H; ++i) if (got[i] == ref[i]) ++mb_sample_match;
+
+    if (taps_modified_ref == 0) {
+        std::cerr << "FAIL isolated_edge: reference did not modify any taps (vacuous)\n";
+        std::exit(1);
+    }
+    if (samples_matched != samples_total || mb_exact != 1 || mb_sample_match != W * H) {
+        std::cerr << "FAIL isolated_edge samples_matched=" << samples_matched << "/" << samples_total
+                  << " mb_exact=" << mb_exact << "/1 mb_samples=" << mb_sample_match << "/" << (W * H)
+                  << " taps_modified_ref=" << taps_modified_ref << "\n";
+        std::exit(1);
+    }
+    std::cout << "DEBLOCK_ISOLATED_EDGE samples_matched=" << samples_matched << "/" << samples_total
+              << " sample_pct=" << (100.0 * samples_matched / samples_total)
+              << " mb_exact=" << mb_exact << "/1 mb_samples=" << mb_sample_match << "/" << (W * H)
+              << " taps_modified_ref=" << taps_modified_ref
+              << " bs=" << BS << " qp=" << QP << " edge=V" << EDGE_X
+              << " note=no_temporal_cascade\n";
+    std::cout << "OK isolated single-edge/MB bit-exact vs clause-8.7 C ref\n";
+}
+
 void testWritebackContract(Vh264_deblock_tb& dut) {
     dut.reset = 1;
     dut.idr_frame_start = 0;
@@ -695,8 +774,9 @@ int main(int argc, char** argv) {
         }
         runNalSequenceContract(nalSequencePath, mbGoldenPath);
     }
+    runIsolatedEdgeMb(dut);
     runDrift(dut, faultHorizontalFirst);
 
-    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, mb_golden, edge-order drift\n";
+    std::cout << "OK h264_deblock RTL sim: bS, threshold, luma, chroma, pipe-latency, writeback-DPB contract, isolated-edge, mb_golden, edge-order drift\n";
     return 0;
 }
