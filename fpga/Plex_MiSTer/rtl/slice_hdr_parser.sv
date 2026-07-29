@@ -22,6 +22,8 @@ module slice_hdr_parser (
 	input  wire        pps_ready,
 	input  wire        deblock_ctrl,
 	input  wire signed [7:0] pic_init_qp,
+	// PPS num_ref_idx_l0_default_active_minus1 (used when override_flag=0).
+	input  wire [7:0]  pps_num_ref_idx_l0_default_minus1,
 
 	output reg         valid,
 	output reg  [15:0] first_mb,
@@ -140,6 +142,7 @@ module slice_hdr_parser (
 	reg [2:0]  pred_sub;
 	reg [2:0]  pred_ref_i;
 	reg signed [15:0] mvd_x_tmp;
+	reg [1:0]  mmco_args_left; // remaining ue args for current MMCO op
 	wire [3:0] pred_mvd_slot = (p_mbt >= 6'd3) ? {pred_blk[1:0], pred_sub[1:0]}
 	                                           : {2'd0, pred_blk[1:0]};
 
@@ -264,7 +267,7 @@ module slice_hdr_parser (
 			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
 			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
 			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
-			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd41; 6'd47: cbp_inter_map = 6'd38;
 			default: cbp_inter_map = 6'd0;
 			endcase
 		end
@@ -384,7 +387,13 @@ module slice_hdr_parser (
 		ST_PRED_MVD    = 6'd40,
 		ST_MVD_X       = 6'd41,
 		ST_MVD_Y       = 6'd42,
-		ST_INTER_CBP   = 6'd43;
+		ST_INTER_CBP   = 6'd43,
+		// P-slice list modification + MMCO (must not steal QP/MB bits).
+		ST_RPLM_FLAG   = 6'd44,
+		ST_RPLM_IDC    = 6'd45,
+		ST_RPLM_ARG    = 6'd46,
+		ST_MMCO        = 6'd47,
+		ST_MMCO_ARG    = 6'd48;
 
 	task automatic pred_clear;
 		integer pi;
@@ -776,29 +785,73 @@ module slice_hdr_parser (
 			ST_REFIDX_FLAG: begin
 				if (acc[0]) begin
 					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
+				end else begin
+					// override_flag=0 → PPS default active count.
+					num_ref_idx_l0_active_minus1 <= pps_num_ref_idx_l0_default_minus1;
+					nleft <= 5'd1; acc <= 0; cont <= ST_RPLM_FLAG; st <= ST_GETBITS;
+				end
+			end
+			ST_REFIDX_L0: begin
+				// Survive into the MB layer: ref_idx presence is gated on this.
+				num_ref_idx_l0_active_minus1 <= ue_val[7:0];
+				nleft <= 5'd1; acc <= 0; cont <= ST_RPLM_FLAG; st <= ST_GETBITS;
+			end
+			ST_RPLM_FLAG: begin
+				// ref_pic_list_modification_flag_l0
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_RPLM_IDC; st <= ST_UE_Z;
 				end else if (nal_ref_lat) begin
 					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
 			end
-			ST_REFIDX_L0: begin
-				// Survive into the MB layer: ref_idx presence is gated on this.
-				num_ref_idx_l0_active_minus1 <= ue_val[7:0];
-				if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+			ST_RPLM_IDC: begin
+				// modification_of_pic_nums_idc loop until idc==3
+				if (ue_val == 16'd3) begin
+					if (nal_ref_lat) begin
+						nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+					end
+				end else if (ue_val <= 16'd2) begin
+					// idc 0/1: abs_diff_pic_num_minus1; idc 2: long_term_pic_num
+					zcnt <= 0; ue_cont <= ST_RPLM_ARG; st <= ST_UE_Z;
+				end else
+					st <= ST_FAIL;
+			end
+			ST_RPLM_ARG: begin
+				zcnt <= 0; ue_cont <= ST_RPLM_IDC; st <= ST_UE_Z;
+			end
+			ST_NIDR_REFMARK: begin
+				// adaptive_ref_pic_marking_mode_flag
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_MMCO; st <= ST_UE_Z;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
 			end
-			ST_NIDR_REFMARK: begin
-				// Baseline product profile uses one short-term reference and no MMCO.
-				// If adaptive_ref_pic_marking_mode_flag is set, stop after the
-				// header rather than mis-parsing MMCO as QP/MB syntax.
-				if (acc[0])
-					st <= ST_DONE;
-				else begin
+			ST_MMCO: begin
+				// memory_management_control_operation until 0
+				if (ue_val == 16'd0) begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end else if (ue_val == 16'd1 || ue_val == 16'd2 || ue_val == 16'd4 || ue_val == 16'd6) begin
+					mmco_args_left <= 2'd1;
+					zcnt <= 0; ue_cont <= ST_MMCO_ARG; st <= ST_UE_Z;
+				end else if (ue_val == 16'd3) begin
+					mmco_args_left <= 2'd2; // diff + long_term_frame_idx
+					zcnt <= 0; ue_cont <= ST_MMCO_ARG; st <= ST_UE_Z;
+				end else if (ue_val == 16'd5) begin
+					zcnt <= 0; ue_cont <= ST_MMCO; st <= ST_UE_Z;
+				end else
+					st <= ST_FAIL;
+			end
+			ST_MMCO_ARG: begin
+				if (mmco_args_left <= 2'd1) begin
+					zcnt <= 0; ue_cont <= ST_MMCO; st <= ST_UE_Z;
+				end else begin
+					mmco_args_left <= mmco_args_left - 2'd1;
+					zcnt <= 0; ue_cont <= ST_MMCO_ARG; st <= ST_UE_Z;
 				end
 			end
 			ST_QPD: begin
