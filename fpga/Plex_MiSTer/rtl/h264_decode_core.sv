@@ -1045,6 +1045,10 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    wire        product_intra_nb_busy;
+    // On the start cycle NBA has not yet written intra_mb_*_r; use syntax XY.
+    wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
+    wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
     // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).
     // Scale with running MB QP (mb_qp_delta folded into qp_launch).
     h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
@@ -1076,8 +1080,8 @@ module h264_decode_core #(
     ) u_product_intra_nb_ctx (
         .clk(clk),
         .reset(reset),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
@@ -1110,7 +1114,8 @@ module h264_decode_core #(
         .chroma_v_top_left(product_intra_chroma_v_topleft),
         .has_chroma_above(product_intra_has_chroma_above),
         .has_chroma_left(product_intra_has_chroma_left),
-        .busy()
+        // MUST reach decode_top: I16 latches nb on start; early start = left-edge rot.
+        .busy(product_intra_nb_busy)
     );
 
     h264_decode_top u_product_intra_mb (
@@ -1137,6 +1142,7 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
+        .nb_busy(product_intra_nb_busy),
         .mb_recon_valid(product_intra_recon_valid),
         .recon_y(product_intra_recon_y),
         .blocks_done(product_intra_blocks_done)

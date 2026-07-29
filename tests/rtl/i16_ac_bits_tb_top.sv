@@ -68,6 +68,7 @@ module i16_ac_bits_tb_top (
         .mb_avail_left(avail_l), .mb_avail_top(avail_t),
         .mb_avail_topright(1'b0), .mb_avail_topleft(1'b0),
         .nb_top(nb_top), .nb_left(nb_left), .nb_topleft(nb_tl), .nb_topright(nb_tr),
+        .nb_busy(1'b0),
         .recon_sample_valid(recon_sample_valid),
         .recon_sample_idx(recon_sample_idx),
         .recon_sample(recon_sample),
