@@ -190,7 +190,27 @@ Required conf for this pair (matches `scripts/package_release.sh:98-100`):
 DECODE=320x240
 PRESENT=fb0
 STREAM=0
+OSD_CONTROL=1
 ```
+
+**`OSD_CONTROL=1` is required for the OSD menu to do anything at all on a v3 core.**
+With `OSD_CONTROL=0`, `MediaPlayer::startOsdPoll()` returns immediately
+(`media_player.cpp:221`: `if (shuttingDown_ || !osdControl_ || osdRun_.exchange(true)) return;`),
+so `applyOsd()` never runs and `idleMode_` stays at its `IdleMode::Logo` default
+(`media_player.hpp:207`). **Symptom: the Idle screen menu item `O[15:14]` appears and can
+be changed, but the background never changes and the logo never animates** — because
+`const bool moving = idleMode() == IdleMode::Screensaver;` (`media_player.cpp:402`) is
+permanently false. The menu looks functional while being entirely inert, which is why
+this survived inspection. Confirm it is live from the daemon's own log:
+
+```
+media: OSD via DDR mailbox (no SPI)
+media: OSD word=0x2000 av_offset_ms=0 clock_ppm=-638 resync=on idle=0
+```
+
+Only set `OSD_CONTROL=1` on a **v3 CONF_STR** core (one whose conf string contains
+`O[15:14],Idle screen,...`). On an older core those same bits mean Pattern/Content FPS
+and decode as a bogus A/V offset — see the warning at `main.cpp:341-342`.
 
 Verify from the daemon's own log rather than the file — the daemon prints what it
 actually adopted:
