@@ -79,7 +79,7 @@ module h264_transform_dequant_tb_top (
 		.coeff(coeff16), .qp(qp), .max_coeff(max_coeff), .dequant(deq)
 	);
 
-	// LATENCY: start → ~18 cyc → done; dc[] held. TB WaitDone(which&1).
+	// LATENCY: start → ~26 cyc → done; dc[] held. TB WaitDone(which&1).
 	h264_luma_dc_hadamard_inv u_ldc (
 		.clk(clk), .reset(reset), .start(ldc_start),
 		.coeff(coeff16), .qp(qp), .dc(ldc), .done(ldc_done)

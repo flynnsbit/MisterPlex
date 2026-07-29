@@ -352,7 +352,7 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_LATCH_RES   = 8'd19;
     // Multi-cycle IQ+IDCT (h264_iq_idct_seq): start→~21 cyc→done, then STORE.
     localparam [7:0] ST_P16_RES_IQ      = 8'd22;
-    // Multi-cycle luma DC Hadamard: start→~18 cyc→done, then latch res_luma_dc.
+    // Multi-cycle luma DC Hadamard: start→~26 cyc→done, then latch res_luma_dc.
     localparam [7:0] ST_P16_RES_LDC     = 8'd23;
     // Hold one cycle after arming M10K raddr so lat_*_q is valid before emit.
     localparam [7:0] ST_WRITE_HOLD      = 8'd20;
@@ -795,7 +795,7 @@ module h264_decode_core #(
     );
     wire [5:0] res_qp = (res_is_chroma_dc || res_is_chroma_ac) ? res_qp_c : mb_qp_y_r;
 
-    // LDC multi-cycle: start→~18 cyc→done. Consumer ST_P16_RES_LDC waits done
+    // LDC multi-cycle: start→~26 cyc→done. Consumer ST_P16_RES_LDC waits done
     // before latching res_luma_dc[] (was combo same-cycle as cavlc_done).
     reg                res_ldc_start_r;
     reg                res_ldc_pending_r;
@@ -1036,7 +1036,7 @@ module h264_decode_core #(
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     // I16 DC: latch feed i16_dc_level_* (NOT luma4x4_* — feed keeps DC off AC),
-    // then multi-cycle LDC start→~18→done. product_i16_dc_valid_r = done pulse
+    // then multi-cycle LDC start→~26→done. product_i16_dc_valid_r = done pulse
     // so top's i16_dc_ready gates AC launch only after scaled DC is stable.
     reg signed [15:0] product_i16_dc_level_r [0:15];
     reg [5:0]         product_i16_dc_qp_r;
@@ -1109,7 +1109,7 @@ module h264_decode_core #(
     wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
     wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
     // Product I_16x16 DC: multi-cycle Hadamard + LevelScale (8.5.10).
-    // LATENCY ~18 cyc; i16_dc_valid = done (top latches then). QP latched w/ levels.
+    // LATENCY ~26 cyc; i16_dc_valid = done (top latches then). QP latched w/ levels.
     h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
         .clk(clk),
         .reset(reset || slice_start),
@@ -1860,7 +1860,7 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_LDC: begin
-                // Wait for sequential luma DC Hadamard (~18 cyc).
+                // Wait for sequential luma DC Hadamard (~26 cyc).
                 if (res_ldc_pending_r) begin
                     res_ldc_pending_r <= 1'b0;
                     res_ldc_start_r <= 1'b1;
