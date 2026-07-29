@@ -1587,8 +1587,8 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // the steady doorbell hot path.
     //
     // Therefore:
-    //   - PLXD-selected bank: skip. Handshake already proved the write target
-    //     was free; post-kick blind yield is vestigial.
+    //   - PLXD-selected bank: skip the blind yield (bank free already proven).
+    //     Whether that skip is tear-safe in product is unproven without soak.
     //   - PLXD-absent fallback: keep a short timed yield as conservative
     //     residue. Do NOT delete it without a multi-thousand-frame soak that
     //     characterises intermittent bank tear — a single green run is not

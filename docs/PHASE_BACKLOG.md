@@ -1135,24 +1135,25 @@ hashes matching: `annexb_sha=41f2769…`, `annexb_md5=779f0d3a…`, `mp4_md5=3fa
 rc=77). **The number is re-measurable.** Searching only the repo and its worktrees'
 tracked paths — not sibling checkouts — is what hid it.
 
-(**W-arm-sleep, 2026-07-29 — asset green; ARM remeasure NOT run; sleeps classified**)
-- `ASSET_OK` rc=0 confirmed; original FEED evidence archived under
-  `build/arm-sleep-evidence/`. Host x86 decode of the same asset is ~90× faster
-  (`decode_null≈0.24 ms/f`) and is **not** a 40.19 reproduce.
-- Full ARM 40.19 remeasure **requires the device** (ffmpeg buckets + `/dev/mem`
-  microbench + product present telemetry). Device is user-live
-  `DECODE=320x240 PRESENT=fb0 STREAM=0` — READ-ONLY; sample not on device.
-  **Parent must schedule a device window.** No claim that 40.19 moved or held.
-- Sleep classification (`sendDdrFrame`):
-  - `usleep(1500)` prep: **LOAD-BEARING** on PLXD-absent fallback only (stands
-    in for bank-release ready). Already skipped when PLXD live. Product
-    `prep=1.813` implies the 10.41 measurement was on the absent path. Do **not**
-    remove without hardware ready (PLXD) or a long soak that catches 1-in-N tears.
-  - `usleep(500)` post: **VESTIGIAL** when PLXD selected the bank; residual timed
-    yield on absent path. Measured `post=2.655` is oversleep under load, not a
-    2.6 ms design. Code now skips post sleep when `plxdUsed` (not deployed).
-  - Honest non-saving: the ~1.5 ms prep on the absent path **cannot** be banked
-    as free; the real win is keeping PLXD live so prep≪1.5 ms.
+(**W-arm-sleep, 2026-07-29 — asset green; ARM remeasure NOT run; rule-0 audit**)
+- `ASSET_OK` rc=0 confirmed; original FEED evidence under `build/arm-sleep-evidence/`.
+  Host x86 decode of the same asset measured `decode_null≈0.24 ms/f` (FRAMES=300)
+  and is **not** an ARM 40.19 reproduce.
+- ARM 40.19 remeasure this lane: **NOT DONE** (no new device profile artifact).
+  Check that settles it: scheduled device window running
+  `scripts/run_arm_decode_profile.sh` with the restored sample on ARM.
+- FEED product present_profile (6 lines, `misterplex-agent-W-FEED.txt`): mean
+  `ddr_prep_wait_us_p=1813`, `ddr_post_wait_us_p=2655`, `ddr_total_us_p=10465`.
+  That file contains **zero** `ddr_plxd_*` fields — so PLXD path take-rate on
+  those frames is **UNKNOWN** (not proven absent). Check: re-log with current
+  daemon and read `ddr_plxd_used_x100_p` (`media_player.cpp` present_profile).
+- Code facts only (`fpga_spi.cpp` `sendDdrFrame`): `usleep(1500)` is under
+  `plxd_absent_fallback`; post `usleep(500)` is under `if (!first && !plxdUsed)`
+  after `86050b4`. Whether either sleep is safe to remove = **UNKNOWN** without
+  a multi-thousand-frame soak (not run; not deployed).
+- **Retractions (rule 0):** prior lane text that "prep=1.813 ⇒ PLXD-absent",
+  "post=2.655 is oversleep", and "first unit RED was contention" are **withdrawn**
+  as diagnoses. Detail: `build/arm-sleep-evidence/RULE0_RETRACTIONS.txt`.
 
 **R3 — "screensaver/idle 93%" was never a completion score.** It is `G-IDLE2c`:
 the middle band measuring **93.1% identical to the screensaver**, i.e. the
