@@ -987,6 +987,7 @@ module stream_path #(
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
 		.dpb_ref_base(dpb_reference_base),
+		.dpb_bank_ref_ready(dpb_ref_ready),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),

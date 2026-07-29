@@ -249,6 +249,7 @@ module h264_pframe_ref_inject_tb #(
 		.p16_mb_y(p16_mb_y),
 		.p16_mb_is_ref(p16_mb_is_ref),
 		.dpb_ref_base(core_dpb_ref_base),
+		.dpb_bank_ref_ready(1'b1),
 		.p16_residual_y(p16_residual_y),
 		.p16_residual_u(p16_residual_u),
 		.p16_residual_v(p16_residual_v),

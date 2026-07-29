@@ -130,6 +130,12 @@ module h264_decode_core #(
     input  wire [7:0]  p16_mb_y,
     input  wire        p16_mb_is_ref,
     input  wire [31:0] dpb_ref_base,
+    // Outer DPB (h264_dpb_ddr) bank/BRAM ready after frame_done load.
+    // Distinct from u_product_dpb_ref.ref_ready (inner, swaps combinationally).
+    // P MC must wait for this before latching dpb_ref_base — otherwise
+    // p16_ref_base_r captures the pre-swap empty bank and early P MBs
+    // reconstruct as pred=0 (got=0 at frame1 MB0 after IDR exact).
+    input  wire        dpb_bank_ref_ready,
     input  wire signed [15:0] p16_residual_y [0:255],
     input  wire signed [15:0] p16_residual_u [0:63],
     input  wire signed [15:0] p16_residual_v [0:63],
@@ -548,15 +554,21 @@ module h264_decode_core #(
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
     // P_Skip / P_L0_16x16 only — never steal I_NxN/I_16x16 in P (mb_intra).
-    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
-                                !mb_intra &&
-                                (mb_skip || (mb_type == 5'd0)) &&
-                                (mb_skip || (part_mode == 3'd0));
-    wire syntax_p16_launch = syntax_p16_candidate && syntax_xy_ready && (wb_state == ST_IDLE) && decode_enable;
-    wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
-    wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
-    wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
-    wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
+    // mb_type_valid is one cycle; sticky pend (below, after MV wires) holds a
+    // missed pulse until ST_IDLE — without it P holes at MB1-8 (count 1162).
+    wire syntax_p16_pulse = mb_type_valid && syntax_xy_ready && !slice_is_i &&
+                            !slice_is_idr && !mb_intra &&
+                            (mb_skip || (mb_type == 5'd0)) &&
+                            (mb_skip || (part_mode == 3'd0));
+    reg        p16_syn_pend;
+    reg [7:0]  p16_syn_x, p16_syn_y;
+    reg        p16_syn_skip;
+    reg signed [15:0] p16_syn_mv_x, p16_syn_mv_y;
+    reg [1:0]  p16_syn_ref;
+    reg [3:0]  p16_syn_cbp_l;
+    reg [1:0]  p16_syn_cbp_c;
+    reg [9:0]  p16_syn_res_off;
+    reg [5:0]  p16_syn_qp;
     wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
@@ -630,6 +642,32 @@ module h264_decode_core #(
 
     wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
     wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
+
+    wire p16_take_pulse = syntax_p16_pulse && (wb_state == ST_IDLE) && decode_enable;
+    wire p16_take_pend  = p16_syn_pend && !p16_take_pulse &&
+                          (wb_state == ST_IDLE) && decode_enable;
+    wire syntax_p16_launch = p16_take_pulse || p16_take_pend;
+    wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
+    wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x :
+                                 (p16_take_pend ? p16_syn_x : syntax_mb_x);
+    wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y :
+                                 (p16_take_pend ? p16_syn_y : syntax_mb_y);
+    wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
+    wire p16_launch_skip = p16_zero_mv_valid ? 1'b1 :
+                           (p16_take_pend ? p16_syn_skip : mb_skip);
+    wire signed [15:0] p16_launch_mv_x = p16_zero_mv_valid ? mv_x_qpel :
+                           (p16_take_pend ? p16_syn_mv_x : syntax_mv_x);
+    wire signed [15:0] p16_launch_mv_y = p16_zero_mv_valid ? mv_y_qpel :
+                           (p16_take_pend ? p16_syn_mv_y : syntax_mv_y);
+    wire [1:0] p16_launch_ref = p16_zero_mv_valid ? 2'd0 :
+                           (p16_take_pend ? p16_syn_ref : eff_ref_idx_l0);
+    wire [3:0] p16_launch_cbp_l = p16_launch_skip ? 4'd0 :
+                           (p16_take_pend ? p16_syn_cbp_l : cbp_luma);
+    wire [1:0] p16_launch_cbp_c = p16_launch_skip ? 2'd0 :
+                           (p16_take_pend ? p16_syn_cbp_c : cbp_chroma);
+    wire [9:0] p16_launch_res_off = p16_take_pend ? p16_syn_res_off :
+                           launch_residual_rel_bit_offset[9:0];
+    wire [5:0] p16_launch_qp = p16_take_pend ? p16_syn_qp : qp_launch;
     wire        cavlc_busy;
     wire        cavlc_done;
     wire        cavlc_ok;
@@ -1422,10 +1460,15 @@ module h264_decode_core #(
     wire [15:0] dbf_out_x;
     wire [15:0] dbf_out_y;
     wire [7:0] dbf_out_data;
-    // Fit4 deblock-OFF acceptance: stream PRE recon during ST_WRITE and skip
-    // the deblock_mb emit path (still has residual M10K hazards past MB0).
+    // Deblock-OFF: stream PRE recon directly (skip deblock_mb emit).
+    // MUST cover both intra ST_WRITE and inter ST_P16_WRITE — P path only
+    // used ST_WRITE before, so P MBs never hit px_wr/DPB (P got=0 after IDR
+    // bank swap; IDR alone stayed bit-exact).
     wire        deblock_off = (disable_deblocking_filter_idc == 2'd1);
-    wire        pre_wb_fire = deblock_off && (wb_state == ST_WRITE);
+    wire        pre_wb_intra = deblock_off && (wb_state == ST_WRITE);
+    wire        pre_wb_p16   = deblock_off && (wb_state == ST_P16_WRITE);
+    wire        pre_wb_fire  = pre_wb_intra | pre_wb_p16;
+    wire [7:0]  pre_wb_data  = pre_wb_p16 ? clip_u8(p16_recon_sum) : lat_recon_q;
     wire [15:0] pre_abs_x = (wb_plane == 2'd0) ?
         {4'd0, wb_mb_x, wb_sample_idx[3:0]} :
         {5'd0, wb_mb_x, wb_sample_idx[2:0]};
@@ -1555,7 +1598,7 @@ module h264_decode_core #(
         .filtered_mb_y(deblock_off ? wb_mb_y : dbf_wb_mb_y),
         .filtered_plane(deblock_off ? wb_plane : dbf_out_plane),
         .filtered_sample_idx(deblock_off ? wb_sample_idx : dbf_wb_sample_idx),
-        .filtered_sample(deblock_off ? lat_recon_q : dbf_out_data),
+        .filtered_sample(deblock_off ? pre_wb_data : dbf_out_data),
         .mem_we(dpb_ref_mem_we),
         .mem_waddr(dpb_ref_mem_waddr),
         .mem_wdata(dpb_ref_mem_wdata),
@@ -1671,6 +1714,17 @@ module h264_decode_core #(
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
+            p16_syn_pend <= 1'b0;
+            p16_syn_x <= 8'd0;
+            p16_syn_y <= 8'd0;
+            p16_syn_skip <= 1'b0;
+            p16_syn_mv_x <= 16'sd0;
+            p16_syn_mv_y <= 16'sd0;
+            p16_syn_ref <= 2'd0;
+            p16_syn_cbp_l <= 4'd0;
+            p16_syn_cbp_c <= 2'd0;
+            p16_syn_res_off <= 10'd0;
+            p16_syn_qp <= 6'd0;
             res_tc_left_valid <= 1'b0;
             res_i16x16_r <= 1'b0;
             res_ac_from_cavlc <= 1'b0;
@@ -1744,17 +1798,28 @@ module h264_decode_core #(
             dbf_smp_idx_d <= wb_idx;
             dbf_smp_data_d <= dpb_ref_filtered_sample;
 
-            if (syntax_p16_candidate) begin
+            if (syntax_p16_pulse) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
                 rbsp_request_offset_r <= syntax_request_byte_offset + 16'd1;
 `else
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
+                // Missed ST_IDLE accept: hold until take_pend (busy stays high).
+                if (!p16_take_pulse) begin
+                    p16_syn_pend <= 1'b1;
+                    p16_syn_x <= syntax_mb_x;
+                    p16_syn_y <= syntax_mb_y;
+                    p16_syn_skip <= mb_skip;
+                    p16_syn_mv_x <= syntax_mv_x;
+                    p16_syn_mv_y <= syntax_mv_y;
+                    p16_syn_ref <= eff_ref_idx_l0;
+                    p16_syn_cbp_l <= mb_skip ? 4'd0 : cbp_luma;
+                    p16_syn_cbp_c <= mb_skip ? 2'd0 : cbp_chroma;
+                    p16_syn_res_off <= launch_residual_rel_bit_offset[9:0];
+                    p16_syn_qp <= qp_launch;
+                end
             end
-            if (mb_type_valid)
-                syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
-
             // Finish first_mb → (x,y) before accepting MB launches.
             if (xy_init_busy) begin
                 if (xy_init_rem >= 16'(MB_W)) begin
@@ -1766,6 +1831,9 @@ module h264_decode_core #(
                     xy_init_busy <= 1'b0;
                 end
             end
+            // Advance syntax cursor only when launch coords are valid. Never
+            // double-increment: a prior bare mb_type_valid +1 raced this block
+            // and could drop (x,y) vs addr alignment under xy_init_busy.
             if (mb_type_valid && syntax_xy_ready) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
                 if (syntax_mb_x_r + 8'd1 >= 8'(MB_W)) begin
@@ -1799,24 +1867,25 @@ module h264_decode_core #(
                     wb_mb_is_ref <= p16_launch_is_ref;
                     wb_mb_is_intra <= 1'b0;
                     wb_base <= dpb_write_base;
-                    p16_ref_base_r <= dpb_ref_base;
+                    // Do NOT latch dpb_ref_base here — outer bank may still be
+                    // in SW_LOAD. Relatch in ST_P16_REF_SEED when bank ready.
 `ifdef H264_DECODE_CORE_FAULT_PERTURB_MV
-                    p16_mv_x_qpel_r <= (p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x) + 16'sd2;
+                    p16_mv_x_qpel_r <= p16_launch_mv_x + 16'sd2;
 `else
-                    p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
+                    p16_mv_x_qpel_r <= p16_launch_mv_x;
 `endif
-                    p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
-                    p16_ref_idx_l0_r <= eff_ref_idx_l0;
-                    p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
+                    p16_mv_y_qpel_r <= p16_launch_mv_y;
+                    p16_ref_idx_l0_r <= p16_launch_ref;
+                    p16_res_bit_offset_r <= p16_launch_res_off;
                     p16_res_block_idx <= 5'd0;
-                    p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;
-                    p16_cbp_chroma_r <= mb_skip ? 2'd0 : cbp_chroma;
+                    p16_cbp_luma_r <= p16_launch_cbp_l;
+                    p16_cbp_chroma_r <= p16_launch_cbp_c;
                     // The walker only launches inter macroblocks today, so
                     // there is no Intra_16x16 luma DC block in the chain.
                     res_i16x16_r <= 1'b0;
                     res_ac_from_cavlc <= 1'b0;
-                    mb_qp_y_r <= qp_launch;
-                    cur_qp_y_r <= qp_launch;
+                    mb_qp_y_r <= p16_launch_qp;
+                    cur_qp_y_r <= p16_launch_qp;
                     for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1) begin
                         res_tc_cur[res_tc_i] <= 5'd0;
                         res_luma_dc[res_tc_i] <= 29'sd0;
@@ -1830,9 +1899,10 @@ module h264_decode_core #(
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
                     res_store_i <= 4'd0;
+                    p16_syn_pend <= 1'b0;
                     // P_Skip / zero-MV shortcut skips residual walk — still
                     // publish total_coeff=0 so next MB nC is not stale (a4fe6f0).
-                    if (p16_zero_mv_valid || mb_skip) begin
+                    if (p16_zero_mv_valid || p16_launch_skip) begin
                         res_tc_left_valid <= 1'b1;
                         for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
                             res_tc_left[res_tc_i] <= 5'd0;
@@ -2081,12 +2151,15 @@ module h264_decode_core #(
                 wb_state <= ST_P16_REF_SEED;
             end
             ST_P16_REF_SEED: begin
-                // Publish the externally-owned reference bank into the local
-                // reference store once, then start the block reference fetch.
-                if (dpb_ref_ready) begin
+                // Wait for OUTER bank/BRAM ready (post IDR load), then latch
+                // the live reference base and fetch. Inner-only ready is not
+                // enough: it rises on the swap pulse before BRAM fill ends.
+                if (dpb_bank_ref_ready) begin
+                    p16_ref_base_r <= dpb_ref_base;
                     p16_fetch_start_r <= 1'b1;
                     wb_state <= ST_P16_WIN_START;
-                end else begin
+                end else if (!dpb_ref_ready) begin
+                    // TB / no-outer path: promote inner bank once.
                     p16_ref_seed_r <= 1'b1;
                 end
             end
@@ -2108,10 +2181,11 @@ module h264_decode_core #(
                 // The loop filter owns a private copy of the macroblock, so it
                 // is still emitting the previous one while this one is
                 // predicted.  Hand over only once it has retired that copy.
-                if (p16_mc_done && !dbf_busy) begin
-                    // res_tc_cur is final by now, so the deblocker latches the
-                    // real per-4x4 coded-coefficient flags for bS derivation.
-                    dbf_start_r <= 1'b1;
+                // deblock_off: do not pulse dbf_start (same as intra path) —
+                // PRE samples stream in ST_P16_WRITE; starting identity dbf
+                // still multi-cycle busy and raced ST_DEBLOCK early-exit.
+                if (p16_mc_done && (deblock_off || !dbf_busy)) begin
+                    dbf_start_r <= deblock_off ? 1'b0 : 1'b1;
                     wb_idx <= 9'd0;
                     wb_state <= ST_P16_WRITE_PRIME;
                 end
@@ -2282,12 +2356,12 @@ module h264_decode_core #(
     assign dpb_wr_data = dpb_ref_mem_wdata;
 
     // Present writeback: POST-deblock when filter on; PRE lat_recon when off.
-    // deblock_off bypass is the fit4 acceptance path (filter not trusted yet).
+    // deblock_off: PRE recon for intra (ST_WRITE) and inter (ST_P16_WRITE).
     assign px_wr_en    = deblock_off ? pre_wb_fire : dbf_out_valid;
     assign px_wr_plane = deblock_off ? wb_plane     : dbf_out_plane;
     assign px_wr_x     = deblock_off ? pre_abs_x    : dbf_out_x;
     assign px_wr_y     = deblock_off ? pre_abs_y    : dbf_out_y;
-    assign px_wr_data  = deblock_off ? lat_recon_q  : dbf_out_data;
+    assign px_wr_data  = deblock_off ? pre_wb_data  : dbf_out_data;
     assign dpb_rd_en = dpb_ref_mem_rd;
     assign dpb_rd_addr = p16_win_rd_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
@@ -2296,7 +2370,8 @@ module h264_decode_core #(
     assign frame_mb_count = mb_count_r;
     // Hold feed in ST_WAIT_CORE until recon is accepted into lat_recon. Do NOT
     // fold dbf_busy here — emit overlaps the next MB's decode on purpose.
-    assign busy = (wb_state != ST_IDLE) || intra_active_r || intra_recon_pend;
+    assign busy = (wb_state != ST_IDLE) || intra_active_r || intra_recon_pend ||
+                  p16_syn_pend;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     // ── Desync detectors ────────────────────────────────────────────────
