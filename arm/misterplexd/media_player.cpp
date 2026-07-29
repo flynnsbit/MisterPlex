@@ -294,11 +294,24 @@ class FpgaBitstreamProducer final : public h264stream::IBitstreamProducer {
 public:
     explicit FpgaBitstreamProducer(FpgaSpi& fpga) : fpga_(fpga) {}
 
+    // Prefer the DDR ring (F3 continuous). If the FPGA consumer never advances
+    // READ after Begin (lab: m1 arbiter/publish path dead while m0 frame-store
+    // lives), fall back to SPI ioctl index=3 which shares stream_ingest → FIFO
+    // and is proven to move nalu/has_stream on integ-fit3.
     h264stream::ControlResult begin(uint64_t session_id) override {
         if (active_)
             return h264stream::ControlResult::ActiveSession;
-        if (!fpga_.ok() || !fpga_.beginBitstreamSession(session_id, 250))
+        if (!fpga_.ok())
             return h264stream::ControlResult::Fatal;
+
+        spi_mode_ = false;
+        if (fpga_.beginBitstreamSession(session_id, 250)) {
+            spi_mode_ = false;
+        } else {
+            // DDR consumer stuck (prod=32, cons=0). SPI path does not need Begin.
+            spi_mode_ = true;
+        }
+
         session_id_ = session_id;
         producer_seq_ = 0;
         consumer_seq_ = 0;
@@ -314,6 +327,8 @@ public:
     h264stream::PushResult pushNal(const h264stream::NalView& nal) override {
         if (!active_ || nal.session_id != session_id_ || !nal.annexb || nal.len == 0)
             return h264stream::PushResult::Fatal;
+        if (paused_)
+            return h264stream::PushResult::Full;
         if (nal.seq != producer_seq_) {
             ++desync_count_;
             last_bad_seq_ = nal.seq;
@@ -322,32 +337,42 @@ public:
         // Contract: copy-on-push. The caller may reuse the demux accumulator as
         // soon as this function returns, even if a future transport is DMA-backed.
         std::vector<uint8_t> copy(nal.annexb, nal.annexb + nal.len);
-        FpgaSpi::BitstreamNal fpgaNal;
-        fpgaNal.session_id = nal.session_id;
-        fpgaNal.seq = nal.seq;
-        fpgaNal.nal_type = nal.nal_type;
-        fpgaNal.annexb = copy.data();
-        fpgaNal.len = copy.size();
-        const auto r = fpga_.pushBitstreamNal(fpgaNal, 0);
-        if (r == FpgaSpi::BitstreamPushResult::Full)
-            return h264stream::PushResult::Full;
-        if (r == FpgaSpi::BitstreamPushResult::Desync) {
-            syncStatus();
-            return h264stream::PushResult::Desync;
+
+        if (spi_mode_) {
+            // Raw Annex-B bytes via F3 ioctl (index 3). No PLXN framing.
+            if (!fpga_.sendBitstreamChunk(copy.data(), copy.size(), /*index=*/3))
+                return h264stream::PushResult::Fatal;
+        } else {
+            FpgaSpi::BitstreamNal fpgaNal;
+            fpgaNal.session_id = nal.session_id;
+            fpgaNal.seq = nal.seq;
+            fpgaNal.nal_type = nal.nal_type;
+            fpgaNal.annexb = copy.data();
+            fpgaNal.len = copy.size();
+            const auto r = fpga_.pushBitstreamNal(fpgaNal, 0);
+            if (r == FpgaSpi::BitstreamPushResult::Full)
+                return h264stream::PushResult::Full;
+            if (r == FpgaSpi::BitstreamPushResult::Desync) {
+                syncStatus();
+                return h264stream::PushResult::Desync;
+            }
+            if (r != FpgaSpi::BitstreamPushResult::Ok)
+                return h264stream::PushResult::Fatal;
         }
-        if (r != FpgaSpi::BitstreamPushResult::Ok)
-            return h264stream::PushResult::Fatal;
         ++producer_seq_;
         bytes_accepted_ += copy.size();
         ++nal_accepted_;
+        consumer_seq_ = producer_seq_; // SPI has no consumer pointer
         return h264stream::PushResult::Ok;
     }
 
     h264stream::ControlResult flush(uint64_t session_id) override {
         if (!active_ || session_id != session_id_)
             return h264stream::ControlResult::NoSession;
-        if (!fpga_.flushBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
+        if (!spi_mode_) {
+            if (!fpga_.flushBitstreamSession(session_id, 250))
+                return h264stream::ControlResult::Fatal;
+        }
         consumer_seq_ = producer_seq_;
         return h264stream::ControlResult::Ok;
     }
@@ -355,8 +380,10 @@ public:
     h264stream::ControlResult end(uint64_t session_id) override {
         if (!active_ || session_id != session_id_)
             return h264stream::ControlResult::NoSession;
-        if (!fpga_.endBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
+        if (!spi_mode_) {
+            if (!fpga_.endBitstreamSession(session_id, 250))
+                return h264stream::ControlResult::Fatal;
+        }
         active_ = false;
         paused_ = false;
         return h264stream::ControlResult::Ok;
@@ -365,8 +392,10 @@ public:
     h264stream::ControlResult pause(uint64_t session_id) override {
         if (!active_ || session_id != session_id_)
             return h264stream::ControlResult::NoSession;
-        if (!fpga_.pauseBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
+        if (!spi_mode_) {
+            if (!fpga_.pauseBitstreamSession(session_id, 250))
+                return h264stream::ControlResult::Fatal;
+        }
         paused_ = true;
         return h264stream::ControlResult::Ok;
     }
@@ -374,8 +403,10 @@ public:
     h264stream::ControlResult resume(uint64_t session_id) override {
         if (!active_ || session_id != session_id_)
             return h264stream::ControlResult::NoSession;
-        if (!fpga_.resumeBitstreamSession(session_id, 250))
-            return h264stream::ControlResult::Fatal;
+        if (!spi_mode_) {
+            if (!fpga_.resumeBitstreamSession(session_id, 250))
+                return h264stream::ControlResult::Fatal;
+        }
         paused_ = false;
         return h264stream::ControlResult::Ok;
     }
@@ -391,24 +422,30 @@ public:
         t.last_bad_seq = last_bad_seq_;
         t.active = active_;
         t.paused = paused_;
-        FpgaSpi::BitstreamStatus s;
-        if (fpga_.readBitstreamStatus(s)) {
-            t.session_id = s.session_id ? s.session_id : t.session_id;
-            t.ring_level_bytes = s.ring_level;
-            t.ring_capacity_bytes = s.ring_capacity;
-            t.consumer_seq = s.consumer_seq;
-            t.underrun_count = s.underrun_count;
-            t.overrun_count = s.overrun_count;
-            t.desync_count = s.desync_count;
-            t.last_bad_seq = s.last_bad_seq;
-            t.active = s.active;
-            t.paused = s.paused;
+        if (!spi_mode_) {
+            FpgaSpi::BitstreamStatus s;
+            if (fpga_.readBitstreamStatus(s)) {
+                t.session_id = s.session_id ? s.session_id : t.session_id;
+                t.ring_level_bytes = s.ring_level;
+                t.ring_capacity_bytes = s.ring_capacity;
+                t.consumer_seq = s.consumer_seq;
+                t.underrun_count = s.underrun_count;
+                t.overrun_count = s.overrun_count;
+                t.desync_count = s.desync_count;
+                t.last_bad_seq = s.last_bad_seq;
+                t.active = s.active;
+                t.paused = s.paused;
+            }
         }
         return t;
     }
 
+    bool spiMode() const { return spi_mode_; }
+
 private:
     void syncStatus() {
+        if (spi_mode_)
+            return;
         FpgaSpi::BitstreamStatus s;
         if (!fpga_.readBitstreamStatus(s))
             return;
@@ -429,6 +466,7 @@ private:
     uint32_t last_bad_seq_ = 0;
     bool active_ = false;
     bool paused_ = false;
+    bool spi_mode_ = false;
 };
 
 } // namespace
@@ -1253,8 +1291,13 @@ void MediaPlayer::streamPump(int sfd) {
         const auto br = f3Dispatch.begin(streamSession);
         if (br == h264stream::ControlResult::Ok) {
             f3Active = true;
-            log("media: F3 NAL producer begin session=" + std::to_string(streamSession) +
-                " " + readDdrBitstreamStatusString());
+            // Distinguish DDR ring handshake vs SPI ioctl fallback (consumer stuck).
+            FpgaSpi::BitstreamStatus bst;
+            const bool ddr_live = fpga_.readBitstreamStatus(bst) && bst.consumer_count > 0;
+            log(std::string("media: F3 NAL producer begin session=") +
+                std::to_string(streamSession) +
+                (ddr_live ? " transport=ddr-ring " : " transport=spi-ioctl-fallback ") +
+                readDdrBitstreamStatusString());
         } else {
             f3Fatal = true;
             log("media: F3 NAL producer begin failed " +
@@ -1674,13 +1717,15 @@ void MediaPlayer::streamPump(int sfd) {
     const int64_t streamCpuUs = std::max<int64_t>(0, streamCpu1 - streamCpu0);
     const auto f3Stats = f3Dispatch.stats();
     const auto f3Status = f3StatusBeforeEnd;
+    // SPI ioctl fallback intentionally leaves DDR consumer_count at 0; that is
+    // not an empty delivery when NALs were accepted on the SPI path.
     const bool effectivelyEmptyDelivery =
-        wantF3 && f3Status.bytes_accepted > 4 && haveDdrBeforeEnd &&
+        wantF3 && !f3Producer.spiMode() && f3Status.bytes_accepted > 4 && haveDdrBeforeEnd &&
         ddrBeforeEnd.consumer_count <= 4;
     if (wantF3 && (f3Status.nal_accepted == 0 || f3Status.bytes_accepted <= 4 ||
                    effectivelyEmptyDelivery || f3Fatal || f3Stats.full_escalations != 0 ||
                    f3Stats.desync_or_fatal != 0)) {
-        log("ERROR media: DDR bitstream zero/effectively-empty delivery "
+        log("ERROR media: F3 bitstream zero/effectively-empty delivery "
             "accepted_nals=" + std::to_string(f3Status.nal_accepted) +
             " accepted_bytes=" + std::to_string(f3Status.bytes_accepted) +
             " dispatcher_seen=" + std::to_string(f3Stats.nal_seen) +
@@ -1690,7 +1735,9 @@ void MediaPlayer::streamPump(int sfd) {
             " effectively_empty=" + (effectivelyEmptyDelivery ? "1" : "0") +
             " " + ddrStatusBeforeEnd);
     }
-    log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
+    log(std::string("media: STREAM end transport=") +
+        (f3Producer.spiMode() ? "spi-ioctl" : "ddr-ring") +
+        " f3_bytes=" + std::to_string(f3Total) +
         " f3_nals=" + std::to_string(f3Status.nal_accepted) +
         " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
         " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +

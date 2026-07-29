@@ -204,8 +204,13 @@ module ddr_bitstream_reader #(
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
 		out_flush <= 1'b0;
-		DDRAM_RD <= 1'b0;
-		DDRAM_WE <= 1'b0;
+		// Avalon-MM: hold RD/WE until the bridge drops waitrequest (BUSY).
+		// One-cycle pulses are lost across the m1 busy CDC and never land in
+		// DDR — which is exactly the "PLXR never rewrites" failure on silicon.
+		if (!DDRAM_BUSY) begin
+			DDRAM_RD <= 1'b0;
+			DDRAM_WE <= 1'b0;
+		end
 
 		if (reset) begin
 			state <= ST_RESET;
