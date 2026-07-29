@@ -591,15 +591,18 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
-        // FFmpeg/host: suffix = 1 + ((unsigned)(level+3) > 6u)
-        // Equivalent: escape→2, else 1 + (|level| >= 4) because
-        // (unsigned)(level+3)>6 ⇔ level<=-4 || level>=4.
+    function automatic [15:0] level_mag(input signed [15:0] lvl);
         begin
-            if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
-                suffix_next_first = 3'd2;
-            else
-                suffix_next_first = 3'd1 + ((lvl >= 16'sd4) || (lvl <= -16'sd4));
+            level_mag = lvl[15] ? (~lvl[15:0] + 16'd1) : lvl[15:0];
+        end
+    endfunction
+
+    // 9.2.2.1 first non-T1: force suffixLength>=1, then +1 if |level|>3.
+    // Must use magnitude — signed tests miss level<=-4 and desync the slice.
+    // (717330a unsigned (level+3)>6u is equivalent: |level|>=4.)
+    function automatic [2:0] suffix_next_first(input signed [15:0] lvl);
+        begin
+            suffix_next_first = (level_mag(lvl) > 16'd3) ? 3'd2 : 3'd1;
         end
     endfunction
 
