@@ -18,6 +18,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/nalu_scanner.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sps_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/pps_parser.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_param_sets.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/slice_hdr_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_cavlc_residual.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_4x4.sv

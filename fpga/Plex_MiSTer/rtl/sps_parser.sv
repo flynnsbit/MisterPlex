@@ -12,6 +12,11 @@ module sps_parser (
 	input  wire        cap_end,
 
 	output reg         valid,
+	// One-cycle strobe for the id-indexed parameter set store, deliberately
+	// a cycle behind ST_DONE so width/height/mb_* have landed before the
+	// store samples them.
+	output reg         wr_pulse,
+	output reg  [7:0]  sps_id,             // seq_parameter_set_id
 	output reg  [7:0]  profile_idc,
 	output reg  [7:0]  level_idc,
 	output reg  [15:0] width,
@@ -51,6 +56,7 @@ module sps_parser (
 	reg [7:0]  prof;
 	reg [4:0]  log2_fn;
 	reg [2:0]  poc_t;
+	reg        wr_arm;
 
 	localparam [4:0]
 		ST_IDLE    = 5'd0,
@@ -93,6 +99,9 @@ module sps_parser (
 		if (reset) begin
 			st <= ST_IDLE;
 			valid <= 0;
+			wr_pulse <= 0;
+			wr_arm <= 0;
+			sps_id <= 0;
 			busy <= 0;
 			profile_idc <= 0;
 			level_idc <= 0;
@@ -119,6 +128,8 @@ module sps_parser (
 			cont <= ST_IDLE;
 			ue_cont <= ST_IDLE;
 		end else begin
+			wr_arm <= 1'b0;
+			wr_pulse <= wr_arm;
 			case (st)
 			ST_IDLE: begin
 				busy <= 0;
@@ -212,6 +223,7 @@ module sps_parser (
 				st <= ST_UE_Z;
 			end
 			ST_SPSID: begin
+				sps_id <= ue_val[7:0];
 				if (prof == 8'd100 || prof == 8'd110 || prof == 8'd122 ||
 				    prof == 8'd244 || prof == 8'd44  || prof == 8'd83  ||
 				    prof == 8'd86  || prof == 8'd118 || prof == 8'd128) begin
@@ -344,11 +356,13 @@ module sps_parser (
 						width  <= (w_mbs * 16'd16) - ((cl + cr) << 1);
 						height <= (h_map * 16'd16 * (frame_mbs_only ? 16'd1 : 16'd2)) - ((ct + cb) << 1);
 						valid  <= 1'b1;
+						wr_arm <= 1'b1;
 					end
 				end else begin
 					width  <= w_mbs * 16'd16;
 					height <= h_map * 16'd16 * (frame_mbs_only ? 16'd1 : 16'd2);
 					valid  <= 1'b1;
+					wr_arm <= 1'b1;
 				end
 			end
 
