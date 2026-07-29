@@ -674,16 +674,15 @@ module h264_i_mb_feed #(
 		.dequant(feed_dc_only_dq),
 		.residual(feed_dc_only_idct)
 	);
+	// 6-bit raster: {by, sy[1:0], bx, sx[1:0]}. Do NOT widen bx/by into
+	// reg[1:0] before concat — {by[1:0],sy,bx[1:0],sx} is 8 bits and the
+	// top by bit is truncated away, mapping every block onto even rows and
+	// letting BL/BR overwrite TL/TR (IDR U/V even-row + bottom-only bug).
 	function automatic [5:0] chroma4x4_index;
 		input [1:0] block;
 		input [3:0] sample;
-		reg [1:0] bx, by, sx, sy;
 		begin
-			bx = block[0];
-			by = block[1];
-			sx = sample[1:0];
-			sy = sample[3:2];
-			chroma4x4_index = {by, sy, bx, sx};
+			chroma4x4_index = {block[1], sample[3:2], block[0], sample[1:0]};
 		end
 	endfunction
 	function automatic signed [15:0] sat16;
@@ -750,6 +749,8 @@ module h264_i_mb_feed #(
 		i16_dc_level_valid <= 1'b0;
 		rbsp_request_valid <= 1'b0;
 		cav_start <= 1'b0;
+		// Default-low pulse; ST_RES_START raises for one cycle at walk end.
+		chroma_residual_valid <= 1'b0;
 
 		if (reset) begin
 			st <= ST_IDLE;
@@ -1124,6 +1125,8 @@ module h264_i_mb_feed #(
 					chr_top_v[{mb_x8[5:0], 1'b0}] <= chr_tc_v[2'd2];
 					chr_top_v[{mb_x8[5:0], 1'b1}] <= chr_tc_v[2'd3];
 					chr_top_valid[mb_x8] <= 1'b1;
+					// One-cycle pulse: core edge-captures residual. Holding the
+					// level into the next MB's mb_start re-armed stale chroma.
 					if (feed_luma_r)
 						chroma_residual_valid <= 1'b1;
 					if (inter_res_only_r && !mb_skip_r) begin

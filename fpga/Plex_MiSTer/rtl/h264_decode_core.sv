@@ -1045,12 +1045,9 @@ module h264_decode_core #(
     // merge dropped the e2eacc5/52b66ac chroma path → product U/V always 0.
     reg  [7:0]  product_intra_recon_u [0:63];
     reg  [7:0]  product_intra_recon_v [0:63];
-    wire signed [15:0] product_intra_chroma_residual_u [0:63];
-    wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
     assign intra_blocks_done = product_intra_blocks_done;
-    // Prefer feed-provided chroma residual when valid; else prediction-only zeros.
 
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
     wire [7:0]  product_intra_ctx_above_unused [0:7];
@@ -1094,21 +1091,42 @@ module h264_decode_core #(
         for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_ctx_px
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
-        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
-            assign product_intra_chroma_residual_u[intra_gi] =
-                intra_chroma_residual_valid ? intra_chroma_residual_u[intra_gi] : 16'sd0;
-            assign product_intra_chroma_residual_v[intra_gi] =
-                intra_chroma_residual_valid ? intra_chroma_residual_v[intra_gi] : 16'sd0;
-        end
     endgenerate
 
     // Chroma 8x8 prediction (spec 8.3.4). DC uses per-4x4-quadrant averages.
+    // SEAM (same class as MB0 Y=0 ST_LATCH_RECON): feed chroma_residual_valid is
+    // a one-cycle pulse at residual-walk end, while chroma8x8_pred valid is a
+    // one-cycle pulse ~75 cycles after mb_start. Gating residual on the live
+    // pulse made every chroma recon sample pred+0 → flat 128 when neighbours
+    // force DC. Latch residual sticky; latch pred sticky; commit recon only
+    // when BOTH are ready (order independent).
     reg         product_chroma_start_r;
+    reg         product_chroma_start_pend;
     wire        product_chroma_u_valid;
     wire        product_chroma_v_valid;
     wire [7:0]  product_chroma_u_pred [0:63];
     wire [7:0]  product_chroma_v_pred [0:63];
+    reg  [7:0]  product_chroma_u_pred_r [0:63];
+    reg  [7:0]  product_chroma_v_pred_r [0:63];
+    reg signed [15:0] product_chroma_res_u_r [0:63];
+    reg signed [15:0] product_chroma_res_v_r [0:63];
+    reg         product_chroma_pred_u_ready;
+    reg         product_chroma_pred_v_ready;
+    reg         product_chroma_res_ready;
+    // Set only after THIS MB's pred+residual have been combined. Do not use
+    // level-held feed chroma_residual_valid: it stays high into the next MB's
+    // mb_start and would make res_ready true with STALE residual before the
+    // new residual walk finishes (writeback then latches wrong U/V).
+    reg         product_chroma_recon_ready;
+    reg         product_intra_luma_recon_ready;
+    reg         product_intra_nb_commit_r;
+    reg         product_intra_nb_committed;
+    reg         intra_chroma_residual_valid_d;
     integer     chroma_pi;
+    wire        intra_chroma_residual_rise =
+        intra_chroma_residual_valid && !intra_chroma_residual_valid_d;
+    // One-cycle nb_ctx publish when BOTH luma and chroma recon are final.
+    wire        product_intra_nb_commit = product_intra_nb_commit_r;
     function automatic [7:0] clip_sum8;
         input [7:0] pred_v;
         input signed [15:0] res_v;
@@ -1145,24 +1163,111 @@ module h264_decode_core #(
         .pred(product_chroma_v_pred)
     );
     always @(posedge clk) begin
-        product_chroma_start_r <= product_intra_mb_start;
-        if (reset) begin
+        // Same nb_busy gate as I16: chroma8x8 samples above/left at start.
+        // Firing on mb_start alone latched stale neighbours while ST_PUB/gather
+        // still ran (row-1 first_fail after top-row exact).
+        product_chroma_start_r <= 1'b0;
+        if (product_intra_mb_start)
+            product_chroma_start_pend <= 1'b1;
+        else if (product_chroma_start_pend && !product_intra_nb_busy) begin
+            product_chroma_start_r <= 1'b1;
+            product_chroma_start_pend <= 1'b0;
+        end
+        intra_chroma_residual_valid_d <= intra_chroma_residual_valid;
+        product_intra_nb_commit_r <= 1'b0;
+        if (reset || slice_start) begin
+            product_chroma_start_pend <= 1'b0;
+            product_chroma_pred_u_ready <= 1'b0;
+            product_chroma_pred_v_ready <= 1'b0;
+            product_chroma_res_ready    <= 1'b0;
+            product_chroma_recon_ready  <= 1'b0;
+            product_intra_luma_recon_ready <= 1'b0;
+            product_intra_nb_committed <= 1'b0;
+            intra_chroma_residual_valid_d <= 1'b0;
             for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1) begin
-                product_intra_recon_u[chroma_pi] <= 8'd128;
-                product_intra_recon_v[chroma_pi] <= 8'd128;
+                product_intra_recon_u[chroma_pi]   <= 8'd128;
+                product_intra_recon_v[chroma_pi]   <= 8'd128;
+                product_chroma_u_pred_r[chroma_pi] <= 8'd128;
+                product_chroma_v_pred_r[chroma_pi] <= 8'd128;
+                product_chroma_res_u_r[chroma_pi]  <= 16'sd0;
+                product_chroma_res_v_r[chroma_pi]  <= 16'sd0;
             end
         end else begin
+            if (product_intra_mb_start) begin
+                product_chroma_pred_u_ready <= 1'b0;
+                product_chroma_pred_v_ready <= 1'b0;
+                product_chroma_res_ready    <= 1'b0;
+                product_chroma_recon_ready  <= 1'b0;
+                product_intra_luma_recon_ready <= 1'b0;
+                product_intra_nb_committed <= 1'b0;
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1) begin
+                    product_chroma_res_u_r[chroma_pi] <= 16'sd0;
+                    product_chroma_res_v_r[chroma_pi] <= 16'sd0;
+                end
+            end
+            if (product_intra_recon_valid)
+                product_intra_luma_recon_ready <= 1'b1;
+            // Rising edge only — level-held valid from prior MB is ignored.
+            if (intra_chroma_residual_rise) begin
+                product_chroma_res_ready <= 1'b1;
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1) begin
+                    product_chroma_res_u_r[chroma_pi] <= intra_chroma_residual_u[chroma_pi];
+                    product_chroma_res_v_r[chroma_pi] <= intra_chroma_residual_v[chroma_pi];
+                end
+            end
             if (product_chroma_u_valid) begin
+                product_chroma_pred_u_ready <= 1'b1;
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_chroma_u_pred_r[chroma_pi] <= product_chroma_u_pred[chroma_pi];
+            end
+            if (product_chroma_v_valid) begin
+                product_chroma_pred_v_ready <= 1'b1;
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_chroma_v_pred_r[chroma_pi] <= product_chroma_v_pred[chroma_pi];
+            end
+            // Combine when the second of pred/res for THIS MB arrives.
+            if (product_chroma_u_valid && product_chroma_res_ready) begin
                 for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
                     product_intra_recon_u[chroma_pi] <=
                         clip_sum8(product_chroma_u_pred[chroma_pi],
-                                  product_intra_chroma_residual_u[chroma_pi]);
+                                  product_chroma_res_u_r[chroma_pi]);
+            end else if (intra_chroma_residual_rise && product_chroma_pred_u_ready) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_u[chroma_pi] <=
+                        clip_sum8(product_chroma_u_pred_r[chroma_pi],
+                                  intra_chroma_residual_u[chroma_pi]);
             end
-            if (product_chroma_v_valid) begin
+            if (product_chroma_v_valid && product_chroma_res_ready) begin
                 for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
                     product_intra_recon_v[chroma_pi] <=
                         clip_sum8(product_chroma_v_pred[chroma_pi],
-                                  product_intra_chroma_residual_v[chroma_pi]);
+                                  product_chroma_res_v_r[chroma_pi]);
+            end else if (intra_chroma_residual_rise && product_chroma_pred_v_ready) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_v[chroma_pi] <=
+                        clip_sum8(product_chroma_v_pred_r[chroma_pi],
+                                  intra_chroma_residual_v[chroma_pi]);
+            end
+            // Both preds + this-MB residual present → recon planes committed.
+            if (intra_chroma_residual_rise &&
+                product_chroma_pred_u_ready && product_chroma_pred_v_ready)
+                product_chroma_recon_ready <= 1'b1;
+            else if (product_chroma_u_valid && product_chroma_pred_v_ready &&
+                     product_chroma_res_ready)
+                product_chroma_recon_ready <= 1'b1;
+            else if (product_chroma_v_valid && product_chroma_pred_u_ready &&
+                     product_chroma_res_ready)
+                product_chroma_recon_ready <= 1'b1;
+            else if (product_chroma_u_valid && product_chroma_v_valid &&
+                     product_chroma_res_ready)
+                product_chroma_recon_ready <= 1'b1;
+
+            // nb_ctx publish the cycle AFTER both recon planes are registered
+            // (same-cycle commit would sample pre-combine U/V via NBA).
+            if (product_intra_luma_recon_ready && product_chroma_recon_ready &&
+                !product_intra_nb_committed) begin
+                product_intra_nb_commit_r <= 1'b1;
+                product_intra_nb_committed <= 1'b1;
             end
         end
     end
@@ -1190,7 +1295,10 @@ module h264_decode_core #(
         // from recon_y_mb on mb_commit — do not re-tie that to 128.
         .block_valid(1'b0),
         .recon_pixels(product_intra_ctx_recon_pixels),
-        .mb_commit(product_intra_recon_valid),
+        // Commit PRE neighbours only once chroma recon is final. Luma
+        // mb_recon_valid can beat chroma by tens of cycles; committing then
+        // published U/V=128 and the next MB's chroma DC was permanently biased.
+        .mb_commit(product_intra_nb_commit),
         .recon_y_mb(product_intra_recon_y),
         .recon_u_mb(product_intra_recon_u),
         .recon_v_mb(product_intra_recon_v),
@@ -1675,7 +1783,11 @@ module h264_decode_core #(
                         wb_state <= ST_P16_LATCH_RES;
                     else
                         wb_state <= ST_P16_RES_START;
-                end else if (product_recon_mb_valid && (deblock_off || !dbf_busy)) begin
+                end else if (product_recon_mb_valid && (deblock_off || !dbf_busy) &&
+                             // Intra: wait until THIS MB's chroma pred+residual
+                             // have been combined (rising-edge residual capture).
+                             (!product_recon_is_intra ||
+                              product_chroma_recon_ready)) begin
                     // Same handover rule as the inter path: the loop filter
                     // may still be emitting the previous macroblock's window.
                     wb_mb_x <= product_recon_mb_x;
