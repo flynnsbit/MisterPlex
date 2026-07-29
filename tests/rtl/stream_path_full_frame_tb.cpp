@@ -586,10 +586,10 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "  \"candidate\": {\n";
     out << "    \"colorspace\": \"I420_NATIVE\",\n";
     out << "    \"h264_loop_filter\": \"disabled\",\n";
-    out << "    \"reconstruction_stage\": \"mc_prediction_only_pre_deblock_no_residual_add\",\n";
+    out << "    \"reconstruction_stage\": \"mc_pred_plus_residual_pre_deblock\",\n";
     out << "    \"reference_picture_state\": \"testbench_prefilled_previous_golden_no_deblock_reference\",\n";
     out << "    \"reference_picture_source\": \"golden_i420_previous_frame_injected_into_dpb_bank0\",\n";
-    out << "    \"conformance_scope\": \"MC arithmetic, all-MB traversal, and parser-to-DPB plumbing only; not end-to-end H.264 P reconstruction\"\n";
+    out << "    \"conformance_scope\": \"MC + Clip1(pred+residual) plumbing; residual plane still sparse until full P CAVLC walk; not end-to-end H.264 P reconstruction (MVs may be 0,0)\"\n";
     out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";

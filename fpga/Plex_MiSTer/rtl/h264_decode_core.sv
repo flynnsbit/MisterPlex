@@ -5,9 +5,11 @@
 //
 // STATUS: PARTIAL PRODUCT DATAPATH.
 //         Product DPB writeback, P16 syntax handoff, MV prediction state, and
-//         an initial scheduled P16 luma CAVLC/IDCT residual traversal are
-//         wired. Full residual traversal, P partition modes, deblock, and full
-//         decode scheduling remain open.
+//         scheduled P16 luma+chroma CAVLC/IDCT residual traversal with
+//         Clip1(pred+residual) writeback are wired. CBP gates which residual
+//         blocks are decoded (uncoded blocks stay 0; P_Skip skips residual).
+//         Full partition modes, deblock-before-DPB, and full decode scheduling
+//         remain open.
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
@@ -284,6 +286,9 @@ module h264_decode_core #(
     reg [6:0]  p16_tap_idx;
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
+    reg [3:0]  p16_cbp_luma_r;
+    reg [1:0]  p16_cbp_chroma_r;
+    reg        p16_skip_residual_r;
     reg        cavlc_start_r;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
@@ -361,6 +366,31 @@ module h264_decode_core #(
     function automatic [5:0] chroma4x4_index(input [1:0] block, input [3:0] sample);
         begin
             chroma4x4_index = {block[1], sample[3:2], block[0], sample[1:0]};
+        end
+    endfunction
+
+    // CBP → residual block map (row-major 4×4 block index used by residual walk).
+    // Luma 8×8 groups: bit0=TL, bit1=TR, bit2=BL, bit3=BR.
+    // Chroma (simplified 8× AC-style blocks): cbp_chroma==2 codes all; 0/1 → none
+    // until a dedicated chroma-DC path lands.
+    function automatic p16_res_block_coded(input [4:0] block_idx);
+        reg [1:0] luma8;
+        begin
+            if (block_idx < P16_LUMA_RES_BLOCKS) begin
+                luma8 = {block_idx[3], block_idx[1]};
+`ifdef H264_DECODE_CORE_FAULT_WRONG_CBP_BIT
+                // Invert the selected CBP bit so a full CBP still drops residual.
+                p16_res_block_coded = ~p16_cbp_luma_r[luma8];
+`else
+                p16_res_block_coded = p16_cbp_luma_r[luma8];
+`endif
+            end else begin
+`ifdef H264_DECODE_CORE_FAULT_SKIP_CHROMA_RESIDUAL
+                p16_res_block_coded = 1'b0;
+`else
+                p16_res_block_coded = (p16_cbp_chroma_r == 2'd2);
+`endif
+            end
         end
     endfunction
 
@@ -634,6 +664,9 @@ module h264_decode_core #(
             p16_tap_idx <= 7'd0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
+            p16_cbp_luma_r <= 4'hf;
+            p16_cbp_chroma_r <= 2'd2;
+            p16_skip_residual_r <= 1'b0;
             cavlc_start_r <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
@@ -700,6 +733,11 @@ module h264_decode_core #(
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
+                    // External residual feed (p16_zero_mv) bypasses CAVLC; syntax path
+                    // latches CBP. P_Skip has no residual syntax → skip walk.
+                    p16_cbp_luma_r <= p16_zero_mv_valid ? 4'hf : cbp_luma;
+                    p16_cbp_chroma_r <= p16_zero_mv_valid ? 2'd2 : cbp_chroma;
+                    p16_skip_residual_r <= p16_zero_mv_valid ? 1'b0 : mb_skip;
                     wb_idx <= 9'd0;
                     p16_tap_idx <= 7'd0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -722,7 +760,9 @@ module h264_decode_core #(
                             lat_p16_residual_v[wb_i] <= 16'sd0;
                         end
                     end
-                    wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
+                    // pred + residual add happens in ST_P16_WRITE via clip_u8(pred+res).
+                    // P_Skip / external residual feed → MC taps directly; else CAVLC walk.
+                    wb_state <= (p16_zero_mv_valid || mb_skip) ? ST_P16_TAP_REQ : ST_P16_RES_START;
                 end else if (recon_mb_valid) begin
                     wb_mb_x <= recon_mb_x;
                     wb_mb_y <= recon_mb_y;
@@ -739,8 +779,18 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_START: begin
-                cavlc_start_r <= 1'b1;
-                wb_state <= ST_P16_RES_WAIT;
+                // Uncoded CBP blocks contribute residual=0 and consume no bits.
+                if (p16_skip_residual_r || !p16_res_block_coded(p16_res_block_idx)) begin
+                    if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
+                        wb_state <= ST_P16_TAP_REQ;
+                    end else begin
+                        p16_res_block_idx <= p16_res_block_idx + 5'd1;
+                        wb_state <= ST_P16_RES_START;
+                    end
+                end else begin
+                    cavlc_start_r <= 1'b1;
+                    wb_state <= ST_P16_RES_WAIT;
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
@@ -800,9 +850,15 @@ module h264_decode_core #(
                 end
             end
             ST_P16_WRITE: begin
+                // H.264 order: predict → add residual → (deblock later) → store.
+                // clip_u8 implements Clip1_Y/C to 8-bit sample range.
                 p16_wr_en_r <= 1'b1;
                 p16_wr_addr_r <= wb_addr;
+`ifdef H264_DECODE_CORE_FAULT_DROP_CLIP
+                p16_wr_data_r <= p16_recon_sum[7:0];
+`else
                 p16_wr_data_r <= clip_u8(p16_recon_sum);
+`endif
                 if (wb_last_sample) begin
                     wb_state <= ST_IDLE;
                     if (wb_mb_is_ref) begin

@@ -162,6 +162,30 @@
       ]
     },
     {
+      "id": "h264_decode_core_p16z_drop_clip",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Dropping Clip1 after pred+residual must wrap high samples (255+1→0) and fail the scoreboard, proving clip is not vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 126 plane=Y got=0 want=255 pred=255 residual=1"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_wrong_cbp_bit",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Inverting CBP 8x8-group bits must drop residual blocks and fail the pred+residual scoreboard, proving CBP gating is live.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 0 plane=Y got=73 want=92 pred=73 residual=19"
+      ]
+    },
+    {
+      "id": "h264_decode_core_p16z_skip_chroma_residual",
+      "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
+      "why": "Skipping chroma residual under CBP must fail a U-plane sample, proving chroma residual add is not vacuous.",
+      "required_substrings": [
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=157 want=164 pred=157 residual=7"
+      ]
+    },
+    {
       "id": "h264_decode_core_real_slice_swap_chroma_read",
       "owner": "tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh",
       "why": "Swapping U/V chroma reference reads must fail against the always-on real-content I420 slice, proving the decode-core chroma path is not only green on authored synthetic fixtures.",

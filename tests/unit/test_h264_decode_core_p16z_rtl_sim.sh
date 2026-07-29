@@ -37,6 +37,9 @@ BUILD_SWAP_SCHED_COEFF="$ROOT/build/verilator/h264_decode_core_p16z_swap_schedul
 BUILD_SWAP_CHROMA_COEFF="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_scheduled_coeff"
 BUILD_SWAP_CHROMA_READ="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_read"
 BUILD_SWAP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_p16z_swap_chroma_residual"
+BUILD_DROP_CLIP="$ROOT/build/verilator/h264_decode_core_p16z_drop_clip"
+BUILD_WRONG_CBP="$ROOT/build/verilator/h264_decode_core_p16z_wrong_cbp_bit"
+BUILD_SKIP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_p16z_skip_chroma_residual"
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
@@ -51,7 +54,7 @@ for f in "$TOP" "$TB" "${RTL[@]}"; do
   fi
 done
 
-mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUILD_BAD_RBSP" "$BUILD_DROP_MV_NB" "$BUILD_DROP_SCHED_RES" "$BUILD_DROP_LAST_LUMA_RES" "$BUILD_DROP_LAST_CHROMA_RES" "$BUILD_SWAP_SCHED_COEFF" "$BUILD_SWAP_CHROMA_COEFF" "$BUILD_SWAP_CHROMA_READ" "$BUILD_SWAP_CHROMA_RES"
+mkdir -p "$BUILD" "$BUILD_DROP_PRED" "$BUILD_DROP_RES" "$BUILD_PERTURB_MV" "$BUILD_BAD_RBSP" "$BUILD_DROP_MV_NB" "$BUILD_DROP_SCHED_RES" "$BUILD_DROP_LAST_LUMA_RES" "$BUILD_DROP_LAST_CHROMA_RES" "$BUILD_SWAP_SCHED_COEFF" "$BUILD_SWAP_CHROMA_COEFF" "$BUILD_SWAP_CHROMA_READ" "$BUILD_SWAP_CHROMA_RES" "$BUILD_DROP_CLIP" "$BUILD_WRONG_CBP" "$BUILD_SKIP_CHROMA_RES"
 echo "RTL SIM: using $VERILATOR_VERSION (h264_decode_core P16x16 real-P)" >&2
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
@@ -263,3 +266,54 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p1
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_decode_core p16x16 real-P red-check: swapped chroma residual fault failed U/V residual scoreboard"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DROP_CLIP" \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_DROP_CLIP \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL[@]}" "$TB"
+set +e
+DROP_CLIP_OUT="$($BUILD_DROP_CLIP/Vh264_decode_core_p16z_tb 2>&1)"
+DROP_CLIP_RC=$?
+set -e
+printf '%s\n' "$DROP_CLIP_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p16z_drop_clip "$DROP_CLIP_RC" <<<"$DROP_CLIP_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$DROP_CLIP_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core p16x16 real-P red-check: drop-clip fault failed Clip1 scoreboard"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_WRONG_CBP" \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_WRONG_CBP_BIT \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL[@]}" "$TB"
+set +e
+WRONG_CBP_OUT="$($BUILD_WRONG_CBP/Vh264_decode_core_p16z_tb 2>&1)"
+WRONG_CBP_RC=$?
+set -e
+printf '%s\n' "$WRONG_CBP_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p16z_wrong_cbp_bit "$WRONG_CBP_RC" <<<"$WRONG_CBP_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$WRONG_CBP_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core p16x16 real-P red-check: wrong-CBP-bit fault failed residual scoreboard"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_SKIP_CHROMA_RES" \
+  --top-module h264_decode_core_p16z_tb -Wno-fatal +define+H264_DECODE_CORE_FAULT_SKIP_CHROMA_RESIDUAL \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL[@]}" "$TB"
+set +e
+SKIP_CHROMA_RES_OUT="$($BUILD_SKIP_CHROMA_RES/Vh264_decode_core_p16z_tb 2>&1)"
+SKIP_CHROMA_RES_RC=$?
+set -e
+printf '%s\n' "$SKIP_CHROMA_RES_OUT"
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_p16z_skip_chroma_residual "$SKIP_CHROMA_RES_RC" <<<"$SKIP_CHROMA_RES_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$SKIP_CHROMA_RES_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_decode_core p16x16 real-P red-check: skip-chroma-residual fault failed U/V residual scoreboard"
