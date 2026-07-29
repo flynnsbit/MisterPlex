@@ -18,12 +18,13 @@ module h264_qp_y_add_delta (
 endmodule
 
 // LATENCY CONTRACT (not combinational):
-//   start pulse → latch Hadamard f[] + qp → 16 scale cycles → done=1 one cycle.
-//   dc[] held from done until next start. Caller holds coeff/qp stable start→done.
-//   ~18 cycles total (16 scale + 1 finish). Consumers:
-//   decode_core ST_P16_RES_LDC (must wait done), decode_core→top i16_dc_valid
-//   (must pulse after done, not on mb_start alone). If cycle count changes,
-//   update this header and every waiter bench.
+//   start pulse → latch coeff+qp → 4 row Hadamard → 4 col Hadamard →
+//   16 scale cycles → done=1 one cycle after last dc[] write.
+//   dc[] held from done until next start. Caller holds coeff/qp stable only
+//   on the start cycle (inputs latched). ~26 cycles total.
+//   Consumers (must wait done — values-equal ≠ timing-equal):
+//     decode_core ST_P16_RES_LDC; product i16_dc_valid after i16_ldc_done;
+//     transform golden TB WaitDone. Update this header if cycle count moves.
 module h264_luma_dc_hadamard_inv (
 	// Intra16x16DCLevel zig-zag scan → scaled DC in residual/IDCT domain (FFmpeg).
 	input  wire               clk,
@@ -120,64 +121,55 @@ module h264_luma_dc_hadamard_inv (
 		endcase
 	endfunction
 
-	// Combo Hadamard on live coeff (stable start→done); register f[] on start.
-	wire signed [20:0] c0  = $signed(coeff[scan_of_raster(4'd0)]);
-	wire signed [20:0] c1  = $signed(coeff[scan_of_raster(4'd1)]);
-	wire signed [20:0] c2  = $signed(coeff[scan_of_raster(4'd2)]);
-	wire signed [20:0] c3  = $signed(coeff[scan_of_raster(4'd3)]);
-	wire signed [20:0] c4  = $signed(coeff[scan_of_raster(4'd4)]);
-	wire signed [20:0] c5  = $signed(coeff[scan_of_raster(4'd5)]);
-	wire signed [20:0] c6  = $signed(coeff[scan_of_raster(4'd6)]);
-	wire signed [20:0] c7  = $signed(coeff[scan_of_raster(4'd7)]);
-	wire signed [20:0] c8  = $signed(coeff[scan_of_raster(4'd8)]);
-	wire signed [20:0] c9  = $signed(coeff[scan_of_raster(4'd9)]);
-	wire signed [20:0] c10 = $signed(coeff[scan_of_raster(4'd10)]);
-	wire signed [20:0] c11 = $signed(coeff[scan_of_raster(4'd11)]);
-	wire signed [20:0] c12 = $signed(coeff[scan_of_raster(4'd12)]);
-	wire signed [20:0] c13 = $signed(coeff[scan_of_raster(4'd13)]);
-	wire signed [20:0] c14 = $signed(coeff[scan_of_raster(4'd14)]);
-	wire signed [20:0] c15 = $signed(coeff[scan_of_raster(4'd15)]);
+	// Shared 4-point Hadamard butterfly (one row or one column per cycle).
+	// o0=a+b+c+d; o1=a+b-c-d; o2=a-b-c+d; o3=a-b+c-d
+	function automatic signed [24:0] bf0;
+		input signed [24:0] a, b, c, d;
+		bf0 = a + b + c + d;
+	endfunction
+	function automatic signed [24:0] bf1;
+		input signed [24:0] a, b, c, d;
+		bf1 = a + b - c - d;
+	endfunction
+	function automatic signed [24:0] bf2;
+		input signed [24:0] a, b, c, d;
+		bf2 = a - b - c + d;
+	endfunction
+	function automatic signed [24:0] bf3;
+		input signed [24:0] a, b, c, d;
+		bf3 = a - b + c - d;
+	endfunction
 
-	wire signed [22:0] g0  = c0+c1+c2+c3;
-	wire signed [22:0] g1  = c0+c1-c2-c3;
-	wire signed [22:0] g2  = c0-c1-c2+c3;
-	wire signed [22:0] g3  = c0-c1+c2-c3;
-	wire signed [22:0] g4  = c4+c5+c6+c7;
-	wire signed [22:0] g5  = c4+c5-c6-c7;
-	wire signed [22:0] g6  = c4-c5-c6+c7;
-	wire signed [22:0] g7  = c4-c5+c6-c7;
-	wire signed [22:0] g8  = c8+c9+c10+c11;
-	wire signed [22:0] g9  = c8+c9-c10-c11;
-	wire signed [22:0] g10 = c8-c9-c10+c11;
-	wire signed [22:0] g11 = c8-c9+c10-c11;
-	wire signed [22:0] g12 = c12+c13+c14+c15;
-	wire signed [22:0] g13 = c12+c13-c14-c15;
-	wire signed [22:0] g14 = c12-c13-c14+c15;
-	wire signed [22:0] g15 = c12-c13+c14-c15;
+	// AREA: serial Hadamard (4 row + 4 col) + one scaler ×16 — was full combo
+	// 16-way Hadamard + parallel scale (~3.4k ALM fit4). No `x <<< qdiv`.
+	localparam [2:0] ST_IDLE  = 3'd0;
+	localparam [2:0] ST_ROW   = 3'd1;
+	localparam [2:0] ST_COL   = 3'd2;
+	localparam [2:0] ST_SCALE = 3'd3;
+	localparam [2:0] ST_DONE  = 3'd4;
 
-	wire signed [24:0] f_comb [0:15];
-	assign f_comb[0]  = g0+g4+g8+g12;  assign f_comb[1]  = g1+g5+g9+g13;
-	assign f_comb[2]  = g2+g6+g10+g14; assign f_comb[3]  = g3+g7+g11+g15;
-	assign f_comb[4]  = g0+g4-g8-g12;  assign f_comb[5]  = g1+g5-g9-g13;
-	assign f_comb[6]  = g2+g6-g10-g14; assign f_comb[7]  = g3+g7-g11-g15;
-	assign f_comb[8]  = g0-g4-g8+g12;  assign f_comb[9]  = g1-g5-g9+g13;
-	assign f_comb[10] = g2-g6-g10+g14; assign f_comb[11] = g3-g7-g11+g15;
-	assign f_comb[12] = g0-g4+g8-g12;  assign f_comb[13] = g1-g5+g9-g13;
-	assign f_comb[14] = g2-g6+g10-g14; assign f_comb[15] = g3-g7+g11-g15;
-
-	// ONE scaler over 16 cycles (was 16-way parallel → ~3.4k ALM).
-	// FFmpeg: qmul=(na*16)<<(qdiv+2); dc=(f*qmul+128)>>8
-	reg [3:0] idx;
-	reg       busy;
-	reg       finishing; // last dc_r write settled → done next cycle
+	reg [2:0] st;
+	reg [1:0] k;       // row or column index 0..3
+	reg [3:0] idx;     // scale index 0..15
 	reg [5:0] qp_r;
-	reg signed [24:0] f_r [0:15];
+	reg signed [24:0] w_r [0:15]; // workspace: raster after load / row / col
 	reg signed [28:0] dc_r [0:15];
 
+	// Mux one row (ST_ROW) or one column (ST_COL) into the shared butterfly.
+	wire signed [24:0] a_in = (st == ST_ROW) ? w_r[{k, 2'b00}] : w_r[{2'b00, k}];
+	wire signed [24:0] b_in = (st == ST_ROW) ? w_r[{k, 2'b01}] : w_r[{2'b01, k}];
+	wire signed [24:0] c_in = (st == ST_ROW) ? w_r[{k, 2'b10}] : w_r[{2'b10, k}];
+	wire signed [24:0] d_in = (st == ST_ROW) ? w_r[{k, 2'b11}] : w_r[{2'b11, k}];
+	wire signed [24:0] o0 = bf0(a_in, b_in, c_in, d_in);
+	wire signed [24:0] o1 = bf1(a_in, b_in, c_in, d_in);
+	wire signed [24:0] o2 = bf2(a_in, b_in, c_in, d_in);
+	wire signed [24:0] o3 = bf3(a_in, b_in, c_in, d_in);
+
+	// ONE scaler over 16 cycles. FFmpeg: qmul=(na*16)<<(qdiv+2); dc=(f*qmul+128)>>8
 	wire [2:0] qmod = qp_mod6(qp_r);
 	wire [3:0] qdiv = qp_div6(qp_r);
 	wire [4:0] na   = norm_adjust0(qmod);
-	wire signed [31:0] base = mul_norm({{7{f_r[idx][24]}}, f_r[idx]}, na);
+	wire signed [31:0] base = mul_norm({{7{w_r[idx][24]}}, w_r[idx]}, na);
 	wire signed [31:0] base16 = {base[27:0], 4'b0};
 	wire signed [47:0] prod = shl_amt(base16, qdiv + 4'd2);
 	wire signed [28:0] scaled = sat29((prod + 48'sd128) >>> 8);
@@ -193,32 +185,65 @@ module h264_luma_dc_hadamard_inv (
 	always @(posedge clk) begin
 		done <= 1'b0;
 		if (reset) begin
-			busy <= 1'b0;
-			finishing <= 1'b0;
+			st <= ST_IDLE;
+			k <= 2'd0;
 			idx <= 4'd0;
 			qp_r <= 6'd0;
 			for (ki = 0; ki < 16; ki = ki + 1) begin
-				f_r[ki] <= 25'sd0;
+				w_r[ki] <= 25'sd0;
 				dc_r[ki] <= 29'sd0;
 			end
-		end else if (start) begin
-			busy <= 1'b1;
-			finishing <= 1'b0;
-			idx <= 4'd0;
-			qp_r <= qp;
-			for (ki = 0; ki < 16; ki = ki + 1)
-				f_r[ki] <= f_comb[ki];
-		end else if (busy) begin
-			dc_r[idx] <= scaled;
-			if (idx == 4'd15) begin
-				busy <= 1'b0;
-				finishing <= 1'b1; // dc_r[15] NBA this cycle; done next
-			end else begin
-				idx <= idx + 4'd1;
+		end else begin
+			case (st)
+			ST_IDLE: begin
+				if (start) begin
+					qp_r <= qp;
+					// Latch zigzag→raster; one shared butterfly follows.
+					for (ki = 0; ki < 16; ki = ki + 1)
+						w_r[ki] <= {{9{coeff[scan_of_raster(ki[3:0])][15]}},
+						            coeff[scan_of_raster(ki[3:0])]};
+					k <= 2'd0;
+					st <= ST_ROW;
+				end
 			end
-		end else if (finishing) begin
-			finishing <= 1'b0;
-			done <= 1'b1; // all dc[] stable
+			ST_ROW: begin
+				// Write butterfly back into this row.
+				w_r[{k, 2'b00}] <= o0;
+				w_r[{k, 2'b01}] <= o1;
+				w_r[{k, 2'b10}] <= o2;
+				w_r[{k, 2'b11}] <= o3;
+				if (k == 2'd3) begin
+					k <= 2'd0;
+					st <= ST_COL;
+				end else begin
+					k <= k + 2'd1;
+				end
+			end
+			ST_COL: begin
+				// Column butterfly into same workspace (Hadamard f[]).
+				w_r[{2'b00, k}] <= o0;
+				w_r[{2'b01, k}] <= o1;
+				w_r[{2'b10, k}] <= o2;
+				w_r[{2'b11, k}] <= o3;
+				if (k == 2'd3) begin
+					idx <= 4'd0;
+					st <= ST_SCALE;
+				end else begin
+					k <= k + 2'd1;
+				end
+			end
+			ST_SCALE: begin
+				dc_r[idx] <= scaled;
+				if (idx == 4'd15)
+					st <= ST_DONE;
+				else
+					idx <= idx + 4'd1;
+			end
+			default: begin // ST_DONE
+				done <= 1'b1;
+				st <= ST_IDLE;
+			end
+			endcase
 		end
 	end
 endmodule

@@ -326,7 +326,7 @@ module h264_decode_top (
 
     wire busy = (state != ST_IDLE);
     // I16: wait for both plane pred AND multi-cycle LDC (i16_dc_valid→latch).
-    // LDC is start→~18 cyc→done; launching xform before dc ready mis-scales AC DC.
+    // LDC is start→~26 cyc→done; launching xform before dc ready mis-scales AC DC.
     reg i16_dc_ready;
     // Hold block launch until neighbour gather is done (top line-buffer path).
     wire launch_ok = mb_started && !nb_busy &&
