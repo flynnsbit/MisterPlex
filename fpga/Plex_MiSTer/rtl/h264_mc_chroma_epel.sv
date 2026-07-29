@@ -129,13 +129,21 @@ module h264_mc_chroma_epel (
 	//   S_V: ao = output column 0..7, ai = window row 0..8
 	//   S_C: ccnt = y*8 + x
 	// ------------------------------------------------------------------
+	// Row stride is a constant multiply by 9, written as a shift-add so no
+	// DSP block can be inferred for address generation.
+	function automatic [6:0] m9(input [3:0] r);
+		begin
+			m9 = 7'((7'(r) << 3) + 7'(r));
+		end
+	endfunction
+
 	wire [2:0] cy = ccnt[5:3];
 	wire [2:0] cx = ccnt[2:0];
 
 	// With both fractions zero the block is a straight window copy, so the
 	// combine pass reads the integer sample directly out of the window.
-	wire [6:0] win_ra = (state == S_H) ? 7'(7'(ao) * 7'd9 + 7'(ai))
-	                                   : 7'(7'(cy) * 7'd9 + 7'(cx));
+	wire [6:0] win_ra = (state == S_H) ? 7'(m9(ao) + 7'(ai))
+	                                   : 7'(m9({1'b0, cy}) + 7'(cx));
 	wire [6:0] tmp_ra = (state == S_V) ? 7'((7'(ai) << 3) + 7'(ao))
 	                                   : 7'((7'(cy) << 3) + 7'(cx));
 

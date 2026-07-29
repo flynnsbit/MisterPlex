@@ -174,14 +174,23 @@ module h264_mc_luma_qpel (
 	wire [3:0] cy = ccnt[7:4];
 	wire [3:0] cx = ccnt[3:0];
 
+	// Row strides are constant multiplies by 21.  Written as a shift-add so
+	// no DSP block can be inferred for address generation either; the fit was
+	// at 130% DSP as well as 248% logic.
+	function automatic [8:0] m21(input [4:0] r);
+		begin
+			m21 = 9'((9'(r) << 4) + (9'(r) << 2) + 9'(r));
+		end
+	endfunction
+
 	// The one integer sample the position needs: pG for G/a/d, pH for c,
 	// pM for n.  No position reads two of them, so one window port suffices.
 	reg [8:0] cwin_a;
 	always @* begin
 		case ({fy_r, fx_r})
-		4'b0011: cwin_a = 9'((9'(cy) + 9'd2) * 9'd21 + 9'(cx) + 9'd3); // pH
-		4'b1100: cwin_a = 9'((9'(cy) + 9'd3) * 9'd21 + 9'(cx) + 9'd2); // pM
-		default: cwin_a = 9'((9'(cy) + 9'd2) * 9'd21 + 9'(cx) + 9'd2); // pG
+		4'b0011: cwin_a = 9'(m21(5'(cy) + 5'd2) + 9'(cx) + 9'd3); // pH
+		4'b1100: cwin_a = 9'(m21(5'(cy) + 5'd3) + 9'(cx) + 9'd2); // pM
+		default: cwin_a = 9'(m21(5'(cy) + 5'd2) + 9'(cx) + 9'd2); // pG
 		endcase
 	end
 
@@ -192,9 +201,9 @@ module h264_mc_luma_qpel (
 	reg [8:0] win_ra;
 	always @* begin
 		case (state)
-		S_H:     win_ra = 9'(9'(ao) * 9'd21 + 9'(ai));
-		S_V:     win_ra = (vsel == 2'd1) ? 9'(9'(ai) * 9'd21 + 9'(ao) + 9'd3)
-		                                 : 9'(9'(ai) * 9'd21 + 9'(ao) + 9'd2);
+		S_H:     win_ra = 9'(m21(ao) + 9'(ai));
+		S_V:     win_ra = (vsel == 2'd1) ? 9'(m21(ai) + 9'(ao) + 9'd3)
+		                                 : 9'(m21(ai) + 9'(ao) + 9'd2);
 		default: win_ra = cwin_a;
 		endcase
 	end

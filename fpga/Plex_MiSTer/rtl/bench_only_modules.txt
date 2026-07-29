@@ -6,9 +6,6 @@ cos: legacy/template sine-cosine helper; no product consumer in Plex.sv hierarch
 lfsr: legacy/template pattern helper; no product consumer in Plex.sv hierarchy.
 mycore: upstream template/demo core, superseded by Plex.sv/emu product top.
 
-h264_deblock_bs: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
-h264_deblock_thresholds: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
-h264_deblock_edge: product-candidate deblock helper currently reachable only from non-product deblock pipelines/benches.
 h264_deblock_edge_pipe: product-candidate deblock helper currently reachable only from non-product skeleton/benches.
 h264_decode_skeleton: resource-estimation skeleton, explicitly not a decoder.
 h264_intra_mode_guard: standalone unsupported-mode guard covered by RTL/unit benches only.
@@ -17,6 +14,13 @@ h264_rbsp_filter: syntax primitive covered by standalone RTL/unit benches only.
 h264_baseline_syntax_parser: syntax primitive covered by standalone RTL/unit benches only.
 h264_exp_golomb_reader: syntax primitive covered by standalone RTL/unit benches only.
 h264_sps_geometry_parser: syntax primitive covered by standalone RTL/unit benches only.
+
+# Parallel combinational MC — benches/sizing only. Product uses h264_mc_*.
+h264_luma_qpel_block_16x16: fully-parallel 16x16 qpel; product uses sequential h264_mc_luma_qpel.
+h264_chroma_epel_block_8x8: fully-parallel 8x8 chroma epel; product uses sequential h264_mc_chroma_epel.
+h264_inter_mc_16x16: parallel MC wrapper; product uses h264_mc_block.
+h264_inter_mc_part: parallel partition MC; product uses h264_mc_block.
+h264_dpb_ddr_bridge: optional DDR-clock CDC bridge; stream_path roots DPB on clk without it.
 
 tb_arb_beat_conservation: RTL testbench top, never product synthesis.
 tb_audio_fifo_cdc: RTL testbench top, never product synthesis.
