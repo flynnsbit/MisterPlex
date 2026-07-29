@@ -452,14 +452,16 @@ static void testDataIntegrityMultiRound() {
 
     auto sps = makeNal(7, 10);
     auto pps = makeNal(8, 5);
+    auto idr = makeNal(5, 64);
     CHECK(dispatch.handleNal(sps.data(), sps.size()) == PushResult::Ok);
     CHECK(dispatch.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+    CHECK(dispatch.handleNal(idr.data(), idr.size()) == PushResult::Ok);
 
     // Consume all, then push more
     ring.consumeBytes(ring.snapshot().size());
     CHECK(ring.snapshot().empty());
 
-    // Push 5 more slices and verify each round-trip
+    // Push 5 more slices and verify each round-trip (post-IDR P slices)
     for (int i = 0; i < 5; ++i) {
         auto slice = makeNal(1, 500 + i * 100);
         CHECK(dispatch.handleNal(slice.data(), slice.size()) == PushResult::Ok);

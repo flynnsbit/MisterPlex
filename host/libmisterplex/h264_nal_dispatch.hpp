@@ -213,24 +213,15 @@ public:
             return PushResult::Ok;
         }
 
-        // Hold parameter sets in the cache always; only gate VCL until IDR.
-        // Non-VCL other than 7/8 (SEI/AUD/…) may still be dropped pre-IDR —
-        // decoder does not need them to start, and mid-GOP SEI is harmless to skip.
-        const bool is_vcl = (type == 1 || type == 5);
-        if (!seen_idr_) {
-            if (type == 7 || type == 8) {
-                // Cache only until IDR; replayParametersIfNeeded pushes them then.
-                return PushResult::Ok;
-            }
-            if (type != 5) {
-                ++stats_.nal_dropped_pre_idr;
-                return PushResult::Ok;
-            }
-            // First IDR: push SPS/PPS then the IDR itself.
-            const auto pr = replayParametersIfNeeded();
-            if (pr != PushResult::Ok)
-                return pr;
-        } else if (is_vcl) {
+        // Drop non-IDR coded slices until the first IDR so a mid-GOP demux
+        // start cannot feed P-frames with no reference. SPS/PPS/SEI/AUD still
+        // flow immediately (parameter sets must land before the IDR).
+        if (!seen_idr_ && type == 1) {
+            ++stats_.nal_dropped_pre_idr;
+            return PushResult::Ok;
+        }
+
+        if (type == 1 || type == 5) {
             const auto pr = replayParametersIfNeeded();
             if (pr != PushResult::Ok)
                 return pr;

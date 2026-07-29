@@ -86,6 +86,22 @@ int main() {
     CHECK(dispatch.stats().pps_replayed >= 1);
     CHECK(dispatch.end() == ControlResult::Ok);
 
+    // Pre-IDR gate: non-IDR VCL is dropped until the first IDR; SPS/PPS still flow.
+    CopyRingBitstreamProducer preIdrRing(4096);
+    NalDispatcher preIdr(preIdrRing, cfg);
+    CHECK(preIdr.begin(21) == ControlResult::Ok);
+    CHECK(preIdr.handleNal(sps.data(), sps.size()) == PushResult::Ok);
+    CHECK(preIdr.handleNal(pps.data(), pps.size()) == PushResult::Ok);
+    CHECK(preIdr.handleNal(p.data(), p.size()) == PushResult::Ok); // drop
+    CHECK(preIdr.handleNal(p.data(), p.size()) == PushResult::Ok); // drop
+    CHECK(preIdr.stats().nal_dropped_pre_idr == 2);
+    CHECK(preIdrRing.status().nal_accepted == 2); // SPS+PPS only
+    CHECK(preIdr.handleNal(idr.data(), idr.size()) == PushResult::Ok);
+    CHECK(preIdr.handleNal(p.data(), p.size()) == PushResult::Ok); // allowed
+    CHECK(preIdrRing.status().nal_accepted == 4);
+    CHECK(preIdr.stats().nal_dropped_pre_idr == 2);
+    CHECK(preIdr.end() == ControlResult::Ok);
+
     // Full is transient and retried; persistent Full escalates distinctly.
     FlakyProducer flaky;
     NalDispatcher retry(flaky, cfg);
