@@ -96,7 +96,7 @@ else
 # Set this to your Plex Media Server, for example:
 # PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
-PRESENT=fb0
+PRESENT=fpga
 STREAM=0
 OSD_CONTROL=1
 MATCH_SOURCE_HZ=off
@@ -222,7 +222,7 @@ Plex.rbf locations (release / device)
 
 PRESENT / STREAM (conf)
 -----------------------
-  PRESENT=fb0|fpga|both     default fb0 (Phase 2 cast path)
+  PRESENT=fb0|fpga|both|none  default fpga (core HDMI idle/OSD; fb0 alone freezes idle)
   STREAM=0|1                annex-B → host I-recon F1 + F3 (STREAM hybrid 3.3k)
   Host recon owns present until FPGA 3.3l mae-competitive. See docs/release.md.
   Lab: bin/set_status --pattern grid --force-bars 1 --raw
