@@ -17,30 +17,6 @@ module h264_dequant4x4 (
 	input  wire [4:0]        max_coeff,
 	output wire signed [28:0] dequant [0:15]
 );
-	function automatic [4:0] zigzag;
-		input [4:0] k;
-		begin
-			case (k)
-			5'd0:  zigzag = 5'd0;
-			5'd1:  zigzag = 5'd1;
-			5'd2:  zigzag = 5'd4;
-			5'd3:  zigzag = 5'd8;
-			5'd4:  zigzag = 5'd5;
-			5'd5:  zigzag = 5'd2;
-			5'd6:  zigzag = 5'd3;
-			5'd7:  zigzag = 5'd6;
-			5'd8:  zigzag = 5'd9;
-			5'd9:  zigzag = 5'd12;
-			5'd10: zigzag = 5'd13;
-			5'd11: zigzag = 5'd10;
-			5'd12: zigzag = 5'd7;
-			5'd13: zigzag = 5'd11;
-			5'd14: zigzag = 5'd14;
-			default: zigzag = 5'd15;
-			endcase
-		end
-	endfunction
-
 	function automatic [4:0] norm_adjust;
 		input [2:0] qmod;
 		input [1:0] mi;
@@ -78,12 +54,43 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+	// qp is 0..51.  A general qp%6 / qp/6 becomes an lpm_divide; a 52-entry
+	// ROM is a handful of LUTs and keeps the scale free of multipliers and
+	// dividers.
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: qp_mod6 = 3'd0;
+			6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: qp_mod6 = 3'd1;
+			6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: qp_mod6 = 3'd2;
+			6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: qp_mod6 = 3'd3;
+			6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46:       qp_mod6 = 3'd4;
+			default:                                             qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd1,6'd2,6'd3,6'd4,6'd5:       qp_div6 = 4'd0;
+			6'd6,6'd7,6'd8,6'd9,6'd10,6'd11:     qp_div6 = 4'd1;
+			6'd12,6'd13,6'd14,6'd15,6'd16,6'd17: qp_div6 = 4'd2;
+			6'd18,6'd19,6'd20,6'd21,6'd22,6'd23: qp_div6 = 4'd3;
+			6'd24,6'd25,6'd26,6'd27,6'd28,6'd29: qp_div6 = 4'd4;
+			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: qp_div6 = 4'd5;
+			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: qp_div6 = 4'd6;
+			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: qp_div6 = 4'd7;
+			default:                             qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
 	// Explicit mux, not `v <<< qdiv`.  Quartus's automatic DSP replacement
 	// turns a variable-distance barrel shifter into a multiply by 1<<qdiv and
-	// packs it into a DSP block -- that, not the normAdjust product, is where
-	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
-	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
-	// a mux tree that the DSP inference engine has no pattern for.
+	// packs it into a DSP block.  qP <= 51 bounds qdiv to 0..8.
 	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
 		begin
 			case (q)
@@ -100,57 +107,42 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
-
-	function automatic signed [28:0] dequant_one;
-		input signed [15:0] c;
-		input [5:0] q;
-		input [4:0] scan;
-		input       skip_dc;
-		reg [4:0] z;
-		reg [1:0] mi;
-		reg [2:0] qmod;
-		reg [3:0] qdiv;
-		reg signed [31:0] v;
+	function automatic [4:0] scan_of_raster;
+		input [3:0] r;
 		begin
-			if (skip_dc)
-				z = zigzag(scan + 5'd1);
-			else
-				z = zigzag(scan);
-			if (((z[1:0] & 2'b01) + (z[3:2] & 2'b01)) == 2'd0)
-				mi = 2'd0;
-			else if (((z[1:0] & 2'b01) + (z[3:2] & 2'b01)) == 2'd1)
-				mi = 2'd1;
-			else
-				mi = 2'd2;
-			qmod = q % 6;
-			qdiv = q / 6;
-			// 8.5.12.1 with the flat weight matrix is (c * normAdjust) << qP/6
-			// for every qP, and every normAdjust value is a sum of at most
-			// three powers of two -- so this needs no multiplier at all.  The
-			// old `c * qmul` form cost two DSP blocks per coefficient, thirty
-			// two for the block, on a device that only has 112.
-			v = 32'(shl_qdiv(40'(mul_norm(32'($signed(c)), norm_adjust(qmod, mi))), qdiv));
-			dequant_one = v[28:0];
+			case (r)
+			4'd0:  scan_of_raster = 5'd0;  4'd1:  scan_of_raster = 5'd1;
+			4'd2:  scan_of_raster = 5'd5;  4'd3:  scan_of_raster = 5'd6;
+			4'd4:  scan_of_raster = 5'd2;  4'd5:  scan_of_raster = 5'd4;
+			4'd6:  scan_of_raster = 5'd7;  4'd7:  scan_of_raster = 5'd12;
+			4'd8:  scan_of_raster = 5'd3;  4'd9:  scan_of_raster = 5'd8;
+			4'd10: scan_of_raster = 5'd11; 4'd11: scan_of_raster = 5'd13;
+			4'd12: scan_of_raster = 5'd9;  4'd13: scan_of_raster = 5'd10;
+			4'd14: scan_of_raster = 5'd14; default: scan_of_raster = 5'd15;
+			endcase
 		end
 	endfunction
 
-	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
-	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
-	assign dequant[1]  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 29'sd0;
-	assign dequant[2]  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 29'sd0;
-	assign dequant[3]  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 29'sd0;
-	assign dequant[4]  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 29'sd0;
-	assign dequant[5]  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 29'sd0;
-	assign dequant[6]  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 29'sd0;
-	assign dequant[7]  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 29'sd0;
-	assign dequant[8]  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 29'sd0;
-	assign dequant[9]  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 29'sd0;
-	assign dequant[10] = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 29'sd0;
-	assign dequant[11] = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 29'sd0;
-	assign dequant[12] = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 29'sd0;
-	assign dequant[13] = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 29'sd0;
-	assign dequant[14] = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 29'sd0;
-	assign dequant[15] = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 29'sd0;
+	// Shared once: dequant_one() with q%6/q/6 was replicated 16x and each
+	// copy pulled its own divider.
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
+
+	genvar r;
+	generate
+		for (r = 0; r < 16; r = r + 1) begin : g_dq
+			localparam int RI = r;
+			// mi from odd raster coordinates (col LSB + row LSB)
+			localparam [1:0] MI = ((RI % 2) != 0 ? 2'd1 : 2'd0) +
+			                      (((RI / 4) % 2) != 0 ? 2'd1 : 2'd0);
+			wire [4:0] sk = scan_of_raster(RI[3:0]);
+			wire signed [15:0] c = (max_coeff > sk) ? coeff[sk[3:0]] : 16'sd0;
+			// 8.5.12.1 flat weight: (c * normAdjust) << (qP/6)
+			wire signed [31:0] base = mul_norm(32'($signed(c)), norm_adjust(qmod, MI));
+			wire signed [39:0] prod = shl_qdiv($signed({{8{base[31]}}, base}), qdiv);
+			assign dequant[r] = prod[28:0];
+		end
+	endgenerate
 endmodule
 
 module h264_idct4x4 (

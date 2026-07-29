@@ -196,6 +196,41 @@ module h264_luma_dc_hadamard_inv (
 	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
 	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
 	// a mux tree that the DSP inference engine has no pattern for.
+
+	// qp is 0..51.  A general qp%6 / qp/6 becomes an lpm_divide; a 52-entry
+	// ROM is a handful of LUTs and keeps the scale free of multipliers and
+	// dividers.
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: qp_mod6 = 3'd0;
+			6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: qp_mod6 = 3'd1;
+			6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: qp_mod6 = 3'd2;
+			6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: qp_mod6 = 3'd3;
+			6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46:       qp_mod6 = 3'd4;
+			default:                                             qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd1,6'd2,6'd3,6'd4,6'd5:       qp_div6 = 4'd0;
+			6'd6,6'd7,6'd8,6'd9,6'd10,6'd11:     qp_div6 = 4'd1;
+			6'd12,6'd13,6'd14,6'd15,6'd16,6'd17: qp_div6 = 4'd2;
+			6'd18,6'd19,6'd20,6'd21,6'd22,6'd23: qp_div6 = 4'd3;
+			6'd24,6'd25,6'd26,6'd27,6'd28,6'd29: qp_div6 = 4'd4;
+			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: qp_div6 = 4'd5;
+			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: qp_div6 = 4'd6;
+			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: qp_div6 = 4'd7;
+			default:                             qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
 	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
 		begin
 			case (q)
@@ -213,8 +248,8 @@ module h264_luma_dc_hadamard_inv (
 	endfunction
 
 	// LevelScale(qP%6,0,0) = 16 * normAdjust(qP%6,0)
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
 
 	// dcY = (f * LevelScale << (qP/6) + 32) >> 6 — identical to both 8.5.10
 	// branches.  LevelScale is 16 * normAdjust, so the >> 6 cancels four of
@@ -310,6 +345,41 @@ module h264_chroma_dc_hadamard_inv (
 	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
 	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
 	// a mux tree that the DSP inference engine has no pattern for.
+
+	// qp is 0..51.  A general qp%6 / qp/6 becomes an lpm_divide; a 52-entry
+	// ROM is a handful of LUTs and keeps the scale free of multipliers and
+	// dividers.
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: qp_mod6 = 3'd0;
+			6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: qp_mod6 = 3'd1;
+			6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: qp_mod6 = 3'd2;
+			6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: qp_mod6 = 3'd3;
+			6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46:       qp_mod6 = 3'd4;
+			default:                                             qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd1,6'd2,6'd3,6'd4,6'd5:       qp_div6 = 4'd0;
+			6'd6,6'd7,6'd8,6'd9,6'd10,6'd11:     qp_div6 = 4'd1;
+			6'd12,6'd13,6'd14,6'd15,6'd16,6'd17: qp_div6 = 4'd2;
+			6'd18,6'd19,6'd20,6'd21,6'd22,6'd23: qp_div6 = 4'd3;
+			6'd24,6'd25,6'd26,6'd27,6'd28,6'd29: qp_div6 = 4'd4;
+			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: qp_div6 = 4'd5;
+			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: qp_div6 = 4'd6;
+			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: qp_div6 = 4'd7;
+			default:                             qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
 	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
 		begin
 			case (q)
@@ -326,8 +396,8 @@ module h264_chroma_dc_hadamard_inv (
 		end
 	endfunction
 
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
 
 	// dcC = ((f * LevelScale(qP%6,0,0)) << (qP/6)) >> 5   (8.5.11.2)
 	// LevelScale is 16 * normAdjust, so >> 5 leaves a single >> 1.
@@ -437,6 +507,41 @@ module h264_dequant4x4_flex (
 	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
 	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
 	// a mux tree that the DSP inference engine has no pattern for.
+
+	// qp is 0..51.  A general qp%6 / qp/6 becomes an lpm_divide; a 52-entry
+	// ROM is a handful of LUTs and keeps the scale free of multipliers and
+	// dividers.
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: qp_mod6 = 3'd0;
+			6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: qp_mod6 = 3'd1;
+			6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: qp_mod6 = 3'd2;
+			6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: qp_mod6 = 3'd3;
+			6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46:       qp_mod6 = 3'd4;
+			default:                                             qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,6'd1,6'd2,6'd3,6'd4,6'd5:       qp_div6 = 4'd0;
+			6'd6,6'd7,6'd8,6'd9,6'd10,6'd11:     qp_div6 = 4'd1;
+			6'd12,6'd13,6'd14,6'd15,6'd16,6'd17: qp_div6 = 4'd2;
+			6'd18,6'd19,6'd20,6'd21,6'd22,6'd23: qp_div6 = 4'd3;
+			6'd24,6'd25,6'd26,6'd27,6'd28,6'd29: qp_div6 = 4'd4;
+			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: qp_div6 = 4'd5;
+			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: qp_div6 = 4'd6;
+			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: qp_div6 = 4'd7;
+			default:                             qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
 	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
 		begin
 			case (q)
@@ -453,8 +558,8 @@ module h264_dequant4x4_flex (
 		end
 	endfunction
 
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
 
 	genvar r;
 	generate
