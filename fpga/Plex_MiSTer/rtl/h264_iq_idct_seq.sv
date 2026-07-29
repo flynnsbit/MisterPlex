@@ -1,11 +1,17 @@
 // h264_iq_idct_seq — sequential 4x4 inverse scale + inverse transform.
 //
-// Bit-exact replacement for h264_dequant4x4_flex + h264_idct4x4 (~21 cycles).
+// Bit-exact replacement for h264_dequant4x4_flex + h264_idct4x4.
 // LevelScale MUST match flex / FFmpeg 8.5.12.1 exactly (not the collapsed form):
 //   d = ((c * na * 16) << (qdiv + 2) + 32) >> 6
 // Do NOT simplify to (c*na)<<qdiv in RTL comments or code — three prior copies
 // each drifted independently.  DSP trap: never `v <<< qdiv` or qp%/qp/; use
 // qp_mod6/qp_div6 LUTs + mul_norm + 48-bit shl_amt mux (amt = qdiv+2, 0..10).
+//
+// LATENCY CONTRACT (not combinational — consumers MUST wait on done):
+//   start pulse → ~21 cycles → done=1 for one cycle; residual[] held stable
+//   from done until next start.  Caller must hold coeff/qp/max/skip/dc stable
+//   start→done.  decode_top uses ST_XFORM + xform_done handshake (not same-cycle).
+//   If this cycle count changes, update this header and every waiter bench.
 `default_nettype none
 
 module h264_iq_idct_seq (
