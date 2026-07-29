@@ -149,6 +149,7 @@ module slice_hdr_parser (
 		FULL_DONE  = 3'd3,
 		FULL_FAIL  = 3'd4;
 	reg [2:0] full_st;
+	reg        blk0_csum_ready; // sticky: block0 coeffs ready for residual_csum
 	reg full_res_start;
 	reg [3:0] full_block_idx;
 	reg [9:0] full_bit_off;
@@ -460,7 +461,8 @@ module slice_hdr_parser (
 		ST_RPCV        = 6'd38, // redundant_pic_cnt
 		ST_RPLMF       = 6'd39, // ref_pic_list_modification_flag_l0
 		ST_RPLMI       = 6'd40, // modification_of_pic_nums_idc
-		ST_RPLMV       = 6'd41; // abs_diff_pic_num_minus1 / long_term_pic_num
+		ST_RPLMV       = 6'd41, // abs_diff_pic_num_minus1 / long_term_pic_num
+		ST_WAIT_RES    = 6'd42; // I_NxN: csum from shared CAVLC block0
 
 	// The store lookup has to be live while ST_PPS is consuming the id, so it
 	// comes straight off ue_val for that one cycle.
@@ -590,6 +592,7 @@ module slice_hdr_parser (
 		full_res_start <= 1'b0;
 		first_luma4x4_blocks_valid <= 1'b0;
 		if (reset || cap_clear) begin
+			blk0_csum_ready <= 1'b0;
 			full_st <= FULL_IDLE;
 			full_block_idx <= 4'd0;
 			full_bit_off <= 10'd0;
@@ -608,6 +611,7 @@ module slice_hdr_parser (
 					full_bit_off <= full_start_bit;
 					first_luma4x4_blocks_present <= 1'b0;
 					first_luma4x4_blocks_done <= 1'b0;
+					blk0_csum_ready <= 1'b0;
 					for (ci = 0; ci < 16; ci = ci + 1)
 						full_tc[ci] <= 5'd0;
 					full_st <= FULL_START;
@@ -622,6 +626,7 @@ module slice_hdr_parser (
 						first_luma4x4_block_coeff[ci] <= 16'sd0;
 					first_luma4x4_blocks_valid <= 1'b1;
 					first_luma4x4_blocks_present <= 1'b1;
+					if (full_block_idx == 4'd0) blk0_csum_ready <= 1'b1;
 					if (full_block_idx == 4'd15) begin
 						first_luma4x4_blocks_done <= 1'b1;
 						full_st <= FULL_DONE;
@@ -646,6 +651,7 @@ module slice_hdr_parser (
 							first_luma4x4_block_coeff[ci] <= full_res_coeff[ci];
 						first_luma4x4_blocks_valid <= 1'b1;
 						first_luma4x4_blocks_present <= 1'b1;
+						if (full_block_idx == 4'd0) blk0_csum_ready <= 1'b1;
 						if (full_block_idx == 4'd15) begin
 							first_luma4x4_blocks_done <= 1'b1;
 							full_st <= FULL_DONE;
@@ -1123,22 +1129,80 @@ module slice_hdr_parser (
 				cbp_me <= ue_val[5:0];
 				full_luma_cbp <= cbp_intra_luma_map(ue_val[5:0]);
 				if (ue_val == 16'd3) begin
-					// cbp=0: no residual (shouldn't happen on real first MB)
-					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
+					// cbp=0: no residual levels
+					residual_ok <= 1'b1;
+					residual_dc <= 0;
+					residual_csum <= 0;
+					residual_place_pulse <= 1'b1;
+					residual_place_ok <= 1'b1;
+					residual_place_tc <= 5'd0;
+					residual_place_t1 <= 2'd0;
+					residual_place_dc <= 0;
+					residual_place_qp <= slice_qp;
+					st <= ST_DONE;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
 				end
 			end
 			ST_MBQP: begin
-				// se(mb_qp_delta) consumed; start coeff_token nC=0
+				// se(mb_qp_delta) consumed.
+				// I_NxN: one shared CAVLC engine streams all 16 blocks — do NOT
+				// also run the inline ST_TOK..ST_PLACE path (was a full second
+				// parser on the same residual, ~3k ALUTs of pure duplicate).
+				// I_16x16 DC: still uses the compact inline token path (single
+				// 4x4 DC block, nC=0) until the shared engine grows a DC mode.
 				if (first_mb_type == 8'd0) begin
 					full_start_req <= 1'b1;
 					full_start_bit <= cur_bit_offset();
+					st <= ST_WAIT_RES;
+				end else begin
+					tcode <= 0;
+					tbits <= 0;
+					st <= ST_TOK_BIT;
 				end
-				tcode <= 0;
-				tbits <= 0;
-				st <= ST_TOK_BIT;
 			end
+			ST_WAIT_RES: begin
+				// I_NxN: shared engine owns residual parse; fold csum from sticky block0.
+				residual_place_pulse <= 1'b0;
+				if (blk0_csum_ready) begin
+					begin : wait_place0
+						reg [7:0] cs;
+						integer j;
+						cs = 8'd0;
+						for (j = 0; j < 16; j = j + 1) begin
+							residual_coeff[j] <= first_luma4x4_block_coeff[j];
+							residual_place_coeff[j] <= first_luma4x4_block_coeff[j];
+							cs = cs ^ sat8(first_luma4x4_block_coeff[j]);
+						end
+						residual_dc <= sat8(first_luma4x4_block_coeff[0]);
+						residual_place_dc <= sat8(first_luma4x4_block_coeff[0]);
+						residual_csum <= cs;
+						place_csum_r <= cs;
+						place_dc_r <= sat8(first_luma4x4_block_coeff[0]);
+						csum_acc <= cs;
+					end
+					residual_ok <= 1'b1;
+					residual_tc <= 5'd16;
+					residual_t1 <= 2'd0;
+					residual_place_ok <= 1'b1;
+					residual_place_tc <= 5'd16;
+					residual_place_t1 <= 2'd0;
+					residual_place_qp <= slice_qp;
+					residual_place_pulse <= 1'b1;
+					place_did <= 1'b1;
+					st <= ST_DONE;
+				end else if (first_luma4x4_blocks_done && !first_luma4x4_blocks_present) begin
+					residual_ok <= 1'b1;
+					residual_dc <= 0;
+					residual_csum <= 0;
+					residual_place_pulse <= 1'b1;
+					residual_place_ok <= 1'b1;
+					residual_place_tc <= 5'd0;
+					residual_place_qp <= slice_qp;
+					st <= ST_DONE;
+				end
+			end
+
 			ST_TOK_BIT: begin
 				if (oob) st <= ST_FAIL;
 				else begin

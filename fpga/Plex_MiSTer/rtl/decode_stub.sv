@@ -159,23 +159,17 @@ module decode_stub #(
 		end
 	endgenerate
 
-	h264_dequant4x4 u_h264_dequant4x4 (
-		.coeff(lat_coeff),
-		.qp(lat_qp),
-		.max_coeff(5'd16),
-		.dequant(idct_dequant)
-	);
-
-	h264_idct4x4 u_h264_idct4x4 (
-		.dequant(idct_dequant),
-		.residual(idct_residual)
-	);
-
-	h264_recon4x4 u_h264_recon4x4 (
-		.pred(idct_pred),
-		.residual(idct_residual),
-		.recon(recon_px)
-	);
+	// Diagnostic paint only.  Product dequant/IDCT lives in decode_core;
+	// a second parallel 16-wide transform here cost ~6k ALUTs after the
+	// DSP→shift/add rewrite and is not needed for F3 paint.
+	genvar zi;
+	generate
+		for (zi = 0; zi < 16; zi = zi + 1) begin : g_diag_pred_only
+			assign idct_dequant[zi] = 29'sd0;
+			assign idct_residual[zi] = 29'sd0;
+			assign recon_px[zi] = idct_pred[zi];
+		end
+	endgenerate
 
 	// P3 inter-prediction product diagnostic: keep the motion/interpolation RTL
 	// instantiated in the shipped bitstream and paint a visible pass/fail tile.
