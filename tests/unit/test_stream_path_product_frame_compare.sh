@@ -41,7 +41,8 @@ PRODUCT_RTL=(
   h264_iq_idct_4x4.sv h264_iq_idct_seq.sv h264_mc_block.sv h264_mc_luma_qpel.sv
   h264_mc_chroma_epel.sv h264_transform_dc.sv h264_inter_pred.sv h264_pskip_mv.sv
   h264_inter_part.sv h264_intra_pred.sv h264_intra_nb_ctx.sv h264_deblock.sv
-  h264_deblock_mb.sv h264_dpb.sv h264_decode_top.sv h264_decode_core.sv h264_perf_counters.sv
+  h264_deblock_mb.sv h264_dpb.sv h264_dpb_ddr.sv h264_dpb_ddr_wr.sv h264_dpb_ddr_rd.sv
+  h264_dpb_bram_ref.sv h264_decode_top.sv h264_decode_core.sv h264_perf_counters.sv
   decode_stub.sv
 )
 
@@ -89,10 +90,13 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --planes "$GOLDEN_ON" --manifest "$GOLDEN_ON_MANIFEST" \
   --expected-h264-loop-filter enabled
 
+# PRODUCT_FORCE_DEBLOCK_OFF: primary IDR gate is vs undeblocked golden (8285481).
+# Without it, bitstream idc=0 runs real deblock and scores only vs ON golden.
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
+  -DPRODUCT_FORCE_DEBLOCK_OFF \
   "$TOP" "${RTL_ARGS[@]}" "$TB"
 
 PRODUCT_I420="$OUT_DIR/product_candidate.i420"
