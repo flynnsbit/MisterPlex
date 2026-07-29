@@ -118,6 +118,9 @@ module h264_i_mb_feed #(
 	reg [1:0]  cbp_c_r;
 	reg [7:0]  mb_type_r;
 	reg        is_i16_r;
+	// Quartus rejects part-select on function call results — latch temps first.
+	reg [5:0]  cbp_tmp6;
+	reg signed [5:0] se_tmp6;
 	reg [5:0]  blk_guard;
 	reg [15:0] guard;
 	reg        win_armed;
@@ -390,10 +393,11 @@ module h264_i_mb_feed #(
 				i4_modes_present <= first_i4_modes_present;
 				if ((first_mb_type >= 8'd1) && (first_mb_type <= 8'd24)) begin
 					intra16x16_mode <= (first_mb_type - 8'd1) & 2'd3;
-					cbp_l_r <= i16_cbp_from_type(first_mb_type)[3:0];
-					cbp_c_r <= i16_cbp_from_type(first_mb_type)[5:4];
-					cbp_luma <= i16_cbp_from_type(first_mb_type)[3:0];
-					cbp_chroma <= i16_cbp_from_type(first_mb_type)[5:4];
+					cbp_tmp6 = i16_cbp_from_type(first_mb_type);
+					cbp_l_r <= cbp_tmp6[3:0];
+					cbp_c_r <= cbp_tmp6[5:4];
+					cbp_luma <= cbp_tmp6[3:0];
+					cbp_chroma <= cbp_tmp6[5:4];
 				end else begin
 					intra16x16_mode <= 2'd2;
 					cbp_l_r <= first_cbp_luma;
@@ -653,8 +657,9 @@ module h264_i_mb_feed #(
 					end else begin
 						is_i16_r <= 1'b1;
 						intra16x16_mode <= (ue_val[7:0] - 8'd1) & 2'd3;
-						cbp_l_r <= i16_cbp_from_type(ue_val[7:0])[3:0];
-						cbp_c_r <= i16_cbp_from_type(ue_val[7:0])[5:4];
+						cbp_tmp6 = i16_cbp_from_type(ue_val[7:0]);
+						cbp_l_r <= cbp_tmp6[3:0];
+						cbp_c_r <= cbp_tmp6[5:4];
 						i4_modes_present <= 1'b0;
 						// chroma pred ue
 						ue_zeros <= 8'd0;
@@ -728,11 +733,12 @@ module h264_i_mb_feed #(
 						error <= 1'b1;
 						st <= ST_FAIL;
 					end else begin
-						cbp_l_r <= cbp_intra_map(ue_val[5:0])[3:0];
-						cbp_c_r <= cbp_intra_map(ue_val[5:0])[5:4];
-						cbp_luma <= cbp_intra_map(ue_val[5:0])[3:0];
-						cbp_chroma <= cbp_intra_map(ue_val[5:0])[5:4];
-						if (cbp_intra_map(ue_val[5:0]) != 6'd0) begin
+						cbp_tmp6 = cbp_intra_map(ue_val[5:0]);
+						cbp_l_r <= cbp_tmp6[3:0];
+						cbp_c_r <= cbp_tmp6[5:4];
+						cbp_luma <= cbp_tmp6[3:0];
+						cbp_chroma <= cbp_tmp6[5:4];
+						if (cbp_tmp6 != 6'd0) begin
 							ue_zeros <= 8'd0;
 							ret_st <= 8'd5;
 							st <= ST_SYN_UE0;
@@ -751,11 +757,12 @@ module h264_i_mb_feed #(
 				end
 				// 5: mb_qp_delta
 				8'd5: begin
-					mb_qp_delta <= se6_from_ue(ue_val);
+					se_tmp6 = se6_from_ue(ue_val);
+					mb_qp_delta <= se_tmp6;
 					// QPy = (QPyprev + mb_qp_delta + 52) % 52
 					begin : qp_upd
 						reg signed [8:0] qn;
-						qn = $signed({1'b0, qp_r}) + $signed({{3{se6_from_ue(ue_val)[5]}}, se6_from_ue(ue_val)});
+						qn = $signed({1'b0, qp_r}) + $signed({{3{se_tmp6[5]}}, se_tmp6});
 						if (qn < 0)
 							qn = qn + 9'sd52;
 						else if (qn >= 9'sd52)
