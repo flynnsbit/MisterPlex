@@ -1239,3 +1239,35 @@ introduced by this audit). Earlier attempts: override env polluted
 Verilator recursive makes (`0 modules`) — use skip-preflight.mk not MAKEFLAGS.
 **Not a green gate; not a product-silicon verdict.** Parent baseline 70/`rc=0`
 not re-established this hour.
+
+## Hour-29 — F12/OSD dead on live user box (2026-07-29)
+
+**User:** “F12 doesn't work on the mister.” Product pin `41adb98c` + daemon
+`06c5735a` in active use. Read-only investigation — full write-up:
+[`docs/f12-osd-investigation-20260729.md`](f12-osd-investigation-20260729.md).
+
+### Pre-reg vs actual
+
+| Pre-reg primary | Actual |
+|-----------------|--------|
+| ~55% parent `PRESENT=fb0` regression | **FALSIFIED as live sole cause** — conf now `PRESENT=fpga`; daemon SIGSTOP no help; Main jiffies unchanged with plexd stopped |
+
+### What held
+
+- **CONF_STR live OK** (`set_status --confstr` full v6) — not a missing-menu core gap.
+- **G-OSD2-class instrument FAIL:** held uinput F12 PNGs still **3-color logo** (no OSD chrome). Same class historically PASSed G-OSD2.
+- **`/tmp/OSD_VISIBLE` VACUOUS** without `log_file_entry` (was misread as “OSD closed”).
+- **`volume 0..7` cmd DEAD** while `screenshot` ALIVE → partial Main dysfunction.
+- **Closest prior:** **G-OSD6** wedged Main — fix was **reboot**, zero RTL.
+
+### Parent fb0 change (adversarial)
+
+**Not the live root cause** of F12 dead right now. Possible residual: fb0 hour left Main wedged until reboot — **untested without reboot clearance**.
+
+### User try-list
+
+1. Reboot MiSTer. 2. F12 on Plex before cast. 3. Fn+F12 / other K400. 4. Volume bar? 5. Report if F12 worked earlier today under fpga present.
+
+### Open (needs clearance)
+
+Reboot A/B; optional post-reboot F12 before misterplexd; optional `log_file_entry=1` for real OSD_VISIBLE oracle. **No core reload required** if same RBF.
