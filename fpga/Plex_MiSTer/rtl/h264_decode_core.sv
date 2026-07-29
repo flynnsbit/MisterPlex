@@ -1612,6 +1612,10 @@ module h264_decode_core #(
             end
             ST_P16_RES_STORE: begin
                 // One IDCT sample per cycle into residual M10K.
+                // Finish by clearing res_store_i so the next block's first
+                // STORE cycle sees 0 (NBA from WAIT alone is one cycle late,
+                // which previously left res_store_i==15 and stored only one
+                // sample per subsequent 4x4 before advancing).
                 if (res_is_luma_ac && !p16_drop_this_luma_residual) begin
                     lat_res_we <= 1'b1;
                     lat_res_wplane <= 2'd0;
@@ -1623,10 +1627,12 @@ module h264_decode_core #(
                     lat_res_waddr <= {2'b0, res_store_chroma_addr};
                     lat_res_wdata <= res_store_sample;
                 end
-                if (res_store_i == 4'd15)
+                if (res_store_i == 4'd15) begin
+                    res_store_i <= 4'd0;
                     res_step_advance();
-                else
+                end else begin
                     res_store_i <= res_store_i + 4'd1;
+                end
             end
             ST_P16_RES_ZERO: begin
                 if (res_is_luma_ac) begin
@@ -1640,10 +1646,12 @@ module h264_decode_core #(
                     lat_res_waddr <= {2'b0, res_store_chroma_addr};
                     lat_res_wdata <= 16'sd0;
                 end
-                if (res_store_i == 4'd15)
+                if (res_store_i == 4'd15) begin
+                    res_store_i <= 4'd0;
                     res_step_advance();
-                else
+                end else begin
                     res_store_i <= res_store_i + 4'd1;
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
