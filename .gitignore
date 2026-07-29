@@ -28,6 +28,7 @@ __pycache__/
 captures/
 releases/
 remote_out/
+artifacts/local/
 
 # Versioned release payloads are intentionally tracked so release packages are
 # reproducible from a fresh clone and cannot pick up stale local bitstreams.

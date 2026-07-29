@@ -8,7 +8,7 @@
     "source_summary": "HEVC /library/metadata/3 re-encoded to H.264 Constrained Baseline 624x480; bounded native-I420 slice decoded with loop filter disabled"
   },
   "source": {
-    "path": "build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264",
+    "path": "artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264",
     "sha256": "41f2769189bdceb3c30315bf557e44e01d016d48c3eca8507ceb6eed51919e04"
   },
   "slice": {
@@ -19,7 +19,7 @@
   "decoder": {
     "ffmpeg_version": "ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
     "loop_filter": "disabled",
-    "command": "ffmpeg -hide_banner -loglevel error -nostdin -skip_loop_filter all -i build/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264 -map 0:v:0 -pix_fmt yuv420p -f rawvideo pipe:1",
+    "command": "ffmpeg -hide_banner -loglevel error -nostdin -skip_loop_filter all -i artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264 -map 0:v:0 -pix_fmt yuv420p -f rawvideo pipe:1",
     "pixel_format": "yuv420p"
   },
   "geometry": {
