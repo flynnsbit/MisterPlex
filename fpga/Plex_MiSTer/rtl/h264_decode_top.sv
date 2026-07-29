@@ -84,6 +84,12 @@ module h264_decode_top (
     // combinational h264_dequant4x4_flex + h264_idct4x4 pair, which cost
     // ~4.5k ALUTs and 16 DSP blocks to finish in one cycle work that this
     // block-serial walk only issues once every ~30 cycles.
+    // Hadamard DC plane is raster {y4,x4}; block_index is H.264 blkIdx
+    // (x={b[2],b[0]}, y={b[3],b[1]}).  Wrong map → flat-looking wrong brightness.
+    wire [1:0] pipe_x4 = {pipe_block_idx[2], pipe_block_idx[0]};
+    wire [1:0] pipe_y4 = {pipe_block_idx[3], pipe_block_idx[1]};
+    wire [3:0] pipe_dc_raster = {pipe_y4, pipe_x4};
+
     h264_iq_idct_seq u_iqidct (
         .clk(clk),
         .reset(reset),
@@ -93,7 +99,7 @@ module h264_decode_top (
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
-        .dc_value(latched_i16_dc[pipe_block_idx]),
+        .dc_value(latched_i16_dc[pipe_dc_raster]),
         .residual(idct_out),
         .done(xform_done)
     );
