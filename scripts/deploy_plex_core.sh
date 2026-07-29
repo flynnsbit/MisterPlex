@@ -271,12 +271,15 @@ exit 4
 REMOTE
     rc=$?
     set -e
-    if [ "$rc" = "3" ]; then
+    # rc=3: MENU never appeared (Main wedged). rc=4: MENU ok but Plex never —
+    # both leave the FPGA off Plex; soft-reboot recovery is the supported path.
+    if [ "$rc" = "3" ] || [ "$rc" = "4" ]; then
       if [ "$DEPLOY_RECOVER" = "reboot" ]; then
+        echo "DEPLOY_RECOVER=reboot after menu-bounce rc=$rc" >&2
         recover_by_reboot
       else
-        echo "DEPLOY_FAIL: Main wedged; DEPLOY_RECOVER=$DEPLOY_RECOVER so no recovery attempted." >&2
-        exit 3
+        echo "DEPLOY_FAIL: menu-bounce rc=$rc; DEPLOY_RECOVER=$DEPLOY_RECOVER so no recovery attempted." >&2
+        exit "$rc"
       fi
     elif [ "$rc" != "0" ]; then
       exit "$rc"
