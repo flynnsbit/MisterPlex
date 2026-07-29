@@ -46,6 +46,8 @@ module stream_path #(
 	output wire [15:0] fifo_level,
 	output wire        stream_ddr_active,
 	output wire [31:0] stream_ddr_bytes_out,
+	// ARM mailbox word (layout in h264_perf_counters.sv). Tie 0 until counters re-wired.
+	output wire [63:0] decode_perf_word,
 	output wire [15:0] stream_ddr_underruns,
 	output wire [15:0] stream_ddr_overruns,
 	output wire [31:0] stream_ddr_host_write,
@@ -798,5 +800,8 @@ module stream_path #(
 	             core_rbsp_overflow | |core_rbsp_window_base |
 	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |core_decode_state | |core_current_mb_addr | core_error;
+
+
+	assign decode_perf_word = 64'd0;
 
 endmodule
