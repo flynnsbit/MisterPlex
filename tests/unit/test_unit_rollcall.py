@@ -133,6 +133,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
     "$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh",
     "$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh",
+    "$(ROOT)/tests/unit/test_h264_mc_qpel_verilator.sh",
     "$(ROOT)/tests/unit/test_level_width_verilator.sh",
     "$(ROOT)/tests/unit/test_stream_path_recon_integration.sh",
     "$(ROOT)/tests/unit/test_stream_path_real_intra_rtl_sim.sh",
