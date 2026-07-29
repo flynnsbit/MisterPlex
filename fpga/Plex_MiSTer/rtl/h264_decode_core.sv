@@ -477,6 +477,7 @@ module h264_decode_core #(
     reg signed [15:0] lat_res_q;
     reg [3:0]  res_store_i;
     reg [7:0]  p16_pred_q;
+    reg signed [15:0] p16_res_q; // M10K residual capture (same +1 pipeline as pred_q)
     reg        p16_pred_in_part_q;
     // The reference windows are no longer staged in registers here.  They
     // stream straight into the MC engines' internal window RAMs, because 603
@@ -655,10 +656,13 @@ module h264_decode_core #(
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
     wire p16_launch_skip = p16_zero_mv_valid ? 1'b1 :
                            (p16_take_pend ? p16_syn_skip : mb_skip);
-    wire signed [15:0] p16_launch_mv_x = p16_zero_mv_valid ? mv_x_qpel :
-                           (p16_take_pend ? p16_syn_mv_x : syntax_mv_x);
-    wire signed [15:0] p16_launch_mv_y = p16_zero_mv_valid ? mv_y_qpel :
-                           (p16_take_pend ? p16_syn_mv_y : syntax_mv_y);
+    // Always form MV from LIVE neighbour state + feed MVD/skip. Pend holds the
+    // feed in YIELD (busy includes p16_syn_pend), so mvd_* still describe the
+    // pending MB when take_pend fires — and ST_IDLE means prior MB has already
+    // committed (or invalidated) left/top. Latched p16_syn_mv_* were computed
+    // at pulse time before that commit and are stale after intra-in-P.
+    wire signed [15:0] p16_launch_mv_x = p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
+    wire signed [15:0] p16_launch_mv_y = p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
     wire [1:0] p16_launch_ref = p16_zero_mv_valid ? 2'd0 :
                            (p16_take_pend ? p16_syn_ref : eff_ref_idx_l0);
     wire [3:0] p16_launch_cbp_l = p16_launch_skip ? 4'd0 :
@@ -947,7 +951,7 @@ module h264_decode_core #(
 
     // Registered M10K read data (address driven one cycle earlier in PRIME/WRITE).
     wire [7:0] wb_data = lat_recon_q;
-    wire signed [15:0] p16_residual_sample = lat_res_q;
+    wire signed [15:0] p16_residual_sample = p16_res_q;
     // Skip / fully-uncoded MB: do not depend on residual RAM contents.
     wire p16_residual_all_zero =
         (p16_cbp_luma_r == 4'd0) && (p16_cbp_chroma_r == 2'd0);
@@ -1788,6 +1792,7 @@ module h264_decode_core #(
             lat_res_we <= 1'b0;
             res_store_i <= 4'd0;
             p16_pred_q <= 8'd0;
+            p16_res_q <= 16'sd0;
             p16_pred_in_part_q <= 1'b0;
             p16_pred_in_part_d1 <= 1'b0;
             p16_mc_rd_plane_d1 <= 2'd0;
@@ -2223,16 +2228,18 @@ module h264_decode_core #(
                 wb_state <= ST_P16_WRITE_HOLD;
             end
             ST_P16_WRITE_HOLD: begin
-                // res_q ← residual0; pred M10K → sample0 into pred_q.
-                // Prefetch residual1; MC addr already 1 (see p16_mc_rd_flat).
+                // Capture residual0/pred0 that PRIME addressed. Prefetch idx1.
+                // Must NOT consume lat_res_q combinationally on WRITE0 — the
+                // raddr=1 NBA would make WRITE0 see residual1 (pred/res skew).
                 lat_res_rplane <= 2'd0;
                 lat_res_raddr <= 8'd1;
+                p16_res_q <= lat_res_q;
                 p16_pred_q <= p16_pred_sample_async;
                 p16_pred_in_part_q <= p16_pred_in_part;
                 wb_state <= ST_P16_WRITE;
             end
             ST_P16_WRITE: begin
-                // q holds residual[wb_idx]; pred_q holds pred[wb_idx].
+                // p16_res_q/pred_q hold sample[wb_idx]; fire recon this cycle.
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
                     wb_state <= ST_DEBLOCK;
@@ -2240,7 +2247,8 @@ module h264_decode_core #(
                     wb_idx <= wb_idx_n;
                     lat_res_rplane <= wb_plane_nn;
                     lat_res_raddr <= wb_sample_idx_nn;
-                    // Capture pred[wb_idx_n] (addr was idx_n during prior beat).
+                    // Capture sample[wb_idx_n] (addr driven prior beat).
+                    p16_res_q <= lat_res_q;
                     p16_pred_q <= p16_pred_sample_async;
                     p16_pred_in_part_q <= p16_pred_in_part;
                 end
@@ -2294,6 +2302,18 @@ module h264_decode_core #(
                         mv_left_y <= p16_mv_y_qpel_r;
                         mv_left_ref <= p16_ref_idx_l0_r;
                         mv_left_valid <= 1'b1;
+                    end else if (wb_mb_is_intra) begin
+                        // Intra neighbours are unavailable for MVP (H.264 8.4.1.3).
+                        // Leaving stale P MVs here poisons P_Skip/median after
+                        // every intra-in-P — the dominant residual-P error class.
+                        mv_top_valid[wb_mb_idx] <= 1'b0;
+                        mv_top_x[wb_mb_idx] <= 16'sd0;
+                        mv_top_y[wb_mb_idx] <= 16'sd0;
+                        mv_top_ref[wb_mb_idx] <= 2'd0;
+                        mv_left_valid <= 1'b0;
+                        mv_left_x <= 16'sd0;
+                        mv_left_y <= 16'sd0;
+                        mv_left_ref <= 2'd0;
                     end
                 end
                 wb_state <= (wb_mb_is_ref && wb_last_mb) ? ST_FRAME_BOUNDARY : ST_IDLE;

@@ -251,7 +251,7 @@ static bool run_luma(Vh264_mc_qpel_tb_top& dut, int fx, int fy, uint8_t out[16 *
     tick(dut);
     for (int i = 0; i < 256; ++i) {
         dut.luma_pred_rd_idx = static_cast<uint8_t>(i);
-        dut.eval(); // async read
+        tick(dut); // M10K sync read: data valid next cycle
         out[i] = static_cast<uint8_t>(dut.luma_pred_rd_data);
     }
     return true;
@@ -275,7 +275,7 @@ static bool run_chroma(Vh264_mc_qpel_tb_top& dut, int fx, int fy, uint8_t ou[8 *
     tick(dut);
     for (int i = 0; i < 64; ++i) {
         dut.chroma_pred_rd_idx = static_cast<uint8_t>(i);
-        dut.eval();
+        tick(dut); // M10K sync read
         ou[i] = static_cast<uint8_t>(dut.chroma_pred_u_rd_data);
         ov[i] = static_cast<uint8_t>(dut.chroma_pred_v_rd_data);
     }
