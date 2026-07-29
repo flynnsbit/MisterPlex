@@ -139,6 +139,8 @@ struct RunResult {
     bool desync = false;
     bool desyncEarly = false;
     bool desyncLong = false;
+    uint8_t desyncCause = 0;
+    uint16_t desyncMb = 0;
     int requests = 0;
 };
 
@@ -166,6 +168,8 @@ RunResult runSlice(Sim& s, int maxCycles = 20000) {
             r.desync = s.top.slice_desync;
             r.desyncEarly = s.top.slice_desync_early;
             r.desyncLong = s.top.slice_desync_long;
+            r.desyncCause = static_cast<uint8_t>(s.top.slice_desync_cause);
+            r.desyncMb = static_cast<uint16_t>(s.top.slice_desync_mb);
             // Drain a few cycles so sticky flags settle.
             for (int k = 0; k < 4; ++k)
                 s.tick();
@@ -174,6 +178,8 @@ RunResult runSlice(Sim& s, int maxCycles = 20000) {
             r.desync = s.top.slice_desync || r.desync;
             r.desyncEarly = s.top.slice_desync_early || r.desyncEarly;
             r.desyncLong = s.top.slice_desync_long || r.desyncLong;
+            r.desyncCause = static_cast<uint8_t>(s.top.slice_desync_cause);
+            r.desyncMb = static_cast<uint16_t>(s.top.slice_desync_mb);
             return r;
         }
         s.tick();
@@ -304,9 +310,13 @@ void checkDesyncLongOverrun() {
     auto r = runSlice(s);
     expect(r.desync || r.error, "overrun: sticky desync/error");
     expect(r.desyncLong || r.error, "overrun: desync_long");
+    expect(r.desyncCause == 3 || r.desyncCause == 2,
+           "overrun: cause skip_overrun/long got=" + std::to_string(r.desyncCause));
+    expect(r.desyncMb == 4, "overrun: mb sticky at PicSizeInMbs got=" + std::to_string(r.desyncMb));
     expect(r.pulses.size() == 4, "overrun: only PicSizeInMbs pulses got=" + std::to_string(r.pulses.size()));
     std::cout << "OK case skip_run overrun desync_long: pulses=" << r.pulses.size()
-              << " desync_long=" << r.desyncLong << "\n";
+              << " desync_long=" << r.desyncLong << " cause=" << int(r.desyncCause)
+              << " mb=" << r.desyncMb << "\n";
 }
 
 void checkDesyncEarlyShort() {
@@ -325,8 +335,11 @@ void checkDesyncEarlyShort() {
     auto r = runSlice(s);
     expect(r.desync, "early: sticky desync");
     expect(r.desyncEarly, "early: desync_early");
+    expect(r.desyncCause == 1, "early: cause=early got=" + std::to_string(r.desyncCause));
+    expect(r.desyncMb == 1, "early: mb sticky after 1 skip got=" + std::to_string(r.desyncMb));
     expect(r.pulses.size() == 1, "early: only 1 MB got=" + std::to_string(r.pulses.size()));
-    std::cout << "OK case early EOS desync_early: pulses=" << r.pulses.size() << "\n";
+    std::cout << "OK case early EOS desync_early: pulses=" << r.pulses.size()
+              << " cause=" << int(r.desyncCause) << " mb=" << r.desyncMb << "\n";
 }
 
 // Header-path style: mb_skip_run==0 means first_mb_p_skip=0 and first coded MB is loaded.

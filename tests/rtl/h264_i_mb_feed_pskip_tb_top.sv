@@ -38,7 +38,9 @@ module h264_i_mb_feed_pskip_tb_top (
 	output wire        error,
 	output wire        slice_desync,
 	output wire        slice_desync_early,
-	output wire        slice_desync_long
+	output wire        slice_desync_long,
+	output wire [3:0]  slice_desync_cause,
+	output wire [15:0] slice_desync_mb
 );
 	wire signed [15:0] first_mvd_x [0:15];
 	wire signed [15:0] first_mvd_y [0:15];
@@ -130,7 +132,9 @@ module h264_i_mb_feed_pskip_tb_top (
 		.error(error),
 		.slice_desync(slice_desync),
 		.slice_desync_early(slice_desync_early),
-		.slice_desync_long(slice_desync_long)
+		.slice_desync_long(slice_desync_long),
+		.slice_desync_cause(slice_desync_cause),
+		.slice_desync_mb(slice_desync_mb)
 	);
 endmodule
 

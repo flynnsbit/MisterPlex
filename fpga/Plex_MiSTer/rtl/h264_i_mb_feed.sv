@@ -115,7 +115,13 @@ module h264_i_mb_feed #(
 	// Sticky PARSE desync: early = more_rbsp false before PicSizeInMbs;
 	// long = data remains after PicSizeInMbs or walker past expected end.
 	output reg         slice_desync_early,
-	output reg         slice_desync_long
+	output reg         slice_desync_long,
+	// First-fault sticky cause + MB address (WHERE it broke). Hold until
+	// slice_go/reset clear. Cause codes (status_telem / host ABI):
+	//   0 none  1 early  2 long/trail  3 skip_run overrun
+	//   4 cavlc/coeff_token  5 rbsp overrun  6 syntax range
+	output reg  [3:0]  slice_desync_cause,
+	output reg  [15:0] slice_desync_mb
 );
 
 	localparam [5:0]
@@ -150,6 +156,15 @@ module h264_i_mb_feed #(
 	localparam [4:0] STEP_CHR_DC_V  = 5'd17;
 	localparam [4:0] STEP_CHR_AC0   = 5'd18;
 	localparam [4:0] STEP_END       = 5'd26;
+
+	// First-fault PARSE desync cause (latched until slice_go/reset).
+	localparam [3:0] DSC_NONE         = 4'd0;
+	localparam [3:0] DSC_EARLY        = 4'd1;
+	localparam [3:0] DSC_LONG         = 4'd2;
+	localparam [3:0] DSC_SKIP_OVERRUN = 4'd3;
+	localparam [3:0] DSC_CAVLC        = 4'd4;
+	localparam [3:0] DSC_RBSP_OVERRUN = 4'd5;
+	localparam [3:0] DSC_SYNTAX       = 4'd6;
 
 	// ret_st codes for syntax dispatch
 	// 0  mb_type (I or P)
@@ -652,6 +667,24 @@ module h264_i_mb_feed #(
 		end
 	endtask
 
+	// First-fault sticky latch (does not overwrite a prior cause this slice).
+	task automatic latch_desync;
+		input        early_i;
+		input        long_i;
+		input [3:0]  cause_i;
+		begin
+			slice_desync <= 1'b1;
+			if (early_i)
+				slice_desync_early <= 1'b1;
+			if (long_i)
+				slice_desync_long <= 1'b1;
+			if (slice_desync_cause == DSC_NONE) begin
+				slice_desync_cause <= cause_i;
+				slice_desync_mb <= mb_addr;
+			end
+		end
+	endtask
+
 	// ── Main FSM ────────────────────────────────────────────────────────
 	always @(posedge clk) begin
 		mb_type_valid <= 1'b0;
@@ -686,6 +719,8 @@ module h264_i_mb_feed #(
 			slice_desync <= 1'b0;
 			slice_desync_early <= 1'b0;
 			slice_desync_long <= 1'b0;
+			slice_desync_cause <= DSC_NONE;
+			slice_desync_mb <= 16'd0;
 			chroma_residual_valid <= 1'b0;
 			for (ci = 0; ci < 64; ci = ci + 1) begin
 				chroma_residual_u[ci] <= 16'sd0;
@@ -749,6 +784,8 @@ module h264_i_mb_feed #(
 					slice_desync <= 1'b0;
 					slice_desync_early <= 1'b0;
 					slice_desync_long <= 1'b0;
+					slice_desync_cause <= DSC_NONE;
+					slice_desync_mb <= 16'd0;
 					guard <= 16'd0;
 					st <= ST_MB0_LOAD;
 				end
@@ -890,8 +927,8 @@ module h264_i_mb_feed #(
 					st <= ST_P_AFTER_MB;
 				end else if (mb_addr >= mb_total) begin
 					// Skip run walked past PicSizeInMbs.
-					slice_desync <= 1'b1;
-					slice_desync_long <= 1'b1;
+					latch_desync(1'b0, 1'b1, DSC_SKIP_OVERRUN);
+					error <= 1'b1;
 					st <= ST_FAIL;
 				end else begin
 					mb_skip_r <= 1'b1;
@@ -1065,6 +1102,13 @@ module h264_i_mb_feed #(
 			ST_RES_WAIT: begin
 				if (cav_done) begin
 					if (!cav_ok) begin
+						// Illegal coeff_token / total_coeff / CAVLC range.
+						latch_desync(1'b0, 1'b0, DSC_CAVLC);
+						error <= 1'b1;
+						st <= ST_FAIL;
+					end else if ((win_bit_base + {6'd0, cav_bit_end}) > rbsp_bits) begin
+						// Residual walk ran past RBSP end.
+						latch_desync(1'b0, 1'b1, DSC_RBSP_OVERRUN);
 						error <= 1'b1;
 						st <= ST_FAIL;
 					end else begin
@@ -1190,15 +1234,12 @@ module h264_i_mb_feed #(
 					// wait one edge
 				end else if (!more_rbsp_w) begin
 					// Clean EOS if skip-run spanned to picture end; else early.
-					if (mb_addr < mb_total) begin
-						slice_desync <= 1'b1;
-						slice_desync_early <= 1'b1;
-					end
+					if (mb_addr < mb_total)
+						latch_desync(1'b1, 1'b0, DSC_EARLY);
 					st <= ST_EOS_CHECK;
 				end else if (mb_addr >= mb_total) begin
 					// Still data (or would parse more) after PicSizeInMbs.
-					slice_desync <= 1'b1;
-					slice_desync_long <= 1'b1;
+					latch_desync(1'b0, 1'b1, DSC_LONG);
 					st <= ST_EOS_CHECK;
 				end else begin
 					// Parse next mb_skip_run (0 is legal → coded MB follows)
@@ -1209,19 +1250,17 @@ module h264_i_mb_feed #(
 			end
 
 			ST_EOS_CHECK: begin
-				// Cross-check PicSizeInMbs vs bitstream end.
-				if (mb_addr < mb_total) begin
-					slice_desync <= 1'b1;
-					slice_desync_early <= 1'b1;
-				end else if (mb_addr > mb_total) begin
-					slice_desync <= 1'b1;
-					slice_desync_long <= 1'b1;
+				// Cross-check PicSizeInMbs vs bitstream end / trailing bits.
+				// more_rbsp_w false ⇒ only rbsp_trailing_bits (or empty) remain —
+				// the best e2e byte-align sync check available without a second pass.
+				if (mb_addr < mb_total)
+					latch_desync(1'b1, 1'b0, DSC_EARLY);
+				else if (mb_addr > mb_total) begin
+					latch_desync(1'b0, 1'b1, DSC_SKIP_OVERRUN);
 					error <= 1'b1;
-				end else if (more_rbsp_w) begin
+				end else if (more_rbsp_w)
 					// Full pic decoded but trailing non-RBSP-trailing bits remain.
-					slice_desync <= 1'b1;
-					slice_desync_long <= 1'b1;
-				end
+					latch_desync(1'b0, 1'b1, DSC_LONG);
 				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
 				rbsp_request_valid <= 1'b1;
 				st <= ST_DONE;
@@ -1251,10 +1290,15 @@ module h264_i_mb_feed #(
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
+				end else if (abs_bit >= rbsp_bits) begin
+					latch_desync(1'b0, 1'b1, DSC_RBSP_OVERRUN);
+					error <= 1'b1;
+					st <= ST_FAIL;
 				end else if (!rd_bit) begin
 					ue_zeros <= ue_zeros + 8'd1;
 					abs_bit <= abs_bit + 16'd1;
 					if (ue_zeros >= 8'd28) begin
+						latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 						error <= 1'b1;
 						st <= ST_FAIL;
 					end
@@ -1316,8 +1360,10 @@ module h264_i_mb_feed #(
 						feed_luma_r <= 1'b1;
 						inter_res_only_r <= 1'b0;
 						if (ue_val > 32'd25) begin
+							latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 							error <= 1'b1; st <= ST_FAIL;
 						end else if (ue_val == 32'd25) begin
+							latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 							error <= 1'b1; st <= ST_FAIL; // I_PCM
 						end else if (ue_val == 32'd0) begin
 							is_i16_r <= 1'b0;
@@ -1374,6 +1420,7 @@ module h264_i_mb_feed #(
 								bit_left <= 8'd1; bit_acc <= 32'd0;
 								ret_st <= 8'd1; st <= ST_SYN_BIT;
 							end else if (ue_val == 32'd30) begin
+								latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 								error <= 1'b1; st <= ST_FAIL; // I_PCM
 							end else begin
 								is_i16_r <= 1'b1;
@@ -1384,6 +1431,7 @@ module h264_i_mb_feed #(
 								ue_zeros <= 8'd0; ret_st <= 8'd3; st <= ST_SYN_UE0;
 							end
 						end else begin
+							latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 							error <= 1'b1; st <= ST_FAIL;
 						end
 					end
@@ -1436,6 +1484,7 @@ module h264_i_mb_feed #(
 				// 4: cbp
 				8'd4: begin
 					if (ue_val >= 32'd48) begin
+						latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 						error <= 1'b1; st <= ST_FAIL;
 					end else begin
 						if (use_inter_cbp) begin
@@ -1507,6 +1556,7 @@ module h264_i_mb_feed #(
 				// 7: sub_mb_type
 				8'd7: begin
 					if (ue_val > 32'd3) begin
+						latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 						error <= 1'b1; st <= ST_FAIL;
 					end else begin
 						sub_mb_types_r[pred_blk[1:0] * 2 +: 2] <= ue_val[1:0];
@@ -1587,6 +1637,7 @@ module h264_i_mb_feed #(
 					ret_st <= 8'd9; st <= ST_SYN_DISPATCH;
 				end
 				default: begin
+					latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 					error <= 1'b1;
 					st <= ST_FAIL;
 				end
@@ -1600,6 +1651,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_FAIL: begin
+				// Ensure a sticky cause even if a path raised error without latch.
+				if (slice_desync_cause == DSC_NONE)
+					latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 				error <= 1'b1;
 				if (slice_go)
 					st <= ST_IDLE;

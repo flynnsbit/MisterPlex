@@ -262,7 +262,13 @@ public:
         uint8_t recon_sig = 0;
         // raw[15]/status[127:120] = P3-3l2 silicon RCA flags. Bits [2:1] may be
         // altered by the Aspect Ratio OSD splice; use the other bits only.
+        // Sticky PARSE desync overlay: bit0=early, bit1=long, [7:4]=cause.
         uint8_t recon_dbg = 0;
+        bool slice_desync = false;
+        bool slice_desync_early = false;
+        bool slice_desync_long = false;
+        uint8_t slice_desync_cause = 0;
+        uint16_t slice_desync_mb = 0; // valid when slice_desync (dual-use sps slots)
         bool ddr_busy = false;      // status_in[79] (v2) — DDR→BRAM copy in flight
         bool swap_pending = false;  // status_in[78] — display bank flip waiting for vsync
         uint8_t stub_frames = 0; // legacy alias

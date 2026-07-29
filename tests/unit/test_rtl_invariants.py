@@ -1186,11 +1186,32 @@ def check_status_telemetry() -> None:
         "That leaves residual_dc at raw[12] but makes raw[13] the byte-counter low byte, "
         "exactly the +file_size%256 failure signature.",
     )
+    # Rank2 mask forces sticky residual/recon; dbg may be st_recon_dbg_telem so
+    # sticky PARSE desync (early/long/cause) is visible to ARM without inventing
+    # a new DDR mailbox. Residual half must still come from st_res_word_sticky.
     check(
-        "status_telem_masked={st_recon_dbg_sticky,st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}" in nt,
-        "Plex.sv residual/recon mask no longer structurally forces {recon_dbg, recon_sig, csum, dc}. "
+        (
+            "status_telem_masked={st_recon_dbg_sticky,st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}"
+            in nt
+            or "status_telem_masked={st_recon_dbg_telem,st_recon_sig_sticky,st_res_word_sticky[15:8],st_res_word_sticky[7:0],status_telem_r[95:0]}"
+            in nt
+        ),
+        "Plex.sv residual/recon mask no longer structurally forces {recon_dbg|telem, recon_sig, csum, dc}. "
         "This mask prevents residual_csum/recon_sig from aliasing live stream bytes; restore it or "
         "add an equivalent guarded pack with a simulation proof.",
+    )
+    check(
+        "st_desync_cause_sticky" in plex and "st_desync_mb_sticky" in plex,
+        "Plex.sv missing sticky PARSE desync cause/mb mailbox latch "
+        "(st_desync_cause_sticky / st_desync_mb_sticky).",
+    )
+    check(
+        "kDesyncCauseCavlc" in status_h and "kDesyncMbLoByte" in status_h,
+        "status_telemetry.hpp missing PARSE desync sticky ABI constants.",
+    )
+    check(
+        "slice_desync_cause" in fpga_spi and "slice_desync_mb" in fpga_spi,
+        "parseCoreStatus must decode sticky PARSE desync cause/mb for ARM.",
     )
     check(
         "raw[kResidualCsumByte]" in fpga_spi
