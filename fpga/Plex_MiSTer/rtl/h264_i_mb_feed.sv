@@ -58,9 +58,11 @@ module h264_i_mb_feed #(
 	// Bit offset after first skip_run (P_Skip) or at first residual (coded MB).
 	input  wire [15:0] first_residual_bit_offset,
 
-	// RBSP window (combinational read; request moves the base).
+	// RBSP window (MULTI-CYCLE; see h264_rbsp_window CONTRACT).
+	// Sample rbsp_byte only when rbsp_window_ready && base covers abs_bit.
 	input  wire [7:0]  rbsp_byte [0:63],
 	input  wire [15:0] rbsp_window_base,
+	input  wire        rbsp_window_ready,
 	output reg  [15:0] rbsp_request_offset,
 	output reg         rbsp_request_valid,
 	input  wire [15:0] rbsp_length,
@@ -148,6 +150,7 @@ module h264_i_mb_feed #(
 		ST_P_SKIP_EMIT  = 6'd20,
 		ST_P_AFTER_MB   = 6'd21,
 		ST_P_SKIP_RUN   = 6'd22,
+		ST_P_AFTER_SKIP_ARM = 6'd25,
 		ST_EOS_CHECK    = 6'd23,
 		ST_EOS_ARM      = 6'd24;
 
@@ -202,6 +205,9 @@ module h264_i_mb_feed #(
 	reg [5:0]  blk_guard;
 	reg [15:0] guard;
 	reg        win_armed;
+	// Offset last requested; ARM waits until window_ready at this base.
+	reg [15:0] win_req_off;
+	wire       win_ok = rbsp_window_ready && (rbsp_window_base == win_req_off);
 	reg [15:0] skip_left;
 	reg        after_skip_run_r; // 1: skip-run just finished → next is coded MB
 	reg [2:0]  part_mode_r;
@@ -791,6 +797,7 @@ module h264_i_mb_feed #(
 			blk_guard <= 6'd0;
 			guard <= 16'd0;
 			win_armed <= 1'b0;
+			win_req_off <= 16'd0;
 			skip_left <= 16'd0;
 			after_skip_run_r <= 1'b0;
 			tc_left_valid <= 1'b0;
@@ -1085,6 +1092,7 @@ module h264_i_mb_feed #(
 			// ── Residual walk (luma feed and/or bit-sync) ─────────────
 			ST_RES_REQ: begin
 				rbsp_request_offset <= abs_bit[18:3];
+				win_req_off <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
 				// I_16x16 always has a luma DC residual block before AC/chroma.
@@ -1113,13 +1121,25 @@ module h264_i_mb_feed #(
 			end
 
 			ST_RES_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed)
+				// Wait for multi-cycle window ready at requested base.
+				if (win_ok) begin
+					win_armed <= 1'b1;
 					st <= ST_RES_START;
+				end else begin
+					win_armed <= 1'b0;
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
+				end
 			end
 
 			ST_RES_START: begin
-				if (res_step >= STEP_END) begin
+				// Refuse to sample bits until the multi-cycle window is ready.
+				if (!win_ok) begin
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
+					win_armed <= 1'b0;
+					st <= ST_RES_ARM;
+				end else if (res_step >= STEP_END) begin
 					// tc_cur is indexed by H.264 blkIdx (0..15), not {by,bx}.
 					// Right edge → next MB left: (bx=3,by=y); bottom → top: (bx=x,by=3).
 					tc_left_valid <= 1'b1;
@@ -1154,6 +1174,7 @@ module h264_i_mb_feed #(
 					// Intra16x16 luma DC: one max16 block, nC of 4x4 blk0.
 					if (rel_bit16 >= 16'd400) begin
 						rbsp_request_offset <= abs_bit[18:3];
+						win_req_off <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_RES_ARM;
@@ -1210,6 +1231,7 @@ module h264_i_mb_feed #(
 				end else begin
 					if (rel_bit16 >= 16'd400) begin
 						rbsp_request_offset <= abs_bit[18:3];
+						win_req_off <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_RES_ARM;
@@ -1372,19 +1394,20 @@ module h264_i_mb_feed #(
 					end else if (mb_addr >= mb_total) begin
 						st <= ST_EOS_CHECK;
 					end else if (after_skip_run_r) begin
-						// Skip-run just finished (or skip_run==0): one coded MB next.
+						// Skip-run just finished (or skip_run==0): one coded MB
+						// next only if more_rbsp_data (7.3.4). Else early EOS.
 						after_skip_run_r <= 1'b0;
 						rbsp_request_offset <= abs_bit[18:3];
+						win_req_off <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
-						// arm then mb_type (ret_st=0)
-						st <= ST_SYN_REQ;
-						ret_st <= 8'd0;
+						st <= ST_P_AFTER_SKIP_ARM;
 						mb_skip_r <= 1'b0;
 						mb_skip <= 1'b0;
 					end else begin
 						// After coded MB: next iteration starts with mb_skip_run.
 						rbsp_request_offset <= abs_bit[18:3];
+						win_req_off <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_P_SKIP_RUN;
@@ -1393,11 +1416,13 @@ module h264_i_mb_feed #(
 			end
 
 			ST_P_SKIP_RUN: begin
-				// Need window armed for more_rbsp_w + ue parse
-				win_armed <= 1'b1;
-				if (!win_armed) begin
-					// wait one edge
+				// Need window ready for more_rbsp_w + ue parse
+				if (!win_ok) begin
+					win_armed <= 1'b0;
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
 				end else if (!more_rbsp_w) begin
+					win_armed <= 1'b1;
 					// Clean EOS if skip-run spanned to picture end; else early.
 					if (mb_addr < mb_total)
 						latch_desync(1'b1, 1'b0, DSC_EARLY);
@@ -1414,19 +1439,45 @@ module h264_i_mb_feed #(
 				end
 			end
 
+			// After a skip-run batch: arm window, then coded MB or early EOS.
+			ST_P_AFTER_SKIP_ARM: begin
+				if (!win_ok) begin
+					win_armed <= 1'b0;
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
+				end else if (!more_rbsp_w) begin
+					if (mb_addr < mb_total)
+						latch_desync(1'b1, 1'b0, DSC_EARLY);
+					st <= ST_EOS_CHECK;
+				end else if (mb_addr >= mb_total) begin
+					latch_desync(1'b0, 1'b1, DSC_LONG);
+					st <= ST_EOS_CHECK;
+				end else begin
+					win_armed <= 1'b1;
+					ue_zeros <= 8'd0;
+					ret_st <= 8'd0; // mb_type
+					st <= ST_SYN_UE0;
+				end
+			end
+
 			ST_EOS_CHECK: begin
 				// Must present the window at abs_bit before sampling more_rbsp_w;
 				// otherwise a stale window can false-trigger DSC_LONG after a
 				// clean full-pic walk (seen at mb_addr==PicSizeInMbs).
 				rbsp_request_offset <= abs_bit[18:3];
+				win_req_off <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
 				st <= ST_EOS_ARM;
 			end
 
 			ST_EOS_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed) begin
+				if (!win_ok) begin
+					win_armed <= 1'b0;
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
+				end else begin
+					win_armed <= 1'b1;
 					// Cross-check PicSizeInMbs vs bitstream end / trailing bits.
 					// more_rbsp_w false ⇒ only rbsp_trailing_bits (or empty) remain.
 					// Also accept more_left<=8 at exact PicSizeInMbs: stop_one_bit +
@@ -1451,14 +1502,19 @@ module h264_i_mb_feed #(
 			// ── Syntax bit reader ─────────────────────────────────────
 			ST_SYN_REQ: begin
 				rbsp_request_offset <= abs_bit[18:3];
+				win_req_off <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
 				st <= ST_SYN_ARM;
 			end
 
 			ST_SYN_ARM: begin
-				win_armed <= 1'b1;
-				if (win_armed) begin
+				if (!win_ok) begin
+					win_armed <= 1'b0;
+					rbsp_request_offset <= win_req_off;
+					rbsp_request_valid <= 1'b1;
+				end else begin
+					win_armed <= 1'b1;
 					// Preserve ret_st — callers set it (mb_type=0, skip_run=6, …)
 					// and window realign from ST_SYN_UE0/BIT must not clobber it.
 					ue_zeros <= 8'd0;
@@ -1467,8 +1523,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_SYN_UE0: begin
-				if (rel_bit16 >= 16'd500) begin
+				if (!win_ok || (rel_bit16 >= 16'd500)) begin
 					rbsp_request_offset <= abs_bit[18:3];
+					win_req_off <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
@@ -1498,8 +1555,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_SYN_UE1: begin
-				if (rel_bit16 >= 16'd500) begin
+				if (!win_ok || (rel_bit16 >= 16'd500)) begin
 					rbsp_request_offset <= abs_bit[18:3];
+					win_req_off <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
@@ -1515,8 +1573,9 @@ module h264_i_mb_feed #(
 			end
 
 			ST_SYN_BIT: begin
-				if (rel_bit16 >= 16'd500) begin
+				if (!win_ok || (rel_bit16 >= 16'd500)) begin
 					rbsp_request_offset <= abs_bit[18:3];
+					win_req_off <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;

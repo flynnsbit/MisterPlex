@@ -43,10 +43,11 @@ module h264_decode_core #(
     input  wire signed [4:0] pps_chroma_qp_index_offset, // se(), range [-12,+12]
 
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
-    // The CAVLC residual block decoder needs random-access to RBSP bits.
-    // This interface provides a window of RBSP bytes around the current position.
+    // MULTI-CYCLE window (see h264_rbsp_window CONTRACT).  Do not sample
+    // rbsp_byte until rbsp_window_ready and window_base covers residual bits.
     input  wire [7:0]  rbsp_byte [0:63],     // 64-byte window of RBSP data
     input  wire [15:0] rbsp_window_base,     // byte offset of rbsp_byte[0] in stream
+    input  wire        rbsp_window_ready,    // registered shadow valid for window_base
     output wire [15:0] rbsp_request_offset,  // request: advance window to this offset
     output wire        rbsp_request_valid,
 
@@ -348,6 +349,11 @@ module h264_decode_core #(
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
+    // Sticky residual window request: mb_type_valid is a 1-cycle pulse while
+    // feed still owns the RBSP mux; keep requesting until window_ready at the
+    // residual byte so multi-cycle refill can complete after ST_YIELD.
+    reg        rbsp_res_pending_r;
+    reg [15:0] rbsp_res_pending_off_r;
     reg signed [15:0] mv_top_x [0:MB_W-1];
     reg signed [15:0] mv_top_y [0:MB_W-1];
     reg [1:0]  mv_top_ref [0:MB_W-1];
@@ -431,12 +437,25 @@ module h264_decode_core #(
                                 (mb_skip || (part_mode == 3'd0) || (mb_type == 5'd0));
     wire syntax_ppart_candidate = syntax_inter_candidate && !mb_skip &&
                                   (part_mode >= 3'd1) && (part_mode <= 3'd3);
-    wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
+    // Latched inter launch intent (mb_type_valid is 1-cycle; YIELD follows).
+    reg        inter_launch_pend_r;
+    reg        inter_launch_is_ppart_r;
+    reg        inter_launch_is_skip_r;
+    // Skip has no residual bits — may launch without window. Coded needs ready.
+    wire syntax_p16_launch = inter_launch_pend_r && !inter_launch_is_ppart_r &&
+                             (wb_state == ST_IDLE) &&
+                             (inter_launch_is_skip_r || residual_window_ok);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
     wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
+    // Multi-cycle window must be ready at residual byte before launch/CAVLC.
+    // Prefer sticky pending offset (survives post-pulse YIELD); fall back to live.
+    wire [15:0] residual_req_byte =
+        rbsp_res_pending_r ? rbsp_res_pending_off_r : syntax_request_byte_offset;
+    wire        residual_window_ok =
+        rbsp_window_ready && (rbsp_window_base == residual_req_byte);
 
     // Geometric presence (for P_Skip forced-zero) vs ref-matched avail (median).
     wire syntax_present_left = (syntax_mb_x != 8'd0) && mv_left_valid;
@@ -576,7 +595,8 @@ module h264_decode_core #(
     // Slot order: 16x8/8x16 use 0 then 1; P8x8 walks only slots whose
     // sub_mb_type covers them (geometry reports invalid for empty slots).
     wire [3:0] part_slot_limit = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
-    wire ppart_launch = syntax_ppart_candidate && (wb_state == ST_IDLE);
+    wire ppart_launch = inter_launch_pend_r && inter_launch_is_ppart_r &&
+                        (wb_state == ST_IDLE) && residual_window_ok;
 
     wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
     wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
@@ -1331,6 +1351,11 @@ module h264_decode_core #(
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
+            rbsp_res_pending_r <= 1'b0;
+            rbsp_res_pending_off_r <= 16'd0;
+            inter_launch_pend_r <= 1'b0;
+            inter_launch_is_ppart_r <= 1'b0;
+            inter_launch_is_skip_r <= 1'b0;
             mv_left_x <= 16'sd0;
             mv_left_y <= 16'sd0;
             mv_left_ref <= 2'd0;
@@ -1366,15 +1391,29 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
+            // Capture inter launch + residual window intent on the mb_type pulse.
             if (syntax_p16_candidate || syntax_ppart_candidate) begin
+                inter_launch_pend_r <= 1'b1;
+                inter_launch_is_ppart_r <= syntax_ppart_candidate;
+                inter_launch_is_skip_r <= mb_skip;
+                if (!mb_skip) begin
+                    rbsp_res_pending_r <= 1'b1;
+                    rbsp_res_pending_off_r <= syntax_request_byte_offset;
+                end
+            end
+            // Keep requesting residual window until ready (survives feed YIELD).
+            if (rbsp_res_pending_r) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
-                rbsp_request_offset_r <= syntax_request_byte_offset + 16'd1;
+                rbsp_request_offset_r <= rbsp_res_pending_off_r + 16'd1;
 `else
-                rbsp_request_offset_r <= syntax_request_byte_offset;
+                rbsp_request_offset_r <= rbsp_res_pending_off_r;
 `endif
             end
-            if (mb_type_valid)
+            // Bump MB addr on pulse for non-pending-inter paths. Inter p16/ppart
+            // delay the bump until launch so syntax_mb_x/y stay valid while the
+            // multi-cycle residual window refills after feed YIELD.
+            if (mb_type_valid && !(syntax_p16_candidate || syntax_ppart_candidate))
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
             if (product_intra_mb_start) begin
                 intra_active_r <= 1'b1;
@@ -1388,6 +1427,9 @@ module h264_decode_core #(
             case (wb_state)
             ST_IDLE: begin
                 if (ppart_launch) begin
+                    inter_launch_pend_r <= 1'b0;
+                    rbsp_res_pending_r <= 1'b0;
+                    syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
                     wb_mb_x <= syntax_mb_x;
                     wb_mb_y <= syntax_mb_y;
                     wb_mb_is_ref <= 1'b1;
@@ -1420,6 +1462,11 @@ module h264_decode_core #(
                     // Decode residual once for the whole MB, then walk partitions.
                     wb_state <= ST_P16_RES_START;
                 end else if (p16_launch) begin
+                    if (syntax_p16_launch) begin
+                        inter_launch_pend_r <= 1'b0;
+                        rbsp_res_pending_r <= 1'b0;
+                        syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+                    end
                     wb_mb_x <= p16_launch_mb_x;
                     wb_mb_y <= p16_launch_mb_y;
                     wb_mb_is_ref <= p16_launch_is_ref;
@@ -1490,7 +1537,11 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_START: begin
-                if (res_block_coded) begin
+                // Re-arm window if it moved / not ready before starting CAVLC.
+                if (res_block_coded && !rbsp_window_ready) begin
+                    rbsp_request_valid_r <= 1'b1;
+                    rbsp_request_offset_r <= residual_req_byte;
+                end else if (res_block_coded) begin
                     cavlc_start_r <= 1'b1;
                     wb_state <= ST_P16_RES_WAIT;
                 end else begin
@@ -1779,7 +1830,9 @@ module h264_decode_core #(
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
     assign intra_blocks_done = product_intra_blocks_done;
-    assign busy = (wb_state != ST_IDLE) || intra_active_r;
+    // Hold busy while waiting for residual window after mb_type pulse so feed
+    // does not walk the next MB before this one launches.
+    assign busy = (wb_state != ST_IDLE) || intra_active_r || inter_launch_pend_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     wire _keep_part_syn = |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
@@ -1790,7 +1843,7 @@ module h264_decode_core #(
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
-        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
+        |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base | rbsp_window_ready |
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |

@@ -82,6 +82,7 @@ module h264_decode_core_wb_tb #(
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(rbsp_byte),
 		.rbsp_window_base(16'd0),
+		.rbsp_window_ready(1'b1),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(1'b0),
