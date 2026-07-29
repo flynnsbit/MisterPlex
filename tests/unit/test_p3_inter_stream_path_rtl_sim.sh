@@ -56,6 +56,7 @@ PRODUCT_RTL=(
   h264_dpb_ddr.sv
   h264_decode_top.sv
   h264_decode_core.sv
+  mb_sample_ram.sv
   decode_stub.sv
 )
 

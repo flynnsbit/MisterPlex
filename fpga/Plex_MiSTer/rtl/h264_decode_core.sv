@@ -417,32 +417,67 @@ module h264_decode_core #(
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        wb_commit_p16;
-    // MB working buffers in M10K — NOT flip-flops.
-    // The previous full-MB parallel latch (256+64+64 bytes + 16-bit residual
-    // plane written in one cycle, then read with a runtime index) burned the
-    // 5,988 ALMs of decode_core "own" logic. Single write port + registered
-    // read address is the M10K template; walks take cycles we have in the
-    // 712-cycle macroblock budget.
-    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_y [0:255];
-    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_u [0:63];
-    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_v [0:63];
-    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_y [0:255];
-    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_u [0:63];
-    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_v [0:63];
+    // MB working buffers as discrete M10K instances (not FF planes).
+    // Case-muxed multi-array always blocks OOMed quartus_map; one module
+    // per plane matches line_buf_ram and maps cleanly.
     reg        lat_recon_we;
     reg [1:0]  lat_recon_wplane;
     reg [7:0]  lat_recon_waddr;
     reg [7:0]  lat_recon_wdata;
     reg [1:0]  lat_recon_rplane;
     reg [7:0]  lat_recon_raddr;
-    reg [7:0]  lat_recon_q;
+    wire [7:0] lat_recon_y_q;
+    wire [7:0] lat_recon_u_q;
+    wire [7:0] lat_recon_v_q;
+    // rplane is registered one cycle before use (same as raddr).
+    reg  [1:0] lat_recon_rplane_q;
+    reg  [1:0] lat_res_rplane_q;
+    wire [7:0] lat_recon_q = (lat_recon_rplane_q == 2'd0) ? lat_recon_y_q :
+                             (lat_recon_rplane_q == 2'd1) ? lat_recon_u_q :
+                                                           lat_recon_v_q;
     reg        lat_res_we;
     reg [1:0]  lat_res_wplane;
     reg [7:0]  lat_res_waddr;
     reg signed [15:0] lat_res_wdata;
     reg [1:0]  lat_res_rplane;
     reg [7:0]  lat_res_raddr;
-    reg signed [15:0] lat_res_q;
+    wire [15:0] lat_res_y_q;
+    wire [15:0] lat_res_u_q;
+    wire [15:0] lat_res_v_q;
+    wire signed [15:0] lat_res_q = (lat_res_rplane_q == 2'd0) ? $signed(lat_res_y_q) :
+                                   (lat_res_rplane_q == 2'd1) ? $signed(lat_res_u_q) :
+                                                               $signed(lat_res_v_q);
+    wire lat_recon_we_y = lat_recon_we && (lat_recon_wplane == 2'd0);
+    wire lat_recon_we_u = lat_recon_we && (lat_recon_wplane == 2'd1);
+    wire lat_recon_we_v = lat_recon_we && (lat_recon_wplane >= 2'd2);
+    wire lat_res_we_y = lat_res_we && (lat_res_wplane == 2'd0);
+    wire lat_res_we_u = lat_res_we && (lat_res_wplane == 2'd1);
+    wire lat_res_we_v = lat_res_we && (lat_res_wplane >= 2'd2);
+
+    mb_sample_ram #(.DEPTH(256), .AW(8), .DATA_W(8)) u_lat_recon_y (
+        .clk(clk), .we(lat_recon_we_y), .waddr(lat_recon_waddr), .wdata(lat_recon_wdata),
+        .raddr(lat_recon_raddr), .rdata(lat_recon_y_q)
+    );
+    mb_sample_ram #(.DEPTH(64), .AW(6), .DATA_W(8)) u_lat_recon_u (
+        .clk(clk), .we(lat_recon_we_u), .waddr(lat_recon_waddr[5:0]), .wdata(lat_recon_wdata),
+        .raddr(lat_recon_raddr[5:0]), .rdata(lat_recon_u_q)
+    );
+    mb_sample_ram #(.DEPTH(64), .AW(6), .DATA_W(8)) u_lat_recon_v (
+        .clk(clk), .we(lat_recon_we_v), .waddr(lat_recon_waddr[5:0]), .wdata(lat_recon_wdata),
+        .raddr(lat_recon_raddr[5:0]), .rdata(lat_recon_v_q)
+    );
+    mb_sample_ram #(.DEPTH(256), .AW(8), .DATA_W(16)) u_lat_res_y (
+        .clk(clk), .we(lat_res_we_y), .waddr(lat_res_waddr), .wdata(lat_res_wdata[15:0]),
+        .raddr(lat_res_raddr), .rdata(lat_res_y_q)
+    );
+    mb_sample_ram #(.DEPTH(64), .AW(6), .DATA_W(16)) u_lat_res_u (
+        .clk(clk), .we(lat_res_we_u), .waddr(lat_res_waddr[5:0]), .wdata(lat_res_wdata[15:0]),
+        .raddr(lat_res_raddr[5:0]), .rdata(lat_res_u_q)
+    );
+    mb_sample_ram #(.DEPTH(64), .AW(6), .DATA_W(16)) u_lat_res_v (
+        .clk(clk), .we(lat_res_we_v), .waddr(lat_res_waddr[5:0]), .wdata(lat_res_wdata[15:0]),
+        .raddr(lat_res_raddr[5:0]), .rdata(lat_res_v_q)
+    );
     reg [3:0]  res_store_i;
     reg [7:0]  p16_pred_q;
     reg        p16_pred_in_part_q;
@@ -936,33 +971,10 @@ module h264_decode_core #(
 `endif
     wire signed [17:0] p16_recon_sum = p16_pred_term + p16_residual_term;
 
-    // M10K port side: single write + registered read per plane family.
+    // Align plane select with registered RAM read data (1-cycle raddr latency).
     always @(posedge clk) begin
-        if (lat_recon_we) begin
-            case (lat_recon_wplane)
-            2'd0: lat_recon_y[lat_recon_waddr] <= lat_recon_wdata;
-            2'd1: lat_recon_u[lat_recon_waddr[5:0]] <= lat_recon_wdata;
-            default: lat_recon_v[lat_recon_waddr[5:0]] <= lat_recon_wdata;
-            endcase
-        end
-        case (lat_recon_rplane)
-        2'd0: lat_recon_q <= lat_recon_y[lat_recon_raddr];
-        2'd1: lat_recon_q <= lat_recon_u[lat_recon_raddr[5:0]];
-        default: lat_recon_q <= lat_recon_v[lat_recon_raddr[5:0]];
-        endcase
-
-        if (lat_res_we) begin
-            case (lat_res_wplane)
-            2'd0: lat_p16_residual_y[lat_res_waddr] <= lat_res_wdata;
-            2'd1: lat_p16_residual_u[lat_res_waddr[5:0]] <= lat_res_wdata;
-            default: lat_p16_residual_v[lat_res_waddr[5:0]] <= lat_res_wdata;
-            endcase
-        end
-        case (lat_res_rplane)
-        2'd0: lat_res_q <= lat_p16_residual_y[lat_res_raddr];
-        2'd1: lat_res_q <= lat_p16_residual_u[lat_res_raddr[5:0]];
-        default: lat_res_q <= lat_p16_residual_v[lat_res_raddr[5:0]];
-        endcase
+        lat_recon_rplane_q <= lat_recon_rplane;
+        lat_res_rplane_q   <= lat_res_rplane;
     end
     wire [31:0] wb_mb_x32 = {24'd0, wb_mb_x};
     wire [31:0] wb_mb_y32 = {24'd0, wb_mb_y};

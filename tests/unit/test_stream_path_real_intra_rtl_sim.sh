@@ -38,6 +38,7 @@ COMMON=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_top.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/mb_sample_ram.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
@@ -56,6 +57,7 @@ import sys
 root = Path(sys.argv[1])
 stream = (root / "fpga/Plex_MiSTer/rtl/stream_path.sv").read_text()
 core = (root / "fpga/Plex_MiSTer/rtl/h264_decode_core.sv").read_text()
+core = (root / "fpga/Plex_MiSTer/rtl/mb_sample_ram.sv").read_text()
 if "h264_decode_core" not in stream:
     raise SystemExit("FAIL real-intra topology: stream_path does not instantiate h264_decode_core")
 if "h264_decode_top" in stream:

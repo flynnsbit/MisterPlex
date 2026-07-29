@@ -37,6 +37,7 @@ RTL_SLICE="$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
 RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
 RTL_DECODE_TOP="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_top.sv"
 RTL_DECODE_CORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_decode_core.sv"
+RTL_DECODE_CORE="$ROOT/fpga/Plex_MiSTer/rtl/mb_sample_ram.sv"
 RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
@@ -67,6 +68,7 @@ done
 for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv rtl/bitstream_fifo.sv rtl/nalu_scanner.sv \
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
            rtl/h264_decode_top.sv rtl/h264_decode_core.sv rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_intra_pred.sv rtl/h264_intra_nb_ctx.sv rtl/h264_deblock.sv rtl/h264_dpb.sv rtl/h264_mc_luma_qpel.sv rtl/h264_mc_chroma_epel.sv rtl/h264_mc_block.sv rtl/h264_dpb_ddr_wr.sv rtl/h264_dpb_ddr_rd.sv rtl/h264_dpb_ddr.sv; do
+           rtl/h264_decode_top.sv rtl/mb_sample_ram.sv rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_intra_pred.sv rtl/h264_intra_nb_ctx.sv rtl/h264_deblock.sv rtl/h264_dpb.sv rtl/h264_mc_luma_qpel.sv rtl/h264_mc_chroma_epel.sv rtl/h264_mc_block.sv rtl/h264_dpb_ddr_wr.sv rtl/h264_dpb_ddr_rd.sv rtl/h264_dpb_ddr.sv; do
   if ! grep -q "$rtl" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product RTL under simulation: $rtl" >&2
     exit 2

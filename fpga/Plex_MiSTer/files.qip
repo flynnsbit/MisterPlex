@@ -5,6 +5,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/async_fifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio_ingest.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/line_buf_ram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mb_sample_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/frame_ingest.sv

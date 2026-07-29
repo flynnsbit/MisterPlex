@@ -46,6 +46,7 @@ RTL=(
   "$RTL_DIR/h264_inter_pred.sv"
   "$RTL_DIR/h264_deblock.sv"
   "$RTL_DIR/h264_decode_core.sv"
+  "$RTL_DIR/mb_sample_ram.sv"
   "$RTL_DIR/h264_dpb.sv"
   "$RTL_DIR/h264_transform_dc.sv"
   "$RTL_DIR/h264_mc_block.sv"
