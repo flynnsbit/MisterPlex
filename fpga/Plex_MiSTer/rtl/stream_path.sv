@@ -507,6 +507,7 @@ module stream_path #(
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
 	wire        core_rbsp_overflow;
+	wire        core_rbsp_ready;
 
 	h264_rbsp_window #(
 		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
@@ -525,7 +526,8 @@ module stream_path #(
 		.window_avail(core_rbsp_avail),
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
-		.overflow(core_rbsp_overflow)
+		.overflow(core_rbsp_overflow),
+		.window_ready(core_rbsp_ready)
 	);
 
 	// Start the feeder once the first-MB residual probe is placed AND the VCL
@@ -729,69 +731,19 @@ module stream_path #(
 		.error(core_error)
 	);
 
-	// Product decode is always rooted at product_decode_core above.  The legacy
-	// decode_stub remains only as the diagnostic frame-store painter until the
-	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
-	// decoder subtree or bypasses MC/DPB/deblock.
-	generate
-		begin : gen_diagnostic_present
-		decode_stub #(
-			.WIDTH(FRAME_W),
-			.HEIGHT(FRAME_H)
-		) stub (
-			.clk(clk), .reset(reset | flush),
-			.vcl_pulse(vcl_pulse),
-			.last_nal_type(last_nal_type),
-			.nalu_count(nalu_count),
-			.idr_count(idr_c),
-			.has_idr(has_idr_w),
-			.sps_valid(sps_valid),
-			.mb_w(sps_mb_w),
-			.mb_h(sps_mb_h),
-			.slice_type(sl_type),
-			.slice_is_i(sl_is_i),
-			.slice_valid(slice_valid),
-			.first_mb_addr(sl_first),
-			.has_mb_type(sl_has_mbt),
-			.first_mb_p_skip(first_mb_p_skip),
-			.first_mb_part_mode(first_mb_part_mode),
-			.first_mb_part_count(first_mb_part_count),
-			.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
-			.first_mb_intra(first_mb_intra),
-			.residual_ok(sl_place_ok),
-			.residual_tc(sl_place_tc),
-			.residual_dc(sl_place_dc),
-			.residual_valid(residual_place_pulse),
-			.slice_qp(sl_place_qp),
-			.residual_coeff(sl_place_coeff),
-			.recon_sig(recon_sig),
-			.recon_dbg(recon_dbg),
-			.recon_dbg_valid(recon_dbg_valid),
-			.recon_valid(recon_valid),
-			.wr_en(stub_fs_wr_en),
-			.wr_pixel(stub_fs_wr_pixel),
-			.wr_reset_ptr(stub_fs_wr_reset),
-			.swap_req(stub_fs_swap),
-			.busy(stub_busy),
-			.frames_out(stub_frames)
-		);
-		end
-	endgenerate
-
-	// decode_stub is retired as the product pixel source: under DDR_FRAME_STORE
-	// present_core ignores fs_* entirely, so the stub's diagnostic paint never
-	// reaches the screen and the decode core's dec_px_* stream is the only
-	// pixel source.  The fs_* path is left intact for the non-DDR frame_store
-	// configuration and for the diagnostic frame-cadence benches.
-	wire        stub_fs_wr_en;
-	wire [15:0] stub_fs_wr_pixel;
-	wire        stub_fs_wr_reset;
-	wire        stub_fs_swap;
+	// decode_stub DELETED from product path (Stage A). Any pixels are the
+	// decode core's.  Tie legacy fs_* / stub status so top-level ports stay.
+	assign recon_sig       = 8'd0;
+	assign recon_dbg       = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid     = 1'b0;
+	assign stub_busy       = 1'b0;
+	assign stub_frames     = 16'd0;
 	always @* begin
-		fs_wr_en    = stub_fs_wr_en;
-		fs_wr_pixel = stub_fs_wr_pixel;
-		fs_wr_reset = stub_fs_wr_reset;
-		fs_swap     = stub_fs_swap;
+		fs_wr_en    = 1'b0;
+		fs_wr_pixel = 16'd0;
+		fs_wr_reset = 1'b0;
+		fs_swap     = 1'b0;
 	end
 
 	(* keep = 1 *) wire keep_si = si_active;
