@@ -206,6 +206,7 @@ module h264_baseline_syntax_parser #(
 		end
 	endfunction
 
+	// Table 9-4 inter CBP (me→cbp). Codes 46/47 MUST be 38/41 (libav parity).
 	function automatic [5:0] cbp_inter_map;
 		input [5:0] code;
 		begin

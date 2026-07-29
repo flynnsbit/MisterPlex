@@ -35,6 +35,13 @@
 //     chroma_residual_*).
 //   * Consumers MUST NOT treat soft-clear mid-MB as valid; only sample while
 //     p_residual_valid=1 (same freeze spirit as rbsp window_ready).
+//
+// g-fit MERGE INTENT:
+//   * win_ok = window_ready && (window_base == win_req_off); ARM states wait it.
+//   * Product FEED_PROVIDES_P_RESIDUAL=1: this feed is sole P residual CAVLC;
+//     core stubs u_product_p16_residual0 and consumes p_residual_* export.
+//   * Table 9-4 inter CBP me46/47 = 38/41 (cbp_inter_map; match libav).
+//   * No start/done latency serialization with core for area panic cuts.
 
 `default_nettype none
 
@@ -353,6 +360,8 @@ module h264_i_mb_feed #(
 		endcase
 	endfunction
 
+	// ITU-T H.264 Table 9-4 coded_block_pattern (inter). me code→cbp.
+	// Keep 46→38, 47→41 (ff_h264_golomb_to_inter_cbp); swap desyncs residual.
 	function automatic [5:0] cbp_inter_map;
 		input [5:0] code;
 		case (code)

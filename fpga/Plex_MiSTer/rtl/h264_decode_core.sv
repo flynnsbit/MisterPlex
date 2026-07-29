@@ -24,6 +24,15 @@
 //     second CAVLC does not synthesize. Set 0 only for legacy residual-walk
 //     experiments (not product stream_path).
 // =============================================================================
+// g-fit MERGE INTENT (sticky pend / sole residual) — keep when integrating fits:
+//   * rbsp_res_pending_r + residual_window_ok: sticky residual byte base across
+//     feed YIELD so legacy CAVLC can wait multi-cycle window refill.
+//   * Product path: FEED_PROVIDES_P_RESIDUAL=1 → feed owns sole P CAVLC; core
+//     launches on feed_p_res_ok (p_residual_valid) and does not arm
+//     rbsp_res_pending / dual residual. generate stubs u_product_p16_residual0.
+//   * Do not re-serialize i_mb_feed start/done with extra latency for area.
+//   * Table 9-4 inter CBP: me code 46→38, 47→41 (see feed/syntax maps).
+// =============================================================================
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
