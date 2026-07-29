@@ -42,6 +42,7 @@ struct Args {
     bool expectRed = false;
     bool productExpectRed = false;
     bool skipRgbCompare = false;
+    bool noPrefill = false; // product path: real DPB only, no golden inject
     std::string h264LoopFilter = "disabled";
 };
 
@@ -72,6 +73,7 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--expect-red") a.expectRed = true;
         else if (k == "--product-expect-red") a.productExpectRed = true;
         else if (k == "--skip-rgb-compare") a.skipRgbCompare = true;
+        else if (k == "--no-prefill") a.noPrefill = true;
         else throw std::runtime_error("unknown argument: " + k);
     }
     if (a.annexb.empty() || a.goldenPlanes.empty() || a.goldenManifest.empty() ||
@@ -1265,8 +1267,10 @@ int main(int argc, char** argv) {
         if (seq.nalCount != static_cast<int>(nals.size()) || seq.vcl != vcl ||
             seq.idr != idr || seq.nonIdr != p || seq.pSlices != p)
             throw std::runtime_error("sequence manifest NAL/VCL counts do not match bitstream");
-        if (seq.frames.size() != refFrames)
+        if (args.maxVclFrames <= 0 && seq.frames.size() != refFrames)
             throw std::runtime_error("sequence manifest VCL metadata count does not match reference frame count");
+        if (args.maxVclFrames > 0 && seq.frames.size() != static_cast<std::size_t>(vcl))
+            throw std::runtime_error("sequence manifest VCL metadata count does not match bitstream VCL count");
         if (args.maxVclFrames < 0)
             throw std::runtime_error("--max-vcl-frames must be >= 0");
         const int vclCompareCount = (args.maxVclFrames > 0)
@@ -1281,11 +1285,13 @@ int main(int argc, char** argv) {
         sim.initNativeCandidate(static_cast<std::size_t>(vclCompareCount));
         sim.reset();
 
-        // Initial setup prefill; IDR writeback may overwrite it, so P slices
-        // refresh BANK0 from the previous decoded golden frame immediately
-        // before each P NAL below.
-        sim.prefillDpbReference(golden, 0);
-        // Prefill ticks are setup cost, not decode; reset cycle counter.
+        // Product no-inject path: leave DPB empty; IDR fills it, P reads it.
+        // Legacy path still prefills golden for isolated MC plumbing scores.
+        if (!args.noPrefill) {
+            sim.prefillDpbReference(golden, 0);
+        } else {
+            std::cout << "PRODUCT_NO_PREFILL dpb starts empty (real ref from decode)\n";
+        }
         sim.cycles = 0;
 
         uint32_t fed = 0;
@@ -1300,7 +1306,7 @@ int main(int argc, char** argv) {
             const auto& n = nals[ni];
             if (expectedFrames >= vclCompareCount && (n.type == 5 || n.type == 1))
                 break;
-            if (n.type == 1 && expectedFrames > 0) {
+            if (n.type == 1 && expectedFrames > 0 && !args.noPrefill) {
                 const uint64_t prefillCycles =
                     sim.prefillDpbReference(golden, static_cast<std::size_t>(expectedFrames - 1));
                 sim.cycles -= prefillCycles;
@@ -1366,6 +1372,9 @@ int main(int argc, char** argv) {
                               << " now_feed_started=" << static_cast<int>(sim.top.product_feed_started)
                               << " now_feed_go=" << static_cast<int>(sim.top.product_feed_slice_go)
                               << " now_feed_i_ready=" << static_cast<int>(sim.top.product_feed_i_ready)
+                              << " feed_st=" << static_cast<int>(sim.top.product_feed_st)
+                              << " feed_mb=" << static_cast<int>(sim.top.product_feed_mb_addr)
+                              << " core_mb=" << static_cast<int>(sim.top.product_current_mb_addr)
                               << " rbsp_overflow=" << (sim.productRbspOverflow ? 1 : 0)
                               << " rbsp_len=" << static_cast<int>(sim.top.product_rbsp_length)
                               << " desync=" << (sim.productSliceDesync ? 1 : 0)
@@ -1502,6 +1511,15 @@ int main(int argc, char** argv) {
                       << " mismatch_pixels=" << mismatch << "\n";
         } else {
             std::cout << "PRODUCT_FRAME_COMPARE exact-match frames=" << vclCompareCount << "\n";
+        }
+        // Per-plane destination-memory exact counts (Y/U/V) across compared frames.
+        for (std::size_t fi = 0; fi < productCr.frames.size(); ++fi) {
+            const auto& fr = productCr.frames[fi];
+            std::cout << "PRODUCT_PLANE_EXACT frame=" << fi
+                      << " Y=" << fr.plane[0].exact << "/" << fr.plane[0].total
+                      << " U=" << fr.plane[1].exact << "/" << fr.plane[1].total
+                      << " V=" << fr.plane[2].exact << "/" << fr.plane[2].total
+                      << "\n";
         }
 
         // Degeneracy assertion (parent directive #18): DPB fetch must return

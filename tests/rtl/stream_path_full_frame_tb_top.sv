@@ -99,6 +99,8 @@ module stream_path_full_frame_tb #(
 	output wire        product_feed_slice_go,
 	output wire        product_feed_started,
 	output wire        product_feed_i_ready,
+	output wire [5:0]  product_feed_st,
+	output wire [15:0] product_feed_mb_addr,
 	output wire        product_slice_valid,
 	output wire        product_slice_is_i,
 	output wire [7:0]  product_sps_mb_w,
@@ -139,6 +141,74 @@ module stream_path_full_frame_tb #(
 	wire first_mb_uses_sub_mb_w;
 	wire first_mb_intra_w;
 
+	// Minimal DDR3 model for DPB write/read (word-addressed 64-bit).
+	// h264_dpb_ddr uses DDR_BASE=0x3040_0000 → word base 0x608_0000.
+	// Contended grants (busy_hold) so product DPB is not scored on a quiet bus.
+	localparam int DDR_WORDS = (FRAME_W * FRAME_H * 3 / 2 * 2) / 8 + 4096;
+	localparam [28:0] DDR_BASE_W = 29'h06080000;
+	reg [63:0] ddr_mem [0:DDR_WORDS-1];
+	reg        ddr_busy_r;
+	reg        ddr_dout_ready_r;
+	reg [63:0] ddr_dout_r;
+	reg [7:0]  rd_left;
+	reg [28:0] rd_addr_r;
+	reg [2:0]  busy_hold;
+	wire [28:0] wr_idx = ddr_addr - DDR_BASE_W;
+	wire [28:0] rd_idx = rd_addr_r - DDR_BASE_W;
+	integer    di;
+	initial begin
+		for (di = 0; di < DDR_WORDS; di = di + 1) ddr_mem[di] = 64'd0;
+		ddr_busy_r = 1'b0;
+		ddr_dout_ready_r = 1'b0;
+		ddr_dout_r = 64'd0;
+		rd_left = 8'd0;
+		rd_addr_r = 29'd0;
+		busy_hold = 3'd0;
+	end
+	always @(posedge clk) begin
+		if (reset) begin
+			ddr_busy_r <= 1'b0;
+			ddr_dout_ready_r <= 1'b0;
+			ddr_dout_r <= 64'd0;
+			rd_left <= 8'd0;
+			rd_addr_r <= 29'd0;
+			busy_hold <= 3'd0;
+		end else begin
+			ddr_dout_ready_r <= 1'b0;
+			if (busy_hold != 3'd0) begin
+				ddr_busy_r <= 1'b1;
+				busy_hold <= busy_hold - 3'd1;
+			end else if (rd_left != 8'd0) begin
+				ddr_busy_r <= 1'b0;
+				ddr_dout_ready_r <= 1'b1;
+				ddr_dout_r <= (rd_idx < DDR_WORDS[28:0]) ? ddr_mem[rd_idx] : 64'd0;
+				rd_addr_r <= rd_addr_r + 29'd1;
+				rd_left <= rd_left - 8'd1;
+				busy_hold <= 3'd1;
+			end else if (ddr_we && !ddr_busy_r) begin
+				if (wr_idx < DDR_WORDS[28:0]) begin
+					if (ddr_be[0]) ddr_mem[wr_idx][7:0]   <= ddr_din[7:0];
+					if (ddr_be[1]) ddr_mem[wr_idx][15:8]  <= ddr_din[15:8];
+					if (ddr_be[2]) ddr_mem[wr_idx][23:16] <= ddr_din[23:16];
+					if (ddr_be[3]) ddr_mem[wr_idx][31:24] <= ddr_din[31:24];
+					if (ddr_be[4]) ddr_mem[wr_idx][39:32] <= ddr_din[39:32];
+					if (ddr_be[5]) ddr_mem[wr_idx][47:40] <= ddr_din[47:40];
+					if (ddr_be[6]) ddr_mem[wr_idx][55:48] <= ddr_din[55:48];
+					if (ddr_be[7]) ddr_mem[wr_idx][63:56] <= ddr_din[63:56];
+				end
+				ddr_busy_r <= 1'b1;
+				busy_hold <= 3'd1;
+			end else if (ddr_rd && !ddr_busy_r) begin
+				rd_addr_r <= ddr_addr;
+				rd_left <= (ddr_burstcnt == 8'd0) ? 8'd1 : ddr_burstcnt;
+				ddr_busy_r <= 1'b1;
+				busy_hold <= 3'd1;
+			end else begin
+				ddr_busy_r <= 1'b0;
+			end
+		end
+	end
+
 	stream_path #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H)
@@ -152,11 +222,11 @@ module stream_path_full_frame_tb #(
 		.flush(flush),
 		.ddr_stream_enable(1'b0),
 		.ddr_bus_want(ddr_bus_want),
-		.ddr_busy(1'b1),
+		.ddr_busy(ddr_busy_r),
 		.ddr_burstcnt(ddr_burstcnt),
 		.ddr_addr(ddr_addr),
-		.ddr_dout(64'd0),
-		.ddr_dout_ready(1'b0),
+		.ddr_dout(ddr_dout_r),
+		.ddr_dout_ready(ddr_dout_ready_r),
 		.ddr_rd(ddr_rd),
 		.ddr_din(ddr_din),
 		.ddr_be(ddr_be),
@@ -247,6 +317,8 @@ module stream_path_full_frame_tb #(
 	assign product_feed_slice_go = dut.feed_slice_go;
 	assign product_feed_started = dut.feed_started;
 	assign product_feed_i_ready = dut.feed_i_ready;
+	assign product_feed_st = dut.feed_dbg_st;
+	assign product_feed_mb_addr = dut.feed_dbg_mb_addr;
 	assign product_slice_valid = slice_valid;
 	assign product_slice_is_i = slice_is_i;
 	assign product_sps_mb_w = sps_mb_w;

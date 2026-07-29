@@ -129,7 +129,10 @@ module h264_i_mb_feed #(
 	//   0 none  1 early  2 long/trail  3 skip_run overrun
 	//   4 cavlc/coeff_token  5 rbsp overrun  6 syntax range
 	output reg  [3:0]  slice_desync_cause,
-	output reg  [15:0] slice_desync_mb
+	output reg  [15:0] slice_desync_mb,
+	// Debug (product TB): live feeder FSM + MB cursor for multi-frame stalls.
+	output wire [5:0]  dbg_st,
+	output wire [15:0] dbg_mb_addr
 );
 
 	localparam [5:0]
@@ -287,6 +290,8 @@ module h264_i_mb_feed #(
 	// Yield releases the RBSP window to the core for inter residual/MC.
 	assign busy = (st != ST_IDLE) && (st != ST_DONE) && (st != ST_FAIL) &&
 	              (st != ST_YIELD_CORE);
+	assign dbg_st = st;
+	assign dbg_mb_addr = mb_addr;
 
 	// ── Geometry helpers ────────────────────────────────────────────────
 	function automatic [1:0] blk_x;

@@ -136,7 +136,9 @@ module h264_i_mb_feed_pskip_tb_top (
 		.slice_desync_early(slice_desync_early),
 		.slice_desync_long(slice_desync_long),
 		.slice_desync_cause(slice_desync_cause),
-		.slice_desync_mb(slice_desync_mb)
+		.slice_desync_mb(slice_desync_mb),
+		.dbg_st(),
+		.dbg_mb_addr()
 	);
 endmodule
 

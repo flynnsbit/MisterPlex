@@ -585,7 +585,8 @@ module h264_decode_core #(
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
     //    actually carries coefficients, and wraps modulo 52.
-    wire mb_is_i16 = slice_is_i && !mb_skip && (mb_type != 5'd0);
+    // I_16x16 on I slices and intra-in-P (feed remaps P Table 7-13 → I type).
+    wire mb_is_i16 = (slice_is_i || mb_intra) && !mb_skip && (mb_type != 5'd0);
     wire mb_has_residual = !mb_skip &&
                            ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0) || mb_is_i16);
     wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
@@ -1140,7 +1141,11 @@ module h264_decode_core #(
     // writeback accepts the recon plane (sticky intra_recon_pend covers the
     // dbf_busy gap so the pulse cannot be lost).
     reg intra_recon_pend;
-    wire product_intra_mb_start = syntax_xy_ready && (mb_type_valid && slice_is_i && !mb_skip &&
+    // I-slice MBs and intra-coded MBs in P (mb_intra). Prior gate was
+    // slice_is_i-only → feed stuck forever in ST_RES_ACK on first I-in-P
+    // (96c806e: feed_st=9 feed_mb=21 after IDR; core never raised blocks_done).
+    wire product_intra_mb_start = syntax_xy_ready && (mb_type_valid &&
+                                         (slice_is_i || mb_intra) && !mb_skip &&
                                          decode_enable && (wb_state == ST_IDLE) &&
                                          !intra_active_r && !intra_recon_pend);
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
