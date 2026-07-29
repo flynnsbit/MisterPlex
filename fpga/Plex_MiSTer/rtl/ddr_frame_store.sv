@@ -187,10 +187,17 @@ module ddr_frame_store #(
 	wire px_in_frame = (dec_px_x_d < 16'(CODED_W)) && (dec_px_y_d < 16'(CODED_H));
 
 	reg [63:0] px_acc;
+	// One MB = 384 B = 48 qwords. Old AW=5 (32) held only the Y plane and
+	// silently dropped U/V when full was ignored — left DDR chroma as stale
+	// colourful garbage under a sharp luma logo. Depth 256 absorbs several MBs
+	// of writeback while line-refill owns the DDR port.
+	// Use delayed (_d) sample path already registered above for timing.
 	wire [63:0] px_acc_next = (px_lane == 3'd0)
 		? {56'd0, dec_px_data_d}
 		: (px_acc | ({56'd0, dec_px_data_d} << {px_lane, 3'b000}));
-	wire px_push = dec_px_wr_en_d && px_in_frame && (px_lane == 3'd7);
+	wire px_fifo_full;
+	wire px_fifo_empty;
+	wire px_push = dec_px_wr_en_d && px_in_frame && (px_lane == 3'd7) && !px_fifo_full;
 
 	always @(posedge clk) begin
 		if (reset)
@@ -200,20 +207,25 @@ module ddr_frame_store #(
 	end
 
 	reg dec_px_seen;
+	reg [15:0] px_fifo_drop_count;
 	always @(posedge clk) begin
-		if (reset)
+		if (reset) begin
 			dec_px_seen <= 1'b0;
-		else if (px_push)
-			dec_px_seen <= 1'b1;
+			px_fifo_drop_count <= 16'd0;
+		end else begin
+			if (px_push)
+				dec_px_seen <= 1'b1;
+			// Count would-be pushes that hit full (should stay 0 with AW>=8).
+			if (dec_px_wr_en_d && px_in_frame && (px_lane == 3'd7) && px_fifo_full &&
+			    px_fifo_drop_count != 16'hFFFF)
+				px_fifo_drop_count <= px_fifo_drop_count + 16'd1;
+		end
 	end
 
-	wire px_fifo_full;
-	wire px_fifo_empty;
 	wire [PX_QW_W+63:0] px_fifo_rdata;
 	reg  px_fifo_pop;
 	wire [PX_QW_W-1:0] px_fifo_qword = px_fifo_rdata[PX_QW_W+63:64];
 	wire [63:0]        px_fifo_data  = px_fifo_rdata[63:0];
-	wire _px_fifo_full_unused = px_fifo_full;
 
 	reg [LINE_SLOTS-1:0] y_wr, u_wr, v_wr;
 	reg [Y_QW_AW-1:0] y_wr_addr;
@@ -277,7 +289,7 @@ module ddr_frame_store #(
 	reg reset_ddr_s1, reset_ddr_s2;
 	wire reset_ddr = reset_ddr_s2;
 
-	async_fifo #(.WIDTH(PX_QW_W + 64), .AW(5)) px_fifo (
+	async_fifo #(.WIDTH(PX_QW_W + 64), .AW(8)) px_fifo (
 		.wr_clk(clk), .wr_reset(reset),
 		.wr_en(px_push), .wr_data({px_qword, px_acc_next}),
 		.wr_full(px_fifo_full), .wr_almost_full(),
@@ -1067,6 +1079,17 @@ module ddr_frame_store #(
 						bank_mbox_req <= 1'b0;
 						bank_mbox_hb <= 18'd0;
 						state_ddr <= S_WRITE_WAIT;
+					// Decoder writeback BEFORE line refill: a full MB is 48
+					// qwords and refill bursts can monopolise the port long
+					// enough to drop chroma if this sits last.
+					end else if (!px_fifo_empty && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
+						DDRAM_ADDR <= (disp_bank_d2 ? BASE_W1 : BASE_W0) +
+						              {{(29-PX_QW_W){1'b0}}, px_fifo_qword};
+						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_DIN <= px_fifo_data;
+						DDRAM_WE <= 1'b1;
+						px_fifo_pop <= 1'b1;
+						state_ddr <= S_WRITE_WAIT;
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
 						fill_idx <= sched_idx;
@@ -1129,17 +1152,6 @@ module ddr_frame_store #(
 							qwords_remaining <= C_LINE_QWORDS[Y_QW_AW:0];
 							state_ddr <= S_LINE_ISSUE;
 						end
-					end else if (!px_fifo_empty && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						// Decoder writeback: land the gathered qword in the
-						// bank that is on screen right now, so the next line
-						// refill of that row picks it straight back up.
-						DDRAM_ADDR <= (disp_bank_d2 ? BASE_W1 : BASE_W0) +
-						              {{(29-PX_QW_W){1'b0}}, px_fifo_qword};
-						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= px_fifo_data;
-						DDRAM_WE <= 1'b1;
-						px_fifo_pop <= 1'b1;
-						state_ddr <= S_WRITE_WAIT;
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
 						DDRAM_ADDR <= DOORBELL_W;
 						DDRAM_BURSTCNT <= 8'd1;
