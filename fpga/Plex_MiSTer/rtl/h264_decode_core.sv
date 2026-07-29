@@ -1449,6 +1449,16 @@ module h264_decode_core #(
             end
             for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
                 res_tc_top_valid[res_tc_i] <= 1'b0;
+                res_chr_top_valid[res_tc_i] <= 1'b0;
+            end
+            for (res_tc_i = 0; res_tc_i < 2; res_tc_i = res_tc_i + 1) begin
+                res_chr_left_u[res_tc_i] <= 5'd0;
+                res_chr_left_v[res_tc_i] <= 5'd0;
+            end
+            for (res_tc_i = 0; res_tc_i < MB_W * 2; res_tc_i = res_tc_i + 1) begin
+                res_chr_top_u[res_tc_i] <= 5'd0;
+                res_chr_top_v[res_tc_i] <= 5'd0;
+            end
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             // Seed (x,y) without combo / or %: first_mb==0 → ready now;
             // else subtract MB_W per cycle until remainder < MB_W.
@@ -1583,6 +1593,20 @@ module h264_decode_core #(
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
                     res_store_i <= 4'd0;
+                    // P_Skip / zero-MV shortcut skips residual walk — still
+                    // publish total_coeff=0 so next MB nC is not stale (a4fe6f0).
+                    if (p16_zero_mv_valid || mb_skip) begin
+                        res_tc_left_valid <= 1'b1;
+                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                            res_tc_left[res_tc_i] <= 5'd0;
+                            res_tc_top[{p16_launch_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <= 5'd0;
+                        end
+                        res_tc_top_valid[p16_launch_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                            res_tc_left_c[res_tc_i] <= 5'd0;
+                            res_tc_top_c[{p16_launch_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <= 5'd0;
+                        end
+                    end
                     // External TB residual plane: stream into M10K. Product path
                     // relies on residual_all_zero or per-block store/zero.
                     if (p16_zero_mv_valid)

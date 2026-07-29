@@ -743,6 +743,35 @@ module h264_i_mb_feed #(
 		end
 	endtask
 
+	// P_Skip / cbp==0 coded MB: residual is all-zero, so every 4x4 total_coeff
+	// is 0. Must publish luma+chroma edges or later CAVLC nC stays STALE after
+	// long skip runs (IDR-invisible; bites mid-P when cbp_c=2 first appears).
+	task automatic publish_zero_tc_neighbours;
+		integer zi;
+		begin
+			for (zi = 0; zi < 16; zi = zi + 1)
+				tc_cur[zi] <= 5'd0;
+			tc_left_valid <= 1'b1;
+			for (zi = 0; zi < 4; zi = zi + 1) begin
+				tc_left[zi] <= 5'd0;
+				tc_top[{mb_x8[5:0], zi[1:0]}] <= 5'd0;
+				chr_tc_u[zi] <= 5'd0;
+				chr_tc_v[zi] <= 5'd0;
+			end
+			tc_top_valid[mb_x8] <= 1'b1;
+			chr_left_valid <= 1'b1;
+			chr_left_u[0] <= 5'd0;
+			chr_left_u[1] <= 5'd0;
+			chr_left_v[0] <= 5'd0;
+			chr_left_v[1] <= 5'd0;
+			chr_top_u[{mb_x8[5:0], 1'b0}] <= 5'd0;
+			chr_top_u[{mb_x8[5:0], 1'b1}] <= 5'd0;
+			chr_top_v[{mb_x8[5:0], 1'b0}] <= 5'd0;
+			chr_top_v[{mb_x8[5:0], 1'b1}] <= 5'd0;
+			chr_top_valid[mb_x8] <= 1'b1;
+		end
+	endtask
+
 	// ── Main FSM ────────────────────────────────────────────────────────
 	always @(posedge clk) begin
 		mb_type_valid <= 1'b0;
@@ -997,7 +1026,8 @@ module h264_i_mb_feed #(
 					else if ((first_cbp_luma != 4'd0) || (first_cbp_chroma != 2'd0))
 						st <= ST_RES_REQ;
 					else begin
-						// No residual bits — pulse skip-style with cbp=0.
+						// No residual bits — publish TC=0 then pulse.
+						publish_zero_tc_neighbours;
 						st <= ST_MB_PULSE;
 					end
 				end
@@ -1041,6 +1071,8 @@ module h264_i_mb_feed #(
 					end
 					i4_modes_present <= 1'b0;
 					chroma_pred_mode <= 2'd0;
+					// Zero residual ⇒ total_coeff=0 on all luma+chroma blocks.
+					publish_zero_tc_neighbours;
 					skip_left <= skip_left - 16'd1;
 					st <= ST_MB_PULSE;
 				end
@@ -1678,13 +1710,10 @@ module h264_i_mb_feed #(
 							mb_qp_y <= qp_r;
 							res_start_bit <= abs_bit;
 							mb_residual_bit_offset <= abs_bit[15:0];
-							for (ci = 0; ci < 16; ci = ci + 1)
-								tc_cur[ci] <= 5'd0;
 							res_step <= 5'd0;
-							if (inter_res_only_r)
-								st <= ST_MB_PULSE;
-							else
-								st <= ST_MB_PULSE;
+							// cbp==0: no residual walk — still publish TC=0 edges.
+							publish_zero_tc_neighbours;
+							st <= ST_MB_PULSE;
 						end
 					end
 				end
@@ -1712,7 +1741,11 @@ module h264_i_mb_feed #(
 					res_step <= 5'd0;
 					if (inter_res_only_r && ((cbp_l_r != 4'd0) || (cbp_c_r != 2'd0) || is_i16_r))
 						st <= ST_RES_REQ; // bit-sync then pulse
-					else
+					else if (!feed_luma_r && (cbp_l_r == 4'd0) && (cbp_c_r == 2'd0) && !is_i16_r) begin
+						// Inter cbp==0 (or no residual): publish TC=0 neighbours.
+						publish_zero_tc_neighbours;
+						st <= ST_MB_PULSE;
+					end else
 						st <= ST_MB_PULSE;
 				end
 				// 6: mb_skip_run
