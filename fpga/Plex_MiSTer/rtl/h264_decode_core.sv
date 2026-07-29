@@ -952,6 +952,7 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    wire        product_intra_nb_busy;
     // Chroma 8x8 prediction (spec 8.3.4). DC uses per-4x4-quadrant averages —
     // do NOT reuse the luma DC single-value rule (see h264_chroma8x8_pred).
     reg         product_chroma_start_r;
@@ -987,6 +988,10 @@ module h264_decode_core #(
         .qp(product_i16_dc_qp_r),
         .dc(product_intra_i16_dc)
     );
+    // Per-4x4 block_valid→recon_pixels path is unused on product: I4x4
+    // within-MB neighbours live in h264_decode_top.local_recon; cross-MB
+    // neighbours publish on mb_commit via recon_y_mb (see h264_intra_nb_ctx).
+    // Keep ports tied so the optional ST_GBLK path stays synthesizable/inert.
     genvar intra_gi;
     integer chroma_pi;
     generate
@@ -1083,6 +1088,9 @@ module h264_decode_core #(
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
+        // block_valid intentionally 0: product does not use mid-MB nb_ctx
+        // block publish (decode_top owns within-MB taps). Luma edges publish
+        // from recon_y_mb on mb_commit — do not re-tie that to 128.
         .block_valid(1'b0),
         .recon_pixels(product_intra_ctx_recon_pixels),
         .mb_commit(product_intra_recon_valid),
@@ -1110,7 +1118,9 @@ module h264_decode_core #(
         .chroma_u_top_left(product_intra_chroma_u_topleft),
         .chroma_v_top_left(product_intra_chroma_v_topleft),
         .has_chroma_above(product_intra_has_chroma_above),
-        .has_chroma_left(product_intra_has_chroma_left)
+        .has_chroma_left(product_intra_has_chroma_left),
+        // MUST reach decode_top: I16 latches nb on start; early start = left-edge rot.
+        .busy(product_intra_nb_busy)
     );
 
     h264_decode_top u_product_intra_mb (
@@ -1136,6 +1146,7 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
+        .nb_busy(product_intra_nb_busy),
         .mb_recon_valid(product_intra_recon_valid_raw),
         .recon_y(product_intra_recon_y),
         .blocks_done(product_intra_blocks_done)

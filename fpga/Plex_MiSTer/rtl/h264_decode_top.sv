@@ -52,6 +52,10 @@ module h264_decode_top (
     input  wire [7:0]  nb_left [0:15],     // 16 samples from MB to the left (right col)
     input  wire [7:0]  nb_topleft,         // Top-left corner sample
     input  wire [7:0]  nb_topright [0:3],  // 4 samples above-right of current 4x4
+    // High while h264_intra_nb_ctx is still gathering this MB's neighbours.
+    // I16 must NOT start (and latch samples) until this drops — otherwise it
+    // captures the PREVIOUS MB's left/top/availability (left-edge 3-MB streak).
+    input  wire        nb_busy,
 
     // ── Outputs ──
     output reg         mb_recon_valid,     // Pulse: full MB reconstruction complete
@@ -162,9 +166,24 @@ module h264_decode_top (
     wire       i16_pred_valid;
     reg        i16_pred_ready;
     wire [7:0] i16_pred_pixels [0:255];
+    // Start I16 only after nb_ctx finishes gather (!nb_busy). Predictor latches
+    // above/left/avail on start; raw mb_start captured the prior MB.
+    reg i16_start_pend;
+    reg i16_nb_start;
+    always @(posedge clk) begin
+        i16_nb_start <= 1'b0;
+        if (reset) begin
+            i16_start_pend <= 1'b0;
+        end else if (mb_start && is_i16x16) begin
+            i16_start_pend <= 1'b1;
+        end else if (i16_start_pend && !nb_busy) begin
+            i16_start_pend <= 1'b0;
+            i16_nb_start   <= 1'b1;
+        end
+    end
     h264_intra16x16_pred u_i16_pred (
         .clk(clk),
-        .start(mb_start && is_i16x16),
+        .start(i16_nb_start),
         .mode(i16_pred_mode),
         .above(nb_top),
         .left(nb_left),
@@ -385,7 +404,9 @@ module h264_decode_top (
 
             case (state)
                 ST_IDLE: begin
-                    if (block_valid && mb_started && (!pipe_is_i16 || i16_pred_ready)) begin
+                    // Hold block launch until neighbour gather is done.
+                    if (block_valid && mb_started && !nb_busy &&
+                        (!pipe_is_i16 || i16_pred_ready)) begin
                         // Latch coefficients and block index
                         for (si = 0; si < 16; si = si + 1)
                             pipe_coeff[si] <= block_coeff[si];
