@@ -74,6 +74,36 @@ module stream_path_full_frame_tb #(
 	output wire [7:0]  native_i420_wr_data,
 	output wire [15:0] native_i420_wr_frame,
 
+	// Product decode_core presentation stream (native I420 plane samples).
+	// This is the only path that paints under DDR_FRAME_STORE; compare against
+	// FFmpeg yuv420p goldens for full-frame product correctness.
+	output wire        product_px_wr_en,
+	output wire [1:0]  product_px_plane,
+	output wire [15:0] product_px_x,
+	output wire [15:0] product_px_y,
+	output wire [7:0]  product_px_data,
+	output wire        product_frame_done,
+	output wire [15:0] product_frame_mb_count,
+	output wire        product_core_busy,
+	output wire [7:0]  product_decode_state,
+	output wire [15:0] product_current_mb_addr,
+	output wire        product_core_error,
+	output wire        product_feed_frame_done,
+	output wire        product_feed_busy,
+	output wire        product_slice_desync,
+	output wire [3:0]  product_slice_desync_cause,
+	output wire [15:0] product_slice_desync_mb,
+	output wire        product_rbsp_overflow,
+	output wire [15:0] product_rbsp_length,
+	output wire        product_rbsp_complete,
+	output wire        product_feed_slice_go,
+	output wire        product_feed_started,
+	output wire        product_feed_i_ready,
+	output wire        product_slice_valid,
+	output wire        product_slice_is_i,
+	output wire [7:0]  product_sps_mb_w,
+	output wire [7:0]  product_sps_mb_h,
+
 	// DPB reference pre-fill — testbench injects real IDR reference data
 	input  wire        dpb_prefill_en,
 	input  wire [31:0] dpb_prefill_addr,
@@ -103,7 +133,7 @@ module stream_path_full_frame_tb #(
 	wire signed [4:0] slice_alpha_c0_offset;
 	wire signed [4:0] slice_beta_offset;
 	wire first_mb_p_skip_w;
-	wire [7:0] p_skip_run_w;
+	wire [15:0] p_skip_run_w;
 	wire [2:0] first_mb_part_mode_w;
 	wire [2:0] first_mb_part_count_w;
 	wire first_mb_uses_sub_mb_w;
@@ -189,8 +219,38 @@ module stream_path_full_frame_tb #(
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+		.fs_swap(fs_swap),
+		.dec_px_wr_en(product_px_wr_en),
+		.dec_px_plane(product_px_plane),
+		.dec_px_x(product_px_x),
+		.dec_px_y(product_px_y),
+		.dec_px_data(product_px_data),
+		.slice_desync(product_slice_desync),
+		.slice_desync_early(),
+		.slice_desync_long(),
+		.slice_desync_cause(product_slice_desync_cause),
+		.slice_desync_mb(product_slice_desync_mb)
 	);
+
+	// Hierarchical product-core observability (not all promoted to stream_path ports).
+	assign product_frame_done = dut.core_frame_done;
+	assign product_frame_mb_count = dut.core_frame_mb_count;
+	assign product_core_busy = dut.core_busy;
+	assign product_decode_state = dut.core_decode_state;
+	assign product_current_mb_addr = dut.core_current_mb_addr;
+	assign product_core_error = dut.core_error;
+	assign product_feed_frame_done = dut.feed_frame_done;
+	assign product_feed_busy = dut.feed_busy;
+	assign product_rbsp_overflow = dut.core_rbsp_overflow;
+	assign product_rbsp_length = dut.core_rbsp_length;
+	assign product_rbsp_complete = dut.core_rbsp_complete;
+	assign product_feed_slice_go = dut.feed_slice_go;
+	assign product_feed_started = dut.feed_started;
+	assign product_feed_i_ready = dut.feed_i_ready;
+	assign product_slice_valid = slice_valid;
+	assign product_slice_is_i = slice_is_i;
+	assign product_sps_mb_w = sps_mb_w;
+	assign product_sps_mb_h = sps_mb_h;
 
 	assign fs_wr_pixel = FAULT_PIXEL_XOR ? (fs_wr_pixel_dut ^ 16'hffff) : fs_wr_pixel_dut;
 	assign trace_slice_qp = dut.gen_diagnostic_present.stub.lat_qp;

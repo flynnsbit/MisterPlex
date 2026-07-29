@@ -36,7 +36,19 @@ module nalu_scanner (
 	output reg  [7:0]  sl_cap_data,
 	output reg         sl_cap_end,
 	output reg         sl_is_idr,
-	output reg         sl_nal_ref_idc_nonzero
+	output reg         sl_nal_ref_idc_nonzero,
+
+	// Uncapped VCL RBSP tap.  sl_cap_* stops after the first 96 bytes because
+	// slice_hdr_parser only needs the header plus the first macroblock; a real
+	// slice is thousands of bytes and the decode core has to be able to slide a
+	// window over all of it.  This tap carries the WHOLE emulation-prevention
+	// stripped RBSP of every VCL NAL (types 1 and 5) with no length ceiling and
+	// keeps its own zero-run state so it stays correct after sl_cap_* has
+	// stopped storing.
+	output reg         vcl_cap_clear,
+	output reg         vcl_cap_en,
+	output reg  [7:0]  vcl_cap_data,
+	output reg         vcl_cap_end
 );
 
 	reg [1:0] zrun;
@@ -48,11 +60,13 @@ module nalu_scanner (
 	reg       sl_idr_r;
 	reg       sl_ref_r;
 	reg       sl_done; // slice header already ended (still draining NAL)
+	reg [1:0] vcl_z;   // EPB zero-run for the uncapped VCL tap
 
 	wire [4:0] nal_t = rd_data[4:0];
 	// Slice header + first I_NxN MB luma residual window fit in ~96 bytes of RBSP.
 	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
 	                       !(cap_tgt == 2'd3 && cap_len >= 7'd96);
+	wire       can_store_vcl = (cap_tgt == 2'd3);
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -90,6 +104,11 @@ module nalu_scanner (
 			sl_is_idr     <= 0;
 			sl_nal_ref_idc_nonzero <= 0;
 			sl_ref_r      <= 0;
+			vcl_z         <= 0;
+			vcl_cap_clear <= 0;
+			vcl_cap_en    <= 0;
+			vcl_cap_data  <= 0;
+			vcl_cap_end   <= 0;
 		end else begin
 			vcl_pulse     <= 1'b0;
 			sps_cap_clear <= 1'b0;
@@ -101,6 +120,9 @@ module nalu_scanner (
 			sl_cap_clear  <= 1'b0;
 			sl_cap_en     <= 1'b0;
 			sl_cap_end    <= 1'b0;
+			vcl_cap_clear <= 1'b0;
+			vcl_cap_en    <= 1'b0;
+			vcl_cap_end   <= 1'b0;
 
 			rd_en <= !rd_empty;
 
@@ -117,12 +139,15 @@ module nalu_scanner (
 						sl_is_idr  <= sl_idr_r;
 						sl_nal_ref_idc_nonzero <= sl_ref_r;
 					end
+					if (cap_tgt == 2'd3)
+						vcl_cap_end <= 1'b1;
 
 					last_nal_type <= rd_data;
 					nalu_count    <= nalu_count + 1'd1;
 					pend_type     <= 1'b0;
 					zrun          <= 0;
 					epb_z         <= 0;
+					vcl_z         <= 0;
 					cap_len       <= 0;
 					sl_done       <= 0;
 
@@ -145,6 +170,7 @@ module nalu_scanner (
 							sl_idr_r     <= 1'b1;
 							sl_ref_r     <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
+							vcl_cap_clear <= 1'b1;
 						end
 						5'd1: begin
 							slice_count  <= slice_count + 1'd1;
@@ -153,12 +179,19 @@ module nalu_scanner (
 							sl_idr_r     <= 1'b0;
 							sl_ref_r     <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
+							vcl_cap_clear <= 1'b1;
 						end
 						default: cap_tgt <= 2'd0;
 					endcase
 				end else if (rd_data == 8'h00) begin
 					if (zrun < 2'd3)
 						zrun <= zrun + 1'd1;
+					if (can_store_vcl) begin
+						if (vcl_z < 2'd2)
+							vcl_z <= vcl_z + 1'd1;
+						vcl_cap_en   <= 1'b1;
+						vcl_cap_data <= 8'h00;
+					end
 					if (can_store) begin
 						if (epb_z < 2'd2)
 							epb_z <= epb_z + 1'd1;
@@ -185,13 +218,25 @@ module nalu_scanner (
 						sl_is_idr  <= sl_idr_r;
 						sl_nal_ref_idc_nonzero <= sl_ref_r;
 					end
+					if (cap_tgt == 2'd3)
+						vcl_cap_end <= 1'b1;
 					cap_tgt   <= 2'd0;
 					sl_done   <= 0;
 					epb_z     <= 0;
+					vcl_z     <= 0;
 					cap_len   <= 0;
 					pend_type <= 1'b1;
 					zrun      <= 0;
 				end else begin
+					if (can_store_vcl) begin
+						if (rd_data == 8'h03 && vcl_z >= 2'd2) begin
+							vcl_z <= 0; // emulation prevention byte
+						end else begin
+							vcl_cap_en   <= 1'b1;
+							vcl_cap_data <= rd_data;
+							vcl_z        <= 0;
+						end
+					end
 					if (can_store) begin
 						if (rd_data == 8'h03 && epb_z >= 2'd2) begin
 							epb_z <= 0; // skip EPB

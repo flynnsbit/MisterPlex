@@ -87,23 +87,150 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
-	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
-	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
-	assign dequant[1]  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 29'sd0;
-	assign dequant[2]  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 29'sd0;
-	assign dequant[3]  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 29'sd0;
-	assign dequant[4]  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 29'sd0;
-	assign dequant[5]  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 29'sd0;
-	assign dequant[6]  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 29'sd0;
-	assign dequant[7]  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 29'sd0;
-	assign dequant[8]  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 29'sd0;
-	assign dequant[9]  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 29'sd0;
-	assign dequant[10] = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 29'sd0;
-	assign dequant[11] = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 29'sd0;
-	assign dequant[12] = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 29'sd0;
-	assign dequant[13] = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 29'sd0;
-	assign dequant[14] = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 29'sd0;
-	assign dequant[15] = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 29'sd0;
+	// max_coeff==15 (chroma/I16 AC): CAVLC omits DC; coeff[k] → zigzag[k+1].
+	// max_coeff==16 (luma): coeff[k] → zigzag[k]. AC-only leaves raster DC = 0.
+	wire ac_only = (max_coeff == 5'd15);
+
+	// dequant_one(..., scan, skip_dc): skip_dc uses zigzag(scan+1) for scale position.
+	// AC-only: pass AC index k as scan with skip_dc=1. DC raster slot stays 0
+	// until chroma Hadamard / luma I16 DC inject overwrites it post-dequant.
+	wire signed [28:0] dq_full_0  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_1  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_2  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_3  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_4  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_5  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_6  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_7  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_8  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_9  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_10 = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_11 = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_12 = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_13 = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_14 = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 29'sd0;
+	wire signed [28:0] dq_full_15 = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 29'sd0;
+
+	// AC-only (max15): coeff[k] → zigzag[k+1] scale position via skip_dc.
+	wire signed [28:0] dq_ac_1  = dequant_one(coeff[0],  qp, 5'd0,  1'b1); // → zig1
+	wire signed [28:0] dq_ac_4  = dequant_one(coeff[1],  qp, 5'd1,  1'b1); // → zig2
+	wire signed [28:0] dq_ac_8  = dequant_one(coeff[2],  qp, 5'd2,  1'b1); // → zig3
+	wire signed [28:0] dq_ac_5  = dequant_one(coeff[3],  qp, 5'd3,  1'b1); // → zig4
+	wire signed [28:0] dq_ac_2  = dequant_one(coeff[4],  qp, 5'd4,  1'b1); // → zig5
+	wire signed [28:0] dq_ac_3  = dequant_one(coeff[5],  qp, 5'd5,  1'b1); // → zig6
+	wire signed [28:0] dq_ac_6  = dequant_one(coeff[6],  qp, 5'd6,  1'b1); // → zig7
+	wire signed [28:0] dq_ac_9  = dequant_one(coeff[7],  qp, 5'd7,  1'b1); // → zig8
+	wire signed [28:0] dq_ac_12 = dequant_one(coeff[8],  qp, 5'd8,  1'b1); // → zig9
+	wire signed [28:0] dq_ac_13 = dequant_one(coeff[9],  qp, 5'd9,  1'b1); // → zig10
+	wire signed [28:0] dq_ac_10 = dequant_one(coeff[10], qp, 5'd10, 1'b1); // → zig11
+	wire signed [28:0] dq_ac_7  = dequant_one(coeff[11], qp, 5'd11, 1'b1); // → zig12
+	wire signed [28:0] dq_ac_11 = dequant_one(coeff[12], qp, 5'd12, 1'b1); // → zig13
+	wire signed [28:0] dq_ac_14 = dequant_one(coeff[13], qp, 5'd13, 1'b1); // → zig14
+	wire signed [28:0] dq_ac_15 = dequant_one(coeff[14], qp, 5'd14, 1'b1); // → zig15
+
+	assign dequant[0]  = ac_only ? 29'sd0    : dq_full_0;
+	assign dequant[1]  = ac_only ? dq_ac_1   : dq_full_1;
+	assign dequant[2]  = ac_only ? dq_ac_2   : dq_full_2;
+	assign dequant[3]  = ac_only ? dq_ac_3   : dq_full_3;
+	assign dequant[4]  = ac_only ? dq_ac_4   : dq_full_4;
+	assign dequant[5]  = ac_only ? dq_ac_5   : dq_full_5;
+	assign dequant[6]  = ac_only ? dq_ac_6   : dq_full_6;
+	assign dequant[7]  = ac_only ? dq_ac_7   : dq_full_7;
+	assign dequant[8]  = ac_only ? dq_ac_8   : dq_full_8;
+	assign dequant[9]  = ac_only ? dq_ac_9   : dq_full_9;
+	assign dequant[10] = ac_only ? dq_ac_10  : dq_full_10;
+	assign dequant[11] = ac_only ? dq_ac_11  : dq_full_11;
+	assign dequant[12] = ac_only ? dq_ac_12  : dq_full_12;
+	assign dequant[13] = ac_only ? dq_ac_13  : dq_full_13;
+	assign dequant[14] = ac_only ? dq_ac_14  : dq_full_14;
+	assign dequant[15] = ac_only ? dq_ac_15  : dq_full_15;
+endmodule
+
+// H.264 Table 8-15 chroma QP mapping (qPi = clip(QP_Y + chroma_qp_index_offset)).
+module h264_chroma_qp (
+	input  wire [5:0]        qp_y,
+	input  wire signed [4:0] chroma_qp_index_offset,
+	output wire [5:0]        qp_c
+);
+	wire signed [7:0] qpi_raw = $signed({1'b0, qp_y}) + $signed({{3{chroma_qp_index_offset[4]}}, chroma_qp_index_offset});
+	wire [5:0] qpi = (qpi_raw < 0) ? 6'd0 : (qpi_raw > 8'sd51) ? 6'd51 : qpi_raw[5:0];
+	// Non-linear map for qPi >= 30 (spec Table 8-15).
+	reg [5:0] map_c;
+	always @* begin
+		case (qpi)
+		6'd30: map_c = 6'd29;
+		6'd31: map_c = 6'd30;
+		6'd32: map_c = 6'd31;
+		6'd33: map_c = 6'd32;
+		6'd34: map_c = 6'd32;
+		6'd35: map_c = 6'd33;
+		6'd36: map_c = 6'd34;
+		6'd37: map_c = 6'd34;
+		6'd38: map_c = 6'd35;
+		6'd39: map_c = 6'd35;
+		6'd40: map_c = 6'd36;
+		6'd41: map_c = 6'd36;
+		6'd42: map_c = 6'd37;
+		6'd43: map_c = 6'd37;
+		6'd44: map_c = 6'd37;
+		6'd45: map_c = 6'd38;
+		6'd46: map_c = 6'd38;
+		6'd47: map_c = 6'd38;
+		6'd48: map_c = 6'd39;
+		6'd49: map_c = 6'd39;
+		6'd50: map_c = 6'd39;
+		6'd51: map_c = 6'd39;
+		default: map_c = qpi;
+		endcase
+	end
+	assign qp_c = map_c;
+endmodule
+
+// Chroma DC 2x2 inverse Hadamard + dequant (ff_h264_chroma_dc_dequant_idct).
+// coeff[] is CAVLC scan order: 0=(0,0), 1=(1,0), 2=(0,1), 3=(1,1).
+// Output dc[] is raster 2x2: 0=(0,0), 1=(0,1), 2=(1,0), 3=(1,1) matching
+// chroma 4x4 block order {bx + by*2} with bx horizontal.
+module h264_chroma_dc_hadamard_inv (
+	input  wire signed [15:0] coeff [0:3],
+	input  wire [5:0]         qp_c,
+	output wire signed [28:0] dc [0:3]
+);
+	function automatic [4:0] mf0;
+		input [2:0] qmod;
+		begin
+			case (qmod)
+			3'd0: mf0 = 5'd10;
+			3'd1: mf0 = 5'd11;
+			3'd2: mf0 = 5'd13;
+			3'd3: mf0 = 5'd14;
+			3'd4: mf0 = 5'd16;
+			default: mf0 = 5'd18;
+			endcase
+		end
+	endfunction
+
+	wire signed [31:0] a0 = coeff[0];
+	wire signed [31:0] b0 = coeff[1];
+	wire signed [31:0] c0 = coeff[2];
+	wire signed [31:0] d0 = coeff[3];
+	wire signed [31:0] a = a0 + b0;
+	wire signed [31:0] e = a0 - b0;
+	wire signed [31:0] b = c0 - d0;
+	wire signed [31:0] c = c0 + d0;
+	// qmul = (mf[0]*16) << (qp/6 + 2); result = (had * qmul) >> 7
+	wire [2:0] qmod = qp_c % 6;
+	wire [3:0] qdiv = qp_c / 6;
+	wire signed [31:0] qmul = $signed({1'b0, mf0(qmod)}) * 32'sd16;
+	wire signed [31:0] qmul_s = qmul <<< (qdiv + 4'd2);
+	wire signed [31:0] t00 = ((a + c) * qmul_s) >>> 7;
+	wire signed [31:0] t01 = ((e + b) * qmul_s) >>> 7;
+	wire signed [31:0] t10 = ((a - c) * qmul_s) >>> 7;
+	wire signed [31:0] t11 = ((e - b) * qmul_s) >>> 7;
+	// Raster for 4x4 block inject: [by][bx] with by row, bx col.
+	assign dc[0] = t00[28:0]; // (0,0)
+	assign dc[1] = t01[28:0]; // (0,1) — bx=1,by=0
+	assign dc[2] = t10[28:0]; // (1,0) — bx=0,by=1
+	assign dc[3] = t11[28:0]; // (1,1)
 endmodule
 
 module h264_idct4x4 (

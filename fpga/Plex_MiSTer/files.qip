@@ -41,3 +41,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bitstream_prefetch.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_rbsp_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i_mb_feed.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_pskip_mv.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_part.sv

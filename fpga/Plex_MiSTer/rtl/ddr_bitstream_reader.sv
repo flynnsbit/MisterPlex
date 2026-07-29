@@ -20,7 +20,14 @@ module ddr_bitstream_reader #(
 	parameter [31:0] STAT5_PHYS = 32'h3014_0040,
 	parameter [31:0] STAT6_PHYS = 32'h3014_0048,
 	parameter int RING_BYTES    = 262144,
-	parameter int POLL_DIV_BITS = 6
+	parameter int POLL_DIV_BITS = 6,
+	// Mailbox poll rate when the ring is running low.  Producer latency shows up
+	// directly as decoder starvation, so a nearly empty ring is polled roughly
+	// eight times more often than a comfortable one.
+	parameter int POLL_DIV_FAST_BITS = 3,
+	parameter int RING_LOW_BYTES = 8192,
+	parameter int PREFETCH_QWORDS = 64,
+	parameter int PREFETCH_BURST  = 16
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -90,9 +97,7 @@ module ddr_bitstream_reader #(
 	localparam [3:0]
 		ST_RESET     = 4'd0,
 		ST_IDLE      = 4'd1,
-		ST_POLL      = 4'd2,
-		ST_READ_WAIT = 4'd3,
-		ST_CONSUME   = 4'd4;
+		ST_POLL      = 4'd2;
 
 	localparam [1:0]
 		MODE_HEADER  = 2'd0,
@@ -102,9 +107,6 @@ module ddr_bitstream_reader #(
 	reg [3:0] state;
 	reg [1:0] mode;
 	reg [POLL_DIV_BITS-1:0] poll_div;
-	reg [63:0] beat_q;
-	reg [2:0] byte_idx;
-	reg [3:0] beat_left;
 	reg [31:0] write_count;
 	reg [31:0] read_count;
 	reg reset_seen;
@@ -135,35 +137,68 @@ module ddr_bitstream_reader #(
 	wire [30:0] ctrl_write_count = DDRAM_DOUT[62:32];
 	wire [31:0] avail = write_count - read_count;
 	wire [31:0] ring_level = (avail > RING_BYTES_W) ? RING_BYTES_W : avail;
-	wire ring_has_data = have_ctrl && (avail != 32'd0) && !overrun_sticky && !fatal_sticky;
-	wire [RING_AW-1:0] read_ring_index = read_count[RING_AW-1:0];
-	wire [28:0] read_qword_offset = 29'(read_ring_index >> 3);
-	wire [2:0] read_byte_index = read_ring_index[2:0];
-	wire [31:0] bytes_to_qword_end = 32'd8 - {29'd0, read_byte_index};
-	wire [31:0] consume_count_w =
-		(avail < bytes_to_qword_end) ? avail : bytes_to_qword_end;
-	wire [3:0] consume_count = consume_count_w[3:0];
-	wire want_poll = enable && (poll_div == {POLL_DIV_BITS{1'b0}});
-	wire want_read = enable && ring_has_data && (beat_left == 4'd0);
+	wire ring_ok = have_ctrl && !overrun_sticky && !fatal_sticky;
+
+	// Burst prefetch front-end.  It owns the ring fetch pointer and the byte
+	// FIFO; this module keeps the DDR arbitration and the record parser.
+	wire        pf_fetch_req;
+	wire [28:0] pf_fetch_addr;
+	wire  [7:0] pf_fetch_len;
+	wire        pf_out_valid;
+	wire  [7:0] pf_out_byte;
+	wire [31:0] pf_read_count;
+	wire [31:0] pf_fetch_count;
+	wire  [7:0] pf_fifo_qwords;
+	wire        pf_beats_pending;
+	reg         pf_grant;
+	reg  [7:0]  pf_grant_len;
+	reg         pf_sync;
+	reg  [31:0] pf_sync_count;
+	wire        rd_is_prefetch;
+
+	wire ring_low = ring_level < 32'(RING_LOW_BYTES);
+	wire poll_tick = ring_low ? (poll_div[POLL_DIV_FAST_BITS-1:0] == {POLL_DIV_FAST_BITS{1'b0}})
+	                          : (poll_div == {POLL_DIV_BITS{1'b0}});
+	wire want_poll = enable && poll_tick && !pf_beats_pending;
+	wire want_read = enable && ring_ok && pf_fetch_req;
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
+	wire byte_take = pf_out_valid && can_consume && !flush;
 	wire [15:0] state_flags = {4'd0, fatal_sticky, desync_sticky, paused, active,
 	                           overrun_sticky, underrun_sticky, mode, state};
 
-	function automatic [7:0] beat_byte(input [63:0] beat, input [2:0] idx);
-		begin
-			case (idx)
-				3'd0: beat_byte = beat[7:0];
-				3'd1: beat_byte = beat[15:8];
-				3'd2: beat_byte = beat[23:16];
-				3'd3: beat_byte = beat[31:24];
-				3'd4: beat_byte = beat[39:32];
-				3'd5: beat_byte = beat[47:40];
-				3'd6: beat_byte = beat[55:48];
-				default: beat_byte = beat[63:56];
-			endcase
-		end
-	endfunction
+	ddr_bitstream_prefetch #(
+		.FIFO_QWORDS(PREFETCH_QWORDS),
+		.BURST_QWORDS(PREFETCH_BURST),
+		.RING_BYTES(RING_BYTES)
+	) u_prefetch (
+		.clk(clk),
+		.reset(reset),
+		.enable(enable && ring_ok),
+		.sync_valid(pf_sync),
+		.sync_count(pf_sync_count),
+		.write_count(write_count),
+		.ring_base_qw(DATA_W),
+		.fetch_req(pf_fetch_req),
+		.fetch_addr(pf_fetch_addr),
+		.fetch_len(pf_fetch_len),
+		.fetch_grant(pf_grant),
+		.fetch_grant_len(pf_grant_len),
+		.beat_valid(DDRAM_DOUT_READY && rd_is_prefetch),
+		.beat_data(DDRAM_DOUT),
+		.out_valid(pf_out_valid),
+		.out_byte(pf_out_byte),
+		.out_ready(can_consume && !flush),
+		.read_count(pf_read_count),
+		.fetch_count(pf_fetch_count),
+		.fifo_qwords(pf_fifo_qwords),
+		.beats_pending(pf_beats_pending)
+	);
+	assign rd_is_prefetch = pf_beats_pending && (state != ST_POLL);
+
+	// Fetch pointer is telemetry the mailbox has no slot for yet; keep it loaded
+	// so the prefetch output cannot be optimised away.
+	wire _unused_pf_fetch = |pf_fetch_count;
 
 	function automatic [31:0] hdr32(input int base);
 		begin
@@ -184,7 +219,12 @@ module ddr_bitstream_reader #(
 			last_bad_seq <= bad_seq;
 			if (desync_count != 16'hFFFF)
 				desync_count <= desync_count + 16'd1;
+			// Restart the telemetry sweep from step 0.  Ordinary byte traffic
+			// only re-arms publish_pending, so an event landing late in a sweep
+			// would otherwise finish the sweep without ever rewriting the
+			// mailbox word that carries it.
 			publish_pending <= 1'b1;
+			publish_step <= 4'd0;
 		end
 	endtask
 
@@ -193,19 +233,20 @@ module ddr_bitstream_reader #(
 			mode <= MODE_HEADER;
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
-			beat_left <= 4'd0;
 		end
 	endtask
 
 	wire bus_want_comb =
-		(state == ST_IDLE) ? (want_poll || want_read || want_pub) :
-		((state == ST_POLL) || (state == ST_READ_WAIT));
+		(state == ST_IDLE) ? (want_poll || want_read || want_pub || pf_beats_pending) :
+		(state == ST_POLL);
 
 	always @(posedge clk) begin
 		out_valid <= 1'b0;
 		out_flush <= 1'b0;
 		DDRAM_RD <= 1'b0;
 		DDRAM_WE <= 1'b0;
+		pf_grant <= 1'b0;
+		pf_sync <= 1'b0;
 
 		if (reset) begin
 			state <= ST_RESET;
@@ -242,10 +283,9 @@ module ddr_bitstream_reader #(
 			have_ctrl <= 1'b0;
 			empty_seen <= 1'b0;
 			seen_payload <= 1'b0;
-			beat_left <= 4'd0;
-			byte_idx <= 3'd0;
 			hdr_idx <= 5'd0;
 			payload_left <= 32'd0;
+			pf_sync_count <= 32'd0;
 		end else if (!enable) begin
 			state <= ST_IDLE;
 			bus_want <= 1'b0;
@@ -257,6 +297,8 @@ module ddr_bitstream_reader #(
 			poll_div <= poll_div + 1'd1;
 
 			if (flush) begin
+				pf_sync <= 1'b1;
+				pf_sync_count <= write_count;
 				read_count <= write_count;
 				fpga_read_count <= write_count;
 				active <= 1'b0;
@@ -277,12 +319,13 @@ module ddr_bitstream_reader #(
 			end
 
 			if (active && have_ctrl && seen_payload && (avail == 32'd0) &&
-			    (beat_left == 4'd0) && !empty_seen && !paused) begin
+			    !pf_out_valid && !pf_beats_pending && !empty_seen && !paused) begin
 				empty_seen <= 1'b1;
 				underrun_sticky <= 1'b1;
 				if (underrun_count != 16'hFFFF)
 					underrun_count <= underrun_count + 16'd1;
 				publish_pending <= 1'b1;
+				publish_step <= 4'd0;
 			end else if (avail != 32'd0) begin
 				empty_seen <= 1'b0;
 			end
@@ -323,7 +366,7 @@ module ddr_bitstream_reader #(
 							end
 							4'd2: begin
 								DDRAM_ADDR <= STAT0_W;
-								DDRAM_DIN <= {ring_level, MAGIC_ST0};
+								DDRAM_DIN <= {pf_fifo_qwords, ring_level[23:0], MAGIC_ST0};
 								DDRAM_WE <= 1'b1;
 								publish_step <= 4'd3;
 							end
@@ -371,11 +414,11 @@ module ddr_bitstream_reader #(
 						DDRAM_RD <= 1'b1;
 						state <= ST_POLL;
 					end else if (want_read && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= DATA_W + read_qword_offset;
-						DDRAM_BURSTCNT <= 8'd1;
+						DDRAM_ADDR <= pf_fetch_addr;
+						DDRAM_BURSTCNT <= pf_fetch_len;
+						pf_grant_len <= pf_fetch_len;
 						DDRAM_RD <= 1'b1;
-						byte_idx <= read_byte_index;
-						state <= ST_READ_WAIT;
+						pf_grant <= 1'b1;
 					end
 				end
 
@@ -387,6 +430,8 @@ module ddr_bitstream_reader #(
 							host_write_count <= {1'b0, ctrl_write_count};
 							if (ctrl_reset != reset_seen) begin
 								reset_seen <= ctrl_reset;
+								pf_sync <= 1'b1;
+								pf_sync_count <= {1'b0, ctrl_write_count};
 								read_count <= {1'b0, ctrl_write_count};
 								fpga_read_count <= {1'b0, ctrl_write_count};
 								active <= 1'b0;
@@ -409,21 +454,17 @@ module ddr_bitstream_reader #(
 					end
 				end
 
-				ST_READ_WAIT: begin
-					if (DDRAM_DOUT_READY) begin
-						beat_q <= DDRAM_DOUT;
-						beat_left <= consume_count;
-						state <= ST_CONSUME;
-					end
-				end
+				default: state <= ST_IDLE;
+			endcase
 
-				ST_CONSUME: begin
-					if (beat_left != 4'd0 && can_consume) begin
-						rx_byte = beat_byte(beat_q, byte_idx);
-						byte_idx <= byte_idx + 3'd1;
-						beat_left <= beat_left - 4'd1;
-						read_count <= read_count + 32'd1;
-						fpga_read_count <= read_count + 32'd1;
+			// Record parser.  It runs independently of the DDR state machine so
+			// a burst in flight and a stalled decoder never interact: bytes only
+			// move on byte_take, so nothing is dropped and nothing is replayed.
+			if (byte_take) begin
+					begin
+						rx_byte = pf_out_byte;
+						read_count <= pf_read_count + 32'd1;
+						fpga_read_count <= pf_read_count + 32'd1;
 						publish_pending <= 1'b1;
 
 						if (mode == MODE_PAYLOAD) begin
@@ -512,15 +553,8 @@ module ddr_bitstream_reader #(
 							end
 						end
 
-						if (beat_left == 4'd1)
-							state <= ST_IDLE;
-					end else if (beat_left == 4'd0) begin
-						state <= ST_IDLE;
 					end
-				end
-
-				default: state <= ST_IDLE;
-			endcase
+			end
 		end
 	end
 endmodule

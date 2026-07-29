@@ -1,13 +1,17 @@
 // h264_decode_top — Real intra macroblock decode datapath.
 //
 // Processes all 16 luma 4×4 blocks of a macroblock sequentially through a
-// shared dequant → IDCT → recon pipeline.
+// shared dequant → IDCT → recon pipeline. Stores 256 reconstructed luma pixels.
 //
-// AREA: random parallel access into a 256-byte reconstruction array was the
-// bulk of the old 19k-ALUT cost (neighbour taps + store + I16 plane slice).
-// Everything is sequential now: one read address and one write address per
-// cycle into a single M10K, plus a streaming sample port so the parent does
-// not need a second parallel copy of the plane.
+// INTERFACE: Block-serial. Feed 16 coefficients per block, strobe block_valid.
+// After 16 blocks, mb_recon_valid pulses and recon_y[0:255] is the full MB.
+//
+// PREDICTION: Instantiates h264_intra4x4_pred and h264_intra16x16_pred.
+// Neighbour context comes from external line buffers via nb_* ports.
+// When no neighbours are available (mb_avail_left=0, mb_avail_top=0),
+// prediction falls back to DC=128 — correct per H.264 spec §8.3.1.2.
+//
+// THIS IS THE MODULE THAT MOVES INTEGRATED_PIPELINE_COVERAGE.
 //
 // OWNER: w-rel.
 
@@ -17,96 +21,131 @@ module h264_decode_top (
     input  wire        clk,
     input  wire        reset,
 
-    input  wire        mb_start,
-    input  wire [7:0]  mb_type,
-    input  wire [5:0]  mb_qp_y,
-    input  wire [7:0]  mb_x,
-    input  wire [7:0]  mb_y,
+    // ── Macroblock-level inputs ──
+    input  wire        mb_start,           // Pulse: begin new macroblock
+    input  wire [7:0]  mb_type,            // H.264 mb_type (0=I_NxN, 1-24=I_16x16, 25=I_PCM)
+    input  wire [5:0]  mb_qp_y,            // Luma QP for this MB
+    input  wire [7:0]  mb_x,               // MB column (0-based)
+    input  wire [7:0]  mb_y,               // MB row (0-based)
 
-    input  wire [1:0]  i16_pred_mode,
+    // ── I_16x16 prediction mode (from slice header parsing) ──
+    input  wire [1:0]  i16_pred_mode,      // 0=V, 1=H, 2=DC, 3=Plane
 
-    input  wire        block_valid,
-    input  wire [3:0]  block_index,
-    input  wire signed [15:0] block_coeff [0:15],
+    // ── Per-block coefficient input ──
+    input  wire        block_valid,        // Pulse: coefficients ready
+    input  wire [3:0]  block_index,        // 0-15 (H.264 raster-to-zigzag scan order)
+    input  wire signed [15:0] block_coeff [0:15], // CAVLC coefficients (zigzag order)
 
-    input  wire        i16_dc_valid,
-    input  wire signed [28:0] i16_dc [0:15],
+    // ── I_16x16 DC bypass (from Hadamard transform) ──
+    input  wire        i16_dc_valid,       // Hadamard DC values ready (all 16)
+    input  wire signed [28:0] i16_dc [0:15], // Post-Hadamard DC for each 4x4 block
 
-    input  wire [3:0]  i4_modes [0:15],
+    // ── I_4x4 prediction modes (from parsing) ──
+    input  wire [3:0]  i4_modes [0:15],    // Per-block intra4x4 prediction mode
 
+    // ── Neighbour context (from w-ctl line buffer) ──
     input  wire        mb_avail_left,
     input  wire        mb_avail_top,
     input  wire        mb_avail_topright,
     input  wire        mb_avail_topleft,
-    input  wire [7:0]  nb_top [0:15],
-    input  wire [7:0]  nb_left [0:15],
-    input  wire [7:0]  nb_topleft,
-    input  wire [7:0]  nb_topright [0:3],
-    // High while h264_intra_nb_ctx is still gathering this MB's neighbours.
-    // I16 must NOT start (and latch samples) until this drops — otherwise it
-    // captures the PREVIOUS MB's left/top/availability and corrupts the left
-    // edge of every row (mb_x==0 sees stale has_left=1 from x=MB_W-1).
-    input  wire        nb_busy,
+    input  wire [7:0]  nb_top [0:15],      // 16 samples from MB above (top row)
+    input  wire [7:0]  nb_left [0:15],     // 16 samples from MB to the left (right col)
+    input  wire [7:0]  nb_topleft,         // Top-left corner sample
+    input  wire [7:0]  nb_topright [0:3],  // 4 samples above-right of current 4x4
 
-    // Streaming PRE-deblock recon (one sample / cycle during store walk).
-    output reg         recon_sample_valid,
-    output reg  [7:0]  recon_sample_idx,
-    output reg  [7:0]  recon_sample,
-    // Per-4x4 block commit for neighbour context (16 samples, raster 4x4).
-    output reg         block_recon_valid,
-    output reg  [3:0]  block_recon_idx,
-    output reg  [7:0]  block_recon_pixels [0:15],
-    // MB complete pulse (line-buffer commit edge).
-    output reg         mb_recon_valid,
-    output reg  [4:0]  blocks_done
+    // ── Outputs ──
+    output reg         mb_recon_valid,     // Pulse: full MB reconstruction complete
+    output reg  [7:0]  recon_y [0:255],    // Reconstructed luma (16×16, raster order)
+    output reg  [4:0]  blocks_done        // Running count of blocks completed
 );
 
+    // ════════════════════════════════════════════════════════════════════
+    // MB TYPE DECODE
+    // ════════════════════════════════════════════════════════════════════
+    wire is_i_nxn  = (mb_type == 8'd0);
     wire is_i16x16 = (mb_type >= 8'd1) && (mb_type <= 8'd24);
+    // wire is_ipcm   = (mb_type == 8'd25); // TODO: w-plane delivers I_PCM
 
+    // ════════════════════════════════════════════════════════════════════
+    // BLOCK SCAN ORDER — H.264 spec Table 6-10 (4x4 luma block indices)
+    // Maps block_index (0-15) to x,y pixel offset within the 16×16 MB
+    // ════════════════════════════════════════════════════════════════════
     function automatic [3:0] block_x_offset;
         input [3:0] idx;
-        block_x_offset = {idx[2], idx[0], 2'b00};
+        case (idx)
+            4'd0:  block_x_offset = 4'd0;
+            4'd1:  block_x_offset = 4'd4;
+            4'd2:  block_x_offset = 4'd0;
+            4'd3:  block_x_offset = 4'd4;
+            4'd4:  block_x_offset = 4'd8;
+            4'd5:  block_x_offset = 4'd12;
+            4'd6:  block_x_offset = 4'd8;
+            4'd7:  block_x_offset = 4'd12;
+            4'd8:  block_x_offset = 4'd0;
+            4'd9:  block_x_offset = 4'd4;
+            4'd10: block_x_offset = 4'd0;
+            4'd11: block_x_offset = 4'd4;
+            4'd12: block_x_offset = 4'd8;
+            4'd13: block_x_offset = 4'd12;
+            4'd14: block_x_offset = 4'd8;
+            default: block_x_offset = 4'd12;
+        endcase
     endfunction
 
     function automatic [3:0] block_y_offset;
         input [3:0] idx;
-        block_y_offset = {idx[3], idx[1], 2'b00};
+        case (idx)
+            4'd0:  block_y_offset = 4'd0;
+            4'd1:  block_y_offset = 4'd0;
+            4'd2:  block_y_offset = 4'd4;
+            4'd3:  block_y_offset = 4'd4;
+            4'd4:  block_y_offset = 4'd0;
+            4'd5:  block_y_offset = 4'd0;
+            4'd6:  block_y_offset = 4'd4;
+            4'd7:  block_y_offset = 4'd4;
+            4'd8:  block_y_offset = 4'd8;
+            4'd9:  block_y_offset = 4'd8;
+            4'd10: block_y_offset = 4'd12;
+            4'd11: block_y_offset = 4'd12;
+            4'd12: block_y_offset = 4'd8;
+            4'd13: block_y_offset = 4'd8;
+            4'd14: block_y_offset = 4'd12;
+            default: block_y_offset = 4'd12;
+        endcase
     endfunction
 
+    // ════════════════════════════════════════════════════════════════════
+    // SHARED ARITHMETIC PIPELINE (dequant → IDCT → recon)
+    // ════════════════════════════════════════════════════════════════════
     reg signed [15:0]  pipe_coeff [0:15];
     reg [5:0]          pipe_qp;
     reg [7:0]          pipe_pred [0:15];
     reg [3:0]          pipe_block_idx;
+    reg                pipe_valid;
     reg                pipe_is_i16;
 
     reg signed [28:0] latched_i16_dc [0:15];
-    reg                xform_start;
-    reg                xform_ready;
-    wire               xform_done;
-    wire signed [28:0] idct_out [0:15];
-
-    // AREA: one sequential scaler + one shared butterfly instead of the
-    // combinational h264_dequant4x4_flex + h264_idct4x4 pair, which cost
-    // ~4.5k ALUTs and 16 DSP blocks to finish in one cycle work that this
-    // block-serial walk only issues once every ~30 cycles.
-    // Hadamard DC plane is raster {y4,x4}; block_index is H.264 blkIdx
-    // (x={b[2],b[0]}, y={b[3],b[1]}).  Wrong map → flat-looking wrong brightness.
-    wire [1:0] pipe_x4 = {pipe_block_idx[2], pipe_block_idx[0]};
-    wire [1:0] pipe_y4 = {pipe_block_idx[3], pipe_block_idx[1]};
-    wire [3:0] pipe_dc_raster = {pipe_y4, pipe_x4};
-
-    h264_iq_idct_seq u_iqidct (
-        .clk(clk),
-        .reset(reset),
-        .start(xform_start),
+    // Hadamard plane is raster {y4,x4}; block_index is H.264 blkIdx.
+    wire [1:0] pipe_dc_x4 = {pipe_block_idx[2], pipe_block_idx[0]};
+    wire [1:0] pipe_dc_y4 = {pipe_block_idx[3], pipe_block_idx[1]};
+    wire [3:0] pipe_dc_raster = {pipe_dc_y4, pipe_dc_x4};
+    // I16: AC-only coeff[0:14] → scan 1..15 + Hadamard DC at scan0.
+    // Non-I16: full 16-coeff dequant.
+    wire signed [28:0] dq_final [0:15];
+    h264_dequant4x4_flex u_dequant (
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
         .dc_value(latched_i16_dc[pipe_dc_raster]),
-        .residual(idct_out),
-        .done(xform_done)
+        .dequant(dq_final)
+    );
+
+    wire signed [28:0] idct_out [0:15];
+    h264_idct4x4 u_idct (
+        .dequant(dq_final),
+        .residual(idct_out)
     );
 
     wire [7:0] recon_block [0:15];
@@ -116,65 +155,44 @@ module h264_decode_top (
         .recon(recon_block)
     );
 
+    // ════════════════════════════════════════════════════════════════════
+    // INTRA 16×16 PREDICTION
+    // ════════════════════════════════════════════════════════════════════
     wire       i16_unsupported;
     wire       i16_pred_valid;
     reg        i16_pred_ready;
-    wire [7:0] i16_rd_data;
-    reg  [4:0] fcnt;
-    wire [7:0] i16_addr = {cur_by + {2'd0, fcnt[3:2]}, cur_bx + {2'd0, fcnt[1:0]}};
-    // PARALLEL_OUT=0: the plane lives in an M10K inside the predictor and is
-    // walked one sample per cycle, so there is no 256:1 byte mux here.
-    //
-    // Start I16 only after nb_ctx finishes gather (!nb_busy).  The predictor
-    // latches above/left/avail on its start edge; firing on raw mb_start
-    // latched the prior MB (classic left-column streak across 2-3 MBs).
-    reg i16_start_pend;
-    reg i16_nb_start;
-    always @(posedge clk) begin
-        i16_nb_start <= 1'b0;
-        if (reset) begin
-            i16_start_pend <= 1'b0;
-        end else if (mb_start && is_i16x16) begin
-            i16_start_pend <= 1'b1;
-        end else if (i16_start_pend && !nb_busy) begin
-            i16_start_pend <= 1'b0;
-            i16_nb_start   <= 1'b1;
-        end
-    end
-
-    h264_intra16x16_pred #(.PARALLEL_OUT(0)) u_i16_pred (
+    wire [7:0] i16_pred_pixels [0:255];
+    h264_intra16x16_pred u_i16_pred (
         .clk(clk),
-        .start(i16_nb_start),
+        .start(mb_start && is_i16x16),
         .mode(i16_pred_mode),
         .above(nb_top),
         .left(nb_left),
         .top_left(nb_topleft),
         .has_above(mb_avail_top),
         .has_left(mb_avail_left),
-        .rd_addr(i16_addr),
-        .rd_data(i16_rd_data),
         .unsupported(i16_unsupported),
-        .valid(i16_pred_valid)
+        .valid(i16_pred_valid),
+        .pred(i16_pred_pixels)
     );
 
-    // Single M10K reconstruction store. Sync read: address one cycle early.
-    (* ramstyle = "M10K" *) reg [7:0] recon_mem [0:255];
-    reg  [7:0] mem_raddr;
-    reg  [7:0] mem_rdata;
-    reg  [7:0] mem_waddr;
-    reg  [7:0] mem_wdata;
-    reg        mem_we;
+    // ════════════════════════════════════════════════════════════════════
+    // INTRA 4×4 PREDICTION — uses per-block reconstructed neighbours
+    // ════════════════════════════════════════════════════════════════════
+    // For each 4×4 block, we need the 4 samples above, 4 to the left,
+    // top-left corner, and optionally 4 above-right.
+    // These come from either the MB-level neighbours or from already-
+    // reconstructed blocks within this MB.
 
-    always @(posedge clk) begin
-        mem_rdata <= recon_mem[mem_raddr];
-        if (mem_we)
-            recon_mem[mem_waddr] <= mem_wdata;
-    end
+    // Local reconstruction store — as blocks complete, their samples
+    // become available as neighbours for subsequent blocks
+    reg [7:0] local_recon [0:255];
 
-    reg  [7:0] blk_above [0:7];
-    reg  [7:0] blk_left [0:3];
-    reg  [7:0] blk_top_left;
-    reg        blk_has_above, blk_has_left;
+    // Per-block neighbour derivation
+    reg [7:0] blk_above [0:7]; // 4 above + 4 above-right
+    reg [7:0] blk_left [0:3];
+    reg [7:0] blk_top_left;
+    reg       blk_has_above, blk_has_left;
 
     wire [3:0] i4_used_mode;
     wire [7:0] i4_pred_pixels [0:15];
@@ -189,256 +207,217 @@ module h264_decode_top (
         .pred(i4_pred_pixels)
     );
 
-    wire [3:0] cur_bx = block_x_offset(pipe_block_idx);
-    wire [3:0] cur_by = block_y_offset(pipe_block_idx);
+    // ════════════════════════════════════════════════════════════════════
+    // BLOCK NEIGHBOUR DERIVATION
+    // Determines above/left/topleft samples for each 4×4 block within
+    // the macroblock, sourcing from either MB-level neighbours or from
+    // already-reconstructed local blocks.
+    //
+    // H.264 above-right availability (Table 6-3): NOT available for
+    // blocks 3, 7, 11, 13, 15 (right-edge or not-yet-decoded).
+    // When unavailable, replicate above[3] → above[4:7].
+    // ════════════════════════════════════════════════════════════════════
+    reg [3:0] cur_bx, cur_by; // pixel x,y of current block's top-left within MB
 
+    // Above-right availability within the MB (H.264 spec constraint)
+    // In 4×4-block units: above-right is at (bx4+1, by4-1)
+    // NOT available when: bx4==3 (right edge), or block not yet decoded
     function automatic above_right_avail;
         input [3:0] bidx;
         case (bidx)
-            4'd3, 4'd7, 4'd11, 4'd13, 4'd15: above_right_avail = 1'b0;
+            4'd3:  above_right_avail = 1'b0; // AR block 4 not yet decoded
+            4'd7:  above_right_avail = 1'b0; // AR outside MB (right edge)
+            4'd11: above_right_avail = 1'b0; // AR block 12 not yet decoded
+            4'd13: above_right_avail = 1'b0; // AR outside MB (right edge)
+            4'd15: above_right_avail = 1'b0; // AR outside MB (right edge)
             default: above_right_avail = 1'b1;
         endcase
     endfunction
 
-    wire ar_in_mb = above_right_avail(pipe_block_idx) && (cur_bx < 4'd12);
-    wire ar_from_topright = above_right_avail(pipe_block_idx) && (cur_bx >= 4'd12) &&
-                            (cur_by == 4'd0) && mb_avail_top && mb_avail_topright;
-
-    // Neighbour walk: 13 taps × 2 phases (ADDR then CAPTURE) for sync RAM.
-    reg  [4:0] nbc;
-    wire [3:0] tap_i   = nbc[4:1];
-    wire       tap_cap = nbc[0];
-    wire [1:0] nb_sub  = tap_i[1:0];
-    wire [3:0] nb_col_a  = cur_bx + {2'd0, nb_sub};
-    wire [3:0] nb_col_ar = cur_bx + 4'd4 + {2'd0, nb_sub};
-    wire [3:0] nb_row_l  = cur_by + {2'd0, nb_sub};
-
-    reg  [7:0] nb_addr;
-    reg  [7:0] nb_ext;
-    reg        nb_use_mem;
+    integer ni;
     always @* begin
-        nb_addr    = 8'd0;
-        nb_ext     = 8'd128;
-        nb_use_mem = 1'b0;
-        if (tap_i <= 4'd3) begin
-            if (cur_by != 4'd0) begin
-                nb_use_mem = 1'b1;
-                nb_addr = {cur_by - 4'd1, nb_col_a};
-            end else if (mb_avail_top) begin
-                nb_ext = nb_top[nb_col_a];
-            end
-        end else if (tap_i <= 4'd7) begin
-            if (ar_from_topright) begin
-                nb_ext = nb_topright[nb_sub];
-            end else if (!ar_in_mb) begin
-                nb_ext = blk_above[3];
-            end else if (cur_by != 4'd0) begin
-                nb_use_mem = 1'b1;
-                nb_addr = {cur_by - 4'd1, nb_col_ar};
-            end else if (mb_avail_top) begin
-                nb_ext = nb_top[nb_col_ar];
-            end else begin
-                nb_ext = blk_above[3];
-            end
-        end else if (tap_i <= 4'd11) begin
-            if (cur_bx != 4'd0) begin
-                nb_use_mem = 1'b1;
-                nb_addr = {nb_row_l, cur_bx - 4'd1};
-            end else if (mb_avail_left) begin
-                nb_ext = nb_left[nb_row_l];
-            end
+        cur_bx = block_x_offset(pipe_block_idx);
+        cur_by = block_y_offset(pipe_block_idx);
+
+        // Default: no neighbours
+        blk_has_above = 1'b0;
+        blk_has_left  = 1'b0;
+        blk_top_left  = 8'd128;
+        for (ni = 0; ni < 8; ni = ni + 1) blk_above[ni] = 8'd128;
+        for (ni = 0; ni < 4; ni = ni + 1) blk_left[ni] = 8'd128;
+
+        // ABOVE (4 samples from row cur_by-1, columns cur_bx to cur_bx+3)
+        if (cur_by != 4'd0) begin
+            // Within-MB: use already-decoded block above
+            blk_has_above = 1'b1;
+            for (ni = 0; ni < 4; ni = ni + 1)
+                blk_above[ni] = local_recon[({cur_by - 4'd1, cur_bx} + ni[7:0])];
+            // Above-right: only if available per H.264 spec
+            if (above_right_avail(pipe_block_idx) && cur_bx < 4'd12)
+                for (ni = 0; ni < 4; ni = ni + 1)
+                    blk_above[4 + ni] = local_recon[({cur_by - 4'd1, cur_bx + 4'd4} + ni[7:0])];
+            else
+                for (ni = 0; ni < 4; ni = ni + 1)
+                    blk_above[4 + ni] = blk_above[3]; // replicate last
         end else begin
-            if (cur_bx != 4'd0 && cur_by != 4'd0) begin
-                nb_use_mem = 1'b1;
-                nb_addr = {cur_by - 4'd1, cur_bx - 4'd1};
-            end else if (cur_bx == 4'd0 && cur_by != 4'd0) begin
-                if (mb_avail_left) nb_ext = nb_left[cur_by - 4'd1];
-            end else if (cur_bx != 4'd0 && cur_by == 4'd0) begin
-                if (mb_avail_top) nb_ext = nb_top[cur_bx - 4'd1];
-            end else if (mb_avail_topleft) begin
-                nb_ext = nb_topleft;
+            // Top row of MB: use MB-level above neighbour
+            if (mb_avail_top) begin
+                blk_has_above = 1'b1;
+                for (ni = 0; ni < 4; ni = ni + 1)
+                    blk_above[ni] = nb_top[{cur_bx} + ni[3:0]];
+                // Above-right from MB above
+                if (above_right_avail(pipe_block_idx) && cur_bx < 4'd12)
+                    for (ni = 0; ni < 4; ni = ni + 1)
+                        blk_above[4 + ni] = nb_top[{cur_bx + 4'd4} + ni[3:0]];
+                else if (above_right_avail(pipe_block_idx) && mb_avail_topright)
+                    for (ni = 0; ni < 4; ni = ni + 1)
+                        blk_above[4 + ni] = nb_topright[ni];
+                else
+                    for (ni = 0; ni < 4; ni = ni + 1)
+                        blk_above[4 + ni] = blk_above[3];
             end
+        end
+
+        // LEFT (4 samples from column cur_bx-1, rows cur_by to cur_by+3)
+        if (cur_bx != 4'd0) begin
+            // Within-MB: use already-decoded block to the left
+            blk_has_left = 1'b1;
+            for (ni = 0; ni < 4; ni = ni + 1)
+                blk_left[ni] = local_recon[{cur_by + ni[3:0], cur_bx - 4'd1}];
+        end else begin
+            // Left edge of MB: use MB-level left neighbour
+            if (mb_avail_left) begin
+                blk_has_left = 1'b1;
+                for (ni = 0; ni < 4; ni = ni + 1)
+                    blk_left[ni] = nb_left[{cur_by} + ni[3:0]];
+            end
+        end
+
+        // TOP-LEFT corner
+        if (cur_bx != 4'd0 && cur_by != 4'd0) begin
+            blk_top_left = local_recon[{cur_by - 4'd1, cur_bx - 4'd1}];
+        end else if (cur_bx == 4'd0 && cur_by != 4'd0) begin
+            if (mb_avail_left)
+                blk_top_left = nb_left[{cur_by} - 4'd1];
+            else
+                blk_top_left = 8'd128;
+        end else if (cur_bx != 4'd0 && cur_by == 4'd0) begin
+            if (mb_avail_top)
+                blk_top_left = nb_top[{cur_bx} - 4'd1];
+            else
+                blk_top_left = 8'd128;
+        end else begin
+            // top-left corner of MB
+            if (mb_avail_topleft)
+                blk_top_left = nb_topleft;
+            else
+                blk_top_left = 8'd128;
         end
     end
 
-    wire [7:0] nb_value = nb_use_mem ? mem_rdata : nb_ext;
+    // ════════════════════════════════════════════════════════════════════
+    // PREDICTION MUX — select I_16x16 or I_4x4 prediction for this block
+    // ════════════════════════════════════════════════════════════════════
+    integer pi;
+    always @* begin
+        if (pipe_is_i16) begin
+            // I_16x16: take 4×4 slice from the full 16×16 prediction
+            for (pi = 0; pi < 4; pi = pi + 1)
+                for (ni = 0; ni < 4; ni = ni + 1)
+                    pipe_pred[pi*4 + ni] = i16_pred_pixels[({cur_by + pi[3:0], cur_bx + ni[3:0]})];
+        end else begin
+            // I_4x4: per-block prediction
+            for (pi = 0; pi < 16; pi = pi + 1)
+                pipe_pred[pi] = i4_pred_pixels[pi];
+        end
+    end
 
-    localparam [2:0] ST_IDLE     = 3'd0,
-                     ST_NBFETCH  = 3'd1,
-                     ST_PREDCAP  = 3'd2,
-                     ST_I16FETCH = 3'd3,
-                     ST_STORE    = 3'd4,
-                     ST_DONE     = 3'd5,
-                     ST_XFORM    = 3'd6;
+    // ════════════════════════════════════════════════════════════════════
+    // SEQUENCING — process blocks one at a time, store results
+    // ════════════════════════════════════════════════════════════════════
+    localparam [1:0] ST_IDLE  = 2'd0,
+                     ST_BLOCK = 2'd1,
+                     ST_STORE = 2'd2,
+                     ST_DONE  = 2'd3;
 
-    reg [2:0] state;
+    reg [1:0] state;
     reg       mb_started;
-    reg [3:0] wcnt;
-
-    reg               skid_full;
-    reg signed [15:0] skid_coeff [0:15];
-    reg [3:0]         skid_index;
-
-    wire busy = (state != ST_IDLE);
-    // Hold block launch until neighbour gather is done (top line-buffer path).
-    wire launch_ok = mb_started && !nb_busy && (!pipe_is_i16 || i16_pred_ready);
-
-    wire [7:0] walk_addr = {cur_by + {2'd0, wcnt[3:2]}, cur_bx + {2'd0, wcnt[1:0]}};
 
     integer si;
     always @(posedge clk) begin
-        recon_sample_valid <= 1'b0;
-        block_recon_valid  <= 1'b0;
-        mb_recon_valid     <= 1'b0;
-        mem_we             <= 1'b0;
-
         if (reset) begin
-            state          <= ST_IDLE;
-            blocks_done    <= 5'd0;
-            mb_started     <= 1'b0;
-            pipe_is_i16    <= 1'b0;
+            state         <= ST_IDLE;
+            mb_recon_valid <= 1'b0;
+            blocks_done   <= 5'd0;
+            pipe_valid    <= 1'b0;
+            mb_started    <= 1'b0;
+            pipe_is_i16   <= 1'b0;
             i16_pred_ready <= 1'b0;
             pipe_block_idx <= 4'd0;
-            pipe_qp        <= 6'd0;
-            nbc            <= 5'd0;
-            wcnt           <= 4'd0;
-            fcnt           <= 5'd0;
-            xform_start    <= 1'b0;
-            xform_ready    <= 1'b0;
-            skid_full      <= 1'b0;
-            skid_index     <= 4'd0;
-            blk_has_above  <= 1'b0;
-            blk_has_left   <= 1'b0;
-            blk_top_left   <= 8'd128;
-            mem_raddr      <= 8'd0;
-            mem_waddr      <= 8'd0;
-            mem_wdata      <= 8'd0;
-            block_recon_idx  <= 4'd0;
-            recon_sample_idx <= 8'd0;
-            recon_sample     <= 8'd0;
-            for (si = 0; si < 8; si = si + 1) blk_above[si] <= 8'd128;
-            for (si = 0; si < 4; si = si + 1) blk_left[si] <= 8'd128;
+            pipe_qp       <= 6'd0;
             for (si = 0; si < 16; si = si + 1) begin
                 pipe_coeff[si] <= 16'sd0;
-                skid_coeff[si] <= 16'sd0;
-                pipe_pred[si]  <= 8'd128;
                 latched_i16_dc[si] <= 29'sd0;
-                block_recon_pixels[si] <= 8'd128;
+            end
+            for (si = 0; si < 256; si = si + 1) begin
+                local_recon[si] <= 8'd0;
+                recon_y[si]     <= 8'd0;
             end
         end else begin
-            xform_start <= 1'b0;
-            if (xform_done)
-                xform_ready <= 1'b1;
-
+            mb_recon_valid <= 1'b0;
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
-            if (i16_dc_valid)
+            // Latch I_16x16 DC values when provided
+            if (i16_dc_valid) begin
                 for (si = 0; si < 16; si = si + 1)
                     latched_i16_dc[si] <= i16_dc[si];
+            end
 
+            // MB start: reset block counter
             if (mb_start) begin
-                blocks_done    <= 5'd0;
-                mb_started     <= 1'b1;
-                pipe_is_i16    <= is_i16x16;
+                blocks_done <= 5'd0;
+                mb_started  <= 1'b1;
+                pipe_is_i16 <= is_i16x16;
                 i16_pred_ready <= !is_i16x16;
-                pipe_qp        <= mb_qp_y;
-                skid_full      <= 1'b0;
-            end else if (block_valid && busy && !skid_full) begin
-                skid_full  <= 1'b1;
-                skid_index <= block_index;
-                for (si = 0; si < 16; si = si + 1)
-                    skid_coeff[si] <= block_coeff[si];
+                pipe_qp     <= mb_qp_y;
             end
 
             case (state)
                 ST_IDLE: begin
-                    if (launch_ok && (skid_full || block_valid)) begin
+                    if (block_valid && mb_started && (!pipe_is_i16 || i16_pred_ready)) begin
+                        // Latch coefficients and block index
                         for (si = 0; si < 16; si = si + 1)
-                            pipe_coeff[si] <= skid_full ? skid_coeff[si] : block_coeff[si];
-                        pipe_block_idx <= skid_full ? skid_index : block_index;
-                        skid_full      <= 1'b0;
-                        nbc            <= 5'd0;
-                        wcnt           <= 4'd0;
-                        fcnt           <= 5'd0;
-                        xform_start    <= 1'b1;
-                        xform_ready    <= 1'b0;
-                        state          <= pipe_is_i16 ? ST_I16FETCH : ST_NBFETCH;
-                    end
-                end
-
-                ST_NBFETCH: begin
-                    if (!tap_cap) begin
-                        if (tap_i == 4'd0) begin
-                            blk_has_above <= (cur_by != 4'd0) || mb_avail_top;
-                            blk_has_left  <= (cur_bx != 4'd0) || mb_avail_left;
-                        end
-                        if (nb_use_mem)
-                            mem_raddr <= nb_addr;
-                        nbc <= nbc + 5'd1;
-                    end else begin
-                        if (tap_i <= 4'd7)
-                            blk_above[tap_i[2:0]] <= nb_value;
-                        else if (tap_i <= 4'd11)
-                            blk_left[tap_i[1:0]] <= nb_value;
-                        else
-                            blk_top_left <= nb_value;
-
-                        if (tap_i == 4'd12)
-                            state <= ST_PREDCAP;
-                        else
-                            nbc <= nbc + 5'd1;
-                    end
-                end
-
-                ST_PREDCAP: begin
-                    for (si = 0; si < 16; si = si + 1)
-                        pipe_pred[si] <= i4_pred_pixels[si];
-                    wcnt  <= 4'd0;
-                    state <= ST_XFORM;
-                end
-
-                // The scaler/transform engine runs alongside the neighbour or
-                // plane walk; this only ever waits out the residual cycles.
-                ST_XFORM: if (xform_ready || xform_done) begin
-                    wcnt  <= 4'd0;
-                    state <= ST_STORE;
-                end
-
-                // Sync M10K read: address on cycle n, sample lands on n+1.
-                ST_I16FETCH: begin
-                    if (fcnt != 5'd0)
-                        pipe_pred[fcnt[3:0] - 4'd1] <= i16_rd_data;
-                    if (fcnt == 5'd16) begin
-                        wcnt  <= 4'd0;
-                        state <= ST_XFORM;
-                    end else begin
-                        fcnt <= fcnt + 5'd1;
+                            pipe_coeff[si] <= block_coeff[si];
+                        pipe_block_idx <= block_index;
+                        pipe_valid     <= 1'b1;
+                        state          <= ST_STORE;
                     end
                 end
 
                 ST_STORE: begin
-                    mem_we    <= 1'b1;
-                    mem_waddr <= walk_addr;
-                    mem_wdata <= recon_block[wcnt];
+                    // Pipeline is combinational — results ready THIS cycle
+                    // Store reconstructed 4×4 block into local buffer
+                    pipe_valid <= 1'b0;
+                    for (si = 0; si < 4; si = si + 1)
+                        for (ni = 0; ni < 4; ni = ni + 1) begin
+                            local_recon[{cur_by + si[3:0], cur_bx + ni[3:0]}] <=
+                                recon_block[si*4 + ni];
+                        end
+                    blocks_done <= blocks_done + 5'd1;
 
-                    recon_sample_valid <= 1'b1;
-                    recon_sample_idx   <= walk_addr;
-                    recon_sample       <= recon_block[wcnt];
-
-                    block_recon_pixels[wcnt] <= recon_block[wcnt];
-
-                    if (wcnt == 4'd15) begin
-                        block_recon_valid <= 1'b1;
-                        block_recon_idx   <= pipe_block_idx;
-                        blocks_done <= blocks_done + 5'd1;
-                        state <= (blocks_done == 5'd15) ? ST_DONE : ST_IDLE;
+                    if (blocks_done == 5'd15) begin
+                        // All 16 luma blocks done — output full MB
+                        state <= ST_DONE;
                     end else begin
-                        wcnt <= wcnt + 4'd1;
+                        state <= ST_IDLE;
                     end
                 end
 
                 ST_DONE: begin
+                    // Copy local_recon to output
+                    for (si = 0; si < 256; si = si + 1)
+                        recon_y[si] <= local_recon[si];
                     mb_recon_valid <= 1'b1;
                     mb_started     <= 1'b0;
                     state          <= ST_IDLE;
@@ -448,9 +427,6 @@ module h264_decode_top (
             endcase
         end
     end
-
-    (* keep = 1 *) wire _keep_decode_top_unused =
-        i16_unsupported | (|i4_used_mode) | (|mb_x) | (|mb_y);
 
 endmodule
 
