@@ -68,6 +68,9 @@ module h264_deblock_mb #(
 	localparam [3:0] S_STORE   = 4'd9;
 	localparam [3:0] S_STORE2  = 4'd10;
 	localparam [3:0] S_PROMOTE = 4'd11;
+	// M10K rdata is registered: address issued on cycle T is stable on T+2.
+	// EMIT_A -> EMIT_W -> EMIT_D closes that gap (was EMIT_A->EMIT_D = off-by-one).
+	localparam [3:0] S_EMIT_W  = 4'd12;
 
 	reg [3:0] state;
 
@@ -750,6 +753,11 @@ module h264_deblock_mb #(
 				if (e_src == 2'd0) y_raddr <= e_yaddr;
 				else if (e_src == 2'd1) u_raddr <= e_caddr;
 				else v_raddr <= e_caddr;
+				state <= S_EMIT_W;
+			end
+
+			S_EMIT_W: begin
+				// Wait for registered M10K read of the address set in EMIT_A.
 				state <= S_EMIT_D;
 			end
 

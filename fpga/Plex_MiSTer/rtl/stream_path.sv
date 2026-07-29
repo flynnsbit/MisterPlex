@@ -729,7 +729,11 @@ module stream_path #(
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(5'sd0),
 		.constrained_intra_pred_flag(1'b0),
-		.disable_deblocking_filter_idc(2'd0),
+		// Fit4 acceptance is deblock-OFF only. The product deblock_mb path still
+		// has residual M10K-latency hazards on gather/skirt; force idc=1 so the
+		// filter math is skipped and emit is identity. Wire sl_deblock_idc when
+		// deblock is trusted. (Was hardwired 0 = always filter.)
+		.disable_deblocking_filter_idc(2'd1),
 		.slice_alpha_c0_offset(5'sd0),
 		.slice_beta_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),

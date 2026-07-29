@@ -1004,9 +1004,15 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    // Gate on IDLE so multi-cycle M10K recon latch cannot race a new MB.
+    // mb_type_valid is a one-cycle feed pulse BEFORE residual bytes. Start must
+    // fire on that edge (cannot wait for dbf_busy — residual would already be
+    // dropped). Serialize only on in-flight recon: keep intra_active until
+    // writeback accepts the recon plane (sticky intra_recon_pend covers the
+    // dbf_busy gap so the pulse cannot be lost).
+    reg intra_recon_pend;
     wire product_intra_mb_start = syntax_xy_ready && (mb_type_valid && slice_is_i && !mb_skip &&
-                                         decode_enable && (wb_state == ST_IDLE));
+                                         decode_enable && (wb_state == ST_IDLE) &&
+                                         !intra_active_r && !intra_recon_pend);
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     // I16 DC: latch feed i16_dc_level_* then delay valid 1 cycle so combo
@@ -1035,8 +1041,10 @@ module h264_decode_core #(
 
     wire signed [28:0] product_intra_i16_dc [0:15];
     wire [7:0]  product_intra_recon_y [0:255];
-    wire [7:0]  product_intra_recon_u [0:63];
-    wire [7:0]  product_intra_recon_v [0:63];
+    // Driven by chroma8x8_pred (+ residual clip). Were undriven wires after a
+    // merge dropped the e2eacc5/52b66ac chroma path → product U/V always 0.
+    reg  [7:0]  product_intra_recon_u [0:63];
+    reg  [7:0]  product_intra_recon_v [0:63];
     wire signed [15:0] product_intra_chroma_residual_u [0:63];
     wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
@@ -1094,10 +1102,76 @@ module h264_decode_core #(
         end
     endgenerate
 
-    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
-    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
-    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
-    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
+    // Chroma 8x8 prediction (spec 8.3.4). DC uses per-4x4-quadrant averages.
+    reg         product_chroma_start_r;
+    wire        product_chroma_u_valid;
+    wire        product_chroma_v_valid;
+    wire [7:0]  product_chroma_u_pred [0:63];
+    wire [7:0]  product_chroma_v_pred [0:63];
+    integer     chroma_pi;
+    function automatic [7:0] clip_sum8;
+        input [7:0] pred_v;
+        input signed [15:0] res_v;
+        reg signed [16:0] s;
+        begin
+            s = $signed({1'b0, pred_v}) + res_v;
+            if (s < 0) clip_sum8 = 8'd0;
+            else if (s > 17'sd255) clip_sum8 = 8'd255;
+            else clip_sum8 = s[7:0];
+        end
+    endfunction
+    h264_chroma8x8_pred u_product_chroma_u_pred (
+        .clk(clk),
+        .start(product_chroma_start_r),
+        .mode(chroma_pred_mode),
+        .above(product_intra_chroma_u_above),
+        .left(product_intra_chroma_u_left),
+        .top_left(product_intra_chroma_u_topleft),
+        .has_above(product_intra_has_chroma_above),
+        .has_left(product_intra_has_chroma_left),
+        .valid(product_chroma_u_valid),
+        .pred(product_chroma_u_pred)
+    );
+    h264_chroma8x8_pred u_product_chroma_v_pred (
+        .clk(clk),
+        .start(product_chroma_start_r),
+        .mode(chroma_pred_mode),
+        .above(product_intra_chroma_v_above),
+        .left(product_intra_chroma_v_left),
+        .top_left(product_intra_chroma_v_topleft),
+        .has_above(product_intra_has_chroma_above),
+        .has_left(product_intra_has_chroma_left),
+        .valid(product_chroma_v_valid),
+        .pred(product_chroma_v_pred)
+    );
+    always @(posedge clk) begin
+        product_chroma_start_r <= product_intra_mb_start;
+        if (reset) begin
+            for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1) begin
+                product_intra_recon_u[chroma_pi] <= 8'd128;
+                product_intra_recon_v[chroma_pi] <= 8'd128;
+            end
+        end else begin
+            if (product_chroma_u_valid) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_u[chroma_pi] <=
+                        clip_sum8(product_chroma_u_pred[chroma_pi],
+                                  product_intra_chroma_residual_u[chroma_pi]);
+            end
+            if (product_chroma_v_valid) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_v[chroma_pi] <=
+                        clip_sum8(product_chroma_v_pred[chroma_pi],
+                                  product_intra_chroma_residual_v[chroma_pi]);
+            end
+        end
+    end
+
+    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid || intra_recon_pend;
+    wire product_recon_is_intra = product_intra_recon_valid || intra_recon_pend;
+    wire [7:0] product_recon_mb_x = product_recon_is_intra ? intra_mb_x_r : recon_mb_x;
+    wire [7:0] product_recon_mb_y = product_recon_is_intra ? intra_mb_y_r : recon_mb_y;
+    wire product_recon_mb_is_ref = product_recon_is_intra ? intra_mb_is_ref_r : recon_mb_is_ref;
 
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(MB_W),
@@ -1199,6 +1273,16 @@ module h264_decode_core #(
     wire [15:0] dbf_out_x;
     wire [15:0] dbf_out_y;
     wire [7:0] dbf_out_data;
+    // Fit4 deblock-OFF acceptance: stream PRE recon during ST_WRITE and skip
+    // the deblock_mb emit path (still has residual M10K hazards past MB0).
+    wire        deblock_off = (disable_deblocking_filter_idc == 2'd1);
+    wire        pre_wb_fire = deblock_off && (wb_state == ST_WRITE);
+    wire [15:0] pre_abs_x = (wb_plane == 2'd0) ?
+        {4'd0, wb_mb_x, wb_sample_idx[3:0]} :
+        {5'd0, wb_mb_x, wb_sample_idx[2:0]};
+    wire [15:0] pre_abs_y = (wb_plane == 2'd0) ?
+        {4'd0, wb_mb_y, wb_sample_idx[7:4]} :
+        {5'd0, wb_mb_y, wb_sample_idx[5:3]};
     wire       dbf_busy;
     wire       dbf_mb_done;
     wire       dbf_smp_done = dbf_smp_valid_d && (dbf_smp_idx_d == 9'd383);
@@ -1311,12 +1395,12 @@ module h264_decode_core #(
         .ref_ready(dpb_ref_ready),
         .current_base(dpb_ref_current_base),
         .reference_base(dpb_ref_reference_base),
-        .filtered_sample_valid(dbf_out_valid),
-        .filtered_mb_x(dbf_wb_mb_x),
-        .filtered_mb_y(dbf_wb_mb_y),
-        .filtered_plane(dbf_out_plane),
-        .filtered_sample_idx(dbf_wb_sample_idx),
-        .filtered_sample(dbf_out_data),
+        .filtered_sample_valid(deblock_off ? pre_wb_fire : dbf_out_valid),
+        .filtered_mb_x(deblock_off ? wb_mb_x : dbf_wb_mb_x),
+        .filtered_mb_y(deblock_off ? wb_mb_y : dbf_wb_mb_y),
+        .filtered_plane(deblock_off ? wb_plane : dbf_out_plane),
+        .filtered_sample_idx(deblock_off ? wb_sample_idx : dbf_wb_sample_idx),
+        .filtered_sample(deblock_off ? lat_recon_q : dbf_out_data),
         .mem_we(dpb_ref_mem_we),
         .mem_waddr(dpb_ref_mem_waddr),
         .mem_wdata(dpb_ref_mem_wdata),
@@ -1482,6 +1566,7 @@ module h264_decode_core #(
             mv_left_ref <= 2'd0;
             mv_left_valid <= 1'b0;
             intra_active_r <= 1'b0;
+            intra_recon_pend <= 1'b0;
             intra_mb_x_r <= 8'd0;
             intra_mb_y_r <= 8'd0;
             intra_mb_is_ref_r <= 1'b0;
@@ -1551,8 +1636,9 @@ module h264_decode_core #(
                 intra_qp_y_r <= qp_launch;
                 cur_qp_y_r <= qp_launch;
             end
+            // Sticky recon handshake: hold until ST_IDLE accepts into LATCH.
             if (product_intra_recon_valid)
-                intra_active_r <= 1'b0;
+                intra_recon_pend <= 1'b1;
 
             case (wb_state)
             ST_IDLE: begin
@@ -1613,16 +1699,18 @@ module h264_decode_core #(
                         wb_state <= ST_P16_LATCH_RES;
                     else
                         wb_state <= ST_P16_RES_START;
-                end else if (product_recon_mb_valid && !dbf_busy) begin
+                end else if (product_recon_mb_valid && (deblock_off || !dbf_busy)) begin
                     // Same handover rule as the inter path: the loop filter
                     // may still be emitting the previous macroblock's window.
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
                     wb_mb_is_ref <= product_recon_mb_is_ref;
-                    wb_mb_is_intra <= product_intra_recon_valid;
-                    if (product_intra_recon_valid)
+                    wb_mb_is_intra <= product_recon_is_intra;
+                    if (product_recon_is_intra)
                         mb_qp_y_r <= intra_qp_y_r;
-                    dbf_start_r <= 1'b1;
+                    intra_recon_pend <= 1'b0;
+                    intra_active_r <= 1'b0;
+                    dbf_start_r <= deblock_off ? 1'b0 : 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
@@ -1632,17 +1720,23 @@ module h264_decode_core #(
             end
             ST_LATCH_RECON: begin
                 // One sample/cycle into lat_recon_* from the recon port arrays.
+                // CRITICAL: product_intra_recon_valid is a one-cycle pulse that
+                // only fires on the ST_IDLE accept edge. ST_LATCH_RECON runs
+                // for 384 cycles after that pulse is gone. Use wb_mb_is_intra
+                // (latched on accept) — gating on the pulse itself selects the
+                // external TB recon_* ports (undriven/0 in product) and writes
+                // an all-zero MB. That is the merged-tree MB0 Y=0 regression.
                 lat_recon_we <= 1'b1;
                 lat_recon_wplane <= wb_plane;
                 lat_recon_waddr <= wb_sample_idx;
                 if (wb_plane == 2'd0)
-                    lat_recon_wdata <= product_intra_recon_valid ?
+                    lat_recon_wdata <= wb_mb_is_intra ?
                         product_intra_recon_y[wb_sample_idx] : recon_y[wb_sample_idx];
                 else if (wb_plane == 2'd1)
-                    lat_recon_wdata <= product_intra_recon_valid ?
+                    lat_recon_wdata <= wb_mb_is_intra ?
                         product_intra_recon_u[wb_sample_idx[5:0]] : recon_u[wb_sample_idx[5:0]];
                 else
-                    lat_recon_wdata <= product_intra_recon_valid ?
+                    lat_recon_wdata <= wb_mb_is_intra ?
                         product_intra_recon_v[wb_sample_idx[5:0]] : recon_v[wb_sample_idx[5:0]];
                 if (wb_last_sample) begin
                     wb_idx <= 9'd0;
@@ -1926,7 +2020,8 @@ module h264_decode_core #(
             // committing early there would swap the bank out from under the
             // samples still being emitted.
             ST_DEBLOCK: begin
-                if (dbf_mb_done || !(wb_mb_is_ref && wb_last_mb))
+                // deblock_off: PRE samples already streamed in ST_WRITE; no dbf wait.
+                if (deblock_off || dbf_mb_done || !(wb_mb_is_ref && wb_last_mb))
                     wb_state <= ST_COMMIT;
             end
             ST_COMMIT: begin
@@ -2008,19 +2103,22 @@ module h264_decode_core #(
     assign dpb_wr_addr = product_wb_addr;
     assign dpb_wr_data = dpb_ref_mem_wdata;
 
-    // Present writeback: POST-deblock stream, plane + frame-relative (x,y).
-    assign px_wr_en    = dbf_out_valid;
-    assign px_wr_plane = dbf_out_plane;
-    assign px_wr_x     = dbf_out_x;
-    assign px_wr_y     = dbf_out_y;
-    assign px_wr_data  = dbf_out_data;
+    // Present writeback: POST-deblock when filter on; PRE lat_recon when off.
+    // deblock_off bypass is the fit4 acceptance path (filter not trusted yet).
+    assign px_wr_en    = deblock_off ? pre_wb_fire : dbf_out_valid;
+    assign px_wr_plane = deblock_off ? wb_plane     : dbf_out_plane;
+    assign px_wr_x     = deblock_off ? pre_abs_x    : dbf_out_x;
+    assign px_wr_y     = deblock_off ? pre_abs_y    : dbf_out_y;
+    assign px_wr_data  = deblock_off ? lat_recon_q  : dbf_out_data;
     assign dpb_rd_en = dpb_ref_mem_rd;
     assign dpb_rd_addr = p16_win_rd_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
-    assign busy = (wb_state != ST_IDLE) || intra_active_r;
+    // Hold feed in ST_WAIT_CORE until recon is accepted into lat_recon. Do NOT
+    // fold dbf_busy here — emit overlaps the next MB's decode on purpose.
+    assign busy = (wb_state != ST_IDLE) || intra_active_r || intra_recon_pend;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
     // ── Desync detectors ────────────────────────────────────────────────
