@@ -276,3 +276,21 @@ REMOTE
 esac
 
 echo "Done."
+
+# Triple check: resident core geometry vs daemon-adopted decode=WxH.
+# Read-only. Soft-skip (77) when daemon log/core map unavailable — never treat as PASS.
+# Mismatch (1) fails the deploy so a 480p conf cannot ride out with a 320x240 core.
+if [[ "${DEPLOY_SKIP_GEOMETRY_GATE:-0}" != "1" ]]; then
+  set +e
+  "$ROOT/scripts/check_core_conf_geometry.sh"
+  geo_rc=$?
+  set -e
+  case "$geo_rc" in
+    0) echo "core_conf_geometry: PASS" ;;
+    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77) — not scored as deploy success evidence" >&2 ;;
+    *)
+      echo "core_conf_geometry: FAIL rc=$geo_rc — core/conf geometry inconsistent" >&2
+      exit "$geo_rc"
+      ;;
+  esac
+fi

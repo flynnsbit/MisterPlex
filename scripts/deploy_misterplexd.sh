@@ -74,3 +74,20 @@ ps w | grep '[m]isterplexd' || true
 wget -qO- http://127.0.0.1:3005/resources | head -c 300; echo
 REMOTE
 echo "Deployed misterplexd → $HOST"
+
+# After restart the adopted running line is fresh — verify it matches resident core.
+# Read-only beyond the deploy already performed above. rc=77 is NOT a pass.
+if [[ "${DEPLOY_SKIP_GEOMETRY_GATE:-0}" != "1" ]]; then
+  set +e
+  "$ROOT/scripts/check_core_conf_geometry.sh"
+  geo_rc=$?
+  set -e
+  case "$geo_rc" in
+    0) echo "core_conf_geometry: PASS" ;;
+    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77) — not scored as deploy success evidence" >&2 ;;
+    *)
+      echo "core_conf_geometry: FAIL rc=$geo_rc — adopted decode does not match resident core" >&2
+      exit "$geo_rc"
+      ;;
+  esac
+fi

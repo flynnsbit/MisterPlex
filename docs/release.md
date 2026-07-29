@@ -199,6 +199,46 @@ actually adopted:
 misterplexd: running name=MiSTerPlex ... decode=320x240 weak=320x240@1000k present=fb0
 ```
 
+Durable gate (do not regress to conf-file parsing):
+
+```bash
+make check-core-conf-geometry
+# or: ./scripts/check_core_conf_geometry.sh
+# Map: assets/core_geometry_map.tsv  (md5 → expected WxH; unknown md5 → rc=77)
+# SoT: last "misterplexd: running ... decode=WxH" line in misterplexd.log
+# Wired into deploy_plex_core.sh + deploy_misterplexd.sh (set DEPLOY_SKIP_GEOMETRY_GATE=1 to bypass)
+# Unit mutation: tests/unit/test_core_conf_geometry_gate.sh  (pass=0 / mismatch=1 / unknown=77)
+```
+
+### Conf silent-override audit (`arm/misterplexd/main.cpp`, tip of this gate)
+
+Same shape as DECODE: hardcoded safe default, then `loadConf` can replace it. Classified for
+geometry/format mismatch risk vs benign preference.
+
+| Key | Default | Geometry/format risk? | Notes |
+|-----|---------|----------------------|-------|
+| **DECODE** | 320×240 | **YES — bank layout** | Primary footgun. Adopted on `running ... decode=`. |
+| **WEAK_RES** / **WEAK_BITRATE** | 320×240@1000k | **YES (PMS request)** | Forces ladder; play path re-labels weak from contentRes but stale 480p conf still confuses ops. |
+| **TRANSCODE_PROFILE** / **WEAK_PROFILE** | 240p ladder | **YES (NOT inert)** | **Read at main.cpp ~206–213.** Applies `applyPlexTranscodeProfile`. Live conf `TRANSCODE_PROFILE=480p` is live code, not a no-op. |
+| **PRESENT** | fb0 | **YES (path)** | `fpga`/`both`/`none` change DDR vs fb0; wrong with STREAM can black-screen or skip RGB. |
+| **STREAM** | 0 | **YES (path)** | annex-B / recon path; product 320×240 cast wants 0. |
+| **STREAM_SKIP_RGB** | auto | **YES (path)** | With PRESENT=fpga can drop RGB from session start. |
+| **OSD_CONTROL** | 0 | **YES (ABI)** | On pre-v3 cores reinterprets status bits as bogus A/V offset / content res. |
+| **DDR_MEM_SYNC** / **DDR_MEM_FLUSH** | 1 / 0 | format-adjacent | Wrong flush/sync → stale frames, not bank base. |
+| **PRESENT_PROFILE** | 0 | benign lab | Timing logs only. |
+| **DDR_FRAME_FORMAT** | yuv420p fixed | benign | Non-yuv values **ignored** with stderr warning. |
+| **SUBTITLES** / **SUBTITLE_STREAM** | off | benign UX | |
+| **AUTO_NEXT** | true | benign UX | |
+| **MATCH_SOURCE_HZ** / **SOURCE_FPS** | off / auto | benign (log/hint) | switchres TODO; no modeline swap yet. |
+| **AUDIO** / **AUDIO_DEVICE** / **AUDIO_DELAY_MS** | on / default / 0 | benign A/V | lipsync preference. |
+| **AUDIO_CLOCK_PPM** / **AV_OFFSET_MS** / **AV_PRESENT_LEAD_MS** / **AV_RESYNC_DROP_MS** | servo defaults | benign A/V | pacing knobs. |
+| **IDLE_SCREEN** | logo | benign UX | |
+| **SKIP_MS** / **SKIP_FORWARD_MS** / **SKIP_BACK_MS** | 30s/10s | benign UX | |
+| **FFMPEG** / **PLEX_*** | paths/servers | ops, not geometry | |
+
+Gate today hard-checks **DECODE geometry vs resident core md5**. PRESENT/STREAM remain operator
+triple fields in the release card; extend the map/gate when a second product geometry ships.
+
 | Piece | Identity |
 |-------|----------|
 | RBF | `release_artifacts/v0.3.0/Plex.rbf` · MD5 **`41adb98c7a630b541091c22ce291be68`** · hardware-validated Phase A playback-controls core (G-VID1 edge-wrap fixed in `0139f2c`, eyes-on 2026-07-26) |

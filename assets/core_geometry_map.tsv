@@ -1,0 +1,6 @@
+# Resident Plex.rbf md5 → expected daemon-adopted DECODE geometry.
+# Used by scripts/check_core_conf_geometry.sh.
+# Columns (TAB-separated): md5_hex  geometry  note
+# Unknown md5 MUST soft-skip (rc=77), never silent-pass.
+# bank1 yuv420p/rgb565 @ 0x40000 align: 320x240→0x30040000; 624/640x480→0x30080000
+41adb98c7a630b541091c22ce291be68	320x240	v0.3.0 product (release_artifacts/v0.3.0/Plex.rbf)
