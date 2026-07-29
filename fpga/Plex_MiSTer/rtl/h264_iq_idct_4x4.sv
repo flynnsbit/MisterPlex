@@ -56,6 +56,28 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+	// Product of a coefficient with a normAdjust table entry, built from
+	// shifts and one three-input add.  H.264 picked these constants so the
+	// inverse transform never needs a multiplier:
+	//   10 = 8+2      11 = 8+2+1    13 = 8+4+1    14 = 16-2     16 = 16
+	//   18 = 16+2     20 = 16+4     23 = 16+8-1   25 = 16+8+1   29 = 32-2-1
+	function automatic signed [31:0] mul_norm(input signed [31:0] c, input [4:0] na);
+		begin
+			case (na)
+			5'd10:   mul_norm = (c <<< 3) + (c <<< 1);
+			5'd11:   mul_norm = (c <<< 3) + (c <<< 1) + c;
+			5'd13:   mul_norm = (c <<< 3) + (c <<< 2) + c;
+			5'd14:   mul_norm = (c <<< 4) - (c <<< 1);
+			5'd16:   mul_norm = (c <<< 4);
+			5'd18:   mul_norm = (c <<< 4) + (c <<< 1);
+			5'd20:   mul_norm = (c <<< 4) + (c <<< 2);
+			5'd23:   mul_norm = (c <<< 4) + (c <<< 3) - c;
+			5'd25:   mul_norm = (c <<< 4) + (c <<< 3) + c;
+			default: mul_norm = (c <<< 5) - (c <<< 1) - c;   // 29
+			endcase
+		end
+	endfunction
+
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -65,7 +87,6 @@ module h264_dequant4x4 (
 		reg [1:0] mi;
 		reg [2:0] qmod;
 		reg [3:0] qdiv;
-		reg signed [31:0] qmul;
 		reg signed [31:0] v;
 		begin
 			if (skip_dc)
@@ -80,9 +101,12 @@ module h264_dequant4x4 (
 				mi = 2'd2;
 			qmod = q % 6;
 			qdiv = q / 6;
-			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
-			qmul = qmul <<< (qdiv + 4'd2);
-			v = ($signed(c) * qmul + 32'sd32) >>> 6;
+			// 8.5.12.1 with the flat weight matrix is (c * normAdjust) << qP/6
+			// for every qP, and every normAdjust value is a sum of at most
+			// three powers of two -- so this needs no multiplier at all.  The
+			// old `c * qmul` form cost two DSP blocks per coefficient, thirty
+			// two for the block, on a device that only has 112.
+			v = mul_norm(32'($signed(c)), norm_adjust(qmod, mi)) <<< qdiv;
 			dequant_one = v[28:0];
 		end
 	endfunction

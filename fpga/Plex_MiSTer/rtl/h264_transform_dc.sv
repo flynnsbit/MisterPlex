@@ -160,19 +160,54 @@ module h264_luma_dc_hadamard_inv (
 	assign f[14] = g2  - g6  + g10 - g14;
 	assign f[15] = g3  - g7  + g11 - g15;
 
+
+	// ── normAdjust product without a multiplier ─────────────────────────────
+	// H.264 chose the normAdjust constants so the inverse transform needs no
+	// multiplier at all: every one of the ten distinct values is a sum of at
+	// most three powers of two.  Writing this as `c * na` handed Quartus a
+	// 16x18 signed multiply, and it spent a DSP block on each of the sixteen
+	// coefficients -- on a 5CSEBA6U23I7 with 112 DSPs that is most of the
+	// device's multipliers on arithmetic that needs none.
+	//
+	//   10 = 8+2      11 = 8+2+1    13 = 8+4+1    14 = 16-2     16 = 16
+	//   18 = 16+2     20 = 16+4     23 = 16+8-1   25 = 16+8+1   29 = 32-2-1
+	//
+	// The shifts are wiring, so this is three muxes and one three-input add.
+	function automatic signed [31:0] mul_norm(input signed [31:0] c, input [4:0] na);
+		begin
+			case (na)
+			5'd10:   mul_norm = (c <<< 3) + (c <<< 1);
+			5'd11:   mul_norm = (c <<< 3) + (c <<< 1) + c;
+			5'd13:   mul_norm = (c <<< 3) + (c <<< 2) + c;
+			5'd14:   mul_norm = (c <<< 4) - (c <<< 1);
+			5'd16:   mul_norm = (c <<< 4);
+			5'd18:   mul_norm = (c <<< 4) + (c <<< 1);
+			5'd20:   mul_norm = (c <<< 4) + (c <<< 2);
+			5'd23:   mul_norm = (c <<< 4) + (c <<< 3) - c;
+			5'd25:   mul_norm = (c <<< 4) + (c <<< 3) + c;
+			default: mul_norm = (c <<< 5) - (c <<< 1) - c;   // 29
+			endcase
+		end
+	endfunction
+
 	// LevelScale(qP%6,0,0) = 16 * normAdjust(qP%6,0)
 	wire [2:0] qmod = qp % 6;
 	wire [3:0] qdiv = qp / 6;
-	wire [15:0] level_scale_u = {7'd0, norm_adjust0(qmod), 4'd0};
-	wire signed [17:0] level_scale = $signed({2'b00, level_scale_u});
 
-	// dcY = (f * LevelScale << (qP/6) + 32) >> 6  — identical to both 8.5.10 branches
+	// dcY = (f * LevelScale << (qP/6) + 32) >> 6 — identical to both 8.5.10
+	// branches.  LevelScale is 16 * normAdjust, so the >> 6 cancels four of
+	// the six bits against that 16:
+	//
+	//   (f * na * 16 << qdiv + 32) >> 6  ==  ((f * na << qdiv) + 2) >> 2
+	//
+	// which also keeps the datapath inside 40 bits instead of 48 and shrinks
+	// the barrel shifter that dominated this module's logic.
 	genvar di;
 	generate
 		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [47:0] mul  = f[di] * level_scale;
-			wire signed [47:0] prod = mul <<< qdiv;
-			assign dc[di] = sat29((prod + 48'sd32) >>> 6);
+			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
+			wire signed [39:0] prod = $signed({{8{base[31]}}, base}) <<< qdiv;
+			assign dc[di] = sat29(48'((prod + 40'sd2) >>> 2));
 		end
 	endgenerate
 endmodule
@@ -217,18 +252,47 @@ module h264_chroma_dc_hadamard_inv (
 	assign f[2] = c0 + c1 - c2 - c3;
 	assign f[3] = c0 - c1 - c2 + c3;
 
+
+	// ── normAdjust product without a multiplier ─────────────────────────────
+	// H.264 chose the normAdjust constants so the inverse transform needs no
+	// multiplier at all: every one of the ten distinct values is a sum of at
+	// most three powers of two.  Writing this as `c * na` handed Quartus a
+	// 16x18 signed multiply, and it spent a DSP block on each of the sixteen
+	// coefficients -- on a 5CSEBA6U23I7 with 112 DSPs that is most of the
+	// device's multipliers on arithmetic that needs none.
+	//
+	//   10 = 8+2      11 = 8+2+1    13 = 8+4+1    14 = 16-2     16 = 16
+	//   18 = 16+2     20 = 16+4     23 = 16+8-1   25 = 16+8+1   29 = 32-2-1
+	//
+	// The shifts are wiring, so this is three muxes and one three-input add.
+	function automatic signed [31:0] mul_norm(input signed [31:0] c, input [4:0] na);
+		begin
+			case (na)
+			5'd10:   mul_norm = (c <<< 3) + (c <<< 1);
+			5'd11:   mul_norm = (c <<< 3) + (c <<< 1) + c;
+			5'd13:   mul_norm = (c <<< 3) + (c <<< 2) + c;
+			5'd14:   mul_norm = (c <<< 4) - (c <<< 1);
+			5'd16:   mul_norm = (c <<< 4);
+			5'd18:   mul_norm = (c <<< 4) + (c <<< 1);
+			5'd20:   mul_norm = (c <<< 4) + (c <<< 2);
+			5'd23:   mul_norm = (c <<< 4) + (c <<< 3) - c;
+			5'd25:   mul_norm = (c <<< 4) + (c <<< 3) + c;
+			default: mul_norm = (c <<< 5) - (c <<< 1) - c;   // 29
+			endcase
+		end
+	endfunction
+
 	wire [2:0] qmod = qp % 6;
 	wire [3:0] qdiv = qp / 6;
-	wire [15:0] level_scale_u = {7'd0, norm_adjust0(qmod), 4'd0};
-	wire signed [17:0] level_scale = $signed({2'b00, level_scale_u});
 
 	// dcC = ((f * LevelScale(qP%6,0,0)) << (qP/6)) >> 5   (8.5.11.2)
+	// LevelScale is 16 * normAdjust, so >> 5 leaves a single >> 1.
 	genvar di;
 	generate
 		for (di = 0; di < 4; di = di + 1) begin : g_cdc
-			wire signed [47:0] mul  = f[di] * level_scale;
-			wire signed [47:0] prod = mul <<< qdiv;
-			assign dc[di] = sat29(prod >>> 5);
+			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
+			wire signed [39:0] prod = $signed({{8{base[31]}}, base}) <<< qdiv;
+			assign dc[di] = sat29(48'(prod >>> 1));
 		end
 	endgenerate
 endmodule
@@ -293,6 +357,36 @@ module h264_dequant4x4_flex (
 		end
 	endfunction
 
+
+	// ── normAdjust product without a multiplier ─────────────────────────────
+	// H.264 chose the normAdjust constants so the inverse transform needs no
+	// multiplier at all: every one of the ten distinct values is a sum of at
+	// most three powers of two.  Writing this as `c * na` handed Quartus a
+	// 16x18 signed multiply, and it spent a DSP block on each of the sixteen
+	// coefficients -- on a 5CSEBA6U23I7 with 112 DSPs that is most of the
+	// device's multipliers on arithmetic that needs none.
+	//
+	//   10 = 8+2      11 = 8+2+1    13 = 8+4+1    14 = 16-2     16 = 16
+	//   18 = 16+2     20 = 16+4     23 = 16+8-1   25 = 16+8+1   29 = 32-2-1
+	//
+	// The shifts are wiring, so this is three muxes and one three-input add.
+	function automatic signed [31:0] mul_norm(input signed [31:0] c, input [4:0] na);
+		begin
+			case (na)
+			5'd10:   mul_norm = (c <<< 3) + (c <<< 1);
+			5'd11:   mul_norm = (c <<< 3) + (c <<< 1) + c;
+			5'd13:   mul_norm = (c <<< 3) + (c <<< 2) + c;
+			5'd14:   mul_norm = (c <<< 4) - (c <<< 1);
+			5'd16:   mul_norm = (c <<< 4);
+			5'd18:   mul_norm = (c <<< 4) + (c <<< 1);
+			5'd20:   mul_norm = (c <<< 4) + (c <<< 2);
+			5'd23:   mul_norm = (c <<< 4) + (c <<< 3) - c;
+			5'd25:   mul_norm = (c <<< 4) + (c <<< 3) + c;
+			default: mul_norm = (c <<< 5) - (c <<< 1) - c;   // 29
+			endcase
+		end
+	endfunction
+
 	wire [2:0] qmod = qp % 6;
 	wire [3:0] qdiv = qp / 6;
 
@@ -309,12 +403,17 @@ module h264_dequant4x4_flex (
 			wire       in_range = skip_dc ? ((scan_idx != 5'd0) && ((scan_idx - 5'd1) < max_coeff))
 			                              : (scan_idx < max_coeff);
 			wire signed [15:0] c    = in_range ? coeff[arr_idx[3:0]] : 16'sd0;
-			wire [15:0]        qmul_u = {7'd0, norm_adjust(qmod, MI), 4'd0};
-			wire signed [17:0] qmul = $signed({2'b00, qmul_u});
-			wire signed [47:0] mul  = c * qmul;
-			wire signed [47:0] prod = mul <<< qdiv;
-			// (c * 16 * na << qdiv + 32) >> 6  ==  c * na << qdiv
-			wire signed [28:0] scaled = sat29((prod + 48'sd32) >>> 6);
+			// 8.5.12.1 collapses to a plain shift for every qP.  With the flat
+			// 4x4 weight matrix LevelScale is 16*normAdjust, so
+			//   qP >= 24: (c*16*na) << (qdiv-4)                 == (c*na) << qdiv
+			//   qP <  24: (c*16*na + 2**(3-qdiv)) >> (4-qdiv)   == (c*na) << qdiv
+			// (the rounding term is exactly one half ULP and floors away).
+			// The old form applied only a <<4 where LevelScale needs <<6, so
+			// every dequantised coefficient came out four times too small --
+			// the residual was there but scaled almost to nothing.
+			wire signed [31:0] base = mul_norm(32'(c), norm_adjust(qmod, MI));
+			wire signed [39:0] prod = $signed({{8{base[31]}}, base}) <<< qdiv;
+			wire signed [28:0] scaled = sat29(48'(prod));
 			if (r == 0) begin : g_dc_pos
 				assign dequant[r] = dc_override ? dc_value : (skip_dc ? 29'sd0 : scaled);
 			end else begin : g_ac_pos

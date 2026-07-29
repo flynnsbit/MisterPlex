@@ -291,6 +291,7 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WIN_START = 8'd9;
     localparam [7:0] ST_P16_RES_IDCT  = 8'd10;
     localparam [7:0] ST_P16_RES_EDGE  = 8'd11;
+    localparam [7:0] ST_P16_MC        = 8'd12;
     // ── Residual traversal steps, in H.264 residual() order ─────────────
     //   0       Intra16x16DCLevel     (16 coeff, only when the MB is I_16x16)
     //   1..16   luma 4x4 blkIdx 0..15 (15 coeff when I_16x16, else 16)
@@ -315,6 +316,7 @@ module h264_decode_core #(
     reg signed [15:0] p16_mv_y_qpel_r;
     reg [1:0]  p16_ref_idx_l0_r;
     reg        p16_fetch_start_r;
+    reg        p16_mc_start_r;
     reg        p16_ref_seed_r;
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
@@ -371,9 +373,8 @@ module h264_decode_core #(
     reg signed [15:0] lat_p16_residual_y [0:255];
     reg signed [15:0] lat_p16_residual_u [0:63];
     reg signed [15:0] lat_p16_residual_v [0:63];
-    reg [7:0]  p16_luma_ref [0:440];
-    reg [7:0]  p16_chroma_u_ref [0:80];
-    reg [7:0]  p16_chroma_v_ref [0:80];
+    // Reference windows stream straight into h264_mc_block window RAMs.
+    // Staging them here as flat reg arrays was the 89k-ALUT MC bottleneck.
     reg        intra_active_r;
     reg [7:0]  intra_mb_x_r;
     reg [7:0]  intra_mb_y_r;
@@ -724,8 +725,8 @@ module h264_decode_core #(
     // h264_dpb_one_ref owns the POST-deblock reference store: it consumes the
     // filtered sample stream, generates the native-I420 write addresses, and
     // fetches one 21×21 luma + two 9×9 chroma reference windows per inter MB.
-    // h264_inter_mc_part then computes the full 16×16 luma / 8×8 chroma
-    // prediction block from those windows.
+    // h264_mc_block then computes the full 16×16 luma / 8×8 chroma
+    // prediction block from those windows (one filter datapath, RAM windows).
     //
     // Bank management stays with the outer level (dpb_write_base/dpb_ref_base
     // inputs), so the embedded reference store's own bank pointers are used
@@ -765,36 +766,48 @@ module h264_decode_core #(
         (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
                              lat_p16_residual_v[wb_sample_idx[5:0]];
 
-    wire [7:0] p16_pred_y [0:255];
-    wire       p16_pred_y_valid [0:255];
-    wire [7:0] p16_pred_u [0:63];
-    wire       p16_pred_u_valid [0:63];
-    wire [7:0] p16_pred_v [0:63];
-    wire       p16_pred_v_valid [0:63];
-    h264_inter_mc_part u_product_p16_mc (
-        .luma_ref_win(p16_luma_ref),
-        .chroma_u_ref_win(p16_chroma_u_ref),
-        .chroma_v_ref_win(p16_chroma_v_ref),
+    wire [7:0] p16_pred_y_rd_data;
+    wire [7:0] p16_pred_u_rd_data;
+    wire [7:0] p16_pred_v_rd_data;
+    wire       p16_pred_y_in_part;
+    wire       p16_pred_c_in_part;
+    wire [7:0] p16_pred_y_head [0:15];
+    wire       p16_mc_busy;
+    wire       p16_mc_done;
+    h264_mc_block u_product_p16_mc (
+        .clk(clk),
+        .reset(reset),
+        .start(p16_mc_start_r),
+        .busy(p16_mc_busy),
+        .done(p16_mc_done),
+        .luma_win_wr(dpb_ref_luma_window_valid),
+        .luma_win_addr(dpb_ref_luma_window_idx),
+        .luma_win_data(dpb_ref_luma_window_sample),
+        .chroma_u_win_wr(dpb_ref_chroma_u_window_valid),
+        .chroma_v_win_wr(dpb_ref_chroma_v_window_valid),
+        .chroma_win_addr(dpb_ref_chroma_window_idx),
+        .chroma_win_data(dpb_ref_chroma_window_sample),
         .luma_frac_x(p16_mv_x_qpel_r[1:0]),
         .luma_frac_y(p16_mv_y_qpel_r[1:0]),
         .chroma_frac_x(p16_mv_x_qpel_r[2:0]),
         .chroma_frac_y(p16_mv_y_qpel_r[2:0]),
         .part_w(5'd16),
         .part_h(5'd16),
-        .pred_y(p16_pred_y),
-        .pred_y_valid(p16_pred_y_valid),
-        .pred_u(p16_pred_u),
-        .pred_u_valid(p16_pred_u_valid),
-        .pred_v(p16_pred_v),
-        .pred_v_valid(p16_pred_v_valid)
+        .pred_y_rd_idx(wb_sample_idx),
+        .pred_y_rd_data(p16_pred_y_rd_data),
+        .pred_y_rd_in_part(p16_pred_y_in_part),
+        .pred_c_rd_idx(wb_sample_idx[5:0]),
+        .pred_u_rd_data(p16_pred_u_rd_data),
+        .pred_v_rd_data(p16_pred_v_rd_data),
+        .pred_c_rd_in_part(p16_pred_c_in_part),
+        .pred_y_head(p16_pred_y_head)
     );
-    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_valid[wb_sample_idx] :
-                            (wb_plane == 2'd1) ? p16_pred_u_valid[wb_sample_idx[5:0]] :
-                                                 p16_pred_v_valid[wb_sample_idx[5:0]];
+    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_in_part
+                                               : p16_pred_c_in_part;
     wire [7:0] p16_pred_sample = !p16_pred_in_part ? 8'd0 :
-                                 (wb_plane == 2'd0) ? p16_pred_y[wb_sample_idx] :
-                                 (wb_plane == 2'd1) ? p16_pred_u[wb_sample_idx[5:0]] :
-                                                      p16_pred_v[wb_sample_idx[5:0]];
+                                 (wb_plane == 2'd0) ? p16_pred_y_rd_data :
+                                 (wb_plane == 2'd1) ? p16_pred_u_rd_data :
+                                                      p16_pred_v_rd_data;
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
 `else
@@ -1116,6 +1129,7 @@ module h264_decode_core #(
     always @(posedge clk) begin
         frame_done_r <= deblock_ref_ready_pulse;
         p16_fetch_start_r <= 1'b0;
+        p16_mc_start_r <= 1'b0;
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
@@ -1131,6 +1145,7 @@ module h264_decode_core #(
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
             p16_fetch_start_r <= 1'b0;
+            p16_mc_start_r <= 1'b0;
             p16_ref_seed_r <= 1'b0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
@@ -1185,12 +1200,6 @@ module h264_decode_core #(
             for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
                 lat_p16_residual_u[wb_i] <= 16'sd0;
                 lat_p16_residual_v[wb_i] <= 16'sd0;
-            end
-            for (wb_i = 0; wb_i < 441; wb_i = wb_i + 1)
-                p16_luma_ref[wb_i] <= 8'd0;
-            for (wb_i = 0; wb_i < 81; wb_i = wb_i + 1) begin
-                p16_chroma_u_ref[wb_i] <= 8'd0;
-                p16_chroma_v_ref[wb_i] <= 8'd0;
             end
             for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
                 mv_top_x[wb_i] <= 16'sd0;
@@ -1378,13 +1387,15 @@ module h264_decode_core #(
                 wb_state <= ST_P16_WIN_FETCH;
             end
             ST_P16_WIN_FETCH: begin
-                if (dpb_ref_luma_window_valid)
-                    p16_luma_ref[dpb_ref_luma_window_idx] <= dpb_ref_luma_window_sample;
-                if (dpb_ref_chroma_u_window_valid)
-                    p16_chroma_u_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
-                if (dpb_ref_chroma_v_window_valid)
-                    p16_chroma_v_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
-                if (dpb_ref_fetch_done)
+                // Window samples stream into the MC engines' window RAMs
+                // on the same valid/index/sample strobes — no staging here.
+                if (dpb_ref_fetch_done) begin
+                    p16_mc_start_r <= 1'b1;
+                    wb_state <= ST_P16_MC;
+                end
+            end
+            ST_P16_MC: begin
+                if (p16_mc_done)
                     wb_state <= ST_P16_WRITE;
             end
             ST_P16_WRITE: begin
