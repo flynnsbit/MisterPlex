@@ -41,6 +41,15 @@ reference. That survival is expected to be low on P-content because filtered
 references cascade through motion compensation, not only because edge samples
 change inside one MB.
 
+### I-frame0 pure-filter gap pair
+
+`derived_realcontent_624x480_baseline_ref1_nob_1f_i420_{disabled,enabled}.yuv`
+plus `..._1f_i420_deblock_gap_v1.json` lock bitstream **frame 0 only** (IDR).
+Frame 0 has U==V and is **not** a chroma-discrimination slice; it exists to
+separate pure in-loop filter delta from temporal cascade. Measured locked shape:
+Y mism=80/299520, chroma exact, mb_exact=1167/1170, three edge MBs. Gate:
+`tests/unit/test_deblock_iframe_gap.sh`.
+
 Regenerate both slices from the full asset:
 
 ```bash
