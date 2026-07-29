@@ -34,6 +34,11 @@ module h264_pframe_ref_inject_tb #(
 	input  wire signed [15:0] p16_mvd_x_qpel,
 	input  wire signed [15:0] p16_mvd_y_qpel,
 	input  wire [1:0]  p16_ref_idx_l0,
+	// 1 = disable in-loop filter (MC/mvd score vs skip_loop_filter golden).
+	// 0 = real deblock on (score vs post-deblock golden / SW model).
+	input  wire [1:0]  disable_deblocking_filter_idc,
+	input  wire signed [4:0] slice_alpha_c0_offset,
+	input  wire signed [4:0] slice_beta_offset,
 	input  wire signed [15:0] p16_residual_y [0:255],
 	input  wire signed [15:0] p16_residual_u [0:63],
 	input  wire signed [15:0] p16_residual_v [0:63],
@@ -215,6 +220,9 @@ module h264_pframe_ref_inject_tb #(
 		.mvd_x_qpel(p16_mvd_x_qpel),
 		.mvd_y_qpel(p16_mvd_y_qpel),
 		.ref_idx_l0(p16_ref_idx_l0),
+		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
