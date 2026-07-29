@@ -4,6 +4,13 @@
 // Safety: unmarked / ambiguous ownership never defaults to FPGA. An MB the FPGA
 // claims without capability or without a real FPGA plane must be detectably
 // host-owned or hard-fail — never silently plausible.
+//
+// Plane availability (2026-07-29 finding): FpgaSpi::tryCaptureReconI420 always
+// fails closed — there is no FPGA→ARM reconstructed I420 readback. DDR frame
+// banks are ARM→scanout only; FPGA DDRAM_WE writes mailboxes only. Live daemon
+// therefore passes fpga_i420=nullptr and relies on loud host reclass
+// (used_host_fallback). Offline tools/hybrid_compose_i420.py still scores
+// file-plane composites. True FPGA+ARM pixel split waits on RTL recon export.
 #pragma once
 
 #include <cstdint>

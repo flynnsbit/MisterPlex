@@ -101,6 +101,30 @@ public:
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
+
+    // P3-3l5 hybrid: attempt to capture the FPGA reconstructed I420 plane.
+    //
+    // FINDING (measured in source, not invented): there is NO FPGA→ARM recon
+    // plane readback today.
+    //   - DDR banks @ kDdrFrameBase (0x30000000) are ARM→scanout only
+    //     (sendYuv420pFrameDdr / publishDdrFrame write; ddram_frame_rd reads
+    //     them into BRAM for HDMI).
+    //   - FPGA DDRAM_WE on that window writes mailboxes only (PLXF/PLXD/PLXS/…)
+    //     — never I420 pixel banks (see ddr_frame_store.sv DDRAM_WE sites).
+    //   - Decoder DPB recon is an internal mem_* port (h264_dpb.sv), not an
+    //     HPS-documented capture ABI.
+    // Reading the present banks would return the ARM's own last write — a
+    // silently-plausible wrong "FPGA plane". This API therefore fails closed
+    // and sets lastError() to kNoReconReadbackReason until RTL exports a
+    // dedicated recon plane + ready doorbell that ARM can mmap.
+    //
+    // What RTL would need (for sv-integrate): FPGA write of recon I420 into a
+    // known HPS-DDR region (not the active present bank), plus a seq/ready
+    // mailbox ARM can poll; then this method becomes a real copy.
+    static constexpr const char* kNoReconReadbackReason =
+        "no FPGA recon I420 readback (DDR banks ARM→scanout; FPGA mailbox-only writes)";
+    bool tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int height);
+
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA

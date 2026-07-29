@@ -474,7 +474,9 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "misterplexd: HYBRID_PRESENT=%s%s\n", hybridPresent ? "1" : "0",
                  hybridPresent && !streamEnabled
                      ? " (no-op without STREAM=1)"
-                     : (hybridPresent ? " (FPGA intra / host inter compose; fail-closed)" : ""));
+                     : (hybridPresent
+                            ? " (opt-in hybrid; host-only until FPGA recon readback; fail-closed)"
+                            : ""));
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");

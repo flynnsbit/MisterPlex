@@ -1331,17 +1331,19 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     // Hybrid (opt-in): ownership gate + compose before F1.
-    // SHIPPED STATE: host-only composite. fpga_i420 is always nullptr (no HPS
-    // FPGA-plane readback). Missing FPGA plane → loud reclass to host; never silent
-    // product_recon_ok. Pre-register @320x240: I→0 host MB after reclass of 300 FPGA
-    // marks, P→300 host MB (CAP_INTER=0). Not a true FPGA+ARM pixel split yet.
+    // SHIPPED STATE: host-only composite until tryCaptureReconI420 succeeds.
+    // Pre-register @320x240: I→0 host MB after reclass of 300 FPGA marks,
+    // P→300 host MB (CAP_INTER=0). Missing FPGA plane → loud reclass, never
+    // silent product_recon_ok. Not a true FPGA+ARM pixel split yet.
     size_t hybridFrames = 0;
     size_t hybridHostMb = 0;
     size_t hybridFpgaMb = 0;
     size_t hybridReclass = 0;
     size_t hybridHardFail = 0;
     bool hybridLoggedCaps = false;
+    bool hybridLoggedNoReadback = false;
     std::vector<uint8_t> hybridComposite;
+    std::vector<uint8_t> hybridFpgaPlane;
 
     auto applyHybridI420 = [&](const uint8_t* hostPlane, size_t hostBytes, int width, int height,
                                char sliceKind, const uint8_t*& outPlane,
@@ -1352,8 +1354,26 @@ void MediaPlayer::streamPump(int sfd) {
             return true;
         if (!hybridLoggedCaps) {
             hybridLoggedCaps = true;
-            log("media: HYBRID_PRESENT=1 host-only composite (no FPGA plane readback); "
-                "CAP_INTRA=1 CAP_INTER=0; fail-closed on ambiguous ownership");
+            log("media: HYBRID_PRESENT=1 CAP_INTRA=1 CAP_INTER=0; fail-closed on "
+                "ambiguous ownership; FPGA plane via tryCaptureReconI420");
+        }
+        // Capture attempt: fails closed today (no RTL export). Never substitute
+        // ARM-written present banks as an "FPGA plane".
+        const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
+        const uint8_t* fpgaPlane = nullptr;
+        size_t fpgaN = 0;
+        if (need > 0) {
+            if (hybridFpgaPlane.size() < need)
+                hybridFpgaPlane.resize(need);
+            if (fpga_.tryCaptureReconI420(hybridFpgaPlane.data(), hybridFpgaPlane.size(), width,
+                                          height)) {
+                fpgaPlane = hybridFpgaPlane.data();
+                fpgaN = need;
+            } else if (!hybridLoggedNoReadback) {
+                hybridLoggedNoReadback = true;
+                log(std::string("media: hybrid FPGA plane unavailable — ") + fpga_.lastError() +
+                    "; loud host reclass (not true FPGA+ARM split)");
+            }
         }
         FpgaSpi::CoreStatus st{};
         const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
@@ -1361,8 +1381,8 @@ void MediaPlayer::streamPump(int sfd) {
             stOk, st.slice_type, st.first_mb_type, st.residual_ok, st.sps_valid, st.has_stream,
             cabacSkip_.load());
         hybrid::PresentDecision d = hybrid::decidePresentFrame(
-            width, height, sliceKind, hostPlane, hostBytes,
-            /*fpga_i420=*/nullptr, /*fpga_n=*/0, sig, hybrid::Caps{}, hybridComposite,
+            width, height, sliceKind, hostPlane, hostBytes, fpgaPlane, fpgaN, sig,
+            hybrid::Caps{}, hybridComposite,
             /*allow_host_fallback=*/true, /*allow_skip_host_f1=*/false);
         if (!d.ok || d.hard_fail) {
             ++hybridHardFail;
@@ -2671,9 +2691,27 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     // No STREAM: ownership signals unavailable — present host plane only
                     // (honest non-hybrid). Still publishF1 with host pixels.
                 } else {
-                    // NOTE: fpga_i420 is nullptr — no HPS FPGA-plane readback yet.
-                    // Path is host-plane + ownership accounting + loud reclass, NOT a
-                    // true FPGA+ARM pixel split until a plane source exists.
+                    // tryCaptureReconI420 fails closed until RTL recon export lands.
+                    // Path is host-plane + ownership + loud reclass unless capture ok.
+                    static bool loggedNoReadback = false;
+                    std::vector<uint8_t> fpgaScratch;
+                    const uint8_t* fpgaPlane = nullptr;
+                    size_t fpgaN = 0;
+                    const size_t need =
+                        static_cast<size_t>(rawW) * static_cast<size_t>(rawH) * 3u / 2u;
+                    if (need > 0) {
+                        fpgaScratch.resize(need);
+                        if (fpga_.tryCaptureReconI420(fpgaScratch.data(), fpgaScratch.size(), rawW,
+                                                      rawH)) {
+                            fpgaPlane = fpgaScratch.data();
+                            fpgaN = need;
+                        } else if (!loggedNoReadback) {
+                            loggedNoReadback = true;
+                            log(std::string("media: hybrid rawvideo FPGA plane unavailable — ") +
+                                fpga_.lastError() +
+                                "; loud host reclass (not true FPGA+ARM split)");
+                        }
+                    }
                     FpgaSpi::CoreStatus st{};
                     const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
                     hybrid::FpgaOwnSignal sig = hybrid::signalFromStatus(
@@ -2687,8 +2725,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             kind = 'P';
                     }
                     hybrid::PresentDecision d = hybrid::decidePresentFrame(
-                        rawW, rawH, kind, txFrame, txBytes, /*fpga_i420=*/nullptr, /*fpga_n=*/0,
-                        sig, hybrid::Caps{}, hybridScratch, /*allow_host_fallback=*/true,
+                        rawW, rawH, kind, txFrame, txBytes, fpgaPlane, fpgaN, sig,
+                        hybrid::Caps{}, hybridScratch, /*allow_host_fallback=*/true,
                         /*allow_skip_host_f1=*/false);
                     if (!d.ok || d.hard_fail) {
                         // Ownership incomplete/contradictory: do not publish this frame to

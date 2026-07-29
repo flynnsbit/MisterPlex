@@ -1789,6 +1789,17 @@ bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width,
     return sendYuv420pFrameDdr(yuv420p, len, makeDdrFrameGeometry(width, height), bank);
 }
 
+bool FpgaSpi::tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int height) {
+    // Fail closed: do not invent a plane by reading ARM-written present banks.
+    // See fpga_spi.hpp kNoReconReadbackReason / hybrid gate design.
+    (void)dst;
+    (void)dst_n;
+    (void)width;
+    (void)height;
+    setErr(kNoReconReadbackReason);
+    return false;
+}
+
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
     if (!pcm || !len) {
         setErr("sendPcmChunk: empty");
