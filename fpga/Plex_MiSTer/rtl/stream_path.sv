@@ -399,7 +399,9 @@ module stream_path #(
 	wire sl_i4_modes_present;
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
-	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
+	wire sl_luma4x4_blocks_done;
+	wire [3:0] sl_luma4x4_block_idx;
+	wire signed [15:0] sl_luma4x4_block_coeff [0:15];
 	wire sl_place_ok;
 	wire [4:0] sl_place_tc;
 	wire [1:0] sl_place_t1;
@@ -457,7 +459,9 @@ module stream_path #(
 		.first_i4_modes_present(sl_i4_modes_present),
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
-		.first_luma4x4_coeff(sl_luma4x4_coeff),
+		.first_luma4x4_blocks_done(sl_luma4x4_blocks_done),
+		.first_luma4x4_block_idx(sl_luma4x4_block_idx),
+		.first_luma4x4_block_coeff(sl_luma4x4_block_coeff),
 		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
 		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
@@ -583,45 +587,25 @@ module stream_path #(
 	reg [4:0] core_luma4x4_total_coeff;
 	reg [1:0] core_luma4x4_trailing_ones;
 	reg signed [15:0] core_luma4x4_coeff_zigzag [0:15];
-	reg signed [15:0] core_luma4x4_latched [0:15][0:15];
-	reg core_luma_feed_active;
-	reg [3:0] core_luma_feed_idx;
+	// One 4x4 block per pulse from the slice parser — no 16x16 latch.
 	integer core_li;
-	integer core_lj;
 	always @(posedge clk) begin
 		core_luma4x4_valid <= 1'b0;
 		if (reset | flush) begin
-			core_luma_feed_active <= 1'b0;
-			core_luma_feed_idx <= 4'd0;
 			core_luma4x4_idx <= 4'd0;
 			core_luma4x4_qp <= 6'd0;
 			core_luma4x4_total_coeff <= 5'd0;
 			core_luma4x4_trailing_ones <= 2'd0;
-			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
+			for (core_li = 0; core_li < 16; core_li = core_li + 1)
 				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
-				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
-			end
-		end else begin
-			if (!core_luma_feed_active && sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present) begin
-				core_luma_feed_active <= 1'b1;
-				core_luma_feed_idx <= 4'd0;
-				core_luma4x4_qp <= sl_place_qp;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-						core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
-			end else if (core_luma_feed_active) begin
-				core_luma4x4_valid <= 1'b1;
-				core_luma4x4_idx <= core_luma_feed_idx;
-				core_luma4x4_total_coeff <= 5'd16;
-				core_luma4x4_trailing_ones <= 2'd0;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
-				if (core_luma_feed_idx == 4'd15)
-					core_luma_feed_active <= 1'b0;
-				else
-					core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
-			end
+		end else if (sl_luma4x4_blocks_valid) begin
+			core_luma4x4_valid <= 1'b1;
+			core_luma4x4_idx <= sl_luma4x4_block_idx;
+			core_luma4x4_qp <= sl_place_qp;
+			core_luma4x4_total_coeff <= 5'd16;
+			core_luma4x4_trailing_ones <= 2'd0;
+			for (core_li = 0; core_li < 16; core_li = core_li + 1)
+				core_luma4x4_coeff_zigzag[core_li] <= sl_luma4x4_block_coeff[core_li];
 		end
 	end
 
@@ -956,7 +940,7 @@ module stream_path #(
 	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
-	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
+	             core_luma4x4_valid | sl_luma4x4_blocks_done | core_dpb_wr_en |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_dpb_wr_full | core_dpb_rd_stall | dpb_ref_ready |

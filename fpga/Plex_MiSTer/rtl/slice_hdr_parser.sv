@@ -69,14 +69,16 @@ module slice_hdr_parser (
 	output reg  [15:0] first_i4_pred_mode_flags,
 	output reg  [47:0] first_i4_rem_modes,
 	output reg         first_i4_modes_present,
-	output reg         first_luma4x4_blocks_valid,
-	output reg         first_luma4x4_blocks_present,
+	output reg         first_luma4x4_blocks_valid,   // pulse: one block ready
+	output reg         first_luma4x4_blocks_present, // sticky: at least one block emitted
+	output reg         first_luma4x4_blocks_done,    // sticky: all 16 finished
+	output reg  [3:0]  first_luma4x4_block_idx,
+	output reg signed [15:0] first_luma4x4_block_coeff [0:15],
 	// Stage C: real coded_block_pattern + residual entry point for the product
 	// decode core, replacing the hardcoded literals in stream_path.
 	output wire [3:0]  first_mb_cbp_luma,
 	output wire [1:0]  first_mb_cbp_chroma,
 	output wire [15:0] first_mb_residual_bit_offset,
-	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
@@ -584,7 +586,6 @@ module slice_hdr_parser (
 	end
 
 	always @(posedge clk) begin
-		integer bi;
 		integer ci;
 		full_res_start <= 1'b0;
 		first_luma4x4_blocks_valid <= 1'b0;
@@ -593,10 +594,11 @@ module slice_hdr_parser (
 			full_block_idx <= 4'd0;
 			full_bit_off <= 10'd0;
 			first_luma4x4_blocks_present <= 1'b0;
-			for (bi = 0; bi < 16; bi = bi + 1) begin
-				full_tc[bi] <= 5'd0;
-				for (ci = 0; ci < 16; ci = ci + 1)
-					first_luma4x4_coeff[bi][ci] <= 16'sd0;
+			first_luma4x4_blocks_done <= 1'b0;
+			first_luma4x4_block_idx <= 4'd0;
+			for (ci = 0; ci < 16; ci = ci + 1) begin
+				full_tc[ci] <= 5'd0;
+				first_luma4x4_block_coeff[ci] <= 16'sd0;
 			end
 		end else begin
 			case (full_st)
@@ -605,22 +607,23 @@ module slice_hdr_parser (
 					full_block_idx <= 4'd0;
 					full_bit_off <= full_start_bit;
 					first_luma4x4_blocks_present <= 1'b0;
-					for (bi = 0; bi < 16; bi = bi + 1) begin
-						full_tc[bi] <= 5'd0;
-						for (ci = 0; ci < 16; ci = ci + 1)
-							first_luma4x4_coeff[bi][ci] <= 16'sd0;
-					end
+					first_luma4x4_blocks_done <= 1'b0;
+					for (ci = 0; ci < 16; ci = ci + 1)
+						full_tc[ci] <= 5'd0;
 					full_st <= FULL_START;
 				end
 			end
 			FULL_START: begin
+				// Emit one block per cycle (zeros if not coded) — no 16x16 storage.
 				if (!full_block_coded(full_block_idx)) begin
 					full_tc[full_block_idx] <= 5'd0;
+					first_luma4x4_block_idx <= full_block_idx;
 					for (ci = 0; ci < 16; ci = ci + 1)
-						first_luma4x4_coeff[full_block_idx][ci] <= 16'sd0;
+						first_luma4x4_block_coeff[ci] <= 16'sd0;
+					first_luma4x4_blocks_valid <= 1'b1;
+					first_luma4x4_blocks_present <= 1'b1;
 					if (full_block_idx == 4'd15) begin
-						first_luma4x4_blocks_present <= 1'b1;
-						first_luma4x4_blocks_valid <= 1'b1;
+						first_luma4x4_blocks_done <= 1'b1;
 						full_st <= FULL_DONE;
 					end else begin
 						full_block_idx <= full_block_idx + 4'd1;
@@ -638,11 +641,13 @@ module slice_hdr_parser (
 					end else begin
 						full_tc[full_block_idx] <= full_res_tc;
 						full_bit_off <= full_res_bit_end;
+						first_luma4x4_block_idx <= full_block_idx;
 						for (ci = 0; ci < 16; ci = ci + 1)
-							first_luma4x4_coeff[full_block_idx][ci] <= full_res_coeff[ci];
+							first_luma4x4_block_coeff[ci] <= full_res_coeff[ci];
+						first_luma4x4_blocks_valid <= 1'b1;
+						first_luma4x4_blocks_present <= 1'b1;
 						if (full_block_idx == 4'd15) begin
-							first_luma4x4_blocks_present <= 1'b1;
-							first_luma4x4_blocks_valid <= 1'b1;
+							first_luma4x4_blocks_done <= 1'b1;
 							full_st <= FULL_DONE;
 						end else begin
 							full_block_idx <= full_block_idx + 4'd1;
@@ -692,6 +697,8 @@ module slice_hdr_parser (
 			first_i4_pred_mode_flags <= 16'd0;
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
+			first_luma4x4_blocks_done <= 1'b0;
+			first_luma4x4_block_idx <= 4'd0;
 			full_luma_cbp <= 4'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
