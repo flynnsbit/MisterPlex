@@ -2396,6 +2396,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrDoorbellUs = 0;
             int64_t ddrPostWaitUs = 0;
             int64_t ddrBankReuseWaitUs = 0;
+            int64_t ddrPlxdPollUs = 0;
+            int64_t ddrPlxdPollIters = 0;
+            int64_t ddrPlxdUsed = 0;
             int64_t ddrTotalUs = 0;
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
@@ -2451,6 +2454,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_post_wait_us_p=" + std::to_string(avgPresented(prof.ddrPostWaitUs)) +
                 " ddr_bank_reuse_wait_us_p=" +
                     std::to_string(avgPresented(prof.ddrBankReuseWaitUs)) +
+                " ddr_plxd_poll_us_p=" + std::to_string(avgPresented(prof.ddrPlxdPollUs)) +
+                " ddr_plxd_poll_iters_x100_p=" +
+                    std::to_string((prof.ddrPlxdPollIters * 100) / presented) +
+                " ddr_plxd_used_x100_p=" +
+                    std::to_string((prof.ddrPlxdUsed * 100) / presented) +
                 " ddr_accounted_us_p=" + std::to_string(avgPresented(ddrAccountedUs)) +
                 " ddr_unaccounted_us_p=" +
                     std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
@@ -2595,6 +2603,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         prof.ddrDoorbellUs += dt.doorbell_us;
                         prof.ddrPostWaitUs += dt.post_wait_us;
                         prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
+                        prof.ddrPlxdPollUs += dt.plxa_poll_us;
+                        prof.ddrPlxdPollIters += dt.plxa_poll_iters;
+                        prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
                         prof.ddrTotalUs += dt.total_us;
                         prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
                         if (dt.total_us > accounted)
