@@ -14,7 +14,8 @@ SKIP
   exit 0
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
-  printf '%s\n' "$VERILATOR_VERSION" >&2
+  printf '%s
+' "$VERILATOR_VERSION" >&2
   exit "$VERILATOR_RC"
 fi
 
@@ -36,7 +37,8 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/nalu_scanner.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_transform_dc.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
@@ -87,9 +89,12 @@ UNDER_RC=$?
 OVER_OUT="$(build_and_run "$BUILD_OVER" -GFAULT_OVERRUN_TELEM=1 2>&1)"
 OVER_RC=$?
 set -e
-printf '%s\n' "$WRAP_OUT"
-printf '%s\n' "$UNDER_OUT"
-printf '%s\n' "$OVER_OUT"
+printf '%s
+' "$WRAP_OUT"
+printf '%s
+' "$UNDER_OUT"
+printf '%s
+' "$OVER_OUT"
 if [[ "$WRAP_RC" -eq 0 ]] || ! grep -q 'wrap' <<<"$WRAP_OUT"; then
   echo "FAIL stream_path DDR ring red-check: wrap fault did not fail wrap gate" >&2
   exit 1

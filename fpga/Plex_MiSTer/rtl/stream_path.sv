@@ -241,7 +241,9 @@ module stream_path #(
 	wire [15:0] sl_first, sl_fn, sl_idr_pic;
 	wire [7:0] sl_type, sl_pps, sl_mbt;
 	wire signed [7:0] sl_qpd, sl_rdc;
+	wire signed [7:0] sl_mb_qpd;
 	wire [5:0] sl_qp;
+	wire [5:0] sl_mb_qp;
 	wire [1:0] sl_deblock_idc;
 	wire signed [4:0] sl_alpha_div2, sl_beta_div2, sl_alpha_off, sl_beta_off;
 	wire [4:0] sl_rtc;
@@ -310,6 +312,8 @@ module stream_path #(
 		.residual_place_dc(sl_place_dc),
 		.residual_place_qp(sl_place_qp),
 		.residual_place_coeff(sl_place_coeff),
+		.first_mb_qp_delta(sl_mb_qpd),
+		.first_mb_qp(sl_mb_qp),
 		.busy(sl_busy)
 	);
 
@@ -453,6 +457,8 @@ module stream_path #(
 	reg [15:0] sweep_guard;
 	reg [5:0]  sweep_blk_guard;
 	reg        core_mb_type_valid;
+	// Apply first-MB mb_qp_delta once; later sweep MBs keep running QP (delta=0).
+	reg signed [7:0] core_mb_qpd_r;
 	wire [4:0] core_intra_blocks_done;
 	wire [15:0] sweep_mb_total_next = {8'd0, sps_mb_w} * {8'd0, sps_mb_h};
 	// The reconstruction front-end has accepted this block once its counter has
@@ -475,6 +481,7 @@ module stream_path #(
 			sweep_mb_total <= 16'd0;
 			sweep_guard <= 16'd0;
 			sweep_blk_guard <= 6'd0;
+			core_mb_qpd_r <= 8'sd0;
 			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
 				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
 				core_i16_dc_level[core_li] <= 16'sd0;
@@ -482,8 +489,7 @@ module stream_path #(
 					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
 			end
 		end else begin
-			// Latch Intra16x16DCLevel as soon as the first residual is placed.
-			// Hadamard in the core is combinatorial on these registers.
+			// Latch Intra16x16DCLevel when placed (before AC walk completes).
 			if (residual_place_pulse && core_first_is_i16) begin
 				core_i16_dc_qp <= sl_place_qp;
 				for (core_li = 0; core_li < 16; core_li = core_li + 1)
@@ -491,30 +497,24 @@ module stream_path #(
 			end
 			case (sweep_state)
 			SW_IDLE: begin
+				// first_luma4x4 is complete residual for I_NxN, or I16 AC
+				// (max_coeff=15) after DC place.  I16 DC stays in core_i16_dc_*.
 				if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present &&
 				    (sweep_mb_total_next != 16'd0)) begin
-					// I_NxN: 16 AC/full 4x4 residual blocks from the parser.
 					core_luma4x4_qp <= sl_place_qp;
+					core_i16_dc_qp  <= sl_place_qp;
+					core_mb_qpd_r   <= sl_mb_qpd;
 					for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
-						core_i16_dc_level[core_li] <= 16'sd0;
+						if (!core_first_is_i16)
+							core_i16_dc_level[core_li] <= 16'sd0;
 						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-							core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
+							core_luma4x4_latched[core_li][core_lj] <=
+								sl_luma4x4_coeff[core_li][core_lj];
 					end
-					core_i16_dc_qp <= sl_place_qp;
-					sweep_mb <= 16'd0;
-					sweep_mb_total <= sweep_mb_total_next;
-					sweep_state <= SW_START;
-				end else if (residual_place_pulse && core_first_is_i16 &&
-				             (sweep_mb_total_next != 16'd0)) begin
-					// I_16x16: DC levels already latched above; AC walk not yet
-					// in the first-MB parser — present zero AC (skip_dc path uses
-					// Hadamard DC).  Brightness is correct; coded AC still open.
-					core_luma4x4_qp <= sl_place_qp;
-					core_i16_dc_qp <= sl_place_qp;
-					for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
-						core_i16_dc_level[core_li] <= sl_place_coeff[core_li];
-						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-							core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
+					// Same-cycle I16 DC-only: residual_place_pulse + zero AC.
+					if (residual_place_pulse && core_first_is_i16) begin
+						for (core_li = 0; core_li < 16; core_li = core_li + 1)
+							core_i16_dc_level[core_li] <= sl_place_coeff[core_li];
 					end
 					sweep_mb <= 16'd0;
 					sweep_mb_total <= sweep_mb_total_next;
@@ -525,6 +525,9 @@ module stream_path #(
 			SW_START: begin
 				core_mb_type_valid <= 1'b1;
 				sweep_guard <= 16'd0;
+				// Only the first MB of the picture sweep carries a real delta.
+				if (sweep_mb != 16'd0)
+					core_mb_qpd_r <= 8'sd0;
 				sweep_state <= SW_GAP;
 			end
 
@@ -539,7 +542,8 @@ module stream_path #(
 			SW_FEED: begin
 				core_luma4x4_valid <= 1'b1;
 				core_luma4x4_idx <= core_luma_feed_idx;
-				core_luma4x4_total_coeff <= 5'd16;
+				// I16 AC blocks carry 15 levels; I_NxN full 16.
+				core_luma4x4_total_coeff <= core_first_is_i16 ? 5'd15 : 5'd16;
 				core_luma4x4_trailing_ones <= 2'd0;
 				for (core_li = 0; core_li < 16; core_li = core_li + 1)
 					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
@@ -681,7 +685,7 @@ module stream_path #(
 		.chroma_pred_mode(2'd0),
 		.cbp_luma(sl_first_mb_cbp_luma),
 		.cbp_chroma(sl_first_mb_cbp_chroma),
-		.mb_qp_delta(sl_qpd[5:0]),
+		.mb_qp_delta(core_mb_qpd_r),
 		.mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),

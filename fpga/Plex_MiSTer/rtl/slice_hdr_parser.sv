@@ -76,6 +76,10 @@ module slice_hdr_parser (
 	output reg  signed [7:0] residual_place_dc,
 	output reg  [5:0]  residual_place_qp,
 	(* keep = 1 *) output reg signed [15:0] residual_place_coeff [0:15],
+	// Per-MB QP after se(mb_qp_delta) with mod-52 wrap (7.4.5).  residual_place_qp
+	// tracks the same value so dequant/Hadamard/deblock share one scale.
+	output reg  signed [7:0] first_mb_qp_delta,
+	output reg  [5:0]  first_mb_qp,
 	output reg         busy
 );
 
@@ -109,8 +113,11 @@ module slice_hdr_parser (
 	reg [2:0]  i4_rem_acc;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 	reg [3:0]  full_luma_cbp;
+	reg [1:0]  full_chroma_cbp; // I16 from mb_type; I4 from me map
 	reg        full_start_req;
 	reg [9:0]  full_start_bit;
+	reg        full_is_i16_ac;  // AC walk: max_coeff=15 (Intra16x16ACLevel)
+	reg [5:0]  mb_qp_latched;  // slice_qp + mb_qp_delta, mod 52
 
 	localparam [2:0]
 		FULL_IDLE  = 3'd0,
@@ -279,9 +286,39 @@ module slice_hdr_parser (
 	// first macroblock of the slice (denominator: 1 of 1170 MBs/frame) — the
 	// parser does not yet stream per-macroblock cbp.
 	assign first_mb_cbp_luma = full_luma_cbp;
-	wire [5:0] first_mb_cbp_full = cbp_intra_map(cbp_me);
-	assign first_mb_cbp_chroma = first_mb_cbp_full[5:4];
+	assign first_mb_cbp_chroma = full_chroma_cbp;
 	assign first_mb_residual_bit_offset = {6'd0, full_start_bit};
+
+	// I_16x16 mb_type 1..24 → cbpY/cbpC (Table 7-11): i=mt-1; cbpY=(i>=12)?15:0; cbpC=(i/4)%3.
+	function automatic [3:0] i16_cbp_luma_of;
+		input [7:0] mt;
+		begin
+			if (mt >= 8'd1 && mt <= 8'd24)
+				i16_cbp_luma_of = ((mt - 8'd1) >= 8'd12) ? 4'b1111 : 4'b0000;
+			else
+				i16_cbp_luma_of = 4'd0;
+		end
+	endfunction
+	function automatic [1:0] i16_cbp_c;
+		input [7:0] mt;
+		reg [7:0] q;
+		begin
+			q = (mt - 8'd1) / 8'd4; // 0..5
+			// q % 3 without division: 0,1,2,3→0,4→1,5→2
+			if (q >= 8'd3) q = q - 8'd3;
+			i16_cbp_c = q[1:0];
+		end
+	endfunction
+
+	// Combinational QP wrap (shared with decode_core / deblock path).
+	reg signed [7:0] qp_dlt_comb;
+	reg [5:0]        qp_prev_comb;
+	wire [5:0]       qp_y_comb;
+	h264_qp_y_add_delta u_mb_qp_wrap (
+		.prev_qp(qp_prev_comb),
+		.mb_qp_delta(qp_dlt_comb),
+		.qp_y(qp_y_comb)
+	);
 
 	function automatic [1:0] full_i4_bx;
 		input [3:0] idx;
@@ -369,7 +406,8 @@ module slice_hdr_parser (
 		.reset(reset || cap_clear),
 		.start(full_res_start),
 		.coeff_token_table(full_coeff_token_table(full_block_idx)),
-		.max_coeff(5'd16),
+		// I_NxN luma: 16 levels. I_16x16 AC after DC: 15 levels (Intra16x16ACLevel).
+		.max_coeff(full_is_i16_ac ? 5'd15 : 5'd16),
 		.bit_offset_start(full_bit_off),
 		.bit_len({3'd0, len} << 3),
 		.rbsp(mem),
@@ -422,7 +460,8 @@ module slice_hdr_parser (
 		ST_REFIDX_FLAG = 6'd32,
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
-		ST_P_MBT       = 6'd35;
+		ST_P_MBT       = 6'd35,
+		ST_WAIT_I16_AC = 6'd36; // after Intra16x16DCLevel, wait AC walk
 
 	task automatic res_clear;
 		integer ci;
@@ -584,8 +623,13 @@ module slice_hdr_parser (
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
 			full_luma_cbp <= 4'd0;
+			full_chroma_cbp <= 2'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
+			full_is_i16_ac <= 1'b0;
+			mb_qp_latched <= 6'd0;
+			first_mb_qp_delta <= 8'sd0;
+			first_mb_qp <= 6'd0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_ok <= 0;
@@ -652,8 +696,10 @@ module slice_hdr_parser (
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
 			full_luma_cbp <= 4'd0;
+			full_chroma_cbp <= 2'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
+			full_is_i16_ac <= 1'b0;
 			residual_ok <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
@@ -875,6 +921,10 @@ module slice_hdr_parser (
 				// I_16x16 (1..24): chroma → qpδ → CAVLC DC (nC=0)
 				// I_NxN (0): 16 pred modes → chroma → cbp → qpδ? → first 4x4 residual
 					if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
+						// Table 7-11: cbpY/cbpC live in mb_type for I_16x16.
+						full_luma_cbp   <= i16_cbp_luma_of(ue_val[7:0]);
+						full_chroma_cbp <= i16_cbp_c(ue_val[7:0]);
+						full_is_i16_ac  <= 1'b0;
 						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
 					end else if (ue_val == 16'd0) begin
 						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0; i4_rem_acc <= 3'd0;
@@ -882,6 +932,8 @@ module slice_hdr_parser (
 						first_i4_rem_modes <= 48'd0;
 						first_i4_modes_present <= 1'b0;
 						full_luma_cbp <= 4'd0;
+						full_chroma_cbp <= 2'd0;
+						full_is_i16_ac <= 1'b0;
 						st <= ST_I4MODE;
 					end else
 						st <= ST_DONE;
@@ -947,17 +999,29 @@ module slice_hdr_parser (
 			ST_CBP: begin
 				// ue(coded_block_pattern me) — me==3 → cbp=0 (no qpδ)
 				cbp_me <= ue_val[5:0];
-				full_luma_cbp <= cbp_intra_luma_map(ue_val[5:0]);
+				full_luma_cbp   <= cbp_intra_luma_map(ue_val[5:0]);
+				full_chroma_cbp <= cbp_intra_map(ue_val[5:0])[5:4];
 				if (ue_val == 16'd3) begin
-					// cbp=0: no residual (shouldn't happen on real first MB)
+					// cbp=0: no residual, no mb_qp_delta — QP stays slice_qp
+					mb_qp_latched <= slice_qp;
+					first_mb_qp_delta <= 8'sd0;
+					first_mb_qp <= slice_qp;
 					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
 				end
 			end
 			ST_MBQP: begin
-				// se(mb_qp_delta) consumed; start coeff_token nC=0
+				// se(mb_qp_delta): running QP_Y = (prev + delta + 52) % 52
+				dlt_tmp = se_of(ue_val);
+				qp_prev_comb = slice_qp;
+				qp_dlt_comb  = dlt_tmp;
+				first_mb_qp_delta <= dlt_tmp;
+				mb_qp_latched <= qp_y_comb;
+				first_mb_qp   <= qp_y_comb;
+				// I_NxN: full 16-coeff luma walk. I_16x16: DC via ST_TOK, AC after place.
 				if (first_mb_type == 8'd0) begin
+					full_is_i16_ac <= 1'b0;
 					full_start_req <= 1'b1;
 					full_start_bit <= cur_bit_offset();
 				end
@@ -981,13 +1045,16 @@ module slice_hdr_parser (
 				if (tbits == 5'd1 && tcode[0] == 1'b1) begin
 					r_tc <= 0; r_t1 <= 0; residual_tc <= 0; residual_t1 <= 0;
 					tok_ok <= 1'b1;
-					residual_ok <= 1'b1; residual_dc <= 0; residual_csum <= 0;
+					// Fall through ST_PLACE so I16 can still launch AC and QP is latched.
 					begin : clr_coeff_tc0
 						integer ci;
-						for (ci = 0; ci < 16; ci = ci + 1)
+						for (ci = 0; ci < 16; ci = ci + 1) begin
 							residual_coeff[ci] <= 16'sd0;
+							lev[ci] <= 16'sd0;
+							runv[ci] <= 4'd0;
+						end
 					end
-					st <= ST_DONE;
+					st <= ST_PLACE;
 				end else if (tbits == 5'd2 && tcode[1:0] == 2'b01) begin
 					r_tc <= 1; r_t1 <= 1; residual_tc <= 1; residual_t1 <= 2'd1;
 					sign_left <= 1; lev_i <= 0; tok_ok <= 1'b1; st <= ST_SIGNS;
@@ -1505,7 +1572,8 @@ module slice_hdr_parser (
 					residual_place_tc <= r_tc;
 					residual_place_t1 <= r_t1[1:0];
 					residual_place_dc <= sat8(dcv);
-					residual_place_qp <= slice_qp;
+					// Per-MB QP (mb_qp_delta applied in ST_MBQP); not bare slice_qp.
+					residual_place_qp <= mb_qp_latched;
 					// PRODUCT: real XOR fold (DIAG 8'h14 STRIPPED per parent R-csum6)
 					residual_csum <= cs;
 					csum_acc <= cs;
@@ -1516,7 +1584,41 @@ module slice_hdr_parser (
 				place_did <= 1'b1;
 				residual_place_pulse <= 1'b1;
 				csum_i <= 5'd0;
-				st <= ST_DONE;
+				// I_16x16: residual just placed is Intra16x16DCLevel.  AC (15-coeff)
+				// blocks follow when cbpY≠0; otherwise present zero AC so the product
+				// path still sees a complete luma residual set.
+				if (first_mb_type >= 8'd1 && first_mb_type <= 8'd24) begin
+					if (full_luma_cbp != 4'd0) begin
+						full_is_i16_ac <= 1'b1;
+						full_start_req <= 1'b1;
+						full_start_bit <= cur_bit_offset();
+						st <= ST_WAIT_I16_AC;
+					end else begin
+						begin : i16_zero_ac
+							integer bi, ci;
+							for (bi = 0; bi < 16; bi = bi + 1) begin
+								full_tc[bi] <= 5'd0;
+								for (ci = 0; ci < 16; ci = ci + 1)
+									first_luma4x4_coeff[bi][ci] <= 16'sd0;
+							end
+						end
+						first_luma4x4_blocks_present <= 1'b1;
+						first_luma4x4_blocks_valid <= 1'b1;
+						st <= ST_DONE;
+					end
+				end else
+					st <= ST_DONE;
+			end
+
+			ST_WAIT_I16_AC: begin
+				// full_* FSM walks 16× Intra16x16ACLevel (max_coeff=15).
+				if (full_st == FULL_DONE) begin
+					full_is_i16_ac <= 1'b0;
+					st <= ST_DONE;
+				end else if (full_st == FULL_FAIL) begin
+					full_is_i16_ac <= 1'b0;
+					st <= ST_FAIL;
+				end
 			end
 
 			ST_DONE: begin

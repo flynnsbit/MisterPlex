@@ -65,7 +65,7 @@ module h264_decode_core #(
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
     input  wire [3:0]  cbp_luma,             // coded_block_pattern luma (4 8×8 groups)
     input  wire [1:0]  cbp_chroma,           // coded_block_pattern chroma (0=none,1=DC,2=DC+AC)
-    input  wire signed [5:0] mb_qp_delta,    // se(), per-MB QP delta
+    input  wire signed [7:0] mb_qp_delta,    // se(), per-MB QP delta (mod-52 wrap)
     input  wire [15:0] mb_residual_bit_offset, // RBSP bit offset for this MB's residual syntax
 
     // ── Product intra luma residual block pulse interface (from CAVLC/parser) ──
@@ -455,16 +455,21 @@ module h264_decode_core #(
     wire p16_launch_is_ref = p16_zero_mv_valid ? p16_mb_is_ref : 1'b1;
     wire [15:0] syntax_request_byte_offset = {3'd0, mb_residual_bit_offset[15:3]};
 
-    // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
-    //    actually carries coefficients, and wraps modulo 52.
-    wire mb_has_residual = !mb_skip && ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0));
-    wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
-                                     $signed({{2{mb_qp_delta[5]}}, mb_qp_delta});
-    wire signed [7:0] qp_delta_wrap = (qp_delta_sum < 8'sd0)  ? (qp_delta_sum + 8'sd52) :
-                                      (qp_delta_sum > 8'sd51) ? (qp_delta_sum - 8'sd52) :
-                                                                 qp_delta_sum;
+    // ── Per-macroblock QP (7.4.5): mb_qp_delta present for I_16x16 always, else
+    //    when CBP≠0.  Running wrap: (QP_Y_PREV + mb_qp_delta + 52) % 52.
+    wire mb_is_i16x16 = slice_is_i ?
+                        ((mb_type >= 5'd1) && (mb_type <= 5'd24)) :
+                        ((mb_type >= 5'd5) && (mb_type <= 5'd30)); // P-slice I_16x16
+    wire mb_has_qp_delta = !mb_skip &&
+                           (mb_is_i16x16 || (cbp_luma != 4'd0) || (cbp_chroma != 2'd0));
+    wire [5:0] qp_y_after_delta;
+    h264_qp_y_add_delta u_product_mb_qp_wrap (
+        .prev_qp(cur_qp_y_r),
+        .mb_qp_delta(mb_qp_delta),
+        .qp_y(qp_y_after_delta)
+    );
     wire [5:0] qp_launch = p16_zero_mv_valid ? slice_qp_y :
-                           mb_has_residual   ? qp_delta_wrap[5:0] : cur_qp_y_r;
+                           mb_has_qp_delta   ? qp_y_after_delta : cur_qp_y_r;
 
     wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
     wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
@@ -1333,6 +1338,8 @@ module h264_decode_core #(
                 intra_active_r <= 1'b1;
                 intra_mb_x_r <= syntax_mb_x;
                 intra_qp_y_r <= qp_launch;
+                mb_qp_y_r <= qp_launch;
+                cur_qp_y_r <= qp_launch;
                 intra_mb_y_r <= syntax_mb_y;
                 intra_mb_is_ref_r <= 1'b1;
             end

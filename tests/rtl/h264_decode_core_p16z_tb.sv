@@ -99,7 +99,7 @@ module h264_decode_core_p16z_tb #(
 		.chroma_pred_mode(2'd0),
 		.cbp_luma(cbp_luma),
 		.cbp_chroma(cbp_chroma),
-		.mb_qp_delta(6'sd0),
+		.mb_qp_delta(8'sd0),
 		.mb_residual_bit_offset(mb_residual_bit_offset),
 		.luma4x4_valid(1'b0),
 		.luma4x4_idx(4'd0),

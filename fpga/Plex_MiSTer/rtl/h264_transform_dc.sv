@@ -15,6 +15,20 @@
 //
 // OWNER: w-residual (inverse transform chain)
 
+// 7.4.5: QP_Y = (QP_Y_PREV + mb_qp_delta + 52) % 52  (two-sided wrap)
+module h264_qp_y_add_delta (
+	input  wire [5:0]         prev_qp,
+	input  wire signed [7:0]  mb_qp_delta,
+	output wire [5:0]         qp_y
+);
+	wire signed [9:0] sum0 = $signed({4'b0, prev_qp}) + mb_qp_delta;
+	wire signed [9:0] adj0 = (sum0 < 10'sd0)  ? (sum0 + 10'sd52) :
+	                         (sum0 > 10'sd51) ? (sum0 - 10'sd52) : sum0;
+	wire signed [9:0] adj1 = (adj0 < 10'sd0)  ? (adj0 + 10'sd52) :
+	                         (adj0 > 10'sd51) ? (adj0 - 10'sd52) : adj0;
+	assign qp_y = adj1[5:0];
+endmodule
+
 module h264_chroma_qp (
 	input  wire [5:0]        qp_y,
 	input  wire signed [4:0] chroma_qp_index_offset,

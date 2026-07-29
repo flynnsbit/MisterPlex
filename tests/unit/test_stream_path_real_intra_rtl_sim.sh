@@ -11,7 +11,8 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
   exit 3
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
-  printf '%s\n' "$VERILATOR_VERSION" >&2
+  printf '%s
+' "$VERILATOR_VERSION" >&2
   exit "$VERILATOR_RC"
 fi
 
@@ -31,7 +32,8 @@ COMMON=(
   "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_transform_dc.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"

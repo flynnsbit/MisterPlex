@@ -42,6 +42,7 @@ PRODUCT_RTL=(
   pps_parser.sv
   h264_cavlc_residual.sv
   slice_hdr_parser.sv
+  h264_transform_dc.sv
   h264_iq_idct_4x4.sv
   h264_iq_idct_seq.sv
   h264_inter_pred.sv

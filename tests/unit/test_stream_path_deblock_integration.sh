@@ -19,12 +19,13 @@ SKIP
   exit 0
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
-  printf '%s\n' "$VERILATOR_VERSION" >&2
+  printf '%s
+' "$VERILATOR_VERSION" >&2
   exit "$VERILATOR_RC"
 fi
 
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
-for src in rtl/stream_path.sv rtl/h264_deblock.sv rtl/h264_deblock_mb.sv rtl/decode_stub.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv; do
+for src in rtl/stream_path.sv rtl/h264_deblock.sv rtl/h264_deblock_mb.sv rtl/decode_stub.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv rtl/h264_transform_dc.sv; do
   if ! grep -q "$src" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product $src" >&2
     exit 2
@@ -46,7 +47,8 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_transform_dc.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv" \
@@ -78,7 +80,8 @@ for fault in bs threshold chroma boundary loop slice-controls; do
   FAULT_OUT="$($EXE --annexb "$SRC_ANNEXB" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" "--fault-$fault" 2>&1)"
   FAULT_RC=$?
   set -e
-  printf '%s\n' "$FAULT_OUT"
+  printf '%s
+' "$FAULT_OUT"
   if [[ "$FAULT_RC" -eq 0 ]]; then
     echo "FAIL stream_path/deblock red-check: $fault unexpectedly passed" >&2
     exit 1

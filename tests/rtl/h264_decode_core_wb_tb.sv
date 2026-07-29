@@ -84,7 +84,7 @@ module h264_decode_core_wb_tb #(
 		.chroma_pred_mode(2'd0),
 		.cbp_luma(4'hf),
 		.cbp_chroma(2'd2),
-		.mb_qp_delta(6'sd0),
+		.mb_qp_delta(8'sd0),
 		.mb_residual_bit_offset(16'd0),
 		.luma4x4_valid(1'b0),
 		.luma4x4_idx(4'd0),
