@@ -154,10 +154,7 @@ module stream_path #(
 	wire        bf_wr_full;
 
 	ddr_bitstream_reader #(
-		.RING_BYTES(BITSTREAM_RING_BYTES),
-		.RING_LOW_BYTES(BITSTREAM_RING_LOW_BYTES),
-		.PREFETCH_QWORDS(BITSTREAM_PREFETCH_QWORDS),
-		.PREFETCH_BURST(BITSTREAM_PREFETCH_BURST)
+		.RING_BYTES(BITSTREAM_RING_BYTES)
 	) ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
