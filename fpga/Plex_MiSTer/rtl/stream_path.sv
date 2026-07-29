@@ -130,8 +130,8 @@ module stream_path #(
 	// Product benches pass the fixture coded size (320x240 or 624x480).
 	// Plex.sv / present path may use a wider surface elsewhere; do not hardcode
 	// 624 here — that forces mb_width mismatch (core error) on 320x240 SPS.
-	localparam int CORE_FRAME_W = FRAME_W;
-	localparam int CORE_FRAME_H = FRAME_H;
+	localparam int CORE_FRAME_W = 624;
+	localparam int CORE_FRAME_H = 480;
 
 	// Whole-slice RBSP capacity.  Settled 624x480 Baseline IDR fixtures are
 	// ~11KB (plex_inter_p16_624x480 IDR = 10895B); keep headroom so a higher-
@@ -393,6 +393,9 @@ module stream_path #(
 	wire        feed_chroma_residual_valid;
 	wire signed [15:0] feed_chroma_residual_u [0:63];
 	wire signed [15:0] feed_chroma_residual_v [0:63];
+	wire        core_i16_dc_level_valid;
+	wire signed [15:0] core_i16_dc_level [0:15];
+	wire [5:0]  core_i16_dc_qp;
 	wire        feed_p_residual_valid;
 	wire signed [15:0] feed_p_residual_y [0:255];
 	wire signed [15:0] feed_p_residual_u [0:63];
@@ -475,41 +478,158 @@ module stream_path #(
 		end
 	endfunction
 
-	wire [3:0] core_i4_modes [0:15];
+	// the entire left-MB column.  MB2 blk8 (true mode DC=2, true pred=6) then
+	// decoded rem=2 against pred=2 → mode 3 (DDL) and first_fail Y addr=2.
+	// Max Baseline frame here is 624x480 → 39 MB columns; pad to 64.
+	localparam int I4_MPM_MB_W_MAX = 64;
+	reg [3:0]  i4_mpm_left [0:3];                 // right-col modes of prev MB
+	reg        i4_mpm_left_valid;
+	reg [3:0]  i4_mpm_top  [0:I4_MPM_MB_W_MAX-1][0:3]; // bottom-row modes / col
+	reg [I4_MPM_MB_W_MAX-1:0] i4_mpm_top_valid;
+	reg [7:0]  i4_mpm_mb_x;
+	reg [7:0]  i4_mpm_mb_y;
+	reg        i4_mpm_pos_valid;
+	reg        i4_mpm_slice_d;
+
+	wire       i4_mpm_slice_start = slice_valid & ~i4_mpm_slice_d;
+	wire [5:0] i4_mpm_mb_x6 = i4_mpm_mb_x[5:0];
+	wire       i4_mpm_left_avail = i4_mpm_pos_valid && (i4_mpm_mb_x != 8'd0) && i4_mpm_left_valid;
+	wire       i4_mpm_top_avail  = i4_mpm_pos_valid && (i4_mpm_mb_y != 8'd0) &&
+	                               (i4_mpm_mb_x < I4_MPM_MB_W_MAX[7:0]) &&
+	                               i4_mpm_top_valid[i4_mpm_mb_x6];
+
+	integer i4_mpm_ri;
+	always @(posedge clk) begin
+		if (reset) begin
+			i4_mpm_slice_d     <= 1'b0;
+			i4_mpm_pos_valid   <= 1'b0;
+			i4_mpm_left_valid  <= 1'b0;
+			i4_mpm_top_valid   <= {I4_MPM_MB_W_MAX{1'b0}};
+			i4_mpm_mb_x        <= 8'd0;
+			i4_mpm_mb_y        <= 8'd0;
+			for (i4_mpm_ri = 0; i4_mpm_ri < 4; i4_mpm_ri = i4_mpm_ri + 1)
+				i4_mpm_left[i4_mpm_ri] <= 4'd2;
+		end else begin
+			i4_mpm_slice_d <= slice_valid;
+			if (i4_mpm_slice_start) begin
+				// Align with feed: first_mb_in_slice is the first address.
+				if (sps_mb_w != 8'd0) begin
+					i4_mpm_mb_x <= sl_first % {8'd0, sps_mb_w};
+					i4_mpm_mb_y <= sl_first / {8'd0, sps_mb_w};
+				end else begin
+					i4_mpm_mb_x <= 8'd0;
+					i4_mpm_mb_y <= 8'd0;
+				end
+				i4_mpm_pos_valid  <= 1'b1;
+				i4_mpm_left_valid <= 1'b0;
+				i4_mpm_top_valid  <= {I4_MPM_MB_W_MAX{1'b0}};
+				for (i4_mpm_ri = 0; i4_mpm_ri < 4; i4_mpm_ri = i4_mpm_ri + 1)
+					i4_mpm_left[i4_mpm_ri] <= 4'd2;
+			end else if (feed_mb_type_valid && i4_mpm_pos_valid) begin
+				// Publish this MB's edge modes for the next neighbour.  Non-I4x4
+				// MBs contribute DC=2 (spec: neighbour not coded as Intra_4x4).
+				if (feed_i4_modes_present) begin
+					i4_mpm_left[0] <= core_i4_modes_calc[5];
+					i4_mpm_left[1] <= core_i4_modes_calc[7];
+					i4_mpm_left[2] <= core_i4_modes_calc[13];
+					i4_mpm_left[3] <= core_i4_modes_calc[15];
+					if (i4_mpm_mb_x < I4_MPM_MB_W_MAX[7:0]) begin
+						i4_mpm_top[i4_mpm_mb_x6][0] <= core_i4_modes_calc[10];
+						i4_mpm_top[i4_mpm_mb_x6][1] <= core_i4_modes_calc[11];
+						i4_mpm_top[i4_mpm_mb_x6][2] <= core_i4_modes_calc[14];
+						i4_mpm_top[i4_mpm_mb_x6][3] <= core_i4_modes_calc[15];
+						i4_mpm_top_valid[i4_mpm_mb_x6] <= 1'b1;
+					end
+				end else begin
+					for (i4_mpm_ri = 0; i4_mpm_ri < 4; i4_mpm_ri = i4_mpm_ri + 1)
+						i4_mpm_left[i4_mpm_ri] <= 4'd2;
+					if (i4_mpm_mb_x < I4_MPM_MB_W_MAX[7:0]) begin
+						i4_mpm_top[i4_mpm_mb_x6][0] <= 4'd2;
+						i4_mpm_top[i4_mpm_mb_x6][1] <= 4'd2;
+						i4_mpm_top[i4_mpm_mb_x6][2] <= 4'd2;
+						i4_mpm_top[i4_mpm_mb_x6][3] <= 4'd2;
+						i4_mpm_top_valid[i4_mpm_mb_x6] <= 1'b1;
+					end
+				end
+				// Left is only meaningful for the next MB on the same row.
+				if ((sps_mb_w != 8'd0) && (i4_mpm_mb_x + 8'd1 >= sps_mb_w)) begin
+					i4_mpm_mb_x       <= 8'd0;
+					i4_mpm_mb_y       <= i4_mpm_mb_y + 8'd1;
+					i4_mpm_left_valid <= 1'b0;
+				end else begin
+					i4_mpm_mb_x       <= i4_mpm_mb_x + 8'd1;
+					i4_mpm_left_valid <= 1'b1;
+				end
+			end
+		end
+	end
+
+	// Combo derive uses the *current* MB's flags + history that still points at
+	// this MB (history/pos NBA-advance at end of mb_type_valid).  Latch the
+	// result on mb_type_valid so residual/decode keep stable modes after pos
+	// advances — a live combo path would re-decode MB0 flags against MB1's
+	// left history and corrupt every block after the pulse.
 	reg [3:0] core_i4_modes_calc [0:15];
+	reg [3:0] core_i4_modes_r [0:15];
+	wire [3:0] core_i4_modes [0:15];
 	integer core_mi;
+	integer core_mj;
+	// I4x4 MPM (8.3.1.1).  rem_intra4x4_pred_mode is 0..7 and pred is 0..8 —
+	// compare as 4-bit.  pred_mode[2:0] truncated mode-8 to 0 so rem=2 against
+	// HU neighbours (pred=8) became mode 3 (DDL) not 2 (DC).  320x240 MB5
+	// blk13 first_fail got=2 ref=53; 624x480 never hit pred=8+rem path.
 	always @* begin
 		for (core_mi = 0; core_mi < 16; core_mi = core_mi + 1) begin : derive_core_i4_modes
 			reg [1:0] bx;
 			reg [1:0] by;
-			reg [3:0] left_idx;
-			reg [3:0] top_idx;
+			reg [3:0] mode_a;
+			reg [3:0] mode_b;
 			reg [3:0] pred_mode;
+			reg [3:0] rem_ext;
 			reg [2:0] rem_mode;
 			bx = core_i4_bx(core_mi[3:0]);
 			by = core_i4_by(core_mi[3:0]);
-			left_idx = (bx == 2'd0) ? 4'd0 : core_i4_idx_at(bx - 2'd1, by);
-			top_idx = (by == 2'd0) ? 4'd0 : core_i4_idx_at(bx, by - 2'd1);
-			if (bx != 2'd0 && by != 2'd0)
-				pred_mode = (core_i4_modes_calc[left_idx] < core_i4_modes_calc[top_idx]) ?
-					core_i4_modes_calc[left_idx] : core_i4_modes_calc[top_idx];
-			else
+			if ((bx == 2'd0 && !i4_mpm_left_avail) ||
+			    (by == 2'd0 && !i4_mpm_top_avail)) begin
 				pred_mode = 4'd2;
+			end else begin
+				if (bx != 2'd0)
+					mode_a = core_i4_modes_calc[core_i4_idx_at(bx - 2'd1, by)];
+				else
+					mode_a = i4_mpm_left[by];
+				if (by != 2'd0)
+					mode_b = core_i4_modes_calc[core_i4_idx_at(bx, by - 2'd1)];
+				else
+					mode_b = i4_mpm_top[i4_mpm_mb_x6][bx];
+				pred_mode = (mode_a < mode_b) ? mode_a : mode_b;
+			end
 			rem_mode = feed_i4_rem_modes[core_mi * 3 +: 3];
+			rem_ext  = {1'b0, rem_mode};
 			if (!feed_i4_modes_present)
 				core_i4_modes_calc[core_mi] = 4'd2;
 			else if (feed_i4_pred_mode_flags[core_mi])
 				core_i4_modes_calc[core_mi] = pred_mode;
 			else
-				core_i4_modes_calc[core_mi] = (rem_mode < pred_mode[2:0]) ?
-					{1'b0, rem_mode} : ({1'b0, rem_mode} + 4'd1);
+				core_i4_modes_calc[core_mi] = (rem_ext < pred_mode) ?
+					rem_ext : (rem_ext + 4'd1);
+		end
+	end
+
+	always @(posedge clk) begin
+		if (reset) begin
+			for (core_mj = 0; core_mj < 16; core_mj = core_mj + 1)
+				core_i4_modes_r[core_mj] <= 4'd2;
+		end else if (feed_mb_type_valid) begin
+			for (core_mj = 0; core_mj < 16; core_mj = core_mj + 1)
+				core_i4_modes_r[core_mj] <= feed_i4_modes_present ?
+					core_i4_modes_calc[core_mj] : 4'd2;
 		end
 	end
 
 	genvar core_gi;
 	generate
 		for (core_gi = 0; core_gi < 16; core_gi = core_gi + 1) begin : gen_core_i4_modes
-			assign core_i4_modes[core_gi] = core_i4_modes_calc[core_gi];
+			assign core_i4_modes[core_gi] = core_i4_modes_r[core_gi];
 		end
 	endgenerate
 
@@ -576,6 +696,19 @@ module stream_path #(
 		end
 	end
 
+
+	// tip feed has no p_residual export; base keep-nets need a driver
+	assign feed_p_residual_valid = 1'b0;
+	genvar _pr_i;
+	generate
+		for (_pr_i = 0; _pr_i < 256; _pr_i = _pr_i + 1) begin : g_pr_y
+			assign feed_p_residual_y[_pr_i] = 16'sd0;
+		end
+		for (_pr_i = 0; _pr_i < 64; _pr_i = _pr_i + 1) begin : g_pr_c
+			assign feed_p_residual_u[_pr_i] = 16'sd0;
+			assign feed_p_residual_v[_pr_i] = 16'sd0;
+		end
+	endgenerate
 	h264_i_mb_feed #(
 		.MB_W_MAX(40)
 	) i_mb_feed (
@@ -608,7 +741,6 @@ module stream_path #(
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
-		.rbsp_window_ready(core_rbsp_ready),
 		.rbsp_request_offset(feed_rbsp_request_offset),
 		.rbsp_request_valid(feed_rbsp_request_valid),
 		.rbsp_length(core_rbsp_length),
@@ -641,13 +773,12 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level_valid(core_i16_dc_level_valid),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
 		.chroma_residual_u(feed_chroma_residual_u),
 		.chroma_residual_v(feed_chroma_residual_v),
 		.chroma_residual_valid(feed_chroma_residual_valid),
-		.p_residual_y(feed_p_residual_y),
-		.p_residual_u(feed_p_residual_u),
-		.p_residual_v(feed_p_residual_v),
-		.p_residual_valid(feed_p_residual_valid),
 		.busy(feed_busy),
 		.frame_feed_done(feed_frame_done),
 		.error(feed_error),
@@ -665,7 +796,6 @@ module stream_path #(
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
-	// P residual planes come from feed export (sole CAVLC+IQ owner).
 	wire signed [15:0] core_p16_residual_y [0:255];
 	wire signed [15:0] core_p16_residual_u [0:63];
 	wire signed [15:0] core_p16_residual_v [0:63];
@@ -673,12 +803,12 @@ module stream_path #(
 		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
 			assign core_recon_u[core_gi] = 8'd128;
 			assign core_recon_v[core_gi] = 8'd128;
-			assign core_p16_residual_u[core_gi] = feed_p_residual_u[core_gi];
-			assign core_p16_residual_v[core_gi] = feed_p_residual_v[core_gi];
+			assign core_p16_residual_u[core_gi] = 16'sd0;
+			assign core_p16_residual_v[core_gi] = 16'sd0;
 		end
 		for (core_gi = 0; core_gi < 256; core_gi = core_gi + 1) begin : gen_core_zero256
 			assign core_recon_y[core_gi] = 8'd0;
-			assign core_p16_residual_y[core_gi] = feed_p_residual_y[core_gi];
+			assign core_p16_residual_y[core_gi] = 16'sd0;
 		end
 	endgenerate
 
@@ -695,6 +825,10 @@ module stream_path #(
 			core_dpb_rd_valid <= core_dpb_rd_en;
 	end
 	wire core_frame_done;
+	wire core_dpb_ref_swap;
+	wire core_err_cavlc_miss;
+	wire core_err_bad_mb_type;
+	wire core_err_mb_overrun;
 	wire [15:0] core_frame_mb_count;
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
@@ -713,6 +847,7 @@ module stream_path #(
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
 
+	wire [63:0] decode_perf_word;
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
 		.FRAME_H(CORE_FRAME_H)
@@ -727,9 +862,16 @@ module stream_path #(
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.constrained_intra_pred_flag(1'b0),
+		// Fit4 acceptance is deblock-OFF only. The product deblock_mb path still
+		// has residual M10K-latency hazards on gather/skirt; force idc=1 so the
+		// filter math is skipped and emit is identity. Wire sl_deblock_idc when
+		// deblock is trusted. (Was hardwired 0 = always filter.)
+		.disable_deblocking_filter_idc(2'd1),
+		.slice_alpha_c0_offset(5'sd0),
+		.slice_beta_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
-		.rbsp_window_ready(core_rbsp_ready),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
 		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(core_mb_type_valid),
@@ -749,6 +891,9 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level_valid(core_i16_dc_level_valid),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
 		.intra_chroma_residual_valid(feed_chroma_residual_valid),
 		.intra_chroma_residual_u(feed_chroma_residual_u),
 		.intra_chroma_residual_v(feed_chroma_residual_v),
@@ -778,7 +923,6 @@ module stream_path #(
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
 		.dpb_ref_base(32'd0),
-		.p_residual_valid(feed_p_residual_valid),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),
@@ -789,6 +933,8 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
+		.dpb_rd_stall(1'b0),
+		.dpb_ref_swap(core_dpb_ref_swap),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
@@ -796,6 +942,11 @@ module stream_path #(
 		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.decode_enable(1'b1),
+		.perf_mbox_word(decode_perf_word), // driven below
 		.busy(core_busy),
 		.intra_blocks_done(core_intra_blocks_done),
 		.decode_state(core_decode_state),

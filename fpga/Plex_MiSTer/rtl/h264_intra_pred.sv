@@ -1,8 +1,25 @@
-// Phase 3.3l-3: H.264 intra prediction helpers.
-// Behaviour matches host/libmisterplex/h264_recon.hpp for the measured all-intra
-// Plex vector. All intra modes supported: I4x4 (9 modes), I16x16 (4 modes incl.
-// Plane per clause 8.3.3.4), Chroma 8x8 (4 modes incl. Plane per clause 8.3.4.4).
-// I_PCM (mb_type 25) remains UNSUPPORTED — mode guard fires unsupported_code for it.
+// AREA NOTE (fit HARD_FAIL, 248% ALM / 130% DSP): these predictors were
+// originally written fully parallel -- all nine I4x4 modes evaluated
+// simultaneously and muxed, and a whole 16x16 / 8x8 plane emitted from one
+// combinational cloud in 32-bit integer arithmetic. Only ONE mode is ever
+// selected and only one sample is ever needed per cycle, so that cost roughly
+// 9x the logic for no benefit.
+//
+// The rebuild below:
+//   * shares ONE 2-tap / 3-tap filter bank across all nine I4x4 modes; every
+//     directional mode is a permutation of the same taps, so the arithmetic is
+//     built once and only the per-pixel selection differs,
+//   * generates the I16x16 and Chroma 8x8 planes ONE SAMPLE PER CYCLE into a
+//     single indexed-write register file (a one-hot write decoder, not 256
+//     independent mode muxes),
+//   * evaluates Plane with a single running accumulator -- add b per column,
+//     add c per row -- instead of 256 parallel gradient evaluations,
+//   * accumulates the Plane gradients with the s += d / acc += s double-sum so
+//     sum (j+1)*d_j needs two adders and no multiplier,
+//   * writes every remaining constant multiply as a shift/add so nothing
+//     infers a DSP block.
+// Latency grew (a 16x16 plane now takes ~275 cycles); area is the binding
+// constraint, not throughput.
 
 module h264_intra4x4_pred (
 	input  wire [3:0] mode,
@@ -14,135 +31,116 @@ module h264_intra4x4_pred (
 	output reg  [3:0] used_mode,
 	output reg  [7:0] pred [0:15]
 );
-	function automatic [7:0] clip8;
-		input integer v;
-		begin
-			if (v < 0) clip8 = 8'd0;
-			else if (v > 255) clip8 = 8'd255;
-			else clip8 = v[7:0];
-		end
-	endfunction
+	// Shared neighbour vector, ordered bottom-left to top-right so that every
+	// directional mode reduces to a contiguous window of q[].
+	//   q[0]     = left[3]  (replicated: mode 8 needs the l2 + 2*l3 + l3 tap)
+	//   q[1..4]  = left[3..0]
+	//   q[5]     = top_left
+	//   q[6..13] = above[0..7]
+	//   q[14]    = above[7] (replicated: mode 3 needs the t6 + 3*t7 tap)
+	wire [7:0] q [0:14];
+	assign q[0] = left[3];
+	assign q[1] = left[3];
+	assign q[2] = left[2];
+	assign q[3] = left[1];
+	assign q[4] = left[0];
+	assign q[5] = top_left;
+	assign q[14] = above[7];
 
-	task automatic put;
-		input int x;
-		input int y;
-		input int v;
-		begin
-			pred[y * 4 + x] = clip8(v);
+	// The only two filter shapes H.264 intra 4x4 ever uses.
+	wire [7:0] a2 [0:13];
+	wire [7:0] a3 [0:12];
+	genvar qi;
+	generate
+		for (qi = 0; qi < 8; qi = qi + 1) begin : g_q_above
+			assign q[6 + qi] = above[qi];
 		end
-	endtask
+		for (qi = 0; qi < 14; qi = qi + 1) begin : g_a2
+			wire [9:0] s2 = {2'd0, q[qi]} + {2'd0, q[qi + 1]} + 10'd1;
+			assign a2[qi] = s2[8:1];
+		end
+		for (qi = 0; qi < 13; qi = qi + 1) begin : g_a3
+			wire [10:0] s3 = {3'd0, q[qi]} + {2'd0, q[qi + 1], 1'b0} +
+			                 {3'd0, q[qi + 2]} + 11'd2;
+			assign a3[qi] = s3[9:2];
+		end
+	endgenerate
 
-	integer x, y, i;
+	wire [9:0] sum_a = {2'd0, above[0]} + {2'd0, above[1]} +
+	                   {2'd0, above[2]} + {2'd0, above[3]};
+	wire [9:0] sum_l = {2'd0, left[0]} + {2'd0, left[1]} +
+	                   {2'd0, left[2]} + {2'd0, left[3]};
+	wire [10:0] dc_both = {1'b0, sum_a} + {1'b0, sum_l} + 11'd4;
+	wire [9:0]  dc_one  = (has_above ? sum_a : sum_l) + 10'd2;
+	wire [7:0]  dc_v = (has_above && has_left) ? dc_both[10:3] :
+	                   (has_above || has_left) ? dc_one[9:2] : 8'd128;
+
+	integer i, x, y, zvr, zhd, zhu;
 	reg [3:0] m;
-	integer t0, t1, t2, t3, t4, t5, t6, t7;
-	integer l0, l1, l2, l3;
-	integer dc_sum;
-	reg [7:0] dc_v;
 	always @* begin
-		dc_sum = 0;
-		dc_v = 8'd128;
-		for (i = 0; i < 16; i = i + 1) pred[i] = 8'd128;
 		m = mode;
 		if (!has_above && (mode == 4'd0 || mode == 4'd3 || mode == 4'd7)) m = 4'd2;
 		if (!has_left  && (mode == 4'd1 || mode == 4'd8)) m = 4'd2;
-		if ((!has_above || !has_left) && (mode == 4'd4 || mode == 4'd5 || mode == 4'd6)) m = 4'd2;
-		used_mode = m;
+		if ((!has_above || !has_left) &&
+		    (mode == 4'd4 || mode == 4'd5 || mode == 4'd6)) m = 4'd2;
+		used_mode = (mode > 4'd8) ? 4'd15 : m;
 
-		t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
-		t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
-		l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
-
-		case (m)
-		4'd0: begin // Vertical
-			for (y = 0; y < 4; y = y + 1)
-				for (x = 0; x < 4; x = x + 1) pred[y * 4 + x] = above[x];
+		// x and y are loop constants, so every q/a2/a3 index below folds to a
+		// constant and each output pixel collapses to a plain 9-way mux.
+		for (i = 0; i < 16; i = i + 1) begin
+			x = i % 4;
+			y = i / 4;
+			zvr = 2 * x - y;
+			zhd = 2 * y - x;
+			zhu = x + 2 * y;
+			case (used_mode)
+			4'd0: pred[i] = q[6 + x];                        // Vertical
+			4'd1: pred[i] = q[4 - y];                        // Horizontal
+			4'd2: pred[i] = dc_v;                            // DC
+			4'd3: pred[i] = a3[6 + x + y];                   // Diagonal Down-Left
+			4'd4: pred[i] = a3[4 + x - y];                   // Diagonal Down-Right
+			4'd5: pred[i] = (zvr < 0)        ? a3[5 + zvr] :          // Vertical-Right
+			                (zvr % 2 == 0)   ? a2[5 + (zvr / 2)]
+			                                 : a3[5 + ((zvr - 1) / 2)];
+			4'd6: pred[i] = (zhd < 0)        ? a3[3 - zhd] :          // Horizontal-Down
+			                (zhd % 2 == 0)   ? a2[4 - (zhd / 2)]
+			                                 : a3[4 - ((zhd + 1) / 2)];
+			4'd7: pred[i] = (y % 2 == 0)     ? a2[6 + x + (y / 2)]    // Vertical-Left
+			                                 : a3[6 + x + ((y - 1) / 2)];
+			4'd8: pred[i] = (zhu > 5)        ? q[1] :                 // Horizontal-Up
+			                (zhu == 5)       ? a3[0] :
+			                (zhu % 2 == 0)   ? a2[3 - (zhu / 2)]
+			                                 : a3[2 - ((zhu - 1) / 2)];
+			default: pred[i] = 8'd128;
+			endcase
 		end
-		4'd1: begin // Horizontal
-			for (y = 0; y < 4; y = y + 1)
-				for (x = 0; x < 4; x = x + 1) pred[y * 4 + x] = left[y];
-		end
-		4'd2: begin // DC
-			if (has_above && has_left) begin
-				dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
-				dc_v = dc_sum >>> 3;
-			end else if (has_above) begin
-				dc_sum = t0 + t1 + t2 + t3 + 10'd2;
-				dc_v = dc_sum >>> 2;
-			end else if (has_left) begin
-				dc_sum = l0 + l1 + l2 + l3 + 10'd2;
-				dc_v = dc_sum >>> 2;
-			end else begin
-				dc_v = 8'd128;
-			end
-			for (i = 0; i < 16; i = i + 1) pred[i] = dc_v;
-		end
-		4'd3: begin // Diagonal Down-Left
-			put(0, 0, (t0 + t2 + 2 * t1 + 2) >>> 2);
-			put(1, 0, (t1 + t3 + 2 * t2 + 2) >>> 2); put(0, 1, (t1 + t3 + 2 * t2 + 2) >>> 2);
-			put(2, 0, (t2 + t4 + 2 * t3 + 2) >>> 2); put(1, 1, (t2 + t4 + 2 * t3 + 2) >>> 2); put(0, 2, (t2 + t4 + 2 * t3 + 2) >>> 2);
-			put(3, 0, (t3 + t5 + 2 * t4 + 2) >>> 2); put(2, 1, (t3 + t5 + 2 * t4 + 2) >>> 2); put(1, 2, (t3 + t5 + 2 * t4 + 2) >>> 2); put(0, 3, (t3 + t5 + 2 * t4 + 2) >>> 2);
-			put(3, 1, (t4 + t6 + 2 * t5 + 2) >>> 2); put(2, 2, (t4 + t6 + 2 * t5 + 2) >>> 2); put(1, 3, (t4 + t6 + 2 * t5 + 2) >>> 2);
-			put(3, 2, (t5 + t7 + 2 * t6 + 2) >>> 2); put(2, 3, (t5 + t7 + 2 * t6 + 2) >>> 2);
-			put(3, 3, (t6 + 3 * t7 + 2) >>> 2);
-		end
-		4'd4: begin // Diagonal Down-Right
-			put(0, 3, (l3 + 2 * l2 + l1 + 2) >>> 2);
-			put(0, 2, (l2 + 2 * l1 + l0 + 2) >>> 2); put(1, 3, (l2 + 2 * l1 + l0 + 2) >>> 2);
-			put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
-			put(0, 0, (l0 + 2 * top_left + t0 + 2) >>> 2); put(1, 1, (l0 + 2 * top_left + t0 + 2) >>> 2); put(2, 2, (l0 + 2 * top_left + t0 + 2) >>> 2); put(3, 3, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
-			put(2, 0, (t0 + 2 * t1 + t2 + 2) >>> 2); put(3, 1, (t0 + 2 * t1 + t2 + 2) >>> 2);
-			put(3, 0, (t1 + 2 * t2 + t3 + 2) >>> 2);
-		end
-		4'd5: begin // Vertical-Right
-			put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
-			put(1, 0, (t0 + t1 + 1) >>> 1); put(2, 2, (t0 + t1 + 1) >>> 1);
-			put(2, 0, (t1 + t2 + 1) >>> 1); put(3, 2, (t1 + t2 + 1) >>> 1);
-			put(3, 0, (t2 + t3 + 1) >>> 1);
-			put(0, 1, (l0 + 2 * top_left + t0 + 2) >>> 2); put(1, 3, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
-			put(2, 1, (t0 + 2 * t1 + t2 + 2) >>> 2); put(3, 3, (t0 + 2 * t1 + t2 + 2) >>> 2);
-			put(3, 1, (t1 + 2 * t2 + t3 + 2) >>> 2);
-			put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
-		end
-		4'd6: begin // Horizontal-Down
-			put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
-			put(1, 0, (l0 + 2 * top_left + t0 + 2) >>> 2); put(3, 1, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
-			put(0, 1, (l0 + l1 + 1) >>> 1); put(2, 2, (l0 + l1 + 1) >>> 1);
-			put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
-			put(0, 2, (l1 + l2 + 1) >>> 1); put(2, 3, (l1 + l2 + 1) >>> 1);
-			put(1, 2, (l0 + 2 * l1 + l2 + 2) >>> 2); put(3, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
-			put(0, 3, (l2 + l3 + 1) >>> 1); put(1, 3, (l1 + 2 * l2 + l3 + 2) >>> 2);
-		end
-		4'd7: begin // Vertical-Left
-			put(0, 0, (t0 + t1 + 1) >>> 1); put(1, 0, (t1 + t2 + 1) >>> 1); put(0, 2, (t1 + t2 + 1) >>> 1);
-			put(2, 0, (t2 + t3 + 1) >>> 1); put(1, 2, (t2 + t3 + 1) >>> 1);
-			put(3, 0, (t3 + t4 + 1) >>> 1); put(2, 2, (t3 + t4 + 1) >>> 1);
-			put(3, 2, (t4 + t5 + 1) >>> 1);
-			put(0, 1, (t0 + 2 * t1 + t2 + 2) >>> 2);
-			put(1, 1, (t1 + 2 * t2 + t3 + 2) >>> 2); put(0, 3, (t1 + 2 * t2 + t3 + 2) >>> 2);
-			put(2, 1, (t2 + 2 * t3 + t4 + 2) >>> 2); put(1, 3, (t2 + 2 * t3 + t4 + 2) >>> 2);
-			put(3, 1, (t3 + 2 * t4 + t5 + 2) >>> 2); put(2, 3, (t3 + 2 * t4 + t5 + 2) >>> 2);
-			put(3, 3, (t4 + 2 * t5 + t6 + 2) >>> 2);
-		end
-		4'd8: begin // Horizontal-Up
-			put(0, 0, (l0 + l1 + 1) >>> 1); put(1, 0, (l0 + 2 * l1 + l2 + 2) >>> 2);
-			put(2, 0, (l1 + l2 + 1) >>> 1); put(0, 1, (l1 + l2 + 1) >>> 1);
-			put(3, 0, (l1 + 2 * l2 + l3 + 2) >>> 2); put(1, 1, (l1 + 2 * l2 + l3 + 2) >>> 2);
-			put(2, 1, (l2 + l3 + 1) >>> 1); put(0, 2, (l2 + l3 + 1) >>> 1);
-			put(3, 1, (l2 + 2 * l3 + l3 + 2) >>> 2); put(1, 2, (l2 + 2 * l3 + l3 + 2) >>> 2);
-			put(3, 2, l3); put(1, 3, l3); put(0, 3, l3); put(2, 2, l3); put(2, 3, l3); put(3, 3, l3);
-		end
-		default: begin
-			used_mode = 4'd15;
-			for (i = 0; i < 16; i = i + 1) pred[i] = 8'd128;
-		end
-		endcase
 	end
 endmodule
 
-module h264_intra16x16_pred (
+// ---------------------------------------------------------------------------
+// Intra_16x16 prediction, clause 8.3.3, modes 0..3 (V / H / DC / Plane).
+// Sequential: one 16-cycle setup pass over the neighbours, two compute cycles,
+// then 256 cycles emitting one predicted sample per cycle.
+// ---------------------------------------------------------------------------
+// PARALLEL_OUT=0 drops the 256-byte combinational `pred` port and serves the
+// block through rd_addr/rd_data instead.  That is what lets the 256-sample
+// buffer infer an M10K: with a parallel output every sample must live in a
+// flop and every consumer pays a 256:1 byte multiplexer.  Benches that want
+// the whole block at once keep the default.
+//
+// LATENCY CONTRACT: `valid` is a one-cycle pulse 275 cycles after `start`, for
+// every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
+// Consumers must wait on `valid`; any fixed-cycle wait shorter than that reads
+// stale samples and looks exactly like a prediction bug.
+//
+// TIMING: neighbour ports (above/left/top_left) are SAMPLED on `start` into
+// local regs before any plane/DC arithmetic.  This breaks the STA path
+// syntax_mb_addr → %MB_W → nb_ctx → nb_top → plane_seed → row_acc that was
+// the worst setup on integ-fit2 (-3.110 ns).  Latch is on the start edge;
+// ST_SETUP body runs the next cycle — zero added latency.
+module h264_intra16x16_pred #(
+	parameter bit PARALLEL_OUT = 1
+) (
 	input  wire        clk,
 	input  wire        start,
 	input  wire [1:0]  mode,
@@ -151,116 +149,176 @@ module h264_intra16x16_pred (
 	input  wire [7:0]  top_left,
 	input  wire        has_above,
 	input  wire        has_left,
+	input  wire [7:0]  rd_addr,
+	output reg  [7:0]  rd_data,
 	output reg         unsupported,
 	output reg         valid,
-	output reg  [7:0]  pred [0:255]
+	output wire [7:0]  pred [0:255]
 );
-	// 2-cycle pipeline for Plane prediction (ITU-T H.264 clause 8.3.3.4).
-	// Cycle 1: gradient accumulation → b, c → pre-compute 32 products bx[]/cy[]
-	// Cycle 2: 256 pixels from registered a + bx[x] + cy[y] → clip
-	// Modes V/H/DC: 1 cycle (register combinational result on start).
+	(* ramstyle = "M10K" *) reg [7:0] pred_buf [0:255];
 
-	function automatic [7:0] clip8;
-		input integer v;
-		begin
-			if (v < 0) clip8 = 8'd0;
-			else if (v > 255) clip8 = 8'd255;
-			else clip8 = v[7:0];
+	always @(posedge clk)
+		rd_data <= pred_buf[rd_addr];
+
+	genvar gp;
+	generate
+		for (gp = 0; gp < 256; gp = gp + 1) begin : g_par
+			if (PARALLEL_OUT) assign pred[gp] = pred_buf[gp];
+			else              assign pred[gp] = 8'd0;
 		end
-	endfunction
+	endgenerate
+	localparam [2:0] ST_IDLE  = 3'd0,
+	                 ST_SETUP = 3'd1,
+	                 ST_CALC  = 3'd2,
+	                 ST_SEED  = 3'd3,
+	                 ST_FILL  = 3'd4;
 
-	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
-	reg phase = 1'b0;
+	reg [2:0] st = ST_IDLE;
+	reg [1:0] mode_r;
+	reg       avail_a_r, avail_l_r;
+	reg [4:0] k;
+	reg [7:0] cnt;
 
-	// Registered intermediates for Plane pipeline (32 products, not 256)
-	reg signed [15:0] a_r;
-	reg signed [15:0] bx_r [0:15];
-	reg signed [15:0] cy_r [0:15];
+	// Pipelined neighbour snapshot (cuts M10K/nb_ctx comb into plane math).
+	reg [7:0] above_r [0:15];
+	reg [7:0] left_r  [0:15];
+	reg [7:0] tl_r;
 
-	// Combinational gradient computation (feeds cycle 1 registers)
-	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
-	integer gi;
-	// Individual gradient terms (computed independently, then tree-reduced)
-	integer ht [0:7];
-	integer vt [0:7];
+	reg [12:0] sum_a, sum_l;
+	// Gradient double-accumulator: iterating j = 7..0 with s += d then acc += s
+	// yields sum (j+1)*d_j using two adders and no multiplier.
+	reg signed [15:0] h_s, h_acc, v_s, v_acc;
+
+	reg signed [15:0] plane_b, plane_c;
+	reg signed [19:0] acc, row_acc;
+	reg [7:0]  dc_v;
+
+	wire [3:0] fx = cnt[3:0];
+	wire [3:0] fy = cnt[7:4];
+
+	// Gradient taps for step k from latched neighbours only.
+	wire [3:0] k_hi = 4'd15 - k[3:0];
+	wire [3:0] k_lo = k[3:0] - 4'd1;
+	wire [7:0] g_hi_a = above_r[k_hi];
+	wire [7:0] g_hi_l = left_r[k_hi];
+	wire [7:0] g_lo_a = (k == 5'd0) ? tl_r : above_r[k_lo];
+	wire [7:0] g_lo_l = (k == 5'd0) ? tl_r : left_r[k_lo];
+	wire signed [15:0] gd_h = $signed({8'd0, g_hi_a}) - $signed({8'd0, g_lo_a});
+	wire signed [15:0] gd_v = $signed({8'd0, g_hi_l}) - $signed({8'd0, g_lo_l});
+
+	// b = (5 * grad + 32) >> 6 with 5*x written as (x << 2) + x.
+	wire signed [21:0] h22 = {{6{h_acc[15]}}, h_acc};
+	wire signed [21:0] v22 = {{6{v_acc[15]}}, v_acc};
+	wire signed [21:0] b_raw = (h22 <<< 2) + h22 + 22'sd32;
+	wire signed [21:0] c_raw = (v22 <<< 2) + v22 + 22'sd32;
+
+	wire [13:0] dc_sum_both = {1'b0, sum_a} + {1'b0, sum_l};
+
+	// Plane seed: a - 7*b - 7*c + 16, with a = 16*(above[15] + left[15]).
+	wire signed [19:0] pb20 = {{4{plane_b[15]}}, plane_b};
+	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
+	wire signed [19:0] b7 = (pb20 <<< 3) - pb20;
+	wire signed [19:0] c7 = (pc20 <<< 3) - pc20;
+	wire [19:0] pa_sum = {12'd0, above_r[15]} + {12'd0, left_r[15]};
+	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
+	wire signed [19:0] plane_seed = pa20 - b7 - c7 + 20'sd16;
+
+	wire signed [14:0] plane_shr = acc[19:5];
+	wire [7:0] plane_pix = plane_shr[14] ? 8'd0 :
+	                       (|plane_shr[13:8] ? 8'd255 : plane_shr[7:0]);
+
+	reg [7:0] sample;
 	always @* begin
-		// Compute individual gradient terms (clause 8.3.3.4)
-		for (gi = 0; gi < 8; gi = gi + 1) begin
-			ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
-			vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
-		end
-		// Balanced tree reduction: 3 add levels instead of 7 in linear chain
-		hgrad_c = ((ht[0]+ht[1]) + (ht[2]+ht[3])) + ((ht[4]+ht[5]) + (ht[6]+ht[7]));
-		vgrad_c = ((vt[0]+vt[1]) + (vt[2]+vt[3])) + ((vt[4]+vt[5]) + (vt[6]+vt[7]));
-		a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
-		b_c = (5 * hgrad_c + 32) >>> 6;
-		c_c = (5 * vgrad_c + 32) >>> 6;
+		if (mode_r == 2'd3)
+			sample = (avail_a_r && avail_l_r) ? plane_pix : 8'd128;
+		else if (mode_r == 2'd0 && avail_a_r) sample = above_r[fx];
+		else if (mode_r == 2'd1 && avail_l_r) sample = left_r[fy];
+		else                                  sample = dc_v;
 	end
 
-	integer x, y, i;
-	integer sum, sa_lo, sa_hi, sl_lo, sl_hi;
-	reg [7:0] dc_v;
-	integer val;
-
+	integer li;
 	always @(posedge clk) begin
 		valid <= 1'b0;
-
-		if (phase) begin
-			// Plane cycle 2: evaluate 256 pixels from 32 registered products
-			for (y = 0; y < 16; y = y + 1)
-				for (x = 0; x < 16; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
-					pred[y * 16 + x] <= clip8(val);
+		case (st)
+		ST_IDLE: begin
+			if (start) begin
+				unsupported <= 1'b0;
+				mode_r    <= mode;
+				avail_a_r <= has_above;
+				avail_l_r <= has_left;
+				for (li = 0; li < 16; li = li + 1) begin
+					above_r[li] <= above[li];
+					left_r[li]  <= left[li];
 				end
-			valid <= 1'b1;
-			phase <= 1'b0;
-		end else if (start) begin
-			unsupported <= 1'b0;
-			if (mode == 2'd3) begin
-				if (has_above && has_left) begin
-					// Plane cycle 1: register a and 32 pre-computed products
-					a_r <= a_c[15:0];
-					for (i = 0; i < 16; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 7);
-						cy_r[i] <= c_c * (i - 7);
-					end
-					phase <= 1'b1;
-				end else begin
-					for (i = 0; i < 256; i = i + 1) pred[i] <= 8'd128;
-					valid <= 1'b1;
-				end
-			end else if (mode == 2'd0 && has_above) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= above[x];
-				valid <= 1'b1;
-			end else if (mode == 2'd1 && has_left) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= left[y];
-				valid <= 1'b1;
-			end else begin
-				// Balanced tree: 5 add levels guaranteed vs up to 32 in linear chain
-				sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
-				      + ((above[4]+above[5]) + (above[6]+above[7]));
-				sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
-				      + ((above[12]+above[13]) + (above[14]+above[15]));
-				sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
-				      + ((left[4]+left[5]) + (left[6]+left[7]));
-				sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
-				      + ((left[12]+left[13]) + (left[14]+left[15]));
-				if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
-				else if (has_above) sum = sa_lo + sa_hi;
-				else if (has_left) sum = sl_lo + sl_hi;
-				else sum = 0;
-				if (has_above && has_left) dc_v = (sum + 16) >>> 5;
-				else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
-				else dc_v = 8'd128;
-				for (i = 0; i < 256; i = i + 1) pred[i] <= dc_v;
-				valid <= 1'b1;
+				tl_r <= top_left;
+				sum_a <= 13'd0;
+				sum_l <= 13'd0;
+				h_s <= 16'sd0; h_acc <= 16'sd0;
+				v_s <= 16'sd0; v_acc <= 16'sd0;
+				k  <= 5'd0;
+				st <= ST_SETUP;
 			end
 		end
+		ST_SETUP: begin
+			sum_a <= sum_a + {5'd0, above_r[k[3:0]]};
+			sum_l <= sum_l + {5'd0, left_r[k[3:0]]};
+			if (!k[3]) begin
+				h_s   <= h_s + gd_h;
+				h_acc <= h_acc + h_s + gd_h;
+				v_s   <= v_s + gd_v;
+				v_acc <= v_acc + v_s + gd_v;
+			end
+			if (k == 5'd15) st <= ST_CALC;
+			k <= k + 5'd1;
+		end
+		ST_CALC: begin
+			// (sum + 16) >> 5 and (sum + 8) >> 4 as truncate-plus-round-bit.
+			if (avail_a_r && avail_l_r)
+				dc_v <= dc_sum_both[12:5] + {7'd0, dc_sum_both[4]};
+			else if (avail_a_r)
+				dc_v <= sum_a[11:4] + {7'd0, sum_a[3]};
+			else if (avail_l_r)
+				dc_v <= sum_l[11:4] + {7'd0, sum_l[3]};
+			else
+				dc_v <= 8'd128;
+			plane_b <= b_raw[21:6];
+			plane_c <= c_raw[21:6];
+			st <= ST_SEED;
+		end
+		ST_SEED: begin
+			acc     <= plane_seed;
+			row_acc <= plane_seed;
+			cnt <= 8'd0;
+			st  <= ST_FILL;
+		end
+		ST_FILL: begin
+			pred_buf[cnt] <= sample;
+			if (fx == 4'd15) begin
+				row_acc <= row_acc + pc20;
+				acc     <= row_acc + pc20;
+			end else begin
+				acc <= acc + pb20;
+			end
+			if (cnt == 8'd255) begin
+				valid <= 1'b1;
+				st    <= ST_IDLE;
+			end
+			cnt <= cnt + 8'd1;
+		end
+		default: st <= ST_IDLE;
+		endcase
 	end
 endmodule
 
+// ---------------------------------------------------------------------------
+// Intra_Chroma 8x8 prediction, clause 8.3.4, modes 0..3 (DC / H / V / Plane).
+// Same sequential shape as the luma engine. Chroma DC is the per-quadrant rule
+// of 8.3.4.1, which is NOT the luma DC rule.
+//
+// LATENCY CONTRACT: `valid` is a one-cycle pulse 75 cycles after `start`, for
+// every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
+// ---------------------------------------------------------------------------
+// Neighbour ports latched on start (same timing cut as I16 plane path).
 module h264_chroma8x8_pred (
 	input  wire        clk,
 	input  wire        start,
@@ -273,120 +331,159 @@ module h264_chroma8x8_pred (
 	output reg         valid,
 	output reg  [7:0]  pred [0:63]
 );
-	// 2-cycle pipeline for Chroma Plane prediction (ITU-T H.264 clause 8.3.4.4).
-	// Cycle 1: gradient accumulation → b, c → pre-compute 16 products bx[]/cy[]
-	// Cycle 2: 64 pixels from registered a + bx[x] + cy[y] → clip
-	// Modes DC/H/V: 1 cycle (register combinational result on start).
+	localparam [2:0] ST_IDLE  = 3'd0,
+	                 ST_SETUP = 3'd1,
+	                 ST_CALC  = 3'd2,
+	                 ST_SEED  = 3'd3,
+	                 ST_FILL  = 3'd4;
 
-	function automatic [7:0] clip8;
-		input integer v;
-		begin
-			if (v < 0) clip8 = 8'd0;
-			else if (v > 255) clip8 = 8'd255;
-			else clip8 = v[7:0];
-		end
-	endfunction
+	reg [2:0] st = ST_IDLE;
+	reg [1:0] mode_r;
+	reg       avail_a_r, avail_l_r;
+	reg [3:0] k;
+	reg [5:0] cnt;
 
-	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
-	reg phase = 1'b0;
+	reg [7:0] above_r [0:7];
+	reg [7:0] left_r  [0:7];
+	reg [7:0] tl_r;
 
-	// Registered intermediates for Plane pipeline (16 products, not 64)
-	reg signed [15:0] a_r;
-	reg signed [15:0] bx_r [0:7];
-	reg signed [15:0] cy_r [0:7];
-
-	// Combinational gradient computation (clause 8.3.4.4)
-	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
-	integer gi;
-	always @* begin
-		hgrad_c = 0;
-		vgrad_c = 0;
-		for (gi = 0; gi < 4; gi = gi + 1) begin
-			hgrad_c = hgrad_c + (gi + 1) * ($signed({1'b0, above[4 + gi]}) - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, above[2 - gi]})));
-			vgrad_c = vgrad_c + (gi + 1) * ($signed({1'b0, left[4 + gi]})  - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, left[2 - gi]})));
-		end
-		a_c = 16 * ($signed({1'b0, above[7]}) + $signed({1'b0, left[7]}));
-		b_c = (17 * hgrad_c + 16) >>> 5;
-		c_c = (17 * vgrad_c + 16) >>> 5;
-	end
-
-	integer x, y, i;
-	integer sum_a0, sum_a1, sum_l0, sum_l1;
-	integer val;
+	reg [10:0] sa0, sa1, sl0, sl1;
+	reg signed [15:0] h_s, h_acc, v_s, v_acc;
+	reg signed [15:0] plane_b, plane_c;
+	reg signed [19:0] acc, row_acc;
 	reg [7:0] dc_tl, dc_tr, dc_bl, dc_br;
 
+	wire [2:0] fx = cnt[2:0];
+	wire [2:0] fy = cnt[5:3];
+
+	// Gradient taps for step k from latched neighbours only.
+	wire [2:0] k_hi = 3'd7 - k[2:0];
+	wire [2:0] k_lo = k[2:0] - 3'd1;
+	wire [7:0] g_hi_a = above_r[k_hi];
+	wire [7:0] g_hi_l = left_r[k_hi];
+	wire [7:0] g_lo_a = (k == 4'd0) ? tl_r : above_r[k_lo];
+	wire [7:0] g_lo_l = (k == 4'd0) ? tl_r : left_r[k_lo];
+	wire signed [15:0] gd_h = $signed({8'd0, g_hi_a}) - $signed({8'd0, g_lo_a});
+	wire signed [15:0] gd_v = $signed({8'd0, g_hi_l}) - $signed({8'd0, g_lo_l});
+
+	// b = (17 * grad + 16) >> 5 with 17*x written as (x << 4) + x.
+	wire signed [21:0] h22 = {{6{h_acc[15]}}, h_acc};
+	wire signed [21:0] v22 = {{6{v_acc[15]}}, v_acc};
+	wire signed [21:0] b_raw = (h22 <<< 4) + h22 + 22'sd16;
+	wire signed [21:0] c_raw = (v22 <<< 4) + v22 + 22'sd16;
+
+	wire signed [19:0] pb20 = {{4{plane_b[15]}}, plane_b};
+	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
+	wire signed [19:0] b3 = (pb20 <<< 1) + pb20;
+	wire signed [19:0] c3 = (pc20 <<< 1) + pc20;
+	wire [19:0] pa_sum = {12'd0, above_r[7]} + {12'd0, left_r[7]};
+	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
+	wire signed [19:0] plane_seed = pa20 - b3 - c3 + 20'sd16;
+
+	wire signed [14:0] plane_shr = acc[19:5];
+	wire [7:0] plane_pix = plane_shr[14] ? 8'd0 :
+	                       (|plane_shr[13:8] ? 8'd255 : plane_shr[7:0]);
+
+	wire [7:0] dc_quad = fy[2] ? (fx[2] ? dc_br : dc_bl)
+	                           : (fx[2] ? dc_tr : dc_tl);
+
+	// Quadrant averages, clause 8.3.4.1.
+	wire [11:0] q_a0l0 = {1'b0, sa0} + {1'b0, sl0};
+	wire [11:0] q_a1l1 = {1'b0, sa1} + {1'b0, sl1};
+
+	reg [7:0] sample;
+	always @* begin
+		// Honour availability: H/V/Plane without the required neighbour → DC.
+		if (mode_r == 2'd3)
+			sample = (avail_a_r && avail_l_r) ? plane_pix : 8'd128;
+		else if (mode_r == 2'd1 && avail_l_r) sample = left_r[fy];
+		else if (mode_r == 2'd2 && avail_a_r) sample = above_r[fx];
+		else                                  sample = dc_quad;
+	end
+
+	integer li;
 	always @(posedge clk) begin
 		valid <= 1'b0;
-
-		if (phase) begin
-			// Plane cycle 2: evaluate 64 pixels from 16 registered products
-			for (y = 0; y < 8; y = y + 1)
-				for (x = 0; x < 8; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
-					pred[y * 8 + x] <= clip8(val);
+		case (st)
+		ST_IDLE: begin
+			if (start) begin
+				mode_r    <= mode;
+				avail_a_r <= has_above;
+				avail_l_r <= has_left;
+				for (li = 0; li < 8; li = li + 1) begin
+					above_r[li] <= above[li];
+					left_r[li]  <= left[li];
 				end
-			valid <= 1'b1;
-			phase <= 1'b0;
-		end else if (start) begin
-			if (mode == 2'd3) begin
-				if (has_above && has_left) begin
-					// Plane cycle 1: register a and 16 pre-computed products
-					a_r <= a_c[15:0];
-					for (i = 0; i < 8; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 3);
-						cy_r[i] <= c_c * (i - 3);
-					end
-					phase <= 1'b1;
-				end else begin
-					for (i = 0; i < 64; i = i + 1) pred[i] <= 8'd128;
-					valid <= 1'b1;
-				end
-			end else if (mode == 2'd0) begin
-				// DC with 4 quadrant sub-averages (clause 8.3.4.1)
-				sum_a0 = (above[0]+above[1]) + (above[2]+above[3]);
-				sum_a1 = (above[4]+above[5]) + (above[6]+above[7]);
-				sum_l0 = (left[0]+left[1]) + (left[2]+left[3]);
-				sum_l1 = (left[4]+left[5]) + (left[6]+left[7]);
-				if (has_above && has_left) begin
-					dc_tl = clip8((sum_a0 + sum_l0 + 4) >>> 3);
-					dc_tr = clip8((sum_a1 + 2) >>> 2);
-					dc_bl = clip8((sum_l1 + 2) >>> 2);
-					dc_br = clip8((sum_a1 + sum_l1 + 4) >>> 3);
-				end else if (has_above) begin
-					dc_tl = clip8((sum_a0 + 2) >>> 2);
-					dc_tr = clip8((sum_a1 + 2) >>> 2);
-					dc_bl = dc_tl;
-					dc_br = dc_tr;
-				end else if (has_left) begin
-					dc_tl = clip8((sum_l0 + 2) >>> 2);
-					dc_tr = dc_tl;
-					dc_bl = clip8((sum_l1 + 2) >>> 2);
-					dc_br = dc_bl;
-				end else begin
-					dc_tl = 8'd128; dc_tr = 8'd128;
-					dc_bl = 8'd128; dc_br = 8'd128;
-				end
-				for (y = 0; y < 4; y = y + 1)
-					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_tl;
-				for (y = 0; y < 4; y = y + 1)
-					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_tr;
-				for (y = 4; y < 8; y = y + 1)
-					for (x = 0; x < 4; x = x + 1) pred[y*8+x] <= dc_bl;
-				for (y = 4; y < 8; y = y + 1)
-					for (x = 4; x < 8; x = x + 1) pred[y*8+x] <= dc_br;
-				valid <= 1'b1;
-			end else if (mode == 2'd1) begin
-				// Horizontal
-				for (y = 0; y < 8; y = y + 1)
-					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= left[y];
-				valid <= 1'b1;
-			end else begin
-				// Vertical (mode 2)
-				for (y = 0; y < 8; y = y + 1)
-					for (x = 0; x < 8; x = x + 1) pred[y*8+x] <= above[x];
-				valid <= 1'b1;
+				tl_r <= top_left;
+				sa0 <= 11'd0; sa1 <= 11'd0;
+				sl0 <= 11'd0; sl1 <= 11'd0;
+				h_s <= 16'sd0; h_acc <= 16'sd0;
+				v_s <= 16'sd0; v_acc <= 16'sd0;
+				k  <= 4'd0;
+				st <= ST_SETUP;
 			end
 		end
+		ST_SETUP: begin
+			if (k[2]) begin
+				sa1 <= sa1 + {3'd0, above_r[k[2:0]]};
+				sl1 <= sl1 + {3'd0, left_r[k[2:0]]};
+			end else begin
+				sa0 <= sa0 + {3'd0, above_r[k[2:0]]};
+				sl0 <= sl0 + {3'd0, left_r[k[2:0]]};
+				h_s   <= h_s + gd_h;
+				h_acc <= h_acc + h_s + gd_h;
+				v_s   <= v_s + gd_v;
+				v_acc <= v_acc + v_s + gd_v;
+			end
+			if (k == 4'd7) st <= ST_CALC;
+			k <= k + 4'd1;
+		end
+		ST_CALC: begin
+			if (avail_a_r && avail_l_r) begin
+				dc_tl <= q_a0l0[10:3] + {7'd0, q_a0l0[2]};
+				dc_tr <= sa1[9:2] + {7'd0, sa1[1]};
+				dc_bl <= sl1[9:2] + {7'd0, sl1[1]};
+				dc_br <= q_a1l1[10:3] + {7'd0, q_a1l1[2]};
+			end else if (avail_a_r) begin
+				dc_tl <= sa0[9:2] + {7'd0, sa0[1]};
+				dc_tr <= sa1[9:2] + {7'd0, sa1[1]};
+				dc_bl <= sa0[9:2] + {7'd0, sa0[1]};
+				dc_br <= sa1[9:2] + {7'd0, sa1[1]};
+			end else if (avail_l_r) begin
+				dc_tl <= sl0[9:2] + {7'd0, sl0[1]};
+				dc_tr <= sl0[9:2] + {7'd0, sl0[1]};
+				dc_bl <= sl1[9:2] + {7'd0, sl1[1]};
+				dc_br <= sl1[9:2] + {7'd0, sl1[1]};
+			end else begin
+				dc_tl <= 8'd128; dc_tr <= 8'd128;
+				dc_bl <= 8'd128; dc_br <= 8'd128;
+			end
+			plane_b <= b_raw[20:5];
+			plane_c <= c_raw[20:5];
+			st <= ST_SEED;
+		end
+		ST_SEED: begin
+			acc     <= plane_seed;
+			row_acc <= plane_seed;
+			cnt <= 6'd0;
+			st  <= ST_FILL;
+		end
+		ST_FILL: begin
+			pred[cnt] <= sample;
+			if (fx == 3'd7) begin
+				row_acc <= row_acc + pc20;
+				acc     <= row_acc + pc20;
+			end else begin
+				acc <= acc + pb20;
+			end
+			if (cnt == 6'd63) begin
+				valid <= 1'b1;
+				st    <= ST_IDLE;
+			end
+			cnt <= cnt + 6'd1;
+		end
+		default: st <= ST_IDLE;
+		endcase
 	end
 endmodule
 
