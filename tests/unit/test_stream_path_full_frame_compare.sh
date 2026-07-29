@@ -62,6 +62,11 @@ PRODUCT_RTL=(
   h264_cavlc_residual.sv
   slice_hdr_parser.sv
   h264_iq_idct_4x4.sv
+  h264_iq_idct_seq.sv
+  h264_mc_block.sv
+  h264_mc_luma_qpel.sv
+  h264_mc_chroma_epel.sv
+  h264_transform_dc.sv
   h264_inter_pred.sv
   h264_intra_pred.sv
   h264_intra_nb_ctx.sv
@@ -523,7 +528,12 @@ mkdir -p "$RTL_SCORER_BUILD" "$RTL_GOLDEN_DIR"
   --top-module h264_rtl_recon_scorer_tb \
   -Wno-fatal \
   "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.sv" \
-  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_block.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_luma_qpel.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_chroma_epel.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_transform_dc.sv" \
   "$ROOT/tests/rtl/h264_rtl_recon_scorer_tb.cpp"
 # Extract golden for all MBs if not already present (or stale)
 if [ ! -f "$RTL_GOLDEN_DIR/mb_000.json" ] || \

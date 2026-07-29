@@ -354,6 +354,13 @@ module h264_decode_core #(
     reg [5:0]  cur_qp_y_r;
     integer    res_tc_i;
     reg [15:0] syntax_mb_addr_r;
+    // Registered mb (x,y) — never combo-divide syntax_mb_addr_r by MB_W.
+    // integ-fit2 STA: syntax_mb_addr_r → Mod0 → intra row_acc was -3.11 ns.
+    reg [7:0]  syntax_mb_x_r;
+    reg [7:0]  syntax_mb_y_r;
+    reg [15:0] xy_init_rem;
+    reg [7:0]  xy_init_y;
+    reg        xy_init_busy;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
     reg signed [15:0] mv_top_x [0:MB_W-1];
@@ -421,14 +428,15 @@ module h264_decode_core #(
     wire [7:0] wb_sample_idx = (wb_plane == 2'd0) ? wb_idx[7:0] :
                                (wb_plane == 2'd1) ? wb_u_idx9[7:0] :
                                                      wb_v_idx9[7:0];
-    wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
-    wire [31:0] syntax_mb_x32 = syntax_mb_addr32 % MB_W;
-    wire [31:0] syntax_mb_y32 = syntax_mb_addr32 / MB_W;
-    wire [7:0] syntax_mb_x = syntax_mb_x32[7:0];
-    wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
+    wire [31:0] syntax_mb_x32 = {24'd0, syntax_mb_x_r};
+    wire [31:0] syntax_mb_y32 = {24'd0, syntax_mb_y_r};
+    wire [7:0] syntax_mb_x = syntax_mb_x_r;
+    wire [7:0] syntax_mb_y = syntax_mb_y_r;
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
-    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+    // Hold P/I launch until first_mb_in_slice → (x,y) init finishes (0 when first_mb=0).
+    wire syntax_xy_ready = !xy_init_busy;
+    wire syntax_p16_candidate = mb_type_valid && syntax_xy_ready && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
@@ -451,9 +459,9 @@ module h264_decode_core #(
 
     wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
     wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
-    wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x32 + 32'd1 < MB_W) ?
+    wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) ?
                                       (syntax_mb_idx + MB_IDX_W'(1)) : syntax_mb_idx;
-    wire syntax_has_top_right = (syntax_mb_x32 + 32'd1 < MB_W) &&
+    wire syntax_has_top_right = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) &&
                                 mv_top_valid[syntax_top_right_idx] &&
                                 (mv_top_ref[syntax_top_right_idx] == ref_idx_l0);
 `ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
@@ -831,7 +839,7 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip;
+    wire        product_intra_mb_start = mb_type_valid && syntax_xy_ready && slice_is_i && !mb_skip;
     // intra_mb_x_r/intra_mb_y_r only take the new macroblock position on the
     // edge AFTER mb_start, but the neighbour-context store and the prediction
     // front-end both latch their state ON mb_start.  Feeding them the stale
@@ -1182,6 +1190,21 @@ module h264_decode_core #(
             for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
                 res_tc_top_valid[res_tc_i] <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
+            // Seed (x,y) without combo / or %: first_mb==0 → ready now;
+            // else subtract MB_W per cycle until remainder < MB_W.
+            if (reset || (first_mb_in_slice == 16'd0)) begin
+                syntax_mb_x_r <= 8'd0;
+                syntax_mb_y_r <= 8'd0;
+                xy_init_rem <= 16'd0;
+                xy_init_y <= 8'd0;
+                xy_init_busy <= 1'b0;
+            end else begin
+                syntax_mb_x_r <= 8'd0;
+                syntax_mb_y_r <= 8'd0;
+                xy_init_rem <= first_mb_in_slice;
+                xy_init_y <= 8'd0;
+                xy_init_busy <= 1'b1;
+            end
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
             mv_left_x <= 16'sd0;
@@ -1221,8 +1244,26 @@ module h264_decode_core #(
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
             end
-            if (mb_type_valid)
+            // Finish first_mb → (x,y) before accepting MB launches.
+            if (xy_init_busy) begin
+                if (xy_init_rem >= 16'(MB_W)) begin
+                    xy_init_rem <= xy_init_rem - 16'(MB_W);
+                    xy_init_y <= xy_init_y + 8'd1;
+                end else begin
+                    syntax_mb_x_r <= xy_init_rem[7:0];
+                    syntax_mb_y_r <= xy_init_y;
+                    xy_init_busy <= 1'b0;
+                end
+            end
+            if (mb_type_valid && syntax_xy_ready) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+                if (syntax_mb_x_r + 8'd1 >= 8'(MB_W)) begin
+                    syntax_mb_x_r <= 8'd0;
+                    syntax_mb_y_r <= syntax_mb_y_r + 8'd1;
+                end else begin
+                    syntax_mb_x_r <= syntax_mb_x_r + 8'd1;
+                end
+            end
             if (product_intra_mb_start) begin
                 intra_active_r <= 1'b1;
                 intra_mb_x_r <= syntax_mb_x;
