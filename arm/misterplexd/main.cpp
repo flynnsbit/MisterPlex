@@ -100,7 +100,10 @@ std::string defaultFfmpegPath() {
 
 int main(int argc, char** argv) {
     std::string name = "MiSTerPlex";
-    std::string machineId = "misterplex-1";
+    // Canonical cast client id (must match deploy/scripts and PMS registration).
+    // A wrong default is worse than a crash: GDM still advertises, casts target an
+    // id nothing answers, and the player silently vanishes. Was "misterplex-1".
+    std::string machineId = "misterplex-dev";
     int port = 3005;
     std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
@@ -1065,6 +1068,15 @@ int main(int argc, char** argv) {
                      "or pass --pms URL. Cast clients that include a server address can still "
                      "select a server per play.\n",
                      confPath.c_str());
+    }
+    // Loud non-canonical id: wrong --id still GDM-advertises but casts target a
+    // ghost (user already lost a cast target once to misterplex-1 / id mismatch).
+    if (machineId != "misterplex-dev") {
+        std::fprintf(stderr,
+                     "misterplexd: ERROR non-canonical --id=%s (canonical is misterplex-dev); "
+                     "GDM will advertise but casts will miss this client and it can vanish "
+                     "silently from Plex\n",
+                     machineId.c_str());
     }
     std::fprintf(stderr,
                  "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%s "

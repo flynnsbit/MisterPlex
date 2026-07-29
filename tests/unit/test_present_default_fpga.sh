@@ -52,4 +52,26 @@ if [[ "$RED_RC" -eq 0 ]]; then
 fi
 echo "PASS red twin: green_checks fail on injected presentMode=fb0 (rc=$RED_RC)"
 
+# Canonical machineId default (silent misterplex-1 broke casting once).
+if ! grep -q 'std::string machineId = "misterplex-dev"' "$MAIN"; then
+  echo "FAIL: main.cpp machineId default is not misterplex-dev" >&2
+  grep -n 'machineId' "$MAIN" | head -10 >&2 || true
+  exit 1
+fi
+if grep -nE 'machineId(_)? = "misterplex-1"' "$MAIN" \
+  "$ROOT/arm/misterplexd/companion.hpp" >/dev/null; then
+  echo "FAIL: residual machineId default misterplex-1" >&2
+  exit 1
+fi
+grep -q 'std::string machineId_ = "misterplex-dev"' \
+  "$ROOT/arm/misterplexd/companion.hpp" || {
+  echo "FAIL: companion.hpp machineId_ default is not misterplex-dev" >&2
+  exit 1
+}
+grep -q 'ERROR non-canonical --id=' "$MAIN" || {
+  echo "FAIL: missing loud non-canonical --id log" >&2
+  exit 1
+}
+echo "PASS machineId default misterplex-dev + non-canonical ERROR log"
+
 echo "OK present default fpga + always-open FPGA idle path"

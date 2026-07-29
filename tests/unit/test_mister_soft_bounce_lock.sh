@@ -540,5 +540,77 @@ if [[ -d "$LOCK" ]]; then
 fi
 echo "PASS FORCE release clears dead/stale foreign lock (rc=$SD_RC)"
 
+# --- 15) FORCE acquire must NOT steal a live foreign holder's lock ---
+rm -rf "$LOCK"
+mkdir -p "$LOCK"
+sleep 120 &
+FOREIGN_ACQ_PID=$!
+echo "$FOREIGN_ACQ_PID" >"$LOCK/pid"
+echo "foreign-live-acquire" >"$LOCK/agent"
+echo "$(date -Iseconds)" >"$LOCK/timestamp"
+echo "$(date +%s)" >"$LOCK/timestamp_epoch"
+echo "foreign-hold-acq" >"$LOCK/reason"
+: >"$LOG"
+set +e
+MISTER_CLAIM_FORCE=1 \
+  "$BOUNCE" claim --force --agent unit-force-steal --reason "must-refuse-live" --hold-s 0 \
+  >"$WORK/foreign_live_acquire.out" 2>"$WORK/foreign_live_acquire.err"
+FA_RC=$?
+set -e
+echo "foreign_live_force_acquire true rc=$FA_RC"
+if [[ ! -d "$LOCK" ]]; then
+  echo "FAIL: FORCE claim/acquire deleted live foreign lock pid=$FOREIGN_ACQ_PID" >&2
+  cat "$WORK/foreign_live_acquire.out" "$WORK/foreign_live_acquire.err" >&2 || true
+  kill "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  wait "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  exit 1
+fi
+still_acq="$(cat "$LOCK/pid" 2>/dev/null || true)"
+if [[ "$still_acq" != "$FOREIGN_ACQ_PID" ]]; then
+  echo "FAIL: FORCE acquire changed foreign lock pid to $still_acq" >&2
+  kill "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  wait "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  exit 1
+fi
+if [[ "$FA_RC" -eq 0 ]]; then
+  echo "FAIL: FORCE claim of live foreign lock returned success" >&2
+  kill "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  wait "$FOREIGN_ACQ_PID" 2>/dev/null || true
+  exit 1
+fi
+grep -qE 'refuse break|live foreign|LOCK_HELD|busy' "$WORK/foreign_live_acquire.err" \
+  "$WORK/foreign_live_acquire.out" 2>/dev/null || {
+  # loud refuse is preferred; at least non-zero + lock intact already proved
+  echo "NOTE: no loud refuse string (rc=$FA_RC lock intact) — acceptable if non-zero"
+}
+kill "$FOREIGN_ACQ_PID" 2>/dev/null || true
+wait "$FOREIGN_ACQ_PID" 2>/dev/null || true
+rm -rf "$LOCK"
+echo "PASS FORCE acquire refuses live foreign lock (rc=$FA_RC)"
+
+# Dead foreign pid + FORCE acquire must clear and proceed (stale path).
+rm -rf "$LOCK"
+mkdir -p "$LOCK"
+echo "999998" >"$LOCK/pid"
+echo "dead-foreign-acq" >"$LOCK/agent"
+echo "$(date +%s)" >"$LOCK/timestamp_epoch"
+: >"$LOG"
+set +e
+MISTER_CLAIM_FORCE=1 \
+  "$BOUNCE" claim --force --agent unit-force-stale --reason "stale-ok" --hold-s 0 \
+  >"$WORK/stale_dead_acquire.out" 2>"$WORK/stale_dead_acquire.err"
+SA_RC=$?
+set -e
+echo "stale_dead_force_acquire true rc=$SA_RC"
+if [[ "$SA_RC" -ne 0 ]]; then
+  echo "FAIL: FORCE claim did not clear dead foreign lock rc=$SA_RC" >&2
+  cat "$WORK/stale_dead_acquire.out" "$WORK/stale_dead_acquire.err" >&2 || true
+  exit 1
+fi
+if [[ -d "$LOCK" ]]; then
+  echo "FAIL: lock left after successful FORCE stale claim" >&2
+  exit 1
+fi
+echo "PASS FORCE acquire clears dead/stale foreign lock (rc=$SA_RC)"
 
 echo "OK mister_soft_bounce lock exclusion + trap release + corename gate"

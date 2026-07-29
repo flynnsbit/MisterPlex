@@ -103,7 +103,7 @@ private:
     static std::string xmlEsc(const std::string& s);
 
     std::string name_ = "MiSTerPlex";
-    std::string machineId_ = "misterplex-1";
+    std::string machineId_ = "misterplex-dev"; // canonical; see main.cpp --id default
     uint16_t port_ = 3005;
     LogFn log_;
     PlayFn onPlay_;

@@ -288,21 +288,51 @@ print_lock_status() {
 }
 
 break_lock_if_allowed() {
+  # Same safety rule as release_lock: NEVER steal a live foreign holder's lock,
+  # even with FORCE=1. FORCE / age only clear genuinely stale locks (empty pid
+  # file or pid provably dead). Ambiguous cases refuse (conservative).
   [[ -d "$LOCK_DIR" ]] || return 0
-  local age stale=0
+  local age holder=""
   age="$(lock_age_s)"
-  if ! lock_owner_alive; then
-    if (( age >= STALE_S )) || [[ "$FORCE" == "1" ]]; then
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+
+  if [[ -n "$holder" && "$holder" != "$$" ]] && kill -0 "$holder" 2>/dev/null; then
+    echo "mister_soft_bounce: refuse break; live foreign holder pid=$holder (FORCE does not steal live locks)" >&2
+    print_lock_status >&2
+    step "lock_break_refused holder=$holder alive=1"
+    audit_local "lock_break_refused" "holder=$holder alive=1 force=$FORCE"
+    return 1
+  fi
+
+  local stale=0
+  if [[ -z "$holder" ]]; then
+    # Empty pid: only break with FORCE or age (mid-write TOCTOU → prefer refuse).
+    if [[ "$FORCE" == "1" ]] || (( age >= STALE_S )); then
       stale=1
     fi
-  elif [[ "$FORCE" == "1" ]]; then
+  elif [[ "$holder" == "$$" ]]; then
     stale=1
+  elif ! kill -0 "$holder" 2>/dev/null; then
+    # Dead pid — FORCE or aged-out.
+    if [[ "$FORCE" == "1" ]] || (( age >= STALE_S )); then
+      stale=1
+    fi
   fi
   if [[ "$stale" != "1" ]]; then
     return 1
   fi
-  echo "mister_soft_bounce: breaking lock (force=$FORCE age_s=$age stale_s=$STALE_S)" >&2
-  audit_local "lock_break"
+
+  # TOCTOU guard: re-read pid and refuse if a live foreign holder appeared.
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$holder" && "$holder" != "$$" ]] && kill -0 "$holder" 2>/dev/null; then
+    echo "mister_soft_bounce: refuse break; holder became live pid=$holder (TOCTOU guard)" >&2
+    step "lock_break_refused holder=$holder toctou=1"
+    audit_local "lock_break_refused" "holder=$holder toctou=1"
+    return 1
+  fi
+
+  echo "mister_soft_bounce: breaking stale lock (force=$FORCE age_s=$age stale_s=$STALE_S holder=${holder:-none})" >&2
+  audit_local "lock_break" "holder=${holder:-none} age_s=$age force=$FORCE"
   rm -rf "$LOCK_DIR"
   return 0
 }
@@ -322,7 +352,7 @@ acquire_lock() {
       fi
     else
       print_lock_status >&2
-      echo "mister_soft_bounce: CLAIM_BUSY (set MISTER_CLAIM_FORCE=1 to override)" >&2
+      echo "mister_soft_bounce: CLAIM_BUSY (FORCE clears stale/dead locks only; never steals a live holder)" >&2
       step "lock_acquire_busy"
       return 2
     fi
@@ -341,7 +371,7 @@ acquire_lock() {
 release_lock() {
   # NEVER delete a lock owned by a different *live* pid — not even with FORCE.
   # FORCE only clears genuinely stale locks (missing pid file, or dead pid).
-  # Stealing a live claim is acquire-time break_lock_if_allowed only.
+  # acquire_lock / break_lock_if_allowed obey the same rule.
   if [[ ! -d "$LOCK_DIR" ]]; then
     step "lock_released_already_free"
     return 0
