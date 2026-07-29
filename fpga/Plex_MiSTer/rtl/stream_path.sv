@@ -118,6 +118,11 @@ module stream_path #(
 	localparam int CORE_FRAME_W = DDR_FRAME_CODED_WIDTH;
 	localparam int CORE_FRAME_H = DDR_FRAME_CODED_HEIGHT;
 
+	// Whole-slice RBSP capacity.  624x480 Baseline I-slices measure a few KB at
+	// the bitrates we ship, but the buffer must not be sized to that: it is a
+	// parameter so a higher-bitrate stream only costs memory, not correctness.
+	localparam int RBSP_DEPTH_BYTES = 8192;
+
 	wire        si_wr_en;
 	wire [7:0]  si_wr_data;
 	wire        si_wr_flush;
@@ -182,6 +187,8 @@ module stream_path #(
 	wire pps_cap_clear, pps_cap_en, pps_cap_end;
 	wire [7:0] pps_cap_data;
 	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr, sl_nal_ref_idc_nonzero;
+	wire vcl_cap_clear, vcl_cap_en, vcl_cap_end;
+	wire [7:0] vcl_cap_data;
 	wire [3:0]  sl_first_mb_cbp_luma;
 	wire [1:0]  sl_first_mb_cbp_chroma;
 	wire [15:0] sl_first_mb_residual_bit_offset;
@@ -200,7 +207,9 @@ module stream_path #(
 		.pps_cap_data(pps_cap_data), .pps_cap_end(pps_cap_end),
 		.sl_cap_clear(sl_cap_clear), .sl_cap_en(sl_cap_en),
 		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr),
-		.sl_nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero)
+		.sl_nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
+		.vcl_cap_clear(vcl_cap_clear), .vcl_cap_en(vcl_cap_en),
+		.vcl_cap_data(vcl_cap_data), .vcl_cap_end(vcl_cap_end)
 	);
 
 	assign has_idr     = has_idr_w;
@@ -560,23 +569,40 @@ module stream_path #(
 		end
 	end
 
-	wire [7:0] core_rbsp_byte [0:63];
-	// Stage C: the core's RBSP window was tied to zero, so the CAVLC residual
-	// decoder could only ever read an empty bitstream. Capture the same slice
-	// byte stream the header parser consumes (core window is 64 bytes).
-	reg [7:0] core_rbsp_buf [0:63];
-	reg [6:0] core_rbsp_len;
-	integer core_rbsp_ci;
-	always @(posedge clk) begin
-		if (reset | flush | sl_cap_clear) begin
-			core_rbsp_len <= 7'd0;
-			for (core_rbsp_ci = 0; core_rbsp_ci < 64; core_rbsp_ci = core_rbsp_ci + 1)
-				core_rbsp_buf[core_rbsp_ci] <= 8'd0;
-		end else if (sl_cap_en && !core_rbsp_len[6]) begin
-			core_rbsp_buf[core_rbsp_len[5:0]] <= sl_cap_data;
-			core_rbsp_len <= core_rbsp_len + 7'd1;
-		end
-	end
+	// Whole-slice RBSP store with a real sliding window.  The old 64-byte
+	// capture could never answer rbsp_request_offset, so the core's request was
+	// dropped on the floor and every macroblock past the first read the same 64
+	// bytes.  h264_rbsp_window holds the entire emulation-prevention-stripped
+	// VCL NAL and serves the core's 64-byte window combinationally at whatever
+	// offset it asks for.
+	wire [15:0] core_rbsp_request_offset;
+	wire        core_rbsp_request_valid;
+	wire [7:0]  core_rbsp_byte [0:63];
+	wire [15:0] core_rbsp_window_base;
+	wire [15:0] core_rbsp_avail;
+	wire [15:0] core_rbsp_length;
+	wire        core_rbsp_complete;
+	wire        core_rbsp_overflow;
+
+	h264_rbsp_window #(
+		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
+		.WINDOW_BYTES(64)
+	) core_rbsp (
+		.clk(clk),
+		.reset(reset | flush),
+		.wr_clear(vcl_cap_clear),
+		.wr_en(vcl_cap_en),
+		.wr_data(vcl_cap_data),
+		.wr_end(vcl_cap_end),
+		.req_valid(core_rbsp_request_valid),
+		.req_offset(core_rbsp_request_offset),
+		.window(core_rbsp_byte),
+		.window_base(core_rbsp_window_base),
+		.window_avail(core_rbsp_avail),
+		.length(core_rbsp_length),
+		.complete(core_rbsp_complete),
+		.overflow(core_rbsp_overflow)
+	);
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -585,7 +611,6 @@ module stream_path #(
 	wire signed [15:0] core_p16_residual_v [0:63];
 	generate
 		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
-			assign core_rbsp_byte[core_gi] = core_rbsp_buf[core_gi];
 			assign core_recon_u[core_gi] = 8'd128;
 			assign core_recon_v[core_gi] = 8'd128;
 			assign core_p16_residual_u[core_gi] = 16'sd0;
@@ -611,8 +636,6 @@ module stream_path #(
 	end
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
-	wire [15:0] core_rbsp_request_offset;
-	wire core_rbsp_request_valid;
 	wire core_busy;
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
@@ -635,7 +658,7 @@ module stream_path #(
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
-		.rbsp_window_base(16'd0),
+		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(core_rbsp_request_offset),
 		.rbsp_request_valid(core_rbsp_request_valid),
 		.mb_type_valid(core_mb_type_valid),
@@ -749,6 +772,9 @@ module stream_path #(
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
+	             |core_rbsp_avail | |core_rbsp_length | core_rbsp_complete |
+	             core_rbsp_overflow | |core_rbsp_window_base |
+	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 
 endmodule

@@ -38,6 +38,7 @@ PRODUCT_RTL=(
   ddr_bitstream_reader.sv
   bitstream_fifo.sv
   nalu_scanner.sv
+  h264_rbsp_window.sv
   sps_parser.sv
   pps_parser.sv
   h264_cavlc_residual.sv
