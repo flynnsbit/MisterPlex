@@ -1328,6 +1328,12 @@ module h264_decode_core #(
         end
     endgenerate
 
+    // PRE/POST seam (g-intra contract):
+    //   smp_* feed is PRE-deblock recon (p16_recon_sum / intra recon).
+    //   dbf_out_* is POST-deblock → DPB (u_product_dpb_ref) + px_wr only.
+    //   u_product_intra_nb_ctx keeps PRE taps (product_intra_recon_*), never dbf_out.
+    //   P_Skip still pulses dbf_start (filter runs with nz=0).
+    //   disable_deblocking_filter_idc==1 → identity samples, still multi-cycle busy.
     h264_deblock_mb #(
         .FRAME_W(FRAME_W),
         .FRAME_H(FRAME_H)
