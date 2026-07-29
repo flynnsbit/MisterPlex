@@ -2,8 +2,9 @@
 // 3.3k: coeff_token + T1 signs + non-T1 levels + total_zeros + run_before → residual_dc.
 // 3.3l-1: ST_PLACE fills full scan-order coeff[0:15]; residual_dc=sat8(coeff[0]);
 //         residual_csum = XOR sat8(coeff[i]) (host residualCsum8 / residual_gold; Baseline 0x14).
-// I_NxN (mt=0) and I_16x16 (1..24). Capture window MAXB=48 B covers first residual (~17 B).
-// Logic-only (no extra M10K). Needs SPS (log2/poc) + PPS (deblock_ctrl, pic_init_qp).
+// I_NxN (mt=0) and I_16x16 (1..24). Capture window MAXB=96 B (M10K) for header+first residual.
+// Product multi-block residual is owned solely by h264_i_mb_feed / decode_core CAVLC.
+// Needs SPS (log2/poc) + PPS (deblock_ctrl, pic_init_qp).
 
 module slice_hdr_parser (
 	input  wire        clk,
@@ -15,29 +16,12 @@ module slice_hdr_parser (
 	input  wire        cap_end,
 	input  wire        is_idr_nal,
 	input  wire        nal_ref_idc_nonzero,
-	// SPS fields, resolved through the active PPS by h264_param_sets. These
-	// are combinational lookups: the id we want is only known once we have
-	// parsed pic_parameter_set_id, and frame_num's own length depends on it,
-	// so they are sampled at ST_PPS rather than at capture start.
 	input  wire [4:0]  log2_max_frame_num,
 	input  wire [2:0]  poc_type,
-	input  wire [5:0]  log2_max_poc_lsb,
 	input  wire        sps_ready,
 	input  wire        pps_ready,
-	// PPS fields for the id this slice references.
-	input  wire        pps_found,
-	input  wire        pps_deblock_ctrl,
-	input  wire signed [7:0] pps_pic_init_qp,
-	input  wire [7:0]  pps_num_ref_l0,
-	input  wire signed [4:0] pps_chroma_qp_index_offset,
-	input  wire        pps_constrained_intra_pred,
-	input  wire        pps_bottom_field_pic_order_present,
-	input  wire        pps_redundant_pic_cnt_present,
-	input  wire        pps_weighted_pred,
-
-	// Combinational select into the parameter set store. Valid one cycle
-	// early (straight off ue_val) while the id is being consumed.
-	output wire [7:0]  pps_sel_id,
+	input  wire        deblock_ctrl,
+	input  wire signed [7:0] pic_init_qp,
 
 	output reg         valid,
 	output reg  [15:0] first_mb,
@@ -45,12 +29,7 @@ module slice_hdr_parser (
 	output reg  [7:0]  pps_id,
 	output reg  [15:0] frame_num,
 	output reg  [15:0] idr_pic_id,
-	output reg  [15:0] pic_order_cnt_lsb,
 	output reg         is_i_slice,
-	output reg  [7:0]  num_ref_idx_l0_active,
-	output reg  signed [4:0] chroma_qp_index_offset,
-	output reg         constrained_intra_pred_flag,
-	output reg         unsupported,
 	output reg  signed [7:0] slice_qp_delta,
 	output reg  [5:0]  slice_qp,       // 0..51
 	output reg  [1:0]  disable_deblocking_filter_idc,
@@ -61,7 +40,7 @@ module slice_hdr_parser (
 	output reg  [7:0]  first_mb_type,
 	output reg         has_mb_type,
 	output reg         first_mb_p_skip,
-	output reg  [7:0]  p_skip_run,
+	output reg  [15:0] p_skip_run,
 	output reg  [2:0]  first_mb_part_mode,
 	output reg  [2:0]  first_mb_part_count,
 	output reg         first_mb_uses_sub_mb,
@@ -69,15 +48,25 @@ module slice_hdr_parser (
 	output reg  [15:0] first_i4_pred_mode_flags,
 	output reg  [47:0] first_i4_rem_modes,
 	output reg         first_i4_modes_present,
-	output reg         first_luma4x4_blocks_valid,
-	output reg         first_luma4x4_blocks_present,
+	// intra_chroma_pred_mode (7.3.5.1)
+	output reg  [1:0]  first_chroma_pred_mode,
+	// P macroblock prediction syntax (7.3.5.1 / 7.3.5.2). Slot layout:
+	// P16x16 → slot 0; 16x8/8x16 → slots 0..1; P_8x8 → (blk*4 + sub).
+	output reg  [7:0]  first_sub_mb_types,
+	output reg         first_sub_mb_valid,
+	output reg  [7:0]  first_mb_ref_idx_l0,
+	output reg  [15:0] first_mb_mvd_valid,
+	output reg signed [15:0] first_mb_mvd_x [0:15],
+	output reg signed [15:0] first_mb_mvd_y [0:15],
+	// num_ref_idx_l0_active_minus1 from the slice header (override or PPS default).
+	// When 0, ref_idx_l0 is absent from the MB layer and inferred as 0.
+	output reg  [7:0]  num_ref_idx_l0_active_minus1,
 	// Stage C: real coded_block_pattern + residual entry point for the product
-	// decode core, replacing the hardcoded literals in stream_path.
+	// decode core / h264_i_mb_feed (sole multi-block residual bit consumer).
 	output wire [3:0]  first_mb_cbp_luma,
 	output wire [1:0]  first_mb_cbp_chroma,
 	output wire [15:0] first_mb_residual_bit_offset,
-	output reg signed [15:0] first_luma4x4_coeff [0:15][0:15],
-	// 3.3f/k residual (first I residual block, nC=0)
+	// 3.3f/k residual (first I residual block, nC=0) — status sticky path only
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
 	output reg         residual_ok,
@@ -102,14 +91,27 @@ module slice_hdr_parser (
 );
 
 	localparam int MAXB = 96;
-	reg [7:0] mem [0:MAXB-1];
+	// Inferred single-port M10K RBSP capture window (sync read, no array reset).
+	// Bit extraction uses a flopped current byte + optional next-byte prefetch so
+	// the header FSM only stalls on the initial fill / cold miss (headers once/slice).
+	(* ramstyle = "M10K,no_rw_check" *) reg [7:0] mem [0:MAXB-1];
 	reg [6:0] len;
 
 	reg [6:0] bbyte;
 	reg [2:0] bpos;
-	wire [7:0] cur = mem[bbyte];
-	wire bitv = cur[bpos];
+	reg [6:0] mem_raddr;       // registered read address
+	reg [7:0] mem_rdata;       // registered read data
+	reg [7:0] cur_byte;        // flop holding mem[bbyte]
+	reg       cur_valid;
+	reg [7:0] pref_byte;       // prefetch of mem[bbyte+1]
+	reg       pref_valid;
+	reg [1:0] rd_phase;        // 0 idle, 1 addr issued, data in mem_rdata next cy
+	reg       rd_is_pref;      // 1 = outstanding read is for prefetch
+	reg [6:0] rd_target;       // absolute byte index of outstanding read
+	wire bitv = cur_byte[bpos];
 	wire oob = (bbyte >= len);
+	// Stall bit-consuming states until current byte is in cur_byte.
+	wire bit_stall = !oob && !cur_valid;
 
 	reg [5:0] st, cont, ue_cont;
 	reg [5:0] zcnt;
@@ -119,12 +121,6 @@ module slice_hdr_parser (
 	reg        nal_ref_lat;
 	reg [4:0]  log2_lat;
 	reg signed [7:0] init_qp_lat;
-	reg [2:0]  poc_lat;
-	reg [4:0]  l2poc_lat;
-	reg        bfpo_lat;
-	reg        rpc_lat;
-	reg        wp_lat;
-	reg [3:0]  rplm_guard;
 	reg signed [7:0] dlt_tmp;
 	reg signed [8:0] qp_tmp;
 	reg [15:0] tcode;
@@ -137,30 +133,15 @@ module slice_hdr_parser (
 	reg [2:0]  i4_rem_acc;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
 	reg [3:0]  full_luma_cbp;
-	reg        full_start_req;
-	reg [9:0]  full_start_bit;
-
-	localparam [2:0]
-		FULL_IDLE  = 3'd0,
-		FULL_START = 3'd1,
-		FULL_WAIT  = 3'd2,
-		FULL_DONE  = 3'd3,
-		FULL_FAIL  = 3'd4;
-	reg [2:0] full_st;
-	reg full_res_start;
-	reg [3:0] full_block_idx;
-	reg [9:0] full_bit_off;
-	reg [4:0] full_tc [0:15];
-	wire full_res_busy;
-	wire full_res_done;
-	wire full_res_ok;
-	wire [9:0] full_res_bit_end;
-	wire [4:0] full_res_tc;
-	wire [1:0] full_res_t1;
-	wire [3:0] full_res_tz;
-	wire signed [15:0] full_res_coeff [0:15];
-	wire signed [15:0] full_res_level_dbg [0:15];
-	wire [3:0] full_res_run_dbg [0:15];
+	reg [9:0]  full_start_bit; // residual/skip entry bit offset for i_mb_feed
+	reg [7:0]  intra_mbt;
+	reg [5:0]  p_mbt;
+	reg [2:0]  pred_blk;
+	reg [2:0]  pred_sub;
+	reg [2:0]  pred_ref_i;
+	reg signed [15:0] mvd_x_tmp;
+	wire [3:0] pred_mvd_slot = (p_mbt >= 6'd3) ? {pred_blk[1:0], pred_sub[1:0]}
+	                                           : {2'd0, pred_blk[1:0]};
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
 	// Width: signed [15:0] — NOT [11:0].  The H.264 spec bounds ordinary 4×4
@@ -267,6 +248,50 @@ module slice_hdr_parser (
 		end
 	endfunction
 
+	// Table 9-4 Inter column — different mapping from Intra.
+	function automatic [5:0] cbp_inter_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_inter_map = 6'd0;  6'd1: cbp_inter_map = 6'd16; 6'd2: cbp_inter_map = 6'd1;  6'd3: cbp_inter_map = 6'd2;
+			6'd4: cbp_inter_map = 6'd4;  6'd5: cbp_inter_map = 6'd8;  6'd6: cbp_inter_map = 6'd32; 6'd7: cbp_inter_map = 6'd3;
+			6'd8: cbp_inter_map = 6'd5;  6'd9: cbp_inter_map = 6'd10; 6'd10: cbp_inter_map = 6'd12; 6'd11: cbp_inter_map = 6'd15;
+			6'd12: cbp_inter_map = 6'd47; 6'd13: cbp_inter_map = 6'd7; 6'd14: cbp_inter_map = 6'd11; 6'd15: cbp_inter_map = 6'd13;
+			6'd16: cbp_inter_map = 6'd14; 6'd17: cbp_inter_map = 6'd6; 6'd18: cbp_inter_map = 6'd9;  6'd19: cbp_inter_map = 6'd31;
+			6'd20: cbp_inter_map = 6'd35; 6'd21: cbp_inter_map = 6'd37; 6'd22: cbp_inter_map = 6'd42; 6'd23: cbp_inter_map = 6'd44;
+			6'd24: cbp_inter_map = 6'd33; 6'd25: cbp_inter_map = 6'd34; 6'd26: cbp_inter_map = 6'd36; 6'd27: cbp_inter_map = 6'd40;
+			6'd28: cbp_inter_map = 6'd39; 6'd29: cbp_inter_map = 6'd43; 6'd30: cbp_inter_map = 6'd45; 6'd31: cbp_inter_map = 6'd46;
+			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
+			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
+			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			default: cbp_inter_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	// Full-width se(v) for MVD (se_of saturates at 8 bits).
+	function automatic signed [15:0] se16_of;
+		input [15:0] k;
+		begin
+			if (k[0] == 1'b0) se16_of = -$signed({1'b0, k[15:1]});
+			else              se16_of = $signed({1'b0, k[15:1]}) + 16'sd1;
+		end
+	endfunction
+
+	// Table 7-18 sub_mb_type partition counts.
+	function automatic [2:0] sub_part_count_of;
+		input [1:0] smt;
+		begin
+			case (smt)
+			2'd0: sub_part_count_of = 3'd1;
+			2'd1: sub_part_count_of = 3'd2;
+			2'd2: sub_part_count_of = 3'd2;
+			default: sub_part_count_of = 3'd4;
+			endcase
+		end
+	endfunction
+
 	function automatic [5:0] cbp_intra_map;
 		input [5:0] code;
 		begin
@@ -307,111 +332,12 @@ module slice_hdr_parser (
 	// first macroblock of the slice (denominator: 1 of 1170 MBs/frame) — the
 	// parser does not yet stream per-macroblock cbp.
 	assign first_mb_cbp_luma = full_luma_cbp;
-	wire [5:0] first_mb_cbp_full = cbp_intra_map(cbp_me);
+	// Table 9-4: Intra vs Inter me→cbp mappings differ; chroma bits [5:4]
+	// must follow the column that was used while parsing the MB.
+	wire [5:0] first_mb_cbp_full = (p_mbt <= 6'd4) ? cbp_inter_map(cbp_me)
+	                                                 : cbp_intra_map(cbp_me);
 	assign first_mb_cbp_chroma = first_mb_cbp_full[5:4];
 	assign first_mb_residual_bit_offset = {6'd0, full_start_bit};
-
-	function automatic [1:0] full_i4_bx;
-		input [3:0] idx;
-		begin
-			case (idx)
-			4'd0, 4'd2, 4'd8, 4'd10: full_i4_bx = 2'd0;
-			4'd1, 4'd3, 4'd9, 4'd11: full_i4_bx = 2'd1;
-			4'd4, 4'd6, 4'd12, 4'd14: full_i4_bx = 2'd2;
-			default: full_i4_bx = 2'd3;
-			endcase
-		end
-	endfunction
-
-	function automatic [1:0] full_i4_by;
-		input [3:0] idx;
-		begin
-			case (idx)
-			4'd0, 4'd1, 4'd4, 4'd5: full_i4_by = 2'd0;
-			4'd2, 4'd3, 4'd6, 4'd7: full_i4_by = 2'd1;
-			4'd8, 4'd9, 4'd12, 4'd13: full_i4_by = 2'd2;
-			default: full_i4_by = 2'd3;
-			endcase
-		end
-	endfunction
-
-	function automatic [3:0] full_i4_idx_at;
-		input [1:0] bx;
-		input [1:0] by;
-		begin
-			case ({by, bx})
-			4'b0000: full_i4_idx_at = 4'd0;
-			4'b0001: full_i4_idx_at = 4'd1;
-			4'b0100: full_i4_idx_at = 4'd2;
-			4'b0101: full_i4_idx_at = 4'd3;
-			4'b0010: full_i4_idx_at = 4'd4;
-			4'b0011: full_i4_idx_at = 4'd5;
-			4'b0110: full_i4_idx_at = 4'd6;
-			4'b0111: full_i4_idx_at = 4'd7;
-			4'b1000: full_i4_idx_at = 4'd8;
-			4'b1001: full_i4_idx_at = 4'd9;
-			4'b1100: full_i4_idx_at = 4'd10;
-			4'b1101: full_i4_idx_at = 4'd11;
-			4'b1010: full_i4_idx_at = 4'd12;
-			4'b1011: full_i4_idx_at = 4'd13;
-			4'b1110: full_i4_idx_at = 4'd14;
-			default: full_i4_idx_at = 4'd15;
-			endcase
-		end
-	endfunction
-
-	function automatic [2:0] full_coeff_token_table;
-		input [3:0] idx;
-		reg [1:0] bx;
-		reg [1:0] by;
-		reg left_avail;
-		reg top_avail;
-		reg [4:0] left_tc;
-		reg [4:0] top_tc;
-		reg [4:0] nc;
-		begin
-			bx = full_i4_bx(idx);
-			by = full_i4_by(idx);
-			left_avail = (bx != 2'd0);
-			top_avail = (by != 2'd0);
-			left_tc = left_avail ? full_tc[full_i4_idx_at(bx - 2'd1, by)] : 5'd0;
-			top_tc = top_avail ? full_tc[full_i4_idx_at(bx, by - 2'd1)] : 5'd0;
-			nc = (left_avail && top_avail) ? ((left_tc + top_tc + 5'd1) >> 1) :
-			     left_avail ? left_tc :
-			     top_avail ? top_tc : 5'd0;
-			full_coeff_token_table = (nc < 5'd2) ? 3'd0 :
-			                         (nc < 5'd4) ? 3'd1 :
-			                         (nc < 5'd8) ? 3'd2 : 3'd3;
-		end
-	endfunction
-
-	function automatic full_block_coded;
-		input [3:0] idx;
-		begin
-			full_block_coded = full_luma_cbp[idx[3:2]];
-		end
-	endfunction
-
-	h264_cavlc_residual_block #(.MAX_BYTES(MAXB)) full_luma_residual (
-		.clk(clk),
-		.reset(reset || cap_clear),
-		.start(full_res_start),
-		.coeff_token_table(full_coeff_token_table(full_block_idx)),
-		.max_coeff(5'd16),
-		.bit_offset_start(full_bit_off),
-		.bit_len({3'd0, len} << 3),
-		.rbsp(mem),
-		.busy(full_res_busy),
-		.done(full_res_done),
-		.ok(full_res_ok),
-		.bit_offset_end(full_res_bit_end),
-		.total_coeff(full_res_tc),
-		.trailing_ones(full_res_t1),
-		.total_zeros(full_res_tz),
-		.coeff(full_res_coeff),
-		.level_dbg(full_res_level_dbg),
-		.run_dbg(full_res_run_dbg)
-	);
 
 	localparam [5:0]
 		ST_IDLE    = 6'd0,
@@ -451,85 +377,32 @@ module slice_hdr_parser (
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
 		ST_P_MBT       = 6'd35,
-		// Elements whose presence is gated by parameter set flags. Skipping
-		// any of them consumes the wrong bits for everything after it.
-		ST_POCL        = 6'd36, // pic_order_cnt_lsb
-		ST_POCB        = 6'd37, // delta_pic_order_cnt_bottom
-		ST_RPCV        = 6'd38, // redundant_pic_cnt
-		ST_RPLMF       = 6'd39, // ref_pic_list_modification_flag_l0
-		ST_RPLMI       = 6'd40, // modification_of_pic_nums_idc
-		ST_RPLMV       = 6'd41; // abs_diff_pic_num_minus1 / long_term_pic_num
+		ST_SUBMBT      = 6'd36,
+		ST_PRED_REF    = 6'd37,
+		ST_REFIDX_TE1  = 6'd38,
+		ST_REFIDX_VAL  = 6'd39,
+		ST_PRED_MVD    = 6'd40,
+		ST_MVD_X       = 6'd41,
+		ST_MVD_Y       = 6'd42,
+		ST_INTER_CBP   = 6'd43;
 
-	// The store lookup has to be live while ST_PPS is consuming the id, so it
-	// comes straight off ue_val for that one cycle.
-	assign pps_sel_id = (st == ST_PPS) ? ue_val[7:0] : pps_id;
-
-	// Slice header elements are conditionally present. These walk the
-	// presence chain in syntax order so that a parameter set flag being
-	// clear means the bits are not consumed, rather than the parser eating
-	// whatever happened to follow.
-	task automatic go_qpd;
+	task automatic pred_clear;
+		integer pi;
 		begin
-			zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
-		end
-	endtask
-
-	task automatic go_refmark;
-		begin
-			if (idr_lat) begin
-				// dec_ref_pic_marking (IDR): no_output_of_prior_pics + long_term_reference
-				nleft <= 5'd2; acc <= 0; cont <= ST_REFMARK; st <= ST_GETBITS;
-			end else if (nal_ref_lat) begin
-				nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-			end else
-				go_qpd;
-		end
-	endtask
-
-	task automatic go_pwt;
-		begin
-			// pred_weight_table() is present when weighted_pred_flag is set on
-			// a P slice. Baseline forbids it and we cannot parse it, so stop
-			// rather than mistake its payload for dec_ref_pic_marking.
-			if (wp_lat) begin
-				unsupported <= 1'b1;
-				st <= ST_FAIL;
-			end else
-				go_refmark;
-		end
-	endtask
-
-	task automatic go_rplm;
-		begin
-			rplm_guard <= 4'd0;
-			nleft <= 5'd1; acc <= 0; cont <= ST_RPLMF; st <= ST_GETBITS;
-		end
-	endtask
-
-	task automatic go_refidx;
-		begin
-			if (is_p_slice_type(slice_type)) begin
-				nleft <= 5'd1; acc <= 0; cont <= ST_REFIDX_FLAG; st <= ST_GETBITS;
-			end else
-				go_refmark;
-		end
-	endtask
-
-	task automatic go_redundant;
-		begin
-			if (rpc_lat) begin
-				zcnt <= 0; ue_cont <= ST_RPCV; st <= ST_UE_Z;
-			end else
-				go_refidx;
-		end
-	endtask
-
-	task automatic go_poc;
-		begin
-			if (poc_lat == 3'd0) begin
-				nleft <= l2poc_lat; acc <= 0; cont <= ST_POCL; st <= ST_GETBITS;
-			end else
-				go_redundant;
+			first_sub_mb_types <= 8'd0;
+			first_sub_mb_valid <= 1'b0;
+			first_mb_ref_idx_l0 <= 8'd0;
+			first_mb_mvd_valid <= 16'd0;
+			for (pi = 0; pi < 16; pi = pi + 1) begin
+				first_mb_mvd_x[pi] <= 16'sd0;
+				first_mb_mvd_y[pi] <= 16'sd0;
+			end
+			p_mbt <= 6'd63;
+			pred_blk <= 3'd0;
+			pred_sub <= 3'd0;
+			pred_ref_i <= 3'd0;
+			mvd_x_tmp <= 16'sd0;
+			intra_mbt <= 8'hFF;
 		end
 	endtask
 
@@ -574,6 +447,40 @@ module slice_hdr_parser (
 		end
 	endtask
 
+	function automatic st_needs_bit;
+		input [5:0] s;
+		begin
+			case (s)
+			ST_GETBITS, ST_UE_Z, ST_REFIDX_TE1, ST_I4MODE,
+			ST_TOK_BIT, ST_SIGNS, ST_LVL_PRE, ST_LVL_SUF,
+			ST_TZ_BIT, ST_RUN_BIT:
+				st_needs_bit = 1'b1;
+			default:
+				st_needs_bit = 1'b0;
+			endcase
+		end
+	endfunction
+
+	// Advance one bitstream bit; reload cur_byte from prefetch or force M10K refill.
+	task automatic advance_bit;
+		begin
+			if (bpos == 3'd0) begin
+				bpos <= 3'd7;
+				bbyte <= bbyte + 1'd1;
+				if (pref_valid) begin
+					cur_byte <= pref_byte;
+					cur_valid <= 1'b1;
+					pref_valid <= 1'b0;
+				end else begin
+					cur_valid <= 1'b0;
+				end
+			end else begin
+				bpos <= bpos - 1'd1;
+			end
+		end
+	endtask
+
+	// Write port: append-only into M10K. Array itself is never reset.
 	always @(posedge clk) begin
 		if (reset || cap_clear)
 			len <= 0;
@@ -583,84 +490,9 @@ module slice_hdr_parser (
 		end
 	end
 
+	// Synchronous registered read port (1-cycle latency).
 	always @(posedge clk) begin
-		integer bi;
-		integer ci;
-		full_res_start <= 1'b0;
-		first_luma4x4_blocks_valid <= 1'b0;
-		if (reset || cap_clear) begin
-			full_st <= FULL_IDLE;
-			full_block_idx <= 4'd0;
-			full_bit_off <= 10'd0;
-			first_luma4x4_blocks_present <= 1'b0;
-			for (bi = 0; bi < 16; bi = bi + 1) begin
-				full_tc[bi] <= 5'd0;
-				for (ci = 0; ci < 16; ci = ci + 1)
-					first_luma4x4_coeff[bi][ci] <= 16'sd0;
-			end
-		end else begin
-			case (full_st)
-			FULL_IDLE: begin
-				if (full_start_req) begin
-					full_block_idx <= 4'd0;
-					full_bit_off <= full_start_bit;
-					first_luma4x4_blocks_present <= 1'b0;
-					for (bi = 0; bi < 16; bi = bi + 1) begin
-						full_tc[bi] <= 5'd0;
-						for (ci = 0; ci < 16; ci = ci + 1)
-							first_luma4x4_coeff[bi][ci] <= 16'sd0;
-					end
-					full_st <= FULL_START;
-				end
-			end
-			FULL_START: begin
-				if (!full_block_coded(full_block_idx)) begin
-					full_tc[full_block_idx] <= 5'd0;
-					for (ci = 0; ci < 16; ci = ci + 1)
-						first_luma4x4_coeff[full_block_idx][ci] <= 16'sd0;
-					if (full_block_idx == 4'd15) begin
-						first_luma4x4_blocks_present <= 1'b1;
-						first_luma4x4_blocks_valid <= 1'b1;
-						full_st <= FULL_DONE;
-					end else begin
-						full_block_idx <= full_block_idx + 4'd1;
-					end
-				end else begin
-					full_res_start <= 1'b1;
-					full_st <= FULL_WAIT;
-				end
-			end
-			FULL_WAIT: begin
-				if (full_res_done) begin
-					if (!full_res_ok) begin
-						first_luma4x4_blocks_present <= 1'b0;
-						full_st <= FULL_FAIL;
-					end else begin
-						full_tc[full_block_idx] <= full_res_tc;
-						full_bit_off <= full_res_bit_end;
-						for (ci = 0; ci < 16; ci = ci + 1)
-							first_luma4x4_coeff[full_block_idx][ci] <= full_res_coeff[ci];
-						if (full_block_idx == 4'd15) begin
-							first_luma4x4_blocks_present <= 1'b1;
-							first_luma4x4_blocks_valid <= 1'b1;
-							full_st <= FULL_DONE;
-						end else begin
-							full_block_idx <= full_block_idx + 4'd1;
-							full_st <= FULL_START;
-						end
-					end
-				end
-			end
-			FULL_DONE: begin
-				if (full_start_req)
-					full_st <= FULL_IDLE;
-			end
-			default: begin
-				if (full_start_req)
-					full_st <= FULL_IDLE;
-			end
-			endcase
-		end
+		mem_rdata <= mem[mem_raddr];
 	end
 
 	always @(posedge clk) begin
@@ -692,8 +524,10 @@ module slice_hdr_parser (
 			first_i4_pred_mode_flags <= 16'd0;
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
+			first_chroma_pred_mode <= 2'd0;
+			num_ref_idx_l0_active_minus1 <= 8'd0;
+			pred_clear;
 			full_luma_cbp <= 4'd0;
-			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
@@ -722,6 +556,11 @@ module slice_hdr_parser (
 			sign_left <= 0;
 			bbyte <= 0;
 			bpos <= 3'd7;
+			cur_valid <= 1'b0;
+			pref_valid <= 1'b0;
+			rd_phase <= 2'd0;
+			rd_is_pref <= 1'b0;
+			mem_raddr <= 7'd0;
 			zcnt <= 0;
 			nleft <= 0;
 			acc <= 0;
@@ -733,17 +572,6 @@ module slice_hdr_parser (
 			nal_ref_lat <= 0;
 			log2_lat <= 5'd4;
 			init_qp_lat <= 8'sd26;
-			poc_lat <= 3'd2;
-			l2poc_lat <= 5'd4;
-			bfpo_lat <= 0;
-			rpc_lat <= 0;
-			wp_lat <= 0;
-			rplm_guard <= 4'd0;
-			pic_order_cnt_lsb <= 16'd0;
-			num_ref_idx_l0_active <= 8'd1;
-			chroma_qp_index_offset <= 5'sd0;
-			constrained_intra_pred_flag <= 1'b0;
-			unsupported <= 1'b0;
 			qp_tmp <= 0;
 			tok_ok <= 0;
 			lev_i <= 0;
@@ -764,6 +592,10 @@ module slice_hdr_parser (
 			st <= ST_IDLE;
 			busy <= 0;
 			valid <= 0;
+			cur_valid <= 1'b0;
+			pref_valid <= 1'b0;
+			rd_phase <= 2'd0;
+			rd_is_pref <= 1'b0;
 			has_mb_type <= 0;
 			first_mb_p_skip <= 0;
 			p_skip_run <= 0;
@@ -771,8 +603,8 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			pred_clear;
 			full_luma_cbp <= 4'd0;
-			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
 			residual_ok <= 0;
 			residual_tc <= 0;
@@ -792,11 +624,46 @@ module slice_hdr_parser (
 		end else begin
 			// Default: place pulse is 1-cycle only (Rank3)
 			residual_place_pulse <= 1'b0;
-			full_start_req <= 1'b0;
-			case (st)
+
+			// M10K read pipeline (registered addr → 1 cy → mem_rdata → capture).
+			// rd_phase: 0 idle, 1 addr issued, 2 mem_rdata holds target byte.
+			if (rd_phase == 2'd1) begin
+				// Address was stable for a full cycle; mem_rdata updates this posedge.
+				rd_phase <= 2'd2;
+			end else if (rd_phase == 2'd2) begin
+				if (rd_target == bbyte) begin
+					cur_byte <= mem_rdata;
+					cur_valid <= 1'b1;
+				end else if (rd_target == (bbyte + 7'd1)) begin
+					pref_byte <= mem_rdata;
+					pref_valid <= 1'b1;
+				end
+				rd_phase <= 2'd0;
+			end else if (!cur_valid && !oob) begin
+				if (pref_valid) begin
+					cur_byte <= pref_byte;
+					cur_valid <= 1'b1;
+					pref_valid <= 1'b0;
+				end else begin
+					mem_raddr <= bbyte;
+					rd_target <= bbyte;
+					rd_is_pref <= 1'b0;
+					rd_phase <= 2'd1;
+				end
+			end else if (cur_valid && !pref_valid && ((bbyte + 7'd1) < len)) begin
+				mem_raddr <= bbyte + 7'd1;
+				rd_target <= bbyte + 7'd1;
+				rd_is_pref <= 1'b1;
+				rd_phase <= 2'd1;
+			end
+
+			// Stall bit consumers until cur_byte is valid (1-cycle M10K latency).
+			if (st_needs_bit(st) && bit_stall) begin
+				// hold st / bit position
+			end else case (st)
 			ST_IDLE: begin
 				busy <= 0;
-				if (cap_end && len >= 7'd2 && sps_ready && pps_ready) begin
+				if (cap_end && len >= 7'd2 && sps_ready && pps_ready && poc_type != 3'd1) begin
 					busy <= 1'b1;
 					has_mb_type <= 0;
 					first_mb_p_skip <= 0;
@@ -826,8 +693,15 @@ module slice_hdr_parser (
 					csum_acc <= 0;
 					idr_lat <= is_idr_nal;
 					nal_ref_lat <= nal_ref_idc_nonzero;
+					db_lat <= deblock_ctrl;
+					log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
+					init_qp_lat <= pic_init_qp;
 					bbyte <= 0;
 					bpos <= 3'd7;
+					cur_valid <= 1'b0;
+					pref_valid <= 1'b0;
+					rd_phase <= 2'd0;
+					rd_is_pref <= 1'b0;
 					zcnt <= 0;
 					ue_cont <= ST_FIRST;
 					st <= ST_UE_Z;
@@ -838,8 +712,7 @@ module slice_hdr_parser (
 				if (oob) st <= ST_FAIL;
 				else begin
 					acc <= {acc[14:0], bitv};
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					if (nleft == 5'd1) st <= cont;
 					else nleft <= nleft - 1'd1;
 				end
@@ -851,12 +724,10 @@ module slice_hdr_parser (
 					if (zcnt >= 6'd20) st <= ST_FAIL;
 					else begin
 						zcnt <= zcnt + 1'd1;
-						if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-						else bpos <= bpos - 1'd1;
+						advance_bit;
 					end
 				end else begin
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					if (zcnt == 0) begin ue_val <= 0; st <= ue_cont; end
 					else begin
 						nleft <= zcnt[4:0]; acc <= 0; cont <= ST_UE_V; st <= ST_GETBITS;
@@ -879,95 +750,46 @@ module slice_hdr_parser (
 				zcnt <= 0; ue_cont <= ST_PPS; st <= ST_UE_Z;
 			end
 			ST_PPS: begin
-				// pps_sel_id is already driving the store with ue_val, so the
-				// whole active parameter set is resolved on this same cycle.
 				pps_id <= ue_val[7:0];
-				db_lat <= pps_deblock_ctrl;
-				init_qp_lat <= pps_pic_init_qp;
-				bfpo_lat <= pps_bottom_field_pic_order_present;
-				rpc_lat <= pps_redundant_pic_cnt_present;
-				wp_lat <= pps_weighted_pred;
-				poc_lat <= poc_type;
-				l2poc_lat <= (log2_max_poc_lsb == 0) ? 5'd4 : log2_max_poc_lsb[4:0];
-				log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
-				num_ref_idx_l0_active <= pps_num_ref_l0 + 8'd1;
-				chroma_qp_index_offset <= pps_chroma_qp_index_offset;
-				constrained_intra_pred_flag <= pps_constrained_intra_pred;
-				// A slice that references a PPS we never saw cannot be parsed
-				// at all: its very next field is frame_num, whose length comes
-				// from that PPS's SPS.
-				if (!pps_found || (poc_type == 3'd1)) begin
-					unsupported <= 1'b1;
-					st <= ST_FAIL;
-				end else begin
-					nleft <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
-					acc <= 0; cont <= ST_FN; st <= ST_GETBITS;
-				end
+				nleft <= log2_lat; acc <= 0; cont <= ST_FN; st <= ST_GETBITS;
 			end
 			ST_FN: begin
 				frame_num <= acc;
 				if (idr_lat) begin
 					zcnt <= 0; ue_cont <= ST_IDR; st <= ST_UE_Z;
-				end else
-					go_poc;
+				end else if (is_p_slice_type(slice_type)) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_REFIDX_FLAG; st <= ST_GETBITS;
+				end else if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end
 			end
 			ST_IDR: begin
 				idr_pic_id <= ue_val;
-				go_poc;
-			end
-			ST_POCL: begin
-				pic_order_cnt_lsb <= acc;
-				if (bfpo_lat) begin
-					// delta_pic_order_cnt_bottom, se(v), value unused.
-					zcnt <= 0; ue_cont <= ST_POCB; st <= ST_UE_Z;
-				end else
-					go_redundant;
-			end
-			ST_POCB: begin
-				go_redundant;
-			end
-			ST_RPCV: begin
-				// redundant_pic_cnt, value unused; redundant slices are dropped
-				// downstream, but the bits still have to come out of the stream.
-				go_refidx;
+				// dec_ref_pic_marking (IDR): no_output_of_prior_pics + long_term_reference
+				nleft <= 5'd2; acc <= 0; cont <= ST_REFMARK; st <= ST_GETBITS;
 			end
 			ST_REFMARK: begin
-				go_qpd;
+				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 			end
 			ST_REFIDX_FLAG: begin
-				// num_ref_idx_active_override_flag. Without the override the
-				// count is the PPS default already latched at ST_PPS.
 				if (acc[0]) begin
 					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
-				end else
-					go_rplm;
-			end
-			ST_REFIDX_L0: begin
-				num_ref_idx_l0_active <= ue_val[7:0] + 8'd1;
-				go_rplm;
-			end
-			ST_RPLMF: begin
-				// ref_pic_list_modification_flag_l0. This bit is present for
-				// every P slice and was previously never consumed, which shifted
-				// slice_qp_delta and everything after it by one bit.
-				if (acc[0]) begin
-					zcnt <= 0; ue_cont <= ST_RPLMI; st <= ST_UE_Z;
-				end else
-					go_pwt;
-			end
-			ST_RPLMI: begin
-				rplm_guard <= rplm_guard + 4'd1;
-				if (ue_val == 16'd3)
-					go_pwt;
-				else if ((ue_val > 16'd3) || (rplm_guard >= 4'd15))
-					st <= ST_FAIL;
-				else begin
-					// idc 0/1: abs_diff_pic_num_minus1. idc 2: long_term_pic_num.
-					zcnt <= 0; ue_cont <= ST_RPLMV; st <= ST_UE_Z;
+				end else if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
 			end
-			ST_RPLMV: begin
-				zcnt <= 0; ue_cont <= ST_RPLMI; st <= ST_UE_Z;
+			ST_REFIDX_L0: begin
+				// Survive into the MB layer: ref_idx presence is gated on this.
+				num_ref_idx_l0_active_minus1 <= ue_val[7:0];
+				if (nal_ref_lat) begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				end
 			end
 			ST_NIDR_REFMARK: begin
 				// Baseline product profile uses one short-term reference and no MMCO.
@@ -1018,7 +840,7 @@ module slice_hdr_parser (
 			end
 			ST_MBT: begin
 				if (is_p_slice_type(slice_type)) begin
-					p_skip_run <= ue_val[7:0];
+					p_skip_run <= ue_val[15:0];
 					if (ue_val != 16'd0) begin
 						first_mb_type <= 8'd0;
 						has_mb_type <= 1'b1;
@@ -1027,6 +849,9 @@ module slice_hdr_parser (
 						first_mb_part_count <= p_part_count_of(1'b1, 8'd0);
 						first_mb_uses_sub_mb <= 1'b0;
 						first_mb_intra <= 1'b0;
+						// Bit offset after mb_skip_run: feed emits N P_Skip then
+						// continues from here (next syntax is mb_type or EOS).
+						full_start_bit <= cur_bit_offset();
 						st <= ST_DONE;
 					end else begin
 						first_mb_p_skip <= 1'b0;
@@ -1034,6 +859,7 @@ module slice_hdr_parser (
 					end
 				end else begin
 					first_mb_type <= ue_val[7:0];
+					intra_mbt <= ue_val[7:0];
 					has_mb_type <= (ue_val <= 16'd25);
 					first_mb_p_skip <= 1'b0;
 					first_mb_part_mode <= 3'd7;
@@ -1062,14 +888,117 @@ module slice_hdr_parser (
 				first_mb_part_count <= p_part_count_of(1'b0, ue_val[7:0]);
 				first_mb_uses_sub_mb <= (ue_val == 16'd3) || (ue_val == 16'd4);
 				first_mb_intra <= (ue_val >= 16'd5) && (ue_val <= 16'd30);
-				st <= ST_DONE;
+				p_mbt <= ue_val[5:0];
+				pred_blk <= 3'd0;
+				pred_sub <= 3'd0;
+				pred_ref_i <= 3'd0;
+				if (ue_val <= 16'd4) begin
+					intra_mbt <= 8'hFF;
+					first_sub_mb_valid <= (ue_val == 16'd3) || (ue_val == 16'd4);
+					if (ue_val == 16'd3 || ue_val == 16'd4) begin
+						zcnt <= 0; ue_cont <= ST_SUBMBT; st <= ST_UE_Z;
+					end else
+						st <= ST_PRED_REF;
+				end else if (ue_val <= 16'd30) begin
+					// Intra MB in P slice: Table 7-13 offset +5.
+					intra_mbt <= ue_val[7:0] - 8'd5;
+					if (ue_val >= 16'd6 && ue_val <= 16'd29) begin
+						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+					end else if (ue_val == 16'd5) begin
+						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0; i4_rem_acc <= 3'd0;
+						first_i4_pred_mode_flags <= 16'd0;
+						first_i4_rem_modes <= 48'd0;
+						first_i4_modes_present <= 1'b0;
+						full_luma_cbp <= 4'd0;
+						st <= ST_I4MODE;
+					end else
+						st <= ST_DONE; // I_PCM
+				end else
+					st <= ST_DONE;
+			end
+			ST_SUBMBT: begin
+				if (ue_val > 16'd3) st <= ST_FAIL;
+				else begin
+					first_sub_mb_types[pred_blk[1:0] * 2 +: 2] <= ue_val[1:0];
+					if (pred_blk >= 3'd3) begin
+						pred_blk <= 3'd0;
+						st <= ST_PRED_REF;
+					end else begin
+						pred_blk <= pred_blk + 3'd1;
+						zcnt <= 0; ue_cont <= ST_SUBMBT; st <= ST_UE_Z;
+					end
+				end
+			end
+			ST_PRED_REF: begin
+				// ref_idx absent when only one active ref, and never for P_8x8ref0.
+				if ((num_ref_idx_l0_active_minus1 == 8'd0) || (p_mbt == 6'd4) ||
+				    (pred_ref_i >= p_part_count_of(1'b0, {2'd0, p_mbt}))) begin
+					pred_blk <= 3'd0;
+					pred_sub <= 3'd0;
+					st <= ST_PRED_MVD;
+				end else if (num_ref_idx_l0_active_minus1 == 8'd1) begin
+					st <= ST_REFIDX_TE1;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_REFIDX_VAL; st <= ST_UE_Z;
+				end
+			end
+			ST_REFIDX_TE1: begin
+				if (oob) st <= ST_FAIL;
+				else begin
+					advance_bit;
+					first_mb_ref_idx_l0[pred_ref_i[1:0] * 2 +: 2] <= {1'b0, ~bitv};
+					pred_ref_i <= pred_ref_i + 3'd1;
+					st <= ST_PRED_REF;
+				end
+			end
+			ST_REFIDX_VAL: begin
+				first_mb_ref_idx_l0[pred_ref_i[1:0] * 2 +: 2] <= ue_val[1:0];
+				pred_ref_i <= pred_ref_i + 3'd1;
+				st <= ST_PRED_REF;
+			end
+			ST_PRED_MVD: begin
+				if (p_mbt >= 6'd3) begin
+					if (pred_blk >= 3'd4) begin
+						zcnt <= 0; ue_cont <= ST_INTER_CBP; st <= ST_UE_Z;
+					end else if (pred_sub >=
+					             sub_part_count_of(first_sub_mb_types[pred_blk[1:0] * 2 +: 2])) begin
+						pred_blk <= pred_blk + 3'd1;
+						pred_sub <= 3'd0;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_MVD_X; st <= ST_UE_Z;
+					end
+				end else if (pred_blk >= p_part_count_of(1'b0, {2'd0, p_mbt})) begin
+					zcnt <= 0; ue_cont <= ST_INTER_CBP; st <= ST_UE_Z;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_MVD_X; st <= ST_UE_Z;
+				end
+			end
+			ST_MVD_X: begin
+				mvd_x_tmp <= se16_of(ue_val);
+				zcnt <= 0; ue_cont <= ST_MVD_Y; st <= ST_UE_Z;
+			end
+			ST_MVD_Y: begin
+				first_mb_mvd_x[pred_mvd_slot] <= mvd_x_tmp;
+				first_mb_mvd_y[pred_mvd_slot] <= se16_of(ue_val);
+				first_mb_mvd_valid[pred_mvd_slot] <= 1'b1;
+				if (p_mbt >= 6'd3) pred_sub <= pred_sub + 3'd1;
+				else pred_blk <= pred_blk + 3'd1;
+				st <= ST_PRED_MVD;
+			end
+			ST_INTER_CBP: begin
+				cbp_me <= ue_val[5:0];
+				full_luma_cbp <= cbp_inter_map(ue_val[5:0]) [3:0];
+				if (cbp_inter_map(ue_val[5:0]) == 6'd0)
+					st <= ST_DONE;
+				else begin
+					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				end
 			end
 			ST_I4MODE: begin
 				// Skip 16 Intra4x4 modes: each is flag(1) or flag(0)+rem(3)
 				if (oob) st <= ST_FAIL;
 				else begin
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					if (i4_sub == 2'd0) begin
 						// prev_intra4x4_pred_mode_flag
 						if (bitv) begin
@@ -1104,9 +1033,9 @@ module slice_hdr_parser (
 				end
 			end
 			ST_CHRPRED: begin
-				// ue(intra_chroma_pred_mode) consumed
-				// I_NxN → cbp me; I_16x16 → mb_qp_delta
-				if (first_mb_type == 8'd0) begin
+				first_chroma_pred_mode <= ue_val[1:0];
+				// I_NxN → cbp me; I_16x16 → mb_qp_delta (use normalised intra_mbt)
+				if (intra_mbt == 8'd0) begin
 					zcnt <= 0; ue_cont <= ST_CBP; st <= ST_UE_Z;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
@@ -1118,17 +1047,17 @@ module slice_hdr_parser (
 				full_luma_cbp <= cbp_intra_luma_map(ue_val[5:0]);
 				if (ue_val == 16'd3) begin
 					// cbp=0: no residual (shouldn't happen on real first MB)
+					full_start_bit <= cur_bit_offset();
 					tcode <= 0; tbits <= 0; st <= ST_TOK_BIT;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
 				end
 			end
 			ST_MBQP: begin
-				// se(mb_qp_delta) consumed; start coeff_token nC=0
-				if (first_mb_type == 8'd0) begin
-					full_start_req <= 1'b1;
-					full_start_bit <= cur_bit_offset();
-				end
+				// se(mb_qp_delta) consumed; start coeff_token nC=0.
+				// Residual entry bit mark for h264_i_mb_feed / product residual walker.
+				// Always capture here (I_NxN, I_16x16, inter) so MB0 bit-sync is exact.
+				full_start_bit <= cur_bit_offset();
 				tcode <= 0;
 				tbits <= 0;
 				st <= ST_TOK_BIT;
@@ -1138,8 +1067,7 @@ module slice_hdr_parser (
 				else begin
 					tcode <= {tcode[14:0], bitv};
 					tbits <= tbits + 1'd1;
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					st <= ST_TOK_CHK;
 				end
 			end
@@ -1226,8 +1154,7 @@ module slice_hdr_parser (
 					// residual_csum is latched sticky only at ST_PLACE — not here.
 					lev[lev_i] <= bitv ? -16'sd1 : 16'sd1;
 					csum_acc <= csum_acc ^ (bitv ? 8'hFF : 8'h01);
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					if (sign_left <= 3'd1) begin
 						// finished T1 signs
 						if (r_t1 < r_tc) begin
@@ -1253,13 +1180,11 @@ module slice_hdr_parser (
 					if (pref >= 6'd31) st <= ST_FAIL;
 					else begin
 						pref <= pref + 1'd1;
-						if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-						else bpos <= bpos - 1'd1;
+						advance_bit;
 					end
 				end else begin
 					// stop bit '1' consumed
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					// decide suffix length to read
 					if (first_non_t1) begin
 						if (pref < 6'd14) begin
@@ -1410,8 +1335,7 @@ module slice_hdr_parser (
 				else begin
 					tzcode <= {tzcode[7:0], bitv};
 					tzbits <= tzbits + 1'd1;
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					st <= ST_TZ_CHK;
 				end
 			end
@@ -1532,8 +1456,7 @@ module slice_hdr_parser (
 				end else begin
 					runcode <= {runcode[3:0], bitv};
 					runbits <= runbits + 1'd1;
-					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
-					else bpos <= bpos - 1'd1;
+					advance_bit;
 					st <= ST_RUN_CHK;
 				end
 			end

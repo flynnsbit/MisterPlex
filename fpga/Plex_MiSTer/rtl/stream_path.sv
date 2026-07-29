@@ -76,7 +76,7 @@ module stream_path #(
 	output wire [7:0]  first_mb_type,
 	output wire        has_mb_type,
 	output wire        first_mb_p_skip,
-	output wire [7:0]  p_skip_run,
+	output wire [15:0] p_skip_run,
 	output wire [2:0]  first_mb_part_mode,
 	output wire [2:0]  first_mb_part_count,
 	output wire        first_mb_uses_sub_mb,
@@ -115,7 +115,14 @@ module stream_path #(
 	output wire  [1:0]  dec_px_plane,
 	output wire [15:0]  dec_px_x,
 	output wire [15:0]  dec_px_y,
-	output wire  [7:0]  dec_px_data
+	output wire  [7:0]  dec_px_data,
+
+	// Slice walker PARSE desync (sticky sources for status telem / ARM).
+	// early: more_rbsp_data false before PicSizeInMbs
+	// long:  still data after PicSizeInMbs / walked past expected
+	output wire         slice_desync,
+	output wire         slice_desync_early,
+	output wire         slice_desync_long
 );
 
 	// The decode core must run on the CODED picture geometry, not the display
@@ -154,7 +161,10 @@ module stream_path #(
 	wire        bf_wr_full;
 
 	ddr_bitstream_reader #(
-		.RING_BYTES(BITSTREAM_RING_BYTES)
+		.RING_BYTES(BITSTREAM_RING_BYTES),
+		.RING_LOW_BYTES(BITSTREAM_RING_LOW_BYTES),
+		.PREFETCH_QWORDS(BITSTREAM_PREFETCH_QWORDS),
+		.PREFETCH_BURST(BITSTREAM_PREFETCH_BURST)
 	) ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -272,9 +282,14 @@ module stream_path #(
 	wire [15:0] sl_i4_pred_mode_flags;
 	wire [47:0] sl_i4_rem_modes;
 	wire sl_i4_modes_present;
-	wire sl_luma4x4_blocks_valid;
-	wire sl_luma4x4_blocks_present;
-	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
+	wire [1:0]  sl_chroma_pred_mode;
+	wire [7:0]  sl_sub_mb_types;
+	wire        sl_sub_mb_valid;
+	wire [7:0]  sl_mb_ref_idx_l0;
+	wire [15:0] sl_mb_mvd_valid;
+	wire signed [15:0] sl_mb_mvd_x [0:15];
+	wire signed [15:0] sl_mb_mvd_y [0:15];
+	wire [7:0]  sl_num_ref_m1;
 	wire sl_place_ok;
 	wire [4:0] sl_place_tc;
 	wire [1:0] sl_place_t1;
@@ -282,11 +297,6 @@ module stream_path #(
 	wire [5:0] sl_place_qp;
 	wire signed [15:0] sl_place_coeff [0:15];
 
-	wire [7:0] sl_pps_sel_id;
-	wire [15:0] sl_poc_lsb;
-	wire [7:0] sl_num_ref_l0;
-	wire signed [4:0] sl_chroma_qp_off;
-	wire sl_cip, sl_unsup;
 	// residual_csum / residual_coeff connect straight to module outputs (no
 	// unpacked-array continuous assign — Quartus-friendly).
 	slice_hdr_parser slp (
@@ -297,28 +307,14 @@ module stream_path #(
 		.nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
 		.log2_max_frame_num(log2_fn),
 		.poc_type(poc_t),
-		.log2_max_poc_lsb(5'd4),
 		.sps_ready(sps_valid),
 		.pps_ready(pps_valid),
-		.pps_found(pps_valid && sps_valid),
-		.pps_deblock_ctrl(pps_deblock),
-		.pps_pic_init_qp(pps_qp),
-		.pps_num_ref_l0(pps_nref),
-		.pps_chroma_qp_index_offset(5'sd0),
-		.pps_constrained_intra_pred(1'b0),
-		.pps_bottom_field_pic_order_present(1'b0),
-		.pps_redundant_pic_cnt_present(1'b0),
-		.pps_weighted_pred(1'b0),
-		.pps_sel_id(sl_pps_sel_id),
+		.deblock_ctrl(pps_deblock),
+		.pic_init_qp(pps_qp),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
-		.pic_order_cnt_lsb(sl_poc_lsb),
 		.is_i_slice(sl_is_i),
-		.num_ref_idx_l0_active(sl_num_ref_l0),
-		.chroma_qp_index_offset(sl_chroma_qp_off),
-		.constrained_intra_pred_flag(sl_cip),
-		.unsupported(sl_unsup),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset_div2(sl_alpha_div2),
@@ -335,9 +331,14 @@ module stream_path #(
 		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
-		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
-		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
-		.first_luma4x4_coeff(sl_luma4x4_coeff),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_sub_mb_valid(sl_sub_mb_valid),
+		.first_mb_ref_idx_l0(sl_mb_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mb_mvd_valid),
+		.first_mb_mvd_x(sl_mb_mvd_x),
+		.first_mb_mvd_y(sl_mb_mvd_y),
+		.num_ref_idx_l0_active_minus1(sl_num_ref_m1),
 		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
 		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
@@ -370,7 +371,7 @@ module stream_path #(
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
-	// Forward declarations for the I-MB residual feeder (instantiated below).
+	// Forward declarations for the I/P-MB residual feeder (instantiated below).
 	wire [15:0] feed_i4_pred_mode_flags;
 	wire [47:0] feed_i4_rem_modes;
 	wire        feed_i4_modes_present;
@@ -384,10 +385,32 @@ module stream_path #(
 	wire        feed_busy;
 	wire        feed_frame_done;
 	wire        feed_error;
+	wire        feed_slice_desync;
+	wire        feed_slice_desync_early;
+	wire        feed_slice_desync_long;
+	wire        feed_chroma_residual_valid;
+	wire signed [15:0] feed_chroma_residual_u [0:63];
+	wire signed [15:0] feed_chroma_residual_v [0:63];
 	wire [15:0] feed_rbsp_request_offset;
 	wire        feed_rbsp_request_valid;
-	wire        core_mb_type_valid;
-	wire [4:0]  core_mb_type;
+	wire        feed_mb_type_valid;
+	wire [4:0]  feed_mb_type;
+	wire        feed_mb_skip;
+	wire        feed_mb_intra;
+	wire [2:0]  feed_part_mode;
+	wire [7:0]  feed_sub_mb_types;
+	wire [7:0]  feed_ref_idx_l0_packed;
+	wire [15:0] feed_mvd_valid;
+	wire signed [15:0] feed_mvd_x [0:15];
+	wire signed [15:0] feed_mvd_y [0:15];
+	// Full-slice walker owns every MB (I and P), including skip_run batches.
+	wire        core_mb_type_valid = feed_mb_type_valid;
+	wire [4:0]  core_mb_type = feed_mb_type;
+	wire        core_mb_skip = feed_mb_skip;
+	wire [3:0]  core_cbp_luma = feed_cbp_luma;
+	wire [1:0]  core_cbp_chroma = feed_cbp_chroma;
+	wire [15:0] core_mb_res_off = feed_mb_residual_bit_offset;
+	wire [1:0]  core_chroma_pred = feed_chroma_pred_mode;
 	wire [4:0]  core_intra_blocks_done;
 	wire        core_luma4x4_valid;
 	wire [3:0]  core_luma4x4_idx;
@@ -484,10 +507,10 @@ module stream_path #(
 		end
 	endgenerate
 
-	// ── Per-MB I-slice residual feed (no MB0 coeff replay) ──────────────────
-	// slice_hdr_parser only exposes the FIRST macroblock.  h264_i_mb_feed walks
-	// real CAVLC residual from the whole-slice RBSP window for every MB and
-	// parses subsequent I-MB syntax so each macroblock gets its own coeffs.
+	// ── Per-MB residual feed (sole multi-block CAVLC residual bit consumer) ──
+	// slice_hdr_parser exports first-MB syntax + residual bit offset/cbp and the
+	// status residual_csum sticky path.  h264_i_mb_feed walks real CAVLC residual
+	// from the whole-slice RBSP window for every MB (including MB0).
 
 	// Whole-slice RBSP store with a real sliding window.  The old 64-byte
 	// capture could never answer rbsp_request_offset, so the core's request was
@@ -507,7 +530,6 @@ module stream_path #(
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
 	wire        core_rbsp_overflow;
-	wire        core_rbsp_ready;
 
 	h264_rbsp_window #(
 		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
@@ -526,25 +548,22 @@ module stream_path #(
 		.window_avail(core_rbsp_avail),
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
-		.overflow(core_rbsp_overflow),
-		.window_ready(core_rbsp_ready)
+		.overflow(core_rbsp_overflow)
 	);
 
-	// Start the feeder once the first-MB residual probe is placed AND the VCL
-	// RBSP capture has finished (window holds the whole NAL).  One-shot: the
-	// feeder latches on the rising edge of slice_go.
-	reg sl_luma_blocks_seen;
+	// Start the feeder once the slice header is valid AND the VCL RBSP capture
+	// has finished.  I/P both arm on slice_valid — multi-block residual bits are
+	// consumed solely by h264_i_mb_feed (not a second parser in slice_hdr_parser).
 	reg feed_started;
-	wire feed_slice_go = sl_luma_blocks_seen && core_rbsp_complete && sl_is_i &&
+	wire feed_i_ready = sl_is_i && slice_valid;
+	wire feed_p_ready = !sl_is_i && slice_valid && (first_mb_p_skip || sl_has_mbt);
+	wire feed_slice_go = (feed_i_ready || feed_p_ready) && core_rbsp_complete &&
 	                     (sps_mb_w != 8'd0) && (sps_mb_h != 8'd0) &&
 	                     !feed_started && !feed_busy;
 	always @(posedge clk) begin
 		if (reset | flush | vcl_cap_clear) begin
-			sl_luma_blocks_seen <= 1'b0;
 			feed_started <= 1'b0;
 		end else begin
-			if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present)
-				sl_luma_blocks_seen <= 1'b1;
 			// Stay started for this VCL NAL even after frame_feed_done so we
 			// do not immediately re-arm on the same sticky complete/present.
 			if (feed_slice_go)
@@ -564,12 +583,24 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.slice_qp_y(sl_qp),
 		.first_mb_type(sl_mbt),
+		.first_mb_p_skip(first_mb_p_skip),
+		.first_p_skip_run(p_skip_run),
+		.first_mb_intra(first_mb_intra),
+		.first_mb_part_mode(first_mb_part_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_mb_ref_idx_l0(sl_mb_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mb_mvd_valid),
+		.first_mb_mvd_x(sl_mb_mvd_x),
+		.first_mb_mvd_y(sl_mb_mvd_y),
+		.num_ref_idx_l0_active(sl_num_ref_m1 + 8'd1),
 		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
 		.first_cbp_luma(sl_first_mb_cbp_luma),
 		.first_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(feed_rbsp_request_offset),
@@ -578,8 +609,16 @@ module stream_path #(
 		.rbsp_complete(core_rbsp_complete),
 		.core_busy(core_busy),
 		.core_intra_blocks_done(core_intra_blocks_done),
-		.mb_type_valid(core_mb_type_valid),
-		.mb_type(core_mb_type),
+		.mb_type_valid(feed_mb_type_valid),
+		.mb_type(feed_mb_type),
+		.mb_skip(feed_mb_skip),
+		.mb_intra(feed_mb_intra),
+		.part_mode(feed_part_mode),
+		.sub_mb_types(feed_sub_mb_types),
+		.ref_idx_l0_packed(feed_ref_idx_l0_packed),
+		.mvd_valid(feed_mvd_valid),
+		.mvd_x(feed_mvd_x),
+		.mvd_y(feed_mvd_y),
 		.i4_pred_mode_flags(feed_i4_pred_mode_flags),
 		.i4_rem_modes(feed_i4_rem_modes),
 		.i4_modes_present(feed_i4_modes_present),
@@ -596,10 +635,19 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.chroma_residual_u(feed_chroma_residual_u),
+		.chroma_residual_v(feed_chroma_residual_v),
+		.chroma_residual_valid(feed_chroma_residual_valid),
 		.busy(feed_busy),
 		.frame_feed_done(feed_frame_done),
-		.error(feed_error)
+		.error(feed_error),
+		.slice_desync(feed_slice_desync),
+		.slice_desync_early(feed_slice_desync_early),
+		.slice_desync_long(feed_slice_desync_long)
 	);
+	assign slice_desync = feed_slice_desync;
+	assign slice_desync_early = feed_slice_desync_early;
+	assign slice_desync_long = feed_slice_desync_long;
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -664,36 +712,43 @@ module stream_path #(
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(5'sd0),
-		.disable_deblocking_filter_idc(sl_deblock_idc),
-		.slice_alpha_c0_offset(sl_alpha_off),
-		.slice_beta_offset(sl_beta_off),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
 		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(core_mb_type_valid),
 		.mb_type(core_mb_type),
-		.mb_skip(1'b0),
+		.mb_skip(core_mb_skip),
+		.mb_intra(feed_mb_intra),
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(feed_i16_mode),
-		.chroma_pred_mode(feed_chroma_pred_mode),
-		.cbp_luma(feed_cbp_luma),
-		.cbp_chroma(feed_cbp_chroma),
+		.chroma_pred_mode(core_chroma_pred),
+		.cbp_luma(core_cbp_luma),
+		.cbp_chroma(core_cbp_chroma),
 		.mb_qp_delta(feed_mb_qp_delta),
-		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
+		.mb_residual_bit_offset(core_mb_res_off),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.intra_chroma_residual_valid(feed_chroma_residual_valid),
+		.intra_chroma_residual_u(feed_chroma_residual_u),
+		.intra_chroma_residual_v(feed_chroma_residual_v),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
-		.part_mode(first_mb_part_mode),
+		.part_mode(feed_part_mode),
 		.part_idx(2'd0),
-		.mvd_x_qpel(16'sd0),
-		.mvd_y_qpel(16'sd0),
-		.ref_idx_l0(2'd0),
+		.mvd_x_qpel(feed_mvd_x[0]),
+		.mvd_y_qpel(feed_mvd_y[0]),
+		.ref_idx_l0(feed_ref_idx_l0_packed[1:0]),
+		.num_ref_idx_l0_active(sl_num_ref_m1 + 8'd1),
+		.part_sub_mb_types(feed_sub_mb_types),
+		.part_ref_idx_l0(feed_ref_idx_l0_packed),
+		.part_mvd_valid(feed_mvd_valid),
+		.part_mvd_x(feed_mvd_x),
+		.part_mvd_y(feed_mvd_y),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
@@ -731,19 +786,69 @@ module stream_path #(
 		.error(core_error)
 	);
 
-	// decode_stub DELETED from product path (Stage A). Any pixels are the
-	// decode core's.  Tie legacy fs_* / stub status so top-level ports stay.
-	assign recon_sig       = 8'd0;
-	assign recon_dbg       = 8'd0;
-	assign recon_dbg_valid = 1'b0;
-	assign recon_valid     = 1'b0;
-	assign stub_busy       = 1'b0;
-	assign stub_frames     = 16'd0;
+	// Product decode is always rooted at product_decode_core above.  The legacy
+	// decode_stub remains only as the diagnostic frame-store painter until the
+	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
+	// decoder subtree or bypasses MC/DPB/deblock.
+	generate
+		begin : gen_diagnostic_present
+		decode_stub #(
+			.WIDTH(FRAME_W),
+			.HEIGHT(FRAME_H)
+		) stub (
+			.clk(clk), .reset(reset | flush),
+			.vcl_pulse(vcl_pulse),
+			.last_nal_type(last_nal_type),
+			.nalu_count(nalu_count),
+			.idr_count(idr_c),
+			.has_idr(has_idr_w),
+			.sps_valid(sps_valid),
+			.mb_w(sps_mb_w),
+			.mb_h(sps_mb_h),
+			.slice_type(sl_type),
+			.slice_is_i(sl_is_i),
+			.slice_valid(slice_valid),
+			.first_mb_addr(sl_first),
+			.has_mb_type(sl_has_mbt),
+			.first_mb_p_skip(first_mb_p_skip),
+			.first_mb_part_mode(first_mb_part_mode),
+			.first_mb_part_count(first_mb_part_count),
+			.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
+			.first_mb_intra(first_mb_intra),
+			.residual_ok(sl_place_ok),
+			.residual_tc(sl_place_tc),
+			.residual_dc(sl_place_dc),
+			.residual_valid(residual_place_pulse),
+			.slice_qp(sl_place_qp),
+			.residual_coeff(sl_place_coeff),
+			.recon_sig(recon_sig),
+			.recon_dbg(recon_dbg),
+			.recon_dbg_valid(recon_dbg_valid),
+			.recon_valid(recon_valid),
+			.wr_en(stub_fs_wr_en),
+			.wr_pixel(stub_fs_wr_pixel),
+			.wr_reset_ptr(stub_fs_wr_reset),
+			.swap_req(stub_fs_swap),
+			.busy(stub_busy),
+			.frames_out(stub_frames)
+		);
+		end
+	endgenerate
+
+	// decode_stub is retired as the product pixel source: under DDR_FRAME_STORE
+	// present_core ignores fs_* entirely, so the stub's diagnostic paint never
+	// reaches the screen and the decode core's dec_px_* stream is the only
+	// pixel source.  The fs_* path is left intact for the non-DDR frame_store
+	// configuration and for the diagnostic frame-cadence benches.
+	wire        stub_fs_wr_en;
+	wire [15:0] stub_fs_wr_pixel;
+	wire        stub_fs_wr_reset;
+	wire        stub_fs_swap;
 	always @* begin
-		fs_wr_en    = 1'b0;
-		fs_wr_pixel = 16'd0;
-		fs_wr_reset = 1'b0;
-		fs_swap     = 1'b0;
+		fs_wr_en    = stub_fs_wr_en;
+		fs_wr_pixel = stub_fs_wr_pixel;
+		fs_wr_reset = stub_fs_wr_reset;
+		fs_swap     = stub_fs_swap;
 	end
 
 	(* keep = 1 *) wire keep_si = si_active;
@@ -755,12 +860,17 @@ module stream_path #(
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             |sl_i4_pred_mode_flags | |sl_i4_rem_modes | sl_i4_modes_present |
-	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
 	             core_luma4x4_valid | core_dpb_wr_en |
 	             core_mb_type_valid | feed_busy | feed_frame_done | feed_error |
 	             |core_intra_blocks_done | |feed_cbp_luma | |feed_mb_residual_bit_offset |
+	             |sl_sub_mb_types | sl_sub_mb_valid | |sl_mb_ref_idx_l0 |
+	             |sl_mb_mvd_valid | |sl_mb_mvd_x[0] | |sl_mb_mvd_y[0] | |sl_num_ref_m1 |
+	             |sl_chroma_pred_mode | feed_mb_intra | feed_mb_skip | feed_slice_desync |
+	             feed_slice_desync_early | feed_slice_desync_long |
+	             feed_chroma_residual_valid | |feed_chroma_residual_u[0] |
+	             |feed_part_mode |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
@@ -769,7 +879,5 @@ module stream_path #(
 	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 
-
 	assign decode_perf_word = 64'd0;
-
 endmodule
