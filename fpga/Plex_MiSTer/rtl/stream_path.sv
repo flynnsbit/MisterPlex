@@ -126,17 +126,12 @@ module stream_path #(
 	output wire [15:0]  slice_desync_mb
 );
 
-	// The decode core must run on the CODED picture geometry, not the display
-	// surface: FRAME_W is the 640-wide present surface, while the stream (and
-	// the DDR framebuffer the reconstruction is written into) is 624x480, i.e.
-	// exactly 39x30 macroblocks.  Using the display width gave the core a
-	// 40-macroblock raster stride, which skewed every macroblock position by a
-	// growing offset and pushed one column per row outside the picture.
-	// Values mirror DDR_FRAME_CODED_WIDTH/HEIGHT in ddr_frame_layout_params.svh.
-	// They are spelled out here rather than `include`d because stream_path is
-	// elaborated by benches that do not put rtl/ on the include path.
-	localparam int CORE_FRAME_W = 624;
-	localparam int CORE_FRAME_H = 480;
+	// Decode core runs on CODED picture geometry supplied via FRAME_W/H.
+	// Product benches pass the fixture coded size (320x240 or 624x480).
+	// Plex.sv / present path may use a wider surface elsewhere; do not hardcode
+	// 624 here — that forces mb_width mismatch (core error) on 320x240 SPS.
+	localparam int CORE_FRAME_W = FRAME_W;
+	localparam int CORE_FRAME_H = FRAME_H;
 
 	// Whole-slice RBSP capacity.  Settled 624x480 Baseline IDR fixtures are
 	// ~11KB (plex_inter_p16_624x480 IDR = 10895B); keep headroom so a higher-

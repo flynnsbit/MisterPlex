@@ -367,7 +367,7 @@ module h264_i_mb_feed #(
 		6'd32:cbp_inter_map=6'd17; 6'd33:cbp_inter_map=6'd18; 6'd34:cbp_inter_map=6'd20; 6'd35:cbp_inter_map=6'd24;
 		6'd36:cbp_inter_map=6'd19; 6'd37:cbp_inter_map=6'd21; 6'd38:cbp_inter_map=6'd26; 6'd39:cbp_inter_map=6'd28;
 		6'd40:cbp_inter_map=6'd23; 6'd41:cbp_inter_map=6'd27; 6'd42:cbp_inter_map=6'd29; 6'd43:cbp_inter_map=6'd30;
-		6'd44:cbp_inter_map=6'd22; 6'd45:cbp_inter_map=6'd25; 6'd46:cbp_inter_map=6'd41; 6'd47:cbp_inter_map=6'd38;
+		6'd44:cbp_inter_map=6'd22; 6'd45:cbp_inter_map=6'd25; 6'd46:cbp_inter_map=6'd38; 6'd47:cbp_inter_map=6'd41;
 		default: cbp_inter_map = 6'd0;
 		endcase
 	endfunction
@@ -777,6 +777,13 @@ module h264_i_mb_feed #(
 			if (slice_desync_cause == DSC_NONE) begin
 				slice_desync_cause <= cause_i;
 				slice_desync_mb <= mb_addr;
+`ifndef SYNTHESIS
+				// Characterise DSC_SYNTAX (e.g. mb≈241 cbp): site + ue + bit cursor.
+				$display("FEED_DESYNC cause=%0d mb=%0d st=%0d ret_st=%0d ue=%0d abs_bit=%0d rbsp_bits=%0d skip_left=%0d after_skip=%0d mb_type_r=%0d cbp_l=%0h cbp_c=%0h intra=%0d i16=%0d",
+					cause_i, mb_addr, st, ret_st, ue_val, abs_bit, rbsp_bits,
+					skip_left, after_skip_run_r, mb_type_r, cbp_l_r, cbp_c_r,
+					mb_intra_r, is_i16_r);
+`endif
 			end
 		end
 	endtask
