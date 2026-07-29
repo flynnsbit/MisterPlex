@@ -26,6 +26,7 @@
     "DECODE_STUB_FAULT_DROP_INTER_RESIDUAL": "Injected decode_stub inter residual-add drop expected-red fault.",
     "DECODE_STUB_FAULT_DROP_INTER_CLIP": "Injected decode_stub inter Clip1 drop expected-red fault.",
     "DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL": "Injected decode_stub inter chroma residual skip expected-red fault.",
+    "DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR": "Injected decode_stub DPB commit synthetic XOR fill expected-red fault.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",

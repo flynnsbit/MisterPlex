@@ -484,13 +484,41 @@ module decode_stub #(
 	                                                             ({5'd0, dpb_fill_mb_x, 3'd0} + {8'd0, dpb_sample_x});
 	wire [15:0]       dpb_abs_y = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_y, 4'd0} + {8'd0, dpb_sample_y}) :
 	                                                             ({5'd0, dpb_fill_mb_y, 3'd0} + {8'd0, dpb_sample_y});
-	wire [7:0]        dpb_filtered_sample_xor = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
-	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
-	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// ── DPB commit sample source ───────────────────────────────────────
+	// WAS: synthetic XOR/chroma-ramp poisoned every P ref.
+	// NOW (priority):
+	//   USE_REAL_REF_COMMIT → multi-MB recon_store (full-frame self-ref measure)
+	//   else product recon mux: P Clip1 inter_recon_*; IDR MB0 blk0 recon_px; else 128
+	// FAULT_REAL_REF_XOR_FILL / DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR → XOR (must RED).
+	wire [7:0]        dpb_synthetic_sample =
+	                                      (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
+	                                      (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
+	                                                                     (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	wire [7:0]        dpb_y_idx = dpb_fill_sample_idx[7:0];
+	wire [5:0]        dpb_c_idx = dpb_filtered_sample_idx[5:0];
+	wire              dpb_commit_is_p = lat_p_inter;
+	wire [7:0]        dpb_recon_src_y =
+	                      dpb_commit_is_p ? inter_recon_y[dpb_y_idx] :
+	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
+	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
+	                      8'd128;
+	wire [7:0]        dpb_recon_src_u = dpb_commit_is_p ? inter_recon_u[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_v = dpb_commit_is_p ? inter_recon_v[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_sample =
+	                      (dpb_filtered_plane == 2'd0) ? dpb_recon_src_y :
+	                      (dpb_filtered_plane == 2'd1) ? dpb_recon_src_u : dpb_recon_src_v;
 	wire              use_real_ref = USE_REAL_REF_COMMIT && !FAULT_REAL_REF_XOR_FILL;
-	// Real-ref path muxes recon_store_sample (declared with store below).
+	// Real-ref multi-MB store sample (declared with store instance below).
 	wire [7:0]        recon_store_sample;
-	wire [7:0]        dpb_filtered_sample = use_real_ref ? recon_store_sample : dpb_filtered_sample_xor;
+`ifdef DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR
+	wire [7:0]        dpb_filtered_sample = dpb_synthetic_sample;
+`else
+	wire [7:0]        dpb_filtered_sample =
+	                      FAULT_REAL_REF_XOR_FILL ? dpb_synthetic_sample :
+	                      USE_REAL_REF_COMMIT     ? recon_store_sample :
+	                                                dpb_recon_src_sample;
+`endif
+
 	wire [7:0]        dpb_filtered_mb_x_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_x : 8'd0;
 	wire [7:0]        dpb_filtered_mb_y_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_y : 8'd0;
 	wire [1:0]        dpb_filtered_plane_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_plane : 2'd0;
