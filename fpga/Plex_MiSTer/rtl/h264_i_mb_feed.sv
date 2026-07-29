@@ -539,8 +539,14 @@ module h264_i_mb_feed #(
 		.qp_c(feed_qp_c)
 	);
 	wire signed [28:0] feed_chr_dc_had [0:3];
+	// Chroma DC CAVLC emits 4 coeffs; slice the shared 16-wide residual bus.
+	wire signed [15:0] cav_coeff_chr_dc [0:3];
+	assign cav_coeff_chr_dc[0] = cav_coeff[0];
+	assign cav_coeff_chr_dc[1] = cav_coeff[1];
+	assign cav_coeff_chr_dc[2] = cav_coeff[2];
+	assign cav_coeff_chr_dc[3] = cav_coeff[3];
 	h264_chroma_dc_hadamard_inv u_feed_chr_dc_had (
-		.coeff(cav_coeff),
+		.coeff(cav_coeff_chr_dc),
 		.qp_c(feed_qp_c),
 		.dc(feed_chr_dc_had)
 	);
