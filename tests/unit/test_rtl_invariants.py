@@ -399,15 +399,26 @@ def sv_expr_uses_doorbell_offset(expr: str, offset: int) -> bool:
 
 
 def cpp_const_map(text: str) -> dict[str, str]:
+    """Map host constexpr names to their initializer expression text.
+
+    Supports assignment form (``constexpr int kFoo = 1;``) and strong-typed
+    brace-init (``constexpr CodedWidth kFoo{624};``).
+    """
     out: dict[str, str] = {}
-    for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*=\s*([^;]+);", text):
-        name = m.group(1)
+
+    def _add(name: str, value: str) -> None:
+        value = value.strip()
         if name in out:
             fail(
                 f"{name} has multiple active host constexpr definitions. Source-text invariants "
                 "must not be satisfiable by a duplicate decoy definition."
             )
-        out[name] = m.group(2).strip()
+        out[name] = value
+
+    for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*=\s*([^;]+);", text):
+        _add(m.group(1), m.group(2))
+    for m in re.finditer(r"constexpr\s+(?:\w+\s+)+(\w+)\s*\{\s*([^}]+)\s*\}\s*;", text):
+        _add(m.group(1), m.group(2))
     return out
 
 
@@ -1485,17 +1496,17 @@ def check_present_geometry_stride_contract() -> None:
         required = [
             (
                 host_norm,
-                "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width)",
+                "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width.get())",
                 "ARM layout must derive luma stride from coded_width (624), not display/presented width",
             ),
             (
                 host_norm,
-                "constuint64_tchromaLineBytes=static_cast<uint64_t>(geom.coded_width/2)",
+                "constuint64_tchromaLineBytes=static_cast<uint64_t>(geom.coded_width.get()/2)",
                 "ARM layout must derive chroma stride from coded_width/2 (312), not cropped width/2",
             ),
             (
                 host_norm,
-                "constuint32_tyBytes=static_cast<uint32_t>(geom.coded_width*geom.coded_height)",
+                "constuint32_tyBytes=static_cast<uint32_t>(codedPixelCount(geom.coded_width,geom.coded_height))",
                 "ARM plane offsets must use coded_width*coded_height for Y bytes",
             ),
             (
@@ -1505,12 +1516,12 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                "constintrawW=ddrGeometry.coded_width;",
+                "constintrawW=ddrGeometry.coded_width.get();",
                 "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",
             ),
             (
                 media_norm,
-                "constintrawDisplayW=ddrGeometry.display_width;",
+                "constintrawDisplayW=ddrGeometry.display_width.get();",
                 "FFmpeg visible scale width must be the cropped display width (618)",
             ),
             (
@@ -1597,14 +1608,14 @@ def check_present_geometry_stride_contract() -> None:
     )
 
     bad_host_presented_stride = host_nt.replace(
-        "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width)",
-        "constuint64_tlineBytes=static_cast<uint64_t>(geom.presented_width)",
+        "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width.get())",
+        "constuint64_tlineBytes=static_cast<uint64_t>(geom.presented_width.get())",
     )
     if not missing_stride_requirements(bad_host_presented_stride, media_nt, frame_nt):
         fail("deliberately changed ARM luma stride 624→640 did not make the geometry gate red")
     bad_media_display_stride = media_nt.replace(
-        "constintrawW=ddrGeometry.coded_width;",
-        "constintrawW=ddrGeometry.display_width;",
+        "constintrawW=ddrGeometry.coded_width.get();",
+        "constintrawW=ddrGeometry.display_width.get();",
     )
     if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt):
         fail("deliberately changed FFmpeg raw stride 624→618 did not make the geometry gate red")
