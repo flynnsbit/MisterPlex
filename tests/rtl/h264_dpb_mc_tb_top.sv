@@ -6,7 +6,8 @@ module h264_dpb_mc_tb #(
 	parameter FAULT_BAD_MC_ROUND = 0,
 	parameter FAULT_EARLY_REF = 0,
 	parameter FAULT_BAD_PART_MASK = 0,
-	parameter USE_DEBLOCK_WB_CTRL = 0
+	parameter USE_DEBLOCK_WB_CTRL = 0,
+	parameter USE_REF_COMMIT = 0
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -35,6 +36,32 @@ module h264_dpb_mc_tb #(
 	output wire               mem_we,
 	output wire [31:0]        mem_waddr,
 	output wire [7:0]         mem_wdata,
+
+	// Genuine recon → deblock → DPB path (USE_REF_COMMIT=1)
+	input  wire               recon_mb_start,
+	input  wire [7:0]         recon_mb_x,
+	input  wire [7:0]         recon_mb_y,
+	input  wire [10:0]        recon_mb_addr,
+	input  wire               recon_mb_is_ref,
+	input  wire               recon_mb_is_intra,
+	input  wire               recon_frame_done,
+	input  wire [5:0]         recon_qp_y,
+	input  wire [5:0]         recon_qp_c,
+	input  wire [15:0]        recon_nz_luma,
+	input  wire signed [15:0] recon_mv_x,
+	input  wire signed [15:0] recon_mv_y,
+	input  wire [1:0]         recon_ref_idx,
+	input  wire               recon_sample_valid,
+	input  wire [8:0]         recon_sample_idx,
+	input  wire [7:0]         recon_sample,
+	input  wire               recon_sample_done,
+	input  wire               slice_start,
+	input  wire               disable_deblocking,
+	input  wire signed [4:0]  slice_alpha_c0_offset,
+	input  wire signed [4:0]  slice_beta_offset,
+	output wire               deblock_busy,
+	output wire               deblock_mb_done,
+	output wire               dpb_invalidate_refs,
 
 	input  wire               fetch_start,
 	input  wire [7:0]         fetch_mb_x,
@@ -96,7 +123,71 @@ module h264_dpb_mc_tb #(
 	wire dpb_frame_done;
 
 	generate
-		if (USE_DEBLOCK_WB_CTRL) begin : gen_deblock_wb
+		if (USE_REF_COMMIT) begin : gen_ref_commit
+			wire [10:0] wb_mb_addr_w;
+			h264_dpb_ref_commit #(
+				.FRAME_W(624),
+				.FRAME_H(480),
+				.MB_COUNT(1170)
+			) u_ref_commit (
+				.clk(clk), .reset(reset),
+				.slice_start(slice_start),
+				.idr_frame_start(idr_start),
+				.disable_deblocking(disable_deblocking),
+				.slice_alpha_c0_offset(slice_alpha_c0_offset),
+				.slice_beta_offset(slice_beta_offset),
+				.frame_boundary(frame_boundary),
+				.recon_mb_start(recon_mb_start),
+				.recon_mb_x(recon_mb_x),
+				.recon_mb_y(recon_mb_y),
+				.recon_mb_addr(recon_mb_addr),
+				.recon_mb_is_ref(recon_mb_is_ref),
+				.recon_mb_is_intra(recon_mb_is_intra),
+				.recon_frame_done(recon_frame_done),
+				.recon_qp_y(recon_qp_y),
+				.recon_qp_c(recon_qp_c),
+				.recon_nz_luma(recon_nz_luma),
+				.recon_mv_x(recon_mv_x),
+				.recon_mv_y(recon_mv_y),
+				.recon_ref_idx(recon_ref_idx),
+				.recon_sample_valid(recon_sample_valid),
+				.recon_sample_idx(recon_sample_idx),
+				.recon_sample(recon_sample),
+				.recon_sample_done(recon_sample_done),
+				.ref_ready(ref_ready_good),
+				.current_base(current_base),
+				.reference_base(reference_base),
+				.ref_ready_pulse(deblock_ref_ready_pulse),
+				.wb_valid(deblock_wb_valid),
+				.wb_mb_addr(wb_mb_addr_w),
+				.commit_order_error(deblock_commit_order_error),
+				.dpb_invalidate_refs(dpb_invalidate_refs),
+				.deblock_busy(deblock_busy),
+				.deblock_mb_done(deblock_mb_done),
+				.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
+				.mem_rd(mem_rd), .mem_raddr(mem_raddr),
+				.mem_rdata(mem_rdata), .mem_rvalid(mem_rvalid),
+				.fetch_start(fetch_start),
+				.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
+				.fetch_part_mode(fetch_part_mode), .fetch_part_idx(fetch_part_idx),
+				.fetch_part_w(fetch_part_w), .fetch_part_h(fetch_part_h),
+				.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
+				.fetch_busy(fetch_busy), .fetch_done(fetch_done),
+				.fetch_error_no_ref(fetch_error_no_ref),
+				.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
+				.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
+				.luma_origin_x(luma_origin_x), .luma_origin_y(luma_origin_y),
+				.chroma_origin_x(chroma_origin_x), .chroma_origin_y(chroma_origin_y),
+				.luma_window_valid(luma_window_valid_good),
+				.luma_window_idx(luma_window_idx_good),
+				.luma_window_sample(luma_window_sample_good),
+				.chroma_u_window_valid(chroma_u_window_valid_good),
+				.chroma_v_window_valid(chroma_v_window_valid_good),
+				.chroma_window_idx(chroma_window_idx_good),
+				.chroma_window_sample(chroma_window_sample_good)
+			);
+			assign deblock_wb_mb_addr = wb_mb_addr_w;
+		end else if (USE_DEBLOCK_WB_CTRL) begin : gen_deblock_wb
 			wire deblock_wb_is_ref;
 			wire deblock_dpb_invalidate_refs;
 			wire [1:0] deblock_ref_ready_slot;
@@ -119,42 +210,76 @@ module h264_dpb_mc_tb #(
 				.commit_order_error(deblock_commit_order_error)
 			);
 			assign dpb_frame_done = deblock_ref_ready_pulse;
+			assign deblock_busy = 1'b0;
+			assign deblock_mb_done = 1'b0;
+			assign dpb_invalidate_refs = deblock_dpb_invalidate_refs;
+
+			h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
+				.clk(clk), .reset(reset),
+				.idr_start(idr_start), .frame_done(dpb_frame_done),
+				.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
+				.filtered_sample_valid(filtered_sample_valid),
+				.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
+				.filtered_plane(filtered_plane), .filtered_sample_idx(filtered_sample_idx),
+				.filtered_sample(filtered_sample),
+				.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
+				.fetch_start(fetch_start),
+				.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
+				.fetch_part_mode(fetch_part_mode), .fetch_part_idx(fetch_part_idx),
+				.fetch_part_w(fetch_part_w), .fetch_part_h(fetch_part_h),
+				.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
+				.fetch_busy(fetch_busy), .fetch_done(fetch_done), .fetch_error_no_ref(fetch_error_no_ref),
+				.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
+				.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
+				.luma_origin_x(luma_origin_x), .luma_origin_y(luma_origin_y),
+				.chroma_origin_x(chroma_origin_x), .chroma_origin_y(chroma_origin_y),
+				.mem_rd(mem_rd), .mem_raddr(mem_raddr), .mem_rdata(mem_rdata), .mem_rvalid(mem_rvalid),
+				.luma_window_valid(luma_window_valid_good), .luma_window_idx(luma_window_idx_good),
+				.luma_window_sample(luma_window_sample_good),
+				.chroma_u_window_valid(chroma_u_window_valid_good),
+				.chroma_v_window_valid(chroma_v_window_valid_good),
+				.chroma_window_idx(chroma_window_idx_good),
+				.chroma_window_sample(chroma_window_sample_good)
+			);
 		end else begin : gen_direct_frame_done
 			assign deblock_wb_valid = 1'b0;
 			assign deblock_wb_mb_addr = 11'd0;
 			assign deblock_ref_ready_pulse = 1'b0;
 			assign deblock_commit_order_error = 1'b0;
 			assign dpb_frame_done = frame_done;
+			assign deblock_busy = 1'b0;
+			assign deblock_mb_done = 1'b0;
+			assign dpb_invalidate_refs = 1'b0;
+
+			h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
+				.clk(clk), .reset(reset),
+				.idr_start(idr_start), .frame_done(dpb_frame_done),
+				.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
+				.filtered_sample_valid(filtered_sample_valid),
+				.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
+				.filtered_plane(filtered_plane), .filtered_sample_idx(filtered_sample_idx),
+				.filtered_sample(filtered_sample),
+				.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
+				.fetch_start(fetch_start),
+				.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
+				.fetch_part_mode(fetch_part_mode), .fetch_part_idx(fetch_part_idx),
+				.fetch_part_w(fetch_part_w), .fetch_part_h(fetch_part_h),
+				.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
+				.fetch_busy(fetch_busy), .fetch_done(fetch_done), .fetch_error_no_ref(fetch_error_no_ref),
+				.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
+				.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
+				.luma_origin_x(luma_origin_x), .luma_origin_y(luma_origin_y),
+				.chroma_origin_x(chroma_origin_x), .chroma_origin_y(chroma_origin_y),
+				.mem_rd(mem_rd), .mem_raddr(mem_raddr), .mem_rdata(mem_rdata), .mem_rvalid(mem_rvalid),
+				.luma_window_valid(luma_window_valid_good), .luma_window_idx(luma_window_idx_good),
+				.luma_window_sample(luma_window_sample_good),
+				.chroma_u_window_valid(chroma_u_window_valid_good),
+				.chroma_v_window_valid(chroma_v_window_valid_good),
+				.chroma_window_idx(chroma_window_idx_good),
+				.chroma_window_sample(chroma_window_sample_good)
+			);
 		end
 	endgenerate
-
-	h264_dpb_one_ref #(.FRAME_W(624), .FRAME_H(480)) u_dpb (
-		.clk(clk), .reset(reset),
-		.idr_start(idr_start), .frame_done(dpb_frame_done),
-		.ref_ready(ref_ready_good), .current_base(current_base), .reference_base(reference_base),
-		.filtered_sample_valid(filtered_sample_valid),
-		.filtered_mb_x(filtered_mb_x), .filtered_mb_y(filtered_mb_y),
-		.filtered_plane(filtered_plane), .filtered_sample_idx(filtered_sample_idx),
-		.filtered_sample(filtered_sample),
-		.mem_we(mem_we), .mem_waddr(mem_waddr), .mem_wdata(mem_wdata),
-		.fetch_start(fetch_start),
-		.fetch_mb_x(fetch_mb_x), .fetch_mb_y(fetch_mb_y),
-		.fetch_part_mode(fetch_part_mode), .fetch_part_idx(fetch_part_idx),
-		.fetch_part_w(fetch_part_w), .fetch_part_h(fetch_part_h),
-		.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
-		.fetch_busy(fetch_busy), .fetch_done(fetch_done), .fetch_error_no_ref(fetch_error_no_ref),
-		.luma_frac_x(luma_frac_x), .luma_frac_y(luma_frac_y),
-		.chroma_frac_x(chroma_frac_x), .chroma_frac_y(chroma_frac_y),
-		.luma_origin_x(luma_origin_x), .luma_origin_y(luma_origin_y),
-		.chroma_origin_x(chroma_origin_x), .chroma_origin_y(chroma_origin_y),
-		.mem_rd(mem_rd), .mem_raddr(mem_raddr), .mem_rdata(mem_rdata), .mem_rvalid(mem_rvalid),
-		.luma_window_valid(luma_window_valid_good), .luma_window_idx(luma_window_idx_good),
-		.luma_window_sample(luma_window_sample_good),
-		.chroma_u_window_valid(chroma_u_window_valid_good),
-		.chroma_v_window_valid(chroma_v_window_valid_good),
-		.chroma_window_idx(chroma_window_idx_good),
-		.chroma_window_sample(chroma_window_sample_good)
-	);
 
 	h264_inter_mc_part u_mc (
 		.luma_ref_win(luma_ref_win),

@@ -265,6 +265,27 @@ void reset(Sim& s) {
     s.top.frame_slot_i = 0;
     s.top.frame_boundary = 0;
     s.top.fetch_start = 0;
+    s.top.recon_mb_start = 0;
+    s.top.recon_mb_x = 0;
+    s.top.recon_mb_y = 0;
+    s.top.recon_mb_addr = 0;
+    s.top.recon_mb_is_ref = 0;
+    s.top.recon_mb_is_intra = 0;
+    s.top.recon_frame_done = 0;
+    s.top.recon_qp_y = 0;
+    s.top.recon_qp_c = 0;
+    s.top.recon_nz_luma = 0;
+    s.top.recon_mv_x = 0;
+    s.top.recon_mv_y = 0;
+    s.top.recon_ref_idx = 0;
+    s.top.recon_sample_valid = 0;
+    s.top.recon_sample_idx = 0;
+    s.top.recon_sample = 0;
+    s.top.recon_sample_done = 0;
+    s.top.slice_start = 0;
+    s.top.disable_deblocking = 0;
+    s.top.slice_alpha_c0_offset = 0;
+    s.top.slice_beta_offset = 0;
     s.tick();
     s.tick();
     s.top.reset = 0;
@@ -404,22 +425,240 @@ void checkPartMc(Sim& s, const std::array<uint8_t, 441>& luma, const std::array<
     }
 }
 
+
+// Filterable vertical edge recon. H.264 only filters when |p0-q0| < alpha(QP)
+// and the beta neighbour tests pass. QP=28 → alpha=20, beta=7, so a step of
+// 16 with flat sides is filtered (bS=3 internal intra), while 16↔240 is not
+// (content edge). Left half 100 / right half 116 is the measurable witness
+// that POST-deblock samples diverge from PRE before DPB storage.
+uint8_t edgeReconY(int idx) {
+    int x = idx & 15;
+    return static_cast<uint8_t>(x < 8 ? 100 : 116);
+}
+uint8_t edgeReconC(int /*idx*/) { return 128; }
+
+void streamReconMb(Sim& s, int mbx, int mby, int mbAddr, bool terminal, bool intra,
+                   uint16_t nz, int16_t mvx, int16_t mvy) {
+    s.top.recon_mb_start = 1;
+    s.top.recon_mb_x = mbx;
+    s.top.recon_mb_y = mby;
+    s.top.recon_mb_addr = mbAddr;
+    s.top.recon_mb_is_ref = 1;
+    s.top.recon_mb_is_intra = intra ? 1 : 0;
+    s.top.recon_frame_done = terminal ? 1 : 0;
+    s.top.recon_qp_y = 28;
+    s.top.recon_qp_c = 28;
+    s.top.recon_nz_luma = nz;
+    s.top.recon_mv_x = mvx;
+    s.top.recon_mv_y = mvy;
+    s.top.recon_ref_idx = 0;
+    s.tick();
+    s.top.recon_mb_start = 0;
+
+    for (int i = 0; i < 384; ++i) {
+        s.top.recon_sample_valid = 1;
+        s.top.recon_sample_idx = i;
+        if (i < 256) s.top.recon_sample = edgeReconY(i);
+        else s.top.recon_sample = edgeReconC(i);
+        s.top.recon_sample_done = (i == 383);
+        s.tick();
+    }
+    s.top.recon_sample_valid = 0;
+    s.top.recon_sample_done = 0;
+
+    // Wait for deblock_mb_done (or immediate commit under SKIP fault).
+    bool sawDone = false;
+    for (int guard = 0; guard < 4000 && !sawDone; ++guard) {
+        s.tick();
+        sawDone = sawDone || s.top.deblock_mb_done || s.top.deblock_wb_valid;
+    }
+    if (!sawDone) {
+        throw std::runtime_error("ref-commit: deblock/mb commit never completed mb=" +
+                                 std::to_string(mbAddr));
+    }
+    // Drain a few cycles so writeback_ctrl samples settle.
+    for (int i = 0; i < 4; ++i) s.tick();
+}
+
+int runGenuineRefCommit(const std::string& nalFixture) {
+    int nals = countAnnexBNals(nalFixture);
+    if (nals < 2) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit requires >=2 NAL units, got "
+                  << nals << "\n";
+        return 1;
+    }
+
+    Sim s;
+    reset(s);
+    s.top.slice_start = 1;
+    s.tick();
+    s.top.slice_start = 0;
+    s.tick();
+
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit early reference before any MB\n";
+        return 1;
+    }
+
+    // Two adjacent intra MBs with a strong internal vertical edge. MB0 alone
+    // filters its internal edge; MB1 filters against MB0's left neighbour so
+    // the POST store is a real deblocked reference picture, not a diagnostic
+    // XOR pattern.
+    std::vector<uint8_t> preSnap(DPB_BYTES, 0xee);
+    auto capturePre = [&](int mbx, int mby) {
+        for (int i = 0; i < 256; ++i) {
+            int x = mbx * 16 + (i & 15);
+            int y = mby * 16 + (i >> 4);
+            preSnap[i420Addr(0, 0, x, y)] = edgeReconY(i);
+        }
+        for (int i = 0; i < 64; ++i) {
+            int x = mbx * 8 + (i & 7);
+            int y = mby * 8 + (i >> 3);
+            preSnap[i420Addr(0, 1, x, y)] = edgeReconC(i);
+            preSnap[i420Addr(0, 2, x, y)] = edgeReconC(i);
+        }
+    };
+    capturePre(0, 0);
+    capturePre(1, 0);
+
+    streamReconMb(s, 0, 0, 0, false, true, 0xFFFF, 0, 0);
+    if (s.top.ref_ready || s.top.deblock_ref_ready_pulse) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit promoted before frame boundary"
+                  << " ref_ready=" << int(s.top.ref_ready)
+                  << " pulse=" << int(s.top.deblock_ref_ready_pulse) << "\n";
+        return 1;
+    }
+    streamReconMb(s, 1, 0, 1, true, true, 0xFFFF, 0, 0);
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit ref_ready before frame_boundary\n";
+        return 1;
+    }
+
+    s.top.frame_boundary = 1;
+    s.tick();
+    s.top.frame_boundary = 0;
+    if (!s.top.deblock_ref_ready_pulse) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit missing ref_ready_pulse at boundary\n";
+        return 1;
+    }
+    // One-cycle delayed promote into DPB.
+    s.tick();
+    s.tick();
+    if (!s.top.ref_ready || s.top.reference_base != 0) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit promotion mismatch"
+                  << " ref_ready=" << int(s.top.ref_ready)
+                  << " ref_base=" << s.top.reference_base << "\n";
+        return 1;
+    }
+
+    // POST-deblock must differ from PRE on the strong vertical edge columns.
+    int edgeDiff = 0;
+    for (int y = 0; y < 16; ++y) {
+        for (int x : {6, 7, 8, 9}) {
+            uint32_t a = i420Addr(0, 0, x, y);
+            if (s.mem[a] != preSnap[a]) ++edgeDiff;
+        }
+    }
+    if (edgeDiff < 8) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit stored PRE/unfiltered samples"
+                  << " edge_px_changed=" << edgeDiff
+                  << " (deblock did not modify the internal vertical edge before DPB write)\n";
+        return 1;
+    }
+
+    // MC fetch from the promoted POST-deblock reference must return the stored
+    // samples (zero-MV integer fetch of MB0).
+    s.top.fetch_mb_x = 0;
+    s.top.fetch_mb_y = 0;
+    s.top.fetch_part_mode = 0;
+    s.top.fetch_part_idx = 0;
+    s.top.fetch_part_w = 16;
+    s.top.fetch_part_h = 16;
+    s.top.fetch_mv_x_qpel = 0;
+    s.top.fetch_mv_y_qpel = 0;
+    s.top.fetch_start = 1;
+    s.tick();
+    s.top.fetch_start = 0;
+
+    std::array<uint8_t, 441> luma{};
+    std::array<bool, 441> lSeen{};
+    int lc = 0;
+    bool sawDone = false;
+    for (int guard = 0; guard < 800 && (lc < 441 || !sawDone); ++guard) {
+        s.tick();
+        if (s.top.luma_window_valid) {
+            int idx = s.top.luma_window_idx;
+            // origin (0,0), window offset -2..+18
+            int sx = std::clamp((idx % 21) - 2, 0, W - 1);
+            int sy = std::clamp((idx / 21) - 2, 0, H - 1);
+            uint8_t want = s.mem[i420Addr(0, 0, sx, sy)];
+            if (s.top.luma_window_sample != want) {
+                std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit MC fetch mismatch idx="
+                          << idx << " got=" << int(s.top.luma_window_sample)
+                          << " want=" << int(want) << " src=(" << sx << "," << sy << ")\n";
+                return 1;
+            }
+            if (!lSeen[static_cast<size_t>(idx)]) {
+                lSeen[static_cast<size_t>(idx)] = true;
+                ++lc;
+            }
+            luma[static_cast<size_t>(idx)] = s.top.luma_window_sample;
+        }
+        sawDone = sawDone || s.top.fetch_done;
+    }
+    if (lc != 441 || !sawDone) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit incomplete fetch luma="
+                  << lc << " done=" << sawDone << "\n";
+        return 1;
+    }
+
+    // IDR must invalidate.
+    s.top.idr_start = 1;
+    s.tick();
+    s.top.idr_start = 0;
+    s.tick();
+    if (s.top.ref_ready) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit IDR did not invalidate prior reference\n";
+        return 1;
+    }
+    s.top.fetch_start = 1;
+    s.tick();
+    s.top.fetch_start = 0;
+    if (!s.top.fetch_error_no_ref) {
+        std::cerr << "FAIL h264_dpb_mc RTL: genuine ref-commit fetch without ref did not error\n";
+        return 1;
+    }
+
+    std::cout << "OK h264_dpb_mc genuine ref-commit: recon→deblock→DPB→promote→MC"
+              << " edge_px_changed=" << edgeDiff
+              << " luma_window=" << lc
+              << " reference_picture_state=decoded_deblocked_via_h264_dpb_ref_commit"
+              << " nals=" << nals
+              << " fixture=" << nalFixture << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     try {
         bool seamOnly = false;
+        bool genuineRef = false;
         std::string nalFixture = "tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264";
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--deblock-dpb-seam")
                 seamOnly = true;
+            else if (arg == "--genuine-ref-commit")
+                genuineRef = true;
             else
                 nalFixture = arg;
         }
         if (seamOnly)
             return runDeblockDpbSeam(nalFixture);
+        if (genuineRef)
+            return runGenuineRefCommit(nalFixture);
         int nals = countAnnexBNals(nalFixture);
         if (nals < 2) {
             std::cerr << "FAIL h264_dpb_mc RTL: bench requires >=2 NAL units, got " << nals << "\n";
