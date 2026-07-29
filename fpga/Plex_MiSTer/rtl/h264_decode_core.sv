@@ -1056,6 +1056,10 @@ module h264_decode_core #(
         .qp(qp_launch),
         .dc(product_intra_i16_dc)
     );
+    // Per-4x4 block_valid→recon_pixels path is unused on product: I4x4
+    // within-MB neighbours live in h264_decode_top.local_recon; cross-MB
+    // neighbours publish on mb_commit via recon_y_mb (see h264_intra_nb_ctx).
+    // Keep ports tied so the optional ST_GBLK path stays synthesizable/inert.
     genvar intra_gi;
     generate
         for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_ctx_px
@@ -1086,6 +1090,9 @@ module h264_decode_core #(
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
+        // block_valid intentionally 0: product does not use mid-MB nb_ctx
+        // block publish (decode_top owns within-MB taps). Luma edges publish
+        // from recon_y_mb on mb_commit — do not re-tie that to 128.
         .block_valid(1'b0),
         .recon_pixels(product_intra_ctx_recon_pixels),
         .mb_commit(product_intra_recon_valid),

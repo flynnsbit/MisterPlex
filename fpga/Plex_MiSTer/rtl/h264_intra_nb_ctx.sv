@@ -297,10 +297,16 @@ module h264_intra_nb_ctx #(
             end
 
             if (mb_commit) begin
-                // Snapshot edges into regs, then sequential M10K publish.
+                // Product path commits full-MB recon (recon_y_mb), not the
+                // optional per-4x4 block_valid path. Snapshot luma edges from
+                // recon_y_mb (row-major {row,col}) — mb_y_buf alone stays at
+                // reset 128 when block_valid is unused and would publish grey.
+                for (r = 0; r < 16; r = r + 1)
+                    for (c = 0; c < 16; c = c + 1)
+                        mb_y_buf[r][c] <= fl(recon_y_mb[{r[3:0], c[3:0]}]);
                 for (i = 0; i < 16; i = i + 1) begin
-                    pub_y_row[i] <= fl(mb_y_buf[15][i]);
-                    pub_y_col[i] <= fl(mb_y_buf[i][15]);
+                    pub_y_row[i] <= fl(recon_y_mb[{4'd15, i[3:0]}]); // bottom row
+                    pub_y_col[i] <= fl(recon_y_mb[{i[3:0], 4'd15}]); // right col
                 end
                 for (r = 0; r < 8; r = r + 1)
                     for (c = 0; c < 8; c = c + 1) begin
@@ -329,6 +335,22 @@ module h264_intra_nb_ctx #(
                     if (hy != 8'd0)
                         ay_raddr <= ay_base + 4'd15;
                 end else if (pend_gmb) begin
+                    // Re-sample left AFTER any prior ST_PUB completed. mb_start may
+                    // have fired while the previous MB was still publishing, so
+                    // left_y_col was stale at the mb_start edge — fix it here.
+                    if (mb_avail_left) begin
+                        for (i = 0; i < 16; i = i + 1)
+                            nb_left[i] <= fl(left_y_col[i]);
+                        for (i = 0; i < 8; i = i + 1) begin
+                            chroma_u_left[i] <= left_u_col[i];
+                            chroma_v_left[i] <= left_v_col[i];
+                        end
+                    end
+                    if (mb_avail_topleft) begin
+                        nb_topleft <= fl(row_tl_y);
+                        chroma_u_top_left <= row_tl_u;
+                        chroma_v_top_left <= row_tl_v;
+                    end
                     pend_gmb <= 1'b0;
                     if (mb_avail_top)
                         st <= ST_GTOP;
@@ -564,5 +586,4 @@ module h264_intra_nb_ctx #(
         end
     end
 
-    wire _unused_y = |recon_y_mb[0];
 endmodule
