@@ -565,7 +565,7 @@ module h264_i_mb_feed #(
 	assign cav_coeff_chr_dc[3] = cav_coeff[3];
 	h264_chroma_dc_hadamard_inv u_feed_chr_dc_had (
 		.coeff(cav_coeff_chr_dc),
-		.qp(feed_qp_c),
+		.qp_c(feed_qp_c),
 		.dc(feed_chr_dc_had)
 	);
 	wire [2:0] feed_chr_ac_i = res_step - STEP_CHR_AC0;

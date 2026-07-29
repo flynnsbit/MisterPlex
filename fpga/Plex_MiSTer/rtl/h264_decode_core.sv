@@ -794,7 +794,7 @@ module h264_decode_core #(
     wire signed [28:0] res_chroma_dc_new [0:3];
     h264_chroma_dc_hadamard_inv u_product_res_chroma_dc (
         .coeff(res_chroma_dc_coeff),
-        .qp(res_qp_c),
+        .qp_c(res_qp_c),
         .dc(res_chroma_dc_new)
     );
 
