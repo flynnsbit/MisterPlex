@@ -412,9 +412,18 @@ module ddr_frame_store #(
 	wire signed [11:0] u_s = {4'd0, u_pix} - 12'sd128;
 	wire signed [11:0] v_s = {4'd0, v_pix} - 12'sd128;
 	wire signed [20:0] y_ext = {{9{y_s[11]}}, y_s};
-	wire signed [20:0] r_calc_w = (y_ext <<< 8) + (21'sd359 * v_s);
-	wire signed [20:0] g_calc_w = (y_ext <<< 8) - (21'sd88 * u_s) - (21'sd183 * v_s);
-	wire signed [20:0] b_calc_w = (y_ext <<< 8) + (21'sd454 * u_s);
+	// BT.601 YUV→RGB coefficients as shift/add — never `*` (0 DSP, fewer ALMs).
+	// 359 = 256+64+32+4+2+1, 88 = 64+16+8, 183 = 128+32+16+4+2+1, 454 = 256+128+64+4+2.
+	wire signed [20:0] v_x359 =
+		(v_s <<< 8) + (v_s <<< 6) + (v_s <<< 5) + (v_s <<< 2) + (v_s <<< 1) + v_s;
+	wire signed [20:0] u_x88  = (u_s <<< 6) + (u_s <<< 4) + (u_s <<< 3);
+	wire signed [20:0] v_x183 =
+		(v_s <<< 7) + (v_s <<< 5) + (v_s <<< 4) + (v_s <<< 2) + (v_s <<< 1) + v_s;
+	wire signed [20:0] u_x454 =
+		(u_s <<< 8) + (u_s <<< 7) + (u_s <<< 6) + (u_s <<< 2) + (u_s <<< 1);
+	wire signed [20:0] r_calc_w = (y_ext <<< 8) + v_x359;
+	wire signed [20:0] g_calc_w = (y_ext <<< 8) - u_x88 - v_x183;
+	wire signed [20:0] b_calc_w = (y_ext <<< 8) + u_x454;
 	wire signed [11:0] r_calc = r_calc_w[19:8];
 	wire signed [11:0] g_calc = g_calc_w[19:8];
 	wire signed [11:0] b_calc = b_calc_w[19:8];

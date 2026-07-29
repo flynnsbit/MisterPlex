@@ -83,7 +83,10 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 set_global_assignment -name VERILOG_MACRO "DECODE_REAL_INTRA=0"
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
-set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
+// Area: 8 line slots * 3 planes dual-clock RAM + O(n^2) refill score burned
+// ~3k ALMs in ddr_frame_store. 4 lines is the default non-macro path and enough
+// for progressive 480p with DDR bursts; underrun counters remain the safety net.
+set_global_assignment -name VERILOG_MACRO "FRAME_LINES_4=1"
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.

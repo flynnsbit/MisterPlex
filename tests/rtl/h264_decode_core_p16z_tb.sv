@@ -138,6 +138,7 @@ module h264_decode_core_p16z_tb #(
 		.dpb_rd_stall(1'b0),
 		.constrained_intra_pred_flag(1'b0),
 		.num_ref_idx_l0_active(8'd1),
+		.decode_enable(1'b1),
 		.dpb_ref_swap(),
 		.frame_done(frame_done),
 		.frame_mb_count(frame_mb_count),

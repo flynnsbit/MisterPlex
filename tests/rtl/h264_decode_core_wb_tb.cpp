@@ -106,8 +106,18 @@ void driveMb(Sim& s, int mbX, int mbY, bool isRef) {
 }
 
 bool waitForIdle(Sim& s) {
-    for (int i = 0; i < 800; ++i) {
+    for (int i = 0; i < 4000; ++i) {
         if (!s.top.busy && !s.top.recon_mb_valid) return true;
+        s.tick();
+    }
+    return false;
+}
+
+// Deblock identity path emits AFTER the core leaves ST_WRITE (and often after
+// busy clears for non-terminal MBs). Wait for the DPB write count, not busy.
+bool waitForWrites(Sim& s, std::size_t want) {
+    for (int i = 0; i < 8000; ++i) {
+        if (s.writes.size() >= want) return true;
         s.tick();
     }
     return false;
@@ -144,6 +154,11 @@ int main(int argc, char** argv) {
     reset(s);
 
     driveMb(s, 1, 0, true);
+    if (!waitForWrites(s, 384)) {
+        std::cerr << "FAIL h264_decode_core writeback scoreboard: first MB write count "
+                  << s.writes.size() << " < 384 (busy=" << int(s.top.busy) << ")\n";
+        return 1;
+    }
     if (!waitForIdle(s)) {
         std::cerr << "FAIL h264_decode_core writeback scoreboard: first MB did not return idle\n";
         return 1;
@@ -157,7 +172,12 @@ int main(int argc, char** argv) {
 
     const std::size_t secondStart = s.writes.size();
     driveMb(s, MB_W - 1, MB_H - 1, true);
-    for (int i = 0; i < 800 && !s.frameDoneSeen; ++i) s.tick();
+    if (!waitForWrites(s, secondStart + 384)) {
+        std::cerr << "FAIL h264_decode_core writeback scoreboard: second MB write count "
+                  << (s.writes.size() - secondStart) << " < 384\n";
+        return 1;
+    }
+    for (int i = 0; i < 4000 && !s.frameDoneSeen; ++i) s.tick();
     rc = checkMbWrites(s.writes, secondStart, MB_W - 1, MB_H - 1);
     if (rc) return rc;
     if (!s.frameDoneSeen) {
