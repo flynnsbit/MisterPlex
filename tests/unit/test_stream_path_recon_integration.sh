@@ -32,6 +32,7 @@ RTL_PREFETCH="$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_prefetch.sv"
 RTL_FIFO="$ROOT/fpga/Plex_MiSTer/rtl/bitstream_fifo.sv"
 RTL_SCAN="$ROOT/fpga/Plex_MiSTer/rtl/nalu_scanner.sv"
 RTL_RBSPWIN="$ROOT/fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv"
+RTL_IMBFEED="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv"
 RTL_SPS="$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
 RTL_PPS="$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
 RTL_CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
@@ -53,7 +54,7 @@ GOLD="$ROOT/build/p3_golden/mb0_stream_path_integration.json"
 BUILD="$ROOT/build/verilator/stream_path_recon_integration"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_recon_integration_fault"
 
-for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
+for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_IMBFEED" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
          "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
@@ -61,6 +62,7 @@ for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIF
   fi
 done
 for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv rtl/ddr_bitstream_prefetch.sv rtl/bitstream_fifo.sv rtl/nalu_scanner.sv rtl/h264_rbsp_window.sv \
+           rtl/h264_i_mb_feed.sv \
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
            rtl/h264_decode_top.sv rtl/h264_decode_core.sv rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_intra_pred.sv rtl/h264_intra_nb_ctx.sv rtl/h264_deblock.sv rtl/h264_dpb.sv; do
   if ! grep -q "$rtl" "$QIP"; then
@@ -80,14 +82,14 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
   --Mdir "$BUILD" \
   --top-module stream_path_recon_integration_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
+  "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_IMBFEED" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
   "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
   --top-module stream_path_recon_integration_tb_top -GFAULT_RECON_SIG_ZERO=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
+  "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_PREFETCH" "$RTL_FIFO" "$RTL_SCAN" "$RTL_RBSPWIN" "$RTL_IMBFEED" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
   "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
 
 "$BUILD/Vstream_path_recon_integration_tb_top" normal "$BITSTREAM" "$GOLD"

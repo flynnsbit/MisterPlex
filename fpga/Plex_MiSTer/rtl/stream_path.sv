@@ -352,6 +352,33 @@ module stream_path #(
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
+	// Forward declarations for the I-MB residual feeder (instantiated below).
+	wire [15:0] feed_i4_pred_mode_flags;
+	wire [47:0] feed_i4_rem_modes;
+	wire        feed_i4_modes_present;
+	wire [1:0]  feed_i16_mode;
+	wire [1:0]  feed_chroma_pred_mode;
+	wire [3:0]  feed_cbp_luma;
+	wire [1:0]  feed_cbp_chroma;
+	wire signed [5:0] feed_mb_qp_delta;
+	wire [5:0]  feed_mb_qp_y;
+	wire [15:0] feed_mb_residual_bit_offset;
+	wire        feed_busy;
+	wire        feed_frame_done;
+	wire        feed_error;
+	wire [15:0] feed_rbsp_request_offset;
+	wire        feed_rbsp_request_valid;
+	wire        core_mb_type_valid;
+	wire [4:0]  core_mb_type;
+	wire [4:0]  core_intra_blocks_done;
+	wire        core_luma4x4_valid;
+	wire [3:0]  core_luma4x4_idx;
+	wire [5:0]  core_luma4x4_qp;
+	wire [4:0]  core_luma4x4_total_coeff;
+	wire [1:0]  core_luma4x4_trailing_ones;
+	wire signed [15:0] core_luma4x4_coeff_zigzag [0:15];
+	wire        core_busy;
+
 	function automatic [1:0] core_i4_bx;
 		input [3:0] idx;
 		begin
@@ -421,10 +448,10 @@ module stream_path #(
 					core_i4_modes_calc[left_idx] : core_i4_modes_calc[top_idx];
 			else
 				pred_mode = 4'd2;
-			rem_mode = sl_i4_rem_modes[core_mi * 3 +: 3];
-			if (!sl_i4_modes_present)
+			rem_mode = feed_i4_rem_modes[core_mi * 3 +: 3];
+			if (!feed_i4_modes_present)
 				core_i4_modes_calc[core_mi] = 4'd2;
-			else if (sl_i4_pred_mode_flags[core_mi])
+			else if (feed_i4_pred_mode_flags[core_mi])
 				core_i4_modes_calc[core_mi] = pred_mode;
 			else
 				core_i4_modes_calc[core_mi] = (rem_mode < pred_mode[2:0]) ?
@@ -439,159 +466,23 @@ module stream_path #(
 		end
 	endgenerate
 
-	reg core_luma4x4_valid;
-	reg [3:0] core_luma4x4_idx;
-	reg [5:0] core_luma4x4_qp;
-	reg [4:0] core_luma4x4_total_coeff;
-	reg [1:0] core_luma4x4_trailing_ones;
-	reg signed [15:0] core_luma4x4_coeff_zigzag [0:15];
-	reg signed [15:0] core_luma4x4_latched [0:15][0:15];
-	reg core_luma_feed_active;
-	reg [3:0] core_luma_feed_idx;
-	integer core_li;
-	integer core_lj;
-
-	// ── Full-frame macroblock sweep ─────────────────────────────────────────
-	// The slice header parser only hands over the FIRST macroblock's residual,
-	// so the core used to reconstruct exactly one macroblock per slice and the
-	// other 1169 stayed untouched.  Replay that residual across every macroblock
-	// of the frame in raster order: each macroblock gets its own position, its
-	// own neighbour context and its own prediction, so the reconstruction is
-	// different for every macroblock even though the coefficients repeat.  This
-	// is the driver that makes the core paint a whole picture; the per-macroblock
-	// residual walker replaces the replay once the parser can deliver it.
-	localparam [2:0] SW_IDLE  = 3'd0;
-	localparam [2:0] SW_START = 3'd1;
-	localparam [2:0] SW_GAP   = 3'd2;
-	localparam [2:0] SW_FEED  = 3'd3;
-	localparam [2:0] SW_BLKACK = 3'd4;
-	localparam [2:0] SW_WAIT  = 3'd5;
-
-	reg [2:0]  sweep_state;
-	reg [15:0] sweep_mb;
-	reg [15:0] sweep_mb_total;
-	reg [15:0] sweep_guard;
-	reg [5:0]  sweep_blk_guard;
-	reg        core_mb_type_valid;
-	wire [4:0] core_intra_blocks_done;
-	wire [15:0] sweep_mb_total_next = {8'd0, sps_mb_w} * {8'd0, sps_mb_h};
-	// The reconstruction front-end has accepted this block once its counter has
-	// moved past the block index we are presenting.
-	wire sweep_blk_taken = (core_intra_blocks_done > {1'b0, core_luma_feed_idx});
-
-	always @(posedge clk) begin
-		core_luma4x4_valid <= 1'b0;
-		core_mb_type_valid <= 1'b0;
-		if (reset | flush) begin
-			core_luma_feed_active <= 1'b0;
-			core_luma_feed_idx <= 4'd0;
-			core_luma4x4_idx <= 4'd0;
-			core_luma4x4_qp <= 6'd0;
-			core_luma4x4_total_coeff <= 5'd0;
-			core_luma4x4_trailing_ones <= 2'd0;
-			sweep_state <= SW_IDLE;
-			sweep_mb <= 16'd0;
-			sweep_mb_total <= 16'd0;
-			sweep_guard <= 16'd0;
-			sweep_blk_guard <= 6'd0;
-			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
-				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
-				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
-			end
-		end else begin
-			case (sweep_state)
-			SW_IDLE: begin
-				if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present &&
-				    (sweep_mb_total_next != 16'd0)) begin
-					core_luma4x4_qp <= sl_place_qp;
-					for (core_li = 0; core_li < 16; core_li = core_li + 1)
-						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
-							core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
-					sweep_mb <= 16'd0;
-					sweep_mb_total <= sweep_mb_total_next;
-					sweep_state <= SW_START;
-				end
-			end
-
-			SW_START: begin
-				core_mb_type_valid <= 1'b1;
-				sweep_guard <= 16'd0;
-				sweep_state <= SW_GAP;
-			end
-
-			// One idle edge so the core's macroblock position registers and the
-			// Intra_16x16 DC front-end settle before the residual blocks land.
-			SW_GAP: begin
-				core_luma_feed_active <= 1'b1;
-				core_luma_feed_idx <= 4'd0;
-				sweep_state <= SW_FEED;
-			end
-
-			SW_FEED: begin
-				core_luma4x4_valid <= 1'b1;
-				core_luma4x4_idx <= core_luma_feed_idx;
-				core_luma4x4_total_coeff <= 5'd16;
-				core_luma4x4_trailing_ones <= 2'd0;
-				for (core_li = 0; core_li < 16; core_li = core_li + 1)
-					core_luma4x4_coeff_zigzag[core_li] <= core_luma4x4_latched[core_luma_feed_idx][core_li];
-				sweep_blk_guard <= 6'd0;
-				sweep_state <= SW_BLKACK;
-			end
-
-			// Present one block at a time and only advance once the core's
-			// reconstruction pipeline has actually consumed it.  Re-present the
-			// same block if it was dropped (Intra_16x16 prediction not ready
-			// yet), and abandon the macroblock if the core never takes it.
-			SW_BLKACK: begin
-				sweep_guard <= sweep_guard + 16'd1;
-				sweep_blk_guard <= sweep_blk_guard + 6'd1;
-				if (sweep_guard == 16'hFFFF) begin
-					core_luma_feed_active <= 1'b0;
-					sweep_guard <= 16'd0;
-					sweep_state <= SW_WAIT;
-				end else if (sweep_blk_taken) begin
-					if (core_luma_feed_idx == 4'd15) begin
-						core_luma_feed_active <= 1'b0;
-						sweep_guard <= 16'd0;
-						sweep_state <= SW_WAIT;
-					end else begin
-						core_luma_feed_idx <= core_luma_feed_idx + 4'd1;
-						sweep_state <= SW_FEED;
-					end
-				end else if (sweep_blk_guard == 6'h3F) begin
-					sweep_state <= SW_FEED;
-				end
-			end
-
-			// Wait for the core to drain reconstruction + writeback for this
-			// macroblock.  The guard keeps the sweep from wedging the whole
-			// picture if the core never lowers busy.
-			SW_WAIT: begin
-				sweep_guard <= sweep_guard + 16'd1;
-				if ((!core_busy && (sweep_guard > 16'd3)) || (sweep_guard == 16'hFFFF)) begin
-					if ((sweep_mb + 16'd1) >= sweep_mb_total)
-						sweep_state <= SW_IDLE;
-					else begin
-						sweep_mb <= sweep_mb + 16'd1;
-						sweep_state <= SW_START;
-					end
-				end
-			end
-
-			default: sweep_state <= SW_IDLE;
-			endcase
-		end
-	end
+	// ── Per-MB I-slice residual feed (no MB0 coeff replay) ──────────────────
+	// slice_hdr_parser only exposes the FIRST macroblock.  h264_i_mb_feed walks
+	// real CAVLC residual from the whole-slice RBSP window for every MB and
+	// parses subsequent I-MB syntax so each macroblock gets its own coeffs.
 
 	// Whole-slice RBSP store with a real sliding window.  The old 64-byte
 	// capture could never answer rbsp_request_offset, so the core's request was
 	// dropped on the floor and every macroblock past the first read the same 64
 	// bytes.  h264_rbsp_window holds the entire emulation-prevention-stripped
-	// VCL NAL and serves the core's 64-byte window combinationally at whatever
-	// offset it asks for.
-	wire [15:0] core_rbsp_request_offset;
-	wire        core_rbsp_request_valid;
+	// VCL NAL and serves a 64-byte window combinationally at whatever offset
+	// the active consumer (I-MB feed or P residual walker) asks for.
+	wire [15:0] core_rbsp_request_offset_raw;
+	wire        core_rbsp_request_valid_raw;
+	wire [15:0] core_rbsp_request_offset =
+		feed_busy ? feed_rbsp_request_offset : core_rbsp_request_offset_raw;
+	wire        core_rbsp_request_valid =
+		feed_busy ? feed_rbsp_request_valid : core_rbsp_request_valid_raw;
 	wire [7:0]  core_rbsp_byte [0:63];
 	wire [15:0] core_rbsp_window_base;
 	wire [15:0] core_rbsp_avail;
@@ -617,6 +508,77 @@ module stream_path #(
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
 		.overflow(core_rbsp_overflow)
+	);
+
+	// Start the feeder once the first-MB residual probe is placed AND the VCL
+	// RBSP capture has finished (window holds the whole NAL).  One-shot: the
+	// feeder latches on the rising edge of slice_go.
+	reg sl_luma_blocks_seen;
+	reg feed_started;
+	wire feed_slice_go = sl_luma_blocks_seen && core_rbsp_complete && sl_is_i &&
+	                     (sps_mb_w != 8'd0) && (sps_mb_h != 8'd0) &&
+	                     !feed_started && !feed_busy;
+	always @(posedge clk) begin
+		if (reset | flush | vcl_cap_clear) begin
+			sl_luma_blocks_seen <= 1'b0;
+			feed_started <= 1'b0;
+		end else begin
+			if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present)
+				sl_luma_blocks_seen <= 1'b1;
+			// Stay started for this VCL NAL even after frame_feed_done so we
+			// do not immediately re-arm on the same sticky complete/present.
+			if (feed_slice_go)
+				feed_started <= 1'b1;
+		end
+	end
+
+	h264_i_mb_feed #(
+		.MB_W_MAX(40)
+	) i_mb_feed (
+		.clk(clk),
+		.reset(reset | flush),
+		.slice_go(feed_slice_go),
+		.slice_is_i(sl_is_i),
+		.mb_width(sps_mb_w),
+		.mb_height(sps_mb_h),
+		.first_mb_in_slice(sl_first),
+		.slice_qp_y(sl_qp),
+		.first_mb_type(sl_mbt),
+		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
+		.first_i4_rem_modes(sl_i4_rem_modes),
+		.first_i4_modes_present(sl_i4_modes_present),
+		.first_cbp_luma(sl_first_mb_cbp_luma),
+		.first_cbp_chroma(sl_first_mb_cbp_chroma),
+		.first_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.rbsp_byte(core_rbsp_byte),
+		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_request_offset(feed_rbsp_request_offset),
+		.rbsp_request_valid(feed_rbsp_request_valid),
+		.rbsp_length(core_rbsp_length),
+		.rbsp_complete(core_rbsp_complete),
+		.core_busy(core_busy),
+		.core_intra_blocks_done(core_intra_blocks_done),
+		.mb_type_valid(core_mb_type_valid),
+		.mb_type(core_mb_type),
+		.i4_pred_mode_flags(feed_i4_pred_mode_flags),
+		.i4_rem_modes(feed_i4_rem_modes),
+		.i4_modes_present(feed_i4_modes_present),
+		.intra16x16_mode(feed_i16_mode),
+		.chroma_pred_mode(feed_chroma_pred_mode),
+		.cbp_luma(feed_cbp_luma),
+		.cbp_chroma(feed_cbp_chroma),
+		.mb_qp_delta(feed_mb_qp_delta),
+		.mb_qp_y(feed_mb_qp_y),
+		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
+		.luma4x4_valid(core_luma4x4_valid),
+		.luma4x4_idx(core_luma4x4_idx),
+		.luma4x4_qp(core_luma4x4_qp),
+		.luma4x4_total_coeff(core_luma4x4_total_coeff),
+		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
+		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.busy(feed_busy),
+		.frame_feed_done(feed_frame_done),
+		.error(feed_error)
 	);
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
@@ -651,7 +613,6 @@ module stream_path #(
 	end
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
-	wire core_busy;
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
 	wire core_error;
@@ -669,9 +630,6 @@ module stream_path #(
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
 
-	wire [1:0] core_i16_pred_mode =
-		(sl_mbt >= 8'd1 && sl_mbt <= 8'd24) ? (sl_mbt[1:0] - 2'd1) : 2'd2;
-
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
 		.FRAME_H(CORE_FRAME_H)
@@ -688,18 +646,18 @@ module stream_path #(
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
-		.rbsp_request_offset(core_rbsp_request_offset),
-		.rbsp_request_valid(core_rbsp_request_valid),
+		.rbsp_request_offset(core_rbsp_request_offset_raw),
+		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(core_mb_type_valid),
-		.mb_type(sl_mbt[4:0]),
-		.mb_skip(first_mb_p_skip),
+		.mb_type(core_mb_type),
+		.mb_skip(1'b0),
 		.intra4x4_modes(core_i4_modes),
-		.intra16x16_mode(core_i16_pred_mode),
-		.chroma_pred_mode(2'd0),
-		.cbp_luma(sl_first_mb_cbp_luma),
-		.cbp_chroma(sl_first_mb_cbp_chroma),
-		.mb_qp_delta(sl_qpd[5:0]),
-		.mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.intra16x16_mode(feed_i16_mode),
+		.chroma_pred_mode(feed_chroma_pred_mode),
+		.cbp_luma(feed_cbp_luma),
+		.cbp_chroma(feed_cbp_chroma),
+		.mb_qp_delta(feed_mb_qp_delta),
+		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),
@@ -827,9 +785,9 @@ module stream_path #(
 	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
-	             core_luma4x4_valid | core_luma_feed_active | core_dpb_wr_en |
-	             core_mb_type_valid | |sweep_state | |sweep_mb | |sweep_mb_total |
-	             |core_intra_blocks_done | |sweep_blk_guard |
+	             core_luma4x4_valid | core_dpb_wr_en |
+	             core_mb_type_valid | feed_busy | feed_frame_done | feed_error |
+	             |core_intra_blocks_done | |feed_cbp_luma | |feed_mb_residual_bit_offset |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
