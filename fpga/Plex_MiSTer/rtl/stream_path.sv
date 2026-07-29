@@ -312,6 +312,7 @@ module stream_path #(
 		.pps_ready(pps_valid),
 		.deblock_ctrl(pps_deblock),
 		.pic_init_qp(pps_qp),
+		.pps_num_ref_idx_l0_default_minus1(pps_nref),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),

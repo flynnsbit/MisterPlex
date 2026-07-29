@@ -203,6 +203,7 @@ module h264_i_mb_feed #(
 	reg [15:0] guard;
 	reg        win_armed;
 	reg [15:0] skip_left;
+	reg        after_skip_run_r; // 1: skip-run just finished → next is coded MB
 	reg [2:0]  part_mode_r;
 	reg [7:0]  sub_mb_types_r;
 	reg [7:0]  ref_pack_r;
@@ -337,7 +338,7 @@ module h264_i_mb_feed #(
 		6'd32:cbp_inter_map=6'd17; 6'd33:cbp_inter_map=6'd18; 6'd34:cbp_inter_map=6'd20; 6'd35:cbp_inter_map=6'd24;
 		6'd36:cbp_inter_map=6'd19; 6'd37:cbp_inter_map=6'd21; 6'd38:cbp_inter_map=6'd26; 6'd39:cbp_inter_map=6'd28;
 		6'd40:cbp_inter_map=6'd23; 6'd41:cbp_inter_map=6'd27; 6'd42:cbp_inter_map=6'd29; 6'd43:cbp_inter_map=6'd30;
-		6'd44:cbp_inter_map=6'd22; 6'd45:cbp_inter_map=6'd25; 6'd46:cbp_inter_map=6'd38; 6'd47:cbp_inter_map=6'd41;
+		6'd44:cbp_inter_map=6'd22; 6'd45:cbp_inter_map=6'd25; 6'd46:cbp_inter_map=6'd41; 6'd47:cbp_inter_map=6'd38;
 		default: cbp_inter_map = 6'd0;
 		endcase
 	endfunction
@@ -762,6 +763,7 @@ module h264_i_mb_feed #(
 			guard <= 16'd0;
 			win_armed <= 1'b0;
 			skip_left <= 16'd0;
+			after_skip_run_r <= 1'b0;
 			tc_left_valid <= 1'b0;
 			chr_left_valid <= 1'b0;
 			frame_feed_done <= 1'b0;
@@ -907,10 +909,13 @@ module h264_i_mb_feed #(
 					// First skip_run already consumed. mb_skip_run==0 is legal
 					// (no run present) — do not coerce to 1.
 					skip_left <= first_p_skip_run;
+					after_skip_run_r <= 1'b1;
 					abs_bit <= {3'd0, first_residual_bit_offset};
 					st <= (first_p_skip_run == 16'd0) ? ST_P_AFTER_MB : ST_P_SKIP_EMIT;
 				end else begin
 					// First coded P MB (or intra-in-P) fully parsed by header.
+					// Header already consumed the leading skip_run (==0).
+					after_skip_run_r <= 1'b0;
 					mb_skip_r <= 1'b0;
 					mb_skip <= 1'b0;
 					mb_intra_r <= first_mb_intra;
@@ -1200,8 +1205,8 @@ module h264_i_mb_feed #(
 					if (!cav_ok) begin
 						// Illegal coeff_token / total_coeff / CAVLC range.
 `ifndef SYNTHESIS
-						$display("FEED_DESYNC mb=%0d cause=4 abs_bit=%0d step=%0d",
-							mb_addr, abs_bit, res_step);
+						$display("FEED_DESYNC mb=%0d cause=4 abs_bit=%0d step=%0d mt=%0d cbp_l=%0d cbp_c=%0d i16=%0d intra=%0d",
+							mb_addr, abs_bit, res_step, mb_type_r, cbp_l_r, cbp_c_r, is_i16_r, mb_intra_r);
 `endif
 						latch_desync(1'b0, 1'b0, DSC_CAVLC);
 						error <= 1'b1;
@@ -1307,6 +1312,13 @@ module h264_i_mb_feed #(
 			end
 
 			// ── After each MB: EOS / next skip_run / next syntax ──────
+			// P-slice data (7.3.4):
+			//   do {
+			//     mb_skip_run; emit that many P_Skip;
+			//     if (more_rbsp_data) parse one coded MB;
+			//   } while (more_rbsp_data);
+			// So: after a skip-run exhausts → coded MB (not another skip_run).
+			// After a coded MB → next skip_run. Track with after_skip_run_r.
 			ST_P_AFTER_MB: begin
 				if (slice_is_i_r) begin
 					if (mb_addr >= mb_total)
@@ -1327,8 +1339,19 @@ module h264_i_mb_feed #(
 						st <= ST_P_SKIP_EMIT;
 					end else if (mb_addr >= mb_total) begin
 						st <= ST_EOS_CHECK;
+					end else if (after_skip_run_r) begin
+						// Skip-run just finished (or skip_run==0): one coded MB next.
+						after_skip_run_r <= 1'b0;
+						rbsp_request_offset <= abs_bit[18:3];
+						rbsp_request_valid <= 1'b1;
+						win_armed <= 1'b0;
+						// arm then mb_type (ret_st=0)
+						st <= ST_SYN_REQ;
+						ret_st <= 8'd0;
+						mb_skip_r <= 1'b0;
+						mb_skip <= 1'b0;
 					end else begin
-						// Align window then decide more_rbsp / next skip_run
+						// After coded MB: next iteration starts with mb_skip_run.
 						rbsp_request_offset <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
@@ -1671,12 +1694,14 @@ module h264_i_mb_feed #(
 				// 6: mb_skip_run
 				8'd6: begin
 					skip_left <= ue_val[15:0];
-					if (ue_val[15:0] != 16'd0)
+					if (ue_val[15:0] != 16'd0) begin
+						after_skip_run_r <= 1'b1;
 						st <= ST_P_SKIP_EMIT;
-					else if (!more_rbsp_w || (mb_addr >= mb_total))
+					end else if (!more_rbsp_w || (mb_addr >= mb_total))
 						st <= ST_EOS_CHECK;
 					else begin
-						// coded MB follows
+						// skip_run==0 → coded MB follows (7.3.4)
+						after_skip_run_r <= 1'b0;
 						ue_zeros <= 8'd0; ret_st <= 8'd0; st <= ST_SYN_UE0;
 					end
 				end
@@ -1772,9 +1797,37 @@ module h264_i_mb_feed #(
 			end
 
 			ST_DONE: begin
+				// One-cycle done pulse, then IDLE so the next VCL's slice_go is
+				// not missed. Prior bug: stayed in ST_DONE until slice_go, but
+				// stream_path only pulses feed_slice_go for one cycle while
+				// !feed_started — that edge was consumed leaving DONE without
+				// re-arming, so P after IDR never walked (desync stayed 0 with
+				// frames_done stuck at 1).
 				frame_feed_done <= 1'b1;
-				if (slice_go)
+				if (slice_go && (mb_width != 8'd0) && (mb_height != 8'd0) && rbsp_complete) begin
+					mb_total <= {8'd0, mb_width} * {8'd0, mb_height};
+					mb_addr <= first_mb_in_slice;
+					qp_r <= slice_qp_y;
+					slice_is_i_r <= slice_is_i;
+					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
+					tc_left_valid <= 1'b0;
+					chr_left_valid <= 1'b0;
+					i16_dc_pending <= 1'b0;
+					for (ci = 0; ci < MB_W_MAX; ci = ci + 1) begin
+						tc_top_valid[ci] <= 1'b0;
+						chr_top_valid[ci] <= 1'b0;
+					end
+					error <= 1'b0;
+					slice_desync <= 1'b0;
+					slice_desync_early <= 1'b0;
+					slice_desync_long <= 1'b0;
+					slice_desync_cause <= DSC_NONE;
+					slice_desync_mb <= 16'd0;
+					guard <= 16'd0;
+					st <= ST_MB0_LOAD;
+				end else begin
 					st <= ST_IDLE;
+				end
 			end
 
 			ST_FAIL: begin
@@ -1782,8 +1835,32 @@ module h264_i_mb_feed #(
 				if (slice_desync_cause == DSC_NONE)
 					latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 				error <= 1'b1;
-				if (slice_go)
+				// Return to IDLE so a later slice_go can re-arm; sticky desync
+				// outputs remain until the next successful slice start clears them.
+				if (slice_go && (mb_width != 8'd0) && (mb_height != 8'd0) && rbsp_complete) begin
+					mb_total <= {8'd0, mb_width} * {8'd0, mb_height};
+					mb_addr <= first_mb_in_slice;
+					qp_r <= slice_qp_y;
+					slice_is_i_r <= slice_is_i;
+					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
+					tc_left_valid <= 1'b0;
+					chr_left_valid <= 1'b0;
+					i16_dc_pending <= 1'b0;
+					for (ci = 0; ci < MB_W_MAX; ci = ci + 1) begin
+						tc_top_valid[ci] <= 1'b0;
+						chr_top_valid[ci] <= 1'b0;
+					end
+					error <= 1'b0;
+					slice_desync <= 1'b0;
+					slice_desync_early <= 1'b0;
+					slice_desync_long <= 1'b0;
+					slice_desync_cause <= DSC_NONE;
+					slice_desync_mb <= 16'd0;
+					guard <= 16'd0;
+					st <= ST_MB0_LOAD;
+				end else begin
 					st <= ST_IDLE;
+				end
 			end
 
 			default: st <= ST_IDLE;

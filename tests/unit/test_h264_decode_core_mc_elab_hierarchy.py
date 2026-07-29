@@ -46,6 +46,8 @@ RTL_FILES = [
     RTL / "h264_intra_nb_ctx.sv",
     RTL / "h264_decode_top.sv",
     RTL / "h264_inter_pred.sv",
+    RTL / "h264_pskip_mv.sv",
+    RTL / "h264_inter_part.sv",
     RTL / "h264_deblock.sv",
     RTL / "h264_decode_core.sv",
     RTL / "h264_dpb.sv",
