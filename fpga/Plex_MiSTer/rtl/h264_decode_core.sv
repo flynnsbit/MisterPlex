@@ -438,11 +438,18 @@ module h264_decode_core #(
     wire [7:0] wb_sample_idx = (wb_plane == 2'd0) ? wb_idx[7:0] :
                                (wb_plane == 2'd1) ? wb_u_idx9[7:0] :
                                                      wb_v_idx9[7:0];
+    // Running MB x/y track syntax_mb_addr_r without a comb %/÷ (integ-fit2
+    // worst setup was syntax_mb_addr → LPM_DIVIDE → nb_ctx → i16 row_acc,
+    // slack -3.110 ns).  Slice-start still uses one %/÷ into these regs only.
+    reg  [7:0] syntax_mb_x_r;
+    reg  [7:0] syntax_mb_y_r;
     wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
-    wire [31:0] syntax_mb_x32 = syntax_mb_addr32 % MB_W;
-    wire [31:0] syntax_mb_y32 = syntax_mb_addr32 / MB_W;
-    wire [7:0] syntax_mb_x = syntax_mb_x32[7:0];
-    wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
+    wire [31:0] syntax_mb_x32 = {24'd0, syntax_mb_x_r};
+    wire [31:0] syntax_mb_y32 = {24'd0, syntax_mb_y_r};
+    wire [7:0] syntax_mb_x = syntax_mb_x_r;
+    wire [7:0] syntax_mb_y = syntax_mb_y_r;
+    wire [31:0] slice_first_mb_x32 = {16'd0, first_mb_in_slice} % MB_W;
+    wire [31:0] slice_first_mb_y32 = {16'd0, first_mb_in_slice} / MB_W;
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
@@ -1285,6 +1292,9 @@ module h264_decode_core #(
             for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
                 res_tc_top_valid[res_tc_i] <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
+            // One-shot %/÷ into regs only (not live into nb_ctx/i16 path).
+            syntax_mb_x_r <= reset ? 8'd0 : slice_first_mb_x32[7:0];
+            syntax_mb_y_r <= reset ? 8'd0 : slice_first_mb_y32[7:0];
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
             mv_left_x <= 16'sd0;
@@ -1336,8 +1346,16 @@ module h264_decode_core #(
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
             end
-            if (mb_type_valid)
+            if (mb_type_valid) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+                // Raster step: x wraps at MB_W, y++.  No divider on this path.
+                if (syntax_mb_x_r == 8'(MB_W - 1)) begin
+                    syntax_mb_x_r <= 8'd0;
+                    syntax_mb_y_r <= syntax_mb_y_r + 8'd1;
+                end else begin
+                    syntax_mb_x_r <= syntax_mb_x_r + 8'd1;
+                end
+            end
             if (product_intra_mb_start) begin
                 intra_active_r <= 1'b1;
                 intra_mb_x_r <= syntax_mb_x;

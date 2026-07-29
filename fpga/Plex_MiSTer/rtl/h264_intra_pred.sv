@@ -132,6 +132,12 @@ endmodule
 // every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
 // Consumers must wait on `valid`; any fixed-cycle wait shorter than that reads
 // stale samples and looks exactly like a prediction bug.
+//
+// TIMING: neighbour ports (above/left/top_left) are SAMPLED on `start` into
+// local regs before any plane/DC arithmetic.  This breaks the STA path
+// syntax_mb_addr → %MB_W → nb_ctx → nb_top → plane_seed → row_acc that was
+// the worst setup on integ-fit2 (-3.110 ns).  Latch is on the start edge;
+// ST_SETUP body runs the next cycle — zero added latency.
 module h264_intra16x16_pred #(
 	parameter bit PARALLEL_OUT = 1
 ) (
@@ -173,6 +179,11 @@ module h264_intra16x16_pred #(
 	reg [4:0] k;
 	reg [7:0] cnt;
 
+	// Pipelined neighbour snapshot (cuts M10K/nb_ctx comb into plane math).
+	reg [7:0] above_r [0:15];
+	reg [7:0] left_r  [0:15];
+	reg [7:0] tl_r;
+
 	reg [12:0] sum_a, sum_l;
 	// Gradient double-accumulator: iterating j = 7..0 with s += d then acc += s
 	// yields sum (j+1)*d_j using two adders and no multiplier.
@@ -185,13 +196,13 @@ module h264_intra16x16_pred #(
 	wire [3:0] fx = cnt[3:0];
 	wire [3:0] fy = cnt[7:4];
 
-	// Gradient taps for step k: above[15-k] - (k == 0 ? top_left : above[k-1]).
+	// Gradient taps for step k from latched neighbours only.
 	wire [3:0] k_hi = 4'd15 - k[3:0];
 	wire [3:0] k_lo = k[3:0] - 4'd1;
-	wire [7:0] g_hi_a = above[k_hi];
-	wire [7:0] g_hi_l = left[k_hi];
-	wire [7:0] g_lo_a = (k == 5'd0) ? top_left : above[k_lo];
-	wire [7:0] g_lo_l = (k == 5'd0) ? top_left : left[k_lo];
+	wire [7:0] g_hi_a = above_r[k_hi];
+	wire [7:0] g_hi_l = left_r[k_hi];
+	wire [7:0] g_lo_a = (k == 5'd0) ? tl_r : above_r[k_lo];
+	wire [7:0] g_lo_l = (k == 5'd0) ? tl_r : left_r[k_lo];
 	wire signed [15:0] gd_h = $signed({8'd0, g_hi_a}) - $signed({8'd0, g_lo_a});
 	wire signed [15:0] gd_v = $signed({8'd0, g_hi_l}) - $signed({8'd0, g_lo_l});
 
@@ -208,7 +219,7 @@ module h264_intra16x16_pred #(
 	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
 	wire signed [19:0] b7 = (pb20 <<< 3) - pb20;
 	wire signed [19:0] c7 = (pc20 <<< 3) - pc20;
-	wire [19:0] pa_sum = {12'd0, above[15]} + {12'd0, left[15]};
+	wire [19:0] pa_sum = {12'd0, above_r[15]} + {12'd0, left_r[15]};
 	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
 	wire signed [19:0] plane_seed = pa20 - b7 - c7 + 20'sd16;
 
@@ -220,11 +231,12 @@ module h264_intra16x16_pred #(
 	always @* begin
 		if (mode_r == 2'd3)
 			sample = (avail_a_r && avail_l_r) ? plane_pix : 8'd128;
-		else if (mode_r == 2'd0 && avail_a_r) sample = above[fx];
-		else if (mode_r == 2'd1 && avail_l_r) sample = left[fy];
+		else if (mode_r == 2'd0 && avail_a_r) sample = above_r[fx];
+		else if (mode_r == 2'd1 && avail_l_r) sample = left_r[fy];
 		else                                  sample = dc_v;
 	end
 
+	integer li;
 	always @(posedge clk) begin
 		valid <= 1'b0;
 		case (st)
@@ -234,6 +246,11 @@ module h264_intra16x16_pred #(
 				mode_r    <= mode;
 				avail_a_r <= has_above;
 				avail_l_r <= has_left;
+				for (li = 0; li < 16; li = li + 1) begin
+					above_r[li] <= above[li];
+					left_r[li]  <= left[li];
+				end
+				tl_r <= top_left;
 				sum_a <= 13'd0;
 				sum_l <= 13'd0;
 				h_s <= 16'sd0; h_acc <= 16'sd0;
@@ -243,8 +260,8 @@ module h264_intra16x16_pred #(
 			end
 		end
 		ST_SETUP: begin
-			sum_a <= sum_a + {5'd0, above[k[3:0]]};
-			sum_l <= sum_l + {5'd0, left[k[3:0]]};
+			sum_a <= sum_a + {5'd0, above_r[k[3:0]]};
+			sum_l <= sum_l + {5'd0, left_r[k[3:0]]};
 			if (!k[3]) begin
 				h_s   <= h_s + gd_h;
 				h_acc <= h_acc + h_s + gd_h;
@@ -301,6 +318,7 @@ endmodule
 // LATENCY CONTRACT: `valid` is a one-cycle pulse 75 cycles after `start`, for
 // every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
 // ---------------------------------------------------------------------------
+// Neighbour ports latched on start (same timing cut as I16 plane path).
 module h264_chroma8x8_pred (
 	input  wire        clk,
 	input  wire        start,
@@ -325,6 +343,10 @@ module h264_chroma8x8_pred (
 	reg [3:0] k;
 	reg [5:0] cnt;
 
+	reg [7:0] above_r [0:7];
+	reg [7:0] left_r  [0:7];
+	reg [7:0] tl_r;
+
 	reg [10:0] sa0, sa1, sl0, sl1;
 	reg signed [15:0] h_s, h_acc, v_s, v_acc;
 	reg signed [15:0] plane_b, plane_c;
@@ -334,13 +356,13 @@ module h264_chroma8x8_pred (
 	wire [2:0] fx = cnt[2:0];
 	wire [2:0] fy = cnt[5:3];
 
-	// Gradient taps for step k: above[7-k] - (k == 0 ? top_left : above[k-1]).
+	// Gradient taps for step k from latched neighbours only.
 	wire [2:0] k_hi = 3'd7 - k[2:0];
 	wire [2:0] k_lo = k[2:0] - 3'd1;
-	wire [7:0] g_hi_a = above[k_hi];
-	wire [7:0] g_hi_l = left[k_hi];
-	wire [7:0] g_lo_a = (k == 4'd0) ? top_left : above[k_lo];
-	wire [7:0] g_lo_l = (k == 4'd0) ? top_left : left[k_lo];
+	wire [7:0] g_hi_a = above_r[k_hi];
+	wire [7:0] g_hi_l = left_r[k_hi];
+	wire [7:0] g_lo_a = (k == 4'd0) ? tl_r : above_r[k_lo];
+	wire [7:0] g_lo_l = (k == 4'd0) ? tl_r : left_r[k_lo];
 	wire signed [15:0] gd_h = $signed({8'd0, g_hi_a}) - $signed({8'd0, g_lo_a});
 	wire signed [15:0] gd_v = $signed({8'd0, g_hi_l}) - $signed({8'd0, g_lo_l});
 
@@ -354,7 +376,7 @@ module h264_chroma8x8_pred (
 	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
 	wire signed [19:0] b3 = (pb20 <<< 1) + pb20;
 	wire signed [19:0] c3 = (pc20 <<< 1) + pc20;
-	wire [19:0] pa_sum = {12'd0, above[7]} + {12'd0, left[7]};
+	wire [19:0] pa_sum = {12'd0, above_r[7]} + {12'd0, left_r[7]};
 	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
 	wire signed [19:0] plane_seed = pa20 - b3 - c3 + 20'sd16;
 
@@ -373,11 +395,12 @@ module h264_chroma8x8_pred (
 	always @* begin
 		if (mode_r == 2'd3)
 			sample = (avail_a_r && avail_l_r) ? plane_pix : 8'd128;
-		else if (mode_r == 2'd1) sample = left[fy];
-		else if (mode_r == 2'd2) sample = above[fx];
+		else if (mode_r == 2'd1) sample = left_r[fy];
+		else if (mode_r == 2'd2) sample = above_r[fx];
 		else                     sample = dc_quad;
 	end
 
+	integer li;
 	always @(posedge clk) begin
 		valid <= 1'b0;
 		case (st)
@@ -386,6 +409,11 @@ module h264_chroma8x8_pred (
 				mode_r    <= mode;
 				avail_a_r <= has_above;
 				avail_l_r <= has_left;
+				for (li = 0; li < 8; li = li + 1) begin
+					above_r[li] <= above[li];
+					left_r[li]  <= left[li];
+				end
+				tl_r <= top_left;
 				sa0 <= 11'd0; sa1 <= 11'd0;
 				sl0 <= 11'd0; sl1 <= 11'd0;
 				h_s <= 16'sd0; h_acc <= 16'sd0;
@@ -396,11 +424,11 @@ module h264_chroma8x8_pred (
 		end
 		ST_SETUP: begin
 			if (k[2]) begin
-				sa1 <= sa1 + {3'd0, above[k[2:0]]};
-				sl1 <= sl1 + {3'd0, left[k[2:0]]};
+				sa1 <= sa1 + {3'd0, above_r[k[2:0]]};
+				sl1 <= sl1 + {3'd0, left_r[k[2:0]]};
 			end else begin
-				sa0 <= sa0 + {3'd0, above[k[2:0]]};
-				sl0 <= sl0 + {3'd0, left[k[2:0]]};
+				sa0 <= sa0 + {3'd0, above_r[k[2:0]]};
+				sl0 <= sl0 + {3'd0, left_r[k[2:0]]};
 				h_s   <= h_s + gd_h;
 				h_acc <= h_acc + h_s + gd_h;
 				v_s   <= v_s + gd_v;
