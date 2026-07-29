@@ -763,25 +763,20 @@ module stream_path #(
 		end
 	endgenerate
 
-	// decode_stub is retired as the product pixel source.  Once the decode core
-	// has committed a real sample the stub's diagnostic paint is muted so it can
-	// never race the core for the non-DDR frame_store either.
+	// decode_stub is retired as the product pixel source: under DDR_FRAME_STORE
+	// present_core ignores fs_* entirely, so the stub's diagnostic paint never
+	// reaches the screen and the decode core's dec_px_* stream is the only
+	// pixel source.  The fs_* path is left intact for the non-DDR frame_store
+	// configuration and for the diagnostic frame-cadence benches.
 	wire        stub_fs_wr_en;
 	wire [15:0] stub_fs_wr_pixel;
 	wire        stub_fs_wr_reset;
 	wire        stub_fs_swap;
-	reg         core_px_owns;
-	always @(posedge clk) begin
-		if (reset)
-			core_px_owns <= 1'b0;
-		else if (dec_px_wr_en)
-			core_px_owns <= 1'b1;
-	end
 	always @* begin
-		fs_wr_en    = stub_fs_wr_en    & ~core_px_owns;
+		fs_wr_en    = stub_fs_wr_en;
 		fs_wr_pixel = stub_fs_wr_pixel;
-		fs_wr_reset = stub_fs_wr_reset & ~core_px_owns;
-		fs_swap     = stub_fs_swap     & ~core_px_owns;
+		fs_wr_reset = stub_fs_wr_reset;
+		fs_swap     = stub_fs_swap;
 	end
 
 	(* keep = 1 *) wire keep_si = si_active;
