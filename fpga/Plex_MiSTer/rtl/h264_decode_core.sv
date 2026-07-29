@@ -801,8 +801,9 @@ module h264_decode_core #(
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
     wire [7:0]  product_intra_recon_y [0:255];
-    wire [7:0]  product_intra_recon_u [0:63];
-    wire [7:0]  product_intra_recon_v [0:63];
+    // Real chroma recon (prediction + residual add). No longer hard-tied to 128.
+    reg  [7:0]  product_intra_recon_u [0:63];
+    reg  [7:0]  product_intra_recon_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
@@ -812,14 +813,14 @@ module h264_decode_core #(
     wire        product_intra_ctx_has_above_unused;
     wire        product_intra_ctx_has_left_unused;
     wire        product_intra_ctx_has_above_right_unused;
-    wire [7:0]  product_intra_ctx_chroma_u_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_top_left_unused;
-    wire [7:0]  product_intra_ctx_chroma_v_top_left_unused;
-    wire        product_intra_ctx_has_chroma_above_unused;
-    wire        product_intra_ctx_has_chroma_left_unused;
+    wire [7:0]  product_intra_chroma_u_above [0:7];
+    wire [7:0]  product_intra_chroma_v_above [0:7];
+    wire [7:0]  product_intra_chroma_u_left [0:7];
+    wire [7:0]  product_intra_chroma_v_left [0:7];
+    wire [7:0]  product_intra_chroma_u_topleft;
+    wire [7:0]  product_intra_chroma_v_topleft;
+    wire        product_intra_has_chroma_above;
+    wire        product_intra_has_chroma_left;
     wire        product_intra_mb_avail_left;
     wire        product_intra_mb_avail_top;
     wire        product_intra_mb_avail_topright;
@@ -828,17 +829,68 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    // Chroma 8x8 prediction (spec 8.3.4). DC uses per-4x4-quadrant averages —
+    // do NOT reuse the luma DC single-value rule (see h264_chroma8x8_pred).
+    reg         product_chroma_start_r;
+    wire        product_chroma_u_valid;
+    wire        product_chroma_v_valid;
+    wire [7:0]  product_chroma_u_pred [0:63];
+    wire [7:0]  product_chroma_v_pred [0:63];
     genvar intra_gi;
+    integer chroma_pi;
     generate
         for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
             assign product_intra_i16_dc[intra_gi] = 29'sd0;
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
-        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral
-            assign product_intra_recon_u[intra_gi] = 8'd128;
-            assign product_intra_recon_v[intra_gi] = 8'd128;
-        end
     endgenerate
+
+    h264_chroma8x8_pred u_product_chroma_u_pred (
+        .clk(clk),
+        .start(product_chroma_start_r),
+        .mode(chroma_pred_mode),
+        .above(product_intra_chroma_u_above),
+        .left(product_intra_chroma_u_left),
+        .top_left(product_intra_chroma_u_topleft),
+        .has_above(product_intra_has_chroma_above),
+        .has_left(product_intra_has_chroma_left),
+        .valid(product_chroma_u_valid),
+        .pred(product_chroma_u_pred)
+    );
+    h264_chroma8x8_pred u_product_chroma_v_pred (
+        .clk(clk),
+        .start(product_chroma_start_r),
+        .mode(chroma_pred_mode),
+        .above(product_intra_chroma_v_above),
+        .left(product_intra_chroma_v_left),
+        .top_left(product_intra_chroma_v_topleft),
+        .has_above(product_intra_has_chroma_above),
+        .has_left(product_intra_has_chroma_left),
+        .valid(product_chroma_v_valid),
+        .pred(product_chroma_v_pred)
+    );
+
+    always @(posedge clk) begin
+        product_chroma_start_r <= product_intra_mb_start;
+        if (reset) begin
+            for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1) begin
+                product_intra_recon_u[chroma_pi] <= 8'd128;
+                product_intra_recon_v[chroma_pi] <= 8'd128;
+            end
+        end else begin
+            // Prediction-only for now: feed still bit-syncs chroma residual for
+            // stream position, and P-slice residual is applied on the inter path.
+            // Intra chroma residual IDCT add remains a follow-on.
+            if (product_chroma_u_valid) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_u[chroma_pi] <= product_chroma_u_pred[chroma_pi];
+            end
+            if (product_chroma_v_valid) begin
+                for (chroma_pi = 0; chroma_pi < 64; chroma_pi = chroma_pi + 1)
+                    product_intra_recon_v[chroma_pi] <= product_chroma_v_pred[chroma_pi];
+            end
+        end
+    end
 
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(MB_W),
@@ -872,14 +924,14 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
-        .chroma_u_above(product_intra_ctx_chroma_u_above_unused),
-        .chroma_v_above(product_intra_ctx_chroma_v_above_unused),
-        .chroma_u_left(product_intra_ctx_chroma_u_left_unused),
-        .chroma_v_left(product_intra_ctx_chroma_v_left_unused),
-        .chroma_u_top_left(product_intra_ctx_chroma_u_top_left_unused),
-        .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
-        .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
-        .has_chroma_left(product_intra_ctx_has_chroma_left_unused)
+        .chroma_u_above(product_intra_chroma_u_above),
+        .chroma_v_above(product_intra_chroma_v_above),
+        .chroma_u_left(product_intra_chroma_u_left),
+        .chroma_v_left(product_intra_chroma_v_left),
+        .chroma_u_top_left(product_intra_chroma_u_topleft),
+        .chroma_v_top_left(product_intra_chroma_v_topleft),
+        .has_chroma_above(product_intra_has_chroma_above),
+        .has_chroma_left(product_intra_has_chroma_left)
     );
 
     h264_decode_top u_product_intra_mb (
