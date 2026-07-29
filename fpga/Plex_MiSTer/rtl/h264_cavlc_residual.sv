@@ -592,11 +592,14 @@ module h264_cavlc_residual_block #(
     endfunction
 
     function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
+        // FFmpeg/host: suffix = 1 + ((unsigned)(level+3) > 6u)
+        // Equivalent: escape→2, else 1 + (|level| >= 4) because
+        // (unsigned)(level+3)>6 ⇔ level<=-4 || level>=4.
         begin
             if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
                 suffix_next_first = 3'd2;
             else
-                suffix_next_first = 3'd1 + ((lvl + 16'sd3) > 16'sd6);
+                suffix_next_first = 3'd1 + ((lvl >= 16'sd4) || (lvl <= -16'sd4));
         end
     endfunction
 

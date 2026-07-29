@@ -219,11 +219,19 @@ module h264_i_mb_feed #(
 	reg        tc_left_valid;
 	reg [4:0]  tc_top [0:(MB_W_MAX*4)-1];
 	reg        tc_top_valid [0:MB_W_MAX-1];
-	// Chroma AC nC (internal 2x2 only) + DC after Hadamard
+	// Chroma AC nC (internal 2x2 + left/top MB edge) + DC after Hadamard
 	reg [4:0]  chr_tc_u [0:3];
 	reg [4:0]  chr_tc_v [0:3];
+	reg [4:0]  chr_left_u [0:1];
+	reg [4:0]  chr_left_v [0:1];
+	reg        chr_left_valid;
+	reg [4:0]  chr_top_u [0:(MB_W_MAX*2)-1];
+	reg [4:0]  chr_top_v [0:(MB_W_MAX*2)-1];
+	reg        chr_top_valid [0:MB_W_MAX-1];
 	reg signed [28:0] chr_dc_u [0:3];
 	reg signed [28:0] chr_dc_v [0:3];
+	// I_16x16: one luma DC (max16) then CBP-gated AC (max15)
+	reg        i16_dc_pending;
 
 	// Bit reader
 	reg [7:0]  ue_zeros;
@@ -422,8 +430,10 @@ module h264_i_mb_feed #(
 	wire [4:0] up_tc_w = up_int ? tc_cur[blk_at(cur_bx, cur_by - 2'd1)]
 	                            : tc_top[{mb_x8[5:0], cur_bx}];
 	wire       up_tc_v = up_int ? 1'b1 : tc_top_valid[mb_x8];
+	// Widen sum: 5-bit (tcA+tcB+1) wraps at 32 (e.g. 15+16+1→0) and breaks nC.
+	wire [5:0] nC_sum = {1'b0, left_tc_w} + {1'b0, up_tc_w} + 6'd1;
 	wire [4:0] nC_w =
-		(left_tc_v && up_tc_v) ? ((left_tc_w + up_tc_w + 5'd1) >> 1) :
+		(left_tc_v && up_tc_v) ? nC_sum[5:1] :
 		left_tc_v ? left_tc_w : up_tc_v ? up_tc_w : 5'd0;
 	wire [2:0] tok_table_luma =
 		(nC_w < 5'd2) ? 3'd0 : (nC_w < 5'd4) ? 3'd1 : (nC_w < 5'd8) ? 3'd2 : 3'd3;
@@ -435,12 +445,12 @@ module h264_i_mb_feed #(
 		input       is_i16;
 		reg [3:0] bi;
 		begin
+			// is_i16: luma steps are AC-only (max15), gated by CBP like I4.
+			// Separate i16_dc_pending consumes the single luma DC (max16).
 			if (step < STEP_LUMA_END) begin
 				bi = step[3:0];
-				if (is_i16)
-					res_step_coded = 1'b1;
-				else
-					res_step_coded = cbp_l[bi[3:2]];
+				// is_i16 selects DC-pending path; AC here is CBP-gated for both.
+				res_step_coded = cbp_l[bi[3:2]] | (is_i16 & 1'b0);
 			end else if (step == STEP_CHR_DC_U || step == STEP_CHR_DC_V)
 				res_step_coded = (cbp_c != 2'd0);
 			else
@@ -572,14 +582,24 @@ module h264_i_mb_feed #(
 	wire       feed_chr_up_int   = feed_chr_ac_blk[1];
 	wire [1:0] feed_chr_left_i = feed_chr_ac_blk - 2'd1;
 	wire [1:0] feed_chr_up_i   = feed_chr_ac_blk - 2'd2;
+	wire [1:0] feed_chr_ly = {1'b0, feed_chr_ac_blk[1]};
+	wire [1:0] feed_chr_lx = {1'b0, feed_chr_ac_blk[0]};
+	// Left: internal blk or previous-MB right edge (lx=1); top: internal or above-MB bottom (ly=1).
 	wire [4:0] feed_chr_left_tc = feed_chr_left_int ?
-		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_left_i] : chr_tc_u[feed_chr_left_i]) : 5'd0;
+		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_left_i] : chr_tc_u[feed_chr_left_i]) :
+		(chr_left_valid ? (feed_chr_ac_is_v ? chr_left_v[feed_chr_ly[0]] : chr_left_u[feed_chr_ly[0]]) : 5'd0);
+	wire       feed_chr_left_v = feed_chr_left_int | chr_left_valid;
 	wire [4:0] feed_chr_up_tc = feed_chr_up_int ?
-		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_up_i] : chr_tc_u[feed_chr_up_i]) : 5'd0;
-	wire [4:0] feed_chr_nC = (feed_chr_left_int && feed_chr_up_int) ?
-		((feed_chr_left_tc + feed_chr_up_tc + 5'd1) >> 1) :
-		feed_chr_left_int ? feed_chr_left_tc :
-		feed_chr_up_int ? feed_chr_up_tc : 5'd0;
+		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_up_i] : chr_tc_u[feed_chr_up_i]) :
+		(chr_top_valid[mb_x8] ?
+			(feed_chr_ac_is_v ? chr_top_v[{mb_x8[5:0], feed_chr_lx[0]}]
+			                  : chr_top_u[{mb_x8[5:0], feed_chr_lx[0]}]) : 5'd0);
+	wire       feed_chr_up_v = feed_chr_up_int | chr_top_valid[mb_x8];
+	wire [5:0] feed_chr_nC_sum = {1'b0, feed_chr_left_tc} + {1'b0, feed_chr_up_tc} + 6'd1;
+	wire [4:0] feed_chr_nC = (feed_chr_left_v && feed_chr_up_v) ?
+		feed_chr_nC_sum[5:1] :
+		feed_chr_left_v ? feed_chr_left_tc :
+		feed_chr_up_v ? feed_chr_up_tc : 5'd0;
 	wire [2:0] feed_chr_ac_table = (feed_chr_nC < 5'd2) ? 3'd0 :
 	                               (feed_chr_nC < 5'd4) ? 3'd1 :
 	                               (feed_chr_nC < 5'd8) ? 3'd2 : 3'd3;
@@ -704,6 +724,7 @@ module h264_i_mb_feed #(
 			cbp_c_r <= 2'd0;
 			mb_type_r <= 8'd0;
 			is_i16_r <= 1'b0;
+			i16_dc_pending <= 1'b0;
 			slice_is_i_r <= 1'b0;
 			mb_intra_r <= 1'b0;
 			mb_skip_r <= 1'b0;
@@ -714,6 +735,7 @@ module h264_i_mb_feed #(
 			win_armed <= 1'b0;
 			skip_left <= 16'd0;
 			tc_left_valid <= 1'b0;
+			chr_left_valid <= 1'b0;
 			frame_feed_done <= 1'b0;
 			error <= 1'b0;
 			slice_desync <= 1'b0;
@@ -732,6 +754,12 @@ module h264_i_mb_feed #(
 				chr_dc_u[ci] <= 29'sd0;
 				chr_dc_v[ci] <= 29'sd0;
 			end
+			for (ci = 0; ci < 2; ci = ci + 1) begin
+				chr_left_u[ci] <= 5'd0;
+				chr_left_v[ci] <= 5'd0;
+			end
+			for (ci = 0; ci < MB_W_MAX; ci = ci + 1)
+				chr_top_valid[ci] <= 1'b0;
 			mb_type <= 5'd0;
 			mb_skip <= 1'b0;
 			mb_intra <= 1'b0;
@@ -778,8 +806,12 @@ module h264_i_mb_feed #(
 					slice_is_i_r <= slice_is_i;
 					num_ref_r <= (num_ref_idx_l0_active == 8'd0) ? 8'd1 : num_ref_idx_l0_active;
 					tc_left_valid <= 1'b0;
-					for (ci = 0; ci < MB_W_MAX; ci = ci + 1)
+					chr_left_valid <= 1'b0;
+					i16_dc_pending <= 1'b0;
+					for (ci = 0; ci < MB_W_MAX; ci = ci + 1) begin
 						tc_top_valid[ci] <= 1'b0;
+						chr_top_valid[ci] <= 1'b0;
+					end
 					error <= 1'b0;
 					slice_desync <= 1'b0;
 					slice_desync_early <= 1'b0;
@@ -990,6 +1022,9 @@ module h264_i_mb_feed #(
 				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
+				// I_16x16 always has a luma DC residual block before AC/chroma.
+				i16_dc_pending <= is_i16_r;
+				res_step <= 5'd0;
 				if (feed_luma_r) begin
 					chroma_residual_valid <= 1'b0;
 					for (ci = 0; ci < 64; ci = ci + 1) begin
@@ -1001,6 +1036,12 @@ module h264_i_mb_feed #(
 						chr_tc_v[ci] <= 5'd0;
 						chr_dc_u[ci] <= 29'sd0;
 						chr_dc_v[ci] <= 29'sd0;
+					end
+				end else begin
+					// Bit-sync path still needs local chroma TC for nC edges.
+					for (ci = 0; ci < 4; ci = ci + 1) begin
+						chr_tc_u[ci] <= 5'd0;
+						chr_tc_v[ci] <= 5'd0;
 					end
 				end
 				st <= ST_RES_ARM;
@@ -1014,12 +1055,25 @@ module h264_i_mb_feed #(
 
 			ST_RES_START: begin
 				if (res_step >= STEP_END) begin
+					// tc_cur is indexed by H.264 blkIdx (0..15), not {by,bx}.
+					// Right edge → next MB left: (bx=3,by=y); bottom → top: (bx=x,by=3).
 					tc_left_valid <= 1'b1;
 					for (ci = 0; ci < 4; ci = ci + 1) begin
-						tc_left[ci] <= tc_cur[{ci[1:0], 2'd3}];
-						tc_top[{mb_x8[5:0], ci[1:0]}] <= tc_cur[{2'd3, ci[1:0]}];
+						tc_left[ci] <= tc_cur[blk_at(2'd3, ci[1:0])];
+						tc_top[{mb_x8[5:0], ci[1:0]}] <= tc_cur[blk_at(ci[1:0], 2'd3)];
 					end
 					tc_top_valid[mb_x8] <= 1'b1;
+					// Publish chroma AC right/bottom edges for next MB nC.
+					chr_left_valid <= 1'b1;
+					chr_left_u[0] <= chr_tc_u[2'd1];
+					chr_left_u[1] <= chr_tc_u[2'd3];
+					chr_left_v[0] <= chr_tc_v[2'd1];
+					chr_left_v[1] <= chr_tc_v[2'd3];
+					chr_top_u[{mb_x8[5:0], 1'b0}] <= chr_tc_u[2'd2];
+					chr_top_u[{mb_x8[5:0], 1'b1}] <= chr_tc_u[2'd3];
+					chr_top_v[{mb_x8[5:0], 1'b0}] <= chr_tc_v[2'd2];
+					chr_top_v[{mb_x8[5:0], 1'b1}] <= chr_tc_v[2'd3];
+					chr_top_valid[mb_x8] <= 1'b1;
 					if (feed_luma_r)
 						chroma_residual_valid <= 1'b1;
 					if (inter_res_only_r && !mb_skip_r) begin
@@ -1030,6 +1084,20 @@ module h264_i_mb_feed #(
 						st <= ST_WAIT_CORE;
 					end else begin
 						st <= ST_YIELD_CORE;
+					end
+				end else if (is_i16_r && i16_dc_pending) begin
+					// Intra16x16 luma DC: one max16 block, nC of 4x4 blk0.
+					if (rel_bit16 >= 16'd400) begin
+						rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+						rbsp_request_valid <= 1'b1;
+						win_armed <= 1'b0;
+						st <= ST_RES_ARM;
+					end else begin
+						cav_table <= tok_table_luma;
+						cav_max <= 5'd16;
+						cav_bit_off <= rel_bit10;
+						cav_start <= 1'b1;
+						st <= ST_RES_WAIT;
 					end
 				end else if (!res_step_coded(res_step, cbp_l_r, cbp_c_r, is_i16_r)) begin
 					if (res_step < STEP_LUMA_END) begin
@@ -1067,12 +1135,11 @@ module h264_i_mb_feed #(
 									chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
 							end
 						end
-						if (feed_luma_r) begin
-							if (feed_chr_ac_is_v)
-								chr_tc_v[feed_chr_ac_blk] <= 5'd0;
-							else
-								chr_tc_u[feed_chr_ac_blk] <= 5'd0;
-						end
+						// Always track TC=0 for neighbour nC (feed + bit-sync).
+						if (feed_chr_ac_is_v)
+							chr_tc_v[feed_chr_ac_blk] <= 5'd0;
+						else
+							chr_tc_u[feed_chr_ac_blk] <= 5'd0;
 						res_step <= res_step + 5'd1;
 					end
 				end else begin
@@ -1084,7 +1151,8 @@ module h264_i_mb_feed #(
 					end else begin
 						if (res_step < STEP_LUMA_END) begin
 							cav_table <= tok_table_luma;
-							cav_max <= 5'd16;
+							// I16 AC is max15; I4 / inter luma is max16.
+							cav_max <= is_i16_r ? 5'd15 : 5'd16;
 						end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
 							cav_table <= 3'd4; // nC = -1 chroma DC coeff_token
 							cav_max <= 5'd4;
@@ -1113,7 +1181,12 @@ module h264_i_mb_feed #(
 						st <= ST_FAIL;
 					end else begin
 						abs_bit <= win_bit_base + {6'd0, cav_bit_end};
-						if (res_step < STEP_LUMA_END) begin
+						if (is_i16_r && i16_dc_pending) begin
+							// DC bits consumed only — AC nC map stays AC-total_coeff.
+							// i16_dc values owned by g-intra (not hardwired here).
+							i16_dc_pending <= 1'b0;
+							st <= ST_RES_START;
+						end else if (res_step < STEP_LUMA_END) begin
 							tc_cur[res_step[3:0]] <= cav_tc;
 							if (feed_luma_r) begin
 								luma4x4_idx <= res_step[3:0];
@@ -1148,11 +1221,12 @@ module h264_i_mb_feed #(
 									else
 										chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
 								end
-								if (feed_chr_ac_is_v)
-									chr_tc_v[feed_chr_ac_blk] <= cav_tc;
-								else
-									chr_tc_u[feed_chr_ac_blk] <= cav_tc;
 							end
+							// Track TC for nC even on bit-sync-only walks.
+							if (feed_chr_ac_is_v)
+								chr_tc_v[feed_chr_ac_blk] <= cav_tc;
+							else
+								chr_tc_u[feed_chr_ac_blk] <= cav_tc;
 							res_step <= res_step + 5'd1;
 							st <= ST_RES_START;
 						end
