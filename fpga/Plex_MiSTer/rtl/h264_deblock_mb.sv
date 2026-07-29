@@ -80,23 +80,32 @@ module h264_deblock_mb #(
 
 	reg [2:0] state;
 
-	// Working window. wy/wu/wv are the current macroblock, l* the right four
-	// columns of the left neighbour (x = -4..-1), t* the bottom four rows of
-	// the upper neighbour (y = -4..-1). All are filtered in place so a later
-	// edge sees the result of the earlier one, as the standard requires.
-	// Force fabric registers: the gather always@* block issues many parallel
-	// runtime-indexed reads through get_y/get_c, which cannot map onto a
-	// single-port M10K and crashes Verific ("read to RAM wasn't mapped to a
-	// specific read port").
-	(* ramstyle = "logic" *) reg [7:0] wy [0:255];
-	(* ramstyle = "logic" *) reg [7:0] wu [0:63];
-	(* ramstyle = "logic" *) reg [7:0] wv [0:63];
-	(* ramstyle = "logic" *) reg [7:0] ly [0:63];   // [row*4 + col], col 0..3 -> x = -4..-1
-	(* ramstyle = "logic" *) reg [7:0] lu [0:31];   // [row*4 + col]
-	(* ramstyle = "logic" *) reg [7:0] lv [0:31];
-	(* ramstyle = "logic" *) reg [7:0] ty [0:63];   // [row*16 + col], row 0..3 -> y = -4..-1
-	(* ramstyle = "logic" *) reg [7:0] tu [0:31];   // [row*8 + col]
-	(* ramstyle = "logic" *) reg [7:0] tv [0:31];
+	// Working window. Packed vectors (not unpacked arrays) so Quartus cannot
+	// infer single-port M10K.  The gather always@* and the neighbour-copy
+	// for-loops issue many parallel runtime-indexed reads; an unpacked array
+	// becomes a RAM and Verific dies with "read to RAM wasn't mapped to a
+	// specific read port".  Packed bit-selects are plain muxes in fabric.
+	// Layout is still raster: sample i lives at bits [8*i+7 : 8*i].
+	reg [8*256-1:0] wy;  // 16x16 luma MB
+	reg [8*64-1:0]  wu;  // 8x8 Cb
+	reg [8*64-1:0]  wv;  // 8x8 Cr
+	reg [8*64-1:0]  ly;  // left luma strip 16x4
+	reg [8*32-1:0]  lu;  // left Cb strip 8x4
+	reg [8*32-1:0]  lv;
+	reg [8*64-1:0]  ty;  // top luma strip 4x16
+	reg [8*32-1:0]  tu;  // top Cb strip 4x8
+	reg [8*32-1:0]  tv;
+
+	// Byte lane helpers for the packed windows.
+	function automatic [7:0] pb(input [8*256-1:0] pack, input integer idx);
+		pb = pack[8*idx +: 8];
+	endfunction
+	function automatic [7:0] pb64(input [8*64-1:0] pack, input integer idx);
+		pb64 = pack[8*idx +: 8];
+	endfunction
+	function automatic [7:0] pb32(input [8*32-1:0] pack, input integer idx);
+		pb32 = pack[8*idx +: 8];
+	endfunction
 
 	// Upper neighbour line buffers, one entry per macroblock column.
 	// Single-ported, sequential access only — M10K is correct here.
@@ -225,9 +234,9 @@ module h264_deblock_mb #(
 		input integer x;
 		input integer y;
 		begin
-			if (x < 0)      get_y = ly[y * 4 + (x + 4)];
-			else if (y < 0) get_y = ty[(y + 4) * 16 + x];
-			else            get_y = wy[y * 16 + x];
+			if (x < 0)      get_y = pb64(ly, y * 4 + (x + 4));
+			else if (y < 0) get_y = pb64(ty, (y + 4) * 16 + x);
+			else            get_y = pb(wy, y * 16 + x);
 		end
 	endfunction
 
@@ -236,9 +245,9 @@ module h264_deblock_mb #(
 		input integer x;
 		input integer y;
 		begin
-			if (x < 0)      get_c = comp ? lv[y * 4 + (x + 4)] : lu[y * 4 + (x + 4)];
-			else if (y < 0) get_c = comp ? tv[(y + 4) * 8 + x] : tu[(y + 4) * 8 + x];
-			else            get_c = comp ? wv[y * 8 + x] : wu[y * 8 + x];
+			if (x < 0)      get_c = comp ? pb32(lv, y * 4 + (x + 4)) : pb32(lu, y * 4 + (x + 4));
+			else if (y < 0) get_c = comp ? pb32(tv, (y + 4) * 8 + x) : pb32(tu, (y + 4) * 8 + x);
+			else            get_c = comp ? pb64(wv, y * 8 + x) : pb64(wu, y * 8 + x);
 		end
 	endfunction
 
@@ -260,10 +269,18 @@ module h264_deblock_mb #(
 		input integer x;
 		input integer y;
 		input [7:0] v;
+		integer idx;
 		begin
-			if (x < 0)      ly[y * 4 + (x + 4)] <= v;
-			else if (y < 0) ty[(y + 4) * 16 + x] <= v;
-			else            wy[y * 16 + x] <= v;
+			if (x < 0) begin
+				idx = y * 4 + (x + 4);
+				ly[8*idx +: 8] <= v;
+			end else if (y < 0) begin
+				idx = (y + 4) * 16 + x;
+				ty[8*idx +: 8] <= v;
+			end else begin
+				idx = y * 16 + x;
+				wy[8*idx +: 8] <= v;
+			end
 		end
 	endtask
 
@@ -272,16 +289,20 @@ module h264_deblock_mb #(
 		input integer x;
 		input integer y;
 		input [7:0] v;
+		integer idx;
 		begin
 			if (x < 0) begin
-				if (comp) lv[y * 4 + (x + 4)] <= v;
-				else      lu[y * 4 + (x + 4)] <= v;
+				idx = y * 4 + (x + 4);
+				if (comp) lv[8*idx +: 8] <= v;
+				else      lu[8*idx +: 8] <= v;
 			end else if (y < 0) begin
-				if (comp) tv[(y + 4) * 8 + x] <= v;
-				else      tu[(y + 4) * 8 + x] <= v;
+				idx = (y + 4) * 8 + x;
+				if (comp) tv[8*idx +: 8] <= v;
+				else      tu[8*idx +: 8] <= v;
 			end else begin
-				if (comp) wv[y * 8 + x] <= v;
-				else      wu[y * 8 + x] <= v;
+				idx = y * 8 + x;
+				if (comp) wv[8*idx +: 8] <= v;
+				else      wu[8*idx +: 8] <= v;
 			end
 		end
 	endtask
@@ -412,52 +433,52 @@ module h264_deblock_mb #(
 			e_plane = 2'd0;
 			e_x = blx + {12'd0, em[3:0]};
 			e_y = bly + {12'd0, em[7:4]};
-			e_data = wy[em[7:0]];
+			e_data = pb(wy, em[7:0]);
 		end else if (em < 10'd320) begin
 			e_plane = 2'd0;
 			e_x = blx - 16'd4 + {14'd0, em_ll[1:0]};
 			e_y = bly + {12'd0, em_ll[5:2]};
-			e_data = ly[em_ll[5:0]];
+			e_data = pb64(ly, em_ll[5:0]);
 			e_gate = use_left;
 		end else if (em < 10'd384) begin
 			e_plane = 2'd0;
 			e_x = blx + {12'd0, em_lt[3:0]};
 			e_y = bly - 16'd4 + {14'd0, em_lt[5:4]};
-			e_data = ty[em_lt[5:0]];
+			e_data = pb64(ty, em_lt[5:0]);
 			e_gate = use_top;
 		end else if (em < 10'd448) begin
 			e_plane = 2'd1;
 			e_x = bcx + {13'd0, em_cu[2:0]};
 			e_y = bcy + {13'd0, em_cu[5:3]};
-			e_data = wu[em_cu[5:0]];
+			e_data = pb64(wu, em_cu[5:0]);
 		end else if (em < 10'd512) begin
 			e_plane = 2'd2;
 			e_x = bcx + {13'd0, em_cv[2:0]};
 			e_y = bcy + {13'd0, em_cv[5:3]};
-			e_data = wv[em_cv[5:0]];
+			e_data = pb64(wv, em_cv[5:0]);
 		end else if (em < 10'd528) begin
 			e_plane = 2'd1;
 			e_x = bcx - 16'd2 + {15'd0, em_ul[0]};
 			e_y = bcy + {13'd0, em_ul[3:1]};
-			e_data = lu[{em_ul[3:1], 1'b1, em_ul[0]}];
+			e_data = pb32(lu, {em_ul[3:1], 1'b1, em_ul[0]});
 			e_gate = use_left;
 		end else if (em < 10'd544) begin
 			e_plane = 2'd2;
 			e_x = bcx - 16'd2 + {15'd0, em_vl[0]};
 			e_y = bcy + {13'd0, em_vl[3:1]};
-			e_data = lv[{em_vl[3:1], 1'b1, em_vl[0]}];
+			e_data = pb32(lv, {em_vl[3:1], 1'b1, em_vl[0]});
 			e_gate = use_left;
 		end else if (em < 10'd560) begin
 			e_plane = 2'd1;
 			e_x = bcx + {13'd0, em_ut[2:0]};
 			e_y = bcy - 16'd2 + {15'd0, em_ut[3]};
-			e_data = tu[{1'b1, em_ut[3], em_ut[2:0]}];
+			e_data = pb32(tu, {1'b1, em_ut[3], em_ut[2:0]});
 			e_gate = use_top;
 		end else begin
 			e_plane = 2'd2;
 			e_x = bcx + {13'd0, em_vt[2:0]};
 			e_y = bcy - 16'd2 + {15'd0, em_vt[3]};
-			e_data = tv[{1'b1, em_vt[3], em_vt[2:0]}];
+			e_data = pb32(tv, {1'b1, em_vt[3], em_vt[2:0]});
 			e_gate = use_top;
 		end
 	end
@@ -541,11 +562,11 @@ module h264_deblock_mb #(
 			S_RECV: begin
 				if (smp_valid) begin
 					if (smp_idx < 9'd256)
-						wy[smp_idx[7:0]] <= smp_data;
+						wy[8*smp_idx[7:0] +: 8] <= smp_data;
 					else if (smp_idx < 9'd320)
-						wu[smp_idx[5:0]] <= smp_data;
+						wu[8*smp_idx[5:0] +: 8] <= smp_data;
 					else
-						wv[smp_idx[5:0]] <= smp_data;
+						wv[8*smp_idx[5:0] +: 8] <= smp_data;
 				end
 				if (smp_done) begin
 					seq_idx <= 7'd0;
@@ -555,10 +576,10 @@ module h264_deblock_mb #(
 
 			// Pull the upper neighbour strip out of the line buffers.
 			S_LOAD: begin
-				ty[seq_idx[5:0]] <= lb_y[lby_addr(lb_base_y + {9'd0, seq_idx})];
+				ty[8*seq_idx[5:0] +: 8] <= lb_y[lby_addr(lb_base_y + {9'd0, seq_idx})];
 				if (!seq_idx[5]) begin
-					tu[seq_idx[4:0]] <= lb_u[lbc_addr(lb_base_c + {10'd0, seq_idx[5:0]})];
-					tv[seq_idx[4:0]] <= lb_v[lbc_addr(lb_base_c + {10'd0, seq_idx[5:0]})];
+					tu[8*seq_idx[4:0] +: 8] <= lb_u[lbc_addr(lb_base_c + {10'd0, seq_idx[5:0]})];
+					tv[8*seq_idx[4:0] +: 8] <= lb_v[lbc_addr(lb_base_c + {10'd0, seq_idx[5:0]})];
 				end
 				if (seq_idx == 7'd63) begin
 					fstep <= 6'd0;
@@ -631,12 +652,12 @@ module h264_deblock_mb #(
 			// neighbour strip for the row below.
 			S_STORE: begin
 				lb_y[lby_addr(lb_base_y + {9'd0, seq_idx})] <=
-					wy[{2'b11, seq_idx[5:4], seq_idx[3:0]}];
+					pb(wy, {2'b11, seq_idx[5:4], seq_idx[3:0]});
 				if (!seq_idx[5]) begin
 					lb_u[lbc_addr(lb_base_c + {10'd0, seq_idx[4:0]})] <=
-						wu[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
+						pb64(wu, {1'b1, seq_idx[4:3], seq_idx[2:0]});
 					lb_v[lbc_addr(lb_base_c + {10'd0, seq_idx[4:0]})] <=
-						wv[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
+						pb64(wv, {1'b1, seq_idx[4:3], seq_idx[2:0]});
 				end
 				if (seq_idx == 7'd63) begin
 					seq_idx <= 7'd0;
@@ -653,33 +674,33 @@ module h264_deblock_mb #(
 				if (use_left) begin
 					lb_y[lby_addr(lb_lbase_y + {10'd0, seq_idx[3:2], 4'd0} + 16'd12 +
 					     {14'd0, seq_idx[1:0]})] <=
-						ly[{2'b11, seq_idx[3:2], seq_idx[1:0]}];
+						pb64(ly, {2'b11, seq_idx[3:2], seq_idx[1:0]});
 					if (!seq_idx[3]) begin
 						lb_u[lbc_addr(lb_lbase_c + {11'd0, seq_idx[2:1], 3'd0} + 16'd6 +
 						     {15'd0, seq_idx[0]})] <=
-							lu[{1'b1, seq_idx[2:1], 1'b1, seq_idx[0]}];
+							pb32(lu, {1'b1, seq_idx[2:1], 1'b1, seq_idx[0]});
 						lb_v[lbc_addr(lb_lbase_c + {11'd0, seq_idx[2:1], 3'd0} + 16'd6 +
 						     {15'd0, seq_idx[0]})] <=
-							lv[{1'b1, seq_idx[2:1], 1'b1, seq_idx[0]}];
+							pb32(lv, {1'b1, seq_idx[2:1], 1'b1, seq_idx[0]});
 					end
 				end
 				if (seq_idx == 7'd15) begin
 					// Rotate this macroblock into the left / upper context.
 					for (i = 0; i < 16; i = i + 1) begin
-						ly[i * 4 + 0] <= wy[i * 16 + 12];
-						ly[i * 4 + 1] <= wy[i * 16 + 13];
-						ly[i * 4 + 2] <= wy[i * 16 + 14];
-						ly[i * 4 + 3] <= wy[i * 16 + 15];
+						ly[8*(i * 4 + 0) +: 8] <= pb(wy, i * 16 + 12);
+						ly[8*(i * 4 + 1) +: 8] <= pb(wy, i * 16 + 13);
+						ly[8*(i * 4 + 2) +: 8] <= pb(wy, i * 16 + 14);
+						ly[8*(i * 4 + 3) +: 8] <= pb(wy, i * 16 + 15);
 					end
 					for (i = 0; i < 8; i = i + 1) begin
-						lu[i * 4 + 0] <= wu[i * 8 + 4];
-						lu[i * 4 + 1] <= wu[i * 8 + 5];
-						lu[i * 4 + 2] <= wu[i * 8 + 6];
-						lu[i * 4 + 3] <= wu[i * 8 + 7];
-						lv[i * 4 + 0] <= wv[i * 8 + 4];
-						lv[i * 4 + 1] <= wv[i * 8 + 5];
-						lv[i * 4 + 2] <= wv[i * 8 + 6];
-						lv[i * 4 + 3] <= wv[i * 8 + 7];
+						lu[8*(i * 4 + 0) +: 8] <= pb64(wu, i * 8 + 4);
+						lu[8*(i * 4 + 1) +: 8] <= pb64(wu, i * 8 + 5);
+						lu[8*(i * 4 + 2) +: 8] <= pb64(wu, i * 8 + 6);
+						lu[8*(i * 4 + 3) +: 8] <= pb64(wu, i * 8 + 7);
+						lv[8*(i * 4 + 0) +: 8] <= pb64(wv, i * 8 + 4);
+						lv[8*(i * 4 + 1) +: 8] <= pb64(wv, i * 8 + 5);
+						lv[8*(i * 4 + 2) +: 8] <= pb64(wv, i * 8 + 6);
+						lv[8*(i * 4 + 3) +: 8] <= pb64(wv, i * 8 + 7);
 					end
 					lft_valid <= 1'b1;
 					lft_intra <= intra_r;
