@@ -650,6 +650,18 @@ stream_path #(
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
+	.p_mb_valid(),
+	.p_mb_addr(),
+	.p_mb_x(),
+	.p_mb_y(),
+	.p_mb_skip(),
+	.p_mb_part_mode(),
+	.p_mb_part_count(),
+	.p_mb_uses_sub_mb(),
+	.p_mb_intra(),
+	.p_mb_count(),
+	.p_slice_done(),
+	.p_traverse_busy(),
 	.fs_swap(stub_swap)
 );
 

@@ -147,7 +147,19 @@ module stream_path_deblock_tb (
 		.residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
 		.recon_sig(recon_sig), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
-		.fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel), .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
+				.p_mb_valid(),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_count(),
+		.p_slice_done(),
+		.p_traverse_busy(),
+.fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel), .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
 	);
 
 	wire [5:0] db_qp = use_stream_qp ? slice_qp : db_qp_avg;

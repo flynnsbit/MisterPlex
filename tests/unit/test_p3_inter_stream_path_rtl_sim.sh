@@ -46,6 +46,8 @@ PRODUCT_RTL=(
   h264_deblock.sv
   h264_dpb.sv
   decode_stub.sv
+  h264_p_mb_traverse.sv
+  h264_cavlc_residual.sv
 )
 
 for f in "$QIP" "$TOP" "$TB" "$IDR_FIXTURE" "$INTER_FIXTURE"; do

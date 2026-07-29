@@ -137,7 +137,19 @@ module stream_path_inter_tb #(
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_raw),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+				.p_mb_valid(),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_count(),
+		.p_slice_done(),
+		.p_traverse_busy(),
+.fs_swap(fs_swap)
 	);
 endmodule
 

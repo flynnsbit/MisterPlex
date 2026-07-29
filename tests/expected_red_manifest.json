@@ -185,6 +185,22 @@
         "FAIL",
         "out.find(kFake) == std::string::npos"
       ]
+    },
+    {
+      "id": "h264_p_mb_traverse_bad_skip",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "Ignoring mb_skip_run must under-count or fault so full P-MB traversal cannot vacuous-pass on skip runs.",
+      "required_substrings": [
+        "FAIL mut_bad_skip"
+      ]
+    },
+    {
+      "id": "h264_p_mb_traverse_drop_last_row",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "Dropping the last MB of each row must under-count traversed MBs so raster completeness is not silently skipped.",
+      "required_substrings": [
+        "FAIL mut_drop_last"
+      ]
     }
   ]
 }

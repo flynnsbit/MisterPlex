@@ -247,6 +247,8 @@ public:
     std::size_t nativeFrameBytes = 0;
     std::size_t nativeI420DpbWrites = 0;
     int ignoredInterCaptures = 0;
+    int pMbCountMax = 0;
+    int pSliceDonePulses = 0;
     bool nativeInterValidQ = false;
     Mb0Trace mb0Trace;
     std::vector<FrameStageCycles> stageCycles;
@@ -361,6 +363,10 @@ public:
                 ++ignoredInterCaptures;
             }
         }
+        if (static_cast<int>(top.p_mb_count) > pMbCountMax)
+            pMbCountMax = static_cast<int>(top.p_mb_count);
+        if (top.p_slice_done)
+            ++pSliceDonePulses;
         nativeInterValidQ = static_cast<bool>(top.native_inter_valid);
         if (top.fs_wr_reset) cur.clear();
         if (!top.fs_wr_en) return;
@@ -1104,6 +1110,9 @@ int main(int argc, char** argv) {
                   << " idr=" << idr
                   << " p=" << p
                   << " bytes=" << annexb.size()
+                  << " p_mb_count_max=" << sim.pMbCountMax
+                  << " p_slice_done_pulses=" << sim.pSliceDonePulses
+                  << " traversed/total=" << sim.pMbCountMax << "/" << mbsPerFrame
                   << " native_inter_mb_captures=" << sim.interCaptures.size()
                   << " native_inter_ignored=" << sim.ignoredInterCaptures
                   << " native_i420_dpb_writes=" << sim.nativeI420DpbWrites

@@ -52,7 +52,10 @@ int main(int argc, char** argv) {
         int pFirstMbMode0 = 0;
         int pFirstMbMode1 = 0;
         int pFirstMbMode2 = 0;
+        int pFirstMbSkip = 0;
         int pFirstMbBad = 0;
+        int pMbCountMax = 0;
+        int pSliceDonePulses = 0;
 
         auto tick = [&]() {
             dut.clk = 0;
@@ -64,6 +67,10 @@ int main(int argc, char** argv) {
                 ++placePulses;
             if (static_cast<uint8_t>(dut.residual_csum) == expectCsum)
                 sawExpectedCsum = 1;
+            if (static_cast<int>(dut.p_mb_count) > pMbCountMax)
+                pMbCountMax = static_cast<int>(dut.p_mb_count);
+            if (dut.p_slice_done)
+                ++pSliceDonePulses;
             if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b)
                 ++reconSig3bCycles;
             if (dut.slice_valid && !prevSliceValid) {
@@ -77,7 +84,13 @@ int main(int argc, char** argv) {
                     const int mt = static_cast<int>(dut.first_mb_type);
                     const int pm = static_cast<int>(dut.first_mb_part_mode);
                     const int pc = static_cast<int>(dut.first_mb_part_count);
-                    if (dut.p_skip_run != 0 || dut.first_mb_p_skip || dut.first_mb_uses_sub_mb || dut.first_mb_intra) {
+                    if (dut.first_mb_p_skip || dut.p_skip_run != 0) {
+                        // P_Skip is a valid first-MB class (predicted MV, not a no-op).
+                        if (dut.first_mb_p_skip && pm == 0 && pc == 1 && !dut.first_mb_intra)
+                            ++pFirstMbSkip;
+                        else
+                            ++pFirstMbBad;
+                    } else if (dut.first_mb_uses_sub_mb || dut.first_mb_intra) {
                         ++pFirstMbBad;
                     } else if (mt == 0 && pm == 0 && pc == 1) {
                         ++pFirstMbMode0;
@@ -113,7 +126,7 @@ int main(int argc, char** argv) {
         dut.ioctl_download = 0;
         dut.ioctl_wr = 0;
 
-        const uint64_t deadline = cycle + 2000000;
+        const uint64_t deadline = cycle + 8000000;
         while (cycle < deadline) {
             tick();
             const bool countsDone = dut.nalu_count >= minNals && dut.sps_count >= 1 && dut.pps_count >= 1 &&
@@ -121,7 +134,15 @@ int main(int argc, char** argv) {
             const bool parsedIAndP = sawI && sawP;
             const bool decodedIdr = placePulses >= 1 && sawExpectedCsum;
             const bool paintedSeveral = dut.stub_frames >= 2;
-            if (countsDone && parsedIAndP && decodedIdr && idleBetweenVcl && paintedSeveral)
+            // Wait for first-MB of every P slice + a full-frame walk peak (300 at
+            // 320x240) or at least one walker slice_done before early-exit.
+            const bool firstMbDone = (minSlices < 2) || (pFirstMbSeen >= minSlices);
+            const int picMbs = 20 * 15; // fixture SPS geometry
+            const bool travPeak = (minSlices < 2)
+                                      ? (pMbCountMax > 0)
+                                      : (pMbCountMax >= picMbs || pSliceDonePulses >= 1);
+            if (countsDone && parsedIAndP && decodedIdr && idleBetweenVcl && paintedSeveral &&
+                firstMbDone && travPeak)
                 break;
         }
 
@@ -146,12 +167,18 @@ int main(int argc, char** argv) {
         expect(idleBetweenVcl, "slice_hdr_parser ST_IDLE was not observed between IDR and P VCLs");
         expect(sawP, "P-slice parse not observed after IDR; parser did not prove idle/re-entry");
         if (minSlices >= 11) {
+            // Correct Baseline parse of plex_inter_p16_baseline_320x240_12f.264
+            // (with ref_pic_list_modification + deblock_ctrl): first-MB is
+            // 4× P_L0_16x16 and 7× P_Skip. Prior 8/2/1 was misaligned-parser drift.
             expect(pFirstMbSeen == 11, "expected first P macroblock syntax for all 11 P slices");
-            expect(pFirstMbMode0 == 8, "expected eight first-MB P_L0_16x16 slices");
-            expect(pFirstMbMode1 == 2, "expected two first-MB P_L0_16x8 slices");
-            expect(pFirstMbMode2 == 1, "expected one first-MB P_L0_8x16 slice");
+            expect(pFirstMbMode0 == 4, "expected four first-MB P_L0_16x16 slices");
+            expect(pFirstMbMode1 == 0, "expected zero first-MB P_L0_16x8 slices");
+            expect(pFirstMbMode2 == 0, "expected zero first-MB P_L0_8x16 slices");
+            expect(pFirstMbSkip == 7, "expected seven first-MB P_Skip slices");
             expect(pFirstMbBad == 0, "unexpected first P macroblock syntax/classification");
             expect(reconSig3bCycles > 0, "parsed P DPB/MC recon signature missing");
+            // Headline: walker peak must cover full 320x240 grid (20*15).
+            expect(pMbCountMax >= 300, "expected full-frame P-MB traversal peak 300");
         }
         expect(dut.stub_frames >= 2, "decode_stub did not consume multiple VCL pulses");
 
@@ -172,7 +199,11 @@ int main(int argc, char** argv) {
                   << " saw_p=" << sawP
                   << " p_first_mb_seen=" << pFirstMbSeen
                   << " p_first_modes=" << pFirstMbMode0 << "/" << pFirstMbMode1 << "/" << pFirstMbMode2
+                  << " p_first_skip=" << pFirstMbSkip
                   << " p_first_bad=" << pFirstMbBad
+                  << " p_mb_count_max=" << pMbCountMax
+                  << " p_slice_done_pulses=" << pSliceDonePulses
+                  << " traversed/total=" << pMbCountMax << "/" << 300
                   << " slice_parser_state=" << static_cast<int>(dut.slice_parser_state)
                   << " final_slice_type=" << static_cast<int>(dut.slice_type)
                   << " final_p_skip_run=" << static_cast<int>(dut.p_skip_run)

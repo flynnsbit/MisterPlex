@@ -1,0 +1,1268 @@
+// h264_p_mb_traverse — full P-slice macroblock raster walker.
+//
+// Owns all-P-MB traversal (PHASE_BACKLOG P3-3p open item): repeated mb_skip_run,
+// per-MB mode parse, raster advance, slice termination. P_Skip emits one MB event
+// per skipped address (not a no-op). Residual bits of coded MBs are consumed via
+// product h264_cavlc_residual_block so the next mb_skip_run/mb_type stays aligned.
+//
+// Interaction: does NOT own MVD reconstruction quality (sv-mvd), residual-add
+// (sv-resadd), or real ref pictures (sv-ref). Emits per-MB syntax events;
+// consumers attach MV/residual/ref independently. Zero-MVD MC remains valid for
+// P_Skip when MVP=0.
+//
+// Scaffold evidence (pre-fix): slice_hdr_parser ST_MBT/ST_P_MBT → ST_DONE after
+// the first P MB only (first_mb_* ports). That is by design, not a mid-loop bug.
+
+`default_nettype none
+
+module h264_p_mb_traverse #(
+	parameter int MAX_RBSP_BYTES = 8192,
+	parameter bit FAULT_BAD_SKIP_RUN = 1'b0,     // mutation: treat skip_run as 0
+	parameter bit FAULT_DROP_LAST_ROW_MB = 1'b0  // mutation: drop last MB of each row
+) (
+	input  wire        clk,
+	input  wire        reset,
+	input  wire        clear,
+
+	// RBSP byte stream (EPB already stripped by nalu_scanner)
+	input  wire        in_valid,
+	input  wire [7:0]  in_byte,
+	input  wire        in_last,
+	output wire        in_ready,
+
+	// Geometry / slice context (from SPS/PPS; header parsed from RBSP)
+	input  wire        start,              // pulse: begin walk on closed RBSP
+	input  wire [7:0]  mb_width,
+	input  wire [7:0]  mb_height,
+	input  wire [4:0]  log2_max_frame_num,
+	input  wire [2:0]  poc_type,
+	input  wire        is_idr_nal,
+	input  wire        nal_ref_idc_nonzero,
+	input  wire        pps_deblock_ctrl,
+	input  wire signed [7:0] pps_pic_init_qp,
+	input  wire [2:0]  num_ref_idx_l0_active_minus1,
+
+	// Per-MB event stream (ready/valid). When mb_valid && !mb_ready, walker stalls.
+	output reg         mb_valid,
+	input  wire        mb_ready,
+	output reg  [15:0] mb_addr,
+	output reg  [7:0]  mb_x,
+	output reg  [7:0]  mb_y,
+	output reg         mb_skip,
+	output reg  [7:0]  mb_type,
+	output reg  [2:0]  part_mode,          // 0=16x16 1=16x8 2=8x16 3=8x8 4=sub 7=intra
+	output reg  [2:0]  part_count,
+	output reg         uses_sub_mb,
+	output reg         is_intra,
+	output reg  [5:0]  cbp,
+	output reg signed [7:0] mb_qp,
+	output reg  [15:0] residual_bit_offset,
+
+	output reg  [15:0] mb_count,           // MBs emitted this slice
+	output reg         slice_done,         // pulse: walk finished
+	output reg         busy,
+	output reg         error,
+	output reg         unsupported
+);
+	localparam int MAX_BITS = MAX_RBSP_BYTES * 8;
+	localparam [2:0]
+		PART_P16x16 = 3'd0,
+		PART_P16x8  = 3'd1,
+		PART_P8x16  = 3'd2,
+		PART_P8x8   = 3'd3,
+		PART_SUB    = 3'd4,
+		PART_INTRA  = 3'd7;
+
+	localparam [7:0]
+		ST_IDLE           = 8'd0,
+		ST_BITS           = 8'd1,
+		ST_UE_ZERO        = 8'd2,
+		ST_UE_SUFFIX      = 8'd3,
+		ST_HDR_FIRST      = 8'd4,
+		ST_HDR_TYPE       = 8'd5,
+		ST_HDR_PPS        = 8'd6,
+		ST_HDR_FRAME      = 8'd7,
+		ST_HDR_IDR        = 8'd8,
+		ST_HDR_REFIDX_F   = 8'd9,
+		ST_HDR_REFIDX_L0  = 8'd10,
+		ST_HDR_LISTMOD_F  = 8'd11,  // ref_pic_list_modification_flag_l0
+		ST_HDR_LISTMOD_IDC = 8'd12, // modification_of_pic_nums_idc loop
+		ST_HDR_REFMARK    = 8'd13,
+		ST_HDR_QPD_PRE    = 8'd14,
+		ST_HDR_QPD        = 8'd15,
+		ST_HDR_DIDC       = 8'd16,
+		ST_HDR_ALPHA      = 8'd17,
+		ST_HDR_BETA       = 8'd18,
+		ST_START          = 8'd19,
+		ST_SKIP_UE        = 8'd20,
+		ST_SKIP_EMIT      = 8'd21,
+		ST_TYPE_UE        = 8'd22,
+		ST_TYPE           = 8'd23,
+		ST_SUB_UE         = 8'd24,
+		ST_MVD_X          = 8'd25,
+		ST_MVD_Y          = 8'd26,
+		ST_MVD_PAIR_DONE  = 8'd27,
+		ST_CBP_UE         = 8'd28,
+		ST_CBP            = 8'd29,
+		ST_QP_UE          = 8'd30,
+		ST_EMIT_CODED     = 8'd31,
+		ST_RES_SETUP      = 8'd32,
+		ST_RES_WAIT       = 8'd33,
+		ST_NEXT_MB        = 8'd34,
+		ST_DONE           = 8'd35,
+		ST_FAIL           = 8'd36,
+		ST_I4_FLAG        = 8'd37,
+		ST_I4_REM         = 8'd38,
+		ST_CHR_UE         = 8'd39,
+		ST_CBP_INTRA_UE   = 8'd40,
+		ST_HDR_LISTMOD_ARG = 8'd41; // abs_diff_pic_num / long_term_pic_num
+
+	reg [7:0] rbsp [0:MAX_RBSP_BYTES-1];
+	reg [15:0] rbsp_len;
+	reg [15:0] bit_pos;
+	reg [7:0] st, ret_st;
+	reg [7:0] fixed_left;
+	reg [31:0] fixed_acc;
+	reg [7:0] ue_zero, ue_suffix_left;
+	reg [31:0] ue_suffix, ue_value;
+
+	reg [15:0] curr_mb;
+	reg [15:0] pic_mbs;
+	reg [15:0] skip_left;
+	reg [15:0] skip_run_lat;
+	reg [7:0] mvd_pairs_left;
+	reg [2:0] sub_idx;
+	reg [5:0] cbp_r;
+	reg signed [7:0] qp_r;
+	reg [7:0] mb_type_r;
+	reg [2:0] part_mode_r;
+	reg [2:0] part_count_r;
+	reg uses_sub_r;
+	reg is_intra_r;
+	reg is_i16_r;              // I_16x16 in P: luma DC first, AC max=15
+	reg [4:0] i4_idx;
+	reg [7:0] slice_type_r;
+	reg [15:0] first_mb_r;
+	reg [4:0] log2_fn_r;
+	reg db_lat;
+	reg idr_lat;
+	reg nal_ref_lat;
+	reg signed [7:0] init_qp_r;
+
+	// Residual block schedule
+	reg [4:0] res_block_i;       // 0..15 luma, 16..17 chroma DC, 18..25 chroma AC
+	reg [4:0] res_blocks_total;
+	reg [3:0] res_luma_mask;     // which 8x8 luma groups coded
+	reg [1:0] res_chroma;        // 0 none, 1 DC, 2 DC+AC
+	reg [15:0] res_win_bit0;     // absolute bit pos of window base (must be 16b for multi-kB slices)
+	reg [7:0] res_win [0:63];
+	reg       cavlc_start_r;
+
+	// nC neighbour total_coeff: top row 4×4 (mb_width*4), left col 4×4 (4)
+	// Indexed by abs 4x4-x within picture for top; left is 4 entries for curr MB.
+	localparam int MAX_MB_W = 64;
+	reg [4:0] tc_top [0:MAX_MB_W*4-1];
+	reg       tc_top_v [0:MAX_MB_W*4-1];
+	reg [4:0] tc_left [0:3];
+	reg       tc_left_v [0:3];
+	// Chroma AC nC: 2 planes × (2×2 blocks/MB). Top: plane × abs 2x2-x.
+	reg [4:0] tc_chr_top [0:1][0:MAX_MB_W*2-1];
+	reg       tc_chr_top_v [0:1][0:MAX_MB_W*2-1];
+	reg [4:0] tc_chr_left [0:1][0:1];
+	reg       tc_chr_left_v [0:1][0:1];
+
+	wire [15:0] mb_w16 = (mb_width == 8'd0) ? 16'd20 : {8'd0, mb_width};
+	wire [15:0] mb_h16 = (mb_height == 8'd0) ? 16'd15 : {8'd0, mb_height};
+	wire [31:0] pic_mbs32 = {16'd0, mb_w16} * {16'd0, mb_h16};
+	wire [15:0] curr_x = (mb_w16 == 16'd0) ? 16'd0 : (curr_mb % mb_w16);
+	wire [15:0] curr_y = (mb_w16 == 16'd0) ? 16'd0 : (curr_mb / mb_w16);
+	wire        drop_this_mb = FAULT_DROP_LAST_ROW_MB && (curr_x == (mb_w16 - 16'd1));
+
+	assign in_ready = !busy && (rbsp_len < MAX_RBSP_BYTES[15:0]);
+
+	function automatic bit rbsp_bit_at;
+		input [15:0] idx;
+		integer byte_i, bit_i;
+		begin
+			byte_i = idx >> 3;
+			bit_i = 7 - (idx & 16'd7);
+			if (byte_i >= rbsp_len)
+				rbsp_bit_at = 1'b0;
+			else
+				rbsp_bit_at = rbsp[byte_i][bit_i];
+		end
+	endfunction
+
+	function automatic signed [7:0] se8_from_ue;
+		input [31:0] code;
+		reg signed [31:0] tmp;
+		begin
+			if (code[0])
+				tmp = $signed({1'b0, code[31:1]}) + 32'sd1;
+			else
+				tmp = -$signed({1'b0, code[31:1]});
+			se8_from_ue = tmp[7:0];
+		end
+	endfunction
+
+	function automatic [5:0] cbp_inter_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_inter_map = 6'd0; 6'd1: cbp_inter_map = 6'd16; 6'd2: cbp_inter_map = 6'd1; 6'd3: cbp_inter_map = 6'd2;
+			6'd4: cbp_inter_map = 6'd4; 6'd5: cbp_inter_map = 6'd8; 6'd6: cbp_inter_map = 6'd32; 6'd7: cbp_inter_map = 6'd3;
+			6'd8: cbp_inter_map = 6'd5; 6'd9: cbp_inter_map = 6'd10; 6'd10: cbp_inter_map = 6'd12; 6'd11: cbp_inter_map = 6'd15;
+			6'd12: cbp_inter_map = 6'd47; 6'd13: cbp_inter_map = 6'd7; 6'd14: cbp_inter_map = 6'd11; 6'd15: cbp_inter_map = 6'd13;
+			6'd16: cbp_inter_map = 6'd14; 6'd17: cbp_inter_map = 6'd6; 6'd18: cbp_inter_map = 6'd9; 6'd19: cbp_inter_map = 6'd31;
+			6'd20: cbp_inter_map = 6'd35; 6'd21: cbp_inter_map = 6'd37; 6'd22: cbp_inter_map = 6'd42; 6'd23: cbp_inter_map = 6'd44;
+			6'd24: cbp_inter_map = 6'd33; 6'd25: cbp_inter_map = 6'd34; 6'd26: cbp_inter_map = 6'd36; 6'd27: cbp_inter_map = 6'd40;
+			6'd28: cbp_inter_map = 6'd39; 6'd29: cbp_inter_map = 6'd43; 6'd30: cbp_inter_map = 6'd45; 6'd31: cbp_inter_map = 6'd46;
+			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
+			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
+			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			default: cbp_inter_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	function automatic [5:0] cbp_intra_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_intra_map = 6'd47; 6'd1: cbp_intra_map = 6'd31; 6'd2: cbp_intra_map = 6'd15; 6'd3: cbp_intra_map = 6'd0;
+			6'd4: cbp_intra_map = 6'd23; 6'd5: cbp_intra_map = 6'd27; 6'd6: cbp_intra_map = 6'd29; 6'd7: cbp_intra_map = 6'd30;
+			6'd8: cbp_intra_map = 6'd7; 6'd9: cbp_intra_map = 6'd11; 6'd10: cbp_intra_map = 6'd13; 6'd11: cbp_intra_map = 6'd14;
+			6'd12: cbp_intra_map = 6'd39; 6'd13: cbp_intra_map = 6'd43; 6'd14: cbp_intra_map = 6'd45; 6'd15: cbp_intra_map = 6'd46;
+			6'd16: cbp_intra_map = 6'd16; 6'd17: cbp_intra_map = 6'd3; 6'd18: cbp_intra_map = 6'd5; 6'd19: cbp_intra_map = 6'd10;
+			6'd20: cbp_intra_map = 6'd12; 6'd21: cbp_intra_map = 6'd19; 6'd22: cbp_intra_map = 6'd21; 6'd23: cbp_intra_map = 6'd26;
+			6'd24: cbp_intra_map = 6'd28; 6'd25: cbp_intra_map = 6'd35; 6'd26: cbp_intra_map = 6'd37; 6'd27: cbp_intra_map = 6'd42;
+			6'd28: cbp_intra_map = 6'd44; 6'd29: cbp_intra_map = 6'd1; 6'd30: cbp_intra_map = 6'd2; 6'd31: cbp_intra_map = 6'd4;
+			6'd32: cbp_intra_map = 6'd8; 6'd33: cbp_intra_map = 6'd17; 6'd34: cbp_intra_map = 6'd18; 6'd35: cbp_intra_map = 6'd20;
+			6'd36: cbp_intra_map = 6'd24; 6'd37: cbp_intra_map = 6'd6; 6'd38: cbp_intra_map = 6'd9; 6'd39: cbp_intra_map = 6'd22;
+			6'd40: cbp_intra_map = 6'd25; 6'd41: cbp_intra_map = 6'd32; 6'd42: cbp_intra_map = 6'd33; 6'd43: cbp_intra_map = 6'd34;
+			6'd44: cbp_intra_map = 6'd36; 6'd45: cbp_intra_map = 6'd40; 6'd46: cbp_intra_map = 6'd38; 6'd47: cbp_intra_map = 6'd41;
+			default: cbp_intra_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	function automatic [7:0] sub_mb_mvd_pairs;
+		input [31:0] sub_type;
+		begin
+			case (sub_type[1:0])
+			2'd0: sub_mb_mvd_pairs = 8'd1;
+			2'd1: sub_mb_mvd_pairs = 8'd2;
+			2'd2: sub_mb_mvd_pairs = 8'd2;
+			default: sub_mb_mvd_pairs = 8'd4;
+			endcase
+		end
+	endfunction
+
+	function automatic [2:0] part_mode_of;
+		input skipped;
+		input [7:0] mt;
+		begin
+			if (skipped || mt == 8'd0) part_mode_of = PART_P16x16;
+			else if (mt == 8'd1) part_mode_of = PART_P16x8;
+			else if (mt == 8'd2) part_mode_of = PART_P8x16;
+			else if (mt == 8'd3 || mt == 8'd4) part_mode_of = PART_P8x8;
+			else part_mode_of = PART_INTRA;
+		end
+	endfunction
+
+	function automatic [2:0] part_count_of;
+		input skipped;
+		input [7:0] mt;
+		begin
+			if (skipped || mt == 8'd0) part_count_of = 3'd1;
+			else if (mt == 8'd1 || mt == 8'd2) part_count_of = 3'd2;
+			else if (mt == 8'd3 || mt == 8'd4) part_count_of = 3'd4;
+			else part_count_of = 3'd0;
+		end
+	endfunction
+
+	// Luma 4x4 scan inside MB: block index 0..15 → (bx,by) in 4x4 units
+	function automatic [1:0] blk4_x;
+		input [3:0] i;
+		begin
+			// 0 1 4 5 / 2 3 6 7 / 8 9 12 13 / 10 11 14 15
+			case (i)
+			4'd0,4'd2,4'd8,4'd10: blk4_x = 2'd0;
+			4'd1,4'd3,4'd9,4'd11: blk4_x = 2'd1;
+			4'd4,4'd6,4'd12,4'd14: blk4_x = 2'd2;
+			default: blk4_x = 2'd3;
+			endcase
+		end
+	endfunction
+	function automatic [1:0] blk4_y;
+		input [3:0] i;
+		begin
+			case (i)
+			4'd0,4'd1,4'd4,4'd5: blk4_y = 2'd0;
+			4'd2,4'd3,4'd6,4'd7: blk4_y = 2'd1;
+			4'd8,4'd9,4'd12,4'd13: blk4_y = 2'd2;
+			default: blk4_y = 2'd3;
+			endcase
+		end
+	endfunction
+
+	function automatic [2:0] nc_table;
+		input [5:0] nC;
+		begin
+			if ($signed({1'b0, nC}) < 0) // chroma DC uses table 4 via caller
+				nc_table = 3'd4;
+			else if (nC < 6'd2) nc_table = 3'd0;
+			else if (nC < 6'd4) nc_table = 3'd1;
+			else if (nC < 6'd8) nc_table = 3'd2;
+			else nc_table = 3'd3;
+		end
+	endfunction
+
+	// nC for luma 4x4 i inside current MB
+	function automatic [5:0] luma_nC;
+		input [3:0] bi;
+		reg [1:0] bx, by;
+		reg [15:0] abs_x;
+		reg avail_a, avail_b;
+		reg [4:0] nA, nB;
+		reg [5:0] sum;
+		begin
+			bx = blk4_x(bi);
+			by = blk4_y(bi);
+			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
+			avail_a = (bx != 2'd0) ? 1'b1 : (curr_x != 16'd0);
+			avail_b = (by != 2'd0) ? 1'b1 : (curr_y != 16'd0);
+			if (bx != 2'd0)
+				nA = tc_left_blk(by); // will use progressive left update; see below
+			else if (curr_x != 16'd0)
+				nA = tc_left[by];
+			else
+				nA = 5'd0;
+			if (by != 2'd0)
+				nB = tc_top_local(bx, by);
+			else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
+				nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+			else begin
+				nB = 5'd0;
+				avail_b = avail_b && (curr_y != 16'd0);
+			end
+			// Fix nA for same-MB left: use running left within MB via tc_left which
+			// we update after each block. At schedule time we use left of prior block.
+			if (!avail_a && !avail_b)
+				luma_nC = 6'd0;
+			else if (!avail_a)
+				luma_nC = {1'b0, nB};
+			else if (!avail_b)
+				luma_nC = {1'b0, nA};
+			else begin
+				sum = {1'b0, nA} + {1'b0, nB};
+				luma_nC = (sum + 6'd1) >> 1;
+			end
+		end
+	endfunction
+
+	// Placeholder helpers replaced by regs below — keep functions thin.
+	function automatic [4:0] tc_left_blk;
+		input [1:0] by;
+		begin
+			tc_left_blk = tc_left[by];
+		end
+	endfunction
+	function automatic [4:0] tc_top_local;
+		input [1:0] bx;
+		input [1:0] by;
+		reg [15:0] abs_x;
+		begin
+			// same-MB top: stored into tc_top at abs after each block; for by>0
+			// left-to-right scan guarantees upper block done.
+			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
+			if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+				tc_top_local = tc_top[abs_x];
+			else
+				tc_top_local = 5'd0;
+			// silence unused
+			if (by == 2'd0) tc_top_local = tc_top_local;
+		end
+	endfunction
+
+	// Chroma 2x2 block coords from scan index 0..3 (row-major)
+	function automatic [0:0] chr_bx;
+		input [1:0] bi;
+		chr_bx = bi[0];
+	endfunction
+	function automatic [0:0] chr_by;
+		input [1:0] bi;
+		chr_by = bi[1];
+	endfunction
+
+	// nC for chroma AC plane p, block bi (0..3)
+	function automatic [5:0] chroma_nC;
+		input       p;
+		input [1:0] bi;
+		reg avail_a, avail_b;
+		reg [4:0] nA, nB;
+		reg [5:0] sum;
+		reg [15:0] abs_x;
+		reg bx, by;
+		begin
+			bx = chr_bx(bi);
+			by = chr_by(bi);
+			abs_x = {curr_x[14:0], 1'b0} + {15'd0, bx};
+			avail_a = bx ? 1'b1 : (curr_x != 16'd0);
+			avail_b = by ? 1'b1 : (curr_y != 16'd0);
+			if (bx)
+				nA = tc_chr_left[p][by];
+			else if (curr_x != 16'd0)
+				nA = tc_chr_left_v[p][by] ? tc_chr_left[p][by] : 5'd0;
+			else
+				nA = 5'd0;
+			if (by)
+				nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+					tc_chr_top[p][abs_x] : 5'd0;
+			else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+				nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+			else
+				nB = 5'd0;
+			if (!avail_a && !avail_b)
+				chroma_nC = 6'd0;
+			else if (!avail_a)
+				chroma_nC = {1'b0, nB};
+			else if (!avail_b)
+				chroma_nC = {1'b0, nA};
+			else begin
+				sum = {1'b0, nA} + {1'b0, nB};
+				chroma_nC = (sum + 6'd1) >> 1;
+			end
+		end
+	endfunction
+
+	task automatic start_bits;
+		input [7:0] nbits;
+		input [7:0] next_st;
+		begin
+			fixed_left <= nbits;
+			fixed_acc <= 32'd0;
+			ret_st <= next_st;
+			st <= ST_BITS;
+		end
+	endtask
+
+	task automatic start_ue;
+		input [7:0] next_st;
+		begin
+			ue_zero <= 8'd0;
+			ue_suffix_left <= 8'd0;
+			ue_suffix <= 32'd0;
+			ue_value <= 32'd0;
+			ret_st <= next_st;
+			st <= ST_UE_ZERO;
+		end
+	endtask
+
+	task automatic fail;
+		begin
+			error <= 1'b1;
+			busy <= 1'b0;
+			st <= ST_FAIL;
+		end
+	endtask
+
+	// Hold one outstanding MB beat until consumer takes it (mb_ready).
+	reg mb_hold;
+	task automatic emit_mb;
+		input skipped;
+		begin
+			if (drop_this_mb) begin
+				// mutation twin: pretend this MB never existed
+			end else begin
+				mb_valid <= 1'b1;
+				mb_hold <= 1'b1;
+				mb_addr <= curr_mb;
+				mb_x <= curr_x[7:0];
+				mb_y <= curr_y[7:0];
+				mb_skip <= skipped;
+				mb_type <= skipped ? 8'd0 : mb_type_r;
+				part_mode <= skipped ? PART_P16x16 : part_mode_r;
+				part_count <= skipped ? 3'd1 : part_count_r;
+				uses_sub_mb <= skipped ? 1'b0 : uses_sub_r;
+				is_intra <= skipped ? 1'b0 : is_intra_r;
+				cbp <= skipped ? 6'd0 : cbp_r;
+				mb_qp <= qp_r;
+				residual_bit_offset <= bit_pos;
+				mb_count <= mb_count + 16'd1;
+			end
+		end
+	endtask
+
+	// CAVLC residual consumer
+	wire        cavlc_busy, cavlc_done, cavlc_ok;
+	wire [9:0]  cavlc_bit_end;
+	wire [4:0]  cavlc_tc;
+	wire [1:0]  cavlc_t1;
+	wire [3:0]  cavlc_tz;
+	wire signed [15:0] cavlc_coeff [0:15];
+	wire signed [15:0] cavlc_lev [0:15];
+	wire [3:0]  cavlc_run [0:15];
+
+	reg [2:0] cavlc_table_r;
+	reg [4:0] cavlc_max_r;
+	reg [9:0] cavlc_bit0_r;   // offset within 64 B window (0..511)
+	reg [9:0] cavlc_bitlen_r;
+
+	h264_cavlc_residual_block #(.MAX_BYTES(64)) u_cavlc (
+		.clk(clk), .reset(reset | clear),
+		.start(cavlc_start_r),
+		.coeff_token_table(cavlc_table_r),
+		.max_coeff(cavlc_max_r),
+		.bit_offset_start(cavlc_bit0_r),
+		.bit_len(cavlc_bitlen_r),
+		.rbsp(res_win),
+		.busy(cavlc_busy), .done(cavlc_done), .ok(cavlc_ok),
+		.bit_offset_end(cavlc_bit_end),
+		.total_coeff(cavlc_tc), .trailing_ones(cavlc_t1), .total_zeros(cavlc_tz),
+		.coeff(cavlc_coeff), .level_dbg(cavlc_lev), .run_dbg(cavlc_run)
+	);
+
+	integer wi, ti;
+	task automatic load_res_window;
+		input [15:0] abs_bit;
+		integer bbase, k;
+		begin
+			bbase = abs_bit >> 3;
+			// Byte-aligned absolute base; CAVLC sees only in-window offsets.
+			res_win_bit0 <= {abs_bit[15:3], 3'b000};
+			for (k = 0; k < 64; k = k + 1) begin
+				if ((bbase + k) < rbsp_len)
+					res_win[k] <= rbsp[bbase + k];
+				else
+					res_win[k] <= 8'd0;
+			end
+		end
+	endtask
+
+	// Residual schedule:
+	//  Inter / I_NxN: idx 0..15 luma 4x4 (max16), 16..17 chrDC, 18..25 chrAC
+	//  I_16x16:       idx 0 = luma DC (max16), 1..16 = luma AC max15 if cbp_l,
+	//                 17..18 chrDC, 19..26 chrAC
+	function automatic bit res_slot_coded;
+		input [4:0] idx;
+		reg [1:0] g;
+		reg [3:0] ac_i;
+		begin
+			if (is_i16_r) begin
+				if (idx == 5'd0)
+					res_slot_coded = 1'b1; // luma DC always
+				else if (idx <= 5'd16) begin
+					ac_i = idx[3:0] - 4'd1;
+					g = {blk4_y(ac_i)[1], blk4_x(ac_i)[1]};
+					res_slot_coded = |res_luma_mask; // cbp_l is 0 or 15
+				end else if (idx <= 5'd18)
+					res_slot_coded = (res_chroma != 2'd0);
+				else
+					res_slot_coded = (res_chroma == 2'd2);
+			end else if (idx < 5'd16) begin
+				g = {blk4_y(idx[3:0])[1], blk4_x(idx[3:0])[1]};
+				res_slot_coded = res_luma_mask[g];
+			end else if (idx < 5'd18) begin
+				res_slot_coded = (res_chroma != 2'd0);
+			end else begin
+				res_slot_coded = (res_chroma == 2'd2);
+			end
+		end
+	endfunction
+
+	task automatic launch_cavlc_for_slot;
+		input [4:0] idx;
+		reg [5:0] nCv;
+		reg [15:0] abs_bit;
+		reg [3:0] ac_i;
+		reg [2:0] chr_i; // 0..7 across planes
+		reg p;
+		reg [1:0] bi;
+		begin
+			abs_bit = bit_pos;
+			load_res_window(abs_bit);
+			if (is_i16_r) begin
+				if (idx == 5'd0) begin
+					// I_16x16 DC nC from left/up MB edge (block 0 neighbours)
+					nCv = luma_nC(4'd0);
+					cavlc_table_r <= nc_table(nCv);
+					cavlc_max_r <= 5'd16;
+				end else if (idx <= 5'd16) begin
+					ac_i = idx[3:0] - 4'd1;
+					nCv = luma_nC(ac_i);
+					cavlc_table_r <= nc_table(nCv);
+					cavlc_max_r <= 5'd15;
+				end else if (idx <= 5'd18) begin
+					cavlc_table_r <= 3'd4;
+					cavlc_max_r <= 5'd4;
+				end else begin
+					// 19..26: plane-major, 4 blocks each (U then V)
+					chr_i = idx - 5'd19;
+					p = chr_i[2];
+					bi = chr_i[1:0];
+					nCv = chroma_nC(p, bi);
+					cavlc_table_r <= nc_table(nCv);
+					cavlc_max_r <= 5'd15;
+				end
+			end else if (idx < 5'd16) begin
+				nCv = luma_nC(idx[3:0]);
+				cavlc_table_r <= nc_table(nCv);
+				cavlc_max_r <= 5'd16;
+			end else if (idx < 5'd18) begin
+				cavlc_table_r <= 3'd4;
+				cavlc_max_r <= 5'd4;
+			end else begin
+				// 18..25: plane-major, 4 blocks each
+				chr_i = idx - 5'd18;
+				p = chr_i[2];
+				bi = chr_i[1:0];
+				nCv = chroma_nC(p, bi);
+				cavlc_table_r <= nc_table(nCv);
+				cavlc_max_r <= 5'd15;
+			end
+			cavlc_bit0_r <= {7'd0, abs_bit[2:0]};
+			cavlc_bitlen_r <= 10'd512;
+			cavlc_start_r <= 1'b1;
+		end
+	endtask
+
+	task automatic commit_tc_after_luma;
+		input [3:0] bi;
+		input [4:0] tc;
+		reg [1:0] bx, by;
+		reg [15:0] abs_x;
+		begin
+			bx = blk4_x(bi);
+			by = blk4_y(bi);
+			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
+			tc_left[by] <= tc;
+			tc_left_v[by] <= 1'b1;
+			if (abs_x < MAX_MB_W*4) begin
+				tc_top[abs_x] <= tc;
+				tc_top_v[abs_x] <= 1'b1;
+			end
+		end
+	endtask
+
+	task automatic commit_tc_after_chr;
+		input       p;
+		input [1:0] bi;
+		input [4:0] tc;
+		reg bx, by;
+		reg [15:0] abs_x;
+		begin
+			bx = chr_bx(bi);
+			by = chr_by(bi);
+			abs_x = {curr_x[14:0], 1'b0} + {15'd0, bx};
+			tc_chr_left[p][by] <= tc;
+			tc_chr_left_v[p][by] <= 1'b1;
+			if (abs_x < MAX_MB_W*2) begin
+				tc_chr_top[p][abs_x] <= tc;
+				tc_chr_top_v[p][abs_x] <= 1'b1;
+			end
+		end
+	endtask
+
+	// Zero both chroma planes' AC neighbour map for this MB (skip / cbp_c!=2).
+	task automatic zero_chr_tc_mb;
+		integer p, b;
+		reg [15:0] abs_x;
+		begin
+			for (p = 0; p < 2; p = p + 1) begin
+				for (b = 0; b < 4; b = b + 1) begin
+					abs_x = {curr_x[14:0], 1'b0} + {15'd0, b[0]};
+					tc_chr_left[p][b[1]] <= 5'd0;
+					tc_chr_left_v[p][b[1]] <= 1'b1;
+					if (abs_x < MAX_MB_W*2) begin
+						tc_chr_top[p][abs_x] <= 5'd0;
+						tc_chr_top_v[p][abs_x] <= 1'b1;
+					end
+				end
+			end
+		end
+	endtask
+
+	always @(posedge clk) begin
+		if (reset || clear) begin
+			rbsp_len <= 16'd0;
+			bit_pos <= 16'd0;
+			busy <= 1'b0;
+			st <= ST_IDLE;
+			ret_st <= ST_IDLE;
+			mb_valid <= 1'b0;
+			mb_hold <= 1'b0;
+			mb_addr <= 16'd0;
+			mb_x <= 8'd0;
+			mb_y <= 8'd0;
+			mb_skip <= 1'b0;
+			mb_type <= 8'd0;
+			part_mode <= PART_INTRA;
+			part_count <= 3'd0;
+			uses_sub_mb <= 1'b0;
+			is_intra <= 1'b0;
+			cbp <= 6'd0;
+			mb_qp <= 8'sd0;
+			residual_bit_offset <= 16'd0;
+			mb_count <= 16'd0;
+			slice_done <= 1'b0;
+			error <= 1'b0;
+			unsupported <= 1'b0;
+			curr_mb <= 16'd0;
+			pic_mbs <= 16'd0;
+			skip_left <= 16'd0;
+			skip_run_lat <= 16'd0;
+			mvd_pairs_left <= 8'd0;
+			sub_idx <= 3'd0;
+			cbp_r <= 6'd0;
+			qp_r <= 8'sd26;
+			mb_type_r <= 8'd0;
+			part_mode_r <= PART_INTRA;
+			part_count_r <= 3'd0;
+			uses_sub_r <= 1'b0;
+			is_intra_r <= 1'b0;
+			is_i16_r <= 1'b0;
+			i4_idx <= 5'd0;
+			res_block_i <= 5'd0;
+			res_blocks_total <= 5'd0;
+			res_luma_mask <= 4'd0;
+			res_chroma <= 2'd0;
+			cavlc_start_r <= 1'b0;
+			for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
+				tc_top[ti] <= 5'd0;
+				tc_top_v[ti] <= 1'b0;
+			end
+			for (ti = 0; ti < 4; ti = ti + 1) begin
+				tc_left[ti] <= 5'd0;
+				tc_left_v[ti] <= 1'b0;
+			end
+			begin : rst_chr
+				integer p, x;
+				for (p = 0; p < 2; p = p + 1) begin
+					tc_chr_left[p][0] <= 5'd0;
+					tc_chr_left[p][1] <= 5'd0;
+					tc_chr_left_v[p][0] <= 1'b0;
+					tc_chr_left_v[p][1] <= 1'b0;
+					for (x = 0; x < MAX_MB_W*2; x = x + 1) begin
+						tc_chr_top[p][x] <= 5'd0;
+						tc_chr_top_v[p][x] <= 1'b0;
+					end
+				end
+			end
+			for (wi = 0; wi < 64; wi = wi + 1)
+				res_win[wi] <= 8'd0;
+		end else begin
+			slice_done <= 1'b0;
+			cavlc_start_r <= 1'b0;
+
+			// Handshake: drop valid when accepted
+			if (mb_valid && mb_ready) begin
+				mb_valid <= 1'b0;
+				mb_hold <= 1'b0;
+			end
+
+			if (!busy && in_valid && in_ready) begin
+				rbsp[rbsp_len] <= in_byte;
+				rbsp_len <= rbsp_len + 16'd1;
+			end
+
+			// Stall FSM while an MB beat is outstanding and not taken
+			if (mb_hold && !(mb_valid && mb_ready) && busy) begin
+				// hold state
+			end else if (!busy && start) begin
+				busy <= 1'b1;
+				error <= 1'b0;
+				unsupported <= 1'b0;
+				mb_count <= 16'd0;
+				pic_mbs <= pic_mbs32[15:0];
+				bit_pos <= 16'd0;
+				log2_fn_r <= (log2_max_frame_num == 5'd0) ? 5'd4 : log2_max_frame_num;
+				db_lat <= pps_deblock_ctrl;
+				idr_lat <= is_idr_nal;
+				nal_ref_lat <= nal_ref_idc_nonzero;
+				init_qp_r <= pps_pic_init_qp;
+				qp_r <= pps_pic_init_qp;
+				for (ti = 0; ti < 4; ti = ti + 1) begin
+					tc_left[ti] <= 5'd0;
+					tc_left_v[ti] <= 1'b0;
+				end
+				for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
+					tc_top[ti] <= 5'd0;
+					tc_top_v[ti] <= 1'b0;
+				end
+				begin : start_chr
+					integer p, x;
+					for (p = 0; p < 2; p = p + 1) begin
+						tc_chr_left[p][0] <= 5'd0;
+						tc_chr_left[p][1] <= 5'd0;
+						tc_chr_left_v[p][0] <= 1'b0;
+						tc_chr_left_v[p][1] <= 1'b0;
+						for (x = 0; x < MAX_MB_W*2; x = x + 1) begin
+							tc_chr_top[p][x] <= 5'd0;
+							tc_chr_top_v[p][x] <= 1'b0;
+						end
+					end
+				end
+				start_ue(ST_HDR_FIRST);
+			end else if (busy) begin
+				case (st)
+				ST_BITS: begin
+					if (fixed_left == 8'd0) st <= ret_st;
+					else if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					else begin
+						fixed_acc <= (fixed_acc << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+						bit_pos <= bit_pos + 16'd1;
+						fixed_left <= fixed_left - 8'd1;
+						if (fixed_left == 8'd1) st <= ret_st;
+					end
+				end
+				ST_UE_ZERO: begin
+					if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					else if (!rbsp_bit_at(bit_pos)) begin
+						bit_pos <= bit_pos + 16'd1;
+						if (ue_zero >= 8'd24) fail();
+						else ue_zero <= ue_zero + 8'd1;
+					end else begin
+						bit_pos <= bit_pos + 16'd1;
+						if (ue_zero == 8'd0) begin
+							ue_value <= 32'd0;
+							st <= ret_st;
+						end else begin
+							ue_suffix_left <= ue_zero;
+							ue_suffix <= 32'd0;
+							st <= ST_UE_SUFFIX;
+						end
+					end
+				end
+				ST_UE_SUFFIX: begin
+					if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					else begin
+						// NBA-correct: old ue_suffix in RHS yields final suffix value.
+						ue_suffix <= (ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+						if (ue_suffix_left == 8'd1) begin
+							ue_value <= ((32'd1 << ue_zero) - 32'd1) +
+							            ((ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)});
+							st <= ret_st;
+						end
+						bit_pos <= bit_pos + 16'd1;
+						ue_suffix_left <= ue_suffix_left - 8'd1;
+					end
+				end
+				ST_HDR_FIRST: begin
+					first_mb_r <= ue_value[15:0];
+					curr_mb <= ue_value[15:0];
+					start_ue(ST_HDR_TYPE);
+				end
+				ST_HDR_TYPE: begin
+					slice_type_r <= ue_value[7:0];
+					if ((ue_value[7:0] != 8'd0) && (ue_value[7:0] != 8'd5)) begin
+						// Not a P slice — idle out without error (I handled elsewhere)
+						unsupported <= 1'b1;
+						st <= ST_DONE;
+					end else
+						start_ue(ST_HDR_PPS);
+				end
+				ST_HDR_PPS: begin
+					start_bits({3'd0, log2_fn_r}, ST_HDR_FRAME);
+				end
+				ST_HDR_FRAME: begin
+					if (idr_lat)
+						start_ue(ST_HDR_IDR);
+					else if ((slice_type_r == 8'd0) || (slice_type_r == 8'd5))
+						start_bits(8'd1, ST_HDR_REFIDX_F);
+					else if (nal_ref_lat)
+						start_bits(8'd1, ST_HDR_REFMARK);
+					else
+						start_ue(ST_HDR_QPD);
+				end
+				ST_HDR_IDR: begin
+					// IDR dec_ref_pic_marking: two flags, then QP
+					start_bits(8'd2, ST_HDR_QPD_PRE);
+				end
+				ST_HDR_REFIDX_F: begin
+					// After override (or override+l0 count): ref_pic_list_modification()
+					if (fixed_acc[0])
+						start_ue(ST_HDR_REFIDX_L0);
+					else
+						start_bits(8'd1, ST_HDR_LISTMOD_F);
+				end
+				ST_HDR_REFIDX_L0: begin
+					start_bits(8'd1, ST_HDR_LISTMOD_F);
+				end
+				// 7.3.3.1 ref_pic_list_modification for P: flag_l0 then optional idc loop.
+				// Missing this bit misaligns QP/mb_skip_run (measured: fixture peak 147/300).
+				ST_HDR_LISTMOD_F: begin
+					if (fixed_acc[0])
+						start_ue(ST_HDR_LISTMOD_IDC);
+					else if (nal_ref_lat)
+						start_bits(8'd1, ST_HDR_REFMARK);
+					else
+						start_ue(ST_HDR_QPD);
+				end
+				ST_HDR_LISTMOD_IDC: begin
+					// modification_of_pic_nums_idc; 3 = end
+					if (ue_value == 32'd3) begin
+						if (nal_ref_lat)
+							start_bits(8'd1, ST_HDR_REFMARK);
+						else
+							start_ue(ST_HDR_QPD);
+					end else if (ue_value == 32'd0 || ue_value == 32'd1 || ue_value == 32'd2) begin
+						start_ue(ST_HDR_LISTMOD_ARG);
+					end else begin
+						unsupported <= 1'b1;
+						fail();
+					end
+				end
+				ST_HDR_LISTMOD_ARG: begin
+					// abs_diff_pic_num_minus1 or long_term_pic_num — value unused
+					start_ue(ST_HDR_LISTMOD_IDC);
+				end
+				ST_HDR_REFMARK: begin
+					// adaptive MMCO unsupported — if set, stop walk
+					if (!idr_lat && fixed_acc[0]) begin
+						unsupported <= 1'b1;
+						st <= ST_DONE;
+					end else
+						start_ue(ST_HDR_QPD);
+				end
+				ST_HDR_QPD_PRE: begin
+					start_ue(ST_HDR_QPD);
+				end
+				ST_HDR_QPD: begin
+					qp_r <= init_qp_r + se8_from_ue(ue_value);
+					if (db_lat)
+						start_ue(ST_HDR_DIDC);
+					else
+						st <= ST_START;
+				end
+				ST_HDR_DIDC: begin
+					if (ue_value != 32'd1)
+						start_ue(ST_HDR_ALPHA);
+					else
+						st <= ST_START;
+				end
+				ST_HDR_ALPHA: begin
+					start_ue(ST_HDR_BETA);
+				end
+				ST_HDR_BETA: begin
+					st <= ST_START;
+				end
+				ST_START: begin
+					if (curr_mb >= pic_mbs) st <= ST_DONE;
+					else start_ue(ST_SKIP_UE);
+				end
+				ST_SKIP_UE: begin
+					skip_run_lat <= FAULT_BAD_SKIP_RUN ? 16'd0 : ue_value[15:0];
+					if (FAULT_BAD_SKIP_RUN) begin
+						// mutation: ignore skip_run and force coded path
+						start_ue(ST_TYPE_UE);
+					end else if (ue_value != 32'd0) begin
+						skip_left <= ue_value[15:0];
+						st <= ST_SKIP_EMIT;
+					end else begin
+						start_ue(ST_TYPE_UE);
+					end
+				end
+				ST_SKIP_EMIT: begin
+					if (curr_mb >= pic_mbs) begin
+						st <= ST_DONE;
+					end else if (skip_left != 16'd0) begin
+						emit_mb(1'b1);
+						// P_Skip has no residual; clear left tc (inferred zeros)
+						for (ti = 0; ti < 4; ti = ti + 1) begin
+							tc_left[ti] <= 5'd0;
+							tc_left_v[ti] <= 1'b1;
+						end
+						begin : skip_top
+							integer sx;
+							for (sx = 0; sx < 4; sx = sx + 1) begin
+								if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+									tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+									tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+								end
+							end
+						end
+						zero_chr_tc_mb();
+						curr_mb <= curr_mb + 16'd1;
+						skip_left <= skip_left - 16'd1;
+					end else if (curr_mb >= pic_mbs) begin
+						st <= ST_DONE;
+					end else begin
+						// After a skip run, a coded MB follows while bits remain.
+						// Do not require 8 spare bits — skip_run/mb_type ue can be 1 bit.
+						if (bit_pos >= (rbsp_len * 16'd8))
+							st <= ST_DONE;
+						else
+							start_ue(ST_TYPE_UE);
+					end
+				end
+				ST_TYPE_UE: begin
+					st <= ST_TYPE;
+				end
+				ST_TYPE: begin
+					mb_type_r <= ue_value[7:0];
+					is_i16_r <= 1'b0;
+					if (ue_value <= 32'd4) begin
+						is_intra_r <= 1'b0;
+						uses_sub_r <= (ue_value == 32'd3) || (ue_value == 32'd4);
+						part_mode_r <= part_mode_of(1'b0, ue_value[7:0]);
+						part_count_r <= part_count_of(1'b0, ue_value[7:0]);
+						if (num_ref_idx_l0_active_minus1 != 3'd0) begin
+							// multi-ref: ref_idx_l0 syntax not walked here
+							unsupported <= 1'b1;
+							// still attempt single-ref path with zero ref idx bits
+						end
+						case (ue_value[2:0])
+						3'd0: begin mvd_pairs_left <= 8'd1; start_ue(ST_MVD_X); end
+						3'd1: begin mvd_pairs_left <= 8'd2; start_ue(ST_MVD_X); end
+						3'd2: begin mvd_pairs_left <= 8'd2; start_ue(ST_MVD_X); end
+						default: begin
+							part_mode_r <= PART_SUB;
+							sub_idx <= 3'd0;
+							mvd_pairs_left <= 8'd0;
+							start_ue(ST_SUB_UE);
+						end
+						endcase
+					end else if (ue_value == 32'd5) begin
+						// I_NxN in P
+						is_intra_r <= 1'b1;
+						uses_sub_r <= 1'b0;
+						part_mode_r <= PART_INTRA;
+						part_count_r <= 3'd0;
+						i4_idx <= 5'd0;
+						start_bits(8'd1, ST_I4_FLAG);
+					end else if (ue_value >= 32'd6 && ue_value <= 32'd29) begin
+						// I_16x16 in P: mb_type 6..29 ≡ I types 1..24
+						// cbp_c = ((mt-6)/4)%3; cbp_l = ((mt-6)/12)?15:0
+						is_intra_r <= 1'b1;
+						is_i16_r <= 1'b1;
+						uses_sub_r <= 1'b0;
+						part_mode_r <= PART_INTRA;
+						part_count_r <= 3'd0;
+						begin : i16_cbp
+							reg [4:0] x;
+							reg [1:0] cc;
+							x = ue_value[4:0] - 5'd6; // 0..23
+							cc = (x / 5'd4) % 2'd3;
+							// cbp[5:4]=chroma 0..2; cbp[3:0]=luma 0 or 15
+							cbp_r <= {cc, (x >= 5'd12) ? 4'hF : 4'h0};
+						end
+						start_ue(ST_CHR_UE);
+					end else if (ue_value == 32'd30) begin
+						// I_PCM — unsupported in product Baseline walker
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						unsupported <= 1'b1;
+						fail();
+					end
+				end
+				ST_SUB_UE: begin
+					if (ue_value > 32'd3) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						mvd_pairs_left <= mvd_pairs_left + sub_mb_mvd_pairs(ue_value);
+						if (sub_idx == 3'd3)
+							start_ue(ST_MVD_X);
+						else begin
+							sub_idx <= sub_idx + 3'd1;
+							start_ue(ST_SUB_UE);
+						end
+					end
+				end
+				// Arrival at ST_MVD_X means ue_value holds se(v) MVD x (or
+				// pairs==0 sentinel to begin CBP). Y is the next se(v).
+				ST_MVD_X: begin
+					if (mvd_pairs_left == 8'd0)
+						start_ue(ST_CBP_UE);
+					else
+						start_ue(ST_MVD_Y);
+				end
+				ST_MVD_Y: begin
+					// ue_value holds MVD y; do not start_ue again (would steal CBP).
+					if (mvd_pairs_left <= 8'd1) begin
+						mvd_pairs_left <= 8'd0;
+						start_ue(ST_CBP_UE);
+					end else begin
+						mvd_pairs_left <= mvd_pairs_left - 8'd1;
+						start_ue(ST_MVD_X);
+					end
+				end
+				ST_MVD_PAIR_DONE: begin
+					// unused; kept for state encoding stability
+					st <= ST_MVD_X;
+				end
+				ST_CBP_UE: begin
+					st <= ST_CBP;
+				end
+				ST_CBP: begin
+					if (ue_value >= 32'd48) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						cbp_r <= cbp_inter_map(ue_value[5:0]);
+						if (cbp_inter_map(ue_value[5:0]) != 6'd0)
+							start_ue(ST_QP_UE);
+						else begin
+							residual_bit_offset <= bit_pos;
+							st <= ST_EMIT_CODED;
+						end
+					end
+				end
+				ST_QP_UE: begin
+					qp_r <= qp_r + se8_from_ue(ue_value);
+					residual_bit_offset <= bit_pos;
+					st <= ST_EMIT_CODED;
+				end
+				ST_I4_FLAG: begin
+					if (fixed_acc[0]) begin
+						if (i4_idx == 5'd15)
+							start_ue(ST_CHR_UE);
+						else begin
+							i4_idx <= i4_idx + 5'd1;
+							start_bits(8'd1, ST_I4_FLAG);
+						end
+					end else begin
+						start_bits(8'd3, ST_I4_REM);
+					end
+				end
+				ST_I4_REM: begin
+					if (i4_idx == 5'd15)
+						start_ue(ST_CHR_UE);
+					else begin
+						i4_idx <= i4_idx + 5'd1;
+						start_bits(8'd1, ST_I4_FLAG);
+					end
+				end
+				ST_CHR_UE: begin
+					// I_NxN: cbp me next. I_16x16: always mb_qp_delta then residual
+					// (luma DC always coded even when cbp_l=cbp_c=0).
+					if (mb_type_r == 8'd5)
+						start_ue(ST_CBP_INTRA_UE);
+					else
+						start_ue(ST_QP_UE);
+				end
+				ST_CBP_INTRA_UE: begin
+					if (ue_value >= 32'd48) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						cbp_r <= cbp_intra_map(ue_value[5:0]);
+						if (cbp_intra_map(ue_value[5:0]) != 6'd0)
+							start_ue(ST_QP_UE);
+						else begin
+							residual_bit_offset <= bit_pos;
+							st <= ST_EMIT_CODED;
+						end
+					end
+				end
+				ST_EMIT_CODED: begin
+					emit_mb(1'b0);
+					res_luma_mask <= cbp_r[3:0];
+					res_chroma <= cbp_r[5:4];
+					if (!is_i16_r && cbp_r == 6'd0) begin
+						// inter/I_NxN with no residual; zero tc neighbours
+						for (ti = 0; ti < 4; ti = ti + 1) begin
+							tc_left[ti] <= 5'd0;
+							tc_left_v[ti] <= 1'b1;
+						end
+						begin : ztop
+							integer sx;
+							for (sx = 0; sx < 4; sx = sx + 1) begin
+								if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+									tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+									tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+								end
+							end
+						end
+						zero_chr_tc_mb();
+						st <= ST_NEXT_MB;
+					end else begin
+						// I_16x16 always enters residual (DC); inter if cbp!=0
+						res_block_i <= 5'd0;
+						st <= ST_RES_SETUP;
+					end
+				end
+				ST_RES_SETUP: begin
+					// I_16x16: 0..26 (DC+16AC+2DC+8AC); else 0..25
+					if ((!is_i16_r && res_block_i >= 5'd26) ||
+					    (is_i16_r && res_block_i >= 5'd27)) begin
+						// If chroma AC not coded, still zero neighbour map once.
+						if (res_chroma != 2'd2)
+							zero_chr_tc_mb();
+						st <= ST_NEXT_MB;
+					end else if (!res_slot_coded(res_block_i)) begin
+						if (is_i16_r) begin
+							if (res_block_i >= 5'd1 && res_block_i <= 5'd16)
+								commit_tc_after_luma(res_block_i[3:0] - 4'd1, 5'd0);
+						end else if (res_block_i < 5'd16) begin
+							commit_tc_after_luma(res_block_i[3:0], 5'd0);
+						end
+						res_block_i <= res_block_i + 5'd1;
+					end else begin
+						launch_cavlc_for_slot(res_block_i);
+						st <= ST_RES_WAIT;
+					end
+				end
+				ST_RES_WAIT: begin
+					if (cavlc_done) begin
+						if (!cavlc_ok) begin
+							fail();
+						end else begin
+							bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+							if (is_i16_r) begin
+								// I_16x16 DC does not enter the 4x4 tc neighbour map;
+								// AC nC uses left/up MB edges and prior AC blocks only.
+								if (res_block_i >= 5'd1 && res_block_i <= 5'd16)
+									commit_tc_after_luma(res_block_i[3:0] - 4'd1, cavlc_tc);
+								else if (res_block_i >= 5'd19) begin
+									// chroma AC
+									commit_tc_after_chr(
+										(res_block_i - 5'd19) >= 5'd4,
+										(res_block_i - 5'd19) & 2'd3,
+										cavlc_tc);
+								end
+							end else if (res_block_i < 5'd16) begin
+								commit_tc_after_luma(res_block_i[3:0], cavlc_tc);
+							end else if (res_block_i >= 5'd18) begin
+								commit_tc_after_chr(
+									(res_block_i - 5'd18) >= 5'd4,
+									(res_block_i - 5'd18) & 2'd3,
+									cavlc_tc);
+							end
+							res_block_i <= res_block_i + 5'd1;
+							st <= ST_RES_SETUP;
+						end
+					end
+				end
+				ST_NEXT_MB: begin
+					curr_mb <= curr_mb + 16'd1;
+					if ((curr_mb + 16'd1) >= pic_mbs)
+						st <= ST_DONE;
+					else if (bit_pos >= (rbsp_len * 16'd8))
+						st <= ST_DONE;
+					else
+						start_ue(ST_SKIP_UE);
+				end
+				ST_DONE: begin
+					slice_done <= 1'b1;
+					busy <= 1'b0;
+					st <= ST_IDLE;
+				end
+				ST_FAIL: begin
+					// Always retire the slice toward consumers (decode_stub FETCH
+					// waits on slice_done). error/unsupported already sticky.
+					slice_done <= 1'b1;
+					busy <= 1'b0;
+					st <= ST_IDLE;
+				end
+				default: fail();
+				endcase
+			end
+		end
+	end
+endmodule
+
+`default_nettype wire

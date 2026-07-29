@@ -57,6 +57,9 @@ module stream_path_full_frame_tb #(
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
 	output wire        fs_swap,
+	output wire [15:0] p_mb_count,
+	output wire        p_slice_done,
+	output wire        p_mb_valid,
 
 	output wire        native_inter_valid,
 	output wire [15:0] native_inter_frame_idx,
@@ -108,6 +111,9 @@ module stream_path_full_frame_tb #(
 	wire [2:0] first_mb_part_count_w;
 	wire first_mb_uses_sub_mb_w;
 	wire first_mb_intra_w;
+	wire p_mb_valid_w;
+	wire [15:0] p_mb_count_w;
+	wire p_slice_done_w;
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
@@ -189,6 +195,18 @@ module stream_path_full_frame_tb #(
 		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
+		.p_mb_valid(p_mb_valid_w),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_count(p_mb_count_w),
+		.p_slice_done(p_slice_done_w),
+		.p_traverse_busy(),
 		.fs_swap(fs_swap)
 	);
 
@@ -198,6 +216,9 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
+	assign p_mb_count = p_mb_count_w;
+	assign p_slice_done = p_slice_done_w;
+	assign p_mb_valid = p_mb_valid_w;
 	assign native_inter_valid = dut.stub.inter_capture_valid;
 	assign native_inter_frame_idx = dut.stub.frames_out;
 	assign native_inter_mb_x = dut.stub.lat_p_mb_x;

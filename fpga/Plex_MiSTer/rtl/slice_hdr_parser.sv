@@ -239,7 +239,10 @@ module slice_hdr_parser (
 		ST_REFIDX_FLAG = 6'd32,
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
-		ST_P_MBT       = 6'd35;
+		ST_P_MBT       = 6'd35,
+		ST_LISTMOD_F   = 6'd36, // ref_pic_list_modification_flag_l0
+		ST_LISTMOD_IDC = 6'd37, // modification_of_pic_nums_idc
+		ST_LISTMOD_ARG = 6'd38; // abs_diff_pic_num_minus1 / long_term_pic_num
 
 	task automatic res_clear;
 		integer ci;
@@ -513,20 +516,39 @@ module slice_hdr_parser (
 				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 			end
 			ST_REFIDX_FLAG: begin
+				// After override: always ref_pic_list_modification() for P (7.3.3).
 				if (acc[0]) begin
 					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
+				end else begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_LISTMOD_F; st <= ST_GETBITS;
+				end
+			end
+			ST_REFIDX_L0: begin
+				nleft <= 5'd1; acc <= 0; cont <= ST_LISTMOD_F; st <= ST_GETBITS;
+			end
+			ST_LISTMOD_F: begin
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_LISTMOD_IDC; st <= ST_UE_Z;
 				end else if (nal_ref_lat) begin
 					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
 			end
-			ST_REFIDX_L0: begin
-				if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
-				end
+			ST_LISTMOD_IDC: begin
+				if (ue_val == 16'd3) begin
+					if (nal_ref_lat) begin
+						nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+					end
+				end else if (ue_val <= 16'd2) begin
+					zcnt <= 0; ue_cont <= ST_LISTMOD_ARG; st <= ST_UE_Z;
+				end else
+					st <= ST_DONE;
+			end
+			ST_LISTMOD_ARG: begin
+				zcnt <= 0; ue_cont <= ST_LISTMOD_IDC; st <= ST_UE_Z;
 			end
 			ST_NIDR_REFMARK: begin
 				// Baseline product profile uses one short-term reference and no MMCO.

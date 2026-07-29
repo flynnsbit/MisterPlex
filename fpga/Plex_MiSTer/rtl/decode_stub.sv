@@ -31,6 +31,18 @@ module decode_stub #(
 	input  wire [2:0]  first_mb_part_count,
 	input  wire        first_mb_uses_sub_mb,
 	input  wire        first_mb_intra,
+	// Full P-slice MB traversal events (from h264_p_mb_traverse)
+	input  wire        trav_mb_valid,
+	output wire        trav_mb_ready,
+	input  wire [15:0] trav_mb_addr,
+	input  wire [7:0]  trav_mb_x,
+	input  wire [7:0]  trav_mb_y,
+	input  wire        trav_mb_skip,
+	input  wire [2:0]  trav_part_mode,
+	input  wire [2:0]  trav_part_count,
+	input  wire        trav_uses_sub_mb,
+	input  wire        trav_intra,
+	input  wire        trav_slice_done,
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -81,6 +93,9 @@ module decode_stub #(
 	reg signed [15:0] lat_coeff [0:15];
 	reg [11:0]     wait_cnt;
 	reg            lat_wait_res;
+	// Sticky residual-path debug (bits 0/3/4/5/6/7). Survives P FETCH which
+	// zeroes lat_coeff so later paints still show the residual pipeline fired.
+	reg [7:0]      lat_res_dbg;
 	reg            lat_p_inter;
 	reg            lat_p_skip;
 	reg [7:0]      lat_p_mb_x;
@@ -92,7 +107,6 @@ module decode_stub #(
 	reg            lat_inter_recon_ok;
 	reg [15:0]     lat_p_mb_addr;
 	reg            inter_capture_valid;
-	reg            p_fetch_advance;
 	reg            p_fetch_launch_pending;
 	reg            p_candidate_seen;
 	reg            pending_p_fetch;
@@ -103,7 +117,17 @@ module decode_stub #(
 	reg [2:0]      pending_p_part_count;
 	reg            pending_p_uses_sub_mb;
 	reg            pending_p_intra;
+	reg            trav_slice_pending;
+	reg            trav_active_slice;
+	reg            trav_got_mb;
 	integer        coeff_i;
+	// Accept a traversal MB when idle-ready for fetch or actively fetching next.
+	// Intra-in-P is accepted (no MC) so the walker never stalls on those MBs.
+	wire           trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
+	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done) ||
+	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy) ||
+	                                 (phase == PH_IDLE && trav_intra);
+	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -422,16 +446,14 @@ module decode_stub #(
 	wire [7:0]        p_req_mb_x = p_req_mb_x16[7:0];
 	wire [7:0]        p_req_mb_y = p_req_mb_y16[7:0];
 	wire [15:0]       lat_p_mb_width = (lat_mb_w == 0) ? 16'd20 : {8'd0, lat_mb_w};
-	wire [15:0]       lat_p_next_mb_addr = lat_p_mb_addr + 16'd1;
-	wire [15:0]       lat_p_next_mb_x16 = (lat_p_mb_width == 16'd0) ? 16'd0 : (lat_p_next_mb_addr % lat_p_mb_width);
-	wire [15:0]       lat_p_next_mb_y16 = (lat_p_mb_width == 16'd0) ? 16'd0 : (lat_p_next_mb_addr / lat_p_mb_width);
-	wire [7:0]        lat_p_next_mb_x = lat_p_next_mb_x16[7:0];
-	wire [7:0]        lat_p_next_mb_y = lat_p_next_mb_y16[7:0];
 	wire              p_fetch_candidate = slice_valid && !slice_is_i && has_mb_type && !first_mb_intra &&
 	                                      ((first_mb_part_mode == 3'd0) || (first_mb_part_mode == 3'd1) ||
 	                                       (first_mb_part_mode == 3'd2) || (first_mb_part_mode == 3'd3) ||
 	                                       (first_mb_part_mode == 3'd4));
 	wire              p_fetch_edge = p_fetch_candidate && !p_candidate_seen;
+	// Prefer walker events; fall back to first-MB edge only if walker silent.
+	// Only commit to walker-driven fetch after an accepted beat (not every pulse).
+	wire              use_trav = trav_active_slice || trav_slice_pending;
 	wire [7:0]        dpb_inter_sig = dpb_pred_y[0] ^ dpb_pred_y[1] ^ dpb_pred_y[2] ^ dpb_pred_y[3] ^
 	                                  dpb_pred_y[4] ^ dpb_pred_y[5] ^ dpb_pred_y[6] ^ dpb_pred_y[7] ^
 	                                  dpb_pred_y[8] ^ dpb_pred_y[9] ^ dpb_pred_y[10] ^ dpb_pred_y[11] ^
@@ -598,6 +620,7 @@ module decode_stub #(
 			recon_valid   <= 0;
 			wait_cnt      <= 0;
 			lat_wait_res  <= 0;
+			lat_res_dbg   <= 0;
 			lat_p_inter   <= 0;
 			lat_p_skip    <= 0;
 			lat_p_mb_x    <= 0;
@@ -609,7 +632,6 @@ module decode_stub #(
 			lat_inter_recon_ok <= 0;
 			lat_p_mb_addr <= 0;
 			inter_capture_valid <= 0;
-			p_fetch_advance <= 0;
 			p_fetch_launch_pending <= 0;
 			p_candidate_seen <= 0;
 			pending_p_fetch <= 0;
@@ -620,6 +642,9 @@ module decode_stub #(
 			pending_p_part_count <= 0;
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
+			trav_slice_pending <= 0;
+			trav_active_slice <= 0;
+			trav_got_mb <= 0;
 			dpb_fetch_start <= 0;
 			dpb_frame_done_pulse <= 0;
 			dpb_fill_mb_addr <= '0;
@@ -632,8 +657,19 @@ module decode_stub #(
 `endif
 			wr_pixel      <= 0;
 		end else begin
-			if (p_fetch_edge) begin
-				pending_p_fetch <= 1'b1;
+			// Track walker slice lifetime (active only after accept)
+			if (trav_mb_ready)
+				trav_active_slice <= 1'b1;
+			if (trav_slice_done) begin
+				trav_slice_pending <= 1'b1;
+				trav_active_slice <= 1'b0;
+			end
+			// Safety: if walker retired while FETCH waits with no more MBs,
+			// the PH_FETCH arms below consume trav_slice_pending.
+			// first-MB-only FETCH fallback is disabled: h264_p_mb_traverse owns
+			// the P MB sequence. Arming pending_p_fetch here raced the walker
+			// and double-painted frames (stub_frames=13 want=12).
+			if (p_fetch_edge && !use_trav) begin
 				pending_p_skip <= first_mb_p_skip;
 				pending_p_mb_x <= p_req_mb_x;
 				pending_p_mb_y <= p_req_mb_y;
@@ -648,7 +684,12 @@ module decode_stub #(
 				p_candidate_seen <= 1'b1;
 			if (phase == PH_IDLE) begin
 			// Idle: on VCL wait for this NAL's place-time residual pulse.
-			if (vcl_pulse) begin
+			// While a walker slice is live, do not drop into WAIT (would clear
+			// lat_inter_recon_ok and stall hold drain mid-P).
+			// Type-1 P is owned by h264_p_mb_traverse — do not enter WAIT/busy
+			// (spurious busy edges break full-frame stage timing and double-count).
+			if (vcl_pulse && !use_trav && !trav_mb_valid &&
+			    (last_nal_type[4:0] != 5'd1)) begin
 				phase    <= PH_WAIT;
 				busy     <= 1'b1;
 				wait_cnt <= WAIT_MAX[11:0];
@@ -657,7 +698,64 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
-			end else if (pending_p_fetch && dpb_ref_ready) begin
+			end else if (vcl_pulse && (last_nal_type[4:0] == 5'd1) &&
+			             !use_trav && !trav_mb_valid) begin
+				// Remember P VCL identity; FETCH starts on trav_mb_ready.
+				lat_type <= last_nal_type;
+				lat_nalu <= nalu_count;
+				lat_idr  <= idr_count;
+				lat_p_inter <= 1'b0;
+				lat_inter_recon_ok <= 1'b0;
+			end else if (trav_mb_ready && trav_intra) begin
+				// Intra-in-P: accept beat, no MC (other lanes own intra recon)
+				lat_p_intra <= 1'b1;
+				trav_got_mb <= 1'b0;
+			end else if (trav_mb_ready) begin
+				// Start / continue P slice from walker event
+				phase <= PH_FETCH;
+				busy <= 1'b1;
+				lat_type <= 8'd1;
+				lat_nalu <= nalu_count;
+				lat_idr <= idr_count;
+				is_idr_frame <= 1'b0;
+				is_i_frame <= 1'b0;
+				lat_sps <= sps_valid;
+				lat_mb_w <= (mb_w == 0) ? 8'd20 : mb_w;
+				lat_mb_h <= (mb_h == 0) ? 8'd15 : mb_h;
+				lat_res_ok <= 1'b0;
+				lat_res_tc <= 5'd0;
+				lat_res_dc <= 8'sd0;
+				lat_qp <= slice_qp;
+				lat_wait_res <= 1'b0;
+				lat_p_inter <= 1'b1;
+				lat_p_skip <= trav_mb_skip;
+				lat_p_mb_x <= trav_mb_x;
+				lat_p_mb_y <= trav_mb_y;
+				lat_p_mb_addr <= trav_mb_addr;
+				lat_p_part_mode <= trav_part_mode;
+				lat_p_part_count <= trav_part_count;
+				lat_p_uses_sub_mb <= trav_uses_sub_mb;
+				lat_p_intra <= 1'b0;
+				trav_got_mb <= 1'b1;
+				recon_valid <= 1'b0;
+				recon_dbg_valid <= 1'b0;
+				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
+					lat_coeff[coeff_i] <= 16'sd0;
+				dpb_fetch_start <= 1'b1;
+				p_fetch_launch_pending <= 1'b1;
+			end else if (trav_slice_pending && !trav_active_slice) begin
+				// Walker finished with no more MBs — paint if we reconstructed any
+				trav_slice_pending <= 1'b0;
+				if (lat_inter_recon_ok) begin
+					phase <= PH_PAINT;
+					busy <= 1'b1;
+					pix_i <= 0;
+					x <= 0;
+					y <= 0;
+					wr_reset_ptr <= 1'b1;
+				end
+			end else if (pending_p_fetch && dpb_ref_ready && !use_trav) begin
+				// Fallback: first-MB-only path when walker not producing
 				phase <= PH_FETCH;
 				busy <= 1'b1;
 				lat_type <= 8'd1;
@@ -685,6 +783,7 @@ module decode_stub #(
 				lat_p_intra <= pending_p_intra;
 				lat_inter_recon_ok <= 1'b0;
 				pending_p_fetch <= 1'b0;
+				trav_got_mb <= 1'b0;
 				recon_valid <= 1'b0;
 				recon_dbg_valid <= 1'b0;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
@@ -696,11 +795,22 @@ module decode_stub #(
 			if (wait_cnt != 12'd0)
 				wait_cnt <= wait_cnt - 12'd1;
 			if (wait_done) begin
-				phase        <= ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM ? PH_DPB_FILL : PH_PAINT);
+				// Default: IDR → DPB fill; other non-P → paint; P handled below
+				// (must NOT paint P here — walker owns P frames).
+				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM)
+					phase <= PH_DPB_FILL;
+				else if (lat_type[4:0] == 5'd1)
+					phase <= PH_IDLE;
+				else
+					phase <= PH_PAINT;
 				pix_i        <= 0;
 				x            <= 0;
 				y            <= 0;
-				wr_reset_ptr <= 1'b1;
+				// Only reset the frame writer when we actually enter a paint
+				// path. Spurious wr_reset on P→IDLE corrupts full-frame stage
+				// timing (fs_wr_reset→fs_swap) and throughput ratchets.
+				if (!((lat_type[4:0] == 5'd1)))
+					wr_reset_ptr <= 1'b1;
 				is_idr_frame <= (lat_type[4:0] == 5'd5);
 				is_i_frame   <= slice_is_i || (lat_type[4:0] == 5'd5);
 				lat_sps      <= sps_valid;
@@ -711,7 +821,7 @@ module decode_stub #(
 				lat_res_dc   <= residual_dc;
 				lat_qp       <= slice_qp;
 				lat_wait_res <= residual_valid;
-				lat_p_inter  <= p_fetch_candidate || pending_p_fetch;
+				lat_p_inter  <= p_fetch_candidate || pending_p_fetch || use_trav;
 				lat_p_skip   <= first_mb_p_skip;
 				lat_p_mb_x   <= p_req_mb_x;
 				lat_p_mb_y   <= p_req_mb_y;
@@ -728,29 +838,66 @@ module decode_stub #(
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
-				if (p_fetch_candidate && dpb_ref_ready) begin
-					phase <= PH_FETCH;
-					dpb_fetch_start <= 1'b1;
-					p_fetch_launch_pending <= 1'b1;
-					pending_p_fetch <= 1'b0;
+				// P VCL: never paint/fetch from wait. Walker events own type-1.
+				if (lat_type[4:0] == 5'd1) begin
+					phase <= PH_IDLE;
+					busy <= 1'b0;
 				end
 			end
-			end else if (p_fetch_advance) begin
-				lat_p_mb_addr <= lat_p_next_mb_addr;
-				lat_p_mb_x <= lat_p_next_mb_x;
-				lat_p_mb_y <= lat_p_next_mb_y;
-				dpb_fetch_start <= 1'b1;
-				p_fetch_launch_pending <= 1'b1;
-				p_fetch_advance <= 1'b0;
 			end else if (phase == PH_FETCH) begin
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
 				p_fetch_launch_pending <= 1'b0;
 			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
-				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
-					p_fetch_advance <= 1'b1;
-				end else begin
+				trav_got_mb <= 1'b0;
+				// Next walker MB, or finish slice
+				if (trav_mb_ready) begin
+					lat_p_skip <= trav_mb_skip;
+					lat_p_mb_x <= trav_mb_x;
+					lat_p_mb_y <= trav_mb_y;
+					lat_p_mb_addr <= trav_mb_addr;
+					lat_p_part_mode <= trav_part_mode;
+					lat_p_part_count <= trav_part_count;
+					lat_p_uses_sub_mb <= trav_uses_sub_mb;
+					lat_p_intra <= trav_intra;
+					trav_got_mb <= 1'b1;
+					dpb_fetch_start <= 1'b1;
+					p_fetch_launch_pending <= 1'b1;
+				end else if (trav_slice_pending || trav_slice_done) begin
+					trav_slice_pending <= 1'b0;
+					trav_active_slice <= 1'b0;
+					phase <= PH_PAINT;
+					pix_i <= 0;
+					x <= 0;
+					y <= 0;
+					wr_reset_ptr <= 1'b1;
+				end else if (!use_trav) begin
+					// Fallback single-MB path ends after one fetch
+					phase <= PH_PAINT;
+					pix_i <= 0;
+					x <= 0;
+					y <= 0;
+					wr_reset_ptr <= 1'b1;
+				end
+				// else: stay in FETCH waiting for next trav_mb_valid
+			end else if (!p_fetch_launch_pending && !dpb_fetch_busy && !trav_got_mb) begin
+				// Idle in FETCH waiting for next event
+				if (trav_mb_ready) begin
+					lat_p_skip <= trav_mb_skip;
+					lat_p_mb_x <= trav_mb_x;
+					lat_p_mb_y <= trav_mb_y;
+					lat_p_mb_addr <= trav_mb_addr;
+					lat_p_part_mode <= trav_part_mode;
+					lat_p_part_count <= trav_part_count;
+					lat_p_uses_sub_mb <= trav_uses_sub_mb;
+					lat_p_intra <= trav_intra;
+					trav_got_mb <= 1'b1;
+					dpb_fetch_start <= 1'b1;
+					p_fetch_launch_pending <= 1'b1;
+				end else if (trav_slice_pending || trav_slice_done) begin
+					trav_slice_pending <= 1'b0;
+					trav_active_slice <= 1'b0;
 					phase <= PH_PAINT;
 					pix_i <= 0;
 					x <= 0;
@@ -783,7 +930,12 @@ module decode_stub #(
 			wr_pixel <= px_comb;
 			if (pix_i == 0) begin
 				recon_sig   <= lat_inter_recon_ok ? 8'h3b : (lat_res_ok ? recon_sig_comb : 8'd0);
-				recon_dbg   <= recon_dbg_comb | {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
+				// Latch residual pipeline dbg on the first paint that still has
+				// live lat_coeff (IDR), then keep it across later P paints.
+				if (lat_res_ok && (recon_dbg_comb[0] | recon_dbg_comb[3]))
+					lat_res_dbg <= recon_dbg_comb;
+				recon_dbg   <= recon_dbg_comb | lat_res_dbg |
+				               {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
 				recon_dbg_valid <= 1'b1;
 				recon_valid <= lat_res_ok | lat_inter_recon_ok;
 			end

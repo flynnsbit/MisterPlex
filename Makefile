@@ -110,6 +110,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
@@ -164,6 +165,7 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
