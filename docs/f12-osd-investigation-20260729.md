@@ -1,115 +1,151 @@
-# F12 / OSD dead on live v0.3.0 box — investigation (2026-07-29)
+# F12 / OSD on live v0.3.0 box — investigation (2026-07-29)
 
-**Scope:** User report “F12 doesn't work on the mister” on the shipped
-`41adb98c` / daemon `06c5735a` product box. Read-only (no core reload, no
-deploy, no conf edit). No Quartus. No HDMI capture.
+**Rule 0:** claims below are either **measured**, **quoted code**, or **UNKNOWN**
+with the settling check named. No cause is asserted without that backing.
 
-**Device at investigation end (quoted):**
-- RBF md5 `41adb98c7a630b541091c22ce291be68` (`/media/fat/_Utility/Plex.rbf`)
-- `CORENAME=Plex`, Main pid 933, misterplexd pid 2014
-- conf (no token): `PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1`
-- Note: parent’s earlier “I set PRESENT=fb0” is **not** the live conf; live is `PRESENT=fpga`. Comment in conf still says “fb0 cast path”.
+**Scope:** User report “F12 doesn't work on the mister.” Read-only device.
+No core reload, deploy, conf edit, Quartus. No HDMI capture.
+
+**Device samples (measured this session):**
+- `md5sum /media/fat/_Utility/Plex.rbf` → `41adb98c7a630b541091c22ce291be68`
+- `cat /tmp/CORENAME` → `Plex`
+- `pidof MiSTer` → `933`; `pidof misterplexd` → `2014` (pids move over time)
+- conf (token redacted): `PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1`
+  (comment in file still says “fb0 cast path”; **file keys** are fpga / OSD_CONTROL=1)
+- daemon log contains: `present=fpga`, `media: OSD via DDR mailbox (no SPI)`,
+  and lines `media: idle screen painted (mode=…)` / `OSD word=0x…`
 
 ---
 
-## Pre-registered prediction (published)
+## Pre-registered prediction (mandatory) — and miss
 
 | Rank | Hypothesis | Prior |
 |------|------------|-------|
-| 1 | Parent `PRESENT=fb0` regression (continuous `/dev/fb0` paint masks OSD) | ~55% |
-| 2 | `[Plex] fb_terminal=0` / conflicting `vga_scaler` ini | secondary |
-| 3 | Long-standing core OSD gap on this RBF | possible |
+| 1 | Parent `PRESENT=fb0` continuous paint blocks F12/OSD | ~55% |
+| 2 | `[Plex] fb_terminal=0` / ini | secondary |
+| 3 | Long-standing core OSD gap | possible |
 | 4 | `OSD_CONTROL` interaction | low |
 
-**Falsifiers registered:** F12 still dead under `PRESENT=fpga`; F12 still dead with daemon `SIGSTOP` (no paint).
+**Miss (published):** primary fb0-paint hypothesis does **not** hold as the
+explanation of the **lab instruments under the conf actually measured**
+(`PRESENT=fpga`). See falsifiers below. Cause of the user-visible F12 report
+remains **UNKNOWN**.
 
 ---
 
-## What is proveable without glass vs eyes-only
+## Measured facts (not causes)
 
-| Claim | Status | Evidence |
-|-------|--------|----------|
-| Core carries v6 CONF_STR / menu | **PROVED** | `set_status --confstr` → full `Plex;;` … `O[15:14],Idle screen,...` `v,6;` `rc=0` |
-| Main accepts uinput keyboard | **PROVED** | dmesg `misterplex-uinput-keys`; Main holds `/dev/input/event*`; `osd_keys.py` “sent: f12” |
-| `/tmp/OSD_VISIBLE` means OSD up | **VACUOUS** | Main_MiSTer `user_io_osd_key_enable`: only `MakeFile("/tmp/OSD_VISIBLE")` if `cfg.log_file_entry`. Device ini: **no** `log_file_entry` |
-| Screenshot shows OSD chrome when open | **HISTORICALLY SOUND** | G-OSD2 PASS used uinput F12 + PNG (`/tmp/osd5.png`); OSD adds multi-color chrome |
-| F12 opens OSD **now** (lab) | **FAIL by that instrument** | Held F12 PNGs `20260729_100933` etc.: **529×479, unique=3** colors `#182021/#e7a208/#000000` (logo only). Not menu chrome |
-| `volume N` cmd path healthy | **FAIL** | Valid `volume 1..7` / `unmute` leave `Plex_volume.cfg` = `00`, mtime stuck |
-| `screenshot` cmd path healthy | **PASS** | New files under `/media/fat/screenshots/Plex/` |
-| Continuous fb0 paint is sole F12 blocker | **FALSIFIED** | Live `PRESENT=fpga`; with daemon `SIGSTOP` (state `T`) F12 still no OSD chrome; Main jiffies/s **unchanged** (~200/2s) with plexd stopped |
-| Physical K400 F12 / Fn layer | **EYES-ONLY** | No capture; lab uinput uses real KEY_F12 (88) so Fn is N/A for lab path |
-| “OSD appeared on glass” | **EYES-ONLY** | User is the only visual instrument |
-
----
-
-## Adversarial answer on parent `PRESENT=fb0` change
-
-**Bluntly: it is not the live root cause of F12 being dead right now.**
-
-1. Live conf is **`PRESENT=fpga`**, not `fb0` (daemon log: `present=fpga`, `FPGA frame path OK`).
-2. Daemon **SIGSTOP** (no blits) did not restore OSD chrome.
-3. Main CPU burn is **independent** of misterplexd (same jiffies with plexd stopped).
-
-**What remains possible:** if F12 first broke during the fb0 hour, Main may have entered a **partial wedge** that **survives** conf revert until **reboot**. That is the G-OSD6 pattern (F12 dead until reboot; not an RTL bug). We did **not** reboot (no clearance). So:
-
-- **Not proven:** “fb0 paint covers OSD pixels.”
-- **Not cleared:** “fb0 session left Main wedged.”
-- **Clearing test:** user or parent **reboot**, then F12 **before** starting misterplexd / cast.
+| # | Measurement | Result | Artifact / quote |
+|---|-------------|--------|------------------|
+| M1 | Live CONF_STR | Full v6 menu string | `set_status --confstr` → `Plex;;` … `O[15:14],Idle screen,...` `v,6;` **true rc=0** |
+| M2 | uinput F12 inject | Script reports send | `osd_keys.py` log: `sent: f12 via misterplex-uinput-keys`; dmesg `input: misterplex-uinput-keys` |
+| M3 | Main holds keyboards | Open fds | `/proc/$(pidof MiSTer)/fd` → `event0/1/2` (at sample time) |
+| M4 | PNG after held uinput F12 | Still logo palette | `20260729_100933-screen.png`: **529×479**, **unique=3** colors `#182021` 98.33%, `#e7a208` 1.67%, `#000000` ~0% |
+| M5 | PNG without F12 (earlier) | Same class | e.g. `100546-screen.png`: same 3 colors, gold count 4230 vs 4234 (tiny delta) |
+| M6 | `/tmp/OSD_VISIBLE` after F12 | **Absent** | `Path.exists()→False`. **Code:** Main only `MakeFile("/tmp/OSD_VISIBLE")` if `cfg.log_file_entry` (`user_io_osd_key_enable`). Device `MiSTer.ini`: **no** `log_file_entry` line → this file’s absence is **not** evidence OSD is closed |
+| M7 | `echo volume N > /dev/MiSTer_cmd` for N in 1..7, unmute | `Plex_volume.cfg` stays `00`, mtime unchanged in those samples | xxd + `ls --full-time` |
+| M8 | `echo screenshot > /dev/MiSTer_cmd` | New PNG files appear | `/media/fat/screenshots/Plex/*-screen.png` mtimes advance |
+| M9 | conf PRESENT key | `fpga` | grep conf; daemon adopted line `present=fpga` |
+| M10 | misterplexd `SIGSTOP` then uinput F12 + screenshot | PNG still 3-color logo; `OSD_VISIBLE` still absent | stop test log; plexd state `T` then `CONT` → `S` |
+| M11 | Main utime/stime over 2s, plexd running vs STOP | ~201 vs ~202 jiffies/2s | measured; **no healthy-Main baseline** in this session |
+| M12 | `strace` on device | **Absent** | `which strace` → not found |
 
 ---
 
-## Best-supported live diagnosis
+## What those facts do **not** settle
 
-**Partial Main dysfunction (G-OSD6 family), not a missing CONF_STR / not live fb0 paint.**
-
-Supporting:
-- G-OSD1-class CONF_STR **OK** on `41adb98c`.
-- G-OSD2-class F12→PNG **no OSD chrome**.
-- `volume` cmd **dead** while `screenshot` **alive** → not a total Main death, not a pure “keyboards unplugged” story.
-- README / backlog already document: *“F12/OSD dead … crashed daemon could strand Main … Reboot”* and G-OSD6 resolved by reboot with zero RTL change.
-- Daemon log: `OSD via DDR mailbox (no SPI)` / `playback input via DDR mailbox` — SPI not required for product path; `/tmp/misterplex_spi.lock` exists but plexd STOP doesn’t cool Main.
-
-Weaker / not primary:
-- `[Plex] fb_terminal=0` affects FB terminal (F9), not the F12 menu gate in Main source.
-- `OSD_CONTROL=1` only makes daemon **read** status; it must not grab F12 (no EVIOCGRAB in v0.3.0 daemon).
+| Question | Status | Settling check |
+|----------|--------|----------------|
+| Is OSD chrome on the **physical display** after F12? | **UNKNOWN** | User eyes (no `/dev/video*`). Lab PNG lacking chrome ≠ glass proof if screenshot path ever omits OSD — G-OSD2 used PNGs historically, but that is prior backlog text, not a re-run on this boot |
+| Does physical K400 F12 reach Main as KEY_F12? | **UNKNOWN** | User try Fn+F12 / second keyboard; or `evtest` on device if installed (not present this session) |
+| Why did `Plex_volume.cfg` not change? | **UNKNOWN** | Read `set_volume` on the **running** Main binary path; or `strace -p $(pidof MiSTer)` during `volume 4` (tool missing). Fact is only: cfg bytes/mtime did not change |
+| Is Main “wedged” like G-OSD6? | **UNKNOWN** | G-OSD6 is a **historical** backlog incident (reboot restored F12). This session did **not** reboot, did **not** capture Main stuck in SPI wait, did **not** prove cmd path total death (screenshot works). High Main jiffies alone ≠ wedge without baseline |
+| Did parent’s earlier `PRESENT=fb0` cause the user’s F12 report? | **UNKNOWN** | Live conf is `PRESENT=fpga`. Continuous fb0 paint is **not** active now. Whether an earlier fb0 boot left lasting Main state requires **reboot A/B** (clearance) |
+| Does uinput F12 call `menu_key_set(KEY_F12)` inside Main? | **UNKNOWN** | Needs `strace`/debug build/`log_file_entry` + observed side effect |
 
 ---
 
-## User try-list (short)
+## Falsifiers that **did** run (narrow claims only)
 
-1. **Reboot the MiSTer** (power cycle). This is the historical fix for dead F12 (G-OSD6).
-2. After reboot, load **Plex**, **do not start a cast yet**. Press **F12**.  
-   - Menu with Aspect / TV Mode / Video delay / Idle screen? → Main was wedged.  
-   - Still nothing? → try step 3–4.
-3. On **Logitech K400**: try **Fn+F12** (F-keys often media-first). Try the **other** K400 if both are paired.
-4. Press volume up/down on the keyboard: does a **volume bar** appear?
-5. Tell us: did F12 work **this morning before** any conf tinkering? After reboot, does F12 die again only **after** misterplexd has been running a while?
+**Claim tested:** “Under **current** `PRESENT=fpga`, continuous misterplexd blits are necessary for lab PNG to lack OSD chrome after uinput F12.”
 
----
+- plexd `SIGSTOP` → F12 → PNG still 3-color logo (M10).
+- So: **blit activity is not required** for that lab outcome under this conf.
 
-## Parent clearance asks (do not do without OK)
+**Claim tested:** “Live conf is still `PRESENT=fb0`.”
 
-| Ask | Why |
-|-----|-----|
-| Reboot MiSTer | Decisive G-OSD6 clear; user-visible |
-| Brief misterplexd stop (or delay start post-reboot) | Split “Main alone” vs “daemon present” |
-| Optional `log_file_entry=1` in ini | Makes `/tmp/OSD_VISIBLE` a real oracle |
-| Do **not** need core reload if reboot + same RBF |
+- File + daemon log say `PRESENT=fpga` / `present=fpga` (M9). **False.**
+
+**Not tested:** “User glass F12.” **Not tested:** “Reboot restores F12.”
 
 ---
 
-## Commands / quotes (evidence)
+## Related code (idle path — **different** symptom than F12 chrome)
 
-```
-md5sum Plex.rbf → 41adb98c7a630b541091c22ce291be68
-PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1
-set_status --confstr → Plex;; … O[15:14],Idle screen,… v,6;  rc=0
-OSD_VISIBLE after F12 → never created (log_file_entry off — vacuous)
-volume 4 / 1 / unmute → Plex_volume.cfg remains 00
-F12 hold PNG 100933: 529x479 unique=3 (#182021 98.33%, #e7a208 1.67%)
-daemon SIGSTOP: Main jiffies/2s 202 vs baseline 201 (no drop)
+Parent’s idle-menu inert finding is backed by code (HEAD; same structure at v0.3.0 tag):
+
+```text
+# media_player.cpp initPresent (HEAD ~764+)
+bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
+if (wantFpga) { fpga_.open(); ... }
+
+# paintIdle (tag cacd8717 ~364+; HEAD ~645+)
+if (fpga_.ok()) {
+  // write idle frame to FPGA/DDR
+  log("media: idle screen painted ...") / "idle paint failed ..."
+}
 ```
 
-**Confidence:** High that live fb0 paint is not the active cause; high that lab F12 does not open OSD chrome; medium that reboot fixes (G-OSD6 prior); low on exact Main spin site without `strace` (absent on device).
+Under `PRESENT=fb0`, `wantFpga` is false → `fpga_.open()` skipped → `fpga_.ok()` false →
+**no** idle DDR repaint and **no** either log line. That is a **quoted-code**
+mechanism for **idle-mode bits not changing what the core scans out**.
 
-**Prediction outcome:** Pre-reg fb0 primary **missed**. Published above.
+That mechanism is **about idle framebuffer content**, not about whether Main
+composites the **framework OSD** on F12. Conflating them is a guess. On the
+**current** boot, daemon log **does** contain `media: idle screen painted` and
+`present=fpga`, so that particular fb0 idle hole is **not** what the live log
+shows now.
+
+---
+
+## Ini facts (measured), not a diagnosis
+
+`[Plex]` section includes `fb_terminal=0`, `vga_scaler=1`, `video_mode=5`,
+`direct_video=0`. Global has `fb_terminal=1`, `key_menu_as_rgui=0`.  
+Whether any of these block F12 on this box: **UNKNOWN** — settling check is
+controlled ini A/B + user eyes or a non-vacuous OSD oracle.
+
+---
+
+## User eyes list (only visual instrument)
+
+1. Press **F12** (and **Fn+F12** on K400). Does the MiSTer **blue/grey settings menu** appear?
+2. After a **reboot**, load Plex, F12 **before** opening the cast app — same question.
+3. Volume keys: volume bar on screen?
+4. Idle screen menu item (if OSD opens): does the picture change?
+
+---
+
+## Parent clearance experiments (not run)
+
+| Experiment | Would settle |
+|------------|----------------|
+| Reboot, F12 before misterplexd | Whether current Main session state is involved |
+| `log_file_entry=1` then F12 | Non-vacuous `/tmp/OSD_VISIBLE` |
+| Install/use `strace -p MiSTer` during F12 | Whether menu path runs |
+| User glass report | Actual F12 UX |
+
+---
+
+## Rule 0 retractions vs earlier wording in this doc / agent report
+
+| Earlier wording | Problem | Replacement |
+|-----------------|---------|-------------|
+| “Best-supported diagnosis: partial Main dysfunction (G-OSD6 family)” | Pattern-match, not measured wedge | **UNKNOWN cause** |
+| “F12 is dead” as fact on glass | No glass; PNG≠glass | **Lab PNG after uinput F12 lacks OSD chrome (M4)**; glass **UNKNOWN** |
+| “Reboot is the fix” | Historical G-OSD6, not this boot | **UNKNOWN** — reboot is a **settling experiment** |
+| “Main busy-loop proves wedge” | No healthy baseline; screenshot still works | Jiffies measured (M11); **interpretation UNKNOWN** |
+| “volume cmd dead” as Main pathology | Only cfg unchanged | **cfg did not change (M7)**; why **UNKNOWN** |
+| “fb0 is not the cause of F12 dead” as global | Over-broad | **Live conf is fpga; blits not required for lab PNG outcome**; user-report root cause still **UNKNOWN** |
+
+**Prediction outcome:** pre-reg primary missed for the lab/conf actually measured.
