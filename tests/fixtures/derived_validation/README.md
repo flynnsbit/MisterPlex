@@ -28,7 +28,20 @@ clamp-edge coverage. The slice manifest records:
 - `unique_y_hashes=8/8`
 - `y_min=0`, `y_max=243`
 
-Regenerate the slice from the full asset:
+### Filter-enabled companion (deblock gap control)
+
+`derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled.yuv` is the same
+eight source frames decoded with FFmpeg's **default in-loop deblocking enabled**
+(no `-skip_loop_filter`). It is a companion control, not a replacement: the
+disabled fixture remains the product pre-deblock oracle other lanes depend on.
+
+The enabled companion exists so the decode-core real-slice scoreboard can measure
+how much of the pre-deblock green survives contact with a filter-enabled
+reference. That survival is expected to be low on P-content because filtered
+references cascade through motion compensation, not only because edge samples
+change inside one MB.
+
+Regenerate both slices from the full asset:
 
 ```bash
 python3 tools/derived_h264_slice_fixture.py generate \
@@ -37,6 +50,13 @@ python3 tools/derived_h264_slice_fixture.py generate \
   --manifest-out tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled_v1.json \
   --frames 149,392,474,710,937,1183,1349,1675 \
   --h264-loop-filter disabled
+
+python3 tools/derived_h264_slice_fixture.py generate \
+  --input artifacts/local/arm-profile-sample/derived_realcontent_624x480_baseline_ref1_nob_1800f.264 \
+  --slice-out tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled.yuv \
+  --manifest-out tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled_v1.json \
+  --frames 149,392,474,710,937,1183,1349,1675 \
+  --h264-loop-filter enabled
 ```
 
 ## Regenerate / verify

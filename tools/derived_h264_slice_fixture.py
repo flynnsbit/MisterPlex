@@ -96,14 +96,35 @@ def build_manifest(
 ) -> dict[str, Any]:
     records = [frame_record(chunk, width, height, i, src) for i, (src, chunk) in enumerate(zip(selected, chunks))]
     uv_distinct = sum(1 for r in records if r["planes"]["U"] != r["planes"]["V"])
+    lf_label = "enabled" if loop_filter == "enabled" else "disabled"
+    always_on = loop_filter == "disabled"
+    if loop_filter == "enabled":
+        stage_blind = (
+            "It detects exact native-I420 byte differences at the enabled-loop-filter stage; "
+            "it does not score presentation RGB/RGB565, disabled-stage control comparisons by itself, frame pacing, drops, or repeats."
+        )
+        stage_summary = (
+            "HEVC /library/metadata/3 re-encoded to H.264 Constrained Baseline 624x480; "
+            "bounded native-I420 slice decoded with in-loop deblocking filter enabled (FFmpeg default)"
+        )
+    else:
+        stage_blind = (
+            "It detects exact native-I420 byte differences at the disabled-loop-filter stage; "
+            "it does not score presentation RGB/RGB565, enabled deblock, frame pacing, drops, or repeats."
+        )
+        stage_summary = (
+            "HEVC /library/metadata/3 re-encoded to H.264 Constrained Baseline 624x480; "
+            "bounded native-I420 slice decoded with loop filter disabled"
+        )
     return {
         "format": FORMAT,
         "scope": {
             "asset_class": "bounded_raw_slice_from_derived_reencoded_validation_asset",
-            "always_on_unit_fixture": True,
+            "always_on_unit_fixture": always_on,
             "not_original_library_content": True,
             "not_original_part_direct_play_evidence": True,
-            "source_summary": "HEVC /library/metadata/3 re-encoded to H.264 Constrained Baseline 624x480; bounded native-I420 slice decoded with loop filter disabled",
+            "source_summary": stage_summary,
+            "h264_loop_filter": lf_label,
         },
         "source": {"path": str(input_path), "sha256": sha256_file(input_path)},
         "slice": {"path": str(slice_path), "bytes": slice_path.stat().st_size, "sha256": sha256_file(slice_path)},
@@ -127,7 +148,7 @@ def build_manifest(
         "frames": records,
         "blind_spots": [
             "The slice is only eight frames; it is an always-on smoke/reference gate, not a replacement for the full 1800-frame manifest when the media is available.",
-            "It detects exact native-I420 byte differences at the disabled-loop-filter stage; it does not score presentation RGB/RGB565, enabled deblock, frame pacing, drops, or repeats.",
+            stage_blind,
             "It catches U/V swaps for this selected slice because every selected frame has distinct U/V hashes; it still cannot prove unsupported-stream parser coverage.",
             "Mutations that the selected frames do not express, or that alias through equal/zero coefficients or equivalent dequant classes, can remain invisible.",
         ],

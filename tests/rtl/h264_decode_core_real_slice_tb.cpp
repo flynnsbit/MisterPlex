@@ -362,7 +362,89 @@ bool waitForWrites(Sim& s, const Slice& slice, const std::vector<Case>& cases, s
     return !s.top.busy && s.writes.size() >= wantWrites;
 }
 
-int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& cases) {
+// Score product (pre-deblock) writeback against a filter-enabled gold without
+// redefining residual from the enabled pair (that would be tautologically green).
+int scoreEnabledSurvival(const Sim& s, const Slice& enabled, const std::vector<Case>& cases) {
+    int mbExact = 0;
+    int sampleMatch = 0;
+    int sampleTotal = 0;
+    int yMatch = 0, yTotal = 0;
+    int uMatch = 0, uTotal = 0;
+    int vMatch = 0, vTotal = 0;
+    int firstDiffSample = -1;
+    std::string firstDiffLabel;
+    int firstDiffGot = -1, firstDiffWant = -1;
+    const char* firstDiffPlane = "";
+
+    for (std::size_t ci = 0; ci < cases.size(); ++ci) {
+        const Case& c = cases.at(ci);
+        int mbMism = 0;
+        for (int i = 0; i < 384; ++i) {
+            const Write& w = s.writes.at(ci * 384 + i);
+            const uint8_t want = targetSample(enabled, c, i);
+            ++sampleTotal;
+            const bool ok = (w.data == want);
+            if (ok) ++sampleMatch;
+            else {
+                ++mbMism;
+                if (firstDiffSample < 0) {
+                    firstDiffSample = i;
+                    firstDiffLabel = c.label;
+                    firstDiffGot = int(w.data);
+                    firstDiffWant = int(want);
+                    firstDiffPlane = i < 256 ? "Y" : (i < 320 ? "U" : "V");
+                }
+            }
+            if (i < 256) {
+                ++yTotal;
+                yMatch += ok;
+            } else if (i < 320) {
+                ++uTotal;
+                uMatch += ok;
+            } else {
+                ++vTotal;
+                vMatch += ok;
+            }
+        }
+        if (mbMism == 0) ++mbExact;
+    }
+
+    // Vacuity guards: 100% match means the enabled gold is not discriminating
+    // (or we accidentally scored the residual oracle against itself). 0% match
+    // usually means frame/index misalignment rather than "deblock everywhere".
+    if (sampleTotal < 1 || sampleMatch == sampleTotal) {
+        std::cerr << "FAIL h264_decode_core real-slice deblock-gap: enabled-gold survival vacuous "
+                  << "sample_match=" << sampleMatch << "/" << sampleTotal
+                  << " (product pre-deblock writeback must diverge from filter-enabled reference)\n";
+        return 1;
+    }
+    if (sampleMatch == 0) {
+        std::cerr << "FAIL h264_decode_core real-slice deblock-gap: enabled-gold survival zero "
+                  << "sample_match=0/" << sampleTotal
+                  << " (likely slice misalignment, not a measured deblock cascade)\n";
+        return 1;
+    }
+    if (mbExact == static_cast<int>(cases.size())) {
+        std::cerr << "FAIL h264_decode_core real-slice deblock-gap: all "
+                  << mbExact << " MBs exact against enabled gold while product path has no in-loop deblock\n";
+        return 1;
+    }
+
+    std::cout << "DEBLOCK_GAP_SURVIVAL product_pre_deblock_vs_enabled_gold"
+              << " mb_exact=" << mbExact << "/" << cases.size()
+              << " sample_match=" << sampleMatch << "/" << sampleTotal
+              << " sample_pct=" << (100.0 * sampleMatch / sampleTotal)
+              << " Y=" << yMatch << "/" << yTotal
+              << " U=" << uMatch << "/" << uTotal
+              << " V=" << vMatch << "/" << vTotal
+              << " first_diff label=" << firstDiffLabel
+              << " sample=" << firstDiffSample << " plane=" << firstDiffPlane
+              << " got=" << firstDiffGot << " want=" << firstDiffWant
+              << " note=temporal_ref_cascade_dominates_edge_only_filter\n";
+    return 0;
+}
+
+int checkScoreboard(const Sim& s, const Slice& slice, const Slice& enabled, const std::vector<Case>& cases) {
     if (s.reads.size() != cases.size() * kReadsPerMb) {
         std::cerr << "FAIL h264_decode_core real-slice scoreboard: read count " << s.reads.size()
                   << " want=" << cases.size() * kReadsPerMb << "\n";
@@ -441,6 +523,7 @@ int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& c
                   << chromaBottomClampReads << " want>=1\n";
         return 1;
     }
+    // Control path: disabled-loop-filter exactness (existing green contract).
     std::cout << "test_h264_decode_core_real_slice: OK real-content disabled-loop-filter I420 slice reconstructed "
               << cases.size() << " P16 MBs exact; residual_nonzero=" << residualNonzeroTotal
               << " chroma_residual_nonzero=" << chromaResidualNonzeroTotal
@@ -452,6 +535,9 @@ int checkScoreboard(const Sim& s, const Slice& slice, const std::vector<Case>& c
         std::cout << " " << c.label << "=" << c.ref << "->" << c.target << "@(" << c.mbX << "," << c.mbY << ")";
     }
     std::cout << "\n";
+
+    // Gap instrument: same product writes vs filter-enabled gold.
+    if (scoreEnabledSurvival(s, enabled, cases) != 0) return 1;
     return 0;
 }
 
@@ -461,11 +547,53 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     const char* path = std::getenv("MPLEX_REAL_SLICE");
     if (!path) path = "tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv";
+    const char* enabledPath = std::getenv("MPLEX_REAL_SLICE_ENABLED");
+    if (!enabledPath) {
+        enabledPath = "tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled.yuv";
+    }
     Slice slice(readFile(path));
+    Slice enabled(readFile(enabledPath));
     if (slice.frames() != kExpectedFrames) {
         std::cerr << "FAIL h264_decode_core real-slice scoreboard: frames=" << slice.frames()
                   << " want=" << kExpectedFrames << "\n";
         return 1;
+    }
+    if (enabled.frames() != kExpectedFrames) {
+        std::cerr << "FAIL h264_decode_core real-slice scoreboard: enabled_frames=" << enabled.frames()
+                  << " want=" << kExpectedFrames << "\n";
+        return 1;
+    }
+    // Guard against accidentally pointing both paths at the same decoded stage.
+    // Compare payload, not path strings (symlinks / identical copies).
+    {
+        bool identical = true;
+        for (int f = 0; f < kExpectedFrames && identical; ++f) {
+            for (int y = 0; y < 8 && identical; ++y) {
+                for (int x = 0; x < 8; ++x) {
+                    if (slice.sample(f, 0, x, y) != enabled.sample(f, 0, x, y) ||
+                        slice.sample(f, 1, x, y) != enabled.sample(f, 1, x, y) ||
+                        slice.sample(f, 2, x, y) != enabled.sample(f, 2, x, y)) {
+                        identical = false;
+                        break;
+                    }
+                }
+            }
+        }
+        // Full-frame compare would be expensive; probe corners + one mid sample per plane/frame.
+        if (identical) {
+            for (int f = 0; f < kExpectedFrames && identical; ++f) {
+                if (slice.sample(f, 0, FRAME_W / 2, FRAME_H / 2) != enabled.sample(f, 0, FRAME_W / 2, FRAME_H / 2) ||
+                    slice.sample(f, 1, C_W / 2, C_H / 2) != enabled.sample(f, 1, C_W / 2, C_H / 2) ||
+                    slice.sample(f, 2, C_W / 2, C_H / 2) != enabled.sample(f, 2, C_W / 2, C_H / 2)) {
+                    identical = false;
+                }
+            }
+        }
+        if (identical) {
+            std::cerr << "FAIL h264_decode_core real-slice scoreboard: disabled and enabled slices are identical "
+                      << "(deblock-gap instrument would be vacuous)\n";
+            return 1;
+        }
     }
     std::vector<Case> cases;
     try {
@@ -486,5 +614,5 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    return checkScoreboard(s, slice, cases);
+    return checkScoreboard(s, slice, enabled, cases);
 }

@@ -215,10 +215,15 @@ module h264_decode_core #(
     //             One cycle per sample read.
     //
     // h264_deblock (w-deblock):
-    //   Operates on complete reconstructed MBs after decode.
-    //   Needs: QP, mb_type of current and neighbours, MVs, recon samples.
-    //   Writes filtered samples back to DPB reference slot.
-    //   CONTRACT: Post-reconstruction, pre-DPB-commit for reference use.
+    //   Building blocks live in h264_deblock.sv (bS, thresholds, edge, pipe,
+    //   writeback_ctrl). PRODUCT GAP (W-INTER2 measured): this core's P16 path
+    //   writes *unfiltered* pred+residual samples straight to DPB. Real Baseline
+    //   streams enable the in-loop filter; scoring product writeback against a
+    //   filter-enabled FFmpeg gold shows ~0% MB-exact survival on the real-slice
+    //   cases because temporal reference cascade dominates edge-only deltas.
+    //   decode_stub may wire writeback_ctrl as a commit seam; that is not pixel
+    //   deblock on this recon path. CONTRACT when integrated: post-recon,
+    //   pre-DPB-commit for reference use (luma edges first).
     //
     // ════════════════════════════════════════════════════════════════════
     // NEIGHBOUR CONTEXT (w-ctl coordination point)

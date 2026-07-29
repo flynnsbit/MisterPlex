@@ -9,10 +9,19 @@ ASSET="$ASSET_DIR/derived_realcontent_624x480_baseline_ref1_nob_1800f.264"
 MANIFEST="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_1800f_i420_hashes_disabled_v1.json"
 SLICE="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv"
 SLICE_MANIFEST="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled_v1.json"
+SLICE_ENABLED="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled.yuv"
+SLICE_ENABLED_MANIFEST="tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled_v1.json"
 OUT="build/derived_validation"
 mkdir -p "$OUT"
 
 python3 tools/derived_h264_slice_fixture.py verify --slice "$SLICE" --manifest "$SLICE_MANIFEST"
+python3 tools/derived_h264_slice_fixture.py verify --slice "$SLICE_ENABLED" --manifest "$SLICE_ENABLED_MANIFEST"
+# Disabled and enabled must differ or the deblock-gap instrument is vacuous.
+if cmp -s "$SLICE" "$SLICE_ENABLED"; then
+  echo "FAIL derived hash fixture: enabled slice is byte-identical to disabled control" >&2
+  exit 1
+fi
+echo "OK derived_validation: disabled vs enabled loop-filter slices differ (deblock gap is scoreable)"
 
 if [[ -f "$ASSET" ]]; then
   python3 tools/derived_h264_plane_hashes.py verify --manifest "$MANIFEST" --input "$ASSET"

@@ -24,10 +24,12 @@ fi
 TOP="$ROOT/tests/rtl/h264_decode_core_p16z_tb.sv"
 TB="$ROOT/tests/rtl/h264_decode_core_real_slice_tb.cpp"
 SLICE="$ROOT/tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_disabled.yuv"
+SLICE_ENABLED="$ROOT/tests/fixtures/derived_validation/derived_realcontent_624x480_baseline_ref1_nob_8f_i420_enabled.yuv"
 RTL_DIR="$ROOT/fpga/Plex_MiSTer/rtl"
 BUILD="$ROOT/build/verilator/h264_decode_core_real_slice"
 BUILD_SWAP_CHROMA="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma_read"
 BUILD_SWAP_CHROMA_RES="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma_residual"
+BUILD_GAP_VACUOUS="$ROOT/build/verilator/h264_decode_core_real_slice_deblock_gap_vacuous"
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
@@ -35,7 +37,7 @@ RTL=(
   "$RTL_DIR/h264_decode_core.sv"
   "$RTL_DIR/h264_dpb.sv"
 )
-for f in "$TOP" "$TB" "$SLICE" "${RTL[@]}"; do
+for f in "$TOP" "$TB" "$SLICE" "$SLICE_ENABLED" "${RTL[@]}"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -45,6 +47,7 @@ done
 build_and_run() {
   local build_dir="$1"
   local define_arg="$2"
+  local enabled_slice="${3:-$SLICE_ENABLED}"
   local bin="$build_dir/Vh264_decode_core_p16z_tb"
   mkdir -p "$build_dir"
   # Always drop prior binary so a failed mutant compile cannot leave a stale green.
@@ -58,7 +61,7 @@ build_and_run() {
   test -x "$bin"
   # Record freshness evidence for mutant builds.
   ls -la --full-time "$bin" >&2
-  MPLEX_REAL_SLICE="$SLICE" "$bin"
+  MPLEX_REAL_SLICE="$SLICE" MPLEX_REAL_SLICE_ENABLED="$enabled_slice" "$bin"
 }
 
 build_and_run "$BUILD" ""
@@ -86,3 +89,21 @@ if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_decode_core_re
 fi
 printf '%s\n' "$RED_CHECK"
 echo "OK h264_decode_core real-slice red-check: swapped U/V chroma residual failed real-content scoreboard"
+
+# Instrument vacuity: scoring the disabled product residual-oracle against the
+# disabled slice-as-"enabled" gold must NOT silently report 100% survival.
+set +e
+VAC_OUT="$(build_and_run "$BUILD_GAP_VACUOUS" "" "$SLICE" 2>&1)"
+VAC_RC=$?
+set -e
+printf '%s\n' "$VAC_OUT"
+if [[ "$VAC_RC" -eq 0 ]]; then
+  echo "FAIL h264_decode_core real-slice deblock-gap: vacuous enabled=disabled path returned rc=0" >&2
+  exit 1
+fi
+if ! grep -q 'disabled and enabled slices are identical\|enabled-gold survival vacuous' <<<"$VAC_OUT"; then
+  echo "FAIL h264_decode_core real-slice deblock-gap: vacuous path did not name the instrument defect" >&2
+  printf '%s\n' "$VAC_OUT" >&2
+  exit 1
+fi
+echo "OK h264_decode_core real-slice red-check: deblock-gap instrument rejects disabled-as-enabled gold"
