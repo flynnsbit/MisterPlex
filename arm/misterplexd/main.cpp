@@ -461,9 +461,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
         if (!osdControl) {
             std::fprintf(stderr,
-                         "misterplexd: OSD_CONTROL=0 — F12 menu Idle Screen changes are "
-                         "inert; only IDLE_SCREEN conf (at start) applies. Set "
-                         "OSD_CONTROL=1 with a v3+ Plex.rbf for live menu rotation.\n");
+                         "misterplexd: OSD_CONTROL=0 — F12 menu Idle Screen is inert; "
+                         "only IDLE_SCREEN conf applies. Set OSD_CONTROL=1 with a v3+ "
+                         "Plex.rbf for live + persisted menu rotation.\n");
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD "
+                         "fallback; first OSD word applies Main's persisted F12 Idle "
+                         "Screen (config/Plex_v7.CFG), then live menu changes.\n");
         }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());

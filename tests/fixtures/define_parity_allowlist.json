@@ -33,7 +33,7 @@
     "H264_DPB_FAULT_EARLY_PROMOTE": "Injected DPB early frame-promote expected-red fault.",
     "H264_DPB_FAULT_NO_IDR_INVALIDATE": "Injected DPB missing-IDR-invalidate expected-red fault.",
     "H264_DPB_FAULT_SKIP_DEBLOCK": "Injected DPB skip-deblock-before-commit expected-red fault.",
-    "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",
+    "OSD_MENU_FAULT_SKIP_INITIAL_IDLE": "Injected OSD idle skip-first-word (ignore persisted F12) expected-red fault.",
     "OSD_MENU_FAULT_FALLBACK_624_BITRATE": "Injected OSD/fallback 624x480 bitrate mismatch expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
     "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",

@@ -186,14 +186,21 @@ inline bool osdIdleChanged(uint16_t a, uint16_t b) {
     return ((a ^ b) & kOsdIdleMask) != 0;
 }
 
+// Idle apply policy (OSD_CONTROL=1):
+//   * First successful OSD word = Main's persisted menu (config/Plex_v7.CFG).
+//     Apply idle bits so F12 "Idle Screen" survives daemon restart / menu reset.
+//   * Later words: apply idle only when [15:14] change (av-offset-only edits
+//     must not re-paint).
+// IDLE_SCREEN conf is the pre-OSD fallback (and the only source when
+// OSD_CONTROL=0). Once the core OSD word is readable, persisted OSD wins.
 inline bool shouldApplyOsdIdle(bool osdSeenBefore, uint16_t previousWord, uint16_t word) {
-#ifdef OSD_MENU_FAULT_APPLY_INITIAL_IDLE
-    (void)osdSeenBefore;
-    (void)previousWord;
-    (void)word;
-    return true;
-#else
+#ifdef OSD_MENU_FAULT_SKIP_INITIAL_IDLE
+    // Fault mutant: old baseline-only behaviour (ignores persisted F12 idle).
     return osdSeenBefore && osdIdleChanged(previousWord, word);
+#else
+    if (!osdSeenBefore)
+        return true;
+    return osdIdleChanged(previousWord, word);
 #endif
 }
 

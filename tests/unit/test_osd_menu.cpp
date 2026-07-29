@@ -92,14 +92,13 @@ int main() {
     for (int bit : {1, 3, 4, 6, 7, 8, 9, 14, 15})
         CHECK(osdChanged(0, static_cast<uint16_t>(1u << bit)));
 
-    // The first OSD word is a baseline snapshot, not proof that the user chose
-    // that idle item during this daemon run. A saved/stale 0x4000 must not turn
-    // IDLE_SCREEN=logo(default) into black just because OSD_CONTROL=1.
-    CHECK(!shouldApplyOsdIdle(false, 0x0000, 0x4000));
-    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4000));
-    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4040)); // video-delay-only change
-    CHECK(shouldApplyOsdIdle(true, 0x0000, 0x4000));  // live Logo -> Black change
-    CHECK(shouldApplyOsdIdle(true, 0x4000, 0x8000));  // live Black -> Screensaver
+    // First OSD word = Main's persisted F12 Idle Screen (Plex_v7.CFG). Apply it
+    // so menu idle survives daemon restart. Later: idle bits only on change.
+    CHECK(shouldApplyOsdIdle(false, 0x0000, 0x4000));  // startup apply Black
+    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4000));  // unchanged
+    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4040));  // video-delay-only change
+    CHECK(shouldApplyOsdIdle(true, 0x0000, 0x4000));   // live Logo -> Black
+    CHECK(shouldApplyOsdIdle(true, 0x4000, 0x8000));   // live Black -> Screensaver
     CHECK(kOsdIdleMask == 0xC000);
 
     // --- idle mode bits match CONF_STR order ---

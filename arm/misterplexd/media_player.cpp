@@ -499,8 +499,8 @@ void MediaPlayer::startOsdPoll() {
                 const bool seenBefore = osdSeen_.exchange(true);
                 if (!seenBefore || osdChanged(prev, word)) {
                     lastOsd_.store(word);
-                    // The first word is Main's saved snapshot. Treat idle bits as a
-                    // baseline so stale 0x4000 cannot override IDLE_SCREEN=logo.
+                    // First word: apply persisted F12 Idle Screen (Main CFG).
+                    // Later: idle only when [15:14] change. See shouldApplyOsdIdle.
                     applyOsd(word, shouldApplyOsdIdle(seenBefore, prev, word));
                 }
             }

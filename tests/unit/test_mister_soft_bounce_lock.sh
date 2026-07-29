@@ -479,4 +479,66 @@ if [[ "$released" != "1" ]]; then
 fi
 echo "PASS kill between acquire and HOLDING=1 released lock via lock_is_ours"
 
+# --- 14) NEVER force-delete another live lane's lock (blocking safety) ---
+rm -rf "$LOCK"
+mkdir -p "$LOCK"
+sleep 120 &
+FOREIGN_PID=$!
+echo "$FOREIGN_PID" >"$LOCK/pid"
+echo "foreign-live-unit" >"$LOCK/agent"
+echo "$(date -Iseconds)" >"$LOCK/timestamp"
+echo "$(date +%s)" >"$LOCK/timestamp_epoch"
+echo "foreign-hold" >"$LOCK/reason"
+set +e
+MISTER_CLAIM_FORCE=1 \
+  "$BOUNCE" release --force \
+  >"$WORK/foreign_live_release.out" 2>"$WORK/foreign_live_release.err"
+FL_RC=$?
+set -e
+echo "foreign_live_force_release true rc=$FL_RC"
+if [[ ! -d "$LOCK" ]]; then
+  echo "FAIL: FORCE release deleted live foreign lock pid=$FOREIGN_PID" >&2
+  cat "$WORK/foreign_live_release.out" "$WORK/foreign_live_release.err" >&2 || true
+  kill "$FOREIGN_PID" 2>/dev/null || true
+  wait "$FOREIGN_PID" 2>/dev/null || true
+  exit 1
+fi
+still="$(cat "$LOCK/pid" 2>/dev/null || true)"
+if [[ "$still" != "$FOREIGN_PID" ]]; then
+  echo "FAIL: foreign lock pid changed to $still" >&2
+  kill "$FOREIGN_PID" 2>/dev/null || true
+  wait "$FOREIGN_PID" 2>/dev/null || true
+  exit 1
+fi
+if [[ "$FL_RC" -eq 0 ]]; then
+  echo "FAIL: FORCE release of live foreign lock returned success" >&2
+  kill "$FOREIGN_PID" 2>/dev/null || true
+  wait "$FOREIGN_PID" 2>/dev/null || true
+  exit 1
+fi
+kill "$FOREIGN_PID" 2>/dev/null || true
+wait "$FOREIGN_PID" 2>/dev/null || true
+rm -rf "$LOCK"
+echo "PASS FORCE release refuses live foreign lock (rc=$FL_RC)"
+
+# Stale dead pid + FORCE must still clear (FORCE reserved for stale).
+rm -rf "$LOCK"
+mkdir -p "$LOCK"
+echo "999999" >"$LOCK/pid"   # almost-certainly dead
+echo "dead-foreign" >"$LOCK/agent"
+set +e
+MISTER_CLAIM_FORCE=1 \
+  "$BOUNCE" release --force \
+  >"$WORK/stale_dead_release.out" 2>"$WORK/stale_dead_release.err"
+SD_RC=$?
+set -e
+echo "stale_dead_force_release true rc=$SD_RC"
+if [[ -d "$LOCK" ]]; then
+  echo "FAIL: FORCE release did not clear dead foreign lock" >&2
+  cat "$WORK/stale_dead_release.out" "$WORK/stale_dead_release.err" >&2 || true
+  exit 1
+fi
+echo "PASS FORCE release clears dead/stale foreign lock (rc=$SD_RC)"
+
+
 echo "OK mister_soft_bounce lock exclusion + trap release + corename gate"

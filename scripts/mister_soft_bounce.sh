@@ -339,20 +339,38 @@ acquire_lock() {
 }
 
 release_lock() {
-  if [[ -d "$LOCK_DIR" ]]; then
-    local holder
-    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [[ -z "$holder" || "$holder" == "$$" || "$FORCE" == "1" ]]; then
-      rm -rf "$LOCK_DIR"
-      step "lock_released"
-      return 0
-    fi
-    echo "mister_soft_bounce: refuse release; holder pid=$holder != $$ (MISTER_CLAIM_FORCE=1 to override)" >&2
-    step "lock_release_refused holder=$holder"
+  # NEVER delete a lock owned by a different *live* pid — not even with FORCE.
+  # FORCE only clears genuinely stale locks (missing pid file, or dead pid).
+  # Stealing a live claim is acquire-time break_lock_if_allowed only.
+  if [[ ! -d "$LOCK_DIR" ]]; then
+    step "lock_released_already_free"
+    return 0
+  fi
+  local holder=""
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ "$holder" == "$$" ]]; then
+    rm -rf "$LOCK_DIR"
+    step "lock_released"
+    return 0
+  fi
+  local alive=0
+  if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+    alive=1
+  fi
+  if [[ "$alive" == "1" ]]; then
+    echo "mister_soft_bounce: refuse release; live foreign holder pid=$holder != $$ (never force-delete live locks)" >&2
+    step "lock_release_refused holder=$holder alive=1"
     return 3
   fi
-  step "lock_released_already_free"
-  return 0
+  # Stale: empty pid or dead pid.
+  if [[ -z "$holder" || "$FORCE" == "1" ]]; then
+    rm -rf "$LOCK_DIR"
+    step "lock_released stale=1 holder=${holder:-none}"
+    return 0
+  fi
+  echo "mister_soft_bounce: refuse release; dead foreign holder pid=$holder (MISTER_CLAIM_FORCE=1 to clear stale)" >&2
+  step "lock_release_refused holder=$holder alive=0"
+  return 3
 }
 
 # Read live CORENAME. Banner-filtered. Test inject: MISTER_CLAIM_FAKE_CORENAME
@@ -760,6 +778,7 @@ cleanup() {
 
   # Release when lock file is ours (pid==$$ written at acquire), NOT only when
   # HOLDING=1. A kill between acquire_lock and HOLDING=1 must still drop the lock.
+  # NEVER FORCE-delete another live lane's lock (two-lanes-on-device failure mode).
   local owned=0
   if lock_is_ours; then
     owned=1
@@ -774,29 +793,46 @@ cleanup() {
       kill -TERM "$child" 2>/dev/null || true
     done
     # 1) RELEASE LOCK FIRST — never leave stranded if restore hangs.
-    # Prefer owner-based release; FORCE only if HOLDING said we own but pid drifted.
+    local did_release=0
     if lock_is_ours; then
-      release_lock || true
+      if release_lock; then
+        did_release=1
+      fi
     elif [[ -d "$LOCK_DIR" ]]; then
-      FORCE=1 release_lock || true
+      local holder=""
+      holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+      if [[ -z "$holder" ]] || ! kill -0 "$holder" 2>/dev/null; then
+        echo "mister_soft_bounce: cleanup clearing stale lock holder=${holder:-none}" >&2
+        if FORCE=1 release_lock; then
+          did_release=1
+        fi
+      else
+        echo "mister_soft_bounce: cleanup WILL NOT steal live lock pid=$holder (owned=$owned)" >&2
+        step "cleanup_lock_foreign_live holder=$holder"
+        audit_local "cleanup_lock_foreign_live" "holder=$holder"
+      fi
     else
       step "lock_released_already_free"
+      did_release=1
     fi
-    audit_local "release" "cleanup=1 prior_ec=$ec owned=$owned"
-    # 2) Restore via soft_bounce so CORENAME + daemon --id are verified.
-    # Failures are loud on stdout/trace but must not re-hang or block lock release
-    # (lock already dropped above). Preserve original exit code $ec.
-    set +e
-    step "cleanup_restore_bounce_begin"
-    TEST_BOUNCE_SLEEP_S=0 soft_bounce "release_cleanup"
-    local restore_rc=$?
-    set -e
-    if [[ "$restore_rc" -ne 0 ]]; then
-      echo "mister_soft_bounce: CLEANUP_RESTORE_FAIL rc=$restore_rc (lock already released; device may need manual Plex/daemon restore)" >&2
-      step "cleanup_restore_fail rc=$restore_rc"
-      audit_local "cleanup_restore_fail" "rc=$restore_rc"
+    audit_local "release" "cleanup=1 prior_ec=$ec owned=$owned did_release=$did_release"
+    # 2) Restore bounce only if this claim owned/released the lock. Never bounce
+    # while another live lane holds the device.
+    if [[ "$owned" == "1" || "$did_release" == "1" ]]; then
+      set +e
+      step "cleanup_restore_bounce_begin"
+      TEST_BOUNCE_SLEEP_S=0 soft_bounce "release_cleanup"
+      local restore_rc=$?
+      set -e
+      if [[ "$restore_rc" -ne 0 ]]; then
+        echo "mister_soft_bounce: CLEANUP_RESTORE_FAIL rc=$restore_rc (lock already released; device may need manual Plex/daemon restore)" >&2
+        step "cleanup_restore_fail rc=$restore_rc"
+        audit_local "cleanup_restore_fail" "rc=$restore_rc"
+      else
+        step "cleanup_restore_ok"
+      fi
     else
-      step "cleanup_restore_ok"
+      step "cleanup_skip_restore reason=foreign_live_lock"
     fi
     step "cleanup_end"
   fi
@@ -857,18 +893,22 @@ do_release() {
     return 0
   fi
   print_lock_status
-  if [[ "$FORCE" != "1" ]]; then
-    local holder
-    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null && [[ "$holder" != "$$" ]]; then
-      echo "mister_soft_bounce: holder still alive pid=$holder; refuse (MISTER_CLAIM_FORCE=1)" >&2
-      return 3
-    fi
+  local holder=""
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$holder" && "$holder" != "$$" ]] && kill -0 "$holder" 2>/dev/null; then
+    # Never steal a live foreign claim via release (FORCE does not override).
+    echo "mister_soft_bounce: holder still alive pid=$holder; refuse release (never force-delete live locks)" >&2
+    return 3
   fi
   # RELEASE LOCK FIRST, then best-effort return-to-Plex.
   step "release_external_begin"
   audit "release_external"
-  FORCE=1 release_lock
+  if [[ "$holder" == "$$" ]]; then
+    release_lock || return $?
+  else
+    # Stale (empty/dead pid): FORCE allowed only for non-live.
+    FORCE=1 release_lock || return $?
+  fi
   soft_bounce "release" || true
   echo "CLAIM_RELEASED"
   step "release_external_end"
