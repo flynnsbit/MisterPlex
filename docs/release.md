@@ -169,10 +169,35 @@ uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
 
 ## Lab stable pair (v0.3.0) — 2am card
 
-Ship **core and daemon together**. A 320×240 core with a 480p-line daemon (or
-the reverse) is a silent geometry mismatch: **320×240 bank1 is `0x30040000`**;
+Ship **core, daemon AND conf together**. A 320×240 core with a 480p-line daemon
+(or the reverse) is a silent geometry mismatch: **320×240 bank1 is `0x30040000`**;
 **624/640×480 bank1 is `0x30080000`**. Wrong pair → stale/wrong bank reads that
 look like “corruption in the background.”
+
+> **It is a triple, not a pair — learned the hard way 2026-07-29.** The core and
+> daemon were deployed correctly, but `/media/fat/misterplex/misterplex.conf` was
+> left on the 480p experiment line (`DECODE=624x480`, `PRESENT=fpga`, `STREAM=1`).
+> **Idle looked perfect, so the mismatch passed inspection**; the fault would only
+> have appeared on the first play. `arm/misterplexd/main.cpp` defaults to
+> `decodeW=320, decodeH=240` (:89) **but the conf overrides it** (:174-179) and
+> `setDecodeSize()` (:285) is called with the conf value — so the daemon would have
+> decoded 624×480 into a layout the 320×240 core does not read. **A conf key silently
+> overriding a correct default is the same defect class as a check that cannot fail.**
+
+Required conf for this pair (matches `scripts/package_release.sh:98-100`):
+
+```
+DECODE=320x240
+PRESENT=fb0
+STREAM=0
+```
+
+Verify from the daemon's own log rather than the file — the daemon prints what it
+actually adopted:
+
+```
+misterplexd: running name=MiSTerPlex ... decode=320x240 weak=320x240@1000k present=fb0
+```
 
 | Piece | Identity |
 |-------|----------|

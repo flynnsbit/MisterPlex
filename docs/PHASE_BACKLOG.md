@@ -1114,3 +1114,41 @@ The **~3.2 ms/f** gap between the product present/DDR path (**10.41 ms/f**) and 
 (**PARENT FAILURE, acknowledged**) The provenance doc for that asset was merged without anyone asking **what protected the file it described**. Proposed durable fix: keep only the manifest in git, regenerate via a checked-in script into an ignored `artifacts/local/` path outside `build/`, and **make the profile docs mark their numbers EXPIRED when the asset SHA is absent** — so a destroyed input degrades the claim automatically instead of silently leaving a confident number in place.
 
 (**DURABLE ASSET HYGIENE IMPLEMENTED — W-arm-present-gap**) Added `scripts/regenerate_arm_profile_asset.sh` and `scripts/check_arm_profile_asset.sh`; `.gitignore` now ignores `artifacts/local/`. The checker prints **`ASSET_EXPIRED`** and exits **77** when the MP4/Annex-B are absent or hash-mismatched, and **`ASSET_OK`** only when the expected SHA/MD5 values are present. `docs/derived-validation-assets.md`, `docs/phase3-decode.md`, and derived-validation fixture docs now point at `artifacts/local/arm-profile-sample/` and explicitly mark the 40.1902 ms/f headline as **EXPIRED** unless the checker is green. Validation evidence: current checkout prints `ASSET_EXPIRED missing ...` with `check-asset true rc=77`; the always-on 8-frame fixture still passes with the full 1800-frame check reported as optional `ASSET_EXPIRED`.
+
+## Hour-27 — parent retractions and the conf triple (2026-07-29)
+
+Four standing claims were wrong. All four were **parent-propagated**, and three of
+them were blockers I had escalated to the user.
+
+**R1 — `PLEX_TOKEN` is NOT absent.** I reported for several hours that the device had
+no token and that playback was therefore blocked *on the user*. A direct read of
+`/media/fat/misterplex/misterplex.conf` shows a populated `PLEX_TOKEN=` line (value
+deliberately not recorded here). **Playback was never blocked on the user.** The
+original probe reported absence and I never re-ran it against the real file.
+
+**R2 — the ARM profile asset was NOT destroyed.** Reported lost to an unrelated
+`make clean`, putting the headline **40.19 ms/f** on an "expiry clock". It survived
+intact in a sibling worktree (`mp-wt-feed/build/arm-profile-sample/`), which had
+never been cleaned. Restored to `artifacts/local/arm-profile-sample/` with all three
+hashes matching: `annexb_sha=41f2769…`, `annexb_md5=779f0d3a…`, `mp4_md5=3fad246c…`.
+`scripts/check_arm_profile_asset.sh` now reports `ASSET_OK` rc=0 (was `ASSET_EXPIRED`
+rc=77). **The number is re-measurable.** Searching only the repo and its worktrees'
+tracked paths — not sibling checkouts — is what hid it.
+
+**R3 — "screensaver/idle 93%" was never a completion score.** It is `G-IDLE2c`:
+the middle band measuring **93.1% identical to the screensaver**, i.e. the
+*fingerprint of the LastFrame torn-composite bug* on the 480p line. I had been
+quoting a defect metric as progress. Honest rescore against the live v0.3.0 core:
+**~55% overall, ≤40% multi-mode** (1 of 4 modes DDR-proven). A high number that
+was actually a bug measurement is the exact failure this fleet exists to catch.
+
+**R4 — the deploy rule is a TRIPLE, not a pair.** See `docs/release.md`. Core and
+daemon were correct; the conf was still `DECODE=624x480 / PRESENT=fpga / STREAM=1`.
+**Idle rendered perfectly, which is why it passed my verification** — the fault was
+scoped to playback only. Corrected live and confirmed from the daemon's own adopted
+values: `decode=320x240 weak=320x240@1000k present=fb0`, 0 errors, pid 31928.
+
+**Process note (own goal).** While editing the conf I used `#` as both `sed`
+delimiter and literal, prepending junk to *every* line of the live config. The
+pre-edit backup made it a non-event. **Taking the backup before the edit is the only
+reason this is a footnote instead of an outage.**
