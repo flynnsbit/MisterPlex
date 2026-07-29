@@ -105,8 +105,12 @@ struct DdrModel {
     void afterPosedge(Vstream_path_ddr_ring_tb_top& dut) {
         if (dut.ddr_we)
             mem[static_cast<uint32_t>(dut.ddr_addr)] = dut.ddr_din;
-        if (dut.ddr_rd)
-            pending.push_back(Pending{2, static_cast<uint32_t>(dut.ddr_addr)});
+        if (dut.ddr_rd) {
+            unsigned beats = dut.ddr_burstcnt ? dut.ddr_burstcnt : 1u;
+            for (unsigned b = 0; b < beats; ++b)
+                pending.push_back(Pending{static_cast<int>(2 + b),
+                                          static_cast<uint32_t>(dut.ddr_addr) + b});
+        }
 
         dut.ddr_model_dout_ready = 0;
         dut.ddr_model_dout = 0;

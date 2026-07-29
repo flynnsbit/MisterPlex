@@ -33,6 +33,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/tests/rtl/stream_path_recon_tb_top.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_ingest.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_prefetch.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/bitstream_fifo.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/nalu_scanner.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv" \

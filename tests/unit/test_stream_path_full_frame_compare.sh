@@ -55,6 +55,7 @@ PRODUCT_RTL=(
   stream_path.sv
   stream_ingest.sv
   ddr_bitstream_reader.sv
+  ddr_bitstream_prefetch.sv
   bitstream_fifo.sv
   nalu_scanner.sv
   h264_rbsp_window.sv
