@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iostream>
 #include <string>
+#include <array>
 #include <vector>
 
 namespace {
@@ -28,6 +29,24 @@ constexpr int kScheduledLumaBlocks = 16;
 constexpr int kScheduledChromaBlocks = 8;
 constexpr int kScheduledBlocks = kScheduledLumaBlocks + kScheduledChromaBlocks;
 
+// coded_block_pattern gating. Macroblock 2 deliberately leaves one luma 8x8
+// group and both chroma components uncoded so the product core's cbp gate is
+// exercised rather than assumed: uncoded blocks must contribute no residual and
+// must consume no bits from the macroblock's CAVLC chain.
+constexpr int kCbpGatedMb = 2;
+int cbpLumaFor(int mbIdx) { return mbIdx == kCbpGatedMb ? 0xb : 0xf; }
+int cbpChromaFor(int mbIdx) { return mbIdx == kCbpGatedMb ? 0x0 : 0x2; }
+
+bool blockCoded(int mbIdx, int block) {
+    if (block < kScheduledLumaBlocks) {
+        // The core indexes 4x4 blocks in raster order, so the 8x8 cbp group is
+        // {block_y[1], block_x[1]}.
+        const int group = ((block >> 3) & 1) * 2 + ((block >> 1) & 1);
+        return ((cbpLumaFor(mbIdx) >> group) & 1) != 0;
+    }
+    return cbpChromaFor(mbIdx) != 0;
+}
+
 int residualBlockSample(int mbIdx, int block, int pos) {
     static constexpr int kScan14[16] = {19, 11, -5, -13, 19, 11, -5, -13,
                                         19, 11, -5, -13, 19, 11, -5, -13};
@@ -35,18 +54,36 @@ int residualBlockSample(int mbIdx, int block, int pos) {
                                         7, 5, 1, -1, 7, 5, 1, -1};
     static constexpr int kHighClamp[16] = {264, 262, 258, 256, 264, 262, 258, 256,
                                            264, 262, 258, 256, 264, 262, 258, 256};
+    if (!blockCoded(mbIdx, block)) return 0;
     if (mbIdx == 1 && (block == 0 || block == 16)) return kHighClamp[pos];
     if (block < kScheduledLumaBlocks) return (block & 1) ? kScan11[pos] : kScan14[pos];
     if (block < kScheduledLumaBlocks + 4) return kScan11[pos];
     return kScan14[pos];
 }
 
-const char* residualBlockBits(int mbIdx, int block) {
-    if (mbIdx == 1 && (block == 0 || block == 16)) return "00010000000000000000001000001111110111"; // scan coeffs [80, 1]
-    if (block < kScheduledLumaBlocks)
-        return (block & 1) ? "00100111" : "0000011100001100111"; // scan coeffs [1,1] or [1,4]
-    return (block < kScheduledLumaBlocks + 4) ? "00100111" : "0000011100001100111";
+// The decoder picks the coeff_token VLC table from nC (H.264 9.2.1), derived
+// from the total_coeff of the left and upper 4x4 neighbours, so the fixture
+// cannot hardcode one table: it has to encode every block with the table the
+// decoder will select. codeFor() supplies the two encodings of each coefficient
+// pattern; only the coeff_token prefix differs, the suffixes are identical.
+// Chroma AC has no neighbour context in the core yet and stays on table 0.
+std::string codeFor(int mbIdx, int block, int table) {
+    if (table > 1) {
+        std::cerr << "FAIL h264_decode_core residual fixture: no encoding for coeff_token table "
+                  << table << " (mb=" << mbIdx << " block=" << block << ")\n";
+        std::exit(1);
+    }
+    if (mbIdx == 1 && (block == 0 || block == 16))  // total_coeff=2 trailing_ones=1, scan coeffs [80, 1]
+        return std::string(table ? "00111" : "000100") + "00000000000000001000001111110111";
+    const bool patternA = (block < kScheduledLumaBlocks) ? ((block & 1) != 0)
+                                                        : (block < kScheduledLumaBlocks + 4);
+    if (patternA)  // total_coeff=2 trailing_ones=2, scan coeffs [1, 1]
+        return std::string(table ? "011" : "001") + "00111";
+    // total_coeff=2 trailing_ones=0, scan coeffs [1, 4]
+    return std::string(table ? "000111" : "00000111") + "00001100111";
 }
+
+std::string residualBlockBits(int mbIdx, int block);
 
 struct Write {
     uint32_t addr = 0;
@@ -71,6 +108,57 @@ const std::vector<MbCase> kCases = {
     {2, 0, 3, 0, 2, 0, 5, 0, 400, 48},
     {3, 0, 4, 0, 5, 0, 9, 0, 504, 56},
 };
+
+// Independent model of the nC neighbour walk the core performs, run once over
+// the fixture's macroblocks in decode order. Uncoded blocks contribute
+// total_coeff 0 to their neighbours and emit no bits at all, which is what makes
+// the cbp gate observable: get it wrong in the RTL and every later block in the
+// macroblock reads the wrong bits.
+const std::vector<std::array<std::string, kScheduledBlocks>>& residualPlan() {
+    static const std::vector<std::array<std::string, kScheduledBlocks>> plan = [] {
+        std::vector<std::array<std::string, kScheduledBlocks>> out(kCases.size());
+        const int firstMb = kCases.front().mbY * MB_W + kCases.front().mbX;
+        int left[4] = {0, 0, 0, 0};
+        bool leftValid = false;
+        std::vector<std::array<int, 4>> top(MB_W, {0, 0, 0, 0});
+        std::vector<char> topValid(MB_W, 0);
+        for (size_t mbIdx = 0; mbIdx < kCases.size(); ++mbIdx) {
+            const MbCase& mb = kCases[mbIdx];
+            const int mbIndex = mb.mbY * MB_W + mb.mbX;
+            const bool leftMbAvailable = mb.mbX != 0 && (mbIndex - 1) >= firstMb;
+            const bool upMbAvailable = mb.mbY != 0 && (mbIndex - MB_W) >= firstMb;
+            int cur[16] = {0};
+            for (int block = 0; block < kScheduledBlocks; ++block) {
+                if (!blockCoded(static_cast<int>(mbIdx), block)) continue;
+                int table = 0;
+                if (block < kScheduledLumaBlocks) {
+                    const int bx = block & 3;
+                    const int by = (block >> 2) & 3;
+                    const bool nAav = (bx != 0) || (leftValid && leftMbAvailable);
+                    const bool nBav = (by != 0) || (topValid[mb.mbX] && upMbAvailable);
+                    const int nA = bx ? cur[by * 4 + bx - 1] : left[by];
+                    const int nB = by ? cur[(by - 1) * 4 + bx] : top[mb.mbX][bx];
+                    const int nC = (nAav && nBav) ? ((nA + nB + 1) >> 1) : nAav ? nA : nBav ? nB : 0;
+                    table = nC < 2 ? 0 : nC < 4 ? 1 : nC < 8 ? 2 : 3;
+                    cur[block] = 2;  // every coefficient pattern here has total_coeff 2
+                }
+                out[mbIdx][block] = codeFor(static_cast<int>(mbIdx), block, table);
+            }
+            leftValid = true;
+            for (int i = 0; i < 4; ++i) {
+                left[i] = cur[i * 4 + 3];
+                top[mb.mbX][i] = cur[12 + i];
+            }
+            topValid[mb.mbX] = 1;
+        }
+        return out;
+    }();
+    return plan;
+}
+
+std::string residualBlockBits(int mbIdx, int block) {
+    return residualPlan().at(static_cast<size_t>(mbIdx)).at(static_cast<size_t>(block));
+}
 
 uint32_t i420Addr(uint32_t base, int plane, int x, int y) {
     if (plane == 0) return base + static_cast<uint32_t>(y * FRAME_W + x);
@@ -256,8 +344,20 @@ uint8_t expectedRecon(int mbIdx, const MbCase& mb, int localIdx) { return clipU8
 bool checkResidualFixture() {
     int nonzero = 0;
     int positionDependent = 0;
+    int uncoded = 0;
     for (int mb = 0; mb < static_cast<int>(kCases.size()); ++mb) {
         for (int block = 0; block < kScheduledBlocks; ++block) {
+            if (!blockCoded(mb, block)) {
+                for (int i = 0; i < 16; ++i) {
+                    if (residualBlockSample(mb, block, i) != 0) {
+                        std::cerr << "FAIL h264_decode_core residual fixture: mb=" << mb
+                                  << " block=" << block << " is cbp-uncoded but not zero\n";
+                        return false;
+                    }
+                }
+                ++uncoded;
+                continue;
+            }
             bool anyNonzero = false;
             bool differsFromFirst = false;
             for (int i = 0; i < 16; ++i) {
@@ -292,13 +392,17 @@ bool checkResidualFixture() {
         std::cerr << "FAIL h264_decode_core residual fixture: U/V reference planes are not distinguishable\n";
         return false;
     }
-    if (uvResidualDiff < static_cast<int>(kCases.size()) * 64) {
+    int chromaCodedMbs = 0;
+    for (int mb = 0; mb < static_cast<int>(kCases.size()); ++mb) chromaCodedMbs += (cbpChromaFor(mb) != 0);
+    if (uvResidualDiff < chromaCodedMbs * 64) {
         std::cerr << "FAIL h264_decode_core residual fixture: U/V residual planes alias uv_residual_diff="
                   << uvResidualDiff << "\n";
         return false;
     }
     std::cout << "INFO h264_decode_core residual fixture: " << positionDependent
-              << " scheduled CAVLC blocks (16Y+8C per MB) are nonzero and position-dependent; nonzero_samples="
+              << " coded CAVLC blocks are nonzero and position-dependent, " << uncoded
+              << " cbp-uncoded blocks are zero (of " << kScheduledBlocks * static_cast<int>(kCases.size())
+              << " scheduled, 16Y+8C per MB); nonzero_samples="
               << nonzero << " uv_ref_distinguishable_samples=" << uvDiff
               << " uv_residual_distinguishable_samples=" << uvResidualDiff
               << " scan_order_sentinel=19/11\n";
@@ -385,6 +489,8 @@ void clearInputs(Sim& s) {
     s.top.mb_type = 0;
     s.top.mb_skip = 0;
     s.top.mb_residual_bit_offset = 0;
+    s.top.cbp_luma = 0;
+    s.top.cbp_chroma = 0;
     s.top.p16_zero_mv_valid = 0;
     s.top.p16_mb_x = 0;
     s.top.p16_mb_y = 0;
@@ -417,9 +523,9 @@ void loadScheduledResidualRbsp(Sim& s, int mbOrdinal) {
     const MbCase& mb = kCases.at(mbOrdinal);
     int bitOffset = mb.residualBitOffset - mb.rbspWindowBase * 8;
     for (int block = 0; block < kScheduledBlocks; ++block) {
-        const char* bits = residualBlockBits(mbOrdinal, block);
-        putBits(bitOffset, bits);
-        bitOffset += static_cast<int>(std::string(bits).size());
+        const std::string bits = residualBlockBits(mbOrdinal, block);
+        putBits(bitOffset, bits.c_str());
+        bitOffset += static_cast<int>(bits.size());
     }
 }
 
@@ -454,6 +560,8 @@ void driveMb(Sim& s, int mbOrdinal) {
     s.top.p16_mvd_y_qpel = mb.mvdY;
     s.top.p16_ref_idx_l0 = 0;
     s.top.mb_residual_bit_offset = mb.residualBitOffset;
+    s.top.cbp_luma = cbpLumaFor(mbOrdinal);
+    s.top.cbp_chroma = cbpChromaFor(mbOrdinal);
     s.top.rbsp_window_base = mb.rbspWindowBase;
     s.top.mb_type = 0;
     s.top.mb_skip = 0;

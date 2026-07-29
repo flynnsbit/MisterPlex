@@ -331,6 +331,22 @@ module h264_decode_core #(
     reg [9:0]  p16_res_bit_offset_r;
     reg [4:0]  p16_res_block_idx;
     reg        cavlc_start_r;
+    // Stage C residual scheduling context.
+    //   cbp: H.264 7.4.5 -- a block whose coded_block_pattern bit is 0 has no
+    //   bits in the stream at all. Decoding it anyway consumes bits belonging to
+    //   the next block and desynchronises the rest of the macroblock.
+    reg [3:0]  p16_cbp_luma_r;
+    reg [1:0]  p16_cbp_chroma_r;
+    //   nC: coeff_token table selection (H.264 9.2.1) needs total_coeff of the
+    //   left and upper 4x4 neighbours. Kept as this macroblock's 16 values, the
+    //   right column of the macroblock to the left, and a per-column line buffer
+    //   of the bottom row of the macroblock row above (same shape as mv_top_*).
+    reg [4:0]  res_tc_cur [0:15];
+    reg [4:0]  res_tc_left [0:3];
+    reg        res_tc_left_valid;
+    reg [4:0]  res_tc_top [0:(MB_W*4)-1];
+    reg        res_tc_top_valid [0:MB_W-1];
+    integer    res_tc_i;
     reg [15:0] syntax_mb_addr_r;
     reg [15:0] rbsp_request_offset_r;
     reg        rbsp_request_valid_r;
@@ -609,11 +625,53 @@ module h264_decode_core #(
         .luma4x4_coeff_zigzag(luma4x4_coeff_zigzag)
     );
 
+    // Block geometry follows luma4x4_index(): index[7:4] is the row, so
+    // block[3:2] is the 4x4 row and block[1:0] the 4x4 column.
+    wire [1:0] res_blk_x = p16_res_block_idx[1:0];
+    wire [1:0] res_blk_y = p16_res_block_idx[3:2];
+    wire       res_is_luma = (p16_res_block_idx < P16_LUMA_RES_BLOCKS);
+    // 8x8 coded_block_pattern group under this core's raster 4x4 ordering.
+    wire [1:0] res_cbp_group = {res_blk_y[1], res_blk_x[1]};
+    wire       res_block_coded = res_is_luma ? p16_cbp_luma_r[res_cbp_group]
+                                             : (p16_cbp_chroma_r == 2'd2);
+
+    wire       res_left_internal = (res_blk_x != 2'd0);
+    wire       res_up_internal   = (res_blk_y != 2'd0);
+    wire [4:0] res_left_tc = res_left_internal ? res_tc_cur[{res_blk_y, res_blk_x - 2'd1}]
+                                               : res_tc_left[res_blk_y];
+    wire       res_left_tc_valid = res_left_internal ? 1'b1 : res_tc_left_valid;
+    wire [4:0] res_up_tc = res_up_internal ? res_tc_cur[{res_blk_y - 2'd1, res_blk_x}]
+                                           : res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_blk_x}];
+    wire       res_up_tc_valid = res_up_internal ? 1'b1 : res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]];
+    wire [15:0] res_mb_index = ({8'd0, wb_mb_y} * {8'd0, mb_width}) + {8'd0, wb_mb_x};
+
+    wire [4:0] res_nC;
+    wire [2:0] res_coeff_token_table;
+    h264_cavlc_nc_predictor u_product_res_nc (
+        .mb_x(wb_mb_x),
+        .mb_y(wb_mb_y),
+        .mb_index(res_mb_index),
+        .mb_width(mb_width),
+        .first_mb_in_slice(first_mb_in_slice),
+        .block_x(res_blk_x),
+        .block_y(res_blk_y),
+        .left_tc_valid(res_left_tc_valid),
+        .left_tc(res_left_tc),
+        .up_tc_valid(res_up_tc_valid),
+        .up_tc(res_up_tc),
+        .nA_available(),
+        .nB_available(),
+        .nC(res_nC),
+        .coeff_token_table(res_coeff_token_table)
+    );
+
     h264_cavlc_residual_block #(.MAX_BYTES(128)) u_product_p16_residual0 (
         .clk(clk),
         .reset(reset || slice_start),
         .start(cavlc_start_r),
-        .coeff_token_table(3'd0),
+        // Chroma AC has no neighbour context stored yet, so it still predicts
+        // from table 0; luma is fully contexted.
+        .coeff_token_table(res_is_luma ? res_coeff_token_table : 3'd0),
         .max_coeff(5'd16),
         .bit_offset_start(p16_res_bit_offset_r),
         .bit_len(rbsp_bit_len),
@@ -1031,6 +1089,17 @@ module h264_decode_core #(
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
             wb_commit_p16 <= 1'b0;
+            p16_cbp_luma_r <= 4'd0;
+            p16_cbp_chroma_r <= 2'd0;
+            res_tc_left_valid <= 1'b0;
+            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                res_tc_cur[res_tc_i] <= 5'd0;
+            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1)
+                res_tc_left[res_tc_i] <= 5'd0;
+            for (res_tc_i = 0; res_tc_i < MB_W * 4; res_tc_i = res_tc_i + 1)
+                res_tc_top[res_tc_i] <= 5'd0;
+            for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
+                res_tc_top_valid[res_tc_i] <= 1'b0;
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
@@ -1162,6 +1231,10 @@ module h264_decode_core #(
                     p16_ref_idx_l0_r <= ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
+                    p16_cbp_luma_r <= cbp_luma;
+                    p16_cbp_chroma_r <= cbp_chroma;
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        res_tc_cur[res_tc_i] <= 5'd0;
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -1188,8 +1261,27 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_START: begin
-                cavlc_start_r <= 1'b1;
-                wb_state <= ST_P16_RES_WAIT;
+                if (res_block_coded) begin
+                    cavlc_start_r <= 1'b1;
+                    wb_state <= ST_P16_RES_WAIT;
+                end else begin
+                    // No bits in the stream for this block: leave the residual
+                    // latch at its launch zero and do not advance bit_offset.
+                    if (res_is_luma)
+                        res_tc_cur[p16_res_block_idx[3:0]] <= 5'd0;
+                    if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
+                        res_tc_left_valid <= 1'b1;
+                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                            res_tc_left[res_tc_i] <= res_tc_cur[{res_tc_i[1:0], 2'd3}];
+                            res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
+                                res_tc_cur[{2'd3, res_tc_i[1:0]}];
+                        end
+                        res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        wb_state <= ST_P16_REF_SEED;
+                    end else begin
+                        p16_res_block_idx <= p16_res_block_idx + 5'd1;
+                    end
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
@@ -1217,7 +1309,25 @@ module h264_decode_core #(
                         end
                     end
 `endif
+                    if (res_is_luma)
+                        res_tc_cur[p16_res_block_idx[3:0]] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
+
                     if (p16_res_block_idx == (P16_RES_BLOCKS - 5'd1)) begin
+                        // Roll this macroblock's edge total_coeff into the left
+                        // register and the per-column top line buffer.
+                        res_tc_left_valid <= 1'b1;
+                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                            res_tc_left[res_tc_i] <= res_tc_cur[{res_tc_i[1:0], 2'd3}];
+                            res_tc_top[{wb_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <=
+                                res_tc_cur[{2'd3, res_tc_i[1:0]}];
+                        end
+                        res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        // Integration (W-DECODE-O5): keep w-cast's nC edge
+                        // bookkeeping, but take HEAD's transition.  w-cast
+                        // branched before the MC window-fetch path landed and
+                        // still targets ST_P16_REF_SEED; ST_P16_REF_SEED is the
+                        // current entry point and reaches the tap fetch via
+                        // ST_P16_WIN_START.
                         wb_state <= ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
