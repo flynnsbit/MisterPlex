@@ -102,6 +102,7 @@ module h264_decode_core_p16z_tb #(
 		.mb_type_valid(mb_type_valid),
 		.mb_type(mb_type),
 		.mb_skip(mb_skip),
+		.mb_intra(1'b0),
 		.intra4x4_modes(intra4x4_modes),
 		.intra16x16_mode(2'd0),
 		.chroma_pred_mode(2'd0),

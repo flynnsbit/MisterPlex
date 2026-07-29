@@ -39,7 +39,7 @@ module slice_hdr_parser (
 	output reg  [7:0]  first_mb_type,
 	output reg         has_mb_type,
 	output reg         first_mb_p_skip,
-	output reg  [7:0]  p_skip_run,
+	output reg  [15:0] p_skip_run,
 	output reg  [2:0]  first_mb_part_mode,
 	output reg  [2:0]  first_mb_part_count,
 	output reg         first_mb_uses_sub_mb,
@@ -953,7 +953,7 @@ module slice_hdr_parser (
 			end
 			ST_MBT: begin
 				if (is_p_slice_type(slice_type)) begin
-					p_skip_run <= ue_val[7:0];
+					p_skip_run <= ue_val[15:0];
 					if (ue_val != 16'd0) begin
 						first_mb_type <= 8'd0;
 						has_mb_type <= 1'b1;
@@ -962,6 +962,9 @@ module slice_hdr_parser (
 						first_mb_part_count <= p_part_count_of(1'b1, 8'd0);
 						first_mb_uses_sub_mb <= 1'b0;
 						first_mb_intra <= 1'b0;
+						// Bit offset after mb_skip_run: feed emits N P_Skip then
+						// continues from here (next syntax is mb_type or EOS).
+						full_start_bit <= cur_bit_offset();
 						st <= ST_DONE;
 					end else begin
 						first_mb_p_skip <= 1'b0;

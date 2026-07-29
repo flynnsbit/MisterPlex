@@ -103,7 +103,7 @@ module stream_path_full_frame_tb #(
 	wire signed [4:0] slice_alpha_c0_offset;
 	wire signed [4:0] slice_beta_offset;
 	wire first_mb_p_skip_w;
-	wire [7:0] p_skip_run_w;
+	wire [15:0] p_skip_run_w;
 	wire [2:0] first_mb_part_mode_w;
 	wire [2:0] first_mb_part_count_w;
 	wire first_mb_uses_sub_mb_w;

@@ -33,7 +33,7 @@ module h264_multinal_stream_path_tb #(
     output wire [7:0]  first_mb_type,
     output wire        has_mb_type,
     output wire        first_mb_p_skip,
-    output wire [7:0]  p_skip_run,
+    output wire [15:0] p_skip_run,
     output wire [2:0]  first_mb_part_mode,
     output wire [2:0]  first_mb_part_count,
     output wire        first_mb_uses_sub_mb,

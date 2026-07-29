@@ -87,6 +87,7 @@ module h264_decode_core_wb_tb #(
 		.mb_type_valid(1'b0),
 		.mb_type(5'd0),
 		.mb_skip(1'b0),
+		.mb_intra(1'b0),
 		.intra4x4_modes(intra4x4_modes),
 		.intra16x16_mode(2'd0),
 		.chroma_pred_mode(2'd0),

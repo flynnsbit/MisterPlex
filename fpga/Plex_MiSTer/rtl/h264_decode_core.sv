@@ -55,6 +55,7 @@ module h264_decode_core #(
     input  wire        mb_type_valid,        // pulse: mb_type decoded for current MB
     input  wire [4:0]  mb_type,              // H.264 mb_type for I/P slices
     input  wire        mb_skip,              // P-slice skip
+    input  wire        mb_intra,             // 1 = I MB or intra-in-P (mb_type is I-coded)
     input  wire [3:0]  intra4x4_modes [0:15], // I_NxN: 9 modes per 4×4 block
     input  wire [1:0]  intra16x16_mode,      // I_16x16: 0=V, 1=H, 2=DC, 3=Plane
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
@@ -415,6 +416,7 @@ module h264_decode_core #(
     // P_Skip / P16x16 / P16x8 / P8x16 / P8x8 (and P_8x8ref0). Multi-partition
     // modes walk slots sequentially through the shared MC engine below.
     wire syntax_inter_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+                                !mb_intra &&
                                 (mb_skip || (mb_type <= 5'd4)) &&
                                 (mb_skip || (part_mode <= 3'd3));
     wire syntax_p16_candidate = syntax_inter_candidate &&
@@ -787,7 +789,7 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip;
+    wire        product_intra_mb_start = mb_type_valid && mb_intra && !mb_skip;
     // intra_mb_x_r/intra_mb_y_r only take the new macroblock position on the
     // edge AFTER mb_start, but the neighbour-context store and the prediction
     // front-end both latch their state ON mb_start.  Feeding them the stale

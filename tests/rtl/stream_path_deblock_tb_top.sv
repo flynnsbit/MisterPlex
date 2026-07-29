@@ -92,7 +92,7 @@ module stream_path_deblock_tb (
 	wire [15:0] sps_width, sps_height;
 	wire has_mb_type;
 	wire first_mb_p_skip;
-	wire [7:0] p_skip_run;
+	wire [15:0] p_skip_run;
 	wire [2:0] first_mb_part_mode;
 	wire [2:0] first_mb_part_count;
 	wire first_mb_uses_sub_mb;
