@@ -1330,9 +1330,11 @@ void MediaPlayer::streamPump(int sfd) {
             f3Dispatch.end();
     };
 
-    // Hybrid (opt-in): ownership + compose before F1. FPGA plane readback is not
-    // available yet — missing FPGA plane reclassifies to host (loud), never silent
-    // product_recon_ok. Pre-register @320x240: I→0 host MB, P→300 host MB (CAP_INTER=0).
+    // Hybrid (opt-in): ownership gate + compose before F1.
+    // SHIPPED STATE: host-only composite. fpga_i420 is always nullptr (no HPS
+    // FPGA-plane readback). Missing FPGA plane → loud reclass to host; never silent
+    // product_recon_ok. Pre-register @320x240: I→0 host MB after reclass of 300 FPGA
+    // marks, P→300 host MB (CAP_INTER=0). Not a true FPGA+ARM pixel split yet.
     size_t hybridFrames = 0;
     size_t hybridHostMb = 0;
     size_t hybridFpgaMb = 0;
@@ -1350,8 +1352,8 @@ void MediaPlayer::streamPump(int sfd) {
             return true;
         if (!hybridLoggedCaps) {
             hybridLoggedCaps = true;
-            log("media: HYBRID_PRESENT=1 CAP_INTRA=1 CAP_INTER=0 — ARM owns inter MBs; "
-                "unmarked/ambiguous ownership fails closed (never silent FPGA)");
+            log("media: HYBRID_PRESENT=1 host-only composite (no FPGA plane readback); "
+                "CAP_INTRA=1 CAP_INTER=0; fail-closed on ambiguous ownership");
         }
         FpgaSpi::CoreStatus st{};
         const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
@@ -1366,7 +1368,7 @@ void MediaPlayer::streamPump(int sfd) {
             ++hybridHardFail;
             log(std::string("ERROR media: hybrid hard-fail ") +
                 (d.fail_reason ? d.fail_reason : "unknown") +
-                " — refusing silent FPGA present");
+                " — refusing F1 present (no silent claim)");
             return false;
         }
         ++hybridFrames;
@@ -2651,43 +2653,51 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
             const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load() && !hybridPresent_;
             // Hybrid owns continuous host YUV F1 even when sparse recon also runs.
-            if ((!reconOwnsF1 || hybridPresent_) && wantFpgaFrameStore) {
-                const uint8_t* txFrame = cleanFrame;
-                size_t txBytes = frameBytes;
-                std::vector<uint8_t> hybridScratch;
+            // On hybrid hard-fail: refuse F1 publish for this frame (hold last good F1).
+            // Do not fall through to host-as-FPGA — that would be a silent plausible path.
+            bool publishF1 = (!reconOwnsF1 || hybridPresent_) && wantFpgaFrameStore;
+            const uint8_t* txFrame = cleanFrame;
+            size_t txBytes = frameBytes;
+            std::vector<uint8_t> hybridScratch;
 
-                if (hybridPresent_ && videoFmt == RawVideoFormat::Yuv420p) {
-                    if (!streamEnabled_) {
-                        static bool loggedHybridNeedsStream = false;
-                        if (!loggedHybridNeedsStream) {
-                            loggedHybridNeedsStream = true;
-                            log("media: HYBRID_PRESENT ignored without STREAM=1 "
-                                "(need F3 + ownership signals); keeping host-only present");
-                        }
+            if (publishF1 && hybridPresent_ && videoFmt == RawVideoFormat::Yuv420p) {
+                if (!streamEnabled_) {
+                    static bool loggedHybridNeedsStream = false;
+                    if (!loggedHybridNeedsStream) {
+                        loggedHybridNeedsStream = true;
+                        log("media: HYBRID_PRESENT ignored without STREAM=1 "
+                            "(need F3 + ownership signals); keeping host-only present");
+                    }
+                    // No STREAM: ownership signals unavailable — present host plane only
+                    // (honest non-hybrid). Still publishF1 with host pixels.
+                } else {
+                    // NOTE: fpga_i420 is nullptr — no HPS FPGA-plane readback yet.
+                    // Path is host-plane + ownership accounting + loud reclass, NOT a
+                    // true FPGA+ARM pixel split until a plane source exists.
+                    FpgaSpi::CoreStatus st{};
+                    const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
+                    hybrid::FpgaOwnSignal sig = hybrid::signalFromStatus(
+                        stOk, st.slice_type, st.first_mb_type, st.residual_ok, st.sps_valid,
+                        st.has_stream, cabacSkip_.load());
+                    char kind = '?';
+                    if (sig.valid) {
+                        if (hybrid::isISliceType(sig.slice_type))
+                            kind = 'I';
+                        else if (hybrid::isPSliceType(sig.slice_type))
+                            kind = 'P';
+                    }
+                    hybrid::PresentDecision d = hybrid::decidePresentFrame(
+                        rawW, rawH, kind, txFrame, txBytes, /*fpga_i420=*/nullptr, /*fpga_n=*/0,
+                        sig, hybrid::Caps{}, hybridScratch, /*allow_host_fallback=*/true,
+                        /*allow_skip_host_f1=*/false);
+                    if (!d.ok || d.hard_fail) {
+                        // Ownership incomplete/contradictory: do not publish this frame to
+                        // F1. Caller loop advances; last good F1 remains on scanout.
+                        log(std::string("ERROR media: hybrid rawvideo hard-fail ") +
+                            (d.fail_reason ? d.fail_reason : "?") +
+                            " — refusing F1 present (no silent FPGA/host claim)");
+                        publishF1 = false;
                     } else {
-                        FpgaSpi::CoreStatus st{};
-                        const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
-                        hybrid::FpgaOwnSignal sig = hybrid::signalFromStatus(
-                            stOk, st.slice_type, st.first_mb_type, st.residual_ok, st.sps_valid,
-                            st.has_stream, cabacSkip_.load());
-                        // Slice kind from status when valid; else '?' → all host (fail closed).
-                        char kind = '?';
-                        if (sig.valid) {
-                            if (hybrid::isISliceType(sig.slice_type))
-                                kind = 'I';
-                            else if (hybrid::isPSliceType(sig.slice_type))
-                                kind = 'P';
-                        }
-                        hybrid::PresentDecision d = hybrid::decidePresentFrame(
-                            rawW, rawH, kind, txFrame, txBytes, nullptr, 0, sig, hybrid::Caps{},
-                            hybridScratch, true, false);
-                        if (!d.ok || d.hard_fail) {
-                            log(std::string("ERROR media: hybrid rawvideo hard-fail ") +
-                                (d.fail_reason ? d.fail_reason : "?") +
-                                " — frame not presented (no silent FPGA)");
-                            restoreOverlayDirty(cleanFrame, dirty);
-                            return;
-                        }
                         if ((frameIndex % 30) == 0)
                             log(std::string("media: ") + d.log_line);
                         if (!hybridScratch.empty()) {
@@ -2696,7 +2706,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         }
                     }
                 }
+            }
 
+            if (publishF1) {
                 // Serialise with the OSD poller / idle painter: FpgaSpi keeps
                 // transaction state, so overlapping ioctls corrupt each other.
                 std::lock_guard<std::mutex> lk(presentMu_);

@@ -783,7 +783,8 @@ module decode_stub #(
 				inter_res_load_pending <= 1'b0;
 				// First residual 4×4 → Y block0 raster positions.
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1) begin
-					inter_res_y[{coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
+					// 8-bit Y-plane index (256 entries); zero-extend the 6-bit raster pack.
+					inter_res_y[{2'b00, coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
 						idct_residual[coeff_i][15:0];
 				end
 			end
