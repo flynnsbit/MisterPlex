@@ -620,12 +620,9 @@ inline ReconResult reconISlice(const uint8_t* annexb, size_t n, ReconTrace* trac
     }
 
     int qp = chain.slice.slice_qp;
-    // chroma_qp_index_offset from PPS — re-parse roughly; default often -2 for x264
-    // Our PPS parser doesn't export it; default 0, x264 uses -2. Probe from known SEI not available.
-    // Read chroma offset by re-parsing PPS quickly:
-    int chroma_offset = 0;
-    {
-        // scan PPS NAL
+    // Prefer PPS field; fall back to a one-shot PPS NAL scan if chain.pps is empty.
+    int chroma_offset = static_cast<int>(chain.pps.chroma_qp_index_offset);
+    if (!chain.pps.valid) {
         size_t ii = 0;
         while (ii + 3 < n) {
             size_t sc = 0;
