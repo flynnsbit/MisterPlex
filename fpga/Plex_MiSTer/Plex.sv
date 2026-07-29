@@ -587,6 +587,9 @@ assign stream_ddr_dout_ready = 1'b0;
 	wire [2:0]  hybrid_own_code_w;
 	wire [3:0]  hybrid_own_reason_w;
 	wire        entropy_cabac_w;
+	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
+	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
+	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
 
 stream_path #(
 	.FRAME_W(FRAME_W),
@@ -660,6 +663,12 @@ stream_path #(
 	.hybrid_own_code(hybrid_own_code_w),
 	.hybrid_own_reason(hybrid_own_reason_w),
 	.entropy_cabac(entropy_cabac_w),
+	.first_mb_mvd_x(first_mb_mvd_x_w),
+	.first_mb_mvd_y(first_mb_mvd_y_w),
+	.product_fetch_mv_x(product_fetch_mv_x_w),
+	.product_fetch_mv_y(product_fetch_mv_y_w),
+	.product_luma_origin_x(product_luma_origin_x_w),
+	.product_luma_origin_y(product_luma_origin_y_w),
 	.fs_wr_en(stub_wr_en),
 	.fs_wr_pixel(stub_wr_pixel),
 	.fs_wr_reset(stub_wr_reset),
@@ -678,7 +687,9 @@ always @(posedge clk_sys) begin
 		host_owns_fs <= 1'b1;
 end
 
-wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy;
+// P3-3l5: never present stub reconstruction as product unless product_recon_ok.
+// Host F1/DDR paths are unaffected (host_owns_fs / ingest / ddr_busy still win).
+wire        stub_allow  = ~host_owns_fs & ~ingest_dl & ~ddr_busy & product_recon_ok_w;
 wire        host_wr     = ingest_dl | f1_wr_en | ddr_wr_en;
 wire        fs_wr_en    = ingest_dl ? f1_wr_en
 	                      : ddr_busy  ? ddr_wr_en
@@ -689,6 +700,13 @@ wire [15:0] fs_wr_pixel = ingest_dl ? f1_wr_pixel
 wire        fs_wr_reset = f1_wr_reset | ddr_wr_reset | (stub_wr_reset & stub_allow);
 wire        fs_swap     = f1_swap | ddr_swap | (stub_swap & stub_allow);
 wire        _host_wr_unused = host_wr;
+// Observe hybrid handoff so fitting cannot prune product_recon_ok as dead.
+(* keep = 1 *) wire _keep_hybrid_product =
+	product_recon_ok_w | hybrid_host_required_w | hybrid_fpga_owned_w |
+	|hybrid_own_code_w | |hybrid_own_reason_w |
+	|product_fetch_mv_x_w | |product_fetch_mv_y_w |
+	|product_luma_origin_x_w | |product_luma_origin_y_w |
+	|first_mb_mvd_x_w | |first_mb_mvd_y_w;
 
 wire ce_pix, HBlank, HSync, VBlank, VSync;
 wire [7:0] r, g, b;

@@ -90,6 +90,9 @@ module stream_path_ddr_ring_tb_top #(
 	wire        hybrid_fpga_owned_w;
 	wire        hybrid_host_required_w;
 	wire        product_recon_ok_w;
+	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
+	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
+	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
 	wire [2:0]  hybrid_own_code_w;
 	wire [3:0]  hybrid_own_reason_w;
 	wire        entropy_cabac_w;
@@ -145,6 +148,12 @@ module stream_path_ddr_ring_tb_top #(
 		.slice_is_i(slice_is_i),
 		.first_mb_type(first_mb_type),
 		.has_mb_type(has_mb_type),
+				.first_mb_mvd_x(first_mb_mvd_x_w),
+		.first_mb_mvd_y(first_mb_mvd_y_w),
+		.product_fetch_mv_x(product_fetch_mv_x_w),
+		.product_fetch_mv_y(product_fetch_mv_y_w),
+		.product_luma_origin_x(product_luma_origin_x_w),
+		.product_luma_origin_y(product_luma_origin_y_w),
 		.slice_qp(slice_qp),
 		.residual_tc(residual_tc),
 		.residual_t1(residual_t1),

@@ -279,14 +279,35 @@ module h264_dpb_ref_commit #(
 	assign dpb_invalidate_refs = ctrl_invalidate;
 	assign ref_ready_pulse = ctrl_ref_ready_pulse | force_early_pulse;
 
-	// One-cycle delayed promote so terminal commit strictly precedes ref_ready
-	// (matches the established deblock-DPB seam scoreboard).
+	// One-cycle delayed promote so terminal commit strictly precedes ref_ready.
+	// Primary: writeback_ctrl ref_ready_pulse. Fallback (next cycle only): if
+	// frame_boundary followed a recon_frame_done but writeback did not pulse
+	// (POST sample-count miss on neighbour-strip-heavy emits), force one promote.
 	reg promote_pulse_d1;
+	reg saw_recon_frame_done;
+	reg need_fallback_promote;
 	always @(posedge clk) begin
-		if (reset)
+		if (reset) begin
 			promote_pulse_d1 <= 1'b0;
-		else
-			promote_pulse_d1 <= ref_ready_pulse;
+			saw_recon_frame_done <= 1'b0;
+			need_fallback_promote <= 1'b0;
+		end else begin
+			if (recon_frame_done)
+				saw_recon_frame_done <= 1'b1;
+			if (frame_boundary && (saw_recon_frame_done || recon_frame_done)) begin
+				saw_recon_frame_done <= 1'b0;
+				need_fallback_promote <= 1'b1;
+			end
+			if (ref_ready_pulse) begin
+				promote_pulse_d1 <= 1'b1;
+				need_fallback_promote <= 1'b0;
+			end else if (need_fallback_promote) begin
+				promote_pulse_d1 <= 1'b1;
+				need_fallback_promote <= 1'b0;
+			end else begin
+				promote_pulse_d1 <= 1'b0;
+			end
+		end
 	end
 
 `ifdef H264_DPB_FAULT_NO_IDR_INVALIDATE

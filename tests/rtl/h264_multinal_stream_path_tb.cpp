@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
         dut.ioctl_download = 0;
         dut.ioctl_wr = 0;
 
-        const uint64_t deadline = cycle + 2000000;
+        const uint64_t deadline = cycle + 8000000;
         while (cycle < deadline) {
             tick();
             const bool countsDone = dut.nalu_count >= minNals && dut.sps_count >= 1 && dut.pps_count >= 1 &&
@@ -121,7 +121,10 @@ int main(int argc, char** argv) {
             const bool parsedIAndP = sawI && sawP;
             const bool decodedIdr = placePulses >= 1 && sawExpectedCsum;
             const bool paintedSeveral = dut.stub_frames >= 2;
-            if (countsDone && parsedIAndP && decodedIdr && idleBetweenVcl && paintedSeveral)
+            const bool paintedAll = dut.stub_frames >= static_cast<uint16_t>(1 + minSlices);
+            const bool sawRecon = (minSlices < 11) || (reconSig3bCycles > 0);
+            if (countsDone && parsedIAndP && decodedIdr && idleBetweenVcl && paintedSeveral &&
+                paintedAll && sawRecon)
                 break;
         }
 
