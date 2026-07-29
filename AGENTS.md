@@ -51,11 +51,34 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 
 ## Hard rules (lab)
 
+0. **NO GUESSING — this rule outranks every other rule here.** Never state a cause,
+   diagnosis, or status that is not backed by **quoted code, a captured exit code, a
+   measured artifact, or a screenshot**. If you do not have that evidence, the only
+   permitted answer is *"unknown — here is the check that would settle it."*
+   A plausible-sounding mechanism is **not** a finding. Applies to the parent
+   orchestrator and to every agent, without exception.
+   - Attributing a failing test to "contention", "flakiness", or "environment"
+     **without proving it** is a guess. Re-run it and read the actual error.
+   - Distinguish *"the log does not contain X"* (evidence) from *"X did not happen"*
+     (inference). Say which one you have.
+   - Capture exit codes **directly** (`cmd; echo "true rc=$?"`), never through a pipe.
+   - A soft-skip (exit 77) is **not** a pass. `UNSCORED` is not a pass.
+   - **Pre-register** predictions before measuring, and publish misses.
 1. At most **one** Quartus/docker fit.
 2. Soft residual skip ≠ hard `res_csum` PASS.
 3. Do not mid-fit edit sources under the live compile.
 4. Post-BUILD_OK: **one** menu deploy → FBAR reconfirm → hard residual → only then next exclusive (e.g. WIDE Fix-2).
 5. Closed eyes experiments stay closed until a **new design** lands (see `docs/p3-wide-rca.md`).
+
+### Guessing incidents on record (why rule 0 exists)
+
+| Guess | Reality |
+|---|---|
+| A RED `make unit` was "transient contention" | Real failure: a lane had committed a hardcoded lab IP, tripping `test_no_private_data` |
+| `PLEX_TOKEN` absent, so playback blocked on the user | Token was present the whole time |
+| The ARM profile asset was destroyed by `make clean` | Intact in a sibling worktree |
+| "93%" idle score meant 93% complete | It was `G-IDLE2c`, a *defect* similarity metric |
+| `PRESENT=fb0` was the right value from `package_release.sh` | `initPresent()` skips `fpga_.open()` unless `PRESENT=fpga\|both`, so the DDR frame store was never repainted and the idle screen froze |
 
 ## Key docs
 
