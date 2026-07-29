@@ -591,18 +591,15 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    function automatic [15:0] level_mag(input signed [15:0] lvl);
+    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
+        // FFmpeg/host: suffix = 1 + ((unsigned)(level+3) > 6u)
+        // Equivalent: escape→2, else 1 + (|level| >= 4) because
+        // (unsigned)(level+3)>6 ⇔ level<=-4 || level>=4.
         begin
-            level_mag = lvl[15] ? (~lvl[15:0] + 16'd1) : lvl[15:0];
-        end
-    endfunction
-
-    // 9.2.2.1 first non-T1: force suffixLength>=1, then +1 if |level|>3.
-    // Must use magnitude — signed tests miss level<=-4 and desync the slice.
-    // (717330a unsigned (level+3)>6u is equivalent: |level|>=4.)
-    function automatic [2:0] suffix_next_first(input signed [15:0] lvl);
-        begin
-            suffix_next_first = (level_mag(lvl) > 16'd3) ? 3'd2 : 3'd1;
+            if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
+                suffix_next_first = 3'd2;
+            else
+                suffix_next_first = 3'd1 + ((lvl >= 16'sd4) || (lvl <= -16'sd4));
         end
     endfunction
 
@@ -618,7 +615,7 @@ module h264_cavlc_residual_block #(
             default: lim = 16'd48;
             endcase
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && level_mag(lvl) > lim)
+            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
                 suffix_next = cur_suf + 3'd1;
         end
     endfunction
@@ -748,8 +745,7 @@ module h264_cavlc_residual_block #(
                             else if (prefix == 6'd14) suffix_left <= (suffix_length != 0) ? {2'd0, suffix_length} : 5'd4;
                             else suffix_left <= prefix[4:0] - 5'd3;
                         end else begin
-                            if (prefix == 6'd14 && suffix_length == 3'd0) suffix_left <= 5'd4;
-                            else if (prefix < 6'd15) suffix_left <= {2'd0, suffix_length};
+                            if (prefix < 6'd15) suffix_left <= {2'd0, suffix_length};
                             else suffix_left <= prefix[4:0] - 5'd3;
                         end
                         st <= ST_LVL_SUF;
@@ -777,8 +773,7 @@ module h264_cavlc_residual_block #(
                         if (suffix_length != 0) level_code = (32'd14 << suffix_length) + suffix_acc;
                         else level_code = 32'd14 + suffix_acc;
                     end else begin
-                        level_code = (32'd15 << suffix_length) +
-                                     ((suffix_length == 3'd0) ? 32'd15 : 32'd0);
+                        level_code = 32'd30;
                         if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
@@ -787,15 +782,14 @@ module h264_cavlc_residual_block #(
                     if (!level_bad) begin
                         lvl_tmp = level_from_code(level_code);
                         level_dbg[idx[3:0]] <= lvl_tmp;
-                        suffix_length <= suffix_next_first(lvl_tmp);
+                        suffix_length <= suffix_next_first(prefix, suffix_length, lvl_tmp);
                         first_non_t1 <= 1'b0;
                     end
                 end else begin
                     if (prefix < 6'd15) begin
                         level_code = ({26'd0, prefix} << suffix_length) + suffix_acc;
                     end else begin
-                        level_code = (32'd15 << suffix_length) +
-                                     ((suffix_length == 3'd0) ? 32'd15 : 32'd0);
+                        level_code = (32'd15 << suffix_length);
                         if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
@@ -898,9 +892,7 @@ module h264_cavlc_residual_block #(
                     place_i <= place_i - 5'd1;
                     next_coeff_num = coeff_num + {2'd0, run_dbg[idx4(place_i - 5'd1)]} + 6'sd1;
                     coeff_num <= next_coeff_num;
-                    // max_coeff=15 (Intra16x16ACLevel / ChromaACLevel): positions 0..14 only.
-                    // Placing into 0..15 as if 16-coeff desyncs the next block's bit pointer.
-                    if (next_coeff_num < $signed({1'b0, max_coeff}))
+                    if (next_coeff_num < 6'sd16)
                         coeff[next_coeff_num[3:0]] <= level_dbg[idx4(place_i - 5'd1)];
                     else st <= ST_FAIL;
                 end
