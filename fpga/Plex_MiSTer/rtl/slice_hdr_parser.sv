@@ -998,9 +998,14 @@ module slice_hdr_parser (
 			end
 			ST_CBP: begin
 				// ue(coded_block_pattern me) — me==3 → cbp=0 (no qpδ)
+				// Quartus rejects bit-select on a function call result; stage via temp.
 				cbp_me <= ue_val[5:0];
-				full_luma_cbp   <= cbp_intra_luma_map(ue_val[5:0]);
-				full_chroma_cbp <= cbp_intra_map(ue_val[5:0])[5:4];
+				begin : cbp_me_decode
+					reg [5:0] cbp_mapped;
+					cbp_mapped = cbp_intra_map(ue_val[5:0]);
+					full_luma_cbp   <= cbp_mapped[3:0];
+					full_chroma_cbp <= cbp_mapped[5:4];
+				end
 				if (ue_val == 16'd3) begin
 					// cbp=0: no residual, no mb_qp_delta — QP stays slice_qp
 					mb_qp_latched <= slice_qp;
@@ -1588,24 +1593,12 @@ module slice_hdr_parser (
 				// blocks follow when cbpY≠0; otherwise present zero AC so the product
 				// path still sees a complete luma residual set.
 				if (first_mb_type >= 8'd1 && first_mb_type <= 8'd24) begin
-					if (full_luma_cbp != 4'd0) begin
-						full_is_i16_ac <= 1'b1;
-						full_start_req <= 1'b1;
-						full_start_bit <= cur_bit_offset();
-						st <= ST_WAIT_I16_AC;
-					end else begin
-						begin : i16_zero_ac
-							integer bi, ci;
-							for (bi = 0; bi < 16; bi = bi + 1) begin
-								full_tc[bi] <= 5'd0;
-								for (ci = 0; ci < 16; ci = ci + 1)
-									first_luma4x4_coeff[bi][ci] <= 16'sd0;
-							end
-						end
-						first_luma4x4_blocks_present <= 1'b1;
-						first_luma4x4_blocks_valid <= 1'b1;
-						st <= ST_DONE;
-					end
+					// Always hand AC (or zero-fill when cbpY=0) to full_* FSM —
+					// single driver of first_luma4x4_* (Quartus multi-driver ban).
+					full_is_i16_ac <= (full_luma_cbp != 4'd0);
+					full_start_req <= 1'b1;
+					full_start_bit <= cur_bit_offset();
+					st <= ST_WAIT_I16_AC;
 				end else
 					st <= ST_DONE;
 			end

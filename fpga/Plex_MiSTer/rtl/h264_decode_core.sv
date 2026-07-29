@@ -941,7 +941,8 @@ module h264_decode_core #(
         .chroma_u_top_left(product_intra_ctx_chroma_u_top_left_unused),
         .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
         .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
-        .has_chroma_left(product_intra_ctx_has_chroma_left_unused)
+        .has_chroma_left(product_intra_ctx_has_chroma_left_unused),
+        .busy() // sequential M10K gather; product path has multi-cycle slack
     );
 
     h264_decode_top u_product_intra_mb (
