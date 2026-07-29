@@ -38,9 +38,11 @@ PRODUCT_RTL=(
   stream_path.sv stream_ingest.sv ddr_bitstream_reader.sv ddr_bitstream_prefetch.sv
   bitstream_fifo.sv nalu_scanner.sv h264_rbsp_window.sv h264_i_mb_feed.sv
   sps_parser.sv pps_parser.sv h264_cavlc_residual.sv slice_hdr_parser.sv
-  h264_iq_idct_4x4.sv h264_inter_pred.sv h264_pskip_mv.sv h264_inter_part.sv
-  h264_intra_pred.sv h264_intra_nb_ctx.sv h264_deblock.sv h264_dpb.sv
-  h264_decode_top.sv h264_decode_core.sv decode_stub.sv
+  h264_iq_idct_4x4.sv h264_iq_idct_seq.sv h264_mc_block.sv h264_mc_luma_qpel.sv
+  h264_mc_chroma_epel.sv h264_transform_dc.sv h264_inter_pred.sv h264_pskip_mv.sv
+  h264_inter_part.sv h264_intra_pred.sv h264_intra_nb_ctx.sv h264_deblock.sv
+  h264_deblock_mb.sv h264_dpb.sv h264_decode_top.sv h264_decode_core.sv
+  decode_stub.sv
 )
 
 for f in "$BITSTREAM" "$SEQUENCE" "$GOLDEN_OFF" "$GOLDEN_OFF_MANIFEST" "$TOP" "$TB" "$QIP"; do
