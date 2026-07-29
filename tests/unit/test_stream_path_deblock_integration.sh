@@ -43,6 +43,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bitstream_reader.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/bitstream_fifo.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/nalu_scanner.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_rbsp_window.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/sps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
