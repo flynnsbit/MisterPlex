@@ -322,6 +322,7 @@ module h264_decode_core #(
     reg [7:0]  wb_mb_y;
     reg        wb_mb_is_ref;
     reg        wb_mb_is_intra;
+    reg [5:0]  intra_qp_y_r;
     reg        dbf_start_r;
     reg        dbf_smp_valid_d;
     reg [8:0]  dbf_smp_idx_d;
@@ -457,7 +458,9 @@ module h264_decode_core #(
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
     //    actually carries coefficients, and wraps modulo 52.
-    wire mb_has_residual = !mb_skip && ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0));
+    wire mb_is_i16 = slice_is_i && !mb_skip && (mb_type != 5'd0);
+    wire mb_has_residual = !mb_skip &&
+                           ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0) || mb_is_i16);
     wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
                                      $signed({{2{mb_qp_delta[5]}}, mb_qp_delta});
     wire signed [7:0] qp_delta_wrap = (qp_delta_sum < 8'sd0)  ? (qp_delta_sum + 8'sd52) :
@@ -1288,6 +1291,7 @@ module h264_decode_core #(
             intra_mb_x_r <= 8'd0;
             intra_mb_y_r <= 8'd0;
             intra_mb_is_ref_r <= 1'b0;
+            intra_qp_y_r <= 6'd26;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
@@ -1335,6 +1339,12 @@ module h264_decode_core #(
                 intra_mb_x_r <= syntax_mb_x;
                 intra_mb_y_r <= syntax_mb_y;
                 intra_mb_is_ref_r <= 1'b1;
+                // Latch QPy at the syntax edge: the reconstruction pulse that
+                // launches the writeback arrives many cycles later, when the
+                // slice-level mb_qp_delta inputs no longer describe this
+                // macroblock. The deblocker needs the right QP for alpha/beta.
+                intra_qp_y_r <= qp_launch;
+                cur_qp_y_r <= qp_launch;
             end
             if (product_intra_recon_valid)
                 intra_active_r <= 1'b0;
@@ -1389,6 +1399,8 @@ module h264_decode_core #(
                     wb_mb_y <= product_recon_mb_y;
                     wb_mb_is_ref <= product_recon_mb_is_ref;
                     wb_mb_is_intra <= product_intra_recon_valid;
+                    if (product_intra_recon_valid)
+                        mb_qp_y_r <= intra_qp_y_r;
                     dbf_start_r <= 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
