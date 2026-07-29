@@ -296,6 +296,23 @@ module h264_decode_core #(
     reg signed [15:0] mv_left_y;
     reg [1:0]  mv_left_ref;
     reg        mv_left_valid;
+    // Sliding above-left (D): latched from top[x] before overwrite at MB end so
+    // the next MB on this row sees MB(x-1,y-1) as D (H.264 8.4.1.3 C→D).
+    reg signed [15:0] mv_d_x;
+    reg signed [15:0] mv_d_y;
+    reg [1:0]  mv_d_ref;
+    reg        mv_d_valid;
+    // Inter neighbour ctx commit seam (coords/MV latched so pulses survive addr++)
+    reg        nb_mb_start_r;
+    reg        nb_commit_r;
+    reg [7:0]  nb_mb_x_r;
+    reg [7:0]  nb_mb_y_r;
+    reg [2:0]  nb_part_mode_r;
+    reg [1:0]  nb_part_idx_r;
+    reg        nb_is_inter_r;
+    reg signed [15:0] nb_mv_x_r;
+    reg signed [15:0] nb_mv_y_r;
+    reg [1:0]  nb_ref_r;
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        dpb_rd_en_r;
@@ -405,35 +422,89 @@ module h264_decode_core #(
     wire syntax_has_top_right = (syntax_mb_x32 + 32'd1 < MB_W) &&
                                 mv_top_valid[syntax_top_right_idx] &&
                                 (mv_top_ref[syntax_top_right_idx] == ref_idx_l0);
+    wire syntax_has_above_left = (syntax_mb_x != 8'd0) && (syntax_mb_y != 8'd0) &&
+                                 mv_d_valid && (mv_d_ref == ref_idx_l0);
+
+    // Product neighbour context store. MVP below still samples the proven
+    // left/top line regs on the launch cycle; nb_ctx is committed with
+    // latched coords/MV after launch so addr++ cannot skew the store.
+    wire nb_avail_a, nb_avail_b, nb_avail_c, nb_avail_d;
+    wire signed [15:0] nb_mv_a_x, nb_mv_a_y, nb_mv_b_x, nb_mv_b_y;
+    wire signed [15:0] nb_mv_c_x, nb_mv_c_y, nb_mv_d_x, nb_mv_d_y;
+    wire [1:0] nb_ref_a, nb_ref_b, nb_ref_c, nb_ref_d;
+    wire signed [15:0] syntax_mv_x;
+    wire signed [15:0] syntax_mv_y;
+    h264_inter_nb_ctx #(.MB_WIDTH_MAX(MB_W > 0 ? MB_W : 1)) u_inter_nb_ctx (
+        .clk(clk),
+        .reset(reset),
+        .mb_x(nb_mb_x_r),
+        .mb_y(nb_mb_y_r),
+        .mb_width(mb_width),
+        .mb_start(nb_mb_start_r),
+        .part_mode(nb_part_mode_r),
+        .part_idx(nb_part_idx_r),
+        .commit(nb_commit_r),
+        .is_inter(nb_is_inter_r),
+        .mv_x(nb_mv_x_r),
+        .mv_y(nb_mv_y_r),
+        .ref_idx(nb_ref_r),
+        .avail_a(nb_avail_a),
+        .avail_b(nb_avail_b),
+        .avail_c(nb_avail_c),
+        .avail_d(nb_avail_d),
+        .mv_a_x(nb_mv_a_x),
+        .mv_a_y(nb_mv_a_y),
+        .mv_b_x(nb_mv_b_x),
+        .mv_b_y(nb_mv_b_y),
+        .mv_c_x(nb_mv_c_x),
+        .mv_c_y(nb_mv_c_y),
+        .mv_d_x(nb_mv_d_x),
+        .mv_d_y(nb_mv_d_y),
+        .ref_a(nb_ref_a),
+        .ref_b(nb_ref_b),
+        .ref_c(nb_ref_c),
+        .ref_d(nb_ref_d)
+    );
+    // Keep neighbour readback visible to synthesis/sim even while launch MVP
+    // still snapshots the legacy left/top line regs.
+    (* keep = 1 *) wire _keep_inter_nb =
+        nb_avail_a | nb_avail_b | nb_avail_c | nb_avail_d |
+        |nb_mv_a_x | |nb_mv_a_y | |nb_mv_b_x | |nb_mv_b_y |
+        |nb_mv_c_x | |nb_mv_c_y | |nb_mv_d_x | |nb_mv_d_y |
+        |nb_ref_a | |nb_ref_b | |nb_ref_c | |nb_ref_d;
+
 `ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
     wire mv_avail_a = 1'b0;
     wire mv_avail_b = 1'b0;
     wire mv_avail_c = 1'b0;
+    wire mv_avail_d = 1'b0;
 `else
+    // Launch-cycle MVP: left/top/top-right line regs + sliding D (C→D).
+    // nb_ctx is the long-term store committed after launch; these regs are the
+    // synchronous snapshot for P_L0_16x16 mvp = median/shortcut + mvd.
     wire mv_avail_a = syntax_has_left;
     wire mv_avail_b = syntax_has_top;
     wire mv_avail_c = syntax_has_top_right;
+    wire mv_avail_d = syntax_has_above_left;
 `endif
-    wire signed [15:0] syntax_mv_x;
-    wire signed [15:0] syntax_mv_y;
     wire signed [15:0] syntax_mv_pred_x;
     wire signed [15:0] syntax_mv_pred_y;
     wire syntax_mv_skip_zero;
     h264_mv_pred_part u_product_p16_mv_pred (
-        .part_mode(3'd0),
-        .part_idx(2'd0),
+        .part_mode(part_mode),
+        .part_idx(part_idx),
         .avail_a(mv_avail_a),
         .avail_b(mv_avail_b),
         .avail_c(mv_avail_c),
-        .avail_d(1'b0),
+        .avail_d(mv_avail_d),
         .mv_a_x(mv_left_x),
         .mv_a_y(mv_left_y),
         .mv_b_x(mv_top_x[syntax_mb_idx]),
         .mv_b_y(mv_top_y[syntax_mb_idx]),
         .mv_c_x(mv_top_x[syntax_top_right_idx]),
         .mv_c_y(mv_top_y[syntax_top_right_idx]),
-        .mv_d_x(16'sd0),
-        .mv_d_y(16'sd0),
+        .mv_d_x(mv_d_x),
+        .mv_d_y(mv_d_y),
         .mvd_x(mvd_x_qpel),
         .mvd_y(mvd_y_qpel),
         .p_skip(mb_skip),
@@ -620,6 +691,8 @@ module h264_decode_core #(
         p16_wr_en_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        nb_mb_start_r <= 1'b0;
+        nb_commit_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -642,6 +715,20 @@ module h264_decode_core #(
             mv_left_y <= 16'sd0;
             mv_left_ref <= 2'd0;
             mv_left_valid <= 1'b0;
+            mv_d_x <= 16'sd0;
+            mv_d_y <= 16'sd0;
+            mv_d_ref <= 2'd0;
+            mv_d_valid <= 1'b0;
+            nb_mb_start_r <= 1'b0;
+            nb_commit_r <= 1'b0;
+            nb_mb_x_r <= 8'd0;
+            nb_mb_y_r <= 8'd0;
+            nb_part_mode_r <= 3'd0;
+            nb_part_idx_r <= 2'd0;
+            nb_is_inter_r <= 1'b0;
+            nb_mv_x_r <= 16'sd0;
+            nb_mv_y_r <= 16'sd0;
+            nb_ref_r <= 2'd0;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
             dpb_rd_en_r <= 1'b0;
@@ -680,8 +767,9 @@ module h264_decode_core #(
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
             end
-            if (mb_type_valid)
+            if (mb_type_valid) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+            end
 
             case (wb_state)
             ST_IDLE: begin
@@ -698,6 +786,17 @@ module h264_decode_core #(
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
                     p16_ref_idx_l0_r <= ref_idx_l0;
+                    // Latch nb_ctx coordinates + final MV; start/commit pulse next.
+                    nb_mb_x_r <= p16_launch_mb_x;
+                    nb_mb_y_r <= p16_launch_mb_y;
+                    nb_part_mode_r <= part_mode;
+                    nb_part_idx_r <= part_idx;
+                    nb_is_inter_r <= 1'b1;
+                    nb_mv_x_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
+                    nb_mv_y_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
+                    nb_ref_r <= ref_idx_l0;
+                    nb_mb_start_r <= 1'b1;
+                    nb_commit_r <= 1'b1;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
                     wb_idx <= 9'd0;
@@ -807,6 +906,12 @@ module h264_decode_core #(
                     wb_state <= ST_IDLE;
                     if (wb_mb_is_ref) begin
                         mb_count_r <= mb_count_r + 16'd1;
+                        // Capture top[x] (prior row) as D for the next MB on this row
+                        // before overwriting it with this MB's final MV.
+                        mv_d_x <= mv_top_x[wb_mb_idx];
+                        mv_d_y <= mv_top_y[wb_mb_idx];
+                        mv_d_ref <= mv_top_ref[wb_mb_idx];
+                        mv_d_valid <= mv_top_valid[wb_mb_idx];
                         mv_top_x[wb_mb_idx] <= p16_mv_x_qpel_r;
                         mv_top_y[wb_mb_idx] <= p16_mv_y_qpel_r;
                         mv_top_ref[wb_mb_idx] <= p16_ref_idx_l0_r;
