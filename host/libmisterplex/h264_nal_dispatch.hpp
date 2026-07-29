@@ -42,6 +42,7 @@ struct DispatchStats {
     uint64_t nal_pushed = 0;
     uint64_t bytes_pushed = 0;
     uint64_t nal_dropped_paused = 0;
+    uint64_t nal_dropped_pre_idr = 0;
     uint64_t sps_replayed = 0;
     uint64_t pps_replayed = 0;
     uint64_t full_retries = 0;
@@ -141,6 +142,10 @@ public:
         paused_ = false;
         sps_delivered_ = false;
         pps_delivered_ = false;
+        // FPGA decode has no reference until the first IDR. Drop non-IDR VCL
+        // (and AUDs etc. are still pushed) until nal_type==5 so a seek/mid-GOP
+        // demux start cannot feed 343 P-frames of garbage.
+        seen_idr_ = false;
         sps_.clear();
         pps_.clear();
         stats_ = {};
@@ -208,7 +213,24 @@ public:
             return PushResult::Ok;
         }
 
-        if (type == 1 || type == 5) {
+        // Hold parameter sets in the cache always; only gate VCL until IDR.
+        // Non-VCL other than 7/8 (SEI/AUD/…) may still be dropped pre-IDR —
+        // decoder does not need them to start, and mid-GOP SEI is harmless to skip.
+        const bool is_vcl = (type == 1 || type == 5);
+        if (!seen_idr_) {
+            if (type == 7 || type == 8) {
+                // Cache only until IDR; replayParametersIfNeeded pushes them then.
+                return PushResult::Ok;
+            }
+            if (type != 5) {
+                ++stats_.nal_dropped_pre_idr;
+                return PushResult::Ok;
+            }
+            // First IDR: push SPS/PPS then the IDR itself.
+            const auto pr = replayParametersIfNeeded();
+            if (pr != PushResult::Ok)
+                return pr;
+        } else if (is_vcl) {
             const auto pr = replayParametersIfNeeded();
             if (pr != PushResult::Ok)
                 return pr;
@@ -220,6 +242,8 @@ public:
                 sps_delivered_ = true;
             else if (type == 8)
                 pps_delivered_ = true;
+            else if (type == 5)
+                seen_idr_ = true;
         }
         return r;
     }
@@ -284,6 +308,7 @@ private:
     bool paused_ = false;
     bool sps_delivered_ = false;
     bool pps_delivered_ = false;
+    bool seen_idr_ = false;
     std::vector<uint8_t> sps_;
     std::vector<uint8_t> pps_;
     DispatchStats stats_;

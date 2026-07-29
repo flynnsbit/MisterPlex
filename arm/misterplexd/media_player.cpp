@@ -1695,6 +1695,7 @@ void MediaPlayer::streamPump(int sfd) {
         " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
         " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
         " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
+        " f3_dropped_pre_idr=" + std::to_string(f3Stats.nal_dropped_pre_idr) +
         " f3_desync=" + std::to_string(f3Status.desync_count) +
         " f3_last_bad_seq=" + std::to_string(f3Status.last_bad_seq) +
         " " + ddrStatusBeforeEnd +
