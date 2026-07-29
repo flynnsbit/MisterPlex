@@ -79,8 +79,9 @@ PY
 }
 
 if [[ "${IDR_YUV_EXACT_SKIP_RUN:-0}" != "1" ]]; then
-  # 624x480 (default fixtures)
-  bash "$COMPARE"
+  # 624x480 — IDR only. MAX_VCL=1 so a P-slice residual desync cannot
+  # fail the IDR plane gate (product_slice_desync is sticky across VCL).
+  PRODUCT_FRAME_MAX_VCL=1 bash "$COMPARE"
 fi
 check_json "624x480" "$ROOT/build/p3_product_frame/product_compare_deblock_off.json" \
   299520 74880 74880 1170

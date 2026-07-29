@@ -2078,10 +2078,11 @@ module h264_decode_core #(
                 // The loop filter owns a private copy of the macroblock, so it
                 // is still emitting the previous one while this one is
                 // predicted.  Hand over only once it has retired that copy.
-                if (p16_mc_done && !dbf_busy) begin
-                    // res_tc_cur is final by now, so the deblocker latches the
-                    // real per-4x4 coded-coefficient flags for bS derivation.
-                    dbf_start_r <= 1'b1;
+                // deblock_off: never arm dbf (PRE stream is the product path);
+                // waiting on dbf_busy after a prior dbf_start left P hung in
+                // ST_P16_MC with frames_done=1 after one P MB.
+                if (p16_mc_done && (deblock_off || !dbf_busy)) begin
+                    dbf_start_r <= deblock_off ? 1'b0 : 1'b1;
                     wb_idx <= 9'd0;
                     wb_state <= ST_P16_WRITE_PRIME;
                 end

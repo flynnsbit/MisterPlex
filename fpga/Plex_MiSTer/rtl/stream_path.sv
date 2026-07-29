@@ -817,15 +817,40 @@ module stream_path #(
 	wire [7:0] core_dpb_wr_data;
 	wire core_dpb_rd_en;
 	wire [31:0] core_dpb_rd_addr;
-	reg core_dpb_rd_valid;
-	always @(posedge clk) begin
-		if (reset | flush)
-			core_dpb_rd_valid <= 1'b0;
-		else
-			core_dpb_rd_valid <= core_dpb_rd_en;
-	end
 	wire core_frame_done;
 	wire core_dpb_ref_swap;
+	// Product DPB: dual-bank native-I420 BRAM. Was tied dpb_rd_data=0 so every
+	// P_Skip/P16 MC window was zero and Intra_in_P saw zero neighbours.
+	localparam int PRODUCT_DPB_FRAME_BYTES = (CORE_FRAME_W * CORE_FRAME_H * 3) / 2;
+	localparam int PRODUCT_DPB_BYTES = 2 * PRODUCT_DPB_FRAME_BYTES;
+	localparam int PRODUCT_DPB_AW = $clog2(PRODUCT_DPB_BYTES);
+	(* ram_style = "block" *) reg [7:0] product_dpb_mem [0:PRODUCT_DPB_BYTES-1];
+	reg [7:0]  product_dpb_rdata;
+	reg        core_dpb_rd_valid;
+	reg [31:0] product_dpb_write_base;
+	reg [31:0] product_dpb_ref_base;
+	always @(posedge clk) begin
+		if (reset | flush) begin
+			core_dpb_rd_valid <= 1'b0;
+			product_dpb_rdata <= 8'd0;
+			product_dpb_write_base <= 32'd0;
+			product_dpb_ref_base <= PRODUCT_DPB_FRAME_BYTES[31:0];
+		end else begin
+			core_dpb_rd_valid <= core_dpb_rd_en;
+			if (core_dpb_wr_en && (core_dpb_wr_addr < PRODUCT_DPB_BYTES[31:0]))
+				product_dpb_mem[core_dpb_wr_addr[PRODUCT_DPB_AW-1:0]] <= core_dpb_wr_data;
+			if (core_dpb_rd_addr < PRODUCT_DPB_BYTES[31:0])
+				product_dpb_rdata <= product_dpb_mem[core_dpb_rd_addr[PRODUCT_DPB_AW-1:0]];
+			else
+				product_dpb_rdata <= 8'd0;
+			// Rotate banks when core promotes the completed frame to reference.
+			if (core_dpb_ref_swap) begin
+				product_dpb_ref_base <= product_dpb_write_base;
+				product_dpb_write_base <= (product_dpb_write_base == 32'd0) ?
+					PRODUCT_DPB_FRAME_BYTES[31:0] : 32'd0;
+			end
+		end
+	end
 	wire core_err_cavlc_miss;
 	wire core_err_bad_mb_type;
 	wire core_err_mb_overrun;
@@ -914,7 +939,7 @@ module stream_path #(
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
 		.recon_mb_is_ref(1'b0),
-		.dpb_write_base(32'd0),
+		.dpb_write_base(product_dpb_write_base),
 		.recon_y(core_recon_y),
 		.recon_u(core_recon_u),
 		.recon_v(core_recon_v),
@@ -922,7 +947,7 @@ module stream_path #(
 		.p16_mb_x(8'd0),
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
-		.dpb_ref_base(32'd0),
+		.dpb_ref_base(product_dpb_ref_base),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),
@@ -931,7 +956,7 @@ module stream_path #(
 		.dpb_wr_data(core_dpb_wr_data),
 		.dpb_rd_en(core_dpb_rd_en),
 		.dpb_rd_addr(core_dpb_rd_addr),
-		.dpb_rd_data(8'd0),
+		.dpb_rd_data(product_dpb_rdata),
 		.dpb_rd_valid(core_dpb_rd_valid),
 		.dpb_rd_stall(1'b0),
 		.dpb_ref_swap(core_dpb_ref_swap),

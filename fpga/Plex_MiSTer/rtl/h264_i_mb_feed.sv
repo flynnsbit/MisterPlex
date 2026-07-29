@@ -1055,6 +1055,11 @@ module h264_i_mb_feed #(
 				mb_skip <= mb_skip_r;
 				mb_intra <= mb_intra_r;
 				publish_pred;
+`ifndef SYNTHESIS
+				// Permanent-ish debug: one line per MB for Intra_in_P scoring.
+				$display("MBTYPE frame_mb=%0d mt=%0d intra=%0d skip=%0d i16=%0d slice_i=%0d",
+					mb_addr, mb_type_r, mb_intra_r, mb_skip_r, is_i16_r, slice_is_i_r);
+`endif
 				st <= ST_MB_GAP;
 			end
 
