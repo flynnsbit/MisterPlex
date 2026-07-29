@@ -354,6 +354,8 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_RES_IQ      = 8'd22;
     // Multi-cycle luma DC Hadamard: start→~26 cyc→done, then latch res_luma_dc.
     localparam [7:0] ST_P16_RES_LDC     = 8'd23;
+    // Multi-cycle chroma DC: start→~6 cyc→done, then latch res_cdc_*.
+    localparam [7:0] ST_P16_RES_CDC     = 8'd24;
     // Hold one cycle after arming M10K raddr so lat_*_q is valid before emit.
     localparam [7:0] ST_WRITE_HOLD      = 8'd20;
     localparam [7:0] ST_P16_WRITE_HOLD  = 8'd21;
@@ -811,11 +813,21 @@ module h264_decode_core #(
     assign res_chroma_dc_coeff[1] = cavlc_dequant_coeff[1];
     assign res_chroma_dc_coeff[2] = cavlc_dequant_coeff[2];
     assign res_chroma_dc_coeff[3] = cavlc_dequant_coeff[3];
+    // CDC multi-cycle: start→~6→done. Consumer ST_P16_RES_CDC waits done
+    // before latching res_cdc_* (was combo same-cycle as cavlc_done).
+    // Feed still combo — g-stream owns feed handshake migration.
+    reg                res_cdc_start_r;
+    reg                res_cdc_pending_r;
+    wire               res_cdc_done;
     wire signed [28:0] res_chroma_dc_new [0:3];
-    h264_chroma_dc_hadamard_inv u_product_res_chroma_dc (
+    h264_chroma_dc_hadamard_inv_seq u_product_res_chroma_dc (
+        .clk(clk),
+        .reset(reset),
+        .start(res_cdc_start_r),
         .coeff(res_chroma_dc_coeff),
         .qp_c(res_qp_c),
-        .dc(res_chroma_dc_new)
+        .dc(res_chroma_dc_new),
+        .done(res_cdc_done)
     );
 
     wire signed [28:0] res_dc_value = res_is_chroma_ac ?
@@ -1547,6 +1559,7 @@ module h264_decode_core #(
         cavlc_start_r <= 1'b0;
         p16_iq_start_r <= 1'b0;
         res_ldc_start_r <= 1'b0;
+        res_cdc_start_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1573,6 +1586,8 @@ module h264_decode_core #(
             p16_iq_pending_r <= 1'b0;
             res_ldc_start_r <= 1'b0;
             res_ldc_pending_r <= 1'b0;
+            res_cdc_start_r <= 1'b0;
+            res_cdc_pending_r <= 1'b0;
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
@@ -1890,6 +1905,21 @@ module h264_decode_core #(
                     res_step_advance();
                 end
             end
+            ST_P16_RES_CDC: begin
+                // Wait for sequential chroma DC Hadamard (~6 cyc).
+                if (res_cdc_pending_r) begin
+                    res_cdc_pending_r <= 1'b0;
+                    res_cdc_start_r <= 1'b1;
+                end else if (res_cdc_done) begin
+                    for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                        if (res_chroma_is_v)
+                            res_cdc_v[res_tc_i] <= res_chroma_dc_new[res_tc_i];
+                        else
+                            res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
+                    end
+                    res_step_advance();
+                end
+            end
             ST_P16_RES_STORE: begin
                 // One IDCT sample per cycle into residual M10K (after IQ done).
                 if (res_is_luma_ac && !p16_drop_this_luma_residual) begin
@@ -1934,14 +1964,10 @@ module h264_decode_core #(
                             res_ldc_pending_r <= 1'b1;
                             wb_state <= ST_P16_RES_LDC;
                         end else if (res_is_chroma_dc) begin
-                            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
-                                if (res_chroma_is_v)
-                                    res_cdc_v[res_tc_i] <= res_chroma_dc_new[res_tc_i];
-                                else
-                                    res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
-                            end
+                            // Multi-cycle CDC: hold cavlc coeffs, wait done, latch.
                             p16_res_bit_offset_r <= cavlc_bit_offset_end;
-                            res_step_advance();
+                            res_cdc_pending_r <= 1'b1;
+                            wb_state <= ST_P16_RES_CDC;
                         end else begin
                             // AC block: nC now, then multi-cycle IQ+IDCT, then store.
                             if (res_is_luma_ac)

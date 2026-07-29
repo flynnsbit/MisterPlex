@@ -367,6 +367,156 @@ module h264_chroma_dc_hadamard_inv (
 	assign dc[3] = t11[28:0]; // (1,1)
 endmodule
 
+// Sequential chroma DC (bit-exact vs combo h264_chroma_dc_hadamard_inv).
+// LATENCY: start → latch Hadamard → 4 scale cycles → done ( ~6 cyc total).
+// Consumers MUST wait done before sampling dc[] (rbsp_window lesson).
+//   decode_core ST_P16_RES_CDC (P residual chroma DC)
+// Feed still uses combo u_feed_chr_dc_had until g-stream wires this handshake.
+// No `x <<< qdiv`. STA: one cmul_norm+cshl path vs four parallel (combo).
+module h264_chroma_dc_hadamard_inv_seq (
+	input  wire               clk,
+	input  wire               reset,
+	input  wire               start,
+	input  wire signed [15:0] coeff [0:3],
+	input  wire [5:0]         qp_c,
+	output wire signed [28:0] dc [0:3],
+	output reg                done
+);
+	function automatic [4:0] mf0;
+		input [2:0] qmod;
+		case (qmod)
+		3'd0: mf0 = 5'd10;
+		3'd1: mf0 = 5'd11;
+		3'd2: mf0 = 5'd13;
+		3'd3: mf0 = 5'd14;
+		3'd4: mf0 = 5'd16;
+		default: mf0 = 5'd18;
+		endcase
+	endfunction
+	function automatic [2:0] cqp_mod6;
+		input [5:0] q;
+		case (q)
+		6'd0,6'd6,6'd12,6'd18,6'd24,6'd30,6'd36,6'd42,6'd48: cqp_mod6 = 3'd0;
+		6'd1,6'd7,6'd13,6'd19,6'd25,6'd31,6'd37,6'd43,6'd49: cqp_mod6 = 3'd1;
+		6'd2,6'd8,6'd14,6'd20,6'd26,6'd32,6'd38,6'd44,6'd50: cqp_mod6 = 3'd2;
+		6'd3,6'd9,6'd15,6'd21,6'd27,6'd33,6'd39,6'd45,6'd51: cqp_mod6 = 3'd3;
+		6'd4,6'd10,6'd16,6'd22,6'd28,6'd34,6'd40,6'd46: cqp_mod6 = 3'd4;
+		default: cqp_mod6 = 3'd5;
+		endcase
+	endfunction
+	function automatic [3:0] cqp_div6;
+		input [5:0] q;
+		case (q)
+		6'd0,6'd1,6'd2,6'd3,6'd4,6'd5: cqp_div6 = 4'd0;
+		6'd6,6'd7,6'd8,6'd9,6'd10,6'd11: cqp_div6 = 4'd1;
+		6'd12,6'd13,6'd14,6'd15,6'd16,6'd17: cqp_div6 = 4'd2;
+		6'd18,6'd19,6'd20,6'd21,6'd22,6'd23: cqp_div6 = 4'd3;
+		6'd24,6'd25,6'd26,6'd27,6'd28,6'd29: cqp_div6 = 4'd4;
+		6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: cqp_div6 = 4'd5;
+		6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: cqp_div6 = 4'd6;
+		6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: cqp_div6 = 4'd7;
+		default: cqp_div6 = 4'd8;
+		endcase
+	endfunction
+	function automatic signed [31:0] cmul_norm;
+		input signed [31:0] x;
+		input [4:0] na;
+		case (na)
+		5'd10: cmul_norm = (x <<< 3) + (x <<< 1);
+		5'd11: cmul_norm = (x <<< 3) + (x <<< 1) + x;
+		5'd13: cmul_norm = (x <<< 3) + (x <<< 2) + x;
+		5'd14: cmul_norm = (x <<< 4) - (x <<< 1);
+		5'd16: cmul_norm = (x <<< 4);
+		default: cmul_norm = (x <<< 4) + (x <<< 1);
+		endcase
+	endfunction
+	function automatic signed [47:0] cshl;
+		input signed [31:0] v;
+		input [3:0] amt;
+		case (amt)
+		4'd0:  cshl = {{16{v[31]}}, v};
+		4'd1:  cshl = {{15{v[31]}}, v, 1'b0};
+		4'd2:  cshl = {{14{v[31]}}, v, 2'b0};
+		4'd3:  cshl = {{13{v[31]}}, v, 3'b0};
+		4'd4:  cshl = {{12{v[31]}}, v, 4'b0};
+		4'd5:  cshl = {{11{v[31]}}, v, 5'b0};
+		4'd6:  cshl = {{10{v[31]}}, v, 6'b0};
+		4'd7:  cshl = {{9{v[31]}},  v, 7'b0};
+		4'd8:  cshl = {{8{v[31]}},  v, 8'b0};
+		4'd9:  cshl = {{7{v[31]}},  v, 9'b0};
+		default: cshl = {{6{v[31]}}, v, 10'b0};
+		endcase
+	endfunction
+
+	localparam [1:0] ST_IDLE  = 2'd0;
+	localparam [1:0] ST_SCALE = 2'd1;
+	localparam [1:0] ST_DONE  = 2'd2;
+
+	reg [1:0] st;
+	reg [1:0] idx;
+	reg [5:0] qp_r;
+	reg signed [31:0] h_r [0:3];
+	reg signed [28:0] dc_r [0:3];
+
+	wire [2:0] qmod = cqp_mod6(qp_r);
+	wire [3:0] qdiv = cqp_div6(qp_r);
+	wire [4:0] na0  = mf0(qmod);
+	wire signed [31:0] bsc = cmul_norm(h_r[idx], na0);
+	wire signed [31:0] s16 = {bsc[27:0], 4'b0};
+	wire signed [47:0] prod = cshl(s16, qdiv + 4'd2);
+	wire signed [31:0] tout = prod >>> 7;
+
+	assign dc[0] = dc_r[0];
+	assign dc[1] = dc_r[1];
+	assign dc[2] = dc_r[2];
+	assign dc[3] = dc_r[3];
+
+	integer ki;
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st <= ST_IDLE;
+			idx <= 2'd0;
+			qp_r <= 6'd0;
+			for (ki = 0; ki < 4; ki = ki + 1) begin
+				h_r[ki] <= 32'sd0;
+				dc_r[ki] <= 29'sd0;
+			end
+		end else begin
+			case (st)
+			ST_IDLE: begin
+				if (start) begin
+					// 2x2 Hadamard (tiny) + latch qp; one scaler follows.
+					// Widen to 32-bit like combo path (a0..d0).
+					qp_r <= qp_c;
+					h_r[0] <= ($signed(coeff[0]) + $signed(coeff[1]))
+					        + ($signed(coeff[2]) + $signed(coeff[3])); // a+c
+					h_r[1] <= ($signed(coeff[0]) - $signed(coeff[1]))
+					        + ($signed(coeff[2]) - $signed(coeff[3])); // e+b
+					h_r[2] <= ($signed(coeff[0]) + $signed(coeff[1]))
+					        - ($signed(coeff[2]) + $signed(coeff[3])); // a-c
+					h_r[3] <= ($signed(coeff[0]) - $signed(coeff[1]))
+					        - ($signed(coeff[2]) - $signed(coeff[3])); // e-b
+					idx <= 2'd0;
+					st <= ST_SCALE;
+				end
+			end
+			ST_SCALE: begin
+				dc_r[idx] <= tout[28:0];
+				if (idx == 2'd3)
+					st <= ST_DONE;
+				else
+					idx <= idx + 2'd1;
+			end
+			default: begin
+				done <= 1'b1;
+				st <= ST_IDLE;
+			end
+			endcase
+		end
+	end
+endmodule
+
 module h264_idct4x4 (
 	input  wire signed [28:0] dequant [0:15],
 	output wire signed [28:0] residual [0:15]
