@@ -47,6 +47,19 @@ module slice_hdr_parser (
 	output reg  [15:0] first_i4_pred_mode_flags,
 	output reg  [47:0] first_i4_rem_modes,
 	output reg         first_i4_modes_present,
+	// intra_chroma_pred_mode (7.3.5.1)
+	output reg  [1:0]  first_chroma_pred_mode,
+	// P macroblock prediction syntax (7.3.5.1 / 7.3.5.2). Slot layout:
+	// P16x16 → slot 0; 16x8/8x16 → slots 0..1; P_8x8 → (blk*4 + sub).
+	output reg  [7:0]  first_sub_mb_types,
+	output reg         first_sub_mb_valid,
+	output reg  [7:0]  first_mb_ref_idx_l0,
+	output reg  [15:0] first_mb_mvd_valid,
+	output reg signed [15:0] first_mb_mvd_x [0:15],
+	output reg signed [15:0] first_mb_mvd_y [0:15],
+	// num_ref_idx_l0_active_minus1 from the slice header (override or PPS default).
+	// When 0, ref_idx_l0 is absent from the MB layer and inferred as 0.
+	output reg  [7:0]  num_ref_idx_l0_active_minus1,
 	output reg         first_luma4x4_blocks_valid,
 	output reg         first_luma4x4_blocks_present,
 	// Stage C: real coded_block_pattern + residual entry point for the product
@@ -111,6 +124,15 @@ module slice_hdr_parser (
 	reg [3:0]  full_luma_cbp;
 	reg        full_start_req;
 	reg [9:0]  full_start_bit;
+	reg [7:0]  intra_mbt;
+	reg [5:0]  p_mbt;
+	reg [2:0]  pred_blk;
+	reg [2:0]  pred_sub;
+	reg [2:0]  pred_ref_i;
+	reg signed [15:0] mvd_x_tmp;
+	wire [3:0] pred_mvd_slot = (p_mbt >= 6'd3) ? {pred_blk[1:0], pred_sub[1:0]}
+	                                           : {2'd0, pred_blk[1:0]};
+
 
 	localparam [2:0]
 		FULL_IDLE  = 3'd0,
@@ -236,6 +258,50 @@ module slice_hdr_parser (
 			else if (mt == 8'd1 || mt == 8'd2) p_part_count_of = 3'd2;
 			else if (mt == 8'd3 || mt == 8'd4) p_part_count_of = 3'd4;
 			else p_part_count_of = 3'd0;
+		end
+	endfunction
+
+	// Table 9-4 Inter column — different mapping from Intra.
+	function automatic [5:0] cbp_inter_map;
+		input [5:0] code;
+		begin
+			case (code)
+			6'd0: cbp_inter_map = 6'd0;  6'd1: cbp_inter_map = 6'd16; 6'd2: cbp_inter_map = 6'd1;  6'd3: cbp_inter_map = 6'd2;
+			6'd4: cbp_inter_map = 6'd4;  6'd5: cbp_inter_map = 6'd8;  6'd6: cbp_inter_map = 6'd32; 6'd7: cbp_inter_map = 6'd3;
+			6'd8: cbp_inter_map = 6'd5;  6'd9: cbp_inter_map = 6'd10; 6'd10: cbp_inter_map = 6'd12; 6'd11: cbp_inter_map = 6'd15;
+			6'd12: cbp_inter_map = 6'd47; 6'd13: cbp_inter_map = 6'd7; 6'd14: cbp_inter_map = 6'd11; 6'd15: cbp_inter_map = 6'd13;
+			6'd16: cbp_inter_map = 6'd14; 6'd17: cbp_inter_map = 6'd6; 6'd18: cbp_inter_map = 6'd9;  6'd19: cbp_inter_map = 6'd31;
+			6'd20: cbp_inter_map = 6'd35; 6'd21: cbp_inter_map = 6'd37; 6'd22: cbp_inter_map = 6'd42; 6'd23: cbp_inter_map = 6'd44;
+			6'd24: cbp_inter_map = 6'd33; 6'd25: cbp_inter_map = 6'd34; 6'd26: cbp_inter_map = 6'd36; 6'd27: cbp_inter_map = 6'd40;
+			6'd28: cbp_inter_map = 6'd39; 6'd29: cbp_inter_map = 6'd43; 6'd30: cbp_inter_map = 6'd45; 6'd31: cbp_inter_map = 6'd46;
+			6'd32: cbp_inter_map = 6'd17; 6'd33: cbp_inter_map = 6'd18; 6'd34: cbp_inter_map = 6'd20; 6'd35: cbp_inter_map = 6'd24;
+			6'd36: cbp_inter_map = 6'd19; 6'd37: cbp_inter_map = 6'd21; 6'd38: cbp_inter_map = 6'd26; 6'd39: cbp_inter_map = 6'd28;
+			6'd40: cbp_inter_map = 6'd23; 6'd41: cbp_inter_map = 6'd27; 6'd42: cbp_inter_map = 6'd29; 6'd43: cbp_inter_map = 6'd30;
+			6'd44: cbp_inter_map = 6'd22; 6'd45: cbp_inter_map = 6'd25; 6'd46: cbp_inter_map = 6'd38; 6'd47: cbp_inter_map = 6'd41;
+			default: cbp_inter_map = 6'd0;
+			endcase
+		end
+	endfunction
+
+	// Full-width se(v) for MVD (se_of saturates at 8 bits).
+	function automatic signed [15:0] se16_of;
+		input [15:0] k;
+		begin
+			if (k[0] == 1'b0) se16_of = -$signed({1'b0, k[15:1]});
+			else              se16_of = $signed({1'b0, k[15:1]}) + 16'sd1;
+		end
+	endfunction
+
+	// Table 7-18 sub_mb_type partition counts.
+	function automatic [2:0] sub_part_count_of;
+		input [1:0] smt;
+		begin
+			case (smt)
+			2'd0: sub_part_count_of = 3'd1;
+			2'd1: sub_part_count_of = 3'd2;
+			2'd2: sub_part_count_of = 3'd2;
+			default: sub_part_count_of = 3'd4;
+			endcase
 		end
 	endfunction
 
@@ -422,7 +488,35 @@ module slice_hdr_parser (
 		ST_REFIDX_FLAG = 6'd32,
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
-		ST_P_MBT       = 6'd35;
+		ST_P_MBT       = 6'd35,
+		ST_SUBMBT      = 6'd36,
+		ST_PRED_REF    = 6'd37,
+		ST_REFIDX_TE1  = 6'd38,
+		ST_REFIDX_VAL  = 6'd39,
+		ST_PRED_MVD    = 6'd40,
+		ST_MVD_X       = 6'd41,
+		ST_MVD_Y       = 6'd42,
+		ST_INTER_CBP   = 6'd43;
+
+	task automatic pred_clear;
+		integer pi;
+		begin
+			first_sub_mb_types <= 8'd0;
+			first_sub_mb_valid <= 1'b0;
+			first_mb_ref_idx_l0 <= 8'd0;
+			first_mb_mvd_valid <= 16'd0;
+			for (pi = 0; pi < 16; pi = pi + 1) begin
+				first_mb_mvd_x[pi] <= 16'sd0;
+				first_mb_mvd_y[pi] <= 16'sd0;
+			end
+			p_mbt <= 6'd63;
+			pred_blk <= 3'd0;
+			pred_sub <= 3'd0;
+			pred_ref_i <= 3'd0;
+			mvd_x_tmp <= 16'sd0;
+			intra_mbt <= 8'hFF;
+		end
+	endtask
 
 	task automatic res_clear;
 		integer ci;
@@ -583,6 +677,9 @@ module slice_hdr_parser (
 			first_i4_pred_mode_flags <= 16'd0;
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
+			first_chroma_pred_mode <= 2'd0;
+			num_ref_idx_l0_active_minus1 <= 8'd0;
+			pred_clear;
 			full_luma_cbp <= 4'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
@@ -651,6 +748,7 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			pred_clear;
 			full_luma_cbp <= 4'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
@@ -795,6 +893,8 @@ module slice_hdr_parser (
 				end
 			end
 			ST_REFIDX_L0: begin
+				// Survive into the MB layer: ref_idx presence is gated on this.
+				num_ref_idx_l0_active_minus1 <= ue_val[7:0];
 				if (nal_ref_lat) begin
 					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
 				end else begin
@@ -866,6 +966,7 @@ module slice_hdr_parser (
 					end
 				end else begin
 					first_mb_type <= ue_val[7:0];
+					intra_mbt <= ue_val[7:0];
 					has_mb_type <= (ue_val <= 16'd25);
 					first_mb_p_skip <= 1'b0;
 					first_mb_part_mode <= 3'd7;
@@ -894,7 +995,112 @@ module slice_hdr_parser (
 				first_mb_part_count <= p_part_count_of(1'b0, ue_val[7:0]);
 				first_mb_uses_sub_mb <= (ue_val == 16'd3) || (ue_val == 16'd4);
 				first_mb_intra <= (ue_val >= 16'd5) && (ue_val <= 16'd30);
-				st <= ST_DONE;
+				p_mbt <= ue_val[5:0];
+				pred_blk <= 3'd0;
+				pred_sub <= 3'd0;
+				pred_ref_i <= 3'd0;
+				if (ue_val <= 16'd4) begin
+					intra_mbt <= 8'hFF;
+					first_sub_mb_valid <= (ue_val == 16'd3) || (ue_val == 16'd4);
+					if (ue_val == 16'd3 || ue_val == 16'd4) begin
+						zcnt <= 0; ue_cont <= ST_SUBMBT; st <= ST_UE_Z;
+					end else
+						st <= ST_PRED_REF;
+				end else if (ue_val <= 16'd30) begin
+					// Intra MB in P slice: Table 7-13 offset +5.
+					intra_mbt <= ue_val[7:0] - 8'd5;
+					if (ue_val >= 16'd6 && ue_val <= 16'd29) begin
+						zcnt <= 0; ue_cont <= ST_CHRPRED; st <= ST_UE_Z;
+					end else if (ue_val == 16'd5) begin
+						i4_i <= 0; i4_sub <= 0; i4_need_rem <= 0; i4_rem_acc <= 3'd0;
+						first_i4_pred_mode_flags <= 16'd0;
+						first_i4_rem_modes <= 48'd0;
+						first_i4_modes_present <= 1'b0;
+						full_luma_cbp <= 4'd0;
+						st <= ST_I4MODE;
+					end else
+						st <= ST_DONE; // I_PCM
+				end else
+					st <= ST_DONE;
+			end
+			ST_SUBMBT: begin
+				if (ue_val > 16'd3) st <= ST_FAIL;
+				else begin
+					first_sub_mb_types[pred_blk[1:0] * 2 +: 2] <= ue_val[1:0];
+					if (pred_blk >= 3'd3) begin
+						pred_blk <= 3'd0;
+						st <= ST_PRED_REF;
+					end else begin
+						pred_blk <= pred_blk + 3'd1;
+						zcnt <= 0; ue_cont <= ST_SUBMBT; st <= ST_UE_Z;
+					end
+				end
+			end
+			ST_PRED_REF: begin
+				// ref_idx absent when only one active ref, and never for P_8x8ref0.
+				if ((num_ref_idx_l0_active_minus1 == 8'd0) || (p_mbt == 6'd4) ||
+				    (pred_ref_i >= p_part_count_of(1'b0, {2'd0, p_mbt}))) begin
+					pred_blk <= 3'd0;
+					pred_sub <= 3'd0;
+					st <= ST_PRED_MVD;
+				end else if (num_ref_idx_l0_active_minus1 == 8'd1) begin
+					st <= ST_REFIDX_TE1;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_REFIDX_VAL; st <= ST_UE_Z;
+				end
+			end
+			ST_REFIDX_TE1: begin
+				if (oob) st <= ST_FAIL;
+				else begin
+					if (bpos == 3'd0) begin bpos <= 3'd7; bbyte <= bbyte + 1'd1; end
+					else bpos <= bpos - 1'd1;
+					first_mb_ref_idx_l0[pred_ref_i[1:0] * 2 +: 2] <= {1'b0, ~bitv};
+					pred_ref_i <= pred_ref_i + 3'd1;
+					st <= ST_PRED_REF;
+				end
+			end
+			ST_REFIDX_VAL: begin
+				first_mb_ref_idx_l0[pred_ref_i[1:0] * 2 +: 2] <= ue_val[1:0];
+				pred_ref_i <= pred_ref_i + 3'd1;
+				st <= ST_PRED_REF;
+			end
+			ST_PRED_MVD: begin
+				if (p_mbt >= 6'd3) begin
+					if (pred_blk >= 3'd4) begin
+						zcnt <= 0; ue_cont <= ST_INTER_CBP; st <= ST_UE_Z;
+					end else if (pred_sub >=
+					             sub_part_count_of(first_sub_mb_types[pred_blk[1:0] * 2 +: 2])) begin
+						pred_blk <= pred_blk + 3'd1;
+						pred_sub <= 3'd0;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_MVD_X; st <= ST_UE_Z;
+					end
+				end else if (pred_blk >= p_part_count_of(1'b0, {2'd0, p_mbt})) begin
+					zcnt <= 0; ue_cont <= ST_INTER_CBP; st <= ST_UE_Z;
+				end else begin
+					zcnt <= 0; ue_cont <= ST_MVD_X; st <= ST_UE_Z;
+				end
+			end
+			ST_MVD_X: begin
+				mvd_x_tmp <= se16_of(ue_val);
+				zcnt <= 0; ue_cont <= ST_MVD_Y; st <= ST_UE_Z;
+			end
+			ST_MVD_Y: begin
+				first_mb_mvd_x[pred_mvd_slot] <= mvd_x_tmp;
+				first_mb_mvd_y[pred_mvd_slot] <= se16_of(ue_val);
+				first_mb_mvd_valid[pred_mvd_slot] <= 1'b1;
+				if (p_mbt >= 6'd3) pred_sub <= pred_sub + 3'd1;
+				else pred_blk <= pred_blk + 3'd1;
+				st <= ST_PRED_MVD;
+			end
+			ST_INTER_CBP: begin
+				cbp_me <= ue_val[5:0];
+				full_luma_cbp <= cbp_inter_map(ue_val[5:0]) [3:0];
+				if (cbp_inter_map(ue_val[5:0]) == 6'd0)
+					st <= ST_DONE;
+				else begin
+					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
+				end
 			end
 			ST_I4MODE: begin
 				// Skip 16 Intra4x4 modes: each is flag(1) or flag(0)+rem(3)
@@ -936,9 +1142,9 @@ module slice_hdr_parser (
 				end
 			end
 			ST_CHRPRED: begin
-				// ue(intra_chroma_pred_mode) consumed
-				// I_NxN → cbp me; I_16x16 → mb_qp_delta
-				if (first_mb_type == 8'd0) begin
+				first_chroma_pred_mode <= ue_val[1:0];
+				// I_NxN → cbp me; I_16x16 → mb_qp_delta (use normalised intra_mbt)
+				if (intra_mbt == 8'd0) begin
 					zcnt <= 0; ue_cont <= ST_CBP; st <= ST_UE_Z;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_MBQP; st <= ST_UE_Z;
@@ -957,7 +1163,7 @@ module slice_hdr_parser (
 			end
 			ST_MBQP: begin
 				// se(mb_qp_delta) consumed; start coeff_token nC=0
-				if (first_mb_type == 8'd0) begin
+				if (intra_mbt == 8'd0) begin
 					full_start_req <= 1'b1;
 					full_start_bit <= cur_bit_offset();
 				end

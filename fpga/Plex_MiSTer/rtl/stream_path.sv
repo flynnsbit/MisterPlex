@@ -267,6 +267,14 @@ module stream_path #(
 	wire signed [7:0] sl_place_dc;
 	wire [5:0] sl_place_qp;
 	wire signed [15:0] sl_place_coeff [0:15];
+	wire [1:0]  sl_chroma_pred_mode;
+	wire [7:0]  sl_sub_mb_types;
+	wire        sl_sub_mb_valid;
+	wire [7:0]  sl_mb_ref_idx_l0;
+	wire [15:0] sl_mb_mvd_valid;
+	wire signed [15:0] sl_mb_mvd_x [0:15];
+	wire signed [15:0] sl_mb_mvd_y [0:15];
+	wire [7:0]  sl_num_ref_m1;
 
 	// residual_csum / residual_coeff connect straight to module outputs (no
 	// unpacked-array continuous assign — Quartus-friendly).
@@ -302,6 +310,14 @@ module stream_path #(
 		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_sub_mb_valid(sl_sub_mb_valid),
+		.first_mb_ref_idx_l0(sl_mb_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mb_mvd_valid),
+		.first_mb_mvd_x(sl_mb_mvd_x),
+		.first_mb_mvd_y(sl_mb_mvd_y),
+		.num_ref_idx_l0_active_minus1(sl_num_ref_m1),
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
@@ -583,6 +599,8 @@ module stream_path #(
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
 	wire        core_rbsp_overflow;
+	             |sl_sub_mb_types | sl_sub_mb_valid | |sl_mb_ref_idx_l0 |
+	             |sl_mb_mvd_valid | |sl_mb_mvd_x[0] | |sl_mb_mvd_y[0] | |sl_num_ref_m1 | |sl_chroma_pred_mode |
 
 	h264_rbsp_window #(
 		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
@@ -666,7 +684,7 @@ module stream_path #(
 		.mb_skip(first_mb_p_skip),
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(core_i16_pred_mode),
-		.chroma_pred_mode(2'd0),
+		.chroma_pred_mode(sl_chroma_pred_mode),
 		.cbp_luma(sl_first_mb_cbp_luma),
 		.cbp_chroma(sl_first_mb_cbp_chroma),
 		.mb_qp_delta(sl_qpd[5:0]),
@@ -681,9 +699,15 @@ module stream_path #(
 		.mv_y_qpel(16'sd0),
 		.part_mode(first_mb_part_mode),
 		.part_idx(2'd0),
-		.mvd_x_qpel(16'sd0),
-		.mvd_y_qpel(16'sd0),
-		.ref_idx_l0(2'd0),
+		.mvd_x_qpel(sl_mb_mvd_x[0]),
+		.mvd_y_qpel(sl_mb_mvd_y[0]),
+		.ref_idx_l0(sl_mb_ref_idx_l0[1:0]),
+		.num_ref_idx_l0_active(sl_num_ref_m1 + 8'd1),
+		.part_sub_mb_types(sl_sub_mb_types),
+		.part_ref_idx_l0(sl_mb_ref_idx_l0),
+		.part_mvd_valid(sl_mb_mvd_valid),
+		.part_mvd_x(sl_mb_mvd_x),
+		.part_mvd_y(sl_mb_mvd_y),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
