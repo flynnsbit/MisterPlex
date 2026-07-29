@@ -127,6 +127,11 @@ endmodule
 // buffer infer an M10K: with a parallel output every sample must live in a
 // flop and every consumer pays a 256:1 byte multiplexer.  Benches that want
 // the whole block at once keep the default.
+//
+// LATENCY CONTRACT: `valid` is a one-cycle pulse 275 cycles after `start`, for
+// every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
+// Consumers must wait on `valid`; any fixed-cycle wait shorter than that reads
+// stale samples and looks exactly like a prediction bug.
 module h264_intra16x16_pred #(
 	parameter bit PARALLEL_OUT = 1
 ) (
@@ -292,6 +297,9 @@ endmodule
 // Intra_Chroma 8x8 prediction, clause 8.3.4, modes 0..3 (DC / H / V / Plane).
 // Same sequential shape as the luma engine. Chroma DC is the per-quadrant rule
 // of 8.3.4.1, which is NOT the luma DC rule.
+//
+// LATENCY CONTRACT: `valid` is a one-cycle pulse 75 cycles after `start`, for
+// every mode (the old parallel RTL answered in 1-2).  Measured, not estimated.
 // ---------------------------------------------------------------------------
 module h264_chroma8x8_pred (
 	input  wire        clk,

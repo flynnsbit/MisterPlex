@@ -26,6 +26,11 @@
 // Equivalences relied on (both exact for signed values):
 //   (c*na*16 << qdiv) + 32) >>> 6  ==  ((c*na << qdiv) + 2) >>> 2
 //   sum of 5 shifted copies of c   ==  c * na   for na < 32
+//
+// HANDSHAKE CONTRACT: pulse `start` for one cycle with coeff/qp stable; `done`
+// pulses once, 21 cycles later, with `residual` valid.  Hold the inputs stable
+// for the whole run.  `start` is sampled on the rising edge, so a driver that
+// changes it in the same delta as the clock edge will be missed entirely.
 `default_nettype none
 
 module h264_iq_idct_seq (

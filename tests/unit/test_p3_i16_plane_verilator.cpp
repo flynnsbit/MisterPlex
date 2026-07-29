@@ -118,7 +118,8 @@ static int run_pred(Vp3_i16_plane_tb& dut) {
     tick(dut);
     dut.start = 0;
     int cycles = 1;
-    while (!dut.valid && cycles < 10) {
+    // Sequential I16 predictor: one sample/cycle, valid at 275 (was 1-2 parallel).
+    while (!dut.valid && cycles < 512) {
         tick(dut);
         ++cycles;
     }

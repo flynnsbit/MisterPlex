@@ -401,7 +401,9 @@ int runI16Pred(Vp3_intra_frame_tb& dut) {
     tickFrame(dut);
     dut.i16_start = 0;
     int cycles = 1;
-    while (!dut.i16_valid && cycles < 10) {
+    // Sequential (area-optimised) I16 predictor emits one sample per cycle and
+    // pulses valid at 275 cycles, not the 1-2 the old parallel RTL took.
+    while (!dut.i16_valid && cycles < 512) {
         tickFrame(dut);
         ++cycles;
     }
@@ -414,7 +416,8 @@ int runChromaPred(Vp3_intra_frame_tb& dut) {
     tickFrame(dut);
     dut.chroma_start = 0;
     int cycles = 1;
-    while (!dut.chroma_valid && cycles < 10) {
+    // Sequential chroma 8x8 predictor pulses valid at 75 cycles.
+    while (!dut.chroma_valid && cycles < 256) {
         tickFrame(dut);
         ++cycles;
     }

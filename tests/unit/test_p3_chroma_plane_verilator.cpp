@@ -74,7 +74,8 @@ static int run_pred(Vp3_chroma_plane_tb& dut) {
     tick(dut);
     dut.start = 0;
     int cycles = 1;
-    while (!dut.valid && cycles < 10) {
+    // Sequential chroma 8x8 predictor: valid at 75 cycles (was 1-2 parallel).
+    while (!dut.valid && cycles < 256) {
         tick(dut);
         ++cycles;
     }
@@ -384,9 +385,11 @@ int main(int argc, char** argv) {
         dut.mode = 3;
         dut.has_above = 1;
         dut.has_left = 1;
+        // Area rewrite: the chroma predictor is sequential (one sample/cycle),
+        // so latency is 75 cycles for every mode, not 2 for Plane and 1 otherwise.
         int cycles = run_pred(dut);
-        if (cycles != 2) {
-            std::cerr << "FAIL: Plane took " << cycles << " cycles, expected 2\n";
+        if (cycles != 75) {
+            std::cerr << "FAIL: Plane took " << cycles << " cycles, expected 75\n";
             ++g_failures;
         }
         ++g_tests;
@@ -394,24 +397,24 @@ int main(int argc, char** argv) {
         // Non-Plane modes should be 1 cycle
         dut.mode = 0;
         cycles = run_pred(dut);
-        if (cycles != 1) {
-            std::cerr << "FAIL: DC took " << cycles << " cycles, expected 1\n";
+        if (cycles != 75) {
+            std::cerr << "FAIL: DC took " << cycles << " cycles, expected 75\n";
             ++g_failures;
         }
         ++g_tests;
 
         dut.mode = 1;
         cycles = run_pred(dut);
-        if (cycles != 1) {
-            std::cerr << "FAIL: H took " << cycles << " cycles, expected 1\n";
+        if (cycles != 75) {
+            std::cerr << "FAIL: H took " << cycles << " cycles, expected 75\n";
             ++g_failures;
         }
         ++g_tests;
 
         dut.mode = 2;
         cycles = run_pred(dut);
-        if (cycles != 1) {
-            std::cerr << "FAIL: V took " << cycles << " cycles, expected 1\n";
+        if (cycles != 75) {
+            std::cerr << "FAIL: V took " << cycles << " cycles, expected 75\n";
             ++g_failures;
         }
         ++g_tests;
