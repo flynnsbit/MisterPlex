@@ -751,7 +751,9 @@ module stream_path #(
 		.BANK_STRIDE(CORE_FRAME_W * CORE_FRAME_H + 2 * ((CORE_FRAME_W / 2) * (CORE_FRAME_H / 2))),
 		.REG_RESPONSE(1'b0),
 		.BRAM_REF(1'b1),
-		.BRAM_LUMA_ONLY(1'b0)
+		// Luma-only M10K ref (~234 blk @624x480). Full I420 (~351) risks
+		// failed inference → logic. Chroma ref stays on DDR cache.
+		.BRAM_LUMA_ONLY(1'b1)
 	) u_dpb_ddr (
 		.clk(clk),
 		.reset(reset | flush),
@@ -798,8 +800,13 @@ module stream_path #(
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.constrained_intra_pred_flag(1'b0),
-		// Real in-loop deblock from slice header. PRE nb unfiltered; DPB/px POST.
+		// Real in-loop deblock from slice header (PRE nb / POST DPB).
+		// PRODUCT_FORCE_DEBLOCK_OFF: one-variable full-frame score vs idc=0.
+`ifdef PRODUCT_FORCE_DEBLOCK_OFF
+		.disable_deblocking_filter_idc(2'd1),
+`else
 		.disable_deblocking_filter_idc(sl_deblock_idc),
+`endif
 		.slice_alpha_c0_offset(sl_alpha_off),
 		.slice_beta_offset(sl_beta_off),
 		.rbsp_byte(core_rbsp_byte),

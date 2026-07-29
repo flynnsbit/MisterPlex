@@ -1,4 +1,14 @@
-// Small dual-clock FIFO for clock-domain crossings.
+// Dual-clock async FIFO for CDC (Gray pointers + simple dual-port RAM).
+//
+// CRITICAL AREA (fit4): never force ramstyle=MLAB. px_fifo is AW=8 × ~(qword+64)
+// = 256 deep; MLAB/LUTRAM mapped that to ~12,478 ALMs — larger than decode_core.
+// Match line_buf_ram / audio_fifo: dual-clock registered SDP → altsyncram M10K.
+//
+// Coding rules that keep M10K inference:
+//   - write only on wr_clk, registered read only on rd_clk
+//   - no reset of the mem array
+//   - ramstyle "M10K, no_rw_check"
+// FWFT timing is unchanged vs the MLAB version: rd_empty=0 iff rd_data is valid.
 module async_fifo #(
 	parameter int WIDTH = 8,
 	parameter int AW    = 4
@@ -18,15 +28,15 @@ module async_fifo #(
 );
 	localparam int DEPTH = 1 << AW;
 
-	(* ramstyle = "MLAB" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+	// Force block RAM. MLAB was the fit4 px_fifo ALM explosion.
+	(* ramstyle = "M10K, no_rw_check" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
 
 	reg [AW:0] wr_bin, wr_gray;
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
 	// Registered first-word-fall-through read port: consumers still see
-	// rd_empty=0 only when rd_data is valid, but no fast-clock RAM data fans
-	// straight into slow-domain logic.
+	// rd_empty=0 only when rd_data is valid.
 	reg [WIDTH-1:0] rd_data_r;
 	reg             rd_valid;
 	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};
@@ -52,6 +62,13 @@ module async_fifo #(
 	assign rd_empty = !rd_valid;
 	assign rd_data = rd_data_r;
 
+	// Write port (wr_clk only). Mem write kept separate from pointer Gray CDC
+	// so the RAM is a clean dual-clock SDP like line_buf_ram.
+	always @(posedge wr_clk) begin
+		if (wr_accept)
+			mem[wr_bin[AW-1:0]] <= wr_data;
+	end
+
 	always @(posedge wr_clk) begin
 		if (wr_reset) begin
 			wr_bin <= '0;
@@ -62,13 +79,15 @@ module async_fifo #(
 			rd_gray_w1 <= rd_gray;
 			rd_gray_w2 <= rd_gray_w1;
 			if (wr_accept) begin
-				mem[wr_bin[AW-1:0]] <= wr_data;
 				wr_bin <= wr_bin_next;
 				wr_gray <= wr_gray_next;
 			end
 		end
 	end
 
+	// Read port (rd_clk only). Registered mem read preserves FWFT: when
+	// rd_prefetch fires, rd_data_r and rd_valid update together (same as
+	// prior MLAB implementation — only the storage fabric changes).
 	always @(posedge rd_clk) begin
 		if (rd_reset) begin
 			rd_bin <= '0;
