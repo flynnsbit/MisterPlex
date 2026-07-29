@@ -140,9 +140,9 @@
     {
       "id": "h264_decode_core_p16z_drop_last_chroma_residual",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
-      "why": "Dropping the last scheduled chroma CAVLC/IDCT block must fail a V-plane sample, proving chroma traversal is not zero-residual-vacuous.",
+      "why": "Dropping the last scheduled chroma AC/IDCT block (DC-only residual) must fail a V-plane sample.",
       "required_substrings": [
-        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 356 plane=V got=23 want=42 pred=23 residual=19"
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 356 plane=V got=23 want=21 pred=23 residual=-2"
       ]
     },
     {
@@ -156,9 +156,9 @@
     {
       "id": "h264_decode_core_p16z_swap_chroma_scheduled_coeff",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
-      "why": "Swapping scheduled chroma CAVLC coefficient scan positions must fail a chroma sample, proving chroma traversal catches scan-order bugs instead of only total energy.",
+      "why": "Swapping chroma DC CAVLC coeff pair 0/1 must scramble Hadamard inject and fail a U-plane sample.",
       "required_substrings": [
-        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 320 plane=V got=207 want=209 pred=190 residual=19"
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 260 plane=U got=187 want=191 pred=189 residual=2"
       ]
     },
     {
@@ -172,9 +172,9 @@
     {
       "id": "h264_decode_core_p16z_swap_chroma_residual",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
-      "why": "Swapping scheduled U/V chroma residual planes must fail the exact chroma sample scoreboard, proving residual-plane aliasing is not hidden by similar fixtures.",
+      "why": "Swapping U/V residual planes must fail the first U sample under DC-only chroma residual.",
       "required_substrings": [
-        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=176 want=164 pred=157 residual=7"
+        "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 256 plane=U got=155 want=159 pred=157 residual=2"
       ]
     },
     {
