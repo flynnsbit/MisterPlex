@@ -948,29 +948,16 @@ module h264_decode_core #(
         .blocks_done(product_intra_blocks_done)
     );
 
-    // Assemble streaming intra recon one sample at a time. product_intra_recon_y
-    // feeds the PRE-deblock neighbour context; lat_recon_y is filled in the same
-    // beat so ST_WRITE never needs a 256-wide parallel load for intra MBs.
+    // Assemble streaming intra recon one sample at a time into the PRE-deblock
+    // neighbour plane. lat_recon_y is owned exclusively by the writeback FSM
+    // (loaded from this plane on mb_recon_valid) to avoid multi-drivers.
     integer intra_si;
-    reg intra_stream_armed;
     always @(posedge clk) begin
         if (reset) begin
-            intra_stream_armed <= 1'b0;
             for (intra_si = 0; intra_si < 256; intra_si = intra_si + 1)
                 product_intra_recon_y[intra_si] <= 8'd128;
-        end else begin
-            if (product_intra_mb_start)
-                intra_stream_armed <= 1'b1;
-            else if (product_intra_recon_valid)
-                intra_stream_armed <= 1'b0;
-
-            if (product_intra_recon_sample_valid) begin
-                product_intra_recon_y[product_intra_recon_sample_idx] <= product_intra_recon_sample;
-                // Only clobber lat_recon_y while an intra MB is in flight and the
-                // writeback FSM is idle (it owns the array otherwise).
-                if (intra_stream_armed && (wb_state == ST_IDLE))
-                    lat_recon_y[product_intra_recon_sample_idx] <= product_intra_recon_sample;
-            end
+        end else if (product_intra_recon_sample_valid) begin
+            product_intra_recon_y[product_intra_recon_sample_idx] <= product_intra_recon_sample;
         end
     end
 
@@ -1307,9 +1294,12 @@ module h264_decode_core #(
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
-                    // Intra Y already streamed into lat_recon_y; only the non-intra
-                    // (stub) path still needs a parallel plane load.
-                    if (!product_intra_recon_valid) begin
+                    // Intra Y was streamed into product_intra_recon_y; load it
+                    // here (single driver of lat_recon_y).
+                    if (product_intra_recon_valid) begin
+                        for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                            lat_recon_y[wb_i] <= product_intra_recon_y[wb_i];
+                    end else begin
                         for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
                             lat_recon_y[wb_i] <= recon_y[wb_i];
                     end

@@ -170,6 +170,8 @@ module h264_decode_skeleton #(
         .top_left(nb_top_left),
         .has_above(stim_valid),
         .has_left(stim_valid),
+        .rd_addr(8'd0),
+        .rd_data(),
         .unsupported(i16_unsupported),
         .pred(i16_pred)
     );

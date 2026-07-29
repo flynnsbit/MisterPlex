@@ -122,7 +122,14 @@ endmodule
 // Sequential: one 16-cycle setup pass over the neighbours, two compute cycles,
 // then 256 cycles emitting one predicted sample per cycle.
 // ---------------------------------------------------------------------------
-module h264_intra16x16_pred (
+// PARALLEL_OUT=0 drops the 256-byte combinational `pred` port and serves the
+// block through rd_addr/rd_data instead.  That is what lets the 256-sample
+// buffer infer an M10K: with a parallel output every sample must live in a
+// flop and every consumer pays a 256:1 byte multiplexer.  Benches that want
+// the whole block at once keep the default.
+module h264_intra16x16_pred #(
+	parameter bit PARALLEL_OUT = 1
+) (
 	input  wire        clk,
 	input  wire        start,
 	input  wire [1:0]  mode,
@@ -131,10 +138,24 @@ module h264_intra16x16_pred (
 	input  wire [7:0]  top_left,
 	input  wire        has_above,
 	input  wire        has_left,
+	input  wire [7:0]  rd_addr,
+	output reg  [7:0]  rd_data,
 	output reg         unsupported,
 	output reg         valid,
-	output reg  [7:0]  pred [0:255]
+	output wire [7:0]  pred [0:255]
 );
+	(* ramstyle = "M10K" *) reg [7:0] pred_buf [0:255];
+
+	always @(posedge clk)
+		rd_data <= pred_buf[rd_addr];
+
+	genvar gp;
+	generate
+		for (gp = 0; gp < 256; gp = gp + 1) begin : g_par
+			if (PARALLEL_OUT) assign pred[gp] = pred_buf[gp];
+			else              assign pred[gp] = 8'd0;
+		end
+	endgenerate
 	localparam [2:0] ST_IDLE  = 3'd0,
 	                 ST_SETUP = 3'd1,
 	                 ST_CALC  = 3'd2,
@@ -182,7 +203,8 @@ module h264_intra16x16_pred (
 	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
 	wire signed [19:0] b7 = (pb20 <<< 3) - pb20;
 	wire signed [19:0] c7 = (pc20 <<< 3) - pc20;
-	wire signed [19:0] pa20 = $signed({4'd0, {10'd0, above[15]} + {10'd0, left[15]}}) <<< 4;
+	wire [19:0] pa_sum = {12'd0, above[15]} + {12'd0, left[15]};
+	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
 	wire signed [19:0] plane_seed = pa20 - b7 - c7 + 20'sd16;
 
 	wire signed [14:0] plane_shr = acc[19:5];
@@ -248,7 +270,7 @@ module h264_intra16x16_pred (
 			st  <= ST_FILL;
 		end
 		ST_FILL: begin
-			pred[cnt] <= sample;
+			pred_buf[cnt] <= sample;
 			if (fx == 4'd15) begin
 				row_acc <= row_acc + pc20;
 				acc     <= row_acc + pc20;
@@ -324,7 +346,8 @@ module h264_chroma8x8_pred (
 	wire signed [19:0] pc20 = {{4{plane_c[15]}}, plane_c};
 	wire signed [19:0] b3 = (pb20 <<< 1) + pb20;
 	wire signed [19:0] c3 = (pc20 <<< 1) + pc20;
-	wire signed [19:0] pa20 = $signed({4'd0, {10'd0, above[7]} + {10'd0, left[7]}}) <<< 4;
+	wire [19:0] pa_sum = {12'd0, above[7]} + {12'd0, left[7]};
+	wire signed [19:0] pa20 = $signed(pa_sum) <<< 4;
 	wire signed [19:0] plane_seed = pa20 - b3 - c3 + 20'sd16;
 
 	wire signed [14:0] plane_shr = acc[19:5];

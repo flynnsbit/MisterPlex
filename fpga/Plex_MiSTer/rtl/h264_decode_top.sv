@@ -74,22 +74,28 @@ module h264_decode_top (
     reg [3:0]          pipe_block_idx;
     reg                pipe_is_i16;
 
-    wire signed [28:0] dq_final [0:15];
     reg signed [28:0] latched_i16_dc [0:15];
-    h264_dequant4x4_flex u_dequant (
+    reg                xform_start;
+    reg                xform_ready;
+    wire               xform_done;
+    wire signed [28:0] idct_out [0:15];
+
+    // AREA: one sequential scaler + one shared butterfly instead of the
+    // combinational h264_dequant4x4_flex + h264_idct4x4 pair, which cost
+    // ~4.5k ALUTs and 16 DSP blocks to finish in one cycle work that this
+    // block-serial walk only issues once every ~30 cycles.
+    h264_iq_idct_seq u_iqidct (
+        .clk(clk),
+        .reset(reset),
+        .start(xform_start),
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
         .dc_value(latched_i16_dc[pipe_block_idx]),
-        .dequant(dq_final)
-    );
-
-    wire signed [28:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
-        .dequant(dq_final),
-        .residual(idct_out)
+        .residual(idct_out),
+        .done(xform_done)
     );
 
     wire [7:0] recon_block [0:15];
@@ -102,8 +108,12 @@ module h264_decode_top (
     wire       i16_unsupported;
     wire       i16_pred_valid;
     reg        i16_pred_ready;
-    wire [7:0] i16_pred_pixels [0:255];
-    h264_intra16x16_pred u_i16_pred (
+    wire [7:0] i16_rd_data;
+    reg  [4:0] fcnt;
+    wire [7:0] i16_addr = {cur_by + {2'd0, fcnt[3:2]}, cur_bx + {2'd0, fcnt[1:0]}};
+    // PARALLEL_OUT=0: the plane lives in an M10K inside the predictor and is
+    // walked one sample per cycle, so there is no 256:1 byte mux here.
+    h264_intra16x16_pred #(.PARALLEL_OUT(0)) u_i16_pred (
         .clk(clk),
         .start(mb_start && is_i16x16),
         .mode(i16_pred_mode),
@@ -112,9 +122,10 @@ module h264_decode_top (
         .top_left(nb_topleft),
         .has_above(mb_avail_top),
         .has_left(mb_avail_left),
+        .rd_addr(i16_addr),
+        .rd_data(i16_rd_data),
         .unsupported(i16_unsupported),
-        .valid(i16_pred_valid),
-        .pred(i16_pred_pixels)
+        .valid(i16_pred_valid)
     );
 
     // Single M10K reconstruction store. Sync read: address one cycle early.
@@ -228,7 +239,8 @@ module h264_decode_top (
                      ST_PREDCAP  = 3'd2,
                      ST_I16FETCH = 3'd3,
                      ST_STORE    = 3'd4,
-                     ST_DONE     = 3'd5;
+                     ST_DONE     = 3'd5,
+                     ST_XFORM    = 3'd6;
 
     reg [2:0] state;
     reg       mb_started;
@@ -260,6 +272,9 @@ module h264_decode_top (
             pipe_qp        <= 6'd0;
             nbc            <= 5'd0;
             wcnt           <= 4'd0;
+            fcnt           <= 5'd0;
+            xform_start    <= 1'b0;
+            xform_ready    <= 1'b0;
             skid_full      <= 1'b0;
             skid_index     <= 4'd0;
             blk_has_above  <= 1'b0;
@@ -281,6 +296,10 @@ module h264_decode_top (
                 block_recon_pixels[si] <= 8'd128;
             end
         end else begin
+            xform_start <= 1'b0;
+            if (xform_done)
+                xform_ready <= 1'b1;
+
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
@@ -311,6 +330,9 @@ module h264_decode_top (
                         skid_full      <= 1'b0;
                         nbc            <= 5'd0;
                         wcnt           <= 4'd0;
+                        fcnt           <= 5'd0;
+                        xform_start    <= 1'b1;
+                        xform_ready    <= 1'b0;
                         state          <= pipe_is_i16 ? ST_I16FETCH : ST_NBFETCH;
                     end
                 end
@@ -343,16 +365,25 @@ module h264_decode_top (
                     for (si = 0; si < 16; si = si + 1)
                         pipe_pred[si] <= i4_pred_pixels[si];
                     wcnt  <= 4'd0;
+                    state <= ST_XFORM;
+                end
+
+                // The scaler/transform engine runs alongside the neighbour or
+                // plane walk; this only ever waits out the residual cycles.
+                ST_XFORM: if (xform_ready || xform_done) begin
+                    wcnt  <= 4'd0;
                     state <= ST_STORE;
                 end
 
+                // Sync M10K read: address on cycle n, sample lands on n+1.
                 ST_I16FETCH: begin
-                    pipe_pred[wcnt] <= i16_pred_pixels[walk_addr];
-                    if (wcnt == 4'd15) begin
+                    if (fcnt != 5'd0)
+                        pipe_pred[fcnt[3:0] - 4'd1] <= i16_rd_data;
+                    if (fcnt == 5'd16) begin
                         wcnt  <= 4'd0;
-                        state <= ST_STORE;
+                        state <= ST_XFORM;
                     end else begin
-                        wcnt <= wcnt + 4'd1;
+                        fcnt <= fcnt + 5'd1;
                     end
                 end
 
