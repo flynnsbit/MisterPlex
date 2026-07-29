@@ -8,8 +8,9 @@
       "log_contains": "present|fstore",
       "min_comb_aluts": 1000,
       "min_registers": 500,
-      "min_block_memory_bits": 100000,
-      "min_m10ks": 1
+      "min_block_memory_bits": 70000,
+      "min_m10ks": 1,
+      "note": "FRAME_LINES_4 line buffers ~80k bits; 8-line needed ~160k"
     },
     {
       "name": "present_core",
@@ -31,6 +32,13 @@
       "hierarchy_contains": "ddr_bitstream_reader:ddr_stream",
       "min_comb_aluts": 100,
       "min_registers": 100
+    },
+    {
+      "name": "h264_decode_core",
+      "entity": "h264_decode_core",
+      "hierarchy_contains": "h264_decode_core:product_decode_core",
+      "min_comb_aluts": 5000,
+      "min_registers": 1000
     }
   ]
 }
