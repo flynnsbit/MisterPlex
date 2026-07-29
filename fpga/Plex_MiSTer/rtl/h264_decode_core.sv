@@ -535,6 +535,11 @@ module h264_decode_core #(
         (wb_plane_nn == 2'd1) ? 8'(wb_idx_nn - 9'd256) :
                                 8'(wb_idx_nn - 9'd320);
     wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
+    // MB_W/MB_H = capacity. Active picture size is SPS mb_width/mb_height.
+    wire [7:0]  eff_mb_w = (mb_width == 8'd0) ? 8'(MB_W) : mb_width;
+    wire [7:0]  eff_mb_h = (mb_height == 8'd0) ? 8'(MB_H) : mb_height;
+    wire [31:0] eff_mb_w32 = {24'd0, eff_mb_w};
+    wire [31:0] eff_mb_h32 = {24'd0, eff_mb_h};
     // Timing: registered walking (x,y) — no combo LPM_DIVIDE on mb_addr.
     wire [31:0] syntax_mb_x32 = {24'd0, syntax_mb_x_r};
     wire [31:0] syntax_mb_y32 = {24'd0, syntax_mb_y_r};
@@ -575,9 +580,9 @@ module h264_decode_core #(
 
     wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == eff_ref_idx_l0);
     wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == eff_ref_idx_l0);
-    wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) ?
+    wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x_r + 8'd1 < eff_mb_w) ?
                                       (syntax_mb_idx + MB_IDX_W'(1)) : syntax_mb_idx;
-    wire syntax_has_top_right = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) &&
+    wire syntax_has_top_right = (syntax_mb_x_r + 8'd1 < eff_mb_w) &&
                                 mv_top_valid[syntax_top_right_idx] &&
                                 (mv_top_ref[syntax_top_right_idx] == eff_ref_idx_l0);
 `ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
@@ -1004,11 +1009,12 @@ module h264_decode_core #(
     wire [31:0] wb_mb_y32 = {24'd0, wb_mb_y};
     wire [31:0] mb_width32 = {24'd0, mb_width};
     wire [31:0] mb_height32 = {24'd0, mb_height};
-    wire [31:0] wb_mb_addr32 = wb_mb_y32 * MB_W + wb_mb_x32;
+    // Active raster = eff_mb_* (SPS); MB_W is storage capacity only.
+    wire [31:0] wb_mb_addr32 = wb_mb_y32 * eff_mb_w32 + wb_mb_x32;
     wire [15:0] wb_mb_addr16 = wb_mb_addr32[15:0];
     wire        wb_last_sample = (wb_idx == 9'd383);
-    wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
-                             (wb_mb_y32 == (MB_H - 1));
+    wire        wb_last_mb = (wb_mb_x32 == (eff_mb_w32 - 32'd1)) &&
+                             (wb_mb_y32 == (eff_mb_h32 - 32'd1));
     // mb_type_valid is a one-cycle feed pulse BEFORE residual bytes. Start must
     // fire on that edge (cannot wait for dbf_busy — residual would already be
     // dropped). Serialize only on in-flight recon: keep intra_active until
@@ -1744,8 +1750,8 @@ module h264_decode_core #(
 
             // Finish first_mb → (x,y) before accepting MB launches.
             if (xy_init_busy) begin
-                if (xy_init_rem >= 16'(MB_W)) begin
-                    xy_init_rem <= xy_init_rem - 16'(MB_W);
+                if (xy_init_rem >= {8'd0, eff_mb_w}) begin
+                    xy_init_rem <= xy_init_rem - {8'd0, eff_mb_w};
                     xy_init_y <= xy_init_y + 8'd1;
                 end else begin
                     syntax_mb_x_r <= xy_init_rem[7:0];
@@ -1761,7 +1767,7 @@ module h264_decode_core #(
             end
             if (mb_type_valid && syntax_xy_ready) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
-                if (syntax_mb_x_r + 8'd1 >= 8'(MB_W)) begin
+                if (syntax_mb_x_r + 8'd1 >= eff_mb_w) begin
                     syntax_mb_x_r <= 8'd0;
                     syntax_mb_y_r <= syntax_mb_y_r + 8'd1;
                 end else begin
@@ -2274,14 +2280,17 @@ module h264_decode_core #(
 
     // The macroblock address is derived by counting, so it running past the
     // picture means macroblocks were invented that the slice never coded.
-    assign err_mb_overrun = mb_type_valid && (syntax_mb_addr32 >= (MB_W * MB_H));
+    assign err_mb_overrun = mb_type_valid &&
+                            (syntax_mb_addr32 >= (eff_mb_w32 * eff_mb_h32));
 
     // The residual decoder reports every lookup that fell off the end of its
     // table without matching a code.
     assign err_cavlc_miss = cavlc_done && !cavlc_ok;
 
-    assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
-                   (mb_height != 8'd0 && mb_height32 != MB_H);
+    // Capacity check only: SPS may be any size <= compile-time MB_W x MB_H
+    // (624x480 max). Equality was wrong — 320x240 SPS raised core_error forever.
+    assign error = (mb_width != 8'd0 && mb_width32 > MB_W) ||
+                   (mb_height != 8'd0 && mb_height32 > MB_H);
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |

@@ -127,15 +127,12 @@ module stream_path #(
 	output wire [15:0]  slice_desync_mb
 );
 
-	// The decode core must run on the CODED picture geometry, not the display
-	// surface: FRAME_W is the 640-wide present surface, while the stream (and
-	// the DDR framebuffer the reconstruction is written into) is 624x480, i.e.
-	// exactly 39x30 macroblocks.  Using the display width gave the core a
-	// 40-macroblock raster stride, which skewed every macroblock position by a
-	// growing offset and pushed one column per row outside the picture.
-	// Values mirror DDR_FRAME_CODED_WIDTH/HEIGHT in ddr_frame_layout_params.svh.
-	// They are spelled out here rather than `include`d because stream_path is
-	// elaborated by benches that do not put rtl/ on the include path.
+	// Decode-core FRAME_* is CAPACITY (max coded geometry), not the active
+	// picture. Active mb_width/mb_height come from SPS at runtime — see
+	// eff_mb_w in h264_decode_core.  624x480 is the largest product coded size
+	// (DDR_FRAME_CODED_*); 320x240 streams must also fit.  Do NOT set these to
+	// the display surface (640) — that once forced a 40-MB stride and skewed
+	// every MB.  Do NOT treat them as "the only legal SPS size" either.
 	localparam int CORE_FRAME_W = 624;
 	localparam int CORE_FRAME_H = 480;
 
@@ -579,6 +576,10 @@ module stream_path #(
 	wire [3:0] core_i4_modes [0:15];
 	integer core_mi;
 	integer core_mj;
+	// I4x4 MPM (8.3.1.1).  rem_intra4x4_pred_mode is 0..7 and pred is 0..8 —
+	// compare as 4-bit.  pred_mode[2:0] truncated mode-8 to 0 so rem=2 against
+	// HU neighbours (pred=8) became mode 3 (DDL) not 2 (DC).  320x240 MB5
+	// blk13 first_fail got=2 ref=53; 624x480 never hit pred=8+rem path.
 	always @* begin
 		for (core_mi = 0; core_mi < 16; core_mi = core_mi + 1) begin : derive_core_i4_modes
 			reg [1:0] bx;
@@ -586,13 +587,10 @@ module stream_path #(
 			reg [3:0] mode_a;
 			reg [3:0] mode_b;
 			reg [3:0] pred_mode;
+			reg [3:0] rem_ext;
 			reg [2:0] rem_mode;
 			bx = core_i4_bx(core_mi[3:0]);
 			by = core_i4_by(core_mi[3:0]);
-			// MPM with cross-MB history.  Picture edges (!left_avail / !top_avail)
-			// keep pred=2 — that matches the prior bit-exact MB0 path on this
-			// stream.  Cross-MB Min() applies only when the neighbour MB exists
-			// (MB2 blk8 left, row1+ top, etc.).
 			if ((bx == 2'd0 && !i4_mpm_left_avail) ||
 			    (by == 2'd0 && !i4_mpm_top_avail)) begin
 				pred_mode = 4'd2;
@@ -608,13 +606,14 @@ module stream_path #(
 				pred_mode = (mode_a < mode_b) ? mode_a : mode_b;
 			end
 			rem_mode = feed_i4_rem_modes[core_mi * 3 +: 3];
+			rem_ext  = {1'b0, rem_mode};
 			if (!feed_i4_modes_present)
 				core_i4_modes_calc[core_mi] = 4'd2;
 			else if (feed_i4_pred_mode_flags[core_mi])
 				core_i4_modes_calc[core_mi] = pred_mode;
 			else
-				core_i4_modes_calc[core_mi] = (rem_mode < pred_mode[2:0]) ?
-					{1'b0, rem_mode} : ({1'b0, rem_mode} + 4'd1);
+				core_i4_modes_calc[core_mi] = (rem_ext < pred_mode) ?
+					rem_ext : (rem_ext + 4'd1);
 		end
 	end
 
