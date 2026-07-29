@@ -39,7 +39,8 @@ module h264_intra_nb_ctx_tb (
     output wire [7:0]  ctx_chroma_u_top_left,
     output wire [7:0]  ctx_chroma_v_top_left,
     output wire        ctx_has_chroma_above,
-    output wire        ctx_has_chroma_left
+    output wire        ctx_has_chroma_left,
+    output wire        ctx_busy
 );
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(39),
@@ -80,7 +81,8 @@ module h264_intra_nb_ctx_tb (
         .chroma_u_top_left(ctx_chroma_u_top_left),
         .chroma_v_top_left(ctx_chroma_v_top_left),
         .has_chroma_above(ctx_has_chroma_above),
-        .has_chroma_left(ctx_has_chroma_left)
+        .has_chroma_left(ctx_has_chroma_left),
+        .busy(ctx_busy)
     );
 
     h264_intra4x4_pred u_pred (

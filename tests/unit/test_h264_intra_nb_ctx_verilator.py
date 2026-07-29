@@ -41,10 +41,21 @@ static void tick(Vh264_intra_nb_ctx_tb& dut) {
     dut.clk = 0; dut.eval();
     dut.clk = 1; dut.eval();
 }
+static void wait_idle(Vh264_intra_nb_ctx_tb& dut) {
+    int g = 0;
+    while (dut.ctx_busy && g < 1024) { tick(dut); ++g; }
+    tick(dut); tick(dut);
+}
+static void set_block_and_wait(Vh264_intra_nb_ctx_tb& dut, int idx) {
+    dut.block_idx = idx;
+    tick(dut);
+    wait_idle(dut);
+}
 
 static void set_block(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y, int block_idx) {
-    int bx = (block_idx & 3) * 4;
-    int by = ((block_idx >> 2) & 3) * 4;
+    // H.264 Table 6-10 inverse: x={idx[2],idx[0],00}, y={idx[3],idx[1],00}
+    int bx = (((block_idx >> 2) & 1) << 3) | (((block_idx >> 0) & 1) << 2);
+    int by = (((block_idx >> 3) & 1) << 3) | (((block_idx >> 1) & 1) << 2);
     dut.block_idx = block_idx;
     for (int yy = 0; yy < 4; ++yy)
         for (int xx = 0; xx < 4; ++xx)
@@ -70,7 +81,7 @@ static void start_mb_slice(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y, int f
     dut.mb_start = 1;
     tick(dut);
     dut.mb_start = 0;
-    tick(dut);
+    wait_idle(dut);
 }
 
 static void start_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
@@ -84,12 +95,12 @@ static void commit_mb(Vh264_intra_nb_ctx_tb& dut, int mb_x, int mb_y) {
         dut.block_valid = 1;
         tick(dut);
         dut.block_valid = 0;
-        tick(dut);
+        wait_idle(dut);
     }
     dut.mb_commit = 1;
     tick(dut);
     dut.mb_commit = 0;
-    tick(dut);  // commit_pending writes PRE-deblock samples into line buffers
+    wait_idle(dut);
 }
 
 static int failures = 0;
@@ -112,9 +123,9 @@ static void check_u8(const char* what, int idx, uint8_t got, uint8_t want) {
 }
 
 static void check_edge_mb00(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("mb00_has_above", dut.ctx_has_above, false);
     check_bool("mb00_has_left", dut.ctx_has_left, false);
     check_bool("mb00_has_chroma_above", dut.ctx_has_chroma_above, false);
@@ -133,9 +144,9 @@ static void check_edge_mb00(Vh264_intra_nb_ctx_tb& dut) {
 }
 
 static void check_mb1_row0_left(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("mb10_has_above", dut.ctx_has_above, false);
     check_bool("mb10_has_left", dut.ctx_has_left, true);
     check_bool("mb10_mb_avail_left", dut.ctx_mb_avail_left, true);
@@ -153,9 +164,9 @@ static void check_mb1_row0_left(Vh264_intra_nb_ctx_tb& dut) {
 }
 
 static void check_row1_above_and_corner(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("mb01_has_above", dut.ctx_has_above, true);
     check_bool("mb01_has_left", dut.ctx_has_left, false);
     check_bool("mb01_mb_avail_top", dut.ctx_mb_avail_top, true);
@@ -177,9 +188,9 @@ static void check_row1_above_and_corner(Vh264_intra_nb_ctx_tb& dut) {
 }
 
 static void check_mb11_both(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("mb11_has_above", dut.ctx_has_above, true);
     check_bool("mb11_has_left", dut.ctx_has_left, true);
     check_bool("mb11_mb_avail_top", dut.ctx_mb_avail_top, true);
@@ -196,18 +207,18 @@ static void check_mb11_both(Vh264_intra_nb_ctx_tb& dut) {
 }
 
 static void check_above_right(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 3;  // top-row 4x4 at x=12: above-right comes from next MB unless picture edge
     dut.pred_mode = 3;
-    dut.eval();
+    set_block_and_wait(dut, 5);
+
     check_bool("mb37_above_right_available", dut.ctx_has_above_right, true);
     for (int i = 0; i < 4; ++i)
         check_u8("mb37_above_right_y", i, dut.ctx_above[4 + i], yval(38, 0, i, 15));
 }
 
 static void check_right_edge_above_right_unavailable(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 3;
     dut.pred_mode = 3;
-    dut.eval();
+    set_block_and_wait(dut, 5);
+
     check_bool("mb38_above_right_unavailable", dut.ctx_has_above_right, false);
     check_bool("mb38_mb_avail_topright_unavailable", dut.ctx_mb_avail_topright, false);
     for (int i = 0; i < 4; ++i)
@@ -215,9 +226,9 @@ static void check_right_edge_above_right_unavailable(Vh264_intra_nb_ctx_tb& dut)
 }
 
 static void check_last_mb(Vh264_intra_nb_ctx_tb& dut) {
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("mb38_29_mb_avail_top", dut.ctx_mb_avail_top, true);
     check_bool("mb38_29_mb_avail_left", dut.ctx_mb_avail_left, true);
     check_bool("mb38_29_mb_avail_topleft", dut.ctx_mb_avail_topleft, true);
@@ -234,9 +245,9 @@ static void check_slice_boundary_masks_storage(Vh264_intra_nb_ctx_tb& dut) {
     const int sy = 1;
     const int first = sy * 39 + sx;
     start_mb_slice(dut, sx, sy, first);
-    dut.block_idx = 0;
     dut.pred_mode = 2;
-    dut.eval();
+    set_block_and_wait(dut, 0);
+
     check_bool("slice_boundary_top_semantic_unavailable", dut.ctx_mb_avail_top, false);
     check_bool("slice_boundary_left_semantic_unavailable", dut.ctx_mb_avail_left, false);
     check_bool("slice_boundary_topleft_semantic_unavailable", dut.ctx_mb_avail_topleft, false);
