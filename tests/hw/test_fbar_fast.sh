@@ -109,12 +109,25 @@ sleep 0.15
 m2=$(capture_mean fbar_fast_bars)
 
 echo "grid_off mean=$m0  grid_on(force) mean=$m1  bars mean=$m2"
-# After eff_pattern fix, force-on with grid should look like bars (closer to m2 than m0)
+# Force-on with grid must be non-black, distinguishable from grid_off, and
+# closer to bars than to grid_off. Non-black alone is vacuous.
 python3 - <<PY
 m0,m1,m2=float("$m0" or 0),float("$m1" or 0),float("$m2" or 0)
-print(f"delta force_vs_bars={abs(m1-m2):.1f} force_vs_grid_off={abs(m1-m0):.1f}")
-# Soft pass: all non-black; hard visual needs RBF with eff_pattern
-ok = m1 >= 15 and m2 >= 15
-raise SystemExit(0 if ok else 1)
+d_bars=abs(m1-m2)
+d_off=abs(m1-m0)
+print(f"delta force_vs_bars={d_bars:.1f} force_vs_grid_off={d_off:.1f}")
+if m1 < 15 or m2 < 15:
+    print("FAIL: force/bars mean too dark (black capture)")
+    raise SystemExit(1)
+if d_off < 3.0 and d_bars < 3.0:
+    print("FAIL: grid_off/force/bars indistinguishable — cannot score force-bars")
+    raise SystemExit(1)
+if d_off < 3.0:
+    print("FAIL: force-bars did not change frame vs grid_off")
+    raise SystemExit(1)
+if d_bars > d_off:
+    print("FAIL: force closer to grid_off than to bars")
+    raise SystemExit(1)
+raise SystemExit(0)
 PY
 echo "FBAR_FAST done (left on bars)"

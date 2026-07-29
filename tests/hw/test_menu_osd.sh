@@ -124,3 +124,6 @@ fi
 echo "Baseline captured. Full matrix needs set_status SPI helper (agent should build)."
 echo "OUT=$OUT"
 ls -la "$OUT"
+# Capture-only without a scored assertion is unscoreable — never exit 0 green.
+hw_skip_not_pass "test_menu_osd" \
+  "baseline capture only; no OSD option matrix scored (use run_menu_matrix.sh)"

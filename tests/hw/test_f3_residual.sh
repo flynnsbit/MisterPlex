@@ -71,11 +71,16 @@ if [[ -f "$RCA_HELPER" ]]; then
   python3 "$RCA_HELPER" --goldens 2>/dev/null || true
   echo "$ST" | python3 "$RCA_HELPER" - 2>/dev/null || true
 fi
+# Present-but-wrong csum is a HARD FAIL (the defect direction that matters).
+# Absent field is the only honest SKIP-NOT-PASS (pre-3.3l-1 RBF).
 if echo "$ST" | grep -qE 'res_csum=20\b'; then
   echo "test_f3_residual: res_csum=20 HARD-class green (3.3l-1 XOR sat8=0x14)"
-else
+elif echo "$ST" | grep -qE 'res_csum='; then
   GOT_CSUM=$(echo "$ST" | sed -n 's/.*res_csum=\([0-9][0-9]*\).*/\1/p' | head -1)
+  echo "test_f3_residual: FAIL res_csum=${GOT_CSUM:-?} want 20/0x14 (present-but-wrong is not a skip)" >&2
+  exit 1
+else
   hw_skip_not_pass "test_f3_residual" \
-    "res_csum unscored (got ${GOT_CSUM:-?}, want 20/0x14); re-gate after R-csum1 deploy"
+    "res_csum field absent; need 3.3l-1 RBF for csum=20/0x14 (soft skip ≠ hard PASS)"
 fi
 echo "test_f3_residual: OK on $HOST — mb0=0 qp=25 res_ok=1 res_tc=8 res_t1=3 res_dc=-24"

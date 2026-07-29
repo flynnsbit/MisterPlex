@@ -17,6 +17,9 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 TOKEN="${PLEX_TOKEN:-${MISTERPLEX_TOKEN:-}}"
 EXPECTED_RBF_MD5="${EXPECTED_RBF_MD5:-}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=tests/hw/hw_gate_common.sh
+source "$ROOT/tests/hw/hw_gate_common.sh"
 SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$HOST"
 DDR_BASE=$((0x30000000))
 DDR_ALIGN=$((256 * 1024))
@@ -89,10 +92,16 @@ echo ""
 
 # ─── PROVENANCE ───────────────────────────────────────────────────────────────
 echo "━━━ PROVENANCE (automated) ━━━"
-RBF_MD5=$(ssh_read 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}')
-echo "  Resident RBF md5: $RBF_MD5"
+# Never awk field-1 of line-1: ssh banners yield "**" (read fault ≠ mismatch).
+RBF_MD5=$(hw_parse_md5_hex "$(ssh_read 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null')")
+echo "  Resident RBF md5: ${RBF_MD5:-unparsed}"
 if [ -n "$EXPECTED_RBF_MD5" ]; then
+    EXPECTED_RBF_MD5=$(printf '%s' "$EXPECTED_RBF_MD5" | tr 'A-F' 'a-f')
     echo "  Expected RBF md5: $EXPECTED_RBF_MD5"
+    if [ -z "$RBF_MD5" ]; then
+        echo "  UNSCORED: could not parse resident RBF md5 (read fault, not a mismatch)"
+        unscored_exit "rbf-md5-unparsed"
+    fi
     if [ "$RBF_MD5" != "$EXPECTED_RBF_MD5" ]; then
         echo "  UNSCORED: resident RBF does not match the expected bitstream"
         unscored_exit "rbf-md5-mismatch"

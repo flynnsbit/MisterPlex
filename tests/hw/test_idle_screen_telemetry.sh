@@ -11,6 +11,9 @@ set -euo pipefail
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 EXPECTED_RBF_MD5="${EXPECTED_RBF_MD5:-}"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=tests/hw/hw_gate_common.sh
+source "$ROOT/tests/hw/hw_gate_common.sh"
 SSH="sshpass -p $PASS ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$HOST"
 DDR_BASE=$((0x30000000))
 DDR_ALIGN=$((256 * 1024))
@@ -79,9 +82,14 @@ derive_ddr_layout_from_plxk() {
 }
 
 echo "IDLE_TELEMETRY_BEGIN"
-RBF_MD5="$(ssh_read 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}')"
-echo "RBF resident=$RBF_MD5 expected=${EXPECTED_RBF_MD5:-unset}"
+# Never awk field-1 of line-1: ssh banners yield "**" and misreport a read fault.
+RBF_MD5="$(hw_parse_md5_hex "$(ssh_read 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null')")"
+echo "RBF resident=${RBF_MD5:-unparsed} expected=${EXPECTED_RBF_MD5:-unset}"
 if [ -n "$EXPECTED_RBF_MD5" ]; then
+    if [ -z "$RBF_MD5" ]; then
+        unscored_exit "rbf-md5-unparsed"
+    fi
+    EXPECTED_RBF_MD5="$(printf '%s' "$EXPECTED_RBF_MD5" | tr 'A-F' 'a-f')"
     if [ "$RBF_MD5" != "$EXPECTED_RBF_MD5" ]; then
         unscored_exit "rbf-md5-mismatch"
     fi
@@ -163,6 +171,11 @@ last|off)
     unscored_exit "last-frame-needs-playback"
     ;;
 logo|"")
+    # Logo paint is not verified here (no capture / no pixel golden). Telemetry
+    # path ran, but picture correctness is unscoreable without eyes/HDMI.
+    echo "IDLE_TELEMETRY_END"
+    echo "IDLE_RESULT=UNSCORED reason=logo-mode-telemetry-only-no-picture-check"
+    exit "$RC_UNSCORED"
     ;;
 *)
     unscored_exit "unknown-idle-mode"

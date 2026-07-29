@@ -9,6 +9,14 @@ hw_skip_not_pass() {
   exit "$HW_RC_UNSCORED"
 }
 
+# Extract the first 32-hex md5 token from mixed ssh/tool output.
+# ssh may print banners (post-quantum warning) ahead of md5sum; never use
+# awk field-1 of line-1 — that parses "**" and misreports a read fault as a
+# provenance mismatch. Empty result means "could not measure".
+hw_parse_md5_hex() {
+  printf '%s\n' "$1" | tr 'A-F' 'a-f' | grep -oE '\b[0-9a-f]{32}\b' | head -1
+}
+
 hw_require_expected_rbf_md5() {
   local name="$1" host="$2" pass="$3" user="$4" expected="${5:-}"
   if [[ -z "$expected" ]]; then
@@ -22,10 +30,7 @@ hw_require_expected_rbf_md5() {
       "$user@$host" 'md5sum /media/fat/_Utility/Plex.rbf' 2>&1); then
     hw_skip_not_pass "$name" "could not read resident Plex.rbf md5: $out"
   fi
-  # ssh may print banners (e.g. the post-quantum key-exchange warning) ahead of the
-  # md5sum line, so select the first 32-hex token instead of field 1 of line 1.
-  # Reporting a parse failure as a "mismatch" would blame the RBF for a read fault.
-  actual=$(printf '%s\n' "$out" | tr 'A-F' 'a-f' | grep -oE '\b[0-9a-f]{32}\b' | head -1)
+  actual=$(hw_parse_md5_hex "$out")
   if [[ -z "$actual" ]]; then
     hw_skip_not_pass "$name" "could not parse resident RBF md5 from device output: $out"
   fi

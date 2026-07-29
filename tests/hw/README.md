@@ -139,8 +139,9 @@ Continuous ARM→FPGA stream (misterplexd) is Phase 3.1.
 2. `./tests/hw/test_f3_residual.sh` — F3-only golden (same Baseline IDR as 3.3e):
    `res_ok=1 res_tc=8 res_t1=3 res_dc=-24` (I_NxN first MB full CAVLC),
    **`mb0=0 qp=25`** `has_frame=1` (stub MB0 gray from residual DC; no F1 so host_owns_fs clear).
-   Hard: `res_csum=20` (XOR sat8 full-16 = **0x14**). A missing/mismatched
-   `res_csum` is **SKIP-NOT-PASS rc=77**, not a green residual card.
+   Hard: `res_csum=20` (XOR sat8 full-16 = **0x14**). A **missing**
+   `res_csum` field is **SKIP-NOT-PASS rc=77**; a **present-but-wrong**
+   value is **FAIL rc=1** (not a soft skip).
 3. Unit: `test_cavlc_dc` (host CAVLC + bit-exact recon maeY=U=V=0); `test_idct_quant` locks csum **0x14**.
 4. STREAM hybrid: host recon F1 owns product present; F3 residual status must not wipe F1.
 
@@ -171,9 +172,8 @@ python3 tests/parse_res_csum_status.py e8 14 3b 53   # raw[12..15]
 Sources: `arm/misterplexd/fpga_spi.cpp` `parseCoreStatus`; `host/libmisterplex/h264_residual_gold.hpp` (`kCsum8==0x14`); `tools/push_frame.cpp` `res_csum=%u`.
 
 ARM on lab: `push_frame --status` prints `res_csum=`; `push_frame --raw` dumps hex.
-Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20`; otherwise the card
-must return non-zero (SKIP-NOT-PASS for unscored pre-RBF state, FAIL for wrong
-scored state).
+Hard gate after F3 push: `res_dc=-24` **and** `res_csum=20`. Absent `res_csum`
+→ SKIP-NOT-PASS rc=77 (pre-3.3l-1). Present-but-wrong `res_csum` → FAIL rc=1.
 
 ### Post–R-csum1 sole-deploy + hard-gate (ONE agent)
 

@@ -82,12 +82,16 @@ echo "$ST" | grep -qE 'res_tc=8'
 echo "$ST" | grep -qE 'res_t1=3'
 echo "$ST" | grep -qE "res_dc=${GOLD_RES_DC}"
 
-# res_csum: hard after 3.3l-1 RBF; SKIP-NOT-PASS on pre-csum bitstream
+# res_csum: hard after 3.3l-1 RBF. Present-but-wrong → FAIL; absent → SKIP.
 if echo "$ST" | grep -qE "res_csum=${GOLD_RES_CSUM}\\b"; then
   echo "test_f3_idct_mb0: res_csum=${GOLD_RES_CSUM} (3.3l-1 XOR sat8=0x14 green)"
+elif echo "$ST" | grep -qE 'res_csum='; then
+  GOT_CSUM=$(echo "$ST" | sed -n 's/.*res_csum=\([0-9][0-9]*\).*/\1/p' | head -1)
+  echo "test_f3_idct_mb0: FAIL res_csum=${GOT_CSUM:-?} want ${GOLD_RES_CSUM}/0x14 (present-but-wrong is not a skip)" >&2
+  exit 1
 else
   hw_skip_not_pass "test_f3_idct_mb0" \
-    "res_csum unscored; need 3.3l-1 RBF for csum=${GOLD_RES_CSUM}"
+    "res_csum field absent; need 3.3l-1 RBF for csum=${GOLD_RES_CSUM}"
 fi
 
 # --- 3.3l-2 recon hard gate when status packs recon_sig ---
