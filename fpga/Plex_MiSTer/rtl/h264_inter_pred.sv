@@ -5,6 +5,12 @@ module h264_mv_pred_16x16 (
 	input  wire               avail_b,
 	input  wire               avail_c,
 	input  wire               avail_d,
+	// Geometric presence (inside pic/slice) — used for P_Skip forced-zero (8.4.1.1).
+	// When tied to avail_*, behaviour matches legacy ref-matched-only availability.
+	input  wire               present_a,
+	input  wire               present_b,
+	input  wire [1:0]         ref_a,
+	input  wire [1:0]         ref_b,
 	input  wire signed [15:0] mv_a_x,
 	input  wire signed [15:0] mv_a_y,
 	input  wire signed [15:0] mv_b_x,
@@ -60,9 +66,11 @@ module h264_mv_pred_16x16 (
 
 	wire signed [15:0] median_x = pred_one(avail_a, avail_b, use_c, mv_a_x, mv_b_x, cand_c_x);
 	wire signed [15:0] median_y = pred_one(avail_a, avail_b, use_c, mv_a_y, mv_b_y, cand_c_y);
-	assign skip_zero = p_skip && (!avail_a || !avail_b ||
-	                              ((mv_a_x == 16'sd0) && (mv_a_y == 16'sd0)) ||
-	                              ((mv_b_x == 16'sd0) && (mv_b_y == 16'sd0)));
+	// Spec 8.4.1.1 P_Skip zero-MV: mbA/mbB unavailable OR either has
+	// (refIdxL0==0 && mvL0==0). Geometric present, not ref-matched avail.
+	wire a_zero = present_a && (ref_a == 2'd0) && (mv_a_x == 16'sd0) && (mv_a_y == 16'sd0);
+	wire b_zero = present_b && (ref_b == 2'd0) && (mv_b_x == 16'sd0) && (mv_b_y == 16'sd0);
+	assign skip_zero = p_skip && (!present_a || !present_b || a_zero || b_zero);
 	assign pred_x = skip_zero ? 16'sd0 : median_x;
 	assign pred_y = skip_zero ? 16'sd0 : median_y;
 	// P_Skip carries no MVD; its motion vector is the derived predictor.
@@ -77,6 +85,10 @@ module h264_mv_pred_part (
 	input  wire               avail_b,
 	input  wire               avail_c,
 	input  wire               avail_d,
+	input  wire               present_a,
+	input  wire               present_b,
+	input  wire [1:0]         ref_a,
+	input  wire [1:0]         ref_b,
 	input  wire signed [15:0] mv_a_x,
 	input  wire signed [15:0] mv_a_y,
 	input  wire signed [15:0] mv_b_x,
@@ -104,6 +116,7 @@ module h264_mv_pred_part (
 	wire unused_skip_zero;
 	h264_mv_pred_16x16 u_median (
 		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
+		.present_a(present_a), .present_b(present_b), .ref_a(ref_a), .ref_b(ref_b),
 		.mv_a_x(mv_a_x), .mv_a_y(mv_a_y), .mv_b_x(mv_b_x), .mv_b_y(mv_b_y),
 		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
 		.mvd_x(16'sd0), .mvd_y(16'sd0), .p_skip(1'b0),
@@ -111,9 +124,9 @@ module h264_mv_pred_part (
 		.mv_x(unused_mv_x), .mv_y(unused_mv_y), .skip_zero(unused_skip_zero)
 	);
 
-	assign skip_zero = p_skip && (!avail_a || !avail_b ||
-	                              ((mv_a_x == 16'sd0) && (mv_a_y == 16'sd0)) ||
-	                              ((mv_b_x == 16'sd0) && (mv_b_y == 16'sd0)));
+	wire a_zero = present_a && (ref_a == 2'd0) && (mv_a_x == 16'sd0) && (mv_a_y == 16'sd0);
+	wire b_zero = present_b && (ref_b == 2'd0) && (mv_b_x == 16'sd0) && (mv_b_y == 16'sd0);
+	assign skip_zero = p_skip && (!present_a || !present_b || a_zero || b_zero);
 
 	always @* begin
 		pred_x = median_pred_x;

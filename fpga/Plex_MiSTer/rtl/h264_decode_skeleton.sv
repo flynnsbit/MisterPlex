@@ -263,6 +263,8 @@ module h264_decode_skeleton #(
     h264_mv_pred_16x16 u_mv_pred_16x16 (
         .avail_a(stim_valid), .avail_b(stim_valid),
         .avail_c(stim_mode[0]), .avail_d(stim_mode[1]),
+        .present_a(stim_valid), .present_b(stim_valid),
+        .ref_a(2'd0), .ref_b(2'd0),
         .mv_a_x($signed(stim_mv_x)), .mv_a_y($signed(stim_mv_y)),
         .mv_b_x($signed(stim_mv_x) + 16'sd4), .mv_b_y($signed(stim_mv_y) - 16'sd2),
         .mv_c_x($signed(stim_mv_x) - 16'sd8), .mv_c_y($signed(stim_mv_y) + 16'sd6),
@@ -282,6 +284,8 @@ module h264_decode_skeleton #(
         .part_idx(stim_mode[1:0]),
         .avail_a(stim_valid), .avail_b(stim_valid),
         .avail_c(stim_mode[0]), .avail_d(stim_mode[1]),
+        .present_a(stim_valid), .present_b(stim_valid),
+        .ref_a(2'd0), .ref_b(2'd0),
         .mv_a_x($signed(stim_mv_x)), .mv_a_y($signed(stim_mv_y)),
         .mv_b_x($signed(stim_mv_x) + 16'sd2), .mv_b_y($signed(stim_mv_y) - 16'sd1),
         .mv_c_x($signed(stim_mv_x) - 16'sd3), .mv_c_y($signed(stim_mv_y) + 16'sd5),

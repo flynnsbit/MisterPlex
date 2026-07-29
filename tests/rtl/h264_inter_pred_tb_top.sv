@@ -69,6 +69,7 @@ module h264_inter_pred_tb #(
 
 	h264_mv_pred_16x16 u_mv (
 		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
+		.present_a(avail_a), .present_b(avail_b), .ref_a(2'd0), .ref_b(2'd0),
 		.mv_a_x(mv_a_x), .mv_a_y(mv_a_y), .mv_b_x(mv_b_x), .mv_b_y(mv_b_y),
 		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
 		.mvd_x(mvd_x), .mvd_y(mvd_y), .p_skip(p_skip),
@@ -78,6 +79,7 @@ module h264_inter_pred_tb #(
 	h264_mv_pred_part u_part (
 		.part_mode(part_mode), .part_idx(part_idx),
 		.avail_a(avail_a), .avail_b(avail_b), .avail_c(avail_c), .avail_d(avail_d),
+		.present_a(avail_a), .present_b(avail_b), .ref_a(2'd0), .ref_b(2'd0),
 		.mv_a_x(mv_a_x), .mv_a_y(mv_a_y), .mv_b_x(mv_b_x), .mv_b_y(mv_b_y),
 		.mv_c_x(mv_c_x), .mv_c_y(mv_c_y), .mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
 		.mvd_x(mvd_x), .mvd_y(mvd_y), .p_skip(p_skip),
