@@ -288,9 +288,6 @@ module stream_path #(
 	wire signed [15:0] sl_mb_mvd_x [0:15];
 	wire signed [15:0] sl_mb_mvd_y [0:15];
 	wire [7:0]  sl_num_ref_m1;
-	wire sl_luma4x4_blocks_valid;
-	wire sl_luma4x4_blocks_present;
-	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
 	wire sl_place_ok;
 	wire [4:0] sl_place_tc;
 	wire [1:0] sl_place_t1;
@@ -340,9 +337,6 @@ module stream_path #(
 		.first_mb_mvd_x(sl_mb_mvd_x),
 		.first_mb_mvd_y(sl_mb_mvd_y),
 		.num_ref_idx_l0_active_minus1(sl_num_ref_m1),
-		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
-		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
-		.first_luma4x4_coeff(sl_luma4x4_coeff),
 		.first_mb_cbp_luma(sl_first_mb_cbp_luma),
 		.first_mb_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_mb_residual_bit_offset(sl_first_mb_residual_bit_offset),
@@ -511,10 +505,10 @@ module stream_path #(
 		end
 	endgenerate
 
-	// ── Per-MB I-slice residual feed (no MB0 coeff replay) ──────────────────
-	// slice_hdr_parser only exposes the FIRST macroblock.  h264_i_mb_feed walks
-	// real CAVLC residual from the whole-slice RBSP window for every MB and
-	// parses subsequent I-MB syntax so each macroblock gets its own coeffs.
+	// ── Per-MB residual feed (sole multi-block CAVLC residual bit consumer) ──
+	// slice_hdr_parser exports first-MB syntax + residual bit offset/cbp and the
+	// status residual_csum sticky path.  h264_i_mb_feed walks real CAVLC residual
+	// from the whole-slice RBSP window for every MB (including MB0).
 
 	// Whole-slice RBSP store with a real sliding window.  The old 64-byte
 	// capture could never answer rbsp_request_offset, so the core's request was
@@ -556,22 +550,18 @@ module stream_path #(
 	);
 
 	// Start the feeder once the slice header is valid AND the VCL RBSP capture
-	// has finished.  I slices wait for the first-MB residual probe; P slices
-	// arm on has_mb_type / first_mb_p_skip (skip_run and/or first coded MB).
-	reg sl_luma_blocks_seen;
+	// has finished.  I/P both arm on slice_valid — multi-block residual bits are
+	// consumed solely by h264_i_mb_feed (not a second parser in slice_hdr_parser).
 	reg feed_started;
-	wire feed_i_ready = sl_is_i && sl_luma_blocks_seen;
+	wire feed_i_ready = sl_is_i && slice_valid;
 	wire feed_p_ready = !sl_is_i && slice_valid && (first_mb_p_skip || sl_has_mbt);
 	wire feed_slice_go = (feed_i_ready || feed_p_ready) && core_rbsp_complete &&
 	                     (sps_mb_w != 8'd0) && (sps_mb_h != 8'd0) &&
 	                     !feed_started && !feed_busy;
 	always @(posedge clk) begin
 		if (reset | flush | vcl_cap_clear) begin
-			sl_luma_blocks_seen <= 1'b0;
 			feed_started <= 1'b0;
 		end else begin
-			if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present)
-				sl_luma_blocks_seen <= 1'b1;
 			// Stay started for this VCL NAL even after frame_feed_done so we
 			// do not immediately re-arm on the same sticky complete/present.
 			if (feed_slice_go)
@@ -868,7 +858,6 @@ module stream_path #(
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             |sl_i4_pred_mode_flags | |sl_i4_rem_modes | sl_i4_modes_present |
-	             sl_luma4x4_blocks_valid | sl_luma4x4_blocks_present |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
 	             core_luma4x4_valid | core_dpb_wr_en |
