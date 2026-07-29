@@ -1,8 +1,8 @@
-// Sequential eighth-sample chroma interpolator (ITU-T H.264 8.4.2.2.2).
+// Resource-shared eighth-sample chroma interpolator (ITU-T H.264 8.4.2.2.2).
 //
 // In 4:2:0 a chroma sample spans two luma samples, so a motion vector in
 // quarter-luma-sample units is already in eighth-chroma-sample units: the
-// fractional parts are mvx & 7 and mvy & 7, and the integer chroma offset is
+// fractional parts are mvx & 7 and mvy & 7 and the integer chroma offset is
 // mvx >>> 3 / mvy >>> 3.  Both are produced by the DPB fetch, which also
 // edge-clamps every tap, so a vector pointing outside the picture replicates
 // the border sample rather than reading garbage.
@@ -10,23 +10,30 @@
 //   predC = ((8-xFrac)(8-yFrac)A + xFrac(8-yFrac)B
 //          + (8-xFrac)yFrac C + xFrac*yFrac*D + 32) >> 6
 //
-// The 9x9 window is one sample wider and taller than the 8x8 block because the
-// bilinear needs A..D at (x,y),(x+1,y),(x,y+1),(x+1,y+1).
+// AREA
+//   The previous revision took the two 9x9 windows in as `input [7:0]
+//   ref_u [0:80]` port arrays and indexed them at runtime from four lanes, so
+//   every lane cost eight 81:1 byte multiplexers on top of its arithmetic.
+//   Here the windows live in RAM and the bilinear is factored into two
+//   separable passes that each read ONE sample per cycle:
 //
-// U and V share the schedule and run in lockstep.  The four weight products
-// are computed once and broadcast to every lane and both planes, so the engine
-// is LANES*4*2 small multipliers rather than the 128 the fully combinational
-// form needs.
+//     pass H:  t[r][x] = (8-xF)*W[r][x] + xF*W[r][x+1]        r=0..8, x=0..7
+//     pass V:  p[y][x] = ((8-yF)*t[y][x] + yF*t[y+1][x] + 32) >> 6
 //
-// THROUGHPUT
-//   clk_sys is 20 MHz, and 1170 macroblocks at ~24 fps leaves 712 cycles per
-//   macroblock for the whole decoder.  One output sample per cycle cost 64
-//   cycles here.  That was not the critical path while luma took 368, but once
-//   the luma engine retires a full-pel block in 16 cycles the chroma bilinear
-//   becomes the thing holding P_Skip open, so it retires LANES columns per
-//   cycle and takes the same integer-motion shortcut.
+//   which is algebraically identical to the four-term product form, and there
+//   is no intermediate rounding: t is kept at full precision (0..2040, 12
+//   bits) and the single +32 >> 6 happens once, in the vertical pass.
 //
-//   LANES = 4:  full-pel 8 cycles, otherwise 16, against 64 before.
+//   A 2-deep shift register slides along each walk so the second operand is
+//   always the previous cycle's sample -- one memory read per output.  The
+//   weight multiplies are 8x3 and are written as shift-adds so they cannot
+//   infer DSP blocks; the fit was at 130% DSP.
+//
+// SCHEDULE
+//   pass H  9*9 + 2 = 83 cycles, skipped when xFrac == 0 and yFrac == 0
+//   pass V  8*9 + 2 = 74 cycles
+//   combine 64 + 1  = 65 cycles
+//   worst case 222, full-pel 66.
 //
 // The samples read here are POST-deblocking reference samples out of the DPB.
 // Intra prediction neighbour taps are a separate, PRE-deblocking path and
@@ -34,147 +41,270 @@
 
 `default_nettype none
 
-module h264_mc_chroma_epel #(
-	// Output columns retired per cycle.  Must divide 8.
-	parameter int LANES = 4
-) (
+module h264_mc_chroma_epel (
 	input  wire        clk,
 	input  wire        reset,
 
+	// 9x9 window streaming write port, index = row*9 + col, one write port
+	// shared by both planes because the DPB fetch delivers U and V on
+	// separate valid strobes with a common index.
+	input  wire        win_u_wr,
+	input  wire        win_v_wr,
+	input  wire [6:0]  win_addr,
+	input  wire [7:0]  win_data,
+
 	input  wire        start,
-	input  wire [7:0]  ref_u [0:80],
-	input  wire [7:0]  ref_v [0:80],
 	input  wire [2:0]  frac_x,
 	input  wire [2:0]  frac_y,
 
 	output reg         busy,
 	output reg         done,
-	output reg  [7:0]  pred_u [0:63],
-	output reg  [7:0]  pred_v [0:63]
+
+	// Prediction read port: 8x8 samples per plane, index = y*8 + x.
+	input  wire [5:0]  pred_rd_idx,
+	output wire [7:0]  pred_u_rd_data,
+	output wire [7:0]  pred_v_rd_data
 );
-	localparam int WIN_COLS = 9;
-	localparam int NGRP     = 8 / LANES;
+	localparam [2:0] S_IDLE = 3'd0;
+	localparam [2:0] S_H    = 3'd1;
+	localparam [2:0] S_V    = 3'd2;
+	localparam [2:0] S_C    = 3'd3;
+	localparam [2:0] S_DONE = 3'd4;
 
-	reg [1:0] state;
-	localparam [1:0] S_IDLE = 2'd0;
-	localparam [1:0] S_RUN  = 2'd1;
-	localparam [1:0] S_COPY = 2'd2;
-	localparam [1:0] S_DONE = 2'd3;
+	reg [2:0] state;
+	wire state_is_v = (state == S_V);
 
-	reg [3:0] grp;
-	reg [3:0] row;
+	// ------------------------------------------------------------------
+	// Storage
+	// ------------------------------------------------------------------
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0]  uwin [0:127];
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0]  vwin [0:127];
+	reg [7:0] uwq, vwq;
 
-	// Integer chroma motion needs no interpolation at all, only the top-left
-	// tap of each 2x2 neighbourhood.  P_Skip dominates the frame, so this is
-	// worth the one extra state.
-	wire full_pel = (frac_x == 3'd0) && (frac_y == 3'd0);
+	// Horizontally interpolated plane at full precision, 9 rows x 8 columns.
+	(* ramstyle = "M10K, no_rw_check" *) reg [11:0] utmp [0:127];
+	(* ramstyle = "M10K, no_rw_check" *) reg [11:0] vtmp [0:127];
+	reg [11:0] utq, vtq;
 
-	// Bilinear weights.  xFrac/yFrac are 0..7 so every weight is 0..8 and every
-	// product is 0..64; the four together always sum to exactly 64.
-	wire [3:0] wx1 = {1'b0, frac_x};
-	wire [3:0] wy1 = {1'b0, frac_y};
-	wire [3:0] wx0 = 4'd8 - wx1;
-	wire [3:0] wy0 = 4'd8 - wy1;
-	wire [6:0] w00 = wx0 * wy0;
-	wire [6:0] w10 = wx1 * wy0;
-	wire [6:0] w01 = wx0 * wy1;
-	wire [6:0] w11 = wx1 * wy1;
+	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] upred [0:63];
+	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] vpred [0:63];
+	assign pred_u_rd_data = upred[pred_rd_idx];
+	assign pred_v_rd_data = vpred[pred_rd_idx];
 
-	// Window index for row r, column c of the 9x9 reference region.
-	function automatic [6:0] cwix(input [3:0] r, input [3:0] c);
-		cwix = 7'(r) * 7'd9 + 7'(c);
-	endfunction
+	// ------------------------------------------------------------------
+	// Weighted sum datapath, shared by both passes and both planes.
+	//   out = a*(8-f) + b*f   with f in 0..7
+	// Written as a shift-add over the three bits of f so no DSP is inferred.
+	// ------------------------------------------------------------------
+	reg [2:0] fx_r, fy_r;
+	wire [2:0] fsel = (state_is_v) ? fy_r : fx_r;
+	wire [3:0] fbar = 4'd8 - {1'b0, fsel};
 
-	// Column within an 8-wide output row.
-	function automatic [2:0] ccix(input [3:0] c);
-		ccix = c[2:0];
-	endfunction
-
-	wire [3:0] col_base = grp * LANES[3:0];
-
-	function automatic [7:0] bilerp(input [7:0] a, input [7:0] b,
-	                                input [7:0] c, input [7:0] d,
-	                                input [6:0] k00, input [6:0] k10,
-	                                input [6:0] k01, input [6:0] k11);
-		reg [15:0] sum;
+	function automatic [15:0] wmul(input [11:0] v, input [3:0] w);
 		begin
-			// Max is 64*255 + 32 = 16352, so 16 bits never overflows.
-			sum = k00 * a + k10 * b + k01 * c + k11 * d + 16'd32;
-			bilerp = sum[13:6];
+			wmul = ({4'd0, v} & {16{w[0]}})
+			     + (({4'd0, v} << 1) & {16{w[1]}})
+			     + (({4'd0, v} << 2) & {16{w[2]}})
+			     + (({4'd0, v} << 3) & {16{w[3]}});
 		end
 	endfunction
 
-	wire [7:0] u_out [0:LANES-1];
-	wire [7:0] v_out [0:LANES-1];
+	// ------------------------------------------------------------------
+	// Control
+	// ------------------------------------------------------------------
+	reg [3:0] ao, ai;
+	reg [5:0] ccnt;
+	reg       a_run;
 
-	genvar gc;
-	generate
-		for (gc = 0; gc < LANES; gc = gc + 1) begin : gen_lane
-			localparam int GC = gc;
-			wire [3:0] lcol = col_base + GC[3:0];
-			wire [6:0] b00 = cwix(row, lcol);
-			wire [6:0] b01 = cwix(row, lcol + 4'd1);
-			wire [6:0] b10 = cwix(row + 4'd1, lcol);
-			wire [6:0] b11 = cwix(row + 4'd1, lcol + 4'd1);
-			assign u_out[gc] = bilerp(ref_u[b00], ref_u[b01], ref_u[b10], ref_u[b11],
-			                          w00, w10, w01, w11);
-			assign v_out[gc] = bilerp(ref_v[b00], ref_v[b01], ref_v[b10], ref_v[b11],
-			                          w00, w10, w01, w11);
-		end
-	endgenerate
+	// 2-deep sliding operand pair.  sa is the older sample (A or C), sb the
+	// newer one (B or D).
+	reg [11:0] u_sa, u_sb, v_sa, v_sb;
 
-	integer i;
-	integer n;
+	wire [15:0] u_mix = wmul(u_sa, fbar) + wmul(u_sb, {1'b0, fsel});
+	wire [15:0] v_mix = wmul(v_sa, fbar) + wmul(v_sb, {1'b0, fsel});
+
+	// ------------------------------------------------------------------
+	// Addressing
+	//   S_H: ao = window row 0..8, ai = window column 0..8
+	//   S_V: ao = output column 0..7, ai = window row 0..8
+	//   S_C: ccnt = y*8 + x
+	// ------------------------------------------------------------------
+	wire [2:0] cy = ccnt[5:3];
+	wire [2:0] cx = ccnt[2:0];
+
+	// With both fractions zero the block is a straight window copy, so the
+	// combine pass reads the integer sample directly out of the window.
+	wire [6:0] win_ra = (state == S_H) ? 7'(7'(ao) * 7'd9 + 7'(ai))
+	                                   : 7'(7'(cy) * 7'd9 + 7'(cx));
+	wire [6:0] tmp_ra = (state == S_V) ? 7'((7'(ai) << 3) + 7'(ao))
+	                                   : 7'((7'(cy) << 3) + 7'(cx));
+
+	// ------------------------------------------------------------------
+	// Pipeline: p1 describes the sample on uwq/vwq/utq/vtq this cycle,
+	// p2 describes the mix standing on u_mix/v_mix this cycle.
+	// ------------------------------------------------------------------
+	reg       p1_v, p2_v;
+	reg [3:0] p1_o, p1_i, p2_o, p2_i;
+	reg       c1_v;
+	reg [5:0] c1_idx;
+	reg       full_r;
+
+	// Horizontal pass writes t[row p2_o][column p2_i - 1].
+	wire       h_we = (state == S_H) && p2_v;
+	wire [6:0] h_wa = 7'((7'(p2_o) << 3) + 7'(p2_i) - 7'd1);
+
+	// Vertical pass retires output row p2_i - 1, column p2_o.
+	wire       v_we = (state == S_V) && p2_v;
+	wire [5:0] v_wa = 6'((6'(p2_i - 4'd1) << 3) + 6'(p2_o));
+	wire [7:0] v_wdu = 8'((u_mix + 16'd32) >> 6);
+	wire [7:0] v_wdv = 8'((v_mix + 16'd32) >> 6);
+
+	// ------------------------------------------------------------------
+	// Memories
+	// ------------------------------------------------------------------
+	always @(posedge clk) begin
+		if (win_u_wr) uwin[win_addr] <= win_data;
+		uwq <= uwin[win_ra];
+	end
+	always @(posedge clk) begin
+		if (win_v_wr) vwin[win_addr] <= win_data;
+		vwq <= vwin[win_ra];
+	end
+
+	always @(posedge clk) begin
+		if (h_we) utmp[h_wa] <= u_mix[11:0];
+		utq <= utmp[tmp_ra];
+	end
+	always @(posedge clk) begin
+		if (h_we) vtmp[h_wa] <= v_mix[11:0];
+		vtq <= vtmp[tmp_ra];
+	end
+
+	always @(posedge clk) begin
+		if (v_we)      upred[v_wa]  <= v_wdu;
+		else if (c1_v) upred[c1_idx] <= uwq;
+	end
+	always @(posedge clk) begin
+		if (v_we)      vpred[v_wa]  <= v_wdv;
+		else if (c1_v) vpred[c1_idx] <= vwq;
+	end
+
+	// ------------------------------------------------------------------
+	// Sequencer
+	// ------------------------------------------------------------------
 	always @(posedge clk) begin
 		if (reset) begin
-			state <= S_IDLE;
-			busy  <= 1'b0;
-			done  <= 1'b0;
-			grp   <= 4'd0;
-			row   <= 4'd0;
-			for (i = 0; i < 64; i = i + 1) begin
-				pred_u[i] <= 8'd128;
-				pred_v[i] <= 8'd128;
-			end
+			state  <= S_IDLE;
+			busy   <= 1'b0;
+			done   <= 1'b0;
+			a_run  <= 1'b0;
+			p1_v   <= 1'b0;
+			p2_v   <= 1'b0;
+			c1_v   <= 1'b0;
+			ao     <= 4'd0;
+			ai     <= 4'd0;
+			ccnt   <= 6'd0;
+			fx_r   <= 3'd0;
+			fy_r   <= 3'd0;
+			full_r <= 1'b0;
+			u_sa   <= 12'd0; u_sb <= 12'd0;
+			v_sa   <= 12'd0; v_sb <= 12'd0;
 		end else begin
 			done <= 1'b0;
+			p1_v <= 1'b0;
+			p2_v <= p1_v;
+			p2_o <= p1_o;
+			p2_i <= p1_i;
+			c1_v <= 1'b0;
+
+			// One new sample per cycle; the operand it pairs with is the one
+			// delivered on the previous cycle.  The first sample of a row or
+			// column only primes the pair, which is why emission starts at
+			// inner index 1.
+			if (p1_v) begin
+				u_sa <= u_sb;
+				v_sa <= v_sb;
+				if (state == S_V) begin
+					u_sb <= utq;
+					v_sb <= vtq;
+				end else begin
+					u_sb <= {4'd0, uwq};
+					v_sb <= {4'd0, vwq};
+				end
+			end
+
 			case (state)
 			S_IDLE: begin
-				busy <= 1'b0;
 				if (start) begin
-					busy  <= 1'b1;
-					grp   <= 4'd0;
-					row   <= 4'd0;
-					state <= full_pel ? S_COPY : S_RUN;
+					fx_r   <= frac_x;
+					fy_r   <= frac_y;
+					full_r <= (frac_x == 3'd0) && (frac_y == 3'd0);
+					busy   <= 1'b1;
+					ao     <= 4'd0;
+					ai     <= 4'd0;
+					ccnt   <= 6'd0;
+					a_run  <= 1'b1;
+					state  <= ((frac_x == 3'd0) && (frac_y == 3'd0)) ? S_C : S_H;
 				end
 			end
-			// Integer motion: a whole 8-sample row of both planes per cycle.
-			S_COPY: begin
-				for (n = 0; n < 8; n = n + 1) begin
-					pred_u[{row[2:0], n[2:0]}] <= ref_u[cwix(row, n[3:0])];
-					pred_v[{row[2:0], n[2:0]}] <= ref_v[cwix(row, n[3:0])];
+
+			S_H: begin
+				if (a_run) begin
+					p1_v <= 1'b1;
+					p1_o <= ao;
+					p1_i <= ai;
+					if (ai == 4'd8) begin
+						ai <= 4'd0;
+						if (ao == 4'd8) a_run <= 1'b0;
+						else            ao    <= ao + 4'd1;
+					end else begin
+						ai <= ai + 4'd1;
+					end
 				end
-				if (row == 4'd7) state <= S_DONE;
-				else row <= row + 4'd1;
+				if (p1_v && p1_i == 4'd0) p2_v <= 1'b0;
+				if (!a_run && !p1_v && !p2_v) begin
+					ao    <= 4'd0;
+					ai    <= 4'd0;
+					a_run <= 1'b1;
+					state <= S_V;
+				end
 			end
-			S_RUN: begin
-				for (n = 0; n < LANES; n = n + 1) begin
-					pred_u[{row[2:0], ccix(col_base + n[3:0])}] <= u_out[n];
-					pred_v[{row[2:0], ccix(col_base + n[3:0])}] <= v_out[n];
+
+			S_V: begin
+				if (a_run) begin
+					p1_v <= 1'b1;
+					p1_o <= ao;
+					p1_i <= ai;
+					if (ai == 4'd8) begin
+						ai <= 4'd0;
+						if (ao == 4'd7) a_run <= 1'b0;
+						else            ao    <= ao + 4'd1;
+					end else begin
+						ai <= ai + 4'd1;
+					end
 				end
-				if (grp == NGRP[3:0] - 4'd1) begin
-					grp <= 4'd0;
-					if (row == 4'd7) state <= S_DONE;
-					else row <= row + 4'd1;
-				end else begin
-					grp <= grp + 4'd1;
-				end
+				if (p1_v && p1_i == 4'd0) p2_v <= 1'b0;
+				if (!a_run && !p1_v && !p2_v) state <= S_DONE;
 			end
+
+			// Only reached for integer motion, where prediction is a copy of
+			// the window's integer samples.
+			S_C: begin
+				if (a_run) begin
+					c1_idx <= ccnt;
+					c1_v   <= 1'b1;
+					if (ccnt == 6'd63) a_run <= 1'b0;
+					else               ccnt  <= ccnt + 6'd1;
+				end
+				if (!a_run && !c1_v) state <= S_DONE;
+			end
+
 			S_DONE: begin
 				busy  <= 1'b0;
 				done  <= 1'b1;
 				state <= S_IDLE;
 			end
+
 			default: state <= S_IDLE;
 			endcase
 		end

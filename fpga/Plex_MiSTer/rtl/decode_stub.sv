@@ -369,15 +369,17 @@ module decode_stub #(
 	wire              dpb_chroma_v_window_valid;
 	wire [6:0]        dpb_chroma_window_idx;
 	wire [7:0]        dpb_chroma_window_sample;
-	reg [7:0]         dpb_luma_win [0:440];
-	reg [7:0]         dpb_u_win [0:80];
-	reg [7:0]         dpb_v_win [0:80];
-	wire [7:0]        dpb_pred_y [0:255];
-	wire              dpb_pred_y_valid [0:255];
-	wire [7:0]        dpb_pred_u [0:63];
-	wire              dpb_pred_u_valid [0:63];
-	wire [7:0]        dpb_pred_v [0:63];
-	wire              dpb_pred_v_valid [0:63];
+	// The reference windows stream straight into the MC engines' window RAMs.
+	// They used to be staged in 603 bytes of register file here and indexed at
+	// runtime, which is what turned the interpolator into an 89,888-ALUT
+	// block the device could not hold.
+	wire              dpb_mc_busy;
+	wire              dpb_mc_done;
+	wire [7:0]        dpb_pred_y [0:15];
+	wire [7:0]        dpb_pred_u_sample;
+	wire [7:0]        dpb_pred_v_sample;
+	wire              dpb_pred_y_in_part;
+	wire              dpb_pred_c_in_part;
 	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
 	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
 	wire              dpb_fill_sample_phase = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx < 9'd384);
@@ -438,7 +440,7 @@ module decode_stub #(
 	                                  dpb_pred_y[8] ^ dpb_pred_y[9] ^ dpb_pred_y[10] ^ dpb_pred_y[11] ^
 	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
 	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
-	                                 dpb_pred_y_valid[0];
+	                                 dpb_pred_y_in_part;
 	// DPB local memory — two banks for ping-pong (current/reference).
 	// In simulation, backed by SRAM; testbench pre-fills reference bank
 	// with real IDR decode data for honest inter measurement.
@@ -523,22 +525,43 @@ module decode_stub #(
 		.chroma_window_sample(dpb_chroma_window_sample)
 	);
 
-	h264_inter_mc_part u_stream_mc (
-		.luma_ref_win(dpb_luma_win),
-		.chroma_u_ref_win(dpb_u_win),
-		.chroma_v_ref_win(dpb_v_win),
+	// Sequential, resource-shared MC.  One 6-tap datapath and one bilinear
+	// unit, with the reference windows and the working planes in M10K, in
+	// place of the fully parallel h264_inter_mc_part that instantiated a
+	// filter per output sample.
+	reg dpb_mc_start;
+	always @(posedge clk)
+		dpb_mc_start <= !reset && dpb_fetch_done;
+
+	h264_mc_block u_stream_mc (
+		.clk(clk), .reset(reset),
+		.start(dpb_mc_start),
+		.busy(dpb_mc_busy), .done(dpb_mc_done),
+		.luma_win_wr(dpb_luma_window_valid),
+		.luma_win_addr(dpb_luma_window_idx),
+		.luma_win_data(dpb_luma_window_sample),
+		.chroma_u_win_wr(dpb_chroma_u_window_valid),
+		.chroma_v_win_wr(dpb_chroma_v_window_valid),
+		.chroma_win_addr(dpb_chroma_window_idx),
+		.chroma_win_data(dpb_chroma_window_sample),
 		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
 		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
 		.part_w(dpb_part_w), .part_h(dpb_part_h),
-		.pred_y(dpb_pred_y), .pred_y_valid(dpb_pred_y_valid),
-		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
-		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
+		.pred_y_rd_idx(8'd0),
+		.pred_y_rd_data(),
+		.pred_y_rd_in_part(dpb_pred_y_in_part),
+		.pred_c_rd_idx(6'd0),
+		.pred_u_rd_data(dpb_pred_u_sample),
+		.pred_v_rd_data(dpb_pred_v_sample),
+		.pred_c_rd_in_part(dpb_pred_c_in_part),
+		.pred_y_head(dpb_pred_y)
 	);
 	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
 	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
 	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |
-	                                   |dpb_chroma_origin_y | dpb_pred_u_valid[0] |
-	                                   dpb_pred_v_valid[0] | |dpb_pred_u[0] | |dpb_pred_v[0] |
+	                                   |dpb_chroma_origin_y | dpb_pred_y_in_part |
+	                                   dpb_pred_c_in_part | |dpb_pred_u_sample |
+	                                   |dpb_pred_v_sample | dpb_mc_busy | dpb_mc_done |
 	                                   |dpb_inter_sig |
 	                                   lat_p_skip | |lat_p_part_count | lat_p_uses_sub_mb |
 	                                   lat_p_intra | |lat_p_mb_x | |lat_p_mb_y |
@@ -572,13 +595,6 @@ module decode_stub #(
 		dpb_mem_rd_dbg_q <= reset ? 1'b0 : dpb_mem_rd;
 		dpb_mem_raddr_dbg_q <= dpb_mem_raddr;
 `endif
-		if (dpb_luma_window_valid)
-			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
-		if (dpb_chroma_u_window_valid)
-			dpb_u_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
-		if (dpb_chroma_v_window_valid)
-			dpb_v_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
-
 		if (reset) begin
 			phase         <= PH_IDLE;
 			busy          <= 0;

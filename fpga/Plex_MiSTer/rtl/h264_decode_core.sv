@@ -413,9 +413,10 @@ module h264_decode_core #(
     reg signed [15:0] lat_p16_residual_y [0:255];
     reg signed [15:0] lat_p16_residual_u [0:63];
     reg signed [15:0] lat_p16_residual_v [0:63];
-    reg [7:0]  p16_luma_ref [0:440];
-    reg [7:0]  p16_chroma_u_ref [0:80];
-    reg [7:0]  p16_chroma_v_ref [0:80];
+    // The reference windows are no longer staged in registers here.  They
+    // stream straight into the MC engines' internal window RAMs, because 603
+    // bytes of register file with runtime indices is what produced the
+    // 89,888-ALUT interpolator the fit rejected.
     reg        intra_active_r;
     reg [7:0]  intra_mb_x_r;
     reg [7:0]  intra_mb_y_r;
@@ -811,12 +812,12 @@ module h264_decode_core #(
         (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
                              lat_p16_residual_v[wb_sample_idx[5:0]];
 
-    wire [7:0] p16_pred_y [0:255];
-    wire       p16_pred_y_valid [0:255];
-    wire [7:0] p16_pred_u [0:63];
-    wire       p16_pred_u_valid [0:63];
-    wire [7:0] p16_pred_v [0:63];
-    wire       p16_pred_v_valid [0:63];
+    wire [7:0] p16_pred_y_rd_data;
+    wire [7:0] p16_pred_u_rd_data;
+    wire [7:0] p16_pred_v_rd_data;
+    wire       p16_pred_y_in_part;
+    wire       p16_pred_c_in_part;
+    wire [7:0] p16_pred_y_head [0:15];
     wire p16_mc_busy;
     wire p16_mc_done;
     // Fractional parts. A quarter-luma-sample vector is already an
@@ -830,29 +831,36 @@ module h264_decode_core #(
         .start(p16_mc_start_r),
         .busy(p16_mc_busy),
         .done(p16_mc_done),
-        .luma_ref_win(p16_luma_ref),
-        .chroma_u_ref_win(p16_chroma_u_ref),
-        .chroma_v_ref_win(p16_chroma_v_ref),
+        .luma_win_wr(dpb_ref_luma_window_valid),
+        .luma_win_addr(dpb_ref_luma_window_idx),
+        .luma_win_data(dpb_ref_luma_window_sample),
+        .chroma_u_win_wr(dpb_ref_chroma_u_window_valid),
+        .chroma_v_win_wr(dpb_ref_chroma_v_window_valid),
+        .chroma_win_addr(dpb_ref_chroma_window_idx),
+        .chroma_win_data(dpb_ref_chroma_window_sample),
         .luma_frac_x(p16_mv_x_qpel_r[1:0]),
         .luma_frac_y(p16_mv_y_qpel_r[1:0]),
         .chroma_frac_x(p16_mv_x_qpel_r[2:0]),
         .chroma_frac_y(p16_mv_y_qpel_r[2:0]),
         .part_w(5'd16),
         .part_h(5'd16),
-        .pred_y(p16_pred_y),
-        .pred_y_valid(p16_pred_y_valid),
-        .pred_u(p16_pred_u),
-        .pred_u_valid(p16_pred_u_valid),
-        .pred_v(p16_pred_v),
-        .pred_v_valid(p16_pred_v_valid)
+        .pred_y_rd_idx(wb_sample_idx),
+        .pred_y_rd_data(p16_pred_y_rd_data),
+        .pred_y_rd_in_part(p16_pred_y_in_part),
+        .pred_c_rd_idx(wb_sample_idx[5:0]),
+        .pred_u_rd_data(p16_pred_u_rd_data),
+        .pred_v_rd_data(p16_pred_v_rd_data),
+        .pred_c_rd_in_part(p16_pred_c_in_part),
+        .pred_y_head(p16_pred_y_head)
     );
-    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_valid[wb_sample_idx] :
-                            (wb_plane == 2'd1) ? p16_pred_u_valid[wb_sample_idx[5:0]] :
-                                                 p16_pred_v_valid[wb_sample_idx[5:0]];
+    // The engines' prediction read ports are asynchronous, so the writeback
+    // walk indexes them directly and needs no extra pipeline stage.
+    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_in_part
+                                               : p16_pred_c_in_part;
     wire [7:0] p16_pred_sample = !p16_pred_in_part ? 8'd0 :
-                                 (wb_plane == 2'd0) ? p16_pred_y[wb_sample_idx] :
-                                 (wb_plane == 2'd1) ? p16_pred_u[wb_sample_idx[5:0]] :
-                                                      p16_pred_v[wb_sample_idx[5:0]];
+                                 (wb_plane == 2'd0) ? p16_pred_y_rd_data :
+                                 (wb_plane == 2'd1) ? p16_pred_u_rd_data :
+                                                      p16_pred_v_rd_data;
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
 `else
@@ -1339,12 +1347,6 @@ module h264_decode_core #(
                 lat_p16_residual_u[wb_i] <= 16'sd0;
                 lat_p16_residual_v[wb_i] <= 16'sd0;
             end
-            for (wb_i = 0; wb_i < 441; wb_i = wb_i + 1)
-                p16_luma_ref[wb_i] <= 8'd0;
-            for (wb_i = 0; wb_i < 81; wb_i = wb_i + 1) begin
-                p16_chroma_u_ref[wb_i] <= 8'd0;
-                p16_chroma_v_ref[wb_i] <= 8'd0;
-            end
             for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
                 mv_top_x[wb_i] <= 16'sd0;
                 mv_top_y[wb_i] <= 16'sd0;
@@ -1547,15 +1549,12 @@ module h264_decode_core #(
                 wb_state <= ST_P16_WIN_FETCH;
             end
             ST_P16_WIN_FETCH: begin
-                if (dpb_ref_luma_window_valid)
-                    p16_luma_ref[dpb_ref_luma_window_idx] <= dpb_ref_luma_window_sample;
-                if (dpb_ref_chroma_u_window_valid)
-                    p16_chroma_u_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
-                if (dpb_ref_chroma_v_window_valid)
-                    p16_chroma_v_ref[dpb_ref_chroma_window_idx] <= dpb_ref_chroma_window_sample;
+                // The window samples go straight into the engines' window
+                // RAMs off the same valid/index/sample strobes; nothing is
+                // staged here any more.
                 if (dpb_ref_fetch_done) begin
                     // The last window sample lands on this same edge, so the
-                    // engine's first read of p16_luma_ref happens after it.
+                    // engine's first window RAM read happens after it.
                     p16_mc_start_r <= 1'b1;
                     wb_state <= ST_P16_MC;
                 end

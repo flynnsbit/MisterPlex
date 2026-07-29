@@ -1,120 +1,102 @@
-// Lane-parallel separable quarter-sample luma interpolator (ITU-T H.264 8.4.2.2.1).
+// Resource-shared quarter-sample luma interpolator (ITU-T H.264 8.4.2.2.1).
 //
-// THROUGHPUT BUDGET -- why this module was widened
-//   clk_sys is 20 MHz (rtl/pll/pll_0002.v output_clock_frequency0), not 100.
-//   624x480 is 39x30 = 1170 macroblocks and the content is ~24 fps, so the
-//   whole decoder gets 20e6 / (1170 * 24) = 712 cycles per macroblock for
-//   every stage combined: reference fetch, prediction, residual,
-//   reconstruction and the in-loop filter.
+// AREA IS THE HARD CONSTRAINT
+//   The previous revisions of this engine took the 21x21 reference window in
+//   as a flat `input [7:0] ref_win [0:440]` port array and indexed it with
+//   runtime row/column values.  Every such index is a 441:1 byte multiplexer
+//   in fabric, and each output lane needed 33 of them (five 6-tap groups plus
+//   three direct integer samples).  That, not the taps, is what produced an
+//   89,888 ALUT block: the filter arithmetic is shift-add and nearly free,
+//   the window random-access port is not.
 //
-//   The first sequential version of this engine spent 6*16 priming cycles,
-//   16*16 run cycles and 16 shift cycles = 368 cycles on luma prediction
-//   alone, over half the entire macroblock budget, for one 16x16 partition.
-//   It is not that the 6-tap needed six cycles -- it was already a one-cycle
-//   shift-add dot product -- it is that only one output sample was retired
-//   per cycle.
+//   This version therefore obeys two rules:
+//     1. The window lives in RAM, addressed one sample per cycle, never in
+//        registers with a runtime index.
+//     2. There is exactly ONE 6-tap datapath in the whole module.  It is
+//        time-multiplexed across the horizontal pass and all three vertical
+//        passes.  A 6-deep shift register slides along the walk, so each new
+//        output needs only one new sample out of memory.
+//   Memory is spent to buy logic, which is the trade the device budget wants:
+//   M10K occupancy was 52% while logic utilisation was 248%.
 //
-// WHAT CHANGED
-//   1. LANES output columns retire per cycle instead of one.  The 6-tap is
-//      shift-add only, so a lane costs adders, not DSPs or memory ports.
-//   2. The b1 sliding row buffer is only maintained for the five sub-sample
-//      positions that actually read the centre sample j.  Every other
-//      position needs at most the horizontal 6-tap of the current output row
-//      and the row below it, which are computed directly from the window.
-//      That removes both the prime pass and the shift pass for 11 of the 16
-//      positions.
-//   3. Full-pel (frac_x == 0 && frac_y == 0) is a straight window copy and
-//      retires a whole 16-sample row per cycle.  P_Skip is 79% of our
-//      macroblocks and lands here whenever the predicted motion vector is
-//      integer, so this is the single hottest path in the decoder.
-//
-//   Resulting schedule, with LANES = 4:
-//     full-pel                        16 cycles
-//     no centre sample (11 of 16)     16 * 4          =  64 cycles
-//     centre sample    ( 5 of 16)     24 + 64 + 16    = 104 cycles
-//   against 368 before.
+// SCHEDULE (cycles; latency is negotiable, area is not)
+//   full-pel  (fx=0,fy=0)        259
+//   fx!=0, fy=0                  444 + 259
+//   fx=0,  fy!=0                 339 + 259
+//   worst (fx=3, centre sample)  444 + 3*339 + 259 = 1720
 //
 // GEOMETRY
-//   ref_win is the 21x21 POST-deblock reference region the DPB fetch
+//   The window is the 21x21 POST-deblock reference region the DPB fetch
 //   produced, raster order, already edge-clamped by h264_luma_ref_tap_addr so
-//   motion vectors that point outside the picture replicate the border
-//   sample.  The integer sample for output (x,y) is ref_win[(y+2)*21+(x+2)].
+//   motion vectors pointing outside the picture replicate the border sample.
+//   The integer sample for output (x,y) is window[(y+2)*21 + (x+2)].
 //
 // SEPARABILITY AND THE DOUBLE-ROUNDING TRAP
-//   b1(r,x) is the raw horizontal 6-tap at full precision, NOT rounded:
+//   b1(r,x) is the raw horizontal 6-tap at FULL precision, not rounded:
 //     b1 = W[r][x] - 5W[r][x+1] + 20W[r][x+2] + 20W[r][x+3] - 5W[r][x+4] + W[r][x+5]
-//   The half-sample b is Clip1((b1 + 16) >> 5), but the centre sample j is a
-//   vertical 6-tap over the *unrounded* b1 values followed by a single
-//   (j1 + 512) >> 10.  Rounding b1 before the vertical pass is the classic
-//   conformance bug and is exactly what the b1 row buffer here exists to
-//   avoid.  The direct-b1 shortcut below is bit-identical because brow[2] and
-//   brow[3] always held the raw horizontal taps of window rows y+2 and y+3.
+//   The half sample b is Clip1((b1 + 16) >> 5), but the centre sample j is a
+//   vertical 6-tap over the *unrounded* b1 values followed by one single
+//   (j1 + 512) >> 10.  hbram therefore stores b1 unrounded at 16 bits signed
+//   (range -2550..10710); the >>5 rounding for b happens only on the way out,
+//   in the combine pass.  Rounding into hbram would be the classic
+//   conformance bug.
 
 `default_nettype none
 
-module h264_mc_luma_qpel #(
-	// Output columns retired per cycle.  Must divide 16.
-	parameter int LANES = 4
-) (
+module h264_mc_luma_qpel (
 	input  wire        clk,
 	input  wire        reset,
 
+	// Reference window streaming write port.  441 samples, raster order,
+	// index = row*21 + col.  Written while the engine is idle, straight from
+	// the DPB fetch, so no 441-register staging array is needed anywhere.
+	input  wire        win_wr,
+	input  wire [8:0]  win_addr,
+	input  wire [7:0]  win_data,
+
 	input  wire        start,
-	input  wire [7:0]  ref_win [0:440],
 	input  wire [1:0]  frac_x,
 	input  wire [1:0]  frac_y,
 
 	output reg         busy,
 	output reg         done,
-	output reg  [7:0]  pred [0:255]
+
+	// Prediction read port: 16x16 samples, index = y*16 + x, asynchronous so
+	// the consumer's writeback walk needs no extra pipeline stage.
+	input  wire [7:0]  pred_rd_idx,
+	output wire [7:0]  pred_rd_data,
+
+	// First 16 samples of the block kept in registers, for the legacy
+	// observability path in decode_stub which taps them in parallel.
+	output reg  [7:0]  pred_head [0:15]
 );
-	localparam int WIN_COLS = 21;
-	localparam int NGRP     = 16 / LANES;
+	// ------------------------------------------------------------------
+	// Storage.  Everything a pass touches is memory, addressed serially.
+	// ------------------------------------------------------------------
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] winram [0:511];
+	reg [7:0] winq;
 
-	// b1 sliding row buffer: raw horizontal taps of window rows y..y+5 for the
-	// output row being emitted.  Only maintained when the centre sample is
-	// actually read.
-	reg signed [15:0] brow [0:5][0:15];
-	reg signed [15:0] bnext [0:15];
+	// Unrounded horizontal 6-tap plane: 21 window rows x 16 output columns.
+	(* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] hbram [0:511];
+	reg signed [15:0] hbq;
 
-	reg  [2:0] state;
-	localparam [2:0] S_IDLE  = 3'd0;
-	localparam [2:0] S_PRIME = 3'd1;
-	localparam [2:0] S_RUN   = 3'd2;
-	localparam [2:0] S_SHIFT = 3'd3;
-	localparam [2:0] S_COPY  = 3'd4;
-	localparam [2:0] S_DONE  = 3'd5;
+	// Rounded vertical half samples over the 16x16 output grid.
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] shram [0:255]; // h, window column x+2
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] smram [0:255]; // m, window column x+3
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] sjram [0:255]; // j, centre sample
+	reg [7:0] shq, smq, sjq;
 
-	reg [4:0] grp;   // 0..NGRP-1 column group within a row
-	reg [4:0] row;   // prime row 0..5, or output row 0..15
+	(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] predram [0:255];
+	assign pred_rd_data = predram[pred_rd_idx];
 
-	// Latched at start so the schedule cannot change under a running block.
-	reg [1:0] fx_r, fy_r;
-	reg       use_j_r;
+	// ------------------------------------------------------------------
+	// The single shared 6-tap datapath.
+	// ------------------------------------------------------------------
+	reg signed [15:0] sr [0:5];
 
-	// The centre sample j is the only value that needs vertical filtering over
-	// the unrounded horizontal taps, i.e. the only reason to keep six rows of
-	// b1 alive.  Positions f, i, j, k and q read it.
-	wire use_j = (frac_x == 2'd2 && frac_y != 2'd0) ||
-	             (frac_y == 2'd2 && frac_x != 2'd0);
-	wire full_pel = (frac_x == 2'd0) && (frac_y == 2'd0);
-
-	function automatic signed [15:0] s16(input [7:0] v);
-		s16 = $signed({8'd0, v});
-	endfunction
-
-	// Window index for row r, column c of the 21x21 reference region.
-	function automatic [8:0] wix(input [4:0] r, input [5:0] c);
-		wix = 9'(r) * 9'd21 + 9'(c);
-	endfunction
-
-	// Column within a 16-wide row, for pred/brow/bnext.
-	function automatic [3:0] cix(input [4:0] c);
-		cix = c[3:0];
-	endfunction
-
-	// 6-tap (1,-5,20,20,-5,1).  Written as shift-adds so no DSP block is
-	// consumed and the whole engine stays in fabric.
+	// (1,-5,20,20,-5,1) written as shift-adds, so no DSP block is consumed
+	// and the whole engine stays in fabric.  This also relieves the 130% DSP
+	// pressure the fit reported.
 	function automatic signed [23:0] tap6(
 		input signed [23:0] a0, input signed [23:0] a1, input signed [23:0] a2,
 		input signed [23:0] a3, input signed [23:0] a4, input signed [23:0] a5);
@@ -127,11 +109,13 @@ module h264_mc_luma_qpel #(
 		end
 	endfunction
 
+	wire signed [23:0] tapo = tap6(sr[0], sr[1], sr[2], sr[3], sr[4], sr[5]);
+
 	function automatic [7:0] clip1(input signed [23:0] v);
 		begin
-			if (v < 0) clip1 = 8'd0;
+			if (v < 0)             clip1 = 8'd0;
 			else if (v > 24'sd255) clip1 = 8'd255;
-			else clip1 = v[7:0];
+			else                   clip1 = v[7:0];
 		end
 	endfunction
 
@@ -141,211 +125,289 @@ module h264_mc_luma_qpel #(
 		end
 	endfunction
 
-	// Horizontal raw 6-tap of window row r starting at output column c.
-	function automatic signed [23:0] horz(input [4:0] r, input [4:0] c);
+	// ------------------------------------------------------------------
+	// Control
+	// ------------------------------------------------------------------
+	localparam [2:0] S_IDLE = 3'd0;
+	localparam [2:0] S_H    = 3'd1; // horizontal pass -> hbram
+	localparam [2:0] S_V    = 3'd2; // vertical pass   -> shram/smram/sjram
+	localparam [2:0] S_C    = 3'd3; // combine         -> predram
+	localparam [2:0] S_DONE = 3'd4;
+
+	reg [2:0] state;
+	reg [1:0] fx_r, fy_r;
+	reg [1:0] vsel;          // 0 = h column, 1 = m column, 2 = centre j
+	reg       use_j_r;
+
+	// Walk counters: ao is the outer index, ai the inner index.
+	reg [4:0] ao, ai;
+	reg [7:0] ccnt;
+	reg       a_run;
+
+	wire use_j    = (frac_x == 2'd2 && frac_y != 2'd0) ||
+	                (frac_y == 2'd2 && frac_x != 2'd0);
+	wire full_pel = (frac_x == 2'd0) && (frac_y == 2'd0);
+
+	// use_j implies frac_x != 0, so the horizontal pass covers the centre
+	// sample's source plane as well as the b/s half samples.
+	wire need_sh = (fy_r != 2'd0);
+	wire need_sm = (fx_r == 2'd3) && (fy_r != 2'd0);
+	wire need_sj = use_j_r;
+
+	// Pick the next vertical sub-pass that is actually required, or 3 when
+	// none are left and the combine pass should run.
+	function automatic [1:0] next_vsel(input [1:0] from);
 		begin
-			horz = tap6(24'(s16(ref_win[wix(r, {1'b0, c} + 6'd0)])),
-			            24'(s16(ref_win[wix(r, {1'b0, c} + 6'd1)])),
-			            24'(s16(ref_win[wix(r, {1'b0, c} + 6'd2)])),
-			            24'(s16(ref_win[wix(r, {1'b0, c} + 6'd3)])),
-			            24'(s16(ref_win[wix(r, {1'b0, c} + 6'd4)])),
-			            24'(s16(ref_win[wix(r, {1'b0, c} + 6'd5)])));
+			if      (from <= 2'd0 && need_sh) next_vsel = 2'd0;
+			else if (from <= 2'd1 && need_sm) next_vsel = 2'd1;
+			else if (from <= 2'd2 && need_sj) next_vsel = 2'd2;
+			else                              next_vsel = 2'd3;
 		end
 	endfunction
 
-	// Vertical raw 6-tap over integer window samples at window column c.
-	function automatic signed [23:0] vert_int(input [4:0] y0, input [5:0] c);
-		begin
-			vert_int = tap6(24'(s16(ref_win[wix(y0 + 5'd0, c)])),
-			                24'(s16(ref_win[wix(y0 + 5'd1, c)])),
-			                24'(s16(ref_win[wix(y0 + 5'd2, c)])),
-			                24'(s16(ref_win[wix(y0 + 5'd3, c)])),
-			                24'(s16(ref_win[wix(y0 + 5'd4, c)])),
-			                24'(s16(ref_win[wix(y0 + 5'd5, c)])));
-		end
-	endfunction
+	// ------------------------------------------------------------------
+	// Address generation, combinational into the synchronous RAM reads.
+	//   S_H: ao = window row 0..20,   ai = window column 0..20
+	//   S_V: ao = output column 0..15, ai = window row 0..20
+	//   S_C: ccnt = y*16 + x
+	// ------------------------------------------------------------------
+	wire [3:0] cy = ccnt[7:4];
+	wire [3:0] cx = ccnt[3:0];
 
-	wire [4:0] col_base = grp * LANES[4:0];
+	// The one integer sample the position needs: pG for G/a/d, pH for c,
+	// pM for n.  No position reads two of them, so one window port suffices.
+	reg [8:0] cwin_a;
+	always @* begin
+		case ({fy_r, fx_r})
+		4'b0011: cwin_a = 9'((9'(cy) + 9'd2) * 9'd21 + 9'(cx) + 9'd3); // pH
+		4'b1100: cwin_a = 9'((9'(cy) + 9'd3) * 9'd21 + 9'(cx) + 9'd2); // pM
+		default: cwin_a = 9'((9'(cy) + 9'd2) * 9'd21 + 9'(cx) + 9'd2); // pG
+		endcase
+	end
 
-	// While priming, hr_row walks window rows 0..5 directly; while running it
-	// stages window row y+6 for the next output row.  The last output row has
-	// no row y+6, so clamp the address inside the 21x21 window even though the
-	// staged value is discarded.
-	wire [4:0] hr_row_raw = (state == S_PRIME) ? row : (row + 5'd6);
-	wire [4:0] hr_row = (hr_row_raw > 5'd20) ? 5'd20 : hr_row_raw;
+	// b comes from window row y+2; s (used by p, q, r) from window row y+3.
+	wire [8:0] chb_a = (fy_r == 2'd3) ? 9'(((9'(cy) + 9'd3) << 4) + 9'(cx))
+	                                  : 9'(((9'(cy) + 9'd2) << 4) + 9'(cx));
 
-	// Per-lane datapath.  Every lane is the original single-column expression
-	// with col replaced by col_base + lane, so the arithmetic is unchanged.
-	wire signed [23:0] lane_hraw [0:LANES-1];
-	wire [7:0]         lane_qpel [0:LANES-1];
+	reg [8:0] win_ra;
+	always @* begin
+		case (state)
+		S_H:     win_ra = 9'(9'(ao) * 9'd21 + 9'(ai));
+		S_V:     win_ra = (vsel == 2'd1) ? 9'(9'(ai) * 9'd21 + 9'(ao) + 9'd3)
+		                                 : 9'(9'(ai) * 9'd21 + 9'(ao) + 9'd2);
+		default: win_ra = cwin_a;
+		endcase
+	end
 
-	genvar gl;
-	generate
-		for (gl = 0; gl < LANES; gl = gl + 1) begin : gen_lane
-			localparam int GL = gl;
-			wire [4:0] lcol = col_base + GL[4:0];
+	wire [8:0] hb_ra = (state == S_V) ? 9'((9'(ai) << 4) + 9'(ao)) : chb_a;
+	wire [7:0] sv_ra = 8'((8'(cy) << 4) + 8'(cx));
 
-			assign lane_hraw[gl] = horz(hr_row, lcol);
+	// ------------------------------------------------------------------
+	// Pipeline.  p1 describes the sample standing on winq/hbq this cycle;
+	// p2 describes the tap6 result standing on tapo this cycle.
+	// ------------------------------------------------------------------
+	reg       p1_v, p2_v;
+	reg [4:0] p1_o, p1_i, p2_o, p2_i;
+	reg       c1_v;
+	reg [7:0] c1_idx;
 
-			// b1 of the output row and of the row below it.  Taken straight
-			// from the window when the buffer is not being maintained; these
-			// are the same raw taps brow[2] and brow[3] would have held.
-			wire signed [23:0] b1 = use_j_r ? 24'($signed(brow[2][cix(lcol)]))
-			                                : horz(row + 5'd2, lcol);
-			wire signed [23:0] s1 = use_j_r ? 24'($signed(brow[3][cix(lcol)]))
-			                                : horz(row + 5'd3, lcol);
-			wire signed [23:0] j1 = tap6(24'(brow[0][cix(lcol)]), 24'(brow[1][cix(lcol)]),
-			                             24'(brow[2][cix(lcol)]), 24'(brow[3][cix(lcol)]),
-			                             24'(brow[4][cix(lcol)]), 24'(brow[5][cix(lcol)]));
+	wire       hb_we = (state == S_H) && p2_v;
+	wire [8:0] hb_wa = 9'((9'(p2_o) << 4) + 9'(p2_i) - 9'd5);
 
-			wire signed [23:0] h1 = vert_int(row, {1'b0, lcol} + 6'd2);
-			wire signed [23:0] m1 = vert_int(row, {1'b0, lcol} + 6'd3);
+	wire       v_we  = (state == S_V) && p2_v;
+	wire [7:0] v_wa  = 8'((8'(p2_i - 5'd5) << 4) + 8'(p2_o));
+	wire [7:0] v_wd  = (vsel == 2'd2) ? clip1((tapo + 24'sd512) >>> 10)
+	                                  : clip1((tapo + 24'sd16)  >>> 5);
 
-			wire [7:0] pG = ref_win[wix(row + 5'd2, {1'b0, lcol} + 6'd2)];
-			wire [7:0] pH = ref_win[wix(row + 5'd2, {1'b0, lcol} + 6'd3)];
-			wire [7:0] pM = ref_win[wix(row + 5'd3, {1'b0, lcol} + 6'd2)];
+	// ------------------------------------------------------------------
+	// Combine pass
+	// ------------------------------------------------------------------
+	wire [7:0] pI = winq;
+	wire [7:0] sB = clip1(($signed({{8{hbq[15]}}, hbq}) + 24'sd16) >>> 5);
+	wire [7:0] sH = shq;
+	wire [7:0] sM = smq;
+	wire [7:0] sJ = sjq;
 
-			wire [7:0] sb = clip1((b1 + 24'sd16) >>> 5);
-			wire [7:0] ss = clip1((s1 + 24'sd16) >>> 5);
-			wire [7:0] sh = clip1((h1 + 24'sd16) >>> 5);
-			wire [7:0] sm = clip1((m1 + 24'sd16) >>> 5);
-			wire [7:0] sj = clip1((j1 + 24'sd512) >>> 10);
+	reg [7:0] cq;
+	always @* begin
+		case ({fy_r, fx_r})
+		4'b0000: cq = pI;             // G
+		4'b0001: cq = avg2(pI, sB);   // a
+		4'b0010: cq = sB;             // b
+		4'b0011: cq = avg2(sB, pI);   // c   (pI is pH here)
+		4'b0100: cq = avg2(pI, sH);   // d
+		4'b0101: cq = avg2(sB, sH);   // e
+		4'b0110: cq = avg2(sB, sJ);   // f
+		4'b0111: cq = avg2(sB, sM);   // g
+		4'b1000: cq = sH;             // h
+		4'b1001: cq = avg2(sH, sJ);   // i
+		4'b1010: cq = sJ;             // j
+		4'b1011: cq = avg2(sJ, sM);   // k
+		4'b1100: cq = avg2(pI, sH);   // n   (pI is pM here)
+		4'b1101: cq = avg2(sH, sB);   // p   (sB is s here)
+		4'b1110: cq = avg2(sJ, sB);   // q
+		default: cq = avg2(sM, sB);   // r
+		endcase
+	end
 
-			reg [7:0] q;
-			always @* begin
-				case ({fy_r, fx_r})
-				4'b0000: q = pG;                 // G
-				4'b0001: q = avg2(pG, sb);       // a
-				4'b0010: q = sb;                 // b
-				4'b0011: q = avg2(sb, pH);       // c
-				4'b0100: q = avg2(pG, sh);       // d
-				4'b0101: q = avg2(sb, sh);       // e
-				4'b0110: q = avg2(sb, sj);       // f
-				4'b0111: q = avg2(sb, sm);       // g
-				4'b1000: q = sh;                 // h
-				4'b1001: q = avg2(sh, sj);       // i
-				4'b1010: q = sj;                 // j
-				4'b1011: q = avg2(sj, sm);       // k
-				4'b1100: q = avg2(pM, sh);       // n
-				4'b1101: q = avg2(sh, ss);       // p
-				4'b1110: q = avg2(sj, ss);       // q
-				default: q = avg2(sm, ss);       // r
-				endcase
-			end
-			assign lane_qpel[gl] = q;
-		end
-	endgenerate
+	// ------------------------------------------------------------------
+	// Memories
+	// ------------------------------------------------------------------
+	always @(posedge clk) begin
+		if (win_wr) winram[win_addr] <= win_data;
+		winq <= winram[win_ra];
+	end
 
+	always @(posedge clk) begin
+		if (hb_we) hbram[hb_wa] <= tapo[15:0];
+		hbq <= hbram[hb_ra];
+	end
+
+	always @(posedge clk) begin
+		if (v_we && vsel == 2'd0) shram[v_wa] <= v_wd;
+		shq <= shram[sv_ra];
+	end
+	always @(posedge clk) begin
+		if (v_we && vsel == 2'd1) smram[v_wa] <= v_wd;
+		smq <= smram[sv_ra];
+	end
+	always @(posedge clk) begin
+		if (v_we && vsel == 2'd2) sjram[v_wa] <= v_wd;
+		sjq <= sjram[sv_ra];
+	end
+
+	always @(posedge clk) begin
+		if (c1_v) predram[c1_idx] <= cq;
+	end
+
+	// ------------------------------------------------------------------
+	// Sequencer
+	// ------------------------------------------------------------------
 	integer i;
-	integer k;
-	integer n;
 	always @(posedge clk) begin
 		if (reset) begin
-			state <= S_IDLE;
-			busy  <= 1'b0;
-			done  <= 1'b0;
-			grp   <= 5'd0;
-			row   <= 5'd0;
-			fx_r  <= 2'd0;
-			fy_r  <= 2'd0;
+			state   <= S_IDLE;
+			busy    <= 1'b0;
+			done    <= 1'b0;
+			a_run   <= 1'b0;
+			p1_v    <= 1'b0;
+			p2_v    <= 1'b0;
+			c1_v    <= 1'b0;
+			ao      <= 5'd0;
+			ai      <= 5'd0;
+			ccnt    <= 8'd0;
+			vsel    <= 2'd0;
+			fx_r    <= 2'd0;
+			fy_r    <= 2'd0;
 			use_j_r <= 1'b0;
-			for (i = 0; i < 256; i = i + 1) pred[i] <= 8'd0;
-			for (k = 0; k < 16; k = k + 1) begin
-				bnext[k]   <= 16'sd0;
-				brow[0][k] <= 16'sd0;
-				brow[1][k] <= 16'sd0;
-				brow[2][k] <= 16'sd0;
-				brow[3][k] <= 16'sd0;
-				brow[4][k] <= 16'sd0;
-				brow[5][k] <= 16'sd0;
-			end
+			for (i = 0; i < 6; i = i + 1) sr[i] <= 16'sd0;
+			for (i = 0; i < 16; i = i + 1) pred_head[i] <= 8'd0;
 		end else begin
 			done <= 1'b0;
+			p1_v <= 1'b0;
+			p2_v <= p1_v;
+			p2_o <= p1_o;
+			p2_i <= p1_i;
+			c1_v <= 1'b0;
+
+			if (c1_v && c1_idx < 8'd16) pred_head[c1_idx[3:0]] <= cq;
+
+			// The shift register slides one sample per delivered read.  At a
+			// row or column boundary its first five pushes still carry the
+			// tail of the previous walk, which is why emission only starts
+			// at inner index 5: by then all six taps belong to this walk.
+			if (p1_v) begin
+				sr[0] <= sr[1];
+				sr[1] <= sr[2];
+				sr[2] <= sr[3];
+				sr[3] <= sr[4];
+				sr[4] <= sr[5];
+				sr[5] <= (state == S_V && vsel == 2'd2) ? hbq
+				                                        : $signed({8'd0, winq});
+			end
+
 			case (state)
 			S_IDLE: begin
-				busy <= 1'b0;
 				if (start) begin
-					busy    <= 1'b1;
-					row     <= 5'd0;
-					grp     <= 5'd0;
 					fx_r    <= frac_x;
 					fy_r    <= frac_y;
 					use_j_r <= use_j;
-					// Full-pel needs no filtering at all, and without the
-					// centre sample there is nothing for the prime pass to
-					// build.
-					state <= full_pel ? S_COPY : (use_j ? S_PRIME : S_RUN);
+					busy    <= 1'b1;
+					ao      <= 5'd0;
+					ai      <= 5'd0;
+					ccnt    <= 8'd0;
+					vsel    <= 2'd0;
+					a_run   <= 1'b1;
+					// frac_x == 0 means no horizontal plane is needed, and it
+					// also means the centre sample is never read, so the only
+					// possible vertical sub-pass is the h column.
+					state   <= full_pel ? S_C : ((frac_x != 2'd0) ? S_H : S_V);
 				end
 			end
 
-			// Straight 16-sample-per-cycle window copy for integer motion.
-			S_COPY: begin
-				for (n = 0; n < 16; n = n + 1)
-					pred[{row[3:0], n[3:0]}] <=
-						ref_win[wix(row + 5'd2, 6'(n[3:0]) + 6'd2)];
-				if (row == 5'd15) state <= S_DONE;
-				else row <= row + 5'd1;
-			end
-
-			S_PRIME: begin
-				// Fill the sliding buffer with b1 rows 0..5 at full precision.
-				for (n = 0; n < LANES; n = n + 1)
-					brow[row[2:0]][cix(col_base + n[4:0])] <= 16'(lane_hraw[n]);
-				if (grp == NGRP[4:0] - 5'd1) begin
-					grp <= 5'd0;
-					if (row == 5'd5) begin
-						row   <= 5'd0;
-						state <= S_RUN;
+			S_H: begin
+				if (a_run) begin
+					p1_v <= 1'b1;
+					p1_o <= ao;
+					p1_i <= ai;
+					if (ai == 5'd20) begin
+						ai <= 5'd0;
+						if (ao == 5'd20) a_run <= 1'b0;
+						else             ao    <= ao + 5'd1;
 					end else begin
-						row <= row + 5'd1;
+						ai <= ai + 5'd1;
 					end
-				end else begin
-					grp <= grp + 5'd1;
 				end
-			end
-
-			S_RUN: begin
-				for (n = 0; n < LANES; n = n + 1)
-					pred[{row[3:0], cix(col_base + n[4:0])}] <= lane_qpel[n];
-				// Stage b1 row y+6 for the next output row.  Rows beyond 20 do
-				// not exist, and the last output row never needs one.
-				if (use_j_r && ((row + 5'd6) <= 5'd20)) begin
-					for (n = 0; n < LANES; n = n + 1)
-						bnext[cix(col_base + n[4:0])] <= 16'(lane_hraw[n]);
-				end
-				if (grp == NGRP[4:0] - 5'd1) begin
-					grp <= 5'd0;
-					// Without the centre sample there is no buffer to rotate,
-					// so the row advance happens here and the shift pass is
-					// skipped entirely.
-					if (use_j_r) begin
-						state <= S_SHIFT;
-					end else if (row == 5'd15) begin
-						state <= S_DONE;
+				// Inner indices 0..4 only prime the shift register.
+				if (p1_v && p1_i < 5'd5) p2_v <= 1'b0;
+				if (!a_run && !p1_v && !p2_v) begin
+					ao    <= 5'd0;
+					ai    <= 5'd0;
+					vsel  <= next_vsel(2'd0);
+					a_run <= 1'b1;
+					if (next_vsel(2'd0) == 2'd3) begin
+						ccnt  <= 8'd0;
+						state <= S_C;
 					end else begin
-						row <= row + 5'd1;
+						state <= S_V;
 					end
-				end else begin
-					grp <= grp + 5'd1;
 				end
 			end
 
-			S_SHIFT: begin
-				// Deferred by one cycle so the last bnext lane has landed.
-				if (row == 5'd15) begin
-					state <= S_DONE;
-				end else begin
-					for (k = 0; k < 16; k = k + 1) begin
-						brow[0][k] <= brow[1][k];
-						brow[1][k] <= brow[2][k];
-						brow[2][k] <= brow[3][k];
-						brow[3][k] <= brow[4][k];
-						brow[4][k] <= brow[5][k];
-						brow[5][k] <= bnext[k];
+			S_V: begin
+				if (a_run) begin
+					p1_v <= 1'b1;
+					p1_o <= ao;
+					p1_i <= ai;
+					if (ai == 5'd20) begin
+						ai <= 5'd0;
+						if (ao == 5'd15) a_run <= 1'b0;
+						else             ao    <= ao + 5'd1;
+					end else begin
+						ai <= ai + 5'd1;
 					end
-					row   <= row + 5'd1;
-					state <= S_RUN;
 				end
+				if (p1_v && p1_i < 5'd5) p2_v <= 1'b0;
+				if (!a_run && !p1_v && !p2_v) begin
+					ao    <= 5'd0;
+					ai    <= 5'd0;
+					vsel  <= next_vsel(vsel + 2'd1);
+					a_run <= 1'b1;
+					if (next_vsel(vsel + 2'd1) == 2'd3) begin
+						ccnt  <= 8'd0;
+						state <= S_C;
+					end
+				end
+			end
+
+			S_C: begin
+				if (a_run) begin
+					c1_idx <= ccnt;
+					c1_v   <= 1'b1;
+					if (ccnt == 8'd255) a_run <= 1'b0;
+					else                ccnt  <= ccnt + 8'd1;
+				end
+				if (!a_run && !c1_v) state <= S_DONE;
 			end
 
 			S_DONE: begin
