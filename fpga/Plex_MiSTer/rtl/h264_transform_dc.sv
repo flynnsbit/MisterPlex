@@ -259,10 +259,12 @@ module h264_luma_dc_hadamard_inv (
 	//
 	// which also keeps the datapath inside 40 bits instead of 48 and shrinks
 	// the barrel shifter that dominated this module's logic.
+	// Prefer DSP multiply here: 16 free DSP blocks beat ~6k ALUTs of mul_norm
+	// (fit HARD_FAIL was ALM-bound at 115% with DSP only 40%).
 	genvar di;
 	generate
 		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
+			wire signed [31:0] base = 32'(f[di]) * 32'(norm_adjust0(qmod));
 			wire signed [39:0] prod = shl_qdiv($signed({{8{base[31]}}, base}), qdiv);
 			assign dc[di] = sat29(48'((prod + 40'sd2) >>> 2));
 		end
@@ -404,7 +406,7 @@ module h264_chroma_dc_hadamard_inv (
 	genvar di;
 	generate
 		for (di = 0; di < 4; di = di + 1) begin : g_cdc
-			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
+			wire signed [31:0] base = 32'(f[di]) * 32'(norm_adjust0(qmod));
 			wire signed [31:0] prod = shl_qdiv(base, qdiv);
 			assign dc[di] = sat29(48'(prod >>> 1));
 		end

@@ -689,20 +689,23 @@ module h264_decode_core #(
         res_luma_dc[res_luma_raster];
     wire res_dc_override = res_is_chroma_ac ? res_chroma_dc_coded : res_i16x16_r;
 
-    wire signed [28:0] p16_res_dequant [0:15];
-    wire signed [28:0] p16_res_idct [0:15];
-    h264_dequant4x4_flex u_product_p16_res_dequant (
+    // AREA: sequential IQ/IDCT — one scaler + butterfly (~20 cycles) instead
+    // of combo dequant+IDCT (~7k ALUTs on the 115% HARD_FAIL fit).
+    reg                 p16_xform_start;
+    wire                p16_xform_done;
+    wire signed [28:0]  p16_res_idct [0:15];
+    h264_iq_idct_seq u_product_p16_res_iqidct (
+        .clk(clk),
+        .reset(reset),
+        .start(p16_xform_start),
         .coeff(res_ac_coeff),
         .qp(res_qp),
         .max_coeff(res_skip_dc ? 5'd15 : 5'd16),
         .skip_dc(res_skip_dc),
         .dc_override(res_dc_override),
         .dc_value(res_dc_value),
-        .dequant(p16_res_dequant)
-    );
-    h264_idct4x4 u_product_p16_res_idct (
-        .dequant(p16_res_dequant),
-        .residual(p16_res_idct)
+        .residual(p16_res_idct),
+        .done(p16_xform_done)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (RES_STEP_CHROMA_DC0 - 5'd1));
@@ -1133,6 +1136,7 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        p16_xform_start <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1150,6 +1154,7 @@ module h264_decode_core #(
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
+            p16_xform_start <= 1'b0;
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
@@ -1296,6 +1301,7 @@ module h264_decode_core #(
                     // No AC bits in the stream, but the plane DC still reaches
                     // this block: transform it with a zero AC field.
                     res_ac_from_cavlc <= 1'b0;
+                    p16_xform_start <= 1'b1;
                     wb_state <= ST_P16_RES_IDCT;
                 end else begin
                     // Uncoded and DC-free: leave the residual latch at its
@@ -1318,36 +1324,20 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_IDCT: begin
-                // DC-only block: nothing was parsed, so no total_coeff and no
-                // bit_offset movement, but the residual is still produced.
+                // Wait for sequential IQ/IDCT (~20 cycles).
+                if (p16_xform_done) begin
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                res_latch_idct();
+                    res_latch_idct();
 `endif
-                if (res_is_luma_ac)
-                    res_tc_cur[res_luma_raster] <= 5'd0;
-                if (res_is_chroma_ac)
-                    res_tc_cur_c[res_c_sel] <= 5'd0;
-                res_step_advance();
+                    if (res_is_luma_ac && !res_ac_from_cavlc)
+                        res_tc_cur[res_luma_raster] <= 5'd0;
+                    if (res_is_chroma_ac && !res_ac_from_cavlc)
+                        res_tc_cur_c[res_c_sel] <= 5'd0;
+                    res_step_advance();
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
-                    if (cavlc_ok) begin
-                        if (res_is_luma_dc) begin
-                            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
-                                res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
-                        end else if (res_is_chroma_dc) begin
-                            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
-                                if (res_chroma_is_v)
-                                    res_cdc_v[res_tc_i] <= res_chroma_dc_new[res_tc_i];
-                                else
-                                    res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
-                            end
-                        end else begin
-`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                            res_latch_idct();
-`endif
-                        end
-                    end
                     // Only the 4x4 AC blocks contribute to the nC context;
                     // the DC blocks of a macroblock do not (9.2.1).
                     if (res_is_luma_ac)
@@ -1355,7 +1345,26 @@ module h264_decode_core #(
                     if (res_is_chroma_ac)
                         res_tc_cur_c[res_c_sel] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
                     p16_res_bit_offset_r <= cavlc_bit_offset_end;
-                    res_step_advance();
+                    if (cavlc_ok) begin
+                        if (res_is_luma_dc) begin
+                            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                                res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                            res_step_advance();
+                        end else if (res_is_chroma_dc) begin
+                            for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                                if (res_chroma_is_v)
+                                    res_cdc_v[res_tc_i] <= res_chroma_dc_new[res_tc_i];
+                                else
+                                    res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
+                            end
+                            res_step_advance();
+                        end else begin
+                            p16_xform_start <= 1'b1;
+                            wb_state <= ST_P16_RES_IDCT;
+                        end
+                    end else begin
+                        res_step_advance();
+                    end
                 end
             end
             ST_P16_RES_EDGE: begin

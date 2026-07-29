@@ -97,25 +97,28 @@ module h264_decode_top (
     reg [3:0]          pipe_block_idx;
     reg                pipe_is_i16;
 
-    wire signed [28:0] dq_final [0:15];
     reg signed [28:0] latched_i16_dc [0:15];
     // I_16x16 luma blocks carry 15 AC coefficients at scan positions 1..15 and
     // take position 0 from the luma DC Hadamard, so the scaler must inverse
     // zig-zag with the DC skipped instead of treating coeff[0] as scan 0.
-    h264_dequant4x4_flex u_dequant (
+    // AREA: sequential one-scaler/one-butterfly replaces combo dequant+IDCT
+    // (~6.5k ALUTs on the failed 115% fit) with ~20 cycles reuse.
+    reg                xform_start;
+    reg                xform_ready;
+    wire               xform_done;
+    wire signed [28:0] idct_out [0:15];
+    h264_iq_idct_seq u_iqidct (
+        .clk(clk),
+        .reset(reset),
+        .start(xform_start),
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
         .dc_value(latched_i16_dc[pipe_block_idx]),
-        .dequant(dq_final)
-    );
-
-    wire signed [28:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
-        .dequant(dq_final),
-        .residual(idct_out)
+        .residual(idct_out),
+        .done(xform_done)
     );
 
     wire [7:0] recon_block [0:15];
@@ -273,7 +276,8 @@ module h264_decode_top (
                      ST_PREDCAP  = 3'd2,
                      ST_I16FETCH = 3'd3,
                      ST_STORE    = 3'd4,
-                     ST_DONE     = 3'd5;
+                     ST_DONE     = 3'd5,
+                     ST_XFORM    = 3'd6;
 
     reg [2:0] state;
     reg       mb_started;
@@ -304,6 +308,8 @@ module h264_decode_top (
             pipe_qp        <= 6'd0;
             nbc            <= 4'd0;
             wcnt           <= 4'd0;
+            xform_start    <= 1'b0;
+            xform_ready    <= 1'b0;
             skid_full      <= 1'b0;
             skid_index     <= 4'd0;
             blk_has_above  <= 1'b0;
@@ -323,6 +329,9 @@ module h264_decode_top (
             end
         end else begin
             mb_recon_valid <= 1'b0;
+            xform_start    <= 1'b0;
+            if (xform_done)
+                xform_ready <= 1'b1;
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
@@ -353,6 +362,8 @@ module h264_decode_top (
                         skid_full      <= 1'b0;
                         nbc            <= 4'd0;
                         wcnt           <= 4'd0;
+                        xform_start    <= 1'b1;
+                        xform_ready    <= 1'b0;
                         state          <= pipe_is_i16 ? ST_I16FETCH : ST_NBFETCH;
                     end
                 end
@@ -376,22 +387,27 @@ module h264_decode_top (
                     for (si = 0; si < 16; si = si + 1)
                         pipe_pred[si] <= i4_pred_pixels[si];
                     wcnt  <= 4'd0;
-                    state <= ST_STORE;
+                    state <= ST_XFORM;
                 end
 
                 ST_I16FETCH: begin
                     pipe_pred[wcnt] <= i16_pred_pixels[walk_addr];
                     if (wcnt == 4'd15) begin
                         wcnt  <= 4'd0;
-                        state <= ST_STORE;
+                        state <= ST_XFORM;
                     end else begin
                         wcnt <= wcnt + 4'd1;
                     end
                 end
 
+                // Scaler runs in parallel with neighbour/plane walk; wait out residual.
+                ST_XFORM: if (xform_ready || xform_done) begin
+                    wcnt  <= 4'd0;
+                    state <= ST_STORE;
+                end
+
                 ST_STORE: begin
-                    // recon_block is combinational over pipe_pred and the IDCT,
-                    // both of which are stable for the whole walk.
+                    // residual is registered in the sequential engine; pred stable.
                     local_recon[walk_addr] <= recon_block[wcnt];
                     recon_y[walk_addr]     <= recon_block[wcnt];
                     if (wcnt == 4'd15) begin
