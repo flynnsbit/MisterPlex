@@ -145,13 +145,12 @@ module h264_decode_core #(
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
     output wire [15:0] current_mb_addr,      // current MB being decoded
-    output wire        error                 // unrecoverable decode error
-);
-    // Deblock controls (tie 0 if unused by stream_path)
+    output wire        error,                // unrecoverable decode error
+    // Deblock controls (from slice header; idc==1 disables filter)
     input  wire [1:0]  disable_deblocking_filter_idc,
     input  wire signed [4:0] slice_alpha_c0_offset,
-    input  wire signed [4:0] slice_beta_offset,
-
+    input  wire signed [4:0] slice_beta_offset
+);
     // ════════════════════════════════════════════════════════════════════
     // INTERNAL ARCHITECTURE (not yet implemented — interface contracts below)
     // ════════════════════════════════════════════════════════════════════
