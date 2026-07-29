@@ -902,7 +902,9 @@ module h264_cavlc_residual_block #(
                     place_i <= place_i - 5'd1;
                     next_coeff_num = coeff_num + {2'd0, run_dbg[idx4(place_i - 5'd1)]} + 6'sd1;
                     coeff_num <= next_coeff_num;
-                    if (next_coeff_num < 6'sd16)
+                    // max_coeff=15 (Intra16x16ACLevel / ChromaACLevel): positions 0..14 only.
+                    // Placing into 0..15 as if 16-coeff desyncs the next block's bit pointer.
+                    if (next_coeff_num < $signed({1'b0, max_coeff}))
                         coeff[next_coeff_num[3:0]] <= level_dbg[idx4(place_i - 5'd1)];
                     else st <= ST_FAIL;
                 end

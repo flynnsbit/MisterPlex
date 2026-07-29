@@ -1016,10 +1016,16 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).
+    // Scale with running MB QP (mb_qp_delta folded into qp_launch).
+    h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
+        .coeff(i16_dc_level),
+        .qp(qp_launch),
+        .dc(product_intra_i16_dc)
+    );
     genvar intra_gi;
     generate
-        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
-            assign product_intra_i16_dc[intra_gi] = 29'sd0;
+        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_ctx_px
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
         for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
@@ -1089,9 +1095,10 @@ module h264_decode_core #(
         .reset(reset || slice_start),
         .mb_start(product_intra_mb_start),
         .mb_type(product_intra_mb_type),
-        .mb_qp_y(luma4x4_qp),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        // Running QP after se(mb_qp_delta) mod-52; sampled on mb_start only.
+        .mb_qp_y(qp_launch),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .i16_pred_mode(product_intra_i16_mode),
         .block_valid(luma4x4_valid),
         .block_index(luma4x4_idx),
