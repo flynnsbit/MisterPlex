@@ -22,6 +22,18 @@ module h264_intra_nb_ctx #(
     input  wire [3:0]  block_idx,
     input  wire        block_valid,
 
+    // constrained_intra_pred_flag comes from the PPS. When it is set, a
+    // neighbouring macroblock that was coded in Inter mode is treated as
+    // unavailable for intra prediction even though its reconstructed samples
+    // exist -- the point is to stop intra prediction depending on data that
+    // came from a reference picture. Tracking it needs the coded type of every
+    // macroblock, not just the intra ones, so it is a separate commit port
+    // from mb_commit (which only carries intra reconstruction).
+    input  wire        constrained_intra_pred,
+    input  wire        mb_coded_valid,
+    input  wire        mb_coded_is_intra,
+    input  wire [7:0]  mb_coded_x,
+
     // PRE-deblock reconstructed luma feedback. block_valid stores the current
     // 4x4 block so later blocks in the same MB can consume it immediately.
     input  wire [7:0]  recon_pixels [0:15],
@@ -78,15 +90,51 @@ module h264_intra_nb_ctx #(
     // H.264 neighbour availability is semantic, not just storage-valid: samples
     // that exist in the line buffer but fall before first_mb_in_slice are not
     // available to this slice.
+    // Coded-type history for constrained intra prediction. intra_above_row is
+    // the same shape as the sample line buffers: entry [x] holds the flag for
+    // the most recently retired macroblock in column x, which while decoding
+    // row y is the macroblock at (x, y-1) for every column at or right of the
+    // current one. The entry for the column just retired is saved off before it
+    // is overwritten, because that is the top-left neighbour of the next
+    // macroblock.
+    reg intra_above_row [0:MB_WIDTH_MAX-1];
+    reg intra_left_flag;
+    reg intra_topleft_flag;
+    integer ci_i;
+
+    wire [7:0] cip_tr_x = ((mb_x + 8'd1) < MB_WIDTH_MAX[7:0]) ? (mb_x + 8'd1) : 8'd0;
+
+    wire cip_left_ok     = !constrained_intra_pred || intra_left_flag;
+    wire cip_top_ok      = !constrained_intra_pred || intra_above_row[mb_x];
+    wire cip_topleft_ok  = !constrained_intra_pred || intra_topleft_flag;
+    wire cip_topright_ok = !constrained_intra_pred || intra_above_row[cip_tr_x];
+
+    always @(posedge clk) begin
+        if (reset) begin
+            for (ci_i = 0; ci_i < MB_WIDTH_MAX; ci_i = ci_i + 1)
+                intra_above_row[ci_i] <= 1'b0;
+            intra_left_flag <= 1'b0;
+            intra_topleft_flag <= 1'b0;
+        end else if (mb_coded_valid) begin
+            intra_topleft_flag <= intra_above_row[mb_coded_x];
+            intra_above_row[mb_coded_x] <= mb_coded_is_intra;
+            intra_left_flag <= mb_coded_is_intra;
+        end
+    end
+
     wire ext_left_available = (mb_x != 8'd0) &&
-                              ((cur_mb_index - 16'd1) >= first_mb_in_slice);
+                              ((cur_mb_index - 16'd1) >= first_mb_in_slice) &&
+                              cip_left_ok;
     wire ext_top_available = (mb_y != 8'd0) &&
-                             (top_mb_index >= first_mb_in_slice);
+                             (top_mb_index >= first_mb_in_slice) &&
+                             cip_top_ok;
     wire ext_topleft_available = (mb_x != 8'd0) && (mb_y != 8'd0) &&
-                                 (top_left_mb_index >= first_mb_in_slice);
+                                 (top_left_mb_index >= first_mb_in_slice) &&
+                                 cip_topleft_ok;
     wire ext_topright_available = (mb_y != 8'd0) &&
                                   ((mb_x + 8'd1) < active_mb_width) &&
-                                  (top_right_mb_index >= first_mb_in_slice);
+                                  (top_right_mb_index >= first_mb_in_slice) &&
+                                  cip_topright_ok;
 
     function automatic int luma_addr(input [7:0] x, input [3:0] col);
         begin

@@ -41,6 +41,11 @@ module h264_decode_core #(
 
     // ── PPS parameters ──
     input  wire signed [4:0] pps_chroma_qp_index_offset, // se(), range [-12,+12]
+    input  wire        constrained_intra_pred_flag,
+    // num_ref_idx_l0_active_minus1 + 1, from the slice header or the PPS
+    // default. When it is 1 the ref_idx_l0 syntax element is absent from the
+    // bitstream entirely and the index is inferred as 0.
+    input  wire [7:0]  num_ref_idx_l0_active,
 
     // ── In-loop deblocking filter controls (slice header) ──
     input  wire [1:0]  disable_deblocking_filter_idc,
@@ -469,13 +474,15 @@ module h264_decode_core #(
     wire [5:0] qp_launch = p16_zero_mv_valid ? slice_qp_y :
                            mb_has_residual   ? qp_delta_wrap[5:0] : cur_qp_y_r;
 
-    wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
-    wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
+    wire [1:0] eff_ref_idx_l0 = (num_ref_idx_l0_active <= 8'd1) ? 2'd0 : ref_idx_l0;
+
+    wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == eff_ref_idx_l0);
+    wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == eff_ref_idx_l0);
     wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x32 + 32'd1 < MB_W) ?
                                       (syntax_mb_idx + MB_IDX_W'(1)) : syntax_mb_idx;
     wire syntax_has_top_right = (syntax_mb_x32 + 32'd1 < MB_W) &&
                                 mv_top_valid[syntax_top_right_idx] &&
-                                (mv_top_ref[syntax_top_right_idx] == ref_idx_l0);
+                                (mv_top_ref[syntax_top_right_idx] == eff_ref_idx_l0);
 `ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
     wire mv_avail_a = 1'b0;
     wire mv_avail_b = 1'b0;
@@ -896,6 +903,11 @@ module h264_decode_core #(
         end
     endgenerate
 
+    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
+    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
+    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
+    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
+
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(MB_W),
         .MB_WIDTH_DEFAULT(MB_W)
@@ -909,6 +921,13 @@ module h264_decode_core #(
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
         .block_valid(1'b0),
+        .constrained_intra_pred(constrained_intra_pred_flag),
+        // Every retired macroblock, intra or inter -- the intra path's own
+        // mb_commit only ever carries intra reconstruction, which is not
+        // enough to know that a neighbour was inter-coded.
+        .mb_coded_valid(product_recon_mb_valid),
+        .mb_coded_is_intra(product_intra_recon_valid),
+        .mb_coded_x(product_recon_mb_x),
         .recon_pixels(product_intra_ctx_recon_pixels),
         .mb_commit(product_intra_recon_valid),
         .recon_y_mb(product_intra_recon_y),
@@ -979,10 +998,6 @@ module h264_decode_core #(
         .blocks_done(product_intra_blocks_done)
     );
 
-    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
-    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
-    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
-    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
 `ifdef H264_DECODE_CORE_FAULT_DROP_WB
     wire product_wb_en = 1'b0;
 `else
@@ -1364,7 +1379,7 @@ module h264_decode_core #(
                     p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
-                    p16_ref_idx_l0_r <= ref_idx_l0;
+                    p16_ref_idx_l0_r <= eff_ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
                     p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;

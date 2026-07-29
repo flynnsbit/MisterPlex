@@ -162,6 +162,10 @@ module h264_dpb_mc_tb #(
 	endgenerate
 
 	h264_intra_nb_ctx #(.MB_WIDTH_MAX(40)) u_tap_nb_ctx (
+		.constrained_intra_pred(1'b0),
+		.mb_coded_valid(1'b0),
+		.mb_coded_is_intra(1'b0),
+		.mb_coded_x(8'd0),
 		.clk(clk), .reset(reset),
 		.mb_x(tap_mb_x), .mb_y(tap_mb_y), .mb_width(tap_mb_width), .mb_start(tap_mb_start),
 		.block_idx(tap_block_idx), .block_valid(tap_block_valid),

@@ -741,6 +741,8 @@ module stream_path #(
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(sl_chroma_qp_off),
+		.constrained_intra_pred_flag(sl_cip),
+		.num_ref_idx_l0_active(sl_num_ref_l0),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset(sl_alpha_off),
 		.slice_beta_offset(sl_beta_off),
