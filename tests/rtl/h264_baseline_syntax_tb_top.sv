@@ -1,5 +1,6 @@
 module h264_baseline_syntax_tb_top #(
-	parameter bit FAULT_RARE_P8X8 = 1'b0
+	parameter bit FAULT_RARE_P8X8 = 1'b0,
+	parameter bit FAULT_SIGN_FLIP_MVD = 1'b0
 ) (
 	input  wire              clk,
 	input  wire              reset,
@@ -52,9 +53,19 @@ module h264_baseline_syntax_tb_top #(
 	output wire [5:0]        coded_block_pattern,
 	output wire signed [7:0] mb_qp_delta,
 	output wire signed [7:0] mb_qp,
-	output wire [15:0]       residual_bit_offset
+	output wire [15:0]       residual_bit_offset,
+	output wire [4:0]        mvd_pair_count,
+	output wire signed [15:0] mvd_l0_x0,
+	output wire signed [15:0] mvd_l0_y0,
+	output wire signed [15:0] mvd_l0_x1,
+	output wire signed [15:0] mvd_l0_y1,
+	output wire signed [15:0] mvd_l0_x2,
+	output wire signed [15:0] mvd_l0_y2,
+	output wire signed [15:0] mvd_l0_x3,
+	output wire signed [15:0] mvd_l0_y3
 );
 	wire [3:0] partition_mode_raw;
+	wire signed [15:0] mvd_x0_raw, mvd_y0_raw;
 
 	h264_baseline_syntax_parser parser (
 		.clk(clk), .reset(reset), .clear(clear),
@@ -73,8 +84,17 @@ module h264_baseline_syntax_tb_top #(
 		.mb_skip_run(mb_skip_run), .mb_skipped(mb_skipped), .mb_type(mb_type), .partition_mode(partition_mode_raw),
 		.intra4x4_pred_mode_flags(intra4x4_pred_mode_flags), .intra4x4_rem_modes(intra4x4_rem_modes),
 		.intra_chroma_pred_mode(intra_chroma_pred_mode), .coded_block_pattern(coded_block_pattern),
-		.mb_qp_delta(mb_qp_delta), .mb_qp(mb_qp), .residual_bit_offset(residual_bit_offset)
+		.mb_qp_delta(mb_qp_delta), .mb_qp(mb_qp), .residual_bit_offset(residual_bit_offset),
+		.mvd_pair_count(mvd_pair_count),
+		.mvd_l0_x0(mvd_x0_raw), .mvd_l0_y0(mvd_y0_raw),
+		.mvd_l0_x1(mvd_l0_x1), .mvd_l0_y1(mvd_l0_y1),
+		.mvd_l0_x2(mvd_l0_x2), .mvd_l0_y2(mvd_l0_y2),
+		.mvd_l0_x3(mvd_l0_x3), .mvd_l0_y3(mvd_l0_y3)
 	);
+
+	// FAULT_SIGN_FLIP_MVD: intentional red-check twin — swaps se(v) sign of first pair.
+	assign mvd_l0_x0 = FAULT_SIGN_FLIP_MVD ? -mvd_x0_raw : mvd_x0_raw;
+	assign mvd_l0_y0 = FAULT_SIGN_FLIP_MVD ? -mvd_y0_raw : mvd_y0_raw;
 
 	assign partition_mode = FAULT_RARE_P8X8 && (partition_mode_raw == 4'd5) ? 4'd2 : partition_mode_raw;
 endmodule

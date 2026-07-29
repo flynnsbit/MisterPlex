@@ -25,6 +25,7 @@ TB="$ROOT/tests/rtl/h264_baseline_syntax_tb.cpp"
 BUILD_ROOT="$ROOT/build/verilator"
 BUILD_OK="$BUILD_ROOT/h264_baseline_syntax"
 BUILD_FAULT="$BUILD_ROOT/h264_baseline_syntax_p8_fault"
+BUILD_MVD_FAULT="$BUILD_ROOT/h264_baseline_syntax_mvd_fault"
 
 for f in "$RTL" "$QIP" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
@@ -37,7 +38,7 @@ if ! grep -q 'rtl/h264_syntax_primitives.sv' "$QIP"; then
   exit 2
 fi
 
-mkdir -p "$BUILD_OK" "$BUILD_FAULT"
+mkdir -p "$BUILD_OK" "$BUILD_FAULT" "$BUILD_MVD_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -66,3 +67,19 @@ if ! grep -q 'rare P8x8 partition' <<<"$FAULT_OUT"; then
   exit 1
 fi
 echo "OK h264_baseline_syntax red-check: rare P8x8 perturbation failed partition check"
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_MVD_FAULT" \
+  --top-module h264_baseline_syntax_tb_top -GFAULT_SIGN_FLIP_MVD=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2 -I$ROOT/host" \
+  "$TOP" "$RTL" "$TB"
+set +e
+MVD_FAULT_OUT="$("$BUILD_MVD_FAULT/Vh264_baseline_syntax_tb_top" 2>&1)"
+MVD_FAULT_RC=$?
+set -e
+if ! RED_CHECK="$(python3 "$ROOT/tests/unit/expected_red.py" h264_baseline_syntax_sign_flip_mvd "$MVD_FAULT_RC" <<<"$MVD_FAULT_OUT" 2>&1)"; then
+  printf '%s\n%s\n' "$RED_CHECK" "$MVD_FAULT_OUT" >&2
+  exit 1
+fi
+printf '%s\n' "$RED_CHECK"
+echo "OK h264_baseline_syntax red-check: mvd se(v) sign-flip fault failed golden"

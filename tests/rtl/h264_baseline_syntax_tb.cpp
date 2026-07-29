@@ -415,6 +415,7 @@ void checkSyntheticP(Vh264_baseline_syntax_tb_top& dut) {
     skip.ue(3);
     expect(feed(dut, skip.bytes(), MODE_MB), "P_Skip parse failed");
     expect(dut.mb_skipped && dut.mb_skip_run == 3 && dut.partition_mode == PART_P_SKIP, "P_Skip fields mismatch");
+    expect(dut.mvd_pair_count == 0, "P_Skip must not emit mvd pairs");
 
     Bits p16;
     p16.ue(0); // mb_skip_run
@@ -425,6 +426,38 @@ void checkSyntheticP(Vh264_baseline_syntax_tb_top& dut) {
     expect(feed(dut, p16.bytes(), MODE_MB), "P16x16 parse failed");
     expect(!dut.mb_skipped && dut.mb_type == 0 && dut.partition_mode == PART_P16X16 && dut.coded_block_pattern == 0,
            "P16x16 fields mismatch");
+    expect(dut.mvd_pair_count == 1 &&
+               static_cast<int16_t>(dut.mvd_l0_x0) == 0 &&
+               static_cast<int16_t>(dut.mvd_l0_y0) == 0,
+           "P16x16 zero mvd_l0 mismatch");
+
+    // Non-zero se(v) mvd_l0 — exercises signed Exp-Golomb mapping.
+    Bits p16mvd;
+    p16mvd.ue(0); // mb_skip_run
+    p16mvd.ue(0); // P_L0_16x16
+    p16mvd.se(7);   // mvd_l0_x
+    p16mvd.se(-4);  // mvd_l0_y
+    p16mvd.ue(0);   // CBP
+    expect(feed(dut, p16mvd.bytes(), MODE_MB), "P16x16 non-zero mvd parse failed");
+    expect(dut.mvd_pair_count == 1 &&
+               static_cast<int16_t>(dut.mvd_l0_x0) == 7 &&
+               static_cast<int16_t>(dut.mvd_l0_y0) == -4,
+           "P16x16 mvd_l0 se(v) decode mismatch");
+
+    // P_L0_16x8: two mvd pairs in raster order (top, bottom).
+    Bits p16x8;
+    p16x8.ue(0);
+    p16x8.ue(1); // P_L0_16x8
+    p16x8.se(3); p16x8.se(1);
+    p16x8.se(-2); p16x8.se(5);
+    p16x8.ue(0);
+    expect(feed(dut, p16x8.bytes(), MODE_MB), "P16x8 mvd parse failed");
+    expect(dut.partition_mode == 3 && dut.mvd_pair_count == 2 &&
+               static_cast<int16_t>(dut.mvd_l0_x0) == 3 &&
+               static_cast<int16_t>(dut.mvd_l0_y0) == 1 &&
+               static_cast<int16_t>(dut.mvd_l0_x1) == -2 &&
+               static_cast<int16_t>(dut.mvd_l0_y1) == 5,
+           "P16x8 mvd pair order/decode mismatch");
 
     Bits p8;
     p8.ue(0); // mb_skip_run
@@ -441,6 +474,7 @@ void checkSyntheticP(Vh264_baseline_syntax_tb_top& dut) {
     expect(dut.partition_mode == PART_P8X8, "rare P8x8 partition did not execute");
     expect(dut.coded_block_pattern == 16, "rare P8x8 CBP mismatch");
     expect(static_cast<int8_t>(dut.mb_qp_delta) == 2 && static_cast<int8_t>(dut.mb_qp) == 12, "rare P8x8 QP mismatch");
+    expect(dut.mvd_pair_count == 9, "rare P8x8 mvd pair count mismatch (1+2+2+4)");
 }
 
 } // namespace
@@ -455,6 +489,6 @@ int main(int argc, char** argv) {
         std::cerr << "h264 baseline syntax RTL check FAILED: " << failures << " failures\n";
         return 1;
     }
-    std::cout << "h264 baseline syntax RTL check PASS: PPS, slice header/deblock offsets, 300/300 real I macroblocks, synthetic P_Skip/P16x16/rare P8x8\n";
+    std::cout << "h264 baseline syntax RTL check PASS: PPS, slice header/deblock offsets, 300/300 real I macroblocks, synthetic P_Skip/P16x16/mvd_l0 se(v)/P16x8/rare P8x8\n";
     return 0;
 }

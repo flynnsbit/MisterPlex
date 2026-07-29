@@ -52,6 +52,9 @@ if ! cmp -s "$FIXTURE" "$REGEN"; then
   exit 2
 fi
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+# PRE-REGISTER (frame_mv_cases walk inside h264_inter_pred_tb.cpp):
+#   3 frames × 39×30 MBs × up to 4 partitions → expect frame_mv_cases=9090 all match.
+#   Actual is published on the OK line; a published miss is a good outcome.
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \

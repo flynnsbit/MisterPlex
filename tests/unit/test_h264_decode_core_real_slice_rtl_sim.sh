@@ -34,6 +34,7 @@ RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
   "$RTL_DIR/h264_inter_pred.sv"
+  "$RTL_DIR/h264_inter_nb_ctx.sv"
   "$RTL_DIR/h264_decode_core.sv"
   "$RTL_DIR/h264_dpb.sv"
 )
