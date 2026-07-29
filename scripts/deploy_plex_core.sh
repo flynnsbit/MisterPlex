@@ -14,6 +14,10 @@
 #                 none (default) — copy only; leave running core alone (safest)
 #                 menu           — load Menu, wait, then load Plex (safer switch)
 #                 core           — load Plex only (use when already on Menu)
+#   DEPLOY_SKIP_COPY 0 | 1
+#                 1 — bounce/load only; never scp or replace the on-device RBF.
+#                 Used by scripts/mister_soft_bounce.sh so a claim signal cannot
+#                 flash a different bitstream. Requires DEPLOY_LOAD=menu|core.
 #   DEPLOY_WAIT_S settle after load_core (default 5)
 #   DEPLOY_RECOVER reboot | none  (default reboot)
 #                 What to do when Main is WEDGED (accepts /dev/MiSTer_cmd writes and
@@ -32,6 +36,7 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 DEPLOY_LOAD="${DEPLOY_LOAD:-none}"
+DEPLOY_SKIP_COPY="${DEPLOY_SKIP_COPY:-0}"
 DEPLOY_WAIT_S="${DEPLOY_WAIT_S:-5}"
 DEPLOY_RECOVER="${DEPLOY_RECOVER:-reboot}"
 DEPLOY_REBOOT_WAIT_S="${DEPLOY_REBOOT_WAIT_S:-150}"
@@ -60,36 +65,54 @@ EOF
   fi
 fi
 
-RBF="${1:-}"
-if [[ -z "$RBF" ]]; then
-  for c in \
-    "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
-    "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
-    "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
-  do
-    [[ -f "$c" ]] && RBF=$c && break
-  done
-fi
-if [[ -z "${RBF:-}" || ! -f "$RBF" ]]; then
-  echo "No Plex.rbf found. Build first: ./scripts/build_rbf.sh" >&2
-  exit 1
-fi
-
 SSH=(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 -o ServerAliveInterval=3 "$USER@$HOST")
 SCP=(sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12)
 
-LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
-echo "Deploy $RBF (md5=$LOCAL_MD5)"
-echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+LOCAL_MD5=""
+RBF="${1:-}"
+if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
+  case "$DEPLOY_LOAD" in
+    menu|bounce|core|plex|1) ;;
+    *)
+      echo "DEPLOY_SKIP_COPY=1 requires DEPLOY_LOAD=menu|core (got '$DEPLOY_LOAD')" >&2
+      exit 2
+      ;;
+  esac
+  # Bounce/load only: never resolve or scp a local RBF (claim soft-bounce path).
+  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
+  echo "Deploy SKIP_COPY=1 (on-device md5=${REMOTE_MD5:-unknown}) — will not flash RBF"
+  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+else
+  if [[ -z "$RBF" ]]; then
+    for c in \
+      "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
+      "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
+      "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
+    do
+      [[ -f "$c" ]] && RBF=$c && break
+    done
+  fi
+  if [[ -z "${RBF:-}" || ! -f "$RBF" ]]; then
+    echo "No Plex.rbf found. Build first: ./scripts/build_rbf.sh" >&2
+    exit 1
+  fi
+  LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
+  echo "Deploy $RBF (md5=$LOCAL_MD5)"
+  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+fi
 
 # --- remote prep: release SPI, soft-stop companion (never -9 first) ---
-"${SSH[@]}" 'bash -s' <<'REMOTE'
+# Claim soft-bounce (DEPLOY_SKIP_COPY=1) never escalates to kill -9.
+ALLOW_KILL9=1
+[[ "$DEPLOY_SKIP_COPY" == "1" ]] && ALLOW_KILL9=0
+"${SSH[@]}" "bash -s" <<REMOTE
 set +e
+ALLOW_KILL9=$ALLOW_KILL9
 # Drop any SPI flock holders gently
 if [ -f /tmp/misterplex_spi.lock ]; then
   # processes blocking on flock — TERM only
-  for p in $(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print $1}'); do
-    kill "$p" 2>/dev/null
+  for p in \$(ps | grep -E '[s]et_status|[p]ush_frame' | awk '{print \$1}'); do
+    kill "\$p" 2>/dev/null
   done
   sleep 0.3
   rm -f /tmp/misterplex_spi.lock
@@ -101,8 +124,8 @@ if ps | grep -v grep | grep -q '[m]isterplexd'; then
     ps | grep -v grep | grep -q '[m]isterplexd' || break
     sleep 0.25
   done
-  # only if still up
-  if ps | grep -v grep | grep -q '[m]isterplexd'; then
+  # only if still up — never -9 on claim soft-bounce path
+  if [ "\$ALLOW_KILL9" = "1" ] && ps | grep -v grep | grep -q '[m]isterplexd'; then
     killall -9 misterplexd 2>/dev/null
   fi
 fi
@@ -112,16 +135,19 @@ killall -CONT MiSTer_groovy 2>/dev/null
 sync
 REMOTE
 
-REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
-if [[ -n "${REMOTE_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
-  echo "Remote already has md5=$REMOTE_MD5 — skip scp"
+if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
+  echo "DEPLOY_SKIP_COPY=1 — leaving on-device /media/fat/_Utility/Plex.rbf untouched"
 else
-  # Stage then atomic replace (never scp onto the open/running name mid-read)
-  STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
-  FINAL="/media/fat/_Utility/Plex.rbf"
-  echo "SCP → $STAGED"
-  "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
-  "${SSH[@]}" "bash -s" <<REMOTE
+  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
+  if [[ -n "${REMOTE_MD5:-}" && -n "${LOCAL_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
+    echo "Remote already has md5=$REMOTE_MD5 — skip scp"
+  else
+    # Stage then atomic replace (never scp onto the open/running name mid-read)
+    STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
+    FINAL="/media/fat/_Utility/Plex.rbf"
+    echo "SCP → $STAGED"
+    "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
+    "${SSH[@]}" "bash -s" <<REMOTE
 set -e
 sync
 # Prefer rename over in-place overwrite of a core that may still be mapped.
@@ -147,6 +173,7 @@ chmod 755 "$FINAL"
 sync
 md5sum "$FINAL"
 REMOTE
+  fi
 fi
 
 # A wedged Main accepts /dev/MiSTer_cmd writes and drops them, so no core can be loaded

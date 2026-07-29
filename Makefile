@@ -115,6 +115,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_no_private_data.sh
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
+	$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh
 	$(ROOT)/scripts/check_define_parity.py
 	python3 $(ROOT)/tests/unit/test_hw_visual_compare.py
 	$(ROOT)/tests/unit/test_decode_throughput_gate.sh

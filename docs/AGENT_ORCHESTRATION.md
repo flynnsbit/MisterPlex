@@ -25,6 +25,33 @@ Parent (top-level) verifies count and **refills the bucket** every tick.
 ## Safe deploy only
 `DEPLOY_LOAD=none|menu ./scripts/deploy_plex_core.sh` — never thrash load_core.
 
+## MiSTer claim / soft-bounce (mandatory)
+
+The lab MiSTer may be in active user playback. **Any agent that needs to
+observe or use the MiSTer must acquire the claim and soft-bounce first, so the
+user sees it.** Silent SSH, status probes that load cores, or background
+`load_core` without a visible Menu flash are forbidden.
+
+```bash
+# Acquire exclusive claim + visible Menu → Plex bounce, run work, auto-release:
+./scripts/mister_soft_bounce.sh claim \
+  --agent "H-gate-rcsum" --reason "hard residual sticky probe" \
+  -- ./tests/hw/test_fbar_fast.sh
+
+# Status / emergency release (override):
+./scripts/mister_soft_bounce.sh status
+MISTER_CLAIM_FORCE=1 ./scripts/mister_soft_bounce.sh release
+```
+
+| Rule | Detail |
+|------|--------|
+| Mutual exclusion | Atomic `mkdir` lock at `build/mister-claim.lock` (override path: `MISTER_CLAIM_LOCK`). Owner pid + agent id + timestamp recorded. Stale lock: dead pid and age ≥ `MISTER_CLAIM_STALE_S` (default 7200), or `MISTER_CLAIM_FORCE=1`. |
+| Visible signal | Reuses **only** `DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh` (Menu → wait → Plex). Never flashes a different RBF. Never thrash `load_core`. Never `kill -9` from the claim path. |
+| Audit | Append who/when/why to local `build/mister-claim-audit.log` and on-device `/media/fat/misterplex/claim-audit.log`. |
+| Release | EXIT/INT/TERM trap always releases the lock and soft-bounces back to Plex so the device returns usable. |
+| Conf | Do **not** edit `/media/fat/misterplex/misterplex.conf` from this path. If a separate task must edit conf, take a timestamped backup first. |
+| Local test | Lock logic is unit-tested with `MISTER_CLAIM_SKIP_BOUNCE=1` (no device). Do not bounce the live device without telling the user. |
+
 ### READY_TO_DEPLOY gate (R-csum4 era — H-proto-rcsum4f)
 
 **READY_TO_DEPLOY=NO** while **either**:
