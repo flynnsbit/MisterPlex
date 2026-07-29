@@ -1,4 +1,4 @@
-// Simulation harness: flex + plain dequant, luma/chroma DC, IDCT, optional seq.
+// Simulation harness: flex + plain dequant, luma/chroma DC, IDCT, seq IQ+IDCT.
 `default_nettype none
 
 module h264_transform_dequant_tb_top (
@@ -46,12 +46,6 @@ module h264_transform_dequant_tb_top (
 	localparam [28:0] PERTURB = 29'd0;
 `endif
 
-	// Combo luma DC: done is immediate so TB WaitDone still works.
-	assign ldc_done = 1'b1;
-	// No seq module required for LevelScale audit — mirror idct of flex.
-	assign seq_done = 1'b1;
-	assign seq_res  = idct_par;
-
 	genvar i;
 	generate
 		for (i = 0; i < 16; i = i + 1) begin : g_c16
@@ -79,27 +73,27 @@ module h264_transform_dequant_tb_top (
 		.skip_dc(skip_dc), .dc_override(dc_override), .dc_value(dc_value),
 		.dequant(flex)
 	);
-
-	// BOTH product instances under test: flex (u_dequant) and plain (u_product_p16).
 	h264_dequant4x4 u_deq (
 		.coeff(coeff16), .qp(qp), .max_coeff(max_coeff), .dequant(deq)
 	);
-
 	h264_luma_dc_hadamard_inv u_ldc (
-		.coeff(coeff16), .qp(qp), .dc(ldc)
+		.clk(clk), .reset(reset), .start(ldc_start),
+		.coeff(coeff16), .qp(qp), .dc(ldc), .done(ldc_done)
 	);
-
 	h264_chroma_dc_hadamard_inv u_cdc (
 		.coeff(coeff4), .qp_c(qp), .dc(cdc)
 	);
-
 	h264_idct4x4 u_idct_par (
 		.dequant(flex), .residual(idct_par)
 	);
-
+	h264_iq_idct_seq u_seq (
+		.clk(clk), .reset(reset), .start(seq_start),
+		.coeff(coeff16), .qp(qp), .max_coeff(max_coeff),
+		.skip_dc(skip_dc), .dc_override(dc_override), .dc_value(dc_value),
+		.residual(seq_res), .done(seq_done)
+	);
 	h264_chroma_epel_block_8x8 u_cep (
 		.ref_win(refwin), .frac_x(frac_x), .frac_y(frac_y), .pred(cpred)
 	);
 endmodule
-
 `default_nettype wire

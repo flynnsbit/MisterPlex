@@ -35,6 +35,7 @@ build_one() {
     $extra_define \
     "$RTL_DIR/h264_transform_dc.sv" \
     "$RTL_DIR/h264_iq_idct_4x4.sv" \
+    "$RTL_DIR/h264_iq_idct_seq.sv" \
     "$RTL_DIR/h264_dpb.sv" \
     "$TOP" "$TB"
 }

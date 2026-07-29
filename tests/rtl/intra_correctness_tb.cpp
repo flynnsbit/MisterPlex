@@ -303,8 +303,13 @@ int main(int argc, char** argv) {
         top.hm_c0 = 100;
         top.hm_c1 = -20;
         top.hm_qp = 26;
-        tick(top);
-        if ((int32_t)top.hm_dc0 != host_dc[0] || (int32_t)top.hm_dc1 != host_dc[1]) {
+        top.hm_start = 1; tick(top); top.hm_start = 0;
+        int hm_cyc = 0;
+        while (!top.hm_done && hm_cyc < 40) { tick(top); ++hm_cyc; }
+        if (!top.hm_done) {
+            std::cerr << "FAIL Hadamard: no done\n";
+            ++g_fail;
+        } else if ((int32_t)top.hm_dc0 != host_dc[0] || (int32_t)top.hm_dc1 != host_dc[1]) {
             std::cerr << "FAIL Hadamard: rtl dc0=" << (int32_t)top.hm_dc0
                       << " host " << host_dc[0]
                       << " rtl dc1=" << (int32_t)top.hm_dc1
@@ -330,6 +335,7 @@ int main(int argc, char** argv) {
         top.iq_dc_override = 0;
         top.iq_dc_value = 0;
         top.iq_start = 1; tick(top); top.iq_start = 0;
+    top.hm_start = 0;
         int cyc = 0;
         while (!top.iq_done && cyc < 40) { tick(top); ++cyc; }
         if (!top.iq_done) {

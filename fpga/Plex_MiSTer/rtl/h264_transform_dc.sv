@@ -18,10 +18,14 @@ module h264_qp_y_add_delta (
 endmodule
 
 module h264_luma_dc_hadamard_inv (
-	// Intra16x16DCLevel zig-zag scan → scaled DC in residual/IDCT domain (FFmpeg).
+	// Sequential: Hadamard combo + ONE scaler over 16 cycles. FFmpeg scale.
+	input  wire               clk,
+	input  wire               reset,
+	input  wire               start,
 	input  wire signed [15:0] coeff [0:15],
 	input  wire [5:0]         qp,
-	output wire signed [28:0] dc [0:15]
+	output reg  signed [28:0] dc [0:15],
+	output reg                done
 );
 	function automatic [4:0] norm_adjust0;
 		input [2:0] qmod;
@@ -78,7 +82,6 @@ module h264_luma_dc_hadamard_inv (
 		default: qp_div6 = 4'd8;
 		endcase
 	endfunction
-	// 9-way + room for +2: shift amount 0..10
 	function automatic signed [47:0] shl_amt;
 		input signed [31:0] v;
 		input [3:0] amt;
@@ -93,7 +96,7 @@ module h264_luma_dc_hadamard_inv (
 		4'd7:  shl_amt = {{9{v[31]}},  v, 7'b0};
 		4'd8:  shl_amt = {{8{v[31]}},  v, 8'b0};
 		4'd9:  shl_amt = {{7{v[31]}},  v, 9'b0};
-		default: shl_amt = {{6{v[31]}}, v, 10'b0}; // 10
+		default: shl_amt = {{6{v[31]}}, v, 10'b0};
 		endcase
 	endfunction
 	function automatic signed [31:0] mul_norm;
@@ -105,7 +108,7 @@ module h264_luma_dc_hadamard_inv (
 		5'd13: mul_norm = (c <<< 3) + (c <<< 2) + c;
 		5'd14: mul_norm = (c <<< 4) - (c <<< 1);
 		5'd16: mul_norm = (c <<< 4);
-		default: mul_norm = (c <<< 4) + (c <<< 1); // 18
+		default: mul_norm = (c <<< 4) + (c <<< 1);
 		endcase
 	endfunction
 
@@ -135,35 +138,56 @@ module h264_luma_dc_hadamard_inv (
 	wire signed [22:0] g14 = c[12]-c[13]-c[14]+c[15];
 	wire signed [22:0] g15 = c[12]-c[13]+c[14]-c[15];
 
-	wire signed [24:0] f [0:15];
-	assign f[0]  = g0+g4+g8+g12;  assign f[1]  = g1+g5+g9+g13;
-	assign f[2]  = g2+g6+g10+g14; assign f[3]  = g3+g7+g11+g15;
-	assign f[4]  = g0+g4-g8-g12;  assign f[5]  = g1+g5-g9-g13;
-	assign f[6]  = g2+g6-g10-g14; assign f[7]  = g3+g7-g11-g15;
-	assign f[8]  = g0-g4-g8+g12;  assign f[9]  = g1-g5-g9+g13;
-	assign f[10] = g2-g6-g10+g14; assign f[11] = g3-g7-g11+g15;
-	assign f[12] = g0-g4+g8-g12;  assign f[13] = g1-g5+g9-g13;
-	assign f[14] = g2-g6+g10-g14; assign f[15] = g3-g7+g11-g15;
+	wire signed [24:0] f_w [0:15];
+	assign f_w[0]  = g0+g4+g8+g12;  assign f_w[1]  = g1+g5+g9+g13;
+	assign f_w[2]  = g2+g6+g10+g14; assign f_w[3]  = g3+g7+g11+g15;
+	assign f_w[4]  = g0+g4-g8-g12;  assign f_w[5]  = g1+g5-g9-g13;
+	assign f_w[6]  = g2+g6-g10-g14; assign f_w[7]  = g3+g7-g11-g15;
+	assign f_w[8]  = g0-g4-g8+g12;  assign f_w[9]  = g1-g5-g9+g13;
+	assign f_w[10] = g2-g6-g10+g14; assign f_w[11] = g3-g7-g11+g15;
+	assign f_w[12] = g0-g4+g8-g12;  assign f_w[13] = g1-g5+g9-g13;
+	assign f_w[14] = g2-g6+g10-g14; assign f_w[15] = g3-g7+g11-g15;
 
-	wire [2:0] qmod = qp_mod6(qp);
-	wire [3:0] qdiv = qp_div6(qp);
-	wire [4:0] na   = norm_adjust0(qmod);
+	reg [1:0] st;
+	reg [3:0] idx;
+	reg [5:0] qp_r;
+	reg signed [24:0] f_r [0:15];
+	localparam [1:0] ST_IDLE=2'd0, ST_SCALE=2'd1, ST_DONE=2'd2;
 
-	// FFmpeg ff_h264_luma_dc_dequant_idct:
-	//   qmul = (na*16) << (qdiv+2);  dc = (f * qmul + 128) >> 8
-	// ≡ ((f * LevelScale) << qdiv + 32) >> 6
-	// 4e0770b had >>2 after *16<<qdiv (16× too large) — do not restore.
-	genvar di;
-	generate
-		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [31:0] base = mul_norm({{7{f[di][24]}}, f[di]}, na); // f*na
-			// (base * 16) << (qdiv+2) = base << (qdiv+6) — split: <<4 then shl(qdiv+2)
-			wire signed [31:0] base16 = {base[27:0], 4'b0};
-			wire signed [47:0] prod = shl_amt(base16, qdiv + 4'd2);
-			wire signed [47:0] rnd  = (prod + 48'sd128) >>> 8;
-			assign dc[di] = sat29(rnd);
+	wire [2:0] qmod = qp_mod6(qp_r);
+	wire [3:0] qdiv = qp_div6(qp_r);
+	wire [4:0] na = norm_adjust0(qmod);
+	wire signed [31:0] base = mul_norm({{7{f_r[idx][24]}}, f_r[idx]}, na);
+	wire signed [31:0] base16 = {base[27:0], 4'b0};
+	wire signed [47:0] prod = shl_amt(base16, qdiv + 4'd2);
+	wire signed [28:0] scaled = sat29((prod + 48'sd128) >>> 8);
+
+	integer k;
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st <= ST_IDLE; idx <= 0; qp_r <= 0;
+			for (k = 0; k < 16; k = k + 1) begin
+				dc[k] <= 0; f_r[k] <= 0;
+			end
+		end else begin
+			case (st)
+			ST_IDLE: if (start) begin
+				for (k = 0; k < 16; k = k + 1) f_r[k] <= f_w[k];
+				qp_r <= qp; idx <= 0; st <= ST_SCALE;
+			end
+			ST_SCALE: begin
+				dc[idx] <= scaled;
+				if (idx == 4'd15) st <= ST_DONE;
+				else idx <= idx + 4'd1;
+			end
+			default: begin
+				done <= 1'b1;
+				st <= ST_IDLE;
+			end
+			endcase
 		end
-	endgenerate
+	end
 endmodule
 
 // 8.5.12.1 flex: inv zig-zag + LevelScale; skip_dc / dc_override for I16 AC.

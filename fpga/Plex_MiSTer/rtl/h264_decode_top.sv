@@ -131,21 +131,24 @@ module h264_decode_top (
     wire [3:0] pipe_dc_raster = {pipe_dc_y4, pipe_dc_x4};
     // I16: AC-only coeff[0:14] → scan 1..15 + Hadamard DC at scan0.
     // Non-I16: full 16-coeff dequant.
-    wire signed [28:0] dq_final [0:15];
-    h264_dequant4x4_flex u_dequant (
+    reg                top_iq_start_r;
+    reg                top_iq_issued_r;
+    wire               top_iq_done;
+    reg [3:0]          pipe_dc_raster_r;
+    wire signed [28:0] idct_out [0:15];
+    wire signed [28:0] top_dc_value = latched_i16_dc[pipe_dc_raster_r];
+    h264_iq_idct_seq u_product_top_iq_idct (
+        .clk(clk),
+        .reset(reset),
+        .start(top_iq_start_r),
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
-        .dc_value(latched_i16_dc[pipe_dc_raster]),
-        .dequant(dq_final)
-    );
-
-    wire signed [28:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
-        .dequant(dq_final),
-        .residual(idct_out)
+        .dc_value(top_dc_value),
+        .residual(idct_out),
+        .done(top_iq_done)
     );
 
     wire [7:0] recon_block [0:15];
@@ -161,6 +164,7 @@ module h264_decode_top (
     wire       i16_unsupported;
     wire       i16_pred_valid;
     reg        i16_pred_ready;
+    reg        i16_dc_ready;
     wire [7:0] i16_pred_pixels [0:255];
     h264_intra16x16_pred u_i16_pred (
         .clk(clk),
@@ -336,7 +340,7 @@ module h264_decode_top (
     // SEQUENCING — process blocks one at a time, store results
     // ════════════════════════════════════════════════════════════════════
     localparam [1:0] ST_IDLE  = 2'd0,
-                     ST_BLOCK = 2'd1,
+                     ST_IQ    = 2'd1,
                      ST_STORE = 2'd2,
                      ST_DONE  = 2'd3;
 
@@ -353,8 +357,12 @@ module h264_decode_top (
             mb_started    <= 1'b0;
             pipe_is_i16   <= 1'b0;
             i16_pred_ready <= 1'b0;
+            i16_dc_ready   <= 1'b0;
             pipe_block_idx <= 4'd0;
             pipe_qp       <= 6'd0;
+            top_iq_start_r <= 1'b0;
+            top_iq_issued_r <= 1'b0;
+            pipe_dc_raster_r <= 4'd0;
             for (si = 0; si < 16; si = si + 1) begin
                 pipe_coeff[si] <= 16'sd0;
                 latched_i16_dc[si] <= 29'sd0;
@@ -365,57 +373,64 @@ module h264_decode_top (
             end
         end else begin
             mb_recon_valid <= 1'b0;
+            top_iq_start_r <= 1'b0;
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
-            // Latch I_16x16 DC values when provided
             if (i16_dc_valid) begin
                 for (si = 0; si < 16; si = si + 1)
                     latched_i16_dc[si] <= i16_dc[si];
+                i16_dc_ready <= 1'b1;
             end
 
-            // MB start: reset block counter
             if (mb_start) begin
                 blocks_done <= 5'd0;
                 mb_started  <= 1'b1;
                 pipe_is_i16 <= is_i16x16;
                 i16_pred_ready <= !is_i16x16;
+                i16_dc_ready   <= !is_i16x16;
                 pipe_qp     <= mb_qp_y;
             end
 
             case (state)
                 ST_IDLE: begin
-                    if (block_valid && mb_started && (!pipe_is_i16 || i16_pred_ready)) begin
-                        // Latch coefficients and block index
+                    if (block_valid && mb_started &&
+                        (!pipe_is_i16 || (i16_pred_ready && i16_dc_ready))) begin
                         for (si = 0; si < 16; si = si + 1)
                             pipe_coeff[si] <= block_coeff[si];
                         pipe_block_idx <= block_index;
+                        pipe_dc_raster_r <= { {block_index[3], block_index[1]},
+                                              {block_index[2], block_index[0]} };
                         pipe_valid     <= 1'b1;
-                        state          <= ST_STORE;
+                        top_iq_issued_r <= 1'b0;
+                        state          <= ST_IQ;
+                    end
+                end
+
+                ST_IQ: begin
+                    if (!top_iq_issued_r) begin
+                        top_iq_start_r <= 1'b1;
+                        top_iq_issued_r <= 1'b1;
+                        pipe_valid <= 1'b0;
+                    end else if (top_iq_done) begin
+                        state <= ST_STORE;
                     end
                 end
 
                 ST_STORE: begin
-                    // Pipeline is combinational — results ready THIS cycle
-                    // Store reconstructed 4×4 block into local buffer
-                    pipe_valid <= 1'b0;
                     for (si = 0; si < 4; si = si + 1)
                         for (ni = 0; ni < 4; ni = ni + 1) begin
                             local_recon[{cur_by + si[3:0], cur_bx + ni[3:0]}] <=
                                 recon_block[si*4 + ni];
                         end
                     blocks_done <= blocks_done + 5'd1;
-
-                    if (blocks_done == 5'd15) begin
-                        // All 16 luma blocks done — output full MB
+                    if (blocks_done == 5'd15)
                         state <= ST_DONE;
-                    end else begin
+                    else
                         state <= ST_IDLE;
-                    end
                 end
 
                 ST_DONE: begin
-                    // Copy local_recon to output
                     for (si = 0; si < 256; si = si + 1)
                         recon_y[si] <= local_recon[si];
                     mb_recon_valid <= 1'b1;

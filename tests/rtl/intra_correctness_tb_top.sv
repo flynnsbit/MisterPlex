@@ -66,12 +66,14 @@ module intra_correctness_tb_top (
 	output wire signed [28:0] iq_r0,
 	output wire        iq_done,
 
-	// luma DC Hadamard
+	// luma DC Hadamard (sequential)
+	input  wire        hm_start,
 	input  wire signed [15:0] hm_c0,
 	input  wire signed [15:0] hm_c1,
 	input  wire [5:0]  hm_qp,
 	output wire signed [28:0] hm_dc0,
-	output wire signed [28:0] hm_dc1
+	output wire signed [28:0] hm_dc1,
+	output wire        hm_done
 );
 
 	wire [7:0] i16_above [0:15];
@@ -189,7 +191,8 @@ module intra_correctness_tb_top (
 	endgenerate
 
 	h264_luma_dc_hadamard_inv u_hm (
-		.coeff(hm_coeff), .qp(hm_qp), .dc(hm_dc)
+		.clk(clk), .reset(reset), .start(hm_start),
+		.coeff(hm_coeff), .qp(hm_qp), .dc(hm_dc), .done(hm_done)
 	);
 	assign hm_dc0 = hm_dc[0];
 	assign hm_dc1 = hm_dc[1];

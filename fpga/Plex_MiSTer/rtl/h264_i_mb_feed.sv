@@ -218,6 +218,9 @@ module h264_i_mb_feed #(
 	reg signed [15:0] mvd_x_tmp;
 	reg [7:0]  num_ref_r;
 	reg        use_inter_cbp;
+	reg [5:0]  cbp_tmp6;
+	reg [7:0]  mbt_tmp8;
+	reg signed [5:0] se_tmp6;
 
 	// nC neighbour total_coeff
 	reg [4:0]  tc_cur [0:15];
@@ -825,10 +828,11 @@ module h264_i_mb_feed #(
 					publish_pred;
 					if ((first_mb_type >= 8'd1) && (first_mb_type <= 8'd24)) begin
 						intra16x16_mode <= (first_mb_type - 8'd1) & 2'd3;
-						cbp_l_r <= i16_cbp_from_type(first_mb_type)[3:0];
-						cbp_c_r <= i16_cbp_from_type(first_mb_type)[5:4];
-						cbp_luma <= i16_cbp_from_type(first_mb_type)[3:0];
-						cbp_chroma <= i16_cbp_from_type(first_mb_type)[5:4];
+						cbp_tmp6 = i16_cbp_from_type(first_mb_type);
+						cbp_l_r <= cbp_tmp6[3:0];
+						cbp_c_r <= cbp_tmp6[5:4];
+						cbp_luma <= cbp_tmp6[3:0];
+						cbp_chroma <= cbp_tmp6[5:4];
 					end else begin
 						intra16x16_mode <= 2'd2;
 						cbp_l_r <= first_cbp_luma;
@@ -878,10 +882,12 @@ module h264_i_mb_feed #(
 						chroma_pred_mode <= first_chroma_pred_mode;
 						if ((first_mb_type >= 8'd6) && (first_mb_type <= 8'd29)) begin
 							intra16x16_mode <= (first_mb_type - 8'd6) & 2'd3;
-							cbp_l_r <= i16_cbp_from_type(first_mb_type - 8'd5)[3:0];
-							cbp_c_r <= i16_cbp_from_type(first_mb_type - 8'd5)[5:4];
-							cbp_luma <= i16_cbp_from_type(first_mb_type - 8'd5)[3:0];
-							cbp_chroma <= i16_cbp_from_type(first_mb_type - 8'd5)[5:4];
+							mbt_tmp8 = first_mb_type - 8'd5;
+							cbp_tmp6 = i16_cbp_from_type(mbt_tmp8);
+							cbp_l_r <= cbp_tmp6[3:0];
+							cbp_c_r <= cbp_tmp6[5:4];
+							cbp_luma <= cbp_tmp6[3:0];
+							cbp_chroma <= cbp_tmp6[5:4];
 						end else begin
 							intra16x16_mode <= 2'd2;
 							cbp_l_r <= first_cbp_luma;
@@ -1416,8 +1422,9 @@ module h264_i_mb_feed #(
 						end else begin
 							is_i16_r <= 1'b1;
 							intra16x16_mode <= (ue_val[7:0] - 8'd1) & 2'd3;
-							cbp_l_r <= i16_cbp_from_type(ue_val[7:0])[3:0];
-							cbp_c_r <= i16_cbp_from_type(ue_val[7:0])[5:4];
+							cbp_tmp6 = i16_cbp_from_type(ue_val[7:0]);
+							cbp_l_r <= cbp_tmp6[3:0];
+							cbp_c_r <= cbp_tmp6[5:4];
 							i4_modes_present <= 1'b0;
 							ue_zeros <= 8'd0; ret_st <= 8'd3; st <= ST_SYN_UE0;
 						end
@@ -1468,8 +1475,10 @@ module h264_i_mb_feed #(
 							end else begin
 								is_i16_r <= 1'b1;
 								intra16x16_mode <= (ue_val[7:0] - 8'd6) & 2'd3;
-								cbp_l_r <= i16_cbp_from_type(ue_val[7:0] - 8'd5)[3:0];
-								cbp_c_r <= i16_cbp_from_type(ue_val[7:0] - 8'd5)[5:4];
+								mbt_tmp8 = ue_val[7:0] - 8'd5;
+								cbp_tmp6 = i16_cbp_from_type(mbt_tmp8);
+								cbp_l_r <= cbp_tmp6[3:0];
+								cbp_c_r <= cbp_tmp6[5:4];
 								i4_modes_present <= 1'b0;
 								ue_zeros <= 8'd0; ret_st <= 8'd3; st <= ST_SYN_UE0;
 							end
@@ -1530,19 +1539,15 @@ module h264_i_mb_feed #(
 						latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 						error <= 1'b1; st <= ST_FAIL;
 					end else begin
-						if (use_inter_cbp) begin
-							cbp_l_r <= cbp_inter_map(ue_val[5:0])[3:0];
-							cbp_c_r <= cbp_inter_map(ue_val[5:0])[5:4];
-							cbp_luma <= cbp_inter_map(ue_val[5:0])[3:0];
-							cbp_chroma <= cbp_inter_map(ue_val[5:0])[5:4];
-						end else begin
-							cbp_l_r <= cbp_intra_map(ue_val[5:0])[3:0];
-							cbp_c_r <= cbp_intra_map(ue_val[5:0])[5:4];
-							cbp_luma <= cbp_intra_map(ue_val[5:0])[3:0];
-							cbp_chroma <= cbp_intra_map(ue_val[5:0])[5:4];
-						end
-						if ((use_inter_cbp ? cbp_inter_map(ue_val[5:0])
-						                   : cbp_intra_map(ue_val[5:0])) != 6'd0) begin
+						if (use_inter_cbp)
+							cbp_tmp6 = cbp_inter_map(ue_val[5:0]);
+						else
+							cbp_tmp6 = cbp_intra_map(ue_val[5:0]);
+						cbp_l_r <= cbp_tmp6[3:0];
+						cbp_c_r <= cbp_tmp6[5:4];
+						cbp_luma <= cbp_tmp6[3:0];
+						cbp_chroma <= cbp_tmp6[5:4];
+						if ((cbp_tmp6 != 6'd0)) begin
 							ue_zeros <= 8'd0; ret_st <= 8'd5; st <= ST_SYN_UE0;
 						end else begin
 							mb_qp_delta <= 6'sd0;
@@ -1564,7 +1569,9 @@ module h264_i_mb_feed #(
 					mb_qp_delta <= se6_from_ue(ue_val);
 					begin : qp_upd
 						reg signed [8:0] qn;
-						qn = $signed({1'b0, qp_r}) + $signed({{3{se6_from_ue(ue_val)[5]}}, se6_from_ue(ue_val)});
+						reg signed [5:0] dlt;
+						dlt = se6_from_ue(ue_val);
+						qn = $signed({1'b0, qp_r}) + $signed({{3{dlt[5]}}, dlt});
 						if (qn < 0) qn = qn + 9'sd52;
 						else if (qn >= 9'sd52) qn = qn - 9'sd52;
 						qp_r <= qn[5:0];
