@@ -13,6 +13,7 @@ struct PpsInfo {
     bool entropy_cabac = false;
     uint8_t num_ref_idx_l0_default = 0;
     int8_t pic_init_qp = 0; // 26 + pic_init_qp_minus26
+    int8_t chroma_qp_index_offset = 0; // se(v), typically [-12,+12]
     bool deblock_ctrl = false;
 };
 
@@ -58,7 +59,7 @@ inline PpsInfo parsePpsRbsp(const uint8_t* payload, size_t len) {
     br.u(2); // weighted_bipred
     out.pic_init_qp = static_cast<int8_t>(26 + br.se());
     br.se(); // qs
-    br.se(); // chroma_qp_index_offset
+    out.chroma_qp_index_offset = static_cast<int8_t>(br.se());
     out.deblock_ctrl = br.u(1) != 0;
     br.u(1); // constrained_intra
     br.u(1); // redundant_pic_cnt
