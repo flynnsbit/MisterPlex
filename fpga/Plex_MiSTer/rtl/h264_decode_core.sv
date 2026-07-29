@@ -1836,12 +1836,10 @@ module h264_decode_core #(
                     end
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
-                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_p16_residual_y[wb_i] <= 16'sd0;
-                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= 16'sd0;
-                        lat_p16_residual_v[wb_i] <= 16'sd0;
-                    end
+                    // Residual plane is M10K single-port (lat_res_we only).
+                    // Do not bulk-clear the array — multi-driver + kills inference.
+                    // Uncoded blocks write zeros via the residual store path;
+                    // p16_residual_all_zero bypasses RAM for cbp=0.
                     // Decode residual once for the whole MB, then walk partitions.
                     wb_state <= ST_P16_RES_START;
                 end else if (p16_launch) begin
