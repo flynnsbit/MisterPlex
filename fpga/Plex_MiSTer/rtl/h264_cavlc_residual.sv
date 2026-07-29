@@ -591,12 +591,22 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
-    function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
+    function automatic [15:0] level_mag(input signed [15:0] lvl);
         begin
-            if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
-                suffix_next_first = 3'd2;
-            else
-                suffix_next_first = 3'd1 + ((lvl + 16'sd3) > 16'sd6);
+            level_mag = lvl[15] ? (~lvl[15:0] + 16'd1) : lvl[15:0];
+        end
+    endfunction
+
+    // 9.2.2.1, applied after the first non trailing-one level: suffixLength is
+    // forced to 1 when it was still 0, then incremented when Abs(level)
+    // exceeds 3 << (suffixLength - 1). Entering suffixLength is 0 or 1 here,
+    // so both paths collapse to the same threshold of 3. The comparison must
+    // be on the magnitude: a signed test lets every negative level below -3
+    // keep suffixLength at 1, which then reads the wrong number of suffix bits
+    // for the next coefficient and desynchronises the rest of the slice.
+    function automatic [2:0] suffix_next_first(input signed [15:0] lvl);
+        begin
+            suffix_next_first = (level_mag(lvl) > 16'd3) ? 3'd2 : 3'd1;
         end
     endfunction
 
@@ -612,7 +622,7 @@ module h264_cavlc_residual_block #(
             default: lim = 16'd48;
             endcase
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
+            if (cur_suf < 3'd6 && level_mag(lvl) > lim)
                 suffix_next = cur_suf + 3'd1;
         end
     endfunction
@@ -742,7 +752,8 @@ module h264_cavlc_residual_block #(
                             else if (prefix == 6'd14) suffix_left <= (suffix_length != 0) ? {2'd0, suffix_length} : 5'd4;
                             else suffix_left <= prefix[4:0] - 5'd3;
                         end else begin
-                            if (prefix < 6'd15) suffix_left <= {2'd0, suffix_length};
+                            if (prefix == 6'd14 && suffix_length == 3'd0) suffix_left <= 5'd4;
+                            else if (prefix < 6'd15) suffix_left <= {2'd0, suffix_length};
                             else suffix_left <= prefix[4:0] - 5'd3;
                         end
                         st <= ST_LVL_SUF;
@@ -770,7 +781,8 @@ module h264_cavlc_residual_block #(
                         if (suffix_length != 0) level_code = (32'd14 << suffix_length) + suffix_acc;
                         else level_code = 32'd14 + suffix_acc;
                     end else begin
-                        level_code = 32'd30;
+                        level_code = (32'd15 << suffix_length) +
+                                     ((suffix_length == 3'd0) ? 32'd15 : 32'd0);
                         if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
@@ -779,14 +791,15 @@ module h264_cavlc_residual_block #(
                     if (!level_bad) begin
                         lvl_tmp = level_from_code(level_code);
                         level_dbg[idx[3:0]] <= lvl_tmp;
-                        suffix_length <= suffix_next_first(prefix, suffix_length, lvl_tmp);
+                        suffix_length <= suffix_next_first(lvl_tmp);
                         first_non_t1 <= 1'b0;
                     end
                 end else begin
                     if (prefix < 6'd15) begin
                         level_code = ({26'd0, prefix} << suffix_length) + suffix_acc;
                     end else begin
-                        level_code = (32'd15 << suffix_length);
+                        level_code = (32'd15 << suffix_length) +
+                                     ((suffix_length == 3'd0) ? 32'd15 : 32'd0);
                         if (prefix >= 6'd16) level_code = level_code + (32'd1 << (prefix - 6'd3)) - 32'd4096;
                         level_code = level_code + suffix_acc;
                     end
