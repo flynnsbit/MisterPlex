@@ -744,6 +744,13 @@ module h264_i_mb_feed #(
 			if (slice_desync_cause == DSC_NONE) begin
 				slice_desync_cause <= cause_i;
 				slice_desync_mb <= mb_addr;
+`ifndef SYNTHESIS
+				// Characterise frame1 DSC_SYNTAX (mb≈241): site + ue + bit cursor.
+				$display("FEED_DESYNC cause=%0d mb=%0d st=%0d ret_st=%0d ue=%0d abs_bit=%0d rbsp_bits=%0d skip_left=%0d after_skip=%0d mb_type_r=%0d cbp_l=%0h cbp_c=%0h intra=%0d i16=%0d",
+					cause_i, mb_addr, st, ret_st, ue_val, abs_bit, rbsp_bits,
+					skip_left, after_skip_run_r, mb_type_r, cbp_l_r, cbp_c_r,
+					mb_intra_r, is_i16_r);
+`endif
 			end
 		end
 	endtask
