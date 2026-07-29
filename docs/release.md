@@ -165,7 +165,9 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 
 **set_status (lab):** after core load, `/media/fat/misterplex/bin/set_status --pattern grid --force-bars 1 --raw` (etc.) RMW-writes OSD status bits without leaving Reset/Flush stuck. Menu matrix: `tests/hw/run_menu_matrix.sh` / `test_fbar_fast.sh`.
 
-**Do not break the Phase 2 cast path:** keep a known-good conf (`PRESENT=fb0`, `STREAM=0`) if STREAM/FPGA work regresses display. Companion HTTP and resolve stay the same for STREAM=0.
+**Do not break the cast path:** product conf is `PRESENT=fpga`, `STREAM=0`,
+`OSD_CONTROL=1`. `PRESENT=fb0` alone freezes the idle screen on the last core
+frame (no DDR repaint). Companion HTTP and resolve stay the same for `STREAM=0`.
 
 ## Plex.rbf locations
 
@@ -201,11 +203,11 @@ look like “corruption in the background.”
 > decoded 624×480 into a layout the 320×240 core does not read. **A conf key silently
 > overriding a correct default is the same defect class as a check that cannot fail.**
 
-Required conf for this pair (matches `scripts/package_release.sh:98-100`):
+Required conf for this pair (matches `scripts/package_release.sh` product keys):
 
 ```
 DECODE=320x240
-PRESENT=fb0
+PRESENT=fpga
 STREAM=0
 OSD_CONTROL=1
 ```

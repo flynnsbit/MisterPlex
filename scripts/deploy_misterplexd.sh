@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Deploy static ARM misterplexd to MiSTer and restart.
+#
+# Hard requirements after start (loud fail, never silent):
+#   - argv --id is the canonical player id (default misterplex-dev)
+#   - /resources machineIdentifier matches that id
+#   - conf has product PRESENT=fpga (fb0 alone freezes idle on the core scanout)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 BIN="$ROOT/build/arm/misterplexd"
+# Canonical cast client id. Wrong id still GDM-advertises; casts target a ghost.
 PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
 PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
 
@@ -39,41 +45,102 @@ fi
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
   "PLAYER_ID='$PLAYER_ID' PMS_URL='$PMS_URL' bash -s" <<'REMOTE'
 set -e
+ID_WANT="${PLAYER_ID:-misterplex-dev}"
 chmod +x /media/fat/misterplex/bin/misterplexd
 chmod +x /media/fat/misterplex/scripts/plex_browse.sh /media/fat/misterplex/scripts/plex_menu.sh 2>/dev/null || true
-# Startup hook (idempotent)
+# Startup hook (idempotent). If an older hook has a non-canonical --id, rewrite it.
 HOOK=/media/fat/linux/_user-startup.sh
 PMS_ARG=""
 if [[ -n "${PMS_URL:-}" ]]; then
   PMS_ARG=" --pms ${PMS_URL}"
 fi
-LINE="/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id ${PLAYER_ID:-misterplex-dev} --port 3005 --conf /media/fat/misterplex/misterplex.conf${PMS_ARG} >>/media/fat/misterplex/misterplexd.log 2>&1 &"
+LINE="/media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id ${ID_WANT} --port 3005 --conf /media/fat/misterplex/misterplex.conf${PMS_ARG} >>/media/fat/misterplex/misterplexd.log 2>&1 &"
 mkdir -p /media/fat/linux /media/fat/misterplex
 touch "$HOOK"
 if ! grep -q 'misterplex/bin/misterplexd' "$HOOK" 2>/dev/null; then
   printf '\n# MiSTerPlex companion + media\n%s\n' "$LINE" >>"$HOOK"
-  echo "Added startup hook"
+  echo "Added startup hook id=${ID_WANT}"
+elif ! grep -qE -- "--id[= ]${ID_WANT}( --|\$)" "$HOOK" 2>/dev/null; then
+  # Prior hook may have shipped --id misterplex (package README bug) or another id.
+  # Token boundary required: misterplex-dev-old must not satisfy want=misterplex-dev.
+  ts=$(date +%Y%m%dT%H%M%S)
+  cp -a "$HOOK" "${HOOK}.bak-misterplex-id-${ts}"
+  # Drop old misterplexd lines; append canonical line.
+  grep -v 'misterplex/bin/misterplexd' "$HOOK" >"${HOOK}.new" || true
+  printf '\n# MiSTerPlex companion + media (id fixed %s)\n%s\n' "$ts" "$LINE" >>"${HOOK}.new"
+  mv -f "${HOOK}.new" "$HOOK"
+  echo "Rewrote startup hook to --id ${ID_WANT} (backup ${HOOK}.bak-misterplex-id-${ts})"
 fi
-# Ensure conf exists (token optional — cast can supply transient tokens)
-if [[ ! -f /media/fat/misterplex/misterplex.conf ]]; then
-  cat >/media/fat/misterplex/misterplex.conf <<'CONF'
-# Set this to your Plex Media Server, for example:
+# Ensure conf exists with product keys. Missing PRESENT used to default to fb0 in
+# older daemons and freeze idle; never bootstrap a conf without PRESENT=fpga.
+CONF=/media/fat/misterplex/misterplex.conf
+if [[ ! -f "$CONF" ]]; then
+  ts=$(date +%Y%m%dT%H%M%S)
+  cat >"$CONF" <<CONF
+# Bootstrap from deploy_misterplexd.sh (${ts})
+# Set PLEX_BASE to your Plex Media Server.
 # PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 # PLEX_TOKEN=
+DECODE=320x240
+PRESENT=fpga
+STREAM=0
+OSD_CONTROL=1
 CONF
   if [[ -n "${PMS_URL:-}" ]]; then
-    printf 'PLEX_BASE=%s\n' "$PMS_URL" >>/media/fat/misterplex/misterplex.conf
+    printf 'PLEX_BASE=%s\n' "$PMS_URL" >>"$CONF"
+  fi
+  echo "Created conf with product PRESENT=fpga DECODE=320x240 STREAM=0 OSD_CONTROL=1"
+else
+  # Loud warn only — never silently rewrite a live conf the user may have tuned.
+  if ! grep -qE '^[[:space:]]*PRESENT=fpga([[:space:]]|$)' "$CONF" 2>/dev/null; then
+    echo "WARNING: $CONF has no PRESENT=fpga line — idle/HDMI may freeze if PRESENT=fb0 or missing on old daemons" >&2
+    grep -nE '^[[:space:]]*PRESENT=' "$CONF" 2>/dev/null || echo "WARNING: no PRESENT= key at all" >&2
   fi
 fi
 : >/media/fat/misterplex/misterplexd.log
-nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id "${PLAYER_ID:-misterplex-dev}" --port 3005 \
+nohup /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id "${ID_WANT}" --port 3005 \
   --conf /media/fat/misterplex/misterplex.conf ${PMS_ARG} \
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 0.8
-ps w | grep '[m]isterplexd' || true
-wget -qO- http://127.0.0.1:3005/resources | head -c 300; echo
+
+# --- Post-start hard checks (silent wrong id kills casting) ---
+ps_line=$(ps -o pid,ppid,args 2>/dev/null | grep '[m]isterplexd' || ps w 2>/dev/null | grep '[m]isterplexd' || true)
+echo "daemon_ps=${ps_line:-NONE}"
+if [[ -z "$ps_line" ]]; then
+  echo "DEPLOY_FAIL: misterplexd not running after start" >&2
+  tail -n 40 /media/fat/misterplex/misterplexd.log 2>/dev/null || true
+  exit 6
+fi
+# Exact --id token (not substring): --id misterplex-dev-old must not pass.
+id_ok=0
+set -- $ps_line
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--id" && -n "${2:-}" ]]; then
+    [[ "$2" == "$ID_WANT" ]] && id_ok=1
+    break
+  fi
+  if [[ "$1" == --id=* ]]; then
+    [[ "${1#--id=}" == "$ID_WANT" ]] && id_ok=1
+    break
+  fi
+  shift
+done
+if [[ "$id_ok" != "1" ]]; then
+  echo "DEPLOY_FAIL: DAEMON_ID_MISMATCH want=${ID_WANT} ps=${ps_line}" >&2
+  exit 7
+fi
+echo "daemon_id_ok=${ID_WANT}"
+
+res=$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
+echo "resources_head=$(printf '%s' "$res" | head -c 300)"
+if ! printf '%s' "$res" | grep -q "machineIdentifier=\"${ID_WANT}\""; then
+  echo "DEPLOY_FAIL: /resources machineIdentifier != ${ID_WANT}" >&2
+  printf '%s\n' "$res" | head -c 500 >&2
+  exit 7
+fi
+echo "resources_id_ok=${ID_WANT}"
 REMOTE
-echo "Deployed misterplexd → $HOST"
+echo "Deployed misterplexd → $HOST (id=$PLAYER_ID verified)"
 
 # After restart the adopted running line is fresh — verify it matches resident core.
 # Read-only beyond the deploy already performed above. rc=77 is NOT a pass.

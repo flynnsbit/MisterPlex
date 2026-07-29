@@ -190,7 +190,7 @@ Start on boot
   Append this to /media/fat/linux/_user-startup.sh:
 
     /media/fat/misterplex/bin/misterplexd \\
-      --name MiSTerPlex --id misterplex --port 3005 \\
+      --name MiSTerPlex --id misterplex-dev --port 3005 \\
       --conf /media/fat/misterplex/misterplex.conf \\
       >>/media/fat/misterplex/misterplexd.log 2>&1 &
 

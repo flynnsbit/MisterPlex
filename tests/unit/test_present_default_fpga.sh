@@ -74,4 +74,46 @@ grep -q 'ERROR non-canonical --id=' "$MAIN" || {
 }
 echo "PASS machineId default misterplex-dev + non-canonical ERROR log"
 
+# Deploy/package paths must not reintroduce silent wrong --id or bare conf.
+PKG="$ROOT/scripts/package_release.sh"
+DEP="$ROOT/scripts/deploy_misterplexd.sh"
+if grep -nE -- '--id misterplex([^-a-zA-Z0-9_]|$)' "$PKG" >/dev/null; then
+  echo "FAIL: package_release.sh still ships bare --id misterplex" >&2
+  grep -nE -- '--id misterplex' "$PKG" >&2 || true
+  exit 1
+fi
+grep -q -- '--id misterplex-dev' "$PKG" || {
+  echo "FAIL: package_release.sh missing --id misterplex-dev" >&2
+  exit 1
+}
+grep -q 'PRESENT=fpga' "$DEP" || {
+  echo "FAIL: deploy_misterplexd.sh bootstrap missing PRESENT=fpga" >&2
+  exit 1
+}
+grep -q 'machineIdentifier=' "$DEP" || {
+  echo "FAIL: deploy_misterplexd.sh missing /resources machineIdentifier check" >&2
+  exit 1
+}
+grep -q 'DAEMON_ID_MISMATCH' "$DEP" || {
+  echo "FAIL: deploy_misterplexd.sh missing DAEMON_ID_MISMATCH hard-fail" >&2
+  exit 1
+}
+# Red twin: bare --id misterplex in a copy must fail the package check above.
+cp "$PKG" "$WORK/package_release.sh"
+if ! grep -q -- '--id misterplex-dev' "$WORK/package_release.sh"; then
+  echo "FAIL: fixture package missing misterplex-dev to mutate" >&2
+  exit 1
+fi
+sed -i 's/--id misterplex-dev/--id misterplex/' "$WORK/package_release.sh"
+set +e
+grep -nE -- '--id misterplex([^-a-zA-Z0-9_]|$)' "$WORK/package_release.sh" >/dev/null
+PKG_RED=$?
+set -e
+echo "package_id_red_twin detect true rc=$PKG_RED"
+if [[ "$PKG_RED" -ne 0 ]]; then
+  echo "FAIL: red twin did not detect injected --id misterplex" >&2
+  exit 1
+fi
+echo "PASS package/deploy silent-default gates (id + PRESENT + resources check)"
+
 echo "OK present default fpga + always-open FPGA idle path"
