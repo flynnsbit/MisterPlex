@@ -643,21 +643,40 @@ module h264_decode_core #(
     wire       res_up_tc_valid = res_up_internal ? 1'b1 : res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]];
     wire [15:0] res_mb_index = ({8'd0, wb_mb_y} * {8'd0, mb_width}) + {8'd0, wb_mb_x};
 
-    // Chroma AC nC from prior chroma AC total_coeff (per component, internal only).
+    // Chroma AC nC from same-component neighbours (internal 2x2 + left/top MB edge).
     reg [4:0]  res_chr_tc_u [0:3];
     reg [4:0]  res_chr_tc_v [0:3];
+    reg [4:0]  res_chr_left_u [0:1];
+    reg [4:0]  res_chr_left_v [0:1];
+    reg        res_chr_left_valid;
+    reg [4:0]  res_chr_top_u [0:(MB_W*2)-1];
+    reg [4:0]  res_chr_top_v [0:(MB_W*2)-1];
+    reg        res_chr_top_valid [0:MB_W-1];
     wire       res_chr_left_int = res_chr_ac_blk[0]; // bx
     wire       res_chr_up_int   = res_chr_ac_blk[1]; // by
     wire [1:0] res_chr_left_i = res_chr_ac_blk - 2'd1; // same row, bx-1
     wire [1:0] res_chr_up_i   = res_chr_ac_blk - 2'd2; // same col, by-1
+    wire [1:0] res_chr_ly = {1'b0, res_chr_ac_blk[1]};
+    wire [1:0] res_chr_lx = {1'b0, res_chr_ac_blk[0]};
+    wire       res_chr_left_mb_avail = (wb_mb_x != 8'd0);
+    wire       res_chr_up_mb_avail = (wb_mb_y != 8'd0);
     wire [4:0] res_chr_left_tc = res_chr_left_int ?
-        (res_chr_ac_is_v ? res_chr_tc_v[res_chr_left_i] : res_chr_tc_u[res_chr_left_i]) : 5'd0;
+        (res_chr_ac_is_v ? res_chr_tc_v[res_chr_left_i] : res_chr_tc_u[res_chr_left_i]) :
+        ((res_chr_left_valid && res_chr_left_mb_avail) ?
+            (res_chr_ac_is_v ? res_chr_left_v[res_chr_ly[0]] : res_chr_left_u[res_chr_ly[0]]) : 5'd0);
+    wire       res_chr_left_v_ok = res_chr_left_int | (res_chr_left_valid && res_chr_left_mb_avail);
     wire [4:0] res_chr_up_tc = res_chr_up_int ?
-        (res_chr_ac_is_v ? res_chr_tc_v[res_chr_up_i] : res_chr_tc_u[res_chr_up_i]) : 5'd0;
-    wire [4:0] res_chr_nC = (res_chr_left_int && res_chr_up_int) ?
-                            ((res_chr_left_tc + res_chr_up_tc + 5'd1) >> 1) :
-                            res_chr_left_int ? res_chr_left_tc :
-                            res_chr_up_int ? res_chr_up_tc : 5'd0;
+        (res_chr_ac_is_v ? res_chr_tc_v[res_chr_up_i] : res_chr_tc_u[res_chr_up_i]) :
+        ((res_chr_top_valid[wb_mb_x[MB_IDX_W-1:0]] && res_chr_up_mb_avail) ?
+            (res_chr_ac_is_v ? res_chr_top_v[{wb_mb_x[MB_IDX_W-1:0], res_chr_lx[0]}]
+                             : res_chr_top_u[{wb_mb_x[MB_IDX_W-1:0], res_chr_lx[0]}]) : 5'd0);
+    wire       res_chr_up_v_ok = res_chr_up_int | (res_chr_top_valid[wb_mb_x[MB_IDX_W-1:0]] && res_chr_up_mb_avail);
+    // Widen sum: 5-bit (tcA+tcB+1) wraps at 32 and breaks nC.
+    wire [5:0] res_chr_nC_sum = {1'b0, res_chr_left_tc} + {1'b0, res_chr_up_tc} + 6'd1;
+    wire [4:0] res_chr_nC = (res_chr_left_v_ok && res_chr_up_v_ok) ?
+                            res_chr_nC_sum[5:1] :
+                            res_chr_left_v_ok ? res_chr_left_tc :
+                            res_chr_up_v_ok ? res_chr_up_tc : 5'd0;
     wire [2:0] res_chr_ac_table = (res_chr_nC < 5'd2) ? 3'd0 :
                                   (res_chr_nC < 5'd4) ? 3'd1 :
                                   (res_chr_nC < 5'd8) ? 3'd2 : 3'd3;
@@ -1290,14 +1309,25 @@ module h264_decode_core #(
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
             res_tc_left_valid <= 1'b0;
+            res_chr_left_valid <= 1'b0;
             for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
                 res_tc_cur[res_tc_i] <= 5'd0;
             for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1)
                 res_tc_left[res_tc_i] <= 5'd0;
             for (res_tc_i = 0; res_tc_i < MB_W * 4; res_tc_i = res_tc_i + 1)
                 res_tc_top[res_tc_i] <= 5'd0;
-            for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
+            for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1) begin
                 res_tc_top_valid[res_tc_i] <= 1'b0;
+                res_chr_top_valid[res_tc_i] <= 1'b0;
+            end
+            for (res_tc_i = 0; res_tc_i < 2; res_tc_i = res_tc_i + 1) begin
+                res_chr_left_u[res_tc_i] <= 5'd0;
+                res_chr_left_v[res_tc_i] <= 5'd0;
+            end
+            for (res_tc_i = 0; res_tc_i < MB_W * 2; res_tc_i = res_tc_i + 1) begin
+                res_chr_top_u[res_tc_i] <= 5'd0;
+                res_chr_top_v[res_tc_i] <= 5'd0;
+            end
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             rbsp_request_offset_r <= 16'd0;
             rbsp_request_valid_r <= 1'b0;
@@ -1422,6 +1452,26 @@ module h264_decode_core #(
                         lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
+                    // P_Skip / zero-MV shortcut skips residual walk — still
+                    // publish total_coeff=0 so next MB nC is not stale.
+                    if (p16_zero_mv_valid || mb_skip) begin
+                        res_tc_left_valid <= 1'b1;
+                        for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                            res_tc_left[res_tc_i] <= 5'd0;
+                            res_tc_top[{p16_launch_mb_x[MB_IDX_W-1:0], res_tc_i[1:0]}] <= 5'd0;
+                        end
+                        res_tc_top_valid[p16_launch_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        res_chr_left_valid <= 1'b1;
+                        res_chr_left_u[0] <= 5'd0;
+                        res_chr_left_u[1] <= 5'd0;
+                        res_chr_left_v[0] <= 5'd0;
+                        res_chr_left_v[1] <= 5'd0;
+                        res_chr_top_u[{p16_launch_mb_x[MB_IDX_W-1:0], 1'b0}] <= 5'd0;
+                        res_chr_top_u[{p16_launch_mb_x[MB_IDX_W-1:0], 1'b1}] <= 5'd0;
+                        res_chr_top_v[{p16_launch_mb_x[MB_IDX_W-1:0], 1'b0}] <= 5'd0;
+                        res_chr_top_v[{p16_launch_mb_x[MB_IDX_W-1:0], 1'b1}] <= 5'd0;
+                        res_chr_top_valid[p16_launch_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                    end
                     wb_state <= p16_zero_mv_valid ? ST_P16_REF_SEED : ST_P16_RES_START;
                 end else if (product_recon_mb_valid) begin
                     wb_mb_x <= product_recon_mb_x;
@@ -1484,6 +1534,35 @@ module h264_decode_core #(
                                 res_tc_cur[{2'd3, res_tc_i[1:0]}];
                         end
                         res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        // Uncoded last chroma AC: edge TC is 0 this cycle (NBA).
+                        begin : chr_edge_pub_unc
+                            reg [4:0] cu1, cu2, cu3, cv1, cv2, cv3;
+                            cu1 = res_chr_tc_u[2'd1];
+                            cu2 = res_chr_tc_u[2'd2];
+                            cu3 = res_chr_tc_u[2'd3];
+                            cv1 = res_chr_tc_v[2'd1];
+                            cv2 = res_chr_tc_v[2'd2];
+                            cv3 = res_chr_tc_v[2'd3];
+                            if (res_is_chr_ac && !res_chr_ac_is_v) begin
+                                if (res_chr_ac_blk == 2'd1) cu1 = 5'd0;
+                                if (res_chr_ac_blk == 2'd2) cu2 = 5'd0;
+                                if (res_chr_ac_blk == 2'd3) cu3 = 5'd0;
+                            end else if (res_is_chr_ac && res_chr_ac_is_v) begin
+                                if (res_chr_ac_blk == 2'd1) cv1 = 5'd0;
+                                if (res_chr_ac_blk == 2'd2) cv2 = 5'd0;
+                                if (res_chr_ac_blk == 2'd3) cv3 = 5'd0;
+                            end
+                            res_chr_left_valid <= 1'b1;
+                            res_chr_left_u[0] <= cu1;
+                            res_chr_left_u[1] <= cu3;
+                            res_chr_left_v[0] <= cv1;
+                            res_chr_left_v[1] <= cv3;
+                            res_chr_top_u[{wb_mb_x[MB_IDX_W-1:0], 1'b0}] <= cu2;
+                            res_chr_top_u[{wb_mb_x[MB_IDX_W-1:0], 1'b1}] <= cu3;
+                            res_chr_top_v[{wb_mb_x[MB_IDX_W-1:0], 1'b0}] <= cv2;
+                            res_chr_top_v[{wb_mb_x[MB_IDX_W-1:0], 1'b1}] <= cv3;
+                            res_chr_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        end
                         wb_state <= part_active_r ? ST_PART_PRED : ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
@@ -1542,6 +1621,37 @@ module h264_decode_core #(
                                 res_tc_cur[{2'd3, res_tc_i[1:0]}];
                         end
                         res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        // Publish chroma edges; last block TC is in-flight NBA this
+                        // cycle so fold cavlc_total_coeff when it is the edge blk.
+                        begin : chr_edge_pub
+                            reg [4:0] cu1, cu2, cu3, cv1, cv2, cv3, cnow;
+                            cnow = cavlc_ok ? cavlc_total_coeff : 5'd0;
+                            cu1 = res_chr_tc_u[2'd1];
+                            cu2 = res_chr_tc_u[2'd2];
+                            cu3 = res_chr_tc_u[2'd3];
+                            cv1 = res_chr_tc_v[2'd1];
+                            cv2 = res_chr_tc_v[2'd2];
+                            cv3 = res_chr_tc_v[2'd3];
+                            if (res_is_chr_ac && !res_chr_ac_is_v) begin
+                                if (res_chr_ac_blk == 2'd1) cu1 = cnow;
+                                if (res_chr_ac_blk == 2'd2) cu2 = cnow;
+                                if (res_chr_ac_blk == 2'd3) cu3 = cnow;
+                            end else if (res_is_chr_ac && res_chr_ac_is_v) begin
+                                if (res_chr_ac_blk == 2'd1) cv1 = cnow;
+                                if (res_chr_ac_blk == 2'd2) cv2 = cnow;
+                                if (res_chr_ac_blk == 2'd3) cv3 = cnow;
+                            end
+                            res_chr_left_valid <= 1'b1;
+                            res_chr_left_u[0] <= cu1;
+                            res_chr_left_u[1] <= cu3;
+                            res_chr_left_v[0] <= cv1;
+                            res_chr_left_v[1] <= cv3;
+                            res_chr_top_u[{wb_mb_x[MB_IDX_W-1:0], 1'b0}] <= cu2;
+                            res_chr_top_u[{wb_mb_x[MB_IDX_W-1:0], 1'b1}] <= cu3;
+                            res_chr_top_v[{wb_mb_x[MB_IDX_W-1:0], 1'b0}] <= cv2;
+                            res_chr_top_v[{wb_mb_x[MB_IDX_W-1:0], 1'b1}] <= cv3;
+                            res_chr_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
+                        end
                         wb_state <= part_active_r ? ST_PART_PRED : ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
