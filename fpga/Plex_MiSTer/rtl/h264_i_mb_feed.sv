@@ -155,7 +155,10 @@ module h264_i_mb_feed #(
 		ST_P_AFTER_MB   = 6'd21,
 		ST_P_SKIP_RUN   = 6'd22,
 		ST_EOS_CHECK    = 6'd23,
-		ST_EOS_ARM      = 6'd24;
+		ST_EOS_ARM      = 6'd24,
+		// Multi-cycle chroma IQ+IDCT (replaces combo dequant+idct ~7.4k ALUT).
+		// LATENCY: start → ~21 cyc → done; residual held. Consumers wait here.
+		ST_RES_IQ       = 6'd25;
 
 	// Residual step index: 0..15 luma, 16/17 chroma DC, 18..25 chroma AC
 	localparam [4:0] STEP_LUMA_END  = 5'd16;
@@ -643,36 +646,33 @@ module h264_i_mb_feed #(
 	                               (feed_chr_nC < 5'd8) ? 3'd2 : 3'd3;
 	wire signed [28:0] feed_chr_dc_inj =
 		feed_chr_ac_is_v ? chr_dc_v[feed_chr_ac_blk] : chr_dc_u[feed_chr_ac_blk];
-	wire signed [28:0] feed_dequant_raw [0:15];
-	wire signed [28:0] feed_dequant [0:15];
+	// AREA: one sequential IQ+IDCT for chroma AC (+ DC-only inject).
+	// Was combo h264_dequant4x4 (5.3k) + 2× idct4x4 (~2.1k). LATENCY ~21 cyc.
+	// Consumer ST_RES_IQ waits done before writing chroma_residual_* (not combo).
+	reg                feed_iq_start_r;
+	reg                feed_iq_pending_r;
+	reg                feed_iq_dc_only_r; // 1: uncoded AC, DC inject only
+	wire               feed_iq_done;
 	wire signed [28:0] feed_idct [0:15];
-	wire signed [28:0] feed_dc_only_dq [0:15];
-	wire signed [28:0] feed_dc_only_idct [0:15];
-	h264_dequant4x4 u_feed_dequant (
-		.coeff(cav_coeff),
-		.qp(feed_qp_c),
-		.max_coeff(5'd15),
-		.dequant(feed_dequant_raw)
-	);
-	genvar fdi;
+	wire signed [15:0] feed_iq_coeff [0:15];
+	genvar fci;
 	generate
-		for (fdi = 0; fdi < 16; fdi = fdi + 1) begin : g_feed_dq
-			if (fdi == 0) begin
-				assign feed_dequant[fdi] = feed_chr_dc_inj;
-				assign feed_dc_only_dq[fdi] = feed_chr_dc_inj;
-			end else begin
-				assign feed_dequant[fdi] = feed_dequant_raw[fdi];
-				assign feed_dc_only_dq[fdi] = 29'sd0;
-			end
+		for (fci = 0; fci < 16; fci = fci + 1) begin : g_feed_iq_c
+			assign feed_iq_coeff[fci] = feed_iq_dc_only_r ? 16'sd0 : cav_coeff[fci];
 		end
 	endgenerate
-	h264_idct4x4 u_feed_idct (
-		.dequant(feed_dequant),
-		.residual(feed_idct)
-	);
-	h264_idct4x4 u_feed_dc_only_idct (
-		.dequant(feed_dc_only_dq),
-		.residual(feed_dc_only_idct)
+	h264_iq_idct_seq u_feed_iq_idct (
+		.clk(clk),
+		.reset(reset || slice_go),
+		.start(feed_iq_start_r),
+		.coeff(feed_iq_coeff),
+		.qp(feed_qp_c),
+		.max_coeff(5'd15),
+		.skip_dc(1'b1),
+		.dc_override(1'b1),
+		.dc_value(feed_chr_dc_inj),
+		.residual(feed_idct),
+		.done(feed_iq_done)
 	);
 	function automatic [5:0] chroma4x4_index;
 		input [1:0] block;
@@ -779,8 +779,11 @@ module h264_i_mb_feed #(
 		i16_dc_level_valid <= 1'b0;
 		rbsp_request_valid <= 1'b0;
 		cav_start <= 1'b0;
+		feed_iq_start_r <= 1'b0;
 
 		if (reset) begin
+			feed_iq_pending_r <= 1'b0;
+			feed_iq_dc_only_r <= 1'b0;
 			st <= ST_IDLE;
 			mb_addr <= 16'd0;
 			mb_total <= 16'd0;
@@ -1208,21 +1211,18 @@ module h264_i_mb_feed #(
 						end
 						res_step <= res_step + 5'd1;
 					end else begin
-						// Uncoded chroma AC: still inject DC-only residual when cbp!=0.
-						if (feed_luma_r && (cbp_c_r != 2'd0)) begin
-							for (ci = 0; ci < 16; ci = ci + 1) begin
-								if (feed_chr_ac_is_v)
-									chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-								else
-									chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-							end
-						end
-						// Always track TC=0 for neighbour nC (feed + bit-sync).
+						// Uncoded chroma AC: multi-cycle DC-only IQ when cbp!=0.
 						if (feed_chr_ac_is_v)
 							chr_tc_v[feed_chr_ac_blk] <= 5'd0;
 						else
 							chr_tc_u[feed_chr_ac_blk] <= 5'd0;
-						res_step <= res_step + 5'd1;
+						if (feed_luma_r && (cbp_c_r != 2'd0)) begin
+							feed_iq_dc_only_r <= 1'b1;
+							feed_iq_pending_r <= 1'b1;
+							st <= ST_RES_IQ;
+						end else begin
+							res_step <= res_step + 5'd1;
+						end
 					end
 				end else begin
 					if (rel_bit16 >= 16'd400) begin
@@ -1309,24 +1309,38 @@ module h264_i_mb_feed #(
 							res_step <= res_step + 5'd1;
 							st <= ST_RES_START;
 						end else begin
-							// Chroma AC: dequant(max15)+DC inject+IDCT into residual plane.
-							if (feed_luma_r) begin
-								for (ci = 0; ci < 16; ci = ci + 1) begin
-									if (feed_chr_ac_is_v)
-										chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-									else
-										chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-								end
-							end
-							// Track TC for nC even on bit-sync-only walks.
+							// Chroma AC: multi-cycle IQ+IDCT (cav_coeff held until next cav_start).
 							if (feed_chr_ac_is_v)
 								chr_tc_v[feed_chr_ac_blk] <= cav_tc;
 							else
 								chr_tc_u[feed_chr_ac_blk] <= cav_tc;
-							res_step <= res_step + 5'd1;
-							st <= ST_RES_START;
+							if (feed_luma_r) begin
+								feed_iq_dc_only_r <= 1'b0;
+								feed_iq_pending_r <= 1'b1;
+								st <= ST_RES_IQ;
+							end else begin
+								res_step <= res_step + 5'd1;
+								st <= ST_RES_START;
+							end
 						end
 					end
+				end
+			end
+
+			// Wait sequential chroma IQ+IDCT; store residual on done (registered).
+			ST_RES_IQ: begin
+				if (feed_iq_pending_r) begin
+					feed_iq_pending_r <= 1'b0;
+					feed_iq_start_r <= 1'b1;
+				end else if (feed_iq_done) begin
+					for (ci = 0; ci < 16; ci = ci + 1) begin
+						if (feed_chr_ac_is_v)
+							chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+						else
+							chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+					end
+					res_step <= res_step + 5'd1;
+					st <= ST_RES_START;
 				end
 			end
 
