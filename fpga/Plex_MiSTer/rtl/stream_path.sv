@@ -138,10 +138,10 @@ module stream_path #(
 	localparam int CORE_FRAME_W = 624;
 	localparam int CORE_FRAME_H = 480;
 
-	// Whole-slice RBSP capacity.  624x480 Baseline I-slices measure a few KB at
-	// the bitrates we ship, but the buffer must not be sized to that: it is a
-	// parameter so a higher-bitrate stream only costs memory, not correctness.
-	localparam int RBSP_DEPTH_BYTES = 8192;
+	// Whole-slice RBSP capacity.  Settled 624x480 Baseline IDR fixtures are
+	// ~11KB (plex_inter_p16_624x480 IDR = 10895B); keep headroom so a higher-
+	// bitrate stream only costs memory, not correctness/overflow.
+	localparam int RBSP_DEPTH_BYTES = 16384;
 
 	wire        si_wr_en;
 	wire [7:0]  si_wr_data;

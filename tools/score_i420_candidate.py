@@ -440,6 +440,7 @@ def first_bad_mb(
                                 "plane": plane,
                                 "mb_x": mb_x,
                                 "mb_y": mb_y,
+                                "mb_addr": mb_y * mb_w + mb_x,
                                 "mb_index": mb_y * mb_w + mb_x,
                                 "x": x,
                                 "y": y,
@@ -475,11 +476,25 @@ def main() -> int:
     ap.add_argument("--mb-metadata", help="optional misterplex.p3.inter_mb_metadata.v1 with P MB type/MV context")
     ap.add_argument("--output", help="write JSON score")
     ap.add_argument("--expect-red", action="store_true", help="candidate must diverge")
+    ap.add_argument(
+        "--max-frames",
+        type=int,
+        default=0,
+        help="score only the first N frames (0 = all). Candidate may be shorter than full golden.",
+    )
+    ap.add_argument(
+        "--allow-loop-filter-mismatch",
+        action="store_true",
+        help="permit candidate/reference H.264 loop-filter state mismatch (diagnostic only)",
+    )
     args = ap.parse_args()
 
     if args.candidate_colorspace != NATIVE_I420:
         refuse(f"candidate colorspace is {args.candidate_colorspace}, expected {NATIVE_I420}")
-    if args.candidate_h264_loop_filter != args.reference_h264_loop_filter:
+    if (
+        args.candidate_h264_loop_filter != args.reference_h264_loop_filter
+        and not args.allow_loop_filter_mismatch
+    ):
         refuse(
             "candidate/reference H.264 loop-filter mismatch: "
             f"candidate={args.candidate_h264_loop_filter} reference={args.reference_h264_loop_filter}"
@@ -499,18 +514,33 @@ def main() -> int:
     height = int(manifest["geometry"]["coded_height"])
     if width % 16 or height % 16:
         raise SystemExit("score_i420_candidate currently requires coded dimensions divisible by 16")
-    frames_meta = manifest["frames"]
+    frames_meta = list(manifest["frames"])
     golden = Path(args.golden_planes).read_bytes()
     candidate = Path(args.candidate_planes).read_bytes()
-    if len(candidate) != len(golden):
-        raise SystemExit(f"candidate size {len(candidate)} != golden size {len(golden)}")
     frame_bytes = width * height * 3 // 2
     if len(golden) != len(frames_meta) * frame_bytes:
         raise SystemExit("golden size does not match manifest frame count/geometry")
+    if args.max_frames < 0:
+        raise SystemExit("--max-frames must be >= 0")
+    if args.max_frames > 0:
+        if args.max_frames > len(frames_meta):
+            raise SystemExit("--max-frames exceeds golden frame count")
+        frames_meta = frames_meta[: args.max_frames]
+        golden = golden[: args.max_frames * frame_bytes]
+    if len(candidate) != len(golden):
+        # Allow a longer candidate only when max-frames truncated the golden view.
+        if args.max_frames > 0 and len(candidate) == args.max_frames * frame_bytes:
+            pass
+        elif args.max_frames > 0 and len(candidate) > len(golden) and len(candidate) % frame_bytes == 0:
+            candidate = candidate[: len(golden)]
+        else:
+            raise SystemExit(f"candidate size {len(candidate)} != golden size {len(golden)}")
     mb_meta = load_mb_metadata(args.mb_metadata, width, height)
 
     sequence_frames = [n for n in seq.get("nals", []) if "vcl_index" in n]
-    if len(sequence_frames) != len(frames_meta):
+    if len(sequence_frames) < len(frames_meta):
+        raise SystemExit("sequence VCL count does not cover scored frame count")
+    if args.max_frames <= 0 and len(sequence_frames) != len(manifest["frames"]):
         raise SystemExit("sequence VCL count does not match frame-plane manifest")
 
     mb_total_per_frame = (width // 16) * (height // 16)

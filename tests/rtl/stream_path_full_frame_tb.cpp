@@ -29,6 +29,8 @@ struct Args {
     std::string goldenManifest;
     std::string candidateI420Out;
     std::string nativeCandidateI420Out;
+    std::string productCandidateI420Out;
+    std::string productJsonOut;
     std::string interMetadataOut;
     std::string sequenceJson;
     std::string sourceSha256;
@@ -36,7 +38,11 @@ struct Args {
     std::string traceJsonOut;
     int width = 0;
     int height = 0;
+    int maxVclFrames = 0; // 0 = all VCL frames in golden
     bool expectRed = false;
+    bool productExpectRed = false;
+    bool skipRgbCompare = false;
+    std::string h264LoopFilter = "disabled";
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -52,6 +58,8 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--golden-manifest") a.goldenManifest = need("--golden-manifest");
         else if (k == "--candidate-i420-out") a.candidateI420Out = need("--candidate-i420-out");
         else if (k == "--native-candidate-i420-out") a.nativeCandidateI420Out = need("--native-candidate-i420-out");
+        else if (k == "--product-candidate-i420-out") a.productCandidateI420Out = need("--product-candidate-i420-out");
+        else if (k == "--product-json-out") a.productJsonOut = need("--product-json-out");
         else if (k == "--inter-metadata-out") a.interMetadataOut = need("--inter-metadata-out");
         else if (k == "--sequence") a.sequenceJson = need("--sequence");
         else if (k == "--source-sha256") a.sourceSha256 = need("--source-sha256");
@@ -59,7 +67,11 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--trace-json-out") a.traceJsonOut = need("--trace-json-out");
         else if (k == "--width") a.width = std::stoi(need("--width"));
         else if (k == "--height") a.height = std::stoi(need("--height"));
+        else if (k == "--max-vcl-frames") a.maxVclFrames = std::stoi(need("--max-vcl-frames"));
+        else if (k == "--h264-loop-filter") a.h264LoopFilter = need("--h264-loop-filter");
         else if (k == "--expect-red") a.expectRed = true;
+        else if (k == "--product-expect-red") a.productExpectRed = true;
+        else if (k == "--skip-rgb-compare") a.skipRgbCompare = true;
         else throw std::runtime_error("unknown argument: " + k);
     }
     if (a.annexb.empty() || a.goldenPlanes.empty() || a.goldenManifest.empty() ||
@@ -67,7 +79,10 @@ Args parseArgs(int argc, char** argv) {
         a.width <= 0 || a.height <= 0)
         throw std::runtime_error("usage: --annexb in.264 --golden-planes ref.yuv "
                                  "--golden-manifest ref.json --sequence sequence.json "
-                                 "--source-sha256 SHA --width W --height H [--json-out out.json] [--expect-red]");
+                                 "--source-sha256 SHA --width W --height H "
+                                 "[--max-vcl-frames N] [--product-candidate-i420-out out.i420] "
+                                 "[--product-json-out out.json] [--skip-rgb-compare] "
+                                 "[--json-out out.json] [--expect-red] [--product-expect-red]");
     return a;
 }
 
@@ -242,10 +257,31 @@ public:
     std::vector<std::vector<uint8_t>> frames;
     std::vector<uint8_t> cur;
     std::vector<uint8_t> nativeCandidate;
+    std::vector<uint8_t> productCandidate;
     std::vector<InterMbCapture> interCaptures;
     std::size_t nativeFrameCount = 0;
     std::size_t nativeFrameBytes = 0;
     std::size_t nativeI420DpbWrites = 0;
+    std::size_t productPxWrites = 0;
+    std::size_t productPxOutOfRange = 0;
+    int productFramesDone = 0;
+    int productLastMbCount = 0;
+    int productMaxMbAddr = -1;
+    bool productCoreError = false;
+    bool productRbspOverflow = false;
+    bool productSliceDesync = false;
+    int productDesyncCause = 0;
+    int productDesyncMb = -1;
+    int productLastDecodeState = 0;
+    bool prevProductFrameDone = false;
+    bool sawFeedSliceGo = false;
+    bool sawFeedBusy = false;
+    bool sawFeedStarted = false;
+    bool sawRbspComplete = false;
+    bool sawSliceValid = false;
+    bool sawSliceIsI = false;
+    int lastSpsMbW = 0;
+    int lastSpsMbH = 0;
     int ignoredInterCaptures = 0;
     bool nativeInterValidQ = false;
     Mb0Trace mb0Trace;
@@ -259,6 +295,29 @@ public:
         nativeFrameCount = frameCount;
         nativeFrameBytes = static_cast<std::size_t>(width) * height * 3 / 2;
         nativeCandidate.assign(frameCount * nativeFrameBytes, 0);
+        productCandidate.assign(frameCount * nativeFrameBytes, 0);
+    }
+
+    bool writeProductSample(int frame, int plane, int x, int y, uint8_t data) {
+        if (frame < 0 || static_cast<std::size_t>(frame) >= nativeFrameCount || nativeFrameBytes == 0)
+            return false;
+        const std::size_t yBytes = static_cast<std::size_t>(width) * height;
+        const int cw = width / 2;
+        const int ch = height / 2;
+        const std::size_t cBytes = static_cast<std::size_t>(cw) * ch;
+        const std::size_t base = static_cast<std::size_t>(frame) * nativeFrameBytes;
+        if (plane == 0) {
+            if (x < 0 || y < 0 || x >= width || y >= height) return false;
+            productCandidate[base + static_cast<std::size_t>(y) * width + x] = data;
+            return true;
+        }
+        if (plane == 1 || plane == 2) {
+            if (x < 0 || y < 0 || x >= cw || y >= ch) return false;
+            const std::size_t planeBase = base + yBytes + (plane == 1 ? 0 : cBytes);
+            productCandidate[planeBase + static_cast<std::size_t>(y) * cw + x] = data;
+            return true;
+        }
+        return false;
     }
 
     void writeNativeInterMb(const InterMbCapture& cap) {
@@ -341,6 +400,40 @@ public:
                 ++nativeI420DpbWrites;
             }
         }
+        // Product decode_core presentation stream (true reconstructed samples).
+        if (top.product_px_wr_en) {
+            const int frame = productFramesDone;
+            const int plane = static_cast<int>(top.product_px_plane);
+            const int x = static_cast<int>(top.product_px_x);
+            const int y = static_cast<int>(top.product_px_y);
+            if (writeProductSample(frame, plane, x, y, static_cast<uint8_t>(top.product_px_data)))
+                ++productPxWrites;
+            else
+                ++productPxOutOfRange;
+        }
+        if (top.product_frame_done && !prevProductFrameDone) {
+            productLastMbCount = static_cast<int>(top.product_frame_mb_count);
+            ++productFramesDone;
+        }
+        prevProductFrameDone = static_cast<bool>(top.product_frame_done);
+        if (top.product_core_error) productCoreError = true;
+        if (top.product_rbsp_overflow) productRbspOverflow = true;
+        if (top.product_slice_desync) {
+            productSliceDesync = true;
+            productDesyncCause = static_cast<int>(top.product_slice_desync_cause);
+            productDesyncMb = static_cast<int>(top.product_slice_desync_mb);
+        }
+        productLastDecodeState = static_cast<int>(top.product_decode_state);
+        const int curMb = static_cast<int>(top.product_current_mb_addr);
+        if (curMb > productMaxMbAddr) productMaxMbAddr = curMb;
+        if (top.product_feed_slice_go) sawFeedSliceGo = true;
+        if (top.product_feed_busy) sawFeedBusy = true;
+        if (top.product_feed_started) sawFeedStarted = true;
+        if (top.product_rbsp_complete) sawRbspComplete = true;
+        if (top.product_slice_valid) sawSliceValid = true;
+        if (top.product_slice_is_i) sawSliceIsI = true;
+        lastSpsMbW = static_cast<int>(top.product_sps_mb_w);
+        lastSpsMbH = static_cast<int>(top.product_sps_mb_h);
         if (top.native_inter_valid && !nativeInterValidQ) {
             InterMbCapture cap;
             cap.frame = static_cast<int>(top.native_inter_frame_idx);
@@ -453,6 +546,32 @@ public:
             tick();
         }
         return top.stub_frames >= want && frames.size() >= want && !top.stub_busy;
+    }
+
+    // Wait for product decode_core to finish `want` frames (frame_done pulses).
+    // Also drains residual stub paint so RGB diagnostic path still completes.
+    // Fail-fast when feed/core raise sticky desync/error after arming — partial
+    // px dumps are still useful for first-bad-MB scoring.
+    bool waitForProductFrames(int want, int maxCycles, bool alsoWaitStub) {
+        for (int i = 0; i < maxCycles; ++i) {
+            const bool productOk = productFramesDone >= want && !top.product_core_busy &&
+                                   !top.product_feed_busy;
+            const bool stubOk = !alsoWaitStub ||
+                                (static_cast<int>(top.stub_frames) >= want &&
+                                 static_cast<int>(frames.size()) >= want && !top.stub_busy);
+            if (productOk && stubOk) return true;
+            if (sawFeedStarted && (productSliceDesync || productCoreError) &&
+                !top.product_feed_busy && !top.product_core_busy) {
+                return false;
+            }
+            tick();
+        }
+        const bool productOk = productFramesDone >= want && !top.product_core_busy &&
+                               !top.product_feed_busy;
+        const bool stubOk = !alsoWaitStub ||
+                            (static_cast<int>(top.stub_frames) >= want &&
+                             static_cast<int>(frames.size()) >= want && !top.stub_busy);
+        return productOk && stubOk;
     }
 };
 
@@ -828,6 +947,187 @@ CompareResult compareFrames(const std::vector<std::vector<uint8_t>>& got,
     return result;
 }
 
+CompareResult compareProductPlanes(const std::vector<uint8_t>& got,
+                                   const std::vector<uint8_t>& ref,
+                                   int width, int height, int frameCount) {
+    if ((width & 1) || (height & 1)) throw std::runtime_error("I420 comparison requires even geometry");
+    const std::size_t lumaPixels = static_cast<std::size_t>(width) * height;
+    const std::size_t chromaPixels = static_cast<std::size_t>(width / 2) * (height / 2);
+    const std::size_t frameBytes = lumaPixels + chromaPixels * 2;
+    if (ref.empty() || (ref.size() % frameBytes) != 0)
+        throw std::runtime_error("golden I420 size is not a whole number of frames");
+    if (got.size() < static_cast<std::size_t>(frameCount) * frameBytes)
+        throw std::runtime_error("product candidate smaller than requested frame count");
+    CompareResult result;
+    result.candidateI420.assign(static_cast<std::size_t>(frameCount) * frameBytes, 0);
+    std::copy(got.begin(), got.begin() + static_cast<std::ptrdiff_t>(frameCount) * static_cast<std::ptrdiff_t>(frameBytes),
+              result.candidateI420.begin());
+    const char* names = "YUV";
+    for (int f = 0; f < frameCount; ++f) {
+        FrameCompareStats frameStats;
+        const auto views = framePlaneViews(static_cast<std::size_t>(f), width, height);
+        for (int p = 0; p < 3; ++p) {
+            const PlaneView& v = views[static_cast<std::size_t>(p)];
+            for (std::size_t i = 0; i < v.count; ++i) {
+                PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
+                const uint8_t g = result.candidateI420[v.offset + i];
+                const uint8_t r = ref[v.offset + i];
+                const uint8_t d = static_cast<uint8_t>(g > r ? g - r : r - g);
+                st.exact += (d == 0);
+                st.sumAbs += d;
+                st.total += 1;
+                st.maxAbs = std::max(st.maxAbs, d);
+                if (d != 0 && !frameStats.firstBad[static_cast<std::size_t>(p)].valid) {
+                    const int x = static_cast<int>(i % static_cast<std::size_t>(v.width));
+                    const int y = static_cast<int>(i / static_cast<std::size_t>(v.width));
+                    frameStats.firstBad[static_cast<std::size_t>(p)] =
+                        {true, static_cast<std::size_t>(f), p, x, y,
+                         static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
+                }
+                if (d != 0 && !result.firstBad.valid) {
+                    const int x = static_cast<int>(i % static_cast<std::size_t>(v.width));
+                    const int y = static_cast<int>(i / static_cast<std::size_t>(v.width));
+                    result.firstBad = {true, static_cast<std::size_t>(f), p, x, y,
+                                       static_cast<int>(g), static_cast<int>(r), static_cast<int>(d)};
+                    result.firstBadFrame = f;
+                }
+            }
+            PlaneStats& st = frameStats.plane[static_cast<std::size_t>(p)];
+            st.mae = static_cast<double>(st.sumAbs) / static_cast<double>(st.total);
+            const BadPixel& first = frameStats.firstBad[static_cast<std::size_t>(p)];
+            std::cout << "PRODUCT_FRAME_COMPARE raw frame=" << f
+                      << " colorspace=I420_NATIVE"
+                      << " plane=" << names[p]
+                      << " exact=" << st.exact
+                      << " pixels=" << st.total
+                      << " mae=" << std::fixed << std::setprecision(6) << st.mae
+                      << " max_abs=" << static_cast<int>(st.maxAbs) << "\n";
+            if (first.valid) {
+                const int mbDiv = (p == 0) ? 16 : 8;
+                const int mbX = first.x / mbDiv;
+                const int mbY = first.y / mbDiv;
+                const int mbW = (width + 15) / 16;
+                const int mbAddr = mbY * mbW + mbX;
+                std::cout << "PRODUCT_FRAME_COMPARE first_bad frame=" << f
+                          << " colorspace=I420_NATIVE"
+                          << " plane=" << names[p]
+                          << " x=" << first.x
+                          << " y=" << first.y
+                          << " mb_addr=" << mbAddr
+                          << " mb_x=" << mbX
+                          << " mb_y=" << mbY
+                          << " pixel_in_mb_x=" << (first.x % mbDiv)
+                          << " pixel_in_mb_y=" << (first.y % mbDiv)
+                          << " got=" << first.got
+                          << " ref=" << first.ref
+                          << " abs=" << first.abs << "\n";
+            }
+        }
+        frameStats.mbTotal = ((width + 15) / 16) * ((height + 15) / 16);
+        for (int my = 0; my < (height + 15) / 16; ++my) {
+            for (int mx = 0; mx < (width + 15) / 16; ++mx) {
+                frameStats.mbExact += mbExactAllPlanes(result.candidateI420, ref,
+                                                      static_cast<std::size_t>(f),
+                                                      width, height, mx, my) ? 1 : 0;
+            }
+        }
+        std::cout << "PRODUCT_FRAME_COMPARE mb frame=" << f
+                  << " exact=" << frameStats.mbExact
+                  << " total=" << frameStats.mbTotal << "\n";
+        result.frames.push_back(frameStats);
+    }
+    result.exact = (result.firstBadFrame < 0);
+    return result;
+}
+
+void writeProductJsonReport(const std::string& path, const Args& args, const SequenceMeta& seq,
+                            const CompareResult& cr, const Sim& sim, int vclCompareCount) {
+    if (path.empty()) return;
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("cannot write product compare JSON: " + path);
+    const char* names[3] = {"Y", "U", "V"};
+    out << "{\n";
+    out << "  \"format\": \"misterplex.p3.product_frame_planes_compare.v1\",\n";
+    out << "  \"source\": {\"path\": \"" << args.annexb << "\", \"sha256\": \""
+        << args.sourceSha256 << "\"},\n";
+    out << "  \"sequence_manifest\": \"" << args.sequenceJson << "\",\n";
+    out << "  \"golden_manifest\": \"" << args.goldenManifest << "\",\n";
+    out << "  \"golden_planes\": \"" << args.goldenPlanes << "\",\n";
+    out << "  \"h264_loop_filter\": \"" << args.h264LoopFilter << "\",\n";
+    out << "  \"geometry\": {\"width\": " << args.width << ", \"height\": " << args.height
+        << ", \"colorspace\": \"I420_NATIVE\"},\n";
+    out << "  \"product_path\": \"stream_path.product_decode_core.dec_px_*\",\n";
+    out << "  \"observability\": {\n";
+    out << "    \"product_frames_done\": " << sim.productFramesDone << ",\n";
+    out << "    \"product_px_writes\": " << sim.productPxWrites << ",\n";
+    out << "    \"product_px_out_of_range\": " << sim.productPxOutOfRange << ",\n";
+    out << "    \"product_last_mb_count\": " << sim.productLastMbCount << ",\n";
+    out << "    \"product_max_mb_addr\": " << sim.productMaxMbAddr << ",\n";
+    out << "    \"product_core_error\": " << (sim.productCoreError ? "true" : "false") << ",\n";
+    out << "    \"product_rbsp_overflow\": " << (sim.productRbspOverflow ? "true" : "false") << ",\n";
+    out << "    \"product_rbsp_length_last\": " << static_cast<int>(sim.top.product_rbsp_length) << ",\n";
+    out << "    \"product_slice_desync\": " << (sim.productSliceDesync ? "true" : "false") << ",\n";
+    out << "    \"product_desync_cause\": " << sim.productDesyncCause << ",\n";
+    out << "    \"product_desync_mb\": " << sim.productDesyncMb << ",\n";
+    out << "    \"product_last_decode_state\": " << sim.productLastDecodeState << "\n";
+    out << "  },\n";
+    out << "  \"summary\": {\"compare_frames\": " << vclCompareCount
+        << ", \"first_bad_frame\": " << cr.firstBadFrame
+        << ", \"strict_pass\": " << (cr.exact ? "true" : "false")
+        << ", \"expectation\": \"" << (args.productExpectRed ? "red" : "strict") << "\"";
+    if (cr.firstBad.valid) {
+        const int mbDiv = (cr.firstBad.plane == 0) ? 16 : 8;
+        const int mbX = cr.firstBad.x / mbDiv;
+        const int mbY = cr.firstBad.y / mbDiv;
+        const int mbW = (args.width + 15) / 16;
+        const int mbAddr = mbY * mbW + mbX;
+        out << ", \"first_bad\": {\"frame_index\": " << cr.firstBad.frame
+            << ", \"plane\": \"" << names[cr.firstBad.plane] << "\", \"x\": " << cr.firstBad.x
+            << ", \"y\": " << cr.firstBad.y << ", \"mb_addr\": " << mbAddr
+            << ", \"mb_x\": " << mbX << ", \"mb_y\": " << mbY
+            << ", \"got\": " << cr.firstBad.got << ", \"ref\": " << cr.firstBad.ref
+            << ", \"abs\": " << cr.firstBad.abs << "}";
+    } else {
+        out << ", \"first_bad\": null";
+    }
+    out << "},\n";
+    out << "  \"frames\": [\n";
+    for (std::size_t f = 0; f < cr.frames.size(); ++f) {
+        const int frameNum = f < seq.frames.size() ? seq.frames[f].frameNum : static_cast<int>(f);
+        const std::string kind = f < seq.frames.size() ? seq.frames[f].sliceKind : "?";
+        out << "    {\"frame_index\": " << f << ", \"frame_num\": " << frameNum
+            << ", \"slice_kind\": \"" << kind << "\", \"mb_exact\": " << cr.frames[f].mbExact
+            << ", \"mb_total\": " << cr.frames[f].mbTotal << ", \"planes\": [";
+        for (int pi = 0; pi < 3; ++pi) {
+            const auto& st = cr.frames[f].plane[static_cast<std::size_t>(pi)];
+            if (pi) out << ", ";
+            const BadPixel& first = cr.frames[f].firstBad[static_cast<std::size_t>(pi)];
+            out << "{\"plane\": \"" << names[pi] << "\", \"exact_pixels\": " << st.exact
+                << ", \"total_pixels\": " << st.total << ", \"mae\": "
+                << std::fixed << std::setprecision(6) << st.mae
+                << ", \"max_abs\": " << static_cast<int>(st.maxAbs) << ", \"first_bad\": ";
+            if (first.valid) {
+                const int mbDiv = (pi == 0) ? 16 : 8;
+                const int mbX = first.x / mbDiv;
+                const int mbY = first.y / mbDiv;
+                const int mbW = (args.width + 15) / 16;
+                out << "{\"x\": " << first.x << ", \"y\": " << first.y
+                    << ", \"mb_addr\": " << (mbY * mbW + mbX)
+                    << ", \"mb_x\": " << mbX << ", \"mb_y\": " << mbY
+                    << ", \"got\": " << first.got << ", \"ref\": " << first.ref
+                    << ", \"abs\": " << first.abs << "}";
+            } else {
+                out << "null";
+            }
+            out << "}";
+        }
+        out << "]}";
+        if (f + 1 != cr.frames.size()) out << ",";
+        out << "\n";
+    }
+    out << "  ]\n}\n";
+}
+
 void writeJsonReport(const std::string& path, const Args& args, const SequenceMeta& seq,
                      const CompareResult& cr, int nals, int idr, int p, std::size_t bytes,
                      uint64_t cycles, const Sim& sim) {
@@ -956,7 +1256,7 @@ int main(int argc, char** argv) {
         }
         if (vcl < 2 || idr < 1 || p < 1)
             throw std::runtime_error("full-frame gate requires IDR plus P-frame VCL NALs");
-        if (static_cast<std::size_t>(vcl) != refFrames)
+        if (static_cast<std::size_t>(vcl) != refFrames && args.maxVclFrames <= 0)
             throw std::runtime_error("reference frame count does not match VCL count");
         if (seq.sha256 != args.sourceSha256 || seq.bytes != static_cast<int>(annexb.size()))
             throw std::runtime_error("sequence manifest source hash/size does not match bitstream");
@@ -967,9 +1267,18 @@ int main(int argc, char** argv) {
             throw std::runtime_error("sequence manifest NAL/VCL counts do not match bitstream");
         if (seq.frames.size() != refFrames)
             throw std::runtime_error("sequence manifest VCL metadata count does not match reference frame count");
+        if (args.maxVclFrames < 0)
+            throw std::runtime_error("--max-vcl-frames must be >= 0");
+        const int vclCompareCount = (args.maxVclFrames > 0)
+            ? std::min(args.maxVclFrames, static_cast<int>(refFrames))
+            : static_cast<int>(refFrames);
+        if (vclCompareCount < 1)
+            throw std::runtime_error("need at least one VCL frame for product compare");
+        if (static_cast<std::size_t>(vclCompareCount) > refFrames)
+            throw std::runtime_error("max-vcl-frames exceeds golden frame count");
 
         Sim sim(args.width, args.height);
-        sim.initNativeCandidate(refFrames);
+        sim.initNativeCandidate(static_cast<std::size_t>(vclCompareCount));
         sim.reset();
 
         // Initial setup prefill; IDR writeback may overwrite it, so P slices
@@ -981,25 +1290,95 @@ int main(int argc, char** argv) {
 
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
-        for (const auto& n : nals) {
+        bool productWaitFailed = false;
+        int productWaitFailedAt = 0;
+        // nalu_scanner only pulses vcl_cap_end on the NEXT start code. Per-VCL
+        // product wait must therefore close the open VCL with that start code
+        // (without the next NAL header) before waiting, or feed never arms.
+        bool nextStartCodeAlreadyFed = false;
+        for (std::size_t ni = 0; ni < nals.size(); ++ni) {
+            const auto& n = nals[ni];
+            if (expectedFrames >= vclCompareCount && (n.type == 5 || n.type == 1))
+                break;
             if (n.type == 1 && expectedFrames > 0) {
                 const uint64_t prefillCycles =
                     sim.prefillDpbReference(golden, static_cast<std::size_t>(expectedFrames - 1));
                 sim.cycles -= prefillCycles;
             }
             const uint64_t injectStart = sim.cycles;
-            for (std::size_t i = n.start; i < n.end; ++i) sim.feedByte(annexb[i]);
+            std::size_t feedFrom = n.start;
+            if (nextStartCodeAlreadyFed) {
+                const std::size_t sc = startCodeLen(annexb, n.start);
+                if (sc == 0)
+                    throw std::runtime_error("expected start code at NAL boundary");
+                feedFrom = n.start + sc;
+                nextStartCodeAlreadyFed = false;
+            }
+            for (std::size_t i = feedFrom; i < n.end; ++i) sim.feedByte(annexb[i]);
+            fed += static_cast<uint32_t>(n.end - feedFrom);
+            // Close VCL RBSP so core_rbsp_complete can rise before we wait.
+            if (n.type == 5 || n.type == 1) {
+                if (ni + 1 < nals.size()) {
+                    const std::size_t scPos = nals[ni + 1].start;
+                    const std::size_t sc = startCodeLen(annexb, scPos);
+                    if (sc == 0)
+                        throw std::runtime_error("next NAL missing start code");
+                    for (std::size_t i = 0; i < sc; ++i) sim.feedByte(annexb[scPos + i]);
+                    fed += static_cast<uint32_t>(sc);
+                    nextStartCodeAlreadyFed = true;
+                } else {
+                    // EOS closer: 00 00 01 is enough for the scanner end pulse.
+                    sim.feedByte(0x00);
+                    sim.feedByte(0x00);
+                    sim.feedByte(0x01);
+                    fed += 3;
+                }
+            }
             sim.injectionCycles += (sim.cycles - injectStart);
-            fed += static_cast<uint32_t>(n.end - n.start);
             sim.top.ioctl_download = 0;
             sim.tick();
             if (!sim.waitForBytes(fed, 20000))
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                const int frameWaitCycles = std::max(600000, args.width * args.height * 8);
-                if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
-                    throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
+                // Product core + optional diagnostic stub paint. 624x480 full MB
+                // walk needs generous budget (feed + transform + writeback).
+                const int frameWaitCycles = std::max(2'000'000, args.width * args.height * 16);
+                if (!sim.waitForProductFrames(expectedFrames, frameWaitCycles, !args.skipRgbCompare)) {
+                    std::cerr << "PRODUCT_WAIT incomplete want_frames=" << expectedFrames
+                              << " product_frames_done=" << sim.productFramesDone
+                              << " product_px_writes=" << sim.productPxWrites
+                              << " product_max_mb_addr=" << sim.productMaxMbAddr
+                              << " product_last_mb_count=" << sim.productLastMbCount
+                              << " core_busy=" << static_cast<int>(sim.top.product_core_busy)
+                              << " feed_busy=" << static_cast<int>(sim.top.product_feed_busy)
+                              << " feed_done=" << static_cast<int>(sim.top.product_feed_frame_done)
+                              << " feed_go_seen=" << (sim.sawFeedSliceGo ? 1 : 0)
+                              << " feed_busy_seen=" << (sim.sawFeedBusy ? 1 : 0)
+                              << " feed_started_seen=" << (sim.sawFeedStarted ? 1 : 0)
+                              << " rbsp_complete_seen=" << (sim.sawRbspComplete ? 1 : 0)
+                              << " slice_valid_seen=" << (sim.sawSliceValid ? 1 : 0)
+                              << " slice_is_i_seen=" << (sim.sawSliceIsI ? 1 : 0)
+                              << " sps_mb=" << sim.lastSpsMbW << "x" << sim.lastSpsMbH
+                              << " now_slice_valid=" << static_cast<int>(sim.top.product_slice_valid)
+                              << " now_slice_is_i=" << static_cast<int>(sim.top.product_slice_is_i)
+                              << " now_rbsp_complete=" << static_cast<int>(sim.top.product_rbsp_complete)
+                              << " now_feed_started=" << static_cast<int>(sim.top.product_feed_started)
+                              << " now_feed_go=" << static_cast<int>(sim.top.product_feed_slice_go)
+                              << " now_feed_i_ready=" << static_cast<int>(sim.top.product_feed_i_ready)
+                              << " rbsp_overflow=" << (sim.productRbspOverflow ? 1 : 0)
+                              << " rbsp_len=" << static_cast<int>(sim.top.product_rbsp_length)
+                              << " desync=" << (sim.productSliceDesync ? 1 : 0)
+                              << " desync_cause=" << sim.productDesyncCause
+                              << " desync_mb=" << sim.productDesyncMb
+                              << " decode_state=" << sim.productLastDecodeState
+                              << " stub_frames=" << static_cast<int>(sim.top.stub_frames)
+                              << "\n";
+                    // Keep going so partial product I420 can be scored vs golden.
+                    productWaitFailed = true;
+                    productWaitFailedAt = expectedFrames;
+                    break;
+                }
             } else {
                 const uint64_t idleStart = sim.cycles;
                 for (int i = 0; i < 256; ++i) sim.tick();
@@ -1007,10 +1386,26 @@ int main(int argc, char** argv) {
             }
         }
 
-        if (sim.frames.size() != refFrames)
-            throw std::runtime_error("captured frame count does not match reference");
+        if (!args.skipRgbCompare && !productWaitFailed &&
+            static_cast<int>(sim.frames.size()) != vclCompareCount)
+            throw std::runtime_error("captured RGB frame count does not match requested compare frames");
         if (sim.top.sps_width != args.width || sim.top.sps_height != args.height)
             throw std::runtime_error("SPS geometry does not match ffprobe geometry");
+        std::cout << "PRODUCT_PATH_STATUS frames_done=" << sim.productFramesDone
+                  << " px_writes=" << sim.productPxWrites
+                  << " px_oor=" << sim.productPxOutOfRange
+                  << " max_mb_addr=" << sim.productMaxMbAddr
+                  << " last_mb_count=" << sim.productLastMbCount
+                  << " rbsp_overflow=" << (sim.productRbspOverflow ? 1 : 0)
+                  << " rbsp_len=" << static_cast<int>(sim.top.product_rbsp_length)
+                  << " desync=" << (sim.productSliceDesync ? 1 : 0)
+                  << " desync_cause=" << sim.productDesyncCause
+                  << " desync_mb=" << sim.productDesyncMb
+                  << " core_error=" << (sim.productCoreError ? 1 : 0)
+                  << " wait_failed=" << (productWaitFailed ? 1 : 0)
+                  << " wait_failed_at_frame=" << productWaitFailedAt
+                  << " h264_loop_filter=" << args.h264LoopFilter
+                  << "\n";
 
         printMb0Trace(sim.mb0Trace);
         writeTraceJson(args.traceJsonOut, sim.mb0Trace);
@@ -1047,13 +1442,16 @@ int main(int argc, char** argv) {
             }
         }
 
-        const CompareResult cr = compareFrames(sim.frames, golden, args.width, args.height);
-        if (!args.candidateI420Out.empty()) {
-            std::ofstream cand(args.candidateI420Out, std::ios::binary);
-            if (!cand) throw std::runtime_error("cannot write candidate I420: " + args.candidateI420Out);
-            cand.write(reinterpret_cast<const char*>(cr.candidateI420.data()),
-                       static_cast<std::streamsize>(cr.candidateI420.size()));
-            if (!cand) throw std::runtime_error("short write candidate I420: " + args.candidateI420Out);
+        CompareResult cr;
+        if (!args.skipRgbCompare) {
+            cr = compareFrames(sim.frames, golden, args.width, args.height);
+            if (!args.candidateI420Out.empty()) {
+                std::ofstream cand(args.candidateI420Out, std::ios::binary);
+                if (!cand) throw std::runtime_error("cannot write candidate I420: " + args.candidateI420Out);
+                cand.write(reinterpret_cast<const char*>(cr.candidateI420.data()),
+                           static_cast<std::streamsize>(cr.candidateI420.size()));
+                if (!cand) throw std::runtime_error("short write candidate I420: " + args.candidateI420Out);
+            }
         }
         if (!args.nativeCandidateI420Out.empty()) {
             std::ofstream cand(args.nativeCandidateI420Out, std::ios::binary);
@@ -1062,7 +1460,49 @@ int main(int argc, char** argv) {
                        static_cast<std::streamsize>(sim.nativeCandidate.size()));
             if (!cand) throw std::runtime_error("short write native candidate I420: " + args.nativeCandidateI420Out);
         }
+        if (!args.productCandidateI420Out.empty()) {
+            std::ofstream cand(args.productCandidateI420Out, std::ios::binary);
+            if (!cand) throw std::runtime_error("cannot write product candidate I420: " + args.productCandidateI420Out);
+            cand.write(reinterpret_cast<const char*>(sim.productCandidate.data()),
+                       static_cast<std::streamsize>(sim.productCandidate.size()));
+            if (!cand) throw std::runtime_error("short write product candidate I420: " + args.productCandidateI420Out);
+        }
         writeInterMetadataJson(args.interMetadataOut, sim.interCaptures, args.width, args.height);
+
+        // Product decode_core vs FFmpeg I420 golden (the real full-frame gate).
+        const CompareResult productCr =
+            compareProductPlanes(sim.productCandidate, golden, args.width, args.height, vclCompareCount);
+        writeProductJsonReport(args.productJsonOut, args, seq, productCr, sim, vclCompareCount);
+        std::cout << "PRODUCT_FRAME_COMPARE summary width=" << args.width
+                  << " height=" << args.height
+                  << " frames=" << vclCompareCount
+                  << " product_frames_done=" << sim.productFramesDone
+                  << " product_px_writes=" << sim.productPxWrites
+                  << " first_bad_frame=" << productCr.firstBadFrame
+                  << " strict_pass=" << (productCr.exact ? 1 : 0)
+                  << " mode=" << (args.productExpectRed ? "expect-red" : "strict")
+                  << " h264_loop_filter=" << args.h264LoopFilter << "\n";
+        if (productCr.firstBad.valid) {
+            const int mbDiv = (productCr.firstBad.plane == 0) ? 16 : 8;
+            const int mbX = productCr.firstBad.x / mbDiv;
+            const int mbY = productCr.firstBad.y / mbDiv;
+            const int mbW = (args.width + 15) / 16;
+            const int mbAddr = mbY * mbW + mbX;
+            std::size_t mismatch = 0;
+            for (const auto& fr : productCr.frames) {
+                for (int pi = 0; pi < 3; ++pi)
+                    mismatch += fr.plane[static_cast<std::size_t>(pi)].total -
+                                fr.plane[static_cast<std::size_t>(pi)].exact;
+            }
+            std::cout << "PRODUCT_FRAME_COMPARE first_failing_mb addr=" << mbAddr
+                      << " mb_x=" << mbX << " mb_y=" << mbY
+                      << " frame=" << productCr.firstBad.frame
+                      << " plane=" << (productCr.firstBad.plane == 0 ? 'Y' :
+                                       productCr.firstBad.plane == 1 ? 'U' : 'V')
+                      << " mismatch_pixels=" << mismatch << "\n";
+        } else {
+            std::cout << "PRODUCT_FRAME_COMPARE exact-match frames=" << vclCompareCount << "\n";
+        }
 
         // Degeneracy assertion (parent directive #18): DPB fetch must return
         // non-trivial data. If all 256 Y pixels in a prediction are identical,
@@ -1093,25 +1533,49 @@ int main(int argc, char** argv) {
                       << " (partial DPB corruption)\n";
         }
 
-        writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
-                        annexb.size(), sim.cycles, sim);
-        const int mbsPerFrame = (args.width / 16) * (args.height / 16);
-        printStageCycles(sim, mbsPerFrame);
-        std::cout << "FULL_FRAME_COMPARE summary width=" << args.width
-                  << " height=" << args.height
-                  << " frames=" << sim.frames.size()
-                  << " nals=" << nals.size()
-                  << " idr=" << idr
-                  << " p=" << p
-                  << " bytes=" << annexb.size()
-                  << " native_inter_mb_captures=" << sim.interCaptures.size()
-                  << " native_inter_ignored=" << sim.ignoredInterCaptures
-                  << " native_i420_dpb_writes=" << sim.nativeI420DpbWrites
-                  << " cycles=" << sim.cycles
-                  << " first_bad_frame=" << cr.firstBadFrame
-                  << " strict_pass=" << (cr.exact ? 1 : 0)
-                  << " mode=" << (args.expectRed ? "expect-red" : "strict") << "\n";
+        if (!args.skipRgbCompare) {
+            writeJsonReport(args.jsonOut, args, seq, cr, static_cast<int>(nals.size()), idr, p,
+                            annexb.size(), sim.cycles, sim);
+            const int mbsPerFrame = (args.width / 16) * (args.height / 16);
+            printStageCycles(sim, mbsPerFrame);
+            std::cout << "FULL_FRAME_COMPARE summary width=" << args.width
+                      << " height=" << args.height
+                      << " frames=" << sim.frames.size()
+                      << " nals=" << nals.size()
+                      << " idr=" << idr
+                      << " p=" << p
+                      << " bytes=" << annexb.size()
+                      << " native_inter_mb_captures=" << sim.interCaptures.size()
+                      << " native_inter_ignored=" << sim.ignoredInterCaptures
+                      << " native_i420_dpb_writes=" << sim.nativeI420DpbWrites
+                      << " cycles=" << sim.cycles
+                      << " first_bad_frame=" << cr.firstBadFrame
+                      << " strict_pass=" << (cr.exact ? 1 : 0)
+                      << " mode=" << (args.expectRed ? "expect-red" : "strict") << "\n";
+        }
 
+        // Product path is the authoritative full-frame result.
+        if (args.productExpectRed) {
+            if (productCr.exact) {
+                std::cerr << "FAIL product expected-red: product_decode_core unexpectedly matched FFmpeg\n";
+                return 1;
+            }
+            std::cout << "OK product expected-red: diverged at frame " << productCr.firstBadFrame << "\n";
+        } else if (!productCr.exact) {
+            std::cerr << "FAIL product strict: product_decode_core pixels differ from FFmpeg at frame "
+                      << productCr.firstBadFrame << "\n";
+            // Still allow RGB diagnostic expect-red path to report separately.
+            if (!args.skipRgbCompare && args.expectRed && !cr.exact) {
+                std::cout << "OK full-frame expected-red (RGB diagnostic only): diverged at frame "
+                          << cr.firstBadFrame << "\n";
+            }
+            return 1;
+        } else {
+            std::cout << "OK product strict: all product I420 planes matched FFmpeg reference decoder\n";
+        }
+
+        if (args.skipRgbCompare)
+            return 0;
         if (args.expectRed) {
             if (cr.exact) {
                 std::cerr << "FAIL full-frame expected-red: stream_path unexpectedly matched reference decoder\n";
