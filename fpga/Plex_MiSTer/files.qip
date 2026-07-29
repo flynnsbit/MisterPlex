@@ -24,8 +24,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_4x4.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_intra_pred.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_syntax_primitives.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_deblock_mb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_slice_modes.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb_ref_commit.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_pred.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_decode_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
