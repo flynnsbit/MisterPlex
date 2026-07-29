@@ -30,6 +30,8 @@ TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"
 BUILD="$ROOT/build/verilator/h264_deblock"
 MB_COMMIT_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_mb_commit_fault"
 WRITEBACK_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_writeback_fault"
+ALPHA_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_alpha_fault"
+BS_FAULT_BUILD="$ROOT/build/verilator/h264_deblock_bs_fault"
 GOLDEN="$ROOT/build/p3_golden/deblock_mb0.json"
 ANNEXB="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264"
 SEQUENCE="$ROOT/tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p_sequence_v1.json"
@@ -113,3 +115,47 @@ if ! grep -q 'DPB ref ready before frame boundary' <<<"$WRITEBACK_FAULT_OUT"; th
   exit 1
 fi
 echo "OK h264_deblock RTL red-check: early DPB ref_ready fault failed"
+
+# Mutation twin: alpha table bias must turn isolated-edge / edge compare RED.
+mkdir -p "$ALPHA_FAULT_BUILD"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$ALPHA_FAULT_BUILD" \
+  --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_ALPHA_BIAS \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+ALPHA_FAULT_OUT="$("$ALPHA_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+ALPHA_FAULT_RC=$?
+set -e
+printf '%s\n' "$ALPHA_FAULT_OUT"
+if [[ "$ALPHA_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: alpha-bias fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -qE 'FAIL (luma|chroma|isolated_edge|thresholds|deblock)' <<<"$ALPHA_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: alpha-bias fault did not emit edge/threshold FAIL" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: alpha-bias mutation turned test RED"
+
+# Mutation twin: force bS=2 must diverge on bS=4 strong-edge vectors.
+mkdir -p "$BS_FAULT_BUILD"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BS_FAULT_BUILD" \
+  --top-module h264_deblock_tb -Wno-fatal +define+H264_DEBLOCK_FAULT_FORCE_BS2 \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "$RTL" "$TB"
+set +e
+BS_FAULT_OUT="$("$BS_FAULT_BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+BS_FAULT_RC=$?
+set -e
+printf '%s\n' "$BS_FAULT_OUT"
+if [[ "$BS_FAULT_RC" -eq 0 ]]; then
+  echo "FAIL h264_deblock RTL red-check: force-bS=2 fault unexpectedly passed" >&2
+  exit 1
+fi
+if ! grep -qE 'FAIL (luma|chroma|isolated_edge|thresholds|deblock|bS)' <<<"$BS_FAULT_OUT"; then
+  echo "FAIL h264_deblock RTL red-check: force-bS fault did not emit edge/threshold FAIL" >&2
+  exit 1
+fi
+echo "OK h264_deblock RTL red-check: force-bS=2 mutation turned test RED"
