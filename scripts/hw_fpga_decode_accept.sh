@@ -75,14 +75,43 @@ cp -f "$CAPTURE_DIR/latest.jpg" "$BEFORE_JPG"
 cp -f "$CAPTURE_DIR/state.json" "$BEFORE_STATE" 2>/dev/null || true
 BEFORE_TICK=$(python3 -c "import json;print(json.load(open('$BEFORE_STATE')).get('current',{}).get('tick',0))" 2>/dev/null || echo 0)
 
-# scp bitstream
+# scp bitstream + dump helper early (needed for wipe)
 REMOTE_BS=/media/fat/misterplex/hw_accept_idr.264
 "${SCP[@]}" "$BITSTREAM" "$USER@$HOST:$REMOTE_BS"
+WIPE_TAG=90  # 0x5A — unique tag so product writeback is unambiguous
+cat > "$OUT/dump_ddr_yuv_boot.py" <<'BOOT'
+#!/usr/bin/env python3
+import mmap,os,struct,sys,json
+PHYS=0x30000000; STRIDE=0x80000; Y_OFF,U_OFF,V_OFF=0,299520,374400
+FW,FH=624,480
+fd=os.open("/dev/mem", os.O_RDWR|os.O_SYNC)
+mm=mmap.mmap(fd, 0x100000, mmap.MAP_SHARED, mmap.PROT_READ|mmap.PROT_WRITE, offset=PHYS)
+def mbox():
+    o={}
+    mag={"PLXK":0x504C584B,"PLXF":0x504C5846,"PLXD":0x504C5844,"PLXS":0x504C5853}
+    for name,off in [("PLXK",0xFF000),("PLXF",0x7F118),("PLXD",0x7F128),("PLXS",0x7F100)]:
+        lo,hi=struct.unpack_from("<II", mm, off)
+        o[name]={"lo":lo,"hi":hi,"magic_ok":lo==mag[name]}
+    return o
+mode=sys.argv[1]
+if mode=="wipe":
+    w=int(sys.argv[2]); fill=bytes([w])*(FW*FH); uf=bytes([0x80])*((FW//2)*(FH//2))
+    for bank in (0,1):
+        off=bank*STRIDE
+        mm[off+Y_OFF:off+Y_OFF+FW*FH]=fill
+        mm[off+U_OFF:off+U_OFF+(FW//2)*(FH//2)]=uf
+        mm[off+V_OFF:off+V_OFF+(FW//2)*(FH//2)]=uf
+    print(json.dumps({"wipe":w,"mailboxes":mbox()}))
+mm.close(); os.close(fd)
+BOOT
+"${SCP[@]}" "$OUT/dump_ddr_yuv_boot.py" "$USER@$HOST:/media/fat/misterplex/dump_ddr_yuv_boot.py"
+log "STEP wipe DDR Y banks to ${WIPE_TAG} (prove product writeback by delta)"
+"${SSH[@]}" "python3 /media/fat/misterplex/dump_ddr_yuv_boot.py wipe $WIPE_TAG" | tee "$OUT/wipe_meta.txt" | tee -a "$REPORT"
 
 log "STEP SPI F3 push $(basename "$BITSTREAM") size=$(stat -c%s "$BITSTREAM")"
 PUSH_LOG="$OUT/push.log"
 "${SSH[@]}" "$PUSH_REMOTE --index 3 '$REMOTE_BS'" | tee "$PUSH_LOG" | tee -a "$REPORT"
-sleep 1.5
+sleep 2.0
 
 STATUS_LOG="$OUT/status.log"
 RAW_LOG="$OUT/raw.log"
@@ -124,93 +153,121 @@ json.dump(tel, open(sys.argv[3],"w"), indent=2)
 print(json.dumps(tel, indent=2))
 PY
 
-# dump DDR YUV: product frame-store is 624x480 bank; crop/compare coded WxH at origin
+# Prove product writeback by bank delta vs WIPE_TAG (PLXF best-effort on fit3).
+log "STEP dump DDR YUV + mailboxes (wipe-delta proof)"
 DUMP_PY="$OUT/dump_ddr_yuv.py"
 cat > "$DUMP_PY" <<PY
 #!/usr/bin/env python3
-import mmap,os,struct,sys
+import mmap,os,struct,sys,json
 PHYS=0x30000000
 STRIDE=0x80000
 Y_OFF,U_OFF,V_OFF=0,299520,374400
 FW,FH=$FRAME_STORE_W,$FRAME_STORE_H
 CW,CH=$CODED_W,$CODED_H
-fd=os.open("/dev/mem", os.O_RDONLY|os.O_SYNC)
-mm=mmap.mmap(fd, STRIDE*2, mmap.MAP_SHARED, mmap.PROT_READ, offset=PHYS)
-def score(off):
-    y=mm[off+Y_OFF:off+Y_OFF+FW*FH]
-    s=sum(y)/len(y)
-    var=sum((b-s)**2 for b in y)/len(y)
-    return var, s
-b0,b1=score(0),score(STRIDE)
-bank=0 if b0[0]>=b1[0] else 1
-off=bank*STRIDE
-# Extract coded WxH I420 from top-left of frame-store raster (Y full-width stride FW)
-out=sys.argv[1]
-y=bytearray(CW*CH); u=bytearray((CW//2)*(CH//2)); v=bytearray((CW//2)*(CH//2))
-for row in range(CH):
-    y[row*CW:(row+1)*CW]=mm[off+Y_OFF+row*FW:off+Y_OFF+row*FW+CW]
-for row in range(CH//2):
-    u[row*(CW//2):(row+1)*(CW//2)]=mm[off+U_OFF+row*(FW//2):off+U_OFF+row*(FW//2)+(CW//2)]
-    v[row*(CW//2):(row+1)*(CW//2)]=mm[off+V_OFF+row*(FW//2):off+V_OFF+row*(FW//2)+(CW//2)]
-open(out,"wb").write(bytes(y)+bytes(u)+bytes(v))
-try:
-    db=struct.unpack_from("<Q", mm, 0xFF000)[0]
-except Exception:
-    db=0
-print(f"bank={bank} var0={b0[0]:.1f} var1={b1[0]:.1f} meanY={(b0 if bank==0 else b1)[1]:.1f} doorbell={db:#x} coded={CW}x{CH}")
+WIPE=$WIPE_TAG
+MODE=sys.argv[1]  # dump (wipe is separate boot helper)
+fd=os.open("/dev/mem", os.O_RDWR|os.O_SYNC)
+mm=mmap.mmap(fd, 0x100000, mmap.MAP_SHARED, mmap.PROT_READ|mmap.PROT_WRITE, offset=PHYS)
+def mbox():
+    out={}
+    for name,off in [("PLXK",0xFF000),("PLXF",0x7F118),("PLXD",0x7F128),("PLXS",0x7F100)]:
+        lo,hi=struct.unpack_from("<II", mm, off)
+        out[name]={"off":off,"lo":lo,"hi":hi,"magic_ok": lo=={"PLXK":0x504C584B,"PLXF":0x504C5846,"PLXD":0x504C5844,"PLXS":0x504C5853}[name]}
+    return out
+if MODE=="dump":
+    out_path=sys.argv[2]
+    def score(off):
+        y=mm[off+Y_OFF:off+Y_OFF+FW*FH]
+        # delta from wipe
+        changed=sum(1 for b in y if b!=WIPE)
+        s=sum(y)/len(y); v=sum((b-s)**2 for b in y)/len(y)
+        return changed, v, s
+    c0,v0,s0=score(0); c1,v1,s1=score(STRIDE)
+    # Prefer bank with most pixels differing from wipe tag
+    bank=0 if c0>=c1 else 1
+    off=bank*STRIDE
+    y=bytearray(CW*CH); u=bytearray((CW//2)*(CH//2)); v=bytearray((CW//2)*(CH//2))
+    for row in range(CH):
+        y[row*CW:(row+1)*CW]=mm[off+Y_OFF+row*FW:off+Y_OFF+row*FW+CW]
+    for row in range(CH//2):
+        u[row*(CW//2):(row+1)*(CW//2)]=mm[off+U_OFF+row*(FW//2):off+U_OFF+row*(FW//2)+(CW//2)]
+        v[row*(CW//2):(row+1)*(CW//2)]=mm[off+V_OFF+row*(FW//2):off+V_OFF+row*(FW//2)+(CW//2)]
+    open(out_path,"wb").write(bytes(y)+bytes(u)+bytes(v))
+    y_changed=sum(1 for b in y if b!=WIPE)
+    meta={"bank":bank,"changed0":c0,"changed1":c1,"var0":v0,"var1":v1,
+          "mean0":s0,"mean1":s1,"coded_y_changed":y_changed,"wipe":WIPE,
+          "mailboxes":mbox(),"coded":f"{CW}x{CH}"}
+    print(json.dumps(meta))
+else:
+    raise SystemExit("usage: dump <out.yuv>")
 mm.close(); os.close(fd)
 PY
 "${SCP[@]}" "$DUMP_PY" "$USER@$HOST:/media/fat/misterplex/dump_ddr_yuv.py"
-DUMP_META=$("${SSH[@]}" "python3 /media/fat/misterplex/dump_ddr_yuv.py /media/fat/misterplex/hw_accept_fpga.yuv" | tee "$OUT/dump_meta.txt" | tee -a "$REPORT")
+DUMP_META=$("${SSH[@]}" "python3 /media/fat/misterplex/dump_ddr_yuv.py dump /media/fat/misterplex/hw_accept_fpga.yuv" | tee "$OUT/dump_meta.txt" | tee -a "$REPORT")
 "${SCP[@]}" "$USER@$HOST:/media/fat/misterplex/hw_accept_fpga.yuv" "$OUT/fpga_i420.yuv"
 
-# PLXF proof comes from --status (frame store status line / ERROR)
-# MB compare at coded size
-python3 - "$GOLDEN_YUV" "$OUT/fpga_i420.yuv" "$OUT/mb_compare.json" "$CODED_W" "$CODED_H" "$STATUS_LOG" <<'PY'
-import json,sys,re
-gpath,fpath,out,w,h,stlog=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4]),int(sys.argv[5]),sys.argv[6]
+# MB compare: product writeback proven if coded_y_changed >> 0 (wipe delta)
+python3 - "$GOLDEN_YUV" "$OUT/fpga_i420.yuv" "$OUT/mb_compare.json" "$CODED_W" "$CODED_H" "$STATUS_LOG" "$OUT/dump_meta.txt" <<'PY'
+import json,sys
+gpath,fpath,out=sys.argv[1],sys.argv[2],sys.argv[3]
+w,h=int(sys.argv[4]),int(sys.argv[5])
+stlog,dmeta=sys.argv[6],sys.argv[7]
 g=open(gpath,'rb').read(); f=open(fpath,'rb').read()
 need=w*h*3//2
-res={"ok":False,"first_failing_mb":None,"mismatched_mbs":0,"y_sad_total":0,"note":"","plxf_ok":False}
+res={"ok":False,"first_failing_mb":None,"mismatched_mbs":0,"y_sad_total":0,"note":"",
+     "plxf_ok":False,"writeback_ok":False,"product_pixels":False}
 st=open(stlog).read() if stlog else ""
-res["plxf_ok"]=("PLXF mailbox absent" not in st and "frame store status unavailable" not in st
-                and ("frame_seq=" in st or "PLXF" in st))
+try: meta=json.loads(open(dmeta).read())
+except Exception: meta={}
+plxf=meta.get("mailboxes",{}).get("PLXF",{})
+res["plxf_ok"]=bool(plxf.get("magic_ok"))
+res["plxf_lo"]=plxf.get("lo")
+res["plxd"]=meta.get("mailboxes",{}).get("PLXD")
+changed=int(meta.get("coded_y_changed") or 0)
+res["coded_y_changed"]=changed
+# Prove product writeback: enough pixels left the wipe tag (not host-stale plane)
+res["writeback_ok"]= changed >= 256  # at least one full MB of Y changed
+res["product_pixels"]= res["writeback_ok"]
 if len(f)<need:
     res["note"]=f"fpga yuv short {len(f)}<{need}"
-    json.dump(res, open(out,'w'), indent=2); print(json.dumps(res)); sys.exit(0)
+    json.dump(res, open(out,'w'), indent=2); print(json.dumps(res,indent=2)); sys.exit(0)
 g=g[:need]; f=f[:need]
 mw,mh=w//16,h//16
 def mb_y(plane, mbx, mby):
     rows=[]
     for r in range(16):
         y=mby*16+r; x=mbx*16
-        off=y*w+x
-        rows.append(plane[off:off+16])
+        rows.append(plane[y*w+x:y*w+x+16])
     return b"".join(rows)
 gy=g[:w*h]; fy=f[:w*h]
-mean=sum(fy)/len(fy)
-var=sum((b-mean)**2 for b in fy)/len(fy)
+mean=sum(fy)/len(fy); var=sum((b-mean)**2 for b in fy)/len(fy)
 res["fpga_y_mean"]=mean; res["fpga_y_var"]=var
 first=None; mism=0; sad=0
+first_written=None
+wipe=int(meta.get("wipe") or 0x5A)
 for mby in range(mh):
   for mbx in range(mw):
     a=mb_y(gy,mbx,mby); b=mb_y(fy,mbx,mby)
     s=sum(abs(a[i]-b[i]) for i in range(256))
     sad+=s
+    written=sum(1 for i in range(256) if b[i]!=wipe)
+    if written>32 and first_written is None:
+        first_written={"mb_x":mbx,"mb_y":mby,"mb_addr":mby*mw+mbx,"y_changed":written}
     if s>64:
       mism+=1
       if first is None:
         first={"mb_x":mbx,"mb_y":mby,"mb_addr":mby*mw+mbx,"y_sad":s}
 res["first_failing_mb"]=first
+res["first_written_mb"]=first_written
 res["mismatched_mbs"]=mism
 res["y_sad_total"]=sad
-if var<=10.0:
-    res["note"]="fpga plane flat/black — product pixels not in DDR (telemetry-only gate)"
-    res["ok"]=False
-elif not res["plxf_ok"]:
-    res["note"]="PLXF mailbox absent — DDR dump not proven product writeback; MB addr informational only"
+if not res["writeback_ok"]:
+    res["note"]="no wipe-delta — product pixels not proven in DDR (telemetry-only)"
     res["ok"]=False
 else:
+    # Pixel instrument is live even if PLXF absent
+    if not res["plxf_ok"]:
+        res["note"]="PLXF absent but wipe-delta proves product writeback; MB first-fail is valid instrument"
     res["ok"]= first is None
 json.dump(res, open(out,'w'), indent=2)
 print(json.dumps(res, indent=2))
@@ -262,12 +319,11 @@ gate("res_csum_nonzero", (tel.get("res_csum") or 0)!=0 or (tel.get("raw13_res_cs
 # desync: not directly in status string; treat raw sticky if present later
 first=mb.get("first_failing_mb")
 note=mb.get("note") or ""
-if "flat" in note or "PLXF" in note:
+wb=bool(mb.get("writeback_ok") or mb.get("product_pixels"))
+gate("writeback_wipe_delta", wb, f"y_changed={mb.get('coded_y_changed')} plxf={mb.get('plxf_ok')}")
+if not wb:
     gate("mb_compare", False, note or "no proven product plane")
-    if first:
-        hw_first=f"addr={first['mb_addr']} ({first['mb_x']},{first['mb_y']}) INFORMATIONAL"
-    else:
-        hw_first="n/a (no proven product DDR plane)"
+    hw_first="n/a (no proven product DDR plane)"
 elif first is None:
     gate("mb_compare", True, "all MB Y match")
     hw_first="none (PASS)"
@@ -275,21 +331,26 @@ else:
     gate("mb_compare", False, f"addr={first['mb_addr']} ({first['mb_x']},{first['mb_y']}) sad={first['y_sad']}")
     hw_first=f"addr={first['mb_addr']} ({first['mb_x']},{first['mb_y']})"
 
-# telemetry pass is the hard gate for SPI F3 on integ-fit3; MB is soft if plane missing
-tele_ok=all(ok for n,ok,_ in gates if n!="mb_compare")
+tele_ok=all(ok for n,ok,_ in gates if n not in ("mb_compare","writeback_wipe_delta"))
 print("=== HW ACCEPT GATES ===")
 for n,ok,d in gates:
     print(f"  {'PASS' if ok else 'FAIL'} {n}: {d}")
 print(f"TELEMETRY: {'PASS' if tele_ok else 'FAIL'}")
+print(f"WRITEBACK: {'PASS' if wb else 'FAIL'} y_changed={mb.get('coded_y_changed')} plxf_ok={mb.get('plxf_ok')}")
 print(f"HW_FIRST_FAILING_MB: {hw_first}")
-print(f"SIM_FIRST_FAILING_MB: addr=1 (reference)")
+print(f"SIM_FIRST_FAILING_MB: addr=1 (lane branch reference; merged TBD)")
 print(f"NOTE: {note}" if note else "NOTE: (none)")
 verdict="FAIL"
-if tele_ok and first is None and not note:
+if tele_ok and wb and first is None:
     verdict="PASS_FULL"
+elif tele_ok and wb:
+    verdict="PASS_PIXEL"
 elif tele_ok:
-    verdict="PASS_TELEMETRY"
+    # Telemetry without wipe-delta: fabric ingested NALs but product pixels
+    # never reached DDR frame-store (fit3 known: PLXF dead, px_wr silent).
+    verdict="PASS_TELEMETRY_NO_WRITEBACK"
 print(f"VERDICT: {verdict}")
-(out/"verdict.txt").write_text(verdict+"\n"+f"hw_first={hw_first}\n")
+(out/"verdict.txt").write_text(
+    verdict+f"\nhw_first={hw_first}\ny_changed={mb.get('coded_y_changed')}\nplxf_ok={mb.get('plxf_ok')}\n")
 sys.exit(0 if tele_ok else 1)
 PY
