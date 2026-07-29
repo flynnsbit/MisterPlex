@@ -477,7 +477,6 @@ module h264_decode_core #(
     reg signed [15:0] lat_res_q;
     reg [3:0]  res_store_i;
     reg [7:0]  p16_pred_q;
-    reg signed [15:0] p16_res_q; // M10K residual capture (same +1 pipeline as pred_q)
     reg        p16_pred_in_part_q;
     // The reference windows are no longer staged in registers here.  They
     // stream straight into the MC engines' internal window RAMs, because 603
@@ -951,7 +950,7 @@ module h264_decode_core #(
 
     // Registered M10K read data (address driven one cycle earlier in PRIME/WRITE).
     wire [7:0] wb_data = lat_recon_q;
-    wire signed [15:0] p16_residual_sample = p16_res_q;
+    wire signed [15:0] p16_residual_sample = lat_res_q;
     // Skip / fully-uncoded MB: do not depend on residual RAM contents.
     wire p16_residual_all_zero =
         (p16_cbp_luma_r == 4'd0) && (p16_cbp_chroma_r == 2'd0);
@@ -1792,7 +1791,6 @@ module h264_decode_core #(
             lat_res_we <= 1'b0;
             res_store_i <= 4'd0;
             p16_pred_q <= 8'd0;
-            p16_res_q <= 16'sd0;
             p16_pred_in_part_q <= 1'b0;
             p16_pred_in_part_d1 <= 1'b0;
             p16_mc_rd_plane_d1 <= 2'd0;
@@ -2228,18 +2226,16 @@ module h264_decode_core #(
                 wb_state <= ST_P16_WRITE_HOLD;
             end
             ST_P16_WRITE_HOLD: begin
-                // Capture residual0/pred0 that PRIME addressed. Prefetch idx1.
-                // Must NOT consume lat_res_q combinationally on WRITE0 — the
-                // raddr=1 NBA would make WRITE0 see residual1 (pred/res skew).
+                // res_q ← residual0; pred M10K → sample0 into pred_q.
+                // Prefetch residual1; MC addr already 1 (see p16_mc_rd_flat).
                 lat_res_rplane <= 2'd0;
                 lat_res_raddr <= 8'd1;
-                p16_res_q <= lat_res_q;
                 p16_pred_q <= p16_pred_sample_async;
                 p16_pred_in_part_q <= p16_pred_in_part;
                 wb_state <= ST_P16_WRITE;
             end
             ST_P16_WRITE: begin
-                // p16_res_q/pred_q hold sample[wb_idx]; fire recon this cycle.
+                // q holds residual[wb_idx]; pred_q holds pred[wb_idx].
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
                     wb_state <= ST_DEBLOCK;
@@ -2247,8 +2243,7 @@ module h264_decode_core #(
                     wb_idx <= wb_idx_n;
                     lat_res_rplane <= wb_plane_nn;
                     lat_res_raddr <= wb_sample_idx_nn;
-                    // Capture sample[wb_idx_n] (addr driven prior beat).
-                    p16_res_q <= lat_res_q;
+                    // Capture pred[wb_idx_n] (addr was idx_n during prior beat).
                     p16_pred_q <= p16_pred_sample_async;
                     p16_pred_in_part_q <= p16_pred_in_part;
                 end
