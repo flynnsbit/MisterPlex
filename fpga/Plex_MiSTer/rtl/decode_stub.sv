@@ -478,9 +478,45 @@ module decode_stub #(
 	                                                             ({5'd0, dpb_fill_mb_x, 3'd0} + {8'd0, dpb_sample_x});
 	wire [15:0]       dpb_abs_y = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_y, 4'd0} + {8'd0, dpb_sample_y}) :
 	                                                             ({5'd0, dpb_fill_mb_y, 3'd0} + {8'd0, dpb_sample_y});
-	wire [7:0]        dpb_filtered_sample = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
-	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
-	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// ── DPB commit sample source (writeback maturity) ───────────────────
+	// Pre-register / measured (w-arm-hybrid audit):
+	//   WAS: synthetic XOR/chroma-ramp (looked structured; poisoned every P ref).
+	//   NOW: genuine recon where the stub actually has it; honest 128 elsewhere.
+	// Per-stage (this file, product path without integ ref_commit):
+	//   IQ/IDCT MB0 blk0 → recon_px[]     GENUINE (h264_recon4x4)
+	//   Inter Clip1(pred+res)             GENUINE arithmetic (inter_recon_*)
+	//   Full I-MB walker                  STUBBED (no per-MB intra stream yet)
+	//   In-loop deblock before DPB store  STUBBED here (h264_dpb_ref_commit is
+	//                                     product-owned by sv-mvd/integ — not
+	//                                     duplicated in this lane)
+	//   DPB one_ref store                 REAL module; content = this sample mux
+	// FAULT: DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR restores the old XOR (must RED).
+	wire [7:0]        dpb_synthetic_sample =
+	                                      (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
+	                                      (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
+	                                                                     (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// Raster idx within plane for inter_recon_* / recon_px mapping.
+	wire [7:0]        dpb_y_idx = dpb_fill_sample_idx[7:0];
+	wire [5:0]        dpb_c_idx = dpb_filtered_sample_idx[5:0];
+	// P commit after MC: full MB Clip1(pred+residual). IDR/I: only MB0 4×4 blk0
+	// has IQ/IDCT samples today; remaining luma/chroma = 128 (not XOR).
+	wire              dpb_commit_is_p = lat_p_inter;
+	wire [7:0]        dpb_recon_src_y =
+	                      dpb_commit_is_p ? inter_recon_y[dpb_y_idx] :
+	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
+	                          // recon_px is 4×4 row-major; map fill idx → blk0 order
+	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
+	                      8'd128;
+	wire [7:0]        dpb_recon_src_u = dpb_commit_is_p ? inter_recon_u[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_v = dpb_commit_is_p ? inter_recon_v[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_sample =
+	                      (dpb_filtered_plane == 2'd0) ? dpb_recon_src_y :
+	                      (dpb_filtered_plane == 2'd1) ? dpb_recon_src_u : dpb_recon_src_v;
+`ifdef DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR
+	wire [7:0]        dpb_filtered_sample = dpb_synthetic_sample;
+`else
+	wire [7:0]        dpb_filtered_sample = dpb_recon_src_sample;
+`endif
 	wire [7:0]        dpb_filtered_mb_x_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_x : 8'd0;
 	wire [7:0]        dpb_filtered_mb_y_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_y : 8'd0;
 	wire [1:0]        dpb_filtered_plane_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_plane : 2'd0;
@@ -524,8 +560,8 @@ module decode_stub #(
 	end
 
 	// Recon export tap: only current-frame DPB writes (I420 byte offsets).
-	// Contents track whatever the fill path commits (synthetic seam patterns
-	// today; real filtered recon when writeback lands). Never the present bank.
+	// Contents track the DPB fill sample mux (recon-sourced; see above).
+	// Never the present bank. POST-deblock maturity tracks ref_commit product.
 	wire [31:0] exp_cur_base = dpb_current_base;
 	wire [31:0] exp_off_raw = dpb_mem_waddr - exp_cur_base;
 	assign exp_sample_valid = dpb_mem_we &&

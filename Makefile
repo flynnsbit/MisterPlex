@@ -96,6 +96,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
 	$(ROOT)/tests/unit/test_p3_hybrid_gate.sh
 	$(ROOT)/tests/unit/test_h264_recon_export.sh
+	python3 $(ROOT)/tests/unit/test_dpb_writeback_source.py
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
