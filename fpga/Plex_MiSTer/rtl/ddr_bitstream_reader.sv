@@ -21,6 +21,11 @@ module ddr_bitstream_reader #(
 	parameter [31:0] STAT6_PHYS = 32'h3014_0048,
 	parameter int RING_BYTES    = 262144,
 	parameter int POLL_DIV_BITS = 6,
+	// Mailbox poll rate when the ring is running low.  Producer latency shows up
+	// directly as decoder starvation, so a nearly empty ring is polled roughly
+	// eight times more often than a comfortable one.
+	parameter int POLL_DIV_FAST_BITS = 3,
+	parameter int RING_LOW_BYTES = 8192,
 	parameter int PREFETCH_QWORDS = 64,
 	parameter int PREFETCH_BURST  = 16
 )(
@@ -151,7 +156,10 @@ module ddr_bitstream_reader #(
 	reg  [31:0] pf_sync_count;
 	wire        rd_is_prefetch;
 
-	wire want_poll = enable && (poll_div == {POLL_DIV_BITS{1'b0}}) && !pf_beats_pending;
+	wire ring_low = ring_level < 32'(RING_LOW_BYTES);
+	wire poll_tick = ring_low ? (poll_div[POLL_DIV_FAST_BITS-1:0] == {POLL_DIV_FAST_BITS{1'b0}})
+	                          : (poll_div == {POLL_DIV_BITS{1'b0}});
+	wire want_poll = enable && poll_tick && !pf_beats_pending;
 	wire want_read = enable && ring_ok && pf_fetch_req;
 	wire want_pub = enable && publish_pending;
 	wire can_consume = (mode != MODE_PAYLOAD) || !out_full;
@@ -187,6 +195,10 @@ module ddr_bitstream_reader #(
 		.beats_pending(pf_beats_pending)
 	);
 	assign rd_is_prefetch = pf_beats_pending && (state != ST_POLL);
+
+	// Fetch pointer is telemetry the mailbox has no slot for yet; keep it loaded
+	// so the prefetch output cannot be optimised away.
+	wire _unused_pf_fetch = |pf_fetch_count;
 
 	function automatic [31:0] hdr32(input int base);
 		begin
@@ -354,7 +366,7 @@ module ddr_bitstream_reader #(
 							end
 							4'd2: begin
 								DDRAM_ADDR <= STAT0_W;
-								DDRAM_DIN <= {ring_level, MAGIC_ST0};
+								DDRAM_DIN <= {pf_fifo_qwords, ring_level[23:0], MAGIC_ST0};
 								DDRAM_WE <= 1'b1;
 								publish_step <= 4'd3;
 							end

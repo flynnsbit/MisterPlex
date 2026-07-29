@@ -7,7 +7,15 @@
 
 module stream_path #(
 	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240
+	parameter int FRAME_H = 240,
+	// Compressed-bitstream ring geometry.  These are parameters and not literals
+	// on purpose: a higher-bitrate stream needs a longer ring and a deeper
+	// prefetch, and that must not require editing the delivery path.  RING_BYTES
+	// must be a power of two and must match what misterplexd allocates.
+	parameter int BITSTREAM_RING_BYTES      = 262144,
+	parameter int BITSTREAM_PREFETCH_QWORDS = 64,
+	parameter int BITSTREAM_PREFETCH_BURST  = 16,
+	parameter int BITSTREAM_RING_LOW_BYTES  = 8192
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -143,7 +151,12 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
-	ddr_bitstream_reader ddr_stream (
+	ddr_bitstream_reader #(
+		.RING_BYTES(BITSTREAM_RING_BYTES),
+		.RING_LOW_BYTES(BITSTREAM_RING_LOW_BYTES),
+		.PREFETCH_QWORDS(BITSTREAM_PREFETCH_QWORDS),
+		.PREFETCH_BURST(BITSTREAM_PREFETCH_BURST)
+	) ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
 		.flush(flush),
