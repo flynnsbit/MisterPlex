@@ -119,9 +119,15 @@ module h264_pframe_ref_inject_tb #(
 	wire        core_rd_stall;
 	wire [7:0]  core_rd_data;
 	wire        core_rd_valid;
+	// Product path: bases track u_dpb_ddr ping-pong. tb_mem path keeps the
+	// C++-driven dpb_ref_base/dpb_write_base ports (usually 0 / WRITE_BASE).
+	wire [31:0] core_dpb_write_base;
+	wire [31:0] core_dpb_ref_base;
 
 	generate
 		if (USE_BRAM_DPB) begin : g_bram
+			wire [31:0] dpb_cur_base;
+			wire [31:0] dpb_ref_base_w;
 			h264_dpb_ddr #(
 				.FRAME_W(FRAME_W),
 				.FRAME_H(FRAME_H),
@@ -139,8 +145,8 @@ module h264_pframe_ref_inject_tb #(
 				.frame_done_ack(dpb_frame_done_ack),
 				.swap_busy(dpb_swap_busy),
 				.ref_ready(dpb_ref_ready),
-				.current_base(),
-				.reference_base(),
+				.current_base(dpb_cur_base),
+				.reference_base(dpb_ref_base_w),
 				.rec_wr_en(dpb_rec_wr_en),
 				.rec_wr_addr(dpb_rec_wr_addr),
 				.rec_wr_data(dpb_rec_wr_data),
@@ -161,6 +167,11 @@ module h264_pframe_ref_inject_tb #(
 				.ddr_we(ddr_we),
 				.ddr_req(ddr_req)
 			);
+			// Writes stay on the TB scoreboard base (WRITE_BASE); only the
+			// reference bank must track u_dpb_ddr so MC ref_rd addresses match.
+			// Product stream_path wires BOTH to dpb_current/reference_base.
+			assign core_dpb_write_base = dpb_write_base;
+			assign core_dpb_ref_base   = dpb_ref_base_w;
 		end else begin : g_tbmem
 			assign dpb_frame_done_ack = 1'b0;
 			assign dpb_ref_ready = 1'b1;
@@ -176,6 +187,8 @@ module h264_pframe_ref_inject_tb #(
 			assign core_rd_stall = tb_mem_rstall;
 			assign core_rd_data = tb_mem_rdata;
 			assign core_rd_valid = tb_mem_rvalid;
+			assign core_dpb_write_base = dpb_write_base;
+			assign core_dpb_ref_base   = dpb_ref_base;
 		end
 	endgenerate
 
@@ -227,7 +240,7 @@ module h264_pframe_ref_inject_tb #(
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
 		.recon_mb_is_ref(1'b0),
-		.dpb_write_base(dpb_write_base),
+		.dpb_write_base(core_dpb_write_base),
 		.recon_y(recon_y),
 		.recon_u(recon_u),
 		.recon_v(recon_v),
@@ -235,7 +248,7 @@ module h264_pframe_ref_inject_tb #(
 		.p16_mb_x(p16_mb_x),
 		.p16_mb_y(p16_mb_y),
 		.p16_mb_is_ref(p16_mb_is_ref),
-		.dpb_ref_base(dpb_ref_base),
+		.dpb_ref_base(core_dpb_ref_base),
 		.p16_residual_y(p16_residual_y),
 		.p16_residual_u(p16_residual_u),
 		.p16_residual_v(p16_residual_v),

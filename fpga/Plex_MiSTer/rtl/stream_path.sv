@@ -835,7 +835,11 @@ module stream_path #(
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
 		.recon_mb_is_ref(1'b0),
-		.dpb_write_base(32'd0),
+		// Bank bases from u_dpb_ddr — must track ping-pong after each frame
+		// swap. Tying these to 0 only works while reference_base==BANK0; the
+		// second GOP reference (BANK1) then mis-addresses and MC reads garbage.
+		// dpb_rd_data/valid come from u_dpb_ddr above — never 8'd0 + fake valid.
+		.dpb_write_base(dpb_current_base),
 		.recon_y(core_recon_y),
 		.recon_u(core_recon_u),
 		.recon_v(core_recon_v),
@@ -843,7 +847,7 @@ module stream_path #(
 		.p16_mb_x(8'd0),
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
-		.dpb_ref_base(32'd0),
+		.dpb_ref_base(dpb_reference_base),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),

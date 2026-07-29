@@ -1003,8 +1003,89 @@ int main(int argc, char** argv) {
 	std::cout << "BRAM_REF_UNDER_MC cycles=" << s.cycles
 	          << " ddr_busy_pulses=" << s.ddr.busy_pulses
 	          << " (real MC + contended DDR via h264_dpb_ddr BRAM_REF)\n";
+
+	// ----- REAL DPB READ (no ffmpeg inject into the MC port) -----
+	// Populate the product DPB solely via rec_wr + frame_done_req (same path
+	// decode writeback uses), then P_Skip MB0 reading through ref_rd_data.
+	// Destination memory must match the pattern — not a valid strobe.
+	{
+		resetDut(s);
+		s.ddr.contention = true;
+		s.top.disable_deblocking_filter_idc = 1;
+		// Non-zero unique pattern so a silent 0-data+fake-valid cannot pass.
+		std::vector<uint8_t> pat(FRAME_BYTES);
+		for (int y = 0; y < FRAME_H; ++y)
+			for (int x = 0; x < FRAME_W; ++x)
+				pat[y * FRAME_W + x] = static_cast<uint8_t>(16 + ((x * 3 + y * 5) & 0x7f));
+		for (int i = 0; i < C_BYTES; ++i) {
+			pat[Y_BYTES + i] = static_cast<uint8_t>(80 + (i & 31));
+			pat[Y_BYTES + C_BYTES + i] = static_cast<uint8_t>(140 + (i & 31));
+		}
+		for (int i = 0; i < FRAME_BYTES; ++i) {
+			int guard = 0;
+			while (s.top.dpb_rec_wr_full && guard++ < 10000) s.tick();
+			if (s.top.dpb_rec_wr_full) {
+				std::cerr << "FAIL REAL_DPB_RD: rec_wr_full\n";
+				return 1;
+			}
+			s.top.dpb_rec_wr_en = 1;
+			s.top.dpb_rec_wr_addr = static_cast<uint32_t>(i);
+			s.top.dpb_rec_wr_data = pat[i];
+			s.tick();
+			s.top.dpb_rec_wr_en = 0;
+		}
+		s.top.dpb_frame_done_req = 1;
+		s.tick();
+		s.top.dpb_frame_done_req = 0;
+		int wait = 0;
+		while (!s.top.dpb_frame_done_ack && wait++ < 5000000) s.tick();
+		if (!s.top.dpb_frame_done_ack || !s.top.dpb_ref_ready) {
+			std::cerr << "FAIL REAL_DPB_RD: swap/ref_ready\n";
+			return 1;
+		}
+		// Poison tb_mem so any accidental tb_mem MC path cannot cheat.
+		for (size_t i = 0; i < s.mem.size(); ++i) s.mem[i] = 0x5A;
+		s.writes.clear();
+		const size_t want = kSamplesPerMb;
+		if (!driveP16(s, 0, 0, 0, 0, nullptr, nullptr, nullptr, want)) {
+			std::cerr << "FAIL REAL_DPB_RD: P_Skip timeout\n";
+			return 1;
+		}
+		uint8_t yb[256], ub[64], vb[64];
+		std::memset(yb, 0xA5, sizeof yb);
+		std::memset(ub, 0xA5, sizeof ub);
+		std::memset(vb, 0xA5, sizeof vb);
+		applyWritesToMb(s.writes, 0, 0, 0, yb, ub, vb);
+		long long rdExact = 0, rdBad = 0, rdZero = 0;
+		for (int ly = 0; ly < 16; ++ly)
+			for (int lx = 0; lx < 16; ++lx) {
+				const int wantY = pat[ly * FRAME_W + lx];
+				const int got = yb[ly * 16 + lx];
+				if (got == 0) ++rdZero;
+				if (got != wantY) {
+					if (rdBad < 6)
+						std::cerr << "FAIL REAL_DPB_RD Y lx=" << lx << " ly=" << ly
+						          << " got=" << got << " want=" << wantY << "\n";
+					++rdBad;
+				} else
+					++rdExact;
+			}
+		for (int cy = 0; cy < 8; ++cy)
+			for (int cx = 0; cx < 8; ++cx) {
+				const int wu = pat[Y_BYTES + cy * C_W + cx];
+				const int wv = pat[Y_BYTES + C_BYTES + cy * C_W + cx];
+				if (ub[cy * 8 + cx] != wu || vb[cy * 8 + cx] != wv) ++rdBad;
+				else rdExact += 2;
+			}
+		std::cout << "REAL_DPB_RD_NO_INJECT samples_exact=" << rdExact
+		          << " samples_bad=" << rdBad << " y_zero=" << rdZero
+		          << " (populate=rec_wr+swap, MC via dpb_ddr ref_rd; tb_mem poisoned)\n";
+		std::cout << (rdBad == 0 && rdExact == kSamplesPerMb ? "REAL_DPB_RD_PASS\n" : "REAL_DPB_RD_FAIL\n");
+		if (rdBad != 0) return 1;
+	}
 #else
 	std::cout << "BRAM_REF_UNDER_MC skipped (tb_mem path); rebuild with -DUSE_BRAM_DPB\n";
+	std::cout << "REAL_DPB_RD_NO_INJECT skipped (needs -DUSE_BRAM_DPB / h264_dpb_ddr)\n";
 #endif
 
 	if (skipBad != 0 || p16Bad != 0 || nzBad != 0 || mvdBad != 0) return 1;
