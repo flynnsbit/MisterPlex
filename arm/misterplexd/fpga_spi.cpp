@@ -1444,8 +1444,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         } else {
             plxd_absent_fallback:
             // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
-            // Fall back to the old timing-based mitigation: brief yield for
-            // previous DMA (~1–3 ms) plus a two-vsync same-bank reuse floor.
+            //
+            // LOAD-BEARING timing mitigation (not a completion check):
+            // stands in for "previous bank DMA / scanout released the write
+            // target". Real readiness is PLXD free_bank_mask; without it the
+            // ARM can overwrite a bank the FPGA is still reading → tear /
+            // intermittent corruption. Do not remove or shrink this sleep on
+            // the absent path without a hardware-side ready signal or a long
+            // soak that characterises 1-in-N frame faults.
+            // Also apply a two-vsync same-bank reuse floor below.
             usleep(1500);
             const double nowMs = std::chrono::duration<double, std::milli>(
                                      std::chrono::steady_clock::now().time_since_epoch())
@@ -1569,10 +1576,25 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                                        std::chrono::steady_clock::now().time_since_epoch())
                                        .count();
 
-    // Steady-state: short yield only (DMA finishes in ~1–3 ms). Vsync page-flip
-    // in frame_store prevents tears without host blocking on swap_pending.
+    // Steady-state post-kick wait.
+    //
+    // Readiness this sleep stood in for: none that we can observe cheaply on the
+    // hot path. frame_store vsync page-flip already prevents tears without the
+    // host blocking on swap_pending; bank overwrite safety is owned by PLXD
+    // (preferred) or by the PLXD-absent prep path (usleep(1500) + optional
+    // kDdrBankReuseMinUs same-bank floor). SPI ddr_busy is a real "DMA in
+    // flight" bit but requires the status SPI path we deliberately left off
+    // the steady doorbell hot path.
+    //
+    // Therefore:
+    //   - PLXD-selected bank: skip. Handshake already proved the write target
+    //     was free; post-kick blind yield is vestigial.
+    //   - PLXD-absent fallback: keep a short timed yield as conservative
+    //     residue. Do NOT delete it without a multi-thousand-frame soak that
+    //     characterises intermittent bank tear — a single green run is not
+    //     proof. Prefer wiring a hardware-side ready (PLXD) over shortening.
     auto tPost0 = std::chrono::steady_clock::now();
-    if (!first)
+    if (!first && !plxdUsed)
         usleep(500);
     auto tPost1 = std::chrono::steady_clock::now();
     timing.post_wait_us = elapsedUs(tPost0, tPost1);

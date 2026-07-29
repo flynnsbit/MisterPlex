@@ -1135,6 +1135,25 @@ hashes matching: `annexb_sha=41f2769…`, `annexb_md5=779f0d3a…`, `mp4_md5=3fa
 rc=77). **The number is re-measurable.** Searching only the repo and its worktrees'
 tracked paths — not sibling checkouts — is what hid it.
 
+(**W-arm-sleep, 2026-07-29 — asset green; ARM remeasure NOT run; sleeps classified**)
+- `ASSET_OK` rc=0 confirmed; original FEED evidence archived under
+  `build/arm-sleep-evidence/`. Host x86 decode of the same asset is ~90× faster
+  (`decode_null≈0.24 ms/f`) and is **not** a 40.19 reproduce.
+- Full ARM 40.19 remeasure **requires the device** (ffmpeg buckets + `/dev/mem`
+  microbench + product present telemetry). Device is user-live
+  `DECODE=320x240 PRESENT=fb0 STREAM=0` — READ-ONLY; sample not on device.
+  **Parent must schedule a device window.** No claim that 40.19 moved or held.
+- Sleep classification (`sendDdrFrame`):
+  - `usleep(1500)` prep: **LOAD-BEARING** on PLXD-absent fallback only (stands
+    in for bank-release ready). Already skipped when PLXD live. Product
+    `prep=1.813` implies the 10.41 measurement was on the absent path. Do **not**
+    remove without hardware ready (PLXD) or a long soak that catches 1-in-N tears.
+  - `usleep(500)` post: **VESTIGIAL** when PLXD selected the bank; residual timed
+    yield on absent path. Measured `post=2.655` is oversleep under load, not a
+    2.6 ms design. Code now skips post sleep when `plxdUsed` (not deployed).
+  - Honest non-saving: the ~1.5 ms prep on the absent path **cannot** be banked
+    as free; the real win is keeping PLXD live so prep≪1.5 ms.
+
 **R3 — "screensaver/idle 93%" was never a completion score.** It is `G-IDLE2c`:
 the middle band measuring **93.1% identical to the screensaver**, i.e. the
 *fingerprint of the LastFrame torn-composite bug* on the 480p line. I had been
