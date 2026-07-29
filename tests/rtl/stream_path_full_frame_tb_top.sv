@@ -253,57 +253,54 @@ module stream_path_full_frame_tb #(
 	assign product_sps_mb_h = sps_mb_h;
 
 	assign fs_wr_pixel = FAULT_PIXEL_XOR ? (fs_wr_pixel_dut ^ 16'hffff) : fs_wr_pixel_dut;
-	assign trace_slice_qp = dut.gen_diagnostic_present.stub.lat_qp;
-	assign trace_residual_tc = dut.gen_diagnostic_present.stub.lat_res_tc;
+	// Stage-A product path: decode_stub is ABSENT. Product scoring uses
+	// dec_px_* / product_* hierarchy above. Native/stub taps are tied off so
+	// this TB still elaborates; do not resurrect gen_diagnostic_present.stub.
+	assign trace_slice_qp = 6'd0;
+	assign trace_residual_tc = 5'd0;
 	assign trace_residual_t1 = dut.sl_place_t1;
-	assign trace_residual_dc = dut.gen_diagnostic_present.stub.lat_res_dc;
+	assign trace_residual_dc = 16'sd0;
 	assign trace_residual_csum = residual_csum;
-	assign native_inter_valid = dut.gen_diagnostic_present.stub.inter_capture_valid;
-	assign native_inter_frame_idx = dut.gen_diagnostic_present.stub.frames_out;
-	assign native_inter_mb_x = dut.gen_diagnostic_present.stub.lat_p_mb_x;
-	assign native_inter_mb_y = dut.gen_diagnostic_present.stub.lat_p_mb_y;
-	assign native_inter_p_skip = dut.gen_diagnostic_present.stub.lat_p_skip;
-	assign native_inter_part_mode = dut.gen_diagnostic_present.stub.lat_p_part_mode;
+	assign native_inter_valid = 1'b0;
+	assign native_inter_frame_idx = 16'd0;
+	assign native_inter_mb_x = 8'd0;
+	assign native_inter_mb_y = 8'd0;
+	assign native_inter_p_skip = 1'b0;
+	assign native_inter_part_mode = 3'd0;
 	genvar trace_i;
 	generate
 		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
-			assign trace_residual_coeff[trace_i] =
-				(FAULT_TRACE_COEFF0_PLUS1 && trace_i == 0) ?
-					(dut.gen_diagnostic_present.stub.lat_coeff[trace_i] + 9'sd1) : dut.gen_diagnostic_present.stub.lat_coeff[trace_i];
-			assign trace_idct_dequant[trace_i] = dut.gen_diagnostic_present.stub.idct_dequant[trace_i];
-			assign trace_idct_residual[trace_i] = dut.gen_diagnostic_present.stub.idct_residual[trace_i];
-			assign trace_recon_px[trace_i] = dut.gen_diagnostic_present.stub.recon_px[trace_i];
+			assign trace_residual_coeff[trace_i] = 9'sd0;
+			assign trace_idct_dequant[trace_i] = 29'sd0;
+			assign trace_idct_residual[trace_i] = 29'sd0;
+			assign trace_recon_px[trace_i] = 8'd0;
 		end
 	endgenerate
 	genvar native_y_i;
 	generate
 		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
-			assign native_inter_pred_y[native_y_i] = dut.gen_diagnostic_present.stub.dpb_pred_y[native_y_i];
+			assign native_inter_pred_y[native_y_i] = 8'd0;
 		end
 	endgenerate
 	genvar native_c_i;
 	generate
 		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
-			assign native_inter_pred_u[native_c_i] = dut.gen_diagnostic_present.stub.dpb_pred_u[native_c_i];
-			assign native_inter_pred_v[native_c_i] = dut.gen_diagnostic_present.stub.dpb_pred_v[native_c_i];
+			assign native_inter_pred_u[native_c_i] = 8'd0;
+			assign native_inter_pred_v[native_c_i] = 8'd0;
 		end
 	endgenerate
 
-	// Native I420 DPB write tap: captures every sample written to the DPB
-	// (IDR intra frames during DPB fill; eventually inter reconstruction too).
-	wire [31:0] dpb_wr_addr_raw = dut.gen_diagnostic_present.stub.dpb_mem_waddr;
-	wire [31:0] dpb_cur_base    = dut.gen_diagnostic_present.stub.dpb_current_base;
-	assign native_i420_wr_en     = dut.gen_diagnostic_present.stub.dpb_mem_we;
-	assign native_i420_wr_offset = dpb_wr_addr_raw - dpb_cur_base;
-	assign native_i420_wr_data   = dut.gen_diagnostic_present.stub.dpb_mem_wdata;
-	assign native_i420_wr_frame  = dut.gen_diagnostic_present.stub.frames_out;
+	// Native I420 DPB write tap unused on product path (dec_px is the source).
+	assign native_i420_wr_en     = 1'b0;
+	assign native_i420_wr_offset = 32'd0;
+	assign native_i420_wr_data   = 8'd0;
+	assign native_i420_wr_frame  = 16'd0;
 
-	// DPB reference pre-fill: inject real decoded IDR samples into the
-	// DPB SRAM. The testbench writes to the REFERENCE bank so that MC
-	// fetches see real data instead of synthetic patterns.
+	// Prefill no-op: product DPB is inside product_decode_core (no stub SRAM).
 	always @(posedge clk) begin
-		if (dpb_prefill_en)
-			dut.gen_diagnostic_present.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
+		if (dpb_prefill_en) begin
+			// intentionally empty
+		end
 	end
 endmodule
 
