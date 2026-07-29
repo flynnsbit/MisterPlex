@@ -167,10 +167,23 @@ module h264_luma_qpel_sample (
 		u8 = v[7:0];
 	endfunction
 
+	// 6-tap (1,-5,20,20,-5,1) as shift-adds — never `*`, so this diagnostic
+	// sample path cannot steal DSP blocks from the product MC budget.
+	function automatic integer tap6(
+		input integer a0, input integer a1, input integer a2,
+		input integer a3, input integer a4, input integer a5);
+		begin
+			tap6 = a0 + a5
+			     - ((a1 <<< 2) + a1)
+			     - ((a4 <<< 2) + a4)
+			     + ((a2 <<< 4) + (a2 <<< 2))
+			     + ((a3 <<< 4) + (a3 <<< 2));
+		end
+	endfunction
+
 	function automatic integer hraw(input integer row, input integer col);
-		hraw = pix(row, col - 2) - 5 * pix(row, col - 1) +
-		       20 * pix(row, col) + 20 * pix(row, col + 1) -
-		       5 * pix(row, col + 2) + pix(row, col + 3);
+		hraw = tap6(pix(row, col - 2), pix(row, col - 1), pix(row, col),
+		            pix(row, col + 1), pix(row, col + 2), pix(row, col + 3));
 	endfunction
 
 	function automatic integer half_h(input integer rowoff, input integer coloff);
@@ -181,9 +194,9 @@ module h264_luma_qpel_sample (
 		integer col;
 		begin
 			col = 4 + coloff;
-			half_v = clip1((pix(2 + rowoff, col) - 5 * pix(3 + rowoff, col) +
-			                20 * pix(4 + rowoff, col) + 20 * pix(5 + rowoff, col) -
-			                5 * pix(6 + rowoff, col) + pix(7 + rowoff, col) + 16) >>> 5);
+			half_v = clip1((tap6(pix(2 + rowoff, col), pix(3 + rowoff, col),
+			                     pix(4 + rowoff, col), pix(5 + rowoff, col),
+			                     pix(6 + rowoff, col), pix(7 + rowoff, col)) + 16) >>> 5);
 		end
 	endfunction
 
@@ -194,9 +207,8 @@ module h264_luma_qpel_sample (
 		begin
 			row = 4 + rowoff;
 			col = 4 + coloff;
-			sum = hraw(row - 2, col) - 5 * hraw(row - 1, col) +
-			      20 * hraw(row, col) + 20 * hraw(row + 1, col) -
-			      5 * hraw(row + 2, col) + hraw(row + 3, col);
+			sum = tap6(hraw(row - 2, col), hraw(row - 1, col), hraw(row, col),
+			           hraw(row + 1, col), hraw(row + 2, col), hraw(row + 3, col));
 			half_c = clip1((sum + 512) >>> 10);
 		end
 	endfunction
@@ -232,13 +244,36 @@ module h264_chroma_epel_sample (
 	input  wire [2:0] frac_y,
 	output wire [7:0] sample
 );
+	// Shift-add only — diagnostic path must not steal DSPs from product MC.
+	function automatic [15:0] smul(input [7:0] s, input [6:0] k);
+		reg [15:0] acc;
+		integer i;
+		begin
+			acc = 16'd0;
+			for (i = 0; i < 7; i = i + 1)
+				if (k[i]) acc = acc + ({8'd0, s} << i);
+			smul = acc;
+		end
+	endfunction
+	function automatic [6:0] wprod(input [3:0] a, input [3:0] b);
+		reg [6:0] acc;
+		integer i;
+		begin
+			acc = 7'd0;
+			for (i = 0; i < 4; i = i + 1)
+				if (b[i]) acc = acc + ({3'd0, a} << i);
+			wprod = acc;
+		end
+	endfunction
 	wire [3:0] wx0 = 4'd8 - {1'b0, frac_x};
 	wire [3:0] wy0 = 4'd8 - {1'b0, frac_y};
-	wire [9:0] a = wx0 * wy0;
-	wire [9:0] b = {1'b0, frac_x} * wy0;
-	wire [9:0] c = wx0 * {1'b0, frac_y};
-	wire [9:0] d = {1'b0, frac_x} * {1'b0, frac_y};
-	wire [15:0] sum = a * p00 + b * p10 + c * p01 + d * p11 + 16'd32;
+	wire [3:0] wx1 = {1'b0, frac_x};
+	wire [3:0] wy1 = {1'b0, frac_y};
+	wire [6:0] a = wprod(wx0, wy0);
+	wire [6:0] b = wprod(wx1, wy0);
+	wire [6:0] c = wprod(wx0, wy1);
+	wire [6:0] d = wprod(wx1, wy1);
+	wire [15:0] sum = smul(p00, a) + smul(p10, b) + smul(p01, c) + smul(p11, d) + 16'd32;
 	assign sample = sum[13:6];
 endmodule
 

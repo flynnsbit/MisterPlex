@@ -53,7 +53,11 @@ module h264_dpb_one_ref #(
 	parameter int FRAME_W = 624,
 	parameter int FRAME_H = 480,
 	parameter int BANK0_BASE = 0,
-	parameter int BANK1_BASE = 898560 / 2
+	// One I420 picture. Derived rather than a fixed 449280 so the bank stride
+	// tracks FRAME_W/FRAME_H and cannot silently disagree with the store
+	// behind the mem_* port; at 624x480 this is exactly the previous value.
+	parameter int BANK1_BASE = (FRAME_W * FRAME_H) +
+	                           2 * ((FRAME_W / 2) * (FRAME_H / 2))
 )(
 	input  wire               clk,
 	input  wire               reset,
@@ -99,6 +103,10 @@ module h264_dpb_one_ref #(
 	output reg  [31:0]        mem_raddr,
 	input  wire [7:0]         mem_rdata,
 	input  wire               mem_rvalid,
+	// Variable-latency memories (the DDR-resident DPB) deassert mem_stall only
+	// on the cycle they accept the address currently on mem_raddr.  A fixed
+	// 1-cycle SRAM ties this low and the module behaves exactly as before.
+	input  wire               mem_stall,
 	output reg                luma_window_valid,
 	output reg  [8:0]         luma_window_idx,
 	output reg  [7:0]         luma_window_sample,
@@ -167,6 +175,10 @@ module h264_dpb_one_ref #(
 
 	reg [2:0] phase;
 	reg [8:0] issue_idx;
+	// Row/column of issue_idx inside its window, tracked alongside the flat
+	// index so the needed-tap test below does not need a divide by 21.
+	reg [4:0] issue_r;
+	reg [4:0] issue_c;
 	reg [1:0] pending_plane;
 	reg [8:0] pending_idx;
 	reg       pending_valid;
@@ -220,15 +232,55 @@ module h264_dpb_one_ref #(
 		endcase
 	end
 
+	// ── Needed-tap narrowing ────────────────────────────────────────────────
+	// The full 21x21 luma and 9x9 chroma windows only exist to carry the 6-tap
+	// and bilinear support.  When a fractional part is zero that axis is not
+	// filtered at all, so the border taps on it are never read and fetching
+	// them is pure cost: at 20 MHz with 712 cycles per macroblock, 603 fetch
+	// cycles is most of the budget on its own.
+	//
+	// The window index mapping is unchanged, so consumers keep their 21x21 /
+	// 9x9 layout; unneeded cells are simply left unwritten and never read.
+	//
+	//   luma    frac_x == 0 -> only window columns 2..17 carry taps
+	//           frac_y == 0 -> only window rows    2..17 carry taps
+	//   chroma  frac_x == 0 -> only column 8 is redundant
+	//           frac_y == 0 -> only row    8 is redundant
+	//
+	//   both fractional  441 + 81 + 81 = 603 cycles (unchanged)
+	//   integer motion   256 + 64 + 64 = 384 cycles
+	//
+	// Integer motion is the P_Skip common case, which is 79% of our
+	// macroblocks.
+	wire luma_tap_needed =
+		(luma_frac_x != 2'd0 || (issue_c >= 5'd2 && issue_c <= 5'd17)) &&
+		(luma_frac_y != 2'd0 || (issue_r >= 5'd2 && issue_r <= 5'd17));
+	wire chroma_tap_needed =
+		(chroma_frac_x != 3'd0 || issue_c <= 5'd7) &&
+		(chroma_frac_y != 3'd0 || issue_r <= 5'd7);
+	wire tap_needed = (phase == PH_LUMA) ? luma_tap_needed : chroma_tap_needed;
+
+	// A request that is presented but not accepted must be held, and no state
+	// may advance underneath it, or the window sample it belongs to is lost.
+	wire mem_hold = mem_rd && mem_stall;
+
 	always @(posedge clk) begin
 		mem_rd                <= 1'b0;
 		luma_window_valid     <= 1'b0;
 		chroma_u_window_valid <= 1'b0;
 		chroma_v_window_valid <= 1'b0;
-		// Pipeline pending metadata to align with SRAM read latency
-		pending_idx_d1        <= pending_idx;
-		pending_plane_d1      <= pending_plane;
-		pending_valid_d1      <= pending_valid;
+		// Re-present an address the memory refused this cycle.
+		if (mem_hold) mem_rd <= 1'b1;
+		// Pipeline pending metadata to align with the memory's read latency.
+		// While a request is held there is no response in flight, so the
+		// alignment stage must stay empty rather than shift a duplicate.
+		if (mem_hold) begin
+			pending_valid_d1 <= 1'b0;
+		end else begin
+			pending_idx_d1   <= pending_idx;
+			pending_plane_d1 <= pending_plane;
+			pending_valid_d1 <= pending_valid;
+		end
 
 		if (reset) begin
 			current_base        <= BANK0_BASE[31:0];
@@ -290,6 +342,7 @@ module h264_dpb_one_ref #(
 				endcase
 			end
 
+			if (!mem_hold) begin
 			if (phase == PH_IDLE) begin
 				pending_valid <= 1'b0;
 				fetch_busy    <= 1'b0;
@@ -300,6 +353,8 @@ module h264_dpb_one_ref #(
 						fetch_busy      <= 1'b1;
 						phase           <= PH_LUMA;
 						issue_idx       <= 9'd0;
+						issue_r         <= 5'd0;
+						issue_c         <= 5'd0;
 						luma_frac_x     <= fetch_mv_x_qpel[1:0];
 						luma_frac_y     <= fetch_mv_y_qpel[1:0];
 						chroma_frac_x   <= fetch_mv_x_qpel[2:0];
@@ -322,48 +377,78 @@ module h264_dpb_one_ref #(
 						fetch_done <= 1'b1;
 					end
 				end
-			end else if (phase == PH_DRAIN) begin
+			end else if (phase == PH_DRAIN || phase == PH_DRAIN2) begin
+				// Retire whatever is still in the address/response alignment
+				// pipeline.  This used to wait for exactly two responses,
+				// which deadlocks as soon as the needed-tap narrowing skips
+				// one of the last two taps of a window, so it now drains on
+				// stage occupancy instead of on a fixed count.
 				pending_valid <= 1'b0;
-				if (mem_rvalid && pending_valid_d1) begin
-					phase <= PH_DRAIN2;
-				end
-			end else if (phase == PH_DRAIN2) begin
-				pending_valid <= 1'b0;
-				if (mem_rvalid && pending_valid_d1) begin
+				if (!pending_valid && !pending_valid_d1) begin
 					phase      <= PH_IDLE;
 					fetch_busy <= 1'b0;
 					fetch_done <= 1'b1;
 				end
 			end else begin
 				fetch_error_no_ref <= 1'b0;
-				mem_rd        <= 1'b1;
-				pending_valid <= 1'b1;
-				pending_plane <= (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2);
-				pending_idx   <= issue_idx;
-				mem_raddr     <= i420_addr(reference_base,
-				                           (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2),
-				                           clamped_x, clamped_y);
+				// A tap this sub-sample position never reads costs nothing but
+				// the cursor advance; no memory request is issued for it and
+				// no pending entry is queued, so the drain still retires
+				// exactly the requests that were made.
+				pending_valid <= 1'b0;
+				if (tap_needed) begin
+					mem_rd        <= 1'b1;
+					pending_valid <= 1'b1;
+					pending_plane <= (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2);
+					pending_idx   <= issue_idx;
+					mem_raddr     <= i420_addr(reference_base,
+					                           (phase == PH_LUMA) ? 2'd0 : ((phase == PH_U) ? 2'd1 : 2'd2),
+					                           clamped_x, clamped_y);
+				end
 				if (phase == PH_LUMA) begin
 					if (issue_idx == 9'd440) begin
 						phase     <= PH_U;
 						issue_idx <= 9'd0;
+						issue_r   <= 5'd0;
+						issue_c   <= 5'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
+						if (issue_c == 5'd20) begin
+							issue_c <= 5'd0;
+							issue_r <= issue_r + 5'd1;
+						end else begin
+							issue_c <= issue_c + 5'd1;
+						end
 					end
 				end else if (phase == PH_U) begin
 					if (issue_idx == 9'd80) begin
 						phase     <= PH_V;
 						issue_idx <= 9'd0;
+						issue_r   <= 5'd0;
+						issue_c   <= 5'd0;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
+						if (issue_c == 5'd8) begin
+							issue_c <= 5'd0;
+							issue_r <= issue_r + 5'd1;
+						end else begin
+							issue_c <= issue_c + 5'd1;
+						end
 					end
 				end else begin
 					if (issue_idx == 9'd80) begin
 						phase      <= PH_DRAIN;
 					end else begin
 						issue_idx <= issue_idx + 9'd1;
+						if (issue_c == 5'd8) begin
+							issue_c <= 5'd0;
+							issue_r <= issue_r + 5'd1;
+						end else begin
+							issue_c <= issue_c + 5'd1;
+						end
 					end
 				end
+			end
 			end
 			if (lat_part_w_lo != 2'd0 || lat_part_h_lo != 2'd0) begin
 				// Keep part_w/part_h observed for lint and future narrower fetch windows.
@@ -481,6 +566,22 @@ module h264_chroma_epel_block_8x8 (
 		end
 	endfunction
 
+	// d * f for f in 0..7, spelled out as shifts and adds.
+	function automatic integer frac_mul(input integer d, input integer f);
+		begin
+			case (f[2:0])
+			3'd0:    frac_mul = 0;
+			3'd1:    frac_mul = d;
+			3'd2:    frac_mul = d <<< 1;
+			3'd3:    frac_mul = (d <<< 1) + d;
+			3'd4:    frac_mul = d <<< 2;
+			3'd5:    frac_mul = (d <<< 2) + d;
+			3'd6:    frac_mul = (d <<< 2) + (d <<< 1);
+			default: frac_mul = (d <<< 3) - d;
+			endcase
+		end
+	endfunction
+
 	function automatic [7:0] interp(input integer x, input integer y);
 		integer p00;
 		integer p10;
@@ -488,6 +589,8 @@ module h264_chroma_epel_block_8x8 (
 		integer p11;
 		integer fx;
 		integer fy;
+		integer h0;
+		integer h1;
 		integer sum;
 		begin
 			fx = {29'd0, frac_x};
@@ -496,10 +599,15 @@ module h264_chroma_epel_block_8x8 (
 			p10 = chroma_pix(y * 9 + x + 1);
 			p01 = chroma_pix((y + 1) * 9 + x);
 			p11 = chroma_pix((y + 1) * 9 + x + 1);
-			sum = (8 - fx) * (8 - fy) * p00 +
-			      fx * (8 - fy) * p10 +
-			      (8 - fx) * fy * p01 +
-			      fx * fy * p11 + 32;
+			// 8.4.2.2.2 written separably so it needs no multiplier:
+			//   (8-yF)*[(8-xF)A + xF*B] + yF*[(8-xF)C + xF*D]
+			// and (8-f)*a + f*b == (a<<3) + f*(b-a).  The four triple
+			// products cost DSP blocks on every one of the sixty four output
+			// pixels; frac is three bits, so frac_mul is a mux over shifted
+			// copies and the result is exact, not an approximation.
+			h0 = (p00 <<< 3) + frac_mul(p10 - p00, fx);
+			h1 = (p01 <<< 3) + frac_mul(p11 - p01, fx);
+			sum = (h0 <<< 3) + frac_mul(h1 - h0, fy) + 32;
 			interp = sum[13:6];
 		end
 	endfunction

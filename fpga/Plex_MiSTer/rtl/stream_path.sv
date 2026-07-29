@@ -38,6 +38,9 @@ module stream_path #(
 	output wire [15:0] fifo_level,
 	output wire        stream_ddr_active,
 	output wire [31:0] stream_ddr_bytes_out,
+	// Rotating per-stage cycle telemetry from the decode pipeline; published
+	// to the ARM through the DDR mailbox.  Layout in h264_perf_counters.sv.
+	output wire [63:0] decode_perf_word,
 	output wire [15:0] stream_ddr_underruns,
 	output wire [15:0] stream_ddr_overruns,
 	output wire [31:0] stream_ddr_host_write,
@@ -136,6 +139,61 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	// ------------------------------------------------------------------
+	// Local two-master mux for the single clk-domain DDR port.
+	//
+	// Master A is the compressed-bitstream ring reader, master B is the
+	// DDR-resident decoded picture buffer.  The outer ddr_bus_arbiter already
+	// owns the clock crossing for this port, so both masters stay on clk and
+	// no additional CDC is needed here.
+	//
+	// Ownership is taken at a transaction boundary and released when the owner
+	// drops its request, which is the jtframe_sdram_mux shape: exactly one
+	// selected slot, data broadcast, slot released on retire.
+	wire        bsr_bus_want;
+	wire  [7:0] bsr_burstcnt;
+	wire [28:0] bsr_addr;
+	wire        bsr_rd;
+	wire [63:0] bsr_din;
+	wire  [7:0] bsr_be;
+	wire        bsr_we;
+
+	wire        dpb_ddr_req;
+	wire  [7:0] dpb_ddr_burstcnt;
+	wire [28:0] dpb_ddr_addr;
+	wire        dpb_ddr_rd;
+	wire [63:0] dpb_ddr_din;
+	wire  [7:0] dpb_ddr_be;
+	wire        dpb_ddr_we;
+
+	// The bitstream reader keeps its own multi-beat bursts in flight across
+	// several cycles, so it holds the port for as long as it wants it.
+	reg  bus_owner_dpb;
+	always @(posedge clk) begin
+		if (reset) begin
+			bus_owner_dpb <= 1'b0;
+		end else if (!bus_owner_dpb) begin
+			if (!bsr_bus_want && dpb_ddr_req) bus_owner_dpb <= 1'b1;
+		end else begin
+			if (!dpb_ddr_req) bus_owner_dpb <= 1'b0;
+		end
+	end
+
+	assign ddr_bus_want  = bsr_bus_want | dpb_ddr_req;
+	assign ddr_burstcnt  = bus_owner_dpb ? dpb_ddr_burstcnt : bsr_burstcnt;
+	assign ddr_addr      = bus_owner_dpb ? dpb_ddr_addr     : bsr_addr;
+	assign ddr_rd        = bus_owner_dpb ? dpb_ddr_rd       : bsr_rd;
+	assign ddr_din       = bus_owner_dpb ? dpb_ddr_din      : bsr_din;
+	assign ddr_be        = bus_owner_dpb ? dpb_ddr_be       : bsr_be;
+	assign ddr_we        = bus_owner_dpb ? dpb_ddr_we       : bsr_we;
+
+	// A master that does not own the port sees it as permanently busy, which
+	// is exactly the back-off every sys/ddram.sv client already implements.
+	wire bsr_ddr_busy     = ddr_busy | bus_owner_dpb;
+	wire bsr_dout_ready   = ddr_dout_ready & ~bus_owner_dpb;
+	wire dpb_ddr_busy     = ddr_busy | ~bus_owner_dpb;
+	wire dpb_dout_ready   = ddr_dout_ready & bus_owner_dpb;
+
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -144,16 +202,16 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
-		.bus_want(ddr_bus_want),
-		.DDRAM_BUSY(ddr_busy),
-		.DDRAM_BURSTCNT(ddr_burstcnt),
-		.DDRAM_ADDR(ddr_addr),
+		.bus_want(bsr_bus_want),
+		.DDRAM_BUSY(bsr_ddr_busy),
+		.DDRAM_BURSTCNT(bsr_burstcnt),
+		.DDRAM_ADDR(bsr_addr),
 		.DDRAM_DOUT(ddr_dout),
-		.DDRAM_DOUT_READY(ddr_dout_ready),
-		.DDRAM_RD(ddr_rd),
-		.DDRAM_DIN(ddr_din),
-		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we),
+		.DDRAM_DOUT_READY(bsr_dout_ready),
+		.DDRAM_RD(bsr_rd),
+		.DDRAM_DIN(bsr_din),
+		.DDRAM_BE(bsr_be),
+		.DDRAM_WE(bsr_we),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
@@ -213,28 +271,124 @@ module stream_path #(
 	wire [2:0] poc_t;
 	wire sps_busy;
 
+	wire sps_wr_pulse;
+	wire [7:0] sps_id_w, sps_max_refs;
+	wire [5:0] sps_l2poc;
+
 	sps_parser sps (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(sps_cap_clear), .cap_en(sps_cap_en),
 		.cap_data(sps_cap_data), .cap_end(sps_cap_end),
-		.valid(sps_valid), .profile_idc(sps_profile), .level_idc(sps_level),
+		.valid(sps_valid), .wr_pulse(sps_wr_pulse), .sps_id(sps_id_w),
+		.profile_idc(sps_profile), .level_idc(sps_level),
 		.width(sps_width), .height(sps_height),
 		.log2_max_frame_num(log2_fn), .poc_type(poc_t),
+		.log2_max_poc_lsb(sps_l2poc), .max_num_ref_frames(sps_max_refs),
 		.mb_width(sps_mb_w), .mb_height(sps_mb_h),
 		.busy(sps_busy)
 	);
 
-	wire pps_busy, pps_cabac, pps_deblock;
-	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
-	wire signed [7:0] pps_qp;
+	wire pps_busy, pps_cabac, pps_deblock, pps_wr_pulse;
+	wire pps_bfpo, pps_wp, pps_cip, pps_rpc, pps_unsup, pps_pfail;
+	wire [7:0] pps_id_w, pps_sps_id, pps_nref, pps_nref1, pps_nsg;
+	wire [1:0] pps_wbi;
+	wire signed [7:0] pps_qp, pps_qs;
+	wire signed [4:0] pps_cqpo;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(pps_cap_clear), .cap_en(pps_cap_en),
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
-		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
-		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
+		.valid(pps_valid), .wr_pulse(pps_wr_pulse),
+		.pps_id(pps_id_w), .sps_id(pps_sps_id),
+		.entropy_cabac(pps_cabac),
+		.bottom_field_pic_order_present(pps_bfpo),
+		.num_slice_groups_minus1(pps_nsg),
+		.num_ref_l0(pps_nref), .num_ref_l1(pps_nref1),
+		.weighted_pred(pps_wp), .weighted_bipred_idc(pps_wbi),
+		.pic_init_qp(pps_qp), .pic_init_qs(pps_qs),
+		.chroma_qp_index_offset(pps_cqpo),
+		.deblock_ctrl(pps_deblock),
+		.constrained_intra_pred(pps_cip),
+		.redundant_pic_cnt_present(pps_rpc),
+		.unsupported(pps_unsup), .parse_fail(pps_pfail),
+		.busy(pps_busy)
+	);
+
+	// Parameter set storage. The slice header parser drives ps_sel_id with the
+	// pic_parameter_set_id it is decoding right now and gets that exact PPS --
+	// and through it that PPS's SPS -- back combinationally in the same cycle.
+	// Handing it whichever set arrived last would give a slice a PPS it does
+	// not reference, changing whether the deblocking offsets are even present
+	// in the bitstream and desyncing every bit after them.
+	wire [7:0] ps_sel_id;
+	wire ps_pps_found, ps_sps_found;
+	wire [7:0] ps_pps_sps_id, ps_num_ref_l0, ps_num_ref_l1;
+	wire ps_bfpo, ps_wp, ps_deblock, ps_cip, ps_rpc;
+	wire [1:0] ps_wbi;
+	wire signed [7:0] ps_pic_init_qp, ps_pic_init_qs;
+	wire signed [4:0] ps_chroma_qp_off;
+	wire [15:0] ps_sps_w, ps_sps_h;
+	wire [7:0] ps_sps_mbw, ps_sps_mbh, ps_sps_max_refs;
+	wire [4:0] ps_sps_l2fn;
+	wire [2:0] ps_sps_poc;
+	wire [5:0] ps_sps_l2poc;
+	wire ps_any_pps, ps_any_sps;
+	wire [7:0] ps_pps_count, ps_sps_count;
+
+	h264_param_sets #(.NUM_PPS(4), .NUM_SPS(2)) u_param_sets (
+		.clk(clk), .reset(reset | flush),
+		.sps_wr(sps_wr_pulse),
+		.sps_wr_id(sps_id_w),
+		.sps_wr_width(sps_width),
+		.sps_wr_height(sps_height),
+		.sps_wr_mb_width(sps_mb_w),
+		.sps_wr_mb_height(sps_mb_h),
+		.sps_wr_log2_max_frame_num(log2_fn),
+		.sps_wr_poc_type(poc_t),
+		.sps_wr_log2_max_poc_lsb(sps_l2poc),
+		.sps_wr_max_num_ref_frames(sps_max_refs),
+		.pps_wr(pps_wr_pulse),
+		.pps_wr_id(pps_id_w),
+		.pps_wr_sps_id(pps_sps_id),
+		.pps_wr_bottom_field_pic_order_present(pps_bfpo),
+		.pps_wr_num_ref_l0(pps_nref),
+		.pps_wr_num_ref_l1(pps_nref1),
+		.pps_wr_weighted_pred(pps_wp),
+		.pps_wr_weighted_bipred_idc(pps_wbi),
+		.pps_wr_pic_init_qp(pps_qp),
+		.pps_wr_pic_init_qs(pps_qs),
+		.pps_wr_chroma_qp_index_offset(pps_cqpo),
+		.pps_wr_deblock_ctrl(pps_deblock),
+		.pps_wr_constrained_intra_pred(pps_cip),
+		.pps_wr_redundant_pic_cnt_present(pps_rpc),
+		.pps_sel_id(ps_sel_id),
+		.pps_sel_found(ps_pps_found),
+		.pps_sel_sps_id(ps_pps_sps_id),
+		.pps_sel_bottom_field_pic_order_present(ps_bfpo),
+		.pps_sel_num_ref_l0(ps_num_ref_l0),
+		.pps_sel_num_ref_l1(ps_num_ref_l1),
+		.pps_sel_weighted_pred(ps_wp),
+		.pps_sel_weighted_bipred_idc(ps_wbi),
+		.pps_sel_pic_init_qp(ps_pic_init_qp),
+		.pps_sel_pic_init_qs(ps_pic_init_qs),
+		.pps_sel_chroma_qp_index_offset(ps_chroma_qp_off),
+		.pps_sel_deblock_ctrl(ps_deblock),
+		.pps_sel_constrained_intra_pred(ps_cip),
+		.pps_sel_redundant_pic_cnt_present(ps_rpc),
+		.sps_sel_found(ps_sps_found),
+		.sps_sel_width(ps_sps_w),
+		.sps_sel_height(ps_sps_h),
+		.sps_sel_mb_width(ps_sps_mbw),
+		.sps_sel_mb_height(ps_sps_mbh),
+		.sps_sel_log2_max_frame_num(ps_sps_l2fn),
+		.sps_sel_poc_type(ps_sps_poc),
+		.sps_sel_log2_max_poc_lsb(ps_sps_l2poc),
+		.sps_sel_max_num_ref_frames(ps_sps_max_refs),
+		.any_pps_valid(ps_any_pps),
+		.any_sps_valid(ps_any_sps),
+		.pps_count(ps_pps_count),
+		.sps_count(ps_sps_count)
 	);
 
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
@@ -243,6 +397,10 @@ module stream_path #(
 	wire signed [7:0] sl_qpd, sl_rdc;
 	wire [5:0] sl_qp;
 	wire [1:0] sl_deblock_idc;
+	wire [15:0] sl_poc_lsb;
+	wire [7:0] sl_num_ref_l0;
+	wire signed [4:0] sl_chroma_qp_off;
+	wire sl_cip, sl_unsup;
 	wire signed [4:0] sl_alpha_div2, sl_beta_div2, sl_alpha_off, sl_beta_off;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
@@ -267,16 +425,30 @@ module stream_path #(
 		.cap_data(sl_cap_data), .cap_end(sl_cap_end),
 		.is_idr_nal(sl_is_idr),
 		.nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
-		.log2_max_frame_num(log2_fn),
-		.poc_type(poc_t),
-		.sps_ready(sps_valid),
-		.pps_ready(pps_valid),
-		.deblock_ctrl(pps_deblock),
-		.pic_init_qp(pps_qp),
+		.log2_max_frame_num(ps_sps_l2fn),
+		.poc_type(ps_sps_poc),
+		.log2_max_poc_lsb(ps_sps_l2poc),
+		.sps_ready(ps_any_sps),
+		.pps_ready(ps_any_pps),
+		.pps_found(ps_pps_found && ps_sps_found),
+		.pps_deblock_ctrl(ps_deblock),
+		.pps_pic_init_qp(ps_pic_init_qp),
+		.pps_num_ref_l0(ps_num_ref_l0),
+		.pps_chroma_qp_index_offset(ps_chroma_qp_off),
+		.pps_constrained_intra_pred(ps_cip),
+		.pps_bottom_field_pic_order_present(ps_bfpo),
+		.pps_redundant_pic_cnt_present(ps_rpc),
+		.pps_weighted_pred(ps_wp),
+		.pps_sel_id(ps_sel_id),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
+		.pic_order_cnt_lsb(sl_poc_lsb),
 		.is_i_slice(sl_is_i),
+		.num_ref_idx_l0_active(sl_num_ref_l0),
+		.chroma_qp_index_offset(sl_chroma_qp_off),
+		.constrained_intra_pred_flag(sl_cip),
+		.unsupported(sl_unsup),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset_div2(sl_alpha_div2),
@@ -602,15 +774,115 @@ module stream_path #(
 	wire [7:0] core_dpb_wr_data;
 	wire core_dpb_rd_en;
 	wire [31:0] core_dpb_rd_addr;
-	reg core_dpb_rd_valid;
-	always @(posedge clk) begin
-		if (reset | flush)
-			core_dpb_rd_valid <= 1'b0;
-		else
-			core_dpb_rd_valid <= core_dpb_rd_en;
-	end
 	wire core_frame_done;
 	wire [15:0] core_frame_mb_count;
+	wire core_px_wr_en;
+
+	// ── Desync recovery ─────────────────────────────────────────────────────
+	// 7 IDRs against 343 P frames means a desync costs tens of frames of wrong
+	// picture, so detection has to stop the slice rather than let it keep
+	// writing garbage into the reference the rest of the GOP predicts from.
+	wire core_err_cavlc_miss;
+	wire core_err_bad_mb_type;
+	wire core_err_mb_overrun;
+	wire rec_decode_enable;
+	wire rec_dpb_flush;
+	wire rec_poc_reset;
+	wire rec_mb_state_clear;
+	wire rec_freeze_output;
+	wire rec_resync_active;
+	wire [15:0] rec_desync_count;
+	wire [2:0]  rec_desync_reason;
+
+	// The picture is complete when every macroblock of it has been decoded.
+	// Comparing the count the core actually retired against the picture size
+	// at the end of the slice catches a desync that stayed inside every VLC
+	// table but still lost the bit position: the macroblock count and the
+	// bitstream disagree about where the slice ended.
+	localparam int PIC_SIZE_IN_MBS = (FRAME_W / 16) * (FRAME_H / 16);
+	wire rec_slice_end = sl_cap_end;
+	wire rec_err_slice_short = rec_slice_end &&
+	                           (core_frame_mb_count < PIC_SIZE_IN_MBS[15:0]);
+	wire rec_err_slice_long  = rec_slice_end &&
+	                           (core_frame_mb_count > PIC_SIZE_IN_MBS[15:0]);
+
+	h264_stream_recovery u_recovery (
+		.clk(clk),
+		.reset(reset | flush),
+		.slice_start(sl_cap_clear),
+		.slice_is_idr(sl_is_idr),
+		.slice_end(rec_slice_end),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.err_slice_short(rec_err_slice_short),
+		.err_slice_long(rec_err_slice_long),
+		.decode_enable(rec_decode_enable),
+		.dpb_flush(rec_dpb_flush),
+		.poc_reset(rec_poc_reset),
+		.mb_state_clear(rec_mb_state_clear),
+		.freeze_output(rec_freeze_output),
+		.resync_active(rec_resync_active),
+		.desync_count(rec_desync_count),
+		.last_desync_reason(rec_desync_reason)
+	);
+
+	// Hold the last complete good frame on screen for the whole resync.  A
+	// partially decoded frame looks worse than a stale one, and a black screen
+	// looks worse than both.
+	assign dec_px_wr_en = core_px_wr_en && !rec_freeze_output;
+	wire core_dpb_ref_swap;
+	wire        core_dpb_rd_valid;
+	wire  [7:0] core_dpb_rd_data;
+	wire        core_dpb_rd_stall;
+	wire        core_dpb_wr_full;
+	wire        dpb_ref_ready;
+	wire        dpb_swap_busy;
+	wire        dpb_frame_done_ack;
+	wire [31:0] dpb_current_base;
+	wire [31:0] dpb_reference_base;
+
+	// The DDR-resident decoded picture buffer.  Post-deblock reconstruction
+	// goes in on dpb_wr_*, motion compensation pulls reference samples back out
+	// on dpb_rd_*.  REG_RESPONSE is 0 because h264_decode_core already carries
+	// a skid stage on its DPB response path, so the cache answers
+	// combinationally on the accepted cycle and the core's skid supplies the
+	// single cycle of alignment h264_dpb_one_ref expects.
+	h264_dpb_ddr #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.BANK_STRIDE(FRAME_W * FRAME_H + 2 * ((FRAME_W / 2) * (FRAME_H / 2))),
+		.REG_RESPONSE(1'b0)
+	) u_dpb_ddr (
+		.clk(clk),
+		.reset(reset | flush),
+		.idr_start(rec_dpb_flush),
+		.frame_done_req(core_dpb_ref_swap),
+		.frame_done_ack(dpb_frame_done_ack),
+		.swap_busy(dpb_swap_busy),
+		.ref_ready(dpb_ref_ready),
+		.current_base(dpb_current_base),
+		.reference_base(dpb_reference_base),
+		.rec_wr_en(core_dpb_wr_en),
+		.rec_wr_addr(core_dpb_wr_addr),
+		.rec_wr_data(core_dpb_wr_data),
+		.rec_wr_full(core_dpb_wr_full),
+		.ref_rd_en(core_dpb_rd_en),
+		.ref_rd_addr(core_dpb_rd_addr),
+		.ref_rd_stall(core_dpb_rd_stall),
+		.ref_rd_data(core_dpb_rd_data),
+		.ref_rd_valid(core_dpb_rd_valid),
+		.ddr_busy(dpb_ddr_busy),
+		.ddr_burstcnt(dpb_ddr_burstcnt),
+		.ddr_addr(dpb_ddr_addr),
+		.ddr_dout(ddr_dout),
+		.ddr_dout_ready(dpb_dout_ready),
+		.ddr_rd(dpb_ddr_rd),
+		.ddr_din(dpb_ddr_din),
+		.ddr_be(dpb_ddr_be),
+		.ddr_we(dpb_ddr_we),
+		.ddr_req(dpb_ddr_req)
+	);
 	wire [15:0] core_rbsp_request_offset;
 	wire core_rbsp_request_valid;
 	wire core_busy;
@@ -633,7 +905,12 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
-		.pps_chroma_qp_index_offset(5'sd0),
+		.pps_chroma_qp_index_offset(sl_chroma_qp_off),
+		.constrained_intra_pred_flag(sl_cip),
+		.num_ref_idx_l0_active(sl_num_ref_l0),
+		.disable_deblocking_filter_idc(sl_deblock_idc),
+		.slice_alpha_c0_offset(sl_alpha_off),
+		.slice_beta_offset(sl_beta_off),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(16'd0),
 		.rbsp_request_offset(core_rbsp_request_offset),
@@ -682,15 +959,22 @@ module stream_path #(
 		.dpb_wr_data(core_dpb_wr_data),
 		.dpb_rd_en(core_dpb_rd_en),
 		.dpb_rd_addr(core_dpb_rd_addr),
-		.dpb_rd_data(8'd0),
+		.dpb_rd_data(core_dpb_rd_data),
 		.dpb_rd_valid(core_dpb_rd_valid),
-		.px_wr_en(dec_px_wr_en),
+		.dpb_rd_stall(core_dpb_rd_stall),
+		.dpb_ref_swap(core_dpb_ref_swap),
+		.px_wr_en(core_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
 		.px_wr_y(dec_px_y),
 		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.decode_enable(rec_decode_enable),
+		.perf_mbox_word(decode_perf_word),
 		.busy(core_busy),
 		.intra_blocks_done(core_intra_blocks_done),
 		.decode_state(core_decode_state),
@@ -748,6 +1032,9 @@ module stream_path #(
 	             |core_intra_blocks_done | |sweep_blk_guard |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
+	             core_dpb_wr_full | core_dpb_rd_stall | dpb_ref_ready |
+	             dpb_swap_busy | dpb_frame_done_ack | |dpb_current_base |
+	             |dpb_reference_base |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 

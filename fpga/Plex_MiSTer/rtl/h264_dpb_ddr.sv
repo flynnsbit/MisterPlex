@@ -63,7 +63,10 @@ module h264_dpb_ddr #(
 	// Frame bank stride.  Must match the address generator feeding
 	// rec_wr_addr / ref_rd_addr.  449280 = one I420 624x480 picture.
 	parameter int    BANK_STRIDE = 449280,
-	parameter int    WR_FIFO_DEPTH = 64
+	parameter int    WR_FIFO_DEPTH = 64,
+	// See h264_dpb_ddr_rd: 1 = registered response (decode_stub contract),
+	// 0 = combinational response for integrations carrying their own skid.
+	parameter bit    REG_RESPONSE  = 1'b1
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -99,7 +102,11 @@ module h264_dpb_ddr #(
 	output reg         ddr_rd,
 	output reg  [63:0] ddr_din,
 	output reg   [7:0] ddr_be,
-	output reg         ddr_we
+	output reg         ddr_we,
+	// Raised while this store wants the shared DDR port.  A host that
+	// multiplexes several masters onto one controller uses this as the
+	// slot request line.
+	output wire        ddr_req
 );
 	localparam [31:0] BANK0_BASE = 32'd0;
 	localparam [31:0] BANK1_BASE = BANK_STRIDE[31:0];
@@ -138,6 +145,13 @@ module h264_dpb_ddr #(
 	);
 
 	reg         cache_invalidate;
+	wire        cache_rd_stall;
+	// Reference reads are held off for the whole swap window. The queued
+	// writes of the picture that is about to become the reference are still
+	// draining, so anything read before the drain completes would be a
+	// half-written reference. This reuses the stall the fetch state machine
+	// already honours instead of needing a separate handshake into the core.
+	assign ref_rd_stall = cache_rd_stall || (ref_rd_en && swap_busy);
 	wire  [7:0] r_burstcnt;
 	wire [28:0] r_addr;
 	wire        r_rd;
@@ -145,13 +159,14 @@ module h264_dpb_ddr #(
 	reg         r_grant;
 
 	h264_dpb_ddr_rd #(
-		.DDR_BASE(DDR_BASE)
+		.DDR_BASE(DDR_BASE),
+		.REG_RESPONSE(REG_RESPONSE)
 	) u_rd (
 		.clk(clk),
 		.reset(reset),
-		.rd_en(ref_rd_en),
+		.rd_en(ref_rd_en && !swap_busy),
 		.rd_addr(ref_rd_addr),
-		.rd_stall(ref_rd_stall),
+		.rd_stall(cache_rd_stall),
 		.rd_data(ref_rd_data),
 		.rd_valid(ref_rd_valid),
 		.invalidate(cache_invalidate),
@@ -203,6 +218,8 @@ module h264_dpb_ddr #(
 		r_grant = (own == OWN_RD);
 		w_grant = (own == OWN_WR);
 	end
+
+	assign ddr_req = (own != OWN_NONE) || r_req || w_req;
 
 	always @* begin
 		if (own == OWN_RD) begin
@@ -260,6 +277,11 @@ module h264_dpb_ddr #(
 				ref_ready        <= 1'b0;
 				cache_invalidate <= 1'b1;
 			end
+			// Invalidate as early as the swap is requested, not only when it
+			// commits, so a downstream address generator that moves its own
+			// bank pointers on the same pulse can never hit a line tagged
+			// against the previous reference picture.
+			if (frame_done_req) cache_invalidate <= 1'b1;
 
 			case (swap_state)
 			SW_IDLE: begin

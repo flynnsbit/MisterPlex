@@ -39,7 +39,13 @@
 //   drain the write FIFO, then invalidate, then move the bank pointers.
 
 module h264_dpb_ddr_rd #(
-	parameter [31:0] DDR_BASE = 32'h3040_0000
+	parameter [31:0] DDR_BASE = 32'h3040_0000,
+	// 1 = rd_valid/rd_data are registered and strobe one cycle after an
+	//     accepted request (matches the decode_stub SRAM contract).
+	// 0 = rd_valid/rd_data are combinational on the accepted cycle, for
+	//     integrations that already carry an external skid stage on the
+	//     response path (h264_decode_core does).
+	parameter bit    REG_RESPONSE = 1'b1
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -48,8 +54,8 @@ module h264_dpb_ddr_rd #(
 	input  wire        rd_en,
 	input  wire [31:0] rd_addr,
 	output wire        rd_stall,
-	output reg   [7:0] rd_data,
-	output reg         rd_valid,
+	output wire  [7:0] rd_data,
+	output wire        rd_valid,
 
 	input  wire        invalidate,
 
@@ -84,6 +90,14 @@ module h264_dpb_ddr_rd #(
 
 	wire accept = rd_en && hit;
 	assign rd_stall = rd_en && !hit;
+
+	// Response staging.  REG_RESPONSE selects between the registered
+	// (decode_stub-equivalent) contract and a combinational one for
+	// integrations that already own a skid stage.
+	reg [7:0] rd_data_q;
+	reg       rd_valid_q;
+	assign rd_data  = REG_RESPONSE ? rd_data_q  : hit_byte;
+	assign rd_valid = REG_RESPONSE ? rd_valid_q : accept;
 
 	// ------------------------------------------------------------------ fsm
 	localparam [1:0] S_IDLE = 2'd0;
@@ -127,18 +141,18 @@ module h264_dpb_ddr_rd #(
 			fill_is_pf   <= 1'b0;
 			pf_pending   <= 1'b0;
 			pf_tag       <= '0;
-			rd_valid     <= 1'b0;
-			rd_data      <= 8'd0;
+			rd_valid_q   <= 1'b0;
+			rd_data_q    <= 8'd0;
 			ddr_rd       <= 1'b0;
 			ddr_addr     <= 29'd0;
 			ddr_burstcnt <= 8'd4;
 		end else begin
-			ddr_rd   <= 1'b0;
-			rd_valid <= 1'b0;
+			ddr_rd     <= 1'b0;
+			rd_valid_q <= 1'b0;
 
 			if (accept) begin
-				rd_valid <= 1'b1;
-				rd_data  <= hit_byte;
+				rd_valid_q <= 1'b1;
+				rd_data_q  <= hit_byte;
 				// The hit slot becomes the most recently used one.
 				lru <= hit0 ? 1'b1 : 1'b0;
 			end
