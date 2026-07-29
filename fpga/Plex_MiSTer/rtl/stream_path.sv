@@ -398,6 +398,10 @@ module stream_path #(
 	wire        feed_chroma_residual_valid;
 	wire signed [15:0] feed_chroma_residual_u [0:63];
 	wire signed [15:0] feed_chroma_residual_v [0:63];
+	wire        feed_p_residual_valid;
+	wire signed [15:0] feed_p_residual_y [0:255];
+	wire signed [15:0] feed_p_residual_u [0:63];
+	wire signed [15:0] feed_p_residual_v [0:63];
 	wire [15:0] feed_rbsp_request_offset;
 	wire        feed_rbsp_request_valid;
 	wire        feed_mb_type_valid;
@@ -645,6 +649,10 @@ module stream_path #(
 		.chroma_residual_u(feed_chroma_residual_u),
 		.chroma_residual_v(feed_chroma_residual_v),
 		.chroma_residual_valid(feed_chroma_residual_valid),
+		.p_residual_y(feed_p_residual_y),
+		.p_residual_u(feed_p_residual_u),
+		.p_residual_v(feed_p_residual_v),
+		.p_residual_valid(feed_p_residual_valid),
 		.busy(feed_busy),
 		.frame_feed_done(feed_frame_done),
 		.error(feed_error),
@@ -662,6 +670,7 @@ module stream_path #(
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
+	// P residual planes come from feed export (sole CAVLC+IQ owner).
 	wire signed [15:0] core_p16_residual_y [0:255];
 	wire signed [15:0] core_p16_residual_u [0:63];
 	wire signed [15:0] core_p16_residual_v [0:63];
@@ -669,12 +678,12 @@ module stream_path #(
 		for (core_gi = 0; core_gi < 64; core_gi = core_gi + 1) begin : gen_core_zero64
 			assign core_recon_u[core_gi] = 8'd128;
 			assign core_recon_v[core_gi] = 8'd128;
-			assign core_p16_residual_u[core_gi] = 16'sd0;
-			assign core_p16_residual_v[core_gi] = 16'sd0;
+			assign core_p16_residual_u[core_gi] = feed_p_residual_u[core_gi];
+			assign core_p16_residual_v[core_gi] = feed_p_residual_v[core_gi];
 		end
 		for (core_gi = 0; core_gi < 256; core_gi = core_gi + 1) begin : gen_core_zero256
 			assign core_recon_y[core_gi] = 8'd0;
-			assign core_p16_residual_y[core_gi] = 16'sd0;
+			assign core_p16_residual_y[core_gi] = feed_p_residual_y[core_gi];
 		end
 	endgenerate
 
@@ -774,6 +783,7 @@ module stream_path #(
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
 		.dpb_ref_base(32'd0),
+		.p_residual_valid(feed_p_residual_valid),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),
@@ -884,6 +894,7 @@ module stream_path #(
 	             feed_slice_desync_early | feed_slice_desync_long |
 	             |feed_slice_desync_cause | |feed_slice_desync_mb |
 	             feed_chroma_residual_valid | |feed_chroma_residual_u[0] |
+	             feed_p_residual_valid | |feed_p_residual_y[0] |
 	             |feed_part_mode |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |

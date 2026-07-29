@@ -131,6 +131,7 @@ module h264_decode_core_wb_tb #(
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
 		.dpb_ref_base(32'd0),
+		.p_residual_valid(1'b0),
 		.p16_residual_y(p16_residual_y),
 		.p16_residual_u(p16_residual_u),
 		.p16_residual_v(p16_residual_v),

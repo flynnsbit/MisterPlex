@@ -50,6 +50,10 @@ module h264_i_mb_feed_pskip_tb_top (
 	wire signed [15:0] luma_zz [0:15];
 	wire signed [15:0] chr_u [0:63];
 	wire signed [15:0] chr_v [0:63];
+	wire signed [15:0] p_res_y [0:255];
+	wire signed [15:0] p_res_u [0:63];
+	wire signed [15:0] p_res_v [0:63];
+	wire        p_res_valid;
 	wire [7:0] rbsp_byte [0:63];
 
 	genvar gi;
@@ -129,6 +133,10 @@ module h264_i_mb_feed_pskip_tb_top (
 		.chroma_residual_u(chr_u),
 		.chroma_residual_v(chr_v),
 		.chroma_residual_valid(),
+		.p_residual_y(p_res_y),
+		.p_residual_u(p_res_u),
+		.p_residual_v(p_res_v),
+		.p_residual_valid(p_res_valid),
 		.busy(busy),
 		.frame_feed_done(frame_feed_done),
 		.error(error),

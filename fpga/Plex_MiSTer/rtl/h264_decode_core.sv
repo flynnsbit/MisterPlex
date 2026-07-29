@@ -4,10 +4,26 @@
 // a complete decode pipeline for Baseline Profile CAVLC streams.
 //
 // STATUS: PARTIAL PRODUCT DATAPATH.
-//         Product DPB writeback, P16 syntax handoff, MV prediction state, and
-//         an initial scheduled P16 luma CAVLC/IDCT residual traversal are
-//         wired. Full residual traversal, P partition modes, deblock, and full
-//         decode scheduling remain open.
+//         Product DPB writeback, P16/P-part syntax handoff, MV prediction, and
+//         inter residual CONSUME from h264_i_mb_feed (p_residual_* planes).
+//         Dual residual CAVLC is gated off when FEED_PROVIDES_P_RESIDUAL=1
+//         (product default): core does not re-parse P residual from RBSP.
+//
+// =============================================================================
+// CONTRACT — p_residual_valid / p16_residual_* (feed → core inter residual)
+// =============================================================================
+//   * When p_residual_valid=1 at inter launch, p16_residual_y/u/v hold one MB
+//     of IQ/IDCT residual samples (pre-clip). Core latches them into
+//     lat_p16_residual_* on the launch cycle and MUST NOT start CAVLC.
+//   * p_residual_valid is frozen by the feed until the next MB (see
+//     h264_i_mb_feed CONTRACT). Core may only sample on launch.
+//   * P_Skip / cbp=0 arrive with valid=1 and all-zero planes (or skip path).
+//   * p16_zero_mv_valid benches may drive planes without p_residual_valid;
+//     zero-MV path still latches p16_residual_* directly.
+//   * FEED_PROVIDES_P_RESIDUAL=1 removes/stubs u_product_p16_residual0 so the
+//     second CAVLC does not synthesize. Set 0 only for legacy residual-walk
+//     experiments (not product stream_path).
+// =============================================================================
 //
 // OWNERSHIP: w-rel (decode datapath integration)
 // CONSUMERS: stream_path.sv (instantiates this)
@@ -25,7 +41,10 @@ module h264_decode_core #(
     parameter int FRAME_H   = 240,
     parameter int MB_W      = (FRAME_W + 15) / 16,
     parameter int MB_H      = (FRAME_H + 15) / 16,
-    parameter int MB_COUNT  = MB_W * MB_H
+    parameter int MB_COUNT  = MB_W * MB_H,
+    // 1 (product): consume feed p_residual_*; stub core P CAVLC instance.
+    // 0: legacy core residual CAVLC walk (debug only).
+    parameter bit FEED_PROVIDES_P_RESIDUAL = 1'b1
 )(
     input  wire        clk,
     input  wire        reset,
@@ -108,16 +127,14 @@ module h264_decode_core #(
     input  wire [7:0]  recon_u [0:63],
     input  wire [7:0]  recon_v [0:63],
 
-    // ── First product P16×16 zero-MV reconstruction path ──
-    // One full MB of residuals is provided by the future P residual walker.
-    // This path fetches the co-located reference MB from DPB, clips
-    // prediction+residual, and commits the reconstructed MB through the
-    // product writeback address path below.
+    // ── Inter residual planes (feed export and/or p16_zero_mv benches) ──
+    // See CONTRACT above. Product stream_path wires h264_i_mb_feed.p_residual_*.
     input  wire        p16_zero_mv_valid,
     input  wire [7:0]  p16_mb_x,
     input  wire [7:0]  p16_mb_y,
     input  wire        p16_mb_is_ref,
     input  wire [31:0] dpb_ref_base,
+    input  wire        p_residual_valid,     // feed: planes frozen for this MB
     input  wire signed [15:0] p16_residual_y [0:255],
     input  wire signed [15:0] p16_residual_u [0:63],
     input  wire signed [15:0] p16_residual_v [0:63],
@@ -441,10 +458,11 @@ module h264_decode_core #(
     reg        inter_launch_pend_r;
     reg        inter_launch_is_ppart_r;
     reg        inter_launch_is_skip_r;
-    // Skip has no residual bits — may launch without window. Coded needs ready.
+    // Skip / feed residual: may launch without RBSP window. Legacy CAVLC needs ready.
+    wire feed_p_res_ok = FEED_PROVIDES_P_RESIDUAL && p_residual_valid;
     wire syntax_p16_launch = inter_launch_pend_r && !inter_launch_is_ppart_r &&
                              (wb_state == ST_IDLE) &&
-                             (inter_launch_is_skip_r || residual_window_ok);
+                             (inter_launch_is_skip_r || feed_p_res_ok || residual_window_ok);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
@@ -596,7 +614,8 @@ module h264_decode_core #(
     // sub_mb_type covers them (geometry reports invalid for empty slots).
     wire [3:0] part_slot_limit = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
     wire ppart_launch = inter_launch_pend_r && inter_launch_is_ppart_r &&
-                        (wb_state == ST_IDLE) && residual_window_ok;
+                        (wb_state == ST_IDLE) &&
+                        (feed_p_res_ok || residual_window_ok);
 
     wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
     wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
@@ -735,26 +754,46 @@ module h264_decode_core #(
     );
     wire [5:0] res_qp = res_is_luma ? slice_qp_y : res_qp_c;
 
-    h264_cavlc_residual_block u_product_p16_residual0 (
-        .clk(clk),
-        .reset(reset || slice_start),
-        .start(cavlc_start_r),
-        .coeff_token_table(res_tok_table),
-        .max_coeff(res_max_coeff),
-        .bit_offset_start(p16_res_bit_offset_r),
-        .bit_len(10'd512),
-        .rbsp(rbsp_byte),
-        .busy(cavlc_busy),
-        .done(cavlc_done),
-        .ok(cavlc_ok),
-        .bit_offset_end(cavlc_bit_offset_end),
-        .total_coeff(cavlc_total_coeff),
-        .trailing_ones(cavlc_trailing_ones),
-        .total_zeros(cavlc_total_zeros),
-        .coeff(cavlc_coeff),
-        .level_dbg(cavlc_level_dbg),
-        .run_dbg(cavlc_run_dbg)
-    );
+    // Dual residual CAVLC: product default FEED_PROVIDES_P_RESIDUAL stubs this
+    // instance away so feed is the sole P residual CAVLC owner (~area win).
+    generate
+        if (!FEED_PROVIDES_P_RESIDUAL) begin : g_core_p_cavlc
+            h264_cavlc_residual_block u_product_p16_residual0 (
+                .clk(clk),
+                .reset(reset || slice_start),
+                .start(cavlc_start_r),
+                .coeff_token_table(res_tok_table),
+                .max_coeff(res_max_coeff),
+                .bit_offset_start(p16_res_bit_offset_r),
+                .bit_len(10'd512),
+                .rbsp(rbsp_byte),
+                .busy(cavlc_busy),
+                .done(cavlc_done),
+                .ok(cavlc_ok),
+                .bit_offset_end(cavlc_bit_offset_end),
+                .total_coeff(cavlc_total_coeff),
+                .trailing_ones(cavlc_trailing_ones),
+                .total_zeros(cavlc_total_zeros),
+                .coeff(cavlc_coeff),
+                .level_dbg(cavlc_level_dbg),
+                .run_dbg(cavlc_run_dbg)
+            );
+        end else begin : g_core_p_cavlc_stub
+            assign cavlc_busy = 1'b0;
+            assign cavlc_done = 1'b0;
+            assign cavlc_ok = 1'b0;
+            assign cavlc_bit_offset_end = 10'd0;
+            assign cavlc_total_coeff = 5'd0;
+            assign cavlc_trailing_ones = 2'd0;
+            assign cavlc_total_zeros = 4'd0;
+            genvar czi;
+            for (czi = 0; czi < 16; czi = czi + 1) begin : g_cav_z
+                assign cavlc_coeff[czi] = 16'sd0;
+                assign cavlc_level_dbg[czi] = 16'sd0;
+                assign cavlc_run_dbg[czi] = 4'd0;
+            end
+        end
+    endgenerate
 
     // Chroma DC Hadamard: comb on live CAVLC coeffs (same-cycle capture).
     wire signed [15:0] chr_dc_coeff_live [0:3];
@@ -1392,17 +1431,18 @@ module h264_decode_core #(
             end
         end else begin
             // Capture inter launch + residual window intent on the mb_type pulse.
+            // Feed-provided residual needs no RBSP re-request (sole CAVLC is feed).
             if (syntax_p16_candidate || syntax_ppart_candidate) begin
                 inter_launch_pend_r <= 1'b1;
                 inter_launch_is_ppart_r <= syntax_ppart_candidate;
                 inter_launch_is_skip_r <= mb_skip;
-                if (!mb_skip) begin
+                if (!mb_skip && !(FEED_PROVIDES_P_RESIDUAL && p_residual_valid)) begin
                     rbsp_res_pending_r <= 1'b1;
                     rbsp_res_pending_off_r <= syntax_request_byte_offset;
                 end
             end
-            // Keep requesting residual window until ready (survives feed YIELD).
-            if (rbsp_res_pending_r) begin
+            // Keep requesting residual window until ready (legacy CAVLC only).
+            if (rbsp_res_pending_r && !FEED_PROVIDES_P_RESIDUAL) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
                 rbsp_request_offset_r <= rbsp_res_pending_off_r + 16'd1;
@@ -1453,14 +1493,15 @@ module h264_decode_core #(
                     end
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
+                    // Prefer feed residual planes; legacy path starts CAVLC walk.
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_p16_residual_y[wb_i] <= 16'sd0;
+                        lat_p16_residual_y[wb_i] <= p_residual_valid ? p16_residual_y[wb_i] : 16'sd0;
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= 16'sd0;
-                        lat_p16_residual_v[wb_i] <= 16'sd0;
+                        lat_p16_residual_u[wb_i] <= p_residual_valid ? p16_residual_u[wb_i] : 16'sd0;
+                        lat_p16_residual_v[wb_i] <= p_residual_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
-                    // Decode residual once for the whole MB, then walk partitions.
-                    wb_state <= ST_P16_RES_START;
+                    wb_state <= (FEED_PROVIDES_P_RESIDUAL || p_residual_valid) ?
+                                ST_PART_PRED : ST_P16_RES_START;
                 end else if (p16_launch) begin
                     if (syntax_p16_launch) begin
                         inter_launch_pend_r <= 1'b0;
@@ -1493,15 +1534,19 @@ module h264_decode_core #(
                     end
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
+                    // Latch feed/zero-MV residual planes; skip dual CAVLC walk.
                     for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
+                        lat_p16_residual_y[wb_i] <=
+                            (p16_zero_mv_valid || p_residual_valid) ? p16_residual_y[wb_i] : 16'sd0;
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
-                        lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
+                        lat_p16_residual_u[wb_i] <=
+                            (p16_zero_mv_valid || p_residual_valid) ? p16_residual_u[wb_i] : 16'sd0;
+                        lat_p16_residual_v[wb_i] <=
+                            (p16_zero_mv_valid || p_residual_valid) ? p16_residual_v[wb_i] : 16'sd0;
                     end
-                    // P_Skip / zero-MV shortcut skips residual walk — still
-                    // publish total_coeff=0 so next MB nC is not stale.
-                    if (p16_zero_mv_valid || mb_skip) begin
+                    // P_Skip / zero-MV / feed residual skip residual walk — still
+                    // publish total_coeff=0 so next MB nC is not stale (legacy).
+                    if (p16_zero_mv_valid || mb_skip || p_residual_valid) begin
                         res_tc_left_valid <= 1'b1;
                         for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
                             res_tc_left[res_tc_i] <= 5'd0;
@@ -1519,7 +1564,8 @@ module h264_decode_core #(
                         res_chr_top_v[{p16_launch_mb_x[MB_IDX_W-1:0], 1'b1}] <= 5'd0;
                         res_chr_top_valid[p16_launch_mb_x[MB_IDX_W-1:0]] <= 1'b1;
                     end
-                    wb_state <= p16_zero_mv_valid ? ST_P16_REF_SEED : ST_P16_RES_START;
+                    wb_state <= (p16_zero_mv_valid || mb_skip || p_residual_valid ||
+                                 FEED_PROVIDES_P_RESIDUAL) ? ST_P16_REF_SEED : ST_P16_RES_START;
                 end else if (product_recon_mb_valid) begin
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
@@ -1848,7 +1894,7 @@ module h264_decode_core #(
         |intra16x16_mode | |chroma_pred_mode | |cbp_luma | |cbp_chroma |
         |mb_qp_delta | |mb_residual_bit_offset | luma4x4_valid | |luma4x4_idx |
         |luma4x4_qp | |luma4x4_total_coeff | |luma4x4_trailing_ones |
-        |luma4x4_coeff_zigzag[0] | intra_chroma_residual_valid |
+        |luma4x4_coeff_zigzag[0] | intra_chroma_residual_valid | p_residual_valid |
         |intra_chroma_residual_u[0] | |intra_chroma_residual_v[0] |
         product_intra_mb_avail_left |
         product_intra_mb_avail_top | product_intra_mb_avail_topright |

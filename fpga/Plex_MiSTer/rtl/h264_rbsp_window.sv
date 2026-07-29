@@ -29,12 +29,13 @@
 //   * Consumers MUST NOT assume same-cycle response to req_valid.
 //
 // Consumers (single shared instance in stream_path as core_rbsp):
-//   * h264_i_mb_feed     — syntax bit-reader + CAVLC residual walk (owns window
-//                          while feed_busy).  Arms ST_*_ARM until window_ready
-//                          && window_base matches the requested offset.
-//   * h264_decode_core   — inter residual CAVLC re-parse (owns window while
-//                          !feed_busy).  Must not launch CAVLC until window_ready
-//                          at syntax residual byte offset.
+//   * h264_i_mb_feed     — syntax bit-reader + sole CAVLC residual walk (owns
+//                          window while feed_busy).  Arms ST_*_ARM until
+//                          window_ready && window_base matches req offset.
+//                          Exports P residual sample planes to the core.
+//   * h264_decode_core   — product FEED_PROVIDES_P_RESIDUAL=1: does NOT re-parse
+//                          P residual (no dual CAVLC).  May still request the
+//                          window only in legacy FEED_PROVIDES_P_RESIDUAL=0 mode.
 //   * stream_path mux    — feed_busy ? feed_req : core_req  (one requester).
 //   * slice_hdr_parser   — separate local M10K MAXB capture; NOT this window.
 //

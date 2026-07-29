@@ -146,6 +146,7 @@ module h264_decode_core_p16z_tb #(
 		.p16_mb_y(p16_mb_y),
 		.p16_mb_is_ref(p16_mb_is_ref),
 		.dpb_ref_base(dpb_ref_base),
+		.p_residual_valid(1'b0),
 		.p16_residual_y(p16_residual_y),
 		.p16_residual_u(p16_residual_u),
 		.p16_residual_v(p16_residual_v),
