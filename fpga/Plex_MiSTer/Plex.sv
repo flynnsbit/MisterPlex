@@ -662,6 +662,24 @@ stream_path #(
 	.p_mb_count(),
 	.p_slice_done(),
 	.p_traverse_busy(),
+			.trav_mb_valid(1'b0),
+		.trav_mb_ready(),
+		.trav_mb_addr(16'd0),
+		.trav_mb_x(8'd0),
+		.trav_mb_y(8'd0),
+		.trav_mb_skip(1'b0),
+		.trav_part_mode(3'd0),
+		.trav_part_count(3'd0),
+		.trav_uses_sub_mb(1'b0),
+		.trav_intra(1'b0),
+		.trav_slice_done(1'b0),
+.first_mb_mvd_x(),
+	.first_mb_mvd_y(),
+	.product_fetch_mv_x(),
+	.product_fetch_mv_y(),
+	.product_luma_origin_x(),
+	.product_luma_origin_y(),
+
 	.fs_swap(stub_swap)
 );
 

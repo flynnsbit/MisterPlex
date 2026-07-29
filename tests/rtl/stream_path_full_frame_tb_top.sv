@@ -207,6 +207,13 @@ module stream_path_full_frame_tb #(
 		.p_mb_count(p_mb_count_w),
 		.p_slice_done(p_slice_done_w),
 		.p_traverse_busy(),
+	.first_mb_mvd_x(),
+	.first_mb_mvd_y(),
+	.product_fetch_mv_x(),
+	.product_fetch_mv_y(),
+	.product_luma_origin_x(),
+	.product_luma_origin_y(),
+
 		.fs_swap(fs_swap)
 	);
 

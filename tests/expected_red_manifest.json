@@ -225,6 +225,14 @@
       "required_substrings": [
         "FAIL mut_drop_last"
       ]
+    },
+    {
+      "id": "decode_stub_fetch_mv_zero",
+      "owner": "tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh",
+      "why": "Forcing fetch MV to zero must fail the product-path origin shift gate (proves hardwire is gone).",
+      "required_substrings": [
+        "FAIL decode_stub fetch_mv: product_fetch_mv got=(0,0) want=(16,0)"
+      ]
     }
   ]
 }

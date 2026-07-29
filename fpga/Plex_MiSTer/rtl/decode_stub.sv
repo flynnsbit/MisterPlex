@@ -7,7 +7,9 @@
 module decode_stub #(
 	parameter int WIDTH  = 320,
 	parameter int HEIGHT = 240,
-	parameter bit ENABLE_DPB_REF_SEAM = 1'b1
+	parameter bit ENABLE_DPB_REF_SEAM = 1'b1,
+	// Mutation twin: force DPB fetch MV to zero (proves product path is live).
+	parameter bit FAULT_FORCE_ZERO_FETCH_MV = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -43,6 +45,9 @@ module decode_stub #(
 	input  wire        trav_uses_sub_mb,
 	input  wire        trav_intra,
 	input  wire        trav_slice_done,
+	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
+	input  wire signed [15:0] first_mb_mvd_x,
+	input  wire signed [15:0] first_mb_mvd_y,
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -55,6 +60,12 @@ module decode_stub #(
 	output reg  [7:0]  recon_dbg,
 	output reg         recon_dbg_valid,
 	output reg         recon_valid,
+
+	// Product MV actually driven into h264_dpb_one_ref (post MVP+mvd).
+	output reg  signed [15:0] product_fetch_mv_x,
+	output reg  signed [15:0] product_fetch_mv_y,
+	output wire signed [15:0] product_luma_origin_x,
+	output wire signed [15:0] product_luma_origin_y,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -128,6 +139,28 @@ module decode_stub #(
 	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy) ||
 	                                 (phase == PH_IDLE && trav_intra);
 	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
+	// First-MB mvd latched for the opening P MB; cleared on multi-MB advance
+	// so later stub-walk MBs use MVP-only (mvd=0) until full syntax lands.
+	reg signed [15:0] lat_mvd_x;
+	reg signed [15:0] lat_mvd_y;
+	reg signed [15:0] pending_mvd_x;
+	reg signed [15:0] pending_mvd_y;
+	// Launch-cycle neighbour snapshot (A/B/C/D) for median MVP 8.4.1.3.
+	// Mirrors h264_inter_nb_ctx semantics with same-cycle availability.
+	localparam int MV_NB_MAX = 40;
+	localparam int MV_NB_AW  = $clog2(MV_NB_MAX); // 6
+	reg signed [15:0] mv_left_x, mv_left_y;
+	reg               mv_left_v;
+	reg signed [15:0] mv_above_x [0:MV_NB_MAX-1];
+	reg signed [15:0] mv_above_y [0:MV_NB_MAX-1];
+	reg               mv_above_v [0:MV_NB_MAX-1];
+	reg signed [15:0] mv_d_x, mv_d_y;
+	reg               mv_d_v;
+	reg signed [15:0] mv_col_al_x, mv_col_al_y;
+	reg               mv_col_al_v;
+	reg        [1:0]  fetch_gap; // delay multi-MB advance so left publishes
+	integer        coeff_i;
+	integer        mv_nb_i;
 
 	wire [9:0] width_w  = WIDTH[9:0];
 	wire [9:0] height_w = HEIGHT[9:0];
@@ -466,6 +499,48 @@ module decode_stub #(
 	// Prefer walker events; fall back to first-MB edge only if walker silent.
 	// Only commit to walker-driven fetch after an accepted beat (not every pulse).
 	wire              use_trav = trav_active_slice || trav_slice_pending;
+
+	// Product MVP + mvd → final qpel MV for DPB fetch (replaces hardwired 0).
+	wire [MV_NB_AW-1:0] lat_mb_x_i  = lat_p_mb_x[MV_NB_AW-1:0];
+	wire [MV_NB_AW-1:0] lat_mb_xr_i = lat_p_mb_x[MV_NB_AW-1:0] + MV_NB_AW'(1);
+	wire [MV_NB_AW-1:0] pend_mb_x_i = pending_p_mb_x[MV_NB_AW-1:0];
+	wire [MV_NB_AW-1:0] req_mb_x_i  = p_req_mb_x[MV_NB_AW-1:0];
+	wire [MV_NB_AW-1:0] next_mb_x_i = lat_p_next_mb_x[MV_NB_AW-1:0];
+	wire              prod_avail_a = (lat_p_mb_x != 8'd0) && mv_left_v;
+	wire              prod_avail_b = (lat_p_mb_y != 8'd0) &&
+	                                 (lat_p_mb_x < MV_NB_MAX[7:0]) && mv_above_v[lat_mb_x_i];
+	wire              prod_avail_c = (lat_p_mb_y != 8'd0) &&
+	                                 (lat_p_mb_x + 8'd1 < lat_mb_w) &&
+	                                 (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) &&
+	                                 mv_above_v[lat_mb_xr_i];
+	wire              prod_avail_d = (lat_p_mb_x != 8'd0) && (lat_p_mb_y != 8'd0) && mv_d_v;
+	wire signed [15:0] prod_mv_a_x = mv_left_x;
+	wire signed [15:0] prod_mv_a_y = mv_left_y;
+	wire signed [15:0] prod_mv_b_x = (lat_p_mb_x < MV_NB_MAX[7:0]) ? mv_above_x[lat_mb_x_i] : 16'sd0;
+	wire signed [15:0] prod_mv_b_y = (lat_p_mb_x < MV_NB_MAX[7:0]) ? mv_above_y[lat_mb_x_i] : 16'sd0;
+	wire signed [15:0] prod_mv_c_x = (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) ? mv_above_x[lat_mb_xr_i] : 16'sd0;
+	wire signed [15:0] prod_mv_c_y = (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) ? mv_above_y[lat_mb_xr_i] : 16'sd0;
+	wire signed [15:0] prod_mvp_x, prod_mvp_y, prod_mv_x, prod_mv_y;
+	wire               prod_skip_zero;
+	h264_mv_pred_part u_product_mv_pred (
+		.part_mode(lat_p_part_mode),
+		.part_idx(2'd0),
+		.avail_a(prod_avail_a), .avail_b(prod_avail_b),
+		.avail_c(prod_avail_c), .avail_d(prod_avail_d),
+		.mv_a_x(prod_mv_a_x), .mv_a_y(prod_mv_a_y),
+		.mv_b_x(prod_mv_b_x), .mv_b_y(prod_mv_b_y),
+		.mv_c_x(prod_mv_c_x), .mv_c_y(prod_mv_c_y),
+		.mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
+		.mvd_x(lat_mvd_x), .mvd_y(lat_mvd_y),
+		.p_skip(lat_p_skip),
+		.pred_x(prod_mvp_x), .pred_y(prod_mvp_y),
+		.mv_x(prod_mv_x), .mv_y(prod_mv_y),
+		.skip_zero(prod_skip_zero)
+	);
+	wire signed [15:0] fetch_mv_x_qpel =
+		FAULT_FORCE_ZERO_FETCH_MV ? 16'sd0 : prod_mv_x;
+	wire signed [15:0] fetch_mv_y_qpel =
+		FAULT_FORCE_ZERO_FETCH_MV ? 16'sd0 : prod_mv_y;
 	wire [7:0]        dpb_inter_sig = dpb_pred_y[0] ^ dpb_pred_y[1] ^ dpb_pred_y[2] ^ dpb_pred_y[3] ^
 	                                  dpb_pred_y[4] ^ dpb_pred_y[5] ^ dpb_pred_y[6] ^ dpb_pred_y[7] ^
 	                                  dpb_pred_y[8] ^ dpb_pred_y[9] ^ dpb_pred_y[10] ^ dpb_pred_y[11] ^
@@ -532,7 +607,7 @@ module decode_stub #(
 		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
 		.fetch_part_mode(lat_p_part_mode), .fetch_part_idx(2'd0),
 		.fetch_part_w(dpb_part_w), .fetch_part_h(dpb_part_h),
-		.fetch_mv_x_qpel(16'sd0), .fetch_mv_y_qpel(16'sd0),
+		.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
 		.fetch_busy(dpb_fetch_busy), .fetch_done(dpb_fetch_done),
 		.fetch_error_no_ref(dpb_fetch_error_no_ref),
 		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
@@ -549,6 +624,9 @@ module decode_stub #(
 		.chroma_window_idx(dpb_chroma_window_idx),
 		.chroma_window_sample(dpb_chroma_window_sample)
 	);
+
+	assign product_luma_origin_x = dpb_luma_origin_x;
+	assign product_luma_origin_y = dpb_luma_origin_y;
 
 	h264_inter_mc_part u_stream_mc (
 		.luma_ref_win(dpb_luma_win),
@@ -731,6 +809,27 @@ module decode_stub #(
 			trav_slice_pending <= 0;
 			trav_active_slice <= 0;
 			trav_got_mb <= 0;
+			lat_mvd_x <= 16'sd0;
+			lat_mvd_y <= 16'sd0;
+			pending_mvd_x <= 16'sd0;
+			pending_mvd_y <= 16'sd0;
+			mv_left_x <= 16'sd0;
+			mv_left_y <= 16'sd0;
+			mv_left_v <= 1'b0;
+			mv_d_x <= 16'sd0;
+			mv_d_y <= 16'sd0;
+			mv_d_v <= 1'b0;
+			mv_col_al_x <= 16'sd0;
+			mv_col_al_y <= 16'sd0;
+			mv_col_al_v <= 1'b0;
+			fetch_gap <= 2'd0;
+			product_fetch_mv_x <= 16'sd0;
+			product_fetch_mv_y <= 16'sd0;
+			for (mv_nb_i = 0; mv_nb_i < MV_NB_MAX; mv_nb_i = mv_nb_i + 1) begin
+				mv_above_x[mv_nb_i] <= 16'sd0;
+				mv_above_y[mv_nb_i] <= 16'sd0;
+				mv_above_v[mv_nb_i] <= 1'b0;
+			end
 			dpb_fetch_start <= 0;
 			dpb_frame_done_pulse <= 0;
 			dpb_fill_mb_addr <= '0;
@@ -770,6 +869,8 @@ module decode_stub #(
 				pending_p_part_count <= first_mb_part_count;
 				pending_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				pending_p_intra <= first_mb_intra;
+				pending_mvd_x <= first_mb_mvd_x;
+				pending_mvd_y <= first_mb_mvd_y;
 			end
 			if (!slice_valid)
 				p_candidate_seen <= 1'b0;
@@ -874,6 +975,21 @@ module decode_stub #(
 				lat_p_part_count <= pending_p_part_count;
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
 				lat_p_intra <= pending_p_intra;
+				lat_mvd_x <= pending_mvd_x;
+				lat_mvd_y <= pending_mvd_y;
+				// D = sliding above-left; then capture above[x] for next D.
+				mv_d_v <= (pending_p_mb_x != 8'd0) && (pending_p_mb_y != 8'd0) && mv_col_al_v;
+				mv_d_x <= mv_col_al_x;
+				mv_d_y <= mv_col_al_y;
+				if ((pending_p_mb_y != 8'd0) && (pending_p_mb_x < MV_NB_MAX[7:0])) begin
+					mv_col_al_v <= mv_above_v[pend_mb_x_i];
+					mv_col_al_x <= mv_above_x[pend_mb_x_i];
+					mv_col_al_y <= mv_above_y[pend_mb_x_i];
+				end else begin
+					mv_col_al_v <= 1'b0;
+					mv_col_al_x <= 16'sd0;
+					mv_col_al_y <= 16'sd0;
+				end
 				lat_inter_recon_ok <= 1'b0;
 				pending_p_fetch <= 1'b0;
 				trav_got_mb <= 1'b0;
@@ -923,6 +1039,20 @@ module decode_stub #(
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				lat_p_intra  <= first_mb_intra;
+				lat_mvd_x    <= first_mb_mvd_x;
+				lat_mvd_y    <= first_mb_mvd_y;
+				mv_d_v <= (p_req_mb_x != 8'd0) && (p_req_mb_y != 8'd0) && mv_col_al_v;
+				mv_d_x <= mv_col_al_x;
+				mv_d_y <= mv_col_al_y;
+				if ((p_req_mb_y != 8'd0) && (p_req_mb_x < MV_NB_MAX[7:0])) begin
+					mv_col_al_v <= mv_above_v[req_mb_x_i];
+					mv_col_al_x <= mv_above_x[req_mb_x_i];
+					mv_col_al_y <= mv_above_y[req_mb_x_i];
+				end else begin
+					mv_col_al_v <= 1'b0;
+					mv_col_al_x <= 16'sd0;
+					mv_col_al_y <= 16'sd0;
+				end
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
 					dpb_fill_mb_addr <= '0;
 					dpb_fill_sample_idx <= 9'd0;
@@ -953,6 +1083,24 @@ module decode_stub #(
 				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
+				// Publish product MV actually consumed by this fetch.
+				product_fetch_mv_x <= fetch_mv_x_qpel;
+				product_fetch_mv_y <= fetch_mv_y_qpel;
+				// Commit neighbour store for subsequent MVP.
+				if (lat_p_mb_x < MV_NB_MAX[7:0]) begin
+					mv_above_x[lat_mb_x_i] <= prod_mv_x;
+					mv_above_y[lat_mb_x_i] <= prod_mv_y;
+					mv_above_v[lat_mb_x_i] <= 1'b1;
+				end
+				if (lat_p_mb_x + 8'd1 >= lat_mb_w) begin
+					mv_left_v <= 1'b0;
+					mv_left_x <= 16'sd0;
+					mv_left_y <= 16'sd0;
+				end else begin
+					mv_left_v <= 1'b1;
+					mv_left_x <= prod_mv_x;
+					mv_left_y <= prod_mv_y;
+				end
 				trav_got_mb <= 1'b0;
 				// Next walker MB, or finish slice
 				if (trav_mb_ready) begin

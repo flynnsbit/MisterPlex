@@ -149,6 +149,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh",
 ]
 
 IGNORED_COMMANDS = [
