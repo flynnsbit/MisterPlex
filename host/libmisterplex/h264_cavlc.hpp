@@ -271,13 +271,15 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
                 levelCode += 2;
             level[i] = toSigned(levelCode);
             out.level[i] = level[i];
-            // suffixLength after first non-T1:
-            // escape path (prefix>=15, or prefix==14 with suffixLength==0) → 2
-            // else → 1 + (level+3 > 6)
-            if (prefix > 14 || (prefix == 14 && suffixLength == 0))
-                suffixLength = 2;
-            else
-                suffixLength = 1 + (static_cast<unsigned>(level[i] + 3) > 6u);
+            // 9.2.2.1: force suffixLength to at least 1, then ++ when
+            // Abs(level) > 3<<(suffixLength-1). Entering suffixLength is 0 or 1
+            // so the threshold collapses to 3 either way. Must use magnitude:
+            // signed (level+3>6) is wrong for every first level <= -4.
+            {
+                const int mag = level[i] < 0 ? -static_cast<int>(level[i])
+                                             : static_cast<int>(level[i]);
+                suffixLength = (mag > 3) ? 2 : 1;
+            }
         } else {
             // --- Subsequent coefficients (suffixLength >= 1) ---
             if (prefix < 15) {
@@ -291,11 +293,14 @@ inline ResidualResult residualBlock(detail::BitReader& br, int nC, int maxNumCoe
             }
             level[i] = toSigned(levelCode);
             out.level[i] = level[i];
-            // FFmpeg: suffix_length += (lim[s] + level > 2*lim[s])
-            static const unsigned kLim[7] = {0, 3, 6, 12, 24, 48, 0xffffffffu};
-            if (suffixLength < 6)
-                suffixLength +=
-                    (kLim[suffixLength] + static_cast<unsigned>(level[i]) > 2u * kLim[suffixLength]);
+            // 9.2.2.1: ++suffixLength when Abs(level) > 3<<(suffixLength-1)
+            // i.e. Abs > {0,3,6,12,24,48}[suffixLength]. A signed level added
+            // into an unsigned lim wraps and always increments for negatives.
+            static const int kLim[7] = {0, 3, 6, 12, 24, 48, 0x7fffffff};
+            const int mag = level[i] < 0 ? -static_cast<int>(level[i])
+                                         : static_cast<int>(level[i]);
+            if (suffixLength < 6 && mag > kLim[suffixLength])
+                suffixLength += 1;
         }
     }
 

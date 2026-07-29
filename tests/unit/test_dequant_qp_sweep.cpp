@@ -128,11 +128,12 @@ int main(int argc, char** argv) {
 
     for (int qp = 0; qp <= 51; ++qp) {
         for (const auto& pat : patterns) {
-            // Set up RTL inputs
+            // Set up RTL inputs. coeff[] is signed [15:0] — do NOT mask to 9 bits
+            // (0x1FF turns -1 into 511 and flips every negative dequant).
             dut->qp = static_cast<uint8_t>(qp);
             dut->max_coeff = 16;
             for (int i = 0; i < 16; ++i)
-                dut->coeff[i] = static_cast<uint16_t>(pat.coeffs[i] & 0x1FF);
+                dut->coeff[i] = static_cast<int16_t>(pat.coeffs[i]);
             dut->eval();
 
             // Compute host reference
@@ -169,11 +170,12 @@ int main(int argc, char** argv) {
         dut->qp = static_cast<uint8_t>(qp);
         dut->max_coeff = 16;
         for (int i = 0; i < 16; ++i)
-            dut->coeff[i] = c[i] & 0x1FF;
+            dut->coeff[i] = static_cast<int16_t>(c[i]);
         dut->eval();
         int32_t rtl_val = dut->dequant[0];
-        if (rtl_val & (1 << 17))
-            rtl_val |= ~((1 << 18) - 1);
+        // dequant is signed [28:0]
+        if (rtl_val & (1 << 28))
+            rtl_val |= ~((1 << 29) - 1);
         printf("  QP=%2d: host=%6d RTL=%6d %s\n",
                qp, ref.values[0], rtl_val,
                ref.values[0] == rtl_val ? "OK" : "MISMATCH");

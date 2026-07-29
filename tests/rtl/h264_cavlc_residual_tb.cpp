@@ -54,15 +54,19 @@ static int signed_to_level_code(int level) {
     return level > 0 ? 2 * level - 2 : -2 * level - 1;
 }
 
-static int suffix_next_first(int prefix, int suffix_length, int level) {
-    if (prefix > 14 || (prefix == 14 && suffix_length == 0))
-        return 2;
-    return 1 + (level + 3 > 6);
+// 9.2.2.1: after the first non-trailing-one level, suffixLength becomes 1
+// (if it was 0) then increments when Abs(level) > 3<<(suffixLength-1).
+// Must use magnitude — a signed (level+3>6) test leaves suffixLength=1 for
+// every first level <= -4 and desynchronises the encoder vs the RTL/spec.
+static int suffix_next_first(int /*prefix*/, int /*suffix_length*/, int level) {
+    const int mag = level < 0 ? -level : level;
+    return (mag > 3) ? 2 : 1;
 }
 
 static int suffix_next(int suffix_length, int level) {
-    static const unsigned lim[7] = {0, 3, 6, 12, 24, 48, 0xffffffffu};
-    if (suffix_length < 6 && lim[suffix_length] + static_cast<unsigned>(level) > 2u * lim[suffix_length])
+    static const int lim[7] = {0, 3, 6, 12, 24, 48, 0x7fffffff};
+    const int mag = level < 0 ? -level : level;
+    if (suffix_length < 6 && mag > lim[suffix_length])
         return suffix_length + 1;
     return suffix_length;
 }
