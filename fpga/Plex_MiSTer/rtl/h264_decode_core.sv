@@ -1573,16 +1573,6 @@ module h264_decode_core #(
             end
             for (res_tc_i = 0; res_tc_i < MB_W; res_tc_i = res_tc_i + 1)
                 res_tc_top_valid[res_tc_i] <= 1'b0;
-                res_chr_top_valid[res_tc_i] <= 1'b0;
-            end
-            for (res_tc_i = 0; res_tc_i < 2; res_tc_i = res_tc_i + 1) begin
-                res_chr_left_u[res_tc_i] <= 5'd0;
-                res_chr_left_v[res_tc_i] <= 5'd0;
-            end
-            for (res_tc_i = 0; res_tc_i < MB_W * 2; res_tc_i = res_tc_i + 1) begin
-                res_chr_top_u[res_tc_i] <= 5'd0;
-                res_chr_top_v[res_tc_i] <= 5'd0;
-            end
             syntax_mb_addr_r <= reset ? 16'd0 : first_mb_in_slice;
             // Seed (x,y) without combo / or %: first_mb==0 → ready now;
             // else subtract MB_W per cycle until remainder < MB_W.
