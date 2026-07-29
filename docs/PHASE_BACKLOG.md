@@ -294,6 +294,8 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
   The middle band is **93.1%** pixel-identical to `screensaver_poststop` and **92.2%** identical to the logo baseline, i.e. the
   middle third of the frame buffer was **never overwritten** and retains stale content from the preceding mode. A user selecting
   "Last frame" sees a torn image.
+  **Not a goal-completion percentage.** See live rescore in
+  [`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md) (~55% on `41adb98c`, not 93%).
   **Open questions:** compare bank0 vs bank1 — if only one bank tears this is a **bank-swap/`swap_pending` defect in the present
   path**, not an idle-mode bug, and is considerably more serious. Also re-run from a clean state to confirm the stale content
   really originates from the previous test rather than a fresh-boot tear.
