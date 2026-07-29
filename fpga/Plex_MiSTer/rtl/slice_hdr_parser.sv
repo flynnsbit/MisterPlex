@@ -15,12 +15,29 @@ module slice_hdr_parser (
 	input  wire        cap_end,
 	input  wire        is_idr_nal,
 	input  wire        nal_ref_idc_nonzero,
+	// SPS fields, resolved through the active PPS by h264_param_sets. These
+	// are combinational lookups: the id we want is only known once we have
+	// parsed pic_parameter_set_id, and frame_num's own length depends on it,
+	// so they are sampled at ST_PPS rather than at capture start.
 	input  wire [4:0]  log2_max_frame_num,
 	input  wire [2:0]  poc_type,
+	input  wire [5:0]  log2_max_poc_lsb,
 	input  wire        sps_ready,
 	input  wire        pps_ready,
-	input  wire        deblock_ctrl,
-	input  wire signed [7:0] pic_init_qp,
+	// PPS fields for the id this slice references.
+	input  wire        pps_found,
+	input  wire        pps_deblock_ctrl,
+	input  wire signed [7:0] pps_pic_init_qp,
+	input  wire [7:0]  pps_num_ref_l0,
+	input  wire signed [4:0] pps_chroma_qp_index_offset,
+	input  wire        pps_constrained_intra_pred,
+	input  wire        pps_bottom_field_pic_order_present,
+	input  wire        pps_redundant_pic_cnt_present,
+	input  wire        pps_weighted_pred,
+
+	// Combinational select into the parameter set store. Valid one cycle
+	// early (straight off ue_val) while the id is being consumed.
+	output wire [7:0]  pps_sel_id,
 
 	output reg         valid,
 	output reg  [15:0] first_mb,
@@ -28,7 +45,12 @@ module slice_hdr_parser (
 	output reg  [7:0]  pps_id,
 	output reg  [15:0] frame_num,
 	output reg  [15:0] idr_pic_id,
+	output reg  [15:0] pic_order_cnt_lsb,
 	output reg         is_i_slice,
+	output reg  [7:0]  num_ref_idx_l0_active,
+	output reg  signed [4:0] chroma_qp_index_offset,
+	output reg         constrained_intra_pred_flag,
+	output reg         unsupported,
 	output reg  signed [7:0] slice_qp_delta,
 	output reg  [5:0]  slice_qp,       // 0..51
 	output reg  [1:0]  disable_deblocking_filter_idc,
@@ -97,6 +119,12 @@ module slice_hdr_parser (
 	reg        nal_ref_lat;
 	reg [4:0]  log2_lat;
 	reg signed [7:0] init_qp_lat;
+	reg [2:0]  poc_lat;
+	reg [4:0]  l2poc_lat;
+	reg        bfpo_lat;
+	reg        rpc_lat;
+	reg        wp_lat;
+	reg [3:0]  rplm_guard;
 	reg signed [7:0] dlt_tmp;
 	reg signed [8:0] qp_tmp;
 	reg [15:0] tcode;
@@ -422,7 +450,88 @@ module slice_hdr_parser (
 		ST_REFIDX_FLAG = 6'd32,
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
-		ST_P_MBT       = 6'd35;
+		ST_P_MBT       = 6'd35,
+		// Elements whose presence is gated by parameter set flags. Skipping
+		// any of them consumes the wrong bits for everything after it.
+		ST_POCL        = 6'd36, // pic_order_cnt_lsb
+		ST_POCB        = 6'd37, // delta_pic_order_cnt_bottom
+		ST_RPCV        = 6'd38, // redundant_pic_cnt
+		ST_RPLMF       = 6'd39, // ref_pic_list_modification_flag_l0
+		ST_RPLMI       = 6'd40, // modification_of_pic_nums_idc
+		ST_RPLMV       = 6'd41; // abs_diff_pic_num_minus1 / long_term_pic_num
+
+	// The store lookup has to be live while ST_PPS is consuming the id, so it
+	// comes straight off ue_val for that one cycle.
+	assign pps_sel_id = (st == ST_PPS) ? ue_val[7:0] : pps_id;
+
+	// Slice header elements are conditionally present. These walk the
+	// presence chain in syntax order so that a parameter set flag being
+	// clear means the bits are not consumed, rather than the parser eating
+	// whatever happened to follow.
+	task automatic go_qpd;
+		begin
+			zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+		end
+	endtask
+
+	task automatic go_refmark;
+		begin
+			if (idr_lat) begin
+				// dec_ref_pic_marking (IDR): no_output_of_prior_pics + long_term_reference
+				nleft <= 5'd2; acc <= 0; cont <= ST_REFMARK; st <= ST_GETBITS;
+			end else if (nal_ref_lat) begin
+				nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+			end else
+				go_qpd;
+		end
+	endtask
+
+	task automatic go_pwt;
+		begin
+			// pred_weight_table() is present when weighted_pred_flag is set on
+			// a P slice. Baseline forbids it and we cannot parse it, so stop
+			// rather than mistake its payload for dec_ref_pic_marking.
+			if (wp_lat) begin
+				unsupported <= 1'b1;
+				st <= ST_FAIL;
+			end else
+				go_refmark;
+		end
+	endtask
+
+	task automatic go_rplm;
+		begin
+			rplm_guard <= 4'd0;
+			nleft <= 5'd1; acc <= 0; cont <= ST_RPLMF; st <= ST_GETBITS;
+		end
+	endtask
+
+	task automatic go_refidx;
+		begin
+			if (is_p_slice_type(slice_type)) begin
+				nleft <= 5'd1; acc <= 0; cont <= ST_REFIDX_FLAG; st <= ST_GETBITS;
+			end else
+				go_refmark;
+		end
+	endtask
+
+	task automatic go_redundant;
+		begin
+			if (rpc_lat) begin
+				zcnt <= 0; ue_cont <= ST_RPCV; st <= ST_UE_Z;
+			end else
+				go_refidx;
+		end
+	endtask
+
+	task automatic go_poc;
+		begin
+			if (poc_lat == 3'd0) begin
+				nleft <= l2poc_lat; acc <= 0; cont <= ST_POCL; st <= ST_GETBITS;
+			end else
+				go_redundant;
+		end
+	endtask
 
 	task automatic res_clear;
 		integer ci;
@@ -624,6 +733,17 @@ module slice_hdr_parser (
 			nal_ref_lat <= 0;
 			log2_lat <= 5'd4;
 			init_qp_lat <= 8'sd26;
+			poc_lat <= 3'd2;
+			l2poc_lat <= 5'd4;
+			bfpo_lat <= 0;
+			rpc_lat <= 0;
+			wp_lat <= 0;
+			rplm_guard <= 4'd0;
+			pic_order_cnt_lsb <= 16'd0;
+			num_ref_idx_l0_active <= 8'd1;
+			chroma_qp_index_offset <= 5'sd0;
+			constrained_intra_pred_flag <= 1'b0;
+			unsupported <= 1'b0;
 			qp_tmp <= 0;
 			tok_ok <= 0;
 			lev_i <= 0;
@@ -676,7 +796,7 @@ module slice_hdr_parser (
 			case (st)
 			ST_IDLE: begin
 				busy <= 0;
-				if (cap_end && len >= 7'd2 && sps_ready && pps_ready && poc_type != 3'd1) begin
+				if (cap_end && len >= 7'd2 && sps_ready && pps_ready) begin
 					busy <= 1'b1;
 					has_mb_type <= 0;
 					first_mb_p_skip <= 0;
@@ -706,9 +826,6 @@ module slice_hdr_parser (
 					csum_acc <= 0;
 					idr_lat <= is_idr_nal;
 					nal_ref_lat <= nal_ref_idc_nonzero;
-					db_lat <= deblock_ctrl;
-					log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
-					init_qp_lat <= pic_init_qp;
 					bbyte <= 0;
 					bpos <= 3'd7;
 					zcnt <= 0;
@@ -762,44 +879,95 @@ module slice_hdr_parser (
 				zcnt <= 0; ue_cont <= ST_PPS; st <= ST_UE_Z;
 			end
 			ST_PPS: begin
+				// pps_sel_id is already driving the store with ue_val, so the
+				// whole active parameter set is resolved on this same cycle.
 				pps_id <= ue_val[7:0];
-				nleft <= log2_lat; acc <= 0; cont <= ST_FN; st <= ST_GETBITS;
+				db_lat <= pps_deblock_ctrl;
+				init_qp_lat <= pps_pic_init_qp;
+				bfpo_lat <= pps_bottom_field_pic_order_present;
+				rpc_lat <= pps_redundant_pic_cnt_present;
+				wp_lat <= pps_weighted_pred;
+				poc_lat <= poc_type;
+				l2poc_lat <= (log2_max_poc_lsb == 0) ? 5'd4 : log2_max_poc_lsb[4:0];
+				log2_lat <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
+				num_ref_idx_l0_active <= pps_num_ref_l0 + 8'd1;
+				chroma_qp_index_offset <= pps_chroma_qp_index_offset;
+				constrained_intra_pred_flag <= pps_constrained_intra_pred;
+				// A slice that references a PPS we never saw cannot be parsed
+				// at all: its very next field is frame_num, whose length comes
+				// from that PPS's SPS.
+				if (!pps_found || (poc_type == 3'd1)) begin
+					unsupported <= 1'b1;
+					st <= ST_FAIL;
+				end else begin
+					nleft <= (log2_max_frame_num == 0) ? 5'd4 : log2_max_frame_num;
+					acc <= 0; cont <= ST_FN; st <= ST_GETBITS;
+				end
 			end
 			ST_FN: begin
 				frame_num <= acc;
 				if (idr_lat) begin
 					zcnt <= 0; ue_cont <= ST_IDR; st <= ST_UE_Z;
-				end else if (is_p_slice_type(slice_type)) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_REFIDX_FLAG; st <= ST_GETBITS;
-				end else if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
-				end
+				end else
+					go_poc;
 			end
 			ST_IDR: begin
 				idr_pic_id <= ue_val;
-				// dec_ref_pic_marking (IDR): no_output_of_prior_pics + long_term_reference
-				nleft <= 5'd2; acc <= 0; cont <= ST_REFMARK; st <= ST_GETBITS;
+				go_poc;
+			end
+			ST_POCL: begin
+				pic_order_cnt_lsb <= acc;
+				if (bfpo_lat) begin
+					// delta_pic_order_cnt_bottom, se(v), value unused.
+					zcnt <= 0; ue_cont <= ST_POCB; st <= ST_UE_Z;
+				end else
+					go_redundant;
+			end
+			ST_POCB: begin
+				go_redundant;
+			end
+			ST_RPCV: begin
+				// redundant_pic_cnt, value unused; redundant slices are dropped
+				// downstream, but the bits still have to come out of the stream.
+				go_refidx;
 			end
 			ST_REFMARK: begin
-				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				go_qpd;
 			end
 			ST_REFIDX_FLAG: begin
+				// num_ref_idx_active_override_flag. Without the override the
+				// count is the PPS default already latched at ST_PPS.
 				if (acc[0]) begin
 					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
-				end else if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
-				end
+				end else
+					go_rplm;
 			end
 			ST_REFIDX_L0: begin
-				if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+				num_ref_idx_l0_active <= ue_val[7:0] + 8'd1;
+				go_rplm;
+			end
+			ST_RPLMF: begin
+				// ref_pic_list_modification_flag_l0. This bit is present for
+				// every P slice and was previously never consumed, which shifted
+				// slice_qp_delta and everything after it by one bit.
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_RPLMI; st <= ST_UE_Z;
+				end else
+					go_pwt;
+			end
+			ST_RPLMI: begin
+				rplm_guard <= rplm_guard + 4'd1;
+				if (ue_val == 16'd3)
+					go_pwt;
+				else if ((ue_val > 16'd3) || (rplm_guard >= 4'd15))
+					st <= ST_FAIL;
+				else begin
+					// idc 0/1: abs_diff_pic_num_minus1. idc 2: long_term_pic_num.
+					zcnt <= 0; ue_cont <= ST_RPLMV; st <= ST_UE_Z;
 				end
+			end
+			ST_RPLMV: begin
+				zcnt <= 0; ue_cont <= ST_RPLMI; st <= ST_UE_Z;
 			end
 			ST_NIDR_REFMARK: begin
 				// Baseline product profile uses one short-term reference and no MMCO.

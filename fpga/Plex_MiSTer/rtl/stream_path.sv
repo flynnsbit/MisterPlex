@@ -258,30 +258,124 @@ module stream_path #(
 	wire [2:0] poc_t;
 	wire sps_busy;
 
+	wire sps_wr_pulse;
+	wire [7:0] sps_id_w, sps_max_refs;
+	wire [5:0] sps_l2poc;
+
 	sps_parser sps (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(sps_cap_clear), .cap_en(sps_cap_en),
 		.cap_data(sps_cap_data), .cap_end(sps_cap_end),
-		.valid(sps_valid), .profile_idc(sps_profile), .level_idc(sps_level),
+		.valid(sps_valid), .wr_pulse(sps_wr_pulse), .sps_id(sps_id_w),
+		.profile_idc(sps_profile), .level_idc(sps_level),
 		.width(sps_width), .height(sps_height),
 		.log2_max_frame_num(log2_fn), .poc_type(poc_t),
+		.log2_max_poc_lsb(sps_l2poc), .max_num_ref_frames(sps_max_refs),
 		.mb_width(sps_mb_w), .mb_height(sps_mb_h),
 		.busy(sps_busy)
 	);
 
-	wire pps_busy, pps_cabac, pps_deblock;
-	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
-	wire signed [7:0] pps_qp;
+	wire pps_busy, pps_cabac, pps_deblock, pps_wr_pulse;
+	wire pps_bfpo, pps_wp, pps_cip, pps_rpc, pps_unsup, pps_pfail;
+	wire [7:0] pps_id_w, pps_sps_id, pps_nref, pps_nref1, pps_nsg;
+	wire [1:0] pps_wbi;
+	wire signed [7:0] pps_qp, pps_qs;
 	wire signed [4:0] pps_cqpo;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
 		.cap_clear(pps_cap_clear), .cap_en(pps_cap_en),
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
-		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
-		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .chroma_qp_index_offset(pps_cqpo),
-		.deblock_ctrl(pps_deblock), .busy(pps_busy)
+		.valid(pps_valid), .wr_pulse(pps_wr_pulse),
+		.pps_id(pps_id_w), .sps_id(pps_sps_id),
+		.entropy_cabac(pps_cabac),
+		.bottom_field_pic_order_present(pps_bfpo),
+		.num_slice_groups_minus1(pps_nsg),
+		.num_ref_l0(pps_nref), .num_ref_l1(pps_nref1),
+		.weighted_pred(pps_wp), .weighted_bipred_idc(pps_wbi),
+		.pic_init_qp(pps_qp), .pic_init_qs(pps_qs),
+		.chroma_qp_index_offset(pps_cqpo),
+		.deblock_ctrl(pps_deblock),
+		.constrained_intra_pred(pps_cip),
+		.redundant_pic_cnt_present(pps_rpc),
+		.unsupported(pps_unsup), .parse_fail(pps_pfail),
+		.busy(pps_busy)
+	);
+
+	// Parameter set storage. The slice header parser drives ps_sel_id with the
+	// pic_parameter_set_id it is decoding right now and gets that exact PPS --
+	// and through it that PPS's SPS -- back combinationally in the same cycle.
+	// Handing it whichever set arrived last would give a slice a PPS it does
+	// not reference, changing whether the deblocking offsets are even present
+	// in the bitstream and desyncing every bit after them.
+	wire [7:0] ps_sel_id;
+	wire ps_pps_found, ps_sps_found;
+	wire [7:0] ps_pps_sps_id, ps_num_ref_l0, ps_num_ref_l1;
+	wire ps_bfpo, ps_wp, ps_deblock, ps_cip, ps_rpc;
+	wire [1:0] ps_wbi;
+	wire signed [7:0] ps_pic_init_qp, ps_pic_init_qs;
+	wire signed [4:0] ps_chroma_qp_off;
+	wire [15:0] ps_sps_w, ps_sps_h;
+	wire [7:0] ps_sps_mbw, ps_sps_mbh, ps_sps_max_refs;
+	wire [4:0] ps_sps_l2fn;
+	wire [2:0] ps_sps_poc;
+	wire [5:0] ps_sps_l2poc;
+	wire ps_any_pps, ps_any_sps;
+	wire [7:0] ps_pps_count, ps_sps_count;
+
+	h264_param_sets #(.NUM_PPS(4), .NUM_SPS(2)) u_param_sets (
+		.clk(clk), .reset(reset | flush),
+		.sps_wr(sps_wr_pulse),
+		.sps_wr_id(sps_id_w),
+		.sps_wr_width(sps_width),
+		.sps_wr_height(sps_height),
+		.sps_wr_mb_width(sps_mb_w),
+		.sps_wr_mb_height(sps_mb_h),
+		.sps_wr_log2_max_frame_num(log2_fn),
+		.sps_wr_poc_type(poc_t),
+		.sps_wr_log2_max_poc_lsb(sps_l2poc),
+		.sps_wr_max_num_ref_frames(sps_max_refs),
+		.pps_wr(pps_wr_pulse),
+		.pps_wr_id(pps_id_w),
+		.pps_wr_sps_id(pps_sps_id),
+		.pps_wr_bottom_field_pic_order_present(pps_bfpo),
+		.pps_wr_num_ref_l0(pps_nref),
+		.pps_wr_num_ref_l1(pps_nref1),
+		.pps_wr_weighted_pred(pps_wp),
+		.pps_wr_weighted_bipred_idc(pps_wbi),
+		.pps_wr_pic_init_qp(pps_qp),
+		.pps_wr_pic_init_qs(pps_qs),
+		.pps_wr_chroma_qp_index_offset(pps_cqpo),
+		.pps_wr_deblock_ctrl(pps_deblock),
+		.pps_wr_constrained_intra_pred(pps_cip),
+		.pps_wr_redundant_pic_cnt_present(pps_rpc),
+		.pps_sel_id(ps_sel_id),
+		.pps_sel_found(ps_pps_found),
+		.pps_sel_sps_id(ps_pps_sps_id),
+		.pps_sel_bottom_field_pic_order_present(ps_bfpo),
+		.pps_sel_num_ref_l0(ps_num_ref_l0),
+		.pps_sel_num_ref_l1(ps_num_ref_l1),
+		.pps_sel_weighted_pred(ps_wp),
+		.pps_sel_weighted_bipred_idc(ps_wbi),
+		.pps_sel_pic_init_qp(ps_pic_init_qp),
+		.pps_sel_pic_init_qs(ps_pic_init_qs),
+		.pps_sel_chroma_qp_index_offset(ps_chroma_qp_off),
+		.pps_sel_deblock_ctrl(ps_deblock),
+		.pps_sel_constrained_intra_pred(ps_cip),
+		.pps_sel_redundant_pic_cnt_present(ps_rpc),
+		.sps_sel_found(ps_sps_found),
+		.sps_sel_width(ps_sps_w),
+		.sps_sel_height(ps_sps_h),
+		.sps_sel_mb_width(ps_sps_mbw),
+		.sps_sel_mb_height(ps_sps_mbh),
+		.sps_sel_log2_max_frame_num(ps_sps_l2fn),
+		.sps_sel_poc_type(ps_sps_poc),
+		.sps_sel_log2_max_poc_lsb(ps_sps_l2poc),
+		.sps_sel_max_num_ref_frames(ps_sps_max_refs),
+		.any_pps_valid(ps_any_pps),
+		.any_sps_valid(ps_any_sps),
+		.pps_count(ps_pps_count),
+		.sps_count(ps_sps_count)
 	);
 
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
@@ -290,6 +384,10 @@ module stream_path #(
 	wire signed [7:0] sl_qpd, sl_rdc;
 	wire [5:0] sl_qp;
 	wire [1:0] sl_deblock_idc;
+	wire [15:0] sl_poc_lsb;
+	wire [7:0] sl_num_ref_l0;
+	wire signed [4:0] sl_chroma_qp_off;
+	wire sl_cip, sl_unsup;
 	wire signed [4:0] sl_alpha_div2, sl_beta_div2, sl_alpha_off, sl_beta_off;
 	wire [4:0] sl_rtc;
 	wire [1:0] sl_rt1;
@@ -314,16 +412,30 @@ module stream_path #(
 		.cap_data(sl_cap_data), .cap_end(sl_cap_end),
 		.is_idr_nal(sl_is_idr),
 		.nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero),
-		.log2_max_frame_num(log2_fn),
-		.poc_type(poc_t),
-		.sps_ready(sps_valid),
-		.pps_ready(pps_valid),
-		.deblock_ctrl(pps_deblock),
-		.pic_init_qp(pps_qp),
+		.log2_max_frame_num(ps_sps_l2fn),
+		.poc_type(ps_sps_poc),
+		.log2_max_poc_lsb(ps_sps_l2poc),
+		.sps_ready(ps_any_sps),
+		.pps_ready(ps_any_pps),
+		.pps_found(ps_pps_found && ps_sps_found),
+		.pps_deblock_ctrl(ps_deblock),
+		.pps_pic_init_qp(ps_pic_init_qp),
+		.pps_num_ref_l0(ps_num_ref_l0),
+		.pps_chroma_qp_index_offset(ps_chroma_qp_off),
+		.pps_constrained_intra_pred(ps_cip),
+		.pps_bottom_field_pic_order_present(ps_bfpo),
+		.pps_redundant_pic_cnt_present(ps_rpc),
+		.pps_weighted_pred(ps_wp),
+		.pps_sel_id(ps_sel_id),
 		.valid(slice_valid),
 		.first_mb(sl_first), .slice_type(sl_type), .pps_id(sl_pps),
 		.frame_num(sl_fn), .idr_pic_id(sl_idr_pic),
+		.pic_order_cnt_lsb(sl_poc_lsb),
 		.is_i_slice(sl_is_i),
+		.num_ref_idx_l0_active(sl_num_ref_l0),
+		.chroma_qp_index_offset(sl_chroma_qp_off),
+		.constrained_intra_pred_flag(sl_cip),
+		.unsupported(sl_unsup),
 		.slice_qp_delta(sl_qpd), .slice_qp(sl_qp),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset_div2(sl_alpha_div2),
@@ -628,7 +740,7 @@ module stream_path #(
 		.first_mb_in_slice(sl_first),
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
-		.pps_chroma_qp_index_offset(pps_cqpo),
+		.pps_chroma_qp_index_offset(sl_chroma_qp_off),
 		.disable_deblocking_filter_idc(sl_deblock_idc),
 		.slice_alpha_c0_offset(sl_alpha_off),
 		.slice_beta_offset(sl_beta_off),

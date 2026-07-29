@@ -40,6 +40,8 @@ module h264_param_sets #(
 	input  wire [7:0]  sps_wr_mb_height,
 	input  wire [4:0]  sps_wr_log2_max_frame_num,
 	input  wire [2:0]  sps_wr_poc_type,
+	input  wire [5:0]  sps_wr_log2_max_poc_lsb,
+	input  wire [7:0]  sps_wr_max_num_ref_frames,
 
 	// ── PPS write port (from pps_parser) ─────────────────────────────
 	input  wire        pps_wr,
@@ -81,6 +83,8 @@ module h264_param_sets #(
 	output wire [7:0]  sps_sel_mb_height,
 	output wire [4:0]  sps_sel_log2_max_frame_num,
 	output wire [2:0]  sps_sel_poc_type,
+	output wire [5:0]  sps_sel_log2_max_poc_lsb,
+	output wire [7:0]  sps_sel_max_num_ref_frames,
 
 	// ── Status ───────────────────────────────────────────────────────
 	output wire        any_pps_valid,
@@ -114,6 +118,8 @@ module h264_param_sets #(
 	reg [7:0]  s_mbh  [0:NUM_SPS-1];
 	reg [4:0]  s_l2fn [0:NUM_SPS-1];
 	reg [2:0]  s_poc  [0:NUM_SPS-1];
+	reg [5:0]  s_l2poc[0:NUM_SPS-1];
+	reg [7:0]  s_nref [0:NUM_SPS-1];
 	reg [7:0]  s_rr;
 
 	integer i;
@@ -191,6 +197,8 @@ module h264_param_sets #(
 				s_mbh[sps_wslot]  <= sps_wr_mb_height;
 				s_l2fn[sps_wslot] <= sps_wr_log2_max_frame_num;
 				s_poc[sps_wslot]  <= sps_wr_poc_type;
+				s_l2poc[sps_wslot] <= sps_wr_log2_max_poc_lsb;
+				s_nref[sps_wslot] <= sps_wr_max_num_ref_frames;
 				if (!s_val[sps_wslot]) sps_count <= sps_count + 8'd1;
 				if (sps_wslot == s_rr)
 					s_rr <= (s_rr == (NUM_SPS[7:0] - 8'd1)) ? 8'd0 : (s_rr + 8'd1);
@@ -252,6 +260,8 @@ module h264_param_sets #(
 	assign sps_sel_mb_height = s_mbh[ssel];
 	assign sps_sel_log2_max_frame_num = s_l2fn[ssel];
 	assign sps_sel_poc_type = s_poc[ssel];
+	assign sps_sel_log2_max_poc_lsb = s_l2poc[ssel];
+	assign sps_sel_max_num_ref_frames = s_nref[ssel];
 
 	assign any_pps_valid = (pps_count != 8'd0);
 	assign any_sps_valid = (sps_count != 8'd0);

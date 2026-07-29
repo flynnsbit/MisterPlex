@@ -24,6 +24,10 @@ module sps_parser (
 	// Extras for slice header / MB grid (3.3d)
 	output reg  [4:0]  log2_max_frame_num, // 4..16
 	output reg  [2:0]  poc_type,           // 0..2
+	// Gates pic_order_cnt_lsb in the slice header when poc_type == 0. Absent
+	// from the slice header otherwise, so the length must travel with the SPS.
+	output reg  [5:0]  log2_max_poc_lsb,   // 4..16
+	output reg  [7:0]  max_num_ref_frames,
 	output reg  [7:0]  mb_width,           // pic_width_in_mbs
 	output reg  [7:0]  mb_height,          // frame height in MBs
 	output reg         busy
@@ -56,6 +60,8 @@ module sps_parser (
 	reg [7:0]  prof;
 	reg [4:0]  log2_fn;
 	reg [2:0]  poc_t;
+	reg [5:0]  l2poc;
+	reg [7:0]  nrefs;
 	reg        wr_arm;
 
 	localparam [4:0]
@@ -102,6 +108,10 @@ module sps_parser (
 			wr_pulse <= 0;
 			wr_arm <= 0;
 			sps_id <= 0;
+			log2_max_poc_lsb <= 6'd4;
+			max_num_ref_frames <= 8'd1;
+			l2poc <= 6'd4;
+			nrefs <= 8'd1;
 			busy <= 0;
 			profile_idc <= 0;
 			level_idc <= 0;
@@ -243,6 +253,7 @@ module sps_parser (
 			end
 			ST_POC: begin
 				poc_t <= ue_val[2:0];
+				l2poc <= 6'd4;
 				if (ue_val == 16'd0) begin
 					zcnt <= 0;
 					ue_cont <= ST_POC0;
@@ -256,11 +267,14 @@ module sps_parser (
 				end
 			end
 			ST_POC0: begin
+				// log2_max_pic_order_cnt_lsb_minus4
+				l2poc <= ue_val[5:0] + 6'd4;
 				zcnt <= 0;
 				ue_cont <= ST_REFS;
 				st <= ST_UE_Z;
 			end
 			ST_REFS: begin
+				nrefs <= (ue_val == 16'd0) ? 8'd1 : ue_val[7:0];
 				nleft <= 5'd1;
 				acc <= 0;
 				cont <= ST_GAPS;
@@ -348,6 +362,8 @@ module sps_parser (
 				st <= ST_IDLE;
 				log2_max_frame_num <= log2_fn;
 				poc_type <= poc_t;
+				log2_max_poc_lsb <= l2poc;
+				max_num_ref_frames <= nrefs;
 				mb_width <= w_mbs[7:0];
 				mb_height <= frame_mbs_only ? h_map[7:0] : {h_map[6:0], 1'b0};
 				if (crop_flag) begin
