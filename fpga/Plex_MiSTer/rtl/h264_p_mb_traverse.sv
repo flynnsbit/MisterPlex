@@ -555,14 +555,25 @@ module h264_p_mb_traverse #(
 					res_slot_coded = 1'b1; // luma DC always
 				else if (idx <= 5'd16) begin
 					ac_i = idx[3:0] - 4'd1;
-					g = {blk4_y(ac_i)[1], blk4_x(ac_i)[1]};
+					// Quartus rejects part-select on function-call results.
+					begin : ac_g_pack
+						reg [1:0] by, bx;
+						by = blk4_y(ac_i);
+						bx = blk4_x(ac_i);
+						g = {by[1], bx[1]};
+					end
 					res_slot_coded = |res_luma_mask; // cbp_l is 0 or 15
 				end else if (idx <= 5'd18)
 					res_slot_coded = (res_chroma != 2'd0);
 				else
 					res_slot_coded = (res_chroma == 2'd2);
 			end else if (idx < 5'd16) begin
-				g = {blk4_y(idx[3:0])[1], blk4_x(idx[3:0])[1]};
+				begin : p_g_pack
+					reg [1:0] by, bx;
+					by = blk4_y(idx[3:0]);
+					bx = blk4_x(idx[3:0]);
+					g = {by[1], bx[1]};
+				end
 				res_slot_coded = res_luma_mask[g];
 			end else if (idx < 5'd18) begin
 				res_slot_coded = (res_chroma != 2'd0);

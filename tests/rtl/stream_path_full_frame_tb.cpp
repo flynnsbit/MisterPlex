@@ -28,6 +28,7 @@ struct Args {
     std::string goldenPlanes;
     std::string goldenManifest;
     std::string candidateI420Out;
+    bool realRef = false;
     std::string nativeCandidateI420Out;
     std::string interMetadataOut;
     std::string sequenceJson;
@@ -51,6 +52,7 @@ Args parseArgs(int argc, char** argv) {
         else if (k == "--golden-planes") a.goldenPlanes = need("--golden-planes");
         else if (k == "--golden-manifest") a.goldenManifest = need("--golden-manifest");
         else if (k == "--candidate-i420-out") a.candidateI420Out = need("--candidate-i420-out");
+        else if (k == "--real-ref") a.realRef = true;
         else if (k == "--native-candidate-i420-out") a.nativeCandidateI420Out = need("--native-candidate-i420-out");
         else if (k == "--inter-metadata-out") a.interMetadataOut = need("--inter-metadata-out");
         else if (k == "--sequence") a.sequenceJson = need("--sequence");
@@ -576,7 +578,7 @@ void writeByteArray(std::ostream& out, const std::array<uint8_t, N>& a) {
 }
 
 void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCapture>& caps,
-                            int width, int height) {
+                            int width, int height, bool realRef) {
     if (path.empty()) return;
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write inter metadata JSON: " + path);
@@ -586,10 +588,17 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "  \"candidate\": {\n";
     out << "    \"colorspace\": \"I420_NATIVE\",\n";
     out << "    \"h264_loop_filter\": \"disabled\",\n";
-    out << "    \"reconstruction_stage\": \"mc_pred_plus_residual_pre_deblock\",\n";
-    out << "    \"reference_picture_state\": \"testbench_prefilled_previous_golden_no_deblock_reference\",\n";
-    out << "    \"reference_picture_source\": \"golden_i420_previous_frame_injected_into_dpb_bank0\",\n";
-    out << "    \"conformance_scope\": \"MC + Clip1(pred+residual) plumbing; residual plane still sparse until full P CAVLC walk; not end-to-end H.264 P reconstruction (MVs may be 0,0)\"\n";
+    if (realRef) {
+        out << "    \"reconstruction_stage\": \"mc_pred_plus_residual_pre_deblock_self_ref\",\n";
+        out << "    \"reference_picture_state\": \"self_decoded_dpb_commit_pre_deblock_no_golden_prefill\",\n";
+        out << "    \"reference_picture_source\": \"product_decode_stub_recon_store_to_dpb_writeback\",\n";
+        out << "    \"conformance_scope\": \"Full-frame native I420 with self-produced DPB reference (no golden prefill). IDR recon still partial (mid-gray fill) until full intra lands; P MBs are Clip1(pred+residual) with product mvd/MVP on first MB; residual plane sparse until full P CAVLC walk.\"\n";
+    } else {
+        out << "    \"reconstruction_stage\": \"mc_pred_plus_residual_pre_deblock\",\n";
+        out << "    \"reference_picture_state\": \"testbench_prefilled_previous_golden_no_deblock_reference\",\n";
+        out << "    \"reference_picture_source\": \"golden_i420_previous_frame_injected_into_dpb_bank0\",\n";
+        out << "    \"conformance_scope\": \"MC + Clip1(pred+residual) plumbing; residual plane still sparse until full P CAVLC walk; not end-to-end H.264 P reconstruction (MVs may be 0,0)\"\n";
+    }
     out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";
@@ -978,17 +987,21 @@ int main(int argc, char** argv) {
         sim.initNativeCandidate(refFrames);
         sim.reset();
 
-        // Initial setup prefill; IDR writeback may overwrite it, so P slices
-        // refresh BANK0 from the previous decoded golden frame immediately
-        // before each P NAL below.
-        sim.prefillDpbReference(golden, 0);
-        // Prefill ticks are setup cost, not decode; reset cycle counter.
-        sim.cycles = 0;
+        // Golden prefill is the FAKE reference path. Real-ref mode commits
+        // decode_stub recon store → DPB writeback only (no golden inject).
+        if (!args.realRef) {
+            sim.prefillDpbReference(golden, 0);
+            // Prefill ticks are setup cost, not decode; reset cycle counter.
+            sim.cycles = 0;
+        } else {
+            std::cout << "REAL_REF_MODE no_golden_prefill USE_REAL_REF_COMMIT=1\n";
+            sim.cycles = 0;
+        }
 
         uint32_t fed = 0;
         uint16_t expectedFrames = 0;
         for (const auto& n : nals) {
-            if (n.type == 1 && expectedFrames > 0) {
+            if (!args.realRef && n.type == 1 && expectedFrames > 0) {
                 const uint64_t prefillCycles =
                     sim.prefillDpbReference(golden, static_cast<std::size_t>(expectedFrames - 1));
                 sim.cycles -= prefillCycles;
@@ -1068,7 +1081,7 @@ int main(int argc, char** argv) {
                        static_cast<std::streamsize>(sim.nativeCandidate.size()));
             if (!cand) throw std::runtime_error("short write native candidate I420: " + args.nativeCandidateI420Out);
         }
-        writeInterMetadataJson(args.interMetadataOut, sim.interCaptures, args.width, args.height);
+        writeInterMetadataJson(args.interMetadataOut, sim.interCaptures, args.width, args.height, args.realRef);
 
         // Degeneracy assertion (parent directive #18): DPB fetch must return
         // non-trivial data. If all 256 Y pixels in a prediction are identical,

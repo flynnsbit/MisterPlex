@@ -3,7 +3,11 @@
 
 module stream_path #(
 	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240
+	parameter int FRAME_H = 240,
+	// Self-produced DPB reference commit (no golden prefill). Sim/measure only
+	// until product IDR recon is complete; default off preserves legacy path.
+	parameter bit USE_REAL_REF_COMMIT = 1'b0,
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -537,7 +541,10 @@ module stream_path #(
 
 	decode_stub #(
 		.WIDTH(FRAME_W),
-		.HEIGHT(FRAME_H)
+		.HEIGHT(FRAME_H),
+		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
+		.ENABLE_FIRST_MB_P_FETCH(1'b0),
+		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),

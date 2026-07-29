@@ -66,6 +66,7 @@ PRODUCT_RTL=(
   h264_dpb.sv
   decode_stub.sv
   h264_p_mb_traverse.sv
+  h264_recon_frame_store.sv
   h264_cavlc_residual.sv
 )
 
@@ -529,3 +530,123 @@ if [ ! -f "$RTL_GOLDEN_DIR/mb_000.json" ] || \
 fi
 # Score all MBs with RED-check
 "$RTL_SCORER_BUILD/Vh264_rtl_recon_scorer_tb" --dir "$RTL_GOLDEN_DIR" --red-check
+
+# =============================================================================
+# REAL_REF_MEASURE — decisive self-produced DPB reference (no golden prefill)
+# =============================================================================
+# Pre-register BEFORE run: expect scores BELOW fake-ref inter=1606/3300.
+# PRE_REGISTER: intra=0/300 inter<=400/3300 (honest floor; IDR recon partial).
+BUILD_REAL="$ROOT/build/verilator/stream_path_full_frame_real_ref"
+BUILD_REAL_XOR="$ROOT/build/verilator/stream_path_full_frame_real_ref_xor"
+REAL_REF_DIR="$ROOT/build/p3_full_frame_real_ref"
+mkdir -p "$BUILD_REAL" "$BUILD_REAL_XOR" "$REAL_REF_DIR"
+REAL_META="$REAL_REF_DIR/native_inter_metadata.json"
+REAL_CAND="$REAL_REF_DIR/native_inter_candidate.i420"
+REAL_SCORE="$REAL_REF_DIR/native_inter_candidate_score.json"
+REAL_COMPARE="$REAL_REF_DIR/frame_planes_compare.json"
+echo "REAL_REF_MEASURE pre-register: intra=0/300 inter<=400/3300 (expect drop vs fake-ref 1606)" >&2
+
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_REAL" \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" -GUSE_REAL_REF_COMMIT=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+
+"$BUILD_REAL/Vstream_path_full_frame_tb" \
+  --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+  --native-candidate-i420-out "$REAL_CAND" \
+  --inter-metadata-out "$REAL_META" --sequence "$SEQUENCE" \
+  --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+  --json-out "$REAL_COMPARE" --trace-json-out "$REAL_REF_DIR/mb0_pipeline_trace.json" \
+  --real-ref --expect-red \
+  | tee "$REAL_REF_DIR/sim.log"
+
+python3 - "$REAL_META" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1]))
+c = meta.get("candidate", {})
+want = {
+    "reference_picture_state": "self_decoded_dpb_commit_pre_deblock_no_golden_prefill",
+    "reference_picture_source": "product_decode_stub_recon_store_to_dpb_writeback",
+    "reconstruction_stage": "mc_pred_plus_residual_pre_deblock_self_ref",
+    "colorspace": "I420_NATIVE",
+    "h264_loop_filter": "disabled",
+}
+for k, w in want.items():
+    got = c.get(k)
+    if got != w:
+        raise SystemExit(f"FAIL real-ref metadata: candidate.{k}={got!r} want {w!r}")
+    if "testbench_prefilled" in str(got):
+        raise SystemExit(f"FAIL real-ref still prefilled: {k}={got!r}")
+print(
+    "OK real-ref provenance:",
+    f"stage={c['reconstruction_stage']}",
+    f"state={c['reference_picture_state']}",
+    f"source={c['reference_picture_source']}",
+)
+PY
+
+set +e
+REAL_SCORE_OUT="$("$ROOT/tools/score_i420_candidate.py" \
+  --sequence "$SEQUENCE" \
+  --golden-manifest "$GOLDEN_MANIFEST" \
+  --golden-planes "$GOLDEN_PLANES" \
+  --candidate-planes "$REAL_CAND" \
+  --candidate-colorspace I420_NATIVE \
+  --reference-h264-loop-filter disabled \
+  --candidate-h264-loop-filter disabled \
+  --mb-metadata "$REAL_META" \
+  --output "$REAL_SCORE" \
+  --expect-red 2>&1)"
+REAL_SCORE_RC=$?
+set -e
+printf '%s\n' "$REAL_SCORE_OUT"
+if [[ "$REAL_SCORE_RC" -ne 0 ]]; then
+  echo "FAIL real-ref score_i420_candidate rc=$REAL_SCORE_RC (fix candidate, never scorer)" >&2
+  exit "$REAL_SCORE_RC"
+fi
+grep -E 'I420_CANDIDATE_SCORE summary|score_i420_candidate: OK' <<<"$REAL_SCORE_OUT"
+
+python3 - "$REAL_SCORE" <<'PY'
+import json, sys
+score = json.load(open(sys.argv[1]))
+s = score["summary"]
+intra, inter = s["intra"], s["inter"]
+print(
+    f"REAL_REF_SCORE intra={intra['mb_exact']}/{intra['mb_total']} "
+    f"inter={inter['mb_exact']}/{inter['mb_total']} strict_pass={score.get('strict_pass')}"
+)
+print(
+    f"REAL_REF_vs_PREREGISTER pre=intra0/300 inter<=400/3300 "
+    f"actual=intra{intra['mb_exact']}/{intra['mb_total']} "
+    f"inter{inter['mb_exact']}/{inter['mb_total']}"
+)
+if "testbench_prefilled" in json.dumps(score):
+    raise SystemExit("FAIL real-ref score blob mentions testbench_prefilled")
+print("OK real-ref score recorded (honest self-produced reference)")
+PY
+
+# Mutation twin: FAULT_REAL_REF_XOR_FILL must change the native candidate.
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_REAL_XOR" \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" \
+  -GUSE_REAL_REF_COMMIT=1 -GFAULT_REAL_REF_XOR_FILL=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+"$BUILD_REAL_XOR/Vstream_path_full_frame_tb" \
+  --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+  --native-candidate-i420-out "$REAL_REF_DIR/native_inter_candidate_xor.i420" \
+  --inter-metadata-out "$REAL_REF_DIR/native_inter_metadata_xor.json" --sequence "$SEQUENCE" \
+  --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+  --json-out "$REAL_REF_DIR/frame_planes_compare_xor.json" \
+  --real-ref --expect-red \
+  >/dev/null
+python3 - "$REAL_CAND" "$REAL_REF_DIR/native_inter_candidate_xor.i420" <<'PY'
+import sys
+a = open(sys.argv[1], "rb").read()
+b = open(sys.argv[2], "rb").read()
+if a == b:
+    raise SystemExit("FAIL real-ref XOR twin: candidate identical to clean real-ref (fault inactive)")
+print(f"OK real-ref XOR twin: candidates differ (clean={len(a)} xor={len(b)})")
+PY
+echo "OK REAL_REF_MEASURE complete"
