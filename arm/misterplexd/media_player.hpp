@@ -6,6 +6,7 @@
 #include "fb_present.hpp"
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
@@ -143,7 +144,11 @@ public:
     // Negative = video ahead of audio (audio sounds late).
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
-    void setDecodeSize(int w, int h);
+    // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
+    // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
+    // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
+    void setDecodeSize(CodedWidth w, CodedHeight h);
+    void setDecodeSize(CodedSize size) { setDecodeSize(size.width, size.height); }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }

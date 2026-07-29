@@ -3,6 +3,7 @@
 // Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
 
 #include "companion.hpp"
+#include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
@@ -113,7 +114,10 @@ int main(int argc, char** argv) {
     std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
-    int decodeW = 320, decodeH = 240;
+    misterplex::CodedSize decodeSize = misterplex::kDefaultCodedDecodeSize;
+    bool decodeAllowLab480p = false;
+    std::string decodeSizeRawCli; // applied after conf so DECODE_ALLOW_LAB_480P is visible
+    std::string decodeSizeSource = "default";
     std::string presentMode = "fb0";
     misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
     bool ddrMemSync = true;
@@ -154,11 +158,10 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc)
             confPath = argv[++i];
         else if (std::strcmp(argv[i], "--decode") == 0 && i + 1 < argc) {
-            int w = 0, h = 0;
-            if (std::sscanf(argv[++i], "%dx%d", &w, &h) == 2) {
-                decodeW = w;
-                decodeH = h;
-            }
+            // Defer typed adoption until after conf: allow flag may arrive via conf.
+            decodeSizeRawCli = argv[++i];
+        } else if (std::strcmp(argv[i], "--decode-allow-lab-480p") == 0) {
+            decodeAllowLab480p = true;
         } else if (std::strcmp(argv[i], "--transcode-profile") == 0 && i + 1 < argc) {
             cliTranscodeProfile = argv[++i];
         } else if (std::strcmp(argv[i], "--play-file") == 0 && i + 1 < argc) {
@@ -167,7 +170,7 @@ int main(int argc, char** argv) {
             playSeconds = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
-                        "[--conf PATH] [--decode WxH] [--transcode-profile 240p|480p] "
+                        "[--conf PATH] [--decode WxH] [--decode-allow-lab-480p] [--transcode-profile 240p|480p] "
                         "[--play-file PATH] [--play-seconds N]\n");
             return 0;
         }
@@ -215,12 +218,44 @@ int main(int argc, char** argv) {
         auto v = loadConf(confPath, "FFMPEG");
         if (!v.empty())
             ffmpeg = v;
+        v = loadConf(confPath, "DECODE_ALLOW_LAB_480P");
+        if (!v.empty())
+            decodeAllowLab480p = decodeAllowLab480p || confTruthy(v);
         v = loadConf(confPath, "DECODE");
         if (!v.empty()) {
-            int w = 0, h = 0;
-            if (std::sscanf(v.c_str(), "%dx%d", &w, &h) == 2) {
-                decodeW = w;
-                decodeH = h;
+            // Typed adoption only — bare sscanf into int is the hole that let a
+            // stale DECODE=624x480 ship against a 320x240 core.
+            const auto adopted = misterplex::adoptExternalCodedSize(v, decodeAllowLab480p);
+            if (adopted.ok()) {
+                decodeSize = adopted.size;
+                decodeSizeSource = "conf:" + confPath;
+                std::fprintf(stderr,
+                             "misterplexd: DECODE adopted coded %s from conf %s\n",
+                             decodeSize.wxh().c_str(), confPath.c_str());
+            } else {
+                std::fprintf(stderr,
+                             "misterplexd: REJECTED DECODE=%s from conf (%s/%s) — keeping "
+                             "coded %s\n",
+                             v.c_str(), misterplex::codedSizeParseStatusName(adopted.status),
+                             adopted.reason, decodeSize.wxh().c_str());
+            }
+        }
+        // CLI --decode wins over conf when both are present, still typed+policy.
+        if (!decodeSizeRawCli.empty()) {
+            const auto adopted =
+                misterplex::adoptExternalCodedSize(decodeSizeRawCli, decodeAllowLab480p);
+            if (adopted.ok()) {
+                decodeSize = adopted.size;
+                decodeSizeSource = "cli:--decode";
+                std::fprintf(stderr,
+                             "misterplexd: DECODE adopted coded %s from --decode\n",
+                             decodeSize.wxh().c_str());
+            } else {
+                std::fprintf(stderr,
+                             "misterplexd: REJECTED --decode=%s (%s/%s) — keeping coded %s\n",
+                             decodeSizeRawCli.c_str(),
+                             misterplex::codedSizeParseStatusName(adopted.status),
+                             adopted.reason, decodeSize.wxh().c_str());
             }
         }
         v = loadConf(confPath, "WEAK_RES");
@@ -322,14 +357,14 @@ int main(int argc, char** argv) {
     // OSD_CONTROL=0 or no Plex core is loaded; with OSD_CONTROL=1 the OSD status
     // word (O[4]) is the content-resolution source of truth.
     if (!transcodeProfileExplicit && !weakResExplicit &&
-        weak.videoResolution == "320x240" && (decodeW != 320 || decodeH != 240)) {
-        const std::string decodeRes = std::to_string(decodeW) + "x" + std::to_string(decodeH);
+        weak.videoResolution == "320x240" && decodeSize != misterplex::kDefaultCodedDecodeSize) {
+        const std::string decodeRes = decodeSize.wxh();
         if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
             weak.profileName = "custom";
             weak.videoResolution = decodeRes;
             if (!weakBitrateExplicit) {
                 weak.maxVideoBitrateKbps =
-                    misterplex::weakBitrateKbpsForCodedSize(decodeW, decodeH);
+                    misterplex::weakBitrateKbpsForCodedSize(decodeSize.width, decodeSize.height);
             }
         }
     }
@@ -360,7 +395,7 @@ int main(int argc, char** argv) {
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
-    player.setDecodeSize(decodeW, decodeH);
+    player.setDecodeSize(decodeSize);
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
     player.setDdrMemSync(ddrMemSync);
@@ -523,7 +558,7 @@ int main(int argc, char** argv) {
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
         if (osdControl)
             return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
-        return misterplex::contentResolutionFromSize(decodeW, decodeH);
+        return misterplex::contentResolutionFromCodedSize(decodeSize.width, decodeSize.height);
     };
 
     auto resolveAgainstServers = [&](const misterplex::PlayRequest& req,
@@ -569,7 +604,7 @@ int main(int argc, char** argv) {
         const uint64_t gen = ++playGen;
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
-        player.setDecodeSize(contentRes.width.get(), contentRes.height.get());
+        player.setDecodeSize(contentRes.width, contentRes.height);
         const auto weakForPlay =
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
         std::fprintf(stderr,
@@ -1017,11 +1052,12 @@ int main(int argc, char** argv) {
                      confPath.c_str());
     }
     std::fprintf(stderr,
-                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%dx%d "
-                 "weak=%s/%s@%dk h264=%s@L%d present=%s auto_next=%d subs=%s\n",
+                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%s "
+                 "decode_source=%s weak=%s/%s@%dk h264=%s@L%d present=%s auto_next=%d subs=%s\n",
                  name.c_str(), machineId.c_str(), port,
                  defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
-                 decodeW, decodeH, weak.profileName.c_str(), weak.videoResolution.c_str(),
+                 decodeSize.wxh().c_str(), decodeSizeSource.c_str(),
+                 weak.profileName.c_str(), weak.videoResolution.c_str(),
                  weak.maxVideoBitrateKbps, weak.h264Profile.c_str(), weak.h264Level,
                  presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str());
     for (size_t i = 0; i < servers.size(); ++i)

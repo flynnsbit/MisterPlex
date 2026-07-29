@@ -712,7 +712,9 @@ void MediaPlayer::stopIdle() {
         idleThr_.join();
 }
 
-void MediaPlayer::setDecodeSize(int w, int h) {
+void MediaPlayer::setDecodeSize(CodedWidth cw, CodedHeight ch) {
+    int w = cw.get();
+    int h = ch.get();
     if (w < 160)
         w = 160;
     if (h < 120)
