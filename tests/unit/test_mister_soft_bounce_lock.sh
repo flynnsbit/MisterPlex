@@ -300,4 +300,109 @@ print("PASS cleanup orders release_lock before restore")
 PY
 
 echo "PASS static timeout/ssh/trap/ensure_daemon/recover checks"
+
+# --- 11) ensure_daemon hard-fail (GAP1) + wrong-id (GAP2); cleanup uses soft_bounce (GAP3) ---
+grep -q 'DAEMON_FAIL' "$BOUNCE" || { echo "FAIL: missing DAEMON_FAIL loud path" >&2; exit 1; }
+grep -q 'DAEMON_ID_MISMATCH' "$BOUNCE" || { echo "FAIL: missing DAEMON_ID_MISMATCH" >&2; exit 1; }
+if grep -n 'pid-present' "$BOUNCE" | grep -vE '[[:space:]]*#' >/dev/null; then
+  echo "FAIL: ensure_daemon still accepts bare pid-present" >&2
+  exit 1
+fi
+if grep -n 'ensure_daemon_warn' "$BOUNCE" >/dev/null; then
+  echo "FAIL: ensure_daemon_warn path still present (must hard-fail)" >&2
+  exit 1
+fi
+# Call sites must not swallow ensure_daemon failures
+if grep -nE 'ensure_daemon.*"\$phase".*\|\| true' "$BOUNCE" >/dev/null; then
+  echo "FAIL: ensure_daemon result still ignored via || true" >&2
+  grep -nE 'ensure_daemon' "$BOUNCE" >&2 || true
+  exit 1
+fi
+# Cleanup must route through soft_bounce (corename+daemon), not bare deploy
+python3 - "$BOUNCE" <<'PY'
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+start = text.find("cleanup() {")
+end = text.find("\ndo_claim()", start)
+body = text[start:end if end > 0 else start + 4000]
+if 'soft_bounce "release_cleanup"' not in body and "soft_bounce 'release_cleanup'" not in body:
+    raise SystemExit("FAIL: cleanup missing soft_bounce release_cleanup")
+# bare deploy inside cleanup is the GAP3 bug
+if 'deploy_plex_core.sh' in body and 'soft_bounce' in body:
+    # soft_bounce may reference deploy internally outside cleanup; only fail if
+    # cleanup invokes deploy directly (env DEPLOY_LOAD=menu block without soft_bounce wrapper)
+    idx = body.find('DEPLOY_LOAD=menu')
+    sb = body.find('soft_bounce')
+    if idx >= 0 and (sb < 0 or idx < sb):
+        # allow only if it's inside a comment
+        line = body[body.rfind('\n', 0, idx):body.find('\n', idx)]
+        if not line.strip().startswith('#'):
+            raise SystemExit("FAIL: cleanup still has direct DEPLOY_LOAD=menu deploy path")
+print("PASS cleanup routes restore through soft_bounce")
+PY
+
+rm -rf "$LOCK"
+: >"$LOG"
+set +e
+MISTER_CLAIM_FAKE_DAEMON=missing \
+  "$BOUNCE" claim --agent unit-daemon-missing --reason "daemon-missing" --hold-s 0 \
+  >"$WORK/daemon_missing.out" 2>"$WORK/daemon_missing.err"
+DM_RC=$?
+set -e
+echo "daemon_missing true rc=$DM_RC"
+if [[ "$DM_RC" -eq 0 ]]; then
+  echo "FAIL: claim succeeded with FAKE_DAEMON=missing" >&2
+  cat "$WORK/daemon_missing.out" "$WORK/daemon_missing.err" >&2
+  exit 1
+fi
+grep -q 'DAEMON_FAIL' "$WORK/daemon_missing.err" || {
+  echo "FAIL: missing DAEMON_FAIL on stdout/err" >&2
+  cat "$WORK/daemon_missing.out" "$WORK/daemon_missing.err" >&2
+  exit 1
+}
+if [[ -d "$LOCK" ]]; then
+  echo "FAIL: lock held after daemon missing fail" >&2
+  exit 1
+fi
+echo "PASS ensure_daemon missing hard-fails (rc=$DM_RC)"
+
+rm -rf "$LOCK"
+: >"$LOG"
+set +e
+MISTER_CLAIM_FAKE_DAEMON=wrong_id \
+  "$BOUNCE" claim --agent unit-daemon-wrongid --reason "daemon-wrongid" --hold-s 0 \
+  >"$WORK/daemon_wrongid.out" 2>"$WORK/daemon_wrongid.err"
+DW_RC=$?
+set -e
+echo "daemon_wrongid true rc=$DW_RC"
+if [[ "$DW_RC" -eq 0 ]]; then
+  echo "FAIL: claim succeeded with FAKE_DAEMON=wrong_id" >&2
+  cat "$WORK/daemon_wrongid.out" "$WORK/daemon_wrongid.err" >&2
+  exit 1
+fi
+grep -qE 'DAEMON_ID_MISMATCH|DAEMON_FAIL' "$WORK/daemon_wrongid.err" || {
+  echo "FAIL: wrong_id did not loud-fail" >&2
+  cat "$WORK/daemon_wrongid.out" "$WORK/daemon_wrongid.err" >&2
+  exit 1
+}
+if [[ -d "$LOCK" ]]; then
+  echo "FAIL: lock held after wrong_id fail" >&2
+  exit 1
+fi
+echo "PASS ensure_daemon wrong_id hard-fails (rc=$DW_RC)"
+
+# sweep script must not hardcode misterplex-183
+if grep -n 'misterplex-183' "$ROOT/scripts/sweep_plex_video_modes.sh" >/dev/null; then
+  echo "FAIL: sweep_plex_video_modes.sh still hardcodes misterplex-183" >&2
+  grep -n 'misterplex-183' "$ROOT/scripts/sweep_plex_video_modes.sh" >&2
+  exit 1
+fi
+grep -q 'misterplex-dev' "$ROOT/scripts/sweep_plex_video_modes.sh" || {
+  echo "FAIL: sweep missing misterplex-dev default" >&2
+  exit 1
+}
+echo "PASS sweep_plex_video_modes uses canonical misterplex-dev"
+
+
 echo "OK mister_soft_bounce lock exclusion + trap release + corename gate"

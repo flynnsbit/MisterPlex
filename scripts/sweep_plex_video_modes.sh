@@ -299,9 +299,10 @@ soft_reboot() {
 }
 
 start_daemon_if_needed() {
-  ssh_m sh -s -- "${PMS_URL:-}" <<'REMOTE'
+  ssh_m sh -s -- "${PMS_URL:-}" "${MISTERPLEX_ID:-misterplex-dev}" <<'REMOTE'
 set -eu
 pms_url="$1"
+daemon_id="$2"
 if ! ps w | grep -q '[m]isterplexd'; then
   mkdir -p /media/fat/misterplex
   if [ ! -x /media/fat/misterplex/bin/misterplexd ]; then
@@ -315,7 +316,7 @@ if ! ps w | grep -q '[m]isterplexd'; then
   fi
   nohup /media/fat/misterplex/bin/misterplexd \
     --name MiSTerPlex \
-    --id misterplex-183 \
+    --id "$daemon_id" \
     --port 3005 \
     --conf /media/fat/misterplex/misterplex.conf \
     "$@" \

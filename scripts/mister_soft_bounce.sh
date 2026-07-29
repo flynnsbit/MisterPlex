@@ -420,6 +420,32 @@ ensure_daemon() {
   local phase="$1"
   step "ensure_daemon_begin phase=$phase id=$MISTERPLEX_ID"
   if [[ "$SKIP_BOUNCE" == "1" ]]; then
+    # Offline unit path: optional inject for hard-fail mutation tests.
+    if [[ -n "${MISTER_CLAIM_FAKE_DAEMON:-}" ]]; then
+      case "${MISTER_CLAIM_FAKE_DAEMON}" in
+        ok|OK)
+          step "ensure_daemon_skip phase=$phase fake=ok id=$MISTERPLEX_ID"
+          audit_local "ensure_daemon_skip:$phase" "id=$MISTERPLEX_ID fake=ok"
+          return 0
+          ;;
+        missing|fail|FAIL)
+          echo "mister_soft_bounce: DAEMON_FAIL phase=$phase id=$MISTERPLEX_ID reason=fake_missing" >&2
+          step "ensure_daemon_fail phase=$phase reason=fake_missing"
+          audit_local "ensure_daemon_fail:$phase" "id=$MISTERPLEX_ID reason=fake_missing"
+          return 6
+          ;;
+        wrong_id|mismatch)
+          echo "mister_soft_bounce: DAEMON_ID_MISMATCH phase=$phase want=$MISTERPLEX_ID got=misterplex-183 (fake)" >&2
+          step "ensure_daemon_fail phase=$phase reason=fake_wrong_id"
+          audit_local "ensure_daemon_fail:$phase" "id=$MISTERPLEX_ID reason=fake_wrong_id"
+          return 7
+          ;;
+        *)
+          echo "mister_soft_bounce: unknown MISTER_CLAIM_FAKE_DAEMON=${MISTER_CLAIM_FAKE_DAEMON}" >&2
+          return 2
+          ;;
+      esac
+    fi
     step "ensure_daemon_skip phase=$phase"
     audit_local "ensure_daemon_skip:$phase" "id=$MISTERPLEX_ID"
     return 0
@@ -427,21 +453,41 @@ ensure_daemon() {
 
   local id_q
   id_q="$(printf '%q' "$MISTERPLEX_ID")"
+  # Remote: start if needed, then HARD-require argv --id match. Wrong id is worse
+  # than missing (cast advertises but never answers). Never accept bare pid-present.
   local remote_cmd
   remote_cmd="set +e
 ID_WANT=${id_q}
-if ps 2>/dev/null | grep -v grep | grep -q \"[m]isterplexd.*--id \${ID_WANT}\"; then
+have_want=0
+have_any=0
+wrong_id=''
+# BusyBox ps: match --id token in argv.
+while IFS= read -r line; do
+  echo \"\$line\" | grep -q '[m]isterplexd' || continue
+  have_any=1
+  if echo \"\$line\" | grep -q -- \"--id \${ID_WANT}\"; then
+    have_want=1
+  else
+    # Extract observed --id if present for loud error.
+    wid=\$(echo \"\$line\" | sed -n 's/.*--id  *\\([^ ]*\\).*/\\1/p' | head -n1)
+    [ -n \"\$wid\" ] && wrong_id=\"\$wid\"
+  fi
+done <<EOF
+\$(ps w 2>/dev/null || ps 2>/dev/null)
+EOF
+if [ \"\$have_want\" = \"1\" ]; then
   echo \"DAEMON_ALREADY id=\${ID_WANT}\"
   exit 0
 fi
-if ps 2>/dev/null | grep -v grep | grep -q '[m]isterplexd'; then
+if [ \"\$have_any\" = \"1\" ]; then
+  echo \"DAEMON_WRONG_ID want=\${ID_WANT} got=\${wrong_id:-unknown} — stopping mismatched daemon\" >&2
   killall misterplexd 2>/dev/null
   for i in 1 2 3 4 5 6 7 8; do
     ps 2>/dev/null | grep -v grep | grep -q '[m]isterplexd' || break
     sleep 0.25
   done
 fi
-cd /media/fat/misterplex || exit 1
+cd /media/fat/misterplex || { echo DAEMON_MISSING_DIR >&2; exit 1; }
 if [ ! -x ./bin/misterplexd ]; then
   echo \"DAEMON_MISSING bin\" >&2
   exit 1
@@ -450,16 +496,32 @@ nohup ./bin/misterplexd --name MiSTerPlex --id \${ID_WANT} --port 3005 \\
   --conf /media/fat/misterplex/misterplex.conf \\
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 0.5
-if ps 2>/dev/null | grep -v grep | grep -q \"[m]isterplexd.*--id \${ID_WANT}\"; then
+# Re-verify argv --id (hard). Bare 'misterplexd running' is NOT success.
+have_want=0
+have_any=0
+wrong_id=''
+while IFS= read -r line; do
+  echo \"\$line\" | grep -q '[m]isterplexd' || continue
+  have_any=1
+  if echo \"\$line\" | grep -q -- \"--id \${ID_WANT}\"; then
+    have_want=1
+  else
+    wid=\$(echo \"\$line\" | sed -n 's/.*--id  *\\([^ ]*\\).*/\\1/p' | head -n1)
+    [ -n \"\$wid\" ] && wrong_id=\"\$wid\"
+  fi
+done <<EOF
+\$(ps w 2>/dev/null || ps 2>/dev/null)
+EOF
+if [ \"\$have_want\" = \"1\" ]; then
   echo \"DAEMON_STARTED id=\${ID_WANT}\"
   exit 0
 fi
-if ps 2>/dev/null | grep -v grep | grep -q '[m]isterplexd'; then
-  echo \"DAEMON_STARTED id=\${ID_WANT} (pid-present)\"
-  exit 0
+if [ \"\$have_any\" = \"1\" ]; then
+  echo \"DAEMON_ID_MISMATCH want=\${ID_WANT} got=\${wrong_id:-unknown}\" >&2
+  exit 7
 fi
 echo \"DAEMON_START_FAIL id=\${ID_WANT}\" >&2
-exit 1"
+exit 6"
 
   set +e
   local out
@@ -471,10 +533,22 @@ exit 1"
     return 124
   fi
   if [[ "$rc" -ne 0 ]]; then
-    echo "mister_soft_bounce: WARN ensure_daemon phase=$phase rc=$rc out=${out:-}" >&2
-    audit "ensure_daemon_warn:$phase" "rc=$rc id=$MISTERPLEX_ID"
-    step "ensure_daemon_warn phase=$phase rc=$rc"
-    return 0
+    cat >&2 <<EOF
+mister_soft_bounce: DAEMON_FAIL phase=$phase rc=$rc id=$MISTERPLEX_ID
+  Bounce cannot leave the device without a verified misterplexd --id $MISTERPLEX_ID.
+  out=${out:-}
+  Do NOT treat this claim as successful. Restore the daemon before releasing the user.
+EOF
+    audit "ensure_daemon_fail:$phase" "rc=$rc id=$MISTERPLEX_ID out=${out:-}"
+    step "ensure_daemon_fail phase=$phase rc=$rc id=$MISTERPLEX_ID"
+    return "$rc"
+  fi
+  # Defense in depth: host-side parse of remote stdout must name the wanted id.
+  if ! printf '%s' "$out" | grep -qE "id=${MISTERPLEX_ID}([[:space:]]|$)"; then
+    echo "mister_soft_bounce: DAEMON_FAIL phase=$phase id=$MISTERPLEX_ID reason=stdout_missing_id out=${out:-}" >&2
+    audit "ensure_daemon_fail:$phase" "rc=7 id=$MISTERPLEX_ID reason=stdout_missing_id"
+    step "ensure_daemon_fail phase=$phase reason=stdout_missing_id"
+    return 7
   fi
   echo "mister_soft_bounce: ensure_daemon phase=$phase ok id=$MISTERPLEX_ID ${out:-}"
   audit "ensure_daemon_ok:$phase" "id=$MISTERPLEX_ID"
@@ -510,7 +584,7 @@ soft_bounce() {
         return "$vrc"
       fi
     fi
-    ensure_daemon "$phase" || true
+    ensure_daemon "$phase" || return $?
     step "bounce_end phase=$phase rc=0"
     return 0
   fi
@@ -557,7 +631,7 @@ soft_bounce() {
     # Opt-in recover may still bring Plex back after a wedged/hung deploy.
     if [[ "$RECOVER_MODE" == "reboot" && "$phase" == "claim" ]]; then
       recover_corename "$phase" || return $?
-      ensure_daemon "$phase" || true
+      ensure_daemon "$phase" || return $?
       step "bounce_end phase=$phase rc=0 via=recover_after_timeout"
       return 0
     fi
@@ -570,7 +644,7 @@ soft_bounce() {
     # rc=3 Main wedged / rc=4 Menu ok but Plex never: opt-in soft reboot recover.
     if [[ "$RECOVER_MODE" == "reboot" && "$phase" == "claim" ]]; then
       recover_corename "$phase" || return $?
-      ensure_daemon "$phase" || true
+      ensure_daemon "$phase" || return $?
       step "bounce_end phase=$phase rc=0 via=recover_after_bounce_fail"
       return 0
     fi
@@ -589,7 +663,7 @@ soft_bounce() {
     fi
   fi
 
-  ensure_daemon "$phase" || true
+  ensure_daemon "$phase" || return $?
   step "bounce_end phase=$phase rc=0"
   return 0
 }
@@ -619,52 +693,32 @@ cleanup() {
     # 1) RELEASE LOCK FIRST — never leave stranded if restore hangs.
     FORCE=1 release_lock || true
     audit_local "release" "cleanup=1 prior_ec=$ec"
-    # 2) Best-effort restore bounce (bounded). Failure must not re-hang.
+    # 2) Restore via soft_bounce so CORENAME + daemon --id are verified.
+    # Failures are loud on stdout/trace but must not re-hang or block lock release
+    # (lock already dropped above). Preserve original exit code $ec.
     set +e
-    if [[ "$SKIP_BOUNCE" == "1" ]]; then
-      TEST_BOUNCE_SLEEP_S=0 soft_bounce "release_cleanup"
-    else
-      if command -v timeout >/dev/null 2>&1; then
-        step "cleanup_restore_bounce_begin"
-        timeout --foreground -k 5 "$CLEANUP_TIMEOUT_S" \
-          env \
-            DEPLOY_LOAD=menu \
-            DEPLOY_SKIP_COPY=1 \
-            DEPLOY_RECOVER=none \
-            DEPLOY_SKIP_GEOMETRY_GATE=1 \
-            MISTER_HOST="$HOST" \
-            MISTER_USER="$USER" \
-            MISTER_PASS="$PASS" \
-            DEPLOY_WAIT_S="$DEPLOY_WAIT_S" \
-            bash "$ROOT/scripts/deploy_plex_core.sh" \
-          >/dev/null 2>&1 || true
-        # Best-effort daemon restart after cleanup bounce (never -9)
-        local id_q
-        id_q="$(printf '%q' "$MISTERPLEX_ID")"
-        timeout --foreground -k 5 "$SSH_TIMEOUT_S" \
-          sshpass -p "$PASS" ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=12 \
-            -o ServerAliveInterval=3 \
-            -o ServerAliveCountMax=3 \
-            -o NumberOfPasswordPrompts=1 \
-            "$USER@$HOST" \
-            "cd /media/fat/misterplex && (ps | grep -v grep | grep -q '[m]isterplexd' || nohup ./bin/misterplexd --name MiSTerPlex --id ${id_q} --port 3005 --conf /media/fat/misterplex/misterplex.conf >>/media/fat/misterplex/misterplexd.log 2>&1 &)" \
-          >/dev/null 2>&1 || true
-        step "cleanup_restore_bounce_end"
-      fi
-    fi
+    step "cleanup_restore_bounce_begin"
+    TEST_BOUNCE_SLEEP_S=0 soft_bounce "release_cleanup"
+    local restore_rc=$?
     set -e
+    if [[ "$restore_rc" -ne 0 ]]; then
+      echo "mister_soft_bounce: CLEANUP_RESTORE_FAIL rc=$restore_rc (lock already released; device may need manual Plex/daemon restore)" >&2
+      step "cleanup_restore_fail rc=$restore_rc"
+      audit_local "cleanup_restore_fail" "rc=$restore_rc"
+    else
+      step "cleanup_restore_ok"
+    fi
     step "cleanup_end"
   fi
   exit "$ec"
 }
 
 do_claim() {
+  # Install trap BEFORE acquire so a signal between mkdir and HOLDING=1 still
+  # runs cleanup (no-op if we never held).
+  trap cleanup EXIT INT TERM HUP
   acquire_lock || return $?
   HOLDING=1
-  trap cleanup EXIT INT TERM HUP
   step "claim_begin"
   audit "claim"
   soft_bounce "claim" || return $?
