@@ -84,6 +84,11 @@ module h264_decode_core #(
     input  wire [1:0]  luma4x4_trailing_ones,
     input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
 
+    // Intra16x16DCLevel from feed (separate from luma4x4 AC path).
+    input  wire        i16_dc_level_valid,
+    input  wire signed [15:0] i16_dc_level [0:15],
+    input  wire [5:0]  i16_dc_qp,
+
     // ── Intra chroma residual (from i_mb_feed chroma IDCT-add) ──
     input  wire        intra_chroma_residual_valid,
     input  wire signed [15:0] intra_chroma_residual_u [0:63],
@@ -1004,17 +1009,27 @@ module h264_decode_core #(
                                          decode_enable && (wb_state == ST_IDLE));
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
-    // I16 DC levels: latch feed's first residual block (Intra16x16DCLevel,
-    // CAVLC zig-zag, max_coeff=16) when product I16 MB starts / block0 lands.
-    reg signed [15:0] i16_dc_level [0:15];
+    // I16 DC: latch feed i16_dc_level_* then delay valid 1 cycle so combo
+    // Hadamard sees NBA-updated levels (4e0770b hold). Never use mb_start —
+    // residual DC arrives later and feed does not put DC on luma4x4_*.
+    reg signed [15:0] product_i16_dc_level_r [0:15];
+    reg [5:0]         product_i16_dc_qp_r;
+    reg               product_i16_dc_hold_r;
+    reg               product_i16_dc_valid_r;
     integer i16_dc_i;
     always @(posedge clk) begin
+        product_i16_dc_hold_r  <= 1'b0;
+        product_i16_dc_valid_r <= product_i16_dc_hold_r;
         if (reset || slice_start) begin
+            product_i16_dc_qp_r <= 6'd0;
+            product_i16_dc_valid_r <= 1'b0;
             for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
-                i16_dc_level[i16_dc_i] <= 16'sd0;
-        end else if (luma4x4_valid && (luma4x4_idx == 4'd0) && mb_is_i16) begin
+                product_i16_dc_level_r[i16_dc_i] <= 16'sd0;
+        end else if (i16_dc_level_valid) begin
+            product_i16_dc_qp_r <= i16_dc_qp;
             for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
-                i16_dc_level[i16_dc_i] <= luma4x4_coeff_zigzag[i16_dc_i];
+                product_i16_dc_level_r[i16_dc_i] <= i16_dc_level[i16_dc_i];
+            product_i16_dc_hold_r <= 1'b1;
         end
     end
 
@@ -1057,10 +1072,9 @@ module h264_decode_core #(
     wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
     wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
     // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).
-    // Scale with running MB QP (mb_qp_delta folded into qp_launch).
     h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
-        .coeff(i16_dc_level),
-        .qp(qp_launch),
+        .coeff(product_i16_dc_level_r),
+        .qp(product_i16_dc_qp_r),
         .dc(product_intra_i16_dc)
     );
     // Per-4x4 block_valid→recon_pixels path is unused on product: I4x4
@@ -1145,7 +1159,7 @@ module h264_decode_core #(
         .block_valid(luma4x4_valid),
         .block_index(luma4x4_idx),
         .block_coeff(luma4x4_coeff_zigzag),
-        .i16_dc_valid(product_intra_mb_start),
+        .i16_dc_valid(product_i16_dc_valid_r),
         .i16_dc(product_intra_i16_dc),
         .i4_modes(intra4x4_modes),
         .mb_avail_left(product_intra_mb_avail_left),

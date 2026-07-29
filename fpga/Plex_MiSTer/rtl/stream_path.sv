@@ -420,6 +420,9 @@ module stream_path #(
 	wire [4:0]  core_luma4x4_total_coeff;
 	wire [1:0]  core_luma4x4_trailing_ones;
 	wire signed [15:0] core_luma4x4_coeff_zigzag [0:15];
+	wire        core_i16_dc_level_valid;
+	wire signed [15:0] core_i16_dc_level [0:15];
+	wire [5:0]  core_i16_dc_qp;
 	wire        core_busy;
 
 	function automatic [1:0] core_i4_bx;
@@ -637,6 +640,9 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level_valid(core_i16_dc_level_valid),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
 		.chroma_residual_u(feed_chroma_residual_u),
 		.chroma_residual_v(feed_chroma_residual_v),
 		.chroma_residual_valid(feed_chroma_residual_valid),
@@ -747,6 +753,9 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level_valid(core_i16_dc_level_valid),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
 		.intra_chroma_residual_valid(feed_chroma_residual_valid),
 		.intra_chroma_residual_u(feed_chroma_residual_u),
 		.intra_chroma_residual_v(feed_chroma_residual_v),

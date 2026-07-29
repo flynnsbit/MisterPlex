@@ -100,6 +100,12 @@ module h264_i_mb_feed #(
 	output reg  [1:0]  luma4x4_trailing_ones,
 	output reg signed [15:0] luma4x4_coeff_zigzag [0:15],
 
+	// Intra16x16DCLevel (CAVLC zigzag) for product Hadamard in decode_core.
+	// Not published on luma4x4_* — DC is a separate plane (g-intra seam).
+	output reg         i16_dc_level_valid,
+	output reg signed [15:0] i16_dc_level [0:15],
+	output reg  [5:0]  i16_dc_qp,
+
 	// I/intra chroma residual samples (IDCT domain, pre-clip add). Valid after
 	// residual walk completes for feed_luma MBs; zeros when chroma uncoded.
 	output reg signed [15:0] chroma_residual_u [0:63],
@@ -741,6 +747,7 @@ module h264_i_mb_feed #(
 	always @(posedge clk) begin
 		mb_type_valid <= 1'b0;
 		luma4x4_valid <= 1'b0;
+		i16_dc_level_valid <= 1'b0;
 		rbsp_request_valid <= 1'b0;
 		cav_start <= 1'b0;
 
@@ -752,6 +759,10 @@ module h264_i_mb_feed #(
 			res_start_bit <= 19'd0;
 			res_step <= 5'd0;
 			qp_r <= 6'd0;
+			i16_dc_level_valid <= 1'b0;
+			i16_dc_qp <= 6'd0;
+			for (ci = 0; ci < 16; ci = ci + 1)
+				i16_dc_level[ci] <= 16'sd0;
 			cbp_l_r <= 4'd0;
 			cbp_c_r <= 2'd0;
 			mb_type_r <= 8'd0;
@@ -1229,9 +1240,15 @@ module h264_i_mb_feed #(
 					end else begin
 						abs_bit <= win_bit_base + {9'd0, cav_bit_end};
 						if (is_i16_r && i16_dc_pending) begin
-							// DC bits consumed only — AC nC map stays AC-total_coeff.
-							// i16_dc values owned by g-intra (not hardwired here).
+							// Hand DC plane to core; do not consume a luma4x4 slot.
+							// AC nC map stays AC-total_coeff only.
 							i16_dc_pending <= 1'b0;
+							i16_dc_qp <= qp_r;
+							if (feed_luma_r) begin
+								i16_dc_level_valid <= 1'b1;
+								for (ci = 0; ci < 16; ci = ci + 1)
+									i16_dc_level[ci] <= cav_coeff[ci];
+							end
 							st <= ST_RES_START;
 						end else if (res_step < STEP_LUMA_END) begin
 							tc_cur[res_step[3:0]] <= cav_tc;
