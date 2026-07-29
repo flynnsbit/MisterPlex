@@ -7,13 +7,14 @@
 //
 // Scope (honest):
 //   * I_NxN residual → 16 luma 4x4 CAVLC blocks (CBP-gated) fed to the core
-//   * I/P chroma residual consumed for bit-sync; product intra chroma may still
-//     be prediction-only until the core residual ports are fully tied
+//   * I chroma residual: DC Hadamard + AC IDCT-add samples exported to core
+//     (feed owns RBSP; core cannot re-parse chroma during ST_WAIT_CORE)
+//   * P chroma residual bit-synced here; core re-parses with QPc/Hadamard
 //   * I_16x16 residual is consumed for bit-sync; DC Hadamard still open
 //   * P-slice full PicSizeInMbs walk with mb_skip_run (ue) runs of P_Skip
 //   * P coded MBs: mb_type + pred (ref/mvd/sub) + inter/intra-in-P CBP + qpδ
 //     + residual bit-sync; core re-parses residual from mb_residual_bit_offset
-//   * more_rbsp_data() end-of-slice; desync if disagree with PicSizeInMbs
+//   * more_rbsp_data() end-of-slice; sticky desync_early / desync_long
 //
 // Area: one shared h264_cavlc_residual_block, sequential bit reader, no second
 // RBSP store (reads the existing h264_rbsp_window).  Single residual source.
@@ -34,6 +35,7 @@ module h264_i_mb_feed #(
 	input  wire [7:0]  mb_height,
 	input  wire [15:0] first_mb_in_slice,
 	input  wire [5:0]  slice_qp_y,
+	input  wire signed [4:0] pps_chroma_qp_index_offset,
 
 	// First-MB syntax already parsed by slice_hdr_parser (denominator: MB0).
 	input  wire [7:0]  first_mb_type,
@@ -98,12 +100,22 @@ module h264_i_mb_feed #(
 	output reg  [1:0]  luma4x4_trailing_ones,
 	output reg signed [15:0] luma4x4_coeff_zigzag [0:15],
 
+	// I/intra chroma residual samples (IDCT domain, pre-clip add). Valid after
+	// residual walk completes for feed_luma MBs; zeros when chroma uncoded.
+	output reg signed [15:0] chroma_residual_u [0:63],
+	output reg signed [15:0] chroma_residual_v [0:63],
+	output reg         chroma_residual_valid,
+
 	// busy is low during ST_YIELD_CORE so the core can own the RBSP window
 	// while it re-parses residual for inter MBs.
 	output wire        busy,
 	output reg         frame_feed_done,
 	output reg         error,
-	output reg         slice_desync
+	output reg         slice_desync,
+	// Sticky PARSE desync: early = more_rbsp false before PicSizeInMbs;
+	// long = data remains after PicSizeInMbs or walker past expected end.
+	output reg         slice_desync_early,
+	output reg         slice_desync_long
 );
 
 	localparam [5:0]
@@ -192,6 +204,11 @@ module h264_i_mb_feed #(
 	reg        tc_left_valid;
 	reg [4:0]  tc_top [0:(MB_W_MAX*4)-1];
 	reg        tc_top_valid [0:MB_W_MAX-1];
+	// Chroma AC nC (internal 2x2 only) + DC after Hadamard
+	reg [4:0]  chr_tc_u [0:3];
+	reg [4:0]  chr_tc_v [0:3];
+	reg signed [28:0] chr_dc_u [0:3];
+	reg signed [28:0] chr_dc_v [0:3];
 
 	// Bit reader
 	reg [7:0]  ue_zeros;
@@ -514,6 +531,91 @@ module h264_i_mb_feed #(
 		.run_dbg(cav_run_dbg)
 	);
 
+	// Chroma residual reconstruct (I/intra feed path only; P core re-parses).
+	wire [5:0] feed_qp_c;
+	h264_chroma_qp u_feed_chroma_qp (
+		.qp_y(qp_r),
+		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.qp_c(feed_qp_c)
+	);
+	wire signed [28:0] feed_chr_dc_had [0:3];
+	h264_chroma_dc_hadamard_inv u_feed_chr_dc_had (
+		.coeff(cav_coeff),
+		.qp_c(feed_qp_c),
+		.dc(feed_chr_dc_had)
+	);
+	wire [2:0] feed_chr_ac_i = res_step - STEP_CHR_AC0;
+	wire       feed_chr_ac_is_v = feed_chr_ac_i[2];
+	wire [1:0] feed_chr_ac_blk = feed_chr_ac_i[1:0];
+	wire       feed_chr_left_int = feed_chr_ac_blk[0];
+	wire       feed_chr_up_int   = feed_chr_ac_blk[1];
+	wire [1:0] feed_chr_left_i = feed_chr_ac_blk - 2'd1;
+	wire [1:0] feed_chr_up_i   = feed_chr_ac_blk - 2'd2;
+	wire [4:0] feed_chr_left_tc = feed_chr_left_int ?
+		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_left_i] : chr_tc_u[feed_chr_left_i]) : 5'd0;
+	wire [4:0] feed_chr_up_tc = feed_chr_up_int ?
+		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_up_i] : chr_tc_u[feed_chr_up_i]) : 5'd0;
+	wire [4:0] feed_chr_nC = (feed_chr_left_int && feed_chr_up_int) ?
+		((feed_chr_left_tc + feed_chr_up_tc + 5'd1) >> 1) :
+		feed_chr_left_int ? feed_chr_left_tc :
+		feed_chr_up_int ? feed_chr_up_tc : 5'd0;
+	wire [2:0] feed_chr_ac_table = (feed_chr_nC < 5'd2) ? 3'd0 :
+	                               (feed_chr_nC < 5'd4) ? 3'd1 :
+	                               (feed_chr_nC < 5'd8) ? 3'd2 : 3'd3;
+	wire signed [28:0] feed_chr_dc_inj =
+		feed_chr_ac_is_v ? chr_dc_v[feed_chr_ac_blk] : chr_dc_u[feed_chr_ac_blk];
+	wire signed [28:0] feed_dequant_raw [0:15];
+	wire signed [28:0] feed_dequant [0:15];
+	wire signed [28:0] feed_idct [0:15];
+	wire signed [28:0] feed_dc_only_dq [0:15];
+	wire signed [28:0] feed_dc_only_idct [0:15];
+	h264_dequant4x4 u_feed_dequant (
+		.coeff(cav_coeff),
+		.qp(feed_qp_c),
+		.max_coeff(5'd15),
+		.dequant(feed_dequant_raw)
+	);
+	genvar fdi;
+	generate
+		for (fdi = 0; fdi < 16; fdi = fdi + 1) begin : g_feed_dq
+			if (fdi == 0) begin
+				assign feed_dequant[fdi] = feed_chr_dc_inj;
+				assign feed_dc_only_dq[fdi] = feed_chr_dc_inj;
+			end else begin
+				assign feed_dequant[fdi] = feed_dequant_raw[fdi];
+				assign feed_dc_only_dq[fdi] = 29'sd0;
+			end
+		end
+	endgenerate
+	h264_idct4x4 u_feed_idct (
+		.dequant(feed_dequant),
+		.residual(feed_idct)
+	);
+	h264_idct4x4 u_feed_dc_only_idct (
+		.dequant(feed_dc_only_dq),
+		.residual(feed_dc_only_idct)
+	);
+	function automatic [5:0] chroma4x4_index;
+		input [1:0] block;
+		input [3:0] sample;
+		reg [1:0] bx, by, sx, sy;
+		begin
+			bx = block[0];
+			by = block[1];
+			sx = sample[1:0];
+			sy = sample[3:2];
+			chroma4x4_index = {by, sy, bx, sx};
+		end
+	endfunction
+	function automatic signed [15:0] sat16;
+		input signed [28:0] v;
+		begin
+			if (v > 29'sd32767) sat16 = 16'sd32767;
+			else if (v < -29'sd32768) sat16 = -16'sd32768;
+			else sat16 = v[15:0];
+		end
+	endfunction
+
 	wire feed_taken = (core_intra_blocks_done > {1'b0, luma4x4_idx});
 
 	task automatic clear_pred;
@@ -576,6 +678,19 @@ module h264_i_mb_feed #(
 			frame_feed_done <= 1'b0;
 			error <= 1'b0;
 			slice_desync <= 1'b0;
+			slice_desync_early <= 1'b0;
+			slice_desync_long <= 1'b0;
+			chroma_residual_valid <= 1'b0;
+			for (ci = 0; ci < 64; ci = ci + 1) begin
+				chroma_residual_u[ci] <= 16'sd0;
+				chroma_residual_v[ci] <= 16'sd0;
+			end
+			for (ci = 0; ci < 4; ci = ci + 1) begin
+				chr_tc_u[ci] <= 5'd0;
+				chr_tc_v[ci] <= 5'd0;
+				chr_dc_u[ci] <= 29'sd0;
+				chr_dc_v[ci] <= 29'sd0;
+			end
 			mb_type <= 5'd0;
 			mb_skip <= 1'b0;
 			mb_intra <= 1'b0;
@@ -626,6 +741,8 @@ module h264_i_mb_feed #(
 						tc_top_valid[ci] <= 1'b0;
 					error <= 1'b0;
 					slice_desync <= 1'b0;
+					slice_desync_early <= 1'b0;
+					slice_desync_long <= 1'b0;
 					guard <= 16'd0;
 					st <= ST_MB0_LOAD;
 				end
@@ -670,13 +787,25 @@ module h264_i_mb_feed #(
 					mb_residual_bit_offset <= first_residual_bit_offset;
 					for (ci = 0; ci < 16; ci = ci + 1)
 						tc_cur[ci] <= 5'd0;
+					for (ci = 0; ci < 4; ci = ci + 1) begin
+						chr_tc_u[ci] <= 5'd0;
+						chr_tc_v[ci] <= 5'd0;
+						chr_dc_u[ci] <= 29'sd0;
+						chr_dc_v[ci] <= 29'sd0;
+					end
+					chroma_residual_valid <= 1'b0;
+					for (ci = 0; ci < 64; ci = ci + 1) begin
+						chroma_residual_u[ci] <= 16'sd0;
+						chroma_residual_v[ci] <= 16'sd0;
+					end
 					res_step <= 5'd0;
 					st <= ST_MB_PULSE;
 				end else if (first_mb_p_skip) begin
-					// First skip_run already consumed; emit that many P_Skip.
-					skip_left <= (first_p_skip_run == 16'd0) ? 16'd1 : first_p_skip_run;
+					// First skip_run already consumed. mb_skip_run==0 is legal
+					// (no run present) — do not coerce to 1.
+					skip_left <= first_p_skip_run;
 					abs_bit <= first_residual_bit_offset;
-					st <= ST_P_SKIP_EMIT;
+					st <= (first_p_skip_run == 16'd0) ? ST_P_AFTER_MB : ST_P_SKIP_EMIT;
 				end else begin
 					// First coded P MB (or intra-in-P) fully parsed by header.
 					mb_skip_r <= 1'b0;
@@ -751,9 +880,12 @@ module h264_i_mb_feed #(
 
 			ST_P_SKIP_EMIT: begin
 				if (skip_left == 16'd0) begin
+					// Run exhausted (including run that ended the slice).
 					st <= ST_P_AFTER_MB;
 				end else if (mb_addr >= mb_total) begin
+					// Skip run walked past PicSizeInMbs.
 					slice_desync <= 1'b1;
+					slice_desync_long <= 1'b1;
 					st <= ST_FAIL;
 				end else begin
 					mb_skip_r <= 1'b1;
@@ -815,6 +947,19 @@ module h264_i_mb_feed #(
 				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
+				if (feed_luma_r) begin
+					chroma_residual_valid <= 1'b0;
+					for (ci = 0; ci < 64; ci = ci + 1) begin
+						chroma_residual_u[ci] <= 16'sd0;
+						chroma_residual_v[ci] <= 16'sd0;
+					end
+					for (ci = 0; ci < 4; ci = ci + 1) begin
+						chr_tc_u[ci] <= 5'd0;
+						chr_tc_v[ci] <= 5'd0;
+						chr_dc_u[ci] <= 29'sd0;
+						chr_dc_v[ci] <= 29'sd0;
+					end
+				end
 				st <= ST_RES_ARM;
 			end
 
@@ -832,6 +977,8 @@ module h264_i_mb_feed #(
 						tc_top[{mb_x8[5:0], ci[1:0]}] <= tc_cur[{2'd3, ci[1:0]}];
 					end
 					tc_top_valid[mb_x8] <= 1'b1;
+					if (feed_luma_r)
+						chroma_residual_valid <= 1'b1;
 					if (inter_res_only_r && !mb_skip_r) begin
 						// Finished pre-pulse bit-sync for inter: now launch core.
 						mb_residual_bit_offset <= res_start_bit;
@@ -856,7 +1003,33 @@ module h264_i_mb_feed #(
 						end else begin
 							res_step <= res_step + 5'd1;
 						end
+					end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
+						// Uncoded chroma DC → zero Hadamard state.
+						if (feed_luma_r) begin
+							for (ci = 0; ci < 4; ci = ci + 1) begin
+								if (res_step == STEP_CHR_DC_U)
+									chr_dc_u[ci] <= 29'sd0;
+								else
+									chr_dc_v[ci] <= 29'sd0;
+							end
+						end
+						res_step <= res_step + 5'd1;
 					end else begin
+						// Uncoded chroma AC: still inject DC-only residual when cbp!=0.
+						if (feed_luma_r && (cbp_c_r != 2'd0)) begin
+							for (ci = 0; ci < 16; ci = ci + 1) begin
+								if (feed_chr_ac_is_v)
+									chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
+								else
+									chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
+							end
+						end
+						if (feed_luma_r) begin
+							if (feed_chr_ac_is_v)
+								chr_tc_v[feed_chr_ac_blk] <= 5'd0;
+							else
+								chr_tc_u[feed_chr_ac_blk] <= 5'd0;
+						end
 						res_step <= res_step + 5'd1;
 					end
 				end else begin
@@ -870,10 +1043,10 @@ module h264_i_mb_feed #(
 							cav_table <= tok_table_luma;
 							cav_max <= 5'd16;
 						end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
-							cav_table <= 3'd4;
+							cav_table <= 3'd4; // nC = -1 chroma DC coeff_token
 							cav_max <= 5'd4;
 						end else begin
-							cav_table <= 3'd0;
+							cav_table <= feed_chr_ac_table;
 							cav_max <= 5'd15;
 						end
 						cav_bit_off <= rel_bit10;
@@ -905,7 +1078,31 @@ module h264_i_mb_feed #(
 								res_step <= res_step + 5'd1;
 								st <= ST_RES_START;
 							end
+						end else if (res_step == STEP_CHR_DC_U || res_step == STEP_CHR_DC_V) begin
+							if (feed_luma_r) begin
+								for (ci = 0; ci < 4; ci = ci + 1) begin
+									if (res_step == STEP_CHR_DC_U)
+										chr_dc_u[ci] <= feed_chr_dc_had[ci];
+									else
+										chr_dc_v[ci] <= feed_chr_dc_had[ci];
+								end
+							end
+							res_step <= res_step + 5'd1;
+							st <= ST_RES_START;
 						end else begin
+							// Chroma AC: dequant(max15)+DC inject+IDCT into residual plane.
+							if (feed_luma_r) begin
+								for (ci = 0; ci < 16; ci = ci + 1) begin
+									if (feed_chr_ac_is_v)
+										chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+									else
+										chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+								end
+								if (feed_chr_ac_is_v)
+									chr_tc_v[feed_chr_ac_blk] <= cav_tc;
+								else
+									chr_tc_u[feed_chr_ac_blk] <= cav_tc;
+							end
 							res_step <= res_step + 5'd1;
 							st <= ST_RES_START;
 						end
@@ -986,12 +1183,19 @@ module h264_i_mb_feed #(
 				if (!win_armed) begin
 					// wait one edge
 				end else if (!more_rbsp_w) begin
+					// Clean EOS if skip-run spanned to picture end; else early.
+					if (mb_addr < mb_total) begin
+						slice_desync <= 1'b1;
+						slice_desync_early <= 1'b1;
+					end
 					st <= ST_EOS_CHECK;
 				end else if (mb_addr >= mb_total) begin
-					slice_desync <= more_rbsp_w;
+					// Still data (or would parse more) after PicSizeInMbs.
+					slice_desync <= 1'b1;
+					slice_desync_long <= 1'b1;
 					st <= ST_EOS_CHECK;
 				end else begin
-					// Parse next mb_skip_run
+					// Parse next mb_skip_run (0 is legal → coded MB follows)
 					ue_zeros <= 8'd0;
 					ret_st <= 8'd6;
 					st <= ST_SYN_UE0;
@@ -1000,13 +1204,20 @@ module h264_i_mb_feed #(
 
 			ST_EOS_CHECK: begin
 				// Cross-check PicSizeInMbs vs bitstream end.
-				if (mb_addr != mb_total)
+				if (mb_addr < mb_total) begin
 					slice_desync <= 1'b1;
-				// more data left with full pic → desync
+					slice_desync_early <= 1'b1;
+				end else if (mb_addr > mb_total) begin
+					slice_desync <= 1'b1;
+					slice_desync_long <= 1'b1;
+					error <= 1'b1;
+				end else if (more_rbsp_w) begin
+					// Full pic decoded but trailing non-RBSP-trailing bits remain.
+					slice_desync <= 1'b1;
+					slice_desync_long <= 1'b1;
+				end
 				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
 				rbsp_request_valid <= 1'b1;
-				if (mb_addr > mb_total)
-					error <= 1'b1;
 				st <= ST_DONE;
 			end
 
