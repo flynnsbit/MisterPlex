@@ -797,19 +797,14 @@ module h264_decode_core #(
 
     // LDC multi-cycle: start→~26 cyc→done. Consumer ST_P16_RES_LDC waits done
     // before latching res_luma_dc[] (was combo same-cycle as cavlc_done).
+    // AREA: ONE shared h264_luma_dc_hadamard_inv for P residual LDC and I16
+    // product DC — mutex by construction (syntax_p16_candidate=!slice_is_i;
+    // product_intra_mb_start requires slice_is_i && wb_state==ST_IDLE).
     reg                res_ldc_start_r;
     reg                res_ldc_pending_r;
     wire               res_ldc_done;
     wire signed [28:0] res_luma_dc_new [0:15];
-    h264_luma_dc_hadamard_inv u_product_res_luma_dc (
-        .clk(clk),
-        .reset(reset),
-        .start(res_ldc_start_r),
-        .coeff(cavlc_dequant_coeff),
-        .qp(mb_qp_y_r),
-        .dc(res_luma_dc_new),
-        .done(res_ldc_done)
-    );
+    // i16_ldc_* and shared unit declared below with product I16 path.
 
     wire signed [15:0] res_chroma_dc_coeff [0:3];
     assign res_chroma_dc_coeff[0] = cavlc_dequant_coeff[0];
@@ -1069,6 +1064,42 @@ module h264_decode_core #(
     end
 
     wire signed [28:0] product_intra_i16_dc [0:15];
+    // Shared LDC: mux coeff/qp on start pulse; route done by latched source.
+    // Consumers unchanged: ST_P16_RES_LDC waits res_ldc_done; top waits
+    // product_i16_dc_valid_r after i16_ldc_done. LATENCY still ~26 cyc.
+    reg                ldc_src_i16_r;
+    wire               shared_ldc_start = res_ldc_start_r | i16_ldc_start_r;
+    wire               shared_ldc_done;
+    wire signed [28:0] shared_ldc_dc [0:15];
+    wire signed [15:0] shared_ldc_coeff [0:15];
+    genvar ldc_gi;
+    generate
+        for (ldc_gi = 0; ldc_gi < 16; ldc_gi = ldc_gi + 1) begin : g_shared_ldc_c
+            assign shared_ldc_coeff[ldc_gi] = i16_ldc_start_r ?
+                product_i16_dc_level_r[ldc_gi] : cavlc_dequant_coeff[ldc_gi];
+            assign res_luma_dc_new[ldc_gi] = shared_ldc_dc[ldc_gi];
+            assign product_intra_i16_dc[ldc_gi] = shared_ldc_dc[ldc_gi];
+        end
+    endgenerate
+    wire [5:0] shared_ldc_qp = i16_ldc_start_r ? product_i16_dc_qp_r : mb_qp_y_r;
+    always @(posedge clk) begin
+        if (reset || slice_start)
+            ldc_src_i16_r <= 1'b0;
+        else if (shared_ldc_start)
+            ldc_src_i16_r <= i16_ldc_start_r;
+    end
+    assign res_ldc_done = shared_ldc_done & ~ldc_src_i16_r;
+    assign i16_ldc_done = shared_ldc_done &  ldc_src_i16_r;
+    h264_luma_dc_hadamard_inv u_shared_luma_dc (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(shared_ldc_start),
+        .coeff(shared_ldc_coeff),
+        .qp(shared_ldc_qp),
+        .dc(shared_ldc_dc),
+        .done(shared_ldc_done)
+    );
+
     wire [7:0]  product_intra_recon_y [0:255];
     // Driven by chroma8x8_pred (+ residual clip). Were undriven wires after a
     // merge dropped the e2eacc5/52b66ac chroma path → product U/V always 0.
@@ -1108,17 +1139,6 @@ module h264_decode_core #(
     // On the start cycle NBA has not yet written intra_mb_*_r; use syntax XY.
     wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
     wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
-    // Product I_16x16 DC: multi-cycle Hadamard + LevelScale (8.5.10).
-    // LATENCY ~26 cyc; i16_dc_valid = done (top latches then). QP latched w/ levels.
-    h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
-        .clk(clk),
-        .reset(reset || slice_start),
-        .start(i16_ldc_start_r),
-        .coeff(product_i16_dc_level_r),
-        .qp(product_i16_dc_qp_r),
-        .dc(product_intra_i16_dc),
-        .done(i16_ldc_done)
-    );
     // Per-4x4 block_valid→recon_pixels path is unused on product: I4x4
     // within-MB neighbours live in h264_decode_top.local_recon; cross-MB
     // neighbours publish on mb_commit via recon_y_mb (see h264_intra_nb_ctx).
