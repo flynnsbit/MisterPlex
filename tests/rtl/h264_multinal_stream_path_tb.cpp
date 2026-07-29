@@ -53,6 +53,10 @@ int main(int argc, char** argv) {
         int pFirstMbMode1 = 0;
         int pFirstMbMode2 = 0;
         int pFirstMbBad = 0;
+        int desyncHits = 0;
+        int maxFrameNumSeen = -1;
+        int idrHdrPulses = 0;
+        int framesAtFirstDesync = -1;
 
         auto tick = [&]() {
             dut.clk = 0;
@@ -62,6 +66,16 @@ int main(int argc, char** argv) {
             ++cycle;
             if (dut.residual_place_pulse)
                 ++placePulses;
+            if (dut.slice_desync || dut.slice_desync_early || dut.slice_desync_long) {
+                if (desyncHits == 0)
+                    framesAtFirstDesync = static_cast<int>(dut.stub_frames);
+                ++desyncHits;
+            }
+            if (dut.slice_valid) {
+                const int fn = static_cast<int>(dut.slice_frame_num);
+                if (fn > maxFrameNumSeen) maxFrameNumSeen = fn;
+                if (dut.slice_is_idr_hdr) ++idrHdrPulses;
+            }
             if (static_cast<uint8_t>(dut.residual_csum) == expectCsum)
                 sawExpectedCsum = 1;
             if (dut.recon_valid && static_cast<uint8_t>(dut.recon_sig) == 0x3b)
@@ -154,6 +168,11 @@ int main(int argc, char** argv) {
             expect(reconSig3bCycles > 0, "parsed P DPB/MC recon signature missing");
         }
         expect(dut.stub_frames >= 2, "decode_stub did not consume multiple VCL pulses");
+        if (desyncHits != 0) {
+            std::cerr << "WARN multi-NAL stream_path: PARSE desync_hits=" << desyncHits
+                      << " break_frames=" << framesAtFirstDesync
+                      << " goal_desync=0 see_FEED_DESYNC\n";
+        }
 
         std::cout << "multi-NAL stream_path raw: bytes=" << bytes.size()
                   << " bytes_in=" << dut.bytes_in
@@ -167,6 +186,10 @@ int main(int argc, char** argv) {
                   << " saw_expected_csum=" << sawExpectedCsum
                   << " recon_sig_3b_cycles=" << reconSig3bCycles
                   << " frames=" << dut.stub_frames
+                  << " desync_hits=" << desyncHits
+                  << " desync_break_frames=" << framesAtFirstDesync
+                  << " max_frame_num=" << maxFrameNumSeen
+                  << " idr_hdr_pulses=" << idrHdrPulses
                   << " saw_i=" << sawI
                   << " idle_between_vcl=" << idleBetweenVcl
                   << " saw_p=" << sawP

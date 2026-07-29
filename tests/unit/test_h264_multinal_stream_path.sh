@@ -73,6 +73,13 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
 "$BUILD/Vh264_multinal_stream_path_tb" "$WCAP_FIXTURE" 5 1 0x14
 "$BUILD/Vh264_multinal_stream_path_tb" "$INTER_FIXTURE" 15 11 0x10
 
+GOP_FIXTURE="tests/fixtures/p3_multinal/gop_idr_p_idr_p.264"
+MID_FIXTURE="tests/fixtures/p3_multinal/gop_idr_p_midsps_idr_p.264"
+# IDR+P+IDR+P+P : >=8 NALs, 3 P-slices, residual csum class from inter IDR (0x10)
+"$BUILD/Vh264_multinal_stream_path_tb" "$GOP_FIXTURE" 8 3 0x10
+"$BUILD/Vh264_multinal_stream_path_tb" "$MID_FIXTURE" 10 3 0x10
+echo "test_h264_multinal_stream_path: OK GOP second-IDR + mid-SPS desync=0 path"
+
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
   --top-module h264_multinal_stream_path_tb -GFAULT_RECON_SIG_ZERO=1 -Wno-fatal \

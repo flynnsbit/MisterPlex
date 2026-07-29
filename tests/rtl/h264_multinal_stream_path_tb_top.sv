@@ -43,7 +43,14 @@ module h264_multinal_stream_path_tb #(
     output wire [5:0]  slice_parser_state,
     output wire [7:0]  recon_sig,
     output wire [7:0]  recon_dbg,
-    output wire        recon_valid
+    output wire        recon_valid,
+    output wire        slice_desync,
+    output wire        slice_desync_early,
+    output wire        slice_desync_long,
+    output wire [3:0]  slice_desync_cause,
+    output wire [15:0] slice_desync_mb,
+    output wire [15:0] slice_frame_num,
+    output wire        slice_is_idr_hdr
 );
     wire has_stream;
     wire [15:0] fifo_level;
@@ -72,7 +79,9 @@ module h264_multinal_stream_path_tb #(
     wire [31:0] stream_ddr_bytes_out, stream_ddr_host_write, stream_ddr_fpga_read;
     wire [15:0] stream_ddr_underruns, stream_ddr_overruns;
 
-    stream_path #(.FRAME_W(16), .FRAME_H(16)) dut (
+    // Match product CORE_FRAME geometry to fixture SPS (320x240). 16x16 forced
+    // mb/core mismatch and false PARSE desync on real 320x240 Annex-B.
+    stream_path #(.FRAME_W(320), .FRAME_H(240)) dut (
         .clk(clk), .reset(reset),
         .ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
         .enable(enable), .flush(flush),
@@ -104,8 +113,13 @@ module h264_multinal_stream_path_tb #(
         .residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
         .recon_sig(recon_sig_dut), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
         .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
-        .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
+        .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap),
+        .slice_desync(slice_desync), .slice_desync_early(slice_desync_early),
+        .slice_desync_long(slice_desync_long), .slice_desync_cause(slice_desync_cause),
+        .slice_desync_mb(slice_desync_mb)
     );
+    assign slice_frame_num = dut.sl_fn;
+    assign slice_is_idr_hdr = dut.sl_is_idr;
 
     assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;
     assign slice_parser_state = dut.slp.st;
