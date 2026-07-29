@@ -1429,7 +1429,9 @@ module h264_decode_core #(
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
                     wb_state <= p16_zero_mv_valid ? ST_P16_REF_SEED : ST_P16_RES_START;
-                end else if (product_recon_mb_valid) begin
+                end else if (product_recon_mb_valid && !dbf_busy) begin
+                    // Same handover rule as the inter path: the loop filter
+                    // may still be emitting the previous macroblock's window.
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
                     wb_mb_is_ref <= product_recon_mb_is_ref;
@@ -1560,7 +1562,10 @@ module h264_decode_core #(
                 end
             end
             ST_P16_MC: begin
-                if (p16_mc_done) begin
+                // The loop filter owns a private copy of the macroblock, so it
+                // is still emitting the previous one while this one is
+                // predicted.  Hand over only once it has retired that copy.
+                if (p16_mc_done && !dbf_busy) begin
                     // res_tc_cur is final by now, so the deblocker latches the
                     // real per-4x4 coded-coefficient flags for bS derivation.
                     dbf_start_r <= 1'b1;
@@ -1586,8 +1591,26 @@ module h264_decode_core #(
             // The macroblock is only committed once its filtered window,
             // including the strips that belong to the left and upper
             // neighbours, has been written out.
+            // ── Pipeline overlap ────────────────────────────────────────
+            // The filter emits a 576-beat window: the macroblock plus the
+            // strips of the left and upper neighbours its edge filtering
+            // rewrote.  At one sample per cycle into a byte-wide writeback
+            // port that is 576 of the 712 cycles a macroblock gets, and
+            // waiting for it here serialised the whole pipeline behind it.
+            //
+            // It works from its own copy, so the core does not have to stay
+            // parked: it commits and moves on to fetch, predict and
+            // reconstruct the next macroblock while the previous one drains.
+            // The handover point in ST_P16_MC / ST_IDLE is where the next
+            // macroblock waits, which keeps macroblocks in order through the
+            // filter and preserves its left/upper neighbour state.
+            //
+            // The last macroblock of a frame is the exception: ST_COMMIT is
+            // what raises filtered_frame_done and swaps the reference bank, so
+            // committing early there would swap the bank out from under the
+            // samples still being emitted.
             ST_DEBLOCK: begin
-                if (dbf_mb_done)
+                if (dbf_mb_done || !(wb_mb_is_ref && wb_last_mb))
                     wb_state <= ST_COMMIT;
             end
             ST_COMMIT: begin
