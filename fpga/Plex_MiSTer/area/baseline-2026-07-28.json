@@ -1,0 +1,3014 @@
+{
+ "device": "5CSEBA6U23I7",
+ "map_rpt": "/home/flynnsbit/mplex-builds/slot1/Plex_MiSTer/output_files/Plex.map.rpt",
+ "modules": {
+  "DC_blocker:dcb_l": {
+   "alut": 144,
+   "dsp": 0
+  },
+  "DC_blocker:dcb_r": {
+   "alut": 144,
+   "dsp": 0
+  },
+  "IIR_filter:IIR_filter": {
+   "alut": 699,
+   "dsp": 8
+  },
+  "add_sub_0dh:auto_generated": {
+   "alut": 13,
+   "dsp": 0
+  },
+  "add_sub_54h:auto_generated": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "add_sub_59h:auto_generated": {
+   "alut": 10,
+   "dsp": 0
+  },
+  "add_sub_64h:auto_generated": {
+   "alut": 5,
+   "dsp": 0
+  },
+  "add_sub_69h:auto_generated": {
+   "alut": 10,
+   "dsp": 0
+  },
+  "add_sub_a9h:auto_generated": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "add_sub_o5h:auto_generated": {
+   "alut": 15,
+   "dsp": 0
+  },
+  "add_sub_uch:auto_generated": {
+   "alut": 9,
+   "dsp": 0
+  },
+  "add_sub_vch:auto_generated": {
+   "alut": 13,
+   "dsp": 0
+  },
+  "alsa:alsa": {
+   "alut": 409,
+   "dsp": 0
+  },
+  "alt_u_div_03f:divider": {
+   "alut": 311,
+   "dsp": 0
+  },
+  "alt_u_div_0te:divider": {
+   "alut": 59,
+   "dsp": 0
+  },
+  "alt_u_div_mse:divider": {
+   "alut": 32,
+   "dsp": 0
+  },
+  "alt_u_div_qve:divider": {
+   "alut": 227,
+   "dsp": 0
+  },
+  "alt_u_div_use:divider": {
+   "alut": 56,
+   "dsp": 0
+  },
+  "altddio_out:hdmiclk_ddr": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altddio_out:vgaclk_ddr": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altera_cyclonev_pll:cyclonev_pll": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altera_cyclonev_pll_base:fpll_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altera_pll:altera_pll_i": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "altera_std_synchronizer:altera_std_synchronizer_inst": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altshift_taps:din1_rtl_0": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "altshift_taps:dv_d1_rtl_0": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "altshift_taps:luma_d0_rtl_0": {
+   "alut": 14,
+   "dsp": 0
+  },
+  "altshift_taps:o_vpix_inner[2].r_rtl_0": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "altshift_taps:vid_rtl_0": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "altsyncram:dpb_mem_rtl_0": {
+   "alut": 161,
+   "dsp": 0
+  },
+  "altsyncram:i_dpram_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:i_mem[0].r[7]__1": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:mask_lut_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:mem_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_a_poly_mem_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_dpram_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_h_poly_mem_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_line0[0].r[7]__2": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_line1[0].r[7]__3": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_line2[0].r[7]__4": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_line3[0].r[7]__5": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_linf0[0].r[7]__6": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_linf1[0].r[7]__7": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_linf2[0].r[7]__8": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_linf3[0].r[7]__9": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:o_v_poly_mem_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:osd_buffer_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram:pal1_mem_rtl_0": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_0nl1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_2aj1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_32k1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_34l1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_89q1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_b4l1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_ccn1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_dr91:altsyncram4": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_egi1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_g0j1:auto_generated": {
+   "alut": 161,
+   "dsp": 0
+  },
+  "altsyncram_g9j1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_i6k1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_jr91:altsyncram4": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_k9j1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_lap1:auto_generated": {
+   "alut": 14,
+   "dsp": 0
+  },
+  "altsyncram_lcl1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_m6n1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_o9j1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_pr91:altsyncram4": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_ro91:altsyncram5": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_sgi1:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "altsyncram_vr91:altsyncram4": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "ascal:ascal": {
+   "alut": 2886,
+   "dsp": 23
+  },
+  "async_fifo:input_fifo": {
+   "alut": 29,
+   "dsp": 0
+  },
+  "async_fifo:m1_rsp_fifo": {
+   "alut": 157,
+   "dsp": 0
+  },
+  "async_fifo:px_fifo": {
+   "alut": 826,
+   "dsp": 0
+  },
+  "aud_mix_top:audmix_l": {
+   "alut": 147,
+   "dsp": 0
+  },
+  "aud_mix_top:audmix_r": {
+   "alut": 144,
+   "dsp": 0
+  },
+  "audio_fifo:afifo": {
+   "alut": 91,
+   "dsp": 0
+  },
+  "audio_ingest:ainst": {
+   "alut": 16,
+   "dsp": 0
+  },
+  "audio_out:audio_out": {
+   "alut": 1527,
+   "dsp": 8
+  },
+  "bitstream_fifo:bfifo": {
+   "alut": 60,
+   "dsp": 0
+  },
+  "cntr_ohf:cntr1": {
+   "alut": 5,
+   "dsp": 0
+  },
+  "cntr_phf:cntr1": {
+   "alut": 2,
+   "dsp": 0
+  },
+  "cntr_rhf:cntr1": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "colorbars:bars": {
+   "alut": 56,
+   "dsp": 0
+  },
+  "csync:csync_hdmi": {
+   "alut": 46,
+   "dsp": 0
+  },
+  "csync:csync_vga": {
+   "alut": 46,
+   "dsp": 0
+  },
+  "ddio_out_1oj:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "ddio_out_b2j:auto_generated": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "ddr_bitstream_reader:ddr_stream": {
+   "alut": 915,
+   "dsp": 0
+  },
+  "ddr_bus_arbiter:ddr_arb": {
+   "alut": 419,
+   "dsp": 0
+  },
+  "ddr_frame_store:fstore": {
+   "alut": 5632,
+   "dsp": 1
+  },
+  "ddr_svc:ddr_svc": {
+   "alut": 26,
+   "dsp": 0
+  },
+  "decode_8la:decode2": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "decode_l2a:rden_decode_b": {
+   "alut": 34,
+   "dsp": 0
+  },
+  "decode_sma:decode2": {
+   "alut": 39,
+   "dsp": 0
+  },
+  "decode_stub:gen_diagnostic_present.stub": {
+   "alut": 6183,
+   "dsp": 32
+  },
+  "dprio_mux:dprio_mux_inst": {
+   "alut": 52,
+   "dsp": 0
+  },
+  "dps_extra_kick:dps_extra_inst": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "dyn_phase_shift:dyn_phase_shift_inst": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "emu:emu": {
+   "alut": 154636,
+   "dsp": 115
+  },
+  "f2sdram_safe_terminator:f2sdram_safe_terminator_ram1": {
+   "alut": 124,
+   "dsp": 0
+  },
+  "f2sdram_safe_terminator:f2sdram_safe_terminator_ram2": {
+   "alut": 37,
+   "dsp": 0
+  },
+  "f2sdram_safe_terminator:f2sdram_safe_terminator_vbuf": {
+   "alut": 76,
+   "dsp": 0
+  },
+  "fpll_dprio_init:fpll_dprio_init_inst": {
+   "alut": 11,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_cnt_sel_0": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_cnt_sel_1": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_cnt_sel_2": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_cnt_sel_3": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_cnt_sel_4": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_dprio_read": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "generic_lcell_comb:lcell_fpll_0_1": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "h264_cavlc_nc_predictor:u_product_res_nc": {
+   "alut": 78,
+   "dsp": 0
+  },
+  "h264_cavlc_residual_block:full_luma_residual": {
+   "alut": 1972,
+   "dsp": 0
+  },
+  "h264_cavlc_residual_block:u_product_p16_residual0": {
+   "alut": 2076,
+   "dsp": 0
+  },
+  "h264_chroma_dc_hadamard_inv:u_product_res_chroma_dc": {
+   "alut": 635,
+   "dsp": 4
+  },
+  "h264_chroma_epel_block_8x8:u_chroma_v": {
+   "alut": 557,
+   "dsp": 29
+  },
+  "h264_chroma_qp:u_product_res_chroma_qp": {
+   "alut": 17,
+   "dsp": 0
+  },
+  "h264_deblock_writeback_ctrl:u_core_deblock_wb": {
+   "alut": 16,
+   "dsp": 0
+  },
+  "h264_deblock_writeback_ctrl:u_stream_dpb_wb": {
+   "alut": 16,
+   "dsp": 0
+  },
+  "h264_decode_core:product_decode_core": {
+   "alut": 132611,
+   "dsp": 81
+  },
+  "h264_decode_top:u_product_intra_mb": {
+   "alut": 19197,
+   "dsp": 16
+  },
+  "h264_dequant4x4:u_h264_dequant4x4": {
+   "alut": 581,
+   "dsp": 32
+  },
+  "h264_dequant4x4_flex:u_dequant": {
+   "alut": 2435,
+   "dsp": 16
+  },
+  "h264_dequant4x4_flex:u_product_p16_res_dequant": {
+   "alut": 2699,
+   "dsp": 16
+  },
+  "h264_dpb_i420_addr:u_addr": {
+   "alut": 86,
+   "dsp": 0
+  },
+  "h264_dpb_mb_write_addr:u_write_addr": {
+   "alut": 94,
+   "dsp": 0
+  },
+  "h264_dpb_one_ref:u_product_dpb_ref": {
+   "alut": 28,
+   "dsp": 0
+  },
+  "h264_dpb_one_ref:u_stream_dpb": {
+   "alut": 538,
+   "dsp": 0
+  },
+  "h264_idct4x4:u_h264_idct4x4": {
+   "alut": 1907,
+   "dsp": 0
+  },
+  "h264_idct4x4:u_idct": {
+   "alut": 2065,
+   "dsp": 0
+  },
+  "h264_idct4x4:u_product_p16_res_idct": {
+   "alut": 2065,
+   "dsp": 0
+  },
+  "h264_inter_mc_16x16:u_full": {
+   "alut": 90445,
+   "dsp": 29
+  },
+  "h264_inter_mc_part:u_product_p16_mc": {
+   "alut": 90445,
+   "dsp": 29
+  },
+  "h264_intra16x16_pred:u_i16_pred": {
+   "alut": 10456,
+   "dsp": 0
+  },
+  "h264_intra4x4_pred:u_i4_pred": {
+   "alut": 791,
+   "dsp": 0
+  },
+  "h264_intra_nb_ctx:u_product_intra_nb_ctx": {
+   "alut": 2402,
+   "dsp": 0
+  },
+  "h264_luma_dc_hadamard_inv:u_product_res_luma_dc": {
+   "alut": 3228,
+   "dsp": 16
+  },
+  "h264_luma_qpel_block_16x16:u_luma": {
+   "alut": 89888,
+   "dsp": 0
+  },
+  "h264_luma_ref_tap_addr:u_chroma_win_addr": {
+   "alut": 131,
+   "dsp": 0
+  },
+  "h264_luma_ref_tap_addr:u_luma_win_addr": {
+   "alut": 147,
+   "dsp": 0
+  },
+  "h264_mv_pred_16x16:u_median": {
+   "alut": 421,
+   "dsp": 0
+  },
+  "h264_mv_pred_part:u_product_p16_mv_pred": {
+   "alut": 421,
+   "dsp": 0
+  },
+  "h264_recon4x4:u_h264_recon4x4": {
+   "alut": 524,
+   "dsp": 0
+  },
+  "h264_recon4x4:u_recon": {
+   "alut": 720,
+   "dsp": 0
+  },
+  "h264_ref_clamp:u_clamp": {
+   "alut": 2,
+   "dsp": 0
+  },
+  "hps_io:hps_io": {
+   "alut": 750,
+   "dsp": 0
+  },
+  "i2c:i2c": {
+   "alut": 109,
+   "dsp": 0
+  },
+  "i2s:i2s": {
+   "alut": 31,
+   "dsp": 0
+  },
+  "iir_filter_tap:iir_tap_0": {
+   "alut": 189,
+   "dsp": 2
+  },
+  "iir_filter_tap:iir_tap_1": {
+   "alut": 228,
+   "dsp": 2
+  },
+  "iir_filter_tap:iir_tap_2": {
+   "alut": 225,
+   "dsp": 2
+  },
+  "line_buf_ram:gen_line[0].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[0].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[0].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[10].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[10].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[10].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[11].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[11].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[11].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[12].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[12].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[12].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[13].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[13].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[13].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[14].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[14].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[14].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[15].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[15].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[15].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[1].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[1].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[1].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[2].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[2].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[2].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[3].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[3].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[3].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[4].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[4].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[4].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[5].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[5].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[5].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[6].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[6].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[6].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[7].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[7].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[7].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[8].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[8].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[8].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[9].uram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[9].vram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "line_buf_ram:gen_line[9].yram": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "lpm_add_sub:adder[0]": {
+   "alut": 15,
+   "dsp": 0
+  },
+  "lpm_divide:Div0": {
+   "alut": 219,
+   "dsp": 0
+  },
+  "lpm_divide:Div1": {
+   "alut": 309,
+   "dsp": 0
+  },
+  "lpm_divide:Div2": {
+   "alut": 309,
+   "dsp": 0
+  },
+  "lpm_divide:Mod0": {
+   "alut": 227,
+   "dsp": 0
+  },
+  "lpm_divide:Mod1": {
+   "alut": 319,
+   "dsp": 0
+  },
+  "lpm_divide:Mod2": {
+   "alut": 311,
+   "dsp": 0
+  },
+  "lpm_divide_2am:auto_generated": {
+   "alut": 28,
+   "dsp": 0
+  },
+  "lpm_divide_52m:auto_generated": {
+   "alut": 32,
+   "dsp": 0
+  },
+  "lpm_divide_6am:auto_generated": {
+   "alut": 55,
+   "dsp": 0
+  },
+  "lpm_divide_7am:auto_generated": {
+   "alut": 56,
+   "dsp": 0
+  },
+  "lpm_divide_7dm:auto_generated": {
+   "alut": 309,
+   "dsp": 0
+  },
+  "lpm_divide_92m:auto_generated": {
+   "alut": 56,
+   "dsp": 0
+  },
+  "lpm_divide_a2m:auto_generated": {
+   "alut": 59,
+   "dsp": 0
+  },
+  "lpm_divide_a5m:auto_generated": {
+   "alut": 311,
+   "dsp": 0
+  },
+  "lpm_divide_kbm:auto_generated": {
+   "alut": 219,
+   "dsp": 0
+  },
+  "lpm_divide_n3m:auto_generated": {
+   "alut": 227,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_0": {
+   "alut": 61,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_1": {
+   "alut": 61,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_465": {
+   "alut": 61,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_466": {
+   "alut": 38,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_472": {
+   "alut": 93,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_473": {
+   "alut": 67,
+   "dsp": 0
+  },
+  "lpm_mult:Mult0_rtl_66": {
+   "alut": 16,
+   "dsp": 0
+  },
+  "lpm_mult:Mult1_rtl_469": {
+   "alut": 30,
+   "dsp": 0
+  },
+  "lpm_mult:Mult1_rtl_471": {
+   "alut": 94,
+   "dsp": 0
+  },
+  "lpm_mult:Mult2_rtl_203": {
+   "alut": 19,
+   "dsp": 0
+  },
+  "lpm_mult:Mult2_rtl_470": {
+   "alut": 18,
+   "dsp": 0
+  },
+  "lpm_mult:Mult3_rtl_468": {
+   "alut": 28,
+   "dsp": 0
+  },
+  "lpm_mult:Mult4_rtl_467": {
+   "alut": 31,
+   "dsp": 0
+  },
+  "lpm_mult:Mult5_rtl_3": {
+   "alut": 37,
+   "dsp": 0
+  },
+  "lpm_mult:Mult6_rtl_2": {
+   "alut": 30,
+   "dsp": 0
+  },
+  "mcp23009:mcp23009": {
+   "alut": 166,
+   "dsp": 0
+  },
+  "mpar_add:padder": {
+   "alut": 15,
+   "dsp": 0
+  },
+  "mpar_add:sub_par_add": {
+   "alut": 5,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[0].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[10].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[11].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[12].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[13].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[14].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[15].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[1].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[2].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[3].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[4].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[5].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[6].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 2,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[7].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[8].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].c_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].c_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[0].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[1].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[2].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[3].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[4].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[5].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[6].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_c_line_hold_pad[7].c_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[0].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[1].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[2].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[3].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[4].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[5].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[6].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[7].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].gen_y_line_hold_pad[8].y_line_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].y_bank_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_meta_hold_pad[9].y_valid_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[0].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[10].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[11].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[12].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[13].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[14].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[15].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[16].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[17].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[18].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[19].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[1].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[20].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[21].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[22].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[23].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[24].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[25].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[26].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[27].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[28].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[29].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[2].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[30].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[31].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[32].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[33].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[34].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[35].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[36].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[37].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[38].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[39].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[3].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[40].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[41].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[42].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[43].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[44].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[45].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[46].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[47].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[48].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[49].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[4].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[50].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[51].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[52].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[53].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[54].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[55].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[56].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[57].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[58].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[59].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[5].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[60].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[61].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[62].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[63].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[6].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[7].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[8].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_in_pad[9].rsp_data_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[0].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[10].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[11].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[12].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[13].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[14].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[15].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[16].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[17].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[18].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[19].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[1].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[20].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[21].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[22].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[23].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[24].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[25].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[26].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[27].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[28].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[29].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[2].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[30].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[31].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[32].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[33].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[34].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[35].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[36].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[37].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[38].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[39].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[3].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[40].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[41].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[42].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[43].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[44].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[45].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[46].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[47].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[48].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[49].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[4].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[50].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[51].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[52].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[53].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[54].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[55].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[56].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[57].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[58].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[59].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[5].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[60].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[61].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[62].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[63].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[6].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[7].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[8].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:gen_rsp_out_pad[9].rsp_data_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:rsp_owner_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:rsp_ready_in_pad": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mplex_hold_lcell:rsp_valid_out_pad_i": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "mult_ki01:auto_generated": {
+   "alut": 61,
+   "dsp": 0
+  },
+  "mult_tg01:auto_generated": {
+   "alut": 16,
+   "dsp": 0
+  },
+  "mult_vd01:auto_generated": {
+   "alut": 94,
+   "dsp": 0
+  },
+  "multcore:mult_core": {
+   "alut": 38,
+   "dsp": 0
+  },
+  "mux_chb:mux3": {
+   "alut": 88,
+   "dsp": 0
+  },
+  "mux_ofb:mux3": {
+   "alut": 8,
+   "dsp": 0
+  },
+  "nalu_scanner:scan": {
+   "alut": 84,
+   "dsp": 0
+  },
+  "osd:hdmi_osd": {
+   "alut": 916,
+   "dsp": 0
+  },
+  "osd:vga_osd": {
+   "alut": 872,
+   "dsp": 0
+  },
+  "pll:pll": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "pll_0002:pll_inst": {
+   "alut": 1,
+   "dsp": 0
+  },
+  "pll_audio:pll_audio": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "pll_audio_0002:pll_audio_inst": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "pll_cfg_hdmi:pll_cfg_hdmi": {
+   "alut": 295,
+   "dsp": 0
+  },
+  "pll_hdmi:pll_hdmi": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "pll_hdmi_0002:pll_hdmi_inst": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "pll_hdmi_adj:pll_hdmi_adj": {
+   "alut": 789,
+   "dsp": 0
+  },
+  "pps_parser:pps": {
+   "alut": 189,
+   "dsp": 0
+  },
+  "present_core:present": {
+   "alut": 5802,
+   "dsp": 2
+  },
+  "scanlines:VGA_scanlines": {
+   "alut": 0,
+   "dsp": 0
+  },
+  "self_reset:self_reset_inst": {
+   "alut": 19,
+   "dsp": 0
+  },
+  "shadowmask:HDMI_shadowmask": {
+   "alut": 255,
+   "dsp": 0
+  },
+  "shift_taps_0vu:auto_generated": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "shift_taps_3vu:auto_generated": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "shift_taps_agv:auto_generated": {
+   "alut": 6,
+   "dsp": 0
+  },
+  "shift_taps_gtu:auto_generated": {
+   "alut": 14,
+   "dsp": 0
+  },
+  "shift_taps_quu:auto_generated": {
+   "alut": 7,
+   "dsp": 0
+  },
+  "sigma_delta_dac:sd_l": {
+   "alut": 19,
+   "dsp": 0
+  },
+  "sigma_delta_dac:sd_r": {
+   "alut": 19,
+   "dsp": 0
+  },
+  "sign_div_unsign_8kh:divider": {
+   "alut": 32,
+   "dsp": 0
+  },
+  "sign_div_unsign_ckh:divider": {
+   "alut": 56,
+   "dsp": 0
+  },
+  "sign_div_unsign_dkh:divider": {
+   "alut": 59,
+   "dsp": 0
+  },
+  "sign_div_unsign_dnh:divider": {
+   "alut": 311,
+   "dsp": 0
+  },
+  "sign_div_unsign_qlh:divider": {
+   "alut": 227,
+   "dsp": 0
+  },
+  "slice_hdr_parser:slp": {
+   "alut": 5393,
+   "dsp": 0
+  },
+  "spdif:toslink": {
+   "alut": 38,
+   "dsp": 0
+  },
+  "sps_parser:sps": {
+   "alut": 309,
+   "dsp": 0
+  },
+  "stream_ingest:si": {
+   "alut": 2,
+   "dsp": 0
+  },
+  "stream_path:spath": {
+   "alut": 147532,
+   "dsp": 113
+  },
+  "sync_fix:sync_h": {
+   "alut": 35,
+   "dsp": 0
+  },
+  "sync_fix:sync_v": {
+   "alut": 35,
+   "dsp": 0
+  },
+  "sys_top": {
+   "alut": 165671,
+   "dsp": 146
+  },
+  "sys_udiv:udiv": {
+   "alut": 26,
+   "dsp": 0
+  },
+  "sys_umul:umul": {
+   "alut": 30,
+   "dsp": 0
+  },
+  "sys_umuldiv:ar_muldiv": {
+   "alut": 57,
+   "dsp": 0
+  },
+  "sysmem_HPS_fpga_interfaces:fpga_interfaces": {
+   "alut": 2,
+   "dsp": 0
+  },
+  "sysmem_lite:sysmem": {
+   "alut": 281,
+   "dsp": 0
+  },
+  "vga_out:vga_out": {
+   "alut": 228,
+   "dsp": 0
+  },
+  "vga_out:vga_scaler_out": {
+   "alut": 292,
+   "dsp": 0
+  },
+  "video_calc:video_calc": {
+   "alut": 433,
+   "dsp": 0
+  },
+  "yc_out:yc_out": {
+   "alut": 668,
+   "dsp": 0
+  }
+ }
+}

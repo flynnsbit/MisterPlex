@@ -698,62 +698,25 @@ module stream_path #(
 		.error(core_error)
 	);
 
-	// Product decode is always rooted at product_decode_core above.  The legacy
-	// decode_stub remains only as the diagnostic frame-store painter until the
-	// core owns presentation; DECODE_REAL_INTRA no longer swaps the product
-	// decoder subtree or bypasses MC/DPB/deblock.
-	generate
-		begin : gen_diagnostic_present
-		decode_stub #(
-			.WIDTH(FRAME_W),
-			.HEIGHT(FRAME_H)
-		) stub (
-			.clk(clk), .reset(reset | flush),
-			.vcl_pulse(vcl_pulse),
-			.last_nal_type(last_nal_type),
-			.nalu_count(nalu_count),
-			.idr_count(idr_c),
-			.has_idr(has_idr_w),
-			.sps_valid(sps_valid),
-			.mb_w(sps_mb_w),
-			.mb_h(sps_mb_h),
-			.slice_type(sl_type),
-			.slice_is_i(sl_is_i),
-			.slice_valid(slice_valid),
-			.first_mb_addr(sl_first),
-			.has_mb_type(sl_has_mbt),
-			.first_mb_p_skip(first_mb_p_skip),
-			.first_mb_part_mode(first_mb_part_mode),
-			.first_mb_part_count(first_mb_part_count),
-			.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
-			.first_mb_intra(first_mb_intra),
-			.residual_ok(sl_place_ok),
-			.residual_tc(sl_place_tc),
-			.residual_dc(sl_place_dc),
-			.residual_valid(residual_place_pulse),
-			.slice_qp(sl_place_qp),
-			.residual_coeff(sl_place_coeff),
-			.recon_sig(recon_sig),
-			.recon_dbg(recon_dbg),
-			.recon_dbg_valid(recon_dbg_valid),
-			.recon_valid(recon_valid),
-			.wr_en(stub_fs_wr_en),
-			.wr_pixel(stub_fs_wr_pixel),
-			.wr_reset_ptr(stub_fs_wr_reset),
-			.swap_req(stub_fs_swap),
-			.busy(stub_busy),
-			.frames_out(stub_frames)
-		);
-		end
-	endgenerate
+	// decode_stub is DELETED, not muted.  It was diagnostic-only after Stage A
+	// retired it as the pixel source, and it cost 32 DSP blocks (its legacy
+	// h264_dequant4x4) plus 6,183 ALUTs.  Deleting it also removes the only
+	// other thing that could paint the frame store, so any picture on screen is
+	// now unambiguously the decode core's output -- do not reinstate it.
+	assign recon_sig       = 8'd0;
+	assign recon_dbg       = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid     = 1'b0;
+	assign stub_busy       = 1'b0;
+	assign stub_frames     = 16'd0;
 
 	// decode_stub is retired as the product pixel source.  Once the decode core
 	// has committed a real sample the stub's diagnostic paint is muted so it can
 	// never race the core for the non-DDR frame_store either.
-	wire        stub_fs_wr_en;
-	wire [15:0] stub_fs_wr_pixel;
-	wire        stub_fs_wr_reset;
-	wire        stub_fs_swap;
+	wire        stub_fs_wr_en    = 1'b0;
+	wire [15:0] stub_fs_wr_pixel = 16'd0;
+	wire        stub_fs_wr_reset = 1'b0;
+	wire        stub_fs_swap     = 1'b0;
 	reg         core_px_owns;
 	always @(posedge clk) begin
 		if (reset)
