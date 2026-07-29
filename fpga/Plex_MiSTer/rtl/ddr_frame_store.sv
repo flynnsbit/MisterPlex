@@ -151,28 +151,51 @@ module ddr_frame_store #(
 	localparam int PX_BYTE_W    = $clog2(PX_FRAME_BYTES);
 	localparam int PX_QW_W      = PX_BYTE_W - 3;
 
+	// Pipeline decode pixel inputs one cycle so y*stride Mult is not on the
+	// same edge as deblock out_y (STA was -0.063 ns on this path).
+	reg        dec_px_wr_en_d;
+	reg  [1:0] dec_px_plane_d;
+	reg [15:0] dec_px_x_d;
+	reg [15:0] dec_px_y_d;
+	reg  [7:0] dec_px_data_d;
+	always @(posedge clk) begin
+		if (reset) begin
+			dec_px_wr_en_d <= 1'b0;
+			dec_px_plane_d <= 2'd0;
+			dec_px_x_d <= 16'd0;
+			dec_px_y_d <= 16'd0;
+			dec_px_data_d <= 8'd0;
+		end else begin
+			dec_px_wr_en_d <= dec_px_wr_en;
+			dec_px_plane_d <= dec_px_plane;
+			dec_px_x_d <= dec_px_x;
+			dec_px_y_d <= dec_px_y;
+			dec_px_data_d <= dec_px_data;
+		end
+	end
+
 	wire [PX_BYTE_W-1:0] px_plane_base =
-		(dec_px_plane == 2'd0) ? PX_BYTE_W'(0) :
-		(dec_px_plane == 2'd1) ? PX_BYTE_W'(PX_Y_BYTES) :
-		                         PX_BYTE_W'(PX_Y_BYTES + PX_C_BYTES);
+		(dec_px_plane_d == 2'd0) ? PX_BYTE_W'(0) :
+		(dec_px_plane_d == 2'd1) ? PX_BYTE_W'(PX_Y_BYTES) :
+		                           PX_BYTE_W'(PX_Y_BYTES + PX_C_BYTES);
 	wire [PX_BYTE_W-1:0] px_row_stride =
-		(dec_px_plane == 2'd0) ? PX_BYTE_W'(CODED_W) : PX_BYTE_W'(PX_C_STRIDE);
+		(dec_px_plane_d == 2'd0) ? PX_BYTE_W'(CODED_W) : PX_BYTE_W'(PX_C_STRIDE);
 	wire [PX_BYTE_W-1:0] px_byte_off =
-		px_plane_base + (PX_BYTE_W'(dec_px_y) * px_row_stride) + PX_BYTE_W'(dec_px_x);
+		px_plane_base + (PX_BYTE_W'(dec_px_y_d) * px_row_stride) + PX_BYTE_W'(dec_px_x_d);
 	wire [PX_QW_W-1:0] px_qword = px_byte_off[PX_BYTE_W-1:3];
 	wire [2:0] px_lane = px_byte_off[2:0];
-	wire px_in_frame = (dec_px_x < 16'(CODED_W)) && (dec_px_y < 16'(CODED_H));
+	wire px_in_frame = (dec_px_x_d < 16'(CODED_W)) && (dec_px_y_d < 16'(CODED_H));
 
 	reg [63:0] px_acc;
 	wire [63:0] px_acc_next = (px_lane == 3'd0)
-		? {56'd0, dec_px_data}
-		: (px_acc | ({56'd0, dec_px_data} << {px_lane, 3'b000}));
-	wire px_push = dec_px_wr_en && px_in_frame && (px_lane == 3'd7);
+		? {56'd0, dec_px_data_d}
+		: (px_acc | ({56'd0, dec_px_data_d} << {px_lane, 3'b000}));
+	wire px_push = dec_px_wr_en_d && px_in_frame && (px_lane == 3'd7);
 
 	always @(posedge clk) begin
 		if (reset)
 			px_acc <= 64'd0;
-		else if (dec_px_wr_en && px_in_frame)
+		else if (dec_px_wr_en_d && px_in_frame)
 			px_acc <= px_acc_next;
 	end
 
