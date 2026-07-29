@@ -102,27 +102,18 @@ public:
                              int bank = 0);
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
 
-    // P3-3l5 hybrid: attempt to capture the FPGA reconstructed I420 plane.
+    // P3-3l5 hybrid: capture FPGA reconstructed I420 from the dedicated export
+    // window (mailbox_abi::kReconExportPhysBase / PLXO). NEVER reads present
+    // banks @ kDdrFrameBase — that would return ARM's own last write.
     //
-    // FINDING (measured in source, not invented): there is NO FPGA→ARM recon
-    // plane readback today.
-    //   - DDR banks @ kDdrFrameBase (0x30000000) are ARM→scanout only
-    //     (sendYuv420pFrameDdr / publishDdrFrame write; ddram_frame_rd reads
-    //     them into BRAM for HDMI).
-    //   - FPGA DDRAM_WE on that window writes mailboxes only (PLXF/PLXD/PLXS/…)
-    //     — never I420 pixel banks (see ddr_frame_store.sv DDRAM_WE sites).
-    //   - Decoder DPB recon is an internal mem_* port (h264_dpb.sv), not an
-    //     HPS-documented capture ABI.
-    // Reading the present banks would return the ARM's own last write — a
-    // silently-plausible wrong "FPGA plane". This API therefore fails closed
-    // and sets lastError() to kNoReconReadbackReason until RTL exports a
-    // dedicated recon plane + ready doorbell that ARM can mmap.
-    //
-    // What RTL would need (for sv-integrate): FPGA write of recon I420 into a
-    // known HPS-DDR region (not the active present bank), plus a seq/ready
-    // mailbox ARM can poll; then this method becomes a real copy.
+    // Fail closed when:
+    //   - mmap unavailable
+    //   - PLXO magic mismatch / ready=0 / torn=1
+    //   - geometry bytes do not fit destination or bank stride
+    //   - seq unchanged since last successful capture (optional stale guard)
+    // On success: memcpy I420 from the published bank into dst.
     static constexpr const char* kNoReconReadbackReason =
-        "no FPGA recon I420 readback (DDR banks ARM→scanout; FPGA mailbox-only writes)";
+        "FPGA recon I420 not ready (PLXO ready=0/torn/missing)";
     bool tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int height);
 
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
@@ -355,6 +346,8 @@ private:
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
     bool ensureDdrMap();
     void releaseDdrMap();
+    bool ensureReconExportMap();
+    void releaseReconExportMap();
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
@@ -382,6 +375,13 @@ private:
     static constexpr uint32_t SSPI_FPGA_EN = (1u << 18);
     static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
+
+    // Dedicated recon export window (PLXO / kReconExportPhysBase) — not present banks.
+    int reconMemFd_ = -1;
+    uint8_t* reconMap_ = nullptr;
+    size_t reconMapLen_ = 0;
+    uint16_t lastReconSeq_ = 0;
+    bool lastReconSeqValid_ = false;
 
     int bitstreamMemFd_ = -1;
     uint8_t* bitstreamMap_ = nullptr;

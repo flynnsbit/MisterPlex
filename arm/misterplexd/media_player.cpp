@@ -1331,10 +1331,9 @@ void MediaPlayer::streamPump(int sfd) {
     };
 
     // Hybrid (opt-in): ownership gate + compose before F1.
-    // SHIPPED STATE: host-only composite until tryCaptureReconI420 succeeds.
-    // Pre-register @320x240: I→0 host MB after reclass of 300 FPGA marks,
-    // P→300 host MB (CAP_INTER=0). Missing FPGA plane → loud reclass, never
-    // silent product_recon_ok. Not a true FPGA+ARM pixel split yet.
+    // FPGA plane from tryCaptureReconI420 (PLXO + dedicated 0x30200000 banks).
+    // Fail closed / loud reclass when mailbox not ready — never present banks.
+    // Pre-register @320x240: I→0 host MB after FPGA plane ok; P→300 host MB.
     size_t hybridFrames = 0;
     size_t hybridHostMb = 0;
     size_t hybridFpgaMb = 0;
@@ -1357,8 +1356,7 @@ void MediaPlayer::streamPump(int sfd) {
             log("media: HYBRID_PRESENT=1 CAP_INTRA=1 CAP_INTER=0; fail-closed on "
                 "ambiguous ownership; FPGA plane via tryCaptureReconI420");
         }
-        // Capture attempt: fails closed today (no RTL export). Never substitute
-        // ARM-written present banks as an "FPGA plane".
+        // Capture from dedicated recon export (PLXO). Never substitute present banks.
         const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
         const uint8_t* fpgaPlane = nullptr;
         size_t fpgaN = 0;
@@ -2691,8 +2689,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     // No STREAM: ownership signals unavailable — present host plane only
                     // (honest non-hybrid). Still publishF1 with host pixels.
                 } else {
-                    // tryCaptureReconI420 fails closed until RTL recon export lands.
-                    // Path is host-plane + ownership + loud reclass unless capture ok.
+                    // Capture PLXO recon bank when ready; else loud reclass (host-only composite).
                     static bool loggedNoReadback = false;
                     std::vector<uint8_t> fpgaScratch;
                     const uint8_t* fpgaPlane = nullptr;

@@ -121,6 +121,38 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	// Bitstream reader owns the stream-side DDR slot when reading the ring.
+	// Recon export steals the slot only while it has a pending write (export_want)
+	// and the bitstream reader is not asserting bus_want — never touches present banks.
+	wire        bs_want;
+	wire  [7:0] bs_burstcnt;
+	wire [28:0] bs_addr;
+	wire        bs_rd;
+	wire [63:0] bs_din;
+	wire  [7:0] bs_be;
+	wire        bs_we;
+	wire        exp_want;
+	wire  [7:0] exp_burstcnt;
+	wire [28:0] exp_addr;
+	wire        exp_rd;
+	wire [63:0] exp_din;
+	wire  [7:0] exp_be;
+	wire        exp_we;
+	wire        grant_export = exp_want && !bs_want;
+
+	assign ddr_bus_want = bs_want | exp_want;
+	assign ddr_burstcnt = grant_export ? exp_burstcnt : bs_burstcnt;
+	assign ddr_addr     = grant_export ? exp_addr     : bs_addr;
+	assign ddr_rd       = grant_export ? exp_rd       : bs_rd;
+	assign ddr_din      = grant_export ? exp_din      : bs_din;
+	assign ddr_be       = grant_export ? exp_be       : bs_be;
+	assign ddr_we       = grant_export ? exp_we       : bs_we;
+
+	// When export holds the grant, hold bitstream with busy so it does not issue.
+	wire bs_busy_eff  = ddr_busy | grant_export;
+	// When bitstream holds the bus, hold export.
+	wire exp_busy_eff = ddr_busy | bs_want;
+
 	ddr_bitstream_reader ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -129,22 +161,59 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
-		.bus_want(ddr_bus_want),
-		.DDRAM_BUSY(ddr_busy),
-		.DDRAM_BURSTCNT(ddr_burstcnt),
-		.DDRAM_ADDR(ddr_addr),
+		.bus_want(bs_want),
+		.DDRAM_BUSY(bs_busy_eff),
+		.DDRAM_BURSTCNT(bs_burstcnt),
+		.DDRAM_ADDR(bs_addr),
 		.DDRAM_DOUT(ddr_dout),
-		.DDRAM_DOUT_READY(ddr_dout_ready),
-		.DDRAM_RD(ddr_rd),
-		.DDRAM_DIN(ddr_din),
-		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we),
+		.DDRAM_DOUT_READY(ddr_dout_ready && !grant_export),
+		.DDRAM_RD(bs_rd),
+		.DDRAM_DIN(bs_din),
+		.DDRAM_BE(bs_be),
+		.DDRAM_WE(bs_we),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
 		.overrun_count(stream_ddr_overruns),
 		.host_write_count(stream_ddr_host_write),
 		.fpga_read_count(stream_ddr_fpga_read)
+	);
+
+	wire        exp_sample_valid;
+	wire [31:0] exp_sample_off;
+	wire [7:0]  exp_sample_data;
+	wire        exp_frame_start;
+	wire        exp_frame_done;
+	wire        exp_frame_abort;
+
+	h264_recon_export #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.PHYS_BASE(32'h3020_0000),
+		.BANK_STRIDE(32'h0004_0000),
+		.MAILBOX_PHYS(32'h3007_F130),
+		.MAGIC(32'h504C_584F)
+	) recon_export (
+		.clk(clk), .reset(reset | flush),
+		.sample_valid(exp_sample_valid),
+		.sample_off(exp_sample_off),
+		.sample_data(exp_sample_data),
+		.frame_start(exp_frame_start),
+		.frame_done(exp_frame_done),
+		.frame_abort(exp_frame_abort),
+		.ddr_want(exp_want),
+		.ddr_busy(exp_busy_eff),
+		.ddr_burstcnt(exp_burstcnt),
+		.ddr_addr(exp_addr),
+		.ddr_dout(ddr_dout),
+		.ddr_dout_ready(ddr_dout_ready && grant_export),
+		.ddr_rd(exp_rd),
+		.ddr_din(exp_din),
+		.ddr_be(exp_be),
+		.ddr_we(exp_we),
+		.busy(),
+		.frames_exported(),
+		.last_torn()
 	);
 
 	wire bf_rd_en, bf_rd_empty, bf_has;
@@ -341,7 +410,13 @@ module stream_path #(
 		.wr_reset_ptr(fs_wr_reset),
 		.swap_req(fs_swap),
 		.busy(stub_busy),
-		.frames_out(stub_frames)
+		.frames_out(stub_frames),
+		.exp_sample_valid(exp_sample_valid),
+		.exp_sample_off(exp_sample_off),
+		.exp_sample_data(exp_sample_data),
+		.exp_frame_start(exp_frame_start),
+		.exp_frame_done(exp_frame_done),
+		.exp_frame_abort(exp_frame_abort)
 	);
 
 	(* keep = 1 *) wire keep_si = si_active;

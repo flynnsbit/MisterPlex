@@ -62,7 +62,16 @@ module decode_stub #(
 	output reg         wr_reset_ptr,
 	output reg         swap_req,
 	output reg         busy,
-	output reg  [15:0] frames_out
+	output reg  [15:0] frames_out,
+
+	// P3-3l5 recon export tap → h264_recon_export (dedicated DDR, not present banks).
+	// Mirrors DPB current-frame byte writes; frame_done on ref-ready pulse.
+	output wire        exp_sample_valid,
+	output wire [31:0] exp_sample_off,
+	output wire [7:0]  exp_sample_data,
+	output wire        exp_frame_start,
+	output wire        exp_frame_done,
+	output wire        exp_frame_abort
 );
 
 	localparam int PIXELS = WIDTH * HEIGHT;
@@ -513,6 +522,20 @@ module decode_stub #(
 		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
 			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
 	end
+
+	// Recon export tap: only current-frame DPB writes (I420 byte offsets).
+	// Contents track whatever the fill path commits (synthetic seam patterns
+	// today; real filtered recon when writeback lands). Never the present bank.
+	wire [31:0] exp_cur_base = dpb_current_base;
+	wire [31:0] exp_off_raw = dpb_mem_waddr - exp_cur_base;
+	assign exp_sample_valid = dpb_mem_we &&
+	                          (dpb_mem_waddr >= exp_cur_base) &&
+	                          (exp_off_raw < DPB_FRAME_BYTES[31:0]);
+	assign exp_sample_off = exp_off_raw;
+	assign exp_sample_data = dpb_mem_wdata;
+	assign exp_frame_start = dpb_idr_start;
+	assign exp_frame_done = ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse;
+	assign exp_frame_abort = reset | deblock_commit_order_error;
 
 	// DPB read port (for MC reference fetch) — 1-cycle latency
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?

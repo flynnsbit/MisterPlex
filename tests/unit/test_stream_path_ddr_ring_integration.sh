@@ -43,6 +43,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_export.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
 )

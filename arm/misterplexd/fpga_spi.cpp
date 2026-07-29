@@ -419,6 +419,7 @@ bool FpgaSpi::open() {
 
 void FpgaSpi::close() {
     releaseDdrMap();
+    releaseReconExportMap();
     releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
@@ -749,6 +750,47 @@ void FpgaSpi::releaseDdrMap() {
         ::close(ddrMemFd_);
         ddrMemFd_ = -1;
     }
+}
+
+bool FpgaSpi::ensureReconExportMap() {
+    if (reconMap_ && reconMemFd_ >= 0)
+        return true;
+    releaseReconExportMap();
+    const size_t kLen = static_cast<size_t>(mailbox_abi::kReconExportMapBytes);
+    // Map from PLXO page through both recon banks so one window covers mailbox+pixels.
+    // PHYS order: PLXO @ 0x3007F130 is BELOW recon base 0x30200000 — map two ranges
+    // is awkward; keep separate: mailbox via present ddr map OR dedicated small maps.
+    // Pixel window only here; mailbox read uses ensureDdrMap (fixed 0x3007Fxxx page
+    // lives inside the historical present map for 320x240+ geometries).
+    reconMemFd_ = ::open("/dev/mem", O_RDWR | O_CLOEXEC | O_SYNC);
+    if (reconMemFd_ < 0) {
+        setErr("ensureReconExportMap: open /dev/mem failed");
+        return false;
+    }
+    void* p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, reconMemFd_,
+                   static_cast<off_t>(mailbox_abi::kReconExportPhysBase));
+    if (p == MAP_FAILED) {
+        setErr("ensureReconExportMap: mmap recon window failed");
+        ::close(reconMemFd_);
+        reconMemFd_ = -1;
+        return false;
+    }
+    reconMap_ = static_cast<uint8_t*>(p);
+    reconMapLen_ = kLen;
+    return true;
+}
+
+void FpgaSpi::releaseReconExportMap() {
+    if (reconMap_) {
+        munmap(reconMap_, reconMapLen_);
+        reconMap_ = nullptr;
+        reconMapLen_ = 0;
+    }
+    if (reconMemFd_ >= 0) {
+        ::close(reconMemFd_);
+        reconMemFd_ = -1;
+    }
+    lastReconSeqValid_ = false;
 }
 
 bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
@@ -1790,14 +1832,81 @@ bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width,
 }
 
 bool FpgaSpi::tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int height) {
-    // Fail closed: do not invent a plane by reading ARM-written present banks.
-    // See fpga_spi.hpp kNoReconReadbackReason / hybrid gate design.
-    (void)dst;
-    (void)dst_n;
-    (void)width;
-    (void)height;
-    setErr(kNoReconReadbackReason);
-    return false;
+    // Fail closed on any incomplete handshake. Never fall back to present banks.
+    if (!dst || width <= 0 || height <= 0 || (width % 2) || (height % 2)) {
+        setErr("tryCaptureReconI420: bad args");
+        return false;
+    }
+    const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 3u / 2u;
+    if (dst_n < need) {
+        setErr("tryCaptureReconI420: dst short");
+        return false;
+    }
+    if (need > static_cast<size_t>(mailbox_abi::kReconExportBankStride)) {
+        setErr("tryCaptureReconI420: frame larger than recon bank stride");
+        return false;
+    }
+
+    // PLXO lives on the fixed control page (0x3007F130), covered by present DDR map.
+    if (!ensureDdrMap())
+        return false;
+    if (!ensureReconExportMap())
+        return false;
+
+    const uint32_t mboxPhys = mailbox_abi::kPlxoAddr;
+    const uint32_t base = ddrLayout_.phys_base;
+    if (mboxPhys < base) {
+        setErr("tryCaptureReconI420: PLXO below DDR map base");
+        return false;
+    }
+    const size_t mboxOff = static_cast<size_t>(mboxPhys - base);
+    if (mboxOff + 8 > ddrMapLen_) {
+        setErr("tryCaptureReconI420: PLXO outside present DDR map window");
+        return false;
+    }
+
+    // Stable double-read of mailbox (torn-frame defence).
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + mboxOff);
+    uint32_t lo0 = 0, hi0 = 0, lo1 = 0, hi1 = 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        lo0 = mw[0];
+        hi0 = mw[1];
+        lo1 = mw[0];
+        hi1 = mw[1];
+        if (lo0 == lo1 && hi0 == hi1)
+            break;
+    }
+    if (lo0 != lo1 || hi0 != hi1) {
+        setErr("tryCaptureReconI420: PLXO unstable");
+        return false;
+    }
+    if (lo0 != mailbox_abi::kPlxoMagic) {
+        setErr(kNoReconReadbackReason);
+        return false;
+    }
+    const bool ready = ((hi0 >> mailbox_abi::kPlxoReadyBit) & 1u) != 0;
+    const bool torn = ((hi0 >> mailbox_abi::kPlxoTornBit) & 1u) != 0;
+    const int bank = static_cast<int>((hi0 >> mailbox_abi::kPlxoBankBit) & 1u);
+    const uint16_t seq = static_cast<uint16_t>(
+        (hi0 >> mailbox_abi::kPlxoSeqBit) & ((1u << mailbox_abi::kPlxoSeqWidth) - 1u));
+    if (!ready || torn) {
+        setErr(kNoReconReadbackReason);
+        return false;
+    }
+    // Optional: allow same seq re-read (compose may sample twice); do not require advance.
+
+    const size_t bankOff =
+        static_cast<size_t>(bank) * static_cast<size_t>(mailbox_abi::kReconExportBankStride);
+    if (bankOff + need > reconMapLen_) {
+        setErr("tryCaptureReconI420: bank out of recon map");
+        return false;
+    }
+    // Copy from dedicated recon window only.
+    std::memcpy(dst, reconMap_ + bankOff, need);
+    lastReconSeq_ = seq;
+    lastReconSeqValid_ = true;
+    clearErr();
+    return true;
 }
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {
