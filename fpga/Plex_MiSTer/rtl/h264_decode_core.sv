@@ -2044,8 +2044,23 @@ module h264_decode_core #(
     // table without matching a code.
     assign err_cavlc_miss = cavlc_done && !cavlc_ok;
 
+    // T02: product MC fetch is 16x16-only (P_Skip + P_L0_16x16). PMS encode
+    // uses partitions=none so sub_mb=0 on our clip — documented limitation,
+    // NOT a live bug. Sticky keep so unsupported partitions never fail silent.
+    wire unsupported_inter_part = mb_type_valid && !mb_skip && !slice_is_i &&
+                                  (mb_type >= 5'd1) && (mb_type <= 5'd4);
+    reg err_unsupported_part_r;
+    always @(posedge clk) begin
+        if (reset)
+            err_unsupported_part_r <= 1'b0;
+        else if (unsupported_inter_part)
+            err_unsupported_part_r <= 1'b1;
+    end
+    (* keep = 1 *) wire err_unsupported_part = err_unsupported_part_r;
+
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
-                   (mb_height != 8'd0 && mb_height32 != MB_H);
+                   (mb_height != 8'd0 && mb_height32 != MB_H) ||
+                   err_unsupported_part_r;
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
@@ -2065,6 +2080,7 @@ module h264_decode_core #(
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         deblock_wb_valid | |deblock_wb_mb_addr | deblock_wb_is_ref |
         deblock_dpb_invalidate_refs | deblock_ref_ready_pulse |
-        |deblock_ref_ready_slot | deblock_commit_order_error;
+        |deblock_ref_ready_slot | deblock_commit_order_error |
+        err_unsupported_part;
 
 endmodule

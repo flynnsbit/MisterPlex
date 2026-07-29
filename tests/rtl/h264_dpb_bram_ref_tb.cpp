@@ -131,10 +131,38 @@ int main(int argc, char** argv) {
 	uint32_t ref_base = t->reference_base;
 	std::printf("INFO: reference_base=0x%x current_base=0x%x\n", ref_base, (unsigned)t->current_base);
 
-	// Read all luma via ref_rd — must be stall-free (BRAM) after accept, +1 valid
 	int errs = 0;
-	int got = 0;
 	std::vector<uint8_t> out(Y, 0);
+#ifdef BRAM_REF_FALLBACK
+	// Pure-DDR fallback: one sample at a time (hold en through stall, drop after accept).
+	for (int i = 0; i < Y; i++) {
+		t->ref_rd_en = 1;
+		t->ref_rd_addr = ref_base + (uint32_t)i;
+		int accepted = 0, cvalid = 0;
+		uint8_t cgot = 0;
+		for (int k = 0; k < 5000 && !cvalid; k++) {
+			t->eval();
+			if (!accepted && t->ref_rd_en && !t->ref_rd_stall)
+				accepted = 1;
+			ddr.step(t);
+			tick(t);
+			if (accepted)
+				t->ref_rd_en = 0;
+			if (t->ref_rd_valid) {
+				cgot = t->ref_rd_data;
+				cvalid = 1;
+			}
+		}
+		if (!accepted || !cvalid) {
+			std::printf("FAIL: luma[%d] accept=%d valid=%d\n", i, accepted, cvalid);
+			errs++;
+			break;
+		}
+		out[i] = cgot;
+	}
+#else
+	// BRAM path: stall-free pipelined reads after load.
+	int got = 0;
 	std::vector<int> pending;
 	int idx = 0;
 	wait = 0;
@@ -144,9 +172,7 @@ int main(int argc, char** argv) {
 			t->ref_rd_en = 1;
 			t->ref_rd_addr = ref_base + (uint32_t)idx;
 		}
-		// check stall: BRAM luma should not stall outside swap
 		if (t->ref_rd_en && t->ref_rd_stall) {
-			// only acceptable if still somehow busy
 			std::printf("FAIL: unexpected stall on luma BRAM rd idx=%d\n", idx);
 			errs++;
 			break;
@@ -169,6 +195,7 @@ int main(int argc, char** argv) {
 		}
 	}
 	t->ref_rd_en = 0;
+#endif
 
 	for (int i = 0; i < Y; i++) {
 		uint8_t exp = (uint8_t)(0xA0 ^ (i * 13));
@@ -214,7 +241,11 @@ int main(int argc, char** argv) {
 	}
 
 	if (errs == 0) {
+#ifdef BRAM_REF_FALLBACK
+		std::printf("PASS: BRAM_REF=0 fallback luma %d bytes exact via DDR, chroma OK\n", Y);
+#else
 		std::printf("PASS: BRAM luma %d bytes exact, chroma DDR OK, frame_done load OK\n", Y);
+#endif
 		delete t;
 		return 0;
 	}

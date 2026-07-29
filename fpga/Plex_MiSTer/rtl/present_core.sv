@@ -22,7 +22,8 @@ module present_core #(
 `elsif FRAME_LINES_16
 	parameter int FRAME_LINE_COUNT = 16
 `else
-	parameter int FRAME_LINE_COUNT = 4
+	// Default 8: chroma writeback is live; 4 was an area cut only.
+	parameter int FRAME_LINE_COUNT = 8
 `endif
 )(
 	input  wire        clk,

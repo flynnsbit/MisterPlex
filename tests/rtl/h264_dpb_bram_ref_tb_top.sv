@@ -31,6 +31,7 @@ module h264_dpb_bram_ref_tb_top (
 	output wire        ddr_req
 );
 	// Tiny frame for fast BRAM fill: 32x16 Y = 512 B; chroma 16x8*2 = 256 B; stride 768.
+	// +define+BRAM_REF_FALLBACK builds the pure-DDR path (BRAM_REF=0).
 	h264_dpb_ddr #(
 		.FRAME_W(32),
 		.FRAME_H(16),
@@ -38,7 +39,11 @@ module h264_dpb_bram_ref_tb_top (
 		.BANK_STRIDE(768),
 		.WR_FIFO_DEPTH(16),
 		.REG_RESPONSE(1'b1),
+`ifdef BRAM_REF_FALLBACK
+		.BRAM_REF(1'b0),
+`else
 		.BRAM_REF(1'b1),
+`endif
 		.BRAM_LUMA_ONLY(1'b1)
 	) u_dut (
 		.clk(clk),
