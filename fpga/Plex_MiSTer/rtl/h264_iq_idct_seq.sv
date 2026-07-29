@@ -1,13 +1,11 @@
 // h264_iq_idct_seq — sequential 4x4 inverse scale + inverse transform.
 //
-// Bit-exact replacement for the pair h264_dequant4x4_flex + h264_idct4x4 when
-// driven one block at a time.  One scaler and one 4-point butterfly are reused
-// across 16 scale cycles + 4 column cycles (~21 cycles total).
-//
-// DSP trap: never write `v <<< qdiv` or `qp % 6` / `qp / 6`.  Quartus turns a
-// variable barrel shift into a DSP multiply.  Use the 9-way shl_qdiv mux and
-// the 52-entry qp_mod6/qp_div6 LUTs.  LevelScale is (c*na)<<qdiv (8.5.12.1),
-// not <<4 — that regression made every AC residual 4x too small.
+// Bit-exact replacement for h264_dequant4x4_flex + h264_idct4x4 (~21 cycles).
+// LevelScale MUST match flex / FFmpeg 8.5.12.1 exactly (not the collapsed form):
+//   d = ((c * na * 16) << (qdiv + 2) + 32) >> 6
+// Do NOT simplify to (c*na)<<qdiv in RTL comments or code — three prior copies
+// each drifted independently.  DSP trap: never `v <<< qdiv` or qp%/qp/; use
+// qp_mod6/qp_div6 LUTs + mul_norm + 48-bit shl_amt mux (amt = qdiv+2, 0..10).
 `default_nettype none
 
 module h264_iq_idct_seq (
@@ -85,19 +83,23 @@ module h264_iq_idct_seq (
 		end
 	endfunction
 
-	// 9-way mux — do NOT rewrite as `v <<< q`.
-	function automatic signed [31:0] shl_qdiv(input signed [31:0] v, input [3:0] q);
+	// 48-bit shift mux for (qdiv+2) in 0..10 — identical to flex. Never `v <<< q`.
+	function automatic signed [47:0] shl_amt;
+		input signed [31:0] v;
+		input [3:0] amt;
 		begin
-			case (q)
-			4'd0:    shl_qdiv = v;
-			4'd1:    shl_qdiv = {v[30:0], 1'b0};
-			4'd2:    shl_qdiv = {v[29:0], 2'b0};
-			4'd3:    shl_qdiv = {v[28:0], 3'b0};
-			4'd4:    shl_qdiv = {v[27:0], 4'b0};
-			4'd5:    shl_qdiv = {v[26:0], 5'b0};
-			4'd6:    shl_qdiv = {v[25:0], 6'b0};
-			4'd7:    shl_qdiv = {v[24:0], 7'b0};
-			default: shl_qdiv = {v[23:0], 8'b0};
+			case (amt)
+			4'd0:  shl_amt = {{16{v[31]}}, v};
+			4'd1:  shl_amt = {{15{v[31]}}, v, 1'b0};
+			4'd2:  shl_amt = {{14{v[31]}}, v, 2'b0};
+			4'd3:  shl_amt = {{13{v[31]}}, v, 3'b0};
+			4'd4:  shl_amt = {{12{v[31]}}, v, 4'b0};
+			4'd5:  shl_amt = {{11{v[31]}}, v, 5'b0};
+			4'd6:  shl_amt = {{10{v[31]}}, v, 6'b0};
+			4'd7:  shl_amt = {{9{v[31]}},  v, 7'b0};
+			4'd8:  shl_amt = {{8{v[31]}},  v, 8'b0};
+			4'd9:  shl_amt = {{7{v[31]}},  v, 9'b0};
+			default: shl_amt = {{6{v[31]}}, v, 10'b0}; // amt==10
 			endcase
 		end
 	endfunction
@@ -120,10 +122,10 @@ module h264_iq_idct_seq (
 	endfunction
 
 	function automatic signed [28:0] sat29;
-		input signed [31:0] v;
+		input signed [47:0] v;
 		begin
-			if (v > 32'sd268435455)       sat29 = 29'sd268435455;
-			else if (v < -32'sd268435456) sat29 = ~29'sd268435455;
+			if (v > 48'sd268435455)       sat29 = 29'sd268435455;
+			else if (v < -48'sd268435456) sat29 = ~29'sd268435455;
 			else                          sat29 = v[28:0];
 		end
 	endfunction
@@ -146,10 +148,13 @@ module h264_iq_idct_seq (
 	wire signed [15:0] cval = in_range ? coeff[arr5[3:0]] : 16'sd0;
 	wire [4:0]         na   = norm_adjust(qmod, mi);
 
-	// LevelScale path identical to h264_dequant4x4_flex: (c * na) << (qp/6)
-	wire signed [31:0] base   = mul_norm(32'($signed(cval)), na);
-	wire signed [31:0] prod   = shl_qdiv(base, qdiv);
-	wire signed [28:0] scaled = sat29(prod);
+	// LevelScale identical to h264_dequant4x4_flex (4e0770b / FFmpeg):
+	//   ((c * na * 16) << (qdiv + 2) + 32) >> 6
+	wire signed [31:0] base   = mul_norm({{16{cval[15]}}, cval}, na);
+	wire signed [31:0] base16 = {base[27:0], 4'b0}; // *16
+	wire signed [47:0] prod   = shl_amt(base16, qdiv + 4'd2);
+	wire signed [47:0] rnd    = (prod + 48'sd32) >>> 6;
+	wire signed [28:0] scaled = sat29(rnd);
 	wire signed [28:0] dq_val = (r == 4'd0) ? (dc_override ? dc_value
 	                                                        : (skip_dc ? 29'sd0 : scaled))
 	                                         : scaled;

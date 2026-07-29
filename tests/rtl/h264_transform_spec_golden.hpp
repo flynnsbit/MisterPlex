@@ -3,17 +3,12 @@
 // Flat 4x4 weight matrix (Baseline default) weightScale = 16 everywhere.
 //
 // Algebra notes (LevelScale = 16 * normAdjust):
-//   AC 8.5.12.1 unsimplified collapses to (c * na) << (qp/6) for integer results.
-//   Luma DC 8.5.10: FFmpeg ff_h264_luma_dc_dequant_idct uses
-//     qmul = (na*16) << (qp/6 + 2);  dc = (f * qmul + 128) >> 8
-//     ≡ (((f * LevelScale) << (qp/6)) + 32) >> 6
-//     ≡ (((f * na) << (qp/6)) + 2) >> 2
-//   Chroma DC 8.5.11: FFmpeg ff_h264_chroma_dc_dequant_idct uses
-//     (f * qmul) >> 7 with the same qmul construction
-//     ≡ (((f * LevelScale) << (qp/6))) >> 5
-//     ≡ (((f * na) << (qp/6))) >> 1
-// A misremembered unsimplified DC form using <<(qdiv-2) with LevelScale=16*na
-// is 16× too large vs every production decoder — do not use it.
+//   AC 8.5.12.1 primary (FFmpeg/RTL): ((c*na*16)<<(qdiv+2)+32)>>6
+//     ≡ spec if/else ≡ collapsed (c*na)<<qdiv  (golden cross-checks all three)
+//   Luma DC 8.5.10: qmul=(na*16)<<(qdiv+2); dc=(f*qmul+128)>>8
+//   Chroma DC 8.5.11: (f*qmul)>>7 with same qmul
+// Do NOT implement AC as bare (c*na)<<qdiv in RTL without the flex-identical
+// *16<<(qdiv+2)+32>>6 form — copy drift caused three independent scale bugs.
 #pragma once
 #include <cstdint>
 #include <algorithm>
@@ -49,25 +44,32 @@ inline int64_t Sat29(int64_t v) {
 
 // 8.5.12.1 Scaling process for residual transform coefficients.
 // weightScale flat = 16.  LevelScale(m,i,j) = weightScale * normAdjust.
-// Unsimplified form from the standard:
-//   if (qP >= 24)
-//     c_ij = (c_ij * LevelScale) << (qP/6 - 4)
-//   else
-//     c_ij = (c_ij * LevelScale + (1 << (3 - qP/6))) >> (4 - qP/6)
-// Integer-equivalent collapsed form used by FFmpeg/JM: (c * na) << (qp/6).
+// Primary form = FFmpeg/JM (matches corrected flex + seq RTL):
+//   d = ((c * na * 16) << (qP/6 + 2) + 32) >> 6
+// Spec unsimplified if/else and the collapsed (c*na)<< (qP/6) are integer-
+// equivalent; golden cross-checks them so a silent drift cannot hide.
 inline int64_t LevelScaleDequant(int64_t c, int qp, int raster) {
   const int qmod = qp % 6;
   const int qdiv = qp / 6;
   const int na = NormAdjust(qmod, MiClass(raster));
   const int64_t level_scale = 16LL * na;
-  int64_t out;
+  // FFmpeg primary
+  const int64_t ff = (((c * level_scale) << (qdiv + 2)) + 32) >> 6;
+  // Spec unsimplified cross-check
+  int64_t spec;
   if (qp >= 24) {
-    out = (c * level_scale) << (qdiv - 4);
+    spec = (c * level_scale) << (qdiv - 4);
   } else {
     const int64_t rnd = 1LL << (3 - qdiv);
-    out = (c * level_scale + rnd) >> (4 - qdiv);
+    spec = (c * level_scale + rnd) >> (4 - qdiv);
   }
-  return Sat29(out);
+  // Collapsed cross-check
+  const int64_t collapsed = (c * (int64_t)na) << qdiv;
+  if (ff != spec || ff != collapsed) {
+    // Force a visible golden failure if the three forms ever diverge.
+    return Sat29(ff ^ 0x7fffffffLL);
+  }
+  return Sat29(ff);
 }
 
 // Flex dequant: inverse zig-zag placement + optional AC-only / DC override.
