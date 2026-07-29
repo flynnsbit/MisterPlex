@@ -87,8 +87,10 @@ module h264_iq_idct_seq (
 	reg [3:0] cnt;
 
 	// ── one shared scaler ────────────────────────────────────────────────
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
+	wire [5:0] qmod6 = qp % 6;
+	wire [5:0] qdiv6 = qp / 6;
+	wire [2:0] qmod = qmod6[2:0];
+	wire [3:0] qdiv = qdiv6[3:0];
 
 	wire [3:0] r     = cnt;
 	// mi counts odd raster coordinates: bit0 is the column LSB, bit2 the row LSB.
