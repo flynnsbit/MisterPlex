@@ -26,7 +26,15 @@ DECODE=320x240
 # WEAK_BITRATE=1000
 # PRESENT=fb0|fpga|both
 PRESENT=fb0
-# STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
+#
+# STREAM — FPGA compressed-bitstream ring feed (F3 / PLXB@0x30140000)
+#   STREAM=0  producer dormant (CTRL=PLXD). Phase-2 cast default with PRESENT=fb0.
+#   STREAM=1  demux annex-B → host I-recon F1 + write NALs into DDR ring for FPGA.
+#   When PRESENT=fpga and STREAM is omitted, misterplexd defaults STREAM=1 so the
+#   FPGA consumer is not starved. Explicit STREAM= always wins.
+#   Lab-safe FPGA bring-up: PRESENT=fpga STREAM=1 STREAM_SKIP_RGB=0 (ARM RGB stays on).
+#   Observe ring: scripts/probe_bitstream_ring.sh  (or MISTER_HOST=... from build host)
+# STREAM=1
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).
 # STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)

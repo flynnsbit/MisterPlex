@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
     bool ddrMemFlush = false;
     bool presentProfile = false;
     bool streamEnabled = false;
+    bool streamConfExplicit = false; // true when conf/CLI set STREAM=
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
@@ -256,8 +257,10 @@ int main(int argc, char** argv) {
         if (!v.empty())
             presentProfile = confTruthy(v);
         v = loadConf(confPath, "STREAM");
-        if (!v.empty())
+        if (!v.empty()) {
             streamEnabled = confTruthy(v);
+            streamConfExplicit = true;
+        }
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -366,6 +369,16 @@ int main(int argc, char** argv) {
     player.setDdrMemSync(ddrMemSync);
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
+    // STREAM was historically default-off: Phase-2 cast (PRESENT=fb0) feeds every
+    // frame via F1 RGB and must not pay demux/F3 cost. The FPGA bitstream consumer
+    // is now in the product hierarchy, so PRESENT=fpga needs the F3 ring producer.
+    // Explicit STREAM= in conf always wins. PRESENT=both stays off unless set —
+    // dual-path cast is still STREAM=0 by default (safe; enable STREAM=1 to feed F3).
+    if (!streamConfExplicit && presentMode == "fpga") {
+        streamEnabled = true;
+        std::fprintf(stderr,
+                     "misterplexd: STREAM defaulted ON (PRESENT=fpga; set STREAM=0 to force dormant PLXD)\n");
+    }
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
@@ -435,9 +448,14 @@ int main(int argc, char** argv) {
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
-                     "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3 DDR ring; preferDirectH264; "
+                     "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga; "
+                     "probe: scripts/probe_bitstream_ring.sh)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
+    } else {
+        std::fprintf(stderr,
+                     "misterplexd: STREAM=0 (F3 producer dormant/PLXD; PRESENT=%s)\n",
+                     presentMode.c_str());
     }
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");

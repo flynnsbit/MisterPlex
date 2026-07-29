@@ -100,6 +100,10 @@ int main() {
     CHECK(preIdr.handleNal(p.data(), p.size()) == PushResult::Ok); // allowed
     CHECK(preIdrRing.status().nal_accepted == 4);
     CHECK(preIdr.stats().nal_dropped_pre_idr == 2);
+    CHECK(preIdr.stats().sps_pushed == 1);
+    CHECK(preIdr.stats().pps_pushed == 1);
+    CHECK(preIdr.stats().idr_pushed == 1);
+    CHECK(preIdr.stats().p_slice_pushed == 1);
     CHECK(preIdr.end() == ControlResult::Ok);
 
     // Full is transient and retried; persistent Full escalates distinctly.

@@ -73,3 +73,6 @@ ps w | grep '[m]isterplexd' || true
 wget -qO- http://127.0.0.1:3005/resources | head -c 300; echo
 REMOTE
 echo "Deployed misterplexd → $HOST"
+echo "Bitstream ring probe (on device or via MISTER_HOST): scripts/probe_bitstream_ring.sh"
+echo "PRODUCT FPGA feed: PRESENT=fpga → STREAM defaults ON; force STREAM=0 for PLXD dormant."
+echo "Lab-safe: PRESENT=fpga STREAM=1 STREAM_SKIP_RGB=0 in /media/fat/misterplex/misterplex.conf"

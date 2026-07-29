@@ -17,6 +17,7 @@
 #include <time.h>
 #include <vector>
 
+#include <fstream>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -785,6 +786,16 @@ bool MediaPlayer::initPresent() {
                     log("media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)");
                 else
                     log("media: DDR bitstream dormant publish failed: " + fpga_.lastError());
+                // Minimal status file so probe_bitstream_ring.sh works without STREAM.
+                const char* path = "/media/fat/misterplex/bitstream_ring.status";
+                const char* tmp = "/media/fat/misterplex/bitstream_ring.status.tmp";
+                std::ofstream out(tmp, std::ios::trunc);
+                if (out) {
+                    out << "stream_enabled=0\ndormant=1\ntriage=STARVED_producer_dormant_PLXD\n"
+                        << "producer_bytes=0\nconsumer_bytes=0\nnal_pushed=0\n";
+                    out.close();
+                    ::rename(tmp, path);
+                }
             }
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
@@ -1224,6 +1235,71 @@ void MediaPlayer::streamPump(int sfd) {
         return formatDdrBitstreamStatus(st);
     };
 
+    // ARM-readable snapshot for starved-vs-broken triage (g-fit / ops).
+    // Write pointer static → producer dormant; write advances & read stuck → consumer
+    // wedged; both advance & picture wrong → decode bug. Path is fixed so a tiny
+    // probe script can cat it without talking to the daemon.
+    auto writeBitstreamRingStatusFile = [&](const h264stream::DispatchStats& ds) {
+        const char* path = "/media/fat/misterplex/bitstream_ring.status";
+        const char* tmp = "/media/fat/misterplex/bitstream_ring.status.tmp";
+        FpgaSpi::BitstreamStatus st;
+        const bool ok = fpga_.readBitstreamStatus(st);
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out)
+            return;
+        out << "# misterplex bitstream ring observability\n";
+        out << "ts_unix_ms="
+            << std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count()
+            << "\n";
+        out << "stream_enabled=1\n";
+        if (!ok) {
+            out << "ddr_readable=0\nerr=" << fpga_.lastError() << "\n";
+        } else {
+            out << "ddr_readable=1\n";
+            out << "dormant=" << (st.dormant ? 1 : 0) << "\n";
+            out << "session_id=" << st.session_id << "\n";
+            out << "active=" << (st.active ? 1 : 0) << "\n";
+            out << "paused=" << (st.paused ? 1 : 0) << "\n";
+            out << "producer_bytes=" << st.producer_count << "\n";
+            out << "consumer_bytes=" << st.consumer_count << "\n";
+            out << "ring_level=" << st.ring_level << "\n";
+            out << "ring_capacity=" << st.ring_capacity << "\n";
+            out << "consumer_seq=" << st.consumer_seq << "\n";
+            out << "underrun=" << st.underrun_count << "\n";
+            out << "overrun=" << st.overrun_count << "\n";
+            out << "desync=" << st.desync_count << "\n";
+            out << "fatal=" << (st.fatal ? 1 : 0) << "\n";
+            const char* triage = "unknown";
+            if (st.dormant)
+                triage = "STARVED_producer_dormant_PLXD";
+            else if (st.producer_count == 0)
+                triage = "STARVED_no_writes";
+            else if (st.consumer_count == 0)
+                triage = "BROKEN_consumer_stuck";
+            else if (st.consumer_count + 4096 < st.producer_count && st.ring_level > 0)
+                triage = "CONSUMER_LAGGING";
+            else if (st.desync || st.fatal)
+                triage = "BROKEN_transport";
+            else
+                triage = "FEED_OK_check_decode";
+            out << "triage=" << triage << "\n";
+        }
+        out << "nal_seen=" << ds.nal_seen << "\n";
+        out << "nal_pushed=" << ds.nal_pushed << "\n";
+        out << "bytes_pushed=" << ds.bytes_pushed << "\n";
+        out << "nal_sps=" << ds.sps_pushed << "\n";
+        out << "nal_pps=" << ds.pps_pushed << "\n";
+        out << "nal_idr=" << ds.idr_pushed << "\n";
+        out << "nal_p=" << ds.p_slice_pushed << "\n";
+        out << "nal_other=" << ds.other_nal_pushed << "\n";
+        out << "nal_dropped_pre_idr=" << ds.nal_dropped_pre_idr << "\n";
+        out << "nal_dropped_paused=" << ds.nal_dropped_paused << "\n";
+        out.close();
+        ::rename(tmp, path);
+    };
+
     streamActive_.store(true);
     reconFrames_.store(0);
     reconPresentOk_.store(false);
@@ -1255,6 +1331,7 @@ void MediaPlayer::streamPump(int sfd) {
             f3Active = true;
             log("media: F3 NAL producer begin session=" + std::to_string(streamSession) +
                 " " + readDdrBitstreamStatusString());
+            writeBitstreamRingStatusFile(f3Dispatch.stats());
         } else {
             f3Fatal = true;
             log("media: F3 NAL producer begin failed " +
@@ -1317,9 +1394,16 @@ void MediaPlayer::streamPump(int sfd) {
         f3Total = static_cast<size_t>(after.bytes_pushed);
         f3Pushes = static_cast<size_t>(after.nal_pushed);
         if (r == h264stream::PushResult::Ok) {
-            if (after.nal_pushed != beforeNals && (after.nal_pushed % 64) == 0)
+            if (after.nal_pushed != beforeNals && (after.nal_pushed % 64) == 0) {
                 log("media: F3 NAL stream nals=" + std::to_string(after.nal_pushed) +
-                    " bytes=" + std::to_string(after.bytes_pushed));
+                    " bytes=" + std::to_string(after.bytes_pushed) +
+                    " sps=" + std::to_string(after.sps_pushed) +
+                    " pps=" + std::to_string(after.pps_pushed) +
+                    " idr=" + std::to_string(after.idr_pushed) +
+                    " p=" + std::to_string(after.p_slice_pushed) +
+                    " " + readDdrBitstreamStatusString());
+                writeBitstreamRingStatusFile(after);
+            }
             return;
         }
         if (r == h264stream::PushResult::Full) {
@@ -1692,6 +1776,10 @@ void MediaPlayer::streamPump(int sfd) {
     }
     log("media: STREAM end f3_bytes=" + std::to_string(f3Total) +
         " f3_nals=" + std::to_string(f3Status.nal_accepted) +
+        " f3_sps=" + std::to_string(f3Stats.sps_pushed) +
+        " f3_pps=" + std::to_string(f3Stats.pps_pushed) +
+        " f3_idr=" + std::to_string(f3Stats.idr_pushed) +
+        " f3_p=" + std::to_string(f3Stats.p_slice_pushed) +
         " f3_full_retries=" + std::to_string(f3Stats.full_retries) +
         " f3_full_escalations=" + std::to_string(f3Stats.full_escalations) +
         " f3_dropped_paused=" + std::to_string(f3Stats.nal_dropped_paused) +
@@ -1705,6 +1793,7 @@ void MediaPlayer::streamPump(int sfd) {
         " idr=" + std::to_string(idrSeen) + " i_slices=" + std::to_string(iSliceSeen) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " present=" + std::to_string(reconFrames_.load()));
+    writeBitstreamRingStatusFile(f3Stats);
 }
 
 int64_t MediaPlayer::readMrAudioQueuedBytes() {

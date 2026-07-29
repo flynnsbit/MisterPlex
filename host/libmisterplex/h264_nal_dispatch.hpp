@@ -48,6 +48,12 @@ struct DispatchStats {
     uint64_t full_retries = 0;
     uint64_t full_escalations = 0;
     uint64_t desync_or_fatal = 0;
+    // Counts of NALs actually accepted into the ring (post backpressure).
+    uint64_t sps_pushed = 0;
+    uint64_t pps_pushed = 0;
+    uint64_t idr_pushed = 0;
+    uint64_t p_slice_pushed = 0;
+    uint64_t other_nal_pushed = 0;
 };
 
 class AnnexBFramer {
@@ -274,6 +280,16 @@ private:
                 ++seq_;
                 ++stats_.nal_pushed;
                 stats_.bytes_pushed += len;
+                if (type == 7)
+                    ++stats_.sps_pushed;
+                else if (type == 8)
+                    ++stats_.pps_pushed;
+                else if (type == 5)
+                    ++stats_.idr_pushed;
+                else if (type == 1)
+                    ++stats_.p_slice_pushed;
+                else
+                    ++stats_.other_nal_pushed;
                 (void)replay;
                 return r;
             }
