@@ -93,6 +93,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_derived_validation_hashes.sh
 	$(ROOT)/tests/unit/test_deblock_iframe_gap.sh
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
+	$(ROOT)/tests/unit/test_p3_hybrid_gate.sh
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors

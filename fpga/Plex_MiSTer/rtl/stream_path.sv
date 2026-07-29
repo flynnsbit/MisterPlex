@@ -1,5 +1,6 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
+// P3-3l5: expose product_recon_ok / hybrid_host_required for STREAM skip-host policy.
 
 module stream_path #(
 	parameter int FRAME_W = 320,
@@ -87,6 +88,14 @@ module stream_path #(
 	output wire [7:0]  recon_dbg,
 	output wire        recon_dbg_valid,
 	output wire        recon_valid,
+
+	// P3-3l5 hybrid product handoff
+	output wire        hybrid_fpga_owned,
+	output wire        hybrid_host_required,
+	output wire        product_recon_ok,
+	output wire [2:0]  hybrid_own_code,
+	output wire [3:0]  hybrid_own_reason,
+	output wire        entropy_cabac,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -285,6 +294,7 @@ module stream_path #(
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
+	assign entropy_cabac = pps_cabac;
 
 	decode_stub #(
 		.WIDTH(FRAME_W),
@@ -309,6 +319,8 @@ module stream_path #(
 		.first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
 		.first_mb_intra(first_mb_intra),
+		.entropy_cabac(pps_cabac),
+		.first_mb_type_i(sl_mbt),
 		.residual_ok(sl_place_ok),
 		.residual_tc(sl_place_tc),
 		.residual_dc(sl_place_dc),
@@ -319,6 +331,11 @@ module stream_path #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
+		.hybrid_fpga_owned(hybrid_fpga_owned),
+		.hybrid_host_required(hybrid_host_required),
+		.product_recon_ok(product_recon_ok),
+		.hybrid_own_code(hybrid_own_code),
+		.hybrid_own_reason(hybrid_own_reason),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),
@@ -334,6 +351,8 @@ module stream_path #(
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
+	             hybrid_host_required | product_recon_ok | hybrid_fpga_owned |
+	             |hybrid_own_code | |hybrid_own_reason |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];

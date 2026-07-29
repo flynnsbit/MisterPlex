@@ -39,7 +39,12 @@ module h264_decode_top_tb (
     // Outputs to C++ driver
     output wire        tb_mb_recon_valid,
     output wire [7:0]  tb_recon_y [0:255],
-    output wire [4:0]  tb_blocks_done
+    output wire [4:0]  tb_blocks_done,
+    output wire        tb_hybrid_fpga_owned,
+    output wire        tb_hybrid_host_required,
+    output wire        tb_hybrid_product_mb_ok,
+    output wire [2:0]  tb_hybrid_own_code,
+    output wire [3:0]  tb_hybrid_own_reason
 );
 
     h264_decode_top u_dut (
@@ -67,7 +72,12 @@ module h264_decode_top_tb (
         .nb_topright(tb_nb_topright),
         .mb_recon_valid(tb_mb_recon_valid),
         .recon_y(tb_recon_y),
-        .blocks_done(tb_blocks_done)
+        .blocks_done(tb_blocks_done),
+        .hybrid_fpga_owned(tb_hybrid_fpga_owned),
+        .hybrid_host_required(tb_hybrid_host_required),
+        .hybrid_product_mb_ok(tb_hybrid_product_mb_ok),
+        .hybrid_own_code(tb_hybrid_own_code),
+        .hybrid_own_reason(tb_hybrid_own_reason)
     );
 
 endmodule

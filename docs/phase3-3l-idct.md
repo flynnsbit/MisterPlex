@@ -1851,6 +1851,8 @@ Only when 3.3l-4 mae competitive on lab titles:
 - Keep host fallback on CABAC / fail  
 - Measure: ALM/M10K fit, decode latency vs present 30 fps budget  
 
+**RTL contract (sim-landed):** `h264_hybrid_mb_own.sv` classifies each MB. FPGA-owned only when capability-backed (default CAP_INTRA_*=1, CAP_INTER_*=0). Unsupported/inter/CABAC/fail → `host_required` + reason code (never silent product-ok). `product_recon_ok` asserts only on pure FPGA-owned I path with residual probe OK; STREAM software must still require competitive mae before skipping host F1. Compose gate: `tools/hybrid_compose_i420.py` + `tools/score_i420_candidate.py` (refusals preserved). Unit: `tests/unit/test_p3_hybrid_gate.sh`.
+
 ---
 
 ## RTL notes (match host / FFmpeg)
