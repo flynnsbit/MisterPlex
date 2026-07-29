@@ -55,3 +55,11 @@ Install from the v0.3.0 tarball rather than mixing old files. Copy `bin/`, `scri
 `licenses/`, and `cores/Plex.rbf` from the extracted package, then copy
 `conf/misterplex.conf.example` to `/media/fat/misterplex/misterplex.conf` and set your own
 `PLEX_BASE=http://YOUR-PLEX-SERVER:32400`.
+
+## Lab pair (do not split)
+
+Core MD5 `41adb98c7a630b541091c22ce291be68` and daemon built at tag **v0.3.0**
+(`cacd8717`, binary MD5 `06c5735a2f85114688f0ff2ac36e4fd4`) must ship together.
+**320×240 bank1 = `0x30040000`; 480p bank1 = `0x30080000`.** A mixed deploy
+recreates background/bank corruption. Full 2am card: [`docs/release.md`](release.md)
+§ *Lab stable pair (v0.3.0)*.

@@ -167,6 +167,71 @@ uses the tracked `release_artifacts/v0.3.0/Plex.rbf` by default, or an explicit
 `RBF_PATH`, and refuses to package it unless the MD5 is
 `41adb98c7a630b541091c22ce291be68`.
 
+## Lab stable pair (v0.3.0) — 2am card
+
+Ship **core and daemon together**. A 320×240 core with a 480p-line daemon (or
+the reverse) is a silent geometry mismatch: **320×240 bank1 is `0x30040000`**;
+**624/640×480 bank1 is `0x30080000`**. Wrong pair → stale/wrong bank reads that
+look like “corruption in the background.”
+
+| Piece | Identity |
+|-------|----------|
+| RBF | `release_artifacts/v0.3.0/Plex.rbf` · MD5 **`41adb98c7a630b541091c22ce291be68`** · hardware-validated Phase A playback-controls core (G-VID1 edge-wrap fixed in `0139f2c`, eyes-on 2026-07-26) |
+| Daemon tree | git tag **v0.3.0** = `cacd87176cbc2017c6ef2673eef84717dd673009` |
+| Daemon binary | static ARM ELF · MD5 **`06c5735a2f85114688f0ff2ac36e4fd4`** · 320×240 RGB565 · `kDdrFrameBytes=320*240*2` · no 624/640 frame constants |
+| Geometry | content **320×240** RGB565; overlay + joystick/keyboard controls |
+
+### Deploy (lab)
+
+```bash
+# From a clean v0.3.0 tree (or worktree at cacd8717) so make arm-plexd matches:
+git worktree add .worktrees/v3-stable cacd8717   # once
+cd .worktrees/v3-stable
+make arm-plexd
+# md5sum build/arm/misterplexd  →  06c5735a2f85114688f0ff2ac36e4fd4
+
+# Core — prefer menu bounce; if already on MENU and bounce stalls, ONE core load:
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh \
+  /path/to/MisterPlex/release_artifacts/v0.3.0/Plex.rbf
+# deploy_plex_core.sh archives outgoing SD core as Plex.<md5[0:8]>.bak.rbf first
+
+./scripts/deploy_misterplexd.sh   # from the same v0.3.0 tree
+```
+
+### Verify on device (quote hashes; use `pidof`, not `pgrep`)
+
+```bash
+md5sum /media/fat/_Utility/Plex.rbf
+# expect 41adb98c7a630b541091c22ce291be68
+md5sum /media/fat/misterplex/bin/misterplexd
+# expect 06c5735a2f85114688f0ff2ac36e4fd4
+cat /tmp/CORENAME          # expect Plex
+pidof misterplexd          # expect ≥1 PID
+wget -qO- http://127.0.0.1:3005/resources | head -c 200
+```
+
+### On-device backups (lab 2026-07-29 ship)
+
+| Path | What |
+|------|------|
+| `/media/fat/_Utility/Plex.226e6a0f.bak.rbf` | Pre-stable overnight core (integ-fit3 / Phase-3; unattributable to fleet until traced) |
+| `/media/fat/_Utility/Plex.rbf.bak` | Single-generation bak (same content at ship time) |
+| `/media/fat/misterplex/bin/misterplexd.prev-c2` | Daemon displaced by last `deploy_misterplexd.sh` (480p-line at ship) |
+| `/media/fat/misterplex/bin/misterplexd.prev-before-v030` | Extra copy of that 480p-line daemon (`ca0b0e9c…`) |
+
+### Rollback (pair — do not mix)
+
+```bash
+# Daemon only (restores prev-c2, restarts process — disrupts a live session):
+./scripts/restore_misterplexd_prev.sh
+# Then restore matching core, or you reintroduce the bank-address mismatch:
+scp /media/fat/_Utility/Plex.226e6a0f.bak.rbf ...   # only if you intend that core
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh path/to/chosen.rbf
+```
+
+`restore_misterplexd_prev.sh` **does not** touch the RBF. Restoring the old
+daemon while leaving the v0.3.0 core loaded is the mismatch this card forbids.
+
 ## Smoke tests
 
 ```bash
