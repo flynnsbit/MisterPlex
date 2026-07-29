@@ -28,6 +28,7 @@ RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
 RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
+RTL_DEBLOCK_MB="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock_mb.sv"
 RTL_DPB="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TB_IQ="$ROOT/tests/rtl/h264_iq_idct_4x4_tb.cpp"
@@ -40,7 +41,7 @@ BUILD_IQ="$BUILD_ROOT/h264_iq_idct_4x4"
 BUILD_DECODE="$BUILD_ROOT/decode_stub_recon"
 BUILD_DECODE_FAULT="$BUILD_ROOT/decode_stub_recon_pred_only"
 
-for f in "$RTL_IQ" "$RTL_DECODE" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$QIP" "$TB_IQ" "$TOP_IQ" "$TB_DECODE" "$TOP_DECODE" "$FIXTURE"; do
+for f in "$RTL_IQ" "$RTL_DECODE" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DEBLOCK_MB" "$RTL_DPB" "$QIP" "$TB_IQ" "$TOP_IQ" "$TB_DECODE" "$TOP_DECODE" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -65,14 +66,14 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD_DECODE" \
   --top-module decode_stub_recon_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DEBLOCK_MB" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
 "$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DECODE_FAULT" \
   --top-module decode_stub_recon_tb -GFAULT_PRED_ONLY=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DEBLOCK_MB" "$RTL_DPB" "$RTL_DECODE" "$TB_DECODE"
 set +e
 FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
 FAULT_RC=$?

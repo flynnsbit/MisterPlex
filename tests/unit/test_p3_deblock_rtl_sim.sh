@@ -23,7 +23,8 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   exit "$VERILATOR_RC"
 fi
 
-RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
+RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock_mb.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_deblock_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_deblock_tb.cpp"

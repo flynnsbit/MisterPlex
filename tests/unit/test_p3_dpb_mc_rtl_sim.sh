@@ -25,6 +25,7 @@ fi
 RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
 INTER_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 DEBLOCK_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
+DEBLOCK_MB_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock_mb.sv"
 NB_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TB="$ROOT/tests/rtl/h264_dpb_mc_tb.cpp"
@@ -41,7 +42,7 @@ BUILD_REF_FAULT="$ROOT/build/verilator/h264_dpb_mc_early_ref"
 BUILD_PART_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_part_mask"
 BUILD_TAP_FAULT="$ROOT/build/verilator/h264_dpb_mc_bad_tap_direction"
 
-for f in "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$QIP" "$TB" "$TOP" "$REAL_P_SCOPE" "$FIXTURE"; do
+for f in "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$QIP" "$TB" "$TOP" "$REAL_P_SCOPE" "$FIXTURE"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -78,14 +79,14 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD" \
   --top-module h264_dpb_mc_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 "$BUILD/Vh264_dpb_mc_tb" "$FIXTURE"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_SEAM" \
   --top-module h264_dpb_mc_tb -GUSE_DEBLOCK_WB_CTRL=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 "$BUILD_SEAM/Vh264_dpb_mc_tb" "$FIXTURE" --deblock-dpb-seam
 "$BUILD_SEAM/Vh264_dpb_mc_tb" "$FIXTURE" --deblock-dpb-full-frame
 "$BUILD_SEAM/Vh264_dpb_mc_tb" "$FIXTURE" --tap-direction-seam
@@ -109,7 +110,7 @@ echo "OK h264_dpb_mc RTL red-check: skipped MB bypass failed full-frame seam"
   --Mdir "$BUILD_TAP_FAULT" \
   --top-module h264_dpb_mc_tb -GFAULT_SWAP_PRE_POST_TAPS=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 TAP_OUT="$("$BUILD_TAP_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" --tap-direction-seam 2>&1)"
 TAP_RC=$?
@@ -129,7 +130,7 @@ echo "OK h264_dpb_mc RTL red-check: swapped pre/post taps failed seam"
   --Mdir "$BUILD_SEAM_MB_FAULT" \
   --top-module h264_dpb_mc_tb -GUSE_DEBLOCK_WB_CTRL=1 -Wno-fatal +define+H264_DEBLOCK_FAULT_MB_COMMIT_EARLY \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 SEAM_MB_OUT="$("$BUILD_SEAM_MB_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" --deblock-dpb-seam 2>&1)"
 SEAM_MB_RC=$?
@@ -149,7 +150,7 @@ echo "OK h264_dpb_mc RTL red-check: deblock early MB commit fault failed seam"
   --Mdir "$BUILD_SEAM_REF_FAULT" \
   --top-module h264_dpb_mc_tb -GUSE_DEBLOCK_WB_CTRL=1 -Wno-fatal +define+H264_DEBLOCK_FAULT_REF_READY_EARLY \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 SEAM_REF_OUT="$("$BUILD_SEAM_REF_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" --deblock-dpb-seam 2>&1)"
 SEAM_REF_RC=$?
@@ -169,7 +170,7 @@ echo "OK h264_dpb_mc RTL red-check: deblock early frame_done fault failed seam"
   --Mdir "$BUILD_CLAMP_FAULT" \
   --top-module h264_dpb_mc_tb -GFAULT_BAD_CLAMP=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 CLAMP_OUT="$("$BUILD_CLAMP_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" 2>&1)"
 CLAMP_RC=$?
@@ -189,7 +190,7 @@ echo "OK h264_dpb_mc RTL red-check: bad edge clamp fault failed golden"
   --Mdir "$BUILD_MC_FAULT" \
   --top-module h264_dpb_mc_tb -GFAULT_BAD_MC_ROUND=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 MC_OUT="$("$BUILD_MC_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" 2>&1)"
 MC_RC=$?
@@ -209,7 +210,7 @@ echo "OK h264_dpb_mc RTL red-check: bad MC arithmetic fault failed golden"
   --Mdir "$BUILD_REF_FAULT" \
   --top-module h264_dpb_mc_tb -GFAULT_EARLY_REF=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 REF_OUT="$("$BUILD_REF_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" 2>&1)"
 REF_RC=$?
@@ -229,7 +230,7 @@ echo "OK h264_dpb_mc RTL red-check: early reference publication fault failed gol
   --Mdir "$BUILD_PART_FAULT" \
   --top-module h264_dpb_mc_tb -GFAULT_BAD_PART_MASK=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2 -I$ROOT -I$ROOT/host" \
-  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$NB_RTL" "$TB"
+  "$TOP" "$RTL" "$INTER_RTL" "$DEBLOCK_RTL" "$DEBLOCK_MB_RTL" "$NB_RTL" "$TB"
 set +e
 PART_OUT="$("$BUILD_PART_FAULT/Vh264_dpb_mc_tb" "$FIXTURE" 2>&1)"
 PART_RC=$?
