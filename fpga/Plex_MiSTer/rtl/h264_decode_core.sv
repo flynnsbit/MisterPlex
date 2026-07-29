@@ -1251,21 +1251,11 @@ module h264_decode_core #(
         .commit_order_error(deblock_commit_order_error)
     );
 
-    // The external DPB read contract returns data one edge after the address
-    // is registered; h264_dpb_one_ref aligns returned data with its own
-    // pending_*_d1 metadata two edges after issue. One skid stage adapts the
-    // former to the latter without reordering reads.
-    reg        dpb_rd_valid_q;
-    reg [7:0]  dpb_rd_data_q;
-    always @(posedge clk) begin
-        if (reset) begin
-            dpb_rd_valid_q <= 1'b0;
-            dpb_rd_data_q  <= 8'd0;
-        end else begin
-            dpb_rd_valid_q <= dpb_rd_valid;
-            dpb_rd_data_q  <= dpb_rd_data;
-        end
-    end
+    // DPB ref_rd contract is registered (+1 after accept), which already
+    // matches h264_dpb_one_ref pending_*_d1. No extra skid — a second stage
+    // would mis-align BRAM and DDR cache responses.
+    wire       dpb_rd_valid_q = dpb_rd_valid;
+    wire [7:0] dpb_rd_data_q  = dpb_rd_data;
 
     // POST-deblock reference store + inter reference window fetch.
     // filtered_sample_* is the same committed POST-deblock sample stream that
