@@ -273,6 +273,14 @@ module stream_path #(
 	wire [15:0] sl_i4_pred_mode_flags;
 	wire [47:0] sl_i4_rem_modes;
 	wire sl_i4_modes_present;
+	wire [1:0]  sl_chroma_pred_mode;
+	wire [7:0]  sl_sub_mb_types;
+	wire        sl_sub_mb_valid;
+	wire [7:0]  sl_mb_ref_idx_l0;
+	wire [15:0] sl_mb_mvd_valid;
+	wire signed [15:0] sl_mb_mvd_x [0:15];
+	wire signed [15:0] sl_mb_mvd_y [0:15];
+	wire [7:0]  sl_num_ref_m1;
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
 	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
@@ -317,6 +325,14 @@ module stream_path #(
 		.first_i4_pred_mode_flags(sl_i4_pred_mode_flags),
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
+		.first_chroma_pred_mode(sl_chroma_pred_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_sub_mb_valid(sl_sub_mb_valid),
+		.first_mb_ref_idx_l0(sl_mb_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mb_mvd_valid),
+		.first_mb_mvd_x(sl_mb_mvd_x),
+		.first_mb_mvd_y(sl_mb_mvd_y),
+		.num_ref_idx_l0_active_minus1(sl_num_ref_m1),
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
@@ -368,8 +384,21 @@ module stream_path #(
 	wire        feed_error;
 	wire [15:0] feed_rbsp_request_offset;
 	wire        feed_rbsp_request_valid;
-	wire        core_mb_type_valid;
-	wire [4:0]  core_mb_type;
+	wire        feed_mb_type_valid;
+	wire [4:0]  feed_mb_type;
+	// First-MB P pulse: i_mb_feed only walks I slices; P first-MB syntax comes
+	// from slice_hdr_parser (incl. partitions). Multi-MB P walker is still open.
+	reg         p_first_mb_pulse;
+	reg         p_first_mb_sent;
+	wire        core_mb_type_valid = feed_mb_type_valid | p_first_mb_pulse;
+	wire [4:0]  core_mb_type = feed_mb_type_valid ? feed_mb_type
+	                     : (first_mb_p_skip ? 5'd0 : sl_mbt[4:0]);
+	wire        core_mb_skip = feed_mb_type_valid ? 1'b0 : first_mb_p_skip;
+	wire [3:0]  core_cbp_luma = feed_mb_type_valid ? feed_cbp_luma : sl_first_mb_cbp_luma;
+	wire [1:0]  core_cbp_chroma = feed_mb_type_valid ? feed_cbp_chroma : sl_first_mb_cbp_chroma;
+	wire [15:0] core_mb_res_off = feed_mb_type_valid ? feed_mb_residual_bit_offset
+	                                                 : sl_first_mb_residual_bit_offset;
+	wire [1:0]  core_chroma_pred = feed_mb_type_valid ? feed_chroma_pred_mode : sl_chroma_pred_mode;
 	wire [4:0]  core_intra_blocks_done;
 	wire        core_luma4x4_valid;
 	wire [3:0]  core_luma4x4_idx;
@@ -558,8 +587,8 @@ module stream_path #(
 		.rbsp_complete(core_rbsp_complete),
 		.core_busy(core_busy),
 		.core_intra_blocks_done(core_intra_blocks_done),
-		.mb_type_valid(core_mb_type_valid),
-		.mb_type(core_mb_type),
+		.mb_type_valid(feed_mb_type_valid),
+		.mb_type(feed_mb_type),
 		.i4_pred_mode_flags(feed_i4_pred_mode_flags),
 		.i4_rem_modes(feed_i4_rem_modes),
 		.i4_modes_present(feed_i4_modes_present),
@@ -630,6 +659,21 @@ module stream_path #(
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
 
+	// One-shot first-MB launch for P slices (parser already consumed prediction
+	// syntax for MB0: sub_mb_type/ref_idx/mvd/inter-CBP).
+	always @(posedge clk) begin
+		p_first_mb_pulse <= 1'b0;
+		if (reset | flush | vcl_cap_clear) begin
+			p_first_mb_sent <= 1'b0;
+		end else if (core_slice_start) begin
+			p_first_mb_sent <= 1'b0;
+		end else if (!sl_is_i && slice_valid && !p_first_mb_sent &&
+		             (first_mb_p_skip || sl_has_mbt) && !feed_busy) begin
+			p_first_mb_pulse <= 1'b1;
+			p_first_mb_sent <= 1'b1;
+		end
+	end
+
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
 		.FRAME_H(CORE_FRAME_H)
@@ -650,14 +694,14 @@ module stream_path #(
 		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(core_mb_type_valid),
 		.mb_type(core_mb_type),
-		.mb_skip(1'b0),
+		.mb_skip(core_mb_skip),
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(feed_i16_mode),
-		.chroma_pred_mode(feed_chroma_pred_mode),
-		.cbp_luma(feed_cbp_luma),
-		.cbp_chroma(feed_cbp_chroma),
+		.chroma_pred_mode(core_chroma_pred),
+		.cbp_luma(core_cbp_luma),
+		.cbp_chroma(core_cbp_chroma),
 		.mb_qp_delta(feed_mb_qp_delta),
-		.mb_residual_bit_offset(feed_mb_residual_bit_offset),
+		.mb_residual_bit_offset(core_mb_res_off),
 		.luma4x4_valid(core_luma4x4_valid),
 		.luma4x4_idx(core_luma4x4_idx),
 		.luma4x4_qp(core_luma4x4_qp),
@@ -668,9 +712,15 @@ module stream_path #(
 		.mv_y_qpel(16'sd0),
 		.part_mode(first_mb_part_mode),
 		.part_idx(2'd0),
-		.mvd_x_qpel(16'sd0),
-		.mvd_y_qpel(16'sd0),
-		.ref_idx_l0(2'd0),
+		.mvd_x_qpel(sl_mb_mvd_x[0]),
+		.mvd_y_qpel(sl_mb_mvd_y[0]),
+		.ref_idx_l0(sl_mb_ref_idx_l0[1:0]),
+		.num_ref_idx_l0_active(sl_num_ref_m1 + 8'd1),
+		.part_sub_mb_types(sl_sub_mb_types),
+		.part_ref_idx_l0(sl_mb_ref_idx_l0),
+		.part_mvd_valid(sl_mb_mvd_valid),
+		.part_mvd_x(sl_mb_mvd_x),
+		.part_mvd_y(sl_mb_mvd_y),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
@@ -788,6 +838,9 @@ module stream_path #(
 	             core_luma4x4_valid | core_dpb_wr_en |
 	             core_mb_type_valid | feed_busy | feed_frame_done | feed_error |
 	             |core_intra_blocks_done | |feed_cbp_luma | |feed_mb_residual_bit_offset |
+	             |sl_sub_mb_types | sl_sub_mb_valid | |sl_mb_ref_idx_l0 |
+	             |sl_mb_mvd_valid | |sl_mb_mvd_x[0] | |sl_mb_mvd_y[0] | |sl_num_ref_m1 |
+	             |sl_chroma_pred_mode | p_first_mb_pulse |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |

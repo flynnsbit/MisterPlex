@@ -71,6 +71,16 @@ module h264_decode_core_p16z_tb #(
 	localparam [7:0] MB_WIDTH_PARAM = 8'((FRAME_W + 15) / 16);
 	localparam [7:0] MB_HEIGHT_PARAM = 8'((FRAME_H + 15) / 16);
 
+	wire signed [15:0] tb_part_mvd_x [0:15];
+	wire signed [15:0] tb_part_mvd_y [0:15];
+	genvar tb_pi;
+	generate
+		for (tb_pi = 0; tb_pi < 16; tb_pi = tb_pi + 1) begin : g_tb_part_mvd
+			assign tb_part_mvd_x[tb_pi] = 16'sd0;
+			assign tb_part_mvd_y[tb_pi] = 16'sd0;
+		end
+	endgenerate
+
 	h264_decode_core #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H)
@@ -112,6 +122,12 @@ module h264_decode_core_p16z_tb #(
 		.mvd_x_qpel(p16_mvd_x_qpel),
 		.mvd_y_qpel(p16_mvd_y_qpel),
 		.ref_idx_l0(p16_ref_idx_l0),
+		.num_ref_idx_l0_active(8'd1),
+		.part_sub_mb_types(8'd0),
+		.part_ref_idx_l0(8'd0),
+		.part_mvd_valid(16'd0),
+		.part_mvd_x(tb_part_mvd_x),
+		.part_mvd_y(tb_part_mvd_y),
 		.recon_mb_valid(1'b0),
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
@@ -147,3 +163,4 @@ module h264_decode_core_p16z_tb #(
 endmodule
 
 `default_nettype wire
+

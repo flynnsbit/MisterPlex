@@ -81,6 +81,14 @@ module h264_decode_core #(
     input  wire signed [15:0] mvd_x_qpel,    // quarter-pel MVD x for current P partition
     input  wire signed [15:0] mvd_y_qpel,    // quarter-pel MVD y for current P partition
     input  wire [1:0]  ref_idx_l0,           // reference index for current P partition
+    // num_ref_idx_l0_active = minus1+1; when 1, ref_idx is inferred 0.
+    input  wire [7:0]  num_ref_idx_l0_active,
+    // Full partition syntax arrays from the slice walker.
+    input  wire [7:0]  part_sub_mb_types,
+    input  wire [7:0]  part_ref_idx_l0,
+    input  wire [15:0] part_mvd_valid,
+    input  wire signed [15:0] part_mvd_x [0:15],
+    input  wire signed [15:0] part_mvd_y [0:15],
 
     // ── Reconstructed macroblock input (from the decode/recon pipeline) ──
     // This is the product handoff into DPB writeback.  It is intentionally
@@ -289,6 +297,8 @@ module h264_decode_core #(
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
     localparam [7:0] ST_P16_WIN_START = 8'd9;
+    localparam [7:0] ST_PART_PRED     = 8'd12;
+    localparam [7:0] ST_PART_ADV      = 8'd13;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -402,9 +412,15 @@ module h264_decode_core #(
     wire [7:0] syntax_mb_y = syntax_mb_y32[7:0];
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
-    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
-                                (mb_skip || (mb_type == 5'd0)) &&
-                                (mb_skip || (part_mode == 3'd0));
+    // P_Skip / P16x16 / P16x8 / P8x16 / P8x8 (and P_8x8ref0). Multi-partition
+    // modes walk slots sequentially through the shared MC engine below.
+    wire syntax_inter_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+                                (mb_skip || (mb_type <= 5'd4)) &&
+                                (mb_skip || (part_mode <= 3'd3));
+    wire syntax_p16_candidate = syntax_inter_candidate &&
+                                (mb_skip || (part_mode == 3'd0) || (mb_type == 5'd0));
+    wire syntax_ppart_candidate = syntax_inter_candidate && !mb_skip &&
+                                  (part_mode >= 3'd1) && (part_mode <= 3'd3);
     wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
@@ -457,6 +473,89 @@ module h264_decode_core #(
         .mv_y(syntax_mv_y),
         .skip_zero(syntax_mv_skip_zero)
     );
+
+    // ── Sequential multi-partition walk (16x8 / 8x16 / 8x8) ───────────────
+    // One shared geometry+MVP+MC path, cycled over slots. No parallel predictors.
+    reg [3:0]  part_slot_r;
+    reg [2:0]  part_mode_r;
+    reg        part_start_r;
+    reg signed [15:0] part_mv_x_r, part_mv_y_r;
+    reg        part_active_r;
+    reg        part_mb_start_r;
+    reg        part_blk_wr_r;
+    reg [15:0] part_blk_mask_r;
+    reg signed [15:0] part_blk_mv_x_r, part_blk_mv_y_r;
+    reg [1:0]  part_blk_ref_r;
+    reg        part_commit_r;
+
+    wire [4:0] part_geo_x, part_geo_y, part_geo_w, part_geo_h;
+    wire       part_geo_valid;
+    h264_part_geometry u_part_geo (
+        .part_mode(part_mode_r),
+        .slot(part_slot_r),
+        .sub_mb_type(part_sub_mb_types[part_slot_r[3:2]*2 +: 2]),
+        .part_x(part_geo_x), .part_y(part_geo_y),
+        .part_w(part_geo_w), .part_h(part_geo_h),
+        .part_valid(part_geo_valid)
+    );
+    wire [15:0] part_geo_mask;
+    h264_part_mask u_part_mask (
+        .part_x(part_geo_x), .part_y(part_geo_y),
+        .part_w(part_geo_w), .part_h(part_geo_h),
+        .mask(part_geo_mask)
+    );
+    wire [1:0] part_ref_slot = (num_ref_idx_l0_active <= 8'd1) ? 2'd0
+                               : part_ref_idx_l0[part_slot_r[3:2]*2 +: 2];
+
+    wire nb_a_p, nb_a_i, nb_b_p, nb_b_i, nb_c_p, nb_c_i, nb_d_p, nb_d_i;
+    wire [1:0] nb_a_r, nb_b_r, nb_c_r, nb_d_r;
+    wire signed [15:0] nb_a_x, nb_a_y, nb_b_x, nb_b_y, nb_c_x, nb_c_y, nb_d_x, nb_d_y;
+    h264_mv_nb_ctx4x4 #(.MB_WIDTH_MAX(MB_W), .MB_WIDTH_DEFAULT(MB_W)) u_mv_nb4 (
+        .clk(clk), .reset(reset),
+        .mb_x(syntax_mb_x), .mb_y(syntax_mb_y),
+        .mb_width(mb_width), .first_mb_in_slice(first_mb_in_slice),
+        .mb_start(part_mb_start_r),
+        .blk_wr_valid(part_blk_wr_r),
+        .blk_wr_mask(part_blk_mask_r),
+        .blk_wr_inter(1'b1),
+        .blk_wr_ref(part_blk_ref_r),
+        .blk_wr_mv_x(part_blk_mv_x_r),
+        .blk_wr_mv_y(part_blk_mv_y_r),
+        .mb_commit(part_commit_r),
+        .commit_mb_x(syntax_mb_x),
+        .q_x(part_geo_x), .q_y(part_geo_y), .q_w(part_geo_w),
+        .q_ref_idx(part_ref_slot),
+        .nb_a_present(nb_a_p), .nb_a_inter(nb_a_i), .nb_a_ref(nb_a_r),
+        .nb_a_mv_x(nb_a_x), .nb_a_mv_y(nb_a_y),
+        .nb_b_present(nb_b_p), .nb_b_inter(nb_b_i), .nb_b_ref(nb_b_r),
+        .nb_b_mv_x(nb_b_x), .nb_b_mv_y(nb_b_y),
+        .nb_c_present(nb_c_p), .nb_c_inter(nb_c_i), .nb_c_ref(nb_c_r),
+        .nb_c_mv_x(nb_c_x), .nb_c_mv_y(nb_c_y),
+        .nb_d_present(nb_d_p), .nb_d_inter(nb_d_i), .nb_d_ref(nb_d_r),
+        .nb_d_mv_x(nb_d_x), .nb_d_mv_y(nb_d_y)
+    );
+    wire signed [15:0] part_mvp_x, part_mvp_y;
+    wire part_shape_override;
+    h264_mv_pred_partition u_part_mvp (
+        .part_mode(part_mode_r), .slot(part_slot_r), .ref_idx_l0(part_ref_slot),
+        .nb_a_present(nb_a_p), .nb_a_inter(nb_a_i), .nb_a_ref(nb_a_r),
+        .nb_a_mv_x(nb_a_x), .nb_a_mv_y(nb_a_y),
+        .nb_b_present(nb_b_p), .nb_b_inter(nb_b_i), .nb_b_ref(nb_b_r),
+        .nb_b_mv_x(nb_b_x), .nb_b_mv_y(nb_b_y),
+        .nb_c_present(nb_c_p), .nb_c_inter(nb_c_i), .nb_c_ref(nb_c_r),
+        .nb_c_mv_x(nb_c_x), .nb_c_mv_y(nb_c_y),
+        .nb_d_present(nb_d_p), .nb_d_inter(nb_d_i), .nb_d_ref(nb_d_r),
+        .nb_d_mv_x(nb_d_x), .nb_d_mv_y(nb_d_y),
+        .mvp_x(part_mvp_x), .mvp_y(part_mvp_y),
+        .shape_override(part_shape_override)
+    );
+    wire signed [15:0] part_mv_comb_x = part_mvp_x + part_mvd_x[part_slot_r];
+    wire signed [15:0] part_mv_comb_y = part_mvp_y + part_mvd_y[part_slot_r];
+
+    // Slot order: 16x8/8x16 use 0 then 1; P8x8 walks only slots whose
+    // sub_mb_type covers them (geometry reports invalid for empty slots).
+    wire [3:0] part_slot_limit = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
+    wire ppart_launch = syntax_ppart_candidate && (wb_state == ST_IDLE);
 
     wire [15:0] launch_residual_window_bit_base = {rbsp_window_base[12:0], 3'd0};
     wire [15:0] launch_residual_rel_bit_offset = mb_residual_bit_offset - launch_residual_window_bit_base;
@@ -652,9 +751,18 @@ module h264_decode_core #(
         .pred_v(p16_pred_v),
         .pred_v_valid(p16_pred_v_valid)
     );
-    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_valid[wb_sample_idx] :
-                            (wb_plane == 2'd1) ? p16_pred_u_valid[wb_sample_idx[5:0]] :
-                                                 p16_pred_v_valid[wb_sample_idx[5:0]];
+    // 4x4 raster index inside the MB for the current luma/chroma sample.
+    wire [3:0] part_luma_blk4 = {wb_sample_idx[7:6], wb_sample_idx[3:2]};
+    // Map chroma sample into covering luma 8x8 top-left 4x4 for mask probe.
+    wire [3:0] part_chroma_luma_blk4 = {wb_sample_idx[5], 1'b0, wb_sample_idx[2], 1'b0};
+    wire part_mask_hit = part_active_r && (
+        (wb_plane == 2'd0) ? part_blk_mask_r[part_luma_blk4]
+                           : part_blk_mask_r[part_chroma_luma_blk4]
+    );
+    wire p16_pred_in_part = part_active_r ? part_mask_hit :
+                            ((wb_plane == 2'd0) ? p16_pred_y_valid[wb_sample_idx] :
+                             (wb_plane == 2'd1) ? p16_pred_u_valid[wb_sample_idx[5:0]] :
+                                                  p16_pred_v_valid[wb_sample_idx[5:0]]);
     wire [7:0] p16_pred_sample = !p16_pred_in_part ? 8'd0 :
                                  (wb_plane == 2'd0) ? p16_pred_y[wb_sample_idx] :
                                  (wb_plane == 2'd1) ? p16_pred_u[wb_sample_idx[5:0]] :
@@ -809,7 +917,8 @@ module h264_decode_core #(
 `else
     wire product_wb_en = (wb_state == ST_WRITE);
 `endif
-    wire p16_sample_wb_en = (wb_state == ST_P16_WRITE);
+    wire p16_sample_wb_en = (wb_state == ST_P16_WRITE) &&
+                             (!part_active_r || part_mask_hit);
     wire deblock_filtered_sample_valid = product_wb_en | p16_sample_wb_en;
     wire deblock_filtered_mb_valid = (wb_state == ST_COMMIT);
     wire deblock_filtered_frame_done = deblock_filtered_mb_valid && wb_last_mb;
@@ -947,6 +1056,10 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        part_start_r <= 1'b0;
+        part_mb_start_r <= 1'b0;
+        part_blk_wr_r <= 1'b0;
+        part_commit_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -955,6 +1068,15 @@ module h264_decode_core #(
             wb_mb_is_ref <= 1'b0;
             wb_base <= 32'd0;
             p16_ref_base_r <= 32'd0;
+            part_slot_r <= 4'd0;
+            part_mode_r <= 3'd0;
+            part_active_r <= 1'b0;
+            part_mv_x_r <= 16'sd0;
+            part_mv_y_r <= 16'sd0;
+            part_blk_mask_r <= 16'd0;
+            part_blk_mv_x_r <= 16'sd0;
+            part_blk_mv_y_r <= 16'sd0;
+            part_blk_ref_r <= 2'd0;
             p16_mv_x_qpel_r <= 16'sd0;
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
@@ -1013,7 +1135,7 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
-            if (syntax_p16_candidate) begin
+            if (syntax_p16_candidate || syntax_ppart_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
                 rbsp_request_offset_r <= syntax_request_byte_offset + 16'd1;
@@ -1034,7 +1156,33 @@ module h264_decode_core #(
 
             case (wb_state)
             ST_IDLE: begin
-                if (p16_launch) begin
+                if (ppart_launch) begin
+                    wb_mb_x <= syntax_mb_x;
+                    wb_mb_y <= syntax_mb_y;
+                    wb_mb_is_ref <= 1'b1;
+                    wb_base <= dpb_write_base;
+                    p16_ref_base_r <= dpb_ref_base;
+                    part_mode_r <= part_mode;
+                    part_slot_r <= 4'd0;
+                    part_active_r <= 1'b1;
+                    part_mb_start_r <= 1'b1;
+                    p16_cbp_luma_r <= cbp_luma;
+                    p16_cbp_chroma_r <= cbp_chroma;
+                    p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
+                    p16_res_block_idx <= 5'd0;
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        res_tc_cur[res_tc_i] <= 5'd0;
+                    wb_idx <= 9'd0;
+                    wb_commit_p16 <= 1'b0;
+                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                        lat_p16_residual_y[wb_i] <= 16'sd0;
+                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
+                        lat_p16_residual_u[wb_i] <= 16'sd0;
+                        lat_p16_residual_v[wb_i] <= 16'sd0;
+                    end
+                    // Decode residual once for the whole MB, then walk partitions.
+                    wb_state <= ST_P16_RES_START;
+                end else if (p16_launch) begin
                     wb_mb_x <= p16_launch_mb_x;
                     wb_mb_y <= p16_launch_mb_y;
                     wb_mb_is_ref <= p16_launch_is_ref;
@@ -1046,11 +1194,11 @@ module h264_decode_core #(
                     p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
-                    p16_ref_idx_l0_r <= ref_idx_l0;
+                    p16_ref_idx_l0_r <= (num_ref_idx_l0_active <= 8'd1) ? 2'd0 : ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
-                    p16_cbp_luma_r <= cbp_luma;
-                    p16_cbp_chroma_r <= cbp_chroma;
+                    p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;
+                    p16_cbp_chroma_r <= mb_skip ? 2'd0 : cbp_chroma;
                     for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
                         res_tc_cur[res_tc_i] <= 5'd0;
                     wb_idx <= 9'd0;
@@ -1095,7 +1243,7 @@ module h264_decode_core #(
                                 res_tc_cur[{2'd3, res_tc_i[1:0]}];
                         end
                         res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
-                        wb_state <= ST_P16_REF_SEED;
+                        wb_state <= part_active_r ? ST_PART_PRED : ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
                     end
@@ -1140,7 +1288,7 @@ module h264_decode_core #(
                                 res_tc_cur[{2'd3, res_tc_i[1:0]}];
                         end
                         res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
-                        wb_state <= ST_P16_REF_SEED;
+                        wb_state <= part_active_r ? ST_PART_PRED : ST_P16_REF_SEED;
                     end else begin
                         p16_res_block_idx <= p16_res_block_idx + 5'd1;
                         p16_res_bit_offset_r <= cavlc_bit_offset_end;
@@ -1174,9 +1322,42 @@ module h264_decode_core #(
             ST_P16_WRITE: begin
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
-                    wb_state <= ST_COMMIT;
+                    if (part_active_r)
+                        wb_state <= ST_PART_ADV;
+                    else
+                        wb_state <= ST_COMMIT;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
+                end
+            end
+            ST_PART_PRED: begin
+                if (part_geo_valid) begin
+                    part_mv_x_r <= part_mv_comb_x;
+                    part_mv_y_r <= part_mv_comb_y;
+                    p16_mv_x_qpel_r <= part_mv_comb_x;
+                    p16_mv_y_qpel_r <= part_mv_comb_y;
+                    p16_ref_idx_l0_r <= part_ref_slot;
+                    part_blk_wr_r <= 1'b1;
+                    part_blk_mask_r <= part_geo_mask;
+                    part_blk_mv_x_r <= part_mv_comb_x;
+                    part_blk_mv_y_r <= part_mv_comb_y;
+                    part_blk_ref_r <= part_ref_slot;
+                    wb_idx <= 9'd0;
+                    // Shared full-MB MC engine; writeback is mask-gated so only
+                    // this partition's samples commit. Residual already latched.
+                    wb_state <= ST_P16_REF_SEED;
+                end else begin
+                    wb_state <= ST_PART_ADV;
+                end
+            end
+            ST_PART_ADV: begin
+                if (part_slot_r >= part_slot_limit) begin
+                    part_active_r <= 1'b0;
+                    part_commit_r <= 1'b1;
+                    wb_state <= ST_COMMIT;
+                end else begin
+                    part_slot_r <= part_slot_r + 4'd1;
+                    wb_state <= ST_PART_PRED;
                 end
             end
             ST_WRITE: begin
@@ -1237,6 +1418,9 @@ module h264_decode_core #(
     assign busy = (wb_state != ST_IDLE) || intra_active_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
+    wire _keep_part_syn = |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
+                        |part_mvd_x[0] | |part_mvd_y[0] | |num_ref_idx_l0_active |
+                        part_geo_valid | part_shape_override | part_active_r;
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
                    (mb_height != 8'd0 && mb_height32 != MB_H);
 
@@ -1253,7 +1437,7 @@ module h264_decode_core #(
         |product_intra_nb_left[0] | |product_intra_nb_topleft |
         |product_intra_nb_topright[0] | product_intra_recon_valid |
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
-        |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
+        |part_mode | |part_idx | _keep_part_syn | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         deblock_wb_valid | |deblock_wb_mb_addr | deblock_wb_is_ref |
