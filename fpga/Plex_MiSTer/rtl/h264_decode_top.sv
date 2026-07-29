@@ -103,6 +103,11 @@ module h264_decode_top (
     reg                pipe_is_i16;
 
     reg signed [28:0] latched_i16_dc [0:15];
+    // Hadamard DC plane is raster {y4,x4}; block_index is H.264 blkIdx
+    // (x={b[2],b[0]}, y={b[3],b[1]}). Wrong map → wrong brightness.
+    wire [1:0] pipe_x4 = {pipe_block_idx[2], pipe_block_idx[0]};
+    wire [1:0] pipe_y4 = {pipe_block_idx[3], pipe_block_idx[1]};
+    wire [3:0] pipe_dc_raster = {pipe_y4, pipe_x4};
     // I_16x16 luma blocks carry 15 AC coefficients at scan positions 1..15 and
     // take position 0 from the luma DC Hadamard, so the scaler must inverse
     // zig-zag with the DC skipped instead of treating coeff[0] as scan 0.
@@ -115,10 +120,6 @@ module h264_decode_top (
 
     // Hadamard DC plane is raster {y4,x4}; block_index is H.264 blkIdx
     // (x={b[2],b[0]}, y={b[3],b[1]}).  Wrong map → flat-looking wrong brightness.
-    wire [1:0] pipe_x4 = {pipe_block_idx[2], pipe_block_idx[0]};
-    wire [1:0] pipe_y4 = {pipe_block_idx[3], pipe_block_idx[1]};
-    wire [3:0] pipe_dc_raster = {pipe_y4, pipe_x4};
-
     h264_iq_idct_seq u_iqidct (
         .clk(clk),
         .reset(reset),
