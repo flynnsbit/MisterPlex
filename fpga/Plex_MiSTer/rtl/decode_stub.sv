@@ -377,6 +377,18 @@ module decode_stub #(
 	wire              dpb_pred_u_valid [0:63];
 	wire [7:0]        dpb_pred_v [0:63];
 	wire              dpb_pred_v_valid [0:63];
+	// Inter reconstruction residual plane (signed post-IDCT samples).
+	// Filled from the first residual 4×4 when residual_ok; remaining samples
+	// stay 0 until a full P residual walker lands. P_Skip keeps zeros.
+	reg signed [15:0] inter_res_y [0:255];
+	reg signed [15:0] inter_res_u [0:63];
+	reg signed [15:0] inter_res_v [0:63];
+	// lat_coeff → IQ/IDCT is combo; sample residual plane one cycle after place.
+	reg               inter_res_load_pending;
+	// recon = Clip1(pred + residual) — product inter export (pre-deblock).
+	wire [7:0]        inter_recon_y [0:255];
+	wire [7:0]        inter_recon_u [0:63];
+	wire [7:0]        inter_recon_v [0:63];
 	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
 	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
 	wire              dpb_fill_sample_phase = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx < 9'd384);
@@ -527,6 +539,72 @@ module decode_stub #(
 		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
 		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
 	);
+
+	// ── Inter residual add: recon = Clip1(pred + residual) ──────────────
+	// Arithmetic already exists in h264_recon4x4; this expands it across the
+	// full MB planes for the native-I420 inter export path.
+	function automatic [7:0] inter_clip_u8;
+		input signed [17:0] v;
+		begin
+`ifdef DECODE_STUB_FAULT_DROP_INTER_CLIP
+			inter_clip_u8 = v[7:0];
+`else
+			if (v < 18'sd0) inter_clip_u8 = 8'd0;
+			else if (v > 18'sd255) inter_clip_u8 = 8'd255;
+			else inter_clip_u8 = v[7:0];
+`endif
+		end
+	endfunction
+`ifdef DECODE_STUB_FAULT_DROP_INTER_RESIDUAL
+	wire signed [15:0] inter_res_y_term [0:255];
+	wire signed [15:0] inter_res_u_term [0:63];
+	wire signed [15:0] inter_res_v_term [0:63];
+	genvar irz;
+	generate
+		for (irz = 0; irz < 256; irz = irz + 1) begin : gen_drop_res_y
+			assign inter_res_y_term[irz] = 16'sd0;
+		end
+		for (irz = 0; irz < 64; irz = irz + 1) begin : gen_drop_res_c
+			assign inter_res_u_term[irz] = 16'sd0;
+			assign inter_res_v_term[irz] = 16'sd0;
+		end
+	endgenerate
+`else
+	wire signed [15:0] inter_res_y_term [0:255];
+	wire signed [15:0] inter_res_u_term [0:63];
+	wire signed [15:0] inter_res_v_term [0:63];
+	genvar irk;
+	generate
+		for (irk = 0; irk < 256; irk = irk + 1) begin : gen_res_y
+			assign inter_res_y_term[irk] = inter_res_y[irk];
+		end
+		for (irk = 0; irk < 64; irk = irk + 1) begin : gen_res_c
+`ifdef DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL
+			assign inter_res_u_term[irk] = 16'sd0;
+			assign inter_res_v_term[irk] = 16'sd0;
+`else
+			assign inter_res_u_term[irk] = inter_res_u[irk];
+			assign inter_res_v_term[irk] = inter_res_v[irk];
+`endif
+		end
+	endgenerate
+`endif
+	genvar iri;
+	generate
+		for (iri = 0; iri < 256; iri = iri + 1) begin : gen_inter_recon_y
+			assign inter_recon_y[iri] = inter_clip_u8(
+				$signed({10'd0, dpb_pred_y[iri]}) +
+				{{2{inter_res_y_term[iri][15]}}, inter_res_y_term[iri]});
+		end
+		for (iri = 0; iri < 64; iri = iri + 1) begin : gen_inter_recon_c
+			assign inter_recon_u[iri] = inter_clip_u8(
+				$signed({10'd0, dpb_pred_u[iri]}) +
+				{{2{inter_res_u_term[iri][15]}}, inter_res_u_term[iri]});
+			assign inter_recon_v[iri] = inter_clip_u8(
+				$signed({10'd0, dpb_pred_v[iri]}) +
+				{{2{inter_res_v_term[iri][15]}}, inter_res_v_term[iri]});
+		end
+	endgenerate
 	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
 	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
 	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |
@@ -593,6 +671,13 @@ module decode_stub #(
 			lat_qp        <= 0;
 			for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 				lat_coeff[coeff_i] <= 16'sd0;
+			for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
+				inter_res_y[coeff_i] <= 16'sd0;
+			for (coeff_i = 0; coeff_i < 64; coeff_i = coeff_i + 1) begin
+				inter_res_u[coeff_i] <= 16'sd0;
+				inter_res_v[coeff_i] <= 16'sd0;
+			end
+			inter_res_load_pending <= 1'b0;
 			recon_sig     <= 0;
 			recon_dbg     <= 0;
 			recon_dbg_valid <= 0;
@@ -633,6 +718,15 @@ module decode_stub #(
 `endif
 			wr_pixel      <= 0;
 		end else begin
+			// One-cycle delayed residual plane load (lat_coeff → IQ/IDCT settled).
+			if (inter_res_load_pending) begin
+				inter_res_load_pending <= 1'b0;
+				// First residual 4×4 → Y block0 raster positions.
+				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1) begin
+					inter_res_y[{coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
+						idct_residual[coeff_i][15:0];
+				end
+			end
 			if (p_fetch_edge) begin
 				pending_p_fetch <= 1'b1;
 				pending_p_skip <= first_mb_p_skip;
@@ -727,6 +821,15 @@ module decode_stub #(
 				end
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
+				// Clear residual plane; load post-IDCT samples next cycle once
+				// lat_coeff has settled into the shared IQ/IDCT path.
+				for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
+					inter_res_y[coeff_i] <= 16'sd0;
+				for (coeff_i = 0; coeff_i < 64; coeff_i = coeff_i + 1) begin
+					inter_res_u[coeff_i] <= 16'sd0;
+					inter_res_v[coeff_i] <= 16'sd0;
+				end
+				inter_res_load_pending <= residual_ok && !first_mb_p_skip;
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
 				if (p_fetch_candidate && dpb_ref_ready) begin
@@ -740,6 +843,14 @@ module decode_stub #(
 				lat_p_mb_addr <= lat_p_next_mb_addr;
 				lat_p_mb_x <= lat_p_next_mb_x;
 				lat_p_mb_y <= lat_p_next_mb_y;
+				// Subsequent P MBs: residual plane cleared until per-MB residual
+				// walk is connected (CBP-gated CAVLC in h264_decode_core).
+				for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
+					inter_res_y[coeff_i] <= 16'sd0;
+				for (coeff_i = 0; coeff_i < 64; coeff_i = coeff_i + 1) begin
+					inter_res_u[coeff_i] <= 16'sd0;
+					inter_res_v[coeff_i] <= 16'sd0;
+				end
 				dpb_fetch_start <= 1'b1;
 				p_fetch_launch_pending <= 1'b1;
 				p_fetch_advance <= 1'b0;
@@ -747,6 +858,7 @@ module decode_stub #(
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
 				p_fetch_launch_pending <= 1'b0;
 			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
+				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
 				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin

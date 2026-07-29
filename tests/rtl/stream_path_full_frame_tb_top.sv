@@ -215,17 +215,19 @@ module stream_path_full_frame_tb #(
 			assign trace_recon_px[trace_i] = dut.stub.recon_px[trace_i];
 		end
 	endgenerate
+	// Native inter export is Clip1(pred+residual) recon (pre-deblock), not MC
+	// prediction alone. Residual plane is 0 until per-MB residual walk fills it.
 	genvar native_y_i;
 	generate
 		for (native_y_i = 0; native_y_i < 256; native_y_i = native_y_i + 1) begin : gen_native_y
-			assign native_inter_pred_y[native_y_i] = dut.stub.dpb_pred_y[native_y_i];
+			assign native_inter_pred_y[native_y_i] = dut.stub.inter_recon_y[native_y_i];
 		end
 	endgenerate
 	genvar native_c_i;
 	generate
 		for (native_c_i = 0; native_c_i < 64; native_c_i = native_c_i + 1) begin : gen_native_c
-			assign native_inter_pred_u[native_c_i] = dut.stub.dpb_pred_u[native_c_i];
-			assign native_inter_pred_v[native_c_i] = dut.stub.dpb_pred_v[native_c_i];
+			assign native_inter_pred_u[native_c_i] = dut.stub.inter_recon_u[native_c_i];
+			assign native_inter_pred_v[native_c_i] = dut.stub.inter_recon_v[native_c_i];
 		end
 	endgenerate
 
