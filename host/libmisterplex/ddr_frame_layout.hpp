@@ -34,8 +34,13 @@ constexpr int kPlex480pYPlaneOffset = 0;
 constexpr int kPlex480pUPlaneOffset = 299520;
 constexpr int kPlex480pVPlaneOffset = 374400;
 // Stride bytes follow coded width, never presented scanout width.
-constexpr int kPlex480pYStrideBytes = kPlex480pCodedWidth.get();
-constexpr int kPlex480pChromaStrideBytes = kPlex480pCodedWidth.get() / 2;
+// Literals kept parseable by scripts/hw_visual_compare.py; locked to coded width.
+constexpr int kPlex480pYStrideBytes = 624;
+constexpr int kPlex480pChromaStrideBytes = 312;
+static_assert(kPlex480pYStrideBytes == kPlex480pCodedWidth.get(),
+              "Y stride must equal coded width");
+static_assert(kPlex480pChromaStrideBytes == kPlex480pCodedWidth.get() / 2,
+              "chroma stride must equal coded width/2");
 constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
