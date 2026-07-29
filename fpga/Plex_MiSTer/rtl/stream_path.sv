@@ -8,6 +8,11 @@
 module stream_path #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
+	// Coded picture geometry for decode_core/DPB. Defaults track FRAME_* so
+	// 320x240 benches need no override. Product Plex.sv must pass 624x480
+	// (DDR_FRAME_CODED_*) while FRAME_* stays 640 present surface.
+	parameter int CODED_W = FRAME_W,
+	parameter int CODED_H = FRAME_H,
 	// Compressed-bitstream ring geometry.  These are parameters and not literals
 	// on purpose: a higher-bitrate stream needs a longer ring and a deeper
 	// prefetch, and that must not require editing the delivery path.  RING_BYTES
@@ -127,17 +132,8 @@ module stream_path #(
 	output wire [15:0]  slice_desync_mb
 );
 
-	// The decode core must run on the CODED picture geometry, not the display
-	// surface: FRAME_W is the 640-wide present surface, while the stream (and
-	// the DDR framebuffer the reconstruction is written into) is 624x480, i.e.
-	// exactly 39x30 macroblocks.  Using the display width gave the core a
-	// 40-macroblock raster stride, which skewed every macroblock position by a
-	// growing offset and pushed one column per row outside the picture.
-	// Values mirror DDR_FRAME_CODED_WIDTH/HEIGHT in ddr_frame_layout_params.svh.
-	// They are spelled out here rather than `include`d because stream_path is
-	// elaborated by benches that do not put rtl/ on the include path.
-	localparam int CORE_FRAME_W = 624;
-	localparam int CORE_FRAME_H = 480;
+	localparam int CORE_FRAME_W = CODED_W;
+	localparam int CORE_FRAME_H = CODED_H;
 
 	// Whole-slice RBSP capacity.  Settled 624x480 Baseline IDR fixtures are
 	// ~11KB (plex_inter_p16_624x480 IDR = 10895B); keep headroom so a higher-
@@ -162,6 +158,42 @@ module stream_path #(
 	wire        ddr_wr_flush;
 	wire        bf_wr_full;
 
+	// Two-master mux: bitstream reader + DPB share the single DDR port (5e584aa).
+	wire        bsr_bus_want;
+	wire  [7:0] bsr_burstcnt;
+	wire [28:0] bsr_addr;
+	wire        bsr_rd;
+	wire [63:0] bsr_din;
+	wire  [7:0] bsr_be;
+	wire        bsr_we;
+	wire        dpb_ddr_req;
+	wire  [7:0] dpb_ddr_burstcnt;
+	wire [28:0] dpb_ddr_addr;
+	wire        dpb_ddr_rd;
+	wire [63:0] dpb_ddr_din;
+	wire  [7:0] dpb_ddr_be;
+	wire        dpb_ddr_we;
+	reg         bus_owner_dpb;
+	always @(posedge clk) begin
+		if (reset)
+			bus_owner_dpb <= 1'b0;
+		else if (!bus_owner_dpb) begin
+			if (!bsr_bus_want && dpb_ddr_req) bus_owner_dpb <= 1'b1;
+		end else if (!dpb_ddr_req)
+			bus_owner_dpb <= 1'b0;
+	end
+	assign ddr_bus_want = bsr_bus_want | dpb_ddr_req;
+	assign ddr_burstcnt = bus_owner_dpb ? dpb_ddr_burstcnt : bsr_burstcnt;
+	assign ddr_addr     = bus_owner_dpb ? dpb_ddr_addr     : bsr_addr;
+	assign ddr_rd       = bus_owner_dpb ? dpb_ddr_rd       : bsr_rd;
+	assign ddr_din      = bus_owner_dpb ? dpb_ddr_din      : bsr_din;
+	assign ddr_be       = bus_owner_dpb ? dpb_ddr_be       : bsr_be;
+	assign ddr_we       = bus_owner_dpb ? dpb_ddr_we       : bsr_we;
+	wire bsr_ddr_busy   = ddr_busy | bus_owner_dpb;
+	wire bsr_dout_ready = ddr_dout_ready & ~bus_owner_dpb;
+	wire dpb_ddr_busy   = ddr_busy | ~bus_owner_dpb;
+	wire dpb_dout_ready = ddr_dout_ready & bus_owner_dpb;
+
 	ddr_bitstream_reader #(
 		.RING_BYTES(BITSTREAM_RING_BYTES)
 	) ddr_stream (
@@ -172,16 +204,16 @@ module stream_path #(
 		.out_byte(ddr_wr_data),
 		.out_flush(ddr_wr_flush),
 		.out_full(bf_wr_full | si_wr_en),
-		.bus_want(ddr_bus_want),
-		.DDRAM_BUSY(ddr_busy),
-		.DDRAM_BURSTCNT(ddr_burstcnt),
-		.DDRAM_ADDR(ddr_addr),
+		.bus_want(bsr_bus_want),
+		.DDRAM_BUSY(bsr_ddr_busy),
+		.DDRAM_BURSTCNT(bsr_burstcnt),
+		.DDRAM_ADDR(bsr_addr),
 		.DDRAM_DOUT(ddr_dout),
-		.DDRAM_DOUT_READY(ddr_dout_ready),
-		.DDRAM_RD(ddr_rd),
-		.DDRAM_DIN(ddr_din),
-		.DDRAM_BE(ddr_be),
-		.DDRAM_WE(ddr_we),
+		.DDRAM_DOUT_READY(bsr_dout_ready),
+		.DDRAM_RD(bsr_rd),
+		.DDRAM_DIN(bsr_din),
+		.DDRAM_BE(bsr_be),
+		.DDRAM_WE(bsr_we),
 		.active(stream_ddr_active),
 		.bytes_out(stream_ddr_bytes_out),
 		.underrun_count(stream_ddr_underruns),
@@ -808,13 +840,15 @@ module stream_path #(
 	wire [7:0] core_dpb_wr_data;
 	wire core_dpb_rd_en;
 	wire [31:0] core_dpb_rd_addr;
-	reg core_dpb_rd_valid;
-	always @(posedge clk) begin
-		if (reset | flush)
-			core_dpb_rd_valid <= 1'b0;
-		else
-			core_dpb_rd_valid <= core_dpb_rd_en;
-	end
+	wire core_dpb_rd_valid;
+	wire [7:0] core_dpb_rd_data;
+	wire core_dpb_rd_stall;
+	wire core_dpb_wr_full;
+	wire dpb_ref_ready;
+	wire dpb_swap_busy;
+	wire dpb_frame_done_ack;
+	wire [31:0] dpb_current_base;
+	wire [31:0] dpb_reference_base;
 	wire core_frame_done;
 	wire core_dpb_ref_swap;
 	wire core_err_cavlc_miss;
@@ -837,6 +871,46 @@ module stream_path #(
 			core_slice_valid_d <= slice_valid;
 	end
 	wire core_slice_start = slice_valid & ~core_slice_valid_d;
+	wire rec_dpb_flush = core_slice_start && sl_is_idr;
+
+	// Real DDR DPB (5e584aa): kill fake dpb_rd_data=8'd0 and base=0.
+	h264_dpb_ddr #(
+		.FRAME_W(CORE_FRAME_W),
+		.FRAME_H(CORE_FRAME_H),
+		.BANK_STRIDE(CORE_FRAME_W * CORE_FRAME_H + 2 * ((CORE_FRAME_W / 2) * (CORE_FRAME_H / 2))),
+		.REG_RESPONSE(1'b0),
+		.BRAM_REF(1'b1),
+		.BRAM_LUMA_ONLY(1'b0)
+	) u_dpb_ddr (
+		.clk(clk),
+		.reset(reset | flush),
+		.idr_start(rec_dpb_flush),
+		.frame_done_req(core_dpb_ref_swap),
+		.frame_done_ack(dpb_frame_done_ack),
+		.swap_busy(dpb_swap_busy),
+		.ref_ready(dpb_ref_ready),
+		.current_base(dpb_current_base),
+		.reference_base(dpb_reference_base),
+		.rec_wr_en(core_dpb_wr_en),
+		.rec_wr_addr(core_dpb_wr_addr),
+		.rec_wr_data(core_dpb_wr_data),
+		.rec_wr_full(core_dpb_wr_full),
+		.ref_rd_en(core_dpb_rd_en),
+		.ref_rd_addr(core_dpb_rd_addr),
+		.ref_rd_stall(core_dpb_rd_stall),
+		.ref_rd_data(core_dpb_rd_data),
+		.ref_rd_valid(core_dpb_rd_valid),
+		.ddr_busy(dpb_ddr_busy),
+		.ddr_burstcnt(dpb_ddr_burstcnt),
+		.ddr_addr(dpb_ddr_addr),
+		.ddr_dout(ddr_dout),
+		.ddr_dout_ready(dpb_dout_ready),
+		.ddr_rd(dpb_ddr_rd),
+		.ddr_din(dpb_ddr_din),
+		.ddr_be(dpb_ddr_be),
+		.ddr_we(dpb_ddr_we),
+		.ddr_req(dpb_ddr_req)
+	);
 
 	h264_decode_core #(
 		.FRAME_W(CORE_FRAME_W),
@@ -853,13 +927,10 @@ module stream_path #(
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.constrained_intra_pred_flag(1'b0),
-		// Fit4 acceptance is deblock-OFF only. The product deblock_mb path still
-		// has residual M10K-latency hazards on gather/skirt; force idc=1 so the
-		// filter math is skipped and emit is identity. Wire sl_deblock_idc when
-		// deblock is trusted. (Was hardwired 0 = always filter.)
-		.disable_deblocking_filter_idc(2'd1),
-		.slice_alpha_c0_offset(5'sd0),
-		.slice_beta_offset(5'sd0),
+		// Real in-loop deblock from slice header (5e584aa). PRE nb; DPB/px POST.
+		.disable_deblocking_filter_idc(sl_deblock_idc),
+		.slice_alpha_c0_offset(sl_alpha_off),
+		.slice_beta_offset(sl_beta_off),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
@@ -904,7 +975,7 @@ module stream_path #(
 		.recon_mb_x(8'd0),
 		.recon_mb_y(8'd0),
 		.recon_mb_is_ref(1'b0),
-		.dpb_write_base(32'd0),
+		.dpb_write_base(dpb_current_base),
 		.recon_y(core_recon_y),
 		.recon_u(core_recon_u),
 		.recon_v(core_recon_v),
@@ -912,7 +983,7 @@ module stream_path #(
 		.p16_mb_x(8'd0),
 		.p16_mb_y(8'd0),
 		.p16_mb_is_ref(1'b0),
-		.dpb_ref_base(32'd0),
+		.dpb_ref_base(dpb_reference_base),
 		.p16_residual_y(core_p16_residual_y),
 		.p16_residual_u(core_p16_residual_u),
 		.p16_residual_v(core_p16_residual_v),
@@ -921,9 +992,9 @@ module stream_path #(
 		.dpb_wr_data(core_dpb_wr_data),
 		.dpb_rd_en(core_dpb_rd_en),
 		.dpb_rd_addr(core_dpb_rd_addr),
-		.dpb_rd_data(8'd0),
+		.dpb_rd_data(core_dpb_rd_data),
 		.dpb_rd_valid(core_dpb_rd_valid),
-		.dpb_rd_stall(1'b0),
+		.dpb_rd_stall(core_dpb_rd_stall),
 		.dpb_ref_swap(core_dpb_ref_swap),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),

@@ -600,7 +600,10 @@ wire  [7:0] dec_px_data;
 
 stream_path #(
 	.FRAME_W(FRAME_W),
-	.FRAME_H(FRAME_H)
+	.FRAME_H(FRAME_H),
+	// Coded 624x480 (39x30 MB); FRAME_* is 640 present (see ddr_frame_layout).
+	.CODED_W(624),
+	.CODED_H(480)
 ) spath (
 	.clk(clk_sys),
 	.reset(reset),

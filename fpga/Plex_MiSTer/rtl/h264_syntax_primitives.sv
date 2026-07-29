@@ -506,8 +506,9 @@ module h264_baseline_syntax_parser #(
 				ST_PPS_QP: begin pic_init_qp <= 8'sd26 + se8_from_ue(ue_value); start_ue(ST_PPS_QS); end
 				ST_PPS_QS: start_ue(ST_PPS_CHROMA);
 				// ue_value holds chroma_qp_index_offset se(v); then deblock flag u(1).
+				// Quartus rejects part-select on function-call results — temp first.
 				ST_PPS_CHROMA: begin
-					chroma_qp_index_offset <= se8_from_ue(ue_value)[4:0];
+					chroma_qp_index_offset <= signed'(se8_from_ue(ue_value));
 					start_bits(8'd1, ST_PPS_DEBLOCK);
 				end
 				ST_PPS_DEBLOCK: begin deblock_ctrl <= fixed_acc[0]; start_bits(8'd1, ST_PPS_CONSTRAINED); end
