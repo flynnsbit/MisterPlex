@@ -43,6 +43,12 @@ RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
 RTL_NB_CTX="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"
 RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
 RTL_DPB="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
+RTL_MC_LUMA="$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_luma_qpel.sv"
+RTL_MC_CHROMA="$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_chroma_epel.sv"
+RTL_MC_BLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_block.sv"
+RTL_DPB_DDR_WR="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr_wr.sv"
+RTL_DPB_DDR_RD="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr_rd.sv"
+RTL_DPB_DDR="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr.sv"
 TOP="$ROOT/tests/rtl/stream_path_recon_integration_tb_top.sv"
 TB="$ROOT/tests/rtl/stream_path_recon_integration_tb.cpp"
 BITSTREAM="$ROOT/tests/fixtures/p3_host_recon/plex_real_baseline_320x240_1f.264"
@@ -52,7 +58,7 @@ BUILD="$ROOT/build/verilator/stream_path_recon_integration"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_recon_integration_fault"
 
 for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
-         "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
+         "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_MC_LUMA" "$RTL_MC_CHROMA" "$RTL_MC_BLOCK" "$RTL_DPB_DDR_WR" "$RTL_DPB_DDR_RD" "$RTL_DPB_DDR" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -60,7 +66,7 @@ for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "
 done
 for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv rtl/bitstream_fifo.sv rtl/nalu_scanner.sv \
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
-           rtl/h264_decode_top.sv rtl/h264_decode_core.sv rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_intra_pred.sv rtl/h264_intra_nb_ctx.sv rtl/h264_deblock.sv rtl/h264_dpb.sv; do
+           rtl/h264_decode_top.sv rtl/h264_decode_core.sv rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_intra_pred.sv rtl/h264_intra_nb_ctx.sv rtl/h264_deblock.sv rtl/h264_dpb.sv rtl/h264_mc_luma_qpel.sv rtl/h264_mc_chroma_epel.sv rtl/h264_mc_block.sv rtl/h264_dpb_ddr_wr.sv rtl/h264_dpb_ddr_rd.sv rtl/h264_dpb_ddr.sv; do
   if ! grep -q "$rtl" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product RTL under simulation: $rtl" >&2
     exit 2
@@ -79,14 +85,14 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
   --top-module stream_path_recon_integration_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+  "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_MC_LUMA" "$RTL_MC_CHROMA" "$RTL_MC_BLOCK" "$RTL_DPB_DDR_WR" "$RTL_DPB_DDR_RD" "$RTL_DPB_DDR" "$TB"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
   --top-module stream_path_recon_integration_tb_top -GFAULT_RECON_SIG_ZERO=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" "$RTL_CAVLC" \
-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+  "$RTL_SLICE" "$RTL_DECODE" "$RTL_DECODE_TOP" "$RTL_DECODE_CORE" "$RTL_IQ" "$RTL_INTER" "$RTL_INTRA" "$RTL_NB_CTX" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_MC_LUMA" "$RTL_MC_CHROMA" "$RTL_MC_BLOCK" "$RTL_DPB_DDR_WR" "$RTL_DPB_DDR_RD" "$RTL_DPB_DDR" "$TB"
 
 "$BUILD/Vstream_path_recon_integration_tb_top" normal "$BITSTREAM" "$GOLD"
 "$BUILD/Vstream_path_recon_integration_tb_top" escape-red "$BITSTREAM" "$GOLD"

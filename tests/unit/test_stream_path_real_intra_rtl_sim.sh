@@ -41,6 +41,12 @@ COMMON=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_luma_qpel.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_chroma_epel.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_block.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr_wr.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr_rd.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ddr.sv"
   "$TB"
 )
 

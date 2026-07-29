@@ -67,6 +67,12 @@ PRODUCT_RTL=(
   h264_intra_nb_ctx.sv
   h264_deblock.sv
   h264_dpb.sv
+  h264_mc_luma_qpel.sv
+  h264_mc_chroma_epel.sv
+  h264_mc_block.sv
+  h264_dpb_ddr_wr.sv
+  h264_dpb_ddr_rd.sv
+  h264_dpb_ddr.sv
   h264_decode_top.sv
   h264_decode_core.sv
   decode_stub.sv
