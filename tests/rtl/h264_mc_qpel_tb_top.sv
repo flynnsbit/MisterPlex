@@ -40,7 +40,21 @@ module h264_mc_qpel_tb_top (
 	output wire        c_done,
 	input  wire [5:0]  c_pred_rd_idx,
 	output wire [7:0]  c_pred_u_rd_data,
-	output wire [7:0]  c_pred_v_rd_data
+	output wire [7:0]  c_pred_v_rd_data,
+
+	// ---- reference-fetch edge clamping --------------------------------
+	// This is the part that keeps a motion vector pointing outside the
+	// picture off an out-of-range DDR address: it clamps the coordinate and
+	// so replicates the border sample.
+	input  wire signed [15:0] t_base_x,
+	input  wire signed [15:0] t_base_y,
+	input  wire        [8:0]  t_tap_idx,
+	input  wire        [15:0] t_width,
+	input  wire        [15:0] t_height,
+	output wire        [15:0] t_luma_x,
+	output wire        [15:0] t_luma_y,
+	output wire        [15:0] t_chroma_x,
+	output wire        [15:0] t_chroma_y
 );
 
 	wire [7:0] l_pred_head [0:15];
@@ -77,6 +91,34 @@ module h264_mc_qpel_tb_top (
 		.pred_rd_idx(c_pred_rd_idx),
 		.pred_u_rd_data(c_pred_u_rd_data),
 		.pred_v_rd_data(c_pred_v_rd_data)
+	);
+
+	// The 21x21 luma reference window the block MC engine consumes, and the
+	// 9x9 chroma window, use exactly these parameterisations in the fetch.
+	h264_luma_ref_tap_addr #(
+		.TAP_COLS(21),
+		.TAP_ORIGIN(2)
+	) u_luma_win_addr (
+		.base_x(t_base_x),
+		.base_y(t_base_y),
+		.tap_idx(t_tap_idx),
+		.width(t_width),
+		.height(t_height),
+		.tap_x(t_luma_x),
+		.tap_y(t_luma_y)
+	);
+
+	h264_luma_ref_tap_addr #(
+		.TAP_COLS(9),
+		.TAP_ORIGIN(0)
+	) u_chroma_win_addr (
+		.base_x(t_base_x),
+		.base_y(t_base_y),
+		.tap_idx(t_tap_idx),
+		.width(t_width),
+		.height(t_height),
+		.tap_x(t_chroma_x),
+		.tap_y(t_chroma_y)
 	);
 
 endmodule

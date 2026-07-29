@@ -11,6 +11,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
 RTL_L="$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_luma_qpel.sv"
 RTL_C="$ROOT/fpga/Plex_MiSTer/rtl/h264_mc_chroma_epel.sv"
+RTL_A="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 TOP="$ROOT/tests/rtl/h264_mc_qpel_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_mc_qpel_tb.cpp"
 OSS_CAD_SUITE="${OSS_CAD_SUITE:-$HOME/.local/oss-cad-suite-20260726}"
@@ -47,7 +48,7 @@ build_one() {
     --Mdir "$build_dir" \
     --top-module h264_mc_qpel_tb_top -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
     -CFLAGS "-std=c++17 -O2 $extra_define" \
-    "$RTL_L" "$RTL_C" "$TOP" "$TB"
+    "$RTL_L" "$RTL_C" "$RTL_A" "$TOP" "$TB"
 }
 
 # RED proof first: perturbing the golden must make the run fail, otherwise the

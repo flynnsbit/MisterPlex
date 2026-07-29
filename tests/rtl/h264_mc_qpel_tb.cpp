@@ -374,6 +374,70 @@ int main(int argc, char **argv) {
         }
     }
 
+    // ---- reference-fetch edge clamping, real 624x480 geometry ---------
+    // A motion vector is legally allowed to point outside the picture.  The
+    // fetch must clamp the coordinate so the border sample replicates; an
+    // unclamped fetch reads garbage or walks off the DDR frame entirely.
+    // This is combinational, so sweep it hard.
+    const int PICW = 624, PICH = 480;
+    dut->t_width = PICW;
+    dut->t_height = PICH;
+    long clamp_checked = 0, clamp_bad = 0, clamp_oob = 0;
+    const int bases[] = {-4096, -700, -512, -64, -21, -3, -1, 0,   1,
+                         8,     311, 312, 479, 480, 623, 624, 700, 4096};
+    for (unsigned bi = 0; bi < sizeof(bases) / sizeof(bases[0]); bi++) {
+        for (unsigned bj = 0; bj < sizeof(bases) / sizeof(bases[0]); bj++) {
+            dut->t_base_x = bases[bi];
+            dut->t_base_y = bases[bj];
+            for (int idx = 0; idx < 441; idx++) {
+                dut->t_tap_idx = idx;
+                dut->eval();
+
+                int lx = (int)(bases[bi] + (idx % 21) - 2);
+                int ly = (int)(bases[bj] + (idx / 21) - 2);
+                if (lx < 0) lx = 0;
+                if (lx > PICW - 1) lx = PICW - 1;
+                if (ly < 0) ly = 0;
+                if (ly > PICH - 1) ly = PICH - 1;
+                clamp_checked += 2;
+                if ((int)dut->t_luma_x != lx || (int)dut->t_luma_y != ly) {
+                    clamp_bad++;
+                    if (first_fail_reported++ < 8)
+                        printf("MISMATCH clamp-luma base=(%d,%d) idx=%d "
+                               "rtl=(%u,%u) golden=(%d,%d)\n",
+                               bases[bi], bases[bj], idx, dut->t_luma_x,
+                               dut->t_luma_y, lx, ly);
+                }
+                // The load-bearing property: whatever the vector, the address
+                // handed to the DPB is inside the frame.
+                if ((int)dut->t_luma_x >= PICW || (int)dut->t_luma_y >= PICH)
+                    clamp_oob++;
+
+                if (idx < 81) {
+                    int cx = (int)(bases[bi] + (idx % 9));
+                    int cy = (int)(bases[bj] + (idx / 9));
+                    if (cx < 0) cx = 0;
+                    if (cx > PICW - 1) cx = PICW - 1;
+                    if (cy < 0) cy = 0;
+                    if (cy > PICH - 1) cy = PICH - 1;
+                    clamp_checked += 2;
+                    if ((int)dut->t_chroma_x != cx ||
+                        (int)dut->t_chroma_y != cy) {
+                        clamp_bad++;
+                        if (first_fail_reported++ < 8)
+                            printf("MISMATCH clamp-chroma base=(%d,%d) idx=%d "
+                                   "rtl=(%u,%u) golden=(%d,%d)\n",
+                                   bases[bi], bases[bj], idx, dut->t_chroma_x,
+                                   dut->t_chroma_y, cx, cy);
+                    }
+                    if ((int)dut->t_chroma_x >= PICW ||
+                        (int)dut->t_chroma_y >= PICH)
+                        clamp_oob++;
+                }
+            }
+        }
+    }
+
     dut->final();
     delete dut;
 
@@ -384,13 +448,16 @@ int main(int argc, char **argv) {
     printf("RTL SIM h264_mc_chroma_epel : %ld sample comparisons, %ld mismatches "
            "(%ld chroma vectors, all 64 sub-positions covered)\n",
            chroma_checked, chroma_bad, chroma_vectors);
+    printf("RTL SIM h264_luma_ref_tap_addr: %ld coordinate comparisons, %ld "
+           "mismatches, %ld out-of-frame addresses (624x480, MVs to +/-4096)\n",
+           clamp_checked, clamp_bad, clamp_oob);
 
-    if (luma_bad || chroma_bad) {
+    if (luma_bad || chroma_bad || clamp_bad || clamp_oob) {
         printf("RTL SIM FAIL\n");
         return 1;
     }
     printf("RTL SIM PASS: serialized MC interpolators match H.264 8.4.2.2.1 / "
            "8.4.2.2.2 bit-exactly, centre (j) and edge-replicated windows "
-           "included\n");
+           "included; every out-of-picture fetch address clamps in-frame\n");
     return 0;
 }
