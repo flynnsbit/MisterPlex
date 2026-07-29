@@ -106,7 +106,9 @@ IDLE_CONF="$(ssh_read "awk -F= '/^IDLE_SCREEN=/{print \$2}' /media/fat/misterple
 [ -n "$IDLE_CONF" ] || IDLE_CONF="logo"
 OSD_CONTROL="$(ssh_read "awk -F= '/^OSD_CONTROL=/{print \$2}' /media/fat/misterplex/misterplex.conf 2>/dev/null | tail -1")"
 [ -n "$OSD_CONTROL" ] || OSD_CONTROL="0"
-echo "CONFIG idle=$IDLE_CONF osd_control=$OSD_CONTROL"
+PRESENT_CONF="$(ssh_read "awk -F= '/^PRESENT=/{print \$2}' /media/fat/misterplex/misterplex.conf 2>/dev/null | tail -1")"
+[ -n "$PRESENT_CONF" ] || PRESENT_CONF="fb0"
+echo "CONFIG idle=$IDLE_CONF osd_control=$OSD_CONTROL present=$PRESENT_CONF"
 
 TIMELINE="$(ssh_read 'wget -qO- "http://127.0.0.1:3005/player/timeline/poll?commandID=wosd-idle-probe" 2>/dev/null || true')"
 STATE="$(printf '%s' "$TIMELINE" | sed -n 's/.*state=\"\([^\"]*\)\".*/\1/p' | head -1)"
@@ -156,6 +158,42 @@ if [ "$RBF_VERIFIED" != "1" ]; then
     unscored_exit "rbf-provenance-unverified"
 fi
 
+# Paint-path log bracket (parent RCA: PRESENT=fb0 skipped fpga_.open in initPresent,
+# paintIdle never entered the fpga_.ok() block → neither success nor fail logged).
+# Evidence class: presence/absence of specific log strings — not HDMI picture.
+PAINT_OK_N="$(ssh_read 'grep -c "idle screen painted" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
+PAINT_FAIL_N="$(ssh_read 'grep -c "idle paint DDR failed\|idle paint failed" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
+PAINT_OPEN_N="$(ssh_read 'grep -c "idle FPGA frame path OK\|FPGA frame path OK" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
+PAINT_OK_N=$(printf '%s' "$PAINT_OK_N" | tr -dc '0-9'); PAINT_OK_N=${PAINT_OK_N:-0}
+PAINT_FAIL_N=$(printf '%s' "$PAINT_FAIL_N" | tr -dc '0-9'); PAINT_FAIL_N=${PAINT_FAIL_N:-0}
+PAINT_OPEN_N=$(printf '%s' "$PAINT_OPEN_N" | tr -dc '0-9'); PAINT_OPEN_N=${PAINT_OPEN_N:-0}
+echo "PAINT_LOG painted=$PAINT_OK_N fail=$PAINT_FAIL_N open_ok=$PAINT_OPEN_N"
+
+case "$PRESENT_CONF" in
+fpga|both)
+    if [ "$PAINT_OK_N" -eq 0 ] && [ "$PAINT_FAIL_N" -eq 0 ]; then
+        # Log lacks both bracket lines → paintIdle fpga block never produced a result.
+        echo "IDLE_TELEMETRY_END"
+        fail_exit "idle-paint-path-silent present=$PRESENT_CONF (no painted/fail log lines)"
+    fi
+    if [ "$PAINT_OK_N" -eq 0 ] && [ "$PAINT_FAIL_N" -gt 0 ]; then
+        echo "IDLE_TELEMETRY_END"
+        fail_exit "idle-paint-ddr-failed present=$PRESENT_CONF fail_lines=$PAINT_FAIL_N"
+    fi
+    ;;
+fb0)
+    # Core scanout is not driven by fb0 blit alone; without painted/open logs we
+    # cannot claim the DDR frame store the core scans was updated.
+    if [ "$PAINT_OK_N" -eq 0 ] && [ "$PAINT_OPEN_N" -eq 0 ]; then
+        echo "IDLE_TELEMETRY_END"
+        unscored_exit "present-fb0-no-fpga-idle-paint-log (core scanout path unproven)"
+    fi
+    ;;
+none)
+    unscored_exit "present-none-no-idle-paint"
+    ;;
+esac
+
 case "$IDLE_CONF" in
 black)
     if [ "$W0_T0" != "0x10101010" ] || [ "$W1_T0" != "0x10101010" ]; then
@@ -171,10 +209,14 @@ last|off)
     unscored_exit "last-frame-needs-playback"
     ;;
 logo|"")
-    # Logo paint is not verified here (no capture / no pixel golden). Telemetry
-    # path ran, but picture correctness is unscoreable without eyes/HDMI.
+    # No HDMI capture: picture content unproven. Paint-path + DDR telemetry only.
+    if [ "$PAINT_OK_N" -gt 0 ]; then
+        echo "IDLE_TELEMETRY_END"
+        echo "IDLE_RESULT=PASS scope=idle-paint-log+ddr-telemetry-not-hdmi"
+        exit "$RC_PASS"
+    fi
     echo "IDLE_TELEMETRY_END"
-    echo "IDLE_RESULT=UNSCORED reason=logo-mode-telemetry-only-no-picture-check"
+    echo "IDLE_RESULT=UNSCORED reason=logo-mode-no-paint-log"
     exit "$RC_UNSCORED"
     ;;
 *)
