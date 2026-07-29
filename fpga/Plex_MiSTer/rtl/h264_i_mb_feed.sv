@@ -148,7 +148,8 @@ module h264_i_mb_feed #(
 		ST_P_SKIP_EMIT  = 6'd20,
 		ST_P_AFTER_MB   = 6'd21,
 		ST_P_SKIP_RUN   = 6'd22,
-		ST_EOS_CHECK    = 6'd23;
+		ST_EOS_CHECK    = 6'd23,
+		ST_EOS_ARM      = 6'd24;
 
 	// Residual step index: 0..15 luma, 16/17 chroma DC, 18..25 chroma AC
 	localparam [4:0] STEP_LUMA_END  = 5'd16;
@@ -182,8 +183,11 @@ module h264_i_mb_feed #(
 	reg [5:0]  st;
 	reg [15:0] mb_addr;
 	reg [15:0] mb_total;
-	reg [15:0] abs_bit;
-	reg [15:0] res_start_bit;
+	// Bit positions must cover full RBSP (length_bytes*8). 16-bit abs_bit
+	// saturated at 8192B; rbsp_bits used to take length[12:0]<<3 (cap 21616)
+	// which falsely tripped DSC_RBSP_OVERRUN mid-frame (~MB249 on 624x480).
+	reg [18:0] abs_bit;
+	reg [18:0] res_start_bit;
 	reg [4:0]  res_step;
 	reg [5:0]  qp_r;
 	reg [3:0]  cbp_l_r;
@@ -406,11 +410,12 @@ module h264_i_mb_feed #(
 		endcase
 	endfunction
 
-	// Absolute bit → window-relative, after a request at abs_bit[15:3]
-	wire [15:0] win_bit_base = {rbsp_window_base[12:0], 3'd0};
-	wire [15:0] rel_bit16 = abs_bit - win_bit_base;
+	// Absolute bit → window-relative, after a request at abs_bit>>3
+	wire [18:0] win_bit_base = {rbsp_window_base, 3'd0};
+	wire [18:0] rel_bit_w = abs_bit - win_bit_base;
+	wire [15:0] rel_bit16 = rel_bit_w[15:0];
 	wire [9:0]  rel_bit10 = rel_bit16[9:0];
-	wire [15:0] rbsp_bits = {rbsp_length[12:0], 3'd0};
+	wire [18:0] rbsp_bits = {rbsp_length, 3'd0};
 
 	// Live bit from window
 	wire [5:0]  rd_byte_idx = rel_bit10[8:3];
@@ -422,14 +427,19 @@ module h264_i_mb_feed #(
 	wire [1:0] cur_by = blk_y(cur_blk);
 	wire [7:0] mb_x8 = (mb_width == 8'd0) ? 8'd0 : mb_addr % {8'd0, mb_width};
 	wire [7:0] mb_y8 = (mb_width == 8'd0) ? 8'd0 : mb_addr / {8'd0, mb_width};
+	// Picture-edge availability: previous-MB left cache is NOT valid at mb_x==0
+	// (row wrap). Top cache is only valid for mb_y>0.
+	wire       left_mb_avail = (mb_x8 != 8'd0);
+	wire       up_mb_avail   = (mb_y8 != 8'd0);
 	wire       left_int = (cur_bx != 2'd0);
 	wire       up_int   = (cur_by != 2'd0);
 	wire [4:0] left_tc_w = left_int ? tc_cur[blk_at(cur_bx - 2'd1, cur_by)]
-	                                : tc_left[cur_by];
-	wire       left_tc_v = left_int ? 1'b1 : tc_left_valid;
+	                                : (left_mb_avail ? tc_left[cur_by] : 5'd0);
+	wire       left_tc_v = left_int ? 1'b1 : (tc_left_valid && left_mb_avail);
 	wire [4:0] up_tc_w = up_int ? tc_cur[blk_at(cur_bx, cur_by - 2'd1)]
-	                            : tc_top[{mb_x8[5:0], cur_bx}];
-	wire       up_tc_v = up_int ? 1'b1 : tc_top_valid[mb_x8];
+	                            : ((up_mb_avail && tc_top_valid[mb_x8]) ?
+	                               tc_top[{mb_x8[5:0], cur_bx}] : 5'd0);
+	wire       up_tc_v = up_int ? 1'b1 : (tc_top_valid[mb_x8] && up_mb_avail);
 	// Widen sum: 5-bit (tcA+tcB+1) wraps at 32 (e.g. 15+16+1→0) and breaks nC.
 	wire [5:0] nC_sum = {1'b0, left_tc_w} + {1'b0, up_tc_w} + 6'd1;
 	wire [4:0] nC_w =
@@ -497,43 +507,58 @@ module h264_i_mb_feed #(
 	endfunction
 
 	// Combinational more_rbsp_data using live window around abs_bit.
-	// Trailing = rbsp_stop_one_bit ('1') + zero alignment (7.4.1).
-	wire [15:0] more_left = (abs_bit >= rbsp_bits) ? 16'd0 : (rbsp_bits - abs_bit);
-	wire [15:0] more_rbase = {rbsp_window_base[12:0], 3'd0};
+	// Trailing = rbsp_stop_one_bit ('1') + zero pad (7.4.1).  Peek up to 32 bits
+	// so a few captured padding bytes after the real RBSP (length overshoot)
+	// still classify as trailing instead of false more_rbsp / DSC_LONG.
+	wire [18:0] more_left = (abs_bit >= rbsp_bits) ? 19'd0 : (rbsp_bits - abs_bit);
+	wire [18:0] more_rbase = {rbsp_window_base, 3'd0};
 	wire more_rbsp_w;
-	wire more_bit [0:7];
+	localparam int MORE_PEEK = 32;
+	wire more_bit [0:MORE_PEEK-1];
 	genvar more_gi;
 	generate
-		for (more_gi = 0; more_gi < 8; more_gi = more_gi + 1) begin : g_more_bits
-			wire [15:0] bpos = abs_bit + more_gi[15:0];
-			wire [9:0]  rb   = bpos - more_rbase;
+		for (more_gi = 0; more_gi < MORE_PEEK; more_gi = more_gi + 1) begin : g_more_bits
+			wire [18:0] bpos = abs_bit + more_gi[18:0];
+			wire [18:0] rb_full = bpos - more_rbase;
+			wire [9:0]  rb   = rb_full[9:0];
+			// Only sample bits inside the 64B window (rb < 512) and more_left.
 			assign more_bit[more_gi] =
-				(more_gi[15:0] < more_left) ?
+				((more_gi[18:0] < more_left) && (rb_full < 19'd512)) ?
 					rbsp_byte[rb[8:3]][3'd7 - rb[2:0]] : 1'b0;
 		end
 	endgenerate
-	// Collapse: any '1' that is not solely the first stop with trailing zeros.
-	wire more_any = more_bit[0]|more_bit[1]|more_bit[2]|more_bit[3]|
-	                more_bit[4]|more_bit[5]|more_bit[6]|more_bit[7];
-	// Find index of first 1; if any 1 after that → more data.
-	wire [3:0] more_first_one =
-		more_bit[0] ? 4'd0 : more_bit[1] ? 4'd1 : more_bit[2] ? 4'd2 :
-		more_bit[3] ? 4'd3 : more_bit[4] ? 4'd4 : more_bit[5] ? 4'd5 :
-		more_bit[6] ? 4'd6 : more_bit[7] ? 4'd7 : 4'd15;
-	wire more_after_stop =
-		(more_first_one < 4'd7) && (
-			((more_first_one < 4'd1) && (more_bit[1]|more_bit[2]|more_bit[3]|more_bit[4]|more_bit[5]|more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd2) && (more_bit[2]|more_bit[3]|more_bit[4]|more_bit[5]|more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd3) && (more_bit[3]|more_bit[4]|more_bit[5]|more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd4) && (more_bit[4]|more_bit[5]|more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd5) && (more_bit[5]|more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd6) && (more_bit[6]|more_bit[7])) ||
-			((more_first_one < 4'd7) && more_bit[7])
-		);
-	assign more_rbsp_w = (more_left == 16'd0) ? 1'b0 :
-	                     (more_left > 16'd8)  ? 1'b1 :
+	wire more_any;
+	wire more_after_stop;
+	// OR-reduce + "any 1 after the first 1" without priority encoder chains.
+	wire [MORE_PEEK-1:0] more_vec;
+	generate
+		for (more_gi = 0; more_gi < MORE_PEEK; more_gi = more_gi + 1) begin : g_more_vec
+			assign more_vec[more_gi] = more_bit[more_gi];
+		end
+	endgenerate
+	assign more_any = |more_vec;
+	// more_after_stop: exists i<j with more_vec[i]=1 and more_vec[j]=1
+	wire [MORE_PEEK-1:0] more_seen1;
+	assign more_seen1[0] = more_vec[0];
+	generate
+		for (more_gi = 1; more_gi < MORE_PEEK; more_gi = more_gi + 1) begin : g_more_seen
+			assign more_seen1[more_gi] = more_seen1[more_gi-1] | more_vec[more_gi];
+		end
+	endgenerate
+	wire [MORE_PEEK-1:0] more_after_bits;
+	assign more_after_bits[0] = 1'b0;
+	generate
+		for (more_gi = 1; more_gi < MORE_PEEK; more_gi = more_gi + 1) begin : g_more_after
+			// 1 at j while a prior 1 was already seen at j-1
+			assign more_after_bits[more_gi] = more_vec[more_gi] & more_seen1[more_gi-1];
+		end
+	endgenerate
+	assign more_after_stop = |more_after_bits;
+	// stop+zeros in the peek (or all zeros) ⇒ trailing/padding, even if length
+	// overshoots the real RBSP by a few captured bytes.
+	assign more_rbsp_w = (more_left == 19'd0) ? 1'b0 :
 	                     (!more_any)          ? 1'b0 :
-	                                            more_after_stop;
+	                     more_after_stop;
 
 	h264_cavlc_residual_block #(.MAX_BYTES(64)) u_cavlc (
 		.clk(clk),
@@ -585,16 +610,19 @@ module h264_i_mb_feed #(
 	wire [1:0] feed_chr_ly = {1'b0, feed_chr_ac_blk[1]};
 	wire [1:0] feed_chr_lx = {1'b0, feed_chr_ac_blk[0]};
 	// Left: internal blk or previous-MB right edge (lx=1); top: internal or above-MB bottom (ly=1).
+	// Gate external left/top on picture edges (mb_x==0 / mb_y==0) — sticky
+	// chr_left_valid from end-of-row must not bleed into the next row.
 	wire [4:0] feed_chr_left_tc = feed_chr_left_int ?
 		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_left_i] : chr_tc_u[feed_chr_left_i]) :
-		(chr_left_valid ? (feed_chr_ac_is_v ? chr_left_v[feed_chr_ly[0]] : chr_left_u[feed_chr_ly[0]]) : 5'd0);
-	wire       feed_chr_left_v = feed_chr_left_int | chr_left_valid;
+		((chr_left_valid && left_mb_avail) ?
+			(feed_chr_ac_is_v ? chr_left_v[feed_chr_ly[0]] : chr_left_u[feed_chr_ly[0]]) : 5'd0);
+	wire       feed_chr_left_v = feed_chr_left_int | (chr_left_valid && left_mb_avail);
 	wire [4:0] feed_chr_up_tc = feed_chr_up_int ?
 		(feed_chr_ac_is_v ? chr_tc_v[feed_chr_up_i] : chr_tc_u[feed_chr_up_i]) :
-		(chr_top_valid[mb_x8] ?
+		((chr_top_valid[mb_x8] && up_mb_avail) ?
 			(feed_chr_ac_is_v ? chr_top_v[{mb_x8[5:0], feed_chr_lx[0]}]
 			                  : chr_top_u[{mb_x8[5:0], feed_chr_lx[0]}]) : 5'd0);
-	wire       feed_chr_up_v = feed_chr_up_int | chr_top_valid[mb_x8];
+	wire       feed_chr_up_v = feed_chr_up_int | (chr_top_valid[mb_x8] && up_mb_avail);
 	wire [5:0] feed_chr_nC_sum = {1'b0, feed_chr_left_tc} + {1'b0, feed_chr_up_tc} + 6'd1;
 	wire [4:0] feed_chr_nC = (feed_chr_left_v && feed_chr_up_v) ?
 		feed_chr_nC_sum[5:1] :
@@ -716,8 +744,8 @@ module h264_i_mb_feed #(
 			st <= ST_IDLE;
 			mb_addr <= 16'd0;
 			mb_total <= 16'd0;
-			abs_bit <= 16'd0;
-			res_start_bit <= 16'd0;
+			abs_bit <= 19'd0;
+			res_start_bit <= 19'd0;
 			res_step <= 5'd0;
 			qp_r <= 6'd0;
 			cbp_l_r <= 4'd0;
@@ -825,7 +853,7 @@ module h264_i_mb_feed #(
 
 			// ── MB0: syntax already known from slice_hdr_parser ───────
 			ST_MB0_LOAD: begin
-				abs_bit <= first_residual_bit_offset;
+				abs_bit <= {3'd0, first_residual_bit_offset};
 				qp_r <= slice_qp_y;
 				mb_qp_y <= slice_qp_y;
 				mb_qp_delta <= 6'sd0;
@@ -858,7 +886,7 @@ module h264_i_mb_feed #(
 						cbp_luma <= first_cbp_luma;
 						cbp_chroma <= first_cbp_chroma;
 					end
-					res_start_bit <= first_residual_bit_offset;
+					res_start_bit <= {3'd0, first_residual_bit_offset};
 					mb_residual_bit_offset <= first_residual_bit_offset;
 					for (ci = 0; ci < 16; ci = ci + 1)
 						tc_cur[ci] <= 5'd0;
@@ -879,7 +907,7 @@ module h264_i_mb_feed #(
 					// First skip_run already consumed. mb_skip_run==0 is legal
 					// (no run present) — do not coerce to 1.
 					skip_left <= first_p_skip_run;
-					abs_bit <= first_residual_bit_offset;
+					abs_bit <= {3'd0, first_residual_bit_offset};
 					st <= (first_p_skip_run == 16'd0) ? ST_P_AFTER_MB : ST_P_SKIP_EMIT;
 				end else begin
 					// First coded P MB (or intra-in-P) fully parsed by header.
@@ -935,7 +963,7 @@ module h264_i_mb_feed #(
 						chroma_pred_mode <= 2'd0;
 						i4_modes_present <= 1'b0;
 					end
-					res_start_bit <= first_residual_bit_offset;
+					res_start_bit <= {3'd0, first_residual_bit_offset};
 					mb_residual_bit_offset <= first_residual_bit_offset;
 					for (ci = 0; ci < 16; ci = ci + 1)
 						tc_cur[ci] <= 5'd0;
@@ -978,7 +1006,7 @@ module h264_i_mb_feed #(
 					cbp_chroma <= 2'd0;
 					mb_qp_delta <= 6'sd0;
 					mb_qp_y <= qp_r;
-					mb_residual_bit_offset <= abs_bit;
+					mb_residual_bit_offset <= abs_bit[15:0];
 					res_start_bit <= abs_bit;
 					clear_pred;
 					part_mode <= 3'd0;
@@ -1019,7 +1047,7 @@ module h264_i_mb_feed #(
 
 			// ── Residual walk (luma feed and/or bit-sync) ─────────────
 			ST_RES_REQ: begin
-				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+				rbsp_request_offset <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
 				// I_16x16 always has a luma DC residual block before AC/chroma.
@@ -1078,7 +1106,7 @@ module h264_i_mb_feed #(
 						chroma_residual_valid <= 1'b1;
 					if (inter_res_only_r && !mb_skip_r) begin
 						// Finished pre-pulse bit-sync for inter: now launch core.
-						mb_residual_bit_offset <= res_start_bit;
+						mb_residual_bit_offset <= res_start_bit[15:0];
 						st <= ST_MB_PULSE;
 					end else if (feed_luma_r) begin
 						st <= ST_WAIT_CORE;
@@ -1088,7 +1116,7 @@ module h264_i_mb_feed #(
 				end else if (is_i16_r && i16_dc_pending) begin
 					// Intra16x16 luma DC: one max16 block, nC of 4x4 blk0.
 					if (rel_bit16 >= 16'd400) begin
-						rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+						rbsp_request_offset <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_RES_ARM;
@@ -1144,7 +1172,7 @@ module h264_i_mb_feed #(
 					end
 				end else begin
 					if (rel_bit16 >= 16'd400) begin
-						rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+						rbsp_request_offset <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_RES_ARM;
@@ -1171,16 +1199,24 @@ module h264_i_mb_feed #(
 				if (cav_done) begin
 					if (!cav_ok) begin
 						// Illegal coeff_token / total_coeff / CAVLC range.
+`ifndef SYNTHESIS
+						$display("FEED_DESYNC mb=%0d cause=4 abs_bit=%0d step=%0d",
+							mb_addr, abs_bit, res_step);
+`endif
 						latch_desync(1'b0, 1'b0, DSC_CAVLC);
 						error <= 1'b1;
 						st <= ST_FAIL;
-					end else if ((win_bit_base + {6'd0, cav_bit_end}) > rbsp_bits) begin
+					end else if ((win_bit_base + {9'd0, cav_bit_end}) > rbsp_bits) begin
 						// Residual walk ran past RBSP end.
+`ifndef SYNTHESIS
+						$display("FEED_DESYNC mb=%0d cause=5 abs_bit=%0d step=%0d win_base=%0d cav_end=%0d rbsp_bits=%0d",
+							mb_addr, abs_bit, res_step, win_bit_base, cav_bit_end, rbsp_bits);
+`endif
 						latch_desync(1'b0, 1'b1, DSC_RBSP_OVERRUN);
 						error <= 1'b1;
 						st <= ST_FAIL;
 					end else begin
-						abs_bit <= win_bit_base + {6'd0, cav_bit_end};
+						abs_bit <= win_bit_base + {9'd0, cav_bit_end};
 						if (is_i16_r && i16_dc_pending) begin
 							// DC bits consumed only — AC nC map stays AC-total_coeff.
 							// i16_dc values owned by g-intra (not hardwired here).
@@ -1293,7 +1329,7 @@ module h264_i_mb_feed #(
 						st <= ST_EOS_CHECK;
 					end else begin
 						// Align window then decide more_rbsp / next skip_run
-						rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+						rbsp_request_offset <= abs_bit[18:3];
 						rbsp_request_valid <= 1'b1;
 						win_armed <= 1'b0;
 						st <= ST_P_SKIP_RUN;
@@ -1324,25 +1360,42 @@ module h264_i_mb_feed #(
 			end
 
 			ST_EOS_CHECK: begin
-				// Cross-check PicSizeInMbs vs bitstream end / trailing bits.
-				// more_rbsp_w false ⇒ only rbsp_trailing_bits (or empty) remain —
-				// the best e2e byte-align sync check available without a second pass.
-				if (mb_addr < mb_total)
-					latch_desync(1'b1, 1'b0, DSC_EARLY);
-				else if (mb_addr > mb_total) begin
-					latch_desync(1'b0, 1'b1, DSC_SKIP_OVERRUN);
-					error <= 1'b1;
-				end else if (more_rbsp_w)
-					// Full pic decoded but trailing non-RBSP-trailing bits remain.
-					latch_desync(1'b0, 1'b1, DSC_LONG);
-				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+				// Must present the window at abs_bit before sampling more_rbsp_w;
+				// otherwise a stale window can false-trigger DSC_LONG after a
+				// clean full-pic walk (seen at mb_addr==PicSizeInMbs).
+				rbsp_request_offset <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
-				st <= ST_DONE;
+				win_armed <= 1'b0;
+				st <= ST_EOS_ARM;
+			end
+
+			ST_EOS_ARM: begin
+				win_armed <= 1'b1;
+				if (win_armed) begin
+					// Cross-check PicSizeInMbs vs bitstream end / trailing bits.
+					// more_rbsp_w false ⇒ only rbsp_trailing_bits (or empty) remain.
+					// Also accept more_left<=8 at exact PicSizeInMbs: stop_one_bit +
+					// zero align fits in one byte; avoids false DSC_LONG when the
+					// trailing peek races a window edge.
+`ifndef SYNTHESIS
+					$display("FEED_EOS mb=%0d total=%0d abs_bit=%0d rbsp_bits=%0d more_left=%0d more=%0d",
+						mb_addr, mb_total, abs_bit, rbsp_bits, more_left, more_rbsp_w);
+`endif
+					if (mb_addr < mb_total)
+						latch_desync(1'b1, 1'b0, DSC_EARLY);
+					else if (mb_addr > mb_total) begin
+						latch_desync(1'b0, 1'b1, DSC_SKIP_OVERRUN);
+						error <= 1'b1;
+					end 					else if (more_rbsp_w)
+						// Full pic decoded but non-trailing bits remain.
+						latch_desync(1'b0, 1'b1, DSC_LONG);
+					st <= ST_DONE;
+				end
 			end
 
 			// ── Syntax bit reader ─────────────────────────────────────
 			ST_SYN_REQ: begin
-				rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+				rbsp_request_offset <= abs_bit[18:3];
 				rbsp_request_valid <= 1'b1;
 				win_armed <= 1'b0;
 				st <= ST_SYN_ARM;
@@ -1360,7 +1413,7 @@ module h264_i_mb_feed #(
 
 			ST_SYN_UE0: begin
 				if (rel_bit16 >= 16'd500) begin
-					rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+					rbsp_request_offset <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
@@ -1370,14 +1423,14 @@ module h264_i_mb_feed #(
 					st <= ST_FAIL;
 				end else if (!rd_bit) begin
 					ue_zeros <= ue_zeros + 8'd1;
-					abs_bit <= abs_bit + 16'd1;
+					abs_bit <= abs_bit + 19'd1;
 					if (ue_zeros >= 8'd28) begin
 						latch_desync(1'b0, 1'b0, DSC_SYNTAX);
 						error <= 1'b1;
 						st <= ST_FAIL;
 					end
 				end else begin
-					abs_bit <= abs_bit + 16'd1;
+					abs_bit <= abs_bit + 19'd1;
 					if (ue_zeros == 8'd0) begin
 						ue_val <= 32'd0;
 						st <= ST_SYN_DISPATCH;
@@ -1391,13 +1444,13 @@ module h264_i_mb_feed #(
 
 			ST_SYN_UE1: begin
 				if (rel_bit16 >= 16'd500) begin
-					rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+					rbsp_request_offset <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
 				end else begin
 					ue_suf <= {ue_suf[30:0], rd_bit};
-					abs_bit <= abs_bit + 16'd1;
+					abs_bit <= abs_bit + 19'd1;
 					if (ue_suf_left == 8'd1) begin
 						ue_val <= ((32'd1 << ue_zeros) - 32'd1) + {ue_suf[30:0], rd_bit};
 						st <= ST_SYN_DISPATCH;
@@ -1408,13 +1461,13 @@ module h264_i_mb_feed #(
 
 			ST_SYN_BIT: begin
 				if (rel_bit16 >= 16'd500) begin
-					rbsp_request_offset <= {3'd0, abs_bit[15:3]};
+					rbsp_request_offset <= abs_bit[18:3];
 					rbsp_request_valid <= 1'b1;
 					win_armed <= 1'b0;
 					st <= ST_SYN_ARM;
 				end else begin
 					bit_acc <= {bit_acc[30:0], rd_bit};
-					abs_bit <= abs_bit + 16'd1;
+					abs_bit <= abs_bit + 19'd1;
 					if (bit_left == 8'd1)
 						st <= ST_SYN_DISPATCH;
 					else
@@ -1579,7 +1632,7 @@ module h264_i_mb_feed #(
 							mb_qp_delta <= 6'sd0;
 							mb_qp_y <= qp_r;
 							res_start_bit <= abs_bit;
-							mb_residual_bit_offset <= abs_bit;
+							mb_residual_bit_offset <= abs_bit[15:0];
 							for (ci = 0; ci < 16; ci = ci + 1)
 								tc_cur[ci] <= 5'd0;
 							res_step <= 5'd0;
@@ -1606,7 +1659,7 @@ module h264_i_mb_feed #(
 						cbp_chroma <= cbp_c_r;
 					end
 					res_start_bit <= abs_bit;
-					mb_residual_bit_offset <= abs_bit;
+					mb_residual_bit_offset <= abs_bit[15:0];
 					for (ci = 0; ci < 16; ci = ci + 1)
 						tc_cur[ci] <= 5'd0;
 					res_step <= 5'd0;
