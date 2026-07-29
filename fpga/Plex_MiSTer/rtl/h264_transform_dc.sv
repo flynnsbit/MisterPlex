@@ -160,19 +160,31 @@ module h264_luma_dc_hadamard_inv (
 	assign f[14] = g2  - g6  + g10 - g14;
 	assign f[15] = g3  - g7  + g11 - g15;
 
-	// LevelScale(qP%6,0,0) = 16 * normAdjust(qP%6,0)
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
-	wire [15:0] level_scale_u = {7'd0, norm_adjust0(qmod), 4'd0};
-	wire signed [17:0] level_scale = $signed({2'b00, level_scale_u});
+	// LevelScale(qP%6,0,0) = 16 * normAdjust(qP%6,0).  The x16 is folded into
+	// the rounding shift below so the datapath never has to carry it.
+	wire [5:0] qmod6 = qp % 6;
+	wire [5:0] qdiv6 = qp / 6;
+	wire [2:0] qmod = qmod6[2:0];
+	wire [3:0] qdiv = qdiv6[3:0];
+	wire [4:0] na = norm_adjust0(qmod);
 
-	// dcY = (f * LevelScale << (qP/6) + 32) >> 6  — identical to both 8.5.10 branches
+	// dcY = (f * LevelScale << (qP/6) + 32) >> 6  — identical to both 8.5.10
+	// branches.  AREA: normAdjust is at most 5 bits, so the product is five
+	// shifted copies of f rather than a multiplier; sixteen of these were
+	// consuming sixteen DSP blocks on a device that is over its DSP budget.
+	//   ((f*na*16 << qdiv) + 32) >> 6  ==  ((f*na << qdiv) + 2) >> 2
 	genvar di;
 	generate
 		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [47:0] mul  = f[di] * level_scale;
-			wire signed [47:0] prod = mul <<< qdiv;
-			assign dc[di] = sat29((prod + 48'sd32) >>> 6);
+			wire signed [29:0] fw = {{5{f[di][24]}}, f[di]};
+			wire signed [29:0] mul = (na[0] ? fw          : 30'sd0)
+			                       + (na[1] ? (fw <<< 1)  : 30'sd0)
+			                       + (na[2] ? (fw <<< 2)  : 30'sd0)
+			                       + (na[3] ? (fw <<< 3)  : 30'sd0)
+			                       + (na[4] ? (fw <<< 4)  : 30'sd0);
+			wire signed [43:0] prod = $signed({{14{mul[29]}}, mul}) <<< qdiv;
+			wire signed [43:0] rnd  = (prod + 44'sd2) >>> 2;
+			assign dc[di] = sat29({{4{rnd[43]}}, rnd});
 		end
 	endgenerate
 endmodule
@@ -217,18 +229,26 @@ module h264_chroma_dc_hadamard_inv (
 	assign f[2] = c0 + c1 - c2 - c3;
 	assign f[3] = c0 - c1 - c2 + c3;
 
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
-	wire [15:0] level_scale_u = {7'd0, norm_adjust0(qmod), 4'd0};
-	wire signed [17:0] level_scale = $signed({2'b00, level_scale_u});
+	wire [5:0] qmod6 = qp % 6;
+	wire [5:0] qdiv6 = qp / 6;
+	wire [2:0] qmod = qmod6[2:0];
+	wire [3:0] qdiv = qdiv6[3:0];
+	wire [4:0] na = norm_adjust0(qmod);
 
 	// dcC = ((f * LevelScale(qP%6,0,0)) << (qP/6)) >> 5   (8.5.11.2)
+	// Shift/add product, x16 folded into the shift:  (16X) >>> 5 == X >>> 1.
 	genvar di;
 	generate
 		for (di = 0; di < 4; di = di + 1) begin : g_cdc
-			wire signed [47:0] mul  = f[di] * level_scale;
-			wire signed [47:0] prod = mul <<< qdiv;
-			assign dc[di] = sat29(prod >>> 5);
+			wire signed [24:0] fw = {{5{f[di][19]}}, f[di]};
+			wire signed [24:0] mul = (na[0] ? fw          : 25'sd0)
+			                       + (na[1] ? (fw <<< 1)  : 25'sd0)
+			                       + (na[2] ? (fw <<< 2)  : 25'sd0)
+			                       + (na[3] ? (fw <<< 3)  : 25'sd0)
+			                       + (na[4] ? (fw <<< 4)  : 25'sd0);
+			wire signed [39:0] prod = $signed({{15{mul[24]}}, mul}) <<< qdiv;
+			wire signed [39:0] rnd  = prod >>> 1;
+			assign dc[di] = sat29({{8{rnd[39]}}, rnd});
 		end
 	endgenerate
 endmodule
@@ -293,8 +313,10 @@ module h264_dequant4x4_flex (
 		end
 	endfunction
 
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
+	wire [5:0] qmod6 = qp % 6;
+	wire [5:0] qdiv6 = qp / 6;
+	wire [2:0] qmod = qmod6[2:0];
+	wire [3:0] qdiv = qdiv6[3:0];
 
 	genvar r;
 	generate
@@ -309,12 +331,20 @@ module h264_dequant4x4_flex (
 			wire       in_range = skip_dc ? ((scan_idx != 5'd0) && ((scan_idx - 5'd1) < max_coeff))
 			                              : (scan_idx < max_coeff);
 			wire signed [15:0] c    = in_range ? coeff[arr_idx[3:0]] : 16'sd0;
-			wire [15:0]        qmul_u = {7'd0, norm_adjust(qmod, MI), 4'd0};
-			wire signed [17:0] qmul = $signed({2'b00, qmul_u});
-			wire signed [47:0] mul  = c * qmul;
-			wire signed [47:0] prod = mul <<< qdiv;
-			// (c * 16 * na << qdiv + 32) >> 6  ==  c * na << qdiv
-			wire signed [28:0] scaled = sat29((prod + 48'sd32) >>> 6);
+			// AREA: five shifted copies of c instead of a multiplier, and the
+			// LevelScale x16 folded into the rounding shift, so this instance
+			// no longer claims a DSP block:
+			//   ((c*na*16 << qdiv) + 32) >> 6  ==  ((c*na << qdiv) + 2) >> 2
+			wire [4:0]         na  = norm_adjust(qmod, MI);
+			wire signed [21:0] cw  = {{6{c[15]}}, c};
+			wire signed [21:0] mul = (na[0] ? cw          : 22'sd0)
+			                       + (na[1] ? (cw <<< 1)  : 22'sd0)
+			                       + (na[2] ? (cw <<< 2)  : 22'sd0)
+			                       + (na[3] ? (cw <<< 3)  : 22'sd0)
+			                       + (na[4] ? (cw <<< 4)  : 22'sd0);
+			wire signed [35:0] prod = $signed({{14{mul[21]}}, mul}) <<< qdiv;
+			wire signed [35:0] rnd  = (prod + 36'sd2) >>> 2;
+			wire signed [28:0] scaled = sat29({{12{rnd[35]}}, rnd});
 			if (r == 0) begin : g_dc_pos
 				assign dequant[r] = dc_override ? dc_value : (skip_dc ? 29'sd0 : scaled);
 			end else begin : g_ac_pos
