@@ -247,6 +247,9 @@ if [[ "$COPY_BACK" == "1" ]]; then
     --map-rpt "$LOCAL_OUT/Plex.map.rpt" \
     --log "$LOCAL_OUT/compile.log"
   "$ROOT/scripts/check_quartus_timing.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
+  # Margin regression vs wtime4 baseline (positive slack that eats budget = fail).
+  # ABSENT/malformed STA exits 77 (SKIP-NOT-PASS), not 0.
+  "$ROOT/scripts/check_timing_margin.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   "$ROOT/scripts/check_timing_exclusions.py" --sta-rpt "$LOCAL_OUT/Plex.sta.rpt"
   RBF="$LOCAL_OUT/Plex.rbf"
   STA="$LOCAL_OUT/Plex.sta.rpt"
