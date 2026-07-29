@@ -3,8 +3,16 @@
 //
 // Drop-in replacement for the combinational h264_inter_mc_part, with a
 // start/done handshake instead of a pure function of its inputs.  The luma and
-// chroma engines run concurrently -- 352 cycles for luma, 64 for chroma -- so
-// the block completes in the luma engine's time.
+// chroma engines run concurrently and both are lane-parallel, so the block
+// completes when the slower of the two retires:
+//
+//   luma    full-pel 17, no centre sample 65, centre sample 105 cycles
+//   chroma  full-pel  9, otherwise 17 cycles
+//
+// Luma is no longer unconditionally the longer of the two: a vector with
+// mv[1:0] == 0 but mv[2] set is integer luma and fractional chroma, so the
+// completion is a real join over both engines rather than an assumption that
+// chroma always finishes first.
 //
 // Inputs are the reference windows the DDR DPB fetch produced: 21x21 luma
 // (16 samples plus the 5 columns and rows of 6-tap support the interpolator
@@ -82,9 +90,32 @@ module h264_mc_block (
 		.pred_v(chroma_v_pred)
 	);
 
-	// Chroma always finishes first; the block is complete when luma retires.
+	// Join: hold whichever engine finishes first until the other one does.
+	reg luma_ret, chroma_ret;
+	reg done_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			luma_ret   <= 1'b0;
+			chroma_ret <= 1'b0;
+			done_r     <= 1'b0;
+		end else begin
+			done_r <= 1'b0;
+			if (start) begin
+				luma_ret   <= 1'b0;
+				chroma_ret <= 1'b0;
+			end else begin
+				if (luma_done)   luma_ret   <= 1'b1;
+				if (chroma_done) chroma_ret <= 1'b1;
+				if ((luma_ret || luma_done) && (chroma_ret || chroma_done)
+				    && !(luma_ret && chroma_ret)) begin
+					done_r <= 1'b1;
+				end
+			end
+		end
+	end
+
 	assign busy = luma_busy || chroma_busy;
-	assign done = luma_done;
+	assign done = done_r;
 
 	wire [4:0] chroma_w = {1'b0, part_w[4:1]};
 	wire [4:0] chroma_h = {1'b0, part_h[4:1]};
