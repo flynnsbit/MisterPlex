@@ -179,12 +179,18 @@ module ddr_bus_arbiter (
 	// (20 MHz) consumer would miss ~70 % of those pulses if sampled
 	// directly.  The FIFO absorbs beats on the fast side and auto-pops
 	// them one per clk_m1 cycle on the slow side.
+	//
+	// Depth matters once m1 issues BURSTS.  A 16-beat burst lands in 16
+	// clk_ddr cycles (~178 ns) while the clk_m1 side can only retire ~3 of
+	// them in that window, so an 8-entry FIFO would silently overflow and
+	// drop compressed bytes.  32 entries hold a full 16-beat burst with the
+	// consumer completely stalled, which is the real worst case.
 	wire        m1_rsp_fifo_full;
 	wire        m1_rsp_fifo_empty;
 	wire [63:0] m1_rsp_fifo_rdata;
 	wire        m1_rsp_wr_en = rsp_valid_out_pad & rsp_owner_m1_out_pad;
 
-	async_fifo #(.WIDTH(64), .AW(3)) m1_rsp_fifo (
+	async_fifo #(.WIDTH(64), .AW(5)) m1_rsp_fifo (
 		.wr_clk   (clk),
 		.wr_reset (rst),
 		.wr_en    (m1_rsp_wr_en),
