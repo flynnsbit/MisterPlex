@@ -13,7 +13,8 @@ module line_buf_ram #(
 	input  wire [AW-1:0] rd_addr,
 	output reg  [DATA_W-1:0] rd_data
 );
-	(* ramstyle = "M10K" *) reg [DATA_W-1:0] mem [0:WIDTH-1];
+	// Explicit M10K dual-clock simple dual-port. No async read, no mem reset.
+	(* ramstyle = "M10K, no_rw_check" *) reg [DATA_W-1:0] mem [0:WIDTH-1];
 
 	always @(posedge wr_clk) begin
 		if (wr_en)

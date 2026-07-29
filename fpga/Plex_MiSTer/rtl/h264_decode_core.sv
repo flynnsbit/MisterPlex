@@ -41,6 +41,16 @@ module h264_decode_core #(
 
     // ── PPS parameters ──
     input  wire signed [4:0] pps_chroma_qp_index_offset, // se(), range [-12,+12]
+    input  wire        constrained_intra_pred_flag,
+    // num_ref_idx_l0_active_minus1 + 1, from the slice header or the PPS
+    // default. When it is 1 the ref_idx_l0 syntax element is absent from the
+    // bitstream entirely and the index is inferred as 0.
+    input  wire [7:0]  num_ref_idx_l0_active,
+
+    // ── In-loop deblocking filter controls (slice header) ──
+    input  wire [1:0]  disable_deblocking_filter_idc,
+    input  wire signed [4:0] slice_alpha_c0_offset,
+    input  wire signed [4:0] slice_beta_offset,
 
     // ── Bitstream access (RBSP bytes for CAVLC residual parsing) ──
     // The CAVLC residual block decoder needs random-access to RBSP bits.
@@ -118,6 +128,14 @@ module h264_decode_core #(
     output wire [31:0] dpb_rd_addr,
     input  wire [7:0]  dpb_rd_data,
     input  wire        dpb_rd_valid,
+    // Backpressure from a variable-latency DPB (the DDR-resident store).
+    // Tie low for a fixed-latency on-chip SRAM.
+    input  wire        dpb_rd_stall,
+    // Pulses on the exact edge the internal reference address generator moves
+    // its current/reference bank pointers. A DDR-resident DPB must sequence
+    // its own flush/invalidate from this, not from the frame_done output,
+    // which is a later status signal.
+    output wire        dpb_ref_swap,
 
     // ── Product present writeback (decoded samples to the display store) ──
     // Same committed sample stream as dpb_wr_*, but expressed as plane +
@@ -135,22 +153,31 @@ module h264_decode_core #(
     output wire        frame_done,           // pulse: complete frame decoded
     output wire [15:0] frame_mb_count,       // MBs decoded this frame
 
+    // ── Bitstream desynchronisation evidence (to h264_stream_recovery) ──
+    // CAVLC is a variable-length code, so a wrong table entry consumes the
+    // wrong number of bits and everything after it is meaningless.  These are
+    // the cheap symptoms of that having happened.
+    output wire        err_cavlc_miss,       // a VLC lookup matched no code
+    output wire        err_bad_mb_type,      // mb_type illegal for the slice type
+    output wire        err_mb_overrun,       // mb address ran past PicSizeInMbs
+
+    // Low while the recovery logic is waiting for an IDR: no new macroblock
+    // may launch, because the reference every P picture predicts from is
+    // already corrupt.
+    input  wire        decode_enable,
+
+    // ── Throughput telemetry ──
+    // Per-stage cycle accounting for the macroblock pipeline, published as one
+    // rotating 64-bit mailbox word.  See h264_perf_counters.sv for the layout.
+    output wire [63:0] perf_mbox_word,
+
     // ── Status/debug ──
-    // intra_blocks_done is the reconstruction front-end's accepted-block count
-    // for the current macroblock.  The macroblock feeder needs it as a real
-    // handshake: the 4x4 reconstruction pipeline only accepts one block every
-    // other cycle (and not at all until Intra_16x16 prediction is ready), so a
-    // free-running burst of 16 block pulses silently loses half of them.
-    output wire [4:0]  intra_blocks_done,
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
     output wire [15:0] current_mb_addr,      // current MB being decoded
-    output wire        error,                // unrecoverable decode error
-    // Deblock controls (from slice header; idc==1 disables filter)
-    input  wire [1:0]  disable_deblocking_filter_idc,
-    input  wire signed [4:0] slice_alpha_c0_offset,
-    input  wire signed [4:0] slice_beta_offset
+    output wire        error                 // unrecoverable decode error
 );
+
     // ════════════════════════════════════════════════════════════════════
     // INTERNAL ARCHITECTURE (not yet implemented — interface contracts below)
     // ════════════════════════════════════════════════════════════════════
@@ -291,11 +318,24 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_RES_WAIT  = 8'd6;
     localparam [7:0] ST_COMMIT        = 8'd7;
     localparam [7:0] ST_FRAME_BOUNDARY = 8'd8;
+    localparam [7:0] ST_DEBLOCK       = 8'd12;
     localparam [7:0] ST_P16_WIN_START = 8'd9;
     localparam [7:0] ST_P16_RES_IDCT  = 8'd10;
     localparam [7:0] ST_P16_RES_EDGE  = 8'd11;
-    localparam [7:0] ST_P16_MC        = 8'd12;
-    localparam [7:0] ST_DEBLOCK       = 8'd13;
+    // Motion compensation is now a multi-cycle engine rather than a
+    // combinational function of the reference window, so it gets its own
+    // state between the window fetch retiring and the prediction writeback.
+    localparam [7:0] ST_P16_MC        = 8'd13;
+    // Sequential M10K fill / residual store (one write port per array).
+    localparam [7:0] ST_LATCH_RECON     = 8'd14;
+    localparam [7:0] ST_P16_RES_STORE   = 8'd15;
+    localparam [7:0] ST_P16_RES_ZERO    = 8'd16;
+    localparam [7:0] ST_WRITE_PRIME     = 8'd17;
+    localparam [7:0] ST_P16_WRITE_PRIME = 8'd18;
+    localparam [7:0] ST_P16_LATCH_RES   = 8'd19;
+    // Hold one cycle after arming M10K raddr so lat_*_q is valid before emit.
+    localparam [7:0] ST_WRITE_HOLD      = 8'd20;
+    localparam [7:0] ST_P16_WRITE_HOLD  = 8'd21;
     // ── Residual traversal steps, in H.264 residual() order ─────────────
     //   0       Intra16x16DCLevel     (16 coeff, only when the MB is I_16x16)
     //   1..16   luma 4x4 blkIdx 0..15 (15 coeff when I_16x16, else 16)
@@ -315,6 +355,7 @@ module h264_decode_core #(
     reg [7:0]  wb_mb_y;
     reg        wb_mb_is_ref;
     reg        wb_mb_is_intra;
+    reg [5:0]  intra_qp_y_r;
     reg        dbf_start_r;
     reg        dbf_smp_valid_d;
     reg [8:0]  dbf_smp_idx_d;
@@ -363,8 +404,6 @@ module h264_decode_core #(
     reg [5:0]  cur_qp_y_r;
     integer    res_tc_i;
     reg [15:0] syntax_mb_addr_r;
-    // Registered mb (x,y) — never combo-divide syntax_mb_addr_r by MB_W.
-    // integ-fit2 STA: syntax_mb_addr_r → Mod0 → intra row_acc was -3.11 ns.
     reg [7:0]  syntax_mb_x_r;
     reg [7:0]  syntax_mb_y_r;
     reg [15:0] xy_init_rem;
@@ -383,14 +422,39 @@ module h264_decode_core #(
     reg [15:0] mb_count_r;
     reg        frame_done_r;
     reg        wb_commit_p16;
-    reg [7:0]  lat_recon_y [0:255];
-    reg [7:0]  lat_recon_u [0:63];
-    reg [7:0]  lat_recon_v [0:63];
-    reg signed [15:0] lat_p16_residual_y [0:255];
-    reg signed [15:0] lat_p16_residual_u [0:63];
-    reg signed [15:0] lat_p16_residual_v [0:63];
-    // Reference windows stream straight into h264_mc_block window RAMs.
-    // Staging them here as flat reg arrays was the 89k-ALUT MC bottleneck.
+    // MB working buffers in M10K — NOT flip-flops.
+    // The previous full-MB parallel latch (256+64+64 bytes + 16-bit residual
+    // plane written in one cycle, then read with a runtime index) burned the
+    // 5,988 ALMs of decode_core "own" logic. Single write port + registered
+    // read address is the M10K template; walks take cycles we have in the
+    // 712-cycle macroblock budget.
+    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_y [0:255];
+    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_u [0:63];
+    (* ramstyle = "M10K, no_rw_check" *) reg [7:0]  lat_recon_v [0:63];
+    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_y [0:255];
+    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_u [0:63];
+    (* ramstyle = "M10K, no_rw_check" *) reg signed [15:0] lat_p16_residual_v [0:63];
+    reg        lat_recon_we;
+    reg [1:0]  lat_recon_wplane;
+    reg [7:0]  lat_recon_waddr;
+    reg [7:0]  lat_recon_wdata;
+    reg [1:0]  lat_recon_rplane;
+    reg [7:0]  lat_recon_raddr;
+    reg [7:0]  lat_recon_q;
+    reg        lat_res_we;
+    reg [1:0]  lat_res_wplane;
+    reg [7:0]  lat_res_waddr;
+    reg signed [15:0] lat_res_wdata;
+    reg [1:0]  lat_res_rplane;
+    reg [7:0]  lat_res_raddr;
+    reg signed [15:0] lat_res_q;
+    reg [3:0]  res_store_i;
+    reg [7:0]  p16_pred_q;
+    reg        p16_pred_in_part_q;
+    // The reference windows are no longer staged in registers here.  They
+    // stream straight into the MC engines' internal window RAMs, because 603
+    // bytes of register file with runtime indices is what produced the
+    // 89,888-ALUT interpolator the fit rejected.
     reg        intra_active_r;
     reg [7:0]  intra_mb_x_r;
     reg [7:0]  intra_mb_y_r;
@@ -437,18 +501,35 @@ module h264_decode_core #(
     wire [7:0] wb_sample_idx = (wb_plane == 2'd0) ? wb_idx[7:0] :
                                (wb_plane == 2'd1) ? wb_u_idx9[7:0] :
                                                      wb_v_idx9[7:0];
+    // Next-sample decode for 1-cycle writeback pipeline (arm next RAM/MC read
+    // while emitting the current registered sample).
+    wire [8:0] wb_idx_n = wb_idx + 9'd1;
+    wire [1:0] wb_plane_n = (wb_idx_n < 9'd256) ? 2'd0 :
+                            (wb_idx_n < 9'd320) ? 2'd1 : 2'd2;
+    wire [7:0] wb_sample_idx_n =
+        (wb_plane_n == 2'd0) ? wb_idx_n[7:0] :
+        (wb_plane_n == 2'd1) ? 8'(wb_idx_n - 9'd256) :
+                               8'(wb_idx_n - 9'd320);
+    wire [8:0] wb_idx_nn = wb_idx + 9'd2;
+    wire [1:0] wb_plane_nn = (wb_idx_nn < 9'd256) ? 2'd0 :
+                             (wb_idx_nn < 9'd320) ? 2'd1 : 2'd2;
+    wire [7:0] wb_sample_idx_nn =
+        (wb_plane_nn == 2'd0) ? wb_idx_nn[7:0] :
+        (wb_plane_nn == 2'd1) ? 8'(wb_idx_nn - 9'd256) :
+                                8'(wb_idx_nn - 9'd320);
+    wire [31:0] syntax_mb_addr32 = {16'd0, syntax_mb_addr_r};
+    // Timing: registered walking (x,y) — no combo LPM_DIVIDE on mb_addr.
     wire [31:0] syntax_mb_x32 = {24'd0, syntax_mb_x_r};
     wire [31:0] syntax_mb_y32 = {24'd0, syntax_mb_y_r};
     wire [7:0] syntax_mb_x = syntax_mb_x_r;
     wire [7:0] syntax_mb_y = syntax_mb_y_r;
+    wire syntax_xy_ready = !xy_init_busy;
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
-    // Hold P/I launch until first_mb_in_slice → (x,y) init finishes (0 when first_mb=0).
-    wire syntax_xy_ready = !xy_init_busy;
-    wire syntax_p16_candidate = mb_type_valid && syntax_xy_ready && !slice_is_i && !slice_is_idr &&
+    wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
-    wire syntax_p16_launch = syntax_p16_candidate && (wb_state == ST_IDLE);
+    wire syntax_p16_launch = syntax_p16_candidate && syntax_xy_ready && (wb_state == ST_IDLE) && decode_enable;
     wire p16_launch = p16_zero_mv_valid || syntax_p16_launch;
     wire [7:0] p16_launch_mb_x = p16_zero_mv_valid ? p16_mb_x : syntax_mb_x;
     wire [7:0] p16_launch_mb_y = p16_zero_mv_valid ? p16_mb_y : syntax_mb_y;
@@ -457,7 +538,9 @@ module h264_decode_core #(
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
     //    actually carries coefficients, and wraps modulo 52.
-    wire mb_has_residual = !mb_skip && ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0));
+    wire mb_is_i16 = slice_is_i && !mb_skip && (mb_type != 5'd0);
+    wire mb_has_residual = !mb_skip &&
+                           ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0) || mb_is_i16);
     wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
                                      $signed({{2{mb_qp_delta[5]}}, mb_qp_delta});
     wire signed [7:0] qp_delta_wrap = (qp_delta_sum < 8'sd0)  ? (qp_delta_sum + 8'sd52) :
@@ -466,13 +549,15 @@ module h264_decode_core #(
     wire [5:0] qp_launch = p16_zero_mv_valid ? slice_qp_y :
                            mb_has_residual   ? qp_delta_wrap[5:0] : cur_qp_y_r;
 
-    wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == ref_idx_l0);
-    wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == ref_idx_l0);
+    wire [1:0] eff_ref_idx_l0 = (num_ref_idx_l0_active <= 8'd1) ? 2'd0 : ref_idx_l0;
+
+    wire syntax_has_left = (syntax_mb_x != 8'd0) && mv_left_valid && (mv_left_ref == eff_ref_idx_l0);
+    wire syntax_has_top = mv_top_valid[syntax_mb_idx] && (mv_top_ref[syntax_mb_idx] == eff_ref_idx_l0);
     wire [MB_IDX_W-1:0] syntax_top_right_idx = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) ?
                                       (syntax_mb_idx + MB_IDX_W'(1)) : syntax_mb_idx;
     wire syntax_has_top_right = (syntax_mb_x_r + 8'd1 < 8'(MB_W)) &&
                                 mv_top_valid[syntax_top_right_idx] &&
-                                (mv_top_ref[syntax_top_right_idx] == ref_idx_l0);
+                                (mv_top_ref[syntax_top_right_idx] == eff_ref_idx_l0);
 `ifdef H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR
     wire mv_avail_a = 1'b0;
     wire mv_avail_b = 1'b0;
@@ -706,23 +791,20 @@ module h264_decode_core #(
         res_luma_dc[res_luma_raster];
     wire res_dc_override = res_is_chroma_ac ? res_chroma_dc_coded : res_i16x16_r;
 
-    // AREA: sequential IQ/IDCT — one scaler + butterfly (~20 cycles) instead
-    // of combo dequant+IDCT (~7k ALUTs on the 115% HARD_FAIL fit).
-    reg                 p16_xform_start;
-    wire                p16_xform_done;
-    wire signed [28:0]  p16_res_idct [0:15];
-    h264_iq_idct_seq u_product_p16_res_iqidct (
-        .clk(clk),
-        .reset(reset),
-        .start(p16_xform_start),
+    wire signed [28:0] p16_res_dequant [0:15];
+    wire signed [28:0] p16_res_idct [0:15];
+    h264_dequant4x4_flex u_product_p16_res_dequant (
         .coeff(res_ac_coeff),
         .qp(res_qp),
         .max_coeff(res_skip_dc ? 5'd15 : 5'd16),
         .skip_dc(res_skip_dc),
         .dc_override(res_dc_override),
         .dc_value(res_dc_value),
-        .residual(p16_res_idct),
-        .done(p16_xform_done)
+        .dequant(p16_res_dequant)
+    );
+    h264_idct4x4 u_product_p16_res_idct (
+        .dequant(p16_res_dequant),
+        .residual(p16_res_idct)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (RES_STEP_CHROMA_DC0 - 5'd1));
@@ -745,8 +827,8 @@ module h264_decode_core #(
     // h264_dpb_one_ref owns the POST-deblock reference store: it consumes the
     // filtered sample stream, generates the native-I420 write addresses, and
     // fetches one 21×21 luma + two 9×9 chroma reference windows per inter MB.
-    // h264_mc_block then computes the full 16×16 luma / 8×8 chroma
-    // prediction block from those windows (one filter datapath, RAM windows).
+    // h264_inter_mc_part then computes the full 16×16 luma / 8×8 chroma
+    // prediction block from those windows.
     //
     // Bank management stays with the outer level (dpb_write_base/dpb_ref_base
     // inputs), so the embedded reference store's own bank pointers are used
@@ -778,13 +860,12 @@ module h264_decode_core #(
     wire [6:0]  dpb_ref_chroma_window_idx;
     wire [7:0]  dpb_ref_chroma_window_sample;
 
-    wire [7:0] wb_data = (wb_plane == 2'd0) ? lat_recon_y[wb_sample_idx] :
-                         (wb_plane == 2'd1) ? lat_recon_u[wb_sample_idx[5:0]] :
-                                               lat_recon_v[wb_sample_idx[5:0]];
-    wire signed [15:0] p16_residual_sample =
-        (wb_plane == 2'd0) ? lat_p16_residual_y[wb_sample_idx] :
-        (wb_plane == 2'd1) ? lat_p16_residual_u[wb_sample_idx[5:0]] :
-                             lat_p16_residual_v[wb_sample_idx[5:0]];
+    // Registered M10K read data (address driven one cycle earlier in PRIME/WRITE).
+    wire [7:0] wb_data = lat_recon_q;
+    wire signed [15:0] p16_residual_sample = lat_res_q;
+    // Skip / fully-uncoded MB: do not depend on residual RAM contents.
+    wire p16_residual_all_zero =
+        (p16_cbp_luma_r == 4'd0) && (p16_cbp_chroma_r == 2'd0);
 
     wire [7:0] p16_pred_y_rd_data;
     wire [7:0] p16_pred_u_rd_data;
@@ -792,8 +873,25 @@ module h264_decode_core #(
     wire       p16_pred_y_in_part;
     wire       p16_pred_c_in_part;
     wire [7:0] p16_pred_y_head [0:15];
-    wire       p16_mc_busy;
-    wire       p16_mc_done;
+    wire p16_mc_busy;
+    wire p16_mc_done;
+    // Fractional parts. A quarter-luma-sample vector is already an
+    // eighth-chroma-sample vector in 4:2:0, so luma takes mv[1:0] against a
+    // mv>>>2 integer origin and chroma takes mv[2:0] against mv>>>3. Both
+    // slices are the correct modulo for negative vectors because the shifts
+    // are arithmetic.
+    // During ST_P16_WRITE (non-last) fetch the *next* sample so pred_q and
+    // residual M10K data line up for a single-cycle emit stream.
+    wire [8:0] p16_mc_rd_flat =
+        ((wb_state == ST_P16_WRITE) && !wb_last_sample) ? wb_idx_n : wb_idx;
+    wire [1:0] p16_mc_rd_plane =
+        (p16_mc_rd_flat < 9'd256) ? 2'd0 :
+        (p16_mc_rd_flat < 9'd320) ? 2'd1 : 2'd2;
+    wire [7:0] p16_mc_rd_idx =
+        (p16_mc_rd_plane == 2'd0) ? p16_mc_rd_flat[7:0] :
+        (p16_mc_rd_plane == 2'd1) ? 8'(p16_mc_rd_flat - 9'd256) :
+                                    8'(p16_mc_rd_flat - 9'd320);
+
     h264_mc_block u_product_p16_mc (
         .clk(clk),
         .reset(reset),
@@ -813,21 +911,25 @@ module h264_decode_core #(
         .chroma_frac_y(p16_mv_y_qpel_r[2:0]),
         .part_w(5'd16),
         .part_h(5'd16),
-        .pred_y_rd_idx(wb_sample_idx),
+        .pred_y_rd_idx(p16_mc_rd_idx),
         .pred_y_rd_data(p16_pred_y_rd_data),
         .pred_y_rd_in_part(p16_pred_y_in_part),
-        .pred_c_rd_idx(wb_sample_idx[5:0]),
+        .pred_c_rd_idx(p16_mc_rd_idx[5:0]),
         .pred_u_rd_data(p16_pred_u_rd_data),
         .pred_v_rd_data(p16_pred_v_rd_data),
         .pred_c_rd_in_part(p16_pred_c_in_part),
         .pred_y_head(p16_pred_y_head)
     );
-    wire p16_pred_in_part = (wb_plane == 2'd0) ? p16_pred_y_in_part
-                                               : p16_pred_c_in_part;
-    wire [7:0] p16_pred_sample = !p16_pred_in_part ? 8'd0 :
-                                 (wb_plane == 2'd0) ? p16_pred_y_rd_data :
-                                 (wb_plane == 2'd1) ? p16_pred_u_rd_data :
-                                                      p16_pred_v_rd_data;
+    // The engines' prediction read ports are asynchronous, so the writeback
+    // walk indexes them directly and needs no extra pipeline stage.
+    wire p16_pred_in_part = (p16_mc_rd_plane == 2'd0) ? p16_pred_y_in_part
+                                                      : p16_pred_c_in_part;
+    wire [7:0] p16_pred_sample_async = !p16_pred_in_part ? 8'd0 :
+                                 (p16_mc_rd_plane == 2'd0) ? p16_pred_y_rd_data :
+                                 (p16_mc_rd_plane == 2'd1) ? p16_pred_u_rd_data :
+                                                             p16_pred_v_rd_data;
+    // Align MC (async) with residual M10K (1-cycle read): use registered pred.
+    wire [7:0] p16_pred_sample = p16_pred_q;
 `ifdef H264_DECODE_CORE_FAULT_DROP_PRED
     wire signed [17:0] p16_pred_term = 18'sd0;
 `else
@@ -836,9 +938,39 @@ module h264_decode_core #(
 `ifdef H264_DECODE_CORE_FAULT_DROP_RESIDUAL
     wire signed [17:0] p16_residual_term = 18'sd0;
 `else
-    wire signed [17:0] p16_residual_term = {{2{p16_residual_sample[15]}}, p16_residual_sample};
+    wire signed [17:0] p16_residual_term = p16_residual_all_zero ? 18'sd0 :
+        {{2{p16_residual_sample[15]}}, p16_residual_sample};
 `endif
     wire signed [17:0] p16_recon_sum = p16_pred_term + p16_residual_term;
+
+    // M10K port side: single write + registered read per plane family.
+    always @(posedge clk) begin
+        if (lat_recon_we) begin
+            case (lat_recon_wplane)
+            2'd0: lat_recon_y[lat_recon_waddr] <= lat_recon_wdata;
+            2'd1: lat_recon_u[lat_recon_waddr[5:0]] <= lat_recon_wdata;
+            default: lat_recon_v[lat_recon_waddr[5:0]] <= lat_recon_wdata;
+            endcase
+        end
+        case (lat_recon_rplane)
+        2'd0: lat_recon_q <= lat_recon_y[lat_recon_raddr];
+        2'd1: lat_recon_q <= lat_recon_u[lat_recon_raddr[5:0]];
+        default: lat_recon_q <= lat_recon_v[lat_recon_raddr[5:0]];
+        endcase
+
+        if (lat_res_we) begin
+            case (lat_res_wplane)
+            2'd0: lat_p16_residual_y[lat_res_waddr] <= lat_res_wdata;
+            2'd1: lat_p16_residual_u[lat_res_waddr[5:0]] <= lat_res_wdata;
+            default: lat_p16_residual_v[lat_res_waddr[5:0]] <= lat_res_wdata;
+            endcase
+        end
+        case (lat_res_rplane)
+        2'd0: lat_res_q <= lat_p16_residual_y[lat_res_raddr];
+        2'd1: lat_res_q <= lat_p16_residual_u[lat_res_raddr[5:0]];
+        default: lat_res_q <= lat_p16_residual_v[lat_res_raddr[5:0]];
+        endcase
+    end
     wire [31:0] wb_mb_x32 = {24'd0, wb_mb_x};
     wire [31:0] wb_mb_y32 = {24'd0, wb_mb_y};
     wire [31:0] mb_width32 = {24'd0, mb_width};
@@ -848,20 +980,17 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    wire        product_intra_mb_start = mb_type_valid && syntax_xy_ready && slice_is_i && !mb_skip;
-    // intra_mb_x_r/intra_mb_y_r only take the new macroblock position on the
-    // edge AFTER mb_start, but the neighbour-context store and the prediction
-    // front-end both latch their state ON mb_start.  Feeding them the stale
-    // register shifts every macroblock's neighbours one position to the left,
-    // which is fatal once the raster sweep walks a whole frame.
-    wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
-    wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
+    // Gate on IDLE so multi-cycle M10K recon latch cannot race a new MB.
+    wire product_intra_mb_start = syntax_xy_ready && (mb_type_valid && slice_is_i && !mb_skip &&
+                                         decode_enable && (wb_state == ST_IDLE));
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
     wire [7:0]  product_intra_recon_y [0:255];
     wire [7:0]  product_intra_recon_u [0:63];
     wire [7:0]  product_intra_recon_v [0:63];
+    wire signed [15:0] product_intra_chroma_residual_u [0:63];
+    wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
@@ -871,14 +1000,14 @@ module h264_decode_core #(
     wire        product_intra_ctx_has_above_unused;
     wire        product_intra_ctx_has_left_unused;
     wire        product_intra_ctx_has_above_right_unused;
-    wire [7:0]  product_intra_ctx_chroma_u_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_above_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_v_left_unused [0:7];
-    wire [7:0]  product_intra_ctx_chroma_u_top_left_unused;
-    wire [7:0]  product_intra_ctx_chroma_v_top_left_unused;
-    wire        product_intra_ctx_has_chroma_above_unused;
-    wire        product_intra_ctx_has_chroma_left_unused;
+    wire [7:0]  product_intra_chroma_u_above [0:7];
+    wire [7:0]  product_intra_chroma_v_above [0:7];
+    wire [7:0]  product_intra_chroma_u_left [0:7];
+    wire [7:0]  product_intra_chroma_v_left [0:7];
+    wire [7:0]  product_intra_chroma_u_topleft;
+    wire [7:0]  product_intra_chroma_v_topleft;
+    wire        product_intra_has_chroma_above;
+    wire        product_intra_has_chroma_left;
     wire        product_intra_mb_avail_left;
     wire        product_intra_mb_avail_top;
     wire        product_intra_mb_avail_topright;
@@ -893,11 +1022,18 @@ module h264_decode_core #(
             assign product_intra_i16_dc[intra_gi] = 29'sd0;
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
-        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral
-            assign product_intra_recon_u[intra_gi] = 8'd128;
-            assign product_intra_recon_v[intra_gi] = 8'd128;
+        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
+            // The core's residual walker does not yet run for intra
+            // macroblocks, so intra chroma is prediction-only for now.
+            assign product_intra_chroma_residual_u[intra_gi] = 16'sd0;
+            assign product_intra_chroma_residual_v[intra_gi] = 16'sd0;
         end
     endgenerate
+
+    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
+    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
+    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
+    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
 
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(MB_W),
@@ -905,13 +1041,20 @@ module h264_decode_core #(
     ) u_product_intra_nb_ctx (
         .clk(clk),
         .reset(reset),
-        .mb_x(intra_mb_x_now),
-        .mb_y(intra_mb_y_now),
+        .mb_x(intra_mb_x_r),
+        .mb_y(intra_mb_y_r),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
         .block_valid(1'b0),
+        .constrained_intra_pred(constrained_intra_pred_flag),
+        // Every retired macroblock, intra or inter -- the intra path's own
+        // mb_commit only ever carries intra reconstruction, which is not
+        // enough to know that a neighbour was inter-coded.
+        .mb_coded_valid(product_recon_mb_valid),
+        .mb_coded_is_intra(product_intra_recon_valid),
+        .mb_coded_x(product_recon_mb_x),
         .recon_pixels(product_intra_ctx_recon_pixels),
         .mb_commit(product_intra_recon_valid),
         .recon_y_mb(product_intra_recon_y),
@@ -931,15 +1074,14 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
-        .chroma_u_above(product_intra_ctx_chroma_u_above_unused),
-        .chroma_v_above(product_intra_ctx_chroma_v_above_unused),
-        .chroma_u_left(product_intra_ctx_chroma_u_left_unused),
-        .chroma_v_left(product_intra_ctx_chroma_v_left_unused),
-        .chroma_u_top_left(product_intra_ctx_chroma_u_top_left_unused),
-        .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
-        .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
-        .has_chroma_left(product_intra_ctx_has_chroma_left_unused),
-        .busy() // sequential M10K gather; product path has multi-cycle slack
+        .chroma_u_above(product_intra_chroma_u_above),
+        .chroma_v_above(product_intra_chroma_v_above),
+        .chroma_u_left(product_intra_chroma_u_left),
+        .chroma_v_left(product_intra_chroma_v_left),
+        .chroma_u_top_left(product_intra_chroma_u_topleft),
+        .chroma_v_top_left(product_intra_chroma_v_topleft),
+        .has_chroma_above(product_intra_has_chroma_above),
+        .has_chroma_left(product_intra_has_chroma_left)
     );
 
     h264_decode_top u_product_intra_mb (
@@ -948,14 +1090,27 @@ module h264_decode_core #(
         .mb_start(product_intra_mb_start),
         .mb_type(product_intra_mb_type),
         .mb_qp_y(luma4x4_qp),
-        .mb_x(intra_mb_x_now),
-        .mb_y(intra_mb_y_now),
+        .mb_x(intra_mb_x_r),
+        .mb_y(intra_mb_y_r),
         .i16_pred_mode(product_intra_i16_mode),
         .block_valid(luma4x4_valid),
         .block_index(luma4x4_idx),
         .block_coeff(luma4x4_coeff_zigzag),
         .i16_dc_valid(product_intra_mb_start),
         .i16_dc(product_intra_i16_dc),
+        .chroma_pred_mode(chroma_pred_mode),
+        .nb_chroma_u_above(product_intra_chroma_u_above),
+        .nb_chroma_v_above(product_intra_chroma_v_above),
+        .nb_chroma_u_left(product_intra_chroma_u_left),
+        .nb_chroma_v_left(product_intra_chroma_v_left),
+        .nb_chroma_u_topleft(product_intra_chroma_u_topleft),
+        .nb_chroma_v_topleft(product_intra_chroma_v_topleft),
+        .mb_avail_chroma_above(product_intra_has_chroma_above),
+        .mb_avail_chroma_left(product_intra_has_chroma_left),
+        .chroma_residual_u(product_intra_chroma_residual_u),
+        .chroma_residual_v(product_intra_chroma_residual_v),
+        .recon_u(product_intra_recon_u),
+        .recon_v(product_intra_recon_v),
         .i4_modes(intra4x4_modes),
         .mb_avail_left(product_intra_mb_avail_left),
         .mb_avail_top(product_intra_mb_avail_top),
@@ -970,13 +1125,10 @@ module h264_decode_core #(
         .blocks_done(product_intra_blocks_done)
     );
 
-    wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
-    wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
-    wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
-    wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
 `ifdef H264_DECODE_CORE_FAULT_DROP_WB
     wire product_wb_en = 1'b0;
 `else
+    // ST_WRITE_PRIME only arms the M10K read address; emit on ST_WRITE.
     wire product_wb_en = (wb_state == ST_WRITE);
 `endif
     wire p16_sample_wb_en = (wb_state == ST_P16_WRITE);
@@ -984,6 +1136,72 @@ module h264_decode_core #(
     wire deblock_filtered_mb_valid = (wb_state == ST_COMMIT);
     wire deblock_filtered_frame_done = deblock_filtered_mb_valid && wb_last_mb;
     wire deblock_frame_boundary = (wb_state == ST_FRAME_BOUNDARY);
+
+    // ── In-loop deblocking ────────────────────────────────────────────────
+    // The reconstruction stream feeds the macroblock deblocker one cycle
+    // delayed so the engine has already latched this macroblock's metadata on
+    // dbf_start_r. Its output is the POST-deblock stream: the DPB reference
+    // store and the present writeback both take it, while intra prediction and
+    // neighbour context keep reading the PRE-deblock reconstruction registers.
+    wire       dbf_out_valid;
+    wire [1:0] dbf_out_plane;
+    wire [15:0] dbf_out_x;
+    wire [15:0] dbf_out_y;
+    wire [7:0] dbf_out_data;
+    wire       dbf_busy;
+    wire       dbf_mb_done;
+    wire       dbf_smp_done = dbf_smp_valid_d && (dbf_smp_idx_d == 9'd383);
+    wire [15:0] dbf_nz_luma_w;
+    genvar dbf_g;
+    generate
+        for (dbf_g = 0; dbf_g < 16; dbf_g = dbf_g + 1) begin : g_dbf_nz
+            assign dbf_nz_luma_w[dbf_g] = (res_tc_cur[dbf_g] != 5'd0);
+        end
+    endgenerate
+
+    h264_deblock_mb #(
+        .FRAME_W(FRAME_W),
+        .FRAME_H(FRAME_H)
+    ) u_product_deblock (
+        .clk(clk),
+        .reset(reset),
+        .slice_start(slice_start),
+        .disable_deblocking(disable_deblocking_filter_idc == 2'd1),
+        .slice_alpha_c0_offset(slice_alpha_c0_offset),
+        .slice_beta_offset(slice_beta_offset),
+        .mb_start(dbf_start_r),
+        .mb_x(wb_mb_x),
+        .mb_y(wb_mb_y),
+        .mb_is_intra(wb_mb_is_intra),
+        .mb_qp_y(mb_qp_y_r),
+        .mb_qp_c(res_qp_c),
+        .mb_nz_luma(dbf_nz_luma_w),
+        .mb_mv_x(wb_mb_is_intra ? 16'sd0 : p16_mv_x_qpel_r),
+        .mb_mv_y(wb_mb_is_intra ? 16'sd0 : p16_mv_y_qpel_r),
+        .mb_ref_idx(wb_mb_is_intra ? 2'd0 : p16_ref_idx_l0_r),
+        .smp_valid(dbf_smp_valid_d),
+        .smp_idx(dbf_smp_idx_d),
+        .smp_data(dbf_smp_data_d),
+        .smp_done(dbf_smp_done),
+        .out_valid(dbf_out_valid),
+        .out_plane(dbf_out_plane),
+        .out_x(dbf_out_x),
+        .out_y(dbf_out_y),
+        .out_data(dbf_out_data),
+        .busy(dbf_busy),
+        .mb_done(dbf_mb_done)
+    );
+
+    // Absolute picture coordinates back to the macroblock-relative form the
+    // reference store's address generator expects. The deblocked window spans
+    // into the left / upper neighbour, so this must be a true division, not a
+    // reuse of wb_mb_x/wb_mb_y.
+    wire [7:0] dbf_wb_mb_x = (dbf_out_plane == 2'd0) ? dbf_out_x[11:4] : dbf_out_x[10:3];
+    wire [7:0] dbf_wb_mb_y = (dbf_out_plane == 2'd0) ? dbf_out_y[11:4] : dbf_out_y[10:3];
+    wire [7:0] dbf_wb_sample_idx = (dbf_out_plane == 2'd0) ?
+                                   {dbf_out_y[3:0], dbf_out_x[3:0]} :
+                                   {2'd0, dbf_out_y[2:0], dbf_out_x[2:0]};
+
     wire deblock_wb_valid;
     wire [CORE_MB_AW-1:0] deblock_wb_mb_addr;
     wire deblock_wb_is_ref;
@@ -1039,63 +1257,8 @@ module h264_decode_core #(
     // post-frame-boundary promotion), or seeded once when the outer level hands
     // this core an externally-owned reference bank via dpb_ref_base.
     wire [7:0] dpb_ref_filtered_sample = p16_sample_wb_en ? clip_u8(p16_recon_sum) : wb_data;
-
-    // Real in-loop deblock (bb1c62b sequential M10K gather/scatter).
-    wire       dbf_out_valid;
-    wire [1:0] dbf_out_plane;
-    wire [15:0] dbf_out_x;
-    wire [15:0] dbf_out_y;
-    wire [7:0] dbf_out_data;
-    wire       dbf_busy;
-    wire       dbf_mb_done;
-    wire       dbf_smp_done = dbf_smp_valid_d && (dbf_smp_idx_d == 9'd383);
-    wire [15:0] dbf_nz_luma_w;
-    genvar dbf_g;
-    generate
-        for (dbf_g = 0; dbf_g < 16; dbf_g = dbf_g + 1) begin : g_dbf_nz
-            assign dbf_nz_luma_w[dbf_g] = (res_tc_cur[dbf_g] != 5'd0);
-        end
-    endgenerate
-
-    h264_deblock_mb #(
-        .FRAME_W(FRAME_W),
-        .FRAME_H(FRAME_H)
-    ) u_product_deblock (
-        .clk(clk),
-        .reset(reset),
-        .slice_start(slice_start),
-        .disable_deblocking(disable_deblocking_filter_idc == 2'd1),
-        .slice_alpha_c0_offset(slice_alpha_c0_offset),
-        .slice_beta_offset(slice_beta_offset),
-        .mb_start(dbf_start_r),
-        .mb_x(wb_mb_x),
-        .mb_y(wb_mb_y),
-        .mb_is_intra(wb_mb_is_intra),
-        .mb_qp_y(mb_qp_y_r),
-        .mb_qp_c(res_qp_c),
-        .mb_nz_luma(dbf_nz_luma_w),
-        .mb_mv_x(wb_mb_is_intra ? 16'sd0 : p16_mv_x_qpel_r),
-        .mb_mv_y(wb_mb_is_intra ? 16'sd0 : p16_mv_y_qpel_r),
-        .mb_ref_idx(wb_mb_is_intra ? 2'd0 : p16_ref_idx_l0_r),
-        .smp_valid(dbf_smp_valid_d),
-        .smp_idx(dbf_smp_idx_d),
-        .smp_data(dbf_smp_data_d),
-        .smp_done(dbf_smp_done),
-        .out_valid(dbf_out_valid),
-        .out_plane(dbf_out_plane),
-        .out_x(dbf_out_x),
-        .out_y(dbf_out_y),
-        .out_data(dbf_out_data),
-        .busy(dbf_busy),
-        .mb_done(dbf_mb_done)
-    );
-
-    wire [7:0] dbf_wb_mb_x = (dbf_out_plane == 2'd0) ? dbf_out_x[11:4] : dbf_out_x[10:3];
-    wire [7:0] dbf_wb_mb_y = (dbf_out_plane == 2'd0) ? dbf_out_y[11:4] : dbf_out_y[10:3];
-    wire [7:0] dbf_wb_sample_idx = (dbf_out_plane == 2'd0) ?
-                                   {dbf_out_y[3:0], dbf_out_x[3:0]} :
-                                   {2'd0, dbf_out_y[2:0], dbf_out_x[2:0]};
-
+    wire product_dpb_ref_swap = deblock_ref_ready_pulse | p16_ref_seed_r;
+    assign dpb_ref_swap = product_dpb_ref_swap;
     h264_dpb_one_ref #(
         .FRAME_W(FRAME_W),
         .FRAME_H(FRAME_H)
@@ -1103,7 +1266,7 @@ module h264_decode_core #(
         .clk(clk),
         .reset(reset),
         .idr_start(slice_start && slice_is_idr),
-        .frame_done(deblock_ref_ready_pulse | p16_ref_seed_r),
+        .frame_done(product_dpb_ref_swap),
         .ref_ready(dpb_ref_ready),
         .current_base(dpb_ref_current_base),
         .reference_base(dpb_ref_reference_base),
@@ -1140,6 +1303,7 @@ module h264_decode_core #(
         .mem_raddr(dpb_ref_mem_raddr),
         .mem_rdata(dpb_rd_data_q),
         .mem_rvalid(dpb_rd_valid_q),
+        .mem_stall(dpb_rd_stall),
         .luma_window_valid(dpb_ref_luma_window_valid),
         .luma_window_idx(dpb_ref_luma_window_idx),
         .luma_window_sample(dpb_ref_luma_window_sample),
@@ -1183,26 +1347,11 @@ module h264_decode_core #(
         end
     endtask
 
-    task automatic res_latch_idct;
-        begin
-            for (wb_i = 0; wb_i < 16; wb_i = wb_i + 1) begin
-                if (res_is_luma_ac) begin
-                    if (!p16_drop_this_luma_residual)
-                        lat_p16_residual_y[luma4x4_index(res_luma_raster, wb_i[3:0])] <=
-                            sat16(p16_res_idct[wb_i]);
-                end else if (res_is_chroma_ac) begin
-                    if (!p16_drop_this_chroma_residual) begin
-                        if (res_chroma_is_v ^ p16_swap_chroma_residual)
-                            lat_p16_residual_v[chroma4x4_index(res_chroma_blk, wb_i[3:0])] <=
-                                sat16(p16_res_idct[wb_i]);
-                        else
-                            lat_p16_residual_u[chroma4x4_index(res_chroma_blk, wb_i[3:0])] <=
-                                sat16(p16_res_idct[wb_i]);
-                    end
-                end
-            end
-        end
-    endtask
+    // One residual sample address for sequential M10K store (res_store_i = 0..15).
+    wire [7:0] res_store_luma_addr  = luma4x4_index(res_luma_raster, res_store_i);
+    wire [5:0] res_store_chroma_addr = chroma4x4_index(res_chroma_blk, res_store_i);
+    wire signed [15:0] res_store_sample = sat16(p16_res_idct[res_store_i]);
+    wire res_store_to_v = (res_chroma_is_v ^ p16_swap_chroma_residual);
 
     always @(posedge clk) begin
         frame_done_r <= deblock_ref_ready_pulse;
@@ -1211,7 +1360,6 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
-        p16_xform_start <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1229,12 +1377,11 @@ module h264_decode_core #(
             p16_mv_y_qpel_r <= 16'sd0;
             p16_ref_idx_l0_r <= 2'd0;
             p16_fetch_start_r <= 1'b0;
-            p16_mc_start_r <= 1'b0;
+        p16_mc_start_r <= 1'b0;
             p16_ref_seed_r <= 1'b0;
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
-            p16_xform_start <= 1'b0;
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
@@ -1287,20 +1434,15 @@ module h264_decode_core #(
             intra_mb_x_r <= 8'd0;
             intra_mb_y_r <= 8'd0;
             intra_mb_is_ref_r <= 1'b0;
+            intra_qp_y_r <= 6'd26;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
-            for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                lat_recon_y[wb_i] <= 8'd0;
-            for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                lat_recon_u[wb_i] <= 8'd0;
-                lat_recon_v[wb_i] <= 8'd0;
-            end
-            for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                lat_p16_residual_y[wb_i] <= 16'sd0;
-            for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                lat_p16_residual_u[wb_i] <= 16'sd0;
-                lat_p16_residual_v[wb_i] <= 16'sd0;
-            end
+            // Do not reset M10K array contents — breaks inference into block RAM.
+            lat_recon_we <= 1'b0;
+            lat_res_we <= 1'b0;
+            res_store_i <= 4'd0;
+            p16_pred_q <= 8'd0;
+            p16_pred_in_part_q <= 1'b0;
             for (wb_i = 0; wb_i < MB_W; wb_i = wb_i + 1) begin
                 mv_top_x[wb_i] <= 16'sd0;
                 mv_top_y[wb_i] <= 16'sd0;
@@ -1308,6 +1450,13 @@ module h264_decode_core #(
                 mv_top_valid[wb_i] <= 1'b0;
             end
         end else begin
+            dbf_start_r <= 1'b0;
+            lat_recon_we <= 1'b0;
+            lat_res_we <= 1'b0;
+            dbf_smp_valid_d <= deblock_filtered_sample_valid;
+            dbf_smp_idx_d <= wb_idx;
+            dbf_smp_data_d <= dpb_ref_filtered_sample;
+
             if (syntax_p16_candidate) begin
                 rbsp_request_valid_r <= 1'b1;
 `ifdef H264_DECODE_CORE_FAULT_BAD_RBSP_REQ
@@ -1316,6 +1465,9 @@ module h264_decode_core #(
                 rbsp_request_offset_r <= syntax_request_byte_offset;
 `endif
             end
+            if (mb_type_valid)
+                syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+
             // Finish first_mb → (x,y) before accepting MB launches.
             if (xy_init_busy) begin
                 if (xy_init_rem >= 16'(MB_W)) begin
@@ -1341,14 +1493,16 @@ module h264_decode_core #(
                 intra_mb_x_r <= syntax_mb_x;
                 intra_mb_y_r <= syntax_mb_y;
                 intra_mb_is_ref_r <= 1'b1;
+                // Latch QPy at the syntax edge: the reconstruction pulse that
+                // launches the writeback arrives many cycles later, when the
+                // slice-level mb_qp_delta inputs no longer describe this
+                // macroblock. The deblocker needs the right QP for alpha/beta.
+                intra_qp_y_r <= qp_launch;
+                cur_qp_y_r <= qp_launch;
             end
             if (product_intra_recon_valid)
                 intra_active_r <= 1'b0;
 
-            dbf_start_r <= 1'b0;
-            dbf_smp_valid_d <= deblock_filtered_sample_valid;
-            dbf_smp_idx_d <= wb_idx;
-            dbf_smp_data_d <= dpb_ref_filtered_sample;
             case (wb_state)
             ST_IDLE: begin
                 if (p16_launch) begin
@@ -1364,7 +1518,7 @@ module h264_decode_core #(
                     p16_mv_x_qpel_r <= p16_zero_mv_valid ? mv_x_qpel : syntax_mv_x;
 `endif
                     p16_mv_y_qpel_r <= p16_zero_mv_valid ? mv_y_qpel : syntax_mv_y;
-                    p16_ref_idx_l0_r <= ref_idx_l0;
+                    p16_ref_idx_l0_r <= eff_ref_idx_l0;
                     p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
                     p16_res_block_idx <= 5'd0;
                     p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;
@@ -1387,28 +1541,66 @@ module h264_decode_core #(
                     end
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
-                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_p16_residual_y[wb_i] <= p16_zero_mv_valid ? p16_residual_y[wb_i] : 16'sd0;
-                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_p16_residual_u[wb_i] <= p16_zero_mv_valid ? p16_residual_u[wb_i] : 16'sd0;
-                        lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
-                    end
-                    wb_state <= p16_zero_mv_valid ? ST_P16_REF_SEED : ST_P16_RES_START;
-                end else if (product_recon_mb_valid) begin
+                    res_store_i <= 4'd0;
+                    // External TB residual plane: stream into M10K. Product path
+                    // relies on residual_all_zero or per-block store/zero.
+                    if (p16_zero_mv_valid)
+                        wb_state <= ST_P16_LATCH_RES;
+                    else
+                        wb_state <= ST_P16_RES_START;
+                end else if (product_recon_mb_valid && !dbf_busy) begin
+                    // Same handover rule as the inter path: the loop filter
+                    // may still be emitting the previous macroblock's window.
                     wb_mb_x <= product_recon_mb_x;
                     wb_mb_y <= product_recon_mb_y;
                     wb_mb_is_ref <= product_recon_mb_is_ref;
-                    wb_mb_is_intra <= 1'b1;
+                    wb_mb_is_intra <= product_intra_recon_valid;
+                    if (product_intra_recon_valid)
+                        mb_qp_y_r <= intra_qp_y_r;
+                    dbf_start_r <= 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
-                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_recon_y[wb_i] <= product_intra_recon_valid ? product_intra_recon_y[wb_i] : recon_y[wb_i];
-                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
-                        lat_recon_u[wb_i] <= product_intra_recon_valid ? product_intra_recon_u[wb_i] : recon_u[wb_i];
-                        lat_recon_v[wb_i] <= product_intra_recon_valid ? product_intra_recon_v[wb_i] : recon_v[wb_i];
-                    end
-                    wb_state <= ST_WRITE;
+                    // Sequential M10K fill — not a 384-wide parallel latch.
+                    wb_state <= ST_LATCH_RECON;
+                end
+            end
+            ST_LATCH_RECON: begin
+                // One sample/cycle into lat_recon_* from the recon port arrays.
+                lat_recon_we <= 1'b1;
+                lat_recon_wplane <= wb_plane;
+                lat_recon_waddr <= wb_sample_idx;
+                if (wb_plane == 2'd0)
+                    lat_recon_wdata <= product_intra_recon_valid ?
+                        product_intra_recon_y[wb_sample_idx] : recon_y[wb_sample_idx];
+                else if (wb_plane == 2'd1)
+                    lat_recon_wdata <= product_intra_recon_valid ?
+                        product_intra_recon_u[wb_sample_idx[5:0]] : recon_u[wb_sample_idx[5:0]];
+                else
+                    lat_recon_wdata <= product_intra_recon_valid ?
+                        product_intra_recon_v[wb_sample_idx[5:0]] : recon_v[wb_sample_idx[5:0]];
+                if (wb_last_sample) begin
+                    wb_idx <= 9'd0;
+                    wb_state <= ST_WRITE_PRIME;
+                end else begin
+                    wb_idx <= wb_idx + 9'd1;
+                end
+            end
+            ST_P16_LATCH_RES: begin
+                lat_res_we <= 1'b1;
+                lat_res_wplane <= wb_plane;
+                lat_res_waddr <= wb_sample_idx;
+                if (wb_plane == 2'd0)
+                    lat_res_wdata <= p16_residual_y[wb_sample_idx];
+                else if (wb_plane == 2'd1)
+                    lat_res_wdata <= p16_residual_u[wb_sample_idx[5:0]];
+                else
+                    lat_res_wdata <= p16_residual_v[wb_sample_idx[5:0]];
+                if (wb_last_sample) begin
+                    wb_idx <= 9'd0;
+                    wb_state <= ST_P16_REF_SEED;
+                end else begin
+                    wb_idx <= wb_idx + 9'd1;
                 end
             end
             ST_P16_RES_START: begin
@@ -1420,11 +1612,10 @@ module h264_decode_core #(
                     // No AC bits in the stream, but the plane DC still reaches
                     // this block: transform it with a zero AC field.
                     res_ac_from_cavlc <= 1'b0;
-                    p16_xform_start <= 1'b1;
+                    res_store_i <= 4'd0;
                     wb_state <= ST_P16_RES_IDCT;
                 end else begin
-                    // Uncoded and DC-free: leave the residual latch at its
-                    // launch zero and do not advance bit_offset.
+                    // Uncoded and DC-free.
                     if (res_is_luma_ac)
                         res_tc_cur[res_luma_raster] <= 5'd0;
                     if (res_is_chroma_ac)
@@ -1439,35 +1630,71 @@ module h264_decode_core #(
                             else
                                 res_cdc_u[res_tc_i] <= 29'sd0;
                         end
-                    res_step_advance();
+                    // Partial-cbp: zero this 4x4 in M10K. Full-zero MB skips
+                    // RAM writes and forces residual_term=0 on the add.
+                    if ((res_is_luma_ac || res_is_chroma_ac) && !p16_residual_all_zero) begin
+                        res_store_i <= 4'd0;
+                        wb_state <= ST_P16_RES_ZERO;
+                    end else begin
+                        res_step_advance();
+                    end
                 end
             end
             ST_P16_RES_IDCT: begin
-                // Wait for sequential IQ/IDCT (~20 cycles).
-                if (p16_xform_done) begin
+                // DC-only block: residual is produced from DC + zero AC.
+                if (res_is_luma_ac)
+                    res_tc_cur[res_luma_raster] <= 5'd0;
+                if (res_is_chroma_ac)
+                    res_tc_cur_c[res_c_sel] <= 5'd0;
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                    res_latch_idct();
+                res_store_i <= 4'd0;
+                wb_state <= ST_P16_RES_STORE;
+`else
+                res_step_advance();
 `endif
-                    if (res_is_luma_ac && !res_ac_from_cavlc)
-                        res_tc_cur[res_luma_raster] <= 5'd0;
-                    if (res_is_chroma_ac && !res_ac_from_cavlc)
-                        res_tc_cur_c[res_c_sel] <= 5'd0;
-                    res_step_advance();
+            end
+            ST_P16_RES_STORE: begin
+                // One IDCT sample per cycle into residual M10K.
+                if (res_is_luma_ac && !p16_drop_this_luma_residual) begin
+                    lat_res_we <= 1'b1;
+                    lat_res_wplane <= 2'd0;
+                    lat_res_waddr <= res_store_luma_addr;
+                    lat_res_wdata <= res_store_sample;
+                end else if (res_is_chroma_ac && !p16_drop_this_chroma_residual) begin
+                    lat_res_we <= 1'b1;
+                    lat_res_wplane <= res_store_to_v ? 2'd2 : 2'd1;
+                    lat_res_waddr <= {2'b0, res_store_chroma_addr};
+                    lat_res_wdata <= res_store_sample;
                 end
+                if (res_store_i == 4'd15)
+                    res_step_advance();
+                else
+                    res_store_i <= res_store_i + 4'd1;
+            end
+            ST_P16_RES_ZERO: begin
+                if (res_is_luma_ac) begin
+                    lat_res_we <= 1'b1;
+                    lat_res_wplane <= 2'd0;
+                    lat_res_waddr <= res_store_luma_addr;
+                    lat_res_wdata <= 16'sd0;
+                end else if (res_is_chroma_ac) begin
+                    lat_res_we <= 1'b1;
+                    lat_res_wplane <= res_store_to_v ? 2'd2 : 2'd1;
+                    lat_res_waddr <= {2'b0, res_store_chroma_addr};
+                    lat_res_wdata <= 16'sd0;
+                end
+                if (res_store_i == 4'd15)
+                    res_step_advance();
+                else
+                    res_store_i <= res_store_i + 4'd1;
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
-                    // Only the 4x4 AC blocks contribute to the nC context;
-                    // the DC blocks of a macroblock do not (9.2.1).
-                    if (res_is_luma_ac)
-                        res_tc_cur[res_luma_raster] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
-                    if (res_is_chroma_ac)
-                        res_tc_cur_c[res_c_sel] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
-                    p16_res_bit_offset_r <= cavlc_bit_offset_end;
                     if (cavlc_ok) begin
                         if (res_is_luma_dc) begin
                             for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
                                 res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                            p16_res_bit_offset_r <= cavlc_bit_offset_end;
                             res_step_advance();
                         end else if (res_is_chroma_dc) begin
                             for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
@@ -1476,12 +1703,28 @@ module h264_decode_core #(
                                 else
                                     res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
                             end
+                            p16_res_bit_offset_r <= cavlc_bit_offset_end;
                             res_step_advance();
                         end else begin
-                            p16_xform_start <= 1'b1;
-                            wb_state <= ST_P16_RES_IDCT;
+                            // AC block: nC now, then sequential residual store.
+                            if (res_is_luma_ac)
+                                res_tc_cur[res_luma_raster] <= cavlc_total_coeff;
+                            if (res_is_chroma_ac)
+                                res_tc_cur_c[res_c_sel] <= cavlc_total_coeff;
+                            p16_res_bit_offset_r <= cavlc_bit_offset_end;
+`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
+                            res_store_i <= 4'd0;
+                            wb_state <= ST_P16_RES_STORE;
+`else
+                            res_step_advance();
+`endif
                         end
                     end else begin
+                        if (res_is_luma_ac)
+                            res_tc_cur[res_luma_raster] <= 5'd0;
+                        if (res_is_chroma_ac)
+                            res_tc_cur_c[res_c_sel] <= 5'd0;
+                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
                         res_step_advance();
                     end
                 end
@@ -1515,36 +1758,108 @@ module h264_decode_core #(
                 wb_state <= ST_P16_WIN_FETCH;
             end
             ST_P16_WIN_FETCH: begin
-                // Window samples stream into the MC engines' window RAMs
-                // on the same valid/index/sample strobes — no staging here.
+                // The window samples go straight into the engines' window
+                // RAMs off the same valid/index/sample strobes; nothing is
+                // staged here any more.
                 if (dpb_ref_fetch_done) begin
+                    // The last window sample lands on this same edge, so the
+                    // engine's first window RAM read happens after it.
                     p16_mc_start_r <= 1'b1;
                     wb_state <= ST_P16_MC;
                 end
             end
             ST_P16_MC: begin
-                if (p16_mc_done)
-                    wb_state <= ST_P16_WRITE;
+                // The loop filter owns a private copy of the macroblock, so it
+                // is still emitting the previous one while this one is
+                // predicted.  Hand over only once it has retired that copy.
+                if (p16_mc_done && !dbf_busy) begin
+                    // res_tc_cur is final by now, so the deblocker latches the
+                    // real per-4x4 coded-coefficient flags for bS derivation.
+                    dbf_start_r <= 1'b1;
+                    wb_idx <= 9'd0;
+                    wb_state <= ST_P16_WRITE_PRIME;
+                end
+            end
+            ST_WRITE_PRIME: begin
+                // Present raddr=0 for the HOLD cycle read.
+                lat_recon_rplane <= 2'd0;
+                lat_recon_raddr <= 8'd0;
+                wb_idx <= 9'd0;
+                wb_state <= ST_WRITE_HOLD;
+            end
+            ST_WRITE_HOLD: begin
+                // During HOLD raddr=0 → lat_recon_q gets sample0 at end.
+                // Prefetch sample1 address so WRITE0's read yields sample1.
+                lat_recon_rplane <= 2'd0;
+                lat_recon_raddr <= 8'd1;
+                wb_state <= ST_WRITE;
+            end
+            ST_P16_WRITE_PRIME: begin
+                lat_res_rplane <= 2'd0;
+                lat_res_raddr <= 8'd0;
+                wb_idx <= 9'd0;
+                // MC async for sample0 (p16_mc_rd sees wb_idx=0 this cycle).
+                p16_pred_q <= p16_pred_sample_async;
+                p16_pred_in_part_q <= p16_pred_in_part;
+                wb_state <= ST_P16_WRITE_HOLD;
+            end
+            ST_P16_WRITE_HOLD: begin
+                // res_q ← residual0 (raddr was 0 during this cycle).
+                // Prefetch residual1; keep pred_q as sample0 from PRIME.
+                lat_res_rplane <= 2'd0;
+                lat_res_raddr <= 8'd1;
+                wb_state <= ST_P16_WRITE;
             end
             ST_P16_WRITE: begin
+                // q holds residual[wb_idx]; pred_q holds pred[wb_idx].
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
-                    dbf_start_r <= 1'b1;
                     wb_state <= ST_DEBLOCK;
                 end else begin
-                    wb_idx <= wb_idx + 9'd1;
+                    // Advance emit index; raddr was already next during this
+                    // cycle (set last beat / HOLD). Point raddr at idx+2.
+                    wb_idx <= wb_idx_n;
+                    // Prefetch address for sample after next (wb_idx+2).
+                    lat_res_rplane <= wb_plane_nn;
+                    lat_res_raddr <= wb_sample_idx_nn;
+                    // Capture pred for the new wb_idx (wb_idx_n): MC ports
+                    // already see wb_idx_n while in ST_P16_WRITE && !last.
+                    p16_pred_q <= p16_pred_sample_async;
+                    p16_pred_in_part_q <= p16_pred_in_part;
                 end
             end
             ST_WRITE: begin
+                // lat_recon_q holds sample[wb_idx] (prefetched previous cycle).
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b0;
-                    dbf_start_r <= 1'b1;
                     wb_state <= ST_DEBLOCK;
                 end else begin
-                    wb_idx <= wb_idx + 9'd1;
+                    wb_idx <= wb_idx_n;
+                    lat_recon_rplane <= wb_plane_nn;
+                    lat_recon_raddr <= wb_sample_idx_nn;
                 end
             end
-            // Drain filter; force wait on last ref MB so POST hits DPB before boundary.
+            // The macroblock is only committed once its filtered window,
+            // including the strips that belong to the left and upper
+            // neighbours, has been written out.
+            // ── Pipeline overlap ────────────────────────────────────────
+            // The filter emits a 576-beat window: the macroblock plus the
+            // strips of the left and upper neighbours its edge filtering
+            // rewrote.  At one sample per cycle into a byte-wide writeback
+            // port that is 576 of the 712 cycles a macroblock gets, and
+            // waiting for it here serialised the whole pipeline behind it.
+            //
+            // It works from its own copy, so the core does not have to stay
+            // parked: it commits and moves on to fetch, predict and
+            // reconstruct the next macroblock while the previous one drains.
+            // The handover point in ST_P16_MC / ST_IDLE is where the next
+            // macroblock waits, which keeps macroblocks in order through the
+            // filter and preserves its left/upper neighbour state.
+            //
+            // The last macroblock of a frame is the exception: ST_COMMIT is
+            // what raises filtered_frame_done and swaps the reference bank, so
+            // committing early there would swap the bank out from under the
+            // samples still being emitted.
             ST_DEBLOCK: begin
                 if (dbf_mb_done || !(wb_mb_is_ref && wb_last_mb))
                     wb_state <= ST_COMMIT;
@@ -1575,11 +1890,60 @@ module h264_decode_core #(
         end
     end
 
-    assign dpb_wr_en = product_wb_en | p16_sample_wb_en;
-    assign dpb_wr_addr = product_wb_addr;
-    assign dpb_wr_data = dpb_ref_filtered_sample;
+    // ════════════════════════════════════════════════════════════════════
+    // THROUGHPUT TELEMETRY
+    // ════════════════════════════════════════════════════════════════════
+    // At 20 MHz with 1170 macroblocks at ~24 fps the whole pipeline gets 712
+    // cycles per macroblock.  Charge every cycle of a macroblock to exactly
+    // one stage so the per-stage totals sum to the macroblock total and no
+    // stage can quietly eat the budget.
+    localparam [2:0] PERF_ST_PARSE   = 3'd0;  // mb_type, residual walk, IDCT
+    localparam [2:0] PERF_ST_FETCH   = 3'd1;  // reference window fetch
+    localparam [2:0] PERF_ST_MC      = 3'd2;  // interpolation
+    localparam [2:0] PERF_ST_WRITE   = 3'd3;  // reconstruction writeback
+    localparam [2:0] PERF_ST_DEBLOCK = 3'd4;  // in-loop filter
+    localparam [2:0] PERF_ST_OTHER   = 3'd5;  // commit, frame boundary
 
-    // Present writeback: POST-deblock absolute (plane,x,y) stream.
+    reg [2:0] perf_stage;
+    always @* begin
+        case (wb_state)
+        ST_P16_RES_START, ST_P16_RES_WAIT,
+        ST_P16_RES_IDCT, ST_P16_RES_STORE, ST_P16_RES_ZERO,
+        ST_P16_RES_EDGE:                  perf_stage = PERF_ST_PARSE;
+        ST_P16_REF_SEED, ST_P16_WIN_START,
+        ST_P16_WIN_FETCH:                 perf_stage = PERF_ST_FETCH;
+        ST_P16_MC:                        perf_stage = PERF_ST_MC;
+        ST_LATCH_RECON, ST_P16_LATCH_RES,
+        ST_WRITE_PRIME, ST_WRITE_HOLD,
+        ST_P16_WRITE_PRIME, ST_P16_WRITE_HOLD,
+        ST_P16_WRITE, ST_WRITE:           perf_stage = PERF_ST_WRITE;
+        ST_DEBLOCK:                       perf_stage = PERF_ST_DEBLOCK;
+        default:                          perf_stage = PERF_ST_OTHER;
+        endcase
+    end
+
+    // Idle time between macroblocks is not a pipeline cost and must not be
+    // charged to whichever stage happened to run last.
+    wire perf_active = (wb_state != ST_IDLE);
+    wire perf_mb_done = (wb_state == ST_COMMIT);
+
+    h264_perf_counters #(
+        .NSTAGES(6)
+    ) u_product_perf (
+        .clk(clk),
+        .reset(reset),
+        .active(perf_active),
+        .stage_id(perf_stage),
+        .mb_done(perf_mb_done),
+        .frame_done(frame_done_r),
+        .mbox_word(perf_mbox_word)
+    );
+
+    assign dpb_wr_en = dpb_ref_mem_we;
+    assign dpb_wr_addr = product_wb_addr;
+    assign dpb_wr_data = dpb_ref_mem_wdata;
+
+    // Present writeback: POST-deblock stream, plane + frame-relative (x,y).
     assign px_wr_en    = dbf_out_valid;
     assign px_wr_plane = dbf_out_plane;
     assign px_wr_x     = dbf_out_x;
@@ -1591,15 +1955,30 @@ module h264_decode_core #(
     assign rbsp_request_valid = rbsp_request_valid_r;
     assign frame_done = frame_done_r;
     assign frame_mb_count = mb_count_r;
-    assign intra_blocks_done = product_intra_blocks_done;
     assign busy = (wb_state != ST_IDLE) || intra_active_r;
     assign decode_state = wb_state;
     assign current_mb_addr = (wb_state == ST_IDLE) ? syntax_mb_addr_r : wb_mb_addr16;
+    // ── Desync detectors ────────────────────────────────────────────────
+    // Baseline mb_type ranges, 7.4.5 Tables 7-11 and 7-13: an I slice has
+    // 0..25 (I_NxN, the 24 I_16x16 flavours, I_PCM); a P slice has 0..4 for
+    // the inter types and 5..30 for the intra types offset by 5.  Anything
+    // above those is not a code point, so the bit position that produced it
+    // was already wrong.
+    assign err_bad_mb_type = mb_type_valid && !mb_skip &&
+                             (slice_is_i ? (mb_type > 5'd25) : (mb_type > 5'd30));
+
+    // The macroblock address is derived by counting, so it running past the
+    // picture means macroblocks were invented that the slice never coded.
+    assign err_mb_overrun = mb_type_valid && (syntax_mb_addr32 >= (MB_W * MB_H));
+
+    // The residual decoder reports every lookup that fell off the end of its
+    // table without matching a code.
+    assign err_cavlc_miss = cavlc_done && !cavlc_ok;
+
     assign error = (mb_width != 8'd0 && mb_width32 != MB_W) ||
                    (mb_height != 8'd0 && mb_height32 != MB_H);
 
     (* keep = 1 *) wire _keep_decode_core_inputs =
-        |disable_deblocking_filter_idc | |slice_alpha_c0_offset | |slice_beta_offset |
         slice_is_idr | slice_is_i | |slice_qp_y | |first_mb_in_slice |
         |pps_chroma_qp_index_offset | |rbsp_byte[0] | |rbsp_window_base |
         mb_type_valid | |mb_type | mb_skip | |intra4x4_modes[0] |

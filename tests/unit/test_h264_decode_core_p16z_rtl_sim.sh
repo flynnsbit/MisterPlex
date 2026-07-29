@@ -47,6 +47,12 @@ RTL=(
   "$RTL_DIR/h264_deblock.sv"
   "$RTL_DIR/h264_decode_core.sv"
   "$RTL_DIR/h264_dpb.sv"
+  "$RTL_DIR/h264_transform_dc.sv"
+  "$RTL_DIR/h264_mc_block.sv"
+  "$RTL_DIR/h264_mc_luma_qpel.sv"
+  "$RTL_DIR/h264_mc_chroma_epel.sv"
+  "$RTL_DIR/h264_deblock_mb.sv"
+  "$RTL_DIR/h264_perf_counters.sv"
 )
 for f in "$TOP" "$TB" "${RTL[@]}"; do
   if [[ ! -f "$f" ]]; then
