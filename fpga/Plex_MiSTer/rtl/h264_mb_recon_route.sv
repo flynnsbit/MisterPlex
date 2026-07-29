@@ -36,6 +36,7 @@ module h264_mb_recon_route (
 	input  wire [5:0]  mb_type,         // raw mb_type for the current slice type
 
 	output reg  [2:0]  route,
+	output reg  [2:0]  part_mode,       // 0=16x16, 1=16x8, 2=8x16, 3=8x8
 	output reg  [5:0]  norm_mb_type,    // intra mb_type normalised to I-slice numbering
 	output reg  [1:0]  i16_pred_mode,
 	output reg  [1:0]  cbp_chroma,
@@ -49,6 +50,9 @@ module h264_mb_recon_route (
 	localparam [2:0] ROUTE_INTRA16 = 3'd2;
 	localparam [2:0] ROUTE_PSKIP   = 3'd3;
 	localparam [2:0] ROUTE_P16     = 3'd4;
+	// Multi-partition inter macroblocks: P_L0_L0_16x8, P_L0_L0_8x16 and
+	// P_8x8 / P_8x8ref0, which reconstruct partition by partition.
+	localparam [2:0] ROUTE_PPART   = 3'd5;
 
 	// Intra type base offset: 0 in an I slice, 5 in a P slice.
 	wire [5:0] intra_base = slice_is_i ? 6'd0 : 6'd5;
@@ -80,9 +84,12 @@ module h264_mb_recon_route (
 	// P-slice inter types. mb_type 0 is P_L0_16x16, 1/2 are the two-partition
 	// splits, 3/4 are the 8x8 forms. Only 16x16 has a reconstruction path.
 	wire p_is_16x16 = !slice_is_i && !mb_is_skip && (mb_type == 6'd0);
+	wire p_is_part  = !slice_is_i && !mb_is_skip &&
+	                  (mb_type >= 6'd1) && (mb_type <= 6'd4);
 
 	always @* begin
 		route = ROUTE_OTHER;
+		part_mode = 3'd0;
 		// An intra macroblock inside a P slice carries mb_type 5..30. Strip the
 		// offset so the intra reconstruction path only ever sees I-slice
 		// numbering and does not need to know the slice type.
@@ -114,6 +121,12 @@ module h264_mb_recon_route (
 			unsupported = 1'b1;
 		end else if (p_is_16x16) begin
 			route = ROUTE_P16;
+			is_inter = 1'b1;
+		end else if (p_is_part) begin
+			route = ROUTE_PPART;
+			// mb_type 1 -> 16x8, 2 -> 8x16, 3/4 -> 8x8 with sub-partitions.
+			part_mode = (mb_type == 6'd1) ? 3'd1 :
+			            (mb_type == 6'd2) ? 3'd2 : 3'd3;
 			is_inter = 1'b1;
 		end else begin
 			route = ROUTE_OTHER;

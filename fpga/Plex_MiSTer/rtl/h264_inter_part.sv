@@ -522,7 +522,7 @@ endmodule
 // eighth-sample chroma phases are dropped (>>>2 and >>>3 respectively) rather
 // than interpolated. Fractional interpolation belongs here, at this site.
 // ---------------------------------------------------------------------------
-module h264_inter_mc_part (
+module h264_inter_mc_part_stream (
 	input  wire        clk,
 	input  wire        reset,
 

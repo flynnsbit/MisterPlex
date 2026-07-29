@@ -227,6 +227,13 @@ module stream_path #(
 	wire [47:0] sl_i4_rem_modes;
 	wire sl_i4_modes_present;
 	wire [1:0] sl_chroma_pred_mode;
+	wire [7:0]  sl_sub_mb_types;
+	wire        sl_sub_mb_valid;
+	wire [7:0]  sl_ref_idx_l0;
+	wire [15:0] sl_mvd_valid;
+	wire signed [15:0] sl_mvd_x [0:15];
+	wire signed [15:0] sl_mvd_y [0:15];
+	wire [7:0]  sl_num_ref_idx_l0_am1;
 	wire sl_luma4x4_blocks_valid;
 	wire sl_luma4x4_blocks_present;
 	wire signed [15:0] sl_luma4x4_coeff [0:15][0:15];
@@ -272,6 +279,13 @@ module stream_path #(
 		.first_i4_rem_modes(sl_i4_rem_modes),
 		.first_i4_modes_present(sl_i4_modes_present),
 		.first_chroma_pred_mode(sl_chroma_pred_mode),
+		.first_sub_mb_types(sl_sub_mb_types),
+		.first_sub_mb_valid(sl_sub_mb_valid),
+		.first_mb_ref_idx_l0(sl_ref_idx_l0),
+		.first_mb_mvd_valid(sl_mvd_valid),
+		.first_mb_mvd_x(sl_mvd_x),
+		.first_mb_mvd_y(sl_mvd_y),
+		.num_ref_idx_l0_active_minus1(sl_num_ref_idx_l0_am1),
 		.first_luma4x4_blocks_valid(sl_luma4x4_blocks_valid),
 		.first_luma4x4_blocks_present(sl_luma4x4_blocks_present),
 		.first_luma4x4_coeff(sl_luma4x4_coeff),
@@ -515,6 +529,11 @@ module stream_path #(
 		.intra4x4_modes(core_i4_modes),
 		.intra16x16_mode(core_i16_pred_mode),
 		.chroma_pred_mode(sl_chroma_pred_mode),
+		.part_sub_mb_types(sl_sub_mb_types),
+		.part_ref_idx_l0(sl_ref_idx_l0),
+		.part_mvd_valid(sl_mvd_valid),
+		.part_mvd_x(sl_mvd_x),
+		.part_mvd_y(sl_mvd_y),
 		.cbp_luma(4'hf),
 		.cbp_chroma(2'd0),
 		.mb_qp_delta(sl_qpd[5:0]),
@@ -626,7 +645,7 @@ module stream_path #(
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
 	// Touch residual_csum + place pulse + a few coeff LSBs so place is not pruned.
-	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
+	wire _keep = sl_sub_mb_valid | |sl_num_ref_idx_l0_am1 | keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |

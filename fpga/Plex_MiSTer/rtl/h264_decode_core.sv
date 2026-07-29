@@ -74,6 +74,15 @@ module h264_decode_core #(
     input  wire signed [5:0] mb_qp_delta,    // se(), per-MB QP delta
     input  wire [15:0] mb_residual_bit_offset, // RBSP bit offset for this MB's residual syntax
 
+    // ── Inter partition prediction syntax (from slice_hdr_parser) ─────────
+    // Slot index is the 8x8 block times four plus the sub-partition for
+    // P_8x8, and the plain partition index for 16x8 / 8x16.
+    input  wire [7:0]  part_sub_mb_types,    // 4 x 2-bit sub_mb_type
+    input  wire [7:0]  part_ref_idx_l0,      // 4 x 2-bit ref_idx_l0 per mbPart
+    input  wire [15:0] part_mvd_valid,
+    input  wire signed [15:0] part_mvd_x [0:15],
+    input  wire signed [15:0] part_mvd_y [0:15],
+
     // ── Product intra luma residual block pulse interface (from CAVLC/parser) ──
     // Coefficients are H.264 zigzag/scan order. h264_dequant4x4 performs the
     // zigzag→raster placement internally before IDCT.
@@ -314,6 +323,11 @@ module h264_decode_core #(
     // which a skipped MB has). A future deblocking filter must walk these
     // macroblocks too -- do not use "was skipped" as a skip condition there.
     localparam [7:0] ST_PSKIP_WAIT   = 8'd10;
+    // Multi-partition inter macroblocks (16x8 / 8x16 / 8x8): one prediction
+    // and one motion compensated copy per partition, assembled into the same
+    // macroblock buffers the single-partition paths use.
+    localparam [7:0] ST_PART_START   = 8'd11;
+    localparam [7:0] ST_PART_WAIT    = 8'd12;
     localparam [4:0] P16_LUMA_RES_BLOCKS = 5'd16;
     localparam [4:0] P16_CHROMA_RES_BLOCKS = 5'd8;
     localparam [4:0] P16_RES_BLOCKS = P16_LUMA_RES_BLOCKS + P16_CHROMA_RES_BLOCKS;
@@ -380,6 +394,21 @@ module h264_decode_core #(
     reg signed [15:0] pskip_mv_x_r;
     reg signed [15:0] pskip_mv_y_r;
     reg [31:0] pskip_ref_base_r;
+    reg [3:0]  part_slot_r;
+    reg [2:0]  part_mode_r;
+    reg        part_start_r;
+    reg signed [15:0] part_mv_x_r;
+    reg signed [15:0] part_mv_y_r;
+    reg [31:0] part_ref_base_r;
+    reg        wb_is_ppart_r;
+    reg        mvblk_mb_start_r;
+    reg        mvflush_r;
+    reg        mvblk_valid_r;
+    reg [15:0] mvblk_mask_r;
+    reg        mvblk_inter_r;
+    reg [1:0]  mvblk_ref_r;
+    reg signed [15:0] mvblk_mv_x_r;
+    reg signed [15:0] mvblk_mv_y_r;
     reg        mvcommit_valid_r;
     reg [7:0]  mvcommit_mb_x_r;
     reg        mvcommit_is_inter_r;
@@ -525,8 +554,10 @@ module h264_decode_core #(
     localparam [2:0] ROUTE_INTRA16 = 3'd2;
     localparam [2:0] ROUTE_PSKIP   = 3'd3;
     localparam [2:0] ROUTE_P16     = 3'd4;
+    localparam [2:0] ROUTE_PPART   = 3'd5;
 
     wire [2:0] mb_route;
+    wire [2:0] mb_route_part_mode;
     wire [5:0] mb_route_norm_mb_type;
     wire [1:0] mb_route_i16_mode;
     wire [1:0] mb_route_cbp_chroma;
@@ -539,6 +570,7 @@ module h264_decode_core #(
         .mb_is_skip(mb_skip),
         .mb_type({1'b0, mb_type}),
         .route(mb_route),
+        .part_mode(mb_route_part_mode),
         .norm_mb_type(mb_route_norm_mb_type),
         .i16_pred_mode(mb_route_i16_mode),
         .cbp_chroma(mb_route_cbp_chroma),
@@ -560,6 +592,9 @@ module h264_decode_core #(
     // rather than on slice_is_i means the intra macroblocks scattered through
     // P slices now reconstruct too instead of being dropped.
     wire route_is_i4 = (mb_route == ROUTE_INTRA4);
+    wire route_is_ppart = (mb_route == ROUTE_PPART);
+    // 16x8 and 8x16 only ever use slots 0 and 1; 8x8 walks all sixteen.
+    wire [3:0] part_slot_max = (part_mode_r == 3'd3) ? 4'd15 : 4'd1;
 
     // ── P_Skip: MV derivation and MC copy ──────────────────────────────────
     wire        pskip_nb_a_present, pskip_nb_a_inter;
@@ -574,7 +609,36 @@ module h264_decode_core #(
     wire        pskip_nb_d_present, pskip_nb_d_inter;
     wire [1:0]  pskip_nb_d_ref;
     wire signed [15:0] pskip_nb_d_mv_x, pskip_nb_d_mv_y;
-    h264_pskip_nb_ctx #(
+    // Partition geometry of the slot currently being predicted. Everything
+    // except the multi-partition path queries a 16x16 partition at (0,0),
+    // which reproduces the macroblock-level taps exactly.
+    wire [4:0] part_geo_x, part_geo_y, part_geo_w, part_geo_h;
+    wire       part_geo_valid;
+    h264_part_geometry u_product_part_geo (
+        .part_mode(part_mode_r),
+        .slot(part_slot_r),
+        .sub_mb_type(part_sub_mb_types[part_slot_r[3:2] * 2 +: 2]),
+        .part_x(part_geo_x),
+        .part_y(part_geo_y),
+        .part_w(part_geo_w),
+        .part_h(part_geo_h),
+        .part_valid(part_geo_valid)
+    );
+    wire [15:0] part_geo_mask;
+    h264_part_mask u_product_part_mask (
+        .part_x(part_geo_x),
+        .part_y(part_geo_y),
+        .part_w(part_geo_w),
+        .part_h(part_geo_h),
+        .mask(part_geo_mask)
+    );
+    wire part_query_active = (wb_state == ST_PART_START);
+    wire [4:0] nb_q_x = part_query_active ? part_geo_x : 5'd0;
+    wire [4:0] nb_q_y = part_query_active ? part_geo_y : 5'd0;
+    wire [4:0] nb_q_w = part_query_active ? part_geo_w : 5'd16;
+    wire [1:0] part_ref_idx_slot = part_ref_idx_l0[part_slot_r[3:2] * 2 +: 2];
+
+    h264_mv_nb_ctx4x4 #(
         .MB_WIDTH_MAX(MB_W),
         .MB_WIDTH_DEFAULT(MB_W)
     ) u_product_pskip_nb_ctx (
@@ -584,12 +648,19 @@ module h264_decode_core #(
         .mb_y(syntax_mb_y),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
+        .mb_start(mvblk_mb_start_r),
+        .blk_wr_valid(mvblk_valid_r),
+        .blk_wr_mask(mvblk_mask_r),
+        .blk_wr_inter(mvblk_inter_r),
+        .blk_wr_ref(mvblk_ref_r),
+        .blk_wr_mv_x(mvblk_mv_x_r),
+        .blk_wr_mv_y(mvblk_mv_y_r),
         .mb_commit(mvcommit_valid_r),
         .commit_mb_x(mvcommit_mb_x_r),
-        .commit_is_inter(mvcommit_is_inter_r),
-        .commit_ref_idx(mvcommit_ref_r),
-        .commit_mv_x(mvcommit_mv_x_r),
-        .commit_mv_y(mvcommit_mv_y_r),
+        .q_x(nb_q_x),
+        .q_y(nb_q_y),
+        .q_w(nb_q_w),
+        .q_ref_idx(part_ref_idx_slot),
         .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
         .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
         .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
@@ -661,14 +732,33 @@ module h264_decode_core #(
     // samples instead of stalling on an unconnected port. Either way the
     // samples are POST-deblock: the DPB holds the filtered picture.
     localparam bit REF_BRIDGE = !REF_PORT_EXTERNAL;
-    wire        pskip_ref_grant = REF_BRIDGE && (wb_state == ST_PSKIP_WAIT);
+    // The P_Skip engine and the partition engine are mutually exclusive by
+    // state, so the reference port needs a mux rather than an arbiter.
+    wire        pskip_ref_grant = (wb_state == ST_PSKIP_WAIT);
+    wire        part_ref_grant  = (wb_state == ST_PART_WAIT);
+    wire        any_ref_grant   = pskip_ref_grant || part_ref_grant;
     wire        mc_ref_req_ready = REF_BRIDGE ? pskip_ref_grant : ref_req_ready;
+    wire        part_ref_req_ready = REF_BRIDGE ? part_ref_grant : ref_req_ready;
     wire        mc_ref_rsp_valid = REF_BRIDGE ? (dpb_rd_valid && pskip_ref_grant)
-                                              : ref_rsp_valid;
+                                              : (ref_rsp_valid && pskip_ref_grant);
+    wire        part_ref_rsp_valid = REF_BRIDGE ? (dpb_rd_valid && part_ref_grant)
+                                                : (ref_rsp_valid && part_ref_grant);
     wire [7:0]  mc_ref_rsp_sample = REF_BRIDGE ? dpb_rd_data : ref_rsp_sample;
+    wire        part_ref_req_valid;
+    wire [1:0]  part_ref_req_plane;
+    wire [15:0] part_ref_req_x;
+    wire [15:0] part_ref_req_y;
+    wire        pskip_ref_req_valid;
+    wire [1:0]  pskip_ref_req_plane;
+    wire [15:0] pskip_ref_req_x;
+    wire [15:0] pskip_ref_req_y;
+    assign ref_req_valid = part_ref_grant ? part_ref_req_valid : pskip_ref_req_valid;
+    assign ref_req_plane = part_ref_grant ? part_ref_req_plane : pskip_ref_req_plane;
+    assign ref_req_x     = part_ref_grant ? part_ref_req_x     : pskip_ref_req_x;
+    assign ref_req_y     = part_ref_grant ? part_ref_req_y     : pskip_ref_req_y;
     wire [31:0] pskip_ref_addr;
     h264_dpb_i420_addr #(.FRAME_W(FRAME_W), .FRAME_H(FRAME_H)) u_product_pskip_rd_addr (
-        .base(pskip_ref_base_r),
+        .base(part_ref_grant ? part_ref_base_r : pskip_ref_base_r),
         .plane(ref_req_plane),
         .x(ref_req_x),
         .y(ref_req_y),
@@ -684,10 +774,10 @@ module h264_decode_core #(
         .mv_y_qpel(pskip_mv_y_r),
         .frame_w(FRAME_W16),
         .frame_h(FRAME_H16),
-        .ref_req_valid(ref_req_valid),
-        .ref_req_plane(ref_req_plane),
-        .ref_req_x(ref_req_x),
-        .ref_req_y(ref_req_y),
+        .ref_req_valid(pskip_ref_req_valid),
+        .ref_req_plane(pskip_ref_req_plane),
+        .ref_req_x(pskip_ref_req_x),
+        .ref_req_y(pskip_ref_req_y),
         .ref_req_ready(mc_ref_req_ready),
         .ref_rsp_valid(mc_ref_rsp_valid),
         .ref_rsp_sample(mc_ref_rsp_sample),
@@ -698,6 +788,66 @@ module h264_decode_core #(
         .busy(pskip_busy),
         .done(pskip_done)
     );
+    // ── Multi-partition inter reconstruction (16x8 / 8x16 / 8x8) ──────────
+    // Clause 8.4.1.3 including the shape-specific overrides that 16x8 and
+    // 8x16 use instead of the median for specific partition indices.
+    wire signed [15:0] part_mvp_x;
+    wire signed [15:0] part_mvp_y;
+    wire        part_shape_override;
+    h264_mv_pred_partition u_product_part_mvp (
+        .part_mode(part_mode_r),
+        .slot(part_slot_r),
+        .ref_idx_l0(part_ref_idx_slot),
+        .nb_a_present(pskip_nb_a_present), .nb_a_inter(pskip_nb_a_inter),
+        .nb_a_ref(pskip_nb_a_ref), .nb_a_mv_x(pskip_nb_a_mv_x), .nb_a_mv_y(pskip_nb_a_mv_y),
+        .nb_b_present(pskip_nb_b_present), .nb_b_inter(pskip_nb_b_inter),
+        .nb_b_ref(pskip_nb_b_ref), .nb_b_mv_x(pskip_nb_b_mv_x), .nb_b_mv_y(pskip_nb_b_mv_y),
+        .nb_c_present(pskip_nb_c_present), .nb_c_inter(pskip_nb_c_inter),
+        .nb_c_ref(pskip_nb_c_ref), .nb_c_mv_x(pskip_nb_c_mv_x), .nb_c_mv_y(pskip_nb_c_mv_y),
+        .nb_d_present(pskip_nb_d_present), .nb_d_inter(pskip_nb_d_inter),
+        .nb_d_ref(pskip_nb_d_ref), .nb_d_mv_x(pskip_nb_d_mv_x), .nb_d_mv_y(pskip_nb_d_mv_y),
+        .mvp_x(part_mvp_x),
+        .mvp_y(part_mvp_y),
+        .shape_override(part_shape_override)
+    );
+    wire signed [15:0] part_mv_x = part_mvp_x + part_mvd_x[part_slot_r];
+    wire signed [15:0] part_mv_y = part_mvp_y + part_mvd_y[part_slot_r];
+
+    wire       part_pred_valid;
+    wire [1:0] part_pred_plane;
+    wire [7:0] part_pred_idx;
+    wire [7:0] part_pred_sample;
+    wire       part_busy;
+    wire       part_done;
+    h264_inter_mc_part_stream u_product_part_mc (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(part_start_r),
+        .mb_x(wb_mb_x),
+        .mb_y(wb_mb_y),
+        .part_x(part_geo_x),
+        .part_y(part_geo_y),
+        .part_w(part_geo_w),
+        .part_h(part_geo_h),
+        .mv_x_qpel(part_mv_x_r),
+        .mv_y_qpel(part_mv_y_r),
+        .frame_w(FRAME_W16),
+        .frame_h(FRAME_H16),
+        .ref_req_valid(part_ref_req_valid),
+        .ref_req_plane(part_ref_req_plane),
+        .ref_req_x(part_ref_req_x),
+        .ref_req_y(part_ref_req_y),
+        .ref_req_ready(part_ref_req_ready),
+        .ref_rsp_valid(part_ref_rsp_valid),
+        .ref_rsp_sample(mc_ref_rsp_sample),
+        .pred_valid(part_pred_valid),
+        .pred_plane(part_pred_plane),
+        .pred_idx(part_pred_idx),
+        .pred_sample(part_pred_sample),
+        .busy(part_busy),
+        .done(part_done)
+    );
+
     h264_mv_pred_part u_product_p16_mv_pred (
         .part_mode(3'd0),
         .part_idx(2'd0),
@@ -1178,6 +1328,10 @@ module h264_decode_core #(
     // the run arrives afterwards as a normal mb_type_valid pulse.
     wire pskip_launch = pskip_pending && (wb_state == ST_IDLE) &&
                         !p16_launch && !product_recon_mb_valid && !pskip_busy;
+    // 16x8 / 8x16 / 8x8 macroblocks reconstruct partition by partition.
+    wire ppart_launch = mb_type_valid && route_is_ppart && (wb_state == ST_IDLE) &&
+                        !pskip_pending && !p16_launch && !product_recon_mb_valid &&
+                        !part_busy;
     assign skip_consume = pskip_launch || (mb_type_valid && !pskip_pending);
     wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
     wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
@@ -1199,7 +1353,15 @@ module h264_decode_core #(
         intra_chroma_start_r <= 1'b0;
         i16_commit_r <= 1'b0;
         pskip_start_r <= 1'b0;
-        mvcommit_valid_r <= 1'b0;
+        part_start_r <= 1'b0;
+        mvblk_valid_r <= 1'b0;
+        mvblk_mb_start_r <= (wb_state == ST_IDLE) &&
+                            (i16_launch || pskip_launch || p16_launch || ppart_launch ||
+                             (mb_type_valid && route_is_i4));
+        mvflush_r <= 1'b0;
+        // The 4x4 field must be written before the macroblock is retired into
+        // the row buffers, so the retire pulse trails the write by one cycle.
+        mvcommit_valid_r <= mvflush_r;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1239,6 +1401,21 @@ module h264_decode_core #(
             pskip_mv_x_r <= 16'sd0;
             pskip_mv_y_r <= 16'sd0;
             pskip_ref_base_r <= 32'd0;
+            part_slot_r <= 4'd0;
+            part_mode_r <= 3'd0;
+            part_start_r <= 1'b0;
+            part_mv_x_r <= 16'sd0;
+            part_mv_y_r <= 16'sd0;
+            part_ref_base_r <= 32'd0;
+            wb_is_ppart_r <= 1'b0;
+            mvblk_valid_r <= 1'b0;
+            mvblk_mask_r <= 16'd0;
+            mvblk_inter_r <= 1'b0;
+            mvblk_ref_r <= 2'd0;
+            mvblk_mv_x_r <= 16'sd0;
+            mvblk_mv_y_r <= 16'sd0;
+            mvblk_mb_start_r <= 1'b0;
+            mvflush_r <= 1'b0;
             mvcommit_valid_r <= 1'b0;
             mvcommit_mb_x_r <= 8'd0;
             mvcommit_is_inter_r <= 1'b0;
@@ -1330,6 +1507,7 @@ module h264_decode_core #(
                         lat_p16_residual_v[wb_i] <= p16_zero_mv_valid ? p16_residual_v[wb_i] : 16'sd0;
                     end
                     wb_state <= p16_zero_mv_valid ? ST_P16_TAP_REQ : ST_P16_RES_START;
+                    wb_is_ppart_r <= 1'b0;
                     wb_is_pskip_r <= 1'b0;
                     wb_mv_is_inter_r <= 1'b1;
                 end else if (product_recon_mb_valid) begin
@@ -1345,6 +1523,7 @@ module h264_decode_core #(
                         lat_recon_v[wb_i] <= product_intra_recon_valid ? product_intra_recon_v[wb_i] : recon_v[wb_i];
                     end
                     wb_state <= ST_WRITE;
+                    wb_is_ppart_r <= 1'b0;
                     wb_is_pskip_r <= 1'b0;
                     wb_mv_is_inter_r <= 1'b0;
                 end else if (i16_launch) begin
@@ -1353,17 +1532,38 @@ module h264_decode_core #(
                     wb_mb_is_ref <= 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
+                    wb_is_ppart_r <= 1'b0;
                     wb_is_pskip_r <= 1'b0;
                     wb_mv_is_inter_r <= 1'b0;
                     i16_luma_done_r <= 1'b0;
                     i16_chroma_done_r <= 1'b0;
                     wb_state <= ST_I16_WAIT;
+                end else if (ppart_launch) begin
+                    wb_mb_x <= syntax_mb_x;
+                    wb_mb_y <= syntax_mb_y;
+                    wb_mb_is_ref <= 1'b1;
+                    wb_base <= dpb_write_base;
+                    wb_idx <= 9'd0;
+                    wb_is_pskip_r <= 1'b0;
+                    wb_mv_is_inter_r <= 1'b1;
+                    wb_is_ppart_r <= 1'b1;
+                    part_mode_r <= mb_route_part_mode;
+                    part_slot_r <= 4'd0;
+                    part_ref_base_r <= dpb_ref_base;
+                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                        lat_recon_y[wb_i] <= 8'd128;
+                    for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
+                        lat_recon_u[wb_i] <= 8'd128;
+                        lat_recon_v[wb_i] <= 8'd128;
+                    end
+                    wb_state <= ST_PART_START;
                 end else if (pskip_launch) begin
                     wb_mb_x <= syntax_mb_x;
                     wb_mb_y <= syntax_mb_y;
                     wb_mb_is_ref <= 1'b1;
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
+                    wb_is_ppart_r <= 1'b0;
                     wb_is_pskip_r <= 1'b1;
                     wb_mv_is_inter_r <= 1'b1;
                     // Clause 8.4.1.1: the neighbour taps are read at the
@@ -1390,6 +1590,50 @@ module h264_decode_core #(
                 if (pskip_done) begin
                     wb_idx <= 9'd0;
                     wb_state <= ST_WRITE;
+                end
+            end
+            ST_PART_START: begin
+                // Predict this partition from the 4x4 neighbour field, publish
+                // its motion so the NEXT partition of this same macroblock can
+                // use it as neighbour A/B/C/D, then stream its samples.
+                if (!part_geo_valid) begin
+                    if (part_slot_r >= part_slot_max) begin
+                        wb_idx <= 9'd0;
+                        wb_state <= ST_WRITE;
+                    end else
+                        part_slot_r <= part_slot_r + 4'd1;
+                end else begin
+                    part_mv_x_r <= part_mv_x;
+                    part_mv_y_r <= part_mv_y;
+                    part_start_r <= 1'b1;
+                    mvblk_valid_r <= 1'b1;
+                    mvblk_mask_r <= part_geo_mask;
+                    mvblk_inter_r <= 1'b1;
+                    mvblk_ref_r <= part_ref_idx_slot;
+                    mvblk_mv_x_r <= part_mv_x;
+                    mvblk_mv_y_r <= part_mv_y;
+                    wb_state <= ST_PART_WAIT;
+                end
+            end
+            ST_PART_WAIT: begin
+                // No residual is added here yet: the partition is the motion
+                // compensated prediction verbatim, as P_Skip is.
+                if (part_pred_valid) begin
+                    if (part_pred_plane == 2'd0)
+                        lat_recon_y[part_pred_idx] <= part_pred_sample;
+                    else if (part_pred_plane == 2'd1)
+                        lat_recon_u[part_pred_idx[5:0]] <= part_pred_sample;
+                    else
+                        lat_recon_v[part_pred_idx[5:0]] <= part_pred_sample;
+                end
+                if (part_done) begin
+                    if (part_slot_r >= part_slot_max) begin
+                        wb_idx <= 9'd0;
+                        wb_state <= ST_WRITE;
+                    end else begin
+                        part_slot_r <= part_slot_r + 4'd1;
+                        wb_state <= ST_PART_START;
+                    end
                 end
             end
             ST_I16_WAIT: begin
@@ -1502,12 +1746,14 @@ module h264_decode_core #(
                         mv_left_ref <= p16_ref_idx_l0_r;
                         mv_left_valid <= 1'b1;
                     end
-                    mvcommit_valid_r <= 1'b1;
+                    mvflush_r <= 1'b1;
                     mvcommit_mb_x_r <= wb_mb_x;
-                    mvcommit_is_inter_r <= 1'b1;
-                    mvcommit_ref_r <= p16_ref_idx_l0_r;
-                    mvcommit_mv_x_r <= p16_mv_x_qpel_r;
-                    mvcommit_mv_y_r <= p16_mv_y_qpel_r;
+                    mvblk_valid_r <= 1'b1;
+                    mvblk_mask_r <= 16'hFFFF;
+                    mvblk_inter_r <= 1'b1;
+                    mvblk_ref_r <= p16_ref_idx_l0_r;
+                    mvblk_mv_x_r <= p16_mv_x_qpel_r;
+                    mvblk_mv_y_r <= p16_mv_y_qpel_r;
                     frame_done_r <= wb_mb_is_ref && wb_last_mb;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
@@ -1523,12 +1769,17 @@ module h264_decode_core #(
                     // derivation sees it as neighbour A/B/C/D. Intra
                     // macroblocks must still be committed (is_inter = 0) so
                     // their refIdx reads back as "not 0" in the special cases.
-                    mvcommit_valid_r <= 1'b1;
+                    mvflush_r <= 1'b1;
                     mvcommit_mb_x_r <= wb_mb_x;
-                    mvcommit_is_inter_r <= wb_mv_is_inter_r;
-                    mvcommit_ref_r <= 2'd0;
-                    mvcommit_mv_x_r <= wb_is_pskip_r ? pskip_mv_x_r : 16'sd0;
-                    mvcommit_mv_y_r <= wb_is_pskip_r ? pskip_mv_y_r : 16'sd0;
+                    // A multi-partition macroblock has already written its own
+                    // per-partition motion into the 4x4 field, so it must not
+                    // be flattened back to one vector here.
+                    mvblk_valid_r <= !wb_is_ppart_r;
+                    mvblk_mask_r <= 16'hFFFF;
+                    mvblk_inter_r <= wb_mv_is_inter_r;
+                    mvblk_ref_r <= 2'd0;
+                    mvblk_mv_x_r <= wb_is_pskip_r ? pskip_mv_x_r : 16'sd0;
+                    mvblk_mv_y_r <= wb_is_pskip_r ? pskip_mv_y_r : 16'sd0;
                     frame_done_r <= wb_mb_is_ref && wb_last_mb;
                 end else begin
                     wb_idx <= wb_idx + 9'd1;
@@ -1544,7 +1795,7 @@ module h264_decode_core #(
     assign dpb_wr_en = product_wb_en | p16_wr_en_r;
     assign dpb_wr_addr = p16_wr_en_r ? p16_wr_addr_r : wb_addr;
     assign dpb_wr_data = p16_wr_en_r ? p16_wr_data_r : wb_data;
-    assign dpb_rd_en = dpb_rd_en_r | (pskip_ref_grant && ref_req_valid);
+    assign dpb_rd_en = dpb_rd_en_r | (REF_BRIDGE && any_ref_grant && ref_req_valid);
     assign dpb_rd_addr = dpb_rd_en_r ? dpb_rd_addr_r : pskip_ref_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
     assign rbsp_request_valid = rbsp_request_valid_r;
@@ -1570,6 +1821,10 @@ module h264_decode_core #(
         |product_intra_nb_topright[0] | product_intra_recon_valid |
         |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
+        |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid |
+        |part_mvd_x[0] | |part_mvd_y[0] | |mb_route_part_mode |
+        part_geo_valid | |part_geo_mask | part_shape_override | part_busy |
+        |part_pred_idx | |part_pred_sample | |part_pred_plane |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
         |mb_route | |mb_route_cbp_chroma | mb_route_cbp_luma_ac |
