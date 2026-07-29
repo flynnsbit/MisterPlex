@@ -285,7 +285,7 @@ candidate = meta.get("candidate", {})
 expected = {
     "colorspace": "I420_NATIVE",
     "h264_loop_filter": "disabled",
-    "reconstruction_stage": "mc_prediction_only_pre_deblock_no_residual_add",
+    "reconstruction_stage": "mc_pred_plus_residual_pre_deblock",
     "reference_picture_state": "testbench_prefilled_previous_golden_no_deblock_reference",
     "reference_picture_source": "golden_i420_previous_frame_injected_into_dpb_bank0",
 }
