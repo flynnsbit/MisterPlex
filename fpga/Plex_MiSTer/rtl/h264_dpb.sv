@@ -1,5 +1,12 @@
 // Phase 3 motion-compensation decoded picture buffer helpers.
 // One short-term reference picture, one current reconstruction picture.
+//
+// Content contract: filtered_sample_* MUST be POST in-loop-deblock native I420
+// samples from a real reconstruction path (see h264_dpb_ref_commit). Writing a
+// diagnostic pattern (decode_stub XOR fill) or PRE-deblock recon makes the
+// reference non-conformant; MC arithmetic can still be green while inter
+// quality remains expected-red. Promotion is frame_done only; IDR clears
+// ref_ready via idr_start.
 `default_nettype none
 
 module h264_dpb_i420_addr #(

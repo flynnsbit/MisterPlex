@@ -480,6 +480,7 @@ module decode_stub #(
 
 	h264_deblock_writeback_ctrl #(
 		.MB_COUNT(DPB_MB_COUNT),
+		.MB_AW(DPB_MB_AW),
 		.FRAME_SLOT_W(2),
 		.SAMPLES_PER_MB(384)
 	) u_stream_dpb_wb (
