@@ -697,8 +697,7 @@ module slice_hdr_parser (
 			first_i4_pred_mode_flags <= 16'd0;
 			first_i4_rem_modes <= 48'd0;
 			first_i4_modes_present <= 1'b0;
-			first_luma4x4_blocks_done <= 1'b0;
-			first_luma4x4_block_idx <= 4'd0;
+			// first_luma4x4_* owned solely by the full residual always block
 			full_luma_cbp <= 4'd0;
 			full_start_req <= 1'b0;
 			full_start_bit <= 10'd0;
