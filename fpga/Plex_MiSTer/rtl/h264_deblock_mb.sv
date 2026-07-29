@@ -84,20 +84,25 @@ module h264_deblock_mb #(
 	// columns of the left neighbour (x = -4..-1), t* the bottom four rows of
 	// the upper neighbour (y = -4..-1). All are filtered in place so a later
 	// edge sees the result of the earlier one, as the standard requires.
-	reg [7:0] wy [0:255];
-	reg [7:0] wu [0:63];
-	reg [7:0] wv [0:63];
-	reg [7:0] ly [0:63];   // [row*4 + col], col 0..3 -> x = -4..-1
-	reg [7:0] lu [0:31];   // [row*4 + col]
-	reg [7:0] lv [0:31];
-	reg [7:0] ty [0:63];   // [row*16 + col], row 0..3 -> y = -4..-1
-	reg [7:0] tu [0:31];   // [row*8 + col]
-	reg [7:0] tv [0:31];
+	// Force fabric registers: the gather always@* block issues many parallel
+	// runtime-indexed reads through get_y/get_c, which cannot map onto a
+	// single-port M10K and crashes Verific ("read to RAM wasn't mapped to a
+	// specific read port").
+	(* ramstyle = "logic" *) reg [7:0] wy [0:255];
+	(* ramstyle = "logic" *) reg [7:0] wu [0:63];
+	(* ramstyle = "logic" *) reg [7:0] wv [0:63];
+	(* ramstyle = "logic" *) reg [7:0] ly [0:63];   // [row*4 + col], col 0..3 -> x = -4..-1
+	(* ramstyle = "logic" *) reg [7:0] lu [0:31];   // [row*4 + col]
+	(* ramstyle = "logic" *) reg [7:0] lv [0:31];
+	(* ramstyle = "logic" *) reg [7:0] ty [0:63];   // [row*16 + col], row 0..3 -> y = -4..-1
+	(* ramstyle = "logic" *) reg [7:0] tu [0:31];   // [row*8 + col]
+	(* ramstyle = "logic" *) reg [7:0] tv [0:31];
 
 	// Upper neighbour line buffers, one entry per macroblock column.
-	reg [7:0] lb_y [0:(MB_W*64)-1];
-	reg [7:0] lb_u [0:(MB_W*32)-1];
-	reg [7:0] lb_v [0:(MB_W*32)-1];
+	// Single-ported, sequential access only — M10K is correct here.
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_y [0:(MB_W*64)-1];
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_u [0:(MB_W*32)-1];
+	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_v [0:(MB_W*32)-1];
 
 	// Neighbour boundary-strength context.
 	reg              lft_valid;

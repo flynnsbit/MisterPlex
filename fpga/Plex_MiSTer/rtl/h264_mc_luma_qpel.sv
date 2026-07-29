@@ -150,18 +150,26 @@ module h264_mc_luma_qpel (
 
 	// use_j implies frac_x != 0, so the horizontal pass covers the centre
 	// sample's source plane as well as the b/s half samples.
+	// Flags must be function arguments: Quartus automatic functions do not
+	// capture module-level nets, so a bare need_sh inside next_vsel was
+	// constantly false and the vertical passes never ran.
 	wire need_sh = (fy_r != 2'd0);
 	wire need_sm = (fx_r == 2'd3) && (fy_r != 2'd0);
 	wire need_sj = use_j_r;
 
 	// Pick the next vertical sub-pass that is actually required, or 3 when
 	// none are left and the combine pass should run.
-	function automatic [1:0] next_vsel(input [1:0] from);
+	function automatic [1:0] next_vsel(
+		input [1:0] from,
+		input       n_sh,
+		input       n_sm,
+		input       n_sj
+	);
 		begin
-			if      (from <= 2'd0 && need_sh) next_vsel = 2'd0;
-			else if (from <= 2'd1 && need_sm) next_vsel = 2'd1;
-			else if (from <= 2'd2 && need_sj) next_vsel = 2'd2;
-			else                              next_vsel = 2'd3;
+			if      (from <= 2'd0 && n_sh) next_vsel = 2'd0;
+			else if (from <= 2'd1 && n_sm) next_vsel = 2'd1;
+			else if (from <= 2'd2 && n_sj) next_vsel = 2'd2;
+			else                           next_vsel = 2'd3;
 		end
 	endfunction
 
@@ -372,9 +380,9 @@ module h264_mc_luma_qpel (
 				if (!a_run && !p1_v && !p2_v) begin
 					ao    <= 5'd0;
 					ai    <= 5'd0;
-					vsel  <= next_vsel(2'd0);
+					vsel  <= next_vsel(2'd0, need_sh, need_sm, need_sj);
 					a_run <= 1'b1;
-					if (next_vsel(2'd0) == 2'd3) begin
+					if (next_vsel(2'd0, need_sh, need_sm, need_sj) == 2'd3) begin
 						ccnt  <= 8'd0;
 						state <= S_C;
 					end else begin
@@ -400,9 +408,9 @@ module h264_mc_luma_qpel (
 				if (!a_run && !p1_v && !p2_v) begin
 					ao    <= 5'd0;
 					ai    <= 5'd0;
-					vsel  <= next_vsel(vsel + 2'd1);
+					vsel  <= next_vsel(vsel + 2'd1, need_sh, need_sm, need_sj);
 					a_run <= 1'b1;
-					if (next_vsel(vsel + 2'd1) == 2'd3) begin
+					if (next_vsel(vsel + 2'd1, need_sh, need_sm, need_sj) == 2'd3) begin
 						ccnt  <= 8'd0;
 						state <= S_C;
 					end
