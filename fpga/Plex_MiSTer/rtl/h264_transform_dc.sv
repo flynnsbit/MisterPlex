@@ -17,11 +17,22 @@ module h264_qp_y_add_delta (
 	assign qp_y = adj1[5:0];
 endmodule
 
+// LATENCY CONTRACT (not combinational):
+//   start pulse → latch Hadamard f[] + qp → 16 scale cycles → done=1 one cycle.
+//   dc[] held from done until next start. Caller holds coeff/qp stable start→done.
+//   ~18 cycles total (16 scale + 1 finish). Consumers:
+//   decode_core ST_P16_RES_LDC (must wait done), decode_core→top i16_dc_valid
+//   (must pulse after done, not on mb_start alone). If cycle count changes,
+//   update this header and every waiter bench.
 module h264_luma_dc_hadamard_inv (
 	// Intra16x16DCLevel zig-zag scan → scaled DC in residual/IDCT domain (FFmpeg).
+	input  wire               clk,
+	input  wire               reset,
+	input  wire               start,
 	input  wire signed [15:0] coeff [0:15],
 	input  wire [5:0]         qp,
-	output wire signed [28:0] dc [0:15]
+	output wire signed [28:0] dc [0:15],
+	output reg                done
 );
 	function automatic [4:0] norm_adjust0;
 		input [2:0] qmod;
@@ -109,61 +120,107 @@ module h264_luma_dc_hadamard_inv (
 		endcase
 	endfunction
 
-	wire signed [20:0] c [0:15];
-	genvar zi;
-	generate
-		for (zi = 0; zi < 16; zi = zi + 1) begin : g_izz
-			localparam int ZI = zi;
-			assign c[zi] = $signed(coeff[scan_of_raster(ZI[3:0])]);
-		end
-	endgenerate
+	// Combo Hadamard on live coeff (stable start→done); register f[] on start.
+	wire signed [20:0] c0  = $signed(coeff[scan_of_raster(4'd0)]);
+	wire signed [20:0] c1  = $signed(coeff[scan_of_raster(4'd1)]);
+	wire signed [20:0] c2  = $signed(coeff[scan_of_raster(4'd2)]);
+	wire signed [20:0] c3  = $signed(coeff[scan_of_raster(4'd3)]);
+	wire signed [20:0] c4  = $signed(coeff[scan_of_raster(4'd4)]);
+	wire signed [20:0] c5  = $signed(coeff[scan_of_raster(4'd5)]);
+	wire signed [20:0] c6  = $signed(coeff[scan_of_raster(4'd6)]);
+	wire signed [20:0] c7  = $signed(coeff[scan_of_raster(4'd7)]);
+	wire signed [20:0] c8  = $signed(coeff[scan_of_raster(4'd8)]);
+	wire signed [20:0] c9  = $signed(coeff[scan_of_raster(4'd9)]);
+	wire signed [20:0] c10 = $signed(coeff[scan_of_raster(4'd10)]);
+	wire signed [20:0] c11 = $signed(coeff[scan_of_raster(4'd11)]);
+	wire signed [20:0] c12 = $signed(coeff[scan_of_raster(4'd12)]);
+	wire signed [20:0] c13 = $signed(coeff[scan_of_raster(4'd13)]);
+	wire signed [20:0] c14 = $signed(coeff[scan_of_raster(4'd14)]);
+	wire signed [20:0] c15 = $signed(coeff[scan_of_raster(4'd15)]);
 
-	wire signed [22:0] g0  = c[0]+c[1]+c[2]+c[3];
-	wire signed [22:0] g1  = c[0]+c[1]-c[2]-c[3];
-	wire signed [22:0] g2  = c[0]-c[1]-c[2]+c[3];
-	wire signed [22:0] g3  = c[0]-c[1]+c[2]-c[3];
-	wire signed [22:0] g4  = c[4]+c[5]+c[6]+c[7];
-	wire signed [22:0] g5  = c[4]+c[5]-c[6]-c[7];
-	wire signed [22:0] g6  = c[4]-c[5]-c[6]+c[7];
-	wire signed [22:0] g7  = c[4]-c[5]+c[6]-c[7];
-	wire signed [22:0] g8  = c[8]+c[9]+c[10]+c[11];
-	wire signed [22:0] g9  = c[8]+c[9]-c[10]-c[11];
-	wire signed [22:0] g10 = c[8]-c[9]-c[10]+c[11];
-	wire signed [22:0] g11 = c[8]-c[9]+c[10]-c[11];
-	wire signed [22:0] g12 = c[12]+c[13]+c[14]+c[15];
-	wire signed [22:0] g13 = c[12]+c[13]-c[14]-c[15];
-	wire signed [22:0] g14 = c[12]-c[13]-c[14]+c[15];
-	wire signed [22:0] g15 = c[12]-c[13]+c[14]-c[15];
+	wire signed [22:0] g0  = c0+c1+c2+c3;
+	wire signed [22:0] g1  = c0+c1-c2-c3;
+	wire signed [22:0] g2  = c0-c1-c2+c3;
+	wire signed [22:0] g3  = c0-c1+c2-c3;
+	wire signed [22:0] g4  = c4+c5+c6+c7;
+	wire signed [22:0] g5  = c4+c5-c6-c7;
+	wire signed [22:0] g6  = c4-c5-c6+c7;
+	wire signed [22:0] g7  = c4-c5+c6-c7;
+	wire signed [22:0] g8  = c8+c9+c10+c11;
+	wire signed [22:0] g9  = c8+c9-c10-c11;
+	wire signed [22:0] g10 = c8-c9-c10+c11;
+	wire signed [22:0] g11 = c8-c9+c10-c11;
+	wire signed [22:0] g12 = c12+c13+c14+c15;
+	wire signed [22:0] g13 = c12+c13-c14-c15;
+	wire signed [22:0] g14 = c12-c13-c14+c15;
+	wire signed [22:0] g15 = c12-c13+c14-c15;
 
-	wire signed [24:0] f [0:15];
-	assign f[0]  = g0+g4+g8+g12;  assign f[1]  = g1+g5+g9+g13;
-	assign f[2]  = g2+g6+g10+g14; assign f[3]  = g3+g7+g11+g15;
-	assign f[4]  = g0+g4-g8-g12;  assign f[5]  = g1+g5-g9-g13;
-	assign f[6]  = g2+g6-g10-g14; assign f[7]  = g3+g7-g11-g15;
-	assign f[8]  = g0-g4-g8+g12;  assign f[9]  = g1-g5-g9+g13;
-	assign f[10] = g2-g6-g10+g14; assign f[11] = g3-g7-g11+g15;
-	assign f[12] = g0-g4+g8-g12;  assign f[13] = g1-g5+g9-g13;
-	assign f[14] = g2-g6+g10-g14; assign f[15] = g3-g7+g11-g15;
+	wire signed [24:0] f_comb [0:15];
+	assign f_comb[0]  = g0+g4+g8+g12;  assign f_comb[1]  = g1+g5+g9+g13;
+	assign f_comb[2]  = g2+g6+g10+g14; assign f_comb[3]  = g3+g7+g11+g15;
+	assign f_comb[4]  = g0+g4-g8-g12;  assign f_comb[5]  = g1+g5-g9-g13;
+	assign f_comb[6]  = g2+g6-g10-g14; assign f_comb[7]  = g3+g7-g11-g15;
+	assign f_comb[8]  = g0-g4-g8+g12;  assign f_comb[9]  = g1-g5-g9+g13;
+	assign f_comb[10] = g2-g6-g10+g14; assign f_comb[11] = g3-g7-g11+g15;
+	assign f_comb[12] = g0-g4+g8-g12;  assign f_comb[13] = g1-g5+g9-g13;
+	assign f_comb[14] = g2-g6+g10-g14; assign f_comb[15] = g3-g7+g11-g15;
 
-	wire [2:0] qmod = qp_mod6(qp);
-	wire [3:0] qdiv = qp_div6(qp);
+	// ONE scaler over 16 cycles (was 16-way parallel → ~3.4k ALM).
+	// FFmpeg: qmul=(na*16)<<(qdiv+2); dc=(f*qmul+128)>>8
+	reg [3:0] idx;
+	reg       busy;
+	reg       finishing; // last dc_r write settled → done next cycle
+	reg [5:0] qp_r;
+	reg signed [24:0] f_r [0:15];
+	reg signed [28:0] dc_r [0:15];
+
+	wire [2:0] qmod = qp_mod6(qp_r);
+	wire [3:0] qdiv = qp_div6(qp_r);
 	wire [4:0] na   = norm_adjust0(qmod);
+	wire signed [31:0] base = mul_norm({{7{f_r[idx][24]}}, f_r[idx]}, na);
+	wire signed [31:0] base16 = {base[27:0], 4'b0};
+	wire signed [47:0] prod = shl_amt(base16, qdiv + 4'd2);
+	wire signed [28:0] scaled = sat29((prod + 48'sd128) >>> 8);
 
-	// FFmpeg ff_h264_luma_dc_dequant_idct:
-	//   qmul = (na*16) << (qdiv+2);  dc = (f * qmul + 128) >> 8
-	// ≡ ((f * LevelScale) << qdiv + 32) >> 6
-	// 4e0770b had >>2 after *16<<qdiv (16× too large) — do not restore.
 	genvar di;
 	generate
-		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [31:0] base = mul_norm({{7{f[di][24]}}, f[di]}, na); // f*na
-			// (base * 16) << (qdiv+2) = base << (qdiv+6) — split: <<4 then shl(qdiv+2)
-			wire signed [31:0] base16 = {base[27:0], 4'b0};
-			wire signed [47:0] prod = shl_amt(base16, qdiv + 4'd2);
-			wire signed [47:0] rnd  = (prod + 48'sd128) >>> 8;
-			assign dc[di] = sat29(rnd);
+		for (di = 0; di < 16; di = di + 1) begin : g_dc_out
+			assign dc[di] = dc_r[di];
 		end
 	endgenerate
+
+	integer ki;
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			busy <= 1'b0;
+			finishing <= 1'b0;
+			idx <= 4'd0;
+			qp_r <= 6'd0;
+			for (ki = 0; ki < 16; ki = ki + 1) begin
+				f_r[ki] <= 25'sd0;
+				dc_r[ki] <= 29'sd0;
+			end
+		end else if (start) begin
+			busy <= 1'b1;
+			finishing <= 1'b0;
+			idx <= 4'd0;
+			qp_r <= qp;
+			for (ki = 0; ki < 16; ki = ki + 1)
+				f_r[ki] <= f_comb[ki];
+		end else if (busy) begin
+			dc_r[idx] <= scaled;
+			if (idx == 4'd15) begin
+				busy <= 1'b0;
+				finishing <= 1'b1; // dc_r[15] NBA this cycle; done next
+			end else begin
+				idx <= idx + 4'd1;
+			end
+		end else if (finishing) begin
+			finishing <= 1'b0;
+			done <= 1'b1; // all dc[] stable
+		end
+	end
 endmodule
 
 // 8.5.12.1 flex: inv zig-zag + LevelScale; skip_dc / dc_override for I16 AC.

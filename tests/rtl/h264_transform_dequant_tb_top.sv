@@ -46,12 +46,6 @@ module h264_transform_dequant_tb_top (
 	localparam [28:0] PERTURB = 29'd0;
 `endif
 
-	// Combo luma DC: done is immediate so TB WaitDone still works.
-	assign ldc_done = 1'b1;
-	// No seq module required for LevelScale audit — mirror idct of flex.
-	assign seq_done = 1'b1;
-	assign seq_res  = idct_par;
-
 	genvar i;
 	generate
 		for (i = 0; i < 16; i = i + 1) begin : g_c16
@@ -85,8 +79,10 @@ module h264_transform_dequant_tb_top (
 		.coeff(coeff16), .qp(qp), .max_coeff(max_coeff), .dequant(deq)
 	);
 
+	// LATENCY: start → ~18 cyc → done; dc[] held. TB WaitDone(which&1).
 	h264_luma_dc_hadamard_inv u_ldc (
-		.coeff(coeff16), .qp(qp), .dc(ldc)
+		.clk(clk), .reset(reset), .start(ldc_start),
+		.coeff(coeff16), .qp(qp), .dc(ldc), .done(ldc_done)
 	);
 
 	h264_chroma_dc_hadamard_inv u_cdc (
@@ -95,6 +91,22 @@ module h264_transform_dequant_tb_top (
 
 	h264_idct4x4 u_idct_par (
 		.dequant(flex), .residual(idct_par)
+	);
+
+	// Real sequential IQ+IDCT — not a mirror of parallel idct.
+	// LATENCY: start → ~21 cycles → done; residual held until next start.
+	h264_iq_idct_seq u_seq (
+		.clk(clk),
+		.reset(reset),
+		.start(seq_start),
+		.coeff(coeff16),
+		.qp(qp),
+		.max_coeff(max_coeff),
+		.skip_dc(skip_dc),
+		.dc_override(dc_override),
+		.dc_value(dc_value),
+		.residual(seq_res),
+		.done(seq_done)
 	);
 
 	h264_chroma_epel_block_8x8 u_cep (

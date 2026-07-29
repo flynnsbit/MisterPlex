@@ -350,6 +350,10 @@ module h264_decode_core #(
     localparam [7:0] ST_WRITE_PRIME     = 8'd17;
     localparam [7:0] ST_P16_WRITE_PRIME = 8'd18;
     localparam [7:0] ST_P16_LATCH_RES   = 8'd19;
+    // Multi-cycle IQ+IDCT (h264_iq_idct_seq): start→~21 cyc→done, then STORE.
+    localparam [7:0] ST_P16_RES_IQ      = 8'd22;
+    // Multi-cycle luma DC Hadamard: start→~18 cyc→done, then latch res_luma_dc.
+    localparam [7:0] ST_P16_RES_LDC     = 8'd23;
     // Hold one cycle after arming M10K raddr so lat_*_q is valid before emit.
     localparam [7:0] ST_WRITE_HOLD      = 8'd20;
     localparam [7:0] ST_P16_WRITE_HOLD  = 8'd21;
@@ -791,11 +795,20 @@ module h264_decode_core #(
     );
     wire [5:0] res_qp = (res_is_chroma_dc || res_is_chroma_ac) ? res_qp_c : mb_qp_y_r;
 
+    // LDC multi-cycle: start→~18 cyc→done. Consumer ST_P16_RES_LDC waits done
+    // before latching res_luma_dc[] (was combo same-cycle as cavlc_done).
+    reg                res_ldc_start_r;
+    reg                res_ldc_pending_r;
+    wire               res_ldc_done;
     wire signed [28:0] res_luma_dc_new [0:15];
     h264_luma_dc_hadamard_inv u_product_res_luma_dc (
+        .clk(clk),
+        .reset(reset),
+        .start(res_ldc_start_r),
         .coeff(cavlc_dequant_coeff),
         .qp(mb_qp_y_r),
-        .dc(res_luma_dc_new)
+        .dc(res_luma_dc_new),
+        .done(res_ldc_done)
     );
 
     wire signed [15:0] res_chroma_dc_coeff [0:3];
@@ -815,20 +828,27 @@ module h264_decode_core #(
         res_luma_dc[res_luma_raster];
     wire res_dc_override = res_is_chroma_ac ? res_chroma_dc_coded : res_i16x16_r;
 
-    wire signed [28:0] p16_res_dequant [0:15];
+    // AREA: sequential IQ+IDCT replaces combo flex dequant + idct4x4
+    // (~5.5k ALM). Consumer ST_P16_RES_STORE expects residual[] after done —
+    // NOT combinational. LATENCY: start → ~21 cycles → done; residual held.
+    // Inputs res_ac_coeff/res_qp/skip/dc must stay stable start→done (block
+    // index does not advance until STORE finishes).
+    reg                p16_iq_start_r;
+    reg                p16_iq_pending_r;
+    wire               p16_iq_done;
     wire signed [28:0] p16_res_idct [0:15];
-    h264_dequant4x4_flex u_product_p16_res_dequant (
+    h264_iq_idct_seq u_product_p16_iq_idct (
+        .clk(clk),
+        .reset(reset),
+        .start(p16_iq_start_r),
         .coeff(res_ac_coeff),
         .qp(res_qp),
         .max_coeff(res_skip_dc ? 5'd15 : 5'd16),
         .skip_dc(res_skip_dc),
         .dc_override(res_dc_override),
         .dc_value(res_dc_value),
-        .dequant(p16_res_dequant)
-    );
-    h264_idct4x4 u_product_p16_res_idct (
-        .dequant(p16_res_dequant),
-        .residual(p16_res_idct)
+        .residual(p16_res_idct),
+        .done(p16_iq_done)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (RES_STEP_CHROMA_DC0 - 5'd1));
@@ -1015,27 +1035,36 @@ module h264_decode_core #(
                                          !intra_active_r && !intra_recon_pend);
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
-    // I16 DC: latch feed i16_dc_level_* then delay valid 1 cycle so combo
-    // Hadamard sees NBA-updated levels (4e0770b hold). Never use mb_start —
-    // residual DC arrives later and feed does not put DC on luma4x4_*.
+    // I16 DC: latch feed i16_dc_level_* (NOT luma4x4_* — feed keeps DC off AC),
+    // then multi-cycle LDC start→~18→done. product_i16_dc_valid_r = done pulse
+    // so top's i16_dc_ready gates AC launch only after scaled DC is stable.
     reg signed [15:0] product_i16_dc_level_r [0:15];
     reg [5:0]         product_i16_dc_qp_r;
-    reg               product_i16_dc_hold_r;
+    reg               i16_ldc_start_r;
+    reg               i16_ldc_pending_r;
     reg               product_i16_dc_valid_r;
+    wire              i16_ldc_done;
     integer i16_dc_i;
     always @(posedge clk) begin
-        product_i16_dc_hold_r  <= 1'b0;
-        product_i16_dc_valid_r <= product_i16_dc_hold_r;
+        i16_ldc_start_r <= 1'b0;
+        product_i16_dc_valid_r <= 1'b0;
         if (reset || slice_start) begin
             product_i16_dc_qp_r <= 6'd0;
-            product_i16_dc_valid_r <= 1'b0;
+            i16_ldc_pending_r <= 1'b0;
             for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
                 product_i16_dc_level_r[i16_dc_i] <= 16'sd0;
-        end else if (i16_dc_level_valid) begin
-            product_i16_dc_qp_r <= i16_dc_qp;
-            for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
-                product_i16_dc_level_r[i16_dc_i] <= i16_dc_level[i16_dc_i];
-            product_i16_dc_hold_r <= 1'b1;
+        end else begin
+            if (i16_dc_level_valid) begin
+                product_i16_dc_qp_r <= i16_dc_qp;
+                for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
+                    product_i16_dc_level_r[i16_dc_i] <= i16_dc_level[i16_dc_i];
+                i16_ldc_pending_r <= 1'b1; // start after NBA latch of levels/qp
+            end else if (i16_ldc_pending_r) begin
+                i16_ldc_pending_r <= 1'b0;
+                i16_ldc_start_r <= 1'b1;
+            end
+            if (i16_ldc_done)
+                product_i16_dc_valid_r <= 1'b1;
         end
     end
 
@@ -1079,11 +1108,16 @@ module h264_decode_core #(
     // On the start cycle NBA has not yet written intra_mb_*_r; use syntax XY.
     wire [7:0]  intra_mb_x_now = product_intra_mb_start ? syntax_mb_x : intra_mb_x_r;
     wire [7:0]  intra_mb_y_now = product_intra_mb_start ? syntax_mb_y : intra_mb_y_r;
-    // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).
+    // Product I_16x16 DC: multi-cycle Hadamard + LevelScale (8.5.10).
+    // LATENCY ~18 cyc; i16_dc_valid = done (top latches then). QP latched w/ levels.
     h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(i16_ldc_start_r),
         .coeff(product_i16_dc_level_r),
         .qp(product_i16_dc_qp_r),
-        .dc(product_intra_i16_dc)
+        .dc(product_intra_i16_dc),
+        .done(i16_ldc_done)
     );
     // Per-4x4 block_valid→recon_pixels path is unused on product: I4x4
     // within-MB neighbours live in h264_decode_top.local_recon; cross-MB
@@ -1485,6 +1519,8 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        p16_iq_start_r <= 1'b0;
+        res_ldc_start_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1507,6 +1543,10 @@ module h264_decode_core #(
             p16_res_bit_offset_r <= 10'd0;
             p16_res_block_idx <= 5'd0;
             cavlc_start_r <= 1'b0;
+            p16_iq_start_r <= 1'b0;
+            p16_iq_pending_r <= 1'b0;
+            res_ldc_start_r <= 1'b0;
+            res_ldc_pending_r <= 1'b0;
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
@@ -1800,20 +1840,42 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_IDCT: begin
-                // DC-only block: residual is produced from DC + zero AC.
+                // DC-only block: residual from DC + zero AC via multi-cycle IQ.
                 if (res_is_luma_ac)
                     res_tc_cur[res_luma_raster] <= 5'd0;
                 if (res_is_chroma_ac)
                     res_tc_cur_c[res_c_sel] <= 5'd0;
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                res_store_i <= 4'd0;
-                wb_state <= ST_P16_RES_STORE;
+                p16_iq_pending_r <= 1'b1;
+                wb_state <= ST_P16_RES_IQ;
 `else
                 res_step_advance();
 `endif
             end
+            ST_P16_RES_IQ: begin
+                // Wait for h264_iq_idct_seq: pending→start next cycle, then done.
+                // residual[] registered in seq o[] from done until next start.
+                if (p16_iq_pending_r) begin
+                    p16_iq_pending_r <= 1'b0;
+                    p16_iq_start_r <= 1'b1;
+                end else if (p16_iq_done) begin
+                    res_store_i <= 4'd0;
+                    wb_state <= ST_P16_RES_STORE;
+                end
+            end
+            ST_P16_RES_LDC: begin
+                // Wait for sequential luma DC Hadamard (~18 cyc).
+                if (res_ldc_pending_r) begin
+                    res_ldc_pending_r <= 1'b0;
+                    res_ldc_start_r <= 1'b1;
+                end else if (res_ldc_done) begin
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                    res_step_advance();
+                end
+            end
             ST_P16_RES_STORE: begin
-                // One IDCT sample per cycle into residual M10K.
+                // One IDCT sample per cycle into residual M10K (after IQ done).
                 if (res_is_luma_ac && !p16_drop_this_luma_residual) begin
                     lat_res_we <= 1'b1;
                     lat_res_wplane <= 2'd0;
@@ -1851,10 +1913,10 @@ module h264_decode_core #(
                 if (cavlc_done) begin
                     if (cavlc_ok) begin
                         if (res_is_luma_dc) begin
-                            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
-                                res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                            // Multi-cycle LDC: hold cavlc coeffs, wait done, latch.
                             p16_res_bit_offset_r <= cavlc_bit_offset_end;
-                            res_step_advance();
+                            res_ldc_pending_r <= 1'b1;
+                            wb_state <= ST_P16_RES_LDC;
                         end else if (res_is_chroma_dc) begin
                             for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
                                 if (res_chroma_is_v)
@@ -1865,15 +1927,15 @@ module h264_decode_core #(
                             p16_res_bit_offset_r <= cavlc_bit_offset_end;
                             res_step_advance();
                         end else begin
-                            // AC block: nC now, then sequential residual store.
+                            // AC block: nC now, then multi-cycle IQ+IDCT, then store.
                             if (res_is_luma_ac)
                                 res_tc_cur[res_luma_raster] <= cavlc_total_coeff;
                             if (res_is_chroma_ac)
                                 res_tc_cur_c[res_c_sel] <= cavlc_total_coeff;
                             p16_res_bit_offset_r <= cavlc_bit_offset_end;
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                            res_store_i <= 4'd0;
-                            wb_state <= ST_P16_RES_STORE;
+                            p16_iq_pending_r <= 1'b1;
+                            wb_state <= ST_P16_RES_IQ;
 `else
                             res_step_advance();
 `endif
@@ -2068,7 +2130,8 @@ module h264_decode_core #(
     always @* begin
         case (wb_state)
         ST_P16_RES_START, ST_P16_RES_WAIT,
-        ST_P16_RES_IDCT, ST_P16_RES_STORE, ST_P16_RES_ZERO,
+        ST_P16_RES_IDCT, ST_P16_RES_IQ, ST_P16_RES_LDC,
+        ST_P16_RES_STORE, ST_P16_RES_ZERO,
         ST_P16_RES_EDGE:                  perf_stage = PERF_ST_PARSE;
         ST_P16_REF_SEED, ST_P16_WIN_START,
         ST_P16_WIN_FETCH:                 perf_stage = PERF_ST_FETCH;

@@ -318,8 +318,12 @@ module h264_decode_top (
     reg [3:0]         skid_index;
 
     wire busy = (state != ST_IDLE);
+    // I16: wait for both plane pred AND multi-cycle LDC (i16_dc_valid→latch).
+    // LDC is start→~18 cyc→done; launching xform before dc ready mis-scales AC DC.
+    reg i16_dc_ready;
     // Hold block launch until neighbour gather is done (top line-buffer path).
-    wire launch_ok = mb_started && !nb_busy && (!pipe_is_i16 || i16_pred_ready);
+    wire launch_ok = mb_started && !nb_busy &&
+                     (!pipe_is_i16 || (i16_pred_ready && i16_dc_ready));
 
     // Store / I16-fetch walk: {cur_by + wcnt[3:2], cur_bx + wcnt[1:0]}
     wire [7:0] walk_addr = {cur_by + {2'd0, wcnt[3:2]}, cur_bx + {2'd0, wcnt[1:0]}};
@@ -333,6 +337,7 @@ module h264_decode_top (
             mb_started     <= 1'b0;
             pipe_is_i16    <= 1'b0;
             i16_pred_ready <= 1'b0;
+            i16_dc_ready   <= 1'b0;
             pipe_block_idx <= 4'd0;
             pipe_qp        <= 6'd0;
             nbc            <= 4'd0;
@@ -364,15 +369,18 @@ module h264_decode_top (
             if (i16_pred_valid)
                 i16_pred_ready <= 1'b1;
 
-            if (i16_dc_valid)
+            if (i16_dc_valid) begin
                 for (si = 0; si < 16; si = si + 1)
                     latched_i16_dc[si] <= i16_dc[si];
+                i16_dc_ready <= 1'b1;
+            end
 
             if (mb_start) begin
                 blocks_done    <= 5'd0;
                 mb_started     <= 1'b1;
                 pipe_is_i16    <= is_i16x16;
                 i16_pred_ready <= !is_i16x16;
+                i16_dc_ready   <= !is_i16x16; // I16 waits LDC done via i16_dc_valid
                 pipe_qp        <= mb_qp_y;
                 skid_full      <= 1'b0;
             end else if (block_valid && busy && !skid_full) begin
