@@ -211,6 +211,43 @@ audit() {
   audit_remote "$event" "$extra"
 }
 
+
+# Exact argv --id token equality (NOT substring).
+# "misterplex-dev-old" must NOT match want=misterplex-dev.
+# Returns 0 iff line contains a --id token whose value equals $2.
+misterplex_argv_id_equals() {
+  local line="$1"
+  local want="$2"
+  local -a toks=()
+  # shellcheck disable=SC2206
+  toks=( $line )
+  local i=0
+  local n=${#toks[@]}
+  while (( i < n )); do
+    local t="${toks[i]}"
+    if [[ "$t" == "--id" ]]; then
+      local got="${toks[i+1]:-}"
+      [[ -n "$got" && "$got" == "$want" ]]
+      return $?
+    fi
+    if [[ "$t" == --id=* ]]; then
+      local got="${t#--id=}"
+      [[ -n "$got" && "$got" == "$want" ]]
+      return $?
+    fi
+    (( ++i ))
+  done
+  return 1
+}
+
+# True when LOCK_DIR exists and its pid file equals this shell's $$.
+lock_is_ours() {
+  [[ -d "$LOCK_DIR" ]] || return 1
+  local holder=""
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  [[ -n "$holder" && "$holder" == "$$" ]]
+}
+
 lock_owner_alive() {
   local pid=""
   [[ -f "$LOCK_DIR/pid" ]] || return 1
@@ -458,22 +495,62 @@ ensure_daemon() {
   local remote_cmd
   remote_cmd="set +e
 ID_WANT=${id_q}
+# Exact --id TOKEN match (not substring). misterplex-dev-old must NOT match misterplex-dev.
+# BusyBox ash-safe: word-split argv line; compare next token after --id.
+exact_id_match() {
+  _line=\$1
+  set -- \$_line
+  while [ \$# -gt 0 ]; do
+    if [ \"\$1\" = '--id' ]; then
+      shift
+      [ \"\$1\" = \"\$ID_WANT\" ] && return 0
+      return 1
+    fi
+    case \"\$1\" in
+      --id=*)
+        _v=\${1#--id=}
+        [ \"\$_v\" = \"\$ID_WANT\" ] && return 0
+        return 1
+        ;;
+    esac
+    shift
+  done
+  return 1
+}
+extract_id() {
+  _line=\$1
+  set -- \$_line
+  while [ \$# -gt 0 ]; do
+    if [ \"\$1\" = '--id' ]; then
+      shift
+      echo \"\$1\"
+      return 0
+    fi
+    case \"\$1\" in
+      --id=*) echo \"\${1#--id=}\"; return 0 ;;
+    esac
+    shift
+  done
+  return 1
+}
+ps_argv() {
+  # BusyBox rejects --no-headers; prefer -o pid,ppid,args then fall back.
+  ps -o pid,ppid,args 2>/dev/null || ps w 2>/dev/null || ps 2>/dev/null
+}
 have_want=0
 have_any=0
 wrong_id=''
-# BusyBox ps: match --id token in argv.
 while IFS= read -r line; do
   echo \"\$line\" | grep -q '[m]isterplexd' || continue
   have_any=1
-  if echo \"\$line\" | grep -q -- \"--id \${ID_WANT}\"; then
+  if exact_id_match \"\$line\"; then
     have_want=1
   else
-    # Extract observed --id if present for loud error.
-    wid=\$(echo \"\$line\" | sed -n 's/.*--id  *\\([^ ]*\\).*/\\1/p' | head -n1)
+    wid=\$(extract_id \"\$line\" 2>/dev/null)
     [ -n \"\$wid\" ] && wrong_id=\"\$wid\"
   fi
 done <<EOF
-\$(ps w 2>/dev/null || ps 2>/dev/null)
+\$(ps_argv)
 EOF
 if [ \"\$have_want\" = \"1\" ]; then
   echo \"DAEMON_ALREADY id=\${ID_WANT}\"
@@ -483,7 +560,7 @@ if [ \"\$have_any\" = \"1\" ]; then
   echo \"DAEMON_WRONG_ID want=\${ID_WANT} got=\${wrong_id:-unknown} — stopping mismatched daemon\" >&2
   killall misterplexd 2>/dev/null
   for i in 1 2 3 4 5 6 7 8; do
-    ps 2>/dev/null | grep -v grep | grep -q '[m]isterplexd' || break
+    ps_argv | grep -v grep | grep -q '[m]isterplexd' || break
     sleep 0.25
   done
 fi
@@ -496,21 +573,21 @@ nohup ./bin/misterplexd --name MiSTerPlex --id \${ID_WANT} --port 3005 \\
   --conf /media/fat/misterplex/misterplex.conf \\
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
 sleep 0.5
-# Re-verify argv --id (hard). Bare 'misterplexd running' is NOT success.
+# Re-verify exact argv --id token. Bare 'misterplexd running' is NOT success.
 have_want=0
 have_any=0
 wrong_id=''
 while IFS= read -r line; do
   echo \"\$line\" | grep -q '[m]isterplexd' || continue
   have_any=1
-  if echo \"\$line\" | grep -q -- \"--id \${ID_WANT}\"; then
+  if exact_id_match \"\$line\"; then
     have_want=1
   else
-    wid=\$(echo \"\$line\" | sed -n 's/.*--id  *\\([^ ]*\\).*/\\1/p' | head -n1)
+    wid=\$(extract_id \"\$line\" 2>/dev/null)
     [ -n \"\$wid\" ] && wrong_id=\"\$wid\"
   fi
 done <<EOF
-\$(ps w 2>/dev/null || ps 2>/dev/null)
+\$(ps_argv)
 EOF
 if [ \"\$have_want\" = \"1\" ]; then
   echo \"DAEMON_STARTED id=\${ID_WANT}\"
@@ -681,9 +758,15 @@ cleanup() {
   CLEANUP_RAN=1
   trap - EXIT INT TERM HUP
 
-  if [[ "$HOLDING" == "1" ]]; then
+  # Release when lock file is ours (pid==$$ written at acquire), NOT only when
+  # HOLDING=1. A kill between acquire_lock and HOLDING=1 must still drop the lock.
+  local owned=0
+  if lock_is_ours; then
+    owned=1
+  fi
+  if [[ "$owned" == "1" || "$HOLDING" == "1" ]]; then
     HOLDING=0
-    step "cleanup_begin exit_code=$ec"
+    step "cleanup_begin exit_code=$ec owned=$owned"
     # Stop any in-flight bounce/ssh children so a hung deploy cannot outlive us.
     # TERM only — never kill -9 (lab rule).
     local child
@@ -691,8 +774,15 @@ cleanup() {
       kill -TERM "$child" 2>/dev/null || true
     done
     # 1) RELEASE LOCK FIRST — never leave stranded if restore hangs.
-    FORCE=1 release_lock || true
-    audit_local "release" "cleanup=1 prior_ec=$ec"
+    # Prefer owner-based release; FORCE only if HOLDING said we own but pid drifted.
+    if lock_is_ours; then
+      release_lock || true
+    elif [[ -d "$LOCK_DIR" ]]; then
+      FORCE=1 release_lock || true
+    else
+      step "lock_released_already_free"
+    fi
+    audit_local "release" "cleanup=1 prior_ec=$ec owned=$owned"
     # 2) Restore via soft_bounce so CORENAME + daemon --id are verified.
     # Failures are loud on stdout/trace but must not re-hang or block lock release
     # (lock already dropped above). Preserve original exit code $ec.
@@ -714,10 +804,16 @@ cleanup() {
 }
 
 do_claim() {
-  # Install trap BEFORE acquire so a signal between mkdir and HOLDING=1 still
-  # runs cleanup (no-op if we never held).
+  # Install trap BEFORE acquire. Lock ownership is the pid file ($$), not HOLDING.
+  # HOLDING is a secondary flag; cleanup releases whenever lock_is_ours.
   trap cleanup EXIT INT TERM HUP
   acquire_lock || return $?
+  # Unit inject: sleep before HOLDING=1 to prove kill still releases via lock_is_ours.
+  if [[ -n "${MISTER_CLAIM_TEST_HOLDING_DELAY_S:-}" && "${MISTER_CLAIM_TEST_HOLDING_DELAY_S}" != "0" ]]; then
+    step "test_holding_delay_s=${MISTER_CLAIM_TEST_HOLDING_DELAY_S}"
+    sleep "${MISTER_CLAIM_TEST_HOLDING_DELAY_S}" &
+    wait $! || true
+  fi
   HOLDING=1
   step "claim_begin"
   audit "claim"

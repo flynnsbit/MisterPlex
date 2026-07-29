@@ -318,29 +318,9 @@ if grep -nE 'ensure_daemon.*"\$phase".*\|\| true' "$BOUNCE" >/dev/null; then
   grep -nE 'ensure_daemon' "$BOUNCE" >&2 || true
   exit 1
 fi
-# Cleanup must route through soft_bounce (corename+daemon), not bare deploy
-python3 - "$BOUNCE" <<'PY'
-import sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text()
-start = text.find("cleanup() {")
-end = text.find("\ndo_claim()", start)
-body = text[start:end if end > 0 else start + 4000]
-if 'soft_bounce "release_cleanup"' not in body and "soft_bounce 'release_cleanup'" not in body:
-    raise SystemExit("FAIL: cleanup missing soft_bounce release_cleanup")
-# bare deploy inside cleanup is the GAP3 bug
-if 'deploy_plex_core.sh' in body and 'soft_bounce' in body:
-    # soft_bounce may reference deploy internally outside cleanup; only fail if
-    # cleanup invokes deploy directly (env DEPLOY_LOAD=menu block without soft_bounce wrapper)
-    idx = body.find('DEPLOY_LOAD=menu')
-    sb = body.find('soft_bounce')
-    if idx >= 0 and (sb < 0 or idx < sb):
-        # allow only if it's inside a comment
-        line = body[body.rfind('\n', 0, idx):body.find('\n', idx)]
-        if not line.strip().startswith('#'):
-            raise SystemExit("FAIL: cleanup still has direct DEPLOY_LOAD=menu deploy path")
-print("PASS cleanup routes restore through soft_bounce")
-PY
+# Cleanup must route through soft_bounce (corename+daemon), not bare deploy.
+# Brace-depth checker + red twin of old direct-deploy path (must go RED).
+python3 "$ROOT/tests/unit/check_soft_bounce_cleanup_route.py" "$BOUNCE"
 
 rm -rf "$LOCK"
 : >"$LOG"
@@ -404,5 +384,99 @@ grep -q 'misterplex-dev' "$ROOT/scripts/sweep_plex_video_modes.sh" || {
 }
 echo "PASS sweep_plex_video_modes uses canonical misterplex-dev"
 
+# --- 12) Exact --id token match (DEFECT 1) + red twin prefix id ---
+# Substring grep --id $WANT would accept misterplex-dev-old; must not.
+if grep -nE 'grep -q -- "--id' "$BOUNCE" >/dev/null; then
+  echo "FAIL: ensure_daemon still uses substring grep for --id" >&2
+  grep -n 'grep -q -- "--id' "$BOUNCE" >&2 || true
+  exit 1
+fi
+grep -q 'exact_id_match' "$BOUNCE" || { echo "FAIL: missing exact_id_match in remote ensure_daemon" >&2; exit 1; }
+grep -q 'misterplex_argv_id_equals' "$BOUNCE" || { echo "FAIL: missing host misterplex_argv_id_equals" >&2; exit 1; }
+grep -q 'ps -o pid,ppid,args' "$BOUNCE" || { echo "FAIL: missing BusyBox-safe ps -o pid,ppid,args" >&2; exit 1; }
+
+MATCHER_SRC="$WORK/id_matcher_extract.sh"
+python3 - "$BOUNCE" "$MATCHER_SRC" <<'PY'
+import re
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+m = re.search(r"^misterplex_argv_id_equals\(\) \{.*?\n\}", text, re.M | re.S)
+if not m:
+    raise SystemExit("FAIL: cannot extract misterplex_argv_id_equals")
+Path(sys.argv[2]).write_text(m.group(0) + "\n")
+PY
+# shellcheck source=/dev/null
+source "$MATCHER_SRC"
+misterplex_argv_id_equals \
+  "123 1 ./bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005" \
+  "misterplex-dev" \
+  || { echo "FAIL: exact id should match misterplex-dev" >&2; exit 1; }
+if misterplex_argv_id_equals \
+  "123 1 ./bin/misterplexd --id misterplex-dev-old --port 3005" \
+  "misterplex-dev"; then
+  echo "FAIL: red twin — misterplex-dev-old must NOT match want=misterplex-dev" >&2
+  exit 1
+fi
+if misterplex_argv_id_equals \
+  "123 1 ./bin/misterplexd --id misterplex-183 --port 3005" \
+  "misterplex-dev"; then
+  echo "FAIL: misterplex-183 must not match misterplex-dev" >&2
+  exit 1
+fi
+misterplex_argv_id_equals "x --id=misterplex-dev y" "misterplex-dev" \
+  || { echo "FAIL: --id=value form should match" >&2; exit 1; }
+if misterplex_argv_id_equals "x --id=misterplex-dev-old y" "misterplex-dev"; then
+  echo "FAIL: red twin --id=misterplex-dev-old must not match" >&2
+  exit 1
+fi
+echo "PASS exact --id token match + red twin misterplex-dev-old rejected"
+
+# --- 13) Stale-lock race: kill between acquire and HOLDING=1 still releases ---
+rm -rf "$LOCK"
+: >"$LOG"
+set +e
+MISTER_CLAIM_TEST_HOLDING_DELAY_S=30 \
+  "$BOUNCE" claim --agent unit-holding-race --reason "holding-race" --hold-s 0 \
+  >"$WORK/holding_race.out" 2>"$WORK/holding_race.err" &
+RACE_PID=$!
+set -e
+saw_lock=0
+for _ in $(seq 1 100); do
+  if [[ -d "$LOCK" && -f "$LOCK/pid" ]]; then
+    saw_lock=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$saw_lock" != "1" ]]; then
+  echo "FAIL: holding-race claim never created lock" >&2
+  cat "$WORK/holding_race.out" "$WORK/holding_race.err" >&2 || true
+  command kill -s TERM "$RACE_PID" 2>/dev/null || true
+  wait "$RACE_PID" 2>/dev/null || true
+  exit 1
+fi
+sleep 0.15
+command kill -s TERM "$RACE_PID"
+set +e
+wait "$RACE_PID"
+RACE_RC=$?
+set -e
+echo "holding_race_kill true rc=$RACE_RC"
+released=0
+for _ in $(seq 1 100); do
+  if [[ ! -d "$LOCK" ]]; then
+    released=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$released" != "1" ]]; then
+  echo "FAIL: kill during HOLDING delay left lock stranded at $LOCK" >&2
+  ls -la "$LOCK" >&2 || true
+  cat "$WORK/holding_race.out" "$WORK/holding_race.err" >&2 || true
+  exit 1
+fi
+echo "PASS kill between acquire and HOLDING=1 released lock via lock_is_ours"
 
 echo "OK mister_soft_bounce lock exclusion + trap release + corename gate"
