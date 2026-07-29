@@ -40,7 +40,7 @@ build_one() {
     --Mdir "$build_dir" \
     --top-module h264_transform_dequant_tb_top \
     -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
-    -CFLAGS "-std=c++17 -O2 -I$ROOT/host" \
+    -CFLAGS "-std=c++17 -O2 -I$ROOT/host -I$ROOT/tests/rtl" \
     $extra_define \
     "$RTL_DIR/h264_transform_dc.sv" \
     "$RTL_DIR/h264_iq_idct_4x4.sv" \
