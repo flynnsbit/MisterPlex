@@ -1,5 +1,6 @@
 #include "pms_timeline.hpp"
 
+#include "log_redact.hpp"
 #include "plex_resolve.hpp"
 
 #include <algorithm>
@@ -17,22 +18,6 @@ bool validState(const std::string& state) {
 
 bool defaultSink(const PmsTimelineHttpRequest& req) {
     return plexHttpGetNoBody(req.url, req.headers, 4);
-}
-
-std::string redactSensitive(std::string s) {
-    for (const char* key : {"X-Plex-Token", "token"}) {
-        size_t pos = 0;
-        const std::string pfx = std::string(key) + "=";
-        while ((pos = s.find(pfx, pos)) != std::string::npos) {
-            pos += pfx.size();
-            auto end = s.find_first_of("& \r\n", pos);
-            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
-                      "<redacted>");
-            if (end == std::string::npos)
-                break;
-        }
-    }
-    return s;
 }
 
 } // namespace
@@ -193,8 +178,9 @@ bool PmsTimelineReporter::send(const Pending& pending) {
         ok = false;
     }
     if (log_) {
-        log_(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
-             " state=" + pending.state + " url=" + redactSensitive(pending.request.url));
+        // redactSensitive at the sink boundary; request.url stays real for HTTP.
+        log_(redactSensitive(std::string("pms timeline: update ") + (ok ? "ok" : "failed") +
+                             " state=" + pending.state + " url=" + pending.request.url));
     }
     return ok;
 }

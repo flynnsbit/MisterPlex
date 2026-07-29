@@ -1,4 +1,5 @@
 #include "companion.hpp"
+#include "log_redact.hpp"
 
 #include <arpa/inet.h>
 #include <cctype>
@@ -73,22 +74,6 @@ std::string headerValue(const std::string& req, const char* name) {
 std::string requestLine(const std::string& req) {
     auto end = req.find("\r\n");
     return req.substr(0, end == std::string::npos ? std::string::npos : end);
-}
-
-std::string redactSensitive(std::string s) {
-    for (const char* key : {"X-Plex-Token", "token"}) {
-        size_t pos = 0;
-        const std::string pfx = std::string(key) + "=";
-        while ((pos = s.find(pfx, pos)) != std::string::npos) {
-            pos += pfx.size();
-            auto end = s.find_first_of("& \r\n", pos);
-            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
-                      "<redacted>");
-            if (end == std::string::npos)
-                break;
-        }
-    }
-    return s;
 }
 
 std::string timelineBrief(const std::string& xml) {
@@ -186,10 +171,13 @@ PlayRequest parsePlayRequest(const std::string& req) {
 } // namespace
 
 void Companion::log(const std::string& s) const {
+    // Central sink redaction: every companion log line is scrubbed even if a
+    // caller forgets to pre-redact a URL or request line.
+    const std::string safe = redactSensitive(s);
     if (log_)
-        log_(s);
+        log_(safe);
     else
-        std::fprintf(stderr, "%s\n", s.c_str());
+        std::fprintf(stderr, "%s\n", safe.c_str());
 }
 
 std::string Companion::xmlEsc(const std::string& s) {
@@ -675,7 +663,8 @@ void Companion::httpLoop() {
         buf[n] = 0;
         std::string req(buf, static_cast<size_t>(n));
         if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-            log("HTTP IN " + redactSensitive(requestLine(req)));
+            // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
+            log("HTTP IN " + requestLine(req));
 
         {
             std::lock_guard<std::mutex> lock(mu_);

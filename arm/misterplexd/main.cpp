@@ -5,6 +5,7 @@
 #include "companion.hpp"
 #include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "log_redact.hpp"
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
@@ -64,20 +65,10 @@ bool confTruthy(const std::string& v) {
     return v == "1" || v == "true" || v == "yes" || v == "on";
 }
 
-std::string redactSensitive(std::string s) {
-    for (const char* key : {"X-Plex-Token", "token"}) {
-        size_t pos = 0;
-        const std::string pfx = std::string(key) + "=";
-        while ((pos = s.find(pfx, pos)) != std::string::npos) {
-            pos += pfx.size();
-            auto end = s.find_first_of("& \r\n", pos);
-            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
-                      "<redacted>");
-            if (end == std::string::npos)
-                break;
-        }
-    }
-    return s;
+// All main-thread diagnostic lines go through here so a forgotten URL/token
+// cannot land in misterplexd.log in cleartext.
+void logDaemon(const std::string& s) {
+    std::fprintf(stderr, "%s\n", misterplex::redactSensitive(s).c_str());
 }
 
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
@@ -467,7 +458,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
     }
-    player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    player.setLog([](const std::string& s) { logDaemon(s); });
     if (streamEnabled) {
         std::fprintf(stderr,
                      "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
@@ -540,10 +531,10 @@ int main(int argc, char** argv) {
     comp.setName(name);
     comp.setMachineId(machineId);
     comp.setPort(static_cast<uint16_t>(port));
-    comp.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    comp.setLog([](const std::string& s) { logDaemon(s); });
 
     misterplex::PmsTimelineReporter pmsTimeline;
-    pmsTimeline.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    pmsTimeline.setLog([](const std::string& s) { logDaemon(s); });
 
     // Session context for multi-base resolve + auto-next.
     std::mutex sessionMu;
@@ -779,9 +770,10 @@ int main(int argc, char** argv) {
         timelineSession.deviceName = name;
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 
-        std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n",
-                     redactSensitive(resolved.playable).c_str(),
-                     static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
+        // resolved.playable keeps the real token for FFmpeg; only the log line is scrubbed.
+        logDaemon("misterplexd: PLAY " + misterplex::redactSensitive(resolved.playable) +
+                  " off=" + std::to_string(startAt) +
+                  " dur=" + std::to_string(resolved.durationMs));
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
 

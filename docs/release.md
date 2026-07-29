@@ -119,6 +119,23 @@ Display output mode is **not** a `misterplex.conf` key; set `[Plex] video_mode` 
 | `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | Default PMS URL for resolve; set this to your Plex Media Server |
 | `PLEX_HOST` | `YOUR-PLEX-SERVER` | Alternate host; builds `http://HOST:32400` (overrides base host) |
 | `PLEX_TOKEN` | *(optional)* | Static token; cast usually supplies transient `X-Plex-Token` |
+
+### Plex token safety (logs)
+
+`misterplexd` redacts `X-Plex-Token`, `token`, `accessToken`, and `PLEX_TOKEN`
+values before any line reaches `misterplexd.log` (keys stay visible as
+`…=REDACTED` / `…: REDACTED` for debugging). Real playback argv/URLs still carry
+the true token so FFmpeg/PMS keep working.
+
+**If you ever shared a `misterplexd.log` (or a lab capture that included one)
+from a build before this redaction, rotate the Plex token:**
+
+1. Plex Web → account → **Authorized Devices** / app tokens (or sign out the
+   device session that issued the cast token), and revoke the exposed token.
+2. If `PLEX_TOKEN=` is set in `/media/fat/misterplex/misterplex.conf`, generate a
+   fresh token and replace that value; restart `misterplexd`.
+3. Do not paste full log files into public issues/chat — prefer redacted snippets
+   (`X-Plex-Token=REDACTED`).
 | `FFMPEG` | `/media/fat/misterplex/bin/ffmpeg` | FFmpeg binary; defaults to the bundled release copy |
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
 | `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = coded 624x480@2000k for 640x480 presented scanout. Both request H.264 Baseline Level 3.0. |

@@ -1,4 +1,5 @@
 #include "media_player.hpp"
+#include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
@@ -69,22 +70,6 @@ inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs)
     }
     return url.substr(0, end) + "&" + value +
            (hash == std::string::npos ? std::string() : url.substr(hash));
-}
-
-inline std::string redactSensitive(std::string s) {
-    for (const char* key : {"X-Plex-Token", "token"}) {
-        size_t pos = 0;
-        const std::string pfx = std::string(key) + "=";
-        while ((pos = s.find(pfx, pos)) != std::string::npos) {
-            pos += pfx.size();
-            auto end = s.find_first_of("& \r\n", pos);
-            s.replace(pos, end == std::string::npos ? std::string::npos : end - pos,
-                      "<redacted>");
-            if (end == std::string::npos)
-                break;
-        }
-    }
-    return s;
 }
 
 // Annex-B start-code length at `i`, or 0 if none.
@@ -434,10 +419,13 @@ private:
 } // namespace
 
 void MediaPlayer::log(const std::string& s) const {
+    // Central sink redaction: spawn argv is logged here; real argv passed to
+    // spawnFfmpeg must remain unredacted (playback needs the true token).
+    const std::string safe = redactSensitive(s);
     if (log_)
-        log_(s);
+        log_(safe);
     else
-        std::fprintf(stderr, "%s\n", s.c_str());
+        std::fprintf(stderr, "%s\n", safe.c_str());
 }
 
 PlaybackSummary MediaPlayer::lastPlaybackSummary() const {
@@ -2330,13 +2318,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         }
 
         {
+            // Log-only join. `args` itself keeps the real token for execv.
+            // MediaPlayer::log applies redactSensitive at the sink.
             std::string joined = "media: spawn single-process";
             for (const auto& a : args) {
                 joined += ' ';
                 if (a.find(' ') != std::string::npos || a.find('\r') != std::string::npos)
                     joined += "[...]";
                 else
-                    joined += redactSensitive(a);
+                    joined += a;
             }
             log(joined);
         }
