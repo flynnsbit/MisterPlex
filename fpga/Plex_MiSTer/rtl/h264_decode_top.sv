@@ -118,8 +118,6 @@ module h264_decode_top (
     wire               xform_done;
     wire signed [28:0] idct_out [0:15];
 
-    // Hadamard DC plane is raster {y4,x4}; block_index is H.264 blkIdx
-    // (x={b[2],b[0]}, y={b[3],b[1]}).  Wrong map → flat-looking wrong brightness.
     h264_iq_idct_seq u_iqidct (
         .clk(clk),
         .reset(reset),
