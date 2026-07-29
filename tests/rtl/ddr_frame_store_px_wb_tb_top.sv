@@ -19,6 +19,7 @@ module ddr_frame_store_px_wb_tb (
 	output wire [7:0]  rd_b,
 	output wire        has_frame,
 	output wire        disp_bank,
+	output wire [15:0] px_fifo_drop_count,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -103,6 +104,7 @@ module ddr_frame_store_px_wb_tb (
 	);
 
 	assign disp_bank = dut.disp_bank;
+	assign px_fifo_drop_count = dut.px_fifo_drop_count;
 endmodule
 
 `default_nettype wire

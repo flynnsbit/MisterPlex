@@ -381,6 +381,11 @@ module ddr_frame_store #(
 		end
 	endfunction
 
+	// Line TAG metadata only (which picture-Y owns each line_buf slot).
+	// Consumers: combo hit-detect on video clk (y_line_v2[slot]==src_y) and
+	// refill scheduler (y_line[slot]==desired_y). Same-cycle index — MUST stay
+	// registers. Pixel payload is already in line_buf_ram (M10K). LINE_SLOTS=16
+	// × Y_W≈9 ≈ 144b — not an ALM problem; do NOT restyle to M10K (+1 cycle).
 	reg [LINE_SLOTS-1:0] y_valid_v1, y_valid_v2, c_valid_v1, c_valid_v2;
 	reg [LINE_SLOTS-1:0] y_bank_v1, y_bank_v2, c_bank_v1, c_bank_v2;
 	reg [Y_W-1:0] y_line_v1 [0:LINE_SLOTS-1];
@@ -552,6 +557,8 @@ module ddr_frame_store #(
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
 
 	reg [3:0] state_ddr;
+	// clk_ddr domain copies of line tags (see video-domain comment above).
+	// Combo compares in refill scheduler — registers only, not M10K.
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
 	reg [LINE_SLOTS-1:0] y_bank, c_bank;
 	reg [Y_W-1:0] y_line [0:LINE_SLOTS-1];
