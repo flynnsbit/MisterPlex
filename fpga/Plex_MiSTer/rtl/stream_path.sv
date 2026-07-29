@@ -113,7 +113,14 @@ module stream_path #(
 	output wire  [1:0]  dec_px_plane,
 	output wire [15:0]  dec_px_x,
 	output wire [15:0]  dec_px_y,
-	output wire  [7:0]  dec_px_data
+	output wire  [7:0]  dec_px_data,
+
+	// Slice walker PARSE desync (sticky sources for status telem / ARM).
+	// early: more_rbsp_data false before PicSizeInMbs
+	// long:  still data after PicSizeInMbs / walked past expected
+	output wire         slice_desync,
+	output wire         slice_desync_early,
+	output wire         slice_desync_long
 );
 
 	// The decode core must run on the CODED picture geometry, not the display
@@ -383,6 +390,11 @@ module stream_path #(
 	wire        feed_frame_done;
 	wire        feed_error;
 	wire        feed_slice_desync;
+	wire        feed_slice_desync_early;
+	wire        feed_slice_desync_long;
+	wire        feed_chroma_residual_valid;
+	wire signed [15:0] feed_chroma_residual_u [0:63];
+	wire signed [15:0] feed_chroma_residual_v [0:63];
 	wire [15:0] feed_rbsp_request_offset;
 	wire        feed_rbsp_request_valid;
 	wire        feed_mb_type_valid;
@@ -596,6 +608,7 @@ module stream_path #(
 		.first_cbp_luma(sl_first_mb_cbp_luma),
 		.first_cbp_chroma(sl_first_mb_cbp_chroma),
 		.first_residual_bit_offset(sl_first_mb_residual_bit_offset),
+		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(feed_rbsp_request_offset),
@@ -630,11 +643,19 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.chroma_residual_u(feed_chroma_residual_u),
+		.chroma_residual_v(feed_chroma_residual_v),
+		.chroma_residual_valid(feed_chroma_residual_valid),
 		.busy(feed_busy),
 		.frame_feed_done(feed_frame_done),
 		.error(feed_error),
-		.slice_desync(feed_slice_desync)
+		.slice_desync(feed_slice_desync),
+		.slice_desync_early(feed_slice_desync_early),
+		.slice_desync_long(feed_slice_desync_long)
 	);
+	assign slice_desync = feed_slice_desync;
+	assign slice_desync_early = feed_slice_desync_early;
+	assign slice_desync_long = feed_slice_desync_long;
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -720,6 +741,9 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.intra_chroma_residual_valid(feed_chroma_residual_valid),
+		.intra_chroma_residual_u(feed_chroma_residual_u),
+		.intra_chroma_residual_v(feed_chroma_residual_v),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(feed_part_mode),
@@ -853,6 +877,8 @@ module stream_path #(
 	             |sl_sub_mb_types | sl_sub_mb_valid | |sl_mb_ref_idx_l0 |
 	             |sl_mb_mvd_valid | |sl_mb_mvd_x[0] | |sl_mb_mvd_y[0] | |sl_num_ref_m1 |
 	             |sl_chroma_pred_mode | feed_mb_intra | feed_mb_skip | feed_slice_desync |
+	             feed_slice_desync_early | feed_slice_desync_long |
+	             feed_chroma_residual_valid | |feed_chroma_residual_u[0] |
 	             |feed_part_mode |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
