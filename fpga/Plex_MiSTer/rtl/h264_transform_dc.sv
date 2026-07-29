@@ -380,18 +380,18 @@ module h264_chroma_dc_hadamard_inv (
 		end
 	endfunction
 
-	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
+	function automatic signed [31:0] shl_qdiv(input signed [31:0] v, input [3:0] q);
 		begin
 			case (q)
 			4'd0:    shl_qdiv = v;
-			4'd1:    shl_qdiv = {v[38:0], 1'b0};
-			4'd2:    shl_qdiv = {v[37:0], 2'b0};
-			4'd3:    shl_qdiv = {v[36:0], 3'b0};
-			4'd4:    shl_qdiv = {v[35:0], 4'b0};
-			4'd5:    shl_qdiv = {v[34:0], 5'b0};
-			4'd6:    shl_qdiv = {v[33:0], 6'b0};
-			4'd7:    shl_qdiv = {v[32:0], 7'b0};
-			default: shl_qdiv = {v[31:0], 8'b0};
+			4'd1:    shl_qdiv = {v[30:0], 1'b0};
+			4'd2:    shl_qdiv = {v[29:0], 2'b0};
+			4'd3:    shl_qdiv = {v[28:0], 3'b0};
+			4'd4:    shl_qdiv = {v[27:0], 4'b0};
+			4'd5:    shl_qdiv = {v[26:0], 5'b0};
+			4'd6:    shl_qdiv = {v[25:0], 6'b0};
+			4'd7:    shl_qdiv = {v[24:0], 7'b0};
+			default: shl_qdiv = {v[23:0], 8'b0};
 			endcase
 		end
 	endfunction
@@ -405,7 +405,7 @@ module h264_chroma_dc_hadamard_inv (
 	generate
 		for (di = 0; di < 4; di = di + 1) begin : g_cdc
 			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
-			wire signed [39:0] prod = shl_qdiv($signed({{8{base[31]}}, base}), qdiv);
+			wire signed [31:0] prod = shl_qdiv(base, qdiv);
 			assign dc[di] = sat29(48'(prod >>> 1));
 		end
 	endgenerate
@@ -542,18 +542,18 @@ module h264_dequant4x4_flex (
 		end
 	endfunction
 
-	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
+	function automatic signed [31:0] shl_qdiv(input signed [31:0] v, input [3:0] q);
 		begin
 			case (q)
 			4'd0:    shl_qdiv = v;
-			4'd1:    shl_qdiv = {v[38:0], 1'b0};
-			4'd2:    shl_qdiv = {v[37:0], 2'b0};
-			4'd3:    shl_qdiv = {v[36:0], 3'b0};
-			4'd4:    shl_qdiv = {v[35:0], 4'b0};
-			4'd5:    shl_qdiv = {v[34:0], 5'b0};
-			4'd6:    shl_qdiv = {v[33:0], 6'b0};
-			4'd7:    shl_qdiv = {v[32:0], 7'b0};
-			default: shl_qdiv = {v[31:0], 8'b0};
+			4'd1:    shl_qdiv = {v[30:0], 1'b0};
+			4'd2:    shl_qdiv = {v[29:0], 2'b0};
+			4'd3:    shl_qdiv = {v[28:0], 3'b0};
+			4'd4:    shl_qdiv = {v[27:0], 4'b0};
+			4'd5:    shl_qdiv = {v[26:0], 5'b0};
+			4'd6:    shl_qdiv = {v[25:0], 6'b0};
+			4'd7:    shl_qdiv = {v[24:0], 7'b0};
+			default: shl_qdiv = {v[23:0], 8'b0};
 			endcase
 		end
 	endfunction
@@ -583,7 +583,7 @@ module h264_dequant4x4_flex (
 			// every dequantised coefficient came out four times too small --
 			// the residual was there but scaled almost to nothing.
 			wire signed [31:0] base = mul_norm(32'(c), norm_adjust(qmod, MI));
-			wire signed [39:0] prod = shl_qdiv($signed({{8{base[31]}}, base}), qdiv);
+			wire signed [31:0] prod = shl_qdiv(base, qdiv);
 			wire signed [28:0] scaled = sat29(48'(prod));
 			if (r == 0) begin : g_dc_pos
 				assign dequant[r] = dc_override ? dc_value : (skip_dc ? 29'sd0 : scaled);

@@ -91,18 +91,18 @@ module h264_dequant4x4 (
 	// Explicit mux, not `v <<< qdiv`.  Quartus's automatic DSP replacement
 	// turns a variable-distance barrel shifter into a multiply by 1<<qdiv and
 	// packs it into a DSP block.  qP <= 51 bounds qdiv to 0..8.
-	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
+	function automatic signed [31:0] shl_qdiv(input signed [31:0] v, input [3:0] q);
 		begin
 			case (q)
 			4'd0:    shl_qdiv = v;
-			4'd1:    shl_qdiv = {v[38:0], 1'b0};
-			4'd2:    shl_qdiv = {v[37:0], 2'b0};
-			4'd3:    shl_qdiv = {v[36:0], 3'b0};
-			4'd4:    shl_qdiv = {v[35:0], 4'b0};
-			4'd5:    shl_qdiv = {v[34:0], 5'b0};
-			4'd6:    shl_qdiv = {v[33:0], 6'b0};
-			4'd7:    shl_qdiv = {v[32:0], 7'b0};
-			default: shl_qdiv = {v[31:0], 8'b0};
+			4'd1:    shl_qdiv = {v[30:0], 1'b0};
+			4'd2:    shl_qdiv = {v[29:0], 2'b0};
+			4'd3:    shl_qdiv = {v[28:0], 3'b0};
+			4'd4:    shl_qdiv = {v[27:0], 4'b0};
+			4'd5:    shl_qdiv = {v[26:0], 5'b0};
+			4'd6:    shl_qdiv = {v[25:0], 6'b0};
+			4'd7:    shl_qdiv = {v[24:0], 7'b0};
+			default: shl_qdiv = {v[23:0], 8'b0};
 			endcase
 		end
 	endfunction
