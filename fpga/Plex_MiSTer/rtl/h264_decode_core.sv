@@ -600,21 +600,29 @@ module h264_decode_core #(
     wire signed [15:0] syntax_mv_pred_x;
     wire signed [15:0] syntax_mv_pred_y;
     wire syntax_mv_skip_zero;
+    // Top-left neighbour D: previous MB on the row above (mb_x-1).
+    wire [MB_IDX_W-1:0] syntax_top_left_idx = (syntax_mb_x != 8'd0) ?
+                                      (syntax_mb_idx - MB_IDX_W'(1)) : syntax_mb_idx;
+    wire syntax_has_top_left = (syntax_mb_x != 8'd0) &&
+                                mv_top_valid[syntax_top_left_idx] &&
+                                (mv_top_ref[syntax_top_left_idx] == eff_ref_idx_l0);
     h264_mv_pred_part u_product_p16_mv_pred (
-        .part_mode(3'd0),
-        .part_idx(2'd0),
+        // Product P path is 16x16-only today; still honour the port so a real
+        // part_mode from the feed is not silently forced to 16x16 MVP.
+        .part_mode(part_mode),
+        .part_idx(part_idx),
         .avail_a(mv_avail_a),
         .avail_b(mv_avail_b),
         .avail_c(mv_avail_c),
-        .avail_d(1'b0),
+        .avail_d(syntax_has_top_left),
         .mv_a_x(mv_left_x),
         .mv_a_y(mv_left_y),
         .mv_b_x(mv_top_x[syntax_mb_idx]),
         .mv_b_y(mv_top_y[syntax_mb_idx]),
         .mv_c_x(mv_top_x[syntax_top_right_idx]),
         .mv_c_y(mv_top_y[syntax_top_right_idx]),
-        .mv_d_x(16'sd0),
-        .mv_d_y(16'sd0),
+        .mv_d_x(mv_top_x[syntax_top_left_idx]),
+        .mv_d_y(mv_top_y[syntax_top_left_idx]),
         .mvd_x(mvd_x_qpel),
         .mvd_y(mvd_y_qpel),
         .p_skip(mb_skip),
@@ -985,17 +993,31 @@ module h264_decode_core #(
     wire        wb_last_sample = (wb_idx == 9'd383);
     wire        wb_last_mb = (wb_mb_x32 == (MB_W - 1)) &&
                              (wb_mb_y32 == (MB_H - 1));
-    // Gate on IDLE so multi-cycle M10K recon latch cannot race a new MB.
-    wire        product_intra_mb_start = mb_type_valid && slice_is_i && !mb_skip &&
-                                         decode_enable && (wb_state == ST_IDLE);
-    wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
-    wire [1:0]  product_intra_i16_mode = intra16x16_mode;
-    wire signed [28:0] product_intra_i16_dc [0:15];
+    // Intra launch is delayed until the residual walker fills I16 DC + chroma
+    // residual (was hardwired 0/0 — silent picture destroyers).  AC luma still
+    // arrives on the luma4x4_* feed from stream_path.
+    reg         product_intra_start_r;
+    reg         wb_intra_res_pending;
+    reg         wb_intra_start_pend; // 1-cycle after DC NBA so i16_dc is stable
+    reg  [7:0]  product_intra_mb_type_r;
+    reg  [1:0]  product_intra_i16_mode_r;
+    reg  [1:0]  product_intra_chroma_mode_r;
+    reg  [7:0]  product_intra_mb_x_hold;
+    reg  [7:0]  product_intra_mb_y_hold;
+    reg  [5:0]  product_intra_qp_hold;
+    reg signed [28:0] product_intra_i16_dc [0:15];
+    reg signed [15:0] product_intra_chroma_residual_u [0:63];
+    reg signed [15:0] product_intra_chroma_residual_v [0:63];
+    wire        product_intra_mb_start = product_intra_start_r;
+    // Hold XY from residual launch — syntax_mb_addr advances on mb_type_valid
+    // before residual finishes, so syntax_mb_x at start pulse is the NEXT MB.
+    wire [7:0]  intra_mb_x_now = product_intra_mb_start ? product_intra_mb_x_hold : intra_mb_x_r;
+    wire [7:0]  intra_mb_y_now = product_intra_mb_start ? product_intra_mb_y_hold : intra_mb_y_r;
+    wire [7:0]  product_intra_mb_type = product_intra_mb_type_r;
+    wire [1:0]  product_intra_i16_mode = product_intra_i16_mode_r;
     wire [7:0]  product_intra_recon_y [0:255];
     wire [7:0]  product_intra_recon_u [0:63];
     wire [7:0]  product_intra_recon_v [0:63];
-    wire signed [15:0] product_intra_chroma_residual_u [0:63];
-    wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
@@ -1023,15 +1045,10 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_topright [0:3];
     genvar intra_gi;
     generate
-        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
-            assign product_intra_i16_dc[intra_gi] = 29'sd0;
+        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_ctx_px
+            // I4 block-neighbour path unused while block_valid is held 0;
+            // mb-level nb_* ports carry the real neighbours.
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
-        end
-        for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
-            // The core's residual walker does not yet run for intra
-            // macroblocks, so intra chroma is prediction-only for now.
-            assign product_intra_chroma_residual_u[intra_gi] = 16'sd0;
-            assign product_intra_chroma_residual_v[intra_gi] = 16'sd0;
         end
     endgenerate
 
@@ -1040,18 +1057,24 @@ module h264_decode_core #(
     wire [7:0] product_recon_mb_y = product_intra_recon_valid ? intra_mb_y_r : recon_mb_y;
     wire product_recon_mb_is_ref = product_intra_recon_valid ? intra_mb_is_ref_r : recon_mb_is_ref;
 
+    // I-slice residual pre-pass candidate (syntax edge, IDLE).
+    wire syntax_intra_launch = mb_type_valid && slice_is_i && !mb_skip &&
+                               decode_enable && (wb_state == ST_IDLE);
+
     h264_intra_nb_ctx #(
         .MB_WIDTH_MAX(MB_W),
         .MB_WIDTH_DEFAULT(MB_W)
     ) u_product_intra_nb_ctx (
         .clk(clk),
         .reset(reset),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
+        // OPEN (g-intra): I4 in-MB neighbour updates need block_valid pulses
+        // with real recon_pixels; held 0 → only mb_commit path updates ctx.
         .block_valid(1'b0),
         .constrained_intra_pred(constrained_intra_pred_flag),
         // Every retired macroblock, intra or inter -- the intra path's own
@@ -1094,16 +1117,18 @@ module h264_decode_core #(
         .reset(reset || slice_start),
         .mb_start(product_intra_mb_start),
         .mb_type(product_intra_mb_type),
-        .mb_qp_y(luma4x4_qp),
-        .mb_x(intra_mb_x_r),
-        .mb_y(intra_mb_y_r),
+        // Running QP after se(mb_qp_delta) mod-52 (was luma4x4_qp — often 0
+        // before the first AC pulse).
+        .mb_qp_y(product_intra_qp_hold),
+        .mb_x(intra_mb_x_now),
+        .mb_y(intra_mb_y_now),
         .i16_pred_mode(product_intra_i16_mode),
         .block_valid(luma4x4_valid),
         .block_index(luma4x4_idx),
         .block_coeff(luma4x4_coeff_zigzag),
         .i16_dc_valid(product_intra_mb_start),
         .i16_dc(product_intra_i16_dc),
-        .chroma_pred_mode(chroma_pred_mode),
+        .chroma_pred_mode(product_intra_chroma_mode_r),
         .nb_chroma_u_above(product_intra_chroma_u_above),
         .nb_chroma_v_above(product_intra_chroma_v_above),
         .nb_chroma_u_left(product_intra_chroma_u_left),
@@ -1355,9 +1380,21 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        product_intra_start_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
+            wb_intra_res_pending <= 1'b0;
+            wb_intra_start_pend <= 1'b0;
+            product_intra_mb_type_r <= 8'd0;
+            product_intra_i16_mode_r <= 2'd0;
+            product_intra_chroma_mode_r <= 2'd0;
+            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                product_intra_i16_dc[res_tc_i] <= 29'sd0;
+            for (res_tc_i = 0; res_tc_i < 64; res_tc_i = res_tc_i + 1) begin
+                product_intra_chroma_residual_u[res_tc_i] <= 16'sd0;
+                product_intra_chroma_residual_v[res_tc_i] <= 16'sd0;
+            end
             wb_mb_x <= 8'd0;
             wb_mb_y <= 8'd0;
             wb_mb_is_ref <= 1'b0;
@@ -1447,28 +1484,78 @@ module h264_decode_core #(
             end
             if (mb_type_valid)
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
+            if (wb_intra_start_pend) begin
+                product_intra_start_r <= 1'b1;
+                wb_intra_start_pend <= 1'b0;
+            end
             if (product_intra_mb_start) begin
                 intra_active_r <= 1'b1;
-                intra_mb_x_r <= syntax_mb_x;
-                intra_mb_y_r <= syntax_mb_y;
+                intra_mb_x_r <= product_intra_mb_x_hold;
+                intra_mb_y_r <= product_intra_mb_y_hold;
                 intra_mb_is_ref_r <= 1'b1;
-                // Latch QPy at the syntax edge: the reconstruction pulse that
-                // launches the writeback arrives many cycles later, when the
-                // slice-level mb_qp_delta inputs no longer describe this
-                // macroblock. The deblocker needs the right QP for alpha/beta.
-                intra_qp_y_r <= qp_launch;
-                cur_qp_y_r <= qp_launch;
+                // QP held at residual-launch (mb_qp_delta no longer valid later).
+                intra_qp_y_r <= product_intra_qp_hold;
+                cur_qp_y_r <= product_intra_qp_hold;
             end
             if (product_intra_recon_valid)
                 intra_active_r <= 1'b0;
 
             case (wb_state)
             ST_IDLE: begin
-                if (p16_launch) begin
+                if (syntax_intra_launch) begin
+                    // I residual pre-pass: walk residual() so I16 DC Hadamard
+                    // and chroma residual are real before decode_top starts.
+                    wb_mb_x <= syntax_mb_x;
+                    wb_mb_y <= syntax_mb_y;
+                    wb_mb_is_ref <= 1'b1;
+                    wb_mb_is_intra <= 1'b1;
+                    wb_base <= dpb_write_base;
+                    p16_res_bit_offset_r <= launch_residual_rel_bit_offset[9:0];
+                    p16_res_block_idx <= 5'd0;
+                    p16_cbp_luma_r <= cbp_luma;
+                    p16_cbp_chroma_r <= cbp_chroma;
+                    res_i16x16_r <= mb_is_i16;
+                    res_ac_from_cavlc <= 1'b0;
+                    mb_qp_y_r <= qp_launch;
+                    cur_qp_y_r <= qp_launch;
+                    product_intra_mb_type_r <= {3'd0, mb_type};
+                    product_intra_i16_mode_r <= intra16x16_mode;
+                    product_intra_chroma_mode_r <= chroma_pred_mode;
+                    product_intra_mb_x_hold <= syntax_mb_x;
+                    product_intra_mb_y_hold <= syntax_mb_y;
+                    product_intra_qp_hold <= qp_launch;
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1) begin
+                        res_tc_cur[res_tc_i] <= 5'd0;
+                        res_luma_dc[res_tc_i] <= 29'sd0;
+                        product_intra_i16_dc[res_tc_i] <= 29'sd0;
+                    end
+                    for (res_tc_i = 0; res_tc_i < 8; res_tc_i = res_tc_i + 1)
+                        res_tc_cur_c[res_tc_i] <= 5'd0;
+                    for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
+                        res_cdc_u[res_tc_i] <= 29'sd0;
+                        res_cdc_v[res_tc_i] <= 29'sd0;
+                    end
+                    for (res_tc_i = 0; res_tc_i < 64; res_tc_i = res_tc_i + 1) begin
+                        product_intra_chroma_residual_u[res_tc_i] <= 16'sd0;
+                        product_intra_chroma_residual_v[res_tc_i] <= 16'sd0;
+                    end
+                    wb_idx <= 9'd0;
+                    wb_commit_p16 <= 1'b0;
+                    res_store_i <= 4'd0;
+                    if (mb_has_residual || mb_is_i16) begin
+                        wb_intra_res_pending <= 1'b1;
+                        wb_state <= ST_P16_RES_START;
+                    end else begin
+                        // I_NxN with cbp=0: prediction-only.
+                        wb_intra_res_pending <= 1'b0;
+                        product_intra_start_r <= 1'b1;
+                    end
+                end else if (p16_launch) begin
                     wb_mb_x <= p16_launch_mb_x;
                     wb_mb_y <= p16_launch_mb_y;
                     wb_mb_is_ref <= p16_launch_is_ref;
                     wb_mb_is_intra <= 1'b0;
+                    wb_intra_res_pending <= 1'b0;
                     wb_base <= dpb_write_base;
                     p16_ref_base_r <= dpb_ref_base;
 `ifdef H264_DECODE_CORE_FAULT_PERTURB_MV
@@ -1482,8 +1569,6 @@ module h264_decode_core #(
                     p16_res_block_idx <= 5'd0;
                     p16_cbp_luma_r <= mb_skip ? 4'd0 : cbp_luma;
                     p16_cbp_chroma_r <= mb_skip ? 2'd0 : cbp_chroma;
-                    // The walker only launches inter macroblocks today, so
-                    // there is no Intra_16x16 luma DC block in the chain.
                     res_i16x16_r <= 1'b0;
                     res_ac_from_cavlc <= 1'b0;
                     mb_qp_y_r <= qp_launch;
@@ -1628,6 +1713,13 @@ module h264_decode_core #(
                     lat_res_wplane <= res_store_to_v ? 2'd2 : 2'd1;
                     lat_res_waddr <= {2'b0, res_store_chroma_addr};
                     lat_res_wdata <= res_store_sample;
+                    // I pre-pass: also fill decode_top chroma residual arrays.
+                    if (wb_intra_res_pending) begin
+                        if (res_store_to_v)
+                            product_intra_chroma_residual_v[res_store_chroma_addr] <= res_store_sample;
+                        else
+                            product_intra_chroma_residual_u[res_store_chroma_addr] <= res_store_sample;
+                    end
                 end
                 if (res_store_i == 4'd15) begin
                     res_store_i <= 4'd0;
@@ -1709,7 +1801,17 @@ module h264_decode_core #(
                         res_tc_cur_c[{res_tc_i[1], 1'b1, res_tc_i[0]}];
                 end
                 res_tc_top_valid[wb_mb_x[MB_IDX_W-1:0]] <= 1'b1;
-                wb_state <= ST_P16_REF_SEED;
+                if (wb_intra_res_pending) begin
+                    // I pre-pass done: publish I16 DC; start decode_top next
+                    // cycle so NBA-updated DC is visible on i16_dc_valid.
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        product_intra_i16_dc[res_tc_i] <= res_luma_dc[res_tc_i];
+                    wb_intra_res_pending <= 1'b0;
+                    wb_intra_start_pend <= 1'b1;
+                    wb_state <= ST_IDLE;
+                end else begin
+                    wb_state <= ST_P16_REF_SEED;
+                end
             end
             ST_P16_REF_SEED: begin
                 // Publish the externally-owned reference bank into the local
