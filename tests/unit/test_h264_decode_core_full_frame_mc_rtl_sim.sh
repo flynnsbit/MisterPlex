@@ -31,6 +31,7 @@ BUILD_DROP_PRED="$ROOT/build/verilator/h264_decode_core_full_frame_mc_drop_pred"
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
+  "$RTL_DIR/h264_iq_idct_seq.sv"
   "$RTL_DIR/h264_intra_pred.sv"
   "$RTL_DIR/h264_intra_nb_ctx.sv"
   "$RTL_DIR/h264_decode_top.sv"

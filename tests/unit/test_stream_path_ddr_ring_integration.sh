@@ -39,6 +39,7 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_nb_ctx.sv"

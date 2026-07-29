@@ -30,6 +30,7 @@ BUILD_SWAP_CHROMA="$ROOT/build/verilator/h264_decode_core_real_slice_swap_chroma
 RTL=(
   "$RTL_DIR/h264_cavlc_residual.sv"
   "$RTL_DIR/h264_iq_idct_4x4.sv"
+  "$RTL_DIR/h264_iq_idct_seq.sv"
   "$RTL_DIR/h264_intra_pred.sv"
   "$RTL_DIR/h264_intra_nb_ctx.sv"
   "$RTL_DIR/h264_decode_top.sv"
