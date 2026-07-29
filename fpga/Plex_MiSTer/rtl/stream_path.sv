@@ -422,10 +422,14 @@ module stream_path #(
 	reg [1:0] core_luma4x4_trailing_ones;
 	reg signed [15:0] core_luma4x4_coeff_zigzag [0:15];
 	reg signed [15:0] core_luma4x4_latched [0:15][0:15];
+	// Intra16x16DCLevel (first residual block on I_16x16) → core Hadamard.
+	reg signed [15:0] core_i16_dc_level [0:15];
+	reg [5:0] core_i16_dc_qp;
 	reg core_luma_feed_active;
 	reg [3:0] core_luma_feed_idx;
 	integer core_li;
 	integer core_lj;
+	wire core_first_is_i16 = (sl_mbt >= 8'd1) && (sl_mbt <= 8'd24);
 
 	// ── Full-frame macroblock sweep ─────────────────────────────────────────
 	// The slice header parser only hands over the FIRST macroblock's residual,
@@ -465,6 +469,7 @@ module stream_path #(
 			core_luma4x4_qp <= 6'd0;
 			core_luma4x4_total_coeff <= 5'd0;
 			core_luma4x4_trailing_ones <= 2'd0;
+			core_i16_dc_qp <= 6'd0;
 			sweep_state <= SW_IDLE;
 			sweep_mb <= 16'd0;
 			sweep_mb_total <= 16'd0;
@@ -472,18 +477,45 @@ module stream_path #(
 			sweep_blk_guard <= 6'd0;
 			for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
 				core_luma4x4_coeff_zigzag[core_li] <= 16'sd0;
+				core_i16_dc_level[core_li] <= 16'sd0;
 				for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
 					core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
 			end
 		end else begin
+			// Latch Intra16x16DCLevel as soon as the first residual is placed.
+			// Hadamard in the core is combinatorial on these registers.
+			if (residual_place_pulse && core_first_is_i16) begin
+				core_i16_dc_qp <= sl_place_qp;
+				for (core_li = 0; core_li < 16; core_li = core_li + 1)
+					core_i16_dc_level[core_li] <= sl_place_coeff[core_li];
+			end
 			case (sweep_state)
 			SW_IDLE: begin
 				if (sl_luma4x4_blocks_valid && sl_luma4x4_blocks_present &&
 				    (sweep_mb_total_next != 16'd0)) begin
+					// I_NxN: 16 AC/full 4x4 residual blocks from the parser.
 					core_luma4x4_qp <= sl_place_qp;
-					for (core_li = 0; core_li < 16; core_li = core_li + 1)
+					for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
+						core_i16_dc_level[core_li] <= 16'sd0;
 						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
 							core_luma4x4_latched[core_li][core_lj] <= sl_luma4x4_coeff[core_li][core_lj];
+					end
+					core_i16_dc_qp <= sl_place_qp;
+					sweep_mb <= 16'd0;
+					sweep_mb_total <= sweep_mb_total_next;
+					sweep_state <= SW_START;
+				end else if (residual_place_pulse && core_first_is_i16 &&
+				             (sweep_mb_total_next != 16'd0)) begin
+					// I_16x16: DC levels already latched above; AC walk not yet
+					// in the first-MB parser — present zero AC (skip_dc path uses
+					// Hadamard DC).  Brightness is correct; coded AC still open.
+					core_luma4x4_qp <= sl_place_qp;
+					core_i16_dc_qp <= sl_place_qp;
+					for (core_li = 0; core_li < 16; core_li = core_li + 1) begin
+						core_i16_dc_level[core_li] <= sl_place_coeff[core_li];
+						for (core_lj = 0; core_lj < 16; core_lj = core_lj + 1)
+							core_luma4x4_latched[core_li][core_lj] <= 16'sd0;
+					end
 					sweep_mb <= 16'd0;
 					sweep_mb_total <= sweep_mb_total_next;
 					sweep_state <= SW_START;
@@ -657,6 +689,8 @@ module stream_path #(
 		.luma4x4_total_coeff(core_luma4x4_total_coeff),
 		.luma4x4_trailing_ones(core_luma4x4_trailing_ones),
 		.luma4x4_coeff_zigzag(core_luma4x4_coeff_zigzag),
+		.i16_dc_level(core_i16_dc_level),
+		.i16_dc_qp(core_i16_dc_qp),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(first_mb_part_mode),

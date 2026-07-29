@@ -78,6 +78,12 @@ module h264_decode_core #(
     input  wire [1:0]  luma4x4_trailing_ones,
     input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
 
+    // Intra16x16DCLevel (CAVLC zigzag) for product I_16x16.  Inverse Hadamard
+    // + DC scale runs here; decode_top substitutes these as d[0] of each 4x4.
+    // Stable before/at mb_type_valid.  Zero when MB is not I_16x16.
+    input  wire signed [15:0] i16_dc_level [0:15],
+    input  wire [5:0]  i16_dc_qp,
+
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
@@ -873,10 +879,16 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).  Adds/subs
+    // + shift/add scale only (0 DSP).  Was hard-tied to 0 → wrong MB brightness.
+    h264_luma_dc_hadamard_inv u_product_intra_i16_dc_hm (
+        .coeff(i16_dc_level),
+        .qp(i16_dc_qp),
+        .dc(product_intra_i16_dc)
+    );
     genvar intra_gi;
     generate
-        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_i16_dc
-            assign product_intra_i16_dc[intra_gi] = 29'sd0;
+        for (intra_gi = 0; intra_gi < 16; intra_gi = intra_gi + 1) begin : g_product_intra_ctx_px
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
         for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_neutral

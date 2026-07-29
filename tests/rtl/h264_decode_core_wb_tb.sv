@@ -30,6 +30,7 @@ module h264_decode_core_wb_tb #(
 	wire [7:0] rbsp_byte [0:63];
 	wire [3:0] intra4x4_modes [0:15];
 	wire signed [15:0] luma4x4_coeff_zigzag [0:15];
+	wire signed [15:0] i16_dc_level [0:15];
 	wire signed [15:0] p16_residual_y [0:255];
 	wire signed [15:0] p16_residual_u [0:63];
 	wire signed [15:0] p16_residual_v [0:63];
@@ -43,6 +44,7 @@ module h264_decode_core_wb_tb #(
 		for (zi = 0; zi < 16; zi = zi + 1) begin : gen_i4_zero
 			assign intra4x4_modes[zi] = 4'd0;
 			assign luma4x4_coeff_zigzag[zi] = 16'sd0;
+			assign i16_dc_level[zi] = 16'sd0;
 		end
 		for (zi = 0; zi < 256; zi = zi + 1) begin : gen_p16_y_zero
 			assign p16_residual_y[zi] = 16'sd0;
@@ -90,6 +92,8 @@ module h264_decode_core_wb_tb #(
 		.luma4x4_total_coeff(5'd0),
 		.luma4x4_trailing_ones(2'd0),
 		.luma4x4_coeff_zigzag(luma4x4_coeff_zigzag),
+		.i16_dc_level(i16_dc_level),
+		.i16_dc_qp(6'd26),
 		.mv_x_qpel(16'sd0),
 		.mv_y_qpel(16'sd0),
 		.part_mode(3'd0),
