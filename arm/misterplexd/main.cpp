@@ -116,6 +116,7 @@ int main(int argc, char** argv) {
     bool presentProfile = false;
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
+    bool hybridPresent = false; // P3-3l5 HYBRID_PRESENT default OFF
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
@@ -287,6 +288,10 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
+        // P3-3l5 hybrid present: default OFF. Does not alter PRESENT/DECODE/STREAM/OSD_CONTROL.
+        v = loadConf(confPath, "HYBRID_PRESENT");
+        if (!v.empty())
+            hybridPresent = confTruthy(v);
         v = loadConf(confPath, "AUTO_NEXT");
         if (!v.empty())
             autoNext = confTruthy(v);
@@ -394,6 +399,7 @@ int main(int argc, char** argv) {
     player.setPresentProfile(presentProfile);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
+    player.setHybridPresent(hybridPresent);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
     std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
                  static_cast<long long>(skipForwardMs), static_cast<long long>(skipBackMs));
@@ -465,6 +471,10 @@ int main(int argc, char** argv) {
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr, "misterplexd: HYBRID_PRESENT=%s%s\n", hybridPresent ? "1" : "0",
+                 hybridPresent && !streamEnabled
+                     ? " (no-op without STREAM=1)"
+                     : (hybridPresent ? " (FPGA intra / host inter compose; fail-closed)" : ""));
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");

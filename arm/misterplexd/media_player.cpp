@@ -2,6 +2,7 @@
 #include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/hybrid_compose.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -731,6 +732,9 @@ std::string MediaPlayer::currentUrl() const {
 bool MediaPlayer::wantSkipRgbVideo() const {
     if (!streamEnabled_)
         return false;
+    // Hybrid needs a continuous host YUV plane for inter (host-owned) MBs.
+    if (hybridPresent_)
+        return false;
     // Continuous fb0 needs RGB; skip only frees dual-A9 when FPGA alone owns present.
     if (presentMode_ == "both" || presentMode_ == "fb0" || presentMode_.empty())
         return false;
@@ -1220,7 +1224,8 @@ void MediaPlayer::streamPump(int sfd) {
     // cabacSkip_ is session-level (cleared in play()); do not clear here on mid-session re-entry.
     log(std::string("media: STREAM=1 host I-slice recon") +
         (wantF1 ? " →F1" : "") + (wantF3 ? " +DDR-bitstream" : "") +
-        (reconToFb ? " +fb0" : ""));
+        (reconToFb ? " +fb0" : "") +
+        (hybridPresent_ ? " +HYBRID_PRESENT" : ""));
 
     // Bound NAL scan buffer (SPS+PPS+IDR can be large at 720p; cap for dual-A9)
     constexpr size_t kMaxAcc = 2 * 1024 * 1024;
@@ -1325,7 +1330,69 @@ void MediaPlayer::streamPump(int sfd) {
             f3Dispatch.end();
     };
 
-    auto presentRecon = [&](const recon::ReconResult& rec) {
+    // Hybrid (opt-in): ownership + compose before F1. FPGA plane readback is not
+    // available yet — missing FPGA plane reclassifies to host (loud), never silent
+    // product_recon_ok. Pre-register @320x240: I→0 host MB, P→300 host MB (CAP_INTER=0).
+    size_t hybridFrames = 0;
+    size_t hybridHostMb = 0;
+    size_t hybridFpgaMb = 0;
+    size_t hybridReclass = 0;
+    size_t hybridHardFail = 0;
+    bool hybridLoggedCaps = false;
+    std::vector<uint8_t> hybridComposite;
+
+    auto applyHybridI420 = [&](const uint8_t* hostPlane, size_t hostBytes, int width, int height,
+                               char sliceKind, const uint8_t*& outPlane,
+                               size_t& outBytes) -> bool {
+        outPlane = hostPlane;
+        outBytes = hostBytes;
+        if (!hybridPresent_)
+            return true;
+        if (!hybridLoggedCaps) {
+            hybridLoggedCaps = true;
+            log("media: HYBRID_PRESENT=1 CAP_INTRA=1 CAP_INTER=0 — ARM owns inter MBs; "
+                "unmarked/ambiguous ownership fails closed (never silent FPGA)");
+        }
+        FpgaSpi::CoreStatus st{};
+        const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
+        hybrid::FpgaOwnSignal sig = hybrid::signalFromStatus(
+            stOk, st.slice_type, st.first_mb_type, st.residual_ok, st.sps_valid, st.has_stream,
+            cabacSkip_.load());
+        hybrid::PresentDecision d = hybrid::decidePresentFrame(
+            width, height, sliceKind, hostPlane, hostBytes,
+            /*fpga_i420=*/nullptr, /*fpga_n=*/0, sig, hybrid::Caps{}, hybridComposite,
+            /*allow_host_fallback=*/true, /*allow_skip_host_f1=*/false);
+        if (!d.ok || d.hard_fail) {
+            ++hybridHardFail;
+            log(std::string("ERROR media: hybrid hard-fail ") +
+                (d.fail_reason ? d.fail_reason : "unknown") +
+                " — refusing silent FPGA present");
+            return false;
+        }
+        ++hybridFrames;
+        hybridHostMb += static_cast<size_t>(d.summary.host_mb);
+        hybridFpgaMb += static_cast<size_t>(d.summary.fpga_mb);
+        hybridReclass += static_cast<size_t>(d.summary.reclassified_fpga_to_host);
+        if (d.summary.used_host_fallback && d.summary.reclassified_fpga_to_host > 0 &&
+            (hybridFrames == 1 || (hybridFrames % 30) == 0)) {
+            log("media: hybrid host-fallback reclass fpga→host mb=" +
+                std::to_string(d.summary.reclassified_fpga_to_host) +
+                " (no FPGA plane readback; detectable, not silent FPGA claim)");
+        }
+        if ((hybridFrames % 30) == 1)
+            log(std::string("media: ") + d.log_line);
+        if (d.skip_host_f1)
+            return true; // caller may skip write; default policy keeps host F1
+        if (hybridComposite.empty()) {
+            log("ERROR media: hybrid composite empty after ok decision");
+            return false;
+        }
+        outPlane = hybridComposite.data();
+        outBytes = hybridComposite.size();
+        return true;
+    };
+
+    auto presentRecon = [&](const recon::ReconResult& rec, char sliceKind = 'I') {
         if (rec.y.empty() || rec.u.empty() || rec.v.empty() || rec.width <= 0 ||
             rec.height <= 0 || (rec.width & 1) || (rec.height & 1))
             return false;
@@ -1358,6 +1425,17 @@ void MediaPlayer::streamPump(int sfd) {
                         kPlex480pPresentedWidth, kPlex480pPresentedHeight,
                         DdrFramePlacement::Pillarbox);
                     ensureYuv420p();
+                    const uint8_t* plane = yuv420p.data();
+                    size_t planeBytes = yuv420p.size();
+                    if (!applyHybridI420(yuv420p.data(), yuv420p.size(), rec.width, rec.height,
+                                         sliceKind, plane, planeBytes)) {
+                        return false;
+                    }
+                    // Hybrid may point at composite; copy into yuv420p for crop+publish.
+                    if (plane != yuv420p.data()) {
+                        yuv420p.assign(plane, plane + planeBytes);
+                        plane = yuv420p.data();
+                    }
                     clearYuv420pCropPadding(yuv420p.data(), g);
                     DdrPublishFrame frame{yuv420p.data(), yuv420p.size(), g,
                                           DdrFrameFormat::Yuv420p};
@@ -1513,7 +1591,7 @@ void MediaPlayer::streamPump(int sfd) {
         // Present every kReconPresentEvery successful I-slice
         if ((reconOk % kReconPresentEvery) != 0)
             return;
-        if (presentRecon(rec)) {
+        if (presentRecon(rec, 'I')) {
             if (reconOk == 1 || ntype == 5 || (reconOk % 8) == 0) {
                 log("media: recon frame ok #" + std::to_string(reconOk) + " " +
                     std::to_string(rec.width) + "x" + std::to_string(rec.height) +
@@ -1694,7 +1772,13 @@ void MediaPlayer::streamPump(int sfd) {
         " recon_ok=" + std::to_string(reconOk) + " recon_fail=" + std::to_string(reconFail) +
         " idr=" + std::to_string(idrSeen) + " i_slices=" + std::to_string(iSliceSeen) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
-        " present=" + std::to_string(reconFrames_.load()));
+        " present=" + std::to_string(reconFrames_.load()) +
+        (hybridPresent_ ? (" hybrid_frames=" + std::to_string(hybridFrames) +
+                           " hybrid_host_mb=" + std::to_string(hybridHostMb) +
+                           " hybrid_fpga_mb=" + std::to_string(hybridFpgaMb) +
+                           " hybrid_reclass=" + std::to_string(hybridReclass) +
+                           " hybrid_fail=" + std::to_string(hybridHardFail))
+                        : std::string()));
 }
 
 int64_t MediaPlayer::readMrAudioQueuedBytes() {
@@ -2565,10 +2649,53 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
             }
 
-            const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-            if (!reconOwnsF1 && wantFpgaFrameStore) {
+            const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load() && !hybridPresent_;
+            // Hybrid owns continuous host YUV F1 even when sparse recon also runs.
+            if ((!reconOwnsF1 || hybridPresent_) && wantFpgaFrameStore) {
                 const uint8_t* txFrame = cleanFrame;
                 size_t txBytes = frameBytes;
+                std::vector<uint8_t> hybridScratch;
+
+                if (hybridPresent_ && videoFmt == RawVideoFormat::Yuv420p) {
+                    if (!streamEnabled_) {
+                        static bool loggedHybridNeedsStream = false;
+                        if (!loggedHybridNeedsStream) {
+                            loggedHybridNeedsStream = true;
+                            log("media: HYBRID_PRESENT ignored without STREAM=1 "
+                                "(need F3 + ownership signals); keeping host-only present");
+                        }
+                    } else {
+                        FpgaSpi::CoreStatus st{};
+                        const bool stOk = fpga_.ok() && fpga_.readCoreStatus(st);
+                        hybrid::FpgaOwnSignal sig = hybrid::signalFromStatus(
+                            stOk, st.slice_type, st.first_mb_type, st.residual_ok, st.sps_valid,
+                            st.has_stream, cabacSkip_.load());
+                        // Slice kind from status when valid; else '?' → all host (fail closed).
+                        char kind = '?';
+                        if (sig.valid) {
+                            if (hybrid::isISliceType(sig.slice_type))
+                                kind = 'I';
+                            else if (hybrid::isPSliceType(sig.slice_type))
+                                kind = 'P';
+                        }
+                        hybrid::PresentDecision d = hybrid::decidePresentFrame(
+                            rawW, rawH, kind, txFrame, txBytes, nullptr, 0, sig, hybrid::Caps{},
+                            hybridScratch, true, false);
+                        if (!d.ok || d.hard_fail) {
+                            log(std::string("ERROR media: hybrid rawvideo hard-fail ") +
+                                (d.fail_reason ? d.fail_reason : "?") +
+                                " — frame not presented (no silent FPGA)");
+                            restoreOverlayDirty(cleanFrame, dirty);
+                            return;
+                        }
+                        if ((frameIndex % 30) == 0)
+                            log(std::string("media: ") + d.log_line);
+                        if (!hybridScratch.empty()) {
+                            txFrame = hybridScratch.data();
+                            txBytes = hybridScratch.size();
+                        }
+                    }
+                }
 
                 // Serialise with the OSD poller / idle painter: FpgaSpi keeps
                 // transaction state, so overlapping ioctls corrupt each other.
