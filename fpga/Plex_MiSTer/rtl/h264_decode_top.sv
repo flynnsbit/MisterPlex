@@ -141,31 +141,31 @@ module h264_decode_top (
     reg                pipe_valid;
     reg                pipe_is_i16;
 
-    wire signed [28:0] dq_final [0:15];
     reg signed [28:0] latched_i16_dc [0:15];
-    // I_16x16 luma blocks carry 15 AC coefficients at scan positions 1..15 and
-    // take position 0 from the luma DC Hadamard, so the scaler must inverse
-    // zig-zag with the DC skipped instead of treating coeff[0] as scan 0.
-    h264_dequant4x4_flex u_dequant (
+    // Sequential IQ+IDCT (same unit as the P16 residual path).  ~21 cycles /
+    // block instead of a 3k-ALM parallel flex + 1k-ALM idct.
+    reg        iq_start_r;
+    wire       iq_done;
+    wire signed [28:0] idct_out [0:15];
+    reg signed [28:0] latched_resid [0:15];
+    h264_iq_idct_seq u_iq_idct (
+        .clk(clk),
+        .reset(reset),
+        .start(iq_start_r),
         .coeff(pipe_coeff),
         .qp(pipe_qp),
         .max_coeff(pipe_is_i16 ? 5'd15 : 5'd16),
         .skip_dc(pipe_is_i16),
         .dc_override(pipe_is_i16),
         .dc_value(latched_i16_dc[pipe_block_idx]),
-        .dequant(dq_final)
-    );
-
-    wire signed [28:0] idct_out [0:15];
-    h264_idct4x4 u_idct (
-        .dequant(dq_final),
-        .residual(idct_out)
+        .residual(idct_out),
+        .done(iq_done)
     );
 
     wire [7:0] recon_block [0:15];
     h264_recon4x4 u_recon (
         .pred(pipe_pred),
-        .residual(idct_out),
+        .residual(latched_resid),
         .recon(recon_block)
     );
 
@@ -414,9 +414,11 @@ module h264_decode_top (
             i16_pred_ready <= 1'b0;
             pipe_block_idx <= 4'd0;
             pipe_qp       <= 6'd0;
+            iq_start_r    <= 1'b0;
             for (si = 0; si < 16; si = si + 1) begin
                 pipe_coeff[si] <= 16'sd0;
                 latched_i16_dc[si] <= 29'sd0;
+                latched_resid[si] <= 29'sd0;
             end
             for (si = 0; si < 256; si = si + 1) begin
                 local_recon[si] <= 8'd0;
@@ -445,21 +447,31 @@ module h264_decode_top (
                 pipe_qp     <= mb_qp_y;
             end
 
+            iq_start_r <= 1'b0;
             case (state)
                 ST_IDLE: begin
                     if (block_valid && mb_started && (!pipe_is_i16 || i16_pred_ready)) begin
-                        // Latch coefficients and block index
+                        // Latch coefficients and block index, kick sequential IQ
                         for (si = 0; si < 16; si = si + 1)
                             pipe_coeff[si] <= block_coeff[si];
                         pipe_block_idx <= block_index;
                         pipe_valid     <= 1'b1;
-                        state          <= ST_STORE;
+                        iq_start_r     <= 1'b1;
+                        state          <= ST_BLOCK;
+                    end
+                end
+
+                ST_BLOCK: begin
+                    // Wait for sequential IQ+IDCT (~21 cycles)
+                    if (iq_done) begin
+                        for (si = 0; si < 16; si = si + 1)
+                            latched_resid[si] <= idct_out[si];
+                        state <= ST_STORE;
                     end
                 end
 
                 ST_STORE: begin
-                    // Pipeline is combinational — results ready THIS cycle
-                    // Store reconstructed 4×4 block into local buffer
+                    // Recon is combinational on latched residual + pred
                     pipe_valid <= 1'b0;
                     for (si = 0; si < 4; si = si + 1)
                         for (ni = 0; ni < 4; ni = ni + 1) begin
@@ -469,7 +481,6 @@ module h264_decode_top (
                     blocks_done <= blocks_done + 5'd1;
 
                     if (blocks_done == 5'd15) begin
-                        // All 16 luma blocks done — output full MB
                         state <= ST_DONE;
                     end else begin
                         state <= ST_IDLE;

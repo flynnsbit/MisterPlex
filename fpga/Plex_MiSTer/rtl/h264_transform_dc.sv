@@ -62,9 +62,14 @@ endmodule
 
 module h264_luma_dc_hadamard_inv (
 	// Intra16x16DCLevel in CAVLC scan order (zig-zag over the 4x4 DC array).
+	// Sequential: butterfly combo, ONE shl_qdiv scaler over 16 cycles.
+	input  wire               clk,
+	input  wire               reset,
+	input  wire               start,
 	input  wire signed [15:0] coeff [0:15],
 	input  wire [5:0]         qp,
-	output wire signed [28:0] dc [0:15]     // raster order; d[0][0] of each 4x4
+	output reg  signed [28:0] dc [0:15],     // raster order; d[0][0] of each 4x4
+	output reg                done
 );
 	function automatic [4:0] norm_adjust0;
 		input [2:0] qmod;
@@ -105,74 +110,14 @@ module h264_luma_dc_hadamard_inv (
 	endfunction
 
 	function automatic signed [28:0] sat29;
-		input signed [47:0] v;
+		input signed [31:0] v;
 		begin
-			if (v > 48'sd268435455) sat29 = 29'sd268435455;
-			else if (v < -48'sd268435456) sat29 = ~29'sd268435455;
+			if (v > 32'sd268435455) sat29 = 29'sd268435455;
+			else if (v < -32'sd268435456) sat29 = ~29'sd268435455;
 			else sat29 = v[28:0];
 		end
 	endfunction
 
-	// Inverse zig-zag: c[raster] = coeff[scan_of_raster(raster)]
-	wire signed [20:0] c [0:15];
-	genvar zi;
-	generate
-		for (zi = 0; zi < 16; zi = zi + 1) begin : g_izz
-			localparam int ZI = zi;
-			assign c[zi] = $signed(coeff[scan_of_raster(ZI[3:0])]);
-		end
-	endgenerate
-
-	// Row transform: g = c * H, H = [1 1 1 1; 1 1 -1 -1; 1 -1 -1 1; 1 -1 1 -1]
-	wire signed [22:0] g0  = c[0]  + c[1]  + c[2]  + c[3];
-	wire signed [22:0] g1  = c[0]  + c[1]  - c[2]  - c[3];
-	wire signed [22:0] g2  = c[0]  - c[1]  - c[2]  + c[3];
-	wire signed [22:0] g3  = c[0]  - c[1]  + c[2]  - c[3];
-	wire signed [22:0] g4  = c[4]  + c[5]  + c[6]  + c[7];
-	wire signed [22:0] g5  = c[4]  + c[5]  - c[6]  - c[7];
-	wire signed [22:0] g6  = c[4]  - c[5]  - c[6]  + c[7];
-	wire signed [22:0] g7  = c[4]  - c[5]  + c[6]  - c[7];
-	wire signed [22:0] g8  = c[8]  + c[9]  + c[10] + c[11];
-	wire signed [22:0] g9  = c[8]  + c[9]  - c[10] - c[11];
-	wire signed [22:0] g10 = c[8]  - c[9]  - c[10] + c[11];
-	wire signed [22:0] g11 = c[8]  - c[9]  + c[10] - c[11];
-	wire signed [22:0] g12 = c[12] + c[13] + c[14] + c[15];
-	wire signed [22:0] g13 = c[12] + c[13] - c[14] - c[15];
-	wire signed [22:0] g14 = c[12] - c[13] - c[14] + c[15];
-	wire signed [22:0] g15 = c[12] - c[13] + c[14] - c[15];
-
-	// Column transform: f = H * g
-	wire signed [24:0] f [0:15];
-	assign f[0]  = g0  + g4  + g8  + g12;
-	assign f[1]  = g1  + g5  + g9  + g13;
-	assign f[2]  = g2  + g6  + g10 + g14;
-	assign f[3]  = g3  + g7  + g11 + g15;
-	assign f[4]  = g0  + g4  - g8  - g12;
-	assign f[5]  = g1  + g5  - g9  - g13;
-	assign f[6]  = g2  + g6  - g10 - g14;
-	assign f[7]  = g3  + g7  - g11 - g15;
-	assign f[8]  = g0  - g4  - g8  + g12;
-	assign f[9]  = g1  - g5  - g9  + g13;
-	assign f[10] = g2  - g6  - g10 + g14;
-	assign f[11] = g3  - g7  - g11 + g15;
-	assign f[12] = g0  - g4  + g8  - g12;
-	assign f[13] = g1  - g5  + g9  - g13;
-	assign f[14] = g2  - g6  + g10 - g14;
-	assign f[15] = g3  - g7  + g11 - g15;
-
-
-	// ── normAdjust product without a multiplier ─────────────────────────────
-	// H.264 chose the normAdjust constants so the inverse transform needs no
-	// multiplier at all: every one of the ten distinct values is a sum of at
-	// most three powers of two.  Writing this as `c * na` handed Quartus a
-	// 16x18 signed multiply, and it spent a DSP block on each of the sixteen
-	// coefficients -- on a 5CSEBA6U23I7 with 112 DSPs that is most of the
-	// device's multipliers on arithmetic that needs none.
-	//
-	//   10 = 8+2      11 = 8+2+1    13 = 8+4+1    14 = 16-2     16 = 16
-	//   18 = 16+2     20 = 16+4     23 = 16+8-1   25 = 16+8+1   29 = 32-2-1
-	//
-	// The shifts are wiring, so this is three muxes and one three-input add.
 	function automatic signed [31:0] mul_norm(input signed [31:0] c, input [4:0] na);
 		begin
 			case (na)
@@ -185,21 +130,11 @@ module h264_luma_dc_hadamard_inv (
 			5'd20:   mul_norm = (c <<< 4) + (c <<< 2);
 			5'd23:   mul_norm = (c <<< 4) + (c <<< 3) - c;
 			5'd25:   mul_norm = (c <<< 4) + (c <<< 3) + c;
-			default: mul_norm = (c <<< 5) - (c <<< 1) - c;   // 29
+			default: mul_norm = (c <<< 5) - (c <<< 1) - c;
 			endcase
 		end
 	endfunction
 
-	// Explicit mux, not `v <<< qdiv`.  Quartus's automatic DSP replacement
-	// turns a variable-distance barrel shifter into a multiply by 1<<qdiv and
-	// packs it into a DSP block -- that, not the normAdjust product, is where
-	// sixteen DSPs per instance were actually going.  qP <= 51 bounds qdiv to
-	// 0..8, so nine concatenations spell the shifter out as pure wiring plus
-	// a mux tree that the DSP inference engine has no pattern for.
-
-	// qp is 0..51.  A general qp%6 / qp/6 becomes an lpm_divide; a 52-entry
-	// ROM is a handful of LUTs and keeps the scale free of multipliers and
-	// dividers.
 	function automatic [2:0] qp_mod6;
 		input [5:0] q;
 		begin
@@ -226,47 +161,116 @@ module h264_luma_dc_hadamard_inv (
 			6'd30,6'd31,6'd32,6'd33,6'd34,6'd35: qp_div6 = 4'd5;
 			6'd36,6'd37,6'd38,6'd39,6'd40,6'd41: qp_div6 = 4'd6;
 			6'd42,6'd43,6'd44,6'd45,6'd46,6'd47: qp_div6 = 4'd7;
-			default:                             qp_div6 = 4'd8; // 48..51
+			default:                             qp_div6 = 4'd8;
 			endcase
 		end
 	endfunction
 
-	function automatic signed [39:0] shl_qdiv(input signed [39:0] v, input [3:0] q);
+	// Keep the 9-way mux — variable `<<< qdiv` re-infers DSPs.
+	function automatic signed [31:0] shl_qdiv(input signed [31:0] v, input [3:0] q);
 		begin
 			case (q)
 			4'd0:    shl_qdiv = v;
-			4'd1:    shl_qdiv = {v[38:0], 1'b0};
-			4'd2:    shl_qdiv = {v[37:0], 2'b0};
-			4'd3:    shl_qdiv = {v[36:0], 3'b0};
-			4'd4:    shl_qdiv = {v[35:0], 4'b0};
-			4'd5:    shl_qdiv = {v[34:0], 5'b0};
-			4'd6:    shl_qdiv = {v[33:0], 6'b0};
-			4'd7:    shl_qdiv = {v[32:0], 7'b0};
-			default: shl_qdiv = {v[31:0], 8'b0};
+			4'd1:    shl_qdiv = {v[30:0], 1'b0};
+			4'd2:    shl_qdiv = {v[29:0], 2'b0};
+			4'd3:    shl_qdiv = {v[28:0], 3'b0};
+			4'd4:    shl_qdiv = {v[27:0], 4'b0};
+			4'd5:    shl_qdiv = {v[26:0], 5'b0};
+			4'd6:    shl_qdiv = {v[25:0], 6'b0};
+			4'd7:    shl_qdiv = {v[24:0], 7'b0};
+			default: shl_qdiv = {v[23:0], 8'b0};
 			endcase
 		end
 	endfunction
 
-	// LevelScale(qP%6,0,0) = 16 * normAdjust(qP%6,0)
-	wire [2:0] qmod = qp_mod6(qp);
-	wire [3:0] qdiv = qp_div6(qp);
-
-	// dcY = (f * LevelScale << (qP/6) + 32) >> 6 — identical to both 8.5.10
-	// branches.  LevelScale is 16 * normAdjust, so the >> 6 cancels four of
-	// the six bits against that 16:
-	//
-	//   (f * na * 16 << qdiv + 32) >> 6  ==  ((f * na << qdiv) + 2) >> 2
-	//
-	// which also keeps the datapath inside 40 bits instead of 48 and shrinks
-	// the barrel shifter that dominated this module's logic.
-	genvar di;
+	// Inverse zig-zag + full Hadamard (adds only) — cheap; the area hog was
+	// 16 parallel 40-bit shl_qdiv trees.
+	wire signed [20:0] c [0:15];
+	genvar zi;
 	generate
-		for (di = 0; di < 16; di = di + 1) begin : g_dc
-			wire signed [31:0] base = mul_norm(32'(f[di]), norm_adjust0(qmod));
-			wire signed [39:0] prod = shl_qdiv($signed({{8{base[31]}}, base}), qdiv);
-			assign dc[di] = sat29(48'((prod + 40'sd2) >>> 2));
+		for (zi = 0; zi < 16; zi = zi + 1) begin : g_izz
+			localparam int ZI = zi;
+			assign c[zi] = $signed(coeff[scan_of_raster(ZI[3:0])]);
 		end
 	endgenerate
+
+	wire signed [22:0] g0  = c[0]  + c[1]  + c[2]  + c[3];
+	wire signed [22:0] g1  = c[0]  + c[1]  - c[2]  - c[3];
+	wire signed [22:0] g2  = c[0]  - c[1]  - c[2]  + c[3];
+	wire signed [22:0] g3  = c[0]  - c[1]  + c[2]  - c[3];
+	wire signed [22:0] g4  = c[4]  + c[5]  + c[6]  + c[7];
+	wire signed [22:0] g5  = c[4]  + c[5]  - c[6]  - c[7];
+	wire signed [22:0] g6  = c[4]  - c[5]  - c[6]  + c[7];
+	wire signed [22:0] g7  = c[4]  - c[5]  + c[6]  - c[7];
+	wire signed [22:0] g8  = c[8]  + c[9]  + c[10] + c[11];
+	wire signed [22:0] g9  = c[8]  + c[9]  - c[10] - c[11];
+	wire signed [22:0] g10 = c[8]  - c[9]  - c[10] + c[11];
+	wire signed [22:0] g11 = c[8]  - c[9]  + c[10] - c[11];
+	wire signed [22:0] g12 = c[12] + c[13] + c[14] + c[15];
+	wire signed [22:0] g13 = c[12] + c[13] - c[14] - c[15];
+	wire signed [22:0] g14 = c[12] - c[13] - c[14] + c[15];
+	wire signed [22:0] g15 = c[12] - c[13] + c[14] - c[15];
+
+	wire signed [24:0] f_w [0:15];
+	assign f_w[0]  = g0  + g4  + g8  + g12;
+	assign f_w[1]  = g1  + g5  + g9  + g13;
+	assign f_w[2]  = g2  + g6  + g10 + g14;
+	assign f_w[3]  = g3  + g7  + g11 + g15;
+	assign f_w[4]  = g0  + g4  - g8  - g12;
+	assign f_w[5]  = g1  + g5  - g9  - g13;
+	assign f_w[6]  = g2  + g6  - g10 - g14;
+	assign f_w[7]  = g3  + g7  - g11 - g15;
+	assign f_w[8]  = g0  - g4  - g8  + g12;
+	assign f_w[9]  = g1  - g5  - g9  + g13;
+	assign f_w[10] = g2  - g6  - g10 + g14;
+	assign f_w[11] = g3  - g7  - g11 + g15;
+	assign f_w[12] = g0  - g4  + g8  - g12;
+	assign f_w[13] = g1  - g5  + g9  - g13;
+	assign f_w[14] = g2  - g6  + g10 - g14;
+	assign f_w[15] = g3  - g7  + g11 - g15;
+
+	// dcY = ((f * na << qdiv) + 2) >> 2  (8.5.10 / LevelScale 16*na)
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
+	reg  [3:0] idx;
+	reg  [1:0] st;
+	reg  signed [24:0] f_r [0:15];
+	localparam [1:0] ST_IDLE = 2'd0, ST_SCALE = 2'd1, ST_DONE = 2'd2;
+
+	wire signed [31:0] base = mul_norm(32'($signed(f_r[idx])), norm_adjust0(qmod));
+	wire signed [31:0] prod = shl_qdiv(base, qdiv);
+	wire signed [28:0] scaled = sat29((prod + 32'sd2) >>> 2);
+
+	integer k;
+	always @(posedge clk) begin
+		done <= 1'b0;
+		if (reset) begin
+			st <= ST_IDLE;
+			idx <= 4'd0;
+			for (k = 0; k < 16; k = k + 1) begin
+				dc[k] <= 29'sd0;
+				f_r[k] <= 25'sd0;
+			end
+		end else begin
+			case (st)
+			ST_IDLE: if (start) begin
+				for (k = 0; k < 16; k = k + 1)
+					f_r[k] <= f_w[k];
+				idx <= 4'd0;
+				st <= ST_SCALE;
+			end
+			ST_SCALE: begin
+				dc[idx] <= scaled;
+				if (idx == 4'd15) st <= ST_DONE;
+				else idx <= idx + 4'd1;
+			end
+			default: begin
+				done <= 1'b1;
+				st <= ST_IDLE;
+			end
+			endcase
+		end
+	end
 endmodule
 
 module h264_chroma_dc_hadamard_inv (

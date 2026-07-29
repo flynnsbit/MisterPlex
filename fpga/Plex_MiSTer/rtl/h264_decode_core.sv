@@ -322,6 +322,8 @@ module h264_decode_core #(
     localparam [7:0] ST_P16_WIN_START = 8'd9;
     localparam [7:0] ST_P16_RES_IDCT  = 8'd10;
     localparam [7:0] ST_P16_RES_EDGE  = 8'd11;
+    localparam [7:0] ST_P16_RES_IQ    = 8'd24;
+    localparam [7:0] ST_P16_RES_HAD   = 8'd25;
     // Motion compensation is now a multi-cycle engine rather than a
     // combinational function of the reference window, so it gets its own
     // state between the window fetch retiring and the prediction writeback.
@@ -712,10 +714,16 @@ module h264_decode_core #(
     wire [5:0] res_qp = (res_is_chroma_dc || res_is_chroma_ac) ? res_qp_c : mb_qp_y_r;
 
     wire signed [28:0] res_luma_dc_new [0:15];
+    reg        luma_dc_start_r;
+    wire       luma_dc_done;
     h264_luma_dc_hadamard_inv u_product_res_luma_dc (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(luma_dc_start_r),
         .coeff(cavlc_dequant_coeff),
         .qp(mb_qp_y_r),
-        .dc(res_luma_dc_new)
+        .dc(res_luma_dc_new),
+        .done(luma_dc_done)
     );
 
     wire signed [15:0] res_chroma_dc_coeff [0:3];
@@ -735,20 +743,24 @@ module h264_decode_core #(
         res_luma_dc[res_luma_raster];
     wire res_dc_override = res_is_chroma_ac ? res_chroma_dc_coded : res_i16x16_r;
 
-    wire signed [28:0] p16_res_dequant [0:15];
+    // Sequential IQ+IDCT: one scaler + one butterfly.  The parallel flex+idct
+    // pair burned ~4.5k ALMs each; a block only needs ~21 cycles and the MB
+    // budget is 712.
+    reg        iq_start_r;
+    wire       iq_done;
     wire signed [28:0] p16_res_idct [0:15];
-    h264_dequant4x4_flex u_product_p16_res_dequant (
+    h264_iq_idct_seq u_product_p16_iq_idct (
+        .clk(clk),
+        .reset(reset || slice_start),
+        .start(iq_start_r),
         .coeff(res_ac_coeff),
         .qp(res_qp),
         .max_coeff(res_skip_dc ? 5'd15 : 5'd16),
         .skip_dc(res_skip_dc),
         .dc_override(res_dc_override),
         .dc_value(res_dc_value),
-        .dequant(p16_res_dequant)
-    );
-    h264_idct4x4 u_product_p16_res_idct (
-        .dequant(p16_res_dequant),
-        .residual(p16_res_idct)
+        .residual(p16_res_idct),
+        .done(iq_done)
     );
 `ifdef H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL
     wire p16_drop_this_luma_residual = (p16_res_block_idx == (RES_STEP_CHROMA_DC0 - 5'd1));
@@ -1273,6 +1285,8 @@ module h264_decode_core #(
         p16_ref_seed_r <= 1'b0;
         rbsp_request_valid_r <= 1'b0;
         cavlc_start_r <= 1'b0;
+        iq_start_r <= 1'b0;
+        luma_dc_start_r <= 1'b0;
         if (reset || slice_start) begin
             wb_state <= ST_IDLE;
             wb_idx <= 9'd0;
@@ -1482,23 +1496,41 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_IDCT: begin
-                // DC-only block: nothing was parsed, so no total_coeff and no
-                // bit_offset movement, but the residual is still produced.
+                // DC-only block: kick sequential IQ/IDCT with zero AC.
+                iq_start_r <= 1'b1;
+                wb_state <= ST_P16_RES_IQ;
+            end
+            ST_P16_RES_IQ: begin
+                iq_start_r <= 1'b0;
+                if (iq_done) begin
 `ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                res_latch_idct();
+                    res_latch_idct();
 `endif
-                if (res_is_luma_ac)
-                    res_tc_cur[res_luma_raster] <= 5'd0;
-                if (res_is_chroma_ac)
-                    res_tc_cur_c[res_c_sel] <= 5'd0;
-                res_step_advance();
+                    if (res_is_luma_ac)
+                        res_tc_cur[res_luma_raster] <= res_ac_from_cavlc && cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    if (res_is_chroma_ac)
+                        res_tc_cur_c[res_c_sel] <= res_ac_from_cavlc && cavlc_ok ? cavlc_total_coeff : 5'd0;
+                    if (res_ac_from_cavlc && cavlc_ok)
+                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                    res_step_advance();
+                end
+            end
+            ST_P16_RES_HAD: begin
+                luma_dc_start_r <= 1'b0;
+                if (luma_dc_done) begin
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                    if (cavlc_ok)
+                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                    res_step_advance();
+                end
             end
             ST_P16_RES_WAIT: begin
                 if (cavlc_done) begin
                     if (cavlc_ok) begin
                         if (res_is_luma_dc) begin
-                            for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
-                                res_luma_dc[res_tc_i] <= res_luma_dc_new[res_tc_i];
+                            luma_dc_start_r <= 1'b1;
+                            wb_state <= ST_P16_RES_HAD;
                         end else if (res_is_chroma_dc) begin
                             for (res_tc_i = 0; res_tc_i < 4; res_tc_i = res_tc_i + 1) begin
                                 if (res_chroma_is_v)
@@ -1506,20 +1538,21 @@ module h264_decode_core #(
                                 else
                                     res_cdc_u[res_tc_i] <= res_chroma_dc_new[res_tc_i];
                             end
+                            p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                            res_step_advance();
                         end else begin
-`ifndef H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL
-                            res_latch_idct();
-`endif
+                            // AC block: run sequential IQ/IDCT then latch.
+                            iq_start_r <= 1'b1;
+                            wb_state <= ST_P16_RES_IQ;
                         end
+                    end else begin
+                        if (res_is_luma_ac)
+                            res_tc_cur[res_luma_raster] <= 5'd0;
+                        if (res_is_chroma_ac)
+                            res_tc_cur_c[res_c_sel] <= 5'd0;
+                        p16_res_bit_offset_r <= cavlc_bit_offset_end;
+                        res_step_advance();
                     end
-                    // Only the 4x4 AC blocks contribute to the nC context;
-                    // the DC blocks of a macroblock do not (9.2.1).
-                    if (res_is_luma_ac)
-                        res_tc_cur[res_luma_raster] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
-                    if (res_is_chroma_ac)
-                        res_tc_cur_c[res_c_sel] <= cavlc_ok ? cavlc_total_coeff : 5'd0;
-                    p16_res_bit_offset_r <= cavlc_bit_offset_end;
-                    res_step_advance();
                 end
             end
             ST_P16_RES_EDGE: begin
@@ -1657,7 +1690,7 @@ module h264_decode_core #(
     always @* begin
         case (wb_state)
         ST_P16_RES_START, ST_P16_RES_WAIT,
-        ST_P16_RES_IDCT, ST_P16_RES_EDGE: perf_stage = PERF_ST_PARSE;
+        ST_P16_RES_IDCT, ST_P16_RES_IQ, ST_P16_RES_HAD, ST_P16_RES_EDGE: perf_stage = PERF_ST_PARSE;
         ST_P16_REF_SEED, ST_P16_WIN_START,
         ST_P16_WIN_FETCH:                 perf_stage = PERF_ST_FETCH;
         ST_P16_MC:                        perf_stage = PERF_ST_MC;
