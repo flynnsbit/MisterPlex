@@ -61,6 +61,7 @@ module h264_decode_top_tb (
         .mb_avail_top(tb_avail_top),
         .mb_avail_topright(tb_avail_topright),
         .mb_avail_topleft(tb_avail_topleft),
+        .nb_busy(1'b0),
         .nb_top(tb_nb_top),
         .nb_left(tb_nb_left),
         .nb_topleft(tb_nb_topleft),

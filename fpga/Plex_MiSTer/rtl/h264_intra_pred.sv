@@ -393,11 +393,12 @@ module h264_chroma8x8_pred (
 
 	reg [7:0] sample;
 	always @* begin
+		// Honour availability: H/V/Plane without the required neighbour → DC.
 		if (mode_r == 2'd3)
 			sample = (avail_a_r && avail_l_r) ? plane_pix : 8'd128;
-		else if (mode_r == 2'd1) sample = left_r[fy];
-		else if (mode_r == 2'd2) sample = above_r[fx];
-		else                     sample = dc_quad;
+		else if (mode_r == 2'd1 && avail_l_r) sample = left_r[fy];
+		else if (mode_r == 2'd2 && avail_a_r) sample = above_r[fx];
+		else                                  sample = dc_quad;
 	end
 
 	integer li;

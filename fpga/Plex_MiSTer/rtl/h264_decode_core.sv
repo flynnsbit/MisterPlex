@@ -891,6 +891,7 @@ module h264_decode_core #(
     wire [7:0]  product_intra_nb_left [0:15];
     wire [7:0]  product_intra_nb_topleft;
     wire [7:0]  product_intra_nb_topright [0:3];
+    wire        product_intra_nb_busy;
     // Product I_16x16 DC: inverse 4x4 Hadamard + LevelScale (8.5.10).  Adds/subs
     // + shift/add scale only (0 DSP).  Was hard-tied to 0 → wrong MB brightness.
     // Scale I16 DC with the same running MB QP used for AC dequant/deblock
@@ -951,7 +952,8 @@ module h264_decode_core #(
         .chroma_v_top_left(product_intra_ctx_chroma_v_top_left_unused),
         .has_chroma_above(product_intra_ctx_has_chroma_above_unused),
         .has_chroma_left(product_intra_ctx_has_chroma_left_unused),
-        .busy() // sequential M10K gather; product path has multi-cycle slack
+        // MUST reach decode_top: I16 latches nb on start; early start = left-edge rot.
+        .busy(product_intra_nb_busy)
     );
 
     h264_decode_top u_product_intra_mb (
@@ -978,6 +980,7 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
+        .nb_busy(product_intra_nb_busy),
         .recon_sample_valid(product_intra_recon_sample_valid),
         .recon_sample_idx(product_intra_recon_sample_idx),
         .recon_sample(product_intra_recon_sample),

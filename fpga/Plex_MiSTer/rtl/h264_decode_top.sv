@@ -42,6 +42,11 @@ module h264_decode_top (
     input  wire [7:0]  nb_left [0:15],
     input  wire [7:0]  nb_topleft,
     input  wire [7:0]  nb_topright [0:3],
+    // High while h264_intra_nb_ctx is still gathering this MB's neighbours.
+    // I16 must NOT start (and latch samples) until this drops — otherwise it
+    // captures the PREVIOUS MB's left/top/availability and corrupts the left
+    // edge of every row (mb_x==0 sees stale has_left=1 from x=MB_W-1).
+    input  wire        nb_busy,
 
     // Streaming PRE-deblock recon (one sample / cycle during store walk).
     output reg         recon_sample_valid,
@@ -119,9 +124,27 @@ module h264_decode_top (
     wire [7:0] i16_addr = {cur_by + {2'd0, fcnt[3:2]}, cur_bx + {2'd0, fcnt[1:0]}};
     // PARALLEL_OUT=0: the plane lives in an M10K inside the predictor and is
     // walked one sample per cycle, so there is no 256:1 byte mux here.
+    //
+    // Start I16 only after nb_ctx finishes gather (!nb_busy).  The predictor
+    // latches above/left/avail on its start edge; firing on raw mb_start
+    // latched the prior MB (classic left-column streak across 2-3 MBs).
+    reg i16_start_pend;
+    reg i16_nb_start;
+    always @(posedge clk) begin
+        i16_nb_start <= 1'b0;
+        if (reset) begin
+            i16_start_pend <= 1'b0;
+        end else if (mb_start && is_i16x16) begin
+            i16_start_pend <= 1'b1;
+        end else if (i16_start_pend && !nb_busy) begin
+            i16_start_pend <= 1'b0;
+            i16_nb_start   <= 1'b1;
+        end
+    end
+
     h264_intra16x16_pred #(.PARALLEL_OUT(0)) u_i16_pred (
         .clk(clk),
-        .start(mb_start && is_i16x16),
+        .start(i16_nb_start),
         .mode(i16_pred_mode),
         .above(nb_top),
         .left(nb_left),
@@ -257,7 +280,8 @@ module h264_decode_top (
     reg [3:0]         skid_index;
 
     wire busy = (state != ST_IDLE);
-    wire launch_ok = mb_started && (!pipe_is_i16 || i16_pred_ready);
+    // Hold block launch until neighbour gather is done (top line-buffer path).
+    wire launch_ok = mb_started && !nb_busy && (!pipe_is_i16 || i16_pred_ready);
 
     wire [7:0] walk_addr = {cur_by + {2'd0, wcnt[3:2]}, cur_bx + {2'd0, wcnt[1:0]}};
 
