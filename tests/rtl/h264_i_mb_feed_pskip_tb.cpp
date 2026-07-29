@@ -76,13 +76,16 @@ struct Sim {
     }
 
     void serveWindow() {
-        if (!top.rbsp_request_valid)
-            return;
-        const uint16_t base = top.rbsp_request_offset;
-        top.rbsp_window_base = base;
-        for (int i = 0; i < 64; ++i) {
-            const size_t abs = static_cast<size_t>(base) + static_cast<size_t>(i);
-            top.rbsp_byte_in[i] = (abs < rbsp.size()) ? rbsp[abs] : 0;
+        // Model registered window: ready same cycle as request (TB combo serve).
+        // Product RTL is multi-cycle M10K; feed waits on rbsp_window_ready.
+        if (top.rbsp_request_valid) {
+            const uint16_t base = top.rbsp_request_offset;
+            top.rbsp_window_base = base;
+            for (int i = 0; i < 64; ++i) {
+                const size_t abs = static_cast<size_t>(base) + static_cast<size_t>(i);
+                top.rbsp_byte_in[i] = (abs < rbsp.size()) ? rbsp[abs] : 0;
+            }
+            top.rbsp_window_ready = 1;
         }
     }
 
@@ -92,6 +95,7 @@ struct Sim {
         top.rbsp_length = lengthBytes;
         top.rbsp_complete = 1;
         top.rbsp_window_base = 0;
+        top.rbsp_window_ready = 1;
         for (int i = 0; i < 64; ++i)
             top.rbsp_byte_in[i] = (static_cast<size_t>(i) < rbsp.size()) ? rbsp[i] : 0;
     }
@@ -115,6 +119,7 @@ struct Sim {
         top.rbsp_complete = 0;
         top.rbsp_length = 0;
         top.rbsp_window_base = 0;
+        top.rbsp_window_ready = 0;
         for (int i = 0; i < 64; ++i)
             top.rbsp_byte_in[i] = 0;
         tick();
@@ -220,16 +225,18 @@ void checkEosSkipRun() {
 
 void checkZeroSkipRunThenCoded() {
     // 2x2: first skip_run=1 already consumed → emit MB0 skip.
-    // Then mid-slice skip_run==0 (legal), coded P_L0_16x16 cbp=0, then skip_run=2 to EOS.
+    // H.264 7.3.4: after a skip-run batch comes a coded MB directly (no
+    // intervening skip_run). After that coded MB, skip_run==0 is legal then
+    // another coded MB; here we use skip_run=2 to cover the rest to EOS.
+    // Pattern: skip / coded P16 cbp0 / skip / skip.
     Sim s;
     s.reset();
     Bits b;
-    b.ue(0); // mid skip_run = 0
-    b.ue(0); // mb_type P_L0_16x16
+    b.ue(0); // mb_type P_L0_16x16 (after first skip-run)
     b.se(0); // mvd_x
     b.se(0); // mvd_y
     b.ue(0); // inter CBP code 0 → cbp=0
-    b.ue(2); // final skip_run covers remaining 2 MBs
+    b.ue(2); // skip_run covers remaining 2 MBs
     b.trailing();
     s.loadRbsp(b);
 
@@ -262,7 +269,7 @@ void checkWindowBoundarySkipRun() {
     // Pre-pad zeros up to kBitOff, then payload.
     while (b.nbits < kBitOff)
         b.pushBit(0);
-    b.ue(0); // skip_run 0
+    // After first skip-run batch: coded MB directly, then skip_run for rest.
     b.ue(0); // P16x16
     b.se(0);
     b.se(0);

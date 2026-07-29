@@ -87,6 +87,7 @@ module h264_decode_core_p16z_tb #(
 		.pps_chroma_qp_index_offset(5'sd0),
 		.rbsp_byte(rbsp_byte_in),
 		.rbsp_window_base(rbsp_window_base),
+		.rbsp_window_ready(1'b1),
 		.rbsp_request_offset(rbsp_request_offset),
 		.rbsp_request_valid(rbsp_request_valid),
 		.mb_type_valid(mb_type_valid),

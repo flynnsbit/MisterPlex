@@ -673,12 +673,9 @@ module stream_path #(
 	// status residual_csum sticky path.  h264_i_mb_feed walks real CAVLC residual
 	// from the whole-slice RBSP window for every MB (including MB0).
 
-	// Whole-slice RBSP store with a real sliding window.  The old 64-byte
-	// capture could never answer rbsp_request_offset, so the core's request was
-	// dropped on the floor and every macroblock past the first read the same 64
-	// bytes.  h264_rbsp_window holds the entire emulation-prevention-stripped
-	// VCL NAL and serves a 64-byte window combinationally at whatever offset
-	// the active consumer (I-MB feed or P residual walker) asks for.
+	// Whole-slice RBSP store with a registered sliding window (M10K + shadow).
+	// MULTI-CYCLE contract: consumers wait for core_rbsp_ready (see
+	// h264_rbsp_window header).  Single shared instance; mux feed vs core req.
 	wire [15:0] core_rbsp_request_offset_raw;
 	wire        core_rbsp_request_valid_raw;
 	wire [15:0] core_rbsp_request_offset =
@@ -691,6 +688,7 @@ module stream_path #(
 	wire [15:0] core_rbsp_length;
 	wire        core_rbsp_complete;
 	wire        core_rbsp_overflow;
+	wire        core_rbsp_ready;
 
 	h264_rbsp_window #(
 		.DEPTH_BYTES(RBSP_DEPTH_BYTES),
@@ -709,7 +707,8 @@ module stream_path #(
 		.window_avail(core_rbsp_avail),
 		.length(core_rbsp_length),
 		.complete(core_rbsp_complete),
-		.overflow(core_rbsp_overflow)
+		.overflow(core_rbsp_overflow),
+		.window_ready(core_rbsp_ready)
 	);
 
 	// Start the feeder once the slice header is valid AND the VCL RBSP capture
@@ -764,6 +763,7 @@ module stream_path #(
 		.pps_chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_window_ready(core_rbsp_ready),
 		.rbsp_request_offset(feed_rbsp_request_offset),
 		.rbsp_request_valid(feed_rbsp_request_valid),
 		.rbsp_length(core_rbsp_length),
@@ -939,6 +939,7 @@ module stream_path #(
 		.slice_beta_offset(sl_beta_off),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
+		.rbsp_window_ready(core_rbsp_ready),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
 		.rbsp_request_valid(core_rbsp_request_valid_raw),
 		.mb_type_valid(core_mb_type_valid),
@@ -1062,7 +1063,7 @@ module stream_path #(
 	             |core_dpb_rd_addr | core_frame_done | |core_frame_mb_count |
 	             core_rbsp_request_valid | |core_rbsp_request_offset | core_busy |
 	             |core_rbsp_avail | |core_rbsp_length | core_rbsp_complete |
-	             core_rbsp_overflow | |core_rbsp_window_base |
+	             core_rbsp_overflow | |core_rbsp_window_base | core_rbsp_ready |
 	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 
