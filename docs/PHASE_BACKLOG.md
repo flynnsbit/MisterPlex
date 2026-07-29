@@ -622,7 +622,7 @@ _Superseded original entry, retained for audit:_ **Bank-floor theory raised and 
 - [x] **Product A/V cast (Plex Web → MiSTerPlex)** — **DONE** `PRESENT=fpga` `STREAM=0` wall-48k; blip24 median **~−13 ms**; pfps≈vfps. Evidence `captures/e2e/REPORT*.md` + blip24.
 - [x] `make unit` — **GREEN** (**C-unit28 PASS** + **C-unit27 PASS** + **C-unit-sf2 PASS** + **C-unit26 PASS** reconfirm + **C-unit25/24/23/22/21/20/19/18/17** + **C-unit16/15/14**): EXIT=0; host golden res_csum=**0x14**; res_dc=-24; y00=73 mean=62; companion OK; parse self-test OK. **HOST GREEN ≠ lab hard residual PASS.** Soft-skip ≠ PASS. Reports `/tmp/misterplex-agent-C-unit28.txt`, `/tmp/misterplex-agent-C-unit27.txt`, `/tmp/misterplex-agent-C-unit-sf2.txt`, `/tmp/misterplex-agent-C-unit26.txt` … `/tmp/misterplex-agent-C-unit14.txt`
 - [~] HW residual hard gate — **IN_PROGRESS / PENDING H-gate-rcsum6** on lab LOADED **`94bbfe43`** (BUILD_OK+DEPLOY done; **do not invent hard PASS**). Historical FAIL **`ec21e133`** + **`8832824e`**. Soft-skip ≠ hard PASS. **3l2 BLOCKED** until product sticky 0x14. **BUILD_OK + DEPLOY ≠ product hard residual PASS.** (Product present path uses **`1441d409`** separately.)
-- [x] FBAR visual PASS — **DONE** on lab **`ec21e133`** (**H-fbar-ec21b** / **W-wide-gate-sf2** / **H-gate-sf2** / **H-gate-ec21** 7.0/82.9/94.4) and prior residual **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**. **FBAR soft ≠ hard residual PASS ≠ WIDE product PASS.**
+- [~] FBAR visual PASS — **HISTORICAL soft PASS** on lab **`ec21e133`** (**H-fbar-ec21b** / **W-wide-gate-sf2** / **H-gate-sf2** / **H-gate-ec21** 7.0/82.9/94.4) and prior residual **`8832824e`** / **`75da8bb1`** / **`4d6ee356`**. **Now UNSCOREABLE/NO_CAPTURE** (Hour-21: no `/dev/video*`, no uvcvideo) — do **not** count as live green. **≠ live user `41adb98c`.** **FBAR soft ≠ hard residual PASS ≠ WIDE product PASS.** See Hour-28 score audit.
 - [ ] Full-width VGA verified (HBlank@320) — **FAIL open** historical **`ec21e133`** (**W-wide-gate-sf2b** span=**0.605** **PILLAR_320_of_529**; **W-wide-gate-sf2** / **H-gate-sf2** same). Fix-2 BUILD_OK+DEPLOY+FBAR but **WIDTH FAIL** — **WIDE still FAIL open Fix-2**. **do not invent WIDE PASS / Fix-3 PASS**. **W-fix3-hold2 FIT_GO=NO**; exclusive FREE.
 - [~] DDR F1 ≥30 fps — **HISTORICAL PASS / CURRENT SILICON UNSUBSTANTIATED**: B-ddr7 on LOADED **`ec21e133`** measured mean **16.5 ms** (~60.6 fps) (`/tmp/misterplex-agent-B-ddr7.txt`); prior B-ddr6 dabdaeb0 same class. Current live evidence on `eeff4eee` shows valid YUV420P `PLXK` but all-zero `PLXF` and `has_frame=0`; do not cite historical DDR PASS as proof that the current DDR frame-store/present path runs on-device.
 - [x] `make package` — **PACKAGE_OK** embeds **`94bbfe43`** (**F-prep-rcsum6** `/tmp/misterplex-agent-F-prep-rcsum6.txt`). Prior **ec21e133** / **8832824e** packages historical. Product tear RBF also in `releases/Plex_vsync_tear_1441d409.rbf`. Package ≠ WIDE PASS.
@@ -1171,3 +1171,70 @@ values: `decode=320x240 weak=320x240@1000k present=fb0`, 0 errors, pid 31928.
 delimiter and literal, prepending junk to *every* line of the live config. The
 pre-edit backup made it a non-event. **Taking the backup before the edit is the only
 reason this is a footnote instead of an outage.**
+
+---
+
+## Hour-28 — programme score audit (2026-07-29)
+
+Full write-up: [`docs/backlog-score-audit-20260729.md`](backlog-score-audit-20260729.md).
+
+**Retraction candidate for the hourly headline `78.4%`.** That figure was a gate-shaped
+blend of frozen capture-backed `[x]` marks, campaign packages (`94bbfe43`), half-open
+residual/DDR rows, and pre-R3 idle inflation — **not** a measurement of the live user
+triple (`41adb98c` + `06c5735a` + `DECODE=320x240/PRESENT=fb0/STREAM=0`).
+
+| Denominator | Honest % | Band |
+|-------------|----------:|------|
+| **Live user product** (v0.3.0 box today) | **~67%** | 63–70 |
+| **Full Phase-3 + lab programme** (FPGA residual/WIDE/capture) | **~44%** | 40–48 |
+
+**Do not report a single blended 78.4% to the user.** Prefer the dual headline.
+
+### Category counts (scored goals)
+
+Pre-registered a=3 b=8 c=10 d=5 clean=12 → actual **a=4 b=11 c=14 d=7 clean=13**.
+Miss published (under-predicted contamination).
+
+| Cat | N | Headliners |
+|-----|--:|------------|
+| (a) defect-as-progress | 4 | G-IDLE2c **93.1%** fingerprint; G-IDLE2 100→65→55; WIDE span **0.605**; FBAR 7/82/94 soft triple |
+| (b) frozen unrunnable | 11 | FBAR/HW visual/G-OSD2/idle glass/G-AV HDMI/**no capture**; residual/WIDE need non-user RBF |
+| (c) ≠ live `41adb98c` | 14 | G-IDLE2a/2b DONE; package embeds `94bbfe43`; FBAR on `ec21e133`…; soak; B-ddr7; present cite `1441d409`; FPGA 3l* |
+| (d) self-agree | 7 | LastFrame==LastFrame; mailbox self-check class; UNSCORED rc=0; rollcall constant; geometry vacuity class |
+| clean | 13 | pin live; conf triple; G-VID1; Logo DDR (fpga boot); G-MAIN/STAB1 code; host units; intra I420 (FPGA denom only) |
+
+### Gate checklist honest reread (same 10 rows)
+
+Naive fill ~7–8/10 ≈ **70–80%** (plausible origin of 78.4). Against **live user artifact**:
+FBAR → **UNSCOREABLE/NO_CAPTURE**; package → **campaign ≠ ship pin**; residual/DDR → **0 on user denom**;
+cast/soak → partial/(c). **~35–45% if gate≡live; keep dual programme table above instead.**
+
+### Goal moves (largest)
+
+| Goal | Old | New | Why |
+|------|-----|-----|-----|
+| Idle/screensaver | 93% / 65% | **~55%** (≤40% multi-mode device) | R3 + live audit |
+| Gate FBAR [x] | DONE | **UNSCOREABLE** | Hour-21 no `/dev/video*` |
+| Gate package [x] | DONE `94bbfe43` | split ship **`41adb98c`** vs campaign | (c) |
+| A/V cast DONE | 100% | **~65%** live | `PRESENT=fb0` not re-proven |
+| P3-WIDE 0.605 | open FAIL | keep FAIL; never “60% done” | (a) |
+| Capture visual weight | smuggled green | **0** | (b) |
+
+### Live device (read-only reconfirm this audit)
+
+`CORE=Plex` RBF `41adb98c…` daemon `06c5735a…` pid one;
+conf `DECODE=320x240 PRESENT=fb0 STREAM=0 OSD_CONTROL=0`; adopted
+`decode=320x240 weak=320x240@1000k present=fb0`. **No deploy/reload.**
+
+### `make unit` gate (this audit)
+
+Exclusive flock runs under concurrent local Quartus. Final attempt:
+`.copilot-session/make-unit-score-audit4.log` — **TRUE_RC=2**,
+`grep -c ': OK'` **=68**, unique `: OK` names **46**, `^OK` **44**.
+Terminal fail: `test_no_private_data` → hardcoded `192.168.1.41` in
+`tests/unit/test_core_conf_geometry_gate.sh:24` (concurrent-tree RED, not
+introduced by this audit). Earlier attempts: override env polluted
+`test_resource_preflight` (clean re-run rc=0); `--eval preflight` leaked into
+Verilator recursive makes (`0 modules`) — use skip-preflight.mk not MAKEFLAGS.
+**Not a green gate; not a product-silicon verdict.** Parent baseline 70/`rc=0`
+not re-established this hour.
