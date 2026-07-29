@@ -153,15 +153,22 @@ module h264_decode_top (
     // latched the prior MB (classic left-column streak across 2-3 MBs).
     reg i16_start_pend;
     reg i16_nb_start;
+    // Permanent invariant: count I16 start pulses (must equal I16 MB count).
+    // A silent launch stall looks like a residual bug without this counter.
+    // verilator lint_off UNUSED
+    reg [15:0] i16_start_pulse_count;
+    // verilator lint_on UNUSED
     always @(posedge clk) begin
         i16_nb_start <= 1'b0;
         if (reset) begin
             i16_start_pend <= 1'b0;
+            i16_start_pulse_count <= 16'd0;
         end else if (mb_start && is_i16x16) begin
             i16_start_pend <= 1'b1;
         end else if (i16_start_pend && !nb_busy) begin
             i16_start_pend <= 1'b0;
             i16_nb_start   <= 1'b1;
+            i16_start_pulse_count <= i16_start_pulse_count + 16'd1;
         end
     end
 
