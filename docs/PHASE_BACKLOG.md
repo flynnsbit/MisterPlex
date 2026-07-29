@@ -208,6 +208,21 @@ Any future green decode claim must name the exact evidence file, fixture, and in
 
 ## ACTIVE — OSD menu v3 + idle screen (**DONE** 2026-07-26)
 
+### Live v0.3.0 idle rescore (**2026-07-29** — supersedes inflated % for the user box)
+
+Device now runs release core **`41adb98c`** + daemon **`06c5735a`** (320×240 RGB565). Full write-up:
+[`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md).
+
+- **Do not read G-IDLE2c’s “93.1% pixel-identical” as a completion score** — that number is the
+  *LastFrame torn-composite bug fingerprint* on the later 480p line.
+- **Honest live goal score: ~55%** (host renderer + bit-exact DDR Logo both banks). Not 93%, not 65%
+  transferred from 480p captures.
+- **Proven without HDMI:** DDR bank0=bank1=host Logo RGB565 md5 `ed806ec51e6f191a02efa71c4697eb65`;
+  CONF_STR idle menu present; unit green + black/LastFrame mutants red.
+- **Unscoreable this boot:** HDMI picture, Black/SS/LastFrame on device, SS animation on glass,
+  stop/EOF→idle (conf still `DECODE=624x480`/`STREAM=1`/`OSD_CONTROL=0` while core is 320×240).
+- **480p G-IDLE2a/2b DONE marks are historical** — they do not grade `41adb98c`.
+
 User ask: *"add the different audio delay settings and any other controls in the config directly to the RBF
 menu items so the user can change them there without having to edit a config"* and *"the last frame of the
 last video is staying on screen and should go back to a default state, black screen or even better a Plex
@@ -292,6 +307,9 @@ This is why `pushContentFpsBits()` / `restoreOsd()` / `osd_state.txt` were rever
   visually indistinguishable from the original black-screen **bug** unless you know it was requested; `Last frame` is
   the most likely to be silently broken; a `Screensaver` that does not animate is a bug and needs two time-separated
   frames diffed to detect. **This goal was scored 100% on the strength of one mode and has been corrected to 65%.**
+  **Further cut for the live v0.3.0 box (2026-07-29):** 480p 2a/2b captures do not transfer; with only Logo
+  DDR-proven on `41adb98c` and no capture card, multi-mode standing is **≤40% device / ~55% overall**
+  per [`docs/idle-screensaver-audit-v030.md`](idle-screensaver-audit-v030.md).
 - [x] G-OSD-UNIT bit layout pinned — `tests/unit/test_osd_menu.cpp` in `make unit` (12 suites green)
 - [ ] G-OSD5 arrow-key menu navigation eyes-on — **PENDING user**: `/dev/uinput` F12 works, **arrows do not register**, so lab automation cannot drive the menu end-to-end
 - [x] G-OSD6 **F12/OSD invisible (2026-07-26)** — **RESOLVED. Root cause: a wedged MiSTer `Main`.**
