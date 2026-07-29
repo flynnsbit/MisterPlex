@@ -21,7 +21,7 @@ cat >"$WORK/match/misterplexd.log" <<'LOG'
 ** WARNING: connection is not using a post-quantum key exchange algorithm.
 misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
 misterplexd: OSD_CONTROL=0
-misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 weak=320x240@1000k present=fb0 auto_next=1 subs=off
+misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://YOUR-PLEX-SERVER:32400 servers=1 decode=320x240 decode_source=default weak=320x240@1000k present=fb0 auto_next=1 subs=off
 LOG
 
 printf '%s\n' "$KNOWN_MD5" >"$WORK/mismatch/core.md5"

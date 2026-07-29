@@ -2,11 +2,11 @@
 # Gate: resident core geometry must match daemon-ADOPTED decode size.
 #
 # WHY NOT PARSE THE CONF FILE:
-#   arm/misterplexd/main.cpp defaults decodeW/H=320x240, then conf DECODE=
-#   overrides, then argv --decode overrides conf. Static conf parsing misses
-#   that precedence and can green-light a lie. The daemon prints what it
-#   actually adopted on the "misterplexd: running ... decode=WxH ..." line.
-#   THAT line is the source of truth for this gate.
+#   arm/misterplexd/main.cpp defaults kDefaultCodedDecodeSize (320x240), then
+#   conf DECODE= / argv --decode go through adoptExternalCodedSize (typed).
+#   Static conf parsing still misses CLI precedence and REJECTED keep-default
+#   cases. The daemon prints what it actually adopted on
+#   "misterplexd: running ... decode=WxH ..." — THAT line is SoT for this gate.
 #
 # Exit codes:
 #   0  PASS  — known core md5, adopted decode matches mapped geometry
