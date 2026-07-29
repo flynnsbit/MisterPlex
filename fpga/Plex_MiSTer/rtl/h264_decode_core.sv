@@ -543,7 +543,10 @@ module h264_decode_core #(
     wire syntax_xy_ready = !xy_init_busy;
     wire [MB_IDX_W-1:0] syntax_mb_idx = syntax_mb_x[MB_IDX_W-1:0];
     wire [MB_IDX_W-1:0] wb_mb_idx = wb_mb_x[MB_IDX_W-1:0];
+    // Feed remaps P-slice Intra mb_type by -5 (I_NxN→0, I16→1..), so a bare
+    // mb_type==0 test would also match Intra_4x4-in-P. Exclude mb_intra.
     wire syntax_p16_candidate = mb_type_valid && !slice_is_i && !slice_is_idr &&
+                                !mb_intra &&
                                 (mb_skip || (mb_type == 5'd0)) &&
                                 (mb_skip || (part_mode == 3'd0));
     wire syntax_p16_launch = syntax_p16_candidate && syntax_xy_ready && (wb_state == ST_IDLE) && decode_enable;
@@ -555,7 +558,9 @@ module h264_decode_core #(
 
     // ── Per-macroblock QP (7.4.5): mb_qp_delta is only present when the MB
     //    actually carries coefficients, and wraps modulo 52.
-    wire mb_is_i16 = slice_is_i && !mb_skip && (mb_type != 5'd0);
+    // Feed presents I-slice and Intra-in-P with the same mb_type map:
+    //   0 = I_NxN, 1..24 = I_16x16 (mode/CBP folded). mb_intra covers P.
+    wire mb_is_i16 = !mb_skip && (slice_is_i || mb_intra) && (mb_type != 5'd0);
     wire mb_has_residual = !mb_skip &&
                            ((cbp_luma != 4'd0) || (cbp_chroma != 2'd0) || mb_is_i16);
     wire signed [7:0] qp_delta_sum = $signed({2'b00, cur_qp_y_r}) +
@@ -1010,9 +1015,13 @@ module h264_decode_core #(
     // writeback accepts the recon plane (sticky intra_recon_pend covers the
     // dbf_busy gap so the pulse cannot be lost).
     reg intra_recon_pend;
-    wire product_intra_mb_start = syntax_xy_ready && (mb_type_valid && slice_is_i && !mb_skip &&
-                                         decode_enable && (wb_state == ST_IDLE) &&
-                                         !intra_active_r && !intra_recon_pend);
+    // I-slice OR Intra-in-P (feed mb_intra). Requiring slice_is_i alone skipped
+    // every intra MB in a P slice — g-mc launch fix; keep the gate here too.
+    wire product_intra_mb_start = syntax_xy_ready &&
+                                         (mb_type_valid && !mb_skip &&
+                                          (slice_is_i || mb_intra) &&
+                                          decode_enable && (wb_state == ST_IDLE) &&
+                                          !intra_active_r && !intra_recon_pend);
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     // I16 DC: latch feed i16_dc_level_* then delay valid 1 cycle so combo
@@ -1127,6 +1136,30 @@ module h264_decode_core #(
         intra_chroma_residual_valid && !intra_chroma_residual_valid_d;
     // One-cycle nb_ctx publish when BOTH luma and chroma recon are final.
     wire        product_intra_nb_commit = product_intra_nb_commit_r;
+
+    // Inter PRE planes for nb_ctx (Intra-in-P neighbours). Filled during
+    // ST_P16_WRITE; commit one cycle after the last sample is registered.
+    reg  [7:0]  inter_pre_recon_y [0:255];
+    reg  [7:0]  inter_pre_recon_u [0:63];
+    reg  [7:0]  inter_pre_recon_v [0:63];
+    reg         inter_pre_nb_commit;
+    reg         inter_pre_nb_commit_pend;
+    wire [7:0]  nb_commit_recon_y [0:255];
+    wire [7:0]  nb_commit_recon_u [0:63];
+    wire [7:0]  nb_commit_recon_v [0:63];
+    genvar nb_ci;
+    generate
+        for (nb_ci = 0; nb_ci < 256; nb_ci = nb_ci + 1) begin : g_nb_commit_y
+            assign nb_commit_recon_y[nb_ci] = inter_pre_nb_commit ?
+                inter_pre_recon_y[nb_ci] : product_intra_recon_y[nb_ci];
+        end
+        for (nb_ci = 0; nb_ci < 64; nb_ci = nb_ci + 1) begin : g_nb_commit_c
+            assign nb_commit_recon_u[nb_ci] = inter_pre_nb_commit ?
+                inter_pre_recon_u[nb_ci] : product_intra_recon_u[nb_ci];
+            assign nb_commit_recon_v[nb_ci] = inter_pre_nb_commit ?
+                inter_pre_recon_v[nb_ci] : product_intra_recon_v[nb_ci];
+        end
+    endgenerate
     function automatic [7:0] clip_sum8;
         input [7:0] pred_v;
         input signed [15:0] res_v;
@@ -1284,8 +1317,10 @@ module h264_decode_core #(
     ) u_product_intra_nb_ctx (
         .clk(clk),
         .reset(reset),
-        .mb_x(intra_mb_x_now),
-        .mb_y(intra_mb_y_now),
+        // mb_x/y: intra gather uses live syntax; inter PRE commit must use
+        // wb_mb_* or edges land on the wrong column (P-slice Intra neighbours).
+        .mb_x(inter_pre_nb_commit ? wb_mb_x : intra_mb_x_now),
+        .mb_y(inter_pre_nb_commit ? wb_mb_y : intra_mb_y_now),
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
@@ -1295,13 +1330,12 @@ module h264_decode_core #(
         // from recon_y_mb on mb_commit — do not re-tie that to 128.
         .block_valid(1'b0),
         .recon_pixels(product_intra_ctx_recon_pixels),
-        // Commit PRE neighbours only once chroma recon is final. Luma
-        // mb_recon_valid can beat chroma by tens of cycles; committing then
-        // published U/V=128 and the next MB's chroma DC was permanently biased.
-        .mb_commit(product_intra_nb_commit),
-        .recon_y_mb(product_intra_recon_y),
-        .recon_u_mb(product_intra_recon_u),
-        .recon_v_mb(product_intra_recon_v),
+        // Intra: commit after chroma combine. Inter: PRE plane after ST_P16_WRITE
+        // so Intra-in-P can see real neighbours (not 128).
+        .mb_commit(product_intra_nb_commit | inter_pre_nb_commit),
+        .recon_y_mb(nb_commit_recon_y),
+        .recon_u_mb(nb_commit_recon_u),
+        .recon_v_mb(nb_commit_recon_v),
         .above(product_intra_ctx_above_unused),
         .left(product_intra_ctx_left_unused),
         .top_left(product_intra_ctx_top_left_unused),
@@ -1381,10 +1415,14 @@ module h264_decode_core #(
     wire [15:0] dbf_out_x;
     wire [15:0] dbf_out_y;
     wire [7:0] dbf_out_data;
-    // Fit4 deblock-OFF acceptance: stream PRE recon during ST_WRITE and skip
-    // the deblock_mb emit path (still has residual M10K hazards past MB0).
+    // Fit4 deblock-OFF acceptance: stream PRE recon and skip the deblock_mb
+    // emit path. MUST include ST_P16_WRITE — gating only ST_WRITE left the
+    // entire P frame at px=0 (product_frames_done=1, P Y got=0).
     wire        deblock_off = (disable_deblocking_filter_idc == 2'd1);
-    wire        pre_wb_fire = deblock_off && (wb_state == ST_WRITE);
+    wire        pre_wb_fire = deblock_off &&
+                              ((wb_state == ST_WRITE) || (wb_state == ST_P16_WRITE));
+    wire [7:0]  pre_wb_data = (wb_state == ST_P16_WRITE) ?
+                              clip_u8(p16_recon_sum) : lat_recon_q;
     wire [15:0] pre_abs_x = (wb_plane == 2'd0) ?
         {4'd0, wb_mb_x, wb_sample_idx[3:0]} :
         {5'd0, wb_mb_x, wb_sample_idx[2:0]};
@@ -1508,7 +1546,7 @@ module h264_decode_core #(
         .filtered_mb_y(deblock_off ? wb_mb_y : dbf_wb_mb_y),
         .filtered_plane(deblock_off ? wb_plane : dbf_out_plane),
         .filtered_sample_idx(deblock_off ? wb_sample_idx : dbf_wb_sample_idx),
-        .filtered_sample(deblock_off ? lat_recon_q : dbf_out_data),
+        .filtered_sample(deblock_off ? pre_wb_data : dbf_out_data),
         .mem_we(dpb_ref_mem_we),
         .mem_waddr(dpb_ref_mem_waddr),
         .mem_wdata(dpb_ref_mem_wdata),
@@ -1671,6 +1709,8 @@ module h264_decode_core #(
             intra_qp_y_r <= 6'd26;
             mb_count_r <= 16'd0;
             frame_done_r <= 1'b0;
+            inter_pre_nb_commit <= 1'b0;
+            inter_pre_nb_commit_pend <= 1'b0;
             // Do not reset M10K array contents — breaks inference into block RAM.
             lat_recon_we <= 1'b0;
             lat_res_we <= 1'b0;
@@ -1712,6 +1752,12 @@ module h264_decode_core #(
                     syntax_mb_y_r <= xy_init_y;
                     xy_init_busy <= 1'b0;
                 end
+            end
+            // Inter PRE nb_ctx commit: one cycle after last ST_P16_WRITE sample.
+            inter_pre_nb_commit <= 1'b0;
+            if (inter_pre_nb_commit_pend) begin
+                inter_pre_nb_commit <= 1'b1;
+                inter_pre_nb_commit_pend <= 1'b0;
             end
             if (mb_type_valid && syntax_xy_ready) begin
                 syntax_mb_addr_r <= syntax_mb_addr_r + 16'd1;
@@ -2059,8 +2105,16 @@ module h264_decode_core #(
             end
             ST_P16_WRITE: begin
                 // q holds residual[wb_idx]; pred_q holds pred[wb_idx].
+                // Snapshot PRE recon for nb_ctx (Intra-in-P left/above).
+                if (wb_plane == 2'd0)
+                    inter_pre_recon_y[wb_sample_idx] <= clip_u8(p16_recon_sum);
+                else if (wb_plane == 2'd1)
+                    inter_pre_recon_u[wb_sample_idx[5:0]] <= clip_u8(p16_recon_sum);
+                else
+                    inter_pre_recon_v[wb_sample_idx[5:0]] <= clip_u8(p16_recon_sum);
                 if (wb_last_sample) begin
                     wb_commit_p16 <= 1'b1;
+                    inter_pre_nb_commit_pend <= 1'b1;
                     wb_state <= ST_DEBLOCK;
                 end else begin
                     // Advance emit index; raddr was already next during this
@@ -2197,7 +2251,7 @@ module h264_decode_core #(
     assign px_wr_plane = deblock_off ? wb_plane     : dbf_out_plane;
     assign px_wr_x     = deblock_off ? pre_abs_x    : dbf_out_x;
     assign px_wr_y     = deblock_off ? pre_abs_y    : dbf_out_y;
-    assign px_wr_data  = deblock_off ? lat_recon_q  : dbf_out_data;
+    assign px_wr_data  = deblock_off ? pre_wb_data  : dbf_out_data;
     assign dpb_rd_en = dpb_ref_mem_rd;
     assign dpb_rd_addr = p16_win_rd_addr;
     assign rbsp_request_offset = rbsp_request_offset_r;
