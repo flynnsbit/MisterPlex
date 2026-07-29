@@ -27,6 +27,7 @@ fi
 FEED_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_mb_feed.sv"
 CAVLC_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
 IQ_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+IQ_SEQ_RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_seq.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TOP="$ROOT/tests/rtl/h264_i_mb_feed_pskip_tb_top.sv"
 TB="$ROOT/tests/rtl/h264_i_mb_feed_pskip_tb.cpp"
@@ -38,7 +39,7 @@ for f in "$FEED_RTL" "$CAVLC_RTL" "$IQ_RTL" "$QIP" "$TOP" "$TB"; do
     exit 2
   fi
 done
-for rel in rtl/h264_i_mb_feed.sv rtl/h264_cavlc_residual.sv rtl/h264_iq_idct_4x4.sv; do
+for rel in rtl/h264_i_mb_feed.sv rtl/h264_cavlc_residual.sv rtl/h264_iq_idct_4x4.sv rtl/h264_iq_idct_seq.sv; do
   if ! grep -q "$rel" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product RTL $rel" >&2
     exit 2
@@ -51,6 +52,6 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD" \
   --top-module h264_i_mb_feed_pskip_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$FEED_RTL" "$CAVLC_RTL" "$IQ_RTL" "$TB"
+  "$TOP" "$FEED_RTL" "$CAVLC_RTL" "$IQ_RTL" "$IQ_SEQ_RTL" "$TB"
 "$BUILD/Vh264_i_mb_feed_pskip_tb_top"
 echo "OK h264_i_mb_feed multi-MB P skip_run boundary RTL sim"

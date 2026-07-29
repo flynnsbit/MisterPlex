@@ -1,4 +1,19 @@
-// Small dual-clock FIFO for clock-domain crossings.
+// Dual-clock async FIFO for CDC (Gray pointers + simple dual-port RAM).
+//
+// MEMORY: M10K dual-port (wr_clk write / rd_clk read). Do NOT use MLAB —
+// deep/wide instances (px_fifo AW=8) exhaust MLAB and silently become ALMs
+// (fit4: px_fifo ~12k ALM, design RAM Blocks 0/553). Map proof: 7236→59 ALUT.
+// Coding rules that keep M10K inference:
+//   - separate always @(posedge wr_clk) mem write (clean SDP, not mixed w/ Gray CDC)
+//   - registered read only on rd_clk; no reset of the mem array
+//   - ramstyle "M10K, no_rw_check"
+//
+// LATENCY CONTRACT (unchanged — consumers already depend on this):
+//   Registered first-word-fall-through: rd_empty=0 iff rd_data is valid.
+//   mem[] is only sampled into rd_data_r on rd_clk (sync read). Consumers
+//   (px_fifo, m1_rsp_fifo, input_fifo, dpb bridge, frame_store) must NOT
+//   assume combo mem[]→rd_data. rd_en pops the registered word and may
+//   prefetch next. FWFT timing is unchanged vs the prior MLAB version.
 module async_fifo #(
 	parameter int WIDTH = 8,
 	parameter int AW    = 4
@@ -18,15 +33,15 @@ module async_fifo #(
 );
 	localparam int DEPTH = 1 << AW;
 
-	(* ramstyle = "MLAB" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+	// Force block RAM. MLAB was the fit4 px_fifo ALM explosion.
+	(* ramstyle = "M10K, no_rw_check" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
 
 	reg [AW:0] wr_bin, wr_gray;
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
 	// Registered first-word-fall-through read port: consumers still see
-	// rd_empty=0 only when rd_data is valid, but no fast-clock RAM data fans
-	// straight into slow-domain logic.
+	// rd_empty=0 only when rd_data is valid.
 	reg [WIDTH-1:0] rd_data_r;
 	reg             rd_valid;
 	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};
@@ -52,6 +67,13 @@ module async_fifo #(
 	assign rd_empty = !rd_valid;
 	assign rd_data = rd_data_r;
 
+	// Write port (wr_clk only). Mem write kept separate from pointer Gray CDC
+	// so the RAM is a clean dual-clock SDP like line_buf_ram.
+	always @(posedge wr_clk) begin
+		if (wr_accept)
+			mem[wr_bin[AW-1:0]] <= wr_data;
+	end
+
 	always @(posedge wr_clk) begin
 		if (wr_reset) begin
 			wr_bin <= '0;
@@ -62,13 +84,15 @@ module async_fifo #(
 			rd_gray_w1 <= rd_gray;
 			rd_gray_w2 <= rd_gray_w1;
 			if (wr_accept) begin
-				mem[wr_bin[AW-1:0]] <= wr_data;
 				wr_bin <= wr_bin_next;
 				wr_gray <= wr_gray_next;
 			end
 		end
 	end
 
+	// Read port (rd_clk only). Registered mem read preserves FWFT: when
+	// rd_prefetch fires, rd_data_r and rd_valid update together (same as
+	// prior MLAB implementation — only the storage fabric changes).
 	always @(posedge rd_clk) begin
 		if (rd_reset) begin
 			rd_bin <= '0;

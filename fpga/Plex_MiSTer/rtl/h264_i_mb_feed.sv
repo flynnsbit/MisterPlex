@@ -174,6 +174,9 @@ module h264_i_mb_feed #(
 		ST_P_AFTER_MB   = 6'd21,
 		ST_P_SKIP_RUN   = 6'd22,
 		ST_P_AFTER_SKIP_ARM = 6'd25,
+		// Sequential IQ+IDCT for P residual plane + chroma AC.
+		// LATENCY: start → ~21 cyc → done; inputs latched on start (CAVLC∥IQ OK).
+		ST_RES_IQ       = 6'd26,
 		ST_EOS_CHECK    = 6'd23,
 		ST_EOS_ARM      = 6'd24;
 
@@ -666,43 +669,44 @@ module h264_i_mb_feed #(
 	                               (feed_chr_nC < 5'd8) ? 3'd2 : 3'd3;
 	wire signed [28:0] feed_chr_dc_inj =
 		feed_chr_ac_is_v ? chr_dc_v[feed_chr_ac_blk] : chr_dc_u[feed_chr_ac_blk];
-	// Luma uses QPy; chroma uses QPc. max_coeff matches CAVLC max for the step.
-	wire [5:0] feed_res_qp = feed_step_is_luma ? qp_r : feed_qp_c;
-	wire [4:0] feed_res_max =
-		feed_step_is_luma ? (is_i16_r ? 5'd15 : 5'd16) :
-		(feed_step_is_chr_dc ? 5'd4 : 5'd15);
-	wire signed [28:0] feed_dequant_raw [0:15];
-	wire signed [28:0] feed_dequant [0:15];
+	// AREA/THROUGHPUT: one sequential IQ+IDCT (was combo dequant + 2× idct).
+	// Consumer ST_RES_IQ waits done; coeff/qp latched on start → CAVLC may
+	// restart next block while IQ runs (initiation ~max(cavlc,21) not sum).
+	// Geometry snapped at start for store-after-done. No fixed frame geometry.
+	reg                feed_iq_start_r;
+	reg                feed_iq_pending_r;
+	reg                feed_iq_dc_only_r;
+	reg                feed_iq_skip_dc_r;
+	reg                feed_iq_dc_ov_r;
+	reg [5:0]          feed_iq_qp_r;
+	reg [4:0]          feed_iq_max_r;
+	reg signed [28:0]  feed_iq_dc_val_r;
+	reg [4:0]          feed_iq_snap_step;
+	reg                feed_iq_snap_feed_luma;
+	reg                feed_iq_snap_inter;
+	reg                feed_iq_snap_chr_v;
+	reg [1:0]          feed_iq_snap_chr_blk;
+	wire               feed_iq_done;
 	wire signed [28:0] feed_idct [0:15];
-	wire signed [28:0] feed_dc_only_dq [0:15];
-	wire signed [28:0] feed_dc_only_idct [0:15];
-	h264_dequant4x4 u_feed_dequant (
-		.coeff(cav_coeff),
-		.qp(feed_res_qp),
-		.max_coeff(feed_res_max),
-		.dequant(feed_dequant_raw)
-	);
-	genvar fdi;
+	wire signed [15:0] feed_iq_coeff [0:15];
+	genvar fci;
 	generate
-		for (fdi = 0; fdi < 16; fdi = fdi + 1) begin : g_feed_dq
-			if (fdi == 0) begin
-				// Chroma-AC only: inject Hadamard DC. Luma uses CAVLC coeff[0].
-				assign feed_dequant[fdi] = feed_step_is_chr_ac ? feed_chr_dc_inj
-				                                               : feed_dequant_raw[fdi];
-				assign feed_dc_only_dq[fdi] = feed_chr_dc_inj;
-			end else begin
-				assign feed_dequant[fdi] = feed_dequant_raw[fdi];
-				assign feed_dc_only_dq[fdi] = 29'sd0;
-			end
+		for (fci = 0; fci < 16; fci = fci + 1) begin : g_feed_iq_c
+			assign feed_iq_coeff[fci] = feed_iq_dc_only_r ? 16'sd0 : cav_coeff[fci];
 		end
 	endgenerate
-	h264_idct4x4 u_feed_idct (
-		.dequant(feed_dequant),
-		.residual(feed_idct)
-	);
-	h264_idct4x4 u_feed_dc_only_idct (
-		.dequant(feed_dc_only_dq),
-		.residual(feed_dc_only_idct)
+	h264_iq_idct_seq u_feed_iq_idct (
+		.clk(clk),
+		.reset(reset || slice_go),
+		.start(feed_iq_start_r),
+		.coeff(feed_iq_coeff),
+		.qp(feed_iq_qp_r),
+		.max_coeff(feed_iq_max_r),
+		.skip_dc(feed_iq_skip_dc_r),
+		.dc_override(feed_iq_dc_ov_r),
+		.dc_value(feed_iq_dc_val_r),
+		.residual(feed_idct),
+		.done(feed_iq_done)
 	);
 	function automatic [7:0] luma4x4_index;
 		input [3:0] block;
@@ -837,8 +841,13 @@ module h264_i_mb_feed #(
 		luma4x4_valid <= 1'b0;
 		rbsp_request_valid <= 1'b0;
 		cav_start <= 1'b0;
+		feed_iq_start_r <= 1'b0;
 
 		if (reset) begin
+			feed_iq_pending_r <= 1'b0;
+			feed_iq_dc_only_r <= 1'b0;
+			feed_iq_skip_dc_r <= 1'b0;
+			feed_iq_dc_ov_r <= 1'b0;
 			st <= ST_IDLE;
 			mb_addr <= 16'd0;
 			mb_total <= 16'd0;
@@ -1293,28 +1302,28 @@ module h264_i_mb_feed #(
 						end
 						res_step <= res_step + 5'd1;
 					end else begin
-						// Uncoded chroma AC: still inject DC-only residual when cbp!=0.
-						if ((feed_luma_r || inter_res_only_r) && (cbp_c_r != 2'd0)) begin
-							for (ci = 0; ci < 16; ci = ci + 1) begin
-								if (feed_luma_r) begin
-									if (feed_chr_ac_is_v)
-										chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-									else
-										chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-								end else begin
-									if (feed_chr_ac_is_v)
-										p_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-									else
-										p_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_dc_only_idct[ci]);
-								end
-							end
-						end
-						// Always track TC=0 for neighbour nC.
+						// Uncoded chroma AC: multi-cycle DC-only IQ when cbp!=0.
 						if (feed_chr_ac_is_v)
 							chr_tc_v[feed_chr_ac_blk] <= 5'd0;
 						else
 							chr_tc_u[feed_chr_ac_blk] <= 5'd0;
-						res_step <= res_step + 5'd1;
+						if ((feed_luma_r || inter_res_only_r) && (cbp_c_r != 2'd0)) begin
+							feed_iq_dc_only_r <= 1'b1;
+							feed_iq_skip_dc_r <= 1'b1;
+							feed_iq_dc_ov_r <= 1'b1;
+							feed_iq_dc_val_r <= feed_chr_dc_inj;
+							feed_iq_qp_r <= feed_qp_c;
+							feed_iq_max_r <= 5'd15;
+							feed_iq_snap_step <= res_step;
+							feed_iq_snap_feed_luma <= feed_luma_r;
+							feed_iq_snap_inter <= inter_res_only_r;
+							feed_iq_snap_chr_v <= feed_chr_ac_is_v;
+							feed_iq_snap_chr_blk <= feed_chr_ac_blk;
+							feed_iq_pending_r <= 1'b1;
+							st <= ST_RES_IQ;
+						end else begin
+							res_step <= res_step + 5'd1;
+						end
 					end
 				end else begin
 					if (rel_bit16 >= 16'd400) begin
@@ -1381,11 +1390,20 @@ module h264_i_mb_feed #(
 								blk_guard <= 6'd0;
 								st <= ST_RES_FEED;
 							end else if (inter_res_only_r) begin
-								// P luma: IQ/IDCT sample plane export (sole CAVLC owner).
-								for (ci = 0; ci < 16; ci = ci + 1)
-									p_residual_y[luma4x4_index(res_step[3:0], ci[3:0])] <= sat16(feed_idct[ci]);
-								res_step <= res_step + 5'd1;
-								st <= ST_RES_START;
+								// P luma: start multi-cycle IQ; store on done (snap).
+								feed_iq_dc_only_r <= 1'b0;
+								feed_iq_skip_dc_r <= 1'b0;
+								feed_iq_dc_ov_r <= 1'b0;
+								feed_iq_dc_val_r <= 29'sd0;
+								feed_iq_qp_r <= qp_r;
+								feed_iq_max_r <= is_i16_r ? 5'd15 : 5'd16;
+								feed_iq_snap_step <= res_step;
+								feed_iq_snap_feed_luma <= 1'b0;
+								feed_iq_snap_inter <= 1'b1;
+								feed_iq_snap_chr_v <= 1'b0;
+								feed_iq_snap_chr_blk <= 2'd0;
+								feed_iq_pending_r <= 1'b1;
+								st <= ST_RES_IQ;
 							end else begin
 								res_step <= res_step + 5'd1;
 								st <= ST_RES_START;
@@ -1402,31 +1420,62 @@ module h264_i_mb_feed #(
 							res_step <= res_step + 5'd1;
 							st <= ST_RES_START;
 						end else begin
-							// Chroma AC: dequant(max15)+DC inject+IDCT into residual plane.
-							if (feed_luma_r) begin
-								for (ci = 0; ci < 16; ci = ci + 1) begin
-									if (feed_chr_ac_is_v)
-										chroma_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-									else
-										chroma_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-								end
-							end else if (inter_res_only_r) begin
-								for (ci = 0; ci < 16; ci = ci + 1) begin
-									if (feed_chr_ac_is_v)
-										p_residual_v[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-									else
-										p_residual_u[chroma4x4_index(feed_chr_ac_blk, ci[3:0])] <= sat16(feed_idct[ci]);
-								end
-							end
-							// Track TC for nC on all residual walks.
+							// Chroma AC: multi-cycle IQ + DC inject; TC for nC now.
 							if (feed_chr_ac_is_v)
 								chr_tc_v[feed_chr_ac_blk] <= cav_tc;
 							else
 								chr_tc_u[feed_chr_ac_blk] <= cav_tc;
-							res_step <= res_step + 5'd1;
-							st <= ST_RES_START;
+							if (feed_luma_r || inter_res_only_r) begin
+								feed_iq_dc_only_r <= 1'b0;
+								feed_iq_skip_dc_r <= 1'b1;
+								feed_iq_dc_ov_r <= 1'b1;
+								feed_iq_dc_val_r <= feed_chr_dc_inj;
+								feed_iq_qp_r <= feed_qp_c;
+								feed_iq_max_r <= 5'd15;
+								feed_iq_snap_step <= res_step;
+								feed_iq_snap_feed_luma <= feed_luma_r;
+								feed_iq_snap_inter <= inter_res_only_r;
+								feed_iq_snap_chr_v <= feed_chr_ac_is_v;
+								feed_iq_snap_chr_blk <= feed_chr_ac_blk;
+								feed_iq_pending_r <= 1'b1;
+								st <= ST_RES_IQ;
+							end else begin
+								res_step <= res_step + 5'd1;
+								st <= ST_RES_START;
+							end
 						end
 					end
+				end
+			end
+
+			// Wait sequential IQ+IDCT; write residual plane on done (snapped geom).
+			// coeff bus free after start pulse (unit latches) — CAVLC∥ next later.
+			ST_RES_IQ: begin
+				if (feed_iq_pending_r) begin
+					feed_iq_pending_r <= 1'b0;
+					feed_iq_start_r <= 1'b1;
+				end else if (feed_iq_done) begin
+					if (feed_iq_snap_step < STEP_LUMA_END) begin
+						// P luma plane
+						for (ci = 0; ci < 16; ci = ci + 1)
+							p_residual_y[luma4x4_index(feed_iq_snap_step[3:0], ci[3:0])] <= sat16(feed_idct[ci]);
+					end else begin
+						for (ci = 0; ci < 16; ci = ci + 1) begin
+							if (feed_iq_snap_feed_luma) begin
+								if (feed_iq_snap_chr_v)
+									chroma_residual_v[chroma4x4_index(feed_iq_snap_chr_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+								else
+									chroma_residual_u[chroma4x4_index(feed_iq_snap_chr_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+							end else if (feed_iq_snap_inter) begin
+								if (feed_iq_snap_chr_v)
+									p_residual_v[chroma4x4_index(feed_iq_snap_chr_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+								else
+									p_residual_u[chroma4x4_index(feed_iq_snap_chr_blk, ci[3:0])] <= sat16(feed_idct[ci]);
+							end
+						end
+					end
+					res_step <= feed_iq_snap_step + 5'd1;
+					st <= ST_RES_START;
 				end
 			end
 
