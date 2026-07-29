@@ -163,10 +163,7 @@ module stream_path #(
 	wire        bf_wr_full;
 
 	ddr_bitstream_reader #(
-		.RING_BYTES(BITSTREAM_RING_BYTES),
-		.RING_LOW_BYTES(BITSTREAM_RING_LOW_BYTES),
-		.PREFETCH_QWORDS(BITSTREAM_PREFETCH_QWORDS),
-		.PREFETCH_BURST(BITSTREAM_PREFETCH_BURST)
+		.RING_BYTES(BITSTREAM_RING_BYTES)
 	) ddr_stream (
 		.clk(clk), .reset(reset),
 		.enable(ddr_stream_enable),
@@ -688,6 +685,10 @@ module stream_path #(
 			core_dpb_rd_valid <= core_dpb_rd_en;
 	end
 	wire core_frame_done;
+	wire core_dpb_ref_swap;
+	wire core_err_cavlc_miss;
+	wire core_err_bad_mb_type;
+	wire core_err_mb_overrun;
 	wire [15:0] core_frame_mb_count;
 	wire [7:0] core_decode_state;
 	wire [15:0] core_current_mb_addr;
@@ -720,6 +721,10 @@ module stream_path #(
 		.mb_width(sps_mb_w),
 		.mb_height(sps_mb_h),
 		.pps_chroma_qp_index_offset(5'sd0),
+		.constrained_intra_pred_flag(1'b0),
+		.disable_deblocking_filter_idc(2'd0),
+		.slice_alpha_c0_offset(5'sd0),
+		.slice_beta_offset(5'sd0),
 		.rbsp_byte(core_rbsp_byte),
 		.rbsp_window_base(core_rbsp_window_base),
 		.rbsp_request_offset(core_rbsp_request_offset_raw),
@@ -780,6 +785,8 @@ module stream_path #(
 		.dpb_rd_addr(core_dpb_rd_addr),
 		.dpb_rd_data(8'd0),
 		.dpb_rd_valid(core_dpb_rd_valid),
+		.dpb_rd_stall(1'b0),
+		.dpb_ref_swap(core_dpb_ref_swap),
 		.px_wr_en(dec_px_wr_en),
 		.px_wr_plane(dec_px_plane),
 		.px_wr_x(dec_px_x),
@@ -787,6 +794,11 @@ module stream_path #(
 		.px_wr_data(dec_px_data),
 		.frame_done(core_frame_done),
 		.frame_mb_count(core_frame_mb_count),
+		.err_cavlc_miss(core_err_cavlc_miss),
+		.err_bad_mb_type(core_err_bad_mb_type),
+		.err_mb_overrun(core_err_mb_overrun),
+		.decode_enable(1'b1),
+		.perf_mbox_word(decode_perf_word),
 		.busy(core_busy),
 		.intra_blocks_done(core_intra_blocks_done),
 		.decode_state(core_decode_state),
@@ -888,5 +900,5 @@ module stream_path #(
 	             vcl_cap_clear | vcl_cap_en | vcl_cap_end | |vcl_cap_data |
 	             |core_decode_state | |core_current_mb_addr | core_error;
 
-	assign decode_perf_word = 64'd0;
+	// decode_perf_word driven by product_decode_core.perf_mbox_word
 endmodule

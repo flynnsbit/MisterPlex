@@ -65,6 +65,7 @@ module h264_decode_core #(
     input  wire        mb_type_valid,        // pulse: mb_type decoded for current MB
     input  wire [4:0]  mb_type,              // H.264 mb_type for I/P slices
     input  wire        mb_skip,              // P-slice skip
+    input  wire        mb_intra,             // 1 = I MB or intra-in-P
     input  wire [3:0]  intra4x4_modes [0:15], // I_NxN: 9 modes per 4×4 block
     input  wire [1:0]  intra16x16_mode,      // I_16x16: 0=V, 1=H, 2=DC, 3=Plane
     input  wire [1:0]  chroma_pred_mode,     // 0=DC, 1=H, 2=V, 3=Plane
@@ -83,6 +84,11 @@ module h264_decode_core #(
     input  wire [1:0]  luma4x4_trailing_ones,
     input  wire signed [15:0] luma4x4_coeff_zigzag [0:15],
 
+    // ── Intra chroma residual (from i_mb_feed chroma IDCT-add) ──
+    input  wire        intra_chroma_residual_valid,
+    input  wire signed [15:0] intra_chroma_residual_u [0:63],
+    input  wire signed [15:0] intra_chroma_residual_v [0:63],
+
     // ── Motion vector inputs (for P-slices, from w-mc MV predictor) ──
     input  wire signed [15:0] mv_x_qpel,     // quarter-pel MV x
     input  wire signed [15:0] mv_y_qpel,     // quarter-pel MV y
@@ -91,6 +97,11 @@ module h264_decode_core #(
     input  wire signed [15:0] mvd_x_qpel,    // quarter-pel MVD x for current P partition
     input  wire signed [15:0] mvd_y_qpel,    // quarter-pel MVD y for current P partition
     input  wire [1:0]  ref_idx_l0,           // reference index for current P partition
+    input  wire [7:0]  part_sub_mb_types,
+    input  wire [7:0]  part_ref_idx_l0,
+    input  wire [15:0] part_mvd_valid,
+    input  wire signed [15:0] part_mvd_x [0:15],
+    input  wire signed [15:0] part_mvd_y [0:15],
 
     // ── Reconstructed macroblock input (from the decode/recon pipeline) ──
     // This is the product handoff into DPB writeback.  It is intentionally
@@ -172,6 +183,7 @@ module h264_decode_core #(
     output wire [63:0] perf_mbox_word,
 
     // ── Status/debug ──
+    output wire [4:0]  intra_blocks_done,
     output wire        busy,
     output wire [7:0]  decode_state,         // FSM state for debug
     output wire [15:0] current_mb_addr,      // current MB being decoded
@@ -985,6 +997,20 @@ module h264_decode_core #(
                                          decode_enable && (wb_state == ST_IDLE));
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
+    // I16 DC levels: latch feed's first residual block (Intra16x16DCLevel,
+    // CAVLC zig-zag, max_coeff=16) when product I16 MB starts / block0 lands.
+    reg signed [15:0] i16_dc_level [0:15];
+    integer i16_dc_i;
+    always @(posedge clk) begin
+        if (reset || slice_start) begin
+            for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
+                i16_dc_level[i16_dc_i] <= 16'sd0;
+        end else if (luma4x4_valid && (luma4x4_idx == 4'd0) && mb_is_i16) begin
+            for (i16_dc_i = 0; i16_dc_i < 16; i16_dc_i = i16_dc_i + 1)
+                i16_dc_level[i16_dc_i] <= luma4x4_coeff_zigzag[i16_dc_i];
+        end
+    end
+
     wire signed [28:0] product_intra_i16_dc [0:15];
     wire [7:0]  product_intra_recon_y [0:255];
     wire [7:0]  product_intra_recon_u [0:63];
@@ -993,6 +1019,9 @@ module h264_decode_core #(
     wire signed [15:0] product_intra_chroma_residual_v [0:63];
     wire        product_intra_recon_valid;
     wire [4:0]  product_intra_blocks_done;
+    assign intra_blocks_done = product_intra_blocks_done;
+    // Prefer feed-provided chroma residual when valid; else prediction-only zeros.
+
     wire [7:0]  product_intra_ctx_recon_pixels [0:15];
     wire [7:0]  product_intra_ctx_above_unused [0:7];
     wire [7:0]  product_intra_ctx_left_unused [0:3];
@@ -1029,10 +1058,10 @@ module h264_decode_core #(
             assign product_intra_ctx_recon_pixels[intra_gi] = 8'd128;
         end
         for (intra_gi = 0; intra_gi < 64; intra_gi = intra_gi + 1) begin : g_product_intra_chroma_residual
-            // The core's residual walker does not yet run for intra
-            // macroblocks, so intra chroma is prediction-only for now.
-            assign product_intra_chroma_residual_u[intra_gi] = 16'sd0;
-            assign product_intra_chroma_residual_v[intra_gi] = 16'sd0;
+            assign product_intra_chroma_residual_u[intra_gi] =
+                intra_chroma_residual_valid ? intra_chroma_residual_u[intra_gi] : 16'sd0;
+            assign product_intra_chroma_residual_v[intra_gi] =
+                intra_chroma_residual_valid ? intra_chroma_residual_v[intra_gi] : 16'sd0;
         end
     endgenerate
 
@@ -1054,13 +1083,6 @@ module h264_decode_core #(
         .mb_start(product_intra_mb_start),
         .block_idx(luma4x4_idx),
         .block_valid(1'b0),
-        .constrained_intra_pred(constrained_intra_pred_flag),
-        // Every retired macroblock, intra or inter -- the intra path's own
-        // mb_commit only ever carries intra reconstruction, which is not
-        // enough to know that a neighbour was inter-coded.
-        .mb_coded_valid(product_recon_mb_valid),
-        .mb_coded_is_intra(product_intra_recon_valid),
-        .mb_coded_x(product_recon_mb_x),
         .recon_pixels(product_intra_ctx_recon_pixels),
         .mb_commit(product_intra_recon_valid),
         .recon_y_mb(product_intra_recon_y),
@@ -1087,7 +1109,8 @@ module h264_decode_core #(
         .chroma_u_top_left(product_intra_chroma_u_topleft),
         .chroma_v_top_left(product_intra_chroma_v_topleft),
         .has_chroma_above(product_intra_has_chroma_above),
-        .has_chroma_left(product_intra_has_chroma_left)
+        .has_chroma_left(product_intra_has_chroma_left),
+        .busy()
     );
 
     h264_decode_top u_product_intra_mb (
@@ -1105,19 +1128,6 @@ module h264_decode_core #(
         .block_coeff(luma4x4_coeff_zigzag),
         .i16_dc_valid(product_intra_mb_start),
         .i16_dc(product_intra_i16_dc),
-        .chroma_pred_mode(chroma_pred_mode),
-        .nb_chroma_u_above(product_intra_chroma_u_above),
-        .nb_chroma_v_above(product_intra_chroma_v_above),
-        .nb_chroma_u_left(product_intra_chroma_u_left),
-        .nb_chroma_v_left(product_intra_chroma_v_left),
-        .nb_chroma_u_topleft(product_intra_chroma_u_topleft),
-        .nb_chroma_v_topleft(product_intra_chroma_v_topleft),
-        .mb_avail_chroma_above(product_intra_has_chroma_above),
-        .mb_avail_chroma_left(product_intra_has_chroma_left),
-        .chroma_residual_u(product_intra_chroma_residual_u),
-        .chroma_residual_v(product_intra_chroma_residual_v),
-        .recon_u(product_intra_recon_u),
-        .recon_v(product_intra_recon_v),
         .i4_modes(intra4x4_modes),
         .mb_avail_left(product_intra_mb_avail_left),
         .mb_avail_top(product_intra_mb_avail_top),
@@ -1997,7 +2007,7 @@ module h264_decode_core #(
         product_intra_mb_avail_topleft | |product_intra_nb_top[0] |
         |product_intra_nb_left[0] | |product_intra_nb_topleft |
         |product_intra_nb_topright[0] | product_intra_recon_valid |
-        |product_intra_blocks_done | |mv_x_qpel | |mv_y_qpel |
+        |product_intra_blocks_done | mb_intra | |part_sub_mb_types | |part_ref_idx_l0 | |part_mvd_valid | |part_mvd_x[0] | |part_mvd_y[0] | |mv_x_qpel | |mv_y_qpel |
         |part_mode | |part_idx | cavlc_busy | |cavlc_bit_offset_end |
         |cavlc_total_coeff | |cavlc_trailing_ones | |cavlc_total_zeros |
         |cavlc_level_dbg[0] | |cavlc_run_dbg[0] |
