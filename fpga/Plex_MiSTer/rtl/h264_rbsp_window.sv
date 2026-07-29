@@ -1,11 +1,25 @@
-// Slice RBSP byte store with a sliding read window (area rewrite).
+// Slice RBSP byte store with a sliding read window.
 //
-// Single M10K byte RAM + registered WINDOW_BYTES snapshot.
-// req_valid starts a WINDOW_BYTES-cycle refill; window_ready is low while
-// filling.  Combo 64-lane barrel rotates of the old banked design cost ~33k
-// ALUTs — this keeps the window in regs and the store in M10K.
-
-`default_nettype none
+// CONTRACT (this is the buffer contract the decode core and every RBSP consumer
+// must agree on; h264_cavlc_residual_block reads a MAX_BYTES slice of it):
+//
+//   * Write side is append-only.  `wr_clear` starts a new NAL, `wr_en` appends
+//     one EPB-stripped RBSP byte, `wr_end` marks the NAL complete.  Bytes past
+//     DEPTH_BYTES are dropped and raise `overflow` — they are never silently
+//     wrapped over live data, because a wrap would corrupt an offset that the
+//     decoder already committed to.
+//   * Read side presents WINDOW_BYTES consecutive RBSP bytes starting at
+//     `window_base`.  `req_valid` moves the base to `req_offset`.  The window is
+//     COMBINATIONAL: the consumer sees the new bytes in the same cycle it
+//     requests them, so no ready/valid handshake is needed and no consumer has
+//     to be redesigned around window-fill latency.
+//   * Reads past `length` return 0.  A consumer must use `window_avail` (bytes
+//     really present from the base onward) to know how much of the window is
+//     real; it is NOT allowed to infer this from the byte values.
+//
+// The window is served from DEPTH_BYTES/WINDOW_BYTES-deep byte banks, one bank
+// per window lane, so an arbitrary unaligned base costs a barrel rotate rather
+// than WINDOW_BYTES read ports on one memory.
 
 module h264_rbsp_window #(
 	parameter int DEPTH_BYTES  = 4096,
@@ -22,44 +36,33 @@ module h264_rbsp_window #(
 	input  wire        req_valid,
 	input  wire [15:0] req_offset,
 
-	output reg  [7:0]  window [0:WINDOW_BYTES-1],
+	output wire [7:0]  window [0:WINDOW_BYTES-1],
 	output wire [15:0] window_base,
 	output wire [15:0] window_avail,
 	output wire [15:0] length,
 	output wire        complete,
-	output wire        overflow,
-	output wire        window_ready
+	output wire        overflow
 );
-	localparam int AW = (DEPTH_BYTES <= 2) ? 1 : $clog2(DEPTH_BYTES);
+	localparam int LANE_W    = $clog2(WINDOW_BYTES);
+	localparam int BANK_ROWS = (DEPTH_BYTES + WINDOW_BYTES - 1) / WINDOW_BYTES;
+	localparam int ROW_W     = (BANK_ROWS <= 1) ? 1 : $clog2(BANK_ROWS);
 	localparam [15:0] DEPTH_W = 16'(DEPTH_BYTES);
-	localparam int IW = (WINDOW_BYTES <= 2) ? 1 : $clog2(WINDOW_BYTES);
 
-	(* ramstyle = "M10K,no_rw_check" *)
-	reg [7:0] mem [0:DEPTH_BYTES-1];
+	// Distributed (MLAB) banks: asynchronous read is what makes the window
+	// combinational.  One bank per window lane.
+	(* ramstyle = "MLAB,no_rw_check" *)
+	reg [7:0] bank [0:WINDOW_BYTES-1][0:BANK_ROWS-1];
 
 	reg [15:0] len_r;
 	reg        complete_r;
 	reg        overflow_r;
 	reg [15:0] base_r;
 
-	// Fill FSM: IDLE -> ISSUE (addr) -> CAPTURE (data->window) x WINDOW
-	localparam [1:0] F_IDLE = 2'd0, F_ISSUE = 2'd1, F_CAP = 2'd2;
-	reg [1:0]  f_st;
-	reg [IW:0] f_idx;       // 0..WINDOW_BYTES
-	reg [15:0] f_addr;
-	reg [AW-1:0] rd_addr_r;
-	reg [7:0]  rd_data_r;
-
-	wire wr_fits = (len_r < DEPTH_W);
-	// Allow writes whenever not in the middle of a same-port conflict: M10K
-	// simple dual-port style — we only write in IDLE or when not capturing
-	// the same address.  Prefer never write during fill for simplicity.
-	wire wr_take = wr_en && wr_fits && (f_st == F_IDLE) && !req_valid;
-
-	wire [15:0] req_base_clamped =
-		(req_offset >= DEPTH_W) ? (DEPTH_W - 16'(WINDOW_BYTES)) : req_offset;
-
-	integer wi;
+	wire [LANE_W-1:0] wr_lane = len_r[LANE_W-1:0];
+	wire [15:0]       wr_row_full = len_r >> LANE_W;
+	wire [ROW_W-1:0]  wr_row = wr_row_full[ROW_W-1:0];
+	wire              wr_fits = (len_r < DEPTH_W);
+	wire              wr_take = wr_en && wr_fits;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -67,78 +70,64 @@ module h264_rbsp_window #(
 			complete_r <= 1'b0;
 			overflow_r <= 1'b0;
 			base_r <= 16'd0;
-			f_st <= F_IDLE;
-			f_idx <= '0;
-			f_addr <= 16'd0;
-			rd_addr_r <= '0;
-			rd_data_r <= 8'd0;
-			for (wi = 0; wi < WINDOW_BYTES; wi = wi + 1)
-				window[wi] <= 8'd0;
 		end else begin
-			// Default: keep M10K read registered
-			rd_data_r <= mem[rd_addr_r];
-
 			if (wr_clear) begin
 				len_r <= 16'd0;
 				complete_r <= 1'b0;
 				overflow_r <= 1'b0;
 				base_r <= 16'd0;
-				f_st <= F_IDLE;
-				f_idx <= '0;
-				for (wi = 0; wi < WINDOW_BYTES; wi = wi + 1)
-					window[wi] <= 8'd0;
 			end else begin
-				if (wr_take) begin
-					mem[len_r[AW-1:0]] <= wr_data;
+				if (wr_take)
 					len_r <= len_r + 16'd1;
-				end else if (wr_en && (f_st == F_IDLE) && !req_valid && !wr_fits) begin
+				else if (wr_en)
 					overflow_r <= 1'b1;
-				end
 				if (wr_end)
 					complete_r <= 1'b1;
-
-				case (f_st)
-				F_IDLE: begin
-					if (req_valid) begin
-						base_r <= req_base_clamped;
-						f_addr <= req_base_clamped;
-						f_idx <= '0;
-						rd_addr_r <= req_base_clamped[AW-1:0];
-						f_st <= F_ISSUE;
-					end
-				end
-				F_ISSUE: begin
-					// rd_data_r will hold mem[rd_addr_r] next cycle
-					f_st <= F_CAP;
-				end
-				F_CAP: begin
-					if (f_addr < len_r)
-						window[f_idx[IW-1:0]] <= rd_data_r;
-					else
-						window[f_idx[IW-1:0]] <= 8'd0;
-
-					if (f_idx + 1'b1 >= (IW+1)'(WINDOW_BYTES)) begin
-						f_st <= F_IDLE;
-						f_idx <= '0;
-					end else begin
-						f_idx <= f_idx + 1'b1;
-						f_addr <= f_addr + 16'd1;
-						rd_addr_r <= (f_addr + 16'd1);
-						f_st <= F_ISSUE;
-					end
-				end
-				default: f_st <= F_IDLE;
-				endcase
 			end
+
+			if (req_valid)
+				base_r <= (req_offset >= DEPTH_W) ? (DEPTH_W - 16'(WINDOW_BYTES))
+				                                  : req_offset;
 		end
 	end
+
+	always @(posedge clk) begin
+		if (wr_take)
+			bank[wr_lane][wr_row] <= wr_data;
+	end
+
+	// Lane k always holds the byte whose address is congruent to k modulo
+	// WINDOW_BYTES, so for a base whose low bits are non-zero the lanes below
+	// the base offset must come from the NEXT row.
+	wire [LANE_W-1:0] base_lane = base_r[LANE_W-1:0];
+	wire [15:0]       base_row_full = base_r >> LANE_W;
+
+	wire [WINDOW_BYTES*8-1:0] lane_flat;
+
+	genvar gk;
+	generate
+		for (gk = 0; gk < WINDOW_BYTES; gk = gk + 1) begin : g_lane
+			wire [15:0] lane_row_full =
+				base_row_full + ((gk[LANE_W-1:0] < base_lane) ? 16'd1 : 16'd0);
+			wire        lane_row_ok = (lane_row_full < 16'(BANK_ROWS));
+			wire [ROW_W-1:0] lane_row = lane_row_full[ROW_W-1:0];
+			// Absolute RBSP address this lane is serving, used to zero-fill the
+			// tail of a NAL that is shorter than the window.
+			wire [15:0] lane_addr = (lane_row_full << LANE_W) | 16'(gk);
+			assign lane_flat[gk*8 +: 8] =
+				(lane_row_ok && (lane_addr < len_r)) ? bank[gk][lane_row] : 8'd0;
+		end
+
+		// Rotate the lane vector so window[0] is the byte at window_base.
+		for (gk = 0; gk < WINDOW_BYTES; gk = gk + 1) begin : g_window
+			wire [LANE_W-1:0] sel = base_lane + gk[LANE_W-1:0];
+			assign window[gk] = lane_flat[{{(32-LANE_W){1'b0}}, sel} * 8 +: 8];
+		end
+	endgenerate
 
 	assign window_base  = base_r;
 	assign window_avail = (len_r > base_r) ? (len_r - base_r) : 16'd0;
 	assign length       = len_r;
 	assign complete     = complete_r;
 	assign overflow     = overflow_r;
-	assign window_ready = (f_st == F_IDLE) && !req_valid;
 endmodule
-
-`default_nettype wire
