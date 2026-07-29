@@ -1544,11 +1544,43 @@ module h264_decode_core #(
         end
     endtask
 
-    // One residual sample address for sequential M10K store (res_store_i = 0..15).
-    wire [7:0] res_store_luma_addr  = luma4x4_index(res_luma_raster, res_store_i);
-    wire [5:0] res_store_chroma_addr = chroma4x4_index(res_chroma_blk, res_store_i);
-    wire signed [15:0] res_store_sample = sat16(p16_res_idct[res_store_i]);
-    wire res_store_to_v = (res_chroma_is_v ^ p16_swap_chroma_residual);
+    // Store path: snapshot residual[] + geometry on IQ done so CAVLC(n+1) can
+	// run during STORE(n) (iq_idct_seq latches coeffs on start). Throughput
+	// not latency: hides up to 16 cyc of store under next CAVLC.
+	reg signed [15:0] res_store_buf [0:15];
+	reg               res_store_is_luma_r;
+	reg               res_store_is_chroma_r;
+	reg               res_store_drop_y_r;
+	reg               res_store_drop_c_r;
+	reg               res_store_to_v_r;
+	reg [3:0]         res_store_raster_r;
+	reg [1:0]         res_store_cblk_r;
+	reg               res_store_cavlc_overlap_r; // idx already advanced; go WAIT after store
+
+	// Peek next residual step for CAVLC∥STORE overlap (same CBP rules as now).
+	wire [4:0] res_next_idx = p16_res_block_idx + 5'd1;
+	wire       res_next_is_luma_dc = (res_next_idx == RES_STEP_LUMA_DC);
+	wire       res_next_is_luma_ac = (res_next_idx >= RES_STEP_LUMA_AC0) &&
+	                                 (res_next_idx < RES_STEP_CHROMA_DC0);
+	wire       res_next_is_chroma_dc = (res_next_idx >= RES_STEP_CHROMA_DC0) &&
+	                                   (res_next_idx < RES_STEP_CHROMA_AC0);
+	wire       res_next_is_chroma_ac = (res_next_idx >= RES_STEP_CHROMA_AC0);
+	wire [3:0] res_next_luma_blk = res_next_idx[3:0] - 4'd1;
+	wire [1:0] res_next_cbp_group = res_next_luma_blk[3:2];
+	wire       res_next_needs_cavlc =
+		(res_next_idx <= RES_STEP_LAST) && (
+			(res_next_is_luma_dc   && res_i16x16_r) ||
+			(res_next_is_luma_ac   && p16_cbp_luma_r[res_next_cbp_group]) ||
+			(res_next_is_chroma_dc && (p16_cbp_chroma_r != 2'd0)) ||
+			(res_next_is_chroma_ac && (p16_cbp_chroma_r == 2'd2))
+		);
+
+	// One residual sample address for sequential M10K store (res_store_i = 0..15).
+	// Uses STORE snapshot so idx may already point at the next CAVLC block.
+	wire [7:0] res_store_luma_addr  = luma4x4_index(res_store_raster_r, res_store_i);
+	wire [5:0] res_store_chroma_addr = chroma4x4_index(res_store_cblk_r, res_store_i);
+	wire signed [15:0] res_store_sample = res_store_buf[res_store_i];
+	wire res_store_to_v = res_store_to_v_r;
 
     always @(posedge clk) begin
         frame_done_r <= deblock_ref_ready_pulse;
@@ -1588,6 +1620,7 @@ module h264_decode_core #(
             res_ldc_pending_r <= 1'b0;
             res_cdc_start_r <= 1'b0;
             res_cdc_pending_r <= 1'b0;
+            res_store_cavlc_overlap_r <= 1'b0;
             wb_commit_p16 <= 1'b0;
             p16_cbp_luma_r <= 4'd0;
             p16_cbp_chroma_r <= 2'd0;
@@ -1886,11 +1919,30 @@ module h264_decode_core #(
             ST_P16_RES_IQ: begin
                 // Wait for h264_iq_idct_seq: pending→start next cycle, then done.
                 // residual[] registered in seq o[] from done until next start.
+                // On done: snapshot residual+geometry, optionally kick CAVLC(n+1)
+                // during STORE(n) — needs iq input latch (coeff free after start).
                 if (p16_iq_pending_r) begin
                     p16_iq_pending_r <= 1'b0;
                     p16_iq_start_r <= 1'b1;
                 end else if (p16_iq_done) begin
+                    for (res_tc_i = 0; res_tc_i < 16; res_tc_i = res_tc_i + 1)
+                        res_store_buf[res_tc_i] <= sat16(p16_res_idct[res_tc_i]);
+                    res_store_is_luma_r   <= res_is_luma_ac;
+                    res_store_is_chroma_r <= res_is_chroma_ac;
+                    res_store_drop_y_r    <= p16_drop_this_luma_residual;
+                    res_store_drop_c_r    <= p16_drop_this_chroma_residual;
+                    res_store_to_v_r      <= (res_chroma_is_v ^ p16_swap_chroma_residual);
+                    res_store_raster_r    <= res_luma_raster;
+                    res_store_cblk_r      <= res_chroma_blk;
                     res_store_i <= 4'd0;
+                    if ((p16_res_block_idx != RES_STEP_LAST) && res_next_needs_cavlc) begin
+                        p16_res_block_idx <= res_next_idx;
+                        cavlc_start_r <= 1'b1;
+                        res_ac_from_cavlc <= 1'b1;
+                        res_store_cavlc_overlap_r <= 1'b1;
+                    end else begin
+                        res_store_cavlc_overlap_r <= 1'b0;
+                    end
                     wb_state <= ST_P16_RES_STORE;
                 end
             end
@@ -1921,33 +1973,39 @@ module h264_decode_core #(
                 end
             end
             ST_P16_RES_STORE: begin
-                // One IDCT sample per cycle into residual M10K (after IQ done).
-                if (res_is_luma_ac && !p16_drop_this_luma_residual) begin
+                // One sample/cyc into residual M10K from snapshot buf.
+                // CAVLC(n+1) may already be running (overlap).
+                if (res_store_is_luma_r && !res_store_drop_y_r) begin
                     lat_res_we <= 1'b1;
                     lat_res_wplane <= 2'd0;
                     lat_res_waddr <= res_store_luma_addr;
                     lat_res_wdata <= res_store_sample;
-                end else if (res_is_chroma_ac && !p16_drop_this_chroma_residual) begin
+                end else if (res_store_is_chroma_r && !res_store_drop_c_r) begin
                     lat_res_we <= 1'b1;
                     lat_res_wplane <= res_store_to_v ? 2'd2 : 2'd1;
                     lat_res_waddr <= {2'b0, res_store_chroma_addr};
                     lat_res_wdata <= res_store_sample;
                 end
-                if (res_store_i == 4'd15)
-                    res_step_advance();
-                else
+                if (res_store_i == 4'd15) begin
+                    if (res_store_cavlc_overlap_r)
+                        wb_state <= ST_P16_RES_WAIT; // idx already at n+1
+                    else
+                        res_step_advance();
+                end else begin
                     res_store_i <= res_store_i + 4'd1;
+                end
             end
             ST_P16_RES_ZERO: begin
+                // Live geometry (no IQ snapshot); idx still this block.
                 if (res_is_luma_ac) begin
                     lat_res_we <= 1'b1;
                     lat_res_wplane <= 2'd0;
-                    lat_res_waddr <= res_store_luma_addr;
+                    lat_res_waddr <= luma4x4_index(res_luma_raster, res_store_i);
                     lat_res_wdata <= 16'sd0;
                 end else if (res_is_chroma_ac) begin
                     lat_res_we <= 1'b1;
-                    lat_res_wplane <= res_store_to_v ? 2'd2 : 2'd1;
-                    lat_res_waddr <= {2'b0, res_store_chroma_addr};
+                    lat_res_wplane <= (res_chroma_is_v ^ p16_swap_chroma_residual) ? 2'd2 : 2'd1;
+                    lat_res_waddr <= {2'b0, chroma4x4_index(res_chroma_blk, res_store_i)};
                     lat_res_wdata <= 16'sd0;
                 end
                 if (res_store_i == 4'd15)

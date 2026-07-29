@@ -9,8 +9,9 @@
 //
 // LATENCY CONTRACT (not combinational — consumers MUST wait on done):
 //   start pulse → ~21 cycles → done=1 for one cycle; residual[] held stable
-//   from done until next start.  Caller must hold coeff/qp/max/skip/dc stable
-//   start→done.  decode_top uses ST_XFORM + xform_done handshake (not same-cycle).
+//   from done until next start.  Inputs (coeff/qp/max/skip/dc) are LATCHED on
+//   start — caller need only hold them on the start cycle (enables CAVLC∥IQ
+//   overlap).  decode_top uses ST_XFORM + xform_done handshake.
 //   If this cycle count changes, update this header and every waiter bench.
 `default_nettype none
 
@@ -141,17 +142,25 @@ module h264_iq_idct_seq (
 	reg [1:0] st;
 	reg [3:0] cnt;
 
-	wire [2:0] qmod = qp_mod6(qp);
-	wire [3:0] qdiv = qp_div6(qp);
+	// Latch on start so caller can free CAVLC/coeff bus (throughput overlap).
+	reg signed [15:0] coeff_r [0:15];
+	reg [5:0]         qp_r;
+	reg [4:0]         max_coeff_r;
+	reg               skip_dc_r;
+	reg               dc_override_r;
+	reg signed [28:0] dc_value_r;
+
+	wire [2:0] qmod = qp_mod6(qp_r);
+	wire [3:0] qdiv = qp_div6(qp_r);
 
 	wire [3:0] r     = cnt;
 	wire [1:0] mi    = {1'b0, r[0]} + {1'b0, r[2]};
 	wire [4:0] scan5 = {1'b0, scan_of_raster(r)};
-	wire [4:0] arr5  = skip_dc ? (scan5 - 5'd1) : scan5;
-	wire in_range    = skip_dc ? ((scan5 != 5'd0) && ((scan5 - 5'd1) < max_coeff))
-	                           : (scan5 < max_coeff);
+	wire [4:0] arr5  = skip_dc_r ? (scan5 - 5'd1) : scan5;
+	wire in_range    = skip_dc_r ? ((scan5 != 5'd0) && ((scan5 - 5'd1) < max_coeff_r))
+	                             : (scan5 < max_coeff_r);
 
-	wire signed [15:0] cval = in_range ? coeff[arr5[3:0]] : 16'sd0;
+	wire signed [15:0] cval = in_range ? coeff_r[arr5[3:0]] : 16'sd0;
 	wire [4:0]         na   = norm_adjust(qmod, mi);
 
 	// LevelScale identical to h264_dequant4x4_flex (4e0770b / FFmpeg):
@@ -161,8 +170,8 @@ module h264_iq_idct_seq (
 	wire signed [47:0] prod   = shl_amt(base16, qdiv + 4'd2);
 	wire signed [47:0] rnd    = (prod + 48'sd32) >>> 6;
 	wire signed [28:0] scaled = sat29(rnd);
-	wire signed [28:0] dq_val = (r == 4'd0) ? (dc_override ? dc_value
-	                                                        : (skip_dc ? 29'sd0 : scaled))
+	wire signed [28:0] dq_val = (r == 4'd0) ? (dc_override_r ? dc_value_r
+	                                                        : (skip_dc_r ? 29'sd0 : scaled))
 	                                         : scaled;
 	// IDCT rounding constant on raster position 0 only (matches h264_idct4x4).
 	wire signed [31:0] b_in = $signed({{3{dq_val[28]}}, dq_val}) +
@@ -203,15 +212,28 @@ module h264_iq_idct_seq (
 		if (reset) begin
 			st  <= ST_IDLE;
 			cnt <= 4'd0;
+			qp_r <= 6'd0;
+			max_coeff_r <= 5'd0;
+			skip_dc_r <= 1'b0;
+			dc_override_r <= 1'b0;
+			dc_value_r <= 29'sd0;
 			rb0 <= 32'sd0; rb1 <= 32'sd0; rb2 <= 32'sd0;
 			for (k = 0; k < 16; k = k + 1) begin
 				a[k] <= 32'sd0;
 				o[k] <= 29'sd0;
+				coeff_r[k] <= 16'sd0;
 			end
 		end else begin
 			case (st)
 				ST_IDLE: if (start) begin
 					cnt <= 4'd0;
+					qp_r <= qp;
+					max_coeff_r <= max_coeff;
+					skip_dc_r <= skip_dc;
+					dc_override_r <= dc_override;
+					dc_value_r <= dc_value;
+					for (k = 0; k < 16; k = k + 1)
+						coeff_r[k] <= coeff[k];
 					st  <= ST_SCALE;
 				end
 
