@@ -65,9 +65,10 @@ module h264_intra_nb_ctx #(
     localparam int LUMA_ABOVE_DEPTH = MB_WIDTH_MAX * 16;
     localparam int CHROMA_ABOVE_DEPTH = MB_WIDTH_MAX * 8;
 
-    // Raster 4x4 block coordinates within the current luma MB.
-    wire [3:0] blk_x = {block_idx[1:0], 2'b00};
-    wire [3:0] blk_y = {block_idx[3:2], 2'b00};
+    // H.264 4x4 block coordinates (spec Table 6-10 / inverse of coded order):
+    //   x = {idx[2], idx[0], 2'b00}, y = {idx[3], idx[1], 2'b00}
+    wire [3:0] blk_x = {block_idx[2], block_idx[0], 2'b00};
+    wire [3:0] blk_y = {block_idx[3], block_idx[1], 2'b00};
     wire [7:0] active_mb_width = (mb_width == 8'd0) ? MB_WIDTH_DEFAULT[7:0] : mb_width;
     wire [15:0] active_mb_width16 = {8'd0, active_mb_width};
     wire [15:0] cur_mb_index = ({8'd0, mb_y} * active_mb_width16) + {8'd0, mb_x};
@@ -218,10 +219,10 @@ module h264_intra_nb_ctx #(
                         mb_y_buf[blk_y + r[3:0]][blk_x + c[3:0]] <= recon_pixels[r * 4 + c];
             end
 
+            // Luma is filled block-by-block via block_valid (serial 16-byte
+            // writes). mb_commit only attaches chroma and triggers the edge
+            // publish into the line buffers — never a 256-wide parallel copy.
             if (mb_commit) begin
-                for (r = 0; r < 16; r = r + 1)
-                    for (c = 0; c < 16; c = c + 1)
-                        mb_y_buf[r][c] <= recon_y_mb[r * 16 + c];
                 for (r = 0; r < 8; r = r + 1)
                     for (c = 0; c < 8; c = c + 1) begin
                         mb_u_buf[r][c] <= recon_u_mb[r * 8 + c];

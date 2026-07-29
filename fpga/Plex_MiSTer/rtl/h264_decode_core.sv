@@ -826,7 +826,14 @@ module h264_decode_core #(
     wire [7:0]  product_intra_mb_type = {3'd0, mb_type};
     wire [1:0]  product_intra_i16_mode = intra16x16_mode;
     wire signed [28:0] product_intra_i16_dc [0:15];
-    wire [7:0]  product_intra_recon_y [0:255];
+    reg  [7:0]  product_intra_recon_y [0:255];
+    wire        product_intra_recon_sample_valid;
+    wire [7:0]  product_intra_recon_sample_idx;
+    wire [7:0]  product_intra_recon_sample;
+    wire        product_intra_block_recon_valid;
+    wire [3:0]  product_intra_block_recon_idx;
+    wire [7:0]  product_intra_block_recon_pixels [0:15];
+
     wire [7:0]  product_intra_recon_u [0:63];
     wire [7:0]  product_intra_recon_v [0:63];
     wire        product_intra_recon_valid;
@@ -877,9 +884,9 @@ module h264_decode_core #(
         .mb_width(mb_width),
         .first_mb_in_slice(first_mb_in_slice),
         .mb_start(product_intra_mb_start),
-        .block_idx(luma4x4_idx),
-        .block_valid(1'b0),
-        .recon_pixels(product_intra_ctx_recon_pixels),
+        .block_idx(product_intra_block_recon_idx),
+        .block_valid(product_intra_block_recon_valid),
+        .recon_pixels(product_intra_block_recon_pixels),
         .mb_commit(product_intra_recon_valid),
         .recon_y_mb(product_intra_recon_y),
         .recon_u_mb(product_intra_recon_u),
@@ -931,10 +938,41 @@ module h264_decode_core #(
         .nb_left(product_intra_nb_left),
         .nb_topleft(product_intra_nb_topleft),
         .nb_topright(product_intra_nb_topright),
+        .recon_sample_valid(product_intra_recon_sample_valid),
+        .recon_sample_idx(product_intra_recon_sample_idx),
+        .recon_sample(product_intra_recon_sample),
+        .block_recon_valid(product_intra_block_recon_valid),
+        .block_recon_idx(product_intra_block_recon_idx),
+        .block_recon_pixels(product_intra_block_recon_pixels),
         .mb_recon_valid(product_intra_recon_valid),
-        .recon_y(product_intra_recon_y),
         .blocks_done(product_intra_blocks_done)
     );
+
+    // Assemble streaming intra recon one sample at a time. product_intra_recon_y
+    // feeds the PRE-deblock neighbour context; lat_recon_y is filled in the same
+    // beat so ST_WRITE never needs a 256-wide parallel load for intra MBs.
+    integer intra_si;
+    reg intra_stream_armed;
+    always @(posedge clk) begin
+        if (reset) begin
+            intra_stream_armed <= 1'b0;
+            for (intra_si = 0; intra_si < 256; intra_si = intra_si + 1)
+                product_intra_recon_y[intra_si] <= 8'd128;
+        end else begin
+            if (product_intra_mb_start)
+                intra_stream_armed <= 1'b1;
+            else if (product_intra_recon_valid)
+                intra_stream_armed <= 1'b0;
+
+            if (product_intra_recon_sample_valid) begin
+                product_intra_recon_y[product_intra_recon_sample_idx] <= product_intra_recon_sample;
+                // Only clobber lat_recon_y while an intra MB is in flight and the
+                // writeback FSM is idle (it owns the array otherwise).
+                if (intra_stream_armed && (wb_state == ST_IDLE))
+                    lat_recon_y[product_intra_recon_sample_idx] <= product_intra_recon_sample;
+            end
+        end
+    end
 
     wire product_recon_mb_valid = recon_mb_valid || product_intra_recon_valid;
     wire [7:0] product_recon_mb_x = product_intra_recon_valid ? intra_mb_x_r : recon_mb_x;
@@ -1269,8 +1307,12 @@ module h264_decode_core #(
                     wb_base <= dpb_write_base;
                     wb_idx <= 9'd0;
                     wb_commit_p16 <= 1'b0;
-                    for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
-                        lat_recon_y[wb_i] <= product_intra_recon_valid ? product_intra_recon_y[wb_i] : recon_y[wb_i];
+                    // Intra Y already streamed into lat_recon_y; only the non-intra
+                    // (stub) path still needs a parallel plane load.
+                    if (!product_intra_recon_valid) begin
+                        for (wb_i = 0; wb_i < 256; wb_i = wb_i + 1)
+                            lat_recon_y[wb_i] <= recon_y[wb_i];
+                    end
                     for (wb_i = 0; wb_i < 64; wb_i = wb_i + 1) begin
                         lat_recon_u[wb_i] <= product_intra_recon_valid ? product_intra_recon_u[wb_i] : recon_u[wb_i];
                         lat_recon_v[wb_i] <= product_intra_recon_valid ? product_intra_recon_v[wb_i] : recon_v[wb_i];
