@@ -160,7 +160,10 @@ module ddram_frame_rd #(
 	assign DDRAM_CLK = clk;
 	assign DDRAM_BE  = 8'hFF;
 
-	reg [63:0] fifo_mem [0:FIFO_N-1];
+	// Pixel beat FIFO: write on DDRAM_DOUT_READY, read into beat_q on posedge.
+	// Consumer is internal (beat_q → wr_pixel); already 1-cycle registered read
+	// into beat_q — M10K adds no extra latency vs prior async-LUTRAM behaviour.
+	(* ramstyle = "M10K, no_rw_check" *) reg [63:0] fifo_mem [0:FIFO_N-1];
 	reg [FIFO_AW:0] fifo_wr, fifo_rd;
 	wire [FIFO_AW:0] fifo_level = fifo_wr - fifo_rd;
 	wire fifo_empty = (fifo_wr == fifo_rd);

@@ -80,9 +80,12 @@ module h264_dpb_ddr_wr #(
 	// ----------------------------------------------------------------- fifo
 	// Posted-write queue.  Depth is sized so an entire macroblock luma row pair
 	// can be absorbed while the read path holds the DDR port.
-	reg [28:0] fifo_word [0:FIFO_DEPTH-1];
-	reg [63:0] fifo_data [0:FIFO_DEPTH-1];
-	reg  [7:0] fifo_be   [0:FIFO_DEPTH-1];
+	// Consumer: command-issue FSM reads head on posedge into ddr_addr/din/be
+	// (registered outputs). M10K sync read matches that NBA pattern — no extra
+	// cycle vs LUTRAM. Do not combo-index these arrays outside the clocked block.
+	(* ramstyle = "M10K, no_rw_check" *) reg [28:0] fifo_word [0:FIFO_DEPTH-1];
+	(* ramstyle = "M10K, no_rw_check" *) reg [63:0] fifo_data [0:FIFO_DEPTH-1];
+	(* ramstyle = "M10K, no_rw_check" *) reg  [7:0] fifo_be   [0:FIFO_DEPTH-1];
 	reg [PTRW:0] fifo_wp;
 	reg [PTRW:0] fifo_rp;
 

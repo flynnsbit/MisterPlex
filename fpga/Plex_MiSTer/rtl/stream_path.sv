@@ -422,6 +422,8 @@ module stream_path #(
 	wire        feed_slice_desync_long;
 	wire [3:0]  feed_slice_desync_cause;
 	wire [15:0] feed_slice_desync_mb;
+	wire [5:0]  feed_dbg_st;
+	wire [15:0] feed_dbg_mb_addr;
 	wire        feed_chroma_residual_valid;
 	wire signed [15:0] feed_chroma_residual_u [0:63];
 	wire signed [15:0] feed_chroma_residual_v [0:63];
@@ -685,7 +687,9 @@ module stream_path #(
 		.slice_desync_early(feed_slice_desync_early),
 		.slice_desync_long(feed_slice_desync_long),
 		.slice_desync_cause(feed_slice_desync_cause),
-		.slice_desync_mb(feed_slice_desync_mb)
+		.slice_desync_mb(feed_slice_desync_mb),
+		.dbg_st(feed_dbg_st),
+		.dbg_mb_addr(feed_dbg_mb_addr)
 	);
 	assign slice_desync = feed_slice_desync;
 	assign slice_desync_early = feed_slice_desync_early;

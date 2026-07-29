@@ -99,6 +99,8 @@ module stream_path_full_frame_tb #(
 	output wire        product_feed_slice_go,
 	output wire        product_feed_started,
 	output wire        product_feed_i_ready,
+	output wire [5:0]  product_feed_st,
+	output wire [15:0] product_feed_mb_addr,
 	output wire        product_slice_valid,
 	output wire        product_slice_is_i,
 	output wire [7:0]  product_sps_mb_w,
@@ -315,6 +317,8 @@ module stream_path_full_frame_tb #(
 	assign product_feed_slice_go = dut.feed_slice_go;
 	assign product_feed_started = dut.feed_started;
 	assign product_feed_i_ready = dut.feed_i_ready;
+	assign product_feed_st = dut.feed_dbg_st;
+	assign product_feed_mb_addr = dut.feed_dbg_mb_addr;
 	assign product_slice_valid = slice_valid;
 	assign product_slice_is_i = slice_is_i;
 	assign product_sps_mb_w = sps_mb_w;
