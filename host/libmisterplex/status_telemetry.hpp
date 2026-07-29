@@ -29,9 +29,17 @@ inline constexpr int kReconDbgByte = 15;
 inline constexpr int kReconSigMb0Block0 = 0x3B;
 
 // P3-3l2 silicon RCA byte (raw[15]); bits [2:1] are reserved because the
-// Aspect Ratio OSD splice overlaps them. Used bits:
+// Aspect Ratio OSD splice overlaps them. Used bits (no PARSE desync sticky):
 //   bit0 coeff_nonzero, bit3 dequant_nonzero, bit4 idct_residual_nonzero,
 //   bit5 recon_differs_from_pred, bit6 lat_res_ok, bit7 waited_for_residual
+//
+// Sticky PARSE desync overlay (Plex.sv st_recon_dbg_telem) when a slice
+// walker fault latched (hold until core reset / explicit clear):
+//   bit0 desync_early   — more_rbsp_data false before PicSizeInMbs
+//   bit1 desync_long    — data/skip past PicSizeInMbs or bad trailing
+//   [7:4] desync_cause  — first-fault code (see kDesyncCause* below)
+//   When bit0|bit1 set (or cause!=0): raw[10..11] (sps_mb_w/h slots) hold
+//   desync_mb little-endian (MB address where the walker broke).
 inline constexpr int kReconDbgCoeffNonzero = 0x01;
 inline constexpr int kReconDbgDequantNonzero = 0x08;
 inline constexpr int kReconDbgIdctNonzero = 0x10;
@@ -41,6 +49,24 @@ inline constexpr int kReconDbgWaitedForResidual = 0x80;
 inline constexpr int kReconDbgMb0Block0 = kReconDbgCoeffNonzero | kReconDbgDequantNonzero |
                                           kReconDbgIdctNonzero | kReconDbgReconDiffers |
                                           kReconDbgLatResOk | kReconDbgWaitedForResidual;
+
+// PARSE desync sticky fields inside raw[15] / status[127:120]
+inline constexpr int kDesyncEarlyBit = 0;
+inline constexpr int kDesyncLongBit = 1;
+inline constexpr int kDesyncCauseShift = 4;
+inline constexpr int kDesyncCauseMask = 0xF;
+// Dual-use SPS dim bytes when desync sticky (same raw indices as sps_mb_*)
+inline constexpr int kDesyncMbLoByte = 10; // status[87:80]
+inline constexpr int kDesyncMbHiByte = 11; // status[95:88]
+
+// First-fault cause codes (h264_i_mb_feed DSC_*)
+inline constexpr int kDesyncCauseNone = 0;
+inline constexpr int kDesyncCauseEarly = 1;
+inline constexpr int kDesyncCauseLong = 2;
+inline constexpr int kDesyncCauseSkipOverrun = 3;
+inline constexpr int kDesyncCauseCavlc = 4;
+inline constexpr int kDesyncCauseRbspOverrun = 5;
+inline constexpr int kDesyncCauseSyntax = 6;
 
 } // namespace status_telemetry
 } // namespace misterplex

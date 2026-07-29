@@ -2024,6 +2024,21 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     s.residual_csum = raw[kResidualCsumByte];
     s.recon_sig = raw[kReconSigByte];
     s.recon_dbg = raw[kReconDbgByte];
+    // Sticky PARSE desync mailbox (raw[15] overlay + dual-use sps dim bytes).
+    s.slice_desync_early = ((s.recon_dbg >> kDesyncEarlyBit) & 1u) != 0;
+    s.slice_desync_long = ((s.recon_dbg >> kDesyncLongBit) & 1u) != 0;
+    s.slice_desync_cause =
+        static_cast<uint8_t>((s.recon_dbg >> kDesyncCauseShift) & kDesyncCauseMask);
+    s.slice_desync = s.slice_desync_early || s.slice_desync_long ||
+                     (s.slice_desync_cause != 0);
+    if (s.slice_desync) {
+        s.slice_desync_mb = static_cast<uint16_t>(
+            raw[kDesyncMbLoByte] | (static_cast<uint16_t>(raw[kDesyncMbHiByte]) << 8));
+        // SPS dims are dual-used for desync_mb while sticky — leave sps_* 0 here
+        // rather than publish a false 16*mb geometry.
+        s.sps_width = 0;
+        s.sps_height = 0;
+    }
     // Stream byte telemetry was reclaimed for P3-3l2 silicon RCA. Publish the
     // NAL-count liveness mirror under an explicit name; keep stream_bytes_in
     // only as a deprecated in-process compatibility alias.

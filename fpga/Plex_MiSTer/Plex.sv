@@ -115,6 +115,11 @@ wire signed [7:0] residual_dc;
 wire [7:0]   residual_csum;
 wire signed [15:0] residual_coeff [0:15];
 wire         residual_place_pulse;
+wire         slice_desync;
+wire         slice_desync_early;
+wire         slice_desync_long;
+wire  [3:0]  slice_desync_cause;
+wire [15:0]  slice_desync_mb;
 wire [7:0]   recon_sig;
 wire [7:0]   recon_dbg;
 wire         recon_dbg_valid;
@@ -668,7 +673,12 @@ stream_path #(
 	.dec_px_plane(dec_px_plane),
 	.dec_px_x(dec_px_x),
 	.dec_px_y(dec_px_y),
-	.dec_px_data(dec_px_data)
+	.dec_px_data(dec_px_data),
+	.slice_desync(slice_desync),
+	.slice_desync_early(slice_desync_early),
+	.slice_desync_long(slice_desync_long),
+	.slice_desync_cause(slice_desync_cause),
+	.slice_desync_mb(slice_desync_mb)
 );
 
 // Phase 3.3j / 3.1b hybrid present:
@@ -878,7 +888,11 @@ assign LED_USER = has_stream ? (act_cnt[20] ^ nalu_count[0] ^ last_nal_type[0])
 //   [111:104] residual_csum    (3.3l-1 XOR sat8(coeff[0:15]); Baseline golden 0x14)
 //   [119:112] recon_sig        (3.3l-2 XOR recon Y[0:15]; MB0 block0 golden 0x3b)
 //   [127:120] p3_recon_dbg     (coeff/dequant/idct/recon non-zero flags for silicon RCA)
+//             sticky PARSE desync overlays dbg:
+//               bit0=early, bit1=long, [7:4]=cause (when desync sticky)
 //   [122:121] forced from status (Aspect ratio) — overlaps stream debug only
+//   When PARSE desync sticky: [95:80] dual-use as desync_mb (last/break MB addr)
+//   else [87:80]=sps_mb_w [95:88]=sps_mb_h. ARM reads via UIO_GET_STATUS / PLXS path.
 wire [7:0] telem_flags = {
 	pps_valid, sps_valid, stub_busy, has_idr,
 	audio_underrun, has_stream, has_audio, has_frame
@@ -898,11 +912,22 @@ wire [7:0] telem_flags = {
 (* preserve *) reg [15:0] st_res_word_sticky;  // ONLY status residual source {csum,dc}
 (* preserve *) reg [7:0]  st_recon_sig_sticky; // ONLY status recon signature source
 (* preserve *) reg [7:0]  st_recon_dbg_sticky; // P3 silicon RCA flags; separate from residual/recon
+(* preserve *) reg        st_desync_sticky;       // PARSE: any desync/error
+(* preserve *) reg        st_desync_early_sticky; // PARSE: slice ended early
+(* preserve *) reg        st_desync_long_sticky;  // PARSE: slice ran long
+(* preserve *) reg [3:0]  st_desync_cause_sticky;// first-fault cause code
+(* preserve *) reg [15:0] st_desync_mb_sticky;   // MB addr where first fault latched
 (* preserve *) reg [127:0] status_telem_r;
 (* preserve *) reg        residual_ok_d_st;
 wire residual_ok_rise = residual_ok & ~residual_ok_d_st;
 wire [7:0] st_res_csum = st_res_word_sticky[15:8];
 wire signed [7:0] st_res_dc = st_res_word_sticky[7:0];
+// dbg sticky with PARSE desync overlay:
+//   [1:0] = {long, early}; [7:4] = cause when sticky else RCA high nibble.
+// AR splice may stomp [2:1]; cause/early/long stay readable for ARM.
+wire [7:0] st_recon_dbg_telem = st_desync_sticky
+	? {st_desync_cause_sticky, st_recon_dbg_sticky[3:2], st_desync_long_sticky, st_desync_early_sticky}
+	: {st_recon_dbg_sticky[7:2], st_desync_long_sticky, st_desync_early_sticky};
 
 // Always block A: residual sticky ONLY (inputs: place pulse / ok rise / residual_*)
 // NEVER mentions stream_bytes_in — structural isolate Rank2.
@@ -912,6 +937,11 @@ always @(posedge clk_sys) begin
 		st_res_word_sticky <= 16'd0;
 		st_recon_sig_sticky <= 8'd0;
 		st_recon_dbg_sticky <= 8'd0;
+		st_desync_sticky       <= 1'b0;
+		st_desync_early_sticky <= 1'b0;
+		st_desync_long_sticky  <= 1'b0;
+		st_desync_cause_sticky <= 4'd0;
+		st_desync_mb_sticky    <= 16'd0;
 		residual_ok_d_st   <= 1'b0;
 	end else begin
 		st_res_word      <= {residual_csum, residual_dc}; // debug bond
@@ -926,6 +956,20 @@ always @(posedge clk_sys) begin
 			st_recon_sig_sticky <= recon_sig;
 		if (recon_dbg_valid)
 			st_recon_dbg_sticky <= recon_dbg;
+		// Sticky PARSE desync mailbox (hold until explicit reset clear).
+		if (slice_desync || slice_desync_early || slice_desync_long) begin
+			st_desync_sticky <= 1'b1;
+			if (slice_desync_early)
+				st_desync_early_sticky <= 1'b1;
+			if (slice_desync_long)
+				st_desync_long_sticky <= 1'b1;
+			// First-fault only: freeze cause + MB where walker broke.
+			if (!st_desync_sticky) begin
+				st_desync_cause_sticky <= (slice_desync_cause != 4'd0) ? slice_desync_cause :
+					(slice_desync_early ? 4'd1 : (slice_desync_long ? 4'd2 : 4'd6));
+				st_desync_mb_sticky <= slice_desync_mb;
+			end
+		end
 		// else HOLD sticky — frozen between intentional place/ok edges
 	end
 end
@@ -943,19 +987,28 @@ always @(posedge clk_sys) begin
 		status_telem_r[63:56]   <= slice_type;
 		status_telem_r[71:64]   <= {residual_ok, residual_tc, residual_t1};
 		status_telem_r[79:72]   <= {ddr_busy, swap_pending, slice_qp};
-		status_telem_r[87:80]   <= sps_mb_w;
-		status_telem_r[95:88]   <= sps_mb_h;
+		// Dual-use when PARSE desync sticky: publish break MB instead of SPS dims.
+		// Host detects via recon_dbg early/long bits or cause nibble.
+		if (st_desync_sticky) begin
+			status_telem_r[87:80] <= st_desync_mb_sticky[7:0];
+			status_telem_r[95:88] <= st_desync_mb_sticky[15:8];
+		end else begin
+			status_telem_r[87:80] <= sps_mb_w;
+			status_telem_r[95:88] <= sps_mb_h;
+		end
 		// residual half from sticky ONLY (never live residual_csum, never stream)
 		status_telem_r[103:96]  <= st_res_word_sticky[7:0];
 		status_telem_r[111:104] <= st_res_word_sticky[15:8];
 		status_telem_r[119:112] <= st_recon_sig_sticky;
+		// Keep sticky RCA in status_telem_r for Rank2 invariant; mask overlays desync.
 		status_telem_r[127:120] <= st_recon_dbg_sticky;
 	end
 end
 
-// Rank2 structural mask: force residual/recon bytes from sticky before AR splice
+// Rank2 structural mask: force residual/recon bytes from sticky before AR splice.
+// dbg byte forced through desync overlay so ARM always sees sticky PARSE bits.
 wire [127:0] status_telem_masked = {
-	st_recon_dbg_sticky,          // P3 recon RCA flags
+	st_recon_dbg_telem,           // P3 recon RCA + sticky PARSE desync/cause
 	st_recon_sig_sticky,          // recon signature forced from sticky
 	st_res_word_sticky[15:8],     // csum forced from sticky
 	st_res_word_sticky[7:0],      // dc forced from sticky
@@ -978,6 +1031,7 @@ reg [7:0]  prev_csum;
 reg signed [7:0] prev_dc;
 reg [7:0]  prev_recon_sig;
 reg [7:0]  prev_recon_dbg;
+reg        prev_desync;
 reg [14:0] st_div;
 always @(posedge clk_sys) begin
 	if (reset) begin
@@ -990,13 +1044,15 @@ always @(posedge clk_sys) begin
 		prev_dc    <= 0;
 		prev_recon_sig <= 0;
 		prev_recon_dbg <= 0;
+		prev_desync <= 0;
 		st_div     <= 0;
 	end else begin
 		status_set <= 0;
 		st_div <= st_div + 1'd1;
 		if (nalu_count != prev_nalu || slice_type != prev_sltype || sps_valid != prev_sps ||
 		    pps_valid != prev_pps || st_res_csum != prev_csum || st_res_dc != prev_dc ||
-		    st_recon_sig_sticky != prev_recon_sig || st_recon_dbg_sticky != prev_recon_dbg ||
+		    st_recon_sig_sticky != prev_recon_sig || st_recon_dbg_telem != prev_recon_dbg ||
+		    st_desync_sticky != prev_desync ||
 		    st_div == 0) begin
 			status_set <= 1'b1;
 			prev_nalu  <= nalu_count;
@@ -1006,7 +1062,8 @@ always @(posedge clk_sys) begin
 			prev_csum  <= st_res_csum;
 			prev_dc    <= st_res_dc;
 			prev_recon_sig <= st_recon_sig_sticky;
-			prev_recon_dbg <= st_recon_dbg_sticky;
+			prev_recon_dbg <= st_recon_dbg_telem;
+			prev_desync <= st_desync_sticky;
 		end
 	end
 end

@@ -46,7 +46,6 @@ module stream_path #(
 	output wire [15:0] fifo_level,
 	output wire        stream_ddr_active,
 	output wire [31:0] stream_ddr_bytes_out,
-	// ARM mailbox word (layout in h264_perf_counters.sv). Tie 0 until counters re-wired.
 	output wire [63:0] decode_perf_word,
 	output wire [15:0] stream_ddr_underruns,
 	output wire [15:0] stream_ddr_overruns,
@@ -120,9 +119,12 @@ module stream_path #(
 	// Slice walker PARSE desync (sticky sources for status telem / ARM).
 	// early: more_rbsp_data false before PicSizeInMbs
 	// long:  still data after PicSizeInMbs / walked past expected
+	// cause/mb: first-fault sticky (see h264_i_mb_feed DSC_* codes)
 	output wire         slice_desync,
 	output wire         slice_desync_early,
-	output wire         slice_desync_long
+	output wire         slice_desync_long,
+	output wire  [3:0]  slice_desync_cause,
+	output wire [15:0]  slice_desync_mb
 );
 
 	// The decode core must run on the CODED picture geometry, not the display
@@ -388,6 +390,8 @@ module stream_path #(
 	wire        feed_slice_desync;
 	wire        feed_slice_desync_early;
 	wire        feed_slice_desync_long;
+	wire [3:0]  feed_slice_desync_cause;
+	wire [15:0] feed_slice_desync_mb;
 	wire        feed_chroma_residual_valid;
 	wire signed [15:0] feed_chroma_residual_u [0:63];
 	wire signed [15:0] feed_chroma_residual_v [0:63];
@@ -643,11 +647,15 @@ module stream_path #(
 		.error(feed_error),
 		.slice_desync(feed_slice_desync),
 		.slice_desync_early(feed_slice_desync_early),
-		.slice_desync_long(feed_slice_desync_long)
+		.slice_desync_long(feed_slice_desync_long),
+		.slice_desync_cause(feed_slice_desync_cause),
+		.slice_desync_mb(feed_slice_desync_mb)
 	);
 	assign slice_desync = feed_slice_desync;
 	assign slice_desync_early = feed_slice_desync_early;
 	assign slice_desync_long = feed_slice_desync_long;
+	assign slice_desync_cause = feed_slice_desync_cause;
+	assign slice_desync_mb = feed_slice_desync_mb;
 	wire [7:0] core_recon_y [0:255];
 	wire [7:0] core_recon_u [0:63];
 	wire [7:0] core_recon_v [0:63];
@@ -869,6 +877,7 @@ module stream_path #(
 	             |sl_mb_mvd_valid | |sl_mb_mvd_x[0] | |sl_mb_mvd_y[0] | |sl_num_ref_m1 |
 	             |sl_chroma_pred_mode | feed_mb_intra | feed_mb_skip | feed_slice_desync |
 	             feed_slice_desync_early | feed_slice_desync_long |
+	             |feed_slice_desync_cause | |feed_slice_desync_mb |
 	             feed_chroma_residual_valid | |feed_chroma_residual_u[0] |
 	             |feed_part_mode |
 	             |core_dpb_wr_addr | |core_dpb_wr_data | core_dpb_rd_en |
