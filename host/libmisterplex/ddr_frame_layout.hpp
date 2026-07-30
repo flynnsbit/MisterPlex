@@ -376,13 +376,21 @@ inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
     return true;
 }
 
-// Center-copy a source I420 frame into a destination coded bank (black-filled).
-// Used when STREAM recon produces a smaller MB frame than the silicon canvas so
-// the publish path still rings the product 624-stride doorbell layout.
-// src must be tightly packed srcW×srcH I420; dst must hold dstGeom coded I420.
-inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int srcH,
-                                             uint8_t* dst, const DdrFrameGeometry& dstGeom) {
-    if (!src || !dst || srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
+// Origin of a tightly packed srcW×srcH I420 rectangle centered inside dstGeom's
+// *display* crop window (not the full coded bank). Offsets are forced even for
+// 4:2:0 chroma alignment. Returns false if src cannot fit.
+//
+// Product pin (320x240 into silicon 624x480 / display 618x480):
+//   x0 = crop_left + (618-320)/2 = 149 → 148 after even align
+//   y0 = crop_top  + (480-240)/2 = 120
+// This origin is CONSTANT for every line — packYuv420pCenteredIntoCodedBank
+// cannot produce per-scanline horizontal wander; a ragged left edge on HDMI is
+// a scanout/underrun defect, not a writer margin bug.
+inline bool codedContentOriginCentered(int srcW, int srcH, const DdrFrameGeometry& dstGeom,
+                                        int& x0, int& y0) {
+    x0 = 0;
+    y0 = 0;
+    if (srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
         return false;
     const int dstW = dstGeom.coded_width.get();
     const int dstH = dstGeom.coded_height.get();
@@ -390,6 +398,38 @@ inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int s
         return false;
     if (srcW > dstW || srcH > dstH)
         return false;
+    const int boxW = dstGeom.display_width.get() > 0 ? dstGeom.display_width.get() : dstW;
+    const int boxH = dstGeom.display_height.get() > 0 ? dstGeom.display_height.get() : dstH;
+    int ox = dstGeom.crop_left + (boxW - srcW) / 2;
+    int oy = dstGeom.crop_top + (boxH - srcH) / 2;
+    if (ox < 0)
+        ox = 0;
+    if (oy < 0)
+        oy = 0;
+    ox &= ~1;
+    oy &= ~1;
+    if (ox + srcW > dstW || oy + srcH > dstH)
+        return false;
+    x0 = ox;
+    y0 = oy;
+    return true;
+}
+
+// Center-copy a source I420 frame into a destination coded bank (black-filled).
+// Used when STREAM recon produces a smaller MB frame than the silicon canvas so
+// the publish path still rings the product 624-stride doorbell layout.
+// src must be tightly packed srcW×srcH I420; dst must hold dstGeom coded I420.
+// Destination X origin is computed ONCE via codedContentOriginCentered and reused
+// for every row — no per-line recompute that could accumulate rounding error.
+inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int srcH,
+                                             uint8_t* dst, const DdrFrameGeometry& dstGeom) {
+    if (!src || !dst)
+        return false;
+    int x0 = 0, y0 = 0;
+    if (!codedContentOriginCentered(srcW, srcH, dstGeom, x0, y0))
+        return false;
+    const int dstW = dstGeom.coded_width.get();
+    const int dstH = dstGeom.coded_height.get();
 
     const size_t dstBytes = yuv420pFrameBytes(dstW, dstH);
     if (dstBytes == 0)
@@ -402,24 +442,6 @@ inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int s
     std::memset(dstY, kYuv420BlackY, static_cast<size_t>(dstW) * static_cast<size_t>(dstH));
     std::memset(dstU, kYuv420BlackU, static_cast<size_t>(dstW / 2) * static_cast<size_t>(dstH / 2));
     std::memset(dstV, kYuv420BlackV, static_cast<size_t>(dstW / 2) * static_cast<size_t>(dstH / 2));
-
-    // Prefer centering inside the *display* crop window when one is declared so
-    // RTL crop+pillarbox still sees content in the visible columns.
-    const int boxW = dstGeom.display_width.get() > 0 ? dstGeom.display_width.get() : dstW;
-    const int boxH = dstGeom.display_height.get() > 0 ? dstGeom.display_height.get() : dstH;
-    const int boxX0 = dstGeom.crop_left;
-    const int boxY0 = dstGeom.crop_top;
-    int x0 = boxX0 + (boxW - srcW) / 2;
-    int y0 = boxY0 + (boxH - srcH) / 2;
-    if (x0 < 0)
-        x0 = 0;
-    if (y0 < 0)
-        y0 = 0;
-    // Keep even offsets for chroma alignment.
-    x0 &= ~1;
-    y0 &= ~1;
-    if (x0 + srcW > dstW || y0 + srcH > dstH)
-        return false;
 
     const uint8_t* srcY = src;
     const uint8_t* srcU = src + static_cast<size_t>(srcW) * static_cast<size_t>(srcH);

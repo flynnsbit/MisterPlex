@@ -352,13 +352,22 @@ module present_core #(
 	// the bottom edge out and expose a row past the frame (the bottom bar).
 	// DE_LAG=3 was measured, not guessed: scripts/gen_edge_markers.py paints the first
 	// source column white and the last mid-grey, and scripts/check_edges.py captures
-	// HDMI and reports where each landed. Sweeping 3..6 on hardware:
+	// HDMI and reports where each landed. Sweeping 3..6 on hardware (RGB565
+	// frame_store @ FRAME_W=320):
 	//   3 -> col0 w=6px, col319 w=4px   (correct)
 	//   4 -> col0 w=4px, col319 w=7px
 	//   5 -> col0 MISSING, col319 w=11px
 	//   6 -> col0 MISSING, col319 w=14px
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
+	//
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
+	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
+	// lag wraps previous-line right columns onto the left edge (ragged boundary +
+	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
+	// wander — retune with gen_edge_markers.py on an authorised fit; do not guess
+	// a new constant here without that sweep. Keep the frame_store-proven value
+	// until then so we do not silently eat left columns.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin

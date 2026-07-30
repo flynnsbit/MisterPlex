@@ -329,6 +329,14 @@ module ddr_frame_store #(
 			end
 		end
 	end
+	// Miss when the line under the beam is not yet in an M10K slot. If DDR fill
+	// completes MID-line, later pixels transition miss→hit and the left edge of
+	// real content wanders by tens of pixels per scanline (parent measured ~44 px
+	// after the ARM stride fix). That is a prefetch/CDC budget issue, not an ARM
+	// writer margin bug: pack/FFmpeg use a constant x0 per frame.
+	// REQUIRES_FIT: tighten want_y lead / LINE_COUNT / blank-time fill so
+	// y_hit_now is true before DE opens each line; optional sticky-miss-to-EOL
+	// only converts wander into full black lines (still a fail).
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);

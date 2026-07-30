@@ -1553,8 +1553,10 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 vf_norm,
-                'returnscaleFilterGeom(displayScale,sws_flags)+":force_original_aspect_ratio=decrease,pad="+scale+":"+std::to_string(crop_left)+":"+std::to_string(crop_top)+":color=black";',
-                "FFmpeg must scale into display geometry then pad once into the coded 624-pixel stride",
+                # Center inside the display window (crop_left/top is display origin in coded,
+                # not a left/top-align of the scaled picture). Matches packYuv origin policy.
+                'returnscaleFilterGeom(displayScale,sws_flags)+":force_original_aspect_ratio=decrease,pad="+scale+":"+padX+":"+padY+":color=black";',
+                "FFmpeg must scale into display geometry then center-pad into the coded 624-pixel stride",
             ),
             (
                 media_norm,

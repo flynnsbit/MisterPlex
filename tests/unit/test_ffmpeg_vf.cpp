@@ -57,7 +57,7 @@ int main() {
         expect_eq(p.reason, "scale_pad_center", "reason center");
     }
 
-    // --- shipping Always @ 624x480 crop path ---
+    // --- shipping Always @ 624x480 crop path (center inside display window) ---
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -70,10 +70,30 @@ int main() {
         const auto p = buildFfmpegVideoFilter(r);
         expect(p.scale_applied, "480p always scales");
         expect_eq(p.vf,
-                  "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:3:0:color="
-                  "black",
-                  "480p crop pad historical string");
+                  "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:3+(618-iw)/"
+                  "2:0+(480-ih)/2:color=black",
+                  "480p crop pad centers inside display window");
         expect_eq(p.reason, "scale_pad_crop", "reason crop");
+    }
+
+    // --- product silicon crop_left=0: 320 delivery scales into 618 then centers ---
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 624;
+        r.coded_h = 480;
+        r.display_w = 618;
+        r.display_h = 480;
+        r.crop_left = 0;
+        r.crop_top = 0;
+        r.scale_mode = FfmpegScaleMode::SkipIdentity;
+        r.source_w = 320;
+        r.source_h = 240;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(p.scale_applied && !p.identity_skip, "320→624 must scale (not identity)");
+        expect_eq(p.vf,
+                  "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/"
+                  "2:0+(480-ih)/2:color=black",
+                  "320 into silicon canvas centered pad string");
     }
 
     // --- Always + fps prefix ---

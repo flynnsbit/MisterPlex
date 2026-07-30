@@ -783,31 +783,47 @@ int main(int argc, char** argv) {
                 ? (std::to_string(expectW) + "x" + std::to_string(expectH))
                 : "unknown";
         // Predict ARM rescale from the same policy media_player will apply.
+        // media_player compares expected_delivery to the *coded bank* (silicon
+        // 624x480 for PRESENT=fpga|both), NOT to contentRes/DECODE (320x240).
+        // Comparing to contentRes here falsely predicted arm_rescale=0 for the
+        // shipping 320 path and hid the required scale+pad into the canvas.
         const auto scaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
+        const bool wantFpgaDdrCanvas =
+            (presentMode == "fpga" || presentMode == "both");
+        const auto codedGeom =
+            wantFpgaDdrCanvas
+                ? misterplex::ddrFrameGeometryForFpgaPresent(contentRes.width,
+                                                              contentRes.height)
+                : misterplex::makeDdrFrameGeometry(contentRes.width, contentRes.height);
+        const int codedW = codedGeom.coded_width.get();
+        const int codedH = codedGeom.coded_height.get();
         int armRescale = 1;
         if (scaleMode == misterplex::FfmpegScaleMode::Off) {
             armRescale = 0;
         } else if (scaleMode == misterplex::FfmpegScaleMode::SkipIdentity) {
             const bool knownMatch =
-                expectW > 0 && expectH > 0 && expectW == contentRes.width.get() &&
-                expectH == contentRes.height.get();
+                expectW > 0 && expectH > 0 && expectW == codedW && expectH == codedH;
             const bool assumeMatch =
                 ffmpegScaleAssumeMatch && !(expectW > 0 && expectH > 0);
             armRescale = (knownMatch || assumeMatch) ? 0 : 1;
         }
         // Greppable single-line geometry contract for parent device logs.
         // Keys: requested_pms expected_delivery decode_target arm_rescale
+        // decode_target is the coded bank (624 on FPGA), content_tier is DECODE/OSD.
         const std::string libraryStr =
             (resolved.mediaWidth > 0 && resolved.mediaHeight > 0)
                 ? (std::to_string(resolved.mediaWidth) + "x" +
                    std::to_string(resolved.mediaHeight))
                 : "unknown";
+        const std::string codedTarget =
+            std::to_string(codedW) + "x" + std::to_string(codedH);
         std::fprintf(stderr,
                      "misterplexd: GEOM requested_pms=%s expected_delivery=%s "
-                     "delivery_basis=%s decode_target=%s arm_rescale=%d "
+                     "delivery_basis=%s decode_target=%s content_tier=%s arm_rescale=%d "
                      "transcoded=%d sws=%s scale_mode=%s library_media=%s\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
-                     decodeTarget.c_str(), armRescale, resolved.transcoded ? 1 : 0,
+                     codedTarget.c_str(), decodeTarget.c_str(), armRescale,
+                     resolved.transcoded ? 1 : 0,
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
                      misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str());
 

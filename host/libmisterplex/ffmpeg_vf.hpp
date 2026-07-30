@@ -102,20 +102,34 @@ inline std::string scaleFilterGeom(const std::string& wh, const std::string& sws
 }
 
 // Canonical product scale+pad strings — freeze tests pin these shapes.
-// 480p crop path: scale into display geometry then pad once into coded stride.
+// 480p crop path: scale into display geometry then pad once into coded stride,
+// centering the scaled frame inside the display window (crop_left/top is the
+// display origin inside the coded bank — NOT a left-align of the content).
 // Square path: scale into coded geometry with centred pad.
+//
+// Prior pad=<coded>:<crop_left>:<crop_top> left/top-aligned the scaled picture
+// at the crop origin. For any source that does not fill the display box that
+// put the entire pillar/letter box on the right/bottom and shoved content into
+// the top-left — wrong vs force_original_aspect_ratio=decrease + pad intent,
+// and it disagreed with packYuv420pCenteredIntoCodedBank (constant center).
+// FFmpeg expressions keep the margin constant per frame (iw/ih are filter-graph
+// constants for a given frame, not recomputed per scanline).
 inline std::string buildScalePadCropped(int display_w, int display_h, int coded_w, int coded_h,
                                         int crop_left, int crop_top,
                                         const std::string& sws_flags) {
     const std::string displayScale =
         std::to_string(display_w) + ":" + std::to_string(display_h);
     const std::string scale = std::to_string(coded_w) + ":" + std::to_string(coded_h);
-    // Keep the historical shape so test_rtl_invariants can pin the product path:
-    // scale=<display>:force_original_aspect_ratio=decrease,pad=<coded>:<crop_l>:<crop_t>:color=black
-    // with optional :flags= inserted only when conf requests it.
+    // pad x = crop_left + (display_w - iw)/2 ; y = crop_top + (display_h - ih)/2
+    // so a full-bleed decrease into display_w lands at x=crop_left (product
+    // crop_left=0 → x=0), and a narrower frame is pillarboxed inside display.
+    const std::string padX = std::to_string(crop_left) + "+(" + std::to_string(display_w) +
+                             "-iw)/2";
+    const std::string padY = std::to_string(crop_top) + "+(" + std::to_string(display_h) +
+                             "-ih)/2";
     return scaleFilterGeom(displayScale, sws_flags) +
-           ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
-           std::to_string(crop_left) + ":" + std::to_string(crop_top) + ":color=black";
+           ":force_original_aspect_ratio=decrease,pad=" + scale + ":" + padX + ":" + padY +
+           ":color=black";
 }
 
 inline std::string buildScalePadCentered(int coded_w, int coded_h,

@@ -366,10 +366,32 @@ int main() {
                                                                misterplex::kPlex480pCodedHeight),
                                  0x00);
         const auto silicon = misterplex::productDdrFrameStoreGeometry();
+        // Exact left/top margin pin for 320x240-into-624x480 (display 618x480):
+        //   x0 = 0 + (618-320)/2 = 149 → 148 after even chroma align
+        //   y0 = 0 + (480-240)/2 = 120
+        // Origin is computed once; every packed row uses the same x0 (no wander).
+        int pinX = -1, pinY = -1;
+        CHECK(misterplex::codedContentOriginCentered(320, 240, silicon, pinX, pinY));
+        CHECK(pinX == 148);
+        CHECK(pinY == 120);
         CHECK(misterplex::packYuv420pCenteredIntoCodedBank(src.data(), 320, 240, dst.data(),
                                                            silicon));
         // Corners of the coded bank stay studio black; a mid-display sample is content.
         CHECK(dst[0] == misterplex::kYuv420BlackY);
+        // Column just left of the packed picture is black; first content column is 0x40
+        // on every row of the packed band — proves constant left margin (no shear).
+        const int dstW = silicon.coded_width.get();
+        for (int row = 0; row < 240; ++row) {
+            const size_t rowBase =
+                static_cast<size_t>(pinY + row) * static_cast<size_t>(dstW);
+            if (pinX > 0)
+                CHECK(dst[rowBase + static_cast<size_t>(pinX - 1)] == misterplex::kYuv420BlackY);
+            CHECK(dst[rowBase + static_cast<size_t>(pinX)] == 0x40);
+            CHECK(dst[rowBase + static_cast<size_t>(pinX + 319)] == 0x40);
+            if (pinX + 320 < dstW)
+                CHECK(dst[rowBase + static_cast<size_t>(pinX + 320)] ==
+                      misterplex::kYuv420BlackY);
+        }
         const int midY = silicon.crop_top + silicon.display_height.get() / 2;
         const int midX = silicon.crop_left + silicon.display_width.get() / 2;
         const size_t midOff = static_cast<size_t>(midY) * static_cast<size_t>(silicon.coded_width.get()) +
