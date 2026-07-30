@@ -16,6 +16,11 @@
 //
 // Scaffold evidence (pre-fix): slice_hdr_parser ST_MBT/ST_P_MBT → ST_DONE after
 // the first P MB only (first_mb_* ports). That is by design, not a mid-loop bug.
+//
+// Area (cycle-iterative): RBSP lives in M10K with registered read; bit engine
+// consumes one registered byte at a time; residual window loads 64B over 64+
+// cycles. No runtime-indexed combo mux over the full RBSP (see
+// docs/cycle-iterative-traverse-area.md). Target <=3000 ALMs.
 
 `default_nettype none
 
@@ -23,7 +28,8 @@ module h264_p_mb_traverse #(
 	parameter int MAX_RBSP_BYTES = 8192,
 	parameter bit FAULT_BAD_SKIP_RUN = 1'b0,     // mutation: treat skip_run as 0
 	parameter bit FAULT_DROP_LAST_ROW_MB = 1'b0, // mutation: drop last MB of each row
-	parameter bit FAULT_NO_QP_WRAP = 1'b0        // mutation: skip QP_Y mod-52 (4× residual)
+	parameter bit FAULT_NO_QP_WRAP = 1'b0,       // mutation: skip QP_Y mod-52 (4× residual)
+	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0     // mutation: skip serial RBSP→res_win (area twin)
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -141,14 +147,39 @@ module h264_p_mb_traverse #(
 		ST_CBP_INTRA_UE   = 8'd40,
 		ST_HDR_LISTMOD_ARG = 8'd41, // abs_diff_pic_num / long_term_pic_num
 		ST_RES_HOLD       = 8'd42, // stall until residual consumer ACKs
-		ST_RES_MB_END     = 8'd43; // pulse res_mb_end then NEXT_MB
+		ST_RES_MB_END     = 8'd43, // pulse res_mb_end then NEXT_MB
+		ST_RES_WIN_LOAD   = 8'd44, // serial 64B RBSP→res_win (M10K, 1B/cyc)
+		ST_INIT_XY        = 8'd45; // first_mb → curr_x/y counters (no / %)
 
-	reg [7:0] rbsp [0:MAX_RBSP_BYTES-1];
+	// ---- RBSP bitstream buffer: single-port M10K, registered read ----
+	// Combo rbsp[runtime] / 64-wide load_res_window measured 1.18M self comb.
+	(* ramstyle = "M10K, no_rw_check" *)
+	reg [7:0] rbsp_mem [0:MAX_RBSP_BYTES-1];
+	reg [7:0]  rbsp_q;
+	reg [13:0] rbsp_raddr;
+	reg [13:0] rbsp_ra_d1;
+	reg        rbsp_we;
+	reg [13:0] rbsp_waddr;
+	reg [7:0]  rbsp_wdata;
 	reg [15:0] rbsp_len;
 	// Must hold MAX_RBSP_BYTES*8 (16384*8=131072 → 18 bits). 16-bit bit_pos
 	// wrapped at 65536 and ended the 624x480 IDR walk at ~250/1170 MBs.
 	reg [17:0] bit_pos;
 	wire [31:0] rbsp_bit_total = {16'd0, rbsp_len} << 3;
+	// Registered current parse byte (no combo index into rbsp_mem).
+	reg [7:0]  bit_byte;
+	reg [13:0] bit_byte_addr;
+	reg        bit_byte_v;
+	wire [13:0] bit_need_addr = bit_pos[17:3];
+	wire        bit_from_q = (rbsp_ra_d1 == bit_need_addr);
+	wire        bit_ready = (bit_byte_v && (bit_byte_addr == bit_need_addr)) || bit_from_q;
+	wire        cur_bit = (bit_byte_v && (bit_byte_addr == bit_need_addr))
+		? bit_byte[3'd7 - bit_pos[2:0]]
+		: rbsp_q[3'd7 - bit_pos[2:0]];
+	// Serial residual window load
+	reg [13:0] win_base;
+	reg [13:0] win_raddr;
+	reg [7:0]  win_k;
 	reg [7:0] st, ret_st;
 	reg [7:0] fixed_left;
 	reg [31:0] fixed_acc;
@@ -225,24 +256,22 @@ module h264_p_mb_traverse #(
 	wire [15:0] mb_w16 = (mb_width == 8'd0) ? 16'd20 : {8'd0, mb_width};
 	wire [15:0] mb_h16 = (mb_height == 8'd0) ? 16'd15 : {8'd0, mb_height};
 	wire [31:0] pic_mbs32 = {16'd0, mb_w16} * {16'd0, mb_h16};
-	wire [15:0] curr_x = (mb_w16 == 16'd0) ? 16'd0 : (curr_mb % mb_w16);
-	wire [15:0] curr_y = (mb_w16 == 16'd0) ? 16'd0 : (curr_mb / mb_w16);
+	// Explicit MB x/y counters (no runtime / or % per reference).
+	reg [7:0] curr_x_r, curr_y_r;
+	reg [15:0] xy_rem;
+	wire [15:0] curr_x = {8'd0, curr_x_r};
+	wire [15:0] curr_y = {8'd0, curr_y_r};
 	wire        drop_this_mb = FAULT_DROP_LAST_ROW_MB && (curr_x == (mb_w16 - 16'd1));
 
 	assign in_ready = !busy && (rbsp_len < MAX_RBSP_BYTES[15:0]);
 
-	function automatic bit rbsp_bit_at;
-		input [17:0] idx;
-		integer byte_i, bit_i;
-		begin
-			byte_i = idx >> 3;
-			bit_i = 7 - (idx[2:0]);
-			if (byte_i >= rbsp_len)
-				rbsp_bit_at = 1'b0;
-			else
-				rbsp_bit_at = rbsp[byte_i][bit_i];
-		end
-	endfunction
+	// Single-port RBSP RAM: one write or one registered read per cycle.
+	always @(posedge clk) begin
+		if (rbsp_we)
+			rbsp_mem[rbsp_waddr] <= rbsp_wdata;
+		rbsp_q <= rbsp_mem[rbsp_raddr];
+		rbsp_ra_d1 <= rbsp_raddr;
+	end
 
 	function automatic signed [7:0] se8_from_ue;
 		input [31:0] code;
@@ -673,21 +702,7 @@ module h264_p_mb_traverse #(
 	);
 
 	integer wi, ti;
-	task automatic load_res_window;
-		input [17:0] abs_bit;
-		integer bbase, k;
-		begin
-			bbase = abs_bit >> 3;
-			// Byte-aligned absolute base; CAVLC sees only in-window offsets.
-			res_win_bit0 <= {abs_bit[17:3], 3'b000};
-			for (k = 0; k < 64; k = k + 1) begin
-				if ((bbase + k) < rbsp_len)
-					res_win[k] <= rbsp[bbase + k];
-				else
-					res_win[k] <= 8'd0;
-			end
-		end
-	endtask
+	// load_res_window removed: ST_RES_WIN_LOAD copies 64B from M10K one/cycle.
 
 	// Residual schedule:
 	//  Inter / I_NxN: idx 0..15 luma 4x4 (max16), 16..17 chrDC, 18..25 chrAC
@@ -744,7 +759,10 @@ module h264_p_mb_traverse #(
 			abs_bit = bit_pos;
 			nCv = 6'd0;
 			maxv = 5'd16;
-			load_res_window(abs_bit);
+			// Window filled later in ST_RES_WIN_LOAD (serial M10K read).
+			res_win_bit0 <= {abs_bit[17:3], 3'b000};
+			win_base <= abs_bit[17:3];
+			win_k <= 8'd0;
 			if (is_i16_r) begin
 				if (idx == 5'd0) begin
 					// I_16x16 DC nC from left/up MB edge (block 0 neighbours)
@@ -795,12 +813,26 @@ module h264_p_mb_traverse #(
 			end
 			cavlc_bit0_r <= {7'd0, abs_bit[2:0]};
 			cavlc_bitlen_r <= 10'd512;
-			cavlc_start_r <= 1'b1;
+			// cavlc_start_r pulsed after ST_RES_WIN_LOAD completes
 `ifdef VERILATOR
 			if (is_i_slice_r && curr_mb < 16'd6)
 				$display("TRAV_RES_LAUNCH mb=%0d res_i=%0d i16=%0d nC=%0d max=%0d abs_bit=%0d",
 					curr_mb, idx, is_i16_r, nCv, maxv, abs_bit);
 `endif
+		end
+	endtask
+
+	task automatic advance_mb_xy;
+		begin
+			if (mb_w16 == 16'd0) begin
+				curr_x_r <= 8'd0;
+				curr_y_r <= 8'd0;
+			end else if (curr_x_r >= (mb_w16[7:0] - 8'd1)) begin
+				curr_x_r <= 8'd0;
+				curr_y_r <= curr_y_r + 8'd1;
+			end else begin
+				curr_x_r <= curr_x_r + 8'd1;
+			end
 		end
 	endtask
 
@@ -864,6 +896,19 @@ module h264_p_mb_traverse #(
 		if (reset || clear) begin
 			rbsp_len <= 16'd0;
 			bit_pos <= 18'd0;
+			rbsp_we <= 1'b0;
+			rbsp_waddr <= 14'd0;
+			rbsp_wdata <= 8'd0;
+			rbsp_raddr <= 14'd0;
+			bit_byte <= 8'd0;
+			bit_byte_addr <= 14'd0;
+			bit_byte_v <= 1'b0;
+			win_base <= 14'd0;
+			win_raddr <= 14'd0;
+			win_k <= 8'd0;
+			curr_x_r <= 8'd0;
+			curr_y_r <= 8'd0;
+			xy_rem <= 16'd0;
 			busy <= 1'b0;
 			st <= ST_IDLE;
 			ret_st <= ST_IDLE;
@@ -961,6 +1006,7 @@ module h264_p_mb_traverse #(
 			slice_done <= 1'b0;
 			cavlc_start_r <= 1'b0;
 			res_mb_end <= 1'b0;
+			rbsp_we <= 1'b0;
 
 			// Handshake: drop valid when accepted
 			if (mb_valid && mb_ready) begin
@@ -970,9 +1016,30 @@ module h264_p_mb_traverse #(
 			if (res_blk_valid && res_blk_ready)
 				res_blk_valid <= 1'b0;
 
+			// RBSP fill: single write port into M10K
 			if (!busy && in_valid && in_ready) begin
-				rbsp[rbsp_len] <= in_byte;
+				rbsp_we <= 1'b1;
+				rbsp_waddr <= rbsp_len[13:0];
+				rbsp_wdata <= in_byte;
 				rbsp_len <= rbsp_len + 16'd1;
+			end
+
+			// Default read address: residual window loader or current bit byte.
+			// Window: issue raddr=base+k for k=0..63; capture byte k at win_k=k+2
+			// (registered M10K read = 1 cycle addr→q).
+			if (st == ST_RES_WIN_LOAD) begin
+				if (win_k <= 8'd63)
+					rbsp_raddr <= win_base + {6'd0, win_k};
+			end else
+				rbsp_raddr <= bit_need_addr;
+
+			// Capture registered RBSP byte for bit engine (not during window load).
+			if (st == ST_RES_WIN_LOAD) begin
+				bit_byte_v <= 1'b0;
+			end else if (rbsp_ra_d1 == bit_need_addr) begin
+				bit_byte <= rbsp_q;
+				bit_byte_addr <= rbsp_ra_d1;
+				bit_byte_v <= 1'b1;
 			end
 
 			// Stall FSM while an MB beat is outstanding and not taken,
@@ -988,6 +1055,9 @@ module h264_p_mb_traverse #(
 				mb_count <= 16'd0;
 				pic_mbs <= pic_mbs32[15:0];
 				bit_pos <= 18'd0;
+				bit_byte_v <= 1'b0;
+				curr_x_r <= 8'd0;
+				curr_y_r <= 8'd0;
 				log2_fn_r <= (log2_max_frame_num == 5'd0) ? 5'd4 : log2_max_frame_num;
 				db_lat <= pps_deblock_ctrl;
 				idr_lat <= is_idr_nal;
@@ -1021,8 +1091,10 @@ module h264_p_mb_traverse #(
 				ST_BITS: begin
 					if (fixed_left == 8'd0) st <= ret_st;
 					else if (bit_pos >= rbsp_bit_total) fail();
-					else begin
-						fixed_acc <= (fixed_acc << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+					else if (!bit_ready) begin
+						// wait M10K byte
+					end else begin
+						fixed_acc <= (fixed_acc << 1) | {31'd0, cur_bit};
 						bit_pos <= bit_pos + 18'd1;
 						fixed_left <= fixed_left - 8'd1;
 						if (fixed_left == 8'd1) st <= ret_st;
@@ -1030,7 +1102,9 @@ module h264_p_mb_traverse #(
 				end
 				ST_UE_ZERO: begin
 					if (bit_pos >= rbsp_bit_total) fail();
-					else if (!rbsp_bit_at(bit_pos)) begin
+					else if (!bit_ready) begin
+						// wait M10K byte
+					end else if (!cur_bit) begin
 						bit_pos <= bit_pos + 18'd1;
 						if (ue_zero >= 8'd24) fail();
 						else ue_zero <= ue_zero + 8'd1;
@@ -1048,12 +1122,14 @@ module h264_p_mb_traverse #(
 				end
 				ST_UE_SUFFIX: begin
 					if (bit_pos >= rbsp_bit_total) fail();
-					else begin
+					else if (!bit_ready) begin
+						// wait M10K byte
+					end else begin
 						// NBA-correct: old ue_suffix in RHS yields final suffix value.
-						ue_suffix <= (ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)};
+						ue_suffix <= (ue_suffix << 1) | {31'd0, cur_bit};
 						if (ue_suffix_left == 8'd1) begin
 							ue_value <= ((32'd1 << ue_zero) - 32'd1) +
-							            ((ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)});
+							            ((ue_suffix << 1) | {31'd0, cur_bit});
 							st <= ret_st;
 						end
 						bit_pos <= bit_pos + 18'd1;
@@ -1063,7 +1139,19 @@ module h264_p_mb_traverse #(
 				ST_HDR_FIRST: begin
 					first_mb_r <= ue_value[15:0];
 					curr_mb <= ue_value[15:0];
-					start_ue(ST_HDR_TYPE);
+					xy_rem <= ue_value[15:0];
+					curr_x_r <= 8'd0;
+					curr_y_r <= 8'd0;
+					st <= ST_INIT_XY;
+				end
+				ST_INIT_XY: begin
+					// Walk first_mb steps on x/y counters (area: no divider).
+					if (xy_rem == 16'd0)
+						start_ue(ST_HDR_TYPE);
+					else begin
+						advance_mb_xy();
+						xy_rem <= xy_rem - 16'd1;
+					end
 				end
 				ST_HDR_TYPE: begin
 					slice_type_r <= ue_value[7:0];
@@ -1210,6 +1298,7 @@ module h264_p_mb_traverse #(
 						end
 						zero_chr_tc_mb();
 						curr_mb <= curr_mb + 16'd1;
+						advance_mb_xy();
 						skip_left <= skip_left - 16'd1;
 					end else if (curr_mb >= pic_mbs) begin
 						st <= ST_DONE;
@@ -1558,7 +1647,28 @@ module h264_p_mb_traverse #(
 							res_block_i <= res_block_i + 5'd1;
 					end else begin
 						launch_cavlc_for_slot(res_block_i);
+						st <= ST_RES_WIN_LOAD;
+					end
+				end
+				ST_RES_WIN_LOAD: begin
+					// Serial 64B from M10K. win_k=0..63 issue; capture at k+2.
+					// Latency: raddr@C → q@C+1 visible to FSM @C+2 (NBA + mem).
+					if (FAULT_SKIP_WIN_LOAD) begin
+						cavlc_start_r <= 1'b1;
 						st <= ST_RES_WAIT;
+					end else begin
+						if (win_k >= 8'd2) begin
+							if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+								res_win[win_k - 8'd2] <= rbsp_q;
+							else
+								res_win[win_k - 8'd2] <= 8'd0;
+						end
+						if (win_k == 8'd65) begin
+							cavlc_start_r <= 1'b1;
+							st <= ST_RES_WAIT;
+							win_k <= 8'd0;
+						end else
+							win_k <= win_k + 8'd1;
 					end
 				end
 				ST_RES_WAIT: begin
@@ -1668,6 +1778,7 @@ module h264_p_mb_traverse #(
 				end
 				ST_NEXT_MB: begin
 					curr_mb <= curr_mb + 16'd1;
+					advance_mb_xy();
 					if ((curr_mb + 16'd1) >= pic_mbs)
 						st <= ST_DONE;
 					else if (bit_pos >= rbsp_bit_total)

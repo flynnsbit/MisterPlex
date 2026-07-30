@@ -1,0 +1,1414 @@
+REAL_REF_MEASURE source_sha=6209d4332e8c5a29ecfaafd1960a91fc6edc3ce0-dirty
+REAL_REF_MEASURE pre-register HEADLINE: intra=0/300 inter=0/3300 (chroma stub floors Y+U+V mb_exact)
+REAL_REF_MEASURE pre-register LUMA: intra_y_mb=260..295/300 intra_y_px=65000..74000/76800 (mb_qp_delta mod-52 wrapQpY)
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                        ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:45: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:224:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  224 |       bx_r[i] <= b_c * (i - 7);
+      |               ^~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:225:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  225 |       cy_r[i] <= c_c * (i - 7);
+      |               ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:254:37: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  254 |     if (has_above && has_left) dc_v = (sum + 16) >>> 5;
+      |                                     ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:255:42: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  255 |     else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:66:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   66 |     dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
+      |                                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   67 |     dc_v = dc_sum >>> 3;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:69:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   69 |     dc_sum = t0 + t1 + t2 + t3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   70 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:72:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   72 |     dc_sum = l0 + l1 + l2 + l3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:73:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   73 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                                                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:106:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  106 |    put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  111 |    put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv:50:18: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   50 |  wire [2:0] qmod = qp % 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv:51:18: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   51 |  wire [3:0] qdiv = qp / 6;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv:64:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'zz' generates 4 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   64 |    zi = zz(i[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv:65:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'transpose4' generates 4 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   65 |    tr = transpose4(zi[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv:66:17: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   66 |    input_cm[tr] = coeff[i];
+      |                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:231:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  231 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:232:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  232 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:233:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  233 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:234:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  234 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:235:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  235 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:236:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  236 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:237:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  237 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:238:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  238 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:239:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  239 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:240:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  240 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:241:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  241 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:242:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  242 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:243:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  243 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:244:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  244 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:245:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  245 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:246:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  246 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:168:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  168 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:169:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  169 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:170:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  170 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:171:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  171 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:172:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  172 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:173:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  173 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:174:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  174 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:175:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  175 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:176:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  176 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:177:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  177 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:178:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  178 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:179:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  179 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:180:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  180 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:181:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  181 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:182:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  182 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_dq'
+   81 |    qmod = q % 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_dq'
+   82 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:154:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  154 |  wire [4:0] i4_x0 = {i4_bx, 2'b00};
+      |                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:155:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  155 |  wire [4:0] i4_y0 = {i4_by, 2'b00};
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:192:27: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  192 |      i4_above[t] = top_row[abs_x0 + t[15:0]];
+      |                           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:195:31: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  195 |      i4_above[4 + t] = top_row[abs_x0 + 16'd4 + t[15:0]];
+      |                               ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:208:26: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  208 |     i4_left[t] = left_col[i4_y0 + t[4:0]];
+      |                          ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:215:35: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  215 |     i4_tl = (abs_x0 > 0) ? top_row[abs_x0 - 16'd1] : 8'd128;
+      |                                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:217:21: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  217 |     i4_tl = left_col[i4_y0 - 5'd1];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:512:32: Operator ADD expects 18 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  512 |           (($signed(dc_had[b]) + 18'sd32) >>> 6);
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:532:11: Operator SUB expects 29 bits on the LHS, but LHS's SIGNED generates 18 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  532 |           - (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
+      |           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:532:41: Operator ADD expects 29 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  532 |           - (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
+      |                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:532:41: Operator ADD expects 29 bits on the RHS, but RHS's CONST '18'sh20' generates 18 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  532 |           - (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
+      |                                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:531:15: Operator ASSIGN expects 18 bits on the Assign RHS, but Assign RHS's ADD generates 29 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  531 |          tsum = $signed({10'd0, plane_y[addr]})
+      |               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1389:31: Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's CONST '1'h1' generates 1 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+ 1389 |      dbg_printed_recon_counts <= 1'b1;
+      |                               ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1384:9: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'dbg_printed_recon_counts' generates 32 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+ 1384 |     if (!dbg_printed_recon_counts) begin
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:173:28: Operator ASSIGNW expects 14 bits on the Assign RHS, but Assign RHS's SEL generates 15 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  173 |  wire [13:0] bit_need_addr = bit_pos[17:3];
+      |                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:298:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  298 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:298:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  298 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:301:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  301 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:301:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  301 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:316:12: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  316 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:316:12: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  316 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:550:26: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  550 |     tc_top_local = tc_top[abs_x];
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:549:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  549 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:549:38: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  549 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:514:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  514 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:514:34: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  514 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:513:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  513 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:590:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  590 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:590:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  590 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:591:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  591 |      tc_chr_top[p][abs_x] : 5'd0;
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:593:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  593 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:593:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  593 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:592:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  592 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:764:13: Operator ASSIGNDLY expects 14 bits on the Assign RHS, but Assign RHS's SEL generates 15 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  764 |    win_base <= abs_bit[17:3];
+      |             ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:786:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  786 |      chr_i = idx - 5'd19;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:806:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  806 |     chr_i = idx - 5'd18;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:851:11: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  851 |     tc_top[abs_x] <= tc;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:852:13: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  852 |     tc_top_v[abs_x] <= 1'b1;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:850:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  850 |    if (abs_x < MAX_MB_W*4) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:870:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  870 |     tc_chr_top[p][abs_x] <= tc;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:871:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  871 |     tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:869:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  869 |    if (abs_x < MAX_MB_W*2) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:887:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  887 |       tc_chr_top[p][abs_x] <= 5'd0;
+      |                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:888:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  888 |       tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:886:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  886 |      if (abs_x < MAX_MB_W*2) begin
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1093:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1093 |      else if (bit_pos >= rbsp_bit_total) fail();
+      |                       ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1104:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1104 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1124:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1124 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1294:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1294 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1295:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1295 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1293:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1293 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1293:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1293 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1308:19: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1308 |       if (bit_pos >= rbsp_bit_total)
+      |                   ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1344:25: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1344 |         cc = (x / 5'd4) % 2'd3;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1344:12: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1344 |         cc = (x / 5'd4) % 2'd3;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1395:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1395 |        cc = (x / 5'd4) % 2'd3;
+      |                        ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1395:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1395 |        cc = (x / 5'd4) % 2'd3;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1550:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1550 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1551:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1551 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1549:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1549 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1549:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1549 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1662:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1662 |         res_win[win_k - 8'd2] <= rbsp_q;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1664:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1664 |         res_win[win_k - 8'd2] <= 8'd0;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1661:31: Operator ADD expects 32 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1661 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1661:48: Operator SUB expects 32 bits on the RHS, but RHS's CONST '18'h2' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1661 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1748:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1748 |          res_win_bit0 + {6'd0, cavlc_bit0_r},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1749:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1749 |          res_win_bit0 + {6'd0, cavlc_bit_end},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1752:32: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1752 |        bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1759:34: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1759 |           (res_hold_idx - 5'd19) & 2'd3,
+      |                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1757:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1757 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1767:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1767 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1765:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                          : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1765 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1784:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1784 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:175:6: Operator ASSIGN expects 16 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.slp'
+  175 |    t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:38: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:47: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                               ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:39: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:48: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                                ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/stream_path_full_frame_tb_top.sv:250:35: Operator ADD expects 16 bits on the RHS, but RHS's CONST '9'sh1' generates 9 bits.
+                                                                                                                                           : ... note: In instance 'stream_path_full_frame_tb'
+  250 |      (dut.stub.lat_coeff[trace_i] + 9'sd1) : dut.stub.lat_coeff[trace_i];
+      |                                   ^
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/stream_path_full_frame_real_ref'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o stream_path_full_frame_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/stream_path_full_frame_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_full_frame_tb__pch.h -o Vstream_path_full_frame_tb__pch.h.fast.gch
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__0.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__1.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__2.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__3.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__4.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.fast -c Vstream_path_full_frame_tb___024root__5.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vstream_path_full_frame_tb__pch.h -o Vstream_path_full_frame_tb__pch.h.slow.gch
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb__ConstPool__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb___024root__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb___024root__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb___024root__1__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb___024root__2__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vstream_path_full_frame_tb__pch.h.slow -c Vstream_path_full_frame_tb__Syms__Slow.cpp
+g++    stream_path_full_frame_tb.o verilated.o verilated_threads.o Vstream_path_full_frame_tb__ALL.a    -pthread -lpthread -latomic   -o Vstream_path_full_frame_tb
+rm Vstream_path_full_frame_tb__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/stream_path_full_frame_real_ref'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 3.825 MB sources in 42 modules, into 11.121 MB in 13 C++ files needing 0.008 MB
+- Verilator: Walltime 32.698 s (elab=0.100, cvt=1.106, bld=31.341); cpu 1.348 s on 1 threads; allocated 104.301 MB
+SOURCE_SHA=6209d4332e8c5a29ecfaafd1960a91fc6edc3ce0-dirty
+REAL_REF_MODE no_golden_prefill USE_REAL_REF_COMMIT=1
+TRAV_CAP_START idr=1
+I_RECON_ENTER trav_pend=0 store_pend=0
+TRAV_CAP_EOP idr=1 len=4570 mb_w=20 mb_h=15
+TRAV_START idr=1 len=4570
+TRAV_HDR_OK i_slice=1 bit_pos=26 qp=27 pic_mbs=300 type=7
+TRAV_RES_LAUNCH mb=0 res_i=0 i16=0 nC=0 max=16 abs_bit=79
+TRAV_RES_OK mb=0 res_i=0 i16=0 tc=8 t1=3 tz=5 bit0=79 bit_end_abs=145 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=1 i16=0 nC=8 max=16 abs_bit=145
+TRAV_RES_OK mb=0 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=145 bit_end_abs=151 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=2 i16=0 nC=8 max=16 abs_bit=151
+TRAV_RES_OK mb=0 res_i=2 i16=0 tc=0 t1=0 tz=0 bit0=151 bit_end_abs=157 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=3 i16=0 nC=0 max=16 abs_bit=157
+TRAV_RES_OK mb=0 res_i=3 i16=0 tc=15 t1=0 tz=1 bit0=157 bit_end_abs=245 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=4 i16=0 nC=0 max=16 abs_bit=245
+TRAV_RES_OK mb=0 res_i=4 i16=0 tc=1 t1=0 tz=0 bit0=245 bit_end_abs=253 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=5 i16=0 nC=1 max=16 abs_bit=253
+TRAV_RES_OK mb=0 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=253 bit_end_abs=254 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=6 i16=0 nC=8 max=16 abs_bit=254
+TRAV_RES_OK mb=0 res_i=6 i16=0 tc=15 t1=3 tz=1 bit0=254 bit_end_abs=316 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=7 i16=0 nC=8 max=16 abs_bit=316
+TRAV_RES_OK mb=0 res_i=7 i16=0 tc=15 t1=1 tz=1 bit0=316 bit_end_abs=389 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=8 i16=0 nC=0 max=16 abs_bit=389
+TRAV_RES_OK mb=0 res_i=8 i16=0 tc=1 t1=0 tz=0 bit0=389 bit_end_abs=397 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=9 i16=0 nC=8 max=16 abs_bit=397
+TRAV_RES_OK mb=0 res_i=9 i16=0 tc=13 t1=1 tz=2 bit0=397 bit_end_abs=459 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=10 i16=0 nC=1 max=16 abs_bit=459
+TRAV_RES_OK mb=0 res_i=10 i16=0 tc=0 t1=0 tz=0 bit0=459 bit_end_abs=460 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=11 i16=0 nC=7 max=16 abs_bit=460
+TRAV_RES_OK mb=0 res_i=11 i16=0 tc=11 t1=0 tz=4 bit0=460 bit_end_abs=526 table=2 max=16
+TRAV_RES_LAUNCH mb=0 res_i=12 i16=0 nC=14 max=16 abs_bit=526
+TRAV_RES_OK mb=0 res_i=12 i16=0 tc=12 t1=2 tz=4 bit0=526 bit_end_abs=590 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=13 i16=0 nC=14 max=16 abs_bit=590
+TRAV_RES_OK mb=0 res_i=13 i16=0 tc=12 t1=2 tz=4 bit0=590 bit_end_abs=653 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=14 i16=0 nC=12 max=16 abs_bit=653
+TRAV_RES_OK mb=0 res_i=14 i16=0 tc=10 t1=0 tz=5 bit0=653 bit_end_abs=725 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=15 i16=0 nC=11 max=16 abs_bit=725
+TRAV_RES_OK mb=0 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=725 bit_end_abs=792 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=16 i16=0 nC=0 max=4 abs_bit=792
+TRAV_RES_OK mb=0 res_i=16 i16=0 tc=4 t1=0 tz=0 bit0=792 bit_end_abs=842 table=4 max=4
+TRAV_RES_LAUNCH mb=0 res_i=17 i16=0 nC=0 max=4 abs_bit=842
+TRAV_RES_OK mb=0 res_i=17 i16=0 tc=4 t1=0 tz=0 bit0=842 bit_end_abs=897 table=4 max=4
+TRAV_RES_LAUNCH mb=0 res_i=18 i16=0 nC=0 max=15 abs_bit=897
+TRAV_RES_OK mb=0 res_i=18 i16=0 tc=12 t1=2 tz=3 bit0=897 bit_end_abs=967 table=0 max=15
+TRAV_RES_LAUNCH mb=0 res_i=19 i16=0 nC=12 max=15 abs_bit=967
+TRAV_RES_OK mb=0 res_i=19 i16=0 tc=6 t1=2 tz=8 bit0=967 bit_end_abs=1003 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=20 i16=0 nC=12 max=15 abs_bit=1003
+TRAV_RES_OK mb=0 res_i=20 i16=0 tc=11 t1=0 tz=4 bit0=1003 bit_end_abs=1063 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=21 i16=0 nC=9 max=15 abs_bit=1063
+TRAV_RES_OK mb=0 res_i=21 i16=0 tc=7 t1=0 tz=7 bit0=1063 bit_end_abs=1112 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=22 i16=0 nC=0 max=15 abs_bit=1112
+TRAV_RES_OK mb=0 res_i=22 i16=0 tc=10 t1=2 tz=4 bit0=1112 bit_end_abs=1156 table=0 max=15
+TRAV_RES_LAUNCH mb=0 res_i=23 i16=0 nC=10 max=15 abs_bit=1156
+TRAV_RES_OK mb=0 res_i=23 i16=0 tc=6 t1=1 tz=5 bit0=1156 bit_end_abs=1198 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=24 i16=0 nC=10 max=15 abs_bit=1198
+TRAV_RES_OK mb=0 res_i=24 i16=0 tc=10 t1=3 tz=5 bit0=1198 bit_end_abs=1255 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=25 i16=0 nC=8 max=15 abs_bit=1255
+TRAV_RES_OK mb=0 res_i=25 i16=0 tc=6 t1=0 tz=8 bit0=1255 bit_end_abs=1298 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=0 i16=0 nC=0 max=16 abs_bit=1354
+TRAV_RES_OK mb=1 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=1354 bit_end_abs=1355 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=1 i16=0 nC=0 max=16 abs_bit=1355
+TRAV_RES_OK mb=1 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=1355 bit_end_abs=1356 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=2 i16=0 nC=8 max=16 abs_bit=1356
+TRAV_RES_OK mb=1 res_i=2 i16=0 tc=16 t1=3 tz=0 bit0=1356 bit_end_abs=1412 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=3 i16=0 nC=8 max=16 abs_bit=1412
+TRAV_RES_OK mb=1 res_i=3 i16=0 tc=0 t1=0 tz=0 bit0=1412 bit_end_abs=1418 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=4 i16=0 nC=0 max=16 abs_bit=1418
+TRAV_RES_OK mb=1 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=1418 bit_end_abs=1419 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=5 i16=0 nC=0 max=16 abs_bit=1419
+TRAV_RES_OK mb=1 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=1419 bit_end_abs=1420 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=6 i16=0 nC=0 max=16 abs_bit=1420
+TRAV_RES_OK mb=1 res_i=6 i16=0 tc=0 t1=0 tz=0 bit0=1420 bit_end_abs=1421 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=7 i16=0 nC=0 max=16 abs_bit=1421
+TRAV_RES_OK mb=1 res_i=7 i16=0 tc=15 t1=1 tz=1 bit0=1421 bit_end_abs=1504 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=8 i16=0 nC=14 max=16 abs_bit=1504
+TRAV_RES_OK mb=1 res_i=8 i16=0 tc=12 t1=2 tz=4 bit0=1504 bit_end_abs=1569 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=9 i16=0 nC=6 max=16 abs_bit=1569
+TRAV_RES_OK mb=1 res_i=9 i16=0 tc=11 t1=1 tz=4 bit0=1569 bit_end_abs=1628 table=2 max=16
+TRAV_RES_LAUNCH mb=1 res_i=10 i16=0 nC=12 max=16 abs_bit=1628
+TRAV_RES_OK mb=1 res_i=10 i16=0 tc=11 t1=0 tz=4 bit0=1628 bit_end_abs=1690 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=11 i16=0 nC=11 max=16 abs_bit=1690
+TRAV_RES_OK mb=1 res_i=11 i16=0 tc=8 t1=0 tz=6 bit0=1690 bit_end_abs=1741 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=12 i16=0 nC=6 max=16 abs_bit=1741
+TRAV_RES_OK mb=1 res_i=12 i16=0 tc=11 t1=2 tz=5 bit0=1741 bit_end_abs=1801 table=2 max=16
+TRAV_RES_LAUNCH mb=1 res_i=13 i16=0 nC=13 max=16 abs_bit=1801
+TRAV_RES_OK mb=1 res_i=13 i16=0 tc=12 t1=1 tz=3 bit0=1801 bit_end_abs=1866 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=14 i16=0 nC=10 max=16 abs_bit=1866
+TRAV_RES_OK mb=1 res_i=14 i16=0 tc=8 t1=0 tz=6 bit0=1866 bit_end_abs=1917 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=15 i16=0 nC=10 max=16 abs_bit=1917
+TRAV_RES_OK mb=1 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=1917 bit_end_abs=1974 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=16 i16=0 nC=0 max=4 abs_bit=1974
+TRAV_RES_OK mb=1 res_i=16 i16=0 tc=2 t1=0 tz=1 bit0=1974 bit_end_abs=1993 table=4 max=4
+TRAV_RES_LAUNCH mb=1 res_i=17 i16=0 nC=0 max=4 abs_bit=1993
+TRAV_RES_OK mb=1 res_i=17 i16=0 tc=2 t1=1 tz=1 bit0=1993 bit_end_abs=2005 table=4 max=4
+TRAV_RES_LAUNCH mb=1 res_i=18 i16=0 nC=6 max=15 abs_bit=2005
+TRAV_RES_OK mb=1 res_i=18 i16=0 tc=10 t1=3 tz=1 bit0=2005 bit_end_abs=2047 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=19 i16=0 nC=10 max=15 abs_bit=2047
+TRAV_RES_OK mb=1 res_i=19 i16=0 tc=10 t1=3 tz=1 bit0=2047 bit_end_abs=2087 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=20 i16=0 nC=9 max=15 abs_bit=2087
+TRAV_RES_OK mb=1 res_i=20 i16=0 tc=13 t1=0 tz=2 bit0=2087 bit_end_abs=2145 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=21 i16=0 nC=12 max=15 abs_bit=2145
+TRAV_RES_OK mb=1 res_i=21 i16=0 tc=12 t1=0 tz=3 bit0=2145 bit_end_abs=2207 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=22 i16=0 nC=6 max=15 abs_bit=2207
+TRAV_RES_OK mb=1 res_i=22 i16=0 tc=6 t1=0 tz=3 bit0=2207 bit_end_abs=2248 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=23 i16=0 nC=6 max=15 abs_bit=2248
+TRAV_RES_OK mb=1 res_i=23 i16=0 tc=6 t1=0 tz=3 bit0=2248 bit_end_abs=2288 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=24 i16=0 nC=6 max=15 abs_bit=2288
+TRAV_RES_OK mb=1 res_i=24 i16=0 tc=12 t1=3 tz=3 bit0=2288 bit_end_abs=2346 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=25 i16=0 nC=9 max=15 abs_bit=2346
+TRAV_RES_OK mb=1 res_i=25 i16=0 tc=13 t1=3 tz=2 bit0=2346 bit_end_abs=2396 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=0 i16=0 nC=0 max=16 abs_bit=2460
+TRAV_RES_OK mb=2 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=2460 bit_end_abs=2461 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=1 i16=0 nC=0 max=16 abs_bit=2461
+TRAV_RES_OK mb=2 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=2461 bit_end_abs=2462 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=2 i16=0 nC=8 max=16 abs_bit=2462
+TRAV_RES_OK mb=2 res_i=2 i16=0 tc=16 t1=1 tz=0 bit0=2462 bit_end_abs=2519 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=3 i16=0 nC=8 max=16 abs_bit=2519
+TRAV_RES_OK mb=2 res_i=3 i16=0 tc=15 t1=1 tz=1 bit0=2519 bit_end_abs=2592 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=4 i16=0 nC=0 max=16 abs_bit=2592
+TRAV_RES_OK mb=2 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=2592 bit_end_abs=2593 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=5 i16=0 nC=0 max=16 abs_bit=2593
+TRAV_RES_OK mb=2 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=2593 bit_end_abs=2594 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=6 i16=0 nC=8 max=16 abs_bit=2594
+TRAV_RES_OK mb=2 res_i=6 i16=0 tc=16 t1=1 tz=0 bit0=2594 bit_end_abs=2652 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=7 i16=0 nC=8 max=16 abs_bit=2652
+TRAV_RES_OK mb=2 res_i=7 i16=0 tc=0 t1=0 tz=0 bit0=2652 bit_end_abs=2658 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=8 i16=0 nC=14 max=16 abs_bit=2658
+TRAV_RES_OK mb=2 res_i=8 i16=0 tc=12 t1=2 tz=4 bit0=2658 bit_end_abs=2724 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=9 i16=0 nC=14 max=16 abs_bit=2724
+TRAV_RES_OK mb=2 res_i=9 i16=0 tc=14 t1=2 tz=1 bit0=2724 bit_end_abs=2788 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=10 i16=0 nC=12 max=16 abs_bit=2788
+TRAV_RES_OK mb=2 res_i=10 i16=0 tc=10 t1=0 tz=5 bit0=2788 bit_end_abs=2857 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=11 i16=0 nC=12 max=16 abs_bit=2857
+TRAV_RES_OK mb=2 res_i=11 i16=0 tc=9 t1=0 tz=6 bit0=2857 bit_end_abs=2919 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=12 i16=0 nC=15 max=16 abs_bit=2919
+TRAV_RES_OK mb=2 res_i=12 i16=0 tc=12 t1=2 tz=4 bit0=2919 bit_end_abs=2984 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=13 i16=0 nC=6 max=16 abs_bit=2984
+TRAV_RES_OK mb=2 res_i=13 i16=0 tc=12 t1=2 tz=4 bit0=2984 bit_end_abs=3048 table=2 max=16
+TRAV_RES_LAUNCH mb=2 res_i=14 i16=0 nC=11 max=16 abs_bit=3048
+TRAV_RES_OK mb=2 res_i=14 i16=0 tc=11 t1=0 tz=4 bit0=3048 bit_end_abs=3115 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=15 i16=0 nC=12 max=16 abs_bit=3115
+TRAV_RES_OK mb=2 res_i=15 i16=0 tc=8 t1=0 tz=6 bit0=3115 bit_end_abs=3167 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=16 i16=0 nC=0 max=4 abs_bit=3167
+TRAV_RES_OK mb=2 res_i=16 i16=0 tc=4 t1=0 tz=0 bit0=3167 bit_end_abs=3187 table=4 max=4
+TRAV_RES_LAUNCH mb=2 res_i=17 i16=0 nC=0 max=4 abs_bit=3187
+TRAV_RES_OK mb=2 res_i=17 i16=0 tc=4 t1=1 tz=0 bit0=3187 bit_end_abs=3205 table=4 max=4
+TRAV_RES_LAUNCH mb=2 res_i=18 i16=0 nC=10 max=15 abs_bit=3205
+TRAV_RES_OK mb=2 res_i=18 i16=0 tc=6 t1=2 tz=8 bit0=3205 bit_end_abs=3238 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=19 i16=0 nC=6 max=15 abs_bit=3238
+TRAV_RES_OK mb=2 res_i=19 i16=0 tc=10 t1=3 tz=1 bit0=3238 bit_end_abs=3281 table=2 max=15
+TRAV_RES_LAUNCH mb=2 res_i=20 i16=0 nC=9 max=15 abs_bit=3281
+TRAV_RES_OK mb=2 res_i=20 i16=0 tc=7 t1=0 tz=7 bit0=3281 bit_end_abs=3333 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=21 i16=0 nC=9 max=15 abs_bit=3333
+TRAV_RES_OK mb=2 res_i=21 i16=0 tc=15 t1=0 tz=0 bit0=3333 bit_end_abs=3390 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=22 i16=0 nC=6 max=15 abs_bit=3390
+TRAV_RES_OK mb=2 res_i=22 i16=0 tc=4 t1=3 tz=7 bit0=3390 bit_end_abs=3409 table=2 max=15
+TRAV_RES_LAUNCH mb=2 res_i=23 i16=0 nC=4 max=15 abs_bit=3409
+TRAV_RES_OK mb=2 res_i=23 i16=0 tc=5 t1=3 tz=3 bit0=3409 bit_end_abs=3426 table=2 max=15
+TRAV_RES_LAUNCH mb=2 res_i=24 i16=0 nC=9 max=15 abs_bit=3426
+TRAV_RES_OK mb=2 res_i=24 i16=0 tc=7 t1=0 tz=7 bit0=3426 bit_end_abs=3475 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=25 i16=0 nC=6 max=15 abs_bit=3475
+TRAV_RES_OK mb=2 res_i=25 i16=0 tc=13 t1=3 tz=2 bit0=3475 bit_end_abs=3529 table=2 max=15
+TRAV_RES_LAUNCH mb=3 res_i=0 i16=0 nC=0 max=16 abs_bit=3582
+TRAV_RES_OK mb=3 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=3582 bit_end_abs=3583 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=1 i16=0 nC=0 max=16 abs_bit=3583
+TRAV_RES_OK mb=3 res_i=1 i16=0 tc=8 t1=3 tz=5 bit0=3583 bit_end_abs=3629 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=2 i16=0 nC=0 max=16 abs_bit=3629
+TRAV_RES_OK mb=3 res_i=2 i16=0 tc=0 t1=0 tz=0 bit0=3629 bit_end_abs=3630 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=3 i16=0 nC=4 max=16 abs_bit=3630
+TRAV_RES_OK mb=3 res_i=3 i16=0 tc=14 t1=0 tz=2 bit0=3630 bit_end_abs=3707 table=2 max=16
+TRAV_RES_LAUNCH mb=3 res_i=4 i16=0 nC=8 max=16 abs_bit=3707
+TRAV_RES_OK mb=3 res_i=4 i16=0 tc=1 t1=1 tz=0 bit0=3707 bit_end_abs=3715 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=5 i16=0 nC=1 max=16 abs_bit=3715
+TRAV_RES_OK mb=3 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=3715 bit_end_abs=3716 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=6 i16=0 nC=8 max=16 abs_bit=3716
+TRAV_RES_OK mb=3 res_i=6 i16=0 tc=16 t1=3 tz=0 bit0=3716 bit_end_abs=3768 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=7 i16=0 nC=8 max=16 abs_bit=3768
+TRAV_RES_OK mb=3 res_i=7 i16=0 tc=15 t1=1 tz=1 bit0=3768 bit_end_abs=3839 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=8 i16=0 nC=6 max=16 abs_bit=3839
+TRAV_RES_OK mb=3 res_i=8 i16=0 tc=15 t1=2 tz=1 bit0=3839 bit_end_abs=3895 table=2 max=16
+TRAV_RES_LAUNCH mb=3 res_i=9 i16=0 nC=15 max=16 abs_bit=3895
+TRAV_RES_OK mb=3 res_i=9 i16=0 tc=13 t1=1 tz=2 bit0=3895 bit_end_abs=3956 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=10 i16=0 nC=12 max=16 abs_bit=3956
+TRAV_RES_OK mb=3 res_i=10 i16=0 tc=8 t1=0 tz=6 bit0=3956 bit_end_abs=4008 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=11 i16=0 nC=11 max=16 abs_bit=4008
+TRAV_RES_OK mb=3 res_i=11 i16=0 tc=11 t1=0 tz=4 bit0=4008 bit_end_abs=4069 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=12 i16=0 nC=15 max=16 abs_bit=4069
+TRAV_RES_OK mb=3 res_i=12 i16=0 tc=11 t1=1 tz=4 bit0=4069 bit_end_abs=4128 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=13 i16=0 nC=13 max=16 abs_bit=4128
+TRAV_RES_OK mb=3 res_i=13 i16=0 tc=11 t1=1 tz=4 bit0=4128 bit_end_abs=4187 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=14 i16=0 nC=11 max=16 abs_bit=4187
+TRAV_RES_OK mb=3 res_i=14 i16=0 tc=11 t1=0 tz=4 bit0=4187 bit_end_abs=4252 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=15 i16=0 nC=11 max=16 abs_bit=4252
+TRAV_RES_OK mb=3 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=4252 bit_end_abs=4317 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=16 i16=0 nC=0 max=4 abs_bit=4317
+TRAV_RES_OK mb=3 res_i=16 i16=0 tc=2 t1=0 tz=0 bit0=4317 bit_end_abs=4341 table=4 max=4
+TRAV_RES_LAUNCH mb=3 res_i=17 i16=0 nC=0 max=4 abs_bit=4341
+TRAV_RES_OK mb=3 res_i=17 i16=0 tc=4 t1=0 tz=0 bit0=4341 bit_end_abs=4390 table=4 max=4
+TRAV_RES_LAUNCH mb=3 res_i=18 i16=0 nC=10 max=15 abs_bit=4390
+TRAV_RES_OK mb=3 res_i=18 i16=0 tc=9 t1=2 tz=2 bit0=4390 bit_end_abs=4427 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=19 i16=0 nC=9 max=15 abs_bit=4427
+TRAV_RES_OK mb=3 res_i=19 i16=0 tc=7 t1=3 tz=7 bit0=4427 bit_end_abs=4470 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=20 i16=0 nC=12 max=15 abs_bit=4470
+TRAV_RES_OK mb=3 res_i=20 i16=0 tc=12 t1=0 tz=3 bit0=4470 bit_end_abs=4530 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=21 i16=0 nC=10 max=15 abs_bit=4530
+TRAV_RES_OK mb=3 res_i=21 i16=0 tc=7 t1=0 tz=7 bit0=4530 bit_end_abs=4579 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=22 i16=0 nC=5 max=15 abs_bit=4579
+TRAV_RES_OK mb=3 res_i=22 i16=0 tc=15 t1=0 tz=0 bit0=4579 bit_end_abs=4649 table=2 max=15
+TRAV_RES_LAUNCH mb=3 res_i=23 i16=0 nC=15 max=15 abs_bit=4649
+TRAV_RES_OK mb=3 res_i=23 i16=0 tc=7 t1=1 tz=7 bit0=4649 bit_end_abs=4699 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=24 i16=0 nC=14 max=15 abs_bit=4699
+TRAV_RES_OK mb=3 res_i=24 i16=0 tc=12 t1=0 tz=3 bit0=4699 bit_end_abs=4763 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=25 i16=0 nC=10 max=15 abs_bit=4763
+TRAV_RES_OK mb=3 res_i=25 i16=0 tc=7 t1=0 tz=7 bit0=4763 bit_end_abs=4821 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=0 i16=0 nC=0 max=16 abs_bit=4868
+TRAV_RES_OK mb=4 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=4868 bit_end_abs=4869 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=1 i16=0 nC=0 max=16 abs_bit=4869
+TRAV_RES_OK mb=4 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=4869 bit_end_abs=4870 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=2 i16=0 nC=8 max=16 abs_bit=4870
+TRAV_RES_OK mb=4 res_i=2 i16=0 tc=15 t1=3 tz=1 bit0=4870 bit_end_abs=4932 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=3 i16=0 nC=8 max=16 abs_bit=4932
+TRAV_RES_OK mb=4 res_i=3 i16=0 tc=0 t1=0 tz=0 bit0=4932 bit_end_abs=4938 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=4 i16=0 nC=0 max=16 abs_bit=4938
+TRAV_RES_OK mb=4 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=4938 bit_end_abs=4939 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=5 i16=0 nC=0 max=16 abs_bit=4939
+TRAV_RES_OK mb=4 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=4939 bit_end_abs=4940 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=6 i16=0 nC=0 max=16 abs_bit=4940
+TRAV_RES_OK mb=4 res_i=6 i16=0 tc=0 t1=0 tz=0 bit0=4940 bit_end_abs=4941 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=7 i16=0 nC=0 max=16 abs_bit=4941
+TRAV_RES_OK mb=4 res_i=7 i16=0 tc=15 t1=1 tz=1 bit0=4941 bit_end_abs=5022 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=8 i16=0 nC=13 max=16 abs_bit=5022
+TRAV_RES_OK mb=4 res_i=8 i16=0 tc=11 t1=1 tz=4 bit0=5022 bit_end_abs=5081 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=9 i16=0 nC=6 max=16 abs_bit=5081
+TRAV_RES_OK mb=4 res_i=9 i16=0 tc=0 t1=0 tz=0 bit0=5081 bit_end_abs=5085 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=10 i16=0 nC=11 max=16 abs_bit=5085
+TRAV_RES_OK mb=4 res_i=10 i16=0 tc=10 t1=0 tz=5 bit0=5085 bit_end_abs=5154 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=11 i16=0 nC=5 max=16 abs_bit=5154
+TRAV_RES_OK mb=4 res_i=11 i16=0 tc=11 t1=1 tz=4 bit0=5154 bit_end_abs=5210 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=12 i16=0 nC=0 max=16 abs_bit=5210
+TRAV_RES_OK mb=4 res_i=12 i16=0 tc=0 t1=0 tz=0 bit0=5210 bit_end_abs=5211 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=13 i16=0 nC=8 max=16 abs_bit=5211
+TRAV_RES_OK mb=4 res_i=13 i16=0 tc=12 t1=1 tz=3 bit0=5211 bit_end_abs=5271 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=14 i16=0 nC=6 max=16 abs_bit=5271
+TRAV_RES_OK mb=4 res_i=14 i16=0 tc=13 t1=2 tz=2 bit0=5271 bit_end_abs=5314 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=15 i16=0 nC=13 max=16 abs_bit=5314
+TRAV_RES_OK mb=4 res_i=15 i16=0 tc=10 t1=0 tz=5 bit0=5314 bit_end_abs=5376 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=16 i16=0 nC=0 max=4 abs_bit=5376
+TRAV_RES_OK mb=4 res_i=16 i16=0 tc=2 t1=0 tz=1 bit0=5376 bit_end_abs=5390 table=4 max=4
+TRAV_RES_LAUNCH mb=4 res_i=17 i16=0 nC=0 max=4 abs_bit=5390
+TRAV_RES_OK mb=4 res_i=17 i16=0 tc=2 t1=0 tz=1 bit0=5390 bit_end_abs=5411 table=4 max=4
+TRAV_RES_LAUNCH mb=4 res_i=18 i16=0 nC=7 max=15 abs_bit=5411
+TRAV_RES_OK mb=4 res_i=18 i16=0 tc=10 t1=2 tz=1 bit0=5411 bit_end_abs=5457 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=19 i16=0 nC=10 max=15 abs_bit=5457
+TRAV_RES_OK mb=4 res_i=19 i16=0 tc=10 t1=2 tz=1 bit0=5457 bit_end_abs=5501 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=20 i16=0 nC=9 max=15 abs_bit=5501
+TRAV_RES_OK mb=4 res_i=20 i16=0 tc=13 t1=1 tz=2 bit0=5501 bit_end_abs=5557 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=21 i16=0 nC=12 max=15 abs_bit=5557
+TRAV_RES_OK mb=4 res_i=21 i16=0 tc=13 t1=1 tz=2 bit0=5557 bit_end_abs=5613 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=22 i16=0 nC=7 max=15 abs_bit=5613
+TRAV_RES_OK mb=4 res_i=22 i16=0 tc=10 t1=2 tz=1 bit0=5613 bit_end_abs=5670 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=23 i16=0 nC=10 max=15 abs_bit=5670
+TRAV_RES_OK mb=4 res_i=23 i16=0 tc=10 t1=2 tz=1 bit0=5670 bit_end_abs=5725 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=24 i16=0 nC=9 max=15 abs_bit=5725
+TRAV_RES_OK mb=4 res_i=24 i16=0 tc=13 t1=0 tz=2 bit0=5725 bit_end_abs=5794 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=25 i16=0 nC=12 max=15 abs_bit=5794
+TRAV_RES_OK mb=4 res_i=25 i16=0 tc=13 t1=0 tz=2 bit0=5794 bit_end_abs=5863 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=0 i16=0 nC=0 max=16 abs_bit=5924
+TRAV_RES_OK mb=5 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=5924 bit_end_abs=5925 table=0 max=16
+TRAV_RES_LAUNCH mb=5 res_i=1 i16=0 nC=0 max=16 abs_bit=5925
+TRAV_RES_OK mb=5 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=5925 bit_end_abs=5926 table=0 max=16
+TRAV_RES_LAUNCH mb=5 res_i=2 i16=0 nC=8 max=16 abs_bit=5926
+TRAV_RES_OK mb=5 res_i=2 i16=0 tc=12 t1=3 tz=3 bit0=5926 bit_end_abs=5964 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=3 i16=0 nC=6 max=16 abs_bit=5964
+TRAV_RES_OK mb=5 res_i=3 i16=0 tc=11 t1=1 tz=4 bit0=5964 bit_end_abs=6015 table=2 max=16
+TRAV_RES_LAUNCH mb=5 res_i=4 i16=0 nC=0 max=16 abs_bit=6015
+TRAV_RES_OK mb=5 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=6015 bit_end_abs=6016 table=0 max=16
+TRAV_RES_LAUNCH mb=5 res_i=5 i16=0 nC=0 max=16 abs_bit=6016
+TRAV_RES_OK mb=5 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=6016 bit_end_abs=6017 table=0 max=16
+TRAV_RES_LAUNCH mb=5 res_i=6 i16=0 nC=6 max=16 abs_bit=6017
+TRAV_RES_OK mb=5 res_i=6 i16=0 tc=12 t1=3 tz=3 bit0=6017 bit_end_abs=6057 table=2 max=16
+TRAV_RES_LAUNCH mb=5 res_i=7 i16=0 nC=6 max=16 abs_bit=6057
+TRAV_RES_OK mb=5 res_i=7 i16=0 tc=11 t1=1 tz=4 bit0=6057 bit_end_abs=6106 table=2 max=16
+TRAV_RES_LAUNCH mb=5 res_i=8 i16=0 nC=12 max=16 abs_bit=6106
+TRAV_RES_OK mb=5 res_i=8 i16=0 tc=9 t1=2 tz=4 bit0=6106 bit_end_abs=6147 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=9 i16=0 nC=10 max=16 abs_bit=6147
+TRAV_RES_OK mb=5 res_i=9 i16=0 tc=11 t1=3 tz=2 bit0=6147 bit_end_abs=6186 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=10 i16=0 nC=10 max=16 abs_bit=6186
+TRAV_RES_OK mb=5 res_i=10 i16=0 tc=8 t1=0 tz=7 bit0=6186 bit_end_abs=6236 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=11 i16=0 nC=10 max=16 abs_bit=6236
+TRAV_RES_OK mb=5 res_i=11 i16=0 tc=10 t1=0 tz=5 bit0=6236 bit_end_abs=6286 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=12 i16=0 nC=12 max=16 abs_bit=6286
+TRAV_RES_OK mb=5 res_i=12 i16=0 tc=10 t1=3 tz=3 bit0=6286 bit_end_abs=6322 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=13 i16=0 nC=11 max=16 abs_bit=6322
+TRAV_RES_OK mb=5 res_i=13 i16=0 tc=9 t1=2 tz=4 bit0=6322 bit_end_abs=6363 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=14 i16=0 nC=10 max=16 abs_bit=6363
+TRAV_RES_OK mb=5 res_i=14 i16=0 tc=8 t1=0 tz=7 bit0=6363 bit_end_abs=6413 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=15 i16=0 nC=9 max=16 abs_bit=6413
+TRAV_RES_OK mb=5 res_i=15 i16=0 tc=10 t1=0 tz=5 bit0=6413 bit_end_abs=6463 table=3 max=16
+TRAV_RES_LAUNCH mb=5 res_i=16 i16=0 nC=0 max=4 abs_bit=6463
+TRAV_RES_OK mb=5 res_i=16 i16=0 tc=2 t1=0 tz=1 bit0=6463 bit_end_abs=6478 table=4 max=4
+TRAV_RES_LAUNCH mb=5 res_i=17 i16=0 nC=0 max=4 abs_bit=6478
+TRAV_RES_OK mb=5 res_i=17 i16=0 tc=2 t1=0 tz=1 bit0=6478 bit_end_abs=6499 table=4 max=4
+TRAV_RES_LAUNCH mb=5 res_i=18 i16=0 nC=10 max=15 abs_bit=6499
+TRAV_RES_OK mb=5 res_i=18 i16=0 tc=3 t1=3 tz=4 bit0=6499 bit_end_abs=6516 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=19 i16=0 nC=3 max=15 abs_bit=6516
+TRAV_RES_OK mb=5 res_i=19 i16=0 tc=3 t1=3 tz=4 bit0=6516 bit_end_abs=6531 table=1 max=15
+TRAV_RES_LAUNCH mb=5 res_i=20 i16=0 nC=8 max=15 abs_bit=6531
+TRAV_RES_OK mb=5 res_i=20 i16=0 tc=7 t1=0 tz=7 bit0=6531 bit_end_abs=6571 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=21 i16=0 nC=5 max=15 abs_bit=6571
+TRAV_RES_OK mb=5 res_i=21 i16=0 tc=7 t1=0 tz=7 bit0=6571 bit_end_abs=6612 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=22 i16=0 nC=10 max=15 abs_bit=6612
+TRAV_RES_OK mb=5 res_i=22 i16=0 tc=5 t1=3 tz=6 bit0=6612 bit_end_abs=6636 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=23 i16=0 nC=5 max=15 abs_bit=6636
+TRAV_RES_OK mb=5 res_i=23 i16=0 tc=5 t1=3 tz=6 bit0=6636 bit_end_abs=6658 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=24 i16=0 nC=9 max=15 abs_bit=6658
+TRAV_RES_OK mb=5 res_i=24 i16=0 tc=7 t1=0 tz=7 bit0=6658 bit_end_abs=6707 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=25 i16=0 nC=6 max=15 abs_bit=6707
+TRAV_RES_OK mb=5 res_i=25 i16=0 tc=7 t1=0 tz=7 bit0=6707 bit_end_abs=6757 table=2 max=15
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+I_RECON_DONE mb_written=300 blk_applied=5021 luma_nz_peak=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+RECON_STORE_COUNTS frame_paint=1 total=300 idr=300 p=0 p_inter_ok=0 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2304 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2304
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=2 total=600 idr=300 p=300 p_inter_ok=300 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=1818 mb_w=20 mb_h=15
+TRAV_START idr=0 len=1818
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=3 total=900 idr=300 p=600 p_inter_ok=600 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2340 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2340
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=4 total=1200 idr=300 p=900 p_inter_ok=900 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2469 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2469
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=5 total=1500 idr=300 p=1200 p_inter_ok=1200 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=1886 mb_w=20 mb_h=15
+TRAV_START idr=0 len=1886
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=28 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=6 total=1800 idr=300 p=1500 p_inter_ok=1500 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2360 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2360
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=28 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=7 total=2100 idr=300 p=1800 p_inter_ok=1800 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2233 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2233
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=29 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=8 total=2400 idr=300 p=2100 p_inter_ok=2100 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=1535 mb_w=20 mb_h=15
+TRAV_START idr=0 len=1535
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=29 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=9 total=2700 idr=300 p=2400 p_inter_ok=2400 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=1937 mb_w=20 mb_h=15
+TRAV_START idr=0 len=1937
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=30 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=10 total=3000 idr=300 p=2700 p_inter_ok=2700 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=2103 mb_w=20 mb_h=15
+TRAV_START idr=0 len=2103
+TRAV_HDR_OK i_slice=0 bit_pos=26 qp=31 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=11 total=3300 idr=300 p=3000 p_inter_ok=3000 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=1383 mb_w=20 mb_h=15
+TRAV_START idr=0 len=1383
+TRAV_HDR_OK i_slice=0 bit_pos=26 qp=33 pic_mbs=300 type=5
+TRAV_DONE mb_count=300 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=12 total=3600 idr=300 p=3300 p_inter_ok=3300 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+MB0_PIPELINE_TRACE cycle=437842 qp=27 total_coeff=8 trailing_ones=3 residual_dc=-19 residual_csum=0x10 coeff=[-19,3,3,0,-3,0,-1,0,0,-1,1,0,1,0,0,0] dequant=[-4256,864,0,-288,864,-1104,0,368,0,0,0,0,-288,368,0,0] idct=[-55,-57,-54,-55,-57,-54,-56,-54,-54,-56,-99,-102,-55,-54,-102,-100] recon=[73,71,74,73,71,74,72,74,74,72,29,26,73,74,26,28]
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=Y exact=1078 pixels=76800 mae=76.605599 max_abs=194
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=Y x=1 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=1 pixel_in_mb_y=0 got=68 ref=71 abs=3
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=U exact=70 pixels=19200 mae=74.763698 max_abs=180
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=128 ref=218 abs=90
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=V exact=160 pixels=19200 mae=75.252813 max_abs=211
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=128 ref=165 abs=37
+FULL_FRAME_COMPARE mb frame=0 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=Y exact=905 pixels=76800 mae=77.307227 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=U exact=158 pixels=19200 mae=74.592292 max_abs=183
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=89 abs=87
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=V exact=20 pixels=19200 mae=72.675573 max_abs=211
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=1 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=Y exact=451 pixels=76800 mae=77.264792 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=U exact=105 pixels=19200 mae=75.221458 max_abs=183
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=92 abs=84
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=V exact=22 pixels=19200 mae=72.482083 max_abs=211
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=247 abs=211
+FULL_FRAME_COMPARE mb frame=2 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=Y exact=281 pixels=76800 mae=77.078438 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=U exact=77 pixels=19200 mae=75.881146 max_abs=187
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=92 abs=84
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=V exact=16 pixels=19200 mae=72.198542 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=244 abs=208
+FULL_FRAME_COMPARE mb frame=3 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=Y exact=330 pixels=76800 mae=76.959089 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=U exact=46 pixels=19200 mae=76.557187 max_abs=187
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=V exact=16 pixels=19200 mae=71.945417 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=4 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=Y exact=296 pixels=76800 mae=76.804102 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=U exact=68 pixels=19200 mae=77.241979 max_abs=202
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=V exact=19 pixels=19200 mae=71.723750 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=5 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=Y exact=363 pixels=76800 mae=76.588568 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=U exact=78 pixels=19200 mae=77.958177 max_abs=202
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=V exact=33 pixels=19200 mae=71.671562 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=6 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=Y exact=286 pixels=76800 mae=76.368359 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=U exact=86 pixels=19200 mae=78.523854 max_abs=206
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=V exact=35 pixels=19200 mae=71.491458 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=7 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=Y exact=248 pixels=76800 mae=76.192552 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=U exact=106 pixels=19200 mae=79.382865 max_abs=206
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=V exact=42 pixels=19200 mae=71.341562 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=8 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=Y exact=281 pixels=76800 mae=75.996562 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=U exact=124 pixels=19200 mae=80.215208 max_abs=208
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=V exact=36 pixels=19200 mae=71.256510 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=9 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=Y exact=301 pixels=76800 mae=75.859544 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=U exact=125 pixels=19200 mae=81.038698 max_abs=208
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=V exact=33 pixels=19200 mae=71.225885 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=10 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=Y exact=324 pixels=76800 mae=75.846510 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=U exact=99 pixels=19200 mae=82.049635 max_abs=212
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=V exact=42 pixels=19200 mae=71.127865 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=11 exact=0 total=300
+DEGENERACY_WARNING inter_captures_constant_y=1969/3300 (partial DPB corruption)
+STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=512254 parse_per_mb=0.963 paint_per_mb=1707.513
+STAGE_CYCLES frame=1 parse_cycles=445184 paint_cycles=76800 parse_per_mb=1483.947 paint_per_mb=256.000
+STAGE_CYCLES frame=2 parse_cycles=443734 paint_cycles=76800 parse_per_mb=1479.113 paint_per_mb=256.000
+STAGE_CYCLES frame=3 parse_cycles=445958 paint_cycles=76800 parse_per_mb=1486.527 paint_per_mb=256.000
+STAGE_CYCLES frame=4 parse_cycles=449062 paint_cycles=76800 parse_per_mb=1496.873 paint_per_mb=256.000
+STAGE_CYCLES frame=5 parse_cycles=440874 paint_cycles=76800 parse_per_mb=1469.580 paint_per_mb=256.000
+STAGE_CYCLES frame=6 parse_cycles=445432 paint_cycles=76800 parse_per_mb=1484.773 paint_per_mb=256.000
+STAGE_CYCLES frame=7 parse_cycles=446778 paint_cycles=76800 parse_per_mb=1489.260 paint_per_mb=256.000
+STAGE_CYCLES frame=8 parse_cycles=436228 paint_cycles=76800 parse_per_mb=1454.093 paint_per_mb=256.000
+STAGE_CYCLES frame=9 parse_cycles=439624 paint_cycles=76800 parse_per_mb=1465.413 paint_per_mb=256.000
+STAGE_CYCLES frame=10 parse_cycles=440441 paint_cycles=76800 parse_per_mb=1468.137 paint_per_mb=256.000
+STAGE_CYCLES frame=11 parse_cycles=434999 paint_cycles=76800 parse_per_mb=1449.997 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=4868603 paint_total=1357054 injection_total=55306 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1352.390 paint_per_mb=376.959 injection_per_mb=15.363
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 p_mb_count_max=300 p_slice_done_pulses=12 traversed/total=300/300 native_inter_mb_captures=3300 native_inter_ignored=0 native_i420_dpb_writes=1382400 cycles=6296045 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+========================================================================
+INTER RCA: first divergent macroblock in raster order
+========================================================================
+  frame=1 mb_index=0 mb=(0,0) plane=Y
+  first_bad_pixel=(0,0) got=73 ref=80 abs=7
+  mb_type=?
+  error_decomposition=unavailable (no predicted_block metadata)
+  >> Supply --mb-metadata with pred_y/pred_u/pred_v to enable prediction vs residual RCA.
+========================================================================
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=Y exact=76800 pixels=76800 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=U exact=11 pixels=19200 mae=70.706354 max_abs=126
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=V exact=18 pixels=19200 mae=70.226042 max_abs=124
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=Y exact=66713 pixels=76800 mae=2.686419 max_abs=146
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=U exact=19 pixels=19200 mae=70.432344 max_abs=127
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=V exact=19 pixels=19200 mae=69.904740 max_abs=125
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=Y exact=63914 pixels=76800 mae=4.329740 max_abs=146
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=U exact=25 pixels=19200 mae=70.257240 max_abs=127
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=V exact=21 pixels=19200 mae=69.631510 max_abs=125
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=Y exact=60936 pixels=76800 mae=6.395404 max_abs=137
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=U exact=93 pixels=19200 mae=70.219740 max_abs=127
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=V exact=27 pixels=19200 mae=69.205469 max_abs=125
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=Y exact=58600 pixels=76800 mae=7.323828 max_abs=141
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=U exact=106 pixels=19200 mae=70.105260 max_abs=124
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=V exact=85 pixels=19200 mae=68.865729 max_abs=125
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=Y exact=57639 pixels=76800 mae=7.410859 max_abs=141
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=U exact=111 pixels=19200 mae=70.083021 max_abs=124
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=V exact=76 pixels=19200 mae=68.494948 max_abs=125
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=Y exact=56314 pixels=76800 mae=7.619987 max_abs=141
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=U exact=157 pixels=19200 mae=70.050885 max_abs=125
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=V exact=85 pixels=19200 mae=68.379167 max_abs=125
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=Y exact=55003 pixels=76800 mae=7.911250 max_abs=141
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=U exact=174 pixels=19200 mae=69.860208 max_abs=122
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=V exact=87 pixels=19200 mae=68.145885 max_abs=125
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=Y exact=53990 pixels=76800 mae=8.036328 max_abs=141
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=U exact=188 pixels=19200 mae=69.734062 max_abs=122
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=V exact=86 pixels=19200 mae=67.989635 max_abs=126
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=Y exact=52858 pixels=76800 mae=8.160599 max_abs=137
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=U exact=206 pixels=19200 mae=69.637396 max_abs=127
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=V exact=98 pixels=19200 mae=67.874375 max_abs=127
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=Y exact=51567 pixels=76800 mae=8.399909 max_abs=137
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=U exact=211 pixels=19200 mae=69.502344 max_abs=126
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=V exact=110 pixels=19200 mae=67.739323 max_abs=127
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=Y exact=50953 pixels=76800 mae=8.491406 max_abs=137
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=U exact=231 pixels=19200 mae=69.345573 max_abs=126
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=V exact=114 pixels=19200 mae=67.625260 max_abs=127
+I420_CANDIDATE_SCORE summary intra=0/300 inter=0/3300 strict_pass=0
+score_i420_candidate: OK expected-red candidate diverged from golden
+headline_score_true_rc=0
+HEADLINE intra=0/300 inter=0/3300
+LUMA_PROGRESS intra_y_mb=300/300 intra_y_blk4=4800/4800 intra_y_px=76800/76800 intra_y_mae=0.000000
+LUMA_PROGRESS inter_y_mb=1939/3300 inter_y_blk4=38056/52800 inter_y_px=628487/844800 inter_y_mae=6.978703
+LUMA_PROGRESS frame0 y_mb=300/300 y_blk4=4800/4800 y_px=76800/76800 y_mae=0.000000
+luma_score_true_rc=0
+LUMA intra_y_mb=300/300 y_px=76800/76800 y_blk4=4800/4800
+LUMA inter_y_mb=1939/3300
+LUMA_vs_PREREGISTER pre=260..295 actual=300 HIT_ABOVE
+{
+  "intra_y_mb_ok": 300,
+  "intra_y_mb_fail": 0,
+  "actual_buckets": {
+    "I16_m0_*": 0,
+    "I_NxN": 0,
+    "other_I16": 0,
+    "cold128": 0
+  },
+  "seed_fail_count": 0
+}
+DONE measure
