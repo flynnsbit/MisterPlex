@@ -531,9 +531,35 @@ module decode_stub #(
 	                                                             ({5'd0, dpb_fill_mb_x, 3'd0} + {8'd0, dpb_sample_x});
 	wire [15:0]       dpb_abs_y = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_y, 4'd0} + {8'd0, dpb_sample_y}) :
 	                                                             ({5'd0, dpb_fill_mb_y, 3'd0} + {8'd0, dpb_sample_y});
-	wire [7:0]        dpb_filtered_sample = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
-	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
-	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// ── Sole DPB commit sample mux (product + observe) ───────────────────
+	// WAS: bare XOR/chroma-ramp on dpb_filtered_sample (poisoned every P ref).
+	// NOW: one recon-sourced mux for product u_product_ref_commit AND observe nets.
+	//   P  → Clip1(pred+residual) inter_recon_*
+	//   IDR/I → MB0 blk0 recon_px when residual_ok; honest 128 elsewhere
+	//   Full I-MB walker still stubbed; POST-deblock via u_product_ref_commit
+	// FAULT DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR restores XOR (mutation twin RED).
+	wire [7:0]        dpb_synthetic_sample =
+	                                      (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
+	                                      (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
+	                                                                     (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	wire [7:0]        dpb_y_idx = dpb_fill_sample_idx[7:0];
+	wire [5:0]        dpb_c_idx = dpb_filtered_sample_idx[5:0];
+	wire              dpb_commit_is_p = lat_p_inter;
+	wire [7:0]        dpb_recon_src_y =
+	                      dpb_commit_is_p ? inter_recon_y[dpb_y_idx] :
+	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
+	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
+	                      8'd128;
+	wire [7:0]        dpb_recon_src_u = dpb_commit_is_p ? inter_recon_u[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_v = dpb_commit_is_p ? inter_recon_v[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_sample =
+	                      (dpb_filtered_plane == 2'd0) ? dpb_recon_src_y :
+	                      (dpb_filtered_plane == 2'd1) ? dpb_recon_src_u : dpb_recon_src_v;
+`ifdef DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR
+	wire [7:0]        dpb_filtered_sample = dpb_synthetic_sample;
+`else
+	wire [7:0]        dpb_filtered_sample = dpb_recon_src_sample;
+`endif
 	wire [7:0]        dpb_filtered_mb_x_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_x : 8'd0;
 	wire [7:0]        dpb_filtered_mb_y_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_y : 8'd0;
 	wire [1:0]        dpb_filtered_plane_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_plane : 2'd0;
@@ -647,7 +673,7 @@ module decode_stub #(
 	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
 
 	// ── Product recon → deblock → DPB (h264_dpb_ref_commit) ─────────────
-	// Closes the diagnostic XOR fill: reconstructed MB samples stream into
+	// Product DPB store: dpb_filtered_sample (recon mux) streams into
 	// deblock_mb, POST samples store into DPB, frame-boundary promotion is
 	// owned by the commit controller. Fetch MVs are product MVP+mvd.
 	reg               recon_mb_start_r;
@@ -664,26 +690,8 @@ module decode_stub #(
 	reg               recon_frame_boundary_r;
 	reg signed [15:0] recon_mv_x_r, recon_mv_y_r;
 	reg               recon_p_mb_commit; // 1 = commit single P MB after fetch, not full IDR walk
-	// PH_DPB_FILL / post-P commit sequencer uses dpb_fill_* counters.
-	// Sample source: IDR → residual recon_px block0 + DC/128 plane;
-	//                 P   → Clip1(pred+residual) inter_recon_* planes.
-	wire              recon_commit_is_p = lat_p_inter && (phase == PH_FETCH || phase == PH_DPB_FILL);
-	wire [7:0]        recon_src_y = (dpb_fill_sample_idx < 9'd256) ? (
-	                      recon_commit_is_p ? inter_recon_y[dpb_fill_sample_idx[7:0]] :
-	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
-	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
-	                      ((dpb_fill_mb_addr == 16'd0) && lat_res_ok) ?
-	                          8'd128 :
-	                      8'd128
-	                  ) : 8'd128;
-	wire [7:0]        recon_src_u = recon_commit_is_p ?
-	                      inter_recon_u[dpb_fill_sample_idx[5:0]] : 8'd128;
-	wire [7:0]        recon_src_v = recon_commit_is_p ?
-	                      inter_recon_v[dpb_fill_sample_idx[5:0]] : 8'd128;
-	wire [7:0]        recon_src_sample =
-	                      (dpb_fill_sample_idx < 9'd256) ? recon_src_y :
-	                      (dpb_fill_sample_idx < 9'd320) ? recon_src_u : recon_src_v;
-
+	// PH_DPB_FILL commits via the sole mux dpb_filtered_sample (= dpb_recon_src_sample
+	// unless DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR). No second sample source.
 	wire              ref_commit_deblock_busy;
 	wire              ref_commit_deblock_mb_done;
 	wire              ref_commit_invalidate;
@@ -1373,7 +1381,7 @@ module decode_stub #(
 				end
 				recon_sample_valid_r <= 1'b1;
 				recon_sample_idx_r <= dpb_fill_sample_idx;
-				recon_sample_r <= recon_src_sample;
+				recon_sample_r <= dpb_filtered_sample;
 				recon_sample_done_r <= (dpb_fill_sample_idx == 9'd383);
 				dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;
 			end else if (dpb_fill_sample_idx == 9'd384) begin

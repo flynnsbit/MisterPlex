@@ -98,6 +98,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_deblock_iframe_gap.sh",
     "$(ROOT)/tests/unit/test_i420_candidate_score.sh",
     "$(ROOT)/tests/unit/test_p3_hybrid_gate.sh",
+    "python3 $(ROOT)/tests/unit/test_dpb_writeback_source.py",
     "$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh",
