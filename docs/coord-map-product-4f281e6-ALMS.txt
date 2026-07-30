@@ -1,0 +1,168 @@
+COORD-MAP PRODUCT-ONLY 4f281e6 — NO probe · LUMA-oriented product wire
+======================================================================
+SOURCE_SHA: 4f281e6f
+  = traverse phase-2 (tc_top/i4_mode_top M10K) on sink phase-2 product path
+  stream_path product-wires h264_p_mb_traverse; decode_stub wires sink+RFS+MC/DPB
+  map_decode_area_probe: **ABSENT** on this SHA (true product-only hierarchy)
+
+Build: /home/flynnsbit/mplex-builds/coord-map-product-4f281e6/Plex_MiSTer
+Log:   .agent-work/integ-wiring/quartus_map_product_4f281e6_attempt2.log
+Tool:  docker ghcr.io/raetro/quartus:mister · quartus_map ONLY · NO FIT
+QSF geometry: FRAME_W=640 FRAME_H=480 (Plex.qsf:83-84) → DPB_MB_COUNT=40×30=1200
+
+**NOT ship-fit.** Product-only whole is ~9× device. Chroma unbound.
+
+======================================================================
+ATTEMPT 1 — virgin product RFS @ SOURCE_SHA (no overlay)
+======================================================================
+true rc=3
+Error (10106): Verilog HDL Loop error at h264_recon_frame_store.sv(46):
+  loop must terminate within 5000 iterations
+  (initial for i in 0..MB_COUNT*384-1; 1200*384=460800)
+Error (12152): Can't elaborate ... h264_recon_frame_store:u_recon_store
+Elapsed ~22:53 · Peak virt 3860 MB
+
+Product source RFS also has async read:
+  assign read_sample = mem[rd_addr];   (h264_recon_frame_store.sv product)
+Docs already classify async read as M10K class-C fail
+  (docs/m10k-inference-boundary.md; fit-budget "RFS uninferred as regs (async read)").
+
+======================================================================
+ATTEMPT 2 — map-only RFS overlay (required to finish map)
+======================================================================
+Overlay (build-dir only, MAP_OVERLAYS.txt):
+  h264_recon_frame_store.sv ← map-friendly form (reg read + ramstyle=M10K + no init)
+  + build_id.v
+true rc=0
+Elapsed 00:15:45 · Peak virt 8185 MB
+
+PRE-REGISTER → OUTCOME
+----------------------
+whole ALMs 25k..40k (pt ~32k)     → **MISS  375,026**  (~9.0× device)
+whole DSP  75..100 (pt ~85)       → **MISS  130**      (device 112)
+no map_decode_area_probe row      → **HIT**
+traverse/sink/RFS under product   → **HIT** (names present)
+RFS M10K Info 276029              → **MISS** (0 hits for u_recon_store; entity bits=0)
+
+WHOLE DESIGN (map.rpt Resource Usage Summary)
+---------------------------------------------
+  ALMs needed     **375,026**   vs device 41,910  = **8.95× OVER**
+  DSP Blocks         **130**   vs device    112  = **OVER by 18**
+  block memory  **3,233,741**  vs 5,662,720      = 57.1%
+  registers       27,654
+  comb ALUTs     725,698
+
+NO probe entity anywhere.
+
+ENTITY (comb ALUTs total (self) · regs · bits · DSP) — measured
+---------------------------------------------------------------
+sys_top                           725,698 (1,199)   27,650  3,233,741   130
+emu                               714,575 (116)     16,493  2,849,216    99
+stream_path                       708,425 (152)     12,463  2,623,936    98
+decode_stub                       697,674 (16,856)   7,299  2,097,152    97
+  altsyncram dpb_mem_rtl_0            161 (0)            5  **2,097,152**  0
+  **h264_inter_mc_part u_stream_mc  674,729 (1,802)**    0         0    **65**
+    h264_inter_mc_16x16 u_full      672,927 (0)          0         0     65
+    **h264_luma_qpel_block_16x16    648,918 (648,918)**  0         0      0
+    chroma_epel u / v              16,122 / 7,887        0         0   1/64
+  h264_dequant4x4 (parallel)          586 (527)          0         0     32
+  h264_i_res_recon_sink               230 (187)        132         0      0
+    (no plane_y/top_row entity rows — sink largely DCE vs probe keep)
+  **h264_recon_frame_store**           **15 (15)**      **11**     **0**  **0**
+h264_p_mb_traverse                  6,012 (4,194)    2,959   132,608      1
+  u_rbsp_ram M10K                         0              0   131,072      0
+  u_tc_top_ram M10K                       0              0     1,536      0
+present_core                        4,853 (22)       2,201   225,280      1
+ddr_frame_store                     4,685 (4,149)    1,985   159,744      0
+slice_hdr_parser                    2,911 (2,911)      857       384      0
+ascal                               2,881 (2,875)    4,477   315,488     23
+h264_deblock_mb                     **not in hierarchy** (writeback_ctrl only, 15 comb)
+
+M10K — quoted (Info 276029 / RAM summary)
+-----------------------------------------
+  HIT: u_rbsp_ram  → M10K SDP 16384×8 = 131,072 bits (RAM summary line)
+  HIT: u_tc_top_ram → M10K SDP 256×6 = 1,536 bits
+  HIT: stub dpb_mem_rtl_0 → 2,097,152 bits (altsyncram AUTO)
+  **MISS RFS:** zero Info 276029 naming u_recon_store; entity **bits=0**
+  Uninferred list (276014) names async_fifo×2 + traverse Ram0..3 size — **not RFS**
+  → RFS array was **eliminated** (15 comb shell), not inferred and not fabric-RAM'd.
+
+BOMB (what replaced "probe tax")
+--------------------------------
+Product-only wall is **NOT** sink/traverse diet leftovers.
+It is **parallel MC luma qpel**:
+  h264_luma_qpel_block_16x16 self comb **648,918** · 0 bits · under u_stream_mc
+  RTL: nested for oy/ox 16×16 unrolled in h264_dpb.sv (module h264_luma_qpel_block_16x16)
+map1 product (no this MC tree) was **21,645 ALMs / 74 DSP** with serial mc_block ~911 comb.
+
+vs 788aa5f probe-inclusive map (for orientation only — different hierarchy):
+  41,666 ALMs / 111 DSP with probe 26,818 comb force-elab sink/trav/RFS
+  That "PASS by 244" is **not comparable** to this product-only number.
+
+======================================================================
+DECODER ENVELOPE (rule-0 from fit-budget — no invention)
+======================================================================
+Device totals (docs/fit-budget-alm-dsp-m10k.md:8-9):
+  ALMs **41,910** · DSP **112** · bits 5,662,720
+
+Quoted policy in same doc — **aspirational targets**, not a reserved decoder partition:
+  §3.2 after crash-diet: product shell hold 21,645; traverse≤3k; sink≤4k; sum **≤~33k ALMs**;
+  headroom **~9k ALMs**; whole-chip DSP proposal **≤100** (12 headroom).
+  §2 DSP bucket table is labeled **proposal**.
+
+**Hard decoder ALM allocation in doc: UNKNOWN — not specified as a fixed carve-out.**
+What is known (measured):
+  device                         41,910 ALMs / 112 DSP
+  this product-only whole       375,026 ALMs / 130 DSP
+  historical product map1        21,645 ALMs /  74 DSP  (no trav/sink/this MC)
+  framework-ish (this map comb): present 4853 + fstore 4685 + ascal 2881 ≈ 12.4k comb
+    (cannot subtract comb from ALMs; order-of-magnitude only)
+
+Decoder headroom vs device on THIS map:
+  41,910 − 375,026 = **−333,116 ALMs** (OVER)
+  112 − 130 = **−18 DSP** (OVER)
+
+======================================================================
+CHROMA HEADROOM (number sv-mvd can design to)
+======================================================================
+Against **device 41,910** on this product-only composition: **none — already 9× over**.
+Against **fit-budget aspirational ≤~33k sum**: also none until MC qpel bomb is gone.
+Against **map1 shell 21,645 + diet sink/trav targets (~7k) ≈ 28k**: leaves ~**6–14k ALMs**
+  aspirational room before chroma mid-bound +5..12k — **only if** parallel MC is
+  replaced by serial class (map1 mc_block ~1k comb) AND sink/trav stay dieted AND
+  RFS is M10K not fabric. **That is a plan, not a measured envelope.**
+
+**Do not use 244 ALMs.** That was device−probe_map whole.
+
+Safe statement for sv-mvd today:
+  Chroma headroom on product-only 4f281e6 = **0 (design does not fit)**.
+  Next gating area target = **h264_luma_qpel_block_16x16 / inter_mc_part**, not deblock,
+  not more sink serialisation for ALMs.
+
+======================================================================
+RFS M10K OPPORTUNITY — measured answer
+======================================================================
+1) Product source @4f281e6: **async read + init loop** → cannot elaborate at FRAME 640.
+2) Map-friendly overlay (reg read + ramstyle M10K): **still 0 block bits** for u_recon_store;
+   **no Info 276029** for recon_store. Array DCE'd (15 comb shell).
+3) Prior probe map RFS: 8,461 comb / **0 bits** (MB_COUNT=4 force-keep) — fabric, not M10K.
+4) fit-budget already: "RFS uninferred as regs (async read)"; target ≤500 logic + 921,600 bits
+   at MB_COUNT=300 (320×240). At QSF 640×480 analytical bits = 1200×384×8 = **3,686,400**
+   which alone is 65% of device BRAM — **on-chip full-frame RFS at 480p is a separate
+   product decision** (doc prefers DDR-backed store for larger clips).
+
+**Verdict:** Yes, product RFS is a **missed M10K / wrong-memory-architecture** site —
+evidence is async read (quoted RTL) + 0-bit maps + Error 10106 init — **but** fixing
+read style is necessary not sufficient; keep/access must retain the array, and 480p
+full-frame on-chip may not be the right store.
+
+======================================================================
+HONEST FRAMING
+======================================================================
+Removing the probe did **not** reveal a comfortable ~21k product with room for chroma.
+It revealed the **real product hierarchy bomb: parallel 16×16 luma qpel MC (~649k comb)
++ 65 DSP in inter_mc_part**, plus residual parallel dequant 32 DSP.
+Traverse phase-2 M10K (rbsp+tc_top) is fine. Sink diet is not the wall on this tree
+(sink DCE'd to 230 comb). Deblock_mb not instantiated.
+
+Luma-only label still applies for chroma merge. **NOT ship-fit.**
