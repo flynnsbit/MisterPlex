@@ -1,0 +1,84 @@
+RMW D PAINT MISS RCA — write_busy/DPB confirmed (measured)
+=========================================================
+SOURCE_SHA base: 0dd96197 (D product) + VERILATOR sink counters (this note)
+PRE: −256 cy/MB paint 1:1 → 2364
+ACT: −146.3 cy/MB paint (2620.387 → 2474.070); delta_cycles=43895
+
+1. METHOD
+---------
+Added VERILATOR-only SINK_CY_BREAKDOWN at dbg_mb_written==300.
+Ran D (INIT skip) and C-like (INIT 256 fill restored, same counters).
+rc captured; paint matches prior commits.
+
+2. QUOTED COUNTERS (clip1 320 I-frame to mb_written=300)
+--------------------------------------------------------
+C-like (INIT on):
+  SINK_CY_BREAKDOWN total=594399 idle_wb=5698 idle_pend=300 idle_ready=137325
+    init=77100 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029
+    iq=87664 apply=83872 dump=83659
+  STAGE paint_cycles=786116 paint_per_mb=2620.387
+
+D (INIT off):
+  SINK_CY_BREAKDOWN total=550504 idle_wb=38737 idle_pend=300 idle_ready=137491
+    init=0 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029
+    iq=87664 apply=83872 dump=83659
+  STAGE paint_cycles=742221 paint_per_mb=2474.070
+
+3. ARITHMETIC (no guess)
+------------------------
+  Δinit     = 77100 − 0     = 77100   (257.0 cy/MB — full INIT removal)
+  Δidle_wb  = 38737 − 5698  = 33039   (+110.1 cy/MB write_busy IDLE)
+  Δsink_tot = 594399−550504 = 43895
+  Δpaint    = 786116−742221 = 43895   (== Δsink_tot exactly)
+
+  Net = Δinit − Δidle_wb = 77100 − 33039 = 44061 ≈ Δpaint (1.7‰)
+
+  PRE assumed Δpaint=Δinit. MISS: Δpaint=Δinit−Δidle_wb.
+
+4. MECHANISM (from code + counters)
+-----------------------------------
+recon_frame_store write = 384 beats/MB (wr_idx 0..383) — h264_recon_frame_store.sv
+Sink write_busy = recon_store_busy | recon_store_pending — decode_stub.sv
+
+res_blk_ready only in ST_IDLE when !write_busy. But after write_req, pending/busy
+update NBA: same cycle ready may still see write_busy=0 → one-cycle accept gap
+for the next MB's first block, then sink leaves IDLE into INIT/SETTLE/work while
+the previous MB's 384-cy store runs.
+
+  C: INIT 256 cy absorbs most of that store tail inside non-IDLE work
+     → idle_wb only 5698 (~19 cy/MB)
+  D: no INIT; work finishes earlier relative to store → idle_wb 38737 (~129 cy/MB)
+
+So the "lost" 110 cy/MB is real recon_store tail that INIT had been hiding.
+NOT a measurement bug. paint_per_mb tracks sink wall-clock 1:1 here.
+
+5. WHERE TIME ACTUALLY IS (D breakdown /300)
+--------------------------------------------
+  iq        87664 → 292.2 cy/MB   (serial IQ wait — do not de-serial without parent)
+  apply     83872 → 279.6
+  dump      83659 → 278.9
+  i16pred   57239 → 190.8
+  i4nb      41029 → 136.8
+  idle_wb   38737 → 129.1         ← store pressure (next lever candidate)
+  idle_ready 137491 → 458.3       ← TRAVERSE STARVE (largest single bucket!)
+  init          0
+
+idle_ready ≫ idle_wb: residual exporter (CAVLC/traverse) often slower than sink.
+E (NB pipe, tens/MB) is small vs idle_ready 458 and idle_wb 129.
+
+6. NEXT LEVER RANKING (no mem / no mul)
+--------------------------------------
+  1) Hide/shrink recon_store 384/MB (double-buffer or burst) — up to ~129 cy
+     now exposed; more if store stays on critical path after feed improves
+  2) Traverse feed (idle_ready 458) — outside pure sink RMW; coordinate
+  3) E NB pipe — tens/MB only; defer
+  4) De-serial IQ/I16 — still needs parent numeric OK vs ALM/DSP
+
+E NOT started. Pad remains ~193 cy vs 2667 after D.
+
+7. LOGS
+-------
+  docs/evidence/_local_logs/rmw_d_stall_rca/sim.log
+  docs/evidence/_local_logs/rmw_c_stall_rca/sim.log
+
+END RCA

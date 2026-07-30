@@ -287,6 +287,13 @@ module h264_i_res_recon_sink #(
 	wire [7:0] dump_cap_a = 8'(cnt - 9'd2);
 	wire [3:0] dump_dc_i  = {dump_cap_a[7:6], dump_cap_a[3:2]};
 
+`ifdef VERILATOR
+	// Stall RCA: paint≠sink miss chase (rmw_d). Not synthesised.
+	reg [63:0] cy_st [0:15];
+	reg [63:0] cy_idle_wb, cy_idle_ready, cy_idle_pend, cy_total;
+	integer si;
+`endif
+
 	always @(posedge clk) begin
 		write_req <= 1'b0;
 		i16_start <= 1'b0;
@@ -294,6 +301,27 @@ module h264_i_res_recon_sink #(
 		had_start <= 1'b0;
 		py_we <= 1'b0;
 		tr_we <= 1'b0;
+
+`ifdef VERILATOR
+		if (reset || clear) begin
+			for (si = 0; si < 16; si = si + 1) cy_st[si] <= 64'd0;
+			cy_idle_wb <= 64'd0;
+			cy_idle_ready <= 64'd0;
+			cy_idle_pend <= 64'd0;
+			cy_total <= 64'd0;
+		end else begin
+			cy_total <= cy_total + 64'd1;
+			cy_st[st] <= cy_st[st] + 64'd1;
+			if (st == ST_IDLE) begin
+				if (write_busy)
+					cy_idle_wb <= cy_idle_wb + 64'd1;
+				else if (pend_mb_end)
+					cy_idle_pend <= cy_idle_pend + 64'd1;
+				else if (res_blk_ready)
+					cy_idle_ready <= cy_idle_ready + 64'd1;
+			end
+		end
+`endif
 
 		if (reset || clear) begin
 			st <= ST_IDLE;
@@ -423,7 +451,6 @@ module h264_i_res_recon_sink #(
 
 			//============================================================
 			// D: retained for stable state encoding; entry bypassed from IDLE.
-			// If ever re-entered, do not paint 128 — forward to SETTLE/IDLE.
 			ST_MB_INIT: begin
 				cnt <= 9'd0;
 				rd_ph <= RD_ISSUE;
@@ -854,6 +881,15 @@ module h264_i_res_recon_sink #(
 					write_req <= 1'b1;
 					write_mb_addr <= cur_mb;
 					dbg_mb_written <= dbg_mb_written + 32'd1;
+`ifdef VERILATOR
+					if (dbg_mb_written + 32'd1 == 32'd300) begin
+						$display("SINK_CY_BREAKDOWN total=%0d idle_wb=%0d idle_pend=%0d idle_ready=%0d init=%0d settle=%0d i16nb=%0d i16pred=%0d had=%0d i4nb=%0d iq=%0d apply=%0d dump=%0d",
+							cy_total, cy_idle_wb, cy_idle_pend, cy_idle_ready,
+							cy_st[ST_MB_INIT], cy_st[ST_SETTLE], cy_st[ST_I16_NB],
+							cy_st[ST_I16_PRED], cy_st[ST_HAD_WAIT], cy_st[ST_I4_NB],
+							cy_st[ST_IQ_WAIT], cy_st[ST_APPLY_PX], cy_st[ST_MB_DUMP]);
+					end
+`endif
 					have_mb <= 1'b0;
 					pend_mb_end <= 1'b0;
 					cnt <= 9'd0;

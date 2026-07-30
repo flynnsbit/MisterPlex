@@ -1,0 +1,65 @@
+sv-traverse ↔ sv-mvd — MB_INIT LANDMINE COORD (before either rebase)
+====================================================================
+SOURCE_SHA tip (traverse): 0dd96197 + stall counters WIP
+mvd tree: .worktrees/rtl-chroma-intra-ship (dirty Intra-in-P on 6d5478eb)
+Date: 2026-07-30
+
+1. DOES INTRA-IN-P REACH THE SINK THAT SKIPPED MB_INIT?
+-------------------------------------------------------
+YES — by design in mvd dirty tree (quoted):
+
+  decode_stub.sv (chroma-intra-ship):
+    wire p_intra_active = (phase == PH_FETCH) && use_real_ref && lat_p_intra;
+    wire i_sink_enable  = (phase == PH_I_RECON) || p_intra_active;
+    .res_blk_valid(i_res_blk_valid && i_sink_enable)
+
+  Prereg docs/evidence/intra_in_p_fix_prereg.txt:
+    "1. Intra-in-P → PH_FETCH + lat_p_intra; ... 2. i_sink_enable when lat_p_intra
+     (real I pred+res+store)"
+
+So P-slice I_16x16 / I_NxN will feed h264_i_res_recon_sink — the same module
+where traverse removed MB_INIT (D @ 664e13c2).
+
+2. DOES THAT INVALIDATE THE D INVARIANT?
+----------------------------------------
+NOT IF mvd's export_zero expansion lands with it.
+
+  traverse (chroma-intra-ship dirty):
+    // I-slice and Intra-in-P: still export zero-coeff luma so sink runs pred
+    if ((is_i_slice_r || is_intra_r) &&
+        ((!is_i16_r && res_block_i < 5'd16) ||
+         (is_i16_r && res_block_i <= 5'd16))) → exp_zero / res_blk_valid
+
+  And coded path:
+    if (is_i_slice_r || is_intra_r || !is_luma_slot) → res_blk_valid
+
+Coverage still: all luma slots (zero or coded) + I16_PRED 256 or I4 APPLY×16.
+
+  mvd's own sink STILL HAS MB_INIT fill (py_wdata<=128 @ ST_MB_INIT) — they have
+  not taken D. Pairing is:
+
+  | merge combo                         | MB_INIT skip safe? |
+  |-------------------------------------|--------------------|
+  | traverse D + mvd export is_intra_r  | YES                |
+  | traverse D + mvd route without exp  | NO — restore INIT  |
+  | mvd alone (keeps INIT)              | YES (INIT present) |
+
+3. CONTRACT BOTH LANES MUST HOLD
+--------------------------------
+A) Gate for full luma export to sink:
+     (is_i_slice_r || is_intra_r) for slots that need pred
+B) If A is ever narrowed, sink MUST restore MB_INIT 256 fill before DUMP
+C) Do not rebase one without the other noticing: patch-file handoff
+
+Traverse will NOT silently keep D if mvd drops is_intra_r from exp_zero.
+mvd should NOT assume INIT exists after taking traverse D.
+
+4. RECOMMENDED MERGE ORDER
+--------------------------
+1. mvd lands Intra-in-P + is_intra_r export (keeps INIT in their sink OK)
+2. traverse D already on branch; on integrate: confirm exp_zero still has
+   is_intra_r then keep D; else re-enable INIT (lose ~146 paint cy/MB)
+
+Handoff copy: also place under mvd docs/evidence/ when possible.
+
+END COORD
