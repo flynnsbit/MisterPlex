@@ -20,7 +20,7 @@
 | Pass | ALMs needed (map) | DSP | Block mem bits | Notes |
 |------|-------------------|-----|----------------|-------|
 | coord-map1 product | **21,645** | **74** | **2,997,709** (53%) | identity deblock, serial MC |
-| coord-map2d + decode probe | **1,241,952** | 149 | 2,997,709 | traverse dominates ALMs |
+| coord-map2d + decode probe | **1,241,952 ALMs needed** | 149 | 2,997,709 | traverse **1,180,271 comb ALUTs**; ~29.6× device ALMs |
 | coord-map3b + chroma/sink | **48,436** | **154** | 2,997,709 | sink+chroma kept; no traverse |
 | wire6 post-fit | 21,021 | 74 | (fit rpt) | BUILD_OK historical |
 
@@ -155,7 +155,13 @@ remaining after product           2,665,011
 
 ---
 
-## 6. Measurement gate (integrate owns)
+## 6. Ownership (sink) — integrate recommendation
+
+**`sv-traverse` implements the sink crash-diet** (owns `h264_i_res_recon_sink.sv`, correctness).  
+**`sv-integrate`** measures + serial-IQ brief; **`sv-mvd`** patch-only on chroma ports.  
+See `docs/cycle-iterative-sink-area.md` §0.
+
+## 7. Measurement gate (integrate owns)
 
 1. One coordinated `quartus_map` per freeze; no lane self-fits.  
 2. Publish ALMs estimate + DSP total + block mem bits + per-module table.  
@@ -170,6 +176,15 @@ remaining after product           2,665,011
 
 ---
 
-## 7. Honest one-liner (unchanged)
+## 8. Exact-source gap (open, non-blocking)
 
-*Functionally exact I-decoder in simulation, roughly thirty times too large to exist on this FPGA — cause localised to traverse RBSP muxes + sink parallel IQ/planes; chroma leaves are cheap; DSP overbooked even without traverse; M10K has ~47% bits free but RFS+RBSP must infer cleanly or RAM becomes the next wall.*
+coord-map2b traverse/sink are **not byte-identical** to score SHAs:
+- `6dc5993` traverse sha256 `d076328e…` vs mapped `d5245c65…` — **only** added `(* ramstyle="M10K" *)` on rbsp/i4_mode_top/tc_top (and those still **uninferred**).
+- sink mapped from chroma era / patches ≠ pure `6dc5993` byte image; map3b used `1e1fbe1` sink.
+
+**NUMBER STANDS** for the architecture (dynamic-index bomb + hierarchy reconcile).  
+**Still owed:** one map on **byte-exact** freeze after serial redesign (area + 300/300 + 1170/1170 same SHA).
+
+## 9. Honest one-liner (corrected phrasing)
+
+*Functionally exact I-decoder in simulation; synthesis succeeds; design **cannot fit** this FPGA **in its current architecture** (~29.6× on map ALMs needed vs 41,910) — cause localised to **64 parallel dynamic RBSP reads** (traverse) + sink parallel IQ/planes; chroma leaves cheap; DSP overbooked even without traverse; `ramstyle` alone will not save you; M10K bits look survivable only after real inference.*

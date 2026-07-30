@@ -1,10 +1,26 @@
 # Cycle-iterative area redesign for `h264_p_mb_traverse`
 
 **Audience:** `sv-traverse` (implements). `sv-integrate` (measurements + this review only — does not edit this module).  
-**Evidence:** coord-map2d `quartus_map` true rc=0 · ALMs needed **1,241,952** ·  
-`h264_p_mb_traverse` **1,180,271 comb ALUTs** (self **1,177,415**) · device **41,910 ALMs**.  
-**Honest sentence:** the decoder is functionally exact in simulation and roughly **thirty times too large** to exist on this FPGA.  
-**Worked example:** serial `h264_mc_luma_qpel.sv` — **318,897 → ~484 ALMs (~650×)** by killing runtime-indexed fabric arrays and sharing one datapath.
+
+**Evidence (coord-map2d, independent audit NUMBER STANDS):**  
+`quartus_map` true rc=0, zero errors, device 5CSEBA6U23I7.  
+Hierarchy reconciles: probe children **1,228,890** comb ALUTs + 38 self = **1,228,928**;  
+traverse **1,180,271 comb ALUTs** of which **1,177,415 self**.  
+Whole-design map **Estimate of Logic utilization (ALMs needed) = 1,241,952**.  
+Device **41,910 ALMs** → **1,241,952 / 41,910 ≈ 29.6×** oversized.
+
+**Units (do not mix):**  
+- Entity table **Combinational ALUTs** (e.g. traverse **1,180,271 ALUTs**)  
+- Whole-chip fit proxy = map **ALMs needed** (**1,241,952 ALMs**) vs device **ALMs**  
+Saying “traverse is 1.18M ALMs” is imprecise; say **1.18M comb ALUTs**, chip **~29.6×** on the ALM estimate.
+
+**Honest sentence (accurate):** synthesis **succeeded**; the design **cannot fit this FPGA in its current architecture** (~30× oversized). Not “cannot be synthesised.”
+
+**Worked example:** serial `h264_mc_luma_qpel.sv` — combo path **~318k area class → ~484 ALMs (~650×)** by killing runtime-indexed fabric arrays and sharing one datapath.
+
+**TRAP — `(* ramstyle="M10K" *)` alone does NOT work.**  
+coord-map2b already added M10K attributes on `rbsp` / `i4_mode_top` / `tc_top` (absent from byte-exact `6dc5993`); Quartus still **uninferred** those arrays and the **1.18M ALUT bomb remained**.  
+**Restructure the access pattern first** (≤1 read port, 1 access/cycle, registered addr, no 64-wide dynamic fan-out), **then** measure. Re-annotating and re-mapping will waste a day.
 
 ---
 
@@ -23,34 +39,39 @@ If a construct would instantiate “one mux/ALU per sample or per byte of the bu
 
 ## 1. Root cause (quoted structure, not guess)
 
-### 1.1 Runtime-indexed RBSP (primary suspect for the 1.18M self comb)
+### 1.1 The bomb: **64 parallel dynamic reads** from the 8KB RBSP (not “pixel loops”)
+
+Mechanism (audit-sharpened; this guide is the authority over loose paraphrases):
 
 ```systemverilog
-// h264_p_mb_traverse.sv — parameter + storage
 parameter int MAX_RBSP_BYTES = 8192;
 reg [7:0] rbsp [0:MAX_RBSP_BYTES-1];
-
-function automatic bit rbsp_bit_at;
-  ...
-  rbsp_bit_at = rbsp[byte_i][bit_i];  // runtime index into 8192 bytes
-endfunction
 
 task automatic load_res_window;
   ...
   for (k = 0; k < 64; k = k + 1)
-    res_win[k] <= rbsp[bbase + k];   // 64 parallel 8192:1 byte muxes in one cycle
+    res_win[k] <= rbsp[bbase + k];  // 64 PARALLEL dynamic indexes in one cycle
 endtask
+// plus rbsp_bit_at(): rbsp[byte_i][bit_i] — more dynamic ports
 ```
 
-This is the **same class of bug** as the old qpel `ref_win [0:440]` port:
+**What Quartus builds:** wide dynamic muxes into `res_win`, on the order of  
+**8,195:1 and 16,387:1 multiplexers (~43,704 and ~87,392 LEs each)** in the audit readout —  
+that **is** the area bomb. It is a **dynamic-index / multi-port read** problem.
+
+It is **not** primarily “unrolled loops over macroblock pixels.” Pixel-loop language understates the fix: you must **serialise RBSP reads to one (or very few) registered ports**, not merely iterate pixels elsewhere.
+
+Same class as old qpel `ref_win[0:440]` runtime index:
 
 | Old qpel (fixed) | Traverse (now) |
 |------------------|----------------|
-| 441-byte window, runtime `(r,c)` index | 8192-byte RBSP, runtime `byte_i` / `bbase+k` |
-| “every index = N:1 mux in fabric” | same |
-| 33 mux groups × 441 → ~90k–318k ALMs | 64×8192 byte muxes + bit reads → **~1.18M comb** |
+| runtime window index → N:1 mux fabric | **64×** runtime `rbsp[bbase+k]` in one task |
+| fix: M10K + 1 sample/cycle + registered q | fix: **same access pattern**, not attributes alone |
+| ~318k → ~484 ALMs | **1,180,271 comb ALUTs** self-dominated |
 
-CAVLC child is only **~2,072 comb** in map2d — the bomb is **parent self logic**, consistent with RBSP mux trees + neighbor tables, not the residual parser core.
+CAVLC child is only **~2,072 comb ALUTs** — residual parser core is fine; **parent RBSP fan-out** is not.
+
+**Attributes already tried and failed** on the map tree (`(* ramstyle="M10K" *)` on rbsp/tops) while `load_res_window` still did 64 parallel dynamic reads → still uninferred → still 1.18M.
 
 ### 1.2 Other large runtime-indexed / reset-unrolled structures
 
@@ -194,7 +215,7 @@ If a path needs 10k cycles/MB, **still OK** at 320×240/23 if average stays unde
 
 | Module | map2d measured | Target after serial | Gate |
 |--------|----------------|---------------------|------|
-| `h264_p_mb_traverse` | **1,180,271** comb | **≤ 3,000 ALMs**, DSP ≤ 2 | must |
+| `h264_p_mb_traverse` | **1,180,271** comb ALUTs | **≤ 3,000 ALMs** (map estimate), DSP ≤ 2 | must |
 | `h264_cavlc_residual_block` | 2,072 | ≤ 2,500 (keep) | hold |
 | RBSP storage | logic mux | **M10K only** (~64–128 blocks for 8–16KB) | must |
 | Neighbor tables | mixed | M10K + few hundred ALMs | must |
@@ -220,13 +241,14 @@ Integrate will run **one** `quartus_map` when traverse publishes a freeze SHA; d
 
 ---
 
-## 7. Anti-patterns (will recreate 1.18M)
+## 7. Anti-patterns (will recreate 1.18M ALUTs)
 
-- `function` reading `rbsp[i]` or `plane[i]` with variable `i`.  
-- `for (k=0;k<N;k++) out[k] = big[base+k]` in one clock with N&gt;4 and big in regs.  
+- `function` / task reading `rbsp[i]` with variable `i` (dynamic port).  
+- **`for (k=0;k<64;k++) res_win[k] <= rbsp[base+k]` in one cycle** — the known bomb.  
+- Adding `(* ramstyle="M10K" *)` **without** changing that access pattern (already proven useless).  
 - Flattening the entire slice into regs “for sim speed.”  
 - `always @*` packing an entire MB of prediction samples.  
-- “Temporary” combo path under `ifdef SYNTHESIS` left empty in sim and full in sim-only — product must match the serial form.
+- Claiming “cannot synthesise” when map rc=0 — say **cannot fit** / oversized architecture.
 
 ---
 

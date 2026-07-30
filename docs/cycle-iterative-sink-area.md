@@ -6,6 +6,10 @@ I16 pred **~9k** · dequant child **52 DSP** · hadamard **32 DSP** · chroma8x8
 **Device:** 41,910 ALMs · **112 DSP** · product already **74 DSP**.  
 **Targets after redesign:** **≤ 4,000 ALMs · ≤ 12 DSP** · M10K tops/plane as below.
 
+**Language:** map entity counts are **comb ALUTs**; targets are **map ALMs needed** / post-fit ALMs.  
+Synthesis of the oversized design **succeeds** — it **does not fit**.  
+**Trap:** `(* ramstyle="M10K" *)` on plane/top without single-ported registered access will **not** infer (same lesson as traverse RBSP).
+
 ---
 
 ## 0. Ownership recommendation (for parent assignment)

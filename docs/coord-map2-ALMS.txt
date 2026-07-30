@@ -1,3 +1,9 @@
+NOTE (2026-07-30 audit): NUMBER STANDS. 1,180,271 = comb ALUTs not ALMs.
+Whole-design ALMs needed 1,241,952 / 41910 ≈ 29.6×. Synthesis rc=0 — cannot FIT, not "cannot synthesise".
+Bomb = 64 parallel dynamic RBSP reads (res_win muxes), not vague pixel-unroll.
+Mapped tree had ramstyle attrs still uninferred — access pattern must change.
+Exact-source vs 6dc5993: attrs-only delta (see fit-budget §8).
+
 coord-map2 — decode-path area (quartus_map only, no fit)
 =========================================================
 Date: 2026-07-30
