@@ -23,6 +23,11 @@
 //
 // Interaction with parallel lanes:
 //   sv-mvd supplies real MVs into fetch_mv_*_qpel — this module is MV-agnostic.
+// AREA: hierarchy cost is dominated by u_deblock (h264_deblock_mb). That child
+// is cycle-iterative single-lane; do not re-introduce packed multi-port windows
+// or 4-wide edge unrolls here. PRE-REGISTER ref_commit tree ≤ 3000 ALMs after
+// deblock rewrite (was 40109 on product-wire3 fit.rpt).
+//
 //   sv-resadd supplies residual into the recon sample stream — this module is
 //   residual-agnostic. Reference content correctness does not depend on either.
 //

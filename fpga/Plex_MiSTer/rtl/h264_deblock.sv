@@ -311,6 +311,136 @@ module h264_deblock_edge (
 	end
 endmodule
 
+// Single-lane edge filter (area path). One sample-pair datapath; deblock_mb
+// iterates lanes over cycles. PRE-REGISTER: edge1 ≪ 4× edge unroll cost.
+module h264_deblock_edge1 (
+	input  wire              is_chroma,
+	input  wire [2:0]        bs,
+	input  wire [5:0]        qp_avg,
+	input  wire signed [4:0] slice_alpha_c0_offset,
+	input  wire signed [4:0] slice_beta_offset,
+	input  wire [7:0]        p3_in,
+	input  wire [7:0]        p2_in,
+	input  wire [7:0]        p1_in,
+	input  wire [7:0]        p0_in,
+	input  wire [7:0]        q0_in,
+	input  wire [7:0]        q1_in,
+	input  wire [7:0]        q2_in,
+	input  wire [7:0]        q3_in,
+	output reg  [7:0]        p2_out,
+	output reg  [7:0]        p1_out,
+	output reg  [7:0]        p0_out,
+	output reg  [7:0]        q0_out,
+	output reg  [7:0]        q1_out,
+	output reg  [7:0]        q2_out,
+	output wire [7:0]        alpha_dbg,
+	output wire [7:0]        beta_dbg,
+	output wire [5:0]        tc0_dbg
+);
+	wire [5:0] index_a_unused, index_b_unused;
+`ifdef H264_DEBLOCK_FAULT_FORCE_BS2
+	wire [2:0] bs_eff = 3'd2;
+`else
+	wire [2:0] bs_eff = bs;
+`endif
+	h264_deblock_thresholds u_thr (
+		.qp_avg(qp_avg),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
+		.bs(bs_eff),
+		.alpha(alpha_dbg),
+		.beta(beta_dbg),
+		.index_a(index_a_unused),
+		.index_b(index_b_unused),
+		.tc0(tc0_dbg)
+	);
+
+	function automatic [7:0] clip8;
+		input signed [13:0] v;
+		begin
+			if (v < 14'sd0) clip8 = 8'd0;
+			else if (v > 14'sd255) clip8 = 8'd255;
+			else clip8 = v[7:0];
+		end
+	endfunction
+	function automatic signed [13:0] clip_signed;
+		input signed [13:0] lo;
+		input signed [13:0] hi;
+		input signed [13:0] v;
+		begin
+			if (v < lo) clip_signed = lo;
+			else if (v > hi) clip_signed = hi;
+			else clip_signed = v;
+		end
+	endfunction
+	function automatic [8:0] absdiff8;
+		input [7:0] a;
+		input [7:0] b;
+		begin
+			absdiff8 = (a >= b) ? ({1'b0, a} - {1'b0, b}) : ({1'b0, b} - {1'b0, a});
+		end
+	endfunction
+
+	reg filter_ok, ap, aq, strong_extra;
+	reg signed [13:0] tc, delta, adj;
+	reg signed [13:0] p0s, p1s, p2s, p3s, q0s, q1s, q2s, q3s;
+
+	always @* begin
+		p2_out = p2_in; p1_out = p1_in; p0_out = p0_in;
+		q0_out = q0_in; q1_out = q1_in; q2_out = q2_in;
+		p0s = {6'b0, p0_in}; p1s = {6'b0, p1_in}; p2s = {6'b0, p2_in}; p3s = {6'b0, p3_in};
+		q0s = {6'b0, q0_in}; q1s = {6'b0, q1_in}; q2s = {6'b0, q2_in}; q3s = {6'b0, q3_in};
+		tc = 14'sd0; delta = 14'sd0; adj = 14'sd0;
+		filter_ok = (bs_eff != 3'd0) && (absdiff8(p0_in, q0_in) < {1'b0, alpha_dbg}) &&
+		            (absdiff8(p1_in, p0_in) < {1'b0, beta_dbg}) &&
+		            (absdiff8(q1_in, q0_in) < {1'b0, beta_dbg});
+		ap = absdiff8(p2_in, p0_in) < {1'b0, beta_dbg};
+		aq = absdiff8(q2_in, q0_in) < {1'b0, beta_dbg};
+		strong_extra = absdiff8(p0_in, q0_in) < {1'b0, (alpha_dbg >> 2) + 8'd2};
+
+		if (filter_ok && bs_eff == 3'd4) begin
+			if (is_chroma) begin
+				p0_out = clip8((p1s <<< 1) + p0s + q1s + 14'sd2 >>> 2);
+				q0_out = clip8((q1s <<< 1) + q0s + p1s + 14'sd2 >>> 2);
+			end else if (strong_extra) begin
+				if (ap) begin
+					p0_out = clip8(p2s + (p1s <<< 1) + (p0s <<< 1) + (q0s <<< 1) + q1s + 14'sd4 >>> 3);
+					p1_out = clip8(p2s + p1s + p0s + q0s + 14'sd2 >>> 2);
+					p2_out = clip8((p3s <<< 1) + 3 * p2s + p1s + p0s + q0s + 14'sd4 >>> 3);
+				end else begin
+					p0_out = clip8((p1s <<< 1) + p0s + q1s + 14'sd2 >>> 2);
+				end
+				if (aq) begin
+					q0_out = clip8(p1s + (p0s <<< 1) + (q0s <<< 1) + (q1s <<< 1) + q2s + 14'sd4 >>> 3);
+					q1_out = clip8(p0s + q0s + q1s + q2s + 14'sd2 >>> 2);
+					q2_out = clip8(p0s + q0s + q1s + 3 * q2s + (q3s <<< 1) + 14'sd4 >>> 3);
+				end else begin
+					q0_out = clip8((q1s <<< 1) + q0s + p1s + 14'sd2 >>> 2);
+				end
+			end else begin
+				p0_out = clip8((p1s <<< 1) + p0s + q1s + 14'sd2 >>> 2);
+				q0_out = clip8((q1s <<< 1) + q0s + p1s + 14'sd2 >>> 2);
+			end
+		end else if (filter_ok) begin
+			tc = is_chroma ? $signed({8'd0, tc0_dbg}) + 14'sd1 :
+			     $signed({8'd0, tc0_dbg}) + (ap ? 14'sd1 : 14'sd0) + (aq ? 14'sd1 : 14'sd0);
+			delta = clip_signed(-tc, tc, (((q0s - p0s) <<< 2) + (p1s - q1s) + 14'sd4) >>> 3);
+			p0_out = clip8(p0s + delta);
+			q0_out = clip8(q0s - delta);
+			if (!is_chroma && ap) begin
+				adj = clip_signed(-$signed({8'd0, tc0_dbg}), $signed({8'd0, tc0_dbg}),
+				                  (p2s + ((p0s + q0s + 14'sd1) >>> 1) - (p1s <<< 1)) >>> 1);
+				p1_out = clip8(p1s + adj);
+			end
+			if (!is_chroma && aq) begin
+				adj = clip_signed(-$signed({8'd0, tc0_dbg}), $signed({8'd0, tc0_dbg}),
+				                  (q2s + ((p0s + q0s + 14'sd1) >>> 1) - (q1s <<< 1)) >>> 1);
+				q1_out = clip8(q1s + adj);
+			end
+		end
+	end
+endmodule
+
 
 module h264_deblock_edge_pipe (
 	input  wire              clk,
