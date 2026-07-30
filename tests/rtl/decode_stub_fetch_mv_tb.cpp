@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
     bool saw_mv = false;
     int16_t got_mv_x = 0, got_mv_y = 0;
     int16_t got_ox = 0, got_oy = 0;
-    for (int i = 0; i < 200000; ++i) {
+    for (int i = 0; i < 2500000; ++i) {
         sim.tick();
         if (sim.top.product_fetch_mv_x != 0 || sim.top.product_fetch_mv_y != 0 ||
             sim.top.frames_out >= 2) {
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
         return fail("P frame did not publish product_fetch_mv / complete") ? 0 : 1;
     }
     // Drain to idle so origin sticky from last fetch is stable.
-    (void)sim.waitIdle(200000);
+    (void)sim.waitIdle(2500000);
     got_mv_x = static_cast<int16_t>(sim.top.product_fetch_mv_x);
     got_mv_y = static_cast<int16_t>(sim.top.product_fetch_mv_y);
     got_ox = static_cast<int16_t>(sim.top.product_luma_origin_x);

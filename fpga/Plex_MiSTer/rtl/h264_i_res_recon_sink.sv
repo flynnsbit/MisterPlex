@@ -1,17 +1,19 @@
 // I-slice residual → Clip1(pred + residual) MB plane sink.
 //
 // Consumes h264_p_mb_traverse res_blk_* / res_mb_end stream.
-// Cycle-iterative: one shared I4 pred + one IQ/IDCT per block (no MB-wide unroll).
-// I16 uses h264_intra16x16_pred (1–2 cycles) then DC/AC residual onto that plane.
-// Chroma deferred flat 128 (stated).
+// Area/DSP (cycle-iterative): serial dequant (1 mul/16cy) + serial I16 Hadamard
+// scale (1 mul/16cy). Kills parallel m15+m16 dequant farm (~52 DSP) and
+// parallel hadamard muls (~32 DSP). See docs/cycle-iterative-sink-area.md.
+// Target: <=4000 ALMs, <=12 DSP. Chroma product owned by sv-mvd (patch only).
 //
-// Neighbours: top-row linebuf (frame width) + left column of current MB row.
+// Neighbours: top-row linebuf (MAX_PIC_W default 1024) + left column.
 // On res_mb_end, write_y/u/v are stable and write_req pulses for one cycle.
 
 `default_nettype none
 
 module h264_i_res_recon_sink #(
-	parameter int MAX_PIC_W = 1024  // luma samples; 64 MB * 16
+	parameter int MAX_PIC_W = 1024, // >=624 for clip2; M10K later (attr-only is trap)
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0 // RED: serial dequant forces zeros
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -43,13 +45,21 @@ module h264_i_res_recon_sink #(
 	output reg  [31:0] dbg_mb_written,
 	output reg  [31:0] dbg_luma_nz
 );
-	localparam [2:0]
-		ST_IDLE     = 3'd0,
-		ST_I16_PRED = 3'd1,
-		ST_SETTLE   = 3'd2,
-		ST_APPLY    = 3'd3;
+	localparam [3:0]
+		ST_IDLE      = 4'd0,
+		ST_SETTLE    = 4'd1,  // lat_* NBA settle before serial start
+		ST_I16_PRED  = 4'd2,
+		ST_HAD_WAIT  = 4'd3,  // serial I16 DC hadamard
+		ST_IQ_WAIT   = 4'd4,  // serial dequant
+		ST_APPLY_PX  = 4'd5;  // serial pixel writeback (I4 / I16 AC)
 
-	reg [2:0] st;
+	reg [3:0] st;
+	reg [4:0] apply_px_i; // 0..15 serial recon write
+	reg       apply_any_nz;
+	reg [1:0] apply_bx, apply_by;
+	reg       apply_is_i4;
+	reg       apply_is_i16_ac;
+	reg       apply_is_i16_dc;
 	reg        have_mb;
 	reg [15:0] cur_mb;
 	reg [7:0]  cur_mb_x, cur_mb_y;
@@ -288,6 +298,10 @@ module h264_i_res_recon_sink #(
 	wire signed [28:0] idct_r [0:15];
 	wire [7:0]         recon_px [0:15];
 	wire signed [15:0] dc_had [0:15];
+	wire               dq_busy, dq_done;
+	wire               had_busy, had_done;
+	reg                dq_start;
+	reg                had_start;
 
 	reg signed [15:0] coeff_for_iq [0:15];
 	reg [4:0]         max_for_iq;
@@ -302,7 +316,6 @@ module h264_i_res_recon_sink #(
 	end
 
 	// I16 AC: inject Hadamard DC at dequant[0] before IDCT (host idct4x4_add).
-	// Split pixel-DC + AC-idct loses combined >>6 rounding (off-by-one).
 	reg use_i16_dc_inject;
 	reg signed [15:0] i16_inject_dc;
 	wire signed [28:0] dq_for_idct [0:15];
@@ -329,10 +342,13 @@ module h264_i_res_recon_sink #(
 		end
 	end
 
-	h264_dequant4x4 u_dq (
+	h264_dequant4x4_serial #(.FAULT_FORCE_ZERO(FAULT_SERIAL_IQ_ZERO)) u_dq (
+		.clk(clk), .reset(reset | clear),
+		.start(dq_start),
 		.coeff(coeff_for_iq),
 		.qp(lat_qp),
 		.max_coeff(max_for_iq),
+		.busy(dq_busy), .done(dq_done),
 		.dequant(dq_raw)
 	);
 	h264_idct4x4 u_idct (
@@ -344,13 +360,19 @@ module h264_i_res_recon_sink #(
 		.residual(idct_r),
 		.recon(recon_px)
 	);
-	h264_i16_dc_hadamard u_had (
+	h264_i16_dc_hadamard_serial u_had (
+		.clk(clk), .reset(reset | clear),
+		.start(had_start),
 		.coeff(lat_coeff),
 		.qp(lat_qp),
+		.busy(had_busy), .done(had_done),
 		.dc_out(dc_had)
 	);
 
 	integer yi, ui, b, y, x, addr, k;
+	wire [1:0] apx_y = apply_px_i[3:2];
+	wire [1:0] apx_x = apply_px_i[1:0];
+	wire [7:0] apx_addr = (apply_by * 4 + apx_y) * 16 + (apply_bx * 4 + apx_x);
 	reg [1:0] bx, by;
 	reg signed [17:0] tsum;
 	reg any_nz;
@@ -358,9 +380,18 @@ module h264_i_res_recon_sink #(
 	always @(posedge clk) begin
 		write_req <= 1'b0;
 		i16_start <= 1'b0;
+		dq_start <= 1'b0;
+		had_start <= 1'b0;
 
 		if (reset || clear) begin
 			st <= ST_IDLE;
+			apply_px_i <= 5'd0;
+			apply_any_nz <= 1'b0;
+			apply_bx <= 2'd0;
+			apply_by <= 2'd0;
+			apply_is_i4 <= 1'b0;
+			apply_is_i16_ac <= 1'b0;
+			apply_is_i16_dc <= 1'b0;
 			have_mb <= 1'b0;
 			cur_mb <= 16'd0;
 			cur_mb_x <= 8'd0;
@@ -439,12 +470,8 @@ module h264_i_res_recon_sink #(
 					for (ci = 0; ci < 16; ci = ci + 1)
 						lat_coeff[ci] <= res_blk_coeff[ci];
 
-					if (res_blk_is_luma && res_blk_is_i16 && res_blk_idx == 5'd0 &&
-					    !i16_pred_done) begin
-						i16_start <= 1'b1;
-						st <= ST_I16_PRED;
-					end else
-						st <= ST_SETTLE;
+					// One settle cycle so lat_* / lat_coeff are visible to serial IQ.
+					st <= ST_SETTLE;
 				end else if (pend_mb_end && !write_busy) begin
 					if (have_mb && (pend_mb_end_addr == cur_mb)) begin
 						for (yi = 0; yi < 16; yi = yi + 1)
@@ -488,71 +515,95 @@ module h264_i_res_recon_sink #(
 				end
 			end
 
+			ST_SETTLE: begin
+				if (lat_is_luma && lat_is_i16 && lat_idx == 5'd0 && !i16_pred_done) begin
+					i16_start <= 1'b1;
+					st <= ST_I16_PRED;
+				end else if (lat_is_luma && lat_is_i16 && lat_idx == 5'd0) begin
+					had_start <= 1'b1;
+					st <= ST_HAD_WAIT;
+				end else if (lat_is_luma &&
+				            ((lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16) ||
+				             (!lat_is_i16 && lat_idx < 5'd16))) begin
+					dq_start <= 1'b1;
+					st <= ST_IQ_WAIT;
+				end else
+					st <= ST_IDLE; // non-luma / chroma deferred
+			end
+
 			ST_I16_PRED: begin
 				if (i16_valid) begin
 					for (yi = 0; yi < 256; yi = yi + 1)
 						plane_y[yi] <= i16_pred[yi];
 					i16_pred_done <= 1'b1;
-					st <= ST_SETTLE;
+					// lat_coeff already settled (from prior ST_SETTLE)
+					had_start <= 1'b1;
+					st <= ST_HAD_WAIT;
 				end
 			end
 
-			ST_SETTLE: st <= ST_APPLY;
-
-			ST_APPLY: begin
-				if (lat_is_luma) begin
-					if (lat_is_i16 && lat_idx == 5'd0) begin
-						for (b = 0; b < 16; b = b + 1) begin
-							by = b[3:2];
-							bx = b[1:0];
-							for (y = 0; y < 4; y = y + 1)
-								for (x = 0; x < 4; x = x + 1) begin
-									addr = (by * 4 + y) * 16 + (bx * 4 + x);
-									tsum = $signed({10'd0, plane_y[addr]}) +
-										(($signed(dc_had[b]) + 18'sd32) >>> 6);
-									plane_y[addr] <= clip_u8(tsum);
-								end
-							i16_dc[b] <= dc_had[b];
-						end
-						i16_dc_valid <= 1'b1;
-						dbg_blk_applied <= dbg_blk_applied + 32'd1;
-					end else if (lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16) begin
-						// Host: dequant AC max15, blk[0][0]=dc, one idct4x4_add.
-						// idx0 painted (dc+32)>>6; when AC nz replace with combined residual.
-						bx = blk4_x(lat_idx[3:0] - 4'd1);
-						by = blk4_y(lat_idx[3:0] - 4'd1);
-						any_nz = 1'b0;
-						for (k = 0; k < 16; k = k + 1)
-							if (lat_coeff[k] != 16'sd0) any_nz = 1'b1;
-						if (any_nz) begin
-							for (y = 0; y < 4; y = y + 1)
-								for (x = 0; x < 4; x = x + 1) begin
-									addr = (by * 4 + y) * 16 + (bx * 4 + x);
-									tsum = $signed({10'd0, plane_y[addr]})
-										- (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
-										+ idct_r[{y[1:0], x[1:0]}];
-									plane_y[addr] <= clip_u8(tsum);
-								end
-						end
-						dbg_blk_applied <= dbg_blk_applied + 32'd1;
-					end else if (!lat_is_i16 && lat_idx < 5'd16) begin
-						bx = blk4_x(lat_idx[3:0]);
-						by = blk4_y(lat_idx[3:0]);
-						any_nz = 1'b0;
-						for (k = 0; k < 16; k = k + 1)
-							if (lat_coeff[k] != 16'sd0) any_nz = 1'b1;
+			ST_HAD_WAIT: begin
+				if (had_done) begin
+					for (b = 0; b < 16; b = b + 1) begin
+						by = b[3:2];
+						bx = b[1:0];
+						i16_dc[b] <= dc_had[b];
 						for (y = 0; y < 4; y = y + 1)
 							for (x = 0; x < 4; x = x + 1) begin
 								addr = (by * 4 + y) * 16 + (bx * 4 + x);
-								if (any_nz)
-									plane_y[addr] <= recon_px[{y[1:0], x[1:0]}];
-								else
-									plane_y[addr] <= i4_pred[{y[1:0], x[1:0]}];
+								tsum = $signed({10'd0, plane_y[addr]}) +
+									(($signed(dc_had[b]) + 18'sd32) >>> 6);
+								plane_y[addr] <= clip_u8(tsum);
 							end
-						dbg_blk_applied <= dbg_blk_applied + 32'd1;
 					end
+					i16_dc_valid <= 1'b1;
+					dbg_blk_applied <= dbg_blk_applied + 32'd1;
+					st <= ST_IDLE;
 				end
-				st <= ST_IDLE;
+			end
+
+			ST_IQ_WAIT: begin
+				if (dq_done) begin
+					apply_is_i16_ac <= (lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16);
+					apply_is_i4 <= (!lat_is_i16 && lat_idx < 5'd16);
+					apply_is_i16_dc <= 1'b0;
+					if (lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16) begin
+						apply_bx <= blk4_x(lat_idx[3:0] - 4'd1);
+						apply_by <= blk4_y(lat_idx[3:0] - 4'd1);
+					end else begin
+						apply_bx <= blk4_x(lat_idx[3:0]);
+						apply_by <= blk4_y(lat_idx[3:0]);
+					end
+					any_nz = 1'b0;
+					for (k = 0; k < 16; k = k + 1)
+						if (lat_coeff[k] != 16'sd0) any_nz = 1'b1;
+					apply_any_nz <= any_nz;
+					apply_px_i <= 5'd0;
+					st <= ST_APPLY_PX;
+				end
+			end
+
+			ST_APPLY_PX: begin
+				// One pixel per cycle into plane_y (shared path for I4 and I16 AC).
+				if (apply_is_i16_ac) begin
+					if (apply_any_nz) begin
+						tsum = $signed({10'd0, plane_y[apx_addr]})
+							- (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+							+ idct_r[{apx_y, apx_x}];
+						plane_y[apx_addr] <= clip_u8(tsum);
+					end
+				end else if (apply_is_i4) begin
+					if (apply_any_nz)
+						plane_y[apx_addr] <= recon_px[{apx_y, apx_x}];
+					else
+						plane_y[apx_addr] <= i4_pred[{apx_y, apx_x}];
+				end
+				if (apply_px_i == 5'd15) begin
+					dbg_blk_applied <= dbg_blk_applied + 32'd1;
+					st <= ST_IDLE;
+					apply_px_i <= 5'd0;
+				end else
+					apply_px_i <= apply_px_i + 5'd1;
 			end
 
 			default: st <= ST_IDLE;

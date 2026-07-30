@@ -15,7 +15,9 @@ module stream_path #(
 	// Mutation: skip QP_Y mod-52 wrap on mb_qp_delta (restores 4× residual).
 	parameter bit FAULT_NO_QP_WRAP = 1'b0,
 	// Mutation: skip serial RBSP→res_win load (area redesign twin).
-	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0
+	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
+	// Mutation: serial dequant forces zeros (sink area redesign twin).
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -650,7 +652,8 @@ module stream_path #(
 		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
 		.ENABLE_FIRST_MB_P_FETCH(1'b0),
 		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
-		.FAULT_DUP_STORE(FAULT_DUP_STORE)
+		.FAULT_DUP_STORE(FAULT_DUP_STORE),
+		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),

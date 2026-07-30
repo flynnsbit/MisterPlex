@@ -46,6 +46,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv" "$ROOT/fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv" \

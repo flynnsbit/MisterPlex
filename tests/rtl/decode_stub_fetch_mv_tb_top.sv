@@ -108,6 +108,7 @@ module decode_stub_fetch_mv_tb #(
 		.i_res_blk_is_luma(1'b0),
 		.i_res_blk_qp(6'd0),
 		.i_res_blk_max_coeff(5'd16),
+		.i_res_blk_pred_mode(4'd0),
 		.i_res_blk_coeff(zero_coeff),
 		.i_res_mb_end(1'b0),
 		.i_res_mb_end_addr(16'd0),

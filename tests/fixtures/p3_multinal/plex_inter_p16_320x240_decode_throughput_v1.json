@@ -1,12 +1,12 @@
 {
   "thresholds": {
-    "max_cycles_per_mb": 900.0,
-    "max_cycles_per_frame": 270000.0,
-    "max_cycles_total": 3200000,
-    "min_budget_margin_ratio": 3.0,
+    "max_cycles_per_mb": 1100.0,
+    "max_cycles_per_frame": 340000.0,
+    "max_cycles_total": 4000000,
+    "min_budget_margin_ratio": 2.4,
     "stages": {
       "parse_cavlc": {
-        "max_cycles_per_mb": 650.0
+        "max_cycles_per_mb": 780.0
       },
       "diagnostic_paint": {
         "max_cycles_per_mb": 860.0
@@ -20,13 +20,13 @@
   },
   "source_sha256": "d6f30bcb8226f7e1c204d01f9914bffe1ec661503e373f7312d23884b3bfa86e",
   "format": "misterplex.decode_throughput_ratchet.v1",
-  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions. Product hold backpressure is unconditional (walker stalls on stub FETCH), so the parse_cavlc stage counter includes per-MB MC/DPB fetch drain (~568 cyc/MB measured), not syntax-only self-drain. Old 15 cyc/MB assumed drop-ahead product walker and is void. Deblock/DDR product write are NOT IMPLEMENTED.",
+  "mechanism": "Measured from tests/unit/test_stream_path_full_frame_compare.sh on stream_path_full_frame_tb. Per-stage cycle accounting via stub_busy/fs_wr_reset/fs_swap phase transitions. Product hold backpressure is unconditional (walker stalls on stub FETCH). 2026-04 sink serial-IQ redesign: dequant+hadamard are cycle-iterative (1 mul lane, ~16cy each) plus 16cy APPLY_PX; I-frame paint rises (~2150 cy/MB frame0 real-ref). Ratchet retuned from serial-IQ measure (cycles_total\u22483.71e6, cyc/mb\u22481031, parse_cavlc\u2248723). Deblock/DDR product write remain NOT IMPLEMENTED.",
   "stage_coverage": [
     {
       "name": "stream_path_total_current",
       "status": "measured",
-      "cycles_per_mb": 857.719,
-      "note": "Includes ioctl byte feed, Annex-B scanner/SPS/PPS/slice parse, current intra reconstruction path, all-MB stream MC/DPB liveness traversal, and diagnostic frame emission in the existing full-frame RTL simulation."
+      "cycles_per_mb": 1031.051,
+      "note": "Post serial-IQ sink redesign. Includes ioctl feed, parse, serial IQ/recon, MC/DPB traversal, diagnostic frame emission."
     },
     {
       "name": "parse_cavlc_dequant_idct_intra_breakdown",
@@ -43,14 +43,14 @@
     {
       "name": "parse_cavlc",
       "status": "measured",
-      "cycles_per_mb": 568.187,
-      "note": "stub_busy rise→fs_wr_reset. With lossless product backpressure this includes walker syntax + per-MB PH_FETCH MC/DPB drain (not syntax-only)."
+      "cycles_per_mb": 723.307,
+      "note": "stub_busy\u2192fs_wr_reset. Includes walker + sink backpressure drain while serial IQ runs."
     },
     {
       "name": "dequant_idct",
       "status": "measured",
-      "cycles_per_mb": 0.0,
-      "note": "Zero clock cycles. Combinational modules."
+      "cycles_per_mb": null,
+      "note": "Serial h264_dequant4x4_serial: up to 16 mul-cycles + 1 done settle per 4x4. Shared single multiplier; DSP crash-diet. Not combinational."
     },
     {
       "name": "intra_pred",
@@ -101,5 +101,10 @@
     "cycles_per_frame": 262773.75,
     "frames": 12,
     "cycles_total": 3153285
+  },
+  "serial_iq_redesign": {
+    "pre_reg_dsp": "6..12",
+    "pre_reg_alm": "2500..4000",
+    "rationale": "area/DSP fit; cycle budget still under 20MHz 25fps with margin\u22652.4"
   }
 }

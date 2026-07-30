@@ -11,7 +11,7 @@ PRODUCT_RTL=(
   stream_path.sv stream_ingest.sv ddr_bitstream_reader.sv bitstream_fifo.sv
   nalu_scanner.sv sps_parser.sv pps_parser.sv slice_hdr_parser.sv
   h264_iq_idct_4x4.sv h264_inter_pred.sv h264_deblock.sv h264_dpb.sv
-  decode_stub.sv h264_p_mb_traverse.sv h264_byte_ram_sp.sv h264_i16_dc_hadamard.sv
+  decode_stub.sv h264_p_mb_traverse.sv h264_byte_ram_sp.sv h264_i16_dc_hadamard.sv h264_i16_dc_hadamard_serial.sv h264_dequant4x4_serial.sv
   h264_i_res_recon_sink.sv h264_intra_pred.sv h264_recon_frame_store.sv
   h264_cavlc_residual.sv
 )
