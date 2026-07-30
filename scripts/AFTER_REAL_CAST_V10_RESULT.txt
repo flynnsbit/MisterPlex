@@ -1,0 +1,51 @@
+AFTER_REAL_CAST_V10_RESULT
+==========================
+No new binary. Live v10 fb9f7619. Visible claim bounce2-realcast.
+claim_realcast true rc=0
+
+PMS TOPOLOGY (facts — do not conflate)
+--------------------------------------
+- Parent said PMS at 127.0.0.1:32400 id 4edd44aa…
+- Measured on this host:
+  - 127.0.0.1:32400 / 192.168.1.24:32400 → machineIdentifier=bf36a3ad… (OTHER server)
+  - http://192.168.1.41:32400 → machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0 (MATCH)
+- Device conf already PLEX_BASE=http://192.168.1.41:32400 token_len=20
+- Device→41 identity OK; device→192.168.1.24:32400 timeout (not used)
+→ Real-cast path used conf PMS .41 = parent-named server id.
+
+PRE-REGISTER → MEASURED
+-----------------------
+R0 PMS_UP 4edd44aa…     HIT  identity on .41
+R1 CAST_TARGET clients  HIT  /clients size=1 name=MiSTerPlex id=misterplex-dev :3005
+                            (before and after session R1_AFTER=HIT)
+R2 HANDSHAKE            HIT  playMedia HTTP 200 Timeline; playMedia ACK key=/library/metadata/6
+                            X-Plex-Target-Client-Identifier: misterplex-dev
+                            no CAST_TARGET_MISMATCH / refusing cast
+R3 RESOLVE real media   HIT  "resolved PMS universal 480p 320x240 /library/metadata/6
+                            title=Sync 24fps Blip dur=30021 transcode=1"
+                            PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mpd…
+                            NOT testsrc / NOT resolve failed
+R4 SESSION              HIT  timeline state=playing time=9654 duration=30021
+R5 FRAMES               HIT  frames≥707; steady pfps≈vfps≈23.2 @24fps source
+                            fpga frame_tx ok via DDR presents continuing
+R6 CPU real media       HIT soft  PLAY_P_ONECPU=12.477 (≪95; similar to testsrc 13.5)
+
+Verdict: REAL_CAST_OK — user question "play something" answered YES on this path.
+
+NOT CLAIMED
+-----------
+- Did not drive a phone/desktop Plex *UI* picker end-to-end; exercised the same
+  product protocol surface (GDM-advertised client in PMS /clients + playMedia
+  with target header + universal transcode URL). "Doesn't stick" from a
+  specific client app remains untested on that client binary.
+- GDM storm → "doesn't stick" causal link still not proven; storm is fixed and
+  real cast now works — correlation only.
+- Daemon deaths still UNEXPLAINED.
+
+LEAVE
+-----
+CORENAME=Plex  md5=fb9f7619  id=misterplex-dev  PROFILE=0  n_d=1 n_s=1
+RBF 14eaeff3 untouched. No conf edit. No reboot. No token printed.
+
+Artifacts: build/arm-real-cast-v10/  device /media/fat/misterplex/real_cast_v10/
+scripts/REAL_CAST_V10_PREREGISTER.txt

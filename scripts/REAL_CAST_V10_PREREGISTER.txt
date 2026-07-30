@@ -1,0 +1,28 @@
+REAL CAST v10 — pre-register (no new binary)
+============================================
+Live: fb9f7619 PROFILE=0 id=misterplex-dev RBF 14eaeff3
+Visible bounce. No conf/token print. No reboot.
+
+FACTS ALREADY MEASURED (before window)
+--------------------------------------
+- Host 127.0.0.1:32400 identity machineIdentifier=bf36a3ad… (DIFFERENT server)
+- Parent-named id 4edd44aa… is at http://192.168.1.41:32400 (UP, http=200)
+- Device conf PLEX_BASE=http://192.168.1.41:32400 ; token_len=20 nonempty
+- Device→41 identity OK; device→192.168.1.24:32400 timeout (host PMS not used)
+- PMS /clients size=1 includes MiSTerPlex machineIdentifier=misterplex-dev :3005
+
+EXPECTATIONS / FALSIFIERS
+-------------------------
+R0 PMS_UP: conf PMS identity matches 4edd44aa… prefix — already HIT; reconfirm in window.
+R1 CAST_TARGET: PMS /clients still lists misterplex-dev after bounce — FAIL if size=0 or id mismatch.
+R2 HANDSHAKE: playMedia with real key=/library/metadata/N + token + address/port of conf PMS
+    → HTTP 200 Timeline; log "playMedia ACK"; NOT "refusing cast/timeline"; NOT immediate stop.
+R3 RESOLVE: log must NOT say "resolve failed" / "test pattern" for this key.
+    FAIL → real cast broken even if testsrc works (report clearly).
+R4 SESSION: timeline state progresses buffering→playing (or playing); duration>0 if known.
+R5 FRAMES: media: frames= N with N≥60 and pfps within ~20% of vfps over ≥15s wall.
+R6 CPU: process P_onecpu during real play — report only (no hard band; testsrc was 13.5).
+    Soft expect P ≪ 95 (pre-GDM-fix play). FALSIFY soft if P≥80 during real play (storm back).
+
+If any of R2–R5 FAIL: say REAL_CAST_FAIL plainly; capture daemon log at drop; leave PROFILE=0.
+SUCCESS only if R1–R5 all HIT.
