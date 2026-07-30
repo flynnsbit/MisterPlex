@@ -188,11 +188,23 @@ echo "\$ps_line" | grep -qE -- "--id[= ]\${ID_WANT}( |\$)" || {
   echo "DEPLOY_FAIL id mismatch" >&2
   exit 7
 }
-res=\$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
-echo "\$res" | grep -q "machineIdentifier=\"\${ID_WANT}\"" || {
-  echo "DEPLOY_FAIL resources id" >&2
+# Retry /resources — single wget after sleep 1 raced companion bind (spurious rc=7).
+res=""
+resources_ok=0
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  res=\$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
+  if echo "\$res" | grep -q "machineIdentifier=\"\${ID_WANT}\""; then
+    resources_ok=1
+    echo "resources_attempt=\$attempt ok"
+    break
+  fi
+  echo "resources_attempt=\$attempt empty_or_mismatch"
+  sleep 0.2
+done
+if [[ "\$resources_ok" != "1" ]]; then
+  echo "DEPLOY_FAIL resources id after retries" >&2
   exit 7
-}
+fi
 echo "resources_id_ok=\$ID_WANT"
 echo "CORENAME=\$(cat /tmp/CORENAME 2>/dev/null || true)"
 rbf=\$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | awk '{print \$1}')

@@ -226,10 +226,23 @@ if [[ "$id_ok" != "1" ]]; then
 fi
 echo "daemon_id_ok=${ID_WANT}"
 
-res=$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
+# /resources can lag bind after nohup (single sleep+wget raced → spurious rc=7).
+# Retry; exit 7 only means real id mismatch / dead HTTP after ready window.
+res=""
+resources_ok=0
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  res=$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
+  if printf '%s' "$res" | grep -q "machineIdentifier=\"${ID_WANT}\""; then
+    resources_ok=1
+    echo "resources_attempt=${attempt} ok"
+    break
+  fi
+  echo "resources_attempt=${attempt} empty_or_mismatch"
+  sleep 0.2
+done
 echo "resources_head=$(printf '%s' "$res" | head -c 300)"
-if ! printf '%s' "$res" | grep -q "machineIdentifier=\"${ID_WANT}\""; then
-  echo "DEPLOY_FAIL: /resources machineIdentifier != ${ID_WANT}" >&2
+if [[ "$resources_ok" != "1" ]]; then
+  echo "DEPLOY_FAIL: /resources machineIdentifier != ${ID_WANT} after retries" >&2
   printf '%s\n' "$res" | head -c 500 >&2
   exit 7
 fi
