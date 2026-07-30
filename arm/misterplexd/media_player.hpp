@@ -233,6 +233,10 @@ private:
     std::atomic<int> avOffsetMs_{misterplex::kOsdAvOffsetDefaultMs};
     std::atomic<int> idleMode_{static_cast<int>(IdleMode::Logo)};
     std::atomic<bool> idleRun_{false};
+    // True only after session-end successfully published a LastFrame latch to DDR.
+    // False at boot / after a session with no complete frame — paintIdle falls back.
+    std::atomic<bool> haveLastFrame_{false};
+    std::atomic<bool> idleLastFrameFallbackLogged_{false};
     // Latched by shutdown() so threadMain's session-end startIdle() cannot spawn
     // a fresh painter after we have already joined the old one.
     std::atomic<bool> shuttingDown_{false};

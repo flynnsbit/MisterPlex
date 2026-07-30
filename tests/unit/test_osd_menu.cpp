@@ -107,9 +107,52 @@ int main() {
     CHECK(idleModeFromBits(2) == IdleMode::Screensaver);
     CHECK(idleModeFromBits(3) == IdleMode::LastFrame);
 
-    // --- OSD word → idle paint buffer checksums (same path applyOsd uses) ---
-    // No HDMI/FPGA readback: prove the daemon paints four distinguishable frames
-    // when driven by O[15:14], and that Screensaver actually moves.
+    // --- applyOsd decision path (planOsdIdleApply — same as media_player) ---
+    // NOT a private render lambda: this is the setIdleMode + paintIdle guard.
+    {
+        // Startup first word → Black while idle: must set mode and paint.
+        auto boot = planOsdIdleApply(/*applyIdle=*/true, IdleMode::Logo, /*bits=*/1,
+                                     /*playing=*/false, /*havePrior=*/false);
+        CHECK(boot.touchMode && boot.mode == IdleMode::Black);
+        CHECK(boot.idleChanged && boot.paint);
+        CHECK(boot.paintMode == IdleMode::Black);
+
+        // Unchanged idle bits: no paint.
+        auto same = planOsdIdleApply(true, IdleMode::Black, 1, false, false);
+        CHECK(same.touchMode && !same.idleChanged && !same.paint);
+
+        // Playing: mode may change but must not paint over video.
+        auto live = planOsdIdleApply(true, IdleMode::Logo, 2, /*playing=*/true, false);
+        CHECK(live.touchMode && live.mode == IdleMode::Screensaver);
+        CHECK(live.idleChanged && !live.paint);
+
+        // LastFrame at boot (no prior frame): MUST paint fallback (not leave logo).
+        auto lfBoot = planOsdIdleApply(true, IdleMode::Logo, /*bits=*/3, false,
+                                       /*havePrior=*/false);
+        CHECK(lfBoot.touchMode && lfBoot.mode == IdleMode::LastFrame);
+        CHECK(lfBoot.idleChanged && lfBoot.paint);
+        CHECK(lfBoot.paintMode == kLastFrameNoPriorFallback);
+        CHECK(lfBoot.paintMode == IdleMode::Black);
+
+        // LastFrame with a real latched frame: leave DDR alone (no paint).
+        auto lfOk = planOsdIdleApply(true, IdleMode::Black, 3, false, /*havePrior=*/true);
+        CHECK(lfOk.mode == IdleMode::LastFrame && lfOk.idleChanged && !lfOk.paint);
+        CHECK(lfOk.paintMode == IdleMode::LastFrame);
+
+        // applyIdle=false (shouldApplyOsdIdle said no): no touch.
+        auto skip = planOsdIdleApply(false, IdleMode::Logo, 1, false, false);
+        CHECK(!skip.touchMode && !skip.paint);
+
+        // Idle thread: LastFrame without prior still repaints fallback; with prior skips.
+        CHECK(idleThreadShouldRepaint(IdleMode::LastFrame, false, false));
+        CHECK(!idleThreadShouldRepaint(IdleMode::LastFrame, false, true));
+        CHECK(!idleThreadShouldRepaint(IdleMode::Logo, true, false));
+        CHECK(idleThreadShouldRepaint(IdleMode::Screensaver, false, false));
+    }
+
+    // --- Renderer checksums (buffer fill only — not the applyOsd paint gate) ---
+    // Proves modes are distinguishable and screensaver moves; does not prove
+    // MediaPlayer issued paintIdle. That is planOsdIdleApply above.
     auto fnv1a = [](const uint8_t* p, size_t n) -> uint64_t {
         uint64_t h = 14695981039346656037ull;
         for (size_t i = 0; i < n; ++i) {
@@ -119,41 +162,55 @@ int main() {
         return h;
     };
     {
-        // applyOsd path: decodeOsdWord → idleModeFromBits → renderIdleYuv420p
         const int yw = 320, yh = 240;
-        auto paintFromOsdWord = [&](uint16_t word, int phase, std::vector<uint8_t>& yuv) -> bool {
+        // Drive paint the way paintIdle does after planOsdIdleApply:
+        // decodeOsdWord → effectiveIdlePaintMode → renderIdleYuv420p
+        auto paintFromOsdWord = [&](uint16_t word, int phase, bool havePrior,
+                                    std::vector<uint8_t>& yuv) -> bool {
             const OsdSettings s = decodeOsdWord(word);
-            const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
-            return renderIdleYuv420p(yuv.data(), yw, yh, im, phase);
+            const IdleMode req = idleModeFromBits(static_cast<unsigned>(s.idleMode));
+            const IdleMode paint = effectiveIdlePaintMode(req, havePrior);
+            if (req == IdleMode::LastFrame && havePrior)
+                return false; // genuine last-frame: paintIdle returns without render
+            return renderIdleYuv420p(yuv.data(), yw, yh, paint, phase);
         };
         const size_t ysz = static_cast<size_t>(yw) * yh * 3 / 2;
-        std::vector<uint8_t> yLogo(ysz), yBlack(ysz), ySs0(ysz), ySs1(ysz), yLast(ysz, 0x5A);
+        std::vector<uint8_t> yLogo(ysz), yBlack(ysz), ySs0(ysz), ySs1(ysz);
+        std::vector<uint8_t> yLastNoPrior(ysz, 0x5A), yLastPrior(ysz, 0x5A);
         // OSD idle bits sit at [15:14]: 0=Logo 1=Black 2=Screensaver 3=LastFrame
-        CHECK(paintFromOsdWord(static_cast<uint16_t>(0u << 14), 0, yLogo));
-        CHECK(paintFromOsdWord(static_cast<uint16_t>(1u << 14), 0, yBlack));
-        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 0, ySs0));
-        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 100, ySs1));
-        CHECK(!paintFromOsdWord(static_cast<uint16_t>(3u << 14), 0, yLast)); // LastFrame no-op
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(0u << 14), 0, false, yLogo));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(1u << 14), 0, false, yBlack));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 0, false, ySs0));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 100, false, ySs1));
+        // LastFrame + no prior → paints Black fallback (not a silent no-op).
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(3u << 14), 0, false, yLastNoPrior));
+        // LastFrame + prior → no paint (sentinel preserved).
+        CHECK(!paintFromOsdWord(static_cast<uint16_t>(3u << 14), 0, true, yLastPrior));
         const uint64_t cLogo = fnv1a(yLogo.data(), yLogo.size());
         const uint64_t cBlack = fnv1a(yBlack.data(), yBlack.size());
         const uint64_t cSs0 = fnv1a(ySs0.data(), ySs0.size());
         const uint64_t cSs1 = fnv1a(ySs1.data(), ySs1.size());
-        const uint64_t cLast = fnv1a(yLast.data(), yLast.size());
+        const uint64_t cLfFb = fnv1a(yLastNoPrior.data(), yLastNoPrior.size());
+        const uint64_t cLfPrior = fnv1a(yLastPrior.data(), yLastPrior.size());
         std::printf("idle_osd_checksum logo=0x%016llx black=0x%016llx ss0=0x%016llx "
-                    "ss1=0x%016llx lastframe_sentinel=0x%016llx\n",
+                    "ss1=0x%016llx lastframe_fallback=0x%016llx lastframe_prior_sentinel=0x%016llx\n",
                     static_cast<unsigned long long>(cLogo),
                     static_cast<unsigned long long>(cBlack),
                     static_cast<unsigned long long>(cSs0),
                     static_cast<unsigned long long>(cSs1),
-                    static_cast<unsigned long long>(cLast));
-        // Four modes must be distinguishable in the paint buffer.
+                    static_cast<unsigned long long>(cLfFb),
+                    static_cast<unsigned long long>(cLfPrior));
         CHECK(cLogo != cBlack);
         CHECK(cLogo != cSs0);
         CHECK(cBlack != cSs0);
-        CHECK(cLast != cLogo && cLast != cBlack && cLast != cSs0);
-        // Moving mode must differ across successive paints (user: non-moving logo).
-        CHECK(cSs0 != cSs1);
-        // Black is video black (Y=16, U=V=128), not near-black logo field.
+        CHECK(cSs0 != cSs1); // screensaver advances
+        // No-prior LastFrame fallback is video black — not the frozen logo.
+        CHECK(cLfFb == cBlack);
+        CHECK(cLfFb != cLogo);
+        // Prior LastFrame left the sentinel untouched.
+        for (uint8_t v : yLastPrior)
+            CHECK(v == 0x5A);
+        CHECK(cLfPrior != cBlack && cLfPrior != cLogo);
         const size_t yBytes = static_cast<size_t>(yw) * yh;
         const size_t cBytes = yBytes / 4;
         for (size_t i = 0; i < yBytes; ++i)
@@ -162,16 +219,17 @@ int main() {
             CHECK(yBlack[yBytes + i] == 128);
             CHECK(yBlack[yBytes + cBytes + i] == 128);
         }
-        // LastFrame left the sentinel untouched.
-        for (uint8_t v : yLast)
-            CHECK(v == 0x5A);
-        // Logo is not all-black (static plex mark on near-black field).
         size_t logoNonBlack = 0;
         for (size_t i = 0; i < yBytes; ++i)
             if (yLogo[i] != 16)
                 ++logoNonBlack;
         CHECK(logoNonBlack > 0);
     }
+
+    // effectiveIdlePaintMode is explicit (not "we did not paint").
+    CHECK(effectiveIdlePaintMode(IdleMode::LastFrame, false) == IdleMode::Black);
+    CHECK(effectiveIdlePaintMode(IdleMode::LastFrame, true) == IdleMode::LastFrame);
+    CHECK(effectiveIdlePaintMode(IdleMode::Logo, false) == IdleMode::Logo);
 
     // --- screensaver drift stays on screen and reverses ---
     const int span = 40;
@@ -194,11 +252,17 @@ int main() {
     for (uint8_t v : buf)
         CHECK(v == 0);
 
-    // LastFrame must not touch the buffer — it is the "leave it alone" mode.
+    // Renderer LastFrame token is still a no-op; callers must pass
+    // effectiveIdlePaintMode(...) so no-prior becomes Black before render.
     std::fill(buf.begin(), buf.end(), 0xAB);
     renderIdleRgb24(buf.data(), w, h, IdleMode::LastFrame, 0);
     for (uint8_t v : buf)
         CHECK(v == 0xAB);
+    std::fill(buf.begin(), buf.end(), 0xAB);
+    renderIdleRgb24(buf.data(), w, h,
+                    effectiveIdlePaintMode(IdleMode::LastFrame, /*havePrior=*/false), 0);
+    for (uint8_t v : buf)
+        CHECK(v == 0); // Black fallback
 
     // Logo paints the background everywhere and the mark somewhere.
     std::fill(buf.begin(), buf.end(), 0xAB);

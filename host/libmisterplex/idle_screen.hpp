@@ -18,8 +18,14 @@ enum class IdleMode {
     Logo = 0,       // static centred chevron on a dark field
     Black = 1,      // flat black
     Screensaver = 2,// chevron slowly drifting to avoid CRT burn-in
-    LastFrame = 3,  // leave whatever was on screen (legacy behaviour)
+    LastFrame = 3,  // last *latched* video frame when one exists
 };
+
+// When F12 Idle Screen = LastFrame but no complete prior video frame was
+// latched (fresh boot, failed session, present path never wrote F1), leaving
+// the DDR store alone reproduces the user's "stuck on a non-moving plex logo"
+// symptom. Fall back to a defined burn-in-safe mode instead of stale contents.
+constexpr IdleMode kLastFrameNoPriorFallback = IdleMode::Black;
 
 inline IdleMode idleModeFromBits(unsigned bits) {
     switch (bits & 3u) {
@@ -28,6 +34,51 @@ inline IdleMode idleModeFromBits(unsigned bits) {
     case 3: return IdleMode::LastFrame;
     default: return IdleMode::Logo;
     }
+}
+
+// Mode the idle painter must actually render. LastFrame only stays LastFrame
+// when havePriorFrame is true (session-end latch published a real frame).
+inline IdleMode effectiveIdlePaintMode(IdleMode mode, bool havePriorFrame) {
+    if (mode == IdleMode::LastFrame && !havePriorFrame)
+        return kLastFrameNoPriorFallback;
+    return mode;
+}
+
+// Daemon applyOsd idle branch (media_player.cpp) — pure so unit tests drive the
+// same decision as the running player, not a private render-only lambda.
+struct OsdIdleApplyPlan {
+    bool touchMode = false;     // setIdleMode
+    IdleMode mode = IdleMode::Logo;
+    bool idleChanged = false;
+    bool paint = false;         // paintIdle()
+    IdleMode paintMode = IdleMode::Logo; // effectiveIdlePaintMode for paint
+};
+
+inline OsdIdleApplyPlan planOsdIdleApply(bool applyIdle, IdleMode currentMode,
+                                         unsigned osdIdleBits, bool playing,
+                                         bool havePriorFrame) {
+    OsdIdleApplyPlan p{};
+    if (!applyIdle)
+        return p;
+    p.touchMode = true;
+    p.mode = idleModeFromBits(osdIdleBits);
+    p.idleChanged = (p.mode != currentMode);
+    p.paintMode = effectiveIdlePaintMode(p.mode, havePriorFrame);
+    // Mirror media_player: paint only on change while not playing. Genuine
+    // LastFrame+prior leaves the latched image (paintIdle would no-op anyway).
+    // LastFrame without prior must paint the fallback (closes frozen-logo boot).
+    p.paint = p.idleChanged && !playing &&
+              !(p.mode == IdleMode::LastFrame && havePriorFrame);
+    return p;
+}
+
+// Idle animation thread: skip only while playing or while holding a real latch.
+inline bool idleThreadShouldRepaint(IdleMode mode, bool playing, bool havePriorFrame) {
+    if (playing)
+        return false;
+    if (mode == IdleMode::LastFrame && havePriorFrame)
+        return false;
+    return true;
 }
 
 // Plex-ish palette: near-black background, amber mark.

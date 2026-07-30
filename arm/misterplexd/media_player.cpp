@@ -580,12 +580,16 @@ void MediaPlayer::applyOsd(uint16_t word, bool applyIdle) {
     setAudioClockTrimEnabled(s.audioClockTrimEnabled);
     setResyncDropMs(s.resyncEnabled ? kDefaultResyncDropMs : 0);
     if (applyIdle) {
-        const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
-        const bool idleChanged = im != idleMode();
-        setIdleMode(im);
-        if (idleChanged)
+        // Decision lives in planOsdIdleApply (idle_screen.hpp) so unit tests
+        // drive the same branch as this daemon path — not a render-only lambda.
+        const OsdIdleApplyPlan plan =
+            planOsdIdleApply(true, idleMode(), static_cast<unsigned>(s.idleMode),
+                             playing_.load(), haveLastFrame_.load());
+        if (plan.touchMode)
+            setIdleMode(plan.mode);
+        if (plan.idleChanged)
             idleLogged_.store(false);
-        if (idleChanged && !playing_.load())
+        if (plan.paint)
             paintIdle();
     }
     log("media: OSD word=0x" + hex16(word) + " av_offset_ms=" + std::to_string(s.avOffsetMs) +
@@ -611,9 +615,17 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
 }
 
 void MediaPlayer::paintIdle() {
-    const IdleMode m = idleMode();
-    if (m == IdleMode::LastFrame)
+    const IdleMode requested = idleMode();
+    // LastFrame + real latch: leave DDR alone. LastFrame without prior: fall
+    // back (effectiveIdlePaintMode) so boot never freezes on a stale logo.
+    if (requested == IdleMode::LastFrame && haveLastFrame_.load())
         return;
+    const IdleMode m = effectiveIdlePaintMode(requested, haveLastFrame_.load());
+    if (requested == IdleMode::LastFrame && m != IdleMode::LastFrame &&
+        !idleLastFrameFallbackLogged_.exchange(true)) {
+        log("media: LastFrame idle has no prior latched frame — falling back to mode=" +
+            std::to_string(static_cast<int>(m)) + " (not stale DDR logo)");
+    }
     const int w = 320;
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
@@ -677,12 +689,14 @@ void MediaPlayer::startIdle() {
         idleThr_.join();
     idleThr_ = std::thread([this] {
         while (idleRun_.load()) {
-            if (playing_.load() || idleMode() == IdleMode::LastFrame) {
+            const IdleMode mode = idleMode();
+            if (!idleThreadShouldRepaint(mode, playing_.load(), haveLastFrame_.load())) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 continue;
             }
             paintIdle();
-            const bool moving = idleMode() == IdleMode::Screensaver;
+            const IdleMode eff = effectiveIdlePaintMode(mode, haveLastFrame_.load());
+            const bool moving = (eff == IdleMode::Screensaver);
             if (moving)
                 idlePhase_.fetch_add(1);
             // A static idle screen is already latched in the frame store, so
@@ -1039,6 +1053,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
+        // New session must re-earn a LastFrame latch; do not keep a stale flag
+        // across plays (would skip fallback after a no-frame session).
+        haveLastFrame_.store(false);
+        idleLastFrameFallbackLogged_.store(false);
         {
             std::lock_guard<std::mutex> lock(summaryMu_);
             lastSummary_ = PlaybackSummary{};
@@ -3070,13 +3088,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
         }
         if (latched) {
+            haveLastFrame_.store(true);
+            idleLastFrameFallbackLogged_.store(false);
             const DdrFrameGeometry& g = lastFrameLatch.frame().geometry();
             log("media: LastFrame idle latched complete DDR frame geometry=" +
                 std::to_string(g.coded_width.get()) + "x" + std::to_string(g.coded_height.get()));
         } else {
-            log("media: LastFrame idle requested but no complete DDR frame was available to latch");
+            // Explicit: no prior frame → do not leave stale boot logo on DDR.
+            haveLastFrame_.store(false);
+            log("media: LastFrame idle requested but no complete DDR frame was available to latch "
+                "— painting fallback");
+            paintIdle();
         }
     } else {
+        haveLastFrame_.store(false);
         // The frame store latches the last frame written; without this the final frame
         // of the video stays on screen until something else paints over it.
         paintIdle();
