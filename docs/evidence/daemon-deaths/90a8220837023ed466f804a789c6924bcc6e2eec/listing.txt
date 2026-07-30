@@ -1,0 +1,14 @@
+total 40
+drwxr-xr-x 1 flynnsbit flynnsbit  276 Jul 30 12:21 .
+drwxr-xr-x 1 flynnsbit flynnsbit  118 Jul 30 11:54 ..
+-rw-r--r-- 1 flynnsbit flynnsbit  630 Jul 30 12:21 build.txt
+-rw-r--r-- 1 flynnsbit flynnsbit 5524 Jul 30 12:21 CAPTURED_OUTPUT.txt
+-rw-r--r-- 1 flynnsbit flynnsbit  545 Jul 30 12:21 LIMITS.txt
+-rw-r--r-- 1 flynnsbit flynnsbit    0 Jul 30 12:21 listing.txt
+-rw-r--r-- 1 flynnsbit flynnsbit  509 Jul 30 12:21 PREREGISTER.txt
+drwxr-xr-x 1 flynnsbit flynnsbit   62 Jul 30 12:21 run
+-rw-r--r-- 1 flynnsbit flynnsbit 1196 Jul 30 12:21 SCORECARD.txt
+-rw-r--r-- 1 flynnsbit flynnsbit    2 Jul 30 12:21 SCORE_RC.txt
+-rw-r--r-- 1 flynnsbit flynnsbit   16 Jul 30 12:21 score_true_rc.txt
+-rw-r--r-- 1 flynnsbit flynnsbit   52 Jul 30 12:21 SOURCE_SHA.txt
+-rw-r--r-- 1 flynnsbit flynnsbit   21 Jul 30 12:21 started_utc.txt

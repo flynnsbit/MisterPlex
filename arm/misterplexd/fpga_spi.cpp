@@ -363,14 +363,18 @@ void FpgaSpi::resumeStrandedMain() {
 
 namespace {
 
-// async-signal-safe enough: kill()/open()/read()/close()/write() are on the
-// safe list; re-raise with the default handler so the crash still surfaces.
-// deathBreadcrumbOnSignal is open/write/close only (no heap).
-void crashGuardHandler(int sig) {
+// async-signal-safe enough for the breadcrumb path: open/write/close only.
+// findMisterPids is best-effort (pre-existing); keep it so Main is not stranded.
+// SA_SIGINFO gives si_code/si_pid/si_addr — distinguishes crash vs kill(2).
+// LIMIT: SIGKILL and OOM never invoke this handler.
+void crashGuardHandler(int sig, siginfo_t* info, void* /*uctx*/) {
     mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
-    misterplex::deathBreadcrumbOnSignal(sig);
+    if (info)
+        misterplex::deathBreadcrumbOnSigInfo(info);
+    else
+        misterplex::deathBreadcrumbOnSignal(sig);
     std::signal(sig, SIG_DFL);
     ::raise(sig);
 }
@@ -379,8 +383,13 @@ void crashGuardHandler(int sig) {
 
 void FpgaSpi::installCrashGuard() {
     // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
+    // Parent SUPERVISE_EXIT / death_capture_supervisor is the SIGKILL path.
+    struct sigaction sa {};
+    sa.sa_sigaction = crashGuardHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
-        std::signal(sig, crashGuardHandler);
+        sigaction(sig, &sa, nullptr);
 }
 
 void FpgaSpi::setErr(std::string msg) {

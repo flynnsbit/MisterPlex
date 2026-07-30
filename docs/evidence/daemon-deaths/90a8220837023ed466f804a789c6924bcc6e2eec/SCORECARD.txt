@@ -1,0 +1,10 @@
+SOURCE_SHA=90a8220837023ed466f804a789c6924bcc6e2eec
+HIT  P1 clean WIFEXITED=1: {'WIFEXITED': '1', 'WEXITSTATUS': '0', 'WIFSIGNALED': '0', 'death_has_clean': True}
+HIT  P1 clean WEXITSTATUS=0: {'WIFEXITED': '1', 'WEXITSTATUS': '0', 'WIFSIGNALED': '0', 'death_has_clean': True}
+HIT  P2 term exits 0 (not WTERMSIG=15): {'WIFEXITED': '1', 'WEXITSTATUS': '0', 'WTERMSIG': '-1', 'why_signal_g_stop': True}
+HIT  P2 term death why=signal-g_stop: {'WIFEXITED': '1', 'WEXITSTATUS': '0', 'WTERMSIG': '-1', 'why_signal_g_stop': True}
+HIT  P3 segv WTERMSIG=11: {'WIFSIGNALED': '1', 'WTERMSIG': '11', 'signal_name': 'SIGSEGV', 'si_code_present': True, 'death_freshness': 'present'}
+HIT  P3 segv si_code in death: {'WIFSIGNALED': '1', 'WTERMSIG': '11', 'signal_name': 'SIGSEGV', 'si_code_present': True, 'death_freshness': 'present'}
+HIT  P4 kill WTERMSIG=9: {'WIFSIGNALED': '1', 'WTERMSIG': '9', 'signal_name': 'SIGKILL', 'death_freshness': 'stale_or_absent_expected', 'death_absent_or_stale': True}
+HIT  P4 kill death_freshness stale_or_absent_expected: {'WIFSIGNALED': '1', 'WTERMSIG': '9', 'signal_name': 'SIGKILL', 'death_freshness': 'stale_or_absent_expected', 'death_absent_or_stale': True}
+OVERALL PASS

@@ -156,11 +156,17 @@ When `misterplexd` exits under `scripts/misterplexd_supervise.sh`, look at:
 
 | Artifact | Path (next to conf) | Meaning |
 |----------|---------------------|---------|
-| Supervise log | `/media/fat/misterplex/misterplexd_supervise.log` | `SUPERVISE_EXIT` with `wait_rc`, `WIFSIGNALED`, `signal` / `exit_status`, and (improved script) `signal_name` + breadcrumb snapshot |
+| Supervise log | `/media/fat/misterplex/misterplexd_supervise.log` | `SUPERVISE_EXIT` with decoded status, `signal_name`, `death_freshness`, last `/proc` sample, breadcrumb + log tail |
+| Capture log | `death_capture.log` / `death_events.jsonl` | Parent `waitpid` record: real `WIFEXITED`/`WEXITSTATUS`/`WIFSIGNALED`/`WTERMSIG`/`WCOREDUMP`, oom_score, VmRSS/VmHWM |
+| Last `/proc` sample | `proc_sample.last` | Last oom_score / oom_score_adj / VmRSS_kB / VmHWM_kB while child lived |
 | Last state | `misterplexd.last` | Coarse state (`idle`/`playing`/…), frames, presents, pos, uptime — **transition-only** writes (not per-frame) |
-| Death note | `misterplexd.death` | Orderly: `exit_code` + `why=`; fatal catchable signal: `death signal=N` (async-signal-safe) |
+| Death note | `misterplexd.death` | Orderly: `exit_code` + `why=`; catchable fatal: `death signal=N si_code= si_pid= si_addr=` (SA_SIGINFO, async-signal-safe) |
 
-**Recognition matrix:** SIGTERM handled by the daemon → `exit_status=0` + `why=signal-g_stop` (not `signal=15`). SIGSEGV/ABRT/BUS/FPE → `signal=N` + `.death` line. **SIGKILL and OOM cannot be caught** → `signal=9`, `.death` stale/absent; OOM needs kernel `dmesg` on-device. Shell `wait` cannot report core-dump → `core_dump=UNKNOWN`.
+**Recognition matrix:** SIGTERM handled by the daemon → `WIFEXITED`/`exit_status=0` + `why=signal-g_stop` (not `WTERMSIG=15`). SIGSEGV/ABRT/BUS/FPE → `WTERMSIG=N` + `.death` with `si_*`. **SIGKILL and OOM cannot be caught in-process** → parent still reports `WTERMSIG=9`, `.death` stale/absent (`death_freshness=stale_or_absent_expected`); OOM needs kernel `dmesg` on-device. Prefer `bin/death_capture_supervisor` (real waitpid); shell `wait` fallback approximates signal as `rc>=128` and cannot report core-dump (`core_dump=UNKNOWN`).
+
+**OOM dmesg (device lane):** `dmesg -T | grep -iE 'killed process|out of memory|oom-kill|Memory cgroup'`. Positive: `Out of memory: Killed process <pid> (misterplexd)` or `oom-kill:...task=misterplexd`.
+
+Host proof (no device): `bash scripts/prove_death_capture_host.sh` → `docs/evidence/daemon-deaths/<SOURCE_SHA>/`.
 
 ### GDM idle CPU (no conf key)
 

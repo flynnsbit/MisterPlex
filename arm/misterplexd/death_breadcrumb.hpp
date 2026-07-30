@@ -1,11 +1,18 @@
 // Survives process death: last known daemon state + fatal-signal note.
 // Hot path: no-op except rare state transitions (not per-frame).
 // Async-signal-safe writer used from crash handlers (open/write/close only).
+//
+// LIMIT (hard): SIGKILL and OOM-killer do not run any handler. In those cases
+// misterplexd.death is absent or STALE; only the supervising parent (waitpid /
+// SUPERVISE_EXIT) and kernel logs can explain the death. Do not treat handler
+// silence as "not a signal death".
 #pragma once
 
 #include <atomic>
 #include <cstdint>
 #include <string>
+
+#include <signal.h>
 
 namespace misterplex {
 
@@ -32,7 +39,12 @@ void deathBreadcrumbUpdate(DeathState st, int64_t frames, int64_t presents, int6
 void deathBreadcrumbExit(int code, const char* why);
 
 // Async-signal-safe: write misterplexd.death with signal number. No heap.
+// Prefer deathBreadcrumbOnSigInfo when SA_SIGINFO is available.
 void deathBreadcrumbOnSignal(int sig);
+
+// Async-signal-safe: record si_signo/si_code/si_pid/si_addr (+ coarse state).
+// Distinguishes crash (SEGV_MAPERR/ACCERR) from kill(2) (SI_USER/SI_TKILL).
+void deathBreadcrumbOnSigInfo(const siginfo_t* info);
 
 // Host/lab override paths (tests). Empty = default under confDir.
 void deathBreadcrumbSetPathsForTest(const std::string& lastPath, const std::string& deathPath);

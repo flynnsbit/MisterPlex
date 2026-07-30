@@ -1,0 +1,2 @@
+2026-07-30T17:21:36Z SUPERVISE_SPAWN label=sigterm pid=2121612
+victim ready mode=term pid=2121612 death=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-reliab-deaths/docs/evidence/daemon-deaths/90a8220837023ed466f804a789c6924bcc6e2eec/run/sigterm/misterplexd.death

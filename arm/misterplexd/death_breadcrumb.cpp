@@ -82,30 +82,80 @@ void writeLastUnlocked(bool /*force*/) {
     g_lastWriteMs.store(nowMs(), std::memory_order_relaxed);
 }
 
-// Async-signal-safe write of a small fixed message.
+// ---- async-signal-safe helpers (no libc formatting, no heap) ----
+
+void asAppend(char* buf, size_t cap, size_t* o, const char* s) {
+    if (!s || !o) return;
+    while (*s && *o + 1 < cap) buf[(*o)++] = *s++;
+}
+
+void asAppendInt(char* buf, size_t cap, size_t* o, long v) {
+    if (!o || *o + 1 >= cap) return;
+    if (v < 0) {
+        buf[(*o)++] = '-';
+        if (v == (-2147483647L - 1L)) v = 2147483647L;
+        else v = -v;
+    }
+    char tmp[24];
+    int n = 0;
+    if (v == 0) tmp[n++] = '0';
+    while (v > 0 && n < static_cast<int>(sizeof(tmp))) {
+        tmp[n++] = static_cast<char>('0' + (v % 10));
+        v /= 10;
+    }
+    while (n > 0 && *o + 1 < cap) buf[(*o)++] = tmp[--n];
+}
+
+void asAppendHexPtr(char* buf, size_t cap, size_t* o, unsigned long v) {
+    asAppend(buf, cap, o, "0x");
+    int started = 0;
+    for (int shift = static_cast<int>(sizeof(void*) * 8) - 4; shift >= 0; shift -= 4) {
+        const unsigned nibble = static_cast<unsigned>((v >> shift) & 0xfu);
+        if (!started && nibble == 0 && shift > 0) continue;
+        started = 1;
+        const char c = static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
+        if (*o + 1 < cap) buf[(*o)++] = c;
+    }
+    if (!started && *o + 1 < cap) buf[(*o)++] = '0';
+}
+
 void writeDeathSignalSafe(int sig) {
     if (g_deathPathC[0] == '\0') return;
     const int fd =
         ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;
-    // Fixed format, no libc formatting beyond digits we emit manually.
     char buf[128];
-    // "death signal=NN state=N frames=... pid=...\n" — keep simple
-    const char prefix[] = "death signal=";
     size_t o = 0;
-    for (const char* p = prefix; *p && o + 1 < sizeof(buf); ++p) buf[o++] = *p;
-    int s = sig;
-    if (s < 0) s = 0;
-    if (s > 99) s = 99;
-    if (s >= 10) buf[o++] = static_cast<char>('0' + (s / 10));
-    buf[o++] = static_cast<char>('0' + (s % 10));
-    const char mid[] = " state=";
-    for (const char* p = mid; *p && o + 1 < sizeof(buf); ++p) buf[o++] = *p;
-    int st = g_state.load(std::memory_order_relaxed);
-    if (st < 0) st = 0;
-    if (st > 9) st = 9;
-    buf[o++] = static_cast<char>('0' + st);
-    buf[o++] = '\n';
+    asAppend(buf, sizeof(buf), &o, "death signal=");
+    asAppendInt(buf, sizeof(buf), &o, sig);
+    asAppend(buf, sizeof(buf), &o, " state=");
+    asAppendInt(buf, sizeof(buf), &o, g_state.load(std::memory_order_relaxed));
+    asAppend(buf, sizeof(buf), &o, "\n");
+    (void)::write(fd, buf, o);
+    ::close(fd);
+}
+
+void writeDeathSigInfoSafe(const siginfo_t* info) {
+    if (g_deathPathC[0] == '\0' || !info) return;
+    const int fd =
+        ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return;
+    char buf[256];
+    size_t o = 0;
+    asAppend(buf, sizeof(buf), &o, "death signal=");
+    asAppendInt(buf, sizeof(buf), &o, info->si_signo);
+    asAppend(buf, sizeof(buf), &o, " si_code=");
+    asAppendInt(buf, sizeof(buf), &o, info->si_code);
+    asAppend(buf, sizeof(buf), &o, " si_pid=");
+    asAppendInt(buf, sizeof(buf), &o, static_cast<long>(info->si_pid));
+    asAppend(buf, sizeof(buf), &o, " si_addr=");
+    asAppendHexPtr(buf, sizeof(buf), &o,
+                   static_cast<unsigned long>(reinterpret_cast<uintptr_t>(info->si_addr)));
+    asAppend(buf, sizeof(buf), &o, " state=");
+    asAppendInt(buf, sizeof(buf), &o, g_state.load(std::memory_order_relaxed));
+    asAppend(buf, sizeof(buf), &o, " pid=");
+    asAppendInt(buf, sizeof(buf), &o, static_cast<long>(::getpid()));
+    asAppend(buf, sizeof(buf), &o, "\n");
     (void)::write(fd, buf, o);
     ::close(fd);
 }
@@ -182,6 +232,14 @@ void deathBreadcrumbExit(int code, const char* why) {
 
 void deathBreadcrumbOnSignal(int sig) {
     writeDeathSignalSafe(sig);
+}
+
+void deathBreadcrumbOnSigInfo(const siginfo_t* info) {
+    if (!info) {
+        writeDeathSignalSafe(-1);
+        return;
+    }
+    writeDeathSigInfoSafe(info);
 }
 
 } // namespace misterplex

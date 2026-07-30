@@ -43,6 +43,15 @@ if [[ -f "$ROOT/build/arm/set_status" ]]; then
   cp -a "$ROOT/build/arm/set_status" "$STAGE/bin/set_status"
   chmod +x "$STAGE/bin/set_status"
 fi
+if [[ -f "$ROOT/build/arm/death_capture_supervisor" ]]; then
+  cp -a "$ROOT/build/arm/death_capture_supervisor" "$STAGE/bin/death_capture_supervisor"
+  chmod +x "$STAGE/bin/death_capture_supervisor"
+fi
+if [[ -f "$ROOT/scripts/misterplexd_supervise.sh" ]]; then
+  mkdir -p "$STAGE/scripts"
+  cp -a "$ROOT/scripts/misterplexd_supervise.sh" "$STAGE/scripts/misterplexd_supervise.sh"
+  chmod +x "$STAGE/scripts/misterplexd_supervise.sh"
+fi
 
 # ffmpeg: bundled so a fresh install needs nothing else. GPLv3 obliges us to ship
 # the licence text and say exactly which build this is and where its source lives.
@@ -149,6 +158,8 @@ version: ${VERSION}
 Contents
 --------
   bin/misterplexd          static ARM companion + media daemon
+  bin/death_capture_supervisor  parent waitpid death capture (SIGKILL-safe)
+  scripts/misterplexd_supervise.sh  respawn + SUPERVISE_EXIT logging
   bin/ffmpeg               static armhf FFmpeg 7.0.2 (GPLv3 — see licenses/ffmpeg)
   bin/push_frame           optional SPI frame/bitstream tool
   bin/set_status           optional OSD status RMW tool (pattern/TV/FPS/…)
