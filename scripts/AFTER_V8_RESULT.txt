@@ -13,7 +13,7 @@ supervise    hook both startup files; live supervise 1 + daemon 1
 bootcore     untouched (still commented)
 
 ==============================================================================
-BEFORE (v7 703b2fd4) — death falsify
+BEFORE (v7 703b2fd4) — death falsify  **B3 MISS — CRASH NOT PROVEN FIXED**
 ==============================================================================
 PREDICT: :3005 DOWN; waitpid captures signal
 ACTUAL:  B3_MISS twice
@@ -22,8 +22,14 @@ ACTUAL:  B3_MISS twice
   - concurrent hammer 40+30 parallel playMedia: still up; hammer hung on wgets
     (killed hammer shells; daemon stayed)
 SIGNAL: still UNKNOWN (death not reproduced under waitpid)
-PUBLISHED MISS: controlled re-entry did not kill v7. Mechanism (code) still
-valid; field race may be timing-rare. Do not claim B3_HIT.
+
+HONEST STATUS (parent 2026-07-30 — binding):
+  - The idle×initPresent race is REAL in source and is CLOSED as hardening.
+  - "Race could explain deaths" ≠ "we found the cause of the deaths".
+  - Observed field daemon deaths remain **UNEXPLAINED**.
+  - Terminating signal remains **UNCAPTURED**.
+  - Do NOT record v8 as having fixed the crash. Fix = justified hardening only.
+  - Failed reproduction is the headline finding if death recurs later.
 
 ==============================================================================
 FALSE v8 98e8c8da — HARD FAIL → ROLLBACK
@@ -50,8 +56,8 @@ PREDICT after: :3005 stays up; doorbell≪1ms; ddr_cpu~1.5ms; combined≈114;
 | promote SPI→doorbell | log lines | both lines present | HIT |
 | ddr_doorbell | ≪1ms fail≥2ms | steady 1 µs (first win 143µs incl SPI) | HIT |
 | ddr_cpu | ~1.5ms fail≥5ms | 1414–1621 µs | HIT |
-| combined CPU | ≤120.5 stretch / ≤126 hard | 117.66 (mp=99.22 ff=18.44 dt=20.117s) | HIT both |
-| death seq port | stays up | A2_HIT port_up | HIT |
+| combined CPU (first card) | ≤120.5 / ≤126 | 117.66 PROFILE=1 20s wall — see §CPU | method-mismatched |
+| death seq port | stays up | A2_HIT port_up | HIT (hardening path) |
 | wrong-target | 409 | 409 | HIT |
 | seek+stop flat | frames unchanged after stop | 150→150 | HIT |
 | pfps≈vfps | ~29.9 | 29.9/29.9 drops=1 @~40s | HIT |
@@ -60,8 +66,8 @@ PREDICT after: :3005 stays up; doorbell≪1ms; ddr_cpu~1.5ms; combined≈114;
 | RBF untouched | 14eaeff3 | 14eaeff3 | HIT |
 | supervise loud exit | SUPERVISE_EXIT log | observed exit_status=0 on soft kill + respawn backoff | HIT |
 
-vs v7 clean 114.65: combined 117.66 is +3.0 — within noise on 20s window; both clear stretch.
-vs false-v8 125.64 / 14ms doorbell: true v8b restores v7 wins.
+vs false-v8 125.64 / 14ms doorbell: true v8b restores doorbell win (1µs).
+Crash-fix claim: **NOT MADE** (B3 miss).
 
 ==============================================================================
 HOST GATES (pre-device)
@@ -72,13 +78,50 @@ make unit: rc=2 under concurrent Quartus + low-mem override — NOT cited as gre
   (critical skip live-PMS baseline; osd/latch/redact FAIL under that run — suspect)
 
 ==============================================================================
+CPU RECONCILE — hybrid 113.9 vs first-card 117.66 (parent order)
+==============================================================================
+Hybrid 113.9 method (CPU_AB_JIFFIES.txt / cpu_ab_jiffies45.txt):
+  formula 200*dj/dc_cpu_all  nproc=2  PROFILE=0  window=45.26s
+  same_mpid=yes same_fpid=yes  metadata/11 real PMS  mp=95.5 ff=18.4 cb=113.9
+
+First-card 117.66 method (MISMATCH — do not compare raw):
+  formula 100*dj/(HZ*dt) HZ=100  PROFILE=1  window=20.117s
+  PROFILE=1 adds present_profile instrumentation (hybrid M2: avoid for steady CPU)
+
+Remeasure 2026-07-30T09:18:54Z (device v8b_cpu_reconcile_*.txt):
+  formula 200*dj/dc_cpu_all nproc=2 PROFILE=0 window du=45.410s
+  same_mpid=yes same_fpid=yes  md5=4cbee6ff
+  dc=9084 dm=4477 df=831
+  mp=98.6 ff=18.3 combined=116.9
+  delta vs hybrid 113.9 = **+3.0**
+  wall cross-check combined=116.89 (same window)
+
+MEDIA CLASS CAVEAT (binding on interpretation):
+  Remeasure ffmpeg cmdline was **testsrc2** not PMS content.
+  Cause: lab URLs used path=/library/metadata/11 but parsePlayRequest only
+  reads query key= (companion.cpp) → playMedia ACK key=(no-key) → testsrc.
+  Host curl to PLEX_HOST:32400 also failed at probe (PMS unreachable then).
+  Hybrid 113.9 was scored on real PMS / metadata path (their RESULT).
+  => +3.0 is **not** yet an apples-to-apples real-media delta.
+  => Cannot attribute +3 to presentMu_/stopIdle cost without real-media repeat.
+  => Cannot dismiss as variance either (parent rule). Status: **UNSETTLED**.
+
+What IS settled:
+  (a) First-card 117.66 is NOT comparable to 113.9 (PROFILE=1 + short wall).
+  (b) Matched formula+PROFILE+45s on this box yielded 116.9 (testsrc).
+  (c) Doorbell/ddr_cpu gates remain HIT independent of combined compare.
+  (d) Real-media key= remeasure when PMS is up — needs parent auth if later.
+
+==============================================================================
 UNKNOWNS / FOLLOW-UPS
 ==============================================================================
-U1 Exact waitpid signal of historical field deaths — still UNKNOWN (B3 miss)
-U2 ensure_daemon on claim cleanup can start a second bare daemon alongside
-   supervise — observed dual; leave scripts force single supervise. Soft bounce
-   ensure_daemon should prefer supervise if hook installed (not done this window).
-U3 Empty-CORENAME debounce — not observed needed after bounce settle
+U1 Exact waitpid signal of historical field deaths — UNKNOWN (B3 miss)
+U2 Root cause of field deaths — **UNEXPLAINED** (race fixed as hardening only)
+U3 ensure_daemon may dual-start bare daemon beside supervise — leave forced single
+U4 Empty-CORENAME debounce — not observed after bounce settle
+U5 CPU +3 vs hybrid 113.9 on real media — UNSETTLED (need key= + PMS up)
+U6 Lab scripts should use key= not path= (parsePlayRequest) — follow-up
 
-NO further device thrash. User leave: v8b 4cbee6ff + supervise + Plex + PROFILE=0.
-Rollback armed: v7 703b2fd4 on prev-c2 / prev-v7; never 06c5735a.
+STANDING BY. No further device access without parent authorisation.
+Leave: v8b 4cbee6ff + supervise + Plex + PROFILE=0 + n_daemon=1.
+Rollback armed: v7 703b2fd4; never 06c5735a.
