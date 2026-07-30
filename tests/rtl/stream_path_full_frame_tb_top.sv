@@ -15,7 +15,8 @@ module stream_path_full_frame_tb #(
 	parameter bit FAULT_NO_QP_WRAP = 1'b0,
 	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
 	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
-	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0,
+	parameter bit FAULT_SKIP_PLANE_NB = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -133,7 +134,8 @@ module stream_path_full_frame_tb #(
 		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP),
 		.FAULT_SKIP_WIN_LOAD(FAULT_SKIP_WIN_LOAD),
 		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
-		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128)
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128),
+		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB)
 	) dut (
 		.clk(clk),
 		.reset(reset),

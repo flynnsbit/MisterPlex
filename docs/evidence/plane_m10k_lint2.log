@@ -1,0 +1,20 @@
+RTL lint: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+RTL lint: parsed 84 Quartus RTL/context files; reporting 44 owned files
+RTL lint: propagated QSF macros SDRAM_CLK_142=1 SDRAM_CL3=1 DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 FRAME_LINES_8=1
+RTL lint warning counts (owned RTL only; vendor/generated excluded):
+  107  fpga/Plex_MiSTer/rtl/h264_intra_pred.sv  WIDTHEXPAND=100 WIDTHTRUNC=7
+   57  fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv  WIDTHEXPAND=31 WIDTHTRUNC=26
+   35  fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv  WIDTHEXPAND=33 WIDTHTRUNC=2
+    7  fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv  WIDTHEXPAND=7
+    6  fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv  WIDTHEXPAND=3 WIDTHTRUNC=3
+    5  fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv  WIDTHEXPAND=3 WIDTHTRUNC=2
+    4  fpga/Plex_MiSTer/rtl/nalu_scanner.sv  WIDTHEXPAND=4
+    3  fpga/Plex_MiSTer/rtl/sdram_memtest.sv  WIDTHTRUNC=3
+    2  fpga/Plex_MiSTer/rtl/colorbars.sv  WIDTHEXPAND=1 WIDTHTRUNC=1
+    2  fpga/Plex_MiSTer/rtl/decode_stub.sv  WIDTHEXPAND=1 WIDTHTRUNC=1
+    2  fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv  WIDTHTRUNC=2
+    1  fpga/Plex_MiSTer/rtl/frame_store.sv  WIDTHEXPAND=1
+    1  fpga/Plex_MiSTer/rtl/present_cadence.sv  WIDTHEXPAND=1
+    1  fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv  WIDTHTRUNC=1
+RTL lint: ignored 50 vendor/generated context errors; see build/rtl_lint_verilator.log
+RTL lint: PASS no warning regressions above /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/fixtures/rtl_lint_baseline.json

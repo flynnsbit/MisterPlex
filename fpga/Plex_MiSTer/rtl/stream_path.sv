@@ -18,7 +18,8 @@ module stream_path #(
 	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
 	// Mutation: serial dequant forces zeros (sink area redesign twin).
 	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
-	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0,
+	parameter bit FAULT_SKIP_PLANE_NB = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -655,7 +656,8 @@ module stream_path #(
 		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
 		.FAULT_DUP_STORE(FAULT_DUP_STORE),
 		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
-		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128)
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128),
+		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),
