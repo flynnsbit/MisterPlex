@@ -11,10 +11,30 @@
     "RED_FAULT_SKIP_TC_TOP_NB": "intra_y << 300"
   },
   "measured_functional": {
-    "clip1_320": {"intra_y_mb": "300/300", "y_px": "76800/76800", "paint_per_mb_f0": 4037.78, "log": "docs/evidence/traverse_p2_clip1.log"},
-    "clip2_624": {"intra_y_mb": "1170/1170", "y_px": "299520/299520", "paint_per_mb_f0": 3978.10, "log": "docs/evidence/traverse_p2_clip2.log"},
-    "RED_SKIP_TC_TOP_NB": {"intra_y_mb": "20/300", "y_px": "5163/76800", "discriminates": true, "log": "docs/evidence/traverse_p2_red_tc_top.log"},
-    "unit_traverse": {"true_rc": 0, "note": "green + bad_skip + drop_last RED OK"}
+    "clip1_320": {
+      "intra_y_mb": "300/300",
+      "y_px": "76800/76800",
+      "paint_per_mb_f0": 4037.78,
+      "log": "docs/evidence/traverse_p2_clip1_4f281e6.log",
+      "source_sha": "4f281e6f5af716b21fa375f0a0313f586d985f55"
+    },
+    "clip2_624": {
+      "intra_y_mb": "1170/1170",
+      "y_px": "299520/299520",
+      "paint_per_mb_f0": 3978.1,
+      "log": "docs/evidence/traverse_p2_clip2_4f281e6.log",
+      "source_sha": "4f281e6f5af716b21fa375f0a0313f586d985f55"
+    },
+    "RED_SKIP_TC_TOP_NB": {
+      "intra_y_mb": "20/300",
+      "y_px": "5163/76800",
+      "discriminates": true,
+      "log": "docs/evidence/traverse_p2_red_tc_top.log"
+    },
+    "unit_traverse": {
+      "true_rc": 0,
+      "note": "green + bad_skip + drop_last RED OK"
+    }
   },
   "cycles_mb": {
     "headline_measured_f0_320": 4037.78,
@@ -24,5 +44,6 @@
   },
   "method": "tc_top+i4_mode_top -> h264_byte_ram_sp; 4-entry edge cache ST_EDGE_LOAD; tc_spat within-MB; FAULT_SKIP_TC_TOP_NB",
   "ALM_DSP": "UNKNOWN until sv-integrate maps; do not self-fit",
-  "note": "tc_chr_top still fabric (secondary)"
+  "note": "tc_chr_top still fabric (secondary)",
+  "commit_sha": "4f281e6f5af716b21fa375f0a0313f586d985f55"
 }
