@@ -90,3 +90,6 @@ wire3 taught combo 16×16 qpel = 318k ALMs. wire4 taught multi-port deblock wind
 v1 serial still 25k — better than 34k but **not shippable**.
 ## coord-map2 (2026-07-30)
 See docs/coord-map2-ALMS.txt. Decode path at traverse@6dc5993 maps to ~1.24M ALMs (traverse alone ~1.18M comb). **Scoped design does not fit.**
+
+## coord-map3 chroma (2026-07-30)
+See docs/coord-map3-ALMS.txt. Chroma leaves cheap (qp=8, dc=249, chr8=0.7–3.9k); sink still ~40k+92 DSP. Traverse remains the 30× blocker.

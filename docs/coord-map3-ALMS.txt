@@ -1,0 +1,71 @@
+coord-map3 — chroma @ 1e1fbe1 area (quartus_map only)
+======================================================
+Date: 2026-07-30
+Pass: coord-map3b (anti-prune keep into residual_csum)
+true rc=0
+Log: .agent-work/integ-wiring/quartus_map_coord3_chroma.log
+RPT: .agent-work/integ-wiring/coord-map3-chroma.Plex.map.rpt
+Build dir only: /home/flynnsbit/mplex-builds/coord-map3-chroma/
+Product base: 7a9cb598
+Chroma/sink overlay SHA: 1e1fbe1
+Probe: map_chroma_area_probe (not product-wired)
+
+PRE-REGISTER (before measure) — see .agent-work/integ-wiring/coord-map3-chroma-preregister.txt
+  chroma_qp: 20-80
+  chroma_dc_hadamard_inv: 150-600, 0-4 DSP
+  chroma8x8_pred: 500-8000
+  sink@1e1fbe1 with chroma: 45k-70k comb, 64-96 DSP
+
+MEASURED (Plex.map.rpt)
+-----------------------
+Estimate of Logic utilization (ALMs needed): 48,436
+Total DSP blocks: 154
+
+Hierarchical Combinational ALUTs / regs / DSP-col:
+
+| Module | Comb ALUTs | Regs | DSP col | vs pre-reg |
+|--------|------------|------|---------|------------|
+| sys_top | 76,083 | 38,742 | 154 | |
+| map_chroma_area_probe | 41,689 | 16,360 | 100 | |
+| h264_i_res_recon_sink:u_sink | **40,456** (self 20,565) | 15,835 | **92** | HIT ~40k band |
+|   h264_intra16x16_pred | 9,045 | 2,579 | 0 | |
+|   h264_intra4x4_pred | 1,386 | 0 | 0 | |
+|   h264_chroma8x8_pred:u_chr_pred | **3,859** | 786 | 0 | mid of 0.5-8k |
+|   h264_dequant4x4:u_dq | 1,362 | 0 | **52** | |
+|   h264_idct4x4:u_idct | 1,905 | 0 | 0 | |
+|   h264_i16_dc_hadamard:u_had | 1,553 | 0 | **32** | |
+|   h264_recon4x4:u_recon | 496 | 0 | 0 | |
+| h264_chroma8x8_pred:u_chr8 (leaf) | 690 | 150 | 0 | OK cheap when alone |
+| h264_chroma_dc_hadamard_inv | **249** | 0 | **8** | HIT |
+| h264_chroma_qp | **8** | 0 | 0 | HIT |
+| decode_stub (product) | ~10.5k | 5k | 32 | unchanged class |
+
+PREDICTION SCORE
+----------------
+- chroma_qp / dc_hadamard: HIT (tiny).
+- chroma8x8 leaf: HIT low end (690); **in-sink instance 3,859** — still small vs traverse.
+- sink: HIT prior ~40k class (map2d 40,439 → map3 40,456). Not a second 1M bomb.
+- DSP: sink path **92** alone; whole design **154 / 112** → **DSP OVERBOOKED** even before fit packing.
+
+Chroma is NOT the 28× problem. Traverse still is.
+Chroma adds ~0.2–4k ALMs of leaf logic and **pushes sink DSP ~64→92**.
+
+FIT ARITHMETIC (still unsoftened)
+--------------------------------
+device                         41,910 ALMs   112 DSP
+product (map1)                 21,645        74
++ traverse (map2d)          1,180,271         1
++ sink+chroma (map3b)          40,456        92
++ deblock serial prior         25,433         ?
++ chroma leaves (if extra)        ~900        8
+                              ---------
+ALMs: CANNOT FIT (~30× from traverse)
+DSP:  product 74 + sink 92 already > 112 even if traverse were free
+      → IQ/Hadamard DSP share is mandatory alongside ALM serialisation
+
+PLAIN: sv-mvd chroma RTL is area-reasonable at leaf level; the sink it
+plugs into is still ~1× device ALMs and illegal on DSP. Headline 300/300
+sim remains real; silicon still blocked on traverse then sink.
+
+coord-map3a note: first map pruned sink to 79 comb (weak keep) — discarded.
+coord-map3b: noprune + free-running stim; sink retained.
