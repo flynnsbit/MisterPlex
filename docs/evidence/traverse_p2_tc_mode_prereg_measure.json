@@ -38,8 +38,9 @@
   },
   "cycles_mb": {
     "headline_measured_f0_320": 4037.78,
-    "budget": 2000,
-    "verdict": "THROUGHPUT_OVER_BUDGET ~2.0x (see cycles_per_mb_breakdown_788aa5f.txt)",
+    "budget_oral_2000": "WITHDRAWN — untraced; see throughput_budget_defense_33904df.txt",
+    "budget_sot_20MHz_25fps": {"320x240": 2666.667, "624x480": 683.761},
+    "verdict_vs_sot": "IDR paint_per_mb 4037 OVER 2667 (~1.51x) and OVER 684 (~5.9x); P parse~1484 PASS 320 / OVER 624",
     "p2_edge_load_delta": "+~0..24 cy/MB parse-side only; paint_per_mb unchanged ~4037"
   },
   "method": "tc_top+i4_mode_top -> h264_byte_ram_sp; 4-entry edge cache ST_EDGE_LOAD; tc_spat within-MB; FAULT_SKIP_TC_TOP_NB",
