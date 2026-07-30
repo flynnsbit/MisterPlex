@@ -1,9 +1,13 @@
-// h264_p_mb_traverse — full P-slice macroblock raster walker.
+// h264_p_mb_traverse — full P/I-slice macroblock raster walker.
 //
-// Owns all-P-MB traversal (PHASE_BACKLOG P3-3p open item): repeated mb_skip_run,
-// per-MB mode parse, raster advance, slice termination. P_Skip emits one MB event
-// per skipped address (not a no-op). Residual bits of coded MBs are consumed via
-// product h264_cavlc_residual_block so the next mb_skip_run/mb_type stays aligned.
+// Owns all-MB traversal: repeated mb_skip_run (P only), per-MB mode parse,
+// raster advance, slice termination. P_Skip emits one MB event per skipped
+// address (not a no-op). Residual bits of coded MBs are consumed via product
+// h264_cavlc_residual_block so the next mb_skip_run/mb_type stays aligned.
+//
+// I/IDR slices (slice_type 2/7): no mb_skip_run; I mb_type numbering
+// (0=I_NxN, 1..24=I_16x16, 25=PCM). Residual block coeffs are exported on
+// res_blk_* for the I-slice recon sink (pred+IQ/IDCT+store).
 //
 // Interaction: does NOT own MVD reconstruction quality (sv-mvd), residual-add
 // (sv-resadd), or real ref pictures (sv-ref). Emits per-MB syntax events;
@@ -57,6 +61,22 @@ module h264_p_mb_traverse #(
 	output reg  [5:0]  cbp,
 	output reg signed [7:0] mb_qp,
 	output reg  [15:0] residual_bit_offset,
+
+	// Per-block residual export (CAVLC levels, scan order). Handshake:
+	// when res_blk_valid && !res_blk_ready the walker stalls in ST_RES_HOLD.
+	output reg         res_blk_valid,
+	input  wire        res_blk_ready,
+	output reg  [15:0] res_blk_mb_addr,
+	output reg  [7:0]  res_blk_mb_x,
+	output reg  [7:0]  res_blk_mb_y,
+	output reg  [4:0]  res_blk_idx,        // schedule index (I16:0=DC,1..16=AC)
+	output reg         res_blk_is_i16,
+	output reg         res_blk_is_luma,    // 1 = luma DC/AC 4x4; 0 = chroma (deferred)
+	output reg  [5:0]  res_blk_qp,
+	output reg  [4:0]  res_blk_max_coeff,  // 16 / 15 / 4
+	output reg signed [15:0] res_blk_coeff [0:15],
+	output reg         res_mb_end,         // pulse: residual schedule done for MB
+	output reg  [15:0] res_mb_end_addr,
 
 	output reg  [15:0] mb_count,           // MBs emitted this slice
 	output reg         slice_done,         // pulse: walk finished
@@ -115,7 +135,9 @@ module h264_p_mb_traverse #(
 		ST_I4_REM         = 8'd38,
 		ST_CHR_UE         = 8'd39,
 		ST_CBP_INTRA_UE   = 8'd40,
-		ST_HDR_LISTMOD_ARG = 8'd41; // abs_diff_pic_num / long_term_pic_num
+		ST_HDR_LISTMOD_ARG = 8'd41, // abs_diff_pic_num / long_term_pic_num
+		ST_RES_HOLD       = 8'd42, // stall until residual consumer ACKs
+		ST_RES_MB_END     = 8'd43; // pulse res_mb_end then NEXT_MB
 
 	reg [7:0] rbsp [0:MAX_RBSP_BYTES-1];
 	reg [15:0] rbsp_len;
@@ -139,9 +161,19 @@ module h264_p_mb_traverse #(
 	reg [2:0] part_count_r;
 	reg uses_sub_r;
 	reg is_intra_r;
-	reg is_i16_r;              // I_16x16 in P: luma DC first, AC max=15
+	reg is_i16_r;              // I_16x16: luma DC first, AC max=15
+	reg is_i_slice_r;          // slice_type 2 or 7 (I/SI all-I coding)
 	reg [4:0] i4_idx;
 	reg [7:0] slice_type_r;
+	// Residual export hold (copy of last CAVLC result while waiting ready)
+	reg [4:0] res_hold_idx;
+	reg       res_hold_is_i16;
+	reg       res_hold_is_luma;
+	reg [5:0] res_hold_qp;
+	reg [4:0] res_hold_max;
+	reg signed [15:0] res_hold_coeff [0:15];
+	reg [15:0] res_hold_mb;
+	reg [7:0]  res_hold_x, res_hold_y;
 	reg [15:0] first_mb_r;
 	reg [4:0] log2_fn_r;
 	reg db_lat;
@@ -462,9 +494,17 @@ module h264_p_mb_traverse #(
 
 	task automatic fail;
 		begin
+`ifdef VERILATOR
+			$display("TRAV_FAIL_NOW mb=%0d st=%0d bit_pos=%0d rbsp_bits=%0d res_i=%0d i_slice=%0d i16=%0d cbp=%0h unsup=%0d",
+				curr_mb, st, bit_pos, (rbsp_len * 16'd8), res_block_i,
+				is_i_slice_r, is_i16_r, cbp_r, unsupported);
+`endif
+			// Retire immediately: prior pattern set busy=0 + ST_FAIL, but the
+			// outer `else if (busy)` guard then skipped ST_FAIL forever.
 			error <= 1'b1;
 			busy <= 1'b0;
-			st <= ST_FAIL;
+			slice_done <= 1'b1;
+			st <= ST_IDLE;
 		end
 	endtask
 
@@ -586,6 +626,7 @@ module h264_p_mb_traverse #(
 	task automatic launch_cavlc_for_slot;
 		input [4:0] idx;
 		reg [5:0] nCv;
+		reg [4:0] maxv;
 		reg [15:0] abs_bit;
 		reg [3:0] ac_i;
 		reg [2:0] chr_i; // 0..7 across planes
@@ -593,49 +634,65 @@ module h264_p_mb_traverse #(
 		reg [1:0] bi;
 		begin
 			abs_bit = bit_pos;
+			nCv = 6'd0;
+			maxv = 5'd16;
 			load_res_window(abs_bit);
 			if (is_i16_r) begin
 				if (idx == 5'd0) begin
 					// I_16x16 DC nC from left/up MB edge (block 0 neighbours)
 					nCv = luma_nC(4'd0);
+					maxv = 5'd16;
 					cavlc_table_r <= nc_table(nCv);
-					cavlc_max_r <= 5'd16;
+					cavlc_max_r <= maxv;
 				end else if (idx <= 5'd16) begin
 					ac_i = idx[3:0] - 4'd1;
 					nCv = luma_nC(ac_i);
+					maxv = 5'd15;
 					cavlc_table_r <= nc_table(nCv);
-					cavlc_max_r <= 5'd15;
+					cavlc_max_r <= maxv;
 				end else if (idx <= 5'd18) begin
+					nCv = 6'd0;
+					maxv = 5'd4;
 					cavlc_table_r <= 3'd4;
-					cavlc_max_r <= 5'd4;
+					cavlc_max_r <= maxv;
 				end else begin
 					// 19..26: plane-major, 4 blocks each (U then V)
 					chr_i = idx - 5'd19;
 					p = chr_i[2];
 					bi = chr_i[1:0];
 					nCv = chroma_nC(p, bi);
+					maxv = 5'd15;
 					cavlc_table_r <= nc_table(nCv);
-					cavlc_max_r <= 5'd15;
+					cavlc_max_r <= maxv;
 				end
 			end else if (idx < 5'd16) begin
 				nCv = luma_nC(idx[3:0]);
+				maxv = 5'd16;
 				cavlc_table_r <= nc_table(nCv);
-				cavlc_max_r <= 5'd16;
+				cavlc_max_r <= maxv;
 			end else if (idx < 5'd18) begin
+				nCv = 6'd0;
+				maxv = 5'd4;
 				cavlc_table_r <= 3'd4;
-				cavlc_max_r <= 5'd4;
+				cavlc_max_r <= maxv;
 			end else begin
 				// 18..25: plane-major, 4 blocks each
 				chr_i = idx - 5'd18;
 				p = chr_i[2];
 				bi = chr_i[1:0];
 				nCv = chroma_nC(p, bi);
+				maxv = 5'd15;
 				cavlc_table_r <= nc_table(nCv);
-				cavlc_max_r <= 5'd15;
+				cavlc_max_r <= maxv;
 			end
 			cavlc_bit0_r <= {7'd0, abs_bit[2:0]};
 			cavlc_bitlen_r <= 10'd512;
 			cavlc_start_r <= 1'b1;
+`ifdef VERILATOR
+			if (is_i_slice_r && curr_mb < 16'd6)
+				$display("TRAV_RES_LAUNCH mb=%0d res_i=%0d i16=%0d nC=%0d max=%0d abs_bit=%0d",
+					curr_mb, idx, is_i16_r, nCv, maxv, abs_bit);
+`endif
 		end
 	endtask
 
@@ -734,12 +791,26 @@ module h264_p_mb_traverse #(
 			uses_sub_r <= 1'b0;
 			is_intra_r <= 1'b0;
 			is_i16_r <= 1'b0;
+			is_i_slice_r <= 1'b0;
 			i4_idx <= 5'd0;
 			res_block_i <= 5'd0;
 			res_blocks_total <= 5'd0;
 			res_luma_mask <= 4'd0;
 			res_chroma <= 2'd0;
 			cavlc_start_r <= 1'b0;
+			res_blk_valid <= 1'b0;
+			res_mb_end <= 1'b0;
+			res_mb_end_addr <= 16'd0;
+			res_blk_mb_addr <= 16'd0;
+			res_blk_mb_x <= 8'd0;
+			res_blk_mb_y <= 8'd0;
+			res_blk_idx <= 5'd0;
+			res_blk_is_i16 <= 1'b0;
+			res_blk_is_luma <= 1'b1;
+			res_blk_qp <= 6'd0;
+			res_blk_max_coeff <= 5'd16;
+			for (ti = 0; ti < 16; ti = ti + 1)
+				res_blk_coeff[ti] <= 16'sd0;
 			for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
 				tc_top[ti] <= 5'd0;
 				tc_top_v[ti] <= 1'b0;
@@ -766,21 +837,27 @@ module h264_p_mb_traverse #(
 		end else begin
 			slice_done <= 1'b0;
 			cavlc_start_r <= 1'b0;
+			res_mb_end <= 1'b0;
 
 			// Handshake: drop valid when accepted
 			if (mb_valid && mb_ready) begin
 				mb_valid <= 1'b0;
 				mb_hold <= 1'b0;
 			end
+			if (res_blk_valid && res_blk_ready)
+				res_blk_valid <= 1'b0;
 
 			if (!busy && in_valid && in_ready) begin
 				rbsp[rbsp_len] <= in_byte;
 				rbsp_len <= rbsp_len + 16'd1;
 			end
 
-			// Stall FSM while an MB beat is outstanding and not taken
+			// Stall FSM while an MB beat is outstanding and not taken,
+			// or while residual export is waiting for consumer ready.
 			if (mb_hold && !(mb_valid && mb_ready) && busy) begin
 				// hold state
+			end else if (res_blk_valid && !res_blk_ready && busy) begin
+				// residual hold (ST_RES_HOLD also waits explicitly)
 			end else if (!busy && start) begin
 				busy <= 1'b1;
 				error <= 1'b0;
@@ -867,12 +944,17 @@ module h264_p_mb_traverse #(
 				end
 				ST_HDR_TYPE: begin
 					slice_type_r <= ue_value[7:0];
-					if ((ue_value[7:0] != 8'd0) && (ue_value[7:0] != 8'd5)) begin
-						// Not a P slice — idle out without error (I handled elsewhere)
+					// P: 0/5; I: 2/7. Other types unsupported here.
+					if ((ue_value[7:0] == 8'd0) || (ue_value[7:0] == 8'd5)) begin
+						is_i_slice_r <= 1'b0;
+						start_ue(ST_HDR_PPS);
+					end else if ((ue_value[7:0] == 8'd2) || (ue_value[7:0] == 8'd7)) begin
+						is_i_slice_r <= 1'b1;
+						start_ue(ST_HDR_PPS);
+					end else begin
 						unsupported <= 1'b1;
 						st <= ST_DONE;
-					end else
-						start_ue(ST_HDR_PPS);
+					end
 				end
 				ST_HDR_PPS: begin
 					start_bits({3'd0, log2_fn_r}, ST_HDR_FRAME);
@@ -960,8 +1042,16 @@ module h264_p_mb_traverse #(
 					st <= ST_START;
 				end
 				ST_START: begin
+`ifdef VERILATOR
+					if (curr_mb == 16'd0)
+						$display("TRAV_HDR_OK i_slice=%0d bit_pos=%0d qp=%0d pic_mbs=%0d type=%0d",
+							is_i_slice_r, bit_pos, qp_r, pic_mbs, slice_type_r);
+`endif
 					if (curr_mb >= pic_mbs) st <= ST_DONE;
-					else start_ue(ST_SKIP_UE);
+					else if (is_i_slice_r)
+						start_ue(ST_TYPE_UE); // I: no mb_skip_run
+					else
+						start_ue(ST_SKIP_UE);
 				end
 				ST_SKIP_UE: begin
 					skip_run_lat <= FAULT_BAD_SKIP_RUN ? 16'd0 : ue_value[15:0];
@@ -1014,7 +1104,35 @@ module h264_p_mb_traverse #(
 				ST_TYPE: begin
 					mb_type_r <= ue_value[7:0];
 					is_i16_r <= 1'b0;
-					if (ue_value <= 32'd4) begin
+					if (is_i_slice_r) begin
+						// I-slice mb_type: 0=I_NxN, 1..24=I_16x16, 25=PCM
+						if (ue_value == 32'd0) begin
+							is_intra_r <= 1'b1;
+							uses_sub_r <= 1'b0;
+							part_mode_r <= PART_INTRA;
+							part_count_r <= 3'd0;
+							i4_idx <= 5'd0;
+							start_bits(8'd1, ST_I4_FLAG);
+						end else if (ue_value >= 32'd1 && ue_value <= 32'd24) begin
+							is_intra_r <= 1'b1;
+							is_i16_r <= 1'b1;
+							uses_sub_r <= 1'b0;
+							part_mode_r <= PART_INTRA;
+							part_count_r <= 3'd0;
+							begin : i16_cbp_i
+								reg [4:0] x;
+								reg [1:0] cc;
+								x = ue_value[4:0] - 5'd1; // 0..23
+								cc = (x / 5'd4) % 2'd3;
+								cbp_r <= {cc, (x >= 5'd12) ? 4'hF : 4'h0};
+							end
+							start_ue(ST_CHR_UE);
+						end else begin
+							// PCM / unknown
+							unsupported <= 1'b1;
+							fail();
+						end
+					end else if (ue_value <= 32'd4) begin
 						is_intra_r <= 1'b0;
 						uses_sub_r <= (ue_value == 32'd3) || (ue_value == 32'd4);
 						part_mode_r <= part_mode_of(1'b0, ue_value[7:0]);
@@ -1150,7 +1268,9 @@ module h264_p_mb_traverse #(
 				ST_CHR_UE: begin
 					// I_NxN: cbp me next. I_16x16: always mb_qp_delta then residual
 					// (luma DC always coded even when cbp_l=cbp_c=0).
-					if (mb_type_r == 8'd5)
+					// I-slice I_NxN has mb_type=0; P-slice I_NxN has mb_type=5.
+					if ((is_i_slice_r && (mb_type_r == 8'd0)) ||
+					    (!is_i_slice_r && (mb_type_r == 8'd5)))
 						start_ue(ST_CBP_INTRA_UE);
 					else
 						start_ue(ST_QP_UE);
@@ -1173,6 +1293,11 @@ module h264_p_mb_traverse #(
 					emit_mb(1'b0);
 					res_luma_mask <= cbp_r[3:0];
 					res_chroma <= cbp_r[5:4];
+`ifdef VERILATOR
+					if (is_i_slice_r && curr_mb < 16'd8)
+						$display("TRAV_I_MB mb=%0d type=%0d i16=%0d cbp=%0h qp=%0d bit_pos=%0d",
+							curr_mb, mb_type_r, is_i16_r, cbp_r, qp_r, bit_pos);
+`endif
 					if (!is_i16_r && cbp_r == 6'd0) begin
 						// inter/I_NxN with no residual; zero tc neighbours
 						for (ti = 0; ti < 4; ti = ti + 1) begin
@@ -1189,7 +1314,12 @@ module h264_p_mb_traverse #(
 							end
 						end
 						zero_chr_tc_mb();
-						st <= ST_NEXT_MB;
+						if (is_i_slice_r) begin
+							res_mb_end <= 1'b1;
+							res_mb_end_addr <= curr_mb;
+							st <= ST_RES_MB_END;
+						end else
+							st <= ST_NEXT_MB;
 					end else begin
 						// I_16x16 always enters residual (DC); inter if cbp!=0
 						res_block_i <= 5'd0;
@@ -1203,7 +1333,13 @@ module h264_p_mb_traverse #(
 						// If chroma AC not coded, still zero neighbour map once.
 						if (res_chroma != 2'd2)
 							zero_chr_tc_mb();
-						st <= ST_NEXT_MB;
+						// Notify recon sink that this MB's residual is complete (I only).
+						if (is_i_slice_r) begin
+							res_mb_end <= 1'b1;
+							res_mb_end_addr <= curr_mb;
+							st <= ST_RES_MB_END;
+						end else
+							st <= ST_NEXT_MB;
 					end else if (!res_slot_coded(res_block_i)) begin
 						if (is_i16_r) begin
 							if (res_block_i >= 5'd1 && res_block_i <= 5'd16)
@@ -1220,33 +1356,98 @@ module h264_p_mb_traverse #(
 				ST_RES_WAIT: begin
 					if (cavlc_done) begin
 						if (!cavlc_ok) begin
+`ifdef VERILATOR
+							$display("TRAV_CAVLC_FAIL mb=%0d res_i=%0d bit_pos=%0d table=%0d max=%0d bit0=%0d end=%0d i16=%0d tc=%0d t1=%0d tz=%0d",
+								curr_mb, res_block_i, bit_pos, cavlc_table_r, cavlc_max_r,
+								cavlc_bit0_r, cavlc_bit_end, is_i16_r, cavlc_tc, cavlc_t1, cavlc_tz);
+`endif
 							fail();
 						end else begin
-							bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
-							if (is_i16_r) begin
-								// I_16x16 DC does not enter the 4x4 tc neighbour map;
-								// AC nC uses left/up MB edges and prior AC blocks only.
-								if (res_block_i >= 5'd1 && res_block_i <= 5'd16)
-									commit_tc_after_luma(res_block_i[3:0] - 4'd1, cavlc_tc);
-								else if (res_block_i >= 5'd19) begin
-									// chroma AC
-									commit_tc_after_chr(
-										(res_block_i - 5'd19) >= 5'd4,
-										(res_block_i - 5'd19) & 2'd3,
-										cavlc_tc);
+							// Stash for HOLD commit (always).
+							res_hold_idx <= res_block_i;
+							res_hold_is_i16 <= is_i16_r;
+							begin : exp_res
+								integer ci;
+								reg is_luma_slot;
+								reg [4:0] maxc;
+								is_luma_slot = is_i16_r ?
+									(res_block_i <= 5'd16) :
+									(res_block_i < 5'd16);
+								if (is_i16_r && res_block_i == 5'd0)
+									maxc = 5'd16;
+								else if (is_i16_r && res_block_i <= 5'd16)
+									maxc = 5'd15;
+								else if (!is_i16_r && res_block_i < 5'd16)
+									maxc = 5'd16;
+								else if ((!is_i16_r && res_block_i < 5'd18) ||
+								         (is_i16_r && res_block_i <= 5'd18))
+									maxc = 5'd4;
+								else
+									maxc = 5'd15;
+								res_hold_is_luma <= is_luma_slot;
+								res_hold_qp <= qp_r[5:0];
+								res_hold_max <= maxc;
+								res_hold_mb <= curr_mb;
+								res_hold_x <= curr_x[7:0];
+								res_hold_y <= curr_y[7:0];
+								for (ci = 0; ci < 16; ci = ci + 1)
+									res_hold_coeff[ci] <= cavlc_coeff[ci];
+								// Export only on I/IDR slices (P residual still
+								// bit-aligned here; recon owned by P path).
+								if (is_i_slice_r) begin
+									res_blk_valid <= 1'b1;
+									res_blk_mb_addr <= curr_mb;
+									res_blk_mb_x <= curr_x[7:0];
+									res_blk_mb_y <= curr_y[7:0];
+									res_blk_idx <= res_block_i;
+									res_blk_is_i16 <= is_i16_r;
+									res_blk_is_luma <= is_luma_slot;
+									res_blk_qp <= qp_r[5:0];
+									res_blk_max_coeff <= maxc;
+									for (ci = 0; ci < 16; ci = ci + 1)
+										res_blk_coeff[ci] <= cavlc_coeff[ci];
 								end
-							end else if (res_block_i < 5'd16) begin
-								commit_tc_after_luma(res_block_i[3:0], cavlc_tc);
-							end else if (res_block_i >= 5'd18) begin
-								commit_tc_after_chr(
-									(res_block_i - 5'd18) >= 5'd4,
-									(res_block_i - 5'd18) & 2'd3,
-									cavlc_tc);
 							end
-							res_block_i <= res_block_i + 5'd1;
-							st <= ST_RES_SETUP;
+							st <= ST_RES_HOLD;
 						end
 					end
+				end
+				ST_RES_HOLD: begin
+					// I export: wait ready. P: res_blk_valid stays 0 → advance now.
+					if (!res_blk_valid || res_blk_ready) begin
+`ifdef VERILATOR
+						if (is_i_slice_r && curr_mb < 16'd6)
+							$display("TRAV_RES_OK mb=%0d res_i=%0d i16=%0d tc=%0d t1=%0d tz=%0d bit0=%0d bit_end_abs=%0d table=%0d max=%0d",
+								curr_mb, res_hold_idx, res_hold_is_i16, cavlc_tc, cavlc_t1, cavlc_tz,
+								res_win_bit0 + {6'd0, cavlc_bit0_r},
+								res_win_bit0 + {6'd0, cavlc_bit_end},
+								cavlc_table_r, cavlc_max_r);
+`endif
+						bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+						if (res_hold_is_i16) begin
+							if (res_hold_idx >= 5'd1 && res_hold_idx <= 5'd16)
+								commit_tc_after_luma(res_hold_idx[3:0] - 4'd1, cavlc_tc);
+							else if (res_hold_idx >= 5'd19) begin
+								commit_tc_after_chr(
+									(res_hold_idx - 5'd19) >= 5'd4,
+									(res_hold_idx - 5'd19) & 2'd3,
+									cavlc_tc);
+							end
+						end else if (res_hold_idx < 5'd16) begin
+							commit_tc_after_luma(res_hold_idx[3:0], cavlc_tc);
+						end else if (res_hold_idx >= 5'd18) begin
+							commit_tc_after_chr(
+								(res_hold_idx - 5'd18) >= 5'd4,
+								(res_hold_idx - 5'd18) & 2'd3,
+								cavlc_tc);
+						end
+						res_block_i <= res_hold_idx + 5'd1;
+						st <= ST_RES_SETUP;
+					end
+				end
+				ST_RES_MB_END: begin
+					// one-cycle gap after res_mb_end pulse
+					st <= ST_NEXT_MB;
 				end
 				ST_NEXT_MB: begin
 					curr_mb <= curr_mb + 16'd1;
@@ -1254,6 +1455,8 @@ module h264_p_mb_traverse #(
 						st <= ST_DONE;
 					else if (bit_pos >= (rbsp_len * 16'd8))
 						st <= ST_DONE;
+					else if (is_i_slice_r)
+						start_ue(ST_TYPE_UE);
 					else
 						start_ue(ST_SKIP_UE);
 				end
@@ -1261,6 +1464,10 @@ module h264_p_mb_traverse #(
 					slice_done <= 1'b1;
 					busy <= 1'b0;
 					st <= ST_IDLE;
+`ifdef VERILATOR
+					$display("TRAV_DONE mb_count=%0d err=%0d unsup=%0d",
+						mb_count, error, unsupported);
+`endif
 				end
 				ST_FAIL: begin
 					// Always retire the slice toward consumers (decode_stub FETCH
@@ -1268,6 +1475,10 @@ module h264_p_mb_traverse #(
 					slice_done <= 1'b1;
 					busy <= 1'b0;
 					st <= ST_IDLE;
+`ifdef VERILATOR
+					$display("TRAV_FAIL mb_count=%0d st_prev_unsup=%0d",
+						mb_count, unsupported);
+`endif
 				end
 				default: fail();
 				endcase

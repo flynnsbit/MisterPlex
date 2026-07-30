@@ -66,6 +66,8 @@ PRODUCT_RTL=(
   h264_dpb.sv
   decode_stub.sv
   h264_p_mb_traverse.sv
+  h264_i16_dc_hadamard.sv
+  h264_i_res_recon_sink.sv
   h264_recon_frame_store.sv
   h264_cavlc_residual.sv
 )
@@ -544,7 +546,10 @@ REAL_META="$REAL_REF_DIR/native_inter_metadata.json"
 REAL_CAND="$REAL_REF_DIR/native_inter_candidate.i420"
 REAL_SCORE="$REAL_REF_DIR/native_inter_candidate_score.json"
 REAL_COMPARE="$REAL_REF_DIR/frame_planes_compare.json"
-echo "REAL_REF_MEASURE pre-register: intra=0/300 inter<=400/3300 (expect drop vs fake-ref 1606)" >&2
+# Pre-register (I-slice walk + pred=128 + luma residual; chroma deferred 128):
+# Expect intra to move off 0 if residual+DC land; still far from perfect (no real
+# intra pred modes, chroma flat). Do not tune toward historical fake 1606.
+echo "REAL_REF_MEASURE pre-register: intra=5..80/300 inter=0..200/3300 (I walk pred=128; chroma deferred)" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_REAL" \

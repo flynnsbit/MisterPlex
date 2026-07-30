@@ -52,6 +52,20 @@ module decode_stub #(
 	input  wire        trav_uses_sub_mb,
 	input  wire        trav_intra,
 	input  wire        trav_slice_done,
+	// I-slice residual export from h264_p_mb_traverse (real-ref I recon)
+	input  wire        i_res_blk_valid,
+	output wire        i_res_blk_ready,
+	input  wire [15:0] i_res_blk_mb_addr,
+	input  wire [7:0]  i_res_blk_mb_x,
+	input  wire [7:0]  i_res_blk_mb_y,
+	input  wire [4:0]  i_res_blk_idx,
+	input  wire        i_res_blk_is_i16,
+	input  wire        i_res_blk_is_luma,
+	input  wire [5:0]  i_res_blk_qp,
+	input  wire [4:0]  i_res_blk_max_coeff,
+	input  wire signed [15:0] i_res_blk_coeff [0:15],
+	input  wire        i_res_mb_end,
+	input  wire [15:0] i_res_mb_end_addr,
 	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
 	input  wire signed [15:0] first_mb_mvd_x,
 	input  wire signed [15:0] first_mb_mvd_y,
@@ -97,8 +111,10 @@ module decode_stub #(
 	localparam [2:0] PH_PAINT = 3'd2;
 	localparam [2:0] PH_FETCH = 3'd3;
 	localparam [2:0] PH_DPB_FILL = 3'd4;
-	// Park first-MB IDR recon into recon_store before DPB fill (real-ref path).
+	// Park first-MB IDR recon into recon_store before DPB fill (legacy place path).
 	localparam [2:0] PH_IDR_STORE = 3'd5;
+	// Real-ref I-slice: wait for residual walk + multi-MB store, then DPB fill.
+	localparam [2:0] PH_I_RECON = 3'd6;
 	reg            is_idr_frame;
 	reg            is_i_frame;
 	reg [7:0]      lat_type;
@@ -153,6 +169,7 @@ module decode_stub #(
 	integer        dbg_store_wr_p_inter_fail;
 	integer        dbg_residual_blk0_loads;
 	integer        dbg_printed_recon_counts;
+	reg [31:0]     dbg_i_recon_cycles;
 `endif
 	// Accept a traversal MB when idle-ready for fetch or actively fetching next.
 	// Intra-in-P is accepted (no MC) so the walker never stalls on those MBs.
@@ -162,7 +179,10 @@ module decode_stub #(
 	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done && !USE_REAL_REF_COMMIT) ||
 	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy &&
 	                                  (!recon_store_pending || recon_store_done)) ||
-	                                 (phase == PH_IDLE && trav_intra);
+	                                 (phase == PH_IDLE && trav_intra) ||
+	                                 // I-slice residual walk: drain MB events unconditionally so the walker
+	                                 // is not stuck on mb_hold while residual export runs.
+	                                 (phase == PH_I_RECON);
 	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
 	// First-MB mvd latched for the opening P MB; cleared on multi-MB advance
 	// so later stub-walk MBs use MVP-only (mvd=0) until full syntax lands.
@@ -762,13 +782,14 @@ module decode_stub #(
 	endgenerate
 
 	// ── Self-produced recon frame store (USE_REAL_REF_COMMIT) ──────────
-	// IDR: first residual 4×4 → recon_px into MB0; rest of MB0 uses DC
-	// fallback (mirrors paint path). No I-slice MB walker yet → MBs 1..N-1
-	// remain cold mid-gray until that lands. P: every fetch_done parks
-	// Clip1(pred+residual) at lat_p_mb_addr (not gated on dpb_inter_ok).
+	// I-slice: h264_i_res_recon_sink consumes traverse residual export and
+	// writes every MB (pred=128 + residual; chroma deferred 128).
+	// Legacy place path: PH_IDR_STORE still packs MB0 blk0 when sink idle.
+	// P: every fetch_done parks Clip1(pred+residual) at lat_p_mb_addr.
 	reg               recon_store_write_start;
 	reg [15:0]        recon_store_write_mb;
 	reg               recon_store_idr_mb0_pending;
+	reg               recon_store_i_sink_pending;
 	wire              recon_store_busy;
 	wire              recon_store_done;
 	reg [7:0]         idr_mb0_y [0:255];
@@ -777,14 +798,63 @@ module decode_stub #(
 	wire [7:0]        recon_store_y_mux [0:255];
 	wire [7:0]        recon_store_u_mux [0:63];
 	wire [7:0]        recon_store_v_mux [0:63];
+
+	// I residual → MB plane sink
+	wire        i_sink_write_req;
+	wire [15:0] i_sink_write_mb;
+	wire [7:0]  i_sink_y [0:255];
+	wire [7:0]  i_sink_u [0:63];
+	wire [7:0]  i_sink_v [0:63];
+	wire [31:0] i_sink_dbg_blk, i_sink_dbg_mb, i_sink_dbg_nz;
+	wire        i_sink_clear = vcl_pulse && (last_nal_type[4:0] == 5'd5);
+
+	h264_i_res_recon_sink u_i_res_sink (
+		.clk(clk), .reset(reset), .clear(i_sink_clear),
+		.res_blk_valid(i_res_blk_valid),
+		.res_blk_ready(i_res_blk_ready),
+		.res_blk_mb_addr(i_res_blk_mb_addr),
+		.res_blk_mb_x(i_res_blk_mb_x),
+		.res_blk_mb_y(i_res_blk_mb_y),
+		.res_blk_idx(i_res_blk_idx),
+		.res_blk_is_i16(i_res_blk_is_i16),
+		.res_blk_is_luma(i_res_blk_is_luma),
+		.res_blk_qp(i_res_blk_qp),
+		.res_blk_max_coeff(i_res_blk_max_coeff),
+		.res_blk_coeff(i_res_blk_coeff),
+		.res_mb_end(i_res_mb_end),
+		.res_mb_end_addr(i_res_mb_end_addr),
+		.write_req(i_sink_write_req),
+		.write_mb_addr(i_sink_write_mb),
+		.write_y(i_sink_y),
+		.write_u(i_sink_u),
+		.write_v(i_sink_v),
+		.write_busy(recon_store_busy | recon_store_pending),
+		.dbg_blk_applied(i_sink_dbg_blk),
+		.dbg_mb_written(i_sink_dbg_mb),
+		.dbg_luma_nz(i_sink_dbg_nz)
+	);
+
+	// Tie-off residual ready when not using sink export (always-on ready if
+	// USE_REAL_REF is 0 still needed so unused ports don't X).
+	// i_res_blk_ready comes from sink.
+
 	genvar rmi;
 	generate
 		for (rmi = 0; rmi < 256; rmi = rmi + 1) begin : gen_store_y_mux
-			assign recon_store_y_mux[rmi] = recon_store_idr_mb0_pending ? idr_mb0_y[rmi] : inter_recon_y[rmi];
+			assign recon_store_y_mux[rmi] =
+				recon_store_i_sink_pending ? i_sink_y[rmi] :
+				recon_store_idr_mb0_pending ? idr_mb0_y[rmi] :
+				inter_recon_y[rmi];
 		end
 		for (rmi = 0; rmi < 64; rmi = rmi + 1) begin : gen_store_c_mux
-			assign recon_store_u_mux[rmi] = recon_store_idr_mb0_pending ? idr_mb0_u[rmi] : inter_recon_u[rmi];
-			assign recon_store_v_mux[rmi] = recon_store_idr_mb0_pending ? idr_mb0_v[rmi] : inter_recon_v[rmi];
+			assign recon_store_u_mux[rmi] =
+				recon_store_i_sink_pending ? i_sink_u[rmi] :
+				recon_store_idr_mb0_pending ? idr_mb0_u[rmi] :
+				inter_recon_u[rmi];
+			assign recon_store_v_mux[rmi] =
+				recon_store_i_sink_pending ? i_sink_v[rmi] :
+				recon_store_idr_mb0_pending ? idr_mb0_v[rmi] :
+				inter_recon_v[rmi];
 		end
 	endgenerate
 	h264_recon_frame_store #(
@@ -914,6 +984,7 @@ module decode_stub #(
 			recon_store_write_mb <= 16'd0;
 			recon_store_pending <= 1'b0;
 			recon_store_idr_mb0_pending <= 1'b0;
+			recon_store_i_sink_pending <= 1'b0;
 			idr_recon_pack_pending <= 1'b0;
 `ifdef VERILATOR
 			dbg_store_wr_total <= 0;
@@ -923,6 +994,7 @@ module decode_stub #(
 			dbg_store_wr_p_inter_fail <= 0;
 			dbg_residual_blk0_loads <= 0;
 			dbg_printed_recon_counts <= 0;
+			dbg_i_recon_cycles <= 32'd0;
 `endif
 			lat_mvd_x <= 16'sd0;
 			lat_mvd_y <= 16'sd0;
@@ -963,6 +1035,21 @@ module decode_stub #(
 			if (trav_slice_done) begin
 				trav_slice_pending <= 1'b1;
 				trav_active_slice <= 1'b0;
+			end
+			// I-sink → recon_store (shared arbiter with P/IDR place paths)
+			if (i_sink_write_req && !recon_store_busy && !recon_store_pending) begin
+				recon_store_write_start <= 1'b1;
+				recon_store_write_mb <= i_sink_write_mb;
+				recon_store_pending <= 1'b1;
+				recon_store_i_sink_pending <= 1'b1;
+				recon_store_idr_mb0_pending <= 1'b0;
+`ifdef VERILATOR
+				dbg_store_wr_total <= dbg_store_wr_total + 1;
+				dbg_store_wr_idr <= dbg_store_wr_idr + 1;
+`endif
+			end else if (recon_store_pending && recon_store_done && recon_store_i_sink_pending) begin
+				recon_store_pending <= 1'b0;
+				recon_store_i_sink_pending <= 1'b0;
 			end
 			// One-cycle delayed residual plane load (lat_coeff → IQ/IDCT settled).
 			if (inter_res_load_pending) begin
@@ -1199,10 +1286,22 @@ module decode_stub #(
 				inter_res_load_pending <= residual_ok && !first_mb_p_skip;
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
-				// Real-ref: park IDR MB0 recon into store before DPB fill.
-				// (Previously IDR jumped straight to PH_DPB_FILL with a cold
-				// store → entire reference frame was mid-gray 128.)
+				// Real-ref: I-slice residual walk fills recon_store for all MBs
+				// before DPB fill. Place-path residual is NOT used for store
+				// (blk0-only); sink owns multi-MB recon (pred=128 + residual).
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM && use_real_ref) begin
+					phase <= PH_I_RECON;
+					busy <= 1'b1;
+					inter_res_load_pending <= 1'b0;
+`ifdef VERILATOR
+					dbg_i_recon_cycles <= 32'd0;
+					$display("I_RECON_ENTER trav_pend=%0d store_pend=%0d",
+						trav_slice_pending, recon_store_pending);
+`endif
+					for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
+						inter_res_y[coeff_i] <= 16'sd0;
+				end else if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM && !use_real_ref) begin
+					// Non-real-ref legacy: single MB0 place pack
 					if (residual_ok) begin
 						phase <= PH_IDR_STORE;
 						idr_recon_pack_pending <= 1'b1;
@@ -1215,6 +1314,27 @@ module decode_stub #(
 					phase <= PH_IDLE;
 					busy <= 1'b0;
 				end
+			end
+			end else if (phase == PH_I_RECON) begin
+			// Drain I residual walk into recon_store; then DPB fill.
+			// i_sink_write_req accepted below (shared with other phases).
+			if (trav_slice_done)
+				trav_slice_pending <= 1'b1;
+// Complete when walker finished and last store drained (mb_written
+			// may be 0 if walk failed — still fill rather than hang).
+			if (trav_slice_pending && !recon_store_pending && !i_sink_write_req) begin
+				trav_slice_pending <= 1'b0;
+				trav_active_slice <= 1'b0;
+				phase <= PH_DPB_FILL;
+				dpb_fill_mb_addr <= '0;
+				dpb_fill_sample_idx <= 9'd0;
+`ifdef VERILATOR
+				if (!dbg_printed_recon_counts) begin
+					$display("I_RECON_DONE mb_written=%0d blk_applied=%0d luma_nz_peak=%0d",
+						i_sink_dbg_mb, i_sink_dbg_blk, i_sink_dbg_nz);
+					dbg_printed_recon_counts <= 1'b1;
+				end
+`endif
 			end
 			end else if (phase == PH_IDR_STORE) begin
 			// One-cycle delayed pack (lat_coeff → IQ/IDCT/recon_px settled),
@@ -1277,6 +1397,7 @@ module decode_stub #(
 				if (recon_store_done) begin
 					recon_store_pending <= 1'b0;
 					recon_store_idr_mb0_pending <= 1'b0;
+					recon_store_i_sink_pending <= 1'b0;
 					trav_got_mb <= 1'b0;
 					if (trav_mb_ready) begin
 						lat_p_skip <= trav_mb_skip;

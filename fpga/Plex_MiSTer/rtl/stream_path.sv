@@ -313,11 +313,14 @@ module stream_path #(
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
-	// ── Full P-slice MB traversal (independent of first-MB residual sticky) ──
-	// Side-buffer every non-IDR slice RBSP, then load the walker when idle so
-	// multi-slice streams are not dropped while a prior walk is in progress.
+	// ── Full P/I-slice MB traversal (independent of first-MB residual sticky) ──
+	// Side-buffer slice RBSP, then load the walker when idle so multi-slice
+	// streams are not dropped while a prior walk is in progress.
+	// Product: non-IDR only. Real-ref: also capture IDR for I-slice residual walk.
 	// Walker self-drains (mb_ready=1) at syntax rate; 1-deep hold feeds stub.
 	localparam int TRAV_BUF_MAX = 8192;
+	// Under real-ref, capture IDR so I residual can fill recon_store before P.
+	wire trav_cap_ok = USE_REAL_REF_COMMIT ? 1'b1 : !sl_is_idr;
 	reg [7:0]  trav_buf [0:TRAV_BUF_MAX-1];
 	reg [15:0] trav_buf_len;
 	reg        trav_buf_ready;   // closed buffer awaiting load
@@ -329,6 +332,7 @@ module stream_path #(
 	// Context latched at RBSP close so a later NAL cannot change walker inputs.
 	reg        trav_lat_nal_ref;
 	reg        trav_lat_deblock;
+	reg        trav_lat_is_idr;
 	reg signed [7:0] trav_lat_qp;
 	reg [2:0]  trav_lat_nref;
 	reg [4:0]  trav_lat_log2_fn;
@@ -355,6 +359,18 @@ module stream_path #(
 	wire [15:0] trav_w_res_off;
 	wire [15:0] trav_mb_count;
 	wire        trav_slice_done, trav_busy, trav_err, trav_unsup;
+	// I residual export → decode_stub sink
+	wire        trav_res_blk_valid;
+	wire        trav_res_blk_ready;
+	wire [15:0] trav_res_blk_mb_addr;
+	wire [7:0]  trav_res_blk_mb_x, trav_res_blk_mb_y;
+	wire [4:0]  trav_res_blk_idx;
+	wire        trav_res_blk_is_i16, trav_res_blk_is_luma;
+	wire [5:0]  trav_res_blk_qp;
+	wire [4:0]  trav_res_blk_max;
+	wire signed [15:0] trav_res_blk_coeff [0:15];
+	wire        trav_res_mb_end;
+	wire [15:0] trav_res_mb_end_addr;
 
 	wire trav_loading = (trav_ld_st == 2'd2);
 	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
@@ -371,6 +387,7 @@ module stream_path #(
 			trav_clear_r <= 1'b0;
 			trav_lat_nal_ref <= 1'b0;
 			trav_lat_deblock <= 1'b0;
+			trav_lat_is_idr <= 1'b0;
 			trav_lat_qp <= 8'sd26;
 			trav_lat_nref <= 3'd0;
 			trav_lat_log2_fn <= 5'd4;
@@ -381,33 +398,41 @@ module stream_path #(
 			trav_start_r <= 1'b0;
 			trav_clear_r <= 1'b0;
 
-			// Capture non-IDR slice RBSP into side buffer (single outstanding)
-			if (sl_cap_clear && !sl_is_idr) begin
+			// Capture slice RBSP (P always; IDR too under USE_REAL_REF_COMMIT)
+			if (sl_cap_clear && trav_cap_ok) begin
 				if (!trav_buf_ready && trav_ld_st == 2'd0) begin
 					trav_buf_len <= 16'd0;
 					trav_buf_active <= 1'b1;
+`ifdef VERILATOR
+					$display("TRAV_CAP_START idr=%0d", sl_is_idr);
+`endif
 				end
-			end else if (sl_cap_clear && sl_is_idr) begin
+			end else if (sl_cap_clear && !trav_cap_ok) begin
 				trav_buf_active <= 1'b0;
 			end
-			if (trav_buf_active && sl_cap_en && !sl_is_idr) begin
+			if (trav_buf_active && sl_cap_en && trav_cap_ok) begin
 				if (trav_buf_len < TRAV_BUF_MAX[15:0]) begin
 					trav_buf[trav_buf_len[12:0]] <= sl_cap_data;
 					trav_buf_len <= trav_buf_len + 16'd1;
 				end
 			end
-			// Close on true type-1 NAL end (not the 48 B header window)
-			if (trav_buf_active && sl_rbsp_eop && !sl_is_idr) begin
+			// Close on true NAL end (not the 48 B header window)
+			if (trav_buf_active && sl_rbsp_eop && trav_cap_ok) begin
 				trav_buf_active <= 1'b0;
 				trav_buf_ready <= 1'b1;
 				trav_lat_nal_ref <= sl_nal_ref_idc_nonzero;
 				trav_lat_deblock <= pps_deblock;
+				trav_lat_is_idr <= sl_is_idr;
 				trav_lat_qp <= pps_qp;
 				trav_lat_nref <= pps_nref[2:0];
 				trav_lat_log2_fn <= log2_fn;
 				trav_lat_poc <= poc_t;
 				trav_lat_mb_w <= sps_mb_w;
 				trav_lat_mb_h <= sps_mb_h;
+`ifdef VERILATOR
+				$display("TRAV_CAP_EOP idr=%0d len=%0d mb_w=%0d mb_h=%0d",
+					sl_is_idr, trav_buf_len, sps_mb_w, sps_mb_h);
+`endif
 			end
 
 			// clear → load → start handshake into walker
@@ -437,6 +462,9 @@ module stream_path #(
 				trav_start_r <= 1'b1;
 				trav_buf_ready <= 1'b0;
 				trav_ld_st <= 2'd0;
+`ifdef VERILATOR
+				$display("TRAV_START idr=%0d len=%0d", trav_lat_is_idr, trav_buf_len);
+`endif
 			end
 			endcase
 		end
@@ -452,7 +480,7 @@ module stream_path #(
 		.mb_width(trav_lat_mb_w), .mb_height(trav_lat_mb_h),
 		.log2_max_frame_num(trav_lat_log2_fn),
 		.poc_type(trav_lat_poc),
-		.is_idr_nal(1'b0),
+		.is_idr_nal(trav_lat_is_idr),
 		.nal_ref_idc_nonzero(trav_lat_nal_ref),
 		.pps_deblock_ctrl(trav_lat_deblock),
 		.pps_pic_init_qp(trav_lat_qp),
@@ -464,6 +492,19 @@ module stream_path #(
 		.uses_sub_mb(trav_w_uses_sub), .is_intra(trav_w_intra),
 		.cbp(trav_w_cbp), .mb_qp(trav_w_mb_qp),
 		.residual_bit_offset(trav_w_res_off),
+		.res_blk_valid(trav_res_blk_valid),
+		.res_blk_ready(trav_res_blk_ready),
+		.res_blk_mb_addr(trav_res_blk_mb_addr),
+		.res_blk_mb_x(trav_res_blk_mb_x),
+		.res_blk_mb_y(trav_res_blk_mb_y),
+		.res_blk_idx(trav_res_blk_idx),
+		.res_blk_is_i16(trav_res_blk_is_i16),
+		.res_blk_is_luma(trav_res_blk_is_luma),
+		.res_blk_qp(trav_res_blk_qp),
+		.res_blk_max_coeff(trav_res_blk_max),
+		.res_blk_coeff(trav_res_blk_coeff),
+		.res_mb_end(trav_res_mb_end),
+		.res_mb_end_addr(trav_res_mb_end_addr),
 		.mb_count(trav_mb_count),
 		.slice_done(trav_slice_done),
 		.busy(trav_busy), .error(trav_err), .unsupported(trav_unsup)
@@ -580,6 +621,20 @@ module stream_path #(
 		.trav_uses_sub_mb(trav_uses_sub),
 		.trav_intra(trav_intra),
 		.trav_slice_done(trav_slice_retire),
+		// I residual stream (real-ref I-slice recon sink)
+		.i_res_blk_valid(trav_res_blk_valid),
+		.i_res_blk_ready(trav_res_blk_ready),
+		.i_res_blk_mb_addr(trav_res_blk_mb_addr),
+		.i_res_blk_mb_x(trav_res_blk_mb_x),
+		.i_res_blk_mb_y(trav_res_blk_mb_y),
+		.i_res_blk_idx(trav_res_blk_idx),
+		.i_res_blk_is_i16(trav_res_blk_is_i16),
+		.i_res_blk_is_luma(trav_res_blk_is_luma),
+		.i_res_blk_qp(trav_res_blk_qp),
+		.i_res_blk_max_coeff(trav_res_blk_max),
+		.i_res_blk_coeff(trav_res_blk_coeff),
+		.i_res_mb_end(trav_res_mb_end),
+		.i_res_mb_end_addr(trav_res_mb_end_addr),
 		.first_mb_mvd_x(first_mb_mvd_x),
 		.first_mb_mvd_y(first_mb_mvd_y),
 		.residual_ok(sl_place_ok),

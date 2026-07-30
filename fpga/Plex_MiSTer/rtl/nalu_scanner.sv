@@ -1,8 +1,11 @@
 // Phase 3.3–3.3d: annex-B scan + typed counts + RBSP capture (SPS/PPS/slice).
 // EPB (00 00 03) stripped.
 // Slice header path: sl_cap_end after first 48 RBSP bytes (first-MB + sticky residual).
-// P-MB traversal path: sl_rbsp_eop at true type-1 NAL end (start code / EOF / MAX).
-// Splitting these prevents the next NAL's sl_cap_clear from aborting a late cap_end parse.
+// MB traversal path: sl_rbsp_eop at true type-1 *and* type-5 (IDR) NAL end
+// (start code / EOF / MAX). Full IDR RBSP is required for the I-slice residual
+// walk — the old scaffold stopped IDR store at 48 B and never pulsed eop.
+// Splitting hdr-end vs eop prevents the next NAL's sl_cap_clear from aborting
+// a late cap_end parse.
 
 module nalu_scanner #(
 	parameter int MAX_SLICE_RBSP = 8192
@@ -54,16 +57,16 @@ module nalu_scanner #(
 	reg       sl_idr_r;
 	reg       sl_ref_r;
 	reg       sl_hdr_ended; // sl_cap_end already issued for this slice
-	reg       sl_done;      // store complete (IDR@48 or type-1@eop/MAX)
-	// Last type-1 may lack a trailing start code — flush after FIFO idle.
+	reg       sl_done;      // full RBSP store complete (eop/MAX) for type-1/5
+	// Last VCL may lack a trailing start code — flush after FIFO idle.
 	reg [15:0] eof_idle;
 
 	wire [4:0] nal_t = rd_data[4:0];
-	// IDR stops storing at 48. Type-1 stores full RBSP up to MAX for the walker.
-	wire [13:0] sl_store_limit = sl_idr_r ? 14'd48 : MAX_SLICE_RBSP[13:0];
+	// Full RBSP up to MAX for both IDR and non-IDR VCL (I residual walk needs IDR).
+	wire [13:0] sl_store_limit = MAX_SLICE_RBSP[13:0];
 	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
 	                       !(cap_tgt == 2'd3 && cap_len >= sl_store_limit);
-	// open_cap for EOF: type-1 still filling past hdr end counts as open
+	// open_cap for EOF: VCL still filling past hdr end counts as open
 	wire       open_cap = (cap_tgt == 2'd3) && !sl_done && (cap_len != 14'd0);
 
 	always @(posedge clk) begin
@@ -188,24 +191,23 @@ module nalu_scanner #(
 						end
 						cap_len <= cap_len + 1'd1;
 						if (cap_tgt == 2'd3) begin
-							// Header window: first 48 B → slice_hdr_parser
+							// Header window: first 48 B → slice_hdr_parser (do not
+							// end the RBSP store — walker needs the full NAL).
 							if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
 								sl_cap_end <= 1'b1;
 								sl_is_idr  <= sl_idr_r;
 								sl_nal_ref_idc_nonzero <= sl_ref_r;
 								sl_hdr_ended <= 1'b1;
-								if (sl_idr_r)
-									sl_done <= 1'b1;
 							end
-							// Type-1 hard cap
-							if (!sl_idr_r && (cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
+							// Hard cap (IDR + type-1)
+							if ((cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
 								sl_rbsp_eop <= 1'b1;
 								sl_done <= 1'b1;
 							end
 						end
 					end
 				end else if (rd_data == 8'h01 && zrun >= 2'd2) begin
-					// Start code: end SPS/PPS; finish type-1 RBSP; hdr if short NAL
+					// Start code: end SPS/PPS; finish VCL RBSP; hdr if short NAL
 					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
 					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
 					else if (cap_tgt == 2'd3) begin
@@ -215,10 +217,8 @@ module nalu_scanner #(
 							sl_nal_ref_idc_nonzero <= sl_ref_r;
 							sl_hdr_ended <= 1'b1;
 						end
-						if (!sl_idr_r && !sl_done) begin
+						if (!sl_done) begin
 							sl_rbsp_eop <= 1'b1;
-							sl_done <= 1'b1;
-						end else if (sl_idr_r) begin
 							sl_done <= 1'b1;
 						end
 					end
@@ -249,10 +249,8 @@ module nalu_scanner #(
 									sl_is_idr  <= sl_idr_r;
 									sl_nal_ref_idc_nonzero <= sl_ref_r;
 									sl_hdr_ended <= 1'b1;
-									if (sl_idr_r)
-										sl_done <= 1'b1;
 								end
-								if (!sl_idr_r && (cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
+								if ((cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
 									sl_rbsp_eop <= 1'b1;
 									sl_done <= 1'b1;
 								end
@@ -272,11 +270,10 @@ module nalu_scanner #(
 							sl_nal_ref_idc_nonzero <= sl_ref_r;
 							sl_hdr_ended <= 1'b1;
 						end
-						if (!sl_idr_r && !sl_done) begin
+						if (!sl_done) begin
 							sl_rbsp_eop <= 1'b1;
 							sl_done <= 1'b1;
-						end else
-							sl_done <= 1'b1;
+						end
 					end
 					cap_tgt  <= 2'd0;
 					eof_idle <= 16'd0;
