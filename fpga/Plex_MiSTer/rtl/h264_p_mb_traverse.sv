@@ -88,6 +88,8 @@ module h264_p_mb_traverse #(
 	output reg  [3:0]  res_blk_pred_mode,
 	output reg         res_mb_end,         // pulse: residual schedule done for MB
 	output reg  [15:0] res_mb_end_addr,
+	// intra_chroma_pred_mode (0..3) latched with res_mb_end for I recon sink
+	output reg  [1:0]  res_mb_chroma_mode,
 
 	output reg  [15:0] mb_count,           // MBs emitted this slice
 	output reg         slice_done,         // pulse: walk finished
@@ -212,6 +214,7 @@ module h264_p_mb_traverse #(
 	reg is_intra_r;
 	reg is_i16_r;              // I_16x16: luma DC first, AC max=15
 	reg is_i_slice_r;          // slice_type 2 or 7 (I/SI all-I coding)
+	reg [1:0] chr_mode_r;      // intra_chroma_pred_mode 0..3 (ue)
 	reg [4:0] i4_idx;
 	reg [1:0] i16_mode_r;      // I_16x16 pred mode 0..3 from mb_type
 	// I4 modes in residual/scan order index 0..15 (same as blk4_x/y).
@@ -952,6 +955,7 @@ module h264_p_mb_traverse #(
 			is_intra_r <= 1'b0;
 			is_i16_r <= 1'b0;
 			is_i_slice_r <= 1'b0;
+			chr_mode_r <= 2'd0;
 			i4_idx <= 5'd0;
 			res_block_i <= 5'd0;
 			res_blocks_total <= 5'd0;
@@ -961,6 +965,7 @@ module h264_p_mb_traverse #(
 			res_blk_valid <= 1'b0;
 			res_mb_end <= 1'b0;
 			res_mb_end_addr <= 16'd0;
+			res_mb_chroma_mode <= 2'd0;
 			res_blk_mb_addr <= 16'd0;
 			res_blk_mb_x <= 8'd0;
 			res_blk_mb_y <= 8'd0;
@@ -1519,14 +1524,20 @@ module h264_p_mb_traverse #(
 					end
 				end
 				ST_CHR_UE: begin
-					// I_NxN: cbp me next. I_16x16: always mb_qp_delta then residual
-					// (luma DC always coded even when cbp_l=cbp_c=0).
+					// ue_value = intra_chroma_pred_mode (0..3). Next: I_NxN → cbp;
+					// I_16x16 → mb_qp_delta then residual (luma DC always coded).
 					// I-slice I_NxN has mb_type=0; P-slice I_NxN has mb_type=5.
-					if ((is_i_slice_r && (mb_type_r == 8'd0)) ||
-					    (!is_i_slice_r && (mb_type_r == 8'd5)))
-						start_ue(ST_CBP_INTRA_UE);
-					else
-						start_ue(ST_QP_UE);
+					if (ue_value > 32'd3) begin
+						unsupported <= 1'b1;
+						fail();
+					end else begin
+						chr_mode_r <= ue_value[1:0];
+						if ((is_i_slice_r && (mb_type_r == 8'd0)) ||
+						    (!is_i_slice_r && (mb_type_r == 8'd5)))
+							start_ue(ST_CBP_INTRA_UE);
+						else
+							start_ue(ST_QP_UE);
+					end
 				end
 				ST_CBP_INTRA_UE: begin
 					if (ue_value >= 32'd48) begin
@@ -1562,12 +1573,10 @@ module h264_p_mb_traverse #(
 							end
 						end
 						zero_chr_tc_mb();
-						if (is_i_slice_r) begin
-							res_mb_end <= 1'b1;
-							res_mb_end_addr <= curr_mb;
-							st <= ST_RES_MB_END;
-						end else
-							st <= ST_NEXT_MB;
+						res_mb_end <= 1'b1;
+						res_mb_end_addr <= curr_mb;
+						res_mb_chroma_mode <= chr_mode_r;
+						st <= ST_RES_MB_END;
 					end else begin
 						// I_16x16 always enters residual (DC); inter if cbp!=0
 						res_block_i <= 5'd0;
@@ -1581,39 +1590,37 @@ module h264_p_mb_traverse #(
 						// If chroma AC not coded, still zero neighbour map once.
 						if (res_chroma != 2'd2)
 							zero_chr_tc_mb();
-						// Notify recon sink that this MB's residual is complete (I only).
-						if (is_i_slice_r) begin
-							res_mb_end <= 1'b1;
-							res_mb_end_addr <= curr_mb;
-							// Commit right/bottom edge modes for next MBs.
-							// I_NxN: real modes. I16/other: host treats neighbour as
-							// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
-							begin : commit_i4_edge_modes
-								integer ei;
-								reg [15:0] ax;
-								for (ei = 0; ei < 4; ei = ei + 1) begin
+						// Residual complete: always pulse end (I sink + P chroma apply).
+						res_mb_end <= 1'b1;
+						res_mb_end_addr <= curr_mb;
+						res_mb_chroma_mode <= chr_mode_r;
+						// Commit right/bottom edge modes for next MBs (I only).
+						// I_NxN: real modes. I16/other: host treats neighbour as
+						// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
+						if (is_i_slice_r) begin : commit_i4_edge_modes
+							integer ei;
+							reg [15:0] ax;
+							for (ei = 0; ei < 4; ei = ei + 1) begin
+								if (!is_i16_r) begin
+									i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
+									i4_mode_left_v[ei] <= i4_mode_spat_v[{ei[1:0], 2'd3}];
+								end else begin
+									i4_mode_left[ei] <= 4'd2;
+									i4_mode_left_v[ei] <= 1'b1;
+								end
+								ax = {curr_x[13:0], 2'b00} + ei[15:0];
+								if (ax < 16'd256) begin
 									if (!is_i16_r) begin
-										i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
-										i4_mode_left_v[ei] <= i4_mode_spat_v[{ei[1:0], 2'd3}];
+										i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
+										i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
 									end else begin
-										i4_mode_left[ei] <= 4'd2;
-										i4_mode_left_v[ei] <= 1'b1;
-									end
-									ax = {curr_x[13:0], 2'b00} + ei[15:0];
-									if (ax < 16'd256) begin
-										if (!is_i16_r) begin
-											i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
-											i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
-										end else begin
-											i4_mode_top[ax[7:0]] <= 4'd2;
-											i4_mode_top_v[ax[7:0]] <= 1'b1;
-										end
+										i4_mode_top[ax[7:0]] <= 4'd2;
+										i4_mode_top_v[ax[7:0]] <= 1'b1;
 									end
 								end
 							end
-							st <= ST_RES_MB_END;
-						end else
-							st <= ST_NEXT_MB;
+						end
+						st <= ST_RES_MB_END;
 					end else if (!res_slot_coded(res_block_i)) begin
 						if (is_i16_r) begin
 							if (res_block_i >= 5'd1 && res_block_i <= 5'd16)
@@ -1720,9 +1727,9 @@ module h264_p_mb_traverse #(
 								res_hold_y <= curr_y[7:0];
 								for (ci = 0; ci < 16; ci = ci + 1)
 									res_hold_coeff[ci] <= cavlc_coeff[ci];
-								// Export only on I/IDR slices (P residual still
-								// bit-aligned here; recon owned by P path).
-								if (is_i_slice_r) begin
+								// I: export all slots (luma+chroma). P: export chroma only
+								// (P luma residual still MC-path; closes UV gap).
+								if (is_i_slice_r || !is_luma_slot) begin
 									res_blk_valid <= 1'b1;
 									res_blk_mb_addr <= curr_mb;
 									res_blk_mb_x <= curr_x[7:0];
@@ -1736,6 +1743,8 @@ module h264_p_mb_traverse #(
 										res_blk_pred_mode <= {2'd0, i16_mode_r};
 									else if (!is_i16_r && res_block_i < 5'd16)
 										res_blk_pred_mode <= i4_mode_scan[res_block_i[3:0]];
+									else if (!is_luma_slot)
+										res_blk_pred_mode <= {2'd0, chr_mode_r};
 									else
 										res_blk_pred_mode <= 4'd0;
 									for (ci = 0; ci < 16; ci = ci + 1)

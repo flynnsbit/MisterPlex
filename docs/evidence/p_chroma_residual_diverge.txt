@@ -1,0 +1,42 @@
+P-chroma residual diverge (post-rebase onto 1c7c5305 / serial-IQ + M10K)
+=======================================================================
+BASE_SHA (rebase onto): 1c7c5305
+PRE_REBASE_TAG: chroma-pre-rebase-ad30babe
+CLIP: tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 (320x12f)
+
+PRE-REGISTER (parent-approved):
+  PRE inter_full 1850..1939/3300  (UV gap ~166 below luma-exact 1939)
+  Mechanism: P res_blk_valid historically 0 so residual ~MC-only; residual ON should not hurt
+
+POST-REBASE MEASURE (dirty tree before this commit):
+  residual ON:  inter_full 1765/3300
+  residual OFF (FAULT_SKIP RED twin): 1773/3300
+  MISS: ON is 8 worse than OFF; residual path is load-bearing and net-negative
+
+STALE residual class (FIXED this commit):
+  Symptom: cbp_c=0 / P_Skip MBs stored nonzero UV residual from prior MB
+  Cause: live p_chr_res_* + NBA clear losing to ST_APPLY_PX; next MB stored stale plane
+  Fix:
+    - h264_p_chroma_res_apply: clear_mb highest priority before FSM
+    - decode_stub: snapshot residual at mb_res_done (p_chr_snap_*)
+    - apply only if lat_p_cbp[5:4]!=0 && p_chr_snap_vld
+    - !p_chr_busy gates next-MB accept
+  Evidence after fix: cbp_c=0 recon==pred; regressed set 14->9
+
+REMAINING class (OPEN):
+  9 MBs (e.g. later-frame addr 109/108/131/154): host UV residual all-0 (gold-OFF),
+  Y ON==OFF exact, RTL cbp_c!=0 + large residual applied.
+  First diverge stage: spatial residual != 0 vs host 0.
+  Host bit-accurate P CAVLC dump still incomplete (docs/evidence/dump_p_mb_chroma_res.cpp).
+  UNKNOWN root — need host cbp/coeffs vs RTL at one MB.
+
+make unit (quiet tree, direct capture):
+  make unit; echo "true rc=$?"
+  unit_true_rc=0
+  ok_line_count=77
+  RTL lint: PASS (sink WIDTHEXPAND=6 WIDTHTRUNC=6 <= baseline 8/6; p_chroma 0)
+
+INTRA held post-rebase: 300/300 (clip1) — not re-measured in this stamp; prior measure logs
+  docs/evidence/rebase_measure_320.log / rebase_red_320.log
+
+NO Quartus / NO device access this lane.

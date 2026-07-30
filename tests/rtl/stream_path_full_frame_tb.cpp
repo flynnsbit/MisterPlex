@@ -1016,10 +1016,9 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("scanner did not drain bytes after NAL type " + std::to_string(n.type));
             if (n.type == 5 || n.type == 1) {
                 ++expectedFrames;
-                // Serial IQ/sink + traverse window load need headroom beyond combo path.
-                // Prior combo real-ref frame0 paint ~512k cy @320x240; serial adds
-                // ~30cy/4x4. Budget: max(2.5e6, W*H*20) keeps 624 clip safe too.
-                const int frameWaitCycles = std::max(2500000, args.width * args.height * 20);
+                // Serial IQ + residual-before-fetch P chroma + M10K win load.
+                // Residual-before-fetch needs tens of M cycles/frame @320.
+                const int frameWaitCycles = std::max(50000000, args.width * args.height * 256);
                 if (!sim.waitForFrames(expectedFrames, frameWaitCycles))
                     throw std::runtime_error("stream_path did not emit frame " + std::to_string(expectedFrames));
             } else {

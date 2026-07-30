@@ -31,6 +31,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_mb_traverse.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_byte_ram_sp.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i16_dc_hadamard.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i16_dc_hadamard_serial.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_chroma_qp.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_chroma_dc_hadamard_inv.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_p_chroma_res_apply.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_i_res_recon_sink.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_recon_frame_store.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dpb.sv

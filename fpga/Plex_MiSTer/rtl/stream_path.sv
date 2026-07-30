@@ -237,6 +237,7 @@ module stream_path #(
 	wire pps_busy, pps_cabac, pps_deblock;
 	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
 	wire signed [7:0] pps_qp;
+	wire signed [4:0] pps_chroma_qp_off;
 
 	pps_parser pps (
 		.clk(clk), .reset(reset | flush),
@@ -244,7 +245,8 @@ module stream_path #(
 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
 		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
 		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
-		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
+		.pic_init_qp(pps_qp), .chroma_qp_index_offset(pps_chroma_qp_off),
+		.deblock_ctrl(pps_deblock), .busy(pps_busy)
 	);
 
 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
@@ -384,6 +386,7 @@ module stream_path #(
 	wire signed [15:0] trav_res_blk_coeff [0:15];
 	wire        trav_res_mb_end;
 	wire [15:0] trav_res_mb_end_addr;
+	wire [1:0]  trav_res_mb_chroma_mode;
 
 	wire trav_loading = (trav_ld_st == 2'd2);
 	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
@@ -521,6 +524,7 @@ module stream_path #(
 		.res_blk_coeff(trav_res_blk_coeff),
 		.res_mb_end(trav_res_mb_end),
 		.res_mb_end_addr(trav_res_mb_end_addr),
+		.res_mb_chroma_mode(trav_res_mb_chroma_mode),
 		.mb_count(trav_mb_count),
 		.slice_done(trav_slice_done),
 		.busy(trav_busy), .error(trav_err), .unsupported(trav_unsup)
@@ -533,6 +537,7 @@ module stream_path #(
 	reg         hold_skip;
 	reg [2:0]   hold_pm, hold_pc;
 	reg         hold_sub, hold_intra;
+	reg [5:0]   hold_cbp;
 	wire        trav_mb_valid = hold_v;
 	wire [15:0] trav_mb_addr = hold_addr;
 	wire [7:0]  trav_mb_x = hold_x;
@@ -542,6 +547,7 @@ module stream_path #(
 	wire [2:0]  trav_part_count = hold_pc;
 	wire        trav_uses_sub = hold_sub;
 	wire        trav_intra = hold_intra;
+	wire [5:0]  trav_cbp = hold_cbp;
 
 `ifdef VERILATOR
 	// Delivered-MB address bitmap (stub accepts). Proves unique coverage
@@ -589,6 +595,7 @@ module stream_path #(
 				hold_pc <= trav_w_part_count;
 				hold_sub <= trav_w_uses_sub;
 				hold_intra <= trav_w_intra;
+				hold_cbp <= trav_w_cbp;
 `ifdef VERILATOR
 				if (trav_w_addr < 16'd1200) begin
 					if (deliv_mb_bits[trav_w_addr[10:0]])
@@ -689,6 +696,7 @@ module stream_path #(
 		.trav_part_count(trav_part_count),
 		.trav_uses_sub_mb(trav_uses_sub),
 		.trav_intra(trav_intra),
+		.trav_cbp(trav_cbp),
 		.trav_slice_done(trav_slice_retire),
 		// I residual stream (real-ref I-slice recon sink)
 		.i_res_blk_valid(trav_res_blk_valid),
@@ -705,6 +713,8 @@ module stream_path #(
 		.i_res_blk_coeff(trav_res_blk_coeff),
 		.i_res_mb_end(trav_res_mb_end),
 		.i_res_mb_end_addr(trav_res_mb_end_addr),
+		.i_res_mb_chroma_mode(trav_res_mb_chroma_mode),
+		.pps_chroma_qp_index_offset(pps_chroma_qp_off),
 		.first_mb_mvd_x(first_mb_mvd_x),
 		.first_mb_mvd_y(first_mb_mvd_y),
 		.residual_ok(sl_place_ok),

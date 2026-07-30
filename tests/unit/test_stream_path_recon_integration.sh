@@ -40,6 +40,9 @@ RTL_RAM="$ROOT/fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv"
 RTL_I16="$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv"
 RTL_I16S="$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv"
 RTL_DQS="$ROOT/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv"
+RTL_CQP="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv"
+RTL_CDC="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv"
+RTL_PCHR="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_chroma_res_apply.sv"
 RTL_ISINK="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv"
 RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
 RTL_CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
@@ -56,7 +59,8 @@ BUILD="$ROOT/build/verilator/stream_path_recon_integration"
 BUILD_FAULT="$ROOT/build/verilator/stream_path_recon_integration_fault"
 
 for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
-         "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" "$RTL_ISINK" "$RTL_INTRA" \
+         "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" \
+         "$RTL_CQP" "$RTL_CDC" "$RTL_PCHR" "$RTL_ISINK" "$RTL_INTRA" \
          "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
@@ -68,6 +72,7 @@ for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv r
            rtl/h264_recon_frame_store.sv \
            rtl/h264_p_mb_traverse.sv rtl/h264_byte_ram_sp.sv \
            rtl/h264_i16_dc_hadamard.sv rtl/h264_i16_dc_hadamard_serial.sv rtl/h264_dequant4x4_serial.sv \
+           rtl/h264_chroma_qp.sv rtl/h264_chroma_dc_hadamard_inv.sv rtl/h264_p_chroma_res_apply.sv \
            rtl/h264_i_res_recon_sink.sv \
            rtl/h264_intra_pred.sv \
            rtl/h264_cavlc_residual.sv \
@@ -90,14 +95,16 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
   --top-module stream_path_recon_integration_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" \
+  "$RTL_CQP" "$RTL_CDC" "$RTL_PCHR" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \
   --top-module stream_path_recon_integration_tb_top -GFAULT_RECON_SIG_ZERO=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_RAM" "$RTL_I16" "$RTL_I16S" "$RTL_DQS" \
+  "$RTL_CQP" "$RTL_CDC" "$RTL_PCHR" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
 
 "$BUILD/Vstream_path_recon_integration_tb_top" normal "$BITSTREAM" "$GOLD"
 "$BUILD/Vstream_path_recon_integration_tb_top" escape-red "$BITSTREAM" "$GOLD"
