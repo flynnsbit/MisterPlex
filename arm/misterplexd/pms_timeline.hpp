@@ -31,13 +31,19 @@ struct PmsTimelineHttpRequest {
     std::vector<std::pair<std::string, std::string>> headers;
 };
 
+// Sink result: ok must reflect real HTTP 2xx (not body non-empty).
+struct PmsTimelineSinkResult {
+    bool ok = false;
+    int httpStatus = 0; // 0 = transport/unknown; else HTTP status
+};
+
 bool buildPmsTimelineHttpRequest(const PmsTimelineSession& session, const std::string& state,
                                  int64_t timeMs, int64_t durationMs,
                                  PmsTimelineHttpRequest& out);
 
 class PmsTimelineReporter {
 public:
-    using HttpSink = std::function<bool(const PmsTimelineHttpRequest&)>;
+    using HttpSink = std::function<PmsTimelineSinkResult(const PmsTimelineHttpRequest&)>;
     using LogFn = std::function<void(const std::string&)>;
 
     static constexpr std::chrono::seconds kPlayingCadence{10};
@@ -53,6 +59,9 @@ public:
     void beginSession(const PmsTimelineSession& session, int64_t timeMs, int64_t durationMs);
     void reportState(const std::string& state, int64_t timeMs, int64_t durationMs);
     void endSession(int64_t timeMs, int64_t durationMs);
+    // Refresh auth for the active session (cast may send a newer token on later
+    // playMedia/seek/poll). No-op when inactive or token empty.
+    void updateToken(const std::string& token);
     void stopAndFlush();
 
 private:

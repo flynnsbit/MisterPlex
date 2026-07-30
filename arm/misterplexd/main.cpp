@@ -556,7 +556,12 @@ int main(int argc, char** argv) {
                                      const std::string& preferredBase, int64_t off,
                                      const misterplex::WeakLadder& weakForPlay)
         -> std::pair<misterplex::ResolveResult, std::string> {
-        std::string token = req.token.empty() ? confToken : req.token;
+        // Cast-pinned host must not authenticate with conf token (different PMS).
+        std::string token;
+        if (!req.token.empty())
+            token = req.token;
+        else if (req.address.empty())
+            token = confToken;
         // Cast-selected base wins when address present.
         std::string selected =
             misterplex::buildPlexBase(req.protocol, req.address, req.port, preferredBase);
@@ -765,12 +770,30 @@ int main(int argc, char** argv) {
             }
             lastPlay = bound;
             lastBase = base;
-            lastToken = bound.token.empty() ? confToken : bound.token;
+            if (!bound.token.empty())
+                lastToken = bound.token;
+            else if (req.address.empty() && !confToken.empty())
+                lastToken = confToken;
         }
 
+        // Timeline must target the server that issued playMedia, with THAT request's
+        // credentials. Mixing cast host (e.g. *.plex.direct, machine 1cdd…) with
+        // conf PLEX_TOKEN (node-worker1 / .41, machine 4edd…) yields HTTP 401 while
+        // the old !body.empty() sink still logged "update ok"
+        // (docs/evidence/timeline-stuck-20260730T173000Z).
+        std::string timelineToken;
+        const char* tokenSrc = "none";
+        if (!bound.token.empty()) {
+            timelineToken = bound.token;
+            tokenSrc = "cast";
+        } else if (req.address.empty() && !confToken.empty()) {
+            // Conf token only when cast did not pin a foreign host.
+            timelineToken = confToken;
+            tokenSrc = "conf";
+        }
         misterplex::PmsTimelineSession timelineSession;
         timelineSession.baseUrl = base;
-        timelineSession.token = bound.token.empty() ? confToken : bound.token;
+        timelineSession.token = timelineToken;
         timelineSession.key = bound.key;
         timelineSession.ratingKey = bound.ratingKey;
         timelineSession.playQueueItemId = bound.playQueueItemId;
@@ -779,6 +802,9 @@ int main(int argc, char** argv) {
         timelineSession.product = "MiSTerPlex";
         timelineSession.version = "0.2.0";
         timelineSession.deviceName = name;
+        std::fprintf(stderr,
+                     "misterplexd: pms timeline session base=%s token_src=%s ratingKey=%s\n",
+                     base.c_str(), tokenSrc, timelineSession.ratingKey.c_str());
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 
         // resolved.playable keeps the real token for FFmpeg; only the log line is scrubbed.
@@ -888,6 +914,17 @@ int main(int argc, char** argv) {
     // playMedia HTTP thread: bump playGen immediately so in-flight doPlay aborts
     // before the new onPlay_ thread even schedules (cast A→B race).
     comp.setPlayQueued([&]() { ++playGen; });
+
+    // Keep PMS /:/timeline auth in lock-step with cast-supplied tokens.
+    comp.setTokenUpdate([&](const std::string& tok) {
+        if (tok.empty())
+            return;
+        {
+            std::lock_guard<std::mutex> lock(sessionMu);
+            lastToken = tok;
+        }
+        pmsTimeline.updateToken(tok);
+    });
 
     // Plant lastPlay immediately so skipNext/skipPrevious during async resolve use the
     // new cast's queue bind — not the previous title's lastPlay (P4-SCRUB race).

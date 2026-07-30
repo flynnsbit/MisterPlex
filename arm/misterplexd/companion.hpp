@@ -44,6 +44,10 @@ public:
     // Fired on the HTTP thread as soon as playMedia plants scrubber state (before
     // the async onPlay_ thread). Used to ++playGen and kill in-flight resolve.
     void setPlayQueued(CtrlFn f) { onPlayQueued_ = std::move(f); }
+    // Cast may present a fresher X-Plex-Token / token= on later player requests
+    // (seek, second playMedia, some polls). Forward to PMS timeline session.
+    using TokenFn = std::function<void(const std::string& token)>;
+    void setTokenUpdate(TokenFn f) { onTokenUpdate_ = std::move(f); }
     void setPause(CtrlFn f) { onPause_ = std::move(f); }
     void setResume(CtrlFn f) { onResume_ = std::move(f); }
     void setStop(CtrlFn f) { onStop_ = std::move(f); }
@@ -113,6 +117,7 @@ private:
     LogFn log_;
     PlayFn onPlay_;
     CtrlFn onPlayQueued_;
+    TokenFn onTokenUpdate_;
     CtrlFn onPause_;
     CtrlFn onResume_;
     CtrlFn onStop_;

@@ -149,6 +149,22 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 
 // Best-effort PMS GET using the same curl-based Plex client identity as resolve.
 // Headers are name/value pairs; response body is discarded by callers.
+// Success is HTTP 2xx only — a non-empty 401 HTML body is a failure (not "ok").
+struct PlexHttpNoBodyResult {
+    bool ok = false;
+    int httpStatus = 0; // 0 = transport/parse failure; otherwise curl %{http_code}
+};
+
+// True iff status is an HTTP success (2xx). status<=0 is never ok.
+bool plexHttpStatusOk(int httpStatus);
+
+// Parse curl -w '%{http_code}' output (trims whitespace). Returns 0 if not a 3-digit code.
+int parseCurlHttpCode(const std::string& curlWriteOut);
+
+PlexHttpNoBodyResult plexHttpGetNoBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers = {},
+    int timeoutSec = 4);
+
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers = {},
                        int timeoutSec = 4);

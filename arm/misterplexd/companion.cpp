@@ -145,11 +145,13 @@ PlayRequest parsePlayRequest(const std::string& req) {
     pr.address = pctDecode(queryParam(req, "address"));
     pr.protocol = queryParam(req, "protocol");
     pr.port = queryParam(req, "port");
-    pr.token = queryParam(req, "token");
+    // Prefer lowercase token= (Plex Web cast). Do not substring-match inside
+    // other keys. Always percent-decode — cast tokens may be URL-encoded.
+    pr.token = pctDecode(queryParam(req, "token"));
     if (pr.token.empty())
-        pr.token = queryParam(req, "X-Plex-Token");
+        pr.token = pctDecode(queryParam(req, "X-Plex-Token"));
     if (pr.token.empty())
-        pr.token = headerValue(req, "X-Plex-Token");
+        pr.token = pctDecode(headerValue(req, "X-Plex-Token"));
     pr.serverMachineId = queryParam(req, "machineIdentifier");
     pr.offsetMs = parseOffsetMs(req, &pr.offsetPresent);
     if (pr.containerKey.find("/playQueues/") != std::string::npos) {
@@ -692,6 +694,24 @@ void Companion::httpLoop() {
         if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
             // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
             log("HTTP IN " + requestLine(req));
+
+        // Refresh PMS timeline auth from cast-bearing player requests. Device
+        // evidence: a live session token can 200 once then 401 later — pick up
+        // newer tokens from subsequent playMedia/seek/poll without restarting.
+        if (onTokenUpdate_ && req.find("/player/") != std::string::npos) {
+            std::string tok = pctDecode(queryParam(req, "token"));
+            if (tok.empty())
+                tok = pctDecode(queryParam(req, "X-Plex-Token"));
+            if (tok.empty())
+                tok = pctDecode(headerValue(req, "X-Plex-Token"));
+            if (!tok.empty()) {
+                try {
+                    onTokenUpdate_(tok);
+                } catch (...) {
+                    log("token update handler exception");
+                }
+            }
+        }
 
         {
             std::lock_guard<std::mutex> lock(mu_);
