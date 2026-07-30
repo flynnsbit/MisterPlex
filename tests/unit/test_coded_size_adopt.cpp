@@ -1,6 +1,7 @@
 // Runtime policy for conf/argv coded-size adoption (parse + lab gate).
 // Complements geometry_type_ok (compile-time tags) and the compile-fail suite.
 #include "libmisterplex/coded_size.hpp"
+#include "libmisterplex/conf_keys.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
 
 #include <cstdio>
@@ -77,6 +78,64 @@ int main() {
 
     // Frame-store reject (too large).
     CHECK_ST(parseCodedSizeString("1920x1080"), CodedSizeParseStatus::NotFrameStoreAccepted);
+
+    // Conf-text adoption: key order independent; CRLF allow must still truthy.
+    // 640x480 → presented_mistake even with allow.
+    {
+        const char* t =
+            "DECODE=640x480\n"
+            "DECODE_ALLOW_LAB_480P=1\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(a.allow_lab_480p);
+        CHECK(a.decode_key_present);
+        CHECK_ST(a.result, CodedSizeParseStatus::PresentedMistake);
+        CHECK(a.result.status != CodedSizeParseStatus::Ok);
+    }
+    // 624x480 without allow → blocked (DECODE before ALLOW in file).
+    {
+        const char* t =
+            "DECODE=624x480\n"
+            "DECODE_ALLOW_LAB_480P=0\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(!a.allow_lab_480p);
+        CHECK_ST(a.result, CodedSizeParseStatus::Lab480pBlocked);
+        CHECK(a.result.size == kDefaultCodedDecodeSize);
+    }
+    // 624x480 with allow AFTER DECODE → adopted (order A).
+    {
+        const char* t =
+            "DECODE=624x480\n"
+            "DECODE_ALLOW_LAB_480P=1\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(a.allow_lab_480p);
+        CHECK_ST(a.result, CodedSizeParseStatus::Ok);
+        CHECK(a.result.size == plex480pCodedDecodeSize());
+    }
+    // 624x480 with allow BEFORE DECODE → adopted (order B).
+    {
+        const char* t =
+            "DECODE_ALLOW_LAB_480P=1\n"
+            "DECODE=624x480\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(a.allow_lab_480p);
+        CHECK_ST(a.result, CodedSizeParseStatus::Ok);
+        CHECK(a.result.size == plex480pCodedDecodeSize());
+    }
+    // CRLF + trailing CR on allow value (Windows conf / getline leftover).
+    {
+        const char* t =
+            "DECODE=624x480\r\n"
+            "DECODE_ALLOW_LAB_480P=1\r\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(a.allow_lab_480p);
+        CHECK_ST(a.result, CodedSizeParseStatus::Ok);
+        CHECK(a.result.size == plex480pCodedDecodeSize());
+    }
+    // confTruthy trim contract (loadConf path uses the same helper).
+    CHECK(confTruthy("1\r"));
+    CHECK(confTruthy(" true "));
+    CHECK(!confTruthy("1x"));
+    CHECK(trimConfValue(" 624x480\r") == "624x480");
 
     // CodedSize is not brace-constructible from two bare ints (tag required).
     static_assert(!std::is_constructible<CodedSize, int, int>::value,

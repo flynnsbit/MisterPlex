@@ -1,10 +1,10 @@
 // FFmpeg -vf construction for misterplexd STREAM=0 rawvideo path.
 // Pure header (no I/O): unit-tested so filter policy cannot drift silently.
 //
-// Product daemon default is SkipIdentity with fast_bilinear sws_flags: omit
-// scale+pad only when expected delivery WxH is known and equals the coded bank
-// (or ASSUME_MATCH). Unknown delivery still emits the historical
-// scale=W:H:force_original_aspect_ratio=decrease,pad=... graph. parseFfmpegScaleMode
+// Product daemon default is SkipIdentity with empty sws_flags: omit scale+pad
+// when expected delivery WxH is known and equals the coded bank (or ASSUME_MATCH).
+// Matching PMS videoResolution → no residual scale on the shipping path.
+// Unknown delivery still emits historical scale+pad. parseFfmpegScaleMode
 // empty/unknown → Always (safe for callers that omit conf).
 #pragma once
 

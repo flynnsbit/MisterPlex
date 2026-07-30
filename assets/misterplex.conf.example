@@ -25,12 +25,18 @@
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
 # FFMPEG=/media/fat/misterplex/bin/ffmpeg
 DECODE=320x240
-# PMS universal transcode profile. Content tier (OSD O[4] when OSD_CONTROL=1,
-# else DECODE) is the source of truth for both the PMS ladder and the coded bank.
-# Do NOT set TRANSCODE_PROFILE larger than DECODE (e.g. 480p + DECODE=320x240):
-# the daemon reconciles the ladder down to DECODE at startup and logs WARN.
-# 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps (not 640x480 —
-# 640 is presented scanout only). Leave unset to follow DECODE / OSD.
+# DECODE is the coded decode bank (product default 320x240). Lab 624x480 needs
+# DECODE_ALLOW_LAB_480P=1 (order of the two keys does not matter). 640x480 is
+# presented scanout only and is always rejected.
+# DECODE_ALLOW_LAB_480P=0
+#
+# TRANSCODE_PROFILE names a PMS ladder entry (bitrate/quality/H.264 caps + a
+# default videoResolution). It is NOT "delivered geometry by itself". Each play
+# sets videoResolution= from the content tier (OSD O[4] when OSD_CONTROL=1, else
+# DECODE). Startup banner prints pms_request_geometry= and decode_bank= separately
+# so profile_name=480p never looks like a second geometry next to decode=320x240.
+# 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps (not 640x480).
+# Leave unset to follow DECODE / OSD.
 # TRANSCODE_PROFILE=240p
 # TRANSCODE_PROFILE=480p
 # Legacy per-field overrides (kept for lab experiments):
@@ -43,8 +49,8 @@ DECODE=320x240
 #                     direct path: library Media WxH when known; unknown → scale)
 #   off            — never scale (lab only)
 # FFMPEG_SCALE=skip_identity
-# Residual scale algo (product default fast_bilinear — cheapest quality sws flag;
-# safety-net only after PMS was asked for the coded bank). Override if needed:
+# Residual scale algo only when scale still runs (no product default — shipping
+# path with matching PMS videoResolution omits the filter). Opt-in example:
 # FFMPEG_SWS_FLAGS=fast_bilinear
 # Lab only: with skip_identity, trust PMS delivered coded WxH without dims.
 # FFMPEG_SCALE_ASSUME_MATCH=0

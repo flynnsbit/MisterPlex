@@ -75,8 +75,9 @@ public:
     // only when expected delivery WxH is known and equals coded; unknown still scales).
     // Conf FFMPEG_SCALE=always|skip_identity|off. See libmisterplex/ffmpeg_vf.hpp.
     void setFfmpegScaleMode(std::string mode);
-    // scale flags= token. Product main defaults to fast_bilinear for residual
-    // scales; empty here = ffmpeg default algo. Conf FFMPEG_SWS_FLAGS.
+    // Optional scale flags= token. Empty = ffmpeg default algo when residual
+    // scale runs. Conf FFMPEG_SWS_FLAGS (no product default — shipping path
+    // usually skip_identity-omits the filter entirely).
     void setFfmpegSwsFlags(std::string flags);
     // When scale mode is skip_identity and source dims are unknown, assume PMS already
     // delivered coded WxH (lab only). Conf FFMPEG_SCALE_ASSUME_MATCH=1.
@@ -232,7 +233,7 @@ private:
     int subtitleStreamIndex_ = 0;
     // FFmpeg -vf scale policy (product default skip_identity — see setFfmpegScaleMode).
     std::string ffmpegScaleMode_ = "skip_identity";
-    // Product main sets fast_bilinear; empty = no :flags= (ffmpeg default algo).
+    // Empty = no :flags= (ffmpeg default algo) when residual scale runs.
     std::string ffmpegSwsFlags_;
     bool ffmpegScaleAssumeMatch_ = false;
     int ffmpegScaleSourceW_ = 0;
