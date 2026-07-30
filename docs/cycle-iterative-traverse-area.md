@@ -18,6 +18,11 @@ Saying “traverse is 1.18M ALMs” is imprecise; say **1.18M comb ALUTs**, chip
 
 **Worked example:** serial `h264_mc_luma_qpel.sv` — combo path **~318k area class → ~484 ALMs (~650×)** by killing runtime-indexed fabric arrays and sharing one datapath.
 
+**MEASURED REAL MODULE (coord-map d57f002, true rc=0):** `h264_byte_ram_sp` **M10K YES**
+(65536 bits, Simple Dual Port, Info 276029). Traverse **9,167 comb ALUTs** (self 7,079)
+down from **1,180,271**. Whole ALMs needed **63,199** (was 1,241,952). See
+`docs/coord-map-d57f002-ALMS.txt`. Quartus needs `win_k` zero-extend patch (Error 10232).
+
 **MEASURED (2026-07-30 m10k-infer micro-probe):** textbook 1R1W registered **DOES infer** M10K
 (65,536 bits, 29 ALMs, `true rc=0`). Async read and 64-wide dynamic window **do not**
 (0 bits, ~46k ALMs). Dual registered reads infer but **replicate** (131,072 bits).

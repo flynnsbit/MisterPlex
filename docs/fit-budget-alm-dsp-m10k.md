@@ -176,7 +176,18 @@ See `docs/cycle-iterative-sink-area.md` §0.
 
 ---
 
-## 8. Exact-source gap (open, non-blocking)
+## 8. Exact-source gap — CLOSED at d57f002
+
+coord-map-d57f002 (`docs/coord-map-d57f002-ALMS.txt`): freeze **d57f002** re-scored
+300/300 and 1170/1170 on the same tree that mapped.
+- `h264_byte_ram_sp` **M10K inferred** (65536 bits, Simple Dual Port) — RAM summary, not ALM guess
+- traverse **9,167 comb ALUTs** (self 7,079) vs map2d **1,180,271** (~129×)
+- whole ALMs needed **63,199** vs **1,241,952** (was 29.6× device → **1.51×**)
+- DSP still **149**; sink **38,687 comb + 64 DSP** still blocks fit
+- ≤3000 ALM gate: entity ALMs absent at map; self comb 7079 → not a clean ALM PASS
+
+## 8b. Prior exact-source note (attrs-only map2b) — superseded
+
 
 coord-map2b traverse/sink are **not byte-identical** to score SHAs:
 - `6dc5993` traverse sha256 `d076328e…` vs mapped `d5245c65…` — **only** added `(* ramstyle="M10K" *)` on rbsp/i4_mode_top/tc_top (and those still **uninferred**).
