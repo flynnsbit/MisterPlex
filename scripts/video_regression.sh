@@ -62,7 +62,7 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-HYBRID_DAEMON_MD5=25f6db43bc90b4c63ffcffa031056b58
+HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.

@@ -154,22 +154,20 @@ SUPLOG=\$ROOT/misterplexd_supervise.log
 backoff=2
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # kill -9 / crash with no handler cannot run daemon atexit. Before every spawn
-# and after every exit, SIGCONT any stopped /media/fat/MiSTer so F12/OSD return.
+# and after every exit, SIGCONT any stopped product Main so F12/OSD return.
+# argv0 must be EXACTLY /media/fat/MiSTer (first cmdline token) — no substring.
 resume_stopped_main() {
   for d in /proc/[0-9]*; do
     [ -r "\$d/cmdline" ] || continue
-    cmd=\$(tr '\\0' ' ' < "\$d/cmdline" 2>/dev/null) || continue
-    case "\$cmd" in
-      /media/fat/MiSTer\ *|*/MiSTer\ *)
-        p=\${d#/proc/}
-        # /proc/pid/stat state is after last ')'
-        st=\$(tr ')' '\\n' < "\$d/stat" 2>/dev/null | tail -n 1 | awk '{print \$1}')
-        if [ "\$st" = "T" ]; then
-          kill -CONT "\$p" 2>/dev/null || true
-          echo "\$(ts) RESUME_MAIN pid=\$p (was T)" >>"\$SUPLOG"
-        fi
-        ;;
-    esac
+    a0=\$(tr '\\0' '\\n' < "\$d/cmdline" 2>/dev/null | head -n1) || continue
+    [ -n "\$a0" ] || continue
+    [ "\$a0" = "/media/fat/MiSTer" ] || continue
+    p=\${d#/proc/}
+    st=\$(tr ')' '\\n' < "\$d/stat" 2>/dev/null | tail -n 1 | awk '{print \$1}')
+    if [ "\$st" = "T" ]; then
+      kill -CONT "\$p" 2>/dev/null || true
+      echo "\$(ts) RESUME_MAIN pid=\$p (was T)" >>"\$SUPLOG"
+    fi
   done
 }
 echo "\$(ts) PLEXCTL_SUPERVISE_START root=\$ROOT" >>"\$SUPLOG"
