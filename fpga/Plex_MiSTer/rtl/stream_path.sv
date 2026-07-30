@@ -11,7 +11,9 @@ module stream_path #(
 	// Mutation: ACK walker while dropping hold load (proves lossless backpressure).
 	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
 	// Mutation: double-count store address (proves STORE_MB_BITMAP RED).
-	parameter bit FAULT_DUP_STORE = 1'b0
+	parameter bit FAULT_DUP_STORE = 1'b0,
+	// Mutation: skip QP_Y mod-52 wrap on mb_qp_delta (restores 4× residual).
+	parameter bit FAULT_NO_QP_WRAP = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -475,7 +477,8 @@ module stream_path #(
 	end
 
 	h264_p_mb_traverse #(
-		.MAX_RBSP_BYTES(8192)
+		.MAX_RBSP_BYTES(8192),
+		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP)
 	) u_p_traverse (
 		.clk(clk), .reset(reset | flush), .clear(trav_clear_r | reset | flush),
 		.in_valid(trav_in_valid), .in_byte(trav_in_byte),

@@ -1,0 +1,6 @@
+EXPERIMENT: qp-vs-level discrimination for 4x residual
+H0_qp: failing MBs have RTL qp = gold_qp+12 (qdiv+2 → 4x qmul)
+H0_level: RTL cavlc levels are 4x golden coefficients at same qp
+H0_neither: qp and levels match gold → bug is apply/hadamard layout
+PRE_MEASURE: qp does NOT separate scale4 vs scale1 classes (qp in BOTH)
+NAMED: (13,0) and (13,6) identical gold zz/dq/idct @qp=31; only (13,6) fails

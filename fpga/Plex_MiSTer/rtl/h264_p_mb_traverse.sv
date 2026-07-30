@@ -22,7 +22,8 @@
 module h264_p_mb_traverse #(
 	parameter int MAX_RBSP_BYTES = 8192,
 	parameter bit FAULT_BAD_SKIP_RUN = 1'b0,     // mutation: treat skip_run as 0
-	parameter bit FAULT_DROP_LAST_ROW_MB = 1'b0  // mutation: drop last MB of each row
+	parameter bit FAULT_DROP_LAST_ROW_MB = 1'b0, // mutation: drop last MB of each row
+	parameter bit FAULT_NO_QP_WRAP = 1'b0        // mutation: skip QP_Y mod-52 (4× residual)
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -249,6 +250,43 @@ module h264_p_mb_traverse #(
 			else
 				tmp = -$signed({1'b0, code[31:1]});
 			se8_from_ue = tmp[7:0];
+		end
+	endfunction
+
+	// H.264 8.5.1 / host wrapQpY: QP_Y += mb_qp_delta modulo 52 (8-bit).
+	// Clamping negatives to 0 is wrong: after rate-control wrap, qp can go
+	// negative in the running sum and must map e.g. 1+(-22)=-21 → 31.
+	// Without this, qp_r[5:0] turns -21 into 43 (=gold+12) → qdiv+2 → 4× residual.
+	function automatic signed [7:0] wrap_qp_y;
+		input signed [7:0] qpy;
+		input signed [7:0] delta;
+		reg signed [15:0] v;
+		begin
+			if (FAULT_NO_QP_WRAP) begin
+				v = qpy + delta;
+				wrap_qp_y = v[7:0];
+			end else begin
+				v = qpy + delta;
+				v = v % 16'sd52; // toward-zero (Verilator/C++11)
+				if (v < 0)
+					v = v + 16'sd52;
+				wrap_qp_y = v[7:0];
+			end
+		end
+	endfunction
+
+	// Slice header slice_qp_delta: host clamps to 0..51 (not mod-52).
+	function automatic signed [7:0] clamp_qp_y;
+		input signed [7:0] qpy;
+		input signed [7:0] delta;
+		reg signed [15:0] v;
+		begin
+			v = qpy + delta;
+			if (v < 0)
+				v = 0;
+			if (v > 51)
+				v = 16'sd51;
+			clamp_qp_y = v[7:0];
 		end
 	endfunction
 
@@ -1105,7 +1143,8 @@ module h264_p_mb_traverse #(
 					start_ue(ST_HDR_QPD);
 				end
 				ST_HDR_QPD: begin
-					qp_r <= init_qp_r + se8_from_ue(ue_value);
+					// slice_qp_delta: clamp 0..51 (host parseSliceHeaderRbsp)
+					qp_r <= clamp_qp_y(init_qp_r, se8_from_ue(ue_value));
 					if (db_lat)
 						start_ue(ST_HDR_DIDC);
 					else
@@ -1329,7 +1368,8 @@ module h264_p_mb_traverse #(
 					end
 				end
 				ST_QP_UE: begin
-					qp_r <= qp_r + se8_from_ue(ue_value);
+					// mb_qp_delta: mod-52 wrap (H.264 8.5.1 / host wrapQpY)
+					qp_r <= wrap_qp_y(qp_r, se8_from_ue(ue_value));
 					residual_bit_offset <= bit_pos;
 					st <= ST_EMIT_CODED;
 				end
@@ -1405,11 +1445,6 @@ module h264_p_mb_traverse #(
 					emit_mb(1'b0);
 					res_luma_mask <= cbp_r[3:0];
 					res_chroma <= cbp_r[5:4];
-`ifdef VERILATOR
-					if (is_i_slice_r && curr_mb < 16'd8)
-						$display("TRAV_I_MB mb=%0d type=%0d i16=%0d cbp=%0h qp=%0d bit_pos=%0d",
-							curr_mb, mb_type_r, is_i16_r, cbp_r, qp_r, bit_pos);
-`endif
 					if (!is_i16_r && cbp_r == 6'd0) begin
 						// inter/I_NxN with no residual; zero tc neighbours
 						for (ti = 0; ti < 4; ti = ti + 1) begin

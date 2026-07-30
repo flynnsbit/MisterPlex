@@ -11,7 +11,8 @@ module stream_path_full_frame_tb #(
 	parameter bit USE_REAL_REF_COMMIT = 1'b0,
 	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
 	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
-	parameter bit FAULT_DUP_STORE = 1'b0
+	parameter bit FAULT_DUP_STORE = 1'b0,
+	parameter bit FAULT_NO_QP_WRAP = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -125,7 +126,8 @@ module stream_path_full_frame_tb #(
 		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
 		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
 		.FAULT_DROP_TRAV_MB(FAULT_DROP_TRAV_MB),
-		.FAULT_DUP_STORE(FAULT_DUP_STORE)
+		.FAULT_DUP_STORE(FAULT_DUP_STORE),
+		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP)
 	) dut (
 		.clk(clk),
 		.reset(reset),

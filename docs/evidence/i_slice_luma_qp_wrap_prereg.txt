@@ -1,0 +1,8 @@
+FIX: wrap_qp_y mod-52 on mb_qp_delta (H.264 8.5.1 / host wrapQpY)
+EVIDENCE:
+  gold+RTL bitstream: mb133 qp_before=1 ue=44 se=-22
+  host wrapQpY(1,-22)=31; RTL was qp_r=-21 → [5:0]=43 = gold+12 → 4× qmul
+PRE_REGISTER HEADLINE: intra=0/300 inter=0/3300 (chroma stub)
+PRE_REGISTER LUMA intra_y_mb: 260..295/300  (was 229; ~33 scale4 fails + cascade)
+PRE_REGISTER LUMA intra_y_px: 65000..74000/76800
+MUTANT: FAULT_NO_QP_WRAP → expect scale4 return / lower y_mb

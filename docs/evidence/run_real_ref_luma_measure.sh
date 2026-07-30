@@ -36,7 +36,7 @@ SRC_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 DIRTY=""; git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet || DIRTY="-dirty"
 echo "REAL_REF_MEASURE source_sha=${SRC_SHA}${DIRTY}"
 echo "REAL_REF_MEASURE pre-register HEADLINE: intra=0/300 inter=0/3300 (chroma stub floors Y+U+V mb_exact)"
-echo "REAL_REF_MEASURE pre-register LUMA: intra_y_mb=225..245/300 intra_y_px=60000..65000/76800 (I16 AC skip_dc + combined DC+AC idct)"
+echo "REAL_REF_MEASURE pre-register LUMA: intra_y_mb=260..295/300 intra_y_px=65000..74000/76800 (mb_qp_delta mod-52 wrapQpY)"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_REAL" \
@@ -85,11 +85,12 @@ REAL_LUMA="$REAL_REF_DIR/native_inter_luma_progress.json"
 python3 - "$REAL_LUMA" <<'PY'
 import json,sys
 sp=json.load(open(sys.argv[1]))
-i=sp["intra"]; p=sp.get("inter",sp.get("predicted",{}))
-print(f"LUMA intra_y_mb={i['y_mb_exact']}/{i['y_mb_total']} y_px={i['y_px_exact']}/{i['y_px_total']} y_blk4={i.get('y_blk4_exact','?')}/{i.get('y_blk4_total','?')}")
+sm=sp.get("summary", sp)
+i=sm.get("intra", {}); p=sm.get("inter", sm.get("predicted", {}))
+print(f"LUMA intra_y_mb={i.get('y_mb_exact',0)}/{i.get('y_mb_total',0)} y_px={i.get('y_pixel_exact',i.get('y_px_exact',0))}/{i.get('y_pixel_total',i.get('y_px_total',0))} y_blk4={i.get('y_blk4_exact','?')}/{i.get('y_blk4_total','?')}")
 print(f"LUMA inter_y_mb={p.get('y_mb_exact',0)}/{p.get('y_mb_total',0)}")
-ymb=i['y_mb_exact']
-print(f"LUMA_vs_PREREGISTER pre=225..245 actual={ymb} {'HIT' if 240<=ymb<=275 else 'MISS'}")
+ymb=int(i.get('y_mb_exact',0))
+print(f"LUMA_vs_PREREGISTER pre=260..295 actual={ymb} {'HIT' if 260<=ymb<=295 else ('HIT_ABOVE' if ymb>295 else 'MISS')}")
 PY
 
 python3 "$ROOT/tools/analyze_i_mb_luma_fail_breakdown.py" \
